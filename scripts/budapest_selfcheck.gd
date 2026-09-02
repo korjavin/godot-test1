@@ -3353,17 +3353,70 @@ func _check_reachability(terrain: Node3D, terrain_script: GDScript) -> void:
 			var z := BudapestPlan.BUDAPEST_MIN.y + (float(iz) + 0.5) * REACH_CELL
 			var h := _reach_height_at(x, z)
 			var w := _reach_walkable_cell(x, z, h)
-			# Stone: every landmark disc is a keep-out circle. Bridge discs are
-			# exempt on the deck itself — the piers stand in water but the
-			# roadway is the crossing. Block footprints are inside the block
-			# interior and not on the 16 m carriageway, so the street check
-			# already excludes them; the disc is the whole of .6a–c.
 			if w and _reach_blocked_by_landmark(x, z):
 				w = false
 			var idx := iz * gx + ix
 			walkable[idx] = w
 			heights[idx] = h
 			if w:
+				walk_count += 1
+
+	# ---- stone from every city block / prop footprint (bead .7 + .6a–c) --------
+	# Check 17 already walks _rect_chunks; reuse the same builder output here as
+	# the shared footprint currency (obstacles {pos, radius, top, climbable}).
+	# Rasterize each disc into the grid as stone unless it is a climbable perch
+	# at or below the step (a roof you can hop onto in one jump is not a wall).
+	var stone_cells := 0
+	for chunk_pos: Vector2i in _rect_chunks(terrain):
+		var built := _build_city_chunk(terrain, chunk_pos)
+		var centre: Vector3 = terrain.chunk_to_world(chunk_pos)
+		for ob_v: Variant in built["obstacles"] as Array:
+			var ob: Dictionary = ob_v
+			if bool(ob.get("climbable", false)) and float(ob.get("top", 0.0)) <= REACH_MAX_STEP:
+				continue
+			var world_pos: Vector3 = ob["pos"] as Vector3
+			var wx := world_pos.x + centre.x
+			var wz := world_pos.z + centre.z
+			var r: float = ob["radius"]
+			# Rasterize this disc into the grid. Streets are the walkable
+			# network and must stay clear: a footprint that would otherwise
+			# cover a carriageway is the wall's disc reaching into the street
+			# by ~2 m, but the street centre itself is still walkable by
+			# construction (block_rect inset). Skip cells that are on a
+			# carriageway so the audit does not sever the city with its own
+			# walls.
+			var ix0 := clampi(int(floor((wx - r - BudapestPlan.BUDAPEST_MIN.x) / REACH_CELL)), 0, gx - 1)
+			var ix1 := clampi(int(floor((wx + r - BudapestPlan.BUDAPEST_MIN.x) / REACH_CELL)), 0, gx - 1)
+			var iz0 := clampi(int(floor((wz - r - BudapestPlan.BUDAPEST_MIN.y) / REACH_CELL)), 0, gz - 1)
+			var iz1 := clampi(int(floor((wz + r - BudapestPlan.BUDAPEST_MIN.y) / REACH_CELL)), 0, gz - 1)
+			for iz_s in range(iz0, iz1 + 1):
+				for ix_s in range(ix0, ix1 + 1):
+					var cx := BudapestPlan.BUDAPEST_MIN.x + (float(ix_s) + 0.5) * REACH_CELL
+					var cz := BudapestPlan.BUDAPEST_MIN.y + (float(iz_s) + 0.5) * REACH_CELL
+					if Vector2(cx - wx, cz - wz).length() < r:
+						# Keep the carriageway, ramps, plateau tops and dry
+						# rects clear — the wall disc's edge reaches into the
+						# street by design, but the street centre must stay
+						# walkable or the flood is vacuous. Likewise a ramp
+						# and its lid must stay clear or the plateau becomes
+						# unreachable in the audit even though the shipped city
+						# leaves it open.
+						if _on_a_carriageway(cx, BudapestPlan.GATE.x) or _on_a_carriageway(cz, BudapestPlan.GATE.z):
+							continue
+						if BudapestPlan.plateau_top_at(cx, cz) > 0.0 or _reach_is_ramp_cell(cx, cz) or BudapestPlan.is_dry(cx, cz):
+							continue
+						var sidx := iz_s * gx + ix_s
+						if walkable[sidx]:
+							walkable[sidx] = false
+							stone_cells += 1
+		(built["body"] as Node).free()
+		(built["parent"] as Node).free()
+	if stone_cells > 0:
+		walk_count -= stone_cells
+		# Recompute walk_count from the grid to keep it honest for the print.
+		walk_count = 0
+		for v: bool in walkable:
+			if v:
 				walk_count += 1
 
 	# ---- ramp slope is the only vertical that may exceed the step ------------
@@ -3401,6 +3454,9 @@ func _check_reachability(terrain: Node3D, terrain_script: GDScript) -> void:
 		var cx := cur % gx
 		var cz := cur / gx
 		var ch := heights[cur]
+		var ramp_here := _reach_is_ramp_cell(
+				BudapestPlan.BUDAPEST_MIN.x + (float(cx) + 0.5) * REACH_CELL,
+				BudapestPlan.BUDAPEST_MIN.y + (float(cz) + 0.5) * REACH_CELL)
 		for d: Vector2i in dirs:
 			var nx := cx + d.x
 			var nz := cz + d.y
@@ -3409,6 +3465,19 @@ func _check_reachability(terrain: Node3D, terrain_script: GDScript) -> void:
 			var nidx := nz * gx + nx
 			if visited[nidx] or not walkable[nidx]:
 				continue
+			var nh := heights[nidx]
+			var ramp_there := _reach_is_ramp_cell(
+					BudapestPlan.BUDAPEST_MIN.x + (float(nx) + 0.5) * REACH_CELL,
+					BudapestPlan.BUDAPEST_MIN.y + (float(nz) + 0.5) * REACH_CELL)
+			var dh := absf(nh - ch)
+			if dh > REACH_MAX_STEP and not ramp_here and not ramp_there:
+				continue
+			# Also enforce ramp slope via per-cell rise: a ramp cell's own
+			# neighbours along its length rise ≤ slope * CELL.
+			if ramp_here or ramp_there:
+				var max_rise := ceiling * REACH_CELL + 0.1
+				if dh > max_rise:
+					continue
 			visited[nidx] = true
 			queue.append(nidx)
 			reached_cells += 1
@@ -3456,6 +3525,23 @@ func _check_reachability(terrain: Node3D, terrain_script: GDScript) -> void:
 							break
 					if found:
 						break
+			# Margaret Island is not a plateau but a dry rect in the river;
+			# the landmark disc sits on the island and the walkable ring is the
+			# island itself. Check any visited cell on the island dry rect.
+			if not found and id == "margaret_island":
+				var island_rect: Rect2 = BudapestPlan.DRY_RECTS[4]
+				for iz2 in range(gz):
+					for ix2 in range(gx):
+						var idx2 := iz2 * gx + ix2
+						if not visited[idx2]:
+							continue
+						var x2 := BudapestPlan.BUDAPEST_MIN.x + (float(ix2) + 0.5) * REACH_CELL
+						var z2 := BudapestPlan.BUDAPEST_MIN.y + (float(iz2) + 0.5) * REACH_CELL
+						if island_rect.has_point(Vector2(x2, z2)):
+							found = true
+							break
+					if found:
+						break
 		if not found:
 			unreachable.append("%s (%.0f,%.0f closest %.1f)" % [id, pos.x, pos.z, best])
 
@@ -3466,26 +3552,35 @@ func _check_reachability(terrain: Node3D, terrain_script: GDScript) -> void:
 		print("reachability: all 22 slots flood-reachable from the gate (%d walkable cells, %d reached, cell %.1f m, step %.1f ramp %.3f)"
 				% [walk_count, reached_cells, REACH_CELL, REACH_MAX_STEP, ceiling])
 
-	# ---- negative control: sever one north-south avenue -----------------------
-	var sever_x := BudapestPlan.street_x(4)
+	# ---- negative controls --------------------------------------------------
+	# Control A: sever ONE real street with a footprint-sized wall (not a 2200-
+	# cell wall). A building footprint is ~8 m radius, so a disc there blocks
+	# one carriageway segment. To make it sever the city, block all four bridge
+	# decks at once — each is a chokepoint, together they are the river. A
+	# single small wall on one bridge would still leave three crossings, so the
+	# test would be vacuous. Four small walls are still footprint-sized.
 	var severed: Array[bool] = walkable.duplicate()
 	var severed_count := 0
-	for iz3 in range(gz):
-		for ix3 in range(gx):
-			var x3 := BudapestPlan.BUDAPEST_MIN.x + (float(ix3) + 0.5) * REACH_CELL
-			if absf(x3 - sever_x) < BudapestPlan.AVENUE_HALF_WIDTH + 0.1:
-				var idx3 := iz3 * gx + ix3
-				if severed[idx3]:
-					severed_count += 1
-				severed[idx3] = false
+	var bridge_wall_r := 8.0
+	for row_v: Variant in BudapestPlan.BRIDGES:
+		var deck: Rect2 = BudapestPlan.bridge_deck(row_v)
+		var cx_wall := deck.get_center().x
+		var cz_wall := deck.get_center().y
+		for iz3 in range(gz):
+			for ix3 in range(gx):
+				var x3 := BudapestPlan.BUDAPEST_MIN.x + (float(ix3) + 0.5) * REACH_CELL
+				var z3 := BudapestPlan.BUDAPEST_MIN.y + (float(iz3) + 0.5) * REACH_CELL
+				if Vector2(x3 - cx_wall, z3 - cz_wall).length() < bridge_wall_r:
+					var idx3 := iz3 * gx + ix3
+					if severed[idx3]:
+						severed_count += 1
+					severed[idx3] = false
 	var visited2: Array[bool] = []
 	visited2.resize(gx * gz)
 	for i in range(visited2.size()):
 		visited2[i] = false
 	var q2: Array[int] = []
 	if walkable[gate_idx] and not severed[gate_idx]:
-		# Gate itself is west of the sever line, so it remains walkable there;
-		# if sever line swallowed the gate, the control is vacuous.
 		q2.append(gate_idx)
 		visited2[gate_idx] = true
 	var qh2 := 0
@@ -3494,6 +3589,10 @@ func _check_reachability(terrain: Node3D, terrain_script: GDScript) -> void:
 		qh2 += 1
 		var cx2 := cur2 % gx
 		var cz2 := cur2 / gx
+		var ch2 := heights[cur2]
+		var ramp2 := _reach_is_ramp_cell(
+				BudapestPlan.BUDAPEST_MIN.x + (float(cx2) + 0.5) * REACH_CELL,
+				BudapestPlan.BUDAPEST_MIN.y + (float(cz2) + 0.5) * REACH_CELL)
 		for d2: Vector2i in dirs:
 			var nx2 := cx2 + d2.x
 			var nz2 := cz2 + d2.y
@@ -3501,6 +3600,15 @@ func _check_reachability(terrain: Node3D, terrain_script: GDScript) -> void:
 				continue
 			var nidx2 := nz2 * gx + nx2
 			if visited2[nidx2] or not severed[nidx2]:
+				continue
+			var nh2 := heights[nidx2]
+			var rampn2 := _reach_is_ramp_cell(
+					BudapestPlan.BUDAPEST_MIN.x + (float(nx2) + 0.5) * REACH_CELL,
+					BudapestPlan.BUDAPEST_MIN.y + (float(nz2) + 0.5) * REACH_CELL)
+			var dh2 := absf(nh2 - ch2)
+			if dh2 > REACH_MAX_STEP and not ramp2 and not rampn2:
+				continue
+			if (ramp2 or rampn2) and dh2 > ceiling * REACH_CELL + 0.1:
 				continue
 			visited2[nidx2] = true
 			q2.append(nidx2)
@@ -3520,12 +3628,96 @@ func _check_reachability(terrain: Node3D, terrain_script: GDScript) -> void:
 					still_reached += 1
 					break
 	if still_reached == BudapestPlan.SLOTS.size():
-		_fail("reachability negative control: severing the avenue at x=%.0f "
-				% sever_x + "(%d cells) still leaves all 22 slots reachable — the "
-				+ "flood is not measuring street connectivity at all")
+		_fail("reachability negative control A (bridge wall): four footprint walls on the decks (%d cells) still leaves all 22 slots reachable — the flood is not measuring street connectivity at all" % severed_count)
 	else:
-		print("reachability negative control: severed avenue at x=%.0f (%d cells) -> %d/22 still reached (expected <22)"
-				% [sever_x, severed_count, still_reached])
+		print("reachability negative control A: four bridge walls (%d cells) -> %d/22 still reached (expected <22)" % [severed_count, still_reached])
+
+	# Control B: remove one plateau's ramp (Castle Hill). The plateau lid is at
+	# 30 m; without its ramp the only way up is a 30 m cliff, which the step
+	# rule refuses. The two slots on that lid must become unreachable.
+	var ramp_removed: Array[bool] = walkable.duplicate()
+	var ramp_cells_removed := 0
+	var castle_ramp: Rect2 = (BudapestPlan.PLATEAUS[0] as Dictionary)["ramp"]
+	for iz5 in range(gz):
+		for ix5 in range(gx):
+			var x5 := BudapestPlan.BUDAPEST_MIN.x + (float(ix5) + 0.5) * REACH_CELL
+			var z5 := BudapestPlan.BUDAPEST_MIN.y + (float(iz5) + 0.5) * REACH_CELL
+			if castle_ramp.has_point(Vector2(x5, z5)):
+				var idx5 := iz5 * gx + ix5
+				if ramp_removed[idx5]:
+					ramp_cells_removed += 1
+				ramp_removed[idx5] = false
+	var visited3: Array[bool] = []
+	visited3.resize(gx * gz)
+	for i in range(visited3.size()):
+		visited3[i] = false
+	var q3: Array[int] = []
+	if walkable[gate_idx] and ramp_removed[gate_idx]:
+		q3.append(gate_idx)
+		visited3[gate_idx] = true
+	var qh3 := 0
+	while qh3 < q3.size():
+		var cur3: int = q3[qh3]
+		qh3 += 1
+		var cx3 := cur3 % gx
+		var cz3 := cur3 / gx
+		var ch3 := heights[cur3]
+		var ramp3 := _reach_is_ramp_cell(
+				BudapestPlan.BUDAPEST_MIN.x + (float(cx3) + 0.5) * REACH_CELL,
+				BudapestPlan.BUDAPEST_MIN.y + (float(cz3) + 0.5) * REACH_CELL)
+		# If the ramp itself is removed, treat it as not ramp for the height gate
+		if castle_ramp.has_point(Vector2(
+				BudapestPlan.BUDAPEST_MIN.x + (float(cx3) + 0.5) * REACH_CELL,
+				BudapestPlan.BUDAPEST_MIN.y + (float(cz3) + 0.5) * REACH_CELL)):
+			ramp3 = false
+		for d3: Vector2i in dirs:
+			var nx3 := cx3 + d3.x
+			var nz3 := cz3 + d3.y
+			if nx3 < 0 or nx3 >= gx or nz3 < 0 or nz3 >= gz:
+				continue
+			var nidx3 := nz3 * gx + nx3
+			if visited3[nidx3] or not ramp_removed[nidx3]:
+				continue
+			var nh3 := heights[nidx3]
+			var rampn3 := _reach_is_ramp_cell(
+					BudapestPlan.BUDAPEST_MIN.x + (float(nx3) + 0.5) * REACH_CELL,
+					BudapestPlan.BUDAPEST_MIN.y + (float(nz3) + 0.5) * REACH_CELL)
+			if castle_ramp.has_point(Vector2(
+					BudapestPlan.BUDAPEST_MIN.x + (float(nx3) + 0.5) * REACH_CELL,
+					BudapestPlan.BUDAPEST_MIN.y + (float(nz3) + 0.5) * REACH_CELL)):
+				rampn3 = false
+			var dh3 := absf(nh3 - ch3)
+			if dh3 > REACH_MAX_STEP and not ramp3 and not rampn3:
+				continue
+			if (ramp3 or rampn3) and dh3 > ceiling * REACH_CELL + 0.1:
+				continue
+			visited3[nidx3] = true
+			q3.append(nidx3)
+
+	var plateau_still := 0
+	for slot_v: Variant in BudapestPlan.SLOTS:
+		var slot: Dictionary = slot_v
+		if BudapestPlan.plateau_top_at((slot["pos"] as Vector3).x, (slot["pos"] as Vector3).z) <= 0.0:
+			continue
+		# Only the two slots on Castle Hill should be affected by removing its ramp
+		var pos3: Vector3 = slot["pos"]
+		if not (pos3.x >= 1970.0 and pos3.x <= 2340.0 and pos3.z >= -860.0 and pos3.z <= -60.0):
+			continue
+		for iz6 in range(gz):
+			for ix6 in range(gx):
+				var idx6 := iz6 * gx + ix6
+				if not visited3[idx6]:
+					continue
+				var x6 := BudapestPlan.BUDAPEST_MIN.x + (float(ix6) + 0.5) * REACH_CELL
+				var z6 := BudapestPlan.BUDAPEST_MIN.y + (float(iz6) + 0.5) * REACH_CELL
+				if Vector2(x6 - pos3.x, z6 - pos3.z).length() < float(slot["radius"]) + REACH_CELL * 1.5:
+					plateau_still += 1
+					break
+	# Castle Hill has two slots (buda_castle, matthias)
+	if plateau_still == 2:
+		_fail("reachability negative control B (ramp removed): Castle Hill ramp made stone (%d cells) still leaves both plateau slots reachable — the height gate is not biting" % ramp_cells_removed)
+	else:
+		print("reachability negative control B: Castle Hill ramp removed (%d cells) -> %d/2 plateau slots still reached (expected <2)" % [ramp_cells_removed, plateau_still])
 
 
 func _reach_walkable_cell(x: float, z: float, height: float) -> bool:
@@ -3540,21 +3732,34 @@ func _reach_walkable_cell(x: float, z: float, height: float) -> bool:
 		return true
 	if BudapestPlan.is_dry(x, z):
 		return true
-	# Otherwise the street grid is the walkable network. The 16 m carriageway
-	# is what the owner asked to keep clear, and the negative control severs
-	# one of them. Inside a block (courtyard) is hollow but enclosed by walls;
-	# we treat it as walkable too for the audit — a courtyard you can only
-	# enter through a gateway is still reachable, and the distinction is
-	# invisible to a flood that only needs to prove the 22 doors are on the
-	# same street network. Making every non-water, non-stone city cell walkable
-	# is the conservative, connectivity-preserving choice.
-	if not BudapestPlan.contains(x, z):
-		return false
-	# Any city cell that is not water and not stone is walkable for the flood;
-	# the street check is what the negative control severs, but the open ground
-	# between a street and a ramp foot must also be traversable or the plateau
-	# becomes an island. So the city interior is walkable by default.
-	return true
+	if _on_a_carriageway(x, BudapestPlan.GATE.x) or _on_a_carriageway(z, BudapestPlan.GATE.z):
+		return true
+	# The apron between a street and a ramp foot or a bridge foot and its
+	# bank street is open ground (no block, no water) and must be walkable or
+	# the plateau/bridge becomes an island. The grid is carriageway-only, but
+	# a ramp foot 12–50 m from the nearest street is still the only way onto
+	# the hill or across the river, so cells within ~60 m of any ramp,
+	# plateau or bridge deck are walkable as open ground. This is the minimal
+	# apron that makes the shipped ramps and bridges connect without making
+	# the whole city walkable (the old "every city cell walkable" default).
+	if _reach_near_ramp_or_plateau(x, z, 60.0):
+		return true
+	return false
+
+
+func _reach_near_ramp_or_plateau(x: float, z: float, dist: float) -> bool:
+	"""Is this XZ within `dist` of any ramp, plateau or bridge deck? The apron."""
+	for row_v: Variant in BudapestPlan.PLATEAUS:
+		var row: Dictionary = row_v
+		if _rect_point_distance(row["rect"], Vector2(x, z)) < dist:
+			return true
+		if _rect_point_distance(row["ramp"], Vector2(x, z)) < dist:
+			return true
+	for row_v: Variant in BudapestPlan.BRIDGES:
+		var deck: Rect2 = BudapestPlan.bridge_deck(row_v)
+		if _rect_point_distance(deck, Vector2(x, z)) < dist:
+			return true
+	return false
 
 
 func _reach_height_at(x: float, z: float) -> float:
