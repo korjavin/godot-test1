@@ -1828,6 +1828,12 @@ func _check_avenue(terrain: Node3D) -> void:
 	var lo: Vector2i = terrain.world_to_chunk(Vector3(corridor.position.x - 60.0, 0.0, -60.0))
 	var hi: Vector2i = terrain.world_to_chunk(Vector3(corridor.end.x + 60.0, 0.0, 60.0))
 	var blockers := 0
+	# THE POSITIVE CONTROL. Every other absence check in this file carries one, and
+	# this sweep needs it most: its whole verdict is a count that stays 0 whether
+	# the corridor is genuinely clear or the city built NOTHING in these chunks. A
+	# rect-membership regression, or an east end that moved, would turn the avenue
+	# into unbuilt scenery and still report a pass.
+	var shapes_examined := 0
 	for cx in range(lo.x, hi.x + 1):
 		for cz in range(lo.y, hi.y + 1):
 			var chunk_pos := Vector2i(cx, cz)
@@ -1839,6 +1845,7 @@ func _check_avenue(terrain: Node3D) -> void:
 				var box := shape.shape as BoxShape3D
 				if box == null:
 					continue
+				shapes_examined += 1
 				var xf: Transform3D = shape.transform
 				var e: Vector3 = box.size * 0.5
 				# The box's own half-extent along world X and Z, through its basis.
@@ -1858,5 +1865,12 @@ func _check_avenue(terrain: Node3D) -> void:
 			body.free()
 			(built["parent"] as Node).free()
 
+	if shapes_examined < 1:
+		_fail("the avenue sweep examined no collision shape at all over the %d "
+				% ((hi.x - lo.x + 1) * (hi.y - lo.y + 1)) + "chunks around the "
+				+ "corridor — the city built nothing there, so a clear corridor "
+				+ "is not what was measured")
+
 	print("avenue: %.0f m from the gate to the west bank at x = %.0f, %d solid "
-			% [corridor.size.x, east, blockers] + "boxes inside its 16 m")
+			% [corridor.size.x, east, blockers] + "boxes inside its 16 m, out of "
+			+ "%d shapes examined" % shapes_examined)

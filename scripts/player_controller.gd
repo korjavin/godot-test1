@@ -151,6 +151,13 @@ const LAND_HARD_SPEED: float = 12.0
 ## every landing squashed maximally. 16.0 puts a plain jump at ~0.64 and leaves
 ## headroom above it for genuine drops.
 const LAND_SQUASH_SPEED_DIVISOR: float = 16.0
+## How fast the SIDE SHUFFLE cycles, against the walk's own 8.0 (animate_walking).
+## The strafe is a CONTINUOUSLY HELD move, so unlike the burst it replaced it has
+## no progress ramp of its own to pose from — without a clock the limbs below are
+## constants and the body slides sideways frozen. Slightly under the walk because
+## a shuffle takes shorter steps than a stride; both are scaled 1.5x by running,
+## so the two cadences stay in step when a strafe turns into a walk.
+const SIDESTEP_CYCLE_SPEED: float = 6.5
 ## Seconds left in the current squash (0 = none) and its 0.2–1.0 strength.
 var land_squash_timer: float = 0.0
 var land_squash_strength: float = 0.0
@@ -2527,28 +2534,33 @@ func animate_sidestep() -> void:
 	if not left_arm or not right_arm or not left_leg or not right_leg:
 		return
 
-	# How far the legs splay sideways, and the extra lift on the leading leg.
+	# THE SHUFFLE CLOCK. A/D is held for as long as the player likes, so the pose
+	# needs a cycle of its own or the character slides sideways with its limbs
+	# locked in one splayed frame. `animation_time` is the same clock the walk
+	# swings on and running scales it the same 1.5x, so a strafe that turns into a
+	# walk hands over mid-stride instead of snapping.
+	var cycle := sin(animation_time * SIDESTEP_CYCLE_SPEED * (1.5 if is_running else 1.0))
+
+	# How far the legs splay sideways, and how much the reaching leg leads.
 	var leg_splay := step_direction * deg_to_rad(28)
 	var lead_lift := step_direction * deg_to_rad(14)
 	# Arms counter-swing for balance.
 	var arm_balance := step_direction * deg_to_rad(20)
 
-	# Both legs lean toward the step; the leading leg (on the step side) lifts a
-	# touch more so the step reads as one foot reaching out and the other following.
-	left_leg.rotation.z = original_rotations["left_leg"].z + leg_splay
-	right_leg.rotation.z = original_rotations["right_leg"].z + leg_splay
-	if step_direction > 0.0:
-		right_leg.rotation.z += lead_lift
-	else:
-		left_leg.rotation.z += lead_lift
+	# Both legs lean toward the step for the whole shuffle — that constant splay is
+	# the pose that reads as "sideways" — and the cycle passes the reach back and
+	# forth between them: one foot steps out, the other closes up behind it.
+	left_leg.rotation.z = original_rotations["left_leg"].z + leg_splay + lead_lift * cycle
+	right_leg.rotation.z = original_rotations["right_leg"].z + leg_splay - lead_lift * cycle
 
-	left_arm.rotation.z = original_rotations["left_arm"].z - arm_balance
-	right_arm.rotation.z = original_rotations["right_arm"].z - arm_balance
+	left_arm.rotation.z = original_rotations["left_arm"].z - arm_balance - arm_balance * 0.4 * cycle
+	right_arm.rotation.z = original_rotations["right_arm"].z - arm_balance + arm_balance * 0.4 * cycle
 
-	# Lean the body into the step direction for a bit of weight shift.
+	# Lean the body into the step direction for a bit of weight shift, and bob on
+	# the closing foot (twice a cycle, the walk's own bob relation).
 	if character_body:
 		character_body.rotation.z = original_rotations["body"].z - step_direction * deg_to_rad(8)
-		character_body.position.y = 0.0
+		character_body.position.y = absf(cycle) * 0.025
 
 func animate_jumping() -> void:
 	"""

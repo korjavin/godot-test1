@@ -1718,14 +1718,22 @@ const CITY_HILL_STONE := Color(0.47, 0.45, 0.41)
 ## the plateau's lid.
 const CITY_RAMP_THICKNESS: float = 1.0
 
-## The avenue's pavement slab: 15 cm, and collide = FALSE.
+## The avenue's pavement slab: 4 cm, straddling y = 0, and collide = FALSE.
 ##
 ## The avenue is a READ — the thing that says "this way into the city" — and not
 ## a corridor. The ground under it is already flat and walkable, so a COLLIDING
-## 15 cm lip would buy nothing and cost 900 m of kerb for a CharacterBody3D to
-## catch its toe on. Same reasoning as the forest canopies' collide = false: pure
-## decoration pays for its pixels and not for a collision shape.
-const CITY_AVENUE_THICKNESS: float = 0.15
+## lip would buy nothing and cost 900 m of kerb for a CharacterBody3D to catch its
+## toe on. Same reasoning as the forest canopies' collide = false: pure decoration
+## pays for its pixels and not for a collision shape.
+##
+## WHICH IS EXACTLY WHY IT MUST BE THIN AND CENTRED ON THE GROUND. Nothing stands
+## ON this slab — the player walks the y = 0 plane straight through it, capsule
+## bottom at y = 0 and the model's feet with it — so every centimetre of pavement
+## above y = 0 is a centimetre of shin rendered inside opaque stone, for the whole
+## 750 m of the one authored route out of the gate. A kerb-height 15 cm slab sunk
+## its feet; 4 cm straddling zero leaves 2 cm proud (enough to read as pavement
+## and to stay off the ground plane's own depth) and 2 cm buried out of sight.
+const CITY_AVENUE_THICKNESS: float = 0.04
 const CITY_AVENUE_STONE := Color(0.62, 0.60, 0.56)
 
 ## THE GATE DISTRICT'S STREET DRESSING (DEC-11) — where the jb7 city prop
@@ -1775,6 +1783,27 @@ const DANUBE_HASH_PRIME_Y: int = 175961107
 ## not one.
 const DANUBE_CROC_CHANCE: float = 0.55
 const DANUBE_CROC_MAX: int = 2
+
+## How far off a DRY RECT a Danube crocodile has to stand, and it is the ONE
+## obstacle test this spawner has.
+##
+## A bridge's STONE OVERHANGS ITS DECK. The Margaret Bridge's cutwaters are 10 m
+## boxes turned 45 degrees at z = +/-13 off a deck rect only 32 m deep, so their
+## corners reach 20.07 m out on Z against the rect's 16 — 4.07 m of solid, colliding
+## stone standing in open water. The Chain Bridge's tower piers overhang by 0.5 m
+## the same way. `danube_wet()` answers true there (it is off the rect), so the
+## per-body re-test that keeps a crocodile off the DECK does not keep it out of the
+## PIER, and it is reachable: chunk (2425, -675) is wet and its candidate square
+## covers the western cutwater's overhang.
+##
+## Every sibling spawner rejects a candidate standing in stone against `obstacles`;
+## this one cannot, because a city landmark's footprint is ONE disc up to 156 m
+## across and passing the list would empty the whole reach of the river. So the
+## test is the deck rect grown by the widest measured overhang plus a body's width
+## instead — bounded, allocation-free, and in WORLD space, which matters because
+## the box in the way may be owned by the neighbouring chunk (the centre rule homes
+## a landmark box by its own centre, not by where it reaches).
+const DANUBE_CROC_DECK_MARGIN: float = 8.0
 
 ## Which slice of the spawn-slot index space the Danube takes — for BOTH the
 ## node name and _croc_roll_seed, one number because they are one identity.
@@ -3683,8 +3712,10 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 		# check that turns predators off must turn off all of them — but its own
 		# independent DANUBE_SALT hash stream, so the spawner above regenerates
 		# every crocodile in the world exactly where it already was. Takes no
-		# `obstacles`: nothing is built in the water, and its own danube_wet()
-		# re-test at each body is what keeps one off a bridge deck.
+		# `obstacles` — a city landmark's footprint is one disc up to 156 m across,
+		# which would empty the whole river — and clears stone with its own
+		# danube_wet() re-test at each body plus a deck-rect margin for the pier
+		# and cutwater stone that hangs off a deck (DANUBE_CROC_DECK_MARGIN).
 		spawn_danube_crocodiles_in_chunk(chunk_pos, mesh_instance)
 		# Rare BOSS crocodiles guarding the coin road (deterministic, station-
 		# indexed — its own BOSS_SEED hash stream, no shared RNG draws consumed).
@@ -5850,6 +5881,11 @@ func spawn_danube_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshIns
 		if not BudapestPlan.danube_wet(world.x, world.z):
 			continue
 
+		# ...and off the stone that HANGS OFF the deck it stands on, which the test
+		# above cannot see. See DANUBE_CROC_DECK_MARGIN.
+		if _near_dry_rect(world.x, world.z, DANUBE_CROC_DECK_MARGIN):
+			continue
+
 		var croc := crocodile_scene.instantiate()
 		# "Crocodile_<cx>_<cy>_<i>", the ground spawner's own prefix and namespace
 		# — croc_id_for() hashes the name into the room-wide id, and the four
@@ -5867,6 +5903,30 @@ func spawn_danube_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshIns
 		croc.species = "crocodile"
 		parent_chunk.add_child(croc)
 		spawned += 1
+
+
+func _near_dry_rect(x: float, z: float, margin: float) -> bool:
+	"""
+	Is this world XZ within `margin` of a Danube DRY RECT (a bridge deck, or the
+	island)?
+
+	@param x, z: world XZ
+	@param margin: how far outside a rect still counts as "near"
+	@return: whether any DRY_RECTS row, grown by `margin` on all four sides,
+	         contains the point
+
+	`BudapestPlan.is_dry` asks the same question with margin 0 and cannot be given
+	one: it is half of the wading contract and is mirrored in `ground.gdshader`, so
+	a margin there would move the shoreline. This is a SPAWNER-side clearance test
+	over the same table and touches neither language of that contract.
+	"""
+	for i in range(BudapestPlan.DRY_RECTS.size()):
+		var r: Rect2 = BudapestPlan.DRY_RECTS[i]
+		if x >= r.position.x - margin and x <= r.position.x + r.size.x + margin \
+				and z >= r.position.y - margin and z <= r.position.y + r.size.y + margin:
+			return true
+	return false
+
 
 func adopt_wanderer(unit: Node3D) -> void:
 	"""
@@ -9847,7 +9907,7 @@ func spawn_city_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 	if av.has_area():
 		var mid_a := av.get_center()
 		create_box(
-				Vector3(mid_a.x - chunk_center.x, CITY_AVENUE_THICKNESS * 0.5, mid_a.y - chunk_center.z),
+				Vector3(mid_a.x - chunk_center.x, 0.0, mid_a.y - chunk_center.z),
 				Vector3(av.size.x, CITY_AVENUE_THICKNESS, av.size.y), 0.0,
 				rng, block_batch, block_body, 0.0, CITY_AVENUE_STONE, false)
 
@@ -10152,10 +10212,17 @@ func _spawn_city_landmarks_in_chunk(chunk_center: Vector3, parent_chunk: MeshIns
 				parent_chunk.add_child(accent)
 		scratch_chunk.free()
 
+		# `top` IS RELATIVE TO THE BUILDER'S CENTRE, and here that centre is not on
+		# the ground: a builder accumulates its height from 0 and the field spawners
+		# hand it center.y = 0, so there the two frames coincide and `footprint.top`
+		# is read straight through. The three slots standing on a plateau lid get
+		# center.y = pos.y (30, 30, 46), so the lid has to be added back or the
+		# entry understates Buda Castle's roofline by the whole hill — and `top` is
+		# the shared footprint currency every later spawner reads.
 		obstacles.append({
 			"pos": Vector3(center.x, 0.0, center.z),
 			"radius": radius,
-			"top": footprint.get("top", pos.y),
+			"top": pos.y + float(footprint.get("top", 0.0)),
 			"climbable": false,
 		})
 
