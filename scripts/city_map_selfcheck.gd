@@ -55,6 +55,11 @@ extends SceneTree
 ##     `player_controller.BUDAPEST_WIN_LANDMARKS` rather than restating 18, and
 ##     both it and the close hint must resolve in German (`tr()` returns its own
 ##     key on a miss, so an unimported row renders in English, silently).
+##
+## ...and OVER ALL SEVEN, a completion sentinel: a GDScript runtime error aborts
+## the FUNCTION it lands in and lets the script carry on, so a half-dead check
+## prints "SELFCHECK OK". Every check stamps itself at its exit and `_initialize`
+## fails on a missing stamp — see `_completed`.
 
 const CityMapPanel: GDScript = preload("res://scripts/city_map_panel.gd")
 const BudapestPlan := preload("res://scripts/budapest_plan.gd")
@@ -79,7 +84,22 @@ const PLAYER_SCENE: String = "res://scenes/player.tscn"
 ## and `Color.is_equal_approx` would reject the very constant that was written.
 const TONE_STEP: float = 1.0 / 255.0
 
+## Every check in this file, by the name it stamps itself with. See `_done()`.
+const CHECKS: Array = [
+	"key_is_free", "projection", "bake_once", "mask", "pause", "teammates", "lines",
+]
+
 var _failures: Array[String] = []
+
+## Which checks reached a deliberate exit. THE REASON THIS EXISTS: a GDScript
+## runtime error does not stop the script — it aborts the FUNCTION it happened in
+## and execution carries on — so a check that dies halfway simply stops asserting
+## and this file prints "SELFCHECK OK". That is not a hypothetical: check 1 shipped
+## in PR #186 doing exactly that, handing `int()` an Array three owners in and
+## silently skipping the six after it. Every check stamps itself as its last
+## statement and the run fails on a missing stamp, so the whole class of defect is
+## caught here instead of by the next reader.
+var _completed: Dictionary = {}
 
 
 ## A stand-in multiplayer manager. The panel reaches the real one through the
@@ -110,6 +130,11 @@ func _initialize() -> void:
 	await _check_teammates()
 	await _check_lines()
 
+	for name: String in CHECKS:
+		if not _completed.has(name):
+			_fail("check \"%s\" never reached its end — a runtime error aborted it "
+				% name + "and every assertion after that point was skipped")
+
 	if _failures.is_empty():
 		print("SELFCHECK OK")
 		quit(0)
@@ -122,6 +147,12 @@ func _initialize() -> void:
 
 func _fail(message: String) -> void:
 	_failures.append(message)
+
+
+func _done(name: String) -> void:
+	"""Stamp a check as having run to a deliberate exit — its LAST statement, and
+	before every early `return` it takes."""
+	_completed[name] = true
 
 
 # ============================================================================
@@ -162,18 +193,54 @@ func _check_key_is_free() -> void:
 		[[TouchControls.FORCE_SHOW_KEYCODE], "touch_controls.FORCE_SHOW_KEYCODE"],
 		[[MobileSettingsPanel.FORCE_SHOW_KEYCODE], "mobile_settings_panel.FORCE_SHOW_KEYCODE"],
 	]
-	var seen: int = 0
+	var claimed: String = _owner_claiming(key, owners)
+	if not claimed.is_empty():
+		_fail("TOGGLE_KEY %s is already %s" % [OS.get_keycode_string(key), claimed])
+
+	# NEGATIVE CONTROLS on the scan itself, and the SECOND one is why this section
+	# was rewritten. Two of the owners above are arrays of arrays — one row per
+	# answer/hero, each holding the main-row digit AND its keypad twin — so the
+	# obvious `int(taken)` over `entry[0]` raises "Nonexistent 'int' constructor"
+	# on the inner Array. A GDScript runtime error ABORTS THE FUNCTION and lets the
+	# script carry on, so the six owners listed after those two were never compared
+	# and this check printed a pass while proving nothing (agy, PR #186). A flat
+	# probe would still pass with the old code; only the nested one fails it.
+	if _owner_claiming(key, [[[key], "a fake flat owner"]]).is_empty():
+		_fail("the scan missed a fake owner holding TOGGLE_KEY in a flat array — "
+			+ "it cannot detect a real collision either")
+	if _owner_claiming(key, [[[[key]], "a fake nested owner"]]).is_empty():
+		_fail("the scan missed a fake owner holding TOGGLE_KEY in a NESTED array — "
+			+ "landmark_toast.ANSWER_KEYCODES and player_controller.HERO_KEYCODES "
+			+ "are exactly that shape, so their keys are not really being compared")
+	_done("key_is_free")
+
+
+static func _flatten_keycodes(value: Variant) -> Array:
+	"""
+	Every keycode inside `value`, however deeply nested, as plain ints.
+
+	A raw-keycode owner is free to hold its keys in whatever shape suits it — one
+	`Key`, a flat array of accepted spellings (`HELP_KEYCODES`), or an array of
+	per-slot arrays (`ANSWER_KEYCODES`, `HERO_KEYCODES`) — and this check may not
+	care which. Recursing is what lets a future owner pick a fourth shape without
+	editing this file, and what stops `int()` being handed an Array.
+	"""
+	var out: Array = []
+	if value is Array or value is PackedInt32Array or value is PackedInt64Array:
+		for item in value:
+			out.append_array(_flatten_keycodes(item))
+	else:
+		out.append(int(value))
+	return out
+
+
+static func _owner_claiming(key: int, owners: Array) -> String:
+	"""The label of the first `[keycodes, label]` owner that already holds `key`,
+	or "" if it is free. Pure, so the negative controls above can drive it."""
 	for entry: Array in owners:
-		for taken in entry[0]:
-			seen += 1
-			if int(taken) == key:
-				_fail("TOGGLE_KEY %s is already %s"
-					% [OS.get_keycode_string(key), entry[1]])
-	# POSITIVE CONTROL on the loop itself: if every constant above resolved to an
-	# empty array the comparison would pass in silence.
-	if seen < owners.size():
-		_fail("only %d raw keycodes were read from %d owners — the scan is hollow"
-			% [seen, owners.size()])
+		if _flatten_keycodes(entry[0]).has(key):
+			return String(entry[1])
+	return ""
 
 
 # ============================================================================
@@ -228,6 +295,7 @@ func _check_projection() -> void:
 	var gate: Vector2 = CityMapPanel.map_point(BudapestPlan.GATE.x, BudapestPlan.GATE.z)
 	if absf(gate.x) > 0.001:
 		_fail("the gate maps to x=%.2f, but it is authored on the city's west edge" % gate.x)
+	_done("projection")
 
 
 func _slot_point(id: String) -> Vector2:
@@ -256,6 +324,7 @@ func _check_bake_once() -> void:
 	if first == null:
 		_fail("opening the panel baked no texture at all")
 		panel.queue_free()
+		_done("bake_once")
 		return
 	if first.get_width() != CityMapPanel.MAP_PIXELS \
 			or first.get_height() != CityMapPanel.MAP_PIXELS:
@@ -277,6 +346,7 @@ func _check_bake_once() -> void:
 	if image == null:
 		_fail("the baked texture has no image to measure")
 		panel.queue_free()
+		_done("bake_once")
 		return
 	# Mid-river, well away from every deck and the island: the Danube's own
 	# polyline node at z = 0.
@@ -287,11 +357,21 @@ func _check_bake_once() -> void:
 	_expect_pixel(image, castle_rect.get_center(), CityMapPanel.COLOR_HILL, "Castle Hill")
 	var chain: Rect2 = BudapestPlan.DRY_RECTS[int(BudapestPlan.BRIDGES[1]["dry"])]
 	_expect_pixel(image, chain.get_center(), CityMapPanel.COLOR_DECK, "the Chain Bridge deck")
-	# NEGATIVE CONTROL: an all-water or all-deck image would pass every line
-	# above. Deep in Pest, far from the river, the hills and the grid's lines.
-	_expect_pixel(image, Vector2(3231.0, 899.0), CityMapPanel.COLOR_LAND, "open Pest")
+	# THE STREET GRID, on a real column of it. The map used to pitch its lines off
+	# `BUDAPEST_MIN` while the plan anchors them at the GATE — 12 m of drift on
+	# every column, invisible against an unmeasured grid, and since bead .9 those
+	# lines are block edges (Opus review, PR #186). The point below is the same
+	# open-Pest spot, snapped to its own block's western street.
+	var pest := Vector2(3231.0, 899.0)
+	var column: int = BudapestPlan.block_cell(pest.x, pest.y).x
+	_expect_pixel(image, Vector2(BudapestPlan.street_x(column), pest.y),
+		CityMapPanel.COLOR_STREET, "a street column")
+	# NEGATIVE CONTROL: an all-water, all-deck or all-street image would pass every
+	# line above. Deep in Pest, far from the river, the hills and the grid's lines.
+	_expect_pixel(image, pest, CityMapPanel.COLOR_LAND, "open Pest")
 
 	panel.queue_free()
+	_done("bake_once")
 	await process_frame
 
 
@@ -340,6 +420,7 @@ func _check_mask_lights_icons() -> void:
 
 	panel.queue_free()
 	player.queue_free()
+	_done("mask")
 	await process_frame
 
 
@@ -422,6 +503,7 @@ func _check_pause_policy() -> void:
 			+ "(paused=%s, holders=%d)" % [paused, PauseHub.holder_count()])
 
 	player.queue_free()
+	_done("pause")
 	await process_frame
 
 
@@ -466,6 +548,7 @@ func _check_teammates() -> void:
 	panel.set_panel_open(false)
 	mp.queue_free()
 	panel.queue_free()
+	_done("teammates")
 	await process_frame
 
 
@@ -512,6 +595,7 @@ func _check_lines() -> void:
 	panel.set_panel_open(false)
 	panel.queue_free()
 	player.queue_free()
+	_done("lines")
 	await process_frame
 
 

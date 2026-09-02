@@ -155,7 +155,7 @@ const ROWS: Array = [
 	# The city map panel — a raw keycode like K, M and P above it, and named here
 	# because a panel nobody can find is a panel that does not exist. No touch
 	# variant, exactly like the M row: `city_map_panel.gd` says why.
-	["B", "Open the map of Budapest and the 22 places to find.", Mode.DESKTOP],
+	["B", "Open the map of Budapest and the places to find.", Mode.DESKTOP],
 	["P", "Pause the game.", Mode.DESKTOP],
 	["Esc", "Free the mouse cursor. Press again to grab it back.", Mode.DESKTOP],
 	["?", "Open or close this list.", Mode.DESKTOP],

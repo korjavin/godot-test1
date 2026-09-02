@@ -409,23 +409,27 @@ func _bake_plan() -> ImageTexture:
 	image.fill(COLOR_LAND)
 
 	# --- The street grid ---------------------------------------------------
-	# `STREET_PITCH` off the plan, on both axes, anchored at the world origin so
-	# the lines fall where the streets do rather than where the map's corner is.
-	var pitch: float = BudapestPlan.STREET_PITCH
-	var first_x: float = ceilf(BudapestPlan.BUDAPEST_MIN.x / pitch) * pitch
-	var x: float = first_x
-	while x <= BudapestPlan.BUDAPEST_MAX.x:
-		var px: int = int(map_point(x, 0.0).x)
+	# `street_x()` / `street_z()` off the plan, walked from the north-west corner's
+	# own cell. NOT `STREET_PITCH` stepped off the map's corner: the grid is
+	# anchored at the GATE (`street_x(0)` is the gate's meridian, and
+	# `crowd_manager.snap_to_grid` reads the same origin), so pitching from
+	# `BUDAPEST_MIN` puts every column 12 m off — and since bead .9 those lines are
+	# real block edges, not decoration. Asking the plan is what stops a map from
+	# drawing streets the city does not have.
+	var cell: Vector2i = BudapestPlan.block_cell(
+		BudapestPlan.BUDAPEST_MIN.x, BudapestPlan.BUDAPEST_MIN.y)
+	var k: int = cell.x
+	while BudapestPlan.street_x(k) <= BudapestPlan.BUDAPEST_MAX.x:
+		var px: int = int(map_point(BudapestPlan.street_x(k), 0.0).x)
 		if px >= 0 and px < MAP_PIXELS:
 			image.fill_rect(Rect2i(px, 0, 1, MAP_PIXELS), COLOR_STREET)
-		x += pitch
-	var first_z: float = ceilf(BudapestPlan.BUDAPEST_MIN.y / pitch) * pitch
-	var z: float = first_z
-	while z <= BudapestPlan.BUDAPEST_MAX.y:
-		var pz: int = int(map_point(0.0, z).y)
+		k += 1
+	var m: int = cell.y
+	while BudapestPlan.street_z(m) <= BudapestPlan.BUDAPEST_MAX.y:
+		var pz: int = int(map_point(0.0, BudapestPlan.street_z(m)).y)
 		if pz >= 0 and pz < MAP_PIXELS:
 			image.fill_rect(Rect2i(0, pz, MAP_PIXELS, 1), COLOR_STREET)
-		z += pitch
+		m += 1
 
 	# --- The Danube --------------------------------------------------------
 	# Only the x-window the polyline can reach is swept: outside it `danube_wet()`
