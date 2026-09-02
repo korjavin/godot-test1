@@ -353,6 +353,7 @@ func _run() -> void:
 	else:
 		_check_radii(terrain_script, builders_script, registry, "field")
 		_check_radii(terrain_script, builders_script, city, "city")
+		_check_top_negative_control()
 		_check_constants(consts, registry)
 		_check_facts(registry)
 		await _check_toast(registry)
@@ -453,6 +454,12 @@ func _check_radii(terrain_script: GDScript, builders_script: GDScript, registry:
 				_fail("%s (seed %d): builder returned radius %.2f but the registry declares %.2f"
 						% [place, seed_index, returned, declared])
 
+			var returned_top: float = float((footprint as Dictionary)["top"])
+			var highest_y := _highest_vertical_extent(block_batch)
+			if not _top_covers(returned_top, highest_y):
+				_fail("%s (seed %d): builder returned top %.2f m below highest emitted vertex %.2f m (overflow %.2f m)"
+						% [place, seed_index, returned_top, highest_y, highest_y - returned_top])
+
 			var worst := _worst_horizontal_extent(block_batch)
 			worst_overall = maxf(worst_overall, worst)
 			if worst > declared + RADIUS_EPSILON:
@@ -488,6 +495,39 @@ func _check_radii(terrain_script: GDScript, builders_script: GDScript, registry:
 		pass
 
 	terrain.free()
+
+
+func _top_covers(t: float, h: float) -> bool:
+	return t >= h - RADIUS_EPSILON
+
+
+func _highest_vertical_extent(block_batch: Array) -> float:
+	"""
+	The highest Y vertex reached by any emitted box in the batch, accounting
+	for box centre, dimensions, yaw and tilt.
+	"""
+	var highest := -INF
+	for item_variant: Variant in block_batch:
+		var item: Dictionary = item_variant
+		var t: Transform3D = item["transform"]
+		for corner: Vector3 in UNIT_CORNERS:
+			var p: Vector3 = t.origin + t.basis * corner
+			highest = maxf(highest, p.y)
+	return highest
+
+
+func _check_top_negative_control() -> void:
+	"""
+	NEGATIVE CONTROL for the recorded-top assertion: prove that _top_covers
+	rejects a top below highest_y and accepts a top at or above highest_y.
+	"""
+	var h := 10.0
+	if _top_covers(h - 0.5, h):
+		_fail("check 1 negative control: _top_covers accepted a top 0.5 m below highest vertex — the top check is not testing anything")
+	if not _top_covers(h, h):
+		_fail("check 1 negative control: _top_covers rejected an exact match at highest vertex")
+	if not _top_covers(h + 0.5, h):
+		_fail("check 1 negative control: _top_covers rejected a top 0.5 m above highest vertex")
 
 
 func _worst_horizontal_extent(block_batch: Array) -> float:
