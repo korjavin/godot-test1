@@ -717,10 +717,10 @@ GUARDS" with a sentence each on how that failure is INVISIBLE in play.
 
 ### Task 10: the full sweep
 
-- [ ] `godot --headless --path . --import`
-- [ ] Run **every** `scripts/*_selfcheck.gd`. All must print `SELFCHECK OK` and exit 0.
-- [ ] `mkdir -p build/web && godot --headless --export-release "Web" build/web/index.html`
+- [x] `godot --headless --path . --import`
+- [x] Run **every** `scripts/*_selfcheck.gd`. All must print `SELFCHECK OK` and exit 0.
+- [x] `mkdir -p build/web && godot --headless --export-release "Web" build/web/index.html`
       — the web export is the performance target and a shader that fails to compile under
       `gl_compatibility` fails HERE and nowhere else.
-- [ ] `git status` clean apart from the intended files. **Never** commit `.beads/` churn to
+- [x] `git status` clean apart from the intended files. **Never** commit `.beads/` churn to
       this branch.
