@@ -3290,18 +3290,23 @@ func _probe_crowd_inside(species_name: String) -> void:
 				seen_not_persisted = true
 			# State must clear after the hold expires and hunter resumes.
 			# Walk the errand to completion via _investigate_move, then verify it
-			# can chase again.
+			# can chase again. Also assert cooldown still >0 at clear (finding #3).
+			var cleared_cd: float = -1.0
 			for _s in range(int(hold / 0.016) + 120):
 				croc._investigate_move(0.016)
-				# Keep ticking the cooldown as _physics_process would.
-				var cd: float = float(croc.get("_crowd_confusion_cooldown"))
-				if cd > 0.0:
-					croc.set("_crowd_confusion_cooldown", maxf(cd - 0.016, 0.0))
+				# Keep ticking the cooldown as _physics_process would — paused while _crowd_errand.
+				if not bool(croc.get("_crowd_errand")):
+					var cd: float = float(croc.get("_crowd_confusion_cooldown"))
+					if cd > 0.0:
+						croc.set("_crowd_confusion_cooldown", maxf(cd - 0.016, 0.0))
 				if not bool(croc.get("is_investigating")):
+					cleared_cd = float(croc.get("_crowd_confusion_cooldown"))
 					break
 			if bool(croc.get("is_investigating")):
 				seen_no_clear = true
 			else:
+				if cleared_cd <= 0.01:
+					_fail("SPECIES['%s'] cooldown was 0 at errand clear — guard expired during walk+hold and errands will chain (finding #3)" % species_name)
 				# After clearing, with cooldown expired it must be able to chase again.
 				croc.set("_crowd_confusion_cooldown", 0.0)
 				croc.set("is_chasing", false)
@@ -3327,6 +3332,55 @@ func _probe_crowd_inside(species_name: String) -> void:
 		_fail("SPECIES['%s'] errand did not survive 5 extra frames with quarry still in range — the stall is destroyed ~16 ms after it starts (finding #1)" % species_name)
 	if seen_no_clear:
 		_fail("SPECIES['%s'] is_investigating never cleared after hold expiry — hunter never resumes" % species_name)
+	# --- _track_scent must not hijack the crowd errand (finding #2) ---
+	# While _crowd_errand the hunter must keep walking to the citizen, not to a scent crumb.
+	# The hang needs quarry OUTSIDE detection (25) but INSIDE scent_radius (150).
+	if not seen_no_clear and refuses > 0:
+		var track_croc: Node = load(CROC_SCENE).instantiate()
+		track_croc.species = species_name
+		root.add_child(track_croc)
+		track_croc.global_position = city_pos
+		track_croc.rotation.y = 0.0
+		track_croc._find_player()
+		var got_track_confusion := false
+		for _a2 in range(80):
+			track_croc.set("_crowd_confusion_cooldown", 0.0)
+			track_croc.set("is_investigating", false)
+			track_croc.set("_crowd_errand", false)
+			track_croc.set("is_chasing", false)
+			track_croc.set("is_tracking", false)
+			track_croc.set("_investigate_hold", 0.0)
+			track_croc._update_chase_state()
+			if bool(track_croc.get("is_investigating")) and bool(track_croc.get("_crowd_errand")):
+				got_track_confusion = true
+				break
+			track_croc.set("is_chasing", false)
+			track_croc._choose_new_direction()
+		if got_track_confusion:
+			# Publish a scent crumb that would make _track_scent set is_tracking true
+			# if the early-return were missing. Use a lod_manager stub.
+			var lod_stub := Node3D.new()
+			var lod_script := GDScript.new()
+			lod_script.source_code = "extends Node3D\nfunc scent_point(pos: Vector3, radius: float) -> Variant:\n\treturn pos + Vector3(30, 0, 0)\n"
+			lod_script.reload()
+			lod_stub.set_script(lod_script)
+			lod_stub.add_to_group("lod_manager")
+			root.add_child(lod_stub)
+			# Move quarry outside detection (60 m) but inside scent (150).
+			stub.global_position = city_pos + Vector3(60, 0, 0)
+			var hold_before: float = float(track_croc.get("_investigate_hold"))
+			track_croc._update_chase_state()
+			if bool(track_croc.get("is_tracking")):
+				_fail("SPECIES['%s'] set is_tracking while _crowd_errand — _track_scent early-return missing (finding #2)" % species_name)
+			# Hold must still decrement via _investigate_move, not via _track_move.
+			track_croc._investigate_move(0.016)
+			var hold_after: float = float(track_croc.get("_investigate_hold"))
+			if hold_after >= hold_before - 0.001:
+				_fail("SPECIES['%s'] hold did not tick while _crowd_errand with quarry at 60 m — movement branch was hijacked by _track_move (finding #2)" % species_name)
+			lod_stub.free()
+		track_croc.free()
+		# Restore stub quarry for the cooldown guard below.
+		stub.global_position = city_pos + Vector3(5, 0, 0)
 	# Cooldown re-roll guard: a live confused body that we keep calling
 	# _update_chase_state on must keep refusing while is_investigating, and
 	# after we artificially end the errand but keep the cooldown, it must chase
