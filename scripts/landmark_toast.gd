@@ -753,6 +753,16 @@ func _arrive_city(index: int) -> void:
 	if player != null and player.has_method("explore_landmark"):
 		player.call("explore_landmark", index)
 
+	# ...AND IF THAT WAS THE EIGHTEENTH, THE RUN IS ALREADY OVER (codex review
+	# 2026-09-02). `explore_landmark()` reaches `_end_run()` synchronously, which
+	# banks the score and raises the victory panel — so a card raised now would
+	# float over that panel, and a burst armed now would trickle 15-25 coins into a
+	# total that has already been banked and displayed, advertising a reward the
+	# final screen does not show. The panel IS the reward for the last landmark;
+	# the card and the coins are what the other seventeen pay.
+	if player != null and "is_game_over" in player and bool(player.is_game_over):
+		return
+
 	var row: Dictionary = _city_row(String(slot["builder"]))
 	if row.is_empty():
 		return   # a wave-C reservation: a position and a radius, nothing to say

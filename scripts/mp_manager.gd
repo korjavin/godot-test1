@@ -1073,6 +1073,21 @@ func _on_lobby_joined(you: String, room: String, master: String, members: Array)
 	# Alone in the `welcome` frame means the lobby just minted this room for us:
 	# there is no run in progress to join, so no placement is ever applied.
 	_first_member = members.size() <= 1
+	# THE HOST'S BUDAPEST WALK IS THE ROOM'S STARTING UNION (codex review
+	# 2026-09-02). A host is the one peer whose world is NOT replaced — it never
+	# adopts a foreign seed, so `reset_position()` never runs and its
+	# `explored_mask` deliberately survives into the room. Left out of
+	# `_explored_mask` those landmarks would be invisible to every peer for the
+	# room's life, because `explore_landmark()` refuses a bit it has already set and
+	# so can never report them again — the host would then be the only member
+	# counting them, which is exactly the divergence a room-wide set exists to stop.
+	# Only for the host: a JOINER's mask is cleared by `_receive_seed` and importing
+	# it here could race that clear.
+	if _first_member:
+		var host_player: Node = get_tree().get_first_node_in_group("player")
+		if host_player != null and "explored_mask" in host_player:
+			_explored_mask |= int(host_player.explored_mask) \
+					& ((1 << BudapestPlan.SLOTS.size()) - 1)
 	# Every member already here sends us exactly one join snapshot, so this is how
 	# many the placement waits for (see JOIN_SNAPSHOT_WAIT). Peers arriving AFTER
 	# us are deliberately not counted: the protocol sends snapshots to the joiner,
@@ -3037,11 +3052,18 @@ func _receive_state(from: String, snapshot: Dictionary) -> void:
 	# older build decodes to 0 and ORs to nothing) and re-drives the win check the
 	# `_join_settled()` gate has been deferring — which is precisely the gate this
 	# snapshot is what closes.
-	if from == _master:
-		_apply_explored(int(snapshot.get("lm", 0)))
 	# The snapshot may be the last thing the placement was waiting on (the seed
 	# can equally well be). Both call in; the latch inside decides.
 	_apply_join_placement()
+	# BUDAPEST'S EXPLORED SET, AFTER THE PLACEMENT AND NOT BEFORE (codex review
+	# 2026-09-02). This snapshot can be the frame that makes `_join_settled()` true
+	# AND the frame that carries eighteen landmarks, so applied above the placement
+	# it opens the victory screen synchronously — and `join_at()` then reads that as
+	# a pre-join game over and hides it, only for the next `room` packet to raise it
+	# again half a second later. Placed here the joiner is put down first and the
+	# win lands once, on a body that is already standing where the room is.
+	if from == _master:
+		_apply_explored(int(snapshot.get("lm", 0)))
 	# ...and the last thing the AUTO-CLAIM was waiting on, for the reason in
 	# `_auto_claim_hero()`: this snapshot is where a joiner learns which heroes are
 	# in a cell, and claiming before it lands is claiming one of them.

@@ -442,6 +442,80 @@ func _check_room_hygiene() -> void:
 			% player.explored_count() + "landmarks the room has never seen")
 	player.queue_free()
 
+	# --- the winning arrival pays nothing behind its own panel ---------------
+	# `explore_landmark()` reaches `_end_run()` synchronously, so an eighteenth
+	# landmark that then armed a 15-25 coin burst would trickle coins into a total
+	# the victory panel has already banked and displayed (codex review 2026-09-02).
+	var winner: Node = await _make_player()
+	var toast: Control = Control.new()
+	toast.set_script(TOAST_SCRIPT)
+	root.add_child(toast)
+	await process_frame
+	var win_at: int = PlayerScript.BUDAPEST_WIN_LANDMARKS
+	# The FINAL one has to be NAMED, or the card-and-coins path this is about is
+	# never reached — so it is picked first and the rest of the staging works round
+	# it. Slot 0 today; found rather than assumed, because wave C moves nothing but
+	# a future author might.
+	var last: int = -1
+	for i in range(BudapestPlan.SLOTS.size()):
+		if not String(BudapestPlan.SLOTS[i]["builder"]).is_empty():
+			last = i
+			break
+	var staged: int = 0
+	for i in range(BudapestPlan.SLOTS.size()):
+		if i == last or staged >= win_at - 1:
+			continue
+		winner.explore_landmark(i)
+		staged += 1
+	if last < 0 or staged != win_at - 1:
+		_fail("could not stage %d landmarks under a named one for the winning-arrival check"
+			% (win_at - 1))
+	else:
+		var coins_before: int = winner.coins_collected
+		winner.global_position = BudapestPlan.SLOTS[last]["pos"]
+		toast._scan_city()
+		if not winner.is_game_over:
+			_fail("the eighteenth landmark did not end the run through the toast")
+		if winner.coins_collected != coins_before:
+			_fail("the winning landmark paid %d coins AFTER the run was banked"
+				% (winner.coins_collected - coins_before))
+		if toast.visible:
+			_fail("the winning landmark raised its card over the victory panel")
+	toast.queue_free()
+	winner.queue_free()
+	# The next two blocks resolve "the player" by group, so the freed one has to be
+	# gone from it before they run.
+	await process_frame
+
+	# --- the host's retained walk seeds the room's union ---------------------
+	# A host is the one peer whose world is NOT replaced, so its `explored_mask`
+	# deliberately survives into the room. Left out of `_explored_mask` those
+	# landmarks are invisible to every peer for the room's life —
+	# `explore_landmark()` refuses a bit it has already set, so nothing can ever
+	# report them again (codex review 2026-09-02).
+	#
+	# Driven through the real `welcome` handler, which is the only place that
+	# decides `_first_member`. It logs one `Nonexistent function 'fetch_ice' in base
+	# 'Nil'` on its way past the mesh setup — there is no lobby socket in a headless
+	# fixture — which is noise of the same kind `mp_selfcheck` already prints and
+	# not a failure: this block asserts on the two fields, and CI's verdict is
+	# "exit 0 AND printed SELFCHECK OK".
+	var host: Node = await _make_player()
+	host.explored_mask = 0b1001
+	var host_mp: Node = MPManager.new()
+	root.add_child(host_mp)
+	await process_frame
+	host_mp._on_lobby_joined("host", "AAAAAA", "host", [{"id": "host", "name": "Host"}])
+	if not host_mp._first_member:
+		_fail("the welcome fixture did not read as a host — check 7's host block "
+			+ "measured a joiner instead")
+	elif host_mp._explored_mask & 0b1001 != 0b1001:
+		_fail("hosting dropped the host's own %d landmarks from the room's union — "
+			% 2 + "every peer would evaluate the win against a smaller set")
+	host_mp.queue_free()
+	host.queue_free()
+	await process_frame
+
 	# --- the retry queue, on a real manager ---------------------------------
 	# Driven on a bare `MpManager` with the room fields set directly. Every send
 	# path degrades to a no-op with no `_rtc` and no `_lobby`
