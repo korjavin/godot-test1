@@ -155,7 +155,20 @@ const STYLES: Dictionary = {
 	## Flat, straight, and slow: 7 m/s is barely above a walk and well under any
 	## character's run, so it reads as a bolt you WATCH coming. From its 10 m
 	## minimum that is 1.43 s in the air and 7.1 m of walked sidestep against a
-	## 0.9 m hit radius — 7.9x the radius, against a required 3x.
+	## 0.9 m hit radius — 7.9x the radius, against a required 3x. That is the
+	## arithmetic check 1 measures, and it is the WORST case on purpose: it treats
+	## the flight as flat, i.e. as if the shooter fired from the ground. A real
+	## titan does not — its muzzle rides its body scale, 13.5 m up at
+	## BOSS_MAX_SCALE 9 — so the actual path from 10 m out is hypot(10, 13.5) =
+	## 16.8 m, 2.40 s in the air, 12.0 m of sidestep, 13.3x the radius. The
+	## elevation only ever makes the shot MORE dodgeable, which is why the flat
+	## number is the safe one to hold the contract against.
+	##
+	## The same elevation drops the bolt's HORIZONTAL speed to 10 / 2.40 =
+	## 4.17 m/s at the 9x cap — under WALK_SPEED (5.0). Nothing in the contract
+	## says otherwise: check 1b bounds the speed by RUN_SPEED so a bolt cannot run
+	## a fleeing player down, and slower is strictly kinder. It is written down
+	## here only so nobody reads the 7.0 as a ground speed.
 	##
 	## `max_range` 32 is the boss territory radius: a bolt can cross the whole
 	## zone it was fired in and no further, so a boss cannot snipe you out of a
@@ -186,6 +199,14 @@ const STYLES: Dictionary = {
 	## slower 6 m/s horizontal makes it the more dodgeable of the two despite the
 	## wider 1.1 m splat radius (6.7 m of sidestep from its 8 m minimum, 6.1x).
 	##
+	## `max_range` 20 (was 16) is a 3-D distance from the MUZZLE, and the clown's
+	## muzzle rides its body scale: at BOSS_MAX_SCALE 9 it stands 11.7 m up, so a
+	## shot at the arm's 14 m ceiling has 18.24 m to fly and a 16 m range freed it
+	## in mid-air. `lifetime` 5.0 is still comfortably over 20 / 6 = 3.33 s, so
+	## the range is what ends a normal flight and the lifetime stays the backstop.
+	## projectile_selfcheck check 1c re-derives this from BOSS_MAX_SCALE, so the
+	## next size bump fails the build rather than evaporating the shots.
+	##
 	## `gravity` 12.0 is arcade, not physical — per repo convention every script
 	## picks its own (the player, the crocodile and this one all differ). It sets
 	## the arc height, since the vertical launch speed is solved from it and the
@@ -197,7 +218,7 @@ const STYLES: Dictionary = {
 		"gravity": 12.0,
 		"hit_radius": 1.1,
 		"min_fire_range": 8.0,
-		"max_range": 16.0,
+		"max_range": 20.0,
 		"lifetime": 5.0,
 		"max_live": 3,
 		"color": Color(1.0, 0.55, 0.75),
@@ -281,8 +302,8 @@ static func fire(from: Vector3, at: Vector3, parent: Node, params: Dictionary,
 	# parent's transform — it first BAKES that transform into the local one, so
 	# world placement is preserved across the flip. Set here, with the node still
 	# outside the tree, there is no global transform to bake and the projectile
-	# keeps exactly the scale its style asked for. Set one line later and a 6x
-	# boss fires a 6x bolt out of a chunk whose own transform it also inherited:
+	# keeps exactly the scale its style asked for. Set one line later and a 9x
+	# boss fires a 9x bolt out of a chunk whose own transform it also inherited:
 	# the precise bug this flag exists to prevent, arrived at by using the flag.
 	p.top_level = true
 	parent.add_child(p)
