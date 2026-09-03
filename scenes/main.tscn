@@ -30,6 +30,7 @@
 [ext_resource type="Script" path="res://scripts/hunt_director.gd" id="28_huntdir"]
 [ext_resource type="Script" path="res://scripts/hero_hud.gd" id="29_herohud"]
 [ext_resource type="Script" path="res://scripts/crowd_manager.gd" id="30_crowd"]
+[ext_resource type="Script" path="res://scripts/traffic_manager.gd" id="32_traffic"]
 [ext_resource type="Script" path="res://scripts/city_map_panel.gd" id="31_citymap"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
@@ -84,6 +85,9 @@ script = ExtResource("18_fauna")
 
 [node name="CrowdManager" type="Node3D" parent="."]
 script = ExtResource("30_crowd")
+
+[node name="TrafficManager" type="Node3D" parent="."]
+script = ExtResource("32_traffic")
 
 [node name="Multiplayer" type="Node" parent="." groups=["mp"]]
 script = ExtResource("19_mp")

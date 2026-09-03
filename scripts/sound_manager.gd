@@ -244,6 +244,20 @@ const HUNTER_PING_VOLUME_DB: float = -12.0  # under the growl (-8) and hiss (-11
 const HUNTER_GRAB_PITCH: float = 0.5   # 90 Hz -> 45 Hz, 0.15 s -> 0.3 s
 const HUNTER_GRAB_VOLUME_DB: float = -7.0  # a hit, so around the bite's -6
 
+# --- Car horn: the city's annoyed double-beep when a hero blocks the carriageway. ---
+## Two short square-wave horns (a slightly dissonant pair, 380 + 320 Hz) with a
+## brief gap — the universal "hey, move!" The car manager gates this behind a
+## hold-off (must be blocked > 1s) and a per-car cooldown, and skips it when the
+## player is > 55 m away so 60 honks is not a fire alarm. Like every other
+## play_* it early-returns while _unlocked is false, so there is no path that
+## bypasses the browser gesture gate. ponytail: replays the built buffer at a
+## fixed pitch; add a dedicated doppler only if it reads wrong.
+const CAR_HORN_FREQ_A: float = 380.0
+const CAR_HORN_FREQ_B: float = 320.0
+const CAR_HORN_NOTE_DURATION: float = 0.13
+const CAR_HORN_GAP: float = 0.07
+const CAR_HORN_VOLUME_DB: float = -9.0
+
 # --- Danger heartbeat: ONE looping "lub-dub" cycle, driven externally. ---
 ## The danger vignette fetches this via get_loop_player("heartbeat") and owns
 ## play/stop/pitch/volume itself — we only bake the stream and park the player.
@@ -311,6 +325,7 @@ func _ready() -> void:
 	_streams["buzz"] = _build_wav(_synth_buzz())
 	_streams["crunch"] = _build_wav(_synth_crunch())
 	_streams["hunter_ping"] = _build_wav(_synth_hunter_ping())
+	_streams["car_horn"] = _build_wav(_synth_car_horn())
 
 	# The wind is the one LOOPING stream: mark the whole buffer as the loop
 	# region so it plays forever once started.
@@ -500,6 +515,18 @@ func play_hunter_grab() -> void:
 	## A hunter's retrieval attempt landing. See HUNTER_GRAB_PITCH for why this is
 	## the buzz buffer dropped an octave rather than a stream of its own.
 	_play_oneshot("buzz", HUNTER_GRAB_VOLUME_DB, HUNTER_GRAB_PITCH)
+
+
+func play_car_horn(distance: float = 0.0) -> void:
+	## Car horn — the traffic yield's "hey, move". Attenuates by distance so 60
+	## cars at 50 m is not a fire alarm. The audibility skip lives in
+	## TrafficManager.HONK_AUDIBLE_RADIUS (one spelling per review); this just
+	## attenuates.
+	# Attenuate ~ -0.18 dB per metre beyond 5 m, clamped.
+	var vol := CAR_HORN_VOLUME_DB
+	if distance > 5.0:
+		vol -= clampf((distance - 5.0) * 0.18, 0.0, 12.0)
+	_play_oneshot("car_horn", vol)
 
 
 func play_projectile(style: String) -> void:
@@ -712,6 +739,26 @@ func _synth_hunter_ping() -> PackedFloat32Array:
 			var progress: float = float(i) / note_frames
 			var envelope: float = exp(-t * HUNTER_PING_DECAY) * (1.0 - progress)
 			samples.append(signf(sin(TAU * freq * t)) * envelope * 0.6)
+	return samples
+
+
+func _synth_car_horn() -> PackedFloat32Array:
+	## Two square-wave horn blasts (380 Hz + 320 Hz) with a gap — an annoyed
+	## but not hostile "beep beep". Same square generator as hunter_ping/buzz,
+	## same click-free envelope. Loud enough to cut through wind but not a
+	## jumpscare; the traffic manager's hold-off + cooldown prevents a siren.
+	var samples := PackedFloat32Array()
+	var note_frames: int = int(CAR_HORN_NOTE_DURATION * MIX_RATE)
+	var gap_frames: int = int(CAR_HORN_GAP * MIX_RATE)
+	for freq in [CAR_HORN_FREQ_A, CAR_HORN_FREQ_B]:
+		if freq == CAR_HORN_FREQ_B:
+			for _i in range(gap_frames):
+				samples.append(0.0)
+		for i in range(note_frames):
+			var t: float = float(i) / MIX_RATE
+			var progress: float = float(i) / note_frames
+			var envelope: float = exp(-t * 28.0) * (1.0 - progress)
+			samples.append(signf(sin(TAU * freq * t)) * envelope * 0.55)
 	return samples
 
 
