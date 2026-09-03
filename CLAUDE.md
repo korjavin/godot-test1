@@ -65,7 +65,14 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            declared top
 #   prop_selfcheck           prop/structure footprints, budgets, palettes
 #   enemy_spawn_selfcheck    every species: no spawn in stone, deterministic
-#                            placement, biome dispatch, behaviour, MP identity
+#                            placement, biome dispatch, behaviour, MP identity;
+#                            plus check 13 the HUNTER FIELD CAP (the expected
+#                            desktop residency under HUNTER_FIELD_CAP off the
+#                            consts, and the live cap firing, reading the COUNT,
+#                            excluding the HQ by PARENT, off in a room, and
+#                            moving nothing else) and check 14 a ROAD BOSS'S
+#                            FOOTPRINT (its own column refused by the shipped
+#                            _settle_coin_y, and no coin inside one over 25 roads)
 #   boss_selfcheck           EVERY BIOME_BOSS kind: the territory leash (hunts
 #                            inside, never leaves), crush immunity is an
 #                            ORDERING, the row's boss speed is the one resolved,
@@ -930,6 +937,20 @@ primes, own `spawn_hunters` flag) instead of through `BIOME_SPECIES` — which i
 dispatch-free and costs the chunk RNG zero draws. That is a **third door** into the
 world and check 4's reachability gate reads `HUNTER_SPECIES` to know about it; check 12
 is the A/B that *proves* the crocodile stream is untouched rather than asserting it.
+
+**THE FIELD IS CAPPED AT TEN, AND THE CAP IS TWO HALVES** (owner ruling 2026-09-02, bead
+`godot-test1-fhu`: *"limit hunters on field with total number 10 (inside HQ doesn't
+count)"*). The half that does the work is `HUNTER_CHANCE` (0.08), tuned so the EXPECTED
+desktop residency — `(2 * render_distance + 1)^2` = 121 chunks — is 9.68 bodies; that half
+is a pure function of (chunk, `run_seed`), so it holds in a room and on every peer.
+`HUNTER_FIELD_CAP` (10) is the backstop for the lucky walk, and it is deliberately *not*
+deterministic: it is a **post-draw skip** at the bottom of `spawn_hunters_in_chunk`,
+counting live bodies of the row that are **not descendants of `tower_shell()`** (the HQ's
+guards are excluded BY PARENT, never by group), and it is **off in a room** — a body count
+differs per peer by where they walked, and crocodiles are master-simulated but never
+network-spawned, so a hunter one peer capped away and the master did not is a local ghost
+that can still bite. **In a room the retuned chance IS the whole cap**; that ceiling is
+documented, not a bug. `enemy_spawn_selfcheck` check 13 pins all five clauses.
 
 **It is also the row that proved player abilities can be opted out of as DATA.** A
 machine has no nose and is not flesh, so its row carries `stink_immune` (`flee_from()`
