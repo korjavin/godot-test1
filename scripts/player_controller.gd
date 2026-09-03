@@ -575,6 +575,87 @@ const CHARACTERS: Array[Dictionary] = [
 	}
 ]
 
+## HOW MUCH SLOWER THE HITCH SINE RUNS THAN THE STRIDE — and it is irrational
+## on purpose (2 - phi, the most stubbornly non-rational ratio there is).
+##
+## The gait is two sines: the STRIDE (which owns the phase, the footstep beat
+## and the leg opposition) and the HITCH, which owns nothing but AMPLITUDE. Two
+## incommensurate periods never line up again, so the walk is "unpredictable"
+## with no `randf()` anywhere: the pose stays a pure function of
+## (hero, animation_time), identical on every peer, needing no state and no
+## netcode. A random call in `_process` would instead make the remote mirror in
+## `remote_avatar.gd` diverge from the body it is a picture of.
+const GAIT_HITCH_RATIO: float = 0.381966
+
+## HOW EACH HERO WALKS — the `SPECIES` / `SKILL_TREES` const-dict idiom, one row
+## per `CHARACTERS` name, resolved ONCE per character swap into `_gait` (never a
+## dict lookup per frame). `gait_for()` merges a row over `DEFAULT`, so a row
+## lists only what it changes and an unknown hero — a fifth character, a scene
+## run standalone — animates exactly as this game did before this table existed.
+##
+## THIS IS POSE ONLY. Not one field here is read by movement: `WALK_SPEED`,
+## `RUN_SPEED`, `calculate_current_speed()` and the catchable-walk chain are
+## untouched, and `stride_rate` scales the ANIMATION clock, never the body.
+##
+## The fields:
+##   stride_rate  radians/second of stride phase at speed_multiplier 1.0 (the
+##                old literal 8.0). This IS the footstep rate — the SFX fire on
+##                the sign flip of the stride sine, so a slow row stomps slowly.
+##   arm_deg/leg_deg  swing amplitude, degrees, forward/back on X.
+##   arm_asym     LEFT arm amplitude ratio. Nobody's arms match; 1.0 is today's.
+##   bob          body rise/fall, model-local metres, at twice the stride rate.
+##                Held under 0.05 so the body stays inside the [-0.05, +0.10] m
+##                band `gait_selfcheck` asserts (a bigger dip puts a foot under
+##                the flat world at full leg swing).
+##   sway_deg     body ROLL — the waddle. Zero for windman on purpose: he is the
+##                default hero, and `capture_selfcheck`'s sidestep test asserts
+##                the walk animation leaves `character_body.rotation.z` at rest.
+##   lean_deg     constant body PITCH into the run.
+##   head_deg     optional head bobble. The `Head` node is looked up with
+##                `get_node_or_null` and a model without one simply gets none.
+##   hitch        how hard the hitch sine modulates the limb amplitude — the
+##                skip, the stumble, the bobble. Kept below 1.0 so the amplitude
+##                factor never reaches zero, let alone flips sign.
+##   phase        this hero's offset into the hitch sine. Two heroes on screen
+##                must not stumble on the same beat.
+##   idle_rate/idle_bob  the standing breathe.
+const GAITS: Dictionary = {
+	# TODAY'S NUMBERS, EXACTLY. animate_walking() read these as literals before
+	# this table existed (8.0 / 30 / 40 / 0.03) and animate_idle() as 2.0 / 0.01.
+	# `hitch` 0.0 means the DEFAULT gait is a single sine, byte-for-byte the old
+	# cycle — which is what makes "an unknown hero animates as it always did" a
+	# measurement rather than a claim.
+	"DEFAULT": {
+		"stride_rate": 8.0, "arm_deg": 30.0, "leg_deg": 40.0, "arm_asym": 1.0,
+		"bob": 0.03, "sway_deg": 0.0, "lean_deg": 0.0, "head_deg": 0.0,
+		"hitch": 0.0, "phase": 0.0, "idle_rate": 2.0, "idle_bob": 0.01,
+	},
+	# Long loping strides, big arms, leaning into the wind he makes.
+	"windman": {
+		"stride_rate": 6.5, "arm_deg": 44.0, "leg_deg": 46.0, "arm_asym": 1.12,
+		"bob": 0.038, "lean_deg": 6.0, "hitch": 0.10, "phase": 0.0,
+		"idle_rate": 1.7, "idle_bob": 0.014,
+	},
+	# Quick short steps, arms held low and tight, with an occasional skip.
+	"primm": {
+		"stride_rate": 10.6, "arm_deg": 20.0, "leg_deg": 30.0, "arm_asym": 0.86,
+		"bob": 0.022, "head_deg": 3.0, "hitch": 0.28, "phase": 1.7,
+		"idle_rate": 2.6, "idle_bob": 0.008,
+	},
+	# A heavy stomp: slow, big legs, a deep bob and a periodic stumble.
+	"teibi": {
+		"stride_rate": 5.2, "arm_deg": 26.0, "leg_deg": 44.0, "arm_asym": 1.05,
+		"bob": 0.045, "sway_deg": 5.0, "lean_deg": 3.0, "hitch": 0.30,
+		"phase": 3.4, "idle_rate": 1.4, "idle_bob": 0.016,
+	},
+	# A waddle: small legs, a wide roll, and a head that will not sit still.
+	"phoboman": {
+		"stride_rate": 7.4, "arm_deg": 22.0, "leg_deg": 24.0, "arm_asym": 1.25,
+		"bob": 0.028, "sway_deg": 11.0, "head_deg": 7.0, "hitch": 0.16,
+		"phase": 5.1, "idle_rate": 2.2, "idle_bob": 0.012,
+	},
+}
+
 ## The 1-4 hotkeys, one row per `CHARACTERS` index: press 2 and you ARE Primm.
 ##
 ## RAW KEYCODES, outside project.godot's input map, for the same reason
@@ -741,6 +822,14 @@ var right_arm: Node3D = null
 var left_leg: Node3D = null
 var right_leg: Node3D = null
 var character_body: Node3D = null
+
+## OPTIONAL. The head bobble's node, looked up by exact name like every other
+## limb — but unlike them a model without one is not even a warning: `head_deg`
+## simply draws nothing. Nothing else in the game requires a `Head`.
+var character_head: Node3D = null
+
+## This character's `GAITS` row, resolved once per swap in set_active_character().
+var _gait: Dictionary = GAITS["DEFAULT"]
 
 ## Shared cel-shading outline, created once and reused for every character.
 ## Applied as a material overlay so it works on any mesh — both the primitive
@@ -2279,6 +2368,11 @@ func set_active_character(index: int) -> void:
 	original_rotations = character_rest_poses[index].duplicate()
 	restore_rest_pose(index)
 
+	# Resolve this hero's walk personality ONCE. The per-frame animation reads
+	# `_gait`, never GAITS — a dict lookup plus a merge every frame for a value
+	# that only changes on a swap is the sort of thing the F3 overlay finds.
+	_gait = gait_for(String(CHARACTERS[index]["name"]))
+
 	# A freshly selected character always starts with NO transient ability state:
 	# not Teibi's resize (a different character would inherit the giant body or
 	# the shrunken capsule) and not Windman's air boost, which is read off a timer
@@ -2307,9 +2401,13 @@ func capture_rest_pose(instance: Node3D) -> Dictionary:
 		return pose
 
 	pose["body"] = body.rotation
+	# `head` rides the same table as the four limbs because the gait bobbles it:
+	# every axis an animation writes has to have a rest value here, or a swap
+	# mid-stride leaves the tilt baked into the next character.
 	var limb_keys := {
 		"left_arm": "LeftArm", "right_arm": "RightArm",
 		"left_leg": "LeftLeg", "right_leg": "RightLeg",
+		"head": "Head",
 	}
 	for key in limb_keys:
 		var limb := body.get_node_or_null(limb_keys[key])
@@ -2332,6 +2430,8 @@ func restore_rest_pose(index: int) -> void:
 		left_leg.rotation = pose["left_leg"]
 	if right_leg and pose.has("right_leg"):
 		right_leg.rotation = pose["right_leg"]
+	if character_head and pose.has("head"):
+		character_head.rotation = pose["head"]
 	if character_body and pose.has("body"):
 		character_body.rotation = pose["body"]
 		character_body.position.y = 0.0
@@ -2339,6 +2439,23 @@ func restore_rest_pose(index: int) -> void:
 # ============================================================================
 # ANIMATION FUNCTIONS
 # ============================================================================
+
+static func gait_for(hero: String) -> Dictionary:
+	"""
+	Resolve one hero's walk personality: their `GAITS` row merged over `DEFAULT`.
+
+	STATIC and total, so `remote_avatar.gd` can read it off the script const the
+	way `hero_hud.gd` reaches `CHARACTERS` — a teammate's Teibi stomps like
+	yours with no node reference and no netcode. An unknown name gets `DEFAULT`,
+	which is the pre-GAITS cycle exactly.
+
+	@param hero: a `CHARACTERS` name
+	@return: a fresh Dictionary carrying every field (never a shared reference)
+	"""
+	var row: Dictionary = GAITS["DEFAULT"].duplicate()
+	if GAITS.has(hero):
+		row.merge(GAITS[hero], true)
+	return row
 
 func setup_animation_references() -> void:
 	"""
@@ -2362,6 +2479,9 @@ func setup_animation_references() -> void:
 	right_arm = character_body.get_node_or_null("RightArm")
 	left_leg = character_body.get_node_or_null("LeftLeg")
 	right_leg = character_body.get_node_or_null("RightLeg")
+	# OPTIONAL, and deliberately not printed below: a model with no Head is not
+	# a broken model, it is a model whose gait row's `head_deg` draws nothing.
+	character_head = character_body.get_node_or_null("Head")
 
 	# Debug output
 	print("  Limb nodes found:")
@@ -2382,6 +2502,8 @@ func setup_animation_references() -> void:
 		original_rotations["right_leg"] = right_leg.rotation
 	if character_body:
 		original_rotations["body"] = character_body.rotation
+	if character_head:
+		original_rotations["head"] = character_head.rotation
 
 	print("Animation system initialized for character")
 
@@ -2531,6 +2653,18 @@ func animate_walking(delta: float, speed_multiplier: float) -> void:
 	Animates the character's limbs for walking/running.
 	Arms and legs swing back and forth.
 
+	TWO SINES, and which is which is the whole design (see `GAIT_HITCH_RATIO`):
+
+	  * the STRIDE owns the PHASE — leg opposition, the body bob at twice the
+	    rate, and the footstep SFX, which fire on its sign flip;
+	  * the HITCH owns nothing but AMPLITUDE. It runs at an irrational fraction
+	    of the stride, so the two never line up twice and the walk reads as
+	    unpredictable while staying a pure function of (hero, animation_time) —
+	    no RNG, no state, identical on every peer.
+
+	Because the hitch scales amplitude and never touches `time_factor`, the
+	footsteps stay exactly on the beat no matter how hard a hero stumbles.
+
 	@param delta: Time since last frame
 	@param speed_multiplier: How fast to play the animation (1.0 = normal, 1.5 = running)
 	"""
@@ -2541,14 +2675,19 @@ func animate_walking(delta: float, speed_multiplier: float) -> void:
 	reset_sidestep_pose()
 
 	# Walking animation uses sine waves for smooth swinging motion
-	var walk_speed = 8.0 * speed_multiplier
-	var arm_swing_amount = deg_to_rad(30)  # 30 degrees swing
-	var leg_swing_amount = deg_to_rad(40)  # 40 degrees swing
+	var walk_speed: float = float(_gait["stride_rate"]) * speed_multiplier
 
 	# Calculate swing values using sine wave
-	var time_factor = animation_time * walk_speed
-	var arm_swing = sin(time_factor) * arm_swing_amount
-	var leg_swing = sin(time_factor) * leg_swing_amount
+	var time_factor: float = animation_time * walk_speed
+	var stride: float = sin(time_factor)
+	# The amplitude modulation. `hitch` is well under 1.0 in every row, so this
+	# factor never reaches zero and can never flip a limb's direction.
+	var wobble: float = sin(time_factor * GAIT_HITCH_RATIO + float(_gait["phase"]))
+	var hitch: float = 1.0 + float(_gait["hitch"]) * wobble
+	var arm_swing_amount: float = deg_to_rad(float(_gait["arm_deg"])) * hitch
+	var leg_swing_amount: float = deg_to_rad(float(_gait["leg_deg"])) * hitch
+	var arm_swing: float = stride * arm_swing_amount
+	var leg_swing: float = stride * leg_swing_amount
 
 	# Footstep sounds, keyed to the walk cycle itself: each sign flip of the
 	# swing sine is a leg passing through centre — a foot planting. Because
@@ -2557,23 +2696,59 @@ func animate_walking(delta: float, speed_multiplier: float) -> void:
 	# the current sign silently so the first frame never mis-fires a step.
 	# Wading swaps the pat for a wet slap on the very same trigger, so the
 	# "occasional splash" cadence comes free from the walk cycle — no new timer.
-	var sine_sign: int = 1 if sin(time_factor) >= 0.0 else -1
+	var sine_sign: int = 1 if stride >= 0.0 else -1
 	if _last_walk_sine_sign != 0 and sine_sign != _last_walk_sine_sign and is_on_floor():
 		_sfx("play_splash" if is_wading else "play_footstep")
 	_last_walk_sine_sign = sine_sign
 
-	# Apply rotations (arms and legs swing opposite to each other)
-	left_arm.rotation.x = original_rotations["left_arm"].x + arm_swing
+	# Apply rotations (arms and legs swing opposite to each other). The LEFT arm
+	# carries the asymmetry, because two arms swinging identically is the single
+	# most robotic thing about the old cycle.
+	left_arm.rotation.x = original_rotations["left_arm"].x + arm_swing * float(_gait["arm_asym"])
 	right_arm.rotation.x = original_rotations["right_arm"].x - arm_swing
 
 	left_leg.rotation.x = original_rotations["left_leg"].x - leg_swing
 	right_leg.rotation.x = original_rotations["right_leg"].x + leg_swing
 
-	# Add slight body bob for realism
+	# Add slight body bob for realism, plus this hero's roll (the waddle) and
+	# pitch (the lean). The bob is MODEL-LOCAL metres — it lives under Body, so
+	# it scales with Teibi's resize the way the limb angles do; the collision
+	# capsule does not move with any of it, which is why the amplitudes are
+	# small enough for the body to still look attached to it.
 	if character_body:
-		var bob_amount = 0.03
-		var bob = sin(time_factor * 2.0) * bob_amount
-		character_body.position.y = bob
+		character_body.position.y = sin(time_factor * 2.0) * float(_gait["bob"])
+		character_body.rotation.z = original_rotations["body"].z \
+				+ stride * deg_to_rad(float(_gait["sway_deg"]))
+		character_body.rotation.x = original_rotations["body"].x \
+				+ deg_to_rad(float(_gait["lean_deg"]))
+
+	# The head bobble — off the hitch sine, so it wanders rather than nodding in
+	# lockstep with the feet. Optional node, per the row's docs.
+	if character_head and original_rotations.has("head"):
+		character_head.rotation.z = original_rotations["head"].z \
+				+ wobble * deg_to_rad(float(_gait["head_deg"]))
+
+func relax_gait_extras(weight: float) -> void:
+	"""
+	Ease the three axes only the WALK gait writes — body roll, body pitch and
+	the head bobble — back to their rest values.
+
+	`reset_sidestep_pose()` is the precedent and the reason this exists: an
+	animation that writes an axis nobody else writes has to put it back, or
+	stopping mid-stride leaves the lean baked in for as long as you stand there.
+	Sidestep owns the roll itself, so it snaps (weight 1.0); idle and the air
+	pose ease, because an 11-degree waddle snapping level the frame you stop is
+	a visible pop.
+
+	@param weight: 1.0 snaps to rest, smaller values lerp toward it per frame.
+	"""
+	if character_body and original_rotations.has("body"):
+		var rest: Vector3 = original_rotations["body"]
+		character_body.rotation.x = lerp(character_body.rotation.x, rest.x, weight)
+		character_body.rotation.z = lerp(character_body.rotation.z, rest.z, weight)
+	if character_head and original_rotations.has("head"):
+		character_head.rotation.z = lerp(
+				character_head.rotation.z, original_rotations["head"].z, weight)
 
 func animate_sidestep() -> void:
 	"""
@@ -2584,6 +2759,10 @@ func animate_sidestep() -> void:
 	"""
 	if not left_arm or not right_arm or not left_leg or not right_leg:
 		return
+
+	# Drop the walk gait's lean and head bobble first — this pose sets the roll
+	# itself two blocks down, so only the pitch and the head would linger.
+	relax_gait_extras(1.0)
 
 	# How far the legs splay sideways, and the extra lift on the leading leg.
 	var leg_splay := step_direction * deg_to_rad(28)
@@ -2621,6 +2800,10 @@ func animate_jumping() -> void:
 	"""
 	if not left_arm or not right_arm or not left_leg or not right_leg:
 		return
+
+	# animate_jumping owns the air: no hitch fires up here, and the walk gait's
+	# lean and head bobble ease out on the way up.
+	relax_gait_extras(0.2)
 
 	# Continuous wing beat while airborne.
 	var flap_speed = 14.0
@@ -2677,17 +2860,21 @@ func animate_idle(delta: float) -> void:
 	# Smoothly return limbs to original positions
 	var lerp_speed = 0.1
 
+	# ...and the gait's own axes with them, or a hero who stops mid-waddle
+	# stands there leaning.
+	relax_gait_extras(0.15)
+
 	left_arm.rotation.x = lerp(left_arm.rotation.x, original_rotations["left_arm"].x, lerp_speed)
 	right_arm.rotation.x = lerp(right_arm.rotation.x, original_rotations["right_arm"].x, lerp_speed)
 
 	left_leg.rotation.x = lerp(left_leg.rotation.x, original_rotations["left_leg"].x, lerp_speed)
 	right_leg.rotation.x = lerp(right_leg.rotation.x, original_rotations["right_leg"].x, lerp_speed)
 
-	# Subtle breathing animation
+	# Subtle breathing animation, at this hero's own rate and depth — a heavy
+	# Teibi breathes slow and deep, a twitchy Primm shallow and quick.
 	if character_body:
-		var breathe_speed = 2.0
-		var breathe_amount = 0.01
-		var breathe = sin(animation_time * breathe_speed) * breathe_amount
+		var breathe: float = sin(animation_time * float(_gait["idle_rate"])) \
+				* float(_gait["idle_bob"])
 		character_body.position.y = lerp(character_body.position.y, breathe, 0.1)
 
 # ============================================================================

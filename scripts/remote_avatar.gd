@@ -69,14 +69,19 @@ const LABEL_HEIGHT: float = 2.2
 const LABEL_PIXEL_SIZE: float = 0.006
 const LABEL_FONT_SIZE: int = 48
 
-## Walk-cycle tuning. These three numbers are DUPLICATED from
-## player_controller.gd's animate_walking() on purpose: three floats copied is
-## cheaper than coupling a visual-only network avatar to the player controller,
-## which owns input, physics, abilities and the roster. If the player's walk cycle is
-## ever retuned and the two visibly diverge, copy the numbers again.
-const STRIDE_FREQUENCY: float = 1.6   ## Stride phase advanced per metre walked
-const ARM_SWING: float = 30.0         ## Degrees, forward/back
-const LEG_SWING: float = 40.0         ## Degrees, forward/back
+## Stride phase advanced per metre walked, for a hero on the DEFAULT gait. A
+## row with a different `stride_rate` scales this in step (see `_animate()`), so
+## a slow-striding Teibi covers the same ground in fewer, longer strides here
+## exactly as he does on his own screen.
+const STRIDE_FREQUENCY: float = 1.6
+
+## The swing amplitudes are NO LONGER COPIED. They used to be three floats
+## duplicated out of `animate_walking()` — cheap, until each hero got their own
+## walk. `PLAYER_SCRIPT.gait_for()` is a static, total, pure read of a script
+## const (the shape `hero_hud.gd` uses to reach `CHARACTERS`), so this stays a
+## visual-only node holding no reference to the player controller, and a
+## teammate's Teibi stomps like yours with no netcode at all.
+const DEFAULT_STRIDE_RATE: float = 8.0  ## `GAITS["DEFAULT"]["stride_rate"]`
 
 ## Speed (m/s) at or above which the walk cycle plays at full amplitude. Below
 ## it the pose fades toward rest, so a standing peer stands still.
@@ -136,6 +141,12 @@ var left_arm: Node3D = null
 var right_arm: Node3D = null
 var left_leg: Node3D = null
 var right_leg: Node3D = null
+## OPTIONAL, exactly as it is for the local player: a model with no `Head` node
+## simply gets no bobble.
+var character_head: Node3D = null
+
+## The shown hero's `PlayerController.GAITS` row, resolved once per model swap.
+var _gait: Dictionary = PLAYER_SCRIPT.gait_for("")
 
 ## Rest rotations captured the moment the model is instanced, exactly as
 ## player_controller.setup_animation_references() does — every animated pose is
@@ -242,6 +253,7 @@ func set_character(index: int) -> void:
 	right_arm = null
 	left_leg = null
 	right_leg = null
+	character_head = null
 	rest_rotations.clear()
 
 	var scene_path: String = PLAYER_SCRIPT.CHARACTERS[index]["scene_path"]
@@ -257,6 +269,9 @@ func set_character(index: int) -> void:
 	# `c` every packet, so leaving them uncommitted means the next packet retries.
 	_last_swap_ms = now
 	character_index = index
+	# This hero's walk personality, resolved here for the same reason the player
+	# resolves it in set_active_character(): a swap is rare, a frame is not.
+	_gait = PLAYER_SCRIPT.gait_for(String(PLAYER_SCRIPT.CHARACTERS[index]["name"]))
 
 	character_node = scene.instantiate()
 	model_root.add_child(character_node)
@@ -283,7 +298,14 @@ func _cache_limbs() -> void:
 	right_arm = character_body.get_node_or_null("RightArm")
 	left_leg = character_body.get_node_or_null("LeftLeg")
 	right_leg = character_body.get_node_or_null("RightLeg")
+	character_head = character_body.get_node_or_null("Head")
 
+	# `body` and `head` ride the same table as the four limbs because the gait
+	# rolls, pitches and bobbles them — every axis an animation writes needs a
+	# rest value, or a model swap leaves the lean baked into the next hero.
+	rest_rotations["body"] = character_body.rotation
+	if character_head:
+		rest_rotations["head"] = character_head.rotation
 	if left_arm:
 		rest_rotations["left_arm"] = left_arm.rotation
 	if right_arm:
@@ -459,25 +481,57 @@ func _animate(delta: float) -> void:
 		right_arm.rotation.x = rest_rotations["right_arm"].x
 		left_arm.rotation.z = rest_rotations["left_arm"].z - spread
 		right_arm.rotation.z = rest_rotations["right_arm"].z + spread
+		_relax_gait_extras()
 		return
 
 	# Grounded: clear the airborne arm roll, then swing on the X axis only.
 	left_arm.rotation.z = rest_rotations["left_arm"].z
 	right_arm.rotation.z = rest_rotations["right_arm"].z
 
-	stride_phase += move_speed * delta * STRIDE_FREQUENCY
+	stride_phase += move_speed * delta * STRIDE_FREQUENCY \
+			* (float(_gait["stride_rate"]) / DEFAULT_STRIDE_RATE)
 
 	# Amplitude scales with speed up to FULL_STRIDE_SPEED, so slowing to a stop
 	# eases the pose back to rest instead of freezing it mid-stride.
 	var amount: float = clampf(move_speed / FULL_STRIDE_SPEED, 0.0, 1.0)
 	var swing: float = sin(stride_phase) * amount
 
-	left_arm.rotation.x = rest_rotations["left_arm"].x + swing * deg_to_rad(ARM_SWING)
-	right_arm.rotation.x = rest_rotations["right_arm"].x - swing * deg_to_rad(ARM_SWING)
-	left_leg.rotation.x = rest_rotations["left_leg"].x - swing * deg_to_rad(LEG_SWING)
-	right_leg.rotation.x = rest_rotations["right_leg"].x + swing * deg_to_rad(LEG_SWING)
+	# The hitch — the player's second, incommensurate sine, off the phase this
+	# node already keeps. It scales AMPLITUDE only, exactly as it does locally.
+	var wobble: float = sin(stride_phase * PLAYER_SCRIPT.GAIT_HITCH_RATIO + float(_gait["phase"]))
+	var hitch: float = 1.0 + float(_gait["hitch"]) * wobble
+	var arm: float = deg_to_rad(float(_gait["arm_deg"])) * hitch
+	var leg: float = deg_to_rad(float(_gait["leg_deg"])) * hitch
+
+	left_arm.rotation.x = rest_rotations["left_arm"].x + swing * arm * float(_gait["arm_asym"])
+	right_arm.rotation.x = rest_rotations["right_arm"].x - swing * arm
+	left_leg.rotation.x = rest_rotations["left_leg"].x - swing * leg
+	right_leg.rotation.x = rest_rotations["right_leg"].x + swing * leg
 
 	# Body bob at twice the stride rate (one bob per footfall), offset to stay
-	# at or above rest so the legs never punch through the ground plane.
+	# at or above rest so the legs never punch through the ground plane, plus
+	# this hero's roll and pitch. All three fade out with `amount`, so a peer
+	# easing to a stop settles level instead of parking mid-waddle.
 	if character_body:
-		character_body.position.y = (sin(stride_phase * 2.0) * 0.5 + 0.5) * 0.03 * amount
+		character_body.position.y = (sin(stride_phase * 2.0) * 0.5 + 0.5) \
+				* float(_gait["bob"]) * amount
+		character_body.rotation.z = rest_rotations["body"].z \
+				+ swing * deg_to_rad(float(_gait["sway_deg"]))
+		character_body.rotation.x = rest_rotations["body"].x \
+				+ amount * deg_to_rad(float(_gait["lean_deg"]))
+	if character_head and rest_rotations.has("head"):
+		character_head.rotation.z = rest_rotations["head"].z \
+				+ amount * wobble * deg_to_rad(float(_gait["head_deg"]))
+
+
+func _relax_gait_extras() -> void:
+	"""
+	Snap the three axes only the grounded gait writes — body roll, body pitch,
+	head bobble — back to rest. The airborne pose is static, so unlike the local
+	player's eased version there is nothing to ease out of.
+	"""
+	if character_body and rest_rotations.has("body"):
+		character_body.rotation.x = rest_rotations["body"].x
+		character_body.rotation.z = rest_rotations["body"].z
+	if character_head and rest_rotations.has("head"):
+		character_head.rotation.z = rest_rotations["head"].z
