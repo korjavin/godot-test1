@@ -801,11 +801,16 @@ func _check_skill_effects_on_player() -> void:
 		_check_dial_contract(player, true, "", "a charged teibi")
 		player.try_activate_ability()
 		var unskilled: float = float(player.ability_cooldowns[teibi_index])
+		# THE REVERT COMES FIRST since bead godot-test1-8rg: the press left him
+		# SMALL, and an altered form waives the cooldown, so both reads below would
+		# be measuring the waiver instead of the charge. `_revert_teibi_to_normal()`
+		# does not touch `ability_cooldowns`, so the charge under test is untouched
+		# — and the cooling arm is still measured on this hero, one line later.
+		player._revert_teibi_to_normal()
 		var unskilled_ratio: float = float(player.get_ability_cooldown_ratio())
 		# ...and the COOLING state: a spent charge is not ready, with no gate to
 		# blame — the arm the dial draws as an emptying amber arc.
 		_check_dial_contract(player, false, "", "a just-fired teibi")
-		player._revert_teibi_to_normal()
 		if not is_equal_approx(unskilled, base_cooldown):
 			_fail("an unranked teibi charged %.3f s of cooldown, wanted %.3f"
 					% [unskilled, base_cooldown])
@@ -817,8 +822,8 @@ func _check_skill_effects_on_player() -> void:
 		player.ability_cooldowns[teibi_index] = 0.0
 		player.try_activate_ability()
 		var skilled: float = float(player.ability_cooldowns[teibi_index])
+		player._revert_teibi_to_normal()   # before the ratio — see above
 		var skilled_ratio: float = float(player.get_ability_cooldown_ratio())
-		player._revert_teibi_to_normal()
 		if not is_equal_approx(skilled, base_cooldown * Progression.COOLDOWN_MULT_MIN):
 			_fail("a fully-ranked teibi charged %.3f s of cooldown, wanted %.3f"
 					% [skilled, base_cooldown * Progression.COOLDOWN_MULT_MIN])
@@ -852,6 +857,59 @@ func _check_skill_effects_on_player() -> void:
 		if not is_equal_approx(after_refund, skilled):
 			_fail("the cooldown refund was not consumed — the next press paid %.3f, wanted %.3f"
 					% [after_refund, skilled])
+
+		# --- THE RESIZE WAIVER (bead godot-test1-8rg) ------------------------
+		# Owner: "teibi shouldn't mandatory wait in tiny state cooldown to become
+		# giant". So while he is ALREADY in an altered form the cooldown is waived
+		# — and the load-bearing half is that the waiver is read from ONE place
+		# (`player._cooldown_remaining()`), which is what stops the dial saying
+		# BLOCKED over a press that fires. `_check_dial_contract()` asserts that
+		# triple, so it is the measurement here, not a hand-written comparison.
+		#
+		# The three shipped rulings that must survive a faster giant are driven
+		# here too: entering an altered form still PAYS, the form budget is not
+		# refilled by the free press, and normal size re-arms the price. (The
+		# INDOOR refusal and the fit probe need a building — `capture_selfcheck`
+		# check 9 drives those, now with the cooldown deliberately left hot.)
+		player.ability_cooldowns[teibi_index] = 0.0
+		player.try_activate_ability()                       # normal -> small
+		if player.teibi_size_state != 1:
+			_fail("the waiver probe could not make teibi small (state %d)"
+					% player.teibi_size_state)
+		var entry_cost: float = float(player.ability_cooldowns[teibi_index])
+		if entry_cost <= 0.0:
+			_fail("entering an altered form charged no cooldown — the waiver ate the price")
+		# CHARGED BUT WAIVED reads exactly like ready, in all three of the dial's
+		# inputs: no gate, a full ring (ratio 0) and no countdown to show.
+		_check_dial_contract(player, true, "", "a small teibi holding a hot cooldown")
+		if not is_zero_approx(float(player.get_ability_remaining())):
+			_fail("the dial counts %.3f s down at a press that fires"
+					% player.get_ability_remaining())
+		# Part-spend the form budget, then take the free press: reaching giant
+		# sooner must spend the SAME budget (TEIBI_FORM_DURATION is a total for the
+		# whole excursion), or this bead shipped a longer giant, not a faster one.
+		player.teibi_form_timer = 3.0
+		player.try_activate_ability()                       # small -> giant, waived
+		if player.teibi_size_state != 2 or not player.is_giant:
+			_fail("a small teibi holding %.3f s of cooldown could not become giant (state %d)"
+					% [entry_cost, player.teibi_size_state])
+		if not is_equal_approx(float(player.teibi_form_timer), 3.0):
+			_fail("the free press refilled the form budget to %.3f s, wanted the 3.000 s left"
+					% player.teibi_form_timer)
+		if float(player.ability_cooldowns[teibi_index]) > entry_cost:
+			_fail("the free press charged cooldown on top: %.3f -> %.3f"
+					% [entry_cost, player.ability_cooldowns[teibi_index]])
+		player.try_activate_ability()                       # giant -> normal, waived
+		if player.teibi_size_state != 0 or player.is_giant:
+			_fail("the waived press home left teibi in state %d" % player.teibi_size_state)
+		# ...AND THE PRICE IS BACK ON. Normal size reads the real timer again, which
+		# is the whole "entering an altered form still pays" half of the ruling —
+		# and the negative control for a waiver that latched instead of tracking
+		# `teibi_size_state`.
+		if float(player.ability_cooldowns[teibi_index]) <= 0.0:
+			_fail("the press home charged no cooldown, so the next entry is free too")
+		_check_dial_contract(player, false, "", "a normal-size teibi after the waived cycle")
+		player.ability_cooldowns[teibi_index] = 0.0
 
 	# --- Windman's two ability multipliers, measured on the body ---------
 	var windman_index: int = -1

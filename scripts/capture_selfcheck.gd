@@ -2497,7 +2497,18 @@ func _resize_is_refused_in_the_open(player: Node, interior: Node3D,
 	if player.teibi_size_state != 1:
 		_fail("in open floor on storey %d Teibi could not go small (state %d) — the indoor rule took the wrong form" % [
 			floor_index, player.teibi_size_state])
-	player.ability_cooldowns[player.current_character_index] = 0.0
+	# THE COOLDOWN IS LEFT HOT ON PURPOSE (bead godot-test1-8rg). Press 1 charged the
+	# full 4 s and nothing has drained it, but an altered form WAIVES the cooldown, so
+	# this press is live — and that is exactly the state the indoor rule has to be
+	# measured in. Zeroing it here, as this check used to, would test the ruling
+	# against a press that was never waived, and a waiver that reached past the gate
+	# order (cooldown, THEN `get_ability_block_reason()`) would sail through.
+	var charged: float = float(player.ability_cooldowns[player.current_character_index])
+	if charged <= 0.0:
+		_fail("press 1 on storey %d charged no cooldown — the waiver is not under test here"
+				% floor_index)
+	if player.is_ability_ready():
+		_fail("in open floor on storey %d the dial says READY while the press is refused" % floor_index)
 	if player.get_ability_block_reason() != "INDOOR":
 		_fail("in open floor on storey %d the growth is gated by %s, not INDOOR" % [
 			floor_index, player.get_ability_block_reason()])
@@ -2506,9 +2517,11 @@ func _resize_is_refused_in_the_open(player: Node, interior: Node3D,
 	if player.teibi_size_state != 1 or player.is_giant:
 		_fail("in open floor on storey %d Teibi grew anyway (state %d, giant %s)" % [
 			floor_index, player.teibi_size_state, player.is_giant])
-	if player.ability_cooldowns[player.current_character_index] > 0.0:
-		_fail("the refused indoor growth charged %.2f s of cooldown" % \
-			player.ability_cooldowns[player.current_character_index])
+	# A refused press still costs nothing — compared against the charge press 1 left,
+	# which only ever ticks DOWN from here.
+	if player.ability_cooldowns[player.current_character_index] > charged:
+		_fail("the refused indoor growth charged cooldown on top: %.2f -> %.2f" % [
+			charged, player.ability_cooldowns[player.current_character_index]])
 	if player.teibi_form_timer <= 0.0:
 		_fail("the refused indoor growth spent the form timer as well")
 	print("indoor rule: storey %d refuses a giant in the middle of an empty room" % floor_index)
@@ -2539,16 +2552,22 @@ func _resize_is_allowed_outdoors(player: Node, shell: Node3D) -> Vector3:
 		_fail("outdoors, normal-size Teibi is gated by %s" % player.get_ability_block_reason())
 	player.try_activate_ability()          # -> small
 	await _settle(player)
-	player.ability_cooldowns[player.current_character_index] = 0.0
+	# THE OWNER'S ACCEPTANCE, END TO END (bead godot-test1-8rg): the cooldown press 1
+	# charged is NOT cleared here any more — from small, F makes a giant immediately.
+	# The dial has to agree, or a player watching an amber ring never presses.
+	if float(player.ability_cooldowns[player.current_character_index]) <= 0.0:
+		_fail("outdoors press 1 charged no cooldown — the free second press proves nothing")
+	if not player.is_ability_ready():
+		_fail("outdoors a small Teibi's dial is not READY, so the free press is invisible")
 	if player.get_ability_block_reason() != "":
 		_fail("outdoors the growth is gated by %s — the indoor rule leaked into the field" % \
 			player.get_ability_block_reason())
-	player.try_activate_ability()          # -> giant
+	player.try_activate_ability()          # -> giant, over a hot cooldown
 	await _settle(player)
 	if player.teibi_size_state != 2 or not player.is_giant:
 		_fail("outdoors Teibi did not grow (state %d) — the ability has been deleted, not gated" % \
 			player.teibi_size_state)
-	print("control: outdoors the same two presses still make a giant")
+	print("control: outdoors the second press makes a giant with the cooldown still hot")
 	return player.global_position
 
 

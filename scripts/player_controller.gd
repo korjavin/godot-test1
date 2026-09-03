@@ -4341,6 +4341,43 @@ func _update_ability_timers(delta: float) -> void:
 		_revert_teibi_to_normal()
 
 
+func _cooldown_remaining() -> float:
+	"""
+	The cooldown that stands in the way of an F press RIGHT NOW, in seconds —
+	which is NOT always the timer sitting in `ability_cooldowns`.
+
+	THIS IS THE ONE HOME OF THE COOLDOWN READ, for exactly the reason
+	`get_ability_block_reason()` is the one home of the gates: the key press, the
+	dial's arc, the dial's seconds text and `is_ability_ready()` all ask it, so
+	the HUD can never paint an amber countdown over a press that fires. A waiver
+	written at the press alone IS that bug — and the dial's three states come out
+	of the ratio and `is_ability_ready()`, so it would have shown up in both.
+
+	THE WAIVER (bead godot-test1-8rg, owner: "teibi shouldn't mandatory wait in
+	tiny state cooldown to become giant"): while Teibi is ALREADY in an altered
+	form, the next resize is free. Normal → small is the press that costs the 4 s;
+	small is the weakest state in the game, and being parked there for a whole
+	cooldown read as a punishment for using the ability rather than as its price.
+	ENTERING an altered form from normal still pays, because `teibi_size_state` is
+	0 at that press — the waiver cannot fire on the press that starts the cycle.
+
+	IT WAIVES THE COOLDOWN AND NOTHING ELSE. `try_activate_ability()` asks the
+	gates AFTER this, so INDOOR (no giant in the HQ, bead godot-test1-xdf) and
+	TIGHT (`_teibi_grow_blocked()`) refuse a waived press exactly as they refuse a
+	charged one; and the form budget is untouched, so a giant reached sooner is
+	reached out of the SAME `TEIBI_FORM_DURATION` (`_ability_teibi()` refills it
+	only from `prev_state == 0`) — a faster giant, never a longer one.
+
+	The character name is checked as well as the state because `ability_cooldowns`
+	is per-hero: a stale non-zero `teibi_size_state` must not be able to waive
+	somebody else's cooldown. (It cannot today — every switch reverts him — which
+	is why this is a belt, not a fix.)
+	"""
+	if teibi_size_state != 0 and String(CHARACTERS[current_character_index]["name"]) == "teibi":
+		return 0.0
+	return ability_cooldowns[current_character_index]
+
+
 func try_activate_ability() -> void:
 	"""
 	Fire the current character's special ability if it isn't on cooldown. Each
@@ -4352,7 +4389,9 @@ func try_activate_ability() -> void:
 	# Still cooling down? The press doesn't fire, but it must not feel dead:
 	# flash the cooldown dial red (via the "ability_hud" group — null-safe, no
 	# hard reference, like every other HUD hookup) and play a low denial buzz.
-	if ability_cooldowns[current_character_index] > 0.0:
+	# Asked through `_cooldown_remaining()` so this press and the dial read the
+	# same number — see the waiver documented there.
+	if _cooldown_remaining() > 0.0:
 		_flash_blocked_feedback()
 		return
 
@@ -4927,12 +4966,16 @@ func get_ability_cooldown_ratio() -> float:
 	var duration: float = _skilled_ability_cooldown()
 	if duration <= 0.0:
 		return 0.0
-	return clampf(ability_cooldowns[current_character_index] / duration, 0.0, 1.0)
+	# `_cooldown_remaining()`, not the raw timer: `ability_hud` reads COOLING off
+	# this ratio alone, so a waived press behind a full amber arc would be the
+	# "dial says blocked while the key works" bug in its most visible form.
+	return clampf(_cooldown_remaining() / duration, 0.0, 1.0)
 
 
 func get_ability_remaining() -> float:
-	"""Seconds of cooldown left on the current character's ability."""
-	return maxf(0.0, ability_cooldowns[current_character_index])
+	"""Seconds of cooldown left on the current character's ability — the cooldown
+	that is actually in the way, so a waived press shows no countdown."""
+	return maxf(0.0, _cooldown_remaining())
 
 
 func get_ability_block_reason() -> String:
@@ -5053,7 +5096,7 @@ func is_ability_ready() -> bool:
 	gate, because a player with a full charge and a refused press has nothing to
 	wait for and needs to know the fix is to land, not to be patient.
 	"""
-	return ability_cooldowns[current_character_index] <= 0.0 \
+	return _cooldown_remaining() <= 0.0 \
 			and get_ability_block_reason() == ""
 
 
