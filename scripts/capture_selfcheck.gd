@@ -266,6 +266,14 @@ class TerrainStub extends Node:
 		ring_from.append((body as Node3D).global_position if body != null else Vector3.INF)
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	BestRunStore.config_path = LOCAL_STORE_PATH
 	_fresh_store()
@@ -334,6 +342,7 @@ func _check_the_arming_gate() -> void:
 	if player.hero_name() == before:
 		_fail("POST-BEAT: the grab did not auto-switch off the captured hero %s" % before)
 	_clear(player)
+	Sentinel.done("the_arming_gate")
 
 
 # ============================================================================
@@ -406,6 +415,7 @@ func _check_only_a_hunter_takes_a_hero() -> void:
 			_fail("a '%s' contact moved the coin count — only a body carrying a"
 				% label + " `coin_setback` row key does that (check 11)")
 		_clear(player)
+	Sentinel.done("only_a_hunter_takes_a_hero")
 
 
 # ============================================================================
@@ -442,6 +452,7 @@ func _check_invulnerability_covers_the_hero_too() -> void:
 			_fail("a grab while '%s' took %s — an ignored bite must cost nothing"
 				% [state, hero])
 		_clear(player)
+	Sentinel.done("invulnerability_covers_the_hero_too")
 
 
 # ============================================================================
@@ -501,6 +512,7 @@ func _check_the_cycle_loses_him_and_the_switch_is_clean() -> void:
 	if player.free_hero_count() != 1:
 		_fail("free_hero_count() says %d with three heroes held" % player.free_hero_count())
 	_clear(player)
+	Sentinel.done("the_cycle_loses_him_and_the_switch_is_clean")
 
 
 # ============================================================================
@@ -523,6 +535,7 @@ func _check_liberation_restores_the_index() -> void:
 	if not player.is_hero_captive(taken):
 		_fail("liberation: nobody was captured, so there was nothing to free")
 		_clear(player)
+		Sentinel.done("liberation_restores_the_index")
 		return
 	player.hero_freed(taken)
 	if player.is_hero_captive(taken):
@@ -533,6 +546,7 @@ func _check_liberation_restores_the_index() -> void:
 		_fail("a repeated / unknown hero_freed() disturbed the roster (%d free, expected %d)"
 			% [player.free_hero_count(), TowerGraph.HEROES.size()])
 	_clear(player)
+	Sentinel.done("liberation_restores_the_index")
 
 
 # ============================================================================
@@ -601,6 +615,7 @@ func _check_the_last_free_hero_ends_the_run() -> void:
 		_fail("the run ended with %s still free" % free_one)
 	_clear(player)
 	_fresh_store()
+	Sentinel.done("the_last_free_hero_ends_the_run")
 
 
 # ============================================================================
@@ -643,6 +658,7 @@ func _check_the_set_stays_out_of_the_monotone_store() -> void:
 			+ "captive set is non-monotone and must never ride a union merge")
 			% [str(before), str(after)])
 	_clear(player)
+	Sentinel.done("the_set_stays_out_of_the_monotone_store")
 
 
 # ============================================================================
@@ -680,6 +696,7 @@ func _check_a_tower_streamed_in_later_holds_him() -> void:
 		shell.queue_free()
 		room.queue_free()
 		_clear(player)
+		Sentinel.done("a_tower_streamed_in_later_holds_him")
 		return
 	if not interior.is_captive(taken):
 		_fail(("a tower built AFTER a field capture does not hold %s (it holds %s) — the "
@@ -726,6 +743,7 @@ func _check_a_tower_streamed_in_later_holds_him() -> void:
 	room.queue_free()
 	_clear(player)
 	await process_frame
+	Sentinel.done("a_tower_streamed_in_later_holds_him")
 
 
 # ============================================================================
@@ -825,6 +843,7 @@ func _check_capture_respects_the_rooms_hand() -> void:
 	_clear(player)
 	room.queue_free()
 	await process_frame
+	Sentinel.done("capture_respects_the_rooms_hand")
 
 
 # ============================================================================
@@ -944,6 +963,7 @@ func _check_the_ai_says_who_bit() -> void:
 	sentry.queue_free()
 	_clear(mark)
 	await process_frame
+	Sentinel.done("the_ai_says_who_bit")
 
 
 # ============================================================================
@@ -1018,11 +1038,13 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	if fraction <= 0.0:
 		_fail("SPECIES['%s'] carries no coin_setback — the guard has no" % GUARD_SPECIES
 				+ " arithmetic, so his hit would be free")
+		Sentinel.done("a_guard_takes_coins_and_ground")
 		return
 	var expected_loss: int = int(floor(float(SETBACK_PROBE_COINS) * fraction))
 	if expected_loss <= 0:
 		_fail("a %.3f setback on %d coins rounds to nothing — this check would pass"
 			% [fraction, SETBACK_PROBE_COINS] + " against a build that took nothing")
+		Sentinel.done("a_guard_takes_coins_and_ground")
 		return
 
 	for lit: bool in [false, true]:
@@ -1152,12 +1174,14 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	if control_fraction <= 0.0:
 		_fail("SPECIES['%s'] carries no coin_setback — the control is not on the" % CONTROL_SPECIES
 				+ " ordinary predator path, so the guard branch above proves nothing")
+		Sentinel.done("a_guard_takes_coins_and_ground")
 		return
 	var control_loss: int = int(floor(float(SETBACK_PROBE_COINS) * control_fraction))
 	if control_loss <= 0 or control_loss == expected_loss:
 		_fail("a %.3f control setback on %d coins bills %d, the guard's %d — the two"
 			% [control_fraction, SETBACK_PROBE_COINS, control_loss, expected_loss]
 			+ " arithmetics must be distinguishable or this control measures nothing")
+		Sentinel.done("a_guard_takes_coins_and_ground")
 		return
 
 	# (a) IN THE FIELD, WITH THE BUILDING STANDING: the bill lands, the ground does
@@ -1265,6 +1289,7 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	if probe_store == null:
 		_fail("the player built no BestRunStore — the record latch has nothing to"
 			+ " reconcile against and the assertions below measure nothing")
+		Sentinel.done("a_guard_takes_coins_and_ground")
 		return
 	probe_store.server_best_coins = 0
 	player_c.call("_reconcile_record_latch")
@@ -1511,6 +1536,7 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	_clear(benched)
 	shell_c.queue_free()
 	await process_frame
+	Sentinel.done("a_guard_takes_coins_and_ground")
 
 
 # ============================================================================
@@ -1579,6 +1605,7 @@ func _check_the_sweep_spares_a_guard() -> void:
 		croc.queue_free()
 	_clear(player)
 	await process_frame
+	Sentinel.done("the_sweep_spares_a_guard")
 
 
 # ============================================================================
@@ -1680,6 +1707,7 @@ func _check_the_fourth_capture_ends_the_run() -> void:
 	shell.queue_free()
 	await process_frame
 	_fresh_store()
+	Sentinel.done("the_fourth_capture_ends_the_run")
 
 
 func _check_the_ending_archives_the_world() -> void:
@@ -1750,6 +1778,7 @@ func _check_the_ending_archives_the_world() -> void:
 	_clear(bitten)
 	await process_frame
 	_fresh_store()
+	Sentinel.done("the_ending_archives_the_world")
 
 
 func _check_run_outcome_and_win() -> void:
@@ -1816,6 +1845,7 @@ func _check_run_outcome_and_win() -> void:
 	_clear(continued)
 	await process_frame
 	_fresh_store()
+	Sentinel.done("run_outcome_and_win")
 
 
 # ============================================================================
@@ -1930,6 +1960,7 @@ func _check_reassign_first_imprison_last() -> void:
 		room.queue_free()
 		terrain.queue_free()
 		await process_frame
+		Sentinel.done("reassign_first_imprison_last")
 		return
 	if player.free_hero_count() != TowerGraph.HEROES.size() - 1:
 		_fail("the bench fired with %d heroes free — it must only ever fire when the ROOM "
@@ -2189,6 +2220,7 @@ func _check_reassign_first_imprison_last() -> void:
 	terrain.queue_free()
 	await process_frame
 	_fresh_store()
+	Sentinel.done("reassign_first_imprison_last")
 
 
 # ============================================================================
@@ -2325,12 +2357,14 @@ func _check_resize_is_not_a_lift() -> void:
 	if interior == null:
 		_fail("the tower built no interior — check 9 has nothing to stand in")
 		tower.queue_free()
+		Sentinel.done("resize_is_not_a_lift")
 		return
 	var player := await _make_player()
 	if not _become(player, "teibi"):
 		_fail("player.tscn has no teibi in CHARACTERS — check 9 cannot drive Resize")
 		_clear(player)
 		tower.queue_free()
+		Sentinel.done("resize_is_not_a_lift")
 		return
 
 	# The giant body, off the shipped capsule and the shipped scale.
@@ -2338,6 +2372,7 @@ func _check_resize_is_not_a_lift() -> void:
 		_fail("player.tscn's collider is not a CapsuleShape3D — check 9 cannot size a giant")
 		_clear(player)
 		tower.queue_free()
+		Sentinel.done("resize_is_not_a_lift")
 		return
 	var capsule: CapsuleShape3D = player.collision_shape.shape as CapsuleShape3D
 	var scale_big: float = player.TEIBI_SCALE_BIG
@@ -2379,6 +2414,7 @@ func _check_resize_is_not_a_lift() -> void:
 	_clear(player)
 	tower.queue_free()
 	await process_frame
+	Sentinel.done("resize_is_not_a_lift")
 
 
 func _resize_is_refused(player: Node, interior: Node3D, floor_index: int,
@@ -2735,12 +2771,14 @@ func _check_air_sight_is_the_indoor_air_rush() -> void:
 	if interior == null:
 		_fail("the tower built no interior — check 10 has nothing to see through")
 		tower.queue_free()
+		Sentinel.done("air_sight_is_the_indoor_air_rush")
 		return
 	var player := await _make_player()
 	if not _become(player, "windman"):
 		_fail("player.tscn has no windman in CHARACTERS — check 10 cannot drive Air Sight")
 		_clear(player)
 		tower.queue_free()
+		Sentinel.done("air_sight_is_the_indoor_air_rush")
 		return
 
 	var indoors := interior.to_global(Vector3(0.0, TowerInterior.FLOOR_Y[0], 0.0))
@@ -2840,6 +2878,7 @@ func _check_air_sight_is_the_indoor_air_rush() -> void:
 	_clear(player)
 	tower.queue_free()
 	await process_frame
+	Sentinel.done("air_sight_is_the_indoor_air_rush")
 
 
 # ============================================================================
@@ -2896,6 +2935,7 @@ func _check_no_second_way_to_lose() -> void:
 					+ "godot-test1-0bc and godot-test1-ueg removed")
 	_clear(player)
 	await process_frame
+	Sentinel.done("no_second_way_to_lose")
 
 
 func _become(player: Node, hero: String) -> bool:
@@ -3041,8 +3081,7 @@ func _report() -> void:
 	for stub: Node in _stubs.values():
 		stub.free()
 	if _failures.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
 		printerr("FAIL: ", failure)

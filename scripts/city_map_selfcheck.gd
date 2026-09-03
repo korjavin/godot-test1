@@ -56,10 +56,9 @@ extends SceneTree
 ##     both it and the close hint must resolve in German (`tr()` returns its own
 ##     key on a miss, so an unimported row renders in English, silently).
 ##
-## ...and OVER ALL SEVEN, a completion sentinel: a GDScript runtime error aborts
-## the FUNCTION it lands in and lets the script carry on, so a half-dead check
-## prints "SELFCHECK OK". Every check stamps itself at its exit and `_initialize`
-## fails on a missing stamp — see `_completed`.
+## ...and OVER ALL SEVEN, a completion sentinel — the pattern this file shipped in
+## PR #186 and bead `godot-test1-llo` then moved into
+## `scripts/selfcheck_sentinel.gd` so every self-check in the repo carries it.
 
 const CityMapPanel: GDScript = preload("res://scripts/city_map_panel.gd")
 const BudapestPlan := preload("res://scripts/budapest_plan.gd")
@@ -84,22 +83,7 @@ const PLAYER_SCENE: String = "res://scenes/player.tscn"
 ## and `Color.is_equal_approx` would reject the very constant that was written.
 const TONE_STEP: float = 1.0 / 255.0
 
-## Every check in this file, by the name it stamps itself with. See `_done()`.
-const CHECKS: Array = [
-	"key_is_free", "projection", "bake_once", "mask", "pause", "teammates", "lines",
-]
-
 var _failures: Array[String] = []
-
-## Which checks reached a deliberate exit. THE REASON THIS EXISTS: a GDScript
-## runtime error does not stop the script — it aborts the FUNCTION it happened in
-## and execution carries on — so a check that dies halfway simply stops asserting
-## and this file prints "SELFCHECK OK". That is not a hypothetical: check 1 shipped
-## in PR #186 doing exactly that, handing `int()` an Array three owners in and
-## silently skipping the six after it. Every check stamps itself as its last
-## statement and the run fails on a missing stamp, so the whole class of defect is
-## caught here instead of by the next reader.
-var _completed: Dictionary = {}
 
 
 ## A stand-in multiplayer manager. The panel reaches the real one through the
@@ -116,6 +100,14 @@ class StubMp extends Node:
 		return markers
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	# ONE FRAME FIRST: `_initialize()` runs before the main loop, and a node added
 	# to `root` before it answers null to `get_tree()` — the lesson
@@ -130,14 +122,8 @@ func _initialize() -> void:
 	await _check_teammates()
 	await _check_lines()
 
-	for name: String in CHECKS:
-		if not _completed.has(name):
-			_fail("check \"%s\" never reached its end — a runtime error aborted it "
-				% name + "and every assertion after that point was skipped")
-
 	if _failures.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 	else:
 		for line: String in _failures:
 			printerr("FAIL: " + line)
@@ -149,12 +135,6 @@ func _fail(message: String) -> void:
 	_failures.append(message)
 
 
-func _done(name: String) -> void:
-	"""Stamp a check as having run to a deliberate exit — its LAST statement, and
-	before every early `return` it takes."""
-	_completed[name] = true
-
-
 # ============================================================================
 # 1. THE KEY IS FREE
 # ============================================================================
@@ -163,6 +143,7 @@ func _check_key_is_free() -> void:
 	var key: int = int(CityMapPanel.TOGGLE_KEY)
 	if key == 0:
 		_fail("the panel's TOGGLE_KEY is 0 — it can never be pressed")
+		Sentinel.done("key_is_free")
 		return
 
 	# --- Against the input map ---------------------------------------------
@@ -212,7 +193,7 @@ func _check_key_is_free() -> void:
 		_fail("the scan missed a fake owner holding TOGGLE_KEY in a NESTED array — "
 			+ "landmark_toast.ANSWER_KEYCODES and player_controller.HERO_KEYCODES "
 			+ "are exactly that shape, so their keys are not really being compared")
-	_done("key_is_free")
+	Sentinel.done("key_is_free")
 
 
 static func _flatten_keycodes(value: Variant) -> Array:
@@ -295,7 +276,7 @@ func _check_projection() -> void:
 	var gate: Vector2 = CityMapPanel.map_point(BudapestPlan.GATE.x, BudapestPlan.GATE.z)
 	if absf(gate.x) > 0.001:
 		_fail("the gate maps to x=%.2f, but it is authored on the city's west edge" % gate.x)
-	_done("projection")
+	Sentinel.done("projection")
 
 
 func _slot_point(id: String) -> Vector2:
@@ -324,7 +305,7 @@ func _check_bake_once() -> void:
 	if first == null:
 		_fail("opening the panel baked no texture at all")
 		panel.queue_free()
-		_done("bake_once")
+		Sentinel.done("bake_once")
 		return
 	if first.get_width() != CityMapPanel.MAP_PIXELS \
 			or first.get_height() != CityMapPanel.MAP_PIXELS:
@@ -346,7 +327,7 @@ func _check_bake_once() -> void:
 	if image == null:
 		_fail("the baked texture has no image to measure")
 		panel.queue_free()
-		_done("bake_once")
+		Sentinel.done("bake_once")
 		return
 	# Mid-river, well away from every deck and the island: the Danube's own
 	# polyline node at z = 0.
@@ -371,8 +352,8 @@ func _check_bake_once() -> void:
 	_expect_pixel(image, pest, CityMapPanel.COLOR_LAND, "open Pest")
 
 	panel.queue_free()
-	_done("bake_once")
 	await process_frame
+	Sentinel.done("bake_once")
 
 
 func _expect_pixel(image: Image, world: Vector2, want: Color, what: String) -> void:
@@ -420,8 +401,8 @@ func _check_mask_lights_icons() -> void:
 
 	panel.queue_free()
 	player.queue_free()
-	_done("mask")
 	await process_frame
+	Sentinel.done("mask_lights_icons")
 
 
 func _lit_slots(panel: Control) -> Array:
@@ -503,8 +484,8 @@ func _check_pause_policy() -> void:
 			+ "(paused=%s, holders=%d)" % [paused, PauseHub.holder_count()])
 
 	player.queue_free()
-	_done("pause")
 	await process_frame
+	Sentinel.done("pause_policy")
 
 
 # ============================================================================
@@ -548,8 +529,8 @@ func _check_teammates() -> void:
 	panel.set_panel_open(false)
 	mp.queue_free()
 	panel.queue_free()
-	_done("teammates")
 	await process_frame
+	Sentinel.done("teammates")
 
 
 # ============================================================================
@@ -595,8 +576,8 @@ func _check_lines() -> void:
 	panel.set_panel_open(false)
 	panel.queue_free()
 	player.queue_free()
-	_done("lines")
 	await process_frame
+	Sentinel.done("lines")
 
 
 # ============================================================================

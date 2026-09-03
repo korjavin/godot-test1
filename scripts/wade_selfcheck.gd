@@ -118,6 +118,14 @@ class StubTerrain:
 		return river
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	# _initialize() cannot await, so the measuring half runs as its own coroutine
 	# and reports from in there. Reporting here would print a verdict at frame 0,
@@ -131,8 +139,7 @@ func _fail(message: String) -> void:
 
 func _report() -> void:
 	if _failures.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 	else:
 		for line: String in _failures:
 			printerr("FAIL: %s" % line)
@@ -232,6 +239,7 @@ func _check_croc_sink(terrain: StubTerrain) -> void:
 	var packed: PackedScene = load(CROC_SCENE)
 	if packed == null:
 		_fail("croc: could not load %s" % CROC_SCENE)
+		Sentinel.done("croc_sink")
 		return
 	var croc: CharacterBody3D = packed.instantiate()
 	# CALL-ORDER CONTRACT, the same one check 7 states for setup_as_boss: the seed
@@ -254,16 +262,19 @@ func _check_croc_sink(terrain: StubTerrain) -> void:
 		_fail("croc: no _tick_river_sink() on %s — did the script fail to attach? "
 				% CROC_SCENE + "(a fresh clone needs `godot --headless --path . --import`)")
 		croc.queue_free()
+		Sentinel.done("croc_sink")
 		return
 	var model: Node3D = croc.get_node_or_null("Model")
 	var capsule: Node3D = croc.get_node_or_null("CollisionShape3D")
 	if model == null or capsule == null:
 		_fail("croc: Model or CollisionShape3D missing from %s" % CROC_SCENE)
 		croc.queue_free()
+		Sentinel.done("croc_sink")
 		return
 	if not croc.is_on_floor():
 		_fail("croc: never settled on the test floor (y=%.2f)" % croc.global_position.y)
 		croc.queue_free()
+		Sentinel.done("croc_sink")
 		return
 	if croc.terrain == null:
 		_fail("croc: did not resolve the terrain in _ready() — the sink can never "
@@ -353,6 +364,7 @@ func _check_croc_sink(terrain: StubTerrain) -> void:
 				% (dry_model_y - model.position.y))
 
 	croc.queue_free()
+	Sentinel.done("croc_sink")
 
 
 func _check_boss_sink_scales(terrain: StubTerrain) -> void:
@@ -369,6 +381,7 @@ func _check_boss_sink_scales(terrain: StubTerrain) -> void:
 	var packed: PackedScene = load(CROC_SCENE)
 	if packed == null:
 		_fail("boss: could not load %s" % CROC_SCENE)
+		Sentinel.done("boss_sink_scales")
 		return
 	var croc: CharacterBody3D = packed.instantiate()
 	# CALL-ORDER CONTRACT: setup_as_boss() must run BEFORE add_child, because
@@ -382,6 +395,7 @@ func _check_boss_sink_scales(terrain: StubTerrain) -> void:
 	if model == null or not croc.is_on_floor():
 		_fail("boss: model missing, or the boss never settled on the test floor")
 		croc.queue_free()
+		Sentinel.done("boss_sink_scales")
 		return
 	if absf(croc.scale.y - BOSS_TEST_SCALE) > EPS:
 		_fail("boss: body scale is %.2f, expected setup_as_boss(%.1f) to apply it"
@@ -405,6 +419,7 @@ func _check_boss_sink_scales(terrain: StubTerrain) -> void:
 
 	terrain.river = false
 	croc.queue_free()
+	Sentinel.done("boss_sink_scales")
 
 
 func _check_remote_avatar(terrain: StubTerrain) -> void:
@@ -424,6 +439,7 @@ func _check_remote_avatar(terrain: StubTerrain) -> void:
 	if model_root == null:
 		_fail("remote: RemoteAvatar.setup() built no model_root")
 		avatar.queue_free()
+		Sentinel.done("remote_avatar")
 		return
 
 	# Dry, grounded — the baseline.
@@ -453,6 +469,7 @@ func _check_remote_avatar(terrain: StubTerrain) -> void:
 
 	terrain.river = false
 	avatar.queue_free()
+	Sentinel.done("remote_avatar")
 
 
 func _check_sink(player: CharacterBody3D, terrain: StubTerrain, model: Node3D,
@@ -506,6 +523,7 @@ func _check_sink(player: CharacterBody3D, terrain: StubTerrain, model: Node3D,
 	if absf(model.position.y) > EPS:
 		_fail("sink: model stayed %.3f m down after leaving the river, expected 0"
 				% -model.position.y)
+	Sentinel.done("sink")
 
 
 func _check_first_person_eyes(player: CharacterBody3D, terrain: StubTerrain) -> void:
@@ -517,6 +535,7 @@ func _check_first_person_eyes(player: CharacterBody3D, terrain: StubTerrain) -> 
 	var arm: SpringArm3D = player.get_node_or_null("CameraPivot/CameraArm")
 	if arm == null:
 		_fail("eyes: CameraArm missing from %s" % PLAYER_SCENE)
+		Sentinel.done("first_person_eyes")
 		return
 	var previous_mode: int = player.view_mode
 	player.view_mode = player.ViewMode.FIRST_PERSON
@@ -540,6 +559,7 @@ func _check_first_person_eyes(player: CharacterBody3D, terrain: StubTerrain) -> 
 	await _frames(SETTLE_FRAMES)
 	player.view_mode = previous_mode
 	player._apply_view_mode()
+	Sentinel.done("first_person_eyes")
 
 
 func _check_jump(player: CharacterBody3D, terrain: StubTerrain) -> void:
@@ -577,6 +597,7 @@ func _check_jump(player: CharacterBody3D, terrain: StubTerrain) -> void:
 	await _frames(4)  # long enough to be grounded AND wading again
 	if not player.is_wading:
 		_fail("jump: could not stage the coyote case — player is not wading")
+		Sentinel.done("jump")
 		return
 	# Step off the ledge AND press in the same breath. The press is pushed and the
 	# body is lifted clear of the floor at the same instant, so (with the one-frame
@@ -594,6 +615,7 @@ func _check_jump(player: CharacterBody3D, terrain: StubTerrain) -> void:
 	var coyote: float = player.velocity.y
 	if player.is_on_floor():
 		_fail("jump: could not stage the coyote case — player never left the floor")
+		Sentinel.done("jump")
 		return
 	if coyote <= 0.0:
 		_fail("jump: the coyote jump never fired (velocity.y=%.2f) — the coyote "
@@ -605,6 +627,7 @@ func _check_jump(player: CharacterBody3D, terrain: StubTerrain) -> void:
 
 	terrain.river = false
 	await _reground(player)
+	Sentinel.done("jump")
 
 
 func _jump_and_measure(player: CharacterBody3D) -> float:
@@ -695,6 +718,7 @@ func _check_speed(player: CharacterBody3D) -> void:
 	if run_dry <= CROC_SCRIPT.MAX_CHASE_SPEED:
 		_fail("speed: running on DRY land (%.2f m/s) does not outpace MAX_CHASE_SPEED "
 				% run_dry + "(%.2f) — this is not a wading bug" % CROC_SCRIPT.MAX_CHASE_SPEED)
+	Sentinel.done("speed")
 
 
 func _check_default_gait(player: CharacterBody3D, terrain: StubTerrain) -> void:
@@ -726,6 +750,7 @@ func _check_default_gait(player: CharacterBody3D, terrain: StubTerrain) -> void:
 	await _reground(player)
 	if not player.is_on_floor():
 		_fail("gait: player never regrounded — STEP 4's duck clause needs is_on_floor()")
+		Sentinel.done("default_gait")
 		return
 
 	# Nothing held: the DEFAULT gait.
@@ -776,3 +801,4 @@ func _check_default_gait(player: CharacterBody3D, terrain: StubTerrain) -> void:
 
 	print("gait: default %.2f m/s (running), modifier held %.2f m/s (walking)"
 			% [default_speed, held_speed])
+	Sentinel.done("default_gait")

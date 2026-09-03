@@ -206,6 +206,14 @@ class StubPlayer:
 		bitten += 1
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	# _initialize() cannot await, so the measuring half runs as its own coroutine
 	# and reports from in there — reporting here would print a verdict at frame 0.
@@ -218,8 +226,7 @@ func _fail(message: String) -> void:
 
 func _report() -> void:
 	if _failures.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 	else:
 		for line: String in _failures:
 			printerr("FAIL: %s" % line)
@@ -392,6 +399,7 @@ func _check_constants() -> void:
 		_fail("consts: BOSS_TERRITORY_RADIUS (%.1f) >= LOD SIM_RADIUS (%.1f) — "
 				% [TERRITORY_RADIUS, SIM_RADIUS]
 				+ "a boss could be asleep inside its own territory")
+	Sentinel.done("constants")
 
 
 func _check_home(boss: CharacterBody3D, home: Vector3) -> void:
@@ -421,6 +429,7 @@ func _check_home(boss: CharacterBody3D, home: Vector3) -> void:
 	if absf(boss.territory_radius() - TERRITORY_RADIUS) > CONTAIN_EPS:
 		_fail("seam: territory_radius() returned %.2f, expected %.2f"
 				% [boss.territory_radius(), TERRITORY_RADIUS])
+	Sentinel.done("home")
 
 
 func _check_hunts_inside(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> void:
@@ -450,6 +459,7 @@ func _check_hunts_inside(boss: CharacterBody3D, player: StubPlayer, home: Vector
 				% [before - after, PHASE_FRAMES, HUNT_CLOSE_MIN]
 				+ "inside its own territory must hunt, not patrol")
 	_assert_contained(boss, home, "hunt")
+	Sentinel.done("hunts_inside")
 
 
 func _check_hunts_at_fence(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> void:
@@ -488,6 +498,7 @@ func _check_hunts_at_fence(boss: CharacterBody3D, player: StubPlayer, home: Vect
 				% (TERRITORY_RADIUS - 0.5)
 				+ "its %.1f m territory — the leash must bound where a boss can go, "
 				% TERRITORY_RADIUS + "never how far it can smell")
+	Sentinel.done("hunts_at_fence")
 
 
 func _check_leashed(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> void:
@@ -518,6 +529,7 @@ func _check_leashed(boss: CharacterBody3D, player: StubPlayer, home: Vector3) ->
 		_fail("leash: boss still chasing a quarry %.1f m from home (territory %.1f); "
 				% [_flat_distance(player.global_position, home), TERRITORY_RADIUS]
 				+ "it is %.1f m away so detection alone will not drop it" % gap)
+	Sentinel.done("leashed")
 
 
 func _check_wanders_contained(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> void:
@@ -567,6 +579,7 @@ func _check_wanders_contained(boss: CharacterBody3D, player: StubPlayer, home: V
 	if worst > TERRITORY_RADIUS + CONTAIN_EPS:
 		_fail("wander: boss reached %.2f m from home while wandering, territory is "
 				% worst + "%.1f m" % TERRITORY_RADIUS)
+	Sentinel.done("wanders_contained")
 
 
 ## How far the animated model's basis may drift from square, as the largest
@@ -611,10 +624,12 @@ func _check_model_rigid(boss: CharacterBody3D) -> void:
 	var model: Node3D = boss.get_node_or_null("Model")
 	if model == null:
 		_fail("model: no Model child — every predator scene must have one")
+		Sentinel.done("model_rigid")
 		return
 	var b: Basis = model.transform.basis
 	if b.x.is_zero_approx() or b.y.is_zero_approx() or b.z.is_zero_approx():
 		_fail("model: a basis column collapsed to zero (%s) — a zero rest scale" % b)
+		Sentinel.done("model_rigid")
 		return
 	var cx: Vector3 = b.x.normalized()
 	var cy: Vector3 = b.y.normalized()
@@ -626,6 +641,7 @@ func _check_model_rigid(boss: CharacterBody3D) -> void:
 				+ " scale with scaled_local (the model's own axes), not scaled"
 				+ " (the parent's), or a non-uniformly scaled species distorts"
 				+ " every time it leans")
+	Sentinel.done("model_rigid")
 
 
 func _check_footprint(boss: CharacterBody3D) -> void:
@@ -666,11 +682,13 @@ func _check_footprint(boss: CharacterBody3D) -> void:
 	if collider == null:
 		_fail("footprint: no CollisionShape3D on this scene — a boss with no body "
 				+ "is neither solid nor placeable")
+		Sentinel.done("footprint")
 		return
 	var capsule := collider.shape as CapsuleShape3D
 	if capsule == null:
 		_fail("footprint: collision shape is %s, not a CapsuleShape3D — this check "
 				% collider.shape + "measures a swept segment and cannot judge it")
+		Sentinel.done("footprint")
 		return
 
 	# The capsule's segment: half its cylinder, along the collider's own +Y, from
@@ -694,6 +712,7 @@ func _check_footprint(boss: CharacterBody3D) -> void:
 				+ "at the 9x cap. Shorten the mesh, or centre it on its own "
 				+ "origin: the reach is the collider's offset PLUS its extent, so "
 				+ "an off-centre body spends the budget twice.")
+	Sentinel.done("footprint")
 
 
 func _check_resolved_speed(boss: CharacterBody3D) -> void:
@@ -723,6 +742,7 @@ func _check_resolved_speed(boss: CharacterBody3D) -> void:
 				% wanted + "BOSS_CHASE_SPEED (%.1f) unless its row opts out with "
 				% CROC_SCRIPT.BOSS_CHASE_SPEED + "boss_chase_speed, and this kind's "
 				+ "row is not being honoured")
+	Sentinel.done("resolved_speed")
 
 
 func _live_projectiles() -> int:
@@ -783,11 +803,13 @@ func _check_leap(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> vo
 	"""
 	var row: Dictionary = CROC_SCRIPT.SPECIES.get(_subject, {})
 	if String(row.get("behavior", "")) != "leap":
+		Sentinel.done("leap")
 		return
 	var airtime: float = CROC_SCRIPT.leap_airtime(row)
 	if airtime <= 0.0:
 		_fail("leap: behaviour is 'leap' but the row's arc constants give no"
 				+ " airtime — already reported in enemy_spawn_selfcheck")
+		Sentinel.done("leap")
 		return
 	var apex: float = float(row["leap_launch_speed"]) * airtime * 0.25
 	var cycle: float = airtime + float(row["leap_cooldown"])
@@ -919,6 +941,7 @@ func _check_leap(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> vo
 		_fail("leap: a %.1f m hop from %.1f m out lands inside the %.1f m"
 				% [reach, gate_at, TERRITORY_RADIUS] + " territory, so this phase"
 				+ " has no illegal landing to refuse and the gate goes untested")
+		Sentinel.done("leap")
 		return
 	# PUT IT DOWN FIRST. Phase C ends wherever the window ended, which is as often
 	# as not mid-arc, and both halves below drive the arm's GROUNDED branch — a
@@ -934,6 +957,7 @@ func _check_leap(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> vo
 		_fail("leap: the boss is not on the floor at the start of the gate phase,"
 				+ " so _behave_leap's grounded branch is unreachable and neither"
 				+ " half below means anything")
+		Sentinel.done("leap")
 		return
 	boss.is_chasing = true
 
@@ -981,6 +1005,7 @@ func _check_leap(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> vo
 	boss.velocity.y = 0.0
 	boss.is_chasing = false
 	boss._leap_lock.clear()
+	Sentinel.done("leap")
 
 
 func _clear_projectiles() -> void:
@@ -1029,9 +1054,11 @@ func _check_ranged(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> 
 	"""
 	var row: Dictionary = CROC_SCRIPT.SPECIES.get(_subject, {})
 	if String(row.get("behavior", "")) != "ranged":
+		Sentinel.done("ranged")
 		return
 	if not row.has("ranged"):
 		_fail("ranged: behaviour is 'ranged' but the row carries no \"ranged\" dict")
+		Sentinel.done("ranged")
 		return
 	var ranged: Dictionary = row["ranged"]
 	var min_range: float = float(ranged["min_fire_range"])
@@ -1116,6 +1143,7 @@ func _check_ranged(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> 
 
 	_clear_projectiles()
 	await _frames(2)
+	Sentinel.done("ranged")
 
 
 func _check_crush_immunity(packed: PackedScene, species_name: String,
@@ -1187,6 +1215,7 @@ func _check_crush_immunity(packed: PackedScene, species_name: String,
 	boss.queue_free()
 	victim.queue_free()
 	await _frames(2)
+	Sentinel.done("crush_immunity")
 
 
 
@@ -1231,6 +1260,7 @@ func _check_row_immunities(giant: StubPlayer) -> void:
 	var packed: PackedScene = load(CROC_SCENE)
 	if packed == null:
 		_fail("immunity: could not load %s" % CROC_SCENE)
+		Sentinel.done("row_immunities")
 		return
 	# How many rows actually exercised each guard, for the vacuity check below.
 	var opted_in: Dictionary = {}
@@ -1337,3 +1367,4 @@ func _check_row_immunities(giant: StubPlayer) -> void:
 					% [BASELINE_SPECIES, key] + "enemy is flesh and has a nose, "
 					+ "and making it immune would quietly break the whole "
 					+ "Phoboman/giant-Teibi half of the toolbox")
+	Sentinel.done("row_immunities")

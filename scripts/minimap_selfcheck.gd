@@ -166,6 +166,14 @@ class StubTower extends Node3D:
 	func sheltered(_pos: Vector3) -> bool:
 		return inside
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	# _initialize() cannot await, so the scene-booting half runs as its own
 	# coroutine; the tree keeps processing until it calls quit().
@@ -203,8 +211,7 @@ func _run() -> void:
 	if failure.is_empty():
 		failure = _check_budapest()
 	if failure.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 	else:
 		printerr("SELFCHECK FAILED: " + failure)
 		quit(1)
@@ -288,6 +295,7 @@ func _check() -> String:
 	print("road points %d (%d on disc) | facing %s | crocs %d/%d | biome %d river %s" % [
 		map._road_count, on_disc, map._facing, map._croc_count, map.MAX_CROC_DOTS,
 		map._biome, map._in_river])
+	Sentinel.done("check")
 	return ""
 
 
@@ -385,6 +393,7 @@ func _check_zoom() -> String:
 	map._tick()
 	print("zoom: %s m | croc radius follows | road window %d -> %d points" \
 		% [map.ZOOM_RADII, default_road, zoomed_road])
+	Sentinel.done("zoom")
 	return ""
 
 
@@ -454,6 +463,7 @@ func _check_teammates() -> String:
 		real_mp.add_to_group("mp")
 	map._mp = null
 	locator._mp = null
+	Sentinel.done("teammates")
 	return failure
 
 
@@ -556,6 +566,7 @@ func _check_teammate_layers(map: Control, locator: Control, player: Node3D, orig
 
 	print("teammates: 3 dots, rim clamp at %.0f px, locator ahead/right/behind = %.0f/%.0f/%.0f of %.0f" \
 		% [map.MAP_RADIUS, bar_ahead, bar_right, bar_behind, locator.size.x])
+	Sentinel.done("teammate_layers")
 	return ""
 
 
@@ -678,6 +689,7 @@ func _check_landmarks() -> String:
 
 	print("landmarks: %d loaded + probe -> X at disc, rim clamp follows zoom, none when unregistered" \
 		% baseline)
+	Sentinel.done("landmarks")
 	return ""
 
 
@@ -820,6 +832,7 @@ func _check_terrain() -> String:
 
 	print("terrain: palette matches ground.gdshader | %d bars/%d rows, run-length merged | " \
 		% [rows, map.TERRAIN_GRID] + "grid span follows zoom | no sampling in _draw()")
+	Sentinel.done("terrain")
 	return ""
 
 
@@ -851,6 +864,7 @@ func _check_palette_matches_shader(map: Control) -> String:
 				% [biome, got.r, got.g, got.b, expect.r, expect.g, expect.b]
 		if absf(got.a - map.TERRAIN_ALPHA) > 0.001:
 			return "minimap BIOME_TINTS[%d] is drawn at alpha %.3f, not TERRAIN_ALPHA" % [biome, got.a]
+	Sentinel.done("palette_matches_shader")
 	return ""
 
 
@@ -936,6 +950,7 @@ func _check_widget_rect() -> String:
 				% [map.MAP_RADIUS, neighbour_name, rect, other.get_global_rect()]
 	print("widget: %.0f px disc in a %.0f x %.0f rect, clear of its HUD neighbours" \
 		% [map.MAP_RADIUS, map.size.x, map.size.y])
+	Sentinel.done("widget_rect")
 	return ""
 
 
@@ -1118,6 +1133,7 @@ func _check_indoors() -> String:
 		return failure
 	print("indoors: storey line + jail intent on storey %d, degraded on %d, arrow anti-stall only" \
 		% [office + 1, maze + 1])
+	Sentinel.done("indoors")
 	return ""
 
 
@@ -1255,6 +1271,7 @@ func _check_hunters_only() -> String:
 		return failure
 
 	print("hunters-only: hunters dotted on minimap | animals (captures_hero: false) draw no dot")
+	Sentinel.done("hunters_only")
 	return ""
 
 
@@ -1327,4 +1344,5 @@ func _check_budapest() -> String:
 		return "storey line is missing while sheltered inside HQ"
 
 	print("budapest: arrow points to gate outdoors | hidden in city rect and HQ | countdown & explored lines verified")
+	Sentinel.done("budapest")
 	return ""

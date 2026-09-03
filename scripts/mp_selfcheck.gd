@@ -91,6 +91,14 @@ const Player: GDScript = preload("res://scripts/player_controller.gd")
 const CrocAI: GDScript = preload("res://scripts/piglet_crocodile_ai.gd")
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	# WAIT ONE FRAME FIRST. At `_initialize` the SceneTree's own root is not yet
 	# inside the tree, so a node added to it never gets `_ready()` and reports a
@@ -99,8 +107,7 @@ func _initialize() -> void:
 	await process_frame
 	var failure: String = await _run_checks()
 	if failure.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 	else:
 		printerr("SELFCHECK FAILED: " + failure)
 		quit(1)
@@ -217,6 +224,7 @@ func _check_avatar_isolation() -> String:
 		avatar.free()
 		if not failure.is_empty():
 			return "%s (character %d)" % [failure, index]
+	Sentinel.done("avatar_isolation")
 	return ""
 
 
@@ -299,6 +307,7 @@ func _check_presence_parser() -> String:
 		var result: Dictionary = MPManager.decode_presence(case[1])
 		if not result.is_empty():
 			return "parser accepted a bad packet (%s): %s" % [case[0], result]
+	Sentinel.done("presence_parser")
 	return ""
 
 
@@ -334,6 +343,7 @@ func _check_forced_seed() -> String:
 		return "set_run_seed did not derive a biome offset"
 	if other == first:
 		return "a different seed gave the same biome offset — run_seed does not reach the biome field"
+	Sentinel.done("forced_seed")
 	return ""
 
 
@@ -357,6 +367,7 @@ func _check_peer_ids() -> String:
 		if seen.has(value):
 			return "peer_int_id collision: %s and %s both give %d" % [seen[value], id, value]
 		seen[value] = id
+	Sentinel.done("peer_ids")
 	return ""
 
 
@@ -413,6 +424,7 @@ func _check_coin_ids() -> String:
 		return "a bobbing coin renamed itself (%d -> %d) — coin_id must be latched at spawn" % [
 			spawn_id, bobbed_id
 		]
+	Sentinel.done("coin_ids")
 	return ""
 
 
@@ -598,6 +610,7 @@ func _check_state_parser() -> String:
 			+ "still sending ls/gs must be read for everything it does say"
 	if stale["cc"] != 7 or stale["dd"] != 9:
 		return "state parser mangled a snapshot that carried retired fields: %s" % stale
+	Sentinel.done("state_parser")
 	return ""
 
 
@@ -648,6 +661,7 @@ func _check_presence_backcompat() -> String:
 	var phase4: Dictionary = {"p": Vector3.ZERO, "y": 0.0, "c": 0, "s": 0.0, "g": true}
 	if MPManager.packet_kind(phase4) != "":
 		return "a phase-3/4 packet with no \"t\" did not read as presence"
+	Sentinel.done("presence_backcompat")
 	return ""
 
 
@@ -771,6 +785,7 @@ func _check_retired_heart_keys_are_tolerated() -> String:
 	if MPManager.decode_room({"cap": [], "cd": 12.0, "co": 2})["co"] != 2:
 		return "decode_room lost a verdict this build DOES know — the fold above is "\
 			+ "swallowing live outcomes with the retired one"
+	Sentinel.done("retired_heart_keys_are_tolerated")
 	return ""
 
 
@@ -793,6 +808,7 @@ func _check_hero_index() -> String:
 	for unknown in ["", "gandalf", "WINDMAN"]:
 		if MPManager.hero_index(unknown) != -1:
 			return "hero_index(%s) resolved — an unknown hero must give -1" % unknown
+	Sentinel.done("hero_index")
 	return ""
 
 
@@ -920,6 +936,7 @@ func _check_croc_sync_parser() -> String:
 		var result: Dictionary = MPManager.decode_croc_sync(case[1])
 		if not result.is_empty():
 			return "croc-sync parser accepted a bad packet (%s): %s" % [case[0], result]
+	Sentinel.done("croc_sync_parser")
 	return ""
 
 
@@ -976,6 +993,7 @@ func _check_croc_ids() -> String:
 		return "a live crocodile's croc_id() (%d) does not match croc_id_for(%s) (%d)" % [
 			live_id, name_a, id
 		]
+	Sentinel.done("croc_ids")
 	return ""
 
 
@@ -1011,6 +1029,7 @@ func _check_room_multiplier() -> String:
 	# A zero step size would be a division by zero on the master's hot path.
 	if MPManager.room_multiplier_from(50, 0, bonus) != 1:
 		return "room_multiplier_from did not guard a zero step size"
+	Sentinel.done("room_multiplier")
 	return ""
 
 
@@ -1060,6 +1079,7 @@ func _check_group_anchor() -> String:
 			+ "— a dying master would respawn on empty ground between its teammates") % str(midpoint)
 	if no_master.distance_to(a) > 0.01 and no_master.distance_to(far) > 0.01:
 		return "_anchor_of answered %s, which is nobody's position" % str(no_master)
+	Sentinel.done("group_anchor")
 	return ""
 
 
@@ -1158,6 +1178,7 @@ func _check_join_world_sweeps() -> String:
 		return "_absorb_collected consumed a chest the room never emptied"
 	untouched.free()
 	mp.free()
+	Sentinel.done("join_world_sweeps")
 	return ""
 
 
@@ -1219,6 +1240,7 @@ func _check_kill_list_authority(mp: Node) -> String:
 	doomed.free()
 	if still_alive:
 		return "the MASTER's join snapshot did not apply its kill list — a joiner still sees crushed crocodiles alive"
+	Sentinel.done("kill_list_authority")
 	return ""
 
 
@@ -1310,6 +1332,7 @@ func _check_remote_scent() -> String:
 	if not (awake is Array) or (awake as Array).size() != 1:
 		return ("peer_positions() dropped an airborne member — the crocodiles around a jumping teammate "
 			+ "would fall asleep under them")
+	Sentinel.done("remote_scent")
 	return ""
 
 
@@ -1402,6 +1425,7 @@ func _check_claim_base_value() -> String:
 		]
 
 	# THE TRUST BOUNDARY, and the reason the base value is not on the wire at all.
+	Sentinel.done("claim_base_value")
 	return _check_confirm_base_is_unforgeable()
 
 
@@ -1461,6 +1485,7 @@ func _check_confirm_base_is_unforgeable() -> String:
 	if honest_base != 2 * Coin.GEM_VALUE:
 		return ("a claim of 2 gems credited %d lifetime coins, expected %d — the base must come from "
 			+ "our own pending claim, not from the packet") % [honest_base, 2 * Coin.GEM_VALUE]
+	Sentinel.done("confirm_base_is_unforgeable")
 	return ""
 
 
@@ -1572,6 +1597,7 @@ func _check_terrain_focus_points() -> String:
 		return "set_focus_points([]) left %d pinned chunks" % leftover
 	if still_pinned:
 		return "releasing the focus points left the far chunk %s in the field" % str(far_chunk)
+	Sentinel.done("terrain_focus_points")
 	return ""
 
 
@@ -1725,6 +1751,7 @@ func _check_hunter_sync() -> String:
 	receiver.free()
 	virgin.free()
 	mp.free()
+	Sentinel.done("hunter_sync")
 	return ""
 
 
@@ -1868,6 +1895,7 @@ func _check_acquisition_cue() -> String:
 	croc.free()
 	quarry.free()
 	sound.free()
+	Sentinel.done("acquisition_cue")
 	return ""
 
 
@@ -1879,7 +1907,14 @@ func _check_acquisition_cue() -> String:
 ## else. In group "player", which is how `MpManager._push_captive_to_player()`
 ## finds the real one — so this sits on the exact code path the game uses, with no
 ## signal, no injection and no hard reference.
-const CAPTIVE_PLAYER_SOURCE := """extends Node
+## A stand-in local player for the captive verb. It is a `Node3D` and not a bare
+## `Node` for one reason: it sits in group "player" while later checks drive
+## `_on_lobby_peer_joined`, whose join snapshot reads `global_position` off
+## whatever answers that group. A bare Node threw there on every run — an error
+## that aborted `_send_state_to` and silently sent no snapshot at all (bead
+## `godot-test1-llo`). The real player is a `CharacterBody3D`, so this is the
+## stub catching up with what it stands in for.
+const CAPTIVE_PLAYER_SOURCE := """extends Node3D
 var told: Array = []
 func set_hero_captive(hero: String, held: bool) -> void:
 	told.append([hero, held])
@@ -1912,7 +1947,7 @@ func _captive_player() -> Node:
 	var script := GDScript.new()
 	script.source_code = CAPTIVE_PLAYER_SOURCE
 	script.reload()
-	var node := Node.new()
+	var node := Node3D.new()
 	node.set_script(script)
 	node.add_to_group("player")
 	root.add_child(node)
@@ -1975,6 +2010,7 @@ func _check_captive_parser() -> String:
 	for packet: Dictionary in hostile:
 		if not MPManager.decode_captive(packet).is_empty():
 			return "decode_captive accepted the hostile packet %s" % str(packet)
+	Sentinel.done("captive_parser")
 	return ""
 
 
@@ -2025,6 +2061,7 @@ func _check_pad_parser() -> String:
 				+ " pad_world's refusal, and it must not read as a distance)"
 	if MPManager.pad_press_in_reach(Vector3(NAN, 0.0, 0.0), plate):
 		return "pad_press_in_reach accepted a NaN sender position"
+	Sentinel.done("pad_parser")
 	return ""
 
 
@@ -2324,6 +2361,7 @@ func _check_captive_set() -> String:
 	fresh.free()
 	player.free()
 	mp.free()
+	Sentinel.done("captive_set")
 	return ""
 
 
@@ -2589,6 +2627,7 @@ func _check_room_publish() -> String:
 	host.free()
 	player.free()
 	mp.free()
+	Sentinel.done("room_publish")
 	return ""
 
 
@@ -2680,6 +2719,7 @@ func _check_hero_press_decision() -> String:
 	offline.free()
 	if not lonely:
 		return "an offline manager claimed to know who holds a hero"
+	Sentinel.done("hero_press_decision")
 	return ""
 
 
@@ -2817,6 +2857,7 @@ func _check_host_persist_and_joiner_near_master() -> String:
 		return "joiner no-master: join_at called (must be reset when no presence)"
 	join_terrain2.remove_from_group("terrain"); join_player2.remove_from_group("player")
 	join_terrain2.free(); join_player2.free(); join_mp2.free()
+	Sentinel.done("host_persist_and_joiner_near_master")
 	return ""
 
 
@@ -2979,4 +3020,5 @@ func _check_ability_visual_state() -> String:
 		return "the avatar settled at scale %f, expected the giant %f" % [
 			worn, Player.TEIBI_SCALE_BIG
 		]
+	Sentinel.done("ability_visual_state")
 	return ""

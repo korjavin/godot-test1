@@ -28,6 +28,14 @@ const EPS: float = 0.05
 var _failures: Array[String] = []
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	# `_initialize()` cannot await, so the measuring half runs as its own coroutine
 	# and reports from in there — the tree keeps processing until it calls quit().
@@ -43,8 +51,7 @@ func _fail(message: String) -> void:
 
 func _report() -> void:
 	if _failures.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 	else:
 		for line: String in _failures:
 			printerr("FAIL: %s" % line)
@@ -56,7 +63,9 @@ func _run() -> void:
 	var packed: PackedScene = load(PLAYER_SCENE)
 	if packed == null:
 		_fail("could not load %s" % PLAYER_SCENE)
+		Sentinel.done("run")
 		_report()
+		Sentinel.done("run")
 		return
 	var player: Node3D = packed.instantiate()
 	root.add_child(player)
@@ -69,14 +78,18 @@ func _run() -> void:
 	if not player.has_method("_apply_view_mode"):
 		_fail("player has no _apply_view_mode() — did the script fail to attach? "
 				+ "(a fresh clone needs `godot --headless --path . --import` first)")
+		Sentinel.done("run")
 		_report()
+		Sentinel.done("run")
 		return
 
 	var camera: Camera3D = player.get_node_or_null("CameraPivot/CameraArm/Camera3D")
 	var model: Node3D = player.get_node_or_null("CharacterModel")
 	if camera == null or model == null:
 		_fail("camera rig or CharacterModel missing from %s" % PLAYER_SCENE)
+		Sentinel.done("run")
 		_report()
+		Sentinel.done("run")
 		return
 
 	# BUDAPEST Z-FIGHTING FIX (bead 8gw.17): the default near=0.05 / far=4000 gives an
@@ -127,6 +140,7 @@ func _run() -> void:
 		_fail("view cycle is %s, expected %s" % [seen, expected])
 
 	player.queue_free()
+	Sentinel.done("run")
 	_report()
 
 
@@ -168,3 +182,4 @@ func _check_view(player: Node3D, camera: Camera3D, model: Node3D, mode: int,
 	if model.visible != want_model_visible:
 		_fail("%s view: CharacterModel.visible is %s, expected %s"
 				% [label, model.visible, want_model_visible])
+	Sentinel.done("view")

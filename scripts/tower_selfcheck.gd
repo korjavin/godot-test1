@@ -188,6 +188,14 @@ var _plan_summary: String = ""
 var _ungated_cache: Dictionary = {}
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	# No `await process_frame`: nothing here touches the tree. See LANDMINES.
 	_check_graph_matches_the_building()
@@ -335,6 +343,7 @@ func _check_graph_matches_the_building() -> void:
 
 	# --- and the same correspondence for the storeys drawn as text ----------
 	_check_plans_bind_to_the_graph()
+	Sentinel.done("graph_matches_the_building")
 
 
 func _check_plans_bind_to_the_graph() -> void:
@@ -487,6 +496,7 @@ func _check_plans_bind_to_the_graph() -> void:
 		_fail(("room '%s' is built but no storey plan draws it — the grid checks cannot see "
 			+ "a room with no cells, so every gates-shut binding it carries is skipped. "
 			+ "Letter it on its floor, or merge it into the room it is half of") % rid3)
+	Sentinel.done("plans_bind_to_the_graph")
 
 
 # ============================================================================
@@ -593,6 +603,7 @@ func _check_design_laws() -> void:
 			_fail("quest '%s' requires quest '%s' — quests are an open set, and a chain is a "
 				% [String(quest["id"]), String(quest["requires_quest"])]
 				+ "second way to strand a player that the subset audit cannot see")
+	Sentinel.done("design_laws")
 
 
 func _whitelist(label: String, row: Dictionary, allowed: Array[String]) -> void:
@@ -704,6 +715,7 @@ func _check_spines_at_the_readiness_floor() -> void:
 					break
 		if not reached_cell:
 			_fail("%s's spine ends at '%s', from which no cell is one open door away" % [hero, here])
+	Sentinel.done("spines_at_the_readiness_floor")
 
 
 # ============================================================================
@@ -754,6 +766,7 @@ func _check_demands_are_forecastable() -> void:
 		if everyone:
 			_fail("demand gate '%s' is met by every hero at the readiness floor — it demands nothing"
 				% gid)
+	Sentinel.done("demands_are_forecastable")
 
 
 # ============================================================================
@@ -788,6 +801,7 @@ func _check_every_subset_reaches_a_cell() -> void:
 					for h: String in free:
 						typed.append(h)
 					_audit_one(story, scar, entry, typed)
+	Sentinel.done("every_subset_reaches_a_cell")
 
 
 func _audit_one(story: Dictionary, scar: Dictionary, entry: Dictionary,
@@ -871,6 +885,7 @@ func _check_captivity_flags_are_honest() -> void:
 		elif real and not claimed:
 			_fail("gate '%s' is NOT flagged needed_during_captivity, but %s cannot reach a cell "
 				% [gid2, necessary[gid2]] + "without it")
+	Sentinel.done("captivity_flags_are_honest")
 
 
 # ============================================================================
@@ -939,6 +954,7 @@ func _check_quests_and_liberation() -> void:
 	for hero2: String in TowerGraph.HEROES:
 		if not by_hero.has(hero2):
 			_fail("no cell is authored for %s — a captive with no cell can never be freed" % hero2)
+	Sentinel.done("quests_and_liberation")
 
 
 # ============================================================================
@@ -1334,6 +1350,7 @@ func _check_scars_are_built() -> void:
 
 	print("tower scars: %d authored, %d built into the interior" % [
 		authored.size(), built.size()])
+	Sentinel.done("scars_are_built")
 
 
 # ============================================================================
@@ -1402,6 +1419,7 @@ func _check_plans_are_walkable() -> void:
 		TowerPlans.STOREYS.size(), rooms_drawn, walkable, ", ".join(angles)]
 
 	_check_the_flood_fill_can_fail()
+	Sentinel.done("plans_are_walkable")
 
 
 # ============================================================================
@@ -1521,6 +1539,7 @@ func _check_riddles_are_answerable() -> void:
 	if riddles > 0:
 		print("tower riddles: %d, each with a %d-pad lock and a clue reachable with it shut" % [
 			riddles, TowerPlans.PAD_DIGITS.length()])
+	Sentinel.done("riddles_are_answerable")
 
 
 func _check_the_flood_fill_can_fail() -> void:
@@ -1539,6 +1558,7 @@ func _check_the_flood_fill_can_fail() -> void:
 	"""
 	var base := _control_storey("s3_records_west", "the storey-3 controls")
 	if base.is_empty():
+		Sentinel.done("the_flood_fill_can_fail")
 		return
 	# A row one character short — the assertion every other one stands on.
 	_control("a short row", _row_at(base, 1, String(base["rows"][1]).substr(1)),
@@ -1649,6 +1669,7 @@ func _check_the_flood_fill_can_fail() -> void:
 		own_lane = _cell_at(own_lane, 26, 15, TowerPlans.STAIR_UP_CHAR)
 		_control("a ramp drawn on the storey entered from outside", own_lane,
 				"stands on its own storey")
+	Sentinel.done("the_flood_fill_can_fail")
 
 
 func _control_storey(room: String, what: String) -> Dictionary:
@@ -2148,8 +2169,7 @@ func _report() -> void:
 		print("tower graph: %d rooms, %d edges, %d gates, %d entries, %d scars — %d subset walks clean"
 			% [_graph["rooms"].size(), _graph["edges"].size(), _graph["gates"].size(),
 				_all_entries().size(), _graph["scars"].size(), _subsets().size()])
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
 		printerr("FAIL: ", failure)

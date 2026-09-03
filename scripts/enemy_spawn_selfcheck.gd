@@ -316,6 +316,14 @@ var _spawn_safe_radius: float = 0.0
 var _slowest_run_speed: float = 0.0
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	_boot()
 
@@ -494,10 +502,12 @@ func _check_species_table() -> void:
 	if _species_table.is_empty():
 		_fail("piglet_crocodile_ai.gd exposes no SPECIES table — the species dispatch"
 				+ " this check measures has nothing to dispatch over")
+		Sentinel.done("species_table")
 		return
 	if not _species_table.has("crocodile"):
 		_fail("SPECIES has no 'crocodile' row — it is the fallback every unknown"
 				+ " species name and every scene-less biome resolves to")
+		Sentinel.done("species_table")
 		return
 
 	# WHICH ROWS ARE BOSS-ONLY: dispatched from BIOME_BOSS and from nowhere in
@@ -725,6 +735,7 @@ func _check_species_table() -> void:
 		_fail("only %d SPECIES row(s) and %d dispatch entries — checks over the"
 				% [_species_table.size(), _biome_species.size()]
 				+ " species table ran against a world with one predator in it")
+	Sentinel.done("species_table")
 
 
 func _check_dispatch_map(label: String, map: Dictionary) -> void:
@@ -760,6 +771,7 @@ func _check_dispatch_map(label: String, map: Dictionary) -> void:
 		if not ResourceLoader.exists(scene_path) or load(scene_path) == null:
 			_fail("%s[%s] points at '%s', which does not load"
 					% [label, biome_v, scene_path])
+	Sentinel.done("dispatch_map")
 
 
 # ============================================================================
@@ -835,9 +847,11 @@ func _check_pack_surround(croc_ai: GDScript) -> void:
 	if names.is_empty():
 		_fail("no SPECIES row has behavior 'pack' — the pack steering this check"
 				+ " measures is not reachable from any species")
+		Sentinel.done("pack_surround")
 		return
 	for wolf_species: String in names:
 		_probe_pack(croc_ai, wolf_species)
+	Sentinel.done("pack_surround")
 
 
 func _probe_pack(croc_ai: GDScript, wolf_species: String) -> void:
@@ -1064,9 +1078,11 @@ func _check_ambush_trip_wire() -> void:
 	if names.is_empty():
 		_fail("no SPECIES row has behavior 'ambush' — the burrow-and-strike this"
 				+ " check measures is not reachable from any species")
+		Sentinel.done("ambush_trip_wire")
 		return
 	for ambush_species: String in names:
 		_probe_ambush(ambush_species)
+	Sentinel.done("ambush_trip_wire")
 
 
 func _probe_ambush(ambush_species: String) -> void:
@@ -1338,9 +1354,11 @@ func _check_charge_dodge(croc_ai: GDScript) -> void:
 	if names.is_empty():
 		_fail("no SPECIES row has behavior 'charge' — the committed charge this"
 				+ " check measures is not reachable from any species")
+		Sentinel.done("charge_dodge")
 		return
 	for charge_species: String in names:
 		_probe_charge(croc_ai, charge_species)
+	Sentinel.done("charge_dodge")
 
 
 func _probe_charge(croc_ai: GDScript, charge_species: String) -> void:
@@ -1534,6 +1552,7 @@ func _check_burst_escape(croc_ai: GDScript) -> void:
 		_fail("could not derive the slowest character's run from player_controller.gd"
 				+ " (RUN_SPEED x the smallest CHARACTER_SPEED) — check 8 would have"
 				+ " raced the burst against a ceiling of zero and passed vacuously")
+		Sentinel.done("burst_escape")
 		return
 
 	var burst_species: Array[String] = []
@@ -1543,6 +1562,7 @@ func _check_burst_escape(croc_ai: GDScript) -> void:
 	if burst_species.is_empty():
 		_fail("no SPECIES row has behavior 'burst' — the bounded burst this check"
 				+ " measures is not reachable from any species")
+		Sentinel.done("burst_escape")
 		return
 
 	for species_name: String in burst_species:
@@ -1621,6 +1641,7 @@ func _check_burst_escape(croc_ai: GDScript) -> void:
 					+ " length, so a predator that never gets far from one spot"
 					+ " never finishes a pounce and holds a speed above"
 					+ " MAX_CHASE_SPEED indefinitely")
+	Sentinel.done("burst_escape")
 
 
 func _burst_circle_duty(croc_ai: GDScript, row: Dictionary, chase: float) -> float:
@@ -1746,9 +1767,11 @@ func _check_ranged_cadence(croc_ai: GDScript) -> void:
 		_fail("no SPECIES row has behavior 'ranged' — the firing rule this check"
 				+ " drives is in the AI (_behave_ranged / ranged_shot_due) with"
 				+ " nothing dispatching to it")
+		Sentinel.done("ranged_cadence")
 		return
 	for species_name: String in shooters:
 		_probe_ranged(croc_ai, species_name)
+	Sentinel.done("ranged_cadence")
 
 
 func _probe_ranged(croc_ai: GDScript, species_name: String) -> void:
@@ -1972,10 +1995,12 @@ func _check_hunt_pacing(croc_ai: GDScript) -> void:
 	if names.is_empty():
 		_fail("no SPECIES row has behavior 'hunt' — the telegraph, ring and"
 				+ " disengage this check measures are not reachable from any species")
+		Sentinel.done("hunt_pacing")
 		return
 	for hunt_species: String in names:
 		_probe_hunt_geometry(croc_ai, hunt_species)
 		_probe_hunt_dispatch(hunt_species)
+	Sentinel.done("hunt_pacing")
 
 
 func _probe_hunt_geometry(croc_ai: GDScript, hunt_species: String) -> void:
@@ -2372,6 +2397,7 @@ func _check_scent_tracking() -> void:
 		_fail("no SPECIES row declares a 'scent_radius' — the hunt arm's scent"
 				+ " tracking leg is unreachable from any species, so hunters are"
 				+ " back to idling where they spawned")
+		Sentinel.done("scent_tracking")
 		return
 	for species_name: String in names:
 		var row: Dictionary = _species_table[species_name]
@@ -2402,6 +2428,7 @@ func _check_scent_tracking() -> void:
 					+ "stalking half of this check would be measuring nothing")
 		_probe_scent(species_name, true)
 		_probe_scent(species_name, false)
+	Sentinel.done("scent_tracking")
 
 
 func _probe_scent(species_name: String, walking: bool) -> void:
@@ -2610,6 +2637,7 @@ func _check_wanderer_adoption(terrain_script: GDScript) -> void:
 				% ADOPT_SCAN_CHUNKS + " check 8g has no subject, so the migration"
 				+ " that keeps a tracker alive across a chunk unload is untested")
 		terrain.free()
+		Sentinel.done("wanderer_adoption")
 		return
 	var slot: String = hunter.name
 
@@ -2667,6 +2695,7 @@ func _check_wanderer_adoption(terrain_script: GDScript) -> void:
 	birth_parent.free()
 	dest_parent.free()
 	terrain.free()
+	Sentinel.done("wanderer_adoption")
 
 
 func _free_scent_probe(croc: Node, stub: Node, lod: Node) -> void:
@@ -2776,6 +2805,7 @@ func _check_leap_cycle(croc_ai: GDScript) -> void:
 		_fail("could not derive the slowest character's run from player_controller.gd"
 				+ " (RUN_SPEED x the smallest CHARACTER_SPEED) — the leap check would"
 				+ " have raced the hop against a ceiling of zero and passed vacuously")
+		Sentinel.done("leap_cycle")
 		return
 
 	var leapers: Array[String] = _species_with("leap")
@@ -2787,9 +2817,11 @@ func _check_leap_cycle(croc_ai: GDScript) -> void:
 		_fail("no SPECIES row has behavior 'leap' — the hop rule this check drives"
 				+ " is in the AI (_behave_leap / leap_due) with nothing dispatching"
 				+ " to it")
+		Sentinel.done("leap_cycle")
 		return
 	for species_name: String in leapers:
 		_probe_leap(croc_ai, species_name)
+	Sentinel.done("leap_cycle")
 
 
 func _probe_leap(croc_ai: GDScript, species_name: String) -> void:
@@ -3038,6 +3070,7 @@ func _check_view_cone(croc_ai: GDScript) -> void:
 		# measure. The control below is skipped with it — it exists to prove the
 		# cone code did not blind the un-coned rows, and there is no cone code in
 		# play to have done that.
+		Sentinel.done("view_cone")
 		return
 
 	var telegraph: float = float(croc_ai.get("SPOT_TELEGRAPH_TIME"))
@@ -3051,6 +3084,7 @@ func _check_view_cone(croc_ai: GDScript) -> void:
 	_probe_view_cone("crocodile", telegraph)
 	print("view cones: %s probed from behind and ahead through a %.2f s beat,"
 			% [str(coned), telegraph] + " crocodile (no cone) as the control")
+	Sentinel.done("view_cone")
 
 
 func _probe_view_cone(species_name: String, telegraph: float) -> void:
@@ -3184,6 +3218,7 @@ func _check_crowd_confusion(croc_ai: GDScript) -> void:
 	_probe_crowd_crocodile_inside()
 	# Also exercise the outside control for crocodile explicitly (was previously dead via if chance>0).
 	_probe_crowd_outside("crocodile")
+	Sentinel.done("crowd_confusion")
 
 
 func _probe_crowd_outside(species_name: String) -> void:
@@ -3537,6 +3572,7 @@ func _check_determinism(terrain_script: GDScript) -> void:
 				differing, forward.size()]
 				+ " the signature is not capturing what run_seed varies, so the"
 				+ " forward/reverse match above proves nothing")
+	Sentinel.done("determinism")
 
 
 func _first_difference(chunk_pos: Variant, a: Array, b: Array) -> String:
@@ -3720,6 +3756,7 @@ func _check_hunter_stream_independence(terrain_script: GDScript) -> void:
 		_fail("the hunter A/B field contained no HUNTERS at all, so the 'hunters on'"
 				+ " leg is the same world as the 'hunters off' leg — check 12a above"
 				+ " measured an inert feature agreeing with itself")
+	Sentinel.done("hunter_stream_independence")
 
 
 func _hunter_ab_field(terrain_script: GDScript, run_seed: int, hunters_on: bool) -> Dictionary:
@@ -3900,6 +3937,7 @@ func _check_mp_contract(croc: Node, species_name: String, chunk_pos: Vector2i,
 		_fail("'%s': a byte with no BURROWED bit still left the body buried —"
 				% species_name + " the burrow is being re-derived from `not"
 				+ " is_chasing` on the receiving peer instead of read from the byte")
+	Sentinel.done("mp_contract")
 
 
 # ============================================================================
@@ -3948,6 +3986,7 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 		# Already reported by name in _run(). Returning rather than walking
 		# anyway, because station 0 of an unseeded cache is a script error, and a
 		# script error before _report() exits 0 with no verdict at all.
+		Sentinel.done("boss_dispatch")
 		return
 
 	var measured := 0
@@ -4124,6 +4163,7 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 					% [biome_v, kind, measured] + " this walk placed was one — the"
 					+ " row was never exercised, so its whole dispatch is untested"
 					+ " (lengthen the walk or change a run seed)")
+	Sentinel.done("boss_dispatch")
 
 
 # ============================================================================
@@ -4184,6 +4224,7 @@ func _check_coverage() -> void:
 	print("coverage: %d biomes visited, %d species multiplayer-probed, ground"
 			% [_biomes_seen_all.size(), _mp_probed.size()]
 			+ " predators by species over all seeds %s" % _species_seen_all)
+	Sentinel.done("coverage")
 
 
 func _bearing_spread_deg(bearings: Array[float]) -> float:
@@ -4212,8 +4253,7 @@ func _fail(message: String) -> void:
 
 func _report() -> void:
 	if _failures.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
 		printerr("FAIL: ", failure)

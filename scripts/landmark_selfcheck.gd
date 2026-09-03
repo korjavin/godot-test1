@@ -329,6 +329,14 @@ const QUIZ_IDS: Array[int] = [11, 4242, -7]
 var _failures: Array[String] = []
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	# _initialize() cannot await, and check 4 has to let the toast's _ready() run
 	# before it can touch the labels that _ready() builds — so the whole run is a
@@ -365,8 +373,7 @@ func _run() -> void:
 	if _failures.is_empty():
 		print("landmarks: %d field + %d city builders × %d seeds measured, toast once-per-approach + radius-derived trigger + first-visit treasure OK, quiz options over %d × %d seeds × %d ids OK, quiz card ask/answer/tap/timeout/re-visit OK"
 				% [registry.size(), city.size(), SEEDS_PER_BUILDER, registry.size(), QUIZ_SEEDS.size(), QUIZ_IDS.size()])
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
 		printerr("FAIL: ", failure)
@@ -495,6 +502,7 @@ func _check_radii(terrain_script: GDScript, builders_script: GDScript, registry:
 		pass
 
 	terrain.free()
+	Sentinel.done("radii")
 
 
 func _top_covers(t: float, h: float) -> bool:
@@ -528,6 +536,7 @@ func _check_top_negative_control() -> void:
 		_fail("check 1 negative control: _top_covers rejected an exact match at highest vertex")
 	if not _top_covers(h + 0.5, h):
 		_fail("check 1 negative control: _top_covers rejected a top 0.5 m above highest vertex")
+	Sentinel.done("top_negative_control")
 
 
 func _worst_horizontal_extent(block_batch: Array) -> float:
@@ -618,6 +627,7 @@ func _check_constants(consts: Dictionary, registry: Array) -> void:
 	if radius + coin_pad_max > edge_margin + RADIUS_EPSILON:
 		_fail("LANDMARK_RADIUS (%.2f) + LANDMARK_COIN_RING_PAD_MAX (%.2f) = %.2f exceeds LANDMARK_EDGE_MARGIN (%.2f) — a reward coin can land outside its own chunk"
 				% [radius, coin_pad_max, radius + coin_pad_max, edge_margin])
+	Sentinel.done("constants")
 
 
 # ============================================================================
@@ -694,6 +704,7 @@ func _check_facts(registry: Array) -> void:
 		_fail("tr() altered a key that is in no table — the English fallback is broken")
 
 	TranslationServer.set_locale(restore)
+	Sentinel.done("facts")
 
 
 # ============================================================================
@@ -1026,6 +1037,7 @@ func _check_toast(registry: Array) -> void:
 	# Freed nodes leave their groups on the NEXT frame, so without this check 5's
 	# markers and toasts would still see this check's player and terrain.
 	await process_frame
+	Sentinel.done("toast")
 
 
 func _approach_again(toast: Control, player: Node3D, near: float, far: float) -> void:
@@ -1113,6 +1125,7 @@ func _check_toast_radius_derived(registry: Array) -> void:
 		# Not a failure: with a registry of near-identical radii there is no probe
 		# distance that separates them, and the check simply has nothing to say.
 		print("landmark_selfcheck: radius spread %.2f m too small to probe; check 5 skipped" % (r_big - r_small))
+		Sentinel.done("toast_radius_derived")
 		return
 
 	# Strictly between the two trigger distances: past the small landmark's, short
@@ -1152,6 +1165,7 @@ func _check_toast_radius_derived(registry: Array) -> void:
 		# second case runs with the first case's marker still answering
 		# get_nodes_in_group("landmark") — which would make the pair meaningless.
 		await process_frame
+	Sentinel.done("toast_radius_derived")
 
 
 func _make_marker(registry: Array, kind: int, at: Vector3) -> Node3D:
@@ -1322,6 +1336,7 @@ func _check_quiz_options(builders_script: GDScript, registry: Array) -> void:
 		_fail("no landmark's options changed across %d landmark ids — the id is not in the quiz hash" % QUIZ_IDS.size())
 	if not fallback_widened and _has_underpopulated_region(per_region):
 		_fail("a region with fewer than 3 rows never produced an outside distractor — the whole-table fallback is dead code")
+	Sentinel.done("quiz_options")
 
 
 # ============================================================================
@@ -1736,6 +1751,7 @@ func _check_quiz_toast(registry: Array) -> void:
 	player.queue_free()
 	terrain.queue_free()
 	await process_frame
+	Sentinel.done("quiz_toast")
 
 
 func _distinct_values(by_input: Dictionary) -> int:
@@ -1806,6 +1822,7 @@ func _check_city_registry(registry: Array, city: Array) -> void:
 	(bad_region[1] as Dictionary)["region"] = "pannonia"
 	if _city_rows_ok(registry, bad_region, "").is_empty():
 		_fail("check 8 negative control: a city row with an invented region was accepted")
+	Sentinel.done("city_registry")
 
 
 func _city_rows_ok(registry: Array, city: Array, report_as: String) -> Array[String]:

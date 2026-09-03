@@ -165,6 +165,14 @@ var _failures: Array[String] = []
 ## never fires and every check below would measure an overlay that never woke up.
 ## The same one-frame wait `minimap_selfcheck.gd` opens with, for the same reason;
 ## `_initialize()` cannot await, so the body is its own coroutine.
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	_run()
 
@@ -189,8 +197,7 @@ func _finish() -> void:
 	# paused is harmless today but is a trap for whatever runs after it.
 	paused = false
 	if _failures.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
 		printerr("FAIL: ", failure)
@@ -214,6 +221,7 @@ func _check_web_gate() -> void:
 	if OS.has_feature("web"):
 		# Not a failure — just nothing this check can say. Godot cannot be run
 		# headless as a web export, so in practice this branch is unreachable.
+		Sentinel.done("web_gate")
 		return
 
 	# Must not crash and must not do anything.
@@ -269,6 +277,7 @@ func _check_web_gate() -> void:
 	# `discard()` is every exit's teardown. Off-web it must be as inert as the
 	# rest — `_dismiss()` calls it unconditionally, film or no film.
 	IntroVideo.discard()
+	Sentinel.done("web_gate")
 
 
 # ============================================================================
@@ -416,6 +425,7 @@ func _check_generated_js() -> void:
 		if not js.contains("addEventListener(%s" % listener):
 			_fail("_create_js() has no %s listener — that failure path would never " \
 				% listener + "report finished and the game would never start")
+	Sentinel.done("generated_js")
 
 
 ## The game-over branch must use the same shared film seam, while a headless
@@ -486,6 +496,7 @@ func _check_game_over_film_path() -> void:
 		_fail("win panel did not make story_label visible")
 	win_panel.queue_free()
 	paused = false
+	Sentinel.done("game_over_film_path")
 
 
 # ============================================================================
@@ -498,6 +509,7 @@ func _check_game_over_film_path() -> void:
 func _check_start_press_desktop_path() -> void:
 	var overlay: Control = _make_overlay()
 	if overlay == null:
+		Sentinel.done("start_press_desktop_path")
 		return
 
 	# NEGATIVE CONTROL. Without this, "the tree is unpaused after the press" is
@@ -521,6 +533,7 @@ func _check_start_press_desktop_path() -> void:
 
 	overlay.queue_free()
 	paused = false
+	Sentinel.done("start_press_desktop_path")
 
 
 ## `_dismiss()` is EVERY exit from the overlay — the film ending, a stalled film
@@ -550,6 +563,7 @@ func _check_dismiss_never_plays() -> void:
 
 	overlay.queue_free()
 	paused = false
+	Sentinel.done("dismiss_never_plays")
 
 
 # ============================================================================
@@ -620,6 +634,7 @@ func _check_world_stays_paused_behind_the_film() -> void:
 
 	overlay.queue_free()
 	paused = false
+	Sentinel.done("world_stays_paused_behind_the_film")
 
 
 # ============================================================================
@@ -682,6 +697,7 @@ func _check_film_end_is_watchdog_covered() -> void:
 			% (budget * 2.0) + "armed, which is the frozen last frame itself")
 		wedged.queue_free()
 		paused = false
+		Sentinel.done("film_end_is_watchdog_covered")
 		return
 	if wedged.ending_callbacks != 1:
 		_fail("the stall backstop ran the completion callback %d times, not once" \
@@ -701,6 +717,7 @@ func _check_film_end_is_watchdog_covered() -> void:
 
 	wedged.queue_free()
 	paused = false
+	Sentinel.done("film_end_is_watchdog_covered")
 
 
 # ============================================================================
@@ -747,6 +764,7 @@ func _check_film_end_never_mints_a_world() -> void:
 	panel.queue_free()
 	player.queue_free()
 	paused = false
+	Sentinel.done("film_end_never_mints_a_world")
 
 
 # ============================================================================
@@ -772,11 +790,13 @@ func _check_no_js_boolean_returns() -> void:
 	var dir := DirAccess.open("res://scripts")
 	if dir == null:
 		_fail("could not open res://scripts — check 8 would pass vacuously")
+		Sentinel.done("no_js_boolean_returns")
 		return
 	var names: PackedStringArray = dir.get_files()
 	if names.size() < 20:
 		_fail("res://scripts listed only %d files — check 8 would pass vacuously" \
 			% names.size())
+		Sentinel.done("no_js_boolean_returns")
 		return
 
 	var scanned := 0
@@ -787,6 +807,7 @@ func _check_no_js_boolean_returns() -> void:
 		var source: String = FileAccess.get_file_as_string("res://scripts/" + name)
 		if source.is_empty():
 			_fail("could not read res://scripts/%s — check 8 would pass vacuously" % name)
+			Sentinel.done("no_js_boolean_returns")
 			return
 		scanned += 1
 		if source.contains("JavaScriptBridge.eval("):
@@ -804,6 +825,7 @@ func _check_no_js_boolean_returns() -> void:
 		_fail("the scan found no JavaScriptBridge.eval caller in %d files — it is " \
 			% scanned + "not reading the scripts that talk to the browser")
 	print("sources: %d scripts scanned, no JS snippet returns a boolean" % scanned)
+	Sentinel.done("no_js_boolean_returns")
 
 
 ## The first banned shape in `source`, as the offending line, or "" for clean.
@@ -846,6 +868,7 @@ class RestartSpy extends Node:
 func _check_card_names_multiplayer() -> void:
 	var overlay: Control = _make_overlay()
 	if overlay == null:
+		Sentinel.done("card_names_multiplayer")
 		return
 
 	var buttons: Array[String] = []
@@ -881,6 +904,7 @@ func _check_card_names_multiplayer() -> void:
 
 	overlay.queue_free()
 	paused = false
+	Sentinel.done("card_names_multiplayer")
 
 
 ## Every Button label and every piece of text under `node`, gathered separately

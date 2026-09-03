@@ -55,6 +55,14 @@ var lod_scans_total: int = 0
 """
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	# _initialize() cannot await, so the checks run as their own coroutine; the
 	# tree keeps processing until it calls quit().
@@ -78,8 +86,7 @@ func _run() -> void:
 	if failure.is_empty():
 		failure = _check_standalone()
 	if failure.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 	else:
 		printerr("SELFCHECK FAILED: " + failure)
 		quit(1)
@@ -158,6 +165,7 @@ func _check_sampling() -> String:
 
 	_destroy(overlay)
 	_destroy(stub)
+	Sentinel.done("sampling")
 	return ""
 
 
@@ -198,6 +206,7 @@ func _check_cap_and_reset() -> String:
 
 	_destroy(overlay)
 	_destroy(stub)
+	Sentinel.done("cap_and_reset")
 	return ""
 
 
@@ -229,6 +238,7 @@ func _check_first_frame() -> String:
 
 	_destroy(overlay)
 	_destroy(stub)
+	Sentinel.done("first_frame")
 	return ""
 
 
@@ -243,6 +253,7 @@ func _check_standalone() -> String:
 	if spikes[0]["chunks_created"] != 0 or spikes[0]["lod_scans"] != 0:
 		return "no-manager spike reported non-zero engine events"
 	_destroy(overlay)
+	Sentinel.done("standalone")
 	return ""
 
 

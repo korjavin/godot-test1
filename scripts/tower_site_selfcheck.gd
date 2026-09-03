@@ -68,6 +68,14 @@ const TOWER_FAR_AWAY: float = 100000.0
 var _failures: Array[String] = []
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	_boot()
 
@@ -130,6 +138,7 @@ func _check_site_is_stable_and_pure() -> void:
 			_fail("seed %d: tower site is %.1f m from spawn — the spawn bubble and the tower disc overlap" % [
 				seed_value, from_origin])
 		terrain.free()
+	Sentinel.done("site_is_stable_and_pure")
 
 
 func _check_site_is_the_same_in_a_second_terrain() -> void:
@@ -158,6 +167,7 @@ func _check_site_is_the_same_in_a_second_terrain() -> void:
 	if sites.size() != 1:
 		_fail("the sampled seeds put the tower in %d different places (%s) — the site is not fixed" % [
 			sites.size(), sites.keys()])
+	Sentinel.done("site_is_the_same_in_a_second_terrain")
 
 
 func _check_footprint_is_dry() -> void:
@@ -228,6 +238,7 @@ func _check_footprint_is_dry() -> void:
 	else:
 		print("tower dry disc: %d of %d sampled seeds have a raw river crossing the site, all masked" % [
 			raw_wet_seeds, SEEDS.size()])
+	Sentinel.done("footprint_is_dry")
 
 
 func _raw_river(terrain: Node3D, world_pos: Vector3) -> bool:
@@ -284,6 +295,7 @@ func _check_nothing_stands_on_the_site() -> void:
 	print("coin road passes %.1f m from the tower site (not excluded, by design)" % road)
 
 	terrain.free()
+	Sentinel.done("nothing_stands_on_the_site")
 
 
 func _check_the_rest_of_the_world_is_byte_identical() -> void:
@@ -316,6 +328,7 @@ func _check_the_rest_of_the_world_is_byte_identical() -> void:
 			differing += 1
 	if differing == 0:
 		_fail("no chunk over the tower site changed when the tower moved — the exclusion is inert")
+	Sentinel.done("the_rest_of_the_world_is_byte_identical")
 
 
 # ============================================================================
@@ -436,8 +449,7 @@ func _fail(message: String) -> void:
 
 func _report() -> void:
 	if _failures.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
 		printerr("FAIL: ", failure)

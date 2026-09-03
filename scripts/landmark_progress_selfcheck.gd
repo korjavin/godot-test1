@@ -97,6 +97,14 @@ const MPManager: GDScript = preload("res://scripts/mp_manager.gd")
 var _failures: Array[String] = []
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	# FIRST, BEFORE ANY PLAYER EXISTS — see the LANDMINE banner. This check wins a
 	# run for real, and a win archives the world.
@@ -119,8 +127,7 @@ func _initialize() -> void:
 	DirAccess.remove_absolute(LOCAL_STORE_PATH)
 
 	if _failures.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 	else:
 		for line: String in _failures:
 			printerr("FAIL: " + line)
@@ -184,6 +191,7 @@ func _check_catalogue() -> void:
 		seen[id] = true
 	print("[landmark_progress] %d named slots, %d wave-C reservations, win at %d"
 		% [named, reserved, PlayerScript.BUDAPEST_WIN_LANDMARKS])
+	Sentinel.done("catalogue")
 
 
 # ============================================================================
@@ -233,6 +241,7 @@ func _check_mask() -> void:
 			% [BudapestPlan.SLOTS.size(), player.explored_count()])
 
 	player.queue_free()
+	Sentinel.done("mask")
 
 
 # ============================================================================
@@ -265,6 +274,7 @@ func _check_threshold() -> void:
 	if full.run_outcome != PlayerScript.Outcome.WON:
 		_fail("the run ended with outcome %d, not WON" % int(full.run_outcome))
 	full.queue_free()
+	Sentinel.done("threshold")
 
 
 # ============================================================================
@@ -329,6 +339,7 @@ func _check_decode_absent() -> void:
 		hostile["lm"] = bad
 		if not MPManager.decode_state(hostile).is_empty():
 			_fail("decode_state accepted a malformed `lm` %s" % [bad])
+	Sentinel.done("decode_absent")
 
 
 # ============================================================================
@@ -380,6 +391,7 @@ func _check_claim_verb() -> void:
 			_fail("a non-finite claim position was granted")
 	if MPManager.landmark_claim_in_reach(here, here, NAN):
 		_fail("a non-finite radius was granted")
+	Sentinel.done("claim_verb")
 
 
 # ============================================================================
@@ -404,6 +416,7 @@ func _check_trigger() -> void:
 		_fail("no slot in the plan has a builder — check 6 has nothing to walk into")
 		toast.queue_free()
 		player.queue_free()
+		Sentinel.done("trigger")
 		return
 
 	var slot: Dictionary = BudapestPlan.SLOTS[index]
@@ -443,6 +456,7 @@ func _check_trigger() -> void:
 
 	toast.queue_free()
 	player.queue_free()
+	Sentinel.done("trigger")
 
 
 # ============================================================================
@@ -520,14 +534,21 @@ func _check_room_hygiene() -> void:
 	# report them again (codex review 2026-09-02).
 	#
 	# Driven through the real `welcome` handler, which is the only place that
-	# decides `_first_member`. It logs one `Nonexistent function 'fetch_ice' in base
-	# 'Nil'` on its way past the mesh setup — there is no lobby socket in a headless
-	# fixture — which is noise of the same kind `mp_selfcheck` already prints and
-	# not a failure: this block asserts on the two fields, and CI's verdict is
-	# "exit 0 AND printed SELFCHECK OK".
+	# decides `_first_member`.
+	#
+	# `lobby_only` IS THE FIXTURE'S SEAM, and it is the shipped flag rather than a
+	# stub: the handler's last line is `_lobby.fetch_ice(...)`, and there is no
+	# socket under a headless manager, so this used to throw "Nonexistent function
+	# 'fetch_ice' in base 'Nil'" on every run. That error aborted
+	# `_on_lobby_joined` — the very class of defect bead `godot-test1-llo` is
+	# about, one frame down: the mesh setup never ran and nothing said so.
+	# `lobby_only` is the relay-only mode's own early return, one line ABOVE the
+	# fetch and BELOW everything this block reads, so both fields are still set by
+	# the real code on the real path.
 	var host: Node = await _make_player()
 	host.explored_mask = 0b1001
 	var host_mp: Node = MPManager.new()
+	host_mp.lobby_only = true
 	root.add_child(host_mp)
 	await process_frame
 	host_mp._on_lobby_joined("host", "AAAAAA", "host", [{"id": "host", "name": "Host"}])
@@ -589,6 +610,7 @@ func _check_room_hygiene() -> void:
 			% mp._pending_landmarks.size())
 
 	mp.queue_free()
+	Sentinel.done("room_hygiene")
 
 
 # ============================================================================
