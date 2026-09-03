@@ -53,6 +53,13 @@ const SWEEP_HZ: float = 240.0
 const HITCH_SECONDS: float = 20.0
 const HITCH_EPS_DEG: float = 1.0
 
+## Stopping: how many idle frames the eased relax gets, and how close to rest
+## the gait's own axes must then be. 120 frames is 2 s at 60 Hz against a 0.15
+## per-frame lerp, so a working relax arrives with three orders of magnitude to
+## spare and a dropped one is nowhere near.
+const RELAX_FRAMES: int = 120
+const REST_EPS: float = 0.005
+
 ## The footstep window. Chosen so no row's crossing lands within a sample of the
 ## window's end, which would make the expected count ambiguous by one.
 const STEP_SECONDS: float = 10.0
@@ -97,6 +104,7 @@ func _run() -> void:
 		Sentinel.done("catalogue")
 		Sentinel.done("bounds")
 		Sentinel.done("expression")
+		Sentinel.done("relax")
 		Sentinel.done("personality")
 		Sentinel.done("footsteps")
 		_report()
@@ -114,6 +122,7 @@ func _run() -> void:
 				+ "node-name contract is broken, and no pose below could be measured")
 		Sentinel.done("bounds")
 		Sentinel.done("expression")
+		Sentinel.done("relax")
 		Sentinel.done("personality")
 		Sentinel.done("footsteps")
 		player.queue_free()
@@ -121,6 +130,7 @@ func _run() -> void:
 		return
 
 	_check_bounds(player)
+	_check_relax(player)
 	_check_personality(player)
 	_check_footsteps(player)
 
@@ -311,7 +321,89 @@ func _check_bounds(player: Node3D) -> void:
 
 
 # ============================================================================
-# CHECK 3 — THE FOUR WALKS DIFFER, AND NONE OF THEM IS A METRONOME
+# CHECK 3 — STOPPING PUTS THE GAIT'S OWN AXES BACK
+# ============================================================================
+
+func _check_relax(player: Node3D) -> void:
+	"""
+	Walk, then stop, and the waddle has to GO.
+
+	The bead's landmine has two halves: a character SWAP must not carry a lean
+	into the next hero (`restore_rest_pose`, covered by check 1's rest table),
+	and STOPPING must not leave you standing there rolled 11 degrees with your
+	head cocked. The second half is enforced by nothing but the three
+	`relax_gait_extras()` calls in `animate_idle` / `animate_sidestep` /
+	`animate_jumping` — and dropping one is a silent, permanently-visible bug
+	that no other check in this repo can see.
+
+	Driven on the two heroes that actually roll: teibi (sway 5, lean 3) and
+	phoboman (sway 11, head 7). A hero whose row asks for none of it would pass
+	this vacuously, which is why it is the loud rows that are measured.
+	"""
+	var step: float = 1.0 / SWEEP_HZ
+	for index: int in PlayerController.CHARACTERS.size():
+		var hero: String = String(PlayerController.CHARACTERS[index]["name"])
+		var row: Dictionary = PlayerController.gait_for(hero)
+		if float(row["sway_deg"]) <= 0.0 and float(row["lean_deg"]) <= 0.0 \
+				and float(row["head_deg"]) <= 0.0:
+			continue  # nothing to put back — see the docstring
+		player.set_active_character(index)
+
+		# Walk far enough into the cycle for every one of those axes to be off
+		# rest, then confirm it: a probe that measured a pose already at rest
+		# would pass no matter what the relax did.
+		player.animation_time = 0.4
+		player.animate_walking(step, 1.0)
+		if _off_rest(player) <= REST_EPS:
+			_fail("%s: the walk pose is already at rest, so this check would be "
+					% hero + "vacuous — pick a different sample time")
+
+		# IDLE eases back. 120 frames is 2 s at 60 Hz; the lerp is 0.15 a frame,
+		# so anything that is still moving has arrived long before that.
+		for i: int in RELAX_FRAMES:
+			player.animation_time = 0.4 + float(i) * step
+			player.animate_idle(step)
+		var idle_off: float = _off_rest(player)
+		if idle_off > REST_EPS:
+			_fail("%s: standing still for %d frames left the body/head %.4f rad off "
+					% [hero, RELAX_FRAMES, idle_off]
+					+ "rest — the walk gait's roll, lean or head bobble is stuck on")
+
+		# SIDESTEP snaps. It writes the body's roll itself, so only the pitch and
+		# the head are this call's business — and they must be exactly at rest.
+		player.animation_time = 0.4
+		player.animate_walking(step, 1.0)
+		player.step_direction = 1.0
+		player.animate_sidestep()
+		var body_rest: Vector3 = player.original_rotations["body"]
+		if absf(player.character_body.rotation.x - body_rest.x) > 1e-6:
+			_fail("%s: a sidestep straight out of a walk left the body pitched %.4f rad "
+					% [hero, absf(player.character_body.rotation.x - body_rest.x)]
+					+ "off rest — the gait's lean is stuck on")
+		if player.character_head and player.original_rotations.has("head"):
+			var head_rest: float = float(player.original_rotations["head"].z)
+			if absf(player.character_head.rotation.z - head_rest) > 1e-6:
+				_fail("%s: a sidestep straight out of a walk left the head %.4f rad off "
+						% [hero, absf(player.character_head.rotation.z - head_rest)]
+						+ "rest — the gait's bobble is stuck on")
+		player.step_direction = 0.0
+
+	Sentinel.done("relax")
+
+
+func _off_rest(player: Node3D) -> float:
+	"""How far the three gait-only axes are from rest, in radians (the worst one)."""
+	var body_rest: Vector3 = player.original_rotations["body"]
+	var worst: float = maxf(absf(player.character_body.rotation.x - body_rest.x),
+			absf(player.character_body.rotation.z - body_rest.z))
+	if player.character_head and player.original_rotations.has("head"):
+		worst = maxf(worst, absf(
+				player.character_head.rotation.z - float(player.original_rotations["head"].z)))
+	return worst
+
+
+# ============================================================================
+# CHECK 4 — THE FOUR WALKS DIFFER, AND NONE OF THEM IS A METRONOME
 # ============================================================================
 
 func _check_personality(player: Node3D) -> void:
@@ -384,7 +476,7 @@ func _pose(player: Node3D) -> Array[float]:
 
 
 # ============================================================================
-# CHECK 4 — THE FOOTSTEP BEAT IS THE STRIDE, AND ONLY THE STRIDE
+# CHECK 5 — THE FOOTSTEP BEAT IS THE STRIDE, AND ONLY THE STRIDE
 # ============================================================================
 
 func _check_footsteps(player: Node3D) -> void:
@@ -444,6 +536,62 @@ func _check_footsteps(player: Node3D) -> void:
 					% [label, flips, STEP_SECONDS, rate, expected]
 					+ "the hitch has moved the PHASE, which retimes every footstep "
 					+ "and every wading splash in the game")
+
+	# A SWAP MUST NOT FIRE A PHANTOM FOOTSTEP. The trigger is a SIGN CHANGE of
+	# `sin(animation_time * stride_rate)` against the last frame's sign, and a
+	# swap changes `stride_rate` under a shared `animation_time` — so there is
+	# always a moment where the outgoing hero's foot was down and the incoming
+	# hero's is up, with no leg having crossed anything. `set_active_character()`
+	# clears the sentinel to 0 for exactly that reason; this measures it.
+	var flip_found: bool = false
+	for a: int in PlayerController.CHARACTERS.size():
+		for b: int in PlayerController.CHARACTERS.size():
+			if a == b:
+				continue
+			var rate_a: float = float(PlayerController.gait_for(
+					String(PlayerController.CHARACTERS[a]["name"]))["stride_rate"])
+			var rate_b: float = float(PlayerController.gait_for(
+					String(PlayerController.CHARACTERS[b]["name"]))["stride_rate"])
+			# A moment where the two rows genuinely disagree about which foot is
+			# down. Without one this assertion would be vacuous, which is why the
+			# search is a search and not a hard-coded pair.
+			var t: float = -1.0
+			for i: int in 400:
+				var probe: float = 0.01 + float(i) * 0.01
+				if (sin(probe * rate_a) >= 0.0) != (sin(probe * rate_b) >= 0.0):
+					t = probe
+					break
+			if t < 0.0:
+				continue
+			flip_found = true
+
+			player.set_active_character(a)
+			player._last_walk_sine_sign = 0
+			player.animation_time = t
+			player.animate_walking(step, 1.0)
+			var outgoing: int = int(player._last_walk_sine_sign)
+
+			player.set_active_character(b)
+			if int(player._last_walk_sine_sign) != 0:
+				_fail("swapping %s -> %s left the previous hero's stride sign (%d) on the "
+						% [String(PlayerController.CHARACTERS[a]["name"]),
+								String(PlayerController.CHARACTERS[b]["name"]), outgoing]
+						+ "footstep sentinel — the next frame reads it as a foot planting "
+						+ "and fires a phantom footstep or splash")
+				continue
+
+			# ...and the hazard was real: the incoming hero's first frame really
+			# does record the OPPOSITE sign, which without the clear above is
+			# precisely the spurious flip.
+			player.animate_walking(step, 1.0)
+			if int(player._last_walk_sine_sign) == outgoing:
+				_fail("the %s -> %s swap probe picked t = %.2f where the two strides agree "
+						% [String(PlayerController.CHARACTERS[a]["name"]),
+								String(PlayerController.CHARACTERS[b]["name"]), t]
+						+ "— this assertion would pass without the sentinel being cleared")
+	if not flip_found:
+		_fail("no pair of heroes disagrees about which foot is down at any sampled time — "
+				+ "the phantom-footstep assertion above never ran")
 
 	# And the rate the DEFAULT row fires at is the one the old literal fired at.
 	var default_rate: float = float(PlayerController.gait_for("no-such-hero")["stride_rate"])

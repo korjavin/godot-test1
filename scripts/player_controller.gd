@@ -1695,9 +1695,15 @@ func reset_sidestep_pose() -> void:
 	"""
 	Return the limb/body roll used by the sidestep back to their rest values.
 
-	The sidestep is the only animation that touches the Z (roll) rotation, so the
-	walk/idle animations never put it back on their own. We snap it here when a
-	step ends so a finished step never leaves the legs slightly splayed.
+	The sidestep is the only animation that rolls the LIMBS on Z, so nothing else
+	puts that back on its own. We snap it here when a step ends so a finished
+	step never leaves the legs slightly splayed.
+
+	The BODY's roll is shared now — the walk gait writes `character_body.rotation.z`
+	for a hero with a `sway_deg` (the waddle), which is exactly why
+	`animate_walking()` calls this FIRST and then writes its own roll over the
+	top. `relax_gait_extras()` is the other half: it is what puts the body's
+	roll, pitch and head bobble back when the walk stops.
 	"""
 	if left_arm and original_rotations.has("left_arm"):
 		left_arm.rotation.z = original_rotations["left_arm"].z
@@ -2372,6 +2378,15 @@ func set_active_character(index: int) -> void:
 	# `_gait`, never GAITS — a dict lookup plus a merge every frame for a value
 	# that only changes on a swap is the sort of thing the F3 overlay finds.
 	_gait = gait_for(String(CHARACTERS[index]["name"]))
+	# ...and FORGET THE OUTGOING HERO'S FOOT. `_last_walk_sine_sign` is a memory of
+	# `sign(sin(animation_time * stride_rate))`, and the new row's `stride_rate` is
+	# a different number — so at the same `animation_time` the new hero's stride
+	# sine can simply have the other sign, and the first frame after a swap would
+	# read that as a foot planting and fire a phantom footstep or wading splash
+	# with no leg having crossed anything. 0 is the sentinel `animate_walking()`
+	# already understands: "no history — record this frame's sign silently", which
+	# is exactly what a hero who has just appeared needs.
+	_last_walk_sine_sign = 0
 
 	# A freshly selected character always starts with NO transient ability state:
 	# not Teibi's resize (a different character would inherit the giant body or
