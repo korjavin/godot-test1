@@ -128,6 +128,11 @@ func _check_multimesh_resources() -> void:
 		_failures.append("Traffic MultiMesh instance_count %d != _traffic_max %d" % [mm.instance_count, tm_max])
 	if mm.instance_count > int(mgr_script.get("TRAFFIC_MAX_DESKTOP")):
 		_failures.append("Traffic instance_count %d exceeds desktop cap" % mm.instance_count)
+	if not mm.use_colors:
+		_failures.append("Traffic MultiMesh must have use_colors=true for per-instance colour variety (stride 16)")
+	# Buffer is sized on first _update_cars tick; allow 0 before first process, otherwise must be 16 stride
+	if mm.buffer.size() != 0 and mm.buffer.size() != mm.instance_count * 16:
+		_failures.append("Traffic MultiMesh buffer size %d != instance_count*16 %d (stride 16 with use_colors)" % [mm.buffer.size(), mm.instance_count * 16])
 	# Feet at y=0
 	var aabb: AABB = mm.mesh.get_aabb()
 	if absf(aabb.position.y) > 0.001:
@@ -192,13 +197,13 @@ func _verify_cars_placement(context: String) -> void:
 	var tm_max: int = _manager.get("_traffic_max")
 	if active > tm_max:
 		_failures.append("%s: active car count %d exceeds _traffic_max %d" % [context, active, tm_max])
-	# MultiMesh readback: origins must be walkable and finite (buffer path like crowd)
+	# MultiMesh readback: origins must be walkable and finite — stride 16 (12 transform + 4 colour) when use_colors=true
 	var mm_node: MultiMeshInstance3D = _manager.get("_multimesh_node")
 	var mm: MultiMesh = mm_node.multimesh
 	var buf: PackedFloat32Array = mm.buffer
 	var vis: int = mm.visible_instance_count
 	for idx in vis:
-		var base := idx * 12
+		var base := idx * 16
 		var ox: float = buf[base + 3]
 		var oy: float = buf[base + 7]
 		var oz: float = buf[base + 11]

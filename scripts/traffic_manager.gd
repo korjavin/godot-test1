@@ -186,7 +186,7 @@ func _ready() -> void:
 	mm_inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
-	mm.use_colors = false
+	mm.use_colors = true
 	mm.mesh = _get_car_mesh()
 	mm.instance_count = _traffic_max
 	mm.visible_instance_count = 0
@@ -468,16 +468,15 @@ func _update_traffic_spawns(player_pos: Vector3) -> void:
 					car["active"] = false
 
 func _update_cars(delta: float, player_pos: Vector3) -> void:
-	# Bulk buffer path like crowd_manager (4 MultiMeshes, 4 draw calls, use_colors false).
-	# Traffic is ONE MultiMesh = 1 draw call; colour variety would be instance colour
-	# but that needs use_colors, so we keep the single shared vertex-coloured mesh
-	# and accept uniform cars for now — still 1 draw call and no material per car.
+	# Bulk buffer with use_colors=true: stride 16 (12 transform + 4 colour floats
+	# r,g,b,a). One MultiMesh = 1 draw call, colour variety via per-instance colour
+	# off the manager's own _rng, still one shared mesh and one shared material.
 	if _multimesh_node == null:
 		return
 	var mm: MultiMesh = _multimesh_node.multimesh
 	var count: int = 0
 	var buf := PackedFloat32Array()
-	buf.resize(_traffic_max * 12)
+	buf.resize(_traffic_max * 16)
 	for car: Dictionary in _cars:
 		if not car["active"]:
 			continue
@@ -511,7 +510,7 @@ func _update_cars(delta: float, player_pos: Vector3) -> void:
 		var wpos: Vector3 = _car_world_pos(car)
 		var basis := Basis().rotated(Vector3.UP, float(car["facing_yaw"]))
 		var t := Transform3D(basis, Vector3(wpos.x, 0.0, wpos.z))
-		var base_idx := count * 12
+		var base_idx := count * 16
 		buf[base_idx + 0] = t.basis.x.x
 		buf[base_idx + 1] = t.basis.y.x
 		buf[base_idx + 2] = t.basis.z.x
@@ -524,16 +523,22 @@ func _update_cars(delta: float, player_pos: Vector3) -> void:
 		buf[base_idx + 9] = t.basis.y.z
 		buf[base_idx + 10] = t.basis.z.z
 		buf[base_idx + 11] = t.origin.z
+		var col: Color = car["color"]
+		buf[base_idx + 12] = col.r
+		buf[base_idx + 13] = col.g
+		buf[base_idx + 14] = col.b
+		buf[base_idx + 15] = col.a
 		count += 1
 		if count >= _traffic_max:
 			break
 	# Park remainder at far away so they are not visible even if count miscounts
 	for i in range(count, _traffic_max):
-		var b := i * 12
-		# identity basis, origin far away
+		var b := i * 16
+		# identity basis, origin far away, transparent
 		buf[b + 0] = 1; buf[b + 1] = 0; buf[b + 2] = 0; buf[b + 3] = 9999.0
 		buf[b + 4] = 0; buf[b + 5] = 1; buf[b + 6] = 0; buf[b + 7] = 9999.0
 		buf[b + 8] = 0; buf[b + 9] = 0; buf[b + 10] = 1; buf[b + 11] = 9999.0
+		buf[b + 12] = 1; buf[b + 13] = 1; buf[b + 14] = 1; buf[b + 15] = 0
 	mm.buffer = buf
 	mm.visible_instance_count = count
 
