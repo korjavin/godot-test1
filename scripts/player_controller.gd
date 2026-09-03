@@ -846,11 +846,11 @@ func _ready() -> void:
 
 	print("Player Controller initialized!")
 	print("Controls:")
-	print("  W / S - Walk forward / back")
+	print("  W / S - Move forward / back (you run by default)")
 	print("  Q / E - Turn left / right")
 	print("  A / D - Strafe left / right")
 	print("  Space - Jump")
-	print("  Shift - Run")
+	print("  Shift - Hold to slow to a walk")
 	print("  Ctrl - Duck")
 	print("  R - Switch Character")
 	print("  F - Special ability (unique per character)")
@@ -1346,8 +1346,21 @@ func _physics_process(delta: float) -> void:
 	# STEP 3: Handle Ducking
 	handle_ducking()
 
-	# STEP 4: Handle Running
-	is_running = Input.is_action_pressed("run") and not is_ducking
+	# STEP 4: Handle Running — INVERTED. The default gait is RUN and the key SLOWS
+	# you (owner ruling 2026-09-03, bead `godot-test1-kov`, verbatim: "let's
+	# reverse shift logic, let's it be opposite, heroes always in run mode, and
+	# shift put them to slower mode. I am tired to hold shift all the time").
+	#
+	# THE ACTION NAME "run" IS HISTORICAL and deliberately not renamed: it is the
+	# key BINDING (Shift) and nothing about the binding changed, while the name is
+	# spelled in project.godot, the keymap card's ACTION_ROWS and every future
+	# rebind surface. Renaming buys no runtime behaviour and costs a four-file
+	# rename, so the comment is the record instead. Read it as "the gait modifier".
+	#
+	# Ducking still wins over both, exactly as before — Ctrl beats the modifier and
+	# beats the default. `wade_selfcheck` check 5 drives all three through the real
+	# action and the shipped calculate_current_speed().
+	is_running = not Input.is_action_pressed("run") and not is_ducking
 
 	# STEP 5: Turn the character with Q / E (changes which way it faces)
 	handle_turning(delta)

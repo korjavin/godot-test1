@@ -28,6 +28,13 @@ extends SceneTree
 ##   3. The wade drag must never take the RUN gait under the crocodile chase cap
 ##      (MAX_CHASE_SPEED), or a river becomes an inescapable trap. That is a
 ##      cross-file inequality between two constants that nothing else checks.
+##   4. **The gait modifier is INVERTED** (bead `godot-test1-kov`): nothing held
+##      is the FAST gait and holding Shift is the slow one. That mapping is ONE
+##      line in `_physics_process`, it has no visible symptom other than the game
+##      feeling wrong, and re-inverting it would leave every other speed
+##      assertion in this file green — they all set `is_running` by hand. Check 5
+##      is the only one that presses the real action and reads the shipped
+##      `calculate_current_speed()` behind it.
 ##
 ## Every check carries a NEGATIVE CONTROL — a dry-land measurement that must NOT
 ## show the effect — because "the number changed" is also true of a bug that
@@ -193,6 +200,7 @@ func _run() -> void:
 	await _check_first_person_eyes(player, terrain)
 	await _check_jump(player, terrain)
 	_check_speed(player)
+	await _check_default_gait(player, terrain)
 	await _check_remote_avatar(terrain)
 
 	# Freed BEFORE the crocodile checks: a live player in the same tiny test world
@@ -687,3 +695,84 @@ func _check_speed(player: CharacterBody3D) -> void:
 	if run_dry <= CROC_SCRIPT.MAX_CHASE_SPEED:
 		_fail("speed: running on DRY land (%.2f m/s) does not outpace MAX_CHASE_SPEED "
 				% run_dry + "(%.2f) — this is not a wading bug" % CROC_SCRIPT.MAX_CHASE_SPEED)
+
+
+func _check_default_gait(player: CharacterBody3D, terrain: StubTerrain) -> void:
+	"""
+	CHECK 5 — THE GAIT MODIFIER IS INVERTED: no key held is the FAST gait, and
+	holding the modifier is the SLOW one (owner ruling 2026-09-03, bead
+	`godot-test1-kov`). Ducking still wins over both.
+
+	This is the ONE check that drives the real input action end to end — press the
+	action the way a player does, let a physics frame run `_physics_process`'s
+	STEP 4, then read the SHIPPED `calculate_current_speed()`. It deliberately
+	does NOT set `is_running` by hand (which is what every other speed assertion
+	in this file does): the whole bug class here lives in the ONE line that maps
+	the action to that flag, and a check that writes the flag itself cannot see it.
+
+	The assertion is the ORDERING and not a number. Re-deriving `RUN_SPEED *
+	CHARACTER_SPEED * gait_mult` here would be a second copy of the branch under
+	test, and a copy that inverted with it would pass. `default > held`, strictly,
+	is what a reverted inversion cannot satisfy — and being strict is also the
+	vacuity guard: a rig where `_physics_process` never ran reports two equal
+	speeds and fails.
+
+	The action name is still "run" for the historical reason `player_controller`
+	records at the read site.
+	"""
+	# Dry land: a previous check may have left the stub river on, and the gait
+	# ordering is the thing under test here — not the drag.
+	terrain.river = false
+	await _reground(player)
+	if not player.is_on_floor():
+		_fail("gait: player never regrounded — STEP 4's duck clause needs is_on_floor()")
+		return
+
+	# Nothing held: the DEFAULT gait.
+	Input.action_release("run")
+	Input.action_release("duck")
+	await _frames(2)
+	var default_running: bool = player.is_running
+	var default_speed: float = player.calculate_current_speed()
+
+	# The modifier held: the SLOW gait.
+	Input.action_press("run")
+	await _frames(2)
+	var held_running: bool = player.is_running
+	var held_speed: float = player.calculate_current_speed()
+
+	# Ducking OVER the default gait — Ctrl has to beat both sides of the flip.
+	Input.action_release("run")
+	Input.action_press("duck")
+	await _frames(2)
+	var duck_running: bool = player.is_running
+	var duck_ducking: bool = player.is_ducking
+	Input.action_release("duck")
+	await _frames(2)
+
+	if not default_running:
+		_fail("gait: NOTHING held and is_running is false — the default gait is the "
+				+ "slow one, which is the pre-`kov` behaviour the owner reversed")
+	if held_running:
+		_fail("gait: the modifier is held and is_running is still true — holding it "
+				+ "must SLOW the hero, not speed it up")
+	if default_speed <= held_speed:
+		_fail("gait: the default gait is %.2f m/s against %.2f held — the default "
+				% [default_speed, held_speed] + "must be strictly FASTER (equal speeds "
+				+ "also mean _physics_process never ran and this check is vacuous)")
+	# The catchable-walk chain, restated where the DEFAULT side of it now sits: the
+	# fast gait is what a player gets for free, so it is the one that has to clear
+	# the chase cap. The slow gait is deliberately below it — that is the whole
+	# point of a modifier that makes you catchable on purpose.
+	if default_speed <= CROC_SCRIPT.MAX_CHASE_SPEED:
+		_fail("gait: the DEFAULT gait is %.2f m/s, at or under MAX_CHASE_SPEED (%.2f) "
+				% [default_speed, CROC_SCRIPT.MAX_CHASE_SPEED]
+				+ "— nothing held would no longer escape")
+	if not duck_ducking:
+		_fail("gait: Ctrl did not duck, so the ducking-wins assertion below is vacuous")
+	elif duck_running:
+		_fail("gait: ducking with nothing else held still reports is_running — ducking "
+				+ "must win over the default gait exactly as it won over the old one")
+
+	print("gait: default %.2f m/s (running), modifier held %.2f m/s (walking)"
+			% [default_speed, held_speed])
