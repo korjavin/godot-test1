@@ -74,11 +74,18 @@ class StubPlayer extends Node:
 		return available
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	_run()
 	if _failures.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 	else:
 		for f: String in _failures:
 			printerr("FAIL: ", f)
@@ -92,6 +99,7 @@ func _fail(msg: String) -> void:
 func _check(cond: bool, msg: String) -> void:
 	if not cond:
 		_fail(msg)
+	Sentinel.done("check")
 
 
 func _run() -> void:
@@ -129,6 +137,7 @@ func _check_every_hero_has_art_and_an_identity() -> void:
 				"%s is %dx%d, smaller than one %d px tile"
 					% [path, tex.get_width(), tex.get_height(),
 						int(HUD_SCRIPT.TILE_SIZE)])
+	Sentinel.done("every_hero_has_art_and_an_identity")
 
 
 func _check_a_missing_portrait_is_a_placeholder() -> void:
@@ -145,6 +154,7 @@ func _check_a_missing_portrait_is_a_placeholder() -> void:
 	_check(hud._portrait(first) is Texture2D,
 		"'%s' did not resolve to a texture through _portrait()" % first)
 	hud.free()
+	Sentinel.done("a_missing_portrait_is_a_placeholder")
 
 
 func _check_the_four_states() -> void:
@@ -152,6 +162,7 @@ func _check_the_four_states() -> void:
 	var heroes := _hero_names()
 	if heroes.size() < 3:
 		_fail("this check needs at least three heroes to tell HELD from CAPTIVE")
+		Sentinel.done("the_four_states")
 		return
 	var hud: Control = HUD_SCRIPT.new()
 	var stub := StubPlayer.new()
@@ -202,6 +213,7 @@ func _check_the_four_states() -> void:
 	bare.free()
 	stub.free()
 	hud.free()
+	Sentinel.done("the_four_states")
 
 
 func _all_indices(n: int) -> Array:
@@ -227,6 +239,7 @@ func _check_the_standalone_degrade() -> void:
 	_check(hud._read_roster().is_empty(),
 		"a freed player must not leave a stale row painted")
 	hud.free()
+	Sentinel.done("the_standalone_degrade")
 
 
 func _check_the_row_fits_and_clears_its_neighbours() -> void:
@@ -240,11 +253,13 @@ func _check_the_row_fits_and_clears_its_neighbours() -> void:
 	var text := FileAccess.get_file_as_string(MAIN_SCENE_PATH)
 	if text.is_empty():
 		_fail("could not read %s" % MAIN_SCENE_PATH)
+		Sentinel.done("the_row_fits_and_clears_its_neighbours")
 		return
 	var hero_rect: Variant = _node_rect(text, "HeroHUD")
 	var perf_rect: Variant = _node_rect(text, "PerfOverlay")
 	if hero_rect == null or perf_rect == null:
 		_fail("HeroHUD / PerfOverlay not both found in %s" % MAIN_SCENE_PATH)
+		Sentinel.done("the_row_fits_and_clears_its_neighbours")
 		return
 
 	var count: int = _hero_names().size()
@@ -274,6 +289,7 @@ func _check_the_row_fits_and_clears_its_neighbours() -> void:
 		"found only %d absolutely-positioned HUD widget(s) — the neighbour scan "
 			% neighbours.size()
 		+ "stopped seeing the scene, so this check would pass on anything")
+	Sentinel.done("the_row_fits_and_clears_its_neighbours")
 
 
 func _hud_absolute_rects(text: String) -> Dictionary:

@@ -27,6 +27,14 @@ var _manager: Node3D = null
 var _player: CharacterBody3D = null
 var _failures: Array[String] = []
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	_root = Node3D.new()
 	root.add_child(_root)
@@ -62,8 +70,7 @@ func _run_checks() -> void:
 	_check_no_interpenetration()
 	if _failures.is_empty():
 		print("traffic_selfcheck: all checks passed cleanly")
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 	else:
 		for f in _failures:
 			printerr("FAIL: ", f)
@@ -76,6 +83,7 @@ func _check_groups_and_collision() -> void:
 		if _manager.is_in_group(g):
 			_failures.append("TrafficManager illegally joined gameplay group '%s'" % g)
 	_check_node_isolation_recursive(_manager)
+	Sentinel.done("groups_and_collision")
 
 func _check_node_isolation_recursive(node: Node) -> void:
 	if node != _manager:
@@ -88,11 +96,13 @@ func _check_node_isolation_recursive(node: Node) -> void:
 			_failures.append("TrafficManager descendant '%s' is an Area3D (must have none)" % node.name)
 	for child in node.get_children():
 		_check_node_isolation_recursive(child)
+	Sentinel.done("node_isolation_recursive")
 
 func _check_multimesh_resources() -> void:
 	var mm_node: MultiMeshInstance3D = _manager.get("_multimesh_node")
 	if mm_node == null:
 		_failures.append("TrafficManager _multimesh_node is null (expected ONE MultiMeshInstance3D)")
+		Sentinel.done("multimesh_resources")
 		return
 	var mm_count := 0
 	for c in _manager.get_children():
@@ -103,9 +113,11 @@ func _check_multimesh_resources() -> void:
 	var mm: MultiMesh = mm_node.multimesh
 	if mm == null:
 		_failures.append("Traffic MultiMesh is null")
+		Sentinel.done("multimesh_resources")
 		return
 	if mm.mesh == null:
 		_failures.append("Traffic MultiMesh has null mesh")
+		Sentinel.done("multimesh_resources")
 		return
 	if mm_node.material_override == null:
 		_failures.append("Traffic material_override is null")
@@ -130,6 +142,7 @@ func _check_multimesh_resources() -> void:
 	var aabb: AABB = mm.mesh.get_aabb()
 	if absf(aabb.position.y) > 0.001:
 		_failures.append("Traffic mesh AABB position.y is %f (must be 0.0 for feet at y=0)" % aabb.position.y)
+	Sentinel.done("multimesh_resources")
 
 func _check_dormancy_outside_budapest() -> void:
 	_player.position = Vector3(0.0, 1.0, 0.0)
@@ -138,6 +151,7 @@ func _check_dormancy_outside_budapest() -> void:
 	var vis: int = mm_node.multimesh.visible_instance_count
 	if vis != 0:
 		_failures.append("Traffic rendered %d visible while player outside Budapest at x=0 (must hide)" % vis)
+	Sentinel.done("dormancy_outside_budapest")
 
 func _check_is_near_budapest_seam() -> void:
 	# Direct seam: _is_near_budapest must be false far outside, true inside
@@ -161,6 +175,7 @@ func _check_is_near_budapest_seam() -> void:
 		_failures.append("_is_near_budapest seam: 0 visible inside Budapest at 2000,0 — should spawn")
 	if vis_out != 0:
 		_failures.append("_is_near_budapest seam: still visible outside — hide failed")
+	Sentinel.done("is_near_budapest_seam")
 
 func _check_placement_and_walkable() -> void:
 	for loc in [Vector3(1750.0, 1.0, 0.0), Vector3(2920.0, 1.0, 248.0)]:
@@ -172,6 +187,7 @@ func _check_placement_and_walkable() -> void:
 	for frame in 60:
 		_manager._process(DT)
 	_verify_cars_placement("Heroes Square avenue")
+	Sentinel.done("placement_and_walkable")
 
 func _verify_cars_placement(context: String) -> void:
 	var plan_script: GDScript = load("res://scripts/budapest_plan.gd")
@@ -253,6 +269,7 @@ func _check_is_traffic_walkable_negatives() -> void:
 	# Positive control: avenue carriageway at gate should be walkable
 	if not mgr_script.is_traffic_walkable(1700.0, 2.4):
 		_failures.append("is_traffic_walkable false at gate avenue lane (1700,2.4) — should be true")
+	Sentinel.done("is_traffic_walkable_negatives")
 
 func _check_yield_stops_short() -> void:
 	var plan_script: GDScript = load("res://scripts/budapest_plan.gd")
@@ -291,6 +308,7 @@ func _check_yield_stops_short() -> void:
 		_failures.append("yield: car did not STOP short — end speed %.3f at x %.2f (player %.2f fwd %.2f) expected speed≈0 before contact" % [float(car["speed"]), end_wpos.x, player_target.x, player_target.x - end_wpos.x])
 	car["active"] = false
 	_manager._hide_all()
+	Sentinel.done("yield_stops_short")
 
 func _check_yield_lateral_and_accel() -> void:
 	# Lateral width: far 5m outside, centre 0m inside, mid-lane 2.0m inside (shrinking tolerance must still slow 2.0)
@@ -345,6 +363,7 @@ func _check_yield_lateral_and_accel() -> void:
 		_failures.append("accel/decel: snap detected — speed dropped 5.0->%.3f in one tick > DECELERATION*DT %.3f" % [after_one, max_decel_step])
 	car["active"] = false
 	_manager._hide_all()
+	Sentinel.done("yield_lateral_and_accel")
 
 func _check_honk_approach_from_cruise() -> void:
 	# Drive FROM CRUISE at a stationary hero — the actual game state — and assert a honk happens
@@ -377,6 +396,7 @@ func _check_honk_approach_from_cruise() -> void:
 		_failures.append("honk approach: car driven from cruise at stationary hero never honked within 15s (is_blocked never true from approach)")
 	car["active"] = false
 	_manager._hide_all()
+	Sentinel.done("honk_approach_from_cruise")
 
 func _check_honk_distance_via_second_blocker() -> void:
 	# Second car as blocker keeps honk path live while player moves far — proves distance gate, not blocked
@@ -432,6 +452,7 @@ func _check_honk_distance_via_second_blocker() -> void:
 	# We already proved far doesn't honk, so we don't fail on near here, just note
 	for c in cars: c["active"] = false
 	_manager._hide_all()
+	Sentinel.done("honk_distance_via_second_blocker")
 
 func _check_web_cap_constants() -> void:
 	var mgr_script: GDScript = load("res://scripts/traffic_manager.gd")
@@ -445,6 +466,7 @@ func _check_web_cap_constants() -> void:
 		_failures.append("cap exceeds design: web %d desk %d (max 16/32)" % [web, desk])
 	if web <= 0 or desk <= 0:
 		_failures.append("caps must be positive")
+	Sentinel.done("web_cap_constants")
 
 func _check_stuck_recycle() -> void:
 	_manager._hide_all()
@@ -469,6 +491,7 @@ func _check_stuck_recycle() -> void:
 		_failures.append("stuck recycle: car with blocked_time %.1f not recycled on next tick (still at same pos)" % float(car["blocked_time"]))
 	car["active"] = false
 	_manager._hide_all()
+	Sentinel.done("stuck_recycle")
 
 func _check_target_speed_seam() -> void:
 	var mgr_script: GDScript = load("res://scripts/traffic_manager.gd")
@@ -489,6 +512,7 @@ func _check_target_speed_seam() -> void:
 	var s_far2: float = mgr_script.target_speed_for_distance(mgr_script.YIELD_DISTANCE - 0.5, cruise)
 	if s_near >= s_far2:
 		_failures.append("target_speed not monotonic: near %.3f >= far %.3f" % [s_near, s_far2])
+	Sentinel.done("target_speed_seam")
 
 func _check_no_interpenetration() -> void:
 	# Headline: no two active boxes overlap (per-axis CAR_LENGTH×CAR_WIDTH), not raw
@@ -517,8 +541,10 @@ func _check_no_interpenetration() -> void:
 				if mgr_script._cars_overlap(wa, ha, wb, hb):
 					var d: float = wa.distance_to(wb)
 					_failures.append("interpenetration: cars %d and %d %s vs %s headings %s/%s centre %.2f overlap (boxes %.1fx%.1f)" % [i, j, str(wa), str(wb), str(ha), str(hb), d, float(mgr_script.get("CAR_LENGTH")), float(mgr_script.get("CAR_WIDTH"))])
+					Sentinel.done("no_interpenetration")
 					return
 	if not _failures.is_empty():
+		Sentinel.done("no_interpenetration")
 		return
 	# Negative control that would have caught the 4.8 vs 5.0 metric bug: two cars
 	# abreast in opposite lanes (same avenue, opposite headings, 4.8 m lateral)
@@ -536,6 +562,7 @@ func _check_no_interpenetration() -> void:
 	var sep_opp: float = wa_opp.distance_to(wb_opp)
 	if mgr_script._cars_overlap(wa_opp, ha_opp, wb_opp, hb_opp):
 		_failures.append("interpenetration negative control failed: abreast opposite lanes %.2f apart flagged as overlap (boxes %.1fx%.1f should have ~%.1f air gap)" % [sep_opp, car_len, car_wid, sep_opp - car_wid])
+		Sentinel.done("no_interpenetration")
 		return
 	# Positive control: same-lane close (3 m longitudinal) MUST be overlap, otherwise metric is toothless
 	var h_same := Vector2(1.0, 0.0)
@@ -543,6 +570,7 @@ func _check_no_interpenetration() -> void:
 	var wb_s := Vector3(2003.0, 0.0, 0.0) + Vector3(-h_same.y, 0.0, h_same.x) * lane_off # 3 m ahead
 	if not mgr_script._cars_overlap(wa_s, h_same, wb_s, h_same):
 		_failures.append("interpenetration positive control failed: same-lane 3 m apart not flagged as overlap — metric toothless")
+		Sentinel.done("no_interpenetration")
 		return
 	var cars: Array = _manager.get("_cars")
 	var cnt: int = 0
@@ -551,3 +579,4 @@ func _check_no_interpenetration() -> void:
 			cnt += 1
 	if cnt < 5:
 		_failures.append("interpenetration check saw only %d active cars (expected >=5 to have pairs)" % cnt)
+	Sentinel.done("no_interpenetration")

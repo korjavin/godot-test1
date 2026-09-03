@@ -248,6 +248,14 @@ var _ride_herd_travel: float = 0.0
 var _ride_lines: Array[String] = []
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	_root = Node3D.new()
 	root.add_child(_root)
@@ -461,8 +469,10 @@ func _finish_trial() -> void:
 	_trial += 1
 	if _trial >= ROWS.size() * TRIALS_PER_ROW:
 		_phase = 4                       # on to row 4, the rider carry
+		Sentinel.done("finish_trial")
 		return
 	_phase = 1
+	Sentinel.done("finish_trial")
 
 
 # ---------------------------------------------------------------------------
@@ -633,9 +643,12 @@ func _finish_ride() -> void:
 
 	_ride_species += 1
 	if _ride_species >= RIDE_SPECIES.size():
+		Sentinel.done("finish_ride")
 		_report()
+		Sentinel.done("finish_ride")
 		return
 	_phase = 4
+	Sentinel.done("finish_ride")
 
 
 func _report() -> void:
@@ -677,8 +690,7 @@ func _report() -> void:
 		print(line + "empty-field detour: %.2f m" % _open_max_avoid)
 		for ride_line: String in _ride_lines:
 			print("ride  ", ride_line)
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 		return
 	for ride_line: String in _ride_lines:
 		print("ride  ", ride_line)

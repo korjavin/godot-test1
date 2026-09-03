@@ -50,6 +50,14 @@ const RUN_SEED: int = 20260826
 var _failures: Array[String] = []
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	_boot()
 
@@ -125,8 +133,7 @@ func _fail(message: String) -> void:
 
 func _report() -> void:
 	if _failures.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
 		printerr("FAIL: ", failure)
@@ -156,6 +163,7 @@ func _check_ring_is_grounded_and_owed(terrain: Node3D) -> void:
 			_fail("safety-ring chunk %s was not marked bare — update_chunks would skip it as already loaded and its content would never be built" % chunk_pos)
 		if chunk_pos not in terrain.pending_chunks:
 			_fail("safety-ring chunk %s was grounded but never queued — nothing will ever populate it" % chunk_pos)
+	Sentinel.done("ring_is_grounded_and_owed")
 
 
 func _check_second_crossing_keeps_the_debt(terrain: Node3D) -> void:
@@ -169,6 +177,7 @@ func _check_second_crossing_keeps_the_debt(terrain: Node3D) -> void:
 	for chunk_pos: Vector2i in _ring():
 		if chunk_pos in terrain.bare_chunks and chunk_pos not in terrain.pending_chunks:
 			_fail("a second update_chunks dropped still-bare chunk %s from the queue — it would stay empty for the rest of the run" % chunk_pos)
+	Sentinel.done("second_crossing_keeps_the_debt")
 
 
 func _check_build_ring_now_pays_it_all_at_once(terrain: Node3D) -> void:
@@ -200,6 +209,7 @@ func _check_build_ring_now_pays_it_all_at_once(terrain: Node3D) -> void:
 		if after.size() != (before[chunk_pos] as Array).size():
 			_fail("draining the queue after build_ring_now rebuilt chunk %s (%d nodes -> %d) — create_chunk is not idempotent and doubled its contents" % [
 				chunk_pos, (before[chunk_pos] as Array).size(), after.size()])
+	Sentinel.done("build_ring_now_pays_it_all_at_once")
 
 
 func _check_drain_paid_the_debt(terrain: Node3D) -> void:
@@ -255,6 +265,7 @@ func _check_drain_paid_the_debt(terrain: Node3D) -> void:
 				grounds += 1
 		if grounds != 1:
 			_fail("chunk %s has %d ground bodies, expected exactly 1 — _ensure_chunk_ground is not idempotent and is leaking the first one" % [chunk_pos, grounds])
+	Sentinel.done("drain_paid_the_debt")
 
 
 func _check_two_frame_build_matches_one(built_over_two_frames: Node3D) -> void:
@@ -290,6 +301,7 @@ func _check_two_frame_build_matches_one(built_over_two_frames: Node3D) -> void:
 				chunk_pos, sig_a.size(), sig_b.size()])
 			break
 	reference.free()
+	Sentinel.done("two_frame_build_matches_one")
 
 
 # ============================================================================

@@ -31,6 +31,14 @@ var _player: CharacterBody3D = null
 var _failures: Array[String] = []
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	_root = Node3D.new()
 	root.add_child(_root)
@@ -62,8 +70,7 @@ func _run_checks() -> void:
 
 	if _failures.is_empty():
 		print("crowd_selfcheck: all checks passed cleanly")
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 	else:
 		for f: String in _failures:
 			printerr("FAIL: ", f)
@@ -80,6 +87,7 @@ func _check_groups_and_collision() -> void:
 			_failures.append("CrowdManager illegally joined gameplay group '%s'" % g)
 
 	_check_node_isolation_recursive(_manager)
+	Sentinel.done("groups_and_collision")
 
 
 func _check_node_isolation_recursive(node: Node) -> void:
@@ -94,6 +102,7 @@ func _check_node_isolation_recursive(node: Node) -> void:
 
 	for child in node.get_children():
 		_check_node_isolation_recursive(child)
+	Sentinel.done("node_isolation_recursive")
 
 
 func _check_multimesh_resources() -> void:
@@ -101,6 +110,7 @@ func _check_multimesh_resources() -> void:
 	var mm_nodes: Array = _manager.get("_multimesh_nodes")
 	if mm_nodes.size() != 4:
 		_failures.append("Expected exactly 4 MultiMeshInstance3D nodes, found %d" % mm_nodes.size())
+		Sentinel.done("multimesh_resources")
 		return
 
 	var shared_mat: Material = mm_nodes[0].material_override
@@ -128,6 +138,7 @@ func _check_multimesh_resources() -> void:
 		var aabb: AABB = mm.mesh.get_aabb()
 		if absf(aabb.position.y) > 0.001:
 			_failures.append("MultiMesh %s mesh AABB position.y is %f (must be 0.0 for feet at y=0)" % [node.name, aabb.position.y])
+	Sentinel.done("multimesh_resources")
 
 
 func _check_dormancy_outside_budapest() -> void:
@@ -142,6 +153,7 @@ func _check_dormancy_outside_budapest() -> void:
 
 	if total_visible != 0:
 		_failures.append("Crowd rendered %d visible instances while player is outside Budapest at x=0" % total_visible)
+	Sentinel.done("dormancy_outside_budapest")
 
 
 func _check_simulation_and_boundaries() -> void:
@@ -166,6 +178,7 @@ func _check_simulation_and_boundaries() -> void:
 		_manager._process(DT)
 
 	_verify_active_citizens("Heroes' Square (x=3520)")
+	Sentinel.done("simulation_and_boundaries")
 
 
 func _verify_active_citizens(context: String) -> void:

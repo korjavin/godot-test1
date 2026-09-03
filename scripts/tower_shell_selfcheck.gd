@@ -162,6 +162,14 @@ const ROAD_SEEDS: Array[int] = [56, 20260828, 4242]
 var _failures: Array[String] = []
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	_boot()
 
@@ -223,6 +231,7 @@ func _check_box_budget() -> void:
 	var boxes := TowerShell.boxes()
 	if boxes.is_empty():
 		_fail("TowerShell.boxes() is empty — there is no tower")
+		Sentinel.done("box_budget")
 		return
 	if boxes.size() > TowerShell.BOX_BUDGET:
 		_fail("the tower shell is %d boxes, over its declared BOX_BUDGET of %d" % [
@@ -243,6 +252,7 @@ func _check_box_budget() -> void:
 		if pos.y - size.y * 0.5 < -0.001:
 			_fail("box %s reaches y=%.3f, below the flat world's ground plane" % [
 				label, pos.y - size.y * 0.5])
+	Sentinel.done("box_budget")
 
 
 func _check_footprint_fits_the_exclusion_disc() -> void:
@@ -273,6 +283,7 @@ func _check_footprint_fits_the_exclusion_disc() -> void:
 	if declared > limit:
 		_fail("TowerShell.footprint_radius() is %.2f m, past TOWER_RADIUS %.1f m" % [declared, limit])
 	terrain.free()
+	Sentinel.done("footprint_fits_the_exclusion_disc")
 
 
 func _check_the_roof_is_sealed() -> void:
@@ -320,6 +331,7 @@ func _check_the_roof_is_sealed() -> void:
 		print("roof sealed: every %.0f m grid point inside +/-%.1f m stops at the slab" % [
 			ROOF_PROBE_STEP, inner])
 	shell.free()
+	Sentinel.done("the_roof_is_sealed")
 
 
 func _check_roof_is_above_windmans_reach() -> void:
@@ -348,6 +360,7 @@ func _check_roof_is_above_windmans_reach() -> void:
 	var peak := _air_rush_peak()
 	if peak <= 0.0:
 		_fail("could not integrate Air Rush out of player_controller/Progression — check 12 would pass vacuously")
+		Sentinel.done("roof_is_above_windmans_reach")
 		return
 	var terrain := _make_terrain(SEED_A)
 	var summit: float = terrain.MOUNTAIN_HEIGHT_MAX
@@ -358,6 +371,7 @@ func _check_roof_is_above_windmans_reach() -> void:
 	var roof := _topmost_solid(boxes)
 	if roof.is_empty():
 		_fail("the shell has no collide:true box on top — there is no roof")
+		Sentinel.done("roof_is_above_windmans_reach")
 		return
 	var roof_pos: Vector3 = roof["pos"]
 	var roof_half: Vector3 = roof["size"] * 0.5
@@ -387,6 +401,7 @@ func _check_roof_is_above_windmans_reach() -> void:
 	# the game can have, smallest capsule included.
 	for body: Dictionary in _bodies():
 		_sweep_for_ledges(boxes, roof, inner, body)
+	Sentinel.done("roof_is_above_windmans_reach")
 
 
 func _bodies() -> Array[Dictionary]:
@@ -586,6 +601,7 @@ func _check_node_shape() -> void:
 	if not shell.is_in_group("tower"):
 		_fail("the tower shell did not join the \"tower\" group — nothing can find it")
 	shell.free()
+	Sentinel.done("node_shape")
 
 
 func _check_mesh_fills_its_box(instance: MeshInstance3D, box: Dictionary) -> void:
@@ -604,12 +620,14 @@ func _check_mesh_fills_its_box(instance: MeshInstance3D, box: Dictionary) -> voi
 	var mesh: Mesh = instance.mesh
 	if mesh == null:
 		_fail("mesh %s was not built at all" % box["name"])
+		Sentinel.done("mesh_fills_its_box")
 		return
 	var kind: String = box.get("mesh", "box")
 	if kind == "box":
 		var as_box := mesh as BoxMesh
 		if as_box == null or as_box.size != box["size"]:
 			_fail("mesh %s is not a BoxMesh of size %s" % [box["name"], box["size"]])
+		Sentinel.done("mesh_fills_its_box")
 		return
 	var aabb := mesh.get_aabb()
 	var size: Vector3 = box["size"]
@@ -619,6 +637,7 @@ func _check_mesh_fills_its_box(instance: MeshInstance3D, box: Dictionary) -> voi
 	if not (aabb.position + aabb.size * 0.5).is_equal_approx(Vector3.ZERO):
 		_fail("mesh %s is not centred on its own origin — it sits at %s" % [
 			box["name"], aabb.position + aabb.size * 0.5])
+	Sentinel.done("mesh_fills_its_box")
 
 
 func _check_materials_are_shared_and_already_toon() -> void:
@@ -670,6 +689,7 @@ func _check_materials_are_shared_and_already_toon() -> void:
 			_fail("ToonShading replaced the material of %s" % mesh.name)
 	a.free()
 	b.free()
+	Sentinel.done("materials_are_shared_and_already_toon")
 
 
 func _check_doorway_is_a_hole() -> void:
@@ -728,6 +748,7 @@ func _check_doorway_is_a_hole() -> void:
 	if not is_equal_approx(float(trigger["pos"].x), float(rings[0]["mid"])):
 		_fail("the door trigger is at x = %.2f, not on the outer wall plane (%.2f)" % [
 			trigger["pos"].x, rings[0]["mid"]])
+	Sentinel.done("doorway_is_a_hole")
 
 
 func _check_door_fires_for_the_player_only() -> void:
@@ -778,6 +799,7 @@ func _check_door_fires_for_the_player_only() -> void:
 	hero.queue_free()
 	shell.queue_free()
 	await process_frame
+	Sentinel.done("door_fires_for_the_player_only")
 
 
 func _check_shell_is_lazy_and_manager_parented() -> void:
@@ -856,6 +878,7 @@ func _check_shell_is_lazy_and_manager_parented() -> void:
 	probe.free()
 	terrain.free()
 	await process_frame
+	Sentinel.done("shell_is_lazy_and_manager_parented")
 
 
 func _check_a_teammate_at_the_tower_builds_it_for_the_master() -> void:
@@ -899,6 +922,7 @@ func _check_a_teammate_at_the_tower_builds_it_for_the_master() -> void:
 	probe.free()
 	terrain.free()
 	await process_frame
+	Sentinel.done("a_teammate_at_the_tower_builds_it_for_the_master")
 
 
 func _check_new_run_keeps_the_site() -> void:
@@ -928,6 +952,7 @@ func _check_new_run_keeps_the_site() -> void:
 		_fail("could not build a shell to test new_run() against")
 		probe.free()
 		terrain.free()
+		Sentinel.done("new_run_keeps_the_site")
 		return
 
 	var old_site: Vector3 = terrain.tower_site()
@@ -972,6 +997,7 @@ func _check_new_run_keeps_the_site() -> void:
 	probe.free()
 	terrain.free()
 	await process_frame
+	Sentinel.done("new_run_keeps_the_site")
 
 
 func _check_join_streams_the_tower_at_the_anchor() -> void:
@@ -1013,6 +1039,7 @@ func _check_join_streams_the_tower_at_the_anchor() -> void:
 	probe.free()
 	terrain.free()
 	await process_frame
+	Sentinel.done("join_streams_the_tower_at_the_anchor")
 
 
 func _check_a_detached_terrain_still_sites_the_tower() -> void:
@@ -1076,6 +1103,7 @@ func _check_a_detached_terrain_still_sites_the_tower() -> void:
 		_fail("under a moved parent the shell's local position is %s, not the site %s — it was placed in world space while every chunk is placed in the terrain's own frame" % [
 			shell.position, terrain.tower_site()])
 	moved.free()
+	Sentinel.done("a_detached_terrain_still_sites_the_tower")
 
 
 func _check_no_road_coin_is_buried_in_the_walls() -> void:
@@ -1133,6 +1161,7 @@ func _check_no_road_coin_is_buried_in_the_walls() -> void:
 		print("seed %d: %d coins near the tower, %d road candidates rejected by the walls" % [
 			seed_value, coins, rejected])
 		terrain.free()
+	Sentinel.done("no_road_coin_is_buried_in_the_walls")
 
 
 func _road_coins_in_the_stone(terrain: Node3D, site: Vector3) -> int:
@@ -1280,6 +1309,7 @@ func _check_impostor() -> void:
 	if _has_collision(impostor):
 		_fail("the horizon impostor carries a collision body — it is a picture, not a building")
 	impostor.free()
+	Sentinel.done("impostor")
 
 
 func _check_impostor_hidden_in_budapest() -> void:
@@ -1329,6 +1359,7 @@ func _check_impostor_hidden_in_budapest() -> void:
 	print("impostor Budapest gate: hidden at %s, visible at %s" % [inside, outside])
 	probe.free()
 	terrain.free()
+	Sentinel.done("impostor_hidden_in_budapest")
 
 
 func _check_minimap_marks_the_tower() -> void:
@@ -1404,6 +1435,7 @@ func _check_minimap_marks_the_tower() -> void:
 	probe.free()
 	stub.free()
 	map.free()
+	Sentinel.done("minimap_marks_the_tower")
 
 
 # ============================================================================
@@ -1521,6 +1553,7 @@ func _check_the_roof_keeps_the_rain_out() -> void:
 
 	weather.free()
 	shell.free()
+	Sentinel.done("the_roof_keeps_the_rain_out")
 
 
 func _check_clouds_stay_clear_of_the_hq() -> void:
@@ -1617,6 +1650,7 @@ func _check_clouds_stay_clear_of_the_hq() -> void:
 	player.free()
 	weather.free()
 	terrain.free()
+	Sentinel.done("clouds_stay_clear_of_the_hq")
 
 
 func _clouds_clear_of(weather: Node, volume: AABB, when: String) -> bool:
@@ -1758,8 +1792,7 @@ func _fail(message: String) -> void:
 
 func _report() -> void:
 	if _failures.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
 		printerr("FAIL: ", failure)

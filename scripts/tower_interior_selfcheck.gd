@@ -209,6 +209,14 @@ class ProbePlayer extends CharacterBody3D:
 		indoor = is_indoor
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	_boot()
 
@@ -320,6 +328,7 @@ func _check_plan_fits_the_shell() -> void:
 			floor_index, structure, TowerInterior.PLAN_BOX_BUDGET,
 			dress, TowerInterior.PLAN_DRESS_BUDGET,
 			TowerInterior.FLOOR_Y[floor_index], TowerInterior.plan_clear_height(floor_index)])
+	Sentinel.done("plan_fits_the_shell")
 
 
 func _fit_boxes(boxes: Array[Dictionary], bound: float, floors: Array[int],
@@ -424,6 +433,7 @@ func _check_no_jump_gated_climb() -> void:
 	print("jump apex %.4f m; upper storey at %.2f m" % [apex, TowerInterior.SLAB_Y])
 	if apex <= 0.0:
 		_fail("could not read the jump apex out of player_controller — check 2 would pass vacuously")
+		Sentinel.done("no_jump_gated_climb")
 		return
 
 	# (b) The shell's wall is not jumpable from the storey above the ground. The
@@ -527,6 +537,7 @@ func _check_no_jump_gated_climb() -> void:
 		if clear <= apex:
 			_fail("storey %d has %.2f m of clear air on a %.4f m jump" % [
 				floor_index, clear, apex])
+	Sentinel.done("no_jump_gated_climb")
 
 
 func _under_slab(above_floor: int, pos: Vector3, half: Vector3) -> bool:
@@ -615,6 +626,7 @@ func _check_the_demand_is_actually_reachable() -> void:
 			max_ranks = int(node.get("max_ranks", 0))
 	if per_rank <= 0.0:
 		_fail("primm has no primm_blink skill node — the demand gate is calibrated against nothing")
+		Sentinel.done("the_demand_is_actually_reachable")
 		return
 	var base: float = float(load(PLAYER_SCRIPT).get_script_constant_map().get("PRIMM_BLINK_DISTANCE", 0.0))
 	var one_rank := base * (1.0 + per_rank)
@@ -636,6 +648,7 @@ func _check_the_demand_is_actually_reachable() -> void:
 			TowerInterior.demand_ratio(one_rank)])
 	if TowerInterior.demand_ratio(base) >= 1.0:
 		_fail("the ladder reads full for an unskilled Primm")
+	Sentinel.done("the_demand_is_actually_reachable")
 
 
 func _check_ramp_is_the_stair() -> void:
@@ -755,6 +768,7 @@ func _check_ramp_is_the_stair() -> void:
 				row["label"], slope, TowerInterior.PLAN_RAMP_MAX_SLOPE])
 		print("%s: %.1f degrees (slope %.4f), foot (%.2f, %.2f) head (%.2f, %.2f)" % [
 			row["label"], degrees, slope, foot.x, foot.y, head.x, head.y])
+	Sentinel.done("ramp_is_the_stair")
 
 
 func _stair_lane(plan: Dictionary) -> Dictionary:
@@ -825,6 +839,7 @@ func _check_headroom_clears_the_camera() -> void:
 		_fail("the player's camera rig is not at CameraPivot/CameraArm/Camera3D — check 4 would pass vacuously")
 		player.queue_free()
 		await process_frame
+		Sentinel.done("headroom_clears_the_camera")
 		return
 
 	var camera_y: float = camera.global_position.y - player.global_position.y
@@ -909,6 +924,7 @@ func _check_headroom_clears_the_camera() -> void:
 	# later check two candidates for "the local player" and a coin-flip for which.
 	player.queue_free()
 	await process_frame
+	Sentinel.done("headroom_clears_the_camera")
 
 
 func _ease_arm() -> void:
@@ -1135,6 +1151,7 @@ func _check_node_shape() -> void:
 		_fail("the interior has no per-storey containers — visibility gating has nothing to toggle")
 	interior.queue_free()
 	await process_frame
+	Sentinel.done("node_shape")
 
 
 func _check_materials_are_shared_and_already_toon() -> void:
@@ -1212,6 +1229,7 @@ func _check_materials_are_shared_and_already_toon() -> void:
 	a.queue_free()
 	b.queue_free()
 	await process_frame
+	Sentinel.done("materials_are_shared_and_already_toon")
 
 
 ## The luminance every surface the player can see inside this building must clear.
@@ -1349,6 +1367,7 @@ func _check_the_interior_is_lit_and_off_white() -> void:
 		INTERIOR_MIN_LUMINANCE, darkest, darkest_where])
 	interior.queue_free()
 	await process_frame
+	Sentinel.done("the_interior_is_lit_and_off_white")
 
 
 func _color_key(c: Color) -> String:
@@ -1413,6 +1432,7 @@ func _check_gate_lifecycle() -> void:
 	if interior == null:
 		_fail("the tower has no TowerInterior child — the interior is not being assembled")
 		await _clear(null, shell)
+		Sentinel.done("gate_lifecycle")
 		return
 
 	# (a) the starting state
@@ -1441,6 +1461,7 @@ func _check_gate_lifecycle() -> void:
 	if mass == null:
 		_fail("the secure door built no mass — check 7 has nothing to open")
 		await _clear(null, shell)
+		Sentinel.done("gate_lifecycle")
 		return
 	var mass_rest: float = mass.position.y
 	var shutter_rest: float = shutter.position.y
@@ -1470,6 +1491,7 @@ func _check_gate_lifecycle() -> void:
 	if pad_area == null:
 		_fail("there is no IdentityTrigger Area3D on the upper storey")
 		await _clear(hero, shell)
+		Sentinel.done("gate_lifecycle")
 		return
 	hero.global_position = pad_area.global_position
 	await _settle_physics()
@@ -1498,6 +1520,7 @@ func _check_gate_lifecycle() -> void:
 	if demand_area == null:
 		_fail("there is no DemandTrigger Area3D")
 		await _clear(hero, shell)
+		Sentinel.done("gate_lifecycle")
 		return
 	hero.hero = "primm"
 	hero.reach = TowerInterior.DEMAND_TARGET * 0.6
@@ -1549,6 +1572,7 @@ func _check_gate_lifecycle() -> void:
 	if check_area == null:
 		_fail("there is no CheckpointTrigger Area3D")
 		await _clear(hero, shell)
+		Sentinel.done("gate_lifecycle")
 		return
 	hero.global_position = check_area.global_position
 	await _settle_physics()
@@ -1676,6 +1700,7 @@ func _check_gate_lifecycle() -> void:
 	hero.queue_free()
 	shell.queue_free()
 	await process_frame
+	Sentinel.done("gate_lifecycle")
 
 
 func _press_pad(hero: Node3D, interior: TowerInterior, gate_id: String, digit: int) -> void:
@@ -1785,6 +1810,7 @@ func _check_opened_state_is_reapplied() -> void:
 
 	shell.queue_free()
 	await process_frame
+	Sentinel.done("opened_state_is_reapplied")
 
 
 # ============================================================================
@@ -1984,6 +2010,7 @@ func _check_visibility_gating() -> void:
 
 	hero.queue_free()
 	await process_frame
+	Sentinel.done("visibility_gating")
 
 
 # ============================================================================
@@ -2233,6 +2260,7 @@ func _check_earned_state_survives_a_relaunch() -> void:
 		_fail("a half-junk tower record did not salvage to exactly its one real id: %s" % [
 			salvaged])
 	_fresh_store()
+	Sentinel.done("earned_state_survives_a_relaunch")
 
 
 # ============================================================================
@@ -2257,6 +2285,7 @@ func _check_the_block_has_no_way_round_it() -> void:
 	if floor_index < 0:
 		_fail("no storey draws a '%s' — the cell block is not in the building at all"
 			% TowerInterior.BLOCK_ROOM)
+		Sentinel.done("the_block_has_no_way_round_it")
 		return
 	var plan := TowerPlans.storey(floor_index)
 	var surface: float = TowerInterior.FLOOR_Y[floor_index]
@@ -2275,6 +2304,7 @@ func _check_the_block_has_no_way_round_it() -> void:
 	if first_run.size == Vector2i.ZERO:
 		_fail("no '%s' run on storey %d for the first spine door" % [
 			TowerPlans.GATE_CHAR, floor_index])
+		Sentinel.done("the_block_has_no_way_round_it")
 		return
 	var corridor := TowerInterior.plan_room_rect(floor_index, "service_stair")
 	var gallery := TowerInterior.plan_room_rect(floor_index, TowerInterior.BLOCK_ROOM)
@@ -2373,6 +2403,7 @@ func _check_the_block_has_no_way_round_it() -> void:
 	var press: Dictionary = by_name.get("CrawlPress", {})
 	if press.is_empty():
 		_fail("the maintenance crawl has no press — the challenge gate is decorative")
+		Sentinel.done("the_block_has_no_way_round_it")
 		return
 	# WHERE it is, before HOW it moves. Check 5 only asserts the mesh agrees with
 	# its own table row, so a row nudged sideways builds a press in the middle of a
@@ -2381,6 +2412,7 @@ func _check_the_block_has_no_way_round_it() -> void:
 	if duct.size == Vector2i.ZERO:
 		_fail("the maintenance crawl has no '%s' run on storey %d" % [
 			TowerPlans.GATE_CHAR, floor_index])
+		Sentinel.done("the_block_has_no_way_round_it")
 		return
 	var duct_x0 := _grid_edge(duct.position.x)
 	var duct_x1 := _grid_edge(duct.end.x)
@@ -2436,6 +2468,7 @@ func _check_the_block_has_no_way_round_it() -> void:
 	print("cell block: storey %d, %d spine doors, %d recesses up to %.2f m wide; press %.2f .. %.2f m over a %.2f m floor" % [
 		floor_index, doors, TowerGraph.HEROES.size(), widest_cell,
 		TowerInterior.PRESS_BOTTOM, TowerInterior.PRESS_TOP, surface])
+	Sentinel.done("the_block_has_no_way_round_it")
 
 
 func _grid_edge(cell: int) -> float:
@@ -2510,6 +2543,7 @@ func _check_the_scar_plan() -> void:
 			scar_boxes.append(box)
 	if scar_boxes.is_empty():
 		_fail("the interior builds no scar box — the authored scar is data only")
+		Sentinel.done("the_scar_plan")
 		return
 	for box: Dictionary in scar_boxes:
 		var pos: Vector3 = box["pos"]
@@ -2531,6 +2565,7 @@ func _check_the_scar_plan() -> void:
 
 	print("scar plan: %d scar box(es), each a doorway the unscarred plan leaves open"
 		% scar_boxes.size())
+	Sentinel.done("the_scar_plan")
 
 
 func _spring_length() -> float:
@@ -2571,6 +2606,7 @@ func _check_the_scar_is_drawn_and_permanent() -> void:
 	if interior == null:
 		_fail("scar: the tower has no TowerInterior child")
 		await _clear(null, shell)
+		Sentinel.done("the_scar_is_drawn_and_permanent")
 		return
 	var body := interior.get_node_or_null("InteriorCollision") as StaticBody3D
 	var rubble := interior.find_child(TowerInterior.SCAR_BOX, true, false) as MeshInstance3D
@@ -2579,6 +2615,7 @@ func _check_the_scar_is_drawn_and_permanent() -> void:
 	if rubble == null or rubble_shape == null:
 		_fail("scar: the interior builds no '%s' mesh + shape" % TowerInterior.SCAR_BOX)
 		await _clear(null, shell)
+		Sentinel.done("the_scar_is_drawn_and_permanent")
 		return
 	if rubble.visible or not rubble_shape.disabled:
 		_fail("scar: an unscarred tower already shows the collapse (visible %s, solid %s)"
@@ -2610,6 +2647,7 @@ func _check_the_scar_is_drawn_and_permanent() -> void:
 	_fresh_store()
 	print("scar: '%s' drawn, solid, and still there after a relaunch"
 		% TowerGraph.SCAR_CUSTODY)
+	Sentinel.done("the_scar_is_drawn_and_permanent")
 
 
 # ============================================================================
@@ -2643,6 +2681,7 @@ func _check_spines_and_liberation() -> void:
 	if interior == null:
 		_fail("the tower has no TowerInterior child")
 		await _clear(null, shell)
+		Sentinel.done("spines_and_liberation")
 		return
 
 	# (a) the starting state
@@ -2683,6 +2722,7 @@ func _check_spines_and_liberation() -> void:
 	if pad_area == null:
 		_fail("there is no SpineTrigger1 Area3D — the first spine door has no pad")
 		await _clear(hero_body, shell)
+		Sentinel.done("spines_and_liberation")
 		return
 	var mass := interior.find_child(String(door["mass"]), true, false) as MeshInstance3D
 	var mass_rest: float = mass.position.y
@@ -2726,6 +2766,7 @@ func _check_spines_and_liberation() -> void:
 	if cell_area == null:
 		_fail("there is no cell volume for %s — his cell cannot be entered" % TowerInterior.AUTHORED_CAPTIVE)
 		await _clear(hero_body, shell)
+		Sentinel.done("spines_and_liberation")
 		return
 	hero_body.hero = "windman" if TowerInterior.AUTHORED_CAPTIVE != "windman" else "teibi"
 	hero_body.global_position = cell_area.global_position
@@ -2787,6 +2828,7 @@ func _check_spines_and_liberation() -> void:
 	if inside == null:
 		_fail("the rebuilt tower has no interior")
 		await _clear(null, again)
+		Sentinel.done("spines_and_liberation")
 		return
 	if not inside.captives().is_empty():
 		_fail("a tower rebuilt after the first rescue still holds %s" % [inside.captives()])
@@ -2797,6 +2839,7 @@ func _check_spines_and_liberation() -> void:
 		_fail("the spine door opened in this run came back shut on a rebuilt tower")
 	again.queue_free()
 	await process_frame
+	Sentinel.done("spines_and_liberation")
 
 
 # ============================================================================
@@ -2855,6 +2898,7 @@ func _check_guards_stand_their_posts() -> void:
 	if interior == null:
 		_fail("no TowerInterior under the shell — check 12 has nothing to measure")
 		await _clear(null, shell)
+		Sentinel.done("guards_stand_their_posts")
 		return
 
 	var live: Array = interior.guard_posts()
@@ -2919,6 +2963,7 @@ func _check_guards_stand_their_posts() -> void:
 	if guards == null:
 		_fail("the interior has no Guards container — nothing was ever stood up")
 		await _clear(null, shell)
+		Sentinel.done("guards_stand_their_posts")
 		return
 
 	for i in TowerInterior.guard_posts_table().size():
@@ -2984,6 +3029,7 @@ func _check_guards_stand_their_posts() -> void:
 	print("tower guards: %d on post, leashed to their own storeys; per storey %s"
 			% [live.size(), str(per_storey)])
 	await _clear(null, shell)
+	Sentinel.done("guards_stand_their_posts")
 
 
 func _solid_near(world_pos: Vector3, yaw: float) -> String:
@@ -3114,6 +3160,7 @@ func _check_guards_reset_on_re_entry() -> void:
 	if interior == null:
 		_fail("no TowerInterior under the shell — check 13 has nothing to measure")
 		await _clear(null, shell)
+		Sentinel.done("guards_reset_on_re_entry")
 		return
 
 	shell.call("mark_opened", TowerInterior.GATE_CHECKPOINT)
@@ -3130,6 +3177,7 @@ func _check_guards_reset_on_re_entry() -> void:
 	if before_ids.is_empty():
 		_fail("no guards to reset — check 13 would pass against an empty building")
 		await _clear(null, shell)
+		Sentinel.done("guards_reset_on_re_entry")
 		return
 
 	# THE REAL TRIGGER. `_on_door_body_entered` filters to group "player", so this
@@ -3142,6 +3190,7 @@ func _check_guards_reset_on_re_entry() -> void:
 		_fail("the doorway crossing did not rebuild the Guards container — either"
 				+ " nothing is connected to player_entered, or the reset reuses it")
 		await _clear(null, shell)
+		Sentinel.done("guards_reset_on_re_entry")
 		return
 
 	var after_ids: Array = []
@@ -3177,6 +3226,7 @@ func _check_guards_reset_on_re_entry() -> void:
 	print("tower guards: re-entry rebuilt %d fresh bodies, opened set %s untouched"
 		% [after_ids.size(), str(opened_after)])
 	await _clear(null, shell)
+	Sentinel.done("guards_reset_on_re_entry")
 
 
 # ============================================================================
@@ -3227,6 +3277,7 @@ func _check_the_leash_holds_under_a_chase() -> void:
 	if guards == null:
 		_fail("no guards in the building — check 14 has nothing to chase with")
 		await _clear(null, shell)
+		Sentinel.done("the_leash_holds_under_a_chase")
 		return
 
 	# The UPPER guard, because it is the one with somewhere to fall to. Chosen by
@@ -3379,6 +3430,7 @@ func _check_the_leash_holds_under_a_chase() -> void:
 	print("tower guards: the leash held a %.0f s chase, worst excursion %.4f m,"
 		% [LEASH_PROBE_SECONDS, worst] + " and re-caught a shove")
 	await _clear(hero, shell)
+	Sentinel.done("the_leash_holds_under_a_chase")
 
 
 # ============================================================================
@@ -3438,6 +3490,7 @@ func _check_the_lure_diverts_a_guard() -> void:
 	if interior == null:
 		_fail("no interior in the tower — check 21 has nothing to press")
 		await _clear(null, shell)
+		Sentinel.done("the_lure_diverts_a_guard")
 		return
 
 	# WHICH STOREY IS A QUESTION FOR THE PLANS, never a number written here: the
@@ -3464,6 +3517,7 @@ func _check_the_lure_diverts_a_guard() -> void:
 		_fail("no planned storey carries both a guard post and a lure plate —"
 				+ " check 21 would pass vacuously")
 		await _clear(null, shell)
+		Sentinel.done("the_lure_diverts_a_guard")
 		return
 
 	# The probe player, parked on the SAME storey but far outside the guard's 9 m
@@ -3480,6 +3534,7 @@ func _check_the_lure_diverts_a_guard() -> void:
 	if landing.size == Vector2i.ZERO:
 		_fail("storey %d draws no landing to park the probe on" % floor_index)
 		await _clear(null, shell)
+		Sentinel.done("the_lure_diverts_a_guard")
 		return
 	var park := Vector3(TowerInterior._grid_x(landing.position.x + landing.size.x * 0.5),
 			TowerInterior.FLOOR_Y[floor_index] + 0.2,
@@ -3504,6 +3559,7 @@ func _check_the_lure_diverts_a_guard() -> void:
 	if guard == null:
 		_fail("storey %d draws a `G` but the building stood no guard on it" % floor_index)
 		await _clear(hero, shell)
+		Sentinel.done("the_lure_diverts_a_guard")
 		return
 	var authored_centre: Vector3 = guard.get("confine_center")
 	var authored_half: Vector2 = guard.get("confine_half")
@@ -3511,6 +3567,7 @@ func _check_the_lure_diverts_a_guard() -> void:
 	if not pad.is_finite():
 		_fail("pad %d of storey %d has no world position" % [pad_index, floor_index])
 		await _clear(hero, shell)
+		Sentinel.done("the_lure_diverts_a_guard")
 		return
 
 	# ---- (e) THE SLEEP, FIRST: press the plate on a body that is asleep --------
@@ -3521,6 +3578,7 @@ func _check_the_lure_diverts_a_guard() -> void:
 	if not interior.lure_guard(floor_index, pad_index):
 		_fail("the plate on storey %d did not divert the guard" % floor_index)
 		await _clear(hero, shell)
+		Sentinel.done("the_lure_diverts_a_guard")
 		return
 	if not bool(guard.get("lod_active")):
 		_fail("the lure left the guard asleep — a slept body runs no"
@@ -3711,6 +3769,7 @@ func _check_the_lure_diverts_a_guard() -> void:
 		% [floor_index, pad_index, walked, worst, facing_off])
 	await _clear(hero, shell)
 	_check_every_plate_has_a_way_to_it()
+	Sentinel.done("the_lure_diverts_a_guard")
 
 
 func _check_every_plate_has_a_way_to_it() -> void:
@@ -3771,6 +3830,7 @@ func _check_every_plate_has_a_way_to_it() -> void:
 				+ " the plan, and every route above is worth nothing")
 	print("tower lure: %d of %d (post, plate) pairs routed, %d corners in total"
 		% [routed, pairs, corners])
+	Sentinel.done("every_plate_has_a_way_to_it")
 
 
 func _route_leg_blocked(floor_index: int, from: Vector3, to: Vector3) -> String:
@@ -3832,6 +3892,7 @@ func _check_the_block_floor_lure_completes() -> void:
 	var floor_index := TowerInterior.block_floor()
 	if floor_index < 0:
 		_fail("no storey draws the cell block — check 21c has no climax to drive")
+		Sentinel.done("the_block_floor_lure_completes")
 		return
 	var post: Dictionary = TowerInterior._plan_guard_post(floor_index)
 	var cells := TowerInterior.pad_cells(TowerPlans.storey(floor_index))
@@ -3839,6 +3900,7 @@ func _check_the_block_floor_lure_completes() -> void:
 		_fail("the cell block's storey draws %d plates and %s guard post — the floor"
 				% [cells.size(), "no" if post.is_empty() else "a"]
 				+ " the campaign ends on is the one floor whose lure has to work")
+		Sentinel.done("the_block_floor_lure_completes")
 		return
 
 	# The plate this guard reaches soonest, measured on the ROUTE it would walk and
@@ -3862,6 +3924,7 @@ func _check_the_block_floor_lure_completes() -> void:
 	if pad_index < 0:
 		_fail("the plan offers this guard no way to either of the block floor's"
 				+ " plates — check 21b would have said so; this drive cannot run")
+		Sentinel.done("the_block_floor_lure_completes")
 		return
 
 	var shell := await _make_tower()
@@ -3869,6 +3932,7 @@ func _check_the_block_floor_lure_completes() -> void:
 	if interior == null:
 		_fail("no interior in the tower — check 21c has nothing to press")
 		await _clear(null, shell)
+		Sentinel.done("the_block_floor_lure_completes")
 		return
 
 	# A probe player in the tree before `reset_guards()`, because a predator resolves
@@ -3893,6 +3957,7 @@ func _check_the_block_floor_lure_completes() -> void:
 	if guard == null:
 		_fail("storey %d draws a `G` but the building stood no guard on it" % floor_index)
 		await _clear(hero, shell)
+		Sentinel.done("the_block_floor_lure_completes")
 		return
 	var pad: Vector3 = interior.pad_world(floor_index, pad_index)
 	var spec: Dictionary = guard.get("spec")
@@ -3901,11 +3966,13 @@ func _check_the_block_floor_lure_completes() -> void:
 	if pace <= 0.0:
 		_fail("the guard resolved a zero patrol pace — the budget below is infinite")
 		await _clear(hero, shell)
+		Sentinel.done("the_block_floor_lure_completes")
 		return
 	var budget: float = route_len / pace * LURE_SLOW_LANE
 	if not interior.lure_guard(floor_index, pad_index):
 		_fail("the block floor's plate %d diverted nobody" % pad_index)
 		await _clear(hero, shell)
+		Sentinel.done("the_block_floor_lure_completes")
 		return
 
 	# ---- THE WALK, then the HOLD, then off the plate again --------------------
@@ -3924,6 +3991,7 @@ func _check_the_block_floor_lure_completes() -> void:
 				+ " %.1f m route at %.2f m/s — the climax's lure does not complete")
 				% [closest, budget, route_len, pace])
 		await _clear(hero, shell)
+		Sentinel.done("the_block_floor_lure_completes")
 		return
 
 	# THE HOLD IS THE PAYLOAD: 120 degrees of cone pointing at a plate, on the far
@@ -3958,6 +4026,7 @@ func _check_the_block_floor_lure_completes() -> void:
 	print("tower lure: storey %d plate %d — %.1f m of route walked in %.1f s (budget %.0f s at %.2f m/s), held %.3f rad off, walked back off the plate"
 		% [floor_index, pad_index, route_len, reached, budget, pace, facing_off])
 	await _clear(hero, shell)
+	Sentinel.done("the_block_floor_lure_completes")
 
 
 # ============================================================================
@@ -4127,6 +4196,7 @@ func _check_the_offices_are_furnished_and_still_walkable() -> void:
 			_fail("%s's portrait material is rebuilt per call — the texture is being copied" % hero)
 	print("tower interior: %d rooms dressed, %d corridor pieces, %d dressing boxes (%d solid), %d portraits hung" % [
 		dressed_rooms, hall_pieces, pieces, solids, frames.size()])
+	Sentinel.done("the_offices_are_furnished_and_still_walkable")
 
 
 func _check_the_plaques_point_at_the_stairs() -> void:
@@ -4230,6 +4300,7 @@ func _check_the_plaques_point_at_the_stairs() -> void:
 		_fail("not one storey in the building is signposted — the plaques are wired to nothing")
 	print("tower interior: %d wayfinding plaques across %d storeys, all pointing at the stairs" \
 		% [plaques, signed_floors])
+	Sentinel.done("the_plaques_point_at_the_stairs")
 
 
 func _cell_touches(cell: Vector2i, box: Dictionary) -> bool:
@@ -4480,6 +4551,7 @@ func _check_air_sight_shows_through_walls_only() -> void:
 					mesh.name, surface])
 	interior.queue_free()
 	await process_frame
+	Sentinel.done("air_sight_shows_through_walls_only")
 
 
 # ============================================================================
@@ -4516,6 +4588,7 @@ func _check_the_dossiers_are_findable() -> void:
 		_fail("check 20: the interior builds no DossierRack")
 		interior.queue_free()
 		await process_frame
+		Sentinel.done("the_dossiers_are_findable")
 		return
 	if rack.multimesh.instance_count != TowerInterior.DOSSIERS.size():
 		_fail("check 20: the rack holds %d instances for %d authored dossiers" % [
@@ -4694,6 +4767,7 @@ func _check_the_dossiers_are_findable() -> void:
 	hero.queue_free()
 	interior.queue_free()
 	await process_frame
+	Sentinel.done("the_dossiers_are_findable")
 
 
 func _check_the_alcove_does_not_trap_teibi(hero: Node3D) -> void:
@@ -4758,6 +4832,7 @@ func _check_the_alcove_does_not_trap_teibi(hero: Node3D) -> void:
 	if int(hero.get("teibi_size_state")) != 0:
 		_fail("check 20: Teibi crawled out of the alcove and never reverted — the deferral is a trap of its own")
 	print("crawl alcove: the revert waits under the lintel and fires one cell away")
+	Sentinel.done("the_alcove_does_not_trap_teibi")
 
 
 func _check_the_crawl_alcove_fits_only_small_teibi(interior: Node3D) -> void:
@@ -4771,6 +4846,7 @@ func _check_the_crawl_alcove_fits_only_small_teibi(interior: Node3D) -> void:
 	var full := _player_capsule_height()
 	if full <= 0.0:
 		_fail("check 20: could not read the player capsule out of player.tscn")
+		Sentinel.done("the_crawl_alcove_fits_only_small_teibi")
 		return
 	var script: GDScript = load(PLAYER_SCRIPT)
 	var small: float = full * float(script.get("TEIBI_SCALE_SMALL"))
@@ -4824,6 +4900,7 @@ func _check_the_crawl_alcove_fits_only_small_teibi(interior: Node3D) -> void:
 				index, cell, ways])
 	if alcoves != 1:
 		_fail("check 20: %d crawl alcoves are authored, expected exactly the one" % alcoves)
+	Sentinel.done("the_crawl_alcove_fits_only_small_teibi")
 
 
 func _rack_scale(rack: MultiMeshInstance3D, index: int) -> float:
@@ -4948,8 +5025,7 @@ func _fail(message: String) -> void:
 
 func _report() -> void:
 	if _failures.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
 		printerr("FAIL: ", failure)

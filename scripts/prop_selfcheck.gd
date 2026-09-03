@@ -148,6 +148,14 @@ const COLOR_EPSILON: float = 0.004
 var _failures: Array[String] = []
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	_run()
 
@@ -178,8 +186,7 @@ func _run() -> void:
 				% [ROLES.size(), TERRITORIES.size(), STRUCTURE_SEEDS])
 		print("bands:      threshold chain, river-in-plains, interior band widths and the shader parity uniforms OK")
 		print("snow:       mammoth radius bound, 2-collider budget, non-climbable footprints and the chunk seam OK")
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
 		printerr("FAIL: ", failure)
@@ -277,6 +284,7 @@ func _check_builders(terrain_script: GDScript, consts: Dictionary) -> void:
 				% [biome, builder, min_boxes, max_boxes, min_solid, max_solid, worst_reach_ratio * 100.0, worst_step])
 
 	terrain.free()
+	Sentinel.done("builders")
 
 
 func _measured_reach(batch: Array) -> float:
@@ -335,6 +343,7 @@ func _check_ladder(builder: String, size: float, seed_index: int, prop: Dictiona
 	if absf(recorded - reached) > EPSILON:
 		_fail("%s size %.1f seed %d: records top %.3f m but its highest standable surface is %.3f m"
 				% [builder, size, seed_index, recorded, reached])
+	Sentinel.done("ladder")
 	return worst_step
 
 
@@ -415,6 +424,7 @@ func _check_constants(consts: Dictionary) -> void:
 		if max_step >= apex:
 			_fail("PROP_MAX_STEP %.2f m >= the player's jump apex %.3f m — a 'climbable' prop is not"
 					% [max_step, apex])
+	Sentinel.done("constants")
 
 
 # ============================================================================
@@ -483,6 +493,7 @@ func _check_chunk_purity(terrain_script: GDScript, consts: Dictionary) -> void:
 
 	print("  purity     %d chunks regenerated twice, %d boxes compared" % [chunks.size(), props_seen])
 	terrain.free()
+	Sentinel.done("chunk_purity")
 
 
 # ============================================================================
@@ -663,6 +674,7 @@ func _check_structures(terrain_script: GDScript, consts: Dictionary) -> void:
 					% [territory, label, built, STRUCTURE_SEEDS, boxes, platforms_seen, worst_step])
 
 	terrain.free()
+	Sentinel.done("structures")
 
 
 func _color_close(a: Color, b: Color) -> bool:
@@ -784,6 +796,7 @@ func _check_biome_bands(terrain_script: GDScript, consts: Dictionary) -> void:
 	if shader == null:
 		_fail("could not load %s — the shader half of the parity contract cannot be checked" % GROUND_SHADER)
 		terrain.free()
+		Sentinel.done("biome_bands")
 		return
 
 	var declared: Dictionary = {}
@@ -822,6 +835,7 @@ func _check_biome_bands(terrain_script: GDScript, consts: Dictionary) -> void:
 	print("  bands      %d thresholds, %d parity uniforms, %d bands reachable"
 			% [chain.size(), PARITY_UNIFORMS.size(), seen.size()])
 	terrain.free()
+	Sentinel.done("biome_bands")
 
 
 # ============================================================================
@@ -879,6 +893,7 @@ func _check_city_content(terrain_script: GDScript, consts: Dictionary) -> void:
 		_fail("only %d city chunks found in an 81x81 field — the city band is far rarer than the measured 12%% share"
 				% city_chunks.size())
 		terrain.free()
+		Sentinel.done("city_content")
 		return
 
 	var climbable := 0
@@ -936,6 +951,7 @@ func _check_city_content(terrain_script: GDScript, consts: Dictionary) -> void:
 	print("  city       %d chunks, %d boxes (%d collide, %d buildings), %d roofs, tallest %.2f m, reach %.2f / %.1f m"
 			% [city_chunks.size(), boxes, solids, footprints, climbable, worst_top, worst_reach, half_chunk])
 	terrain.free()
+	Sentinel.done("city_content")
 
 
 # ============================================================================
@@ -1037,6 +1053,7 @@ func _check_snow_content(terrain_script: GDScript, consts: Dictionary) -> void:
 		_fail("only %d snow chunks found in an 81x81 field — the snow band is far rarer than the measured 6%% share"
 				% snow_chunks.size())
 		terrain.free()
+		Sentinel.done("snow_content")
 		return
 
 	var boxes := 0
@@ -1083,6 +1100,7 @@ func _check_snow_content(terrain_script: GDScript, consts: Dictionary) -> void:
 	print("  mammoth    %d seeds, %d-%d boxes, 2 colliders each, worst bone %.3f / %.2f m declared"
 			% [MAMMOTH_SEEDS, boxes_min, boxes_max, worst_bone, mammoth_radius])
 	terrain.free()
+	Sentinel.done("snow_content")
 
 
 func _color_on_ramp(c: Color, a: Color, b: Color) -> bool:
@@ -1305,3 +1323,4 @@ func _check_scarcity(terrain_script: GDScript, consts: Dictionary) -> void:
 	print("  scarcity   k at 0/1/2/3999/4000: %.3f / %.3f / %.3f / %.3f / %.3f, far empty near non-empty" % [samples[0], samples[1], samples[2], samples[3], samples[4]])
 
 	terrain.free()
+	Sentinel.done("scarcity")

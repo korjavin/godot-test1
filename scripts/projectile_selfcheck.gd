@@ -108,6 +108,14 @@ const MAX_FRAMES: int = 900
 var _failures: Array[String] = []
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	# `_initialize()` cannot await, so the measuring half runs as its own
 	# coroutine and reports from in there. Reporting HERE would print a verdict
@@ -122,8 +130,7 @@ func _fail(message: String) -> void:
 
 func _report() -> void:
 	if _failures.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 	else:
 		for line: String in _failures:
 			printerr("FAIL: %s" % line)
@@ -310,6 +317,7 @@ func _check_fairness() -> void:
 			_fail("%s: style '%s' has no entry in sound_manager.PROJECTILE_SOUNDS "
 					% [label, str(p["style"])] + "— it would fall back to a "
 					+ "generic cue, and the telegraph is what makes the dodge fair")
+	Sentinel.done("fairness")
 
 
 # ============================================================================
@@ -399,6 +407,7 @@ func _check_straight_flight() -> void:
 	if p == null:
 		_fail("straight: fire() returned null with no shooter and no cap in play")
 		parent.queue_free()
+		Sentinel.done("straight_flight")
 		return
 	if not p.top_level:
 		_fail("straight: the projectile is not top_level — it would inherit the "
@@ -435,6 +444,7 @@ func _check_straight_flight() -> void:
 		_fail("straight: the bolt lived %d physics frames — it should be airborne "
 				% path.size() + "for seconds, not frames")
 		parent.queue_free()
+		Sentinel.done("straight_flight")
 		return
 
 	# Every sample must sit exactly on the fire ray at exactly the declared
@@ -490,6 +500,7 @@ func _check_straight_flight() -> void:
 
 	parent.queue_free()
 	await physics_frame
+	Sentinel.done("straight_flight")
 
 
 # ============================================================================
@@ -515,6 +526,7 @@ func _check_lob_landing() -> void:
 	if p == null:
 		_fail("lob: fire() returned null")
 		parent.queue_free()
+		Sentinel.done("lob_landing")
 		return
 
 	var result: Array = await _fly(p)
@@ -524,6 +536,7 @@ func _check_lob_landing() -> void:
 	if path.size() < 10:
 		_fail("lob: lived only %d physics frames" % path.size())
 		parent.queue_free()
+		Sentinel.done("lob_landing")
 		return
 
 	var landed: Vector3 = path[path.size() - 1]
@@ -563,6 +576,7 @@ func _check_lob_landing() -> void:
 
 	parent.queue_free()
 	await physics_frame
+	Sentinel.done("lob_landing")
 
 
 # ============================================================================
@@ -584,6 +598,7 @@ func _check_dodges() -> void:
 	for style_name in PROJECTILE.STYLES:
 		await _check_dodge(str(style_name), true)
 		await _check_dodge(str(style_name), false)
+	Sentinel.done("dodges")
 
 
 func _muzzle_height_for(style_name: String) -> float:
@@ -642,6 +657,7 @@ func _check_dodge(style_name: String, walking: bool) -> void:
 	var stub: Node3D = _make_hit_stub(Vector3(range_m, 0.0, 0.0), hits)
 	if stub == null:
 		parent.queue_free()
+		Sentinel.done("dodge")
 		return
 	var muzzle: float = _muzzle_height_for(style_name)
 	var from := Vector3(0.0, muzzle if muzzle > 0.0 else 2.5, 0.0)
@@ -651,6 +667,7 @@ func _check_dodge(style_name: String, walking: bool) -> void:
 		_fail("dodge[%s]: fire() returned null" % style_name)
 		stub.queue_free()
 		parent.queue_free()
+		Sentinel.done("dodge")
 		return
 
 	var step: float = PLAYER_SCRIPT.WALK_SPEED * _tick()
@@ -694,6 +711,7 @@ func _check_dodge(style_name: String, walking: bool) -> void:
 		stub.queue_free()
 	parent.queue_free()
 	await physics_frame
+	Sentinel.done("dodge")
 
 
 # ============================================================================
@@ -784,3 +802,4 @@ func _check_cap() -> void:
 	boss_a.queue_free()
 	boss_b.queue_free()
 	await physics_frame
+	Sentinel.done("cap")

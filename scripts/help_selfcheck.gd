@@ -91,6 +91,14 @@ const ACTION_ROWS: Array = [
 var _overlay: Control = null
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	_run()
 
@@ -106,8 +114,7 @@ func _run() -> void:
 	if failure.is_empty():
 		failure = await _check_live()
 	if failure.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 	else:
 		printerr("SELFCHECK FAILED: " + failure)
 		quit(1)
@@ -262,6 +269,7 @@ func _check_table() -> String:
 
 	print("table: %d desktop rows, %d touch rows, %d actions checked against the input map" \
 		% [desktop.size(), touch.size(), ACTION_ROWS.size()])
+	Sentinel.done("table")
 	return ""
 
 
@@ -323,6 +331,7 @@ func _check_translations() -> String:
 				+ "inside a German game, silently") % english.c_escape()
 			break
 	TranslationServer.set_locale(previous)
+	Sentinel.done("translations")
 	return failure
 
 
@@ -375,6 +384,7 @@ func _check_german_widths() -> String:
 	if failure.is_empty():
 		print("german widths: widest unbreakable word %.1f px of %.0f px" \
 			% [widest, HelpOverlay.DESC_WIDTH])
+	Sentinel.done("german_widths")
 	return failure
 
 
@@ -405,6 +415,7 @@ func _check_live() -> String:
 		failure = await _check_pause_is_shared()
 	if failure.is_empty():
 		failure = await _check_no_double_capture()
+	Sentinel.done("live")
 	return failure
 
 
@@ -464,6 +475,7 @@ func _check_open_close() -> String:
 		return "STUCK PAUSE — the help overlay closed but the tree is still paused"
 	if _overlay._body.visible:
 		return "the help overlay closed but its body is still visible"
+	Sentinel.done("open_close")
 	return ""
 
 
@@ -476,6 +488,7 @@ func _check_escape_closes() -> String:
 		return "Esc did not close the help overlay"
 	if paused:
 		return "STUCK PAUSE — Esc closed the help overlay but the tree is still paused"
+	Sentinel.done("escape_closes")
 	return ""
 
 
@@ -518,6 +531,7 @@ func _check_pause_is_shared() -> String:
 	if paused:
 		return "STUCK PAUSE — the last holder released and the tree is still paused"
 	other.free()
+	Sentinel.done("pause_is_shared")
 	return ""
 
 
@@ -546,4 +560,5 @@ func _check_no_double_capture() -> String:
 	if paused:
 		return "STUCK PAUSE — the mouse check left the tree paused"
 	print("pause: taken and released cleanly, foreign pause survives, no phantom re-capture")
+	Sentinel.done("no_double_capture")
 	return ""

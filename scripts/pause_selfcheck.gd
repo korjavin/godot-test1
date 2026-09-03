@@ -66,6 +66,14 @@ var _overlay: Control = null
 var _pause_controller: Node = null
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	# ONE FRAME FIRST. `_initialize()` runs before the main loop, and a node added
 	# to `root` before that answers null to `get_tree()` — so every holder in
@@ -80,8 +88,7 @@ func _initialize() -> void:
 	if failure.is_empty():
 		failure = await _check_mobile_driver_claim()
 	if failure.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 	else:
 		printerr("SELFCHECK FAILED: " + failure)
 		quit(1)
@@ -193,6 +200,7 @@ func _check_hub_lifecycle() -> String:
 	a.free()
 	c.free()
 	print("hub: overlapping claims counted by identity; a dying holder releases itself")
+	Sentinel.done("hub_lifecycle")
 	return ""
 
 
@@ -287,6 +295,7 @@ func _check_master_repro() -> String:
 		return "the help overlay closed but the hub still holds %d claims" % PauseHub.holder_count()
 
 	print("repro: P + ? + P leaves the world frozen behind the help card; closing it resumes")
+	Sentinel.done("master_repro")
 	return ""
 
 
@@ -373,6 +382,7 @@ func _check_no_raw_pause_writes() -> String:
 	if not seen_a_pauser:
 		return "the scan found no PauseHub caller in %d files — it is not reading the pausers" % scanned
 	print("sources: %d scripts scanned, none writes get_tree().paused directly" % scanned)
+	Sentinel.done("no_raw_pause_writes")
 	return ""
 
 
@@ -435,4 +445,5 @@ func _check_mobile_driver_claim() -> String:
 	foreign.free()
 	driver.queue_free()
 	print("mobile: the driver claims over a foreign pause and keeps its double-switch guard")
+	Sentinel.done("mobile_driver_claim")
 	return ""

@@ -165,6 +165,14 @@ const COIN_WALK_CHUNKS: int = 24
 var _failures: Array[String] = []
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	_boot()
 
@@ -210,8 +218,7 @@ func _fail(message: String) -> void:
 
 func _report() -> void:
 	if _failures.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
 		printerr("FAIL: ", failure)
@@ -362,6 +369,7 @@ func _check_plan_purity() -> void:
 	var text := FileAccess.get_file_as_string(PLAN_PATH)
 	if text.is_empty():
 		_fail("could not read %s — check 1 measured nothing" % PLAN_PATH)
+		Sentinel.done("plan_purity")
 		return
 
 	var hits := _scan_banned(text)
@@ -384,6 +392,7 @@ func _check_plan_purity() -> void:
 
 	print("plan purity: %d lines scanned for %s, %d hits (control: %d)" % [
 			text.split("\n").size(), ", ".join(BANNED_TOKENS), hits.size(), control.size()])
+	Sentinel.done("plan_purity")
 
 
 func _scan_banned(text: String) -> Array[String]:
@@ -486,6 +495,7 @@ func _check_plan_well_formed() -> void:
 	print("plan: %d slots (%d wave-C reservations), %d on a plateau lid, %d "
 			% [slots.size(), reserved, on_plateau, in_band]
 			+ "inside the Danube band and all of them on a dry rect")
+	Sentinel.done("plan_well_formed")
 
 
 # ============================================================================
@@ -539,6 +549,7 @@ func _check_regeneration(terrain_script: GDScript) -> void:
 			% [probes.size(), boxes, RUN_SEED, SECOND_SEED])
 	a.free()
 	b.free()
+	Sentinel.done("regeneration")
 
 
 func _dense_pest_chunk_probe() -> Vector3:
@@ -773,6 +784,7 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 			+ "%d with stone — the rect is chunk-aligned today" % edge_with_stone)
 
 	_check_web_residency(terrain, boxes_at, shapes_at)
+	Sentinel.done("budgets")
 
 
 func _check_web_residency(terrain: Node3D, boxes_at: Dictionary, shapes_at: Dictionary) -> void:
@@ -848,6 +860,7 @@ func _check_web_residency(terrain: Node3D, boxes_at: Dictionary, shapes_at: Dict
 				boxes2 += int(boxes_at.get(at2, 0))
 				shapes2 += int(shapes_at.get(at2, 0))
 		print("  web window %s 7×7 at %s holds %d boxes and %d shapes (info, densest is %d at %s)" % [id, centre2, boxes2, shapes2, worst_boxes, worst_at])
+	Sentinel.done("web_residency")
 
 
 # ============================================================================
@@ -1021,6 +1034,7 @@ func _check_slicing(terrain: Node3D) -> void:
 				+ "%d accent(s) total" % accents)
 
 	_check_no_box_outgrows_a_chunk(terrain)
+	Sentinel.done("slicing")
 
 
 func _check_no_box_outgrows_a_chunk(terrain: Node3D) -> void:
@@ -1097,6 +1111,7 @@ func _check_no_box_outgrows_a_chunk(terrain: Node3D) -> void:
 
 	print("no box outgrows a chunk: worst %.1f m ('%s') against a %.0f m chunk"
 			% [worst, worst_id, terrain.chunk_size])
+	Sentinel.done("no_box_outgrows_a_chunk")
 
 
 func _shape_keys(body_v: Variant) -> Array:
@@ -1265,6 +1280,7 @@ func _check_parity(terrain: Node3D) -> void:
 	var shader := FileAccess.get_file_as_string(SHADER_PATH)
 	if shader.is_empty():
 		_fail("could not read %s — the GPU half of check 6 measured nothing" % SHADER_PATH)
+		Sentinel.done("parity")
 		return
 	var terrain_text := FileAccess.get_file_as_string(TERRAIN_PATH)
 	var uniforms: Array[String] = ["city_rect", "city_river", "city_river_count",
@@ -1302,6 +1318,7 @@ func _check_parity(terrain: Node3D) -> void:
 					BudapestPlan.DANUBE.size() - 1, BudapestPlan.DRY_RECTS.size()])
 
 	_check_parity_packing(terrain, shader)
+	Sentinel.done("parity")
 
 
 func _check_parity_packing(terrain: Node3D, shader: String) -> void:
@@ -1342,6 +1359,7 @@ func _check_parity_packing(terrain: Node3D, shader: String) -> void:
 	if mat == null:
 		_fail("the terrain's material is not a ShaderMaterial — check 6 could not "
 				+ "read back a single pushed uniform")
+		Sentinel.done("parity_packing")
 		return
 
 	var rect: Vector4 = mat.get_shader_parameter("city_rect")
@@ -1357,6 +1375,7 @@ func _check_parity_packing(terrain: Node3D, shader: String) -> void:
 	if soft <= 0.0:
 		_fail("ground.gdshader declares no CITY_RIVER_EDGE_SOFT — check 6's "
 				+ "smoothstep tolerance would be a number written down twice")
+		Sentinel.done("parity_packing")
 		return
 
 	var points: Array[Vector2] = []
@@ -1423,6 +1442,7 @@ func _check_parity_packing(terrain: Node3D, shader: String) -> void:
 	print("  packing: %d in-city samples agree between the shader's predicate on "
 			% checked + "its PUSHED uniforms and is_river_at (%d of them on a dry "
 			% gpu_dry_hits + "rect), %d disagreements" % disagreed)
+	Sentinel.done("parity_packing")
 
 
 func _shader_int(shader: String, name: String) -> int:
@@ -1638,6 +1658,7 @@ func _check_approach_corridor(terrain_script: GDScript) -> void:
 			% [worst_kink * 100.0, measured]
 			+ "worst coin gap %.2f m against a %.0f m pitch"
 			% [worst_gap, BudapestPlan.CITY_COIN_SPACING])
+	Sentinel.done("approach_corridor")
 
 
 # ============================================================================
@@ -1721,6 +1742,7 @@ func _check_consumers_stop(terrain: Node3D, terrain_script: GDScript) -> void:
 	print("caps: coins %d -> 0 across T, clearance %.1f -> INF, bosses %d -> 0, "
 			% [coins_before, near, before]
 			+ "map stops at station %d of %d" % [k_last, k])
+	Sentinel.done("consumers_stop")
 
 
 func _bosses_near_stations(terrain: Node3D, k_from: int, k_to: int, interval: int) -> int:
@@ -1858,6 +1880,7 @@ func _check_spawner_policy(terrain: Node3D) -> void:
 			% chunks.size() + "landmarks/chests/biome content, 0 bosses; %d Danube "
 			% danube_crocs + "crocodiles (all wet, %d dry) and %d hunters"
 			% [dry_crocs, hunters])
+	Sentinel.done("spawner_policy")
 
 
 # ============================================================================
@@ -1902,6 +1925,7 @@ func _check_crocodile_stream_ab(terrain_script: GDScript) -> void:
 	print("croc A/B: %d ordinary crocodiles west of the gate and %d Danube "
 			% [west_crocs, river_crocs] + "crocodiles in the city's own chunks, "
 			+ "none moved by the city streamer")
+	Sentinel.done("crocodile_stream_ab")
 
 
 func _croc_ab_pair(terrain_script: GDScript, where: String, reach: int, at: Vector3) -> int:
@@ -2132,6 +2156,7 @@ func _check_ramps(terrain: Node3D) -> void:
 				% [gap, lowest, highest, top]
 				+ "nearest Danube %.1f m (band %.0f + margin %.0f)"
 				% [wettest, BudapestPlan.DANUBE_HALF_WIDTH, PLATEAU_DRY_MARGIN])
+	Sentinel.done("ramps")
 
 
 # ============================================================================
@@ -2172,6 +2197,7 @@ func _check_difficulty_clamp() -> void:
 
 	print("difficulty: chase speed %.3f at the gate, %.3f at the rect's east edge "
 			% [at_gate, past_gate] + "(pinned), %.3f 3800 m west (free)" % westward)
+	Sentinel.done("difficulty_clamp")
 
 
 func _boss_chase_speed_at(scene: PackedScene, world_x: float) -> float:
@@ -2295,6 +2321,7 @@ func _check_avenue(terrain: Node3D) -> void:
 	print("avenue: %.0f m from the gate to the west bank at x = %.0f, %d solid "
 			% [corridor.size.x, east, blockers] + "boxes inside its 16 m (the Chain "
 			+ "Bridge's approach exempted), out of %d shapes examined" % shapes_examined)
+	Sentinel.done("avenue")
 
 
 func _on_a_bridge_deck(x: float, z: float) -> bool:
@@ -2396,6 +2423,7 @@ func _check_bridges(terrain: Node3D) -> void:
 	_check_nothing_stands_in_the_river(terrain)
 	_check_margaret_island(terrain, claimed)
 	_check_danube_crocodiles(terrain)
+	Sentinel.done("bridges")
 
 
 ## The one slot whose STONE stands in the Danube on purpose. Sixty pairs of iron
@@ -2477,6 +2505,7 @@ func _check_nothing_stands_in_the_river(terrain: Node3D) -> void:
 	print("nothing in the river: %d landmarks' colliding stone measured against "
 			% checked + "the band, %d exempt (on a dry rect, or %s)"
 			% [exempt, str(WET_STONE_ALLOWED)])
+	Sentinel.done("nothing_stands_in_the_river")
 
 
 func _landmark_wettest(terrain: Node3D, index: int, centre: Vector3) -> Dictionary:
@@ -2536,6 +2565,7 @@ func _check_river_rule_control(terrain: Node3D) -> void:
 	var probe := _slot_index("rudas_bath")
 	if probe < 0:
 		_fail("check 14's river control could not find a builder to mutate")
+		Sentinel.done("river_rule_control")
 		return
 	var mid: Vector2 = BudapestPlan.DANUBE[2]
 	var wet := _landmark_wettest(terrain, probe, Vector3(mid.x, 0.0, mid.y))
@@ -2557,6 +2587,7 @@ func _check_river_rule_control(terrain: Node3D) -> void:
 	if _rect_polyline_distance(Rect2(1700.0, -10.0, 20.0, 20.0)) <= BudapestPlan.DANUBE_HALF_WIDTH:
 		_fail("a rect 650 m west of the Danube measured as inside the band — the "
 				+ "rect / polyline distance answers wet for everything")
+	Sentinel.done("river_rule_control")
 
 
 func _rect_point_distance(r: Rect2, p: Vector2) -> float:
@@ -2649,6 +2680,7 @@ func _check_no_reward_under_a_deck(terrain: Node3D) -> void:
 	if line.size() < 2:
 		_fail("the approach coin line came out as %d points — check 14's buried-"
 				% line.size() + "reward sweep measured nothing")
+		Sentinel.done("no_reward_under_a_deck")
 		return
 	var buried := 0
 	for p: Vector2 in line:
@@ -2662,6 +2694,7 @@ func _check_no_reward_under_a_deck(terrain: Node3D) -> void:
 
 	print("approach coins: %d on the line, last at x = %.0f, %d of them under a "
 			% [line.size(), line[line.size() - 1].x, buried] + "bridge deck")
+	Sentinel.done("no_reward_under_a_deck")
 
 
 func _check_bridge_profile_control() -> void:
@@ -2711,6 +2744,7 @@ func _check_bridge_profile_control() -> void:
 	if absf(_span_gap(solid, 0.0, 25.0) - 5.0) > 0.001:
 		_fail("_span_gap missed 5 m of deck missing off the END of the run — a "
 				+ "bridge that stopped short of its own abutment would pass")
+	Sentinel.done("bridge_profile_control")
 
 
 func _check_one_bridge(terrain: Node3D, row: Dictionary, id: String,
@@ -2726,6 +2760,7 @@ func _check_one_bridge(terrain: Node3D, row: Dictionary, id: String,
 	if si < 0:
 		_fail("bridge '%s' has no SLOTS row — its deck would be built where "
 				% id + "nothing ever puts a pylon under it")
+		Sentinel.done("one_bridge")
 		return
 	var slot: Dictionary = BudapestPlan.SLOTS[si]
 	if String(slot["builder"]).is_empty():
@@ -2762,6 +2797,7 @@ func _check_one_bridge(terrain: Node3D, row: Dictionary, id: String,
 		_fail("bridge '%s' is %.0f m long against two %.0f m approaches — the "
 				% [id, deck.size.x, BudapestPlan.BRIDGE_RAMP_RUN] + "ramps meet in "
 				+ "the middle and there is no level deck at all")
+		Sentinel.done("one_bridge")
 		return
 	var driest := INF
 	for end_x: float in [deck.position.x, deck.end.x]:
@@ -2881,6 +2917,7 @@ func _check_one_bridge(terrain: Node3D, row: Dictionary, id: String,
 	if boxes < 3:
 		_fail("bridge '%s' came out as %d boxes — a %.0f m deck crosses several "
 				% [id, boxes, deck.size.x] + "chunks, so this measured the wrong thing")
+		Sentinel.done("one_bridge")
 		return
 	if shapes != boxes:
 		_fail("bridge '%s' built %d boxes but %d collision shapes — a deck you "
@@ -2906,6 +2943,7 @@ func _check_one_bridge(terrain: Node3D, row: Dictionary, id: String,
 			% [shapes, worst, gap_x, gap_z]
 			+ "%d dry samples across, abutments %.0f m out from the polyline"
 			% [dry_samples, driest])
+	Sentinel.done("one_bridge")
 
 
 func _span_gap(spans: Array[Vector2], from: float, to: float) -> float:
@@ -2942,6 +2980,7 @@ func _check_margaret_island(terrain: Node3D, claimed: Dictionary) -> void:
 	if island < 0:
 		_fail("every DRY_RECTS row is claimed by a bridge deck — Margaret Island "
 				+ "has stopped being dry land in the river")
+		Sentinel.done("margaret_island")
 		return
 	var r: Rect2 = BudapestPlan.DRY_RECTS[island]
 	var wet := 0
@@ -2967,6 +3006,7 @@ func _check_margaret_island(terrain: Node3D, claimed: Dictionary) -> void:
 	var si := _slot_index("margaret_island")
 	if si < 0:
 		_fail("no 'margaret_island' slot — the island is dry land nobody names")
+		Sentinel.done("margaret_island")
 		return
 	var slot: Dictionary = BudapestPlan.SLOTS[si]
 	var pos: Vector3 = slot["pos"]
@@ -2980,6 +3020,7 @@ func _check_margaret_island(terrain: Node3D, claimed: Dictionary) -> void:
 	print("Margaret Island: DRY_RECTS row %d, %.0f x %.0f m, 121/121 points dry "
 			% [island, r.size.x, r.size.y] + "and every one inside the band; the "
 			+ "landmark's %.0f m disc fits on it" % rad)
+	Sentinel.done("margaret_island")
 
 
 func _check_danube_crocodiles(terrain: Node3D) -> void:
@@ -3049,6 +3090,7 @@ func _check_danube_crocodiles(terrain: Node3D) -> void:
 	print("Danube crocodiles: %d over %d wet chunks along the full 2.2 km, "
 			% [total, wet_chunks] + "buckets %s north -> south, %d within %.0f m "
 			% [str(buckets), near_deck, margin] + "of a deck or the island")
+	Sentinel.done("danube_crocodiles")
 
 
 # ============================================================================
@@ -3313,6 +3355,7 @@ func _check_city_blocks(terrain: Node3D) -> void:
 	print("city coins: %d over %d walked chunks (%d gems), %s on the four decks, "
 			% [coins, walk.size(), gems, str(bridge_coins.values())]
 			+ "%d off the grid" % off_route)
+	Sentinel.done("city_blocks")
 
 
 func _in_carriageway(w: float, half_extent: float, origin: float) -> bool:
@@ -3462,6 +3505,7 @@ func _check_reachability(terrain: Node3D, terrain_script: GDScript) -> void:
 	if not walkable[gate_idx]:
 		_fail("the gate cell %s is not walkable — the flood has nowhere to start"
 				% Vector2i(gate_ix, gate_iz))
+		Sentinel.done("reachability")
 		return
 
 	var visited: Array[bool] = []
@@ -3749,6 +3793,7 @@ func _check_reachability(terrain: Node3D, terrain_script: GDScript) -> void:
 		_fail("reachability negative control B (ramp removed): Castle Hill ramp made stone (%d cells) still leaves both plateau slots reachable — the height gate is not biting" % ramp_cells_removed)
 	else:
 		print("reachability negative control B: Castle Hill ramp removed (%d cells) -> %d/2 plateau slots still reached (expected <2)" % [ramp_cells_removed, plateau_still])
+	Sentinel.done("reachability")
 
 
 func _reach_walkable_cell(x: float, z: float) -> bool:
@@ -3913,6 +3958,7 @@ func _check_determinism_every_chunk(terrain_script: GDScript) -> void:
 	if moved_hunters > 0:
 		_fail("%d chunks outside Budapest moved their hunters when the city streamer ran"
 				% moved_hunters)
+	Sentinel.done("determinism_every_chunk")
 
 
 func _count_bodies_outside(terrain_script: GDScript, kind: String, at: Vector3, reach: int, outside: bool) -> int:

@@ -164,6 +164,14 @@ const WIDTH_BUDGETS: Array = [
 var _failures: Array[String] = []
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	var rows: Array = _read_csv()
 	if not _failures.is_empty():
@@ -180,8 +188,7 @@ func _initialize() -> void:
 
 func _finish() -> void:
 	if _failures.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
 		printerr("FAIL: ", failure)
@@ -247,6 +254,7 @@ func _read_csv() -> Array:
 func _check_translations(rows: Array) -> void:
 	if rows.is_empty():
 		_fail("%s contains no rows" % CSV_PATH)
+		Sentinel.done("translations")
 		return
 
 	var restore: String = TranslationServer.get_locale()
@@ -273,6 +281,7 @@ func _check_translations(rows: Array) -> void:
 				% [String(row["key"]).c_escape()])
 
 	TranslationServer.set_locale(restore)
+	Sentinel.done("translations")
 
 
 ## A key with no entry must come back unchanged. This is the whole reason the
@@ -290,6 +299,7 @@ func _check_fallback() -> void:
 	if tr("PLAY SOLO") == "PLAY SOLO":
 		_fail("locale de_DE did not fall through to the de translation")
 	TranslationServer.set_locale(restore)
+	Sentinel.done("fallback")
 
 
 ## THE ACCEPTANCE CRITERION, asserted mechanically: an already-built Control
@@ -331,6 +341,7 @@ func _check_live_switch() -> void:
 
 	label.queue_free()
 	TranslationServer.set_locale(restore)
+	Sentinel.done("live_switch")
 
 
 ## The saved-language round trip, driven through `start_overlay.gd`'s own static
@@ -361,6 +372,7 @@ func _check_locale_config() -> void:
 
 	DirAccess.remove_absolute(LOCALE_STORE_PATH)
 	TranslationServer.set_locale(restore_locale)
+	Sentinel.done("locale_config")
 
 
 ## Measure every budgeted German string in the real font at the real size. A
@@ -372,12 +384,14 @@ func _check_widths(rows: Array) -> void:
 		font = ThemeDB.fallback_font
 	if font == null:
 		_fail("no font available — the width check would pass vacuously")
+		Sentinel.done("widths")
 		return
 	# Prove the ruler works before trusting any measurement it makes. A headless
 	# build configured with the dummy text server measures everything as 0, which
 	# would turn every assertion below into a silent pass.
 	if font.get_string_size("MMMM", HORIZONTAL_ALIGNMENT_LEFT, -1, 26).x <= 0.0:
 		_fail("font measured a non-empty string as 0 wide — the width check would pass vacuously")
+		Sentinel.done("widths")
 		return
 
 	var german: Dictionary = {}
@@ -399,3 +413,4 @@ func _check_widths(rows: Array) -> void:
 				if width > limit:
 					_fail("%s: %s is %.1f px wide at font size %d, over the %.0f px budget"
 						% [where, line.c_escape(), width, font_size, limit])
+	Sentinel.done("widths")

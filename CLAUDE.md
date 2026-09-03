@@ -22,6 +22,19 @@ driven from the editor and CI. Correctness is guarded by **headless self-checks*
 prints `SELFCHECK OK` and exits 0. Run the ones covering what you touched; read the
 script's own header for what it asserts.
 
+**EVERY CHECK STAMPS ITS OWN EXIT, through `scripts/selfcheck_sentinel.gd`.** A GDScript
+runtime error does not stop a script — it aborts the FUNCTION it lands in (returning that
+function's declared default, `""` for a `-> String` check, which reads as "no failure")
+and execution carries on, so a check that dies halfway simply stops asserting and the file
+prints `SELFCHECK OK`. So a check calls `Sentinel.done("name")` as its last statement and
+before every early exit, and the report site calls `Sentinel.finish(self)` in place of
+`print("SELFCHECK OK")` + `quit(0)`; the expected set is READ OUT OF THE FILE'S OWN SOURCE
+rather than listed in a const, so a check added or renamed is covered without a second edit.
+It is consulted only on the PASSING path — a run that already failed fails anyway, and
+`mp_selfcheck`'s fail-fast runner would otherwise bury one honest message under
+twenty-seven unreached checks. A new self-check needs the preload, the stamps and that one
+report line.
+
 ```bash
 godot --path . scenes/main.tscn                    # run the game
 godot --path . scenes/characters/primm.tscn        # run one scene in isolation

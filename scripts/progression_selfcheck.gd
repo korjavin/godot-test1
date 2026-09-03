@@ -67,6 +67,14 @@ const LOCAL_STORE_PATH: String = "user://progression_selfcheck_best_run.cfg"
 var _failures: Array[String] = []
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _isolate_local_store() -> void:
 	BestRunStore.config_path = LOCAL_STORE_PATH
 	DirAccess.remove_absolute(LOCAL_STORE_PATH)
@@ -86,8 +94,7 @@ func _fail(message: String) -> void:
 func _report() -> void:
 	DirAccess.remove_absolute(LOCAL_STORE_PATH)
 	if _failures.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 	else:
 		for line: String in _failures:
 			printerr("FAIL: %s" % line)
@@ -137,6 +144,7 @@ func _check_curve() -> void:
 
 	if Progression.level_for(0) != 0 or Progression.level_for(-5) != 0:
 		_fail("a fresh (or corrupt) profile is not level 0")
+	Sentinel.done("curve")
 
 
 func _check_points_and_levelling() -> void:
@@ -188,6 +196,7 @@ func _check_points_and_levelling() -> void:
 				% [progression.unspent_points(), progression.level])
 
 	progression.free()
+	Sentinel.done("points_and_levelling")
 
 
 func _check_store_load_is_monotone() -> void:
@@ -212,6 +221,7 @@ func _check_store_load_is_monotone() -> void:
 		_fail("a BEHIND store answer lowered the profile to %d / level %d / %d spent"
 				% [progression.lifetime_coins, progression.level, progression.spent_points])
 	progression.free()
+	Sentinel.done("store_load_is_monotone")
 
 
 func _check_streak_does_not_inflate_lifetime() -> void:
@@ -230,6 +240,7 @@ func _check_streak_does_not_inflate_lifetime() -> void:
 	var packed: PackedScene = load(PLAYER_SCENE)
 	if packed == null:
 		_fail("could not load %s" % PLAYER_SCENE)
+		Sentinel.done("streak_does_not_inflate_lifetime")
 		return
 	var player: Node = packed.instantiate()
 	root.add_child(player)
@@ -238,6 +249,7 @@ func _check_streak_does_not_inflate_lifetime() -> void:
 		_fail("player has no collect_coin() — did the script fail to attach? "
 				+ "(a fresh clone needs `godot --headless --path . --import` first)")
 		player.queue_free()
+		Sentinel.done("streak_does_not_inflate_lifetime")
 		return
 
 	var progression := _make_progression()
@@ -313,6 +325,7 @@ func _check_streak_does_not_inflate_lifetime() -> void:
 
 	progression.free()
 	player.queue_free()
+	Sentinel.done("streak_does_not_inflate_lifetime")
 
 
 # =============================================================================
@@ -450,6 +463,7 @@ func _check_tree_data() -> void:
 			if String(def.get("effect", "")).contains("walk"):
 				_fail("%s.%s scales WALK speed — the catchable-walk contract forbids it"
 						% [hero, String(def["id"])])
+	Sentinel.done("tree_data")
 
 
 func _check_spending() -> void:
@@ -529,6 +543,7 @@ func _check_spending() -> void:
 				% [progression.unspent_points(), spent_at_max])
 
 	progression.free()
+	Sentinel.done("spending")
 
 
 func _check_caps() -> void:
@@ -656,6 +671,7 @@ func _check_caps() -> void:
 	flier.free()
 
 	progression.free()
+	Sentinel.done("caps")
 
 
 func _check_ranks_merge_is_monotone() -> void:
@@ -685,6 +701,7 @@ func _check_ranks_merge_is_monotone() -> void:
 	BestRunStore.merge_ranks(into, {"windman": {"cd1": "three", "fleet": -4}})
 	if int(into["windman"]["cd1"]) != 5 or int(into["windman"]["fleet"]) != 1:
 		_fail("a malformed rank map corrupted the real ranks: %s" % [into["windman"]])
+	Sentinel.done("ranks_merge_is_monotone")
 
 
 func _check_skill_effects_on_player() -> void:
@@ -703,6 +720,7 @@ func _check_skill_effects_on_player() -> void:
 	var packed: PackedScene = load(PLAYER_SCENE)
 	if packed == null:
 		_fail("could not load %s" % PLAYER_SCENE)
+		Sentinel.done("skill_effects_on_player")
 		return
 	var player: Node = packed.instantiate()
 	root.add_child(player)
@@ -710,6 +728,7 @@ func _check_skill_effects_on_player() -> void:
 	if not player.has_method("calculate_current_speed"):
 		_fail("player has no calculate_current_speed() — did the script fail to attach?")
 		player.queue_free()
+		Sentinel.done("skill_effects_on_player")
 		return
 
 	# --- Baseline, with NO progression node anywhere ---------------------
@@ -1083,6 +1102,7 @@ func _check_skill_effects_on_player() -> void:
 
 	progression.free()
 	player.queue_free()
+	Sentinel.done("skill_effects_on_player")
 
 
 func _check_ranks_survive_a_relaunch() -> void:
@@ -1142,6 +1162,7 @@ func _check_ranks_survive_a_relaunch() -> void:
 	progression.store = null
 	progression.free()
 	reader.free()
+	Sentinel.done("ranks_survive_a_relaunch")
 
 
 func _check_phase_echo_refunds_a_wall_pass() -> void:
@@ -1163,6 +1184,7 @@ func _check_phase_echo_refunds_a_wall_pass() -> void:
 	var packed: PackedScene = load(PLAYER_SCENE)
 	if packed == null:
 		_fail("could not load %s" % PLAYER_SCENE)
+		Sentinel.done("phase_echo_refunds_a_wall_pass")
 		return
 	var player: Node3D = packed.instantiate()
 	root.add_child(player)
@@ -1175,6 +1197,7 @@ func _check_phase_echo_refunds_a_wall_pass() -> void:
 	if primm_index < 0:
 		_fail("no primm in CHARACTERS — the Phase Echo measurement needs it")
 		player.queue_free()
+		Sentinel.done("phase_echo_refunds_a_wall_pass")
 		return
 	player.set_active_character(primm_index)
 	player.global_position = Vector3.ZERO
@@ -1225,6 +1248,7 @@ func _check_phase_echo_refunds_a_wall_pass() -> void:
 	wall.queue_free()
 	progression.free()
 	player.queue_free()
+	Sentinel.done("phase_echo_refunds_a_wall_pass")
 
 
 func _check_panel_spends_and_releases_its_pause() -> void:
@@ -1277,6 +1301,7 @@ func _check_panel_spends_and_releases_its_pause() -> void:
 
 	panel.queue_free()
 	progression.free()
+	Sentinel.done("panel_spends_and_releases_its_pause")
 
 
 # =============================================================================
@@ -1334,6 +1359,7 @@ func _check_dial_contract(player: Node, expect_ready: bool, expect_reason: Strin
 		_fail("%s: is_ability_ready() = %s but ratio %.3f / gate %s say otherwise — "
 				% [where, ready, ratio, reason.c_escape()]
 				+ "the dial's two inputs disagree about availability")
+	Sentinel.done("dial_contract")
 
 
 func _spawn_stub_croc(at: Vector3) -> StubCroc:
@@ -1357,6 +1383,7 @@ func _check_active_skills_on_player() -> void:
 	var packed: PackedScene = load(PLAYER_SCENE)
 	if packed == null:
 		_fail("could not load %s" % PLAYER_SCENE)
+		Sentinel.done("active_skills_on_player")
 		return
 	var player: Node = packed.instantiate()
 	root.add_child(player)
@@ -1364,6 +1391,7 @@ func _check_active_skills_on_player() -> void:
 	if not player.has_method("calculate_current_speed"):
 		_fail("player has no calculate_current_speed() — did the script fail to attach?")
 		player.queue_free()
+		Sentinel.done("active_skills_on_player")
 		return
 	player.is_wading = false
 
@@ -1379,6 +1407,7 @@ func _check_active_skills_on_player() -> void:
 
 	progression.free()
 	player.queue_free()
+	Sentinel.done("active_skills_on_player")
 
 
 func _check_speed_burst(player: Node, progression: Progression) -> void:
@@ -1394,6 +1423,7 @@ func _check_speed_burst(player: Node, progression: Progression) -> void:
 			hero_index = index
 	if hero_index < 0:
 		_fail("no windman in CHARACTERS — the speed-burst measurement needs one")
+		Sentinel.done("speed_burst")
 		return
 	player.set_active_character(hero_index)
 	_spend_or_fail(progression, "windman", "fleet")
@@ -1479,6 +1509,7 @@ func _check_speed_burst(player: Node, progression: Progression) -> void:
 					% player.speed_burst_timer)
 	player.is_running = false
 	player.speed_burst_timer = 0.0
+	Sentinel.done("speed_burst")
 
 
 func _check_air_rush_arc(player: Node, progression: Progression) -> void:
@@ -1496,6 +1527,7 @@ func _check_air_rush_arc(player: Node, progression: Progression) -> void:
 			windman_index = index
 	if windman_index < 0:
 		_fail("no windman in CHARACTERS — the Air Rush arc measurement needs one")
+		Sentinel.done("air_rush_arc")
 		return
 	player.set_active_character(windman_index)
 
@@ -1553,6 +1585,7 @@ func _check_air_rush_arc(player: Node, progression: Progression) -> void:
 		if not is_equal_approx(float(player._skill_mult("windman_gravity")), 1.0):
 			_fail("teibi reads a windman_gravity multiplier of %.3f, wanted 1.0"
 					% player._skill_mult("windman_gravity"))
+	Sentinel.done("air_rush_arc")
 
 
 func _air_rush_peak(player: Node, lift_mult: float, gravity_mult: float, boost_mult: float) -> float:
@@ -1589,6 +1622,7 @@ func _check_crush_quake(player: Node, progression: Progression) -> void:
 			teibi_index = index
 	if teibi_index < 0:
 		_fail("no teibi in CHARACTERS — the Crush Quake measurement needs one")
+		Sentinel.done("crush_quake")
 		return
 	player.set_active_character(teibi_index)
 	player.global_position = Vector3.ZERO
@@ -1630,6 +1664,7 @@ func _check_crush_quake(player: Node, progression: Progression) -> void:
 	near.queue_free()
 	far.queue_free()
 	await physics_frame
+	Sentinel.done("crush_quake")
 
 
 func _check_stink_is_bounded(player: Node, progression: Progression) -> void:
@@ -1648,6 +1683,7 @@ func _check_stink_is_bounded(player: Node, progression: Progression) -> void:
 			phobo_index = index
 	if phobo_index < 0:
 		_fail("no phoboman in CHARACTERS — the stink-radius measurement needs one")
+		Sentinel.done("stink_is_bounded")
 		return
 	player.set_active_character(phobo_index)
 	player.global_position = Vector3.ZERO
@@ -1692,6 +1728,7 @@ func _check_stink_is_bounded(player: Node, progression: Progression) -> void:
 	edge.queue_free()
 	outside.queue_free()
 	await physics_frame
+	Sentinel.done("stink_is_bounded")
 
 
 func _run() -> void:

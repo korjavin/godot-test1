@@ -120,6 +120,14 @@ var _game_over: Control = null
 ## parented but never gets `_ready()`. Same one-frame wait `intro_selfcheck.gd`
 ## and `minimap_selfcheck.gd` open with; `_initialize()` cannot await, so the body
 ## is its own coroutine.
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	_run()
 
@@ -141,8 +149,7 @@ func _run() -> void:
 func _finish() -> void:
 	_teardown()
 	if _failures.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
 		printerr("FAIL: ", failure)
@@ -170,6 +177,7 @@ func _check_bake_contract() -> void:
 	var source: String = FileAccess.get_file_as_string(SCRIPT_PATH)
 	if source.is_empty():
 		_fail("could not read %s to check the line CI rewrites" % SCRIPT_PATH)
+		Sentinel.done("bake_contract")
 		return
 	# The exact anchor `.github/workflows/build.yml` seds on. Reshape this line and
 	# the bake becomes a silent no-op: the client then fetches the current marker,
@@ -190,6 +198,7 @@ func _check_bake_contract() -> void:
 		_fail("build_version.gd calls the static JSON parser — it pushes an engine " \
 			+ "ERROR on every unparseable body, so one broken proxy spams the " \
 			+ "console for as long as the tab is open. Use JSON.new().parse().")
+	Sentinel.done("bake_contract")
 
 
 # ============================================================================
@@ -202,6 +211,7 @@ func _check_web_gate() -> void:
 	if OS.has_feature("web"):
 		# Nothing this check can say — Godot cannot run headless as a web export,
 		# so in practice this branch is unreachable.
+		Sentinel.done("web_gate")
 		return
 
 	var watch := Watch.new()
@@ -233,6 +243,7 @@ func _check_web_gate() -> void:
 	watch._poll()
 
 	watch.free()
+	Sentinel.done("web_gate")
 
 
 # ============================================================================
@@ -293,6 +304,7 @@ func _check_latch() -> void:
 		if watch._pending:
 			_fail("%s latched an update — only a 200 that parsed may" % case[0])
 		_teardown()
+	Sentinel.done("latch")
 
 
 # ============================================================================
@@ -317,6 +329,7 @@ func _check_never_mid_run() -> void:
 		_fail("the pending update was dropped mid-run instead of being held — the " \
 			+ "player would stay on the old build until they reload by hand")
 	_teardown()
+	Sentinel.done("never_mid_run")
 
 
 # ============================================================================
@@ -354,6 +367,7 @@ func _check_the_safe_point_has_to_hold() -> void:
 			_fail("the dwell on %s never expired — the reload is owed forever and " \
 				% screen + "the feature does nothing")
 		_teardown()
+	Sentinel.done("the_safe_point_has_to_hold")
 
 
 # ============================================================================
@@ -389,6 +403,7 @@ func _check_fires_at_the_start_card() -> void:
 		_fail("the watch fired %d times over the frames after the reload — a " \
 			% watch.reloads + "reload storm, not a reload")
 	_teardown()
+	Sentinel.done("fires_at_the_start_card")
 
 
 ## Post-run safe point: the game-over screen is up, so the run is already spent.
@@ -403,6 +418,7 @@ func _check_fires_at_game_over() -> void:
 		_fail("a pending update at the game-over screen produced %d reloads, " \
 			% watch.reloads + "expected 1 — the post-run safe point does not work")
 	_teardown()
+	Sentinel.done("fires_at_game_over")
 
 
 # ============================================================================
@@ -441,6 +457,7 @@ func _check_room_outranks_the_safe_points() -> void:
 				_fail("leaving the room on %s (from %s) did not release the held " \
 					% [screen, state] + "reload (%d)" % watch.reloads)
 			_teardown()
+	Sentinel.done("room_outranks_the_safe_points")
 
 
 # ============================================================================
@@ -462,6 +479,7 @@ func _check_an_empty_world_is_not_safe() -> void:
 		_fail("the tab reloaded with no mp / start_overlay / game_over_ui in the " \
 			+ "tree — a missing node must read as `not safe`, never as `reload now`")
 	watch.free()
+	Sentinel.done("an_empty_world_is_not_safe")
 
 
 # ============================================================================

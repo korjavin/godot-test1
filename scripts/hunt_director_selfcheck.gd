@@ -100,6 +100,14 @@ const EPS: float = 1e-4
 var _failures: Array[String] = []
 
 
+## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
+## lands in and lets the script carry on, so a check that dies halfway simply
+## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
+## itself at its exit; the report site asks whether every stamp was reached.
+## `scripts/selfcheck_sentinel.gd` carries the whole reasoning.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+
+
 func _initialize() -> void:
 	# The live probe in check 6 needs the tree to have settled, so the measuring
 	# half runs as its own coroutine and reports from in there. Reporting from
@@ -114,8 +122,7 @@ func _fail(message: String) -> void:
 
 func _report() -> void:
 	if _failures.is_empty():
-		print("SELFCHECK OK")
-		quit(0)
+		Sentinel.finish(self)
 	else:
 		for line: String in _failures:
 			printerr("FAIL: %s" % line)
@@ -159,6 +166,7 @@ func _check_cap() -> void:
 	## other two rules held OPEN (no lull, no bearings), so the only thing that
 	## can deny is the cap and a denial here is unambiguous.
 	if not _rules_isolated():
+		Sentinel.done("cap")
 		return
 	var cap: int = DIRECTOR.MAX_PURSUERS
 	for closing: int in range(cap + 2):
@@ -178,6 +186,7 @@ func _check_cap() -> void:
 					% closing + "%dth (cap is %d). Rule 1 is not enforced — that "
 					% [closing + 1, cap] + "is the surround the escape-sector rule "
 					+ "exists to make impossible, arriving through the front door.")
+	Sentinel.done("cap")
 
 
 # ============================================================================
@@ -189,6 +198,7 @@ func _check_lull_pure() -> void:
 	## directions: any time left denies, no time left grants. A one-sided check
 	## passes for a director that denies everything forever.
 	if not _rules_isolated():
+		Sentinel.done("lull_pure")
 		return
 	if not DIRECTOR.grant_engagement(PackedFloat32Array(), 0, 0.0, 0.0):
 		_fail("lull: with zero seconds of lull left, an unopposed hunter on an "
@@ -202,6 +212,7 @@ func _check_lull_pure() -> void:
 	if DIRECTOR.grant_engagement(PackedFloat32Array(), 0, DIRECTOR.ENGAGE_LULL, 0.0):
 		_fail("lull: a quarry with a FULL %.1f s lull granted a fresh engagement"
 				% DIRECTOR.ENGAGE_LULL)
+	Sentinel.done("lull_pure")
 
 
 # ============================================================================
@@ -214,6 +225,7 @@ func _check_escape_sector() -> void:
 		_fail("escape sector: MIN_ESCAPE_SECTOR is %.3f rad — outside (0, TAU) it "
 				% min_sector + "is either always open (no guarantee at all) or "
 				+ "never open (every hunter frozen on its ring forever)")
+		Sentinel.done("escape_sector")
 		return
 	var guarantee_deg: float = rad_to_deg(min_sector)
 
@@ -334,6 +346,7 @@ func _check_escape_sector() -> void:
 		_fail("escape sector: %d adversarial sets produced ZERO grants — the rule "
 				% SWEEP_SETS + "refuses everything, which paces nothing and "
 				+ "freezes every hunter in the world on its standoff ring")
+	Sentinel.done("escape_sector")
 
 
 func _ring_with_widest_gap(widest_deg: float) -> PackedFloat32Array:
@@ -398,6 +411,7 @@ func _check_live_pacing() -> void:
 				+ "no cap pressure, no lull, and a 180° gap on the circle, so "
 				+ "nothing in the rules could have denied it")
 		_teardown([director, a, b, c])
+		Sentinel.done("live_pacing")
 		return
 
 	# THE GRAB, reported through the public verb the bead specifies. The hit
@@ -429,6 +443,7 @@ func _check_live_pacing() -> void:
 				+ "The lull never expires, so one grab retires the hunters "
 				+ "permanently.")
 		_teardown([director, a, b, c])
+		Sentinel.done("live_pacing")
 		return
 
 	# ---- rule 2's second half: the hard chase -------------------------------
@@ -453,6 +468,7 @@ func _check_live_pacing() -> void:
 				% DIRECTOR.ENGAGE_LULL + "run")
 
 	_teardown([director, a, b, c])
+	Sentinel.done("live_pacing")
 
 
 # ============================================================================
@@ -485,6 +501,7 @@ func _check_reaped_grab() -> void:
 		_fail("reaped grab: the harness could not seat the hunter that is about "
 				+ "to grab, so neither half of this check would mean anything")
 		_teardown([took, a, b])
+		Sentinel.done("reaped_grab")
 		return
 	# Exactly what the bite path leaves behind: no longer closing, seconds owed on
 	# the disengage clock. Nobody calls report_grab — the director must notice.
@@ -507,6 +524,7 @@ func _check_reaped_grab() -> void:
 		_fail("reaped grab: the harness could not seat the hunter that is about "
 				+ "to lose its quarry, so the negative control is untested")
 		_teardown([lost, c, d])
+		Sentinel.done("reaped_grab")
 		return
 	c._hunt_lock["closing"] = false
 	c._hunt_lock["disengage"] = 0.0
@@ -517,6 +535,7 @@ func _check_reaped_grab() -> void:
 				+ "Every broken line of sight now pauses the class, which the "
 				+ "player reads as a tell.")
 	_teardown([lost, c, d])
+	Sentinel.done("reaped_grab")
 
 
 # ============================================================================
@@ -546,6 +565,7 @@ func _check_two_quarries() -> void:
 					+ "(hunter %d of %d was refused), so the isolation test below "
 					% [i + 1, cap] + "would have proved nothing")
 			_teardown([director] + filled)
+			Sentinel.done("two_quarries")
 			return
 		unit._hunt_lock["closing"] = true
 
@@ -605,6 +625,7 @@ func _check_two_quarries() -> void:
 				+ "teammate being caught pauses the hunters chasing everybody.")
 
 	_teardown([director, extra, far, replacement, here_again] + filled)
+	Sentinel.done("two_quarries")
 
 
 # ============================================================================
@@ -626,6 +647,7 @@ func _check_absent_director() -> void:
 		_fail("absent director: something was still in group 'hunt_director' when "
 				+ "this check started — an earlier check leaked its node, and the "
 				+ "degrade path cannot be measured with one in the world")
+		Sentinel.done("absent_director")
 		return
 
 	var hunter: Node = load(HUNTER_SCENE).instantiate()
@@ -642,6 +664,7 @@ func _check_absent_director() -> void:
 				+ "to measure")
 		hunter.queue_free()
 		await process_frame
+		Sentinel.done("absent_director")
 		return
 
 	hunter.chase_target = Vector3.ZERO
@@ -666,6 +689,7 @@ func _check_absent_director() -> void:
 	_teardown([director, stub])
 	hunter.queue_free()
 	await process_frame
+	Sentinel.done("absent_director")
 
 
 # ============================================================================
@@ -800,6 +824,7 @@ func _check_dread_channels() -> void:
 	vignette.queue_free()
 	player.queue_free()
 	await process_frame
+	Sentinel.done("dread_channels")
 
 
 # ============================================================================
