@@ -157,22 +157,45 @@ jobs:
   # change breaking determinism, the biome CPU/GPU parity contract, the speed
   # lattice or German fit merged green.
   #
-  # A SEPARATE JOB, not a step in `build`, deliberately: it runs in parallel so
-  # it adds no wall-clock, and a failing check reports as its own red check
-  # rather than hiding behind a build failure. Both deploy jobs `needs:` it, so
-  # nothing publishes on a red self-check.
+  # SEPARATE JOBS, not steps in `build`, deliberately: they run in parallel so
+  # they add no wall-clock, and a failing check reports as its own red check
+  # rather than hiding behind a build failure. Both deploy jobs `needs:` the
+  # `selfchecks` aggregator below, so nothing publishes on a red self-check.
   #
   # The suite is DISCOVERED BY GLOB, never listed here. A list in a workflow file
   # is a list nobody updates — five of these checks were added in a single day.
   # Globbing means a new scripts/*_selfcheck.gd is gated the moment it lands.
+  #
+  # SHARDED, because sequentially the suite took ~8 minutes and it is the gate
+  # every push waits on. The partition is computed FROM THE GLOB AT RUNTIME —
+  # every Nth file of the shell's sorted glob — never from a list of check names
+  # in this file, for exactly the reason above: a list would go stale silently
+  # the first time somebody adds a check, which is the failure mode this repo
+  # keeps hitting. Nothing here knows how many shards there are either:
+  # `strategy.job-index` / `strategy.job-total` are GitHub's own count of the
+  # matrix, so the matrix list is the only edit a re-shard needs.
+  #
+  # The fixed setup (checkout, fonts, import) repeats per shard by design — the
+  # partition is dynamic, so any shard could draw locale_selfcheck or
+  # intro_selfcheck and each shard has to be able to run every check.
   # ============================================================================
-  selfchecks:
-    name: 🩺 Self-checks
+  selfcheck-shard:
+    name: 🩺 Self-checks ${{ matrix.shard }}/${{ strategy.job-total }}
     runs-on: ubuntu-latest
-    # The whole suite is well under a minute of actual work; this is only here so
-    # a check whose SceneTree never calls quit() is a red build rather than a job
-    # the runner kills six hours later.
-    timeout-minutes: 20
+    # A shard is a couple of minutes of actual work; this is only here so a check
+    # whose SceneTree never calls quit() is a red build rather than a job the
+    # runner kills six hours later.
+    timeout-minutes: 15
+    strategy:
+      # NOT fail-fast, and it is the matrix half of the same rule the loop below
+      # keeps: every check runs, every failure is named, and the verdict comes at
+      # the end. A red shard must not cancel its siblings.
+      fail-fast: false
+      matrix:
+        # The COUNT is what matters, not the values — the step reads
+        # `strategy.job-index` / `strategy.job-total`, so this list is the one
+        # place a re-shard is edited and no other number has to agree with it.
+        shard: [ 1, 2, 3, 4, 5 ]
     container:
       image: barichello/godot-ci:4.5
     steps:
@@ -190,6 +213,8 @@ jobs:
       # button came out 103 px against its 98 px budget, a failure that reproduces
       # on no developer machine. A text-metric check in a font-less container is
       # measuring a fiction, so give the container the fonts a real machine has.
+      # EVERY shard installs them: the partition is dynamic, so any shard can draw
+      # locale_selfcheck.
       - name: 🔤 Install fonts (locale_selfcheck measures real glyph widths)
         run: |
           apt-get update -qq
@@ -201,7 +226,8 @@ jobs:
       # global `class_name` (IntroVideo) resolves to nothing at all, which makes
       # intro_selfcheck fail to PARSE — see the exit-code note in the run step
       # for why that would otherwise have been silently green.
-      # Same command CLAUDE.md tells a human to run in a fresh clone.
+      # Same command CLAUDE.md tells a human to run in a fresh clone. Per shard,
+      # for the same reason the fonts are.
       - name: 🌍 Import assets (generates the translation resources)
         run: |
           godot --headless --path . --import
@@ -210,16 +236,31 @@ jobs:
               || { echo "::error::assets/translations/ui.${locale}.translation was not generated — locale_selfcheck would measure a table that is not there"; exit 1; }
           done
 
-      # THE EXIT CODE ALONE IS NOT A VERDICT. Measured on 4.5: a script that
-      # fails to parse prints "Failed to load script ... Parse error" and
-      # `godot --headless --script` still exits 0 — the check never ran and the
-      # job would go green. So a pass requires BOTH exit 0 AND the literal
-      # "SELFCHECK OK" line the script only prints after its last assertion.
-      # That is also what catches a crash, a missing binary and an empty glob.
+      # THE EXIT CODE ALONE IS NOT A VERDICT, and it misses TWO different things.
+      # Measured on 4.5: a script that fails to PARSE prints "Failed to load
+      # script ... Parse error" and `godot --headless --script` still exits 0 —
+      # the check never ran and the job would go green. A RUNTIME error is the
+      # same hole one step later: Godot logs "SCRIPT ERROR:", aborts that call,
+      # carries on, and the script still reaches its final print and exits 0 —
+      # which is how budapest_selfcheck once printed SELFCHECK OK while every
+      # assertion in its check 4 had been skipped (bead godot-test1-egr).
+      # So a pass needs all THREE: exit 0, the literal "SELFCHECK OK" line the
+      # script only prints after its last assertion, and NO "SCRIPT ERROR" in the
+      # captured output. Together they also catch a crash, a missing binary and
+      # an empty glob.
       #
-      # NOT fail-fast: every check runs, every failure is named, and the verdict
-      # comes at the end. One broken check must not hide the state of the other
-      # fifteen — the whole point of running them is knowing which contracts hold.
+      # NOT fail-fast: every check in this shard runs, every failure is named,
+      # and the verdict comes at the end. One broken check must not hide the
+      # state of the others — the whole point of running them is knowing which
+      # contracts hold. (The matrix carries the same rule; see `fail-fast` above.)
+      #
+      # THE PARTITION: every Nth file of the glob, N and the offset coming from
+      # GitHub's own matrix count. It is a pure function of the glob, so a check
+      # added to scripts/ is covered the day it lands with no edit here. The
+      # shards must agree on the glob's ORDER — they do, being the same image on
+      # the same checkout — and if they ever did not, the aggregator's union
+      # check below is what catches it rather than a check silently running twice
+      # or never.
       #
       # PLAIN POSIX sh, deliberately — no arrays, no `shopt`, no `<<<`. The
       # godot-ci image ships no bash, so Actions falls back to `sh -e {0}` and a
@@ -227,31 +268,120 @@ jobs:
       # other step in this workflow is POSIX for the same reason. A hung check is
       # caught by the job's `timeout-minutes`, not a per-check `timeout(1)` —
       # one less binary to assume the image has.
-      - name: 🩺 Run every self-check
+      - name: 🩺 Run this shard's self-checks
+        env:
+          SHARD: ${{ strategy.job-index }}
+          SHARDS: ${{ strategy.job-total }}
+          # TEMPORARY, and it is a list of TWO NAMED CHECKS, not a policy.
+          # Both carry ONE pre-existing SCRIPT ERROR on master (mp_selfcheck:
+          # global_position read off a harness stub; landmark_progress_selfcheck:
+          # a fetch_ice call on Nil), found by the gate above the day it was
+          # written. Bead godot-test1-llo fixes them; DELETE THIS LINE WITH IT.
+          # Anything else logging SCRIPT ERROR is red, which is the whole point.
+          SCRIPT_ERROR_EXEMPT: "mp_selfcheck landmark_progress_selfcheck"
         run: |
           command -v godot >/dev/null || { echo "::error::godot is not on PATH — no self-check would have run"; exit 1; }
+          : > "ran-${SHARD}.txt"
           total=0
+          ran=0
           failed=""
           for check in scripts/*_selfcheck.gd; do
             [ -e "$check" ] || { echo "::error::scripts/*_selfcheck.gd matched nothing — the suite would have silently passed"; exit 1; }
             total=$((total + 1))
+            [ $(( (total - 1) % SHARDS )) -eq "$SHARD" ] || continue
+            ran=$((ran + 1))
             name=$(basename "$check" .gd)
+            echo "$name" >> "ran-${SHARD}.txt"
             echo "::group::${name}"
-            if out=$(godot --headless --path . --script "res://${check}" 2>&1) \
-              && printf '%s\n' "$out" | grep -qx "SELFCHECK OK"; then
-              printf '%s\n' "$out"
-              echo "::endgroup::"
+            if out=$(godot --headless --path . --script "res://${check}" 2>&1); then rc=0; else rc=$?; fi
+            printf '%s\n' "$out"
+            echo "::endgroup::"
+            why=""
+            [ "$rc" -eq 0 ] || why="exited ${rc}"
+            printf '%s\n' "$out" | grep -qx "SELFCHECK OK" || why="${why}${why:+; }no 'SELFCHECK OK' line"
+            if printf '%s\n' "$out" | grep -q "SCRIPT ERROR"; then
+              case " ${SCRIPT_ERROR_EXEMPT} " in
+                *" ${name} "*)
+                  echo "::warning::${name} logged SCRIPT ERROR — known, and temporarily exempt until bead godot-test1-llo lands" ;;
+                *)
+                  why="${why}${why:+; }logged SCRIPT ERROR — a runtime error aborts that call and skips every assertion after it, and Godot still exits 0" ;;
+              esac
+            fi
+            if [ -z "$why" ]; then
               echo "OK   ${name}"
             else
-              printf '%s\n' "$out"
-              echo "::endgroup::"
-              echo "::error::${name} FAILED — no 'SELFCHECK OK' (see the ${name} log group above)"
+              echo "::error::${name} FAILED — ${why} (see the ${name} log group above)"
               failed="${failed} ${name}"
             fi
           done
-          echo "-- ${total} self-checks run --"
+          echo "-- shard ${SHARD}: ran ${ran} of the glob's ${total} self-checks --"
           [ -z "$failed" ] || { echo "::error::self-checks failed:${failed}"; exit 1; }
-          echo "all ${total} self-checks passed"
+          echo "shard ${SHARD}: all ${ran} self-checks passed"
+
+      # `always()`, so a red shard still reports WHICH checks it ran — otherwise a
+      # single failure would also make the aggregator's union check red for a
+      # second, misleading reason.
+      - name: 📤 Report which checks this shard ran
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selfcheck-ran-${{ strategy.job-index }}
+          path: ran-${{ strategy.job-index }}.txt
+          retention-days: 1
+
+  # ============================================================================
+  # THE GATE ITSELF. `deploy` and `deploy-stack` `needs:` this job, and it is
+  # green only when EVERY shard is green: `needs.selfcheck-shard.result` is the
+  # matrix's AGGREGATE result, so one red shard makes it 'failure' and this job
+  # fails. `if: always()` is what makes that reachable — without it a failed
+  # matrix would SKIP this job, and a skipped `needs:` blocks the deploy too, but
+  # silently and with no verdict printed. Do not drop the explicit result test:
+  # `always()` alone would make this job green regardless.
+  #
+  # It also re-does the arithmetic the shards did: the union of what they ran
+  # must be exactly the glob, with no name run twice and none missed. That is the
+  # measurement behind "every check still runs on every push" — the shards report
+  # what they ACTUALLY executed, and this compares it against the glob rather
+  # than trusting the partition.
+  # ============================================================================
+  selfchecks:
+    name: 🩺 Self-checks
+    needs: selfcheck-shard
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 🧮 Every shard must be green
+        env:
+          SHARD_RESULT: ${{ needs.selfcheck-shard.result }}
+        run: |
+          echo "shard matrix result: ${SHARD_RESULT}"
+          [ "${SHARD_RESULT}" = "success" ] \
+            || { echo "::error::a self-check shard did not pass (${SHARD_RESULT}) — see the shard jobs for the named failures"; exit 1; }
+
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📥 Collect what every shard ran
+        uses: actions/download-artifact@v4
+        with:
+          pattern: selfcheck-ran-*
+          path: ran
+          merge-multiple: true
+
+      - name: 🧮 The union of the shards must be exactly the glob
+        run: |
+          cat ran/ran-*.txt | sort > /tmp/ran.txt
+          for check in scripts/*_selfcheck.gd; do
+            [ -e "$check" ] || { echo "::error::scripts/*_selfcheck.gd matched nothing — the suite would have silently passed"; exit 1; }
+            basename "$check" .gd
+          done | sort > /tmp/glob.txt
+          echo "-- $(wc -l < /tmp/ran.txt) self-checks executed across the shards; the glob names $(wc -l < /tmp/glob.txt) --"
+          dupes=$(uniq -d /tmp/ran.txt)
+          [ -z "$dupes" ] || { printf '%s\n' "$dupes"; echo "::error::the shards overlap — the checks above ran more than once, so the partition is not a partition"; exit 1; }
+          diff -u /tmp/glob.txt /tmp/ran.txt \
+            || { echo "::error::the shards did not run exactly the glob (- = in the glob but never run, + = run but not in the glob)"; exit 1; }
+          echo "every self-check in scripts/*_selfcheck.gd ran exactly once"
 
   # ============================================================================
   # Enemy-model contract
