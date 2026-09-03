@@ -25,6 +25,13 @@ extends Node3D
 ##   * Feet rest at y = 0 by construction. Spawning occurs in a bubble around
 ##     the local player inside BudapestPlan.rect(), recycling when out of range.
 ##   * Transforms written in bulk via multimesh.buffer (never set_instance_transform).
+##   * Budget (bead 8gw.22): a citizen the CAMERA cannot see is ticked COARSELY —
+##     a few times a second, by the real elapsed time — never frozen. The rule and
+##     its rate live in scripts/ambience_lod.gd; read that file's header for why a
+##     freeze would look wrong and why the camera, not the player, is asked.
+##     ONE decision per citizen per frame (`lod_step`), taken in
+##     _update_crowd_spawns and spent by _update_walkers, so the walkability and
+##     recycle checks are made on exactly the ticks the citizen takes.
 
 # ============================================================================
 # CONSTANTS — budgets, distances, and grid
@@ -92,6 +99,8 @@ var _crowd_max: int = CROWD_MAX_DESKTOP
 ##   facing_yaw: float (current facing angle in radians)
 ##   heading_dir: Vector2 (current direction vector on XZ)
 ##   active: bool (whether currently spawned and active)
+##   lod_debt: float (seconds banked while out of view — ambience_lod.gd's)
+##   lod_step: float (seconds to advance THIS frame; 0.0 = not this citizen's tick)
 var _citizens: Array[Dictionary] = []
 
 ## Four MultiMeshInstance3D child nodes (one per archetype).
@@ -99,6 +108,9 @@ var _multimesh_nodes: Array[MultiMeshInstance3D] = []
 
 ## Reusable Budapest plan reference (pure static calls).
 const PLAN_SCRIPT := preload("res://scripts/budapest_plan.gd")
+
+## The shared "coarse-tick what we cannot see" rule — see its header.
+const AmbienceLod := preload("res://scripts/ambience_lod.gd")
 
 # ============================================================================
 # SHARED RESOURCES (static — one per PROCESS, not per citizen/manager)
@@ -377,6 +389,8 @@ func _ready() -> void:
 				"facing_yaw": 0.0,
 				"heading_dir": Vector2(1.0, 0.0),
 				"active": false,
+				"lod_debt": 0.0,
+				"lod_step": 0.0,
 			})
 
 
@@ -392,11 +406,16 @@ func _process(delta: float) -> void:
 		_hide_all()
 		return
 
+	# Whose tick is it this frame? Asked ONCE per frame off the ACTIVE CAMERA
+	# (never the player — the FRONT view looks backward along the hero), and
+	# spent by both loops below. Empty planes (no camera) = everything visible.
+	var planes: Array[Plane] = AmbienceLod.view_planes(get_viewport())
+
 	# Maintain active citizens in bubble around player
-	_update_crowd_spawns(player_pos)
+	_update_crowd_spawns(delta, player_pos, planes)
 
 	# Update movement, grid wayfinding, and animation
-	_update_walkers(delta, player_pos)
+	_update_walkers(delta, true)
 
 
 # ============================================================================
@@ -543,14 +562,32 @@ func _find_spawn_segment_near(player_pos: Vector3) -> Dictionary:
 	return {}
 
 
-func _update_crowd_spawns(player_pos: Vector3) -> void:
+func _update_crowd_spawns(delta: float, player_pos: Vector3, planes: Array[Plane] = []) -> void:
 	## Activates or recycles citizens in a natural, distributed arrangement around the player.
+	##
+	## THIS IS ALSO WHERE THE COARSE TICK IS DECIDED, once per citizen per frame,
+	## and written to `lod_step` for `_update_walkers` to spend. Deciding it here
+	## rather than there is what makes the recycle test (walkability, the despawn
+	## radius) happen on exactly the ticks a citizen moves on — a citizen that is
+	## not stepping cannot have walked anywhere that needs re-checking, and the
+	## dominant cost of this loop is `is_walkable`, not the movement.
+	## `planes` empty (no camera) => everything visible => byte-for-byte today.
+	# EVERY citizen must get its decision, which is why the "no walkable street
+	# near the player" case sets a flag and carries on instead of breaking out of
+	# the loop as it used to: a citizen the loop never reached would keep LAST
+	# frame's `lod_step` and spend it a second time. The retry storm that `break`
+	# existed to prevent is prevented by the flag — no further spawn searches.
+	var spawn_exhausted: bool = false
 	for citizen: Dictionary in _citizens:
 		if not citizen["active"]:
+			citizen["lod_step"] = delta  # nowhere to stand yet: never coarse-ticked
+			if spawn_exhausted:
+				continue
 			var seg := _find_spawn_segment_near(player_pos)
 			if seg.is_empty():
-				# No walkable street near player: break immediately to avoid retry storm
-				break
+				# No walkable street near the player: stop searching this frame.
+				spawn_exhausted = true
+				continue
 			var start_pt: Vector3 = seg["start"]
 			var end_pt: Vector3 = seg["end"]
 			var t_prog := _rng.randf_range(0.05, 0.95)
@@ -570,8 +607,13 @@ func _update_crowd_spawns(player_pos: Vector3) -> void:
 			citizen["speed"] = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
 			citizen["walk_phase"] = _rng.randf_range(0.0, TAU)
 			citizen["pause_timer"] = 0.0
+			citizen["lod_debt"] = 0.0
 			citizen["active"] = true
 		else:
+			var visible: bool = AmbienceLod.is_visible_at(planes, _citizen_world_pos(citizen))
+			citizen["lod_step"] = AmbienceLod.step_delta(citizen, delta, visible)
+			if float(citizen["lod_step"]) <= 0.0:
+				continue  # not this citizen's tick — it moves later, by the banked time
 			# Check if citizen has drifted beyond DESPAWN_RADIUS or out of walkable zone
 			var cpos: Vector3 = citizen["pos"]
 			var flat_dist := Vector2(cpos.x - player_pos.x, cpos.z - player_pos.z).length()
@@ -598,13 +640,21 @@ func _update_crowd_spawns(player_pos: Vector3) -> void:
 					citizen["speed"] = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
 					citizen["walk_phase"] = _rng.randf_range(0.0, TAU)
 					citizen["pause_timer"] = 0.0
+					citizen["lod_debt"] = 0.0
 				else:
 					citizen["active"] = false
 
 
-func _update_walkers(delta: float, _player_pos: Vector3) -> void:
+func _update_walkers(delta: float, lod_gated: bool = false) -> void:
 	## Advances citizen movement, applies procedural walk bob/sway, and pushes
 	## transforms in bulk to the four MultiMeshes via multimesh.buffer.
+	##
+	## `lod_gated` false means every citizen steps by `delta` — which is what a
+	## harness driving this function directly wants, and byte-for-byte what a
+	## camera-less scene produces anyway. `_process` passes true and each citizen
+	## spends the `lod_step` decided in `_update_crowd_spawns`: 0.0 means it is
+	## not its tick, so it is DRAWN WHERE IT STANDS and moves on its next one.
+	## Nothing is ever skipped out of the buffer — the crowd is never a hole.
 	var counts := [0, 0, 0, 0]
 	var buffers: Array[PackedFloat32Array] = []
 	for k in ARCHETYPE_COUNT:
@@ -623,10 +673,16 @@ func _update_walkers(delta: float, _player_pos: Vector3) -> void:
 		var target: Vector3 = citizen["target"]
 		var is_moving := false
 
-		if citizen["pause_timer"] > 0.0:
-			citizen["pause_timer"] -= delta
+		# The coarse tick: the REAL elapsed time since this citizen last stepped,
+		# not one frame's worth — that is what keeps an unseen street walking.
+		var step_dt: float = float(citizen["lod_step"]) if lod_gated else delta
+
+		if step_dt <= 0.0:
+			pass  # not its tick; fall through to the draw with its current state
+		elif citizen["pause_timer"] > 0.0:
+			citizen["pause_timer"] -= step_dt
 		else:
-			var step: float = citizen["speed"] * delta
+			var step: float = citizen["speed"] * step_dt
 			var to_target := target - pos
 			var dist := to_target.length()
 
@@ -651,7 +707,7 @@ func _update_walkers(delta: float, _player_pos: Vector3) -> void:
 
 				# Smoothly rotate facing yaw towards current heading
 				var target_yaw := atan2(-move_dir.x, -move_dir.z)
-				citizen["facing_yaw"] = rotate_toward(citizen["facing_yaw"], target_yaw, 5.0 * delta)
+				citizen["facing_yaw"] = rotate_toward(citizen["facing_yaw"], target_yaw, 5.0 * step_dt)
 
 		citizen["pos"] = pos
 

@@ -19,8 +19,19 @@ extends SceneTree
 ##      shipped move_toward path, respects accel/decel and lateral width.
 ##   6. Honk: hold-off + cooldown via shipped _update_cars approached from
 ##      cruise, and distance gate via second-car blocker.
+##   7. THE COARSE TICK (bead 8gw.22): a car the camera cannot see is ticked a
+##      few times a second by the REAL elapsed time — it ADVANCES, it is never
+##      frozen and never deleted — is_traffic_walkable is still asked on every
+##      tick it takes, and a null camera degrades to full-rate updates.
+##   8. The de-quadratic'd queue scan answers EXACTLY what the all-pairs scan it
+##      replaced answered, measured against an independent oracle.
 
 const DT: float = 1.0 / 60.0
+
+## The coarse-tick window: 2 s at 60 Hz, so a 0.25 s tick fires ~8 times.
+const LOD_FRAMES: int = 120
+
+const AmbienceLod := preload("res://scripts/ambience_lod.gd")
 
 var _root: Node3D = null
 var _manager: Node3D = null
@@ -68,6 +79,8 @@ func _run_checks() -> void:
 	_check_stuck_recycle()
 	_check_target_speed_seam()
 	_check_no_interpenetration()
+	_check_coarse_tick_out_of_view()
+	_check_queue_scan_matches_all_pairs()
 	if _failures.is_empty():
 		print("traffic_selfcheck: all checks passed cleanly")
 		Sentinel.finish(self)
@@ -580,3 +593,198 @@ func _check_no_interpenetration() -> void:
 	if cnt < 5:
 		_failures.append("interpenetration check saw only %d active cars (expected >=5 to have pairs)" % cnt)
 	Sentinel.done("no_interpenetration")
+
+
+# ============================================================================
+# 7. THE COARSE TICK — a car nobody can see keeps driving, slowly ticked
+# ============================================================================
+
+func _drive_probe_car(car: Dictionary, frames: int) -> Dictionary:
+	## Runs the SHIPPED _process for `frames` and reports what the probe car was
+	## granted, how far it got, and whether it ever stood off the carriageway —
+	## is_traffic_walkable is the FIRST branch of every tick a car takes, so a
+	## coarse-ticked car must be as clear of the Danube as a full-rate one.
+	var mgr_script: GDScript = load("res://scripts/traffic_manager.gd")
+	var start: Vector3 = mgr_script._car_world_pos(car)
+	var stepped: int = 0
+	var granted: float = 0.0
+	var off_road: int = 0
+	for f in frames:
+		_manager._process(DT)
+		if float(car["lod_step"]) > 0.0:
+			stepped += 1
+			granted += float(car["lod_step"])
+		var w: Vector3 = mgr_script._car_world_pos(car)
+		if not mgr_script.is_traffic_walkable(w.x, w.z):
+			off_road += 1
+	return {
+		"dist": mgr_script._car_world_pos(car).distance_to(start),
+		"stepped": stepped,
+		"granted": granted,
+		"off_road": off_road,
+	}
+
+
+func _seat_probe_car(car: Dictionary) -> void:
+	car["pos"] = Vector3(1788.0, 0.0, 0.0)
+	car["heading_dir"] = Vector2(1.0, 0.0)
+	car["facing_yaw"] = atan2(-1.0, 0.0)
+	car["cruise_speed"] = 5.0
+	car["speed"] = 5.0
+	car["blocked_time"] = 0.0
+	car["honk_cooldown"] = 999.0
+	car["honk_count"] = 0
+	car["lod_debt"] = 0.0
+	car["lod_step"] = 0.0
+	car["active"] = true
+
+
+func _check_coarse_tick_out_of_view() -> void:
+	## One car on the gate avenue with the hero 120 m off to the side, driven
+	## through the shipped _process with a camera pointed AWAY from it and then
+	## with no camera at all. The car is never deleted and never frozen in either.
+	_manager._hide_all()
+	var cars: Array = _manager.get("_cars")
+	for c: Dictionary in cars:
+		c["active"] = false
+	var probe: Dictionary = cars[7]
+	# Far enough down the cross street that the car is well outside the frustum,
+	# still inside DESPAWN_RADIUS so the manager keeps it rather than recycling.
+	var player_pos := Vector3(1788.0, 1.0, 120.0)
+	_player.position = player_pos
+
+	# --- A. NULL CAMERA => full rate (today's behaviour) ----------------------
+	_seat_probe_car(probe)
+	var full: Dictionary = _drive_probe_car(probe, LOD_FRAMES)
+	if int(full["stepped"]) != LOD_FRAMES:
+		_failures.append("null camera: car stepped on %d of %d frames — a camera-less scene must degrade to FULL RATE" % [int(full["stepped"]), LOD_FRAMES])
+	if int(full["off_road"]) != 0:
+		_failures.append("null camera: car stood off the carriageway on %d frames" % int(full["off_road"]))
+
+	# --- B. CAMERA LOOKING AWAY => coarse, but still driving ------------------
+	var cam := Camera3D.new()
+	_root.add_child(cam)
+	cam.current = true
+	# At the hero, looking further down the cross street (+Z): the car is ~120 m
+	# BEHIND this camera, so nothing but a bug puts it in the frustum.
+	cam.global_transform = Transform3D(Basis(Vector3.UP, PI), player_pos)
+	_seat_probe_car(probe)
+	var coarse: Dictionary = _drive_probe_car(probe, LOD_FRAMES)
+	var elapsed: float = LOD_FRAMES * DT
+
+	if int(coarse["stepped"]) >= LOD_FRAMES / 4:
+		_failures.append("out of view: car stepped on %d of %d frames — expected about %d at a %.2f s coarse tick; the gate is not gating"
+			% [int(coarse["stepped"]), LOD_FRAMES, int(elapsed / AmbienceLod.COARSE_TICK_SECONDS), AmbienceLod.COARSE_TICK_SECONDS])
+	if int(coarse["stepped"]) == 0:
+		_failures.append("out of view: car never stepped at all in %d frames — that is a FREEZE, not a coarse tick" % LOD_FRAMES)
+	# THE ANTI-FREEZE ASSERTION, in the time domain: every second of wall clock
+	# is granted to the car, just in fewer and bigger pieces. A gate that skipped
+	# instead of banking drops this to ~0.
+	if absf(float(coarse["granted"]) - elapsed) > AmbienceLod.COARSE_TICK_SECONDS + 0.001:
+		_failures.append("out of view: car was granted %.3f s of the %.3f s that passed — the bank must be SPENT, not dropped (a freeze reads ~0)"
+			% [float(coarse["granted"]), elapsed])
+	# ...and in the distance domain: it really covered the road.
+	if float(coarse["dist"]) <= 0.0:
+		_failures.append("out of view: car did not move at all over %.1f s — frozen, not coarse-ticked" % elapsed)
+	if float(probe["speed"]) > 1.0 and float(coarse["dist"]) < 0.5 * elapsed * float(probe["cruise_speed"]):
+		_failures.append("out of view: car still rolling at %.2f m/s but covered only %.2f m in %.1f s — a coarse tick advances by the REAL elapsed time"
+			% [float(probe["speed"]), float(coarse["dist"]), elapsed])
+	# The Danube rule survives the coarse tick.
+	if int(coarse["off_road"]) != 0:
+		_failures.append("out of view: coarse-ticked car stood off the carriageway on %d of %d frames — is_traffic_walkable must be asked on every tick it takes"
+			% [int(coarse["off_road"]), LOD_FRAMES])
+	# Nothing was deleted to buy any of this.
+	if not probe["active"]:
+		_failures.append("out of view: probe car was deactivated — no car may EVER be deleted as an optimization")
+	var live: int = 0
+	for c: Dictionary in cars:
+		if c["active"]:
+			live += 1
+	if live > int(_manager.get("_traffic_max")):
+		_failures.append("out of view: %d live cars exceeds the cap %d" % [live, int(_manager.get("_traffic_max"))])
+
+	cam.current = false
+	_root.remove_child(cam)
+	cam.free()
+
+	# --- C. The camera going away restores full rate --------------------------
+	_seat_probe_car(probe)
+	var after: Dictionary = _drive_probe_car(probe, 30)
+	if int(after["stepped"]) != 30:
+		_failures.append("camera removed: car stepped on %d of 30 frames — losing the camera must return everything to full rate" % int(after["stepped"]))
+
+	for c: Dictionary in cars:
+		c["active"] = false
+	_manager._hide_all()
+	Sentinel.done("coarse_tick_out_of_view")
+
+
+# ============================================================================
+# 8. The locality gate changed no ANSWER — only the work
+# ============================================================================
+
+func _oracle_block_ahead(cars: Array, idx: int, player_pos: Vector3) -> float:
+	## The all-pairs scan _distance_to_block_ahead used to be, written out
+	## independently here: no QUEUE_SCAN_RANGE reject, no index shortcut.
+	var mgr_script: GDScript = load("res://scripts/traffic_manager.gd")
+	var car: Dictionary = cars[idx]
+	var wpos: Vector3 = mgr_script._car_world_pos(car)
+	var h: Vector2 = car["heading_dir"]
+	var perp := Vector2(-h.y, h.x)
+	var best := INF
+	var to_p := Vector2(player_pos.x - wpos.x, player_pos.z - wpos.z)
+	var fwd := to_p.dot(h)
+	if fwd > 0.0 and fwd < float(mgr_script.get("YIELD_DISTANCE")) + 2.0:
+		if absf(to_p.dot(perp)) <= float(mgr_script.get("LATERAL_TOLERANCE")):
+			best = fwd
+	for j in cars.size():
+		if j == idx:
+			continue
+		var other: Dictionary = cars[j]
+		if not other["active"]:
+			continue
+		var ow: Vector3 = mgr_script._car_world_pos(other)
+		var to_c := Vector2(ow.x - wpos.x, ow.z - wpos.z)
+		var fwd_c := to_c.dot(h)
+		if fwd_c <= 0.0 or fwd_c >= float(mgr_script.get("YIELD_DISTANCE")) + 1.0:
+			continue
+		if h.dot(other["heading_dir"] as Vector2) < 0.6:
+			continue
+		if absf(to_c.dot(perp)) <= float(mgr_script.get("LATERAL_TOLERANCE_CAR")):
+			best = minf(best, fwd_c)
+	return best
+
+
+func _check_queue_scan_matches_all_pairs() -> void:
+	## _distance_to_block_ahead rejects a pair on a per-axis box before it
+	## computes anything (QUEUE_SCAN_RANGE). That is only sound if it rejects
+	## exactly the pairs that could never have been the answer — so drive both
+	## over a live, crowded bubble and demand the SAME number every time.
+	_manager._hide_all()
+	_player.position = Vector3(2000.0, 1.0, 0.0)
+	var cars: Array = _manager.get("_cars")
+	var compared: int = 0
+	var finite_seen: int = 0
+	for frame in 240:
+		_manager._process(DT)
+		var pp: Vector3 = _player.position
+		for i in cars.size():
+			if not cars[i]["active"]:
+				continue
+			var shipped: float = _manager._distance_to_block_ahead(cars[i], pp, i)
+			var oracle: float = _oracle_block_ahead(cars, i, pp)
+			compared += 1
+			if is_finite(oracle):
+				finite_seen += 1
+			if absf(shipped - oracle) > 0.0001 and not (is_inf(shipped) and is_inf(oracle)):
+				_failures.append("queue scan: locality gate changed the answer for car %d — shipped %.4f, all-pairs oracle %.4f" % [i, shipped, oracle])
+				Sentinel.done("queue_scan_matches_all_pairs")
+				return
+		# Nudge the hero along the avenue so the population keeps churning.
+		_player.position = Vector3(2000.0 + float(frame) * 0.25, 1.0, 0.0)
+	if compared < 500:
+		_failures.append("queue scan: only %d car/frame pairs compared — too few to mean anything" % compared)
+	if finite_seen == 0:
+		_failures.append("queue scan: the oracle never once found a blocker in %d comparisons — the check is toothless, it never exercised the case the gate could break" % compared)
+	_manager._hide_all()
+	Sentinel.done("queue_scan_matches_all_pairs")
