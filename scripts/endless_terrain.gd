@@ -2210,6 +2210,36 @@ const TREE_CANOPY_TAPER: float = 0.68     # each layer up is this fraction as wi
 const TREE_TRUNK_COLOR := Color(0.34, 0.24, 0.16)
 const TREE_LEAF_COLOR := Color(0.16, 0.36, 0.19)
 
+## FOREST — THE ANTI-MINECRAFT SET (bead godot-test1-u7a, owner: "trees are too
+## minecraft-ish, we need own style"). Every one of these is a TRANSFORM or a
+## COLOUR, because that is all a MultiMesh instance can carry: the chunk keeps its
+## ONE unit-cube batch and its ONE draw call, and a forest chunk emits exactly the
+## same number of instances it always did. What changed is that no two of them
+## line up any more.
+##
+##   * TREE_LEAF_COLOR_WARM is the far end of a per-tree tint ramp. The flat single
+##     green was the loudest half of the Minecraft read — a wood of identically
+##     coloured slabs reads as one material, not as foliage.
+##   * TREE_CANOPY_YAW_STEP turns each canopy layer 45 deg against the one below.
+##     A square has 90 deg symmetry, so the stack alternates 0 / 45 / 0 and the
+##     silhouette from any angle is an interference pattern of two squares — an
+##     octagon-ish crown instead of a column of aligned cubes. Costs NO rng draw.
+##   * TREE_CANOPY_DEPTH_RATIO makes each layer a rectangle rather than a square,
+##     so the alternating yaw actually crosses instead of repeating. The half
+##     diagonal of a (w, w*0.84) plan is 0.65*w, UNDER the 0.71*w a square costs,
+##     so the chunk-seam bound below stays an over-estimate.
+##   * TREE_TRUNK_TILT_MAX leans the trunk. A tree leans; a fence post does not.
+##     The canopy is offset to follow the leaning trunk's axis (see the builder).
+const TREE_LEAF_COLOR_WARM := Color(0.33, 0.46, 0.15)  # sun-struck yellow-green
+const TREE_LEAF_CROWN_LIFT: float = 0.40  # how far the TOP layer is pushed toward warm
+const TREE_CANOPY_YAW_STEP: float = PI * 0.25  # 45 deg per layer up
+const TREE_CANOPY_DEPTH_RATIO: float = 0.84    # plan is a rectangle, not a square
+const TREE_CANOPY_WIDTH_JITTER_MIN: float = 0.78
+const TREE_CANOPY_WIDTH_JITTER_MAX: float = 1.06
+const TREE_TRUNK_TILT_MAX: float = 0.08  # radians of lean, either way
+const TREE_CANOPY_TILT_MAX: float = 0.16   # radians, alternating sign per layer
+const TREE_CANOPY_SLIDE: float = 0.14      # fraction of a layer's width it slides off axis
+
 ## MOUNTAIN — massifs per mountain chunk. Each is a stack of shrinking boxes, so
 ## a "range" is 2-4 crude peaks per chunk and the biome band is several chunks
 ## across.
@@ -2611,6 +2641,16 @@ const FROZEN_TREE_TRUNK_WIDTH_MAX: float = 0.60
 const FROZEN_TREE_HEIGHT_MIN: float = 2.6
 const FROZEN_TREE_HEIGHT_MAX: float = 4.6
 const FROZEN_TREE_BRANCH_LEN: float = 1.5   # one bare branch box, long side
+## The deadwood half of bead godot-test1-u7a's restyle. Same rule as the forest's:
+## transforms and colours only, no new instances, no new draw call. A dead tree
+## leans harder than a living one (nothing is holding it up), each branch is a
+## different length rather than the same stick four times, and the timber runs from
+## bleached grey to wet-rot brown per tree instead of one flat frost colour.
+## The branch multiplier NEVER exceeds 1.0 on purpose: `branch_reach` below is the
+## chunk-seam bound, and shrink-only keeps it an over-estimate with no edit there.
+const FROZEN_TREE_TILT_MAX: float = 0.11    # radians of lean, either way
+const FROZEN_TREE_BRANCH_JITTER_MIN: float = 0.58
+const SNOW_DEADWOOD_DARK := Color(0.31, 0.27, 0.24)  # the wet-rot end of the ramp
 
 ## MAMMOTH SKELETONS — the territory's marquee prop, and the one place in this file
 ## where create_box's `tilt` is doing work nothing else could do: a rib is a thin
@@ -2684,6 +2724,26 @@ const OASIS_PALM_TRUNK_WIDTH: float = 0.6
 const OASIS_PALM_TRUNK_HEIGHT: float = 4.5
 const OASIS_PALM_FROND_WIDTH: float = 3.0
 const OASIS_PALM_FROND_COUNT: int = 4
+## The palm half of bead godot-test1-u7a. The old crown was four full-length slabs
+## centred ON the trunk at one height with no tilt — a flat plus-sign hat, which is
+## the single most Minecraft-shaped thing in the file. Now each frond starts AT the
+## crown and hangs outward and DOWN.
+##
+## THE FROND'S LONG AXIS MOVED FROM LOCAL X TO LOCAL Z, and that is the whole trick:
+## create_box's `tilt` is a rotation about the box's local X, so a frond lying along
+## X only ROLLS about its own length (invisible on a slab) while one lying along Z
+## PITCHES — which is droop. No new create_box parameter was needed for it.
+##
+## Drooping only ever REDUCES the horizontal span (cos of the droop), and the frond
+## now reaches from the trunk instead of through it, so the crown is no wider than
+## it was; OASIS_PALM_EDGE_MARGIN grew only for the new trunk lean.
+const OASIS_PALM_TILT_MAX: float = 0.10   # radians — a palm curves, it does not stand to attention
+const OASIS_PALM_DROOP_MIN: float = 0.20  # radians below horizontal, per palm
+const OASIS_PALM_DROOP_MAX: float = 0.38
+const OASIS_PALM_DROOP_ALT: float = 1.45  # every other frond droops this much harder
+const OASIS_PALM_FROND_JITTER_MIN: float = 0.70  # shrink-only, so the span stays bounded
+const OASIS_PALM_EDGE_MARGIN: float = 2.6
+const OASIS_PALM_FROND_COLOR := Color(0.28, 0.48, 0.28)
 const OASIS_BOULDER_MIN: int = 3
 const OASIS_BOULDER_MAX: int = 6
 const OASIS_BOULDER_SIZE_MIN: float = 0.8
@@ -8493,26 +8553,37 @@ func _spawn_desert_oasis(chunk_center: Vector3, chunk_pos: Vector2i, rng: Random
 			var palm_x := local_x + cos(palm_angle) * palm_dist
 			var palm_z := local_z + sin(palm_angle) * palm_dist
 
-			# Keep palm within chunk bounds
-			if absf(palm_x) > chunk_size * 0.5 - 2.0 or absf(palm_z) > chunk_size * 0.5 - 2.0:
+			# Keep palm within chunk bounds. The margin carries the trunk's lean now
+			# (see OASIS_PALM_TILT_MAX); the drooping fronds span LESS than the old
+			# flat ones did, so they did not move it.
+			if absf(palm_x) > chunk_size * 0.5 - OASIS_PALM_EDGE_MARGIN or absf(palm_z) > chunk_size * 0.5 - OASIS_PALM_EDGE_MARGIN:
 				continue
 
 			var trunk_yaw := rng.randf_range(0.0, TAU)
+			# Two unconditional per-palm draws: the trunk's curve and how hard this
+			# palm's crown hangs.
+			var palm_lean := rng.randf_range(-OASIS_PALM_TILT_MAX, OASIS_PALM_TILT_MAX)
+			var droop := rng.randf_range(OASIS_PALM_DROOP_MIN, OASIS_PALM_DROOP_MAX)
 			# Trunk (colliding)
 			create_box(
 				Vector3(palm_x, OASIS_PALM_TRUNK_HEIGHT * 0.5, palm_z),
 				Vector3(OASIS_PALM_TRUNK_WIDTH, OASIS_PALM_TRUNK_HEIGHT, OASIS_PALM_TRUNK_WIDTH),
-				trunk_yaw, rng, block_batch, block_body, 0.0, Color(0.40, 0.32, 0.22)
+				trunk_yaw, rng, block_batch, block_body, palm_lean, Color(0.40, 0.32, 0.22)
 			)
 
-			# Fronds (visual only, collide=false) — 4 layers fanning out
+			# Fronds (visual only, collide=false) — each starts at the crown and
+			# hangs outward and down, alternating how far (see the const block).
+			var crown := Vector3(palm_x, OASIS_PALM_TRUNK_HEIGHT - 0.15, palm_z) \
+					+ Vector3(sin(trunk_yaw), 0.0, cos(trunk_yaw)) * sin(palm_lean) * (OASIS_PALM_TRUNK_HEIGHT * 0.5)
 			for _f in OASIS_PALM_FROND_COUNT:
-				var frond_height := OASIS_PALM_TRUNK_HEIGHT - 0.5
+				var flen := OASIS_PALM_FROND_WIDTH * rng.randf_range(OASIS_PALM_FROND_JITTER_MIN, 1.0)
 				var frond_yaw := trunk_yaw + (TAU / OASIS_PALM_FROND_COUNT) * _f
+				var f_droop := droop * (1.0 if _f % 2 == 0 else OASIS_PALM_DROOP_ALT)
+				var frond_rot := Basis(Vector3.UP, frond_yaw) * Basis(Vector3.RIGHT, f_droop)
 				create_box(
-					Vector3(palm_x, frond_height + 0.3, palm_z),
-					Vector3(OASIS_PALM_FROND_WIDTH, 0.6, 0.4),
-					frond_yaw, rng, block_batch, block_body, 0.0, Color(0.28, 0.48, 0.28), false
+					crown + frond_rot * Vector3(0.0, 0.0, flen * 0.5),
+					Vector3(0.42, 0.30, flen),
+					frond_yaw, rng, block_batch, block_body, f_droop, OASIS_PALM_FROND_COLOR, false
 				)
 
 			# Small trunk footprint
@@ -8630,7 +8701,15 @@ func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 	# chunk (same reasoning as MOUNTAIN_EDGE_MARGIN). A flat 2.0 m margin left the
 	# widest canopy poking 0.4 m past the seam, where it would vanish with its own
 	# chunk while the neighbour still renders.
-	var half := chunk_size / 2.0 - TREE_CANOPY_WIDTH_MAX * 0.71
+	#
+	# The lean added by TREE_TRUNK_TILT_MAX slides the canopy sideways along the
+	# trunk's own axis, so the margin now carries that offset too. It is written as
+	# the arithmetic rather than a number: the highest canopy centre sits about
+	# three layer-heights above the trunk's mid-point, and sin(lean) times that is
+	# how far it can travel. Retune the lean or the layer height and this follows.
+	var lean_reach := sin(TREE_TRUNK_TILT_MAX) * (TREE_TRUNK_HEIGHT_MAX * 0.5 + TREE_CANOPY_LAYER_HEIGHT * 3.0)
+	var widest_layer := TREE_CANOPY_WIDTH_MAX * TREE_CANOPY_WIDTH_JITTER_MAX
+	var half := chunk_size / 2.0 - (widest_layer * (0.71 + TREE_CANOPY_SLIDE) + lean_reach)
 	var count := rng.randi_range(FOREST_TREES_MIN, FOREST_TREES_MAX)
 	var chunk_pos_forest := world_to_chunk(chunk_center)
 	var k_forest := scarcity_at(chunk_center)
@@ -8653,6 +8732,13 @@ func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 		var trunk_w := rng.randf_range(TREE_TRUNK_WIDTH_MIN, TREE_TRUNK_WIDTH_MAX)
 		var trunk_h := rng.randf_range(TREE_TRUNK_HEIGHT_MIN, TREE_TRUNK_HEIGHT_MAX)
 		var yaw := rng.randf_range(0.0, TAU)
+		# The two anti-Minecraft per-tree draws, taken UNCONDITIONALLY and in a fixed
+		# order right here — above the scarcity roll, so a thinned tree cannot make
+		# the stream depend on the roll's branch. `leaf_t` mixes this tree's foliage
+		# somewhere along TREE_LEAF_COLOR -> TREE_LEAF_COLOR_WARM (no two trees the
+		# same green); `lean` is the trunk's tilt.
+		var leaf_t := rng.randf()
+		var lean := rng.randf_range(-TREE_TRUNK_TILT_MAX, TREE_TRUNK_TILT_MAX)
 		var scarcity_roll := float(hash(Vector3i(chunk_pos_forest.x * 96174811, chunk_pos_forest.y * 18266587, run_seed ^ SCARCITY_SALT ^ _i)) % 1000000) / 1000000.0
 		if scarcity_roll >= k_forest:
 			continue
@@ -8661,19 +8747,46 @@ func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 		create_box(
 			Vector3(local_x, trunk_h * 0.5, local_z),
 			Vector3(trunk_w, trunk_h, trunk_w),
-			yaw, rng, block_batch, block_body, 0.0, TREE_TRUNK_COLOR
+			yaw, rng, block_batch, block_body, lean, TREE_TRUNK_COLOR
 		)
 
 		# Canopy: 2-3 shrinking slabs stacked from just below the trunk top, each
 		# VISUAL ONLY (collide = false) — you walk under a tree, not into its leaves.
+		#
+		# THE CANOPY RIDES THE LEANING TRUNK. create_box's tilt is Basis(UP, yaw) *
+		# Basis(RIGHT, lean), which tips the box's local +Y toward its local +Z — so
+		# the trunk's axis drifts along the world direction of that local +Z,
+		# (sin yaw, 0, cos yaw), by sin(lean) per metre above the trunk box's CENTRE.
+		# Leaving the canopy on the vertical would hang the crown off the side of a
+		# leaning trunk, which is the one way this could look worse than a cube.
+		var lean_dir := Vector3(sin(yaw), 0.0, cos(yaw)) * sin(lean)
 		var layers := rng.randi_range(TREE_CANOPY_LAYERS_MIN, TREE_CANOPY_LAYERS_MAX)
 		var canopy_w := rng.randf_range(TREE_CANOPY_WIDTH_MIN, TREE_CANOPY_WIDTH_MAX)
 		var canopy_y := trunk_h - TREE_CANOPY_LAYER_HEIGHT * 0.3
+		var leaf_base := TREE_LEAF_COLOR.lerp(TREE_LEAF_COLOR_WARM, leaf_t)
 		for _l in layers:
+			# One draw per layer, so no two layers of one tree are the same width —
+			# the taper alone made every tree the same tapering stack.
+			var w := canopy_w * rng.randf_range(TREE_CANOPY_WIDTH_JITTER_MIN, TREE_CANOPY_WIDTH_JITTER_MAX)
+			var mid_y := canopy_y + TREE_CANOPY_LAYER_HEIGHT * 0.5
+			# Crown lift: the top of a real canopy catches the light. Derived from
+			# the layer INDEX, so it costs no draw.
+			var crown := 0.0 if layers <= 1 else float(_l) / float(layers - 1)
+			var layer_yaw := yaw + TREE_CANOPY_YAW_STEP * float(_l)
+			# THE LAST TWO ARE FREE — both derived from values already drawn, so
+			# neither costs an rng draw and neither can move a spawn. A flat-topped
+			# stack of level slabs is the shape that still read as a cube once the
+			# colours and the yaw were fixed, so each layer PITCHES (alternating
+			# sign, magnitude off this tree's own leaf_t) and SLIDES off the trunk
+			# axis along its own yaw. Both bounded by the constants, both measured
+			# by prop_selfcheck's forest seam clause.
+			var layer_tilt := TREE_CANOPY_TILT_MAX * (0.4 + 0.6 * leaf_t) * (1.0 if _l % 2 == 0 else -1.0)
+			var slide := Vector3(sin(layer_yaw), 0.0, cos(layer_yaw)) * (w * TREE_CANOPY_SLIDE * crown)
 			create_box(
-				Vector3(local_x, canopy_y + TREE_CANOPY_LAYER_HEIGHT * 0.5, local_z),
-				Vector3(canopy_w, TREE_CANOPY_LAYER_HEIGHT, canopy_w),
-				yaw, rng, block_batch, block_body, 0.0, TREE_LEAF_COLOR, false
+				Vector3(local_x, mid_y, local_z) + lean_dir * (mid_y - trunk_h * 0.5) + slide,
+				Vector3(w, TREE_CANOPY_LAYER_HEIGHT, w * TREE_CANOPY_DEPTH_RATIO),
+				layer_yaw, rng, block_batch, block_body, layer_tilt,
+				leaf_base.lerp(TREE_LEAF_COLOR_WARM, crown * TREE_LEAF_CROWN_LIFT), false
 			)
 			canopy_y += TREE_CANOPY_LAYER_HEIGHT * 0.8
 			canopy_w *= TREE_CANOPY_TAPER
@@ -9106,7 +9219,12 @@ func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 	# only the half-diagonal (the bound a prop builder's centred decoration needs)
 	# understates it by the offset, which is 0.63 m of the 1.40 and measured 24.81 m
 	# of a 25.00 m seam over just fourteen chunks.
+	#
+	# The lean added by FROZEN_TREE_TILT_MAX carries the branches sideways with the
+	# trunk, so the margin gains sin(lean) times the tallest trunk. Written as the
+	# arithmetic, so retuning the lean or the height retunes this with it.
 	var branch_reach := FROZEN_TREE_BRANCH_LEN * 0.42 + 0.5 * Vector3(FROZEN_TREE_BRANCH_LEN, 0.22, 0.22).length()
+	branch_reach += sin(FROZEN_TREE_TILT_MAX) * FROZEN_TREE_HEIGHT_MAX
 	var tree_half := chunk_size / 2.0 - (FROZEN_TREE_TRUNK_WIDTH_MAX * 0.71 + branch_reach)
 	var chunk_pos_snow := world_to_chunk(chunk_center)
 	var k_snow := scarcity_at(chunk_center)
@@ -9130,6 +9248,14 @@ func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 		var trunk_w := rng.randf_range(FROZEN_TREE_TRUNK_WIDTH_MIN, FROZEN_TREE_TRUNK_WIDTH_MAX)
 		var trunk_h := rng.randf_range(FROZEN_TREE_HEIGHT_MIN, FROZEN_TREE_HEIGHT_MAX)
 		var yaw := rng.randf_range(0.0, TAU)
+		# The two per-tree restyle draws, unconditional and above the scarcity roll —
+		# the forest builder's rule, for the forest builder's reason.
+		var wood_t := rng.randf()
+		var lean_snow := rng.randf_range(-FROZEN_TREE_TILT_MAX, FROZEN_TREE_TILT_MAX)
+		var wood := SNOW_DEADWOOD.lerp(SNOW_DEADWOOD_DARK, wood_t)
+		# Same axis arithmetic the forest canopy uses: create_box tips local +Y
+		# toward local +Z, whose world direction under this yaw is (sin, 0, cos).
+		var lean_dir_snow := Vector3(sin(yaw), 0.0, cos(yaw)) * sin(lean_snow)
 		# Per-object scarcity for snow trees: own hash stream, no draw.
 		# Must be the last continue before geometry is emitted, after whatever draws master makes before that point.
 		# At k=1 nothing is skipped and the stream is master's; at k<1 a thinned object's emit-time draws are skipped, which shifts the rest of THIS chunk — deterministic (k is pure in position) and intended.
@@ -9140,7 +9266,7 @@ func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 		# Trunk: solid, so you bump into it and the crocodiles' raycasts see it.
 		create_box(
 			Vector3(local_x, trunk_h * 0.5, local_z), Vector3(trunk_w, trunk_h, trunk_w),
-			yaw, rng, block_batch, block_body, 0.0, SNOW_DEADWOOD
+			yaw, rng, block_batch, block_body, lean_snow, wood
 		)
 
 		# Bare branches — no canopy, that is the point of a dead tree. Visual only:
@@ -9148,12 +9274,15 @@ func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 		for _b in rng.randi_range(2, 3):
 			var a := rng.randf_range(0.0, TAU)
 			var by := trunk_h * rng.randf_range(0.55, 0.92)
-			var dir := Vector3(cos(a), 0.0, sin(a)) * (FROZEN_TREE_BRANCH_LEN * 0.42)
+			# One draw per branch: four identical sticks is the read this bead is
+			# here to kill. Shrink-only (see FROZEN_TREE_BRANCH_JITTER_MIN).
+			var blen := FROZEN_TREE_BRANCH_LEN * rng.randf_range(FROZEN_TREE_BRANCH_JITTER_MIN, 1.0)
+			var dir := Vector3(cos(a), 0.0, sin(a)) * (blen * 0.42)
 			create_box(
-				Vector3(local_x, by, local_z) + dir,
-				Vector3(FROZEN_TREE_BRANCH_LEN, 0.22, 0.22),
+				Vector3(local_x, by, local_z) + dir + lean_dir_snow * (by - trunk_h * 0.5),
+				Vector3(blen, 0.22, 0.22),
 				a + PI * 0.5, rng, block_batch, block_body, rng.randf_range(-0.5, 0.5),
-				SNOW_DEADWOOD, false
+				wood.lerp(SNOW_DEADWOOD_DARK, 0.25), false
 			)
 
 		# Footprint stops at the TRUNK top and is NOT climbable — the forest's rule,

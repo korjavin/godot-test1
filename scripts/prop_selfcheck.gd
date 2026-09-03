@@ -177,6 +177,7 @@ func _run() -> void:
 		_check_biome_bands(terrain_script, consts)
 		_check_city_content(terrain_script, consts)
 		_check_snow_content(terrain_script, consts)
+		_check_forest_content(terrain_script, consts)
 		_check_scarcity(terrain_script, consts)
 
 	if _failures.is_empty():
@@ -186,6 +187,7 @@ func _run() -> void:
 				% [ROLES.size(), TERRITORIES.size(), STRUCTURE_SEEDS])
 		print("bands:      threshold chain, river-in-plains, interior band widths and the shader parity uniforms OK")
 		print("snow:       mammoth radius bound, 2-collider budget, non-climbable footprints and the chunk seam OK")
+		print("forest:     chunk seam, one collider per tree, non-climbable footprints, leaf-shade spread and trunk lean OK")
 		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
@@ -1101,6 +1103,176 @@ func _check_snow_content(terrain_script: GDScript, consts: Dictionary) -> void:
 			% [MAMMOTH_SEEDS, boxes_min, boxes_max, worst_bone, mammoth_radius])
 	terrain.free()
 	Sentinel.done("snow_content")
+
+
+## CHECK 10 — the forest's own restyle contract (bead godot-test1-u7a).
+## How many distinct leaf shades a wood must show before it stops reading as one
+## flat material. A chunk carries 25-40 trees, so anything above a handful proves
+## the per-tree tint draw is really reaching the batch; the number is low on
+## purpose — it is a floor against a REVERT to one colour, not a taste knob.
+const FOREST_MIN_LEAF_SHADES: int = 8
+
+## What fraction of a wood's trunks must actually lean. The draw is symmetric over
+## [-TREE_TRUNK_TILT_MAX, +TREE_TRUNK_TILT_MAX] so in practice it is all of them;
+## the bound is loose so a future retune that narrows the lean does not fail here
+## for being tasteful, only for being ZERO.
+const FOREST_MIN_LEANING_FRACTION: float = 0.9
+
+
+func _check_forest_content(terrain_script: GDScript, consts: Dictionary) -> void:
+	"""
+	The forest had no check of its own before this bead, and the restyle gave it
+	four things worth measuring — all of them driven through the SHIPPED
+	_spawn_forest_content over real forest chunks, never re-derived here.
+
+	  1. THE CHUNK SEAM. The trunk now LEANS and the canopy rides that lean, so a
+	     canopy travels sideways from the trunk that placed it and the old seam
+	     margin (canopy half-diagonal alone) stopped being an upper bound. A
+	     canopy over the seam vanishes with its own chunk while the neighbour is
+	     still drawn — the same failure _check_snow_content's clause 4 exists for.
+	  2. ONE COLLIDER PER TREE, EXACTLY. Canopies pass collide = false; that is
+	     the whole reason a 40-tree chunk is affordable. As an equality against
+	     the footprint count, not a bound, because a builder that quietly drops a
+	     `false` still satisfies any "at most" and turns each tree into four
+	     collision shapes.
+	  3. NOTHING IN A WOOD IS CLIMBABLE. A climbable tree footprint would let
+	     _settle_coin_y perch a road coin on `top` — 4 m up a trunk, unreachable.
+	  4. THE RESTYLE ITSELF, which is the only reason this check is new: the wood
+	     must show many distinct leaf shades (a single flat green was the loudest
+	     half of the Minecraft read the owner reported) and its trunks must
+	     actually lean. Both are measured off the emitted batch, so reverting
+	     either one in the builder fails here.
+
+	The negative controls are the non-empty assertions: an empty batch would
+	satisfy the seam bound, the equality and the climbable count perfectly.
+	"""
+	var biome_enum: Dictionary = consts["Biome"]
+	var forest_value: int = int(biome_enum["FOREST"])
+	# The two ends of the per-tree tint ramp, linearised the way create_box stores
+	# them. Read from the constant map so a colour retune moves this with it.
+	var leaf_a: Color = (consts["TREE_LEAF_COLOR"] as Color).srgb_to_linear()
+	var leaf_b: Color = (consts["TREE_LEAF_COLOR_WARM"] as Color).srgb_to_linear()
+
+	# A canopy layer is turned against the one below it, and a SQUARE has 90 deg
+	# symmetry — so a step that is a multiple of PI/2 turns nothing at all and the
+	# stack goes back to being aligned cubes. Asserted on the constant because the
+	# effect (two layers of ONE tree crossing) cannot be recovered from a chunk
+	# batch without re-grouping boxes into trees, which would re-implement the
+	# builder inside the check.
+	var yaw_step: float = float(consts["TREE_CANOPY_YAW_STEP"])
+	if absf(fmod(absf(yaw_step), PI * 0.5)) < EPSILON:
+		_fail("TREE_CANOPY_YAW_STEP %.4f is a multiple of PI/2 — a square canopy has 90 deg symmetry, so every layer lands back on the one below and the crown is a column of aligned cubes again"
+				% yaw_step)
+
+	var terrain := Node3D.new()
+	terrain.set_script(terrain_script)
+	terrain.set_run_seed(20260826)
+	var chunk_size: float = float(terrain.get("chunk_size"))
+	var half_chunk := chunk_size * 0.5
+
+	var forest_chunks: Array[Vector2i] = []
+	for cx in range(-40, 41):
+		for cz in range(-40, 41):
+			if forest_chunks.size() >= 12:
+				break
+			var centre: Vector3 = terrain.chunk_to_world(Vector2i(cx, cz))
+			if terrain.biome_at(centre.x, centre.z) == forest_value:
+				forest_chunks.append(Vector2i(cx, cz))
+
+	if forest_chunks.size() < 6:
+		_fail("only %d forest chunks found in an 81x81 field — the forest band is far rarer than the measured 10.7%% share"
+				% forest_chunks.size())
+		terrain.free()
+		Sentinel.done("forest_content")
+		return
+
+	var boxes := 0
+	var solids := 0
+	var footprints := 0
+	var climbable := 0
+	var trunks := 0
+	var leaning := 0
+	var leaves := 0
+	var pitched := 0
+	var shades: Dictionary = {}
+	var worst_reach := 0.0
+
+	for chunk: Vector2i in forest_chunks:
+		var centre: Vector3 = terrain.chunk_to_world(chunk)
+		var rng := RandomNumberGenerator.new()
+		rng.seed = hash(Vector3i(chunk.x, chunk.y, 4242))
+		var batch: Array = []
+		var body := StaticBody3D.new()
+		var obstacles: Array = []
+		terrain.call("_spawn_forest_content", centre, rng, obstacles, batch, body)
+
+		boxes += batch.size()
+		solids += body.get_child_count()
+		body.free()
+		worst_reach = maxf(worst_reach, _axis_reach(batch))
+		footprints += obstacles.size()
+		for ob_variant: Variant in obstacles:
+			if bool((ob_variant as Dictionary)["climbable"]):
+				climbable += 1
+
+		for entry_variant: Variant in batch:
+			var entry: Dictionary = entry_variant
+			var c: Color = entry["color"]
+			if _color_on_ramp(c, leaf_a, leaf_b):
+				# Quantised, so "how many shades" is a count of visibly different
+				# greens rather than of float noise.
+				shades[Vector3i(roundi(c.r * 400.0), roundi(c.g * 400.0), roundi(c.b * 400.0))] = true
+				leaves += 1
+				var lup: Vector3 = (entry["transform"] as Transform3D).basis.y.normalized()
+				if lup.distance_to(Vector3.UP) > EPSILON:
+					pitched += 1
+				continue
+			# Not a leaf: it is a trunk. Its local UP is only Vector3.UP when the
+			# lean was zero.
+			trunks += 1
+			var up: Vector3 = (entry["transform"] as Transform3D).basis.y.normalized()
+			if up.distance_to(Vector3.UP) > EPSILON:
+				leaning += 1
+
+	if boxes == 0 or footprints == 0:
+		_fail("%d forest chunks produced no trees at all — nothing was measured" % forest_chunks.size())
+		terrain.free()
+		Sentinel.done("forest_content")
+		return
+
+	if worst_reach > half_chunk + EPSILON:
+		_fail("forest geometry reaches %.2f m from the chunk centre, past the %.2f m seam — a canopy would vanish with its own chunk while its neighbour still draws"
+				% [worst_reach, half_chunk])
+	if solids != footprints:
+		_fail("a wood of %d footprints emitted %d collision shapes — it must be EXACTLY one per tree (the trunk); canopies are collide = false, which is what makes 40 trees a chunk affordable"
+				% [footprints, solids])
+	if climbable > 0:
+		_fail("%d forest footprints record climbable = true — a tree's top is 4 m up the trunk, so _settle_coin_y must SKIP a road coin there, not perch one"
+				% climbable)
+	if shades.size() < FOREST_MIN_LEAF_SHADES:
+		_fail("a wood of %d trees shows only %d distinct leaf shades (floor %d) — one flat green is the Minecraft read bead u7a exists to remove"
+				% [footprints, shades.size(), FOREST_MIN_LEAF_SHADES])
+	if trunks == 0:
+		_fail("no forest box was coloured OFF the leaf ramp — the trunk sample is empty, so the lean below measured nothing")
+	elif float(leaning) / float(trunks) < FOREST_MIN_LEANING_FRACTION:
+		_fail("only %d of %d forest trunks lean off vertical (floor %.0f%%) — an upright box on flat ground is a fence post, not a tree"
+				% [leaning, trunks, FOREST_MIN_LEANING_FRACTION * 100.0])
+	# The canopy's own pitch, measured for the trunk lean's reason: a stack of
+	# LEVEL slabs was the shape that still read as a cube after the colours and
+	# the yaw step were fixed. Not every layer pitches (the alternation is by
+	# index and a one-layer tree exists), so this is a floor on the count, and
+	# `leaves == 0` is its negative control.
+	if leaves == 0:
+		_fail("no forest box was coloured ON the leaf ramp — the canopy sample is empty, so the pitch below measured nothing")
+	elif pitched * 2 < leaves:
+		_fail("only %d of %d forest canopy slabs are pitched off level — a stack of level slabs is the flat-topped cube this restyle removes"
+				% [pitched, leaves])
+
+	print("  forest     %d chunks, %d boxes (%d collide, %d footprints, 0 climbable), %d leaf shades, %d/%d trunks lean, %d/%d canopy slabs pitched, reach %.2f / %.1f m"
+			% [forest_chunks.size(), boxes, solids, footprints, shades.size(), leaning, trunks,
+			   pitched, leaves, worst_reach, half_chunk])
+	terrain.free()
+	Sentinel.done("forest_content")
 
 
 func _color_on_ramp(c: Color, a: Color, b: Color) -> bool:
