@@ -11774,9 +11774,18 @@ func spawn_city_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 	     it (a deck takes no `obstacles` footprint, deliberately, so _settle_coin_y
 	     cannot see it — the same reasoning `_approach_coin_east_end` is built on).
 	     The bridge's OWN line, at deck height, replaces it.
-	  3. GEMS AT THE SQUARES. Where two avenues cross is a square, and a square is
-	     worth stopping at — a gem is 10 coins, so the streak the player is
+	  3. GEMS AT THE SQUARES. Where two GEM avenues cross is a square, and a square
+	     is worth stopping at — a gem is 10 coins, so the streak the player is
 	     building has somewhere to pay off.
+
+	AND THE PITCH IS THE CITY'S OWN, NOT THE CORRIDOR'S (bead godot-test1-1qm,
+	owner: "coins should be really rare in Budapest"). Both loops below step
+	CITY_STREET_COIN_SPACING (64 m) where they used to step CITY_COIN_SPACING
+	(8 m) — one coin per city block along an avenue, and gems on a quarter of the
+	squares. The APPROACH corridor above keeps the 8 m pitch untouched: it is the
+	guide out of the field and has to read as a continuous trail, which is the
+	whole reason the two pitches are two constants. Entity counts moved BY DESIGN
+	here, which is the one reason the performance conventions allow them to move.
 	"""
 	if not spawn_coins or coin_scene == null:
 		return
@@ -11805,12 +11814,12 @@ func spawn_city_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 			var lo := maxf(square.position.y if axis_x else square.position.x, run_min)
 			var hi := minf(square.end.y if axis_x else square.end.x,
 					BudapestPlan.BUDAPEST_MAX.y if axis_x else BudapestPlan.BUDAPEST_MAX.x)
-			var j := ceili((lo - run_min) / BudapestPlan.CITY_COIN_SPACING)
-			var along := run_min + float(j) * BudapestPlan.CITY_COIN_SPACING
+			var j := ceili((lo - run_min) / BudapestPlan.CITY_STREET_COIN_SPACING)
+			var along := run_min + float(j) * BudapestPlan.CITY_STREET_COIN_SPACING
 			while along <= hi:
 				var world := Vector3(fixed if axis_x else along, COIN_GROUND_HEIGHT,
 						along if axis_x else fixed)
-				along += BudapestPlan.CITY_COIN_SPACING
+				along += BudapestPlan.CITY_STREET_COIN_SPACING
 				_place_city_coin(world, chunk_pos, centre, parent_chunk, obstacles,
 						_city_square_here(world.x, world.z))
 
@@ -11824,11 +11833,11 @@ func spawn_city_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 			continue
 		var z := deck.get_center().y
 		var b := ceili((maxf(square.position.x, deck.position.x) - deck.position.x)
-				/ BudapestPlan.CITY_COIN_SPACING)
-		var x := deck.position.x + float(b) * BudapestPlan.CITY_COIN_SPACING
+				/ BudapestPlan.CITY_STREET_COIN_SPACING)
+		var x := deck.position.x + float(b) * BudapestPlan.CITY_STREET_COIN_SPACING
 		while x <= minf(square.end.x, deck.end.x):
 			var world := Vector3(x, BudapestPlan.bridge_surface_y(row_v, x) + COIN_GROUND_HEIGHT, z)
-			x += BudapestPlan.CITY_COIN_SPACING
+			x += BudapestPlan.CITY_STREET_COIN_SPACING
 			if world_to_chunk(world) != chunk_pos:
 				continue
 			# NO _settle_coin_y HERE, and that is deliberate: a deck coin is 12 m
@@ -11866,15 +11875,24 @@ func _place_city_coin(world: Vector3, chunk_pos: Vector2i, centre: Vector3,
 
 
 func _city_square_here(x: float, z: float) -> bool:
-	"""Is this coin standing on a SQUARE — within half a pitch of a crossing of two
-	avenues? That is where the gems go, and it is the one place the grid's two
-	axes have anything to say to each other."""
-	var half := BudapestPlan.CITY_COIN_SPACING * 0.5
+	"""
+	Is this coin standing at a SQUARE — the crossing of two GEM avenues? That is
+	where the gems go, and it is the one place the grid's two axes have anything
+	to say to each other.
+
+	PURE GRID PARITY, and the distance test that used to be here is GONE rather
+	than retuned (bead godot-test1-1qm). It asked whether the coin lay within half
+	a COIN pitch of the crossing, which discriminated while that pitch was 8 m; at
+	CITY_STREET_COIN_SPACING (64 m) it is wider than STREET_PITCH (62 m), so every
+	coin is within half a pitch of its nearest crossing and the test answers true
+	for all of them — a clause that cannot say no is worse than no clause, because
+	it reads like one that can. What is left is the parity of the two NEAREST
+	street lines, which is the rule the owner's "really rare" asked for: a gem at
+	every fourth square instead of at every one.
+	"""
 	var k := roundi((x - BudapestPlan.GATE.x) / BudapestPlan.STREET_PITCH)
 	var m := roundi((z - BudapestPlan.GATE.z) / BudapestPlan.STREET_PITCH)
-	return BudapestPlan.is_avenue(k) and BudapestPlan.is_avenue(m) \
-			and absf(x - BudapestPlan.street_x(k)) <= half \
-			and absf(z - BudapestPlan.street_z(m)) <= half
+	return BudapestPlan.is_gem_avenue(k) and BudapestPlan.is_gem_avenue(m)
 
 
 func _approach_coin_east_end() -> float:

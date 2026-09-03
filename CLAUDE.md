@@ -447,11 +447,21 @@ Three rules of the city's own, all pinned by `budapest_selfcheck`:
   chunk has ONE batch and splitting it is a second draw call per chunk, which is the
   invariant check 4 defends. **Do not split the batch to restore them** — that needs a
   new ruling.
-- **THE CITY'S COINS RIDE THE AVENUES AND EVERY BRIDGE.** `spawn_city_coins_in_chunk`,
-  zero RNG like its `spawn_approach_coins_in_chunk` sibling: every fourth grid line is
-  an avenue (`CITY_AVENUE_EVERY`), coins step along it at `CITY_COIN_SPACING`, gems
-  stand where two avenues cross, and each bridge carries its own line at
-  `bridge_surface_y`. Three rules and each is a bug avoided: no coin west of
+- **THE CITY'S COINS RIDE THE AVENUES AND EVERY BRIDGE, AND THEY ARE RARE.**
+  `spawn_city_coins_in_chunk`, zero RNG like its `spawn_approach_coins_in_chunk`
+  sibling: every fourth grid line is an avenue (`CITY_AVENUE_EVERY`), coins step
+  along it at `CITY_STREET_COIN_SPACING`, gems stand where two GEM avenues cross
+  (`CITY_GEM_AVENUE_EVERY`, every eighth line — pure grid parity, no hash), and each
+  bridge carries its own line at `bridge_surface_y`. **The street pitch is 64 m and is
+  NOT the corridor's 8 m** (owner ruling 2026-09-04, bead `godot-test1-1qm`: *"coins
+  should be really rare in Budapest"* — 4,133 coins in the rect became 527, a DESIGN
+  change to entity counts, which is the one reason the performance conventions allow
+  them to move). The two pitches are two constants because the approach corridor is a
+  GUIDE and has to read as a continuous trail; it is untouched. Check 15 holds the
+  walked avenue and every deck to a floor AND a **ceiling** derived from the constant,
+  and asserts the constant itself against `CITY_STREET_COIN_MIN_PITCH` — a derived
+  expectation would otherwise follow a one-character revert back down in silence.
+  Three rules and each is a bug avoided: no coin west of
   `_approach_coin_east_end()` on the gate avenue (bead .3's corridor owns that), none
   on a deck rect at ground level (the bridge's own line owns the crossing, 12 m up),
   and the deck line skips `_settle_coin_y` because the perch rule is about the ground

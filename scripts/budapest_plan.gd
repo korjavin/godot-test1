@@ -363,6 +363,24 @@ const AVENUE_HALF_WIDTH: float = 8.0
 ## at the terminal would otherwise freeze the score for the last 900 m.
 const CITY_COIN_SPACING: float = 8.0
 
+## Spacing of the CITY's own street coins — the avenue lines and the bridge decks.
+## It is a SECOND constant and not the one above, because the two lines are two
+## different things: the corridor above is a GUIDE from the road's terminal to the
+## gate and has to read as a trail, while the city's is a REWARD scattered over a
+## 2.2 km grid the player already knows how to navigate.
+##
+## OWNER, 2026-09-04: "coins should be really rare in Budapest". At the corridor's
+## 8 m the ~18 avenues each way carried thousands of pickups and Pest read as a
+## carpet; at 64 m an avenue offers one coin per city block, which is a thing you
+## walk to rather than through. This is a DESIGN change to entity counts, which is
+## the one reason the performance conventions allow them to move at all.
+##
+## IT IS ALSO WIDER THAN STREET_PITCH (62 m), AND THAT IS WHAT MAKES THE GEM RULE
+## PURE PARITY — see _city_square_here in endless_terrain.gd: at most one coin can
+## fall in any one cross-street's span, so "is this coin at a square" stops being a
+## distance and becomes the parity of the two nearest street lines.
+const CITY_STREET_COIN_SPACING: float = 64.0
+
 # ----------------------------------------------------------------------------
 # SECTION 5b — THE BLOCKS (bead godot-test1-8gw.9)
 # ----------------------------------------------------------------------------
@@ -440,6 +458,12 @@ const BLOCK_STOREYS_BUDA := Vector2i(2, 3)
 ## rather than a carpet you stand in. Nine avenues each way over the rect.
 const CITY_AVENUE_EVERY: int = 4
 
+## Which avenues carry a GEM where they cross: every other one on each axis, so a
+## quarter of the squares — ~496 m apart along an avenue. Grid parity and nothing
+## else (no hash, no seed: the city is authored, and budapest_selfcheck check 1
+## reads this file as text to keep it that way).
+const CITY_GEM_AVENUE_EVERY: int = CITY_AVENUE_EVERY * 2
+
 
 static func street_x(k: int) -> float:
 	"""The world X of street column `k`. Column 0 is the gate's own meridian."""
@@ -485,6 +509,12 @@ static func is_avenue(i: int) -> bool:
 	"""Is street line `i` (a column or a row — the grid is square) an AVENUE, i.e.
 	one of the lines the city's coin routes run down?"""
 	return i % CITY_AVENUE_EVERY == 0
+
+
+static func is_gem_avenue(i: int) -> bool:
+	"""Is street line `i` one of the avenues whose crossings carry a GEM? A subset
+	of is_avenue by construction, so a gem is always on a coin route."""
+	return i % CITY_GEM_AVENUE_EVERY == 0
 
 
 static func river_x_at(z: float) -> float:

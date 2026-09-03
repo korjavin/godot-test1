@@ -162,6 +162,21 @@ const BLOCK_TOUCH_EPS: float = 0.01
 ## How far along one avenue check 15 walks looking for its coins, in chunks.
 const COIN_WALK_CHUNKS: int = 24
 
+## How far check 15 lets the walked avenue's coin count stray from what
+## CITY_STREET_COIN_SPACING owes it. Wide, because the walk crosses landmarks,
+## a plateau and the gate corridor, each of which legitimately eats coins —
+## these bound the ORDER of the density, which is the only thing the owner's
+## "really rare" is a statement about. A revert to the corridor's 8 m pitch is
+## eight times the ceiling, not a few percent over it.
+const COIN_PITCH_TOLERANCE_LO: float = 0.5
+const COIN_PITCH_TOLERANCE_HI: float = 1.6
+
+## The floor under CITY_STREET_COIN_SPACING itself — the owner's 2026-09-04
+## "coins should be really rare in Budapest" as a number. It is separate from the
+## tolerances above because those are DERIVED from that constant and would follow
+## it back down to the corridor's 8 m without a word.
+const CITY_STREET_COIN_MIN_PITCH: float = 32.0
+
 var _failures: Array[String] = []
 
 
@@ -3122,10 +3137,14 @@ func _check_city_blocks(terrain: Node3D) -> void:
 	     wing's depth ever exceeded half the block, the four would meet in the
 	     middle and every block in Budapest would be a solid 44 m cube with a
 	     cornice on it.
-	  d. THE COINS RIDE THE AVENUES AND EVERY BRIDGE. With a gem at a square, and
-	     with every coin on a carriageway — a coin the routes put inside a
-	     building would be unreachable, and one that skipped a whole bridge would
-	     leave the crossing unrewarded.
+	  d. THE COINS RIDE THE AVENUES AND EVERY BRIDGE, AT THE PITCH THE PLAN
+	     DECLARES. With a gem at a square, and with every coin on a carriageway —
+	     a coin the routes put inside a building would be unreachable, and one
+	     that skipped a whole bridge would leave the crossing unrewarded. Since
+	     bead godot-test1-1qm the walked avenue's count is also held between a
+	     floor and a CEILING derived from CITY_STREET_COIN_SPACING: the owner's
+	     "coins should be really rare in Budapest" is a statement about density,
+	     and only a ceiling can fail a return to the 8 m carpet.
 	"""
 	var consts := (terrain.get_script() as GDScript).get_script_constant_map()
 
@@ -3280,12 +3299,16 @@ func _check_city_blocks(terrain: Node3D) -> void:
 	# ---- d. the coin routes -------------------------------------------------
 	var coins := 0
 	var gems := 0
+	var avenue_coins := 0
 	var off_route := 0
 	var bridge_coins: Dictionary = {}
 	for row_v: Variant in BudapestPlan.BRIDGES:
 		bridge_coins[String((row_v as Dictionary)["id"])] = 0
 	# One column avenue's worth of chunks, plus every chunk each bridge deck
 	# touches — the two things the routes promise, walked rather than asserted.
+	# The dictionary's VALUE is "this chunk is on the walked avenue column", which
+	# is what lets the pitch assertion below count that column's own coins and
+	# nothing else — a bridge chunk carries other avenues and a whole deck line.
 	var walk: Dictionary = {}
 	var cell_m: float = terrain.chunk_size
 	var avenue_x: float = BudapestPlan.street_x(BudapestPlan.CITY_AVENUE_EVERY * 4)
@@ -3296,11 +3319,13 @@ func _check_city_blocks(terrain: Node3D) -> void:
 		var deck: Rect2 = BudapestPlan.bridge_deck(row_v)
 		var x := deck.position.x
 		while x <= deck.end.x:
-			walk[terrain.world_to_chunk(Vector3(x, 0.0, deck.get_center().y))] = true
+			var at: Vector2i = terrain.world_to_chunk(Vector3(x, 0.0, deck.get_center().y))
+			walk[at] = bool(walk.get(at, false))
 			x += cell_m * 0.5
 
 	for chunk_pos_v: Variant in walk.keys():
 		var chunk_pos: Vector2i = chunk_pos_v
+		var on_walked_avenue: bool = bool(walk[chunk_pos_v])
 		var centre: Vector3 = terrain.chunk_to_world(chunk_pos)
 		var built := _build_city_chunk(terrain, chunk_pos)
 		var parent: MeshInstance3D = built["parent"]
@@ -3313,6 +3338,9 @@ func _check_city_blocks(terrain: Node3D) -> void:
 			coins += 1
 			if int(pickup.get("value")) > 1:
 				gems += 1
+			if on_walked_avenue \
+					and absf(world.x - avenue_x) <= BudapestPlan.AVENUE_HALF_WIDTH:
+				avenue_coins += 1
 			var on_deck := false
 			for row_v: Variant in BudapestPlan.BRIDGES:
 				if (BudapestPlan.bridge_deck(row_v) as Rect2).has_point(
@@ -3340,11 +3368,61 @@ func _check_city_blocks(terrain: Node3D) -> void:
 				+ "1.4 km with no coin source bead .3 left behind")
 	if gems < 1:
 		_fail("no gem anywhere on the walked avenue — the squares where two "
-				+ "avenues cross are supposed to be worth stopping at")
-	for id_v: Variant in bridge_coins.keys():
-		if int(bridge_coins[id_v]) < 1:
-			_fail("bridge '%s' carries no coin at all — 'coins ... across every "
-					% String(id_v) + "bridge' is the bead's own wording")
+				+ "GEM avenues cross are supposed to be worth stopping at")
+	# A LINE ACROSS EVERY BRIDGE, and "a line" is now measured against the deck's
+	# own length rather than being one coin at the abutment (bead
+	# godot-test1-1qm). "At least one" survived a pitch of 12.8 km in a mutation
+	# test, which is a coin on each bridge and a crossing rewarded nowhere.
+	for row_v: Variant in BudapestPlan.BRIDGES:
+		var row: Dictionary = row_v
+		var id := String(row["id"])
+		var owed := (BudapestPlan.bridge_deck(row_v) as Rect2).size.x \
+				/ BudapestPlan.CITY_STREET_COIN_SPACING
+		var floor_n := maxi(1, floori(owed * COIN_PITCH_TOLERANCE_LO))
+		if int(bridge_coins[id]) < floor_n:
+			_fail("bridge '%s' carries %d coins over a %.0f m deck, under the %d "
+					% [id, int(bridge_coins[id]),
+							(BudapestPlan.bridge_deck(row_v) as Rect2).size.x, floor_n]
+					+ "a %.0f m pitch owes it — 'coins ... across every bridge' "
+					% BudapestPlan.CITY_STREET_COIN_SPACING
+					+ "is the bead's own wording, and one coin is not a line")
+
+	# ...AND THE PITCH IS THE DESIGN, SO THE PITCH IS WHAT IS MEASURED (bead
+	# godot-test1-1qm, owner: "coins should be really rare in Budapest").
+	# "At least one coin somewhere" was just as happy with the 8 m carpet the
+	# city shipped with as with the rarity that replaced it, so the walked
+	# avenue's own coins are counted against the pitch they are laid at. BOTH
+	# ENDS ARE LOAD-BEARING and for opposite reasons: the FLOOR is the old
+	# promise (an avenue you follow must actually pay), and the CEILING is the
+	# new one — it is the only thing here that goes red if the pitch is ever
+	# put back to the corridor's, which is exactly the regression the owner
+	# asked to be rid of. The expectation is DERIVED from the shipped constant
+	# rather than written down, so a future retune moves one number and this
+	# check follows it.
+	#
+	# THE CONSTANT ITSELF IS ASSERTED FIRST, and it has to be: everything below
+	# is DERIVED from it, so a one-character edit putting it back to 8 would
+	# retune the expectation with it and pass in silence. This line is the owner
+	# ruling written as a number the build can check.
+	if BudapestPlan.CITY_STREET_COIN_SPACING < CITY_STREET_COIN_MIN_PITCH:
+		_fail("CITY_STREET_COIN_SPACING is %.0f m, under the %.0f m floor the "
+				% [BudapestPlan.CITY_STREET_COIN_SPACING, CITY_STREET_COIN_MIN_PITCH]
+				+ "owner's 'coins should be really rare in Budapest' put on it "
+				+ "— the city is a carpet of pickups again")
+	var span := float(COIN_WALK_CHUNKS) * cell_m
+	var expect := span / BudapestPlan.CITY_STREET_COIN_SPACING
+	if float(avenue_coins) < expect * COIN_PITCH_TOLERANCE_LO:
+		_fail("the walked avenue carries %d coins over %.0f m, under the %.1f "
+				% [avenue_coins, span, expect * COIN_PITCH_TOLERANCE_LO]
+				+ "a %.0f m pitch owes it — an avenue is a route the player "
+				% BudapestPlan.CITY_STREET_COIN_SPACING
+				+ "follows, and one that pays nothing is not one")
+	if float(avenue_coins) > expect * COIN_PITCH_TOLERANCE_HI:
+		_fail("the walked avenue carries %d coins over %.0f m, over the %.1f a "
+				% [avenue_coins, span, expect * COIN_PITCH_TOLERANCE_HI]
+				+ "%.0f m pitch allows — Budapest is carpeted again, which is "
+				% BudapestPlan.CITY_STREET_COIN_SPACING
+				+ "the owner's 'coins should be really rare' undone")
 
 	print("blocks: %d of %d city cells filled, %d of %d swept collision shapes "
 			% [buildable, scanned, shapes_seen - exempt, shapes_seen]
@@ -3354,7 +3432,11 @@ func _check_city_blocks(terrain: Node3D) -> void:
 			% [block_chunk_worst, block_chunk_worst_at])
 	print("city coins: %d over %d walked chunks (%d gems), %s on the four decks, "
 			% [coins, walk.size(), gems, str(bridge_coins.values())]
-			+ "%d off the grid" % off_route)
+			+ "%d off the grid; %d on the walked avenue over %.0f m "
+			% [off_route, avenue_coins, span]
+			+ "(a %.0f m pitch owes %.1f, tolerated %.1f-%.1f)"
+			% [BudapestPlan.CITY_STREET_COIN_SPACING, expect,
+					expect * COIN_PITCH_TOLERANCE_LO, expect * COIN_PITCH_TOLERANCE_HI])
 	Sentinel.done("city_blocks")
 
 
