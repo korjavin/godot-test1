@@ -272,13 +272,6 @@ jobs:
         env:
           SHARD: ${{ strategy.job-index }}
           SHARDS: ${{ strategy.job-total }}
-          # TEMPORARY, and it is a list of TWO NAMED CHECKS, not a policy.
-          # Both carry ONE pre-existing SCRIPT ERROR on master (mp_selfcheck:
-          # global_position read off a harness stub; landmark_progress_selfcheck:
-          # a fetch_ice call on Nil), found by the gate above the day it was
-          # written. Bead godot-test1-llo fixes them; DELETE THIS LINE WITH IT.
-          # Anything else logging SCRIPT ERROR is red, which is the whole point.
-          SCRIPT_ERROR_EXEMPT: "mp_selfcheck landmark_progress_selfcheck"
         run: |
           command -v godot >/dev/null || { echo "::error::godot is not on PATH — no self-check would have run"; exit 1; }
           : > "ran-${SHARD}.txt"
@@ -300,12 +293,7 @@ jobs:
             [ "$rc" -eq 0 ] || why="exited ${rc}"
             printf '%s\n' "$out" | grep -qx "SELFCHECK OK" || why="${why}${why:+; }no 'SELFCHECK OK' line"
             if printf '%s\n' "$out" | grep -q "SCRIPT ERROR"; then
-              case " ${SCRIPT_ERROR_EXEMPT} " in
-                *" ${name} "*)
-                  echo "::warning::${name} logged SCRIPT ERROR — known, and temporarily exempt until bead godot-test1-llo lands" ;;
-                *)
-                  why="${why}${why:+; }logged SCRIPT ERROR — a runtime error aborts that call and skips every assertion after it, and Godot still exits 0" ;;
-              esac
+              why="${why}${why:+; }logged SCRIPT ERROR — a runtime error aborts that call and skips every assertion after it, and Godot still exits 0"
             fi
             if [ -z "$why" ]; then
               echo "OK   ${name}"
