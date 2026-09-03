@@ -1263,6 +1263,31 @@ pausing at crossings, strictly avoiding the wet Danube and plateau cliffs, with 
 Ambient spawns bubble around the local player inside `BudapestPlan.rect()`, recycling when out
 of range and sleeping when outside the city. Pinned by `crowd_selfcheck`.
 
+**THE AMBIENCE BUDGET IS A COARSE TICK, NEVER A FREEZE, and `scripts/ambience_lod.gd` is
+its one home** (owner, bead `godot-test1-8gw.22`: *"we may use the same trick - only those
+moving who we can see"*, in the same sentence as *"I want this natural"*). The crowd and
+`scripts/traffic_manager.gd` (the cars, group `"traffic"`, one MultiMesh) share that file
+because the rule and its rate must be ONE number. An instance the CAMERA cannot see is
+ticked ~4 Hz instead of 60 and advances by the **real elapsed time** when its turn comes,
+so nothing is ever static and turning round shows a street that plausibly kept walking; a
+binary freeze is the bug this is written against. Four rules, all pinned:
+
+- **The camera, not the player** — `get_viewport().get_camera_3d()`, frustum plus a 12 m
+  margin. `C` cycles third-person / first-person / FRONT, and FRONT looks BACKWARD along
+  the hero, so "in front of the player" is wrong in one of the three shipped views;
+  `crowd_selfcheck` drives all three with probe walkers either side of the hero.
+- **A null camera degrades to EVERYTHING VISIBLE** — full rate, today's behaviour — never
+  to "nothing updates". Every headless check and every standalone scene runs that path.
+- **ONE decision per instance per frame** (`lod_step`, taken in the spawn/recycle pass and
+  spent by the movement pass), which is what keeps `is_walkable` / `is_traffic_walkable`
+  the FIRST branch of every tick an instance actually takes. Nothing is ever deleted and no
+  cap moved: this changes how OFTEN, never whether — the LOD manager's rule one step on.
+- **The queue scan is no longer all-pairs.** `_distance_to_block_ahead` rejects a pair on a
+  per-axis box (`QUEUE_SCAN_RANGE`) before computing anything and takes its own index from
+  the caller instead of a `find`. It is a strictly conservative reject, and
+  `traffic_selfcheck` check 8 holds it to an independent all-pairs oracle over a live
+  bubble rather than trusting the argument.
+
 ### Art direction
 Authored in `main.tscn` (key light, ProceduralSky, glow, BCS grade) plus
 `scripts/toon_shading.gd`, whose **static cache keyed by source material id** is the point:

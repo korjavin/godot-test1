@@ -28,6 +28,14 @@ extends Node3D
 ##   * Feet at y = 0 by construction. Cars stay on the carriageway — the
 ##     AVENUE_HALF_WIDTH (8 m) band on every CITY_AVENUE_EVERY-th grid line, one
 ##     side of the centreline so opposite directions do not overlap.
+##   * Budget (bead 8gw.22): a car the CAMERA cannot see is ticked COARSELY — a
+##     few times a second, by the real elapsed time — never frozen and never
+##     deleted. The rule and its rate live in scripts/ambience_lod.gd. ONE
+##     decision per car per frame (`lod_step`), taken in _update_traffic_spawns
+##     and spent by _update_cars, which is what keeps is_traffic_walkable the
+##     FIRST branch of every tick a car actually takes: a car that did not step
+##     cannot have driven into the Danube, and one that did was checked in the
+##     same pass that let it.
 ##   * ponytail: cars drive at y = 0 only and never on bridge decks. The deck is
 ##     a dry rect 12 m up (BudapestPlan.BRIDGE_DECK_TOP) that needs
 ##     bridge_surface_y — that is a second problem; a car at y = 0 under a bridge
@@ -81,6 +89,19 @@ const STUCK_RECYCLE_TIME: float = 10.0
 # directions get opposite signs via the heading-perp, so they do not overlap.
 const LANE_OFFSET: float = 2.4
 
+# Locality gate for the queue scan (bead 8gw.22). _distance_to_block_ahead used to
+# do the full per-axis decomposition against EVERY other car — quadratic, and
+# measured at 0.30 ms/frame for 32 cars before anything else in the tick was paid.
+# A pair can only ever change the answer when it passes BOTH the forward test
+# (0 < fwd < YIELD_DISTANCE + 1) and the lateral one (<= LATERAL_TOLERANCE_CAR),
+# so two cars that matter are under sqrt((YIELD+1)^2 + LAT^2) ~ 19.2 m apart in
+# WORLD position, and base (centreline) positions differ from world ones by at
+# most one lane offset each. This per-axis box reject is therefore strictly
+# conservative — it changes no answer, it just refuses to compute one.
+# Deliberately not a spatial hash: it is 32 cars, and a hash is a structure to
+# keep in step with every spawn and recycle.
+const QUEUE_SCAN_RANGE: float = YIELD_DISTANCE + 1.0 + 2.0 * LANE_OFFSET + LATERAL_TOLERANCE_CAR
+
 # Car palette — per-instance colours through MultiMesh instance colours.
 const CAR_PALETTE: Array[Color] = [
 	Color(0.85, 0.18, 0.18),  # red
@@ -111,11 +132,16 @@ var _traffic_max: int = TRAFFIC_MAX_DESKTOP
 #   honk_cooldown: float
 #   honk_count: int         # for selfcheck seam
 #   active: bool
+#   lod_debt: float         # seconds banked while out of view — ambience_lod.gd's
+#   lod_step: float         # seconds to advance THIS frame; 0.0 = not this car's tick
 var _cars: Array[Dictionary] = []
 
 var _multimesh_node: MultiMeshInstance3D = null
 
 const PLAN_SCRIPT := preload("res://scripts/budapest_plan.gd")
+
+## The shared "coarse-tick what we cannot see" rule — see its header.
+const AmbienceLod := preload("res://scripts/ambience_lod.gd")
 
 static var _shared_material: StandardMaterial3D = null
 static var _shared_mesh: ArrayMesh = null
@@ -219,6 +245,8 @@ func _ready() -> void:
 			"honk_cooldown": 0.0,
 			"honk_count": 0,
 			"active": false,
+			"lod_debt": 0.0,
+			"lod_step": 0.0,
 		})
 
 func _process(delta: float) -> void:
@@ -230,8 +258,12 @@ func _process(delta: float) -> void:
 	if not _is_near_budapest(player_pos):
 		_hide_all()
 		return
-	_update_traffic_spawns(player_pos)
-	_update_cars(delta, player_pos)
+	# Whose tick is it this frame? Asked ONCE per frame off the ACTIVE CAMERA
+	# (never the player — the FRONT view looks backward along the hero), and
+	# spent by both passes below. Empty planes (no camera) = everything visible.
+	var planes: Array[Plane] = AmbienceLod.view_planes(get_viewport())
+	_update_traffic_spawns(delta, player_pos, planes)
+	_update_cars(delta, player_pos, true)
 
 # ============================================================================
 # QUERIES
@@ -319,6 +351,13 @@ func _is_occupied_near(world_pos: Vector3, exclude: Dictionary = {}) -> bool:
 	for other: Dictionary in _cars:
 		if not other["active"]:
 			continue
+		# Locality reject before the exclude compare (a Dictionary deep-compare)
+		# and before _car_world_pos: MIN_CAR_SPACING is the whole reach of this
+		# test, and base positions are within one lane offset of world ones.
+		var obase: Vector3 = other["pos"]
+		if absf(obase.x - world_pos.x) > MIN_CAR_SPACING + LANE_OFFSET \
+				or absf(obase.z - world_pos.z) > MIN_CAR_SPACING + LANE_OFFSET:
+			continue
 		if not exclude.is_empty() and other == exclude:
 			continue
 		var ow: Vector3 = _car_world_pos(other)
@@ -354,7 +393,7 @@ static func target_speed_for_distance(block_dist: float, cruise: float) -> float
 	var t := (block_dist - STOP_DISTANCE) / (YIELD_DISTANCE - STOP_DISTANCE)
 	return cruise * clampf(t, 0.0, 1.0)
 
-func _distance_to_block_ahead(car: Dictionary, player_pos: Vector3) -> float:
+func _distance_to_block_ahead(car: Dictionary, player_pos: Vector3, car_idx: int = -1) -> float:
 	var wpos: Vector3 = _car_world_pos(car)
 	var h: Vector2 = car["heading_dir"]
 	# Check player first
@@ -366,14 +405,23 @@ func _distance_to_block_ahead(car: Dictionary, player_pos: Vector3) -> float:
 		var lat := absf(to_p.dot(perp))
 		if lat <= LATERAL_TOLERANCE:
 			p_dist = fwd
-	# Check cars ahead — index loop to avoid Dictionary deep-compare (==) vs identity
+	# Check cars ahead — index loop to avoid Dictionary deep-compare (==) vs identity.
+	# The caller passes its own index; the `find` fallback is for a direct caller
+	# and is itself a linear Dictionary compare, which is exactly what the loop
+	# below refuses to pay per pair.
 	var c_dist := INF
-	var car_idx := _cars.find(car)
+	if car_idx < 0:
+		car_idx = _cars.find(car)
+	var base: Vector3 = car["pos"]
 	for j in _cars.size():
 		if j == car_idx:
 			continue
 		var other: Dictionary = _cars[j]
 		if not other["active"]:
+			continue
+		# Locality reject BEFORE any vector work — see QUEUE_SCAN_RANGE.
+		var obase: Vector3 = other["pos"]
+		if absf(obase.x - base.x) > QUEUE_SCAN_RANGE or absf(obase.z - base.z) > QUEUE_SCAN_RANGE:
 			continue
 		var ow: Vector3 = _car_world_pos(other)
 		var to_c := Vector2(ow.x - wpos.x, ow.z - wpos.z)
@@ -460,19 +508,39 @@ func _assign_car_from_segment(car: Dictionary, seg: Dictionary) -> void:
 	car["blocked_time"] = 0.0
 	car["honk_cooldown"] = _rng.randf_range(0.0, 1.0)
 	car["honk_count"] = 0
+	car["lod_debt"] = 0.0
 	car["active"] = true
 
-func _update_traffic_spawns(player_pos: Vector3) -> void:
+func _update_traffic_spawns(delta: float, player_pos: Vector3, planes: Array[Plane] = []) -> void:
 	# Recycle out of sight: far cars always, near off-carriageway cars U-turn instead of popping.
+	#
+	# THIS IS ALSO WHERE THE COARSE TICK IS DECIDED, once per car per frame, and
+	# written to `lod_step` for _update_cars to spend. Deciding it here is what
+	# keeps is_traffic_walkable the FIRST branch of every tick a car takes: the
+	# same pass that grants the step re-checks the ground the car is standing on.
+	# `planes` empty (no camera) => everything visible => byte-for-byte today.
 	const VISIBLE_POP_GUARD: float = 90.0
+	# EVERY car must get its decision, which is why the "no walkable street near
+	# the player" case sets a flag and carries on instead of breaking out of the
+	# loop as it used to: a car the loop never reached would keep LAST frame's
+	# `lod_step` and spend it a second time. The retry storm that `break` existed
+	# to prevent is prevented by the flag — no further _find_spawn_segment_near.
+	var spawn_exhausted: bool = false
 	for car: Dictionary in _cars:
 		if not car["active"]:
+			car["lod_step"] = delta  # nowhere to stand yet: never coarse-ticked
+			if spawn_exhausted:
+				continue
 			var seg := _find_spawn_segment_near(player_pos)
 			if seg.is_empty():
-				break
+				spawn_exhausted = true
+				continue
 			_assign_car_from_segment(car, seg)
 		else:
 			var wpos: Vector3 = _car_world_pos(car)
+			car["lod_step"] = AmbienceLod.step_delta(car, delta, AmbienceLod.is_visible_at(planes, wpos))
+			if float(car["lod_step"]) <= 0.0:
+				continue  # not this car's tick — it drives later, by the banked time
 			var flat_dist := Vector2(wpos.x - player_pos.x, wpos.z - player_pos.z).length()
 			var walkable := is_traffic_walkable(wpos.x, wpos.z)
 			if flat_dist > DESPAWN_RADIUS or not walkable:
@@ -509,45 +577,56 @@ func _update_traffic_spawns(player_pos: Vector3) -> void:
 				else:
 					car["active"] = false
 
-func _update_cars(delta: float, player_pos: Vector3) -> void:
+func _update_cars(delta: float, player_pos: Vector3, lod_gated: bool = false) -> void:
 	# Bulk buffer with use_colors=true: stride 16 (12 transform + 4 colour floats
 	# r,g,b,a). One MultiMesh = 1 draw call, colour variety via per-instance colour
 	# off the manager's own _rng, still one shared mesh and one shared material.
+	#
+	# `lod_gated` false means every car steps by `delta` — what a harness driving
+	# this function directly wants, and byte-for-byte what a camera-less scene
+	# produces anyway. `_process` passes true and each car spends the `lod_step`
+	# decided in _update_traffic_spawns: 0.0 means it is not its tick, so it is
+	# DRAWN WHERE IT STANDS and drives on its next one. Never skipped out of the
+	# buffer, never deleted — the traffic is never a hole.
 	if _multimesh_node == null:
 		return
 	var mm: MultiMesh = _multimesh_node.multimesh
 	var count: int = 0
 	var buf := PackedFloat32Array()
 	buf.resize(_traffic_max * 16)
-	for car: Dictionary in _cars:
+	for ci in _cars.size():
+		var car: Dictionary = _cars[ci]
 		if not car["active"]:
 			continue
-		var block_dist: float = _distance_to_block_ahead(car, player_pos)
-		var target: float = target_speed_for_distance(block_dist, float(car["cruise_speed"]))
-		var cur: float = float(car["speed"])
-		var next: float
-		if target < cur:
-			next = move_toward(cur, target, DECELERATION * delta)
-		else:
-			next = move_toward(cur, target, ACCELERATION * delta)
-		car["speed"] = next
+		# The coarse tick: the REAL elapsed time since this car last drove.
+		var step_dt: float = float(car["lod_step"]) if lod_gated else delta
+		if step_dt > 0.0:
+			var block_dist: float = _distance_to_block_ahead(car, player_pos, ci)
+			var target: float = target_speed_for_distance(block_dist, float(car["cruise_speed"]))
+			var cur: float = float(car["speed"])
+			var next: float
+			if target < cur:
+				next = move_toward(cur, target, DECELERATION * step_dt)
+			else:
+				next = move_toward(cur, target, ACCELERATION * step_dt)
+			car["speed"] = next
 
-		var is_blocked: bool = (block_dist < YIELD_DISTANCE and next < 0.25)
-		if is_blocked:
-			car["blocked_time"] = float(car["blocked_time"]) + delta
-			car["honk_cooldown"] = maxf(0.0, float(car["honk_cooldown"]) - delta)
-			if float(car["blocked_time"]) >= HONK_HOLDOFF and float(car["honk_cooldown"]) <= 0.0:
-				_try_honk(car, player_pos)
-				car["honk_cooldown"] = HONK_COOLDOWN
-		else:
-			if float(car["blocked_time"]) > 0.0:
-				car["blocked_time"] = maxf(0.0, float(car["blocked_time"]) - delta * 2.0)
-			car["honk_cooldown"] = maxf(0.0, float(car["honk_cooldown"]) - delta)
+			var is_blocked: bool = (block_dist < YIELD_DISTANCE and next < 0.25)
+			if is_blocked:
+				car["blocked_time"] = float(car["blocked_time"]) + step_dt
+				car["honk_cooldown"] = maxf(0.0, float(car["honk_cooldown"]) - step_dt)
+				if float(car["blocked_time"]) >= HONK_HOLDOFF and float(car["honk_cooldown"]) <= 0.0:
+					_try_honk(car, player_pos)
+					car["honk_cooldown"] = HONK_COOLDOWN
+			else:
+				if float(car["blocked_time"]) > 0.0:
+					car["blocked_time"] = maxf(0.0, float(car["blocked_time"]) - step_dt * 2.0)
+				car["honk_cooldown"] = maxf(0.0, float(car["honk_cooldown"]) - step_dt)
 
-		var h: Vector2 = car["heading_dir"]
-		var base: Vector3 = car["pos"]
-		base += Vector3(h.x, 0.0, h.y) * float(car["speed"]) * delta
-		car["pos"] = base
+			var h: Vector2 = car["heading_dir"]
+			var base: Vector3 = car["pos"]
+			base += Vector3(h.x, 0.0, h.y) * float(car["speed"]) * step_dt
+			car["pos"] = base
 
 		var wpos: Vector3 = _car_world_pos(car)
 		var basis := Basis().rotated(Vector3.UP, float(car["facing_yaw"]))
