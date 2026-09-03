@@ -1,7 +1,7 @@
 extends Control
 ## ============================================================================
-## START OVERLAY — the first thing a player sees, and the only place
-## multiplayer is impossible to miss
+## START OVERLAY — the one press that starts the game, and the one place a
+## first-time player is told multiplayer exists
 ## ============================================================================
 ## The problem it exists for, from the owner's playtest of the deployed build:
 ## *"opened the URL, game just starts, no idea multiplayer exists."* The MP
@@ -10,16 +10,26 @@ extends Control
 ## practice invisible. Two hidden steps (press ESC to free the cursor, then find
 ## a small button) is not a feature a first-time visitor discovers.
 ##
-## So the game no longer starts on its own. It opens on one screen with two
-## choices:
+## So the game no longer starts on its own. It opens on one screen with ONE
+## button — PLAY (or Enter/Space) — and a line underneath saying where
+## multiplayer lives.
 ##
-##     PLAY SOLO        — one press, and everything is exactly as it was
-##     MULTIPLAYER      — one press, and the room list is open
+## **THE SOLO / MULTIPLAYER FORK IS GONE** (owner ruling 2026-09-03, bead
+## `godot-test1-6pa`, verbatim: *"we shouldn't have solo/multiplayer select on
+## start I believe as all our games are multiplayer, as they can be converted in
+## multiplayer at any time with menu MP"*). It was a false choice and always was:
+## a solo run is a room with one member, the MP panel converts one into the other
+## at any moment during play, and the answer never bound anything — so the card
+## was asking the player to decide something before they had any information.
 ##
-## Solo stays **one action deep**: a returning player who never wants
-## multiplayer presses one button (or Enter/Space) and is in the game. That is
-## the whole tax, and it buys the other half of the audience an entry point they
-## can actually find.
+## What the card still owes the reported problem is DISCOVERY, and it now pays
+## that in WORDS rather than in a second button: the hint under PLAY names the MP
+## button, says which corner it is in, and names the ESC that frees the cursor to
+## reach it (`mp_ui.gd`'s header: that button is the only way in, and there is no
+## keyboard shortcut for it). Every cold start reads it, which is strictly more
+## than the old MULTIPLAYER button managed — that one was reachable only *before*
+## the run started, and the player who pressed PLAY SOLO was back to hunting a
+## 110 px corner button they had no reason to believe existed.
 ##
 ## ----------------------------------------------------------------------------
 ## Built in code, no assets — the project convention
@@ -41,8 +51,8 @@ extends Control
 ##     be bitten behind it; and
 ##   * the player must not be *driven* — `player_controller` reads gameplay
 ##     through the global polled `Input` state and through `_input()`, neither of
-##     which a `Control` on top suppresses, so Space (Play Solo's own shortcut)
-##     would also jump.
+##     which a `Control` on top suppresses, so Space (the PLAY button's own
+##     shortcut) would also jump.
 ##
 ## `process_mode` gates `_input` and `_physics_process` together, so pausing is
 ## the one-line fix for both — exactly the argument `mp_ui._set_panel_open()`
@@ -99,7 +109,7 @@ extends Control
 ## steal the tap — killing motion and all audio for the session. It therefore
 ## hides itself (and drops its pause) while `touch_controls.has_modal()`, the
 ## same three lines `mp_ui.gd` and `mobile_settings_panel.gd` run for the same
-## reason. On a phone the order is: enable motion → choose Solo or Multiplayer.
+## reason. On a phone the order is: enable motion → press PLAY.
 
 # ============================================================================
 # CONSTANTS — layout
@@ -111,9 +121,9 @@ extends Control
 ## game title that wraps to two lines grows the card instead of overflowing it.
 const CARD_WIDTH: float = 420.0
 
-## Buttons are past the ~44-48 pt minimum touch target, and PLAY SOLO is the
-## taller of the two: it is the default action, and on a phone the difference in
-## size is the fastest way to read which one that is.
+## The PLAY button is past the ~44-48 pt minimum touch target. It is the only
+## button on the card now that the fork is gone, so nothing here has to out-size
+## anything else to read as the default action.
 const BUTTON_HEIGHT: float = 64.0
 
 ## GODOT'S OWN BACKSTOP BEHIND THE BROWSER'S. How long the film may make no
@@ -198,7 +208,7 @@ var _intro_playing: bool = false
 
 ## Optional completion hook for a film that is not the opening film. The ending
 ## uses this node's pause, modal processing and browser lifecycle too, then
-## restarts the player before this node is re-entered for the next PLAY SOLO.
+## restarts the player before this node is re-entered for the next PLAY.
 var _film_finished_callback: Callable = Callable()
 
 ## The stall backstop's two numbers: the last playback position seen, and how long
@@ -307,8 +317,7 @@ func _process(delta: float) -> void:
 	# (`touch_controls` shows it whenever motion is not yet enabled), so releasing
 	# here meant `_ready()`'s pause lasted exactly one frame and the world ran live
 	# — crocodiles closing on a spawn bubble only 25 m wide — while the player had
-	# not yet chosen PLAY SOLO or MULTIPLAYER. That is the one thing this node
-	# exists to prevent.
+	# not yet pressed PLAY. That is the one thing this node exists to prevent.
 	#
 	# Nothing is stranded behind the held pause: all three of `has_modal()`'s
 	# overlays are PROCESS_MODE_ALWAYS and dismiss themselves, and the resume
@@ -451,7 +460,7 @@ func reenter_for_new_run() -> void:
 ## transparent while a touch modal is up, and it is one-way — this screen never
 ## comes back. And NOT `_intro_playing`: the film is 47 s during which this node is
 ## technically still undismissed, but a reload there throws the player back to the
-## card and makes them press PLAY SOLO again, which is not "nothing to lose".
+## card and makes them press PLAY again, which is not "nothing to lose".
 func is_showing() -> bool:
 	return not _dismissed and not _intro_playing
 
@@ -528,17 +537,15 @@ func _build_ui() -> void:
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(subtitle)
 
-	var solo := _make_button("PLAY SOLO", _on_play_solo_pressed)
-	# The default action, and the taller of the two so which one that is reads at
-	# a glance rather than from the label.
-	solo.custom_minimum_size = Vector2(0.0, BUTTON_HEIGHT + 8.0)
-	solo.add_theme_font_size_override("font_size", BUTTON_FONT_SIZE + 2)
-	vbox.add_child(solo)
+	vbox.add_child(_make_button("PLAY", _on_start_pressed))
 
-	vbox.add_child(_make_button("MULTIPLAYER", _on_multiplayer_pressed))
-
+	# THE WHOLE OF MULTIPLAYER'S DISCOVERABILITY, and it is deliberately a
+	# sentence rather than a button (see the header). It names the control, the
+	# corner it is parked in and the key that frees the cursor to click it,
+	# because the reported bug was never "there is no way in" — the MP button was
+	# always there — it was "no idea multiplayer exists".
 	var hint := Label.new()
-	hint.text = "Multiplayer: play the same world with up to 4 friends"
+	hint.text = "Multiplayer anytime — the MP button, bottom left (ESC frees the cursor). Up to 4 friends in one world."
 	hint.add_theme_font_size_override("font_size", HINT_FONT_SIZE)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -668,27 +675,31 @@ func _unhandled_input(event: InputEvent) -> void:
 	# since `_dismissed` is one-way and there is no route back to this screen.
 	# `_intro_playing` is in the same guard for a sharper reason than the others:
 	# SPACE is `ui_accept` AND it is the film's skip key, so without it every skip
-	# attempt would ALSO re-enter `_on_play_solo_pressed()` from Godot's side while
-	# the film is still up.
+	# attempt would ALSO re-enter `_on_start_pressed()` from Godot's side while the
+	# film is still up.
 	if _dismissed or _intro_playing or event == null or _touch_modal_up():
 		return
 	if event.is_action_pressed("ui_accept"):
 		get_viewport().set_input_as_handled()
-		_on_play_solo_pressed()
+		_on_start_pressed()
 
 
-## Play the intro film first (web only), then start the game.
+## Play the intro film first (web only), then start the game. This is the card's
+## one and only action.
 ##
-## Hooked HERE and deliberately not in `_dismiss()`: `_on_multiplayer_pressed()`
-## dismisses too, but it opens a panel rather than starting a game, and a film in
-## front of the room list would be nothing but a delay.
+## Hooked HERE and deliberately not in `_dismiss()`, which is the obvious
+## "simplification" and would be a LOOP: every other way out of this node ends in
+## `_dismiss()` — the film finishing, a stalled film given up on, a cancelled
+## ending film, a film that failed to start — so a film started from there would
+## start another one the moment it ended. `intro_selfcheck` check 3 drives
+## `_dismiss()` directly to keep the split.
 ##
 ## The world stays paused behind the video for free — this node already holds the
 ## pause and does not release it until `_dismiss()` — so `player_controller.gd`
 ## needs no edit. `IntroVideo.start()` is false off-web and on every failure path
 ## it knows of, so desktop, the editor, and a web build whose CDN is unreachable
 ## all take the original one-line route unchanged.
-func _on_play_solo_pressed() -> void:
+func _on_start_pressed() -> void:
 	if _intro_playing:
 		return
 	if _start_film(IntroVideo.VIDEO_URL):
@@ -703,33 +714,9 @@ func _on_play_solo_pressed() -> void:
 	_dismiss()
 
 
-func _on_multiplayer_pressed() -> void:
-	# The preloaded film is thrown away by `_dismiss()` below — this press opens a
-	# panel rather than starting a game, so the film is never coming and a
-	# still-buffering 20 MB source has no business surviving into the multiplayer
-	# session. That teardown used to be an explicit call right here; it now lives
-	# in `_dismiss()`, where EVERY exit from this screen passes it.
-	#
-	# NOT capturing the mouse: the panel is about to open and wants the cursor.
-	# On web `Input.set_mouse_mode(CAPTURED)` only REQUESTS pointer lock — the
-	# browser grants it on a later task — so `mp_ui._apply_pause()`'s
-	# `mouse_mode == MOUSE_MODE_CAPTURED` test would read VISIBLE, decline to
-	# release it, and the lock would then land with the panel open: cursor warped
-	# to screen centre, Join/Copy/Leave/Close unreachable. Exactly the failure the
-	# panel's pause exists to prevent.
-	_dismiss(false)
-	# Open the MP panel through the group, no hard reference — the same discovery
-	# rule the rest of the HUD follows. `_dismiss()` released our pause and the
-	# panel takes its own synchronously inside `open_panel()`, so the world is
-	# never unpaused for even one frame in between.
-	var panel: Node = get_tree().get_first_node_in_group("mp_ui")
-	if panel != null and panel.has_method("open_panel"):
-		panel.open_panel()
-
-
 ## Stand down for good: hide, stop processing, release the pause, hand the mouse
 ## back to the game.
-func _dismiss(capture_mouse: bool = true) -> void:
+func _dismiss() -> void:
 	if _dismissed:
 		return
 	_dismissed = true
@@ -743,8 +730,8 @@ func _dismiss(capture_mouse: bool = true) -> void:
 	# screen. This is the single place the pause is handed back, so it is the
 	# single place the film has to be taken down, and the two must happen in this
 	# order and in the same step. Every ending routes through here — the film
-	# ending or being skipped, MULTIPLAYER's "never coming", and above all a
-	# `_film_finished()` that answered true for a reason the browser could not
+	# ending or being skipped, a start that never got a film at all, and above all
+	# a `_film_finished()` that answered true for a reason the browser could not
 	# report.
 	#
 	# `IntroVideo.is_finished()` is deliberately FAIL-OPEN (its header: "the only
@@ -780,7 +767,7 @@ func _dismiss(capture_mouse: bool = true) -> void:
 	#    Skipped on a touch session for the same reason
 	#    `player_controller._ready()` skips it: there is no mouse to capture and
 	#    the request would pop a useless prompt over the touch controls.
-	if capture_mouse and not _is_touch:
+	if not _is_touch:
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 

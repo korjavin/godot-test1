@@ -30,16 +30,20 @@ extends SceneTree
 ##     `start()` false and `is_finished()` true are what make the desktop path
 ##     below reduce to the original code.
 ##
-##  2. **The desktop PLAY SOLO path is byte-for-byte the old one.** Pressing it
-##     must still dismiss the card, release the tree pause and leave no intro state
-##     latched. This is the regression that would ship as "the game no longer
-##     starts", and it is checked with a negative control: the tree is asserted
-##     PAUSED before the press, or "unpaused after" would be satisfied by an
-##     overlay that never paused anything at all.
+##  2. **The desktop PLAY path is byte-for-byte the old one.** Pressing the
+##     card's one button must still dismiss the card, release the tree pause and
+##     leave no intro state latched. This is the regression that would ship as
+##     "the game no longer starts", and it is checked with a negative control: the
+##     tree is asserted PAUSED before the press, or "unpaused after" would be
+##     satisfied by an overlay that never paused anything at all.
 ##
-##  3. **MULTIPLAYER never plays the film.** It shares `_dismiss()` with PLAY
-##     SOLO, which is exactly why the hook went on `_on_play_solo_pressed()`
-##     instead — so this asserts the split held.
+##  3. **`_dismiss()` never STARTS a film.** The film hook lives on
+##     `_on_start_pressed()` and nowhere else, because every other way out of the
+##     overlay ends in `_dismiss()` — so a film started there would start another
+##     one the moment the first ended. (Until bead `godot-test1-6pa` this was
+##     asserted through the card's MULTIPLAYER button, which shared `_dismiss()`
+##     with PLAY SOLO; the button is gone, the split it guarded is not, so the
+##     check now drives `_dismiss()` itself.)
 ##
 ##  4. **The generated JS survived GDScript's `%` formatting.** The create snippet
 ##     is a format string full of CSS percentages, every one of which has to be
@@ -92,6 +96,15 @@ extends SceneTree
 ##     the numeric reads live in one helper per file); what it does buy is that the
 ##     exact regression that cost this feature three fixes cannot come back
 ##     unnoticed.
+##
+##  9. **ONE BUTTON, AND IT STILL NAMES MULTIPLAYER.** The card is where bead
+##     `godot-test1-6pa` dropped the SOLO / MULTIPLAYER fork, and the whole risk
+##     in dropping it is restoring the bug the card was BUILT for — the owner's
+##     *"opened the URL, game just starts, no idea multiplayer exists."* The
+##     replacement is a sentence rather than a button, and a sentence is exactly
+##     the kind of thing a later edit deletes without noticing, so it is asserted:
+##     no button on the card offers a mode choice, and some text on it names the
+##     MP entry point. It reads the REAL card `_build_ui()` draws.
 ##
 ## Deliberately NOT localized (a debug surface, per CLAUDE.md).
 
@@ -161,12 +174,13 @@ func _run() -> void:
 	_check_web_gate()
 	_check_generated_js()
 	_check_game_over_film_path()
-	_check_play_solo_desktop_path()
-	_check_multiplayer_never_plays()
+	_check_start_press_desktop_path()
+	_check_dismiss_never_plays()
 	_check_world_stays_paused_behind_the_film()
 	_check_film_end_is_watchdog_covered()
 	_check_film_end_never_mints_a_world()
 	_check_no_js_boolean_returns()
+	_check_card_names_multiplayer()
 	_finish()
 
 
@@ -252,8 +266,8 @@ func _check_web_gate() -> void:
 			+ "own watchdog budgets — Godot would pre-empt the film's cold fetch " \
 			+ "instead of backstopping a wedged one")
 
-	# `discard()` is the MULTIPLAYER path's teardown. Off-web it must be as inert
-	# as the rest — it is called unconditionally from `_on_multiplayer_pressed()`.
+	# `discard()` is every exit's teardown. Off-web it must be as inert as the
+	# rest — `_dismiss()` calls it unconditionally, film or no film.
 	IntroVideo.discard()
 
 
@@ -478,10 +492,10 @@ func _check_game_over_film_path() -> void:
 # 2. + 3. THE OVERLAY, DRIVEN FOR REAL
 # ============================================================================
 
-## Build the real `start_overlay.gd` in this tree and press PLAY SOLO. Off-web
-## this must behave exactly as it did before the film existed: dismissed, pause
+## Build the real `start_overlay.gd` in this tree and press PLAY. Off-web this
+## must behave exactly as it did before the film existed: dismissed, pause
 ## released, no intro state latched.
-func _check_play_solo_desktop_path() -> void:
+func _check_start_press_desktop_path() -> void:
 	var overlay: Control = _make_overlay()
 	if overlay == null:
 		return
@@ -491,46 +505,47 @@ func _check_play_solo_desktop_path() -> void:
 	# the far worse bug, since the world would run live behind the menu.
 	if not paused:
 		_fail("the start overlay did not pause the tree in _ready() — the world " \
-			+ "runs behind the menu and the 'unpaused after PLAY SOLO' assertion " \
+			+ "runs behind the menu and the 'unpaused after PLAY' assertion " \
 			+ "below would pass vacuously")
 
-	overlay._on_play_solo_pressed()
+	overlay._on_start_pressed()
 
 	if overlay._intro_playing:
-		_fail("PLAY SOLO latched _intro_playing off-web — the film gate leaked " \
-			+ "onto the desktop path")
+		_fail("PLAY latched _intro_playing off-web — the film gate leaked onto " \
+			+ "the desktop path")
 	if not overlay._dismissed:
-		_fail("PLAY SOLO did not dismiss the start overlay off-web — the desktop " \
-			+ "path is no longer the original one")
+		_fail("PLAY did not dismiss the start overlay off-web — the desktop path " \
+			+ "is no longer the original one")
 	if paused:
-		_fail("the tree is still paused after PLAY SOLO — the game never starts")
+		_fail("the tree is still paused after PLAY — the game never starts")
 
 	overlay.queue_free()
 	paused = false
 
 
-## MULTIPLAYER dismisses too, and it shares `_dismiss()` with PLAY SOLO. The film
-## hangs off `_on_play_solo_pressed()` precisely so this button does not get one;
-## assert the split, because moving the hook into `_dismiss()` is the obvious
-## "simplification" and it is wrong. (The film's TEARDOWN lives in `_dismiss()`
+## `_dismiss()` is EVERY exit from the overlay — the film ending, a stalled film
+## given up on, a cancelled ending film, a film that failed to start — so the film
+## may only ever be STARTED from `_on_start_pressed()`. Moving the hook down into
+## `_dismiss()` is the obvious "simplification" and it is a loop: the film would
+## restart itself the moment it ended. (The film's TEARDOWN lives in `_dismiss()`
 ## and belongs there — that is the opposite direction and the whole of check 5:
 ## every exit must leave the element gone. It is only the STARTING of the film
 ## that must not be shared.)
-func _check_multiplayer_never_plays() -> void:
+func _check_dismiss_never_plays() -> void:
 	var overlay := _make_film_overlay()
 
-	overlay._on_multiplayer_pressed()
+	overlay._dismiss()
 
 	if overlay._intro_playing:
-		_fail("MULTIPLAYER started the intro film — it opens a panel rather than a " \
-			+ "game and must never play it")
+		_fail("_dismiss() started the intro film — the film hook belongs on the " \
+			+ "PLAY press alone, or a film that ends starts another one")
 	if not overlay._dismissed:
-		_fail("MULTIPLAYER no longer dismisses the start overlay")
-	# It must also THROW THE PRELOADED FILM AWAY: this press opens a panel, so the
-	# film is never coming and a still-buffering 20 MB source has no business
+		_fail("_dismiss() no longer dismisses the start overlay")
+	# It must also THROW THE PRELOADED FILM AWAY: an exit that shows no film means
+	# the film is never coming, and a still-buffering 20 MB source has no business
 	# outliving the press.
 	if overlay.teardowns != 1:
-		_fail("MULTIPLAYER left the preloaded film's element alive (%d teardowns) " \
+		_fail("_dismiss() left the preloaded film's element alive (%d teardowns) " \
 			% overlay.teardowns + "— a 20 MB source buffers on into the session")
 
 	overlay.queue_free()
@@ -825,6 +840,62 @@ class RestartSpy extends Node:
 ## `class_name` type (now including `IntroVideo`) fails to resolve, scripts
 ## silently do not load, and every assertion above would pass for the worst
 ## possible reason.
+## The card carries no fork and still points at multiplayer. Driven on the real
+## overlay so it measures what `_build_ui()` actually draws, not a copy of the
+## strings.
+func _check_card_names_multiplayer() -> void:
+	var overlay: Control = _make_overlay()
+	if overlay == null:
+		return
+
+	var buttons: Array[String] = []
+	var texts: Array[String] = []
+	_collect_card_text(overlay, buttons, texts)
+
+	# THE FORK IS GONE. "PLAY SOLO" / "MULTIPLAYER" as buttons is the thing the
+	# bead removed; the locale pills are not a mode choice and stay.
+	for label: String in buttons:
+		if label.to_upper().contains("SOLO") or label.to_upper() == "MULTIPLAYER":
+			_fail("the start card offers a mode choice again (%s) — one press must " \
+				% label.c_escape() + "start the game, and multiplayer belongs on the " \
+				+ "MP panel")
+
+	# ...AND MULTIPLAYER IS STILL DISCOVERABLE FROM A COLD START. The card is the
+	# one screen every first-time player passes through, so it has to say the
+	# feature exists and where its button is.
+	var says_multiplayer: bool = false
+	var says_where: bool = false
+	for text: String in texts:
+		if text.to_lower().contains("multiplayer"):
+			says_multiplayer = true
+		if text.contains("MP"):
+			says_where = true
+	if not says_multiplayer:
+		_fail("nothing on the start card mentions multiplayer — this is the exact " \
+			+ "bug the card was built for: 'opened the URL, game just starts, no " \
+			+ "idea multiplayer exists'")
+	if not says_where:
+		_fail("the start card mentions multiplayer but never names the MP button — " \
+			+ "the panel has no keyboard shortcut, so an unnamed corner button is " \
+			+ "what 'no idea multiplayer exists' was about")
+
+	overlay.queue_free()
+	paused = false
+
+
+## Every Button label and every piece of text under `node`, gathered separately
+## because the two assertions above ask different questions of them.
+func _collect_card_text(node: Node, buttons: Array[String], texts: Array[String]) -> void:
+	if node is Button:
+		buttons.append((node as Button).text)
+	if node is Label:
+		texts.append((node as Label).text)
+	if node is Button:
+		texts.append((node as Button).text)
+	for child: Node in node.get_children():
+		_collect_card_text(child, buttons, texts)
+
+
 func _make_overlay() -> Control:
 	var overlay := Control.new()
 	overlay.set_script(StartOverlay)
