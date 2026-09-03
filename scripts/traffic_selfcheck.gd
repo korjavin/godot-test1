@@ -220,17 +220,17 @@ func _verify_cars_placement(context: String) -> void:
 			_failures.append("%s: MultiMesh instance %d origin (%f,%f) not walkable" % [context, idx, ox, oz])
 
 func _check_is_traffic_walkable_negatives() -> void:
-	# Direct negative controls at known-bad coords — proves each refusal is load-bearing
+	# Direct negative controls — each point ISOLATES its clause: on avenue carriageway,
+	# inside rect, not dry, so only the tested refusal makes it false.
 	var mgr_script: GDScript = load("res://scripts/traffic_manager.gd")
 	var plan_script: GDScript = load("res://scripts/budapest_plan.gd")
-	# Mid-Danube (wet)
-	var danube_x: float = plan_script.river_x_at(0.0)
-	var danube_z: float = 0.0
-	if mgr_script.is_traffic_walkable(danube_x, danube_z):
-		_failures.append("is_traffic_walkable true at Danube wet (%.1f,%.1f) — must refuse danube_wet" % [danube_x, danube_z])
-	# Castle Hill plateau
-	if mgr_script.is_traffic_walkable(2170.0, -240.0):
-		_failures.append("is_traffic_walkable true on Castle Hill plateau (2170,-240) — must refuse plateau_top_at")
+	# Danube wet ON avenue: avenue crossing at (2592, -496) — Z avenue -496 + X avenue 2592,
+	# river_x_at(-496)≈2520 → 72m inside wet, on carriageway (intersection), not dry, not plateau
+	if mgr_script.is_traffic_walkable(2592.0, -496.0):
+		_failures.append("is_traffic_walkable true at Danube wet ON avenue (2592,-496) — must refuse danube_wet (isolated: on-carriageway, not dry)")
+	# Castle Hill plateau ON avenue: (2096, -496) — X 2096 inside plateau rect 1970-2340, Z -496 avenue, not wet, not dry
+	if mgr_script.is_traffic_walkable(2096.0, -496.0):
+		_failures.append("is_traffic_walkable true on Castle Hill plateau ON avenue (2096,-496) — must refuse plateau_top_at (isolated)")
 	# Chain Bridge deck (dry rect)
 	var chain_dry: Rect2 = plan_script.DRY_RECTS[1]
 	var chain_pt := chain_dry.get_center()
@@ -246,9 +246,9 @@ func _check_is_traffic_walkable_negatives() -> void:
 	# Off-city (outside rect)
 	if mgr_script.is_traffic_walkable(0.0, 0.0):
 		_failures.append("is_traffic_walkable true at (0,0) outside Budapest — must refuse contains")
-	# Solid landmark (e.g., Parliament disc)
-	if mgr_script.is_traffic_walkable(2760.0, -480.0):
-		_failures.append("is_traffic_walkable true inside Parliament solid landmark — must refuse")
+	# Solid landmark ON avenue: Parliament disc centre 2760,-480 via avenue intersection (2840,-496) — 82m inside radius 151, on avenue, not wet/plateau/dry
+	if mgr_script.is_traffic_walkable(2840.0, -496.0):
+		_failures.append("is_traffic_walkable true inside Parliament ON avenue (2840,-496) — must refuse _is_inside_solid_landmark (isolated)")
 	# Positive control: avenue carriageway at gate should be walkable
 	if not mgr_script.is_traffic_walkable(1700.0, 2.4):
 		_failures.append("is_traffic_walkable false at gate avenue lane (1700,2.4) — should be true")
@@ -292,7 +292,7 @@ func _check_yield_stops_short() -> void:
 	_manager._hide_all()
 
 func _check_yield_lateral_and_accel() -> void:
-	# Lateral width: player offset 5m laterally should NOT block; 1.5m should
+	# Lateral width: far 5m outside, centre 0m inside, mid-lane 2.0m inside (shrinking tolerance must still slow 2.0)
 	var mgr_script: GDScript = load("res://scripts/traffic_manager.gd")
 	_manager._hide_all()
 	var cars: Array = _manager.get("_cars")
@@ -306,22 +306,32 @@ func _check_yield_lateral_and_accel() -> void:
 	car["blocked_time"] = 0.0
 	car["honk_cooldown"] = 999.0
 	car["active"] = true
-	# Player 5m lateral (outside 3.2) — should NOT slow
+	# Far 5m lateral (outside 3.2) — should NOT slow (stays near cruise)
 	var player_far_lat := Vector3(1800.0, 1.0, 2.4 + 5.0)
 	_manager._update_cars(DT, player_far_lat)
 	var speed_far: float = float(car["speed"])
-	# Reset and test close lateral
+	# Centre 0m — should slow
 	car["pos"] = Vector3(1788.0, 0.0, 0.0)
 	car["speed"] = 5.0
 	car["blocked_time"] = 0.0
-	var player_close_lat := Vector3(1800.0, 1.0, 2.4)
+	var player_centre := Vector3(1800.0, 1.0, 2.4)
 	for i in 60:
-		_manager._update_cars(DT, player_close_lat)
-	var speed_close: float = float(car["speed"])
+		_manager._update_cars(DT, player_centre)
+	var speed_centre: float = float(car["speed"])
+	# Inside-lane 2.0m (within 3.2) — must still slow; shrinking tolerance to 0.01 would make this NOT slow
+	car["pos"] = Vector3(1788.0, 0.0, 0.0)
+	car["speed"] = 5.0
+	car["blocked_time"] = 0.0
+	var player_mid := Vector3(1800.0, 1.0, 2.4 + 2.0)
+	for i in 60:
+		_manager._update_cars(DT, player_mid)
+	var speed_mid: float = float(car["speed"])
 	if speed_far < 4.5:
-		_failures.append("lateral: far lateral 5m still slowed to %.2f — should be near cruise (LATERAL_TOLERANCE not enforced)" % speed_far)
-	if speed_close >= speed_far:
-		_failures.append("lateral: close lateral did not slow more than far (%.2f vs %.2f)" % [speed_close, speed_far])
+		_failures.append("lateral: far 5m still slowed to %.2f — should be near cruise (too-LARGE tolerance not caught)" % speed_far)
+	if speed_centre >= speed_far:
+		_failures.append("lateral: centre 0m did not slow more than far 5m (%.2f vs %.2f)" % [speed_centre, speed_far])
+	if speed_mid >= 4.0:
+		_failures.append("lateral: mid-lane 2.0m not slowed (%.2f) — should still be within 3.2; shrinking tolerance to 0.01 would hide this" % speed_mid)
 	# Accel/decel: speed change per tick must be limited to ACCELERATION*DT, not snap to target
 	car["pos"] = Vector3(1788.0, 0.0, 0.0)
 	car["speed"] = 5.0
