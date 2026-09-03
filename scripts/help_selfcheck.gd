@@ -235,6 +235,24 @@ func _check_table() -> String:
 			+ "indoors and the card still promises only the outdoor ability") \
 			% PlayerController.INDOOR_ABILITY_NAME
 
+	# --- The gait modifier reads as a MODIFIER ------------------------------
+	# Bead `godot-test1-kov` inverted the gait: nothing held is the fast gait and
+	# Shift slows you. The legend check above CANNOT SEE THAT — it compares the
+	# action's bound key against the row's legend, and the binding did not move, so
+	# a card still promising "Run." passes every assertion in this block. The
+	# BEHAVIOUR half is `wade_selfcheck` check 5, which presses the real action and
+	# reads the shipped `calculate_current_speed()`; this half is the card, held to
+	# the same string-content strength as the F row's ability names below.
+	var gait_row := _row_text(_legend_for_action("run"))
+	if gait_row.is_empty():
+		return "no help row for the gait modifier"
+	if not gait_row.to_lower().contains("slow"):
+		return ("the gait-modifier row says \"%s\" — the key SLOWS the hero since bead " \
+			+ "godot-test1-kov and the card has to say so") % gait_row
+	if gait_row.to_lower().contains("run."):
+		return ("the gait-modifier row says \"%s\" — it still advertises the key as RUN, " \
+			+ "which is the behaviour godot-test1-kov reversed") % gait_row
+
 	# --- The heroes ---------------------------------------------------------
 	var switch_row := _row_text("R")
 	for character: Dictionary in PlayerController.CHARACTERS:
@@ -264,6 +282,15 @@ func _legends(rows: Array) -> Array:
 	for row: Array in rows:
 		out.append(String(row[0]))
 	return out
+
+
+## The legend `ACTION_ROWS` pairs with an action — so the row an action's card
+## lives on is never spelled twice in this file.
+func _legend_for_action(action: String) -> String:
+	for entry: Array in ACTION_ROWS:
+		if String(entry[0]) == action:
+			return String(entry[1])
+	return ""
 
 
 func _row_text(legend: String) -> String:

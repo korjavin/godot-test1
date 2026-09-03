@@ -127,12 +127,12 @@ enum Mode {
 ## ponytail: two columns if a row ever needs a note long enough to want its own
 ## line.
 const ROWS: Array = [
-	["W / S", "Walk forward and back.", Mode.DESKTOP],
+	["W / S", "Move forward and back — you run by default.", Mode.DESKTOP],
 	["Q / E", "Turn left and right.", Mode.DESKTOP],
 	["A / D", "Strafe left or right while held.", Mode.DESKTOP],
 	["Mouse", "Look around. Click to grab the cursor again.", Mode.DESKTOP],
 	["Space", "Jump. A jump also breaks a crocodile's scent.", Mode.DESKTOP],
-	["Shift", "Run. Running always outruns a crocodile.", Mode.DESKTOP],
+	["Shift", "Hold to slow to a walk. Let go and you run again.", Mode.DESKTOP],
 	["Ctrl", "Duck and move slowly.", Mode.DESKTOP],
 	["R", "Switch hero: Windman, Primm, Teibi, Phoboman.", Mode.DESKTOP],
 	["1 2 3 4", "Jump straight to one hero — the numbers on the portraits.", Mode.DESKTOP],
