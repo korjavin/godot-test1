@@ -58,6 +58,14 @@ extends SceneTree
 ##      been in must NOT reset it, which is the whole difference between an
 ##      anti-stall rescue and a compass. Driven through a `StubTower`, because the
 ##      real shell is 400 m from spawn and is not built at all out there.
+##   10. RIVERS (bd godot-test1-06o.1): that the contour is drawn in the ground
+##      shader's river blue, that a stub field with a straight contour paints a
+##      DENSE polyline across the disc while a stub with no zero crossing draws
+##      nothing, that no endpoint is NaN, that the tower's dry disc masks the
+##      line, that no segment at the city wall floats off real water (mapped
+##      back to world XZ against the shipped `is_river_at()`), and that the
+##      lattice spans the disc at every zoom off the shared scale — sampled on
+##      the tick, never in `_draw()`.
 ##
 ## It boots the real main scene, because the road station cache only exists once a
 ## chunk has generated — there is nothing pure to test in isolation here.
@@ -115,11 +123,30 @@ class StubTerrain extends Node:
 	var split_x: float = INF
 	var low: int = 1    # Biome.DESERT
 	var high: int = 5   # Biome.SNOW
+	## The river seam beside biome_at/is_river_at: a synthetic SIGNED field.
+	## `world_x - river_x` is a straight zero contour down the disc (the
+	## positive control); `river_flat` pins the whole field dry (the negative
+	## control). Every call is counted and spanned like biome_at's, so the same
+	## zoom and _draw disciplines can be measured on it.
+	var river_calls: int = 0
+	var river_min_x: float = INF
+	var river_max_x: float = -INF
+	var river_x: float = INF
+	var river_flat: bool = false
+	## The tower's dry disc for the map's mask: far away by default (masks
+	## nothing); a check parks it on the contour. The radius mirrors the
+	## terrain's own TOWER_RADIUS the way fauna_selfcheck mirrors it — it pins
+	## the map's masking logic here, while tower_site_selfcheck pins the value.
+	const TOWER_RADIUS: float = 65.0
+	var tower_at := Vector3(1.0e6, 0.0, 0.0)
 
 	func reset() -> void:
 		calls = 0
 		min_x = INF
 		max_x = -INF
+		river_calls = 0
+		river_min_x = INF
+		river_max_x = -INF
 
 	func biome_at(world_x: float, _world_z: float) -> int:
 		calls += 1
@@ -129,6 +156,17 @@ class StubTerrain extends Node:
 
 	func is_river_at(_world_pos: Vector3) -> bool:
 		return false
+
+	func river_field_at(world_x: float, _world_z: float) -> float:
+		river_calls += 1
+		river_min_x = minf(river_min_x, world_x)
+		river_max_x = maxf(river_max_x, world_x)
+		if river_flat:
+			return 1.0
+		return world_x - river_x
+
+	func tower_site() -> Vector3:
+		return tower_at
 
 
 class StubCroc extends Node3D:
@@ -202,6 +240,8 @@ func _run() -> void:
 		failure = _check_landmarks()
 	if failure.is_empty():
 		failure = await _check_terrain()
+	if failure.is_empty():
+		failure = await _check_river()
 	if failure.is_empty():
 		failure = _check_widget_rect()
 	if failure.is_empty():
@@ -910,6 +950,257 @@ func _terrain_biome_at_pixel(map: Control, at: Vector2) -> int:
 				return biome
 		return -2
 	return -1
+
+
+func _check_river() -> String:
+	"""The river contour layer: the ground shader's river blue, marched off a
+	KNOWN field, spanning the disc at every zoom, sampled on the tick and never
+	in `_draw()`.
+
+	Driven from a `StubTerrain` with a synthetic `river_field_at()` — a straight
+	zero contour plus a flat dry mode — because assertions about which pixels
+	got a line need a world whose water is exactly known. The real terrain goes
+	back at the end, like `_check_terrain`."""
+	var map: Control = root.get_node_or_null("Main/HUD/MinimapHUD")
+	var player: Node3D = get_first_node_in_group("player")
+	if map == null or player == null:
+		return "no MinimapHUD or no player for the river checks"
+
+	# 0. THE INK IS THE GROUND SHADER'S river_color, not the map's own — the
+	#    BIOME_TINTS parity discipline, one uniform further.
+	var text := FileAccess.get_file_as_string(GROUND_SHADER_PATH)
+	if text.is_empty():
+		return "could not read %s — the river ink cannot be checked against the ground" \
+			% GROUND_SHADER_PATH
+	var want: Variant = _shader_color(text, "river_color")
+	if want == null:
+		return "ground.gdshader has no `river_color` uniform — the map mirrors a colour that is gone"
+	var got: Color = map.COLOR_RIVER
+	var expect: Color = want
+	if absf(got.r - expect.r) > 0.005 or absf(got.g - expect.g) > 0.005 \
+			or absf(got.b - expect.b) > 0.005:
+		return ("minimap COLOR_RIVER is (%.3f, %.3f, %.3f) but ground.gdshader paints " \
+			+ "its rivers (%.3f, %.3f, %.3f) — the map and the ground disagree about a colour") \
+			% [got.r, got.g, got.b, expect.r, expect.g, expect.b]
+
+	# 0b. THE SEAM IS REAL, not re-implemented: the terrain behind the map must
+	#     HAVE river_field_at() (the has_method() guard degrades silently to no
+	#     line, the road-cache failure mode of check 1), and the shipped field
+	#     must be bit-for-bit the number is_river_at() thresholds — verified
+	#     against the WORLD, at whatever seed this run rolled, with no river
+	#     needed nearby.
+	var real_terrain: Node = map._terrain
+	if real_terrain == null or not real_terrain.has_method("river_field_at"):
+		return "the terrain has no river_field_at() — the river layer's has_method() guard " \
+			+ "degrades silently to no line anywhere, and nothing logs a word"
+	var pwx := player.global_position.x
+	var pwz := player.global_position.z
+	for k in range(9):
+		var wx := pwx + float(k) * 7.0
+		var wz := pwz - float(k) * 3.0
+		var got_f: float = real_terrain.river_field_at(wx, wz)
+		var want_f: float = real_terrain._biome_noise(wx, wz) - real_terrain.RIVER_LEVEL
+		if got_f != want_f:
+			return "river_field_at() is not _biome_noise - RIVER_LEVEL off the real terrain"
+
+	var stub := StubTerrain.new()
+	map._terrain = stub
+	var failure := ""
+	while true:  # one pass; every exit is a `break`, so the stub is always restored
+		# 1. A STRAIGHT CONTOUR through the player must paint a line across the
+		#    disc: segments reaching both halves, spanning most of it, every
+		#    endpoint on the disc — and sampled off the terrain lattice, not
+		#    some grid of its own.
+		stub.reset()
+		stub.river_flat = false
+		stub.river_x = player.global_position.x
+		stub.tower_at = Vector3(1.0e6, 0.0, 0.0)
+		map._tick()
+		if map._river_count <= 0:
+			failure = "a straight river contour through the player painted no segments at all"
+			break
+		var y0 := INF
+		var y1 := -INF
+		for i in range(map._river_count * 2):
+			var p: Vector2 = map._river_points[i]
+			y0 = minf(y0, p.y)
+			y1 = maxf(y1, p.y)
+			# NAN is the whole masking mechanism (tower disc, rim skip, city
+			# seam) and every comparison against it is false, so a leaked NAN
+			# would sail through both tests below unseen — fail it outright.
+			if not p.is_finite():
+				failure = "a river endpoint is NaN — the mask leaked into the buffer"
+				break
+			if (p - map.MAP_CENTER).length() > map.MAP_RADIUS + 2.0:
+				failure = ("a river segment endpoint sits %.1f px from the disc centre, " \
+					+ "past the %.0f px rim — the contour is not clamped to the disc") \
+					% [(p - map.MAP_CENTER).length(), map.MAP_RADIUS]
+				break
+			# The stub's contour runs straight down the middle, so every true
+			# crossing sits within half a cell of the centre column — a bound
+			# of one full cell leaves 2x headroom. Crossings emitted where the
+			# field does not straddle (extrapolated, rim-clamped) scatter
+			# across the disc and trip this.
+			if absf(p.x - map.MAP_CENTER.x) > map.TERRAIN_CELL:
+				failure = ("a river segment endpoint sits %.1f px off the straight contour " \
+					+ "— the march is emitting crossings where the field does not straddle") \
+					% absf(p.x - map.MAP_CENTER.x)
+				break
+		if not failure.is_empty():
+			break
+		if y0 > map.MAP_CENTER.y or y1 < map.MAP_CENTER.y:
+			failure = "a straight contour down the middle painted only one half of the disc"
+			break
+		if y1 - y0 < map.MAP_RADIUS:
+			failure = ("a straight contour down the middle spans %.0f px, under half the " \
+				+ "disc — the march is dropping most of its segments") % (y1 - y0)
+			break
+		# DENSITY, not just extent: a straight contour through a 15-lattice
+		# disc crosses ~14 quads, so halving the march (every other row) must
+		# fail here even though the span survives it.
+		if map._river_count < map.TERRAIN_GRID - 3:
+			failure = ("a straight contour down the middle painted %d segments, under the " \
+				+ "%d a full march gives — the march is skipping lattice rows") \
+				% [map._river_count, map.TERRAIN_GRID - 3]
+			break
+		if stub.river_calls <= 0 or stub.river_calls > map.TERRAIN_GRID * map.TERRAIN_GRID:
+			failure = ("the river layer took %d river_field_at() samples for a %dx%d grid " \
+				+ "— it is not marching the terrain lattice") \
+				% [stub.river_calls, map.TERRAIN_GRID, map.TERRAIN_GRID]
+			break
+
+		# 2. A FIELD WITH NO ZERO CROSSING draws nothing — the negative control
+		#    for a layer that paints water where there is none.
+		stub.reset()
+		stub.river_flat = true
+		map._tick()
+		if map._river_count != 0:
+			failure = ("a dry field painted %d river segments — the march invents " \
+				+ "water where the field has no contour") % map._river_count
+			break
+
+		# 3. THE TOWER'S DRY DISC masks the line the way is_river_at() masks the
+		#    band: the same straight contour with the disc parked ON it must
+		#    paint FEWER segments, but still paint the line's outer reaches.
+		stub.reset()
+		stub.river_flat = false
+		stub.tower_at = player.global_position + Vector3(45.0, 0.0, 0.0)
+		map._tick()
+		var masked: int = map._river_count
+		stub.reset()
+		stub.tower_at = Vector3(1.0e6, 0.0, 0.0)
+		map._tick()
+		var unmasked: int = map._river_count
+		if masked <= 0:
+			failure = "the tower disc ate the whole river line instead of masking its own ground"
+			break
+		if masked >= unmasked:
+			failure = ("the tower disc masked nothing (%d segments with it, %d without) " \
+				+ "— the line crosses ground where there is no band") % [masked, unmasked]
+			break
+
+		# 4. THE LATTICE SPANS THE DISC AT EVERY ZOOM — the _check_terrain 2c
+		#    discipline, on the river samples: a layer with its own hardcoded
+		#    reach reports the same span at both zooms.
+		var expected_default := _expected_sample_span(map)
+		stub.reset()
+		map._tick()
+		var span_default := stub.river_max_x - stub.river_min_x
+		if absf(span_default - expected_default) > 1.0:
+			failure = "the river lattice sampled %.1f m across at the default zoom, expected %.1f m" \
+				% [span_default, expected_default]
+			break
+		map._zoom_by(1)
+		var expected_zoomed := _expected_sample_span(map)
+		stub.reset()
+		map._tick()
+		var span_zoomed := stub.river_max_x - stub.river_min_x
+		map._zoom_by(-1)
+		if absf(span_zoomed - expected_zoomed) > 1.0:
+			failure = ("the river lattice sampled %.1f m across one zoom step out, expected " \
+				+ "%.1f m (a layer with its own hardcoded reach reports %.1f m at both)") \
+				% [span_zoomed, expected_zoomed, expected_default]
+			break
+
+		# 5. THE TICK SAMPLES, `_draw()` NEVER DOES — the 2d discipline, on
+		#    river_field_at().
+		stub.reset()
+		map._tick()
+		var after_tick: int = stub.river_calls
+		map._time_until_tick = 10.0
+		map.queue_redraw()
+		await process_frame
+		await process_frame
+		if stub.river_calls != after_tick:
+			failure = ("_draw() took %d river_field_at() samples — the river layer must read " \
+				+ "the tick's snapshot, never the world") % [stub.river_calls - after_tick]
+			break
+
+		# 6. THE CITY WALL draws no river of its own. With the player straddling
+		#    Budapest's west edge at three stops, every drawn segment's midpoint
+		#    must map back to world XZ within a cell of real water (the shipped
+		#    is_river_at()) — marching across the seam's two incommensurable
+		#    fields paints a straight artefact along the wall instead. Driven
+		#    on the REAL terrain: the stub has no rect and this runs at spawn.
+		map._terrain = real_terrain
+		var home: Vector3 = player.global_position
+		var wall := BudapestPlan.rect().position.x
+		var z0 := BudapestPlan.rect().position.y
+		var z1 := BudapestPlan.rect().end.y
+		var stop_failure := ""
+		for stop in range(3):
+			player.global_position = Vector3(wall - 30.0, home.y,
+				lerpf(z0, z1, 0.25 + 0.25 * float(stop)))
+			map._tick()
+			var scale: float = map._map_scale()
+			var cell_world: float = map.TERRAIN_CELL / scale
+			var px0 := player.global_position.x
+			var pz0 := player.global_position.z
+			for s in range(map._river_count):
+				var mid: Vector2 = (map._river_points[s * 2] + map._river_points[s * 2 + 1]) * 0.5
+				if not mid.is_finite():
+					stop_failure = "a river endpoint is NaN — the mask leaked into the buffer"
+					break
+				var wx: float = px0 + (mid.x - map.MAP_CENTER.x) / scale
+				var wz: float = pz0 + (mid.y - map.MAP_CENTER.y) / scale
+				# A midpoint on authored dry ground (deck, island) cannot be
+				# judged by wading — the contour there is banks passing under,
+				# still truthful — so only water-side segments are asserted.
+				if BudapestPlan.is_dry(wx, wz):
+					continue
+				var wet := false
+				for o in [Vector2.ZERO, Vector2(cell_world, 0.0),
+						Vector2(-cell_world, 0.0), Vector2(0.0, cell_world),
+						Vector2(0.0, -cell_world)]:
+					if real_terrain.is_river_at(Vector3(wx + o.x, 0.0, wz + o.y)):
+						wet = true
+						break
+				if not wet:
+					stop_failure = ("a river segment at world (%.0f, %.0f) has no water " \
+						+ "within a cell — the march crossed the city seam's two fields") % [wx, wz]
+					break
+			if not stop_failure.is_empty():
+				break
+		player.global_position = home
+		map._terrain = stub
+		if not stop_failure.is_empty():
+			failure = stop_failure
+			break
+		break
+
+	# Put the real world back whatever happened, and re-tick so the map is live again.
+	map._terrain = real_terrain
+	stub.free()
+	map._zoom_index = map.ZOOM_DEFAULT_INDEX
+	map._time_until_tick = 0.0
+	map._tick()
+	if not failure.is_empty():
+		return failure
+
+	print("river: shader river_color ink | straight contour dense across the disc, dry field draws nothing | " \
+		+ "tower disc masked | city wall draws nothing off real water | lattice span follows zoom | no sampling in _draw()")
+	Sentinel.done("river")
+	return ""
 
 
 func _check_widget_rect() -> String:
