@@ -17,9 +17,12 @@ extends Node3D
 ##     decelerate smoothly with move_toward to stop short; stopped + still
 ##     blocked > hold-off → HONK with per-car cooldown; blocked far too long →
 ##     recycle out of sight (never drive through the player).
-##   * Budget: hard TRAFFIC_MAX (30 web / 60 desktop) rendered via ONE
+##   * Budget: hard TRAFFIC_MAX (16 web / 32 desktop, was 30/60) rendered via ONE
 ##     MultiMeshInstance3D (one mesh, one shared StandardMaterial3D, colour
 ##     variety via per-instance colours, never a material per car) → 1 draw call.
+##     Density cut roughly in half on web (≈1 car per 35m of avenue within the
+##     110m bubble) so gaps read, not clumps; SPAWN_RADIUS kept at 110m so
+##     VISIBLE_POP_GUARD (90m) still hides recycles.
 ##   * Bubble spawns around the local player inside BudapestPlan.rect(), recycles
 ##     when out of range or on non-carriageway, sleeps outside the city.
 ##   * Feet at y = 0 by construction. Cars stay on the carriageway — the
@@ -34,12 +37,20 @@ extends Node3D
 # CONSTANTS — budgets, distances, speeds, yield, honk
 # ============================================================================
 
-const TRAFFIC_MAX_DESKTOP: int = 60
-const TRAFFIC_MAX_WEB: int = 30
+const TRAFFIC_MAX_DESKTOP: int = 32
+const TRAFFIC_MAX_WEB: int = 16
 
 const SPAWN_RADIUS: float = 110.0
 const DESPAWN_RADIUS: float = 145.0
 const SPAWN_MIN_DIST: float = 14.0
+
+const CAR_LENGTH: float = 4.4
+const CAR_WIDTH: float = 1.85
+# Spawn/recycle clearance — centre distance wants free air, not just non-overlap.
+# This is INTENTIONALLY larger than opposite-lane separation (4.8 m) so a spawn
+# candidate near an oncoming car is rejected for clearance, even though two
+# cars passing abreast at 4.8 m do NOT interpenetrate (lateral gap 4.8 > CAR_WIDTH 1.85).
+const MIN_CAR_SPACING: float = 5.0
 
 # Cruise speeds — city traffic, comfortable read.
 const CRUISE_MIN: float = 4.0
@@ -48,8 +59,12 @@ const ACCELERATION: float = 5.0
 const DECELERATION: float = 9.0
 
 # Yield distances: start braking at YIELD_DISTANCE, aim to stop STOP_DISTANCE short.
+# STOP_DISTANCE is centre-to-centre with a car-length term so a queued pair shows a visible gap.
+# STOP_DISTANCE (6.7) > MIN_CAR_SPACING (5.0) is intentional: STOP governs the
+# in-lane queue gap (visible bumper gap), MIN_CAR_SPACING governs spawn clearance;
+# a legitimately queued pair sits at ~6.7, which is > spawn clearance, not a conflict.
 const YIELD_DISTANCE: float = 18.0
-const STOP_DISTANCE: float = 4.5
+const STOP_DISTANCE: float = 6.7  # 4.5 + CAR_LENGTH*0.5 (was 4.5 centre-to-centre, looked touching)
 const LATERAL_TOLERANCE: float = 3.2
 const LATERAL_TOLERANCE_CAR: float = 2.4
 
@@ -297,6 +312,35 @@ static func _car_world_pos(car: Dictionary) -> Vector3:
 	var perp := Vector3(-h.y, 0.0, h.x)
 	return base + perp * LANE_OFFSET
 
+func _is_occupied_near(world_pos: Vector3, exclude: Dictionary = {}) -> bool:
+	# Crowd precedent MIN_WALKER_SPACING — reject candidate within a car-length of any live car.
+	# This is a SPAWN clearance test (centre distance), intentionally larger than
+	# opposite-lane separation, not the overlap assertion — see MIN_CAR_SPACING comment.
+	for other: Dictionary in _cars:
+		if not other["active"]:
+			continue
+		if not exclude.is_empty() and other == exclude:
+			continue
+		var ow: Vector3 = _car_world_pos(other)
+		if world_pos.distance_to(ow) < MIN_CAR_SPACING:
+			return true
+	return false
+
+static func _cars_overlap(world_a: Vector3, heading_a: Vector2, world_b: Vector3, heading_b: Vector2) -> bool:
+	# Box overlap — per-axis in car's own frame, same decomposition as _distance_to_block_ahead.
+	# Two 4.4×1.85 boxes overlap only if BOTH longitudinal < CAR_LENGTH and lateral < CAR_WIDTH
+	# in either car's frame. Opposite lanes at 4.8 m lateral have ~3 m air gap, so no overlap.
+	var delta := Vector2(world_b.x - world_a.x, world_b.z - world_a.z)
+	# Frame A
+	var perp_a := Vector2(-heading_a.y, heading_a.x)
+	if absf(delta.dot(heading_a)) < CAR_LENGTH - 0.01 and absf(delta.dot(perp_a)) < CAR_WIDTH - 0.01:
+		return true
+	# Frame B (covers orthogonal orientation swap)
+	var perp_b := Vector2(-heading_b.y, heading_b.x)
+	if absf(delta.dot(heading_b)) < CAR_LENGTH - 0.01 and absf(delta.dot(perp_b)) < CAR_WIDTH - 0.01:
+		return true
+	return false
+
 # ============================================================================
 # YIELD — the actual ask (exposed seams for selfcheck mutation testing)
 # ============================================================================
@@ -399,6 +443,8 @@ func _find_spawn_segment_near(player_pos: Vector3) -> Dictionary:
 		var ahead := wpos + Vector3(heading.x, 0.0, heading.y) * 6.0
 		if not is_traffic_walkable(ahead.x, ahead.z):
 			continue
+		if _is_occupied_near(wpos):
+			continue
 		return {"pos": base, "heading": heading}
 	return {}
 
@@ -434,11 +480,21 @@ func _update_traffic_spawns(player_pos: Vector3) -> void:
 					# Would pop in plain view — U-turn (not junction turning) instead of vanishing.
 					var h: Vector2 = car["heading_dir"]
 					var rev := Vector2(-h.x, -h.y)
-					car["heading_dir"] = rev
-					car["facing_yaw"] = atan2(-rev.x, -rev.y)
-					# Nudge one step back onto walkable side so next tick is clean
-					car["pos"] = car["pos"] + Vector3(rev.x, 0, rev.y) * 1.0
-					car["blocked_time"] = 0.0
+					var new_base: Vector3 = car["pos"] + Vector3(rev.x, 0, rev.y) * 1.0
+					var new_perp: Vector3 = Vector3(-rev.y, 0, rev.x)
+					var new_wpos: Vector3 = new_base + new_perp * LANE_OFFSET
+					if _is_occupied_near(new_wpos, car):
+						# New lane occupied — still would interpenetrate, so recycle out of sight instead
+						var seg2 := _find_spawn_segment_near(player_pos)
+						if not seg2.is_empty():
+							_assign_car_from_segment(car, seg2)
+						else:
+							car["active"] = false
+					else:
+						car["heading_dir"] = rev
+						car["facing_yaw"] = atan2(-rev.x, -rev.y)
+						car["pos"] = new_base
+						car["blocked_time"] = 0.0
 				else:
 					var seg := _find_spawn_segment_near(player_pos)
 					if not seg.is_empty():

@@ -59,6 +59,7 @@ func _run_checks() -> void:
 	_check_web_cap_constants()
 	_check_stuck_recycle()
 	_check_target_speed_seam()
+	_check_no_interpenetration()
 	if _failures.is_empty():
 		print("traffic_selfcheck: all checks passed cleanly")
 		print("SELFCHECK OK")
@@ -438,11 +439,10 @@ func _check_web_cap_constants() -> void:
 	var desk: int = int(mgr_script.get("TRAFFIC_MAX_DESKTOP"))
 	if web >= desk:
 		_failures.append("web cap %d must be < desktop cap %d" % [web, desk])
-	if web != 30 or desk != 60:
-		_failures.append("web/desktop caps mutated: web %d (expected 30) desk %d (expected 60)" % [web, desk])
-	if web > 30 or desk > 60:
-		_failures.append("cap exceeds design: web %d desk %d" % [web, desk])
-	# The runtime _traffic_max is chosen in _ready; headless is desktop, but constants must hold
+	if web != 16 or desk != 32:
+		_failures.append("web/desktop caps mutated: web %d (expected 16) desk %d (expected 32) — was 30/60, cut roughly in half" % [web, desk])
+	if web > 16 or desk > 32:
+		_failures.append("cap exceeds design: web %d desk %d (max 16/32)" % [web, desk])
 	if web <= 0 or desk <= 0:
 		_failures.append("caps must be positive")
 
@@ -489,3 +489,65 @@ func _check_target_speed_seam() -> void:
 	var s_far2: float = mgr_script.target_speed_for_distance(mgr_script.YIELD_DISTANCE - 0.5, cruise)
 	if s_near >= s_far2:
 		_failures.append("target_speed not monotonic: near %.3f >= far %.3f" % [s_near, s_far2])
+
+func _check_no_interpenetration() -> void:
+	# Headline: no two active boxes overlap (per-axis CAR_LENGTH×CAR_WIDTH), not raw
+	# centre distance — opposite lanes are 4.8 m apart laterally, ~3 m air gap, so
+	# raw 5.0 centre distance is unsatisfiable for passing pairs. Checked over many
+	# spawn/recycle cycles. Mutation-tested: delete the _is_occupied_near guard in
+	# _find_spawn_segment_near and it must go RED (same-lane overlap).
+	var mgr_script: GDScript = load("res://scripts/traffic_manager.gd")
+	# Use the player's bubble position to drive many cycles
+	_player.position = Vector3(2000.0, 1.0, 0.0)
+	for frame in 200:
+		_manager._process(DT)
+		var cars: Array = _manager.get("_cars")
+		var active_cars: Array = []
+		for car: Dictionary in cars:
+			if car["active"]:
+				active_cars.append(car)
+		for i in range(active_cars.size()):
+			for j in range(i + 1, active_cars.size()):
+				var ca: Dictionary = active_cars[i]
+				var cb: Dictionary = active_cars[j]
+				var wa: Vector3 = mgr_script._car_world_pos(ca)
+				var wb: Vector3 = mgr_script._car_world_pos(cb)
+				var ha: Vector2 = ca["heading_dir"]
+				var hb: Vector2 = cb["heading_dir"]
+				if mgr_script._cars_overlap(wa, ha, wb, hb):
+					var d: float = wa.distance_to(wb)
+					_failures.append("interpenetration: cars %d and %d %s vs %s headings %s/%s centre %.2f overlap (boxes %.1fx%.1f)" % [i, j, str(wa), str(wb), str(ha), str(hb), d, float(mgr_script.get("CAR_LENGTH")), float(mgr_script.get("CAR_WIDTH"))])
+					return
+	if not _failures.is_empty():
+		return
+	# Negative control that would have caught the 4.8 vs 5.0 metric bug: two cars
+	# abreast in opposite lanes (same avenue, opposite headings, 4.8 m lateral)
+	# must NOT be considered overlapping.
+	var lane_off: float = float(mgr_script.get("LANE_OFFSET"))
+	var car_len: float = float(mgr_script.get("CAR_LENGTH"))
+	var car_wid: float = float(mgr_script.get("CAR_WIDTH"))
+	var base_a := Vector3(2000.0, 0.0, 0.0)
+	var base_b := Vector3(2000.0, 0.0, 0.0) # same base centreline
+	var ha_opp := Vector2(1.0, 0.0)
+	var hb_opp := Vector2(-1.0, 0.0)
+	var wa_opp := base_a + Vector3(-ha_opp.y, 0.0, ha_opp.x) * lane_off
+	var wb_opp := base_b + Vector3(-hb_opp.y, 0.0, hb_opp.x) * lane_off
+	# wa_opp and wb_opp should be 4.8 apart laterally
+	var sep_opp: float = wa_opp.distance_to(wb_opp)
+	if mgr_script._cars_overlap(wa_opp, ha_opp, wb_opp, hb_opp):
+		_failures.append("interpenetration negative control failed: abreast opposite lanes %.2f apart flagged as overlap (boxes %.1fx%.1f should have ~%.1f air gap)" % [sep_opp, car_len, car_wid, sep_opp - car_wid])
+		return
+	# Positive control: same-lane close (3 m longitudinal) MUST be overlap, otherwise metric is toothless
+	var h_same := Vector2(1.0, 0.0)
+	var wa_s := Vector3(2000.0, 0.0, 0.0) + Vector3(-h_same.y, 0.0, h_same.x) * lane_off
+	var wb_s := Vector3(2003.0, 0.0, 0.0) + Vector3(-h_same.y, 0.0, h_same.x) * lane_off # 3 m ahead
+	if not mgr_script._cars_overlap(wa_s, h_same, wb_s, h_same):
+		_failures.append("interpenetration positive control failed: same-lane 3 m apart not flagged as overlap — metric toothless")
+		return
+	var cars: Array = _manager.get("_cars")
+	var cnt: int = 0
+	for c: Dictionary in cars:
+		if c["active"]:
+			cnt += 1
+	if cnt < 5:
+		_failures.append("interpenetration check saw only %d active cars (expected >=5 to have pairs)" % cnt)
