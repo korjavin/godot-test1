@@ -1373,11 +1373,19 @@ The web (WebGL) build is the performance-sensitive target.
 ## CI/CD
 
 `.github/workflows/build.yml` builds the web export on every push, and runs the two
-self-check jobs beside it: `selfchecks` globs **every** `scripts/*_selfcheck.gd` (so a new
-one is gated the day it lands) and `model-selfcheck` runs `scripts/predator_parts.py`.
-A check counts as passed only if it exits 0 **and** printed `SELFCHECK OK` — a GDScript
-parse error exits 0, so the exit code alone is not a verdict. Both deploy jobs `needs:`
-them. **Deploy happens only on push to `master`** — merging is what publishes.
+self-check jobs beside it: `selfcheck-shard` globs **every** `scripts/*_selfcheck.gd` (so a
+new one is gated the day it lands) and `model-selfcheck` runs `scripts/predator_parts.py`.
+A check counts as passed only if it exits 0 **and** printed `SELFCHECK OK` **and** logged no
+`SCRIPT ERROR` — Godot exits 0 on a parse error AND on a runtime error, so the exit code
+alone is not a verdict, and a runtime error skips every assertion after it while the script
+still prints its OK line.
+The GDScript suite is **sharded across a matrix** (~8 min sequential → ~2 min); the
+partition is every Nth file of the glob at runtime off `strategy.job-index` /
+`strategy.job-total`, **never a list of check names in the YAML** — a list goes stale
+silently the day someone adds a check. `selfchecks` is the aggregating job both deploy jobs
+`needs:`: it is green only when every shard is, and it re-reads the glob to prove the union
+of what the shards actually ran was exactly the suite. **Deploy happens only on push to
+`master`** — merging is what publishes.
 
 The same master push runs `deploy-stack`, the **single owner of the `deploy` branch** that
 Portainer reads: it builds both production images, pins them by commit SHA (**never
