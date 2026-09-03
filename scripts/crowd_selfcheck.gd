@@ -21,6 +21,15 @@ extends SceneTree
 ##      CROWD_MAX (60 web / 120 desktop) active walkers inside Budapest around player.
 ##   6. MultiMesh buffer readback: transforms read from MultiMesh.buffer are
 ##      finite, inside BudapestPlan.rect(), and outside Danube water.
+##   8. SOLID, AND NEVER A CAGE (bead 8gw.21): the pooled proxy colliders are the
+##      MANAGER's and nobody else's — every CollisionObject3D under the manager is
+##      one of at most CITIZEN_PROXY_POOL StaticBody3Ds on the fauna-precedent
+##      layer, in no group, carrying no mesh — and a REAL player.tscn driven by the
+##      SHIPPED movement is (a) stopped by a citizen and (b) through it within a
+##      beat, each mutation-tested against the other's absence.
+##   9. NO GAMEPLAY GROUP GAINED A MEMBER: the proxy layer is invisible to the
+##      shipped crocodile's own mask, and the shipped Stink Wave sweep touches the
+##      crocodiles and nothing of the crowd's with a live crowd in the tree.
 ##   7. THE COARSE TICK (bead 8gw.22): a citizen the camera cannot see is ticked
 ##      a few times a second by the REAL elapsed time — it ADVANCES, it is never
 ##      frozen — a null camera degrades to full-rate updates for everything, and
@@ -42,11 +51,37 @@ const PROBE_REACH_MIN: float = 36.0
 const PROBE_REACH_MAX: float = 60.0
 
 const AmbienceLod := preload("res://scripts/ambience_lod.gd")
+const Proxies := preload("res://scripts/ambience_proxies.gd")
+const CrowdScript := preload("res://scripts/crowd_manager.gd")
+const PLAYER_SCENE: String = "res://scenes/player.tscn"
+
+## How many CollisionObject3Ds the isolation walk found under the manager.
+var _proxies_seen: int = 0
+
+## Where the probe citizen stands, straight ahead of the hero (metres). Contact
+## is at ~0.8 m (player capsule 0.5 + proxy half 0.3), so a walking hero reaches
+## it in well under half a second.
+const PROBE_AHEAD: float = 2.0
+
+## A street corner the crowd is happy to walk: Pest inner city.
+const SOLID_PROBE_SPOT := Vector3(2900.0, 0.0, 0.0)
+
+## The SOLID window: shorter than the anti-trap latch's own fuse. Measured — the
+## hero reaches the citizen at frame ~14 and the latch (AmbienceProxies.
+## STUCK_SECONDS, 0.5 s) therefore fires at frame ~44, so 30 frames is squarely
+## "blocked", and what this measures is a citizen being solid rather than the
+## yield happening not to have fired yet.
+const SOLID_FRAMES: int = 30
+
+## The NEVER-TRAPPED window, from the same standing start. Long enough for the
+## latch to fire and for the hero to walk clear.
+const ESCAPE_FRAMES: int = 200
 
 var _root: Node3D = null
 var _manager: Node3D = null
 var _player: CharacterBody3D = null
 var _failures: Array[String] = []
+var _started: bool = false
 
 
 ## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
@@ -74,6 +109,10 @@ func _initialize() -> void:
 
 
 func _process(_delta: float) -> bool:
+	# ONE shot: the checks below await physics frames, so this must not re-enter.
+	if _started:
+		return false
+	_started = true
 	_run_checks()
 	return false
 
@@ -86,6 +125,8 @@ func _run_checks() -> void:
 	_check_dormancy_outside_budapest()
 	_check_simulation_and_boundaries()
 	_check_coarse_tick_and_camera_views()
+	await _check_solid_and_never_trapped()
+	await _check_no_gameplay_group_gained_a_member()
 
 	if _failures.is_empty():
 		print("crowd_selfcheck: all checks passed cleanly")
@@ -105,19 +146,51 @@ func _check_groups_and_collision() -> void:
 		if _manager.is_in_group(g):
 			_failures.append("CrowdManager illegally joined gameplay group '%s'" % g)
 
+	_proxies_seen = 0
 	_check_node_isolation_recursive(_manager)
+	if _proxies_seen != CrowdScript.CITIZEN_PROXY_POOL:
+		_failures.append("the manager owns %d proxy bodies, expected exactly"
+			% _proxies_seen + " CITIZEN_PROXY_POOL (%d) — the pool is a CONSTANT,"
+			% CrowdScript.CITIZEN_PROXY_POOL
+			+ " and one body per citizen is what this whole design refuses")
 	Sentinel.done("groups_and_collision")
 
 
 func _check_node_isolation_recursive(node: Node) -> void:
+	## TIGHTENED rather than loosened by bead 8gw.21. The rule used to be "no
+	## CollisionObject3D anywhere under this manager", which the pooled proxies
+	## would simply break; the rule it becomes is stricter about everything that
+	## mattered and says exactly what the ONE exception is. A CITIZEN still has no
+	## body — a citizen is not a node at all — so what this now forbids is a body
+	## that is not one of the manager's own numbered pool slots, a pool bigger than
+	## CITIZEN_PROXY_POOL, one on a layer a predator can see, one carrying a mesh
+	## (which would cost the draw call the whole design exists to protect) and, as
+	## before, any group membership and any Area3D whatsoever.
 	if node != _manager:
 		var groups := node.get_groups()
 		if not groups.is_empty():
 			_failures.append("CrowdManager descendant '%s' has groups: %s (must have none)" % [node.name, str(groups)])
-		if node is CollisionObject3D:
-			_failures.append("CrowdManager descendant '%s' is a physics CollisionObject3D (must have none)" % node.name)
 		if node is Area3D:
 			_failures.append("CrowdManager descendant '%s' is an Area3D (must have none)" % node.name)
+		elif node is CollisionObject3D:
+			_proxies_seen += 1
+			if not String(node.name).begins_with(Proxies.PROXY_NAME_PREFIX):
+				_failures.append("CrowdManager descendant '%s' is a CollisionObject3D that is not"
+					% node.name + " a pooled proxy — citizens themselves must carry no body")
+			if not (node is StaticBody3D):
+				_failures.append("proxy '%s' is not a StaticBody3D — anything that can be"
+					% node.name + " driven by physics can push the hero")
+			var body := node as CollisionObject3D
+			if body.collision_layer != Proxies.PROXY_LAYER:
+				_failures.append("proxy '%s' is on collision layer %d, not the fauna-precedent"
+					% [node.name, body.collision_layer]
+					+ " layer %d that ONLY the player masks" % Proxies.PROXY_LAYER)
+			if body.collision_mask != 0:
+				_failures.append("proxy '%s' masks %d — a proxy asks the world nothing;"
+					% [node.name, body.collision_mask] + " the player asks it")
+		if node is VisualInstance3D and not (node is MultiMeshInstance3D):
+			_failures.append("CrowdManager descendant '%s' is a VisualInstance3D that is not"
+				% node.name + " one of the four crowd MultiMeshes — the draw-call story is 4")
 
 	for child in node.get_children():
 		_check_node_isolation_recursive(child)
@@ -429,3 +502,259 @@ func _check_coarse_tick_and_camera_views() -> void:
 	ahead["active"] = false
 	behind["active"] = false
 	Sentinel.done("coarse_tick_and_camera_views")
+
+
+# ============================================================================
+# CHECK 8 — SOLID, AND NEVER A CAGE (bead godot-test1-8gw.21)
+# ============================================================================
+#
+# OWNER: "our hero can run through crowd and cars, shouldn't be so."
+#
+# The two halves are each other's control, and that is the point. A crowd that
+# blocks is one assertion away from a crowd that CAGES — citizens walk their
+# waypoints and never look where they are going, so a hero pressed into one by a
+# facade would stand there forever. So this drives ONE press of `move_forward` on
+# a real `player.tscn`, under real physics, against a citizen planted in the
+# street ahead, and asserts BOTH:
+#
+#   (a) at SOLID_FRAMES the hero has walked up to the citizen and STOPPED short
+#       of it — the pooled proxy is a wall;
+#   (b) by ESCAPE_FRAMES the hero is PAST it — `AmbienceProxies`' pool-wide stuck
+#       latch yielded and let him through.
+#
+# Each is mutation-tested by removing exactly the thing the other depends on: a
+# pool with no bodies (the collision) must fail (a), and a latch held at zero
+# every frame (the yield) must fail (b). Nothing here re-implements a metre of
+# movement or of collision: the hero is the shipped controller, the wall is the
+# shipped manager's own pool, placed by the shipped `_process`.
+
+func _check_solid_and_never_trapped() -> void:
+	# The bare probe body in group "player" would race the real hero for the
+	# manager's `_find_player()`; from here on the real one is the only player.
+	_player.remove_from_group("player")
+
+	var floor_body := _make_floor()
+	var hero: Node3D = load(PLAYER_SCENE).instantiate() as Node3D
+	_root.add_child(hero)
+	await physics_frame
+
+	var probe := _pick_probe_spot()
+	if probe == Vector3.INF:
+		_failures.append("check 8 found no walkable street near %s to stand a citizen"
+			% str(SOLID_PROBE_SPOT) + " on — the probe could not be staged")
+		hero.queue_free()
+		floor_body.queue_free()
+		Sentinel.done("solid_and_never_trapped")
+		return
+
+	# ---- (a) A CITIZEN IS A WALL -------------------------------------------
+	var start: Vector3 = await _drive_into_probe(hero, probe, SOLID_FRAMES, false)
+	var gap: float = hero.global_position.z - probe.z
+	if start.z - hero.global_position.z < 0.5:
+		_failures.append("the hero barely moved (%.2f m in %d frames) — check 8 measured"
+			% [start.z - hero.global_position.z, SOLID_FRAMES]
+			+ " a wall against a hero that never walked into it, which every mutant passes")
+	# Contact is ~0.80 m (capsule 0.5 + proxy half 0.3) and the real discriminator
+	# is the SIGN: a hero who walked through ends up on the far side, with a
+	# NEGATIVE gap and metres of it. 0.5 is that call with room for the few
+	# centimetres of penetration `move_and_slide` leaves at a 10 m/s arrival.
+	if gap < 0.5:
+		_failures.append("the hero walked to within %.2f m of a citizen's centre (contact is"
+			% gap + " ~0.8 m) — he went THROUGH a citizen, which is the bug this bead is")
+	else:
+		print("crowd solid: hero stopped %.2f m short of the citizen after %d frames"
+			% [gap, SOLID_FRAMES])
+
+	# ...MUTANT: the same drive with a pool that owns no bodies. This is the
+	# collision and nothing else removed, and the hero must sail straight through.
+	var real_pool: RefCounted = _manager.get("_proxies")
+	var empty_pool: RefCounted = Proxies.new()
+	empty_pool.build(_manager, 0, CrowdScript.CITIZEN_PROXY_HALF,
+		CrowdScript.CITIZEN_PROXY_HEIGHT, CrowdScript.CITIZEN_PROXY_REACH)
+	# ...and the real pool's bodies put to sleep first. A pool that is merely no
+	# longer CONSULTED leaves its shapes standing wherever its last commit put
+	# them, and the mutant would be blocked by the very collision it removed.
+	real_pool.sleep()
+	_manager.set("_proxies", empty_pool)
+	await _drive_into_probe(hero, probe, SOLID_FRAMES, false)
+	if hero.global_position.z - probe.z >= 0.5:
+		_failures.append("with the proxy pool emptied the hero STILL stopped %.2f m short"
+			% (hero.global_position.z - probe.z)
+			+ " of the citizen — check 8(a) is measuring something other than the"
+			+ " collision it claims to, so it would pass a build with no collision at all")
+	_manager.set("_proxies", real_pool)
+
+	# ---- (b) ...AND NEVER A CAGE -------------------------------------------
+	await _drive_into_probe(hero, probe, ESCAPE_FRAMES, false)
+	var through: float = probe.z - hero.global_position.z
+	if through < 0.5:
+		_failures.append("after %d frames of walking into a citizen the hero is still %.2f m"
+			% [ESCAPE_FRAMES, -through] + " short of it — a solid crowd that never yields"
+			+ " is an invisible wall, and a hero pinned against a facade would never get out")
+	else:
+		print("crowd yields: hero was %.2f m past the citizen after %d frames"
+			% [through, ESCAPE_FRAMES])
+
+	# ...MUTANT: the same drive with the pool-wide stuck latch held at zero every
+	# frame — the yield and nothing else removed. Now he must never get through.
+	await _drive_into_probe(hero, probe, ESCAPE_FRAMES, true)
+	if probe.z - hero.global_position.z >= 0.5:
+		_failures.append("with the anti-trap latch held at zero the hero got past the citizen"
+			+ " anyway — check 8(b) is not measuring the yield, so a build in which a"
+			+ " crowd can cage the player would pass it")
+
+	hero.queue_free()
+	floor_body.queue_free()
+	await process_frame
+	Sentinel.done("solid_and_never_trapped")
+
+
+func _make_floor() -> StaticBody3D:
+	## Something to stand on. Layer 1, which is what the player's mask 5 reads for
+	## the world; the proxies live on layer 3 of that same mask.
+	var body := StaticBody3D.new()
+	body.name = "ProbeFloor"
+	body.collision_layer = 1
+	var cs := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(400.0, 1.0, 400.0)
+	cs.shape = box
+	cs.position = Vector3(SOLID_PROBE_SPOT.x, -0.5, SOLID_PROBE_SPOT.z)
+	body.add_child(cs)
+	_root.add_child(body)
+	return body
+
+
+func _pick_probe_spot() -> Vector3:
+	## A street point the crowd is willing to stand on, with PROBE_AHEAD metres of
+	## walkable street behind it for the hero to start from. Asked of the SHIPPED
+	## `is_walkable`, so the probe can never be staged somewhere a citizen would be
+	## recycled out from under it mid-drive.
+	for dx in range(-30, 31, 2):
+		for dz in range(-30, 31, 2):
+			var p := Vector3(SOLID_PROBE_SPOT.x + float(dx), 0.0, SOLID_PROBE_SPOT.z + float(dz))
+			if CrowdScript.is_walkable(p.x, p.z) \
+					and CrowdScript.is_walkable(p.x, p.z + PROBE_AHEAD) \
+					and CrowdScript.is_walkable(p.x, p.z + PROBE_AHEAD + 4.0) \
+					and CrowdScript.is_walkable(p.x, p.z - 4.0):
+				return p
+	return Vector3.INF
+
+
+func _plant_probe(where: Vector3) -> void:
+	## Stand citizen 0 on `where` and keep it there — a paused walker, planted
+	## every frame so neither its own waypoint walk nor the recycle pass can move
+	## the thing the hero is being driven into.
+	var cits: Array = _manager.get("_citizens")
+	var c: Dictionary = cits[0]
+	c["pos"] = where
+	c["target"] = where
+	c["lane_offset"] = 0.0
+	c["heading_dir"] = Vector2(0.0, 1.0)
+	c["facing_yaw"] = 0.0
+	c["pause_timer"] = 10.0
+	c["speed"] = 0.0
+	c["active"] = true
+	c["lod_debt"] = 0.0
+
+
+func _drive_into_probe(hero: Node3D, probe: Vector3, frames: int,
+		kill_latch: bool) -> Vector3:
+	## Stand the hero PROBE_AHEAD behind the probe and hold `move_forward` for
+	## `frames` physics frames. Returns where he started.
+	##
+	## `player.tscn`'s root has an identity basis and `get_input_direction()`
+	## answers (0, -1) for move_forward, so "forward" is world -Z: the probe is
+	## planted at -Z of the start and the hero walks straight at it.
+	hero.global_position = Vector3(probe.x, 0.05, probe.z + PROBE_AHEAD)
+	# FACE -Z. `player.tscn`'s controller turns the body to face down the road on
+	# `_ready`, so "forward" is not -Z until it is told to be — and a probe that
+	# assumed it walked the hero off at right angles to the thing it was measuring.
+	hero.rotation = Vector3.ZERO
+	hero.velocity = Vector3.ZERO
+	var start: Vector3 = hero.global_position
+	Input.action_press("move_forward", 1.0)
+	for _i in frames:
+		_plant_probe(probe)
+		if kill_latch:
+			# The yield removed, and only the yield: the pool's contact window can
+			# never reach AmbienceProxies.STUCK_SECONDS, so nothing ever softens.
+			var pool: RefCounted = _manager.get("_proxies")
+			pool.set("_watch_time", 0.0)
+			pool.set("_soft", 0.0)
+		_manager._process(DT)
+		await physics_frame
+	Input.action_release("move_forward")
+	return start
+
+
+# ============================================================================
+# CHECK 9 — NO GAMEPLAY GROUP GAINED A MEMBER
+# ============================================================================
+#
+# The pool is the first physics body this manager has ever owned, so the thing
+# to prove is that it changed nothing about the game. Two independent readings,
+# because either alone is weak: the LAYER ARITHMETIC (a predator's own shipped
+# mask, read off `piglet_crocodile.tscn` rather than written down here, cannot
+# see the proxy layer — which is what makes a proxy invisible to a chase, to the
+# LOD manager's sweep and to the hunt director), and the SHIPPED STINK WAVE
+# driven with a live crowd in the tree, which must scatter the crocodile and
+# nothing else. Check 1 already forbids any group membership under the manager;
+# this is the behavioural half of the same claim.
+
+func _check_no_gameplay_group_gained_a_member() -> void:
+	var croc_scene: PackedScene = load("res://scenes/characters/piglet_crocodile.tscn")
+	var croc: Node3D = croc_scene.instantiate() as Node3D
+	var croc_mask: int = (croc as CollisionObject3D).collision_mask
+	if (croc_mask & Proxies.PROXY_LAYER) != 0:
+		_failures.append("the shipped crocodile masks %d, which INCLUDES the proxy layer %d"
+			% [croc_mask, Proxies.PROXY_LAYER] + " — every predator in the game would"
+			+ " start bumping into pedestrians, and the fauna precedent this layer"
+			+ " choice copies is broken")
+	croc.free()
+
+	# A live crowd, then the shipped fear sweep. Group discovery is the whole
+	# mechanism, so if a proxy — or a citizen — had joined "crocodile" it would be
+	# scattered here and counted.
+	_player.add_to_group("player")
+	_player.position = Vector3(2900.0, 1.0, 0.0)
+	for _i in 90:
+		_manager._process(DT)
+	var active: int = 0
+	for c: Dictionary in _manager.get("_citizens"):
+		if c["active"]:
+			active += 1
+	if active <= 0:
+		_failures.append("check 9 ran its Stink Wave probe over an EMPTY crowd — it would"
+			+ " pass with the crowd in every gameplay group there is")
+
+	var hero: Node3D = load(PLAYER_SCENE).instantiate() as Node3D
+	_root.add_child(hero)
+	hero.global_position = Vector3(2900.0, 0.05, 0.0)
+	var real_croc: Node3D = croc_scene.instantiate() as Node3D
+	_root.add_child(real_croc)
+	real_croc.global_position = Vector3(2903.0, 0.0, 0.0)
+	await physics_frame
+
+	hero.call("_scare_crocodiles", hero.global_position, 3.0, 30.0)
+	if not bool(real_croc.get("is_fleeing")):
+		_failures.append("the shipped Stink Wave did not scatter a crocodile 3 m away —"
+			+ " check 9's positive control is dead, so 'it scattered nothing of the"
+			+ " crowd's' means nothing")
+	for n: Node in get_nodes_in_group("crocodile"):
+		if _manager.is_ancestor_of(n):
+			_failures.append("'%s' is a descendant of the CrowdManager AND in group"
+				% n.name + " 'crocodile' — a pedestrian the Stink Wave scatters, a hunter"
+				+ " chases and the LOD manager sleeps")
+	for g: String in ["player", "crocodile", "enemy", "boss", "coin", "landmark", "fauna"]:
+		for n: Node in get_nodes_in_group(g):
+			if _manager.is_ancestor_of(n):
+				_failures.append("'%s' is under the CrowdManager and in gameplay group '%s'"
+					% [n.name, g])
+	print("crowd isolation: %d citizens live, crocodile mask %d never sees proxy layer %d"
+		% [active, croc_mask, Proxies.PROXY_LAYER])
+
+	real_croc.queue_free()
+	hero.queue_free()
+	await process_frame
+	Sentinel.done("no_gameplay_group_gained_a_member")

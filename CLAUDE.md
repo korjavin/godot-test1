@@ -1288,6 +1288,37 @@ binary freeze is the bug this is written against. Four rules, all pinned:
   `traffic_selfcheck` check 8 holds it to an independent all-pairs oracle over a live
   bubble rather than trusting the argument.
 
+**THEY ARE SOLID, AND STILL NOT NODES — `scripts/ambience_proxies.gd` is the one home**
+(owner, bead `godot-test1-8gw.21`: *"our hero can run through crowd and cars, shouldn't be
+so"*). No citizen and no car gets a body; each MANAGER owns a small POOL of `StaticBody3D`
+proxies (6 citizens, 4 cars — measured maxima 4 and 3 within reach, and both are CONSTANTS
+that do not grow with the caps) that is moved onto the nearest few instances every frame.
+The locality is 8gw.22's: `offer()` is called from inside the loop that already writes the
+MultiMesh buffer, so there is no second nearest-N pass. Four rules:
+
+- **The isolation is the PHYSICS LAYER, and it is `fauna_manager.gd`'s verbatim** —
+  layer 3 (`PROXY_LAYER` 4), which only the player's `collision_mask = 5` reads.
+  Every predator is layer 2 / mask 3, so a proxy is invisible to a chase, to the LOD
+  sweep, to the hunt director and to the Stink Wave. Nothing joins a group; a proxy
+  carries no mesh, so 4 crowd + 1 traffic draw calls are untouched.
+- **The player can never be trapped, and that is the CROWD's rule** (`yields`).
+  Citizens walk their waypoints and do not look where they are going, so a pool-wide
+  contact WINDOW yields the whole pool for a second when the hero makes less than
+  `STUCK_TRAVEL` of headway across `STUCK_SECONDS`. It is a distance over a window and
+  deliberately not an instantaneous speed — a pinned hero's per-frame speed swings on
+  the frames depenetration nudges him. **Cars declare it off**: one brakes 18 m out and
+  stops 6.7 m short on an 8 m half-width avenue, so it can pin nobody, and a car you
+  could walk through after a beat is not a car.
+- **Nothing may push the hero.** A proxy whose footprint contains his CENTRE is not
+  solid that frame (it can only fire on a pose that landed on him). For cars the
+  stronger promise is arithmetic: `CAR_WIDTH/2 + 0.5` is far inside `LATERAL_TOLERANCE`,
+  so every car that could touch a hero has already yielded to him.
+- **The two self-checks were TIGHTENED, not loosened.** They no longer say "no
+  `CollisionObject3D` under the manager" but "the only ones are exactly N numbered pool
+  slots, `StaticBody3D`, on `PROXY_LAYER`, masking nothing, in no group, carrying no
+  mesh" — plus a real `player.tscn` driven by the shipped movement into a planted
+  instance, mutation-tested against an emptied pool.
+
 ### Art direction
 Authored in `main.tscn` (key light, ProceduralSky, glow, BCS grade) plus
 `scripts/toon_shading.gd`, whose **static cache keyed by source material id** is the point:

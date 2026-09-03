@@ -11,8 +11,16 @@ extends Node3D
 ##     randomize()d RNG drives colours, cruise speeds and spawn jitter.
 ##   * Cars join NO group and carry NO collision bodies or Area3Ds. A car with a
 ##     body would be grabbed by the Stink Wave, LOD manager, hunt director, and
-##     would collide against 2,100 city boxes. "Must not bump" is free: no body
-##     cannot push anyone. The work is making it visibly YIELD.
+##     would collide against 2,100 city boxes. The work is making it visibly YIELD.
+##   * Solid anyway (bead 8gw.21): the MANAGER owns CAR_PROXY_POOL colliders that
+##     follow the nearest few cars to the local player, on the fauna layer that
+##     only the player masks — so a hero bumps a bumper and slides along it while
+##     the cars themselves stay transforms in a buffer, in no group, with no
+##     draw call added. "Must not bump" is still not the body's job and never
+##     was: a car that could reach the hero has already YIELDED, because half a
+##     car's width plus a player radius (0.925 + 0.5) is well inside
+##     LATERAL_TOLERANCE (3.2) and a yield begins YIELD_DISTANCE (18 m) out.
+##     traffic_selfcheck asserts that margin and drives the stop.
 ##   * Yield: clear → cruise; lane blocked (local player + car ahead) →
 ##     decelerate smoothly with move_toward to stop short; stopped + still
 ##     blocked > hold-off → HONK with per-car cooldown; blocked far too long →
@@ -138,10 +146,37 @@ var _cars: Array[Dictionary] = []
 
 var _multimesh_node: MultiMeshInstance3D = null
 
+## The pooled proxy colliders (CAR_PROXY_POOL of them, the MANAGER's nodes —
+## never a car's). See ambience_proxies.gd.
+var _proxies: RefCounted = null
+
 const PLAN_SCRIPT := preload("res://scripts/budapest_plan.gd")
 
 ## The shared "coarse-tick what we cannot see" rule — see its header.
 const AmbienceLod := preload("res://scripts/ambience_lod.gd")
+
+## The shared pooled-proxy collider — read its header for why the cars themselves
+## stay bodiless and why nothing here can shove a hero.
+const AmbienceProxies := preload("res://scripts/ambience_proxies.gd")
+
+## HOW MANY CARS CAN TOUCH THE HERO AT ONCE. MEASURED, not guessed: over six runs
+## of 3,600 frames each, standing the hero ON a carriageway at four city
+## locations at the desktop cap of 32, the most cars ever simultaneously inside
+## CAR_PROXY_REACH was THREE (a car in each direction plus one queued behind).
+## Four is that with a car's worth of headroom, and like the crowd's pool it is a
+## CONSTANT: it does not grow with TRAFFIC_MAX.
+const CAR_PROXY_POOL: int = 4
+
+## How near a car must be to be given a body. Contact happens at ~2.7 m off the
+## nose (half of CAR_LENGTH plus a player radius); 8 m is comfortably more than a
+## frame of closing speed even head-on, and a car this close has long since begun
+## to yield.
+const CAR_PROXY_REACH: float = 8.0
+
+## The car's footprint half-extents (front is local -Z, the mesh convention) and
+## the collider's height — the chassis and cabin, not the roof trim.
+const CAR_PROXY_HALF := Vector2(CAR_WIDTH * 0.5, CAR_LENGTH * 0.5)
+const CAR_PROXY_HEIGHT: float = 1.15
 
 static var _shared_material: StandardMaterial3D = null
 static var _shared_mesh: ArrayMesh = null
@@ -232,6 +267,18 @@ func _ready() -> void:
 	add_child(mm_inst)
 	_multimesh_node = mm_inst
 
+	# The pooled colliders. Built here so they exist for a manager driven
+	# straight out of a harness, exactly like the MultiMesh above.
+	_proxies = AmbienceProxies.new()
+	# `yields: false` — a car is SOLID and stays solid. The crowd's anti-trap
+	# yield is a crowd problem (a pedestrian walks into you and keeps walking);
+	# a car brakes 18 m out and stops 6.7 m short, stands only on a carriageway
+	# and leaves 5.6 m of open road past its far flank, so it can never pin
+	# anybody — and a car you could walk through after a beat is exactly what the
+	# owner did not ask for. See ambience_proxies.gd's header.
+	_proxies.build(self, CAR_PROXY_POOL, CAR_PROXY_HALF, CAR_PROXY_HEIGHT,
+		CAR_PROXY_REACH, false)
+
 	_cars.clear()
 	for i in _traffic_max:
 		_cars.append({
@@ -262,8 +309,13 @@ func _process(delta: float) -> void:
 	# (never the player — the FRONT view looks backward along the hero), and
 	# spent by both passes below. Empty planes (no camera) = everything visible.
 	var planes: Array[Plane] = AmbienceLod.view_planes(get_viewport())
+	# Open the proxy pool's candidate buffer: the nearest few cars are picked up
+	# INSIDE _update_cars' existing loop (offer()), so the collision shares
+	# 8gw.22's one pass per car and adds no scan of its own.
+	_proxies.begin(player_pos)
 	_update_traffic_spawns(delta, player_pos, planes)
 	_update_cars(delta, player_pos, true)
+	_proxies.commit(delta, player_pos)
 
 # ============================================================================
 # QUERIES
@@ -629,6 +681,9 @@ func _update_cars(delta: float, player_pos: Vector3, lod_gated: bool = false) ->
 			car["pos"] = base
 
 		var wpos: Vector3 = _car_world_pos(car)
+		# The proxy pool rides THIS loop — world position and facing already in
+		# hand, so being solid costs a box reject per car.
+		_proxies.offer(Vector3(wpos.x, 0.0, wpos.z), float(car["facing_yaw"]))
 		var basis := Basis().rotated(Vector3.UP, float(car["facing_yaw"]))
 		var t := Transform3D(basis, Vector3(wpos.x, 0.0, wpos.z))
 		var base_idx := count * 16
@@ -664,6 +719,10 @@ func _update_cars(delta: float, player_pos: Vector3, lod_gated: bool = false) ->
 	mm.visible_instance_count = count
 
 func _hide_all() -> void:
+	# The colliders go with the cars, or a hero leaving the city keeps bumping
+	# into ghosts parked at the last pose the pool held.
+	if _proxies != null:
+		_proxies.sleep()
 	if _multimesh_node != null:
 		_multimesh_node.multimesh.visible_instance_count = 0
 	for car: Dictionary in _cars:
