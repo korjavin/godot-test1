@@ -59,6 +59,7 @@ func _run_checks() -> void:
 	_check_web_cap_constants()
 	_check_stuck_recycle()
 	_check_target_speed_seam()
+	_check_no_interpenetration()
 	if _failures.is_empty():
 		print("traffic_selfcheck: all checks passed cleanly")
 		print("SELFCHECK OK")
@@ -438,11 +439,10 @@ func _check_web_cap_constants() -> void:
 	var desk: int = int(mgr_script.get("TRAFFIC_MAX_DESKTOP"))
 	if web >= desk:
 		_failures.append("web cap %d must be < desktop cap %d" % [web, desk])
-	if web != 30 or desk != 60:
-		_failures.append("web/desktop caps mutated: web %d (expected 30) desk %d (expected 60)" % [web, desk])
-	if web > 30 or desk > 60:
-		_failures.append("cap exceeds design: web %d desk %d" % [web, desk])
-	# The runtime _traffic_max is chosen in _ready; headless is desktop, but constants must hold
+	if web != 16 or desk != 32:
+		_failures.append("web/desktop caps mutated: web %d (expected 16) desk %d (expected 32) — was 30/60, cut roughly in half" % [web, desk])
+	if web > 16 or desk > 32:
+		_failures.append("cap exceeds design: web %d desk %d (max 16/32)" % [web, desk])
 	if web <= 0 or desk <= 0:
 		_failures.append("caps must be positive")
 
@@ -489,3 +489,37 @@ func _check_target_speed_seam() -> void:
 	var s_far2: float = mgr_script.target_speed_for_distance(mgr_script.YIELD_DISTANCE - 0.5, cruise)
 	if s_near >= s_far2:
 		_failures.append("target_speed not monotonic: near %.3f >= far %.3f" % [s_near, s_far2])
+
+func _check_no_interpenetration() -> void:
+	# Headline: no two active cars closer than one car-length (MIN_CAR_SPACING),
+	# checked over many spawn/recycle cycles. Mutation-tested: delete the
+	# _is_occupied_near guard in _find_spawn_segment_near and it must go RED.
+	var mgr_script: GDScript = load("res://scripts/traffic_manager.gd")
+	var min_spacing: float = float(mgr_script.get("MIN_CAR_SPACING"))
+	# Use the player's bubble position to drive many cycles
+	_player.position = Vector3(2000.0, 1.0, 0.0)
+	for frame in 200:
+		_manager._process(DT)
+		var cars: Array = _manager.get("_cars")
+		# Build list of active world positions
+		var active_world: Array[Vector3] = []
+		for car: Dictionary in cars:
+			if not car["active"]:
+				continue
+			active_world.append(mgr_script._car_world_pos(car))
+		# Check every pair
+		for i in range(active_world.size()):
+			for j in range(i + 1, active_world.size()):
+				var d: float = active_world[i].distance_to(active_world[j])
+				if d < min_spacing - 0.01:
+					_failures.append("interpenetration: cars %d and %d %s apart %.2f < MIN_CAR_SPACING %.1f" % [i, j, str(active_world[i]), d, min_spacing])
+					return
+		# Also count that we actually have cars to test
+	if _failures.is_empty():
+		var cars: Array = _manager.get("_cars")
+		var cnt: int = 0
+		for c: Dictionary in cars:
+			if c["active"]:
+				cnt += 1
+		if cnt < 5:
+			_failures.append("interpenetration check saw only %d active cars (expected >=5 to have pairs)" % cnt)

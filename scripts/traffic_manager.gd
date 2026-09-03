@@ -17,9 +17,12 @@ extends Node3D
 ##     decelerate smoothly with move_toward to stop short; stopped + still
 ##     blocked > hold-off → HONK with per-car cooldown; blocked far too long →
 ##     recycle out of sight (never drive through the player).
-##   * Budget: hard TRAFFIC_MAX (30 web / 60 desktop) rendered via ONE
+##   * Budget: hard TRAFFIC_MAX (16 web / 32 desktop, was 30/60) rendered via ONE
 ##     MultiMeshInstance3D (one mesh, one shared StandardMaterial3D, colour
 ##     variety via per-instance colours, never a material per car) → 1 draw call.
+##     Density cut roughly in half on web (≈1 car per 35m of avenue within the
+##     110m bubble) so gaps read, not clumps; SPAWN_RADIUS kept at 110m so
+##     VISIBLE_POP_GUARD (90m) still hides recycles.
 ##   * Bubble spawns around the local player inside BudapestPlan.rect(), recycles
 ##     when out of range or on non-carriageway, sleeps outside the city.
 ##   * Feet at y = 0 by construction. Cars stay on the carriageway — the
@@ -34,12 +37,17 @@ extends Node3D
 # CONSTANTS — budgets, distances, speeds, yield, honk
 # ============================================================================
 
-const TRAFFIC_MAX_DESKTOP: int = 60
-const TRAFFIC_MAX_WEB: int = 30
+const TRAFFIC_MAX_DESKTOP: int = 32
+const TRAFFIC_MAX_WEB: int = 16
 
 const SPAWN_RADIUS: float = 110.0
 const DESPAWN_RADIUS: float = 145.0
 const SPAWN_MIN_DIST: float = 14.0
+
+const CAR_LENGTH: float = 4.4
+const CAR_WIDTH: float = 1.85
+# Minimum centre-to-centre spacing at spawn/recycle — one car-length, crowd precedent MIN_WALKER_SPACING.
+const MIN_CAR_SPACING: float = 5.0
 
 # Cruise speeds — city traffic, comfortable read.
 const CRUISE_MIN: float = 4.0
@@ -48,8 +56,9 @@ const ACCELERATION: float = 5.0
 const DECELERATION: float = 9.0
 
 # Yield distances: start braking at YIELD_DISTANCE, aim to stop STOP_DISTANCE short.
+# STOP_DISTANCE is centre-to-centre with a car-length term so a queued pair shows a visible gap.
 const YIELD_DISTANCE: float = 18.0
-const STOP_DISTANCE: float = 4.5
+const STOP_DISTANCE: float = 6.7  # 4.5 + CAR_LENGTH*0.5 (was 4.5 centre-to-centre, looked touching)
 const LATERAL_TOLERANCE: float = 3.2
 const LATERAL_TOLERANCE_CAR: float = 2.4
 
@@ -297,6 +306,18 @@ static func _car_world_pos(car: Dictionary) -> Vector3:
 	var perp := Vector3(-h.y, 0.0, h.x)
 	return base + perp * LANE_OFFSET
 
+func _is_occupied_near(world_pos: Vector3, exclude: Dictionary = {}) -> bool:
+	# Crowd precedent MIN_WALKER_SPACING — reject candidate within a car-length of any live car.
+	for other: Dictionary in _cars:
+		if not other["active"]:
+			continue
+		if not exclude.is_empty() and other == exclude:
+			continue
+		var ow: Vector3 = _car_world_pos(other)
+		if world_pos.distance_to(ow) < MIN_CAR_SPACING:
+			return true
+	return false
+
 # ============================================================================
 # YIELD — the actual ask (exposed seams for selfcheck mutation testing)
 # ============================================================================
@@ -399,6 +420,8 @@ func _find_spawn_segment_near(player_pos: Vector3) -> Dictionary:
 		var ahead := wpos + Vector3(heading.x, 0.0, heading.y) * 6.0
 		if not is_traffic_walkable(ahead.x, ahead.z):
 			continue
+		if _is_occupied_near(wpos):
+			continue
 		return {"pos": base, "heading": heading}
 	return {}
 
@@ -434,11 +457,21 @@ func _update_traffic_spawns(player_pos: Vector3) -> void:
 					# Would pop in plain view — U-turn (not junction turning) instead of vanishing.
 					var h: Vector2 = car["heading_dir"]
 					var rev := Vector2(-h.x, -h.y)
-					car["heading_dir"] = rev
-					car["facing_yaw"] = atan2(-rev.x, -rev.y)
-					# Nudge one step back onto walkable side so next tick is clean
-					car["pos"] = car["pos"] + Vector3(rev.x, 0, rev.y) * 1.0
-					car["blocked_time"] = 0.0
+					var new_base: Vector3 = car["pos"] + Vector3(rev.x, 0, rev.y) * 1.0
+					var new_perp: Vector3 = Vector3(-rev.y, 0, rev.x)
+					var new_wpos: Vector3 = new_base + new_perp * LANE_OFFSET
+					if _is_occupied_near(new_wpos, car):
+						# New lane occupied — still would interpenetrate, so recycle out of sight instead
+						var seg2 := _find_spawn_segment_near(player_pos)
+						if not seg2.is_empty():
+							_assign_car_from_segment(car, seg2)
+						else:
+							car["active"] = false
+					else:
+						car["heading_dir"] = rev
+						car["facing_yaw"] = atan2(-rev.x, -rev.y)
+						car["pos"] = new_base
+						car["blocked_time"] = 0.0
 				else:
 					var seg := _find_spawn_segment_near(player_pos)
 					if not seg.is_empty():
