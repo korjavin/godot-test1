@@ -438,7 +438,9 @@ func _run() -> void:
 	_check_crowd_confusion(croc_ai)
 	_check_determinism(terrain_script)
 	_check_hunter_stream_independence(terrain_script)
+	_check_hunter_field_cap(terrain_script)
 	_check_boss_dispatch(terrain_script)
+	_check_boss_coin_footprint(terrain_script)
 
 	for run_seed: int in RUN_SEEDS:
 		_sweep(terrain_script, run_seed, spawn_height, edge_inset)
@@ -3657,12 +3659,21 @@ func _chunk_signature(terrain: Node, chunk_pos: Vector2i) -> Array:
 	return parts
 
 
-func _generate_chunk(terrain: Node, chunk_pos: Vector2i) -> MeshInstance3D:
+func _generate_chunk(terrain: Node, chunk_pos: Vector2i, with_coins: bool = false,
+		out_obstacles: Array = []) -> MeshInstance3D:
 	"""
 	Run create_chunk's spawner sequence over one chunk. THE CALLER FREES the parent.
 
 	@param terrain: a terrain node with its run seed already forced
 	@param chunk_pos: the chunk to generate
+	@param with_coins: also lay the chunk's slice of the COIN ROAD, which
+	                   create_chunk does immediately after the hunters. Off by
+	                   default because most callers here digest bodies and a coin
+	                   is not one; check 14 needs it, because "a coin settled
+	                   inside the boss" is a fact about the two together.
+	@param out_obstacles: filled with the finished footprint list, so a caller can
+	                      drive `_settle_coin_y` against exactly the obstacles the
+	                      chunk really built (check 14 again)
 	@return the chunk parent, in the tree at the chunk's world origin, holding
 	        every body the chunk spawned
 
@@ -3686,6 +3697,9 @@ func _generate_chunk(terrain: Node, chunk_pos: Vector2i) -> MeshInstance3D:
 	terrain.spawn_platform_crocodiles(chunk_pos, parent, platforms)
 	terrain.spawn_bosses_in_chunk(chunk_pos, parent, obstacles)
 	terrain.spawn_hunters_in_chunk(chunk_pos, parent, obstacles)
+	if with_coins:
+		terrain.spawn_coins_in_chunk(chunk_pos, parent, obstacles)
+	out_obstacles.assign(obstacles)
 	body.free()
 	return parent
 
@@ -3804,6 +3818,412 @@ func _hunter_ab_field(terrain_script: GDScript, run_seed: int, hunters_on: bool)
 			out[chunk_pos] = [parts, hunter_count]
 	terrain.free()
 	return out
+
+
+# ============================================================================
+# CHECK 13 — THE FIELD CAP on GD-SURVEY hunters (bead godot-test1-fhu)
+# ============================================================================
+
+## The square field checks 13b-e regenerate. Smaller than DETERMINISM_FIELD only
+## because five legs are built over it and each one is a whole field; at
+## HUNTER_CHANCE it still offers several hunters, which the positive control
+## below insists on rather than assumes.
+const CAP_FIELD: int = 9
+
+
+func _check_hunter_field_cap(terrain_script: GDScript) -> void:
+	"""
+	The owner's ten (2026-09-02): "limit hunters on field with total number 10
+	(inside HQ doesn't count)". THE FIX IS TWO HALVES and this checks both, because
+	each covers exactly what the other cannot.
+
+	  * 13a — THE RETUNED CHANCE, which is the half that holds everywhere. Read
+	    HUNTER_CHANCE and `render_distance` off the shipped script and assert the
+	    EXPECTED desktop residency is under HUNTER_FIELD_CAP. This is the only half
+	    that is a pure function of (chunk, run_seed) — it works in a room, on every
+	    peer, with no shared state — so a retune that breaks it must fail here even
+	    though the hard cap below would still clamp a solo player's screen.
+	  * 13b — THE HARD CAP FIRES. A field generated with HUNTER_FIELD_CAP hunter
+	    bodies already standing in the tree must place NONE.
+	  * 13c — AND IT IS THE COUNT, not "off". One body short of the cap must place
+	    exactly the hunters the empty field placed — same count, same positions.
+	    Without this, `return true` unconditionally passes 13b.
+	  * 13d — THE HQ DOESN'T COUNT. The same bodies parented under the tower shell
+	    must not cap anything: that is the owner's parenthesis, and it is why the
+	    exclusion is by PARENT (a guard is in group "crocodile" like everything
+	    else).
+	  * 13e — AND IT IS OFF IN A ROOM, the documented ceiling: a live body count
+	    differs per peer by where they walked, and crocodiles are master-simulated
+	    but never network-spawned, so a hunter one peer capped away and the master
+	    did not is a body they disagree about.
+	  * 13f — NOTHING ELSE MOVED. Every crocodile, boss and COIN of the capped
+	    field is byte-identical to the uncapped one. The cap is a post-draw skip at
+	    the very bottom of the spawner, so turning it on may remove hunters and
+	    may not slide anything else.
+
+	Every leg drives the SHIPPED `spawn_hunters_in_chunk` through `_generate_chunk`,
+	with the shipped `hunter_robot.tscn` as the standing population — the cap counts
+	real bodies by their real `species`, so a stand-in Node3D would be measuring a
+	rule this file invented rather than the one that ships.
+	"""
+	var consts: Dictionary = terrain_script.get_script_constant_map()
+	if not consts.has("HUNTER_FIELD_CAP") or not consts.has("HUNTER_CHANCE"):
+		_fail("endless_terrain.gd has no HUNTER_FIELD_CAP / HUNTER_CHANCE — the"
+				+ " owner's field cap (bead godot-test1-fhu) is gone, so nothing"
+				+ " here bounds the number of retrieval units in the world")
+		Sentinel.done("hunter_field_cap")
+		return
+	if _hunter_scene == null:
+		_fail("endless_terrain.gd exposes no HUNTER_SCENE — check 13 cannot put a"
+				+ " standing population in the field, so the cap would be measured"
+				+ " against an empty world and pass vacuously")
+		Sentinel.done("hunter_field_cap")
+		return
+	var cap: int = int(consts["HUNTER_FIELD_CAP"])
+	var chance: float = float(consts["HUNTER_CHANCE"])
+
+	# ---- 13a: the expected desktop field, from the consts --------------------
+	# render_distance is an @export, so it is read off a fresh node (whose _ready
+	# never runs, detached) rather than restated here — the web build lowers it in
+	# _ready and desktop is the wider of the two, which is the one to bound.
+	var probe := Node3D.new()
+	probe.set_script(terrain_script)
+	var render_distance: int = int(probe.render_distance)
+	probe.free()
+	var residency: int = (2 * render_distance + 1) * (2 * render_distance + 1)
+	var expected: float = float(residency) * chance
+	print("hunter cap: render_distance %d -> %d chunks resident, expected %.2f"
+			% [render_distance, residency, expected]
+			+ " hunters at HUNTER_CHANCE %.3f, hard cap %d" % [chance, cap])
+	if expected > float(cap):
+		_fail("HUNTER_CHANCE %.3f over the %d-chunk desktop residency expects %.2f"
+				% [chance, residency, expected]
+				+ " hunters, above the cap of %d — the DETERMINISTIC half of the" % cap
+				+ " field cap is broken, so a room (where the live cap is off by"
+				+ " design) would run over the owner's ten. Lower HUNTER_CHANCE")
+
+	# ---- 13b-f: the hard cap, driven on the shipped spawner ------------------
+	var empty: Dictionary = _cap_field(terrain_script, RUN_SEEDS[0], 0, false, false)
+	var full: Dictionary = _cap_field(terrain_script, RUN_SEEDS[0], cap, false, false)
+	var one_short: Dictionary = _cap_field(terrain_script, RUN_SEEDS[0], cap - 1, false, false)
+	var in_hq: Dictionary = _cap_field(terrain_script, RUN_SEEDS[0], cap, true, false)
+	var in_room: Dictionary = _cap_field(terrain_script, RUN_SEEDS[0], cap, false, true)
+
+	print("hunter cap: %d chunks placed %d hunters with an empty field, %d with %d"
+			% [int(empty["chunks"]), int(empty["hunters"]), int(full["hunters"]), cap]
+			+ " standing, %d with %d standing, %d with %d in the HQ, %d in a room"
+					% [int(one_short["hunters"]), cap - 1, int(in_hq["hunters"]),
+					cap, int(in_room["hunters"])])
+
+	if int(empty["hunters"]) < 1:
+		_fail("the field cap check placed no hunters at all with an empty field —"
+				+ " every leg below compared zero against zero and measured nothing"
+				+ " (widen CAP_FIELD or change RUN_SEEDS[0])")
+	if int(full["hunters"]) != 0:
+		_fail("%d hunter(s) spawned into a field that already held %d — the"
+				% [int(full["hunters"]), cap]
+				+ " HUNTER_FIELD_CAP skip in spawn_hunters_in_chunk is not firing,"
+				+ " so the owner's ten is not a ceiling at all")
+	if int(one_short["hunters"]) != int(empty["hunters"]):
+		_fail("a field holding %d hunters (one short of the cap) placed %d more,"
+				% [cap - 1, int(one_short["hunters"])]
+				+ " but the empty field placed %d — the cap is not reading the"
+						% int(empty["hunters"])
+				+ " COUNT, it is refusing (or admitting) unconditionally")
+	if int(in_hq["hunters"]) != int(empty["hunters"]):
+		_fail("%d hunters standing INSIDE THE HQ capped the field down to %d"
+				% [cap, int(in_hq["hunters"])]
+				+ " (the empty field placed %d) — the owner's \"inside HQ doesn't"
+						% int(empty["hunters"])
+				+ " count\" is not honoured, so a guarded building starves the world"
+				+ " of the predator the building is about")
+	if int(in_room["hunters"]) != int(empty["hunters"]):
+		_fail("the live cap fired in a ROOM (%d placed against %d) — a body count"
+				% [int(in_room["hunters"]), int(empty["hunters"])]
+				+ " is not shared between peers, so a hunter one peer capped away"
+				+ " and the master did not is a body they disagree about")
+
+	var moved := 0
+	var first := ""
+	var others := 0
+	for key_v: Variant in (empty["world"] as Dictionary):
+		var mine: Array = (empty["world"] as Dictionary)[key_v]
+		others += mine.size()
+		var theirs: Array = (full["world"] as Dictionary).get(key_v, [])
+		if var_to_bytes(mine) != var_to_bytes(theirs):
+			moved += 1
+			if first == "":
+				first = _first_difference(key_v, mine, theirs)
+	if moved > 0:
+		_fail("%d chunk(s) put their crocodiles, bosses or COINS somewhere else"
+				% moved + " once the hunter cap was hit — the cap is not a post-draw"
+				+ " skip at the bottom of spawn_hunters_in_chunk, so a full field"
+				+ " reshapes the world around it. First: %s" % first)
+	if others < 1:
+		_fail("the capped/uncapped comparison held no crocodiles, bosses or coins"
+				+ " at all — it matched two empty signatures and proved nothing")
+	Sentinel.done("hunter_field_cap")
+
+
+func _cap_field(terrain_script: GDScript, run_seed: int, standing: int,
+		under_tower: bool, in_room: bool) -> Dictionary:
+	"""
+	One leg of check 13.
+
+	@param terrain_script: endless_terrain.gd
+	@param run_seed: forced through the public set_run_seed() seam
+	@param standing: how many hunter bodies are already in the tree before the
+	                 field is generated
+	@param under_tower: park those bodies under the terrain's `_tower_shell`, which
+	                    is what the cap's by-PARENT exclusion reads
+	@param in_room: publish a group-"mp" node answering is_online() = true
+	@return { chunks, hunters, world } — the hunter COUNT the field placed, and a
+	        per-chunk signature of everything else it built
+
+	THE STANDING POPULATION IS THE SHIPPED SCENE, with `species` assigned before
+	add_child like every spawner does (`_ready()` resolves the row exactly once).
+	The cap counts by that field, so a bare Node3D would be counted by nothing and
+	the leg would silently become the empty one.
+
+	Chunk parents are freed as they go, which is what keeps the hunters this leg
+	SPAWNS from capping the leg itself — the real game frees a chunk's hunter with
+	its chunk too, just at streaming distance instead of immediately.
+	"""
+	var terrain := Node3D.new()
+	terrain.set_script(terrain_script)
+	terrain.set_run_seed(run_seed)
+	terrain.crocodile_scene = load(CROC_SCENE)
+	terrain.coin_scene = load(COIN_SCENE)
+
+	var holder := Node3D.new()
+	root.add_child(holder)
+	if under_tower:
+		# The seam the cap reads is `tower_shell()`, whose backing field is what the
+		# real streamer assigns when the building is instanced. Set it here rather
+		# than instancing an 80 m shell: the rule under test is ANCESTRY, and a
+		# stand-in ancestor is the honest way to ask about ancestry.
+		terrain._tower_shell = holder
+	for i in standing:
+		var body: Node = _hunter_scene.instantiate()
+		body.name = "Standing_%d" % i
+		body.species = _hunter_species
+		holder.add_child(body)
+
+	var mp_stub: Node = null
+	if in_room:
+		mp_stub = _room_stub()
+		root.add_child(mp_stub)
+
+	var world := {}
+	var hunters := 0
+	var half := CAP_FIELD / 2
+	for cx in range(-half, half + 1):
+		for cz in range(-half, half + 1):
+			var chunk_pos := Vector2i(cx, cz)
+			var parent := _generate_chunk(terrain, chunk_pos, true)
+			var parts: Array = []
+			for child in parent.get_children():
+				var node := child as Node3D
+				if node == null:
+					continue
+				if String(child.name).begins_with("Hunter_"):
+					hunters += 1
+					continue
+				# ONLY A PREDATOR IS LABELLED BY ITS NAME. A crocodile's name IS its
+				# room-wide id and is a pure function of its chunk; a coin, an
+				# artifact prop or a camp piece is unnamed and takes the engine's
+				# "@Area3D@8868", which counts up per PROCESS — so a name-keyed
+				# signature reports every one of them as having moved when nothing
+				# has. Class plus position says everything this comparison needs.
+				var label: String = (String(child.name) + "|" + String(child.get("species"))
+						if child.is_in_group("crocodile") else child.get_class())
+				parts.append([label, node.position])
+			parent.free()
+			world[chunk_pos] = parts
+
+	holder.free()
+	if mp_stub != null:
+		mp_stub.free()
+	terrain.free()
+	return { "chunks": world.size(), "hunters": hunters, "world": world }
+
+
+func _room_stub() -> Node:
+	"""
+	A node in group "mp" that says a room exists, and nothing else.
+
+	The cap asks `is_online()` behind `has_method`, the null-safe group lookup this
+	project uses everywhere. Driving it with the real MpManager would boot a lobby
+	client and a WebRTC peer to answer one bool; a four-line script is the whole
+	contract the spawner depends on.
+	"""
+	var script := GDScript.new()
+	script.source_code = "extends Node\nfunc is_online() -> bool:\n\treturn true\n"
+	script.reload()
+	var stub := Node.new()
+	stub.set_script(script)
+	stub.add_to_group("mp")
+	return stub
+
+
+# ============================================================================
+# CHECK 14 — a ROAD BOSS is a footprint, so no coin settles inside it
+# ============================================================================
+
+## Road bosses walked by check 14, and the seeds it walks them on. The bead
+## (godot-test1-6op) asks for 25 seeds; the boss count per seed is small because
+## every station generates a whole chunk WITH its coins, and a boss's owning chunk
+## is the only one that can hold it (the claim rule in spawn_bosses_in_chunk).
+const BOSS_COIN_SEED_COUNT: int = 25
+const BOSS_COIN_BOSSES: int = 4
+
+## "A coin came near a boss", as a multiple of the boss's own footprint radius.
+## Purely a NON-VACUITY gate: the road's coins and the road's bosses share a
+## centreline, so if not one coin in the whole walk lands within this of a boss,
+## the walk is not testing what it thinks it is.
+const BOSS_COIN_NEAR_FACTOR: float = 3.0
+
+
+func _check_boss_coin_footprint(terrain_script: GDScript) -> void:
+	"""
+	THE BUG (bead godot-test1-6op, found by the 9k7 review of PR #187): a road boss
+	appended NO footprint to `obstacles`, so `spawn_coins_in_chunk` — which runs
+	after it in create_chunk — laid the road straight through a body up to 6.3 m
+	across. It is visible in that PR's own screenshot as a coin at the crocodile's
+	flank, and it is worth ~125 m² of swallowed coins per boss at 9x scale.
+
+	TWO ASSERTIONS, and the first is the one that cannot go vacuous:
+
+	  * 14a — THE PERCH RULE REFUSES THE BOSS'S OWN COLUMN. `_settle_coin_y` is
+	    driven directly, at the boss's exact position, against the exact
+	    `obstacles` list the chunk built, and must answer INF ("skip this coin").
+	    That is the shipped rule reading the shipped footprint, so it fails the
+	    moment the append is removed — no coin has to happen to land there.
+	  * 14b — AND NO COIN THE CHUNK ACTUALLY SPAWNED IS INSIDE ONE. The field-level
+	    consequence, over BOSS_COIN_SEED_COUNT roads.
+
+	`top: 0.0, climbable: false` is what makes 14a true: a body is not a perch, so
+	the tallest-overlap rule must SKIP the coin rather than stand it on the boss's
+	head — the cactus / camp / tree-canopy call, one home for the rule.
+	"""
+	var consts: Dictionary = terrain_script.get_script_constant_map()
+	var per_scale: float = float(consts.get("BOSS_FOOTPRINT_RADIUS_PER_SCALE", 0.0))
+	if per_scale <= 0.0 or _boss_interval < 1:
+		_fail("endless_terrain.gd has no usable BOSS_FOOTPRINT_RADIUS_PER_SCALE /"
+				+ " BOSS_INTERVAL_STATIONS — check 14 has no radius to measure a"
+				+ " boss's swallowed coins against")
+		Sentinel.done("boss_coin_footprint")
+		return
+
+	var measured := 0
+	var coins := 0
+	var inside := 0
+	var near := 0
+	var perch_ok := 0
+	var worst := ""
+
+	for s in BOSS_COIN_SEED_COUNT:
+		# Spread over the same kind of arbitrary seeds check 11 walks; the two lists
+		# are deliberately different worlds, so between them the road is asked about
+		# far more than one river and one band.
+		var run_seed: int = 314159 + s * 7919
+		var terrain := Node3D.new()
+		terrain.set_script(terrain_script)
+		terrain.set_run_seed(run_seed)
+		terrain.crocodile_scene = load(CROC_SCENE)
+		terrain.coin_scene = load(COIN_SCENE)
+
+		# Grow the station cache until it really spans the last boss — by WORLD X,
+		# not by index, exactly as check 11 does and for the same reason.
+		var last_k: int = BOSS_COIN_BOSSES * _boss_interval
+		var reach: float = float(last_k) * maxf(float(terrain.road_coin_spacing), 1.0)
+		while terrain.road_k_max < last_k:
+			terrain._road_extend_to_x(0.0, reach)
+			reach *= 1.5
+		var last_boss: int = mini(BOSS_COIN_BOSSES,
+				terrain._road_terminal_k() / _boss_interval)
+
+		for i in range(1, last_boss + 1):
+			var boss: Dictionary = terrain._boss_at(i)
+			var chunk_pos: Vector2i = terrain.world_to_chunk(boss["positions"][0])
+			var obstacles: Array = []
+			var parent := _generate_chunk(terrain, chunk_pos, true, obstacles)
+
+			var body: Node3D = null
+			for child in parent.get_children():
+				if String(child.name) == "BossCrocodile_%d" % i:
+					body = child as Node3D
+					break
+			if body == null:
+				# Every candidate buried in geometry: a designed outcome, not a
+				# failure (check 11 owns the floor on how often that may happen).
+				parent.free()
+				continue
+
+			measured += 1
+			var radius: float = per_scale * float(boss["scale"])
+
+			# 14a — the shipped rule, at the body's own column.
+			var settled: float = terrain._settle_coin_y(body.position.x,
+					body.position.z, 0.5, obstacles)
+			if is_inf(settled):
+				perch_ok += 1
+			elif worst == "":
+				worst = ("seed %d boss %d (scale %.2f, footprint %.2f m): a coin at"
+						+ " its exact centre settles at y = %.2f instead of being"
+						+ " skipped") % [run_seed, i, float(boss["scale"]), radius,
+						settled]
+
+			# 14b — and nothing the chunk really spawned stands in it.
+			for child in parent.get_children():
+				if not child.is_in_group("coin"):
+					continue
+				var coin := child as Node3D
+				coins += 1
+				var d: float = Vector2(coin.position.x - body.position.x,
+						coin.position.z - body.position.z).length()
+				if d < radius:
+					inside += 1
+					if worst == "":
+						worst = ("seed %d boss %d: a coin sits %.2f m from its"
+								+ " centre, inside the %.2f m footprint"
+								) % [run_seed, i, d, radius]
+				elif d < radius * BOSS_COIN_NEAR_FACTOR:
+					near += 1
+			parent.free()
+		terrain.free()
+
+	print("boss footprint: %d road bosses over %d seeds, %d coins in their chunks;"
+			% [measured, BOSS_COIN_SEED_COUNT, coins]
+			+ " %d/%d refuse a coin at the boss's own column; %d coins inside a"
+					% [perch_ok, measured, inside]
+			+ " footprint, %d within %.0fx of one" % [near, BOSS_COIN_NEAR_FACTOR])
+
+	if measured < 1:
+		_fail("check 14 placed no road boss at all over %d seeds — it measured"
+				% BOSS_COIN_SEED_COUNT + " nothing (see check 11's placement floor)")
+	if perch_ok < measured:
+		_fail("%d of %d road bosses do not refuse a coin at their own centre —"
+				% [measured - perch_ok, measured]
+				+ " spawn_bosses_in_chunk is not appending its {pos, radius, top:"
+				+ " 0.0, climbable: false} footprint to `obstacles`, so"
+				+ " _settle_coin_y cannot see the body and the road runs through"
+				+ " it (bead godot-test1-6op). First: %s" % worst)
+	if inside > 0:
+		_fail("%d road coin(s) settled INSIDE a boss's footprint — the append is"
+				% inside + " there but the coin pass is not reading it (order:"
+				+ " spawn_bosses_in_chunk must run before spawn_coins_in_chunk in"
+				+ " create_chunk). First: %s" % worst)
+	if coins < 1:
+		_fail("not one coin was spawned in any boss's chunk, so 14b compared"
+				+ " nothing — the road and the bosses have come apart, or"
+				+ " `coin_scene` never reached the terrain")
+	if near < 1:
+		_fail("no coin in the whole walk landed within %.0fx of a boss footprint —"
+				% BOSS_COIN_NEAR_FACTOR + " the road's coins and the road's bosses"
+				+ " no longer share a centreline, so 14b would pass over a world"
+				+ " in which the bug could not occur")
+	Sentinel.done("boss_coin_footprint")
 
 
 # ============================================================================

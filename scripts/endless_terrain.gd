@@ -468,8 +468,8 @@ const SPAWN_SAFE_RADIUS: float = 25.0
 const HUNTER_SPECIES: String = "hunter_robot"
 const HUNTER_SCENE := preload("res://scenes/characters/hunter_robot.tscn")
 
-## Chance that a chunk gets a hunter at all — ~1 in 6.7 chunks, dropping to ~1 in
-## 7 once the placement loop's rejections are counted.
+## Chance that a chunk gets a hunter at all — ~1 in 12.5 chunks, dropping to ~1 in
+## 13 once the placement loop's rejections are counted.
 ##
 ## 0.30 -> 0.15: the predator-density call this const was left provisional for
 ## (owner pacing ruling, 2026-08-29), made across the species at once. The hunter
@@ -479,7 +479,49 @@ const HUNTER_SCENE := preload("res://scenes/characters/hunter_robot.tscn")
 ## family two sections down (chest ~1 in 13, artifact ~1 in 23, landmark ~1 in 40)
 ## — it is a THREAT, and a threat you meet once an hour teaches nothing — while
 ## leaving whole stretches of walking with no encounter in them.
-const HUNTER_CHANCE: float = 0.15
+##
+## 0.15 -> 0.08 IS THE OWNER'S FIELD CAP, AND IT IS THE HALF THAT DOES THE WORK
+## (bead godot-test1-fhu, owner 2026-09-02: "limit hunters on field with total
+## number 10 (inside HQ doesn't count)"). THE ARITHMETIC, stated here because a
+## number tuned against a residency is meaningless without the residency:
+##
+##   desktop residency = (2 * render_distance + 1)^2 = (2*5 + 1)^2 = 121 chunks
+##   expected hunters  = 121 * 0.08                  = 9.68 bodies
+##   ...minus the placement loop's rejections (river / bubble / stone / tower),
+##      which only ever REMOVE a hunter                <= 9.68 < HUNTER_FIELD_CAP
+##
+## Web (render_distance 3) is 49 chunks, so ~3.9. So the EXPECTED field is under
+## the cap on both platforms without the cap ever having to fire — which is the
+## point: the chance is a pure function of (chunk, run_seed) and the hard cap
+## below is not. `enemy_spawn_selfcheck` check 13a asserts that inequality off
+## these two consts, so a retune that breaks it fails the build.
+const HUNTER_CHANCE: float = 0.08
+
+## The HARD ceiling on hunters standing in the FIELD at once — the owner's ten.
+##
+## WHY THIS IS THE SECOND HALF AND NOT THE ONLY HALF. A live "count the bodies,
+## skip the spawn" cap is NOT a pure function of (chunk, run_seed): it depends on
+## the order chunks happened to load, which is where the player walked. And
+## crocodiles are master-simulated but never network-spawned (CLAUDE.md), so a
+## hunter one peer spawned and the master did not is a local ghost that can still
+## bite you. So the retuned chance above is what actually holds the number down,
+## everywhere and for everybody; this is the backstop for the tail — the walk that
+## happens to cross a dozen lucky chunks.
+##
+## THREE RULES, all of them load-bearing:
+##
+##   * IT IS A POST-DRAW SKIP (CLAUDE.md's rule), placed below every draw in
+##     spawn_hunters_in_chunk, so a capped chunk consumes exactly the stream a
+##     spawning one does and nothing else in the world slides.
+##   * IT COUNTS BY PARENT, NOT BY GROUP. The HQ's guards are in group
+##     "crocodile" like everything else and are parented to the BUILDING, so they
+##     are excluded by asking `tower_shell()` whether it is their ancestor —
+##     "inside HQ doesn't count" is the owner's own clause.
+##   * IT IS OFF IN A ROOM. In a room the retuned chance is the WHOLE cap, and
+##     that ceiling is deliberate: two peers who have walked different routes hold
+##     different body counts, so a live cap would have them disagree about which
+##     hunters exist — the ghost above. Documented, not fixed.
+const HUNTER_FIELD_CAP: int = 10
 
 ## Salt for the hunter's independent hash stream, in the ARTIFACT_SALT /
 ## CAMP_SALT / CHEST_SALT / LANDMARK_SALT / BIOME_SALT / BOSS_SEED family: an
@@ -6455,6 +6497,12 @@ func spawn_hunters_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, o
 				return
 			_migrated_units.erase(slot)
 
+		# THE OWNER'S TEN (HUNTER_FIELD_CAP). Last rejection in the function and
+		# BELOW EVERY DRAW, like all the others: a capped chunk spends exactly the
+		# stream a spawning one does, so turning the cap on slides nothing.
+		if _field_hunters_full(parent_chunk):
+			return
+
 		var hunter := HUNTER_SCENE.instantiate()
 		# "Hunter_<cx>_<cy>_<i>", its own namespace beside "Crocodile_" /
 		# "PatrolCrocodile_" / "BossCrocodile_". The name IS the room-wide id
@@ -6479,6 +6527,53 @@ func spawn_hunters_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, o
 		hunter.species = HUNTER_SPECIES
 		parent_chunk.add_child(hunter)
 		return
+
+
+func _field_hunters_full(parent_chunk: Node) -> bool:
+	"""
+	Are there already HUNTER_FIELD_CAP hunters standing in the FIELD?
+
+	@param parent_chunk: the chunk the caller is filling — it is what supplies the
+	                     SceneTree, because this node is driven DETACHED by several
+	                     self-checks while the chunk parent they hand it is real
+	@return true when spawn_hunters_in_chunk must skip (post-draw) this hunter
+
+	THREE THINGS IT IS CAREFUL ABOUT, and each is a way to get this wrong:
+
+	  * THE HQ DOESN'T COUNT, and the exclusion is BY PARENT — `tower_shell()` is
+	    asked whether it is the body's ancestor. Not by group (a guard is in
+	    "crocodile" like everything else), and not by position either: a guard
+	    chasing you onto the doorstep is still the building's.
+	  * OFF IN A ROOM. `is_online()` is "a room exists", the window in which every
+	    peer must agree about which bodies the world holds; a live body count
+	    differs per peer by where they walked, so in a room HUNTER_CHANCE is the
+	    whole cap (see the const).
+	  * A DETACHED / TREE-LESS CALLER COUNTS NOTHING, so the cap simply does not
+	    fire — the degrade every group lookup in this project takes.
+
+	The species field rather than the "Hunter_" name prefix, because the name is a
+	spawn SLOT and the row is what makes a body a retrieval unit; the tower guard
+	is a different row and would be excluded by this line too, which is belt to the
+	parent test's braces.
+	"""
+	var tree := parent_chunk.get_tree()
+	if tree == null:
+		return false
+	var mp: Node = tree.get_first_node_in_group("mp")
+	if mp != null and mp.has_method("is_online") and bool(mp.is_online()):
+		return false
+	var shell: Node = tower_shell()
+	var count := 0
+	for body: Node in tree.get_nodes_in_group("crocodile"):
+		if String(body.get("species")) != HUNTER_SPECIES:
+			continue
+		if shell != null and shell.is_ancestor_of(body):
+			continue
+		count += 1
+		if count >= HUNTER_FIELD_CAP:
+			return true
+	return false
+
 
 func spawn_platform_crocodiles(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, platforms: Array) -> void:
 	"""
@@ -6825,6 +6920,34 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, ob
 		croc.species = boss_row["species"]
 		croc.setup_as_boss(boss.scale)
 		parent_chunk.add_child(croc)
+
+		# THE BOSS IS A THING BUILT, SO IT PAYS THE SHARED CURRENCY (bead
+		# godot-test1-6op, found by the 9k7 review of PR #187 — a coin sitting at
+		# the crocodile's flank in the PR's own screenshot). Every other spawner
+		# appends its footprint to `obstacles` and the later ones read it; a boss
+		# appended nothing, so `spawn_coins_in_chunk` — which runs AFTER this
+		# function in create_chunk, so no reordering was needed — laid its road
+		# coins straight through a body up to 6.3 m across (~125 m² swallowed per
+		# boss at 9x scale).
+		#
+		# `top: 0.0, climbable: false` is the whole point and not a placeholder: a
+		# non-climbable footprint makes `_settle_coin_y` SKIP the coin rather than
+		# perch it, which is the right answer for a body — the cactus / camp /
+		# canopy call, one home for the rule. The radius is the same scaled
+		# clearance the candidate walk above judged this boss's own spot by, so the
+		# stone a boss is kept out of and the coins kept out of a boss are one
+		# number.
+		#
+		# COSTS NO DRAW and appends AFTER placement, so it perturbs nothing on this
+		# boss's own stream. It IS visible to the spawners below this one in
+		# create_chunk (a later boss in the same chunk, and the hunter), which is
+		# correct in exactly the same way: neither should be standing inside it.
+		obstacles.append({
+			"pos": Vector3(local_pos.x, 0.0, local_pos.z),
+			"radius": footprint,
+			"top": 0.0,
+			"climbable": false,
+		})
 
 func _artifact_at(chunk_pos: Vector2i) -> Dictionary:
 	"""
