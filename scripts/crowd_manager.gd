@@ -11,6 +11,11 @@ extends Node3D
 ##     its own randomize()d RNG drives waypoint choices and walk speeds.
 ##   * Citizens join NO group and carry NO collision bodies or Area3Ds (a node in
 ##     "player" or "crocodile" would be grabbed by the Stink Wave, LOD, or chase).
+##   * Solid anyway (bead 8gw.21): the MANAGER owns CITIZEN_PROXY_POOL colliders
+##     that follow the nearest few citizens to the local player, on the fauna
+##     layer that only the player masks. The citizens stay transforms in a
+##     buffer; the pool joins no group and adds no draw call. See
+##     scripts/ambience_proxies.gd for the isolation and the anti-trap rule.
 ##   * City defence (bead 8gw.16): nearest_citizen_to() is the seam the hunter
 ##     reads — the crowd confuses GD-SURVEY acquisitions inside the city.
 ##   * Budget: hard CROWD_MAX (60 on web, 120 on desktop) rendered via FOUR
@@ -106,11 +111,41 @@ var _citizens: Array[Dictionary] = []
 ## Four MultiMeshInstance3D child nodes (one per archetype).
 var _multimesh_nodes: Array[MultiMeshInstance3D] = []
 
+## The pooled proxy colliders (CITIZEN_PROXY_POOL of them, the MANAGER's nodes —
+## never a citizen's). See ambience_proxies.gd.
+var _proxies: RefCounted = null
+
 ## Reusable Budapest plan reference (pure static calls).
 const PLAN_SCRIPT := preload("res://scripts/budapest_plan.gd")
 
 ## The shared "coarse-tick what we cannot see" rule — see its header.
 const AmbienceLod := preload("res://scripts/ambience_lod.gd")
+
+## The shared pooled-proxy collider — read its header for why the citizens
+## themselves stay bodiless and how the player is kept from being trapped.
+const AmbienceProxies := preload("res://scripts/ambience_proxies.gd")
+
+## HOW MANY CITIZENS CAN TOUCH THE HERO AT ONCE. MEASURED, not guessed: over six
+## runs of 3,600 frames each, at four city locations, at the desktop cap of 120,
+## the most citizens ever simultaneously inside CITIZEN_PROXY_REACH of the player
+## was FOUR — and it was 0 or 1 on 85% of frames. MIN_WALKER_SPACING (1.8 m)
+## bounds it anyway: a 3 m disc cannot hold many walkers that keep 1.8 m apart.
+## Six is that measurement with room for a crossing crowding a corner, and it is
+## a CONSTANT — it does not grow with CROWD_MAX, which is the whole point of a
+## pool. Anything past the sixth nearest is a ghost, which is exactly the set the
+## hero cannot reach.
+const CITIZEN_PROXY_POOL: int = 6
+
+## How near a citizen must be to be given a body. Contact happens at ~0.8 m
+## (player radius 0.5 + citizen 0.3); 3 m is a quarter of a second of lead even
+## at a sprinting hero closing on an oncoming walker, and the pool covers
+## everything inside it.
+const CITIZEN_PROXY_REACH: float = 3.0
+
+## The citizen's footprint and height — a shoulders-wide box around the walker,
+## deliberately slimmer than the mesh so a hero brushes past rather than snags.
+const CITIZEN_PROXY_HALF := Vector2(0.30, 0.30)
+const CITIZEN_PROXY_HEIGHT: float = 1.75
 
 # ============================================================================
 # SHARED RESOURCES (static — one per PROCESS, not per citizen/manager)
@@ -351,6 +386,12 @@ func _ready() -> void:
 	add_to_group("crowd")
 	_rng.randomize()
 
+	# The pooled colliders. Built here so they exist for a manager driven
+	# straight out of a harness, exactly like the MultiMeshes below.
+	_proxies = AmbienceProxies.new()
+	_proxies.build(self, CITIZEN_PROXY_POOL, CITIZEN_PROXY_HALF,
+			CITIZEN_PROXY_HEIGHT, CITIZEN_PROXY_REACH)
+
 	_crowd_max = CROWD_MAX_WEB if OS.has_feature("web") else CROWD_MAX_DESKTOP
 
 	# Create 4 MultiMeshInstance3D child nodes (shadows off, matching fauna precedent)
@@ -411,11 +452,19 @@ func _process(delta: float) -> void:
 	# spent by both loops below. Empty planes (no camera) = everything visible.
 	var planes: Array[Plane] = AmbienceLod.view_planes(get_viewport())
 
+	# Open the proxy pool's candidate buffer: the nearest few citizens are picked
+	# up INSIDE _update_walkers' existing loop (offer()), so the collision shares
+	# 8gw.22's one pass per instance and adds no scan of its own.
+	_proxies.begin(player_pos)
+
 	# Maintain active citizens in bubble around player
 	_update_crowd_spawns(delta, player_pos, planes)
 
 	# Update movement, grid wayfinding, and animation
 	_update_walkers(delta, true)
+
+	# ...and place the handful of bodies on whatever that loop offered.
+	_proxies.commit(delta, player_pos)
 
 
 # ============================================================================
@@ -726,6 +775,10 @@ func _update_walkers(delta: float, lod_gated: bool = false) -> void:
 
 		var t := Transform3D(basis, Vector3(world_pos.x, bob_y, world_pos.z))
 
+		# The proxy pool rides THIS loop — the world position and the facing are
+		# already in hand, so being solid costs a box reject per citizen.
+		_proxies.offer(Vector3(world_pos.x, 0.0, world_pos.z), float(citizen["facing_yaw"]))
+
 		var idx: int = counts[k]
 		var max_inst: int = _multimesh_nodes[k].multimesh.instance_count
 		if idx < max_inst:
@@ -781,7 +834,10 @@ func nearest_citizen_to(pos: Vector3, max_dist: float = 40.0) -> Variant:
 
 
 func _hide_all() -> void:
-	## Hides all citizens when outside Budapest.
+	## Hides all citizens when outside Budapest — and with them the colliders,
+	## or a hero leaving the city would keep bumping into ghosts.
+	if _proxies != null:
+		_proxies.sleep()
 	for k in ARCHETYPE_COUNT:
 		if k < _multimesh_nodes.size() and _multimesh_nodes[k] != null:
 			_multimesh_nodes[k].multimesh.visible_instance_count = 0

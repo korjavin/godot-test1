@@ -25,6 +25,15 @@ extends SceneTree
 ##      tick it takes, and a null camera degrades to full-rate updates.
 ##   8. The de-quadratic'd queue scan answers EXACTLY what the all-pairs scan it
 ##      replaced answered, measured against an independent oracle.
+##   9. SOLID (bead 8gw.21): the pooled proxy colliders are the MANAGER's and
+##      nobody else's — every CollisionObject3D under it is one of at most
+##      CAR_PROXY_POOL StaticBody3Ds on the fauna-precedent layer, in no group,
+##      carrying no mesh — a real player.tscn driven by the SHIPPED movement is
+##      stopped by a car AND STAYS stopped (the crowd's anti-trap yield is the
+##      crowd's, with the crowd itself as the control), mutation-tested against an
+##      emptied pool; and a car that has stopped for the hero never moves again,
+##      never displaces him and never damages him, argued from the shipped
+##      constants and then driven.
 
 const DT: float = 1.0 / 60.0
 
@@ -32,11 +41,54 @@ const DT: float = 1.0 / 60.0
 const LOD_FRAMES: int = 120
 
 const AmbienceLod := preload("res://scripts/ambience_lod.gd")
+const Proxies := preload("res://scripts/ambience_proxies.gd")
+const TrafficScript := preload("res://scripts/traffic_manager.gd")
+const CrowdScript := preload("res://scripts/crowd_manager.gd")
+const PLAYER_SCENE: String = "res://scenes/player.tscn"
+const PLAN_SCRIPT := preload("res://scripts/budapest_plan.gd")
+
+## How many CollisionObject3Ds the isolation walk found under the manager.
+var _proxies_seen: int = 0
+
+## A Pest avenue the traffic is happy to drive.
+const LANE_PROBE_SPOT := Vector3(2900.0, 0.0, 0.0)
+
+## Where the hero starts, measured from the parked car's CENTRE. Its rear bumper
+## is CAR_LENGTH/2 = 2.2 m back and the hero's capsule is 0.5 m, so contact is at
+## 2.7 m and this is a clear run-up.
+const CAR_PROBE_AHEAD: float = 6.0
+
+## The closest to a car's centre a hero may ever get. Contact is 2.7 m; anything
+## under this is penetration, and a hero who actually walked through would be on
+## the far side with a NEGATIVE gap.
+const CAR_CONTACT_MIN: float = 1.8
+
+## The SOLID window, and the LONG one that proves a car never goes soft (well past
+## AmbienceProxies.STUCK_SECONDS, which is the crowd's rule and not the traffic's).
+const CAR_SOLID_FRAMES: int = 40
+const CAR_PERSIST_FRAMES: int = 180
+
+## The yield drive: how far back down the lane the car starts, and for how long.
+const APPROACH_BACK: float = 30.0
+const APPROACH_FRAMES: int = 420
+
+## What counts as "at rest", and how far a car at rest may still travel. The
+## shipped brake is `move_toward` against a target that is itself falling to
+## zero, so the speed decays asymptotically and never reaches an exact 0.0 —
+## asking for one measures nothing at all. 0.1 m/s is a fiftieth of a walk, and
+## the half metre is what a car may still coast off that: the number that matters
+## is the CLOSEST APPROACH below, which is the whole "never moves into him".
+const CAR_AT_REST: float = 0.1
+const CAR_CREEP_MAX: float = 0.5
+
+## How long a car is held ON the hero for the no-shove probe.
+const ON_TOP_FRAMES: int = 40
 
 var _root: Node3D = null
 var _manager: Node3D = null
 var _player: CharacterBody3D = null
 var _failures: Array[String] = []
+var _started: bool = false
 
 ## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
 ## lands in and lets the script carry on, so a check that dies halfway simply
@@ -60,6 +112,10 @@ func _initialize() -> void:
 	_root.add_child(_manager)
 
 func _process(_delta: float) -> bool:
+	# ONE shot: the checks below await physics frames, so this must not re-enter.
+	if _started:
+		return false
+	_started = true
 	_run_checks()
 	return false
 
@@ -81,6 +137,8 @@ func _run_checks() -> void:
 	_check_no_interpenetration()
 	_check_coarse_tick_out_of_view()
 	_check_queue_scan_matches_all_pairs()
+	await _check_car_is_solid()
+	await _check_stopped_car_never_pushes()
 	if _failures.is_empty():
 		print("traffic_selfcheck: all checks passed cleanly")
 		Sentinel.finish(self)
@@ -95,18 +153,47 @@ func _check_groups_and_collision() -> void:
 	for g in ["player", "crocodile", "enemy", "boss", "terrain", "crowd", "fauna"]:
 		if _manager.is_in_group(g):
 			_failures.append("TrafficManager illegally joined gameplay group '%s'" % g)
+	_proxies_seen = 0
 	_check_node_isolation_recursive(_manager)
+	if _proxies_seen != TrafficScript.CAR_PROXY_POOL:
+		_failures.append("the manager owns %d proxy bodies, expected exactly CAR_PROXY_POOL"
+			% _proxies_seen + " (%d) — the pool is a CONSTANT, and one body per car is what"
+			% TrafficScript.CAR_PROXY_POOL + " this whole design refuses")
 	Sentinel.done("groups_and_collision")
 
 func _check_node_isolation_recursive(node: Node) -> void:
+	## TIGHTENED rather than loosened by bead 8gw.21 — see the same walk in
+	## crowd_selfcheck.gd for the reasoning. A CAR still has no body (a car is not
+	## a node at all); what this forbids is a body that is not one of the manager's
+	## own numbered pool slots, a pool bigger than CAR_PROXY_POOL, one on a layer a
+	## predator can see, one that masks anything back, one carrying a mesh (the
+	## draw-call story is ONE MultiMesh) and, as before, any group membership and
+	## any Area3D whatsoever.
 	if node != _manager:
 		var groups := node.get_groups()
 		if not groups.is_empty():
 			_failures.append("TrafficManager descendant '%s' has groups: %s (must have none)" % [node.name, str(groups)])
-		if node is CollisionObject3D:
-			_failures.append("TrafficManager descendant '%s' is a physics CollisionObject3D (must have none)" % node.name)
 		if node is Area3D:
 			_failures.append("TrafficManager descendant '%s' is an Area3D (must have none)" % node.name)
+		elif node is CollisionObject3D:
+			_proxies_seen += 1
+			if not String(node.name).begins_with(Proxies.PROXY_NAME_PREFIX):
+				_failures.append("TrafficManager descendant '%s' is a CollisionObject3D that"
+					% node.name + " is not a pooled proxy — cars themselves must carry no body")
+			if not (node is StaticBody3D):
+				_failures.append("proxy '%s' is not a StaticBody3D — anything physics can"
+					% node.name + " drive can push the hero")
+			var body := node as CollisionObject3D
+			if body.collision_layer != Proxies.PROXY_LAYER:
+				_failures.append("proxy '%s' is on collision layer %d, not the"
+					% [node.name, body.collision_layer]
+					+ " fauna-precedent layer %d that ONLY the player masks" % Proxies.PROXY_LAYER)
+			if body.collision_mask != 0:
+				_failures.append("proxy '%s' masks %d — a proxy asks the world nothing;"
+					% [node.name, body.collision_mask] + " the player asks it")
+		if node is VisualInstance3D and not (node is MultiMeshInstance3D):
+			_failures.append("TrafficManager descendant '%s' is a VisualInstance3D that is"
+				% node.name + " not the traffic MultiMesh — the draw-call story is ONE")
 	for child in node.get_children():
 		_check_node_isolation_recursive(child)
 	Sentinel.done("node_isolation_recursive")
@@ -788,3 +875,377 @@ func _check_queue_scan_matches_all_pairs() -> void:
 		_failures.append("queue scan: the oracle never once found a blocker in %d comparisons — the check is toothless, it never exercised the case the gate could break" % compared)
 	_manager._hide_all()
 	Sentinel.done("queue_scan_matches_all_pairs")
+
+
+# ============================================================================
+# CHECK 17 — A CAR IS SOLID, AND STAYS SOLID (bead godot-test1-8gw.21)
+# ============================================================================
+#
+# OWNER: "our hero can run through crowd and cars, shouldn't be so."
+#
+# The same pooled proxy the crowd uses (`scripts/ambience_proxies.gd`), and the
+# same drive: a real `player.tscn` under real physics, walked by the SHIPPED
+# movement into a stopped car. Two assertions, and the second is the one that
+# distinguishes traffic from the crowd — a car does NOT carry the crowd's
+# anti-trap yield, so it is still solid after a long press. The crowd's pool is
+# the positive control for the flag: if `yields_to_pinned_player()` were true for
+# everybody, this file's own claim would be vacuous.
+#
+# Mutation-tested by emptying the pool, which must let the hero drive straight
+# through the bumper.
+
+func _check_car_is_solid() -> void:
+	if _manager.get("_proxies").yields_to_pinned_player():
+		_failures.append("the traffic pool carries the CROWD's anti-trap yield — a car"
+			+ " would become walk-through-able after a beat, which is not what a car is."
+			+ " The yield exists because citizens walk into you and keep walking; a car"
+			+ " brakes 18 m out and stops 6.7 m short and can pin nobody")
+	# ...with the OTHER shipped manager as the positive control, so "the traffic
+	# does not yield" is a difference between two real answers rather than a flag
+	# nobody ever sets. A build in which nothing yields fails right here.
+	var crowd := Node3D.new()
+	crowd.set_script(CrowdScript)
+	_root.add_child(crowd)
+	if not crowd.get("_proxies").yields_to_pinned_player():
+		_failures.append("the CROWD's pool does not yield either — nothing in the game"
+			+ " carries the anti-trap rule, so a hero pinned by pedestrians stays pinned")
+	crowd.queue_free()
+	await process_frame
+
+	# THE LAYER ARITHMETIC, off the shipped crocodile's OWN mask rather than a
+	# number written down here. Asserting `collision_layer == PROXY_LAYER` in the
+	# isolation walk is self-referential — move the constant and it still passes —
+	# so the claim that actually matters is asked of a predator: if this layer were
+	# in a predator's mask, every crocodile in the game would start bumping into
+	# parked cars, and the fauna precedent the choice copies is broken.
+	var croc: Node3D = load("res://scenes/characters/piglet_crocodile.tscn").instantiate() as Node3D
+	var croc_mask: int = (croc as CollisionObject3D).collision_mask
+	croc.free()
+	if (croc_mask & Proxies.PROXY_LAYER) != 0:
+		_failures.append("the shipped crocodile masks %d, which INCLUDES the proxy layer"
+			% croc_mask + " %d" % Proxies.PROXY_LAYER)
+
+	_player.remove_from_group("player")
+	var lane := _pick_lane_spot()
+	if lane == Vector3.INF:
+		_failures.append("check 17 found no carriageway near %s to stand a car on"
+			% str(LANE_PROBE_SPOT))
+		Sentinel.done("car_is_solid")
+		return
+	var floor_body := _make_floor(lane)
+	var hero: Node3D = load(PLAYER_SCENE).instantiate() as Node3D
+	_root.add_child(hero)
+	await physics_frame
+
+	# ---- SOLID, and still solid a long press later -------------------------
+	var start: Vector3 = await _drive_into_car(hero, lane, CAR_SOLID_FRAMES)
+	var gap: float = hero.global_position.z - lane.z
+	if start.z - hero.global_position.z < 0.5:
+		_failures.append("the hero barely moved (%.2f m in %d frames) — check 17 measured"
+			% [start.z - hero.global_position.z, CAR_SOLID_FRAMES]
+			+ " a car against a hero that never walked into it")
+	if gap < CAR_CONTACT_MIN:
+		_failures.append("the hero reached %.2f m of a car's centre (its rear bumper is"
+			% gap + " %.2f m back) — he walked THROUGH a car"
+			% (TrafficScript.CAR_LENGTH * 0.5))
+	else:
+		print("car solid: hero stopped %.2f m short of the car's centre after %d frames"
+			% [gap, CAR_SOLID_FRAMES])
+
+	var long_gap: float = 0.0
+	await _drive_into_car(hero, lane, CAR_PERSIST_FRAMES)
+	long_gap = hero.global_position.z - lane.z
+	if long_gap < CAR_CONTACT_MIN:
+		_failures.append("after %d frames of pressing into it the hero was %.2f m from the"
+			% [CAR_PERSIST_FRAMES, long_gap] + " car's centre — a car went soft under a"
+			+ " sustained press, which is the crowd's rule leaking into the traffic")
+	else:
+		print("car stays solid: still %.2f m short after %d frames of pressing"
+			% [long_gap, CAR_PERSIST_FRAMES])
+
+	# ...MUTANT: the pool emptied and the real one put to sleep, so nothing at all
+	# is solid. A pool merely no longer consulted would leave its shapes standing
+	# where its last commit put them and block the mutant with the very collision
+	# it removed.
+	var real_pool: RefCounted = _manager.get("_proxies")
+	var empty_pool: RefCounted = Proxies.new()
+	empty_pool.build(_manager, 0, TrafficScript.CAR_PROXY_HALF,
+		TrafficScript.CAR_PROXY_HEIGHT, TrafficScript.CAR_PROXY_REACH, false)
+	real_pool.sleep()
+	_manager.set("_proxies", empty_pool)
+	await _drive_into_car(hero, lane, CAR_SOLID_FRAMES)
+	if hero.global_position.z - lane.z >= CAR_CONTACT_MIN:
+		_failures.append("with the proxy pool emptied the hero STILL stopped %.2f m short"
+			% (hero.global_position.z - lane.z) + " of the car — check 17 is measuring"
+			+ " something other than the collision it claims to, so it would pass a build"
+			+ " with no car collision at all")
+	_manager.set("_proxies", real_pool)
+
+	_restore_cars()
+	hero.queue_free()
+	floor_body.queue_free()
+	await process_frame
+	Sentinel.done("car_is_solid")
+
+
+# ============================================================================
+# CHECK 18 — A CAR THAT STOPPED FOR THE HERO NEVER MOVES, DAMAGES OR DISPLACES
+# ============================================================================
+#
+# The bead's second named failure mode. Bodiless cars satisfied it for free — a
+# thing with no collider cannot push anybody — so giving them one is exactly
+# where it could be lost, and it is asserted two ways that do not depend on each
+# other:
+#
+#   * THE ARITHMETIC, off the shipped constants. Half a car's width plus a
+#     player radius is the closest a car can come to a hero's centre and still
+#     touch him, and that is far inside LATERAL_TOLERANCE — so EVERY car that
+#     could reach a hero is already inside the lane test that makes it brake, and
+#     it began braking YIELD_DISTANCE out, which is more than its own stopping
+#     distance from CRUISE_MAX. No car ever advances into a hero at all.
+#   * THE DRIVE, off the shipped `_process`. A car is set cruising down a lane at
+#     a real, unmoving `player.tscn`; once it has stopped, its position must not
+#     change by another millimetre, the hero's must not change either, and the
+#     hero must take no hit.
+
+func _check_stopped_car_never_pushes() -> void:
+	# (a) the arithmetic
+	var reach: float = TrafficScript.CAR_WIDTH * 0.5 + Proxies.PLAYER_HALF
+	if reach >= TrafficScript.LATERAL_TOLERANCE:
+		_failures.append("a car can touch a hero %.2f m off its lane axis but only yields"
+			% reach + " to one within %.2f m — a car outside the yield test but inside"
+			% TrafficScript.LATERAL_TOLERANCE + " its own bumper would drive into him")
+	var braking: float = (TrafficScript.CRUISE_MAX * TrafficScript.CRUISE_MAX) \
+		/ (2.0 * TrafficScript.DECELERATION)
+	if TrafficScript.YIELD_DISTANCE - TrafficScript.STOP_DISTANCE <= braking:
+		_failures.append("a car needs %.2f m to shed CRUISE_MAX but only has %.2f m of"
+			% [braking, TrafficScript.YIELD_DISTANCE - TrafficScript.STOP_DISTANCE]
+			+ " yield room — it would still be rolling when it reached the hero")
+
+	# (b) the drive
+	_player.remove_from_group("player")
+	var lane := _pick_lane_spot()
+	if lane == Vector3.INF:
+		_failures.append("check 18 found no carriageway to run its approach on")
+		Sentinel.done("stopped_car_never_pushes")
+		return
+	var floor_body := _make_floor(lane)
+	var hero: Node3D = load(PLAYER_SCENE).instantiate() as Node3D
+	_root.add_child(hero)
+	await physics_frame
+
+	# The hero stands still in the lane; the car starts APPROACH_BACK metres away
+	# down the same lane at cruise, driving straight at him.
+	hero.global_position = Vector3(lane.x, 0.05, lane.z)
+	hero.rotation = Vector3.ZERO
+	hero.velocity = Vector3.ZERO
+	await physics_frame
+	var hero_at: Vector3 = hero.global_position
+
+	var car: Dictionary = _solo_car()
+	_plant_car(car, Vector3(lane.x, 0.0, lane.z - APPROACH_BACK), TrafficScript.CRUISE_MAX)
+
+	# `move_toward` against a target that itself falls to zero decays the speed
+	# asymptotically, so "stopped" is not an exact 0.0 and asking for one measures
+	# nothing. What the bead actually asks is measured instead: the car NEVER
+	# REACHES him (min gap), it really does come to rest (final speed), and from
+	# the moment it is at rest it CREEPS NO FURTHER.
+	var min_gap: float = INF
+	var crept: float = 0.0
+	var rest_at := Vector3.INF
+	var travelled: float = 0.0
+	for _i in APPROACH_FRAMES:
+		var before: Vector3 = _manager._car_world_pos(car)
+		_manager._process(DT)
+		await physics_frame
+		var after: Vector3 = _manager._car_world_pos(car)
+		travelled += before.distance_to(after)
+		min_gap = minf(min_gap, after.distance_to(hero_at))
+		if float(car["speed"]) <= CAR_AT_REST:
+			if rest_at == Vector3.INF:
+				rest_at = after
+			else:
+				crept = maxf(crept, rest_at.distance_to(after))
+
+	if travelled < 1.0:
+		_failures.append("the probe car drove %.2f m in %d frames — check 18's approach is"
+			% [travelled, APPROACH_FRAMES] + " dead, so 'it stopped short and stayed there'"
+			+ " is true of a car that was never moving")
+	if rest_at == Vector3.INF:
+		_failures.append("the car never came to rest (speed %.2f, floor %.2f) in %d frames"
+			% [float(car["speed"]), CAR_AT_REST, APPROACH_FRAMES]
+			+ " with a hero standing in its lane — the shipped yield did not fire")
+	elif crept > CAR_CREEP_MAX:
+		_failures.append("a car that had come to rest for the hero then crept another"
+			+ " %.3f m — a stopped car must never become a hazard" % crept)
+	# THE ONE THAT MATTERS: the closest it ever got. Not its nose (CAR_LENGTH/2,
+	# which would only catch a car that had run him over) but STOP_DISTANCE — the
+	# gap the yield promises. A car that closed past that is one that decided to
+	# stop and then kept coming, which is the whole failure mode.
+	if min_gap < TrafficScript.STOP_DISTANCE - 0.25:
+		_failures.append("the car closed to %.2f m of the hero, inside the %.2f m its own"
+			% [min_gap, TrafficScript.STOP_DISTANCE] + " yield promises — it stopped for"
+			+ " him and then moved in anyway")
+	var stop_gap: float = min_gap
+	# HORIZONTAL displacement: a hero dropped 5 cm onto the probe floor settles by
+	# exactly that much in Y, and "was he shoved" is a question about the ground
+	# plane.
+	var shoved: float = Vector2(hero.global_position.x - hero_at.x,
+		hero.global_position.z - hero_at.z).length()
+	if shoved > 0.05:
+		_failures.append("the hero was displaced %.3f m by a car yielding to him — a car"
+			% shoved + " may be bumped into and slid along, never something that shoves")
+	if bool(hero.get("is_caught")) or bool(hero.get("is_respawning")):
+		_failures.append("the hero was CAUGHT by a car — traffic is scenery and carries no"
+			+ " damage of any kind")
+	# ---- (c) A POSE THAT LANDS ON THE HERO IS NOT SOLID --------------------
+	# The approach above can never produce this — a car brakes 18 m out and no
+	# spawner places one within SPAWN_MIN_DIST of the hero — but a TELEPORT can:
+	# Primm's Phase Step, a respawn, the HQ's setback. A teleported static body
+	# overlapping a capsule is resolved by `move_and_slide`'s depenetration, which
+	# is a launch, so `AmbienceProxies._player_inside()` refuses to be solid over
+	# the hero's own centre. Driven the only way it exists: stand him INSIDE the
+	# parked car and require him to still be standing there.
+	hero.global_position = Vector3(lane.x, 0.05, lane.z)
+	hero.velocity = Vector3.ZERO
+	await physics_frame
+	var inside_at: Vector3 = hero.global_position
+	for _i in ON_TOP_FRAMES:
+		_plant_car(car, Vector3(lane.x, 0.0, lane.z), 0.0)
+		_manager._process(DT)
+		await physics_frame
+	# FULL 3-D here, unlike the shove measurement above: `move_and_slide` recovers
+	# a body out of an overlap along the shortest exit, and for a 1.15 m tall car
+	# box under a 2 m capsule that exit is UP. A horizontal-only reading calls
+	# being stood on a car roof "not displaced".
+	var launched: float = hero.global_position.distance_to(inside_at)
+	if launched > 0.5:
+		_failures.append("a car planted ON the hero threw him %.2f m — a proxy over the"
+			% launched + " hero's own centre must not be solid, or every teleport that"
+			+ " lands him in traffic (Phase Step, a respawn, the HQ setback) is a launch")
+
+	print("car yield: drove %.1f m, closed to %.2f m off the hero, crept %.4f m after"
+		% [travelled, stop_gap, crept]
+		+ " coming to rest; hero displaced %.4f m," % shoved
+		+ " and a car planted on him moved him %.2f m" % launched)
+
+	_restore_cars()
+	hero.queue_free()
+	floor_body.queue_free()
+	await process_frame
+	Sentinel.done("stopped_car_never_pushes")
+
+
+# ---------------------------------------------------------------------------
+# check 17/18 harness
+# ---------------------------------------------------------------------------
+
+func _make_floor(centre: Vector3) -> StaticBody3D:
+	## Something to stand on, CENTRED ON THE LANE THE PROBE ACTUALLY FOUND — not
+	## on LANE_PROBE_SPOT, which is only where the avenue search starts. The
+	## nearest drivable north-south avenue is 300 m down the city from it, and a
+	## floor left at the search origin drops the hero into the void: the first
+	## draft of this check reported 355 m of "displacement by a car" that was
+	## nothing but free fall.
+	var body := StaticBody3D.new()
+	body.name = "ProbeFloor"
+	body.collision_layer = 1
+	var cs := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(200.0, 1.0, 200.0)
+	cs.shape = box
+	cs.position = Vector3(centre.x, -0.5, centre.z)
+	body.add_child(cs)
+	_root.add_child(body)
+	return body
+
+
+func _pick_lane_spot() -> Vector3:
+	## A point a car is willing to stand on with a clear run of the SAME
+	## north-south avenue behind it, so the probe drives along Z — which is the
+	## hero's own forward once his rotation is zeroed.
+	##
+	## The avenue is SNAPPED the way `_find_spawn_segment_near` snaps it (every
+	## CITY_AVENUE_EVERY-th grid line off the gate), never guessed by sweeping a
+	## box: the carriageway is a 16 m band on a 248 m pitch, so a blind sweep
+	## around an arbitrary point finds nothing and reports the probe unstageable.
+	## Every metre of the run is then asked of the SHIPPED `is_traffic_walkable`,
+	## so the probe car can never be recycled out from under the drive.
+	var ave_pitch: float = PLAN_SCRIPT.STREET_PITCH * float(PLAN_SCRIPT.CITY_AVENUE_EVERY)
+	var gate_x: float = PLAN_SCRIPT.GATE.x
+	var k: float = roundf((LANE_PROBE_SPOT.x - gate_x) / ave_pitch)
+	for kk: int in [0, 1, -1, 2, -2]:
+		var ave_x: float = gate_x + (k + float(kk)) * ave_pitch
+		for dz in range(-600, 601, 4):
+			var z := LANE_PROBE_SPOT.z + float(dz)
+			var ok := true
+			for step in range(-int(APPROACH_BACK) - 6, 14, 2):
+				if not TrafficScript.is_traffic_walkable(ave_x, z + float(step)):
+					ok = false
+					break
+			if ok:
+				return Vector3(ave_x, 0.0, z)
+	return Vector3.INF
+
+
+var _all_cars: Array = []
+
+
+func _solo_car() -> Dictionary:
+	## Reduce the manager to ONE car for the duration of a probe.
+	##
+	## Sleeping the other 31 is not enough and that is not a detail: the shipped
+	## `_update_traffic_spawns` re-activates every inactive car it finds, every
+	## frame, so a probe that merely deactivates them is driven through a live
+	## bubble of 31 real cars — one of which parks on the hero and launches him
+	## (measured: 349 m of "displacement" in 420 frames, from a proxy landing on a
+	## capsule). Handing the manager a one-element `_cars` gives its own spawner
+	## nothing to fill, so the only body in the world is the one being asserted
+	## about. `_restore_cars()` puts the fleet back.
+	if _all_cars.is_empty():
+		_all_cars = _manager.get("_cars")
+	var solo: Array[Dictionary] = [_all_cars[0]]
+	_manager.set("_cars", solo)
+	return solo[0]
+
+
+func _restore_cars() -> void:
+	if not _all_cars.is_empty():
+		_manager.set("_cars", _all_cars)
+
+
+func _plant_car(car: Dictionary, world: Vector3, speed: float) -> void:
+	## Stand `car` so that its DRAWN AND COLLIDED position is `world`, heading +Z.
+	## `_car_world_pos` offsets a car LANE_OFFSET metres along its own
+	## perpendicular (right-hand traffic), so the record's base has to be set back
+	## by that offset or the body ends up a lane away from where the probe thinks
+	## it is.
+	var heading := Vector2(0.0, 1.0)
+	var perp := Vector3(-heading.y, 0.0, heading.x)
+	car["heading_dir"] = heading
+	car["facing_yaw"] = atan2(-heading.x, -heading.y)
+	car["pos"] = world - perp * TrafficScript.LANE_OFFSET
+	car["speed"] = speed
+	car["cruise_speed"] = TrafficScript.CRUISE_MAX
+	car["blocked_time"] = 0.0
+	car["honk_cooldown"] = 99.0  # the horn is check 6's subject, not this one's
+	car["active"] = true
+	car["lod_debt"] = 0.0
+
+
+func _drive_into_car(hero: Node3D, lane: Vector3, frames: int) -> Vector3:
+	## Stand a STOPPED car on `lane` and walk the hero into its rear from
+	## CAR_PROBE_AHEAD metres back. `player.tscn` turns its body to face down the
+	## road on `_ready`, so the rotation is zeroed to make "forward" world -Z.
+	var car: Dictionary = _solo_car()
+	hero.global_position = Vector3(lane.x, 0.05, lane.z + CAR_PROBE_AHEAD)
+	hero.rotation = Vector3.ZERO
+	hero.velocity = Vector3.ZERO
+	var start: Vector3 = hero.global_position
+	Input.action_press("move_forward", 1.0)
+	for _i in frames:
+		_plant_car(car, lane, 0.0)
+		_manager._process(DT)
+		await physics_frame
+	Input.action_release("move_forward")
+	return start
