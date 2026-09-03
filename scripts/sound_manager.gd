@@ -116,7 +116,7 @@ const GROWL_VOLUME_DB: float = -8.0
 ##
 ## Why it is the whoosh's synth with the filter opened up, and not a new idea:
 ## every noise sound in this file is one-pole-low-passed noise, and the factor IS
-## the character (wind 0.02 rumbles, footstep 0.18 taps, whoosh 0.25 swells).
+## the character (footstep 0.18 taps, whoosh 0.25 swells).
 ## 0.55 barely filters at all, which leaves the sibilant top end the whoosh
 ## deliberately throws away — that top end is what "hiss" means. The crunch shows
 ## the other end: fully unfiltered noise reads as violence, not warning.
@@ -221,7 +221,7 @@ const PROJECTILE_SOUND_FALLBACK: Dictionary = {
 ## DESCENDING, where the coin ascends: a rising pair reads as reward in every
 ## game anyone has played, and the interval is the cheapest way to keep the two
 ## unconfusable even through a phone speaker. Square, and high, so it cuts
-## through the wind bed and a chasing pack without being loud.
+## through a chasing pack without being loud.
 const HUNTER_PING_FREQS: Array[float] = [2200.0, 1650.0]  # a descending fourth
 const HUNTER_PING_NOTE_DURATION: float = 0.055  # each tone: a blip, not a beep
 const HUNTER_PING_GAP: float = 0.035    # silence between them — two events, not one
@@ -718,7 +718,7 @@ func _synth_hunter_ping() -> PackedFloat32Array:
 func _synth_car_horn() -> PackedFloat32Array:
 	## Two square-wave horn blasts (380 Hz + 320 Hz) with a gap — an annoyed
 	## but not hostile "beep beep". Same square generator as hunter_ping/buzz,
-	## same click-free envelope. Loud enough to cut through wind but not a
+	## same click-free envelope. Loud enough to be heard over gameplay but not a
 	## jumpscare; the traffic manager's hold-off + cooldown prevents a siren.
 	var samples := PackedFloat32Array()
 	var note_frames: int = int(CAR_HORN_NOTE_DURATION * MIX_RATE)

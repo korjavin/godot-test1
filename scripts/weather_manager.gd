@@ -185,11 +185,9 @@ const RAIN_SILENT_DB: float = -60.0
 ## Seconds for the full silent↔audible fade on rain-zone enter/exit.
 const RAIN_FADE_TIME: float = 1.5
 
-## Rain loop synthesis (mirrors sound_manager._synth_wind(), kept LOCAL so
-## sound_manager.gd stays untouched): ~2 s of one-pole low-passed noise with a
-## crossfaded loop seam. The filter factor is much larger than the wind's 0.02
-## — less filtering keeps the noise bright and hissy, which is what reads as
-## "rain" instead of "distant rumble".
+## Rain loop synthesis: ~2 s of one-pole low-passed noise with a crossfaded loop
+## seam. The filter factor is 0.25 — less filtering keeps the noise bright and
+## hissy, which is what reads as "rain" instead of "distant rumble".
 const RAIN_LOOP_DURATION: float = 2.0
 const RAIN_LOWPASS: float = 0.25
 const RAIN_CROSSFADE: float = 0.05      # seconds blended across the loop seam
@@ -570,16 +568,14 @@ func _update_rain_audio(elapsed: float) -> void:
 
 
 func _synth_rain_stream() -> AudioStreamWAV:
-	## The rain bed: ~2 s of LIGHTLY low-passed noise, looped forever — the
-	## same recipe as sound_manager._synth_wind() but with a much brighter
-	## filter (RAIN_LOWPASS 0.25 vs the wind's 0.02), because retained hiss is
-	## what makes noise read as rain. Synthesis lives HERE, not in
-	## sound_manager.gd, purely to keep that file untouched (zero merge
-	## surface with the parallel executors editing it).
+	## The rain bed: ~2 s of LIGHTLY low-passed noise, looped forever (RAIN_LOWPASS
+	## 0.25), because retained hiss is what makes noise read as rain. Synthesis lives
+	## HERE, not in sound_manager.gd, purely to keep that file untouched (zero merge
+	## surface with parallel tasks editing it).
 	##
-	## Loop-seam trick (same as the wind): synthesize a surplus tail, then
-	## crossfade it into the head so sample[frames] (which playback wraps to
-	## sample[0]) transitions smoothly instead of clicking.
+	## Loop-seam trick: synthesize a surplus tail, then crossfade it into the head
+	## so sample[frames] (which playback wraps to sample[0]) transitions smoothly
+	## instead of clicking.
 	var fade_frames: int = int(RAIN_CROSSFADE * RAIN_MIX_RATE)
 	var frames: int = int(RAIN_LOOP_DURATION * RAIN_MIX_RATE)
 	var raw := PackedFloat32Array()

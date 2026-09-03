@@ -48,13 +48,6 @@ func _check_sound_unlock_and_loops() -> void:
 	root.add_child(sm)
 
 	var loop_players: Dictionary = sm.get("_loop_players")
-	if loop_players == null:
-		_fail("_loop_players dictionary missing on sound_manager")
-		root.remove_child(sm)
-		sm.free()
-		Sentinel.done("sound_unlock_and_loops")
-		return
-
 	if loop_players.has("wind"):
 		_fail("sound_manager must not register an ambient 'wind' loop player")
 

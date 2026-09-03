@@ -256,9 +256,9 @@ func _update_heartbeat(t: float, delta: float) -> void:
 		if not (sm.has_method("is_unlocked") and sm.is_unlocked()):
 			return
 		# Set the ramp BEFORE play(): the loop player is built with the engine
-		# default 0 dB (unlike the wind bed, which gets WIND_VOLUME_DB), and the
-		# "lub" is the loudest sample in the cycle, so starting it before the
-		# first volume write pops at full scale instead of the intended -18 dB.
+		# default 0 dB, and the "lub" is the loudest sample in the cycle, so
+		# starting it before the first volume write pops at full scale instead
+		# of the intended -18 dB.
 		_apply_heartbeat_ramp(sm, t)
 		sm.get_loop_player("heartbeat").play()
 		_heartbeat_playing = true
