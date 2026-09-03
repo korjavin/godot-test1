@@ -190,7 +190,7 @@ func show_game_over(coins: int, best_coins: int, is_new_best: bool, outcome: int
 					Vector2.ONE, 0.4).set_trans(Tween.TRANS_SINE)
 	# The ending film is the game-over / win screen on web. Start it through the
 	# existing start overlay so IntroVideo.start() has one call site and its pause,
-	# modal key handling and fail-open teardown are shared with PLAY SOLO.
+	# modal key handling and fail-open teardown are shared with the start card's PLAY press.
 	visible = false
 	var overlay := get_tree().get_first_node_in_group("start_overlay")
 	if OS.has_feature("web") and overlay != null and overlay.has_method("play_film"):

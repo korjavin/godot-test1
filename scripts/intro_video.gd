@@ -2,7 +2,7 @@ class_name IntroVideo
 ## ============================================================================
 ## INTRO FILM — a browser <video> element over the Godot canvas, web only
 ## ============================================================================
-## The 47.5 s opening film that plays when a web player presses PLAY SOLO. It is
+## The 47.5 s opening film that plays when a web player presses PLAY. It is
 ## static-only (no node, no scene, no autoload): all of its state lives in the
 ## browser, on `window.__ck_intro`, and `start_overlay.gd` drives it with three
 ## calls — `preload_element()` at boot, `start()` on the press, `is_finished()`
@@ -52,7 +52,7 @@ class_name IntroVideo
 ## Autoplay WITH SOUND, and why the fallback exists
 ## ----------------------------------------------------------------------------
 ## The film has an AAC track, and browsers block audible autoplay without user
-## activation. The PLAY SOLO press IS activation — but Godot dispatches input on
+## activation. The PLAY press IS activation — but Godot dispatches input on
 ## its own `requestAnimationFrame` tick, **not synchronously inside the DOM click
 ## handler**, so this rides *sticky* activation (the page has been interacted
 ## with) rather than *transient* activation (we are inside the handler). Sticky is
@@ -81,7 +81,7 @@ class_name IntroVideo
 ##
 ## That is the whole of godot-test1-8f8, and it is why three previous fixes
 ## (COEP headers, 4x4, zmz, 3iy.20/21) each treated a symptom: `_start_js()`
-## returned JS `true`, `start()` read it as false, PLAY SOLO fell through to
+## returned JS `true`, `start()` read it as false, PLAY fell through to
 ## `_dismiss()`, and the film was torn down about a millisecond after the browser
 ## had begun playing it. `is_finished()`'s `typeof != TYPE_BOOL` fail-open read
 ## the same corruption as "finished", so even a film that survived the start
@@ -184,7 +184,7 @@ static func start(video_url: String = VIDEO_URL) -> bool:
 	if not OS.has_feature("web"):
 		return false
 	# Build-if-missing rather than assuming `preload_element()` ran and survived:
-	# the film plays on EVERY PLAY SOLO press (owner decision — no first-visit
+	# the film plays on EVERY PLAY press (owner decision — no first-visit
 	# flag, no persistence), and a finished film tears its own element down, so a
 	# second press would otherwise have nothing to show.
 	JavaScriptBridge.eval(_create_js(video_url), true)
@@ -260,10 +260,10 @@ static func _start_js() -> String:
 
 
 ## Throw the (possibly still buffering) element away without ever showing it —
-## what MULTIPLAYER does, because that press opens a panel instead of starting a
-## game and the film is never coming. `preload="auto"` is a hint the browser is
-## free to take seriously, so leaving a live 20 MB source attached for a whole
-## multiplayer session is bandwidth nobody asked for. Routed through the same
+## what `start_overlay._dismiss()` does on every exit that shows no film, because
+## then the film is never coming. `preload="auto"` is a hint the browser is free
+## to take seriously, so leaving a live 20 MB source attached for the whole
+## session is bandwidth nobody asked for. Routed through the same
 ## single `finish` exit as every other ending, so the teardown is the one that is
 ## already known to be complete. Idempotent, and a no-op off-web.
 static func discard() -> void:
@@ -446,7 +446,7 @@ static func _create_js(video_url: String = VIDEO_URL) -> String:
 				};
 
 				/* THE SINGLE EXIT. Every ending — natural end, skip, decode error,
-				   both play() rejections, the stall watchdog, the MULTIPLAYER
+				   both play() rejections, the stall watchdog, the preload
 				   discard that never shows the film at all — comes through here, and
 				   it leaves NOTHING over the canvas: listeners off, source released,
 				   element detached, scratchpad cleared. Idempotent, because several
@@ -526,7 +526,7 @@ static func _create_js(video_url: String = VIDEO_URL) -> String:
 				};
 				s.onKeyUp = function(e){
 					/* ONLY swallow the release of a press WE swallowed. The obvious
-					   victim otherwise is the SPACE that launched the film: PLAY SOLO
+					   victim otherwise is the SPACE that launched the film: PLAY
 					   has SPACE as its shortcut, so that keydown reached Godot before
 					   these listeners existed, and eating its keyup would leave
 					   `jump`/`ui_accept` latched down — the next press is then no

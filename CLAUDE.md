@@ -145,7 +145,9 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            dropped), the `lmk` parser over ints AND relay
 #                            floats, the master's proximity rule, and the
 #                            approach trigger driven through the shipped toast
-#   intro_selfcheck          intro film: web gate, desktop PLAY SOLO path, JS shape
+#   intro_selfcheck          intro film: web gate, desktop PLAY path, JS shape,
+#                            and the ONE-PRESS start card — no mode fork, and it
+#                            still names the MP button (bead godot-test1-6pa)
 #   build_version_selfcheck  auto-reload onto a new build: the CI bake contract,
 #                            the web gate, and never mid-run / never in a room
 #   pause_selfcheck          the pause refcount: overlapping holders, the

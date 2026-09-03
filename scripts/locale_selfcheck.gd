@@ -107,8 +107,13 @@ const WIDTH_BUDGETS: Array = [
 	["Leave room", 18, 320.0, "MP panel button"],
 	["Tap a room to join", 18, 320.0, "MP panel status"],
 	# start_overlay.gd — CARD_WIDTH 420 with a 20 px content margin each side.
-	["PLAY SOLO", 26, 380.0, "start overlay Play Solo"],
-	["MULTIPLAYER", 24, 380.0, "start overlay Multiplayer"],
+	# One button since bead godot-test1-6pa dropped the SOLO / MULTIPLAYER fork.
+	# The card's hint line is exempt for the reason stated in the header above: it
+	# autowraps inside a container that grows.
+	["PLAY", 24, 380.0, "start overlay Play"],
+	# "PLAY SOLO" and "MULTIPLAYER" are no longer buttons, but their CSV rows stay
+	# — they are this file's own translation sentinels in `_check_fallback()` and
+	# `_check_live_switch()`, and `landmark_selfcheck` uses the first one too.
 	# skill_tree_ui.gd — only the strings that CANNOT wrap are budgeted. The node
 	# descriptions and the two hint lines autowrap inside their column, so German
 	# grows the card downward (it scrolls) instead of overflowing it; that is the
