@@ -1883,6 +1883,27 @@ const CITY_WINDOW_HEIGHT: float = 1.60
 const CITY_WINDOW_PROUD: float = 0.06
 const CITY_WINDOW_SILL: float = 1.15        # sill height above the storey floor
 
+## ...AND IT IS PULLED IN AT ITS ENDS, which is the OTHER half of the same lesson
+## (bead godot-test1-8gw.19). A proud band was still drawn to the hull's exact
+## length, so while its street face stood 6 cm clear its two END faces landed on
+## the hull's end planes at a separation of EXACTLY zero — measured, 20.8 m² of
+## shared face per pair, 37 hull/window pairs in a single chunk. Zero fights at
+## any depth precision on any renderer, which is why raising the camera's near
+## plane (bead 8gw.17) did nothing for it; and coplanar QUADS fight along their
+## shared diagonal, which is why the owner saw "instead of rectangular i see
+## triangle for a moment" rather than two colours swapping.
+##
+## It was visible on most of every other street wall, not in a corner: block_wing
+## spans the north/south wings the full width of the ring and insets the side
+## wings by BLOCK_WING_DEPTH, so a ±X street wall is end face, front face, end
+## face — 26 of 43.6 m fighting — while the ±Z walls of the same block are clean,
+## and vice versa.
+##
+## 4 cm, applied to the WHOLE building rect before _city_chunk_slice so that
+## neighbouring chunks still cut one rect and still meet flush. It changes no box
+## count, costs no RNG draw, and is invisible at street scale.
+const CITY_BAND_END_INSET: float = 0.04
+
 ## The block palette. Walls reuse the CITY_PLASTER_A/B pair the gate district's
 ## houses lerp between, so Budapest is ONE city and not two; the rest is new
 ## because a 5-storey facade has parts a 2.5 m cottage does not.
@@ -11265,8 +11286,10 @@ func _city_band(piece: Rect2, along_x: bool, proud: float, y: float, thickness: 
 	door, and grown before it is sliced — see the caller for why that ordering is
 	the difference between a flush seam and a z-fighting one. Never collides.
 	"""
-	var grown: Rect2 = piece.grow_individual(0.0, proud, 0.0, proud) if along_x \
-			else piece.grow_individual(proud, 0.0, proud, 0.0)
+	# Cross axis stands PROUD; the long axis is pulled IN by CITY_BAND_END_INSET so
+	# the band's end faces never land on the hull's own end planes — see that const.
+	var grown: Rect2 = piece.grow_individual(-CITY_BAND_END_INSET, proud, -CITY_BAND_END_INSET, proud) if along_x \
+			else piece.grow_individual(proud, -CITY_BAND_END_INSET, proud, -CITY_BAND_END_INSET)
 	var slice := _city_chunk_slice(chunk_center, grown)
 	if not slice.has_area():
 		return
