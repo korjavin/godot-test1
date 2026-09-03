@@ -2625,16 +2625,6 @@ func _receive_seed(payload: Dictionary) -> void:
 	_has_seed = true
 	status.emit("Shared world seed received")
 
-	# Host no-op: adopting seed already ours changes nothing — no new_run, no
-	# reset, no explored_mask wipe. Guard on seed equality, not on master, so a
-	# peer that happens to hold same seed is also spared. This is the smallest
-	# fix for "creating a room mid-run must not rebuild the host world".
-	var _noop_terrain: Node = get_tree().get_first_node_in_group("terrain")
-	if _noop_terrain != null:
-		var _cur_seed: Variant = _noop_terrain.get("run_seed")
-		if _cur_seed != null and _should_noop_on_seed(_room_seed, int(_cur_seed)):
-			return
-
 	# BUDAPEST IS UNEXPLORED IN A WORLD WE HAVE NOT WALKED. Adopting a foreign seed
 	# is the one event that REPLACES this peer's world, and it is the single site
 	# above all three branches below — the spawn reset, the mid-run rebuild and the
@@ -2644,7 +2634,11 @@ func _receive_seed(payload: Dictionary) -> void:
 	# HOST never gets here, which is correct: its own run continues, seed and all.
 	var seed_player: Node = get_tree().get_first_node_in_group("player")
 	if seed_player != null and "explored_mask" in seed_player:
-		seed_player.set("explored_mask", 0)
+		# Don't wipe mask for same-seed rejoin (no world change) — guard here too
+		var _mask_terrain: Node = get_tree().get_first_node_in_group("terrain")
+		var _mask_cur: Variant = _mask_terrain.get("run_seed") if _mask_terrain != null else null
+		if _mask_cur == null or not _should_noop_on_seed(_room_seed, int(_mask_cur)):
+			seed_player.set("explored_mask", 0)
 
 	# A MID-RUN JOINER MUST NOT BE RESET TO THE ORIGIN. Once a snapshot is in
 	# hand the group's position is known, so hand straight over to the join
@@ -2655,6 +2649,17 @@ func _receive_seed(payload: Dictionary) -> void:
 	if _can_join_place():
 		_apply_join_placement()
 		return
+
+	# Guard for same-room rejoin (review item 4) — same seed is no-op, but
+	# placed BELOW the join hand-over so _apply_join_placement isn't skipped
+	# for the reachable rejoin case. Host never reaches here today (welcome
+	# latch at _on_lobby_joined sets _has_seed synchronously), but leave-and-
+	# rejoin does. See review.
+	var _rejoin_terrain: Node = get_tree().get_first_node_in_group("terrain")
+	if _rejoin_terrain != null:
+		var _cur2: Variant = _rejoin_terrain.get("run_seed")
+		if _cur2 != null and _should_noop_on_seed(_room_seed, int(_cur2)):
+			return
 
 	var terrain: Node = get_tree().get_first_node_in_group("terrain")
 	var player: Node = get_tree().get_first_node_in_group("player")
@@ -2676,10 +2681,6 @@ func _receive_seed(payload: Dictionary) -> void:
 		return
 
 	if terrain != null and terrain.has_method("new_run"):
-		# Joiner near-master: if arriving and we have master's presence pos, land
-		# near them instead of at origin. Offset via ring scan so we never spawn
-		# inside geometry (same JOIN_RING logic as join_at's _place_near).
-		# Degrade honestly: if no master pos yet, fall back to origin (today's).
 		var _master_pos: Variant = null
 		if _arriving() and _master != "" and _peer_state.has(_master):
 			var _md: Dictionary = _peer_state[_master] as Dictionary
@@ -2687,15 +2688,17 @@ func _receive_seed(payload: Dictionary) -> void:
 				_master_pos = _md["pos"] as Vector3
 		if _master_pos != null:
 			var _master_anchor: Vector3 = _master_pos as Vector3
-			var _spot: Vector3 = _find_clear_spot_near_anchor(_master_anchor, player)
-			terrain.new_run(_room_seed, terrain.world_to_chunk(_spot))
+			terrain.new_run(_room_seed, terrain.world_to_chunk(_master_anchor))
 			if terrain.has_method("build_ring_now"):
-				terrain.build_ring_now(terrain.world_to_chunk(_spot))
+				terrain.build_ring_now(terrain.world_to_chunk(_master_anchor))
+			await get_tree().physics_frame
+			if _state != State.IN_ROOM:
+				return
 			if player != null:
 				if player.has_method("join_at"):
 					player.join_at(_master_anchor)
 				elif "global_position" in player:
-					player.global_position = Vector3(_spot.x, 2.0, _spot.z)
+					player.global_position = Vector3(_master_anchor.x, 2.0, _master_anchor.z)
 			return
 		terrain.new_run(_room_seed)
 
@@ -2896,47 +2899,6 @@ static func _anchor_of(positions: Dictionary, master_id: String) -> Vector3:
 					nearest = pos
 			return nearest
 	return centroid
-
-
-func _find_clear_spot_near_anchor(anchor: Vector3, player: Node) -> Vector3:
-	"""
-	Find a clear spot near `anchor` so we never materialise inside a block.
-
-	Reuses the JOIN_RING logic from player_controller's `_place_near`: nearest
-	ring first, 8 angles per ring, first candidate that the body fits in.
-	Probes via player's `_is_body_blocked_at` when available (same capsule-
-	centre sphere that `_place_near` uses, so flat ground never counts).
-	Falls back to `CrowdManager.is_walkable` for Budapest's street rule, and
-	finally to the anchor itself — at worst the physics shove-out handles it, and
-	the caller still passes the anchor's chunk to `new_run` so the ring is built.
-
-	Degrades honestly: no player → anchor; no probe → anchor.
-	"""
-	const RING_RADII: Array[float] = [3.0, 5.0, 8.0, 12.0]
-	const RING_ANGLES: int = 8
-	if player != null and player.has_method("_is_body_blocked_at"):
-		for radius: float in RING_RADII:
-			for i in range(RING_ANGLES):
-				var angle: float = TAU * float(i) / float(RING_ANGLES)
-				var cand := Vector3(anchor.x + cos(angle) * radius, 0.0, anchor.z + sin(angle) * radius)
-				if not (player as Object).call("_is_body_blocked_at", cand):
-					return cand
-	# Fallback: try CrowdManager street walkability when in Budapest, else anchor
-	var crowd: Node = get_tree().get_first_node_in_group("crowd") if get_tree() != null else null
-	if crowd != null and crowd.has_method("is_walkable"):
-		# Use the crowd's static helper via script if available
-		var crowd_script: Script = crowd.get_script() as Script
-		if crowd_script != null and crowd_script.has_method("is_walkable"):
-			for radius: float in RING_RADII:
-				for i in range(RING_ANGLES):
-					var angle: float = TAU * float(i) / float(RING_ANGLES)
-					var cand2 := Vector3(anchor.x + cos(angle) * radius, 0.0, anchor.z + sin(angle) * radius)
-					# Call via crowd script's static (like CrowdManager.is_walkable)
-					# Use call to avoid static type issues
-					var ok: bool = crowd_script.call("is_walkable", cand2.x, cand2.z) as bool
-					if ok:
-						return cand2
-	return anchor
 
 
 # =============================================================================

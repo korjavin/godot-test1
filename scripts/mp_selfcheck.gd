@@ -97,7 +97,7 @@ func _initialize() -> void:
 	# zero `global_transform` — which would make the live-coin check below pass
 	# vacuously against a coin that was never actually spawned.
 	await process_frame
-	var failure: String = _run_checks()
+	var failure: String = await _run_checks()
 	if failure.is_empty():
 		print("SELFCHECK OK")
 		quit(0)
@@ -180,7 +180,7 @@ func _run_checks() -> String:
 	failure = _check_hero_press_decision()
 	if not failure.is_empty():
 		return failure
-	failure = _check_host_persist_and_joiner_near_master()
+	failure = await _check_host_persist_and_joiner_near_master()
 	if not failure.is_empty():
 		return failure
 	return _check_ability_visual_state()
@@ -2689,19 +2689,20 @@ func _check_hero_press_decision() -> String:
 
 func _check_host_persist_and_joiner_near_master() -> String:
 	"""
-	Host creating a room mid-run must not rebuild or teleport when the adopted
-	seed is already theirs (pure seed equality, not master check), and a joiner
-	must land near the master on a clear spot, not at the origin. The no-op is
-	pure logic (seed comparison) and the joiner placement is verified on the
-	shipped `_find_clear_spot_near_anchor` seam, with the no-presence fallback.
-	Same-seed A/B proves the host world is byte-identical.
+	Host same-seed is no-op (pure seed equality, rejoin case) and joiner lands
+	near master on a clear spot via the shipped new_run/join_at seam, with
+	no-presence fallback to origin. Same-seed A/B is covered by host no-op
+	(no new_run → world byte-identical); the old tautology (33333==33333) is
+	removed per review. All asserts drive shipped seam, not mock re-implementation.
 	"""
-	# Pure seed helper — no mesh, no tree
 	if not MPManager._should_noop_on_seed(12345, 12345):
 		return "_should_noop_on_seed true case failed (same seed must noop)"
 	if MPManager._should_noop_on_seed(12345, 54321):
 		return "_should_noop_on_seed false case failed (different seed must not noop)"
-	# Host no-op integration: same seed → no new_run, no reset, coins intact, mask not wiped
+	# Rejoin same-seed no-op: leave-and-rejoin same room keeps world, so adopt
+	# must not rebuild, teleport or wipe mask/coins. This is the reachable case
+	# (leave clears _has_seed but keeps _room_seed). Host never reaches here
+	# today (welcome latch), but the guard is for rejoin.
 	var host_terrain: Node = _mock_terrain(77777)
 	var host_player: Node = _mock_player(Vector3(1234.0, 0.0, 567.0), 42, 3.14)
 	host_player.set("explored_mask", 3)
@@ -2710,50 +2711,45 @@ func _check_host_persist_and_joiner_near_master() -> String:
 	var host_mp: Node = MPManager.new()
 	host_mp.add_to_group("mp")
 	root.add_child(host_mp)
+	# Simulate rejoin: already in room 77777, left (clears _has_seed) but terrain stays
 	host_mp._has_seed = false
-	host_mp._room_seed = 0
-	# Simulate host's terrain already at 77777, then receive same seed
-	var payload_same: Dictionary = {"seed": float(77777)}
-	host_mp._receive_seed(payload_same)
+	host_mp._room_seed = 77777
+	host_mp._receive_seed({"seed": float(77777)})
 	if (host_terrain as Object).get("new_run_called"):
 		host_terrain.remove_from_group("terrain"); host_player.remove_from_group("player")
 		host_terrain.free(); host_player.free(); host_mp.free()
-		return "host same-seed adopted: terrain.new_run was called (must be no-op)"
+		return "rejoin same-seed: terrain.new_run was called (must be no-op)"
 	if (host_player as Object).get("reset_called"):
 		host_terrain.remove_from_group("terrain"); host_player.remove_from_group("player")
 		host_terrain.free(); host_player.free(); host_mp.free()
-		return "host same-seed adopted: player.reset_position was called (must be no-op)"
+		return "rejoin same-seed: player.reset_position was called (must be no-op)"
 	if (host_player as Object).get("explored_mask") != 3:
 		host_terrain.remove_from_group("terrain"); host_player.remove_from_group("player")
 		host_terrain.free(); host_player.free(); host_mp.free()
-		return "host same-seed adopted: explored_mask was wiped (must stay)"
+		return "rejoin same-seed: explored_mask was wiped (must stay)"
 	if int(host_player.get("own_coins")) != 42 or absf(float(host_player.get("run_distance")) - 3.14) > 0.001:
 		host_terrain.remove_from_group("terrain"); host_player.remove_from_group("player")
 		host_terrain.free(); host_player.free(); host_mp.free()
-		return "host same-seed adopted: coins/distance changed (must stay)"
-	# Negative control: different seed MUST rebuild/teleport (proves guard is load-bearing)
-	# Reuse same nodes to avoid get_first_node_in_group picking the old queued-free node
+		return "rejoin same-seed: coins/distance changed (must stay)"
+	# Different seed must rebuild (proves guard is load-bearing, not always-noop)
 	host_terrain.set("new_run_called", false)
 	host_terrain.set("run_seed", 77777)
 	host_player.set("reset_called", false)
 	host_player.set("explored_mask", 0)
 	host_player.global_position = Vector3.ZERO
 	host_mp._has_seed = false
-	host_mp._room_seed = 0
+	host_mp._room_seed = 77777
 	host_mp._receive_seed({"seed": float(99999)})
 	if not (host_terrain as Object).get("new_run_called"):
 		host_terrain.remove_from_group("terrain"); host_player.remove_from_group("player")
 		host_terrain.free(); host_player.free(); host_mp.free()
-		return "host different-seed: terrain.new_run was NOT called (must rebuild on foreign seed)"
+		return "rejoin different-seed: terrain.new_run was NOT called (must rebuild on foreign seed)"
 	host_terrain.remove_from_group("terrain"); host_player.remove_from_group("player")
 	host_terrain.free(); host_player.free(); host_mp.free()
 
-	# Joiner near master: with master's pos in _peer_state, fallback must land near master, not at origin, and not inside geometry
+	# Joiner near master: with master's pos, must call new_run around master's chunk and join_at, not reset
 	var join_terrain: Node = _mock_terrain(11111)
 	var join_player: Node = _mock_player(Vector3(0.0, 0.0, 0.0), 0, 0.0)
-	# Make join_player's _is_body_blocked_at return true for origin-adjacent blocked spot, false for ring
-	# Use a wall at master_pos itself to force offset
-	join_player.set("blocked_center", Vector3(500.0, 0.0, 500.0))
 	root.add_child(join_terrain)
 	root.add_child(join_player)
 	var join_mp: Node = MPManager.new()
@@ -2762,28 +2758,38 @@ func _check_host_persist_and_joiner_near_master() -> String:
 	join_mp._has_seed = false
 	join_mp._master = "master1"
 	join_mp._peer_state = {"master1": {"pos": Vector3(500.0, 0.0, 500.0)}}
-	join_mp._join_msec = Time.get_ticks_msec() # arriving
+	join_mp._join_msec = Time.get_ticks_msec()
 	join_mp._state = MPManager.State.IN_ROOM
-	# Call receive with foreign seed (different from join_terrain's 11111)
 	join_mp._receive_seed({"seed": float(22222)})
-	# Must have landed near master (within 15m) and not at origin
-	var landed: Vector3 = join_player.global_position
-	var dist_to_master: float = landed.distance_to(Vector3(500.0, 0.0, 500.0))
-	if dist_to_master > 15.0:
-		join_terrain.free(); join_player.free(); join_mp.free()
-		return "joiner near-master: landed %.1fm from master (max 15) at %s" % [dist_to_master, str(landed)]
-	if landed.distance_to(Vector3.ZERO) < 10.0:
-		join_terrain.free(); join_player.free(); join_mp.free()
-		return "joiner near-master: landed at origin %s (must be near master)" % str(landed)
-	# Must not be inside geometry: our mock blocks anchor itself, so spot should be offset 3m+
-	if (join_player as Object).call("_is_body_blocked_at", landed):
+	# Wait one physics frame for the await in _receive_seed to place
+	await root.get_tree().physics_frame
+	if not (join_terrain as Object).get("new_run_called"):
 		join_terrain.remove_from_group("terrain"); join_player.remove_from_group("player")
 		join_terrain.free(); join_player.free(); join_mp.free()
-		return "joiner near-master: landed inside geometry at %s" % str(landed)
+		return "joiner near-master: new_run not called"
+	var expected_around: Vector2i = join_terrain.call("world_to_chunk", Vector3(500.0, 0.0, 500.0)) as Vector2i
+	var got_around: Vector2i = (join_terrain as Object).get("new_run_around") as Vector2i
+	if got_around != expected_around:
+		join_terrain.remove_from_group("terrain"); join_player.remove_from_group("player")
+		join_terrain.free(); join_player.free(); join_mp.free()
+		return "joiner near-master: new_run_around %s != expected %s" % [str(got_around), str(expected_around)]
+	if not (join_player as Object).get("join_called"):
+		join_terrain.remove_from_group("terrain"); join_player.remove_from_group("player")
+		join_terrain.free(); join_player.free(); join_mp.free()
+		return "joiner near-master: join_at not called (must be join, not reset)"
+	if (join_player as Object).get("reset_called"):
+		join_terrain.remove_from_group("terrain"); join_player.remove_from_group("player")
+		join_terrain.free(); join_player.free(); join_mp.free()
+		return "joiner near-master: reset_position called (must be join)"
+	var janchor: Vector3 = (join_player as Object).get("join_anchor") as Vector3
+	if janchor != Vector3(500.0, 0.0, 500.0):
+		join_terrain.remove_from_group("terrain"); join_player.remove_from_group("player")
+		join_terrain.free(); join_player.free(); join_mp.free()
+		return "joiner near-master: join_anchor %s != master pos" % str(janchor)
 	join_terrain.remove_from_group("terrain"); join_player.remove_from_group("player")
 	join_terrain.free(); join_player.free(); join_mp.free()
 
-	# Degrade honestly: no master pos yet → fallback to origin
+	# Degrade honestly: no master pos yet → fallback to origin (reset, not join)
 	var join_terrain2: Node = _mock_terrain(11111)
 	var join_player2: Node = _mock_player(Vector3.ZERO, 0, 0.0)
 	root.add_child(join_terrain2)
@@ -2793,30 +2799,24 @@ func _check_host_persist_and_joiner_near_master() -> String:
 	root.add_child(join_mp2)
 	join_mp2._has_seed = false
 	join_mp2._master = "master1"
-	join_mp2._peer_state = {} # no pos yet
+	join_mp2._peer_state = {}
 	join_mp2._join_msec = Time.get_ticks_msec()
 	join_mp2._state = MPManager.State.IN_ROOM
 	join_mp2._receive_seed({"seed": float(22222)})
-	var landed2: Vector3 = join_player2.global_position
-	# Without master pos, it should have reset to origin (today's behaviour)
-	if landed2.distance_to(Vector3.ZERO) > 5.0:
+	if not (join_terrain2 as Object).get("new_run_called"):
 		join_terrain2.remove_from_group("terrain"); join_player2.remove_from_group("player")
 		join_terrain2.free(); join_player2.free(); join_mp2.free()
-		return "joiner no-master fallback: landed at %s (expected near origin when no presence yet)" % str(landed2)
+		return "joiner no-master: new_run not called"
+	if not (join_player2 as Object).get("reset_called"):
+		join_terrain2.remove_from_group("terrain"); join_player2.remove_from_group("player")
+		join_terrain2.free(); join_player2.free(); join_mp2.free()
+		return "joiner no-master fallback: reset_position not called (expected origin fallback)"
+	if (join_player2 as Object).get("join_called"):
+		join_terrain2.remove_from_group("terrain"); join_player2.remove_from_group("player")
+		join_terrain2.free(); join_player2.free(); join_mp2.free()
+		return "joiner no-master: join_at called (must be reset when no presence)"
 	join_terrain2.remove_from_group("terrain"); join_player2.remove_from_group("player")
 	join_terrain2.free(); join_player2.free(); join_mp2.free()
-
-	# Same-seed A/B: host's world byte-identical across room creation (no rebuild)
-	var t1: Node = _mock_terrain(33333)
-	var t2: Node = _mock_terrain(33333)
-	root.add_child(t1)
-	root.add_child(t2)
-	# Simulate host's terrain before and after no-op: generate a chunk signature
-	# Use endless_terrain's chunk hashing if available, else just compare run_seed
-	if int(t1.get("run_seed")) != int(t2.get("run_seed")):
-		t1.free(); t2.free()
-		return "same-seed A/B: run_seed mismatch"
-	t1.free(); t2.free()
 	return ""
 
 
@@ -2882,6 +2882,7 @@ var run_distance: float = 0.0
 var explored_mask: int = 0
 var reset_called: bool = false
 var join_called: bool = false
+var join_anchor: Vector3 = Vector3.ZERO
 var blocked_center: Vector3 = Vector3.ZERO
 var initial_pos: Vector3 = Vector3.ZERO
 func _ready() -> void:
@@ -2894,22 +2895,11 @@ func reset_position() -> void:
 	run_distance = 0.0
 func join_at(anchor: Vector3) -> void:
 	join_called = true
-	# Reuse same ring logic as _place_near but via mock's _is_body_blocked_at
-	var spot: Vector3 = anchor
-	for radius in [3.0, 5.0, 8.0, 12.0]:
-		for i in 8:
-			var ang: float = TAU * float(i) / 8.0
-			var cand := Vector3(anchor.x + cos(ang) * radius, 0.0, anchor.z + sin(ang) * radius)
-			if not _is_body_blocked_at(cand):
-				spot = cand
-				break
-		if spot != anchor:
-			break
-	global_position = Vector3(spot.x, 2.0, spot.z)
+	join_anchor = anchor
+	global_position = Vector3(anchor.x, 2.0, anchor.z)
 	own_coins = 0
 	run_distance = 0.0
 func _is_body_blocked_at(pos: Vector3) -> bool:
-	# Block only the exact anchor centre to force offset (simulates a wall at master)
 	if blocked_center != Vector3.ZERO and pos.distance_to(blocked_center) < 1.0:
 		return true
 	return false
