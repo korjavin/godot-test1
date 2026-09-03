@@ -250,6 +250,7 @@ func _run() -> void:
 	await _check_the_scar_is_drawn_and_permanent()
 	await _check_spines_and_liberation()
 	await _check_guards_stand_their_posts()
+	_check_guard_capsule_fits_the_doors()
 	await _check_guards_reset_on_re_entry()
 	await _check_the_leash_holds_under_a_chase()
 	await _check_the_lure_diverts_a_guard()
@@ -2847,19 +2848,19 @@ func _check_spines_and_liberation() -> void:
 # ============================================================================
 
 ## How much room a guard's body needs around its post before "clear of the
-## stonework" means anything. The `tower_guard.tscn` capsule is 0.28125 m in
-## radius (the 1.5x chassis of bead godot-test1-6bj; it was 0.1875); this is
+## stonework" means anything. The `tower_guard.tscn` capsule is 0.421875 m in
+## radius (the 2.25x chassis of bead godot-test1-5ow; it was 0.28125); this is
 ## still over it, so a post that merely GRAZES a jamb is a failure rather than a
 ## lucky pass. Read as: nothing solid may come within this of a post, at any
 ## height a standing body occupies.
 const GUARD_BODY_CLEARANCE: float = 0.45
 
-## How tall a standing guard is, for the same test. The chassis stands 1.5 m
+## How tall a standing guard is, for the same test. The chassis stands 2.25 m
 ## (the capsule lies on the travel axis, so it is the MODEL's height that this
-## has to cover, not the capsule's 2.025 m length); a little over it, so a post
+## has to cover, not the capsule's 3.0375 m length); a little over it, so a post
 ## under the crawl lintel (top at 2.8 m, underside 2.0) or under a raised mass
 ## would be caught.
-const GUARD_BODY_HEIGHT: float = 1.6
+const GUARD_BODY_HEIGHT: float = 2.4
 
 func _check_guards_stand_their_posts() -> void:
 	"""
@@ -3103,6 +3104,90 @@ func _guard_footprint(yaw: float) -> Rect2:
 				hi.y = maxf(hi.y, z + r)
 		probe.free()
 	return Rect2(lo, hi - lo)
+
+
+func _check_guard_capsule_fits_the_doors() -> void:
+	"""
+	Check 12b. The real guard capsule fits a spine door, clears every storey,
+	and does NOT fit the crawl alcove.
+
+	The capsule AND the model height are read off a live `tower_guard.tscn`
+	instance — the `_guard_footprint` discipline — because the whole claim is
+	about the body this bead grew, and a copy of 0.84 here would keep passing
+	after a retune broke the scene. Three assertions:
+
+	  * DOORWAY: the capsule's diameter clears one PLAN_CELL (a spine door is
+	    one cell wide). The capsule lies on the travel axis, so length along
+	    travel never gates a doorway — width does.
+	  * STOREYS: the model's height clears every planned storey's air.
+	  * CRAWL: the model's height does NOT clear DOSSIER_CRAWL_CLEAR — the
+	    alcove is small Teibi's door, and a guard that fit under its lintel
+	    would be routable into a dead end no audit can see.
+	"""
+	var scene := TowerInterior.guard_scene()
+	if scene == null:
+		_fail("check 12b: tower_guard.tscn is missing — the fit cannot be measured")
+		Sentinel.done("guard_capsule_fits_the_doors")
+		return
+	var probe := scene.instantiate() as Node3D
+	var shape_node := probe.find_child("CollisionShape3D", true, false) as CollisionShape3D
+	var capsule := (shape_node.shape if shape_node != null else null) as CapsuleShape3D
+	var model := probe.find_child("Model", true, false) as Node3D
+	if capsule == null or model == null:
+		_fail("check 12b: tower_guard.tscn has no readable capsule/model — the fit cannot be measured")
+		probe.free()
+		Sentinel.done("guard_capsule_fits_the_doors")
+		return
+	var diameter := capsule.radius * 2.0
+	var door := TowerPlans.PLAN_CELL
+	if diameter >= door:
+		_fail("check 12b: the guard's %.2f m capsule does not fit a %.2f m spine door" % [diameter, door])
+	var tall := _visual_height(model)
+	if tall <= 0.0:
+		_fail("check 12b: tower_guard.tscn draws no mesh — the height cannot be measured")
+		probe.free()
+		Sentinel.done("guard_capsule_fits_the_doors")
+		return
+	if tall <= TowerInterior.DOSSIER_CRAWL_CLEAR:
+		_fail("check 12b: the %.2f m guard fits under the crawl lintel (%.2f m) — the alcove admits it" % [
+			tall, TowerInterior.DOSSIER_CRAWL_CLEAR])
+	var low := INF
+	for floor_index: int in TowerPlans.floors():
+		low = minf(low, TowerInterior.plan_clear_height(floor_index))
+	if tall >= low:
+		_fail("check 12b: the %.2f m guard does not clear a %.2f m storey" % [tall, low])
+	print("guard capsule: %.2f m wide through %.2f m doors, %.2f m tall under %.2f m ceilings, refused by the %.2f m crawl" % [
+		diameter, door, tall, low, TowerInterior.DOSSIER_CRAWL_CLEAR])
+	probe.free()
+	Sentinel.done("guard_capsule_fits_the_doors")
+
+
+func _visual_height(body: Node3D) -> float:
+	## Top of the highest drawn mesh under `body`, in body space — the number a
+	## lintel or a ceiling actually meets. Walks every MeshInstance3D (the hunter
+	## exports welded, but the mesh count is the exporter's business, not this
+	## check's) through its global transform, so nesting never silently drops a
+	## part. 0 when nothing is drawn at all.
+	var lo := Vector3(INF, INF, INF)
+	var hi := Vector3(-INF, -INF, -INF)
+	var stack: Array[Node] = [body]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		for c in n.get_children():
+			stack.append(c)
+		var mi := n as MeshInstance3D
+		if mi == null or mi.mesh == null:
+			continue
+		var box := mi.get_global_transform() * mi.get_aabb()
+		lo.x = minf(lo.x, box.position.x)
+		lo.y = minf(lo.y, box.position.y)
+		lo.z = minf(lo.z, box.position.z)
+		hi.x = maxf(hi.x, box.end.x)
+		hi.y = maxf(hi.y, box.end.y)
+		hi.z = maxf(hi.z, box.end.z)
+	if lo.x >= INF:
+		return 0.0
+	return hi.y - lo.y
 
 
 func _standable(x: float, z: float, foot_y: float) -> bool:
