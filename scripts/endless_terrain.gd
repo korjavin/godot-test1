@@ -9628,6 +9628,26 @@ func is_river_at(world_pos: Vector3) -> bool:
 	return absf(_biome_noise(world_pos.x, world_pos.z) - RIVER_LEVEL) < RIVER_HALF_WIDTH
 
 
+func river_field_at(world_x: float, world_z: float) -> float:
+	"""
+	The RAW signed river field: _biome_noise minus RIVER_LEVEL, so the river's
+	centreline is the ZERO contour and the banks sit at +/- RIVER_HALF_WIDTH.
+
+	@param world_x, world_z: World-space point (metres).
+	@return: Signed distance-ish of the field from the river level. Negative on
+	         one bank, positive on the other, zero mid-channel.
+
+	Pure, allocation-free, one noise evaluation — the same cost shape as the two
+	readouts beside it, for the minimap's contour tracer (bead godot-test1-06o.1):
+	marching squares needs the FIELD, not the boolean, because a river is ~8 m
+	wide against a ~12 px map cell and sampling the boolean only paints confetti
+	along a line that is not the line. Deliberately the RAW field: no tower-disc
+	and no Budapest override — those are readout policy in is_river_at(), while a
+	tracer needs the unmasked number (it masks the disc itself, sample by sample).
+	"""
+	return _biome_noise(world_x, world_z) - RIVER_LEVEL
+
+
 func in_budapest(world_x: float, world_z: float) -> bool:
 	"""
 	Is this world XZ inside the authored Budapest rect?
