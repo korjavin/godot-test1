@@ -482,6 +482,13 @@ var _terrain_count: int = 0
 var _river_points: PackedVector2Array = PackedVector2Array()
 var _river_count: int = 0
 var _river_field: PackedFloat32Array = PackedFloat32Array()
+## Which field each lattice sample came from: 1 city (Danube banks in metres),
+## 0 open field (dimensionless noise offset). A quad mixing the two is refused,
+## never marched — marching across the seam paints a dead-straight fake river
+## along the city wall, so each line ends at the wall instead, the way the
+## tower disc's NAN ends it at the grounds. Pre-sized with the lattice so the
+## tick allocates nothing.
+var _river_city: PackedByteArray = PackedByteArray()
 ## Set on the first tick that samples the river layer, for the one-line cost
 ## print the rivers bead asks for (field evaluations per tick).
 var _river_logged: bool = false
@@ -604,6 +611,7 @@ func _ready() -> void:
 	# terrain-grid cell. Both sized once, for the _terrain_points reason.
 	_river_points.resize(MAX_RIVER_SEGMENTS * 2)
 	_river_field.resize(TERRAIN_GRID * TERRAIN_GRID)
+	_river_city.resize(TERRAIN_GRID * TERRAIN_GRID)
 	_build_zoom_buttons()
 
 
@@ -902,12 +910,16 @@ func _gather_rivers() -> void:
 	INSIDE BUDAPEST the noise field is not the river — the city overrides it
 	with the authored Danube (see is_river_at) — so samples in the rect march
 	`danube_distance - DANUBE_HALF_WIDTH` instead: the SAME zero march draws the
-	Danube's banks. Dry-rect cells (bridge decks, Margaret Island) are
-	deliberately NOT cut out of the contour: they are about wading, not about
-	where the water's edge sits, and a bank that stopped at every bridge would
-	be the confetti failure again. Samples inside the tower's dry disc are
-	dropped (NAN), the way is_river_at() and the shader drop the band there —
-	the line ends at the grounds' edge instead of crossing them.
+	Danube's banks. The two fields never share a quad: a per-sample city bit
+	(`_river_city`) refuses mixed quads, because the two values are
+	incommensurable — a dimensionless offset vs metres — and marching across
+	the seam paints a dead-straight fake river along the city wall. Each line
+	ends at the wall instead. Dry-rect cells (bridge decks, Margaret Island)
+	are deliberately NOT cut out of the contour: they are about wading, not
+	about where the water's edge sits, and a bank that stopped at every bridge
+	would be the confetti failure again. Samples inside the tower's dry disc
+	are dropped (NAN), the way is_river_at() and the shader drop the band
+	there — the line ends at the grounds' edge instead of crossing them.
 
 	No terrain with `river_field_at()` (or no terrain at all) means no river
 	layer — the usual has_method() degrade, never an error."""
@@ -941,10 +953,12 @@ func _gather_rivers() -> void:
 				_river_field[k] = NAN
 				continue
 			var wx := _player_pos.x + (px - MAP_CENTER.x) * metres_per_px
+			var in_city := BudapestPlan.contains(wx, wz)
+			_river_city[k] = 1 if in_city else 0
 			if has_tower and Vector2(wx - site.x, wz - site.z).length() <= tower_r:
 				_river_field[k] = NAN
 				continue
-			if BudapestPlan.contains(wx, wz):
+			if in_city:
 				_river_field[k] = BudapestPlan.danube_distance(wx, wz) - BudapestPlan.DANUBE_HALF_WIDTH
 			else:
 				_river_field[k] = _terrain.river_field_at(wx, wz)
@@ -959,12 +973,19 @@ func _gather_rivers() -> void:
 		for i in range(TERRAIN_GRID - 1):
 			var ax := origin.x + (float(i) + 0.5) * TERRAIN_CELL
 			var bx := ax + TERRAIN_CELL
+			# Two fields, one quad is not marchable: the city bit must agree on
+			# all four corners (see _river_city) — the line ends at the wall.
+			var ja := j * TERRAIN_GRID + i
+			if _river_city[ja] != _river_city[ja + 1] \
+					or _river_city[ja] != _river_city[ja + TERRAIN_GRID] \
+					or _river_city[ja] != _river_city[ja + TERRAIN_GRID + 1]:
+				continue
 			# Corners: a top-left, b top-right, c bottom-left, d bottom-right
 			# (j+1 is +Z, which is screen DOWN — north-up, like every layer).
-			var a := _river_field[j * TERRAIN_GRID + i]
-			var b := _river_field[j * TERRAIN_GRID + i + 1]
-			var c := _river_field[(j + 1) * TERRAIN_GRID + i]
-			var d := _river_field[(j + 1) * TERRAIN_GRID + i + 1]
+			var a := _river_field[ja]
+			var b := _river_field[ja + 1]
+			var c := _river_field[ja + TERRAIN_GRID]
+			var d := _river_field[ja + TERRAIN_GRID + 1]
 			# Edge crossings in cyclic order: top, right, bottom, left. INF
 			# means "no crossing on this edge" — fixed locals, no per-quad
 			# allocation on the tick.
