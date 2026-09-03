@@ -519,11 +519,9 @@ func play_hunter_grab() -> void:
 
 func play_car_horn(distance: float = 0.0) -> void:
 	## Car horn — the traffic yield's "hey, move". Attenuates by distance so 60
-	## cars at 50 m is not a fire alarm; skips entirely beyond 55 m (see
-	## HONK_AUDIBLE_RADIUS in traffic_manager). Respects the browser gate like
-	## every other play_*.
-	if distance > 55.0:
-		return
+	## cars at 50 m is not a fire alarm. The audibility skip lives in
+	## TrafficManager.HONK_AUDIBLE_RADIUS (one spelling per review); this just
+	## attenuates.
 	# Attenuate ~ -0.18 dB per metre beyond 5 m, clamped.
 	var vol := CAR_HORN_VOLUME_DB
 	if distance > 5.0:

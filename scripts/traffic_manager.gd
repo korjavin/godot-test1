@@ -138,10 +138,7 @@ static func _get_car_mesh() -> ArrayMesh:
 		return _shared_mesh
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	# Chassis — feet at y=0. Box from y=0..0.55 (center 0.275, height 0.55)
-	var body_col := Color(0.82, 0.82, 0.82)  # neutral, tinted by instance colour via vertex? actually per-instance
-	# We'll bake a neutral body; per-instance colour tints via MultiMesh instance color (modulates albedo via vertex colour path? Use instance colour)
-	# Keep vertex neutral so instance colour dominates.
+	var body_col := Color(0.82, 0.82, 0.82)
 	var body_dark := Color(0.18, 0.18, 0.20)
 	var glass := Color(0.55, 0.68, 0.78, 0.88)
 	var wheel_col := Color(0.08, 0.08, 0.09)
@@ -318,20 +315,20 @@ func _distance_to_block_ahead(car: Dictionary, player_pos: Vector3) -> float:
 	var h: Vector2 = car["heading_dir"]
 	# Check player first
 	var p_dist := INF
-	if player_pos != Vector3.ZERO or true:
-		var to_p := Vector2(player_pos.x - wpos.x, player_pos.z - wpos.z)
-		var fwd := to_p.dot(h)
-		if fwd > 0.0 and fwd < YIELD_DISTANCE + 2.0:
-			# perp distance
-			var perp := Vector2(-h.y, h.x)
-			var lat := absf(to_p.dot(perp))
-			if lat <= LATERAL_TOLERANCE:
-				p_dist = fwd
-	# Check cars ahead
+	var to_p := Vector2(player_pos.x - wpos.x, player_pos.z - wpos.z)
+	var fwd := to_p.dot(h)
+	if fwd > 0.0 and fwd < YIELD_DISTANCE + 2.0:
+		var perp := Vector2(-h.y, h.x)
+		var lat := absf(to_p.dot(perp))
+		if lat <= LATERAL_TOLERANCE:
+			p_dist = fwd
+	# Check cars ahead — index loop to avoid Dictionary deep-compare (==) vs identity
 	var c_dist := INF
-	for other: Dictionary in _cars:
-		if other == car:
+	var car_idx := _cars.find(car)
+	for j in _cars.size():
+		if j == car_idx:
 			continue
+		var other: Dictionary = _cars[j]
 		if not other["active"]:
 			continue
 		var ow: Vector3 = _car_world_pos(other)
@@ -360,17 +357,7 @@ func _try_honk(car: Dictionary, player_pos: Vector3) -> void:
 	car["honk_count"] = int(car["honk_count"]) + 1
 	var sm := get_tree().get_first_node_in_group("sound_manager")
 	if sm != null and sm.has_method("play_car_horn"):
-		# Pass distance so sound can attenuate (optional).
-		if sm.has_method("play_car_horn"):
-			# Try distance param; fall back to no-arg.
-			var args_ok := false
-			# GDScript reflection: call with distance if the method expects it; we try both.
-			# Use callv to avoid errors if signature mismatches.
-			if sm.get_method_list().any(func(m): return m["name"] == "play_car_horn"):
-				# Inspect arg count quickly by calling with distance and catching
-				sm.call("play_car_horn", d)
-			else:
-				sm.call("play_car_horn")
+		sm.play_car_horn(d)
 
 # ============================================================================
 # SPAWN / RECYCLE
@@ -415,55 +402,54 @@ func _find_spawn_segment_near(player_pos: Vector3) -> Dictionary:
 		return {"pos": base, "heading": heading}
 	return {}
 
+func _assign_car_from_segment(car: Dictionary, seg: Dictionary) -> void:
+	## Single home of the 7-line spawn/recycle assignment (review nit: was copy-pasted 3×).
+	car["pos"] = seg["pos"]
+	car["heading_dir"] = seg["heading"]
+	var h: Vector2 = seg["heading"]
+	car["facing_yaw"] = atan2(-h.x, -h.y)
+	car["cruise_speed"] = _rng.randf_range(CRUISE_MIN, CRUISE_MAX)
+	car["speed"] = car["cruise_speed"] * 0.9
+	car["color"] = CAR_PALETTE[_rng.randi() % CAR_PALETTE.size()]
+	car["blocked_time"] = 0.0
+	car["honk_cooldown"] = _rng.randf_range(0.0, 1.0)
+	car["honk_count"] = 0
+	car["active"] = true
+
 func _update_traffic_spawns(player_pos: Vector3) -> void:
+	# Recycle out of sight: far cars always, near off-carriageway cars U-turn instead of popping.
+	const VISIBLE_POP_GUARD: float = 90.0
 	for car: Dictionary in _cars:
 		if not car["active"]:
 			var seg := _find_spawn_segment_near(player_pos)
 			if seg.is_empty():
 				break
-			car["pos"] = seg["pos"]
-			car["heading_dir"] = seg["heading"]
-			var h: Vector2 = seg["heading"]
-			car["facing_yaw"] = atan2(-h.x, -h.y)
-			car["cruise_speed"] = _rng.randf_range(CRUISE_MIN, CRUISE_MAX)
-			car["speed"] = car["cruise_speed"] * 0.9
-			car["color"] = CAR_PALETTE[_rng.randi() % CAR_PALETTE.size()]
-			car["blocked_time"] = 0.0
-			car["honk_cooldown"] = _rng.randf_range(0.0, 1.0)
-			car["honk_count"] = 0
-			car["active"] = true
+			_assign_car_from_segment(car, seg)
 		else:
 			var wpos: Vector3 = _car_world_pos(car)
 			var flat_dist := Vector2(wpos.x - player_pos.x, wpos.z - player_pos.z).length()
-			if flat_dist > DESPAWN_RADIUS or not is_traffic_walkable(wpos.x, wpos.z):
-				var seg := _find_spawn_segment_near(player_pos)
-				if not seg.is_empty():
-					car["pos"] = seg["pos"]
-					car["heading_dir"] = seg["heading"]
-					var h: Vector2 = seg["heading"]
-					car["facing_yaw"] = atan2(-h.x, -h.y)
-					car["cruise_speed"] = _rng.randf_range(CRUISE_MIN, CRUISE_MAX)
-					car["speed"] = car["cruise_speed"] * 0.9
-					car["color"] = CAR_PALETTE[_rng.randi() % CAR_PALETTE.size()]
+			var walkable := is_traffic_walkable(wpos.x, wpos.z)
+			if flat_dist > DESPAWN_RADIUS or not walkable:
+				if not walkable and flat_dist <= VISIBLE_POP_GUARD:
+					# Would pop in plain view — U-turn (not junction turning) instead of vanishing.
+					var h: Vector2 = car["heading_dir"]
+					var rev := Vector2(-h.x, -h.y)
+					car["heading_dir"] = rev
+					car["facing_yaw"] = atan2(-rev.x, -rev.y)
+					# Nudge one step back onto walkable side so next tick is clean
+					car["pos"] = car["pos"] + Vector3(rev.x, 0, rev.y) * 1.0
 					car["blocked_time"] = 0.0
-					car["honk_cooldown"] = _rng.randf_range(0.0, 1.0)
-					car["honk_count"] = 0
 				else:
-					car["active"] = false
+					var seg := _find_spawn_segment_near(player_pos)
+					if not seg.is_empty():
+						_assign_car_from_segment(car, seg)
+					else:
+						car["active"] = false
 			elif car["blocked_time"] > STUCK_RECYCLE_TIME:
 				# Permanently blocked — recycle out of sight, never drive through.
 				var seg := _find_spawn_segment_near(player_pos)
 				if not seg.is_empty():
-					car["pos"] = seg["pos"]
-					car["heading_dir"] = seg["heading"]
-					var h: Vector2 = seg["heading"]
-					car["facing_yaw"] = atan2(-h.x, -h.y)
-					car["cruise_speed"] = _rng.randf_range(CRUISE_MIN, CRUISE_MAX)
-					car["speed"] = car["cruise_speed"] * 0.9
-					car["color"] = CAR_PALETTE[_rng.randi() % CAR_PALETTE.size()]
-					car["blocked_time"] = 0.0
-					car["honk_cooldown"] = _rng.randf_range(0.0, 1.0)
-					car["honk_count"] = 0
+					_assign_car_from_segment(car, seg)
 				else:
 					car["active"] = false
 
@@ -490,7 +476,7 @@ func _update_cars(delta: float, player_pos: Vector3) -> void:
 			next = move_toward(cur, target, ACCELERATION * delta)
 		car["speed"] = next
 
-		var is_blocked: bool = (block_dist < YIELD_DISTANCE and target == 0.0 and next < 0.25)
+		var is_blocked: bool = (block_dist < YIELD_DISTANCE and next < 0.25)
 		if is_blocked:
 			car["blocked_time"] = float(car["blocked_time"]) + delta
 			car["honk_cooldown"] = maxf(0.0, float(car["honk_cooldown"]) - delta)
