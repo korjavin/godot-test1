@@ -3164,7 +3164,14 @@ var _shared_ground_mesh: PlaneMesh
 ## create_box pre-converts each instance colour with `srgb_to_linear()` before storing
 ## it, so the per-instance colour is already linear and matches what the OLD
 ## `albedo_color` (sRGB→linear) path produced. See the COLOUR SPACE note in create_box.
-var _shared_block_material: StandardMaterial3D
+var _shared_block_material: ShaderMaterial
+
+## The world block shader — style direction A's top-lit gradient (see the file's
+## own header for the whole argument). PRELOADED rather than `load()`ed on purpose:
+## a missing or renamed shader is then a PARSE error in this script, which every
+## self-check that touches endless_terrain.gd already fails on, instead of a null
+## material and a silently white world at runtime.
+const WORLD_BLOCK_SHADER: Shader = preload("res://assets/shaders/world_block.gdshader")
 
 ## Lazily-created shared material for artifact glow accents (rune strips, eyes,
 ## missing keystones — see the ARTIFACTS section). ONE material shared by every
@@ -3181,6 +3188,14 @@ var _shared_camp_ember_material: StandardMaterial3D
 ## per instance, we use one mid-range value for all blocks. (We still CONSUME the
 ## same RNG call in create_box so the deterministic world layout is unchanged.)
 const SHARED_BLOCK_ROUGHNESS: float = 0.85
+
+## Style direction A's ONE tuning number: how dark the BOTTOM of every box gets, as
+## a fraction of its own colour, fading to 1.0 (full colour) at its top. Handed to
+## world_block.gdshader's `bottom_shade` uniform by _get_shared_block_material.
+## Setting it to 1.0 restores the pre-style flat look exactly — which is the honest
+## way to A/B this, and the reason the gradient's floor is a named constant rather
+## than a literal in the shader.
+const BLOCK_BOTTOM_SHADE: float = 0.78
 
 ## Curated block colour ramps (Task 8 of the rendering pass). The old code rolled
 ## each colour channel independently, which gave muddy, uncoordinated blocks. Now
@@ -3223,19 +3238,27 @@ func _get_shared_ground_mesh() -> PlaneMesh:
 		_shared_ground_mesh.material = terrain_material
 	return _shared_ground_mesh
 
-func _get_shared_block_material() -> StandardMaterial3D:
+func _get_shared_block_material() -> ShaderMaterial:
 	"""
 	Returns the shared block material used by every block MultiMesh, creating it on
-	first use. `vertex_color_use_as_albedo = true` makes each MultiMesh instance's
-	per-instance Color show up as that block's albedo, so one material can paint all
-	the earthy browns/grays/mossy greens.
+	first use. It is WORLD_BLOCK_SHADER, style direction A's top-lit gradient, and it
+	does what the StandardMaterial3D before it did — the per-instance MultiMesh Color
+	IS the albedo (that is what paints all the earthy browns/greys/mossy greens off
+	one material), at SHARED_BLOCK_ROUGHNESS — plus a per-box vertical gradient
+	darkening each box toward its own foot. Read the shader's header for why that
+	gradient costs no per-instance data and no change to the MultiMesh layout.
+
+	STILL ONE MATERIAL FOR THE WHOLE WORLD: the lazy singleton is unchanged, so the
+	batching story ("one MultiMesh + one material per chunk") is exactly what it was.
 	"""
 	if _shared_block_material == null:
-		_shared_block_material = StandardMaterial3D.new()
-		# THE key line: take the per-instance vertex colour and use it as albedo.
-		_shared_block_material.vertex_color_use_as_albedo = true
-		# Single representative roughness (see SHARED_BLOCK_ROUGHNESS note above).
-		_shared_block_material.roughness = SHARED_BLOCK_ROUGHNESS
+		_shared_block_material = ShaderMaterial.new()
+		_shared_block_material.shader = WORLD_BLOCK_SHADER
+		# Single representative roughness (see SHARED_BLOCK_ROUGHNESS note above) —
+		# the same constant, now handed to the shader instead of to a
+		# StandardMaterial3D property.
+		_shared_block_material.set_shader_parameter("block_roughness", SHARED_BLOCK_ROUGHNESS)
+		_shared_block_material.set_shader_parameter("bottom_shade", BLOCK_BOTTOM_SHADE)
 	return _shared_block_material
 
 func _get_artifact_glow_material() -> StandardMaterial3D:
