@@ -2559,6 +2559,18 @@ func _broadcast_seed_if_master() -> void:
 		_lobby.send_signal_to("", {"mp": "seed", "seed": _room_seed})
 
 
+static func _should_noop_on_seed(adopted_seed: int, current_seed: int) -> bool:
+	"""
+	Pure seed-equality guard for the host no-op case (bead godot-test1-ank).
+
+	Adopting a seed already ours changes nothing — no new_run, no
+	reset_position, no explored_mask wipe. Guard on equality, not on
+	"am I the master", so a peer that happens to hold same seed is also spared.
+	Testable without a mesh: mp_selfcheck drives this directly.
+	"""
+	return adopted_seed == current_seed
+
+
 func _latch_seed_from_terrain() -> void:
 	"""
 	Adopt our own terrain's `run_seed` as the room's, if we have not got one yet.
@@ -2622,7 +2634,11 @@ func _receive_seed(payload: Dictionary) -> void:
 	# HOST never gets here, which is correct: its own run continues, seed and all.
 	var seed_player: Node = get_tree().get_first_node_in_group("player")
 	if seed_player != null and "explored_mask" in seed_player:
-		seed_player.set("explored_mask", 0)
+		# Don't wipe mask for same-seed rejoin (no world change) — guard here too
+		var _mask_terrain: Node = get_tree().get_first_node_in_group("terrain")
+		var _mask_cur: Variant = _mask_terrain.get("run_seed") if _mask_terrain != null else null
+		if _mask_cur == null or not _should_noop_on_seed(_room_seed, int(_mask_cur)):
+			seed_player.set("explored_mask", 0)
 
 	# A MID-RUN JOINER MUST NOT BE RESET TO THE ORIGIN. Once a snapshot is in
 	# hand the group's position is known, so hand straight over to the join
@@ -2633,6 +2649,17 @@ func _receive_seed(payload: Dictionary) -> void:
 	if _can_join_place():
 		_apply_join_placement()
 		return
+
+	# Guard for same-room rejoin (review item 4) — same seed is no-op, but
+	# placed BELOW the join hand-over so _apply_join_placement isn't skipped
+	# for the reachable rejoin case. Host never reaches here today (welcome
+	# latch at _on_lobby_joined sets _has_seed synchronously), but leave-and-
+	# rejoin does. See review.
+	var _rejoin_terrain: Node = get_tree().get_first_node_in_group("terrain")
+	if _rejoin_terrain != null:
+		var _cur2: Variant = _rejoin_terrain.get("run_seed")
+		if _cur2 != null and _should_noop_on_seed(_room_seed, int(_cur2)):
+			return
 
 	var terrain: Node = get_tree().get_first_node_in_group("terrain")
 	var player: Node = get_tree().get_first_node_in_group("player")
@@ -2654,6 +2681,25 @@ func _receive_seed(payload: Dictionary) -> void:
 		return
 
 	if terrain != null and terrain.has_method("new_run"):
+		var _master_pos: Variant = null
+		if _arriving() and _master != "" and _peer_state.has(_master):
+			var _md: Dictionary = _peer_state[_master] as Dictionary
+			if _md.has("pos") and _md["pos"] is Vector3:
+				_master_pos = _md["pos"] as Vector3
+		if _master_pos != null:
+			var _master_anchor: Vector3 = _master_pos as Vector3
+			terrain.new_run(_room_seed, terrain.world_to_chunk(_master_anchor))
+			if terrain.has_method("build_ring_now"):
+				terrain.build_ring_now(terrain.world_to_chunk(_master_anchor))
+			await get_tree().physics_frame
+			if _state != State.IN_ROOM:
+				return
+			if player != null:
+				if player.has_method("join_at"):
+					player.join_at(_master_anchor)
+				elif "global_position" in player:
+					player.global_position = Vector3(_master_anchor.x, 2.0, _master_anchor.z)
+			return
 		terrain.new_run(_room_seed)
 
 	if player != null and player.has_method("reset_position"):
