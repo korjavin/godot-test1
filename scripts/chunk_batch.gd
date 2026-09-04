@@ -64,6 +64,45 @@ extends RefCounted
 ## transforms carry the per-axis scale, so this single cube becomes every block.
 static var _shared_unit_box_mesh: BoxMesh
 
+## WHICH SHAPE a batch entry draws (bead godot-test1-y1o.1, epic y1o "get rid of
+## blocks"). Before this the world had exactly one silhouette — the shared unit
+## cube — so a tree canopy, a boulder and a dune were all scaled boxes, which is
+## most of what reads as Minecraft.
+##
+## THE ONE RULE, and everything downstream rests on it: **every unit mesh fits
+## the UNIT CUBE exactly**, so an entry's `dimensions` still means its BOUNDING
+## BOX whichever kind it is. That is what keeps prop_selfcheck's cube-corner
+## reach helpers and landmark_selfcheck's extent helpers VALID UPPER BOUNDS with
+## no edit — a sphere inscribed in the cube can only ever reach less far than the
+## cube's corner — and it is what keeps world_block.gdshader's gradient
+## meaningful, since its whole trick is that model-space `VERTEX.y` runs
+## -0.5 .. +0.5 over any instance. `batch_selfcheck` asserts it per kind.
+##
+## COLLISION IS UNCHANGED whatever the kind: create_box still hangs a BoxShape3D
+## of `dimensions` on the chunk's one body. It is conservative (a sphere's shape
+## is its bounding box) and the climbable-top contract wants a flat box top
+## anyway. So the RULE FOR CONSUMERS is: a non-CUBE kind is for `collide = false`
+## decoration and for NON-CLIMBABLE colliders — canopies, cacti, dome roofs.
+## Anything a player is meant to stand on stays CUBE.
+## `ponytail:` a tighter shape per kind (SphereShape3D, CylinderShape3D) is one
+## match arm in the collision half below — add it the day a consumer wants a
+## player to slide off a dome, not before.
+enum BoxKind { CUBE, SPHERE, CONE, CYLINDER }
+
+## Lazily-created shared unit meshes for the NON-CUBE kinds, keyed by BoxKind.
+## The cube keeps its own `static var` above because it is also handed out on its
+## own (the artifact accent instances it directly).
+static var _shared_unit_meshes: Dictionary = {}
+
+## Segment counts for the round kinds. THE FACETS ARE THE STYLE, not a budget
+## compromise: style direction A is faceted low-poly, and the x7k clouds already
+## shipped on the same reasoning. They are also what keeps a canopy affordable —
+## a sphere at 8 x 4 is 64 triangles against a cube's 12.
+const UNIT_SPHERE_RADIAL: int = 8
+const UNIT_SPHERE_RINGS: int = 4
+const UNIT_CYLINDER_RADIAL: int = 8
+const UNIT_CONE_RADIAL: int = 6
+
 ## Lazily-created shared material for the block MultiMesh. `vertex_color_use_as_albedo`
 ## lets one material show each instance's individual colour. Per-instance roughness
 ## is NOT supported by MultiMesh (only transform + color are per-instance), so we
@@ -137,6 +176,55 @@ static func _get_shared_unit_box_mesh() -> BoxMesh:
 		_shared_unit_box_mesh.size = Vector3.ONE  # unit cube; scaled per-instance
 	return _shared_unit_box_mesh
 
+static func unit_mesh(kind: int) -> Mesh:
+	"""
+	The shared unit mesh for one BoxKind, created on first use and then reused by
+	every chunk for the rest of the process — the cube's lazy singleton, one table
+	wider.
+
+	EVERY ONE OF THEM FITS THE UNIT CUBE, which is the enum's whole contract:
+	SphereMesh at radius 0.5 / height 1.0 and CylinderMesh at radius 0.5 /
+	height 1.0 are both centred on the origin and span -0.5 .. +0.5 on all three
+	axes, and a cone is that cylinder with `top_radius = 0`. An inscribed polygon
+	only ever sits INSIDE the circle it is inscribed in, so lowering a segment
+	count can never break the bound.
+
+	An UNKNOWN kind degrades to the cube rather than returning null: a null mesh
+	is an invisible chunk with no error anywhere, and this is the one place a bad
+	int from a future consumer can arrive.
+	"""
+	if kind == BoxKind.CUBE:
+		return _get_shared_unit_box_mesh()
+	if _shared_unit_meshes.has(kind):
+		return _shared_unit_meshes[kind]
+	var mesh: Mesh
+	match kind:
+		BoxKind.SPHERE:
+			var sphere := SphereMesh.new()
+			sphere.radius = 0.5
+			sphere.height = 1.0
+			sphere.radial_segments = UNIT_SPHERE_RADIAL
+			sphere.rings = UNIT_SPHERE_RINGS
+			mesh = sphere
+		BoxKind.CYLINDER:
+			var cyl := CylinderMesh.new()
+			cyl.top_radius = 0.5
+			cyl.bottom_radius = 0.5
+			cyl.height = 1.0
+			cyl.radial_segments = UNIT_CYLINDER_RADIAL
+			mesh = cyl
+		BoxKind.CONE:
+			var cone := CylinderMesh.new()
+			cone.top_radius = 0.0
+			cone.bottom_radius = 0.5
+			cone.height = 1.0
+			cone.radial_segments = UNIT_CONE_RADIAL
+			mesh = cone
+		_:
+			return _get_shared_unit_box_mesh()
+	_shared_unit_meshes[kind] = mesh
+	return mesh
+
 static func _get_shared_block_material() -> ShaderMaterial:
 	"""
 	Returns the shared block material used by every block MultiMesh, creating it on
@@ -171,7 +259,7 @@ static func create_block(center_pos: Vector3, size: float, yaw: float, rng: Rand
 	"""
 	create_box(center_pos, Vector3(size, size, size), yaw, rng, block_batch, block_body)
 
-static func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D, tilt: float = 0.0, color_override: Color = Color(0.0, 0.0, 0.0, 0.0), collide: bool = true) -> void:
+static func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D, tilt: float = 0.0, color_override: Color = Color(0.0, 0.0, 0.0, 0.0), collide: bool = true, kind: int = BoxKind.CUBE) -> void:
 	"""
 	Register one box for rendering AND register its physics collision shape. Used for
 	cube blocks and for the flat slabs that make up terraced mounds.
@@ -179,7 +267,7 @@ static func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng
 	VISUALS vs COLLISION are DECOUPLED (Tasks 4 + 5 of the perf plan):
 	- VISUALS (Task 4): this function no longer instances a MeshInstance3D +
 	  StandardMaterial3D per block. Instead it appends one
-	  { "transform": Transform3D, "color": Color } entry to `block_batch`. The caller
+	  { "transform": Transform3D, "color": Color, "kind": int } entry to `block_batch`. The caller
 	  (create_chunk) later turns the whole batch into ONE MultiMeshInstance3D, so all
 	  of a chunk's blocks draw in a single draw call instead of dozens (see this
 	  file's MultiMesh banner and _build_block_multimesh below). The blocks look EXACTLY
@@ -234,6 +322,13 @@ static func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng
 	                `tilt` and `color_override` this changes NO RNG behaviour: the
 	                colour and roughness draws above happen identically whatever
 	                `collide` is, so the deterministic world layout is untouched.
+	@param kind: OPTIONAL — WHICH SHARED UNIT MESH this entry draws (see the
+	             BoxKind banner up top for the unit-cube rule, the collision rule
+	             and the rule for consumers). Defaults to CUBE, so all 600-odd
+	             existing call sites are byte-for-byte what they were. Like every
+	             optional above it, it COSTS NO RNG DRAW — the colour and
+	             roughness draws are unchanged — so choosing a kind can never
+	             move a spawn.
 	"""
 	# ----- Pick the block colour from a curated ramp -----------------------------
 	# IMPORTANT (determinism): the chunk's world layout is seeded from this same RNG.
@@ -326,9 +421,16 @@ static func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng
 	# collision in lockstep. With the default `tilt == 0.0` the extra Basis is the
 	# identity, so this transform is bit-for-bit what the yaw-only code produced.
 	var rot := Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, tilt)
+	#
+	# `kind` IS ALWAYS WRITTEN, never written only when it is not CUBE. The entry
+	# is a UNIFORM SHAPE: budapest_selfcheck's determinism A/B and prop_selfcheck's
+	# purity check compare whole dicts (through var_to_bytes and `!=`), so a key
+	# that is present on some entries and absent on others is a difference between
+	# two runs that agree about every box.
 	block_batch.append({
 		"transform": Transform3D(rot.scaled_local(dimensions), center_pos),
 		"color": chosen_color.srgb_to_linear(),
+		"kind": kind,
 	})
 
 	# ----- Register the collision shape on the CHUNK'S shared body (COLLISION) ----
@@ -355,6 +457,9 @@ static func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng
 	if not collide:
 		return
 
+	# A BoxShape3D OF `dimensions` WHATEVER THE KIND — the entry's bounding box,
+	# which every unit mesh fits inside. See the BoxKind banner for why that is
+	# conservative rather than wrong, and the rule it puts on consumers.
 	var collision_shape := CollisionShape3D.new()
 	collision_shape.transform = Transform3D(rot, center_pos)
 
@@ -369,14 +474,29 @@ static func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng
 static func _build_block_multimesh(parent_chunk: MeshInstance3D, block_batch: Array,
 		cast_shadows: bool = true) -> void:
 	"""
-	Turn a chunk's whole batch of blocks into ONE MultiMeshInstance3D, so every block
-	in the chunk renders in a single draw call (instead of one draw call per block).
+	Turn a chunk's whole batch of blocks into ONE MultiMeshInstance3D PER MESH KIND
+	PRESENT, so every block in the chunk renders in one draw call per silhouette
+	(instead of one draw call per block).
 
-	@param parent_chunk: The chunk mesh — we parent the MultiMeshInstance3D to it so it
-	                    is freed automatically when the chunk unloads (same per-chunk
-	                    parenting rule everything else follows).
-	@param block_batch: The list of { "transform": Transform3D, "color": Color } entries
-	                    create_box appended while building this chunk's blocks.
+	ONE PER KIND *PRESENT* — never one per kind that exists. A MultiMesh holds ONE
+	mesh, so a batch carrying two silhouettes cannot be one MultiMesh; but a chunk
+	of nothing but cubes builds EXACTLY what it built before this bead — a single
+	node, still named "BlockMultiMesh" — because the bucket for every other kind is
+	empty and empty buckets emit nothing. Budapest never passes a kind, so the
+	city's one-batch invariant (budapest_selfcheck check 4) holds BY CONSTRUCTION;
+	that check asserts it anyway, and batch_selfcheck asserts the cube-only shape
+	directly.
+
+	THE PER-KIND SPLIT IS THE ONLY SANCTIONED MULTIPLICATION of a chunk's
+	MultiMeshInstance3Ds. Do not split the cube batch again — not for shadows (that
+	is an owner ruling, see CLAUDE.md), not for materials, not for anything.
+
+	@param parent_chunk: The chunk mesh — we parent the MultiMeshInstance3Ds to it so
+	                    they are freed automatically when the chunk unloads (same
+	                    per-chunk parenting rule everything else follows).
+	@param block_batch: The list of { "transform": Transform3D, "color": Color,
+	                    "kind": int } entries create_box appended while building
+	                    this chunk's blocks.
 	@param cast_shadows: OPTIONAL — false makes this chunk's batch a shadow RECEIVER
 	                    only. Defaults to true, so every pre-existing chunk in the
 	                    world is byte-for-byte what it was; the ONE caller that
@@ -395,25 +515,62 @@ static func _build_block_multimesh(parent_chunk: MeshInstance3D, block_batch: Ar
 	- The GPU then draws the unit cube `instance_count` times in essentially one draw
 	  call. Fewer draw calls = the big web/WebGL performance win this task is after.
 	"""
+	# Bucket by kind. An entry with no "kind" is read as a CUBE, which is what lets
+	# a self-check hand this function a hand-built batch without restating the key.
+	# A kind that is not in the enum is bucketed as a CUBE rather than into a
+	# bucket of its own: the loop below walks BoxKind.values(), so its own bucket
+	# would never be visited and the boxes would silently vanish from the world.
+	# unit_mesh() degrades the same way for the same reason.
+	var buckets: Dictionary = {}
+	for entry_v: Variant in block_batch:
+		var k: int = (entry_v as Dictionary).get("kind", BoxKind.CUBE)
+		if BoxKind.find_key(k) == null:
+			k = BoxKind.CUBE
+		if not buckets.has(k):
+			buckets[k] = []
+		(buckets[k] as Array).append(entry_v)
+
+	# ENUM ORDER, not dictionary insertion order, so the chunk's children land in
+	# the same sequence whatever order the spawners happened to emit their boxes in
+	# — the same reason everything else in this world engine is deterministic.
+	for k: int in BoxKind.values():
+		if not buckets.has(k):
+			continue
+		_emit_kind_multimesh(parent_chunk, buckets[k], k, cast_shadows)
+
+
+static func _emit_kind_multimesh(parent_chunk: MeshInstance3D, entries: Array,
+		kind: int, cast_shadows: bool) -> void:
+	"""
+	One kind's bucket becomes one MultiMeshInstance3D. Split out of
+	_build_block_multimesh so the loop above reads as the bucketing it is; the
+	body below is what that function has always done.
+	"""
 	# Build the MultiMesh and declare its per-instance data layout.
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D  # per-instance 3D transform
 	mm.use_colors = true                          # per-instance colour (earthy shade)
-	mm.mesh = _get_shared_unit_box_mesh()         # one unit cube shared by all chunks
-	mm.instance_count = block_batch.size()        # allocate the instance buffer
+	mm.mesh = unit_mesh(kind)                     # one unit mesh shared by all chunks
+	mm.instance_count = entries.size()            # allocate the instance buffer
 
 	# Fill in each instance's transform (size+yaw+position) and colour.
-	for i in block_batch.size():
-		var entry: Dictionary = block_batch[i]
+	for i in entries.size():
+		var entry: Dictionary = entries[i]
 		mm.set_instance_transform(i, entry["transform"])
 		mm.set_instance_color(i, entry["color"])
 
 	# Wrap the MultiMesh in a MultiMeshInstance3D so it lives in the scene tree.
+	# THE CUBE KEEPS THE NAME "BlockMultiMesh" — budapest_selfcheck and the A/B
+	# harnesses look the node up by it, and the cube is what every chunk that
+	# existed before this bead builds.
 	var mmi := MultiMeshInstance3D.new()
-	mmi.name = "BlockMultiMesh"
+	mmi.name = ("BlockMultiMesh" if kind == BoxKind.CUBE
+			else "BlockMultiMesh_%s" % BoxKind.find_key(kind))
 	mmi.multimesh = mm
-	# One shared material for every block; vertex_color_use_as_albedo lets the
-	# per-instance colours show through (see _get_shared_block_material).
+	# One shared material for every block WHATEVER ITS KIND; the shader's gradient
+	# is model-space, so it works unchanged on a sphere or a cone (see the unit-cube
+	# rule on BoxKind). vertex_color_use_as_albedo lets the per-instance colours
+	# show through (see _get_shared_block_material).
 	mmi.material_override = _get_shared_block_material()
 	if not cast_shadows:
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -544,6 +701,21 @@ static func split_city_boxes_on_chunk_grid(terrain: Node3D, chunk_center: Vector
 		var entry: Dictionary = entry_v
 		var t: Transform3D = entry["transform"]
 		var b := t.basis
+		# A CUT CONE IS NOT TWO CONES. Cutting works because a box's pieces are
+		# boxes; a sphere's are not spheres, so a non-CUBE entry is left whole and
+		# keeps the centre rule, exactly like a rotated box below.
+		#
+		# The COLLISION half further down cannot see this decision — it walks
+		# shapes, and a shape carries no kind — so a colliding non-cube box wider
+		# than a chunk would have its BoxShape3D cut while its visual stayed whole.
+		# That cannot happen today: this is the CITY path and Budapest is pure cube
+		# (budapest_selfcheck asserts a city chunk builds exactly one
+		# MultiMeshInstance3D), and no city builder passes a kind. `ponytail:` if a
+		# kind ever reaches a city builder, pair the two halves by carrying the kind
+		# onto the CollisionShape3D as metadata.
+		if int(entry.get("kind", BoxKind.CUBE)) != BoxKind.CUBE:
+			out.append(entry)
+			continue
 		if not _is_axis_aligned_basis(b):
 			out.append(entry)
 			continue
@@ -562,6 +734,11 @@ static func split_city_boxes_on_chunk_grid(terrain: Node3D, chunk_center: Vector
 					"transform": Transform3D(nb, Vector3(
 							xv.x - chunk_center.x, t.origin.y, zv.x - chunk_center.z)),
 					"color": entry["color"],
+					# Always CUBE by the early-out above, but CARRIED rather than
+					# hardcoded: the entry shape must stay uniform (see create_box's
+					# note on why a sometimes-present key is a difference between
+					# two runs that agree about every box).
+					"kind": entry.get("kind", BoxKind.CUBE),
 				})
 	batch.clear()
 	batch.append_array(out)

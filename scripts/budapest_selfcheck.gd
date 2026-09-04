@@ -717,6 +717,26 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 			# ...and then the chunk's ONE draw call, built exactly the way
 			# create_chunk builds it.
 			terrain._build_block_multimesh(parent, batch)
+			# BUDAPEST STAYS PURE CUBE (bead godot-test1-y1o.1). Since the
+			# mesh-kind slot landed, _build_block_multimesh emits one
+			# MultiMeshInstance3D per KIND PRESENT — so a city builder that reached
+			# for a dome or a spire would silently double this chunk's draw calls,
+			# and the pre-build sweep above cannot see it (it runs BEFORE the batch
+			# is built, which is exactly what makes it the right question for
+			# everything else). This is the after-the-fact half, and it is the only
+			# thing that can see it. Budapest is authored, its look is stone, and
+			# the box budgets beside it are written against ONE batch per chunk.
+			var mmis: int = 0
+			for child in parent.get_children():
+				if child is MultiMeshInstance3D:
+					mmis += 1
+			if mmis != 1:
+				_fail("city chunk %s built %d MultiMeshInstance3Ds, not 1 — a city "
+						% [chunk_pos, mmis]
+						+ "builder has passed a non-CUBE ChunkBatch.BoxKind. Budapest "
+						+ "stays pure cube: every per-kind batch is another draw call "
+						+ "over 1,631 city chunks, which is the cost check 4's "
+						+ "residency window exists to hold down")
 
 		body.free()
 		parent.free()

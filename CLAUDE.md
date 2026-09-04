@@ -42,6 +42,16 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 ./serve.sh                                          # serve a web build (WASM needs http://)
 
 # Self-checks — godot --headless --path . --script res://scripts/<name>.gd
+#   batch_selfcheck          the chunk batch's MESH-KIND slot: every BoxKind's
+#                            unit mesh inscribed in the unit cube (and spanning
+#                            its full height, or the shader gradient never
+#                            reaches full colour), one MultiMeshInstance3D per
+#                            kind PRESENT sharing one material and one shadow
+#                            flag (a cube-only batch still exactly one node
+#                            named BlockMultiMesh, measured over 225 real field
+#                            chunks), the city splitter carrying kind and
+#                            leaving a non-cube WHOLE, and collision staying a
+#                            BoxShape3D of dimensions for every kind
 #   fauna_selfcheck          herd steering + rider carry
 #   mp_selfcheck             multiplayer pure logic (decoders, ids, arithmetic)
 #   locale_selfcheck         en/de table + German fits its controls
@@ -217,6 +227,15 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            without touching the building (Continue reopens the
 #                            ending, New Game clears it), plus the vocabulary of
 #                            both retired models — hearts and the vetoed break-out
+#   tower_lift_selfcheck     the HQ's service lift (L): the key is free against the
+#                            input map AND every other panel's constant, every stop
+#                            is a built `entries` row with an `unlock` id landing on
+#                            a real `s` cell, and the menu driven on a REAL shell —
+#                            nothing offered before it is opened, the opened stop
+#                            listed, the ride landing on that storey's landing, an
+#                            unoffered floor refused, and the four refusals (room,
+#                            game over, mid-bite, away from the call point) each
+#                            with the refusal removed as its control
 #   tower_selfcheck          THE SOFTLOCK AUDIT: TOWER_GRAPH bound to the boxes
 #                            the interior really builds, the three design laws
 #                            (spines at floor rank, no item custody, mutations
@@ -318,6 +337,31 @@ Load-bearing rules:
   and `landmark_builders`' contract are what those two buy; every other caller (the city
   streamer, `budapest_selfcheck`) reaches `ChunkBatch` directly. **New batch machinery
   lands there, not in the world engine.**
+- **A BOX HAS A MESH KIND, AND EVERY UNIT MESH FITS THE UNIT CUBE** (bead
+  `godot-test1-y1o.1`, epic `y1o` "get rid of blocks"). The batch entry is
+  `{transform, color, kind}` — `ChunkBatch.BoxKind` (CUBE / SPHERE / CONE / CYLINDER), a
+  trailing optional on `create_box` defaulting to CUBE, **always written** so the entry
+  shape stays uniform (the whole-dict `var_to_bytes` signatures both `prop_selfcheck` and
+  `budapest_selfcheck` compare would otherwise differ between two runs that agree about
+  every box). Three rules, all pinned by `batch_selfcheck`:
+  **every unit mesh is inscribed in the unit cube** (`ChunkBatch.unit_mesh`, radius 0.5 /
+  height 1.0, lazy and shared like the cube), which is what keeps `dimensions` meaning the
+  entry's BOUNDING BOX for every kind — and therefore keeps `prop_selfcheck`'s cube-corner
+  reach helpers and `landmark_selfcheck`'s extent helpers valid upper bounds with no edit,
+  and `world_block.gdshader`'s model-space -0.5..+0.5 gradient meaningful;
+  **collision is unchanged** — still a `BoxShape3D` of `dimensions` whatever the kind, so a
+  non-CUBE kind is for `collide = false` decoration and NON-CLIMBABLE colliders only,
+  never for anything a player stands on; and
+  **`_build_block_multimesh` emits one `MultiMeshInstance3D` per kind PRESENT** — a
+  cube-only chunk (every chunk the world ships today) builds exactly the one node it always
+  did, still named `BlockMultiMesh`, and every bucket shares the one
+  `_get_shared_block_material` and the chunk's `cast_shadows` flag. That per-kind split is
+  the ONLY sanctioned multiplication of a chunk's MultiMeshInstance3Ds. **Budapest stays
+  pure cube** — no city builder passes a kind, and `budapest_selfcheck` asserts a built
+  city chunk has exactly one MultiMeshInstance3D, which is the after-the-fact half its
+  pre-build sweep cannot see. The city splitter **carries `kind` and leaves a non-CUBE
+  entry whole**: a cut cone is not two cones. Choosing a kind costs **no RNG draw**, so it
+  can never move a spawn.
 - **Chunk-parented, so unloading frees it.** Anything spawned per-chunk parents to the
   chunk MeshInstance3D or it leaks.
 - **Footprints are the shared currency.** Each thing built appends
@@ -783,10 +827,21 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   walked seventeen guards into a wall. The AI is handed points and knows nothing about
   `TowerPlans`. The leash is GROWN toward the waypoint being walked and handed back at
   the post; an acquisition takes the growth back around the body on the spot, so a
-  chase is still fought over a beat-sized patch. **What is deliberately not here yet,
-  carrying a `ponytail:` comment**: the storey-8
-  **lift stop** ships its trigger and its graph rows but no menu to choose it from — that is bead `godot-test1-3iy.7`. The entry is audited from anyway, so
-  the 15-subset property already holds starting at the labyrinth's foot.
+  chase is still fought over a beat-sized patch.
+- **THE SERVICE LIFT IS A MENU AND NO GEOMETRY, and a stop is a GRAPH ROW**
+  (`scripts/tower_lift_menu.gd`, bead `godot-test1-3iy.7`). `L` at the ground
+  floor's `s` landing lists the stops you have earned and a digit rides you to
+  that storey's landing. Nothing about it is authored here: a stop is an entry
+  some MUTATION grants (`TowerGraph.lift_stops()`), it is unlocked when its
+  row's `unlock` id is in the shell's monotone opened set — the maze stop's own
+  id, written by `LiftStopTrigger`; the checkpoint's, for the upper one — and it
+  lands on the storey whose plan claims its room as the `landing`. So a third
+  stop is a `TOWER_GRAPH` row and no code, and the ride needs no reachability
+  argument of its own: `tower_selfcheck` already walks all fifteen subsets FROM
+  every entry a mutation can grant. **It is ONE WAY (up, from the ground floor)
+  and draws no car**, both `ponytail:` in that file. The refusals are
+  `city_map_panel`'s — in a room, over game over, and mid-bite — and the pause
+  is `PauseHub`'s; `tower_lift_selfcheck` drives all of them on a real shell.
 
 `scripts/tower_graph.gd` is the tower's TOPOLOGY as one const dict of plain dicts —
 rooms, gated passages, entries, the mutation table, the enumerated scar states, the four
@@ -1209,14 +1264,15 @@ pair in `player_controller`, so the consts stay consts.
 **There is no walk-speed effect and there may never be one** — the catchable-walk contract
 above is the tightest margin in the game.
 
-Panels open on raw keycodes outside the input map (K, M, P, B, +/−, F3–F7): named actions are
+Panels open on raw keycodes outside the input map (K, M, P, B, L, +/−, F3–F7): named actions are
 for rebindable *gameplay* input, and a key that only opens a panel has nothing to rebind
 against. Every overlay pauses the tree, because the player reads gameplay through global
 polled `Input`, which a focused `Control` does not suppress.
 
 ### The pause is refcounted — `scripts/pause_hub.gd` is the only writer
-Seven scripts freeze the world (`pause_controller`, `help_overlay`, `skill_tree_ui`,
-`mp_ui`, `start_overlay`, `mobile_input`, `landmark_toast`). They used to own it
+Nine scripts freeze the world (`pause_controller`, `help_overlay`, `skill_tree_ui`,
+`mp_ui`, `start_overlay`, `mobile_input`, `landmark_toast`, `city_map_panel`,
+`tower_lift_menu`). They used to own it
 first-taker-wins, and the bug was **emergent**: an overlay opening over an already-paused
 tree claimed nothing, so whichever owner released first started the world under every
 overlay still on screen (P, `?`, P — help card over live crocodiles).
@@ -1408,8 +1464,21 @@ state machine and imports no network types, so tests drive it directly.
 
 ### Mesh (`scripts/mp_manager.gd` and friends)
 `lobby_client.gd` (socket + `/ice`), `mp_manager.gd` (mesh, seed, presence, heroes, shared
-totals, crocodile sync, claims), `remote_avatar.gd` (visual only), `mp_ui.gd`,
-`teammate_locator.gd`.
+totals, crocodile sync, claims), **`mp_codec.gd` (the pure codec)**, `remote_avatar.gd`
+(visual only), `mp_ui.gd`, `teammate_locator.gd`.
+
+**THE PARSERS ARE `MpCodec`, THE HANDLERS ARE `MpManager`, and that seam is the file
+boundary.** `scripts/mp_codec.gd` (`class_name MpCodec`, all `static`) holds every
+`decode_*` — `decode_presence`, `decode_state`, `decode_croc_sync`, `decode_captive`,
+`decode_room`, `decode_pad`, `decode_lmk` — plus `packet_kind`, the `_croc_flags` byte
+packing and the `CROC_FLAG_*` constants both ends of it read, the two `*_in_reach`
+proximity tests, `peer_int_id`, and the wire-format bounds (`MAX_STATE_IDS`,
+`MAX_HERO_NAME`, `MAX_CROC_SYNC`, `MAX_LANDMARK_CLAIM_PAD`, …) they are written against.
+It reads no instance state and knows about no room. Everything with a socket or state —
+the mesh, presence, the verbs, authority, rate limits, the hero pool — stays in
+`mp_manager.gd`. **A new verb is a parser in `mp_codec.gd` beside its siblings and a
+handler in `mp_manager.gd`**; a bound belongs with the parser that enforces it, so the
+encoder reads it back as `MpCodec.X` rather than re-typing the number.
 
 The sharpest rules, in rough order of how badly they bite:
 

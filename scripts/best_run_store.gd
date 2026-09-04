@@ -174,7 +174,7 @@ const CONFIG_WORLD_ARCHIVED: String = "archived"
 
 ## Hard bound on the stored tower set, at BOTH ends — what is written and what is
 ## accepted back. The same discipline (and the same reason) as
-## `mp_manager.MAX_STATE_IDS`: this exists to keep a corrupt or hand-edited file
+## `MpCodec.MAX_STATE_IDS`: this exists to keep a corrupt or hand-edited file
 ## from being walked without limit, not to police how much of the tower a player
 ## may open. The whole authored building is a dozen ids (`tower_graph.gd`), so
 ## 256 is two orders of headroom and still a bound.
