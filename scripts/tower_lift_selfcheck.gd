@@ -314,7 +314,9 @@ func _check_the_menu_on_a_real_shell() -> void:
 	# under a foreign pause. Driven through the SHIPPED handler rather than argued.
 	var before: int = int(player.current_character_index)
 	var other: int = (before + 1) % (PlayerScript.CHARACTERS as Array).size()
-	player._input(_digit_event(int((PlayerScript.HERO_KEYCODES[other] as Array)[0])))
+	# `_unhandled_input`, which is where `HERO_KEYCODES` is really read — `_input`
+	# handles R and the mouse and would let this pass while proving nothing.
+	player._unhandled_input(_digit_event(int((PlayerScript.HERO_KEYCODES[other] as Array)[0])))
 	if int(player.current_character_index) != before:
 		_fail("a digit pressed with the lift menu up also switched hero — the menu's "
 			+ "pause is supposed to be what stops that")
