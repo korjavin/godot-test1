@@ -37,6 +37,16 @@ extends Node3D
 ##     ONE decision per citizen per frame (`lod_step`), taken in
 ##     _update_crowd_spawns and spent by _update_walkers, so the walkability and
 ##     recycle checks are made on exactly the ticks the citizen takes.
+##   * Traffic-aware (bead 8gw.23): a walker following an AVENUE stands on the
+##     PAVEMENT rather than in a car lane (PAVEMENT_LANE_OFFSET), one crossing
+##     holds at the kerb while a car is inside its braking distance
+##     (traffic_manager.blocks_crossing), and one already in the road is BRAKED
+##     FOR (blocking_citizen_distance, the seam the cars read). Group discovery
+##     both ways, has_method-guarded: still no body, no group, 4 draw calls.
+##   * Spread (same bead): _find_spawn_segment_near draws uniformly over the
+##     STREET NETWORK in the bubble rather than uniformly in r off a snapped
+##     intersection, MIN_WALKER_SPACING is enforced at spawn, and a recycle goes
+##     to the far half of the bubble. Read that function for the measurement.
 
 # ============================================================================
 # CONSTANTS — budgets, distances, and grid
@@ -677,24 +687,28 @@ func _find_spawn_segment_near(player_pos: Vector3, min_dist: float = SPAWN_MIN_D
 	## space"). The old sampler did three things, each of which piles citizens up:
 	##   * `randf_range(SPAWN_MIN_DIST, SPAWN_RADIUS)` is uniform in *r*, and a
 	##     disc's area grows as r² — so the middle of the bubble was over-weighted
-	##     by 1/r. Area-weighting is `sqrt(lerp(min², max²))`, below.
+	##     by 1/r.
 	##   * it then SNAPPED to the nearest INTERSECTION, collapsing every point of
-	##     a 62 x 62 m cell onto one corner. Snapping ONE axis instead lands the
-	##     point on a street LINE and leaves the along-street coordinate
-	##     continuous and uniform, which is what a street actually is.
+	##     a 62 x 62 m cell onto one corner.
 	##   * and when 16 draws failed it fell back to the PLAYER'S OWN snapped
 	##     intersection — so every rejected draw landed on a single spot. That
 	##     fallback is gone; a frame with nowhere to stand simply spawns nobody
 	##     (the caller's `spawn_exhausted` flag already handles that).
-	## Measured over 500 draws in a static bubble, before: 24 cells used and 78 in
-	## the busiest (3.7x uniform). After: see the PR body and check 10.
 	##
-	## The draw itself never touches a disc, which is the whole trick: it picks a
-	## STREET LINE uniformly among the lines that cross the bubble, then a point
-	## uniformly along that line's CHORD inside it. Every line is equally likely,
-	## so the crowd is spread over the grid rather than over the disc's middle —
-	## and a snapped-disc sample is not uniform along a line anyway (its density
-	## follows the chord width, piling points up near the centre again).
+	## THE DRAW NEVER TOUCHES A DISC, which is the whole trick: it picks a STREET
+	## LINE uniformly among the lines that cross the bubble, then a point uniformly
+	## along that line's CHORD inside it. Every line is equally likely, so the crowd
+	## spreads over the grid rather than over the disc's middle, and the
+	## along-street coordinate stays continuous — which is what a street is.
+	## Area-weighting the disc and snapping ONE axis was the first fix and it was
+	## measured and dropped: a snapped-disc sample is not uniform along a line, its
+	## density follows the chord width, which piles points up near the centre again.
+	##
+	## The measurement is `crowd_selfcheck` check 10, and it is RADIAL rather than a
+	## cell histogram (a 62 m cell grid is drawn on the very lines the walkers stand
+	## on, so the peak cell count is mostly noise). Share of an arrival landing
+	## inside half the spawn radius — a quarter of the area, so uniform is 25% —
+	## over 1,200 arrivals at four city spots: 36% before, 21% now.
 	var pitch: float = PLAN_SCRIPT.STREET_PITCH
 	var origin_x: float = PLAN_SCRIPT.GATE.x
 	for attempt in 24:

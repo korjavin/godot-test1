@@ -673,6 +673,20 @@ func _check_solid_and_never_trapped() -> void:
 func _hold_citizen_on_hero(hero: Node3D, where: Vector3, frames: int) -> float:
 	## Stand the hero on `where` and plant a citizen on exactly the same spot for
 	## `frames` frames, through the shipped `_process`. Returns how far he moved.
+	##
+	## THE ANTI-TRAP LATCH IS CLEARED FIRST, and without this the (c) pair is a
+	## coin toss. A hero standing still IS a hero making no headway, so the pool's
+	## contact window softens the WHOLE pool a beat into either hold — and the
+	## mutant, which runs second, then inherits a pool that is already yielding
+	## and can never be solid on anybody, whatever its height is. It reported
+	## "moved him 0.00 m" and blamed the guard. Both holds therefore start from
+	## the same cleared latch, which is `_drive_into_probe`'s own kill switch used
+	## the other way round: there it is held at zero to REMOVE the yield, here it
+	## is zeroed once so neither hold begins inside somebody else's.
+	var pool: RefCounted = _manager.get("_proxies")
+	pool.set("_watching", false)
+	pool.set("_watch_time", 0.0)
+	pool.set("_soft", 0.0)
 	hero.global_position = where
 	hero.rotation = Vector3.ZERO
 	hero.velocity = Vector3.ZERO

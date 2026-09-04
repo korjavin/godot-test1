@@ -44,6 +44,13 @@ extends Node3D
 ##     FIRST branch of every tick a car actually takes: a car that did not step
 ##     cannot have driven into the Danube, and one that did was checked in the
 ##     same pass that let it.
+##   * CITIZENS TOO (bead 8gw.23): the crowd is another blocker in the same yield
+##     path — _distance_to_citizen_ahead reads crowd_manager's own seam and feeds
+##     target_speed_for_distance beside the hero's distance, so a walker on the
+##     carriageway is braked for rather than driven through. The other direction
+##     is blocks_crossing, which the crowd asks before stepping off a kerb. Both
+##     through the group with a has_method guard (a preload between these two
+##     managers would be a cycle), so either one alone behaves as it did before.
 ##   * ponytail: cars drive at y = 0 only and never on bridge decks. The deck is
 ##     a dry rect 12 m up (BudapestPlan.BRIDGE_DECK_TOP) that needs
 ##     bridge_surface_y — that is a second problem; a car at y = 0 under a bridge
