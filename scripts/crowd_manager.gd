@@ -63,10 +63,36 @@ const WALK_SWAY_AMOUNT: float = 0.035
 const WALK_PITCH_AMOUNT: float = 0.015
 
 ## Minimum distance between walkers in the same street lane (metres).
+## ENFORCED AT SPAWN since bead 8gw.23 (it used to be a number nobody read, and
+## two citizens could be placed on the same metre of street) — see
+## `_too_close_to_walker`.
 const MIN_WALKER_SPACING: float = 1.8
 
 ## Lateral lane offsets across the street corridor.
 const LANE_OFFSETS: Array[float] = [-3.2, -1.6, 0.0, 1.6, 3.2]
+
+## THE PAVEMENT LANE, for a citizen walking ALONG an avenue (bead 8gw.23).
+##
+## Every CITY_AVENUE_EVERY-th grid line carries traffic_manager's cars, in lanes
+## at ±LANE_OFFSET (2.4 m) either side of the centreline. A citizen in one of the
+## LANE_OFFSETS above is 0.8 m from a car lane — half a car's width (0.925) plus
+## half a citizen's (0.3) is 1.225, so it stands IN the traffic and is driven
+## through, every time, for the whole length of the avenue. That is the owner's
+## "crowds still go through cars" far more than any crossing is.
+##
+## So an avenue walker goes on the PAVEMENT instead: outside AVENUE_HALF_WIDTH
+## (8.0, the carriageway edge) and inside the block face, which BudapestPlan
+## insets by AVENUE_HALF_WIDTH + BLOCK_PAVEMENT (9.2). 8.6 puts a 0.6 m-wide
+## citizen at 8.3–8.9 — clear of both, and far outside the cars' own
+## LATERAL_TOLERANCE, so no car ever brakes for somebody on the kerb.
+const PAVEMENT_LANE_OFFSET: float = 8.6
+
+## Where a RECYCLED walker reappears: the far half of the bubble (bead 8gw.23).
+## A recycle used the same [SPAWN_MIN_DIST, SPAWN_RADIUS] draw as a first spawn,
+## so a citizen leaving at 145 m could pop back 15 m from the hero's nose — and
+## since the bubble is churning continuously as the player walks, that is a
+## second, steady pump concentrating the crowd around him.
+const RECYCLE_MIN_DIST: float = SPAWN_RADIUS * 0.6
 
 ## Hero archetype indices (order matches PlayerController.CHARACTERS).
 const ARCHETYPE_WINDMAN: int = 0
@@ -582,33 +608,154 @@ func _pick_next_waypoint(current_pos: Vector3, current_heading: Vector2) -> Vect
 	return valid_candidates[_rng.randi() % valid_candidates.size()]
 
 
-func _find_spawn_segment_near(player_pos: Vector3) -> Dictionary:
-	## Finds a valid street segment (start, end) within SPAWN_RADIUS of the player.
-	for attempt in 16:
-		var angle := _rng.randf_range(0.0, TAU)
-		var dist := _rng.randf_range(SPAWN_MIN_DIST, SPAWN_RADIUS)
-		var cand_x := player_pos.x + cos(angle) * dist
-		var cand_z := player_pos.z + sin(angle) * dist
-		var snapped := snap_to_grid(cand_x, cand_z)
+static func _next_intersection(base: Vector3, dir: Vector2) -> Vector3:
+	## The next 62 m grid intersection from `base` in `dir` — the walk target for
+	## a citizen standing PART WAY along a street rather than on a corner.
+	var pitch: float = PLAN_SCRIPT.STREET_PITCH
+	var origin_x: float = PLAN_SCRIPT.GATE.x
+	if absf(dir.x) > 0.5:
+		var k: float = (base.x - origin_x) / pitch
+		# The epsilon is what stops a citizen spawned exactly ON an intersection
+		# from targeting the intersection it is already standing on.
+		var nk: float = ceilf(k + 0.001) if dir.x > 0.0 else floorf(k - 0.001)
+		return Vector3(origin_x + nk * pitch, 0.0, base.z)
+	var m: float = base.z / pitch
+	var nm: float = ceilf(m + 0.001) if dir.y > 0.0 else floorf(m - 0.001)
+	return Vector3(base.x, 0.0, nm * pitch)
 
-		if is_walkable(snapped.x, snapped.y):
-			var corner := Vector3(snapped.x, 0.0, snapped.y)
-			var dir_choice := Vector2(1.0 if _rng.randf() < 0.5 else -1.0, 0.0)
-			if _rng.randf() < 0.5:
-				dir_choice = Vector2(0.0, 1.0 if _rng.randf() < 0.5 else -1.0)
-			var next_corner := _pick_next_waypoint(corner, dir_choice)
-			if next_corner != corner:
-				return {"start": corner, "end": next_corner, "dir": dir_choice}
 
-	# Fallback to snapped player pos
-	var p_snap := snap_to_grid(player_pos.x, player_pos.z)
-	if is_walkable(p_snap.x, p_snap.y):
-		var p_corner := Vector3(p_snap.x, 0.0, p_snap.y)
-		var p_next := _pick_next_waypoint(p_corner, Vector2(1.0, 0.0))
-		if p_next != p_corner:
-			return {"start": p_corner, "end": p_next, "dir": Vector2(1.0, 0.0)}
+static func walks_an_avenue(base: Vector3, heading: Vector2) -> bool:
+	## Is the street line this citizen is walking ALONG one of the avenues that
+	## carry traffic? (Not "is this point on a carriageway" — that is
+	## traffic_manager's question and includes every avenue a citizen CROSSES.)
+	## The line is the coordinate that does NOT change as it walks.
+	var ave_pitch: float = PLAN_SCRIPT.STREET_PITCH * float(PLAN_SCRIPT.CITY_AVENUE_EVERY)
+	if absf(heading.x) > absf(heading.y):
+		return absf(base.z - roundf(base.z / ave_pitch) * ave_pitch) < 1.0
+	var origin_x: float = PLAN_SCRIPT.GATE.x
+	var k := roundf((base.x - origin_x) / ave_pitch)
+	return absf(base.x - (origin_x + k * ave_pitch)) < 1.0
+
+
+func _pick_lane(base: Vector3, heading: Vector2) -> float:
+	## The lateral offset for a walker on this street line, re-asked EVERY TIME
+	## the heading changes — a lane picked at spawn and never revisited put a
+	## citizen who turned onto an avenue straight into the traffic.
+	var lane: float
+	if walks_an_avenue(base, heading):
+		lane = PAVEMENT_LANE_OFFSET if _rng.randf() < 0.5 else -PAVEMENT_LANE_OFFSET
+	else:
+		lane = LANE_OFFSETS[_rng.randi() % LANE_OFFSETS.size()]
+	var lat_dir := Vector3(-heading.y, 0.0, heading.x)
+	var test_pos: Vector3 = base + lat_dir * lane
+	if not is_walkable(test_pos.x, test_pos.z):
+		return 0.0
+	return lane
+
+
+func _too_close_to_walker(world_pos: Vector3) -> bool:
+	## MIN_WALKER_SPACING as a spawn clearance — traffic_manager's
+	## `_is_occupied_near` precedent, per-axis reject first so the whole test is
+	## a couple of compares for the citizens that cannot possibly be the answer.
+	for other: Dictionary in _citizens:
+		if not other["active"]:
+			continue
+		var obase: Vector3 = other["pos"]
+		if absf(obase.x - world_pos.x) > MIN_WALKER_SPACING + PAVEMENT_LANE_OFFSET \
+				or absf(obase.z - world_pos.z) > MIN_WALKER_SPACING + PAVEMENT_LANE_OFFSET:
+			continue
+		var ow: Vector3 = _citizen_world_pos(other)
+		if Vector2(ow.x - world_pos.x, ow.z - world_pos.z).length() < MIN_WALKER_SPACING:
+			return true
+	return false
+
+
+func _find_spawn_segment_near(player_pos: Vector3, min_dist: float = SPAWN_MIN_DIST) -> Dictionary:
+	## A point drawn UNIFORMLY OVER THE STREET NETWORK inside the bubble.
+	##
+	## THE BUG THIS REPLACES (bead 8gw.23, owner: "why are they all in one
+	## space"). The old sampler did three things, each of which piles citizens up:
+	##   * `randf_range(SPAWN_MIN_DIST, SPAWN_RADIUS)` is uniform in *r*, and a
+	##     disc's area grows as r² — so the middle of the bubble was over-weighted
+	##     by 1/r. Area-weighting is `sqrt(lerp(min², max²))`, below.
+	##   * it then SNAPPED to the nearest INTERSECTION, collapsing every point of
+	##     a 62 x 62 m cell onto one corner. Snapping ONE axis instead lands the
+	##     point on a street LINE and leaves the along-street coordinate
+	##     continuous and uniform, which is what a street actually is.
+	##   * and when 16 draws failed it fell back to the PLAYER'S OWN snapped
+	##     intersection — so every rejected draw landed on a single spot. That
+	##     fallback is gone; a frame with nowhere to stand simply spawns nobody
+	##     (the caller's `spawn_exhausted` flag already handles that).
+	## Measured over 500 draws in a static bubble, before: 24 cells used and 78 in
+	## the busiest (3.7x uniform). After: see the PR body and check 10.
+	##
+	## The draw itself never touches a disc, which is the whole trick: it picks a
+	## STREET LINE uniformly among the lines that cross the bubble, then a point
+	## uniformly along that line's CHORD inside it. Every line is equally likely,
+	## so the crowd is spread over the grid rather than over the disc's middle —
+	## and a snapped-disc sample is not uniform along a line anyway (its density
+	## follows the chord width, piling points up near the centre again).
+	var pitch: float = PLAN_SCRIPT.STREET_PITCH
+	var origin_x: float = PLAN_SCRIPT.GATE.x
+	for attempt in 24:
+		var base: Vector3
+		var dir_choice: Vector2
+		if _rng.randf() < 0.5:
+			# A line of constant Z, walked along X.
+			var m_lo := ceili((player_pos.z - SPAWN_RADIUS) / pitch)
+			var m_hi := floori((player_pos.z + SPAWN_RADIUS) / pitch)
+			if m_hi < m_lo:
+				continue
+			var line_z := float(m_lo + _rng.randi() % (m_hi - m_lo + 1)) * pitch
+			var half := sqrt(maxf(0.0, SPAWN_RADIUS * SPAWN_RADIUS
+					- (line_z - player_pos.z) * (line_z - player_pos.z)))
+			base = Vector3(player_pos.x + _rng.randf_range(-half, half), 0.0, line_z)
+			dir_choice = Vector2(1.0 if _rng.randf() < 0.5 else -1.0, 0.0)
+		else:
+			# A line of constant X, walked along Z.
+			var k_lo := ceili((player_pos.x - SPAWN_RADIUS - origin_x) / pitch)
+			var k_hi := floori((player_pos.x + SPAWN_RADIUS - origin_x) / pitch)
+			if k_hi < k_lo:
+				continue
+			var line_x := origin_x + float(k_lo + _rng.randi() % (k_hi - k_lo + 1)) * pitch
+			var half := sqrt(maxf(0.0, SPAWN_RADIUS * SPAWN_RADIUS
+					- (line_x - player_pos.x) * (line_x - player_pos.x)))
+			base = Vector3(line_x, 0.0, player_pos.z + _rng.randf_range(-half, half))
+			dir_choice = Vector2(0.0, 1.0 if _rng.randf() < 0.5 else -1.0)
+
+		# The near hole: never place a walker on top of the hero.
+		if Vector2(base.x - player_pos.x, base.z - player_pos.z).length() < min_dist:
+			continue
+
+		var target := _next_intersection(base, dir_choice)
+		if not is_walkable(base.x, base.z) or not is_walkable(target.x, target.z):
+			continue
+		if _too_close_to_walker(base):
+			continue
+		return {"start": base, "end": target, "dir": dir_choice}
 
 	return {}
+
+
+func _assign_citizen_from_segment(citizen: Dictionary, seg: Dictionary) -> void:
+	## The single home of the spawn/recycle assignment (it was copy-pasted twice,
+	## and the lane rule now has to be applied in both).
+	var start_pt: Vector3 = seg["start"]
+	var end_pt: Vector3 = seg["end"]
+	# `start` is ALREADY the uniform point along the street — the old sampler
+	# lerped because its start was an intersection, and lerping now would pull
+	# every draw back toward the corners this sampler exists to get away from.
+	citizen["pos"] = start_pt
+	citizen["target"] = end_pt
+	var heading: Vector2 = (seg["dir"] as Vector2).normalized()
+	citizen["heading_dir"] = heading
+	citizen["facing_yaw"] = atan2(-heading.x, -heading.y)
+	citizen["lane_offset"] = _pick_lane(start_pt, heading)
+	citizen["speed"] = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
+	citizen["walk_phase"] = _rng.randf_range(0.0, TAU)
+	citizen["pause_timer"] = 0.0
+	citizen["lod_debt"] = 0.0
+	citizen["active"] = true
 
 
 func _update_crowd_spawns(delta: float, player_pos: Vector3, planes: Array[Plane] = []) -> void:
@@ -637,27 +784,7 @@ func _update_crowd_spawns(delta: float, player_pos: Vector3, planes: Array[Plane
 				# No walkable street near the player: stop searching this frame.
 				spawn_exhausted = true
 				continue
-			var start_pt: Vector3 = seg["start"]
-			var end_pt: Vector3 = seg["end"]
-			var t_prog := _rng.randf_range(0.05, 0.95)
-			citizen["pos"] = start_pt.lerp(end_pt, t_prog)
-			citizen["target"] = end_pt
-			var delta_x: float = end_pt.x - start_pt.x
-			var delta_z: float = end_pt.z - start_pt.z
-			var heading := Vector2(delta_x, delta_z).normalized()
-			citizen["heading_dir"] = heading
-			citizen["facing_yaw"] = atan2(-delta_x, -delta_z)
-			var lane: float = LANE_OFFSETS[_rng.randi() % LANE_OFFSETS.size()]
-			var lat_dir := Vector3(-heading.y, 0.0, heading.x)
-			var test_pos: Vector3 = citizen["pos"] + lat_dir * lane
-			if not is_walkable(test_pos.x, test_pos.z):
-				lane = 0.0
-			citizen["lane_offset"] = lane
-			citizen["speed"] = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
-			citizen["walk_phase"] = _rng.randf_range(0.0, TAU)
-			citizen["pause_timer"] = 0.0
-			citizen["lod_debt"] = 0.0
-			citizen["active"] = true
+			_assign_citizen_from_segment(citizen, seg)
 		else:
 			var visible: bool = AmbienceLod.is_visible_at(planes, _citizen_world_pos(citizen))
 			citizen["lod_step"] = AmbienceLod.step_delta(citizen, delta, visible)
@@ -667,29 +794,11 @@ func _update_crowd_spawns(delta: float, player_pos: Vector3, planes: Array[Plane
 			var cpos: Vector3 = citizen["pos"]
 			var flat_dist := Vector2(cpos.x - player_pos.x, cpos.z - player_pos.z).length()
 			if flat_dist > DESPAWN_RADIUS or not is_walkable(cpos.x, cpos.z):
-				# Recycle closer to player
-				var seg := _find_spawn_segment_near(player_pos)
+				# Recycle to the FAR side of the bubble, never under the hero's
+				# nose — see RECYCLE_MIN_DIST.
+				var seg := _find_spawn_segment_near(player_pos, RECYCLE_MIN_DIST)
 				if not seg.is_empty():
-					var start_pt: Vector3 = seg["start"]
-					var end_pt: Vector3 = seg["end"]
-					var t_prog := _rng.randf_range(0.05, 0.95)
-					citizen["pos"] = start_pt.lerp(end_pt, t_prog)
-					citizen["target"] = end_pt
-					var delta_x: float = end_pt.x - start_pt.x
-					var delta_z: float = end_pt.z - start_pt.z
-					var heading := Vector2(delta_x, delta_z).normalized()
-					citizen["heading_dir"] = heading
-					citizen["facing_yaw"] = atan2(-delta_x, -delta_z)
-					var lane: float = LANE_OFFSETS[_rng.randi() % LANE_OFFSETS.size()]
-					var lat_dir := Vector3(-heading.y, 0.0, heading.x)
-					var test_pos: Vector3 = citizen["pos"] + lat_dir * lane
-					if not is_walkable(test_pos.x, test_pos.z):
-						lane = 0.0
-					citizen["lane_offset"] = lane
-					citizen["speed"] = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
-					citizen["walk_phase"] = _rng.randf_range(0.0, TAU)
-					citizen["pause_timer"] = 0.0
-					citizen["lod_debt"] = 0.0
+					_assign_citizen_from_segment(citizen, seg)
 				else:
 					citizen["active"] = false
 
@@ -704,6 +813,14 @@ func _update_walkers(delta: float, lod_gated: bool = false) -> void:
 	## spends the `lod_step` decided in `_update_crowd_spawns`: 0.0 means it is
 	## not its tick, so it is DRAWN WHERE IT STANDS and moves on its next one.
 	## Nothing is ever skipped out of the buffer — the crowd is never a hole.
+	# THE KERB RULE's seam (bead 8gw.23), resolved ONCE per call through the group
+	# — never a preload, which between these two managers would be a cycle, and
+	# never per citizen. Absent (a harness, a standalone scene) => nobody holds,
+	# which is byte-for-byte the behaviour before this bead.
+	var traffic: Node = get_tree().get_first_node_in_group("traffic") if is_inside_tree() else null
+	if traffic != null and not traffic.has_method("blocks_crossing"):
+		traffic = null
+
 	var counts := [0, 0, 0, 0]
 	var buffers: Array[PackedFloat32Array] = []
 	for k in ARCHETYPE_COUNT:
@@ -748,15 +865,32 @@ func _update_walkers(delta: float, lod_gated: bool = false) -> void:
 				var delta_z: float = next_target.z - pos.z
 				if Vector2(delta_x, delta_z).length_squared() > 0.01:
 					citizen["heading_dir"] = Vector2(delta_x, delta_z).normalized()
+				# The lane is re-asked on every turn: a citizen that walked off a
+				# side street onto an avenue keeping its old ±3.2 m lane would be
+				# standing in the traffic. See PAVEMENT_LANE_OFFSET.
+				citizen["lane_offset"] = _pick_lane(pos, citizen["heading_dir"])
 			else:
 				var move_dir := to_target / dist
-				pos += move_dir * step
-				citizen["walk_phase"] += step * STRIDE_FREQUENCY
-				is_moving = true
+				var next_pos := pos + move_dir * step
+				# THE KERB RULE: a citizen does not STEP ONTO a carriageway while a
+				# car is within its braking distance of the spot. It is asked of
+				# the step, not of the citizen — one already in the road keeps
+				# going and the car brakes for IT instead (traffic_manager's
+				# `_distance_to_citizen_ahead`), because freezing somebody
+				# mid-crossing is the one place to be run over.
+				var lane_dir := Vector3(-float(citizen["heading_dir"].y), 0.0,
+						float(citizen["heading_dir"].x)) * float(citizen["lane_offset"])
+				if traffic != null and traffic.blocks_crossing(
+						pos + lane_dir, next_pos + lane_dir, citizen["heading_dir"]):
+					pass  # wait at the kerb; asked again next tick
+				else:
+					pos = next_pos
+					citizen["walk_phase"] += step * STRIDE_FREQUENCY
+					is_moving = true
 
-				# Smoothly rotate facing yaw towards current heading
-				var target_yaw := atan2(-move_dir.x, -move_dir.z)
-				citizen["facing_yaw"] = rotate_toward(citizen["facing_yaw"], target_yaw, 5.0 * step_dt)
+					# Smoothly rotate facing yaw towards current heading
+					var target_yaw := atan2(-move_dir.x, -move_dir.z)
+					citizen["facing_yaw"] = rotate_toward(citizen["facing_yaw"], target_yaw, 5.0 * step_dt)
 
 		citizen["pos"] = pos
 
@@ -812,6 +946,36 @@ static func _citizen_world_pos(citizen: Dictionary) -> Vector3:
 	var base: Vector3 = citizen["pos"]
 	var h: Vector2 = citizen["heading_dir"]
 	return base + Vector3(-h.y, 0.0, h.x) * float(citizen["lane_offset"])
+
+
+func blocking_citizen_distance(from: Vector3, heading: Vector2,
+		max_fwd: float, lat_tol: float) -> float:
+	## THE TRAFFIC'S SEAM (bead 8gw.23): how far ahead of `from` along `heading`
+	## the nearest citizen stands, or INF. traffic_manager feeds this into the
+	## SHIPPED yield/brake path exactly as it feeds the hero's distance in, so a
+	## citizen on the carriageway is braked for rather than driven through.
+	##
+	## Like nearest_citizen_to this is a pure read of the walker array — no scene
+	## query, no group, no body. The per-axis reject is QUEUE_SCAN_RANGE's
+	## precedent and is strictly conservative: a citizen that can be the answer is
+	## within `max_fwd` along one axis and `lat_tol` across, both bounded by
+	## `max_fwd`, plus one lane offset of slack between base and world position.
+	var best := INF
+	var reach: float = max_fwd + PAVEMENT_LANE_OFFSET
+	for citizen: Dictionary in _citizens:
+		if not citizen["active"]:
+			continue
+		var base: Vector3 = citizen["pos"]
+		if absf(base.x - from.x) > reach or absf(base.z - from.z) > reach:
+			continue
+		var wpos: Vector3 = _citizen_world_pos(citizen)
+		var to_c := Vector2(wpos.x - from.x, wpos.z - from.z)
+		var fwd := to_c.dot(heading)
+		if fwd <= 0.0 or fwd >= max_fwd:
+			continue
+		if absf(to_c.dot(Vector2(-heading.y, heading.x))) <= lat_tol and fwd < best:
+			best = fwd
+	return best
 
 
 func nearest_citizen_to(pos: Vector3, max_dist: float = 40.0) -> Variant:

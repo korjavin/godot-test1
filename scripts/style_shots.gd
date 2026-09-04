@@ -19,6 +19,7 @@ const SETTLE_SECONDS: float = 9.0
 const YAW_SECONDS: float = 1.5
 
 var _out_dir: String = "user://shots"
+var _hidden_groups: PackedStringArray = PackedStringArray(["crowd", "traffic", "weather", "fauna"])
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -26,8 +27,15 @@ func _ready() -> void:
 	# is the monitor's, not the renderer's.
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	Engine.max_fps = 0
-	for a in OS.get_cmdline_user_args():
-		_out_dir = a
+	var args := OS.get_cmdline_user_args()
+	if args.size() > 0:
+		_out_dir = args[0]
+	# Second arg: which ambience groups to hide, comma-separated. The default is
+	# the y1o list (this tool exists to A/B the BLOCK material, and randomized
+	# ambience is noise against it) — but bead 8gw.23 is about the crowd and the
+	# traffic themselves, so it passes "weather,fauna" and keeps them on screen.
+	if args.size() > 1:
+		_hidden_groups = args[1].split(",", false)
 	DirAccess.make_dir_recursive_absolute(_out_dir)
 	call_deferred("_run")
 
@@ -55,7 +63,7 @@ func _run() -> void:
 	# extends Node and parents its cloud/rain/bird MultiMeshes to itself), so a
 	# `manager is Node3D` test silently skips the one system whose randomized
 	# clouds actually show up in the sky of every shot.
-	for g in ["crowd", "traffic", "weather", "fauna"]:
+	for g in _hidden_groups:
 		for amb in get_tree().get_nodes_in_group(g):
 			_hide_visuals(amb)
 

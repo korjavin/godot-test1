@@ -1547,6 +1547,50 @@ MultiMesh buffer, so there is no second nearest-N pass. Four rules:
   mesh" — plus a real `player.tscn` driven by the shipped movement into a planted
   instance, mutation-tested against an emptied pool.
 
+**CITIZENS AND CARS SEE EACH OTHER, AND NEITHER GAINED A BODY** (owner, bead
+`godot-test1-8gw.23`: *"crowds in budapest still go through cars, not good, fix"*).
+Both are MultiMesh transforms and the proxies are the hero's alone, so nothing physical
+was ever going to stop it. Three parts, all in the two managers, all pinned by
+`crowd_selfcheck` checks 10 and 11:
+
+- **A citizen walking ALONG an avenue is on the PAVEMENT** (`PAVEMENT_LANE_OFFSET`,
+  8.6 m — outside `AVENUE_HALF_WIDTH` and inside the block face at
+  `AVENUE_HALF_WIDTH + BLOCK_PAVEMENT`). The ordinary `LANE_OFFSETS` (±3.2) put a walker
+  0.8 m from a car lane, which is inside both boxes — that, and not the crossings, is
+  most of what the owner saw. The lane is **re-asked on every turn** (`_pick_lane`), or a
+  citizen that walked off a side street onto an avenue keeps a lane that is now traffic.
+- **The car brakes for a citizen on the carriageway through the SHIPPED yield path** —
+  `_distance_to_citizen_ahead` feeds `crowd_manager.blocking_citizen_distance` into
+  `target_speed_for_distance` beside the hero's own distance. It is deliberately its own
+  function and NOT a fourth clause in `_distance_to_block_ahead`, whose answer is pinned
+  byte-for-byte against an independent all-pairs oracle (`traffic_selfcheck` check 8).
+- **A citizen holds at the KERB rather than stepping in front of a car**
+  (`traffic_manager.blocks_crossing`), and **the distance is measured to the CROSSING
+  POINT, not to the walker** — a citizen at the kerb is 10 m to the side of the lane it
+  is about to enter, so a test on its next 4 cm step is false at every kerb and true only
+  once it is already in the road. One already crossing is let through (the car brakes for
+  it instead: freezing somebody mid-road is the one place to be run over), and a car on
+  the citizen's OWN axis is ignored, or a walker on an avenue would stand still forever.
+- **Discovery is the group, both ways, `has_method`-guarded** — a preload between these
+  two would be a cycle, and a harness with only one of them behaves exactly as before.
+
+**AND THE SPAWN IS UNIFORM OVER THE STREET NETWORK** (same bead: *"why are they all in
+one space"*). `_find_spawn_segment_near` picks a street LINE uniformly among those
+crossing the bubble, then a point uniformly along that line's chord inside it. What it
+replaced drew its radius uniformly **in r** (a disc's area grows as r², so the middle was
+over-weighted by 1/r), **snapped to the nearest INTERSECTION** (collapsing a whole
+62 x 62 m cell onto one corner), and after 16 failed draws **fell back to the player's own
+intersection** — every rejected draw on one spot. The cluster is invisible in steady
+state, because the walk diffuses it within a minute; it is what the player is handed
+walking IN the gate, when all 120 come off the sampler at once, so check 10 measures the
+bubble filled FROM COLD and the metric is RADIAL (the share inside half the spawn radius,
+a quarter of the area, so uniform is 25%) rather than a cell histogram whose tiling sits
+on the street lines. Measured over 1,200 arrivals at four spots: **36% → 21%**. The
+retired sampler is written out in the check as the mutation control and must fail the
+same bound. `MIN_WALKER_SPACING` is finally enforced (at spawn), and a RECYCLE goes to
+the FAR half of the bubble (`RECYCLE_MIN_DIST`) — a walker leaving at 145 m used to pop
+back 15 m from the hero's nose, a second pump concentrating the crowd as he walks.
+
 ### Art direction
 Authored in `main.tscn` (key light, ProceduralSky, glow, BCS grade) plus
 `scripts/toon_shading.gd`, whose **static cache keyed by source material id** is the point:

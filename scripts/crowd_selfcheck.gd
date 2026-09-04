@@ -30,6 +30,16 @@ extends SceneTree
 ##   9. NO GAMEPLAY GROUP GAINED A MEMBER: the proxy layer is invisible to the
 ##      shipped crocodile's own mask, and the shipped Stink Wave sweep touches the
 ##      crocodiles and nothing of the crowd's with a live crowd in the tree.
+##  10. THE SPAWN IS SPREAD (bead 8gw.23): the whole bubble filled from cold —
+##      what the player sees WALKING IN THE GATE, when every citizen comes off
+##      the sampler in one pass — is uniform over the streets rather than piled
+##      around the hero, measured as the share landing in the inner QUARTER OF
+##      THE AREA and as the number of 62 m cells used. The OLD sampler, written
+##      out here, is the mutation control and must go RED on the same numbers.
+##  11. A CAR NEVER DRIVES THROUGH A CITIZEN (bead 8gw.23): a citizen crossing an
+##      avenue in front of a moving car is never inside the car's footprint, with
+##      the crowd taken out of the group as the mutation control — the car must
+##      then drive straight over it.
 ##   7. THE COARSE TICK (bead 8gw.22): a citizen the camera cannot see is ticked
 ##      a few times a second by the REAL elapsed time — it ADVANCES, it is never
 ##      frozen — a null camera degrades to full-rate updates for everything, and
@@ -53,6 +63,7 @@ const PROBE_REACH_MAX: float = 60.0
 const AmbienceLod := preload("res://scripts/ambience_lod.gd")
 const Proxies := preload("res://scripts/ambience_proxies.gd")
 const CrowdScript := preload("res://scripts/crowd_manager.gd")
+const PLAN := preload("res://scripts/budapest_plan.gd")
 const PLAYER_SCENE: String = "res://scenes/player.tscn"
 
 ## How many CollisionObject3Ds the isolation walk found under the manager.
@@ -128,6 +139,8 @@ func _run_checks() -> void:
 	_check_coarse_tick_and_camera_views()
 	await _check_solid_and_never_trapped()
 	await _check_no_gameplay_group_gained_a_member()
+	_check_spawn_distribution()
+	await _check_car_never_drives_through_a_citizen()
 
 	if _failures.is_empty():
 		print("crowd_selfcheck: all checks passed cleanly")
@@ -759,3 +772,341 @@ func _check_no_gameplay_group_gained_a_member() -> void:
 	hero.queue_free()
 	await process_frame
 	Sentinel.done("no_gameplay_group_gained_a_member")
+
+
+# ============================================================================
+# CHECK 10 — THE SPAWN IS SPREAD (bead godot-test1-8gw.23)
+# ============================================================================
+#
+# OWNER: "let's spread crowds in budapest more uniform, why they are all in one
+# space".
+#
+# WHERE THE CLUSTER IS VISIBLE. In steady state the walk itself diffuses the
+# crowd, so a sampler bias is nearly invisible a minute in — which is exactly why
+# this is measured on the bubble filled FROM COLD, the state the player is
+# handed when he walks in the gate, when he re-enters the city, and on every F2.
+# All 120 come off the sampler in one pass there.
+#
+# THE METRIC IS RADIAL, and deliberately not a cell histogram: a 62 m cell grid
+# is drawn on the street LINES the citizens stand on, so which side of a boundary
+# a walker falls on is arbitrary and the peak cell count is mostly noise. The
+# share landing inside HALF the bubble radius is not: that circle is a QUARTER of
+# the bubble's area, so a sampler uniform over the streets puts ~25% of the crowd
+# in it and no argument about tiling can move the number.
+#
+# The old sampler drew its radius UNIFORMLY IN r — which over-weights the middle
+# of a disc by 1/r — and fell back to the player's OWN intersection after 16
+# failed draws. Measured over 1,200 arrivals at four city spots: 42 / 32 / 37 /
+# 29% inside that circle against a uniform 25%. It is written out below as the
+# mutation control and must fail this check's own bound.
+
+## Four city spots, and the bubble filled from cold ten times at each.
+const DIST_SPOTS: Array[Vector3] = [
+	Vector3(2400.0, 0.0, 0.0),
+	Vector3(2600.0, 0.0, 400.0),
+	Vector3(3000.0, 0.0, -500.0),
+	Vector3(2900.0, 0.0, 800.0),
+]
+const DIST_ARRIVALS: int = 10
+
+## The bound, on the share inside SPAWN_RADIUS / 2 — a quarter of the bubble's
+## area, so uniform is 25%. Shipped measures 17-23%, the old sampler 29-42%;
+## 28% sits between the two with room on both sides.
+const DIST_INNER_SHARE_MAX: float = 28.0
+
+## ...and a floor on the SPREAD, so a sampler that collapsed onto one street
+## still fails even if it collapsed at the right radius. The bubble is 220 m
+## across on a 62 m grid, so a dozen cells is most of what there is.
+const DIST_MIN_CELLS: int = 8
+
+
+func _dist_profile(spot: Vector3, use_old: bool) -> Dictionary:
+	## Fill the bubble from cold `DIST_ARRIVALS` times and report the share of
+	## walkers inside half the spawn radius plus the 62 m cells they used.
+	var pitch: float = PLAN.STREET_PITCH
+	var half_r: float = CrowdScript.SPAWN_RADIUS * 0.5
+	var cells := {}
+	var inner: int = 0
+	var total: int = 0
+	_player.position = spot
+	for _rep in DIST_ARRIVALS:
+		_manager._hide_all()
+		var points: Array[Vector3] = []
+		if use_old:
+			for _i in _manager.get("_citizens").size():
+				var p := _old_sampler_point(spot)
+				if p != Vector3.INF:
+					points.append(p)
+		else:
+			_manager._process(DT)
+			for c: Dictionary in _manager.get("_citizens"):
+				if c["active"]:
+					points.append(CrowdScript._citizen_world_pos(c))
+		for w: Vector3 in points:
+			total += 1
+			if Vector2(w.x - spot.x, w.z - spot.z).length() < half_r:
+				inner += 1
+			cells[Vector2i(int(floor((w.x - PLAN.GATE.x) / pitch)),
+					int(floor(w.z / pitch)))] = true
+	return {
+		"n": total,
+		"inner_share": 100.0 * float(inner) / maxf(1.0, float(total)),
+		"cells": cells.size(),
+	}
+
+
+func _old_sampler_point(player_pos: Vector3) -> Vector3:
+	## THE MUTATION CONTROL: `_find_spawn_segment_near` as it stood before bead
+	## 8gw.23, written out here so "the fix moved the number" is a comparison of
+	## two live samplers and not of a number against a memory. Uniform in r, snap
+	## to the nearest INTERSECTION, then lerp along one edge — and on 16 failures
+	## fall back to the player's own intersection, which is the pile-up.
+	var rng := _manager.get("_rng") as RandomNumberGenerator
+	for _attempt in 16:
+		var angle := rng.randf_range(0.0, TAU)
+		var dist := rng.randf_range(CrowdScript.SPAWN_MIN_DIST, CrowdScript.SPAWN_RADIUS)
+		var snapped: Vector2 = CrowdScript.snap_to_grid(player_pos.x + cos(angle) * dist,
+				player_pos.z + sin(angle) * dist)
+		if CrowdScript.is_walkable(snapped.x, snapped.y):
+			var corner := Vector3(snapped.x, 0.0, snapped.y)
+			var d := Vector2(1.0 if rng.randf() < 0.5 else -1.0, 0.0)
+			if rng.randf() < 0.5:
+				d = Vector2(0.0, 1.0 if rng.randf() < 0.5 else -1.0)
+			var nxt: Vector3 = _manager._pick_next_waypoint(corner, d)
+			if nxt != corner:
+				return corner.lerp(nxt, rng.randf_range(0.05, 0.95))
+	var p: Vector2 = CrowdScript.snap_to_grid(player_pos.x, player_pos.z)
+	if CrowdScript.is_walkable(p.x, p.y):
+		var c := Vector3(p.x, 0.0, p.y)
+		var n: Vector3 = _manager._pick_next_waypoint(c, Vector2(1.0, 0.0))
+		if n != c:
+			return c.lerp(n, rng.randf_range(0.05, 0.95))
+	return Vector3.INF
+
+
+func _check_spawn_distribution() -> void:
+	var shipped_inner: float = 0.0
+	var control_inner: float = 0.0
+	var spots: int = 0
+	for spot: Vector3 in DIST_SPOTS:
+		var got: Dictionary = _dist_profile(spot, false)
+		var old: Dictionary = _dist_profile(spot, true)
+		if int(got["n"]) < 500:
+			_failures.append("check 10 got only %d spawns at %s — too few to mean anything"
+				% [int(got["n"]), str(spot)])
+			Sentinel.done("spawn_distribution")
+			return
+		if float(got["inner_share"]) > DIST_INNER_SHARE_MAX:
+			_failures.append(("at %s, %.1f%% of the crowd spawned inside HALF the bubble"
+				+ " radius — a quarter of its area, so uniform is 25%% and the bound is"
+				+ " %.0f%%. The crowd is piling up around the hero again; see"
+				+ " _find_spawn_segment_near.")
+				% [str(spot), float(got["inner_share"]), DIST_INNER_SHARE_MAX])
+		if int(got["cells"]) < DIST_MIN_CELLS:
+			_failures.append("at %s the whole crowd fitted in %d 62 m cells (floor %d) —"
+				% [str(spot), int(got["cells"]), DIST_MIN_CELLS]
+				+ " it collapsed onto a handful of streets")
+		shipped_inner += float(got["inner_share"])
+		control_inner += float(old["inner_share"])
+		spots += 1
+		print("spawn spread at %s: %.1f%% inner / %d cells (old sampler: %.1f%% / %d)"
+			% [str(spot), float(got["inner_share"]), int(got["cells"]),
+			float(old["inner_share"]), int(old["cells"])])
+
+	# THE MUTATION CONTROL, run for real rather than asserted: the retired sampler
+	# has to FAIL the bound this check holds the shipped one to, or the bound is
+	# loose enough to pass anything.
+	var control_avg: float = control_inner / maxf(1.0, float(spots))
+	var shipped_avg: float = shipped_inner / maxf(1.0, float(spots))
+	if control_avg <= DIST_INNER_SHARE_MAX:
+		_failures.append(("check 10's mutation control PASSED: the pre-8gw.23 sampler"
+			+ " averaged %.1f%% inside the inner quarter-area, under the %.0f%% bound."
+			+ " The bound cannot tell the two samplers apart, so it is measuring nothing.")
+			% [control_avg, DIST_INNER_SHARE_MAX])
+	print("spawn spread: shipped %.1f%% vs retired sampler %.1f%% inside the inner"
+		% [shipped_avg, control_avg] + " quarter-area (uniform 25%%, bound %.0f%%)"
+		% DIST_INNER_SHARE_MAX)
+	_manager._hide_all()
+	Sentinel.done("spawn_distribution")
+
+
+# ============================================================================
+# CHECK 11 — A CAR NEVER DRIVES THROUGH A CITIZEN (bead godot-test1-8gw.23)
+# ============================================================================
+#
+# OWNER: "crowds in budapest still go through cars, not good, fix".
+#
+# Neither a citizen nor a car has a body — the pooled proxies exist only for the
+# hero — so nothing physical was ever going to stop this, and the fix is the
+# SHIPPED brake: `traffic_manager._distance_to_citizen_ahead` feeds a citizen on
+# the carriageway into `target_speed_for_distance` exactly as it feeds the hero.
+#
+# The probe is a citizen already MID-CROSSING (the kerb rule deliberately lets it
+# carry on; stopping somebody in the road is the one place to be run over) with a
+# car bearing down on it. Driven on the two shipped movement passes, and
+# mutation-tested by taking the crowd out of the group — the seam is discovered
+# through it, so an unfixed build is exactly what that run measures, and the car
+# must then drive straight over the walker.
+
+const TrafficScript := preload("res://scripts/traffic_manager.gd")
+
+## Long enough for a car starting 25 m back at cruise (4–6.5 m/s) to reach and
+## pass the crossing point, twice over.
+const CAR_PROBE_FRAMES: int = 300
+
+## The car's footprint plus the citizen's half-width — "inside the car" for a
+## walker whose own box is CITIZEN_PROXY_HALF.
+const CAR_HIT_LONG: float = TrafficScript.CAR_LENGTH * 0.5 + 0.3
+const CAR_HIT_LAT: float = TrafficScript.CAR_WIDTH * 0.5 + 0.3
+
+## The kerb probe's own window: the walk is 17 m at 2.4 m/s (7.1 s) plus the wait
+## for a car to clear, so 700 frames is that with room either side.
+const KERB_PROBE_FRAMES: int = 700
+
+
+func _car_probe_min_gap(traffic: Node3D, crowd: Node3D) -> float:
+	## Drive one car east down an avenue at one citizen crossing it, and report
+	## the closest the citizen ever came to being INSIDE the car — as a fraction
+	## of the footprint, so < 1.0 means it was driven through.
+	var cars: Array = traffic.get("_cars")
+	var citizens: Array = crowd.get("_citizens")
+	traffic._hide_all()
+	crowd._hide_all()
+
+	# The z = 0 avenue (CITY_AVENUE_EVERY-th grid line through the gate), a car
+	# in the +X lane, and a citizen on an ORDINARY street line crossing it.
+	var cross_x: float = PLAN.GATE.x + 13.0 * PLAN.STREET_PITCH  # not a multiple of 4
+	var car: Dictionary = cars[0]
+	car["pos"] = Vector3(cross_x - 25.0, 0.0, 0.0)
+	car["heading_dir"] = Vector2(1.0, 0.0)
+	car["facing_yaw"] = atan2(-1.0, 0.0)
+	car["cruise_speed"] = 6.0
+	car["speed"] = 6.0
+	car["blocked_time"] = 0.0
+	car["honk_cooldown"] = 0.0
+	car["lod_step"] = DT
+	car["active"] = true
+
+	var walker: Dictionary = citizens[0]
+	# Already ON the carriageway (|z| < AVENUE_HALF_WIDTH), and placed so that at
+	# 1.2 m/s it stands in the car's own lane (z = +LANE_OFFSET) at the moment a
+	# car 25 m back at 6 m/s arrives — the collision is dead centre, not a near miss.
+	walker["pos"] = Vector3(cross_x, 0.0, TrafficScript.LANE_OFFSET - 1.2 * (25.0 / 6.0))
+	walker["target"] = Vector3(cross_x, 0.0, 12.0)
+	walker["heading_dir"] = Vector2(0.0, 1.0)
+	walker["facing_yaw"] = 0.0
+	walker["lane_offset"] = 0.0
+	walker["speed"] = 1.2
+	walker["pause_timer"] = 0.0
+	walker["walk_phase"] = 0.0
+	walker["lod_step"] = DT
+	walker["active"] = true
+
+	var worst := INF
+	var far_away := Vector3(0.0, 0.0, 9000.0)  # the hero is nowhere near this
+	for _f in CAR_PROBE_FRAMES:
+		traffic._update_cars(DT, far_away, false)
+		crowd._update_walkers(DT, false)
+		var cw: Vector3 = TrafficScript._car_world_pos(car)
+		var pw: Vector3 = CrowdScript._citizen_world_pos(walker)
+		var d := Vector2(pw.x - cw.x, pw.z - cw.z)
+		var h: Vector2 = car["heading_dir"]
+		var along: float = absf(d.dot(h)) / CAR_HIT_LONG
+		var across: float = absf(d.dot(Vector2(-h.y, h.x))) / CAR_HIT_LAT
+		worst = minf(worst, maxf(along, across))
+	return worst
+
+
+func _kerb_probe(traffic: Node3D, crowd: Node3D, with_car: bool) -> int:
+	## THE KERB RULE's own measurement: a citizen starting on the PAVEMENT and
+	## walking across the avenue. Returns the frame it clears the far kerb — with
+	## a car coming that must be LATER, because it waited.
+	var cars: Array = traffic.get("_cars")
+	var citizens: Array = crowd.get("_citizens")
+	traffic._hide_all()
+	crowd._hide_all()
+	var cross_x: float = PLAN.GATE.x + 13.0 * PLAN.STREET_PITCH
+	var kerb: float = PLAN.AVENUE_HALF_WIDTH
+
+	if with_car:
+		var car: Dictionary = cars[0]
+		# 15 m back at 6 m/s: it is inside YIELD_DISTANCE of the crossing point at
+		# the moment the walker reaches the kerb, which is what has to hold it.
+		car["pos"] = Vector3(cross_x - 15.0, 0.0, 0.0)
+		car["heading_dir"] = Vector2(1.0, 0.0)
+		car["facing_yaw"] = atan2(-1.0, 0.0)
+		car["cruise_speed"] = 6.0
+		car["speed"] = 6.0
+		car["blocked_time"] = 0.0
+		car["honk_cooldown"] = 0.0
+		car["lod_step"] = DT
+		car["active"] = true
+
+	var walker: Dictionary = citizens[0]
+	walker["pos"] = Vector3(cross_x, 0.0, -kerb - 1.0)  # on the pavement, not the road
+	walker["target"] = Vector3(cross_x, 0.0, kerb + 12.0)
+	walker["heading_dir"] = Vector2(0.0, 1.0)
+	walker["facing_yaw"] = 0.0
+	walker["lane_offset"] = 0.0
+	walker["speed"] = 2.4
+	walker["pause_timer"] = 0.0
+	walker["walk_phase"] = 0.0
+	walker["lod_step"] = DT
+	walker["active"] = true
+
+	var far_away := Vector3(0.0, 0.0, 9000.0)
+	for f in KERB_PROBE_FRAMES:
+		if with_car:
+			traffic._update_cars(DT, far_away, false)
+		crowd._update_walkers(DT, false)
+		if float((walker["pos"] as Vector3).z) >= kerb:
+			return f
+	return KERB_PROBE_FRAMES
+
+
+func _check_car_never_drives_through_a_citizen() -> void:
+	var traffic := Node3D.new()
+	traffic.set_script(TrafficScript)
+	_root.add_child(traffic)
+	await process_frame
+
+	var with_crowd: float = _car_probe_min_gap(traffic, _manager)
+	if with_crowd < 1.0:
+		_failures.append(("a car drove THROUGH a crossing citizen — it reached %.2f of its"
+			+ " own footprint (1.0 is the bumper). traffic_manager brakes for the hero and"
+			+ " for cars ahead; a citizen on the carriageway has to be the same blocker,"
+			+ " through _distance_to_citizen_ahead.") % with_crowd)
+
+	# THE MUTATION CONTROL: the seam is group discovery, so a crowd out of the
+	# group IS the pre-8gw.23 build. The car must run the walker over.
+	_manager.remove_from_group("crowd")
+	var without: float = _car_probe_min_gap(traffic, _manager)
+	_manager.add_to_group("crowd")
+	if without >= 1.0:
+		_failures.append(("check 11's mutation control PASSED: with the crowd out of the"
+			+ " 'crowd' group the car still missed the citizen (%.2f of a footprint), so"
+			+ " the probe never put anybody in front of a car and proves nothing.")
+			% without)
+	print("car vs citizen: closest approach %.2f of a car footprint with the brake,"
+		% with_crowd + " %.2f with the crowd unreachable" % without)
+
+	# THE KERB RULE, the citizen's own half: it waits on the pavement rather than
+	# stepping in front of a car. Its control is the same walk with no car at all
+	# — the crossing must be strictly slower with one coming, or the hold never
+	# fired and `blocks_crossing` is decorative.
+	var waited: int = _kerb_probe(traffic, _manager, true)
+	var clear: int = _kerb_probe(traffic, _manager, false)
+	if waited <= clear:
+		_failures.append(("a citizen stepped off the kerb in front of a car: it cleared the"
+			+ " avenue on frame %d with a car bearing down and frame %d with an empty road,"
+			+ " so it never waited. traffic_manager.blocks_crossing is the hold.")
+			% [waited, clear])
+	else:
+		print("kerb rule: crossing took %d frames with a car coming, %d on an empty road"
+			% [waited, clear])
+
+	traffic._hide_all()
+	traffic.queue_free()
+	_manager._hide_all()
+	await process_frame
+	Sentinel.done("car_never_drives_through_a_citizen")
