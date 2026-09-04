@@ -360,7 +360,15 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            the run in the same frame chain and archives the world
 #                            without touching the building (Continue reopens the
 #                            ending, New Game clears it), plus the vocabulary of
-#                            both retired models — hearts and the vetoed break-out
+#                            both retired models — hearts and the vetoed break-out.
+#                            Check 20 is the CONTACT PATH, and it is the only one
+#                            that can see the chassis move: a real
+#                            hunter_robot.tscn at its shipped 2.25x scale walks at
+#                            a real player.tscn on a floor, through the shipped
+#                            _physics_process / move_and_slide / _handle_collisions
+#                            with NO hand-made collision call, and must imprison the
+#                            hero; the mutation control disables its own capsule and
+#                            must imprison nobody
 #   tower_lift_selfcheck     the HQ's service lift (L): the key is free against the
 #                            input map AND every other panel's constant, every stop
 #                            is a built `entries` row with an `unlock` id landing on
