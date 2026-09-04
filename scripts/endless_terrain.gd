@@ -3192,10 +3192,19 @@ const SHARED_BLOCK_ROUGHNESS: float = 0.85
 ## Style direction A's ONE tuning number: how dark the BOTTOM of every box gets, as
 ## a fraction of its own colour, fading to 1.0 (full colour) at its top. Handed to
 ## world_block.gdshader's `bottom_shade` uniform by _get_shared_block_material.
-## Setting it to 1.0 restores the pre-style flat look exactly — which is the honest
-## way to A/B this, and the reason the gradient's floor is a named constant rather
-## than a literal in the shader.
-const BLOCK_BOTTOM_SHADE: float = 0.78
+##
+## THREE VALUES WORTH KNOWING, and the whole style is retuned by moving between them:
+##   1.0  — the KILL SWITCH: the pre-style flat look, byte-for-byte, through this
+##          same code path. That is why the gradient's floor is a named constant
+##          rather than a literal in the shader, and it is how the A/B renders on
+##          bead godot-test1-y1o.7 were taken honestly.
+##   0.78 — the value bead y1o.7 specified. Correct, and too subtle to read at
+##          street scale on anything but a tall box.
+##   0.60 — SHIPPED, chosen from those renders on 2026-09-04. Where the Budapest
+##          facades pick up a real ambient-occlusion read down the street canyon
+##          and a forest trunk plants itself on the ground.
+## It is one number and nothing else reads it, so retuning the look is this line.
+const BLOCK_BOTTOM_SHADE: float = 0.60
 
 ## Curated block colour ramps (Task 8 of the rendering pass). The old code rolled
 ## each colour channel independently, which gave muddy, uncoordinated blocks. Now
