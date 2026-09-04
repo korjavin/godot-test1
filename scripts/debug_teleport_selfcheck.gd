@@ -1,5 +1,5 @@
 extends SceneTree
-## debug_teleport_selfcheck — the debug-only teleport (F2 Budapest gate / F8 HQ,
+## debug_teleport_selfcheck — the debug-only teleport (T Budapest gate / H HQ,
 ## bead godot-test1-xtl) preserves the run it moves, and fires only in debug
 ## builds outside rooms.
 ##
@@ -32,6 +32,12 @@ func _initialize() -> void:
 	_check_gate_table()
 	_check_gate_wiring()
 	await _check_run_preserved()
+	var player: Node = get_first_node_in_group("player")
+	if player != null:
+		await _check_sequence_recognizer(player)
+	else:
+		_fail("no player found for sequence recognizer check")
+		Sentinel.done("sequence_recognizer")
 	await _check_absent_in_room()
 
 	if _failures.is_empty():
@@ -48,57 +54,48 @@ func _fail(message: String) -> void:
 
 
 func _check_keys_are_free() -> void:
-	"""F2 and F8 collide with nothing — `city_map_selfcheck`'s idiom, its list.
+	"""KEY_BACKSLASH collides with nothing — `city_map_selfcheck`'s idiom, its list.
 
-	A panel key is not rebindable, so a collision is unfixable from inside the
-	game: both surfaces fire, forever. The registry and the two scanners are
-	`city_map_selfcheck`'s statics, borrowed rather than copied, so a panel key
-	added there is compared against these two the day it lands (and vice versa
-	— the teleport's own rows are in that list, and each subject skips its own).
+	The arming key is not rebindable, so a collision is unfixable from inside the
+	game: both surfaces fire, forever. The registry and the scanner are
+	`city_map_selfcheck`'s statics, borrowed rather than copied.
 	"""
 	var owners: Array = CityMapSelfcheck.panel_key_owners()
-	var subjects: Array = [
-		[int(PlayerScript.DEBUG_TELEPORT_BUDAPEST_KEY), "player_controller.DEBUG_TELEPORT_BUDAPEST_KEY"],
-		[int(PlayerScript.DEBUG_TELEPORT_HQ_KEY), "player_controller.DEBUG_TELEPORT_HQ_KEY"],
-	]
-	if subjects[0][0] == subjects[1][0]:
-		_fail("both teleport keys are %s — one destination is unreachable"
-			% OS.get_keycode_string(subjects[0][0]))
-	for subject: Array in subjects:
-		var key: int = subject[0]
-		var label: String = subject[1]
-		if key == 0:
-			_fail("%s is 0 — it can never be pressed" % label)
-			continue
-		# Against the input map: a gameplay action is rebindable, this is not.
-		# BARE PRESSES ONLY, `tower_lift_selfcheck`'s rule: Godot ships built-in
-		# `ui_text_*` actions on modified keys, and a panel key is pressed with
-		# nothing held, so a modified event is a different chord and not a
-		# collision. Every action this GAME binds is modifier-free.
-		for action: StringName in InputMap.get_actions():
-			for event: InputEvent in InputMap.action_get_events(action):
-				var as_key := event as InputEventKey
-				if as_key == null:
-					continue
-				if as_key.ctrl_pressed or as_key.alt_pressed or as_key.meta_pressed \
-						or as_key.shift_pressed:
-					continue
-				if int(as_key.keycode) == key or int(as_key.physical_keycode) == key:
-					_fail("%s (%s) is also bound to the input action \"%s\""
-						% [label, OS.get_keycode_string(key), action])
-		# ...and against every other raw-keycode panel, its own row excepted.
-		var others: Array = []
-		for row: Array in owners:
-			if String(row[1]) != label:
-				others.append(row)
-		var claimed: String = CityMapSelfcheck._owner_claiming(key, others)
-		if not claimed.is_empty():
-			_fail("%s (%s) is already %s" % [label, OS.get_keycode_string(key), claimed])
-		# NEGATIVE CONTROL on the scan, `city_map_selfcheck`'s: a nested fake
-		# owner must be caught, or the two nested rows in the real list (the
-		# hero digits, the quiz answers) are not being compared at all.
-		if CityMapSelfcheck._owner_claiming(key, [[[[key]], "a fake nested owner"]]).is_empty():
-			_fail("the scan missed a fake owner holding %s — it cannot detect a real collision either" % label)
+	var key: int = int(PlayerScript.CHEAT_ARM_KEY)
+	var label: String = "player_controller.CHEAT_ARM_KEY"
+	if key == 0:
+		_fail("%s is 0 — it can never be pressed" % label)
+		Sentinel.done("keys_are_free")
+		return
+	# Against the input map: a gameplay action is rebindable, this is not.
+	# BARE PRESSES ONLY, `tower_lift_selfcheck`'s rule: Godot ships built-in
+	# `ui_text_*` actions on modified keys, and a panel key is pressed with
+	# nothing held, so a modified event is a different chord and not a
+	# collision. Every action this GAME binds is modifier-free.
+	for action: StringName in InputMap.get_actions():
+		for event: InputEvent in InputMap.action_get_events(action):
+			var as_key := event as InputEventKey
+			if as_key == null:
+				continue
+			if as_key.ctrl_pressed or as_key.alt_pressed or as_key.meta_pressed \
+					or as_key.shift_pressed:
+				continue
+			if int(as_key.keycode) == key or int(as_key.physical_keycode) == key:
+				_fail("%s (%s) is also bound to the input action \"%s\""
+					% [label, OS.get_keycode_string(key), action])
+	# ...and against every other raw-keycode panel, its own row excepted.
+	var others: Array = []
+	for row: Array in owners:
+		if String(row[1]) != label:
+			others.append(row)
+	var claimed: String = CityMapSelfcheck._owner_claiming(key, others)
+	if not claimed.is_empty():
+		_fail("%s (%s) is already %s" % [label, OS.get_keycode_string(key), claimed])
+	# NEGATIVE CONTROL on the scan, `city_map_selfcheck`'s: a nested fake
+	# owner must be caught, or the two nested rows in the real list (the
+	# hero digits, the quiz answers) are not being compared at all.
+	if CityMapSelfcheck._owner_claiming(key, [[[[key]], "a fake nested owner"]]).is_empty():
+		_fail("the scan missed a fake owner holding %s — it cannot detect a real collision either" % label)
 	Sentinel.done("keys_are_free")
 
 
@@ -251,3 +248,104 @@ func _check_absent_in_room() -> void:
 	if player.coins_collected != 100:
 		_fail("the refused teleport touched run state")
 	Sentinel.done("room_absent")
+
+
+func _send_key(player: Node, keycode: Key) -> void:
+	var event := InputEventKey.new()
+	event.keycode = keycode
+	event.pressed = true
+	player._unhandled_input(event)
+
+
+func _check_sequence_recognizer(player: Node) -> void:
+	"""Cheat code recognizer (bead godot-test1-a7i): \\fo, \\fb, \\fh sequence handling.
+
+	Tests:
+	- Bare fo without backslash does not toggle overlay
+	- Unknown code \\fx does not fire and resets buffer
+	- Non-letter key during sequence discards buffer
+	- Sequence typed after timeout (> CHEAT_TIMEOUT_MS) does not fire
+	- Valid \\fo toggles perf overlay
+	- Valid \\fh teleports to HQ
+	"""
+	var perf: Node = get_first_node_in_group("perf_overlay")
+	if perf == null:
+		_fail("no perf_overlay node in scene tree")
+		Sentinel.done("sequence_recognizer")
+		return
+
+	var initial_vis: bool = perf.visible
+
+	# 1. Bare "fo" without backslash does NOT toggle overlay.
+	_send_key(player, KEY_F)
+	_send_key(player, KEY_O)
+	if perf.visible != initial_vis:
+		_fail("bare fo without backslash toggled perf overlay")
+	if player._cheat_armed or not player._cheat_buffer.is_empty():
+		_fail("bare letter keys armed or filled cheat buffer without backslash")
+
+	# 2. Unknown code \\fx does NOT fire anything and resets buffer.
+	_send_key(player, KEY_BACKSLASH)
+	if not player._cheat_armed:
+		_fail("KEY_BACKSLASH did not arm cheat recognizer")
+	_send_key(player, KEY_F)
+	if player._cheat_buffer != "f":
+		_fail("first letter 'f' not recorded in cheat buffer")
+	_send_key(player, KEY_X)
+	if player._cheat_armed or not player._cheat_buffer.is_empty():
+		_fail("unknown cheat code \\fx did not reset armed buffer")
+	if perf.visible != initial_vis:
+		_fail("unknown cheat code \\fx toggled perf overlay")
+
+	# 3. Non-letter key during sequence discards buffer.
+	_send_key(player, KEY_BACKSLASH)
+	_send_key(player, KEY_F)
+	_send_key(player, KEY_SPACE)
+	if player._cheat_armed or not player._cheat_buffer.is_empty():
+		_fail("non-letter key while armed did not discard cheat buffer")
+
+	# 4. Sequence typed after timeout (> CHEAT_TIMEOUT_MS) does NOT fire.
+	_send_key(player, KEY_BACKSLASH)
+	if not player._cheat_armed:
+		_fail("KEY_BACKSLASH did not arm cheat recognizer for timeout test")
+	player._cheat_armed_msec -= (PlayerScript.CHEAT_TIMEOUT_MS + 500)
+	_send_key(player, KEY_F)
+	if player._cheat_armed or not player._cheat_buffer.is_empty():
+		_fail("cheat recognizer remained armed after timeout elapsed")
+	_send_key(player, KEY_O)
+	if perf.visible != initial_vis:
+		_fail("timed-out cheat sequence \\fo toggled perf overlay")
+
+	# 5. Valid \\fo toggles perf overlay.
+	_send_key(player, KEY_BACKSLASH)
+	_send_key(player, KEY_F)
+	_send_key(player, KEY_O)
+	if perf.visible == initial_vis:
+		_fail("valid \\fo sequence did not toggle perf overlay")
+	if player._cheat_armed or not player._cheat_buffer.is_empty():
+		_fail("valid \\fo sequence left cheat buffer armed/non-empty")
+
+	# Toggle it back to original state
+	_send_key(player, KEY_BACKSLASH)
+	_send_key(player, KEY_F)
+	_send_key(player, KEY_O)
+	if perf.visible != initial_vis:
+		_fail("second \\fo sequence did not toggle perf overlay back")
+
+	# 6. Valid \\fh teleports to HQ.
+	var hq_dest: Vector3 = player.debug_destination_hq()
+	var pos_before: Vector3 = player.global_position
+	_send_key(player, KEY_BACKSLASH)
+	_send_key(player, KEY_F)
+	_send_key(player, KEY_H)
+	# debug_teleport_to awaits a physics frame:
+	await physics_frame
+	await process_frame
+	await physics_frame
+	await process_frame
+	if player.global_position.distance_to(hq_dest) > 20.0:
+		_fail("valid \\fh sequence did not teleport to HQ (distance to HQ: %.1f m)" % player.global_position.distance_to(hq_dest))
+	if player.global_position.distance_to(pos_before) < 50.0:
+		_fail("valid \\fh sequence did not move player away from previous position")
+
+	Sentinel.done("sequence_recognizer")

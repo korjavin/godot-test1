@@ -64,7 +64,7 @@ watch the radial dial in the top-right.
 | **F** | Special ability |
 | **P** | Pause |
 | **Esc** | Release / recapture the mouse |
-| **F3** | Performance overlay |
+| **\fo** | Performance overlay |
 
 ### Mobile (web build)
 Open the game on your phone and tap the start overlay (this also grants iOS

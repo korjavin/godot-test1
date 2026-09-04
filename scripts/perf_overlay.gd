@@ -29,7 +29,7 @@ extends Label
 ## at 60 and then stops dead for a tenth of a second. The rows above are sampled
 ## at 4 Hz and would never show that frame at all. So on EVERY frame — including
 ## while the overlay is hidden, because the spike we care about most is the one
-## during startup before anyone pressed F3 — we compare the frame's own delta
+## during startup before anyone pressed O — we compare the frame's own delta
 ## against two thresholds and, when it is over, log the frame's magnitude
 ## TOGETHER WITH what the engine did on that same frame:
 ##
@@ -43,28 +43,23 @@ extends Label
 ## to move these numbers, not a vibe. Getting the two lined up on the SAME frame
 ## is the one subtle thing in here; see the off-by-one note in `_sample_frame`.
 ## Spikes are also printed (throttled) as `[SPIKE]` lines, so a web run leaves a
-## readable trail in the browser console with no overlay open.
+## record in the browser console.
 ##
-## Read the numbers back with `get_spike_summary()` / `get_spike_log()`, and
-## start a fresh measurement window with `reset_spike_stats()`.
+## ----------------------------------------------------------------------------
+## USAGE
+## ----------------------------------------------------------------------------
+## Toggle the on-screen stats with cheat code **\fo**.
 ##
-## Sampling is POLL-based (we read plain counters off the two managers through
-## their groups) rather than the managers pushing events at us: the measurement
-## must never be able to change what it measures, and a poll that finds no
-## manager simply reports zero, so a scene run standalone still works.
+## The spike log is read programmatically by tests (`get_spike_log()`) and
+## summarizes cleanly via `get_spike_summary()`.
 ##
 ## It lives in the HUD CanvasLayer as a plain Label. It does not touch gameplay:
 ## it only reads counters and prints them. It ignores mouse input and starts
 ## hidden in release builds so it never ends up in a player's face.
 ##
-## **Not localized, deliberately.** This is a debug surface (F3), read while
+## **Not localized, deliberately.** This is a debug surface (\fo), read while
 ## tuning against English documentation, and it is excluded from the game's
 ## en/de translation pass by design — see CLAUDE.md "Localization".
-
-## Key that toggles the overlay on/off. F3 is the conventional "debug stats" key
-## and does not collide with any of our gameplay input actions (move/jump/run/
-## duck/switch_character) defined in project.godot.
-const TOGGLE_KEYCODE: Key = KEY_F3
 
 ## How often (seconds) we recompute the text. We deliberately do NOT update every
 ## frame: counting nodes / iterating the crocodile group every frame would itself
@@ -155,7 +150,7 @@ func _ready() -> void:
 
 	# Start hidden by default. In a debug build (running from the editor or a
 	# debug export) we show it immediately so we always have numbers while
-	# developing; in a release build it stays hidden until the player presses F3.
+	# developing; in a release build it stays hidden until the player types \fo.
 	# This guarantees the overlay never ships "in the player's face".
 	visible = OS.is_debug_build()
 
@@ -163,17 +158,12 @@ func _ready() -> void:
 	_time_until_refresh = 0.0
 
 
-func _input(event: InputEvent) -> void:
-	# Toggle visibility on the configured key. We read the raw key here (rather
-	# than a named input action) on purpose: this is a developer/debug toggle, not
-	# a gameplay control, so it intentionally lives outside the project's input map.
-	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == TOGGLE_KEYCODE:
-			visible = not visible
-			# Forcing an immediate refresh makes the overlay feel instant the
-			# moment it is shown.
-			if visible:
-				_time_until_refresh = 0.0
+func toggle() -> void:
+	visible = not visible
+	# Forcing an immediate refresh makes the overlay feel instant the
+	# moment it is shown.
+	if visible:
+		_time_until_refresh = 0.0
 
 
 func _process(delta: float) -> void:
@@ -181,7 +171,7 @@ func _process(delta: float) -> void:
 	# comparison, cheaper than the visibility check it sits above. It has to be
 	# here rather than below the early-return because the freezes we are hunting
 	# happen at startup and on chunk-boundary crossings, long before (or entirely
-	# without) anyone pressing F3.
+	# without) anyone typing \fo.
 	_sample_frame(delta)
 
 	# Cheap-return while hidden so the overlay costs essentially nothing when off.
@@ -238,7 +228,7 @@ func _update_text() -> void:
 	# --- Compose the readout ----------------------------------------------
 	# Using a multi-line string keeps each metric on its own row, easy to read
 	# and easy to screenshot for the before/after measurement table in the plan.
-	text = "PERF (F3)\n"
+	text = "PERF (\\fo)\n"
 	text += "FPS: %d\n" % int(roundf(fps))
 	text += "Process: %.2f ms\n" % process_ms
 	text += "Physics: %.2f ms\n" % physics_ms

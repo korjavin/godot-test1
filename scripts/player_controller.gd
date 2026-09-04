@@ -674,14 +674,21 @@ const HERO_KEYCODES: Array = [
 	[KEY_4, KEY_KP_4],
 ]
 
-## Debug-only teleport keys (bead godot-test1-xtl): F2 puts the player at
-## Budapest's gate, F8 at the HQ — one action from a fresh run to wherever an
-## F3 perf reading is needed. Raw keycodes outside the input map (the
-## perf_overlay F3 precedent): nothing gameplay to rebind. F2 sits next to F3
-## on purpose (teleport, then measure); F8 is clear of the F3–F7 debug cluster
-## (perf, motion, touch force-enables, settings).
-const DEBUG_TELEPORT_BUDAPEST_KEY: Key = KEY_F2
-const DEBUG_TELEPORT_HQ_KEY: Key = KEY_F8
+## Cheat-code sequence recogniser (bead godot-test1-a7i): \fo perf overlay,
+## \fb teleport Budapest, \fh teleport HQ. Backslash arms an empty buffer;
+## the next two letter keys within CHEAT_TIMEOUT_MS complete it.
+const CHEAT_ARM_KEY: Key = KEY_BACKSLASH
+const CHEAT_TIMEOUT_MS: int = 2000
+
+const CHEAT_CODES: Dictionary = {
+	"fo": "perf_overlay",
+	"fb": "teleport_budapest",
+	"fh": "teleport_hq",
+}
+
+var _cheat_armed: bool = false
+var _cheat_buffer: String = ""
+var _cheat_armed_msec: int = 0
 
 ## Reentrancy guard for the teleport below: it awaits a physics frame, and a
 ## second press inside that window must not start a second rebuild.
@@ -1052,19 +1059,48 @@ func _unhandled_input(event: InputEvent) -> void:
 			# sees the digit.
 			get_viewport().set_input_as_handled()
 			return
-	# DEBUG TELEPORT (bead godot-test1-xtl): F2 Budapest gate, F8 HQ. The
-	# game-over / paused / quiz guards above already refused panels and cards,
-	# so a press that reaches here is live play; the debug-build and room gates
-	# below are the rest of the bead. Fire and forget: the teleport awaits a
-	# physics frame and the busy flag covers a second press inside it.
-	if key.keycode == DEBUG_TELEPORT_BUDAPEST_KEY or key.keycode == DEBUG_TELEPORT_HQ_KEY:
-		if debug_teleport_allowed(OS.is_debug_build(), _debug_in_room()) \
-				and not _debug_teleport_busy:
-			var dest := debug_destination_budapest() \
-				if key.keycode == DEBUG_TELEPORT_BUDAPEST_KEY else debug_destination_hq()
-			get_viewport().set_input_as_handled()
-			debug_teleport_to(dest)
+	# CHEAT CODE SEQUENCE RECOGNISER (bead godot-test1-a7i): \fo, \fb, \fh.
+	# Backslash arms an empty buffer; the next two letter keys within ~2 s
+	# complete it. A match dispatches; any other key, a third letter, or the
+	# timeout discards the buffer silently — never a partial action.
+	if key.keycode == CHEAT_ARM_KEY:
+		_cheat_armed = true
+		_cheat_buffer = ""
+		_cheat_armed_msec = Time.get_ticks_msec()
+		get_viewport().set_input_as_handled()
 		return
+	elif _cheat_armed:
+		if Time.get_ticks_msec() - _cheat_armed_msec > CHEAT_TIMEOUT_MS:
+			_cheat_armed = false
+			_cheat_buffer = ""
+		elif key.keycode >= KEY_A and key.keycode <= KEY_Z:
+			_cheat_buffer += char(key.keycode).to_lower()
+			get_viewport().set_input_as_handled()
+			if _cheat_buffer.length() == 2:
+				var code: String = _cheat_buffer
+				_cheat_armed = false
+				_cheat_buffer = ""
+				_dispatch_cheat_code(code)
+			return
+		else:
+			_cheat_armed = false
+			_cheat_buffer = ""
+
+
+func _dispatch_cheat_code(code: String) -> void:
+	if not CHEAT_CODES.has(code):
+		return
+	match code:
+		"fo":
+			var perf: Node = get_tree().get_first_node_in_group("perf_overlay")
+			if perf != null and perf.has_method("toggle"):
+				perf.toggle()
+		"fb", "fh":
+			if debug_teleport_allowed(OS.is_debug_build(), _debug_in_room()) \
+					and not _debug_teleport_busy:
+				var dest := debug_destination_budapest() \
+					if code == "fb" else debug_destination_hq()
+				debug_teleport_to(dest)
 
 # ============================================================================
 # CAMERA VIEW CYCLE (third-person / first-person / front)
@@ -4123,7 +4159,7 @@ func _place_near(anchor: Vector3) -> void:
 
 
 # ============================================================================
-# DEBUG-ONLY TELEPORT (F2 BUDAPEST GATE / F8 HQ — BEAD godot-test1-xtl)
+# DEBUG-ONLY TELEPORT (\fb BUDAPEST GATE / \fh HQ — BEADS godot-test1-xtl / a7i)
 # ============================================================================
 
 static func debug_teleport_allowed(debug_build: bool, in_room: bool) -> bool:
@@ -4137,7 +4173,7 @@ static func debug_teleport_allowed(debug_build: bool, in_room: bool) -> bool:
 
 
 static func debug_destination_budapest() -> Vector3:
-	"""Where F2 lands: inside Budapest past the gate, on the avenue.
+	"""Where \\fb lands: inside Budapest past the gate, on the avenue.
 
 	40 m inside the gate (BudapestPlan.GATE is the rect's west edge) is avenue,
 	not wall; `_place_near()` ring-probes the exact clear spot from there, so
@@ -4147,7 +4183,7 @@ static func debug_destination_budapest() -> Vector3:
 
 
 func debug_destination_hq() -> Vector3:
-	"""Where F8 lands: on the flat HQ ground outside the tower's dry disc.
+	"""Where \\fh lands: on the flat HQ ground outside the tower's dry disc.
 
 	The site plus the disc radius plus a margin — the same "beside it, not in
 	it" the join anchor uses. Read off the terrain (an instance const access,
@@ -4171,7 +4207,7 @@ func _debug_in_room() -> bool:
 
 
 func debug_teleport_to(dest: Vector3) -> bool:
-	"""Put the player at `dest` for an F3 perf reading, rebuilding the world
+	"""Put the player at `dest` for a \fo perf reading, rebuilding the world
 	under them. Returns false — placing NOTHING — when the gates refuse (release
 	build, room, reentrant press) or the world is missing.
 
