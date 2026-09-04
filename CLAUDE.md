@@ -1171,10 +1171,24 @@ consumer beads are filed from that report.
 `scripts/player_controller.gd` (a `CharacterBody3D`). Character switching on R (`switch_character`) cycles
 `CHARACTERS`, freeing and re-instancing under `$CharacterModel`.
 
+**THE ANIMATION LIVES IN `scripts/player_animation.gd`** (`class_name PlayerAnimation`,
+bd `godot-test1-ftn.9`) — the limb references, `original_rotations`, the `GAITS` table
+and `gait_for()`, the walk / idle / air / sidestep cycles, `relax_gait_extras()` /
+`reset_sidestep_pose()`, and the cel-shading applied to a model on the swap path. The
+body keeps movement, capture, respawn, the input map and every contract method the
+`"player"` group answers. It is a `RefCounted` HOLDING the player (`player.anim`, wired
+in `_init()`), not `landmark_builders.gd`'s static-library contract, because the pose IS
+state; it reaches back through `player` for what the BODY owns (`is_on_floor()`, the
+landing squash, the Teibi scale, the sidestep flags, `_sfx`), and that direction is
+one-way. The reference is deliberately untyped — `player_controller.gd` carries no
+`class_name`, so there is no type to write and no cycle to create. `remote_avatar.gd`
+reads `PlayerAnimation.gait_for()` / `GAIT_HITCH_RATIO` off the class; the four
+selfchecks that drive a real `player.tscn` reach `player.anim.<field>` directly.
+
 **There is no `AnimationPlayer`.** Limb animation is sine waves driven onto child nodes
 looked up **by exact name**: `Body`, and under it `LeftArm` / `RightArm` / `LeftLeg` /
-`RightLeg`. A new playable character scene must use these names or it loads and stays
-frozen.
+`RightLeg` (plus an OPTIONAL `Head`). A new playable character scene must use these names
+or it loads and stays frozen.
 
 **Camera rig is `$CameraPivot/CameraArm/Camera3D`, and `CameraArm` is a `SpringArm3D`,
 which overwrites its children's local position every physics frame.** Nothing may write
