@@ -197,6 +197,7 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	# No `await process_frame`: nothing here touches the tree. See LANDMINES.
 	_check_graph_matches_the_building()
 	_check_design_laws()

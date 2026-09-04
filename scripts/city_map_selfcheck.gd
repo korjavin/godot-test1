@@ -110,6 +110,7 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	# ONE FRAME FIRST: `_initialize()` runs before the main loop, and a node added
 	# to `root` before it answers null to `get_tree()` — the lesson
 	# `pause_selfcheck` and `minimap_selfcheck` both record at length.
