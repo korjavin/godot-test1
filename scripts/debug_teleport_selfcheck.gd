@@ -14,6 +14,10 @@ const PlayerScript: GDScript = preload("res://scripts/player_controller.gd")
 
 const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
+## The raw-keycode panel registry, borrowed rather than copied — see
+## `_check_keys_are_free()`.
+const CityMapSelfcheck: GDScript = preload("res://scripts/city_map_selfcheck.gd")
+
 var _failures: Array[String] = []
 
 
@@ -23,6 +27,7 @@ func _initialize() -> void:
 	# `pause_selfcheck` and `minimap_selfcheck` both record at length.
 	await process_frame
 
+	_check_keys_are_free()
 	_check_gate_table()
 	_check_gate_wiring()
 	await _check_run_preserved()
@@ -39,6 +44,54 @@ func _initialize() -> void:
 
 func _fail(message: String) -> void:
 	_failures.append(message)
+
+
+func _check_keys_are_free() -> void:
+	"""F2 and F8 collide with nothing — `city_map_selfcheck`'s idiom, its list.
+
+	A panel key is not rebindable, so a collision is unfixable from inside the
+	game: both surfaces fire, forever. The registry and the two scanners are
+	`city_map_selfcheck`'s statics, borrowed rather than copied, so a panel key
+	added there is compared against these two the day it lands (and vice versa
+	— the teleport's own rows are in that list, and each subject skips its own).
+	"""
+	var owners: Array = CityMapSelfcheck.panel_key_owners()
+	var subjects: Array = [
+		[int(PlayerScript.DEBUG_TELEPORT_BUDAPEST_KEY), "player_controller.DEBUG_TELEPORT_BUDAPEST_KEY"],
+		[int(PlayerScript.DEBUG_TELEPORT_HQ_KEY), "player_controller.DEBUG_TELEPORT_HQ_KEY"],
+	]
+	if subjects[0][0] == subjects[1][0]:
+		_fail("both teleport keys are %s — one destination is unreachable"
+			% OS.get_keycode_string(subjects[0][0]))
+	for subject: Array in subjects:
+		var key: int = subject[0]
+		var label: String = subject[1]
+		if key == 0:
+			_fail("%s is 0 — it can never be pressed" % label)
+			continue
+		# Against the input map: a gameplay action is rebindable, this is not.
+		for action: StringName in InputMap.get_actions():
+			for event: InputEvent in InputMap.action_get_events(action):
+				var as_key := event as InputEventKey
+				if as_key == null:
+					continue
+				if int(as_key.keycode) == key or int(as_key.physical_keycode) == key:
+					_fail("%s (%s) is also bound to the input action \"%s\""
+						% [label, OS.get_keycode_string(key), action])
+		# ...and against every other raw-keycode panel, its own row excepted.
+		var others: Array = []
+		for row: Array in owners:
+			if String(row[1]) != label:
+				others.append(row)
+		var claimed: String = CityMapSelfcheck._owner_claiming(key, others)
+		if not claimed.is_empty():
+			_fail("%s (%s) is already %s" % [label, OS.get_keycode_string(key), claimed])
+		# NEGATIVE CONTROL on the scan, `city_map_selfcheck`'s: a nested fake
+		# owner must be caught, or the two nested rows in the real list (the
+		# hero digits, the quiz answers) are not being compared at all.
+		if CityMapSelfcheck._owner_claiming(key, [[[[key]], "a fake nested owner"]]).is_empty():
+			_fail("the scan missed a fake owner holding %s — it cannot detect a real collision either" % label)
+	Sentinel.done("keys_are_free")
 
 
 func _check_gate_table() -> void:
