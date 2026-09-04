@@ -29,7 +29,7 @@ class_name MpManager
 ## THE CODEC IS `scripts/mp_codec.gd` — every parser this file used to carry
 ## ----------------------------------------------------------------------------
 ## `decode_presence` / `decode_state` / `decode_croc_sync` / `decode_captive` /
-## `decode_room` / `decode_pad` / `decode_lmk`, `packet_kind`, the `_croc_flags`
+## `decode_room` / `decode_pad` / `decode_lmk` / `decode_herd`, `packet_kind`, the `_croc_flags`
 ## byte packing, the two `*_in_reach` proximity tests, `peer_int_id` and the
 ## wire-format bounds all of them are written against now live in `MpCodec`
 ## (bead godot-test1-ftn.11 — a mechanical, behaviour-preserving move). They
@@ -197,9 +197,15 @@ const MAX_FLEE_DURATION: float = 60.0
 ##         traffic; budgeted like `kill` so a burst after a hitch still drains
 ##         while a flood cannot. Master-only, and it costs the master one range
 ##         test plus one proximity test against its own presence table.
+##   herd  is the master's migrating herd (bead godot-test1-6xc), sent on the same
+##         tick as `croc` and budgeted at the same 40: it is one packet per tick,
+##         not one per crocodile, and a peer over that ceiling is not playing. It
+##         is master-only and costs the receiver a dictionary of eight validated
+##         fields plus — for a herd it has not seen before — one seeded build of at
+##         most ten animals, which the one-herd invariant bounds absolutely.
 const VERB_BUDGET_PER_SEC: Dictionary = {
 	"clm": 30, "kill": 10, "flee": 4, "croc": 40, "cnf": 150, "dead": 60,
-	"cap": 8, "room": 12, "pad": 4, "lmk": 10,
+	"cap": 8, "room": 12, "pad": 4, "lmk": 10, "herd": 40,
 }
 
 ## How often the master publishes the room's captive set, in hertz.
@@ -3140,6 +3146,11 @@ func _process(delta: float) -> void:
 		_croc_accum = fmod(_croc_accum, croc_interval)
 		if _master == _you:
 			_send_croc_sync()
+			# The migrating herd rides the same tick and needs no timeout branch
+			# of its own: a peer that stops hearing about a herd frees it from
+			# `fauna_manager` itself (REMOTE_HERD_TIMEOUT), which is the one test
+			# that also covers a master change, a leave and no MP node at all.
+			_send_herd_sync()
 		else:
 			_tick_croc_timeout()
 
@@ -3647,6 +3658,8 @@ func _receive_mesh_verb(from_id: String, verb: String, packet: Dictionary) -> vo
 	match verb:
 		"croc":
 			_receive_croc_sync(from_id, packet)
+		"herd":
+			_receive_herd(from_id, packet)
 		"clm":
 			_receive_claim(from_id, packet)
 		"cnf":
@@ -4281,6 +4294,86 @@ func _tick_croc_timeout() -> void:
 	for id: int in _synced_crocs.keys():
 		if not is_instance_valid(_synced_crocs[id]):
 			_synced_crocs.erase(id)
+
+
+# =============================================================================
+# FAUNA HERD SYNC (bead godot-test1-6xc)
+# =============================================================================
+#
+# THE MASTER SIMULATES, PEERS REPLAY — the whole of the owner's report ("in
+# multiplayer i can see giraffes and I ride on one of them but my buddy in the
+# same game don't see them"). Fauna still never touches `run_seed`; this is the
+# SCENT TRAIL's precedent — runtime state the master broadcasts, outside the
+# determinism contract, costing no seeded stream a draw.
+#
+# ONE PACKET PER TICK, NOT ONE PER ANIMAL. A herd's whole state is its build
+# params plus (centre, facing yaw, metres travelled): every member sits at
+# `centre + offset` and every limb angle is a pure function of metres walked, so
+# ~70 bytes at CROC_SYNC_HZ describes up to ten animals completely. The params
+# ride EVERY tick rather than once, which is what makes it self-healing for a
+# dropped packet, for a peer whose mesh was still negotiating and for a late
+# joiner — no relay leg and no join-snapshot field.
+#
+# THE SYNC LAYER CREATES NO NODE AND FREES NONE, exactly like the crocodile sync
+# above it. `fauna_manager.gd` owns the animals at both ends: `herd_sync_state()`
+# describes its own herd, `apply_herd_sync()` builds or eases one, and the
+# silence timeout that frees a replay lives beside the state it frees.
+#
+# MIXED-BUILD CEILING, documented like the `room` verb's: a master on a build
+# without this verb publishes nothing, and a peer in that room draws no fauna at
+# all (it will not roll its own — see `_mp_replays_the_herd`). It converges the
+# moment the room's master is on this build.
+
+func _send_herd_sync() -> void:
+	"""
+	Master only: tell every peer about the herd crossing our field, or that none
+	is (`k: -1`, the all-clear — see `MpCodec.decode_herd`).
+
+	Sent UNRELIABLE, for the reason presence is: another one follows in 100 ms and
+	re-transmitting a stale centre would be strictly worse than skipping it. Sent
+	UNCONDITIONALLY rather than only while a herd is alive, because the all-clear
+	is what frees a peer's copy promptly when a crossing ends; it is ~26 bytes at
+	10 Hz to at most three peers, half a percent of what the crocodile sync costs.
+	"""
+	if _rtc == null:
+		return
+	var state: Dictionary = {"k": -1}
+	var fauna := get_tree().get_first_node_in_group("fauna")
+	if fauna != null and fauna.has_method("herd_sync_state"):
+		var live: Dictionary = fauna.call("herd_sync_state")
+		if not live.is_empty():
+			state = live
+	state["t"] = "herd"
+	var bytes: PackedByteArray = var_to_bytes(state)
+	_rtc.set_transfer_mode(MultiplayerPeer.TRANSFER_MODE_UNRELIABLE)
+	# Targeted, not broadcast-to-peer-0, for the reason `_send_presence()` spells
+	# out: `_connections` holds peers negotiation has merely STARTED with.
+	var peers: Dictionary = _rtc.get_peers()
+	for pid: int in peers:
+		if not bool((peers[pid] as Dictionary).get("connected", false)):
+			continue
+		_rtc.set_target_peer(pid)
+		_rtc.put_packet(bytes)
+
+
+func _receive_herd(from_id: String, packet: Dictionary) -> void:
+	"""
+	Apply one herd packet from the master.
+
+	DROPPED UNLESS IT CAME FROM THE MASTER, and dropped while WE are the master,
+	for exactly `_receive_croc_sync()`'s reasons: the mesh is peer input, so
+	without the first any member could put a giraffe in front of everybody, and
+	without the second our own herd would be driven by an echo of itself.
+	"""
+	if from_id != _master or _master == _you:
+		return
+	var state: Dictionary = MpCodec.decode_herd(packet)
+	if state.is_empty():
+		return  # The eighth trust boundary refused it; whole or nothing.
+	var fauna := get_tree().get_first_node_in_group("fauna")
+	if fauna == null or not fauna.has_method("apply_herd_sync"):
+		return  # No fauna manager in this scene — not an error, the LOD idiom.
+	fauna.call("apply_herd_sync", state)
 
 
 func _croc_by_id(id: int) -> Node:

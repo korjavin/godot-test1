@@ -21,11 +21,28 @@ extends Node
 ## through a camel. HERDERS stay walk-through — there is nothing to stand on top
 ## of a person, and a walking human pillar that blocks the player adds nothing.
 ##
-## Multiplayer note (cross-ref godot-test1-s86.3): a player standing on a camel
-## is just a player transform, which peer presence already carries — no sync work
-## here. But fauna is local and non-deterministic, so a remote peer does NOT see
-## the camel and a ridden avatar appears to glide ~2 m above the ground on their
-## screen. Known, accepted cosmetic artifact; do not design around it.
+## MULTIPLAYER: THE MASTER SIMULATES, PEERS REPLAY (bead godot-test1-6xc,
+## superseding s86.3's "accepted cosmetic artifact" — the owner reported it:
+## "in multiplayer i can see giraffes and I ride on one of them but my buddy in
+## the same game don't see them"). Fauna STILL never touches `run_seed`: a herd
+## is on a wall clock, so even a seeded roll would fire at different moments on
+## different peers and diverge on the first physics probe. It is the SCENT
+## TRAIL's precedent instead — runtime state the master broadcasts, outside the
+## determinism contract, costing no seeded stream a single draw.
+##
+## The whole herd is (params) + (centre, facing yaw, metres travelled): every
+## member sits at `centre + offset` and every limb angle is a pure function of
+## metres walked, so N per-animal transforms never cross the wire. The master
+## ROLLS the params and BUILDS from them; a peer is handed the same params and
+## runs the same seeded build, so both sides get the same species, the same
+## member count and the same formation byte for byte. `herd_sync_state()` /
+## `apply_herd_sync()` are the two seams `mp_manager.gd` drives at CROC_SYNC_HZ;
+## everything below them is the local code path it always was, and a peer with
+## no room takes exactly today's branch.
+##
+## The rider artifact goes with it: presence already carries the rider's y, so
+## once the giraffe exists under the avatar on the buddy's screen the avatar is
+## standing on its deck rather than gliding over empty ground.
 ##
 ## This node (named FaunaManager, added once under Main in main.tscn, in group
 ## "fauna") is the ENTIRE feature — sibling in spirit to
@@ -607,6 +624,64 @@ const TRUNK_SEGMENT_LAG: float = 0.6
 const TRUNK_SWAY_RATE: float = 0.7
 
 # ============================================================================
+# CONSTANTS — the multiplayer replay (bead godot-test1-6xc)
+# ============================================================================
+
+## The three things a herd can BE, indexed by the `k` a `herd` packet carries.
+## The wire is an index into THIS array and the builder is called off it, so the
+## kind vocabulary is written down exactly once: `MpCodec.decode_herd()` bounds
+## `k` against `HERD_BUILDERS.size()` rather than against a literal, and a fourth
+## herd is one row here plus its `_spawn_*` — no codec edit at all.
+const HERD_BUILDERS: Array[String] = [
+	"_spawn_caravan", "_spawn_elephant_family", "_spawn_giraffe_flock",
+]
+
+## How hard one arriving `herd` packet pulls the replayed centre and facing onto
+## the master's. Between packets the peer DEAD-RECKONS along the migration line
+## at the herd's own speed (`_replay_herd`), so what this corrects is only the
+## lateral terms it cannot see — the meander and the obstacle detour, together
+## under 0.3 m per 100 ms tick — and the members' own FORMATION_LERP_SPEED lag
+## smooths what is left. A weight rather than RemoteAvatar's
+## `1 - exp(-rate * delta)` because this is applied per PACKET, not per frame.
+const HERD_SYNC_EASE: float = 0.3
+
+## Seconds of silence after which a replayed herd is freed.
+##
+## Deliberately the fauna side's own timer and not a hook in `mp_manager.gd`:
+## every way a replay can end — the master's samples stopping, a new master
+## elected, this peer leaving the room, the MP manager going away entirely — is
+## the same event down here, "no packet arrived", so ONE test covers all four and
+## there is no fourth site to forget. Matched to `mp_manager.CROC_SYNC_TIMEOUT`,
+## which is the same question asked about a crocodile.
+const REMOTE_HERD_TIMEOUT: float = 2.0
+
+## Shortest gap (milliseconds) between two REBUILDS of a replayed herd.
+##
+## A TRUST BOUNDARY, not a tuning knob (found by codex review, 2026-09-04). The
+## master is only the oldest member of a public room, so a hostile one naming a
+## new `sd` on every packet would despawn and rebuild up to ten animal trees at
+## the `herd` verb's whole 40/s budget — and the frees are QUEUED, so the trees
+## pile up until the frame ends. One rebuild a second is invisible to every
+## honest path (a herd's identity changes at most once per FAUNA_INTERVAL, two
+## minutes, and the fastest legitimate change is a master election) and turns the
+## flood into one build a second, which is what an honest herd costs anyway.
+const HERD_REBUILD_MIN_MSEC: int = 1000
+
+## Furthest (metres) one packet may CORRECT the replayed centre by. Past it the
+## sample is not a correction at all and is handled as a rebuild.
+##
+## The second half of the rate limit above, and the same trust boundary (codex
+## review, 2026-09-04): `k` and `sd` unchanged with `p` alternating between two
+## legal coordinates slides ten AnimatableBody3Ds across the correction, and Godot
+## hands a rider the platform velocity that implies — the fling
+## FACING_YAW_RATE_MAX exists to stop, on the other axis. An honest correction is
+## only the LATERAL drift dead reckoning cannot see: the meander (0.45 m/s) plus
+## the detour ease (AVOID_EASE_SPEED), i.e. under 3 m/s, and a replay is freed
+## after REMOTE_HERD_TIMEOUT of silence anyway — so ~5 m is the honest worst and
+## this leaves 5x over it while sitting far under the wire's own 1e7 bound.
+const HERD_SYNC_MAX_CORRECTION: float = 25.0
+
+# ============================================================================
 # STATE
 # ============================================================================
 
@@ -633,6 +708,44 @@ var _herd_lateral: Vector3 = Vector3.ZERO
 var _herd_position: Vector3 = Vector3.ZERO
 var _herd_speed: float = 0.0
 var _herd_travelled: float = 0.0
+
+## The point every member is actually placed relative to — `_herd_position` plus
+## the meander and the obstacle detour, both of which ride `_herd_lateral`. It is
+## a member rather than a local in `_update_herd` because it is the ONE number a
+## replaying peer needs: publishing the finished centre is what lets that peer
+## know nothing about meander, detour or steering (see `herd_sync_state`).
+var _herd_centre: Vector3 = Vector3.ZERO
+
+## This herd's build params, kept so the master can re-publish them on EVERY
+## sync tick rather than once: that is what makes the replay self-healing for a
+## dropped packet, for a peer whose mesh was still negotiating when the herd
+## started, and for a late joiner — with no relay leg and no join-snapshot field.
+var _herd_kind: int = -1
+var _herd_seed: int = 0
+var _herd_origin: Vector3 = Vector3.ZERO
+
+## True while the live herd is the ROOM MASTER'S and we are only drawing it.
+## It gates three things and nothing else: `_physics_process` replays instead of
+## simulating, `herd_sync_state()` refuses to publish somebody else's herd back
+## at them, and `_despawn_herd` clears it. A peer that stops receiving packets
+## frees the herd (REMOTE_HERD_TIMEOUT) and is an ordinary local manager again.
+var _herd_remote: bool = false
+
+## Seconds since the last `herd` packet was applied. Only ever advanced by
+## `_replay_herd`, so it costs a solo run nothing at all.
+var _herd_silence: float = 0.0
+
+## When the last replayed herd was BUILT, against HERD_REBUILD_MIN_MSEC. Starts a
+## whole window in the past so the first herd of a process is never refused.
+var _herd_built_msec: int = -HERD_REBUILD_MIN_MSEC
+
+## The facing the last `herd` packet asked for. A REPLAY SLEWS TOWARD IT at
+## FACING_YAW_RATE_MAX exactly as the master does, rather than assigning it: the
+## packet arrives at 10 Hz and the roots are AnimatableBody3Ds, so writing a
+## whole sample's turn in one physics frame is the rider fling that constant was
+## added to stop — an honest 0.05 rad step is 3 rad/s, six times the cap (codex
+## review, 2026-09-04).
+var _herd_target_yaw: float = 0.0
 
 ## Seconds this herd has been alive, against MAX_HERD_LIFETIME (see there for
 ## why a purely relative despawn test can stall forever).
@@ -1312,7 +1425,14 @@ func _physics_process(delta: float) -> void:
 	## here either — a stride is ~0.6 Hz, so the weather manager's birds-alias
 	## argument (which justified per-frame updates there) simply does not apply.
 	if not _animals.is_empty():
-		_update_herd(delta)
+		# A REPLAYED HERD IS NEVER SIMULATED — it is the master's, and the two
+		# code paths must not both drive one set of animals. The flag is checked
+		# here rather than the room being asked, so the hot path costs no group
+		# lookup and a solo run reaches `_update_herd` exactly as it always did.
+		if _herd_remote:
+			_replay_herd(delta)
+		else:
+			_update_herd(delta)
 		return
 
 	_event_timer -= delta
@@ -1340,6 +1460,16 @@ func _find_player() -> Node3D:
 
 
 func _spawn_herd() -> void:
+	## ROLL one herd: draw the migration line, the speed, the species and the
+	## build seed, then hand all five to `_build_herd()` — which is the ONLY
+	## thing that ever creates an animal, on the master and on a replaying peer
+	## alike. That split is the whole of bead godot-test1-6xc: two builds off one
+	## seed are byte-identical, so the buddy's screen shows the same species, the
+	## same member count and the same formation without a transform on the wire.
+	##
+	## Everything drawn here is drawn in the order it always was, so the field's
+	## migration lines are distributed exactly as before.
+	##
 	## Build and place one herd on the edge of the field, aimed to walk
 	## through the player's general area and out the far side.
 	##
@@ -1363,6 +1493,12 @@ func _spawn_herd() -> void:
 		# feature's worst case is a single event, ever — ≤ 8 animals for a herd,
 		# ≤ 10 members for a caravan (CARAVAN_HERDERS_MAX + CARAVAN_BEASTS_MAX).
 		return
+	# IN A ROOM THE MASTER ROLLS THE HERDS AND NOBODY ELSE DOES. The timer above
+	# still counts down and re-arms — a non-master simply never produces a herd
+	# of its own, so there is no second crossing to reconcile and no state that
+	# has to be unwound when it stops being a peer.
+	if _mp_replays_the_herd():
+		return
 	var player := _find_player()
 	if player == null:
 		return
@@ -1384,31 +1520,79 @@ func _spawn_herd() -> void:
 	# In open country the first attempt always passes, so the draw sequence — and
 	# with it every migration line the field has ever laid out — is unchanged.
 	var placed := false
+	var heading_angle := 0.0
+	var origin := Vector3.ZERO
 	for _attempt: int in TOWER_SPAWN_TRIES:
 		# Heading is drawn from a cone facing back down the road (PI = straight
 		# against the player's +X run direction) — see MIGRATION_HEADING_SPREAD for
 		# why a uniform compass heading would leave most migrations unseen.
-		var angle := PI + _rng.randf_range(-MIGRATION_HEADING_SPREAD, MIGRATION_HEADING_SPREAD)
-		_herd_heading = Vector3(cos(angle), 0.0, sin(angle))
+		heading_angle = PI + _rng.randf_range(-MIGRATION_HEADING_SPREAD, MIGRATION_HEADING_SPREAD)
+		var heading := Vector3(cos(heading_angle), 0.0, sin(heading_angle))
 		# Lateral = heading rotated 90° in the ground plane; with heading, it is
 		# the herd-local frame every formation offset is expressed in.
-		_herd_lateral = Vector3(-_herd_heading.z, 0.0, _herd_heading.x)
+		var lateral := Vector3(-heading.z, 0.0, heading.x)
 		# Offset the whole migration line sideways so the herd passes BESIDE the
 		# player instead of straight through them (see MIGRATION_MISS_MIN).
 		var miss := _rng.randf_range(MIGRATION_MISS_MIN, MIGRATION_MISS_MAX)
 		if _rng.randf() < 0.5:
 			miss = -miss
 		var setback := sqrt(spawn_radius * spawn_radius - miss * miss)
-		_herd_position = player_ground - _herd_heading * setback + _herd_lateral * miss
-		if not _tower_excludes_spawn(_herd_position):
+		origin = player_ground - heading * setback + lateral * miss
+		if not _tower_excludes_spawn(origin):
 			placed = true
 			break
 	if not placed:
 		return
-	_herd_speed = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
+	var speed := _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
+	# Which of the three it is. The caravan is rolled FIRST and takes its slice
+	# off the top, so the elephant/giraffe split below is untouched (see
+	# CARAVAN_CHANCE) — and the draw sequence is the one this always made.
+	var builder := "_spawn_caravan"
+	if _rng.randf() >= CARAVAN_CHANCE:
+		builder = "_spawn_elephant_family" if _rng.randf() < ELEPHANT_CHANCE \
+				else "_spawn_giraffe_flock"
+	_build_herd({
+		"k": HERD_BUILDERS.find(builder), "o": origin, "h": heading_angle,
+		"sd": _rng.randi(), "sp": speed,
+	})
+	_refresh_probe_exclude(player)
+
+	# LAST, because the plan needs `_herd_offset_max` — which is this herd's own
+	# formation width and is only known once every member has been placed. It is
+	# also MASTER-SIDE ONLY: a replaying peer does no steering at all, because the
+	# centre it is handed already carries the master's detour.
+	_plan_tower_detour()
+
+
+func _build_herd(params: Dictionary) -> void:
+	## THE ONLY PLACE AN ANIMAL IS EVER CREATED — the master runs it off the roll
+	## it just made, a peer runs it off the `herd` packet it just received, and
+	## the two produce the same herd because every draw the members are made of
+	## comes off a FRESH RandomNumberGenerator seeded with `sd`.
+	##
+	## `params` is the wire format itself (see `herd_sync_state` /
+	## `MpCodec.decode_herd`): `k` the HERD_BUILDERS index, `o` the origin, `h`
+	## the heading angle in radians, `sd` the build seed, `sp` the walk speed.
+	## Passing the packet straight in is what stops the master and the peer
+	## reading two different descriptions of one herd.
+	##
+	## The private `_rng` is SWAPPED rather than replaced: it is the ambience
+	## clock — the event timer and every future migration line come off it — and
+	## leaving it pinned to a herd's seed would make the rest of the session
+	## deterministic, which is exactly what fauna must never be.
+	_herd_kind = int(params["k"])
+	_herd_seed = int(params["sd"])
+	_herd_origin = params["o"]
+	_herd_speed = float(params["sp"])
+	var heading_angle: float = float(params["h"])
+	_herd_heading = Vector3(cos(heading_angle), 0.0, sin(heading_angle))
+	_herd_lateral = Vector3(-_herd_heading.z, 0.0, _herd_heading.x)
+	_herd_position = _herd_origin
+	_herd_centre = _herd_origin
 	_herd_travelled = 0.0
 	_herd_age = 0.0
 	_herd_offset_max = 0.0
+	_herd_silence = 0.0
 	# Fresh herd, fresh detour state — a herd that despawned mid-swerve must not
 	# hand its offset to the next one, which walks a completely different line.
 	_avoid_target = 0.0
@@ -1416,27 +1600,21 @@ func _spawn_herd() -> void:
 	_avoid_velocity = 0.0
 	_probe_timer = 0.0
 	_avoid_hold_until = 0.0
+	_tower_bend = 0.0
 	# Seed the slew-limited facing at the migration heading — the same expression
 	# _add_animal places each member with — so the first tick has nothing to slew
 	# toward and the herd does not spin up from world north (see FACING_YAW_RATE_MAX).
 	_facing_yaw = atan2(-_herd_heading.x, -_herd_heading.z)
-	_refresh_probe_exclude(player)
+	_herd_target_yaw = _facing_yaw
 
 	# Build the members with their formation offsets (herd-local lateral/long
 	# pairs turned into world-space vectors — heading never changes, so the
 	# world-space offset is valid for the herd's whole life).
-	# The caravan is rolled FIRST and takes its slice off the top, so the
-	# elephant/giraffe split below is untouched (see CARAVAN_CHANCE).
-	if _rng.randf() < CARAVAN_CHANCE:
-		_spawn_caravan()
-	elif _rng.randf() < ELEPHANT_CHANCE:
-		_spawn_elephant_family()
-	else:
-		_spawn_giraffe_flock()
-
-	# LAST, because the plan needs `_herd_offset_max` — which is this herd's own
-	# formation width and is only known once every member has been placed.
-	_plan_tower_detour()
+	var ambience_rng := _rng
+	_rng = RandomNumberGenerator.new()
+	_rng.seed = _herd_seed
+	call(HERD_BUILDERS[_herd_kind])
+	_rng = ambience_rng
 
 
 func _spawn_elephant_family() -> void:
@@ -1679,18 +1857,63 @@ func _update_herd(delta: float) -> void:
 			FACING_YAW_RATE_MAX * delta)
 	_facing_yaw = yaw
 
-	# The ease is a soft, uniform lag on the whole formation (members start
-	# exactly on their slots, so nothing here spreads them apart): it takes the
-	# edge off the meander's direction changes so the herd swings into a turn
-	# instead of snapping onto the new line.
+	_herd_centre = centre
+	_place_members(delta)
+
+
+func _place_members(delta: float) -> void:
+	## Ease every member onto `_herd_centre + offset`, face it at `_facing_yaw`
+	## and animate — the tail BOTH drivers share (`_update_herd` on the master,
+	## `_replay_herd` on a peer), so the two can never disagree about what a herd
+	## centre means.
+	##
+	## The ease is a soft, uniform lag on the whole formation (members start
+	## exactly on their slots, so nothing here spreads them apart): it takes the
+	## edge off the meander's direction changes so the herd swings into a turn
+	## instead of snapping onto the new line. On a peer it does a second job for
+	## free — its ~0.67 s time constant is far slower than the 100 ms sync tick,
+	## so the master's stepped centre arrives as continuous motion.
 	var ease_weight := minf(1.0, FORMATION_LERP_SPEED * delta)
 	for animal: Dictionary in _animals:
 		var root: Node3D = animal["root"]
-		var target: Vector3 = centre + animal["offset"]
+		var target: Vector3 = _herd_centre + animal["offset"]
 		root.position = root.position.lerp(target, ease_weight)
-		root.rotation.y = yaw
+		root.rotation.y = _facing_yaw
 
 	_animate_animals()
+
+
+func _replay_herd(delta: float) -> void:
+	## Draw the ROOM MASTER'S herd. No probe, no steering, no despawn radius and
+	## no lifetime cap: the centre we are sent already carries the meander and the
+	## detour, and when the crossing ends the master simply stops describing it.
+	##
+	## Between packets the centre is DEAD-RECKONED along the migration line at the
+	## herd's own speed, which is what keeps the legs walking at 60 Hz off a 10 Hz
+	## feed — `_animate_animals` is a pure function of `_herd_travelled`, so a
+	## stepped accumulator would read as stepped legs. `apply_herd_sync` eases the
+	## residual (the lateral terms this cannot see) back onto the truth.
+	##
+	## ponytail: the master spawns a herd ~FIELD_RADIUS from ITS OWN player, so a
+	## teammate far away can in principle see animals past their own terrain — the
+	## herd is drawn over open sky rather than over ground. Not handled, because
+	## the crocodile sync already fades everything at that range and nobody has
+	## seen it; if it shows, the fix is to HIDE the animals on this peer's local
+	## DESPAWN_RADIUS test and never to free them, which would desync the build.
+	_herd_silence += delta
+	if _herd_silence > REMOTE_HERD_TIMEOUT:
+		# The master went quiet — it despawned the herd, was deposed, or we left
+		# the room. All four are this one test (see REMOTE_HERD_TIMEOUT).
+		_despawn_herd()
+		return
+	_herd_age += delta
+	_herd_travelled += _herd_speed * delta
+	_herd_centre += _herd_heading * (_herd_speed * delta)
+	# SLEW-LIMITED HERE TOO, on the same constant and for the same reason the
+	# master slews: these roots are AnimatableBody3Ds and a rider inherits
+	# `angular x r`. See `_herd_target_yaw`.
+	_facing_yaw = rotate_toward(_facing_yaw, _herd_target_yaw, FACING_YAW_RATE_MAX * delta)
+	_place_members(delta)
 
 
 func _refresh_probe_exclude(player: Node3D) -> void:
@@ -1988,6 +2211,10 @@ func _despawn_herd() -> void:
 	for animal: Dictionary in _animals:
 		(animal["root"] as Node3D).queue_free()
 	_animals.clear()
+	# Whoever's herd it was, it is nobody's now: the next one starts as a local
+	# roll unless a `herd` packet claims it first (see `apply_herd_sync`).
+	_herd_remote = false
+	_herd_kind = -1
 	# Forget the tower plan with the herd it was made for. `_spawn_herd` rewrites
 	# it anyway, but a stale bend left lying around is a live steering command for
 	# anything that drives the herd state directly (fauna_selfcheck's rider row
@@ -1995,3 +2222,108 @@ func _despawn_herd() -> void:
 	# nowhere near the line it was handed.
 	_tower_bend = 0.0
 	_event_timer = _rng.randf_range(FAUNA_INTERVAL_MIN, FAUNA_INTERVAL_MAX)
+
+
+# ============================================================================
+# MULTIPLAYER SEAMS (bead godot-test1-6xc)
+# ============================================================================
+# Two functions and one predicate, driven by `mp_manager.gd` at CROC_SYNC_HZ.
+# Discovery is the "mp" group and `has_method`, both ways — a preload between
+# these two files would be a hard dependency in a direction neither wants, and a
+# harness with only one of them behaves exactly as it did before this existed.
+
+func _mp_replays_the_herd() -> bool:
+	## Are we a room member who is NOT the master, i.e. somebody else's herd is
+	## the only herd we may draw?
+	##
+	## Asked once per FAUNA_INTERVAL (two to four minutes), never per frame — the
+	## per-frame answer is `_herd_remote`, which the packet itself sets. Solo, or
+	## as the master, this is false and every path below it is today's code.
+	var mp := get_tree().get_first_node_in_group("mp")
+	if mp == null or not mp.has_method("is_online") or not mp.has_method("get_master") \
+			or not mp.has_method("my_id"):
+		return false
+	if not bool(mp.call("is_online")):
+		return false
+	return str(mp.call("get_master")) != str(mp.call("my_id"))
+
+
+func herd_sync_state() -> Dictionary:
+	## What the master publishes: the build params AND the live state, every tick.
+	##
+	## `{}` means "no herd is crossing", which `mp_manager` sends as the all-clear
+	## so a peer frees its copy the moment the master's crossing ends rather than
+	## waiting out REMOTE_HERD_TIMEOUT.
+	##
+	## A REPLAYED HERD IS NEVER PUBLISHED. That is what makes promotion heal
+	## itself: a peer elected master is still replaying the old master's herd, so
+	## it publishes the all-clear, every other peer frees immediately, and its own
+	## copy goes on the silence timeout a moment later — with no hook in
+	## `_on_lobby_master_changed` and no state to hand over.
+	if _animals.is_empty() or _herd_remote:
+		return {}
+	return {
+		"k": _herd_kind,
+		"o": _herd_origin,
+		"h": atan2(_herd_heading.z, _herd_heading.x),
+		"sd": _herd_seed,
+		"sp": _herd_speed,
+		"p": _herd_centre,
+		"y": _facing_yaw,
+		"d": _herd_travelled,
+	}
+
+
+func apply_herd_sync(state: Dictionary) -> void:
+	## Apply one already-validated `herd` packet (see `MpCodec.decode_herd`).
+	##
+	## `k < 0` is the master's all-clear. Anything else is a herd, and the packet
+	## is either a REBUILD (see the three cases below, all rate-limited) or a
+	## CORRECTION that eases the one we already have onto the master's truth.
+	if not _animals.is_empty() and not _herd_remote:
+		# OUR OWN CROSSING YIELDS TO THE ROOM'S the moment the master speaks —
+		# two herds at once is exactly what the one-herd invariant forbids, and
+		# this is the window a peer that joined mid-crossing lands in.
+		_despawn_herd()
+	var kind: int = int(state.get("k", -1))
+	if kind < 0:
+		if _herd_remote:
+			_despawn_herd()
+		return
+	var centre: Vector3 = state["p"]
+	# THREE THINGS ARE A REBUILD AND NOT A CORRECTION: a herd we do not have, a
+	# herd whose identity changed, and one whose centre has moved further than a
+	# correction could honestly be (HERD_SYNC_MAX_CORRECTION — sliding ten
+	# AnimatableBody3Ds across a teleport flings a rider). All three go through
+	# the SAME rate limit, so a hostile master gets one build a second whichever
+	# field it spams. A refused packet returns WITHOUT touching `_herd_silence`,
+	# so a master that really has moved on stops renewing the lease and the herd
+	# we are holding times out in REMOTE_HERD_TIMEOUT.
+	if not _herd_remote or kind != _herd_kind or int(state["sd"]) != _herd_seed \
+			or _herd_centre.distance_to(centre) > HERD_SYNC_MAX_CORRECTION:
+		if Time.get_ticks_msec() - _herd_built_msec < HERD_REBUILD_MIN_MSEC:
+			return               # keep drawing the herd we already have
+		_herd_built_msec = Time.get_ticks_msec()
+		_despawn_herd()
+		_build_herd(state)
+		_herd_remote = true
+		# SNAPPED, NOT EASED — `_build_herd` puts everything at the herd's ORIGIN,
+		# which for a late joiner is most of a crossing behind where the master's
+		# herd actually is. There is nobody standing on an animal that did not
+		# exist a moment ago, so this is the one place a whole-pose write is safe.
+		_herd_centre = centre
+		_facing_yaw = float(state["y"])
+		_herd_target_yaw = _facing_yaw
+		_herd_travelled = float(state["d"])
+		for animal: Dictionary in _animals:
+			var root: Node3D = animal["root"]
+			root.position = _herd_centre + animal["offset"]
+			root.rotation.y = _facing_yaw
+		return
+	_herd_silence = 0.0
+	_herd_centre = _herd_centre.lerp(centre, HERD_SYNC_EASE)
+	# The yaw is a TARGET, slewed toward on the physics clock by `_replay_herd`.
+	_herd_target_yaw = float(state["y"])
+	# SET, not eased: it is a metre count driving a sine, and easing it would
+	# make the legs walk at a speed the herd is not travelling at.
+	_herd_travelled = float(state["d"])

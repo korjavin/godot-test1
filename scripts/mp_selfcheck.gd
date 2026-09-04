@@ -198,6 +198,9 @@ func _run_checks() -> String:
 	failure = _check_ability_visual_state()
 	if not failure.is_empty():
 		return failure
+	failure = _check_herd_parser()
+	if not failure.is_empty():
+		return failure
 	return _check_room_pause()
 
 
@@ -2045,6 +2048,148 @@ func _check_captive_parser() -> String:
 			return "decode_captive accepted the hostile packet %s" % str(packet)
 	Sentinel.done("captive_parser")
 	return ""
+
+
+## A fauna manager reduced to the one method `MpManager._receive_herd()` calls,
+## in group "fauna" so it is found through the shipped group lookup.
+const FAUNA_STUB_SOURCE := """extends Node
+var applied: Array = []
+func apply_herd_sync(state: Dictionary) -> void:
+	applied.append(state)
+"""
+
+
+func _check_herd_parser() -> String:
+	"""
+	The `herd` verb — the EIGHTH trust boundary (bead godot-test1-6xc), plus the
+	authority rule that decides whose giraffes everybody draws.
+
+	THE HONEST PACKETS COME FIRST AND THEY ARE THE POINT: a parser that returned
+	`{}` for everything would pass every rejection below while making the buddy's
+	screen as empty as it was before this bead.
+	"""
+	var honest: Dictionary = {
+		"t": "herd", "k": 1, "o": Vector3(10.0, 0.0, -4.0), "h": 1.25, "sd": 99,
+		"sp": 2.5, "p": Vector3(12.0, 0.0, -4.5), "y": 0.5, "d": 17.5,
+	}
+	var good: Dictionary = MpCodec.decode_herd(honest)
+	if good.is_empty():
+		return "decode_herd dropped an honest herd packet"
+	for key: String in ["k", "o", "sd", "sp", "p", "d"]:
+		if good.get(key, null) != honest[key]:
+			return "decode_herd changed %s: %s -> %s" % [key, honest[key], good.get(key, null)]
+	if not is_equal_approx(float(good["h"]), 1.25) or not is_equal_approx(float(good["y"]), 0.5):
+		return "decode_herd changed an in-range angle (%s)" % str(good)
+
+	# THE ALL-CLEAR must decode to a VALUE and not to the `{}` that means
+	# malformed — it is how a master says "my crossing ended" without making every
+	# peer wait out its silence timeout.
+	var clear: Dictionary = MpCodec.decode_herd({"t": "herd", "k": -1})
+	if clear.is_empty() or int(clear.get("k", 0)) != -1:
+		return "decode_herd dropped the master's all-clear (%s)" % str(clear)
+
+	# Every kind the fauna manager can build must be accepted, or a species goes
+	# permanently invisible to everybody but the master.
+	for kind: int in MpCodec.FAUNA_SCRIPT.HERD_BUILDERS.size():
+		var packet: Dictionary = honest.duplicate()
+		packet["k"] = kind
+		if MpCodec.decode_herd(packet).is_empty():
+			return "decode_herd refused herd kind %d, which fauna_manager can build" % kind
+
+	# ...and everything a peer that is not speaking this protocol could send.
+	var over_kind: int = MpCodec.FAUNA_SCRIPT.HERD_BUILDERS.size()
+	var hostile: Array[Dictionary] = [
+		{"t": "herd"},                                             # no kind at all
+		_herd_with("k", float(over_kind - 1)),                     # kind is a float
+		_herd_with("k", over_kind),                                # kind out of range
+		_herd_with("k", true),                                     # ...or a bool
+		_herd_with("sd", 1.5),                                     # seed is a float
+		_herd_with("o", Vector2(1.0, 2.0)),                        # origin is a Vector2
+		_herd_with("o", Vector3(NAN, 0.0, 0.0)),                   # NaN origin
+		_herd_with("p", Vector3(0.0, INF, 0.0)),                   # infinite centre
+		_herd_with("p", Vector3(MpCodec.MAX_PRESENCE_COORD * 2.0, 0.0, 0.0)),
+		_herd_with("h", NAN),                                      # NaN heading
+		_herd_with("y", "0.5"),                                    # yaw is a string
+		_herd_with("sp", -1.0),                                    # walking backwards
+		_herd_with("sp", 1.0e30),                                  # ...or at 1e30 m/s
+		# JUST OVER THE AMBLE. `sp` is written onto AnimatableBody3D roots every
+		# physics tick and Godot derives a RIDER's platform velocity from that
+		# delta, so the presence packet's generous 1e4 m/s is not a bound here.
+		_herd_with("sp", MpCodec.FAUNA_SCRIPT.WALK_SPEED_MAX + 0.5),
+		_herd_with("d", -0.1),                                     # negative distance
+		_herd_with("d", 1.0e30),                                   # poisons the stride sine
+		_herd_with("d", NAN),
+	]
+	for packet: Dictionary in hostile:
+		if not MpCodec.decode_herd(packet).is_empty():
+			return "decode_herd accepted the hostile packet %s" % str(packet)
+
+	# A missing REQUIRED field is malformed here, unlike a presence counter: none
+	# of these is a field a later build added, and a half-described herd would be
+	# built at the origin facing north on every screen but the master's.
+	for key: String in ["o", "h", "sd", "sp", "p", "y", "d"]:
+		var truncated: Dictionary = honest.duplicate()
+		truncated.erase(key)
+		if not MpCodec.decode_herd(truncated).is_empty():
+			return "decode_herd accepted a packet with no %s" % key
+
+	# WRAPPED, not bounded: both angles are eased with `lerp_angle` on the far
+	# side, where `1e30 + anything small IS 1e30`.
+	var spun: Dictionary = MpCodec.decode_herd(_herd_with("y", 1.0e6))
+	if spun.is_empty() or float(spun["y"]) < 0.0 or float(spun["y"]) >= TAU:
+		return "decode_herd did not wrap a huge yaw into [0, TAU) (%s)" % str(spun)
+
+	# ...and both ends of the amble are ACCEPTED, or the honest herds the fauna
+	# manager actually rolls would be refused and the buddy would see nothing.
+	for edge: float in [MpCodec.FAUNA_SCRIPT.WALK_SPEED_MIN, MpCodec.FAUNA_SCRIPT.WALK_SPEED_MAX]:
+		if MpCodec.decode_herd(_herd_with("sp", edge)).is_empty():
+			return "decode_herd refused %.1f m/s, which fauna_manager rolls" % edge
+
+	# The verb has to be budgeted like every other one `_receive_mesh_verb`
+	# dispatches — "only the master sends this" is not a rate bound.
+	if not MPManager.VERB_BUDGET_PER_SEC.has("herd"):
+		return "the herd verb has no VERB_BUDGET_PER_SEC row"
+
+	# AUTHORITY. Only the master's herd is drawn, and a packet arriving while WE
+	# are the master is dropped too — otherwise our own herd is driven by an echo.
+	var fauna_script := GDScript.new()
+	fauna_script.source_code = FAUNA_STUB_SOURCE
+	fauna_script.reload()
+	var fauna: Node = fauna_script.new()
+	fauna.add_to_group("fauna")
+	root.add_child(fauna)
+	var mp: Node = _room_manager("us")
+	mp._master = "themaster"
+	mp._receive_herd("someoneelse", honest)
+	if not (fauna.get("applied") as Array).is_empty():
+		fauna.queue_free()
+		mp.queue_free()
+		return "a NON-MASTER's herd packet was applied — any member could put a herd on every screen"
+	mp._receive_herd("themaster", honest)
+	if (fauna.get("applied") as Array).size() != 1:
+		fauna.queue_free()
+		mp.queue_free()
+		return "the master's herd packet was NOT applied — this check measured nothing"
+	mp._master = "us"
+	mp._receive_herd("us", honest)
+	if (fauna.get("applied") as Array).size() != 1:
+		fauna.queue_free()
+		mp.queue_free()
+		return "we applied a herd packet while we were the master — our own herd would be driven by an echo"
+	fauna.queue_free()
+	mp.queue_free()
+	Sentinel.done("herd_parser")
+	return ""
+
+
+func _herd_with(key: String, value: Variant) -> Dictionary:
+	"""One honest herd packet with a single field replaced — see _check_herd_parser."""
+	var packet: Dictionary = {
+		"t": "herd", "k": 1, "o": Vector3(10.0, 0.0, -4.0), "h": 1.25, "sd": 99,
+		"sp": 2.5, "p": Vector3(12.0, 0.0, -4.5), "y": 0.5, "d": 17.5,
+	}
+	packet[key] = value
+	return packet
 
 
 func _check_pad_parser() -> String:
