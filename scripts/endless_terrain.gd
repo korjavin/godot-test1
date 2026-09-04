@@ -963,7 +963,7 @@ const FIELD_BRIDGE_FOOT_PUSH_MAX: float = 30.0
 ## is under WADE_SURFACE_MAX for its first 2.4 m, i.e. a hero wading on a bridge.
 ## 260 m covers every grazing stretch field_bridge_selfcheck has measured; past
 ## it the crossing is refused and the lake rule takes it.
-const FIELD_BRIDGE_BANK_WALK_MAX: float = 260.0
+const FIELD_BRIDGE_BANK_WALK_MAX: float = 600.0
 
 ## Slop on a slab's own faces when asking whether a point stands on it. A
 ## millimetre: big enough that the exact edge of a slab answers "yes" whichever
@@ -10726,7 +10726,8 @@ func _field_bridge_reach() -> float:
 	return FIELD_BRIDGE_MAX_SPAN \
 			+ float(2 * FIELD_BRIDGE_DRY_STATIONS + 2) * _road_spacing() \
 			+ 2.0 * (_field_bridge_run() + FIELD_BRIDGE_FOOT_PUSH_MAX) \
-			+ 2.0 * FIELD_BRIDGE_HALF_WIDTH
+			+ 2.0 * FIELD_BRIDGE_HALF_WIDTH \
+			+ 2.0 * FIELD_BRIDGE_BANK_WALK_MAX
 
 
 func _field_bridge_dry_across(centre: Vector2, dir: Vector2) -> bool:
@@ -10797,6 +10798,44 @@ func _field_bridge_wet(k: int) -> bool:
 	return _centreline_wet(back, fwd)
 
 
+func _field_bridge_out_dir(k: int, sign: int) -> Vector2:
+	"""
+	The unit direction a ramp at deck end `k` runs AWAY from the deck in —
+	westward for `sign` -1, eastward for +1.
+
+	IT IS THE CONTINUATION OF THE LAST DECK SEGMENT, not the next station's
+	bearing, because that is the direction `_field_bridge_row_from` gives the
+	foot: a ramp colinear with the slab it meets leaves no wedge at the parapet.
+	Testing the growth along the road's NEXT segment instead measures a ramp
+	nobody builds, and where the road turns the two disagree enough to refuse a
+	crossing that would have been fine (seed 777001, station 71).
+	"""
+	var here: Vector2 = _road_station(k).center
+	var inward: Vector2 = _road_station(k - sign).center
+	return (here - inward).normalized()
+
+
+func _field_bridge_ramp_dry(head: Vector2, foot: Vector2) -> bool:
+	"""
+	Is the whole RAMP RECTANGLE — every deck-wide section from the deck's end
+	`head` down to `foot` — clear of the water?
+
+	The abutment's real question, and the growth loop's too: a ramp that lands on
+	a dry section but crosses a shallow on the way is a stretch of bridge under
+	WADE_SURFACE_MAX with water beside it, which a hero on the parapet wades.
+	"""
+	var run := head.distance_to(foot)
+	if run <= 0.0:
+		return _field_bridge_dry_across(head, Vector2.RIGHT)
+	var dir := (foot - head) / run
+	var steps := int(run / FIELD_BRIDGE_PROBE_STEP)
+	for i in range(steps + 1):
+		if not _field_bridge_dry_across(head + dir * minf(
+				float(i) * FIELD_BRIDGE_PROBE_STEP, run), dir):
+			return false
+	return _field_bridge_dry_across(foot, dir)
+
+
 func _field_bridge_section_dry(k: int) -> bool:
 	"""Is a deck-wide section across station `k` dry all the way across? The
 	abutment's question (see _field_bridge_dry_across), asked of a station."""
@@ -10854,13 +10893,12 @@ func _field_bridge_foot(head: Vector2, out_dir: Vector2) -> Vector2:
 	var pushed := 0.0
 	while pushed <= FIELD_BRIDGE_FOOT_PUSH_MAX:
 		var foot := head + out_dir * (run + pushed)
-		# TWO CONDITIONS, and the second is what the span rule handed over when it
-		# went back to measuring the centreline: the foot's whole 16 m section
-		# must be on the bank, AND the centreline from the deck's end down to the
-		# foot must be dry — a ramp is under WADE_SURFACE_MAX for its first 2.4 m,
-		# so water beneath THAT is a hero wading on a bridge.
-		if _field_bridge_dry_across(foot, out_dir) \
-				and not _centreline_wet(head, foot):
+		# THE WHOLE RAMP RECTANGLE, not the foot's section and the centreline. A
+		# ramp is under WADE_SURFACE_MAX for its first 2.4 m and it is 16 m wide,
+		# so a hero hugging its parapet over a bank shallow wades on a bridge —
+		# measured on six seeds, ~1-3 m of one edge each. The rectangle is every
+		# section from the deck's end down to the foot.
+		if _field_bridge_ramp_dry(head, foot):
 			return foot
 		pushed += FIELD_BRIDGE_PROBE_STEP
 	# NEVER A KNOWN-WET FOOT. Out of budget the honest answer is that this bank
@@ -11055,22 +11093,61 @@ func field_bridge_at(k0: int) -> Dictionary:
 	# Bounded by FIELD_BRIDGE_MAX_SPAN at each end — the same ceiling the water
 	# itself gets, because this growth is the deck following a river bank and a
 	# bank is exactly as long as the crossing next to it.
+	#
+	# THE CACHE IS EXTENDED FIRST, AND THE LOOPS DO NOT READ ITS EDGE. This
+	# answer is memoized for the run, so a loop that stopped at whatever the
+	# station cache happened to hold would make the BRIDGE SET a function of the
+	# order the player walked the chunks in — measured: seed 409 built six
+	# bridges ascending and five descending, and in a room two peers would lay
+	# different decks over the same water. The k1 walk above returns UN-memoized
+	# when the cache is short for exactly this reason; the growth cannot, because
+	# it may legitimately want stations 260 m out, so it makes sure they exist.
+	var reach_x := FIELD_BRIDGE_BANK_WALK_MAX + FIELD_BRIDGE_FOOT_PUSH_MAX \
+			+ 2.0 * _field_bridge_run()
+	_road_extend_to_x(_road_station(west_k).center.x - reach_x,
+			_road_station(east_k).center.x + reach_x)
 	var grown := 0.0
-	while west_k - 1 > road_k_min and grown < FIELD_BRIDGE_BANK_WALK_MAX \
-			and not _field_bridge_section_dry(west_k):
+	while grown < FIELD_BRIDGE_BANK_WALK_MAX and not _field_bridge_ramp_dry(
+			_road_station(west_k).center,
+			_road_station(west_k).center + _field_bridge_out_dir(west_k, -1)
+					* _field_bridge_run()):
 		grown += _road_station(west_k).center.distance_to(
 				_road_station(west_k - 1).center)
 		west_k -= 1
 	grown = 0.0
-	while east_k + 1 < mini(road_k_max, terminal) \
-			and grown < FIELD_BRIDGE_BANK_WALK_MAX \
-			and not _field_bridge_section_dry(east_k):
+	while east_k + 1 < terminal and grown < FIELD_BRIDGE_BANK_WALK_MAX \
+			and not _field_bridge_ramp_dry(
+					_road_station(east_k).center,
+					_road_station(east_k).center
+							+ _field_bridge_out_dir(east_k, 1) * _field_bridge_run()):
 		grown += _road_station(east_k).center.distance_to(
 				_road_station(east_k + 1).center)
 		east_k += 1
 	var pts := PackedVector2Array()
 	for k in range(west_k, east_k + 1):
 		pts.append(_road_station(k).center)
+
+	# ONE ANCHOR OWNS A DECK. Two crossings on the same bank both grow outward to
+	# the same dry ground and produce the SAME row under two anchors — and then
+	# every chunk emits every slab twice: double the boxes, double the collision
+	# shapes, and a full-length z-fight (7 of 78 seeds, one of them three times
+	# over). The WESTERN entry wins, so the rule is: if an earlier entry's deck
+	# already covers this crossing, this anchor has nothing to build.
+	#
+	# It terminates because it only ever looks WEST, and it is cheap because
+	# field_bridge_at is memoized — the neighbour it asks was built by the same
+	# window scan a moment ago.
+	var look := west_k
+	while look < k0:
+		var earlier: Dictionary = field_bridge_at(look)
+		look += 1
+		if earlier.is_empty():
+			continue
+		if _field_bridge_surface_on(earlier,
+				Vector3(_road_station(k0).center.x, 0.0,
+						_road_station(k0).center.y)) > -INF:
+			_field_bridge_cache[k0] = empty
+			return empty
 
 	var row := _field_bridge_row_from(pts)
 	if not row.is_empty():
@@ -11190,7 +11267,14 @@ func approach_bridges() -> Array:
 	# cheap and metre-fine; the DECK is decimated back to the road's pitch below,
 	# so the stone is the same shape either way.
 	var pts := PackedVector2Array()
-	var x := ROAD_TERMINAL_X
+	# FROM THE TERMINAL STATION, NOT FROM ROAD_TERMINAL_X. `T` is the last station
+	# AT OR WEST of that X, so the two are up to a station apart — and the west
+	# extension below stops at the terminal station, which left that gap
+	# unsampled. On seed 115 the handoff water sits inside it, so the corridor
+	# walked straight over the crossing it exists to find.
+	# `road_approach_point` answers the terminal itself west of it, so starting
+	# here is continuous with the extension and adds no kink.
+	var x := minf(ROAD_TERMINAL_X, terminal.x)
 	while x <= east_x:
 		pts.append(BudapestPlan.road_approach_point(terminal, x))
 		x += FIELD_BRIDGE_PROBE_STEP
@@ -11206,24 +11290,35 @@ func approach_bridges() -> Array:
 	# section was wet, and on seed 224 the crossing ended at `T - 1` with the
 	# terminal dry, so neither side saw it at all.
 	var terminal_k := _road_terminal_k()
-	var handoff := false
-	for k in range(terminal_k - FIELD_BRIDGE_DRY_STATIONS, terminal_k + 1):
-		if k > road_k_min and _field_bridge_wet(k):
-			handoff = true
-			break
-	if handoff:
+	# THE WEST EXTENSION IS UNCONDITIONAL, and that is the handoff's whole
+	# ownership rule. The road side refuses any crossing whose far bank or whose
+	# grown deck runs past the last station a road consumer may touch, and west of
+	# `T` the corridor is a POINT whose perpendicular is not the road's — so every
+	# TRIGGER tried here (the corridor's own first sample, then the road's wet
+	# stations near T) missed one shape of the same case. Starting the corridor's
+	# line on dry ROAD, always, means the scan below simply sees the crossing;
+	# anything the road side really did deck is skipped by the ownership test in
+	# the loop, so nothing is built twice.
+	if true:
 		# Walk back to the last DRY station, then lay the road's own centreline
 		# out at the SAME pitch as the corridor's samples — mixing 6 m stations
 		# with 1 m samples makes the decimation below skip 36 m of the western
 		# half and turn the last deck segment into a chord.
+		_road_extend_to_x(_road_station(terminal_k).center.x
+				- FIELD_BRIDGE_BANK_WALK_MAX - FIELD_BRIDGE_MAX_SPAN,
+				ROAD_TERMINAL_X)
 		var k := terminal_k
 		var walked_west := 0.0
-		while k > road_k_min and walked_west <= FIELD_BRIDGE_MAX_SPAN:
+		while walked_west <= FIELD_BRIDGE_BANK_WALK_MAX:
 			k -= 1
 			walked_west += _road_station(k).center.distance_to(
 					_road_station(k + 1).center)
-			if not _field_bridge_wet(k):
-				break   # the near bank, and the deck's own dry margin
+			# Far enough back that a RAMP fits on dry ground — the same rule the
+			# road's own growth stops on, so the corridor's deck can end here.
+			if _field_bridge_ramp_dry(_road_station(k).center,
+					_road_station(k).center + _field_bridge_out_dir(k, -1)
+							* _field_bridge_run()):
+				break
 		var west := PackedVector2Array()
 		for j in range(k, terminal_k):
 			var from: Vector2 = _road_station(j).center
@@ -11256,22 +11351,33 @@ func approach_bridges() -> Array:
 		# ...and the same growth outward until the SECTION at each end is dry
 		# across its width (see field_bridge_at): the deck carries on at 1.6 m
 		# rather than dragging a ramp along the water.
+		# ...growing on the RAMP RECTANGLE, exactly as the road's does: the foot
+		# this deck will ask for demands the whole rectangle dry, so a growth that
+		# stopped on a dry SECTION would hand it a bank it must refuse.
+		# ...growing on the RAMP RECTANGLE, exactly as the road's does — and along
+		# the direction the DECIMATED deck will hand its foot, not the 1 m local
+		# one. The two differ wherever the corridor bends, and a growth that
+		# cleared a ramp nobody builds hands the row a bank it must refuse.
+		var stride: int = maxi(1, roundi(_road_spacing() / FIELD_BRIDGE_PROBE_STEP))
+		var run := _field_bridge_run()
 		var grown := 0.0
 		while i > 0 and grown < FIELD_BRIDGE_BANK_WALK_MAX and not \
-				_field_bridge_dry_across(pts[i], (pts[i + 1] - pts[i]).normalized()):
+				_field_bridge_ramp_dry(pts[i], pts[i] - (pts[
+						mini(i + stride, pts.size() - 1)] - pts[i]).normalized() * run):
 			grown += pts[i].distance_to(pts[i - 1])
 			i -= 1
 		grown = 0.0
 		while j < pts.size() - 2 and grown < FIELD_BRIDGE_BANK_WALK_MAX and not \
-				_field_bridge_dry_across(pts[j], (pts[j] - pts[j - 1]).normalized()):
+				_field_bridge_ramp_dry(pts[j], pts[j] + (pts[j] - pts[
+						maxi(j - stride, 0)]).normalized() * run):
 			grown += pts[j].distance_to(pts[j + 1])
 			j += 1
 
-		# THE DECK IS DECIMATED BACK TO THE ROAD'S PITCH: detection wants metres,
-		# but a slab per metre is a hundred boxes and a hundred collision shapes
-		# for one crossing. Both ends are kept whatever the stride lands on, so
-		# the deck still starts and finishes on the dry samples the walk found.
-		var stride: int = maxi(1, roundi(_road_spacing() / FIELD_BRIDGE_PROBE_STEP))
+		# THE DECK IS DECIMATED BACK TO THE ROAD'S PITCH (`stride`, above):
+		# detection wants metres, but a slab per metre is a hundred boxes and a
+		# hundred collision shapes for one crossing. Both ends are kept whatever
+		# the stride lands on, so the deck still starts and finishes on the dry
+		# samples the walk found.
 		var deck := PackedVector2Array()
 		var m := i
 		while m < j:
@@ -11285,6 +11391,12 @@ func approach_bridges() -> Array:
 			# band the fine sampling exists to catch (seed 63's is 5 m wide), so
 			# it is the common case here rather than a corner of one.
 			deck = PackedVector2Array([pts[i], pts[(i + j) / 2], pts[j]])
+		# ...and the ROAD may already have decked this water from its own side of
+		# the handoff (its east growth can run to T). One deck, one owner.
+		var mid: Vector2 = pts[(i + j) / 2]
+		if _field_bridge_decked(mid, _road_bridges_near(mid.x, mid.x)):
+			i = j + 1
+			continue
 		var row := _field_bridge_row_from(deck)
 		if not row.is_empty():
 			row["k0"] = -1   # the corridor has no station index
@@ -11321,16 +11433,7 @@ func field_bridges_near(x0: float, x1: float) -> Array:
 	# its eastern one.
 	_road_extend_to_x(x0 - reach - _road_spacing() * 2.0,
 			x1 + reach + _road_spacing() * 2.0)
-	var rows: Array = []
-	var k := _road_first_k_at_or_after_x(x0 - reach)
-	while k <= road_k_max:
-		var cur_k := k
-		k += 1
-		if _road_station(cur_k).center.x > x1 + reach:
-			break
-		var row: Dictionary = field_bridge_at(cur_k)
-		if not row.is_empty():
-			rows.append(row)
+	var rows: Array = _road_bridges_near(x0, x1)
 	# ...and the APPROACH CORRIDOR's own, which are not station-indexed and so are
 	# not on the walk above. Cheap: the scan is memoized for the run and its rows
 	# are rejected on X like any other.
@@ -11341,6 +11444,41 @@ func field_bridges_near(x0: float, x1: float) -> Array:
 			continue
 		rows.append(row)
 	return rows
+
+
+func _road_bridges_near(x0: float, x1: float) -> Array:
+	"""
+	The STATION-INDEXED half of field_bridges_near — every road bridge whose stone
+	can reach the world-X window.
+
+	Its own function because the corridor scan has to ask it: a crossing the road
+	side already decks must not be decked a second time from the other side of the
+	handoff (see approach_bridges). Splitting it is also what keeps that question
+	free of recursion — the corridor asks about ROAD rows, and road rows never ask
+	about the corridor.
+	"""
+	var reach := _field_bridge_reach()
+	_road_extend_to_x(x0 - reach - _road_spacing() * 2.0,
+			x1 + reach + _road_spacing() * 2.0)
+	var rows: Array = []
+	var k := _road_first_k_at_or_after_x(x0 - reach)
+	while k <= road_k_max:
+		var cur_k := k
+		k += 1
+		if _road_station(cur_k).center.x > x1 + reach:
+			break
+		var row: Dictionary = field_bridge_at(cur_k)
+		if not row.is_empty():
+			rows.append(row)
+	return rows
+
+
+func _field_bridge_decked(at: Vector2, rows: Array) -> bool:
+	"""Is this world XZ already on one of these decks?"""
+	for row_v: Variant in rows:
+		if _field_bridge_surface_on(row_v, Vector3(at.x, 0.0, at.y)) > -INF:
+			return true
+	return false
 
 
 func field_bridge_surface_y(world_pos: Vector3) -> float:

@@ -56,7 +56,7 @@ const PLAYER_SCENE: String = "res://scenes/player.tscn"
 ## so the crossing straddles the handoff between the road and the corridor.
 const CROSSING_SEEDS: Array[int] = [11, 2027, 90210, 777001, 424243, 8, 131313,
 		606060, 5150, 99991, 31337, 271828, 72, 4, 26, 12, 63, 115,
-		218, 203, 224, 202, 206]
+		218, 203, 224, 202, 206, 409, 535, 532, 404]
 
 ## The walk must actually MEET rivers, or check 1 is a green lie about a road
 ## that never got its feet wet. Measured today: 40+ crossings over the 12 seeds.
@@ -360,6 +360,39 @@ func _check_every_crossing_is_bridged() -> void:
 					wet_from = Vector2.INF
 				prev = at
 			prev = to
+		# ...and NO DECK IS BUILT TWICE. Two crossings that grow onto the same bank
+		# used to produce byte-identical rows under two anchors, and then every
+		# chunk emitted every slab twice — double the boxes, double the collision
+		# shapes and a full-length z-fight. Compared on the POLY, which is what a
+		# chunk slices, and then on coverage, which catches the partial case the
+		# poly bytes miss.
+		var seen_polys: Dictionary = {}
+		var all_rows: Array = _all_bridges(terrain)
+		all_rows.append_array(terrain.approach_bridges())
+		for row_v: Variant in all_rows:
+			var key := var_to_bytes((row_v as Dictionary)["poly"])
+			if seen_polys.has(key):
+				_fail("seed %d builds the SAME deck twice (%s .. %s) — every"
+						% [run_seed, (row_v as Dictionary)["poly"][0],
+								(row_v as Dictionary)["poly"][
+										((row_v as Dictionary)["poly"] as PackedVector2Array).size() - 1]]
+						+ " chunk it touches emits every slab twice")
+				break
+			seen_polys[key] = true
+		for k in range(2, terminal):
+			if not terrain._field_bridge_wet(k):
+				continue
+			var centre: Vector2 = terrain._road_station(k).center
+			var covers := 0
+			for row_v: Variant in all_rows:
+				if terrain._field_bridge_surface_on(row_v,
+						Vector3(centre.x, 0.0, centre.y)) > -INF:
+					covers += 1
+			if covers > 1:
+				_fail("seed %d: station %d is under %d decks at once — one"
+						% [run_seed, k, covers] + " crossing, one owner")
+				break
+
 		# ...and the structural half: only a crossing ENTRY may anchor a bridge,
 		# so two decks can never cover one river.
 		for k in range(2, terminal):
@@ -626,25 +659,34 @@ func _check_abutments_are_dry() -> void:
 				var foot: Vector2 = poly[end]
 				var inward: Vector2 = (deck_end - foot).normalized()
 				var perp := Vector2(-inward.y, inward.x)
-				var ramp := foot.distance_to(deck_end)
-				longest = maxf(longest, ramp)
-				if ramp > _base_run() + EPS:
+				var ramp_len := foot.distance_to(deck_end)
+				longest = maxf(longest, ramp_len)
+				if ramp_len > _base_run() + EPS:
 					pushes += 1
-				# ACROSS THE WHOLE WIDTH, at a step of its own that is FINER than
-				# the shipped probe's: three lanes passed a foot with a wet patch
-				# 0.5 m inside one edge (seed 12, anchor 122), and a check that
-				# samples exactly where the code samples cannot see that at all.
-				var lane := -half_w
-				while lane <= half_w + FOOT_LANE_STEP * 0.5:
-					var probe: Vector2 = foot + perp * minf(lane, half_w)
-					lane += FOOT_LANE_STEP
-					if not terrain.is_river_at(Vector3(probe.x, 0.0, probe.y)):
-						continue
-					_fail("seed %d: a field bridge's abutment reaches"
-							% run_seed + " (%.1f, %.1f), which is IN the"
-							% [probe.x, probe.y] + " river — the whole WIDTH"
-							+ " of a foot has to be on the bank")
-					break
+				# THE WHOLE RAMP RECTANGLE, at a step of its own that is FINER
+				# than the shipped probe's: three lanes passed a foot with a wet
+				# patch 0.5 m inside one edge (seed 12, anchor 122), and the
+				# ramp's SIDES were wet on six more while its foot and centreline
+				# were dry — a hero hugging the parapet wades on a bridge. A check
+				# that samples exactly where the code samples cannot see either.
+				var along := 0.0
+				var wet_here := false
+				while along <= ramp_len and not wet_here:
+					var spine: Vector2 = foot + inward * along
+					along += FOOT_LANE_STEP * 2.0
+					var lane := -half_w
+					while lane <= half_w + FOOT_LANE_STEP * 0.5:
+						var probe: Vector2 = spine + perp * minf(lane, half_w)
+						lane += FOOT_LANE_STEP
+						if not terrain.is_river_at(Vector3(probe.x, 0.0, probe.y)):
+							continue
+						_fail("seed %d: a field bridge's RAMP covers"
+								% run_seed + " (%.1f, %.1f), which is IN the"
+								% [probe.x, probe.y] + " river — the whole"
+								+ " rectangle from the foot to the deck has to"
+								+ " be on the bank, or its parapet is a wade")
+						wet_here = true
+						break
 			# 4b — THE FUNCTION'S OWN INVARIANT: `_field_bridge_foot` may return a
 			# dry foot or refuse outright, and nothing else. Driven at the worst
 			# possible input — a WET station, aimed further INTO the water along
@@ -856,12 +898,64 @@ func _check_ab_against_the_feature_off() -> void:
 				_fail("a lifted road coin sits at y = %.2f where the deck"
 						% a.y + " surface says %.2f" % want)
 				break
+	# ---- 6b: THE BRIDGE SET IS NOT A FUNCTION OF WHERE THE PLAYER WALKED ----
+	# The growth walks the station cache, and the answer is memoized for the run —
+	# so a loop that stopped at whatever the cache happened to hold made the whole
+	# bridge SET depend on the order chunks were visited (seed 409 built six
+	# bridges ascending and five descending, and in a room two peers would lay
+	# different decks over the same water). Every subject seed is driven both
+	# ways, through the shipped window scan.
+	var order_diffs := 0
+	for seed_v in CROSSING_SEEDS:
+		var asc := _walk_windows(seed_v, true)
+		var desc := _walk_windows(seed_v, false)
+		if asc == desc:
+			continue
+		order_diffs += 1
+		_fail("seed %d yields a DIFFERENT set of bridges walking the chunk"
+				% seed_v + " windows west-to-east than east-to-west (%d vs %d"
+						% [asc.size(), desc.size()]
+				+ " decks) — the plan is a function of where the player walked")
+	print("field bridges: %d of %d seeds disagree between ascending and"
+			% [order_diffs, CROSSING_SEEDS.size()] + " descending chunk visits")
+
 	print("field bridges: chunk %s — %d bridge boxes, %d road coin(s) lifted onto"
 			% [chunk_pos, on_a["bridge_boxes"], lifted] + " the deck")
 	on_a["terrain"].free()
 	on_b["terrain"].free()
 	off["terrain"].free()
 	Sentinel.done("ab_against_the_feature_off")
+
+
+func _walk_windows(run_seed: int, ascending: bool) -> Array:
+	"""
+	Drive `field_bridges_near` over the whole road, chunk window by chunk window,
+	in one direction — then read back every deck it settled on.
+
+	@return the polylines, sorted, so two orders can be compared as data.
+	"""
+	var terrain := _terrain(run_seed)
+	var xs: Array = []
+	var x: float = -600.0
+	while x <= TERRAIN_SCRIPT.ROAD_TERMINAL_X + 200.0:
+		xs.append(x)
+		x += 50.0
+	if not ascending:
+		xs.reverse()
+	for at_v: Variant in xs:
+		var at: float = at_v
+		terrain.field_bridges_near(at - 25.0, at + 25.0)
+	# Keys are STRINGS, not PackedByteArrays: an Array of byte arrays has no
+	# ordering to sort by, so a set compared that way agrees by accident.
+	var seen: Dictionary = {}
+	for at_v: Variant in xs:
+		var at: float = at_v
+		for row_v: Variant in terrain.field_bridges_near(at - 25.0, at + 25.0):
+			seen[var_to_bytes((row_v as Dictionary)["poly"]).hex_encode()] = true
+	terrain.free()
+	var out: Array = seen.keys()
+	out.sort()
+	return out
 
 
 var _origin_terrain: Node3D = null
