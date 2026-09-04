@@ -194,6 +194,13 @@ var _portrait_guard: ColorRect = null
 ## Full-screen "Paused — tap to resume" Button, shown while `get_tree().paused` on a
 ## real touch session (the focus-loss pause set by mobile_input.gd). Same tap-surface
 ## pattern as the enable overlay; its tap calls the driver's `resume_from_pause()`.
+##
+## KNOWN AND ACCEPTED (bead godot-test1-3a2): the visibility test is the tree's
+## pause and the TAP is gated on `paused_by_driver`, so a phone frozen by a room
+## member's P shows a tap that does nothing. A touch session has no P key and
+## cannot pause the room, so the tap could only ever cancel somebody else's pause
+## — which is precisely what the refcount exists to prevent. Rewording it needs a
+## localized string for a screen that already says the honest thing.
 var _resume_overlay: Button = null
 
 

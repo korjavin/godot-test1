@@ -29,6 +29,13 @@ Press P to resume","PAUSED
 Press P to resume","PAUSE
 
 P drücken zum Fortsetzen"
+"PAUSED by %s
+
+They resume","PAUSED by %s
+
+They resume","PAUSE durch %s
+
+Sie setzen fort"
 "Click to look around","Click to look around","Klicken zum Umsehen"
 "PLAINS","PLAINS","EBENE"
 "DESERT","DESERT","WÜSTE"

@@ -274,7 +274,11 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #   build_version_selfcheck  auto-reload onto a new build: the CI bake contract,
 #                            the web gate, and never mid-run / never in a room
 #   pause_selfcheck          the pause refcount: overlapping holders, the
-#                            P / ? / P repro, and nothing writing tree.paused
+#                            P / ? / P repro, nothing writing tree.paused, and
+#                            check 5 the ROOM-WIDE pause as one more holder (P
+#                            inert under it, the world frozen while a remote
+#                            claim comes and goes under a local P, and a local
+#                            pauser still publishing nothing)
 #   tower_site_selfcheck     the tower's site: deterministic, dry, and clear of
 #                            every spawner (plus the A/B that the rest of the world
 #                            is byte-identical with the exclusion on and off)
@@ -1530,9 +1534,9 @@ against. Every overlay pauses the tree, because the player reads gameplay throug
 polled `Input`, which a focused `Control` does not suppress.
 
 ### The pause is refcounted — `scripts/pause_hub.gd` is the only writer
-Nine scripts freeze the world (`pause_controller`, `help_overlay`, `skill_tree_ui`,
+Ten scripts freeze the world (`pause_controller`, `help_overlay`, `skill_tree_ui`,
 `mp_ui`, `start_overlay`, `mobile_input`, `landmark_toast`, `city_map_panel`,
-`tower_lift_menu`). They used to own it
+`tower_lift_menu`, `mp_manager`). They used to own it
 first-taker-wins, and the bug was **emergent**: an overlay opening over an already-paused
 tree claimed nothing, so whichever owner released first started the world under every
 overlay still on screen (P, `?`, P — help card over live crocodiles).
@@ -1547,6 +1551,12 @@ What stays with the feature and NOT in the hub: the refusals (`pause_controller`
 `skill_tree_ui` won't open under a foreign pause), and reads of `get_tree().paused` as a
 **condition** — "is the world stopped" — which several places want and which are
 deliberately not routed through the refcount.
+
+**ONLY P TRAVELS** (bead `godot-test1-3a2`, owner: *"when I click pause in the MP it
+should be paused for all"*). The tenth holder is `mp_manager`, claiming on behalf of a
+ROOM MEMBER who pressed P — see the MP section. The other nine stay LOCAL, and the three
+in-room refusals stay refusals: reading a map, a help card or a lift menu must not stop
+three other people. Making an eleventh gesture room-wide is an owner decision.
 
 ### Persistence
 `scripts/best_run_store.gd` owns best distance/coins plus lifetime coins, spent points and
@@ -1866,6 +1876,32 @@ The sharpest rules, in rough order of how badly they bite:
   `_auto_claim_hero()` waits for
   `_join_settled()` — on the `welcome` frame the captive set is still empty, and claiming
   there means claiming a hero who is in a cell.
+- **P IS THE ONE ROOM-WIDE PAUSE, AND IT IS A PRESENCE BIT RATHER THAN A VERB** (bead
+  `godot-test1-3a2`). `pause_controller` joins group `"pause_controller"` and answers
+  `is_pausing()`; `_send_presence` sets `pz: true` off that and **omits it when false**
+  (the `ab` precedent, so an older build sees the shape it always saw); `decode_presence`
+  reads absent as false and drops the packet whole on a `pz` that is not a BOOL — there is
+  nothing here to clamp, so `1` and `"yes"` are malformed, not truthy. On the receive side
+  the bit lands in `_peer_state` beside `pos`/`floor`, and `_apply_remote_pause()` (per
+  frame, above the `_rtc` guard) holds **exactly one** `PauseHub` claim while any
+  non-stale peer's bit is set. **`_peer_state` is deliberately the only home**: `peer_left`
+  erases there, a dead mesh link marks `stale` there and `leave()` clears it, so there is
+  no fourth erase site to forget and no pause can outlive the peer holding it. Presence
+  over a verb buys the repair channel for free — 15 Hz, so a dropped packet heals in 66 ms
+  and a joiner learns on its first sample — and needs no `VERB_BUDGET_PER_SEC` row. The
+  window it cannot reach is a peer whose ICE is still negotiating: it runs for that second
+  or two and then freezes with everybody else, which is a documented ceiling and not the
+  seed's problem (a seed must arrive before any channel opens; a pause is idempotent). **Any
+  member may pause**, and P stays inert under a foreign pause, so the peer who paused is
+  the peer who resumes; the escape hatch for one who never does is the MP panel's Leave,
+  which is `PROCESS_MODE_ALWAYS`. The local **game-over refusal** is re-asked every frame
+  (`mp_ui._apply_pause`'s reason: `GameOverUI` is PAUSABLE and Play Again would die).
+  **The REMOTE card is not the local one**: it releases a captured mouse and its dim
+  IGNOREs clicks, because the way out of a peer who never resumes is the MP panel's
+  Leave, which lives on the HUD canvas UNDER the layer-90 overlay — the local card keeps
+  swallowing clicks, since there P is right in front of you. Known ceiling, documented at
+  the line: a touch session shows "Paused — tap to resume" whose tap is gated on
+  `paused_by_driver`, so under a remote pause the tap does nothing.
 - The stall heartbeat rides the lobby relay, not the mesh, because a throttled tab stops
   polling both.
 

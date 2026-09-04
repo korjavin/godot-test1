@@ -348,9 +348,29 @@ static func _decode_presence_dict(state: Dictionary) -> Dictionary:
 			return {}
 		ability = int(ability_value)
 
+	# `pz` — THE SENDER HAS PAUSED THE ROOM (bead godot-test1-3a2). Same
+	# missing-is-not-malformed rule as `ab` and the counters — an older build
+	# sends no `pz` and simply never pauses anybody, which is the behaviour it
+	# already has — but unlike them there is nothing here to clamp: the field is
+	# a BOOL or the packet is malformed, so present-and-not-a-bool drops it
+	# whole. `true` is the only value ever sent (the encoder OMITS false), and
+	# `false` is accepted anyway because "I have resumed" is a perfectly honest
+	# thing for a later build to say explicitly.
+	# `has()`, not `get(key, null)` like the fields above: for those, null and
+	# absent both mean "an older peer said nothing" and read as the default. Here
+	# PRESENT-AND-NOT-A-BOOL drops the packet, and an explicit null IS present —
+	# `get()` cannot tell the two apart, so it would quietly accept the one shape
+	# of malformed the rule exists to catch.
+	var room_paused: bool = false
+	if state.has("pz"):
+		if typeof(state["pz"]) != TYPE_BOOL:
+			return {}
+		room_paused = state["pz"]
+
 	return {
 		"p": pos, "y": yaw, "c": char_index, "s": speed, "g": state["g"],
 		"cc": counters["cc"], "dd": counters["dd"], "ab": ability,
+		"pz": room_paused,
 	}
 
 # =============================================================================

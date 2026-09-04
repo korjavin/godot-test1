@@ -26,6 +26,17 @@ extends Node
 ## refcount is what makes "P again" safe while the help card is still up over
 ## our pause: we drop OUR claim, the help keeps ITS one, and the world stays
 ## frozen until the last overlay closes.
+##
+## IN A ROOM, P IS THE ONE PAUSE THAT TRAVELS (bead godot-test1-3a2, owner:
+## "when I click pause in the MP it should be paused for all"). This node joins
+## group "pause_controller" and answers `is_pausing()`; `mp_manager._send_presence`
+## reads that once a frame and sets a `pz` bit on the presence packet, and every
+## other peer's manager holds ONE `PauseHub` claim while anybody's bit is set. So
+## nothing about the pause is sent from here and no packet is decoded here — this
+## node only draws the card that names who to wait for (`_process` below).
+## The other eight pausers stay LOCAL and that is deliberate: reading a map, a
+## help card or a skill tree must not stop three other people. See the list in
+## `pause_hub.gd`'s header.
 
 ## The key that toggles pause. A constant (not an input-map action) on purpose:
 ## debug/meta keys in this project live outside the input map so they can never
@@ -36,8 +47,23 @@ const PAUSE_KEY: Key = KEY_P
 const DIM_COLOR: Color = Color(0.0, 0.0, 0.0, 0.55)
 const PAUSE_TEXT: String = "PAUSED\n\nPress P to resume"
 
-## The overlay UI this node builds for itself in _ready().
+## Shown instead while a ROOM MEMBER holds the pause. `%s` is their lobby name.
+## `tr()`d explicitly at the format string (localization rule 2 — a string
+## composed at runtime is never seen by Control auto-translation).
+const REMOTE_PAUSE_TEXT: String = "PAUSED by %s\n\nThey resume"
+
+## The overlay UI this node builds for itself in _ready(), and the label inside
+## it whose text switches between the local and the remote message.
 var _overlay: CanvasLayer = null
+var _label: Label = null
+
+## The full-screen dim. Held because its `mouse_filter` differs between the two
+## cards — see `_show_remote_card()`.
+var _dim: ColorRect = null
+
+## The name of the room member currently pausing us, `""` for nobody. Cached so
+## `_process` writes the label only on a change rather than 60 times a second.
+var _remote_pauser: String = ""
 
 ## True while THIS node holds a `PauseHub` claim. The mobile focus-loss pause
 ## (mobile_input.gd) also freezes the tree — P must never silently cancel THAT
@@ -54,7 +80,20 @@ func _ready() -> void:
 	# Keep processing input while the tree is paused — the entire point of
 	# this node (children, i.e. the overlay, inherit ALWAYS from here).
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	# The per-HUD-widget group idiom: `mp_manager` finds us by group and asks
+	# `is_pausing()`, so it never learns that the player owns this node.
+	add_to_group("pause_controller")
 	_build_overlay()
+
+
+func is_pausing() -> bool:
+	"""
+	Whether the LOCAL player is holding the pause with P. The one thing
+	`mp_manager._send_presence` reads; it is `_paused_by_us` and nothing else,
+	because a pause we merely inherited (the help card, a teammate) is not ours
+	to publish and republishing it would deadlock two peers into each other.
+	"""
+	return _paused_by_us
 
 
 func _input(event: InputEvent) -> void:
@@ -72,9 +111,11 @@ func _toggle_pause() -> void:
 		_paused_by_us = false
 		PauseHub.release(self)
 		_overlay.visible = false
-		if _recapture_mouse:
-			_recapture_mouse = false
-			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+		# A room member may still be pausing underneath us — `_process` sees the
+		# cleared cache next frame and puts their card back up (and takes the mouse
+		# straight back off us, which is what it is for).
+		_remote_pauser = ""
+		_recapture_mouse_if_released()
 		return
 	# P IS INERT UNDER SOMEBODY ELSE'S PAUSE, unchanged by the refcount. This is a
 	# CONDITION read — "is the world already stopped" — not an ownership question:
@@ -90,11 +131,15 @@ func _toggle_pause() -> void:
 		return
 	PauseHub.take(self)
 	_paused_by_us = true
+	# Restore OUR message and OUR dim. A remote card may have been up a moment ago
+	# (a teammate resumed, then we pressed P), and a label left saying "PAUSED by
+	# Ada — they resume" over our own pause names the wrong person to wait for.
+	_label.text = PAUSE_TEXT
+	_dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	_remote_pauser = ""
 	_overlay.visible = true
 	# Free the mouse so a paused player can reach their browser/OS.
-	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
-		_recapture_mouse = true
+	_release_mouse()
 
 
 func _build_overlay() -> void:
@@ -108,20 +153,121 @@ func _build_overlay() -> void:
 	_overlay.visible = false
 	add_child(_overlay)
 
-	var dim := ColorRect.new()
-	dim.color = DIM_COLOR
-	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	# Swallow clicks while paused so the game underneath can't be poked.
-	dim.mouse_filter = Control.MOUSE_FILTER_STOP
-	_overlay.add_child(dim)
+	_dim = ColorRect.new()
+	_dim.color = DIM_COLOR
+	_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	# Swallow clicks while paused so the game underneath can't be poked. Flipped to
+	# IGNORE for the REMOTE card — see `_show_remote_card()`.
+	_dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	_overlay.add_child(_dim)
 
-	var label := Label.new()
-	label.text = PAUSE_TEXT
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.set_anchors_preset(Control.PRESET_FULL_RECT)
-	label.add_theme_font_size_override("font_size", 48)
-	label.add_theme_color_override("font_color", Color.WHITE)
-	label.add_theme_color_override("font_outline_color", Color.BLACK)
-	label.add_theme_constant_override("outline_size", 8)
-	_overlay.add_child(label)
+	_label = Label.new()
+	_label.text = PAUSE_TEXT
+	_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_label.add_theme_font_size_override("font_size", 48)
+	_label.add_theme_color_override("font_color", Color.WHITE)
+	_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	_label.add_theme_constant_override("outline_size", 8)
+	# The dim is the only thing that decides whether this card eats clicks; a
+	# second Control quietly doing it too is how the remote card's escape hatch
+	# would come back blocked. (IGNORE is `Label`'s default — said out loud
+	# because the behaviour is now load-bearing.)
+	_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_overlay.add_child(_label)
+
+
+func _process(_delta: float) -> void:
+	"""
+	Draw the card for a pause somebody ELSE in the room is holding.
+
+	The claim itself is `mp_manager`'s — it takes exactly one `PauseHub` claim
+	while any member's presence carries the `pz` bit, and this node neither sends
+	nor decodes a packet. All that is left is the screen, which would otherwise be
+	a world that silently stopped for no visible reason.
+
+	Our OWN pause wins the label outright (the early return): `_toggle_pause`
+	already put the local card up, and P is inert under a foreign pause anyway, so
+	the peer who paused is the peer who resumes — the owner's own phrasing.
+
+	Runs while the tree is frozen because this node is PROCESS_MODE_ALWAYS, which
+	is the same property that lets it hear the unpause keypress.
+	"""
+	if _paused_by_us:
+		return
+	var mp: Node = get_tree().get_first_node_in_group("mp")
+	# `has_method`-guarded like every other group lookup in this project: the
+	# player scene run standalone has no manager, and a headless fixture may put
+	# something else in the group.
+	var who: String = str(mp.call("remote_pauser_name")) \
+			if mp != null and mp.has_method("remote_pauser_name") else ""
+	if who == _remote_pauser:
+		return
+	_remote_pauser = who
+	_show_remote_card(who)
+
+
+func _show_remote_card(who: String) -> void:
+	"""
+	Put up (or take down) the card for a teammate's pause.
+
+	THE ESCAPE HATCH IS WHY THIS IS NOT JUST A LABEL SWAP. Under our OWN pause the
+	way out is P; under a teammate's, P is inert by design, so the only way out of
+	a peer who never resumes is the MP panel's Leave — which is PROCESS_MODE_ALWAYS
+	and opens under a foreign pause, but lives on the HUD CanvasLayer UNDER this
+	overlay. So the remote card releases a captured mouse (a captured cursor cannot
+	click anything) and lets the dim IGNORE clicks, which leaves the HUD's MP
+	button reachable through it. The local card keeps swallowing them: there the
+	world underneath must not be pokeable and P is right there.
+	"""
+	_overlay.visible = not who.is_empty()
+	if who.is_empty():
+		_dim.mouse_filter = Control.MOUSE_FILTER_STOP
+		_recapture_mouse_if_released()
+		return
+	_label.text = tr(REMOTE_PAUSE_TEXT) % who
+	_dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_release_mouse()
+
+
+func _release_mouse() -> void:
+	"""Free a captured cursor and remember to hand it back on resume."""
+	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+		_recapture_mouse = true
+
+
+func _recapture_mouse_if_released() -> void:
+	"""
+	The other half of `_release_mouse()`. The resume is a user gesture (a keypress
+	or a teammate's packet arriving on a frame we are awake for), which is what
+	browser pointer-lock needs, so this works on desktop web too.
+
+	NOT WHILE SOMEBODY ELSE IS STILL PAUSING, and that is the refcount's rule one
+	more time: the MP panel is what the remote card deliberately leaves clickable,
+	and a panel opened over an ALREADY-free cursor arms no `_recapture_mouse` of
+	its own — so grabbing the pointer back the moment the teammate resumes pins
+	the cursor to screen centre over a panel whose buttons are now unreachable and
+	whose claim nothing can release. The claim we are dropping is ours alone; the
+	cursor belongs to whoever is still holding one, and `mp_ui` re-captures on
+	close. The flag is spent either way, because there is no second chance to.
+	"""
+	if not _recapture_mouse:
+		return
+	_recapture_mouse = false
+	if _may_recapture_mouse():
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+
+func _may_recapture_mouse() -> bool:
+	"""
+	Whether the cursor is ours to take back — i.e. nobody else is still pausing.
+
+	A one-caller predicate, which this project would normally not write, and it is
+	one because HEADLESS CANNOT SEE THE EFFECT: `Input.set_mouse_mode()` is a no-op
+	under the dummy display server and `Input.mouse_mode` reads VISIBLE whatever
+	you do to it, so an assertion on the pointer passes however this branch is
+	written. `pause_selfcheck` drives the decision instead.
+	"""
+	return not get_tree().paused

@@ -4,11 +4,22 @@ extends Object
 ## PAUSE HUB — the one place in this project that writes `get_tree().paused`
 ## ============================================================================
 ##
-## Seven scripts freeze the world: `pause_controller.gd` (P), `help_overlay.gd`
+## Ten scripts freeze the world: `pause_controller.gd` (P), `help_overlay.gd`
 ## (?), `skill_tree_ui.gd` (K), `mp_ui.gd` (the MP panel), `start_overlay.gd`
-## (the start menu and the intro film), `mobile_input.gd` (focus loss / portrait)
-## and `landmark_toast.gd` (a pending quiz). Before this file each one owned the
-## pause outright and carried the same guard:
+## (the start menu and the intro film), `mobile_input.gd` (focus loss / portrait),
+## `landmark_toast.gd` (a pending quiz), `city_map_panel.gd` (B),
+## `tower_lift_menu.gd` (L) and — since bead godot-test1-3a2 —
+## `mp_manager.gd`, on behalf of a ROOM MEMBER who pressed P.
+##
+## **ONLY P TRAVELS.** `mp_manager`'s claim is driven by a `pz` bit on the
+## presence packet that `pause_controller.is_pausing()` alone sets, so the other
+## nine holders are local and stay that way: reading a map, a help card, a skill
+## tree or a lift menu must not stop three other people, which is exactly why
+## `landmark_toast`, `city_map_panel` and `tower_lift_menu` REFUSE to pause in a
+## room at all. Making a tenth gesture room-wide is an owner decision, not a
+## refactor.
+##
+## Before this file each one owned the pause outright and carried the same guard:
 ##
 ##     if not tree.paused:          # take
 ##         tree.paused = true
@@ -18,7 +29,7 @@ extends Object
 ##         _paused_by_us = false
 ##         tree.paused = false
 ##
-## Every one of those seven was individually correct and the SYSTEM was still
+## Every one of those was individually correct and the SYSTEM was still
 ## broken, because the discipline was FIRST-TAKER-OWNS rather than a refcount: an
 ## overlay opening over an already-paused tree claimed nothing, so whichever
 ## owner released first started the world under every overlay still on screen.
