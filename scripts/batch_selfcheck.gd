@@ -559,7 +559,10 @@ func _check_collision_is_unchanged_by_kind() -> void:
 		[ChunkBatch.BoxKind.SPHERE, Vector3(2.0 * (a + 0.05), 2.0, 2.0), "BoxShape3D",
 			"a sphere just OUTSIDE it (a squashed ellipsoid keeps its box)"],
 		[ChunkBatch.BoxKind.SPHERE, Vector3(3.6, 1.6, 3.6), "BoxShape3D",
-			"the Taj's 2.25-aspect dome tier, the one shipped box past the gate"],
+			"a 2.25-aspect lens dome — the shape the fallback exists for. NOTHING"
+			+ " SHIPPED IS PAST THE GATE since bead y1o.11 reshaped the Taj (the"
+			+ " worst colliding sphere in the field is now its 1.57 chattri), so"
+			+ " this planted box is the ONLY thing exercising that half"],
 		[ChunkBatch.BoxKind.CYLINDER, Vector3(2.0 * (a - 0.05), 40.0, 2.0), "CylinderShape3D",
 			"a cylinder just INSIDE the gate — and 40 m TALL, because the axis is"
 			+ " not part of the aspect: a column is not a squashed drum"],

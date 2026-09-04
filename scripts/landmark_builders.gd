@@ -898,10 +898,17 @@ static func quiz_options(kind: int, landmark_id: int, run_seed: int) -> Array[in
 ##          it, and rule 5c's "CONE only on the piece that ends a taper" is what
 ##          keeps them out of reach in the first place.
 ##        * A ROUND BOX SQUASHED PAST `ChunkBatch.ROUND_COLLIDER_MAX_ASPECT` (1.6)
-##          FALLS BACK TO ITS BOX, because no SphereShape3D is an ellipsoid. The
-##          Taj's dome tiers (3.6 x 1.6) are the only shipped case. If you want a
-##          flattened dome a player stands on, draw it as a CYLINDER — a cylinder's
-##          aspect is measured in PLAN only, so a pancake drum is still round.
+##          FALLS BACK TO ITS BOX, because no SphereShape3D is an ellipsoid.
+##          NOTHING IN THIS FILE IS PAST IT TODAY — measured over all 28 field
+##          builders x 4 seeds after bead y1o.11 reshaped the Taj and Kinderdijk,
+##          the worst colliding SPHERE is the Taj's chattri dome at **1.57**
+##          (1.1 x 0.7 x 1.1) and the worst colliding CYLINDER the Redeemer's arm
+##          at 1.25 in PLAN. So every round colliding box in the field is round in
+##          collision, and the Taj's dome is 0.03 off the gate: **squash a dome
+##          any further and it silently goes back to being a box.** If you want a
+##          flattened dome a player stands on, draw it as a CYLINDER — a
+##          cylinder's aspect is measured in PLAN only, so a pancake drum is still
+##          round however thin it is.
 ##
 ## The 22 Budapest builders below take NO kind at all and must not: a city box is
 ## sliced on the chunk grid, and a rotated or non-cube one keeps the centre rule

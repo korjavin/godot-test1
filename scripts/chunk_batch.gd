@@ -533,11 +533,17 @@ static func collision_shape_for(kind: int, dimensions: Vector3) -> Shape3D:
 	— which is where the box is worst (a unit sphere's box misses by 0.73 r at a
 	corner). At 1.6 the long-axis gap is still under the corner gap it removes, so
 	the round shape is never the worse answer; past it the ellipsoid is a real
-	ellipsoid and the bounding box is closer on the axes that matter. MEASURED over
-	all 28 field builders x 4 seeds: every colliding CYLINDER is 1.00-1.25 in plan
-	(84% dead round) and every colliding SPHERE 1.00-1.50 EXCEPT the Taj's dome
-	tiers at 2.25 (3.6 x 1.6 x 3.6), which really are squashed and really do keep
-	their box.
+	ellipsoid and the bounding box is closer on the axes that matter.
+
+	THE GATE IS THE ARGUMENT ABOVE, NOT A FIT TO THE DATA, and the data is why it
+	is worth saying: MEASURED over all 28 field builders x 4 seeds (after bead
+	y1o.11 reshaped the Taj and Kinderdijk), NOTHING SHIPPED IS PAST IT — 844
+	colliding CYLINDERs at 1.00-1.25 in plan and 148 colliding SPHEREs at
+	1.00-1.57, the worst being the Taj's chattri dome (1.1 x 0.7 x 1.1) with 0.03
+	of headroom. So the fallback has no consumer today and is here for the shape a
+	builder will one day squash; `batch_selfcheck` check 4 (d) drives BOTH ends of
+	this constant on planted boxes precisely because the world stopped exercising
+	one of them.
 	"""
 	match kind:
 		BoxKind.SPHERE:
