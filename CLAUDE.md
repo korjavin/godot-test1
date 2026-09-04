@@ -305,7 +305,19 @@ Load-bearing rules:
 - **One MultiMesh + one collision body per chunk.** All decorative geometry goes through
   `create_box()`, which appends to the chunk's `block_batch` and (unless `collide=false`)
   adds a `CollisionShape3D` to the chunk's single `BlockCollision` `StaticBody3D`. Never
-  instance a MeshInstance3D or a physics body per object.
+  instance a MeshInstance3D or a physics body per object. **That seam is its own file** —
+  `scripts/chunk_batch.gd` (`class_name ChunkBatch`, all static, bead `godot-test1-ftn.1`):
+  `create_box` / `create_block` / `_build_block_multimesh`, the two process-wide shared
+  resources (`_get_shared_unit_box_mesh` / `_get_shared_block_material` — the latter
+  the `world_block.gdshader` material, with `WORLD_BLOCK_SHADER`,
+  `BLOCK_BOTTOM_SHADE`, `SHARED_BLOCK_ROUGHNESS` and the `RAMP_*` banner beside
+  it), and the city splitter
+  (`split_city_boxes_on_chunk_grid` / `_is_axis_aligned_basis` / `_chunk_grid_spans`).
+  `endless_terrain.gd` keeps a one-line forwarder for `create_box` and
+  `_build_block_multimesh` and nothing else — the 600-odd `terrain.create_box(` call sites
+  and `landmark_builders`' contract are what those two buy; every other caller (the city
+  streamer, `budapest_selfcheck`) reaches `ChunkBatch` directly. **New batch machinery
+  lands there, not in the world engine.**
 - **Chunk-parented, so unloading frees it.** Anything spawned per-chunk parents to the
   chunk MeshInstance3D or it leaks.
 - **Footprints are the shared currency.** Each thing built appends
@@ -364,11 +376,11 @@ Three rules of the city's own, all pinned by `budapest_selfcheck`:
   missing). **The centre rule slices a LANDMARK, not a BOX**, and these builders emit
   single boxes far bigger than a chunk (Buda Castle's terrace is 70 x 300 m), so every
   oversized axis-aligned box is first cut on the world chunk grid by
-  `split_city_boxes_on_chunk_grid()` — without it a 300 m palace lives in one 50 m chunk
+  `ChunkBatch.split_city_boxes_on_chunk_grid()` — without it a 300 m palace lives in one 50 m chunk
   and vanishes at the web build's 150 m residency edge while you walk its far end. A
   ROTATED box cannot be cut into boxes and keeps the centre rule; `budapest_selfcheck`
   check 5 fails any box, turned or not, bigger than a chunk. **The splitter cuts the MESH
-  and the COLLISION BODY on ONE shared predicate** (`_is_axis_aligned_basis`): `create_box`
+  and the COLLISION BODY on ONE shared predicate** (`ChunkBatch._is_axis_aligned_basis`): `create_box`
   hands the two halves different bases for the same box — the batch entry carries the
   dimensions, the shape node only the rotation — so a second spelling of "axis-aligned"
   is how they drift into a drawn wall whose collision lives in another chunk. Check 5
@@ -441,7 +453,7 @@ Three rules of the city's own, all pinned by `budapest_selfcheck`:
   `godot-test1-8gw.9`, verbatim: *"it's okay without shadow, performance is more
   important"*). 2,100+ tall casters in the 49-chunk web view cost **19 ms a frame in
   the shadow pass alone** — none of it visible in the draw-call count the box budgets
-  guard — so `_build_block_multimesh`'s `cast_shadows` flag makes a city chunk's batch
+  guard — so `ChunkBatch._build_block_multimesh`'s `cast_shadows` flag makes a city chunk's batch
   a shadow RECEIVER only, the tower interior's measured rule met outdoors. It is the
   WHOLE chunk, so a landmark loses its cast shadow with the blocks around it; the
   chunk has ONE batch and splitting it is a second draw call per chunk, which is the
