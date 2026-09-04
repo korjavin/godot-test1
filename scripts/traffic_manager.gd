@@ -44,6 +44,13 @@ extends Node3D
 ##     FIRST branch of every tick a car actually takes: a car that did not step
 ##     cannot have driven into the Danube, and one that did was checked in the
 ##     same pass that let it.
+##   * CITIZENS TOO (bead 8gw.23): the crowd is another blocker in the same yield
+##     path — _distance_to_citizen_ahead reads crowd_manager's own seam and feeds
+##     target_speed_for_distance beside the hero's distance, so a walker on the
+##     carriageway is braked for rather than driven through. The other direction
+##     is blocks_crossing, which the crowd asks before stepping off a kerb. Both
+##     through the group with a has_method guard (a preload between these two
+##     managers would be a cycle), so either one alone behaves as it did before.
 ##   * ponytail: cars drive at y = 0 only and never on bridge decks. The deck is
 ##     a dry rect 12 m up (BudapestPlan.BRIDGE_DECK_TOP) that needs
 ##     bridge_surface_y — that is a second problem; a car at y = 0 under a bridge
@@ -82,6 +89,10 @@ const DECELERATION: float = 9.0
 const YIELD_DISTANCE: float = 18.0
 const STOP_DISTANCE: float = 6.7  # 4.5 + CAR_LENGTH*0.5 (was 4.5 centre-to-centre, looked touching)
 const LATERAL_TOLERANCE: float = 3.2
+
+# How far BEHIND the crossing point a car still counts as blocking it: half a car
+# plus a citizen's own half-width and a little air. See `blocks_crossing`.
+const CROSSING_REAR_CLEAR: float = CAR_LENGTH * 0.5 + 0.9
 const LATERAL_TOLERANCE_CAR: float = 2.4
 
 # Honk timing — one annoyed honk every few seconds, not a siren.
@@ -492,6 +503,94 @@ func _distance_to_block_ahead(car: Dictionary, player_pos: Vector3, car_idx: int
 	# Nearest blocker
 	return minf(p_dist, c_dist)
 
+func _distance_to_citizen_ahead(car: Dictionary) -> float:
+	## THE CITIZENS, through the SAME yield/brake path as the hero (bead 8gw.23).
+	##
+	## Owner: "crowds in budapest still go through cars, not good, fix". Neither a
+	## citizen nor a car has a body — the pooled proxies exist only for the hero —
+	## so nothing physical was ever going to stop this. The fix is the shipped
+	## brake: a citizen on the carriageway is a blocker at a distance, and
+	## target_speed_for_distance does the rest.
+	##
+	## Deliberately its OWN function rather than a fourth clause inside
+	## `_distance_to_block_ahead`: that function's answer is pinned byte-for-byte
+	## against an independent all-pairs oracle (traffic_selfcheck check 8), and
+	## the oracle is about the CAR queue's locality gate. Keeping the crowd term
+	## out of it leaves that measurement meaning exactly what it says.
+	##
+	## Discovery is the project rule — the group, has_method-guarded, so a build
+	## with no crowd (a harness, a standalone scene) degrades to INF, i.e. today.
+	if not is_inside_tree():
+		return INF
+	var crowd := get_tree().get_first_node_in_group("crowd")
+	if crowd == null or not crowd.has_method("blocking_citizen_distance"):
+		return INF
+	return crowd.blocking_citizen_distance(_car_world_pos(car), car["heading_dir"] as Vector2,
+			YIELD_DISTANCE + 2.0, LATERAL_TOLERANCE)
+
+
+func blocks_crossing(from: Vector3, to: Vector3, heading: Vector2) -> bool:
+	## THE CROWD'S SEAM (bead 8gw.23): may a citizen at `from`, walking `heading`,
+	## take a step to `to`? False unless the step ENTERS a carriageway with a car
+	## inside its braking distance of the spot.
+	##
+	## Three refusals, and each is a bug avoided:
+	##   * already ON the carriageway => allowed. Stopping somebody mid-crossing
+	##     parks them in the traffic; the car brakes for them instead.
+	##   * the step does not reach a carriageway => allowed, nothing to wait for.
+	##   * a car on the SAME axis as the walker is not being crossed — it is
+	##     driving up the avenue the citizen walks along, which is the car's
+	##     problem, not the citizen's. Without this a walker on an avenue would
+	##     stand still forever with a car creeping behind it.
+	##
+	## THE DISTANCE IS MEASURED TO THE CROSSING POINT, NOT TO THE WALKER. That is
+	## the whole of the rule and it was got wrong once: a citizen at the kerb is
+	## 10 m to the side of the lane it is about to enter, so asking "is the next
+	## 4 cm step inside a car's path" is false at every kerb and true only once
+	## the walker is already in the road — where the first refusal has taken over.
+	## The point to ask about is where the walker's LINE meets the car's, which is
+	## what a person at a kerb actually judges.
+	## The distance is the car's own YIELD_DISTANCE — the kerb rule and the brake
+	## are two readings of one number.
+	if _is_on_avenue_carriageway(from.x, from.z):
+		return false
+	if not _is_on_avenue_carriageway(to.x, to.z):
+		return false
+	for car: Dictionary in _cars:
+		if not car["active"]:
+			continue
+		var h: Vector2 = car["heading_dir"]
+		if absf(h.dot(heading)) > 0.6:
+			continue
+		var perp := Vector2(-h.y, h.x)
+		var denom := heading.dot(perp)
+		if absf(denom) < 0.1:
+			continue  # very nearly parallel after all; nothing is being crossed
+		var wpos: Vector3 = _car_world_pos(car)
+		var to_p := Vector2(to.x - wpos.x, to.z - wpos.z)
+		# Walk `to` along the citizen's own heading until it sits on the car's line.
+		var travel := -to_p.dot(perp) / denom
+		# ...but the walker's line is INFINITE, and the car's is too. Without this
+		# bound a citizen stepping onto the z = 0 avenue is held by a car on the
+		# PARALLEL z = 248 avenue, because their lines still cross — 248 m up the
+		# walker's line, which is not a crossing anybody is about to make. A
+		# crossing is at most the carriageway's own width away: the walker starts
+		# at a kerb (AVENUE_HALF_WIDTH out) and the lane it must clear is nearer
+		# still, so twice the half-width is the whole of the geometry.
+		if absf(travel) > 2.0 * PLAN_SCRIPT.AVENUE_HALF_WIDTH:
+			continue
+		var cross := to_p + heading * travel
+		var fwd := cross.dot(h)
+		# THE CAR'S BODY, NOT ITS CENTRE. `fwd > 0` released the walker the instant
+		# the centre passed the crossing, while 2.2 m of car was still across it —
+		# and a car STOPPED by the hero ahead straddles it indefinitely, so the
+		# walker stepped into a stationary car and the car, looking only forward,
+		# never saw it. Release once the rear bumper is clear by a body's width.
+		if fwd > -CROSSING_REAR_CLEAR and fwd <= YIELD_DISTANCE:
+			return true
+	return false
+
+
 func _try_honk(car: Dictionary, player_pos: Vector3) -> void:
 	# Distance-attenuated: skip if player too far; otherwise fire sound.
 	var wpos: Vector3 = _car_world_pos(car)
@@ -653,7 +752,8 @@ func _update_cars(delta: float, player_pos: Vector3, lod_gated: bool = false) ->
 		# The coarse tick: the REAL elapsed time since this car last drove.
 		var step_dt: float = float(car["lod_step"]) if lod_gated else delta
 		if step_dt > 0.0:
-			var block_dist: float = _distance_to_block_ahead(car, player_pos, ci)
+			var block_dist: float = minf(_distance_to_block_ahead(car, player_pos, ci),
+					_distance_to_citizen_ahead(car))
 			var target: float = target_speed_for_distance(block_dist, float(car["cruise_speed"]))
 			var cur: float = float(car["speed"])
 			var next: float

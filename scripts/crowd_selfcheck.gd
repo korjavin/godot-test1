@@ -33,6 +33,32 @@ extends SceneTree
 ##   9. NO GAMEPLAY GROUP GAINED A MEMBER: the proxy layer is invisible to the
 ##      shipped crocodile's own mask, and the shipped Stink Wave sweep touches the
 ##      crocodiles and nothing of the crowd's with a live crowd in the tree.
+##  10. THE SPAWN IS SPREAD (bead 8gw.23): the whole bubble filled from cold —
+##      what the player sees WALKING IN THE GATE, when every citizen comes off
+##      the sampler in one pass — is uniform over the streets rather than piled
+##      around the hero, measured as the share landing in the inner QUARTER OF
+##      THE AREA and as the number of 62 m cells used. The OLD sampler, written
+##      out here, is the mutation control and must go RED on the same numbers.
+##  11. CITIZENS AND CARS SEE EACH OTHER (bead 8gw.23), three ways: a walker
+##      following an AVENUE is put on the pavement rather than in the traffic
+##      (with an ordinary street as the control); a citizen crossing in front of
+##      a moving car is never inside the car's footprint, mutation-tested by
+##      taking the crowd out of its group — the car must then drive over it; and
+##      a citizen at the KERB waits, measured against the same walk on an empty
+##      road.
+##  13. NOBODY WALKS ON THE DANUBE (bead 8gw.23): a live bubble at each of the
+##      four bridges, every RENDERED walker position asked of the shipped
+##      `is_walkable`. A lane is up to 8.6 m to the SIDE of the street line and
+##      a bridge deck's DRY rect covers the centreline but not the lane, so a
+##      base-only test walked citizens out over the water; non-vacuity is the
+##      count of walkers that came within reach of the band.
+##  12. A WALKER NEVER TELEPORTS MID-BLOCK (bead 8gw.23): over 2,000 driven
+##      steps, no citizen that did not TURN moves further in one frame than its
+##      own top speed allows — which is how a lane re-drawn on a straight step
+##      shows up (a sign flip is 17.2 m sideways on an avenue) — a turn is
+##      bounded by the lane geometry instead of forbidden (read the check's
+##      header for why the corner is a known discontinuity), and the spawn
+##      clearance is measured on the positions walkers really stand at.
 ##   7. THE COARSE TICK (bead 8gw.22): a citizen the camera cannot see is ticked
 ##      a few times a second by the REAL elapsed time — it ADVANCES, it is never
 ##      frozen — a null camera degrades to full-rate updates for everything, and
@@ -56,6 +82,7 @@ const PROBE_REACH_MAX: float = 60.0
 const AmbienceLod := preload("res://scripts/ambience_lod.gd")
 const Proxies := preload("res://scripts/ambience_proxies.gd")
 const CrowdScript := preload("res://scripts/crowd_manager.gd")
+const PLAN := preload("res://scripts/budapest_plan.gd")
 const PLAYER_SCENE: String = "res://scenes/player.tscn"
 
 ## How many CollisionObject3Ds the isolation walk found under the manager.
@@ -138,6 +165,11 @@ func _run_checks() -> void:
 	_check_coarse_tick_and_camera_views()
 	await _check_solid_and_never_trapped()
 	await _check_no_gameplay_group_gained_a_member()
+	_check_spawn_distribution()
+	_check_pavement_lane()
+	await _check_car_never_drives_through_a_citizen()
+	_check_walkers_never_teleport()
+	_check_no_walker_on_water()
 
 	if _failures.is_empty():
 		print("crowd_selfcheck: all checks passed cleanly")
@@ -656,6 +688,20 @@ func _check_solid_and_never_trapped() -> void:
 func _hold_citizen_on_hero(hero: Node3D, where: Vector3, frames: int) -> float:
 	## Stand the hero on `where` and plant a citizen on exactly the same spot for
 	## `frames` frames, through the shipped `_process`. Returns how far he moved.
+	##
+	## THE ANTI-TRAP LATCH IS CLEARED FIRST, and without this the (c) pair is a
+	## coin toss. A hero standing still IS a hero making no headway, so the pool's
+	## contact window softens the WHOLE pool a beat into either hold — and the
+	## mutant, which runs second, then inherits a pool that is already yielding
+	## and can never be solid on anybody, whatever its height is. It reported
+	## "moved him 0.00 m" and blamed the guard. Both holds therefore start from
+	## the same cleared latch, which is `_drive_into_probe`'s own kill switch used
+	## the other way round: there it is held at zero to REMOVE the yield, here it
+	## is zeroed once so neither hold begins inside somebody else's.
+	var pool: RefCounted = _manager.get("_proxies")
+	pool.set("_watching", false)
+	pool.set("_watch_time", 0.0)
+	pool.set("_soft", 0.0)
 	hero.global_position = where
 	hero.rotation = Vector3.ZERO
 	hero.velocity = Vector3.ZERO
@@ -817,3 +863,685 @@ func _check_no_gameplay_group_gained_a_member() -> void:
 	hero.queue_free()
 	await process_frame
 	Sentinel.done("no_gameplay_group_gained_a_member")
+
+
+# ============================================================================
+# CHECK 10 — THE SPAWN IS SPREAD (bead godot-test1-8gw.23)
+# ============================================================================
+#
+# OWNER: "let's spread crowds in budapest more uniform, why they are all in one
+# space".
+#
+# WHERE THE CLUSTER IS VISIBLE. In steady state the walk itself diffuses the
+# crowd, so a sampler bias is nearly invisible a minute in — which is exactly why
+# this is measured on the bubble filled FROM COLD, the state the player is
+# handed when he walks in the gate, when he re-enters the city, and on every F2.
+# All 120 come off the sampler in one pass there.
+#
+# THE METRIC IS RADIAL, and deliberately not a cell histogram: a 62 m cell grid
+# is drawn on the street LINES the citizens stand on, so which side of a boundary
+# a walker falls on is arbitrary and the peak cell count is mostly noise. The
+# share landing inside HALF the bubble radius is not: that circle is a QUARTER of
+# the bubble's area, so a sampler uniform over the streets puts ~25% of the crowd
+# in it and no argument about tiling can move the number.
+#
+# The old sampler drew its radius UNIFORMLY IN r — which over-weights the middle
+# of a disc by 1/r — and fell back to the player's OWN intersection after 16
+# failed draws. Measured over 1,200 arrivals at four city spots: 42 / 32 / 37 /
+# 29% inside that circle against a uniform 25%. It is written out below as the
+# mutation control and must fail this check's own bound.
+
+## Four city spots, and the bubble filled from cold ten times at each.
+const DIST_SPOTS: Array[Vector3] = [
+	Vector3(2400.0, 0.0, 0.0),
+	Vector3(2600.0, 0.0, 400.0),
+	Vector3(3000.0, 0.0, -500.0),
+	Vector3(2900.0, 0.0, 800.0),
+]
+const DIST_ARRIVALS: int = 10
+
+## The bound, on the share inside SPAWN_RADIUS / 2 — a quarter of the bubble's
+## area, so uniform is 25%. Shipped measures 17-23%, the old sampler 29-42%;
+## 28% sits between the two with room on both sides.
+const DIST_INNER_SHARE_MAX: float = 28.0
+
+## ...and a floor on the SPREAD, so a sampler that collapsed onto one street
+## still fails even if it collapsed at the right radius. The bubble is 220 m
+## across on a 62 m grid, so a dozen cells is most of what there is.
+const DIST_MIN_CELLS: int = 8
+
+
+func _dist_profile(spot: Vector3, use_old: bool) -> Dictionary:
+	## Fill the bubble from cold `DIST_ARRIVALS` times and report the share of
+	## walkers inside half the spawn radius plus the 62 m cells they used.
+	var pitch: float = PLAN.STREET_PITCH
+	var half_r: float = CrowdScript.SPAWN_RADIUS * 0.5
+	var cells := {}
+	var inner: int = 0
+	var total: int = 0
+	_player.position = spot
+	for _rep in DIST_ARRIVALS:
+		_manager._hide_all()
+		var points: Array[Vector3] = []
+		if use_old:
+			for _i in _manager.get("_citizens").size():
+				var p := _old_sampler_point(spot)
+				if p != Vector3.INF:
+					points.append(p)
+		else:
+			_manager._process(DT)
+			for c: Dictionary in _manager.get("_citizens"):
+				if c["active"]:
+					points.append(CrowdScript._citizen_world_pos(c))
+		for w: Vector3 in points:
+			total += 1
+			if Vector2(w.x - spot.x, w.z - spot.z).length() < half_r:
+				inner += 1
+			cells[Vector2i(int(floor((w.x - PLAN.GATE.x) / pitch)),
+					int(floor(w.z / pitch)))] = true
+	return {
+		"n": total,
+		"inner_share": 100.0 * float(inner) / maxf(1.0, float(total)),
+		"cells": cells.size(),
+	}
+
+
+func _old_sampler_point(player_pos: Vector3) -> Vector3:
+	## THE MUTATION CONTROL: `_find_spawn_segment_near` as it stood before bead
+	## 8gw.23, written out here so "the fix moved the number" is a comparison of
+	## two live samplers and not of a number against a memory. Uniform in r, snap
+	## to the nearest INTERSECTION, then lerp along one edge — and on 16 failures
+	## fall back to the player's own intersection, which is the pile-up.
+	var rng := _manager.get("_rng") as RandomNumberGenerator
+	for _attempt in 16:
+		var angle := rng.randf_range(0.0, TAU)
+		var dist := rng.randf_range(CrowdScript.SPAWN_MIN_DIST, CrowdScript.SPAWN_RADIUS)
+		var snapped: Vector2 = CrowdScript.snap_to_grid(player_pos.x + cos(angle) * dist,
+				player_pos.z + sin(angle) * dist)
+		if CrowdScript.is_walkable(snapped.x, snapped.y):
+			var corner := Vector3(snapped.x, 0.0, snapped.y)
+			var d := Vector2(1.0 if rng.randf() < 0.5 else -1.0, 0.0)
+			if rng.randf() < 0.5:
+				d = Vector2(0.0, 1.0 if rng.randf() < 0.5 else -1.0)
+			var nxt: Vector3 = _manager._pick_next_waypoint(corner, d)
+			if nxt != corner:
+				return corner.lerp(nxt, rng.randf_range(0.05, 0.95))
+	var p: Vector2 = CrowdScript.snap_to_grid(player_pos.x, player_pos.z)
+	if CrowdScript.is_walkable(p.x, p.y):
+		var c := Vector3(p.x, 0.0, p.y)
+		var n: Vector3 = _manager._pick_next_waypoint(c, Vector2(1.0, 0.0))
+		if n != c:
+			return c.lerp(n, rng.randf_range(0.05, 0.95))
+	return Vector3.INF
+
+
+func _check_spawn_distribution() -> void:
+	var shipped_inner: float = 0.0
+	var control_inner: float = 0.0
+	var spots: int = 0
+	for spot: Vector3 in DIST_SPOTS:
+		var got: Dictionary = _dist_profile(spot, false)
+		var old: Dictionary = _dist_profile(spot, true)
+		if int(got["n"]) < 500:
+			_failures.append("check 10 got only %d spawns at %s — too few to mean anything"
+				% [int(got["n"]), str(spot)])
+			Sentinel.done("spawn_distribution")
+			return
+		if float(got["inner_share"]) > DIST_INNER_SHARE_MAX:
+			_failures.append(("at %s, %.1f%% of the crowd spawned inside HALF the bubble"
+				+ " radius — a quarter of its area, so uniform is 25%% and the bound is"
+				+ " %.0f%%. The crowd is piling up around the hero again; see"
+				+ " _find_spawn_segment_near.")
+				% [str(spot), float(got["inner_share"]), DIST_INNER_SHARE_MAX])
+		if int(got["cells"]) < DIST_MIN_CELLS:
+			_failures.append("at %s the whole crowd fitted in %d 62 m cells (floor %d) —"
+				% [str(spot), int(got["cells"]), DIST_MIN_CELLS]
+				+ " it collapsed onto a handful of streets")
+		shipped_inner += float(got["inner_share"])
+		control_inner += float(old["inner_share"])
+		spots += 1
+		print("spawn spread at %s: %.1f%% inner / %d cells (old sampler: %.1f%% / %d)"
+			% [str(spot), float(got["inner_share"]), int(got["cells"]),
+			float(old["inner_share"]), int(old["cells"])])
+
+	# THE MUTATION CONTROL, run for real rather than asserted: the retired sampler
+	# has to FAIL the bound this check holds the shipped one to, or the bound is
+	# loose enough to pass anything.
+	var control_avg: float = control_inner / maxf(1.0, float(spots))
+	var shipped_avg: float = shipped_inner / maxf(1.0, float(spots))
+	if control_avg <= DIST_INNER_SHARE_MAX:
+		_failures.append(("check 10's mutation control PASSED: the pre-8gw.23 sampler"
+			+ " averaged %.1f%% inside the inner quarter-area, under the %.0f%% bound."
+			+ " The bound cannot tell the two samplers apart, so it is measuring nothing.")
+			% [control_avg, DIST_INNER_SHARE_MAX])
+	print("spawn spread: shipped %.1f%% vs retired sampler %.1f%% inside the inner"
+		% [shipped_avg, control_avg] + " quarter-area (uniform 25%%, bound %.0f%%)"
+		% DIST_INNER_SHARE_MAX)
+	_manager._hide_all()
+	Sentinel.done("spawn_distribution")
+
+
+# ============================================================================
+# CHECK 11 — A CAR NEVER DRIVES THROUGH A CITIZEN (bead godot-test1-8gw.23)
+# ============================================================================
+#
+# OWNER: "crowds in budapest still go through cars, not good, fix".
+#
+# Neither a citizen nor a car has a body — the pooled proxies exist only for the
+# hero — so nothing physical was ever going to stop this, and the fix is the
+# SHIPPED brake: `traffic_manager._distance_to_citizen_ahead` feeds a citizen on
+# the carriageway into `target_speed_for_distance` exactly as it feeds the hero.
+#
+# The probe is a citizen already MID-CROSSING (the kerb rule deliberately lets it
+# carry on; stopping somebody in the road is the one place to be run over) with a
+# car bearing down on it. Driven on the two shipped movement passes, and
+# mutation-tested by taking the crowd out of the group — the seam is discovered
+# through it, so an unfixed build is exactly what that run measures, and the car
+# must then drive straight over the walker.
+
+const TrafficScript := preload("res://scripts/traffic_manager.gd")
+
+## Long enough for a car starting 25 m back at cruise (4–6.5 m/s) to reach and
+## pass the crossing point, twice over.
+const CAR_PROBE_FRAMES: int = 300
+
+## The car's footprint plus the citizen's half-width — "inside the car" for a
+## walker whose own box is CITIZEN_PROXY_HALF.
+const CAR_HIT_LONG: float = TrafficScript.CAR_LENGTH * 0.5 + 0.3
+const CAR_HIT_LAT: float = TrafficScript.CAR_WIDTH * 0.5 + 0.3
+
+## The kerb probe's own window: the walk is 17 m at 2.4 m/s (7.1 s) plus the wait
+## for a car to clear, so 700 frames is that with room either side.
+const KERB_PROBE_FRAMES: int = 700
+
+
+func _car_probe_min_gap(traffic: Node3D, crowd: Node3D) -> float:
+	## Drive one car east down an avenue at one citizen crossing it, and report
+	## the closest the citizen ever came to being INSIDE the car — as a fraction
+	## of the footprint, so < 1.0 means it was driven through.
+	var cars: Array = traffic.get("_cars")
+	var citizens: Array = crowd.get("_citizens")
+	traffic._hide_all()
+	crowd._hide_all()
+
+	# The z = 0 avenue (CITY_AVENUE_EVERY-th grid line through the gate), a car
+	# in the +X lane, and a citizen on an ORDINARY street line crossing it.
+	var cross_x: float = PLAN.GATE.x + 13.0 * PLAN.STREET_PITCH  # not a multiple of 4
+	var car: Dictionary = cars[0]
+	car["pos"] = Vector3(cross_x - 25.0, 0.0, 0.0)
+	car["heading_dir"] = Vector2(1.0, 0.0)
+	car["facing_yaw"] = atan2(-1.0, 0.0)
+	car["cruise_speed"] = 6.0
+	car["speed"] = 6.0
+	car["blocked_time"] = 0.0
+	car["honk_cooldown"] = 0.0
+	car["lod_step"] = DT
+	car["active"] = true
+
+	var walker: Dictionary = citizens[0]
+	# Already ON the carriageway (|z| < AVENUE_HALF_WIDTH), and placed so that at
+	# 1.2 m/s it stands in the car's own lane (z = +LANE_OFFSET) at the moment a
+	# car 25 m back at 6 m/s arrives — the collision is dead centre, not a near miss.
+	walker["pos"] = Vector3(cross_x, 0.0, TrafficScript.LANE_OFFSET - 1.2 * (25.0 / 6.0))
+	walker["target"] = Vector3(cross_x, 0.0, 12.0)
+	walker["heading_dir"] = Vector2(0.0, 1.0)
+	walker["facing_yaw"] = 0.0
+	walker["lane_offset"] = 0.0
+	walker["speed"] = 1.2
+	walker["pause_timer"] = 0.0
+	walker["walk_phase"] = 0.0
+	walker["lod_step"] = DT
+	walker["active"] = true
+
+	var worst := INF
+	var far_away := Vector3(0.0, 0.0, 9000.0)  # the hero is nowhere near this
+	for _f in CAR_PROBE_FRAMES:
+		traffic._update_cars(DT, far_away, false)
+		crowd._update_walkers(DT, false)
+		var cw: Vector3 = TrafficScript._car_world_pos(car)
+		var pw: Vector3 = CrowdScript._citizen_world_pos(walker)
+		var d := Vector2(pw.x - cw.x, pw.z - cw.z)
+		var h: Vector2 = car["heading_dir"]
+		var along: float = absf(d.dot(h)) / CAR_HIT_LONG
+		var across: float = absf(d.dot(Vector2(-h.y, h.x))) / CAR_HIT_LAT
+		worst = minf(worst, maxf(along, across))
+	return worst
+
+
+func _kerb_probe(traffic: Node3D, crowd: Node3D, with_car: bool) -> int:
+	## THE KERB RULE's own measurement: a citizen starting on the PAVEMENT and
+	## walking across the avenue. Returns the frame it clears the far kerb — with
+	## a car coming that must be LATER, because it waited.
+	var cars: Array = traffic.get("_cars")
+	var citizens: Array = crowd.get("_citizens")
+	traffic._hide_all()
+	crowd._hide_all()
+	var cross_x: float = PLAN.GATE.x + 13.0 * PLAN.STREET_PITCH
+	var kerb: float = PLAN.AVENUE_HALF_WIDTH
+
+	if with_car:
+		var car: Dictionary = cars[0]
+		# 15 m back at 6 m/s: it is inside YIELD_DISTANCE of the crossing point at
+		# the moment the walker reaches the kerb, which is what has to hold it.
+		car["pos"] = Vector3(cross_x - 15.0, 0.0, 0.0)
+		car["heading_dir"] = Vector2(1.0, 0.0)
+		car["facing_yaw"] = atan2(-1.0, 0.0)
+		car["cruise_speed"] = 6.0
+		car["speed"] = 6.0
+		car["blocked_time"] = 0.0
+		car["honk_cooldown"] = 0.0
+		car["lod_step"] = DT
+		car["active"] = true
+
+	var walker: Dictionary = citizens[0]
+	walker["pos"] = Vector3(cross_x, 0.0, -kerb - 1.0)  # on the pavement, not the road
+	walker["target"] = Vector3(cross_x, 0.0, kerb + 12.0)
+	walker["heading_dir"] = Vector2(0.0, 1.0)
+	walker["facing_yaw"] = 0.0
+	walker["lane_offset"] = 0.0
+	walker["speed"] = 2.4
+	walker["pause_timer"] = 0.0
+	walker["walk_phase"] = 0.0
+	walker["lod_step"] = DT
+	walker["active"] = true
+
+	var far_away := Vector3(0.0, 0.0, 9000.0)
+	for f in KERB_PROBE_FRAMES:
+		if with_car:
+			traffic._update_cars(DT, far_away, false)
+		crowd._update_walkers(DT, false)
+		if float((walker["pos"] as Vector3).z) >= kerb:
+			return f
+	return KERB_PROBE_FRAMES
+
+
+func _check_pavement_lane() -> void:
+	## THE HALF THE CAR PROBE CANNOT SEE: a citizen walking ALONG an avenue is on
+	## the PAVEMENT, so the cars never have to brake for it in the first place.
+	## `_pick_lane` is asked directly, at an avenue line and at an ordinary street
+	## line, because the difference between the two answers IS the rule.
+	var ave_pitch: float = PLAN.STREET_PITCH * float(PLAN.CITY_AVENUE_EVERY)
+	# An avenue of constant Z through the middle of Pest, walked along X.
+	var on_avenue := Vector3(PLAN.GATE.x + 5.0 * PLAN.STREET_PITCH, 0.0, 4.0 * ave_pitch)
+	# ...and an ordinary street line one pitch off it, walked the same way.
+	var on_street := Vector3(on_avenue.x, 0.0, on_avenue.z + PLAN.STREET_PITCH)
+	var along := Vector2(1.0, 0.0)
+
+	if not CrowdScript.walks_an_avenue(on_avenue, along):
+		_failures.append("check 11's avenue probe at %s is not on an avenue line —"
+			% str(on_avenue) + " it measures nothing")
+		Sentinel.done("pavement_lane")
+		return
+	if CrowdScript.walks_an_avenue(on_street, along):
+		_failures.append("check 11's control line at %s IS an avenue — the two probes"
+			% str(on_street) + " cannot tell the rule from the default")
+		Sentinel.done("pavement_lane")
+		return
+
+	# Twenty draws each: the lane is a random pick, so one sample proves nothing.
+	for _i in 20:
+		var ave_lane: float = absf(_manager._pick_lane(on_avenue, along, on_avenue + Vector3(PLAN.STREET_PITCH, 0.0, 0.0)))
+		if ave_lane <= PLAN.AVENUE_HALF_WIDTH:
+			_failures.append(("a citizen walking ALONG an avenue was put %.1f m off the"
+				+ " centreline, inside the %.1f m carriageway — it is standing in the"
+				+ " traffic, which is most of what 'crowds go through cars' was.")
+				% [ave_lane, PLAN.AVENUE_HALF_WIDTH])
+			break
+		if ave_lane >= PLAN.AVENUE_HALF_WIDTH + PLAN.BLOCK_PAVEMENT:
+			_failures.append(("a citizen walking ALONG an avenue was put %.1f m off the"
+				+ " centreline, at or past the block face at %.1f m — it is inside a"
+				+ " building.") % [ave_lane, PLAN.AVENUE_HALF_WIDTH + PLAN.BLOCK_PAVEMENT])
+			break
+	for _i in 20:
+		var street_lane: float = absf(_manager._pick_lane(on_street, along, on_street + Vector3(PLAN.STREET_PITCH, 0.0, 0.0)))
+		if street_lane > PLAN.AVENUE_HALF_WIDTH:
+			_failures.append(("an ordinary street put a walker %.1f m off the centreline —"
+				+ " the pavement lane is for AVENUES, and a 62 m street has no traffic to"
+				+ " keep clear of.") % street_lane)
+			break
+	# THE GATE AVENUE, which is the city's own western EDGE: BudapestPlan puts
+	# BUDAPEST_MIN.x exactly on GATE.x, so for a north/south walker there the
+	# WESTERN pavement is outside the rect and unwalkable. A `_pick_lane` that
+	# gave up on its first draw fell through to 0.0 half the time — the middle of
+	# the busiest road in the city, at the one place every player walks in.
+	var gate_ns := Vector3(PLAN.GATE.x, 0.0, 3.0 * ave_pitch)
+	var north := Vector2(0.0, 1.0)
+	if not CrowdScript.walks_an_avenue(gate_ns, north):
+		_failures.append("check 11's gate probe at %s is not on an avenue" % str(gate_ns))
+	elif CrowdScript.is_walkable(gate_ns.x - CrowdScript.PAVEMENT_LANE_OFFSET, gate_ns.z):
+		_failures.append("check 11's gate probe has a walkable WEST pavement, so it is not"
+			+ " standing on the city edge the mirror rule exists for")
+	else:
+		for _i in 20:
+			var gate_lane: float = absf(_manager._pick_lane(gate_ns, north, gate_ns + Vector3(0.0, 0.0, PLAN.STREET_PITCH)))
+			if gate_lane <= PLAN.AVENUE_HALF_WIDTH:
+				_failures.append(("on the GATE avenue — the city's own west edge, where one"
+					+ " pavement is outside the rect — a walker was put %.1f m off the"
+					+ " centreline, inside the %.1f m carriageway. _pick_lane must try the"
+					+ " other pavement before it gives up.")
+					% [gate_lane, PLAN.AVENUE_HALF_WIDTH])
+				break
+	print("pavement lane: avenue walkers at +/-%.1f m (carriageway %.1f, block face %.1f),"
+		% [CrowdScript.PAVEMENT_LANE_OFFSET, PLAN.AVENUE_HALF_WIDTH,
+		PLAN.AVENUE_HALF_WIDTH + PLAN.BLOCK_PAVEMENT]
+		+ " gate avenue mirrored to the east pavement")
+	Sentinel.done("pavement_lane")
+
+
+func _check_car_never_drives_through_a_citizen() -> void:
+	var traffic := Node3D.new()
+	traffic.set_script(TrafficScript)
+	_root.add_child(traffic)
+	await process_frame
+
+	var with_crowd: float = _car_probe_min_gap(traffic, _manager)
+	if with_crowd < 1.0:
+		_failures.append(("a car drove THROUGH a crossing citizen — it reached %.2f of its"
+			+ " own footprint (1.0 is the bumper). traffic_manager brakes for the hero and"
+			+ " for cars ahead; a citizen on the carriageway has to be the same blocker,"
+			+ " through _distance_to_citizen_ahead.") % with_crowd)
+
+	# THE MUTATION CONTROL: the seam is group discovery, so a crowd out of the
+	# group IS the pre-8gw.23 build. The car must run the walker over.
+	_manager.remove_from_group("crowd")
+	var without: float = _car_probe_min_gap(traffic, _manager)
+	_manager.add_to_group("crowd")
+	if without >= 1.0:
+		_failures.append(("check 11's mutation control PASSED: with the crowd out of the"
+			+ " 'crowd' group the car still missed the citizen (%.2f of a footprint), so"
+			+ " the probe never put anybody in front of a car and proves nothing.")
+			% without)
+	print("car vs citizen: closest approach %.2f of a car footprint with the brake,"
+		% with_crowd + " %.2f with the crowd unreachable" % without)
+
+	# THE KERB RULE, the citizen's own half: it waits on the pavement rather than
+	# stepping in front of a car. Its control is the same walk with no car at all
+	# — the crossing must be strictly slower with one coming, or the hold never
+	# fired and `blocks_crossing` is decorative.
+	var waited: int = _kerb_probe(traffic, _manager, true)
+	var clear: int = _kerb_probe(traffic, _manager, false)
+	if waited <= clear:
+		_failures.append(("a citizen stepped off the kerb in front of a car: it cleared the"
+			+ " avenue on frame %d with a car bearing down and frame %d with an empty road,"
+			+ " so it never waited. traffic_manager.blocks_crossing is the hold.")
+			% [waited, clear])
+	else:
+		print("kerb rule: crossing took %d frames with a car coming, %d on an empty road"
+			% [waited, clear])
+
+	# A PARALLEL AVENUE IS NOT A CROSSING. Both lines are infinite, so a car on
+	# the z = 248 avenue still "crosses" a northbound walker's line — 248 m up it.
+	# Without the travel bound that car holds a citizen stepping onto z = 0.
+	traffic._hide_all()
+	var far_car: Dictionary = (traffic.get("_cars") as Array)[0]
+	var step_x: float = PLAN.GATE.x + 13.0 * PLAN.STREET_PITCH
+	var ave_pitch: float = PLAN.STREET_PITCH * float(PLAN.CITY_AVENUE_EVERY)
+	far_car["pos"] = Vector3(step_x - 5.0, 0.0, ave_pitch)
+	far_car["heading_dir"] = Vector2(1.0, 0.0)
+	far_car["facing_yaw"] = 0.0
+	far_car["speed"] = 6.0
+	far_car["cruise_speed"] = 6.0
+	far_car["active"] = true
+	# The same step the kerb probe makes, onto the z = 0 avenue.
+	var kerb_from := Vector3(step_x, 0.0, -PLAN.AVENUE_HALF_WIDTH - 0.1)
+	var kerb_to := Vector3(step_x, 0.0, -PLAN.AVENUE_HALF_WIDTH + 0.1)
+	if traffic.blocks_crossing(kerb_from, kerb_to, Vector2(0.0, 1.0)):
+		_failures.append(("a citizen stepping onto the z = 0 avenue was held by a car on the"
+			+ " PARALLEL avenue %.0f m away — blocks_crossing projected onto the walker's"
+			+ " INFINITE line and found a crossing nobody is about to make.") % ave_pitch)
+	# ...and the positive control: the same car moved onto the avenue being
+	# entered must still hold it, or the bound rejected everything.
+	far_car["pos"] = Vector3(step_x - 5.0, 0.0, 0.0)
+	if not traffic.blocks_crossing(kerb_from, kerb_to, Vector2(0.0, 1.0)):
+		_failures.append("with the car on the avenue actually being crossed the kerb rule"
+			+ " did NOT hold — the travel bound is rejecting real crossings too")
+	else:
+		print("kerb rule: a car on the parallel avenue %.0f m away holds nobody;" % ave_pitch
+			+ " the same car on the crossed avenue does")
+
+	# A STOPPED CAR STRADDLING THE CROSSING still blocks it. `fwd <= 0` released the
+	# walker the moment the car's CENTRE passed, while 2.2 m of body was still
+	# across the lane — and a car stopped by the hero ahead straddles it for as
+	# long as the hero stands there, so the walker steps into a stationary car
+	# that, looking only forward, never sees it.
+	traffic._hide_all()
+	var stalled: Dictionary = (traffic.get("_cars") as Array)[0]
+	stalled["pos"] = Vector3(step_x + 1.0, 0.0, 0.0)   # centre 1 m PAST the crossing
+	stalled["heading_dir"] = Vector2(1.0, 0.0)
+	stalled["facing_yaw"] = 0.0
+	stalled["speed"] = 0.0
+	stalled["cruise_speed"] = 0.0
+	stalled["active"] = true
+	if not traffic.blocks_crossing(kerb_from, kerb_to, Vector2(0.0, 1.0)):
+		_failures.append(("a citizen was released onto the crossing with a STOPPED car"
+			+ " straddling it — its centre is 1.0 m past, but %.1f m of car is still"
+			+ " across the lane. blocks_crossing must use the car's BODY, not its centre.")
+			% (TrafficScript.CAR_LENGTH * 0.5))
+	# ...and the control: the same car a whole body-length further on, genuinely
+	# clear, must release. Without this the fix could just be "always blocked".
+	stalled["pos"] = Vector3(step_x + TrafficScript.CROSSING_REAR_CLEAR + 1.0, 0.0, 0.0)
+	if traffic.blocks_crossing(kerb_from, kerb_to, Vector2(0.0, 1.0)):
+		_failures.append("a car entirely PAST the crossing still held the walker — the rear"
+			+ " clearance is not releasing, so a citizen waits for cars that have gone")
+	else:
+		print("kerb rule: a car straddling the crossing holds; the same car %.1f m past"
+			% (TrafficScript.CROSSING_REAR_CLEAR + 1.0) + " releases")
+
+	traffic._hide_all()
+	traffic.queue_free()
+	_manager._hide_all()
+	await process_frame
+	Sentinel.done("car_never_drives_through_a_citizen")
+
+
+# ============================================================================
+# CHECK 12 — A WALKER NEVER TELEPORTS MID-BLOCK, AND NEVER SPAWNS ON ANOTHER
+# ============================================================================
+#
+# TWO THINGS A LANE CAN DO WRONG, and neither is visible to any check above.
+#
+# (a) The lane is drawn at a TURN, and `_pick_next_waypoint` carries straight on
+#     60% of the time. Re-drawing on those steps flips the SIGN half of them,
+#     which on an avenue is +8.6 m to -8.6 m — a 17.2 m sideways jump across both
+#     car lanes, in one frame, for a citizen that never turned (6.4 m on an
+#     ordinary street). The proxy pool follows the citizen, so it is a collider
+#     jumping through the hero too.
+#
+#     THE MEASUREMENT IS PER-FRAME WORLD DISPLACEMENT ON A STEP THAT DID NOT
+#     TURN, and the exclusion is not a loophole — it is the shipped lane model.
+#     A lane is an offset along the heading's PERPENDICULAR, so a 90° turn
+#     rotates it: leaving the value alone, a walker at +8.6 m on a street of
+#     constant Z is at -8.6 m along X the instant it turns, `sqrt(2) * lane`
+#     away. That corner has always been a jump (±3.2 m lanes made it 4.5 m; the
+#     pavement makes it 12.2 m) and closing it needs the walker to cut the
+#     corner of its OWN offset path, which means knowing the next lane before it
+#     picks the next street — a waypoint model this bead did not come to write.
+#     So the turn is bounded instead of forbidden, which is what stops it
+#     growing quietly, and `ponytail:` in `_pick_lane` names the upgrade.
+#
+#     `_update_walkers` is driven DIRECTLY rather than through `_process`: the
+#     spawn/recycle pass legitimately teleports (that is what a recycle IS), so
+#     leaving it out is what makes any jump here the walk's own.
+#
+# (b) The spawn clearance is `MIN_WALKER_SPACING`, and it used to be measured
+#     against the street CENTRELINE while the lane was chosen afterwards — so two
+#     candidates 6 m apart on the centreline could pass and then draw the same
+#     lane and stand on each other. Measured on the world positions, after a cold
+#     fill, which is where every walker's lane has just been drawn.
+
+## 2,000 steps: ~33 s of walking, so every citizen crosses several intersections
+## and the 60%-straight case is taken thousands of times over the crowd.
+const WALK_STEPS: int = 2000
+
+## The mid-block bound: the fastest walker's own step, doubled. `lod_gated` is
+## false here so every citizen advances by exactly DT, and nothing in a walk can
+## outrun its own speed — a lane re-roll is 6.4 m or 17.2 m against 0.09 m.
+const MAX_STEP_FACTOR: float = 2.0
+
+
+func _check_walkers_never_teleport() -> void:
+	var bound: float = CrowdScript.WALK_SPEED_MAX * DT * MAX_STEP_FACTOR
+	# The corner's own bound, off the lane geometry rather than a number typed
+	# here: the widest lane rotated 90 degrees, plus one step of walking.
+	# A 90-degree turn rotates the lane onto the other axis, so the two offsets are
+	# perpendicular and the jump is sqrt(2) x lane. A U-TURN is not in this bound
+	# on purpose: it keeps the same street line and the shipped code flips the
+	# stored value with the heading, so it moves the walker NOWHERE — leaving the
+	# looser 2 x lane here would stop measuring that.
+	var corner_bound: float = sqrt(2.0) * CrowdScript.PAVEMENT_LANE_OFFSET + bound
+	_manager._hide_all()
+	_player.position = Vector3(2600.0, 1.0, 0.0)
+	# The SPAWN PASS ALONE, not `_process`: the movement pass would step every
+	# walker up to WALK_SPEED_MAX * DT before the clearance below is measured, and
+	# two placed exactly at the floor closing on each other read as a violation the
+	# sampler never committed. This is also the last spawn pass of the check — the
+	# walk below is driven straight into `_update_walkers`.
+	var no_planes: Array[Plane] = []
+	_manager._update_crowd_spawns(DT, _player.position, no_planes)
+
+	var cits: Array = _manager.get("_citizens")
+	# (b) THE SPAWN CLEARANCE, on the positions the walkers really stand at.
+	var world: Array[Vector3] = []
+	for c: Dictionary in cits:
+		if c["active"]:
+			world.append(CrowdScript._citizen_world_pos(c))
+	var live: int = world.size()
+	var worst_gap := INF
+	for a in world.size():
+		for b in range(a + 1, world.size()):
+			var gap := Vector2(world[a].x - world[b].x, world[a].z - world[b].z).length()
+			worst_gap = minf(worst_gap, gap)
+	if live < 20:
+		_failures.append("check 12 filled only %d walkers — too few to mean anything" % live)
+		Sentinel.done("walkers_never_teleport")
+		return
+	if worst_gap < CrowdScript.MIN_WALKER_SPACING:
+		_failures.append(("two walkers spawned %.2f m apart, inside MIN_WALKER_SPACING"
+			+ " (%.2f) — the clearance is being measured somewhere nobody stands, which is"
+			+ " what happens when the lane is drawn after the test.")
+			% [worst_gap, CrowdScript.MIN_WALKER_SPACING])
+
+	# (a) THE WALK ITSELF, split on whether the citizen turned that frame.
+	var prev: Array[Vector3] = []
+	var prev_h: Array[Vector2] = []
+	prev.resize(cits.size())
+	prev_h.resize(cits.size())
+	for i in cits.size():
+		prev[i] = CrowdScript._citizen_world_pos(cits[i])
+		prev_h[i] = cits[i]["heading_dir"]
+	var worst_step: float = 0.0
+	var worst_at: int = -1
+	var worst_corner: float = 0.0
+	var turns: int = 0
+	for _f in WALK_STEPS:
+		_manager._update_walkers(DT, false)
+		for i in cits.size():
+			if not cits[i]["active"]:
+				continue
+			var now: Vector3 = CrowdScript._citizen_world_pos(cits[i])
+			var h: Vector2 = cits[i]["heading_dir"]
+			var moved := Vector2(now.x - prev[i].x, now.z - prev[i].z).length()
+			if h.is_equal_approx(prev_h[i]):
+				if moved > worst_step:
+					worst_step = moved
+					worst_at = i
+			else:
+				turns += 1
+				worst_corner = maxf(worst_corner, moved)
+			prev[i] = now
+			prev_h[i] = h
+	if turns < 20:
+		_failures.append("check 12 saw only %d turns in %d steps — the corner bound below"
+			% [turns, WALK_STEPS] + " was never exercised. A 62 m block at ~2.3 m/s is"
+			+ " ~1,600 frames, so a few dozen is the expected yield; zero is not.")
+	if worst_step > bound:
+		_failures.append(("walker %d moved %.2f m in ONE frame WITHOUT TURNING, against a"
+			+ " bound of %.3f m (WALK_SPEED_MAX x %.3f x %.0f). A walk cannot outrun its own"
+			+ " speed, so this is the lane jumping sideways — _pick_lane must be asked on a"
+			+ " TURN and only on a turn.") % [worst_at, worst_step, bound, DT, MAX_STEP_FACTOR])
+	if worst_corner > corner_bound:
+		_failures.append(("a walker moved %.2f m through a CORNER, past the %.2f m the lane"
+			+ " geometry allows (sqrt(2) x PAVEMENT_LANE_OFFSET + one step). The turn is a"
+			+ " known discontinuity — see this check's header — but it is bounded by the"
+			+ " widest lane, and this is wider than that.") % [worst_corner, corner_bound])
+	else:
+		print("walk continuity: %d walkers, %d steps, worst straight frame %.4f m (bound"
+			% [live, WALK_STEPS, worst_step]
+			+ " %.4f); %d corners, worst %.2f m (bound %.2f); closest spawn pair %.2f m"
+			% [bound, turns, worst_corner, corner_bound, worst_gap])
+	_manager._hide_all()
+	Sentinel.done("walkers_never_teleport")
+
+
+# ============================================================================
+# CHECK 13 — NOBODY WALKS ON THE DANUBE (bead godot-test1-8gw.23, round 3)
+# ============================================================================
+#
+# THE BUG THIS EXISTS FOR. A walker's lane is up to PAVEMENT_LANE_OFFSET to the
+# SIDE of the street line it follows, and every walkability test in this file
+# used to be asked of the CENTRELINE. On the four bridge avenues those two answer
+# differently: a `DRY_RECTS` row covers the deck, so a north/south walker at
+# x = 2344 is on dry ground while its RENDERED position at x = 2352.6 is over open
+# water — and the recycle pass, asking the base too, never took it away. A citizen
+# walking on the Danube, for as long as the bubble held it.
+#
+# Both halves are fixed and this measures the pair from the outside: the lane is
+# validated along the WHOLE leg (`_lane_walkable`, sampled at both ends and the
+# middle) and the recycle guard asks `_citizen_world_pos`. So the assertion needs
+# to know about neither — it drives a live bubble at each bridge and asks the
+# shipped `is_walkable` of every RENDERED position.
+#
+# Non-vacuity matters more than usual here: a probe that never puts a walker
+# NEAR the river proves nothing, so it counts the walkers within reach of the
+# band and fails if the bubbles never went near the water.
+
+## Frames per bridge: enough for a walker spawned on a deck avenue to walk clear
+## of the DRY rect (32 m of deck at ~2.3 m/s is ~14 s).
+const RIVER_FRAMES: int = 1200
+
+## How near the Danube's centreline a walker has to come for this to have been a
+## real test of the river edge at all.
+const RIVER_REACH: float = 160.0
+const RIVER_MIN_NEAR: int = 20
+
+
+func _check_no_walker_on_water() -> void:
+	var wet: int = 0
+	var near_river: int = 0
+	var worst := Vector3.ZERO
+	for row_v: Variant in PLAN.BRIDGES:
+		var row: Dictionary = row_v
+		var rect: Rect2 = PLAN.DRY_RECTS[int(row["dry"])]
+		# Stand the hero ON the deck: the bubble then straddles both banks and the
+		# open water either side of it, which is exactly the geometry that broke.
+		var spot := Vector3(rect.position.x + rect.size.x * 0.5, 1.0,
+				rect.position.y + rect.size.y * 0.5)
+		_manager._hide_all()
+		_player.position = spot
+		for _f in RIVER_FRAMES:
+			_manager._process(DT)
+			for c: Dictionary in _manager.get("_citizens"):
+				if not c["active"]:
+					continue
+				var w: Vector3 = CrowdScript._citizen_world_pos(c)
+				if PLAN.danube_distance(w.x, w.z) < RIVER_REACH:
+					near_river += 1
+				if not CrowdScript.is_walkable(w.x, w.z):
+					wet += 1
+					worst = w
+	if near_river < RIVER_MIN_NEAR:
+		_failures.append("check 13 never put a walker within %.0f m of the Danube (%d"
+			% [RIVER_REACH, near_river] + " samples) — it measured nothing about the river")
+	if wet > 0:
+		_failures.append(("%d walker frames were rendered on unwalkable ground — the last at"
+			+ " %s, %.1f m from the Danube's centreline. A lane is up to %.1f m to the SIDE"
+			+ " of the street line, so a base that is dry says nothing; `_lane_walkable`"
+			+ " validates the whole leg and the recycle guard asks the RENDERED position.")
+			% [wet, str(worst), PLAN.danube_distance(worst.x, worst.z),
+			CrowdScript.PAVEMENT_LANE_OFFSET])
+	else:
+		print("river: %d walker-frames sampled at the four bridges, %d of them within"
+			% [near_river, near_river] + " %.0f m of the Danube, none on water"
+			% RIVER_REACH)
+	_manager._hide_all()
+	Sentinel.done("no_walker_on_water")

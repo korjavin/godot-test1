@@ -8,7 +8,8 @@ extends Node
 ## shipped spike telemetry's summary — taken on the LIVE game before the pose is
 ## frozen, which is the F3 reading the epic asks every child PR for.
 ##
-## Usage: godot --path . scenes/style_shots.tscn -- <outdir>
+## Usage: godot --path . scenes/style_shots.tscn -- <outdir> [only=<substring>]
+##                                                           [hide=<groups>]
 ##        godot --rendering-method gl_compatibility --path . …   (the web renderer)
 ##
 ## It is a DEBUG TOOL and nothing in the game loads it: `scenes/style_shots.tscn`
@@ -24,6 +25,12 @@ var _out_dir: String = "user://shots"
 ## and the epic's A/B pairs want.
 var _only: String = ""
 
+## Which ambience groups `hide=` suppresses. The default is the y1o list — this
+## tool exists to A/B the BLOCK material and randomized ambience is noise against
+## it — but bead 8gw.23 is about the crowd and the traffic THEMSELVES, so it
+## passes `hide=weather,fauna` and keeps them on screen.
+var _hidden_groups: PackedStringArray = PackedStringArray(["crowd", "traffic", "weather", "fauna"])
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	# Without this the desktop window vsyncs at 60 and every frame-time reading
@@ -33,6 +40,8 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("only="):
 			_only = a.substr(5)
+		elif a.begins_with("hide="):
+			_hidden_groups = a.substr(5).split(",", false)
 		else:
 			_out_dir = a
 	DirAccess.make_dir_recursive_absolute(_out_dir)
@@ -62,7 +71,7 @@ func _run() -> void:
 	# extends Node and parents its cloud/rain/bird MultiMeshes to itself), so a
 	# `manager is Node3D` test silently skips the one system whose randomized
 	# clouds actually show up in the sky of every shot.
-	for g in ["crowd", "traffic", "weather", "fauna"]:
+	for g in _hidden_groups:
 		for amb in get_tree().get_nodes_in_group(g):
 			_hide_visuals(amb)
 
@@ -80,12 +89,17 @@ func _run() -> void:
 	var field := _find_biome(terrain, terrain.Biome.PLAINS)
 	var forest := _find_biome(terrain, terrain.Biome.FOREST)
 	var street := Vector3(1600.0 + 5.0 * 62.0, 0.0, 3.0 * 62.0)
+	# ...and one on a real AVENUE (bead 8gw.23): every CITY_AVENUE_EVERY-th grid
+	# line is the only place traffic_manager puts a car, so an ordinary street is
+	# the one view of Budapest with no cars in it.
+	var avenue := Vector3(1600.0 + 5.0 * 62.0, 0.0, 0.0)
 
-	print("[SHOTS] field=", field, " forest=", forest, " street=", street)
+	print("[SHOTS] field=", field, " forest=", forest, " street=", street, " avenue=", avenue)
 
 	await _shoot(terrain, player, field, 0.0, "1_field")
 	await _shoot(terrain, player, forest, 0.0, "2_forest")
 	await _shoot(terrain, player, street, -PI * 0.5, "3_budapest")
+	await _shoot(terrain, player, avenue, -PI * 0.5, "3b_budapest_avenue")
 
 	# THE FIELD BRIDGES (bead godot-test1-06o.2) — two shots, and the second one
 	# keeps the HUD on because the minimap's river line is half of what it shows.
