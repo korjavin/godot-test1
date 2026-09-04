@@ -402,7 +402,7 @@ const STOREYS: Array[Dictionary] = [
 	# of the pier between the two west record stacks and reachable only from `A`. It
 	# is a dead end that leads nowhere and joins no graph row — the whole of it is a
 	# place to put something (bead `godot-test1-3iy.23` stands an evidence dossier
-	# there). What makes it a CRAWL is a lintel `TowerInterior` hangs over its mouth
+	# there). What makes it a CRAWL is a lintel `TowerDossiers` hangs over its mouth
 	# at `DOSSIER_CRAWL_CLEAR`, and that is deliberately invisible to this drawing:
 	# the audits flood-fill in 2-D, so a height gate reads to them as ordinary floor,
 	# exactly as the cell block's maintenance crawl does. Keep the cell non-`#` or

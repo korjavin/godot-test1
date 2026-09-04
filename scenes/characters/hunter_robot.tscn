@@ -4,8 +4,8 @@
 [ext_resource type="PackedScene" path="res://assets/models/characters/hunter.glb" id="2_model"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
-radius = 0.28125
-height = 2.025
+radius = 0.421875
+height = 3.0375
 
 [node name="HunterRobot" type="CharacterBody3D" groups=["crocodile", "enemy"]]
 collision_layer = 2
@@ -16,5 +16,5 @@ script = ExtResource("1_hunter")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 0, 0.28125, -0.0975)
+transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 0, 0.421875, -0.14625)
 shape = SubResource("CapsuleShape3D_1")

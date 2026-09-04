@@ -31,9 +31,11 @@ made geometry.
 import pathlib
 import sys
 
+import trimesh
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from predator_parts import box, rgba, save, spike  # noqa: E402
+from predator_parts import OUT_DIR, MAX_FACES, box, build, rgba, spike  # noqa: E402
 
 # --- Palette. THESE HEXES ARE LINEAR, NOT sRGB — see the long gamma note at the
 # top of generate_snake.py's palette; the same trap applies here. Each constant
@@ -70,18 +72,22 @@ PRONG_LEN = 0.14
 # dark-saddle comment describes, and this model is nothing but right angles.
 BITE = 0.02
 
-# --- The whole chassis is then scaled UP on export (owner: "scale hunters 150%
-# bigger" -> 1.5x current size, bead godot-test1-6bj). It rides `save`'s existing
-# scale argument rather than being multiplied into the proportions above, for two
-# reasons: every number in this file stays the number a reader can compare against
-# the other generators', and the scale is applied to the WELDED mesh before the
-# feet-at-y=0 translation, so the contract `verify()` asserts survives it for free.
-# 1.35 x 1.00 x 0.375 m becomes 2.025 x 1.50 x 0.5625 — still inside
-# predator_parts' LENGTH_RANGE (0.6, 2.2), and still walks under every tower
-# storey's ~4.6 m clear height. The .tscn capsules are the same 1.5x by hand
-# (a scene cannot read a Python constant); see the hunter row's measured block in
-# piglet_crocodile_ai.gd, which records both.
-CHASSIS_SCALE = 1.5
+# --- The whole chassis is then scaled UP on export: the SECOND 1.5x (owner
+# ruling 2026-09-04, bead godot-test1-5ow, on top of godot-test1-6bj's 1.5x) —
+# 1.5x the CURRENT size, TOTAL 2.25x the original 1.35 x 1.00 x 0.375 m chassis
+# (~3.04 m long, 2.25 m tall). Do NOT apply 1.5x a third time: "current" is now
+# this. It rides `build`'s existing scale argument rather than being multiplied
+# into the proportions above, for two reasons: every number in this file stays
+# the number a reader can compare against the other generators', and the scale
+# is applied to the WELDED mesh before the feet-at-y=0 translation, so the
+# orientation/feet contracts survive it for free. Past LENGTH_RANGE (0.6, 2.2)
+# now, so the hunter carries its own `verify_hunter` beside the humanoid
+# bosses' (the range is an absolute-size envelope; the proportion guard,
+# longer-than-wide, lives on in the hunter's own). Still walks under every
+# tower storey's ~4.6 m clear height. The .tscn capsules are the same 1.5x by
+# hand (a scene cannot read a Python constant); see the hunter row's measured
+# block in piglet_crocodile_ai.gd, which records both.
+CHASSIS_SCALE = 2.25
 
 BACK_Y = LEG_LEN + HULL_H          # top of the chassis, the machine's shoulder line
 MAST_TOP = BACK_Y + MAST_H
@@ -171,5 +177,55 @@ def build_hunter():
     return parts
 
 
+def verify_hunter(mesh: trimesh.Trimesh) -> None:
+    """Assert enemy-model contracts and the hunter's own size envelope.
+
+    The shared `verify()` in predator_parts cannot judge this model any more:
+    at 2.25x the chassis is ~3.04 m long, past LENGTH_RANGE (0.6, 2.2). That
+    range is an ABSOLUTE-size envelope for the animals, so widening it would
+    loosen every quadruped's guard — instead the hunter carries its own window
+    beside the humanoid bosses' `verify_titan` / `verify_clown`, the way they do.
+    The window admits the 2.25x chassis and rejects the 1.5x one (2.03 m), so a
+    stale scale in either direction fails here rather than shipping a wrong-sized
+    machine over a wrong-sized capsule.
+    """
+    assert len(mesh.faces) > 0, "hunter: empty mesh"
+    assert len(mesh.faces) <= MAX_FACES, f"hunter: {len(mesh.faces)} faces exceeds {MAX_FACES}"
+
+    lo, hi = mesh.bounds
+    assert abs(lo[1]) < 1e-6, f"hunter: feet at y={lo[1]:.4f}, must be 0"
+
+    height = hi[1] - lo[1]
+    assert 2.1 <= height <= 2.4, f"hunter: height {height:.2f}m outside [2.1, 2.4]"
+
+    length = hi[0] - lo[0]
+    assert 2.9 <= length <= 3.2, f"hunter: length {length:.2f}m outside [2.9, 3.2]"
+    # The proportion guard LENGTH_RANGE never carried: the body stays longer
+    # than it is wide, or the facing yaw reads as a sideways machine.
+    assert hi[0] > 0.0, "hunter: nothing forward of origin (+X facing required)"
+    assert length > hi[2] - lo[2], "hunter: wider than it is long"
+
+    bias = hi[2] + lo[2]
+    assert abs(bias) <= 1e-6, f"hunter: off-centre on z (bias {bias:.4f})"
+
+    colors = mesh.visual.vertex_colors
+    assert colors is not None and len(colors) == len(mesh.vertices), \
+        "hunter: missing vertex colors"
+
+
+def save_hunter() -> trimesh.Trimesh:
+    """Weld at CHASSIS_SCALE, check against verify_hunter, export, report."""
+    mesh = build(build_hunter(), CHASSIS_SCALE)
+    verify_hunter(mesh)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    path = OUT_DIR / "hunter.glb"
+    mesh.export(path)
+    lo, hi = mesh.bounds
+    print(f"✓ hunter: {path}")
+    print(f"  {len(mesh.vertices)} verts / {len(mesh.faces)} faces")
+    print(f"  {hi[0] - lo[0]:.2f} m long, {hi[1]:.2f} m tall, {hi[2] - lo[2]:.2f} m wide")
+    return mesh
+
+
 if __name__ == "__main__":
-    save(build_hunter(), "hunter", CHASSIS_SCALE)
+    save_hunter()
