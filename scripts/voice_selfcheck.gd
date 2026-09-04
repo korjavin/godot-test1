@@ -374,16 +374,7 @@ func _check_mic_key_free() -> void:
 		Sentinel.done("mic_key_free")
 		return
 
-	var keys: Array[int] = []
-	for event: InputEvent in InputMap.action_get_events(MIC_ACTION):
-		var as_key := event as InputEventKey
-		if as_key == null:
-			continue
-		var code: int = int(as_key.physical_keycode)
-		if code == 0:
-			code = int(as_key.keycode)
-		if code != 0 and not keys.has(code):
-			keys.append(code)
+	var keys: Array[int] = _mic_keycodes()
 	if keys.is_empty():
 		_fail("`%s` is bound to no key at all — it can never be pressed" % MIC_ACTION)
 		Sentinel.done("mic_key_free")
@@ -437,10 +428,12 @@ func _check_help_row() -> void:
 	line here exists so a deleted voice row fails with the VOICE feature's name on
 	it. A key the player is never told about is a feature that does not exist.
 	"""
-	var legend: String = ""
-	for key: int in _mic_keycodes():
-		legend = OS.get_keycode_string(key)
-		break
+	var keys: Array[int] = _mic_keycodes()
+	if keys.is_empty():
+		_fail("`%s` is bound to no key, so the help card cannot name one" % MIC_ACTION)
+		Sentinel.done("help_row")
+		return
+	var legend: String = OS.get_keycode_string(keys[0])
 	var found := false
 	for row: Array in HelpOverlay.visible_rows(false):
 		if String(row[0]).contains(legend) and String(row[1]).to_lower().contains("voice"):
@@ -485,8 +478,9 @@ func _check_no_js_bool() -> void:
 	"""
 	# NEGATIVE CONTROL FIRST. Every assertion below is "we found nothing", which is
 	# also what a matcher looking for the wrong thing reports.
-	var fixture: String = "(function(){try{ret" + "urn !!s.done;}catch(e){ret" + "urn true;}})()"
-	if _js_bool_offence(fixture).is_empty():
+	# (`intro_selfcheck`'s own global scan exempts `*_selfcheck.gd` precisely so a
+	# check can hold the shape it is banning, which is why this reads plainly.)
+	if _js_bool_offence("(function(){try{return !!s.done;}catch(e){return true;}})()").is_empty():
 		_fail("the boolean-return matcher does not flag the snippet godot-test1-8f8 "
 			+ "actually shipped — check 6 would pass vacuously")
 
