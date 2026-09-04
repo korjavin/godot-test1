@@ -855,6 +855,55 @@ static func quiz_options(kind: int, landmark_id: int, run_seed: int) -> Array[in
 ##
 ## The RNG is the landmark's PRIVATE stream (seeded from _landmark_at's `seed`),
 ## so a builder may draw as freely as its shape needs — nothing else reads it.
+##
+## ---------------------------------------------------------------------------
+## THE KIND SLOT — a FIELD builder's fifth rule (bead godot-test1-y1o.6)
+## ---------------------------------------------------------------------------
+## Every box here used to be a cube, so a dome, a column, an onion and a boulder
+## were the same silhouette in different proportions. create_box's last argument
+## picks a shared unit MESH instead (ChunkBatch.BoxKind), and choosing one is
+## free: it costs no RNG draw, no collision shape and no draw call beyond the one
+## MultiMeshInstance3D per kind PRESENT in a chunk. Four rules, and every one of
+## them is what makes this a colour-only-stream edit rather than a rebuild:
+##
+##  5a. NOTHING BUT THE KIND MOVED. No box was added, removed, resized, recoloured
+##      or reordered by this pass, because a builder's RNG stream is shared with
+##      nothing and its DRAW ORDER is the world's determinism: an extra
+##      _lm_shade would slide every later box in that landmark. If a shape wants
+##      one more piece, that is a separate bead with its own A/B.
+##  5b. THE UNIT MESH FITS THE UNIT CUBE, so `dimensions` still means the
+##      bounding box, the declared radius still bounds the stone, and each
+##      builder's own radius arithmetic is untouched. It also REACHES the cube's
+##      top face at its axis, which is what keeps a returned `top` (and
+##      rotated_box_top) the DRAWN apex rather than merely an upper bound —
+##      landmark_selfcheck's check 9 asserts exactly that, per kind.
+##  5c. THE TAPER RULE. A spire in this file is a stack of shrinking boxes, and
+##      a stack of CONES is a stack of POINTS with an overhanging disc above each
+##      one. So a taper is CYLINDER all the way up and CONE only on the piece
+##      that ends it. The same reasoning is why a shrinking stack that carries
+##      something above it (a finial, a lantern) keeps CYLINDER to the top.
+##  5d. COLLISION IS STILL A BOX WHATEVER THE KIND, and that is a KNOWN,
+##      ACCEPTED MISMATCH here — not a claim that a round collider is fine.
+##      ChunkBatch's own banner is the rule (a non-CUBE kind is for
+##      `collide = false` decoration and NON-CLIMBABLE colliders; anything a
+##      player stands on stays CUBE), and this file bends it: a colliding SPHERE
+##      or CYLINDER is a ball or a column you bump into 0.15-0.6 m before you
+##      touch it on a diagonal, and can be stood on where the eye sees nothing
+##      — measured on the Zugspitze's scree, the Trevi's reef and the Space
+##      Needle's foot pads, all of them reachable. The trade was taken because
+##      the alternative was leaving every column, drum and boulder a box, and
+##      because a `collide` flag is not this bead's to move (that changes the
+##      chunk's collision shapes and its A/B). The CONE is where the line is
+##      drawn, because its stone is a POINT at the top of a box-shaped ledge —
+##      a floor made of nothing — and check 9 asserts that half.
+##      `ponytail:` the honest fix is a per-kind CollisionShape3D
+##      (SphereShape3D / CylinderShape3D), which is one match arm in
+##      chunk_batch.gd's collision half; that is its own bead. Until it lands,
+##      prefer CUBE for anything a player is meant to STAND on.
+##
+## The 22 Budapest builders below take NO kind at all and must not: a city box is
+## sliced on the chunk grid, and a rotated or non-cube one keeps the centre rule
+## (see _spawn_city_landmarks_in_chunk). budapest_selfcheck fails one that does.
 
 static func _lm_shade(base: Color, rng: RandomNumberGenerator, amount: float = 0.06) -> Color:
 	"""
@@ -959,7 +1008,8 @@ static func _landmark_moai(terrain: Node3D, center: Vector3, rng: RandomNumberGe
 		terrain.create_box(base + Vector3(0.0, AHU.y + body.y / 2.0, 0.0), body, yaw + wobble, rng, block_batch, block_body, 0.0, stone)
 		var head := Vector3(1.15, 1.5, 1.0)
 		var head_y := AHU.y + body.y + head.y / 2.0
-		terrain.create_box(base + Vector3(0.0, head_y, 0.0), head, yaw + wobble, rng, block_batch, block_body, 0.0, stone)
+		terrain.create_box(base + Vector3(0.0, head_y, 0.0), head, yaw + wobble, rng, block_batch, block_body, 0.0, stone,
+				true, ChunkBatch.BoxKind.SPHERE)
 		# The heavy brow ridge, proud of the face — visual trim only (it sits on the
 		# head's own collision volume), so collide = false.
 		terrain.create_box(base + Vector3(0.0, head_y + 0.25, 0.0) + Basis(Vector3.UP, yaw + wobble) * Vector3(0.0, 0.0, head.z / 2.0 + 0.06),
@@ -1113,12 +1163,14 @@ static func _landmark_liberty(terrain: Node3D, center: Vector3, rng: RandomNumbe
 	for i in 4:
 		var w: float = 2.6 - float(i) * 0.33
 		var h := 1.6
-		terrain.create_box(center + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w * 0.85), yaw, rng, block_batch, block_body, 0.0, copper)
+		terrain.create_box(center + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w * 0.85), yaw, rng, block_batch, block_body, 0.0, copper,
+				true, ChunkBatch.BoxKind.CYLINDER)
 		y += h
 
 	# Head.
 	var head_h := 1.1
-	terrain.create_box(center + Vector3(0.0, y + head_h / 2.0, 0.0), Vector3(1.0, head_h, 1.0), yaw, rng, block_batch, block_body, 0.0, copper)
+	terrain.create_box(center + Vector3(0.0, y + head_h / 2.0, 0.0), Vector3(1.0, head_h, 1.0), yaw, rng, block_batch, block_body, 0.0, copper,
+			true, ChunkBatch.BoxKind.SPHERE)
 	var crown_y := y + head_h
 
 	# The seven-point crown: spikes radiating outward and up. Trim only (they hang
@@ -1133,16 +1185,17 @@ static func _landmark_liberty(terrain: Node3D, center: Vector3, rng: RandomNumbe
 	for i in 7:
 		var a := yaw + PI * (float(i) / 6.0 - 0.5)   # a half-circle fan, facing forward
 		terrain.create_box(center + Vector3(cos(a) * 0.85, crown_y + 0.15, sin(a) * 0.85), Vector3(0.22, 1.0, 0.22),
-				PI / 2.0 - a, rng, block_batch, block_body, 0.45, copper, false)
+				PI / 2.0 - a, rng, block_batch, block_body, 0.45, copper, false, ChunkBatch.BoxKind.CONE)
 
 	# The raised arm: two vertical boxes stepping outward and up (upper arm, then
 	# forearm), with the torch on top. Deliberately NOT tilted — a tilted arm box
 	# would need its own sign reasoning for a limb that reads fine as a step at the
 	# 30 m the silhouette is judged from.
 	var shoulder := center + rot * Vector3(1.0, y - 0.6, 0.0)
-	terrain.create_box(shoulder + rot * Vector3(0.35, 0.8, 0.0), Vector3(0.5, 2.0, 0.5), yaw, rng, block_batch, block_body, 0.0, copper)
+	terrain.create_box(shoulder + rot * Vector3(0.35, 0.8, 0.0), Vector3(0.5, 2.0, 0.5), yaw, rng, block_batch, block_body, 0.0, copper,
+			true, ChunkBatch.BoxKind.CYLINDER)
 	var hand := shoulder + rot * Vector3(0.7, 2.6, 0.0)
-	terrain.create_box(hand, Vector3(0.6, 1.6, 0.6), yaw, rng, block_batch, block_body, 0.0, copper)
+	terrain.create_box(hand, Vector3(0.6, 1.6, 0.6), yaw, rng, block_batch, block_body, 0.0, copper, true, ChunkBatch.BoxKind.CYLINDER)
 	# THE one accent: the torch flame, warm — the only thing on this statue that
 	# should be visible from the coin road at night.
 	terrain._spawn_artifact_accent(parent_chunk, hand + Vector3(0.0, 1.2, 0.0), Vector3(0.55, 0.8, 0.55), yaw, 0.0, terrain._get_camp_ember_material())
@@ -1194,7 +1247,8 @@ static func _landmark_plaza_mayor(terrain: Node3D, center: Vector3, rng: RandomN
 		for p in 3:
 			var px := (float(p) - 1.0) * BAY
 			terrain.create_box(center + side_rot * Vector3(px, STOREY / 2.0, wall_line - WALL_T / 2.0 - 0.35),
-					Vector3(0.5, STOREY, 0.5), side_yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.05))
+					Vector3(0.5, STOREY, 0.5), side_yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.05),
+					true, ChunkBatch.BoxKind.CYLINDER)
 
 	# The entrance arch: two piers either side of the missing bay plus a lintel over
 	# it, so the gap reads as a doorway rather than as a demolition.
@@ -1207,7 +1261,8 @@ static func _landmark_plaza_mayor(terrain: Node3D, center: Vector3, rng: RandomN
 
 	# The courtyard's centrepiece: Felipe III on his plinth, abstracted to two boxes.
 	terrain.create_box(center + Vector3(0.0, 0.4, 0.0), Vector3(1.4, 0.8, 1.4), yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_GRANITE, rng))
-	terrain.create_box(center + Vector3(0.0, 0.8 + 0.85, 0.0), Vector3(0.55, 1.7, 0.55), yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.03))
+	terrain.create_box(center + Vector3(0.0, 0.8 + 0.85, 0.0), Vector3(0.55, 1.7, 0.55), yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.03),
+			true, ChunkBatch.BoxKind.CYLINDER)
 
 	# ponytail: the roof is a cornice band, not a pitched roof — a real one needs
 	# tilted slabs whose collision would then be a ramp the player slides off. Add
@@ -1310,17 +1365,29 @@ static func _landmark_taj(terrain: Node3D, center: Vector3, rng: RandomNumberGen
 
 	# The dome: three shrinking boxes plus a finial. Crude, and unmistakable.
 	var y := hall_y + HALL.y
+	# Two SPHERES for the bulb, a CYLINDER for the shoulder it necks into and a
+	# CONE for the finial — _lm_onion's vocabulary, on a stack authored before it.
+	var dome_kinds: Array = [ChunkBatch.BoxKind.SPHERE, ChunkBatch.BoxKind.SPHERE, ChunkBatch.BoxKind.CYLINDER]
+	var dome_i := 0
 	for dims in [Vector3(3.6, 1.6, 3.6), Vector3(2.6, 1.2, 2.6), Vector3(1.6, 0.9, 1.6)]:
-		terrain.create_box(center + Vector3(0.0, y + dims.y / 2.0, 0.0), dims, yaw, rng, block_batch, block_body, 0.0, marble)
+		terrain.create_box(center + Vector3(0.0, y + dims.y / 2.0, 0.0), dims, yaw, rng, block_batch, block_body, 0.0, marble,
+				true, dome_kinds[dome_i])
+		dome_i += 1
 		y += dims.y
-	terrain.create_box(center + Vector3(0.0, y + 0.6, 0.0), Vector3(0.35, 1.2, 0.35), yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_GRANITE, rng))
+	# CYLINDER and not the cone the taper wants: this finial COLLIDES, and rule 5d
+	# refuses a colliding cone (a point at the top of a box-shaped ledge). The
+	# collide flag is not this bead's to move — that changes collision shapes.
+	terrain.create_box(center + Vector3(0.0, y + 0.6, 0.0), Vector3(0.35, 1.2, 0.35), yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_GRANITE, rng),
+			true, ChunkBatch.BoxKind.CYLINDER)
 
 	# Four minarets, one per plinth corner, each with a small cap.
 	for corner in 4:
 		var a := yaw + PI / 4.0 + PI / 2.0 * float(corner)
 		var spot := center + Vector3(cos(a) * MINARET_OFF * sqrt(2.0), 0.0, sin(a) * MINARET_OFF * sqrt(2.0))
-		terrain.create_box(spot + Vector3(0.0, PLINTH.y + 4.0, 0.0), Vector3(0.8, 8.0, 0.8), yaw, rng, block_batch, block_body, 0.0, marble)
-		terrain.create_box(spot + Vector3(0.0, PLINTH.y + 8.35, 0.0), Vector3(1.1, 0.7, 1.1), yaw, rng, block_batch, block_body, 0.0, marble)
+		terrain.create_box(spot + Vector3(0.0, PLINTH.y + 4.0, 0.0), Vector3(0.8, 8.0, 0.8), yaw, rng, block_batch, block_body, 0.0, marble,
+				true, ChunkBatch.BoxKind.CYLINDER)
+		terrain.create_box(spot + Vector3(0.0, PLINTH.y + 8.35, 0.0), Vector3(1.1, 0.7, 1.1), yaw, rng, block_batch, block_body, 0.0, marble,
+				true, ChunkBatch.BoxKind.SPHERE)
 
 	return { "radius": 8.6, "top": y + 1.2 }
 
@@ -1394,14 +1461,16 @@ static func _landmark_colosseum(terrain: Node3D, center: Vector3, rng: RandomNum
 		# boxes and would cost a second trig pair per pier.
 		var spot: Vector3 = center + rot * Vector3(cos(a) * RING_A, 0.0, sin(a) * RING_B)
 		var face := yaw + PI / 2.0 - a
-		terrain.create_box(spot + Vector3(0.0, PIER.y / 2.0, 0.0), PIER, face, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
+		terrain.create_box(spot + Vector3(0.0, PIER.y / 2.0, 0.0), PIER, face, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03),
+				true, ChunkBatch.BoxKind.CYLINDER)
 		# The lintel bridging this bay to the next — trim, sitting on the piers'
 		# own collision volumes, so collide = false keeps the arcade walkable.
 		terrain.create_box(spot + Vector3(0.0, PIER.y + LINTEL.y / 2.0, 0.0), LINTEL, face,
 				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
 		if i >= standing:
 			continue
-		terrain.create_box(spot + Vector3(0.0, tier1_top + PIER2.y / 2.0, 0.0), PIER2, face, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
+		terrain.create_box(spot + Vector3(0.0, tier1_top + PIER2.y / 2.0, 0.0), PIER2, face, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03),
+				true, ChunkBatch.BoxKind.CYLINDER)
 		terrain.create_box(spot + Vector3(0.0, tier1_top + PIER2.y + LINTEL2.y / 2.0, 0.0), LINTEL2, face,
 				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
 		# The attic wall, on a shorter arc still, so the ruin steps down twice.
@@ -1454,13 +1523,19 @@ static func _landmark_big_ben(terrain: Node3D, center: Vector3, rng: RandomNumbe
 	terrain.create_box(center + Vector3(0.0, y + PARAPET.y / 2.0, 0.0), PARAPET, yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
 	y += PARAPET.y
 
-	# The spire: four boxes narrowing to a point.
+	# The spire: four boxes narrowing to a point — and the ONE taper in this file
+	# that stops at CYLINDER all the way up. Every box of this tower COLLIDES and
+	# rule 5d refuses a colliding cone; the collide flag is not this bead's to
+	# move, because that changes the chunk's collision shapes. The round tiers
+	# still lose the four square corners a stepped stone spire had.
 	for i in 4:
 		var w: float = 3.0 - float(i) * 0.68
 		var h := 1.3
-		terrain.create_box(center + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w), yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04))
+		terrain.create_box(center + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w), yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04),
+				true, ChunkBatch.BoxKind.CYLINDER)
 		y += h
-	terrain.create_box(center + Vector3(0.0, y + 0.35, 0.0), Vector3(0.25, 0.7, 0.25), yaw, rng, block_batch, block_body, 0.0, stone)
+	terrain.create_box(center + Vector3(0.0, y + 0.35, 0.0), Vector3(0.25, 0.7, 0.25), yaw, rng, block_batch, block_body, 0.0, stone,
+			true, ChunkBatch.BoxKind.CYLINDER)
 	y += 0.7
 	terrain._spawn_artifact_accent(parent_chunk, center + Vector3(0.0, y + 0.3, 0.0), Vector3(0.4, 0.5, 0.4), yaw, 0.0, terrain._get_camp_ember_material())
 
@@ -1514,7 +1589,8 @@ static func _landmark_pisa(terrain: Node3D, center: Vector3, rng: RandomNumberGe
 		var dims: Vector3 = tier_variant
 		var mid := s + dims.y / 2.0
 		var drum_pos := center + lean_dir * (mid * sin(LEAN)) + Vector3(0.0, mid * cos(LEAN), 0.0)
-		terrain.create_box(drum_pos, dims, drum_yaw, rng, block_batch, block_body, LEAN, _lm_shade(marble, rng, 0.02))
+		terrain.create_box(drum_pos, dims, drum_yaw, rng, block_batch, block_body, LEAN, _lm_shade(marble, rng, 0.02),
+				true, ChunkBatch.BoxKind.CYLINDER)
 		# The gallery lip capping this drum — pure overhang, sitting on the drum's
 		# own collision volume, so collide = false. It is what makes the stack read
 		# as a colonnaded tower rather than as a pile of blocks.
@@ -1522,7 +1598,7 @@ static func _landmark_pisa(terrain: Node3D, center: Vector3, rng: RandomNumberGe
 		var lip_pos := center + lean_dir * (lip_s * sin(LEAN)) + Vector3(0.0, lip_s * cos(LEAN), 0.0)
 		var lip_dims := Vector3(dims.x + 0.5, 0.25, dims.z + 0.5)
 		terrain.create_box(lip_pos, lip_dims, drum_yaw,
-				rng, block_batch, block_body, LEAN, _lm_shade(marble, rng, 0.02).darkened(0.12), false)
+				rng, block_batch, block_body, LEAN, _lm_shade(marble, rng, 0.02).darkened(0.12), false, ChunkBatch.BoxKind.CYLINDER)
 		s += dims.y
 
 	return { "radius": 4.4, "top": rotated_box_top(s * cos(LEAN), Vector3(BELFRY.x + 0.5, 0.25, BELFRY.z + 0.5), LEAN) }
@@ -1598,7 +1674,8 @@ static func _landmark_redeemer(terrain: Node3D, center: Vector3, rng: RandomNumb
 	for i in 3:
 		var w: float = 2.0 - float(i) * 0.2
 		var h := 2.2
-		terrain.create_box(center + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w * 0.8), yaw, rng, block_batch, block_body, 0.0, soapstone)
+		terrain.create_box(center + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w * 0.8), yaw, rng, block_batch, block_body, 0.0, soapstone,
+				true, ChunkBatch.BoxKind.CYLINDER)
 		y += h
 
 	# THE ARMS — one box, and the reason this shape works at all.
@@ -1612,7 +1689,8 @@ static func _landmark_redeemer(terrain: Node3D, center: Vector3, rng: RandomNumb
 				rng, block_batch, block_body, 0.0, soapstone, false)
 
 	# Head and shoulders above the arms.
-	terrain.create_box(center + Vector3(0.0, y + 0.5, 0.0), Vector3(0.9, 1.0, 0.9), yaw, rng, block_batch, block_body, 0.0, soapstone)
+	terrain.create_box(center + Vector3(0.0, y + 0.5, 0.0), Vector3(0.9, 1.0, 0.9), yaw, rng, block_batch, block_body, 0.0, soapstone,
+			true, ChunkBatch.BoxKind.SPHERE)
 
 	return { "radius": 4.8, "top": y + 1.0 }
 
@@ -1642,18 +1720,19 @@ static func _landmark_torii(terrain: Node3D, center: Vector3, rng: RandomNumberG
 	var lacquer := _lm_shade(LM_VERMILION, rng, 0.04)
 
 	for side in [-1.0, 1.0]:
-		terrain.create_box(center + rot * Vector3(side * PILLAR_X, PILLAR.y / 2.0, 0.0), PILLAR, yaw, rng, block_batch, block_body, 0.0, lacquer)
+		terrain.create_box(center + rot * Vector3(side * PILLAR_X, PILLAR.y / 2.0, 0.0), PILLAR, yaw, rng, block_batch, block_body, 0.0, lacquer,
+				true, ChunkBatch.BoxKind.CYLINDER)
 		# The four splayed support legs that make this the ITSUKUSHIMA torii rather
 		# than a plain one — the shrine's gate stands in the sea on exactly these.
 		for z_side in [-1.0, 1.0]:
 			terrain.create_box(center + rot * Vector3(side * (PILLAR_X + 0.15), 1.9, z_side * 1.5), Vector3(0.5, 3.8, 0.5),
-					yaw, rng, block_batch, block_body, 0.0, _lm_shade(lacquer, rng, 0.03))
+					yaw, rng, block_batch, block_body, 0.0, _lm_shade(lacquer, rng, 0.03), true, ChunkBatch.BoxKind.CYLINDER)
 
 	# The nuki: straight, and deliberately longer than the pillar spacing so it
 	# protrudes on both sides. Trim (it threads the pillars' own volumes).
 	terrain.create_box(center + Vector3(0.0, 4.3, 0.0), Vector3(7.6, 0.6, 0.9), yaw, rng, block_batch, block_body, 0.0, lacquer, false)
 	# The gakuzuka, the short strut standing on the nuki.
-	terrain.create_box(center + Vector3(0.0, 5.35, 0.0), Vector3(0.5, 1.5, 0.5), yaw, rng, block_batch, block_body, 0.0, lacquer, false)
+	terrain.create_box(center + Vector3(0.0, 5.35, 0.0), Vector3(0.5, 1.5, 0.5), yaw, rng, block_batch, block_body, 0.0, lacquer, false, ChunkBatch.BoxKind.CYLINDER)
 
 	# The shimaki (the flat second beam) and the kasagi above it, both stepped
 	# upward toward the ends. All trim: a beam 6 m up is not something to stand on.
@@ -1751,7 +1830,8 @@ static func _landmark_brandenburg(terrain: Node3D, center: Vector3, rng: RandomN
 	for cx_variant: Variant in COL_X:
 		var cx: float = cx_variant
 		for z_side in [-1.0, 1.0]:
-			terrain.create_box(center + rot * Vector3(cx, col_base + COL.y / 2.0, z_side * COL_Z), COL, yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+			terrain.create_box(center + rot * Vector3(cx, col_base + COL.y / 2.0, z_side * COL_Z), COL, yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02),
+					true, ChunkBatch.BoxKind.CYLINDER)
 
 	# The entablature, in three bays for the Plaza Mayor's radius reason.
 	var arch_y := col_base + COL.y
@@ -1820,12 +1900,14 @@ static func _landmark_neuschwanstein(terrain: Node3D, center: Vector3, rng: Rand
 	# The keep — the tall slender one, and the tallest thing here.
 	const KEEP := Vector3(2.2, 10.5, 2.2)
 	var keep_spot := center + rot * Vector3(-3.8, 0.0, -1.4)
-	terrain.create_box(keep_spot + Vector3(0.0, CRAG + KEEP.y / 2.0, 0.0), KEEP, yaw, rng, block_batch, block_body, 0.0, _lm_shade(wall, rng, 0.02))
+	terrain.create_box(keep_spot + Vector3(0.0, CRAG + KEEP.y / 2.0, 0.0), KEEP, yaw, rng, block_batch, block_body, 0.0, _lm_shade(wall, rng, 0.02),
+			true, ChunkBatch.BoxKind.CYLINDER)
 	var top := CRAG + KEEP.y
-	# Its spire: three shrinking slabs to a point.
+	# Its spire: three shrinking slabs to a point — the taper rule, CONE last.
 	for i in 3:
 		var w: float = 2.7 - float(i) * 0.75
-		terrain.create_box(keep_spot + Vector3(0.0, top + 0.6, 0.0), Vector3(w, 1.2, w), yaw, rng, block_batch, block_body, 0.0, roof, false)
+		terrain.create_box(keep_spot + Vector3(0.0, top + 0.6, 0.0), Vector3(w, 1.2, w), yaw, rng, block_batch, block_body, 0.0, roof, false,
+				ChunkBatch.BoxKind.CONE if i == 2 else ChunkBatch.BoxKind.CYLINDER)
 		top += 1.2
 
 	# Three corner turrets, each with its own cone.
@@ -1834,11 +1916,13 @@ static func _landmark_neuschwanstein(terrain: Node3D, center: Vector3, rng: Rand
 		var spot: Vector2 = spot_variant
 		var base := center + rot * Vector3(spot.x, 0.0, spot.y)
 		var t_h := rng.randf_range(6.0, 7.4)
-		terrain.create_box(base + Vector3(0.0, CRAG + t_h / 2.0, 0.0), Vector3(1.3, t_h, 1.3), yaw, rng, block_batch, block_body, 0.0, _lm_shade(wall, rng, 0.02))
+		terrain.create_box(base + Vector3(0.0, CRAG + t_h / 2.0, 0.0), Vector3(1.3, t_h, 1.3), yaw, rng, block_batch, block_body, 0.0, _lm_shade(wall, rng, 0.02),
+				true, ChunkBatch.BoxKind.CYLINDER)
 		var ty := CRAG + t_h
 		for i in 2:
 			var w: float = 1.8 - float(i) * 0.7
-			terrain.create_box(base + Vector3(0.0, ty + 0.45, 0.0), Vector3(w, 0.9, w), yaw, rng, block_batch, block_body, 0.0, roof, false)
+			terrain.create_box(base + Vector3(0.0, ty + 0.45, 0.0), Vector3(w, 0.9, w), yaw, rng, block_batch, block_body, 0.0, roof, false,
+					ChunkBatch.BoxKind.CONE if i == 1 else ChunkBatch.BoxKind.CYLINDER)
 			ty += 0.9
 
 	return { "radius": 8.0, "top": top }
@@ -1893,15 +1977,16 @@ static func _landmark_cologne(terrain: Node3D, center: Vector3, rng: RandomNumbe
 		var base := center + rot * Vector3(side * TOWER_X, 0.0, TOWER_Z)
 		terrain.create_box(base + Vector3(0.0, TOWER.y / 2.0, 0.0), TOWER, yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
 		var y := TOWER.y
-		# Four shrinking slabs to a needle point. Trim: it is 13 m up.
+		# Four shrinking slabs to a needle point. Trim: it is 13 m up. The taper
+		# rule: CYLINDER all the way up, CONE on the piece that ends it.
 		for i in 4:
 			var w: float = 2.7 - float(i) * 0.6
 			var h := 1.5
 			terrain.create_box(base + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w), yaw,
-					rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+					rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false, ChunkBatch.BoxKind.CYLINDER)
 			y += h
 		terrain.create_box(base + Vector3(0.0, y + 0.5, 0.0), Vector3(0.3, 1.0, 0.3), yaw,
-				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false, ChunkBatch.BoxKind.CONE)
 		tip = y + 1.0
 
 	return { "radius": 8.6, "top": tip }
@@ -1927,16 +2012,16 @@ static func _lm_onion(terrain: Node3D, base: Vector3, width: float, color: Color
 	"""
 	var h := 0.0
 	terrain.create_box(base + Vector3(0.0, 0.25, 0.0), Vector3(width * 0.78, 0.5, width * 0.78), yaw,
-			rng, block_batch, block_body, 0.0, _lm_shade(color, rng, 0.03), false)
+			rng, block_batch, block_body, 0.0, _lm_shade(color, rng, 0.03), false, ChunkBatch.BoxKind.CYLINDER)
 	h += 0.5
 	terrain.create_box(base + Vector3(0.0, h + width * 0.42, 0.0), Vector3(width, width * 0.84, width), yaw,
-			rng, block_batch, block_body, 0.0, _lm_shade(color, rng, 0.03), false)
+			rng, block_batch, block_body, 0.0, _lm_shade(color, rng, 0.03), false, ChunkBatch.BoxKind.SPHERE)
 	h += width * 0.84
 	terrain.create_box(base + Vector3(0.0, h + 0.28, 0.0), Vector3(width * 0.52, 0.56, width * 0.52), yaw,
-			rng, block_batch, block_body, 0.0, _lm_shade(color, rng, 0.03), false)
+			rng, block_batch, block_body, 0.0, _lm_shade(color, rng, 0.03), false, ChunkBatch.BoxKind.CYLINDER)
 	h += 0.56
 	terrain.create_box(base + Vector3(0.0, h + 0.55, 0.0), Vector3(0.18, 1.1, 0.18), yaw,
-			rng, block_batch, block_body, 0.0, _lm_shade(LM_SANDSTONE, rng, 0.02), false)
+			rng, block_batch, block_body, 0.0, _lm_shade(LM_SANDSTONE, rng, 0.02), false, ChunkBatch.BoxKind.CONE)
 	return h + 1.1
 
 static func _landmark_st_basil(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
@@ -1981,7 +2066,7 @@ static func _landmark_st_basil(terrain: Node3D, center: Vector3, rng: RandomNumb
 		var spot := center + Vector3(cos(a) * RING_R, 0.0, sin(a) * RING_R)
 		var shaft_h: float = 4.2 + float(i % 3) * 1.1
 		terrain.create_box(spot + Vector3(0.0, PODIUM.y + shaft_h / 2.0, 0.0), Vector3(1.7, shaft_h, 1.7), yaw,
-				rng, block_batch, block_body, 0.0, brick)
+				rng, block_batch, block_body, 0.0, brick, true, ChunkBatch.BoxKind.CYLINDER)
 		var dome_h := _lm_onion(terrain, spot + Vector3(0.0, PODIUM.y + shaft_h, 0.0), 1.9,
 				dome_colors[i % dome_colors.size()], yaw, rng, block_batch, block_body)
 		top = maxf(top, PODIUM.y + shaft_h + dome_h)
@@ -1991,12 +2076,14 @@ static func _landmark_st_basil(terrain: Node3D, center: Vector3, rng: RandomNumb
 	const SHAFT_H := 9.0
 	for k in 2:
 		terrain.create_box(center + Vector3(0.0, PODIUM.y + SHAFT_H / 2.0, 0.0), Vector3(2.9, SHAFT_H, 2.9),
-				yaw + float(k) * PI / 4.0, rng, block_batch, block_body, 0.0, _lm_shade(LM_MARBLE, rng, 0.03))
+				yaw + float(k) * PI / 4.0, rng, block_batch, block_body, 0.0, _lm_shade(LM_MARBLE, rng, 0.03),
+				true, ChunkBatch.BoxKind.CYLINDER)
 	var ty := PODIUM.y + SHAFT_H
 	for i in 5:
 		var w: float = 2.7 - float(i) * 0.46
 		terrain.create_box(center + Vector3(0.0, ty + 0.55, 0.0), Vector3(w, 1.1, w), yaw,
-				rng, block_batch, block_body, 0.0, _lm_shade(LM_VERMILION, rng, 0.03), false)
+				rng, block_batch, block_body, 0.0, _lm_shade(LM_VERMILION, rng, 0.03), false,
+				ChunkBatch.BoxKind.CONE if i == 4 else ChunkBatch.BoxKind.CYLINDER)
 		ty += 1.1
 	var crown := _lm_onion(terrain, center + Vector3(0.0, ty, 0.0), 1.2, LM_SANDSTONE, yaw, rng, block_batch, block_body)
 
@@ -2147,7 +2234,7 @@ static func _landmark_petra(terrain: Node3D, center: Vector3, rng: RandomNumberG
 			rng, block_batch, block_body, 0.0, _lm_shade(rock, rng, 0.03))
 	for i in 6:
 		terrain.create_box(center + rot * Vector3((float(i) - 2.5) * 1.7, 3.3, FACADE_Z + 0.35), Vector3(0.7, 5.2, 0.7), yaw,
-				rng, block_batch, block_body, 0.0, _lm_shade(rock, rng, 0.03))
+				rng, block_batch, block_body, 0.0, _lm_shade(rock, rng, 0.03), true, ChunkBatch.BoxKind.CYLINDER)
 	terrain.create_box(center + rot * Vector3(0.0, 6.3, FACADE_Z + 0.2), Vector3(10.0, 1.0, 1.4), yaw,
 			rng, block_batch, block_body, 0.0, _lm_shade(rock, rng, 0.03))
 	for i in 3:
@@ -2164,15 +2251,19 @@ static func _landmark_petra(terrain: Node3D, center: Vector3, rng: RandomNumberG
 				rng, block_batch, block_body, 0.0, _lm_shade(rock, rng, 0.03))
 		terrain.create_box(center + rot * Vector3(side * 3.5, 12.9, FACADE_Z), Vector3(3.0, 0.5, 1.4), yaw,
 				rng, block_batch, block_body, 0.0, _lm_shade(rock, rng, 0.03), false)
+	# THE THOLOS. The crossed pair that was the octagon is now two CYLINDERS —
+	# the same drum, actually round — and its cap takes the taper rule.
 	for k in 2:
 		terrain.create_box(center + rot * Vector3(0.0, 10.4, FACADE_Z + 0.1), Vector3(3.2, 4.6, 3.2),
-				yaw + float(k) * PI / 4.0, rng, block_batch, block_body, 0.0, _lm_shade(rock, rng, 0.03))
+				yaw + float(k) * PI / 4.0, rng, block_batch, block_body, 0.0, _lm_shade(rock, rng, 0.03),
+				true, ChunkBatch.BoxKind.CYLINDER)
 	for i in 3:
 		var w: float = 2.6 - float(i) * 0.75
 		terrain.create_box(center + rot * Vector3(0.0, 12.9 + float(i) * 0.55, FACADE_Z + 0.1), Vector3(w, 0.55, w), yaw,
-				rng, block_batch, block_body, 0.0, _lm_shade(rock, rng, 0.03), false)
+				rng, block_batch, block_body, 0.0, _lm_shade(rock, rng, 0.03), false,
+				ChunkBatch.BoxKind.CONE if i == 2 else ChunkBatch.BoxKind.CYLINDER)
 	terrain.create_box(center + rot * Vector3(0.0, 14.9, FACADE_Z + 0.1), Vector3(0.9, 1.0, 0.9), yaw,
-			rng, block_batch, block_body, 0.0, _lm_shade(rock, rng, 0.03), false)
+			rng, block_batch, block_body, 0.0, _lm_shade(rock, rng, 0.03), false, ChunkBatch.BoxKind.CONE)
 
 	return { "radius": 8.0, "top": 15.4 }
 
@@ -2212,7 +2303,7 @@ static func _landmark_rushmore(terrain: Node3D, center: Vector3, rng: RandomNumb
 		# stay small: a tilt widens a box's horizontal reach as well as leaning it.
 		terrain.create_box(center + rot * Vector3(sx + rng.randf_range(-1.0, 1.0), 0.7, 1.9), Vector3(1.8, 1.4, 1.5),
 				yaw + rng.randf_range(0.0, TAU), rng, block_batch, block_body, rng.randf_range(-0.2, 0.2),
-				_lm_shade(granite, rng, 0.05))
+				_lm_shade(granite, rng, 0.05), true, ChunkBatch.BoxKind.SPHERE)
 
 	# The four heads. Trim (brow, nose, hair) sits on the head's own volume, so
 	# collide = false; the head itself collides like the rock it was cut from.
@@ -2287,14 +2378,15 @@ static func _landmark_angkor_wat(terrain: Node3D, center: Vector3, rng: RandomNu
 			var w: float = (2.2 - float(k) * 0.34) * f
 			var h: float = 0.85 * f
 			terrain.create_box(spot + Vector3(0.0, ty + h / 2.0, 0.0), Vector3(w, h, w), yaw,
-					rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+					rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false, ChunkBatch.BoxKind.CYLINDER)
 			ty += h
-		# The waist that makes it a lotus rather than a cone.
+		# The waist that makes it a lotus rather than a cone — and now that the
+		# tiers are round it is a SPHERE, which is what a lotus bud actually is.
 		terrain.create_box(spot + Vector3(0.0, ty + 0.45 * f, 0.0), Vector3(1.5 * f, 0.9 * f, 1.5 * f), yaw,
-				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false, ChunkBatch.BoxKind.SPHERE)
 		ty += 0.9 * f
 		terrain.create_box(spot + Vector3(0.0, ty + 0.6 * f, 0.0), Vector3(0.5 * f, 1.2 * f, 0.5 * f), yaw,
-				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false, ChunkBatch.BoxKind.CONE)
 		tallest = maxf(tallest, ty + 1.2 * f)
 
 	return { "radius": 9.0, "top": tallest }
@@ -2471,11 +2563,15 @@ static func _landmark_kinderdijk(terrain: Node3D, center: Vector3, rng: RandomNu
 		for k in 3:
 			var w: float = 3.0 - float(k) * 0.42
 			terrain.create_box(center + rot * Vector3(mx, y + 0.95, 0.0), Vector3(w, 1.9, w), yaw,
-					rng, block_batch, block_body, 0.0, _lm_shade(brick, rng, 0.03))
+					rng, block_batch, block_body, 0.0, _lm_shade(brick, rng, 0.03), true, ChunkBatch.BoxKind.CYLINDER)
 			y += 1.9
-		# The cap: dark thatch, and wider than the body it sits on.
+		# The cap: dark thatch, and wider than the body it sits on. A CYLINDER
+		# rather than the cone a mill's cap wants, because this box COLLIDES and
+		# rule 5d refuses a colliding cone — the round tapering body under it is
+		# what turns "the octagonal brick tower in the house's vocabulary" into a
+		# real one.
 		terrain.create_box(center + rot * Vector3(mx, y + 0.75, 0.0), Vector3(2.5, 1.5, 2.5), yaw,
-				rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04))
+				rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04), true, ChunkBatch.BoxKind.CYLINDER)
 		y += 1.5
 		var hub_y: float = y - 0.6
 		terrain.create_box(center + rot * Vector3(mx, hub_y, 1.35), Vector3(0.4, 0.4, 0.9), yaw,
@@ -2529,10 +2625,12 @@ static func _landmark_pharos(terrain: Node3D, center: Vector3, rng: RandomNumber
 			0.0, trim, false)
 	y += 0.4
 
-	# STAGE 2 — the octagon.
+	# STAGE 2 — the octagon, which is now honestly a CYLINDER: the crossed pair
+	# was the closest a box vocabulary got to a round stage, and it no longer has
+	# to approximate.
 	for k in 2:
 		terrain.create_box(center + Vector3(0.0, y + 2.6, 0.0), Vector3(3.4, 5.2, 3.4), yaw + float(k) * PI / 4.0,
-				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), true, ChunkBatch.BoxKind.CYLINDER)
 	y += 5.2
 	terrain.create_box(center + Vector3(0.0, y + 0.2, 0.0), Vector3(3.6, 0.4, 3.6), yaw, rng, block_batch, block_body,
 			0.0, trim, false)
@@ -2540,7 +2638,7 @@ static func _landmark_pharos(terrain: Node3D, center: Vector3, rng: RandomNumber
 
 	# STAGE 3 — the slim top and the lantern platform over it.
 	terrain.create_box(center + Vector3(0.0, y + 1.7, 0.0), Vector3(2.2, 3.4, 2.2), yaw, rng, block_batch, block_body,
-			0.0, _lm_shade(stone, rng, 0.02))
+			0.0, _lm_shade(stone, rng, 0.02), true, ChunkBatch.BoxKind.CYLINDER)
 	y += 3.4
 	terrain.create_box(center + Vector3(0.0, y + 0.25, 0.0), Vector3(3.0, 0.5, 3.0), yaw, rng, block_batch, block_body,
 			0.0, trim)
@@ -2550,7 +2648,7 @@ static func _landmark_pharos(terrain: Node3D, center: Vector3, rng: RandomNumber
 	for i in 4:
 		var a := yaw + PI / 4.0 + TAU * float(i) / 4.0
 		terrain.create_box(center + Vector3(cos(a) * 1.15, y + 0.7, sin(a) * 1.15), Vector3(0.3, 1.4, 0.3), yaw,
-				rng, block_batch, block_body, 0.0, trim, false)
+				rng, block_batch, block_body, 0.0, trim, false, ChunkBatch.BoxKind.CYLINDER)
 	terrain._spawn_artifact_accent(parent_chunk, center + Vector3(0.0, y + 0.8, 0.0), Vector3(1.1, 1.2, 1.1),
 			yaw, 0.0, terrain._get_camp_ember_material())
 
@@ -2637,7 +2735,7 @@ static func _landmark_reichstag(terrain: Node3D, center: Vector3, rng: RandomNum
 	# a colonnade rather than into a flat wall.
 	for cx in [-3.0, -1.8, -0.6, 0.6, 1.8, 3.0]:
 		terrain.create_box(center + rot * Vector3(cx, 0.7 + 2.6, -(BLOCK.z / 2.0 + 0.3)), Vector3(0.9, 5.2, 0.9),
-				yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+				yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), true, ChunkBatch.BoxKind.CYLINDER)
 	terrain.create_box(center + rot * Vector3(0.0, y + 0.9, -(BLOCK.z / 2.0 + 0.3)), Vector3(7.0, 1.4, 1.2), yaw,
 			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
 	# The dark recess behind the columns, so the portico reads as a porch.
@@ -2658,15 +2756,17 @@ static func _landmark_reichstag(terrain: Node3D, center: Vector3, rng: RandomNum
 	# stops it reading as one, and the SLIGHT re-yaw per tier is what stops it
 	# reading as a pyramid.
 	terrain.create_box(center + Vector3(0.0, y + 0.6, 0.0), Vector3(5.6, 1.2, 5.6), yaw, rng, block_batch, block_body,
-			0.0, _lm_shade(stone, rng, 0.02))
+			0.0, _lm_shade(stone, rng, 0.02), true, ChunkBatch.BoxKind.CYLINDER)
 	var dy := y + 1.2
+	# Foster's dome really IS a stepped glass drum, so the four tiers are
+	# CYLINDERS rather than a sphere — and the lantern on top is the sphere.
 	for i in 4:
 		var w: float = 5.0 - float(i) * 0.95
 		terrain.create_box(center + Vector3(0.0, dy + 0.55, 0.0), Vector3(w, 1.1, w), yaw + float(i) * PI / 8.0,
-				rng, block_batch, block_body, 0.0, _lm_shade(glass, rng, 0.02), false)
+				rng, block_batch, block_body, 0.0, _lm_shade(glass, rng, 0.02), false, ChunkBatch.BoxKind.CYLINDER)
 		dy += 1.1
 	terrain.create_box(center + Vector3(0.0, dy + 0.4, 0.0), Vector3(0.8, 0.8, 0.8), yaw, rng, block_batch, block_body,
-			0.0, _lm_shade(glass, rng, 0.02), false)
+			0.0, _lm_shade(glass, rng, 0.02), false, ChunkBatch.BoxKind.SPHERE)
 
 	return { "radius": 8.4, "top": dy + 0.8 }
 
@@ -2703,15 +2803,15 @@ static func _landmark_fernsehturm(terrain: Node3D, center: Vector3, rng: RandomN
 	# a plan rather than sprouting out of the grass.
 	for k in 2:
 		terrain.create_box(center + Vector3(0.0, 0.8, 0.0), Vector3(7.6, 1.6, 7.6), yaw + float(k) * PI / 4.0,
-				rng, block_batch, block_body, 0.0, _lm_shade(pale, rng, 0.02))
+				rng, block_batch, block_body, 0.0, _lm_shade(pale, rng, 0.02), true, ChunkBatch.BoxKind.CYLINDER)
 	var y := 1.6
 
 	# THE SHAFT, in two tapering stages so it reads as a needle rather than a post.
 	const SHAFT_TOP := 17.4
 	terrain.create_box(center + Vector3(0.0, y + 4.0, 0.0), Vector3(2.6, 8.0, 2.6), yaw, rng, block_batch, block_body,
-			0.0, _lm_shade(pale, rng, 0.02))
+			0.0, _lm_shade(pale, rng, 0.02), true, ChunkBatch.BoxKind.CYLINDER)
 	terrain.create_box(center + Vector3(0.0, 9.6 + (SHAFT_TOP - 9.6) / 2.0, 0.0), Vector3(2.1, SHAFT_TOP - 9.6, 2.1),
-			yaw, rng, block_batch, block_body, 0.0, _lm_shade(pale, rng, 0.02))
+			yaw, rng, block_batch, block_body, 0.0, _lm_shade(pale, rng, 0.02), true, ChunkBatch.BoxKind.CYLINDER)
 
 	# THE SPHERE, threaded onto the shaft at 11 m. All trim — it hangs in the air on
 	# the shaft's own collision volume and there is nothing there to stand on.
@@ -2725,7 +2825,8 @@ static func _landmark_fernsehturm(terrain: Node3D, center: Vector3, rng: RandomN
 		# a horizon line instead of reading as one smooth lump.
 		var tint: Color = steel if i == 2 else pale
 		terrain.create_box(center + Vector3(0.0, sy + SPHERE_H / 2.0, 0.0), Vector3(w, SPHERE_H, w),
-				yaw + float(i) * PI / 10.0, rng, block_batch, block_body, 0.0, _lm_shade(tint, rng, 0.02), false)
+				yaw + float(i) * PI / 10.0, rng, block_batch, block_body, 0.0, _lm_shade(tint, rng, 0.02), false,
+				ChunkBatch.BoxKind.SPHERE)
 		sy += SPHERE_H
 
 	# THE ANTENNA — four thinning segments, red and white banded the way every tall
@@ -2736,7 +2837,7 @@ static func _landmark_fernsehturm(terrain: Node3D, center: Vector3, rng: RandomN
 		var h := 2.2
 		var band: Color = _lm_shade(LM_VERMILION, rng, 0.03) if i % 2 == 1 else _lm_shade(pale, rng, 0.02)
 		terrain.create_box(center + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w), yaw,
-				rng, block_batch, block_body, 0.0, band, false)
+				rng, block_batch, block_body, 0.0, band, false, ChunkBatch.BoxKind.CONE if i == 3 else ChunkBatch.BoxKind.CYLINDER)
 		y += h
 	terrain._spawn_artifact_accent(parent_chunk, center + Vector3(0.0, y + 0.4, 0.0), Vector3(0.5, 0.6, 0.5),
 			yaw, 0.0, terrain._get_camp_ember_material())
@@ -2798,7 +2899,7 @@ static func _landmark_porta_nigra(terrain: Node3D, center: Vector3, rng: RandomN
 		for cx in [-4.8, -3.2, -1.6, 0.0, 1.6, 3.2, 4.8]:
 			for z_side in [-1.0, 1.0]:
 				terrain.create_box(center + rot * Vector3(cx, y + STOREY / 2.0, z_side * 2.36), Vector3(0.55, STOREY - 0.7, 0.4),
-						yaw, rng, block_batch, block_body, 0.0, _lm_shade(soot, rng, 0.03).darkened(0.12), false)
+						yaw, rng, block_batch, block_body, 0.0, _lm_shade(soot, rng, 0.03).darkened(0.12), false, ChunkBatch.BoxKind.CYLINDER)
 		y += STOREY
 		terrain.create_box(center + Vector3(0.0, y + 0.35, 0.0), Vector3(12.0, 0.7, 5.0), yaw, rng, block_batch, block_body,
 				0.0, _lm_shade(soot, rng, 0.02))
@@ -2809,11 +2910,11 @@ static func _landmark_porta_nigra(terrain: Node3D, center: Vector3, rng: RandomN
 	var east := center + rot * Vector3(5.4, 0.0, 0.0)
 	for k in 2:
 		terrain.create_box(east + Vector3(0.0, 0.6 + (y - 0.6) / 2.0 + 1.7, 0.0), Vector3(3.2, y - 0.6 + 3.4, 3.2),
-				yaw + float(k) * PI / 4.0, rng, block_batch, block_body, 0.0, _lm_shade(soot, rng, 0.02))
+				yaw + float(k) * PI / 4.0, rng, block_batch, block_body, 0.0, _lm_shade(soot, rng, 0.02), true, ChunkBatch.BoxKind.CYLINDER)
 	terrain.create_box(east + Vector3(0.0, y + 3.6, 0.0), Vector3(3.6, 0.5, 3.6), yaw, rng, block_batch, block_body,
 			0.0, _lm_shade(soot, rng, 0.03).darkened(0.14), false)
 	terrain.create_box(center + rot * Vector3(-5.4, 0.6 + (y - 0.6) / 2.0, 0.0), Vector3(3.0, y - 0.6, 3.0), yaw,
-			rng, block_batch, block_body, 0.0, _lm_shade(soot, rng, 0.02))
+			rng, block_batch, block_body, 0.0, _lm_shade(soot, rng, 0.02), true, ChunkBatch.BoxKind.CYLINDER)
 
 	return { "radius": 8.2, "top": y + 3.9 }
 
@@ -2890,13 +2991,13 @@ static func _landmark_holstentor(terrain: Node3D, center: Vector3, rng: RandomNu
 			var pos := foot + lean_dir * (mid * sin(LEAN)) + Vector3(0.0, mid * cos(LEAN), 0.0)
 			for k in 2:
 				terrain.create_box(pos, Vector3(4.2, DRUM_H, 4.2), drum_yaw + float(k) * PI / 4.0,
-						rng, block_batch, block_body, LEAN, _lm_shade(brick, rng, 0.02))
+						rng, block_batch, block_body, LEAN, _lm_shade(brick, rng, 0.02), true, ChunkBatch.BoxKind.CYLINDER)
 			s += DRUM_H
 		# The dark arrow-slit band round each drum stack, and the conical roof over
 		# it. Both trim: they sit on the drums' own collision volume.
 		var slit := foot + lean_dir * (4.6 * sin(LEAN)) + Vector3(0.0, 4.6 * cos(LEAN), 0.0)
 		terrain.create_box(slit, Vector3(4.4, 0.5, 4.4), drum_yaw, rng, block_batch, block_body, LEAN,
-				_lm_shade(brick, rng, 0.03).darkened(0.3), false)
+				_lm_shade(brick, rng, 0.03).darkened(0.3), false, ChunkBatch.BoxKind.CYLINDER)
 		var cy := s
 		for i in 3:
 			var w: float = 4.6 - float(i) * 1.4
@@ -2904,7 +3005,7 @@ static func _landmark_holstentor(terrain: Node3D, center: Vector3, rng: RandomNu
 			var pos := foot + lean_dir * (mid * sin(LEAN)) + Vector3(0.0, mid * cos(LEAN), 0.0)
 			var roof_dims := Vector3(w, 1.7, w)
 			terrain.create_box(pos, roof_dims, drum_yaw, rng, block_batch, block_body, LEAN,
-					_lm_shade(roof, rng, 0.03), false)
+					_lm_shade(roof, rng, 0.03), false, ChunkBatch.BoxKind.CONE if i == 2 else ChunkBatch.BoxKind.CYLINDER)
 			tower_top = maxf(tower_top, rotated_box_top(0.6 + mid * cos(LEAN), roof_dims, LEAN))
 			cy += 1.7
 
@@ -2980,30 +3081,33 @@ static func _landmark_frauenkirche(terrain: Node3D, center: Vector3, rng: Random
 		for z_side in [-1.0, 1.0]:
 			var spot := center + rot * Vector3(x_side * TURRET_XZ, 0.0, z_side * TURRET_XZ)
 			terrain.create_box(spot + Vector3(0.0, 0.8 + 4.1, 0.0), Vector3(1.3, 8.2, 1.3), yaw,
-					rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.05))
+					rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.05), true, ChunkBatch.BoxKind.CYLINDER)
 			terrain.create_box(spot + Vector3(0.0, 0.8 + 8.6, 0.0), Vector3(1.0, 0.8, 1.0), yaw,
-					rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.04), false)
+					rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.04), false, ChunkBatch.BoxKind.SPHERE)
 
 	# THE STONE BELL. Widest tier SECOND — see the docstring.
 	const BELL_W: Array = [6.6, 6.9, 6.4, 5.4, 4.0, 2.6]
 	const BELL_H: Array = [1.0, 1.1, 1.1, 1.1, 1.0, 0.9]
+	# EVERY TIER A CYLINDER, including the bulging one: the bell is a surface of
+	# revolution and the widths already carry the swell, so a stack of drums cut
+	# to those widths IS the curve. Spheres here would bead it.
 	for i in BELL_W.size():
 		var w: float = BELL_W[i]
 		var h: float = BELL_H[i]
 		terrain.create_box(center + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w), yaw + float(i) * PI / 12.0,
-				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.06), false)
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.06), false, ChunkBatch.BoxKind.CYLINDER)
 		y += h
 
 	# The lantern, its little cupola, and the golden cross that went back up in 2004
 	# — made in London by the son of one of the bomber crews, which is the kind of
 	# thing a one-line fact has no room for and a shape can at least gesture at.
 	terrain.create_box(center + Vector3(0.0, y + 0.9, 0.0), Vector3(2.0, 1.8, 2.0), yaw, rng, block_batch, block_body,
-			0.0, _lm_shade(stone, rng, 0.04), false)
+			0.0, _lm_shade(stone, rng, 0.04), false, ChunkBatch.BoxKind.CYLINDER)
 	y += 1.8
 	for i in 2:
 		var w: float = 1.7 - float(i) * 0.6
 		terrain.create_box(center + Vector3(0.0, y + 0.4, 0.0), Vector3(w, 0.8, w), yaw, rng, block_batch, block_body,
-				0.0, _lm_shade(stone, rng, 0.04), false)
+				0.0, _lm_shade(stone, rng, 0.04), false, ChunkBatch.BoxKind.CONE if i == 1 else ChunkBatch.BoxKind.CYLINDER)
 		y += 0.8
 	var gold := _lm_shade(LM_SANDSTONE, rng, 0.02)
 	terrain.create_box(center + Vector3(0.0, y + 0.9, 0.0), Vector3(0.22, 1.8, 0.22), yaw, rng, block_batch, block_body,
@@ -3139,7 +3243,7 @@ static func _landmark_zugspitze(terrain: Node3D, center: Vector3, rng: RandomNum
 		var r := rng.randf_range(3.1, 4.3)
 		var w := rng.randf_range(0.7, 1.4)
 		terrain.create_box(center + Vector3(cos(a) * r, w / 2.0, sin(a) * r), Vector3(w, w, w),
-				rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, _lm_shade(rock, rng, 0.05))
+				rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, _lm_shade(rock, rng, 0.05), true, ChunkBatch.BoxKind.SPHERE)
 
 	# THE CROSS. Trim: it stands on the summit's own collision volume 9 m up, and a
 	# 22 cm post is not something to walk into.
@@ -3317,7 +3421,7 @@ static func _landmark_ulm_minster(terrain: Node3D, center: Vector3, rng: RandomN
 	var y := 16.0
 	for k in 2:
 		terrain.create_box(base + Vector3(0.0, y + 2.6, 0.0), Vector3(3.4, 5.2, 3.4), yaw + float(k) * PI / 4.0,
-				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), true, ChunkBatch.BoxKind.CYLINDER)
 	y += 5.2
 
 	# THE OPENWORK SPIRE — six shrinking boxes, each re-yawed a little so the taper
@@ -3326,10 +3430,10 @@ static func _landmark_ulm_minster(terrain: Node3D, center: Vector3, rng: RandomN
 		var w: float = 3.0 - float(i) * 0.44
 		var h := 1.6
 		terrain.create_box(base + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w), yaw + float(i) * PI / 16.0,
-				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false, ChunkBatch.BoxKind.CONE if i == 5 else ChunkBatch.BoxKind.CYLINDER)
 		y += h
 	terrain.create_box(base + Vector3(0.0, y + 0.7, 0.0), Vector3(0.28, 1.4, 0.28), yaw, rng, block_batch, block_body,
-			0.0, _lm_shade(stone, rng, 0.02), false)
+			0.0, _lm_shade(stone, rng, 0.02), false, ChunkBatch.BoxKind.CONE)
 
 	return { "radius": 8.0, "top": y + 1.4 }
 
@@ -3379,7 +3483,8 @@ static func _landmark_bremen_musicians(terrain: Node3D, center: Vector3, rng: Ra
 		for z_side in [-1.0, 1.0]:
 			var thick: float = 0.34 if x_side > 0.0 else 0.28
 			terrain.create_box(center + rot * Vector3(x_side * 0.95, PLINTH + 0.6, z_side * 0.38),
-					Vector3(thick, 1.2, thick), yaw, rng, block_batch, block_body, 0.0, _lm_shade(bronze, rng, 0.02))
+					Vector3(thick, 1.2, thick), yaw, rng, block_batch, block_body, 0.0, _lm_shade(bronze, rng, 0.02),
+					true, ChunkBatch.BoxKind.CYLINDER)
 	var body_y := PLINTH + 1.2 + 0.62
 	terrain.create_box(center + Vector3(0.0, body_y, 0.0), Vector3(2.6, 1.24, 1.1), yaw, rng, block_batch, block_body,
 			0.0, _lm_shade(bronze, rng, 0.02))
@@ -3434,7 +3539,7 @@ static func _landmark_bremen_musicians(terrain: Node3D, center: Vector3, rng: Ra
 # WAVE 5
 # ----------------------------------------------------------------------------
 
-static func _lm_strut(terrain: Node3D, center: Vector3, from: Vector3, to: Vector3, thick: float, color: Color, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D, collide: bool = false) -> void:
+static func _lm_strut(terrain: Node3D, center: Vector3, from: Vector3, to: Vector3, thick: float, color: Color, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D, collide: bool = false, kind: int = ChunkBatch.BoxKind.CUBE) -> void:
 	"""
 	ONE BOX SPANNING TWO POINTS IN ANY DIRECTION — the piece this file has been
 	working around since wave 1, and the reason three of wave 5's shapes are
@@ -3458,6 +3563,12 @@ static func _lm_strut(terrain: Node3D, center: Vector3, from: Vector3, to: Vecto
 	letter's diagonal stroke). Pass true for anything the player can walk into — the
 	Space Needle's legs are the only wave-5 caller that does.
 
+	KIND DEFAULTS CUBE for the one caller that must stay flat: the Hollywood sign's
+	Y and W are sheet metal, and a round stroke is a pipe. Everything else that
+	spans two points here is a TUBE — the Atomium's twelve, Tower Bridge's chains,
+	the Space Needle's legs, a dragon's neck — and passes CYLINDER. The kind rides
+	the same box, so it costs no draw and no RNG draw (rule 5a above).
+
 	@param from / to: chunk-local offsets from `center`, BEFORE the landmark yaw.
 	@param thick: the strut's square cross-section.
 
@@ -3473,7 +3584,7 @@ static func _lm_strut(terrain: Node3D, center: Vector3, from: Vector3, to: Vecto
 	var tilt := acos(clampf(dir.y, -1.0, 1.0))
 	var theta := atan2(dir.x, dir.z)
 	terrain.create_box(center + Basis(Vector3.UP, yaw) * ((from + to) * 0.5), Vector3(thick, length, thick),
-			yaw + theta, rng, block_batch, block_body, tilt, color, collide)
+			yaw + theta, rng, block_batch, block_body, tilt, color, collide, kind)
 
 
 static func _landmark_parthenon(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
@@ -3525,11 +3636,11 @@ static func _landmark_parthenon(terrain: Node3D, center: Vector3, rng: RandomNum
 		var cx: float = -END_X + float(i) * (END_X * 2.0 / 7.0)
 		for z_side in [-1.0, 1.0]:
 			terrain.create_box(center + rot * Vector3(cx, col_y, z_side * FLANK_Z), COL, yaw,
-					rng, block_batch, block_body, 0.0, _lm_shade(marble, rng, 0.025))
+					rng, block_batch, block_body, 0.0, _lm_shade(marble, rng, 0.025), true, ChunkBatch.BoxKind.CYLINDER)
 	for x_side in [-1.0, 1.0]:
 		for cz in [-0.8, 0.8]:
 			terrain.create_box(center + rot * Vector3(x_side * END_X, col_y, cz), COL, yaw,
-					rng, block_batch, block_body, 0.0, _lm_shade(marble, rng, 0.025))
+					rng, block_batch, block_body, 0.0, _lm_shade(marble, rng, 0.025), true, ChunkBatch.BoxKind.CYLINDER)
 
 	# The cella — the walled inner room the columns stand around. Kept low enough
 	# that the colonnade still reads as a colonnade from every bearing.
@@ -3612,10 +3723,14 @@ static func _landmark_sagrada(terrain: Node3D, center: Vector3, rng: RandomNumbe
 				var h := rng.randf_range(1.5, 2.1)
 				terrain.create_box(base + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w),
 						yaw + float(i) * PI / 14.0, rng, block_batch, block_body, 0.0,
-						_lm_shade(stone, rng, 0.025), i < 2)
+						_lm_shade(stone, rng, 0.025), i < 2,
+						ChunkBatch.BoxKind.CONE if i == tiers - 1 else ChunkBatch.BoxKind.CYLINDER)
 				y += h
+			# The pinnacle is a SPHERE: Gaudi's are knobbly coloured bulbs, and
+			# that is the one thing on this thicket that is not a taper.
 			terrain.create_box(base + Vector3(0.0, y + 0.45, 0.0), Vector3(0.75, 0.9, 0.75), yaw,
-					rng, block_batch, block_body, 0.0, _lm_shade(pinnacles[rng.randi_range(0, 3)], rng, 0.04), false)
+					rng, block_batch, block_body, 0.0, _lm_shade(pinnacles[rng.randi_range(0, 3)], rng, 0.04), false,
+					ChunkBatch.BoxKind.SPHERE)
 
 	# THE CENTRAL TOWER, and it is drawn to be the tallest by construction.
 	var y := 0.7
@@ -3624,10 +3739,10 @@ static func _landmark_sagrada(terrain: Node3D, center: Vector3, rng: RandomNumbe
 		var h := rng.randf_range(1.9, 2.3)
 		terrain.create_box(center + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w),
 				yaw + float(i) * PI / 20.0, rng, block_batch, block_body, 0.0,
-				_lm_shade(stone, rng, 0.02), i < 2)
+				_lm_shade(stone, rng, 0.02), i < 2, ChunkBatch.BoxKind.CONE if i == 9 else ChunkBatch.BoxKind.CYLINDER)
 		y += h
 	terrain.create_box(center + Vector3(0.0, y + 0.7, 0.0), Vector3(1.1, 1.4, 1.1), yaw,
-			rng, block_batch, block_body, 0.0, _lm_shade(LM_MARBLE, rng, 0.03), false)
+			rng, block_batch, block_body, 0.0, _lm_shade(LM_MARBLE, rng, 0.03), false, ChunkBatch.BoxKind.CONE)
 
 	return { "radius": 7.6, "top": y + 1.4 }
 
@@ -3679,13 +3794,13 @@ static func _landmark_tower_bridge(terrain: Node3D, center: Vector3, rng: Random
 		for tx in [-1.1, 1.1]:
 			for tz in [-1.4, 1.4]:
 				terrain.create_box(center + rot * Vector3(side * TOWER_X + tx, y + 0.9, tz), Vector3(0.8, 1.8, 0.8), yaw,
-						rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+						rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false, ChunkBatch.BoxKind.CYLINDER)
 				terrain.create_box(center + rot * Vector3(side * TOWER_X + tx, y + 2.2, tz), Vector3(0.5, 0.9, 0.5), yaw,
-						rng, block_batch, block_body, 0.0, blue, false)
+						rng, block_batch, block_body, 0.0, blue, false, ChunkBatch.BoxKind.CONE)
 		for i in 3:
 			var w: float = 2.6 - float(i) * 0.75
 			terrain.create_box(center + rot * Vector3(side * TOWER_X, y + 0.55, 0.0), Vector3(w, 1.1, w), yaw,
-					rng, block_batch, block_body, 0.0, blue, false)
+					rng, block_batch, block_body, 0.0, blue, false, ChunkBatch.BoxKind.CONE if i == 2 else ChunkBatch.BoxKind.CYLINDER)
 			y += 1.1
 		tower_top = y
 
@@ -3698,7 +3813,7 @@ static func _landmark_tower_bridge(terrain: Node3D, center: Vector3, rng: Random
 		# The suspension chain, one straight strut per side of the roadway.
 		for z_side in [-1.0, 1.0]:
 			_lm_strut(terrain, center, Vector3(side * 4.9, 6.4, z_side * 1.5), Vector3(side * 7.4, 2.9, z_side * 1.5),
-					0.35, blue, yaw, rng, block_batch, block_body)
+					0.35, blue, yaw, rng, block_batch, block_body, false, ChunkBatch.BoxKind.CYLINDER)
 
 	# The bascule roadway between the towers, closed to traffic and solid underfoot.
 	terrain.create_box(center + Vector3(0.0, 2.4, 0.0), Vector3(6.8, 0.5, 3.2), yaw,
@@ -3827,12 +3942,12 @@ static func _landmark_atomium(terrain: Node3D, center: Vector3, rng: RandomNumbe
 	# six more from every ring sphere in to the core, which the real Atomium has as
 	# its escalator shafts.
 	for i in 3:
-		_lm_strut(terrain, center, spheres[0], spheres[1 + i], 0.5, steel, yaw, rng, block_batch, block_body)
-		_lm_strut(terrain, center, spheres[5 + i], spheres[8], 0.5, steel, yaw, rng, block_batch, block_body)
-		_lm_strut(terrain, center, spheres[1 + i], spheres[5 + i], 0.5, steel, yaw, rng, block_batch, block_body)
-		_lm_strut(terrain, center, spheres[1 + i], spheres[5 + (i + 2) % 3], 0.5, steel, yaw, rng, block_batch, block_body)
-		_lm_strut(terrain, center, spheres[1 + i], spheres[4], 0.42, steel, yaw, rng, block_batch, block_body)
-		_lm_strut(terrain, center, spheres[5 + i], spheres[4], 0.42, steel, yaw, rng, block_batch, block_body)
+		_lm_strut(terrain, center, spheres[0], spheres[1 + i], 0.5, steel, yaw, rng, block_batch, block_body, false, ChunkBatch.BoxKind.CYLINDER)
+		_lm_strut(terrain, center, spheres[5 + i], spheres[8], 0.5, steel, yaw, rng, block_batch, block_body, false, ChunkBatch.BoxKind.CYLINDER)
+		_lm_strut(terrain, center, spheres[1 + i], spheres[5 + i], 0.5, steel, yaw, rng, block_batch, block_body, false, ChunkBatch.BoxKind.CYLINDER)
+		_lm_strut(terrain, center, spheres[1 + i], spheres[5 + (i + 2) % 3], 0.5, steel, yaw, rng, block_batch, block_body, false, ChunkBatch.BoxKind.CYLINDER)
+		_lm_strut(terrain, center, spheres[1 + i], spheres[4], 0.42, steel, yaw, rng, block_batch, block_body, false, ChunkBatch.BoxKind.CYLINDER)
+		_lm_strut(terrain, center, spheres[5 + i], spheres[4], 0.42, steel, yaw, rng, block_batch, block_body, false, ChunkBatch.BoxKind.CYLINDER)
 
 	# THE SPHERES. Solid only where the player could walk into one — the bottom
 	# sphere and the three of ring A sit low enough to matter; the rest is 8 m up.
@@ -3841,11 +3956,11 @@ static func _landmark_atomium(terrain: Node3D, center: Vector3, rng: RandomNumbe
 		var solid: bool = s.y < 6.5
 		var tint := _lm_shade(steel, rng, 0.02)
 		terrain.create_box(center + rot * s, Vector3(NODE, NODE, NODE), yaw,
-				rng, block_batch, block_body, 0.0, tint, solid)
+				rng, block_batch, block_body, 0.0, tint, solid, ChunkBatch.BoxKind.SPHERE)
 		terrain.create_box(center + rot * s, Vector3(NODE, NODE, NODE), yaw + PI / 4.0,
-				rng, block_batch, block_body, 0.0, tint, false)
+				rng, block_batch, block_body, 0.0, tint, false, ChunkBatch.BoxKind.SPHERE)
 		terrain.create_box(center + rot * s, Vector3(NODE * 0.66, NODE * 1.32, NODE * 0.66), yaw,
-				rng, block_batch, block_body, 0.0, tint.darkened(0.06), false)
+				rng, block_batch, block_body, 0.0, tint.darkened(0.06), false, ChunkBatch.BoxKind.CYLINDER)
 
 	return { "radius": 6.6, "top": TOP_Y + NODE * 0.66 }
 
@@ -3919,7 +4034,7 @@ static func _landmark_hollywood(terrain: Node3D, center: Vector3, rng: RandomNum
 		var bs := rng.randf_range(0.5, 0.9)
 		terrain.create_box(center + rot * Vector3(bx, 0.9 + bs / 2.0, rng.randf_range(1.0, 1.6)),
 				Vector3(bs * 1.4, bs, bs * 1.2), rng.randf_range(0.0, TAU),
-				rng, block_batch, block_body, 0.0, scrub.darkened(0.2), false)
+				rng, block_batch, block_body, 0.0, scrub.darkened(0.2), false, ChunkBatch.BoxKind.SPHERE)
 
 	var top := 0.0
 	for i in WORD.length():
@@ -3981,12 +4096,12 @@ static func _landmark_space_needle(terrain: Node3D, center: Vector3, rng: Random
 		var a := deg_to_rad(90.0 + float(i) * 120.0)
 		var foot := Vector3(cos(a) * LEG_R, 0.4, sin(a) * LEG_R)
 		terrain.create_box(center + rot * Vector3(foot.x, 0.25, foot.z), Vector3(1.6, 0.5, 1.6), yaw,
-				rng, block_batch, block_body, 0.0, _lm_shade(LM_GRANITE, rng, 0.04))
+				rng, block_batch, block_body, 0.0, _lm_shade(LM_GRANITE, rng, 0.04), true, ChunkBatch.BoxKind.CYLINDER)
 		_lm_strut(terrain, center, foot, Vector3(cos(a) * 0.75, 11.4, sin(a) * 0.75), 0.9, steel,
-				yaw, rng, block_batch, block_body, true)
+				yaw, rng, block_batch, block_body, true, ChunkBatch.BoxKind.CYLINDER)
 
 	terrain.create_box(center + Vector3(0.0, CORE.y / 2.0, 0.0), CORE, yaw,
-			rng, block_batch, block_body, 0.0, _lm_shade(steel, rng, 0.02))
+			rng, block_batch, block_body, 0.0, _lm_shade(steel, rng, 0.02), true, ChunkBatch.BoxKind.CYLINDER)
 
 	# THE SAUCER, four stacked discs each doubled at 45 degrees so the profile is a
 	# round dish rather than a square tray. All trim — it is 15 m up.
@@ -4003,14 +4118,14 @@ static func _landmark_space_needle(terrain: Node3D, center: Vector3, rng: Random
 		var h: float = disc[1]
 		for extra_yaw in [0.0, PI / 4.0]:
 			terrain.create_box(center + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w),
-					yaw + float(extra_yaw), rng, block_batch, block_body, 0.0, disc[2], false)
+					yaw + float(extra_yaw), rng, block_batch, block_body, 0.0, disc[2], false, ChunkBatch.BoxKind.CYLINDER)
 		y += h
 
 	# The spike, and the beacon that has to be on top of it.
 	for i in 5:
 		var w: float = 1.0 - float(i) * 0.17
 		terrain.create_box(center + Vector3(0.0, y + 0.5, 0.0), Vector3(w, 1.0, w), yaw,
-				rng, block_batch, block_body, 0.0, _lm_shade(steel, rng, 0.02), false)
+				rng, block_batch, block_body, 0.0, _lm_shade(steel, rng, 0.02), false, ChunkBatch.BoxKind.CONE if i == 4 else ChunkBatch.BoxKind.CYLINDER)
 		y += 1.0
 	terrain._spawn_artifact_accent(_parent_chunk, center + Vector3(0.0, y + 0.3, 0.0), Vector3(0.35, 0.45, 0.35),
 			yaw, 0.0, terrain._get_camp_ember_material())
@@ -4157,12 +4272,12 @@ static func _landmark_stave_church(terrain: Node3D, center: Vector3, rng: Random
 
 	# The ridge turret and its spire.
 	terrain.create_box(center + Vector3(0.0, y + 1.3, 0.0), Vector3(1.5, 2.6, 1.5), yaw,
-			rng, block_batch, block_body, 0.0, _lm_shade(timber, rng, 0.02), false)
+			rng, block_batch, block_body, 0.0, _lm_shade(timber, rng, 0.02), false, ChunkBatch.BoxKind.CYLINDER)
 	y += 2.6
 	for i in 4:
 		var w: float = 1.9 - float(i) * 0.42
 		terrain.create_box(center + Vector3(0.0, y + 0.45, 0.0), Vector3(w, 0.9, w), yaw,
-				rng, block_batch, block_body, 0.0, _lm_shade(shingle, rng, 0.02), false)
+				rng, block_batch, block_body, 0.0, _lm_shade(shingle, rng, 0.02), false, ChunkBatch.BoxKind.CONE if i == 3 else ChunkBatch.BoxKind.CYLINDER)
 		y += 0.9
 
 	# THE DRAGON HEADS — four of them, off the gable ends of the two lower roofs,
@@ -4173,7 +4288,8 @@ static func _landmark_stave_church(terrain: Node3D, center: Vector3, rng: Random
 		for z_side in [-1.0, 1.0]:
 			var root := Vector3(0.0, gy, z_side * (reach - 0.9))
 			var head := Vector3(0.0, gy + 1.1, z_side * reach)
-			_lm_strut(terrain, center, root, head, 0.28, _lm_shade(timber, rng, 0.02), yaw, rng, block_batch, block_body)
+			_lm_strut(terrain, center, root, head, 0.28, _lm_shade(timber, rng, 0.02), yaw, rng, block_batch, block_body,
+					false, ChunkBatch.BoxKind.CYLINDER)
 			terrain.create_box(center + rot * (head + Vector3(0.0, 0.15, z_side * 0.2)), Vector3(0.34, 0.4, 0.7), yaw,
 					rng, block_batch, block_body, 0.0, _lm_shade(timber, rng, 0.02), false)
 
@@ -4224,13 +4340,13 @@ static func _landmark_trevi(terrain: Node3D, center: Vector3, rng: RandomNumberG
 	# Four applied columns, then THE NICHE and the figure standing in it.
 	for cx in [-4.6, -1.9, 1.9, 4.6]:
 		terrain.create_box(center + rot * Vector3(cx, 4.3, -1.2), Vector3(0.9, 7.2, 0.9), yaw,
-				rng, block_batch, block_body, 0.0, _lm_shade(travertine, rng, 0.025))
+				rng, block_batch, block_body, 0.0, _lm_shade(travertine, rng, 0.025), true, ChunkBatch.BoxKind.CYLINDER)
 	terrain.create_box(center + rot * Vector3(0.0, 4.2, -1.15), Vector3(3.6, 6.4, 0.6), yaw,
 			rng, block_batch, block_body, 0.0, travertine.darkened(0.55), false)
 	terrain.create_box(center + rot * Vector3(0.0, 2.6, -0.9), Vector3(1.3, 3.4, 0.85), yaw,
-			rng, block_batch, block_body, 0.0, _lm_shade(LM_MARBLE, rng, 0.02), false)
+			rng, block_batch, block_body, 0.0, _lm_shade(LM_MARBLE, rng, 0.02), false, ChunkBatch.BoxKind.CYLINDER)
 	terrain.create_box(center + rot * Vector3(0.0, 4.6, -0.9), Vector3(0.55, 0.6, 0.55), yaw,
-			rng, block_batch, block_body, 0.0, _lm_shade(LM_MARBLE, rng, 0.02), false)
+			rng, block_batch, block_body, 0.0, _lm_shade(LM_MARBLE, rng, 0.02), false, ChunkBatch.BoxKind.SPHERE)
 
 	# THE REEF: tumbled rock spilling from the facade's foot into the water. Own
 	# yaws, so the bound is |offset| + half-diagonal rather than the aligned corner.
@@ -4240,7 +4356,7 @@ static func _landmark_trevi(terrain: Node3D, center: Vector3, rng: RandomNumberG
 		var rs := rng.randf_range(0.9, 1.8)
 		terrain.create_box(center + rot * Vector3(rx, rs * 0.42, rz), Vector3(rs * 1.2, rs * 0.9, rs),
 				rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0,
-				_lm_shade(LM_STONE_GREY, rng, 0.05))
+				_lm_shade(LM_STONE_GREY, rng, 0.05), true, ChunkBatch.BoxKind.SPHERE)
 
 	# THE BASIN: three rim walls (the facade is the fourth), the water, and one step
 	# down to it — the step people sit on to throw the coin over their shoulder.
