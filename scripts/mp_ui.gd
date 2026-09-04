@@ -233,6 +233,8 @@ var _voice_mode_button: Button = null
 var _mic_state_label: Label = null
 var _mic_mute_button: Button = null
 var _deafen_button: Button = null
+## The opt-in camera toggle (bead godot-test1-xtr.6).
+var _camera_button: Button = null
 var _voice: Node = null
 var _voice_signals_connected: bool = false
 
@@ -545,6 +547,12 @@ func _build_ui() -> void:
 
 	_deafen_button = _make_button("Deafen", _on_deafen_pressed)
 	_voice_section.add_child(_deafen_button)
+
+	# OPT-IN AND OFF BY DEFAULT (owner ruling 2026-09-04, bead godot-test1-xtr.6):
+	# the camera permission prompt is asked on the FIRST PRESS of this button and
+	# nowhere else, so a player who never presses it is never asked.
+	_camera_button = _make_button("Camera off", _on_camera_pressed)
+	_voice_section.add_child(_camera_button)
 
 	_mic_state_label = Label.new()
 	_mic_state_label.name = "MicState"
@@ -1311,6 +1319,8 @@ func _ensure_voice() -> Node:
 			_voice.connect("tx_changed", _on_voice_tx_changed)
 		if _voice.has_signal("mic_denied_changed"):
 			_voice.connect("mic_denied_changed", _on_voice_mic_denied_changed)
+		if _voice.has_signal("camera_changed"):
+			_voice.connect("camera_changed", _on_camera_changed)
 	return _voice
 
 
@@ -1356,6 +1366,20 @@ func _on_deafen_pressed() -> void:
 	_update_voice_ui()
 
 
+func _on_camera_pressed() -> void:
+	var voice := _ensure_voice()
+	if voice == null or not voice.has_method("set_camera_enabled"):
+		return
+	voice.set_camera_enabled(not bool(voice.is_camera_on()))
+	_update_voice_ui()
+
+
+func _on_camera_changed(_on: Variant) -> void:
+	# The press is synchronous; the permission prompt's answer is not, so the
+	# button's label is repainted when it lands rather than polled for.
+	_update_voice_ui()
+
+
 func _on_peer_mute_pressed(id: String) -> void:
 	var voice := _ensure_voice()
 	if voice == null or not voice.has_method("set_peer_muted"):
@@ -1390,6 +1414,19 @@ func _update_voice_ui() -> void:
 	if _deafen_button != null:
 		var deaf: bool = voice.has_method("is_deafened") and bool(voice.is_deafened())
 		_deafen_button.text = "Deafened" if deaf else "Deafen"
+
+	if _camera_button != null:
+		var can_cam: bool = voice.has_method("set_camera_enabled")
+		_camera_button.visible = can_cam
+		if can_cam:
+			# A refusal is reported ON the button that asked, which is why the
+			# camera needs no status line of its own beside the microphone's.
+			if voice.has_method("camera_denied") and bool(voice.camera_denied()):
+				_camera_button.text = "Camera blocked"
+				_camera_button.disabled = true
+			else:
+				_camera_button.disabled = false
+				_camera_button.text = "Camera on" if bool(voice.is_camera_on()) else "Camera off"
 
 	if _mic_state_label != null:
 		# MUTE WINS over the V state, so it wins the label too: reporting

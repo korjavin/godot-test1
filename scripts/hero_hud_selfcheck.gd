@@ -109,6 +109,7 @@ func _run() -> void:
 	_check_the_four_states()
 	_check_the_standalone_degrade()
 	_check_the_row_fits_and_clears_its_neighbours()
+	_check_the_video_tile_lookup()
 
 
 func _hero_names() -> PackedStringArray:
@@ -291,6 +292,61 @@ func _check_the_row_fits_and_clears_its_neighbours() -> void:
 			% neighbours.size()
 		+ "stopped seeing the scene, so this check would pass on anything")
 	Sentinel.done("the_row_fits_and_clears_its_neighbours")
+
+
+func _check_the_video_tile_lookup() -> void:
+	"""
+	6. The two seams the camera overlay reads (bead godot-test1-xtr.6):
+	`hero_names()` is the row this widget is really drawing, and `tile_rect()` is
+	the tile `_draw` really paints.
+
+	The overlay is a DOM <video> positioned at that rect, so a `tile_rect` that
+	drifted from `_draw`'s arithmetic puts a teammate's face beside their portrait
+	instead of on it — and no self-check can see that in a browser. What CAN be
+	measured here is that the two agree with each other and with the row's pitch,
+	and that an off-roster name answers an EMPTY rect rather than tile zero (which
+	would park a picture over Windman for every hero nobody holds).
+	"""
+	var hud: Control = HUD_SCRIPT.new()
+	var stub := StubPlayer.new()
+	hud.player = stub
+	# The row is measured OUT of the tree, where `tile_rect` answers its own local
+	# arithmetic: this check is about that arithmetic agreeing with `_draw`'s, and
+	# the screen transform above it is Godot's, not ours, to get right.
+	# Nothing is drawn until `_process` has read the roster, so the empty answer is
+	# the standalone degrade AND the state the overlay meets on its first poll.
+	_check(hud.hero_names().is_empty(),
+		"hero_names() answered %s before the row read a roster" % [hud.hero_names()])
+	_check(hud.tile_rect(_hero_names()[0]) == Rect2(),
+		"tile_rect() offered a rect for a row that is drawing nothing")
+
+	hud._process(0.0)
+	var names: PackedStringArray = hud.hero_names()
+	_check(names == _hero_names(),
+		"hero_names() is %s, but the roster is %s" % [names, _hero_names()])
+
+	# The pitch between two tiles is what `_draw` steps by, and `tile_rect` is the
+	# one description both now read.
+	var pitch: float = float(HUD_SCRIPT.TILE_SIZE) + float(HUD_SCRIPT.TILE_GAP)
+	var previous := Rect2()
+	for i: int in names.size():
+		var rect: Rect2 = hud.tile_rect(names[i])
+		_check(rect.size.x == float(HUD_SCRIPT.TILE_SIZE)
+				and rect.size.y == float(HUD_SCRIPT.TILE_SIZE),
+			"tile_rect(%s) is %s, not one TILE_SIZE square" % [names[i], rect])
+		if i > 0:
+			_check(is_equal_approx(rect.position.x - previous.position.x, pitch),
+				"tile %d starts %.1f px after tile %d, not the row's %.1f pitch"
+					% [i, rect.position.x - previous.position.x, i - 1, pitch])
+			_check(rect.position.y == previous.position.y,
+				"tile %d is not on the same line as tile %d" % [i, i - 1])
+		previous = rect
+
+	_check(hud.tile_rect("no_such_hero") == Rect2(),
+		"tile_rect() answered a real rect for a hero that is not on the row")
+	hud.free()
+	stub.free()
+	Sentinel.done("the_video_tile_lookup")
 
 
 func _hud_absolute_rects(text: String) -> Dictionary:

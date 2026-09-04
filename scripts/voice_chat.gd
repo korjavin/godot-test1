@@ -60,8 +60,9 @@ extends Node
 ## `mp_manager`'s own "the lower id offers" rule so both signalling families
 ## agree about who gives way.
 ##
-## The payoff is bead .6: a camera track is `pc.addTrack(videoTrack)` and one
-## renegotiation — no new signalling family, no second connection, no rework. It
+## The payoff was bead .6, and it came out exactly that size: the camera is
+## `pc.addTrack(videoTrack)` and one renegotiation, with no new signalling family,
+## no second connection and no rework (see the VIDEO section at the foot). It
 ## is also what lets the microphone arrive LATE: a connection is opened the
 ## moment a member appears, with a `recvonly` audio transceiver if the permission
 ## prompt has not been answered yet, and adding the real track when it lands just
@@ -106,6 +107,10 @@ enum Mode {
 signal mode_changed(mode: Mode)
 signal tx_changed(active: bool)
 signal mic_denied_changed(denied: bool)
+## The camera's permission prompt came back (bead godot-test1-xtr.6). The press
+## itself is synchronous, so this is the ASYNC half — granted, or refused — and
+## it exists so the MP panel's button can stop saying "asking" without polling.
+signal camera_changed(on: bool)
 
 # ============================================================================
 # TUNABLES
@@ -154,6 +159,24 @@ const SPEAK_HOLD_MSEC: int = 150
 ## characters, so this can never be one.
 const SELF_LEVEL_KEY: String = "me"
 
+## THE CAMERA (bead godot-test1-xtr.6). `ckVoice.camState()`'s answer, the mic's
+## numbers one feature along — never booleans, see the header.
+const CAM_IDLE: int = 0
+const CAM_ASKING: int = 1
+const CAM_ON: int = 2
+const CAM_DENIED: int = 3
+
+## How often the video tiles are reconciled with the hero row. The row is pinned
+## to a screen corner and only moves when the viewport does, and the browser
+## re-places a tile on its own `resize` listener, so 5 Hz is generous — it is
+## really the rate at which a hero CHANGES HANDS or a camera comes and goes.
+const TILE_INTERVAL: float = 0.2
+
+## How far inside a tile the picture is drawn, in window pixels. The tile's frame,
+## its active ring and a captive's bars are `hero_hud`'s and stay visible around
+## the video — the overlay is above the canvas, so anything it covers is gone.
+const TILE_INSET: float = 3.0
+
 ## The browser half, installed once at `window.ckVoice` on the first room join —
 ## the `intro_video.gd` idiom: one GD const string, one `JavaScriptBridge.eval`,
 ## all the state on `window` where the media actually lives.
@@ -190,6 +213,15 @@ const VOICE_JS: String = """
 		   `muted` is keyed by lobby id and outlives its connection, so a peer that
 		   blips through a renegotiation stays muted. */
 		deaf: 0, micMuted: 0, muted: {},
+		/* THE CAMERA (bead godot-test1-xtr.6). A SECOND TRACK on the same
+		   connections — never a second RTCPeerConnection and never a second
+		   signalling family: `addTrack` fires `onnegotiationneeded` and the
+		   perfect-negotiation machinery above re-offers over the same `vc` tag.
+		   `camWant` is what the player last asked for, `camState` is where the
+		   permission prompt got to; the two differ while it is on screen.
+		   `tiles` remembers each peer's rect as a FRACTION of the canvas, so a
+		   resize is re-applied here instead of re-measured in GDScript. */
+		cam: null, camState: 0, camWant: 0, tiles: {},
 		/* One AudioContext for the whole module, and one AnalyserNode per stream
 		   (remote) plus one for the local mic. `levels()` reads them all and
 		   answers ONE string — never one bridge call per peer, and never a
@@ -347,6 +379,171 @@ const VOICE_JS: String = """
 		return 1;
 	}
 
+	/* ------------------------------------------------------------------------
+	   THE CAMERA, AND THE TILE IT IS DRAWN IN (bead godot-test1-xtr.6)
+	   ------------------------------------------------------------------------
+	   The picture is a DOM <video> absolutely positioned over the Godot canvas —
+	   `intro_video.gd`'s precedent — and NOT a frame copied through the bridge:
+	   the browser decodes and composites it, so a peer's camera costs this
+	   single-threaded export nothing per frame. The GDScript half only ever pushes
+	   a rect, and only when it changes.
+
+	   THE RECT CROSSES AS FRACTIONS OF THE CANVAS, never pixels. Godot measures in
+	   window pixels; the canvas's CSS box is those pixels divided by
+	   devicePixelRatio and moved by whatever the page's layout says. Multiplying a
+	   fraction by `getBoundingClientRect()` is that whole conversion, and it is
+	   also why a resize needs no new measurement from GDScript.
+
+	   ponytail: mounted on `document.body`, so Godot's own canvas-only fullscreen
+	   (`DisplayServer.WINDOW_MODE_FULLSCREEN` calls `canvas.requestFullscreen()`)
+	   would hide it — reachable only from the touch fullscreen button, and mobile
+	   is out of scope by owner ruling. The browser's own F11 sets no
+	   `fullscreenElement`, so that one is covered. The documented upgrade path if
+	   this ever bites is the bead's ImageTexture frame-copy fallback. */
+
+	function canvasBox() {
+		var c = document.getElementById('canvas') || document.querySelector('canvas');
+		if (!c || !c.getBoundingClientRect) { return null; }
+		return c.getBoundingClientRect();
+	}
+
+	function placeTile(id) {
+		var p = S.peers[id];
+		var t = S.tiles[id];
+		if (!p || !p.video || !t) { return 0; }
+		var r = canvasBox();
+		if (!r || t[2] <= 0 || t[3] <= 0) { return 0; }
+		p.video.style.cssText = 'position:fixed;pointer-events:none;object-fit:cover;' +
+			'background:#000;z-index:2147482000;' +
+			'left:' + (r.left + t[0] * r.width) + 'px;' +
+			'top:' + (r.top + t[1] * r.height) + 'px;' +
+			'width:' + (t[2] * r.width) + 'px;' +
+			'height:' + (t[3] * r.height) + 'px;';
+		return 1;
+	}
+
+	function setTile(id, fx, fy, fw, fh) {
+		S.tiles[String(id)] = [fx, fy, fw, fh];
+		return placeTile(String(id));
+	}
+
+	function hideTile(id) {
+		var k = String(id);
+		delete S.tiles[k];
+		var p = S.peers[k];
+		if (p && p.video) { p.video.style.display = 'none'; }
+		return 1;
+	}
+
+	/* A resize moves the canvas without moving the fraction, so the GD side has
+	   nothing to push and this is the only thing that can re-place the pictures. */
+	function replaceTiles() {
+		for (var k in S.tiles) { placeTile(k); }
+		return 1;
+	}
+
+	function showVideo(id, stream) {
+		var p = S.peers[id];
+		if (!p || !document || !document.body) { return 0; }
+		if (!p.video) {
+			var v = document.createElement('video');
+			v.autoplay = true;
+			/* MUTED, always: the sound is the <audio> element's job, and a second
+			   voice out of this element would be an echo of the same peer. */
+			v.muted = true;
+			v.className = 'ck-voice-cam';
+			v.setAttribute('playsinline', '');
+			v.style.cssText = 'display:none;';
+			document.body.appendChild(v);
+			p.video = v;
+		}
+		p.video.srcObject = stream;
+		var pr = p.video.play();
+		if (pr && pr.catch) { pr.catch(function () { }); }
+		/* Nothing is shown until GDScript says where the tile is — a picture
+		   parked at 0,0 over the corner of the screen is worse than none. */
+		placeTile(id);
+		return 1;
+	}
+
+	function attachCam(p) {
+		if (!S.cam || p.vsend) { return 0; }
+		var t = S.cam.getVideoTracks()[0];
+		if (!t) { return 0; }
+		try {
+			p.vsend = p.pc.addTrack(t, S.cam);
+			/* THE BANDWIDTH BUDGET, and the only place it is written down on this
+			   side: 150 kbps caps one portrait-sized stream, so a 4-peer mesh is
+			   3 up + 3 down under half a megabit each way. */
+			var prm = p.vsend.getParameters();
+			if (!prm.encodings || !prm.encodings.length) { prm.encodings = [{}]; }
+			prm.encodings[0].maxBitrate = 150000;
+			var sp = p.vsend.setParameters(prm);
+			if (sp && sp.catch) { sp.catch(function () { }); }
+		} catch (e) { }
+		return 1;
+	}
+
+	function detachCam(p) {
+		if (!p.vsend) { return 0; }
+		/* removeTrack fires onnegotiationneeded, so switching the camera off is
+		   the same one renegotiation switching it on was. */
+		try { p.pc.removeTrack(p.vsend); } catch (e) { }
+		p.vsend = null;
+		return 1;
+	}
+
+	function camera(on) {
+		var k;
+		if (on) {
+			if (S.camState === 1 || S.camState === 2) { return S.camState; }
+			if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+				S.camState = 3;
+				return 3;
+			}
+			S.camState = 1;
+			var gen = S.gen;
+			/* Portrait size and portrait frame rate: the picture is drawn in a
+			   48 px tile, so anything larger is bytes nobody can see. */
+			navigator.mediaDevices.getUserMedia({
+				audio: false,
+				video: { width: 160, height: 120, frameRate: 12 }
+			}).then(function (st) {
+				/* A grant that lands after the room went away — or after the player
+				   changed their mind — RELEASES the device. The mic's rule, and for
+				   the camera the tab's recording light makes it visible. */
+				if (gen !== S.gen || S.camWant === 0) {
+					var stale = st.getTracks();
+					for (var j = 0; j < stale.length; j++) { stale[j].stop(); }
+					if (gen === S.gen) { S.camState = 0; }
+					return;
+				}
+				S.cam = st;
+				S.camState = 2;
+				for (var q in S.peers) { attachCam(S.peers[q]); }
+			}).catch(function () { if (gen === S.gen) { S.camState = 3; } });
+			return 1;
+		}
+		for (k in S.peers) { detachCam(S.peers[k]); hideTile(k); }
+		if (S.cam) {
+			var ts = S.cam.getTracks();
+			for (var i = 0; i < ts.length; i++) { ts[i].stop(); }
+			S.cam = null;
+		}
+		/* A refusal STICKS until the room ends: re-prompting on every press is the
+		   retry loop the epic forbids. */
+		if (S.camState !== 3) { S.camState = 0; }
+		return 0;
+	}
+
+	/* Who has a live picture right now, as one string — `levels()`'s format rule:
+	   one bridge call, never one per peer, and never a boolean. */
+	function videoPeers() {
+		var out = [];
+		for (var k in S.peers) { if (S.peers[k].hasVideo === 1) { out.push(k); } }
+		return out.join(',');
+	}
+
 	function flag(val) {
 		return (val === 1 || val === '1' || val === true) ? 1 : 0;
 	}
@@ -375,7 +572,8 @@ const VOICE_JS: String = """
 		   "the lower id offers" so both families agree on who yields. */
 		var p = {
 			pc: pc, polite: (S.self > id), making: 0, sent: 0,
-			audio: null, meter: null, cand: [], timer: null, q: Promise.resolve()
+			audio: null, meter: null, cand: [], timer: null, q: Promise.resolve(),
+			video: null, vsend: null, hasVideo: 0
 		};
 		S.peers[id] = p;
 
@@ -401,7 +599,20 @@ const VOICE_JS: String = """
 			if (!p.timer) { p.timer = setTimeout(function () { flush(id); }, 100); }
 		};
 
+		/* KIND-GUARDED, which is what lets an OLD build ignore a camera it does not
+		   know about and what keeps a peer's video out of the <audio> element. */
 		pc.ontrack = function (ev) {
+			if (ev.track && ev.track.kind === 'video') {
+				p.hasVideo = 1;
+				/* A sender's removeTrack reaches us as `mute`, not as `ended`, so
+				   both take the picture down — and unmute brings it back without a
+				   new element. */
+				ev.track.onmute = function () { p.hasVideo = 0; hideTile(id); };
+				ev.track.onended = function () { p.hasVideo = 0; hideTile(id); };
+				ev.track.onunmute = function () { p.hasVideo = 1; };
+				showVideo(id, new MediaStream([ev.track]));
+				return;
+			}
 			play(id, (ev.streams && ev.streams[0]) ? ev.streams[0] : new MediaStream([ev.track]));
 		};
 
@@ -409,6 +620,9 @@ const VOICE_JS: String = """
 		   so the handshake happens and this peer can at least LISTEN. */
 		if (S.stream) { attach(p); }
 		else { try { pc.addTransceiver('audio', { direction: 'recvonly' }); } catch (e) { } }
+		/* A peer that joins while the camera is already on gets it on the first
+		   handshake rather than on a second renegotiation. */
+		attachCam(p);
 		return 1;
 	}
 
@@ -420,6 +634,13 @@ const VOICE_JS: String = """
 		if (p.audio) {
 			p.audio.srcObject = null;
 			if (p.audio.parentNode) { p.audio.parentNode.removeChild(p.audio); }
+		}
+		/* THE PICTURE GOES WITH THE PEER — leaving a room may not leave a <video>
+		   on the page, exactly as it may not leave an <audio>. */
+		delete S.tiles[id];
+		if (p.video) {
+			p.video.srcObject = null;
+			if (p.video.parentNode) { p.video.parentNode.removeChild(p.video); }
 		}
 		try { p.pc.close(); } catch (e) { }
 		delete S.peers[id];
@@ -520,6 +741,14 @@ const VOICE_JS: String = """
 	function stop() {
 		S.gen = S.gen + 1;
 		S.tx = 0;
+		/* THE CAMERA DIES WITH THE ROOM — the opt-in is per room, and a capture
+		   device still running outside the room it was granted for is the worst
+		   possible way to get this wrong. Before `close()` so `detachCam` still
+		   has connections to take the sender off. */
+		S.camWant = 0;
+		camera(0);
+		S.camState = 0;
+		S.tiles = {};
 		/* PER-PEER MUTES DIE WITH THE ROOM — they are keyed by lobby id and a
 		   mute is about the people you are in a room with. Mic mute and deafen
 		   are about YOU and survive to the next room, all three being session
@@ -539,6 +768,13 @@ const VOICE_JS: String = """
 		S.mic = 0;
 		return 1;
 	}
+
+	/* ONE listener for the whole module: the fractions do not change when the
+	   window does, so this is the only thing that can follow the canvas. */
+	try {
+		window.addEventListener('resize', replaceTiles);
+		document.addEventListener('fullscreenchange', replaceTiles);
+	} catch (e) { }
 
 	window.ckVoice = {
 		start: function (selfId, cfgJson, send) {
@@ -561,6 +797,11 @@ const VOICE_JS: String = """
 			return on;
 		},
 		levels: levels,
+		setCamera: function (v) { S.camWant = flag(v); return camera(S.camWant); },
+		camState: function () { return S.camState; },
+		setTile: setTile,
+		hideTile: hideTile,
+		videoPeers: videoPeers,
 		txState: function () { return S.tx; },
 		micState: function () { return S.mic; },
 		frames: function () { return S.frames; }
@@ -635,6 +876,22 @@ var _speaking_pushed: Dictionary = {}
 
 var _levels_accum: float = 0.0
 
+## THE CAMERA (bead godot-test1-xtr.6). OFF BY DEFAULT and per ROOM: `_teardown()`
+## clears it exactly as the JS `stop()` does, because a capture device is not
+## something to leave running into the next room on the strength of an old press.
+var _camera_on: bool = false
+
+## The camera state we last told anybody about, so `camera_changed` fires on the
+## EDGE — the prompt's answer — and not once a poll.
+var _reported_cam: int = CAM_IDLE
+
+## `peer id -> the tile rect last pushed`, as FRACTIONS of the canvas. The push is
+## change-gated off this, so a still hero row costs one bridge call per poll and
+## no DOM writes at all.
+var _pushed_tiles: Dictionary = {}
+
+var _tile_accum: float = 0.0
+
 
 func _ready() -> void:
 	add_to_group("voice")
@@ -666,6 +923,10 @@ func _process(delta: float) -> void:
 	if _levels_accum >= LEVELS_INTERVAL:
 		_levels_accum = 0.0
 		_poll_levels()
+	_tile_accum += delta
+	if _tile_accum >= TILE_INTERVAL:
+		_tile_accum = 0.0
+		_poll_tiles()
 	_accum += delta
 	if _accum < POLL_INTERVAL:
 		return
@@ -705,6 +966,7 @@ func _tick() -> void:
 	_flush_pending()
 	_push_members()
 	_report_mic()
+	_report_camera()
 
 
 func _start(ice: Dictionary) -> bool:
@@ -736,6 +998,7 @@ func _start(ice: Dictionary) -> bool:
 	# worth of presses and never the last room's.
 	_ck.setMicMuted(1 if _mic_muted else 0)
 	_ck.setDeafened(1 if _deafened else 0)
+	_ck.setCamera(1 if _camera_on else 0)
 	for id: Variant in _peer_muted:
 		_ck.setPeerMuted(str(id), 1)
 	return true
@@ -783,6 +1046,25 @@ func _report_mic() -> void:
 		_mp.emit_signal("status", MIC_BLOCKED_STATUS)
 
 
+func _report_camera() -> void:
+	"""
+	Watch the permission prompt come back and say so ONCE. A refusal is not an
+	error and gets no retry loop — the button below simply stops offering, exactly
+	as the microphone's status line does one feature along.
+	"""
+	var state: Variant = _ck.camState()
+	if typeof(state) != TYPE_INT and typeof(state) != TYPE_FLOAT:
+		return
+	var cam: int = int(state)
+	if cam == _reported_cam:
+		return
+	_reported_cam = cam
+	if cam == CAM_DENIED:
+		_camera_on = false
+	if cam == CAM_ON or cam == CAM_DENIED:
+		camera_changed.emit(cam == CAM_ON)
+
+
 func _teardown() -> void:
 	"""
 	Close every connection, remove every `<audio>` element and release the capture
@@ -796,6 +1078,15 @@ func _teardown() -> void:
 	# clear. Per-peer mutes go with the room, mirroring the JS `stop()`.
 	_clear_speaking()
 	_peer_muted.clear()
+	# THE CAMERA IS PER ROOM (see `_camera_on`), and the JS `stop()` releases the
+	# device and removes every <video> — this side only has to agree about it, and
+	# has to agree ABOVE the `_running` guard for the same reason `_pending` does.
+	_pushed_tiles.clear()
+	var had_camera: bool = _camera_on
+	_camera_on = false
+	_reported_cam = CAM_IDLE
+	if had_camera:
+		camera_changed.emit(false)
 	# ABOVE the `_running` guard: a room can end while the start-up window is
 
 	# still open, and a queue that survived it would replay the last room's
@@ -1160,3 +1451,118 @@ func _clear_speaking() -> void:
 			avatar.set_speaking(false)
 	_speaking_pushed.clear()
 	_speaking_until.clear()
+
+
+# ============================================================================
+# VIDEO — THE CAMERA IN THE TEAMMATE'S HERO TILE (bead godot-test1-xtr.6)
+# ============================================================================
+## ADDITIVE, and that is the whole design: the camera is one more track on the
+## connections bead .1 already built, so it is `addTrack` plus the renegotiation
+## `onnegotiationneeded` already does over the same `vc` tag — no second
+## `RTCPeerConnection`, no second signalling family, no `mp_codec` parser and no
+## `mp_manager` edit. Switching it off is `removeTrack` and the same one
+## renegotiation back.
+##
+## OPT-IN AND OFF BY DEFAULT (owner ruling 2026-09-04). The permission prompt is
+## asked on the first press of the MP panel's Camera button and never on a join,
+## so a player who never presses it is never asked; a refusal sticks for the room.
+##
+## WHERE THE PICTURE GOES: the tile of the hero that peer HOLDS. The hero row is
+## the LOCAL roster — four heroes, not four players — so "in place of their hero
+## portrait" resolves through the lobby's `hero_holder()`, which is also exactly
+## `hero_hud`'s STATE_HELD (somebody else has him). Nobody's own tile is ever
+## covered, because `S.peers` in the browser never contains ourselves.
+##
+## THE RENDER PATH IS A DOM OVERLAY, not frame copies (the bead weighed both).
+## The browser decodes and composites, so the per-frame cost on this
+## single-threaded export is ZERO; GDScript's whole contribution is a rect at
+## 5 Hz, pushed only when it changes, in fractions of the canvas so the browser
+## owns `devicePixelRatio` and every resize. The fallback if the overlay ever
+## fights the canvas is the ImageTexture copy path, and it is written down in the
+## bead rather than built here.
+
+
+func set_camera_enabled(on: bool) -> void:
+	if _camera_on == on:
+		return
+	# A refusal is not a state to toggle back into: asking again on every press is
+	# the retry loop the epic rules out.
+	if on and camera_denied():
+		return
+	_camera_on = on
+	if not on:
+		_pushed_tiles.clear()
+	if _is_web and _running and _ck != null:
+		_ck.setCamera(1 if on else 0)
+	camera_changed.emit(on)
+
+
+func is_camera_on() -> bool:
+	return _camera_on
+
+
+func camera_denied() -> bool:
+	if not _is_web or _ck == null:
+		return false
+	var state: Variant = _ck.camState()
+	if typeof(state) != TYPE_INT and typeof(state) != TYPE_FLOAT:
+		return false
+	return int(state) == CAM_DENIED
+
+
+func _poll_tiles() -> void:
+	"""
+	Put every live remote picture over the tile of the hero its peer holds.
+
+	ONE bridge call for the roll-call (`videoPeers()`, `levels()`'s one-string
+	rule), then at most one `setTile` per peer whose rect actually MOVED — the
+	hero row is pinned to a screen corner, so in the steady state that is nothing
+	at all. A resize does not move the FRACTION, which is why the browser re-places
+	the pictures on its own listener and this poll stays silent through one.
+
+	Everything is `has_method`-guarded and degrades to no pictures: a scene with no
+	hero row, a manager that predates `hero_holder`, a peer holding no hero.
+	"""
+	if not _running or _ck == null:
+		_pushed_tiles.clear()
+		return
+	var raw: Variant = _ck.videoPeers()
+	if typeof(raw) != TYPE_STRING:
+		return
+	var senders: Dictionary = {}
+	for id: String in str(raw).split(",", false):
+		senders[id] = true
+
+	var live: Dictionary = {}
+	var hud: Node = get_tree().get_first_node_in_group("hero_hud")
+	var win: Vector2 = Vector2(get_window().size) if get_window() != null else Vector2.ZERO
+	var ready: bool = not senders.is_empty() \
+		and hud != null and hud.has_method("tile_rect") and hud.has_method("hero_names") \
+		and _mp != null and is_instance_valid(_mp) and _mp.has_method("hero_holder") \
+		and win.x > 0.0 and win.y > 0.0
+	if ready:
+		for hero: String in hud.hero_names():
+			var holder: String = str(_mp.hero_holder(hero))
+			# Not a sender covers "nobody holds him", "I hold him" and "he has no
+			# camera" in one test: our own id is never in the browser's peer set.
+			if not senders.has(holder):
+				continue
+			var tile: Rect2 = hud.tile_rect(hero)
+			if tile.size.x <= TILE_INSET * 2.0 or tile.size.y <= TILE_INSET * 2.0:
+				continue
+			var inset: Rect2 = tile.grow(-TILE_INSET)
+			var frac := Rect2(inset.position / win, inset.size / win)
+			live[holder] = true
+			if _pushed_tiles.get(holder, Rect2()) == frac:
+				continue
+			_pushed_tiles[holder] = frac
+			_ck.setTile(holder, frac.position.x, frac.position.y, frac.size.x, frac.size.y)
+
+	# A hero handed back, a camera switched off, a peer gone: whatever we placed
+	# and can no longer justify comes down. The browser also hides on its own
+	# `mute`/`ended`, which is the half this poll cannot see in time.
+	for id: Variant in _pushed_tiles.keys():
+		if live.has(id):
+			continue
+		_pushed_tiles.erase(id)
+		_ck.hideTile(str(id))
