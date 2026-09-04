@@ -1510,6 +1510,11 @@ func _clear_speaking() -> void:
 
 
 func set_camera_enabled(on: bool) -> void:
+	# Off-web this may not so much as flip the flag: the panel row it is pressed
+	# from is hidden behind `is_available()` there, and a camera that reads as ON
+	# with no browser under it is a lie every reader of `is_camera_on()` inherits.
+	if not _is_web:
+		return
 	if _camera_on == on:
 		return
 	# A refusal is not a state to toggle back into: asking again on every press is
