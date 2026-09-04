@@ -662,6 +662,15 @@ func _pick_lane(base: Vector3, heading: Vector2) -> float:
 	## when the heading is unchanged: a fresh draw is a sign flip half the time,
 	## and on an avenue that is a 17.2 m sideways jump across both car lanes in
 	## one frame (6.4 m on an ordinary street). The caller owns that condition.
+	##
+	## ponytail: A 90-DEGREE TURN STILL JUMPS, by `sqrt(2) * lane` (12.2 m on the
+	## pavement, 4.5 m on the ±3.2 lanes it has always cost). A lane is an offset
+	## along the heading's perpendicular, so turning rotates it onto the other
+	## axis — the offset PATHS of two perpendicular streets meet at a corner the
+	## walker never visits. Closing it means walking to that corner, which needs
+	## the NEXT lane before the next street is picked: a two-leg waypoint model,
+	## its own bead. `crowd_selfcheck` check 12 bounds the corner off this
+	## constant so it cannot grow quietly in the meantime.
 	var lane: float
 	if walks_an_avenue(base, heading):
 		lane = PAVEMENT_LANE_OFFSET if _rng.randf() < 0.5 else -PAVEMENT_LANE_OFFSET
