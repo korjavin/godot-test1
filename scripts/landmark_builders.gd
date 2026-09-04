@@ -898,17 +898,25 @@ static func quiz_options(kind: int, landmark_id: int, run_seed: int) -> Array[in
 ##          it, and rule 5c's "CONE only on the piece that ends a taper" is what
 ##          keeps them out of reach in the first place.
 ##        * A ROUND BOX SQUASHED PAST `ChunkBatch.ROUND_COLLIDER_MAX_ASPECT` (1.6)
-##          FALLS BACK TO ITS BOX, because no SphereShape3D is an ellipsoid.
-##          NOTHING IN THIS FILE IS PAST IT TODAY — measured over all 28 field
-##          builders x 4 seeds after bead y1o.11 reshaped the Taj and Kinderdijk,
-##          the worst colliding SPHERE is the Taj's chattri dome at **1.57**
-##          (1.1 x 0.7 x 1.1) and the worst colliding CYLINDER the Redeemer's arm
-##          at 1.25 in PLAN. So every round colliding box in the field is round in
-##          collision, and the Taj's dome is 0.03 off the gate: **squash a dome
-##          any further and it silently goes back to being a box.** If you want a
-##          flattened dome a player stands on, draw it as a CYLINDER — a
-##          cylinder's aspect is measured in PLAN only, so a pancake drum is still
-##          round however thin it is.
+##          FALLS BACK TO ITS BOX, because no SphereShape3D is an ellipsoid. The
+##          worst colliding SPHERE is still the Taj's chattri dome at **1.57**
+##          (1.1 x 0.7 x 1.1), 0.03 off the gate: **squash a dome any further and
+##          it silently goes back to being a box.** If you want a flattened dome a
+##          player stands on, draw it as a CYLINDER — a cylinder's aspect is
+##          measured in PLAN only, so a pancake drum is still round however thin
+##          it is.
+##          BEAD y1o.17 GAVE THE FALLBACK ITS FIRST TWO CONSUMERS, and both are
+##          deliberate: the Sydney Opera House's shell slabs (4.0 in plan) and the
+##          Pont du Gard's tier-2 piers (1.83). Both keep exactly the BoxShape3D
+##          they had as cubes, so nothing about walking into either changed, and a
+##          CYLINDER fills its box floor to ceiling — the mismatch is four plan
+##          corners per slab and never a foot-height hole. Every other round
+##          colliding box in the field is still round in collision. (`chunk_batch.
+##          gd`'s `collision_shape_for` banner records the pre-y1o.17 census and
+##          its "the fallback has no consumer today" line is that measurement's,
+##          not a rule.) A NEW past-the-gate colliding round box needs the same
+##          two sentences at ITS line: why the shape wants it, and why the box it
+##          keeps is harmless where a player can reach.
 ##
 ## The 22 Budapest builders below take NO kind at all and must not: a city box is
 ## sliced on the chunk grid, and a rotated or non-cube one keeps the centre rule
@@ -947,6 +955,15 @@ static func _landmark_stonehenge(terrain: Node3D, center: Vector3, rng: RandomNu
 	(half-diagonal 0.71), so 6.44. RING_R is 5.6 rather than the 6.0 a real plan
 	would suggest precisely because of that lintel term.
 	NO ACCENT: Stonehenge is a sundial, not a lamp.
+
+	THE STANDING STONES ARE CYLINDERS, THE LINTELS STAY CUBES (bead
+	godot-test1-y1o.17). A menhir is a weathered pillar and a sarsen upright reads
+	as one; a lintel is a DRESSED beam laid flat across two of them, and a round
+	lintel is a log. Both uprights and bluestones are near-square in plan
+	(1.0 x 1.0 and 1.0 x 0.7), so both stay well inside
+	ChunkBatch.ROUND_COLLIDER_MAX_ASPECT and collide as the CylinderShape3D they
+	draw — which matters here more than anywhere else in the registry, because
+	these are the one landmark whose stones you walk between at head height.
 	"""
 	const RING_R := 5.6
 	const TRILITHONS := 5
@@ -969,7 +986,7 @@ static func _landmark_stonehenge(terrain: Node3D, center: Vector3, rng: RandomNu
 		for side in [-1.0, 1.0]:
 			terrain.create_box(ring_pos + tangent * (side * 1.2) + Vector3(0.0, UPRIGHT.y / 2.0, 0.0),
 					UPRIGHT, yaw + rng.randf_range(-0.05, 0.05), rng, block_batch, block_body,
-					0.0, _lm_shade(LM_STONE_GREY, rng))
+					0.0, _lm_shade(LM_STONE_GREY, rng), true, ChunkBatch.BoxKind.CYLINDER)
 		# The lintel laid flat across both tops — the detail that makes a trilithon
 		# read as Stonehenge and not as a stone circle.
 		terrain.create_box(ring_pos + Vector3(0.0, UPRIGHT.y + LINTEL.y / 2.0, 0.0),
@@ -983,7 +1000,8 @@ static func _landmark_stonehenge(terrain: Node3D, center: Vector3, rng: RandomNu
 		var dims := Vector3(1.0, rng.randf_range(2.2, 2.9), 0.7)
 		var lean := rng.randf_range(-0.15, 0.15)
 		terrain.create_box(center + Vector3(cos(a) * INNER_R, dims.y / 2.0 - 0.15, sin(a) * INNER_R),
-				dims, PI / 2.0 - a, rng, block_batch, block_body, lean, _lm_shade(LM_STONE_GREY, rng))
+				dims, PI / 2.0 - a, rng, block_batch, block_body, lean, _lm_shade(LM_STONE_GREY, rng),
+				true, ChunkBatch.BoxKind.CYLINDER)
 
 	return { "radius": 7.6, "top": UPRIGHT.y + LINTEL.y }
 
@@ -1099,6 +1117,17 @@ static func _landmark_golden_gate(terrain: Node3D, center: Vector3, rng: RandomN
 	0.5*sqrt(17.0^2 + 3.0^2) = 8.63. A tower leg sits at sqrt(5.5^2 + 1.2^2) = 5.63
 	with half-diagonal 0.64 => 6.27. So 8.63 <= 9.4.
 	NO ACCENT: the towers already carry the loudest colour in the whole palette.
+
+	THE TOWER SHAFTS ARE CYLINDERS AND THE CABLE IS NOT (bead godot-test1-y1o.17).
+	A leg is a 0.9 x 0.9 plan column, so it collides as the CylinderShape3D it
+	draws and is a round steel shaft you walk under. THE CABLE STAYS CUBES, and
+	the reason is the enum rather than the shape: `CylinderMesh`'s axis is the
+	entry's local +Y (collision_shape_for's banner), and a cable segment is a
+	1.25 m box lying on its side with 0.3 m of height — asking for a CYLINDER
+	there draws a 1.25 m PANCAKE, not a strand. A horizontal tube in this file is
+	`_lm_strut`, which would mean re-laying the catenary as struts: a box COUNT
+	change, a different RNG draw count in this builder, and therefore its own
+	bead. Same reason the two crossbeams stay boxes.
 	"""
 	const TOWER_X := 5.5          # half the tower spacing (towers 11 m apart)
 	const LEG := Vector3(0.9, 11.0, 0.9)
@@ -1112,7 +1141,7 @@ static func _landmark_golden_gate(terrain: Node3D, center: Vector3, rng: RandomN
 	for side in [-1.0, 1.0]:
 		for z_side in [-1.0, 1.0]:
 			terrain.create_box(center + rot * Vector3(side * TOWER_X, LEG.y / 2.0, z_side * LEG_Z),
-					LEG, yaw, rng, block_batch, block_body, 0.0, orange)
+					LEG, yaw, rng, block_batch, block_body, 0.0, orange, true, ChunkBatch.BoxKind.CYLINDER)
 		# Two crossbeams tying each tower's legs together — the ladder look that
 		# says "suspension tower" rather than "two posts".
 		for beam_y in [DECK_Y + 1.4, LEG.y - 1.0]:
@@ -1293,6 +1322,15 @@ static func _landmark_eiffel(terrain: Node3D, center: Vector3, rng: RandomNumber
 	0.5*sqrt(2*6.0^2) = 4.24 at the centre. A lower leg segment sits at
 	sqrt(2*2.2^2) = 3.11 with a tilted horizontal half-reach under 1.5 => 4.6.
 	So 4.6 <= 6.2.
+
+	THE IRONWORK IS CYLINDERS, THE PLATFORMS ARE NOT (bead godot-test1-y1o.17).
+	Every leg segment, every shaft box and the antenna is square in plan and
+	stands on its own local +Y, so each becomes the round member it always
+	wanted to be and collides as the CylinderShape3D it draws (rule 5d) — the
+	legs are the one part of this shape a player walks into. The two PLATFORMS
+	stay CUBE because they really are square decks, and rule 5c keeps the taper
+	CYLINDER to the top rather than ending it in a cone: the antenna collides,
+	and a colliding cone is a point under a box-shaped ledge (check 9c).
 	"""
 	const LEG_TILT := 0.30
 	const SEG := Vector3(0.85, 3.6, 0.85)
@@ -1318,9 +1356,11 @@ static func _landmark_eiffel(terrain: Node3D, center: Vector3, rng: RandomNumber
 	for corner in 4:
 		var a := yaw + PI / 4.0 + PI / 2.0 * float(corner)
 		var lower := center + Vector3(cos(a) * 2.2, SEG.y / 2.0, sin(a) * 2.2)
-		terrain.create_box(lower, SEG, PI / 2.0 - a, rng, block_batch, block_body, -LEG_TILT, iron)
+		terrain.create_box(lower, SEG, PI / 2.0 - a, rng, block_batch, block_body, -LEG_TILT, iron,
+				true, ChunkBatch.BoxKind.CYLINDER)
 		var upper := center + Vector3(cos(a) * 1.2, SEG.y * 1.5 - 0.1, sin(a) * 1.2)
-		terrain.create_box(upper, Vector3(SEG.x * 0.85, SEG.y, SEG.z * 0.85), PI / 2.0 - a, rng, block_batch, block_body, -LEG_TILT * 0.55, iron)
+		terrain.create_box(upper, Vector3(SEG.x * 0.85, SEG.y, SEG.z * 0.85), PI / 2.0 - a, rng, block_batch, block_body, -LEG_TILT * 0.55, iron,
+				true, ChunkBatch.BoxKind.CYLINDER)
 
 	# First platform — the wide one you can see people standing on from the Champ
 	# de Mars, and here a genuinely reachable roof if you climb the legs.
@@ -1335,11 +1375,13 @@ static func _landmark_eiffel(terrain: Node3D, center: Vector3, rng: RandomNumber
 	for i in 3:
 		var w: float = 2.4 - float(i) * 0.55
 		var h := 3.5
-		terrain.create_box(center + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w), yaw, rng, block_batch, block_body, 0.0, iron)
+		terrain.create_box(center + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w), yaw, rng, block_batch, block_body, 0.0, iron,
+				true, ChunkBatch.BoxKind.CYLINDER)
 		y += h
 
 	# Antenna, and THE one accent: the aircraft beacon at the very top.
-	terrain.create_box(center + Vector3(0.0, y + 1.25, 0.0), Vector3(0.3, 2.5, 0.3), yaw, rng, block_batch, block_body, 0.0, iron)
+	terrain.create_box(center + Vector3(0.0, y + 1.25, 0.0), Vector3(0.3, 2.5, 0.3), yaw, rng, block_batch, block_body, 0.0, iron,
+			true, ChunkBatch.BoxKind.CYLINDER)
 	terrain._spawn_artifact_accent(parent_chunk, center + Vector3(0.0, y + 2.7, 0.0), Vector3(0.4, 0.4, 0.4), yaw, 0.0, terrain._get_camp_ember_material())
 
 	return { "radius": 6.2, "top": y + 2.5 }
@@ -1629,6 +1671,18 @@ static func _landmark_sphinx(terrain: Node3D, center: Vector3, rng: RandomNumber
 	so 7.17 <= 7.6. The body slab is 0.8 + 0.5*sqrt(9.4^2 + 3.4^2) = 0.8 + 5.00 =
 	5.80, and the headdress is 1.6 + 1.91 = 3.51.
 	NO ACCENT: the Sphinx has no light and never had one.
+
+	CARVED PARTS ARE ROUND, THE CARCASS IS NOT (bead godot-test1-y1o.17). The
+	head is a SPHERE and the chest a SPHERE (both near-cubic, 1.11 and 1.15 in
+	aspect, so both collide as the SphereShape3D they draw), and the rear haunch
+	is a CYLINDER — a flat drum whose aspect is measured in PLAN only (rule 5d),
+	so a 1.1 m thick rump is still round in collision. The BODY SLAB STAYS A
+	CUBE on purpose: at 9.4 x 2.4 x 3.4 it is 3.9 aspect, past
+	ChunkBatch.ROUND_COLLIDER_MAX_ASPECT in every orientation, so a round mesh
+	there would keep its BoxShape3D and put a metre of invisible stone at the
+	flanks of the one landmark in this registry you can walk the whole length
+	of. Rounding it honestly means splitting it into segments, which is boxes,
+	which is another bead. The paws stay cubes because a paw IS a squared block.
 	"""
 	var yaw := rng.randf_range(0.0, TAU)
 	var rot := Basis(Vector3.UP, yaw)
@@ -1638,7 +1692,8 @@ static func _landmark_sphinx(terrain: Node3D, center: Vector3, rng: RandomNumber
 	const BODY := Vector3(9.4, 2.4, 3.4)
 	terrain.create_box(center + rot * Vector3(-0.8, BODY.y / 2.0, 0.0), BODY, yaw, rng, block_batch, block_body, 0.0, stone)
 	# The rear haunch, a little higher than the back.
-	terrain.create_box(center + rot * Vector3(-3.6, BODY.y + 0.55, 0.0), Vector3(3.0, 1.1, 3.4), yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
+	terrain.create_box(center + rot * Vector3(-3.6, BODY.y + 0.55, 0.0), Vector3(3.0, 1.1, 3.4), yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03),
+			true, ChunkBatch.BoxKind.CYLINDER)
 
 	# The two forepaws. They collide — walking into a paw is the scale cue.
 	for side in [-1.0, 1.0]:
@@ -1647,9 +1702,11 @@ static func _landmark_sphinx(terrain: Node3D, center: Vector3, rng: RandomNumber
 	# Chest and head.
 	const CHEST := Vector3(2.6, 3.0, 3.0)
 	var chest_y := BODY.y + CHEST.y / 2.0
-	terrain.create_box(center + rot * Vector3(1.5, chest_y, 0.0), CHEST, yaw, rng, block_batch, block_body, 0.0, stone)
+	terrain.create_box(center + rot * Vector3(1.5, chest_y, 0.0), CHEST, yaw, rng, block_batch, block_body, 0.0, stone,
+			true, ChunkBatch.BoxKind.SPHERE)
 	var head_base := BODY.y + CHEST.y
-	terrain.create_box(center + rot * Vector3(1.5, head_base + 0.9, 0.0), Vector3(2.0, 1.8, 2.0), yaw, rng, block_batch, block_body, 0.0, stone)
+	terrain.create_box(center + rot * Vector3(1.5, head_base + 0.9, 0.0), Vector3(2.0, 1.8, 2.0), yaw, rng, block_batch, block_body, 0.0, stone,
+			true, ChunkBatch.BoxKind.SPHERE)
 	# The nemes headdress — the flared cloth that makes the head read as a pharaoh
 	# rather than as a lion's. Trim on the head's own volume.
 	terrain.create_box(center + rot * Vector3(1.5, head_base + 1.5, 0.0), Vector3(2.8, 1.4, 2.6), yaw,
@@ -2115,6 +2172,19 @@ static func _landmark_sydney_opera(terrain: Node3D, center: Vector3, rng: Random
 	The shells COLLIDE — they are the building — and only the dark glass mouth,
 	which sits inside a shell's own volume, does not.
 
+	A SLAB IS A CYLINDER AND NOT A SPHERE, and the difference is where the player
+	stands (bead godot-test1-y1o.17). Rounding the slabs is the point — six
+	rectangles stepping back is the most box-like silhouette in the registry —
+	but a SPHERE tapers to nothing at the box's FLOOR, and the shells stand on a
+	1.1 m podium a player can walk onto, so a lens-shaped sail would put a 3.4 m
+	wide invisible wall around a needle at foot height. A CYLINDER fills its box
+	top to bottom, so the only mismatch left is the four plan corners of each
+	slab, and the sail is round where you see it edge on. It is past
+	ChunkBatch.ROUND_COLLIDER_MAX_ASPECT in plan (4.0), so the collider is the
+	same BoxShape3D these slabs have always had — nothing about walking into the
+	Opera House changed. Making the FRONT silhouette a curve means splitting a
+	shell into more pieces, which is boxes and its own bead.
+
 	RADIUS ARITHMETIC (declared 8.2). The podium is the widest box, 14.0 x 6.0, so
 	0.5*sqrt(14.0^2 + 6.0^2) = 7.62. The furthest shell slab is the small group's
 	last, at sqrt(4.8^2 + 2.99^2) = 5.66 with a half-diagonal of 0.96 => 6.62; the
@@ -2146,7 +2216,7 @@ static func _landmark_sydney_opera(terrain: Node3D, center: Vector3, rng: Random
 			var d: float = (0.85 - 0.28 * t) * s
 			var z: float = float(g.z) + dir * (0.35 + t * 2.9) * s
 			terrain.create_box(center + rot * Vector3(g.x, PODIUM.y + h / 2.0, z), Vector3(w, h, d), yaw,
-					rng, block_batch, block_body, 0.0, _lm_shade(sail, rng, 0.02))
+					rng, block_batch, block_body, 0.0, _lm_shade(sail, rng, 0.02), true, ChunkBatch.BoxKind.CYLINDER)
 			tallest = maxf(tallest, PODIUM.y + h)
 
 	# The glass wall closing each shell's mouth — the dark vertical face that stops
@@ -2489,6 +2559,16 @@ static func _landmark_pont_du_gard(terrain: Node3D, center: Vector3, rng: Random
 	at 6.3 with 0.5*sqrt(1.8^2 + 2.6^2) = 1.58 => 7.88; the top deck's outermost
 	segment is at 5.6 + 1.71 = 7.31. So 8.25 <= 8.8.
 	NO ACCENT.
+
+	THE PIERS ARE CYLINDERS AND THE LINTELS ARE NOT (bead godot-test1-y1o.17).
+	Every tier's uprights become round weathered stone — a tier-1 pier is 1.44 in
+	plan, inside ChunkBatch.ROUND_COLLIDER_MAX_ASPECT, so the piers a player
+	actually walks between collide as the CylinderShape3D they draw; the tier-2
+	piers are 1.83 and keep their box, which costs nothing because they start
+	6 m up. The lintels and the channel deck stay CUBE: they are the flat courses
+	laid ACROSS the piers, and a round one is a log. What is still missing is the
+	ARCH itself — a semicircle of voussoirs is a ring of new boxes, i.e. a
+	different draw count in this builder, so it is its own bead and not a kind.
 	"""
 	const T1_H := 5.0
 	const T2_H := 4.2
@@ -2499,7 +2579,7 @@ static func _landmark_pont_du_gard(terrain: Node3D, center: Vector3, rng: Random
 	# TIER 1 — four heavy piers carrying three big arches.
 	for i in 4:
 		terrain.create_box(center + rot * Vector3((float(i) - 1.5) * 4.2, T1_H / 2.0, 0.0), Vector3(1.8, T1_H, 2.6), yaw,
-				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), true, ChunkBatch.BoxKind.CYLINDER)
 	for i in 3:
 		terrain.create_box(center + rot * Vector3((float(i) - 1.0) * 4.2, T1_H + 0.5, 0.0), Vector3(4.2, 1.0, 2.4), yaw,
 				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
@@ -2508,7 +2588,7 @@ static func _landmark_pont_du_gard(terrain: Node3D, center: Vector3, rng: Random
 	var t2_y: float = T1_H + 1.0
 	for i in 6:
 		terrain.create_box(center + rot * Vector3((float(i) - 2.5) * 2.8, t2_y + T2_H / 2.0, 0.0), Vector3(1.2, T2_H, 2.2), yaw,
-				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), true, ChunkBatch.BoxKind.CYLINDER)
 	for i in 5:
 		terrain.create_box(center + rot * Vector3((float(i) - 2.0) * 2.8, t2_y + T2_H + 0.45, 0.0), Vector3(2.8, 0.9, 2.0), yaw,
 				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
@@ -2519,7 +2599,7 @@ static func _landmark_pont_du_gard(terrain: Node3D, center: Vector3, rng: Random
 	var t3_y: float = t2_y + T2_H + 0.9
 	for i in 6:
 		terrain.create_box(center + rot * Vector3((float(i) - 2.5) * 2.24, t3_y + 0.85, 0.0), Vector3(0.75, 1.7, 1.6), yaw,
-				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false, ChunkBatch.BoxKind.CYLINDER)
 	for i in 5:
 		var dx := (float(i) - 2.0) * 2.8
 		terrain.create_box(center + rot * Vector3(dx, t3_y + 2.0, 0.0), Vector3(2.9, 0.6, 1.8), yaw,
@@ -3277,8 +3357,17 @@ static func _landmark_wartburg(terrain: Node3D, center: Vector3, rng: RandomNumb
 	a silhouette two entries could share, so the separation has to be COLOUR and
 	MASS. Neuschwanstein is white walls, blue cones and a tall slender keep — a
 	fairy tale seen from below. The Wartburg is ochre and dark timber, wide and low,
-	with a square battlemented keep and no cone anywhere on it — a fortress that
-	was a fortress. Put them side by side and nothing about them matches.
+	with a square battlemented keep — a fortress that was a fortress. Put them side
+	by side and nothing about them matches.
+
+	SO THE BERGFRIED STAYS SQUARE AND THE GATE TOWER GOES ROUND (bead
+	godot-test1-y1o.17). The keep is the half of that contrast that does the work,
+	and it keeps every cube it has: square shaft, square battlement band, four
+	square merlons. The GATE tower is the other tower a fortress like this has, and
+	it is a CYLINDER with a CONE cap — round in plan (1.08 aspect), so it collides
+	as the drum it draws, and its cap is already collide = false, which is what
+	rule 5d requires of a cone. One 1.2 m hipped cone on a gate house is not
+	Neuschwanstein's three blue spires, and the sentence above still holds.
 
 	THE TIMBER FRAMING IS THE HALF THAT DOES THE WORK. Fachwerk — dark beams laid
 	over pale infill in horizontals and diagonals — is a pattern nothing else in the
@@ -3361,9 +3450,9 @@ static func _landmark_wartburg(terrain: Node3D, center: Vector3, rng: RandomNumb
 	# The gate tower and the curtain wall closing the courtyard.
 	var gate_spot := center + rot * Vector3(4.6, 0.0, -2.2)
 	terrain.create_box(gate_spot + Vector3(0.0, ROCK + 3.0, 0.0), Vector3(2.4, 6.0, 2.6), yaw,
-			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), true, ChunkBatch.BoxKind.CYLINDER)
 	terrain.create_box(gate_spot + Vector3(0.0, ROCK + 6.6, 0.0), Vector3(2.8, 1.2, 3.0), yaw,
-			rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04), false)
+			rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04), false, ChunkBatch.BoxKind.CONE)
 	terrain.create_box(gate_spot + rot * Vector3(0.0, ROCK + 1.3, -1.4), Vector3(1.2, 2.6, 0.4), yaw,
 			rng, block_batch, block_body, 0.0, LM_OCHRE.darkened(0.78), false)
 	for wx in [-1.4, 0.6, 2.6]:
@@ -4162,6 +4251,17 @@ static func _landmark_osaka_castle(terrain: Node3D, center: Vector3, rng: Random
 	5.67 and its corner kicks reach sqrt(4.75^2 + 4.25^2) = 6.37.
 	NO ACCENT: the shachihoko are already the bright thing up there, and gold that
 	glows is a lamp.
+
+	NOTHING ON A TENSHU IS ROUND EXCEPT ITS ORNAMENT (bead godot-test1-y1o.17).
+	The plinth courses, the five tiers and the five roofs are rectangular and stay
+	CUBE — an oval Osaka Castle is not Osaka Castle, and a CONE roof would pull its
+	edge inside the four corner kicks that are standing on it and leave them
+	floating. What is round is the trim: each roof's UPSWEPT CORNER is a CONE (a
+	kicked eave tip is a point, and all twenty are collide = false, which is what
+	rule 5d asks of a cone), and each shachihoko is a SPHERE body with a CONE
+	tail — a fish, rather than two boxes. Curving the roof PLANES needs a curve
+	create_box cannot draw and more pieces than this builder emits, so it is not a
+	kind and not this bead.
 	"""
 	var yaw := rng.randf_range(0.0, TAU)
 	var rot := Basis(Vector3.UP, yaw)
@@ -4199,16 +4299,16 @@ static func _landmark_osaka_castle(terrain: Node3D, center: Vector3, rng: Random
 			for z_side in [-1.0, 1.0]:
 				terrain.create_box(center + rot * Vector3(x_side * rw / 2.0, y + 0.55, z_side * rd / 2.0),
 						Vector3(1.0, 0.4, 1.0), yaw, rng, block_batch, block_body, 0.0,
-						_lm_shade(tile, rng, 0.04).lightened(0.1), false)
+						_lm_shade(tile, rng, 0.04).lightened(0.1), false, ChunkBatch.BoxKind.CONE)
 		y += 0.45
 		ridge_w = w
 
 	# THE SHACHIHOKO: two golden fish facing each other along the top ridge, tails up.
 	for x_side in [-1.0, 1.0]:
 		terrain.create_box(center + rot * Vector3(x_side * ridge_w * 0.32, y + 0.4, 0.0), Vector3(0.85, 0.8, 0.4), yaw,
-				rng, block_batch, block_body, 0.0, gold, false)
+				rng, block_batch, block_body, 0.0, gold, false, ChunkBatch.BoxKind.SPHERE)
 		terrain.create_box(center + rot * Vector3(x_side * (ridge_w * 0.32 + 0.35), y + 0.95, 0.0), Vector3(0.3, 0.6, 0.3), yaw,
-				rng, block_batch, block_body, 0.0, gold, false)
+				rng, block_batch, block_body, 0.0, gold, false, ChunkBatch.BoxKind.CONE)
 
 	return { "radius": 8.8, "top": y + 1.25 }
 
