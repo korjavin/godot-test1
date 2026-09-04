@@ -902,6 +902,15 @@ Don't simplify any line of it back to scalar arithmetic.
 
 `biome_at()` / `is_river_at()` are the public API — pure, allocation-free, safe per tick.
 
+**There is a SPIKE behind `FIELD_ALTITUDE` (`endless_terrain.gd`) and it ships `false`.**
+Bead `godot-test1-ope.1` built a vertex-displaced heightfield with the parity contract one
+clause wider (`height_at()` / `field_height()`), Budapest, the HQ disc, every river band
+and the coin road corridor held at y = 0, and a `HeightMapShape3D` ground shape — all of it
+inert with the flag false and `alt_enabled = 0.0`, which is byte for byte the flat world
+above. **The flat world is still what ships**; the measurement, the red-check list and the
+migration order of the consumer list live in `docs/field-altitude-spike.md`, and the epic's
+consumer beads are filed from that report.
+
 ### Player
 `scripts/player_controller.gd` (a `CharacterBody3D`). Character switching on R (`switch_character`) cycles
 `CHARACTERS`, freeing and re-instancing under `$CharacterModel`.

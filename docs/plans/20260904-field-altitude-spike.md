@@ -423,10 +423,10 @@ burning the budget the measurement needs.
 
 ### Task 7: The report — web numbers and the migration order
 
-- [ ] write `docs/field-altitude-spike.md`. Sections: what was built; the road-corridor
+- [x] write `docs/field-altitude-spike.md`. Sections: what was built; the road-corridor
       answer taken and why; the parity argument; the RED-CHECK LIST table from Task 6;
       the web numbers; the migration order
-- [ ] **the migration order**, the epic's consumer list, each with a size
+- [x] **the migration order**, the epic's consumer list, each with a size
       (small/medium/huge), the self-check that proves it, and the ORDER, dependencies
       first. Suggested spine, to be revised by what the reds actually say:
       1. ground mesh + collision (the scheme itself) — **huge** — `chunk_stream_selfcheck`
@@ -439,12 +439,32 @@ burning the budget the measurement needs.
       8. wading (`is_on_floor()` + XZ) — **small** — `wade_selfcheck`
       9. mountain impassability — **medium** — `enemy_spawn_selfcheck`, a new check
       10. the minimap's flat assumptions — **small** — `minimap_selfcheck`
-- [ ] record the deliberate NON-consumers and why: Budapest, the tower shell and
+- [x] record the deliberate NON-consumers and why: Budapest, the tower shell and
       interior, the crowd, the traffic and fauna — all inside forced-flat zones or
       manager-parented, so they migrate by NOT migrating
-- [ ] add a `CLAUDE.md` note — ONE short paragraph under "Biomes are decoration over a
+- [x] add a `CLAUDE.md` note — ONE short paragraph under "Biomes are decoration over a
       flat world" saying the flag exists, defaults false, and points at the report.
       Do not rewrite the section: the flat world is still what ships
+
+  NOTE (Task 7): the report is written in the plan's order — what was built, the
+  road-corridor answer, the parity argument, the red-check list (Task 6's table,
+  unchanged), the numbers, the migration order, the deliberate non-consumers. The
+  migration spine was REVISED against what the reds actually said: the suggested
+  order's items 1 and 2 stand, but `create_box` block bases move UP to 3 (four of
+  the consumers below settle onto a block, so a floating block poisons their
+  measurements), and consumer 9 gains "a NEW check, there is none today". Sizes are
+  otherwise the plan's.
+
+  NOTE (Task 7, web numbers): the F3 pair is PENDING and is written into the report
+  as an empty table plus the exact reproducible procedure. F3 is an on-screen
+  overlay in a browser and there is no headless path to it — the plan files it
+  under Post-Completion for that reason. What IS in the report is the
+  headless-measurable half (the 2,610 us/chunk heightmap, the ~23 ms synchronous
+  ring, the slope bounds) and the structurally-known half (draw calls, node count
+  and vertex count all unchanged; three `field_height()` evaluations per vertex,
+  ~42,483 per frame at the web build's 49-chunk residency). Budapest (F2) and the
+  HQ (F8) rows are named as CONTROLS: both are forced-flat, so a frame-time
+  difference there that the open field does not show is a mask bug.
 
 ### Task 8: Verify acceptance
 
