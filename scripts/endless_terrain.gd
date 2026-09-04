@@ -11673,29 +11673,33 @@ func _field_bridge_section_dry(k: int) -> bool:
 	return _field_bridge_dry_across(st.center, Vector2(cos(heading), sin(heading)))
 
 
-func _centreline_wet(from: Vector2, to: Vector2) -> bool:
-	"""
-	Is any point of this centreline segment in a river band? The length below
-	compared to zero, so "is it wet" and "how wet" are one measurement.
-	"""
-	return _centreline_wet_metres(from, to) > 0.0
-
-
 func _centreline_wet_metres(from: Vector2, to: Vector2) -> float:
 	"""
 	How many metres of this centreline segment are in a river band, sampled at
-	FIELD_BRIDGE_PROBE_STEP. Both ends included, so a zero-length segment is one
-	sample and answers either 0 or one step.
+	FIELD_BRIDGE_PROBE_STEP.
+
+	EACH SAMPLE OWNS THE INTERVAL AHEAD OF IT, never the interval AND the
+	end-point: charging `steps + 1` samples a full step each reports `span +
+	step` for a fully wet segment, and summed over a crossing's stations that
+	overcounted seed 19's 115.8 m of water as 139.7 m and refused the bridge as a
+	lake under a 120 m cap. So a fully wet segment contributes exactly `span`.
+
+	The far end-point belongs to the NEXT segment's first sample — consecutive
+	station windows tile the centreline (see _field_bridge_wet_metres), so no
+	metre is counted twice and none is missed.
 
 	The one home of "the road is in the water HERE", shared by the station walk,
 	the approach corridor's and the span cap.
 	"""
 	var span := from.distance_to(to)
 	var steps := int(span / FIELD_BRIDGE_PROBE_STEP)
-	var step_len: float = span / float(steps) if steps > 0 else FIELD_BRIDGE_PROBE_STEP
+	if steps < 1:
+		# Shorter than one probe step: one sample, and it owns what there is.
+		return span if is_river_at(Vector3(from.x, 0.0, from.y)) else 0.0
+	var step_len: float = span / float(steps)
 	var wet := 0.0
-	for i in range(steps + 1):
-		var at: Vector2 = from.lerp(to, 0.0 if steps == 0 else float(i) / float(steps))
+	for i in range(steps):
+		var at: Vector2 = from.lerp(to, float(i) / float(steps))
 		if is_river_at(Vector3(at.x, 0.0, at.y)):
 			wet += step_len
 	return wet

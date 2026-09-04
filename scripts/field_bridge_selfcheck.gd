@@ -56,7 +56,7 @@ const PLAYER_SCENE: String = "res://scenes/player.tscn"
 ## so the crossing straddles the handoff between the road and the corridor.
 const CROSSING_SEEDS: Array[int] = [11, 2027, 90210, 777001, 424243, 8, 131313,
 		606060, 5150, 99991, 31337, 271828, 72, 4, 26, 12, 63, 115,
-		218, 203, 224, 202, 206, 409, 535, 532, 404, 296]
+		218, 203, 224, 202, 206, 409, 535, 532, 404, 296, 19]
 
 ## The walk must actually MEET rivers, or check 1 is a green lie about a road
 ## that never got its feet wet. Measured today: 40+ crossings over the 12 seeds.
@@ -319,6 +319,7 @@ func _check_every_crossing_is_bridged() -> void:
 		var prev := Vector2.INF
 		var water := 0.0
 		var wet_k := 0
+		var wet_pts := PackedVector2Array()
 		for k in range(1, terminal + 2):
 			if k > terrain.road_k_max:
 				break
@@ -333,11 +334,17 @@ func _check_every_crossing_is_bridged() -> void:
 					wet_from = at
 					water = 0.0
 					wet_k = k
+					wet_pts = PackedVector2Array([at])
 				elif wet:
 					water += at.distance_to(prev)
+					wet_pts.append(at)
 				elif wet_from != Vector2.INF:
 					crossings += 1
-					var mid: Vector2 = (wet_from + prev) * 0.5
+					# THE MIDDLE SAMPLE, not the average of the two ends: the
+					# road bends, and the midpoint of a chord across a bend is
+					# off the deck entirely (seed 19 reported an unbridged
+					# crossing whose every station was covered).
+					var mid: Vector2 = wet_pts[wet_pts.size() / 2]
 					if water > TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN:
 						lakes += 1
 					elif terrain.field_bridge_surface_y(
@@ -369,17 +376,41 @@ func _check_every_crossing_is_bridged() -> void:
 			var row: Dictionary = row_v
 			var k_a: int = int(row["k0"])
 			var k_b: int = int(row["k1"])
+			# The SAME interval the shipped windows tile — from the midpoint
+			# behind the entry station to the midpoint past the far one — walked
+			# at half a metre, half the code's pitch, integrating the interval
+			# ahead of each sample (a fully wet stretch must contribute its own
+			# length, no more: charging the end-point too reported 139.7 m for
+			# seed 19's 115.8 m of water and refused the bridge as a lake).
+			var line := PackedVector2Array()
+			line.append((terrain._road_station(k_a - 1).center
+					+ terrain._road_station(k_a).center) * 0.5)
+			for kk in range(k_a, k_b + 1):
+				line.append(terrain._road_station(kk).center)
+			line.append((terrain._road_station(k_b).center
+					+ terrain._road_station(k_b + 1).center) * 0.5)
 			var spanned := 0.0
-			var prev_p: Vector2 = terrain._road_station(k_a).center
-			var probe: Vector2 = prev_p
-			for kk in range(k_a, k_b + 2):
-				var to_p: Vector2 = terrain._road_station(kk).center
-				var steps: int = maxi(1, int(prev_p.distance_to(to_p) * 2.0))
-				for i in range(steps + 1):
-					probe = prev_p.lerp(to_p, float(i) / float(steps))
+			for li in range(line.size() - 1):
+				var seg_a: Vector2 = line[li]
+				var seg_b: Vector2 = line[li + 1]
+				var steps: int = maxi(1, int(seg_a.distance_to(seg_b) * 2.0))
+				var step_len: float = seg_a.distance_to(seg_b) / float(steps)
+				for i in range(steps):
+					var probe: Vector2 = seg_a.lerp(seg_b, float(i) / float(steps))
 					if terrain.is_river_at(Vector3(probe.x, 0.0, probe.y)):
-						spanned += prev_p.distance_to(to_p) / float(steps)
-				prev_p = to_p
+						spanned += step_len
+			# ...and the SHIPPED count must agree with it. The cap is only as
+			# good as its arithmetic, and nothing else in the file compares the
+			# two.
+			var counted := 0.0
+			for kk in range(k_a, k_b + 1):
+				counted += terrain._field_bridge_wet_metres(kk)
+			if absf(counted - spanned) > TERRAIN_SCRIPT.FIELD_BRIDGE_PROBE_STEP + 1.0:
+				_fail("seed %d: the bridge at station %d spans %.1f m of water"
+						% [run_seed, k_a, spanned] + " measured at half a metre,"
+						+ " but the shipped cap counted %.1f — the two are not"
+								% counted + " measuring the same river")
+				break
 			if spanned > TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN + 1.0:
 				_fail("seed %d: the bridge anchored at station %d spans %.1f m of"
 						% [run_seed, k_a, spanned] + " wet centreline, past the"
@@ -1544,20 +1575,25 @@ func _check_the_approach_corridor_is_bridged() -> void:
 		var run_start := Vector2.INF
 		var prev := Vector2.INF
 		var walked := 0.0
+		var wet_line := PackedVector2Array()
 		while x <= east_x:
 			var p: Vector2 = BudapestPlan.road_approach_point(terminal, x)
 			var wet: bool = terrain.is_river_at(Vector3(p.x, 0.0, p.y))
 			if wet and run_start == Vector2.INF:
 				run_start = p
 				walked = 0.0
+				wet_line = PackedVector2Array([p])
 			elif wet:
 				walked += p.distance_to(prev)
+				wet_line.append(p)
 			elif run_start != Vector2.INF:
 				# A stretch just ended — judge it.
 				wet_stretches += 1
 				if run_seed == APPROACH_SUBJECT_SEED:
 					subject_wet = true
-				var mid := (run_start + prev) * 0.5
+				# The middle SAMPLE — check 1's reason: a chord's midpoint across
+				# a bend is not on the road.
+				var mid: Vector2 = wet_line[wet_line.size() / 2]
 				if walked > TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN:
 					lakes += 1
 				elif terrain.field_bridge_surface_y(
