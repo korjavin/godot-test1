@@ -98,7 +98,11 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            footprints, bodies and boxes byte for byte; coins
 #                            move in Y only) — and check 7, a REAL player.tscn
 #                            walked across a REAL deck: dry every metre, wet a
-#                            metre off the parapet, wet again with the deck gone
+#                            metre off the parapet, wet again with the deck gone.
+#                            Check 9 walks the AUTHORED APPROACH CORRIDOR (T to
+#                            the gate) metre by metre and asserts every wet
+#                            stretch is bridged; check 10 samples the wedge arc
+#                            at all 203 turning joints of all 39 bridges
 #   minimap_selfcheck        the map actually read the world
 #   city_map_selfcheck       the Budapest map panel (B): the key is free against
 #                            the input map AND every other panel's constant, the
@@ -1027,17 +1031,29 @@ makes a STEP, which `CharacterBody3D` cannot climb at all; and **road coins on a
 it** (`_settle_coin_y` still runs first, unlike the city's deck line, because a road boss
 stands on a river crossing and its footprint must still refuse a coin outright).
 
-Three of those rules were WRONG ONCE, and the corrections are the interesting part.
+**AND THE CORRIDOR IS BRIDGED TOO.** The road's consumers stop at `T`; the player does
+not. `approach_bridges()` samples `BudapestPlan.road_approach_point()` from `T` to the
+Danube's west bank at the road's own pitch and walks it with the same crossing rule,
+because the city's river override only starts at the rect's west edge — so the procedural
+river is alive under the authored corridor, and on seed 4 it crosses one at x ≈ 1495 with
+nothing over it. Same decks, same `_field_bridge_row_from()`, and the approach coin line
+rides them like the road's.
+
+Four of those rules were WRONG ONCE, and the corrections are the interesting part.
 **`_field_bridge_slabs()` is the single description of the stone** — the builder that emits
 it and the surface query that answers "can I stand here" both read it, because they
 disagreed: the query was a point-to-POLYLINE distance, i.e. a CAPSULE, and at a joint on
 the outside of a turn it accepted points no rectangle covered, so a road coin stood at deck
 height over open air. **The span cap counts metres WALKED**, never the chord back to the
-entry station, which a curved wet run makes shorter than the road really is. And **an
-abutment is probed across its WIDTH** (`_field_bridge_foot`): a 16 m foot slab can have a
-corner in the water while its centre is dry — which is a flank you keep wading up — so the
-foot is pushed further out until all of it is on the bank, free, because a longer run at a
-fixed rise is only a gentler ramp.
+entry station, which a curved wet run makes shorter than the road really is. **A
+cross-section is measured ACROSS THE WHOLE WIDTH** — `_field_bridge_dry_across()`, one
+primitive for "is the road in the water here" and "is this abutment on the bank", because
+three lanes passed a foot with a wet patch half a metre inside one edge; and when the push
+budget runs out the crossing is REFUSED (the lake rule), never given a known-wet foot.
+Finally **the slab stretch at a joint is DERIVED, `half * tan(turn / 2)`**: the road's
+recurrence restores the heading toward +X as well as turning it, so a station can turn
+further than `road_turn_rate_deg` alone allows (22.4° measured), and a fixed stretch left a
+wedge of open air at the outer parapet.
 
 ### Player
 `scripts/player_controller.gd` (a `CharacterBody3D`). Character switching on R (`switch_character`) cycles

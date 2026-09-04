@@ -52,7 +52,7 @@ const PLAYER_SCENE: String = "res://scenes/player.tscn"
 ## is only 79.2 m, so it is the world where "the cap is metres walked" and "the
 ## cap is the straight line across" give different answers — see check 1.
 const CROSSING_SEEDS: Array[int] = [11, 2027, 90210, 777001, 424243, 8, 131313,
-		606060, 5150, 99991, 31337, 271828, 72]
+		606060, 5150, 99991, 31337, 271828, 72, 4, 26, 12]
 
 ## The walk must actually MEET rivers, or check 1 is a green lie about a road
 ## that never got its feet wet. Measured today: 40+ crossings over the 12 seeds.
@@ -63,6 +63,11 @@ const EPS: float = 0.01
 
 ## The deck's walking height, read from the file that owns it.
 const FIELD_TOP: float = TERRAIN_SCRIPT.FIELD_BRIDGE_TOP
+
+## How finely check 4 walks an abutment's width. Deliberately FINER than the
+## terrain's own FIELD_BRIDGE_PROBE_STEP: a check that samples exactly where the
+## code samples can only ever agree with it.
+const FOOT_LANE_STEP: float = 0.25
 
 ## Physics frames allowed for the player to fall onto a deck and settle.
 const SETTLE_FRAMES: int = 40
@@ -133,6 +138,8 @@ func _run() -> void:
 	_check_deck_fits_every_clearance()
 	_check_ab_against_the_feature_off()
 	_check_deck_coins_stand_on_stone()
+	_check_the_approach_corridor_is_bridged()
+	_check_no_wedge_at_any_joint()
 	await _check_the_crossing_is_dry_underfoot()
 	_report()
 
@@ -595,6 +602,7 @@ func _check_abutments_are_dry() -> void:
 	var measured := 0
 	var wet_controls := 0
 	var pushes := 0
+	var refusals := 0
 	var longest := 0.0
 	for run_seed in CROSSING_SEEDS:
 		var terrain := _terrain(run_seed)
@@ -607,17 +615,50 @@ func _check_abutments_are_dry() -> void:
 				var deck_end: Vector2 = poly[1] if end == 0 else poly[poly.size() - 2]
 				var foot: Vector2 = poly[end]
 				var inward: Vector2 = (deck_end - foot).normalized()
-				var perp := Vector2(-inward.y, inward.x) * half_w
+				var perp := Vector2(-inward.y, inward.x)
 				var ramp := foot.distance_to(deck_end)
 				longest = maxf(longest, ramp)
 				if ramp > _base_run() + EPS:
 					pushes += 1
-				for probe in [foot, foot + perp, foot - perp]:
-					if terrain.is_river_at(Vector3(probe.x, 0.0, probe.y)):
-						_fail("seed %d: a field bridge's abutment reaches"
-								% run_seed + " (%.1f, %.1f), which is IN the"
-								% [probe.x, probe.y] + " river — the whole WIDTH"
-								+ " of a foot has to be on the bank")
+				# ACROSS THE WHOLE WIDTH, at a step of its own that is FINER than
+				# the shipped probe's: three lanes passed a foot with a wet patch
+				# 0.5 m inside one edge (seed 12, anchor 122), and a check that
+				# samples exactly where the code samples cannot see that at all.
+				var lane := -half_w
+				while lane <= half_w + FOOT_LANE_STEP * 0.5:
+					var probe: Vector2 = foot + perp * minf(lane, half_w)
+					lane += FOOT_LANE_STEP
+					if not terrain.is_river_at(Vector3(probe.x, 0.0, probe.y)):
+						continue
+					_fail("seed %d: a field bridge's abutment reaches"
+							% run_seed + " (%.1f, %.1f), which is IN the"
+							% [probe.x, probe.y] + " river — the whole WIDTH"
+							+ " of a foot has to be on the bank")
+					break
+			# 4b — THE FUNCTION'S OWN INVARIANT: `_field_bridge_foot` may return a
+			# dry foot or refuse outright, and nothing else. Driven at the worst
+			# possible input — a WET station, aimed further INTO the water along
+			# the road — because that is where the push budget runs out, and
+			# where the rejected implementation returned the last point it tried
+			# and planted a 16 m abutment slab mid-river.
+			for k in range(int(row["k0"]), int(row["k1"]) + 1):
+				if int(row["k0"]) < 0:
+					break   # the approach corridor has no station indices
+				var st: Dictionary = terrain._road_station(k)
+				var heading: float = st.heading
+				var dir := Vector2(cos(heading), sin(heading))
+				var got: Vector2 = terrain._field_bridge_foot(st.center, dir)
+				if got == Vector2.INF:
+					refusals += 1
+					continue
+				if not terrain._field_bridge_dry_across(got, dir):
+					_fail("seed %d: _field_bridge_foot answered (%.1f, %.1f) for"
+							% [run_seed, got.x, got.y] + " a ramp aimed into the"
+							+ " water at station %d, and that foot is WET across"
+							% k + " its width — it must push to dry ground or"
+							+ " refuse the crossing, never plant a known-wet"
+							+ " abutment")
+
 			# ...and the control: the middle of the span is water.
 			var samples := _walk(row, 1.0)
 			var mp: Vector2 = samples[int(samples.size() / 2)]["pos"]
@@ -628,17 +669,19 @@ func _check_abutments_are_dry() -> void:
 	print("field bridges: %d bridges measured for dry abutments — %d feet needed"
 			% [measured, pushes] + " a push, longest ramp %.1f m (base %.1f, push"
 					% [longest, _base_run()]
-			+ " budget %.0f); %d span water at mid-point"
-					% [TERRAIN_SCRIPT.FIELD_BRIDGE_FOOT_PUSH_MAX, wet_controls])
+			+ " budget %.0f); %d span water at mid-point; %d ramps aimed into the"
+					% [TERRAIN_SCRIPT.FIELD_BRIDGE_FOOT_PUSH_MAX, wet_controls,
+							refusals]
+			+ " water were REFUSED rather than given a wet foot")
 	if measured < 1:
 		_fail("check 4 measured no bridge at all")
 	if wet_controls < 1:
 		_fail("check 4's wet control never fired: not one bridge's mid-point is"
 				+ " in a river, so 'the feet are dry' is true of a dry world")
-	if pushes < 1:
-		_fail("not one abutment in %d bridges needed pushing back, so the corner"
-				% measured + " probe in _field_bridge_foot has never moved a foot"
-				+ " — the fix it is the assertion for is untested here")
+	if refusals < 1:
+		_fail("check 4b never drove _field_bridge_foot past its push budget, so"
+				+ " 'it refuses rather than planting a wet foot' is a claim about"
+				+ " a branch this check never reached")
 	Sentinel.done("abutments_are_dry")
 
 
@@ -1254,3 +1297,167 @@ func _capsule_hit(poly: PackedVector2Array, p: Vector2, half: float) -> bool:
 		if p.distance_to(a + seg * t) <= half:
 			return true
 	return false
+
+
+# ============================================================================
+# CHECK 9 — the APPROACH CORRIDOR is bridged too
+# ============================================================================
+
+## The seed the corridor bug was found on: its approach line crosses procedural
+## water around x = 1495, between the terminal station and the gate.
+const APPROACH_SUBJECT_SEED: int = 4
+
+## How finely the corridor is walked here. Finer than the shipped scan's station
+## pitch, so a crossing narrower than one station cannot hide between samples.
+const APPROACH_WALK_STEP: float = 1.0
+
+
+func _check_the_approach_corridor_is_bridged() -> void:
+	"""
+	THE SOFTLOCK THE STATION WALK CANNOT SEE (Codex re-review of PR #232). The
+	road's consumers stop at the terminal station `T`; the PLAYER does not. From
+	`T` the route is `BudapestPlan.road_approach_point()` — ~150 m of authored
+	corridor with a coin line along it — and the city's river override only starts
+	at the rect's west edge, so the procedural river is alive underneath. On seed 4
+	the corridor crosses one at about x = 1495 and nothing bridged it.
+
+	So: walk the corridor INDEPENDENTLY, metre by metre, from `T` to the city rect,
+	and for every stretch of water assert the shipped `approach_bridges()` really
+	covers it — through `field_bridge_surface_y`, the same query a coin and a
+	player's feet get. A stretch longer than the span cap is the documented lake
+	and is counted instead.
+
+	NON-VACUITY: seed 4 must be one of the seeds that has a wet corridor at all,
+	or this is a check about a dry walk.
+	"""
+	var wet_stretches := 0
+	var bridged := 0
+	var lakes := 0
+	var subject_wet := false
+	var worst := ""
+
+	for run_seed in CROSSING_SEEDS:
+		var terrain := _terrain(run_seed)
+		terrain._road_extend_to_x(0.0, TERRAIN_SCRIPT.ROAD_TERMINAL_X)
+		var terminal: Vector2 = terrain._road_station(terrain._road_terminal_k()).center
+		var east_x: float = minf(terrain._approach_coin_east_end(),
+				BudapestPlan.BUDAPEST_MIN.x)
+		# Build the corridor's bridges once (the shipped scan), then walk.
+		terrain.approach_bridges()
+		var x: float = TERRAIN_SCRIPT.ROAD_TERMINAL_X
+		var run_start := Vector2.INF
+		var prev := Vector2.INF
+		var walked := 0.0
+		while x <= east_x:
+			var p: Vector2 = BudapestPlan.road_approach_point(terminal, x)
+			var wet: bool = terrain.is_river_at(Vector3(p.x, 0.0, p.y))
+			if wet and run_start == Vector2.INF:
+				run_start = p
+				walked = 0.0
+			elif wet:
+				walked += p.distance_to(prev)
+			elif run_start != Vector2.INF:
+				# A stretch just ended — judge it.
+				wet_stretches += 1
+				if run_seed == APPROACH_SUBJECT_SEED:
+					subject_wet = true
+				var mid := (run_start + prev) * 0.5
+				if walked > TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN:
+					lakes += 1
+				elif terrain.field_bridge_surface_y(
+						Vector3(mid.x, 0.0, mid.y)) > -INF:
+					bridged += 1
+				else:
+					if worst == "":
+						worst = ("seed %d: the APPROACH CORRIDOR crosses %.1f m"
+								% [run_seed, walked] + " of water at (%.1f, %.1f)"
+								% [mid.x, mid.y] + " with NO bridge — between the"
+								+ " terminal station and the gate, where a player"
+								+ " cannot go round")
+					_fail(worst)
+				run_start = Vector2.INF
+			prev = p
+			x += APPROACH_WALK_STEP
+		terrain.free()
+
+	print("field bridges: the approach corridor crosses water %d time(s) over %d"
+			% [wet_stretches, CROSSING_SEEDS.size()] + " seeds — %d bridged, %d"
+					% [bridged, lakes] + " over the span cap")
+	if not subject_wet:
+		_fail("seed %d's approach corridor is dry, so check 9 has lost the world"
+				% APPROACH_SUBJECT_SEED + " the corridor bug was found in")
+	if bridged < 1:
+		_fail("check 9 never found a BRIDGED corridor crossing — the corridor"
+				+ " scan builds nothing, or the walk is not measuring it")
+	Sentinel.done("approach_corridor_is_bridged")
+
+
+# ============================================================================
+# CHECK 10 — no wedge of open air at any joint, on any bridge, on any seed
+# ============================================================================
+
+func _check_no_wedge_at_any_joint() -> void:
+	"""
+	A DECK IS SLABS, AND A TURN OPENS A GAP BETWEEN TWO OF THEM. Two rectangles
+	meeting at an angle leave a triangle of open air at the outer parapet whose
+	depth is half * tan(turn / 2). The shipped stretch used to be a fixed 1.5 m
+	chosen against `road_turn_rate_deg` — but the road's recurrence ALSO restores
+	the heading toward +X, so a station can turn further than the noise alone
+	allows (seed 26, anchor 74: a 22.41 degree joint wanting 1.585 m).
+
+	So the wedge is sampled where it opens: an arc at the deck's own half-width
+	around every joint, on the OUTSIDE of the turn, on every bridge of every seed.
+	It is measured against the boxes the CHUNKS build, not against the plan.
+	"""
+	var joints := 0
+	var gaps := 0
+	var worst_turn := 0.0
+	var worst := ""
+
+	for run_seed in CROSSING_SEEDS:
+		var terrain := _terrain(run_seed)
+		for row_v: Variant in _all_bridges(terrain):
+			var row: Dictionary = row_v
+			var poly: PackedVector2Array = row["poly"]
+			var half: float = row["half"]
+			var boxes := _chunk_bridge_boxes(terrain, poly, 1)
+			for i in range(1, poly.size() - 1):
+				var a: Vector2 = (poly[i] - poly[i - 1]).normalized()
+				var b: Vector2 = (poly[i + 1] - poly[i]).normalized()
+				var turn: float = absf(a.angle_to(b))
+				if turn <= 0.0001:
+					continue
+				joints += 1
+				worst_turn = maxf(worst_turn, turn)
+				# The wedge opens on the OUTSIDE of the turn: to the left when
+				# the road turns right, and the other way round.
+				var side: float = -signf(a.cross(b))
+				# Sample the arc between the two slabs' outer edges.
+				for step in 9:
+					var t := float(step) / 8.0
+					var ang: float = a.angle() + side * (PI * 0.5) \
+							+ (b.angle() - a.angle()) * t
+					var probe := poly[i] + Vector2(cos(ang), sin(ang)) * (half - 0.02)
+					if _covered(boxes, Vector3(probe.x, FIELD_TOP - 0.05, probe.y)):
+						continue
+					gaps += 1
+					if worst == "":
+						worst = ("seed %d: a %.2f degree joint at (%.1f, %.1f)"
+								% [run_seed, rad_to_deg(turn), poly[i].x, poly[i].y]
+								+ " leaves open air at the outer parapet"
+								+ " ((%.2f, %.2f) has no stone under the deck)"
+										% [probe.x, probe.y])
+					break
+		terrain.free()
+
+	print("field bridges: %d turning joints over %d seeds, worst %.2f degrees"
+			% [joints, CROSSING_SEEDS.size(), rad_to_deg(worst_turn)]
+			+ " (a fixed 1.5 m stretch covers %.2f); %d with a wedge of open air"
+					% [rad_to_deg(2.0 * atan(1.5 / 8.0)), gaps])
+	if joints < 1:
+		_fail("check 10 found no turning joint at all — every bridge in thirteen"
+				+ " worlds is straight, so the wedge it measures cannot exist")
+	if gaps > 0:
+		_fail("%d joint(s) leave a wedge of open air at the parapet — the slab"
+				% gaps + " stretch is not covering the turn. First: %s" % worst)
+	Sentinel.done("no_wedge_at_any_joint")
