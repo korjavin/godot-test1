@@ -58,6 +58,9 @@ const MIN_CROSSINGS: int = 8
 ## Metre / m-per-second slop. Everything measured here is decimetres or bigger.
 const EPS: float = 0.01
 
+## The deck's walking height, read from the file that owns it.
+const FIELD_TOP: float = TERRAIN_SCRIPT.FIELD_BRIDGE_TOP
+
 ## Physics frames allowed for the player to fall onto a deck and settle.
 const SETTLE_FRAMES: int = 40
 
@@ -114,12 +117,19 @@ func _frames(n: int) -> void:
 
 
 func _run() -> void:
+	# ONE FRAME FIRST, and it is not a nicety: a node added to `root` from
+	# _initialize() is not `is_inside_tree()` until the tree has ticked once, and
+	# a chunk harness that generates a TREASURE CHEST hands its `setup()` a node
+	# with no tree — `global_position` returns identity and the group lookup
+	# errors out. Every check below builds real chunks.
+	await _frames(1)
 	_check_every_crossing_is_bridged()
 	_check_the_stone_covers_the_walk()
 	_check_slope()
 	_check_abutments_are_dry()
 	_check_deck_fits_every_clearance()
 	_check_ab_against_the_feature_off()
+	_check_deck_coins_stand_on_stone()
 	await _check_the_crossing_is_dry_underfoot()
 	_report()
 
@@ -219,7 +229,10 @@ func _covered(boxes: Array, point: Vector3) -> bool:
 		var box: Dictionary = box_v
 		var xf: Transform3D = box["xform"]
 		var local: Vector3 = xf.affine_inverse() * point
-		if absf(local.x) <= 0.5 and absf(local.y) <= 0.5 and absf(local.z) <= 0.5:
+		# 0.5 is the unit cube's face; the slop is the terrain's EDGE_EPS in the
+		# box's own local units, so "on the face" reads the same here as it does
+		# in the shipped query.
+		if absf(local.x) <= 0.502 and absf(local.y) <= 0.502 and absf(local.z) <= 0.502:
 			return true
 	return false
 
@@ -273,6 +286,7 @@ func _check_every_crossing_is_bridged() -> void:
 	var crossings := 0
 	var bridged := 0
 	var lakes := 0
+	var curved := 0
 	var worst := ""
 
 	for run_seed in CROSSING_SEEDS:
@@ -295,6 +309,23 @@ func _check_every_crossing_is_bridged() -> void:
 			crossings += 1
 			if not row.is_empty():
 				bridged += 1
+				# THE CAP IS METRES WALKED, not the chord back to the entry —
+				# a curved wet run is longer than the straight line across it,
+				# and the chord let a crossing over the cap through (seed 72).
+				var span_walked := 0.0
+				var span_chord: float = terrain._road_station(int(row["k0"])).center \
+						.distance_to(terrain._road_station(int(row["k1"])).center)
+				for j in range(int(row["k0"]), int(row["k1"])):
+					span_walked += terrain._road_station(j + 1).center.distance_to(
+							terrain._road_station(j).center)
+				if span_walked > TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN + EPS:
+					_fail("seed %d station %d is bridged over %.1f m of WALKED"
+							% [run_seed, k, span_walked] + " water, past the"
+							+ " %.0f m cap (its chord is only %.1f m — the cap"
+							% [TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN, span_chord]
+							+ " must measure the road, not the straight line)")
+				if span_walked > span_chord + 0.5:
+					curved += 1
 				continue
 			# No bridge: the only sanctioned reason is the span cap. Measure the
 			# water the road walks from here and hold the refusal to it.
@@ -322,8 +353,9 @@ func _check_every_crossing_is_bridged() -> void:
 
 	print("field bridges: %d road river crossings over %d seeds — %d bridged, %d"
 			% [crossings, CROSSING_SEEDS.size(), bridged, lakes]
-			+ " over the %.0f m span cap (wade, by design)"
-			% TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN)
+			+ " over the %.0f m span cap (wade, by design); %d of the bridged"
+					% [TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN, curved]
+			+ " really curve (walked > chord)")
 
 	if crossings < MIN_CROSSINGS:
 		_fail("check 1 found only %d road river crossings over %d seeds (wanted"
@@ -332,6 +364,10 @@ func _check_every_crossing_is_bridged() -> void:
 	if bridged < 1:
 		_fail("check 1 bridged NOTHING — every crossing it found was written off"
 				+ " as a lake, so no geometry was ever built")
+	if curved < 1:
+		_fail("not one bridged crossing is CURVED (walked > chord) over %d seeds"
+				% CROSSING_SEEDS.size() + " — the walked-vs-chord assertion above"
+				+ " is true of a straight road and measures nothing")
 	Sentinel.done("every_crossing_is_bridged")
 
 
@@ -394,7 +430,10 @@ func _check_the_stone_covers_the_walk() -> void:
 
 	var holes := 0
 	var worst := ""
-	var lanes: Array[float] = [0.0, half - 1.0, -(half - 1.0)]
+	# THE FULL WIDTH, not a metre inside it: the parapet lane is where a foot
+	# corner in the water was found (check 4), and a coverage sweep that stops a
+	# metre short cannot see a slab that is narrower than the plan says.
+	var lanes: Array[float] = [0.0, half - 0.1, -(half - 0.1)]
 	for sample_v: Variant in _walk(row, 1.0):
 		var sample: Dictionary = sample_v
 		var p: Vector2 = sample["pos"]
@@ -531,47 +570,92 @@ func _max_slope(profile: Array) -> Vector2:
 func _check_abutments_are_dry() -> void:
 	"""
 	A ramp whose foot is in the water is a bridge you have to wade to, which is
-	the whole feature undone. Both feet are asked of the shipped `is_river_at` —
-	the XZ band, deliberately, because this is a question about the GROUND and
-	not about a body.
+	the whole feature undone. Both feet of EVERY bridge on every seed are asked of
+	the shipped `is_river_at` — the XZ band, deliberately, because this is a
+	question about the GROUND and not about a body.
 
-	Measured over every seed that has a bridge rather than over one, because the
-	dry margin is FIELD_BRIDGE_DRY_STATIONS of road and the road's step is a
-	tunable. NEGATIVE CONTROL: the same predicate at mid-span must answer WET, or
-	the check would pass on a world with no rivers in it at all.
+	BOTH CORNERS, NOT THE CENTRELINE POINT, and that is the assertion the fix is
+	measured by: an abutment is a 16 m wide slab at y = 0, so a corner of it can
+	stand in the water while its centre is dry — and a player walking up that
+	flank keeps wading until the ramp has risen past WADE_SURFACE_MAX (found on
+	seed 12, station 116). `_field_bridge_foot` pushes the foot back until all
+	three probes are dry; this walks every foot in twelve worlds and asks.
+
+	TWO CONTROLS. The mid-span must be WET, or "the feet are dry" is true of a
+	world with no rivers in it; and the push must have FIRED somewhere, or the
+	corner probe is decoration that never moved a foot.
 	"""
 	var measured := 0
 	var wet_controls := 0
+	var pushes := 0
+	var longest := 0.0
 	for run_seed in CROSSING_SEEDS:
 		var terrain := _terrain(run_seed)
-		var row := _first_bridge(terrain, run_seed)
-		if row.is_empty():
-			terrain.free()
-			continue
-		measured += 1
-		var poly: PackedVector2Array = row["poly"]
-		for foot in [poly[0], poly[poly.size() - 1]]:
-			if terrain.is_river_at(Vector3(foot.x, 0.0, foot.y)):
-				_fail("seed %d: a field bridge's ramp foot at (%.1f, %.1f) stands"
-						% [run_seed, foot.x, foot.y] + " IN the river — the"
-						+ " abutment has to be on the bank")
-		# ...and the control: the middle of the span is water.
-		var along: PackedFloat32Array = row["along"]
-		var samples := _walk(row, 1.0)
-		var mid: Dictionary = samples[int(samples.size() / 2)]
-		var mp: Vector2 = mid["pos"]
-		if terrain.is_river_at(Vector3(mp.x, 0.0, mp.y)):
-			wet_controls += 1
+		for row_v: Variant in _all_bridges(terrain):
+			var row: Dictionary = row_v
+			measured += 1
+			var poly: PackedVector2Array = row["poly"]
+			var half_w: float = row["half"]
+			for end in [0, poly.size() - 1]:
+				var deck_end: Vector2 = poly[1] if end == 0 else poly[poly.size() - 2]
+				var foot: Vector2 = poly[end]
+				var inward: Vector2 = (deck_end - foot).normalized()
+				var perp := Vector2(-inward.y, inward.x) * half_w
+				var ramp := foot.distance_to(deck_end)
+				longest = maxf(longest, ramp)
+				if ramp > _base_run() + EPS:
+					pushes += 1
+				for probe in [foot, foot + perp, foot - perp]:
+					if terrain.is_river_at(Vector3(probe.x, 0.0, probe.y)):
+						_fail("seed %d: a field bridge's abutment reaches"
+								% run_seed + " (%.1f, %.1f), which is IN the"
+								% [probe.x, probe.y] + " river — the whole WIDTH"
+								+ " of a foot has to be on the bank")
+			# ...and the control: the middle of the span is water.
+			var samples := _walk(row, 1.0)
+			var mp: Vector2 = samples[int(samples.size() / 2)]["pos"]
+			if terrain.is_river_at(Vector3(mp.x, 0.0, mp.y)):
+				wet_controls += 1
 		terrain.free()
 
-	print("field bridges: %d bridges measured for dry abutments, %d of them"
-			% [measured, wet_controls] + " really span water at mid-point")
+	print("field bridges: %d bridges measured for dry abutments — %d feet needed"
+			% [measured, pushes] + " a push, longest ramp %.1f m (base %.1f, push"
+					% [longest, _base_run()]
+			+ " budget %.0f); %d span water at mid-point"
+					% [TERRAIN_SCRIPT.FIELD_BRIDGE_FOOT_PUSH_MAX, wet_controls])
 	if measured < 1:
 		_fail("check 4 measured no bridge at all")
 	if wet_controls < 1:
 		_fail("check 4's wet control never fired: not one bridge's mid-point is"
 				+ " in a river, so 'the feet are dry' is true of a dry world")
+	if pushes < 1:
+		_fail("not one abutment in %d bridges needed pushing back, so the corner"
+				% measured + " probe in _field_bridge_foot has never moved a foot"
+				+ " — the fix it is the assertion for is untested here")
 	Sentinel.done("abutments_are_dry")
+
+
+func _base_run() -> float:
+	"""The ramp run before any push — the terrain's own derivation, not a number
+	typed here (FIELD_BRIDGE_TOP over Budapest's deck slope)."""
+	return TERRAIN_SCRIPT.FIELD_BRIDGE_TOP * BudapestPlan.BRIDGE_RAMP_RUN \
+			/ BudapestPlan.BRIDGE_DECK_TOP
+
+
+func _all_bridges(terrain: Node3D) -> Array:
+	"""
+	EVERY bridge on this road, west to east. The plan-level walk check 1 makes,
+	kept as a helper because check 4 wants all of them and not just the first —
+	twelve first bridges is twelve feet, and the corner rule is about ragged banks
+	that only show up in numbers.
+	"""
+	terrain._road_extend_to_x(0.0, TERRAIN_SCRIPT.ROAD_TERMINAL_X)
+	var out: Array = []
+	for k in range(2, terrain._road_terminal_k()):
+		var row: Dictionary = terrain.field_bridge_at(k)
+		if not row.is_empty():
+			out.append(row)
+	return out
 
 
 # ============================================================================
@@ -988,5 +1072,178 @@ func _stand(player: CharacterBody3D, at: Vector3) -> bool:
 			# is_on_floor() already true — the flag is read at STEP 1.5, above
 			# the move, so the landing frame still carries the airborne answer.
 			await physics_frame
+			return true
+	return false
+
+
+# ============================================================================
+# CHECK 8 — every coin standing on a deck has a SLAB under it
+# ============================================================================
+
+## Seeds check 8 lays real coins on. Fewer than check 1's list because each one
+## generates whole chunks; 26 is the seed the capsule bug was found on.
+const COIN_SEEDS: Array[int] = [26, 11, 2027, 90210]
+
+
+func _check_deck_coins_stand_on_stone() -> void:
+	"""
+	THE BUG THE RECTANGLE FIX EXISTS FOR (Codex review of PR #232). The surface
+	query used to be a point-to-POLYLINE distance — which describes a CAPSULE,
+	not the slabs the builder emits. At a joint on the outside of a turn a point
+	can be within half a deck of the walking line and outside every rectangle, so
+	`spawn_coins_in_chunk` stood a coin at deck height over open air (seed 26,
+	station 34, near (246.25, 17.93)).
+
+	So: lay the road's REAL coins through the shipped spawner over every chunk a
+	bridge touches, and for every coin the deck lifted, assert there is a BUILT
+	BOX under it. The boxes come from `_bridge_boxes` and the coins from
+	`spawn_coins_in_chunk`; neither reads the other, so this measures the two
+	halves agreeing rather than one of them twice.
+
+	THE MUTATION CONTROL is the old test itself: `_capsule_hit` is the rejected
+	implementation, and somewhere on these bridges there must be a point it calls
+	deck which no slab covers. If there is not, the rectangle fix changed nothing
+	measurable and this check is decoration.
+	"""
+	var lifted := 0
+	var floating := 0
+	var capsule_lies := 0
+	var worst := ""
+
+	for run_seed in COIN_SEEDS:
+		var terrain := _terrain(run_seed)
+		var row := _first_bridge(terrain, run_seed)
+		if row.is_empty():
+			terrain.free()
+			continue
+		var poly: PackedVector2Array = row["poly"]
+		var half: float = row["half"]
+		# EVERY bridge's stone over the chunks below, not just this row's: a
+		# neighbouring crossing can lay coins in the same chunks, and a coin
+		# blamed on missing stone that another bridge is holding up is a lie.
+		var boxes := _chunk_bridge_boxes(terrain, poly, 2)
+
+		# THE CONTROL, on geometry rather than on luck: walk a ring at exactly the
+		# deck's half-width around every joint. The capsule accepts all of it; the
+		# slabs do not, on the outside of every turn.
+		for i in range(1, poly.size() - 1):
+			for step in 72:
+				var ang := TAU * float(step) / 72.0
+				var probe := poly[i] + Vector2(cos(ang), sin(ang)) * (half - 0.05)
+				if not _capsule_hit(poly, probe, half):
+					continue
+				if not _covered(boxes, Vector3(probe.x, FIELD_TOP - 0.05, probe.y)):
+					capsule_lies += 1
+
+		# ...and the real coins, chunk by chunk along the bridge.
+		var seen: Dictionary = {}
+		for p in poly:
+			var cp: Vector2i = terrain.world_to_chunk(Vector3(p.x, 0.0, p.y))
+			for dx in range(-1, 2):
+				for dz in range(-1, 2):
+					var at := cp + Vector2i(dx, dz)
+					if seen.has(at):
+						continue
+					seen[at] = true
+					var built := _generate(run_seed, at, true)
+					var origin: Vector3 = terrain.chunk_to_world(at)
+					for coin_v: Variant in built["coins"]:
+						var coin: Vector3 = coin_v
+						var world := coin + origin
+						# A DECK COIN IS ONE THE QUERY CLAIMS, not one that sits
+						# high: `_settle_coin_y` perches ordinary coins on top of
+						# a climbable prop, and those are somebody else's rule.
+						var surface: float = terrain.field_bridge_surface_y(world)
+						if surface <= -INF:
+							continue
+						lifted += 1
+						if not is_equal_approx(world.y,
+								surface + TERRAIN_SCRIPT.COIN_GROUND_HEIGHT):
+							floating += 1
+							if worst == "":
+								worst = ("seed %d: a coin over the deck at"
+										% run_seed + " (%.2f, %.2f) sits at y ="
+										% [world.x, world.z] + " %.2f where the"
+										% world.y + " surface says %.2f" % surface)
+							continue
+						if _covered(boxes, Vector3(world.x, surface - 0.05, world.z)):
+							continue
+						floating += 1
+						if worst == "":
+							worst = ("seed %d: a coin at (%.2f, %.2f) was raised"
+									% [run_seed, world.x, world.z] + " to y = %.2f"
+									% world.y + " with NO slab under it")
+					built["terrain"].free()
+		terrain.free()
+
+	print("field bridges: %d road coins raised onto a deck over %d seeds, %d of"
+			% [lifted, COIN_SEEDS.size(), floating]
+			+ " them over open air; the rejected capsule test accepts %d points"
+					% capsule_lies + " no slab covers")
+
+	if lifted < 1:
+		_fail("check 8 found no coin standing on a deck at all — it measured"
+				+ " nothing (the road's coins should ride every crossing)")
+	if floating > 0:
+		_fail("%d road coin(s) stand at deck height over open air — the deck"
+				% floating + " query is accepting points outside the slabs the"
+				+ " chunks really build. First: %s" % worst)
+	if capsule_lies < 1:
+		_fail("check 8's mutation control is inert: the rejected point-to-polyline"
+				+ " (capsule) test accepts nothing the slabs refuse, so the"
+				+ " rectangle containment it replaced cannot be shown to matter")
+	Sentinel.done("deck_coins_stand_on_stone")
+
+
+func _chunk_bridge_boxes(terrain: Node3D, poly: PackedVector2Array, ring: int) -> Array:
+	"""
+	Every field-bridge box the chunks around a walking line build, in WORLD space
+	and with NO filtering by which bridge it belongs to.
+
+	@param ring: How many chunks past the line's own to sweep.
+
+	`_bridge_boxes` keeps one bridge's stone so check 2 can say "built exactly
+	once"; this one keeps ALL of it, because check 8 asks the opposite question —
+	is there anything at all under this coin — and a neighbouring crossing's deck
+	is a perfectly good answer.
+	"""
+	var seen: Dictionary = {}
+	var boxes: Array = []
+	for p in poly:
+		var c0: Vector2i = terrain.world_to_chunk(Vector3(p.x, 0.0, p.y))
+		for dx in range(-ring, ring + 1):
+			for dz in range(-ring, ring + 1):
+				var cp := c0 + Vector2i(dx, dz)
+				if seen.has(cp):
+					continue
+				seen[cp] = true
+				var batch: Array = []
+				var body := StaticBody3D.new()
+				terrain.spawn_field_bridges_in_chunk(cp, batch, body)
+				var origin: Vector3 = terrain.chunk_to_world(cp)
+				for entry_v: Variant in batch:
+					var entry: Dictionary = entry_v
+					var xf: Transform3D = entry["transform"]
+					boxes.append({
+						"xform": Transform3D(xf.basis, xf.origin + origin),
+						"chunk": cp,
+					})
+				body.free()
+	return boxes
+
+
+func _capsule_hit(poly: PackedVector2Array, p: Vector2, half: float) -> bool:
+	"""
+	THE REJECTED IMPLEMENTATION, kept here as check 8's mutation: a clamped
+	point-to-segment distance over the whole polyline, i.e. "is this within half a
+	deck of the walking line". It rounds off every joint into a disc, which is why
+	it accepts open air on the outside of a turn.
+	"""
+	for i in range(poly.size() - 1):
+		var a: Vector2 = poly[i]
+		var seg: Vector2 = poly[i + 1] - a
+		var len_sq := seg.length_squared()
+		var t: float = 0.0 if len_sq <= 0.0 else clampf((p - a).dot(seg) / len_sq, 0.0, 1.0)
+		if p.distance_to(a + seg * t) <= half:
 			return true
 	return false

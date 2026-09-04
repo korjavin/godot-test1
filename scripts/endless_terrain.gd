@@ -945,6 +945,17 @@ const FIELD_BRIDGE_DRY_STATIONS: int = 1
 ## water at its EDGES too, not just under the walking line.
 const FIELD_BRIDGE_PROBE_STEP: float = 1.0
 
+## How far a ramp foot may be pushed back to get its whole WIDTH onto dry land
+## (see _field_bridge_foot). Pushing lengthens the run at a fixed rise, so it can
+## only make the ramp gentler; 30 m is far more bank than any measured crossing
+## has needed, and check 4 prints the worst push it found.
+const FIELD_BRIDGE_FOOT_PUSH_MAX: float = 30.0
+
+## Slop on a slab's own faces when asking whether a point stands on it. A
+## millimetre: big enough that the exact edge of a slab answers "yes" whichever
+## way the last bit of a dot product falls, small enough to be no geometry.
+const EDGE_EPS: float = 0.001
+
 ## How far each deck slab is stretched past a joint with the NEXT deck slab,
 ## metres. The road turns up to `road_turn_rate_deg` a station, so two slabs
 ## meeting flush would leave a wedge of open air at the outer parapet of a turn:
@@ -10695,7 +10706,8 @@ func _field_bridge_reach() -> float:
 	"""
 	return FIELD_BRIDGE_MAX_SPAN \
 			+ float(2 * FIELD_BRIDGE_DRY_STATIONS + 2) * _road_spacing() \
-			+ 2.0 * _field_bridge_run() + 2.0 * FIELD_BRIDGE_SLAB_EXTEND
+			+ 2.0 * (_field_bridge_run() + FIELD_BRIDGE_FOOT_PUSH_MAX) \
+			+ 2.0 * FIELD_BRIDGE_SLAB_EXTEND
 
 
 func _field_bridge_wet(k: int) -> bool:
@@ -10727,6 +10739,98 @@ func _field_bridge_wet(k: int) -> bool:
 	if is_river_at(Vector3(centre.x + perp.x, 0.0, centre.y + perp.y)):
 		return true
 	return is_river_at(Vector3(centre.x - perp.x, 0.0, centre.y - perp.y))
+
+
+func _field_bridge_foot(head: Vector2, out_dir: Vector2) -> Vector2:
+	"""
+	Where one ramp's FOOT stands: back along `out_dir` from the deck's end, far
+	enough that the whole width of the abutment is on dry land.
+
+	@param head: The deck end this ramp climbs to (a station centre).
+	@param out_dir: Unit vector pointing AWAY from the deck, along the ramp.
+	@return: The foot point, world XZ.
+
+	THE CENTRELINE IS NOT THE ABUTMENT. The foot is a 16 m wide slab at y = 0, so
+	a corner of it can stand in the river while its centre is dry — and a player
+	walking up that side keeps wading until the ramp has risen past
+	WADE_SURFACE_MAX, which is the whole bridge undone on one flank (measured:
+	seed 12, station 116, the east foot's north corner). So both corners are
+	PROBED, and the foot is pushed further out until they are dry.
+
+	PUSHING IS FREE AND CANNOT BREAK THE SLOPE: the rise is fixed at
+	FIELD_BRIDGE_TOP, so a longer run is a GENTLER ramp, always further under
+	TowerInterior.PLAN_RAMP_MAX_SLOPE than the base run already is.
+
+	# ponytail: at FIELD_BRIDGE_FOOT_PUSH_MAX the push gives up and takes the
+	# longest ramp it tried. A bank ragged enough to be wet 30 m back on both
+	# corners is a bank the deck's own span cap should have refused; over
+	# field_bridge_selfcheck's twelve seeds the cap is never reached (check 4
+	# probes every foot corner and prints the worst push). Widen it, or refuse
+	# the crossing, the day a world finds one.
+	"""
+	var perp := Vector2(-out_dir.y, out_dir.x) * FIELD_BRIDGE_HALF_WIDTH
+	var run := _field_bridge_run()
+	var pushed := 0.0
+	while pushed <= FIELD_BRIDGE_FOOT_PUSH_MAX:
+		var foot := head + out_dir * (run + pushed)
+		if not is_river_at(Vector3(foot.x, 0.0, foot.y)) \
+				and not is_river_at(Vector3(foot.x + perp.x, 0.0, foot.y + perp.y)) \
+				and not is_river_at(Vector3(foot.x - perp.x, 0.0, foot.y - perp.y)):
+			return foot
+		pushed += FIELD_BRIDGE_PROBE_STEP
+	return head + out_dir * (run + FIELD_BRIDGE_FOOT_PUSH_MAX)
+
+
+func _field_bridge_slabs(row: Dictionary) -> Array:
+	"""
+	THE SLABS OF ONE BRIDGE — the single description of what the stone is, read
+	by the builder that emits it AND by the surface query that answers where you
+	can stand.
+
+	@param row: A field_bridge_at() row.
+	@return: One entry per slab, in order:
+	           "start" / "dir" / "len"   the slab's axis in world XZ (its own
+	                                     length, the stretch included)
+	           "y_a" / "y_b"             the walking height at each end
+	           "half"                    half its width
+
+	ONE TABLE, TWO READERS, and it exists because the two disagreed. The query
+	used to be a point-to-POLYLINE distance, which describes a CAPSULE: at a
+	joint on the outside of a turn, a point can be within half a deck of the line
+	and outside every rectangle the builder actually emitted. `spawn_coins_in_chunk`
+	then stood a coin at deck height over open air (seed 26, station 34). A
+	rectangle is what is built, so a rectangle is what is asked.
+
+	The heights are the INDEX, not a re-derivation from the profile: the polyline
+	is (west ramp foot, every deck station, east ramp foot) by construction, so
+	the two end points are at 0 and everything between them is at deck height —
+	which also lets the two ramps have DIFFERENT runs (see _field_bridge_foot)
+	with no second profile to keep in step.
+	"""
+	var poly: PackedVector2Array = row["poly"]
+	var half: float = row["half"]
+	var last := poly.size() - 2   # index of the LAST segment
+	var out: Array = []
+	for i in range(poly.size() - 1):
+		var y_a := 0.0 if i == 0 else FIELD_BRIDGE_TOP
+		var y_b := 0.0 if i == last else FIELD_BRIDGE_TOP
+		var a: Vector2 = poly[i]
+		var seg: Vector2 = poly[i + 1] - a
+		# The slab stretch, at deck-to-deck joints ONLY — BOTH ends of it have to
+		# be deck. A slab overhanging the head of a ramp is a step you cannot walk
+		# back up (see FIELD_BRIDGE_SLAB_EXTEND), and stretching the RAMP itself
+		# is worse: its top surface is a plane through its two ends, so a longer
+		# box at the same heights lifts the whole surface off the profile.
+		var deck := i >= 1 and i <= last - 1
+		var ext_a := FIELD_BRIDGE_SLAB_EXTEND if deck and i >= 2 else 0.0
+		var ext_b := FIELD_BRIDGE_SLAB_EXTEND if deck and i <= last - 2 else 0.0
+		var dir := seg.normalized()
+		out.append({
+			"start": a - dir * ext_a, "dir": dir,
+			"len": seg.length() + ext_a + ext_b,
+			"y_a": y_a, "y_b": y_b, "half": half,
+		})
+	return out
 
 
 func field_bridge_at(k0: int) -> Dictionary:
@@ -10781,11 +10885,14 @@ func field_bridge_at(k0: int) -> Dictionary:
 		_field_bridge_cache[k0] = empty
 		return empty
 
-	# Walk forward to the far bank. `centre` distance rather than index count, so
-	# the cap is metres of water and not a station budget that road_coin_spacing
-	# could retune out from under it.
-	var start: Vector2 = _road_station(k0).center
+	# Walk forward to the far bank, ACCUMULATING THE METRES WALKED — never the
+	# chord back to the first wet station, which a curved wet run makes shorter
+	# than the road really is (measured on seed 72: 84 m walked reading as a
+	# 79.2 m chord, so a crossing over the cap was bridged anyway). The cap is
+	# metres of water, and a station budget would be one `road_coin_spacing`
+	# retune away from meaning something else.
 	var k1 := k0
+	var walked := 0.0
 	while true:
 		var next := k1 + 1
 		if next + FIELD_BRIDGE_DRY_STATIONS > terminal:
@@ -10799,7 +10906,8 @@ func field_bridge_at(k0: int) -> Dictionary:
 			return empty
 		if not _field_bridge_wet(next):
 			break
-		if _road_station(next).center.distance_to(start) > FIELD_BRIDGE_MAX_SPAN:
+		walked += _road_station(next).center.distance_to(_road_station(k1).center)
+		if walked > FIELD_BRIDGE_MAX_SPAN:
 			_field_bridge_cache[k0] = empty   # a lake, see above
 			return empty
 		k1 = next
@@ -10816,13 +10924,12 @@ func field_bridge_at(k0: int) -> Dictionary:
 	# purpose: a ramp and the slab it meets that share a direction have no wedge of
 	# open air between them at the parapet, so the one joint the slab stretch is
 	# forbidden to cover (see FIELD_BRIDGE_SLAB_EXTEND) needs no cover.
-	var run := _field_bridge_run()
 	var head := (pts[1] - pts[0]).normalized()
 	var tail := (pts[pts.size() - 1] - pts[pts.size() - 2]).normalized()
 	var poly := PackedVector2Array()
-	poly.append(pts[0] - head * run)
+	poly.append(_field_bridge_foot(pts[0], -head))
 	poly.append_array(pts)
-	poly.append(pts[pts.size() - 1] + tail * run)
+	poly.append(_field_bridge_foot(pts[pts.size() - 1], tail))
 
 	var along := PackedFloat32Array()
 	along.append(0.0)
@@ -10831,7 +10938,7 @@ func field_bridge_at(k0: int) -> Dictionary:
 
 	var row := {
 		"k0": k0, "k1": k1, "poly": poly, "along": along,
-		"half": FIELD_BRIDGE_HALF_WIDTH, "run": run,
+		"half": FIELD_BRIDGE_HALF_WIDTH,
 	}
 	_field_bridge_cache[k0] = row
 	return row
@@ -10906,29 +11013,28 @@ func _field_bridge_surface_on(row: Dictionary, world_pos: Vector3) -> float:
 	makes for the Danube, kept here because this one also needs the PARAMETER
 	(how far along) and not just the distance.
 	"""
-	var poly: PackedVector2Array = row["poly"]
-	var along: PackedFloat32Array = row["along"]
-	var half: float = row["half"]
 	var p := Vector2(world_pos.x, world_pos.z)
-	var best := INF
-	var best_s := 0.0
-	for i in range(poly.size() - 1):
-		var a: Vector2 = poly[i]
-		var seg: Vector2 = poly[i + 1] - a
-		var len_sq := seg.length_squared()
-		var t := 0.0 if len_sq <= 0.0 else clampf((p - a).dot(seg) / len_sq, 0.0, 1.0)
-		var on := a + seg * t
-		var d := p.distance_to(on)
-		if d < best:
-			best = d
-			best_s = along[i] + seg.length() * t
-	if best > half:
-		return -INF
-	# The profile: up one ramp, flat, down the other. clampf keeps the flat span
-	# flat for every bridge longer than two ramps, which every bridge is.
-	var total: float = along[along.size() - 1]
-	var run: float = row["run"]
-	return clampf(minf(best_s, total - best_s) / run, 0.0, 1.0) * FIELD_BRIDGE_TOP
+	for slab_v: Variant in _field_bridge_slabs(row):
+		var slab: Dictionary = slab_v
+		var d: Vector2 = p - Vector2(slab["start"])
+		var dir: Vector2 = slab["dir"]
+		# The slab's own frame: how far along it, and how far off its axis.
+		var along: float = d.dot(dir)
+		var length: float = slab["len"]
+		# A millimetre of tolerance on every face, because the ends and the
+		# parapets are exactly where a caller asks: the ramp foot projects to
+		# `along` = 0 and a dot product of two normalised vectors lands either
+		# side of it, which would answer "no bridge" on the first sample of a
+		# metre-by-metre walk of its own deck.
+		if along < -EDGE_EPS or along > length + EDGE_EPS:
+			continue
+		if absf(d.dot(Vector2(-dir.y, dir.x))) > float(slab["half"]) + EDGE_EPS:
+			continue
+		# The top surface is the plane through the slab's two ends, so the height
+		# is one lerp — and a ramp and a deck slab are the same arithmetic.
+		return lerpf(float(slab["y_a"]), float(slab["y_b"]),
+				clampf(along / length, 0.0, 1.0))
+	return -INF
 
 
 func spawn_field_bridges_in_chunk(chunk_pos: Vector2i, block_batch: Array,
@@ -10970,33 +11076,16 @@ func spawn_field_bridges_in_chunk(chunk_pos: Vector2i, block_batch: Array,
 	rng.seed = FIELD_BRIDGE_STREAM_SEED
 	for row_v: Variant in rows:
 		var row: Dictionary = row_v
-		var poly: PackedVector2Array = row["poly"]
-		var half: float = row["half"]
-		var last := poly.size() - 2   # index of the LAST segment
-		for i in range(poly.size() - 1):
-			# THE HEIGHT IS THE INDEX, not a re-derivation from the profile: the
-			# polyline is (west ramp foot, every deck station, east ramp foot) by
-			# construction, so the two end points are at 0 and everything between
-			# them is at deck height. Exact, and it makes "which segments are the
-			# ramps" a fact about the array rather than a float comparison.
-			var y_a := 0.0 if i == 0 else FIELD_BRIDGE_TOP
-			var y_b := 0.0 if i == last else FIELD_BRIDGE_TOP
-			var a: Vector2 = poly[i]
-			var seg: Vector2 = poly[i + 1] - a
-			# The slab stretch, at deck-to-deck joints ONLY — BOTH ends of it have
-			# to be deck. A slab overhanging the head of a ramp is a step you
-			# cannot walk back up (see FIELD_BRIDGE_SLAB_EXTEND), and stretching
-			# the RAMP itself is worse: its centre height is the mean of its two
-			# ends, so a longer box at the same height lifts its whole top surface
-			# off the profile and leaves a gap at the foot. Measured, by check 2.
-			var deck := i >= 1 and i <= last - 1
-			var ext_a := FIELD_BRIDGE_SLAB_EXTEND if deck and i >= 2 else 0.0
-			var ext_b := FIELD_BRIDGE_SLAB_EXTEND if deck and i <= last - 2 else 0.0
-			var dir := seg.normalized()
-			var mid := a + seg * 0.5 + dir * (ext_b - ext_a) * 0.5
+		for slab_v: Variant in _field_bridge_slabs(row):
+			var slab: Dictionary = slab_v
+			var dir: Vector2 = slab["dir"]
+			var run_h: float = slab["len"]
+			var y_a: float = slab["y_a"]
+			var y_b: float = slab["y_b"]
+			var half: float = slab["half"]
+			var mid: Vector2 = Vector2(slab["start"]) + dir * run_h * 0.5
 			if world_to_chunk(Vector3(mid.x, 0.0, mid.y)) != chunk_pos:
 				continue
-			var run_h := seg.length() + ext_a + ext_b
 			var rise := y_b - y_a
 			var length := sqrt(run_h * run_h + rise * rise)
 			# create_box composes Basis(UP, yaw) * Basis(RIGHT, tilt), so a box

@@ -996,6 +996,18 @@ makes a STEP, which `CharacterBody3D` cannot climb at all; and **road coins on a
 it** (`_settle_coin_y` still runs first, unlike the city's deck line, because a road boss
 stands on a river crossing and its footprint must still refuse a coin outright).
 
+Three of those rules were WRONG ONCE, and the corrections are the interesting part.
+**`_field_bridge_slabs()` is the single description of the stone** — the builder that emits
+it and the surface query that answers "can I stand here" both read it, because they
+disagreed: the query was a point-to-POLYLINE distance, i.e. a CAPSULE, and at a joint on
+the outside of a turn it accepted points no rectangle covered, so a road coin stood at deck
+height over open air. **The span cap counts metres WALKED**, never the chord back to the
+entry station, which a curved wet run makes shorter than the road really is. And **an
+abutment is probed across its WIDTH** (`_field_bridge_foot`): a 16 m foot slab can have a
+corner in the water while its centre is dry — which is a flank you keep wading up — so the
+foot is pushed further out until all of it is on the bank, free, because a longer run at a
+fixed rise is only a gentler ramp.
+
 ### Player
 `scripts/player_controller.gd` (a `CharacterBody3D`). Character switching on R (`switch_character`) cycles
 `CHARACTERS`, freeing and re-instancing under `$CharacterModel`.
