@@ -111,6 +111,7 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	var terrain_script: GDScript = load(TERRAIN_SCRIPT)
 	var consts: Dictionary = terrain_script.get_script_constant_map()
 	if not consts.has("SCARCITY_PLAIN_DISTANCE"):
