@@ -78,6 +78,7 @@ const MIN_KINDS_BUILT: int = 34
 ## a landmark — its chunk still has to have room for the shape — so
 ## LANDMARK_MILE_SPACING is sized to put NINETEEN slots on the 1450 m mile to
 ## stand twelve. Measured 13 / 15 / 14.
+const MILE_MIN_IN_CORRIDOR: int = 12
 
 ## How far off the centreline still counts as "in the corridor" for check 5.
 ## LANDMARK_MILE_LATERAL_MAX (120) is where a mile site is placed; a chunk is
