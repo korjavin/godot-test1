@@ -51,11 +51,14 @@ assign() {
   awk -v weights="$WEIGHTS" -v bins="$1" '
     BEGIN {
       if (bins < 1) { print "bad shard count: " bins > "/dev/stderr"; exit 1 }
+      # A quoted key and then the number after it. Deliberately no POSIX
+      # character class in this regex: mawk before 1.3.4 does not have them and
+      # the awk in the godot-ci image is whatever Debian shipped.
       while ((getline line < weights) > 0) {
-        if (!match(line, /"[a-z0-9_]+"[[:space:]]*:/)) continue
-        k = substr(line, RSTART, RLENGTH)
-        sub(/^"/, "", k); sub(/"[[:space:]]*:$/, "", k)
+        if (!match(line, /"[a-z0-9_]+"/)) continue
+        k = substr(line, RSTART + 1, RLENGTH - 2)
         v = substr(line, RSTART + RLENGTH); gsub(/[^0-9.]/, "", v)
+        if (v == "") continue
         w[k] = v + 0
         if (w[k] > maxw) maxw = w[k]
       }
