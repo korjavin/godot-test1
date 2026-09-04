@@ -29,8 +29,11 @@ extends SceneTree
 ##      everything else 1.
 ##   3. THE CITY SPLITTER LEAVES A NON-CUBE WHOLE. A cut cone is not two cones;
 ##      cutting works only because a box's pieces are boxes.
-##   4. COLLISION IS UNCHANGED BY KIND — still a BoxShape3D of `dimensions`, the
-##      conservative bound the climbable-top contract wants.
+##   4. COLLISION FOLLOWS THE KIND (bead godot-test1-y1o.10) — a near-round SPHERE
+##      collides as a SphereShape3D and a near-round CYLINDER as a
+##      CylinderShape3D, both INSCRIBED in `dimensions`; a CONE and anything past
+##      `ROUND_COLLIDER_MAX_ASPECT` keep the bounding box. The shape COUNT is
+##      untouched, which every collision budget in the suite depends on.
 ##
 ## The AABB check reads the mesh's own VERTEX ARRAYS rather than `get_aabb()`:
 ## headless is the dummy rendering driver (the same reason tower_interior writes
@@ -369,6 +372,17 @@ func _check_splitter_carries_kind() -> void:
 	comparing equal between two runs that agree about every box.
 
 	The non-cube half is the design rule: a cut cone is not two cones.
+
+	BOTH HALVES ON ONE PREDICATE, and that is the half this check exists for since
+	bead godot-test1-y1o.10. The splitter's two loops are handed DIFFERENT bases for
+	the same box (the batch entry carries `rot.scaled_local(dimensions)`, the shape
+	node the bare `rot`) and are joined only by `_is_axis_aligned_basis`; cutting
+	one and not the other is a drawn wall whose collision lives in another chunk.
+	So the wide CUBE below is asserted to be cut into the SAME number of pieces on
+	both sides, and the wide colliding SPHERE to be left whole on both — the second
+	being the new pairing: the visual half skips it on `kind`, and the collision
+	half reaches the same answer with no knowledge of kind at all, because a
+	`SphereShape3D` fails its `as BoxShape3D` cast.
 	"""
 	var terrain := Node3D.new()
 	terrain.set_script(load(TERRAIN_SCRIPT) as GDScript)
@@ -385,6 +399,14 @@ func _check_splitter_carries_kind() -> void:
 	ChunkBatch.create_box(Vector3.ZERO, wide, 0.0, rng, batch, body)
 	ChunkBatch.create_box(Vector3(0.0, 20.0, 0.0), wide, 0.0, rng, batch, body,
 			0.0, Color(0, 0, 0, 0), false, ChunkBatch.BoxKind.SPHERE)
+	# A COLLIDING round box the same size, for the both-halves pairing: it is the
+	# only entry here that reaches the collision loop with a non-box shape. Near
+	# cubic (so it really is a SphereShape3D, not the aspect fallback) and still
+	# far wider than a chunk on X, which is what the splitter measures.
+	var wide_round := Vector3(chunk_size * 3.4, chunk_size * 3.0, chunk_size * 3.2)
+	ChunkBatch.create_box(Vector3(0.0, 60.0, 0.0), wide_round, 0.0, rng, batch, body,
+			0.0, Color(0, 0, 0, 0), true, ChunkBatch.BoxKind.SPHERE)
+	var shapes_before: int = body.get_child_count()
 	ChunkBatch.split_city_boxes_on_chunk_grid(terrain, Vector3.ZERO, batch, body)
 
 	var cubes: int = 0
@@ -409,11 +431,38 @@ func _check_splitter_carries_kind() -> void:
 		_fail("a cube %.1f m wide over a %.1f m chunk grid split into %d pieces — "
 				% [wide.x, chunk_size, cubes]
 				+ "the splitter did not run, so nothing about kind was measured")
-	if spheres != 1:
-		_fail("a SPHERE %.1f m wide came back as %d entries — a non-cube kind must "
+	if spheres != 2:
+		_fail("two SPHEREs %.1f m wide came back as %d entries — a non-cube kind must "
 				% [wide.x, spheres]
 				+ "be left WHOLE and keep the centre rule, because a cut cone is "
 				+ "not two cones")
+
+	# --- BOTH HALVES, ONE PREDICATE ------------------------------------------
+	var box_shapes: int = 0
+	var round_shapes: int = 0
+	for child in body.get_children():
+		var cs := child as CollisionShape3D
+		if cs == null:
+			continue
+		if cs.shape is BoxShape3D:
+			box_shapes += 1
+		else:
+			round_shapes += 1
+	if shapes_before != 2:
+		_fail("the splitter probe hung %d shapes before cutting, not the 2 it plants "
+				% shapes_before + "(one cube, one colliding sphere) — the pairing "
+				+ "assertions below are measuring the wrong batch")
+	if box_shapes != cubes:
+		_fail("the splitter cut the wide cube into %d MESH pieces but %d COLLISION "
+				% [cubes, box_shapes]
+				+ "pieces. The two halves are handed different bases for the same box "
+				+ "and joined only by _is_axis_aligned_basis — one cut and not the "
+				+ "other is a drawn wall whose collision lives in another chunk")
+	if round_shapes != 1:
+		_fail("a colliding SPHERE %.1f m wide left %d non-box collision shapes, not 1 "
+				% [wide_round.x, round_shapes]
+				+ "— the visual half leaves it whole on `kind`, so the collision half "
+				+ "must leave it whole too (it does, by failing its BoxShape3D cast)")
 	body.free()
 	terrain.free()
 	Sentinel.done("splitter_kind")
@@ -425,13 +474,46 @@ func _check_splitter_carries_kind() -> void:
 
 func _check_collision_is_unchanged_by_kind() -> void:
 	"""
-	A colliding non-cube keeps its BoxShape3D of `dimensions` — conservative (the
-	unit mesh fits inside it, check 1) and what the climbable-top contract wants,
-	since a flat box top is what `_settle_coin_y` perches a coin on.
+	THE COLLISION SHAPE IS THE KIND'S (bead godot-test1-y1o.10), and this is the
+	only place the mapping is asserted.
+
+	A near-round SPHERE hangs a `SphereShape3D` and a near-round CYLINDER a
+	`CylinderShape3D`, both INSCRIBED in `dimensions`; a CONE, a CUBE and anything
+	squashed past `ROUND_COLLIDER_MAX_ASPECT` hang a `BoxShape3D` OF `dimensions`.
+	Read `ChunkBatch.collision_shape_for`'s docstring for why each of those is the
+	answer — this function only measures that they still are.
+
+	FOUR THINGS, and each fails silently on its own:
+	  (a) THE TYPE per kind, on a NEAR-CUBIC box (the shape a landmark's boulder,
+	      drum or pier really is). A revert to all-boxes is otherwise invisible.
+	  (b) THE DIMENSIONS. A sphere's radius is the SMALLEST half-extent and a
+	      cylinder's height is exactly `dimensions.y` — a radius taken off the
+	      LARGEST axis instead would put stone outside the box, and outside the
+	      radius every landmark declares.
+	  (c) THE INSCRIPTION, measured rather than derived: no point of the shape's
+	      own bounding box may leave `dimensions`.
+	  (d) THE ASPECT FALLBACK, driven at BOTH ends of `ROUND_COLLIDER_MAX_ASPECT`
+	      — a box just inside it is still round, one just outside is a box again.
+	      Without the second half the constant could be raised to infinity and
+	      every assertion here would still pass.
+
+	THE SHAPE COUNT IS UNCHANGED and that is asserted too: exactly one shape per
+	colliding entry, none for `collide = false`, whatever the kind. Every check
+	that bills a chunk's collision (budapest's per-chunk budget, the tower's 640)
+	counts shapes, so a kind that hung two would move numbers all over the suite.
 	"""
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 42
-	var dims := Vector3(2.0, 5.0, 3.0)
+	# Near-cubic on purpose: this is (a)'s subject, and a 2 x 5 x 3 box is past
+	# the aspect gate — (d) drives that end deliberately, below.
+	var dims := Vector3(3.0, 3.6, 3.2)
+	# The type every kind must hang at this aspect. CONE is the deliberate box.
+	var want_type: Dictionary = {
+		ChunkBatch.BoxKind.CUBE: "BoxShape3D",
+		ChunkBatch.BoxKind.SPHERE: "SphereShape3D",
+		ChunkBatch.BoxKind.CONE: "BoxShape3D",
+		ChunkBatch.BoxKind.CYLINDER: "CylinderShape3D",
+	}
 	for kind: int in ChunkBatch.BoxKind.values():
 		var batch: Array = []
 		var body := StaticBody3D.new()
@@ -444,14 +526,15 @@ func _check_collision_is_unchanged_by_kind() -> void:
 					% [name, shapes.size()])
 		else:
 			var cs := shapes[0] as CollisionShape3D
-			var box := (cs.shape if cs != null else null) as BoxShape3D
-			if box == null:
-				_fail("create_box(kind = %s) hung a %s, not a BoxShape3D — collision "
-						% [name, shapes[0].get_class()]
-						+ "must stay the entry's bounding box whatever it draws")
-			elif box.size != dims:
-				_fail("create_box(kind = %s) sized its shape %s, not the dimensions %s"
-						% [name, box.size, dims])
+			var shape: Shape3D = cs.shape if cs != null else null
+			var got: String = shape.get_class() if shape != null else "<none>"
+			if got != String(want_type[kind]):
+				_fail("create_box(kind = %s) on a near-cubic box hung a %s, wanted a %s — "
+						% [name, got, want_type[kind]]
+						+ "ChunkBatch.collision_shape_for's whole table")
+			else:
+				for problem: String in _shape_problems(name, shape, dims):
+					_fail(problem)
 		# ...and collide = false still hangs nothing, for every kind.
 		var no_batch: Array = []
 		var no_body := StaticBody3D.new()
@@ -464,7 +547,88 @@ func _check_collision_is_unchanged_by_kind() -> void:
 					% name + "its visual entry")
 		body.free()
 		no_body.free()
+
+	# --- (d) the aspect gate, at both ends -----------------------------------
+	# Driven on collision_shape_for directly: create_box only forwards to it, and
+	# a pair of RNG-consuming calls per probe would say nothing extra.
+	var a: float = ChunkBatch.ROUND_COLLIDER_MAX_ASPECT
+	var probes: Array = [
+		# kind, dimensions, expected class, what the case IS
+		[ChunkBatch.BoxKind.SPHERE, Vector3(2.0 * (a - 0.05), 2.0, 2.0), "SphereShape3D",
+			"a sphere just INSIDE the aspect gate"],
+		[ChunkBatch.BoxKind.SPHERE, Vector3(2.0 * (a + 0.05), 2.0, 2.0), "BoxShape3D",
+			"a sphere just OUTSIDE it (a squashed ellipsoid keeps its box)"],
+		[ChunkBatch.BoxKind.SPHERE, Vector3(3.6, 1.6, 3.6), "BoxShape3D",
+			"a 2.25-aspect lens dome — the shape the fallback exists for. NOTHING"
+			+ " SHIPPED IS PAST THE GATE since bead y1o.11 reshaped the Taj (the"
+			+ " worst colliding sphere in the field is now its 1.57 chattri), so"
+			+ " this planted box is the ONLY thing exercising that half"],
+		[ChunkBatch.BoxKind.CYLINDER, Vector3(2.0 * (a - 0.05), 40.0, 2.0), "CylinderShape3D",
+			"a cylinder just INSIDE the gate — and 40 m TALL, because the axis is"
+			+ " not part of the aspect: a column is not a squashed drum"],
+		[ChunkBatch.BoxKind.CYLINDER, Vector3(2.0 * (a + 0.05), 4.0, 2.0), "BoxShape3D",
+			"a cylinder whose PLAN is past the gate (an elliptic drum)"],
+	]
+	for probe_v: Variant in probes:
+		var probe: Array = probe_v
+		var pdims: Vector3 = probe[1]
+		var shape := ChunkBatch.collision_shape_for(int(probe[0]), pdims)
+		if shape.get_class() != String(probe[2]):
+			_fail("%s (%s at %s) collided as a %s, wanted a %s"
+					% [probe[3], ChunkBatch.BoxKind.find_key(int(probe[0])), pdims,
+						shape.get_class(), probe[2]])
+		else:
+			for problem: String in _shape_problems(String(probe[3]), shape, pdims):
+				_fail(problem)
 	Sentinel.done("collision_by_kind")
+
+
+func _shape_problems(label: String, shape: Shape3D, dims: Vector3) -> Array[String]:
+	"""
+	(b) + (c): the shape's dimensions, and that its own bounding box is INSIDE
+	the entry's. Shared by the per-kind loop and the aspect probes so the two can
+	never disagree about what "inscribed" means.
+
+	The bound is measured from the shape's OWN fields rather than re-derived from
+	`dims`, which is the point: a radius taken off the wrong axis shows up here as
+	stone outside the box, not as a formula that matches itself.
+	"""
+	var out: Array[String] = []
+	var half := Vector3.ZERO
+	var sphere := shape as SphereShape3D
+	var cyl := shape as CylinderShape3D
+	var box := shape as BoxShape3D
+	if sphere != null:
+		half = Vector3.ONE * sphere.radius
+		var want_r: float = minf(dims.x, minf(dims.y, dims.z)) * 0.5
+		if not is_equal_approx(sphere.radius, want_r):
+			out.append("%s: SphereShape3D radius %.4f, wanted the SMALLEST half-extent %.4f"
+					% [label, sphere.radius, want_r])
+	elif cyl != null:
+		half = Vector3(cyl.radius, cyl.height * 0.5, cyl.radius)
+		var want_radius: float = minf(dims.x, dims.z) * 0.5
+		if not is_equal_approx(cyl.radius, want_radius):
+			out.append("%s: CylinderShape3D radius %.4f, wanted the smaller RADIAL half-extent %.4f"
+					% [label, cyl.radius, want_radius])
+		if not is_equal_approx(cyl.height, dims.y):
+			out.append("%s: CylinderShape3D height %.4f, wanted dimensions.y %.4f exactly — "
+					% [label, cyl.height, dims.y]
+					+ "the axis is reproduced, only the radius is inscribed")
+	elif box != null:
+		half = box.size * 0.5
+		if box.size != dims:
+			out.append("%s: BoxShape3D sized %s, not the dimensions %s" % [label, box.size, dims])
+	else:
+		out.append("%s: collided as a %s, which this check cannot measure at all"
+				% [label, shape.get_class()])
+		return out
+	if half.x > dims.x * 0.5 + EPS or half.y > dims.y * 0.5 + EPS \
+			or half.z > dims.z * 0.5 + EPS:
+		out.append("%s: the collider's own bounds %s reach outside the entry's %s — a "
+				% [label, half * 2.0, dims]
+				+ "collider must be INSCRIBED in `dimensions` like the unit mesh is, or "
+				+ "it puts stone outside the radius a landmark declares")
+	return out
 
 
 # ---------------------------------------------------------------------------

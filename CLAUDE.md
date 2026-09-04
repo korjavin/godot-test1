@@ -64,8 +64,14 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            flag (a cube-only batch still exactly one node
 #                            named BlockMultiMesh, measured over 225 real field
 #                            chunks), the city splitter carrying kind and
-#                            leaving a non-cube WHOLE, and collision staying a
-#                            BoxShape3D of dimensions for every kind. Check 5 is
+#                            leaving a non-cube WHOLE on BOTH halves (the mesh on
+#                            kind, the body on its BoxShape3D cast) with the wide
+#                            CUBE cut into equal piece counts either side, and
+#                            check 4 the PER-KIND COLLISION SHAPE: the type per
+#                            kind, the radius/height, the collider INSCRIBED in
+#                            dimensions, one shape per colliding entry and none
+#                            without, and the aspect fallback driven at BOTH ends
+#                            of ROUND_COLLIDER_MAX_ASPECT. Check 5 is
 #                            the PER-BIOME DRAW-CALL BILL, iterating the Biome
 #                            enum over both shipped field spawners: a forest
 #                            chunk builds exactly TWO nodes (BlockMultiMesh +
@@ -393,9 +399,15 @@ Load-bearing rules:
   entry's BOUNDING BOX for every kind — and therefore keeps `prop_selfcheck`'s cube-corner
   reach helpers and `landmark_selfcheck`'s extent helpers valid upper bounds with no edit,
   and `world_block.gdshader`'s model-space -0.5..+0.5 gradient meaningful;
-  **collision is unchanged** — still a `BoxShape3D` of `dimensions` whatever the kind, so a
-  non-CUBE kind is for `collide = false` decoration and NON-CLIMBABLE colliders only,
-  never for anything a player stands on; and
+  **collision FOLLOWS the kind** (bead `godot-test1-y1o.10`) — `ChunkBatch.collision_shape_for`
+  is the one home of the mapping: a near-round SPHERE hangs a `SphereShape3D`, a near-round
+  CYLINDER a `CylinderShape3D` (radius = the smallest half-extent, so the collider is
+  INSCRIBED in `dimensions` exactly like the mesh; the cylinder's axis is local Y, where
+  `CylinderMesh` puts it, never "the long axis"), and a CONE plus anything squashed past
+  `ROUND_COLLIDER_MAX_ASPECT` (1.6 — no `SphereShape3D` is an ellipsoid) keeps the bounding
+  box. The shape COUNT is untouched, which every collision budget in the suite rests on.
+  **The CONE is the one kind still wrong on purpose** (Godot has no cone primitive), so
+  nothing a player can reach may be a colliding cone — `landmark_selfcheck` check 9c; and
   **`_build_block_multimesh` emits one `MultiMeshInstance3D` per kind PRESENT** — a
   cube-only chunk builds exactly the one node it always
   did, still named `BlockMultiMesh`, and every bucket shares the one

@@ -1893,16 +1893,15 @@ func _check_kinds(terrain_script: GDScript, builders_script: GDScript, registry:
 	      Under a TILT a round mesh can only sit LOWER than the cube's rotated
 	      corner, so the helper and check 1's corner sweep stay true upper bounds,
 	      and that direction is what is asserted there instead of equality.
-	  (c) NO COLLIDING BOX IS A CONE. Collision is a BoxShape3D whatever the kind
-	      (ChunkBatch's banner), and a cone is a point at the top of that box —
-	      a ledge made of nothing. A colliding SPHERE or CYLINDER is a mismatch
-	      too, and this check DELIBERATELY ALLOWS IT: you stop 0.15-0.6 m short of
-	      a ball on a diagonal and can stand on an invisible square over it. That
-	      is a known, accepted trade (rule 5d in landmark_builders.gd) whose
-	      honest fix is a per-kind collision shape and its own bead — the cone is
-	      where the line is drawn because its box has no stone under the top face
-	      AT ALL. So this asserts the CONE half only, and is not a statement that
-	      the other two are correct.
+	  (c) NO COLLIDING BOX IS A CONE. Since bead godot-test1-y1o.10 a colliding
+	      SPHERE or CYLINDER hangs the round shape it draws
+	      (`ChunkBatch.collision_shape_for`), so those two are no longer a
+	      mismatch and this check is deliberately silent about them — a drum you
+	      stand on is now a drum. The CONE is the kind that STAYS a box, because
+	      Godot has no cone primitive: its stone is a point at the top of a
+	      box-shaped ledge, a floor made of nothing. So the assertion is the same
+	      one it always was, and rule 5c ("CONE only on the piece that ends a
+	      taper") is what keeps them out of a player's reach.
 	  (d) THE FIELD REALLY SPENDS ALL THREE non-cube kinds. A revert to all-cubes
 	      — a merge that drops an argument, a refactor that loses it — is
 	      otherwise invisible: every other assertion in this file passes on cubes.
@@ -1961,11 +1960,12 @@ func _check_kinds(terrain_script: GDScript, builders_script: GDScript, registry:
 					checked_entries += 1
 					var t: Transform3D = item["transform"]
 					if _cone_collides(kind, t.origin, collider_at):
-						_fail(("%s (seed %d): a CONE box collides. Collision is the entry's "
+						_fail(("%s (seed %d): a CONE box collides. Every other kind now "
 								% [builder, seed_index])
-								+ "BOUNDING BOX whatever the kind, so a colliding cone is a "
-								+ "point under a box-shaped ledge — put the cone where "
-								+ "nothing collides (the taper rule)")
+								+ "collides as the shape it draws, but Godot has no cone "
+								+ "primitive, so a CONE keeps its BOUNDING BOX and a "
+								+ "colliding cone is a point under a box-shaped ledge — put "
+								+ "the cone where nothing collides (the taper rule)")
 					for problem: String in _kind_top_problems(builder, seed_index, kind, t,
 							_unit_mesh_vertices(kind)):
 						_fail(problem)
@@ -2102,7 +2102,7 @@ func _check_kind_negative_controls() -> void:
 	if _cone_collides(ChunkBatch.BoxKind.CONE, at + Vector3(0.0, 1.0, 0.0), colliders):
 		_fail("check 9 negative control: a CONE with no collision shape under it was reported as colliding")
 	if _cone_collides(ChunkBatch.BoxKind.CYLINDER, at, colliders):
-		_fail("check 9 negative control: a colliding CYLINDER was refused — (c) asserts the CONE half only, deliberately (rule 5d)")
+		_fail("check 9 negative control: a colliding CYLINDER was refused — (c) asserts the CONE half only, deliberately: a cylinder now collides as a CylinderShape3D (rule 5d)")
 	Sentinel.done("kind_negative_controls")
 
 

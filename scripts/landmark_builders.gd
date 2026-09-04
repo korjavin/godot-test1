@@ -882,24 +882,33 @@ static func quiz_options(kind: int, landmark_id: int, run_seed: int) -> Array[in
 ##      one. So a taper is CYLINDER all the way up and CONE only on the piece
 ##      that ends it. The same reasoning is why a shrinking stack that carries
 ##      something above it (a finial, a lantern) keeps CYLINDER to the top.
-##  5d. COLLISION IS STILL A BOX WHATEVER THE KIND, and that is a KNOWN,
-##      ACCEPTED MISMATCH here — not a claim that a round collider is fine.
-##      ChunkBatch's own banner is the rule (a non-CUBE kind is for
-##      `collide = false` decoration and NON-CLIMBABLE colliders; anything a
-##      player stands on stays CUBE), and this file bends it: a colliding SPHERE
-##      or CYLINDER is a ball or a column you bump into 0.15-0.6 m before you
-##      touch it on a diagonal, and can be stood on where the eye sees nothing
-##      — measured on the Zugspitze's scree, the Trevi's reef and the Space
-##      Needle's foot pads, all of them reachable. The trade was taken because
-##      the alternative was leaving every column, drum and boulder a box, and
-##      because a `collide` flag is not this bead's to move (that changes the
-##      chunk's collision shapes and its A/B). The CONE is where the line is
-##      drawn, because its stone is a POINT at the top of a box-shaped ledge —
-##      a floor made of nothing — and check 9 asserts that half.
-##      `ponytail:` the honest fix is a per-kind CollisionShape3D
-##      (SphereShape3D / CylinderShape3D), which is one match arm in
-##      chunk_batch.gd's collision half; that is its own bead. Until it lands,
-##      prefer CUBE for anything a player is meant to STAND on.
+##  5d. COLLISION FOLLOWS THE KIND, AND THE CONE IS THE ONE THAT STILL DOES NOT.
+##      Bead godot-test1-y1o.10 closed the mismatch this rule used to record: a
+##      near-round colliding SPHERE now hangs a `SphereShape3D` and a near-round
+##      colliding CYLINDER a `CylinderShape3D`, both inscribed in the box, so the
+##      Zugspitze's scree, the Trevi's reef, the Space Needle's foot pads, the
+##      Colosseum's piers, the Kinderdijk drums and the Atomium's base are the
+##      shape you see — you stop at the ball, and you stand on the drum's real
+##      round top. `ChunkBatch.collision_shape_for` is the whole mapping and the
+##      whole argument; nothing about it is this file's to restate.
+##      TWO THINGS ARE STILL ON THIS FILE:
+##        * A CONE COLLIDES AS A BOX — Godot has no cone primitive — so its stone
+##          is a POINT at the top of a box-shaped ledge, a floor made of nothing.
+##          Nothing a player can reach may be a colliding cone; check 9c asserts
+##          it, and rule 5c's "CONE only on the piece that ends a taper" is what
+##          keeps them out of reach in the first place.
+##        * A ROUND BOX SQUASHED PAST `ChunkBatch.ROUND_COLLIDER_MAX_ASPECT` (1.6)
+##          FALLS BACK TO ITS BOX, because no SphereShape3D is an ellipsoid.
+##          NOTHING IN THIS FILE IS PAST IT TODAY — measured over all 28 field
+##          builders x 4 seeds after bead y1o.11 reshaped the Taj and Kinderdijk,
+##          the worst colliding SPHERE is the Taj's chattri dome at **1.57**
+##          (1.1 x 0.7 x 1.1) and the worst colliding CYLINDER the Redeemer's arm
+##          at 1.25 in PLAN. So every round colliding box in the field is round in
+##          collision, and the Taj's dome is 0.03 off the gate: **squash a dome
+##          any further and it silently goes back to being a box.** If you want a
+##          flattened dome a player stands on, draw it as a CYLINDER — a
+##          cylinder's aspect is measured in PLAN only, so a pancake drum is still
+##          round however thin it is.
 ##
 ## The 22 Budapest builders below take NO kind at all and must not: a city box is
 ## sliced on the chunk grid, and a rotated or non-cube one keeps the centre rule
