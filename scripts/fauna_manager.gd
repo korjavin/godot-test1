@@ -2277,8 +2277,9 @@ func herd_sync_state() -> Dictionary:
 func apply_herd_sync(state: Dictionary) -> void:
 	## Apply one already-validated `herd` packet (see `MpCodec.decode_herd`).
 	##
-	## `k < 0` is the master's all-clear. Anything else is a herd: unknown params
-	## build one, known params ease the one we have onto the master's truth.
+	## `k < 0` is the master's all-clear. Anything else is a herd, and the packet
+	## is either a REBUILD (see the three cases below, all rate-limited) or a
+	## CORRECTION that eases the one we already have onto the master's truth.
 	if not _animals.is_empty() and not _herd_remote:
 		# OUR OWN CROSSING YIELDS TO THE ROOM'S the moment the master speaks —
 		# two herds at once is exactly what the one-herd invariant forbids, and
