@@ -1453,6 +1453,9 @@ class StubTerrain extends Node:
 	func is_river_at(_pos: Vector3) -> bool:
 		return false
 
+	func is_wading_at(_pos: Vector3) -> bool:
+		return false
+
 
 func _check_the_roof_keeps_the_rain_out() -> void:
 	"""

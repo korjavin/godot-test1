@@ -86,6 +86,23 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            glob opens `Sentinel.isolate_user_state()` and names
 #                            no real `user://` path
 #   wade_selfcheck           river wading (player, croc, boss)
+#   field_bridge_selfcheck   FIELD BRIDGES where the road crosses a river: every
+#                            crossing under the span cap bridged exactly once
+#                            over 12 seeds (with the lake case counted), the
+#                            stone the CHUNKS build walked metre by metre in
+#                            three lanes for holes / seam gaps / duplicates,
+#                            the slope against TowerInterior.PLAN_RAMP_MAX_SLOPE
+#                            with a STEP as its control, both abutments dry with
+#                            mid-span as the wet control, the deck narrower than
+#                            every *_ROAD_CLEARANCE, the A/B (feature off: same
+#                            footprints, bodies and boxes byte for byte; coins
+#                            move in Y only) — and check 7, a REAL player.tscn
+#                            walked across a REAL deck: dry every metre, wet a
+#                            metre off the parapet, wet again with the deck gone.
+#                            Check 9 walks the AUTHORED APPROACH CORRIDOR (T to
+#                            the gate) metre by metre and asserts every wet
+#                            stretch is bridged; check 10 samples the wedge arc
+#                            at all 203 turning joints of all 39 bridges
 #   altitude_selfcheck       the FIELD ALTITUDE spike (flag off): 0.0 everywhere
 #                            with the flag off, the fp32 CPU/GPU port bit-exact
 #                            against a GLSL-derived oracle (with an f64 negative
@@ -570,12 +587,12 @@ one 4,100-line file until bd `godot-test1-ftn.13` split it by check family:
   shares the plateaus' `_city_ramp_slice` and is held to `TowerInterior.PLAN_RAMP_MAX_SLOPE`.
   **Margaret Island is the same mechanism**, one `DRY_RECTS` row, no machinery of its own.
   Known and documented: `DRY_RECTS` is XZ-only, so the river bed *under* a deck is dry too.
-- **The road's five CONSUMERS stop at the terminal station `T`; the road itself does not.**
+- **The road's CONSUMERS stop at the terminal station `T`; the road itself does not.**
   `_road_terminal_k()` is the last station at or west of `ROAD_TERMINAL_X`, and the caps
   are numbered in the code: road coins, road clearance, road bosses
   (`endless_terrain.gd`) and the minimap's drawn line (`minimap_hud.gd`) are 1–4;
-  CAP 5 is `_alt_road_segments`, the `FIELD_ALTITUDE` spike's flat corridor, which is
-  inert while the flag is false.
+  CAP 5 is FIELD BRIDGES and CAP 6 is `_alt_road_segments`, the `FIELD_ALTITUDE` spike's
+  flat corridor, which is inert while the flag is false.
   **`_road_extend_to_x` is deliberately NOT capped** — it is the station cache, and a cache
   that stops growing hangs every forward loop that walks it until it passes an X. From `T`
   the player is carried on by `spawn_approach_coins_in_chunk`, a deterministic corridor
@@ -996,6 +1013,110 @@ Don't simplify any line of it back to scalar arithmetic.
 
 `biome_at()` / `is_river_at()` are the public API — pure, allocation-free, safe per tick.
 
+**WADING IS Y-AWARE; THE BAND IS NOT** (bead `godot-test1-06o.2`). `is_river_at()` stays
+XZ-only — it is the band the shader paints, and the parity contract above is about it.
+Whether a *body* is in the water is the narrower question `is_wading_at(pos)` answers:
+`pos.y < WADE_SURFACE_MAX` (0.6 m) **and** `is_river_at`. That rule has ONE home and
+three callers — the player's `is_wading`, the remote avatar's sink, the crocodile's
+`_tick_river_sink` (plus the minimap's "in a river" readout) — because a fourth caller
+would be a fourth chance to forget the height. It needs **no shader edit**: the water is
+still painted under a bridge, which is correct.
+
+**It does NOT close Budapest's "walk the river bed under a deck" gap, and the reason is one
+layer down**: inside the rect `is_river_at` delegates to `BudapestPlan.danube_wet()`, which
+already subtracts every `DRY_RECTS` row — so the bed under the four authored decks answers
+DRY before the height rule is ever asked, for players, avatars, crocodiles and the map
+alike. Closing it means asking the band WITHOUT the cutout on the low-Y path, and the
+cutout is shared with MARGARET ISLAND, which is dry LAND at y = 0 and must stay dry — so it
+is a bridge-rects-only exception, a Budapest behaviour change, and bead
+`godot-test1-06o.3`'s to make with the not-walkable ruling in hand.
+
+**THE ROAD CROSSES A RIVER ON A BRIDGE, and that is what keeps a run crossable** when
+bead `godot-test1-06o.3` makes a channel not walkable. `spawn_field_bridges_in_chunk`
+builds one low stone footbridge per road river crossing — the anchor is the station that
+ENTERS the water (wet here, dry behind), so "one bridge per crossing" is a definition and
+not a de-duplication pass; the span walks forward to the far bank and refuses past
+`FIELD_BRIDGE_MAX_SPAN` (a lake, which wades and is 06o.3's problem). Five rules:
+**zero RNG** (the site is the road's centreline plus the river field, both pure; the boxes
+come off a private fixed-seed stream), so the A/B proves every other spawner is
+byte-identical; **no `obstacles` footprint** — a bridge is meant to be walked, and a
+footprint would push crocodiles off the road and make `_settle_coin_y` skip the deck's
+coins; **the CENTRE rule, not rect slicing**, because the deck is a chain of ROTATED slabs
+following the curving road (an axis-aligned deck would have to be widened by the lateral
+drift, which at the 78° heading cap is a 190 m slab) — safe here only because every piece
+is far smaller than a chunk, which the check asserts; **the ramps read
+`BudapestPlan`'s own deck slope and are held to `TowerInterior.PLAN_RAMP_MAX_SLOPE`**, and
+a slab may only be stretched at a deck-to-deck joint — stretching one over a ramp head
+makes a STEP, which `CharacterBody3D` cannot climb at all; and **road coins on a deck ride
+it** (`_settle_coin_y` still runs first, unlike the city's deck line, because a road boss
+stands on a river crossing and its footprint must still refuse a coin outright).
+
+**A DECK IS A FLOOR FOR BODIES TOO** — `field_bridge_stand_y()`. Every spawner drops a body
+at a ground height and lets gravity settle it, so one placed at 0.6 m under a 1.6 m deck
+can neither fall onto it nor climb out; a boss whose station is a river station has almost
+all its candidate spots inside the deck by construction. It is a LIFT, not a refusal:
+refusing the spot deleted every RIVER boss in the world, which is the one path that
+dispatches the crocodile — `enemy_spawn_selfcheck` check 11's non-vacuity assertion is what
+caught that, one round after the refusal shipped.
+
+**AND THE CORRIDOR IS BRIDGED TOO.** The road's consumers stop at `T`; the player does
+not. `approach_bridges()` samples `BudapestPlan.road_approach_point()` from `T` to the
+Danube's west bank **at `FIELD_BRIDGE_PROBE_STEP`, not at the road's pitch** (a station is
+~6 m of X and a band can be narrower — seed 63's fell between two samples), decimates the
+deck back to that pitch so the stone is the same shape, and continues the line WEST along
+the road's stations (resampled to the same metre pitch) whenever the ROAD SIDE REFUSES —
+that refusal, `k1 + DRY > T`, is the trigger, not a probe of the corridor's own first
+sample, because west of `T` the corridor is a POINT and its perpendicular is not the road's
+(seeds 115, 203, 224 are three shapes of the same handoff). One owner, one deck. It walks the same crossing rule as the stations,
+because the city's river override only starts at the rect's west edge — so the procedural
+river is alive under the authored corridor, and on seed 4 it crosses one at x ≈ 1495 with
+nothing over it. Same decks, same `_field_bridge_row_from()`, and the approach coin line
+rides them like the road's — **behind the same `spawn_field_bridges` flag**, because
+`field_bridge_surface_y` answers off the plan, which exists whether or not the builder ran.
+
+Four of those rules were WRONG ONCE, and the corrections are the interesting part.
+**`_field_bridge_slabs()` is the single description of the stone** — the builder that emits
+it and the surface query that answers "can I stand here" both read it, because they
+disagreed: the query was a point-to-POLYLINE distance, i.e. a CAPSULE, and at a joint on
+the outside of a turn it accepted points no rectangle covered, so a road coin stood at deck
+height over open air. **The span cap counts metres WALKED**, never the chord back to the
+entry station, which a curved wet run makes shorter than the road really is — **and it
+counts them on the CENTRELINE**, which is where the hero is. Measuring the span on the
+16 m section instead made a road that merely runs ALONGSIDE a river (seed 218 grazes one
+within 8 m for 186 m) into a "lake" and left two real crossings unbridged. The section
+keeps exactly one job: **where a RAMP may stand**. `_field_bridge_dry_across()` is its one
+home and `_field_bridge_ramp_dry()` is the shape it is asked in — the whole rectangle from
+the deck's end to the foot, because three lanes passed a foot with a wet patch half a metre
+inside one edge and the ramp's SIDES were wet on six seeds while its centre was dry, and a
+ramp is under `WADE_SURFACE_MAX` for its first 2.4 m. When no dry ramp is reachable the
+DECK CARRIES ON at deck height along the bank (`FIELD_BRIDGE_BANK_WALK_MAX`) rather than
+dragging one through the water, and only when even that fails is the crossing refused (the
+lake rule), never given a known-wet foot.
+
+**THE SPAN CAP IS WET METRES, AND THE WINDOW SCAN IS THE FEATURE'S PERF BUDGET.** The cap
+adds up the water each station OWNS (`_field_bridge_wet_metres`, memoized — the hot read of
+the whole feature), never the distances between wet station centres, which drops the entry
+station's share and both partial intervals at the banks and bridged a 124.5 m crossing as
+if it were 120.0. And `_field_bridge_reach()` pads a scan by how far stone reaches from its
+anchor IN ONE DIRECTION: doubling the bank walk and the ramp in it made the window 2.9 km
+wide and the first cold query of a run **33 ms**, one whole frame-spike budget, walking
+1,200 stations whose decks could never touch the chunk being built. One-sided, plus the
+memo and a 300 m bank walk, it is **8-10 ms cold and 0.1 ms warm**.
+
+**THE GROWTH MAY NOT READ THE STATION CACHE'S EDGE, and ONE ANCHOR OWNS A DECK.** Both are
+determinism, and both were wrong once. The growth is memoized, so a loop that stopped at
+whatever the cache happened to hold made the bridge SET a function of the order chunks were
+visited — six decks walking east, five walking west, and two peers in a room laying
+different stone over the same water; it extends the cache to its own budget first now, and
+`field_bridge_selfcheck` check 6b drives every subject seed both ways. And two crossings
+that grow onto the same bank produce the same deck under two anchors, which every chunk
+then emits TWICE: the WESTERN entry owns a merged deck and the later anchor builds nothing,
+with the corridor skipping any crossing the road already decked (`_road_bridges_near` is
+split out for exactly that question, so the ownership test can never recurse).
+Finally **the slab stretch at a joint is DERIVED, `half * tan(turn / 2)`**: the road's
+recurrence restores the heading toward +X as well as turning it, so a station can turn
+further than `road_turn_rate_deg` alone allows (22.4° measured), and a fixed stretch left a
+wedge of open air at the outer parapet.
 **There is a SPIKE behind `FIELD_ALTITUDE` (`endless_terrain.gd`) and it ships `false`.**
 Bead `godot-test1-ope.1` built a vertex-displaced heightfield with the parity contract one
 clause wider (`height_at()` / `field_height()`), Budapest, the HQ disc, every river band

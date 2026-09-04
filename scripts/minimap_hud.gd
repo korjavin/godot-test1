@@ -787,8 +787,13 @@ func _gather_world() -> void:
 		# Defensive clamp: the enum arrives as a plain int across the group
 		# boundary, and it indexes our colour/name tables.
 		_biome = clampi(b, 0, BIOME_NAMES.size() - 1)
-	if _terrain.has_method("is_river_at"):
-		_in_river = _terrain.is_river_at(_player_pos)
+	# `is_wading_at`, not `is_river_at` (bead godot-test1-06o.2): the readout says
+	# the PLAYER is in a river, and a player standing on a bridge deck over the
+	# band is not. Y-aware, so it agrees with the wade the legs are actually
+	# feeling; the band itself is still drawn under the deck by _gather_terrain,
+	# which is the map telling the truth about the water.
+	if _terrain.has_method("is_wading_at"):
+		_in_river = _terrain.is_wading_at(_player_pos)
 
 
 func _gather_terrain() -> void:

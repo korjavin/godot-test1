@@ -4603,22 +4603,31 @@ func _sheltered() -> bool:
 
 func _terrain_is_river_here() -> bool:
 	"""
-	Whether the player is standing in a river band, asked of the terrain through
-	the "terrain" group — the same null-safe group + has_method shape as
+	Whether the player is standing IN a river, asked of the terrain through the
+	"terrain" group — the same null-safe group + has_method shape as
 	_weather_is_raining_here() above and _sfx(), so the player scene run on its
 	own (no EndlessTerrain in the tree) simply answers "no river" instead of
 	erroring.
 
-	EDUCATIONAL NOTE:
-	- is_river_at() is one evaluation of the terrain's biome noise: no allocation,
-	  no physics query, no node lookup beyond this one — cheap enough to ask
-	  every physics tick, which is exactly what _physics_process does.
+	IT ASKS `is_wading_at`, NOT `is_river_at` (bead godot-test1-06o.2), and the
+	difference is the Y. `is_river_at` is the BAND — XZ-only, the same function
+	the ground shader paints, and it stays that way. Whether a BODY is in the
+	water is a narrower question, because the body may be standing on a bridge
+	deck over the band; that rule lives in ONE place on the terrain and this is
+	one of its three callers (the remote avatar and the crocodile's river sink are
+	the others).
 
-	@return bool: true when this exact spot is inside a river band.
+	EDUCATIONAL NOTE:
+	- is_wading_at() is a height compare and, only if that passes, one evaluation
+	  of the terrain's biome noise: no allocation, no physics query, no node
+	  lookup beyond this one — cheap enough to ask every physics tick, which is
+	  exactly what _physics_process does.
+
+	@return bool: true when the player is standing in the water here.
 	"""
 	var terrain := get_tree().get_first_node_in_group("terrain")
-	if terrain and terrain.has_method("is_river_at"):
-		return terrain.is_river_at(global_position)
+	if terrain and terrain.has_method("is_wading_at"):
+		return terrain.is_wading_at(global_position)
 	return false
 
 
