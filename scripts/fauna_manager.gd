@@ -655,6 +655,18 @@ const HERD_SYNC_EASE: float = 0.3
 ## which is the same question asked about a crocodile.
 const REMOTE_HERD_TIMEOUT: float = 2.0
 
+## Shortest gap (milliseconds) between two REBUILDS of a replayed herd.
+##
+## A TRUST BOUNDARY, not a tuning knob (found by codex review, 2026-09-04). The
+## master is only the oldest member of a public room, so a hostile one naming a
+## new `sd` on every packet would despawn and rebuild up to ten animal trees at
+## the `herd` verb's whole 40/s budget — and the frees are QUEUED, so the trees
+## pile up until the frame ends. One rebuild a second is invisible to every
+## honest path (a herd's identity changes at most once per FAUNA_INTERVAL, two
+## minutes, and the fastest legitimate change is a master election) and turns the
+## flood into one build a second, which is what an honest herd costs anyway.
+const HERD_REBUILD_MIN_MSEC: int = 1000
+
 # ============================================================================
 # STATE
 # ============================================================================
@@ -708,6 +720,10 @@ var _herd_remote: bool = false
 ## Seconds since the last `herd` packet was applied. Only ever advanced by
 ## `_replay_herd`, so it costs a solo run nothing at all.
 var _herd_silence: float = 0.0
+
+## When the last replayed herd was BUILT, against HERD_REBUILD_MIN_MSEC. Starts a
+## whole window in the past so the first herd of a process is never refused.
+var _herd_built_msec: int = -HERD_REBUILD_MIN_MSEC
 
 ## Seconds this herd has been alive, against MAX_HERD_LIFETIME (see there for
 ## why a purely relative despawn test can stall forever).
@@ -2246,9 +2262,19 @@ func apply_herd_sync(state: Dictionary) -> void:
 		if _herd_remote:
 			_despawn_herd()
 		return
+	# A REBUILD IS RATE-LIMITED — see HERD_REBUILD_MIN_MSEC. A refused packet
+	# returns WITHOUT touching `_herd_silence`, so a master that really has moved
+	# on stops renewing the lease and the herd we are holding times out in
+	# REMOTE_HERD_TIMEOUT; the next packet after that builds the new one.
+	var rebuild_ok: bool = Time.get_ticks_msec() - _herd_built_msec >= HERD_REBUILD_MIN_MSEC
 	if _herd_remote and (kind != _herd_kind or int(state["sd"]) != _herd_seed):
+		if not rebuild_ok:
+			return               # keep drawing the herd we already have
 		_despawn_herd()          # the master rolled a different herd
 	if _animals.is_empty():
+		if not rebuild_ok:
+			return
+		_herd_built_msec = Time.get_ticks_msec()
 		_build_herd(state)
 		_herd_remote = true
 	_herd_silence = 0.0

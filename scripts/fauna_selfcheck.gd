@@ -818,6 +818,20 @@ func _check_replay() -> void:
 		_replay_line = "replay: formation %.4f m, centre gap %.2f m, %d members" \
 				% [worst, gap, animals.size()]
 
+	# ...and A REBUILD IS RATE-LIMITED, which is a trust boundary rather than a
+	# tuning knob: the master is only the oldest member of a public room, and one
+	# naming a fresh `sd` on every packet would otherwise despawn and rebuild ten
+	# animal trees at the verb's whole 40/s budget (codex review, 2026-09-04).
+	var swapped: Dictionary = params.duplicate()
+	swapped["sd"] = REPLAY_SEED + 1
+	swapped["p"] = published
+	swapped["y"] = REPLAY_HEADING
+	swapped["d"] = travelled
+	_manager.call("apply_herd_sync", swapped)
+	if int(_manager.get("_herd_seed")) != REPLAY_SEED:
+		_failures.append("a second herd identity was built inside %d ms — a hostile master could rebuild ten animals per packet"
+				% int(_manager.get("HERD_REBUILD_MIN_MSEC")))
+
 	# (c) SILENCE FREES IT. No packet for REMOTE_HERD_TIMEOUT and the herd goes,
 	# which is the ONE test that also covers a deposed master, a leave and no MP
 	# node at all — see fauna_manager.REMOTE_HERD_TIMEOUT.

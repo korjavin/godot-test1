@@ -2112,6 +2112,10 @@ func _check_herd_parser() -> String:
 		_herd_with("y", "0.5"),                                    # yaw is a string
 		_herd_with("sp", -1.0),                                    # walking backwards
 		_herd_with("sp", 1.0e30),                                  # ...or at 1e30 m/s
+		# JUST OVER THE AMBLE. `sp` is written onto AnimatableBody3D roots every
+		# physics tick and Godot derives a RIDER's platform velocity from that
+		# delta, so the presence packet's generous 1e4 m/s is not a bound here.
+		_herd_with("sp", MpCodec.FAUNA_SCRIPT.WALK_SPEED_MAX + 0.5),
 		_herd_with("d", -0.1),                                     # negative distance
 		_herd_with("d", 1.0e30),                                   # poisons the stride sine
 		_herd_with("d", NAN),
@@ -2134,6 +2138,12 @@ func _check_herd_parser() -> String:
 	var spun: Dictionary = MpCodec.decode_herd(_herd_with("y", 1.0e6))
 	if spun.is_empty() or float(spun["y"]) < 0.0 or float(spun["y"]) >= TAU:
 		return "decode_herd did not wrap a huge yaw into [0, TAU) (%s)" % str(spun)
+
+	# ...and both ends of the amble are ACCEPTED, or the honest herds the fauna
+	# manager actually rolls would be refused and the buddy would see nothing.
+	for edge: float in [MpCodec.FAUNA_SCRIPT.WALK_SPEED_MIN, MpCodec.FAUNA_SCRIPT.WALK_SPEED_MAX]:
+		if MpCodec.decode_herd(_herd_with("sp", edge)).is_empty():
+			return "decode_herd refused %.1f m/s, which fauna_manager rolls" % edge
 
 	# The verb has to be budgeted like every other one `_receive_mesh_verb`
 	# dispatches — "only the master sends this" is not a rate bound.

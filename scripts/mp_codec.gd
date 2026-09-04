@@ -194,6 +194,10 @@ const FAUNA_SCRIPT := preload("res://scripts/fauna_manager.gd")
 
 ## Sanity bound on the `d` field of a `herd` packet — metres the herd has walked.
 ##
+## The `sp` field has no constant of its own: it is bounded by
+## `FAUNA_SCRIPT.WALK_SPEED_MAX` directly, because the honest range IS the amble
+## the fauna manager rolls (see `decode_herd`).
+##
 ## THE PRESENCE PACKET'S `s` CASE ONE VERB ALONG, and for exactly its reason:
 ## `_animate_animals()` multiplies this into a `sin()` for every limb of every
 ## animal, so a finite-but-absurd 1e38 makes every limb angle garbage for as long
@@ -559,10 +563,15 @@ static func decode_herd(packet: Dictionary) -> Dictionary:
 	var travelled: float = float(packet["d"])
 	if not (is_finite(heading) and is_finite(yaw) and is_finite(speed) and is_finite(travelled)):
 		return {}
-	# Speed and distance are BOTH bounded and non-negative: a herd walks forward
-	# at a walking pace, and each of them latches an accumulator on the far side —
-	# the dead-reckoned centre and the stride phase (see MAX_HERD_TRAVELLED).
-	if speed < 0.0 or speed > MAX_PRESENCE_SPEED:
+	# SPEED IS BOUNDED BY THE WALK ITSELF, not by the presence packet's generous
+	# 1e4 m/s. `_replay_herd()` writes it straight onto AnimatableBody3D roots
+	# every physics tick, and Godot derives the platform velocity a RIDER inherits
+	# from that transform delta — so a finite 1e4 is a 167 m jump per tick and a
+	# rider flung off the deck, which the presence bound exists to reject rather
+	# than to allow. The honest range is WALK_SPEED_MIN..MAX, read off the fauna
+	# manager like `k` is, so retuning the amble retunes this with it (found by
+	# codex review, 2026-09-04).
+	if speed < 0.0 or speed > FAUNA_SCRIPT.WALK_SPEED_MAX:
 		return {}
 	if travelled < 0.0 or travelled > MAX_HERD_TRAVELLED:
 		return {}
