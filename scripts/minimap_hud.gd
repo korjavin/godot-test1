@@ -1107,7 +1107,7 @@ func _gather_road() -> void:
 		return
 	var k_min: int = _terrain.road_k_min
 	var k_max: int = _terrain.road_k_max
-	# CAP 4 OF 4 — the drawn line stops where the road does (bead
+	# CAP 4 OF 5 — the drawn line stops where the road does (bead
 	# godot-test1-8gw.3). The coin road ends at a terminal station west of
 	# Budapest's gate; the station CACHE keeps growing past it (its loops and
 	# binary searches depend on spanning any X — see endless_terrain's
