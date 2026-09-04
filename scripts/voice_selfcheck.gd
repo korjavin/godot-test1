@@ -496,6 +496,22 @@ func _check_no_js_bool() -> void:
 			+ "extraction is reading the wrong text")
 	if not module.contains("stats:"):
 		_fail("the extracted VOICE_JS block does not export stats")
+	# ICE RECOVERY, asserted BY NAME (bead godot-test1-xtr.7). A PC that drops to
+	# `failed` is never rebuilt by `members()` — that only closes a PC when the id
+	# leaves the room — so without these two lines a handover mutes a peer for the
+	# life of the room, silently and with nothing on screen to say so. It rides
+	# this check because this is the one place VOICE_JS is read as TEXT; a revert
+	# now fails by name.
+	# BOTH HALVES, and each spelled as CODE rather than as the bare word: the
+	# handler that notices and the call that repairs. `restartIce` on its own is
+	# also what the comment beside it says, so a check on the word alone survives
+	# the deletion of the call it is guarding — measured, not assumed.
+	for needle: String in ["oniceconnectionstatechange", "pc.restartIce()"]:
+		if not module.contains(needle):
+			_fail("voice_chat.gd's VOICE_JS is missing `%s` — a PeerConnection that "
+				% needle + "drops to iceConnectionState 'failed' (Wi-Fi -> LTE "
+				+ "handover, NAT rebind, an expiring coturn allocation) then stays "
+				+ "dead for the whole life of the room (godot-test1-xtr.7)")
 	var offence: String = _js_bool_offence(module)
 	if not offence.is_empty():
 		_fail("voice_chat.gd's VOICE_JS hands a JS boolean back over the bridge "

@@ -641,6 +641,23 @@ const VOICE_JS: String = """
 			if (!p.timer) { p.timer = setTimeout(function () { flush(id); }, 100); }
 		};
 
+		/* A DEAD TRANSPORT REBUILDS ITSELF. A Wi-Fi -> LTE handover, a NAT rebind
+		   or an expiring coturn allocation drops the PC to `failed`, and nothing
+		   else here would ever notice: `members()` only closes a PC when the id
+		   LEAVES the room, so a still-listed peer would stay silent for the life
+		   of the room. `restartIce()` fires `onnegotiationneeded`, which the
+		   perfect-negotiation queue above already turns into a fresh offer over
+		   the existing "vc" relay — no new signalling kind, no new PC, no timer
+		   loop. Both ends may fire it at once; polite/impolite resolves the glare.
+		   ponytail: ICE only. A DTLS-level `connectionState === 'failed'` would
+		   need the close(id)/open(id) pair from the OFFERER alone; not seen in
+		   practice, so it is not written. */
+		pc.oniceconnectionstatechange = function () {
+			if (pc.iceConnectionState === 'failed') {
+				try { pc.restartIce(); } catch (e) { }
+			}
+		};
+
 		/* KIND-GUARDED, which is what lets an OLD build ignore a camera it does not
 		   know about and what keeps a peer's video out of the <audio> element. */
 		pc.ontrack = function (ev) {
