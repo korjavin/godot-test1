@@ -2053,12 +2053,12 @@ func _kind_top_problems(builder: String, seed_index: int, kind: int, t: Transfor
 	# YAW-ONLY is the case a builder's `top` arithmetic assumes: the box's local
 	# +Y is world +Y, so the mesh's apex and the cube's highest corner are the
 	# same height and rotated_box_top names it exactly.
-	var up: Vector3 = t.basis.get_column(1)
+	var up: Vector3 = (t.basis * Vector3.UP)
 	if absf(up.x) < RADIUS_EPSILON and absf(up.z) < RADIUS_EPSILON:
 		if absf(mesh_top - cube_top) > RADIUS_EPSILON:
 			problems.append("%s (seed %d): an untilted BoxKind.%s box draws to %.4f m but its box tops out at %.4f m — a dome's top is no longer its sphere's top, so every `top` computed off that box over-declares"
 					% [builder, seed_index, kind_name, mesh_top, cube_top])
-		var dims := Vector3(t.basis.get_column(0).length(), up.length(), t.basis.get_column(2).length())
+		var dims := Vector3((t.basis * Vector3.RIGHT).length(), up.length(), (t.basis * Vector3.BACK).length())
 		var helper: float = LandmarkBuilders.rotated_box_top(t.origin.y, dims, 0.0)
 		if absf(helper - mesh_top) > RADIUS_EPSILON:
 			problems.append("%s (seed %d): rotated_box_top says %.4f m for a BoxKind.%s box that draws to %.4f m — the helper disagrees with the shape"

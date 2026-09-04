@@ -1358,8 +1358,11 @@ static func _landmark_taj(terrain: Node3D, center: Vector3, rng: RandomNumberGen
 				true, dome_kinds[dome_i])
 		dome_i += 1
 		y += dims.y
+	# CYLINDER and not the cone the taper wants: this finial COLLIDES, and rule 5d
+	# refuses a colliding cone (a point at the top of a box-shaped ledge). The
+	# collide flag is not this bead's to move — that changes collision shapes.
 	terrain.create_box(center + Vector3(0.0, y + 0.6, 0.0), Vector3(0.35, 1.2, 0.35), yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_GRANITE, rng),
-			true, ChunkBatch.BoxKind.CONE)
+			true, ChunkBatch.BoxKind.CYLINDER)
 
 	# Four minarets, one per plinth corner, each with a small cap.
 	for corner in 4:
@@ -1504,14 +1507,16 @@ static func _landmark_big_ben(terrain: Node3D, center: Vector3, rng: RandomNumbe
 	terrain.create_box(center + Vector3(0.0, y + PARAPET.y / 2.0, 0.0), PARAPET, yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
 	y += PARAPET.y
 
-	# The spire: four boxes narrowing to a point. THE TAPER RULE (see the KIND
-	# banner above _lm_shade): every tier but the last is a CYLINDER and the last
-	# is the CONE, so the stack ends in ONE point instead of four.
+	# The spire: four boxes narrowing to a point — and the ONE taper in this file
+	# that stops at CYLINDER all the way up. Every box of this tower COLLIDES and
+	# rule 5d refuses a colliding cone; the collide flag is not this bead's to
+	# move, because that changes the chunk's collision shapes. The round tiers
+	# still lose the four square corners a stepped stone spire had.
 	for i in 4:
 		var w: float = 3.0 - float(i) * 0.68
 		var h := 1.3
 		terrain.create_box(center + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w), yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04),
-				true, ChunkBatch.BoxKind.CONE if i == 3 else ChunkBatch.BoxKind.CYLINDER)
+				true, ChunkBatch.BoxKind.CYLINDER)
 		y += h
 	terrain.create_box(center + Vector3(0.0, y + 0.35, 0.0), Vector3(0.25, 0.7, 0.25), yaw, rng, block_batch, block_body, 0.0, stone,
 			true, ChunkBatch.BoxKind.CYLINDER)
@@ -2544,11 +2549,13 @@ static func _landmark_kinderdijk(terrain: Node3D, center: Vector3, rng: RandomNu
 			terrain.create_box(center + rot * Vector3(mx, y + 0.95, 0.0), Vector3(w, 1.9, w), yaw,
 					rng, block_batch, block_body, 0.0, _lm_shade(brick, rng, 0.03), true, ChunkBatch.BoxKind.CYLINDER)
 			y += 1.9
-		# The cap: dark thatch, and wider than the body it sits on. A CONE, which
-		# is what "the octagonal brick tower in the house's vocabulary" was always
-		# describing.
+		# The cap: dark thatch, and wider than the body it sits on. A CYLINDER
+		# rather than the cone a mill's cap wants, because this box COLLIDES and
+		# rule 5d refuses a colliding cone — the round tapering body under it is
+		# what turns "the octagonal brick tower in the house's vocabulary" into a
+		# real one.
 		terrain.create_box(center + rot * Vector3(mx, y + 0.75, 0.0), Vector3(2.5, 1.5, 2.5), yaw,
-				rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04), true, ChunkBatch.BoxKind.CONE)
+				rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04), true, ChunkBatch.BoxKind.CYLINDER)
 		y += 1.5
 		var hub_y: float = y - 0.6
 		terrain.create_box(center + rot * Vector3(mx, hub_y, 1.35), Vector3(0.4, 0.4, 0.9), yaw,

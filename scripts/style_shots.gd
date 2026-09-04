@@ -80,8 +80,110 @@ func _run() -> void:
 	await _shoot(terrain, player, forest, 0.0, "2_forest")
 	await _shoot(terrain, player, street, -PI * 0.5, "3_budapest")
 
+	# LANDMARKS (bead godot-test1-y1o.6). Each one is found by BUILDER NAME rather
+	# than by a hand-typed chunk: `_landmark_at` is a pure function of (chunk,
+	# run_seed), so sweeping it answers "where is the Taj in this world" without
+	# building anything, and the same SEED puts it in the same chunk for the
+	# before shot and the after shot. `dist` is per-place because the registry's
+	# shapes run from a 4 m bronze to a 20 m cathedral.
+	for shot_v: Variant in LANDMARK_SHOTS:
+		var shot: Dictionary = shot_v
+		await _shoot_landmark(terrain, player, String(shot["builder"]),
+				float(shot["dist"]), String(shot["name"]))
+
 	print("[SHOTS] done -> ", _out_dir)
 	get_tree().quit(0)
+
+## The landmark shots, by BUILDER NAME — the registry's own identity, and the one
+## thing that cannot drift when a row is appended (the `kind` index can).
+const LANDMARK_SHOTS: Array = [
+	{ "builder": "_landmark_taj", "dist": 22.0, "name": "4_taj" },
+	{ "builder": "_landmark_st_basil", "dist": 19.0, "name": "5_st_basil" },
+	{ "builder": "_landmark_cologne", "dist": 26.0, "name": "6_cologne" },
+	{ "builder": "_landmark_parthenon", "dist": 24.0, "name": "7_parthenon" },
+	{ "builder": "_landmark_pisa", "dist": 18.0, "name": "8_pisa" },
+	{ "builder": "_landmark_kinderdijk", "dist": 24.0, "name": "9_kinderdijk" },
+]
+
+## How far out the sweep looks for a chunk carrying the wanted landmark. The
+## registry is 48 places at LANDMARK_CHANCE, so one particular place is rare —
+## this is a few thousand chunks, which costs a hash each and nothing else.
+const LANDMARK_SWEEP: int = 60
+
+
+func _landmark_kind(builder: String) -> int:
+	for i in LandmarkBuilders.LANDMARKS.size():
+		if String((LandmarkBuilders.LANDMARKS[i] as Dictionary)["builder"]) == builder:
+			return i
+	return -1
+
+
+func _find_landmark_chunks(terrain: Node, kind: int) -> Array:
+	"""
+	Every chunk near spawn whose deterministic landmark ROLL is this kind, nearest
+	first. A roll is not a building: spawn_landmark_in_chunk's candidate loop can
+	still reject every spot in the chunk, which is why the caller walks this list
+	and checks for a real marker rather than trusting the first hit.
+	"""
+	var out: Array = []
+	for ring in range(1, LANDMARK_SWEEP):
+		for dx in range(-ring, ring + 1):
+			for dz in range(-ring, ring + 1):
+				if absi(dx) != ring and absi(dz) != ring:
+					continue   # only the ring's edge; the inside was walked already
+				var lm: Dictionary = terrain._landmark_at(Vector2i(dx, dz))
+				if not lm.is_empty() and int(lm["kind"]) == kind:
+					out.append(Vector2i(dx, dz))
+		if out.size() >= 6:
+			return out
+	return out
+
+
+func _shoot_landmark(terrain: Node, player: Node3D, builder: String, dist: float, name: String) -> void:
+	"""
+	Stand `dist` metres from one named landmark and photograph it.
+
+	TWO SETTLES, because the marker only exists once the chunk is BUILT: the first
+	teleport is to the chunk centre (which is where `_landmark_at` says the place
+	is, to within half a chunk), and only then can the `landmark` group be asked
+	where the stone actually stands. The second pose is inside chunks that are
+	already up, so it needs no rebuild — `_shoot` re-runs the settle anyway, which
+	is what freezes the same camera for both halves of an A/B.
+	"""
+	var kind := _landmark_kind(builder)
+	if kind < 0:
+		print("[SHOTS] no registry row named ", builder)
+		return
+	var at := Vector3.INF
+	# THE MARKER'S OWN `kind` META IS THE TEST, not "the nearest marker": a rolled
+	# chunk whose candidate loop found no spot builds nothing, and the nearest
+	# marker is then some OTHER landmark hundreds of metres away — which is a shot
+	# of the wrong building with the right filename, the one failure this tool
+	# cannot afford (measured: the Taj and the Parthenon both photographed Big Ben).
+	for chunk_v: Variant in _find_landmark_chunks(terrain, kind):
+		var chunk: Vector2i = chunk_v
+		var centre: Vector3 = terrain.chunk_to_world(chunk) + Vector3(25.0, 2.0, 25.0)
+		player.set_physics_process(true)
+		player.set_process(true)
+		terrain.new_run(SEED, chunk)
+		player.global_position = centre
+		player.velocity = Vector3.ZERO
+		await get_tree().create_timer(SETTLE_SECONDS, true, false, true).timeout
+		for n_v: Variant in get_tree().get_nodes_in_group("landmark"):
+			var n: Node3D = n_v
+			if int(n.get_meta("kind", -1)) == kind and n.global_position.distance_to(centre) < 60.0:
+				at = n.global_position
+		if at != Vector3.INF:
+			break
+	if at == Vector3.INF:
+		print("[SHOTS] ", builder, " rolled but never built within the sweep — skipped")
+		return
+	# Stand south-east of it and turn to face it. A Node3D's forward is -Z, so
+	# `Basis(UP, yaw) * -Z` must equal `-back`: sin yaw = back.x, cos yaw = back.z,
+	# i.e. yaw = atan2(back.x, back.z).
+	var back := Vector3(0.7, 0.0, 0.7).normalized() * dist
+	await _shoot(terrain, player, at + back + Vector3(0.0, 2.0, 0.0),
+			atan2(back.x, back.z), name)
 
 func _find_biome(terrain: Node, want: int) -> Vector3:
 	var x: float = 250.0
@@ -127,7 +229,12 @@ func _shoot(terrain: Node, player: Node3D, where: Vector3, yaw: float, name: Str
 	player.global_position = where
 	player.rotation.y = yaw
 	player.velocity = Vector3.ZERO
-	player.camera_pivot.rotation = Vector3(0.0, yaw, 0.0)
+	# THE PIVOT'S YAW IS A LAG OFFSET, NOT A HEADING (`camera_yaw_lag`, which
+	# player_controller decays to zero) — it is a child of the body, so writing the
+	# heading here TURNED THE CAMERA TWICE and framed everything 45 degrees off the
+	# thing the shot was aimed at (measured on the Taj, bead godot-test1-y1o.6).
+	# Zero the yaw, keep the pitch the rig is holding.
+	player.camera_pivot.rotation = Vector3(player.camera_pivot.rotation.x, 0.0, 0.0)
 	# The respawn blink toggles visibility, so a bite during the settle can leave
 	# the hero mid-blink and absent from one shot of the pair.
 	player.visible = true
