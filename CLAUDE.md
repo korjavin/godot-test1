@@ -42,6 +42,16 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 ./serve.sh                                          # serve a web build (WASM needs http://)
 
 # Self-checks — godot --headless --path . --script res://scripts/<name>.gd
+#   batch_selfcheck          the chunk batch's MESH-KIND slot: every BoxKind's
+#                            unit mesh inscribed in the unit cube (and spanning
+#                            its full height, or the shader gradient never
+#                            reaches full colour), one MultiMeshInstance3D per
+#                            kind PRESENT sharing one material and one shadow
+#                            flag (a cube-only batch still exactly one node
+#                            named BlockMultiMesh, measured over 225 real field
+#                            chunks), the city splitter carrying kind and
+#                            leaving a non-cube WHOLE, and collision staying a
+#                            BoxShape3D of dimensions for every kind
 #   fauna_selfcheck          herd steering + rider carry
 #   mp_selfcheck             multiplayer pure logic (decoders, ids, arithmetic)
 #   locale_selfcheck         en/de table + German fits its controls
@@ -305,7 +315,44 @@ Load-bearing rules:
 - **One MultiMesh + one collision body per chunk.** All decorative geometry goes through
   `create_box()`, which appends to the chunk's `block_batch` and (unless `collide=false`)
   adds a `CollisionShape3D` to the chunk's single `BlockCollision` `StaticBody3D`. Never
-  instance a MeshInstance3D or a physics body per object.
+  instance a MeshInstance3D or a physics body per object. **That seam is its own file** —
+  `scripts/chunk_batch.gd` (`class_name ChunkBatch`, all static, bead `godot-test1-ftn.1`):
+  `create_box` / `create_block` / `_build_block_multimesh`, the two process-wide shared
+  resources (`_get_shared_unit_box_mesh` / `_get_shared_block_material` — the latter
+  the `world_block.gdshader` material, with `WORLD_BLOCK_SHADER`,
+  `BLOCK_BOTTOM_SHADE`, `SHARED_BLOCK_ROUGHNESS` and the `RAMP_*` banner beside
+  it), and the city splitter
+  (`split_city_boxes_on_chunk_grid` / `_is_axis_aligned_basis` / `_chunk_grid_spans`).
+  `endless_terrain.gd` keeps a one-line forwarder for `create_box` and
+  `_build_block_multimesh` and nothing else — the 600-odd `terrain.create_box(` call sites
+  and `landmark_builders`' contract are what those two buy; every other caller (the city
+  streamer, `budapest_selfcheck`) reaches `ChunkBatch` directly. **New batch machinery
+  lands there, not in the world engine.**
+- **A BOX HAS A MESH KIND, AND EVERY UNIT MESH FITS THE UNIT CUBE** (bead
+  `godot-test1-y1o.1`, epic `y1o` "get rid of blocks"). The batch entry is
+  `{transform, color, kind}` — `ChunkBatch.BoxKind` (CUBE / SPHERE / CONE / CYLINDER), a
+  trailing optional on `create_box` defaulting to CUBE, **always written** so the entry
+  shape stays uniform (the whole-dict `var_to_bytes` signatures both `prop_selfcheck` and
+  `budapest_selfcheck` compare would otherwise differ between two runs that agree about
+  every box). Three rules, all pinned by `batch_selfcheck`:
+  **every unit mesh is inscribed in the unit cube** (`ChunkBatch.unit_mesh`, radius 0.5 /
+  height 1.0, lazy and shared like the cube), which is what keeps `dimensions` meaning the
+  entry's BOUNDING BOX for every kind — and therefore keeps `prop_selfcheck`'s cube-corner
+  reach helpers and `landmark_selfcheck`'s extent helpers valid upper bounds with no edit,
+  and `world_block.gdshader`'s model-space -0.5..+0.5 gradient meaningful;
+  **collision is unchanged** — still a `BoxShape3D` of `dimensions` whatever the kind, so a
+  non-CUBE kind is for `collide = false` decoration and NON-CLIMBABLE colliders only,
+  never for anything a player stands on; and
+  **`_build_block_multimesh` emits one `MultiMeshInstance3D` per kind PRESENT** — a
+  cube-only chunk (every chunk the world ships today) builds exactly the one node it always
+  did, still named `BlockMultiMesh`, and every bucket shares the one
+  `_get_shared_block_material` and the chunk's `cast_shadows` flag. That per-kind split is
+  the ONLY sanctioned multiplication of a chunk's MultiMeshInstance3Ds. **Budapest stays
+  pure cube** — no city builder passes a kind, and `budapest_selfcheck` asserts a built
+  city chunk has exactly one MultiMeshInstance3D, which is the after-the-fact half its
+  pre-build sweep cannot see. The city splitter **carries `kind` and leaves a non-CUBE
+  entry whole**: a cut cone is not two cones. Choosing a kind costs **no RNG draw**, so it
+  can never move a spawn.
 - **Chunk-parented, so unloading frees it.** Anything spawned per-chunk parents to the
   chunk MeshInstance3D or it leaks.
 - **Footprints are the shared currency.** Each thing built appends
@@ -364,11 +411,11 @@ Three rules of the city's own, all pinned by `budapest_selfcheck`:
   missing). **The centre rule slices a LANDMARK, not a BOX**, and these builders emit
   single boxes far bigger than a chunk (Buda Castle's terrace is 70 x 300 m), so every
   oversized axis-aligned box is first cut on the world chunk grid by
-  `split_city_boxes_on_chunk_grid()` — without it a 300 m palace lives in one 50 m chunk
+  `ChunkBatch.split_city_boxes_on_chunk_grid()` — without it a 300 m palace lives in one 50 m chunk
   and vanishes at the web build's 150 m residency edge while you walk its far end. A
   ROTATED box cannot be cut into boxes and keeps the centre rule; `budapest_selfcheck`
   check 5 fails any box, turned or not, bigger than a chunk. **The splitter cuts the MESH
-  and the COLLISION BODY on ONE shared predicate** (`_is_axis_aligned_basis`): `create_box`
+  and the COLLISION BODY on ONE shared predicate** (`ChunkBatch._is_axis_aligned_basis`): `create_box`
   hands the two halves different bases for the same box — the batch entry carries the
   dimensions, the shape node only the rotation — so a second spelling of "axis-aligned"
   is how they drift into a drawn wall whose collision lives in another chunk. Check 5
@@ -441,7 +488,7 @@ Three rules of the city's own, all pinned by `budapest_selfcheck`:
   `godot-test1-8gw.9`, verbatim: *"it's okay without shadow, performance is more
   important"*). 2,100+ tall casters in the 49-chunk web view cost **19 ms a frame in
   the shadow pass alone** — none of it visible in the draw-call count the box budgets
-  guard — so `_build_block_multimesh`'s `cast_shadows` flag makes a city chunk's batch
+  guard — so `ChunkBatch._build_block_multimesh`'s `cast_shadows` flag makes a city chunk's batch
   a shadow RECEIVER only, the tower interior's measured rule met outdoors. It is the
   WHOLE chunk, so a landmark loses its cast shadow with the blocks around it; the
   chunk has ONE batch and splitting it is a second draw call per chunk, which is the
@@ -502,7 +549,13 @@ two-storey keep, plus eight hand-planned storeys over it (see below) rising to t
 BLOCK under the sealed roof, assembled onto the
 shell by
 `endless_terrain` (one direction only — the interior reads the shell's constants, so a
-shell that knew about the interior would be a cyclic `class_name`). Four rules of its
+shell that knew about the interior would be a cyclic `class_name`). **Two families were
+lifted out of it whole** by bd `godot-test1-ftn.12` and neither may drift back:
+`scripts/tower_dressing.gd` (`TowerDressing` — the office, corridor and wayfinding
+dressers) and `scripts/tower_dossiers.gd` (`TowerDossiers` — the evidence dossiers).
+Both are static libraries in `landmark_builders.gd`'s idiom, reaching back into
+`TowerInterior` for the plan-grid readers and the palette; that direction is one-way and
+`plan_boxes()` is the single seam the dressing enters through. Four rules of its
 own, all pinned by `tower_interior_selfcheck`:
 
 - **No interior traversal may demand a jump-height.** The base apex (3.6125 m) is what
@@ -679,7 +732,11 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   that counts draws**; check 5 asserts both. Read `DRAW_BUDGET` as "nothing left the
   batch", not as a draw count.
 - **The EVIDENCE DOSSIERS are the one MultiMesh in the building, and one is the cap.**
-  Six authored folders (`DOSSIERS`, a const table of `{floor, cell, lore}` — floors 2-6
+  They live in `scripts/tower_dossiers.gd` (`class_name TowerDossiers`, bd
+  `godot-test1-ftn.12`), a static library the interior hands itself to; the four state
+  vars and the `body_entered` handler stay on the node, and the seams are four lines in
+  `tower_interior.gd`.
+  Six authored folders (`TowerDossiers.DOSSIERS`, a const table of `{floor, cell, lore}` — floors 2-6
   only, never the labyrinth or the block) pay `DOSSIER_VALUE` coins and a localized line
   on the `landmark_toast` card when you walk into one. A pickup has to vanish on its own,
   which a merged storey batch cannot do, and six meshes would be six SURFACES — so they
@@ -697,7 +754,7 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   watched stretch, which is pure cell choice and must stay takeable by timing the patrol
   alone.
 - **The offices are FURNISHED, and the furniture is derived rather than drawn.** No
-  glyph was added to `TowerPlans` for it: `_plan_dressing` walks each storey's rooms
+  glyph was added to `TowerPlans` for it: `TowerDressing.plan_dressing` walks each storey's rooms
   and puts desks, chairs, cabinets, bookshelves, meeting tables, coolers, plants and
   framed diplomas/photos on the cells that touch a wall, off a FIXED salt (never
   `run_seed` — the tower is authored). It is all vertex-coloured boxes in the storey's
@@ -707,7 +764,7 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   turnstile came out). Furniture has its own
   per-storey budget (`PLAN_DRESS_BUDGET` 580) so `PLAN_BOX_BUDGET` keeps measuring
   exactly what it always did. **The CORRIDORS are dressed too** (benches and planters,
-  `_hall_dressing`), on cells whose four neighbours are all stone or open floor and whose
+  `TowerDressing._hall_dressing`), on cells whose four neighbours are all stone or open floor and whose
   hall is two cells wide — never in the labyrinth or the block, and **never solid**, which
   is why the halls need no connectivity fill of their own. **The WAYFINDING PLAQUES ride the same dresser** — one
   per office room, on the bare wall nearest the way out, its arrow pointing along that
@@ -716,7 +773,7 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   live bearing arrow would rank the corridors at every junction and quietly solve the
   maze, so the horizontal help is authored, coarse and in the world. **Three rules keep it safe and check 18 asserts all
   three**: nothing lands on a doorway cell or beside one; a solid piece is committed only
-  if the room's connectivity is unchanged (`_still_connected`); and a cell carrying
+  if the room's connectivity is unchanged (`TowerDressing._still_connected`); and a cell carrying
   anything else the storey draws — a pad, a lock plate, a set piece — or standing under
   the storey above's stairwell hole is refused. Only waist-high-or-taller pieces collide.
 - **The labyrinth's rule is TWO ROUTES, and the spines walk the ungated one.** Each maze
@@ -1389,8 +1446,21 @@ state machine and imports no network types, so tests drive it directly.
 
 ### Mesh (`scripts/mp_manager.gd` and friends)
 `lobby_client.gd` (socket + `/ice`), `mp_manager.gd` (mesh, seed, presence, heroes, shared
-totals, crocodile sync, claims), `remote_avatar.gd` (visual only), `mp_ui.gd`,
-`teammate_locator.gd`.
+totals, crocodile sync, claims), **`mp_codec.gd` (the pure codec)**, `remote_avatar.gd`
+(visual only), `mp_ui.gd`, `teammate_locator.gd`.
+
+**THE PARSERS ARE `MpCodec`, THE HANDLERS ARE `MpManager`, and that seam is the file
+boundary.** `scripts/mp_codec.gd` (`class_name MpCodec`, all `static`) holds every
+`decode_*` — `decode_presence`, `decode_state`, `decode_croc_sync`, `decode_captive`,
+`decode_room`, `decode_pad`, `decode_lmk` — plus `packet_kind`, the `_croc_flags` byte
+packing and the `CROC_FLAG_*` constants both ends of it read, the two `*_in_reach`
+proximity tests, `peer_int_id`, and the wire-format bounds (`MAX_STATE_IDS`,
+`MAX_HERO_NAME`, `MAX_CROC_SYNC`, `MAX_LANDMARK_CLAIM_PAD`, …) they are written against.
+It reads no instance state and knows about no room. Everything with a socket or state —
+the mesh, presence, the verbs, authority, rate limits, the hero pool — stays in
+`mp_manager.gd`. **A new verb is a parser in `mp_codec.gd` beside its siblings and a
+handler in `mp_manager.gd`**; a bound belongs with the parser that enforces it, so the
+encoder reads it back as `MpCodec.X` rather than re-typing the number.
 
 The sharpest rules, in rough order of how badly they bite:
 

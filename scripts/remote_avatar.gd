@@ -119,7 +119,7 @@ var on_floor: bool = true
 
 ## The peer's visible ability state, as `PLAYER_SCRIPT.ABILITY_BIT_*` flags —
 ## Teibi's Resize form and Windman's Air Rush (bead godot-test1-69p). Straight
-## off the wire, already bounded to a byte by `MPManager.decode_presence()`, and
+## off the wire, already bounded to a byte by `MpCodec.decode_presence()`, and
 ## read only with `&` and `ability_visual_scale()`, both of which are total: a
 ## bit this build does not know draws nothing rather than breaking the pose.
 var ability_bits: int = 0

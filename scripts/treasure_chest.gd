@@ -56,7 +56,7 @@ const OPEN_FLASH_LIFETIME: float = 0.35
 
 ## The ONE sphere shape every chest trigger that will ever spawn shares. Same
 ## static lazy-getter discipline as ability_effect._get_shared_sphere_mesh() and
-## endless_terrain._get_shared_unit_box_mesh(): every chest wants the identical
+## ChunkBatch._get_shared_unit_box_mesh(): every chest wants the identical
 ## radius, and chests are rebuilt on every chunk reload.
 static var _shared_shape: SphereShape3D = null
 

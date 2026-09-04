@@ -72,7 +72,7 @@ extends SceneTree
 const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
 const CROC_AI_SCRIPT: String = "res://scripts/piglet_crocodile_ai.gd"
 const PLAYER_SCRIPT: String = "res://scripts/player_controller.gd"
-const MP_SCRIPT: String = "res://scripts/mp_manager.gd"
+const MP_SCRIPT: String = "res://scripts/mp_codec.gd"
 const LOD_SCRIPT: String = "res://scripts/crocodile_lod_manager.gd"
 const TOWER_INTERIOR_SCRIPT: String = "res://scripts/tower_interior.gd"
 const CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
@@ -225,11 +225,12 @@ var _biomes_seen_all: Dictionary = {}
 ## scene, and 2800 crocodiles a seed would pay for the same answer 2800 times.
 var _mp_probed: Dictionary = {}
 
-## mp_manager.gd's CROC_FLAG_* constants, read through get_script_constant_map()
-## for the same reason SPECIES is (a `const` is not a property, and MpManager
+## mp_codec.gd's CROC_FLAG_* constants, read through get_script_constant_map()
+## for the same reason SPECIES is (a `const` is not a property, and MpCodec
 ## has no instance here). Named through CROC_STATE_BITS rather than restated, so
 ## a bit that is renamed there fails check 10 by name instead of silently
-## comparing against a zero.
+## comparing against a zero. The codec is where BOTH halves of the flag byte
+## live since bead godot-test1-ftn.11 — the packing and the constants together.
 var _mp_consts: Dictionary = {}
 
 ## piglet_crocodile_ai.gd's SPECIES table and endless_terrain.gd's BIOME_SPECIES
@@ -4312,15 +4313,15 @@ func _check_mp_contract(croc: Node, species_name: String, chunk_pos: Vector2i,
 		var member: String = String(member_v)
 		var flag_name: String = String(CROC_STATE_BITS[member])
 		if not _mp_consts.has(flag_name):
-			_fail("mp_manager.gd has no %s — the bit '%s' rides is gone, so nothing"
+			_fail("mp_codec.gd has no %s — the bit '%s' rides is gone, so nothing"
 					% [flag_name, member] + " the master says about it reaches a peer")
 			continue
 		var bit: int = int(_mp_consts[flag_name])
 		for value: bool in [true, false]:
 			croc.set(member, value)
-			var carried: bool = (MpManager._croc_flags(croc) & bit) != 0
+			var carried: bool = (MpCodec._croc_flags(croc) & bit) != 0
 			if carried != value:
-				_fail("'%s': MpManager._croc_flags() wrote %s for %s = %s —" % [
+				_fail("'%s': MpCodec._croc_flags() wrote %s for %s = %s —" % [
 						species_name, "1" if carried else "0", member, value]
 						+ " the master's byte does not describe this species, so"
 						+ " every peer draws it in a pose it is not in")

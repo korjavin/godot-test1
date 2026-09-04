@@ -717,6 +717,26 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 			# ...and then the chunk's ONE draw call, built exactly the way
 			# create_chunk builds it.
 			terrain._build_block_multimesh(parent, batch)
+			# BUDAPEST STAYS PURE CUBE (bead godot-test1-y1o.1). Since the
+			# mesh-kind slot landed, _build_block_multimesh emits one
+			# MultiMeshInstance3D per KIND PRESENT — so a city builder that reached
+			# for a dome or a spire would silently double this chunk's draw calls,
+			# and the pre-build sweep above cannot see it (it runs BEFORE the batch
+			# is built, which is exactly what makes it the right question for
+			# everything else). This is the after-the-fact half, and it is the only
+			# thing that can see it. Budapest is authored, its look is stone, and
+			# the box budgets beside it are written against ONE batch per chunk.
+			var mmis: int = 0
+			for child in parent.get_children():
+				if child is MultiMeshInstance3D:
+					mmis += 1
+			if mmis != 1:
+				_fail("city chunk %s built %d MultiMeshInstance3Ds, not 1 — a city "
+						% [chunk_pos, mmis]
+						+ "builder has passed a non-CUBE ChunkBatch.BoxKind. Budapest "
+						+ "stays pure cube: every per-kind batch is another draw call "
+						+ "over 1,631 city chunks, which is the cost check 4's "
+						+ "residency window exists to hold down")
 
 		body.free()
 		parent.free()
@@ -913,11 +933,11 @@ func _check_slicing(terrain: Node3D) -> void:
 	# than found later.
 	var yawed := Basis(Vector3.UP, PI)
 	for dim: Vector3 in [Vector3(1.0, 1.0, 1.0), Vector3(125.0, 3.0, 272.0)]:
-		if not terrain._is_axis_aligned_basis(yawed.scaled_local(dim)):
+		if not ChunkBatch._is_axis_aligned_basis(yawed.scaled_local(dim)):
 			_fail("a PI-yawed %.0f x %.0f box reads as ROTATED to the splitter "
 					% [dim.x, dim.z] + "while its own collision basis reads as "
 					+ "axis-aligned — the two halves are testing different things")
-	if terrain._is_axis_aligned_basis(Basis(Vector3.UP, PI * 0.25)):
+	if ChunkBatch._is_axis_aligned_basis(Basis(Vector3.UP, PI * 0.25)):
 		_fail("a 45-degree yaw reads as axis-aligned — the splitter would cut a "
 				+ "rotated box into pieces that do not reassemble")
 
@@ -1168,7 +1188,7 @@ func _run_builder(terrain: Node3D, index: int, center: Vector3, chunk_center: Ve
 	var body := StaticBody3D.new()
 	terrain._landmark_builders.call(String(slot["builder"]), terrain, center, rng,
 			chunk, batch, body)
-	terrain.split_city_boxes_on_chunk_grid(chunk_center, batch, body)
+	ChunkBatch.split_city_boxes_on_chunk_grid(terrain, chunk_center, batch, body)
 	return {"batch": batch, "body": body, "chunk": chunk,
 			"accents": chunk.get_child_count()}
 
