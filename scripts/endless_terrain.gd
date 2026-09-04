@@ -1870,6 +1870,45 @@ const ALT_RIVER_SKIRT_K: float = 3.5
 const ALT_ROAD_FLAT_HALF: float = 22.0
 const ALT_ROAD_SKIRT: float = 40.0
 
+## THE COARSE ROAD POLYLINE the corridor is measured against — and the ONE
+## geometry BOTH languages read (plan, Task 3). The GPU cannot walk the station
+## cache: it is a Dictionary grown on demand, station by station. So the corridor
+## arrives as a uniform array, and the CPU reads that SAME array rather than
+## re-deriving the distance from the stations — parity by construction beats
+## parity by re-derivation, the _city_river_segments() precedent one feature on.
+##
+## STRIDE 8 — every 8th station, ~48 m of road apart. MEASURED over 5 seeds and
+## ±560 m of centreline: the worst fine station sits 9.3 m off the chord between
+## its two coarse ends, against a 22 m ALT_ROAD_FLAT_HALF — so the centreline the
+## player actually walks is always deep inside the flat strip, which is the only
+## thing this corridor has to promise. Stride 4 measures 3.6 m and stride 16
+## measures 25.2 m, which is already OUTSIDE the strip: 16 is a road with hills on
+## it. 8 is the coarsest stride that still buys the promise.
+const ALT_ROAD_SEG_STRIDE: int = 8
+
+## The deviation bound stride 8 buys, rounded up from the measured 9.3 m. Nothing
+## in the field reads it: it is the written contract between ALT_ROAD_SEG_STRIDE
+## and ALT_ROAD_FLAT_HALF, and altitude_selfcheck's check 3 asserts it, so raising
+## the stride fails loudly instead of quietly putting the coin road on a hill.
+const ALT_ROAD_SEG_DEV_MAX: float = 12.0
+
+## How many segments the corridor is, and how far the station cache is grown to
+## build them. 24 segments — TWELVE EACH SIDE of the player's own station — is
+## 12 x 8 x 6 m = 576 m of road either way on a straight stretch, comfortably past
+## the 250 m desktop residency half-width (render_distance 5 x chunk_size 50), so
+## every loaded chunk's ground sees the same corridor the CPU does.
+##
+## ALT_ROAD_WINDOW is what _road_extend_to_x is asked for, and it is 600 rather
+## than 576 for exactly one reason: the window is taken in STATIONS, so the cache
+## has to already hold the station 96 west of the player, and on a straight road
+## that station is 576 m west. The 24 m of slack is the margin that keeps the
+## binary search either side of it inside the cache.
+##
+## ALT_ROAD_SEG_MAX is restated in ground.gdshader — a GLSL array is a fixed size —
+## the CITY_SHADER_SEG_MAX contract one array along.
+const ALT_ROAD_SEG_MAX: int = 24
+const ALT_ROAD_WINDOW: float = 600.0
+
 ## The sizes of ground.gdshader's two Budapest array uniforms, restated here for
 ## the ONE thing GDScript can do that GLSL cannot: fail loudly. A GLSL array is a
 ## fixed size, so the plan's Danube and its dry rects have to be padded to it —
@@ -2964,6 +3003,21 @@ var road_k_max: int = 0
 const ROAD_TERMINAL_K_UNSET: int = -0x7FFFFFFF
 var _road_terminal_k_cache: int = ROAD_TERMINAL_K_UNSET
 
+## THE COARSE ROAD POLYLINE for the currently loaded window, as (x1, z1, x2, z2)
+## segments — the one cache _alt_flat_mask's clause 4 reads on this side and
+## ground.gdshader's `alt_road_seg` array uniform is fed from on the other.
+##
+## Empty until the first refresh, and empty forever while the spike flag is off.
+## An empty cache means _alt_road_distance() answers INF, which the mask already
+## reads as "nowhere near the road" — the same degrade _road_lateral_distance has
+## always given a point far off-road in X, so there is no uninitialised state to
+## trip over.
+##
+## Refreshed on a CHUNK-BOUNDARY CROSSING only (update_chunks, the seam that
+## already runs there) — never per frame, and above all never from height_at(),
+## which is called once per ground vertex.
+var _alt_road_segs: PackedVector4Array = PackedVector4Array()
+
 ## Memoized result of _approach_coin_east_end() — where the approach coin line
 ## meets the Danube. Unlike the terminal station above this carries NO run seed
 ## (the avenue is authored at z = 0 and so is the river), so new_run() leaves it
@@ -3867,6 +3921,16 @@ func update_chunks(player_chunk: Vector2i) -> void:
 	- We maintain a square of chunks around the player
 	- As the player moves, we add/remove chunks at the edges
 	"""
+
+	# STEP 0: refresh the coarse ROAD POLYLINE the heightfield's flat corridor is
+	# measured against (spike flag only — _alt_road_segments is empty with it off).
+	#
+	# A chunk-boundary crossing is exactly the seam it wants: it runs once per ~50 m
+	# of walking rather than per frame, and it runs BEFORE STEP 3 lays the safety
+	# ring's ground, so the floor built this crossing already sees this crossing's
+	# corridor. See clause 4 of _alt_flat_mask for the window's known ceiling.
+	if alt_enabled():
+		_alt_road_refresh(float(player_chunk.x) * chunk_size + chunk_size / 2.0)
 
 	# STEP 1: Find all chunks that SHOULD be loaded.
 	#
@@ -9610,6 +9674,101 @@ func alt_amplitude_at(world_x: float, world_z: float) -> float:
 	return _alt_amplitude(_biome_noise(world_x, world_z))
 
 
+func _alt_road_segments(center_x: float) -> PackedVector4Array:
+	"""
+	The coin road around `center_x` as a COARSE polyline, packed as (x1, z1, x2, z2)
+	segments — the shape ground.gdshader's `alt_road_seg` array uniform wants and
+	the shape _alt_road_distance() reads on this side.
+
+	@param center_x: World X the window is centred on (the player's chunk centre).
+	@return: Up to ALT_ROAD_SEG_MAX segments, west to east. EMPTY while the spike
+	         flag is off, and empty east of the terminal station.
+
+	EVERY ALT_ROAD_SEG_STRIDE-th station is a node, so the segments are ~48 m of
+	road each — see ALT_ROAD_SEG_STRIDE for the measurement that says a chord that
+	long still keeps the centreline inside ALT_ROAD_FLAT_HALF.
+
+	CAP 5 OF THE ROAD'S CONSUMERS (bead godot-test1-8gw.3, joining road coins, road
+	clearance, road bosses and the minimap line): the walk stops at
+	_road_terminal_k(). East of T there is no road to flatten a corridor around,
+	and the approach corridor that carries the player on from there lies inside
+	Budapest's rect, which clause 1 of the mask has already flattened outright.
+
+	The cap is on this CONSUMER and not on _road_extend_to_x — that function's
+	forward loop hangs if the cache stops growing (see _road_terminal_k) — and the
+	extend call below is what makes the binary search after it valid.
+	"""
+	var segs := PackedVector4Array()
+	# The flag first, before the station cache is grown: with the spike off this
+	# function must not so much as touch the road, or the "byte for byte today's
+	# world" merge condition would rest on the cache being pure (it is, but the
+	# claim should not need that argument).
+	if not alt_enabled():
+		return segs
+	# Grown in X, because that is the only thing _road_extend_to_x speaks — but the
+	# window is then taken in STATIONS around the player's own station, NOT as the
+	# X range itself. The road's heading cap is 78 degrees, so a curving stretch
+	# advances as little as 1.25 m of X per 6 m station: an X-ordered walk starting
+	# at center_x - ALT_ROAD_WINDOW spends its whole segment budget hundreds of
+	# metres WEST of the player and leaves the ground under their feet uncorridored.
+	# Centring on the station is what makes the window a window around the player.
+	_road_extend_to_x(center_x - ALT_ROAD_WINDOW, center_x + ALT_ROAD_WINDOW)
+	var k_last := mini(road_k_max, _road_terminal_k())
+	var half := ALT_ROAD_SEG_MAX / 2  # segments each side of the player's station
+	var k_center := _road_first_k_at_or_after_x(center_x)
+	var k := maxi(road_k_min, k_center - half * ALT_ROAD_SEG_STRIDE)
+	var k_end := mini(k_last, k_center + half * ALT_ROAD_SEG_STRIDE)
+	var prev := Vector2.ZERO
+	var have_prev := false
+	while k <= k_end and segs.size() < ALT_ROAD_SEG_MAX:
+		var c: Vector2 = _road_station(k).center
+		if have_prev:
+			segs.append(Vector4(prev.x, prev.y, c.x, c.y))
+		prev = c
+		have_prev = true
+		k += ALT_ROAD_SEG_STRIDE
+	return segs
+
+
+func _alt_road_refresh(center_x: float) -> void:
+	"""
+	Rebuild the cached coarse road polyline around `center_x`.
+
+	@param center_x: World X the new window is centred on.
+
+	THE ONE WRITER of _alt_road_segs, so the CPU's corridor and the array
+	ground.gdshader is fed can never be built from two different windows. Called
+	from update_chunks (chunk-boundary crossings) and, once Task 4 lands, read
+	straight back out by _apply_biome_shader_params().
+	"""
+	_alt_road_segs = _alt_road_segments(center_x)
+
+
+func _alt_road_distance(world_x: float, world_z: float) -> float:
+	"""
+	Distance (world metres, XZ) from a point to the CACHED coarse road polyline —
+	the GDScript twin of `alt_road_distance` in ground.gdshader.
+
+	@param world_x, world_z: World-space point to test.
+	@return: Distance to the nearest segment, or INF when the cache is empty (spike
+	         off, or no refresh yet). INF is what the mask already reads as "no road
+	         here", so an unbuilt window degrades to full altitude and never to a
+	         crash.
+
+	The clamped point-to-segment projection is BudapestPlan.segment_distance() —
+	the same arithmetic the Danube polyline and the approach corridor ride, written
+	entirely in Vector2 so every intermediate is f32 and matches what the shader
+	computes. A second spelling of it here is exactly how the two would drift.
+	"""
+	var p := Vector2(world_x, world_z)
+	var best := INF
+	for seg: Vector4 in _alt_road_segs:
+		var d := BudapestPlan.segment_distance(p, Vector2(seg.x, seg.y), Vector2(seg.z, seg.w))
+		if d < best:
+			best = d
+	return best
+
+
 func _alt_flat_mask(world_x: float, world_z: float, biome_value: float) -> float:
 	"""
 	HOW MUCH ALTITUDE THIS POINT IS ALLOWED — the GDScript twin of `alt_flat_mask`
@@ -9663,18 +9822,23 @@ func _alt_flat_mask(world_x: float, world_z: float, biome_value: float) -> float
 	mask *= smoothstep(RIVER_HALF_WIDTH, RIVER_HALF_WIDTH * ALT_RIVER_SKIRT_K,
 			absf(biome_value - RIVER_LEVEL))
 
-	# CLAUSE 4 — THE COIN ROAD CORRIDOR. See ALT_ROAD_FLAT_HALF for why the road
-	# is the spike's control.
+	# CLAUSE 4 — THE COIN ROAD CORRIDOR. See ALT_ROAD_FLAT_HALF for why the road is
+	# the spike's control, and _alt_road_segments for the coarse polyline both
+	# languages measure it against. Reading the CACHE rather than the station cache
+	# is what makes this clause a pure lookup: height_at() is called once per ground
+	# vertex, and growing a Dictionary from there would be a side effect per vertex.
 	#
-	# ponytail: this reads the shipped _road_lateral_distance (station centres,
-	# 6 m apart — a polyline in all but name) rather than a corridor of its own.
-	# KNOWN CEILING, and Task 3 of the plan is the upgrade: the GPU cannot walk the
-	# station cache, so parity needs a COARSE polyline pushed as a uniform array and
-	# read by both sides. Until then clause 4 is CPU-only and this function extends
-	# the station cache as a side effect, which height_at()'s "pure and
-	# allocation-free" docstring does not want.
-	var road_d := _road_lateral_distance(world_x, world_z, ALT_ROAD_FLAT_HALF + ALT_ROAD_SKIRT)
-	mask *= smoothstep(ALT_ROAD_FLAT_HALF, ALT_ROAD_FLAT_HALF + ALT_ROAD_SKIRT, road_d)
+	# ponytail: the window is ALT_ROAD_SEG_MAX segments around the station nearest
+	# the last chunk-boundary crossing, so outside it the corridor is simply not
+	# flattened — a debug teleport far up the road sees hills on it until the next
+	# crossing refreshes the polyline, one chunk of walking away. A hard-curving
+	# stretch shortens the window in X too (96 stations is 576 m of straight road
+	# but only ~120 m of a road at the 78-degree heading cap), which is inside the
+	# 250 m residency. KNOWN SPIKE CEILING, both halves; the upgrade path is a
+	# distance texture (no window at all) or, cheaper, a bigger ALT_ROAD_SEG_MAX in
+	# both languages.
+	mask *= smoothstep(ALT_ROAD_FLAT_HALF, ALT_ROAD_FLAT_HALF + ALT_ROAD_SKIRT,
+			_alt_road_distance(world_x, world_z))
 
 	return mask
 
@@ -9688,10 +9852,10 @@ func height_at(world_x: float, world_z: float) -> float:
 	@return: Ground height in metres, signed around 0. Exactly 0.0 everywhere when
 	         the spike flag is off, and exactly 0.0 inside every authored zone.
 
-	RNG-free and deterministic — the biome field's contract, because it is the same
-	field read a third way. NOT yet allocation-free: clause 4 of _alt_flat_mask
-	grows the road station cache (pure in `k`, so the ANSWER is unchanged and
-	load-order independent), which Task 3's coarse polyline removes.
+	RNG-free, deterministic and side-effect-free — the biome field's contract,
+	because it is the same field read a third way. Clause 4 of _alt_flat_mask reads
+	the CACHED coarse road polyline (rebuilt on chunk-boundary crossings, never
+	from here), so nothing in this call chain grows a cache or draws from a stream.
 	"""
 	# THE FLAG, FIRST LINE AND BEFORE ANY NOISE. With the spike off this is the
 	# whole function, so the flat world costs one bool compare and not one hash.
@@ -12023,6 +12187,9 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	_road_terminal_k_cache = ROAD_TERMINAL_K_UNSET
 	# ...and the approach coin line with it: it is resampled off that station.
 	_approach_coin_line_cache = PackedVector2Array()
+	# ...and the spike's coarse road polyline, which is a window onto the same
+	# centreline. update_chunks in step 4 below rebuilds it for the new world.
+	_alt_road_segs = PackedVector4Array()
 	pending_chunks.clear()
 	pending_removals.clear()
 

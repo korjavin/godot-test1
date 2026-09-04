@@ -228,31 +228,58 @@ burning the budget the measurement needs.
 
 ### Task 3: The road corridor as a shared coarse polyline
 
-- [ ] add `ALT_ROAD_SEG_MAX = 24`, `ALT_ROAD_SEG_STRIDE = 8` (every 8th station ~48 m
+- [x] add `ALT_ROAD_SEG_MAX = 24`, `ALT_ROAD_SEG_STRIDE = 8` (every 8th station ~48 m
       apart; the road's heading cap makes the chord deviation far under the 18 m
       between `ALT_ROAD_FLAT_HALF` and `ALT_ROAD_SKIRT`, so a coarse polyline flattens
       the same corridor a fine one would) and `ALT_ROAD_WINDOW = 560.0` m (just over
       the desktop residency half-width, `render_distance` 5 × `chunk_size` 50)
-- [ ] add `_alt_road_segments(center_x: float) -> PackedVector4Array` — walks the
+      — plus `ALT_ROAD_SEG_DEV_MAX = 12.0`, the deviation bound the stride buys
+- [x] add `_alt_road_segments(center_x: float) -> PackedVector4Array` — walks the
       station cache from `center_x - ALT_ROAD_WINDOW` to `+ ALT_ROAD_WINDOW` by
       `ALT_ROAD_SEG_STRIDE`, packing consecutive centres as `(x1, z1, x2, z2)`, capped
       at `ALT_ROAD_SEG_MAX`. Stops at `_road_terminal_k()` — **cap 5 of the road's
       consumers**; east of T there is no road to flatten around, and
       `spawn_approach_coins_in_chunk`'s corridor is inside Budapest's rect anyway
-- [ ] cache it on the terrain (`_alt_road_segs`) and refresh it **on a chunk-boundary
+- [x] cache it on the terrain (`_alt_road_segs`) and refresh it **on a chunk-boundary
       crossing only** (the same seam `update_chunks` already runs on), never per frame
-- [ ] add `_alt_road_distance(world_x, world_z) -> float` — the clamped
+- [x] add `_alt_road_distance(world_x, world_z) -> float` — the clamped
       point-to-segment loop over that cache, the SAME projection as
       `BudapestPlan.danube_distance()` / the shader's `city_river_distance`
-- [ ] wire clause 4 of `_alt_flat_mask` to it
-- [ ] document the **known spike ceiling** in a `ponytail:` comment: outside the
+- [x] wire clause 4 of `_alt_flat_mask` to it
+- [x] document the **known spike ceiling** in a `ponytail:` comment: outside the
       window the corridor is not flattened, so a teleport far ahead sees a hilly road
       for one chunk-crossing until the window refreshes. Upgrade path: a distance
       texture, or widening the window
-- [ ] extend check 3's road leg to sample the corridor at 40 stations either side of
+- [x] extend check 3's road leg to sample the corridor at 40 stations either side of
       the player and assert exactly `0.0`
-- [ ] run the check
+- [x] run the check
 
+
+  NOTE (deviation, deliberate): the plan's stride claim was MEASURED rather than
+  assumed. Worst fine-station offset from the chord over 5 seeds and ±560 m:
+  stride 4 → 3.6 m, stride 8 → 9.3 m, stride 16 → 25.2 m. Stride 8 keeps the
+  centreline the player walks well inside `ALT_ROAD_FLAT_HALF` (22 m); stride 16
+  does not. `ALT_ROAD_SEG_DEV_MAX = 12.0` records the bound and check 3 asserts
+  it (mutation-tested at stride 24: it fails, naming the stride).
+
+  NOTE (deviation, deliberate): the window is taken in STATIONS around the
+  player's own station, not as the X range `ALT_ROAD_WINDOW` names. The road's
+  heading cap is 78°, so a curving stretch advances as little as 1.25 m of X per
+  6 m station — an X-ordered walk from `center_x - ALT_ROAD_WINDOW` spent its
+  whole 24-segment budget hundreds of metres west of the player and left the
+  ground under their feet uncorridored (measured: 651 m off, check 3 red).
+  `ALT_ROAD_WINDOW` is now 600.0 and is the `_road_extend_to_x` hint, sized so
+  the station 96 west of the player is already cached on a straight road. The
+  ceiling this leaves — a hard-curving stretch shortens the corridor in X to
+  ~120 m, inside the 250 m desktop residency — is in the `ponytail:` comment.
+
+  NOTE: check 3's road leg already walked 40 stations either side, so the last
+  checkbox was extended rather than added: it now drives the shipped
+  `_alt_road_refresh()` seam (without it the check would sample an empty window
+  and pass for the wrong reason), asserts the chord deviation, prints it as a
+  report number, and shrinks its lateral offset to
+  `ALT_ROAD_FLAT_HALF - ALT_ROAD_SEG_DEV_MAX` so it can keep demanding exactly
+  `0.0` instead of a tolerance.
 ### Task 4: The GPU twin — vertex displacement in `ground.gdshader`
 
 - [ ] add the uniforms, all with INERT defaults: `alt_enabled = 0.0`,

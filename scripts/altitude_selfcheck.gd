@@ -310,25 +310,54 @@ func _check_flat_zones() -> void:
 		_assert_alive(t, seed_value, "river band", dry)
 
 		# --- ZONE 4: THE COIN ROAD CORRIDOR -----------------------------------
-		# Walked as the curve it is: every station centre, plus a random lateral
-		# offset inside ALT_ROAD_FLAT_HALF. Stations only at or west of the
-		# terminal — CAP 5 OF THE ROAD'S CONSUMERS (bead godot-test1-8gw.3): east
-		# of T there is no road, and the approach corridor that carries the walk on
-		# from there is inside Budapest's rect and already flat by zone 1.
+		# Walked as the curve it is: FLAT_ROAD_STATIONS stations either side of the
+		# origin, every one of them a centre the player really walks over, plus a
+		# lateral offset. Stations only at or west of the terminal — CAP 5 OF THE
+		# ROAD'S CONSUMERS (bead godot-test1-8gw.3): east of T there is no road, and
+		# the approach corridor that carries the walk on from there is inside
+		# Budapest's rect and already flat by zone 1.
+		#
+		# THE SHIPPED REFRESH SEAM IS DRIVEN, not bypassed: the corridor is measured
+		# against the COARSE polyline _alt_road_refresh() caches on a chunk-boundary
+		# crossing, so a check that sampled height_at() without it would be asserting
+		# against an empty window (INF distance, no corridor at all) and would pass
+		# for the wrong reason. Centred on the origin, which the ±240 m of stations
+		# below sit well inside of ALT_ROAD_WINDOW from.
+		t._alt_road_refresh(0.0)
 		var terminal: int = t._road_terminal_k()
 		var on_road: Array[Vector2] = []
 		var off_road: Array[Vector2] = []
+		# The polyline is a CHORD across ALT_ROAD_SEG_STRIDE stations, so a fine
+		# station can sit up to ALT_ROAD_SEG_DEV_MAX off it (asserted below). The
+		# flat strip a sample is guaranteed to be inside is therefore the flat half
+		# LESS that deviation — the honest promise the corridor makes, and shrinking
+		# the offset is how this leg keeps asking for EXACTLY 0.0 rather than for a
+		# tolerance.
+		var lateral: float = t.ALT_ROAD_FLAT_HALF - t.ALT_ROAD_SEG_DEV_MAX
+		var worst_dev := 0.0
 		for i in FLAT_ROAD_STATIONS * 2 + 1:
 			var k: int = mini(i - FLAT_ROAD_STATIONS, terminal)
 			t._road_extend_to_x(-SAMPLE_HALF, SAMPLE_HALF)
 			var st: Dictionary = t._road_station(k)
 			var c: Vector2 = st.center
+			# THE CHORD DEVIATION ITSELF, measured on the shipped cache: this is what
+			# binds ALT_ROAD_SEG_STRIDE to ALT_ROAD_FLAT_HALF, and without it raising
+			# the stride would quietly walk the coin road onto a hill while every
+			# other leg of this check still passed.
+			worst_dev = maxf(worst_dev, t._alt_road_distance(c.x, c.y))
 			var n := Vector2(-sin(st.heading), cos(st.heading))  # the road's normal
 			for j in 8:
-				on_road.append(c + n * rng.randf_range(-1.0, 1.0) * t.ALT_ROAD_FLAT_HALF)
+				on_road.append(c + n * rng.randf_range(-1.0, 1.0) * lateral)
 				var side: float = 1.0 if j % 2 == 0 else -1.0
 				off_road.append(c + n * side * (t.ALT_ROAD_FLAT_HALF + t.ALT_ROAD_SKIRT
-						+ rng.randf_range(1.0, FLAT_CONTROL_MARGIN)))
+						+ t.ALT_ROAD_SEG_DEV_MAX + rng.randf_range(1.0, FLAT_CONTROL_MARGIN)))
+		if worst_dev > t.ALT_ROAD_SEG_DEV_MAX:
+			_fail("seed %d: a road station sits %.2f m off the coarse polyline, over ALT_ROAD_SEG_DEV_MAX %.1f — lower ALT_ROAD_SEG_STRIDE or the coin road is on a hill" % [
+				seed_value, worst_dev, t.ALT_ROAD_SEG_DEV_MAX])
+		# The measured deviation is a REPORT number as well as an assertion — it is
+		# what says how coarse the polyline is allowed to get.
+		print("[altitude] seed %d: worst road-station offset from the coarse polyline %.2f m (bound %.1f m, %d segments)" % [
+			seed_value, worst_dev, t.ALT_ROAD_SEG_DEV_MAX, t._alt_road_segs.size()])
 		_assert_flat(t, seed_value, "road corridor", on_road)
 		_assert_alive(t, seed_value, "road corridor", off_road)
 
