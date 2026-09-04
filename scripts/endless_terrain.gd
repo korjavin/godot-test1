@@ -3920,6 +3920,15 @@ func _apply_biome_shader_params() -> void:
 	mat.set_shader_parameter("biome_mountain_max", BIOME_MOUNTAIN_MAX)
 	mat.set_shader_parameter("river_level", RIVER_LEVEL)
 	mat.set_shader_parameter("river_half_width", RIVER_HALF_WIDTH)
+	# THE DEEP CHANNEL's darker centre strip (bead godot-test1-06o.3). Parity in
+	# the ordinary sense: the strip you cannot walk into has to be the strip you
+	# can SEE, and both are readouts of the same normalised depth — the fraction
+	# is pushed rather than restated in GLSL. It shades the NOISE river and the
+	# Danube from the one number. The shader deliberately does NOT run the FORD
+	# exemption (`_deep_channel_ford` — a road-width gap at one refused crossing
+	# in thirty-nine, which would cost a station search per fragment): the tint
+	# says "deep water", the CPU says who may walk it.
+	mat.set_shader_parameter("river_deep_fraction", RIVER_DEEP_FRACTION)
 	mat.set_shader_parameter("biome_blend", BIOME_BLEND)
 	# THE DRY DISC, the GPU half of it: is_river_at() refuses to call the tower's
 	# footprint water, so the shader must refuse to paint it blue. Parity-critical
@@ -10313,20 +10322,193 @@ func is_wading_at(world_pos: Vector3) -> bool:
 	parity contract is about `is_river_at`, which is unchanged, and this is a
 	strictly narrower question that only a body can ask.
 
-	IT DOES NOT CLOSE BUDAPEST'S UNDER-DECK GAP, which an earlier version of this
-	docstring claimed. Inside the rect `is_river_at` answers
-	`BudapestPlan.danube_wet()`, and that already subtracts every DRY_RECTS row —
-	so the bed under an authored deck is dry before the height is ever compared.
-	Asking the band without the cutout would also flood MARGARET ISLAND, which is
-	the same mechanism holding dry LAND at y = 0; the bridge-rects-only exception
-	that would close it belongs to bead godot-test1-06o.3.
+	IT CLOSES BUDAPEST'S UNDER-DECK GAP (bead godot-test1-06o.3) by asking
+	`river_depth_at`, which subtracts only the DRY_RECTS rows that are real LAND.
+	`is_river_at` still subtracts every row — it is the band the shader paints and
+	a deck must read dry to it — but a BODY at y = 0 under a deck 12 m up is
+	standing in the Danube, and the height compare above is what makes that
+	distinction safe: a body ON the deck never reaches this line. Margaret Island
+	keeps its cutout because it is land, not a lid.
 
 	Cheap in the order that matters: the height compare is free and rejects every
 	body on a deck before the noise evaluation runs.
 	"""
 	if world_pos.y >= WADE_SURFACE_MAX:
 		return false
-	return is_river_at(world_pos)
+	return river_depth_at(world_pos.x, world_pos.z) < 1.0
+
+
+## ============================================================================
+## THE DEEP CHANNEL — rivers are not walkable down the middle
+## ============================================================================
+##
+## OWNER RULING 2026-09-04, re-asked with urgency 2026-09-05 ("why rivers, and
+## danube are still walkable? fix this") — bead godot-test1-06o.3. The inner
+## fraction of every river band is IMPASSABLE: a body that gets into it is pushed
+## back out along the field's own gradient. The outer band still wades at exactly
+## today's numbers (WADE_SPEED_FACTOR / WADE_RUN_MIN_SPEED are untouched), so the
+## thing that made wading a decision rather than a trap survives on the banks.
+##
+## WHY A FRACTION AND NOT A WALL: a hard wall across an endless procedural field
+## is a softlock generator. A centre channel leaves the banks walkable, keeps the
+## river readable as water you can stand in, and puts the crossing where the
+## bridges are — the road's (spawn_field_bridges_in_chunk), the corridor's
+## (approach_bridges) and Budapest's four authored decks.
+const RIVER_DEEP_FRACTION: float = 0.4
+
+## Finite-difference step for the push direction, in metres. Small against a band
+## (~10-20 m across) and large against fp32 noise, so the two extra evaluations
+## give a direction and not rounding noise. At the CENTRELINE the field has a
+## kink (it is an absolute value), and a FORWARD difference is exactly right
+## there: every step off the centre increases the depth, so the answer is always
+## outward — which is what un-sticks a body teleported mid-channel.
+const RIVER_DEEP_PROBE: float = 0.5
+
+## THE FORD's half-width — how far off the road's CENTRELINE the one exemption
+## reaches, in metres. The deck's own half-width plus a station, so the gap in the
+## wall is the width of the road and a metre of slop, never a beach: off the road
+## the same water is still walled.
+const RIVER_DEEP_FORD_HALF: float = FIELD_BRIDGE_HALF_WIDTH + 4.0
+
+
+func river_depth_at(world_x: float, world_z: float) -> float:
+	"""
+	How deep into a river this XZ is, NORMALISED: 0 on the centreline, 1 at the
+	bank, > 1 on dry land.
+
+	@param world_x, world_z: World-space point (metres). XZ-only, like the band.
+	@return: |field| / half-width for the noise river, distance / half-width for
+	         the authored Danube, and DRY_MARGIN for anything masked dry.
+
+	ONE FIELD FOR TWO RIVERS, which is the whole point: the deep channel, the
+	push gradient and the Y-aware wade test all read this, so the procedural river
+	and the Danube get the same rule with no second implementation and no second
+	set of constants. It is the same cost shape as `is_river_at` — the tower disc
+	first (no noise evaluation), then Budapest, then one `_biome_noise`.
+
+	IT IS NOT `is_river_at`, and the difference is exactly one clause: inside the
+	city it subtracts only the dry LAND rows (`BudapestPlan.is_dry_land`), never
+	the four bridge decks. See `is_wading_at` — a deck is dry to the shader and to
+	every spawner, and is water to a body standing under it.
+	"""
+	# Far enough out that no caller can mistake it for a bank; a plain INF would
+	# poison the finite difference in deep_channel_push().
+	const DRY_MARGIN: float = 4.0
+	var site := tower_site()
+	# Vector2, not scalar math: fp32, the same fp32 is_river_at() runs in.
+	if Vector2(world_x - site.x, world_z - site.z).length() <= TOWER_RADIUS:
+		return DRY_MARGIN
+	if BudapestPlan.contains(world_x, world_z):
+		if BudapestPlan.is_dry_land(world_x, world_z):
+			return DRY_MARGIN
+		return BudapestPlan.danube_distance(world_x, world_z) \
+				/ BudapestPlan.DANUBE_HALF_WIDTH
+	return absf(_biome_noise(world_x, world_z) - RIVER_LEVEL) / RIVER_HALF_WIDTH
+
+
+func deep_channel_push(world_pos: Vector3) -> Vector3:
+	"""
+	The way OUT of the impassable centre channel, or ZERO if this body is not in
+	one.
+
+	@param world_pos: The BODY's world position — Y matters, exactly as in
+	                  is_wading_at.
+	@return: A horizontal UNIT vector pointing at the nearest bank, or
+	         Vector3.ZERO when the body is free to move.
+
+	THE ONE HOME OF THE RULE, beside `is_wading_at` for the same reason that one
+	exists: the player pushes with it, the self-check measures it, and a second
+	consumer must not get a second idea of where the channel is.
+
+	COST: the height compare and one `river_depth_at` reject every body that is
+	not already mid-channel; only a body INSIDE the strip pays the two extra
+	evaluations for the gradient. Zero allocation past the two Vector2s.
+
+	NOT A COLLISION SHAPE, deliberately. The world is flat and the river is a
+	shader tint — giving it a StaticBody would put thousands of bodies in the
+	world, break the "no water mesh" invariant and still not follow a contour.
+	"""
+	if world_pos.y >= WADE_SURFACE_MAX:
+		return Vector3.ZERO
+	var depth := river_depth_at(world_pos.x, world_pos.z)
+	if depth >= RIVER_DEEP_FRACTION:
+		return Vector3.ZERO
+	# THE ONE EXEMPTION, and it asks the AUTHORITY rather than a threshold: a road
+	# crossing the field bridges REFUSED (a lake, past FIELD_BRIDGE_MAX_SPAN of
+	# walked water) is left wadeable on purpose, and walling it would softlock the
+	# road it stands on. Asked last because it is the only expensive line here and
+	# only a body already inside a strip ever reaches it.
+	if _deep_channel_ford(world_pos.x, world_pos.z):
+		return Vector3.ZERO
+	var e := RIVER_DEEP_PROBE
+	var grad := Vector2(
+			river_depth_at(world_pos.x + e, world_pos.z) - depth,
+			river_depth_at(world_pos.x, world_pos.z + e) - depth) / e
+	if grad.length_squared() <= 0.0:
+		return Vector3.ZERO
+	var out := grad.normalized()
+	return Vector3(out.x, 0.0, out.y)
+
+
+func _deep_channel_ford(world_x: float, world_z: float) -> bool:
+	"""
+	Is this point standing in the ONE thing the deep channel yields to — a road
+	river crossing the field bridges REFUSED?
+
+	@return: true when the road is wet here, the point is on the road, and no
+	         bridge was built for the crossing it belongs to.
+
+	WHY THE AUTHORITY AND NOT A WIDTH THRESHOLD. The first version of this asked
+	the field's own gradient — a band wider than FIELD_BRIDGE_MAX_SPAN
+	perpendicular is a lake — which is cheap, pointwise and WRONG: the cap counts
+	the water the road WALKS, and a road crossing a 100 m band at an angle walks
+	124 m of it. Measured over 20 seeds x 4 km, that left exactly one crossing
+	(seed 10, x = 443) unbridged AND walled, which is the softlock this bead
+	exists to avoid. `field_bridge_at` is the function that decides, so it is the
+	function that is asked.
+
+	IT IS THE ROAD'S WIDTH AND NOT THE RIVER'S. Off the centreline by more than
+	RIVER_DEEP_FORD_HALF the same water is walled again, so a lake is a lake
+	everywhere except at the ford the road drives through it.
+
+	COST: only a body already INSIDE a deep strip ever calls this, and everything
+	it reads is memoized — `field_bridge_at` and `_field_bridge_wet` for the run,
+	the station cache by X. The walk back to the crossing entry is bounded by the
+	span cap itself: a run longer than that is over the cap by definition, so it
+	answers true without walking any further.
+	"""
+	var spacing := _road_spacing()
+	_road_extend_to_x(world_x - spacing * 2.0, world_x + spacing * 2.0)
+	var k := _road_first_k_at_or_after_x(world_x)
+	if k <= road_k_min or k > road_k_max:
+		return false
+	# The nearer of the two stations bracketing this X — the road is a polyline
+	# and the point may sit either side of the sample.
+	var here: Vector2 = _road_station(k).center
+	var back: Vector2 = _road_station(k - 1).center
+	if absf(back.x - world_x) < absf(here.x - world_x):
+		k -= 1
+		here = back
+	# CAP 5 again: east of the terminal station the road has no bridges of its own
+	# (the corridor's are approach_bridges', and they cover every wet stretch), so
+	# there is nothing here to exempt.
+	if k > _road_terminal_k():
+		return false
+	if Vector2(world_x, world_z).distance_to(here) > RIVER_DEEP_FORD_HALF:
+		return false
+	if not _field_bridge_wet(k):
+		return false
+	# Back to the crossing ENTRY, which is the index field_bridge_at is keyed on.
+	var budget := int(FIELD_BRIDGE_MAX_SPAN / maxf(spacing, 0.1)) + 4
+	var k0 := k
+	while k0 > road_k_min and _field_bridge_wet(k0 - 1):
+		k0 -= 1
+		budget -= 1
+		if budget <= 0:
+			# More wet stations than the cap can possibly span: refused for sure,
+			# and walking the rest of a lake to prove it buys nothing.
+			return true
+	return field_bridge_at(k0).is_empty()
 
 
 func river_field_at(world_x: float, world_z: float) -> float:
