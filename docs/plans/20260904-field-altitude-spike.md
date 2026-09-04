@@ -346,30 +346,46 @@ burning the budget the measurement needs.
 
 ### Task 5: Ground collision — `HeightMapShape3D` per chunk, measured
 
-- [ ] in `_ensure_chunk_ground`, keep TODAY'S `BoxShape3D` path unchanged when
+- [x] in `_ensure_chunk_ground`, keep TODAY'S `BoxShape3D` path unchanged when
       `FIELD_ALTITUDE` is false (byte for byte — this is the merge condition)
-- [ ] when true, build a `HeightMapShape3D`: `map_width = map_depth = 17` (identical to
+- [x] when true, build a `HeightMapShape3D`: `map_width = map_depth = 17` (identical to
       the visual mesh's 16x16 subdivisions, so the floor you stand on is the floor you
       see), `map_data` a `PackedFloat32Array` of `height_at` over the chunk grid.
       `HeightMapShape3D` cells are 1 unit, so scale the `CollisionShape3D` uniformly by
       `chunk_size / 16.0` and pre-divide the stored heights by the same factor —
       uniform scale, no non-uniform-shape warning. Comment the arithmetic
-- [ ] add a monotone `ground_collision_usec_total: int` counter on the terrain,
+- [x] add a monotone `ground_collision_usec_total: int` counter on the terrain,
       accumulated around the heightmap build. **A spike source exposes a counter, never
       a signal** — `perf_overlay.gd` polls `chunks_created_total` the same way
-- [ ] surface it in `scripts/perf_overlay.gd` beside the existing counters, but ONLY
+- [x] surface it in `scripts/perf_overlay.gd` beside the existing counters, but ONLY
       as one extra line and only when the counter is non-zero (flag off ⇒ invisible)
-- [ ] add **check 5 — THE FLOOR IS THE FIELD**: with the flag ON, a built chunk's
+- [x] add **check 5 — THE FLOOR IS THE FIELD**: with the flag ON, a built chunk's
       ground body carries a `HeightMapShape3D`; its sampled grid values, un-scaled,
       equal `height_at` at the corresponding world points to `<= 1e-3`; and with the
       flag OFF the shape is still a `BoxShape3D` of `Vector3(chunk_size, 0.1,
       chunk_size)`. Print the measured per-chunk build cost in µs — that number is a
       report deliverable, not an assertion
-- [ ] add **check 6 — THE FIELD IS WALKABLE**: sample the max height delta per metre
+- [x] add **check 6 — THE FIELD IS WALKABLE**: sample the max height delta per metre
       over 20,000 points on three seeds; assert it stays under 1.0 (45°), and PRINT the
       max, the mountain-band max and the jump apex (3.6125 m) beside it so the
       mountain-impassability consumer has a number in the report
-- [ ] run the check
+- [x] run the check
+
+  NOTE (measurement, a Task 7 report number): the heightmap costs **2,610 us per
+  chunk** (9 chunks, 23,492 us) — 289 `height_at()` calls at ~9 us each, and the
+  9-chunk synchronous safety ring a boundary crossing floors is therefore ~23 ms
+  in ONE frame. That is a spike, it is exactly what the counter exists to show,
+  and it is a MIGRATION finding, not something the spike fixes.
+
+  NOTE: max slope measured **0.591 / 0.557 / 0.644 m per metre** over three seeds
+  (mountain band 0.502 / 0.457 / 0.361) against the 1.0 bound — the field is
+  walkable everywhere with ~35% headroom, so the residual mountain-impassability
+  risk is a gentle rise against a massif wall and not a ramp over it.
+
+  NOTE (deviation, deliberate): `GROUND_SUBDIVISIONS` was added as a const and
+  `_get_shared_ground_mesh` now reads it. The plan says the collision grid is
+  "identical to the visual mesh's 16x16 subdivisions"; that identity was a 16
+  typed in two places, which is the one way the floor and the drawn surface drift.
 
 ### Task 6: The RED-CHECK LIST — run the whole suite both ways
 

@@ -3069,6 +3069,20 @@ var last_player_chunk: Vector2i = Vector2i(999999, 999999)
 var chunks_created_total: int = 0
 var chunks_removed_total: int = 0
 
+## FIELD ALTITUDE (the spike, bead godot-test1-ope.1): lifetime microseconds spent
+## building per-chunk ground collision HEIGHTMAPS. Exactly 0 with the flag off,
+## because the flag-off path builds the same BoxShape3D it always did and never
+## enters the timed block.
+##
+## IT EXISTS BECAUSE THE BUILD LANDS INSIDE THE SYNCHRONOUS FLOOR PATH.
+## update_chunks() grounds the safety ring in the frame the player crosses a
+## boundary — the floor is the whole fall-through guarantee — so a heightmap that
+## cost milliseconds would be a startup freeze wearing a chunk-streaming costume.
+## Same convention as the two counters above and for the same reason: A SPIKE
+## SOURCE EXPOSES A MONOTONE COUNTER, NEVER A SIGNAL, so `perf_overlay.gd` can
+## poll it at its own rate and measuring can never perturb what it measures.
+var ground_collision_usec_total: int = 0
+
 # ----------------------------------------------------------------------------
 # TIME-SLICED CHUNK GENERATION (one chunk per frame, nearest-first)
 # ----------------------------------------------------------------------------
@@ -3328,6 +3342,18 @@ var _tower_impostor: Node3D = null
 ## The single ground PlaneMesh shared by every chunk (see _get_shared_ground_mesh).
 var _shared_ground_mesh: PlaneMesh
 
+## The ground plane's subdivision count, in quads per side. 16 x 16 quads is
+## 17 x 17 vertices over a 50 m chunk — 3.125 m apart, which is the density the
+## vertex-noise ground shader wants and (with FIELD_ALTITUDE on) plenty for a
+## 260 m-wavelength height field.
+##
+## IT IS A CONSTANT BECAUSE TWO THINGS READ IT. The visual mesh below and the
+## collision HeightMapShape3D in _ensure_chunk_ground are built on the same grid
+## ON PURPOSE — the floor you stand on is then the floor you see, for free and by
+## construction rather than by review. Written down twice, the two would drift and
+## the ground would draw one surface while collision answered another.
+const GROUND_SUBDIVISIONS: int = 16
+
 ## Lazily-created shared material for artifact glow accents (rune strips, eyes,
 ## missing keystones — see the ARTIFACTS section). ONE material shared by every
 ## accent in the world, same lazy-singleton discipline as ChunkBatch's own two.
@@ -3350,8 +3376,8 @@ func _get_shared_ground_mesh() -> PlaneMesh:
 	if _shared_ground_mesh == null:
 		_shared_ground_mesh = PlaneMesh.new()
 		_shared_ground_mesh.size = Vector2(chunk_size, chunk_size)
-		_shared_ground_mesh.subdivide_width = 16
-		_shared_ground_mesh.subdivide_depth = 16
+		_shared_ground_mesh.subdivide_width = GROUND_SUBDIVISIONS
+		_shared_ground_mesh.subdivide_depth = GROUND_SUBDIVISIONS
 		_shared_ground_mesh.material = terrain_material
 	return _shared_ground_mesh
 
@@ -4120,10 +4146,34 @@ func _ensure_chunk_ground(chunk_pos: Vector2i) -> MeshInstance3D:
 	# cosmetic, not behavioural.
 	var static_body := StaticBody3D.new()
 	var collision_shape := CollisionShape3D.new()
-	var box_shape := BoxShape3D.new()
 
-	box_shape.size = Vector3(chunk_size, 0.1, chunk_size)
-	collision_shape.shape = box_shape
+	if alt_enabled():
+		# FIELD ALTITUDE (the spike, bead godot-test1-ope.1). The displaced ground
+		# needs a floor that follows it, and it is built on the SAME 17 x 17 grid
+		# the visual mesh is subdivided into, so the surface the player stands on
+		# is the surface the vertex shader drew rather than an approximation of it.
+		#
+		# TIMED, because this lands inside update_chunks' synchronous safety-ring
+		# path (see ground_collision_usec_total for why that matters).
+		var started_usec := Time.get_ticks_usec()
+		collision_shape.shape = _alt_ground_heightmap(chunk_pos)
+		# THE UNIFORM SCALE, and why the heights were pre-divided by it upstream:
+		# HeightMapShape3D cells are ONE unit wide and the grid is centred on the
+		# node, so a 17-wide map spans -8..+8 units. The chunk is chunk_size (50 m)
+		# across, so the shape is stretched by chunk_size / GROUND_SUBDIVISIONS
+		# (3.125) to reach -25..+25 m. UNIFORM is the operative word — a
+		# non-uniformly scaled shape is a Godot warning and an unsupported physics
+		# case — so the scale hits Y as well, and _alt_ground_heightmap already
+		# divided every stored height by the same factor to cancel it back out.
+		collision_shape.scale = Vector3.ONE * (chunk_size / float(GROUND_SUBDIVISIONS))
+		ground_collision_usec_total += Time.get_ticks_usec() - started_usec
+	else:
+		# TODAY'S FLOOR, byte for byte: one box the width of the chunk, 0.1 m
+		# thick. This is what ships (FIELD_ALTITUDE is false) and the branch above
+		# is unreachable in every build the player ever runs.
+		var box_shape := BoxShape3D.new()
+		box_shape.size = Vector3(chunk_size, 0.1, chunk_size)
+		collision_shape.shape = box_shape
 
 	static_body.add_child(collision_shape)
 	mesh_instance.add_child(static_body)
@@ -9942,6 +9992,53 @@ func height_at(world_x: float, world_z: float) -> float:
 	var b := _biome_noise(world_x, world_z)
 	var h := Vector2(signed_unit * _alt_amplitude(b), 0.0).x
 	return Vector2(h * _alt_flat_mask(world_x, world_z, b), 0.0).x
+
+
+func _alt_ground_heightmap(chunk_pos: Vector2i) -> HeightMapShape3D:
+	"""
+	THE FLOOR OF ONE CHUNK, sampled off height_at() — the collision half of the
+	spike, and the only altitude code that allocates anything.
+
+	@param chunk_pos: Chunk coordinates.
+	@return: A HeightMapShape3D on the chunk's own 17 x 17 grid, in SHAPE units
+	         (see the divide below); the caller scales it into metres.
+
+	ONLY EVER CALLED BEHIND alt_enabled(). With the spike off the chunk keeps its
+	BoxShape3D and this function is never entered, which is the merge condition.
+
+	THE GRID IS THE VISUAL MESH'S GRID. GROUND_SUBDIVISIONS quads per side is
+	GROUND_SUBDIVISIONS + 1 vertices per side, and the sample points below are the
+	PlaneMesh's own vertex positions — so the floor and the drawn surface are the
+	same 17 x 17 samples of the same function and cannot disagree anywhere, not
+	even by an interpolation scheme. That identity is free and it is why the plan
+	refuses to raise the subdivision.
+
+	Row-major, `map_data[z * map_width + x]`, the Godot layout: x runs along +X and
+	z along +Z, both centred on the node, which is exactly how the chunk's own
+	square is centred on its MeshInstance3D.
+	"""
+	var side := GROUND_SUBDIVISIONS + 1
+	var shape := HeightMapShape3D.new()
+	shape.map_width = side
+	shape.map_depth = side
+
+	# The metres-per-cell the CollisionShape3D's uniform scale will apply. Heights
+	# are DIVIDED by it here so that scale multiplies them back to the metres
+	# height_at() returned — the alternative, a non-uniform scale of (cell, 1,
+	# cell), is a Godot warning and unsupported by the physics server.
+	var cell := chunk_size / float(GROUND_SUBDIVISIONS)
+	var origin := chunk_to_world(chunk_pos)
+	var half := chunk_size / 2.0
+
+	var data := PackedFloat32Array()
+	data.resize(side * side)
+	for iz in side:
+		var world_z := origin.z - half + float(iz) * cell
+		for ix in side:
+			var world_x := origin.x - half + float(ix) * cell
+			data[iz * side + ix] = height_at(world_x, world_z) / cell
+	shape.map_data = data
+	return shape
 
 
 

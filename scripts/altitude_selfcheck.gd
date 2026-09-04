@@ -38,6 +38,20 @@ extends SceneTree
 ##      the pushes matched BOTH ways, the shader's array bound at least the
 ##      GDScript's, and the road array read back OFF THE MATERIAL to prove it is
 ##      packed (x1, z1, x2, z2) and not, say, (x, z, dx, dz).
+##   5. THE FLOOR IS THE FIELD. `_ensure_chunk_ground` builds a HeightMapShape3D
+##      on the visual mesh's OWN 17x17 grid with the flag on and today's
+##      BoxShape3D with it off, and the stored samples times the shape's uniform
+##      scale are height_at() to the millimetre — the ground you stand on and the
+##      ground the vertex shader drew are the same surface. Check 5, which also
+##      PRINTS the per-chunk build cost, because that build lands inside
+##      update_chunks' synchronous safety-ring path and the microseconds are a
+##      report deliverable rather than a budget anybody has measured yet.
+##   6. THE FIELD IS WALKABLE. The gradient magnitude over a one-metre step stays
+##      under 45 degrees everywhere, so the heightfield is terrain and not scenery
+##      you slide off — and the mountain band's own worst slope is printed beside
+##      the jump apex, because MOUNTAIN IMPASSABILITY is the flat-world consumer
+##      with the most to lose and the report has to reason about it with numbers.
+##      Check 6.
 ##
 ## CHECK 2 CARRIES ITS OWN NEGATIVE CONTROL, and it is the point of the check: a
 ## naive f64 oracle (bare scalars, no Vector2 anywhere) must DISAGREE with the
@@ -121,6 +135,41 @@ const ABSENT_ALT_UNIFORM: String = "alt_amp_ocean"
 ## the 48 m between two nodes of the polyline.
 const SEG_ENDPOINT_EPSILON: float = 1e-3
 
+## `player_controller.gd`, for check 6's jump apex. The apex is RECOMPUTED off
+## JUMP_VELOCITY and gravity rather than restated — tower_interior_selfcheck's
+## _jump_apex verbatim, and for the same reason: the number is only meaningful in
+## the report if it still tracks the jump anyone actually retunes.
+const PLAYER_SCRIPT: String = "res://scripts/player_controller.gd"
+
+## The chunks check 5 grounds. Nine of them, deliberately spread: (0, 0) and its
+## neighbours sit inside the refreshed road window (so the corridor clause is
+## live in the sampled heights), the far ones do not, and one lands on the HQ
+## disc — three different mask regimes through one code path.
+const GROUND_CHUNKS: Array[Vector2i] = [
+	Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, -1),
+	Vector2i(-8, 0), Vector2i(40, 17), Vector2i(-33, -26), Vector2i(7, -19),
+	Vector2i(2, 60),
+]
+
+## Tolerance on a heightmap sample, in metres. The stored value is an f32 (a
+## PackedFloat32Array is the shape's storage) of a height under ~25 m, so the
+## representation error is ~1e-6; a millimetre is far above it and far below
+## anything a player could stand on.
+const HEIGHTMAP_EPSILON: float = 1e-3
+
+## Check 6's sample count per seed, and the step it measures the slope over. ONE
+## METRE because that is the unit the claim is made in ("height delta per metre")
+## and it is the scale a CharacterBody3D's floor test works at; 20,000 points over
+## the +/- 5 km box hits every band of the amplitude ladder thousands of times.
+const WALK_SAMPLES: int = 20000
+const WALK_STEP: float = 1.0
+
+## The slope the field may not exceed, in metres per metre. 1.0 is 45 degrees —
+## Godot's own default floor_max_angle is 45 degrees, so a steeper face is a wall
+## the player slides off rather than ground they walk up, and a field that grew
+## one would be handing the mountain massifs a ramp round the side.
+const MAX_WALKABLE_SLOPE: float = 1.0
+
 var _failures: Array[String] = []
 
 
@@ -141,6 +190,8 @@ func _run() -> void:
 	_check_fp32_parity()
 	_check_flat_zones()
 	_check_shader_parity()
+	_check_ground_collision()
+	_check_field_is_walkable()
 	_report()
 
 
@@ -575,6 +626,198 @@ func _check_shader_parity() -> void:
 		declared.size(), value_checked, gpu_seg_max, t.ALT_ROAD_SEG_MAX, seg_count])
 	t.free()
 	Sentinel.done("shader_parity")
+
+
+func _check_ground_collision() -> void:
+	"""
+	Check 5. THE FLOOR IS THE FIELD.
+
+	`_ensure_chunk_ground` is the one place a chunk gets something to stand on, and
+	it runs inside update_chunks' SYNCHRONOUS safety-ring path — the floor is the
+	whole fall-through guarantee. So this check has three jobs:
+
+	  a. WITH THE FLAG OFF the shape is still a BoxShape3D of exactly
+	     Vector3(chunk_size, 0.1, chunk_size), and ground_collision_usec_total is
+	     still 0. That is the merge condition restated where the collision half of
+	     it lives; chunk_stream_selfcheck asserts the same box from the other side.
+	  b. WITH THE FLAG ON the shape is a HeightMapShape3D whose stored samples,
+	     multiplied back by the CollisionShape3D's uniform scale, equal height_at()
+	     at the corresponding world points. THAT PRODUCT IS THE POINT: the heights
+	     are pre-divided by the scale so the scale can be uniform, and a check that
+	     read map_data raw would happily pass a floor sitting at a third of the
+	     height the player sees. The scale is asserted uniform for the same reason.
+	  c. THE COST, PRINTED. The per-chunk build lands in the synchronous path, so
+	     its microseconds are a REPORT deliverable (docs/field-altitude-spike.md),
+	     not an assertion — a threshold typed in here would be a number nobody
+	     measured pretending to be a budget.
+	"""
+	# --- a. the flag OFF ------------------------------------------------------
+	var flat := _make_terrain(SEEDS[0])
+	var flat_chunk: Node = flat._ensure_chunk_ground(GROUND_CHUNKS[0])
+	var flat_shape := _ground_collision_shape(flat_chunk)
+	if flat_shape == null:
+		_fail("the flag-off chunk grew no CollisionShape3D at all — every chunk's floor is its fall-through guarantee")
+	elif not (flat_shape.shape is BoxShape3D):
+		_fail("the flag-off chunk's ground shape is a %s, not a BoxShape3D — the merge condition is that FIELD_ALTITUDE false is byte for byte today's world" % flat_shape.shape.get_class())
+	else:
+		var want := Vector3(flat.chunk_size, 0.1, flat.chunk_size)
+		if (flat_shape.shape as BoxShape3D).size != want:
+			_fail("the flag-off ground box is %s, not %s — chunk_stream_selfcheck asserts this box from the other side" % [
+				str((flat_shape.shape as BoxShape3D).size), str(want)])
+		if flat_shape.scale != Vector3.ONE:
+			_fail("the flag-off ground shape is scaled %s — the flat path must not touch the transform" % str(flat_shape.scale))
+	if flat.ground_collision_usec_total != 0:
+		_fail("ground_collision_usec_total is %d with the flag off — the timed heightmap block was entered on the flat path" % flat.ground_collision_usec_total)
+	flat.free()
+
+	# --- b. the flag ON -------------------------------------------------------
+	var t := _make_terrain(SEEDS[0])
+	t.alt_force = true
+	# The shipped refresh seam, so the corridor clause is LIVE in the heights the
+	# chunks around the origin sample (check 3's note, one check along).
+	t._alt_road_refresh(0.0)
+	var side: int = t.GROUND_SUBDIVISIONS + 1
+	var cell: float = t.chunk_size / float(t.GROUND_SUBDIVISIONS)
+	var worst := 0.0
+	var sampled := 0
+	for chunk_pos: Vector2i in GROUND_CHUNKS:
+		var node: Node = t._ensure_chunk_ground(chunk_pos)
+		var cs := _ground_collision_shape(node)
+		if cs == null or not (cs.shape is HeightMapShape3D):
+			_fail("chunk %s built a %s with the flag ON — the displaced ground has no floor that follows it" % [
+				str(chunk_pos), "nothing" if cs == null else cs.shape.get_class()])
+			continue
+		var shape: HeightMapShape3D = cs.shape
+		if shape.map_width != side or shape.map_depth != side:
+			_fail("chunk %s heightmap is %dx%d, not %dx%d — the collision grid has left the visual mesh's grid and the floor is an approximation of the surface you see" % [
+				str(chunk_pos), shape.map_width, shape.map_depth, side, side])
+			continue
+		# UNIFORM, and equal to the metres-per-cell the heights were divided by.
+		# A non-uniform scale is a Godot warning and unsupported by the physics
+		# server; a uniform one of the WRONG size is a floor at the wrong height
+		# with no warning anywhere, which is why the value is asserted too.
+		if not is_equal_approx(cs.scale.x, cell) or cs.scale != Vector3.ONE * cs.scale.x:
+			_fail("chunk %s heightmap scale is %s, not a uniform %.6f (chunk_size / GROUND_SUBDIVISIONS)" % [
+				str(chunk_pos), str(cs.scale), cell])
+			continue
+		var origin: Vector3 = t.chunk_to_world(chunk_pos)
+		var half: float = t.chunk_size / 2.0
+		var data: PackedFloat32Array = shape.map_data
+		for iz in side:
+			var world_z: float = origin.z - half + float(iz) * cell
+			for ix in side:
+				var world_x: float = origin.x - half + float(ix) * cell
+				# UN-SCALED: the stored sample times the scale is the metres the
+				# player stands at, and height_at is the metres the shader drew.
+				var got: float = float(data[iz * side + ix]) * cs.scale.y
+				var delta: float = absf(got - t.height_at(world_x, world_z))
+				worst = maxf(worst, delta)
+				sampled += 1
+		if worst > HEIGHTMAP_EPSILON:
+			_fail("chunk %s: the collision heightmap is %.6f m off height_at() — the floor you stand on is not the ground you see" % [
+				str(chunk_pos), worst])
+			break
+	if t.ground_collision_usec_total <= 0:
+		_fail("ground_collision_usec_total is still 0 after %d flag-on chunks — the counter perf_overlay polls measures nothing" % GROUND_CHUNKS.size())
+	# THE REPORT NUMBER (plan, Task 5): the synchronous safety ring is 9 chunks on
+	# a boundary crossing, so per-chunk microseconds times nine is the frame this
+	# spike would add to a crossing.
+	print("[altitude] ground collision: %d chunks, %d us total, %.1f us per chunk (%d grid samples, worst %.9f m off height_at)" % [
+		GROUND_CHUNKS.size(), t.ground_collision_usec_total,
+		float(t.ground_collision_usec_total) / float(GROUND_CHUNKS.size()), sampled, worst])
+	t.free()
+	Sentinel.done("ground_collision")
+
+
+func _check_field_is_walkable() -> void:
+	"""
+	Check 6. THE FIELD IS WALKABLE — and the mountains are still walls.
+
+	The heightfield may not hand the player a slope they can walk up where the
+	flat world had a wall: MOUNTAIN IMPASSABILITY is a block massif you go around,
+	and it rests on the jump apex (3.61 m) sitting under MOUNTAIN_MIN_LAYER_HEIGHT.
+	A field steeper than MAX_WALKABLE_SLOPE would be scenery the player slides off
+	rather than terrain; a field with a *gentle* rise against a massif wall is the
+	residual risk, and this check prints the numbers the report reasons about it
+	with rather than pretending to settle it.
+
+	The slope is the gradient MAGNITUDE over a one-metre step in each axis, so a
+	diagonal ridge is measured at its steepest and not at its axis-aligned
+	shoulder. Sampled per seed, and the MOUNTAIN band is tracked separately
+	because that band carries the biggest amplitude in the ladder by a factor of
+	six and it is the only one impassability depends on.
+	"""
+	var apex := _jump_apex()
+	if apex <= 0.0:
+		_fail("could not read the jump apex out of player_controller — check 6's mountain reasoning would print nothing")
+	for seed_value: int in SEEDS:
+		var t := _make_terrain(seed_value)
+		t.alt_force = true
+		t._alt_road_refresh(0.0)
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+		var worst := 0.0
+		var worst_at := Vector2.ZERO
+		var worst_mountain := 0.0
+		var mountain_samples := 0
+		for i in WALK_SAMPLES:
+			var x := rng.randf_range(-SAMPLE_HALF, SAMPLE_HALF)
+			var z := rng.randf_range(-SAMPLE_HALF, SAMPLE_HALF)
+			var h: float = t.height_at(x, z)
+			var dx: float = (t.height_at(x + WALK_STEP, z) - h) / WALK_STEP
+			var dz: float = (t.height_at(x, z + WALK_STEP) - h) / WALK_STEP
+			var slope := Vector2(dx, dz).length()
+			if slope > worst:
+				worst = slope
+				worst_at = Vector2(x, z)
+			if t.biome_at(x, z) == t.Biome.MOUNTAIN:
+				mountain_samples += 1
+				worst_mountain = maxf(worst_mountain, slope)
+		if worst > MAX_WALKABLE_SLOPE:
+			_fail("seed %d: the field reaches %.3f m per metre at (%.1f, %.1f), over MAX_WALKABLE_SLOPE %.1f — that face is a wall the player slides off, not ground" % [
+				seed_value, worst, worst_at.x, worst_at.y, MAX_WALKABLE_SLOPE])
+		# REPORT NUMBERS, all three on one line (plan, Task 5): the field's worst
+		# slope, the worst inside the band impassability depends on, and the jump
+		# apex the massif walls are sized against.
+		print("[altitude] seed %d: max slope %.3f m/m (mountain band %.3f over %d samples), jump apex %.4f m, bound %.1f" % [
+			seed_value, worst, worst_mountain, mountain_samples, apex, MAX_WALKABLE_SLOPE])
+		t.free()
+	Sentinel.done("field_is_walkable")
+
+
+func _ground_collision_shape(chunk_node: Node) -> CollisionShape3D:
+	"""
+	The one CollisionShape3D under a chunk's ground StaticBody3D, or null.
+
+	Walked rather than $-pathed because the nodes are unnamed, and because
+	_ensure_chunk_ground is the only thing that has run on this chunk here — a
+	fully populated chunk also carries the BLOCK body, which is a different
+	StaticBody3D and not this one's business.
+	"""
+	for body: Node in chunk_node.get_children():
+		if body is StaticBody3D:
+			for child: Node in body.get_children():
+				if child is CollisionShape3D:
+					return child
+	return null
+
+
+func _jump_apex() -> float:
+	"""
+	The player's unaided jump apex in metres, JUMP_VELOCITY^2 / (2 * gravity) —
+	tower_interior_selfcheck._jump_apex verbatim, and recomputed rather than
+	restated for the same reason: the number is only worth printing in the report
+	if it still tracks the jump somebody might retune.
+	"""
+	var script: GDScript = load(PLAYER_SCRIPT)
+	var probe: Object = script.new()
+	var g: float = float(probe.get("gravity"))
+	var v: float = float(script.get_script_constant_map().get("JUMP_VELOCITY", 0.0))
+	if probe is Node:
+		(probe as Node).free()
+	if g <= 0.0 or v <= 0.0:
+		return 0.0
+	return v * v / (2.0 * g)
 
 
 func _shader_int(shader: String, name: String) -> int:
