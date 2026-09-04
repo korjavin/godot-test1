@@ -667,6 +667,20 @@ const REMOTE_HERD_TIMEOUT: float = 2.0
 ## flood into one build a second, which is what an honest herd costs anyway.
 const HERD_REBUILD_MIN_MSEC: int = 1000
 
+## Furthest (metres) one packet may CORRECT the replayed centre by. Past it the
+## sample is not a correction at all and is handled as a rebuild.
+##
+## The second half of the rate limit above, and the same trust boundary (codex
+## review, 2026-09-04): `k` and `sd` unchanged with `p` alternating between two
+## legal coordinates slides ten AnimatableBody3Ds across the correction, and Godot
+## hands a rider the platform velocity that implies — the fling
+## FACING_YAW_RATE_MAX exists to stop, on the other axis. An honest correction is
+## only the LATERAL drift dead reckoning cannot see: the meander (0.45 m/s) plus
+## the detour ease (AVOID_EASE_SPEED), i.e. under 3 m/s, and a replay is freed
+## after REMOTE_HERD_TIMEOUT of silence anyway — so ~5 m is the honest worst and
+## this leaves 5x over it while sitting far under the wire's own 1e7 bound.
+const HERD_SYNC_MAX_CORRECTION: float = 25.0
+
 # ============================================================================
 # STATE
 # ============================================================================
@@ -724,6 +738,14 @@ var _herd_silence: float = 0.0
 ## When the last replayed herd was BUILT, against HERD_REBUILD_MIN_MSEC. Starts a
 ## whole window in the past so the first herd of a process is never refused.
 var _herd_built_msec: int = -HERD_REBUILD_MIN_MSEC
+
+## The facing the last `herd` packet asked for. A REPLAY SLEWS TOWARD IT at
+## FACING_YAW_RATE_MAX exactly as the master does, rather than assigning it: the
+## packet arrives at 10 Hz and the roots are AnimatableBody3Ds, so writing a
+## whole sample's turn in one physics frame is the rider fling that constant was
+## added to stop — an honest 0.05 rad step is 3 rad/s, six times the cap (codex
+## review, 2026-09-04).
+var _herd_target_yaw: float = 0.0
 
 ## Seconds this herd has been alive, against MAX_HERD_LIFETIME (see there for
 ## why a purely relative despawn test can stall forever).
@@ -1583,6 +1605,7 @@ func _build_herd(params: Dictionary) -> void:
 	# _add_animal places each member with — so the first tick has nothing to slew
 	# toward and the herd does not spin up from world north (see FACING_YAW_RATE_MAX).
 	_facing_yaw = atan2(-_herd_heading.x, -_herd_heading.z)
+	_herd_target_yaw = _facing_yaw
 
 	# Build the members with their formation offsets (herd-local lateral/long
 	# pairs turned into world-space vectors — heading never changes, so the
@@ -1886,6 +1909,10 @@ func _replay_herd(delta: float) -> void:
 	_herd_age += delta
 	_herd_travelled += _herd_speed * delta
 	_herd_centre += _herd_heading * (_herd_speed * delta)
+	# SLEW-LIMITED HERE TOO, on the same constant and for the same reason the
+	# master slews: these roots are AnimatableBody3Ds and a rider inherits
+	# `angular x r`. See `_herd_target_yaw`.
+	_facing_yaw = rotate_toward(_facing_yaw, _herd_target_yaw, FACING_YAW_RATE_MAX * delta)
 	_place_members(delta)
 
 
@@ -2262,24 +2289,40 @@ func apply_herd_sync(state: Dictionary) -> void:
 		if _herd_remote:
 			_despawn_herd()
 		return
-	# A REBUILD IS RATE-LIMITED — see HERD_REBUILD_MIN_MSEC. A refused packet
-	# returns WITHOUT touching `_herd_silence`, so a master that really has moved
-	# on stops renewing the lease and the herd we are holding times out in
-	# REMOTE_HERD_TIMEOUT; the next packet after that builds the new one.
-	var rebuild_ok: bool = Time.get_ticks_msec() - _herd_built_msec >= HERD_REBUILD_MIN_MSEC
-	if _herd_remote and (kind != _herd_kind or int(state["sd"]) != _herd_seed):
-		if not rebuild_ok:
+	var centre: Vector3 = state["p"]
+	# THREE THINGS ARE A REBUILD AND NOT A CORRECTION: a herd we do not have, a
+	# herd whose identity changed, and one whose centre has moved further than a
+	# correction could honestly be (HERD_SYNC_MAX_CORRECTION — sliding ten
+	# AnimatableBody3Ds across a teleport flings a rider). All three go through
+	# the SAME rate limit, so a hostile master gets one build a second whichever
+	# field it spams. A refused packet returns WITHOUT touching `_herd_silence`,
+	# so a master that really has moved on stops renewing the lease and the herd
+	# we are holding times out in REMOTE_HERD_TIMEOUT.
+	if not _herd_remote or kind != _herd_kind or int(state["sd"]) != _herd_seed \
+			or _herd_centre.distance_to(centre) > HERD_SYNC_MAX_CORRECTION:
+		if Time.get_ticks_msec() - _herd_built_msec < HERD_REBUILD_MIN_MSEC:
 			return               # keep drawing the herd we already have
-		_despawn_herd()          # the master rolled a different herd
-	if _animals.is_empty():
-		if not rebuild_ok:
-			return
 		_herd_built_msec = Time.get_ticks_msec()
+		_despawn_herd()
 		_build_herd(state)
 		_herd_remote = true
+		# SNAPPED, NOT EASED — `_build_herd` puts everything at the herd's ORIGIN,
+		# which for a late joiner is most of a crossing behind where the master's
+		# herd actually is. There is nobody standing on an animal that did not
+		# exist a moment ago, so this is the one place a whole-pose write is safe.
+		_herd_centre = centre
+		_facing_yaw = float(state["y"])
+		_herd_target_yaw = _facing_yaw
+		_herd_travelled = float(state["d"])
+		for animal: Dictionary in _animals:
+			var root: Node3D = animal["root"]
+			root.position = _herd_centre + animal["offset"]
+			root.rotation.y = _facing_yaw
+		return
 	_herd_silence = 0.0
-	_herd_centre = _herd_centre.lerp(state["p"] as Vector3, HERD_SYNC_EASE)
-	_facing_yaw = lerp_angle(_facing_yaw, float(state["y"]), HERD_SYNC_EASE)
+	_herd_centre = _herd_centre.lerp(centre, HERD_SYNC_EASE)
+	# The yaw is a TARGET, slewed toward on the physics clock by `_replay_herd`.
+	_herd_target_yaw = float(state["y"])
 	# SET, not eased: it is a metre count driving a sine, and easing it would
 	# make the legs walk at a speed the herd is not travelling at.
 	_herd_travelled = float(state["d"])

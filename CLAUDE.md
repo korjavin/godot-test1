@@ -79,10 +79,13 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            other biome exactly one
 #   fauna_selfcheck          herd steering + rider carry, plus row 6 the MP
 #                            REPLAY: one seed gives two byte-identical builds, a
-#                            replayed herd tracks the master's centre and holds
-#                            its formation, silence frees it, and a room
-#                            non-master rolls nothing (with "out of the room it
-#                            does" as the positive control)
+#                            joiner is snapped onto the live sample, a replay
+#                            tracks the master's centre and holds its formation,
+#                            the facing is slewed and the centre bounded (a rider
+#                            inherits angular x r), a rebuild is rate-limited,
+#                            silence frees it, and a room non-master rolls
+#                            nothing (with "out of the room it does" as the
+#                            positive control)
 #   mp_selfcheck             multiplayer pure logic (decoders, ids, arithmetic)
 #   locale_selfcheck         en/de table + German fits its controls
 #   view_selfcheck           the three camera views C cycles

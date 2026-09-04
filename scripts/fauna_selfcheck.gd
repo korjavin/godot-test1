@@ -51,13 +51,19 @@ extends SceneTree
 ##      behind the probe that overwrites it. See the tower block below.
 ##
 ##   6. THE MULTIPLAYER REPLAY (bead godot-test1-6xc) — the owner's "my buddy in
-##      the same game don't see them". Four things, each with the mutation that
-##      breaks it: two builds off one seed are byte-identical (or the two screens
-##      draw different flocks under one name), a replayed herd tracks the master's
-##      centre and holds its formation at `centre + offset`, silence for
-##      REMOTE_HERD_TIMEOUT frees it (or a dead master's herd is immortal), and a
+##      the same game don't see them". Seven things, each mutation-tested: two
+##      builds off one seed are byte-identical (or the two screens draw different
+##      flocks under one name); a JOINER is snapped onto the live sample rather
+##      than eased onto it from an origin 200 m back; a replay tracks the master's
+##      centre and holds its formation at `centre + offset`; the facing is SLEWED
+##      at FACING_YAW_RATE_MAX rather than assigned per packet, and the centre may
+##      not be corrected past HERD_SYNC_MAX_CORRECTION — both of those because a
+##      rider inherits `angular x r` and a whole 10 Hz sample written in one 60 Hz
+##      frame is the fling row 4 measures; a rebuild is rate-limited, because a
+##      hostile master is an ordinary peer with a title; silence for
+##      REMOTE_HERD_TIMEOUT frees it (or a dead master's herd is immortal); and a
 ##      room NON-MASTER rolls nothing of its own — with "out of the room it rolls
-##      one" as that last row's positive control, because "spawned nothing" is
+##      one" as that last one's positive control, because "spawned nothing" is
 ##      also what a harness that cannot spawn reports.
 ##
 ## Don't grow this into a suite. Two non-obvious things in here. (a) Rows 1-3
@@ -698,10 +704,19 @@ const REPLAY_FORMATION_TOLERANCE: float = 1e-3
 ## Non-vacuity floor on (a): GIRAFFE_FLOCK_MIN is 4, so a build that produced one
 ## animal — or none — would compare two trivially equal signatures.
 const GIRAFFE_MIN_FOR_ROW: int = 4
-## The synthetic feed: six packets at the shipped 10 Hz sync tick (six frames of
-## the harness's 60 Hz per packet), which is 0.6 s of room traffic.
-const REPLAY_PACKETS: int = 6
+## The synthetic feed: ten packets at the shipped 10 Hz sync tick (six frames of
+## the harness's 60 Hz per packet), which is 1 s of room traffic — long enough
+## for the ease to close REPLAY_LATERAL_WANDER well inside its tolerance.
+const REPLAY_PACKETS: int = 10
 const REPLAY_TICKS_PER_PACKET: int = 6
+## How far the master's herd has already walked when the joiner's first packet
+## arrives. Two thirds of a crossing, so a replay that EASED onto it instead of
+## snapping would be drawn a long way from where the master draws it.
+const REPLAY_JOIN_DISTANCE: float = 200.0
+## Yaw step the master asks for in one packet, to measure the slew limit against.
+## Far past anything honest (the master itself slews at FACING_YAW_RATE_MAX), so
+## an unlimited replay would write the whole 2 rad in a single physics frame.
+const REPLAY_YAW_KICK: float = 2.0
 ## Enough ticks for the event timer to fire and the herd to be built — the timer
 ## is set to one frame, so this is slack, not a schedule.
 const REPLAY_SPAWN_TICKS: int = 5
@@ -728,6 +743,17 @@ func _herd_params() -> Dictionary:
 		"o": REPLAY_ORIGIN, "h": REPLAY_HEADING,
 		"sd": REPLAY_SEED, "sp": REPLAY_SPEED,
 	}
+
+
+func _replay_packet(params: Dictionary, centre: Vector3, travelled: float) -> Dictionary:
+	## One synthetic `herd` packet: this herd's params plus the live state the
+	## master would be publishing. Built from `params` so the identity fields can
+	## never drift out of step with the build under test.
+	var packet: Dictionary = params.duplicate()
+	packet["p"] = centre
+	packet["y"] = REPLAY_HEADING
+	packet["d"] = travelled
+	return packet
 
 
 func _formation_signature() -> PackedByteArray:
@@ -766,23 +792,35 @@ func _check_replay() -> void:
 		_failures.append("two builds from seed %d differ — a peer would draw a different herd from the master's"
 				% REPLAY_SEED)
 
-	# (b) A REPLAY TRACKS THE MASTER AND KEEPS ITS FORMATION. Six packets, each
-	# describing a centre that has walked the line AND wandered off it (the
-	# meander and the detour, which the peer cannot see), with the shipped
-	# `_physics_process` ticked between them so the dead reckoning runs.
+	# (b) A LATE JOINER IS SNAPPED, NOT EASED. The master's herd has already
+	# walked REPLAY_JOIN_DISTANCE from the origin `_build_herd` places everything
+	# at, and easing onto that at HERD_SYNC_EASE would draw it most of a crossing
+	# behind the master for several seconds.
 	var heading := Vector3(cos(REPLAY_HEADING), 0.0, sin(REPLAY_HEADING))
 	var lateral := Vector3(-heading.z, 0.0, heading.x)
-	var travelled := 0.0
-	var published := REPLAY_ORIGIN
+	var travelled := REPLAY_JOIN_DISTANCE
+	var published := REPLAY_ORIGIN + heading * travelled
+	_manager.call("apply_herd_sync", _replay_packet(params, published, travelled))
+	var joined: Vector3 = _manager.get("_herd_centre")
+	if joined.distance_to(published) > REPLAY_FORMATION_TOLERANCE:
+		_failures.append("a joiner's replay started %.1f m from the master's herd — it was eased onto the sample instead of snapped"
+				% joined.distance_to(published))
+	var joined_worst := 0.0
+	for animal: Dictionary in (_manager.get("_animals") as Array):
+		joined_worst = maxf(joined_worst,
+				(animal["root"] as Node3D).position.distance_to(published + (animal["offset"] as Vector3)))
+	if joined_worst > REPLAY_FORMATION_TOLERANCE:
+		_failures.append("a joiner's animals were drawn %.1f m off centre + offset — the snap did not reach the member roots"
+				% joined_worst)
+
+	# (c) A REPLAY TRACKS THE MASTER AND KEEPS ITS FORMATION. The master now opens
+	# a berth the peer cannot see (dead reckoning walks the heading and nothing
+	# else), and every packet is followed by real `_physics_process` ticks.
 	for step: int in REPLAY_PACKETS:
 		travelled += REPLAY_SPEED * DT * float(REPLAY_TICKS_PER_PACKET)
 		published = REPLAY_ORIGIN + heading * travelled \
 				+ lateral * REPLAY_LATERAL_WANDER
-		var packet: Dictionary = params.duplicate()
-		packet["p"] = published
-		packet["y"] = REPLAY_HEADING
-		packet["d"] = travelled
-		_manager.call("apply_herd_sync", packet)
+		_manager.call("apply_herd_sync", _replay_packet(params, published, travelled))
 		for _tick: int in REPLAY_TICKS_PER_PACKET:
 			_manager.call("_physics_process", DT)
 	var animals: Array = _manager.get("_animals")
@@ -818,21 +856,44 @@ func _check_replay() -> void:
 		_replay_line = "replay: formation %.4f m, centre gap %.2f m, %d members" \
 				% [worst, gap, animals.size()]
 
-	# ...and A REBUILD IS RATE-LIMITED, which is a trust boundary rather than a
+	# (d) THE YAW IS SLEWED ON THE PHYSICS CLOCK, not assigned per packet. These
+	# roots are AnimatableBody3Ds and a rider inherits `angular x r`, so a whole
+	# 10 Hz sample's turn written in one 60 Hz frame is the fling
+	# FACING_YAW_RATE_MAX exists to stop (codex review, 2026-09-04).
+	var rate: float = float(_manager.get("FACING_YAW_RATE_MAX"))
+	var kicked: Dictionary = _replay_packet(params, published, travelled)
+	kicked["y"] = REPLAY_HEADING + REPLAY_YAW_KICK
+	_manager.call("apply_herd_sync", kicked)
+	var yaw_before: float = float(_manager.get("_facing_yaw"))
+	_manager.call("_physics_process", DT)
+	var yaw_step: float = absf(angle_difference(yaw_before, float(_manager.get("_facing_yaw"))))
+	if yaw_step > rate * DT * 1.01:
+		_failures.append("the replayed facing turned %.3f rad in one tick against the %.3f rad cap — a rider would be flung off the deck"
+				% [yaw_step, rate * DT])
+	if yaw_step <= 0.0:
+		_failures.append("the replayed facing did not follow the master at all — this row measured nothing")
+
+	# (e) A REBUILD IS RATE-LIMITED, which is a trust boundary rather than a
 	# tuning knob: the master is only the oldest member of a public room, and one
 	# naming a fresh `sd` on every packet would otherwise despawn and rebuild ten
 	# animal trees at the verb's whole 40/s budget (codex review, 2026-09-04).
-	var swapped: Dictionary = params.duplicate()
+	var swapped: Dictionary = _replay_packet(params, published, travelled)
 	swapped["sd"] = REPLAY_SEED + 1
-	swapped["p"] = published
-	swapped["y"] = REPLAY_HEADING
-	swapped["d"] = travelled
 	_manager.call("apply_herd_sync", swapped)
 	if int(_manager.get("_herd_seed")) != REPLAY_SEED:
 		_failures.append("a second herd identity was built inside %d ms — a hostile master could rebuild ten animals per packet"
 				% int(_manager.get("HERD_REBUILD_MIN_MSEC")))
+	# ...and the same limit covers a TELEPORTING centre, which is the other way to
+	# make the manager slide ten bodies across the map in one frame.
+	var far: Dictionary = _replay_packet(params,
+			published + heading * (float(_manager.get("HERD_SYNC_MAX_CORRECTION")) * 10.0), travelled)
+	var before_far: Vector3 = _manager.get("_herd_centre")
+	_manager.call("apply_herd_sync", far)
+	if (_manager.get("_herd_centre") as Vector3).distance_to(before_far) \
+			> float(_manager.get("HERD_SYNC_MAX_CORRECTION")):
+		_failures.append("one packet moved the replayed centre further than HERD_SYNC_MAX_CORRECTION — a rider would be flung")
 
-	# (c) SILENCE FREES IT. No packet for REMOTE_HERD_TIMEOUT and the herd goes,
+	# (f) SILENCE FREES IT. No packet for REMOTE_HERD_TIMEOUT and the herd goes,
 	# which is the ONE test that also covers a deposed master, a leave and no MP
 	# node at all — see fauna_manager.REMOTE_HERD_TIMEOUT.
 	var timeout: float = float(_manager.get("REMOTE_HERD_TIMEOUT"))
@@ -842,7 +903,7 @@ func _check_replay() -> void:
 		_failures.append("a replayed herd survived %.1f s of silence — a dead master's herd is immortal"
 				% timeout)
 
-	# (d) A NON-MASTER ROLLS NOTHING, and the SAME manager rolls one the moment
+	# (g) A NON-MASTER ROLLS NOTHING, and the SAME manager rolls one the moment
 	# the room is gone — the positive control, without which "spawns nothing"
 	# would pass on a harness that simply cannot spawn.
 	var mp_script := GDScript.new()
