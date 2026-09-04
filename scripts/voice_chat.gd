@@ -419,6 +419,9 @@ const VOICE_JS: String = """
 			'top:' + (r.top + t[1] * r.height) + 'px;' +
 			'width:' + (t[2] * r.width) + 'px;' +
 			'height:' + (t[3] * r.height) + 'px;';
+		/* Explicit rather than relying on `cssText` having cleared it: this is the
+		   one line that undoes a `blankTile`, and it should say so. */
+		p.video.style.display = '';
 		return 1;
 	}
 
@@ -427,10 +430,20 @@ const VOICE_JS: String = """
 		return placeTile(String(id));
 	}
 
+	/* TWO WAYS TO TAKE A PICTURE DOWN, and the difference is who owns the rect.
+	   `hideTile` is GDScript's — it FORGETS the rect, so the next poll has to push
+	   one. `blankTile` is the browser's, for a track that stalled: the rect is kept
+	   so `placeTile` can bring the picture straight back. Deleting it there would
+	   wedge the tile forever, because a stall and its recovery inside one poll
+	   window leave GDScript's change-gate holding the identical rect and pushing
+	   nothing, and a row pinned to a screen corner never moves to force the issue. */
 	function hideTile(id) {
-		var k = String(id);
-		delete S.tiles[k];
-		var p = S.peers[k];
+		delete S.tiles[String(id)];
+		return blankTile(id);
+	}
+
+	function blankTile(id) {
+		var p = S.peers[String(id)];
 		if (p && p.video) { p.video.style.display = 'none'; }
 		return 1;
 	}
@@ -524,15 +537,23 @@ const VOICE_JS: String = """
 			}).catch(function () { if (gen === S.gen) { S.camState = 3; } });
 			return 1;
 		}
-		for (k in S.peers) { detachCam(S.peers[k]); hideTile(k); }
+		/* ONLY OUR OWN SENDERS. `p.video` and `S.tiles[k]` are the peer's INCOMING
+		   picture — hiding them here would black out every teammate because you
+		   switched your own camera off. */
+		for (k in S.peers) { detachCam(S.peers[k]); }
 		if (S.cam) {
 			var ts = S.cam.getTracks();
 			for (var i = 0; i < ts.length; i++) { ts[i].stop(); }
 			S.cam = null;
 		}
-		/* A refusal STICKS until the room ends: re-prompting on every press is the
-		   retry loop the epic forbids. */
-		if (S.camState !== 3) { S.camState = 0; }
+		/* ASKING SURVIVES AN OFF-PRESS, and it has to. Dropping back to IDLE lets
+		   the next press start a SECOND getUserMedia while the first prompt is
+		   still up, and only one of the two streams is ever reachable to stop — the
+		   other captures for the life of the page. The pending promise's own
+		   `camWant === 0` branch is what releases the device, and it is already
+		   correct. A refusal likewise STICKS until the room ends: re-prompting on
+		   every press is the retry loop the epic forbids. */
+		if (S.camState === 2) { S.camState = 0; }
 		return 0;
 	}
 
@@ -605,11 +626,13 @@ const VOICE_JS: String = """
 			if (ev.track && ev.track.kind === 'video') {
 				p.hasVideo = 1;
 				/* A sender's removeTrack reaches us as `mute`, not as `ended`, so
-				   both take the picture down — and unmute brings it back without a
-				   new element. */
-				ev.track.onmute = function () { p.hasVideo = 0; hideTile(id); };
+				   both take the picture down — but a `mute` is also what an
+				   ordinary media stall looks like, so it KEEPS the rect and
+				   `unmute` puts the same picture straight back. An `ended` track
+				   never comes back, so that one drops the rect. */
+				ev.track.onmute = function () { p.hasVideo = 0; blankTile(id); };
 				ev.track.onended = function () { p.hasVideo = 0; hideTile(id); };
-				ev.track.onunmute = function () { p.hasVideo = 1; };
+				ev.track.onunmute = function () { p.hasVideo = 1; placeTile(id); };
 				showVideo(id, new MediaStream([ev.track]));
 				return;
 			}
@@ -1490,8 +1513,8 @@ func set_camera_enabled(on: bool) -> void:
 	if on and camera_denied():
 		return
 	_camera_on = on
-	if not on:
-		_pushed_tiles.clear()
+	# `_pushed_tiles` is deliberately NOT cleared: it tracks the pictures TEAMMATES
+	# are sending, and switching your own camera off does not take one of those down.
 	if _is_web and _running and _ck != null:
 		_ck.setCamera(1 if on else 0)
 	camera_changed.emit(on)

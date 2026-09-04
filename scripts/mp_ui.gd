@@ -1425,8 +1425,9 @@ func _update_voice_ui() -> void:
 				_camera_button.text = "Camera blocked"
 				_camera_button.disabled = true
 			else:
+				var on: bool = voice.has_method("is_camera_on") and bool(voice.is_camera_on())
 				_camera_button.disabled = false
-				_camera_button.text = "Camera on" if bool(voice.is_camera_on()) else "Camera off"
+				_camera_button.text = "Camera on" if on else "Camera off"
 
 	if _mic_state_label != null:
 		# MUTE WINS over the V state, so it wins the label too: reporting
