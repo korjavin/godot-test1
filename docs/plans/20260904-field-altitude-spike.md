@@ -468,14 +468,51 @@ burning the budget the measurement needs.
 
 ### Task 8: Verify acceptance
 
-- [ ] `git diff origin/master --stat` — confirm the diff touches only
+- [x] `git diff origin/master --stat` — confirm the diff touches only
       `scripts/endless_terrain.gd`, `assets/shaders/ground.gdshader`,
       `scripts/altitude_selfcheck.gd`, `scripts/perf_overlay.gd`, `CLAUDE.md`,
       `docs/field-altitude-spike.md` and this plan
-- [ ] confirm `FIELD_ALTITUDE` is `false` in the committed tree
-- [ ] confirm `alt_enabled`'s shader default is `0.0`
-- [ ] re-run the full `scripts/*_selfcheck.gd` glob one final time — all green
-- [ ] `godot --headless --path . --import` runs clean
+
+      **Taken against the MERGE BASE, not `origin/master`.** Master moved on
+      while this branch was built (PRs #226 `y1o.9-flat-normals` and #227
+      `bn8-scarcity-every-biome` landed), so a raw `git diff origin/master`
+      shows those four files (`chunk_batch.gd`, `batch_selfcheck.gd`,
+      `prop_selfcheck.gd`, the deleted `scarcity_selfcheck.gd`) as REVERSE
+      diffs of master's own work, which this branch never touched.
+      `git diff $(git merge-base origin/master HEAD) --stat` is what the
+      claim means, and it is exactly the eight files:
+
+      ```
+      CLAUDE.md                                   |   9 +
+      assets/shaders/ground.gdshader              | 223 ++++++-
+      docs/field-altitude-spike.md                | 307 +++++++++
+      docs/plans/20260904-field-altitude-spike.md | 515 +++++++++++++++
+      scripts/altitude_selfcheck.gd               | 988 ++++++++++++++++++++
+      scripts/altitude_selfcheck.gd.uid           |   1 +
+      scripts/endless_terrain.gd                  | 652 +++++++++++++++-
+      scripts/perf_overlay.gd                     |   9 +
+      8 files changed, 2694 insertions(+), 10 deletions(-)
+      ```
+
+      The `.uid` is Godot's sibling for the new script (CLAUDE.md: managed by
+      the editor, never hand-edited) and is not a ninth file in spirit.
+- [x] confirm `FIELD_ALTITUDE` is `false` in the committed tree —
+      `git show HEAD:scripts/endless_terrain.gd | grep FIELD_ALTITUDE` gives
+      `const FIELD_ALTITUDE: bool = false` at line 1781, and the working tree
+      is clean, so what was measured is what is committed
+- [x] confirm `alt_enabled`'s shader default is `0.0` —
+      `git show HEAD:assets/shaders/ground.gdshader` line 139,
+      `uniform float alt_enabled = 0.0;`. Both halves of the twin are off in
+      the committed tree, which is the merge condition
+- [x] re-run the full `scripts/*_selfcheck.gd` glob one final time — all green.
+      **36 of 36 PASS**, judged by CI's own three rules (exit 0 AND printed
+      `SELFCHECK OK` AND logged no `SCRIPT ERROR`), including the new
+      `altitude_selfcheck` and the two checks master added under this branch's
+      feet (`batch_selfcheck`, the rebuilt `prop_selfcheck`). Logs at
+      `/tmp/ope1-final-*.log`.
+- [x] `godot --headless --path . --import` runs clean — exit 0, no
+      `SCRIPT ERROR`, no import failure; run BEFORE the glob so no check read a
+      stale imported table (CLAUDE.md's `ui.csv` rule)
 
 ## Technical Details
 
