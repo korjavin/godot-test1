@@ -331,7 +331,7 @@ Load-bearing rules:
   adds a `CollisionShape3D` to the chunk's single `BlockCollision` `StaticBody3D`. Never
   instance a MeshInstance3D or a physics body per object. **That seam is its own file** —
   `scripts/chunk_batch.gd` (`class_name ChunkBatch`, all static, bead `godot-test1-ftn.1`):
-  `create_box` / `create_block` / `_build_block_multimesh`, the two process-wide shared
+  `create_box` / `_build_block_multimesh`, the two process-wide shared
   resources (`_get_shared_unit_box_mesh` / `_get_shared_block_material` — the latter
   the `world_block.gdshader` material, with `WORLD_BLOCK_SHADER`,
   `BLOCK_BOTTOM_SHADE`, `SHARED_BLOCK_ROUGHNESS` and the `RAMP_*` banner beside
