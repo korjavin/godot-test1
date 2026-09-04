@@ -93,6 +93,7 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	_root = Node3D.new()
 	root.add_child(_root)
 

@@ -213,6 +213,7 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	# _initialize() cannot await, so the scene-booting half runs as its own
 	# coroutine; the tree keeps processing until it calls quit().
 	_run()

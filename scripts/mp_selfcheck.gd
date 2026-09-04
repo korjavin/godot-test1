@@ -104,6 +104,7 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	# WAIT ONE FRAME FIRST. At `_initialize` the SceneTree's own root is not yet
 	# inside the tree, so a node added to it never gets `_ready()` and reports a
 	# zero `global_transform` — which would make the live-coin check below pass

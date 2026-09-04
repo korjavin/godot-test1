@@ -47,9 +47,10 @@ const CSV_PATH: String = "res://assets/translations/ui.csv"
 ## the real functions rather than a copy of them. Static, so no scene is needed.
 const StartOverlay := preload("res://scripts/start_overlay.gd")
 
-## The throwaway config the round trip is driven against, instead of the player's
-## own `user://locale.cfg` — see `_check_locale_config`.
-const LOCALE_STORE_PATH: String = "user://locale_selfcheck.cfg"
+## The round trip is driven against `StartOverlay.locale_config_path`, which
+## `Sentinel.isolate_user_state()` has already moved into a directory private to
+## this process — never the player's own `user://locale.cfg`, which a run that
+## died mid-check used to leave speaking German. See `_check_locale_config`.
 
 ## Widths a German label must fit into, as
 ## `[csv key, font size, usable width px, what it is]`.
@@ -173,6 +174,7 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	var rows: Array = _read_csv()
 	if not _failures.is_empty():
 		_finish()
@@ -353,8 +355,7 @@ func _check_live_switch() -> void:
 ## saved choice cannot change the verdict either.
 func _check_locale_config() -> void:
 	var restore_locale: String = TranslationServer.get_locale()
-	StartOverlay.locale_config_path = LOCALE_STORE_PATH
-	DirAccess.remove_absolute(LOCALE_STORE_PATH)
+	DirAccess.remove_absolute(StartOverlay.locale_config_path)
 
 	StartOverlay.save_locale("de")
 	if TranslationServer.get_locale() != "de":
@@ -370,7 +371,7 @@ func _check_locale_config() -> void:
 	if TranslationServer.get_locale() != "de":
 		_fail("save_locale() accepted an unknown locale")
 
-	DirAccess.remove_absolute(LOCALE_STORE_PATH)
+	DirAccess.remove_absolute(StartOverlay.locale_config_path)
 	TranslationServer.set_locale(restore_locale)
 	Sentinel.done("locale_config")
 

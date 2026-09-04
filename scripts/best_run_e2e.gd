@@ -30,7 +30,8 @@ extends SceneTree
 ##      the write and the read, and only a server answer can raise it again.
 ##
 ## IT NEVER OPENS THE MACHINE'S `user://best_run.cfg`. `BestRunStore.config_path`
-## is pointed at `LOCAL_STORE_PATH` before the first store is built, so this runs
+## is pointed at a directory private to THIS PROCESS before the first store is
+## built (`selfcheck_sentinel.gd`, the self-checks' own seam), so this runs
 ## against a throwaway profile with a throwaway player id. It used to back the
 ## real file up and put it back, and that was wrong twice over: every local write
 ## is a monotone read-modify-write merge, so a developer's real record leaked into
@@ -42,24 +43,21 @@ extends SceneTree
 const TIMEOUT_SEC: float = 20.0
 const POLL_SEC: float = 0.5
 
-## The throwaway profile this run uses instead of the real one. Removed on the
-## way in as well as out, so a killed run leaves nothing behind to be inherited.
-const LOCAL_STORE_PATH: String = "user://best_run_e2e.cfg"
+## The per-process `user://` isolation every `scripts/*_selfcheck.gd` uses. This is
+## not one of them (it needs a live lobby), but it opens the same store and gets
+## trampled by the same neighbour, so it takes the same seam.
+const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	_run()
 
 
 func _finish(code: int, message: String) -> void:
-	DirAccess.remove_absolute(LOCAL_STORE_PATH)
+	DirAccess.remove_absolute(BestRunStore.config_path)
 	print(message)
 	quit(code)
-
-
-func _isolate_local_store() -> void:
-	BestRunStore.config_path = LOCAL_STORE_PATH
-	DirAccess.remove_absolute(LOCAL_STORE_PATH)
 
 
 func _clear_local_records() -> void:
@@ -88,8 +86,6 @@ func _run() -> void:
 	if not (lobby.begins_with("http://") or lobby.begins_with("https://")):
 		_finish(1, "BEST_RUN FAILED: http_url() produced %s — the ws→http rewrite is broken" % lobby)
 		return
-
-	_isolate_local_store()
 
 	var store := _make_store()
 

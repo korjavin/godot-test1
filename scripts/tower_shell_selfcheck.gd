@@ -141,10 +141,6 @@ const CLOUD_DRIFT_TICKS: int = 1500
 ## Geometry tolerance, in metres.
 const EPS: float = 0.001
 
-## Throwaway save file this check points `BestRunStore.config_path` at, so the
-## machine's real `user://best_run.cfg` is never opened. See `_boot()`.
-const LOCAL_STORE_PATH: String = "user://tower_shell_selfcheck_best_run.cfg"
-
 ## Seeds for the terrain-driven checks. Two is enough: those checks are about the
 ## STREAMING RULE, not about a particular world, and phase 1's own self-check is
 ## where the site is sampled across river fields.
@@ -171,18 +167,17 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
 func _initialize() -> void:
-	_boot()
-
-
-func _boot() -> void:
 	# THE STORE SEAM FIRST, before any shell exists. A shell hydrates its opened
 	# set from `BestRunStore` the moment it enters the tree (tower_shell.gd), so
 	# without this every shell below would open the developer's real
 	# `user://best_run.cfg`. Nothing here asserts gate state, so it would not fail
 	# — but a self-check that reads a real profile at all is one edit away from
 	# writing to it, which is the trap `progression_selfcheck.gd` documents.
-	BestRunStore.config_path = LOCAL_STORE_PATH
-	DirAccess.remove_absolute(LOCAL_STORE_PATH)
+	Sentinel.isolate_user_state()
+	_boot()
+
+
+func _boot() -> void:
 	# ONE FRAME BEFORE ANYTHING, for the reason tower_site_selfcheck.gd gives: a node
 	# added to `root` from inside _initialize() is not `is_inside_tree()` until the
 	# first frame, so anything reading a global transform measures a detached world.

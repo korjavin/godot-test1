@@ -61,6 +61,7 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	_check_unit_meshes_fit_the_cube()
 	_check_multimesh_per_kind()
 	_check_splitter_carries_kind()

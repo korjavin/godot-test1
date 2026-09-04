@@ -35,6 +35,20 @@ It is consulted only on the PASSING path — a run that already failed fails any
 twenty-seven unreached checks. A new self-check needs the preload, the stamps and that one
 report line.
 
+**EVERY CHECK ALSO OWNS ITS `user://` STATE, and the seam is the same file.**
+`Sentinel.isolate_user_state()` is the FIRST statement of every check's
+`_initialize()`: it points `BestRunStore.config_path` and
+`StartOverlay.locale_config_path` at a freshly created directory keyed by this
+PROCESS's pid, so a check can neither read the developer's real profile nor be
+trampled by the same check running in another worktree (`user://` is per PROJECT
+NAME, so every checkout on a machine shares one directory) nor inherit the state a
+SIGTERM'd predecessor left behind — bead `godot-test1-3y3`, generalising `t8z`'s
+per-file redirect in `progression_selfcheck`, which was hermetic against the player
+and not against itself. `progression_selfcheck`'s `hermetic_stores` check audits the
+glob for that call, for any other assignment of either seam, and for the real paths
+as literals. **The shipped game is untouched** and still persists to
+`user://best_run.cfg`.
+
 ```bash
 godot --path . scenes/main.tscn                    # run the game
 godot --path . scenes/characters/primm.tscn        # run one scene in isolation
@@ -56,7 +70,10 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #   mp_selfcheck             multiplayer pure logic (decoders, ids, arithmetic)
 #   locale_selfcheck         en/de table + German fits its controls
 #   view_selfcheck           the three camera views C cycles
-#   progression_selfcheck    level curve, skill trees, effects on a live player
+#   progression_selfcheck    level curve, skill trees, effects on a live player,
+#                            plus `hermetic_stores`: every `*_selfcheck.gd` in the
+#                            glob opens `Sentinel.isolate_user_state()` and names
+#                            no real `user://` path
 #   wade_selfcheck           river wading (player, croc, boss)
 #   minimap_selfcheck        the map actually read the world
 #   city_map_selfcheck       the Budapest map panel (B): the key is free against

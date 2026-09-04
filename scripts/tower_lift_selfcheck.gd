@@ -60,13 +60,6 @@ const SHELL_SCENE: String = "res://scenes/tower/tower_shell.tscn"
 const INTERIOR_SCENE: String = "res://scenes/tower/tower_interior.tscn"
 const PLAYER_SCENE: String = "res://scenes/player.tscn"
 
-## Throwaway save file this check points `BestRunStore.config_path` at for its
-## whole run. NOTHING HERE MAY OPEN THE MACHINE'S `user://best_run.cfg`: a shell
-## hydrates from the store on entering the tree and WRITES THROUGH on every id it
-## opens, so without the redirect check 3 would store lift ids into a developer's
-## real profile — `tower_interior_selfcheck`'s trap, verbatim.
-const LOCAL_STORE_PATH: String = "user://tower_lift_selfcheck_best_run.cfg"
-
 
 class StubMp extends Node:
 	var busy: bool = false
@@ -82,7 +75,7 @@ var _failures: Array[String] = []
 
 
 func _initialize() -> void:
-	BestRunStore.config_path = LOCAL_STORE_PATH
+	Sentinel.isolate_user_state()
 	_fresh_store()
 	# ONE FRAME FIRST: a node added to `root` from inside `_initialize()` is not
 	# `is_inside_tree()` until the first frame, so anything reading a global
@@ -539,5 +532,6 @@ func _clear(player: Node, shell: Node, panel: Node) -> void:
 
 func _fresh_store() -> void:
 	"""Delete the throwaway save, so the next assertion starts from a clean profile.
-	Never the real one — see `LOCAL_STORE_PATH`."""
-	DirAccess.remove_absolute(LOCAL_STORE_PATH)
+	Never the real one — `Sentinel.isolate_user_state()` moved
+	`BestRunStore.config_path` into this process's own scratch directory."""
+	DirAccess.remove_absolute(BestRunStore.config_path)

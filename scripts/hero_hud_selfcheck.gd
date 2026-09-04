@@ -83,6 +83,7 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	_run()
 	if _failures.is_empty():
 		Sentinel.finish(self)
