@@ -81,12 +81,17 @@ func _run() -> void:
 	var field := _find_biome(terrain, terrain.Biome.PLAINS)
 	var forest := _find_biome(terrain, terrain.Biome.FOREST)
 	var street := Vector3(1600.0 + 5.0 * 62.0, 0.0, 3.0 * 62.0)
+	# ...and one on a real AVENUE (bead 8gw.23): every CITY_AVENUE_EVERY-th grid
+	# line is the only place traffic_manager puts a car, so an ordinary street is
+	# the one view of Budapest with no cars in it.
+	var avenue := Vector3(1600.0 + 5.0 * 62.0, 0.0, 0.0)
 
-	print("[SHOTS] field=", field, " forest=", forest, " street=", street)
+	print("[SHOTS] field=", field, " forest=", forest, " street=", street, " avenue=", avenue)
 
 	await _shoot(terrain, player, field, 0.0, "1_field")
 	await _shoot(terrain, player, forest, 0.0, "2_forest")
 	await _shoot(terrain, player, street, -PI * 0.5, "3_budapest")
+	await _shoot(terrain, player, avenue, -PI * 0.5, "3b_budapest_avenue")
 
 	# LANDMARKS (bead godot-test1-y1o.6). Each one is found by BUILDER NAME rather
 	# than by a hand-typed chunk: `_landmark_at` is a pure function of (chunk,
