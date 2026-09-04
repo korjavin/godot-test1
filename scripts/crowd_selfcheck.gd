@@ -39,10 +39,13 @@ extends SceneTree
 ##      around the hero, measured as the share landing in the inner QUARTER OF
 ##      THE AREA and as the number of 62 m cells used. The OLD sampler, written
 ##      out here, is the mutation control and must go RED on the same numbers.
-##  11. A CAR NEVER DRIVES THROUGH A CITIZEN (bead 8gw.23): a citizen crossing an
-##      avenue in front of a moving car is never inside the car's footprint, with
-##      the crowd taken out of the group as the mutation control — the car must
-##      then drive straight over it.
+##  11. CITIZENS AND CARS SEE EACH OTHER (bead 8gw.23), three ways: a walker
+##      following an AVENUE is put on the pavement rather than in the traffic
+##      (with an ordinary street as the control); a citizen crossing in front of
+##      a moving car is never inside the car's footprint, mutation-tested by
+##      taking the crowd out of its group — the car must then drive over it; and
+##      a citizen at the KERB waits, measured against the same walk on an empty
+##      road.
 ##   7. THE COARSE TICK (bead 8gw.22): a citizen the camera cannot see is ticked
 ##      a few times a second by the REAL elapsed time — it ADVANCES, it is never
 ##      frozen — a null camera degrades to full-rate updates for everything, and
@@ -150,6 +153,7 @@ func _run_checks() -> void:
 	await _check_solid_and_never_trapped()
 	await _check_no_gameplay_group_gained_a_member()
 	_check_spawn_distribution()
+	_check_pavement_lane()
 	await _check_car_never_drives_through_a_citizen()
 
 	if _failures.is_empty():
@@ -1120,6 +1124,56 @@ func _kerb_probe(traffic: Node3D, crowd: Node3D, with_car: bool) -> int:
 		if float((walker["pos"] as Vector3).z) >= kerb:
 			return f
 	return KERB_PROBE_FRAMES
+
+
+func _check_pavement_lane() -> void:
+	## THE HALF THE CAR PROBE CANNOT SEE: a citizen walking ALONG an avenue is on
+	## the PAVEMENT, so the cars never have to brake for it in the first place.
+	## `_pick_lane` is asked directly, at an avenue line and at an ordinary street
+	## line, because the difference between the two answers IS the rule.
+	var ave_pitch: float = PLAN.STREET_PITCH * float(PLAN.CITY_AVENUE_EVERY)
+	# An avenue of constant Z through the middle of Pest, walked along X.
+	var on_avenue := Vector3(PLAN.GATE.x + 5.0 * PLAN.STREET_PITCH, 0.0, 4.0 * ave_pitch)
+	# ...and an ordinary street line one pitch off it, walked the same way.
+	var on_street := Vector3(on_avenue.x, 0.0, on_avenue.z + PLAN.STREET_PITCH)
+	var along := Vector2(1.0, 0.0)
+
+	if not CrowdScript.walks_an_avenue(on_avenue, along):
+		_failures.append("check 11's avenue probe at %s is not on an avenue line —"
+			% str(on_avenue) + " it measures nothing")
+		Sentinel.done("pavement_lane")
+		return
+	if CrowdScript.walks_an_avenue(on_street, along):
+		_failures.append("check 11's control line at %s IS an avenue — the two probes"
+			% str(on_street) + " cannot tell the rule from the default")
+		Sentinel.done("pavement_lane")
+		return
+
+	# Twenty draws each: the lane is a random pick, so one sample proves nothing.
+	for _i in 20:
+		var ave_lane: float = absf(_manager._pick_lane(on_avenue, along))
+		if ave_lane <= PLAN.AVENUE_HALF_WIDTH:
+			_failures.append(("a citizen walking ALONG an avenue was put %.1f m off the"
+				+ " centreline, inside the %.1f m carriageway — it is standing in the"
+				+ " traffic, which is most of what 'crowds go through cars' was.")
+				% [ave_lane, PLAN.AVENUE_HALF_WIDTH])
+			break
+		if ave_lane >= PLAN.AVENUE_HALF_WIDTH + PLAN.BLOCK_PAVEMENT:
+			_failures.append(("a citizen walking ALONG an avenue was put %.1f m off the"
+				+ " centreline, at or past the block face at %.1f m — it is inside a"
+				+ " building.") % [ave_lane, PLAN.AVENUE_HALF_WIDTH + PLAN.BLOCK_PAVEMENT])
+			break
+	for _i in 20:
+		var street_lane: float = absf(_manager._pick_lane(on_street, along))
+		if street_lane > PLAN.AVENUE_HALF_WIDTH:
+			_failures.append(("an ordinary street put a walker %.1f m off the centreline —"
+				+ " the pavement lane is for AVENUES, and a 62 m street has no traffic to"
+				+ " keep clear of.") % street_lane)
+			break
+	print("pavement lane: avenue walkers at +/-%.1f m (carriageway %.1f, block face %.1f)"
+		% [CrowdScript.PAVEMENT_LANE_OFFSET, PLAN.AVENUE_HALF_WIDTH,
+		PLAN.AVENUE_HALF_WIDTH + PLAN.BLOCK_PAVEMENT])
+	Sentinel.done("pavement_lane")
 
 
 func _check_car_never_drives_through_a_citizen() -> void:
