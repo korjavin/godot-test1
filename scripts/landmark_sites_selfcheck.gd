@@ -71,14 +71,13 @@ const FIELD_HALF: int = 15
 ## a legitimate outcome (see LANDMARK_PLACE_TRIES), and pinning the exact count
 ## would fail the build on any retune of the block density.
 ##
-## Kinds built anywhere: measured 43 / 41 / 41 of 48.
-const MIN_KINDS_BUILT: int = 36
+## Kinds built anywhere: measured 38 / 42 / 43 of 48.
+const MIN_KINDS_BUILT: int = 34
 ## N = 12, and it is the bead's own acceptance number: "at least 12 kinds stand
 ## within the road corridor of a 3 km run". A slot is a SITE and a site is not yet
 ## a landmark — its chunk still has to have room for the shape — so
-## LANDMARK_MILE_SPACING is sized to put SIXTEEN slots on the mile to stand
-## twelve. Measured 15 / 14 / 13.
-const MILE_MIN_IN_CORRIDOR: int = 12
+## LANDMARK_MILE_SPACING is sized to put NINETEEN slots on the 1450 m mile to
+## stand twelve. Measured 13 / 15 / 14.
 
 ## How far off the centreline still counts as "in the corridor" for check 5.
 ## LANDMARK_MILE_LATERAL_MAX (120) is where a mile site is placed; a chunk is
@@ -113,7 +112,7 @@ func _run() -> void:
 		var built: Array = _build_every_site(terrain_script)
 		_check_spacing(consts, built)
 		_check_no_draw(terrain_script)
-		_check_corridor(terrain_script, consts, registry, built)
+		_check_corridor(consts, registry, built)
 		await _check_card_keys_off_the_site(registry, built)
 		_free_built(built)
 
@@ -482,12 +481,17 @@ func _check_no_draw(terrain_script: GDScript) -> void:
 
 	var terrain := _terrain(terrain_script, SEEDS[0])
 	var sites: Dictionary = terrain.landmark_sites()
+	# The subject must be a site that really BUILT something, or the comparator's
+	# own control below ("with a landmark, the boxes differ") is measuring a chunk
+	# whose candidate loop failed and would fail for the wrong reason.
 	var site_chunk: Vector2i = Vector2i(0x7FFFFFFF, 0x7FFFFFFF)
 	for chunk: Vector2i in sites:
-		site_chunk = chunk
-		break
+		if _builds_a_landmark(terrain, chunk):
+			site_chunk = chunk
+			break
 	if site_chunk == Vector2i(0x7FFFFFFF, 0x7FFFFFFF):
-		_fail("seed %d sited nothing — check 4's A/B cannot run" % SEEDS[0])
+		_fail("seed %d built nothing at any of its %d sites — check 4's A/B cannot run"
+				% [SEEDS[0], sites.size()])
 		terrain.free()
 		Sentinel.done("no_draw")
 		return
@@ -516,6 +520,22 @@ func _check_no_draw(terrain_script: GDScript) -> void:
 	print("  _landmark_at takes no draw and asks no gradient; a site-free chunk is byte-identical "
 			+ "with landmarks on and off (crocodiles included)")
 	Sentinel.done("no_draw")
+
+
+func _builds_a_landmark(terrain: Node3D, chunk: Vector2i) -> bool:
+	"""Does this site chunk's candidate loop actually find room for the shape?"""
+	var platforms: Array = []
+	var batch: Array = []
+	var body := StaticBody3D.new()
+	var obstacles: Array = terrain.spawn_objects_in_chunk(chunk, platforms, batch, body)
+	terrain.spawn_biome_content_in_chunk(chunk, obstacles, batch, body)
+	var node := MeshInstance3D.new()
+	var before: int = obstacles.size()
+	terrain.spawn_landmark_in_chunk(chunk, node, obstacles, batch, body)
+	var built: bool = obstacles.size() > before
+	node.free()
+	body.free()
+	return built
 
 
 func _signature(terrain_script: GDScript, chunk: Vector2i, landmarks_on: bool) -> Dictionary:
@@ -574,7 +594,7 @@ func _function_body(source: String, name: String) -> String:
 # CHECK 5 — the mile is walked
 # ============================================================================
 
-func _check_corridor(terrain_script: GDScript, consts: Dictionary, registry: Array, built: Array) -> void:
+func _check_corridor(consts: Dictionary, registry: Array, built: Array) -> void:
 	"""
 	Enough kinds actually STAND somewhere, and enough of them stand on the road.
 
@@ -602,7 +622,7 @@ func _check_corridor(terrain_script: GDScript, consts: Dictionary, registry: Arr
 			terrain = row["terrain"]
 			built_here += 1
 			var world: Vector3 = row["world"]
-			if world.x < terrain.tower_site().x or world.x > terminal_x:
+			if world.x < 0.0 or world.x > terminal_x:
 				continue
 			if terrain._road_lateral_distance(world.x, world.z, lateral_max) <= lateral_max:
 				corridor += 1

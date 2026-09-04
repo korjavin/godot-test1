@@ -1544,21 +1544,22 @@ const LANDMARK_SITE_NONE: Vector2i = Vector2i(0x7FFFFFFF, 0x7FFFFFFF)
 ##
 ## THE BEAD GUESSED 250-400 m AND THAT WAS ARITHMETIC, NOT DESIGN: it assumed the
 ## road terminal sat at x = +1600..+3800, i.e. a 2.0-4.2 km corridor, and derived
-## "5-17 slots" from it — then asked its acceptance for TWELVE kinds standing in
-## the corridor of a run. ROAD_TERMINAL_X is really 1450 and the HQ is at -400,
-## so the corridor is 1844 m measured, half what the bead assumed; the COUNT is
-## the half of that pair that was actually specified, so the count is what this
-## follows. 115 m fits 16 slots in 1844 m, and 16 slots is what it takes to STAND
-## twelve: a slot is a site, and a site whose chunk has no room for the shape
-## builds nothing (see LANDMARK_PLACE_TRIES). Measured 15 / 14 / 13 corridor
-## landmarks BUILT over `landmark_sites_selfcheck`'s three seeds, against its
-## floor of 12.
+## "5-17 slots" from it — then asked its acceptance for TWELVE kinds STANDING in
+## the corridor of a run. ROAD_TERMINAL_X is really 1450 and the corridor runs
+## from station 0, so it is 1450 m — a third of what the bead assumed at the top
+## end. The COUNT is the half of that pair that was actually specified, so the
+## count is what this follows.
+##
+## 75 m fits 19 slots in 1450 m, and it takes nineteen SITES to stand twelve
+## LANDMARKS: a site whose chunk has no room for the shape builds nothing (the
+## whole of LANDMARK_PLACE_TRIES' note). Measured 13 / 15 / 14 corridor landmarks
+## built over `landmark_sites_selfcheck`'s three seeds, against its floor of 12.
 ##
 ## Consecutive mile landmarks alternate sides at 60-120 m out, so the real
-## walk-to-walk distance is 130-230 m — a monument every couple of minutes on the
+## walk-to-walk distance is 120-190 m — a monument every minute or two on the
 ## trail, which is the "museum mile" the bead names, and still an OFF-ROAD detour
 ## (LANDMARK_ROAD_CLEARANCE is 22 m and the nearest site is 60).
-const LANDMARK_MILE_SPACING: float = 115.0
+const LANDMARK_MILE_SPACING: float = 75.0
 
 ## Lateral offset band for a MILE site: far enough off the trail to be a detour,
 ## near enough to be seen from it. Both are >> LANDMARK_ROAD_CLEARANCE (22).
@@ -1595,7 +1596,7 @@ const LANDMARK_SITE_TRIES: int = 32
 ##
 ## MEASURED over the 48 sites of three seeds (20260904 / 777 / 4242), kinds built
 ## out of 48 (and of those, kinds standing in the road corridor), at the
-## row-radius test below:
+## row-radius test below and at an earlier, slightly wider mile spacing:
 ##     4 tries:   22 / 19 / 26   (corridor 6 / 4 / 5)  — the old constant
 ##    40 tries:   40 / 39 / 39   (corridor 14 / 13 / 12)
 ##   200 tries:   43 / 41 / 41   (corridor 15 / 14 / 13)
@@ -7911,9 +7912,10 @@ func _build_landmark_sites() -> Dictionary:
 
 	@return: chunk Vector2i -> kind index.
 
-	THE MILE AND THE ANNULUS. The corridor is the road centreline from the HQ
-	(`tower_site().x`) to the terminal station T, which is every metre of road a
-	run's consumers acknowledge. It is divided into slots LANDMARK_MILE_SPACING
+	THE MILE AND THE ANNULUS. The corridor is the road centreline from STATION 0
+	(the spawn, where the road is defined to begin) to the terminal station T,
+	which is every metre of road a run's consumers acknowledge. It is divided into
+	slots LANDMARK_MILE_SPACING
 	apart; kinds 0..slots-1 take one slot each, and every remaining kind takes a
 	station drawn uniformly from the same span with a 0.5-2.5 km lateral offset
 	instead of a 60-120 m one. There is no third case: the mile and the annulus
@@ -7923,10 +7925,10 @@ func _build_landmark_sites() -> Dictionary:
 	road CURVES, so a station advances `_road_spacing() * cos(heading)` of X and
 	not the full 6 m — measured 4.0 m over the shipped corridor. Counting stations
 	per slot therefore packs the mile ~1.5x denser than LANDMARK_MILE_SPACING says,
-	and does it differently on every seed (462, 470 and 433 stations over the same
-	1844 m on the three seeds `landmark_sites_selfcheck` runs). So a slot's target
-	X is arithmetic and the STATION is looked up from it, through the same binary
-	search every other road consumer uses.
+	and does it differently on every seed (the same 1450 m spans a different number
+	of stations in every world). So a slot's target X is arithmetic and the STATION
+	is looked up from it, through the same binary search every other road consumer
+	uses.
 
 	ONE HASH PER ATTEMPT, and it carries everything. `hash(Vector3i(...))` is folded
 	into three independent fields — 12 bits of along-slot jitter, 12 bits of
@@ -7942,14 +7944,25 @@ func _build_landmark_sites() -> Dictionary:
 	run. That is the honest degrade: the alternative is relaxing a rule that exists
 	because the HQ, the city, the spawn bubble and the river are places a monument
 	must not stand in.
+
+	AND THE CORRIDOR STOPS AT THE SPAWN RATHER THAN REACHING BACK TO THE HQ, which
+	is a CONSTRAINT and not a preference. This table is global and pre-computed, so
+	anything it reads is read for the WHOLE world — it cannot take the post-draw
+	skip every per-chunk rejection in this file takes. `tower_site_selfcheck`
+	check 5 is what says so out loud: it moves the tower and demands that a chunk
+	the disc does not reach be byte-identical, and a corridor whose west end was
+	`tower_site().x` moved all 48 sites when the tower moved. Station 0 is the
+	road's own origin and depends on nothing. The 400 m of road west of the spawn
+	is the HQ's approach and belongs to the building, not to the museum.
 	"""
 	var sites: Dictionary = {}
 	var kinds: int = LandmarkBuilders.LANDMARKS.size()
 
-	# The corridor, in station indices. _road_extend_to_x is the uncapped station
-	# cache (see _road_terminal_k's docstring for why the CONSUMERS cap and it does
-	# not); T is the consumer cap and this is consumer number five.
-	var mile_x_min: float = tower_site().x
+	# The corridor, in station indices: station 0 (the spawn, where the road is
+	# DEFINED to begin) to the terminal station T. _road_extend_to_x is the uncapped
+	# station cache (see _road_terminal_k's docstring for why the CONSUMERS cap and
+	# it does not); T is the consumer cap and this is consumer number five.
+	var mile_x_min: float = 0.0
 	_road_extend_to_x(mile_x_min, ROAD_TERMINAL_X)
 	var k_first: int = _road_first_k_at_or_after_x(mile_x_min)
 	var k_last: int = _road_terminal_k()
@@ -8025,6 +8038,15 @@ func _landmark_site_ok(chunk: Vector2i, taken: Dictionary) -> bool:
 	the one corner that clears it, and a monument crowding the HQ gate is the thing
 	tower_excludes() exists to prevent. `chunk_size` as the radius is the diagonal
 	half-width rounded up, i.e. deliberately generous.
+
+	THE HQ CLAUSE CANNOT FIRE TODAY and it stays anyway. No station of the museum
+	mile's corridor is west of the spawn and no annulus site is within 500 m of the
+	centreline, so nothing this table proposes reaches a disc 400 m west on the road
+	— which is exactly what keeps the table's global pre-computation compatible with
+	`tower_site_selfcheck` check 5 (see `_build_landmark_sites`). It is one line and
+	it is the project's single home for tower clearance, which every sibling spawner
+	also calls; if a future corridor DOES reach the HQ, this is where the rejection
+	belongs, and that check is where the consequence will be argued out.
 
 	THE RIVER TEST is at the chunk CENTRE only, and it is a cheap pre-reject rather
 	than the rule: `_biome_spot_ok` still refuses a wet candidate metre by metre in
