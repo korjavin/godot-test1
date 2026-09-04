@@ -3858,6 +3858,13 @@ static func lift_stand(floor_index: int) -> Vector3:
 	construction, because the flood fill in `tower_selfcheck` walks it. Deterministic
 	for the same reason everything else in this building is: it reads authored text
 	and draws nothing.
+
+	INSURANCE RATHER THAN A FIX TODAY, and measured: all three landings this
+	building has a lift stop at or calls from have a bbox centre that already IS an
+	`s`, so the snap changes nothing this build draws. It is here so the EXTENSION
+	RULE holds — a storey whose landing wraps a corner gets a working stop from its
+	plan alone, instead of a `tower_lift_selfcheck` failure a designer has to
+	hand-place around.
 	"""
 	var plan := TowerPlans.storey(floor_index)
 	if plan.is_empty():
