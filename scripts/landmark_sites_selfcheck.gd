@@ -19,6 +19,12 @@ extends SceneTree
 ##      `_landmark_at`, so it measures the reverse lookup and not the table it
 ##      reads. The table itself is checked too, over the WHOLE world rather than
 ##      a window, because a 30x30 field is only a window.
+##   1b. A NEW SEED RESEATS THE TABLE. The site table is memoized for the run, so
+##      a seed assigned AFTER the first lookup — the multiplayer joiner's path —
+##      would otherwise keep the OLD run's 48 landmarks while every other
+##      seed-derived stream moved. Asserted on `set_run_seed()`, which CLAUDE.md
+##      makes the ONLY place the seed is written and therefore the only seam that
+##      sees every door.
 ##   2. NO SITE STANDS SOMEWHERE A MONUMENT MUST NOT. The HQ disc, the Budapest
 ##      rect, the spawn bubble and a river band, over every site of every seed —
 ##      plus four MUTATION CONTROLS driven through the shipped `_landmark_site_ok`
@@ -38,7 +44,8 @@ extends SceneTree
 ##      chunk WITH a site is identical up to the landmark's own footprint, which
 ##      is the documented and intended difference. Both directions are asserted,
 ##      so neither can pass vacuously.
-##   5. THE MILE IS WALKED. Every site chunk is built for real; the kinds that end
+##   5. THE MILE IS WALKED. Every site chunk is built THROUGH `create_chunk` (and
+##      check 5 reads this file's own harness as text to keep it that way); the kinds that end
 ##      up standing inside the road corridor are counted against
 ##      `MILE_MIN_IN_CORRIDOR`, and the kinds that end up standing anywhere at all
 ##      against `MIN_KINDS_BUILT`. Those two numbers are the feature: a site table
@@ -51,6 +58,8 @@ extends SceneTree
 ##      asks for now that `kind` is unique.
 
 const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
+## This file, for check 5's guard on its own harness.
+const SELF_SCRIPT: String = "res://scripts/landmark_sites_selfcheck.gd"
 const BUILDERS_SCRIPT: String = "res://scripts/landmark_builders.gd"
 const TOAST_SCRIPT: String = "res://scripts/landmark_toast.gd"
 const CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
@@ -71,13 +80,13 @@ const FIELD_HALF: int = 15
 ## a legitimate outcome (see LANDMARK_PLACE_TRIES), and pinning the exact count
 ## would fail the build on any retune of the block density.
 ##
-## Kinds built anywhere: measured 38 / 42 / 43 of 48.
+## Kinds built anywhere: measured 37 / 43 / 43 of 48, through `create_chunk`.
 const MIN_KINDS_BUILT: int = 34
 ## N = 12, and it is the bead's own acceptance number: "at least 12 kinds stand
 ## within the road corridor of a 3 km run". A slot is a SITE and a site is not yet
 ## a landmark — its chunk still has to have room for the shape — so
 ## LANDMARK_MILE_SPACING is sized to put NINETEEN slots on the 1450 m mile to
-## stand twelve. Measured 13 / 15 / 14.
+## stand twelve. Measured 13 / 15 / 14, through `create_chunk`.
 const MILE_MIN_IN_CORRIDOR: int = 12
 
 ## How far off the centreline still counts as "in the corridor" for check 5.
@@ -102,6 +111,12 @@ func _initialize() -> void:
 
 
 func _run() -> void:
+	# ONE FRAME FIRST, and it is load-bearing: `root.add_child()` during
+	# `_initialize()` does not put a node in the tree yet, so `_build_every_site`'s
+	# `create_chunk` would build every chunk detached — and the spawners that ask a
+	# chunk for its GLOBAL position or its tree (platform guards, the hunter cap)
+	# would degrade with an engine error instead of running.
+	await process_frame
 	var terrain_script: GDScript = load(TERRAIN_SCRIPT)
 	var consts: Dictionary = terrain_script.get_script_constant_map()
 	var registry: Array = load(BUILDERS_SCRIPT).get_script_constant_map().get("LANDMARKS", [])
@@ -109,10 +124,11 @@ func _run() -> void:
 		_fail("landmark_builders.gd has no LANDMARKS registry — nothing to site")
 	else:
 		_check_unique(terrain_script, registry)
+		_check_seed_reseats_the_table(terrain_script)
 		_check_legal_sites(terrain_script, consts)
 		var built: Array = _build_every_site(terrain_script)
 		_check_spacing(consts, built)
-		_check_no_draw(terrain_script)
+		_check_no_draw(terrain_script, built)
 		_check_corridor(consts, registry, built)
 		await _check_card_keys_off_the_site(registry, built)
 		_free_built(built)
@@ -133,10 +149,29 @@ func _fail(message: String) -> void:
 
 
 func _terrain(terrain_script: GDScript, seed_value: int) -> Node3D:
-	"""A detached terrain on `seed_value`, with the crocodile scene check 4 needs."""
+	"""
+	A REAL terrain in the tree on `seed_value`, with the crocodile scene check 4
+	needs. `tower_site_selfcheck`'s recipe, and both halves of it matter:
+
+	IN THE TREE, because `create_chunk` parents its chunk to the terrain and
+	several spawners ask that chunk for its GLOBAL position or its tree (the
+	platform guards, the hunter cap, the chest's `setup`). Detached, they degrade
+	with an engine error instead of running — which is a harness measuring a
+	world the game does not build.
+
+	SEEDED AFTER `add_child`, which is the trap: `_ready()` calls `_roll_run_seed()`,
+	so a seed assigned before the node enters the tree is thrown away and every
+	"deterministic" measurement below runs on a fresh random world. `_run()` awaits
+	one frame first, because `root.add_child()` during `_initialize()` does not put
+	a node in the tree at all.
+
+	It never streams on its own: `_ready` finds no node in group "player", so
+	`player` stays null and `_process` returns immediately.
+	"""
 	var terrain := Node3D.new()
 	terrain.set_script(terrain_script)
 	terrain.crocodile_scene = load(CROC_SCENE)
+	root.add_child(terrain)
 	terrain.set_run_seed(seed_value)
 	return terrain
 
@@ -225,6 +260,91 @@ func _mile_midpoint(terrain: Node3D) -> Vector3:
 	var k: int = (terrain._road_first_k_at_or_after_x(x_min) + terrain._road_terminal_k()) / 2
 	var centre: Vector2 = terrain._road_station(k).center
 	return Vector3(centre.x, 0.0, centre.y)
+
+
+# ============================================================================
+# CHECK 1b — a new seed reseats the table
+# ============================================================================
+
+func _check_seed_reseats_the_table(terrain_script: GDScript) -> void:
+	"""
+	`set_run_seed()` DROPS THE MEMOIZED SITE TABLE, and this is the check that
+	says so.
+
+	The table is built lazily and cached for the run. Nothing about that is wrong
+	until a seed arrives AFTER the first lookup — which is not a corner case but
+	the multiplayer join path: a peer rolls its own seed in `_ready()`, streams
+	chunks, and is then handed the room's seed through `set_run_seed()`. Without
+	the reset that peer keeps the OLD world's 48 landmarks while its road, its
+	biome field, its crocodiles and every other seed-derived stream have moved —
+	silently, because a cached Dictionary looks exactly like a correct one.
+	Codex review of PR #228 found it.
+
+	THE ASSERTION IS ON `set_run_seed()` AND NOT ON `new_run()`, deliberately.
+	`new_run()` resets it too and would pass this check on its own, but CLAUDE.md's
+	rule is that `set_run_seed()` is the ONLY place the seed is written — so it is
+	the only seam that sees every door, and it is the one a future joiner path has
+	to be safe through. Driving `new_run()` here would certify the door this bug
+	came through as unlocked.
+
+	MUTATION-TESTED: delete the two reset lines from `set_run_seed()` and this goes
+	red on the first assertion.
+	"""
+	var terrain := _terrain(terrain_script, SEEDS[0])
+	# Build it, exactly as a chunk streaming in would.
+	var first: Dictionary = terrain.landmark_sites().duplicate()
+	if first.is_empty():
+		_fail("seed %d sited nothing — check 1b cannot run" % SEEDS[0])
+		terrain.free()
+		Sentinel.done("seed_reseats_the_table")
+		return
+
+	# ...then hand it another seed, the way a multiplayer joiner is handed the
+	# room's, and ask again.
+	terrain.set_run_seed(SEEDS[1])
+	var second: Dictionary = terrain.landmark_sites()
+	if second == first:
+		_fail("the site table survived set_run_seed(%d) — it is still seed %d's %d sites, "
+				% [SEEDS[1], SEEDS[0], first.size()]
+				+ "so a multiplayer joiner would walk the master's road past the LAST run's "
+				+ "landmarks (the memo must be dropped where the seed is written)")
+
+	# ...and it must be the RIGHT new table, not merely a different one: identical
+	# to what a terrain born on that seed builds. Without this, a reset that
+	# cleared the memo but left some other stale state would still pass above.
+	#
+	# THE ROAD CACHE IS THAT OTHER STALE STATE, and it is `new_run()`'s to clear,
+	# not `set_run_seed()`'s. The mile is strung along the centreline, and
+	# `road_stations` / `_road_terminal_k_cache` / `_approach_coin_line_cache` are
+	# memoized off the seed exactly like the site table but reset one level up —
+	# so a bare `set_run_seed()` rebuilds the sites onto the PREVIOUS run's road.
+	# This step therefore clears the road the way `new_run()` does before comparing,
+	# which is what every shipped caller of `set_run_seed` already does (`_ready`'s
+	# roll happens before any road exists; the multiplayer path is `new_run`).
+	#
+	# ponytail: the road memos stay in `new_run()` — moving them into the seed write
+	# is the same fix one seam wider and it belongs to whoever owns the road, not to
+	# this bead. If a third caller of `set_run_seed` ever appears, move them and
+	# delete these four lines.
+	terrain.road_stations = {}
+	terrain.road_k_min = 1
+	terrain.road_k_max = 0
+	terrain._road_terminal_k_cache = terrain.ROAD_TERMINAL_K_UNSET
+	terrain.set_run_seed(SEEDS[1])
+	var rebuilt: Dictionary = terrain.landmark_sites()
+	var fresh := _terrain(terrain_script, SEEDS[1])
+	var expected: Dictionary = fresh.landmark_sites()
+	if rebuilt != expected:
+		_fail("after set_run_seed(%d) on a cleared road the table has %d sites but a terrain "
+				% [SEEDS[1], rebuilt.size()]
+				+ "born on that seed builds %d — the rebuild is not a pure function of the "
+				% expected.size()
+				+ "new seed")
+	fresh.free()
+	terrain.free()
+	print("  set_run_seed drops the memo: %d sites -> %d, and they are the new seed's own"
+			% [first.size(), second.size()])
+	Sentinel.done("seed_reseats_the_table")
 
 
 # ============================================================================
@@ -326,48 +446,61 @@ func _find_wet_chunk(terrain: Node3D) -> Vector2i:
 
 func _build_every_site(terrain_script: GDScript) -> Array:
 	"""
-	Run the shipped pipeline over every site chunk of every seed and collect what
-	was actually built.
+	Build every site chunk of every seed THROUGH THE SHIPPED `create_chunk` and
+	collect what was actually built.
 
 	@return: Array of { "seed", "chunk", "kind", "world" (Vector3 centre),
-	         "marker" (the real Node3D, still parented to its scratch chunk) }.
+	         "marker" (the real Node3D, still parented to its real chunk node) }.
 
-	IT IS THE REAL PIPELINE IN THE REAL ORDER — scattered props, then biome
-	content, then the landmark — because a site chunk's candidate loop is judged
-	against the `obstacles` those two produce, and a check that skipped them would
-	measure a world with no stone in it and report every site as built.
+	IT CALLS `create_chunk`, NOT A HAND-ROLLED PIPELINE, and that is the whole
+	point of this function. The first version of this check ran props -> biome
+	content -> landmark, which LOOKS like the real order and is not: production
+	runs the ARTIFACT and the CAMP between them, and both append footprints to
+	`obstacles` BEFORE `spawn_landmark_in_chunk` reads it. A candidate that clears
+	a chunk without them can be rejected — or moved — in the game, so the harness
+	was measuring a slightly emptier world than the one that ships (seed 20260904:
+	38 built in the hand-rolled order, 37 through `create_chunk`) and every number
+	downstream of it — the built floor, the corridor count, the spacing, the card —
+	was asserted against that wrong world.
+	Codex review of PR #228 found it.
 
-	The scratch chunk nodes are kept alive (in `_scratch`) rather than freed,
-	because check 6 walks up to a marker that is still parented to one. They are
-	never added to the tree, so nothing about them runs.
+	THE FIX IS TO DELETE THE ORDER, NOT TO EXTEND IT. A harness that lists the
+	spawners in the right order is a second copy of `create_chunk`'s ordering
+	comment, and the next spawner inserted before the landmark desynchronises it
+	again in silence. Calling the shipped function makes the divergence
+	unrepresentable, which is why there is no "harness matches create_chunk"
+	assertion here: there is nothing left to disagree. What guards it instead is a
+	TEXT check in check 5 — this function must call `create_chunk` and must not call
+	`spawn_landmark_in_chunk` — because a construction argument fails silently.
+	MUTATION-TESTED: put the hand-rolled order back and the counts move to
+	38 / 42 / 43, check 5's two guards fire by name and check 6 fires as well.
+
+	The terrain node goes INTO THE TREE, because `create_chunk` parents its chunk
+	to it — the `tower_site_selfcheck` recipe. It still streams nothing on its own:
+	`_ready` finds no node in group "player", so `player` stays null and `_process`
+	returns immediately. `_free_built` frees each terrain, and its chunks with it.
 	"""
 	var out: Array = []
 	for seed_value: int in SEEDS:
 		var terrain := _terrain(terrain_script, seed_value)
 		var sites: Dictionary = terrain.landmark_sites()
 		for chunk: Vector2i in sites:
-			var platforms: Array = []
-			var batch: Array = []
-			var body := StaticBody3D.new()
-			var obstacles: Array = terrain.spawn_objects_in_chunk(chunk, platforms, batch, body)
-			terrain.spawn_biome_content_in_chunk(chunk, obstacles, batch, body)
-			var chunk_node := MeshInstance3D.new()
-			terrain.spawn_landmark_in_chunk(chunk, chunk_node, obstacles, batch, body)
-			body.free()
+			terrain.create_chunk(chunk)
+			var chunk_node: Node3D = terrain.active_chunks.get(chunk)
+			if chunk_node == null:
+				continue
 			var marker: Node3D = null
 			for child in chunk_node.get_children():
 				if child is Node3D and child.is_in_group("landmark"):
 					marker = child
 					break
 			if marker == null:
-				chunk_node.free()
 				continue
-			var chunk_world: Vector3 = terrain.chunk_to_world(chunk)
 			out.append({
 				"seed": seed_value,
 				"chunk": chunk,
 				"kind": int(sites[chunk]),
-				"world": chunk_world + marker.position,
+				"world": terrain.chunk_to_world(chunk) + marker.position,
 				"marker": marker,
 				"chunk_node": chunk_node,
 				"terrain": terrain,
@@ -377,15 +510,12 @@ func _build_every_site(terrain_script: GDScript) -> Array:
 
 func _free_built(built: Array) -> void:
 	"""
-	Drop every scratch node `_build_every_site` kept alive. Nothing here was ever
-	added to the tree, so this is only about not printing a leak report at exit —
+	Drop every terrain `_build_every_site` kept alive, and with it every chunk
+	`create_chunk` parented to one. Only about not printing a leak report at exit —
 	which reads exactly like a failure in the CI log.
 	"""
 	var terrains: Dictionary = {}
 	for row: Dictionary in built:
-		var node: Node = row["chunk_node"]
-		if is_instance_valid(node):
-			node.free()
 		terrains[row["terrain"]] = true
 	for terrain: Variant in terrains:
 		if is_instance_valid(terrain as Node):
@@ -445,7 +575,7 @@ func _check_spacing(consts: Dictionary, built: Array) -> void:
 # CHECK 4 — the reverse lookup costs the shared streams nothing
 # ============================================================================
 
-func _check_no_draw(terrain_script: GDScript) -> void:
+func _check_no_draw(terrain_script: GDScript, built: Array) -> void:
 	"""
 	Asking "does a landmark stand here" must not move anything else in the world.
 
@@ -484,11 +614,13 @@ func _check_no_draw(terrain_script: GDScript) -> void:
 	var sites: Dictionary = terrain.landmark_sites()
 	# The subject must be a site that really BUILT something, or the comparator's
 	# own control below ("with a landmark, the boxes differ") is measuring a chunk
-	# whose candidate loop failed and would fail for the wrong reason.
+	# whose candidate loop failed and would fail for the wrong reason. It is taken
+	# from `_build_every_site`'s list — which is `create_chunk`'s own answer — so
+	# this check cannot pick a subject the game disagrees about.
 	var site_chunk: Vector2i = Vector2i(0x7FFFFFFF, 0x7FFFFFFF)
-	for chunk: Vector2i in sites:
-		if _builds_a_landmark(terrain, chunk):
-			site_chunk = chunk
+	for row: Dictionary in built:
+		if int(row["seed"]) == SEEDS[0]:
+			site_chunk = row["chunk"]
 			break
 	if site_chunk == Vector2i(0x7FFFFFFF, 0x7FFFFFFF):
 		_fail("seed %d built nothing at any of its %d sites — check 4's A/B cannot run"
@@ -523,27 +655,20 @@ func _check_no_draw(terrain_script: GDScript) -> void:
 	Sentinel.done("no_draw")
 
 
-func _builds_a_landmark(terrain: Node3D, chunk: Vector2i) -> bool:
-	"""Does this site chunk's candidate loop actually find room for the shape?"""
-	var platforms: Array = []
-	var batch: Array = []
-	var body := StaticBody3D.new()
-	var obstacles: Array = terrain.spawn_objects_in_chunk(chunk, platforms, batch, body)
-	terrain.spawn_biome_content_in_chunk(chunk, obstacles, batch, body)
-	var node := MeshInstance3D.new()
-	var before: int = obstacles.size()
-	terrain.spawn_landmark_in_chunk(chunk, node, obstacles, batch, body)
-	var built: bool = obstacles.size() > before
-	node.free()
-	body.free()
-	return built
-
-
 func _signature(terrain_script: GDScript, chunk: Vector2i, landmarks_on: bool) -> Dictionary:
 	"""
 	Generate one chunk in create_chunk's order and return three signatures:
 	`pre` (everything that runs BEFORE the landmark), `boxes` (the whole visual
 	batch) and `crocs` (the bodies, which run after and read the footprints).
+
+	NOT `create_chunk` ITSELF, unlike `_build_every_site`, and for one reason: this
+	needs the batch and the obstacle list SPLIT at the landmark, which only calling
+	the spawners in order can give. So the order is written out here — and it is the
+	real one, artifact and camp included, which is exactly the thing the build pass
+	got wrong. Everything the split does not need runs after the split point.
+
+	The terrain and its scratch chunk go into the tree, because the chest asks its
+	parent for a global transform and a tree on `setup()`.
 	"""
 	var terrain := _terrain(terrain_script, SEEDS[0])
 	terrain.spawn_landmarks = landmarks_on
@@ -553,6 +678,8 @@ func _signature(terrain_script: GDScript, chunk: Vector2i, landmarks_on: bool) -
 	var obstacles: Array = terrain.spawn_objects_in_chunk(chunk, platforms, batch, body)
 	terrain.spawn_biome_content_in_chunk(chunk, obstacles, batch, body)
 	var chunk_node := MeshInstance3D.new()
+	chunk_node.position = terrain.chunk_to_world(chunk)
+	terrain.add_child(chunk_node)
 	terrain.spawn_artifact_in_chunk(chunk, chunk_node, obstacles, batch, body)
 	terrain.spawn_camp_in_chunk(chunk, chunk_node, obstacles, batch, body)
 	var pre: PackedByteArray = var_to_bytes(batch) + var_to_bytes(obstacles)
@@ -560,15 +687,14 @@ func _signature(terrain_script: GDScript, chunk: Vector2i, landmarks_on: bool) -
 	terrain.spawn_chest_in_chunk(chunk, chunk_node, obstacles, batch, body)
 	var croc_parent := MeshInstance3D.new()
 	croc_parent.position = terrain.chunk_to_world(chunk)
+	terrain.add_child(croc_parent)
 	terrain.spawn_crocodiles_in_chunk(chunk, croc_parent, obstacles)
 	var crocs: PackedStringArray = PackedStringArray()
 	for child in croc_parent.get_children():
 		crocs.append("%s@%s" % [child.name, str((child as Node3D).position)])
 	var boxes: PackedByteArray = var_to_bytes(batch)
-	croc_parent.free()
-	chunk_node.free()
 	body.free()
-	terrain.free()
+	terrain.free()  # frees the scratch chunk and the croc parent with it
 	return { "pre": pre, "boxes": boxes, "crocs": crocs }
 
 
@@ -610,6 +736,28 @@ func _check_corridor(consts: Dictionary, registry: Array, built: Array) -> void:
 	own X span, and within LANDMARK_MILE_LATERAL_MAX + CORRIDOR_PAD of the
 	centreline `_road_lateral_distance` measures".
 	"""
+	# THE HARNESS ITSELF, READ AS TEXT, and it is the assertion that keeps every
+	# number below honest. `_build_every_site` must call `create_chunk` and must not
+	# call the landmark spawner directly: a hand-rolled order is how this check came
+	# to measure a world with no artifacts and no camps in it (see that function's
+	# docstring). A behavioural comparison is impossible here — the harness IS the
+	# shipped function, so there is nothing to compare it against — which is exactly
+	# why the guard is on the source.
+	var own_source: String = FileAccess.get_file_as_string(SELF_SCRIPT)
+	var harness := _function_body(own_source, "_build_every_site")
+	if harness.is_empty():
+		_fail("could not read `_build_every_site` out of %s — the harness guard is measuring "
+				% SELF_SCRIPT + "nothing")
+	else:
+		if not harness.contains("create_chunk("):
+			_fail("`_build_every_site` no longer calls `create_chunk` — every count below is "
+					+ "then measured against a hand-rolled spawner order, which is how this "
+					+ "check once reported 38 built where the game builds 37")
+		if harness.contains("spawn_landmark_in_chunk("):
+			_fail("`_build_every_site` calls `spawn_landmark_in_chunk` directly — the landmark "
+					+ "must be reached THROUGH `create_chunk`, or the artifact and camp "
+					+ "footprints its candidate loop is judged against are missing")
+
 	var lateral_max: float = float(consts["LANDMARK_MILE_LATERAL_MAX"]) + CORRIDOR_PAD
 	var terminal_x: float = float(consts["ROAD_TERMINAL_X"])
 	var per_seed: PackedStringArray = PackedStringArray()

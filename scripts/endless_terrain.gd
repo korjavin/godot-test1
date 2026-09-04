@@ -1600,6 +1600,10 @@ const LANDMARK_SITE_TRIES: int = 32
 ##     4 tries:   22 / 19 / 26   (corridor 6 / 4 / 5)  — the old constant
 ##    40 tries:   40 / 39 / 39   (corridor 14 / 13 / 12)
 ##   200 tries:   43 / 41 / 41   (corridor 15 / 14 / 13)
+## That sweep predates the mile's final spacing AND ran on the check's own
+## hand-rolled chunk order rather than `create_chunk`, so it is the SHAPE of the
+## curve that it measures, not the row; the shipped numbers are 37 / 43 / 43
+## built, corridor 13 / 15 / 14 — `landmark_sites_selfcheck` prints them.
 ## and it plateaus there — the remainder are chunks where a 4-9 m circle genuinely
 ## does not fit (field CITY band chunks are two thirds of them). 200 tries is FREE
 ## because only ~48 chunks in a whole world ever run this loop, and each try is a
@@ -3442,6 +3446,17 @@ func set_run_seed(value: int) -> void:
 	# the paths of the run you just lost. Hung off the seed write for the same
 	# reason `_tower_reset()` is: every path that starts a world comes through here.
 	_migrated_units.clear()
+	# ...and the MUSEUM MILE, for the same reason and one worse. The site table is
+	# memoized and pure in run_seed, so a table built BEFORE this write survives it
+	# and hands the new world the OLD run's landmarks while every other seed-derived
+	# stream has moved. new_run() resets it too (beside the road cache it is derived
+	# from), but new_run() is not the only door: a multiplayer joiner takes the
+	# master's seed through set_run_seed() after its own _ready() roll, and anything
+	# that streamed a chunk in between has already built the table. THE SEED WRITE IS
+	# THE ONLY PLACE THAT SEES EVERY DOOR — which is exactly why _tower_reset() and
+	# the trail purge hang here too.
+	_landmark_sites_cache = {}
+	_landmark_sites_built = false
 	var lod := get_tree().get_first_node_in_group("lod_manager") if is_inside_tree() else null
 	if lod != null and lod.has_method("reset_trails"):
 		lod.reset_trails()

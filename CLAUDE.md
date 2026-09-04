@@ -103,8 +103,12 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            real built centres, a site-free chunk byte-identical
 #                            with landmarks on and off (crocodiles included) plus
 #                            `_landmark_at` read as TEXT for a draw or a k, the
-#                            built/on-the-mile floors, and a REALLY BUILT marker
-#                            walked up to through the shipped toast
+#                            built/on-the-mile floors (measured through the shipped
+#                            `create_chunk`, with the harness read as TEXT so it
+#                            can never drift back to a hand-rolled spawner order
+#                            that skips the artifact and the camp), a REALLY BUILT
+#                            marker walked up to through the shipped toast, and
+#                            check 1b: `set_run_seed()` drops the memo
 #   prop_selfcheck           prop/structure footprints, budgets, palettes
 #   scarcity_selfcheck       the distance gradient, ONE RULE FOR EVERY BIOME: the
 #                            k curve itself, then a near and a far field per
@@ -441,9 +445,11 @@ Load-bearing rules:
   (owner ruling 2026-09-04, bead `godot-test1-bcf`: *"for landmarks they should be
   unique, each type exists once in our world"*). There is no rarity roll and no
   `LANDMARK_CHANCE` any more: `landmark_sites()` gives every `LandmarkBuilders.LANDMARKS`
-  row ONE site — a chunk coordinate, pure in `run_seed`, built once per run and dropped by
-  `new_run()` beside the road station cache it is derived from — and `_landmark_at` is a
-  reverse lookup in that table. So the chunk stream sees **not one draw and not one hash**,
+  row ONE site — a chunk coordinate, pure in `run_seed`, built once per run and **dropped in
+  `set_run_seed()`, the one place the seed is written** (a memo that outlived a re-seed would
+  hand a multiplayer joiner the master's road with the LAST run's landmarks on it;
+  `new_run()` clears it again beside the road station cache it is derived from) — and
+  `_landmark_at` is a reverse lookup in that table. So the chunk stream sees **not one draw and not one hash**,
   and a site is answerable for a chunk that has never streamed in. Sites are strung along
   the MUSEUM MILE (the road from the HQ to the terminal station `T`, one kind per
   `LANDMARK_MILE_SPACING` of X, 60-120 m off alternating sides) with the overflow in a
