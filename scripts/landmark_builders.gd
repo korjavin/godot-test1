@@ -6,9 +6,10 @@ extends RefCounted
 ## nothing else in the project has to know about.
 ##
 ## THE SPLIT, and why it falls exactly here. endless_terrain.gd keeps the
-## POLICY — how rare a landmark is (LANDMARK_CHANCE), which hash stream decides
-## it (_landmark_at), how far off the coin road it must sit, how its reward ring
-## and its crocodile-exclusion footprint are sized (spawn_landmark_in_chunk).
+## POLICY — WHERE each place stands (the MUSEUM MILE: one site per kind, chosen
+## from run_seed alone and read back by `_landmark_at`), how far off the coin road
+## it must sit, how its reward ring and its crocodile-exclusion footprint are
+## sized (spawn_landmark_in_chunk).
 ## This file keeps the CONTENT — the palette, the registry, and the builder that
 ## turns a spot into stone. Policy is about the WORLD and reads a dozen sibling
 ## constants; content is about a PLACE and reads none of them. That is the whole
@@ -116,10 +117,12 @@ const CITY_PARK_GREEN := Color(0.20, 0.42, 0.22) # Margaret Island foliage (dE 0
 ## invents a sixth word or forgets the field, because a missing region silently
 ## degrades that place's quiz to whole-table distractors rather than erroring.
 ##
-## ORDER IS LOAD-BEARING ONLY IN THAT IT IS THE KIND ROLL — _landmark_at draws
-## randi_range(0, LANDMARKS.size() - 1) into this array, so appending is safe and
-## reordering re-rolls every landmark in every existing world (harmless: worlds
-## are per-run anyway).
+## ORDER IS LOAD-BEARING ONLY IN THAT AN INDEX IS AN IDENTITY — since bead
+## godot-test1-bcf a kind is unique in the world and its ROW INDEX is what
+## `landmark_sites()` places, what the marker's `kind` meta carries and what
+## `quiz_options` keys on. So APPENDING is free (a new row simply gets its own
+## site) and REORDERING moves every landmark in every existing world, which is
+## harmless because worlds are per-run anyway.
 const LANDMARKS: Array = [
 	{
 		"builder": "_landmark_stonehenge",
@@ -551,14 +554,13 @@ const LANDMARKS: Array = [
 # ----------------------------------------------------------------------------
 ##
 ## A SEPARATE const, not a `city: true` flag on the rows above, and the reason is
-## the field's landmark roll. `_landmark_at` draws
-## randi_range(0, LANDMARKS.size() - 1) out of the chunk's own hash stream, so a
-## flag would mean either a post-draw `continue` (a filter nobody can forget, but
-## still one more thing between a draw and a placement) or a resized array (which
-## re-rolls every landmark in every world). A table endless_terrain.gd has never
-## heard of cannot reach the field roll AT ALL: the draw sequence is not changed,
-## it is not reachable. That is the cheapest possible answer to "keep these out of
-## the countryside", and it costs one extra line in landmark_selfcheck.
+## the field's placement. `landmark_sites()` walks LANDMARKS by index and gives
+## every row a site, so a flag would mean a filter in that walk — one more thing
+## nobody may forget — and a shared array would mean the 22 city rows shifting the
+## index of every field row. A table endless_terrain.gd has never heard of cannot
+## reach the field placement AT ALL: it is not filtered out, it is not reachable.
+## That is the cheapest possible answer to "keep these out of the countryside",
+## and it costs one extra line in landmark_selfcheck.
 ##
 ## It also keeps check 2 honest. Every row up there must satisfy
 ## radius <= LANDMARK_RADIUS (9.5) because that is the bound _biome_spot_ok is
@@ -1363,13 +1365,15 @@ static func _landmark_taj(terrain: Node3D, center: Vector3, rng: RandomNumberGen
 	terrain.create_box(center + rot * Vector3(0.0, hall_y + 1.9, HALL.z / 2.0 - 0.05), Vector3(2.4, 3.4, 0.5),
 			yaw, rng, block_batch, block_body, 0.0, LM_MARBLE.darkened(0.72), false)
 
-	# The dome: three shrinking boxes plus a finial. Crude, and unmistakable.
+	# The dome: drum, bulbous dome, and collar plus a finial. Replacing the
+	# stepped flattened-lens tiers with one cubic SPHERE restores the Mughal
+	# silhouette while preserving box count, draw order, and collisions.
 	var y := hall_y + HALL.y
-	# Two SPHERES for the bulb, a CYLINDER for the shoulder it necks into and a
-	# CONE for the finial — _lm_onion's vocabulary, on a stack authored before it.
-	var dome_kinds: Array = [ChunkBatch.BoxKind.SPHERE, ChunkBatch.BoxKind.SPHERE, ChunkBatch.BoxKind.CYLINDER]
+	# A CYLINDER for the drum, a cubic SPHERE for the bulbous dome, and a
+	# CYLINDER for the shoulder necking into the finial.
+	var dome_kinds: Array = [ChunkBatch.BoxKind.CYLINDER, ChunkBatch.BoxKind.SPHERE, ChunkBatch.BoxKind.CYLINDER]
 	var dome_i := 0
-	for dims in [Vector3(3.6, 1.6, 3.6), Vector3(2.6, 1.2, 2.6), Vector3(1.6, 0.9, 1.6)]:
+	for dims in [Vector3(2.8, 1.0, 2.8), Vector3(3.6, 3.0, 3.6), Vector3(1.2, 0.5, 1.2)]:
 		terrain.create_box(center + Vector3(0.0, y + dims.y / 2.0, 0.0), dims, yaw, rng, block_batch, block_body, 0.0, marble,
 				true, dome_kinds[dome_i])
 		dome_i += 1
@@ -2565,15 +2569,13 @@ static func _landmark_kinderdijk(terrain: Node3D, center: Vector3, rng: RandomNu
 			terrain.create_box(center + rot * Vector3(mx, y + 0.95, 0.0), Vector3(w, 1.9, w), yaw,
 					rng, block_batch, block_body, 0.0, _lm_shade(brick, rng, 0.03), true, ChunkBatch.BoxKind.CYLINDER)
 			y += 1.9
-		# The cap: dark thatch, and wider than the body it sits on. A CYLINDER
-		# rather than the cone a mill's cap wants, because this box COLLIDES and
-		# rule 5d refuses a colliding cone — the round tapering body under it is
-		# what turns "the octagonal brick tower in the house's vocabulary" into a
-		# real one.
-		terrain.create_box(center + rot * Vector3(mx, y + 0.75, 0.0), Vector3(2.5, 1.5, 2.5), yaw,
-				rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04), true, ChunkBatch.BoxKind.CYLINDER)
-		y += 1.5
-		var hub_y: float = y - 0.6
+		# The cap: dark thatch, tapering to a cone point. Non-colliding so rule 5d
+		# is respected (no colliding cone); the body cylinders below provide the
+		# collision shape.
+		terrain.create_box(center + rot * Vector3(mx, y + 0.8, 0.0), Vector3(2.4, 1.6, 2.4), yaw,
+				rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04), false, ChunkBatch.BoxKind.CONE)
+		y += 1.6
+		var hub_y: float = y - 0.9
 		terrain.create_box(center + rot * Vector3(mx, hub_y, 1.35), Vector3(0.4, 0.4, 0.9), yaw,
 				rng, block_batch, block_body, 0.0, _lm_shade(LM_BASALT, rng, 0.03), false)
 		# The sails. Trim: a sail 7 m up is not a floor.
