@@ -402,7 +402,7 @@ Systems never hold hard references to each other. Use
 `get_tree().get_first_node_in_group(...)`, not `$`-paths or exported references, and
 guard with `has_method` so a scene run standalone degrades instead of erroring. Groups:
 `player`, `crocodile`, `enemy`, `coin`, `landmark`, `terrain`, `weather`, `fauna`, `crowd`,
-`sound_manager`, `progression`, `mp`, `lod_manager`, plus one per HUD widget.
+`sound_manager`, `progression`, `mp`, `voice`, `lod_manager`, plus one per HUD widget.
 
 **`"player"` means the LOCAL player and nothing else.** Terrain streaming, crocodile
 chase, the LOD manager, the danger vignette, fauna and weather all resolve "the player"
@@ -1849,7 +1849,7 @@ totals, crocodile sync, claims), **`mp_codec.gd` (the pure codec)**, `remote_ava
 **THE PARSERS ARE `MpCodec`, THE HANDLERS ARE `MpManager`, and that seam is the file
 boundary.** `scripts/mp_codec.gd` (`class_name MpCodec`, all `static`) holds every
 `decode_*` — `decode_presence`, `decode_state`, `decode_croc_sync`, `decode_captive`,
-`decode_room`, `decode_pad`, `decode_lmk`, `decode_herd` — plus `packet_kind`, the `_croc_flags` byte
+`decode_room`, `decode_pad`, `decode_lmk`, `decode_herd`, `decode_vc` — plus `packet_kind`, the `_croc_flags` byte
 packing and the `CROC_FLAG_*` constants both ends of it read, the two `*_in_reach`
 proximity tests, `peer_int_id`, and the wire-format bounds (`MAX_STATE_IDS`,
 `MAX_HERO_NAME`, `MAX_CROC_SYNC`, `MAX_LANDMARK_CLAIM_PAD`, …) they are written against.
@@ -1949,6 +1949,39 @@ The sharpest rules, in rough order of how badly they bite:
 
 Desktop needs the `webrtc-native` addon (fetched by `./fetch_webrtc_addon.sh`, never
 vendored); the web build needs nothing.
+
+### Voice chat — a SECOND signalling family on the same relay, WEB ONLY
+`scripts/voice_chat.gd` (group `"voice"`, `PROCESS_MODE_ALWAYS`, in `main.tscn` beside
+the manager) opens a browser `RTCPeerConnection` per room member carrying audio, because
+Godot's `WebRTCPeerConnection` — engine and `webrtc-native` alike — is **data channels
+only**: there is no `add_track` and no microphone, so voice can never ride the mesh and
+the desktop build can never carry it. It is web-only **by owner ruling** as well
+(2026-09-04, epic `godot-test1-xtr`) — mobile is out of scope entirely, rooms cap at 4
+and there will be no SFU. Off the web export the node connects to nothing and never
+touches `JavaScriptBridge`.
+
+- **The seam in `mp_manager.gd` is three functions and must stay three** — `ice_config()`,
+  `send_voice()` and `_forward_voice()`, which owns BOTH trust gates (the sender is a
+  current `_members` row; the shape is `MpCodec.decode_vc()`) before emitting
+  `voice_relay`. `_on_lobby_relay`'s `"mp"` arms are untouched: a `"vc"` payload is handed
+  off above the dispatch, in the branch that already ignored everything without an `"mp"`
+  key because "later phases share this same relay".
+- **The browser half is ONE const JS string** installed at `window.ckVoice` on the first
+  room join (`intro_video.gd`'s idiom), and **every function in it answers a number** —
+  a JS boolean crossing the bridge is a corrupted Variant on Godot 4.5's web template
+  (`intro_selfcheck` check 8 scans every `scripts/*.gd` for it). The outbound callback is
+  RETAINED in a member var or the GC detaches it (`mobile_sensors.gd`'s trap).
+- **PERFECT NEGOTIATION from day one**, polite = the lexicographically HIGHER lobby id so
+  it agrees with the mesh's "the lower id offers". That is what makes bead .6's camera a
+  plain `addTrack` plus one renegotiation, and what lets the microphone arrive LATE: a
+  connection opens with a `recvonly` transceiver and renegotiates when the permission
+  prompt comes back. Every signalling op for a peer is serialised on that peer's own
+  promise chain, or trickled ICE races `setRemoteDescription` and is silently lost.
+- **THE MIC STARTS OFF** (owner ruling 2026-09-04): the track is attached to every
+  connection with `enabled = false`, so what ships is "everyone hears, nobody transmits";
+  bead .2's `V` key flips it. A denial is listen-only plus one status line, never a retry
+  loop. ICE is trickled and batched per 100 ms — the lobby caps a payload at 32 KB and
+  meters a sender at 120 frames burst / 30 per second.
 
 ## Performance & web build
 

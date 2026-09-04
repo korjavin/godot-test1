@@ -366,6 +366,11 @@ signal status(message: String)
 ## shape, and the same reason, as `room_changed`.
 signal heroes_changed(heroes: Dictionary, pool: Array)
 
+## A VOICE signalling payload from a current room member, already through
+## `MpCodec.decode_vc()` — so `scripts/voice_chat.gd` (the only listener) never
+## sees an unvalidated one. See `_forward_voice()` for the whole of the seam.
+signal voice_relay(from: String, payload: Dictionary)
+
 # =============================================================================
 # STATE
 # =============================================================================
@@ -2146,6 +2151,67 @@ func _on_ice_candidate_created(media: String, index: int, candidate_name: String
 	})
 
 
+# =============================================================================
+# THE VOICE SEAM — three functions, and deliberately nothing else
+# =============================================================================
+# Voice (scripts/voice_chat.gd, bead godot-test1-xtr.1) is a SECOND signalling
+# family over the same lobby relay, tagged `"vc"` where the mesh's own frames are
+# tagged `"mp"`. It opens its own browser `RTCPeerConnection` per member carrying
+# media tracks, because Godot's `WebRTCPeerConnection` — engine and
+# `webrtc-native` alike — exposes DATA CHANNELS ONLY. So the mesh cannot carry it
+# and this manager does not want to know how it works: it forwards a validated
+# payload, sends one back, and lends out the ICE config it already fetched.
+#
+# `voice_chat.gd` finds us through group `"mp"` with `has_method` guards, so a
+# build without it (every desktop build, every headless self-check) costs the
+# mesh exactly the three functions below and nothing more.
+
+func ice_config() -> Dictionary:
+	"""
+	The `/ice` payload this room's mesh was built with, or `{}` before the fetch
+	lands (and always in `lobby_only`). Returned by reference like `get_members()`
+	— it is fixed for the room's life, see `_on_ice_ready()`.
+	"""
+	return _ice
+
+
+func send_voice(to: String, payload: Dictionary) -> void:
+	"""
+	Relay one `"vc"` payload to `to`. The mirror of the `_forward_voice()` gate:
+	refused off-room, so a voice module that has not yet noticed the room went away
+	cannot keep writing to a dead socket.
+	"""
+	if _state != State.IN_ROOM or _lobby == null or to.is_empty():
+		return
+	_lobby.send_signal_to(to, payload)
+
+
+func _forward_voice(from: String, payload: Dictionary) -> void:
+	"""
+	A `"vc"` payload — validate it and hand it on, or drop it.
+
+	TWO GATES, and both are this file's job rather than the voice module's. The
+	SENDER must be a current room member: room codes are public over `/rooms`, so
+	the relay reaches anyone who joined, and a peer that has left must not still be
+	able to renegotiate somebody's microphone. The SHAPE is `MpCodec.decode_vc()`'s,
+	so `voice_chat.gd` — whose next stop is a `JavaScriptBridge` call — only ever
+	sees a payload this build is willing to act on.
+	"""
+	var known := false
+	for member: Variant in _members:
+		if typeof(member) == TYPE_DICTIONARY \
+				and str((member as Dictionary).get("id", "")) == from:
+			known = true
+			break
+	if not known:
+		push_warning("MpManager: dropped a vc payload from non-member %s" % from)
+		return
+	var vc: Dictionary = MpCodec.decode_vc(payload)
+	if vc.is_empty():
+		return  # decode_vc already warned about exactly what was wrong.
+	voice_relay.emit(from, vc)
+
+
 func _on_lobby_relay(from: String, payload: Dictionary) -> void:
 	"""
 	A relayed payload from `from`. **This is a trust boundary** — the lobby never
@@ -2155,9 +2221,13 @@ func _on_lobby_relay(from: String, payload: Dictionary) -> void:
 
 	A payload with no `"mp"` key is silently ignored rather than warned about:
 	later phases share this same relay, and refusing to choke on their traffic is
-	what makes this client forward compatible.
+	what makes this client forward compatible. The VOICE family (`"vc"`) is the
+	first of those later phases to arrive — it is handed off whole to
+	`_forward_voice()` above the `mp` dispatch, so not one arm below it moves.
 	"""
 	if not payload.has("mp"):
+		if payload.has("vc"):
+			_forward_voice(from, payload)
 		return
 
 	match str(payload["mp"]):
