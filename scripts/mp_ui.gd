@@ -140,6 +140,19 @@ const ROOM_ROW_HERO_MAX: int = 2
 const CODE_FONT_SIZE: int = 34
 const BODY_FONT_SIZE: int = 18
 
+## The member row (bead godot-test1-xtr.3): a speaking dot, the name, and a mute
+## toggle narrow enough to leave a 32-character lobby name room to clip in.
+const DOT_WIDTH: float = 18.0
+const MUTE_BUTTON_WIDTH: float = 104.0
+const DOT_IDLE: Color = Color(1.0, 1.0, 1.0, 0.25)
+const DOT_SPEAKING: Color = Color(0.45, 1.0, 0.45, 1.0)
+
+## The key `voice_chat.gd` reports the LOCAL microphone's level under. Mirrored
+## rather than preloaded: `voice_chat.gd` is found through the group like every
+## other system here, and a preload for one string would be this panel's only
+## hard reference to it.
+const VOICE_SELF_KEY: String = "me"
+
 # ============================================================================
 # STATE
 # ============================================================================
@@ -214,12 +227,23 @@ var _host_button: Button = null
 var _join_button: Button = null
 var _leave_button: Button = null
 
-## Voice chat controls (bead godot-test1-xtr.2).
+## Voice chat controls (bead godot-test1-xtr.2, extended by .3).
 var _voice_section: VBoxContainer = null
 var _voice_mode_button: Button = null
 var _mic_state_label: Label = null
+var _mic_mute_button: Button = null
+var _deafen_button: Button = null
 var _voice: Node = null
 var _voice_signals_connected: bool = false
+
+## The member ROWS (bead godot-test1-xtr.3): one `{id, dot, mute}` per name under
+## `_members_box`. Rebuilt wholesale — like `_rebuild_room_buttons()`, and for the
+## same reason: four rows is smaller than a diff of four rows — but only when the
+## SIGNATURE below actually changes, because `_refresh()` fires on every presence
+## broadcast and rebuilding a button the player is mid-tap on eats the tap.
+var _members_box: VBoxContainer = null
+var _member_rows: Array = []
+var _member_sig: String = ""
 
 
 
@@ -283,6 +307,13 @@ func _process(_delta: float) -> void:
 	# see `_apply_pause()` for why (this node is PROCESS_MODE_ALWAYS, so it keeps
 	# ticking under its own pause).
 	_apply_pause(_panel_open)
+
+	# The speaking dots follow speech, which `_refresh()`'s lobby events cannot;
+	# only while the panel is actually open, because nothing here is visible
+	# otherwise. This node is PROCESS_MODE_ALWAYS, so the dots keep moving under a
+	# pause — which they must, since voice does (epic godot-test1-xtr).
+	if _panel_open:
+		_update_member_rows()
 
 
 # ============================================================================
@@ -481,6 +512,9 @@ func _build_ui() -> void:
 	_code_row.add_child(copy_button)
 
 	# --- Member list ------------------------------------------------------
+	# The heading stays a plain Label; the names below it are one ROW each since
+	# bead godot-test1-xtr.3, because a speaking dot and a per-peer mute toggle
+	# are not things a joined string can carry.
 	_members_label = Label.new()
 	_members_label.name = "Members"
 	_members_label.text = ""
@@ -488,6 +522,12 @@ func _build_ui() -> void:
 	_members_label.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
 	_members_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vbox.add_child(_members_label)
+
+	_members_box = VBoxContainer.new()
+	_members_box.name = "MemberRows"
+	_members_box.add_theme_constant_override("separation", 4)
+	_members_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.add_child(_members_box)
 
 	# --- Voice chat controls (shown only while in a room) ------------------
 	_voice_section = VBoxContainer.new()
@@ -499,6 +539,12 @@ func _build_ui() -> void:
 
 	_voice_mode_button = _make_button("Voice: always on", _on_voice_mode_pressed)
 	_voice_section.add_child(_voice_mode_button)
+
+	_mic_mute_button = _make_button("Mute mic", _on_mic_mute_pressed)
+	_voice_section.add_child(_mic_mute_button)
+
+	_deafen_button = _make_button("Deafen", _on_deafen_pressed)
+	_voice_section.add_child(_deafen_button)
 
 	_mic_state_label = Label.new()
 	_mic_state_label.name = "MicState"
@@ -1096,8 +1142,9 @@ func _refresh() -> void:
 	if _code_label != null:
 		_code_label.text = code
 
+	var heading: String = _rebuild_member_rows(manager)
 	if _members_label != null:
-		_members_label.text = _member_lines(manager)
+		_members_label.text = heading
 
 	_update_voice_ui()
 
@@ -1118,25 +1165,115 @@ func _current_code() -> String:
 	return String(manager.get_room_code())
 
 
-## Render the lobby's `[{"id": ..., "name": ...}, ...]` member list as one name
-## per line. The lobby is a trust boundary, so a member entry that is not a
-## dictionary with a name is skipped rather than crashing the HUD.
-func _member_lines(manager: Node) -> String:
-	if manager == null or not manager.has_method("get_members"):
-		return ""
-	var lines: PackedStringArray = PackedStringArray()
-	for member: Variant in manager.get_members():
-		if typeof(member) != TYPE_DICTIONARY:
-			continue
-		# Type-checked rather than converted — see `_on_heroes_changed`. `has("name")`
-		# only proved the key exists, so a non-string name still aborted the render
-		# and blanked the whole member list.
-		var raw_name: Variant = (member as Dictionary).get("name", null)
-		if typeof(raw_name) == TYPE_STRING:
-			lines.append("• %s" % (raw_name as String))
-	if lines.is_empty():
-		return ""
-	return tr("In room:") + "\n" + "\n".join(lines)
+## Rebuild the member ROWS from the lobby's `[{"id": ..., "name": ...}, ...]`.
+## One row per member: a speaking dot, the name, and — for everybody but you — a
+## per-peer mute toggle. The lobby is a trust boundary, so a member entry that is
+## not a dictionary with a string name is skipped rather than crashing the HUD.
+##
+## Returns the heading the caller puts above the rows ("" when there is nobody,
+## which also hides the box).
+func _rebuild_member_rows(manager: Node) -> String:
+	var entries: Array = []
+	var sig: String = ""
+	var you: String = ""
+	if manager != null and manager.has_method("my_id"):
+		you = String(manager.my_id())
+	if manager != null and manager.has_method("get_members"):
+		for member: Variant in manager.get_members():
+			if typeof(member) != TYPE_DICTIONARY:
+				continue
+			# Type-checked rather than converted — see `_on_heroes_changed`.
+			# `has("name")` only proved the key exists, so a non-string name still
+			# aborted the render and blanked the whole member list.
+			var raw_name: Variant = (member as Dictionary).get("name", null)
+			if typeof(raw_name) != TYPE_STRING:
+				continue
+			var id: String = str((member as Dictionary).get("id", ""))
+			entries.append({"id": id, "name": raw_name as String})
+			sig += "%s%s" % [id, raw_name as String]
+	sig += "%s" % you
+
+	if sig != _member_sig:
+		_member_sig = sig
+		_member_rows.clear()
+		for child: Node in _members_box.get_children():
+			child.queue_free()
+		for entry: Variant in entries:
+			_members_box.add_child(_make_member_row(entry as Dictionary, you))
+
+	if _members_box != null:
+		_members_box.visible = not entries.is_empty()
+	_update_member_rows()
+	return tr("In room:") if not entries.is_empty() else ""
+
+
+func _make_member_row(entry: Dictionary, you: String) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	# The dot is a glyph, not a word — nothing to translate and nothing to fit.
+	var dot := Label.new()
+	dot.text = "●"
+	dot.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
+	dot.custom_minimum_size = Vector2(DOT_WIDTH, 0.0)
+	dot.modulate = DOT_IDLE
+	row.add_child(dot)
+
+	# `clip_text` is the room rows' own rule (see `locale_selfcheck`'s header):
+	# a lobby name is up to 32 characters of somebody else's choosing, so the
+	# label must be structurally unable to overflow rather than merely short.
+	var name_label := Label.new()
+	name_label.text = String(entry.get("name", ""))
+	name_label.clip_text = true
+	name_label.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(name_label)
+
+	var id: String = String(entry.get("id", ""))
+	var mute: Button = null
+	# No mute button on your own row: silencing yourself is the "Mute mic" button
+	# above, which is a different thing (send side, not receive side).
+	if not id.is_empty() and id != you:
+		mute = _make_button("Mute", _on_peer_mute_pressed.bind(id))
+		mute.size_flags_horizontal = Control.SIZE_SHRINK_END
+		mute.custom_minimum_size = Vector2(MUTE_BUTTON_WIDTH, TOUCH_MIN_HEIGHT)
+		row.add_child(mute)
+
+	_member_rows.append({"id": id, "dot": dot, "mute": mute})
+	return row
+
+
+## Repaint the dots and relabel the per-peer buttons. Driven from `_process`,
+## because a dot has to follow speech at the voice module's own 10 Hz and
+## `_refresh()` only fires on lobby events. Four rows and two dictionary lookups
+## each — cheaper than deciding whether it is worth skipping.
+func _update_member_rows() -> void:
+	if _member_rows.is_empty():
+		return
+	var voice := _ensure_voice()
+	var speaks: bool = voice != null and voice.has_method("is_speaking")
+	var mutes: bool = voice != null and voice.has_method("is_peer_muted")
+	var you: String = ""
+	var manager := _ensure_manager()
+	if manager != null and manager.has_method("my_id"):
+		you = String(manager.my_id())
+	for row: Variant in _member_rows:
+		var entry: Dictionary = row as Dictionary
+		var id: String = String(entry.get("id", ""))
+		var dot: Label = entry.get("dot", null)
+		if dot != null and is_instance_valid(dot):
+			# Your own dot is driven by the LOCAL microphone's level, which the
+			# voice module reports under its own key rather than under your lobby
+			# id (nothing on the wire carries your own audio back to you).
+			var key: String = VOICE_SELF_KEY if (not you.is_empty() and id == you) else id
+			var on: bool = speaks and not key.is_empty() and bool(voice.is_speaking(key))
+			dot.modulate = DOT_SPEAKING if on else DOT_IDLE
+		var mute: Button = entry.get("mute", null)
+		if mute != null and is_instance_valid(mute):
+			var muted: bool = mutes and bool(voice.is_peer_muted(id))
+			mute.text = "Muted" if muted else "Mute"
 
 
 # ============================================================================
@@ -1183,6 +1320,34 @@ func _on_voice_mode_pressed() -> void:
 	_update_voice_ui()
 
 
+## The three escape hatches (bead godot-test1-xtr.3). Each is a plain toggle on
+## the voice node — no confirmation, no persistence — because the whole point of
+## an escape hatch from somebody else's microphone is that it takes one press.
+
+func _on_mic_mute_pressed() -> void:
+	var voice := _ensure_voice()
+	if voice == null or not voice.has_method("set_mic_muted"):
+		return
+	voice.set_mic_muted(not bool(voice.is_mic_muted()))
+	_update_voice_ui()
+
+
+func _on_deafen_pressed() -> void:
+	var voice := _ensure_voice()
+	if voice == null or not voice.has_method("set_deafened"):
+		return
+	voice.set_deafened(not bool(voice.is_deafened()))
+	_update_voice_ui()
+
+
+func _on_peer_mute_pressed(id: String) -> void:
+	var voice := _ensure_voice()
+	if voice == null or not voice.has_method("set_peer_muted"):
+		return
+	voice.set_peer_muted(id, not bool(voice.is_peer_muted(id)))
+	_update_member_rows()
+
+
 func _update_voice_ui() -> void:
 	if _voice_section == null:
 		return
@@ -1202,8 +1367,21 @@ func _update_voice_ui() -> void:
 		else:
 			_voice_mode_button.text = "Voice: always on"
 
+	if _mic_mute_button != null:
+		var muted: bool = voice.has_method("is_mic_muted") and bool(voice.is_mic_muted())
+		_mic_mute_button.text = "Mic muted" if muted else "Mute mic"
+
+	if _deafen_button != null:
+		var deaf: bool = voice.has_method("is_deafened") and bool(voice.is_deafened())
+		_deafen_button.text = "Deafened" if deaf else "Deafen"
+
 	if _mic_state_label != null:
-		if voice.has_method("mic_denied") and voice.mic_denied():
+		# MUTE WINS over the V state, so it wins the label too: reporting
+		# "transmitting" while the track is disabled is the one lie this row must
+		# never tell.
+		if voice.has_method("is_mic_muted") and voice.is_mic_muted():
+			_mic_state_label.text = "Mic: muted"
+		elif voice.has_method("mic_denied") and voice.mic_denied():
 			_mic_state_label.text = "Mic: blocked — listening only"
 		elif mode == 1:
 			_mic_state_label.text = "Mic: transmitting" if tx else "Mic: off — hold V"

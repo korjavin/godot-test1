@@ -140,6 +140,20 @@ const MIC_BLOCKED_STATUS: String = "Voice: microphone blocked — listening only
 ## An offer plus a few ICE batches per incumbent, against a 4-peer room.
 const MAX_PENDING_RELAYS: int = 48
 
+## THE SPEAKING INDICATOR (bead godot-test1-xtr.3). `ckVoice.levels()` is asked
+## ten times a second — one bridge call, one string, every peer in it — and a
+## level at or over the threshold RE-ARMS a hold rather than setting a boolean.
+## The hold is the whole point: speech is gaps, and a dot driven straight off the
+## instantaneous level strobes between syllables. 150 ms is short enough that
+## silence still reads as silence inside the bead's 300 ms budget.
+const LEVELS_INTERVAL: float = 0.1
+const SPEAK_THRESHOLD: float = 8.0
+const SPEAK_HOLD_MSEC: int = 150
+
+## The key `levels()` reports the local microphone under. A lobby id is 32 hex
+## characters, so this can never be one.
+const SELF_LEVEL_KEY: String = "me"
+
 ## The browser half, installed once at `window.ckVoice` on the first room join —
 ## the `intro_video.gd` idiom: one GD const string, one `JavaScriptBridge.eval`,
 ## all the state on `window` where the media actually lives.
@@ -167,7 +181,90 @@ const VOICE_JS: String = """
 	   sit on screen for as long as the player likes, so its promise routinely
 	   outlives the room it was asked for; every continuation compares against it
 	   rather than trusting that it is still wanted. */
-	var S = { self: '', cfg: null, peers: {}, stream: null, mic: 0, send: null, frames: 0, retry: 0, gen: 0, tx: 0 };
+	var S = {
+		self: '', cfg: null, peers: {}, stream: null, mic: 0, send: null,
+		frames: 0, retry: 0, gen: 0, tx: 0,
+		/* THE ESCAPE HATCHES (bead godot-test1-xtr.3). All three are RECEIVE- or
+		   SEND-side flags on this browser and nothing is signalled: a hostile mic
+		   is exactly the case where the sender cannot be relied on to cooperate.
+		   `muted` is keyed by lobby id and outlives its connection, so a peer that
+		   blips through a renegotiation stays muted. */
+		deaf: 0, micMuted: 0, muted: {},
+		/* One AudioContext for the whole module, and one AnalyserNode per stream
+		   (remote) plus one for the local mic. `levels()` reads them all and
+		   answers ONE string — never one bridge call per peer, and never a
+		   boolean. */
+		ctx: null, meterSelf: null
+	};
+
+	/* Lazily built, and RESUMED every time it is asked for: an AudioContext
+	   created before the tab's first gesture starts suspended, and a suspended
+	   context meters silence. Failure is not an error — no meters means no dots,
+	   which is exactly the graceful degrade an escape hatch may not have. */
+	function ctx() {
+		if (!S.ctx) {
+			var C = window.AudioContext || window.webkitAudioContext;
+			if (!C) { return null; }
+			try { S.ctx = new C(); } catch (e) { return null; }
+		}
+		if (S.ctx.state === 'suspended') { try { S.ctx.resume(); } catch (e) { } }
+		return S.ctx;
+	}
+
+	/* An analyser tapping one MediaStream. The stream must ALSO be attached to a
+	   playing <audio> element for a remote track to be pumped at all (Chrome), and
+	   it always is — `play()` is what calls this. */
+	function meter(stream) {
+		var c = ctx();
+		if (!c || !stream) { return null; }
+		try {
+			var an = c.createAnalyser();
+			an.fftSize = 512;
+			var src = c.createMediaStreamSource(stream);
+			src.connect(an);
+			return { an: an, src: src, buf: new Uint8Array(an.fftSize) };
+		} catch (e) { return null; }
+	}
+
+	function unmeter(m) {
+		if (m && m.src) { try { m.src.disconnect(); } catch (e) { } }
+		return 1;
+	}
+
+	/* RMS of the time-domain window, scaled to 0-100. A muted MIC reads 0 here
+	   for free — `enabled = false` makes the track emit silence — so the local
+	   dot needs no separate rule about transmit state. */
+	function level(m) {
+		if (!m) { return 0; }
+		try { m.an.getByteTimeDomainData(m.buf); } catch (e) { return 0; }
+		var sum = 0;
+		for (var i = 0; i < m.buf.length; i++) {
+			var v = (m.buf[i] - 128) / 128;
+			sum += v * v;
+		}
+		var out = Math.round(Math.sqrt(sum / m.buf.length) * 400);
+		return out > 100 ? 100 : out;
+	}
+
+	/* Deafen and per-peer mute are the same switch on a different set. */
+	function applyAudio() {
+		for (var k in S.peers) {
+			var a = S.peers[k].audio;
+			if (a) { a.muted = (S.deaf === 1 || S.muted[k] === 1); }
+		}
+		return 1;
+	}
+
+	/* MIC MUTE WINS over the V state: the track transmits only when the player
+	   asked to talk AND has not muted themselves. Un-muting restores whatever V
+	   last said, because `S.tx` was never touched. */
+	function applyMic() {
+		if (!S.stream) { return 0; }
+		var on = (S.tx === 1 && S.micMuted === 0);
+		var ts = S.stream.getAudioTracks();
+		for (var i = 0; i < ts.length; i++) { ts[i].enabled = on; }
+		return 1;
+	}
 
 
 	/* One relayed frame out. Counted for bead .4's readout — the lobby meters
@@ -201,6 +298,11 @@ const VOICE_JS: String = """
 			p.audio = a;
 		}
 		p.audio.srcObject = stream;
+		/* Re-applied on every track, not just the first: a renegotiation hands us
+		   a new stream for a peer whose mute the player set before it arrived. */
+		p.audio.muted = (S.deaf === 1 || S.muted[id] === 1);
+		unmeter(p.meter);
+		p.meter = meter(stream);
 		var pr = p.audio.play();
 		if (pr && pr.catch) { pr.catch(function () { retry(); }); }
 		return 1;
@@ -214,6 +316,9 @@ const VOICE_JS: String = """
 		S.retry = 1;
 		window.addEventListener('pointerdown', function () {
 			S.retry = 0;
+			/* The same gesture the <audio> elements were waiting for is the one an
+			   AudioContext wants, so the meters come alive with the sound. */
+			ctx();
 			for (var k in S.peers) {
 				var a = S.peers[k].audio;
 				if (a) { var q = a.play(); if (q && q.catch) { q.catch(function () { }); } }
@@ -232,14 +337,14 @@ const VOICE_JS: String = """
 		return 1;
 	}
 
+	function flag(val) {
+		return (val === 1 || val === '1' || val === true) ? 1 : 0;
+	}
+
 	function setTx(val) {
-		var active = (val === 1 || val === '1' || val === true) ? 1 : 0;
-		S.tx = active;
-		if (S.stream) {
-			var ts = S.stream.getAudioTracks();
-			for (var i = 0; i < ts.length; i++) { ts[i].enabled = (active === 1); }
-		}
-		return active;
+		S.tx = flag(val);
+		applyMic();
+		return S.tx;
 	}
 
 	function flush(id) {
@@ -260,7 +365,7 @@ const VOICE_JS: String = """
 		   "the lower id offers" so both families agree on who yields. */
 		var p = {
 			pc: pc, polite: (S.self > id), making: 0, sent: 0,
-			audio: null, cand: [], timer: null, q: Promise.resolve()
+			audio: null, meter: null, cand: [], timer: null, q: Promise.resolve()
 		};
 		S.peers[id] = p;
 
@@ -301,6 +406,7 @@ const VOICE_JS: String = """
 		var p = S.peers[id];
 		if (!p) { return 0; }
 		if (p.timer) { clearTimeout(p.timer); }
+		unmeter(p.meter);
 		if (p.audio) {
 			p.audio.srcObject = null;
 			if (p.audio.parentNode) { p.audio.parentNode.removeChild(p.audio); }
@@ -333,8 +439,9 @@ const VOICE_JS: String = """
 			S.stream = st;
 			/* THE MIC STARTS OFF. The track exists on every connection so .2's V
 			   key is one flag flip, but it transmits silence until then. */
-			var ts = st.getAudioTracks();
-			for (var i = 0; i < ts.length; i++) { ts[i].enabled = (S.tx === 1); }
+			applyMic();
+			unmeter(S.meterSelf);
+			S.meterSelf = meter(st);
 			S.mic = 2;
 			for (var k in S.peers) { attach(S.peers[k]); }
 		/* A late REFUSAL is stale too — left alone it would suppress the next
@@ -389,9 +496,27 @@ const VOICE_JS: String = """
 		return 1;
 	}
 
+	/* ONE STRING, one bridge call per poll: "id:level,...,me:level" with every
+	   level an INTEGER 0-100. Lobby ids are 32 hex characters
+	   (`best_run_store._load_or_make_player_id`), so `:` and `,` can never appear
+	   in one and `me` can never collide with one. */
+	function levels() {
+		var out = [];
+		for (var k in S.peers) { out.push(k + ':' + level(S.peers[k].meter)); }
+		out.push('me:' + level(S.meterSelf));
+		return out.join(',');
+	}
+
 	function stop() {
 		S.gen = S.gen + 1;
 		S.tx = 0;
+		/* PER-PEER MUTES DIE WITH THE ROOM — they are keyed by lobby id and a
+		   mute is about the people you are in a room with. Mic mute and deafen
+		   are about YOU and survive to the next room, all three being session
+		   state that nothing ever persists. */
+		S.muted = {};
+		unmeter(S.meterSelf);
+		S.meterSelf = null;
 		for (var k in S.peers) { close(k); }
 		S.peers = {};
 		/* Release the capture device too, or the tab keeps its recording
@@ -417,6 +542,15 @@ const VOICE_JS: String = """
 		recv: recv,
 		stop: stop,
 		setTx: setTx,
+		setMicMuted: function (v) { S.micMuted = flag(v); applyMic(); return S.micMuted; },
+		setDeafened: function (v) { S.deaf = flag(v); applyAudio(); return S.deaf; },
+		setPeerMuted: function (id, v) {
+			var on = flag(v);
+			if (on) { S.muted[String(id)] = 1; } else { delete S.muted[String(id)]; }
+			applyAudio();
+			return on;
+		},
+		levels: levels,
 		txState: function () { return S.tx; },
 		micState: function () { return S.mic; },
 		frames: function () { return S.frames; }
@@ -474,6 +608,23 @@ var _last_code: String = ""
 
 var _accum: float = 0.0
 
+## THE ESCAPE HATCHES (bead godot-test1-xtr.3), mirrored here so the panel can
+## label its buttons without a bridge call and so `_start()` can re-push them
+## onto a module that outlives one room. Session state: nothing writes them to
+## `BestRunStore` or `localStorage`, unlike `_mode`.
+var _mic_muted: bool = false
+var _deafened: bool = false
+var _peer_muted: Dictionary = {}
+
+## `id -> the msec at which its dot goes out`, re-armed by every loud sample.
+var _speaking_until: Dictionary = {}
+
+## `id -> the last value pushed into that peer's avatar`, so a highlight is
+## written on the EDGE and a name tag is not re-modulated ten times a second.
+var _speaking_pushed: Dictionary = {}
+
+var _levels_accum: float = 0.0
+
 
 func _ready() -> void:
 	add_to_group("voice")
@@ -501,6 +652,10 @@ func _exit_tree() -> void:
 
 func _process(delta: float) -> void:
 	_poll_input()
+	_levels_accum += delta
+	if _levels_accum >= LEVELS_INTERVAL:
+		_levels_accum = 0.0
+		_poll_levels()
 	_accum += delta
 	if _accum < POLL_INTERVAL:
 		return
@@ -561,6 +716,13 @@ func _start(ice: Dictionary) -> bool:
 	_ck.start(_mp.my_id() if _mp.has_method("my_id") else "", JSON.stringify(ice), _send_cb)
 	_running = true
 	_ck.setTx(1 if _tx else 0)
+	# `window.ckVoice` is installed ONCE per session and survives every room, so a
+	# mute set in the last room is still set in its `S` — but a module that failed
+	# to install and was rebuilt would not be. Re-pushing is two idempotent calls
+	# and removes the question. (`_peer_muted` is empty here: `_teardown()` clears
+	# it exactly as `stop()` clears the JS side's.)
+	_ck.setMicMuted(1 if _mic_muted else 0)
+	_ck.setDeafened(1 if _deafened else 0)
 	return true
 
 
@@ -614,6 +776,11 @@ func _teardown() -> void:
 	"""
 	_last_code = ""
 	_set_tx(false)
+	# Every dot goes out and every name tag is handed back its own colour before
+	# the avatars are freed — a highlight left on is a highlight nothing will ever
+	# clear. Per-peer mutes go with the room, mirroring the JS `stop()`.
+	_clear_speaking()
+	_peer_muted.clear()
 	# ABOVE the `_running` guard: a room can end while the start-up window is
 
 	# still open, and a queue that survived it would replay the last room's
@@ -814,3 +981,167 @@ func _save_mode() -> void:
 		cfg.set_value(BestRunStore.CONFIG_VOICE_SECTION, "mode", mode_str)
 		cfg.save(BestRunStore.config_path)
 
+
+# ============================================================================
+# MUTE / DEAFEN / PER-PEER MUTE, AND THE SPEAKING INDICATOR (bead xtr.3)
+# ============================================================================
+## Three switches and one poll. THE SWITCHES ARE RECEIVE-SIDE OR SEND-SIDE AND
+## NOTHING IS SIGNALLED — a peer whose microphone is a scream is exactly the peer
+## who will not cooperate with a request to stop, so per-peer mute is
+## `<audio>.muted` on THIS browser, deafen is all of them, and the mic mute is
+## our own `track.enabled`. Nobody is told and nobody has to agree.
+##
+## MUTE WINS OVER V. `_tx` is the V key's answer and this file never overwrites
+## it; the JS `applyMic()` transmits on `tx AND NOT micMuted`, so un-muting
+## restores whatever V last said in whichever mode is current.
+##
+## SESSION STATE, NEVER PERSISTED — a mute is about the room you are in, not
+## about you forever, so nothing here touches `BestRunStore`. Per-peer mutes are
+## dropped at teardown on both sides of the bridge, which is also the documented
+## ceiling: a peer who leaves and rejoins gets a FRESH lobby id and is therefore
+## not muted any more.
+
+
+func set_mic_muted(on: bool) -> void:
+	if _mic_muted == on:
+		return
+	_mic_muted = on
+	if _is_web and _running and _ck != null:
+		_ck.setMicMuted(1 if on else 0)
+
+
+func is_mic_muted() -> bool:
+	return _mic_muted
+
+
+func set_deafened(on: bool) -> void:
+	if _deafened == on:
+		return
+	_deafened = on
+	if _is_web and _running and _ck != null:
+		_ck.setDeafened(1 if on else 0)
+
+
+func is_deafened() -> bool:
+	return _deafened
+
+
+func set_peer_muted(id: String, on: bool) -> void:
+	if id.is_empty():
+		return
+	if bool(_peer_muted.get(id, false)) == on:
+		return
+	if on:
+		_peer_muted[id] = true
+	else:
+		_peer_muted.erase(id)
+	if _is_web and _running and _ck != null:
+		_ck.setPeerMuted(id, 1 if on else 0)
+
+
+func is_peer_muted(id: String) -> bool:
+	return bool(_peer_muted.get(id, false))
+
+
+func is_speaking(id: String) -> bool:
+	"""
+	Is that peer (or `SELF_LEVEL_KEY`, the local microphone) making noise right
+	now? Read by the MP panel's dots every frame and by `_push_speaking()` for the
+	name tags — a dictionary lookup, so polling it is free.
+	"""
+	return int(_speaking_until.get(id, 0)) > Time.get_ticks_msec()
+
+
+func _poll_levels() -> void:
+	"""
+	ONE bridge call, ONE string, every peer in it. A per-peer call would be four
+	`JavaScriptBridge` round trips ten times a second on a single-threaded web
+	export, which is the cost this format exists to avoid — and a per-peer
+	BOOLEAN could not cross the bridge at all (see the header).
+
+	Everything the string says is treated as untrusted text: it is our own module
+	talking, but it arrives as a Variant through a bridge that has been wrong
+	before, so a malformed pair is skipped rather than parsed optimistically.
+	"""
+	if not _running or _ck == null:
+		if not _speaking_until.is_empty() or not _speaking_pushed.is_empty():
+			_clear_speaking()
+		return
+	var raw: Variant = _ck.levels()
+	if typeof(raw) != TYPE_STRING:
+		return
+	apply_levels(str(raw))
+
+
+func apply_levels(raw: String) -> void:
+	"""
+	Parse one levels string and re-arm the holds. Split out from the bridge call
+	so the format has a seam that can be driven without a browser — the bridge is
+	the one thing a headless check can never stand up.
+	"""
+	var now: int = Time.get_ticks_msec()
+	for entry: String in raw.split(",", false):
+		var parts: PackedStringArray = entry.split(":")
+		if parts.size() != 2 or parts[0].is_empty() or not parts[1].is_valid_float():
+			continue
+		if parts[1].to_float() >= SPEAK_THRESHOLD:
+			_speaking_until[parts[0]] = now + SPEAK_HOLD_MSEC
+	_push_speaking()
+
+
+func _push_speaking() -> void:
+	"""
+	Drive the remote avatars' name tags, on the EDGE only.
+
+	The avatar is reached BY NODE NAME under the manager (`Peer_<id>`, the name
+	`_add_peer()` gives it) rather than through a new getter on `MpManager`: the
+	epic holds this feature's manager diff to the three-function voice seam, and a
+	`get_node_or_null` plus `has_method` is the same group-discovery degrade
+	everything else here uses. A build whose avatar predates `set_speaking` simply
+	shows no highlight.
+	"""
+	var stale: Array = []
+	for id: Variant in _speaking_until:
+		if int(_speaking_until[id]) <= Time.get_ticks_msec():
+			stale.append(id)
+	for id: Variant in stale:
+		_speaking_until.erase(id)
+
+	# The union of "speaking now" and "was told it was speaking" — the second half
+	# is what turns a highlight back OFF.
+	var ids: Dictionary = {}
+	for id: Variant in _speaking_until:
+		ids[id] = true
+	for id: Variant in _speaking_pushed:
+		ids[id] = true
+	for id: Variant in ids:
+		if str(id) == SELF_LEVEL_KEY:
+			continue
+		var on: bool = _speaking_until.has(id)
+		if bool(_speaking_pushed.get(id, false)) == on:
+			continue
+		if on:
+			_speaking_pushed[id] = true
+		else:
+			_speaking_pushed.erase(id)
+		var avatar: Node = _avatar_for(str(id))
+		if avatar != null:
+			avatar.set_speaking(on)
+
+
+func _avatar_for(id: String) -> Node:
+	if _mp == null or not is_instance_valid(_mp) or id.is_empty():
+		return null
+	var avatar: Node = _mp.get_node_or_null("Peer_%s" % id)
+	if avatar == null or not avatar.has_method("set_speaking"):
+		return null
+	return avatar
+
+
+func _clear_speaking() -> void:
+	for id: Variant in _speaking_pushed.keys():
+		var avatar: Node = _avatar_for(str(id))
+		if avatar != null:
+			avatar.set_speaking(false)
+	_speaking_pushed.clear()
+	_speaking_until.clear()

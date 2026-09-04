@@ -1982,6 +1982,24 @@ touches `JavaScriptBridge`.
   bead .2's `V` key flips it. A denial is listen-only plus one status line, never a retry
   loop. ICE is trickled and batched per 100 ms — the lobby caps a payload at 32 KB and
   meters a sender at 120 frames burst / 30 per second.
+- **THE ESCAPE HATCHES ARE LOCAL AND NOTHING IS SIGNALLED** (bead `godot-test1-xtr.3`).
+  A hostile microphone is exactly the sender who will not cooperate, so per-peer mute is
+  `<audio>.muted` on the listener's browser, deafen is all of them, and the mic mute is
+  our own `track.enabled`. **Mute WINS over the `V` state** — the JS transmits on
+  `tx AND NOT micMuted`, so un-muting restores whatever `V` last said — and all three are
+  SESSION state nothing persists. Per-peer mutes die with the room on both sides of the
+  bridge, which is also the documented ceiling: a peer who rejoins gets a fresh lobby id
+  and is no longer muted.
+- **THE SPEAKING INDICATOR IS ONE POLLED STRING.** `ckVoice.levels()` answers
+  `"id:level,…,me:level"` (integers 0-100 — one bridge call per poll, never one per peer,
+  and never a boolean) off one `AnalyserNode` per stream; `apply_levels()` parses it at
+  10 Hz into a 150 ms HOLD per id, because speech is gaps and a dot driven off the
+  instantaneous level strobes between syllables. It drives two surfaces and no third: the
+  MP panel's per-member row and `RemoteAvatar.set_speaking()`, which only recolours the
+  `NameTag` `Label3D` that already exists — **the avatar gains no node**, so
+  `mp_selfcheck`'s isolation walk is untouched. The avatar is reached by node name
+  (`Peer_<id>`) rather than a new getter, which is what keeps the `mp_manager` seam three
+  functions wide.
 
 ## Performance & web build
 
