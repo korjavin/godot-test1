@@ -525,6 +525,33 @@ func _check_room_pause_holder() -> String:
 		return "the card probe left a claim behind (holders=%d)" % PauseHub.holder_count()
 	controller._show_remote_card("")
 
+	# --- ...AND THE POINTER GOES BACK TO WHOEVER IS STILL PAUSING -------------
+	# The remote card frees the cursor precisely so the MP panel can be clicked,
+	# and a panel opened over an ALREADY-free cursor arms no recapture of its own.
+	# So handing the pointer back the moment the teammate resumes would pin it to
+	# screen centre over a panel whose buttons are unreachable and whose claim
+	# nothing can release. Headless has no pointer lock, so this is driven on the
+	# FLAG and the decision, which is the half that is ours.
+	var panel := Node.new()
+	root.add_child(panel)
+	PauseHub.take(panel)
+	controller.set("_recapture_mouse", true)
+	controller._recapture_mouse_if_released()
+	if bool(controller.get("_recapture_mouse")):
+		return "the recapture flag survived its own release — it would fire again later"
+	if controller._may_recapture_mouse():
+		return ("the cursor would be grabbed back while another holder still has the " \
+			+ "world frozen — the MP panel's buttons become unreachable and nothing " \
+			+ "releases it")
+	PauseHub.release(panel)
+	# THE POSITIVE CONTROL, or "must not recapture" is satisfied by never
+	# recapturing at all: with the last holder gone the cursor IS ours again.
+	if not controller._may_recapture_mouse():
+		return "the cursor is never handed back at all — the game is unplayable after a pause"
+	panel.free()
+	if paused or PauseHub.holder_count() != 0:
+		return "the pointer probe left a claim behind (holders=%d)" % PauseHub.holder_count()
+
 	# `mp_manager`'s claim, stood in for by a plain node (the hub keys on identity).
 	var remote := Node.new()
 	root.add_child(remote)

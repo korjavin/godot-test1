@@ -3404,9 +3404,15 @@ func _send_presence() -> void:
 	# peer holding it, which is the failure mode a reliable "pause" verb would
 	# have to invent a lease to avoid. It is also already rate-bounded by
 	# MAX_PRESENCE_PACKETS_PER_PEER, so it needs no VERB_BUDGET_PER_SEC row.
-	# The window it cannot reach is a peer still negotiating ICE — which has no
-	# world to freeze yet. A reliable verb plus a relay leg and a snapshot field
-	# is the upgrade path if 66 ms ever matters; it does not.
+	# THE WINDOW IT CANNOT REACH IS A PEER STILL NEGOTIATING ICE, and that is a
+	# documented ceiling rather than an oversight (bead godot-test1-3a2). The seed
+	# takes the relay leg because it must arrive BEFORE any channel opens or the
+	# joiner walks a different world; a pause is not that — it is idempotent, it
+	# is re-sent 15 times a second, and the worst it costs is that a joiner runs
+	# for the second or two its ICE takes and then freezes with everybody else.
+	# Buying that second costs a reliable verb, a relay leg AND a join-snapshot
+	# field, which is three more shapes of packet for a peer that is still
+	# staring at a loading world. If it ever matters, that is the upgrade path.
 	#
 	# THIS IS THE P KEY AND NOTHING ELSE. The help card, the skill tree, the MP
 	# panel, the map, the lift and the quiz stay LOCAL pauses — see the list in

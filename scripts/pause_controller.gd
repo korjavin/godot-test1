@@ -243,7 +243,31 @@ func _recapture_mouse_if_released() -> void:
 	The other half of `_release_mouse()`. The resume is a user gesture (a keypress
 	or a teammate's packet arriving on a frame we are awake for), which is what
 	browser pointer-lock needs, so this works on desktop web too.
+
+	NOT WHILE SOMEBODY ELSE IS STILL PAUSING, and that is the refcount's rule one
+	more time: the MP panel is what the remote card deliberately leaves clickable,
+	and a panel opened over an ALREADY-free cursor arms no `_recapture_mouse` of
+	its own — so grabbing the pointer back the moment the teammate resumes pins
+	the cursor to screen centre over a panel whose buttons are now unreachable and
+	whose claim nothing can release. The claim we are dropping is ours alone; the
+	cursor belongs to whoever is still holding one, and `mp_ui` re-captures on
+	close. The flag is spent either way, because there is no second chance to.
 	"""
-	if _recapture_mouse:
-		_recapture_mouse = false
+	if not _recapture_mouse:
+		return
+	_recapture_mouse = false
+	if _may_recapture_mouse():
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+
+func _may_recapture_mouse() -> bool:
+	"""
+	Whether the cursor is ours to take back — i.e. nobody else is still pausing.
+
+	A one-caller predicate, which this project would normally not write, and it is
+	one because HEADLESS CANNOT SEE THE EFFECT: `Input.set_mouse_mode()` is a no-op
+	under the dummy display server and `Input.mouse_mode` reads VISIBLE whatever
+	you do to it, so an assertion on the pointer passes however this branch is
+	written. `pause_selfcheck` drives the decision instead.
+	"""
+	return not get_tree().paused

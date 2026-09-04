@@ -1888,7 +1888,10 @@ The sharpest rules, in rough order of how badly they bite:
   erases there, a dead mesh link marks `stale` there and `leave()` clears it, so there is
   no fourth erase site to forget and no pause can outlive the peer holding it. Presence
   over a verb buys the repair channel for free — 15 Hz, so a dropped packet heals in 66 ms
-  and a joiner learns on its first sample — and needs no `VERB_BUDGET_PER_SEC` row. **Any
+  and a joiner learns on its first sample — and needs no `VERB_BUDGET_PER_SEC` row. The
+  window it cannot reach is a peer whose ICE is still negotiating: it runs for that second
+  or two and then freezes with everybody else, which is a documented ceiling and not the
+  seed's problem (a seed must arrive before any channel opens; a pause is idempotent). **Any
   member may pause**, and P stays inert under a foreign pause, so the peer who paused is
   the peer who resumes; the escape hatch for one who never does is the MP panel's Leave,
   which is `PROCESS_MODE_ALWAYS`. The local **game-over refusal** is re-asked every frame

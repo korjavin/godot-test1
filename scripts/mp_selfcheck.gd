@@ -659,7 +659,10 @@ func _check_presence_backcompat() -> String:
 	# not a bool is malformed and drops the packet WHOLE. `1` is the interesting
 	# case: `bool(1)` is true everywhere in GDScript, so a parser that coerced
 	# would let a peer pause the room with an int and never be noticed.
-	for junk: Variant in [1, 0, "yes", 1.0, Vector3.ZERO]:
+	# `null` is in the list on purpose: it is the one malformed shape that reads
+	# as ABSENT through `get(key, null)`, so it is what a `has()`-less validator
+	# would let past while every other junk value here failed.
+	for junk: Variant in [1, 0, "yes", 1.0, Vector3.ZERO, null]:
 		var poisoned_pause: Dictionary = MpCodec.decode_presence(var_to_bytes({
 			"p": Vector3.ZERO, "y": 0.0, "c": 0, "s": 0.0, "g": true, "pz": junk
 		}))
