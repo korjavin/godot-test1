@@ -73,6 +73,19 @@ const TODAY: Dictionary = {
 	"hitch": 0.0, "phase": 0.0, "idle_rate": 2.0, "idle_bob": 0.01,
 }
 
+## THE SIDESTEP SWEEP (bead godot-test1-3ek). Metres of held strafe, and the
+## speed the probe drives them at — the cycle is DISTANCE-driven, so what the
+## sweep has to cover is ground, not seconds. 6 m is a little over three full
+## DEFAULT cycles (TAU / SIDESTEP_PHASE_PER_METRE = 1.96 m each), which is
+## enough for every hero's slower or faster rate to close at least one.
+const STRAFE_METRES: float = 6.0
+const STRAFE_SPEED: float = 5.0
+
+## How far apart two poses in one strafe must get before the cycle counts as a
+## cycle. Same reasoning and the same number as `HITCH_EPS_DEG`: far below every
+## row's amplitude, far above float noise.
+const STRAFE_EPS_DEG: float = 1.0
+
 var _failures: Array[String] = []
 
 
@@ -108,6 +121,7 @@ func _run() -> void:
 		Sentinel.done("relax")
 		Sentinel.done("personality")
 		Sentinel.done("footsteps")
+		Sentinel.done("sidestep")
 		_report()
 		return
 
@@ -126,6 +140,7 @@ func _run() -> void:
 		Sentinel.done("relax")
 		Sentinel.done("personality")
 		Sentinel.done("footsteps")
+		Sentinel.done("sidestep")
 		player.queue_free()
 		_report()
 		return
@@ -134,6 +149,7 @@ func _run() -> void:
 	_check_relax(player)
 	_check_personality(player)
 	_check_footsteps(player)
+	_check_sidestep(player)
 
 	player.queue_free()
 	await process_frame
@@ -375,7 +391,7 @@ func _check_relax(player: Node3D) -> void:
 		player.anim.animation_time = 0.4
 		player.anim.animate_walking(step, 1.0)
 		player.step_direction = 1.0
-		player.anim.animate_sidestep()
+		player.anim.animate_sidestep(step)
 		var body_rest: Vector3 = player.anim.original_rotations["body"]
 		if absf(player.anim.character_body.rotation.x - body_rest.x) > 1e-6:
 			_fail("%s: a sidestep straight out of a walk left the body pitched %.4f rad "
@@ -602,3 +618,157 @@ func _check_footsteps(player: Node3D) -> void:
 				+ "footstep of an unknown hero would be retimed")
 
 	Sentinel.done("footsteps")
+
+
+# ============================================================================
+# CHECK 6 — THE SIDESTEP IS A CYCLE, AND ITS PHASE IS METRES
+# ============================================================================
+
+func _check_sidestep(player: Node3D) -> void:
+	"""
+	Holding A / D has to look like STEPPING, not like leaning (bead
+	godot-test1-3ek; owner: *"left-right movement should have better animation
+	like steps left and right"*).
+
+	Four things, and the first two are the whole bead:
+
+	  (a) the pose MOVES over a held strafe, and the two legs take TURNS being
+	      the one that has reached out — measured as the roll GAP between them
+	      taking both signs. The retired pose is written out below as
+	      `_static_sidestep_gap()` and driven through the identical metric,
+	      where it must FAIL: a lean held for as long as the key is down has one
+	      gap, one sign, forever. That mutation control is what stops this
+	      check passing on a pose that quietly went static again.
+	  (b) the phase is DISTANCE, so the same ground covered at half the speed
+	      over twice the frames is the SAME pose. Nothing else in this file can
+	      see a regression to `animation_time`, and a time-driven strafe is
+	      exactly what the bead replaced.
+	  (c) `reset_sidestep_pose()` still puts every limb roll back, because that
+	      is the key-order bug `capture_selfcheck` guards from the other side —
+	      and it must now also drop the PHASE, or the next strafe starts
+	      mid-stride.
+	  (d) the per-hero personality is real: two rows with different `leg_deg`
+	      must not shuffle with the same amplitude, or the `GAITS` scaling is
+	      decorative.
+	"""
+	var step: float = 1.0 / SWEEP_HZ
+	var eps: float = deg_to_rad(STRAFE_EPS_DEG)
+	var amplitudes: Dictionary = {}
+
+	for index: int in PlayerController.CHARACTERS.size():
+		var hero: String = String(PlayerController.CHARACTERS[index]["name"])
+		player.set_active_character(index)
+		var anim = player.anim
+
+		# (a) DRIVE A HELD STRAFE and watch the gap between the two legs.
+		player.step_direction = 1.0
+		player.velocity = Vector3(0.0, 0.0, STRAFE_SPEED)
+		anim.reset_sidestep_pose()
+		var frames: int = int(STRAFE_METRES / (STRAFE_SPEED * step))
+		var gap_min: float = INF
+		var gap_max: float = -INF
+		var lift_seen: float = 0.0
+		for i: int in frames:
+			anim.animate_sidestep(step)
+			var gap: float = anim.left_leg.rotation.z - anim.right_leg.rotation.z
+			gap_min = minf(gap_min, gap)
+			gap_max = maxf(gap_max, gap)
+			lift_seen = maxf(lift_seen, absf(anim.character_body.position.y))
+		if gap_min >= -eps or gap_max <= eps:
+			_fail("%s: over %.1f m of held strafe the roll gap between the legs stayed in "
+					% [hero, STRAFE_METRES]
+					+ "[%.4f, %.4f] rad — one leg never took its turn reaching out, so "
+					% [gap_min, gap_max]
+					+ "the strafe is still a static splay and not a stepping cycle")
+		amplitudes[hero] = gap_max - gap_min
+		if lift_seen <= 0.0:
+			_fail("%s: the body never left its rest height over a whole strafe — the "
+					% hero + "bob on the close beat is not being drawn")
+		# The bob rides inside the same band the walk is held to, or the model
+		# stops looking attached to a collision capsule that does not move.
+		if lift_seen > BODY_Y_MAX:
+			_fail("%s: the strafe bob reached %.4f m, past the %.4f m the walk cycle is "
+					% [hero, lift_seen, BODY_Y_MAX] + "held to")
+
+		# THE MUTATION CONTROL: today's retired pose, swept the same way. It draws
+		# ONE gap for the whole strafe, so its min and its max are the same
+		# number and the "both signs" bound above cannot be met. If this ever
+		# passes the bound, the bound has stopped measuring anything.
+		var s_min: float = INF
+		var s_max: float = -INF
+		for i: int in frames:
+			var s_gap: float = _static_sidestep_gap(anim, 1.0)
+			s_min = minf(s_min, s_gap)
+			s_max = maxf(s_max, s_gap)
+		if s_min < -eps and s_max > eps:
+			_fail("%s: the RETIRED static splay passed the alternation bound — the "
+					% hero + "check would not go red on a strafe that stopped moving")
+
+		# (b) THE PHASE IS METRES. Same ground, half the speed, twice the frames.
+		var fast: Array[float] = _strafe_pose(anim, STRAFE_SPEED, step, frames)
+		var slow: Array[float] = _strafe_pose(anim, STRAFE_SPEED * 0.5, step, frames * 2)
+		for k: int in fast.size():
+			if absf(fast[k] - slow[k]) > 1e-5:
+				_fail("%s: the same %.1f m walked at half the speed gave a different pose "
+						% [hero, STRAFE_METRES]
+						+ "(%.5f vs %.5f) — the sidestep phase is running on TIME, not "
+						% [fast[k], slow[k]] + "on distance")
+				break
+
+		# (c) RELEASE PUTS IT BACK, phase included.
+		player.velocity = Vector3(0.0, 0.0, STRAFE_SPEED)
+		anim.animate_sidestep(step)
+		anim.reset_sidestep_pose()
+		for key: String in ["left_arm", "right_arm", "left_leg", "right_leg"]:
+			var limb: Node3D = anim.get(key)
+			if limb == null:
+				continue
+			if absf(limb.rotation.z - float(anim.original_rotations[key].z)) > 1e-6:
+				_fail("%s: releasing the strafe left %s rolled %.5f rad off rest"
+						% [hero, key, absf(limb.rotation.z - float(anim.original_rotations[key].z))])
+		if absf(float(anim._sidestep_phase)) > 0.0 or int(anim._last_sidestep_sine_sign) != 0:
+			_fail("%s: releasing the strafe kept the cycle's phase (%.4f) or its footstep "
+					% [hero, float(anim._sidestep_phase)]
+					+ "sentinel (%d) — the next strafe would start mid-stride"
+					% int(anim._last_sidestep_sine_sign))
+		player.step_direction = 0.0
+		player.velocity = Vector3.ZERO
+
+	# (d) THE PERSONALITY IS REAL: the rows do not all shuffle alike.
+	var distinct: Dictionary = {}
+	for hero: String in amplitudes:
+		distinct[snappedf(float(amplitudes[hero]), 1e-4)] = true
+	if distinct.size() < 2:
+		_fail("every hero's strafe has the same amplitude — the GAITS scaling in "
+				+ "sidestep_pose() is not reaching the pose")
+
+	Sentinel.done("sidestep")
+
+
+func _strafe_pose(anim, speed: float, step: float, frames: int) -> Array[float]:
+	"""Walk one strafe from a clean start and return the pose it ends on."""
+	anim.reset_sidestep_pose()
+	for i: int in frames:
+		anim.player.velocity = Vector3(0.0, 0.0, speed)
+		anim.animate_sidestep(step)
+	return [anim.left_leg.rotation.z, anim.right_leg.rotation.z,
+			anim.left_arm.rotation.z, anim.right_arm.rotation.z,
+			anim.character_body.position.y]
+
+
+func _static_sidestep_gap(anim, direction: float) -> float:
+	"""
+	THE RETIRED POSE, written out so it can be the mutation control: the splay
+	`animate_sidestep()` held for as long as A/D was down, before bead
+	godot-test1-3ek. Its leg gap is a CONSTANT — no phase reaches it — which is
+	exactly the "both signs" assertion above failing.
+	"""
+	var leg_splay: float = direction * deg_to_rad(28)
+	var lead_lift: float = direction * deg_to_rad(14)
+	var left: float = float(anim.original_rotations["left_leg"].z) + leg_splay
+	var right: float = float(anim.original_rotations["right_leg"].z) + leg_splay
+	if direction > 0.0:
+		right += lead_lift
+	else:
+		left += lead_lift
+	return left - right

@@ -118,6 +118,44 @@ const GAITS: Dictionary = {
 	},
 }
 
+## THE SIDEWAYS SHUFFLE (bead godot-test1-3ek). Owner: *"left-right movement
+## should have better animation like steps left and right"*.
+##
+## A strafe used to be ONE POSE — both legs splayed 28 degrees toward the step
+## and held there — so holding A read as a frozen lean sliding sideways. It is
+## now a CYCLE: the two legs open and close around the lean, taking turns being
+## the one that reaches out, with a small rise while the feet are apart.
+##
+## THE PHASE IS METRES, NOT SECONDS, and that is the one thing that must not
+## drift back. `animate_walking()` runs on `animation_time`, which is why it
+## needs a `speed_multiplier` argument to stop the run looking like a moonwalk;
+## a strafe has no such argument and its speed moves for reasons the animation
+## cannot see (the wade factor, the skill tree, a slope). Advancing on distance
+## travelled makes "a slow strafe steps slowly" arithmetic rather than tuning,
+## and a speed change re-rates the cycle with no pop because the phase itself
+## never jumps. `gait_selfcheck`'s sidestep check drives the same distance at
+## two different speeds and asserts the pose is identical.
+##
+## THE POSE IS A PURE FUNCTION OF (phase, step_direction) — no RNG, no timer,
+## no per-frame state but the accumulator — so it costs the mesh nothing and
+## needs no netcode. `remote_avatar.gd` does not draw a strafe at all today;
+## if it ever does, it can read this off the same two numbers.
+##
+## The degrees below are the DEFAULT hero's and every one of them is scaled by
+## that hero's own `GAITS` row (`leg_deg` / `arm_deg` / `bob` / `stride_rate`)
+## relative to DEFAULT, so a heavy Teibi shuffles slow and wide and a twitchy
+## Primm quick and small — the walk's personality, sideways, with no second
+## table. `SPLAY` and `LEAN` and the arm bias are today's numbers kept as the
+## BIAS the cycle rides on, which is why a strafe still reads as a lean.
+const SIDESTEP_PHASE_PER_METRE: float = 3.2  ## ~0.98 m per step for DEFAULT
+const SIDESTEP_SPLAY_DEG: float = 20.0       ## standing bias, both legs, toward the step
+const SIDESTEP_STEP_DEG: float = 18.0        ## the alternating reach/close
+const SIDESTEP_LIFT_DEG: float = 12.0        ## extra roll on whichever leg is reaching
+const SIDESTEP_LEAN_DEG: float = 8.0         ## body roll into the step (unchanged)
+const SIDESTEP_ARM_DEG: float = 20.0         ## arm counter-roll bias (unchanged)
+const SIDESTEP_ARM_SWING_DEG: float = 9.0    ## arm counter-swing on the cycle
+const SIDESTEP_BOB_SCALE: float = 0.6        ## of the row's own walk bob
+
 # ============================================================================
 # ANIMATION STATE
 # ============================================================================
@@ -161,6 +199,19 @@ var was_on_floor: bool = true
 ## 0 means "not walking" (the reset state), so the first frame of a new walk
 ## just records the sign instead of mis-firing a step.
 var _last_walk_sine_sign: int = 0
+
+## THE SIDESTEP CYCLE'S PHASE, in radians, accumulated from METRES TRAVELLED —
+## see the `SIDESTEP_*` banner. `reset_sidestep_pose()` zeroes it, so every
+## strafe starts from the same place and a released one leaves nothing behind.
+var _sidestep_phase: float = 0.0
+
+## The sidestep's own copy of the walk's footstep trick: the sign of
+## sin(_sidestep_phase) last frame, whose flip is the CLOSE BEAT (the feet
+## passing through together). It is deliberately NOT `_last_walk_sine_sign` —
+## that one is a memory of the walk cycle the strafe is meant to resume into,
+## and sharing the variable would make each swap between the two fire a
+## phantom step off the other cycle's phase.
+var _last_sidestep_sine_sign: int = 0
 
 # ============================================================================
 # THE CHARACTER SWAP PATH — style, rest poses, limb references
@@ -406,7 +457,7 @@ func update_character_animation(delta: float, input_dir: Vector2) -> void:
 		animate_jumping()
 	# Sidestep takes priority on the ground when strafing without forward motion
 	elif player.is_stepping and absf(input_dir.y) <= 0.01:
-		animate_sidestep()
+		animate_sidestep(delta)
 	# Landing detected
 	elif not was_on_floor and current_on_floor:
 		animate_landing()
@@ -549,42 +600,111 @@ func relax_gait_extras(weight: float) -> void:
 		character_head.rotation.z = lerp(
 				character_head.rotation.z, original_rotations["head"].z, weight)
 
-func animate_sidestep() -> void:
+func sidestep_pose(phase: float, direction: float) -> void:
 	"""
-	Animate the legs (and arms) for a sideways strafe while A / D is held.
+	Write ONE frame of the sideways shuffle: the whole pose as a pure function
+	of (phase, direction), with no reads of the clock, the player or anything
+	else. `animate_sidestep()` is the half that decides what `phase` is.
+
+	The split is the bead's own requirement — the pose has to be a deterministic
+	pure function of (phase, direction) so it stays MP-safe and needs no
+	netcode — and it is also what makes the pose answerable at a phase nobody
+	walked to, which is how a future remote avatar would draw a strafe off two
+	numbers on the wire.
 
 	Unlike walking (which swings the limbs forward/back on the X axis), the
-	sidestep rolls them on the Z axis so the motion reads as sideways.
+	sidestep rolls them on the Z axis so the motion reads as sideways. The two
+	legs open and close around the lean — `cycle` is the same sine for both with
+	opposite signs, so each in turn is the one reaching out while the other
+	closes to it, which is exactly the step-out / close / repeat the owner asked
+	for. Everything is scaled off this hero's own `GAITS` row; see the
+	`SIDESTEP_*` banner for why the degrees below are the DEFAULT hero's.
+
+	@param phase: cycle phase in radians (metres travelled x the per-metre rate)
+	@param direction: `step_direction`, -1 (left) .. +1 (right)
 	"""
 	if not left_arm or not right_arm or not left_leg or not right_leg:
 		return
 
 	# Drop the walk gait's lean and head bobble first — this pose sets the roll
-	# itself two blocks down, so only the pitch and the head would linger.
+	# itself at the bottom, so only the pitch and the head would linger.
 	relax_gait_extras(1.0)
 
-	# How far the legs splay sideways, and the extra lift on the leading leg.
-	var leg_splay: float = player.step_direction * deg_to_rad(28)
-	var lead_lift: float = player.step_direction * deg_to_rad(14)
-	# Arms counter-swing for balance.
-	var arm_balance: float = player.step_direction * deg_to_rad(20)
+	# This hero's amplitudes, as a ratio of the DEFAULT row the degrees above
+	# were authored against — never a second table of sidestep numbers.
+	var default_row: Dictionary = GAITS["DEFAULT"]
+	var leg_scale: float = float(_gait["leg_deg"]) / float(default_row["leg_deg"])
+	var arm_scale: float = float(_gait["arm_deg"]) / float(default_row["arm_deg"])
 
-	# Both legs lean toward the step; the leading leg (on the step side) lifts a
-	# touch more so the step reads as one foot reaching out and the other following.
-	left_leg.rotation.z = original_rotations["left_leg"].z + leg_splay
-	right_leg.rotation.z = original_rotations["right_leg"].z + leg_splay
-	if player.step_direction > 0.0:
-		right_leg.rotation.z += lead_lift
+	var cycle: float = sin(phase)
+	# The BIAS: both legs lean toward the step for as long as it is held. This is
+	# the old static pose, kept, and it is why frame one of a strafe already
+	# looks like a strafe instead of like standing still at phase 0.
+	var splay: float = direction * deg_to_rad(SIDESTEP_SPLAY_DEG) * leg_scale
+	# The CYCLE: opposite signs, so the pair opens and closes.
+	var reach: float = cycle * deg_to_rad(SIDESTEP_STEP_DEG) * leg_scale
+	left_leg.rotation.z = original_rotations["left_leg"].z + splay + reach
+	right_leg.rotation.z = original_rotations["right_leg"].z + splay - reach
+
+	# The leg currently reaching gets extra roll in the step direction, so the
+	# beat reads as one foot going out and the other following rather than as
+	# two legs scissoring. It fades to nothing at the close, where both feet are
+	# planted and neither is "the" reaching one.
+	var lift: float = direction * deg_to_rad(SIDESTEP_LIFT_DEG) * leg_scale * absf(cycle)
+	if cycle >= 0.0:
+		left_leg.rotation.z += lift
 	else:
-		left_leg.rotation.z += lead_lift
+		right_leg.rotation.z += lift
 
-	left_arm.rotation.z = original_rotations["left_arm"].z - arm_balance
-	right_arm.rotation.z = original_rotations["right_arm"].z - arm_balance
+	# Arms: the old counter-roll as the bias, plus a counter-swing on the same
+	# phase (opposite the legs, which is what makes it balance rather than sway).
+	var arm_bias: float = direction * deg_to_rad(SIDESTEP_ARM_DEG) * arm_scale
+	var arm_swing: float = cycle * deg_to_rad(SIDESTEP_ARM_SWING_DEG) * arm_scale
+	left_arm.rotation.z = original_rotations["left_arm"].z - arm_bias - arm_swing
+	right_arm.rotation.z = original_rotations["right_arm"].z - arm_bias + arm_swing
 
-	# Lean the body into the step direction for a bit of weight shift.
+	# Lean the body into the step direction for a bit of weight shift, and rise
+	# while the feet are apart — so the body settles ON the close beat, which is
+	# the same beat the footstep fires on. Off the row's own walk `bob`, scaled
+	# down, so it stays inside the band `gait_selfcheck` check 2 measures.
 	if character_body:
-		character_body.rotation.z = original_rotations["body"].z - player.step_direction * deg_to_rad(8)
-		character_body.position.y = 0.0
+		character_body.rotation.z = original_rotations["body"].z \
+				- direction * deg_to_rad(SIDESTEP_LEAN_DEG)
+		character_body.position.y = absf(cycle) * float(_gait["bob"]) * SIDESTEP_BOB_SCALE
+
+func animate_sidestep(delta: float) -> void:
+	"""
+	Advance the sideways shuffle by the metres just walked, then pose it.
+
+	THE PHASE IS DISTANCE. `player.velocity` is the body's own speed, so
+	`speed * delta` is the ground it actually covered this frame — which is what
+	makes a wading, skill-buffed or uphill strafe step at the rate it looks like
+	it should, with no `speed_multiplier` argument to keep in step with movement
+	code that has four ways to change the number. A stationary strafe (walked
+	into a wall) simply holds its pose, which is correct.
+
+	@param delta: Time since last frame
+	"""
+	if not left_arm or not right_arm or not left_leg or not right_leg:
+		return
+
+	var speed: float = Vector2(player.velocity.x, player.velocity.z).length()
+	_sidestep_phase += speed * delta \
+			* SIDESTEP_PHASE_PER_METRE * float(_gait["stride_rate"]) \
+			/ float(GAITS["DEFAULT"]["stride_rate"])
+
+	# Footsteps on the CLOSE BEAT, off the walk cycle's own sign-flip trick: the
+	# sine crosses zero exactly when the feet pass through together, so the beat
+	# comes free from the phase and needs no timer. Sign 0 is the "just started
+	# strafing" sentinel `reset_sidestep_pose()` leaves behind — record it
+	# silently so the first frame of a strafe never fires a phantom step.
+	var sine_sign: int = 1 if sin(_sidestep_phase) >= 0.0 else -1
+	if _last_sidestep_sine_sign != 0 and sine_sign != _last_sidestep_sine_sign \
+			and player.is_on_floor():
+		player._sfx("play_splash" if player.is_wading else "play_footstep")
+	_last_sidestep_sine_sign = sine_sign
+
+	sidestep_pose(_sidestep_phase, player.step_direction)
 
 func animate_jumping() -> void:
 	"""
@@ -689,7 +809,16 @@ func reset_sidestep_pose() -> void:
 	`animate_walking()` calls this FIRST and then writes its own roll over the
 	top. `relax_gait_extras()` is the other half: it is what puts the body's
 	roll, pitch and head bobble back when the walk stops.
+
+	It also drops the CYCLE (bead godot-test1-3ek) — the phase back to zero and
+	the footstep tracker to its "no history" sentinel — because this is the one
+	function every way out of a strafe already routes through: release, going
+	airborne, W taking over, and `restart_game()`. A phase that survived a
+	release would make the next strafe start mid-stride, and a kept sine sign
+	would fire a step off it on the first frame.
 	"""
+	_sidestep_phase = 0.0
+	_last_sidestep_sine_sign = 0
 	if left_arm and original_rotations.has("left_arm"):
 		left_arm.rotation.z = original_rotations["left_arm"].z
 	if right_arm and original_rotations.has("right_arm"):
