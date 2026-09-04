@@ -173,6 +173,8 @@ func _check_key_is_free() -> void:
 		[[MobileInput.FORCE_ENABLE_KEYCODE], "mobile_input.FORCE_ENABLE_KEYCODE"],
 		[[TouchControls.FORCE_SHOW_KEYCODE], "touch_controls.FORCE_SHOW_KEYCODE"],
 		[[MobileSettingsPanel.FORCE_SHOW_KEYCODE], "mobile_settings_panel.FORCE_SHOW_KEYCODE"],
+		[[PlayerScript.DEBUG_TELEPORT_BUDAPEST_KEY], "player_controller.DEBUG_TELEPORT_BUDAPEST_KEY"],
+		[[PlayerScript.DEBUG_TELEPORT_HQ_KEY], "player_controller.DEBUG_TELEPORT_HQ_KEY"],
 	]
 	var claimed: String = _owner_claiming(key, owners)
 	if not claimed.is_empty():

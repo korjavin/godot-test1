@@ -674,6 +674,19 @@ const HERO_KEYCODES: Array = [
 	[KEY_4, KEY_KP_4],
 ]
 
+## Debug-only teleport keys (bead godot-test1-xtl): F2 puts the player at
+## Budapest's gate, F8 at the HQ — one action from a fresh run to wherever an
+## F3 perf reading is needed. Raw keycodes outside the input map (the
+## perf_overlay F3 precedent): nothing gameplay to rebind. F2 sits next to F3
+## on purpose (teleport, then measure); F8 is clear of the F3–F7 debug cluster
+## (perf, motion, touch force-enables, settings).
+const DEBUG_TELEPORT_BUDAPEST_KEY: Key = KEY_F2
+const DEBUG_TELEPORT_HQ_KEY: Key = KEY_F8
+
+## Reentrancy guard for the teleport below: it awaits a physics frame, and a
+## second press inside that window must not start a second rebuild.
+var _debug_teleport_busy: bool = false
+
 ## Current character index (starts with windman at index 0)
 var current_character_index: int = 0
 
@@ -1039,6 +1052,19 @@ func _unhandled_input(event: InputEvent) -> void:
 			# sees the digit.
 			get_viewport().set_input_as_handled()
 			return
+	# DEBUG TELEPORT (bead godot-test1-xtl): F2 Budapest gate, F8 HQ. The
+	# game-over / paused / quiz guards above already refused panels and cards,
+	# so a press that reaches here is live play; the debug-build and room gates
+	# below are the rest of the bead. Fire and forget: the teleport awaits a
+	# physics frame and the busy flag covers a second press inside it.
+	if key.keycode == DEBUG_TELEPORT_BUDAPEST_KEY or key.keycode == DEBUG_TELEPORT_HQ_KEY:
+		if debug_teleport_allowed(OS.is_debug_build(), _debug_in_room()) \
+				and not _debug_teleport_busy:
+			var dest := debug_destination_budapest() \
+				if key.keycode == DEBUG_TELEPORT_BUDAPEST_KEY else debug_destination_hq()
+			get_viewport().set_input_as_handled()
+			debug_teleport_to(dest)
+		return
 
 # ============================================================================
 # CAMERA VIEW CYCLE (third-person / first-person / front)
@@ -4094,6 +4120,105 @@ func _place_near(anchor: Vector3) -> void:
 	# "arrived somewhere new".
 	_wade_sink = 0.0
 	_apply_wade_sink()
+
+
+# ============================================================================
+# DEBUG-ONLY TELEPORT (F2 BUDAPEST GATE / F8 HQ — BEAD godot-test1-xtl)
+# ============================================================================
+
+static func debug_teleport_allowed(debug_build: bool, in_room: bool) -> bool:
+	"""Whether the debug teleport may fire: debug builds only, never in a room.
+
+	The two halves of the bead's gate as one testable predicate. The caller
+	passes the REAL `OS.is_debug_build()` and the REAL room state; the check
+	drives all four corners of this table.
+	"""
+	return debug_build and not in_room
+
+
+static func debug_destination_budapest() -> Vector3:
+	"""Where F2 lands: inside Budapest past the gate, on the avenue.
+
+	40 m inside the gate (BudapestPlan.GATE is the rect's west edge) is avenue,
+	not wall; `_place_near()` ring-probes the exact clear spot from there, so
+	this only has to name the neighborhood.
+	"""
+	return BudapestPlan.GATE + Vector3(40.0, 0.0, 0.0)
+
+
+func debug_destination_hq() -> Vector3:
+	"""Where F8 lands: on the flat HQ ground outside the tower's dry disc.
+
+	The site plus the disc radius plus a margin — the same "beside it, not in
+	it" the join anchor uses. Read off the terrain (an instance const access,
+	the minimap's `_terrain.TOWER_RADIUS` precedent), never a second copy of
+	the site: `tower_site()` is a CONSTANT today and a retune must move this
+	with it.
+	"""
+	var terrain := get_tree().get_first_node_in_group("terrain")
+	if terrain != null and terrain.has_method("tower_site"):
+		var site: Vector3 = terrain.tower_site()
+		return site + Vector3(terrain.TOWER_RADIUS + 20.0, 0.0, 0.0)
+	return Vector3(0.0, 2.0, 0.0)
+
+
+func _debug_in_room() -> bool:
+	"""Whether this player is in a multiplayer room, by `restart_game()`'s idiom:
+	a settled room has a bank to share, and solo (or arriving) has null.
+	"""
+	var mp := _mp()
+	return mp != null and mp.has_method("shared_bank") and mp.shared_bank(own_coins) != null
+
+
+func debug_teleport_to(dest: Vector3) -> bool:
+	"""Put the player at `dest` for an F3 perf reading, rebuilding the world
+	under them. Returns false — placing NOTHING — when the gates refuse (release
+	build, room, reentrant press) or the world is missing.
+
+	THIS PRESERVES THE RUN: coins, distance, streak, explored mask, heroes,
+	captives — everything a measurement is taken OF. A teleport is a walk at
+	infinite speed: chunk content is seed-deterministic (walking away and back
+	rebuilds the same chunks), and every run total lives on the player, which
+	this never touches. `join_at()`'s zeroing is room bookkeeping this path must
+	not do. Proximity systems (landmark exploring, croc aggro) will of course
+	notice the new neighborhood on arrival — that is what "debug-only" means:
+	this must never be reachable in a release build, or it trivially defeats the
+	win condition, the difficulty ramp and the road.
+
+	ABSENT IN ROOMS: the key is dead there and this returns false. A peer's
+	position is mesh-published truth, and a teleport mid-arrival would fight
+	`MpManager._apply_join_placement()`'s own placement; the arrival path wins
+	by construction because it runs last.
+
+	The re-seat is `MpManager._apply_join_placement()`'s sequence, minus the
+	seed change it needs and we must not do: `new_run` with the CURRENT seed
+	re-centres an identical world, `build_ring_now()` buys the ring's blocks
+	and crocodiles up front so `_place_near()`'s probes see real geometry, and
+	the physics-frame wait lets the physics space learn the new chunks before
+	any probe runs (placing before it probes the OLD world and drops you inside
+	a wall — the comment over there).
+	"""
+	if not debug_teleport_allowed(OS.is_debug_build(), _debug_in_room()):
+		return false
+	if _debug_teleport_busy:
+		return false
+	var terrain := get_tree().get_first_node_in_group("terrain")
+	if terrain == null or not terrain.has_method("new_run") \
+			or not terrain.has_method("world_to_chunk") \
+			or not terrain.has_method("build_ring_now"):
+		return false
+	_debug_teleport_busy = true
+	var chunk: Vector2i = terrain.world_to_chunk(dest)
+	terrain.new_run(terrain.run_seed, chunk)
+	terrain.build_ring_now(chunk)
+	await get_tree().physics_frame
+	_place_near(dest)
+	clear_nearby_crocodiles(global_position)
+	respawn_blink_timer = 0.0
+	_apply_view_mode()
+	_reset_ability_states()
+	_debug_teleport_busy = false
+	return true
 
 
 func _room_group_anchor() -> Variant:

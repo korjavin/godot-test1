@@ -183,6 +183,8 @@ const ROWS: Array = [
 	["F5", "Force-enable the touch motion driver.", Mode.DEBUG],
 	["F6", "Force-show the touch controls.", Mode.DEBUG],
 	["F7", "Force-show the ⚙ tuning panel.", Mode.DEBUG],
+	["F2", "Teleport to Budapest's gate (debug builds only).", Mode.DEBUG],
+	["F8", "Teleport to the HQ (debug builds only).", Mode.DEBUG],
 ]
 
 # ============================================================================
