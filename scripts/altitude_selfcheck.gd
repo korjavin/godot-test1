@@ -114,8 +114,12 @@ const FLAT_SAMPLES: int = 2000
 ## control is measuring "the field is alive out here" and not the ramp.
 const FLAT_CONTROL_MARGIN: float = 300.0
 
-## How many road stations either side of the origin check 3 walks. The corridor is
-## a curve, so sampling it means sampling the ROAD rather than a box around it.
+## How many road stations either side of the origin check 3 SAMPLES FOR FLATNESS.
+## The corridor is a curve, so sampling it means sampling the ROAD rather than a box
+## around it. It is not the range the chord deviation is measured over — that one is
+## derived from ALT_ROAD_SEG_MAX / ALT_ROAD_SEG_STRIDE in the check itself, because
+## the bound has to hold at the window's outermost nodes and not only where the
+## player is standing.
 const FLAT_ROAD_STATIONS: int = 40
 
 ## Check 3's window-slide leg: how many coarse nodes it plants ramp probes on, and
@@ -471,19 +475,29 @@ func _check_flat_zones() -> void:
 		# the offset is how this leg keeps asking for EXACTLY 0.0 rather than for a
 		# tolerance.
 		var lateral: float = t.ALT_ROAD_FLAT_HALF - t.ALT_ROAD_SEG_DEV_MAX
-		var worst_dev := 0.0
 		# Once, not per station: the arguments never change and growing the cache is
 		# the expensive part of this leg.
 		t._road_extend_to_x(-SAMPLE_HALF, SAMPLE_HALF)
+		# THE CHORD DEVIATION ITSELF, measured on the shipped cache over the WHOLE
+		# window and not just the stretch the flat sampling below walks. This is what
+		# binds ALT_ROAD_SEG_STRIDE to ALT_ROAD_FLAT_HALF, and without it raising the
+		# stride would quietly walk the coin road onto a hill while every other leg of
+		# this check still passed — so the walked range is DERIVED from the corridor's
+		# own constants (`half * stride` stations either side is exactly the node span
+		# _alt_road_segments builds), never a literal of its own. A separate loop
+		# because the flat/alive sampling is the expensive half and only has to prove
+		# the promise where the player is; the bound has to hold at every node the
+		# shader and the baked heightmap read, including the outermost pair.
+		var dev_stations: int = t.ALT_ROAD_SEG_MAX / 2 * t.ALT_ROAD_SEG_STRIDE
+		var worst_dev := 0.0
+		for i in dev_stations * 2 + 1:
+			var kd: int = mini(i - dev_stations, terminal)
+			var cd: Vector2 = t._road_station(kd).center
+			worst_dev = maxf(worst_dev, t._alt_road_distance(cd.x, cd.y))
 		for i in FLAT_ROAD_STATIONS * 2 + 1:
 			var k: int = mini(i - FLAT_ROAD_STATIONS, terminal)
 			var st: Dictionary = t._road_station(k)
 			var c: Vector2 = st.center
-			# THE CHORD DEVIATION ITSELF, measured on the shipped cache: this is what
-			# binds ALT_ROAD_SEG_STRIDE to ALT_ROAD_FLAT_HALF, and without it raising
-			# the stride would quietly walk the coin road onto a hill while every
-			# other leg of this check still passed.
-			worst_dev = maxf(worst_dev, t._alt_road_distance(c.x, c.y))
 			var n := Vector2(-sin(st.heading), cos(st.heading))  # the road's normal
 			for j in 8:
 				on_road.append(c + n * rng.randf_range(-1.0, 1.0) * lateral)
@@ -495,8 +509,8 @@ func _check_flat_zones() -> void:
 				seed_value, worst_dev, t.ALT_ROAD_SEG_DEV_MAX])
 		# The measured deviation is a REPORT number as well as an assertion — it is
 		# what says how coarse the polyline is allowed to get.
-		print("[altitude] seed %d: worst road-station offset from the coarse polyline %.2f m (bound %.1f m, %d segments)" % [
-			seed_value, worst_dev, t.ALT_ROAD_SEG_DEV_MAX, t._alt_road_segs.size()])
+		print("[altitude] seed %d: worst road-station offset from the coarse polyline %.2f m over +/-%d stations (bound %.1f m, %d segments)" % [
+			seed_value, worst_dev, dev_stations, t.ALT_ROAD_SEG_DEV_MAX, t._alt_road_segs.size()])
 		_assert_flat(t, seed_value, "road corridor", on_road)
 		_assert_alive(t, seed_value, "road corridor", off_road)
 

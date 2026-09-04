@@ -30,9 +30,12 @@ matching ground collision shape, and one self-check that pins all of it.
   collision heightmap once per chunk safe. **It is a window in STATIONS, though, so a
   hard-curving stretch shortens it in X to ~120 m and a loaded chunk CAN see the end
   move** (the `ponytail:` ceiling on clause 4, and the second bullet under "The road
-  corridor" below). **Promoting the spike means either making the corridor
+  corridor" below). **A chunk pinned by `set_focus_points()` — a far multiplayer
+  teammate — is loaded at unbounded distance and is the same hole with no bound on
+  it at all**: its floor is baked off the LOCAL player's window, possibly with no
+  corridor over it. **Promoting the spike means either making the corridor
   position-derived (a distance function of X, or a texture) or re-baking a loaded
-  chunk's floor on refresh** — which closes this hole with it.
+  chunk's floor on refresh** — which closes all three with it.
 - **`_alt_flat_mask(x, z, biome)`** — the product of four independent 0..1 smoothstep
   factors, so a point in two zones is flat and never twice flat: Budapest's rect
   (delegated to `BudapestPlan`, +120 m skirt), the HQ disc (`TOWER_RADIUS`, +60 m),

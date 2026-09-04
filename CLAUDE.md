@@ -491,8 +491,10 @@ Three rules of the city's own, all pinned by `budapest_selfcheck`:
   Known and documented: `DRY_RECTS` is XZ-only, so the river bed *under* a deck is dry too.
 - **The road's four CONSUMERS stop at the terminal station `T`; the road itself does not.**
   `_road_terminal_k()` is the last station at or west of `ROAD_TERMINAL_X`, and the caps
-  are numbered 1–4 in the code: road coins, road clearance, road bosses
-  (`endless_terrain.gd`) and the minimap's drawn line (`minimap_hud.gd`).
+  are numbered in the code: road coins, road clearance, road bosses
+  (`endless_terrain.gd`) and the minimap's drawn line (`minimap_hud.gd`) are 1–4;
+  CAP 5 is `_alt_road_segments`, the `FIELD_ALTITUDE` spike's flat corridor, which is
+  inert while the flag is false.
   **`_road_extend_to_x` is deliberately NOT capped** — it is the station cache, and a cache
   that stops growing hangs every forward loop that walks it until it passes an X. From `T`
   the player is carried on by `spawn_approach_coins_in_chunk`, a deterministic corridor

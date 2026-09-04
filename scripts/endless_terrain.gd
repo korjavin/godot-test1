@@ -3960,7 +3960,10 @@ func set_focus_points(points: Array) -> void:
 	influence what a chunk contains: chunk content is a pure function of the
 	chunk's own coords + `run_seed`, so a chunk pinned by a teammate is
 	byte-identical to the one the local player would build by walking there. See
-	the `focus_chunks` banner in SECTION 2.
+	the `focus_chunks` banner in SECTION 2. (The FIELD_ALTITUDE spike's road
+	corridor is the one thing that would break that with the flag on — its window
+	is centred on the LOCAL player, so a far-pinned chunk bakes a floor off a window
+	that never covered it. Flag-off it is inert; see height_at().)
 
 	Call it as often as you like — an unchanged set is a no-op (one Dictionary
 	compare), so the 9 Hz caller in `crocodile_lod_manager.gd` costs nothing
@@ -9853,8 +9856,8 @@ func _alt_road_segments(center_x: float) -> PackedVector4Array:
 	road each — see ALT_ROAD_SEG_STRIDE for the measurement that says a chord that
 	long still keeps the centreline inside ALT_ROAD_FLAT_HALF.
 
-	CAP 5 OF THE ROAD'S CONSUMERS (bead godot-test1-8gw.3, joining road coins, road
-	clearance, road bosses and the minimap line): the walk stops at
+	CAP 5 OF THE ROAD'S CONSUMERS (bead godot-test1-8gw.3, joining CAPs 1-4 — road
+	coins, road clearance, road bosses and the minimap line): the walk stops at
 	_road_terminal_k(). East of T there is no road to flatten a corridor around.
 
 	ponytail: and there is a GAP between T and the city, which this cap creates and
@@ -10067,11 +10070,14 @@ func height_at(world_x: float, world_z: float) -> float:
 	is bit-identical from every centre INSIDE the window, but a point that falls
 	off the window's end when the player walks away answers a different height. The
 	window reaches _alt_road_window() metres either side, comfortably past the
-	250 m desktop residency half-width on a straight road, so no LOADED chunk sees
-	it move — which is what makes the baked collision heightmap safe. Promoting the
-	spike means either making the corridor position-derived (a distance function of
-	X, or a texture) or re-baking loaded chunks on refresh; see
-	docs/field-altitude-spike.md.
+	250 m desktop residency half-width on a straight road, so no chunk loaded BY
+	PROXIMITY sees it move — which is what makes the baked collision heightmap safe.
+	A chunk pinned by set_focus_points() (a far multiplayer teammate) is the
+	exception and is loaded at unbounded distance, so its floor is baked off
+	whatever the local player's window held — possibly no corridor at all. Promoting
+	the spike means either making the corridor position-derived (a distance function
+	of X, or a texture) or re-baking loaded chunks on refresh; both close the focus
+	case with the residency one. See docs/field-altitude-spike.md.
 	"""
 	# THE FLAG, FIRST LINE AND BEFORE ANY NOISE. With the spike off this is the
 	# whole function, so the flat world costs one bool compare and not one hash.
