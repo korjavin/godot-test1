@@ -74,10 +74,23 @@ extends RefCounted
 ##  * **NOTHING MAY PUSH THE PLAYER.** A pool body is teleported, so a body
 ##    placed ON TOP of the player would be resolved by `move_and_slide`'s
 ##    depenetration — a shove. `_player_inside()` is the guard: a proxy whose
-##    footprint already contains the player's CENTRE is not solid this frame. It
+##    VOLUME already contains the player is not solid this frame. It
 ##    can never fire during ordinary contact (contact holds the centre a player
 ##    radius clear of the footprint on every axis), so it costs nothing and
-##    covers every way a pose can land on a hero. For CARS the stronger promise
+##    covers every way a pose can land on a hero.
+##    **THE TEST IS 3-D, AND THAT IS BEAD `godot-test1-d5f`.** It used to be the
+##    FOOTPRINT alone — an XZ centre containment — and a hero standing on a car
+##    roof has his centre inside the footprint by definition, so the box he was
+##    standing on switched itself off and he fell through it to the road. Worse,
+##    the same rule met him on the way DOWN: measured on a real `player.tscn`
+##    running at a parked car and jumping, the proxy went soft the frame he
+##    crossed the bumper and stayed soft for the whole arc, so he sailed through
+##    the car instead of landing on it — the owner's "I can run through the car,
+##    but if I jump on it, I go through it to the ground", one bug with two
+##    symptoms. The vertical half is `ROOF_GRACE`: feet at or above the roof are
+##    STANDING ON IT and keep it solid; only feet genuinely below the roof — the
+##    pose a teleport lands you in, and the only one depenetration would launch —
+##    turn it off. For CARS the stronger promise
 ##    is upstream and is pure arithmetic: half the car's width plus a player
 ##    radius (0.925 + 0.5) is far inside `traffic_manager.LATERAL_TOLERANCE`
 ##    (3.2 m), so every car that could reach the player has already yielded to
@@ -119,11 +132,26 @@ const STUCK_TRAVEL: float = 0.5
 ## the stuck gate reads it.
 const CONTACT_PAD: float = 0.35
 
+## How far BELOW a proxy's roof the hero's feet may be and still count as
+## STANDING ON IT rather than being stuck inside it. It bounds the only shove
+## this file still permits: a hero whose feet are within this much of the roof
+## keeps the box solid, so the very worst `move_and_slide` can lift him is
+## ROOF_GRACE metres — a fifth of a step, against the 1.15 m launch that "his
+## centre is in the footprint, switch it off" was trading it for. It has to be
+## more than the few millimetres of penetration a landing at 8 m/s leaves and
+## less than a step-up, and anything in that range is the same rule.
+const ROOF_GRACE: float = 0.15
+
 var _bodies: Array[StaticBody3D] = []
 var _shapes: Array[CollisionShape3D] = []
 
 ## Footprint half-extents in the proxy's OWN frame: x lateral, z longitudinal.
 var _half := Vector2(0.3, 0.3)
+
+## The shape's full height, base at y = 0 — so the ROOF is at exactly this world
+## y, since `commit()` seats every body at y = 0. Kept because the no-shove guard
+## is 3-D and a rule about a roof needs to know where the roof is.
+var _height: float = 1.0
 
 ## Does this pool yield to a pinned player? See the header — the crowd does, the
 ## traffic deliberately does not.
@@ -158,6 +186,7 @@ func build(parent: Node3D, count: int, half: Vector2, height: float, reach: floa
 	convention both car and citizen meshes are modelled in); `height` is the
 	shape's full height with its base at y = 0."""
 	_half = half
+	_height = height
 	_reach = reach
 	_yields = yields
 	for i in count:
@@ -265,11 +294,28 @@ func _contact_range() -> float:
 
 
 func _player_inside(pos: Vector3, yaw: float, player_pos: Vector3) -> bool:
-	"""Is the player's CENTRE inside this proxy's own footprint? Only a body that
+	"""Is the player's body inside this proxy's own VOLUME? Only a body that
 	landed ON the hero can answer true — ordinary contact holds his centre a
-	player radius clear of every face — so this is the no-shove guard and never a
-	way through. `Basis.rotated(UP, yaw)` sends local +X to (cos, 0, -sin) and
-	local +Z to (sin, 0, cos); front is local -Z, the mesh convention."""
+	player radius clear of every side face, and a hero on the roof is above it —
+	so this is the no-shove guard and never a way through.
+
+	THE VERTICAL HALF FIRST, because it is what bead `godot-test1-d5f` fixed:
+	`player_pos` is the hero's FEET (`player.tscn`'s capsule is offset a metre up
+	from its origin) and `commit()` seats every body at y = 0, so the roof is at
+	`_height` in the same frame. Feet at or above it, less ROOF_GRACE, are
+	standing ON the box — the box stays solid and he walks around on it. Only
+	feet BELOW the roof can be the pose depenetration would launch.
+
+	`ponytail:` there is no lower bound (feet below the box's base) and no capsule
+	radius here. Both proxied things stand on the y = 0 street the hero does, so
+	"below the base" is not a pose this game has, and the XZ test is deliberately
+	the CENTRE — widening it by a player radius would switch the box off during
+	ordinary contact, which is the through-the-car bug spelled the other way.
+
+	`Basis.rotated(UP, yaw)` sends local +X to (cos, 0, -sin) and local +Z to
+	(sin, 0, cos); front is local -Z, the mesh convention."""
+	if player_pos.y >= _height - ROOF_GRACE:
+		return false
 	var d := Vector2(player_pos.x - pos.x, player_pos.z - pos.z)
 	var ax := Vector2(cos(yaw), -sin(yaw))
 	var az := Vector2(sin(yaw), cos(yaw))

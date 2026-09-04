@@ -1537,15 +1537,23 @@ MultiMesh buffer, so there is no second nearest-N pass. Four rules:
   the frames depenetration nudges him. **Cars declare it off**: one brakes 18 m out and
   stops 6.7 m short on an 8 m half-width avenue, so it can pin nobody, and a car you
   could walk through after a beat is not a car.
-- **Nothing may push the hero.** A proxy whose footprint contains his CENTRE is not
-  solid that frame (it can only fire on a pose that landed on him). For cars the
+- **Nothing may push the hero, AND THE TEST IS 3-D.** A proxy whose VOLUME contains
+  him is not solid that frame (it can only fire on a pose that landed on him). The
+  vertical half is bead `godot-test1-d5f`: the rule used to be the FOOTPRINT alone, and
+  a hero standing on a car roof has his centre inside the footprint by definition — so
+  the box switched itself off under his feet and he fell through to the road, and the
+  same rule met him mid-jump so he passed clean through the car instead of landing on
+  it. Feet at or above the roof less `ROOF_GRACE` are STANDING on it and keep it solid;
+  only feet genuinely below the roof turn it off. For cars the
   stronger promise is arithmetic: `CAR_WIDTH/2 + 0.5` is far inside `LATERAL_TOLERANCE`,
   so every car that could touch a hero has already yielded to him.
 - **The two self-checks were TIGHTENED, not loosened.** They no longer say "no
   `CollisionObject3D` under the manager" but "the only ones are exactly N numbered pool
   slots, `StaticBody3D`, on `PROXY_LAYER`, masking nothing, in no group, carrying no
   mesh" — plus a real `player.tscn` driven by the shipped movement into a planted
-  instance, mutation-tested against an emptied pool.
+  instance, mutation-tested against an emptied pool, and since `d5f` a hero who
+  STANDS on a parked car for a second and a citizen planted on him who moves him
+  nowhere, each mutation-tested against the pool forgetting how tall it is.
 
 **CITIZENS AND CARS SEE EACH OTHER, AND NEITHER GAINED A BODY** (owner, bead
 `godot-test1-8gw.23`: *"crowds in budapest still go through cars, not good, fix"*).
