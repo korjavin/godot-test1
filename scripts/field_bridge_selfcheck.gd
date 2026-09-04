@@ -55,7 +55,8 @@ const PLAYER_SCENE: String = "res://scenes/player.tscn"
 ## (a coarse walk steps over it), and 115's terminal station stands IN the water,
 ## so the crossing straddles the handoff between the road and the corridor.
 const CROSSING_SEEDS: Array[int] = [11, 2027, 90210, 777001, 424243, 8, 131313,
-		606060, 5150, 99991, 31337, 271828, 72, 4, 26, 12, 63, 115]
+		606060, 5150, 99991, 31337, 271828, 72, 4, 26, 12, 63, 115,
+		218, 203, 224, 202, 206]
 
 ## The walk must actually MEET rivers, or check 1 is a green lie about a road
 ## that never got its feet wet. Measured today: 40+ crossings over the 12 seeds.
@@ -300,79 +301,82 @@ func _check_every_crossing_is_bridged() -> void:
 	var bridged := 0
 	var lakes := 0
 	var curved := 0
+	var anchored := 0
 	var worst := ""
 
 	for run_seed in CROSSING_SEEDS:
 		var terrain := _terrain(run_seed)
 		terrain._road_extend_to_x(0.0, TERRAIN_SCRIPT.ROAD_TERMINAL_X)
 		var terminal: int = terrain._road_terminal_k()
-		var prev_wet: bool = terrain._field_bridge_wet(1)
-		for k in range(2, terminal - 1):
-			var wet: bool = terrain._field_bridge_wet(k)
-			var row: Dictionary = terrain.field_bridge_at(k)
-			var entry := wet and not prev_wet
-			prev_wet = wet
-			if not entry:
-				if not row.is_empty() and worst == "":
-					worst = ("seed %d station %d anchors a bridge but is not a"
-							% [run_seed, k] + " crossing ENTRY (wet here: %s) —"
-							% wet + " two decks can now cover one river")
-					_fail(worst)
+		# THE WALK IS THIS CHECK'S OWN, ON THE CENTRELINE, AT A METRE. It used to
+		# ask the shipped `_field_bridge_wet` — which is what the code asks — so
+		# it could only ever agree with it: when the span cap was measuring the
+		# 16 m SECTION rather than the centreline, check 1 measured the section
+		# too and reported two real crossings as one lake (seed 777001, the
+		# reviewer's F1). `is_river_at` is the band itself, and a metre is finer
+		# than any station.
+		var wet_from := Vector2.INF
+		var prev := Vector2.INF
+		var water := 0.0
+		var wet_k := 0
+		for k in range(1, terminal + 2):
+			if k > terrain.road_k_max:
+				break
+			var st: Dictionary = terrain._road_station(k)
+			var to: Vector2 = st.center
+			var from: Vector2 = prev if prev != Vector2.INF else to
+			var steps: int = maxi(1, int(from.distance_to(to)))
+			for i in range(1, steps + 1):
+				var at: Vector2 = from.lerp(to, float(i) / float(steps))
+				var wet: bool = terrain.is_river_at(Vector3(at.x, 0.0, at.y))
+				if wet and wet_from == Vector2.INF:
+					wet_from = at
+					water = 0.0
+					wet_k = k
+				elif wet:
+					water += at.distance_to(prev)
+				elif wet_from != Vector2.INF:
+					crossings += 1
+					var mid: Vector2 = (wet_from + prev) * 0.5
+					if water > TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN:
+						lakes += 1
+					elif terrain.field_bridge_surface_y(
+							Vector3(mid.x, 0.0, mid.y)) > -INF:
+						bridged += 1
+						if wet_from.distance_to(prev) + 0.5 < water:
+							curved += 1
+					else:
+						if worst == "":
+							worst = ("seed %d: the road walks %.1f m of water at"
+									% [run_seed, water] + " (%.1f, %.1f) near"
+											% [mid.x, mid.y]
+									+ " station %d, well inside the %.0f m cap —"
+											% [wet_k,
+													TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN]
+									+ " and there is NO BRIDGE. That crossing is a"
+									+ " softlock the day rivers stop being"
+									+ " walkable")
+						_fail(worst)
+					wet_from = Vector2.INF
+				prev = at
+			prev = to
+		# ...and the structural half: only a crossing ENTRY may anchor a bridge,
+		# so two decks can never cover one river.
+		for k in range(2, terminal):
+			if terrain.field_bridge_at(k).is_empty():
 				continue
-			crossings += 1
-			if not row.is_empty():
-				bridged += 1
-				# THE CAP IS METRES WALKED, not the chord back to the entry —
-				# a curved wet run is longer than the straight line across it,
-				# and the chord let a crossing over the cap through (seed 72).
-				var span_walked := 0.0
-				var span_chord: float = terrain._road_station(int(row["k0"])).center \
-						.distance_to(terrain._road_station(int(row["k1"])).center)
-				for j in range(int(row["k0"]), int(row["k1"])):
-					span_walked += terrain._road_station(j + 1).center.distance_to(
-							terrain._road_station(j).center)
-				if span_walked > TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN + EPS:
-					_fail("seed %d station %d is bridged over %.1f m of WALKED"
-							% [run_seed, k, span_walked] + " water, past the"
-							+ " %.0f m cap (its chord is only %.1f m — the cap"
-							% [TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN, span_chord]
-							+ " must measure the road, not the straight line)")
-				if span_walked > span_chord + 0.5:
-					curved += 1
+			anchored += 1
+			if terrain._field_bridge_wet(k) and not terrain._field_bridge_wet(k - 1):
 				continue
-			# No bridge: the only sanctioned reason is the span cap. Measure the
-			# water the road walks from here and hold the refusal to it.
-			# MEASURED THE WAY THE SHIPPED CAP MEASURES — metres WALKED. Asking
-			# the chord here is the same bug one level up: it reported seed 72's
-			# 84 m crossing as 79.2 m and then failed the build for refusing it.
-			var j := k
-			var wide := false
-			var water := 0.0
-			while j < terminal - 1 and terrain._field_bridge_wet(j + 1):
-				j += 1
-				water += terrain._road_station(j).center.distance_to(
-						terrain._road_station(j - 1).center)
-				if water > TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN:
-					wide = true
-					break
-			if wide:
-				lakes += 1
-				continue
-			if worst == "":
-				worst = ("seed %d: the road enters the water at station %d and"
-						% [run_seed, k] + " walks %.1f m of it, well inside the"
-						% water
-						+ " %.0f m cap — and there is NO BRIDGE. That crossing is"
-						% TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN
-						+ " a softlock the day rivers stop being walkable")
-				_fail(worst)
+			_fail("seed %d station %d anchors a bridge but is not a crossing"
+					% [run_seed, k] + " ENTRY — two decks can now cover one river")
 		terrain.free()
 
-	print("field bridges: %d road river crossings over %d seeds — %d bridged, %d"
-			% [crossings, CROSSING_SEEDS.size(), bridged, lakes]
-			+ " over the %.0f m span cap (wade, by design); %d of the bridged"
-					% [TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN, curved]
-			+ " really curve (walked > chord)")
+	print("field bridges: %d road river crossings over %d seeds (walked on the"
+			% [crossings, CROSSING_SEEDS.size()] + " CENTRELINE at 1 m) — %d"
+					% bridged + " bridged, %d over the %.0f m span cap (wade, by"
+							% [lakes, TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN]
+			+ " design); %d curve; %d bridges anchored" % [curved, anchored])
 
 	if crossings < MIN_CROSSINGS:
 		_fail("check 1 found only %d road river crossings over %d seeds (wanted"
@@ -383,8 +387,11 @@ func _check_every_crossing_is_bridged() -> void:
 				+ " as a lake, so no geometry was ever built")
 	if curved < 1:
 		_fail("not one bridged crossing is CURVED (walked > chord) over %d seeds"
-				% CROSSING_SEEDS.size() + " — the walked-vs-chord assertion above"
-				+ " is true of a straight road and measures nothing")
+				% CROSSING_SEEDS.size() + " — the cap's walked measurement is"
+				+ " true of a straight road and measures nothing")
+	if anchored < 1:
+		_fail("check 1 found no anchored bridge at all, so its entry rule is a"
+				+ " claim about an empty set")
 	Sentinel.done("every_crossing_is_bridged")
 
 
@@ -1264,6 +1271,7 @@ func _check_deck_coins_stand_on_stone() -> void:
 	var off_terrain := _terrain(off_seed)
 	var floating_off := 0
 	var measured_off := 0
+	var worst_off := ""
 	for row_v: Variant in off_terrain.approach_bridges():
 		var poly: PackedVector2Array = (row_v as Dictionary)["poly"]
 		var seen_off: Dictionary = {}
@@ -1285,8 +1293,8 @@ func _check_deck_coins_stand_on_stone() -> void:
 						if is_inf(settled) or is_equal_approx(coin.y, settled):
 							continue
 						floating_off += 1
-						if worst == "":
-							worst = ("seed %d with spawn_field_bridges OFF: a coin"
+						if worst_off == "":
+							worst_off = ("seed %d with spawn_field_bridges OFF: a coin"
 									% off_seed + " in chunk %s sits at y = %.2f"
 											% [at, coin.y]
 									+ " where the perch rule says %.2f — it was"
@@ -1302,7 +1310,7 @@ func _check_deck_coins_stand_on_stone() -> void:
 				% off_seed + " bridges off, so it measured nothing")
 	if floating_off > 0:
 		_fail("%d coin(s) ride a deck that does not exist with"
-				% floating_off + " spawn_field_bridges OFF: %s" % worst)
+				% floating_off + " spawn_field_bridges OFF: %s" % worst_off)
 
 	if capsule_lies < 1:
 		_fail("check 8's mutation control is inert: the rejected point-to-polyline"
@@ -1445,6 +1453,35 @@ func _check_the_approach_corridor_is_bridged() -> void:
 			prev = p
 			x += APPROACH_WALK_STEP
 		terrain.free()
+
+	# ...and the stone the corridor lays STOPS SHORT OF THE CITY. A crossing that
+	# ends on the rect boundary needs its dry margin and a ramp past it, so a few
+	# metres inside is by design — but the gate district is authored from
+	# x = 1620 and a seeded slab in it is a solid box in a carriageway that
+	# budapest_city_selfcheck's sweep would call a bug.
+	var reach := -INF
+	for run_seed in CROSSING_SEEDS:
+		var terrain := _terrain(run_seed)
+		for row_v: Variant in terrain.approach_bridges():
+			for p in (row_v as Dictionary)["poly"] as PackedVector2Array:
+				reach = maxf(reach, p.x)
+		terrain.free()
+	# THE BOUND IS THE GATE DISTRICT'S OWN WEST EDGE, read from the plan. A few
+	# metres inside the rect is unavoidable and deliberate — a crossing whose
+	# water reaches the boundary needs a dry margin and a 2.8 m ramp past it, and
+	# there is no legal slope that fits in less — but the district is authored
+	# stone and a seeded slab in it is exactly the solid box in a carriageway
+	# budapest_city_selfcheck's sweep exists to refuse.
+	var bound: float = BudapestPlan.DISTRICT.position.x
+	print("field bridges: the corridor's easternmost stone reaches x = %.1f"
+			% reach + " — %.1f m past the rect edge at %.0f, and %.1f m short of"
+					% [reach - BudapestPlan.BUDAPEST_MIN.x,
+							BudapestPlan.BUDAPEST_MIN.x, bound - reach]
+			+ " the gate district at %.0f" % bound)
+	if reach >= bound:
+		_fail("a corridor bridge reaches x = %.1f, into Budapest's authored gate"
+				% reach + " district (from x = %.0f) — seeded stone there is a"
+						% bound + " solid box in an authored carriageway")
 
 	print("field bridges: the approach corridor crosses water %d time(s) over %d"
 			% [wet_stretches, CROSSING_SEEDS.size()] + " seeds — %d bridged, %d"

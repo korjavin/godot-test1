@@ -1036,9 +1036,10 @@ not. `approach_bridges()` samples `BudapestPlan.road_approach_point()` from `T` 
 Danube's west bank **at `FIELD_BRIDGE_PROBE_STEP`, not at the road's pitch** (a station is
 ~6 m of X and a band can be narrower — seed 63's fell between two samples), decimates the
 deck back to that pitch so the stone is the same shape, and continues the line WEST along
-the road's stations when the terminal itself stands in water (seed 115: the road-side
-builder refuses that span because its far bank is past `T`, so without the extension
-neither side bridged the handoff). It walks the same crossing rule as the stations,
+the road's stations (resampled to the same metre pitch) whenever the ROAD SIDE REFUSES —
+that refusal, `k1 + DRY > T`, is the trigger, not a probe of the corridor's own first
+sample, because west of `T` the corridor is a POINT and its perpendicular is not the road's
+(seeds 115, 203, 224 are three shapes of the same handoff). One owner, one deck. It walks the same crossing rule as the stations,
 because the city's river override only starts at the rect's west edge — so the procedural
 river is alive under the authored corridor, and on seed 4 it crosses one at x ≈ 1495 with
 nothing over it. Same decks, same `_field_bridge_row_from()`, and the approach coin line
@@ -1051,11 +1052,16 @@ it and the surface query that answers "can I stand here" both read it, because t
 disagreed: the query was a point-to-POLYLINE distance, i.e. a CAPSULE, and at a joint on
 the outside of a turn it accepted points no rectangle covered, so a road coin stood at deck
 height over open air. **The span cap counts metres WALKED**, never the chord back to the
-entry station, which a curved wet run makes shorter than the road really is. **A
-cross-section is measured ACROSS THE WHOLE WIDTH** — `_field_bridge_dry_across()`, one
-primitive for "is the road in the water here" and "is this abutment on the bank", because
-three lanes passed a foot with a wet patch half a metre inside one edge; and when the push
-budget runs out the crossing is REFUSED (the lake rule), never given a known-wet foot.
+entry station, which a curved wet run makes shorter than the road really is — **and it
+counts them on the CENTRELINE**, which is where the hero is. Measuring the span on the
+16 m section instead made a road that merely runs ALONGSIDE a river (seed 218 grazes one
+within 8 m for 186 m) into a "lake" and left two real crossings unbridged. The section
+keeps exactly one job: **where a foot may stand**. `_field_bridge_dry_across()` is its one
+home, because three lanes passed a foot with a wet patch half a metre inside one edge; when
+no dry section is reachable the DECK CARRIES ON at deck height along the bank
+(`FIELD_BRIDGE_BANK_WALK_MAX`) rather than dragging a ramp — which is under
+`WADE_SURFACE_MAX` for its first 2.4 m — through the water, and only when even that fails
+is the crossing refused (the lake rule), never given a known-wet foot.
 Finally **the slab stretch at a joint is DERIVED, `half * tan(turn / 2)`**: the road's
 recurrence restores the heading toward +X as well as turning it, so a station can turn
 further than `road_turn_rate_deg` alone allows (22.4° measured), and a fixed stretch left a
