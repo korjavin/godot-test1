@@ -1068,12 +1068,25 @@ entry station, which a curved wet run makes shorter than the road really is — 
 counts them on the CENTRELINE**, which is where the hero is. Measuring the span on the
 16 m section instead made a road that merely runs ALONGSIDE a river (seed 218 grazes one
 within 8 m for 186 m) into a "lake" and left two real crossings unbridged. The section
-keeps exactly one job: **where a foot may stand**. `_field_bridge_dry_across()` is its one
-home, because three lanes passed a foot with a wet patch half a metre inside one edge; when
-no dry section is reachable the DECK CARRIES ON at deck height along the bank
-(`FIELD_BRIDGE_BANK_WALK_MAX`) rather than dragging a ramp — which is under
-`WADE_SURFACE_MAX` for its first 2.4 m — through the water, and only when even that fails
-is the crossing refused (the lake rule), never given a known-wet foot.
+keeps exactly one job: **where a RAMP may stand**. `_field_bridge_dry_across()` is its one
+home and `_field_bridge_ramp_dry()` is the shape it is asked in — the whole rectangle from
+the deck's end to the foot, because three lanes passed a foot with a wet patch half a metre
+inside one edge and the ramp's SIDES were wet on six seeds while its centre was dry, and a
+ramp is under `WADE_SURFACE_MAX` for its first 2.4 m. When no dry ramp is reachable the
+DECK CARRIES ON at deck height along the bank (`FIELD_BRIDGE_BANK_WALK_MAX`) rather than
+dragging one through the water, and only when even that fails is the crossing refused (the
+lake rule), never given a known-wet foot.
+
+**THE GROWTH MAY NOT READ THE STATION CACHE'S EDGE, and ONE ANCHOR OWNS A DECK.** Both are
+determinism, and both were wrong once. The growth is memoized, so a loop that stopped at
+whatever the cache happened to hold made the bridge SET a function of the order chunks were
+visited — six decks walking east, five walking west, and two peers in a room laying
+different stone over the same water; it extends the cache to its own budget first now, and
+`field_bridge_selfcheck` check 6b drives every subject seed both ways. And two crossings
+that grow onto the same bank produce the same deck under two anchors, which every chunk
+then emits TWICE: the WESTERN entry owns a merged deck and the later anchor builds nothing,
+with the corridor skipping any crossing the road already decked (`_road_bridges_near` is
+split out for exactly that question, so the ownership test can never recurse).
 Finally **the slab stretch at a joint is DERIVED, `half * tan(turn / 2)`**: the road's
 recurrence restores the heading toward +X as well as turning it, so a station can turn
 further than `road_turn_rate_deg` alone allows (22.4° measured), and a fixed stretch left a
