@@ -890,8 +890,13 @@ const ROAD_TERMINAL_X: float = 1450.0
 #     the river bed underneath one. Here the deck is opaque stone and the WADE
 #     TEST became Y-AWARE instead (see WADE_SURFACE_MAX / is_wading_at) — the
 #     water is still painted under the deck, which is correct, and standing on
-#     the deck is dry because you are 1.6 m above it. That closes Budapest's gap
-#     in the same edit and costs the shader nothing.
+#     the deck is dry because you are 1.6 m above it, and it costs the shader
+#     nothing. It does NOT close Budapest's own gap: inside the rect
+#     `is_river_at` delegates to `BudapestPlan.danube_wet()`, which subtracts
+#     every DRY_RECTS row, so the bed under an authored deck answers DRY before
+#     the height rule is asked. The cutout is shared with Margaret Island, which
+#     is dry LAND at y = 0 — so closing it is a bridge-rects-only exception and
+#     bead godot-test1-06o.3's call, not this one's.
 #   * NOT an `obstacles` footprint. A bridge is MEANT to be walked, and a
 #     footprint is a keep-out claim that would push crocodiles off the road and
 #     make `_settle_coin_y` skip the coins ON the deck — the city ramp's rule.
@@ -6640,6 +6645,11 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 		if not valid_position:
 			continue
 
+		# ...and a FIELD BRIDGE is a floor, not an obstacle: a spot on a deck
+		# keeps its XZ and is lifted onto the stone (see field_bridge_stand_y).
+		crocodile_pos.y = field_bridge_stand_y(croc_world.x, croc_world.z,
+				crocodile_pos.y)
+
 		# Instantiate this chunk's predator (crocodile everywhere but the desert)
 		var crocodile_instance = species_scene.instantiate()
 		# NAMED "Crocodile_…" WHATEVER THE SPECIES, deliberately. The name is this
@@ -6922,6 +6932,10 @@ func spawn_hunters_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, o
 		# in that the crocodile spawner already respects.
 		if tower_excludes(world.x, world.z, min_object_clearance):
 			continue
+
+		# ...and a FIELD BRIDGE is a floor: a spot on a deck keeps its XZ and is
+		# lifted onto the stone (see field_bridge_stand_y).
+		local.y = field_bridge_stand_y(world.x, world.z, local.y)
 
 		# ONE SLOT, ONE BODY. A hunter that walked off this chunk while tracking is
 		# re-parented to the ground under it (`adopt_wanderer`), so this chunk can
@@ -7345,6 +7359,14 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, ob
 		# multiplayer identity, and enemy_spawn_selfcheck's sweep classifies
 		# bodies by exactly these three prefixes. A per-species name would buy
 		# nothing and churn both.
+		# A FIELD BRIDGE IS A FLOOR: a boss whose spot is on a deck stands ON it
+		# rather than inside the slab (see field_bridge_stand_y). A river station
+		# dispatches the crocodile, and a river station is exactly where a deck
+		# is, so this is the common case and not a corner of one.
+		local_pos.y = field_bridge_stand_y(
+				chunk_to_world(chunk_pos).x + local_pos.x,
+				chunk_to_world(chunk_pos).z + local_pos.z, local_pos.y)
+
 		croc.name = "BossCrocodile_%d" % cur_i
 		# Chunk-LOCAL position (relative to the chunk center), like every other
 		# chunk-parented node. Default rotation — the wander AI turns it within a
@@ -10289,9 +10311,15 @@ func is_wading_at(world_pos: Vector3) -> bool:
 	IT DOES NOT TOUCH THE SHADER, deliberately. The blue band is still painted
 	under a bridge, because the water really is under the bridge — the CPU/GPU
 	parity contract is about `is_river_at`, which is unchanged, and this is a
-	strictly narrower question that only a body can ask. It also closes, from the
-	other side, the gap spawn_city_bridges_in_chunk's ponytail note names: under a
-	Danube deck y is ~0 so the river bed stays WET, and on it y is 12 so it is dry.
+	strictly narrower question that only a body can ask.
+
+	IT DOES NOT CLOSE BUDAPEST'S UNDER-DECK GAP, which an earlier version of this
+	docstring claimed. Inside the rect `is_river_at` answers
+	`BudapestPlan.danube_wet()`, and that already subtracts every DRY_RECTS row —
+	so the bed under an authored deck is dry before the height is ever compared.
+	Asking the band without the cutout would also flood MARGARET ISLAND, which is
+	the same mechanism holding dry LAND at y = 0; the bridge-rects-only exception
+	that would close it belongs to bead godot-test1-06o.3.
 
 	Cheap in the order that matters: the height compare is free and rejects every
 	body on a deck before the noise evaluation runs.
@@ -12353,6 +12381,38 @@ func field_bridge_surface_y(world_pos: Vector3) -> float:
 		if y > -INF:
 			return y
 	return -INF
+
+
+func field_bridge_stand_y(world_x: float, world_z: float, ground_y: float) -> float:
+	"""
+	The height a BODY spawns at over this world XZ: its usual ground height, or
+	that height above the deck when a field bridge is here.
+
+	@param ground_y: The spawner's own drop height (0.6 for a boss, the
+	                 crocodile's settle height, and so on) — kept, not replaced,
+	                 so the gravity settle each spawner relies on is unchanged.
+
+	A BODY IS DROPPED AT A GROUND HEIGHT AND SETTLED BY GRAVITY, so one placed at
+	0.6 under a deck whose walking surface is 1.6 m up can neither fall onto it
+	nor climb out: it clips through the stone or wanders about underneath (seed
+	19's third road boss stood in exactly that, and all eight of its candidate
+	spots were on the deck).
+
+	A LIFT, NOT A REFUSAL, and the difference is a population. Rejecting the spot
+	is the tidier-looking rule and it is what this shipped for one round — but a
+	boss on a RIVER station is the one path that dispatches the crocodile, its
+	spots are inside the 16 m deck almost by construction, and refusing them
+	deleted every river boss in the world (`enemy_spawn_selfcheck` check 11's
+	non-vacuity assertion caught it). Standing the animal ON the bridge keeps the
+	encounter the road promised.
+
+	Deliberately NOT an `obstacles` footprint: that list is the coin perch rule's
+	too, and a footprint here would make `_settle_coin_y` skip the very coins the
+	deck is supposed to carry. It costs no RNG draw either, so it can move no
+	spawn.
+	"""
+	var surface := field_bridge_surface_y(Vector3(world_x, 0.0, world_z))
+	return ground_y if surface <= -INF else ground_y + surface
 
 
 func _field_bridge_surface_on(row: Dictionary, world_pos: Vector3) -> float:

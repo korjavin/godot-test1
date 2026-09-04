@@ -248,13 +248,29 @@ func _shoot_field_bridge(terrain: Node, player: Node3D) -> void:
 
 
 func _show_widget(group: String, on: bool = true) -> void:
-	"""Flip the CanvasLayer that carries one HUD widget, found by its group."""
+	"""
+	Show ONE HUD widget and nothing else on its layer.
+
+	The HUD is one shared CanvasLayer, so flipping the layer reveals the coin
+	label, the ability dial and the hero row along with the widget asked for —
+	which is three things too many in a shot whose point is the minimap. The
+	layer is turned on and every branch of it that does not lead to the widget is
+	turned off; nothing is restored, because this tool takes its shots and quits.
+	"""
 	for n_v: Variant in get_tree().get_nodes_in_group(group):
 		var n: Node = n_v
+		var branch: Node = n
 		while n != null and not (n is CanvasLayer):
+			branch = n
 			n = n.get_parent()
-		if n != null:
-			(n as CanvasLayer).visible = on
+		if n == null:
+			continue
+		(n as CanvasLayer).visible = on
+		for sibling in (n as CanvasLayer).get_children():
+			if sibling == branch:
+				continue
+			if sibling is CanvasItem:
+				(sibling as CanvasItem).visible = false
 
 
 func _find_biome(terrain: Node, want: int) -> Vector3:

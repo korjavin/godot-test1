@@ -1074,6 +1074,7 @@ func _generate(run_seed: int, chunk_pos: Vector2i, bridges: bool,
 	for entry_v: Variant in batch:
 		entries.append(var_to_bytes(entry_v))
 	var bodies: Array = []
+	var body_pos: Dictionary = {}
 	var coins: Array = []
 	var index := 0
 	for child in parent.get_children():
@@ -1084,11 +1085,14 @@ func _generate(run_seed: int, chunk_pos: Vector2i, bridges: bool,
 				coins.append((child as Node3D).position)
 			continue
 		bodies.append("%s@%s" % [child.name, (child as Node3D).position])
+		body_pos["%s@%s" % [child.name, (child as Node3D).position]] = \
+				(child as Node3D).position
 	body.free()
 	parent.queue_free()
 	return {
 		"terrain": terrain,
 		"obstacle_list": obstacles,
+		"body_pos": body_pos,
 		"batch": entries,
 		"bridge_boxes": bridge_boxes,
 		"obstacles": var_to_bytes(obstacles),
@@ -1306,7 +1310,12 @@ func _stand(player: CharacterBody3D, at: Vector3) -> bool:
 
 ## Seeds check 8 lays real coins on. Fewer than check 1's list because each one
 ## generates whole chunks; 26 is the seed the capsule bug was found on.
-const COIN_SEEDS: Array[int] = [26, 11, 2027, 90210]
+## 19 is the seed whose third road boss stood inside a bridge deck (check 8c).
+const COIN_SEEDS: Array[int] = [26, 11, 2027, 90210, 19]
+
+## How many road bosses check 8c walks per seed. Six covers seed 19's third and
+## every crossing within ~1.8 km of the spawn, which is the road a run walks.
+const BOSS_WALK: int = 6
 
 
 func _check_deck_coins_stand_on_stone() -> void:
@@ -1332,6 +1341,8 @@ func _check_deck_coins_stand_on_stone() -> void:
 	var lifted := 0
 	var floating := 0
 	var capsule_lies := 0
+	var bodies_on_deck := 0
+	var bosses_walked := 0
 	var worst := ""
 
 	for run_seed in COIN_SEEDS:
@@ -1371,6 +1382,33 @@ func _check_deck_coins_stand_on_stone() -> void:
 					seen[at] = true
 					var built := _generate(run_seed, at, true)
 					var origin: Vector3 = terrain.chunk_to_world(at)
+					# 8c — NOTHING WITH FEET STANDS INSIDE THE DECK. A body is
+					# dropped at a ground height and settled by gravity, so one
+					# placed at y = 0.6 under a 1.6 m slab can neither fall onto
+					# it nor climb out: it clips through the stone or wanders
+					# underneath (seed 19's third road boss). The spawners refuse
+					# the SPOT; this is the field-level consequence.
+					for body_v: Variant in built["bodies"]:
+						var label := String(body_v)
+						var at_pos: Vector3 = built["body_pos"][label]
+						var body_world := at_pos + origin
+						# ASKED OF THE SURFACE QUERY, never of the lift the
+						# spawners call: a check that asked the same function
+						# would agree with a broken one.
+						var deck: float = terrain.field_bridge_surface_y(body_world)
+						if deck <= -INF:
+							continue
+						if body_world.y >= deck - EPS:
+							continue   # standing ON the stone, which is the rule
+						bodies_on_deck += 1
+						if worst == "":
+							worst = ("seed %d: %s stands at (%.1f, %.1f) y = %.2f,"
+									% [run_seed, label, body_world.x,
+											body_world.z, body_world.y]
+									+ " UNDER a deck whose surface is %.2f — it"
+											% deck
+									+ " spawns inside the slab and gravity cannot"
+									+ " lift it")
 					for coin_v: Variant in built["coins"]:
 						var coin: Vector3 = coin_v
 						var world := coin + origin
@@ -1400,11 +1438,54 @@ func _check_deck_coins_stand_on_stone() -> void:
 					built["terrain"].free()
 		terrain.free()
 
+	print("field bridges: %d bodies stand UNDER a deck (never on it) over the"
+			% bodies_on_deck + " coin seeds")
 	print("field bridges: %d road coins raised onto a deck over %d seeds, %d of"
 			% [lifted, COIN_SEEDS.size(), floating]
 			+ " them over open air; the rejected capsule test accepts %d points"
 					% capsule_lies + " no slab covers")
 
+	# ...and THE ROAD BOSSES, walked by index rather than found by luck. A boss
+	# owns every BOSS_INTERVAL_STATIONS-th station, so the one that lands on a
+	# crossing is a schedule away from the first bridge of a seed and the chunk
+	# sweep above will never visit it (seed 19's third boss is 150 stations out).
+	# enemy_spawn_selfcheck check 14's idiom: take the boss's own chunk, build it,
+	# and look at what stands there.
+	for run_seed in COIN_SEEDS:
+		var bt := _terrain(run_seed)
+		bt._road_extend_to_x(0.0, TERRAIN_SCRIPT.ROAD_TERMINAL_X)
+		var interval: int = TERRAIN_SCRIPT.BOSS_INTERVAL_STATIONS
+		var last_boss: int = mini(BOSS_WALK, bt._road_terminal_k() / interval)
+		for i in range(1, last_boss + 1):
+			var boss: Dictionary = bt._boss_at(i)
+			var cp: Vector2i = bt.world_to_chunk(boss["positions"][0])
+			var built := _generate(run_seed, cp, false)
+			var origin: Vector3 = bt.chunk_to_world(cp)
+			for label_v: Variant in built["bodies"]:
+				var label := String(label_v)
+				var body_world: Vector3 = built["body_pos"][label] + origin
+				bosses_walked += 1
+				var deck: float = bt.field_bridge_surface_y(body_world)
+				if deck <= -INF or body_world.y >= deck - EPS:
+					continue   # off the deck, or standing on it
+				bodies_on_deck += 1
+				if worst == "":
+					worst = ("seed %d boss %d's chunk: %s stands at (%.1f, %.1f)"
+							% [run_seed, i, label, body_world.x, body_world.z]
+							+ " y = %.2f, UNDER a deck whose surface is %.2f —"
+									% [body_world.y, deck]
+							+ " it spawns inside the slab and gravity cannot"
+							+ " lift it")
+			built["terrain"].free()
+		bt.free()
+	print("field bridges: %d bodies walked in the road bosses' own chunks"
+			% bosses_walked)
+
+	if bodies_on_deck > 0:
+		_fail("%d crocodile(s), hunter(s) or boss(es) spawn UNDER a bridge deck"
+				% bodies_on_deck + " instead of on it — a body dropped at ground"
+				+ " height inside the slab can neither fall onto it nor climb"
+				+ " out. First: %s" % worst)
 	if lifted < 1:
 		_fail("check 8 found no coin standing on a deck at all — it measured"
 				+ " nothing (the road's coins should ride every crossing)")

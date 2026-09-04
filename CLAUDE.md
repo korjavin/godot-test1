@@ -1020,8 +1020,16 @@ Whether a *body* is in the water is the narrower question `is_wading_at(pos)` an
 three callers — the player's `is_wading`, the remote avatar's sink, the crocodile's
 `_tick_river_sink` (plus the minimap's "in a river" readout) — because a fourth caller
 would be a fourth chance to forget the height. It needs **no shader edit**: the water is
-still painted under a bridge, which is correct, and it closes Budapest's known "walk the
-river bed under a deck" gap from the other side (under a 12 m deck y is ~0, so still wet).
+still painted under a bridge, which is correct.
+
+**It does NOT close Budapest's "walk the river bed under a deck" gap, and the reason is one
+layer down**: inside the rect `is_river_at` delegates to `BudapestPlan.danube_wet()`, which
+already subtracts every `DRY_RECTS` row — so the bed under the four authored decks answers
+DRY before the height rule is ever asked, for players, avatars, crocodiles and the map
+alike. Closing it means asking the band WITHOUT the cutout on the low-Y path, and the
+cutout is shared with MARGARET ISLAND, which is dry LAND at y = 0 and must stay dry — so it
+is a bridge-rects-only exception, a Budapest behaviour change, and bead
+`godot-test1-06o.3`'s to make with the not-walkable ruling in hand.
 
 **THE ROAD CROSSES A RIVER ON A BRIDGE, and that is what keeps a run crossable** when
 bead `godot-test1-06o.3` makes a channel not walkable. `spawn_field_bridges_in_chunk`
@@ -1042,6 +1050,14 @@ a slab may only be stretched at a deck-to-deck joint — stretching one over a r
 makes a STEP, which `CharacterBody3D` cannot climb at all; and **road coins on a deck ride
 it** (`_settle_coin_y` still runs first, unlike the city's deck line, because a road boss
 stands on a river crossing and its footprint must still refuse a coin outright).
+
+**A DECK IS A FLOOR FOR BODIES TOO** — `field_bridge_stand_y()`. Every spawner drops a body
+at a ground height and lets gravity settle it, so one placed at 0.6 m under a 1.6 m deck
+can neither fall onto it nor climb out; a boss whose station is a river station has almost
+all its candidate spots inside the deck by construction. It is a LIFT, not a refusal:
+refusing the spot deleted every RIVER boss in the world, which is the one path that
+dispatches the crocodile — `enemy_spawn_selfcheck` check 11's non-vacuity assertion is what
+caught that, one round after the refusal shipped.
 
 **AND THE CORRIDOR IS BRIDGED TOO.** The road's consumers stop at `T`; the player does
 not. `approach_bridges()` samples `BudapestPlan.road_approach_point()` from `T` to the
