@@ -570,6 +570,14 @@ static func is_walkable(x: float, z: float) -> bool:
 
 static func snap_to_grid(x: float, z: float) -> Vector2:
 	## Snaps world XZ to the nearest Budapest street grid intersection.
+	##
+	## NO SPAWNER READS THIS ANY MORE — bead 8gw.23 took it out of
+	## `_find_spawn_segment_near`, because collapsing a whole 62 m cell onto one
+	## corner is half of why the crowd bunched up. It stays because it is the grid
+	## origin written down once (`city_map_panel` names it as the reference for
+	## its own pitch) and because `crowd_selfcheck` check 10's mutation control
+	## rebuilds the retired sampler out of it. Deleting it silently guts that
+	## control, so delete the control with it or leave both alone.
 	var pitch: float = PLAN_SCRIPT.STREET_PITCH
 	var origin_x: float = PLAN_SCRIPT.GATE.x
 	var gx: float = roundf((x - origin_x) / pitch) * pitch + origin_x
