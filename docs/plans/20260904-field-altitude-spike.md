@@ -140,10 +140,10 @@ burning the budget the measurement needs.
 
 ### Task 1: The height function, CPU half, behind the flag
 
-- [ ] add `const FIELD_ALTITUDE: bool = false` to `scripts/endless_terrain.gd` beside
+- [x] add `const FIELD_ALTITUDE: bool = false` to `scripts/endless_terrain.gd` beside
       the biome constants, with a docstring saying it is a SPIKE flag: false = today's
       flat world, byte for byte, and that is the merge condition
-- [ ] add the altitude constants next to it, each with its reason:
+- [x] add the altitude constants next to it, each with its reason:
       `ALT_CELL_SIZE = 260.0` (wavelength, deliberately not `BIOME_CELL_SIZE` so hills
       do not line up with biome edges), `ALT_OFFSET_SALT = Vector2(37.0, 71.0)` (its
       own domain shift on top of `biome_offset`, so altitude never correlates with the
@@ -152,34 +152,34 @@ burning the budget the measurement needs.
       `ALT_AMP_DESERT = 2.5` (dunes, low), `ALT_AMP_PLAINS = 3.5` (gentle),
       `ALT_AMP_CITY = 1.0` (the NOISE city band — near flat, it is meant to be paved),
       `ALT_AMP_FOREST = 6.0`, `ALT_AMP_MOUNTAIN = 22.0`, `ALT_AMP_SNOW = 16.0`
-- [ ] add `_alt_value_noise_pair(p: Vector2) -> float` — two octaves,
+- [x] add `_alt_value_noise_pair(p: Vector2) -> float` — two octaves,
       `_biome_value_noise(p) * (1 - ALT_DETAIL_WEIGHT) + _biome_value_noise(p *
       ALT_DETAIL_SCALE + Vector2(17.0, 31.0)) * ALT_DETAIL_WEIGHT`, **reusing the
       existing `_biome_value_noise` / `_biome_hash2`** — one lattice hash in the whole
       project, which is what keeps the port honest
-- [ ] add `alt_amplitude_at(world_x, world_z) -> float`: the SAME chained-smoothstep
+- [x] add `alt_amplitude_at(world_x, world_z) -> float`: the SAME chained-smoothstep
       ladder `fragment()` already uses on `v_biome`, over the six amplitudes instead of
       six colours, on the same `_biome_noise` value with the same
       `BIOME_*_MAX` thresholds and the same `BIOME_BLEND`. Chained low-to-high, exactly
       the shader's order; a copy of the chain shape, never a new classification
-- [ ] add `height_at(world_x, world_z) -> float`: `if not FIELD_ALTITUDE: return 0.0`
+- [x] add `height_at(world_x, world_z) -> float`: `if not FIELD_ALTITUDE: return 0.0`
       first line; then `p = Vector2(world_x, world_z) / ALT_CELL_SIZE + biome_offset +
       ALT_OFFSET_SALT`, `n = _alt_value_noise_pair(p)`, signed height
       `(n - 0.5) * 2.0 * alt_amplitude_at(...)`, times `_alt_flat_mask(...)` (Task 2).
       **Every step routed through `Vector2` for fp32**, the `_biome_hash2` rule
-- [ ] add the check file `scripts/altitude_selfcheck.gd` with the Sentinel chassis
+- [x] add the check file `scripts/altitude_selfcheck.gd` with the Sentinel chassis
       (`Sentinel.isolate_user_state()` first line of `_initialize()`, `Sentinel.done()`
       per check and before every early exit, `Sentinel.finish(self)` at the report site)
       and **check 1 — THE FLAG IS OFF**: with `FIELD_ALTITUDE` false, `height_at`
       returns exactly `0.0` at 10,000 points spread over ±5 km on three seeds
-- [ ] add **check 2 — fp32 PARITY**: an INDEPENDENT strict-fp32 oracle written inside
+- [x] add **check 2 — fp32 PARITY**: an INDEPENDENT strict-fp32 oracle written inside
       the check straight off the GLSL text (`hash2`/`value_noise` re-derived,
       Vector2-routed), compared against the shipped `_alt_value_noise_pair` at 10,000
       points — bit-exact on the noise, `<= 1e-4 m` on the composed height. Plus a
       **negative control**: an fp64 oracle (bare scalars) must DISAGREE at >1% of
       points, or the check has no teeth. This is the assertion the bead calls "the
       acceptance"
-- [ ] run `godot --headless --path . --script res://scripts/altitude_selfcheck.gd` —
+- [x] run `godot --headless --path . --script res://scripts/altitude_selfcheck.gd` —
       must print `SELFCHECK OK`, exit 0, no `SCRIPT ERROR`
 
 ### Task 2: The four forced-flat zones (CPU half)

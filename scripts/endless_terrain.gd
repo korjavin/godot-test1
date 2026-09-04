@@ -1761,6 +1761,77 @@ const RIVER_HALF_WIDTH: float = 0.007
 ## hard thresholds above, the eye reads this blend.
 const BIOME_BLEND: float = 0.05
 
+# ----------------------------------------------------------------------------
+# FIELD ALTITUDE — THE SPIKE FLAG (bead godot-test1-ope.1)
+# ----------------------------------------------------------------------------
+#
+# THE WORLD IS STILL FLAT. This whole block, every alt_* uniform in
+# ground.gdshader and every `alt_` function below it exist to MEASURE what a
+# vertex-displaced heightfield would cost and what it would break — not to ship
+# one. With FIELD_ALTITUDE false the world is byte for byte today's flat world:
+# height_at() early-returns 0.0 before touching any noise, _ensure_chunk_ground
+# builds the same BoxShape3D it always did, and _apply_biome_shader_params()
+# pushes alt_enabled = 0.0 so the shader displaces nothing. THAT IS THE MERGE
+# CONDITION — the flag ships false and every self-check is green with it false.
+#
+# Flipping it true is how the spike's numbers are taken (see
+# docs/field-altitude-spike.md): the red-check list, the per-chunk collision
+# build cost and the web F3 readings all come from a local flip that is never
+# committed.
+const FIELD_ALTITUDE: bool = false
+
+## THE SELF-CHECK SEAM for the flag above. `altitude_selfcheck.gd` drives both
+## the flag-off and the flag-on paths in ONE process, which a `const` alone
+## cannot express — so alt_enabled() is the single gate every altitude path
+## reads and this var is the only other thing it looks at. THE GAME NEVER WRITES
+## IT: nothing outside a self-check may set it, which is what keeps "the flag is
+## a const" true in every shipped build.
+var alt_force: bool = false
+
+## Altitude noise wavelength in metres. Deliberately NOT BIOME_CELL_SIZE (400):
+## if the hills shared the biome field's wavelength every ridge would line up
+## with a biome edge and the world would read as terraced regions rather than as
+## terrain. 260 m is coprime-ish with 400 and still spans ~5 chunks, so a hill is
+## something you walk over rather than something you step on.
+const ALT_CELL_SIZE: float = 260.0
+
+## Altitude's own domain shift, applied ON TOP of this run's biome_offset. The
+## "own hash stream" rule one feature along: without it the height field and the
+## biome field would be the same noise read twice, so every mountain band would
+## have its peak in exactly the same place as its own classification maximum.
+const ALT_OFFSET_SALT: Vector2 = Vector2(37.0, 71.0)
+
+## The second octave: frequency multiplier and its weight in the 0..1 sum. One
+## broad octave alone gives smooth blobs; 30% of a 3.1x octave is enough to read
+## as ground without adding a slope the walk check would refuse.
+const ALT_DETAIL_SCALE: float = 3.1
+const ALT_DETAIL_WEIGHT: float = 0.3
+
+## The second octave's own lattice shift, so the two octaves do not share their
+## zero-gradient lattice corners (value noise has zero gradient at every corner —
+## see the note on RIVER_HALF_WIDTH — and stacking two octaves that agree about
+## where those corners are gives visible flat spots on every hilltop).
+const ALT_DETAIL_SHIFT: Vector2 = Vector2(17.0, 31.0)
+
+## PER-BIOME AMPLITUDE, in metres: the half-range of the signed height, so a
+## MOUNTAIN point swings +/- 22 m. Read out of the biome field with the exact
+## smoothstep chain fragment() uses for the six ground colours, so the height a
+## band gets and the colour it is painted are the same readout of the same
+## number and cannot disagree at a boundary.
+##
+## The numbers are the SPIKE's, chosen to be legible in a screenshot rather than
+## tuned: desert dunes are low, plains are gentle, the NOISE city band is nearly
+## paved flat (it is meant to be a town, and Budapest itself is forced flat
+## outright by _alt_flat_mask), forest is rolling, mountain is the headline and
+## snow sits just under it. Every one of them is a REPORT item, not a shipped
+## tuning.
+const ALT_AMP_DESERT: float = 2.5
+const ALT_AMP_PLAINS: float = 3.5
+const ALT_AMP_CITY: float = 1.0
+const ALT_AMP_FOREST: float = 6.0
+const ALT_AMP_MOUNTAIN: float = 22.0
+const ALT_AMP_SNOW: float = 16.0
+
 ## The sizes of ground.gdshader's two Budapest array uniforms, restated here for
 ## the ONE thing GDScript can do that GLSL cannot: fail loudly. A GLSL array is a
 ## fixed size, so the plan's Danube and its dry rects have to be padded to it —
@@ -9401,6 +9472,129 @@ func river_field_at(world_x: float, world_z: float) -> float:
 	tracer needs the unmasked number (it masks the disc itself, sample by sample).
 	"""
 	return _biome_noise(world_x, world_z) - RIVER_LEVEL
+
+
+# ============================================================================
+# FIELD ALTITUDE (the SPIKE — see FIELD_ALTITUDE at the top of the file)
+# ============================================================================
+#
+# The same shape as the biome field above and for the same reasons: a PURE
+# function of (world x, world z, run_seed) with no RNG draw, no hash stream and
+# no state, so a revisited chunk regenerates byte-identically; and a two-language
+# twin in ground.gdshader that is EDITED TOGETHER with this one, because the
+# ground you see displaced and the ground you stand on have to be the same
+# surface. It reuses _biome_value_noise / _biome_hash2 rather than bringing its
+# own lattice hash — one hash in the whole project is what keeps the fp32 port
+# honest, and it means the height field inherits the mod(289) wrap that stops
+# the noise collapsing out at kilometre X.
+
+func alt_enabled() -> bool:
+	"""
+	THE ONE GATE every altitude path reads.
+
+	@return: true when the heightfield is live.
+
+	FIELD_ALTITUDE is the shipped answer (false, always) and `alt_force` is the
+	self-check's, so `altitude_selfcheck.gd` can drive both halves in one process
+	without editing a const. Nothing in the game writes alt_force.
+	"""
+	return FIELD_ALTITUDE or alt_force
+
+
+func _alt_value_noise_pair(p: Vector2) -> float:
+	"""
+	The altitude field's two octaves — the GDScript twin of `alt_value_noise_pair`
+	in ground.gdshader.
+
+	@param p: Sample point in altitude-noise space (world metres / ALT_CELL_SIZE,
+	          already domain-shifted).
+	@return: Value in 0..1 (the two weights sum to 1, so the sum cannot leave the
+	         range either octave lives in).
+
+	EVERY STEP ROUTED THROUGH Vector2, which is the only fp32 cast GDScript has —
+	the whole argument is in _biome_hash2's docstring and it applies with more
+	force here, because a hash difference that moved the WATERLINE by metres would
+	move a MOUNTAIN by metres. Do not simplify a line of this back to scalar
+	arithmetic: bare GDScript floats are f64 and the GPU is f32, and the two give
+	different fields rather than the same field at different precisions.
+	"""
+	# The complement is taken through fp32 too: the shader receives
+	# alt_detail_weight as a float32 uniform and computes 1.0 - it in fp32, so
+	# rounding the pair here is what makes the two weights bit-identical.
+	var w := Vector2(1.0 - ALT_DETAIL_WEIGHT, ALT_DETAIL_WEIGHT)
+	var broad := Vector2(_biome_value_noise(p) * w.x, 0.0).x
+	var detail := Vector2(_biome_value_noise(p * ALT_DETAIL_SCALE + ALT_DETAIL_SHIFT) * w.y, 0.0).x
+	return Vector2(broad + detail, 0.0).x
+
+
+func _alt_amplitude(biome_value: float) -> float:
+	"""
+	How tall the ground is allowed to be where the biome field reads
+	`biome_value` — the GDScript twin of `alt_amplitude` in ground.gdshader.
+
+	@param biome_value: A _biome_noise() readout (0..1).
+	@return: The half-range of the signed height, in metres.
+
+	IT IS fragment()'s COLOUR CHAIN WITH SIX METRES INSTEAD OF SIX COLOURS —
+	chained low-to-high over the same BIOME_*_MAX thresholds with the same
+	BIOME_BLEND radius, in the same order (desert, plains, city, forest, mountain,
+	snow). That is deliberate and it is the cheap half of the parity contract: the
+	amplitude a band gets is the same readout of the same number as the colour it
+	is painted, so a band cannot be tall where it looks like sand. A NEW BAND is
+	one extra lerpf here and one extra mix() there, exactly as it is for colour.
+	"""
+	var amp := ALT_AMP_DESERT
+	amp = lerpf(amp, ALT_AMP_PLAINS,
+			smoothstep(BIOME_DESERT_MAX - BIOME_BLEND, BIOME_DESERT_MAX + BIOME_BLEND, biome_value))
+	amp = lerpf(amp, ALT_AMP_CITY,
+			smoothstep(BIOME_PLAINS_MAX - BIOME_BLEND, BIOME_PLAINS_MAX + BIOME_BLEND, biome_value))
+	amp = lerpf(amp, ALT_AMP_FOREST,
+			smoothstep(BIOME_CITY_MAX - BIOME_BLEND, BIOME_CITY_MAX + BIOME_BLEND, biome_value))
+	amp = lerpf(amp, ALT_AMP_MOUNTAIN,
+			smoothstep(BIOME_FOREST_MAX - BIOME_BLEND, BIOME_FOREST_MAX + BIOME_BLEND, biome_value))
+	amp = lerpf(amp, ALT_AMP_SNOW,
+			smoothstep(BIOME_MOUNTAIN_MAX - BIOME_BLEND, BIOME_MOUNTAIN_MAX + BIOME_BLEND, biome_value))
+	return amp
+
+
+func alt_amplitude_at(world_x: float, world_z: float) -> float:
+	"""
+	_alt_amplitude() at a world position — the public readout, for a check or a
+	report that wants the amplitude without composing a height.
+
+	@param world_x, world_z: World-space point (metres).
+	@return: The band's half-range in metres at that point.
+
+	height_at() deliberately does NOT go through here: it already has the biome
+	value in hand, and a second _biome_noise() evaluation per height sample would
+	be paid three times over per vertex once the shader's normals arrive.
+	"""
+	return _alt_amplitude(_biome_noise(world_x, world_z))
+
+
+func height_at(world_x: float, world_z: float) -> float:
+	"""
+	THE FIELD'S ALTITUDE at a world position — the GDScript twin of `field_height`
+	in ground.gdshader, and the one function every altitude consumer reads.
+
+	@param world_x, world_z: World-space point (metres).
+	@return: Ground height in metres, signed around 0. Exactly 0.0 everywhere when
+	         the spike flag is off, and exactly 0.0 inside every authored zone.
+
+	Pure, allocation-free and RNG-free — the biome field's contract, because it is
+	the same field read a third way.
+	"""
+	# THE FLAG, FIRST LINE AND BEFORE ANY NOISE. With the spike off this is the
+	# whole function, so the flat world costs one bool compare and not one hash.
+	if not alt_enabled():
+		return 0.0
+	var p := Vector2(world_x, world_z) / ALT_CELL_SIZE + biome_offset + ALT_OFFSET_SALT
+	var n := _alt_value_noise_pair(p)
+	# 0..1 -> -1..1, so the field cuts valleys as well as raising hills and its
+	# mean stays at the y = 0 the whole game is written against.
+	var signed_unit := Vector2((n - 0.5) * 2.0, 0.0).x
+	return Vector2(signed_unit * _alt_amplitude(_biome_noise(world_x, world_z)), 0.0).x
+
 
 
 func in_budapest(world_x: float, world_z: float) -> bool:
