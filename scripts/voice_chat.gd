@@ -120,6 +120,13 @@ const MIC_DENIED: int = 3
 ## and the panel's `Label` auto-translates it.
 const MIC_BLOCKED_STATUS: String = "Voice: microphone blocked — listening only"
 
+## Most relayed payloads held while the browser module is starting. See
+## `_on_voice_relay()` for why the window exists; the cap is here because
+## everything in that queue is peer input and an incumbent could otherwise be
+## made to buffer without limit by a joiner that simply never finishes joining.
+## An offer plus a few ICE batches per incumbent, against a 4-peer room.
+const MAX_PENDING_RELAYS: int = 48
+
 ## The browser half, installed once at `window.ckVoice` on the first room join —
 ## the `intro_video.gd` idiom: one GD const string, one `JavaScriptBridge.eval`,
 ## all the state on `window` where the media actually lives.
@@ -143,7 +150,11 @@ const VOICE_JS: String = """
 (function () {
 	if (window.ckVoice) { return 1; }
 
-	var S = { self: '', cfg: null, peers: {}, stream: null, mic: 0, send: null, frames: 0, retry: 0 };
+	/* `gen` is the ROOM GENERATION, bumped by stop(). A getUserMedia prompt can
+	   sit on screen for as long as the player likes, so its promise routinely
+	   outlives the room it was asked for; every continuation compares against it
+	   rather than trusting that it is still wanted. */
+	var S = { self: '', cfg: null, peers: {}, stream: null, mic: 0, send: null, frames: 0, retry: 0, gen: 0 };
 
 	/* One relayed frame out. Counted for bead .4's readout — the lobby meters
 	   every sender at 120 frames burst / 30 per second (server/conn.go), which is
@@ -278,12 +289,22 @@ const VOICE_JS: String = """
 		if (S.mic) { return 0; }
 		if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { S.mic = 3; return 0; }
 		S.mic = 1;
+		var gen = S.gen;
 		/* NOISE SUPPRESSION IS THE BROWSER'S OWN — three constraints, no DSP of
 		   ours (epic ruling: an RNNoise worklet only if .4 measures these red). */
 		navigator.mediaDevices.getUserMedia({
 			audio: { noiseSuppression: true, echoCancellation: true, autoGainControl: true },
 			video: false
 		}).then(function (st) {
+			/* A grant that lands after the room went away RELEASES the device
+			   instead of adopting it: stop() cannot cancel this promise, and a
+			   tab left recording outside the room it asked for is the worst
+			   possible way to get this wrong. */
+			if (gen !== S.gen) {
+				var stale = st.getTracks();
+				for (var j = 0; j < stale.length; j++) { stale[j].stop(); }
+				return;
+			}
 			S.stream = st;
 			/* THE MIC STARTS OFF. The track exists on every connection so .2's V
 			   key is one flag flip, but it transmits silence until then. */
@@ -291,7 +312,9 @@ const VOICE_JS: String = """
 			for (var i = 0; i < ts.length; i++) { ts[i].enabled = false; }
 			S.mic = 2;
 			for (var k in S.peers) { attach(S.peers[k]); }
-		}).catch(function () { S.mic = 3; });
+		/* A late REFUSAL is stale too — left alone it would suppress the next
+		   room's prompt and report a denial nobody made this time. */
+		}).catch(function () { if (gen === S.gen) { S.mic = 3; } });
 		return 1;
 	}
 
@@ -342,6 +365,7 @@ const VOICE_JS: String = """
 	}
 
 	function stop() {
+		S.gen = S.gen + 1;
 		for (var k in S.peers) { close(k); }
 		S.peers = {};
 		/* Release the capture device too, or the tab keeps its recording
@@ -395,6 +419,10 @@ var _mp: Node = null
 ## True while the browser module is running for a room — i.e. between the first
 ## tick that had both a room and an ICE config, and the teardown.
 var _running: bool = false
+
+## Validated relays that arrived before the browser module was running, as
+## `[from, payload]` pairs in arrival order. See `_on_voice_relay()`.
+var _pending: Array = []
 
 ## The member list last pushed into JS, as the JSON we pushed, so the diff costs
 ## a string compare per poll and no allocation when nothing changed.
@@ -462,6 +490,10 @@ func _tick() -> void:
 		return
 	if not _running and not _start(ice):
 		return
+	# BEFORE `_push_members()` on purpose: a replayed payload from somebody who
+	# has since left opens a connection in the module, and the membership diff
+	# that runs next is what closes it again.
+	_flush_pending()
 	_push_members()
 	_report_mic()
 
@@ -534,6 +566,10 @@ func _teardown() -> void:
 	device. Idempotent, and called from both ends — the poll noticing the room is
 	gone, and this node leaving the tree.
 	"""
+	# ABOVE the `_running` guard: a room can end while the start-up window is
+	# still open, and a queue that survived it would replay the last room's
+	# handshake into the next one.
+	_pending.clear()
 	if not _running:
 		return
 	_running = false
@@ -564,13 +600,35 @@ func _on_js_send(args: Array) -> void:
 	_mp.send_voice(str(args[0]), parsed as Dictionary)
 
 
+func _flush_pending() -> void:
+	"""Replay what arrived during the start-up window, in arrival order."""
+	if _pending.is_empty():
+		return
+	var queued: Array = _pending
+	_pending = []
+	for entry: Array in queued:
+		_ck.recv(str(entry[0]), JSON.stringify(entry[1]))
+
+
 func _on_voice_relay(from: String, payload: Dictionary) -> void:
 	"""
 	INBOUND. Already through `MpCodec.decode_vc()` and already proved to come from
 	a current room member — `MpManager._forward_voice()` owns both gates, so the
 	only thing left here is to get it across the bridge.
+
+	EXCEPT IN ONE WINDOW, AND DROPPING IT THERE DEADLOCKS THE PAIR (codex review
+	2026-09-04). An incumbent sees a joiner the moment the lobby says so and
+	offers straight away; the joiner's own module cannot start until its `/ice`
+	round trip lands, which is later. Discarded, that offer never comes again —
+	`onnegotiationneeded` fired once — and when the joiner then offers, an
+	IMPOLITE incumbent reads its own unanswered local offer as a collision and
+	ignores the joiner's too. Neither side ever answers. So the window is
+	BUFFERED, `MpManager._pending_signals`'s answer to the same shape of race one
+	signalling family along.
 	"""
 	if not _running or _ck == null:
+		if _mp != null and is_instance_valid(_mp) and _pending.size() < MAX_PENDING_RELAYS:
+			_pending.append([from, payload])
 		return
 	_ck.recv(from, JSON.stringify(payload))
 
