@@ -1220,8 +1220,10 @@ crocodile's own collision handling.
 **Species are data, not subclasses.** Every trait that makes one predator feel different —
 speeds, detection, wander rhythm, obstacle feelers, waddle/bite geometry, river sink, and
 the `coin_setback` bill losing to it costs — is a
-row of the `SPECIES` const dict of plain dicts at the top of `piglet_crocodile_ai.gd`, the
-same shape as `Progression.SKILL_TREES`. An instance's `species` field is a plain public
+row of the `SPECIES` const dict of plain dicts, which lives in `scripts/species_table.gd`
+(`class_name SpeciesTable`, bd `godot-test1-ftn.10`) and is aliased back into
+`piglet_crocodile_ai.gd` as `const SPECIES := SpeciesTable.SPECIES`, so every reader still
+spells it `SPECIES`. Same shape as `Progression.SKILL_TREES`. An instance's `species` field is a plain public
 var assigned **before `add_child`** (same call-order contract as `setup_as_boss()`), and
 `_ready()` resolves it once into `spec`, which the per-frame paths read. A new predator is
 a new entry there plus at most one new arm in a `match` — never a new script and never a
