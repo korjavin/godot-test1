@@ -184,34 +184,47 @@ burning the budget the measurement needs.
 
 ### Task 2: The four forced-flat zones (CPU half)
 
-- [ ] add `_alt_flat_mask(world_x, world_z) -> float` — the PRODUCT of four 0..1
+- [x] add `_alt_flat_mask(world_x, world_z, biome_value) -> float` — the PRODUCT of four 0..1
       factors, each a smoothstep skirt so the ground never steps. Returns 1.0 (no
       flattening) in open field. One function, four clauses, each commented with the
       thing it protects
-- [ ] clause 1 — **BUDAPEST**: 0 inside `BudapestPlan.rect()`, rising to 1 at
+- [x] clause 1 — **BUDAPEST**: 0 inside `BudapestPlan.rect()`, rising to 1 at
       `ALT_CITY_SKIRT = 120.0` m outside it. Use the standard axis-aligned box
       distance (`d = max(rect_min - p, p - rect_max)`, outside distance
       `length(max(d, 0))`). Delegate the rect to `BudapestPlan`, never restate it —
       `in_budapest()`'s rule. NOTE in the comment: the authored Danube and every
       `DRY_RECTS` row live INSIDE the rect, so they need no clause of their own
-- [ ] clause 2 — **THE HQ DISC**: 0 within `TOWER_RADIUS` of `tower_site()`, rising to
+- [x] clause 2 — **THE HQ DISC**: 0 within `TOWER_RADIUS` of `tower_site()`, rising to
       1 at `+ ALT_TOWER_SKIRT = 60.0` m. Shares `TOWER_RADIUS`; states no distance of
       its own — the shell's rule
-- [ ] clause 3 — **EVERY RIVER BAND**: 0 where `absf(_biome_noise(x,z) - RIVER_LEVEL)
+- [x] clause 3 — **EVERY RIVER BAND**: 0 where `absf(_biome_noise(x,z) - RIVER_LEVEL)
       < RIVER_HALF_WIDTH`, rising to 1 at `RIVER_HALF_WIDTH * ALT_RIVER_SKIRT_K`
       (`= 3.5`). **The skirt is in FIELD units, not metres**, and that is the point:
       the flat edge and the wading edge are then readouts of the same number, so
       `is_river_at`'s XZ-only contract survives and water stays at y = 0
-- [ ] clause 4 — **THE COIN ROAD CORRIDOR**: 0 within `ALT_ROAD_FLAT_HALF = 22.0` m of
+- [x] clause 4 — **THE COIN ROAD CORRIDOR**: 0 within `ALT_ROAD_FLAT_HALF = 22.0` m of
       the coarse road polyline (Task 3), rising to 1 at `+ ALT_ROAD_SKIRT = 40.0` m.
       22 m clears `road_width_max/2` and every road-clearance constant
       (`MOUNTAIN_ROAD_CLEARANCE` 24 is the widest, so the corridor sits just inside it)
-- [ ] add **check 3 — THE FLAT ZONES HOLD**: with the flag forced ON in the check,
+- [x] add **check 3 — THE FLAT ZONES HOLD**: with the flag forced ON in the check,
       2,000 points sampled inside Budapest's rect, inside the HQ disc, inside sampled
       river bands and inside the road corridor must return exactly `0.0`; plus the
       **negative control** — points one full skirt outside each zone must be non-zero
       somewhere, or "flat everywhere" would pass
-- [ ] run the check — `SELFCHECK OK`, exit 0, no `SCRIPT ERROR`
+- [x] run the check — `SELFCHECK OK`, exit 0, no `SCRIPT ERROR`
+
+  NOTE (deviation, deliberate): the mask takes the `_biome_noise` value as a third
+  argument rather than re-deriving it, matching the shader twin's
+  `alt_flat_mask(vec2 w, float b)` signature exactly — `height_at` already has the
+  value in hand for the amplitude ladder, and the vertex shader spends it three
+  times over for the finite-difference normals.
+
+  NOTE (deviation, deliberate): clause 4 currently reads the shipped
+  `_road_lateral_distance` (station centres 6 m apart — a polyline in all but
+  name) instead of a corridor of its own. Task 3 replaces it with the coarse
+  cached polyline the GPU can also read; a `ponytail:` comment on the clause
+  records the ceiling. Check 3's road leg walks the real station cache either
+  side of the origin, so it will keep asserting the same thing after the swap.
 
 ### Task 3: The road corridor as a shared coarse polyline
 

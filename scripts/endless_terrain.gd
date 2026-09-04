@@ -1832,6 +1832,44 @@ const ALT_AMP_FOREST: float = 6.0
 const ALT_AMP_MOUNTAIN: float = 22.0
 const ALT_AMP_SNOW: float = 16.0
 
+## THE FOUR FORCED-FLAT ZONES' SKIRTS (see _alt_flat_mask below). Each zone is a
+## hard inner region where the ground is held at exactly y = 0, plus a smoothstep
+## SKIRT out to the number here — the ground has to arrive at the authored zone
+## already level, because a step at the boundary is a wall the player walks into
+## and a seam the shader draws a crease along.
+
+## Budapest: 120 m outside BudapestPlan.rect(). Wide because the city's own edge
+## is a street grid the player walks out of — the skirt has to be longer than the
+## STREET_PITCH (62 m) it hands over to, or the last block sits on a slope.
+const ALT_CITY_SKIRT: float = 120.0
+
+## The HQ disc: 60 m outside TOWER_RADIUS. Shorter than the city's because the
+## thing being protected is one building on a 65 m disc rather than a 2.2 km grid,
+## and the tower's own approach is already clear of everything (tower_excludes).
+const ALT_TOWER_SKIRT: float = 60.0
+
+## Every river band: the skirt is expressed in FIELD units — a multiple of
+## RIVER_HALF_WIDTH — and NOT in metres, which is the whole trick. is_river_at()
+## reads the same |_biome_noise - RIVER_LEVEL| < RIVER_HALF_WIDTH test, so the
+## flat edge and the wading edge are two readouts of ONE number and can never
+## disagree: water stays at y = 0 and the XZ-only wading contract survives with no
+## edit anywhere. 3.5 gives a bank about two and a half river-widths wide, which
+## at the field's local gradient is a shallow ramp rather than a levee.
+const ALT_RIVER_SKIRT_K: float = 3.5
+
+## The coin road corridor: flat within 22 m of the centreline, level by 40 m
+## beyond that. 22 clears road_width_max/2 and sits just inside the widest road
+## clearance any spawner asks for (MOUNTAIN_ROAD_CLEARANCE 24), so the strip that
+## is held flat is a strip nothing is allowed to stand in anyway.
+##
+## THE ROAD IS THE SPIKE'S CONTROL and that is why it is flattened at all (the
+## bead offered "accept the road on hills" as the alternative). The coin road is
+## where the player walks, so a hilly road sends coin settling, road bosses and
+## road clearance red in the same run and the red list stops telling you which
+## breakage is the heightfield's.
+const ALT_ROAD_FLAT_HALF: float = 22.0
+const ALT_ROAD_SKIRT: float = 40.0
+
 ## The sizes of ground.gdshader's two Budapest array uniforms, restated here for
 ## the ONE thing GDScript can do that GLSL cannot: fail loudly. A GLSL array is a
 ## fixed size, so the plan's Danube and its dry rects have to be padded to it —
@@ -9572,6 +9610,75 @@ func alt_amplitude_at(world_x: float, world_z: float) -> float:
 	return _alt_amplitude(_biome_noise(world_x, world_z))
 
 
+func _alt_flat_mask(world_x: float, world_z: float, biome_value: float) -> float:
+	"""
+	HOW MUCH ALTITUDE THIS POINT IS ALLOWED — the GDScript twin of `alt_flat_mask`
+	in ground.gdshader.
+
+	@param world_x, world_z: World-space point (metres).
+	@param biome_value: The _biome_noise() readout at that point. PASSED IN, not
+	                    re-derived: height_at() already has it for the amplitude
+	                    ladder, and the shader twin takes it as `b` for the same
+	                    reason — the vertex shader evaluates it once and spends it
+	                    three times over for the finite-difference normals.
+	@return: 1.0 in open field (full altitude), 0.0 inside any authored zone, and
+	         a smoothstep ramp across each zone's skirt.
+
+	IT IS A PRODUCT OF FOUR INDEPENDENT 0..1 FACTORS, so a point in two zones is
+	FLAT, never twice flat — the four clauses cannot fight, and adding a fifth zone
+	one day is one more factor and no re-derivation of the other four.
+
+	THE ZONES ARE THE AUTHORED WORLD, and holding them at exactly 0.0 is what makes
+	the spike's red-check list readable: Budapest, the tower interior and every
+	wading test are written against a flat world, so if one of them goes red with
+	the flag on, the MASK is wrong and the check is right (plan, Task 2).
+	"""
+	var p := Vector2(world_x, world_z)
+
+	# CLAUSE 1 — BUDAPEST. The authored city, its plateaus, its bridge decks and
+	# every DRY_RECTS row live INSIDE this rect, so none of them needs a clause of
+	# its own. The rect is BudapestPlan's number and is never restated here — the
+	# in_budapest() rule, one function along.
+	var city: Rect2 = BudapestPlan.rect()
+	# The standard axis-aligned outside distance: per-axis overshoot, clamped at
+	# zero so an inside point measures 0 on both axes rather than a negative.
+	var city_d := Vector2(
+			maxf(maxf(city.position.x - p.x, p.x - city.end.x), 0.0),
+			maxf(maxf(city.position.y - p.y, p.y - city.end.y), 0.0)).length()
+	var mask := smoothstep(0.0, ALT_CITY_SKIRT, city_d)
+
+	# CLAUSE 2 — THE HQ DISC. Shares TOWER_RADIUS and states no distance of its
+	# own, the shell's rule: the building is not batched, not chunk-parented and
+	# not rebuilt, so the ground under it may not move by so much as a millimetre.
+	var site := tower_site()
+	var tower_d := p.distance_to(Vector2(site.x, site.z))
+	mask *= smoothstep(TOWER_RADIUS, TOWER_RADIUS + ALT_TOWER_SKIRT, tower_d)
+
+	# CLAUSE 3 — EVERY RIVER BAND, in FIELD units. This is the same
+	# |_biome_noise - RIVER_LEVEL| < RIVER_HALF_WIDTH test is_river_at() makes, so
+	# the water's edge and the flat edge are one number: rivers stay at y = 0 and
+	# wading stays XZ-only with no edit. Deliberately the RAW field, exactly as the
+	# shader has it in `b` — the tower and city overrides is_river_at() applies are
+	# readout policy, and both of those zones are already flattened above.
+	mask *= smoothstep(RIVER_HALF_WIDTH, RIVER_HALF_WIDTH * ALT_RIVER_SKIRT_K,
+			absf(biome_value - RIVER_LEVEL))
+
+	# CLAUSE 4 — THE COIN ROAD CORRIDOR. See ALT_ROAD_FLAT_HALF for why the road
+	# is the spike's control.
+	#
+	# ponytail: this reads the shipped _road_lateral_distance (station centres,
+	# 6 m apart — a polyline in all but name) rather than a corridor of its own.
+	# KNOWN CEILING, and Task 3 of the plan is the upgrade: the GPU cannot walk the
+	# station cache, so parity needs a COARSE polyline pushed as a uniform array and
+	# read by both sides. Until then clause 4 is CPU-only and this function extends
+	# the station cache as a side effect, which height_at()'s "pure and
+	# allocation-free" docstring does not want.
+	var road_d := _road_lateral_distance(world_x, world_z, ALT_ROAD_FLAT_HALF + ALT_ROAD_SKIRT)
+	mask *= smoothstep(ALT_ROAD_FLAT_HALF, ALT_ROAD_FLAT_HALF + ALT_ROAD_SKIRT, road_d)
+
+	return mask
+
+
 func height_at(world_x: float, world_z: float) -> float:
 	"""
 	THE FIELD'S ALTITUDE at a world position — the GDScript twin of `field_height`
@@ -9581,8 +9688,10 @@ func height_at(world_x: float, world_z: float) -> float:
 	@return: Ground height in metres, signed around 0. Exactly 0.0 everywhere when
 	         the spike flag is off, and exactly 0.0 inside every authored zone.
 
-	Pure, allocation-free and RNG-free — the biome field's contract, because it is
-	the same field read a third way.
+	RNG-free and deterministic — the biome field's contract, because it is the same
+	field read a third way. NOT yet allocation-free: clause 4 of _alt_flat_mask
+	grows the road station cache (pure in `k`, so the ANSWER is unchanged and
+	load-order independent), which Task 3's coarse polyline removes.
 	"""
 	# THE FLAG, FIRST LINE AND BEFORE ANY NOISE. With the spike off this is the
 	# whole function, so the flat world costs one bool compare and not one hash.
@@ -9593,7 +9702,12 @@ func height_at(world_x: float, world_z: float) -> float:
 	# 0..1 -> -1..1, so the field cuts valleys as well as raising hills and its
 	# mean stays at the y = 0 the whole game is written against.
 	var signed_unit := Vector2((n - 0.5) * 2.0, 0.0).x
-	return Vector2(signed_unit * _alt_amplitude(_biome_noise(world_x, world_z)), 0.0).x
+	# ONE _biome_noise() evaluation, spent twice: the amplitude ladder and the flat
+	# mask's river clause are both readouts of the same number, and the shader twin
+	# passes it to both for the same reason.
+	var b := _biome_noise(world_x, world_z)
+	var h := Vector2(signed_unit * _alt_amplitude(b), 0.0).x
+	return Vector2(h * _alt_flat_mask(world_x, world_z, b), 0.0).x
 
 
 

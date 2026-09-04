@@ -7,8 +7,8 @@ extends SceneTree
 ## shape as tower_site_selfcheck.gd, and it exists for the same reason: every way
 ## of breaking a noise field looks like ordinary scenery from the outside.
 ##
-## WHAT IT GUARDS. The spike ships behind `FIELD_ALTITUDE = false`, so it has two
-## halves and this file asserts both:
+## WHAT IT GUARDS. The spike ships behind `FIELD_ALTITUDE = false`, so it has
+## three halves and this file asserts all of them:
 ##
 ##   1. THE FLAG IS OFF, AND OFF MEANS EXACTLY 0.0. Not "small", not "flat
 ##      enough" — the flat world is what ships, every other self-check in the
@@ -22,6 +22,13 @@ extends SceneTree
 ##      Vector2 (the only fp32 cast GDScript has) — and check 2 is what proves
 ##      that routing is still there, by re-deriving the field a second time
 ##      straight off the GLSL text and demanding bit-exact agreement.
+##   3. THE AUTHORED ZONES DO NOT MOVE. Budapest, the HQ disc, every river band
+##      and the coin road corridor are held at EXACTLY 0.0 by _alt_flat_mask, so
+##      the authored world migrates by not migrating and the spike's red-check
+##      list stays readable — a red budapest_selfcheck with the flag on means the
+##      MASK is wrong, never the check. Check 3, with a per-zone negative control
+##      one full skirt outside, because "flat everywhere" also passes a mask that
+##      returns zero.
 ##
 ## CHECK 2 CARRIES ITS OWN NEGATIVE CONTROL, and it is the point of the check: a
 ## naive f64 oracle (bare scalars, no Vector2 anywhere) must DISAGREE with the
@@ -71,6 +78,21 @@ const F64_DISAGREE_MIN_FRACTION: float = 0.01
 ## above HEIGHT_EPSILON, so the two legs can never both pass on the same noise.
 const F64_DISAGREE_EPSILON: float = 1e-3
 
+## Samples per zone in check 3, each leg. 2,000 over a zone is dense enough that
+## a mask clause with a hole in it (a sign flip, a skirt read as an inner radius)
+## is hit many times over, and small enough that the four legs plus their controls
+## stay well under a second.
+const FLAT_SAMPLES: int = 2000
+
+## How far past a zone's own skirt the negative control samples, in metres. One
+## full skirt again: far enough that smoothstep has certainly reached 1.0, so the
+## control is measuring "the field is alive out here" and not the ramp.
+const FLAT_CONTROL_MARGIN: float = 300.0
+
+## How many road stations either side of the origin check 3 walks. The corridor is
+## a curve, so sampling it means sampling the ROAD rather than a box around it.
+const FLAT_ROAD_STATIONS: int = 40
+
 var _failures: Array[String] = []
 
 
@@ -89,6 +111,7 @@ func _boot() -> void:
 func _run() -> void:
 	_check_flag_is_off()
 	_check_fp32_parity()
+	_check_flat_zones()
 	_report()
 
 
@@ -174,13 +197,22 @@ func _check_fp32_parity() -> void:
 			# The composed height, straight off the plan's recipe, against the
 			# shipped one. The amplitude ladder is re-derived too.
 			var amp: float = _oracle_amplitude(t._biome_noise(x, z), t)
-			var expected: float = (oracle - 0.5) * 2.0 * amp
+			# The flat mask rides along from the SHIPPED function, deliberately:
+			# check 2 is about the NOISE PORT, and check 3 is the mask's own
+			# assertion (with its own negative control). Re-deriving the four zones
+			# here would buy a second copy of them and no extra coverage.
+			var flat: float = t._alt_flat_mask(x, z, t._biome_noise(x, z))
+			var expected: float = (oracle - 0.5) * 2.0 * amp * flat
 			var got: float = t.height_at(x, z)
 			var delta := absf(got - expected)
 			worst_height = maxf(worst_height, delta)
 			if delta > HEIGHT_EPSILON:
 				height_mismatches += 1
 
+			# The control compares the NOISE, so it is measured on the unmasked
+			# height — a point inside an authored zone is 0.0 by construction on
+			# both sides and would dilute the fraction with agreements that say
+			# nothing about the port.
 			if absf(_oracle_pair_f64(p, t) - shipped) * amp > F64_DISAGREE_EPSILON:
 				f64_disagreements += 1
 
@@ -198,6 +230,136 @@ func _check_fp32_parity() -> void:
 			seed_value, worst_height, fraction * 100.0])
 		t.free()
 	Sentinel.done("fp32_parity")
+
+
+func _check_flat_zones() -> void:
+	"""
+	Check 3. THE FOUR FORCED-FLAT ZONES HOLD.
+
+	With the flag forced ON, every point inside an authored zone must read EXACTLY
+	0.0 — not "nearly flat". The authored world (Budapest's 2,025 chunk cells, the
+	HQ shell and its interior, every wading band, the coin road the player actually
+	walks) is written against y = 0, and the whole point of Task 2 is that those
+	consumers migrate by NOT migrating.
+
+	EACH LEG CARRIES ITS OWN NEGATIVE CONTROL, one full skirt plus
+	FLAT_CONTROL_MARGIN outside the zone, where SOMETHING must be non-zero. Without
+	it a mask that returned 0.0 everywhere — or a height function that never got
+	past the flag — would pass every positive leg and prove nothing.
+	"""
+	for seed_value: int in SEEDS:
+		var t := _make_terrain(seed_value)
+		t.alt_force = true
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+
+		# --- ZONE 1: BUDAPEST -------------------------------------------------
+		var city: Rect2 = BudapestPlan.rect()
+		var inside: Array[Vector2] = []
+		for i in FLAT_SAMPLES:
+			inside.append(Vector2(
+					rng.randf_range(city.position.x, city.end.x),
+					rng.randf_range(city.position.y, city.end.y)))
+		_assert_flat(t, seed_value, "budapest", inside)
+		# Control: due west of the rect, past the skirt. West because that is the
+		# side the player walks in from, so it is the ramp anyone would ever see.
+		var city_out: Array[Vector2] = []
+		for i in FLAT_SAMPLES:
+			city_out.append(Vector2(
+					city.position.x - t.ALT_CITY_SKIRT - rng.randf_range(1.0, FLAT_CONTROL_MARGIN),
+					rng.randf_range(city.position.y, city.end.y)))
+		_assert_alive(t, seed_value, "budapest", city_out)
+
+		# --- ZONE 2: THE HQ DISC ----------------------------------------------
+		var site: Vector3 = t.tower_site()
+		var centre := Vector2(site.x, site.z)
+		var disc: Array[Vector2] = []
+		for i in FLAT_SAMPLES:
+			# sqrt on the radius so the samples are uniform over the AREA and do
+			# not pile up at the middle, where any mask is trivially zero.
+			var r: float = sqrt(rng.randf()) * t.TOWER_RADIUS
+			var a: float = rng.randf_range(0.0, TAU)
+			disc.append(centre + Vector2(cos(a), sin(a)) * r)
+		_assert_flat(t, seed_value, "hq disc", disc)
+		var disc_out: Array[Vector2] = []
+		for i in FLAT_SAMPLES:
+			var r2: float = t.TOWER_RADIUS + t.ALT_TOWER_SKIRT + rng.randf_range(1.0, FLAT_CONTROL_MARGIN)
+			var a2: float = rng.randf_range(0.0, TAU)
+			disc_out.append(centre + Vector2(cos(a2), sin(a2)) * r2)
+		_assert_alive(t, seed_value, "hq disc", disc_out)
+
+		# --- ZONE 3: EVERY RIVER BAND -----------------------------------------
+		# The band is a level set of the biome field, so it cannot be enumerated —
+		# it is FOUND, by rejection sampling the same box the other checks use.
+		var wet: Array[Vector2] = []
+		var dry: Array[Vector2] = []
+		var tries := 0
+		while (wet.size() < FLAT_SAMPLES or dry.size() < FLAT_SAMPLES) and tries < 400000:
+			tries += 1
+			var q := Vector2(rng.randf_range(-SAMPLE_HALF, SAMPLE_HALF),
+					rng.randf_range(-SAMPLE_HALF, SAMPLE_HALF))
+			var offset: float = absf(t._biome_noise(q.x, q.y) - t.RIVER_LEVEL)
+			if offset < t.RIVER_HALF_WIDTH and wet.size() < FLAT_SAMPLES:
+				wet.append(q)
+			elif offset > t.RIVER_HALF_WIDTH * t.ALT_RIVER_SKIRT_K * 2.0 and dry.size() < FLAT_SAMPLES:
+				dry.append(q)
+		if wet.size() < FLAT_SAMPLES:
+			_fail("seed %d: only found %d/%d river-band points in %d tries — the sampler, not the mask" % [
+				seed_value, wet.size(), FLAT_SAMPLES, tries])
+		_assert_flat(t, seed_value, "river band", wet)
+		_assert_alive(t, seed_value, "river band", dry)
+
+		# --- ZONE 4: THE COIN ROAD CORRIDOR -----------------------------------
+		# Walked as the curve it is: every station centre, plus a random lateral
+		# offset inside ALT_ROAD_FLAT_HALF. Stations only at or west of the
+		# terminal — CAP 5 OF THE ROAD'S CONSUMERS (bead godot-test1-8gw.3): east
+		# of T there is no road, and the approach corridor that carries the walk on
+		# from there is inside Budapest's rect and already flat by zone 1.
+		var terminal: int = t._road_terminal_k()
+		var on_road: Array[Vector2] = []
+		var off_road: Array[Vector2] = []
+		for i in FLAT_ROAD_STATIONS * 2 + 1:
+			var k: int = mini(i - FLAT_ROAD_STATIONS, terminal)
+			t._road_extend_to_x(-SAMPLE_HALF, SAMPLE_HALF)
+			var st: Dictionary = t._road_station(k)
+			var c: Vector2 = st.center
+			var n := Vector2(-sin(st.heading), cos(st.heading))  # the road's normal
+			for j in 8:
+				on_road.append(c + n * rng.randf_range(-1.0, 1.0) * t.ALT_ROAD_FLAT_HALF)
+				var side: float = 1.0 if j % 2 == 0 else -1.0
+				off_road.append(c + n * side * (t.ALT_ROAD_FLAT_HALF + t.ALT_ROAD_SKIRT
+						+ rng.randf_range(1.0, FLAT_CONTROL_MARGIN)))
+		_assert_flat(t, seed_value, "road corridor", on_road)
+		_assert_alive(t, seed_value, "road corridor", off_road)
+
+		t.free()
+	Sentinel.done("flat_zones")
+
+
+func _assert_flat(t: Node3D, seed_value: int, zone: String, points: Array[Vector2]) -> void:
+	"""Every one of `points` must read exactly 0.0 — the positive leg of check 3."""
+	for q: Vector2 in points:
+		var h: float = t.height_at(q.x, q.y)
+		if h != 0.0:
+			_fail("seed %d: %s is not flat — height_at(%.1f, %.1f) = %.6f m (the mask, not the check)" % [
+				seed_value, zone, q.x, q.y, h])
+			return
+
+
+func _assert_alive(t: Node3D, seed_value: int, zone: String, points: Array[Vector2]) -> void:
+	"""
+	SOMETHING outside the zone must be non-zero — the negative control.
+
+	Deliberately "at least one" and not "most": a control point one skirt out can
+	legitimately land in ANOTHER zone (the road crosses rivers, the HQ sits west of
+	the city), and the claim being tested is only that the mask is not stuck at
+	zero.
+	"""
+	for q: Vector2 in points:
+		if t.height_at(q.x, q.y) != 0.0:
+			return
+	_fail("seed %d: NOTHING outside the %s zone has any altitude across %d control points — the mask is flattening the whole world (negative control failed)" % [
+		seed_value, zone, points.size()])
 
 
 # ============================================================================
