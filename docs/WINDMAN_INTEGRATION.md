@@ -13,7 +13,8 @@ The Windman character has been upgraded from simple primitive shapes to a high-r
 ### Scene Files
 - `scenes/characters/windman_updated.tscn` - **Active player character scene** (used by player controller)
 - `scenes/characters/windman_3d.tscn` - Standalone scene with full skeleton setup
-- `scenes/characters/windman.tscn` - Legacy primitive-based version (kept for reference)
+  (the legacy primitive-based `windman.tscn` was deleted in bead godot-test1-y1o.19 —
+  nothing referenced it)
 
 ### Scripts
 - `scripts/windman_animator.gd` - Animation bridge script
@@ -129,7 +130,7 @@ To create custom skeletal animations:
 
 ## Comparison: Old vs New
 
-| Aspect | Old (windman.tscn) | New (windman_updated.tscn) |
+| Aspect | Old (primitive placeholder, since deleted) | New (windman_updated.tscn) |
 |--------|-------------------|----------------------------|
 | Vertices | ~200 | 4,838 |
 | Visual Quality | Basic primitives | High-detail mesh |
