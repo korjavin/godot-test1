@@ -55,7 +55,7 @@ glow_bloom = 0.05
 glow_hdr_threshold = 0.85
 adjustment_enabled = true
 adjustment_contrast = 1.08
-adjustment_saturation = 1.18
+adjustment_saturation = 1.26
 
 [node name="Main" type="Node3D"]
 
