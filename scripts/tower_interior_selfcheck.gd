@@ -3166,19 +3166,28 @@ func _visual_height(body: Node3D) -> float:
 	## Top of the highest drawn mesh under `body`, in body space — the number a
 	## lintel or a ceiling actually meets. Walks every MeshInstance3D (the hunter
 	## exports welded, but the mesh count is the exporter's business, not this
-	## check's) through its global transform, so nesting never silently drops a
-	## part. 0 when nothing is drawn at all.
+	## check's), composing each node's LOCAL transform down from `body`, so
+	## nesting never silently drops a part and the probe never needs the tree —
+	## `get_global_transform()` on an unparented probe logs an inside-tree
+	## condition and answers identity, which would bless any nested transform
+	## away. 0 when nothing is drawn at all.
 	var lo := Vector3(INF, INF, INF)
 	var hi := Vector3(-INF, -INF, -INF)
-	var stack: Array[Node] = [body]
+	var stack: Array = [[body, Transform3D.IDENTITY]]
 	while not stack.is_empty():
-		var n: Node = stack.pop_back()
+		var item: Array = stack.pop_back()
+		var n := item[0] as Node3D
+		var xf: Transform3D = item[1]
+		if n == null:
+			continue
 		for c in n.get_children():
-			stack.append(c)
+			var cn := c as Node3D
+			if cn != null:
+				stack.append([cn, xf * cn.transform])
 		var mi := n as MeshInstance3D
 		if mi == null or mi.mesh == null:
 			continue
-		var box := mi.get_global_transform() * mi.get_aabb()
+		var box := xf * mi.get_aabb()
 		lo.x = minf(lo.x, box.position.x)
 		lo.y = minf(lo.y, box.position.y)
 		lo.z = minf(lo.z, box.position.z)
