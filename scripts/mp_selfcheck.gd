@@ -1719,10 +1719,10 @@ func _check_hunter_sync() -> String:
 	if String(hunter.spec.get("behavior", "")) != "hunt":
 		return "the spawned hunter did not resolve the hunt row — check 3 would be vacuous"
 
-	mp._rebuild_croc_cache()
-	if mp._croc_by_id(hunter_id) != hunter:
+	MpCrocSync.rebuild_croc_cache(mp)
+	if MpCrocSync.croc_by_id(mp, hunter_id) != hunter:
 		return "the sync id cache does not resolve a Hunter_ node — the sync assumes a prefix"
-	if mp._croc_by_id(croc.croc_id()) != croc:
+	if MpCrocSync.croc_by_id(mp, croc.croc_id()) != croc:
 		return "the sync id cache does not resolve a Crocodile_ node beside a hunter"
 
 	# --- 3. The flag byte. Sweep every combination the encoder can produce.
