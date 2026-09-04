@@ -4027,10 +4027,10 @@ func _physics_process(delta: float) -> void:
 			var current_speed := chase_speed_instance if (is_chasing or is_fleeing or is_tracking) else _wander_speed(delta)
 			# The burst arm's one output (see `burst_factor`). It is 1.0 for every
 			# species but the mountain cougar and the city alley hound, so this is
-			# a no-op multiply for all four older rows. Gated on `is_chasing` and
-			# NOT on `is_fleeing`: the flee branch above sits over
-			# _update_chase_state, so a fleeing predator never runs the arm and
-			# would otherwise carry whatever factor it held when the wave hit.
+			# a no-op multiply for all four older rows.
+			# Gated on `is_chasing` and NOT on `is_fleeing`: fleeing predators never
+			# run the chase dispatch and would otherwise carry whatever factor it held
+			# when the wave hit.
 			if is_chasing:
 				current_speed *= burst_factor
 			if avoiding:
@@ -4085,13 +4085,7 @@ func _find_player() -> void:
 
 
 static func _is_quarry_giant(q: Node) -> bool:
-	if q == null:
-		return false
-	if q.has_method("is_giant"):
-		return q.is_giant()
-	if "is_giant" in q:
-		return bool(q.get("is_giant"))
-	return false
+	return q != null and q.has_method("crushes_crocodiles") and q.crushes_crocodiles()
 
 
 func _update_chase_state() -> void:
@@ -4179,9 +4173,6 @@ func _update_chase_state() -> void:
 						giant_source = avatar_pos
 
 		if found_giant:
-			spot_clock = 0.0
-			if _spot_label != null:
-				_spot_label.visible = false
 			flee_from(giant_source, GIANT_FEAR_HOLD, player_node != null and giant_source == player_node.global_position)
 			return
 

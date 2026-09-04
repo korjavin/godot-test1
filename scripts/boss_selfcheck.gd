@@ -1481,6 +1481,23 @@ func _check_row_immunities(giant: StubPlayer) -> void:
 			body.mp_node = null
 			mock_mp.queue_free()
 
+			# 6. Real player.tscn contract (Opus SHOULD-FIX 3)
+			# Proves real player_controller.crushes_crocodiles() drives giant fear, not only the stub.
+			body.is_fleeing = false
+			body.flee_time_remaining = 0.0
+			body.is_chasing = false
+			var real_player: Node3D = load("res://scenes/player.tscn").instantiate() as Node3D
+			root.add_child(real_player)
+			real_player.is_giant = true
+			real_player.global_position = body.global_position + Vector3(5.0, 0.0, 0.0)
+			body.player_node = real_player
+			body._update_chase_state()
+			if not body.is_fleeing:
+				_fail("giant fear (real player): hunter did not flee real player.tscn in giant form at 5m")
+			body.player_node = giant
+			real_player.queue_free()
+			await _frames(2)
+
 		body.queue_free()
 		await _frames(2)
 	_subject = ""

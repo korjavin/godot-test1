@@ -1065,8 +1065,8 @@ touches no grab range, collision, speed or detection, and a denied hunter keeps 
 visibly. Rules are bucketed **per quarry by proximity**, never globally — group `"player"`
 is the local player, so a global cap would starve a room. **Absent director = granted**,
 which is what keeps the standalone `hunter_robot.tscn` and every headless harness working;
-that degrade is debug-only, because hunters are Stink-Wave-exempt and uncrushable and the
-open sector is their whole fairness budget. `grant_engagement` / `escape_sector_open` are
+that degrade is debug-only, because hunters are uncrushable and the
+open sector (alongside Phoboman's Stink Wave and giant Teibi) is their fairness budget. `grant_engagement` / `escape_sector_open` are
 static and pure so `hunt_director_selfcheck` drives the shipped geometry. Its numbers (cap
 2, 20 s chase, 15 s lull, 90°) are **provisional, held for the predator-density epic**.
 
