@@ -51,8 +51,11 @@ const PLAYER_SCENE: String = "res://scenes/player.tscn"
 ## 72 is not arbitrary: its road walks 84 m of water through a bend whose CHORD
 ## is only 79.2 m, so it is the world where "the cap is metres walked" and "the
 ## cap is the straight line across" give different answers — see check 1.
+## 63 and 115 are check 9's: 63's corridor crosses a band NARROWER than a station
+## (a coarse walk steps over it), and 115's terminal station stands IN the water,
+## so the crossing straddles the handoff between the road and the corridor.
 const CROSSING_SEEDS: Array[int] = [11, 2027, 90210, 777001, 424243, 8, 131313,
-		606060, 5150, 99991, 31337, 271828, 72, 4, 26, 12]
+		606060, 5150, 99991, 31337, 271828, 72, 4, 26, 12, 63, 115]
 
 ## The walk must actually MEET rivers, or check 1 is a green lie about a road
 ## that never got its feet wet. Measured today: 40+ crossings over the 12 seeds.
@@ -899,22 +902,33 @@ func _generate(run_seed: int, chunk_pos: Vector2i, bridges: bool,
 	terrain.spawn_crocodiles_in_chunk(chunk_pos, parent, obstacles)
 	terrain.spawn_bosses_in_chunk(chunk_pos, parent, obstacles)
 	terrain.spawn_hunters_in_chunk(chunk_pos, parent, obstacles)
+	# Everything already in the chunk is somebody else's coin — an artifact's
+	# reward, a camp's, a chest's — placed by its own rule at its own height. The
+	# two TRAIL spawners are what this file is about, so only what they add below
+	# is collected as `coins`.
+	var before_coins := parent.get_child_count()
 	terrain.spawn_coins_in_chunk(chunk_pos, parent, obstacles)
+	terrain.spawn_approach_coins_in_chunk(chunk_pos, parent, obstacles)
 
 	var entries: Array = []
 	for entry_v: Variant in batch:
 		entries.append(var_to_bytes(entry_v))
 	var bodies: Array = []
 	var coins: Array = []
+	var index := 0
 	for child in parent.get_children():
+		var was_trail := index >= before_coins
+		index += 1
 		if child.is_in_group("coin"):
-			coins.append((child as Node3D).position)
+			if was_trail:
+				coins.append((child as Node3D).position)
 			continue
 		bodies.append("%s@%s" % [child.name, (child as Node3D).position])
 	body.free()
 	parent.queue_free()
 	return {
 		"terrain": terrain,
+		"obstacle_list": obstacles,
 		"batch": entries,
 		"bridge_boxes": bridge_boxes,
 		"obstacles": var_to_bytes(obstacles),
@@ -1238,6 +1252,58 @@ func _check_deck_coins_stand_on_stone() -> void:
 		_fail("%d road coin(s) stand at deck height over open air — the deck"
 				% floating + " query is accepting points outside the slabs the"
 				+ " chunks really build. First: %s" % worst)
+	# ---- 8b: WITH THE BRIDGES OFF, NOTHING RIDES A DECK ---------------------
+	# `field_bridge_surface_y` answers off the PLAN, which exists whether or not
+	# the builder was allowed to run — so a lift that does not read the flag
+	# stands a coin 1.6 m over open water in every configuration that turns the
+	# bridges off. The ROAD's line was gated from the start; the corridor's was
+	# not (seed 4). Driven on the shipped perch rule against the shipped
+	# footprints: with the flag off, every coin must sit exactly where
+	# `_settle_coin_y` puts it.
+	var off_seed: int = APPROACH_SUBJECT_SEED
+	var off_terrain := _terrain(off_seed)
+	var floating_off := 0
+	var measured_off := 0
+	for row_v: Variant in off_terrain.approach_bridges():
+		var poly: PackedVector2Array = (row_v as Dictionary)["poly"]
+		var seen_off: Dictionary = {}
+		for p in poly:
+			var cp: Vector2i = off_terrain.world_to_chunk(Vector3(p.x, 0.0, p.y))
+			for dx in range(-1, 2):
+				for dz in range(-1, 2):
+					var at := cp + Vector2i(dx, dz)
+					if seen_off.has(at):
+						continue
+					seen_off[at] = true
+					var built := _generate(off_seed, at, false)
+					for coin_v: Variant in built["coins"]:
+						var coin: Vector3 = coin_v
+						measured_off += 1
+						var settled: float = built["terrain"]._settle_coin_y(
+								coin.x, coin.z, TERRAIN_SCRIPT.COIN_GROUND_HEIGHT,
+								built["obstacle_list"])
+						if is_inf(settled) or is_equal_approx(coin.y, settled):
+							continue
+						floating_off += 1
+						if worst == "":
+							worst = ("seed %d with spawn_field_bridges OFF: a coin"
+									% off_seed + " in chunk %s sits at y = %.2f"
+											% [at, coin.y]
+									+ " where the perch rule says %.2f — it was"
+											% settled
+									+ " lifted onto a deck that was never built")
+					built["terrain"].free()
+	off_terrain.free()
+	print("field bridges: %d coins on seed %d's corridor chunks with the bridges"
+			% [measured_off, off_seed] + " OFF, %d of them lifted anyway"
+					% floating_off)
+	if measured_off < 1:
+		_fail("check 8b laid no coin at all on seed %d's corridor chunks with the"
+				% off_seed + " bridges off, so it measured nothing")
+	if floating_off > 0:
+		_fail("%d coin(s) ride a deck that does not exist with"
+				% floating_off + " spawn_field_bridges OFF: %s" % worst)
+
 	if capsule_lies < 1:
 		_fail("check 8's mutation control is inert: the rejected point-to-polyline"
 				+ " (capsule) test accepts nothing the slabs refuse, so the"

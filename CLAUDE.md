@@ -1033,11 +1033,17 @@ stands on a river crossing and its footprint must still refuse a coin outright).
 
 **AND THE CORRIDOR IS BRIDGED TOO.** The road's consumers stop at `T`; the player does
 not. `approach_bridges()` samples `BudapestPlan.road_approach_point()` from `T` to the
-Danube's west bank at the road's own pitch and walks it with the same crossing rule,
+Danube's west bank **at `FIELD_BRIDGE_PROBE_STEP`, not at the road's pitch** (a station is
+~6 m of X and a band can be narrower — seed 63's fell between two samples), decimates the
+deck back to that pitch so the stone is the same shape, and continues the line WEST along
+the road's stations when the terminal itself stands in water (seed 115: the road-side
+builder refuses that span because its far bank is past `T`, so without the extension
+neither side bridged the handoff). It walks the same crossing rule as the stations,
 because the city's river override only starts at the rect's west edge — so the procedural
 river is alive under the authored corridor, and on seed 4 it crosses one at x ≈ 1495 with
 nothing over it. Same decks, same `_field_bridge_row_from()`, and the approach coin line
-rides them like the road's.
+rides them like the road's — **behind the same `spawn_field_bridges` flag**, because
+`field_bridge_surface_y` answers off the plan, which exists whether or not the builder ran.
 
 Four of those rules were WRONG ONCE, and the corrections are the interesting part.
 **`_field_bridge_slabs()` is the single description of the stone** — the builder that emits

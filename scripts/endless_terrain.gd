@@ -11078,16 +11078,45 @@ func approach_bridges() -> Array:
 	if east_x <= ROAD_TERMINAL_X:
 		return _approach_bridge_cache
 
-	# Sample the corridor at the road's own pitch, so a deck here is the same
-	# shape as a deck one station west of it.
-	var step := _road_spacing()
+	# SAMPLED AT THE PROBE STEP, NOT AT THE ROAD'S PITCH. A station is ~6 m of X
+	# and a river band can be narrower than that, so a corridor walked station by
+	# station steps straight over one and reports dry ground on both sides of
+	# water it never asked about (run seed 63: the band at x = 1530-1532 fell
+	# between two samples and the corridor got no bridge at all). Detection is
+	# cheap and metre-fine; the DECK is decimated back to the road's pitch below,
+	# so the stone is the same shape either way.
 	var pts := PackedVector2Array()
 	var x := ROAD_TERMINAL_X
 	while x <= east_x:
 		pts.append(BudapestPlan.road_approach_point(terminal, x))
-		x += step
+		x += FIELD_BRIDGE_PROBE_STEP
 
-	var i := 1
+	# ...and the WEST EXTENSION, which is the handoff case. `road_approach_point`
+	# answers the terminal itself for every x west of it, so a crossing that is
+	# already under way AT `T` has no dry sample in front of it here — and the
+	# road-side builder refuses it too, because its far bank lies past the last
+	# station a road consumer may touch (seed 115). Neither side bridged it. So
+	# when the terminal stands in water, the corridor's line is continued WEST
+	# along the road's own stations to the last dry one, and this one scan spans
+	# the handoff.
+	if not _field_bridge_dry_across(pts[0], (pts[1] - pts[0]).normalized()):
+		var west := PackedVector2Array()
+		var k := _road_terminal_k()
+		var walked_west := 0.0
+		while k > road_k_min and walked_west <= FIELD_BRIDGE_MAX_SPAN:
+			k -= 1
+			var st: Dictionary = _road_station(k)
+			walked_west += st.center.distance_to(_road_station(k + 1).center)
+			west.append(st.center)
+			var heading: float = st.heading
+			if _field_bridge_dry_across(st.center,
+					Vector2(cos(heading), sin(heading))):
+				break   # the near bank, and the deck's own dry margin
+		west.reverse()
+		west.append_array(pts)
+		pts = west
+
+	var i := 0
 	while i < pts.size() - 1:
 		if _approach_wet(pts, i) or not _approach_wet(pts, i + 1):
 			i += 1
@@ -11106,9 +11135,24 @@ func approach_bridges() -> Array:
 		if lake or j >= pts.size() - 1:
 			i = j + 1
 			continue
+		# THE DECK IS DECIMATED BACK TO THE ROAD'S PITCH: detection wants metres,
+		# but a slab per metre is a hundred boxes and a hundred collision shapes
+		# for one crossing. Both ends are kept whatever the stride lands on, so
+		# the deck still starts and finishes on the dry samples the walk found.
+		var stride: int = maxi(1, roundi(_road_spacing() / FIELD_BRIDGE_PROBE_STEP))
 		var deck := PackedVector2Array()
-		for m in range(i, j + 1):
+		var m := i
+		while m < j:
 			deck.append(pts[m])
+			m += stride
+		deck.append(pts[j])
+		if deck.size() < 3:
+			# A crossing narrower than one stride decimates to its two ends, and
+			# a deck needs a middle: the row is (dry margin, deck..., dry margin),
+			# so two points describe no deck at all. This is exactly the narrow
+			# band the fine sampling exists to catch (seed 63's is 5 m wide), so
+			# it is the common case here rather than a corner of one.
+			deck = PackedVector2Array([pts[i], pts[(i + j) / 2], pts[j]])
 		var row := _field_bridge_row_from(deck)
 		if not row.is_empty():
 			row["k0"] = -1   # the corridor has no station index
@@ -12522,9 +12566,16 @@ func spawn_approach_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstan
 		# ...and the corridor's own bridges, the road line's rule one spawner
 		# along (bead godot-test1-06o.2): a coin standing over a deck rides it,
 		# instead of being buried in the slab that crosses the water here.
-		var deck_y := field_bridge_surface_y(world)
-		if deck_y > -INF:
-			local.y = deck_y + COIN_GROUND_HEIGHT
+		#
+		# BEHIND THE SAME FLAG as the road line's lift, and for a reason the road
+		# line found first: `field_bridge_surface_y` answers off the PLAN, which
+		# exists whether or not the builder was allowed to run, so an ungated lift
+		# stands a coin 1.6 m over open water in every configuration that turns
+		# the bridges off — the A/B in field_bridge_selfcheck check 6 among them.
+		if spawn_field_bridges:
+			var deck_y := field_bridge_surface_y(world)
+			if deck_y > -INF:
+				local.y = deck_y + COIN_GROUND_HEIGHT
 
 		var coin := coin_scene.instantiate()
 		coin.position = local
