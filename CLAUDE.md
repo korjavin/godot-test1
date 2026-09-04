@@ -87,6 +87,25 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            nothing (with "out of the room it does" as the
 #                            positive control)
 #   mp_selfcheck             multiplayer pure logic (decoders, ids, arithmetic)
+#   voice_selfcheck          the PURE HALF of the web-only voice layer (epic
+#                            `godot-test1-xtr`), since nothing headless has a
+#                            bridge: `MpCodec.decode_vc` against hostile
+#                            payloads with honest offer/answer/ice round-trips
+#                            beside them, the membership + shape gates driven on
+#                            a REAL `MpManager._on_lobby_relay` (a non-member's
+#                            offer must emit nothing) with the `no mp key ->
+#                            return` precedence, the mode round-tripping the
+#                            store while `_tx` starts FALSE on every fresh node
+#                            (owner's "mic starts off"), `voice_mic`'s key free
+#                            against every other action and every raw-keycode
+#                            panel, the help row, no JS boolean in `VOICE_JS`
+#                            read as TEXT, INERT off-web with the driven list
+#                            checked for COMPLETENESS against the script's own
+#                            method list (a new public method fails by name
+#                            until it is proved bridge-free), PROCESS_MODE_ALWAYS
+#                            and no `.paused`, and what V really does —
+#                            always-on TOGGLES, push-to-talk HOLDS, a mode switch
+#                            or a leaving room drops the mic
 #   locale_selfcheck         en/de table + German fits its controls
 #   view_selfcheck           the three camera views C cycles
 #   progression_selfcheck    level curve, skill trees, effects on a live player,
