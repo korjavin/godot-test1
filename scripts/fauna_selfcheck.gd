@@ -50,6 +50,16 @@ extends SceneTree
 ##      plan is exactly what keeps passing silently after someone reorders it
 ##      behind the probe that overwrites it. See the tower block below.
 ##
+##   6. THE MULTIPLAYER REPLAY (bead godot-test1-6xc) — the owner's "my buddy in
+##      the same game don't see them". Four things, each with the mutation that
+##      breaks it: two builds off one seed are byte-identical (or the two screens
+##      draw different flocks under one name), a replayed herd tracks the master's
+##      centre and holds its formation at `centre + offset`, silence for
+##      REMOTE_HERD_TIMEOUT frees it (or a dead master's herd is immortal), and a
+##      room NON-MASTER rolls nothing of its own — with "out of the room it rolls
+##      one" as that last row's positive control, because "spawned nothing" is
+##      also what a harness that cannot spawn reports.
+##
 ## Don't grow this into a suite. Two non-obvious things in here. (a) Rows 1-3
 ## drive the manager's own _physics_process by hand, SUB-STEPPED inside a real
 ## physics frame, so the queries are legal and a 45 s crossing costs a second of
@@ -247,6 +257,9 @@ var _ride_rider_travel: float = 0.0
 var _ride_herd_travel: float = 0.0
 var _ride_lines: Array[String] = []
 
+## Row 6's one report line (see _check_replay).
+var _replay_line: String = ""
+
 
 ## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
 ## lands in and lets the script carry on, so a check that dies halfway simply
@@ -364,6 +377,11 @@ func _physics_process(_delta: float) -> bool:
 			_settle_ride()
 		6:
 			_run_ride()
+		7:
+			# Row 6 needs no physics at all, so it runs whole in one frame and
+			# then reports — see _check_replay.
+			_check_replay()
+			_report()
 	return false
 
 
@@ -645,11 +663,196 @@ func _finish_ride() -> void:
 	_ride_species += 1
 	if _ride_species >= RIDE_SPECIES.size():
 		Sentinel.done("finish_ride")
-		_report()
-		Sentinel.done("finish_ride")
+		_phase = 7
 		return
 	_phase = 4
 	Sentinel.done("finish_ride")
+
+
+# ---------------------------------------------------------------------------
+# Row 6 — THE MULTIPLAYER REPLAY (bead godot-test1-6xc)
+# ---------------------------------------------------------------------------
+
+## The params one synthetic `herd` packet carries. `k` is the GIRAFFE index
+## (read off the shipped table, never a literal) because the flock is the widest
+## formation and the one the owner reported seeing alone.
+const REPLAY_SEED: int = 987654321
+const REPLAY_ORIGIN: Vector3 = Vector3(40.0, 0.0, -25.0)
+const REPLAY_HEADING: float = PI * 0.75
+const REPLAY_SPEED: float = 2.5
+## How far OFF THE STRAIGHT LINE the synthetic master's centre stands — a berth
+## it opened before the first packet, standing in for the meander and the
+## obstacle detour, neither of which a peer can see: dead reckoning walks the
+## heading and nothing else. The ease closes it geometrically (x0.7 a packet, so
+## 5 x 0.7^6 = 0.59 m by the last one); delete the `p` ease in `apply_herd_sync`
+## and the peer stays out by the whole 5 m.
+const REPLAY_LATERAL_WANDER: float = 5.0
+## How close the replayed centre must end up to the master's published one.
+## Measured 0.13 m; the 0.59 m the ease is bound to leave sits under it and the
+## 5 m the missing ease leaves sits far over, so the threshold is in a gap.
+const REPLAY_CENTRE_TOLERANCE: float = 1.0
+## How exactly the formation must hold. Every member shares one centre and one
+## ease weight and starts on its slot, so member-to-member vectors are the
+## difference of two offsets EXACTLY — this is float slop, not a budget.
+const REPLAY_FORMATION_TOLERANCE: float = 1e-3
+## Non-vacuity floor on (a): GIRAFFE_FLOCK_MIN is 4, so a build that produced one
+## animal — or none — would compare two trivially equal signatures.
+const GIRAFFE_MIN_FOR_ROW: int = 4
+## The synthetic feed: six packets at the shipped 10 Hz sync tick (six frames of
+## the harness's 60 Hz per packet), which is 0.6 s of room traffic.
+const REPLAY_PACKETS: int = 6
+const REPLAY_TICKS_PER_PACKET: int = 6
+## Enough ticks for the event timer to fire and the herd to be built — the timer
+## is set to one frame, so this is slack, not a schedule.
+const REPLAY_SPAWN_TICKS: int = 5
+
+## A room this peer is not the master of. Only the three methods
+## `fauna_manager._mp_replays_the_herd()` asks for, so a rename there is a
+## silently-skipped row here and not a false pass — the row drives the shipped
+## predicate through the shipped group lookup.
+const MP_STUB_SOURCE := """extends Node
+var online: bool = true
+func is_online() -> bool:
+	return online
+func get_master() -> String:
+	return "themaster"
+func my_id() -> String:
+	return "us"
+"""
+
+
+func _herd_params() -> Dictionary:
+	var builders: Array = _manager.get("HERD_BUILDERS")
+	return {
+		"k": builders.find("_spawn_giraffe_flock"),
+		"o": REPLAY_ORIGIN, "h": REPLAY_HEADING,
+		"sd": REPLAY_SEED, "sp": REPLAY_SPEED,
+	}
+
+
+func _formation_signature() -> PackedByteArray:
+	## Every member's formation slot and stride phase — the two things a build
+	## draws off the seeded RNG, and the whole of what "the same herd" means on
+	## two machines. Byte-compared, so a one-ULP difference fails.
+	var rows: Array = []
+	for animal: Dictionary in (_manager.get("_animals") as Array):
+		rows.append([animal["offset"], animal["phase"]])
+	return var_to_bytes(rows)
+
+
+func _check_replay() -> void:
+	## The four things bead godot-test1-6xc has to be true for the buddy to see
+	## the giraffe. Driven on the SHIPPED functions by hand, in one physics frame
+	## each — none of this needs the physics server, unlike rows 1-4.
+	_manager.call("_despawn_herd")
+	_manager.set("_event_timer", 1e9)
+	_player.global_position = Vector3(0.0, PLAYER_Y, 0.0)
+	_obstacle.position = Vector3(0.0, 0.0, 9000.0)
+	var params: Dictionary = _herd_params()
+
+	# (a) ONE SEED, ONE HERD. Two builds off the same params must agree about
+	# every member's slot and stride phase, or the master and the peer are
+	# drawing two different flocks under one name.
+	_manager.call("_build_herd", params)
+	var first: PackedByteArray = _formation_signature()
+	var members: int = (_manager.get("_animals") as Array).size()
+	_manager.call("_despawn_herd")
+	_manager.call("_build_herd", params)
+	var second: PackedByteArray = _formation_signature()
+	_manager.call("_despawn_herd")
+	if members < GIRAFFE_MIN_FOR_ROW:
+		_failures.append("build-from-params made %d giraffes — this row measured nothing" % members)
+	if first != second:
+		_failures.append("two builds from seed %d differ — a peer would draw a different herd from the master's"
+				% REPLAY_SEED)
+
+	# (b) A REPLAY TRACKS THE MASTER AND KEEPS ITS FORMATION. Six packets, each
+	# describing a centre that has walked the line AND wandered off it (the
+	# meander and the detour, which the peer cannot see), with the shipped
+	# `_physics_process` ticked between them so the dead reckoning runs.
+	var heading := Vector3(cos(REPLAY_HEADING), 0.0, sin(REPLAY_HEADING))
+	var lateral := Vector3(-heading.z, 0.0, heading.x)
+	var travelled := 0.0
+	var published := REPLAY_ORIGIN
+	for step: int in REPLAY_PACKETS:
+		travelled += REPLAY_SPEED * DT * float(REPLAY_TICKS_PER_PACKET)
+		published = REPLAY_ORIGIN + heading * travelled \
+				+ lateral * REPLAY_LATERAL_WANDER
+		var packet: Dictionary = params.duplicate()
+		packet["p"] = published
+		packet["y"] = REPLAY_HEADING
+		packet["d"] = travelled
+		_manager.call("apply_herd_sync", packet)
+		for _tick: int in REPLAY_TICKS_PER_PACKET:
+			_manager.call("_physics_process", DT)
+	var animals: Array = _manager.get("_animals")
+	if animals.size() != members:
+		_failures.append("the replay built %d animals against the master's %d"
+				% [animals.size(), members])
+	elif animals.is_empty():
+		_failures.append("the replay built nothing — this row measured nothing")
+	else:
+		# Placed at `centre + offset`: every member-to-member vector is the
+		# difference of two slots. Measured this way rather than against the
+		# centre itself because FORMATION_LERP_SPEED lags the whole formation
+		# behind it by design, on the master exactly as here.
+		var base_pos: Vector3 = (animals[0]["root"] as Node3D).position
+		var base_off: Vector3 = animals[0]["offset"]
+		var worst := 0.0
+		for animal: Dictionary in animals:
+			var drawn: Vector3 = (animal["root"] as Node3D).position - base_pos
+			worst = maxf(worst, drawn.distance_to((animal["offset"] as Vector3) - base_off))
+		if worst > REPLAY_FORMATION_TOLERANCE:
+			_failures.append("replayed formation is out by %.4f m — members are not at centre + offset"
+					% worst)
+		var centre: Vector3 = _manager.get("_herd_centre")
+		# Dead reckoning has run one more packet's worth of ticks since the last
+		# `p`, so compare against where the master's centre would be by now.
+		var expected: Vector3 = published + heading * (REPLAY_SPEED * DT * float(REPLAY_TICKS_PER_PACKET))
+		var gap: float = centre.distance_to(expected)
+		if gap > REPLAY_CENTRE_TOLERANCE:
+			_failures.append("replayed centre is %.2f m from the master's (max %.2f) — the packet's centre is not being applied"
+					% [gap, REPLAY_CENTRE_TOLERANCE])
+		if float(_manager.get("_herd_travelled")) <= 0.0:
+			_failures.append("replayed herd has walked 0 m — its legs never move")
+		_replay_line = "replay: formation %.4f m, centre gap %.2f m, %d members" \
+				% [worst, gap, animals.size()]
+
+	# (c) SILENCE FREES IT. No packet for REMOTE_HERD_TIMEOUT and the herd goes,
+	# which is the ONE test that also covers a deposed master, a leave and no MP
+	# node at all — see fauna_manager.REMOTE_HERD_TIMEOUT.
+	var timeout: float = float(_manager.get("REMOTE_HERD_TIMEOUT"))
+	for _tick: int in int(timeout / DT) + 10:
+		_manager.call("_physics_process", DT)
+	if not (_manager.get("_animals") as Array).is_empty():
+		_failures.append("a replayed herd survived %.1f s of silence — a dead master's herd is immortal"
+				% timeout)
+
+	# (d) A NON-MASTER ROLLS NOTHING, and the SAME manager rolls one the moment
+	# the room is gone — the positive control, without which "spawns nothing"
+	# would pass on a harness that simply cannot spawn.
+	var mp_script := GDScript.new()
+	mp_script.source_code = MP_STUB_SOURCE
+	mp_script.reload()
+	var mp: Node = mp_script.new()
+	mp.add_to_group("mp")
+	_root.add_child(mp)
+	_manager.set("_event_timer", DT)
+	for _tick: int in REPLAY_SPAWN_TICKS:
+		_manager.call("_physics_process", DT)
+	if not (_manager.get("_animals") as Array).is_empty():
+		_failures.append("a room NON-MASTER rolled a herd of its own — two crossings in one room")
+	if float(_manager.get("_event_timer")) <= 0.0:
+		_failures.append("a non-master's event timer stopped re-arming — it would call _spawn_herd every frame")
+	mp.set("online", false)
+	_manager.set("_event_timer", DT)
+	for _tick: int in REPLAY_SPAWN_TICKS:
+		_manager.call("_physics_process", DT)
+	if (_manager.get("_animals") as Array).is_empty():
+		_failures.append("out of the room the manager still spawned nothing — the non-master assertion above measured nothing")
+	_manager.call("_despawn_herd")
+	mp.queue_free()
+	Sentinel.done("check_replay")
 
 
 func _report() -> void:
@@ -691,6 +894,7 @@ func _report() -> void:
 		print(line + "empty-field detour: %.2f m" % _open_max_avoid)
 		for ride_line: String in _ride_lines:
 			print("ride  ", ride_line)
+		print(_replay_line)
 		Sentinel.finish(self)
 		return
 	for ride_line: String in _ride_lines:

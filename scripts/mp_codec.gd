@@ -186,6 +186,22 @@ const MAX_STATE_CAPTIVES: int = 8
 ## sources of truth, and neither may re-type what it finds there.
 const PLAYER_SCRIPT := preload("res://scripts/player_controller.gd")
 
+## The fauna manager, preloaded ONLY to read `HERD_BUILDERS` — a `herd` packet's
+## `k` is an index into it, so the bound is the herd vocabulary itself and never a
+## number written down twice, exactly like `PLAYER_SCRIPT.CHARACTERS` above. A
+## fourth herd kind is one row there and no edit here.
+const FAUNA_SCRIPT := preload("res://scripts/fauna_manager.gd")
+
+## Sanity bound on the `d` field of a `herd` packet — metres the herd has walked.
+##
+## THE PRESENCE PACKET'S `s` CASE ONE VERB ALONG, and for exactly its reason:
+## `_animate_animals()` multiplies this into a `sin()` for every limb of every
+## animal, so a finite-but-absurd 1e38 makes every limb angle garbage for as long
+## as the herd lives. The honest ceiling is MAX_HERD_LIFETIME x WALK_SPEED_MAX
+## (720 m); this is the presence packet's coordinate bound reused, generous by
+## design because it exists to reject hostile input rather than to police a walk.
+const MAX_HERD_TRAVELLED: float = MAX_PRESENCE_COORD
+
 
 # =============================================================================
 # PEER ID MAPPING
@@ -470,6 +486,94 @@ static func decode_croc_sync(state: Dictionary) -> Dictionary:
 	# combination of CROC_FLAG_* bits plus unknown bits, and the receiver reads it
 	# with `&` so bits it does not know are ignored.
 	return {"ids": ids, "xf": xf, "flags": flags}
+
+# =============================================================================
+# FAUNA HERD — the `herd` verb (bead godot-test1-6xc)
+# =============================================================================
+
+static func decode_herd(packet: Dictionary) -> Dictionary:
+	"""
+	The migrating-herd parser — the EIGHTH trust boundary, master-only and
+	whole-or-nothing like every one before it.
+
+	Wire format, the `var_to_bytes` of:
+
+	    {"t": "herd",
+	     "k": int,      # HERD_BUILDERS index, or -1 for "no herd is crossing"
+	     "o": Vector3,  # the origin the herd was built at   ) build params, sent
+	     "h": float,    # its heading angle, radians          ) EVERY tick so the
+	     "sd": int,     # its build seed                      ) replay self-heals
+	     "sp": float,   # its walk speed, m/s                 )
+	     "p": Vector3,  # the live herd centre    ) live state
+	     "y": float,    # its facing yaw          )
+	     "d": float}    # metres walked           )
+
+	`k == -1` IS THE ALL-CLEAR and carries nothing else — it is how a master says
+	"my crossing has ended" without waiting out the receiver's silence timeout, so
+	it must decode to a value (`{"k": -1}`) and not to the `{}` that means
+	"malformed". Every other `k` names a herd and every field is then REQUIRED:
+	unlike a presence counter, none of these is a field a later build added, and a
+	half-described herd would be built at the origin facing north.
+
+	@param packet: the already-`bytes_to_var`-decoded packet — NEVER
+	    `bytes_to_var_with_objects`, see `_receive_mesh_packets()`.
+	@return the validated params-plus-state, `{"k": -1}` for the all-clear, or
+	    `{}`. `h` and `y` come back wrapped into `[0, TAU)`.
+	"""
+	# STRICT `int`, like `decode_pad`: this verb never crosses the lobby relay, so
+	# `var_to_bytes` round-trips the real type and a float here is a peer that is
+	# not speaking this protocol. `bool` is excluded explicitly because GDScript's
+	# `typeof(true)` is TYPE_BOOL, not TYPE_INT, so the test already refuses it.
+	if typeof(packet.get("k", null)) != TYPE_INT:
+		return {}
+	var kind: int = int(packet["k"])
+	if kind < 0:
+		return {"k": -1}
+	if kind >= FAUNA_SCRIPT.HERD_BUILDERS.size():
+		return {}
+	if typeof(packet.get("sd", null)) != TYPE_INT:
+		return {}
+	if typeof(packet.get("o", null)) != TYPE_VECTOR3 \
+			or typeof(packet.get("p", null)) != TYPE_VECTOR3:
+		return {}
+	if not _is_number(packet.get("h", null)) or not _is_number(packet.get("y", null)) \
+			or not _is_number(packet.get("sp", null)) or not _is_number(packet.get("d", null)):
+		return {}
+
+	# FINITENESS BEFORE ANY USE, the rule `decode_presence()` spells out: a herd
+	# handed a NaN centre interpolates to NaN forever after, and 1e30 is finite but
+	# just as permanent. The coordinate bound is the presence packet's — a herd
+	# stands in the same world a player does.
+	var origin: Vector3 = packet["o"]
+	var centre: Vector3 = packet["p"]
+	for point: Vector3 in [origin, centre]:
+		if not point.is_finite():
+			return {}
+		if absf(point.x) > MAX_PRESENCE_COORD or absf(point.y) > MAX_PRESENCE_COORD \
+				or absf(point.z) > MAX_PRESENCE_COORD:
+			return {}
+
+	var heading: float = float(packet["h"])
+	var yaw: float = float(packet["y"])
+	var speed: float = float(packet["sp"])
+	var travelled: float = float(packet["d"])
+	if not (is_finite(heading) and is_finite(yaw) and is_finite(speed) and is_finite(travelled)):
+		return {}
+	# Speed and distance are BOTH bounded and non-negative: a herd walks forward
+	# at a walking pace, and each of them latches an accumulator on the far side —
+	# the dead-reckoned centre and the stride phase (see MAX_HERD_TRAVELLED).
+	if speed < 0.0 or speed > MAX_PRESENCE_SPEED:
+		return {}
+	if travelled < 0.0 or travelled > MAX_HERD_TRAVELLED:
+		return {}
+
+	# WRAPPED, not bounded, exactly as `decode_presence()` wraps `y`: both angles
+	# are eased with `lerp_angle` on the far side, and `1e30 + anything small IS
+	# 1e30`. Wrapping is lossless for every honest sender.
+	return {
+		"k": kind, "o": origin, "h": fposmod(heading, TAU), "sd": int(packet["sd"]),
+		"sp": speed, "p": centre, "y": fposmod(yaw, TAU), "d": travelled,
+	}
 
 # =============================================================================
 # JOIN SNAPSHOT — the third trust boundary

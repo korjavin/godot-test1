@@ -77,7 +77,12 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            chunk builds exactly TWO nodes (BlockMultiMesh +
 #                            BlockMultiMesh_SPHERE, the canopies) and every
 #                            other biome exactly one
-#   fauna_selfcheck          herd steering + rider carry
+#   fauna_selfcheck          herd steering + rider carry, plus row 6 the MP
+#                            REPLAY: one seed gives two byte-identical builds, a
+#                            replayed herd tracks the master's centre and holds
+#                            its formation, silence frees it, and a room
+#                            non-master rolls nothing (with "out of the room it
+#                            does" as the positive control)
 #   mp_selfcheck             multiplayer pure logic (decoders, ids, arithmetic)
 #   locale_selfcheck         en/de table + German fits its controls
 #   view_selfcheck           the three camera views C cycles
@@ -1588,7 +1593,34 @@ return — is **silent for every player in the room but the one simulating that 
 ### Weather and fauna — ambience, deliberately outside the determinism contract
 `scripts/weather_manager.gd` (clouds, storm rain zones, birds) and
 `scripts/fauna_manager.gd` (elephant/giraffe herds, herder caravans) both use their own
-`randomize()`d RNG and never touch `run_seed`. Don't wire them in.
+`randomize()`d RNG and never touch `run_seed`. **Don't wire them into the seed** — a
+herd is on a wall clock, so even a seeded roll would fire at different moments on
+different peers and diverge on the first physics probe.
+
+**BUT A HERD IS SHARED IN A ROOM: THE MASTER SIMULATES AND PEERS REPLAY** (bead
+`godot-test1-6xc`, owner: *"in multiplayer i can see giraffes and I ride on one of them
+but my buddy in the same game don't see them"*, superseding `s86.3`'s "accepted cosmetic
+artifact"). It is the SCENT TRAIL's precedent, not the seed's: runtime state the master
+broadcasts, outside the determinism contract, costing no seeded stream a draw. A herd's
+whole state is (params) + (centre, facing yaw, metres travelled) — every member sits at
+`centre + offset` and every limb angle is a pure function of metres walked — so ONE
+`herd` packet on the existing croc-sync tick describes up to ten animals and no
+per-animal transform ever crosses the wire. Four rules:
+`_spawn_herd()` ROLLS and `_build_herd()` BUILDS, and the build's every draw comes off a
+**fresh RNG seeded with the packet's `sd`**, which is what makes two builds byte-identical
+(the private `_rng` is swapped and restored — pinning the ambience clock to a herd's seed
+would make the rest of the session deterministic); the **params ride every tick**, which
+is what makes it self-healing for a dropped packet, a mid-negotiation peer and a late
+joiner with no relay leg and no snapshot field; a room **non-master rolls nothing** and its
+event timer just re-arms; and the **silence timeout lives in `fauna_manager`**
+(`REMOTE_HERD_TIMEOUT`), because "the master went quiet", "the master was deposed", "we
+left the room" and "there is no MP node" are one event down there — so `mp_manager` needs
+no leave hook, no master-changed hook and no timeout branch. Promotion heals itself
+because `herd_sync_state()` refuses to publish a herd it is only replaying. The rider
+artifact goes with it: presence already carries the rider's y. Documented ceiling: a
+master on a build without the verb publishes nothing and its peers see no fauna at all.
+Animals still join no group, still carry no gameplay body, and are still manager-parented.
+Rows 1-5 of `fauna_selfcheck` are unchanged; row 6 pins the replay.
 
 Weather exposes `is_raining_at(pos)`; the player uses it through one null-safe helper —
 Windman can't launch in rain and loses an active boost on entering one.
@@ -1814,7 +1846,7 @@ totals, crocodile sync, claims), **`mp_codec.gd` (the pure codec)**, `remote_ava
 **THE PARSERS ARE `MpCodec`, THE HANDLERS ARE `MpManager`, and that seam is the file
 boundary.** `scripts/mp_codec.gd` (`class_name MpCodec`, all `static`) holds every
 `decode_*` — `decode_presence`, `decode_state`, `decode_croc_sync`, `decode_captive`,
-`decode_room`, `decode_pad`, `decode_lmk` — plus `packet_kind`, the `_croc_flags` byte
+`decode_room`, `decode_pad`, `decode_lmk`, `decode_herd` — plus `packet_kind`, the `_croc_flags` byte
 packing and the `CROC_FLAG_*` constants both ends of it read, the two `*_in_reach`
 proximity tests, `peer_int_id`, and the wire-format bounds (`MAX_STATE_IDS`,
 `MAX_HERO_NAME`, `MAX_CROC_SYNC`, `MAX_LANDMARK_CLAIM_PAD`, …) they are written against.
@@ -1902,6 +1934,13 @@ The sharpest rules, in rough order of how badly they bite:
   swallowing clicks, since there P is right in front of you. Known ceiling, documented at
   the line: a touch session shows "Paused — tap to resume" whose tap is gated on
   `paused_by_driver`, so under a remote pause the tap does nothing.
+- **The migrating HERD is master-simulated and replayed, on one packet per tick** (bead
+  `godot-test1-6xc`). The `herd` verb is master-only, unreliable, sent on the existing
+  croc-sync tick beside `croc`, and carries the build params AND the live
+  (centre, yaw, metres) every time — `{"k": -1}` being the all-clear. Like the crocodile
+  sync it CREATES AND FREES NOTHING: `fauna_manager.gd` owns the animals at both ends and
+  owns the silence timeout that frees a replay, which is why this needed no leave hook and
+  no master-changed hook. See the fauna section for the four rules.
 - The stall heartbeat rides the lobby relay, not the mesh, because a throttled tab stops
   polling both.
 
