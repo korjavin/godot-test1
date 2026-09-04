@@ -286,7 +286,7 @@ func _check_decode_absent() -> void:
 	# AN OLD MASTER'S PACKET. No `m` at all, and it must still repair the cells:
 	# dropping it would cost a mixed room its captive-set convergence over a field
 	# that master has never heard of.
-	var old_master: Dictionary = MPManager.decode_room({"cap": ["primm"], "cd": 0.0, "co": 0})
+	var old_master: Dictionary = MpCodec.decode_room({"cap": ["primm"], "cd": 0.0, "co": 0})
 	if old_master.is_empty():
 		_fail("decode_room DROPPED a packet with no `m` — an old master's captive-set "
 			+ "repair would stop working the day this field shipped")
@@ -295,13 +295,13 @@ func _check_decode_absent() -> void:
 			% [old_master.get("m", "<missing>"), old_master["cap"]])
 
 	# A packet that DOES carry one.
-	var fresh: Dictionary = MPManager.decode_room({"cap": [], "cd": 0.0, "co": 0, "m": 0b1011})
+	var fresh: Dictionary = MpCodec.decode_room({"cap": [], "cd": 0.0, "co": 0, "m": 0b1011})
 	if fresh.is_empty() or int(fresh["m"]) != 0b1011:
 		_fail("decode_room lost a live mask: %s" % fresh)
 
 	# A LARGER MASK IS FOLDED, NOT DROPPED — the `co` rule: a peer on a build with
 	# a twenty-third landmark is still telling the truth about the first 22.
-	var wide: Dictionary = MPManager.decode_room({
+	var wide: Dictionary = MpCodec.decode_room({
 		"cap": [], "cd": 0.0, "co": 0, "m": (1 << (BudapestPlan.SLOTS.size() + 2)) | 0b1,
 	})
 	if wide.is_empty():
@@ -313,7 +313,7 @@ func _check_decode_absent() -> void:
 	# which is the one that matters: `int(INF)` is undefined and on wasm the trunc
 	# can trap the module, so it has to be refused BEFORE any cast.
 	for bad: Variant in ["7", true, [], {}, INF, -INF, NAN, -1.0]:
-		if not MPManager.decode_room({"cap": [], "cd": 0.0, "co": 0, "m": bad}).is_empty():
+		if not MpCodec.decode_room({"cap": [], "cd": 0.0, "co": 0, "m": bad}).is_empty():
 			_fail("decode_room accepted a malformed mask %s" % [bad])
 
 	# --- the join snapshot ---------------------------------------------------
@@ -321,7 +321,7 @@ func _check_decode_absent() -> void:
 		"cc": 0, "gs": 0, "dd": 0, "gc": 0,
 		"px": 0.0, "py": 0.0, "pz": 0.0, "ids": [],
 	}
-	var no_lm: Dictionary = MPManager.decode_state(base.duplicate())
+	var no_lm: Dictionary = MpCodec.decode_state(base.duplicate())
 	if no_lm.is_empty():
 		_fail("decode_state DROPPED a snapshot with no `lm` — a peer on an older "
 			+ "build is still worth its position, its counters and its id lists")
@@ -330,14 +330,14 @@ func _check_decode_absent() -> void:
 
 	var with_lm: Dictionary = base.duplicate()
 	with_lm["lm"] = 0b101
-	var got: Dictionary = MPManager.decode_state(with_lm)
+	var got: Dictionary = MpCodec.decode_state(with_lm)
 	if got.is_empty() or int(got["lm"]) != 0b101:
 		_fail("decode_state lost a snapshot mask: %s" % got)
 
 	for bad: Variant in ["3", INF, NAN, -2.0, []]:
 		var hostile: Dictionary = base.duplicate()
 		hostile["lm"] = bad
-		if not MPManager.decode_state(hostile).is_empty():
+		if not MpCodec.decode_state(hostile).is_empty():
 			_fail("decode_state accepted a malformed `lm` %s" % [bad])
 	Sentinel.done("decode_absent")
 
@@ -347,49 +347,49 @@ func _check_decode_absent() -> void:
 # ============================================================================
 
 func _check_claim_verb() -> void:
-	var good: Dictionary = MPManager.decode_lmk({"t": "lmk", "i": 3})
+	var good: Dictionary = MpCodec.decode_lmk({"t": "lmk", "i": 3})
 	if good.is_empty() or int(good["i"]) != 3:
 		_fail("decode_lmk lost a plain int index: %s" % good)
 	# THE RELAY LEG: `JSON.parse_string` hands every number back as a float, so a
 	# whole-numbered float is the SAME claim and must decode.
-	var relayed: Dictionary = MPManager.decode_lmk({"mp": "lmk", "i": 3.0})
+	var relayed: Dictionary = MpCodec.decode_lmk({"mp": "lmk", "i": 3.0})
 	if relayed.is_empty() or int(relayed["i"]) != 3:
 		_fail("decode_lmk dropped a relayed (float) index — every claim made while "
 			+ "ICE is still negotiating would be lost to the room: %s" % relayed)
 
 	var last: int = BudapestPlan.SLOTS.size() - 1
-	if MPManager.decode_lmk({"i": last}).is_empty():
+	if MpCodec.decode_lmk({"i": last}).is_empty():
 		_fail("decode_lmk refused the LAST slot — the range test is off by one")
 	for bad: Variant in [-1, last + 1, 3.5, "3", true, null, INF, NAN, [], {}]:
-		if not MPManager.decode_lmk({"i": bad}).is_empty():
+		if not MpCodec.decode_lmk({"i": bad}).is_empty():
 			_fail("decode_lmk accepted a hostile index %s" % [bad])
 
 	# --- the proximity rule --------------------------------------------------
 	var slot: Dictionary = BudapestPlan.SLOTS[0]
 	var here: Vector3 = slot["pos"]
 	var radius: float = float(slot["radius"])
-	if not MPManager.landmark_claim_in_reach(here, here, radius):
+	if not MpCodec.landmark_claim_in_reach(here, here, radius):
 		_fail("a peer standing ON a landmark was refused its claim")
 	# Just inside and just outside the skirt, so the bound is measured and not
 	# merely present.
-	var near: Vector3 = here + Vector3(radius + MPManager.MAX_LANDMARK_CLAIM_PAD - 1.0, 0.0, 0.0)
-	if not MPManager.landmark_claim_in_reach(near, here, radius):
+	var near: Vector3 = here + Vector3(radius + MpCodec.MAX_LANDMARK_CLAIM_PAD - 1.0, 0.0, 0.0)
+	if not MpCodec.landmark_claim_in_reach(near, here, radius):
 		_fail("a peer inside radius + pad was refused its claim")
-	var far: Vector3 = here + Vector3(radius + MPManager.MAX_LANDMARK_CLAIM_PAD + 1.0, 0.0, 0.0)
-	if MPManager.landmark_claim_in_reach(far, here, radius):
+	var far: Vector3 = here + Vector3(radius + MpCodec.MAX_LANDMARK_CLAIM_PAD + 1.0, 0.0, 0.0)
+	if MpCodec.landmark_claim_in_reach(far, here, radius):
 		_fail("a peer OUTSIDE radius + pad was granted its claim — a modified client "
 			+ "would win the run from the gate")
 	# THE ATTACK THIS EXISTS FOR: a claim from the far side of the world.
-	if MPManager.landmark_claim_in_reach(Vector3(-4000.0, 0.0, 0.0), here, radius):
+	if MpCodec.landmark_claim_in_reach(Vector3(-4000.0, 0.0, 0.0), here, radius):
 		_fail("a claim from 5 km away was granted")
 	# FLAT XZ: three slots stand on a plateau lid 30-46 m up, and a Y-aware
 	# distance would refuse somebody standing directly on top of Buda Castle.
-	if not MPManager.landmark_claim_in_reach(here + Vector3(0.0, 46.0, 0.0), here, radius):
+	if not MpCodec.landmark_claim_in_reach(here + Vector3(0.0, 46.0, 0.0), here, radius):
 		_fail("a peer 46 m above a landmark was refused — the distance is not flat XZ")
 	for bad: Vector3 in [Vector3(INF, 0, 0), Vector3(NAN, 0, 0)]:
-		if MPManager.landmark_claim_in_reach(bad, here, radius):
+		if MpCodec.landmark_claim_in_reach(bad, here, radius):
 			_fail("a non-finite claim position was granted")
-	if MPManager.landmark_claim_in_reach(here, here, NAN):
+	if MpCodec.landmark_claim_in_reach(here, here, NAN):
 		_fail("a non-finite radius was granted")
 	Sentinel.done("claim_verb")
 
