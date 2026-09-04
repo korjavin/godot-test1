@@ -1670,10 +1670,23 @@ func mic_badge() -> int:
 	The ORDER is the priority the row draws: a denied mic can never transmit, and
 	a hand mute beats whatever the mode says (`applyMic()` in the browser module
 	is `tx && !muted`, and this is that rule read back out).
+
+	IT READS `_reported_mic`, NOT `mic_denied()`, AND THAT IS THE WHOLE POINT OF
+	THIS COMMENT. Its caller is a HUD widget's `_process`, so this runs 60 times a
+	second in a browser room, and `mic_denied()` asks `_ck.micState()` — a
+	`JavaScriptBridge` round trip — on every call. Every other bridge reader in
+	this file is throttled and one-call-per-poll for exactly that reason
+	(`LEVELS_INTERVAL` 10 Hz, `TILE_INTERVAL` 5 Hz, `POLL_INTERVAL` 2 Hz), and the
+	permission answer is the slowest-moving fact here: it changes once per room
+	join, when the user answers a prompt. `_report_mic()` already refreshes
+	`_reported_mic` off that same 2 Hz `_tick` and fires `mic_denied_changed` on
+	the edge, so the cached value is never more than half a second stale and the
+	frame path pays nothing. `mp_ui` keeps the live read — it asks once per panel
+	refresh, not once per frame.
 	"""
 	if not _is_web or not _is_in_room():
 		return MIC_BADGE_NONE
-	if mic_denied():
+	if _reported_mic == MIC_DENIED:
 		return MIC_BADGE_DENIED
 	if _mic_muted:
 		return MIC_BADGE_MUTED

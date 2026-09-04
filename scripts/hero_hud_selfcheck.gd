@@ -49,6 +49,10 @@ extends SceneTree
 ##      with a speaking hero — plus the two things nothing else can see, that the
 ##      row with NO voice node is byte-identical to the one bead .7 shipped, and
 ##      that the numbers and the green this widget mirrors are the real ones.
+##      **7b executes the REAL `voice_chat.gd` ladders** with `_is_web` forced on
+##      and a `StubMp` in the manager's place, because check 7 only ever meets
+##      them off-web, where both return on their first line — so the priority
+##      order and the self/remote key split would otherwise be untested code.
 ##
 ##      IT MOVED SIDEWAYS AND NOT DOWN, which is worth knowing before you "fix" it:
 ##      `PerfOverlay` is a Label whose real height is its TEXT's minimum size (316
@@ -105,6 +109,25 @@ class StubVoice extends Node:
 		return speaking.has(hero)
 
 
+## The MP manager's stand-in, carrying the three methods `voice_chat` asks a room
+## about. It exists so check 7b can drive the REAL `voice_chat.gd` — with
+## `_is_web` forced on, which is the only way anything headless reaches past that
+## file's first line and into the two ladders this bead added.
+class StubMp extends Node:
+	var online: bool = true
+	var me: String = "aaaaaaaa"
+	var holders: Dictionary = {}
+
+	func is_online() -> bool:
+		return online
+
+	func my_id() -> String:
+		return me
+
+	func hero_holder(hero: String) -> String:
+		return str(holders.get(hero, ""))
+
+
 ## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
 ## lands in and lets the script carry on, so a check that dies halfway simply
 ## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
@@ -142,6 +165,7 @@ func _run() -> void:
 	_check_the_row_fits_and_clears_its_neighbours()
 	_check_the_video_tile_lookup()
 	_check_voice_on_the_row()
+	_check_the_voice_seams_in_a_room()
 
 
 func _hero_names() -> PackedStringArray:
@@ -540,6 +564,52 @@ func _check_voice_on_the_row() -> void:
 			% hud._speaking
 		+ "there being voice at all")
 
+	# --- WHERE THE BADGE IS DRAWN, which `_draw` cannot be asked headless --------
+	# `badge_on_tile` / `deafen_on_tile` ARE `_draw`'s two decisions, and without
+	# them a badge drawn in the NONE state or a headphone-slash drawn on every
+	# tile would be invisible to this file: a control outside the tree has no
+	# canvas item, so the painting itself can never run here.
+	voice.badge = HUD_SCRIPT.MIC_BADGE_TX
+	voice.deafened = true
+	stub.current_character_index = 1
+	hud._process(0.0)
+	_check(hud.badge_on_tile(1) == HUD_SCRIPT.MIC_BADGE_TX,
+		"the badge is not on the tile of the hero being driven (got %d on tile 1)"
+			% hud.badge_on_tile(1))
+	for other: int in [0, 2]:
+		_check(hud.badge_on_tile(other) == HUD_SCRIPT.MIC_BADGE_NONE,
+			"a second mic badge appeared on tile %d — one badge on the row" % other)
+		_check(not hud.deafen_on_tile(other),
+			"a headphone-slash appeared on tile %d, away from the mic badge" % other)
+	_check(hud.deafen_on_tile(1),
+		"the headphone-slash is not on the badge's own tile while deafened")
+	voice.deafened = false
+	hud._process(0.0)
+	_check(not hud.deafen_on_tile(1),
+		"a headphone-slash is drawn while the player is not deafened")
+	voice.badge = HUD_SCRIPT.MIC_BADGE_NONE
+	hud._process(0.0)
+	_check(hud.badge_on_tile(1) == HUD_SCRIPT.MIC_BADGE_NONE,
+		"a mic badge is drawn on a row with no voice at all — every desktop run "
+		+ "would carry one")
+
+	# THE BENCHED HERO, and it is the reason the badge rides the DRIVEN tile and
+	# not the ACTIVE one. A captured hero stays the body you are in (the prison
+	# role never switches character), captivity OUTRANKS active, so the row has no
+	# ACTIVE tile at all — which is exactly when somebody is on the microphone.
+	voice.badge = HUD_SCRIPT.MIC_BADGE_TX
+	stub.captive = [heroes[1]]
+	hud._process(0.0)
+	_check(hud.tile_state(heroes[1]) == HUD_SCRIPT.STATE_CAPTIVE,
+		"this sub-check needs tile 1 captive to mean anything")
+	for s: int in hud._states:
+		_check(s != HUD_SCRIPT.STATE_ACTIVE,
+			"a captive driven hero must leave NO active tile, or this proves nothing")
+	_check(hud.badge_on_tile(1) == HUD_SCRIPT.MIC_BADGE_TX,
+		"the mic badge vanished while the driven hero was in a cell — that is the "
+		+ "one moment a benched player is certainly talking")
+	stub.captive = []
+
 	# A voice node that predates either seam degrades, it does not error.
 	hud.voice = Node.new()
 	hud._process(0.0)
@@ -561,10 +631,103 @@ func _check_voice_on_the_row() -> void:
 	var next_func := draw_body.find("\nfunc ")
 	if next_func > 0:
 		draw_body = draw_body.substr(0, next_func)
-	_check(draw_body.contains("_speaking") and draw_body.contains("_mic_badge"),
-		"_draw() no longer reads _speaking / _mic_badge — everything check 7 "
-		+ "measures would be a snapshot nothing draws")
+	# It must ASK the two decisions rather than re-deriving them: everything above
+	# drives `badge_on_tile` / `deafen_on_tile`, and a `_draw` that painted a badge
+	# off `_mic_badge` and `_badge_index` directly would be a third description of
+	# a rule this file can otherwise only measure in one place.
+	for seam: String in ["badge_on_tile(", "deafen_on_tile(", "_speaking"]:
+		_check(draw_body.contains(seam),
+			"_draw() no longer reads `%s` — everything check 7 measures would be "
+				% seam + "a decision nothing draws")
 	Sentinel.done("voice_on_the_row")
+
+
+func _check_the_voice_seams_in_a_room() -> void:
+	"""
+	7b. THE TWO LADDERS INSIDE `voice_chat.gd`, executed rather than stubbed.
+
+	Check 7 drives the ROW through a stub, and touches the real module only
+	off-web — where both seams short-circuit on their first line. So not one line
+	of `mic_badge()`'s priority order or `is_hero_speaking()`'s holder resolution
+	would run anywhere in this suite, and `voice_selfcheck`'s `PUBLIC_CALLS` rows
+	only prove they never reach the bridge, never what they answer.
+
+	Both are pure over instance state plus the manager, so forcing `_is_web` on
+	and hanging a `StubMp` off `_mp` runs them exactly as a browser would — and
+	`mic_badge()` reads the CACHED `_reported_mic` rather than `mic_denied()`
+	precisely so no bridge is involved even here (see its docstring: its caller is
+	a `_process`).
+	"""
+	var heroes := _hero_names()
+	var voice: Node = VOICE_SCRIPT.new()
+	var mp := StubMp.new()
+	voice._is_web = true
+	voice._mp = mp
+	mp.holders = {heroes[0]: mp.me, heroes[1]: "bbbbbbbb"}
+
+	# --- mic_badge(): the priority order, top down --------------------------
+	_check(int(voice.mic_badge()) == HUD_SCRIPT.MIC_BADGE_OFF,
+		"a live room with the mic idle reads %d, not OFF" % int(voice.mic_badge()))
+	voice._tx = true
+	_check(int(voice.mic_badge()) == HUD_SCRIPT.MIC_BADGE_TX,
+		"a transmitting mic reads %d, not TX" % int(voice.mic_badge()))
+	# MUTE WINS OVER THE MODE — the browser transmits on `tx && !muted`, and this
+	# is that rule read back out. Both flags set at once is the whole assertion.
+	voice._mic_muted = true
+	_check(int(voice.mic_badge()) == HUD_SCRIPT.MIC_BADGE_MUTED,
+		"a muted mic that is also transmitting reads %d — mute must win"
+			% int(voice.mic_badge()))
+	# And a DENIED microphone outranks both: it can never transmit at all.
+	voice._reported_mic = VOICE_SCRIPT.MIC_DENIED
+	_check(int(voice.mic_badge()) == HUD_SCRIPT.MIC_BADGE_DENIED,
+		"a denied mic reads %d, not DENIED" % int(voice.mic_badge()))
+	voice._reported_mic = VOICE_SCRIPT.MIC_IDLE
+	voice._mic_muted = false
+	# OUT OF THE ROOM IS NOTHING, even on the web with the mic wide open.
+	mp.online = false
+	_check(int(voice.mic_badge()) == HUD_SCRIPT.MIC_BADGE_NONE,
+		"a transmitting mic outside a room reads %d — there is no room to badge"
+			% int(voice.mic_badge()))
+	mp.online = true
+
+	# --- is_hero_speaking(): the self / remote split ------------------------
+	# The browser reports our own microphone under `me` and every peer under its
+	# lobby id (`S.peers` is remote-only), so the two halves take DIFFERENT keys —
+	# which is why only a levels string that carries one and not the other can
+	# tell a correct mapping from one that asks for our lobby id.
+	voice.apply_levels("%s:80" % VOICE_SCRIPT.SELF_LEVEL_KEY)
+	_check(voice.is_hero_speaking(heroes[0]),
+		"our own hero's ring did not light off the `%s` level key"
+			% VOICE_SCRIPT.SELF_LEVEL_KEY)
+	_check(not voice.is_hero_speaking(heroes[1]),
+		"a teammate's hero lit off OUR microphone level")
+	voice._speaking_until.clear()
+	voice.apply_levels("bbbbbbbb:80")
+	_check(voice.is_hero_speaking(heroes[1]),
+		"a speaking peer's hero did not light off that peer's lobby id")
+	_check(not voice.is_hero_speaking(heroes[0]),
+		"our own hero lit off a TEAMMATE's level")
+	# A hero nobody holds, and a room nobody is in.
+	_check(not voice.is_hero_speaking(heroes[2]),
+		"a hero nobody holds lit a speaking ring")
+	_check(not voice.is_hero_speaking(""),
+		"the empty hero name lit a speaking ring")
+	mp.online = false
+	_check(not voice.is_hero_speaking(heroes[1]),
+		"a ring lit outside a room")
+	mp.online = true
+	# A manager that predates `hero_holder` degrades rather than erroring.
+	var bare := Node.new()
+	voice._mp = bare
+	_check(not voice.is_hero_speaking(heroes[1]),
+		"a manager with no hero_holder() must read as nobody speaking")
+	_check(int(voice.mic_badge()) == HUD_SCRIPT.MIC_BADGE_NONE,
+		"a manager with no is_online() must read as no room")
+	bare.free()
+	voice._mp = null
+	mp.free()
+	voice.free()
+	Sentinel.done("the_voice_seams_in_a_room")
 
 
 func _hud_absolute_rects(text: String) -> Dictionary:

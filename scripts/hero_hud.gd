@@ -55,8 +55,15 @@ extends Control
 ## answered by `voice_chat.gd` — `mic_badge()` and `is_hero_speaking()`. The hero
 ## -> holder mapping and the browser's `me` level key stay over there beside the
 ## camera tiles that already need them; this widget only draws. Off the web, with
-## no voice node, or outside a room every answer is "nothing" and the row is
-## byte-identical to the one bead .7 shipped.
+## no voice node, or outside a room every answer is "nothing", so the row DRAWS
+## exactly what bead .7's did and repaints exactly as rarely — the whole cost on a
+## desktop or headless run is two dynamic dispatches a frame, and `mic_badge()`
+## itself short-circuits before touching anything.
+##
+## THE BADGE RIDES THE HERO YOU DRIVE, NOT THE ACTIVE TILE — see `_badge_index`;
+## and the two draw decisions are `badge_on_tile()` / `deafen_on_tile()`, public
+## because a `_draw` outside the tree has no canvas item and they are the only
+## part of the painting a headless check can measure.
 ##
 ## The green is `remote_avatar.gd`'s `LABEL_SPEAKING_COLOR`, mirrored rather than
 ## preloaded (the discovery convention refuses a hard reference to another node's
@@ -177,6 +184,12 @@ var _mic_badge: int = MIC_BADGE_NONE
 var _deafened: bool = false
 var _speaking: int = 0
 var _pulse: int = 0
+## Which tile the mic badge rides: the hero you are DRIVING, which is deliberately
+## NOT "the ACTIVE tile". Captivity outranks ACTIVE, and a BENCHED peer keeps
+## driving the hero the lobby says they hold while that hero is in a cell — so a
+## row with no ACTIVE tile at all is a normal state of a room, and it is precisely
+## the state in which somebody is on the microphone asking to be let out.
+var _badge_index: int = -1
 
 
 func _ready() -> void:
@@ -192,7 +205,8 @@ func _process(_delta: float) -> void:
 	var heroes := _read_roster()
 	var states := _read_states(heroes)
 	var badge := _read_mic_badge()
-	var deaf := badge != MIC_BADGE_NONE and _voice_flag("is_deafened")
+	var driven := _driven_index(heroes)
+	var deaf := badge != MIC_BADGE_NONE and _read_deafened()
 	var speaking := _read_speaking(heroes, badge)
 	# The ring's phase is only asked for while something is actually ringing, so
 	# an idle row's snapshot is as static as it was before voice existed.
@@ -203,15 +217,30 @@ func _process(_delta: float) -> void:
 	# Repaint only on change (the HUD widget idiom) — `_draw` is comparatively
 	# expensive and the roster is unchanged on almost every frame of a run.
 	if heroes == _heroes and states == _states and badge == _mic_badge \
-			and deaf == _deafened and speaking == _speaking and pulse == _pulse:
+			and driven == _badge_index and deaf == _deafened \
+			and speaking == _speaking and pulse == _pulse:
 		return
 	_heroes = heroes
 	_states = states
 	_mic_badge = badge
+	_badge_index = driven
 	_deafened = deaf
 	_speaking = speaking
 	_pulse = pulse
 	queue_redraw()
+
+
+func _driven_index(heroes: PackedStringArray) -> int:
+	"""
+	The slot of the hero this player is DRIVING, or -1. Not a state — see
+	`_badge_index`: a captive or benched hero is still the body you are in.
+	"""
+	if heroes.is_empty() or player == null or not is_instance_valid(player):
+		return -1
+	if not ("current_character_index" in player):
+		return -1
+	var index: int = int(player.current_character_index)
+	return index if index >= 0 and index < heroes.size() else -1
 
 
 func _voice_node() -> Node:
@@ -226,12 +255,12 @@ func _voice_node() -> Node:
 	return voice
 
 
-func _voice_flag(method: String) -> bool:
-	"""One boolean seam off the voice node, false when it is absent or predates it."""
+func _read_deafened() -> bool:
+	"""Is the local player deafened? False with no voice node, or one without it."""
 	var node := _voice_node()
-	if node == null or not node.has_method(method):
+	if node == null or not node.has_method("is_deafened"):
 		return false
-	return bool(node.call(method))
+	return bool(node.is_deafened())
 
 
 func _read_mic_badge() -> int:
@@ -450,27 +479,24 @@ func _draw() -> void:
 		else:
 			draw_rect(rect, COLOR_FRAME, false, 1.0)
 
-		# VOICE. The ring goes INSIDE the frame so it reads beside the active
-		# border rather than replacing it; a captive tile keeps its bars, and the
-		# ring is drawn over the veil so a HELD teammate talking still shows.
+		# VOICE, and the two decisions are `badge_on_tile` / `deafen_on_tile` so a
+		# self-check can drive them without a canvas. The mic badge is drawn FIRST
+		# and the ring over it: the badge's dark backdrop reaches into the ring's
+		# band at that corner, and the ring is the tile-level statement.
+		var badge := badge_on_tile(i)
+		if badge != MIC_BADGE_NONE:
+			_draw_mic_badge(_badge_box(rect, true), badge)
+		if deafen_on_tile(i):
+			_draw_deafen_badge(_badge_box(rect, false))
+
+		# The ring goes INSIDE the frame so it reads beside the active border
+		# rather than replacing it; a captive tile keeps its bars, and the ring is
+		# drawn over the veil so a HELD teammate talking still shows.
 		if (_speaking & (1 << i)) != 0:
 			var t: float = 0.5 - 0.5 * cos(TAU * float(_pulse) / float(RING_PULSE_STEPS))
 			var ring := COLOR_SPEAKING
 			ring.a = lerp(RING_ALPHA_MIN, RING_ALPHA_MAX, t)
 			draw_rect(rect.grow(-RING_INSET), ring, false, RING_WIDTH)
-
-		# The mic badge rides the tile of the body you are DRIVING, which in a room
-		# is the hero you hold — one badge on the row, never four.
-		if state == STATE_ACTIVE and _mic_badge != MIC_BADGE_NONE:
-			_draw_mic_badge(Rect2(
-				Vector2(rect.position.x + BADGE_MARGIN,
-					rect.end.y - BADGE_SIZE - BADGE_MARGIN),
-				Vector2(BADGE_SIZE, BADGE_SIZE)))
-			if _deafened:
-				_draw_deafen_badge(Rect2(
-					Vector2(rect.end.x - BADGE_SIZE - BADGE_MARGIN,
-						rect.end.y - BADGE_SIZE - BADGE_MARGIN),
-					Vector2(BADGE_SIZE, BADGE_SIZE)))
 
 		# The hotkey digit, top-left of the tile. A LABEL ONLY — this HUD binds
 		# nothing and depends on no hotkey bead; the digits match the 1-4 order
@@ -502,6 +528,35 @@ func _draw_digit(font: Font, digit: String, rect: Rect2) -> void:
 		DIGIT_FONT_SIZE, COLOR_DIGIT)
 
 
+func badge_on_tile(index: int) -> int:
+	"""
+	The mic badge that tile draws, `MIC_BADGE_NONE` for none — `_draw`'s ONE
+	decision, public so `hero_hud_selfcheck` can drive it (a `_draw` on a control
+	outside the tree has no canvas item, so the painting itself is untestable
+	headless and only this ladder can be measured).
+
+	ONE badge on the row, never four, and it rides `_badge_index` rather than the
+	ACTIVE state — see that var for why a room can legitimately have no ACTIVE
+	tile while the microphone is very much live.
+	"""
+	if _mic_badge == MIC_BADGE_NONE or index != _badge_index:
+		return MIC_BADGE_NONE
+	return _mic_badge
+
+
+func deafen_on_tile(index: int) -> bool:
+	"""The headphone-slash, which rides the mic badge's tile and its liveness."""
+	return _deafened and badge_on_tile(index) != MIC_BADGE_NONE
+
+
+func _badge_box(rect: Rect2, left: bool) -> Rect2:
+	"""One badge's square, in a bottom corner of the tile. Two axes, two corners."""
+	var x := rect.position.x + BADGE_MARGIN if left \
+		else rect.end.x - BADGE_SIZE - BADGE_MARGIN
+	return Rect2(Vector2(x, rect.end.y - BADGE_SIZE - BADGE_MARGIN),
+		Vector2(BADGE_SIZE, BADGE_SIZE))
+
+
 func mic_badge_color(badge: int) -> Color:
 	"""
 	The colour one `MIC_BADGE_*` state is drawn in — a function rather than a
@@ -519,14 +574,14 @@ func mic_badge_color(badge: int) -> Color:
 			return COLOR_MIC_OFF
 
 
-func _draw_mic_badge(box: Rect2) -> void:
+func _draw_mic_badge(box: Rect2, badge: int) -> void:
 	"""
 	A microphone, vertex-drawn: capsule, cradle, stem, base — plus a slash when
 	the mic cannot transmit. No texture and no node, like every other mark on this
 	row; at 15 px the shape carries as much as the colour does, which is what
 	makes the badge readable for a player who cannot tell the red from the amber.
 	"""
-	var color := mic_badge_color(_mic_badge)
+	var color := mic_badge_color(badge)
 	var w := box.size.x
 	var h := box.size.y
 	var cx := box.position.x + w * 0.5
@@ -539,7 +594,7 @@ func _draw_mic_badge(box: Rect2) -> void:
 		Vector2(cx, box.position.y + h * 0.82), color, 1.5)
 	draw_line(Vector2(cx - w * 0.20, box.position.y + h * 0.82),
 		Vector2(cx + w * 0.20, box.position.y + h * 0.82), color, 1.5)
-	if _mic_badge == MIC_BADGE_MUTED or _mic_badge == MIC_BADGE_DENIED:
+	if badge == MIC_BADGE_MUTED or badge == MIC_BADGE_DENIED:
 		_draw_slash(box, color)
 
 
