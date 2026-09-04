@@ -178,13 +178,13 @@ const ROWS: Array = [
 
 	# Debug builds only, and untranslated on purpose — the surfaces themselves are
 	# excluded from localization (see locale_selfcheck.gd's header).
+	["F2", "Teleport to Budapest's gate — then F3 to measure.", Mode.DEBUG],
 	["F3", "Performance overlay: FPS, draw calls, live crocodiles.", Mode.DEBUG],
 	["F4", "Raw motion-sensor read-out.", Mode.DEBUG],
 	["F5", "Force-enable the touch motion driver.", Mode.DEBUG],
 	["F6", "Force-show the touch controls.", Mode.DEBUG],
 	["F7", "Force-show the ⚙ tuning panel.", Mode.DEBUG],
-	["F2", "Teleport to Budapest's gate (debug builds only).", Mode.DEBUG],
-	["F8", "Teleport to the HQ (debug builds only).", Mode.DEBUG],
+	["F8", "Teleport to the GastroDefense HQ.", Mode.DEBUG],
 ]
 
 # ============================================================================

@@ -4175,15 +4175,25 @@ func debug_teleport_to(dest: Vector3) -> bool:
 	under them. Returns false — placing NOTHING — when the gates refuse (release
 	build, room, reentrant press) or the world is missing.
 
-	THIS PRESERVES THE RUN: coins, distance, streak, explored mask, heroes,
-	captives — everything a measurement is taken OF. A teleport is a walk at
-	infinite speed: chunk content is seed-deterministic (walking away and back
-	rebuilds the same chunks), and every run total lives on the player, which
-	this never touches. `join_at()`'s zeroing is room bookkeeping this path must
-	not do. Proximity systems (landmark exploring, croc aggro) will of course
-	notice the new neighborhood on arrival — that is what "debug-only" means:
-	this must never be reachable in a release build, or it trivially defeats the
-	win condition, the difficulty ramp and the road.
+	THIS PRESERVES THE RUN: coins, streak, explored mask, heroes, captives —
+	everything a measurement is taken OF. A teleport is a walk at infinite
+	speed: chunk content is seed-deterministic (walking away and back rebuilds
+	the same chunks), and every run total lives on the player, which this never
+	touches. `join_at()`'s zeroing is room bookkeeping this path must not do.
+	Proximity systems (landmark exploring, croc aggro) will of course notice the
+	new neighborhood on arrival — that is what "debug-only" means: this must
+	never be reachable in a release build, or it trivially defeats the win
+	condition, the difficulty ramp and the road.
+
+	DISTANCE IS THE ONE THING A JUMP CANNOT LEAVE ALONE, and the file already
+	knows what to do about it: `own_distance` is measured from
+	`own_distance_origin`, so shifting that origin by exactly the jump leaves
+	the PERSONAL figure — the one a bite banks — untouched, which is what
+	`_respawn_in_place()` and `join_at()` both do for their own teleports.
+	`run_distance` is a running max of raw displacement from the world origin
+	and therefore moves with the body by definition; nothing persists it
+	(`_bank_records` submits distance as 0) and the key is dead in a room, so
+	it is left to tell the truth about where the body is.
 
 	ABSENT IN ROOMS: the key is dead there and this returns false. A peer's
 	position is mesh-published truth, and a teleport mid-arrival would fight
@@ -4212,7 +4222,10 @@ func debug_teleport_to(dest: Vector3) -> bool:
 	terrain.new_run(terrain.run_seed, chunk)
 	terrain.build_ring_now(chunk)
 	await get_tree().physics_frame
+	var from_xz := Vector2(global_position.x, global_position.z)
 	_place_near(dest)
+	# A TELEPORT IS NOT DISTANCE RUN — `_respawn_in_place()`'s line, verbatim.
+	own_distance_origin += Vector2(global_position.x, global_position.z) - from_xz
 	clear_nearby_crocodiles(global_position)
 	respawn_blink_timer = 0.0
 	_apply_view_mode()

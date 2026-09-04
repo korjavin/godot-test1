@@ -91,9 +91,19 @@ func _boot() -> Array:
 func _check_run_preserved() -> void:
 	"""Teleporting moves the run without corrupting it (the bead's stated rule).
 
-	Sets the four run totals to known nonzero values, teleports to the gate via
-	the SHIPPED function, and asserts all four survive, the body lands near the
+	Sets the run totals to known nonzero values, teleports to the gate via the
+	SHIPPED function, and asserts they survive, the body lands near the
 	destination on built ground, and the whole thing takes under a second.
+
+	MEASURED A PHYSICS FRAME AFTER THE ARRIVAL, not in the window before one has
+	run — `_physics_process` is where every distance total is re-derived from
+	the body's position, so an assertion taken before it would pass on a
+	teleport that inflates them all a frame later. That frame is why
+	`own_distance` is on the list: the shipped function shifts
+	`own_distance_origin` by the jump (`_respawn_in_place()`'s line), and
+	without that shift this is the assertion that goes red. `run_distance` is
+	deliberately NOT on it — it is a running max of raw displacement from the
+	world origin, so it must grow, and the check below asserts that it did.
 	"""
 	var boot: Array = await _boot()
 	if bool(boot[0]):
@@ -103,7 +113,9 @@ func _check_run_preserved() -> void:
 	var player: Node = boot[1]
 	var terrain: Node = get_first_node_in_group("terrain")
 	player.coins_collected = 100
+	player.own_coins = 100
 	player.run_distance = 1500
+	player.own_distance = 1500
 	player.coin_streak = 7
 	player.explored_mask = 3
 	var dest: Vector3 = PlayerScript.debug_destination_budapest()
@@ -126,10 +138,15 @@ func _check_run_preserved() -> void:
 		_fail("no built chunk under the player after the teleport")
 	if player.global_position.y < -5.0 or player.global_position.y > 6.0:
 		_fail("the player is at y=%.1f after the teleport — not on ground" % player.global_position.y)
-	if player.coins_collected != 100 or player.run_distance != 1500 \
+	await physics_frame
+	if player.coins_collected != 100 or player.own_coins != 100 \
 			or player.coin_streak != 7 or player.explored_mask != 3:
-		_fail("the teleport changed run state (coins=%d distance=%d streak=%d mask=%d) — it must preserve the run" % [
-			player.coins_collected, player.run_distance, player.coin_streak, player.explored_mask])
+		_fail("the teleport changed run state (coins=%d own_coins=%d streak=%d mask=%d) — it must preserve the run" % [
+			player.coins_collected, player.own_coins, player.coin_streak, player.explored_mask])
+	if player.own_distance != 1500:
+		_fail("the teleport inflated the personal distance record to %d — own_distance_origin was not shifted by the jump" % player.own_distance)
+	if player.run_distance <= 1500:
+		_fail("run_distance did not follow the body to Budapest (%d) — it is raw displacement and must" % player.run_distance)
 	Sentinel.done("run_preserved")
 
 
