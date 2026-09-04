@@ -1566,7 +1566,11 @@ The web (WebGL) build is the performance-sensitive target.
   map (the F3–F7 precedent), and it re-seats the world through
   `MpManager._apply_join_placement()`'s own sequence (`new_run` with the CURRENT seed →
   `build_ring_now` → wait a physics frame → `_place_near`) so the body lands on built
-  ground with the ring's blocks and crocodiles already there. It preserves the run —
+  ground with the ring's blocks and crocodiles already there. **TAKE THE READING ON
+  `godot --headless --export-debug "Web" build/web/index.html` + `./serve.sh`** — CI and the
+  deployed build export `--export-release`, where `is_debug_build()` is false and F2/F8 are
+  dead by design, so a before/after PAIR is comparable on the debug template but the absolute
+  numbers are not the deployed build's. It preserves the run —
   coins, streak, mask, heroes — and shifts `own_distance_origin` by the jump so the
   personal record is not banked from a place nobody walked to. `debug_teleport_selfcheck`
   pins all of it.

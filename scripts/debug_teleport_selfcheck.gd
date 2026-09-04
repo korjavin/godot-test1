@@ -70,10 +70,17 @@ func _check_keys_are_free() -> void:
 			_fail("%s is 0 — it can never be pressed" % label)
 			continue
 		# Against the input map: a gameplay action is rebindable, this is not.
+		# BARE PRESSES ONLY, `tower_lift_selfcheck`'s rule: Godot ships built-in
+		# `ui_text_*` actions on modified keys, and a panel key is pressed with
+		# nothing held, so a modified event is a different chord and not a
+		# collision. Every action this GAME binds is modifier-free.
 		for action: StringName in InputMap.get_actions():
 			for event: InputEvent in InputMap.action_get_events(action):
 				var as_key := event as InputEventKey
 				if as_key == null:
+					continue
+				if as_key.ctrl_pressed or as_key.alt_pressed or as_key.meta_pressed \
+						or as_key.shift_pressed:
 					continue
 				if int(as_key.keycode) == key or int(as_key.physical_keycode) == key:
 					_fail("%s (%s) is also bound to the input action \"%s\""
@@ -189,6 +196,13 @@ func _check_run_preserved() -> void:
 	var chunk: Vector2i = terrain.world_to_chunk(player.global_position)
 	if not terrain.active_chunks.has(chunk):
 		_fail("no built chunk under the player after the teleport")
+	elif terrain.bare_chunks.has(chunk):
+		# `new_run()` floors the ring synchronously, so `active_chunks` alone is
+		# satisfied by HALF the sequence — a debt note in `bare_chunks` is the
+		# only thing that can see `build_ring_now()` missing, which is the half
+		# that stops `_place_near()` probing a bare ring and landing you inside
+		# a block that appears two frames later.
+		_fail("the chunk under the player is BARE (ground only) — build_ring_now() did not buy its content before _place_near() probed it")
 	if player.global_position.y < -5.0 or player.global_position.y > 6.0:
 		_fail("the player is at y=%.1f after the teleport — not on ground" % player.global_position.y)
 	await physics_frame

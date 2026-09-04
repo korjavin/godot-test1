@@ -75,6 +75,7 @@ const MobileInput := preload("res://scripts/mobile_input.gd")
 const TouchControls := preload("res://scripts/touch_controls.gd")
 const MobileSettingsPanel := preload("res://scripts/mobile_settings_panel.gd")
 const SkillTreeUi := preload("res://scripts/skill_tree_ui.gd")
+const TowerLiftMenu := preload("res://scripts/tower_lift_menu.gd")
 const LandmarkToast := preload("res://scripts/landmark_toast.gd")
 
 const PLAYER_SCENE: String = "res://scenes/player.tscn"
@@ -191,6 +192,10 @@ static func panel_key_owners() -> Array:
 	panel key is still ONE edit, here, and it is compared against everything
 	that already exists in both directions. A subject that appears in the list
 	skips its own row by label.
+
+	`tower_lift_selfcheck` still carries a fourth copy of this list; pointing it
+	here too is the obvious follow-up and is deliberately not this bead's edit.
+	Its key IS a row below, so a lift key moved onto F2/F8/B is caught here.
 	"""
 	return [
 		[[MinimapHud.TOGGLE_KEYCODE], "minimap_hud.TOGGLE_KEYCODE"],
@@ -198,6 +203,7 @@ static func panel_key_owners() -> Array:
 		[MinimapHud.ZOOM_OUT_KEYCODES, "minimap_hud.ZOOM_OUT_KEYCODES"],
 		[[PauseController.PAUSE_KEY], "pause_controller.PAUSE_KEY"],
 		[[SkillTreeUi.TOGGLE_KEY], "skill_tree_ui.TOGGLE_KEY"],
+		[[TowerLiftMenu.TOGGLE_KEY], "tower_lift_menu.TOGGLE_KEY"],
 		[HelpOverlay.HELP_KEYCODES, "help_overlay.HELP_KEYCODES"],
 		[LandmarkToast.ANSWER_KEYCODES, "landmark_toast.ANSWER_KEYCODES"],
 		[PlayerScript.HERO_KEYCODES, "player_controller.HERO_KEYCODES"],

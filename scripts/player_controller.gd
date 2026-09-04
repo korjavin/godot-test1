@@ -4185,6 +4185,11 @@ func debug_teleport_to(dest: Vector3) -> bool:
 	never be reachable in a release build, or it trivially defeats the win
 	condition, the difficulty ramp and the road.
 
+	NOT TOTAL, and the exception is the HQ: `new_run()` re-seeds even with the
+	same value, and `set_run_seed()` resets the tower — so the shell re-streams
+	and its PER-RUN interior state (taken dossiers, guards, the LOD scent
+	trails) comes back. The monotone opened set is a store and survives.
+
 	DISTANCE IS THE ONE THING A JUMP CANNOT LEAVE ALONE, and the file already
 	knows what to do about it: `own_distance` is measured from
 	`own_distance_origin`, so shifting that origin by exactly the jump leaves
