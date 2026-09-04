@@ -14,9 +14,9 @@ extends SceneTree
 ## ONE CHECK IN ONE FILE, AND THE REASON IS THE CLOCK. This errand is sixty metres
 ## of route walked by a real body under real physics at a patrol pace, plus the hold
 ## and the walk off the plate: **fifty-five seconds**, against about eight for the
-## twenty-two checks left in `tower_interior_selfcheck.gd` and twenty-seven for the
-## five in `tower_guard_selfcheck.gd`. A CI shard cannot break a file apart, so
-## while this check shared a file with the other twenty-seven it was a ninety-second
+## twenty-two checks left in `tower_interior_selfcheck.gd` and twenty-five for the
+## six in `tower_guard_selfcheck.gd`. A CI shard cannot break a file apart, so
+## while this check shared a file with the other twenty-eight it was a ninety-second
 ## brick the packer had to build a bin around. On its own it is the pole it actually
 ## is, and everything else in the tower runs in the time of a short check.
 ##

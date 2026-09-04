@@ -106,6 +106,16 @@ static func fresh_store() -> void:
 
 	Never the real one: `Sentinel.isolate_user_state()` pointed
 	`BestRunStore.config_path` at this process's own scratch file before any shell
-	could exist.
+	could exist — and it reads that seam rather than naming a path, which is what
+	makes the sentence true rather than hopeful.
+
+	`ponytail:` THE CEILING IS THAT THIS `remove_absolute` NOW SITS OUTSIDE THE
+	AUDIT. `progression_selfcheck`'s `hermetic_stores` globs `*_selfcheck.gd`, and
+	this file is not one — so the one line in the tower checks that DELETES a store
+	is the one line that audit no longer reads. It is safe today for the reason
+	above (a seam, not a literal); it stops being safe the day somebody types
+	`user://best_run.cfg` here, which is precisely the mistake the audit exists to
+	catch. If a second non-check file ever needs a store verb, widen that glob to
+	the whole of `scripts/` rather than trusting this comment.
 	"""
 	DirAccess.remove_absolute(BestRunStore.config_path)

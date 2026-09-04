@@ -10,11 +10,11 @@ extends SceneTree
 ## ftn.13 shape (enemy_spawn / budapest precedent): the check NUMBERS and the check
 ## NAMES are exactly what they were, not one assertion moved, and this file owns its
 ## own Sentinel set, its own `isolate_user_state()` and its own report site. The
-## split is by RUNTIME, not by taste: the interior's other twenty-two checks add up
-## to about eight seconds and these five are eighty, because every one of them is a
-## real body walking a real floor under real physics. A CI shard cannot break a file
-## apart, so a file the size of the old one is a brick the packer has to build a bin
-## around.
+## split is by RUNTIME, not by taste: the twenty-two checks left in that file add up
+## to eight seconds, these six are twenty-five, and check 21c on its own is another
+## fifty-five — because a guard check is a real body walking a real floor under real
+## physics, and the rest are geometry. A CI shard cannot break a file apart, so a
+## file the size of the old one is a brick the packer has to build a bin around.
 ##
 ## WHAT IT GUARDS, and why each is worth a check:
 ##

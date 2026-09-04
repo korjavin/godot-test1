@@ -523,7 +523,7 @@ func _digit_event(keycode: int) -> InputEventKey:
 func _clear(player: Node, shell: Node, panel: Node) -> void:
 	"""Free a check's probes. NOT tidiness: a leftover probe leaves a second node in
 	group "player", and the next check's `get_first_node_in_group` picks one of them
-	at random (`tower_interior_selfcheck._clear`'s lesson)."""
+	at random (`TowerProbe.clear`'s lesson)."""
 	for node: Node in [player, shell, panel]:
 		if node != null and is_instance_valid(node):
 			node.queue_free()
