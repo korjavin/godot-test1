@@ -3795,9 +3795,10 @@ func _build_lift_stop() -> void:
 	only difference is which set member the id names: the checkpoint is a gate id,
 	this is `TowerGraph.ENTRY_LIFT_MAZE`, the graph entry the lift will offer.
 
-	# ponytail: the trigger and no menu. Choosing a stop is bead godot-test1-3iy.7,
-	# and the entry's `built` flag in the graph says so; earning it has to ship
-	# first or that bead has nothing to offer.
+	THE MENU THAT SPENDS IT is `scripts/tower_lift_menu.gd` (bead godot-test1-3iy.7),
+	which lists the stops whose `unlock` id this trigger — or the checkpoint — put in
+	that set and rides you to `lift_stand()`. Nothing here knows about it: the stop
+	is earned by standing on it, and what the earning is worth is the menu's problem.
 	"""
 	var floor_index := lift_stop_floor()
 	if floor_index < 0:
@@ -3822,13 +3823,65 @@ static func lift_stop_floor() -> int:
 	`s` cells you arrive on. Re-plan the labyrinth onto a different floor and the
 	trigger follows it, the way `block_floor()` follows the cell block.
 	"""
-	var room := String(TowerGraph.entry(TowerGraph.ENTRY_LIFT_MAZE).get("room", ""))
-	if room == "":
+	return landing_floor(String(TowerGraph.entry(TowerGraph.ENTRY_LIFT_MAZE).get("room", "")))
+
+
+static func landing_floor(room_id: String) -> int:
+	"""
+	Which `FLOOR_Y` index has `room_id` for its `landing`, -1 when none does.
+
+	The seam between a graph ENTRY (which names a room) and a storey (which is a
+	number), and the only place that translation is written. `lift_stop_floor()`
+	above and the lift menu both ask it, so re-planning a landing onto another
+	floor moves the trigger and the ride together.
+	"""
+	if room_id == "":
 		return -1
 	for floor_index: int in TowerPlans.floors():
-		if String(TowerPlans.storey(floor_index).get("landing", "")) == room:
+		if String(TowerPlans.storey(floor_index).get("landing", "")) == room_id:
 			return floor_index
 	return -1
+
+
+static func lift_stand(floor_index: int) -> Vector3:
+	"""
+	Where the lift sets you down on a storey: an `s` LANDING CELL near the middle
+	of that storey's landing.
+
+	@return: an interior-LOCAL point, 0.2 m off the walking surface —
+	        `entry_stand()`'s and `checkpoint_stand()`'s convention.
+
+	THE NEAREST `s` CELL TO THE CENTROID, not the centre of `landing_rect()`. The
+	rect is a bounding box over cells that need not fill it (the ground floor's
+	landing is an 18 x 16 hall with a doorway bitten out of one row), so its centre
+	is only accidentally standable; a cell that IS an `s` is standable by
+	construction, because the flood fill in `tower_selfcheck` walks it. Deterministic
+	for the same reason everything else in this building is: it reads authored text
+	and draws nothing.
+	"""
+	var plan := TowerPlans.storey(floor_index)
+	if plan.is_empty():
+		return entry_stand()
+	var cells: Array[Vector2i] = []
+	var sum := Vector2.ZERO
+	for r: int in plan["rows"].size():
+		var line := String(plan["rows"][r])
+		for c: int in line.length():
+			if line[c] == TowerPlans.LANDING_CHAR:
+				cells.append(Vector2i(c, r))
+				sum += Vector2(float(c), float(r))
+	if cells.is_empty():
+		return entry_stand()
+	var centroid := sum / float(cells.size())
+	var best := cells[0]
+	var best_d := INF
+	for cell: Vector2i in cells:
+		var d := (Vector2(float(cell.x), float(cell.y)) - centroid).length_squared()
+		if d < best_d:
+			best_d = d
+			best = cell
+	return Vector3(_grid_x(float(best.x) + 0.5), FLOOR_Y[floor_index] + 0.2,
+			_grid_z(float(best.y) + 0.5))
 
 
 static func landing_rect(floor_index: int) -> Rect2i:
@@ -4813,7 +4866,8 @@ func _on_lift_stop_enter(body: Node3D) -> void:
 	(the receptacle's, the corridor's, the gallery's) and the maze has none — a line
 	written to the ground floor's label 32 m below is a line nobody reads, and a
 	Label3D on a landing is a draw call plus a translation row for a message the
-	phase-7 menu will state properly anyway.
+	lift menu states properly anyway — it lists this floor from the moment this
+	line runs.
 	"""
 	if not body.is_in_group("player") or _is_open(TowerGraph.ENTRY_LIFT_MAZE):
 		return

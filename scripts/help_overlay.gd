@@ -156,6 +156,10 @@ const ROWS: Array = [
 	# because a panel nobody can find is a panel that does not exist. No touch
 	# variant, exactly like the M row: `city_map_panel.gd` says why.
 	["B", "Open the map of Budapest and the places to find.", Mode.DESKTOP],
+	# The HQ's service lift — a raw keycode like the four above it, and named here
+	# for the same reason B is: a panel that only opens where you are standing is
+	# unfindable if the card does not say where. No touch variant, like B and M.
+	["L", "At the HQ ground landing: ride the lift, a number picks the floor.", Mode.DESKTOP],
 	["P", "Pause the game.", Mode.DESKTOP],
 	["Esc", "Free the mouse cursor. Press again to grab it back.", Mode.DESKTOP],
 	["?", "Open or close this list.", Mode.DESKTOP],

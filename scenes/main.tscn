@@ -1,4 +1,4 @@
-[gd_scene load_steps=35 format=3 uid="uid://clqb4rcmjrpgs"]
+[gd_scene load_steps=36 format=3 uid="uid://clqb4rcmjrpgs"]
 
 [ext_resource type="PackedScene" uid="uid://bqtq2xtxqnvvr" path="res://scenes/player.tscn" id="1_main"]
 [ext_resource type="Script" uid="uid://b07rwceo0eo4o" path="res://scripts/endless_terrain.gd" id="2_terrain"]
@@ -32,6 +32,7 @@
 [ext_resource type="Script" path="res://scripts/crowd_manager.gd" id="30_crowd"]
 [ext_resource type="Script" path="res://scripts/traffic_manager.gd" id="32_traffic"]
 [ext_resource type="Script" path="res://scripts/city_map_panel.gd" id="31_citymap"]
+[ext_resource type="Script" path="res://scripts/tower_lift_menu.gd" id="33_lift"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.25, 0.45, 0.75, 1)
@@ -365,3 +366,12 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("31_citymap")
+
+[node name="TowerLiftMenu" type="Control" parent="HUD"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("33_lift")

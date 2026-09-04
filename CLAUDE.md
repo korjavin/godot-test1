@@ -217,6 +217,15 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            without touching the building (Continue reopens the
 #                            ending, New Game clears it), plus the vocabulary of
 #                            both retired models — hearts and the vetoed break-out
+#   tower_lift_selfcheck     the HQ's service lift (L): the key is free against the
+#                            input map AND every other panel's constant, every stop
+#                            is a built `entries` row with an `unlock` id landing on
+#                            a real `s` cell, and the menu driven on a REAL shell —
+#                            nothing offered before it is opened, the opened stop
+#                            listed, the ride landing on that storey's landing, an
+#                            unoffered floor refused, and the four refusals (room,
+#                            game over, mid-bite, away from the call point) each
+#                            with the refusal removed as its control
 #   tower_selfcheck          THE SOFTLOCK AUDIT: TOWER_GRAPH bound to the boxes
 #                            the interior really builds, the three design laws
 #                            (spines at floor rank, no item custody, mutations
@@ -783,10 +792,21 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   walked seventeen guards into a wall. The AI is handed points and knows nothing about
   `TowerPlans`. The leash is GROWN toward the waypoint being walked and handed back at
   the post; an acquisition takes the growth back around the body on the spot, so a
-  chase is still fought over a beat-sized patch. **What is deliberately not here yet,
-  carrying a `ponytail:` comment**: the storey-8
-  **lift stop** ships its trigger and its graph rows but no menu to choose it from — that is bead `godot-test1-3iy.7`. The entry is audited from anyway, so
-  the 15-subset property already holds starting at the labyrinth's foot.
+  chase is still fought over a beat-sized patch.
+- **THE SERVICE LIFT IS A MENU AND NO GEOMETRY, and a stop is a GRAPH ROW**
+  (`scripts/tower_lift_menu.gd`, bead `godot-test1-3iy.7`). `L` at the ground
+  floor's `s` landing lists the stops you have earned and a digit rides you to
+  that storey's landing. Nothing about it is authored here: a stop is an entry
+  some MUTATION grants (`TowerGraph.lift_stops()`), it is unlocked when its
+  row's `unlock` id is in the shell's monotone opened set — the maze stop's own
+  id, written by `LiftStopTrigger`; the checkpoint's, for the upper one — and it
+  lands on the storey whose plan claims its room as the `landing`. So a third
+  stop is a `TOWER_GRAPH` row and no code, and the ride needs no reachability
+  argument of its own: `tower_selfcheck` already walks all fifteen subsets FROM
+  every entry a mutation can grant. **It is ONE WAY (up, from the ground floor)
+  and draws no car**, both `ponytail:` in that file. The refusals are
+  `city_map_panel`'s — in a room, over game over, and mid-bite — and the pause
+  is `PauseHub`'s; `tower_lift_selfcheck` drives all of them on a real shell.
 
 `scripts/tower_graph.gd` is the tower's TOPOLOGY as one const dict of plain dicts —
 rooms, gated passages, entries, the mutation table, the enumerated scar states, the four
@@ -1209,14 +1229,15 @@ pair in `player_controller`, so the consts stay consts.
 **There is no walk-speed effect and there may never be one** — the catchable-walk contract
 above is the tightest margin in the game.
 
-Panels open on raw keycodes outside the input map (K, M, P, B, +/−, F3–F7): named actions are
+Panels open on raw keycodes outside the input map (K, M, P, B, L, +/−, F3–F7): named actions are
 for rebindable *gameplay* input, and a key that only opens a panel has nothing to rebind
 against. Every overlay pauses the tree, because the player reads gameplay through global
 polled `Input`, which a focused `Control` does not suppress.
 
 ### The pause is refcounted — `scripts/pause_hub.gd` is the only writer
-Seven scripts freeze the world (`pause_controller`, `help_overlay`, `skill_tree_ui`,
-`mp_ui`, `start_overlay`, `mobile_input`, `landmark_toast`). They used to own it
+Nine scripts freeze the world (`pause_controller`, `help_overlay`, `skill_tree_ui`,
+`mp_ui`, `start_overlay`, `mobile_input`, `landmark_toast`, `city_map_panel`,
+`tower_lift_menu`). They used to own it
 first-taker-wins, and the bug was **emergent**: an overlay opening over an already-paused
 tree claimed nothing, so whichever owner released first started the world under every
 overlay still on screen (P, `?`, P — help card over live crocodiles).
