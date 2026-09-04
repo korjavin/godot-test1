@@ -6,7 +6,7 @@ extends SceneTree
 ##     godot --headless --path . --import      # once, so class_name types resolve
 ##     godot --headless --path . --script res://scripts/pause_selfcheck.gd
 ##
-## Guards `scripts/pause_hub.gd` and the seven scripts that pause through it.
+## Guards `scripts/pause_hub.gd` and the ten scripts that pause through it.
 ##
 ## THE DEFECT THIS FILE EXISTS FOR, reproducible on the shipped game before the
 ## hub landed: press P (pause_controller freezes the world), press `?` to open the
@@ -43,6 +43,16 @@ extends SceneTree
 ##     TREE rather than on our own claim turned it into a missing claim under any
 ##     foreign pause. Both halves are checked: the claim is now taken over a
 ##     foreign pause, and the double-call protection still holds.
+##
+##  5. **The ROOM-WIDE pause is one more holder and nothing else** (bead
+##     godot-test1-3a2). `mp_manager` claims on behalf of a peer who pressed P, so
+##     the interesting cases are the interactions with the LOCAL pausers, which
+##     `mp_selfcheck` check 25 (the claim arithmetic) cannot see: P stays inert
+##     under the remote claim, releasing the remote claim starts the world, and a
+##     remote claim arriving and leaving UNDER a local P leaves the world frozen.
+##     A LOCAL pauser is asserted to have stayed local in the same breath — the
+##     help card takes a claim and publishes nothing, which is the "only P
+##     travels" rule the other nine holders rest on.
 ##
 ## Deliberately NOT covered: the mouse-capture handovers (headless has no pointer
 ## lock — `help_selfcheck` covers the half that works without one), and the touch
@@ -88,6 +98,8 @@ func _initialize() -> void:
 		failure = await _check_master_repro()
 	if failure.is_empty():
 		failure = await _check_mobile_driver_claim()
+	if failure.is_empty():
+		failure = await _check_room_pause_holder()
 	if failure.is_empty():
 		Sentinel.finish(self)
 	else:
@@ -447,4 +459,97 @@ func _check_mobile_driver_claim() -> String:
 	driver.queue_free()
 	print("mobile: the driver claims over a foreign pause and keeps its double-switch guard")
 	Sentinel.done("mobile_driver_claim")
+	return ""
+
+
+# ============================================================================
+# 5. THE ROOM-WIDE PAUSE IS JUST ANOTHER HOLDER
+# ============================================================================
+
+func _check_room_pause_holder() -> String:
+	"""
+	Bead godot-test1-3a2 made ONE gesture room-wide: a peer's P reaches us as a
+	`pz` bit on their presence packet, and `mp_manager` turns that into one
+	ordinary `PauseHub` claim. So the thing to check HERE is not the wire (that is
+	`mp_selfcheck` check 25) but that the new holder obeys the refcount like the
+	other nine — which is exactly the property the shipped bug was the absence of.
+
+	The remote claim is driven through a stand-in holder rather than a live
+	`MpManager`: to this file the manager is one more node holding one more claim,
+	and asserting anything else here would be asserting `mp_manager`'s job twice.
+	"""
+	if paused or PauseHub.holder_count() != 0:
+		return "check 5 started with %d holders — an earlier check leaked a claim" \
+			% PauseHub.holder_count()
+
+	# THE REAL NODE CHECK 2 ALREADY FOUND, under the real `main.tscn`. Instancing a
+	# second `player.tscn` here would put two nodes in group "player", and the
+	# game-over refusal every pauser reads resolves that group by FIRST — so the
+	# fixture would decide which player answers.
+	var controller: Node = _pause_controller
+	if controller == null:
+		return "check 2 never found the pause_controller — check 5 has nothing to drive"
+	if not controller.has_method("is_pausing"):
+		return "pause_controller has no is_pausing() — mp_manager has nothing to publish"
+	if not controller.is_in_group("pause_controller"):
+		return ("pause_controller is not in group \"pause_controller\" — " \
+			+ "`mp_manager._send_presence` finds it by group and would publish nothing")
+	if controller.is_pausing():
+		return "is_pausing() answered true with nothing pressed"
+
+	# `mp_manager`'s claim, stood in for by a plain node (the hub keys on identity).
+	var remote := Node.new()
+	root.add_child(remote)
+
+	# --- A teammate pauses: the world stops, and OUR P stays inert -------------
+	PauseHub.take(remote)
+	if not paused:
+		return "the remote claim did not freeze the world"
+	await _press(KEY_P)
+	if bool(controller.get("_paused_by_us")):
+		return ("P claimed a SECOND pause under the teammate's — the peer who paused " \
+			+ "must be the peer who resumes, and this leaves a card nobody can dismiss")
+	if controller.is_pausing():
+		return "P under a foreign pause made is_pausing() true — we would publish a pause we do not hold"
+	# ...and the teammate resuming really does start the world (the positive control).
+	PauseHub.release(remote)
+	if paused or PauseHub.holder_count() != 0:
+		return "the teammate resumed and the world stayed frozen (holders=%d)" \
+			% PauseHub.holder_count()
+
+	# --- OUR P first, then a remote claim arriving and leaving under it --------
+	await _press(KEY_P)
+	if not paused or not controller.is_pausing():
+		return "P did not take the local pause"
+	PauseHub.take(remote)
+	if PauseHub.holder_count() != 2:
+		return "the local P and a remote claim are both up but the hub counts %d" \
+			% PauseHub.holder_count()
+	PauseHub.release(remote)
+	if not paused:
+		return ("THE REFCOUNT BUG, one holder along: the teammate resumed and the world " \
+			+ "started under OUR pause card")
+	if not controller.is_pausing():
+		return "the remote release dropped our own claim bit"
+
+	# --- A LOCAL pauser is still local ----------------------------------------
+	# The help card is one of the nine that must never travel. It takes a claim
+	# like anybody, and `is_pausing()` — the only thing the wire reads — stays
+	# false for it, which is the whole of "only P travels".
+	var local := Node.new()
+	root.add_child(local)
+	PauseHub.take(local)
+	await _press(KEY_P)  # releases our own claim; the help card's stays
+	if controller.is_pausing():
+		return "P released its claim but is_pausing() still reports one"
+	if not paused:
+		return "a local overlay's claim did not survive our P release"
+	PauseHub.release(local)
+	if paused or PauseHub.holder_count() != 0:
+		return "check 5 left the world frozen (holders=%d)" % PauseHub.holder_count()
+
+	local.free()
+	remote.free()
+	print("room pause: the remote claim is one more holder, and only P is publishable")
+	Sentinel.done("room_pause_holder")
 	return ""

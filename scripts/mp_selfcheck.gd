@@ -195,7 +195,10 @@ func _run_checks() -> String:
 	failure = await _check_host_persist_and_joiner_near_master()
 	if not failure.is_empty():
 		return failure
-	return _check_ability_visual_state()
+	failure = _check_ability_visual_state()
+	if not failure.is_empty():
+		return failure
+	return _check_room_pause()
 
 
 # =============================================================================
@@ -641,6 +644,27 @@ func _check_presence_backcompat() -> String:
 	# godot-test1-0bc, so they must be absent from what the parser hands out.
 	if legacy.has("lv") or legacy.has("rl"):
 		return "the presence parser still publishes a retired heart field: %s" % legacy
+	# `pz` (the room-wide pause, bead godot-test1-3a2) is the newest field on this
+	# packet and takes the same rule: a phase-3 peer sends none and must read as
+	# "not pausing", or an older build would silently freeze the room it joins.
+	if legacy.get("pz", null) != false:
+		return "a packet with no pz did not read as not-paused: %s" % legacy
+	for sent: bool in [true, false]:
+		var explicit: Dictionary = MpCodec.decode_presence(var_to_bytes({
+			"p": Vector3.ZERO, "y": 0.0, "c": 0, "s": 0.0, "g": true, "pz": sent
+		}))
+		if explicit.is_empty() or explicit["pz"] != sent:
+			return "pz %s did not round-trip: %s" % [sent, explicit]
+	# ...and unlike the counters there is nothing here to clamp, so a `pz` that is
+	# not a bool is malformed and drops the packet WHOLE. `1` is the interesting
+	# case: `bool(1)` is true everywhere in GDScript, so a parser that coerced
+	# would let a peer pause the room with an int and never be noticed.
+	for junk: Variant in [1, 0, "yes", 1.0, Vector3.ZERO]:
+		var poisoned_pause: Dictionary = MpCodec.decode_presence(var_to_bytes({
+			"p": Vector3.ZERO, "y": 0.0, "c": 0, "s": 0.0, "g": true, "pz": junk
+		}))
+		if not poisoned_pause.is_empty():
+			return "parser accepted a non-bool pz (%s): %s" % [junk, poisoned_pause]
 
 	# Present-and-bad still drops the packet whole.
 	var poisoned: Dictionary = MpCodec.decode_presence(var_to_bytes({
@@ -2932,6 +2956,7 @@ var join_called: bool = false
 var join_anchor: Vector3 = Vector3.ZERO
 var blocked_center: Vector3 = Vector3.ZERO
 var initial_pos: Vector3 = Vector3.ZERO
+var is_game_over: bool = false
 func _ready() -> void:
 	if initial_pos != Vector3.ZERO:
 		global_position = initial_pos
@@ -3027,4 +3052,104 @@ func _check_ability_visual_state() -> String:
 			worn, Player.TEIBI_SCALE_BIG
 		]
 	Sentinel.done("ability_visual_state")
+	return ""
+
+
+# =============================================================================
+# 25. THE ROOM-WIDE PAUSE (bead godot-test1-3a2)
+# =============================================================================
+
+func _check_room_pause() -> String:
+	"""
+	The MANAGER half of the presence `pz` bit — the codec half rides check 7.
+
+	Everything here is driven on `_peer_state` plus the shipped
+	`_apply_remote_pause()`, because that pair IS the design: the pause has no
+	dictionary of its own precisely so that every way a peer leaves the table
+	drops its claim with it, and a check that maintained its own set would be
+	asserting against a copy of the bug.
+	"""
+	if PauseHub.holder_count() != 0:
+		return "check 25 started with %d pause holders — an earlier check leaked one" \
+			% PauseHub.holder_count()
+
+	var mp: Node = MPManager.new()
+	mp.add_to_group("mp")
+	root.add_child(mp)
+	mp._members = [{"id": "aaa", "name": "Ada"}, {"id": "bbb", "name": "Bo"}]
+
+	var fail: String = ""
+	# --- A pauses: exactly ONE claim ------------------------------------------
+	mp._peer_state = {"aaa": {"pz": true}}
+	mp._apply_remote_pause()
+	if PauseHub.holder_count() != 1 or not paused:
+		fail = "one pausing peer took %d claims (paused=%s)" \
+			% [PauseHub.holder_count(), paused]
+	# --- B pauses too: STILL one claim ----------------------------------------
+	if fail.is_empty():
+		mp._peer_state["bbb"] = {"pz": true}
+		mp._apply_remote_pause()
+		if PauseHub.holder_count() != 1:
+			fail = "a second pausing peer added a claim (%d) — the hub counts by node" \
+				% PauseHub.holder_count()
+	# --- A resumes with B still pausing: the world stays frozen ---------------
+	if fail.is_empty():
+		mp._peer_state["aaa"] = {"pz": false}
+		mp._apply_remote_pause()
+		if not paused:
+			fail = "one of two pausers resumed and the world started under the other"
+		elif mp.remote_pauser_name() != "Bo":
+			fail = "the card named \"%s\", expected the peer still pausing" \
+				% mp.remote_pauser_name()
+	# --- B goes stale (a dead mesh link): released with no erase site ---------
+	if fail.is_empty():
+		mp._peer_state["bbb"]["stale"] = true
+		mp._apply_remote_pause()
+		if paused or PauseHub.holder_count() != 0:
+			fail = "a stale peer kept the room frozen (holders=%d)" % PauseHub.holder_count()
+		elif mp.remote_pauser_name() != "":
+			fail = "remote_pauser_name() named somebody with nothing held"
+	# --- ...and erasing it outright is the same answer ------------------------
+	if fail.is_empty():
+		mp._peer_state = {"bbb": {"pz": true}}
+		mp._apply_remote_pause()
+		if not paused:
+			fail = "the positive control failed — a live pausing peer did not freeze the world"
+		else:
+			mp._peer_state.erase("bbb")
+			mp._apply_remote_pause()
+			if paused or PauseHub.holder_count() != 0:
+				fail = "erasing the last pauser left the world frozen for good"
+	# --- OVER GAME OVER NOTHING IS TAKEN --------------------------------------
+	# `GameOverUI` is PAUSABLE, so a remote pause there kills Play Again and
+	# `ui_accept` and the screen has no way out. `pause_controller` and
+	# `mp_ui._apply_pause` refuse for the same reason; this is the third.
+	var player: Node = null
+	if fail.is_empty():
+		player = _mock_player(Vector3.ZERO, 0, 0.0)
+		root.add_child(player)
+		player.set("is_game_over", true)
+		mp._peer_state = {"aaa": {"pz": true}}
+		mp._apply_remote_pause()
+		if paused or PauseHub.holder_count() != 0:
+			fail = "a remote pause froze the local game-over screen (holders=%d)" \
+				% PauseHub.holder_count()
+		else:
+			# THE CONTROL: the same peer, the same bit, game over cleared.
+			player.set("is_game_over", false)
+			mp._apply_remote_pause()
+			if not paused:
+				fail = "the game-over control failed — the pause never applied at all"
+			mp._peer_state = {}
+			mp._apply_remote_pause()
+
+	if player != null:
+		player.remove_from_group("player")
+		player.free()
+	mp.free()
+	if paused or PauseHub.holder_count() != 0:
+		return "check 25 leaked a pause claim (holders=%d)" % PauseHub.holder_count()
+	if not fail.is_empty():
+		return fail
+	Sentinel.done("room_pause")
 	return ""

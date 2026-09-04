@@ -630,6 +630,13 @@ var _room_streak: int = 0
 var _room_multiplier: int = 1
 var _room_streak_deadline_msec: int = 0
 
+## Whether we are currently holding a `PauseHub` claim on behalf of a room member
+## who pressed P — see `_apply_remote_pause()`. ONE claim however many peers are
+## pausing, because the hub counts holders by node identity and this node is one
+## node; the bit is only here so the take and the release happen on the edge
+## rather than every frame.
+var _paused_by_remote: bool = false
+
 
 
 func _init() -> void:
@@ -814,6 +821,11 @@ func leave() -> void:
 	_room_accum = 0.0
 	_room_relay_digest = ""
 	_state_received = {}
+	# THE ROOM'S PAUSE DIES WITH THE ROOM, IMMEDIATELY. `_peer_state` is empty
+	# now, so this releases; and it has to be called explicitly because `_process`
+	# early-returns on OFFLINE and would never reach the release on its own —
+	# leaving solo play frozen with nothing alive that could unfreeze it.
+	_apply_remote_pause()
 	_first_member = true
 	_join_applied = false
 	_gone_coins = 0
@@ -3088,6 +3100,11 @@ func _process(delta: float) -> void:
 	# heartbeat on the relay — see the section comment on `_tick_heartbeat`.
 	_tick_heartbeat(delta)
 	_tick_stall_watch(delta)
+	# ABOVE THE `_rtc` GUARD like the three above it: a mesh that dies (or was
+	# never built) must still be able to RELEASE a pause we are holding, and the
+	# game-over exemption inside is a moving condition that has to be re-asked
+	# every frame — `mp_ui._apply_pause`'s reason, one node along.
+	_apply_remote_pause()
 	# The room's captive set, slower still — and ABOVE THE `_rtc`
 	# GUARD, which is half the point of this publish: the LOBBY RELAY leg reaches peers whose
 	# mesh has not come up (and every peer of a `--lobby-only` master, whose mesh
@@ -3375,6 +3392,28 @@ func _send_presence() -> void:
 			if player.has_method("ability_visual_state") else 0
 	if ability != 0:
 		state["ab"] = ability
+	# `pz` — THE ROOM-WIDE PAUSE (bead godot-test1-3a2, owner: "when I click pause
+	# in the MP it should be paused for all"). OMITTED WHEN FALSE, exactly like
+	# `ab`, so an older build sees the packet shape it has always seen and simply
+	# never pauses anybody.
+	#
+	# WHY IT RIDES PRESENCE RATHER THAN BEING A VERB. Presence is re-sent at
+	# PRESENCE_HZ, so the bit is its own repair channel: a dropped packet heals in
+	# 66 ms, a joiner learns the room is frozen on the first sample it receives,
+	# and a pauser whose tab dies simply stops sending — no lock can outlive the
+	# peer holding it, which is the failure mode a reliable "pause" verb would
+	# have to invent a lease to avoid. It is also already rate-bounded by
+	# MAX_PRESENCE_PACKETS_PER_PEER, so it needs no VERB_BUDGET_PER_SEC row.
+	# The window it cannot reach is a peer still negotiating ICE — which has no
+	# world to freeze yet. A reliable verb plus a relay leg and a snapshot field
+	# is the upgrade path if 66 ms ever matters; it does not.
+	#
+	# THIS IS THE P KEY AND NOTHING ELSE. The help card, the skill tree, the MP
+	# panel, the map, the lift and the quiz stay LOCAL pauses — see the list in
+	# `pause_hub.gd` — because reading a card must not stop three other people.
+	var pauser: Node = get_tree().get_first_node_in_group("pause_controller")
+	if pauser != null and pauser.has_method("is_pausing") and bool(pauser.call("is_pausing")):
+		state["pz"] = true
 
 	var bytes: PackedByteArray = var_to_bytes(state)
 	_rtc.set_transfer_mode(MultiplayerPeer.TRANSFER_MODE_UNRELIABLE)
@@ -3493,7 +3532,92 @@ func _receive_mesh_packets() -> void:
 			# jumping breaks the scent for a REMOTE member exactly as it does for
 			# the local player (bead godot-test1-s86.15).
 			"floor": state["g"],
+			# Whether this peer is holding the room-wide pause. Kept HERE rather
+			# than in a dictionary of its own so every way a peer leaves the
+			# table — `peer_left`'s erase, `leave()`'s clear, the stale mark a
+			# dead mesh link earns — drops its pause with it, with no fourth
+			# erase site to forget. `_apply_remote_pause()` reads it each frame.
+			"pz": state["pz"],
 		}
+
+
+# =============================================================================
+# THE ROOM-WIDE PAUSE
+# =============================================================================
+
+func _apply_remote_pause() -> void:
+	"""
+	Hold exactly one `PauseHub` claim while any live room member is pausing, and
+	drop it the moment none is. Called every frame from `_process` (this node is
+	PROCESS_MODE_ALWAYS, so it keeps running under the pause it takes — without
+	that nothing could ever release it) and once more from `leave()`.
+
+	THE STATE IS `_peer_state` AND NOTHING ELSE, which is the whole reason this
+	needs no erase site of its own: a peer that leaves is erased there
+	(`_on_lobby_peer_left`), a peer whose mesh link died is marked `stale` there
+	(`_prune_dead_connections`) and skipped below, and `leave()` clears the table
+	outright. A separate `_remote_pausers` dictionary would be a fourth place to
+	forget, and the failure mode of forgetting is a world frozen for the rest of
+	the run with nobody left to unfreeze it.
+
+	ONE CLAIM, NOT ONE PER PEER: `PauseHub` counts holders by node identity, so
+	two pausing peers are the same single claim from this node and the first of
+	them to resume cannot start the world under the second.
+
+	THE GAME-OVER REFUSAL is `pause_controller._toggle_pause()`'s and
+	`mp_ui._apply_pause()`'s, for their reason: `GameOverUI` is PAUSABLE, so a
+	pause over it kills Play Again and `ui_accept` and there is no way out of the
+	screen. It is a MOVING condition — a teammate can pause while we are dead and
+	we can die while they are paused — which is why this runs per frame rather
+	than on the packet.
+	"""
+	var wanted: bool = false
+	for id: String in _peer_state:
+		var entry: Dictionary = _peer_state[id]
+		if bool(entry.get("stale", false)):
+			continue
+		if bool(entry.get("pz", false)):
+			wanted = true
+			break
+	if wanted:
+		var player: Node = get_tree().get_first_node_in_group("player")
+		if player != null and bool(player.get("is_game_over")):
+			wanted = false
+	if wanted == _paused_by_remote:
+		return
+	_paused_by_remote = wanted
+	if wanted:
+		PauseHub.take(self)
+	else:
+		PauseHub.release(self)
+
+
+func remote_pauser_name() -> String:
+	"""
+	The lobby name of a member who has frozen the room, or `""` when nobody has —
+	including when somebody has but we are not honouring it (the game-over
+	exemption above). `pause_controller` draws its card off this and is the only
+	caller; nothing outside this file needs to know the pause came over the wire.
+
+	ponytail: with two pausers this names whichever the table iterates first, and
+	P stays inert under a foreign pause, so the OTHER one is who you actually wait
+	for. Naming both is a longer card for a case the owner has not asked about —
+	the escape hatch for a peer who will not resume is the MP panel's Leave, which
+	is PROCESS_MODE_ALWAYS and opens under a foreign pause.
+	"""
+	if not _paused_by_remote:
+		return ""
+	for id: String in _peer_state:
+		var entry: Dictionary = _peer_state[id]
+		if bool(entry.get("stale", false)) or not bool(entry.get("pz", false)):
+			continue
+		for member: Variant in _members:
+			if typeof(member) != TYPE_DICTIONARY:
+				continue
+			if str((member as Dictionary).get("id", "")) == id:
+				return str((member as Dictionary).get("name", ""))
+		return id  # In the state table but not (yet) in the member list.
+	return ""
 
 
 func _receive_mesh_verb(from_id: String, verb: String, packet: Dictionary) -> void:
