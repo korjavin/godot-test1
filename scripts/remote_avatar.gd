@@ -535,3 +535,13 @@ func _relax_gait_extras() -> void:
 		character_body.rotation.z = rest_rotations["body"].z
 	if character_head and rest_rotations.has("head"):
 		character_head.rotation.z = rest_rotations["head"].z
+
+
+func is_giant() -> bool:
+	"""
+	Quarry contract (bead godot-test1-upu): reports whether this remote peer is
+	currently wearing the giant form, decoded from presence ability bits.
+	Read by piglet_crocodile_ai to deter predators with fears_giant_radius.
+	"""
+	return bool(ability_bits & PLAYER_SCRIPT.ABILITY_BIT_GIANT)
+

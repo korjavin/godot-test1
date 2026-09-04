@@ -962,14 +962,17 @@ network-spawned, so a hunter one peer capped away and the master did not is a lo
 that can still bite. **In a room the retuned chance IS the whole cap**; that ceiling is
 documented, not a bug. `enemy_spawn_selfcheck` check 13 pins all five clauses.
 
-**It is also the row that proved player abilities can be opted out of as DATA.** A
-machine has no nose and is not flesh, so its row carries `stink_immune` (`flee_from()`
-early-returns) and `crush_immune` (giant Teibi's squash block is skipped and the body
-takes the ordinary bite path). Both are `spec.get(key, false)` reads placed beside the
-existing `is_boss` guards — never a species-name test — so the next armoured or airtight
-predator opts in with a row edit and no code change. `boss_selfcheck` check 8 drives
-**every** row through both real paths, which makes the seven animal rows the negative
-control and anchors the crocodile by name against a stray key.
+**It is also the row that proved player abilities can be opted out of as DATA.** By
+owner ruling 2026-09-04 (bead `godot-test1-bvh`), the hunter's stink exemption is
+reversed — gameplay beats fiction, so Phoboman's Stink Wave scares hunter robots away
+like any ordinary predator. Its row retains `crush_immune` (a machine is not flesh, so
+giant Teibi's squash block is skipped and the body takes the ordinary bite path), and
+adds `fears_giant_radius` (14 m; owner ruling 2026-09-04, bead `godot-test1-upu`: giant Teibi
+scares hunters away instead of crushing them). These are `spec.get(key, default)` reads
+placed beside the existing `is_boss` guards — never a species-name test — so the next
+armoured or airtight predator opts in with a row edit and no code change. `boss_selfcheck`
+check 8 drives **every** row through both real paths and giant fear, which makes the animal
+rows the negative control and anchors the crocodile by name against a stray key.
 
 **The tower guard is the FOURTH door, and it is not in `endless_terrain` at all.** It is
 placed on a post by `TowerInterior` (`GUARD_SPECIES` / `GUARD_SCENE` /
@@ -979,9 +982,9 @@ dispatch maps and the hunter spawner alone reports a shipped predator as unspawn
 **It adds no behaviour arm**: "patrols its floor and never leaves it" is the existing
 `set_confinement()` leash the elevated-platform guards already use, so the row is
 `behavior: "solo"` and the patrol is geometry. Its `coin_setback` key is the same
-required row key every predator carries, and it reuses BOTH of the hunter's immunity
-keys AND its `captures_hero` — see the tower section above for why each is a design
-decision and not an inheritance.
+required row key every predator carries, and it keeps BOTH `stink_immune` and `crush_immune`
+(with no `fears_giant_radius`) AND its `captures_hero` — see the tower section above for
+why each is a design decision and not an inheritance.
 
 **The hunt arm has a SECOND LEG: scent tracking, and it is steering, not detection.**
 Out of detection a row carrying `scent_radius` (150 m, the hunter alone) asks the LOD

@@ -205,6 +205,9 @@ class StubPlayer:
 	func hit_by_crocodile(_attacker: Node = null) -> void:
 		bitten += 1
 
+	func is_giant() -> bool:
+		return giant
+
 
 ## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
 ## lands in and lets the script carry on, so a check that dies halfway simply
@@ -1263,7 +1266,9 @@ func _check_row_immunities(giant: StubPlayer) -> void:
 		Sentinel.done("row_immunities")
 		return
 	# How many rows actually exercised each guard, for the vacuity check below.
-	var opted_in: Dictionary = {}
+	var opted_in: Dictionary = {
+		"fears_giant_radius": 0,
+	}
 	for key: String in IMMUNITY_KEYS:
 		opted_in[key] = 0
 
@@ -1272,10 +1277,13 @@ func _check_row_immunities(giant: StubPlayer) -> void:
 		var row: Dictionary = CROC_SCRIPT.SPECIES[species_name]
 		var stink_immune: bool = bool(row.get("stink_immune", false))
 		var crush_immune: bool = bool(row.get("crush_immune", false))
+		var fears_giant_radius: float = float(row.get("fears_giant_radius", 0.0))
 		if stink_immune:
 			opted_in["stink_immune"] += 1
 		if crush_immune:
 			opted_in["crush_immune"] += 1
+		if fears_giant_radius > 0.0:
+			opted_in["fears_giant_radius"] += 1
 
 		# Same call-order contract as everywhere else: species BEFORE add_child,
 		# because _ready() resolves `spec` from it exactly once.
@@ -1307,6 +1315,16 @@ func _check_row_immunities(giant: StubPlayer) -> void:
 				_fail("stink: this row asks for no immunity, but flee_from() left "
 						+ "it not fleeing — Phoboman's wave must still work on "
 						+ "every ordinary predator")
+
+		if species_name == "hunter_robot":
+			if stink_immune:
+				_fail("stink: hunter_robot carries stink_immune — reversed by owner ruling 2026-09-04 (bead bvh)")
+			var src := body.global_position + Vector3(3.0, 0.0, 0.0)
+			var d_before := body.global_position.distance_to(src)
+			await _frames(10)
+			var d_after := body.global_position.distance_to(src)
+			if d_after <= d_before:
+				_fail("stink: hunter_robot is_fleeing but did not move away from stink source (before=%.2f, after=%.2f)" % [d_before, d_after])
 
 		# The flee flag is cleared BEFORE the crush half, and it has to be: a
 		# fleeing body early-returns out of the bite path at the bottom of
@@ -1344,19 +1362,92 @@ func _check_row_immunities(giant: StubPlayer) -> void:
 					+ "— an immune body bites the giant, a crushable one dies "
 					+ "without biting")
 
+		# ---- C. GIANT TEIBI'S FEAR (bead godot-test1-upu) -----------------------
+		body.is_fleeing = false
+		body.flee_time_remaining = 0.0
+		body.is_chasing = false
+		body.player_node = giant
+		giant.giant = true
+		giant.global_position = body.global_position + Vector3(5.0, 0.0, 0.0)
+
+		# Drive shipped _update_chase_state() with giant 5 m away
+		body._update_chase_state()
+		if fears_giant_radius > 0.0:
+			if not body.is_fleeing:
+				_fail("giant fear: row carries fears_giant_radius=%.1f and giant is 5m away, but body did not flee" % fears_giant_radius)
+		else:
+			if body.is_fleeing:
+				_fail("giant fear: row carries no fears_giant_radius, but giant Teibi caused it to flee")
+
+		if species_name == "tower_guard":
+			if fears_giant_radius > 0.0 or row.has("fears_giant_radius"):
+				_fail("giant fear: tower_guard must not carry fears_giant_radius — the keep is a stealth challenge (bead upu)")
+
+		if species_name == "hunter_robot":
+			if fears_giant_radius <= 0.0:
+				_fail("giant fear: hunter_robot must carry fears_giant_radius > 0 (bead upu)")
+
+			# 1. Normal Teibi beside hunter: must not flee, must keep chasing
+			body.is_fleeing = false
+			body.flee_time_remaining = 0.0
+			body.is_chasing = false
+			giant.giant = false
+			giant.global_position = body.global_position + Vector3(5.0, 0.0, 0.0)
+			body._update_chase_state()
+			if body.is_fleeing:
+				_fail("giant fear: hunter fled a NORMAL-size Teibi 5m away")
+			if not body.is_chasing:
+				_fail("giant fear: hunter did not chase normal Teibi 5m away")
+
+			# 2. Giant Teibi beyond radius: must not flee
+			body.is_fleeing = false
+			body.flee_time_remaining = 0.0
+			body.is_chasing = false
+			giant.giant = true
+			giant.global_position = body.global_position + Vector3(fears_giant_radius + 5.0, 0.0, 0.0)
+			body._update_chase_state()
+			if body.is_fleeing:
+				_fail("giant fear: giant Teibi beyond radius (%.1f m > %.1f m) caused hunter to flee" % [fears_giant_radius + 5.0, fears_giant_radius])
+
+			# 3. Fear holds while giant stands and releases ~GIANT_FEAR_HOLD after revert
+			body.is_fleeing = false
+			body.flee_time_remaining = 0.0
+			body.is_chasing = false
+			giant.giant = true
+			giant.global_position = body.global_position + Vector3(5.0, 0.0, 0.0)
+			body._update_chase_state()
+			if not body.is_fleeing:
+				_fail("giant fear: hunter failed to flee giant at 5m")
+			# Hold while giant stands
+			await _frames(20)
+			if not body.is_fleeing:
+				_fail("giant fear: fear dropped while giant still in range")
+			# Giant reverts to normal
+			giant.giant = false
+			# Fear must still hold midway through GIANT_FEAR_HOLD (~0.5s = 30 frames)
+			await _frames(30)
+			if not body.is_fleeing:
+				_fail("giant fear: fear released prematurely before GIANT_FEAR_HOLD elapsed")
+			# Fear must release once GIANT_FEAR_HOLD has passed (~0.75s more = 45 frames)
+			await _frames(45)
+			if body.is_fleeing:
+				_fail("giant fear: fear did not release after GIANT_FEAR_HOLD elapsed")
+
 		body.queue_free()
 		await _frames(2)
 	_subject = ""
 
-	# ---- C. THE TABLE ACTUALLY EXERCISES BOTH GUARDS ------------------------
+	# ---- D. THE TABLE ACTUALLY EXERCISES ALL GUARDS ------------------------
 	for key: String in IMMUNITY_KEYS:
 		if int(opted_in[key]) <= 0:
 			_fail("immunity: no row in SPECIES carries '%s', so the loop above "
 					% key + "never took that guard and proves nothing about it — "
 					+ "delete the guard or restore the row key")
+	if int(opted_in.get("fears_giant_radius", 0)) <= 0:
+		_fail("giant fear: no row in SPECIES carries fears_giant_radius > 0")
 
-	# ---- D. THE ANCHOR ------------------------------------------------------
-	# Part A/B read the row, so a row that turned immune by mistake would be
+	# ---- E. THE ANCHOR ------------------------------------------------------
+	# Part A/B/C read the row, so a row that turned immune by mistake would be
 	# measured as correct. The baseline predator is pinned by name instead.
 	var baseline: Dictionary = CROC_SCRIPT.SPECIES.get(BASELINE_SPECIES, {})
 	if baseline.is_empty():
@@ -1367,4 +1458,6 @@ func _check_row_immunities(giant: StubPlayer) -> void:
 					% [BASELINE_SPECIES, key] + "enemy is flesh and has a nose, "
 					+ "and making it immune would quietly break the whole "
 					+ "Phoboman/giant-Teibi half of the toolbox")
+	if float(baseline.get("fears_giant_radius", 0.0)) > 0.0:
+		_fail("immunity: the '%s' row carries fears_giant_radius" % BASELINE_SPECIES)
 	Sentinel.done("row_immunities")
