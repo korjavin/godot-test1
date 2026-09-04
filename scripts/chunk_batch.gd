@@ -132,8 +132,10 @@ const UNIT_CONE_RADIAL: int = 6
 ##     climbable surface, and the wider it is the less of the `BoxShape3D` top
 ##     hangs over open air — the one honest cost of keeping the box collider, and
 ##     the reason this is not a taste knob.
-##   * The SHOULDER touches 1.0, so a rock really fills the `dimensions` it
-##     declares on its widest axis instead of rattling around inside it.
+##   * The SHOULDER is the widest ROW at 1.0 — but the jitter below subtracts from
+##     it like every other, so the widest VERTEX on the built mesh lands at 0.943
+##     of the half-extent, not at 1.0. The row's job is to say where the swell is,
+##     not to promise the box is filled.
 ##   * The BASE is tucked in (0.86), which is what makes the thing sit on the
 ##     ground like a boulder rather than stand on it like a bollard.
 ##
@@ -629,10 +631,19 @@ static func collision_shape_for(kind: int, dimensions: Vector3) -> Shape3D:
 	Its whole reason to be a kind of its own is that its lid is FLAT and at exactly
 	the box's top face, so the boulder you climb has the surface where every rock
 	builder's recorded `top` already promised it. Giving it a round collider would
-	undo precisely the thing it was drawn for. What it costs is the same overhang
-	every flat-topped box has always had at its corners — visible stone stops a
-	little inside the collider on the diagonal — and that is a strictly smaller
-	error than the cube it replaced, whose SIDES were out there too.
+	undo precisely the thing it was drawn for.
+
+	WHAT IT COSTS IS NEW, AND HERE IS THE NUMBER. Unlike every other kind, the
+	CUBE's mesh and its `BoxShape3D` coincide exactly — so a rock is the first
+	thing in this game whose collider disagrees with its own silhouette, and the
+	disagreement is not small. Measured on the shipped `UNIT_ROCK_PROFILE`: the lid
+	is an octagon of circumradius 0.398 against the collider's 0.5 half-extent, so
+	about HALF the top face you stand on is over drawn-empty air, guaranteed solid
+	only within 0.735 of the half-extent; the base ring reaches ~0.40-0.43, so the
+	collider is also a small invisible snag at ground level. That is the price of
+	the flat lid landing exactly where every recorded `top` says, and it is why the
+	lid's width in UNIT_ROCK_PROFILE is a contract and not a taste knob — but the
+	next person to read this should know it is a real cost and not a rounding one.
 
 	THE RADIUS IS THE SMALLEST HALF-EXTENT, so the collider is INSCRIBED in the
 	entry's bounding box exactly like the unit mesh is (the BoxKind banner's one
@@ -936,9 +947,12 @@ static func split_city_boxes_on_chunk_grid(terrain: Node3D, chunk_center: Vector
 		# reaches the same answer on its own for the round cases: a near-round
 		# SPHERE or CYLINDER hangs a SphereShape3D / CylinderShape3D, which its
 		# `as BoxShape3D` cast refuses, so both halves leave that entry whole. The
-		# residual gap is the SQUASHED round box and the CONE, which
-		# collision_shape_for() still gives a BoxShape3D: the collision half would
-		# cut one while the visual stayed whole. That cannot happen today — this is
+		# residual gap is every kind collision_shape_for() still gives a BoxShape3D:
+		# the SQUASHED round box, the CONE, and — since bead godot-test1-y1o.3 —
+		# EVERY ROCK, unconditionally and at any aspect, which makes it much the
+		# widest member of that class. The collision half would cut one while the
+		# visual stayed whole (measured: a 3.4-chunk-wide ROCK comes back as one
+		# mesh entry and eight shapes). That cannot happen today — this is
 		# the CITY path and Budapest is pure cube (budapest_selfcheck asserts a city
 		# chunk builds exactly one MultiMeshInstance3D), and no city builder passes
 		# a kind. `ponytail:` if a kind ever reaches a city builder, close the

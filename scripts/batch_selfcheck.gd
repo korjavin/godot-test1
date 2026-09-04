@@ -786,6 +786,7 @@ func _check_draw_calls_per_biome() -> void:
 
 	var sampled: Dictionary = {}   # biome value -> chunks measured
 	var worst: Dictionary = {}     # biome value -> most buckets any sampled chunk built
+	var paying: Dictionary = {}    # biome value -> chunks that built MORE than one
 	var wrong: Dictionary = {}     # biome value -> "got n, wanted m" for the first offender
 
 	for cx in range(-BIOME_SWEEP, BIOME_SWEEP + 1):
@@ -811,6 +812,8 @@ func _check_draw_calls_per_biome() -> void:
 			ChunkBatch._build_block_multimesh(parent, batch)
 			var nodes: Array = _multimeshes(parent)
 			worst[biome] = maxi(int(worst.get(biome, 0)), nodes.size())
+			if nodes.size() > 1:
+				paying[biome] = int(paying.get(biome, 0)) + 1
 
 			# (a) ONE BUCKET PER DISTINCT KIND PRESENT, no more and no fewer. The
 			# expectation is read off the batch the shipped spawners just filled,
@@ -857,7 +860,14 @@ func _check_draw_calls_per_biome() -> void:
 					% [biome_name, wrong[value]]
 					+ "more than that biome's KIND_CAP_BY_NAME — the epic y1o ceiling is a chunk "
 					+ "with trees AND rocks, which is two extra buckets and no third")
-		print("  %-8s worst %d block draw call(s) over %d chunks (cap %s)"
-				% [biome_name, int(worst.get(value, 0)), n, kind_cap.get(value, "-")])
+		# HOW OFTEN, not just how bad. The worst case alone reads as "some chunks"
+		# when it may be nearly all of them — a cost that is under the cap on every
+		# chunk and paid on 90% of them is still most of a web frame, and it is the
+		# number an owner's by-eye ruling on a new consumer needs. Printed rather
+		# than asserted: the frequency is a design fact for the reader, while the
+		# thing that must not drift is the cap above.
+		print("  %-8s worst %d block draw call(s), >1 on %d of %d chunks (cap %s)"
+				% [biome_name, int(worst.get(value, 0)), int(paying.get(value, 0)),
+						n, kind_cap.get(value, "-")])
 	terrain.free()
 	Sentinel.done("draw_calls_per_biome")
