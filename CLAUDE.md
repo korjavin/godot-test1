@@ -153,10 +153,16 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            active), the no-player degrade, the row's
 #                            fit in main.tscn against every other widget
 #                            pinned to that corner, \fo included, and check 6
-#                            the VIDEO OVERLAY's two lookups (`hero_names()` is
-#                            the row really drawn; `tile_rect()` is `_draw`'s own
-#                            arithmetic, one square per hero at the row's pitch,
-#                            EMPTY for a name the row is not drawing)
+#                            the VIDEO OVERLAY's three lookups in TWO HALVES:
+#                            `tile_rect()` measured against the row's own pitch
+#                            (self-consistency — EMPTY for a name the row is not
+#                            drawing) and, because that cannot see the two
+#                            descriptions disagree, `_draw` read as TEXT for the
+#                            shared `_tile_rect_local`; plus `hero_names()` is
+#                            the row really drawn, `tile_state()` reports CAPTIVE
+#                            so the overlay leaves the cell bars alone, and
+#                            `voice_chat`'s mirrored copy of that constant is
+#                            bound to the real one
 #   landmark_selfcheck       every builder fits its declared radius AND its
 #                            declared top
 #   landmark_sites_selfcheck THE MUSEUM MILE: every field kind sited AT MOST ONCE
@@ -2042,9 +2048,12 @@ touches `JavaScriptBridge`.
   `devicePixelRatio`, CSS scaling and every resize belong to the browser (which re-places
   the tiles on its own `resize` listener — a resize moves no fraction, so nothing is
   pushed). It lands on the tile of the hero that peer HOLDS, resolved through the lobby's
-  `hero_holder()` — which is exactly `hero_hud`'s STATE_HELD — and `hero_hud` gained only
-  `hero_names()` / `tile_rect()`, the latter being `_draw`'s own arithmetic so the two can
-  never drift. **BANDWIDTH: 160x120 @ 12 fps VP8 capped at 150 kbps by
+  `hero_holder()` — which is exactly `hero_hud`'s STATE_HELD — **except a CAPTIVE tile,
+  which takes no picture at all**: its cell bars are drawn ACROSS the tile, no inset saves
+  them, and a benched peer still HOLDS the hero they are locked up as. `hero_hud` gained
+  only `hero_names()` / `tile_rect()` / `tile_state()`, and `_draw` and `tile_rect` are
+  bound through one `_tile_rect_local` (asserted as TEXT, because measuring `tile_rect`
+  against itself cannot see them drift apart). **BANDWIDTH: 160x120 @ 12 fps VP8 capped at 150 kbps by
   `sender.setParameters`** — at the 4-peer cap that is 3 up + 3 down ≈ 0.45 Mbps each way
   plus ~0.1 Mbps of audio, and a relayed pair adds TURN BYTES but no new allocation
   (coturn's quota counts allocations, and the camera rides the voice PC). Known ceiling,

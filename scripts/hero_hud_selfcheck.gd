@@ -52,6 +52,9 @@ extends SceneTree
 
 const HUD_SCRIPT := preload("res://scripts/hero_hud.gd")
 const PLAYER_SCRIPT := preload("res://scripts/player_controller.gd")
+## The camera overlay's mirrored copy of `STATE_CAPTIVE` — check 6 binds it. A
+## SCRIPT dependency for one constant, not a node reference.
+const VOICE_SCRIPT := preload("res://scripts/voice_chat.gd")
 const MAIN_SCENE_PATH := "res://scenes/main.tscn"
 
 var _failures: Array[String] = []
@@ -296,16 +299,21 @@ func _check_the_row_fits_and_clears_its_neighbours() -> void:
 
 func _check_the_video_tile_lookup() -> void:
 	"""
-	6. The two seams the camera overlay reads (bead godot-test1-xtr.6):
-	`hero_names()` is the row this widget is really drawing, and `tile_rect()` is
-	the tile `_draw` really paints.
+	6. The three seams the camera overlay reads (bead godot-test1-xtr.6):
+	`hero_names()` is the row this widget is really drawing, `tile_rect()` is where
+	a tile is, and `tile_state()` is what that tile is saying.
 
 	The overlay is a DOM <video> positioned at that rect, so a `tile_rect` that
 	drifted from `_draw`'s arithmetic puts a teammate's face beside their portrait
-	instead of on it — and no self-check can see that in a browser. What CAN be
-	measured here is that the two agree with each other and with the row's pitch,
-	and that an off-roster name answers an EMPTY rect rather than tile zero (which
-	would park a picture over Windman for every hero nobody holds).
+	instead of on it — and no self-check can see that in a browser. TWO HALVES,
+	because neither sees the other: the geometry below is `tile_rect` measured
+	against the row's own pitch (self-consistency — a +1 px offset applied to BOTH
+	`_draw` and `tile_rect` is not a bug, it is a moved row), and the TEXT read is
+	what binds them, asserting `_draw` steps by `_tile_rect_local` rather than
+	arithmetic of its own. Plus: an off-roster name answers an EMPTY rect rather
+	than tile zero (which would park a picture over Windman for every hero nobody
+	holds), a CAPTIVE tile reports itself so the overlay can leave its cell bars
+	alone, and `voice_chat`'s mirrored copy of that constant is the real one.
 	"""
 	var hud: Control = HUD_SCRIPT.new()
 	var stub := StubPlayer.new()
@@ -344,8 +352,41 @@ func _check_the_video_tile_lookup() -> void:
 
 	_check(hud.tile_rect("no_such_hero") == Rect2(),
 		"tile_rect() answered a real rect for a hero that is not on the row")
+
+	# CAPTIVITY IS THE ONE STATE DRAWN AS A SHAPE — bars ACROSS the whole tile —
+	# so the overlay has to be able to ask, and skips those tiles entirely.
+	stub.captive = [names[1]]
+	hud._process(0.0)
+	_check(hud.tile_state(names[1]) == HUD_SCRIPT.STATE_CAPTIVE,
+		"tile_state(%s) is %d, not STATE_CAPTIVE" % [names[1], hud.tile_state(names[1])])
+	_check(hud.tile_state(names[0]) != HUD_SCRIPT.STATE_CAPTIVE,
+		"tile_state() called a free hero captive")
+	_check(hud.tile_state("no_such_hero") == HUD_SCRIPT.STATE_FREE,
+		"tile_state() answered a real state for a hero that is not on the row")
+	_check(VOICE_SCRIPT.HERO_HUD_STATE_CAPTIVE == HUD_SCRIPT.STATE_CAPTIVE,
+		"voice_chat mirrors STATE_CAPTIVE as %d, but it is %d — the overlay would "
+			% [VOICE_SCRIPT.HERO_HUD_STATE_CAPTIVE, HUD_SCRIPT.STATE_CAPTIVE]
+		+ "cover the cell bars")
 	hud.free()
 	stub.free()
+
+	# THE TEXT HALF, and it is the only thing that binds the two. Everything above
+	# measures `tile_rect` against itself, so a +1 px offset in BOTH it and `_draw`
+	# passes — correctly, that is a moved row — and one in `tile_rect` alone passes
+	# too, which is the bug. `_draw` reading the shared `_tile_rect_local` is what
+	# makes them one description.
+	var source := FileAccess.get_file_as_string("res://scripts/hero_hud.gd")
+	if source.is_empty():
+		_fail("could not read hero_hud.gd — check 6's binding would pass vacuously")
+		Sentinel.done("the_video_tile_lookup")
+		return
+	var draw_body := source.substr(source.find("func _draw() -> void:"))
+	var next_func := draw_body.find("\nfunc ")
+	if next_func > 0:
+		draw_body = draw_body.substr(0, next_func)
+	_check(draw_body.contains("_tile_rect_local("),
+		"_draw() no longer steps by _tile_rect_local() — it and tile_rect() are two "
+		+ "descriptions of the row again, and check 6 cannot see them disagree")
 	Sentinel.done("the_video_tile_lookup")
 
 

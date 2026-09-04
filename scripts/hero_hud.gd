@@ -203,6 +203,21 @@ func hero_names() -> PackedStringArray:
 	return _heroes
 
 
+func tile_state(hero: String) -> int:
+	"""
+	That hero's tile state (the STATE_* consts), or `STATE_FREE` for a name this
+	row is not drawing.
+
+	Exists beside `tile_rect()` for the camera overlay: a picture drawn over a
+	CAPTIVE tile hides the cell bars, which are the one state this row says with a
+	SHAPE rather than a brightness. Reads the same `_states` snapshot `_draw` does.
+	"""
+	var index := _index_of(hero)
+	if index < 0 or index >= _states.size():
+		return STATE_FREE
+	return _states[index]
+
+
 func tile_rect(hero: String) -> Rect2:
 	"""
 	Where that hero's tile is ON SCREEN, in window pixels — an empty `Rect2` when
@@ -215,11 +230,7 @@ func tile_rect(hero: String) -> Rect2:
 	its CanvasLayer and the project's stretch scale, none of which the caller
 	should have to know about.
 	"""
-	var index := -1
-	for i: int in _heroes.size():
-		if _heroes[i] == hero:
-			index = i
-			break
+	var index := _index_of(hero)
 	if index < 0:
 		return Rect2()
 	var local := _tile_rect_local(index)
@@ -229,6 +240,14 @@ func tile_rect(hero: String) -> Rect2:
 		return local
 	var xform := get_screen_transform()
 	return Rect2(xform * local.position, xform.basis_xform(local.size))
+
+
+func _index_of(hero: String) -> int:
+	"""That hero's slot in the row this widget is drawing, or -1."""
+	for i: int in _heroes.size():
+		if _heroes[i] == hero:
+			return i
+	return -1
 
 
 func _tile_rect_local(index: int) -> Rect2:

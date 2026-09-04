@@ -172,10 +172,19 @@ const CAM_DENIED: int = 3
 ## really the rate at which a hero CHANGES HANDS or a camera comes and goes.
 const TILE_INTERVAL: float = 0.2
 
-## How far inside a tile the picture is drawn, in window pixels. The tile's frame,
-## its active ring and a captive's bars are `hero_hud`'s and stay visible around
-## the video — the overlay is above the canvas, so anything it covers is gone.
+## How far inside a tile the picture is drawn, in window pixels — enough to leave
+## `hero_hud`'s frame and its active ring showing around the video. The overlay is
+## ABOVE the canvas, so anything it covers is simply gone, which is why a CAPTIVE
+## tile takes no picture at all: its cell bars are drawn ACROSS the whole tile and
+## no inset can save them, and they are the one state this row says with a shape
+## rather than a brightness. `_poll_tiles` skips those.
 const TILE_INSET: float = 3.0
+
+## `hero_hud.STATE_CAPTIVE`, mirrored rather than preloaded — the row is found
+## through its group like every other widget here, and a preload would be a hard
+## reference the discovery convention refuses. `hero_hud_selfcheck` check 6 binds
+## the two numbers so this cannot drift.
+const HERO_HUD_STATE_CAPTIVE: int = 3
 
 ## The browser half, installed once at `window.ckVoice` on the first room join —
 ## the `intro_video.gd` idiom: one GD const string, one `JavaScriptBridge.eval`,
@@ -493,10 +502,15 @@ const VOICE_JS: String = """
 			   side: 150 kbps caps one portrait-sized stream, so a 4-peer mesh is
 			   3 up + 3 down under half a megabit each way. */
 			var prm = p.vsend.getParameters();
-			if (!prm.encodings || !prm.encodings.length) { prm.encodings = [{}]; }
-			prm.encodings[0].maxBitrate = 150000;
-			var sp = p.vsend.setParameters(prm);
-			if (sp && sp.catch) { sp.catch(function () { }); }
+			/* Only ever EDIT what getParameters handed back: setParameters rejects
+			   an encodings array whose length differs from the current one, so
+			   inventing an entry is not a fallback, it is a guaranteed rejection.
+			   A browser that reports none is uncapped, which is the honest degrade. */
+			if (prm.encodings && prm.encodings.length) {
+				prm.encodings[0].maxBitrate = 150000;
+				var sp = p.vsend.setParameters(prm);
+				if (sp && sp.catch) { sp.catch(function () { }); }
+			}
 		} catch (e) { }
 		return 1;
 	}
@@ -1570,6 +1584,7 @@ func _poll_tiles() -> void:
 	var win: Vector2 = Vector2(get_window().size) if get_window() != null else Vector2.ZERO
 	var ready: bool = not senders.is_empty() \
 		and hud != null and hud.has_method("tile_rect") and hud.has_method("hero_names") \
+		and hud.has_method("tile_state") \
 		and _mp != null and is_instance_valid(_mp) and _mp.has_method("hero_holder") \
 		and win.x > 0.0 and win.y > 0.0
 	if ready:
@@ -1578,6 +1593,11 @@ func _poll_tiles() -> void:
 			# Not a sender covers "nobody holds him", "I hold him" and "he has no
 			# camera" in one test: our own id is never in the browser's peer set.
 			if not senders.has(holder):
+				continue
+			# A CAPTIVE TILE KEEPS ITS BARS. They are drawn across the whole tile,
+			# so no inset leaves them visible — and a benched peer still HOLDS the
+			# hero they are locked up as, which is exactly when this fires.
+			if int(hud.tile_state(hero)) == HERO_HUD_STATE_CAPTIVE:
 				continue
 			var tile: Rect2 = hud.tile_rect(hero)
 			if tile.size.x <= TILE_INSET * 2.0 or tile.size.y <= TILE_INSET * 2.0:
