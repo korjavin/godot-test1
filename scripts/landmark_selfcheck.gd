@@ -370,6 +370,7 @@ func _run() -> void:
 		_check_quiz_options(builders_script, registry)
 		await _check_quiz_toast(registry)
 		_check_city_registry(registry, city)
+		_check_kinds(terrain_script, builders_script, registry, city)
 
 	if _failures.is_empty():
 		print("landmarks: %d field + %d city builders × %d seeds measured, toast once-per-approach + radius-derived trigger + first-visit treasure OK, quiz options over %d × %d seeds × %d ids OK, quiz card ask/answer/tap/timeout/re-visit OK"
@@ -1864,3 +1865,264 @@ func _city_rows_ok(registry: Array, city: Array, report_as: String) -> Array[Str
 		for problem: String in problems:
 			_fail(problem)
 	return problems
+
+
+# ============================================================================
+# CHECK 9 — the SHAPE KINDS are honest: the drawn apex IS the declared top
+# ============================================================================
+
+func _check_kinds(terrain_script: GDScript, builders_script: GDScript, registry: Array, city: Array) -> void:
+	"""
+	Bead godot-test1-y1o.6 gave the FIELD builders the batch's mesh-kind slot —
+	domes are spheres, columns and drums cylinders, spires end in a cone — and
+	every one of those is still an entry whose `dimensions` mean its BOUNDING BOX.
+	That sentence is the whole reason check 1 needed no edit, and it is exactly
+	the kind of claim that is true the day it is written and silently false a year
+	later. So it is measured, five ways, and every one is an EFFECT measurement
+	(this file's house rule): the mesh's OWN vertices are put through the entry's
+	OWN Transform3D, never a formula re-derived from what the builder passed.
+
+	  (a) EVERY KIND THE FIELD SPENDS FITS THE UNIT CUBE AND REACHES ITS TOP.
+	      batch_selfcheck owns this for the enum; it is asked again here of the
+	      kinds this registry actually uses, because it is the premise of (b) and
+	      of every `top` a builder returns.
+	  (b) THE DRAWN APEX IS THE BOX'S TOP, AND rotated_box_top NAMES IT. For a
+	      yaw-only non-cube box the highest vertex the engine draws is exactly
+	      rotated_box_top(centre.y, dims, 0) — a dome's top is its sphere's top —
+	      so a builder that computed its `top` off a box still names real stone.
+	      Under a TILT a round mesh can only sit LOWER than the cube's rotated
+	      corner, so the helper and check 1's corner sweep stay true upper bounds,
+	      and that direction is what is asserted there instead of equality.
+	  (c) NO COLLIDING BOX IS A CONE. Collision is a BoxShape3D whatever the kind
+	      (ChunkBatch's banner), and a cone is a point at the top of that box —
+	      a ledge made of nothing. A sphere and a cylinder both fill their box
+	      along its axis, so those may collide. This is the taper rule's other
+	      half: the CONE goes where nothing collides.
+	  (d) THE FIELD REALLY SPENDS ALL THREE non-cube kinds. A revert to all-cubes
+	      — a merge that drops an argument, a refactor that loses it — is
+	      otherwise invisible: every other assertion in this file passes on cubes.
+	  (e) THE CITY BUILDERS STAY PURE CUBE. A Budapest box is sliced on the chunk
+	      grid and a non-cube one keeps the centre rule, so a SHARED helper
+	      leaking a kind into the 22 city builders is the realistic accident.
+	      budapest_selfcheck owns it from the chunk side; this is the same fact
+	      one seam earlier, and it costs one dictionary.
+
+	THREE SEEDS, not check 1's 25: a kind is a constant in the source and does not
+	vary with the draw, while the vertex sweep is the one measurement here that is
+	not free. The seeds still differ, because Sagrada rolls its tier COUNT and the
+	tier that ends the taper is the cone.
+	"""
+	var kinds_seen: Dictionary = {}        # kind -> boxes, over the field table
+	var city_kinds: Dictionary = {}
+	var per_builder: Dictionary = {}       # builder -> { kind -> boxes }
+	var checked_entries: int = 0
+
+	for pass_i in 2:
+		var table: Array = registry if pass_i == 0 else city
+		var bucket: Dictionary = kinds_seen if pass_i == 0 else city_kinds
+		for entry_variant: Variant in table:
+			var row: Dictionary = entry_variant
+			var builder: String = String(row.get("builder", ""))
+			if builder.is_empty():
+				continue
+			for seed_index in 3:
+				var terrain: Node3D = Node3D.new()
+				terrain.set_script(terrain_script)
+				var block_batch: Array = []
+				var block_body := StaticBody3D.new()
+				var chunk := MeshInstance3D.new()
+				var rng := RandomNumberGenerator.new()
+				rng.seed = hash(Vector3i(seed_index, builder.hash(), 9))
+				builders_script.call(builder, terrain, Vector3.ZERO, rng, chunk, block_batch, block_body)
+
+				# WHICH BOXES COLLIDE, by their own centre. create_box gives the
+				# shape the SAME centre as the batch entry, so an origin match is
+				# what "this box also has a collider" means from out here.
+				var collider_at: Dictionary = {}
+				for shape_v: Variant in block_body.get_children():
+					var shape: Node3D = shape_v
+					collider_at[_origin_key(shape.transform.origin)] = true
+
+				for item_v: Variant in block_batch:
+					var item: Dictionary = item_v
+					var kind: int = int(item.get("kind", ChunkBatch.BoxKind.CUBE))
+					bucket[kind] = int(bucket.get(kind, 0)) + 1
+					if pass_i == 0:
+						var seen: Dictionary = per_builder.get(builder, {})
+						seen[kind] = int(seen.get(kind, 0)) + 1
+						per_builder[builder] = seen
+					if kind == ChunkBatch.BoxKind.CUBE:
+						continue
+					checked_entries += 1
+					var t: Transform3D = item["transform"]
+					if _cone_collides(kind, t.origin, collider_at):
+						_fail(("%s (seed %d): a CONE box collides. Collision is the entry's "
+								% [builder, seed_index])
+								+ "BOUNDING BOX whatever the kind, so a colliding cone is a "
+								+ "point under a box-shaped ledge — put the cone where "
+								+ "nothing collides (the taper rule)")
+					for problem: String in _kind_top_problems(builder, seed_index, kind, t,
+							_unit_mesh_vertices(kind)):
+						_fail(problem)
+
+				block_body.free()
+				chunk.free()
+				terrain.free()
+
+	# --- (a) every kind the field spends fits the cube AND reaches its top.
+	for kind: int in kinds_seen:
+		if kind == ChunkBatch.BoxKind.CUBE:
+			continue
+		var reach := _unit_mesh_reach(kind)
+		var kind_name: String = ChunkBatch.BoxKind.find_key(kind)
+		if reach.x > 0.5 + RADIUS_EPSILON or reach.y > 0.5 + RADIUS_EPSILON or reach.z > 0.5 + RADIUS_EPSILON:
+			_fail(("BoxKind.%s's unit mesh reaches %s, outside the unit cube — every " % [kind_name, reach])
+					+ "declared radius in this registry is measured off cube corners and "
+					+ "would stop bounding the stone")
+		if absf(reach.y - 0.5) > RADIUS_EPSILON:
+			_fail(("BoxKind.%s's unit mesh tops out at %.4f, not the cube's 0.5 — a " % [kind_name, reach.y])
+					+ "builder's returned `top` is computed off the BOX, so a mesh that "
+					+ "does not reach it declares a height nothing is drawn at")
+
+	# --- (d) all three non-cube kinds are actually spent by the field table.
+	for kind: int in [ChunkBatch.BoxKind.SPHERE, ChunkBatch.BoxKind.CYLINDER, ChunkBatch.BoxKind.CONE]:
+		if int(kinds_seen.get(kind, 0)) <= 0:
+			_fail(("no field builder emits BoxKind.%s any more — the landmarks have "
+					% ChunkBatch.BoxKind.find_key(kind))
+					+ "reverted to boxes, and every other check in this file passes on boxes")
+
+	# --- (e) the city half is pure cube.
+	for kind: int in city_kinds:
+		if kind != ChunkBatch.BoxKind.CUBE:
+			_fail(("a CITY builder emitted BoxKind.%s. A Budapest box is sliced on the "
+					% ChunkBatch.BoxKind.find_key(kind))
+					+ "chunk grid and a non-cube keeps the centre rule — see "
+					+ "_spawn_city_landmarks_in_chunk")
+
+	_check_kind_negative_controls()
+
+	var census: PackedStringArray = []
+	for kind: int in kinds_seen:
+		census.append("%s %d" % [ChunkBatch.BoxKind.find_key(kind), int(kinds_seen[kind])])
+	var round_builders: int = 0
+	for builder: Variant in per_builder:
+		var seen: Dictionary = per_builder[builder]
+		if seen.size() > 1 or not seen.has(ChunkBatch.BoxKind.CUBE):
+			round_builders += 1
+	print("landmark_selfcheck: kinds over 3 seeds — field [%s], city [CUBE only], %d of %d field builders draw something round, %d non-cube boxes measured vertex by vertex"
+			% [", ".join(census), round_builders, registry.size(), checked_entries])
+	Sentinel.done("kinds")
+
+
+func _origin_key(p: Vector3) -> String:
+	"""
+	A box centre as a match key. Rounded, because the batch entry and the
+	collision shape are built from the SAME Vector3 and only have to agree to
+	within the float they were both written from.
+	"""
+	return "%.4f|%.4f|%.4f" % [p.x, p.y, p.z]
+
+
+func _cone_collides(kind: int, origin: Vector3, collider_at: Dictionary) -> bool:
+	"""(c), for one entry. Split out so the negative control drives this code."""
+	return kind == ChunkBatch.BoxKind.CONE and collider_at.has(_origin_key(origin))
+
+
+func _kind_top_problems(builder: String, seed_index: int, kind: int, t: Transform3D,
+		verts: PackedVector3Array) -> Array[String]:
+	"""
+	(b), for ONE non-cube entry: the highest vertex the engine will actually draw,
+	measured against the cube-corner bound check 1 uses and against the
+	rotated_box_top helper three builders compute their `top` with.
+
+	`verts` is a parameter rather than a lookup so the negative control can hand
+	it a mesh that does NOT fill its box — which is the only way to stage this
+	failure without editing a shipped unit mesh.
+	"""
+	var problems: Array[String] = []
+	var mesh_top := -INF
+	for v: Vector3 in verts:
+		mesh_top = maxf(mesh_top, (t * v).y)
+	var cube_top := -INF
+	for corner: Vector3 in UNIT_CORNERS:
+		cube_top = maxf(cube_top, (t * corner).y)
+	var kind_name: String = ChunkBatch.BoxKind.find_key(kind)
+	if mesh_top > cube_top + RADIUS_EPSILON:
+		problems.append("%s (seed %d): a BoxKind.%s box draws up to %.4f m, above its own bounding box's %.4f m — check 1's corner sweep, and every `top` in this registry, stop bounding it"
+				% [builder, seed_index, kind_name, mesh_top, cube_top])
+	# YAW-ONLY is the case a builder's `top` arithmetic assumes: the box's local
+	# +Y is world +Y, so the mesh's apex and the cube's highest corner are the
+	# same height and rotated_box_top names it exactly.
+	var up: Vector3 = t.basis.get_column(1)
+	if absf(up.x) < RADIUS_EPSILON and absf(up.z) < RADIUS_EPSILON:
+		if absf(mesh_top - cube_top) > RADIUS_EPSILON:
+			problems.append("%s (seed %d): an untilted BoxKind.%s box draws to %.4f m but its box tops out at %.4f m — a dome's top is no longer its sphere's top, so every `top` computed off that box over-declares"
+					% [builder, seed_index, kind_name, mesh_top, cube_top])
+		var dims := Vector3(t.basis.get_column(0).length(), up.length(), t.basis.get_column(2).length())
+		var helper: float = LandmarkBuilders.rotated_box_top(t.origin.y, dims, 0.0)
+		if absf(helper - mesh_top) > RADIUS_EPSILON:
+			problems.append("%s (seed %d): rotated_box_top says %.4f m for a BoxKind.%s box that draws to %.4f m — the helper disagrees with the shape"
+					% [builder, seed_index, helper, kind_name, mesh_top])
+	return problems
+
+
+func _check_kind_negative_controls() -> void:
+	"""
+	Both entry-level halves of check 9 pass VACUOUSLY over a batch of cubes, so
+	each is driven once on a deliberately broken input.
+	"""
+	# The honest case first, or a broken assertion would "catch" everything and
+	# prove nothing: a unit sphere scaled 2x and centred at y = 5 reaches 6.0 m,
+	# which is exactly its box top and exactly rotated_box_top's answer.
+	var honest := Transform3D(Basis().scaled(Vector3(2.0, 2.0, 2.0)), Vector3(0.0, 5.0, 0.0))
+	for kind: int in [ChunkBatch.BoxKind.SPHERE, ChunkBatch.BoxKind.CONE, ChunkBatch.BoxKind.CYLINDER]:
+		if not _kind_top_problems("control", 0, kind, honest, _unit_mesh_vertices(kind)).is_empty():
+			_fail("check 9 negative control: an untilted unit %s was reported as not reaching its own box top — the top test is broken"
+					% ChunkBatch.BoxKind.find_key(kind))
+
+	# THE LIE: the same box drawn by a mesh that only fills 80% of its height —
+	# the shape of the bug this half exists for (a unit mesh that stops short, so
+	# a builder's `top` names a height nothing is drawn at).
+	var squashed: PackedVector3Array = []
+	for v: Vector3 in _unit_mesh_vertices(ChunkBatch.BoxKind.SPHERE):
+		squashed.append(Vector3(v.x, v.y * 0.8, v.z))
+	if _kind_top_problems("control", 0, ChunkBatch.BoxKind.SPHERE, honest, squashed).is_empty():
+		_fail("check 9 negative control: a mesh reaching only 80% of its box's height was accepted as the box's top — the apex assertion is not testing anything")
+
+	# (c)'s control: the same origin, once with a collider and once without.
+	var at := Vector3(1.0, 2.0, 3.0)
+	var colliders: Dictionary = { _origin_key(at): true }
+	if not _cone_collides(ChunkBatch.BoxKind.CONE, at, colliders):
+		_fail("check 9 negative control: a CONE standing on a collision shape was not reported")
+	if _cone_collides(ChunkBatch.BoxKind.CONE, at + Vector3(0.0, 1.0, 0.0), colliders):
+		_fail("check 9 negative control: a CONE with no collision shape under it was reported as colliding")
+	if _cone_collides(ChunkBatch.BoxKind.CYLINDER, at, colliders):
+		_fail("check 9 negative control: a colliding CYLINDER was refused — a cylinder fills its box along its axis and may collide")
+
+
+var _unit_verts_cache: Dictionary = {}
+
+
+func _unit_mesh_vertices(kind: int) -> PackedVector3Array:
+	"""
+	The shared unit mesh's own vertices, read once per kind and reused: the sweep
+	above runs them over every non-cube box both registries emit.
+	"""
+	if _unit_verts_cache.has(kind):
+		return _unit_verts_cache[kind]
+	var mesh: Mesh = ChunkBatch.unit_mesh(kind)
+	var verts: PackedVector3Array = []
+	if mesh != null and mesh.get_surface_count() > 0:
+		verts = mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+	_unit_verts_cache[kind] = verts
+	return verts
+
+
+func _unit_mesh_reach(kind: int) -> Vector3:
+	"""How far one kind's unit mesh reaches from its own origin on each axis."""
+	var reach := Vector3.ZERO
+	for v: Vector3 in _unit_mesh_vertices(kind):
+		reach.x = maxf(reach.x, absf(v.x))
+		reach.y = maxf(reach.y, absf(v.y))
+		reach.z = maxf(reach.z, absf(v.z))
+	return reach
