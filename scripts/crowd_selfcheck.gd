@@ -52,13 +52,14 @@ extends SceneTree
 ##      a bridge deck's DRY rect covers the centreline but not the lane, so a
 ##      base-only test walked citizens out over the water; non-vacuity is the
 ##      count of walkers that came within reach of the band.
-##  12. A WALKER NEVER TELEPORTS MID-BLOCK (bead 8gw.23): over 2,000 driven
-##      steps, no citizen that did not TURN moves further in one frame than its
-##      own top speed allows — which is how a lane re-drawn on a straight step
-##      shows up (a sign flip is 17.2 m sideways on an avenue) — a turn is
-##      bounded by the lane geometry instead of forbidden (read the check's
-##      header for why the corner is a known discontinuity), and the spawn
-##      clearance is measured on the positions walkers really stand at.
+##  12. A WALKER NEVER TELEPORTS, MID-BLOCK OR AT A CORNER (beads 8gw.23 and
+##      8gw.24): over 2,000 driven steps NO citizen moves further in one frame
+##      than its own top speed allows — on a straight step that is how a lane
+##      re-drawn when nothing turned shows up (a sign flip is 17.2 m sideways on
+##      an avenue), and on a TURN it is the corner waypoint, which since 8gw.24
+##      is held to the very same bound. The retired arrival branch is written
+##      out here as the mutation control and must blow it. The spawn clearance
+##      is measured on the positions walkers really stand at.
 ##   7. THE COARSE TICK (bead 8gw.22): a citizen the camera cannot see is ticked
 ##      a few times a second by the REAL elapsed time — it ADVANCES, it is never
 ##      frozen — a null camera degrades to full-rate updates for everything, and
