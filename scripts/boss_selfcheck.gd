@@ -820,7 +820,7 @@ func _check_leap(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> vo
 	if String(row.get("behavior", "")) != "leap":
 		Sentinel.done("leap")
 		return
-	var airtime: float = CROC_SCRIPT.leap_airtime(row)
+	var airtime: float = CrocSteering.leap_airtime(row)
 	if airtime <= 0.0:
 		_fail("leap: behaviour is 'leap' but the row's arc constants give no"
 				+ " airtime — already reported in enemy_spawn_selfcheck")
@@ -944,7 +944,7 @@ func _check_leap(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> vo
 	# and both halves are taken at the SAME position with the SAME spent clock, so
 	# only the BEARING differs and the control isolates the guard.
 	player.global_position = home + Vector3(300.0, 0.0, 0.0)
-	var reach: float = CROC_SCRIPT.leap_reach(boss.chase_speed_instance, row)
+	var reach: float = CrocSteering.leap_reach(boss.chase_speed_instance, row)
 	# TWO METRES INSIDE THE FENCE, the same spot check 8 parks a ranged boss at.
 	# It is the geometry where the two bearings differ in the only way that
 	# matters: outward the projected landing clears the circle, inward it does not.

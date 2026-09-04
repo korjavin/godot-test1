@@ -1280,6 +1280,17 @@ ring around the quarry, derived from its own deterministic id, so the pack surro
 no coordinator, no registry and no group scan — which is also what makes it LOD-safe (a
 slept wolf corrupts nothing, a waking one recomputes with no lurch).
 
+**WHERE A UNIT AIMS IS `scripts/croc_steering.gd`; WHAT IT DOES ABOUT IT IS THE ARM.**
+`CrocSteering` (all static, bd `godot-test1-ftn.16`) holds the eight PURE functions —
+`hunt_steer_point`, `charge_steer_point`, `pack_steer_point`, `ranged_shot_due`,
+`leap_airtime` / `leap_reach` / `leap_due`, `burst_cycle_factor` — each taking its quarry,
+position, lock Dictionary and `SPECIES` row explicitly and answering a point, a number or
+a bool. That purity is what lets `enemy_behavior_selfcheck` measure the pack surround, the
+charge sidestep and both races with no body in the tree, so **keep them pure**. The
+`_behave_*` arms stay on the body with the dozen instance vars they drive, and
+`PACK_FLANK_TAPER` moved with the one function that reads it (aliased back, so
+`get_script_constant_map()` still answers).
+
 Per-instance speed and size rolls are **not** deterministic (they use a `randomize()`d
 RNG); only *positions* are. Bosses skip both rolls — `setup_as_boss()` must be called
 **before** `add_child`, because `_ready()` is where the rolls happen.

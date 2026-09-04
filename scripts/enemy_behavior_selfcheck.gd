@@ -434,7 +434,7 @@ func _probe_pack(croc_ai: GDScript, wolf_species: String) -> void:
 	for slot in range(pack_size):
 		for d: float in [0.5, 1.0, 4.0, 9.0, 18.0, 40.0]:
 			var from := quarry + Vector3(d, 0.0, 0.0)
-			var point: Vector3 = croc_ai.pack_steer_point(quarry, from, slot, pack_size, flank)
+			var point: Vector3 = CrocSteering.pack_steer_point(quarry, from, slot, pack_size, flank)
 			var ring: float = (point - quarry).length()
 			# Both ceilings the function promises: the taper (which is what
 			# guarantees a wolf always has somewhere left to walk) and the row's
@@ -484,7 +484,7 @@ func _probe_pack(croc_ai: GDScript, wolf_species: String) -> void:
 				for _step in range(steps):
 					var target: Vector3 = quarry
 					if flanking:
-						target = croc_ai.pack_steer_point(
+						target = CrocSteering.pack_steer_point(
 								quarry, pos, ids[i], pack_size, flank)
 					var to_target := target - pos
 					to_target.y = 0.0
@@ -979,7 +979,7 @@ func _charge_miss(croc_ai: GDScript, row: Dictionary, dodge_at: float,
 			quarry.x += _walk_speed * CHARGE_PROBE_DT
 		var target := quarry
 		if committed:
-			target = croc_ai.charge_steer_point(quarry, pos, lock, commit)
+			target = CrocSteering.charge_steer_point(quarry, pos, lock, commit)
 		var to_target := target - pos
 		to_target.y = 0.0
 		if to_target.length() > 0.1:
@@ -1195,7 +1195,7 @@ func _burst_circle_duty(croc_ai: GDScript, row: Dictionary, chase: float) -> flo
 	var burst_factor: float = float(row["burst_factor"])
 	for _step in range(steps):
 		var pos := Vector3(cos(angle), 0.0, sin(angle)) * BURST_CIRCLE_RADIUS
-		var factor: float = croc_ai.burst_cycle_factor(pos, lock, row)
+		var factor: float = CrocSteering.burst_cycle_factor(pos, lock, row)
 		if is_equal_approx(factor, burst_factor):
 			bursts += 1
 		angle += (chase * factor * BURST_RACE_DT) / BURST_CIRCLE_RADIUS
@@ -1229,7 +1229,7 @@ func _burst_race(croc_ai: GDScript, row: Dictionary, chase: float, quarry_speed:
 	var lock := {}
 	var steps := int(BURST_RACE_SECONDS / BURST_RACE_DT)
 	for _step in range(steps):
-		var factor: float = croc_ai.burst_cycle_factor(pos, lock, probe_row)
+		var factor: float = CrocSteering.burst_cycle_factor(pos, lock, probe_row)
 		pos.z += chase * factor * BURST_RACE_DT
 		quarry.z += quarry_speed * BURST_RACE_DT
 		if quarry.z - pos.z <= 0.0:
@@ -1436,7 +1436,7 @@ func _ranged_shots(croc_ai: GDScript, ranged: Dictionary, distance: float) -> Ar
 	var shots: Array[int] = []
 	var steps: int = int(RANGED_PROBE_SECONDS / RANGED_PROBE_DT)
 	for step in range(steps):
-		if croc_ai.ranged_shot_due(distance, RANGED_PROBE_DT, lock, ranged):
+		if CrocSteering.ranged_shot_due(distance, RANGED_PROBE_DT, lock, ranged):
 			shots.append(step)
 	return shots
 
@@ -1659,7 +1659,7 @@ func _hunt_walk(croc_ai: GDScript, row: Dictionary, start: float,
 		if distance > previous + EPSILON:
 			monotone = false
 		previous = distance
-		var target: Vector3 = croc_ai.hunt_steer_point(quarry, pos, closing, standoff)
+		var target: Vector3 = CrocSteering.hunt_steer_point(quarry, pos, closing, standoff)
 		var to_target := target - pos
 		to_target.y = 0.0
 		if to_target.length() > 0.1:
@@ -2373,7 +2373,7 @@ func _probe_leap(croc_ai: GDScript, species_name: String) -> void:
 		return
 
 	# ---- 1. THE ARC IS AN ARC ----------------------------------------------
-	var airtime: float = croc_ai.leap_airtime(row)
+	var airtime: float = CrocSteering.leap_airtime(row)
 	if airtime <= 0.0:
 		_fail("SPECIES['%s'] leap_launch_speed %.2f / leap_gravity %.2f give an"
 				% [species_name, float(row["leap_launch_speed"]), float(row["leap_gravity"])]
@@ -2409,7 +2409,7 @@ func _probe_leap(croc_ai: GDScript, species_name: String) -> void:
 	var peak: float = _max_chase_speed * speed_factor
 
 	# ---- 3. THE REACH FITS THE LEASH ---------------------------------------
-	var reach: float = croc_ai.leap_reach(_max_chase_speed, row)
+	var reach: float = CrocSteering.leap_reach(_max_chase_speed, row)
 	if _boss_only.has(species_name) and reach >= _boss_territory_radius:
 		_fail("SPECIES['%s'] hops %.1f m, which is not inside its own %.1f m"
 				% [species_name, reach, _boss_territory_radius] + " territory —"
@@ -2516,7 +2516,7 @@ func _leap_race(croc_ai: GDScript, row: Dictionary, chase: float, quarry_speed: 
 
 	var speed_factor: float = float(probe_row["leap_speed_factor"])
 	var recover_factor: float = float(probe_row["leap_recover_factor"])
-	var airtime: float = croc_ai.leap_airtime(probe_row)
+	var airtime: float = CrocSteering.leap_airtime(probe_row)
 
 	var pos := Vector3.ZERO
 	var quarry := Vector3(0.0, 0.0, BURST_RACE_GAP)
@@ -2526,7 +2526,7 @@ func _leap_race(croc_ai: GDScript, row: Dictionary, chase: float, quarry_speed: 
 	var steps := int(BURST_RACE_SECONDS / BURST_RACE_DT)
 	for _step in range(steps):
 		var grounded: bool = airborne_left <= 0.0
-		var launched: bool = croc_ai.leap_due(grounded, landing_ok, BURST_RACE_DT,
+		var launched: bool = CrocSteering.leap_due(grounded, landing_ok, BURST_RACE_DT,
 				lock, probe_row)
 		if launched:
 			airborne_left = airtime
