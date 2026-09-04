@@ -489,7 +489,7 @@ Three rules of the city's own, all pinned by `budapest_selfcheck`:
   shares the plateaus' `_city_ramp_slice` and is held to `TowerInterior.PLAN_RAMP_MAX_SLOPE`.
   **Margaret Island is the same mechanism**, one `DRY_RECTS` row, no machinery of its own.
   Known and documented: `DRY_RECTS` is XZ-only, so the river bed *under* a deck is dry too.
-- **The road's four CONSUMERS stop at the terminal station `T`; the road itself does not.**
+- **The road's five CONSUMERS stop at the terminal station `T`; the road itself does not.**
   `_road_terminal_k()` is the last station at or west of `ROAD_TERMINAL_X`, and the caps
   are numbered in the code: road coins, road clearance, road bosses
   (`endless_terrain.gd`) and the minimap's drawn line (`minimap_hud.gd`) are 1–4;

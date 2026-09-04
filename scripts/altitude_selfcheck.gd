@@ -856,13 +856,34 @@ func _check_shader_parity() -> void:
 	if seg_count <= 0:
 		_fail("alt_road_seg_count is %d after a refresh — the shader flattens no corridor at all while the CPU's heightmap flattens %d segments" % [
 			seg_count, t._alt_road_segs.size()])
-	# ...and the PADDING really is inert. The shader never reads past the count, but
-	# a padder that re-packed or reordered would show up here first.
-	for i in range(seg_count, segs.size()):
-		if segs[i] != Vector4.ZERO:
+	# ...and the PADDING really is inert. THE TAIL HAS TO BE FORCED TO EXIST: every
+	# window this check can realistically centre on fills the polyline, so
+	# `seg_count == ALT_ROAD_SEG_MAX` and a loop over `range(seg_count,
+	# segs.size())` is a loop over nothing — a padder writing garbage past the count
+	# walked straight through it. So the cache is TRUNCATED and re-pushed through
+	# the shipped seam, which is the only way the tail is ever non-empty here.
+	var full_segs: PackedVector4Array = t._alt_road_segs
+	var short_want: int = mini(3, full_segs.size())
+	t._alt_road_segs = full_segs.slice(0, short_want)
+	t._apply_biome_shader_params()
+	var short_segs: PackedVector4Array = mat.get_shader_parameter("alt_road_seg")
+	var short_count: int = mat.get_shader_parameter("alt_road_seg_count")
+	if short_count != short_want or short_segs.size() != t.ALT_ROAD_SEG_MAX:
+		_fail("a %d-segment cache pushed alt_road_seg_count %d into an array of %d — the padder must fill to ALT_ROAD_SEG_MAX %d and count only what the cache holds" % [
+			short_want, short_count, short_segs.size(), t.ALT_ROAD_SEG_MAX])
+	for i in range(short_count, short_segs.size()):
+		if short_segs[i] != Vector4.ZERO:
 			_fail("alt_road_seg[%d] is %s past alt_road_seg_count %d — the padded tail is not zeros, so the array is not the cache verbatim" % [
-				i, str(segs[i]), seg_count])
+				i, str(short_segs[i]), short_count])
 			break
+	# Put the real window back: everything below reads the full polyline.
+	t._alt_road_segs = full_segs
+	t._apply_biome_shader_params()
+	segs = mat.get_shader_parameter("alt_road_seg")
+	seg_count = mat.get_shader_parameter("alt_road_seg_count")
+	if seg_count != full_segs.size():
+		_fail("restoring the full corridor pushed alt_road_seg_count %d for a %d-segment cache" % [
+			seg_count, full_segs.size()])
 	# EVERY ENDPOINT MUST BE A REAL STATION CENTRE. That is what distinguishes the
 	# shipped (x1, z1, x2, z2) from the plausible (x, z, dx, dz): the second packs a
 	# DELTA into zw, which is a few tens of metres from the origin and is a station

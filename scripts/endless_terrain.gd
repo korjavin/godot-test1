@@ -6951,7 +6951,7 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, ob
 		# centerline X is strictly increasing in k), so we're done either way.
 		if k > road_k_max:
 			break
-		# CAP 3 OF 4 — no boss stands past the road's terminal station (bead
+		# CAP 3 OF 5 — no boss stands past the road's terminal station (bead
 		# godot-test1-8gw.3). Bosses GUARD the coin road; east of T there is no road
 		# to guard, and the city's own predator policy is Budapest's to decide.
 		#
@@ -10676,8 +10676,9 @@ func _road_terminal_k() -> int:
 	callers (_road_first_k_at_or_after_x's own contract, the coin scan and the boss
 	scan) ASSUME the cache spans whatever X they asked for; a short cache silently
 	answers them with the terminal station for every chunk in the city. So the
-	centreline cache stays infinite and honest — it is the four things that READ it
-	(road coins, road clearance, road bosses, the minimap line) that stop at T.
+	centreline cache stays infinite and honest — it is the five things that READ it
+	(road coins, road clearance, road bosses, the minimap line, and the
+	FIELD_ALTITUDE spike's flat corridor `_alt_road_segments`) that stop at T.
 
 	The definition is the one the machinery already provides: extend so the cache
 	covers T, binary-search the first station at or after T, and step back one. The
@@ -10741,7 +10742,7 @@ func _road_coins_at(k: int) -> Array:
 	  ROAD_COIN_LONG_JITTER*spacing (along-road); spawn_coins_in_chunk's `pad` is derived
 	  from exactly that bound so the scan window can never miss a scattered coin at a seam.
 	"""
-	# CAP 1 OF 4 — the road's coins stop at the terminal station (bead
+	# CAP 1 OF 5 — the road's coins stop at the terminal station (bead
 	# godot-test1-8gw.3). Past T the coin line is the city's authored approach
 	# corridor instead (spawn_approach_coins_in_chunk), so a road coin here would
 	# be a second, wandering trail crossing the avenue.
@@ -10846,7 +10847,7 @@ func _road_lateral_distance(world_x: float, world_z: float, clearance: float) ->
 
 	var best := INF
 	var k := _road_first_k_at_or_after_x(world_x - pad)
-	# CAP 2 OF 4 — the road's CLEARANCE stops at the terminal station too (bead
+	# CAP 2 OF 5 — the road's CLEARANCE stops at the terminal station too (bead
 	# godot-test1-8gw.3): east of T there is no road, so nothing out there should be
 	# shoved aside to keep a coin swath clear that does not exist. Past T the scan
 	# window is empty and this returns INF, which every caller already reads as
