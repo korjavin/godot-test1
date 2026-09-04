@@ -1695,7 +1695,14 @@ was ever going to stop it. Three parts, all in the two managers, all pinned by
   model has always cost (±3.2 made it 4.5 m) and `crowd_selfcheck` check 12 BOUNDS rather
   than forbids. `_pick_lane` tries **both** pavements before giving up, because
   `BUDAPEST_MIN.x == GATE.x` puts the gate avenue's west pavement outside the rect and a
-  single-draw version dropped half its walkers onto that carriageway's centreline.
+  single-draw version dropped half its walkers onto that carriageway's centreline. **And
+  a lane is validated along the WHOLE leg, never at its base** (`_lane_walkable`, both ends
+  and the middle) with the recycle guard asking the RENDERED position: a bridge deck's
+  `DRY_RECTS` row covers the centreline but not a lane 8.6 m to the side of it, so a
+  north/south walker on the Chain Bridge avenue passed a base-only test and then walked out
+  over the Danube, and the base-only recycle never took it away. `crowd_selfcheck` check 13
+  drives a live bubble at all four bridges and asks the shipped `is_walkable` of every
+  rendered position.
 - **The car brakes for a citizen on the carriageway through the SHIPPED yield path** —
   `_distance_to_citizen_ahead` feeds `crowd_manager.blocking_citizen_distance` into
   `target_speed_for_distance` beside the hero's own distance. It is deliberately its own
@@ -1710,7 +1717,9 @@ was ever going to stop it. Three parts, all in the two managers, all pinned by
   the citizen's OWN axis is ignored, or a walker on an avenue would stand still forever.
   Both lines are INFINITE, so the projection is bounded by the carriageway's own width —
   without that a citizen stepping onto the z = 0 avenue is held by a car on the parallel
-  one 248 m up its own line.
+  one 248 m up its own line. And the release reads the car's BODY (`CROSSING_REAR_CLEAR`),
+  never its centre: a 4.4 m car whose centre has just passed still straddles the lane, and
+  one stopped by the hero ahead straddles it for as long as he stands there.
 - **Discovery is the group, both ways, `has_method`-guarded** — a preload between these
   two would be a cycle, and a harness with only one of them behaves exactly as before.
 

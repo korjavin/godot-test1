@@ -46,6 +46,12 @@ extends SceneTree
 ##      taking the crowd out of its group — the car must then drive over it; and
 ##      a citizen at the KERB waits, measured against the same walk on an empty
 ##      road.
+##  13. NOBODY WALKS ON THE DANUBE (bead 8gw.23): a live bubble at each of the
+##      four bridges, every RENDERED walker position asked of the shipped
+##      `is_walkable`. A lane is up to 8.6 m to the SIDE of the street line and
+##      a bridge deck's DRY rect covers the centreline but not the lane, so a
+##      base-only test walked citizens out over the water; non-vacuity is the
+##      count of walkers that came within reach of the band.
 ##  12. A WALKER NEVER TELEPORTS MID-BLOCK (bead 8gw.23): over 2,000 driven
 ##      steps, no citizen that did not TURN moves further in one frame than its
 ##      own top speed allows — which is how a lane re-drawn on a straight step
@@ -163,6 +169,7 @@ func _run_checks() -> void:
 	_check_pavement_lane()
 	await _check_car_never_drives_through_a_citizen()
 	_check_walkers_never_teleport()
+	_check_no_walker_on_water()
 
 	if _failures.is_empty():
 		print("crowd_selfcheck: all checks passed cleanly")
@@ -1173,7 +1180,7 @@ func _check_pavement_lane() -> void:
 
 	# Twenty draws each: the lane is a random pick, so one sample proves nothing.
 	for _i in 20:
-		var ave_lane: float = absf(_manager._pick_lane(on_avenue, along))
+		var ave_lane: float = absf(_manager._pick_lane(on_avenue, along, on_avenue + Vector3(PLAN.STREET_PITCH, 0.0, 0.0)))
 		if ave_lane <= PLAN.AVENUE_HALF_WIDTH:
 			_failures.append(("a citizen walking ALONG an avenue was put %.1f m off the"
 				+ " centreline, inside the %.1f m carriageway — it is standing in the"
@@ -1186,7 +1193,7 @@ func _check_pavement_lane() -> void:
 				+ " building.") % [ave_lane, PLAN.AVENUE_HALF_WIDTH + PLAN.BLOCK_PAVEMENT])
 			break
 	for _i in 20:
-		var street_lane: float = absf(_manager._pick_lane(on_street, along))
+		var street_lane: float = absf(_manager._pick_lane(on_street, along, on_street + Vector3(PLAN.STREET_PITCH, 0.0, 0.0)))
 		if street_lane > PLAN.AVENUE_HALF_WIDTH:
 			_failures.append(("an ordinary street put a walker %.1f m off the centreline —"
 				+ " the pavement lane is for AVENUES, and a 62 m street has no traffic to"
@@ -1206,7 +1213,7 @@ func _check_pavement_lane() -> void:
 			+ " standing on the city edge the mirror rule exists for")
 	else:
 		for _i in 20:
-			var gate_lane: float = absf(_manager._pick_lane(gate_ns, north))
+			var gate_lane: float = absf(_manager._pick_lane(gate_ns, north, gate_ns + Vector3(0.0, 0.0, PLAN.STREET_PITCH)))
 			if gate_lane <= PLAN.AVENUE_HALF_WIDTH:
 				_failures.append(("on the GATE avenue — the city's own west edge, where one"
 					+ " pavement is outside the rect — a walker was put %.1f m off the"
@@ -1291,6 +1298,34 @@ func _check_car_never_drives_through_a_citizen() -> void:
 	else:
 		print("kerb rule: a car on the parallel avenue %.0f m away holds nobody;" % ave_pitch
 			+ " the same car on the crossed avenue does")
+
+	# A STOPPED CAR STRADDLING THE CROSSING still blocks it. `fwd <= 0` released the
+	# walker the moment the car's CENTRE passed, while 2.2 m of body was still
+	# across the lane — and a car stopped by the hero ahead straddles it for as
+	# long as the hero stands there, so the walker steps into a stationary car
+	# that, looking only forward, never sees it.
+	traffic._hide_all()
+	var stalled: Dictionary = (traffic.get("_cars") as Array)[0]
+	stalled["pos"] = Vector3(step_x + 1.0, 0.0, 0.0)   # centre 1 m PAST the crossing
+	stalled["heading_dir"] = Vector2(1.0, 0.0)
+	stalled["facing_yaw"] = 0.0
+	stalled["speed"] = 0.0
+	stalled["cruise_speed"] = 0.0
+	stalled["active"] = true
+	if not traffic.blocks_crossing(kerb_from, kerb_to, Vector2(0.0, 1.0)):
+		_failures.append(("a citizen was released onto the crossing with a STOPPED car"
+			+ " straddling it — its centre is 1.0 m past, but %.1f m of car is still"
+			+ " across the lane. blocks_crossing must use the car's BODY, not its centre.")
+			% (TrafficScript.CAR_LENGTH * 0.5))
+	# ...and the control: the same car a whole body-length further on, genuinely
+	# clear, must release. Without this the fix could just be "always blocked".
+	stalled["pos"] = Vector3(step_x + TrafficScript.CROSSING_REAR_CLEAR + 1.0, 0.0, 0.0)
+	if traffic.blocks_crossing(kerb_from, kerb_to, Vector2(0.0, 1.0)):
+		_failures.append("a car entirely PAST the crossing still held the walker — the rear"
+			+ " clearance is not releasing, so a citizen waits for cars that have gone")
+	else:
+		print("kerb rule: a car straddling the crossing holds; the same car %.1f m past"
+			% (TrafficScript.CROSSING_REAR_CLEAR + 1.0) + " releases")
 
 	traffic._hide_all()
 	traffic.queue_free()
@@ -1436,3 +1471,77 @@ func _check_walkers_never_teleport() -> void:
 			% [bound, turns, worst_corner, corner_bound, worst_gap])
 	_manager._hide_all()
 	Sentinel.done("walkers_never_teleport")
+
+
+# ============================================================================
+# CHECK 13 — NOBODY WALKS ON THE DANUBE (bead godot-test1-8gw.23, round 3)
+# ============================================================================
+#
+# THE BUG THIS EXISTS FOR. A walker's lane is up to PAVEMENT_LANE_OFFSET to the
+# SIDE of the street line it follows, and every walkability test in this file
+# used to be asked of the CENTRELINE. On the four bridge avenues those two answer
+# differently: a `DRY_RECTS` row covers the deck, so a north/south walker at
+# x = 2344 is on dry ground while its RENDERED position at x = 2352.6 is over open
+# water — and the recycle pass, asking the base too, never took it away. A citizen
+# walking on the Danube, for as long as the bubble held it.
+#
+# Both halves are fixed and this measures the pair from the outside: the lane is
+# validated along the WHOLE leg (`_lane_walkable`, sampled at both ends and the
+# middle) and the recycle guard asks `_citizen_world_pos`. So the assertion needs
+# to know about neither — it drives a live bubble at each bridge and asks the
+# shipped `is_walkable` of every RENDERED position.
+#
+# Non-vacuity matters more than usual here: a probe that never puts a walker
+# NEAR the river proves nothing, so it counts the walkers within reach of the
+# band and fails if the bubbles never went near the water.
+
+## Frames per bridge: enough for a walker spawned on a deck avenue to walk clear
+## of the DRY rect (32 m of deck at ~2.3 m/s is ~14 s).
+const RIVER_FRAMES: int = 1200
+
+## How near the Danube's centreline a walker has to come for this to have been a
+## real test of the river edge at all.
+const RIVER_REACH: float = 160.0
+const RIVER_MIN_NEAR: int = 20
+
+
+func _check_no_walker_on_water() -> void:
+	var wet: int = 0
+	var near_river: int = 0
+	var worst := Vector3.ZERO
+	for row_v: Variant in PLAN.BRIDGES:
+		var row: Dictionary = row_v
+		var rect: Rect2 = PLAN.DRY_RECTS[int(row["dry"])]
+		# Stand the hero ON the deck: the bubble then straddles both banks and the
+		# open water either side of it, which is exactly the geometry that broke.
+		var spot := Vector3(rect.position.x + rect.size.x * 0.5, 1.0,
+				rect.position.y + rect.size.y * 0.5)
+		_manager._hide_all()
+		_player.position = spot
+		for _f in RIVER_FRAMES:
+			_manager._process(DT)
+			for c: Dictionary in _manager.get("_citizens"):
+				if not c["active"]:
+					continue
+				var w: Vector3 = CrowdScript._citizen_world_pos(c)
+				if PLAN.danube_distance(w.x, w.z) < RIVER_REACH:
+					near_river += 1
+				if not CrowdScript.is_walkable(w.x, w.z):
+					wet += 1
+					worst = w
+	if near_river < RIVER_MIN_NEAR:
+		_failures.append("check 13 never put a walker within %.0f m of the Danube (%d"
+			% [RIVER_REACH, near_river] + " samples) — it measured nothing about the river")
+	if wet > 0:
+		_failures.append(("%d walker frames were rendered on unwalkable ground — the last at"
+			+ " %s, %.1f m from the Danube's centreline. A lane is up to %.1f m to the SIDE"
+			+ " of the street line, so a base that is dry says nothing; `_lane_walkable`"
+			+ " validates the whole leg and the recycle guard asks the RENDERED position.")
+			% [wet, str(worst), PLAN.danube_distance(worst.x, worst.z),
+			CrowdScript.PAVEMENT_LANE_OFFSET])
+	else:
+		print("river: %d walker-frames sampled at the four bridges, %d of them within"
+			% [near_river, near_river] + " %.0f m of the Danube, none on water"
+			% RIVER_REACH)
+	_manager._hide_all()
+	Sentinel.done("no_walker_on_water")

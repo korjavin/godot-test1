@@ -89,6 +89,10 @@ const DECELERATION: float = 9.0
 const YIELD_DISTANCE: float = 18.0
 const STOP_DISTANCE: float = 6.7  # 4.5 + CAR_LENGTH*0.5 (was 4.5 centre-to-centre, looked touching)
 const LATERAL_TOLERANCE: float = 3.2
+
+# How far BEHIND the crossing point a car still counts as blocking it: half a car
+# plus a citizen's own half-width and a little air. See `blocks_crossing`.
+const CROSSING_REAR_CLEAR: float = CAR_LENGTH * 0.5 + 0.9
 const LATERAL_TOLERANCE_CAR: float = 2.4
 
 # Honk timing — one annoyed honk every few seconds, not a siren.
@@ -577,7 +581,12 @@ func blocks_crossing(from: Vector3, to: Vector3, heading: Vector2) -> bool:
 			continue
 		var cross := to_p + heading * travel
 		var fwd := cross.dot(h)
-		if fwd > 0.0 and fwd <= YIELD_DISTANCE:
+		# THE CAR'S BODY, NOT ITS CENTRE. `fwd > 0` released the walker the instant
+		# the centre passed the crossing, while 2.2 m of car was still across it —
+		# and a car STOPPED by the hero ahead straddles it indefinitely, so the
+		# walker stepped into a stationary car and the car, looking only forward,
+		# never saw it. Release once the rear bumper is clear by a body's width.
+		if fwd > -CROSSING_REAR_CLEAR and fwd <= YIELD_DISTANCE:
 			return true
 	return false
 

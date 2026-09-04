@@ -655,7 +655,24 @@ static func walks_an_avenue(base: Vector3, heading: Vector2) -> bool:
 	return absf(base.x - (origin_x + k * ave_pitch)) < 1.0
 
 
-func _pick_lane(base: Vector3, heading: Vector2) -> float:
+func _lane_walkable(base: Vector3, to: Vector3, heading: Vector2, lane: float) -> bool:
+	## Is the OFFSET path walkable for the whole leg? The centreline being dry says
+	## nothing about a lane 8.6 m to the side of it, and the Danube is where that
+	## bites: a north/south walker on the Chain Bridge avenue passes a base-only
+	## test because the bridge's DRY rect covers its centreline, then walks north
+	## off the end of the deck with its RENDERED position 8.6 m out over the water.
+	## Sampled rather than swept — the leg is one 62 m block and the bands it can
+	## cross are hundreds of metres wide, and `_update_crowd_spawns` re-asks the
+	## rendered position every tick as the backstop for anything between samples.
+	var lat := Vector3(-heading.y, 0.0, heading.x) * lane
+	for t: float in [0.0, 0.5, 1.0]:
+		var p: Vector3 = base.lerp(to, t) + lat
+		if not is_walkable(p.x, p.z):
+			return false
+	return true
+
+
+func _pick_lane(base: Vector3, heading: Vector2, to: Vector3) -> float:
 	## The lateral offset for a walker on this street line, asked whenever the
 	## heading CHANGES — a lane picked at spawn and never revisited put a citizen
 	## who turned onto an avenue straight into the traffic. It must NOT be asked
@@ -676,8 +693,7 @@ func _pick_lane(base: Vector3, heading: Vector2) -> float:
 		lane = PAVEMENT_LANE_OFFSET if _rng.randf() < 0.5 else -PAVEMENT_LANE_OFFSET
 	else:
 		lane = LANE_OFFSETS[_rng.randi() % LANE_OFFSETS.size()]
-	var lat_dir := Vector3(-heading.y, 0.0, heading.x)
-	if is_walkable((base + lat_dir * lane).x, (base + lat_dir * lane).z):
+	if _lane_walkable(base, to, heading, lane):
 		return lane
 	# THE OTHER PAVEMENT, before giving up. The city's WEST edge is the gate
 	# avenue itself (BUDAPEST_MIN.x == GATE.x), so for a north/south walker there
@@ -686,8 +702,7 @@ func _pick_lane(base: Vector3, heading: Vector2) -> float:
 	# road in the city, at the one place every player enters it. Both offsets are
 	# symmetric (LANE_OFFSETS as much as the pavement), so the mirror is always a
 	# legitimate lane and not a second rule.
-	var mirrored: Vector3 = base - lat_dir * lane
-	if is_walkable(mirrored.x, mirrored.z):
+	if _lane_walkable(base, to, heading, -lane):
 		return -lane
 	# Neither side fits. 0.0 is the centreline, which is the one strip of an
 	# avenue no car lane covers (they sit at ±LANE_OFFSET), so it is a safe
@@ -783,7 +798,7 @@ func _find_spawn_segment_near(player_pos: Vector3, min_dist: float = SPAWN_MIN_D
 		# centreline, pass a test made against `base`, and then draw the same lane
 		# and land on top of each other — MIN_WALKER_SPACING measured against a
 		# point nobody occupies.
-		var lane := _pick_lane(base, dir_choice)
+		var lane := _pick_lane(base, dir_choice, target)
 		var lat_dir := Vector3(-dir_choice.y, 0.0, dir_choice.x)
 		if _too_close_to_walker(base + lat_dir * lane):
 			continue
@@ -809,7 +824,7 @@ func _assign_citizen_from_segment(citizen: Dictionary, seg: Dictionary) -> void:
 	# it here would throw that clearance away. `_pick_lane` is the fallback for a
 	# caller that built a segment by hand (a harness, a probe).
 	citizen["lane_offset"] = float(seg["lane"]) if seg.has("lane") \
-			else _pick_lane(start_pt, heading)
+			else _pick_lane(start_pt, heading, end_pt)
 	citizen["speed"] = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
 	citizen["walk_phase"] = _rng.randf_range(0.0, TAU)
 	citizen["pause_timer"] = 0.0
@@ -849,8 +864,12 @@ func _update_crowd_spawns(delta: float, player_pos: Vector3, planes: Array[Plane
 			citizen["lod_step"] = AmbienceLod.step_delta(citizen, delta, visible)
 			if float(citizen["lod_step"]) <= 0.0:
 				continue  # not this citizen's tick — it moves later, by the banked time
-			# Check if citizen has drifted beyond DESPAWN_RADIUS or out of walkable zone
-			var cpos: Vector3 = citizen["pos"]
+			# Drifted out of the bubble, or off walkable ground — and the ground is
+			# asked of the RENDERED position, never the centreline. A lane is up to
+			# PAVEMENT_LANE_OFFSET to the side, so a walker whose base is dry can be
+			# standing in the Danube; `_lane_walkable` keeps it from being placed
+			# there and this is the backstop for everything between its samples.
+			var cpos: Vector3 = _citizen_world_pos(citizen)
 			var flat_dist := Vector2(cpos.x - player_pos.x, cpos.z - player_pos.z).length()
 			if flat_dist > DESPAWN_RADIUS or not is_walkable(cpos.x, cpos.z):
 				# Recycle to the FAR side of the bubble, never under the hero's
@@ -940,7 +959,7 @@ func _update_walkers(delta: float, lod_gated: bool = false) -> void:
 					# citizen crosses the road to stand on the other side of it.
 					citizen["lane_offset"] = -float(citizen["lane_offset"])
 				elif not new_h.is_equal_approx(was_heading):
-					citizen["lane_offset"] = _pick_lane(pos, new_h)
+					citizen["lane_offset"] = _pick_lane(pos, new_h, next_target)
 			else:
 				var move_dir := to_target / dist
 				var next_pos := pos + move_dir * step
