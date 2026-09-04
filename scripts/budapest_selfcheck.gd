@@ -913,11 +913,11 @@ func _check_slicing(terrain: Node3D) -> void:
 	# than found later.
 	var yawed := Basis(Vector3.UP, PI)
 	for dim: Vector3 in [Vector3(1.0, 1.0, 1.0), Vector3(125.0, 3.0, 272.0)]:
-		if not terrain._is_axis_aligned_basis(yawed.scaled_local(dim)):
+		if not ChunkBatch._is_axis_aligned_basis(yawed.scaled_local(dim)):
 			_fail("a PI-yawed %.0f x %.0f box reads as ROTATED to the splitter "
 					% [dim.x, dim.z] + "while its own collision basis reads as "
 					+ "axis-aligned — the two halves are testing different things")
-	if terrain._is_axis_aligned_basis(Basis(Vector3.UP, PI * 0.25)):
+	if ChunkBatch._is_axis_aligned_basis(Basis(Vector3.UP, PI * 0.25)):
 		_fail("a 45-degree yaw reads as axis-aligned — the splitter would cut a "
 				+ "rotated box into pieces that do not reassemble")
 
@@ -1168,7 +1168,7 @@ func _run_builder(terrain: Node3D, index: int, center: Vector3, chunk_center: Ve
 	var body := StaticBody3D.new()
 	terrain._landmark_builders.call(String(slot["builder"]), terrain, center, rng,
 			chunk, batch, body)
-	terrain.split_city_boxes_on_chunk_grid(chunk_center, batch, body)
+	ChunkBatch.split_city_boxes_on_chunk_grid(terrain, chunk_center, batch, body)
 	return {"batch": batch, "body": body, "chunk": chunk,
 			"accents": chunk.get_child_count()}
 

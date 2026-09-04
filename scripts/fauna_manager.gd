@@ -708,7 +708,7 @@ var _probe_exclude: Array[RID] = []
 # ============================================================================
 # SHARED RESOURCES (static — one per PROCESS, not one per manager/animal)
 # ============================================================================
-# Same discipline as endless_terrain._get_shared_unit_box_mesh() and
+# Same discipline as ChunkBatch._get_shared_unit_box_mesh() and
 # ToonShading's static material cache: every animal that will ever exist is
 # built from ONE unit BoxMesh scaled per part, and the total material count
 # for the whole feature is a small constant (2 species + 2 accents), no matter
