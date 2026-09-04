@@ -250,6 +250,7 @@ func _run() -> void:
 	await _check_the_scar_is_drawn_and_permanent()
 	await _check_spines_and_liberation()
 	await _check_guards_stand_their_posts()
+	_check_guard_capsule_fits_the_doors()
 	await _check_guards_reset_on_re_entry()
 	await _check_the_leash_holds_under_a_chase()
 	await _check_the_lure_diverts_a_guard()
@@ -1092,11 +1093,11 @@ func _check_node_shape() -> void:
 	# trigger and this count follows it down instead of failing on a stale number.
 	#
 	# ...and one per EVIDENCE DOSSIER (bead godot-test1-3iy.23), counted off the
-	# authored table for the same reason: a dossier added to `DOSSIERS` that never
+	# authored table for the same reason: a dossier added to `TowerDossiers.DOSSIERS` that never
 	# grew a trigger is a folder you can walk through, and this is where that shows.
 	var lift_stops := 1 if TowerInterior.lift_stop_floor() >= 0 else 0
 	var want_areas := 3 + TowerInterior.SPINE_DOORS.size() + TowerGraph.HEROES.size() \
-			+ 2 + lift_stops + TowerInterior.DOSSIERS.size()
+			+ 2 + lift_stops + TowerDossiers.DOSSIERS.size()
 	var lock_pads := 0
 	var lure_pads := 0
 	for plan: Dictionary in TowerPlans.STOREYS:
@@ -1106,7 +1107,7 @@ func _check_node_shape() -> void:
 	if areas != want_areas:
 		_fail("the interior has %d Area3D, expected %d (3 pads + %d spine pads + %d cells + 1 press + 1 purge + %d riddle lock pads + %d lure pads + %d lift stop + %d dossiers)" % [
 			areas, want_areas, TowerInterior.SPINE_DOORS.size(), TowerGraph.HEROES.size(),
-			lock_pads, lure_pads, lift_stops, TowerInterior.DOSSIERS.size()])
+			lock_pads, lure_pads, lift_stops, TowerDossiers.DOSSIERS.size()])
 	# ...and the stop stands where the graph says it does. A trigger built on the
 	# wrong storey would still be one `Area3D` and pass the count above.
 	if lift_stops == 1:
@@ -2847,19 +2848,42 @@ func _check_spines_and_liberation() -> void:
 # ============================================================================
 
 ## How much room a guard's body needs around its post before "clear of the
-## stonework" means anything. The `tower_guard.tscn` capsule is 0.28125 m in
-## radius (the 1.5x chassis of bead godot-test1-6bj; it was 0.1875); this is
-## still over it, so a post that merely GRAZES a jamb is a failure rather than a
-## lucky pass. Read as: nothing solid may come within this of a post, at any
-## height a standing body occupies.
-const GUARD_BODY_CLEARANCE: float = 0.45
+## stonework" means anything: nothing solid may come within this of a post, at
+## any height a standing body occupies, so a post that merely GRAZES a jamb is
+## a failure rather than a lucky pass. Derived from the LIVE capsule (see
+## `guard_body_clearance`), never hand-copied — the next chassis growth scales
+## the threshold instead of silently shrinking its headroom.
+const GUARD_CLEARANCE_FACTOR: float = 1.0667  # == 0.45 at the 2.25x radius
 
-## How tall a standing guard is, for the same test. The chassis stands 1.5 m
+static var _guard_capsule_radius: float = -1.0
+
+
+static func guard_body_clearance() -> float:
+	"""Room a guard's body needs around its post, from the live capsule.
+
+	The `tower_guard.tscn` capsule radius times GUARD_CLEARANCE_FACTOR (which
+	reproduces the old hand-copied 0.45 at the 2.25x radius, so the threshold
+	is unchanged today). Falls back to 0.45 when the scene is unreadable —
+	everything downstream fails loudly in that case anyway.
+	"""
+	if _guard_capsule_radius < 0.0:
+		_guard_capsule_radius = 0.45 / GUARD_CLEARANCE_FACTOR
+		var scene := TowerInterior.guard_scene()
+		if scene != null:
+			var probe := scene.instantiate() as Node3D
+			var shape_node := probe.find_child("CollisionShape3D", true, false) as CollisionShape3D
+			var capsule := (shape_node.shape if shape_node != null else null) as CapsuleShape3D
+			if capsule != null:
+				_guard_capsule_radius = capsule.radius
+			probe.free()
+	return _guard_capsule_radius * GUARD_CLEARANCE_FACTOR
+
+## How tall a standing guard is, for the same test. The chassis stands 2.25 m
 ## (the capsule lies on the travel axis, so it is the MODEL's height that this
-## has to cover, not the capsule's 2.025 m length); a little over it, so a post
+## has to cover, not the capsule's 3.0375 m length); a little over it, so a post
 ## under the crawl lintel (top at 2.8 m, underside 2.0) or under a raised mass
 ## would be caught.
-const GUARD_BODY_HEIGHT: float = 1.6
+const GUARD_BODY_HEIGHT: float = 2.4
 
 func _check_guards_stand_their_posts() -> void:
 	"""
@@ -3074,10 +3098,11 @@ func _guard_footprint(yaw: float) -> Rect2:
 	## READ OFF `tower_guard.tscn`, never restated here: the capsule's own transform
 	## and dimensions are the thing under test, so a scene whose shape stopped
 	## matching its model must not be measured against a copy of the number it used
-	## to carry. Degrades to the plain `GUARD_BODY_CLEARANCE` disc if the scene is
+	## to carry. Degrades to the plain derived-clearance disc if the scene is
 	## ever reshaped into something this cannot read.
-	var lo := Vector2(-GUARD_BODY_CLEARANCE, -GUARD_BODY_CLEARANCE)
-	var hi := Vector2(GUARD_BODY_CLEARANCE, GUARD_BODY_CLEARANCE)
+	var clearance := guard_body_clearance()
+	var lo := Vector2(-clearance, -clearance)
+	var hi := Vector2(clearance, clearance)
 	var scene := TowerInterior.guard_scene()
 	if scene != null:
 		var probe := scene.instantiate()
@@ -3103,6 +3128,106 @@ func _guard_footprint(yaw: float) -> Rect2:
 				hi.y = maxf(hi.y, z + r)
 		probe.free()
 	return Rect2(lo, hi - lo)
+
+
+func _check_guard_capsule_fits_the_doors() -> void:
+	"""
+	Check 12b. The real guard capsule fits a spine door, clears every storey,
+	and does NOT fit the crawl alcove.
+
+	The capsule AND the model height are read off a live `tower_guard.tscn`
+	instance — the `_guard_footprint` discipline — because the whole claim is
+	about the body this bead grew, and a copy of 0.84 here would keep passing
+	after a retune broke the scene. Three assertions:
+
+	  * DOORWAY: the capsule's diameter clears one PLAN_CELL (a spine door is
+	    one cell wide). The capsule lies on the travel axis, so length along
+	    travel never gates a doorway — width does.
+	  * STOREYS: the model's height clears every planned storey's air.
+	  * CRAWL: the capsule's vertical extent passes under DOSSIER_CRAWL_CLEAR
+	    (pinned, so outgrowing it fails) — and the alcove stays guard-free by
+	    ROUTING, not by height: it is a dead end (check 20) and no post,
+	    patrol lane or lure plate is inside it. The old mesh-height clause
+	    stated something false of the physics body, which is the capsule.
+	"""
+	var scene := TowerInterior.guard_scene()
+	if scene == null:
+		_fail("check 12b: tower_guard.tscn is missing — the fit cannot be measured")
+		Sentinel.done("guard_capsule_fits_the_doors")
+		return
+	var probe := scene.instantiate() as Node3D
+	var shape_node := probe.find_child("CollisionShape3D", true, false) as CollisionShape3D
+	var capsule := (shape_node.shape if shape_node != null else null) as CapsuleShape3D
+	if capsule == null:
+		_fail("check 12b: tower_guard.tscn has no readable capsule — the fit cannot be measured")
+		probe.free()
+		Sentinel.done("guard_capsule_fits_the_doors")
+		return
+	var diameter := capsule.radius * 2.0
+	var door := TowerPlans.PLAN_CELL
+	if diameter >= door:
+		_fail("check 12b: the guard's %.2f m capsule does not fit a %.2f m spine door" % [diameter, door])
+	# Measured from the probe ROOT, not the Model node: a retune of the model's
+	# in-game size is a transform on Model itself, and measuring under it would
+	# bless that away (the F1 mutation: Model scaled 2.5x must fail the storey
+	# clause, not print 2.25 m).
+	var tall := _visual_height(probe)
+	if tall <= 0.0:
+		_fail("check 12b: tower_guard.tscn draws no mesh — the height cannot be measured")
+		probe.free()
+		Sentinel.done("guard_capsule_fits_the_doors")
+		return
+	var capsule_hi := capsule.radius * 2.0
+	if capsule_hi >= TowerInterior.DOSSIER_CRAWL_CLEAR:
+		_fail("check 12b: the guard's %.2f m capsule no longer fits under the crawl lintel (%.2f m)" % [
+			capsule_hi, TowerInterior.DOSSIER_CRAWL_CLEAR])
+	var low := INF
+	for floor_index: int in TowerPlans.floors():
+		low = minf(low, TowerInterior.plan_clear_height(floor_index))
+	if tall >= low:
+		_fail("check 12b: the %.2f m guard does not clear a %.2f m storey" % [tall, low])
+	print("guard capsule: %.2f m wide through %.2f m doors, %.2f m tall under %.2f m ceilings, %.2f m capsule passes under the %.2f m crawl (alcove guard-free by routing, check 20), clearance %.4f" % [
+		diameter, door, tall, low, capsule_hi, TowerInterior.DOSSIER_CRAWL_CLEAR,
+		guard_body_clearance()])
+	probe.free()
+	Sentinel.done("guard_capsule_fits_the_doors")
+
+
+func _visual_height(body: Node3D) -> float:
+	## Top of the highest drawn mesh under `body`, in body space — the number a
+	## lintel or a ceiling actually meets. Walks every MeshInstance3D (the hunter
+	## exports welded, but the mesh count is the exporter's business, not this
+	## check's), composing each node's LOCAL transform down from `body`, so
+	## nesting never silently drops a part and the probe never needs the tree —
+	## `get_global_transform()` on an unparented probe logs an inside-tree
+	## condition and answers identity, which would bless any nested transform
+	## away. 0 when nothing is drawn at all.
+	var lo := Vector3(INF, INF, INF)
+	var hi := Vector3(-INF, -INF, -INF)
+	var stack: Array = [[body, Transform3D.IDENTITY]]
+	while not stack.is_empty():
+		var item: Array = stack.pop_back()
+		var n := item[0] as Node3D
+		var xf: Transform3D = item[1]
+		if n == null:
+			continue
+		for c in n.get_children():
+			var cn := c as Node3D
+			if cn != null:
+				stack.append([cn, xf * cn.transform])
+		var mi := n as MeshInstance3D
+		if mi == null or mi.mesh == null:
+			continue
+		var box := xf * mi.get_aabb()
+		lo.x = minf(lo.x, box.position.x)
+		lo.y = minf(lo.y, box.position.y)
+		lo.z = minf(lo.z, box.position.z)
+		hi.x = maxf(hi.x, box.end.x)
+		hi.y = maxf(hi.y, box.end.y)
+		hi.z = maxf(hi.z, box.end.z)
+	if lo.x >= INF:
+		return 0.0
+	return hi.y - lo.y
 
 
 func _standable(x: float, z: float, foot_y: float) -> bool:
@@ -4034,10 +4159,10 @@ func _check_the_block_floor_lure_completes() -> void:
 # ============================================================================
 
 ## The floor on how many pieces a room big enough to be an office actually gets.
-## `TowerInterior.DRESS_MIN_PIECES` is what the builder aims for; this is the same
+## `TowerDressing.DRESS_MIN_PIECES` is what the builder aims for; this is the same
 ## number asked from outside, so a dresser that silently stopped placing anything
 ## fails here rather than shipping ten storeys of empty rooms with green checks.
-const DRESS_FLOOR: int = TowerInterior.DRESS_MIN_PIECES
+const DRESS_FLOOR: int = TowerDressing.DRESS_MIN_PIECES
 
 
 func _check_the_offices_are_furnished_and_still_walkable() -> void:
@@ -4046,7 +4171,7 @@ func _check_the_offices_are_furnished_and_still_walkable() -> void:
 	be, and no piece of furniture can shut a door.
 
 	THE THIRD ONE IS THE WHOLE POINT AND IT IS ASKED INDEPENDENTLY. The builder
-	runs its own flood fill before committing a solid piece (see `_still_connected`)
+	runs its own flood fill before committing a solid piece (see `TowerDressing._still_connected`)
 	— but a check that trusted the builder's fill would be the builder agreeing with
 	itself. So this fill is written here, from the ASCII and the emitted BOXES,
 	and never from the dresser's own bookkeeping: a room's cells, minus every cell a
@@ -4057,7 +4182,7 @@ func _check_the_offices_are_furnished_and_still_walkable() -> void:
 
 	The other four are the constraints the bead states in so many words:
 
-	  a. nothing solid is under `DRESS_WAIST` — the desks and cabinets are walls,
+	  a. nothing solid is under `TowerDressing.DRESS_WAIST` — the desks and cabinets are walls,
 	     the chairs and plants are not, and the player never snags on a chair;
 	  b. no dressing box stands in a doorway or in a gate's `D` run — a piece in
 	     either is a door that will not open or a corridor that is not one;
@@ -4090,13 +4215,13 @@ func _check_the_offices_are_furnished_and_still_walkable() -> void:
 			var top: float = box["pos"].y + box["size"].y * 0.5
 			if box["collide"]:
 				solids += 1
-				if String(box["name"]).contains(TowerInterior.HALL_LETTER):
+				if String(box["name"]).contains(TowerDressing.HALL_LETTER):
 					_fail("%s is solid corridor dressing — a bench in a hall must be walk-through" \
 						% box["name"])
 				# (a) the waist rule, as an effect on the geometry that got built.
-				if top - surface < TowerInterior.DRESS_WAIST - EPS:
+				if top - surface < TowerDressing.DRESS_WAIST - EPS:
 					_fail("%s is solid but only %.2f m tall — under DRESS_WAIST (%.2f), so it is a thing to snag on" % [
-						box["name"], top - surface, TowerInterior.DRESS_WAIST])
+						box["name"], top - surface, TowerDressing.DRESS_WAIST])
 			# (b) doorways and gate runs. Asked by FOOTPRINT and not by cell name,
 			# because a piece is placed by metres and a `D` run is drawn in cells.
 			for cell: Vector2i in forbidden:
@@ -4128,7 +4253,7 @@ func _check_the_offices_are_furnished_and_still_walkable() -> void:
 		for letter: String in plan["rooms"]:
 			var room_id := String(plan["rooms"][letter])
 			var placed := _dress_cells(floor_index, letter)
-			if TowerInterior.DRESS_SKIP_ROOMS.has(room_id):
+			if TowerDressing.DRESS_SKIP_ROOMS.has(room_id):
 				if not placed.is_empty():
 					_fail("%s is a set piece and was dressed anyway (%d cells)" % [
 						room_id, placed.size()])
@@ -4339,7 +4464,7 @@ func _hall_dress_cells(floor_index: int) -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
 	var seen := {}
 	var prefix := "%sDress%s_" % [TowerInterior._plan_prefix(floor_index),
-			TowerInterior.HALL_LETTER]
+			TowerDressing.HALL_LETTER]
 	for box: Dictionary in TowerInterior.plan_boxes(floor_index):
 		var box_name := String(box["name"])
 		if not box_name.begins_with(prefix):
@@ -4357,7 +4482,7 @@ func _hall_dress_cells(floor_index: int) -> Array[Vector2i]:
 
 func _is_hall(ch: String) -> bool:
 	## Walkable open floor a bench may stand against — corridor or landing. Spelled
-	## out from `TowerPlans` rather than read off `TowerInterior.HALL_CHARS`, so this
+	## out from `TowerPlans` rather than read off `TowerDressing.HALL_CHARS`, so this
 	## file states the rule instead of agreeing with the builder about it.
 	return ch == TowerPlans.FLOOR_CHAR or ch == TowerPlans.LANDING_CHAR
 
@@ -4420,7 +4545,7 @@ func _doors_still_reach(cells: Array[Vector2i], blocked: Dictionary,
 	ground floor, joined only through corridors this fill cannot see, and asking
 	"is this room one piece" of it fails on the empty building. Asking what the
 	furniture CHANGED is the honest form, and it is the exact property the builder
-	preserves cell by cell (`_still_connected`) — arrived at from the other end, off
+	preserves cell by cell (`TowerDressing._still_connected`) — arrived at from the other end, off
 	the boxes rather than off the placement, which is what makes it a second opinion.
 	"""
 	var empty_of := _components(cells, {})
@@ -4578,8 +4703,8 @@ func _check_the_dossiers_are_findable() -> void:
 	alcove fails instead of quietly becoming impassable — or open to everybody.
 
 	And the last part is DRIVEN, because the five structural assertions above would
-	all pass on a dossier that pays nothing: `_collect_dossier` is called the way the
-	trigger calls it and the coins, the hidden instance and the refusal to pay twice
+	all pass on a dossier that pays nothing: `TowerDossiers.collect` is called the way
+	the trigger calls it and the coins, the hidden instance and the refusal to pay twice
 	are read back off the real player and the real rack.
 	"""
 	var interior := await _make_interior()
@@ -4590,25 +4715,25 @@ func _check_the_dossiers_are_findable() -> void:
 		await process_frame
 		Sentinel.done("the_dossiers_are_findable")
 		return
-	if rack.multimesh.instance_count != TowerInterior.DOSSIERS.size():
+	if rack.multimesh.instance_count != TowerDossiers.DOSSIERS.size():
 		_fail("check 20: the rack holds %d instances for %d authored dossiers" % [
-			rack.multimesh.instance_count, TowerInterior.DOSSIERS.size()])
+			rack.multimesh.instance_count, TowerDossiers.DOSSIERS.size()])
 	# ...and every one of them is DRAWN, at its own cell, on a fresh building. This
 	# is the positive half of the hiding assertion at the bottom: a rack that never
 	# wrote its buffer at all would satisfy "the taken one is invisible" perfectly.
-	for index: int in TowerInterior.DOSSIERS.size():
+	for index: int in TowerDossiers.DOSSIERS.size():
 		if _rack_scale(rack, index) <= EPS:
 			_fail("check 20: dossier %d is not drawn on a fresh building" % index)
-		if not _rack_origin(rack, index).is_equal_approx(TowerInterior.dossier_point(index)):
+		if not _rack_origin(rack, index).is_equal_approx(TowerDossiers.point(index)):
 			_fail("check 20: dossier %d is drawn at %s, not at its cell %s" % [
-				index, _rack_origin(rack, index), TowerInterior.dossier_point(index)])
+				index, _rack_origin(rack, index), TowerDossiers.point(index)])
 
 	# (a) WHERE THEY STAND — one storey at a time, so the flood fill is walked once
 	#     per floor and not once per dossier.
 	var cells := {}
 	var ids := {}
-	for index: int in TowerInterior.DOSSIERS.size():
-		var row: Dictionary = TowerInterior.DOSSIERS[index]
+	for index: int in TowerDossiers.DOSSIERS.size():
+		var row: Dictionary = TowerDossiers.DOSSIERS[index]
 		var floor_index := int(row["floor"])
 		var cell: Vector2i = row["cell"]
 		var key := "%d:%d,%d" % [floor_index, cell.x, cell.y]
@@ -4616,11 +4741,11 @@ func _check_the_dossiers_are_findable() -> void:
 			_fail("check 20: dossiers %d and %d both stand on %s" % [
 				cells[key], index, key])
 		cells[key] = index
-		if floor_index < TowerInterior.DOSSIER_FLOOR_MIN \
-				or floor_index > TowerInterior.DOSSIER_FLOOR_MAX:
+		if floor_index < TowerDossiers.DOSSIER_FLOOR_MIN \
+				or floor_index > TowerDossiers.DOSSIER_FLOOR_MAX:
 			_fail("check 20: dossier %d is on storey %d, outside the office and ops storeys %d..%d" % [
-				index, floor_index, TowerInterior.DOSSIER_FLOOR_MIN,
-				TowerInterior.DOSSIER_FLOOR_MAX])
+				index, floor_index, TowerDossiers.DOSSIER_FLOOR_MIN,
+				TowerDossiers.DOSSIER_FLOOR_MAX])
 			continue
 		# ...and the range is not trusted on its own: the two places the bead
 		# actually forbids are asked by name, so re-planning the maze or the block
@@ -4663,29 +4788,29 @@ func _check_the_dossiers_are_findable() -> void:
 			if _box_covers_cell(box, cell):
 				_fail("check 20: %s stands in dossier %d's cell %s on storey %d" % [
 					box["name"], index, cell, floor_index])
-		var id: int = interior.call("dossier_id", index)
+		var id: int = TowerDossiers.id_of(interior, index)
 		if ids.has(id):
 			_fail("check 20: dossiers %d and %d share the pickup id %d" % [ids[id], index, id])
 		ids[id] = index
 
 	# (c2) AND THE RESERVATION THAT KEEPS (c) TRUE IS REAL. Nothing in today's layout
 	#      wanted these six cells, so (c) passes whether or not they are handed to
-	#      `_plan_dressing` — which would leave the one seam that keeps a derived desk
+	#      `TowerDressing.plan_dressing` — which would leave the one seam that keeps a derived desk
 	#      off a pickup untested until the day a designer moved a dossier onto a wall
 	#      the dresser likes. So the seam is measured on its own terms: one mark per
 	#      dossier on the storey, covering that dossier's cell and NO cell beside it.
-	for floor_index: int in range(TowerInterior.DOSSIER_FLOOR_MIN,
-			TowerInterior.DOSSIER_FLOOR_MAX + 1):
+	for floor_index: int in range(TowerDossiers.DOSSIER_FLOOR_MIN,
+			TowerDossiers.DOSSIER_FLOOR_MAX + 1):
 		var here: Array[int] = []
-		for index: int in TowerInterior.DOSSIERS.size():
-			if int(TowerInterior.DOSSIERS[index]["floor"]) == floor_index:
+		for index: int in TowerDossiers.DOSSIERS.size():
+			if int(TowerDossiers.DOSSIERS[index]["floor"]) == floor_index:
 				here.append(index)
-		var marks := TowerInterior._dossier_marks(floor_index)
+		var marks := TowerDossiers.marks(floor_index)
 		if marks.size() != here.size():
 			_fail("check 20: storey %d reserves %d cells for %d dossiers" % [
 				floor_index, marks.size(), here.size()])
 		for index: int in here:
-			var cell: Vector2i = TowerInterior.DOSSIERS[index]["cell"]
+			var cell: Vector2i = TowerDossiers.DOSSIERS[index]["cell"]
 			var covered := 0
 			for mark: Dictionary in marks:
 				if _box_covers_cell(mark, cell):
@@ -4709,18 +4834,18 @@ func _check_the_dossiers_are_findable() -> void:
 	root.add_child(hero)
 	await process_frame
 	var before: int = hero.get("coins_collected")
-	interior.call("_collect_dossier", 0, hero)
+	TowerDossiers.collect(interior, 0, hero)
 	var gained: int = int(hero.get("coins_collected")) - before
 	if gained <= 0:
 		_fail("check 20: walking into a dossier paid %d coins" % gained)
 	if _rack_scale(rack, 0) > EPS:
 		_fail("check 20: the dossier was taken and its instance is still drawn")
-	if not _rack_origin(rack, 0).is_equal_approx(TowerInterior.dossier_point(0)):
+	if not _rack_origin(rack, 0).is_equal_approx(TowerDossiers.point(0)):
 		_fail("check 20: a hidden dossier moved off its cell instead of losing its scale")
 	# ...and it cannot be taken twice, which is the difference between a pickup and
 	# a coin printer: the trigger fires again every time the player steps back in.
 	var again: int = hero.get("coins_collected")
-	interior.call("_collect_dossier", 0, hero)
+	TowerDossiers.collect(interior, 0, hero)
 	if int(hero.get("coins_collected")) != again:
 		_fail("check 20: a dossier already taken paid out a second time")
 	# (e2) ...AND A REFUSED LORE LINE WAITS INSTEAD OF DYING (codex post-merge
@@ -4734,21 +4859,21 @@ func _check_the_dossiers_are_findable() -> void:
 	root.add_child(toast)
 	await process_frame
 	toast.set("_quiz_pending", true)
-	interior.call("_collect_dossier", 1, hero)
+	TowerDossiers.collect(interior, 1, hero)
 	var queue: Array = interior.get("_dossier_lore_queue")
 	if queue.size() != 1:
 		_fail("check 20: a lore line refused by a pending quiz was dropped (queue holds %d)" % queue.size())
 	interior.set("_dossier_poll", 0.0)
-	interior.call("_tick_dossiers", 0.016)
+	TowerDossiers.tick(interior, 0.016)
 	if Array(interior.get("_dossier_lore_queue")).size() != 1:
 		_fail("check 20: the retry announced over a quiz still on screen")
 	toast.set("_quiz_pending", false)
 	interior.set("_dossier_poll", 0.0)
-	interior.call("_tick_dossiers", 0.016)
+	TowerDossiers.tick(interior, 0.016)
 	if not Array(interior.get("_dossier_lore_queue")).is_empty():
 		_fail("check 20: the queued lore line was not announced once the quiz cleared")
 	var fact_label: Label = toast.get("fact_label")
-	if fact_label == null or fact_label.text != String(TowerInterior.DOSSIERS[1]["lore"]):
+	if fact_label == null or fact_label.text != String(TowerDossiers.DOSSIERS[1]["lore"]):
 		_fail("check 20: the retried card does not carry the refused dossier's lore line")
 	toast.queue_free()
 	await process_frame
@@ -4762,8 +4887,8 @@ func _check_the_dossiers_are_findable() -> void:
 	await _check_the_alcove_does_not_trap_teibi(hero)
 
 	print("dossiers: %d authored on storeys %d..%d, one taken for %d coins" % [
-		TowerInterior.DOSSIERS.size(), TowerInterior.DOSSIER_FLOOR_MIN,
-		TowerInterior.DOSSIER_FLOOR_MAX, gained])
+		TowerDossiers.DOSSIERS.size(), TowerDossiers.DOSSIER_FLOOR_MIN,
+		TowerDossiers.DOSSIER_FLOOR_MAX, gained])
 	hero.queue_free()
 	interior.queue_free()
 	await process_frame
@@ -4784,17 +4909,17 @@ func _check_the_alcove_does_not_trap_teibi(hero: Node3D) -> void:
 	"the revert defers" is behaviour rather than a reading of the branch.
 	"""
 	var index := -1
-	for i: int in TowerInterior.DOSSIERS.size():
-		if bool(TowerInterior.DOSSIERS[i].get("alcove", false)):
+	for i: int in TowerDossiers.DOSSIERS.size():
+		if bool(TowerDossiers.DOSSIERS[i].get("alcove", false)):
 			index = i
 			break
 	if index < 0:
 		return   # no alcove authored; check 20 has already failed on that.
-	var floor_index := int(TowerInterior.DOSSIERS[index]["floor"])
-	var cell: Vector2i = TowerInterior.DOSSIERS[index]["cell"]
+	var floor_index := int(TowerDossiers.DOSSIERS[index]["floor"])
+	var cell: Vector2i = TowerDossiers.DOSSIERS[index]["cell"]
 	var surface: float = TowerInterior.FLOOR_Y[floor_index]
-	var inside := Vector3(TowerInterior.dossier_point(index).x, surface,
-			TowerInterior.dossier_point(index).z)
+	var inside := Vector3(TowerDossiers.point(index).x, surface,
+			TowerDossiers.point(index).z)
 	# The control is the room cell the alcove's one mouth opens onto — full height,
 	# and the place a crawling Teibi stands up the moment he backs out of the gap.
 	var outside := inside
@@ -4850,7 +4975,7 @@ func _check_the_crawl_alcove_fits_only_small_teibi(interior: Node3D) -> void:
 		return
 	var script: GDScript = load(PLAYER_SCRIPT)
 	var small: float = full * float(script.get("TEIBI_SCALE_SMALL"))
-	var clear := TowerInterior.DOSSIER_CRAWL_CLEAR
+	var clear := TowerDossiers.DOSSIER_CRAWL_CLEAR
 	if clear >= full:
 		_fail("check 20: the crawl alcove leaves %.2f m under its lintel and the player is %.2f m tall — it is not a gate at all" % [
 			clear, full])
@@ -4861,8 +4986,8 @@ func _check_the_crawl_alcove_fits_only_small_teibi(interior: Node3D) -> void:
 		clear, full, small])
 
 	var alcoves := 0
-	for index: int in TowerInterior.DOSSIERS.size():
-		var row: Dictionary = TowerInterior.DOSSIERS[index]
+	for index: int in TowerDossiers.DOSSIERS.size():
+		var row: Dictionary = TowerDossiers.DOSSIERS[index]
 		if not bool(row.get("alcove", false)):
 			continue
 		alcoves += 1
@@ -4880,9 +5005,9 @@ func _check_the_crawl_alcove_fits_only_small_teibi(interior: Node3D) -> void:
 		if lintel != null:
 			_fail("check 20: %s left the storey's batch — a lintel never moves and must not cost a draw" % want)
 		var under: float = built["pos"].y - built["size"].y * 0.5
-		if not is_equal_approx(under, surface + TowerInterior.DOSSIER_CRAWL_CLEAR):
+		if not is_equal_approx(under, surface + TowerDossiers.DOSSIER_CRAWL_CLEAR):
 			_fail("check 20: %s's underside is at %.3f m, not the declared %.3f m" % [
-				want, under, surface + TowerInterior.DOSSIER_CRAWL_CLEAR])
+				want, under, surface + TowerDossiers.DOSSIER_CRAWL_CLEAR])
 		if not bool(built["collide"]):
 			_fail("check 20: %s is not solid — you can walk through the gate" % want)
 		# ...AND THE ALCOVE IS A DEAD END. The lintel is invisible to both 2-D flood
@@ -4986,10 +5111,10 @@ func _plan_reaches(plan: Dictionary, goal: Vector2i) -> bool:
 
 
 func _box_covers_cell(box: Dictionary, cell: Vector2i) -> bool:
-	## Does this box's footprint reach into `cell`? `_cell_is_taken`'s test, with
-	## the same `DRESS_EPS` inset, so "the dresser thought this cell was free" and
+	## Does this box's footprint reach into `cell`? `TowerDressing._cell_is_taken`'s test, with
+	## the same `TowerDressing.DRESS_EPS` inset, so "the dresser thought this cell was free" and
 	## "this cell is free" are the same question.
-	var eps := TowerInterior.DRESS_EPS
+	var eps := TowerDressing.DRESS_EPS
 	var x0 := TowerInterior._grid_x(float(cell.x)) + eps
 	var x1 := TowerInterior._grid_x(float(cell.x) + 1.0) - eps
 	var z0 := TowerInterior._grid_z(float(cell.y)) + eps

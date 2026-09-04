@@ -116,7 +116,7 @@ const GROWL_VOLUME_DB: float = -8.0
 ##
 ## Why it is the whoosh's synth with the filter opened up, and not a new idea:
 ## every noise sound in this file is one-pole-low-passed noise, and the factor IS
-## the character (wind 0.02 rumbles, footstep 0.18 taps, whoosh 0.25 swells).
+## the character (footstep 0.18 taps, whoosh 0.25 swells).
 ## 0.55 barely filters at all, which leaves the sibilant top end the whoosh
 ## deliberately throws away — that top end is what "hiss" means. The crunch shows
 ## the other end: fully unfiltered noise reads as violence, not warning.
@@ -221,7 +221,7 @@ const PROJECTILE_SOUND_FALLBACK: Dictionary = {
 ## DESCENDING, where the coin ascends: a rising pair reads as reward in every
 ## game anyone has played, and the interval is the cheapest way to keep the two
 ## unconfusable even through a phone speaker. Square, and high, so it cuts
-## through the wind bed and a chasing pack without being loud.
+## through a chasing pack without being loud.
 const HUNTER_PING_FREQS: Array[float] = [2200.0, 1650.0]  # a descending fourth
 const HUNTER_PING_NOTE_DURATION: float = 0.055  # each tone: a blip, not a beep
 const HUNTER_PING_GAP: float = 0.035    # silence between them — two events, not one
@@ -266,15 +266,6 @@ const HEARTBEAT_CYCLE: float = 0.8        # full lub-dub + silence = one loop
 const HEARTBEAT_DUB_DELAY: float = 0.22   # seconds from "lub" to the "dub"
 const HEARTBEAT_DUB_LEVEL: float = 0.7    # the second thump is slightly softer
 
-# --- Ambient wind: a long smoothed-noise loop, DELIBERATELY very quiet. ---
-## It should register subconsciously ("the world is alive"), never as a sound
-## the player notices — hence far below every one-shot above.
-const WIND_DURATION: float = 2.0
-const WIND_LOWPASS: float = 0.02        # one-pole smoothing factor (smaller =
-										# duller/deeper rumble, larger = hissier)
-const WIND_CROSSFADE: float = 0.05      # seconds blended across the loop seam
-const WIND_VOLUME_DB: float = -26.0
-
 # ============================================================================
 # STATE
 # ============================================================================
@@ -291,11 +282,7 @@ var _streams: Dictionary = {}
 var _players: Array[AudioStreamPlayer] = []
 var _next_player: int = 0
 
-## Dedicated looping player for the ambient wind bed (never shared with the
-## pool — a one-shot must not steal the loop's voice).
-var _wind_player: AudioStreamPlayer = null
-
-## Every dedicated looping player, keyed by name ("wind" today). Future
+## Every dedicated looping player, keyed by name ("heartbeat" today). Future
 ## systems that need a runtime-varied loop (e.g. a proximity heartbeat) grab
 ## a named player via get_loop_player() instead of adding their own audio
 ## nodes, so all voices stay owned by this one manager.
@@ -327,30 +314,16 @@ func _ready() -> void:
 	_streams["hunter_ping"] = _build_wav(_synth_hunter_ping())
 	_streams["car_horn"] = _build_wav(_synth_car_horn())
 
-	# The wind is the one LOOPING stream: mark the whole buffer as the loop
-	# region so it plays forever once started.
-	var wind: AudioStreamWAV = _build_wav(_synth_wind())
-	wind.loop_mode = AudioStreamWAV.LOOP_FORWARD
-	wind.loop_begin = 0
-	wind.loop_end = wind.data.size() / 2  # frames, not bytes (2 bytes/frame)
-
 	# Build the one-shot player pool.
 	for i in range(ONESHOT_PLAYER_COUNT):
 		var p := AudioStreamPlayer.new()
 		add_child(p)
 		_players.append(p)
 
-	# And the dedicated wind player (stream set now, played at unlock).
-	_wind_player = AudioStreamPlayer.new()
-	_wind_player.stream = wind
-	_wind_player.volume_db = WIND_VOLUME_DB
-	add_child(_wind_player)
-	_loop_players["wind"] = _wind_player
-
-	# The danger heartbeat is the second looping stream — same recipe as the
-	# wind (LOOP_FORWARD over the whole buffer), but we deliberately do NOT
-	# play it here: the danger vignette drives play/stop/pitch/volume live via
-	# get_loop_player("heartbeat"), gated on is_unlocked().
+	# The danger heartbeat is a looping stream (LOOP_FORWARD over the whole
+	# buffer), but we deliberately do NOT play it here: the danger vignette
+	# drives play/stop/pitch/volume live via get_loop_player("heartbeat"),
+	# gated on is_unlocked().
 	var heartbeat: AudioStreamWAV = _build_wav(_synth_heartbeat())
 	heartbeat.loop_mode = AudioStreamWAV.LOOP_FORWARD
 	heartbeat.loop_begin = 0
@@ -376,13 +349,14 @@ func _input(event: InputEvent) -> void:
 # ============================================================================
 
 func unlock_audio() -> void:
-	## Flip the browser-gesture gate and start the ambient wind bed. Safe to
-	## call any number of times from anywhere (first-input handler above, the
-	## mobile touch UI's enable-overlay tap, ...) — only the first call acts.
+	## Flip the browser-gesture gate. Safe to call any number of times from
+	## anywhere (first-input handler above, the mobile touch UI's enable-overlay
+	## tap, ...) — only the first call acts.
 	if _unlocked:
 		return
 	_unlocked = true
-	_wind_player.play()
+
+
 
 
 func is_unlocked() -> bool:
@@ -394,10 +368,9 @@ func is_unlocked() -> bool:
 
 func get_loop_player(loop_name: String) -> AudioStreamPlayer:
 	## Fetch (or lazily create) the dedicated looping AudioStreamPlayer for a
-	## named ambient bed. "wind" is the only built-in; a future system (e.g. a
-	## danger heartbeat) can request its own name, assign a looping stream, and
-	## vary pitch_scale / volume_db live every frame. The player is a child of
-	## this node, so it respects the same lifetime as everything else here.
+	## named looping cue or bed ("heartbeat" is built-in; "rain" is created
+	## by weather_manager). The player is a child of this node, so it respects
+	## the same lifetime as everything else here.
 	if not _loop_players.has(loop_name):
 		var p := AudioStreamPlayer.new()
 		add_child(p)
@@ -745,7 +718,7 @@ func _synth_hunter_ping() -> PackedFloat32Array:
 func _synth_car_horn() -> PackedFloat32Array:
 	## Two square-wave horn blasts (380 Hz + 320 Hz) with a gap — an annoyed
 	## but not hostile "beep beep". Same square generator as hunter_ping/buzz,
-	## same click-free envelope. Loud enough to cut through wind but not a
+	## same click-free envelope. Loud enough to be heard over gameplay but not a
 	## jumpscare; the traffic manager's hold-off + cooldown prevents a siren.
 	var samples := PackedFloat32Array()
 	var note_frames: int = int(CAR_HORN_NOTE_DURATION * MIX_RATE)
@@ -839,25 +812,3 @@ func _synth_heartbeat() -> PackedFloat32Array:
 		samples.append(value)
 	return samples
 
-
-func _synth_wind() -> PackedFloat32Array:
-	## The ambient bed: ~2 s of HEAVILY low-passed noise, looped forever. The
-	## aggressive one-pole filter (see WIND_LOWPASS) turns hissy white noise
-	## into a soft distant-wind rumble. To loop without an audible click, the
-	## buffer's start and end must meet seamlessly: we synthesize a little
-	## extra, then crossfade the surplus tail into the head so the loop seam
-	## is a smooth blend instead of a jump.
-	var fade_frames: int = int(WIND_CROSSFADE * MIX_RATE)
-	var frames: int = int(WIND_DURATION * MIX_RATE)
-	var raw := PackedFloat32Array()
-	var filtered: float = 0.0
-	for i in range(frames + fade_frames):  # surplus tail for the crossfade
-		filtered += WIND_LOWPASS * (randf_range(-1.0, 1.0) - filtered)
-		raw.append(filtered * 4.0)  # heavy filtering eats amplitude; compensate
-	# Crossfade: blend the surplus tail over the head so sample[frames] (which
-	# playback wraps to sample[0]) transitions smoothly.
-	var samples := raw.slice(0, frames)
-	for i in range(fade_frames):
-		var blend: float = float(i) / fade_frames  # 0 at seam → 1 into the head
-		samples[i] = raw[frames + i] * (1.0 - blend) + samples[i] * blend
-	return samples

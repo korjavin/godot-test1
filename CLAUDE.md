@@ -305,7 +305,19 @@ Load-bearing rules:
 - **One MultiMesh + one collision body per chunk.** All decorative geometry goes through
   `create_box()`, which appends to the chunk's `block_batch` and (unless `collide=false`)
   adds a `CollisionShape3D` to the chunk's single `BlockCollision` `StaticBody3D`. Never
-  instance a MeshInstance3D or a physics body per object.
+  instance a MeshInstance3D or a physics body per object. **That seam is its own file** —
+  `scripts/chunk_batch.gd` (`class_name ChunkBatch`, all static, bead `godot-test1-ftn.1`):
+  `create_box` / `create_block` / `_build_block_multimesh`, the two process-wide shared
+  resources (`_get_shared_unit_box_mesh` / `_get_shared_block_material` — the latter
+  the `world_block.gdshader` material, with `WORLD_BLOCK_SHADER`,
+  `BLOCK_BOTTOM_SHADE`, `SHARED_BLOCK_ROUGHNESS` and the `RAMP_*` banner beside
+  it), and the city splitter
+  (`split_city_boxes_on_chunk_grid` / `_is_axis_aligned_basis` / `_chunk_grid_spans`).
+  `endless_terrain.gd` keeps a one-line forwarder for `create_box` and
+  `_build_block_multimesh` and nothing else — the 600-odd `terrain.create_box(` call sites
+  and `landmark_builders`' contract are what those two buy; every other caller (the city
+  streamer, `budapest_selfcheck`) reaches `ChunkBatch` directly. **New batch machinery
+  lands there, not in the world engine.**
 - **Chunk-parented, so unloading frees it.** Anything spawned per-chunk parents to the
   chunk MeshInstance3D or it leaks.
 - **Footprints are the shared currency.** Each thing built appends
@@ -364,11 +376,11 @@ Three rules of the city's own, all pinned by `budapest_selfcheck`:
   missing). **The centre rule slices a LANDMARK, not a BOX**, and these builders emit
   single boxes far bigger than a chunk (Buda Castle's terrace is 70 x 300 m), so every
   oversized axis-aligned box is first cut on the world chunk grid by
-  `split_city_boxes_on_chunk_grid()` — without it a 300 m palace lives in one 50 m chunk
+  `ChunkBatch.split_city_boxes_on_chunk_grid()` — without it a 300 m palace lives in one 50 m chunk
   and vanishes at the web build's 150 m residency edge while you walk its far end. A
   ROTATED box cannot be cut into boxes and keeps the centre rule; `budapest_selfcheck`
   check 5 fails any box, turned or not, bigger than a chunk. **The splitter cuts the MESH
-  and the COLLISION BODY on ONE shared predicate** (`_is_axis_aligned_basis`): `create_box`
+  and the COLLISION BODY on ONE shared predicate** (`ChunkBatch._is_axis_aligned_basis`): `create_box`
   hands the two halves different bases for the same box — the batch entry carries the
   dimensions, the shape node only the rotation — so a second spelling of "axis-aligned"
   is how they drift into a drawn wall whose collision lives in another chunk. Check 5
@@ -441,7 +453,7 @@ Three rules of the city's own, all pinned by `budapest_selfcheck`:
   `godot-test1-8gw.9`, verbatim: *"it's okay without shadow, performance is more
   important"*). 2,100+ tall casters in the 49-chunk web view cost **19 ms a frame in
   the shadow pass alone** — none of it visible in the draw-call count the box budgets
-  guard — so `_build_block_multimesh`'s `cast_shadows` flag makes a city chunk's batch
+  guard — so `ChunkBatch._build_block_multimesh`'s `cast_shadows` flag makes a city chunk's batch
   a shadow RECEIVER only, the tower interior's measured rule met outdoors. It is the
   WHOLE chunk, so a landmark loses its cast shadow with the blocks around it; the
   chunk has ONE batch and splitting it is a second draw call per chunk, which is the
@@ -502,7 +514,13 @@ two-storey keep, plus eight hand-planned storeys over it (see below) rising to t
 BLOCK under the sealed roof, assembled onto the
 shell by
 `endless_terrain` (one direction only — the interior reads the shell's constants, so a
-shell that knew about the interior would be a cyclic `class_name`). Four rules of its
+shell that knew about the interior would be a cyclic `class_name`). **Two families were
+lifted out of it whole** by bd `godot-test1-ftn.12` and neither may drift back:
+`scripts/tower_dressing.gd` (`TowerDressing` — the office, corridor and wayfinding
+dressers) and `scripts/tower_dossiers.gd` (`TowerDossiers` — the evidence dossiers).
+Both are static libraries in `landmark_builders.gd`'s idiom, reaching back into
+`TowerInterior` for the plan-grid readers and the palette; that direction is one-way and
+`plan_boxes()` is the single seam the dressing enters through. Four rules of its
 own, all pinned by `tower_interior_selfcheck`:
 
 - **No interior traversal may demand a jump-height.** The base apex (3.6125 m) is what
@@ -679,7 +697,11 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   that counts draws**; check 5 asserts both. Read `DRAW_BUDGET` as "nothing left the
   batch", not as a draw count.
 - **The EVIDENCE DOSSIERS are the one MultiMesh in the building, and one is the cap.**
-  Six authored folders (`DOSSIERS`, a const table of `{floor, cell, lore}` — floors 2-6
+  They live in `scripts/tower_dossiers.gd` (`class_name TowerDossiers`, bd
+  `godot-test1-ftn.12`), a static library the interior hands itself to; the four state
+  vars and the `body_entered` handler stay on the node, and the seams are four lines in
+  `tower_interior.gd`.
+  Six authored folders (`TowerDossiers.DOSSIERS`, a const table of `{floor, cell, lore}` — floors 2-6
   only, never the labyrinth or the block) pay `DOSSIER_VALUE` coins and a localized line
   on the `landmark_toast` card when you walk into one. A pickup has to vanish on its own,
   which a merged storey batch cannot do, and six meshes would be six SURFACES — so they
@@ -697,7 +719,7 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   watched stretch, which is pure cell choice and must stay takeable by timing the patrol
   alone.
 - **The offices are FURNISHED, and the furniture is derived rather than drawn.** No
-  glyph was added to `TowerPlans` for it: `_plan_dressing` walks each storey's rooms
+  glyph was added to `TowerPlans` for it: `TowerDressing.plan_dressing` walks each storey's rooms
   and puts desks, chairs, cabinets, bookshelves, meeting tables, coolers, plants and
   framed diplomas/photos on the cells that touch a wall, off a FIXED salt (never
   `run_seed` — the tower is authored). It is all vertex-coloured boxes in the storey's
@@ -707,7 +729,7 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   turnstile came out). Furniture has its own
   per-storey budget (`PLAN_DRESS_BUDGET` 580) so `PLAN_BOX_BUDGET` keeps measuring
   exactly what it always did. **The CORRIDORS are dressed too** (benches and planters,
-  `_hall_dressing`), on cells whose four neighbours are all stone or open floor and whose
+  `TowerDressing._hall_dressing`), on cells whose four neighbours are all stone or open floor and whose
   hall is two cells wide — never in the labyrinth or the block, and **never solid**, which
   is why the halls need no connectivity fill of their own. **The WAYFINDING PLAQUES ride the same dresser** — one
   per office room, on the bare wall nearest the way out, its arrow pointing along that
@@ -716,7 +738,7 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   live bearing arrow would rank the corridors at every junction and quietly solve the
   maze, so the horizontal help is authored, coarse and in the world. **Three rules keep it safe and check 18 asserts all
   three**: nothing lands on a doorway cell or beside one; a solid piece is committed only
-  if the room's connectivity is unchanged (`_still_connected`); and a cell carrying
+  if the room's connectivity is unchanged (`TowerDressing._still_connected`); and a cell carrying
   anything else the storey draws — a pad, a lock plate, a set piece — or standing under
   the storey above's stairwell hole is refused. Only waist-high-or-taller pieces collide.
 - **The labyrinth's rule is TWO ROUTES, and the spines walk the ungated one.** Each maze
@@ -1223,7 +1245,8 @@ means devices sharing the id, and nothing transfers one.
 ### Synthesized audio — no asset files
 `scripts/sound_manager.gd` generates every sound in code as an `AudioStreamWAV`. **There
 are no audio asset files**; keep it that way. One-shots ride a round-robin player pool;
-named ambient beds come from `get_loop_player(name)`.
+there is no ambient bed running continuously — beds and looping cues are event-driven
+(e.g. heartbeat under danger, rain in storm zones) and fetched via `get_loop_player(name)`.
 
 **Browsers block audio until a user gesture**, so every `play_*` early-returns until
 `unlock_audio()` fires. Don't add a path that bypasses that gate; a `get_loop_player` voice

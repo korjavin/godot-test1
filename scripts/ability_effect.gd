@@ -64,7 +64,7 @@ func setup(color: Color, max_radius: float, lifetime: float, delay: float = 0.0)
 	# pickup sparkle spawns one of these on every collected coin (~2/s along the
 	# road) — a fresh SphereMesh each time is a fresh GPU buffer each time, which
 	# is exactly the churn the web build can least afford. Same shared lazy-getter
-	# pattern as endless_terrain._get_shared_unit_box_mesh() and ToonShading's
+	# pattern as ChunkBatch._get_shared_unit_box_mesh() and ToonShading's
 	# cache. The MATERIAL still has to be per-instance, since alpha fades per wave.
 	mesh = _get_shared_sphere_mesh()
 

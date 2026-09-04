@@ -3,7 +3,7 @@ shader_type spatial;
 // WORLD BLOCK MATERIAL — style direction A (faceted low-poly + top-lit gradient).
 //
 // This is the shared material of EVERY chunk's block MultiMesh (see
-// endless_terrain.gd::_get_shared_block_material). It replaces a StandardMaterial3D
+// chunk_batch.gd::_get_shared_block_material). It replaces a StandardMaterial3D
 // that did exactly two things — `vertex_color_use_as_albedo = true` and
 // `roughness = 0.85` — and it still does exactly those two things, PLUS one:
 //
