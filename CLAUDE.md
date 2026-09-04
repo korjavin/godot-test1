@@ -1835,6 +1835,18 @@ hundreds of crocodiles get one styled duplicate per source material, never one p
 Fog colour must equal the sky horizon colours — if the sky changes, all three move together.
 Verified against the web `gl_compatibility` renderer; SSAO/DOF/volumetrics don't exist there.
 
+**THE GRADE IS TUNED FOR FACETS, and its four literals pull the same way** (bead
+`godot-test1-y1o.18`, style direction A). A faceted silhouette reads from a CRISP
+facet-to-facet value step, so the key light is a hard sun (`light_angular_distance` 0.5,
+`light_energy` 1.25) and ambient is deliberately UNDER-filled
+(`ambient_light_source = 3` — SKY, spelled out rather than left to the background mode —
+at `ambient_light_energy` 0.85), because full sky ambient refills exactly the faces
+`world_block.gdshader`'s top-lit gradient darkens. `adjustment_saturation` is 1.12 for the
+same reason: louder chroma turns that gradient into two equally loud hues instead of one
+colour lit from above. **Retune them as a set, and re-shoot the pair** —
+`godot --path . scenes/style_shots.tscn -- <outdir>` is the acceptance tool, on both
+renderers.
+
 ### Mobile / touch controls
 `scripts/mobile_sensors.gd` (native `Input` sensors or a `JavaScriptBridge` DOM shim),
 `scripts/mobile_input.gd` (step detection → walk, tilt/twist → steer),
