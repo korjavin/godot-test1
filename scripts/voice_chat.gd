@@ -95,9 +95,22 @@ extends Node
 ## under the room-wide P — the media path is the browser's and never stops, so
 ## the GD half must not stop either or the poll below would stall mid-handshake.
 
+const BestRunStore := preload("res://scripts/best_run_store.gd")
+
+## Mode enum for voice chat transmission (bead godot-test1-xtr.2).
+enum Mode {
+	ALWAYS_ON = 0,
+	PUSH_TO_TALK = 1,
+}
+
+signal mode_changed(mode: Mode)
+signal tx_changed(active: bool)
+signal mic_denied_changed(denied: bool)
+
 # ============================================================================
 # TUNABLES
 # ============================================================================
+
 
 ## How often the room is reconciled with the browser (seconds). Everything this
 ## node does is idempotent bookkeeping — is there a room, is the ICE config in
@@ -154,7 +167,8 @@ const VOICE_JS: String = """
 	   sit on screen for as long as the player likes, so its promise routinely
 	   outlives the room it was asked for; every continuation compares against it
 	   rather than trusting that it is still wanted. */
-	var S = { self: '', cfg: null, peers: {}, stream: null, mic: 0, send: null, frames: 0, retry: 0, gen: 0 };
+	var S = { self: '', cfg: null, peers: {}, stream: null, mic: 0, send: null, frames: 0, retry: 0, gen: 0, tx: 0 };
+
 
 	/* One relayed frame out. Counted for bead .4's readout — the lobby meters
 	   every sender at 120 frames burst / 30 per second (server/conn.go), which is
@@ -218,7 +232,18 @@ const VOICE_JS: String = """
 		return 1;
 	}
 
+	function setTx(val) {
+		var active = (val === 1 || val === '1' || val === true) ? 1 : 0;
+		S.tx = active;
+		if (S.stream) {
+			var ts = S.stream.getAudioTracks();
+			for (var i = 0; i < ts.length; i++) { ts[i].enabled = (active === 1); }
+		}
+		return active;
+	}
+
 	function flush(id) {
+
 		var p = S.peers[id];
 		if (!p) { return 0; }
 		p.timer = null;
@@ -309,7 +334,7 @@ const VOICE_JS: String = """
 			/* THE MIC STARTS OFF. The track exists on every connection so .2's V
 			   key is one flag flip, but it transmits silence until then. */
 			var ts = st.getAudioTracks();
-			for (var i = 0; i < ts.length; i++) { ts[i].enabled = false; }
+			for (var i = 0; i < ts.length; i++) { ts[i].enabled = (S.tx === 1); }
 			S.mic = 2;
 			for (var k in S.peers) { attach(S.peers[k]); }
 		/* A late REFUSAL is stale too — left alone it would suppress the next
@@ -366,6 +391,7 @@ const VOICE_JS: String = """
 
 	function stop() {
 		S.gen = S.gen + 1;
+		S.tx = 0;
 		for (var k in S.peers) { close(k); }
 		S.peers = {};
 		/* Release the capture device too, or the tab keeps its recording
@@ -390,9 +416,12 @@ const VOICE_JS: String = """
 		members: members,
 		recv: recv,
 		stop: stop,
+		setTx: setTx,
+		txState: function () { return S.tx; },
 		micState: function () { return S.mic; },
 		frames: function () { return S.frames; }
 	};
+
 	return 1;
 })()
 """
@@ -432,6 +461,17 @@ var _pushed_members: String = ""
 ## ONCE per room, which is the difference between a status line and a nag.
 var _reported_mic: int = MIC_IDLE
 
+## Voice chat transmission mode: Mode.ALWAYS_ON (default) or Mode.PUSH_TO_TALK.
+## Persisted to ConfigFile on desktop and localStorage on web.
+var _mode: Mode = Mode.ALWAYS_ON
+
+## Mic transmit state. Starts FALSE at every join in BOTH modes.
+var _tx: bool = false
+
+## The last room code seen through _on_room_changed, to distinguish real room
+## transitions from roster-only updates (which emit room_changed with the same code).
+var _last_code: String = ""
+
 var _accum: float = 0.0
 
 
@@ -439,10 +479,12 @@ func _ready() -> void:
 	add_to_group("voice")
 	# Voice must keep flowing under every overlay and under the room-wide pause.
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	_load_mode()
 	_is_web = OS.has_feature("web")
 	if not _is_web:
 		set_process(false)
 		return
+
 	_mp = get_tree().get_first_node_in_group("mp")
 	if _mp == null:
 		set_process(false)
@@ -458,11 +500,13 @@ func _exit_tree() -> void:
 
 
 func _process(delta: float) -> void:
+	_poll_input()
 	_accum += delta
 	if _accum < POLL_INTERVAL:
 		return
 	_accum = 0.0
 	_tick()
+
 
 
 # ============================================================================
@@ -516,6 +560,7 @@ func _start(ice: Dictionary) -> bool:
 		_send_cb = JavaScriptBridge.create_callback(_on_js_send)
 	_ck.start(_mp.my_id() if _mp.has_method("my_id") else "", JSON.stringify(ice), _send_cb)
 	_running = true
+	_ck.setTx(1 if _tx else 0)
 	return true
 
 
@@ -556,6 +601,7 @@ func _report_mic() -> void:
 	if mic == _reported_mic or mic != MIC_DENIED:
 		return
 	_reported_mic = mic
+	mic_denied_changed.emit(true)
 	if _mp.has_signal("status"):
 		_mp.emit_signal("status", MIC_BLOCKED_STATUS)
 
@@ -566,15 +612,21 @@ func _teardown() -> void:
 	device. Idempotent, and called from both ends — the poll noticing the room is
 	gone, and this node leaving the tree.
 	"""
+	_last_code = ""
+	_set_tx(false)
 	# ABOVE the `_running` guard: a room can end while the start-up window is
+
 	# still open, and a queue that survived it would replay the last room's
 	# handshake into the next one.
 	_pending.clear()
+	var had_denial: bool = (_reported_mic == MIC_DENIED)
+	_reported_mic = MIC_IDLE
+	if had_denial:
+		mic_denied_changed.emit(false)
 	if not _running:
 		return
 	_running = false
 	_pushed_members = ""
-	_reported_mic = MIC_IDLE
 	if _ck != null:
 		_ck.stop()
 
@@ -640,7 +692,125 @@ func _on_room_changed(code: String, _members: Array) -> void:
 	A join or a membership change only wakes the poll, which is where the ICE
 	config and the mic state are looked at anyway.
 	"""
+	if code != _last_code:
+		_last_code = code
+		_set_tx(false)
 	if code.is_empty():
 		_teardown()
 		return
 	_accum = POLL_INTERVAL
+
+
+# ============================================================================
+# TRANSMIT MODE & INPUT POLLING (bead godot-test1-xtr.2)
+# ============================================================================
+
+func is_available() -> bool:
+	return _is_web
+
+
+func mic_denied() -> bool:
+	if not _is_web:
+		return false
+	if _ck != null:
+		var state: Variant = _ck.micState()
+		if typeof(state) == TYPE_INT or typeof(state) == TYPE_FLOAT:
+			return int(state) == MIC_DENIED
+	return _reported_mic == MIC_DENIED
+
+
+func get_mode() -> Mode:
+	return _mode
+
+
+func set_mode(new_mode: Mode) -> void:
+	"""
+	Switch between ALWAYS_ON and PUSH_TO_TALK.
+	Switching mode resets _tx to false (a hold-to-talk key released into
+	always-on must not leave the mic open).
+	"""
+	var changed: bool = (_mode != new_mode)
+	if changed:
+		_mode = new_mode
+		_save_mode()
+		mode_changed.emit(_mode)
+	_set_tx(false)
+
+
+func is_tx() -> bool:
+	return _tx
+
+
+func _is_in_room() -> bool:
+	return _mp != null and is_instance_valid(_mp) and _mp.has_method("is_online") and bool(_mp.is_online())
+
+
+func _poll_input() -> void:
+	"""
+	Poll the voice_mic action every frame in _process under PROCESS_MODE_ALWAYS.
+	Works under tree pause and room-wide pause.
+	ALWAYS_ON: Input.is_action_just_pressed("voice_mic") flips _tx.
+	PUSH_TO_TALK: _tx = Input.is_action_pressed("voice_mic").
+	Pushed to JS only on change via _set_tx().
+	"""
+	if not _is_in_room():
+		if _tx:
+			_set_tx(false)
+		return
+	match _mode:
+		Mode.ALWAYS_ON:
+			if Input.is_action_just_pressed("voice_mic"):
+				_set_tx(not _tx)
+		Mode.PUSH_TO_TALK:
+			var held: bool = Input.is_action_pressed("voice_mic")
+			if held != _tx:
+				_set_tx(held)
+
+
+func _set_tx(active: bool) -> void:
+	if _tx == active:
+		return
+	_tx = active
+	if _is_web and _running and _ck != null:
+		_ck.setTx(1 if _tx else 0)
+	tx_changed.emit(_tx)
+
+
+func _load_mode() -> void:
+	"""
+	Load voice mode from localStorage ck_voice_mode on web, or ConfigFile [voice] section
+	at BestRunStore.config_path on desktop. Default ALWAYS_ON.
+	"""
+	var loaded_mode := Mode.ALWAYS_ON
+	if OS.has_feature("web"):
+		var raw: String = BestRunStore.ls_get(BestRunStore.LS_VOICE_MODE)
+		if raw == "push_to_talk" or raw == "1":
+			loaded_mode = Mode.PUSH_TO_TALK
+		elif raw == "always_on" or raw == "0":
+			loaded_mode = Mode.ALWAYS_ON
+	else:
+		var cfg := ConfigFile.new()
+		if cfg.load(BestRunStore.config_path) == OK:
+			var val: Variant = cfg.get_value(BestRunStore.CONFIG_VOICE_SECTION, "mode", "always_on")
+			if str(val) == "push_to_talk" or str(val) == "1":
+				loaded_mode = Mode.PUSH_TO_TALK
+			else:
+				loaded_mode = Mode.ALWAYS_ON
+
+	_mode = loaded_mode
+
+
+func _save_mode() -> void:
+	"""
+	Persist voice mode only (never _tx) to localStorage ck_voice_mode on web, or
+	ConfigFile [voice] section at BestRunStore.config_path on desktop.
+	"""
+	var mode_str := "push_to_talk" if _mode == Mode.PUSH_TO_TALK else "always_on"
+	if OS.has_feature("web"):
+		BestRunStore.ls_set(BestRunStore.LS_VOICE_MODE, mode_str)
+	else:
+		var cfg := ConfigFile.new()
+		cfg.load(BestRunStore.config_path)
+		cfg.set_value(BestRunStore.CONFIG_VOICE_SECTION, "mode", mode_str)
+		cfg.save(BestRunStore.config_path)
+

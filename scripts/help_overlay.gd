@@ -138,6 +138,10 @@ const ROWS: Array = [
 	["1 2 3 4", "Jump straight to one hero — the numbers on the portraits.", Mode.DESKTOP],
 	["F", "Special ability: Air Rush, Phase Step, Resize or Stink Wave — Air Sight indoors.", Mode.DESKTOP],
 	["C", "Cycle the view: over the shoulder, eyes, front.", Mode.DESKTOP],
+	["V", "Voice mic on/off in a multiplayer room (hold to talk in push-to-talk mode).", Mode.DESKTOP],
+
+
+
 	# The landmark quiz answer keys. Raw keycodes outside the input map, like K
 	# and M beneath — so `help_selfcheck.gd` cannot compare them against a bound
 	# action, and its `raw` table names a constant per legend that only the toast

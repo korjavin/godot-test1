@@ -128,6 +128,11 @@ const CONFIG_RECORD_LANDMARKS_BEST: String = "landmarks_best"
 ## hand (the bead's "clean profile" case) does not touch their best run.
 const CONFIG_PROGRESSION_SECTION: String = "progression"
 
+## Desktop section and localStorage key for voice chat mode (bead godot-test1-xtr.2).
+const CONFIG_VOICE_SECTION: String = "voice"
+const LS_VOICE_MODE: String = "ck_voice_mode"
+
+
 ## Desktop section for THE TOWER'S EARNED STATE — one monotone set of ids (see
 ## the tower block further down). A section of its own for the same two reasons
 ## the progression one has one: it is legible in the file, and deleting it by
@@ -711,7 +716,16 @@ func _load_or_make_player_id() -> String:
 	return fresh
 
 
+static func ls_get(key: String) -> String:
+	return _ls_get(key)
+
+
+static func ls_set(key: String, value: String) -> void:
+	_ls_set(key, value)
+
+
 static func _ls_get(key: String) -> String:
+
 	"""
 	Read one `localStorage` key, or "" for anything that is not a stored string.
 

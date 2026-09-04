@@ -214,6 +214,14 @@ var _host_button: Button = null
 var _join_button: Button = null
 var _leave_button: Button = null
 
+## Voice chat controls (bead godot-test1-xtr.2).
+var _voice_section: VBoxContainer = null
+var _voice_mode_button: Button = null
+var _mic_state_label: Label = null
+var _voice: Node = null
+var _voice_signals_connected: bool = false
+
+
 
 func _ready() -> void:
 	# Keep working while the tree is paused, for the same reason
@@ -236,7 +244,9 @@ func _ready() -> void:
 
 	_build_ui()
 	_ensure_manager()
+	_ensure_voice()
 	_refresh()
+
 
 
 ## Yield the screen to TouchControls' full-rect overlays — the exact three lines
@@ -479,8 +489,28 @@ func _build_ui() -> void:
 	_members_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vbox.add_child(_members_label)
 
+	# --- Voice chat controls (shown only while in a room) ------------------
+	_voice_section = VBoxContainer.new()
+	_voice_section.name = "VoiceSection"
+	_voice_section.add_theme_constant_override("separation", 6)
+	_voice_section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_voice_section.visible = false
+	vbox.add_child(_voice_section)
+
+	_voice_mode_button = _make_button("Voice: always on", _on_voice_mode_pressed)
+	_voice_section.add_child(_voice_mode_button)
+
+	_mic_state_label = Label.new()
+	_mic_state_label.name = "MicState"
+	_mic_state_label.text = "Mic: off — press V"
+	_mic_state_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_mic_state_label.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
+	_mic_state_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_voice_section.add_child(_mic_state_label)
+
 	# --- Leave + Close ----------------------------------------------------
 	_leave_button = _make_button("Leave room", _on_leave_pressed)
+
 	vbox.add_child(_leave_button)
 
 	vbox.add_child(_make_button("Close", _on_mp_button_pressed))
@@ -520,8 +550,12 @@ func _ensure_manager() -> Node:
 	# manager whose `room_changed`/`status` are silently unwired and the panel
 	# goes permanently stale, which is the opposite of what this re-fetch promises.
 	_signals_connected = false
-	_manager = get_tree().get_first_node_in_group("mp")
+	var tree := get_tree()
+	if tree == null:
+		return null
+	_manager = tree.get_first_node_in_group("mp")
 	if _manager != null and not _signals_connected:
+
 		# `has_signal` guards keep this safe against a stand-in node that merely
 		# happens to be in the group.
 		if _manager.has_signal("room_changed"):
@@ -612,6 +646,7 @@ func _on_room_changed(_code: String, _members: Array) -> void:
 func _on_status(message: String) -> void:
 	if _status_label != null:
 		_status_label.text = message
+	_update_voice_ui()
 
 
 # ============================================================================
@@ -1064,6 +1099,9 @@ func _refresh() -> void:
 	if _members_label != null:
 		_members_label.text = _member_lines(manager)
 
+	_update_voice_ui()
+
+
 
 ## True while the manager reports an actual room. False with no manager at all,
 ## so a scene without the Multiplayer node reads as "solo" everywhere.
@@ -1099,3 +1137,76 @@ func _member_lines(manager: Node) -> String:
 	if lines.is_empty():
 		return ""
 	return tr("In room:") + "\n" + "\n".join(lines)
+
+
+# ============================================================================
+# VOICE CHAT CONTROLS (bead godot-test1-xtr.2)
+# ============================================================================
+
+func _ensure_voice() -> Node:
+	if _voice != null and is_instance_valid(_voice):
+		return _voice
+	var tree := get_tree()
+	if tree == null:
+		return null
+	_voice = tree.get_first_node_in_group("voice")
+	if _voice != null and not _voice_signals_connected:
+		_voice_signals_connected = true
+		if _voice.has_signal("mode_changed"):
+			_voice.connect("mode_changed", _on_voice_mode_changed)
+		if _voice.has_signal("tx_changed"):
+			_voice.connect("tx_changed", _on_voice_tx_changed)
+		if _voice.has_signal("mic_denied_changed"):
+			_voice.connect("mic_denied_changed", _on_voice_mic_denied_changed)
+	return _voice
+
+
+func _on_voice_mode_changed(_mode: Variant) -> void:
+	_update_voice_ui()
+
+
+func _on_voice_tx_changed(_tx: Variant) -> void:
+	_update_voice_ui()
+
+
+func _on_voice_mic_denied_changed(_denied: Variant) -> void:
+	_update_voice_ui()
+
+
+func _on_voice_mode_pressed() -> void:
+	var voice := _ensure_voice()
+	if voice == null:
+		return
+	var current_mode: int = voice.get_mode()
+	var new_mode: int = 1 if current_mode == 0 else 0
+	voice.set_mode(new_mode)
+	_update_voice_ui()
+
+
+func _update_voice_ui() -> void:
+	if _voice_section == null:
+		return
+	var voice := _ensure_voice()
+	var available: bool = voice != null and voice.has_method("is_available") and bool(voice.is_available())
+	var online := _is_online()
+	_voice_section.visible = online and available
+	if not _voice_section.visible or voice == null:
+		return
+
+	var mode: int = voice.get_mode()
+	var tx: bool = voice.is_tx()
+
+	if _voice_mode_button != null:
+		if mode == 1:
+			_voice_mode_button.text = "Voice: push to talk"
+		else:
+			_voice_mode_button.text = "Voice: always on"
+
+	if _mic_state_label != null:
+		if voice.has_method("mic_denied") and voice.mic_denied():
+			_mic_state_label.text = "Mic: blocked — listening only"
+		elif mode == 1:
+			_mic_state_label.text = "Mic: transmitting" if tx else "Mic: off — hold V"
+		else:
+			_mic_state_label.text = "Mic: on — press V" if tx else "Mic: off — press V"
+

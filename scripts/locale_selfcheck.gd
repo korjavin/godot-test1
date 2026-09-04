@@ -107,6 +107,14 @@ const WIDTH_BUDGETS: Array = [
 	["Copy", 18, 320.0, "MP panel button"],
 	["Leave room", 18, 320.0, "MP panel button"],
 	["Tap a room to join", 18, 320.0, "MP panel status"],
+	["Voice: always on", 18, 320.0, "MP panel voice toggle"],
+	["Voice: push to talk", 18, 320.0, "MP panel voice toggle"],
+	["Mic: off — press V", 18, 320.0, "MP panel mic state"],
+	["Mic: on — press V", 18, 320.0, "MP panel mic state"],
+	["Mic: off — hold V", 18, 320.0, "MP panel mic state"],
+	["Mic: transmitting", 18, 320.0, "MP panel mic state"],
+	["Mic: blocked — listening only", 18, 320.0, "MP panel mic state"],
+
 	# start_overlay.gd — CARD_WIDTH 420 with a 20 px content margin each side.
 	# One button since bead godot-test1-6pa dropped the SOLO / MULTIPLAYER fork.
 	# The card's hint line is exempt for the reason stated in the header above: it
