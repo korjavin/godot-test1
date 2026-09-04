@@ -726,13 +726,18 @@ func _start(ice: Dictionary) -> bool:
 	_ck.start(_mp.my_id() if _mp.has_method("my_id") else "", JSON.stringify(ice), _send_cb)
 	_running = true
 	_ck.setTx(1 if _tx else 0)
-	# `window.ckVoice` is installed ONCE per session and survives every room, so a
-	# mute set in the last room is still set in its `S` — but a module that failed
-	# to install and was rebuilt would not be. Re-pushing is two idempotent calls
-	# and removes the question. (`_peer_muted` is empty here: `_teardown()` clears
-	# it exactly as `stop()` clears the JS side's.)
+	# EVERY SWITCH IS REPLAYED HERE, and the per-peer set is the one that matters
+	# (codex review 2026-09-04). A room's members are known from the `welcome`
+	# frame, but this module cannot start until the `/ice` round trip lands — so
+	# the panel is live and mutable for a second or two while `_running` is false,
+	# and a Mute pressed in that window would otherwise sit in `_peer_muted`
+	# reading "Muted" over a peer nobody had told the browser about. `_teardown()`
+	# clears the set exactly as the JS `stop()` does, so this replays a window's
+	# worth of presses and never the last room's.
 	_ck.setMicMuted(1 if _mic_muted else 0)
 	_ck.setDeafened(1 if _deafened else 0)
+	for id: Variant in _peer_muted:
+		_ck.setPeerMuted(str(id), 1)
 	return true
 
 

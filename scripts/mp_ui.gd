@@ -1225,6 +1225,12 @@ func _make_member_row(entry: Dictionary, you: String) -> HBoxContainer:
 	# label must be structurally unable to overflow rather than merely short.
 	var name_label := Label.new()
 	name_label.text = String(entry.get("name", ""))
+	# A lobby name is somebody's own text, and a bare `Label` AUTO-TRANSLATES it
+	# (CLAUDE.md's rule 1: the key IS the English string) — so a player calling
+	# themselves "Hero" or "Mute" would show up in German as this panel's own
+	# widget labels. The old joined "• %s" line was safe by accident; a row is
+	# not (codex review 2026-09-04).
+	name_label.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
 	name_label.clip_text = true
 	name_label.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
