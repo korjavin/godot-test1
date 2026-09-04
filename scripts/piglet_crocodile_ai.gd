@@ -6071,7 +6071,7 @@ func set_remote_state(pos: Vector3, yaw: float, flags: int) -> void:
 	# It costs no protocol. CROC_FLAG_CHASING has been on the wire and restored
 	# below since the sync shipped — the edge was always there to be read, and this
 	# is the "the acquisition cue is the same answer from the other end" that
-	# CROC_FLAG_BURROWED's note in mp_manager.gd rules out a sixth bit for.
+	# CROC_FLAG_BURROWED's note in mp_codec.gd rules out a sixth bit for.
 	#
 	# Fires only on the transition, so a peer receiving 10 samples a second of a
 	# crocodile that is still chasing hears one cue per engagement, not ten a

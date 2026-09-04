@@ -1643,7 +1643,7 @@ func _check_hunter_sync() -> String:
 	  3. THE FLAG BYTE. Every combination the encoder can produce round-trips
 	     through a real hunter body byte-identically. That is the executable form
 	     of this bead's ruling that the hunt states owe no new bit (see
-	     CROC_FLAG_BURROWED's note in mp_manager.gd): today five bits, five
+	     CROC_FLAG_BURROWED's note in mp_codec.gd): today five bits, five
 	     restored, and the day someone adds a sixth for a pose motion cannot
 	     show, this fails until `set_remote_state` learns it too.
 	"""
