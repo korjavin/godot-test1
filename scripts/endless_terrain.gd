@@ -1368,7 +1368,14 @@ const TREASURE_CHEST_SCRIPT := preload("res://scripts/treasure_chest.gd")
 ##   chest     ~1 chunk in 13   a 1.3 m box, 6-11 coins in a burst, NO GEM
 ##   artifact  ~1 chunk in 23   huge ruin, 2-4 coins AND the one guaranteed GEM
 ##   camp      ~1 chunk in 31   a whole village, 1-3 coins, no gem
-##   landmark  ~1 chunk in 40-60  a famous place, 2-4 coins, NO GEM, plus a fact
+##   landmark  48 IN THE WORLD   a famous place, 2-4 coins, NO GEM, plus a fact
+##
+## The landmark row is the odd one out and has been since bead godot-test1-bcf:
+## the other three are RATES and it is a CENSUS. There are as many landmarks as
+## there are registry rows, ever, and where each stands is THE MUSEUM MILE below.
+## It still sits at the bottom of the hierarchy — 41 of 48 built over a whole
+## world against a chest every 13 chunks — and it is the only one of the four you
+## can set out to find.
 ##
 ## The four pairs were 8-15 / 3-5 / 2-4 / 3-5 until bead godot-test1-7ed trimmed
 ## every one of them by ~30% (owner, 2026-09-02). The HIERARCHY is what matters
@@ -1385,11 +1392,14 @@ const TREASURE_CHEST_SCRIPT := preload("res://scripts/treasure_chest.gd")
 ## real reward is the card (see scripts/landmark_toast.gd); the coins are the
 ## apology for the distance.
 ##
-## Structurally this is the chest/camp/artifact recipe with NOTHING added:
-##   - _landmark_at()             the rarity roll ALONE, on its own independent
-##                                hash stream (LANDMARK_SALT + its own coordinate
-##                                primes), so it consumes ZERO draws from the
-##                                shared chunk RNG.
+## Structurally this is the chest/camp/artifact recipe with ONE thing changed —
+## the roll (bead godot-test1-bcf; see THE MUSEUM MILE further down):
+##   - landmark_sites()           ONE SITE PER KIND for the whole run, a pure
+##                                function of run_seed built once and memoized.
+##   - _landmark_at()             the REVERSE LOOKUP alone — one Dictionary
+##                                lookup in that table, so it consumes ZERO draws
+##                                from the shared chunk RNG and, unlike the roll
+##                                it replaced, evaluates no hash per chunk either.
 ##   - spawn_landmark_in_chunk()  holds the candidate loop, because that is the
 ##                                only place `obstacles` exists — see
 ##                                _landmark_at's docstring for why putting the
@@ -1405,9 +1415,9 @@ const TREASURE_CHEST_SCRIPT := preload("res://scripts/treasure_chest.gd")
 ## THE REGISTRY AND THE BUILDERS LIVE IN scripts/landmark_builders.gd, NOT HERE.
 ## That file holds the palette, the LANDMARKS registry (pure data — builder method
 ## NAME, English name, English fact, footprint radius) and one static builder per
-## place; this file holds the POLICY that places them: how rare they are, which
-## hash stream decides it, how far off the road they sit, how the reward ring and
-## the crocodile-exclusion footprint are sized. Adding a famous place is ONE
+## place; this file holds the POLICY that places them: WHERE each one stands,
+## which hash stream decides it, how far off the road they sit, how the reward
+## ring and the crocodile-exclusion footprint are sized. Adding a famous place is ONE
 ## builder function, ONE registry entry and TWO ui.csv rows, and touches nothing
 ## in this file, in the toast, or in the self-check.
 ##
@@ -1426,114 +1436,25 @@ const TREASURE_CHEST_SCRIPT := preload("res://scripts/treasure_chest.gd")
 ## landmarks and diff the two.
 @export var spawn_landmarks: bool = true
 
-## Probability that a chunk ROLLS a landmark. This is NOT the built rate: the
-## candidate loop in spawn_landmark_in_chunk rejects spots that are in a river,
-## too near the coin road, or overlapping stone already in the chunk — and a
-## 9.5 m circle is camp-sized, so the overlap test rejects a great deal.
+## THE RARITY ROLL IS RETIRED, and `LANDMARK_CHANCE` with it (bead
+## godot-test1-bcf). Until 2026-09-04 a chunk rolled 0.21 * scarcity against its
+## own LANDMARK_SALT stream and then drew a kind uniformly from the registry;
+## five waves of measurement across 38 seeds and 22,000 chunks tuned that number
+## from 0.15 to 0.21 to hold the built rate in a "1 landmark per 40-60 chunks"
+## band. The owner's ruling ("each type exists once in our world") makes a RATE
+## the wrong shape of answer entirely: there is no population to be rare within
+## any more, so the number, its band and its sweeps all went with it. See THE
+## MUSEUM MILE below for what replaced them.
 ##
-## MEASURED, never derived by algebra — the survival rate depends on the block
-## density the biome mix happens to produce, which is why every sibling constant
-## carries its own number (CAMP_CHANCE 0.18 -> 14% survival -> 1 per 31;
-## CHEST_CHANCE 0.08 -> 98.5% -> 1 per 12.5, the same roll meaning wildly
-## different things). Throwaway headless sweep over a 41x41 = 1681 chunk field
-## with every spawner that runs BEFORE this one on (crocodiles and coins spawn
-## after it and cannot reach its candidate loop): 224 chunks ROLLED a landmark
-## and 32 BUILT one — 14.3% survival, 1 built landmark per 52.5 chunks, all
-## eight kinds appearing.
-##
-## MEASURE ACROSS SEEDS, NOT ONE. That first figure is a SINGLE run_seed, and the
-## rate is far more seed-dependent than the sibling constants' are, because what
-## rejects a candidate here is overlap with a chunk's biome content — so a seed
-## whose biome offset lands more of the field in sparse desert builds many more
-## landmarks than one that lands it in forest. Five further seeds over 25x25 = 625
-## chunks each: 1 per 52.1, 28.4, 41.7, 56.8 and 52.1 (survival 12.4-25.0%).
-## AGGREGATED over all six sweeps — 4806 chunks, 673 rolled, 104 built — that is
-## 15.5% survival and 1 built landmark per 46.2 chunks, inside the intended
-## 1-per-40-60 band and deliberately rarer than the artifacts' 1-in-23, because
-## these are destinations rather than scenery. So 0.15 stands as measured, with
-## the honest caveat that any ONE world sits somewhere in 1-per-28..57.
-## Survival is camp-like (~15%) rather than chest-like (98.5%) for the same reason
-## a camp's is: the overlap test rejects almost everything for a 9.5 m circle and
-## almost nothing for a 1.5 m one.
-## Re-measure this pair — over SEVERAL seeds — if the radius, the clearances or
-## the biome mix change.
-##
-## WAVE 3 RETUNE, 0.15 -> 0.19, AND IT IS NOT ABOUT THE KIND COUNT. Adding kinds
-## cannot move the built rate at all — _landmark_at draws randf() then
-## randi_range(0, size - 1), and randi_range consumes exactly one draw whatever
-## its range, so the seed handed to the spawner and therefore the SPOT are
-## bit-identical however many places exist (measured again at 28 kinds: over a
-## 17x17 field x 6 seeds the same 30 chunks built a landmark before and after,
-## and 1704/1704 landmark-free chunks were byte-identical). What moved is the
-## judgement about where in the intended 1-per-40-60 band this should sit.
-##
-## MEASURED ON THIS BRANCH, one harness, all three rows the same 17x17 field:
-##   18 kinds, chance 0.15, 40 seeds (11560 chunks): 1652 rolled, 201 built —
-##      12.2% survival, 1 per 57.5
-##   28 kinds, chance 0.15, 60 seeds (17340 chunks): 2487 rolled, 309 built —
-##      12.4% survival, 1 per 56.1  (unchanged, as the paragraph above requires)
-##   28 kinds, chance 0.19, 60 seeds (17340 chunks): 3217 rolled, 402 built —
-##      12.5% survival, 1 per 43.1
-## Survival is flat across all three because the candidate loop judges a spot
-## against the chunk's geometry and knows nothing about how often it is asked, so
-## the rate scales with the chance almost exactly: 56.1 * 0.15 / 0.19 = 44.3
-## predicted against 43.1 measured. 0.15 had drifted to the SPARSE EDGE of the
-## band while each individual place got 28 times rarer than it was at eight kinds;
-## 0.19 puts the category back in the middle of the band (1 per 43) without
-## touching the "landmarks are destinations, not scenery" rarity that keeps them
-## well behind the artifacts' 1-in-23.
-##
-## WAVE 4 (the German pack, 28 -> 38 kinds): SWEPT AGAIN AND NOT RETUNED. The
-## epic's rule is to re-measure at every new kind count, and this time the sweep
-## was pointed straight at the claim the paragraph above makes rather than at the
-## rate — because the rate is the thing that claim says CANNOT move, and a rate
-## measured on a different harness cannot tell the two apart.
-##
-## So the harness digested the whole BUILT SET — every built chunk's coords and
-## its landmark's spot to a millimetre, over the same 17x17 field x 60 seeds
-## (17340 chunks) — and was run twice against the same code, once with all 38
-## registry entries and once with the ten wave-4 entries cut back out:
-##   38 kinds: 3245 rolled, 357 built, digest 4242030217
-##   28 kinds: 3245 rolled, 357 built, digest 4242030217
-## BIT-IDENTICAL. Not "the same rate" — the same chunks, in the same places. That
-## is randi_range consuming exactly one draw whatever its range, measured rather
-## than argued, and it is the property that makes appending kinds free forever.
-##
-## The rate that harness reports is 11.0% survival, 1 per 48.6 — inside the
-## intended 1-per-40-60 band, so LANDMARK_CHANCE stayed at 0.19 there. It is NOT
-## comparable to the three rows above (different harness: coins, chests and
-## crocodiles disabled, and its own seed set), which is precisely why the digest
-## is the measurement that decided this and the rate is only the sanity check.
-##
-## WAVE 5 RETUNE, 0.19 -> 0.21 (38 -> 48 kinds, the epic's target reached). The
-## digest was re-run FIRST, because no rate means anything until the append-is-free
-## property is confirmed at the new kind count: same 17x17 field x 60 seeds (17340
-## chunks), run twice against the same code, once with all 48 registry entries and
-## once with landmark_builders.gd checked back out at 38:
-##   48 kinds: 3286 rolled, 359 built, digest 403935944
-##   38 kinds: 3286 rolled, 359 built, digest 403935944
-## BIT-IDENTICAL again — the same chunks, in the same places, to the millimetre.
-##
-## THEN THE RATE, swept on that same harness across three chances. Survival is flat
-## across all three, as it has to be: the candidate loop judges a spot against the
-## chunk's geometry and knows nothing about how often it is asked.
-##   0.19: 3286 rolled, 359 built — 10.9% survival, 1 per 48.3
-##   0.21: 3646 rolled, 391 built — 10.7% survival, 1 per 44.3
-##   0.23: 3958 rolled, 424 built — 10.7% survival, 1 per 40.9
-## The 0.19 row is what forced the change, and NOT because the kind count moved —
-## it cannot, and that is now measured twice. It is that this harness puts 0.19 at
-## 1 per 48.3, the SPARSE END of the band, while the wave-3 retune that chose 0.19
-## believed on its own cruder harness that it was setting 1 per 43 — "the middle of
-## the band", in that paragraph's own words. 0.21 is the smallest step that makes
-## the constant match the intent already written beside it: 1 per 44.3 measured,
-## mid-band, and still 1.9x rarer than the artifacts' 1-in-23, which is the
-## "destinations, not scenery" margin every one of these retunes has protected.
-##
-## 0.23 WAS MEASURED AND NOT TAKEN. It hits the epic's "1-per-40-ish" phrasing
-## exactly, but taking it would move the design target from mid-band to the dense
-## end — a judgement the sweep does not force. The sweep only shows where 0.19
-## actually landed, so the retune goes only as far as that.
-const LANDMARK_CHANCE: float = 0.21
+## ONE FINDING FROM THOSE SWEEPS OUTLIVED THE CONSTANT and is worth keeping,
+## because it is the property that makes appending places to the registry free:
+## `randi_range` consumes exactly ONE draw whatever its range, MEASURED rather
+## than argued — the same 17x17 field x 60 seeds run twice against the same code,
+## once with all 48 registry entries and once with landmark_builders.gd checked
+## back out at 38, produced BIT-IDENTICAL worlds (3286 rolled, 359 built, digest
+## 403935944 both times). The site table below keys on the kind index directly, so
+## the property it protects — appending a place moves nothing else — now holds by
+## construction rather than by measurement.
 
 ## Fixed salt XORed into run_seed for the landmark hash stream, in the
 ## ARTIFACT_SALT / CAMP_SALT / CHEST_SALT / BIOME_SALT / BOSS_SEED family: an
@@ -1550,11 +1471,145 @@ const LANDMARK_SALT: int = 0x1A_D3A2C  # "LANDMARK"-ish; arbitrary fixed constan
 const LANDMARK_HASH_PRIME_X: int = 32452867
 const LANDMARK_HASH_PRIME_Y: int = 49979687
 
+## ============================================================================
+## THE MUSEUM MILE — ONE SITE PER KIND, AND THE CHUNK DOES A REVERSE LOOKUP
+## ============================================================================
+##
+## Owner, 2026-09-04 (bead godot-test1-bcf): *"for landmarks they should be
+## unique, each type exists once in our world"*. Budapest's CITY_LANDMARKS were
+## always unique — they are 22 authored slots — and the FIELD registry was not:
+## the old `_landmark_at` rolled a rarity chance per chunk and then drew a kind
+## uniformly from the same chunk-local stream, so an infinite field repeated
+## every kind forever and two Eiffel Towers 300 m apart was luck rather than a
+## bug anybody could point at.
+##
+## SO THE PLACEMENT IS INVERTED. Instead of "does this chunk have a landmark, and
+## if so which", the question is "where does kind K stand this run" — asked once
+## per run for all 48 kinds, cached, and READ BACK BY CHUNK COORDINATE
+## (`landmark_sites()` is chunk -> kind; `_landmark_at` is one Dictionary lookup
+## in it). Three properties fall out of that shape and all three are load-bearing:
+##
+##   * UNIQUENESS IS STRUCTURAL. A kind has one site or none. It is not a rate
+##     that happens to be low, so no seed, no walk and no field size can produce
+##     a second Colosseum.
+##   * IT COSTS THE CHUNK STREAM NOTHING. Not one RNG draw is taken from any
+##     shared stream, and not one hash is even evaluated per chunk — the table is
+##     built ONCE per run from `run_seed` alone. Crocodiles, hunters, bosses,
+##     coins, props, camps, chests and artifacts are byte-identical to a build
+##     with `spawn_landmarks = false`, which is what the A/B measures.
+##   * A SITE IS COMPUTABLE WITHOUT ITS CHUNK. `landmark_site(kind)` answers for a
+##     chunk that has never streamed in, which is what a future "unexplored
+##     landmark" minimap mark would need. Not this bead.
+##
+## WHERE THE SITES GO. The road is the run's spine — it starts at the HQ
+## (`tower_site().x`, -400) and every road consumer stops at the terminal station
+## `T` (ROAD_TERMINAL_X, 1450), so ~1850 m of centreline is the corridor a run
+## actually walks. That is the MUSEUM MILE: as many kinds as `LANDMARK_MILE_SPACING`
+## fits get a slot on it, spread evenly by METRES OF X and looked up as stations
+## (the road bosses' idiom — X is strictly increasing in `k`, so a station is a
+## place), offset 60-120 m to one side and alternating sides by kind parity so the
+## walk is never all-left. Everything that does not fit the mile goes into an ANNULUS
+## 0.5-2.5 km off the same centreline, on the same hash — a wanderer finds those,
+## and nothing is unreachable.
+##
+## SCARCITY DOES NOT APPLY HERE ANY MORE, and that is a decision rather than an
+## omission. `scarcity_at` thins a POPULATION: it answers "how much of what would
+## be here is still here" and the three shipped forms (chance * k, roundi(n * k),
+## the per-object `_scarcity_keep` skip) all remove one of many. A thing that
+## exists exactly ONCE IN THE WORLD is neither thinned nor unthinned — multiplying
+## its single existence by k is a coin flip on whether the Eiffel Tower is in this
+## run at all, which is not a gradient, it is a lottery. The gradient's own
+## purpose (owner ruling, bead godot-test1-bn8: demotivate walking away from
+## Budapest) is served by the mile instead: the sites are ON the corridor and in a
+## 2.5 km annulus around it, i.e. all of them are inside the k > 0 field anyway,
+## and the far field beyond SCARCITY_PLAIN_DISTANCE (4 km) holds no site at all.
+## `scarcity_selfcheck` keeps `_landmark_at` in its per-biome sweep unchanged and
+## still measures 0 out there — see the note in its `_check_every_biome`.
+##
+## The rest of the pipeline is untouched: `spawn_landmark_in_chunk` still runs the
+## LANDMARK_PLACE_TRIES candidate loop against `_biome_spot_ok` where `obstacles`
+## exists, still batches into the chunk's one MultiMesh, still perches its coin
+## ring and still appends one non-climbable footprint.
+
+## Fixed salt for the SITE stream, distinct from LANDMARK_SALT so the site table
+## and anything else keyed on a landmark cannot share a lattice.
+const LANDMARK_SITE_SALT: int = 0x51_7E5  # "SITES"-ish; arbitrary fixed constant
+
+## `landmark_site()`'s "this kind has no site this run" answer. A real chunk
+## coordinate is bounded by the world's float range divided by chunk_size, so this
+## is unreachable; callers must test rather than compare distances to it.
+const LANDMARK_SITE_NONE: Vector2i = Vector2i(0x7FFFFFFF, 0x7FFFFFFF)
+
+## Metres of ROAD X per museum-mile slot.
+##
+## THE BEAD GUESSED 250-400 m AND THAT WAS ARITHMETIC, NOT DESIGN: it assumed the
+## road terminal sat at x = +1600..+3800, i.e. a 2.0-4.2 km corridor, and derived
+## "5-17 slots" from it — then asked its acceptance for TWELVE kinds STANDING in
+## the corridor of a run. ROAD_TERMINAL_X is really 1450 and the corridor runs
+## from station 0, so it is 1450 m — a third of what the bead assumed at the top
+## end. The COUNT is the half of that pair that was actually specified, so the
+## count is what this follows.
+##
+## 75 m fits 19 slots in 1450 m, and it takes nineteen SITES to stand twelve
+## LANDMARKS: a site whose chunk has no room for the shape builds nothing (the
+## whole of LANDMARK_PLACE_TRIES' note). Measured 13 / 15 / 14 corridor landmarks
+## built over `landmark_sites_selfcheck`'s three seeds, against its floor of 12.
+##
+## Consecutive mile landmarks alternate sides at 60-120 m out, so the real
+## walk-to-walk distance is 120-190 m — a monument every minute or two on the
+## trail, which is the "museum mile" the bead names, and still an OFF-ROAD detour
+## (LANDMARK_ROAD_CLEARANCE is 22 m and the nearest site is 60).
+const LANDMARK_MILE_SPACING: float = 75.0
+
+## Lateral offset band for a MILE site: far enough off the trail to be a detour,
+## near enough to be seen from it. Both are >> LANDMARK_ROAD_CLEARANCE (22).
+const LANDMARK_MILE_LATERAL_MIN: float = 60.0
+const LANDMARK_MILE_LATERAL_MAX: float = 120.0
+
+## Lateral offset band for a FIELD site — the annulus the kinds that do not fit
+## the mile go into, the bead's "0.5-2.5 km off the road". Inside
+## SCARCITY_PLAIN_DISTANCE (4 km) by construction, so every kind stands in ground
+## the gradient still furnishes.
+const LANDMARK_FIELD_LATERAL_MIN: float = 500.0
+const LANDMARK_FIELD_LATERAL_MAX: float = 2500.0
+
+## Deterministic re-hash attempts before a kind gives up and simply has no site
+## this run. A site is rejected for standing in the HQ disc, the Budapest rect,
+## the spawn bubble, a river band or a chunk another kind already took; each
+## retry is a new hash on (kind, attempt, run_seed), never a draw. 32 is far more
+## than it takes: `landmark_sites_selfcheck` reports 144 sites over three seeds,
+## i.e. all 48 kinds sited in all three worlds, with none of the four rules
+## running a kind out of attempts.
+const LANDMARK_SITE_TRIES: int = 32
+
 ## Candidate spots tried inside a chunk before giving up. Every try failing means
 ## NO LANDMARK — the same call artifacts and camps both make, and the right one:
 ## the Eiffel Tower sticking out of a mountain massif reads far worse than a
-## chunk without one, and a higher LANDMARK_CHANCE reaches the same built rate.
-const LANDMARK_PLACE_TRIES: int = 4
+## chunk without one.
+##
+## RAISED 4 -> 200 BY THE MUSEUM MILE, and the reason is that the MEANING OF A
+## FAILURE CHANGED. While every chunk rolled, a 10.7% survival rate was a RATE:
+## the failures were absorbed by LANDMARK_CHANCE and the built density was tuned
+## against the survivors. With one site per kind a failed candidate loop means
+## that kind is ABSENT FROM THE WORLD, so the tries stopped being a tuning knob
+## and became a completeness budget.
+##
+## MEASURED over the 48 sites of three seeds (20260904 / 777 / 4242), kinds built
+## out of 48 (and of those, kinds standing in the road corridor), at the
+## row-radius test below and at an earlier, slightly wider mile spacing:
+##     4 tries:   22 / 19 / 26   (corridor 6 / 4 / 5)  — the old constant
+##    40 tries:   40 / 39 / 39   (corridor 14 / 13 / 12)
+##   200 tries:   43 / 41 / 41   (corridor 15 / 14 / 13)
+## That sweep predates the mile's final spacing AND ran on the check's own
+## hand-rolled chunk order rather than `create_chunk`, so it is the SHAPE of the
+## curve that it measures, not the row; the shipped numbers are 37 / 43 / 43
+## built, corridor 13 / 15 / 14 — `landmark_sites_selfcheck` prints them.
+## and it plateaus there — the remainder are chunks where a 4-9 m circle genuinely
+## does not fit (field CITY band chunks are two thirds of them). 200 tries is FREE
+## because only ~48 chunks in a whole world ever run this loop, and each try is a
+## `randf_range` pair plus one `_biome_spot_ok` over ~25 footprints. No other
+## stream can see them either: the loop draws from the landmark's OWN private RNG.
+const LANDMARK_PLACE_TRIES: int = 200
 
 ## The WIDEST footprint any registry entry may declare, and therefore the value
 ## handed to _biome_spot_ok as "the widest this thing could be" — the house rule,
@@ -2268,6 +2323,58 @@ const CITY_CHUNK_MS_BUDGET: float = 12.0
 ## from pos to the nearest edge of the UNION (BudapestPlan.rect() plus the corridor
 ## box from the HQ disc to the gate). Measured k at HQ (~2 km) is ~0.25 when measured
 ## off the rect alone; off the union the whole corridor stays at 1.0 (see review).
+##
+## ONE RULE FOR EVERY BIOME (bead `godot-test1-bn8`, owner 2026-09-04: *"i see that
+## object in plains rare and rare when we farther away from center hq+budapest, but
+## I don't see this happening with desert and probably other biomes, it should be one
+## rule for all, we should demotivate players go far away from center"*). The gradient
+## used to be applied per FAMILY and several families never read k, so a desert kept
+## every oasis, every dune and every mammoth on the way out while the plains emptied.
+## The rule now, and the whole of it:
+##
+##   * EVERY CONTENT BUILDER READS k. Scattered props, feature structures,
+##     artifacts, camps, chests, geo landmarks, cacti, oases, dunes, forest trees,
+##     city houses / stalls / lights, snow trees and mammoth skeletons — all of
+##     them, in the three forms below and no fourth one.
+##   * MASSIFS ARE EXEMPT (owner ruling, same date). They are the impassable walls
+##     the flat-world invariant rests on, not decoration: a far mountain band with
+##     no massifs is a plains band painted grey. `_spawn_mountain_content` is
+##     therefore the one biome builder with no k in it at all.
+##   * PREDATORS, HUNTERS, BOSSES AND ROAD COINS ARE NEVER THINNED. Entity counts
+##     are design-only, and fewer predators far out would REWARD leaving — the
+##     opposite of the ruling; the road is the guide to Budapest. There are no
+##     off-road CHUNK coins to thin either: every non-road coin in the world is a
+##     reward inside an artifact, camp, chest or landmark, so it already vanishes
+##     with the feature that carries it.
+##
+## THE THREE FORMS, and never a fourth:
+##
+##   * A COUNT TARGET becomes `roundi(target * k)` (the scattered-prop scatter).
+##   * A RARITY ROLL is compared against `chance * k` — the same roll, no new draw
+##     (structures, artifacts, camps, chests, oases, dunes). GEO LANDMARKS USED TO
+##     BE ON THIS LINE AND ARE DELIBERATELY NOT ANY MORE: since bead
+##     godot-test1-bcf each kind exists exactly ONCE IN THE WORLD, so there is no
+##     population for a gradient to thin and multiplying a single existence by k
+##     would be a lottery rather than a thinning. Every site is on the road
+##     corridor or in a 2.5 km annulus round it, i.e. inside the k > 0 field
+##     anyway; see the MUSEUM MILE banner and `scarcity_selfcheck`'s
+##     `_check_every_biome`, which still measures the far field's zero.
+##   * A PER-OBJECT removal inside a loop is a post-draw `continue` on
+##     `_scarcity_keep()`'s own SCARCITY_SALT hash stream (cacti, forest trees,
+##     city furniture, snow trees, mammoths).
+##
+## In all three the shared chunk / biome RNG takes exactly the draws it took
+## before, which is why k = 1 near the centre regenerates byte-identically.
+##
+## AND THERE IS NO `if k <= 0.0: return` SHORTCUT ANY MORE, deliberately. Four
+## biome builders carried one; it emitted the same nothing the per-object rolls do,
+## but it emitted it for the WHOLE FUNCTION — so a builder further down that forgot
+## k (the oasis, which is called from the bottom of `_spawn_desert_content`) looked
+## correct at 4 km and the acceptance check could not tell the difference. The far
+## field is now empty because every builder's own k says so, which is the only
+## version of that measurement a mutation test can fail.
+## `scripts/scarcity_selfcheck.gd` iterates the Biome enum and fails the build for
+## a builder that forgets k.
 const SCARCITY_PLAIN_DISTANCE: float = 4000.0
 const SCARCITY_D0: float = 400.0
 const SCARCITY_SALT: int = 0x5C4177 # own stream for per-object scarcity rolls
@@ -2314,6 +2421,39 @@ func scarcity_at(pos: Vector3) -> float:
 	if d >= SCARCITY_PLAIN_DISTANCE:
 		return 0.0
 	return clampf(1.0 - log(1.0 + d / SCARCITY_D0) / _SCARCITY_DENOM, 0.0, 1.0)
+
+
+func _scarcity_keep(chunk_pos: Vector2i, index: int, k: float) -> bool:
+	"""
+	The ONE home of the per-object scarcity roll — the third of the three forms in
+	the banner above, and the only one that needs a hash stream of its own.
+
+	@param chunk_pos: The chunk the object stands in. NOT the world position: a
+	                  builder is sliced by nothing, and a chunk-keyed roll is what
+	                  makes a revisited chunk regenerate identically.
+	@param index: The object's index within its own loop, plus a per-family offset
+	              where one loop's objects would otherwise share rolls with
+	              another's (the city's stalls take `_i + 1000`, its lights
+	              `_i + 2000`, snow's mammoths `_i + 1000`). THE OFFSETS ARE PART OF
+	              THE WORLD — changing one moves every object of that family.
+	@param k: scarcity_at() at the chunk's centre, read once by the caller.
+	@return: true to build this object, false to thin it away.
+
+	IT COSTS NO DRAW. The roll is a hash of (chunk, run_seed ^ SCARCITY_SALT ^
+	index), not a draw from the caller's RandomNumberGenerator, so the shared
+	biome / chunk stream is exactly the sequence it was before scarcity existed.
+
+	THE CALL MUST BE A POST-DRAW `continue`, the discipline every removal in this
+	file follows: put it after whatever unconditional draws the object takes and
+	immediately before the first create_box. At k = 1 it never skips and the world
+	is byte-identical; below 1 a thinned object's emit-time draws are skipped,
+	which shifts the rest of THAT chunk — deterministic (k is pure in position)
+	and intended.
+	"""
+	var roll := float(hash(Vector3i(
+		chunk_pos.x * 96174811, chunk_pos.y * 18266587, run_seed ^ SCARCITY_SALT ^ index
+	)) % 1000000) / 1000000.0
+	return roll < k
 
 
 # ----------------------------------------------------------------------------
@@ -2371,7 +2511,7 @@ const TREE_CANOPY_LAYERS_MIN: int = 2
 const TREE_CANOPY_LAYERS_MAX: int = 3
 const TREE_CANOPY_WIDTH_MIN: float = 2.2  # widest (bottom) canopy layer
 const TREE_CANOPY_WIDTH_MAX: float = 3.4
-const TREE_CANOPY_LAYER_HEIGHT: float = 1.0
+const TREE_CANOPY_LAYER_HEIGHT: float = 1.0  # legacy slab height: crown seat dip (0.3m) and seam lean bound
 const TREE_CANOPY_TAPER: float = 0.68     # each layer up is this fraction as wide
 const TREE_TRUNK_COLOR := Color(0.34, 0.24, 0.16)
 const TREE_LEAF_COLOR := Color(0.16, 0.36, 0.19)
@@ -3047,6 +3187,15 @@ var _approach_coin_east_end_cache: float = INF
 ## east end above it IS seeded, and new_run() resets it beside the terminal cache.
 var _approach_coin_line_cache: PackedVector2Array = PackedVector2Array()
 
+## Memoized result of _build_landmark_sites() — chunk Vector2i -> LANDMARKS kind,
+## the whole field landmark placement for this run (see the MUSEUM MILE banner).
+## It rides the road centreline, so like the two caches above it IS seeded and
+## new_run() resets it beside them. The `_built` flag is separate because an empty
+## table is a legitimate answer (spawn_landmarks off, or a degenerate road) and
+## `is_empty()` alone would rebuild it on every chunk.
+var _landmark_sites_cache: Dictionary = {}
+var _landmark_sites_built: bool = false
+
 ## Reference to the player node to track their position
 var player: Node3D
 
@@ -3530,6 +3679,17 @@ func set_run_seed(value: int) -> void:
 	# the paths of the run you just lost. Hung off the seed write for the same
 	# reason `_tower_reset()` is: every path that starts a world comes through here.
 	_migrated_units.clear()
+	# ...and the MUSEUM MILE, for the same reason and one worse. The site table is
+	# memoized and pure in run_seed, so a table built BEFORE this write survives it
+	# and hands the new world the OLD run's landmarks while every other seed-derived
+	# stream has moved. new_run() resets it too (beside the road cache it is derived
+	# from), but new_run() is not the only door: a multiplayer joiner takes the
+	# master's seed through set_run_seed() after its own _ready() roll, and anything
+	# that streamed a chunk in between has already built the table. THE SEED WRITE IS
+	# THE ONLY PLACE THAT SEES EVERY DOOR — which is exactly why _tower_reset() and
+	# the trail purge hang here too.
+	_landmark_sites_cache = {}
+	_landmark_sites_built = false
 	var lod := get_tree().get_first_node_in_group("lod_manager") if is_inside_tree() else null
 	if lod != null and lod.has_method("reset_trails"):
 		lod.reset_trails()
@@ -8064,43 +8224,251 @@ func spawn_chest_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 # GEO LANDMARKS (see the GEO LANDMARKS constant banner)
 # ============================================================================
 
+func landmark_sites() -> Dictionary:
+	"""
+	THE WHOLE FIELD LANDMARK PLACEMENT FOR THIS RUN: chunk Vector2i -> kind index.
+
+	@return: The memoized site table. At most one entry per LANDMARKS kind, at most
+	         one kind per chunk. Read-only to callers — it is the cache itself, not
+	         a copy, because it is asked once per chunk generated.
+
+	Pure in `run_seed` (and in the road centreline, which is itself pure in
+	run_seed), so every peer in a room and every regeneration of the same run agree
+	for free — the same argument the old per-chunk roll made, one level up. Built
+	lazily on the first ask and dropped by new_run() beside the station cache it is
+	derived from; see the MUSEUM MILE banner for the design.
+	"""
+	if _landmark_sites_built:
+		return _landmark_sites_cache
+	_landmark_sites_cache = _build_landmark_sites()
+	_landmark_sites_built = true
+	return _landmark_sites_cache
+
+
+func landmark_site(kind: int) -> Vector2i:
+	"""
+	Where kind `kind` stands this run, as CHUNK coordinates.
+
+	@param kind: Index into LandmarkBuilders.LANDMARKS.
+	@return: The kind's chunk, or LANDMARK_SITE_NONE when every attempt was
+	         rejected and this run simply has no such place. Callers must test.
+
+	The forward direction of `landmark_sites()`, and the one a future minimap mark
+	for an UNVISITED landmark would read: it answers for a chunk that has never
+	streamed in. Linear in the table (48 entries), which is fine for a UI ask and
+	is why the SPAWNER uses the reverse lookup instead.
+	"""
+	var sites: Dictionary = landmark_sites()
+	for chunk: Vector2i in sites:
+		if int(sites[chunk]) == kind:
+			return chunk
+	return LANDMARK_SITE_NONE
+
+
+func _build_landmark_sites() -> Dictionary:
+	"""
+	Choose one site per LANDMARKS kind. Called once per run by landmark_sites().
+
+	@return: chunk Vector2i -> kind index.
+
+	THE MILE AND THE ANNULUS. The corridor is the road centreline from STATION 0
+	(the spawn, where the road is defined to begin) to the terminal station T,
+	which is every metre of road a run's consumers acknowledge. It is divided into
+	slots LANDMARK_MILE_SPACING
+	apart; kinds 0..slots-1 take one slot each, and every remaining kind takes a
+	station drawn uniformly from the same span with a 0.5-2.5 km lateral offset
+	instead of a 60-120 m one. There is no third case: the mile and the annulus
+	differ ONLY in the offset band and in how the station is picked.
+
+	A SLOT IS METRES OF X, NOT A COUNT OF STATIONS, and that is not a nicety. The
+	road CURVES, so a station advances `_road_spacing() * cos(heading)` of X and
+	not the full 6 m — measured 4.0 m over the shipped corridor. Counting stations
+	per slot therefore packs the mile ~1.5x denser than LANDMARK_MILE_SPACING says,
+	and does it differently on every seed (the same 1450 m spans a different number
+	of stations in every world). So a slot's target X is arithmetic and the STATION
+	is looked up from it, through the same binary search every other road consumer
+	uses.
+
+	ONE HASH PER ATTEMPT, and it carries everything. `hash(Vector3i(...))` is folded
+	into three independent fields — 12 bits of along-slot jitter, 12 bits of
+	lateral offset, one bit of side — so a rejected attempt re-hashes with a new
+	`attempt` and moves the whole site rather than nudging one axis. That is the
+	bead's "deterministic re-hash with a bounded attempt count, never a chunk draw".
+
+	SIDES ALTERNATE BY KIND PARITY on the mile (walking the trail should not be
+	48 detours to the left) and are hashed in the annulus, where there is no walk
+	order to alternate along.
+
+	A kind whose LANDMARK_SITE_TRIES attempts are all rejected has NO SITE this
+	run. That is the honest degrade: the alternative is relaxing a rule that exists
+	because the HQ, the city, the spawn bubble and the river are places a monument
+	must not stand in.
+
+	AND THE CORRIDOR STOPS AT THE SPAWN RATHER THAN REACHING BACK TO THE HQ, which
+	is a CONSTRAINT and not a preference. This table is global and pre-computed, so
+	anything it reads is read for the WHOLE world — it cannot take the post-draw
+	skip every per-chunk rejection in this file takes. `tower_site_selfcheck`
+	check 5 is what says so out loud: it moves the tower and demands that a chunk
+	the disc does not reach be byte-identical, and a corridor whose west end was
+	`tower_site().x` moved all 48 sites when the tower moved. Station 0 is the
+	road's own origin and depends on nothing. The 400 m of road west of the spawn
+	is the HQ's approach and belongs to the building, not to the museum.
+	"""
+	var sites: Dictionary = {}
+	var kinds: int = LandmarkBuilders.LANDMARKS.size()
+
+	# The corridor, in station indices: station 0 (the spawn, where the road is
+	# DEFINED to begin) to the terminal station T. _road_extend_to_x is the uncapped
+	# station cache (see _road_terminal_k's docstring for why the CONSUMERS cap and
+	# it does not); T is the consumer cap and this is consumer number five.
+	var mile_x_min: float = 0.0
+	_road_extend_to_x(mile_x_min, ROAD_TERMINAL_X)
+	var k_first: int = _road_first_k_at_or_after_x(mile_x_min)
+	var k_last: int = _road_terminal_k()
+	var span: int = maxi(1, k_last - k_first)
+	# The corridor in METRES of X (see the docstring for why not in stations), and
+	# how many LANDMARK_MILE_SPACING slots fit in it.
+	var corridor: float = maxf(1.0, _road_station(k_last).center.x - mile_x_min)
+	var mile_slots: int = clampi(int(corridor / LANDMARK_MILE_SPACING), 0, kinds)
+
+	for kind in kinds:
+		for attempt in LANDMARK_SITE_TRIES:
+			var h: int = hash(Vector3i(
+				kind * LANDMARK_HASH_PRIME_X,
+				attempt * LANDMARK_HASH_PRIME_Y,
+				run_seed ^ LANDMARK_SITE_SALT))
+			# Three independent fields off one hash. Mask AFTER the shift: hash()
+			# may return a negative and `>>` on one is arithmetic.
+			var u_along: float = float(h & 0xFFF) / 4096.0
+			var u_lateral: float = float((h >> 12) & 0xFFF) / 4096.0
+			var station: int
+			var lateral: float
+			var side: float
+			if kind < mile_slots:
+				# MILE — an evenly spaced slot, jittered inside its own slot so two
+				# runs do not stand their monuments on the same metre marks.
+				var target_x: float = mile_x_min + (float(kind) + u_along) * LANDMARK_MILE_SPACING
+				station = _road_first_k_at_or_after_x(target_x)
+				lateral = lerpf(LANDMARK_MILE_LATERAL_MIN, LANDMARK_MILE_LATERAL_MAX, u_lateral)
+				side = 1.0 if kind % 2 == 0 else -1.0
+			else:
+				# ANNULUS — anywhere along the same corridor, far off it.
+				station = k_first + int(u_along * float(span))
+				lateral = lerpf(LANDMARK_FIELD_LATERAL_MIN, LANDMARK_FIELD_LATERAL_MAX, u_lateral)
+				side = 1.0 if ((h >> 24) & 1) == 0 else -1.0
+			station = clampi(station, k_first, k_last)
+			var st: Dictionary = _road_station(station)
+			var heading: float = st.heading
+			# Same perp construction as _road_coins_at / _boss_at (XZ plane;
+			# Vector2.x is world X, Vector2.y is world Z).
+			var perp := Vector2(-sin(heading), cos(heading))
+			var spot: Vector2 = st.center + perp * (side * lateral)
+			var chunk: Vector2i = world_to_chunk(Vector3(spot.x, 0.0, spot.y))
+			if _landmark_site_ok(chunk, sites):
+				sites[chunk] = kind
+				break
+
+	return sites
+
+
+func _landmark_site_ok(chunk: Vector2i, taken: Dictionary) -> bool:
+	"""
+	May kind K stand in this chunk? Asked of a CHUNK, not of a spot, because the
+	site table is chunk-keyed and the exact metre inside it is still chosen by
+	spawn_landmark_in_chunk's candidate loop against the finished `obstacles`.
+
+	@param chunk: Candidate chunk coordinates.
+	@param taken: Sites accepted so far this build.
+	@return: false when the chunk is somebody else's, the HQ's, the city's, the
+	         spawn bubble's or a river's.
+
+	THE PAIRWISE SPACING RULE IS "DISTINCT CHUNKS", AND THAT IS ARITHMETIC.
+	The bead asks for >= 2x the largest declared radius (2 * LANDMARK_RADIUS = 19 m)
+	between two sites. A candidate stays LANDMARK_EDGE_MARGIN (12) inside its own
+	chunk, so its centre is at most chunk_size/2 - 12 = 13 m from the chunk centre.
+	Two landmarks in edge-adjacent chunks are therefore at least 50 - 13 - 13 = 24 m
+	apart, and diagonally at least 70.7 - 2*13*sqrt(2) = 33.9 m. Both clear 19, so
+	one Dictionary lookup buys the whole rule and there is no distance loop here.
+	`landmark_sites_selfcheck` asserts the CONSEQUENCE (>= 19 m, measured on real
+	built centres) rather than this argument.
+
+	THE WHOLE CHUNK IS TESTED against the HQ and the spawn bubble, not its centre:
+	a chunk half inside the disc would put its candidate loop to work looking for
+	the one corner that clears it, and a monument crowding the HQ gate is the thing
+	tower_excludes() exists to prevent. `chunk_size` as the radius is the diagonal
+	half-width rounded up, i.e. deliberately generous.
+
+	THE HQ CLAUSE CANNOT FIRE TODAY and it stays anyway. No station of the museum
+	mile's corridor is west of the spawn and no annulus site is within 500 m of the
+	centreline, so nothing this table proposes reaches a disc 400 m west on the road
+	— which is exactly what keeps the table's global pre-computation compatible with
+	`tower_site_selfcheck` check 5 (see `_build_landmark_sites`). It is one line and
+	it is the project's single home for tower clearance, which every sibling spawner
+	also calls; if a future corridor DOES reach the HQ, this is where the rejection
+	belongs, and that check is where the consequence will be argued out.
+
+	THE RIVER TEST is at the chunk CENTRE only, and it is a cheap pre-reject rather
+	than the rule: `_biome_spot_ok` still refuses a wet candidate metre by metre in
+	the spawner. Rejecting the chunk here is what stops a kind spending every one of
+	its LANDMARK_PLACE_TRIES in a band it can never clear and vanishing from the run.
+	"""
+	if taken.has(chunk):
+		return false
+	var world: Vector3 = chunk_to_world(chunk)
+	# Budapest owns its ground: the city's landmarks are the plan's 22 authored
+	# slots, and a rolled Eiffel beside the authored one is the bug DEC-9 named.
+	if in_budapest(world.x, world.z):
+		return false
+	if tower_excludes(world.x, world.z, chunk_size):
+		return false
+	if Vector2(world.x, world.z).length() < SPAWN_SAFE_RADIUS + chunk_size:
+		return false
+	if is_river_at(world):
+		return false
+	return true
+
+
 func _landmark_at(chunk_pos: Vector2i) -> Dictionary:
 	"""
-	Deterministic geo-landmark placement for one chunk — _chest_at / _camp_at /
-	_artifact_at for famous places, same shape, same guarantees. Pure function of
-	chunk coords + run_seed via the independent LANDMARK_SALT hash stream, so it
-	consumes NO draw from the shared chunk RNG: every block, crocodile and coin the
-	generator produced before landmarks existed is still exactly where it was in
-	every chunk that does not build one.
+	THE REVERSE LOOKUP: does any kind's site land in this chunk?
 
 	@param chunk_pos: Chunk coordinates to decide for.
-	@return: {} when this chunk rolled no landmark (the overwhelming majority);
+	@return: {} when no kind stands here (all but ~48 chunks in the world);
 	         otherwise { "seed": int, "kind": int } — the seed for the landmark's
 	         private RNG (spawn_landmark_in_chunk uses it for placement, geometry
 	         and the coin ring) and the index into LANDMARKS of WHICH famous place
 	         this is.
 
-	WHY THERE IS NO CANDIDATE LOOP HERE. This is the landmine that BOTH artifacts
-	and camps had to be dug out of, and it is worth restating rather than cross-
-	referencing, because the next person to add a landmark family member will reach
-	for it again: when this function runs, THE CHUNK HAS NO GEOMETRY YET. The only
-	tests available are river and road, and neither rejects the thing that actually
-	matters — overlap with the chunk's ~12 scattered blocks, its feature structure,
-	its biome trees and massifs, its artifact and its camp. Camps measured 11
-	rejections in 121 chunks from river+road alone, i.e. ~91% of rolled camps
-	"survived" a test that checked nothing, and then ~9% survived once the real
-	test was applied where it belongs — landing camps roughly 10x rarer than the
-	constant said, with no error anywhere. So the LANDMARK_PLACE_TRIES loop lives
-	in spawn_landmark_in_chunk, where `obstacles` exists, and this function does
-	exactly two things: roll whether, and roll which.
+	Same signature and same contract as `_chest_at` / `_camp_at` / `_artifact_at`,
+	and still consumes NO draw from the shared chunk RNG — but it is no longer a
+	rarity roll at all. It is one Dictionary lookup in `landmark_sites()`, which is
+	pure in run_seed and built once per run. See the MUSEUM MILE banner for why the
+	question was inverted and why `scarcity_at` is no longer asked here.
+
+	THE PRIVATE SEED IS KEYED ON THE KIND, not on the chunk. The kind is unique now,
+	so (kind, run_seed) identifies the landmark exactly as (chunk, run_seed) used
+	to — and the builders' stream touches COLOUR ONLY plus the in-chunk candidate
+	spot, so this is the same "a private stream per landmark" contract it always
+	was. Keying it on the chunk instead would work too and would be strictly worse:
+	the palette would then depend on where the site happened to land.
+
+	WHY THERE IS STILL NO CANDIDATE LOOP HERE. This is the landmine that BOTH
+	artifacts and camps had to be dug out of, and it is worth restating rather than
+	cross-referencing, because the next person to add a landmark family member will
+	reach for it again: when this function runs, THE CHUNK HAS NO GEOMETRY YET. The
+	only tests available are river and road, and neither rejects the thing that
+	actually matters — overlap with the chunk's ~12 scattered blocks, its feature
+	structure, its biome trees and massifs, its artifact and its camp. So the
+	LANDMARK_PLACE_TRIES loop lives in spawn_landmark_in_chunk, where `obstacles`
+	exists, and this function does exactly one thing: answer whether.
 
 	EDUCATIONAL NOTE — the determinism contract:
 	- Within a run the same chunk yields the IDENTICAL landmark (same place, same
 	  spot, same stone jitter, same coin ring) however often it unloads and
-	  regenerates: the RNG is seeded purely from chunk coords + run_seed, and every
-	  draw downstream comes off that one stream in a fixed order.
-	- Across runs, new_run() re-rolls run_seed, so a new world puts different
-	  places in different chunks.
+	  regenerates: the site table is pure in run_seed, and every draw downstream
+	  comes off one stream seeded from the kind in a fixed order.
+	- Across runs, new_run() re-rolls run_seed, so a new world puts the same 48
+	  places somewhere else entirely (and the road they are strung along moves too).
 	- MULTIPLAYER NEEDS ZERO WORK because of exactly that: run_seed is already
 	  shared by every peer in a room, so every peer generates the same landmark in
 	  the same chunk by construction. No packet, no claim, no sync.
@@ -8109,41 +8477,20 @@ func _landmark_at(chunk_pos: Vector2i) -> Dictionary:
 	  field (pure in world position + run_seed) and the overlap test reads the
 	  chunk's own obstacle list (pure in chunk coords + run_seed).
 	"""
-	var rng := RandomNumberGenerator.new()
-	# Own coordinate primes AND own salt — see the LANDMARK_HASH_PRIME_* constants
-	# for why they differ from every other stream in this file.
-	rng.seed = hash(Vector3i(chunk_pos.x * LANDMARK_HASH_PRIME_X, chunk_pos.y * LANDMARK_HASH_PRIME_Y, run_seed ^ LANDMARK_SALT))
-
-	# The rarity roll — almost every chunk bails here, and this is the ONLY draw
-	# taken from the stream at this point. The rest happen in
-	# spawn_landmark_in_chunk off an RNG re-seeded from `seed`, so the two together
-	# stay one fixed sequence per chunk.
-	# Scarcity thins to plain terrain at 4 km: compare against chance * k (post-draw, no new draw).
-	var k_lm := scarcity_at(chunk_to_world(chunk_pos))
-	if rng.randf() >= LANDMARK_CHANCE * k_lm:
+	var sites: Dictionary = landmark_sites()
+	if not sites.has(chunk_pos):
 		return {}
-
-	# WHICH place. Drawn here rather than in the spawner so the kind is decided by
-	# the same pure function as the rarity: a chunk's landmark identity is known
-	# without building anything, which is what lets the measurement sweep report a
-	# per-kind distribution over a field it never renders.
-	#
-	# UNIFORM OVER THE WHOLE REGISTRY, and deliberately expressed as
-	# `LandmarkBuilders.LANDMARKS.size()` rather than a number: appending places to
-	# the registry widens this draw for free and keeps every kind equally likely,
-	# which is the only property the rarity story rests on (the BUILT rate is set by
-	# LANDMARK_CHANCE and the candidate loop, and is completely independent of how
-	# many kinds there are — adding ten places makes each one rarer without making
-	# landmarks as a whole any rarer).
-	var kind := rng.randi_range(0, LandmarkBuilders.LANDMARKS.size() - 1)
-
-	return { "seed": rng.randi(), "kind": kind }
+	var kind: int = int(sites[chunk_pos])
+	return {
+		"seed": hash(Vector3i(kind, LANDMARK_SALT, run_seed)),
+		"kind": kind,
+	}
 
 
 
 func spawn_landmark_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
-	Spawn this chunk's geo landmark, if _landmark_at says it has one, plus its coin
+	Spawn this chunk's geo landmark, if a kind's site lands here, plus its coin
 	ring and its marker node. Called from create_chunk AFTER spawn_camp_in_chunk and
 	BEFORE spawn_chest_in_chunk (and therefore before _build_block_multimesh + the
 	block_body attach), so every box the builder emits joins the chunk's SINGLE
@@ -8166,10 +8513,15 @@ func spawn_landmark_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 	@param block_batch / block_body: The chunk's visual batch + collision body,
 	                                 threaded through to create_box.
 	"""
-	# BUDAPEST — no PROCEDURAL geo landmarks in the city (DEC-9). The builders are
-	# the same ones the rect uses, but WHERE they stand is the plan's 22 slots and
-	# not a rarity roll — two Eiffel Towers, one authored and one rolled, in the
-	# same district. NOT tower_excludes(): per-system answers.
+	# BUDAPEST — no FIELD geo landmarks in the city (DEC-9). The builders are the
+	# same ones the rect uses, but WHERE they stand is the plan's 22 authored slots
+	# and not the museum mile — two Eiffel Towers, one authored and one sited, in
+	# the same district. NOT tower_excludes(): per-system answers.
+	#
+	# BELT AND BRACES SINCE THE MUSEUM MILE: `_landmark_site_ok` already refuses a
+	# chunk in the rect, so no site is ever here. It stays because this is the
+	# spawner's own statement of the city policy every sibling spawner also makes,
+	# and it costs one rectangle test on a path that already reads chunk_to_world.
 	var lm_center := chunk_to_world(chunk_pos)
 	if in_budapest(lm_center.x, lm_center.z):
 		return
@@ -8179,9 +8531,9 @@ func spawn_landmark_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 	if lm.is_empty():
 		return
 
-	# The landmark's OWN private RNG, seeded from _landmark_at's roll: it picks the
-	# spot AND feeds the builder AND draws the coin ring, so each consumes as many
-	# draws as it needs without the rarity roll (or any other stream) caring.
+	# The landmark's OWN private RNG, seeded off (kind, run_seed) by _landmark_at:
+	# it picks the spot AND feeds the builder AND draws the coin ring, so each
+	# consumes as many draws as it needs without any other stream caring.
 	var rng := RandomNumberGenerator.new()
 	rng.seed = lm.seed
 
@@ -8196,12 +8548,26 @@ func spawn_landmark_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 	# something you trip over on the trail; the overlap half is what keeps the
 	# silhouette readable.
 	#
-	# EVERY TRY FAILING MEANS NO LANDMARK — the same call artifacts and camps both
-	# make, and the right one here too: the Eiffel Tower sticking out of a mountain
-	# massif reads far worse than a chunk without one, and a higher LANDMARK_CHANCE
-	# reaches the same built rate. LANDMARK_RADIUS is handed over as "the widest this
-	# could be", because the shape's real radius is only known after its builder has
-	# run (the house rule every sibling spawner follows).
+	# EVERY TRY FAILING MEANS NO LANDMARK, and since the museum mile that means NO
+	# SUCH PLACE IN THIS WORLD rather than "one chunk in fifty went without" — the
+	# whole reason LANDMARK_PLACE_TRIES is 200 and not 4. It is still the right
+	# call: the Eiffel Tower sticking out of a mountain massif reads far worse than
+	# a world without an Eiffel Tower.
+	#
+	# THE RADIUS ASKED FOR IS THE ROW'S OWN, NOT LANDMARK_RADIUS, and that changed
+	# with the museum mile (bead godot-test1-bcf). The sibling spawners hand over
+	# "the widest this could be" because their shape is drawn from the same stream
+	# AFTER the spot is chosen, so its real width is genuinely unknown here — but a
+	# landmark's is DECLARED in its registry row, `landmark_selfcheck` asserts every
+	# builder fits inside it, and the kind is known before the loop starts. Asking
+	# for 9.5 m when the row says 4.2 was pure conservatism, and it stopped being
+	# free the moment a rejected chunk meant the Sagrada Familia is not in this
+	# world at all rather than "one chunk in fifty went without". LANDMARK_RADIUS
+	# stays the GLOBAL BOUND every inequality in the banner is derived from
+	# (the edge margin, the road clearance, the coin-ring pad) — this is the one
+	# place that wanted the specific number instead of the bound.
+	var entry: Dictionary = LandmarkBuilders.LANDMARKS[lm.kind]
+	var want_radius: float = minf(float(entry.radius), LANDMARK_RADIUS)
 	var local_x := 0.0
 	var local_z := 0.0
 	var placed := false
@@ -8210,7 +8576,7 @@ func spawn_landmark_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 		tries += 1
 		local_x = rng.randf_range(-half, half)
 		local_z = rng.randf_range(-half, half)
-		if _biome_spot_ok(chunk_center, local_x, local_z, LANDMARK_RADIUS, LANDMARK_ROAD_CLEARANCE, obstacles):
+		if _biome_spot_ok(chunk_center, local_x, local_z, want_radius, LANDMARK_ROAD_CLEARANCE, obstacles):
 			placed = true
 	if not placed:
 		return
@@ -8228,7 +8594,6 @@ func spawn_landmark_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 	# STATIC on LandmarkBuilders: they hold no state, they only need this terrain's
 	# create_box / _spawn_artifact_accent. Object.call() dispatches a GDScript
 	# static method exactly as it dispatched these when they were methods here.
-	var entry: Dictionary = LandmarkBuilders.LANDMARKS[lm.kind]
 	var footprint: Dictionary = _landmark_builders.call(entry.builder, self, center, rng, parent_chunk, block_batch, block_body)
 
 	# --- The reward: a small ring of ordinary coins round the base, and
@@ -8340,7 +8705,12 @@ func _oasis_at(chunk_pos: Vector2i) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(Vector3i(chunk_pos.x * 73856093, chunk_pos.y * 19349663, run_seed ^ OASIS_SALT))
 
-	if rng.randf() >= OASIS_CHANCE:
+	# Scarcity thins oases to plain terrain at 4 km — the artifact/camp/chest/
+	# landmark form: the SAME roll compared against chance * k, no new draw on this
+	# stream, so a desert near the centre keeps exactly the oases it always had.
+	# The whole oasis is one roll, which is why its palms, boulders and reeds need
+	# no k of their own.
+	if rng.randf() >= OASIS_CHANCE * scarcity_at(chunk_to_world(chunk_pos)):
 		return {}
 
 	return { "seed": rng.randi() }
@@ -8355,7 +8725,8 @@ func _dune_at(chunk_pos: Vector2i) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(Vector3i(chunk_pos.x * 73856093, chunk_pos.y * 19349663, run_seed ^ DUNE_SALT))
 
-	if rng.randf() >= DUNE_CHANCE:
+	# Scarcity, same form and same reason as _oasis_at above.
+	if rng.randf() >= DUNE_CHANCE * scarcity_at(chunk_to_world(chunk_pos)):
 		return {}
 
 	return { "seed": rng.randi() }
@@ -8510,8 +8881,6 @@ func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 	var count := rng.randi_range(CACTUS_MIN, CACTUS_MAX)
 	var chunk_pos_cactus := world_to_chunk(chunk_center)
 	var k_cactus := scarcity_at(chunk_center)
-	if k_cactus <= 0.0:
-		return
 
 	for _i in count:
 		var local_x := rng.randf_range(-half, half)
@@ -8530,6 +8899,14 @@ func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 		var width := rng.randf_range(CACTUS_WIDTH_MIN, CACTUS_WIDTH_MAX)
 		var segments := rng.randi_range(2, 3)
 		var yaw := rng.randf_range(0.0, TAU)
+		# Per-object scarcity, post-draw and after the three unconditional draws
+		# above — the forest's rule, for the forest's reason. Before bead
+		# `godot-test1-bn8` the desert read k only as the `k_cactus <= 0` bail
+		# above, so a desert kept EVERY cactus right up to the 4 km line and then
+		# lost the lot in one chunk: the "one rule for all" the owner asked for is
+		# a gradient here, not a cliff.
+		if not _scarcity_keep(chunk_pos_cactus, _i, k_cactus):
+			continue
 		var top_y := 0.0
 
 		for _s in segments:
@@ -8793,8 +9170,6 @@ func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 	var count := rng.randi_range(FOREST_TREES_MIN, FOREST_TREES_MAX)
 	var chunk_pos_forest := world_to_chunk(chunk_center)
 	var k_forest := scarcity_at(chunk_center)
-	if k_forest <= 0.0:
-		return
 
 	for _i in count:
 		var local_x := rng.randf_range(-half, half)
@@ -8819,8 +9194,7 @@ func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 		# same green); `lean` is the trunk's tilt.
 		var leaf_t := rng.randf()
 		var lean := rng.randf_range(-TREE_TRUNK_TILT_MAX, TREE_TRUNK_TILT_MAX)
-		var scarcity_roll := float(hash(Vector3i(chunk_pos_forest.x * 96174811, chunk_pos_forest.y * 18266587, run_seed ^ SCARCITY_SALT ^ _i)) % 1000000) / 1000000.0
-		if scarcity_roll >= k_forest:
+		if not _scarcity_keep(chunk_pos_forest, _i, k_forest):
 			continue
 
 		# Trunk: solid, so you bump into it and crocodiles' raycasts see it.
@@ -8924,10 +9298,18 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 	"""
 	var half := chunk_size / 2.0 - MOUNTAIN_EDGE_MARGIN
 	var count := rng.randi_range(MOUNTAIN_MASSIF_MIN, MOUNTAIN_MASSIF_MAX)
-	var chunk_pos_mtn := world_to_chunk(chunk_center)
-	var k_mtn := scarcity_at(chunk_center)
-	if k_mtn <= 0.0:
-		return
+
+	# MASSIFS ARE EXEMPT FROM THE SCARCITY GRADIENT — owner ruling 2026-09-04, bead
+	# `godot-test1-bn8`, and the ONE builder in this file with no k in it at all.
+	# Everything else the world draws is decoration and thins to plain terrain at
+	# 4 km; a massif is not decoration, it is the impassable wall the flat-world
+	# invariant substitutes for raised terrain (see the docstring above). Thinned,
+	# a mountain band 4 km out is a plains band painted grey, and the "you walk
+	# AROUND a mountain" contract quietly stops existing exactly where the player
+	# is least likely to report it. This used to read `k_mtn = scarcity_at(...)`
+	# plus a per-massif post-draw roll; both are deliberately gone, and
+	# `scarcity_selfcheck` asserts the far mountain band still builds stone while
+	# every other family in the same chunks builds none.
 
 	# Massifs are NOT checked against the whole `obstacles` list. A massif's
 	# footprint radius is ~9.7 m, so demanding clearance from all dozen scattered
@@ -8988,12 +9370,7 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 
 		var height := rng.randf_range(MOUNTAIN_HEIGHT_MIN, MOUNTAIN_HEIGHT_MAX)
 		var base_w := rng.randf_range(MOUNTAIN_BASE_WIDTH_MIN, MOUNTAIN_BASE_WIDTH_MAX)
-		# Per-object scarcity: own hash stream, no draw.
-		# Must be the last continue before geometry is emitted, after whatever draws master makes before that point.
-		# At k=1 nothing is skipped and the stream is master's; at k<1 a thinned object's emit-time draws are skipped, which shifts the rest of THIS chunk — deterministic (k is pure in position) and intended.
-		var scarcity_roll_mtn := float(hash(Vector3i(chunk_pos_mtn.x * 96174811, chunk_pos_mtn.y * 18266587, run_seed ^ SCARCITY_SALT ^ _i)) % 1000000) / 1000000.0
-		if scarcity_roll_mtn >= k_mtn:
-			continue
+		# (No scarcity roll here — massifs are exempt; see the note above `avoid`.)
 		# The layer count falls straight out of the height: every step must be too
 		# tall to jump onto. Without that rule an 8 m massif split into 7 layers is
 		# a 1.14 m staircase with a 1.7 m ledge at each level — a walkable ziggurat,
@@ -9073,8 +9450,6 @@ func _spawn_city_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 	var half := chunk_size / 2.0 - CITY_HOUSE_RADIUS_MAX
 	var chunk_pos_city := world_to_chunk(chunk_center)
 	var k_city := scarcity_at(chunk_center)
-	if k_city <= 0.0:
-		return
 
 	# ---- HOUSES ------------------------------------------------------------
 	for _i in rng.randi_range(CITY_HOUSE_TRIES_MIN, CITY_HOUSE_TRIES_MAX):
@@ -9089,8 +9464,7 @@ func _spawn_city_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 		var roof := CITY_ROOF_TILE if rng.randf() < 0.6 else CITY_ROOF_SLATE
 		var windows := rng.randi_range(1, 2)
 		# Per-object scarcity: own hash stream, post-draw skip so k=1 stays identical.
-		var scarcity_roll_house := float(hash(Vector3i(chunk_pos_city.x * 96174811, chunk_pos_city.y * 18266587, run_seed ^ SCARCITY_SALT ^ _i)) % 1000000) / 1000000.0
-		if scarcity_roll_house >= k_city:
+		if not _scarcity_keep(chunk_pos_city, _i, k_city):
 			continue
 		# The snap can push a candidate back outside the margin, so clamp rather
 		# than redraw — a redraw would be a draw, and every rejection in this file
@@ -9167,8 +9541,7 @@ func _spawn_city_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 		var sw := rng.randf_range(CITY_STALL_WIDTH_MIN, CITY_STALL_WIDTH_MAX)
 		var canvas := CITY_ROOF_TILE if rng.randf() < 0.5 else CITY_ROOF_SLATE
 		# Per-object scarcity for stalls (offset 1000 to decorrelate from houses).
-		var scarcity_roll_stall := float(hash(Vector3i(chunk_pos_city.x * 96174811, chunk_pos_city.y * 18266587, run_seed ^ SCARCITY_SALT ^ (_i + 1000))) % 1000000) / 1000000.0
-		if scarcity_roll_stall >= k_city:
+		if not _scarcity_keep(chunk_pos_city, _i + 1000, k_city):
 			continue
 		sx = clampf(sx, -half, half)
 		sz = clampf(sz, -half, half)
@@ -9216,8 +9589,7 @@ func _spawn_city_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 		var lh := rng.randf_range(CITY_LIGHT_HEIGHT_MIN, CITY_LIGHT_HEIGHT_MAX)
 		var is_signal := rng.randf() < CITY_SIGNAL_CHANCE
 		# Per-object scarcity for lights (offset 2000).
-		var scarcity_roll_light := float(hash(Vector3i(chunk_pos_city.x * 96174811, chunk_pos_city.y * 18266587, run_seed ^ SCARCITY_SALT ^ (_i + 2000))) % 1000000) / 1000000.0
-		if scarcity_roll_light >= k_city:
+		if not _scarcity_keep(chunk_pos_city, _i + 2000, k_city):
 			continue
 		lx = clampf(lx, -half, half)
 		lz = clampf(lz, -half, half)
@@ -9327,8 +9699,6 @@ func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 	var tree_half := chunk_size / 2.0 - (FROZEN_TREE_TRUNK_WIDTH_MAX * 0.71 + branch_reach)
 	var chunk_pos_snow := world_to_chunk(chunk_center)
 	var k_snow := scarcity_at(chunk_center)
-	if k_snow <= 0.0:
-		return
 	for _i in rng.randi_range(FROZEN_TREE_MIN, FROZEN_TREE_MAX):
 		var local_x := rng.randf_range(-tree_half, tree_half)
 		var local_z := rng.randf_range(-tree_half, tree_half)
@@ -9356,10 +9726,7 @@ func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 		# toward local +Z, whose world direction under this yaw is (sin, 0, cos).
 		var lean_dir_snow := Vector3(sin(yaw), 0.0, cos(yaw)) * sin(lean_snow)
 		# Per-object scarcity for snow trees: own hash stream, no draw.
-		# Must be the last continue before geometry is emitted, after whatever draws master makes before that point.
-		# At k=1 nothing is skipped and the stream is master's; at k<1 a thinned object's emit-time draws are skipped, which shifts the rest of THIS chunk — deterministic (k is pure in position) and intended.
-		var scarcity_roll_snowt := float(hash(Vector3i(chunk_pos_snow.x * 96174811, chunk_pos_snow.y * 18266587, run_seed ^ SCARCITY_SALT ^ _i)) % 1000000) / 1000000.0
-		if scarcity_roll_snowt >= k_snow:
+		if not _scarcity_keep(chunk_pos_snow, _i, k_snow):
 			continue
 
 		# Trunk: solid, so you bump into it and the crocodiles' raycasts see it.
@@ -9414,6 +9781,12 @@ func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 		if not placed:
 			# Every try failing means NO skeleton. A mammoth shoved through a stand
 			# of trees reads worse than a chunk without one — the camp's rule.
+			continue
+		# Per-object scarcity, post-draw (every placement try above has drawn) and
+		# immediately before the ~17 draws _snow_mammoth spends. Offset 1000 so a
+		# skeleton and the tree of the same index above do not share a roll — the
+		# city's houses/stalls/lights precedent.
+		if not _scarcity_keep(chunk_pos_snow, _i + 1000, k_snow):
 			continue
 
 		var top := _snow_mammoth(Vector3(mx, 0.0, mz), rng, block_batch, block_body)
@@ -12507,6 +12880,11 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	_road_terminal_k_cache = ROAD_TERMINAL_K_UNSET
 	# ...and the approach coin line with it: it is resampled off that station.
 	_approach_coin_line_cache = PackedVector2Array()
+	# ...and the museum mile: every site is a station index on the centreline
+	# above, so a table kept across a re-seed would string this run's landmarks
+	# along the LAST run's road (see the MUSEUM MILE banner).
+	_landmark_sites_cache = {}
+	_landmark_sites_built = false
 	# ...and the spike's coarse road polyline, which is a window onto the same
 	# centreline. update_chunks in step 4 below rebuilds it for the new world.
 	_alt_road_segs = PackedVector4Array()
