@@ -167,13 +167,22 @@ jobs:
   # Globbing means a new scripts/*_selfcheck.gd is gated the moment it lands.
   #
   # SHARDED, because sequentially the suite took ~8 minutes and it is the gate
-  # every push waits on. The partition is computed FROM THE GLOB AT RUNTIME —
-  # every Nth file of the shell's sorted glob — never from a list of check names
-  # in this file, for exactly the reason above: a list would go stale silently
-  # the first time somebody adds a check, which is the failure mode this repo
-  # keeps hitting. Nothing here knows how many shards there are either:
+  # every push waits on. The partition is computed FROM THE GLOB AT RUNTIME by
+  # `scripts/selfcheck_shards.sh` — never from a list of check names in this
+  # file, for exactly the reason above: a list would go stale silently the first
+  # time somebody adds a check, which is the failure mode this repo keeps
+  # hitting. Nothing here knows how many shards there are either:
   # `strategy.job-index` / `strategy.job-total` are GitHub's own count of the
   # matrix, so the matrix list is the only edit a re-shard needs.
+  #
+  # It used to be "every Nth file", which is POSITIONAL and therefore reshuffles
+  # whenever a file is added or renamed: PR #233 split two checks in two and
+  # landed boss (3m01) and tower_interior (1m30) in one bin, taking the gate from
+  # 4m30 to 6m00 while the other four shards sat idle at ~1m20. The script packs
+  # by measured cost instead (weights in `scripts/selfcheck_durations.json`, an
+  # unmeasured name treated as the heaviest); read its header for the packing and
+  # for how to refresh the table. The glob is still the only source of truth for
+  # WHAT runs — the table only says how heavy each name is.
   #
   # The fixed setup (checkout, fonts, import) repeats per shard by design — the
   # partition is dynamic, so any shard could draw locale_selfcheck or
@@ -254,13 +263,12 @@ jobs:
       # state of the others — the whole point of running them is knowing which
       # contracts hold. (The matrix carries the same rule; see `fail-fast` above.)
       #
-      # THE PARTITION: every Nth file of the glob, N and the offset coming from
-      # GitHub's own matrix count. It is a pure function of the glob, so a check
-      # added to scripts/ is covered the day it lands with no edit here. The
-      # shards must agree on the glob's ORDER — they do, being the same image on
-      # the same checkout — and if they ever did not, the aggregator's union
-      # check below is what catches it rather than a check silently running twice
-      # or never.
+      # THE PARTITION is `scripts/selfcheck_shards.sh`, which is a pure function
+      # of the glob plus a committed weights table, so a check added to scripts/
+      # is covered the day it lands with no edit here. The shards must agree on
+      # its answer — they do, being the same image on the same checkout — and if
+      # they ever did not, the aggregator's union check below is what catches it
+      # rather than a check silently running twice or never.
       #
       # PLAIN POSIX sh, deliberately — no arrays, no `shopt`, no `<<<`. The
       # godot-ci image ships no bash, so Actions falls back to `sh -e {0}` and a
@@ -275,17 +283,15 @@ jobs:
         run: |
           command -v godot >/dev/null || { echo "::error::godot is not on PATH — no self-check would have run"; exit 1; }
           : > "ran-${SHARD}.txt"
-          total=0
+          total=$(sh scripts/selfcheck_shards.sh --count)
           ran=0
           failed=""
-          for check in scripts/*_selfcheck.gd; do
-            [ -e "$check" ] || { echo "::error::scripts/*_selfcheck.gd matched nothing — the suite would have silently passed"; exit 1; }
-            total=$((total + 1))
-            [ $(( (total - 1) % SHARDS )) -eq "$SHARD" ] || continue
+          for check in $(sh scripts/selfcheck_shards.sh "$SHARD" "$SHARDS"); do
             ran=$((ran + 1))
             name=$(basename "$check" .gd)
             echo "$name" >> "ran-${SHARD}.txt"
             echo "::group::${name}"
+            began=$(date +%s)
             if out=$(godot --headless --path . --script "res://${check}" 2>&1); then rc=0; else rc=$?; fi
             printf '%s\n' "$out"
             echo "::endgroup::"
@@ -296,13 +302,20 @@ jobs:
               why="${why}${why:+; }logged SCRIPT ERROR — a runtime error aborts that call and skips every assertion after it, and Godot still exits 0"
             fi
             if [ -z "$why" ]; then
-              echo "OK   ${name}"
+              # The seconds are how selfcheck_durations.json gets refreshed —
+              # see the script's header. Nothing reads them automatically.
+              echo "OK   ${name}  ($(( $(date +%s) - began ))s)"
             else
               echo "::error::${name} FAILED — ${why} (see the ${name} log group above)"
               failed="${failed} ${name}"
             fi
           done
           echo "-- shard ${SHARD}: ran ${ran} of the glob's ${total} self-checks --"
+          # A command substitution in a `for` list is NOT checked by `set -e`, so
+          # a partition script that died would silently run nothing and pass.
+          # (True only while there are more checks than shards, which there are
+          # by a factor of eight.)
+          [ "$ran" -gt 0 ] || { echo "::error::this shard ran no self-checks at all"; exit 1; }
           [ -z "$failed" ] || { echo "::error::self-checks failed:${failed}"; exit 1; }
           echo "shard ${SHARD}: all ${ran} self-checks passed"
 
@@ -356,6 +369,13 @@ jobs:
           pattern: selfcheck-ran-*
           path: ran
           merge-multiple: true
+
+      # The partition script's own check, and the only place it CAN run: it
+      # simulates the packing over the real glob plus a dummy file, which no
+      # live shard can do, and it fails a weights entry naming a check that no
+      # longer exists. Needs no godot and no import — a second of shell.
+      - name: 🧮 The partition script agrees with itself
+        run: sh scripts/selfcheck_shards.sh --selftest
 
       - name: 🧮 The union of the shards must be exactly the glob
         run: |
