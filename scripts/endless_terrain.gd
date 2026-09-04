@@ -1832,10 +1832,14 @@ const ALT_AMP_FOREST: float = 6.0
 const ALT_AMP_MOUNTAIN: float = 22.0
 const ALT_AMP_SNOW: float = 16.0
 
-## The tallest rung of the ladder above, DERIVED so retuning any amplitude carries
-## the cull volume with it. It is not a shader uniform — nothing in ground.gdshader
-## wants it — it is only what _ensure_chunk_ground sizes a displaced chunk's
-## custom_aabb from, and the field is a SIGNED half-range so the box spans +/- it.
+## The tallest rung of the ladder above, SPELLED from it rather than computed —
+## GDScript cannot call maxf() in a const. It is not a shader uniform (nothing in
+## ground.gdshader wants it); it is only what _ensure_chunk_ground sizes a
+## displaced chunk's custom_aabb from, and the field is a SIGNED half-range so the
+## box spans +/- it. Because the spelling is manual, altitude_selfcheck check 5
+## asserts it really is the maximum over all six: a retune that raised
+## ALT_AMP_SNOW past mountain would otherwise leave every cull volume in the world
+## short while this line still read as "the tallest rung".
 const ALT_AMP_MAX: float = ALT_AMP_MOUNTAIN
 
 ## THE FOUR FORCED-FLAT ZONES' SKIRTS (see _alt_flat_mask below). Each zone is a
@@ -3680,6 +3684,8 @@ func _alt_road_seg_uniform() -> PackedVector4Array:
 	"""
 	var segs := PackedVector4Array()
 	segs.resize(ALT_ROAD_SEG_MAX)
+	assert(_alt_road_segs.size() <= ALT_ROAD_SEG_MAX,
+			"_alt_road_segs holds more segments than the GLSL array can carry — the push clamps and the GPU flattens a shorter corridor than the collision heightmap does")
 	for i in mini(_alt_road_segs.size(), ALT_ROAD_SEG_MAX):
 		segs[i] = _alt_road_segs[i]
 	return segs
@@ -9849,9 +9855,22 @@ func _alt_road_segments(center_x: float) -> PackedVector4Array:
 
 	CAP 5 OF THE ROAD'S CONSUMERS (bead godot-test1-8gw.3, joining road coins, road
 	clearance, road bosses and the minimap line): the walk stops at
-	_road_terminal_k(). East of T there is no road to flatten a corridor around,
-	and the approach corridor that carries the player on from there lies inside
-	Budapest's rect, which clause 1 of the mask has already flattened outright.
+	_road_terminal_k(). East of T there is no road to flatten a corridor around.
+
+	ponytail: and there is a GAP between T and the city, which this cap creates and
+	nothing else closes. T is at or west of ROAD_TERMINAL_X (1450) and the rect
+	starts at BUDAPEST_MIN.x (1600), so the 150 m of authored approach corridor
+	(BudapestPlan.road_approach_point, the seam spawn_approach_coins_in_chunk lays
+	its coin trail along at y = 0) is outside BOTH flat zones for part of its run:
+	clause 1's city skirt is only ALT_CITY_SKIRT (120 m) wide, and clause 4's
+	polyline releases ALT_ROAD_FLAT_HALF + ALT_ROAD_SKIRT past the last station.
+	Around x = 1500-1520 the product of the two leaves ~70-85 % of the local
+	amplitude standing, and those coins would float or bury with the flag on.
+	KNOWN SPIKE CEILING, in the report's migration list: the fix is to walk the
+	approach centreline into this same polyline (it is a pure function and needs no
+	new machinery), which costs ~3 more segments and therefore ALT_ROAD_SEG_MAX in
+	both languages. Not done here because the spike ships flag-off and the corridor
+	is only the control it measures the field against.
 
 	The cap is on this CONSUMER and not on _road_extend_to_x — that function's
 	forward loop hangs if the cache stops growing (see _road_terminal_k) — and the

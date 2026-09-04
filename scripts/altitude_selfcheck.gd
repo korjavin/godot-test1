@@ -178,10 +178,16 @@ const GROUND_CHUNKS: Array[Vector2i] = [
 	Vector2i(2, 60),
 ]
 
-## Tolerance on a heightmap sample, in metres. The stored value is an f32 (a
-## PackedFloat32Array is the shape's storage) of a height under ~25 m, so the
-## representation error is ~1e-6; a millimetre is far above it and far below
-## anything a player could stand on.
+## Tolerance on a heightmap sample, in metres. Two sources, both bounded and both
+## far below anything a player could stand on: the stored value is an f32 (a
+## PackedFloat32Array is the shape's storage) of a height under ~25 m, so ~1e-6;
+## and the sample POSITION is now the PlaneMesh's own f32 vertex coordinate while
+## the builder walks the same grid in f64, so the two evaluate height_at() at
+## points up to an f32 ulp apart on a field whose steepest slope is ~0.8 m/m.
+## MEASURED worst 1.1e-4 m across the nine chunks (it was 4.8e-7 while this check
+## re-derived the builder's own f64 positions and therefore could not see a wrong
+## grid at all — see the note over the grid read in check 5). A millimetre keeps a
+## 9x margin over that and is still two orders under a visible seam.
 const HEIGHTMAP_EPSILON: float = 1e-3
 
 ## Check 6's sample count per seed, and the step it measures the slope over. ONE
@@ -504,9 +510,17 @@ func _check_flat_zones() -> void:
 		# spike's own control — and nothing here could see it.
 		#
 		# Walked in chunk_size steps because update_chunks refreshes the window on a
-		# chunk-boundary crossing, and sampled only inside the desktop residency
-		# half-width, which is the ground that is actually loaded and therefore
-		# baked.
+		# chunk-boundary crossing, and sampled only inside the ground that is
+		# actually loaded and therefore baked — the desktop residency half-width.
+		#
+		# ...CAPPED BY WHAT THE WINDOW REALLY REACHES, which is not the residency.
+		# The window is ALT_ROAD_SEG_MAX segments in STATIONS, and a curving stretch
+		# advances as little as 1.25 m of X per station (the `ponytail:` ceiling on
+		# clause 4 of _alt_flat_mask), so a probe can sit inside 250 m and still fall
+		# off the polyline's end — where _alt_road_distance answers INF from one
+		# window and a real distance from the next. That is the DOCUMENTED ceiling,
+		# not the lattice-snap bug this leg exists to catch, so it must not be
+		# measured here; the cap is taken from the shipped cache below, per window.
 		var residency: float = float(t.render_distance) * t.chunk_size
 		var probe_pts: Array[Vector2] = []
 		for i in WINDOW_PROBE_STATIONS:
@@ -519,22 +533,28 @@ func _check_flat_zones() -> void:
 			probe_pts.append(c_p + n_p * (t.ALT_ROAD_FLAT_HALF + t.ALT_ROAD_SKIRT * 0.5))
 		var worst_slide := 0.0
 		var slide_at := Vector2.ZERO
+		var slide_compared := 0
 		var base_center: float = probe_pts[0].x
 		for step in WINDOW_PROBE_STEPS:
 			var cx: float = base_center + float(step) * t.chunk_size
 			t._alt_road_refresh(cx)
+			var reach: float = minf(residency, _alt_window_reach(t, cx))
 			var heights: Array[float] = []
 			for q: Vector2 in probe_pts:
 				heights.append(t.height_at(q.x, q.y))
 			t._alt_road_refresh(cx + t.chunk_size)
+			reach = minf(reach, _alt_window_reach(t, cx))
 			for j in probe_pts.size():
 				var q2: Vector2 = probe_pts[j]
-				if absf(q2.x - cx) > residency:
+				if absf(q2.x - cx) > reach:
 					continue
+				slide_compared += 1
 				var slide: float = absf(heights[j] - t.height_at(q2.x, q2.y))
 				if slide > worst_slide:
 					worst_slide = slide
 					slide_at = q2
+		if slide_compared == 0:
+			_fail("seed %d: the window-slide leg compared no probe at all — every one fell outside both windows' X reach, so the lattice snap is unmeasured" % seed_value)
 		if worst_slide > HEIGHT_EPSILON:
 			_fail("seed %d: height_at%s moved %.4f m when the road window slid one chunk — the corridor's chord nodes are not snapped to the stride lattice, so a chunk's baked floor no longer matches the surface the shader draws over it" % [
 				seed_value, str(slide_at), worst_slide])
@@ -542,6 +562,28 @@ func _check_flat_zones() -> void:
 
 		t.free()
 	Sentinel.done("flat_zones")
+
+
+func _alt_window_reach(t: Node, center_x: float) -> float:
+	"""
+	How far in X the CURRENTLY CACHED corridor window actually reaches either side
+	of `center_x`.
+
+	@param t: The terrain, with _alt_road_segs already refreshed.
+	@param center_x: The X the window was refreshed around.
+	@return: Metres, the SMALLER of the two ends' reach. 0.0 for an empty cache.
+
+	The window is ALT_ROAD_SEG_MAX segments in STATIONS, and a station advances as
+	little as 1.25 m of X on a stretch at the 78-degree heading cap, so the X reach
+	is a property of the road's shape and cannot be written down. Measured off the
+	polyline the shipped code just built, which is the only honest answer.
+	"""
+	var segs: PackedVector4Array = t._alt_road_segs
+	if segs.is_empty():
+		return 0.0
+	var west: float = segs[0].x
+	var east: float = segs[segs.size() - 1].z
+	return maxf(0.0, minf(center_x - west, east - center_x))
 
 
 func _check_shader_parity() -> void:
@@ -695,8 +737,10 @@ func _check_shader_parity() -> void:
 	var default_vec2_re := RegEx.new()
 	default_vec2_re.compile("uniform\\s+vec2\\s+(alt_\\w+)\\s*=\\s*vec2\\(([^)]*)\\)\\s*;")
 	var defaults_checked := 0
+	var default_seen: Dictionary = {}
 	for m: RegExMatch in default_re.search_all(shader_text):
 		var uniform_name := m.get_string(1)
+		default_seen[uniform_name] = true
 		if uniform_name == "alt_enabled":
 			continue  # the gate; its 0.0 default IS the inert-default idiom
 		var const_name := uniform_name.to_upper()
@@ -709,6 +753,7 @@ func _check_shader_parity() -> void:
 	var vec2_defaults_checked := 0
 	for m: RegExMatch in default_vec2_re.search_all(shader_text):
 		var uniform_name := m.get_string(1)
+		default_seen[uniform_name] = true
 		var const_name := uniform_name.to_upper()
 		if uniform_name == "alt_offset":
 			const_name = "ALT_OFFSET_SALT"  # the one uniform not named after its const
@@ -731,6 +776,19 @@ func _check_shader_parity() -> void:
 	if defaults_checked == 0 or vec2_defaults_checked == 0:
 		_fail("check 4 parsed %d float and %d vec2 alt_* uniform defaults out of ground.gdshader — the declared-default leg passed vacuously" % [
 			defaults_checked, vec2_defaults_checked])
+	# THE EXPECTATION IS THE DECLARED SET, NOT THE REGEX HITS. Both patterns above
+	# require an `= <literal>`, so `uniform float alt_foo;` — legal GLSL, defaulted
+	# to 0.0 by the compiler — matched neither, was never compared to anything, and
+	# the two non-vacuity counters above still passed on its siblings. That is
+	# exactly the uniform the header's promise is about: the one an editor preview
+	# or a check that never ran _apply_biome_shader_params draws a dead field from.
+	# The array is exempt (a GLSL array default carries no meaningful value) and so
+	# is its count, which leg (c) asserts against the cache instead.
+	for uniform_name: String in declared.keys():
+		if uniform_name in ["alt_road_seg", "alt_road_seg_count"]:
+			continue
+		if not default_seen.has(uniform_name):
+			_fail("ground.gdshader declares '%s' with no literal default — GLSL gives it 0.0, so a material nobody fed draws a field nobody ships, and check 4's default leg cannot see it at all" % uniform_name)
 
 	# ALT_OFFSET_SALT's PUSHED value by hand, since it is the one uniform not named
 	# after the constant it carries and so leg (b) skips it.
@@ -741,12 +799,30 @@ func _check_shader_parity() -> void:
 	# ---- c. the road array's packing ----------------------------------------
 	var segs: PackedVector4Array = mat.get_shader_parameter("alt_road_seg")
 	var seg_count: int = mat.get_shader_parameter("alt_road_seg_count")
-	if segs.size() != t.ALT_ROAD_SEG_MAX:
-		_fail("alt_road_seg was pushed with %d entries against ALT_ROAD_SEG_MAX %d — a GLSL array uniform is a fixed size and a short push leaves the tail undefined" % [
-			segs.size(), t.ALT_ROAD_SEG_MAX])
-	if seg_count <= 0 or seg_count != t._alt_road_segs.size():
-		_fail("alt_road_seg_count is %d against the CPU cache's %d — the GPU and the collision heightmap would flatten two different corridors" % [
+	# THE CLAMP IS THE ONLY THING HERE THAT CAN HIDE A BUG, so it is the only thing
+	# worth asserting. `segs.size() == ALT_ROAD_SEG_MAX` and `seg_count ==
+	# _alt_road_segs.size()` are both true BY CONSTRUCTION —
+	# _alt_road_seg_uniform() resizes to the constant on its first statement and
+	# _alt_road_segments' build loop already caps the cache at it — so the pair of
+	# comparisons this leg used to make were values against themselves. What is not
+	# guaranteed is that the cache FITS: _apply_biome_shader_params pushes
+	# mini(cache, MAX), so a polyline that outgrew the GLSL array is silently
+	# TRUNCATED on the GPU while _alt_road_distance() still walks all of it on the
+	# CPU — the GPU and the collision heightmap flattening two different corridors,
+	# with no error anywhere.
+	if t._alt_road_segs.size() > t.ALT_ROAD_SEG_MAX:
+		_fail("the CPU corridor cache holds %d segments against ALT_ROAD_SEG_MAX %d — the push clamps to the array size, so the GPU flattens a shorter corridor than the collision heightmap does" % [
+			t._alt_road_segs.size(), t.ALT_ROAD_SEG_MAX])
+	if seg_count <= 0:
+		_fail("alt_road_seg_count is %d after a refresh — the shader flattens no corridor at all while the CPU's heightmap flattens %d segments" % [
 			seg_count, t._alt_road_segs.size()])
+	# ...and the PADDING really is inert. The shader never reads past the count, but
+	# a padder that re-packed or reordered would show up here first.
+	for i in range(seg_count, segs.size()):
+		if segs[i] != Vector4.ZERO:
+			_fail("alt_road_seg[%d] is %s past alt_road_seg_count %d — the padded tail is not zeros, so the array is not the cache verbatim" % [
+				i, str(segs[i]), seg_count])
+			break
 	# EVERY ENDPOINT MUST BE A REAL STATION CENTRE. That is what distinguishes the
 	# shipped (x1, z1, x2, z2) from the plausible (x, z, dx, dz): the second packs a
 	# DELTA into zw, which is a few tens of metres from the origin and is a station
@@ -836,23 +912,46 @@ func _check_ground_collision() -> void:
 	# the bug and the floor was quietly a different interpolant of height_at() from
 	# the surface drawn over it. The mesh's own vertex array is the only
 	# independent witness there is.
+	#
+	# COUNT, SPACING **AND ORIGIN**, and the third one is why the two sorted
+	# coordinate lists below are kept rather than reduced to a `cell`: an earlier
+	# version recovered mesh_x[0] and then threw it away, sampling at
+	# `origin - half + i * cell` — the builder's own formula, character for
+	# character. A builder that sampled at cell centres, or mirrored Z, or
+	# transposed the row-major index would have been reproduced verbatim here and
+	# certified. The loop below indexes mesh_x / mesh_z DIRECTLY, so the sample
+	# positions are the mesh's vertices and nothing about the grid is re-derived.
 	var ground_verts: PackedVector3Array = t._get_shared_ground_mesh() \
 			.get_mesh_arrays()[Mesh.ARRAY_VERTEX]
 	var distinct_x: Dictionary = {}
+	var distinct_z: Dictionary = {}
 	for v: Vector3 in ground_verts:
 		distinct_x[snappedf(v.x, 1e-4)] = true
+		distinct_z[snappedf(v.z, 1e-4)] = true
 	var mesh_side: int = distinct_x.size()
 	var mesh_x: Array = distinct_x.keys()
 	mesh_x.sort()
+	var mesh_z: Array = distinct_z.keys()
+	mesh_z.sort()
 	var mesh_cell: float = float(mesh_x[1]) - float(mesh_x[0])
 	var side: int = t.ALT_GROUND_SIDE
 	var cell: float = t.alt_ground_cell()
-	if mesh_side != side:
-		_fail("the shared ground PlaneMesh is %d vertices across but ALT_GROUND_SIDE is %d — the collision grid is not the visual mesh's grid and the floor is an approximation of the surface you see" % [
-			mesh_side, side])
+	if mesh_side != side or distinct_z.size() != side:
+		_fail("the shared ground PlaneMesh is %d x %d vertices but ALT_GROUND_SIDE is %d — the collision grid is not the visual mesh's grid and the floor is an approximation of the surface you see" % [
+			mesh_side, distinct_z.size(), side])
 	if not is_equal_approx(mesh_cell, cell):
 		_fail("the shared ground PlaneMesh's vertex spacing is %.6f m but alt_ground_cell() is %.6f m — the heightmap samples land between the drawn vertices" % [
 			mesh_cell, cell])
+	# ALT_AMP_MAX HAS TO BOUND THE WHOLE LADDER, not the rung it is spelled from.
+	# The custom_aabb below is sized from it, so a retune that raises ALT_AMP_SNOW
+	# past ALT_AMP_MOUNTAIN would leave every cull volume in the world short while
+	# `const ALT_AMP_MAX := ALT_AMP_MOUNTAIN` still read as "the tallest rung".
+	# GDScript cannot call maxf() in a const, so the maximum is asserted here.
+	for amp_name: String in ["ALT_AMP_DESERT", "ALT_AMP_PLAINS", "ALT_AMP_CITY",
+			"ALT_AMP_FOREST", "ALT_AMP_MOUNTAIN", "ALT_AMP_SNOW"]:
+		if float(t.get(amp_name)) > t.ALT_AMP_MAX:
+			_fail("%s is %.1f m, over ALT_AMP_MAX %.1f — every displaced chunk's custom_aabb is shorter than the field it bounds and hilltops are culled on screen" % [
+				amp_name, float(t.get(amp_name)), t.ALT_AMP_MAX])
 	var worst := 0.0
 	var sampled := 0
 	for chunk_pos: Vector2i in GROUND_CHUNKS:
@@ -900,12 +999,14 @@ func _check_ground_collision() -> void:
 			_fail("chunk %s has no custom_aabb with the flag on — the displaced ground is frustum-culled against a zero-height box and hillsides pop at the screen edge" % str(chunk_pos))
 			continue
 		var origin: Vector3 = t.chunk_to_world(chunk_pos)
-		var half: float = t.chunk_size / 2.0
 		var data: PackedFloat32Array = shape.map_data
+		# THE MESH'S OWN VERTICES, offset to this chunk. Not `origin - half + i *
+		# cell`: see the note above the grid read — that formula is the builder's,
+		# and a check that repeats it agrees with the builder about a wrong grid.
 		for iz in side:
-			var world_z: float = origin.z - half + float(iz) * cell
+			var world_z: float = origin.z + float(mesh_z[iz])
 			for ix in side:
-				var world_x: float = origin.x - half + float(ix) * cell
+				var world_x: float = origin.x + float(mesh_x[ix])
 				# UN-SCALED: the stored sample times the scale is the metres the
 				# player stands at, and height_at is the metres the shader drew.
 				var got: float = float(data[iz * side + ix]) * cs.scale.y

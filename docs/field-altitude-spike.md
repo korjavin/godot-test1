@@ -25,11 +25,14 @@ matching ground collision shape, and one self-check that pins all of it.
   (x, z, `run_seed`) **except clause 4 of the flat mask**, which reads the cached
   coarse road polyline: the chord nodes are snapped to a stride lattice so the
   corridor is bit-identical from every window centre, but a point that falls off the
-  window's end answers differently. The window out-reaches the desktop residency, so
-  no loaded chunk ever sees it move — which is what makes baking the collision
-  heightmap once per chunk safe. **Promoting the spike means either making the
-  corridor position-derived (a distance function of X, or a texture) or re-baking a
-  loaded chunk's floor on refresh.**
+  window's end answers differently. On a straight road the window out-reaches the
+  desktop residency, so no loaded chunk sees it move — which is what makes baking the
+  collision heightmap once per chunk safe. **It is a window in STATIONS, though, so a
+  hard-curving stretch shortens it in X to ~120 m and a loaded chunk CAN see the end
+  move** (the `ponytail:` ceiling on clause 4, and the second bullet under "The road
+  corridor" below). **Promoting the spike means either making the corridor
+  position-derived (a distance function of X, or a texture) or re-baking a loaded
+  chunk's floor on refresh** — which closes this hole with it.
 - **`_alt_flat_mask(x, z, biome)`** — the product of four independent 0..1 smoothstep
   factors, so a point in two zones is flat and never twice flat: Budapest's rect
   (delegated to `BudapestPlan`, +120 m skirt), the HQ disc (`TOWER_RADIUS`, +60 m),
@@ -327,6 +330,7 @@ means the suite certifies the migration silently.
 | 4 | **Coin settling** — `_settle_coin_y`, `COIN_GROUND_HEIGHT` | **medium** | `prop_selfcheck`, `enemy_spawn_selfcheck` check 14 | perches on a climbable top, which is 3's output; coins are the headline score, so this is the first one a player feels |
 | 5 | **Crocodile / boss gravity settle** | **medium** | `enemy_spawn_selfcheck`, `boss_selfcheck` | species settle to flat ground; the boss territory leash and the LOD radii are XZ and stay XZ |
 | 6 | **Road stations and the coin road** | **medium** | `enemy_spawn_selfcheck` check 11 | the spike keeps the road flat as a control; migrating it is choosing to give it up, and it must come after 4 and 5 because road coins and road bosses ride it |
+| 6a | **The T-to-gate APPROACH CORRIDOR** — the one gap the spike leaves open | **small** | `altitude_selfcheck` check 3 (a new leg, walking `BudapestPlan.road_approach_point` from T to the gate) | `_alt_road_segments` caps at `_road_terminal_k()` (x ≤ `ROAD_TERMINAL_X` 1450) and clause 1's city skirt is only `ALT_CITY_SKIRT` (120 m) outside a rect starting at 1600, so ~110 m of the authored approach centreline — the trail `spawn_approach_coins_in_chunk` lays at y = 0 — carries 70–85 % of the local amplitude and those coins would float or bury. Fix is to walk that centreline into the same polyline (it is a pure function, no new machinery) plus `ALT_ROAD_SEG_MAX` in both languages. Recorded as a `ponytail:` ceiling on `_alt_road_segments`; harmless today because the flag ships false |
 | 7 | **The spawn point + the `SPAWN_SAFE_RADIUS` mirror** | **small** | `chunk_stream_selfcheck` | one y, two files (`endless_terrain` and `player_controller`) kept in step |
 | 8 | **Wading** — `is_on_floor()` AND river-at-XZ | **small** | `wade_selfcheck` | `is_river_at` is XZ-only by documented contract; elevated ground over a river band would wade. Cheap **only** while rivers stay a forced-flat zone — the moment they do not, this is medium |
 | 9 | **Mountain impassability** | **medium** | `enemy_spawn_selfcheck` + a NEW check (there is none today) | jump apex 3.6125 m under `MOUNTAIN_MIN_LAYER_HEIGHT` 4.0, and no skill touches `JUMP_VELOCITY`; a massif's blocks sit at y = 0 while the ground beside them rises. Needs 3 first, because "the wall's base" is a block base |
