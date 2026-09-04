@@ -1898,16 +1898,16 @@ const ALT_ROAD_SEG_DEV_MAX: float = 12.0
 ## the 250 m desktop residency half-width (render_distance 5 x chunk_size 50), so
 ## every loaded chunk's ground sees the same corridor the CPU does.
 ##
-## ALT_ROAD_WINDOW is what _road_extend_to_x is asked for, and it is 600 rather
-## than 576 for exactly one reason: the window is taken in STATIONS, so the cache
-## has to already hold the station 96 west of the player, and on a straight road
-## that station is 576 m west. The 24 m of slack is the margin that keeps the
-## binary search either side of it inside the cache.
+## The X reach _road_extend_to_x is asked for is DERIVED from this and the stride
+## by _alt_road_window(), never written down a second time.
+##
+## THE NODES ARE SNAPPED to a stride lattice (see _alt_road_segments): the window
+## slides with the player, but which stations are chord nodes does not, because a
+## chunk's collision heightmap is baked once and the shader re-evaluates live.
 ##
 ## ALT_ROAD_SEG_MAX is restated in ground.gdshader — a GLSL array is a fixed size —
 ## the CITY_SHADER_SEG_MAX contract one array along.
 const ALT_ROAD_SEG_MAX: int = 24
-const ALT_ROAD_WINDOW: float = 600.0
 
 ## The sizes of ground.gdshader's two Budapest array uniforms, restated here for
 ## the ONE thing GDScript can do that GLSL cannot: fail loudly. A GLSL array is a
@@ -3342,10 +3342,12 @@ var _tower_impostor: Node3D = null
 ## The single ground PlaneMesh shared by every chunk (see _get_shared_ground_mesh).
 var _shared_ground_mesh: PlaneMesh
 
-## The ground plane's subdivision count, in quads per side. 16 x 16 quads is
-## 17 x 17 vertices over a 50 m chunk — 3.125 m apart, which is the density the
-## vertex-noise ground shader wants and (with FIELD_ALTITUDE on) plenty for a
-## 260 m-wavelength height field.
+## The ground plane's subdivision count, as Godot's PlaneMesh means it: `N` CUTS,
+## so 17 x 17 quads and 18 x 18 vertices over a 50 m chunk — 2.941 m apart, which
+## is the density the vertex-noise ground shader wants and (with FIELD_ALTITUDE
+## on) plenty for a 260 m-wavelength height field. ALT_GROUND_SIDE below is that
+## VERTEX count and is what the collision heightmap reads; do not spell either as
+## GROUND_SUBDIVISIONS + 1.
 ##
 ## IT IS A CONSTANT BECAUSE TWO THINGS READ IT. The visual mesh below and the
 ## collision HeightMapShape3D in _ensure_chunk_ground are built on the same grid
@@ -3353,6 +3355,13 @@ var _shared_ground_mesh: PlaneMesh
 ## construction rather than by review. Written down twice, the two would drift and
 ## the ground would draw one surface while collision answered another.
 const GROUND_SUBDIVISIONS: int = 16
+
+## VERTICES per side of that mesh, which is the number the collision heightmap
+## needs and is NOT GROUND_SUBDIVISIONS + 1. Godot's `subdivide_width = N` inserts
+## N cuts into ONE quad, giving N + 1 quads and N + 2 vertices — measured, 18 x 18
+## for 16. Getting this wrong does not fail anywhere: it silently makes the floor a
+## different piecewise-linear interpolant of height_at() from the drawn surface.
+const ALT_GROUND_SIDE: int = GROUND_SUBDIVISIONS + 2
 
 ## Lazily-created shared material for artifact glow accents (rune strips, eyes,
 ## missing keystones — see the ARTIFACTS section). ONE material shared by every
@@ -4149,9 +4158,10 @@ func _ensure_chunk_ground(chunk_pos: Vector2i) -> MeshInstance3D:
 
 	if alt_enabled():
 		# FIELD ALTITUDE (the spike, bead godot-test1-ope.1). The displaced ground
-		# needs a floor that follows it, and it is built on the SAME 17 x 17 grid
-		# the visual mesh is subdivided into, so the surface the player stands on
-		# is the surface the vertex shader drew rather than an approximation of it.
+		# needs a floor that follows it, and it is built on the SAME vertex grid the
+		# visual mesh is subdivided into (ALT_GROUND_SIDE^2, 18 x 18), so the surface
+		# the player stands on is the surface the vertex shader drew rather than an
+		# approximation of it.
 		#
 		# TIMED, because this lands inside update_chunks' synchronous safety-ring
 		# path (see ground_collision_usec_total for why that matters).
@@ -4159,13 +4169,13 @@ func _ensure_chunk_ground(chunk_pos: Vector2i) -> MeshInstance3D:
 		collision_shape.shape = _alt_ground_heightmap(chunk_pos)
 		# THE UNIFORM SCALE, and why the heights were pre-divided by it upstream:
 		# HeightMapShape3D cells are ONE unit wide and the grid is centred on the
-		# node, so a 17-wide map spans -8..+8 units. The chunk is chunk_size (50 m)
-		# across, so the shape is stretched by chunk_size / GROUND_SUBDIVISIONS
-		# (3.125) to reach -25..+25 m. UNIFORM is the operative word — a
-		# non-uniformly scaled shape is a Godot warning and an unsupported physics
-		# case — so the scale hits Y as well, and _alt_ground_heightmap already
-		# divided every stored height by the same factor to cancel it back out.
-		collision_shape.scale = Vector3.ONE * (chunk_size / float(GROUND_SUBDIVISIONS))
+		# node, so an 18-wide map spans -8.5..+8.5 units. The chunk is chunk_size
+		# (50 m) across, so the shape is stretched by alt_ground_cell() (2.941) to
+		# reach -25..+25 m. UNIFORM is the operative word — a non-uniformly scaled
+		# shape is a Godot warning and an unsupported physics case — so the scale
+		# hits Y as well, and _alt_ground_heightmap already divided every stored
+		# height by the same factor to cancel it back out.
+		collision_shape.scale = Vector3.ONE * alt_ground_cell()
 		ground_collision_usec_total += Time.get_ticks_usec() - started_usec
 	else:
 		# TODAY'S FLOOR, byte for byte: one box the width of the chunk, 0.1 m
@@ -9691,9 +9701,11 @@ func river_field_at(world_x: float, world_z: float) -> float:
 # FIELD ALTITUDE (the SPIKE — see FIELD_ALTITUDE at the top of the file)
 # ============================================================================
 #
-# The same shape as the biome field above and for the same reasons: a PURE
-# function of (world x, world z, run_seed) with no RNG draw, no hash stream and
-# no state, so a revisited chunk regenerates byte-identically; and a two-language
+# The same shape as the biome field above and for the same reasons: a function of
+# (world x, world z, run_seed) with no RNG draw and no hash stream, so a revisited
+# chunk regenerates byte-identically — with ONE named exception, the road
+# corridor's sliding window, which height_at()'s docstring states and bounds; and a
+# two-language
 # twin in ground.gdshader that is EDITED TOGETHER with this one, because the
 # ground you see displaced and the ground you stand on have to be the same
 # surface. It reuses _biome_value_noise / _biome_hash2 rather than bringing its
@@ -9770,19 +9782,26 @@ func _alt_amplitude(biome_value: float) -> float:
 	return amp
 
 
-func alt_amplitude_at(world_x: float, world_z: float) -> float:
+func _alt_road_window() -> float:
 	"""
-	_alt_amplitude() at a world position — the public readout, for a check or a
-	report that wants the amplitude without composing a height.
+	How far in X the station cache is grown to build one corridor window.
 
-	@param world_x, world_z: World-space point (metres).
-	@return: The band's half-range in metres at that point.
+	@return: Metres either side of the window's centre.
 
-	height_at() deliberately does NOT go through here: it already has the biome
-	value in hand, and a second _biome_noise() evaluation per height sample would
-	be paid three times over per vertex once the shader's normals arrive.
+	DERIVED, never hand-multiplied: half the segment budget, times the stations
+	each segment spans, times the metres a station is — plus the slack below. A
+	written-down 600.0 goes stale the day road_coin_spacing (an @export) or either
+	segment constant moves, and the corridor then silently shortens against a
+	road_k_max clamp with no error anywhere.
+
+	THE SLACK is what the window is taken in STATIONS rather than in X for: the
+	road's heading cap is 78 degrees, so a curving stretch advances as little as
+	1.25 m of X per station and the cache has to already hold the station the
+	lattice snap asks for. A straight road needs the bare product; anything else
+	needs the binary search either side of it to land inside the cache.
 	"""
-	return _alt_amplitude(_biome_noise(world_x, world_z))
+	return float(ALT_ROAD_SEG_MAX / 2 * ALT_ROAD_SEG_STRIDE + ALT_ROAD_SEG_STRIDE) \
+			* road_coin_spacing
 
 
 func _alt_road_segments(center_x: float) -> PackedVector4Array:
@@ -9820,14 +9839,31 @@ func _alt_road_segments(center_x: float) -> PackedVector4Array:
 	# window is then taken in STATIONS around the player's own station, NOT as the
 	# X range itself. The road's heading cap is 78 degrees, so a curving stretch
 	# advances as little as 1.25 m of X per 6 m station: an X-ordered walk starting
-	# at center_x - ALT_ROAD_WINDOW spends its whole segment budget hundreds of
+	# at center_x - _alt_road_window() spends its whole segment budget hundreds of
 	# metres WEST of the player and leaves the ground under their feet uncorridored.
 	# Centring on the station is what makes the window a window around the player.
-	_road_extend_to_x(center_x - ALT_ROAD_WINDOW, center_x + ALT_ROAD_WINDOW)
+	var reach := _alt_road_window()
+	_road_extend_to_x(center_x - reach, center_x + reach)
 	var k_last := mini(road_k_max, _road_terminal_k())
 	var half := ALT_ROAD_SEG_MAX / 2  # segments each side of the player's station
-	var k_center := _road_first_k_at_or_after_x(center_x)
-	var k := maxi(road_k_min, k_center - half * ALT_ROAD_SEG_STRIDE)
+	# SNAPPED TO THE STRIDE LATTICE, and this line is load-bearing. The nodes have
+	# to be a function of the WORLD, not of where the player is standing: the
+	# collision HeightMapShape3D is baked once per chunk off height_at() and never
+	# rebuilt, while the shader re-evaluates the corridor live off whatever window
+	# was last pushed. An unsnapped k_center advances by ~8 stations per 50 m of
+	# walking but not by EXACTLY 8, so every chunk-boundary crossing re-picked a
+	# different set of chord nodes, _alt_road_distance() at a fixed world point
+	# moved with it, and the floor drifted metres away from the surface drawn over
+	# it — measured at 2.19 m along the coin road, which is the spike's control.
+	# Snapping makes every node a station k = 0 (mod stride), so the polyline
+	# inside the window is bit-identical from every centre.
+	var k_center: int = _road_first_k_at_or_after_x(center_x)
+	k_center -= posmod(k_center, ALT_ROAD_SEG_STRIDE)
+	var k := k_center - half * ALT_ROAD_SEG_STRIDE
+	# Clamped ON THE LATTICE — a bare maxi(road_k_min, ...) would put the western
+	# end back on an arbitrary station and reintroduce exactly what the snap fixed.
+	while k < road_k_min:
+		k += ALT_ROAD_SEG_STRIDE
 	var k_end := mini(k_last, k_center + half * ALT_ROAD_SEG_STRIDE)
 	var prev := Vector2.ZERO
 	var have_prev := false
@@ -9972,10 +10008,22 @@ func height_at(world_x: float, world_z: float) -> float:
 	@return: Ground height in metres, signed around 0. Exactly 0.0 everywhere when
 	         the spike flag is off, and exactly 0.0 inside every authored zone.
 
-	RNG-free, deterministic and side-effect-free — the biome field's contract,
-	because it is the same field read a third way. Clause 4 of _alt_flat_mask reads
-	the CACHED coarse road polyline (rebuilt on chunk-boundary crossings, never
-	from here), so nothing in this call chain grows a cache or draws from a stream.
+	RNG-free and side-effect-free — the biome field's contract, because it is the
+	same field read a third way. Nothing in this call chain grows a cache or draws
+	from a stream.
+
+	IT IS PURE IN (x, z, run_seed) EVERYWHERE EXCEPT CLAUSE 4 of _alt_flat_mask,
+	and that exception is the honest version of the contract. Clause 4 reads the
+	CACHED coarse road polyline, whose WINDOW slides with the player: the chord
+	NODES are snapped to a stride lattice (see _alt_road_segments) so the corridor
+	is bit-identical from every centre INSIDE the window, but a point that falls
+	off the window's end when the player walks away answers a different height. The
+	window reaches _alt_road_window() metres either side, comfortably past the
+	250 m desktop residency half-width on a straight road, so no LOADED chunk sees
+	it move — which is what makes the baked collision heightmap safe. Promoting the
+	spike means either making the corridor position-derived (a distance function of
+	X, or a texture) or re-baking loaded chunks on refresh; see
+	docs/field-altitude-spike.md.
 	"""
 	# THE FLAG, FIRST LINE AND BEFORE ANY NOISE. With the spike off this is the
 	# whole function, so the flat world costs one bool compare and not one hash.
@@ -9994,30 +10042,49 @@ func height_at(world_x: float, world_z: float) -> float:
 	return Vector2(h * _alt_flat_mask(world_x, world_z, b), 0.0).x
 
 
+func alt_ground_cell() -> float:
+	"""
+	Metres between two adjacent ground vertices — the heightmap's cell size and the
+	CollisionShape3D's uniform scale, which are the same number by construction.
+
+	@return: chunk_size spread over ALT_GROUND_SIDE - 1 spans (2.941 m at 50 m).
+
+	PUBLIC because altitude_selfcheck reads it back; there is nowhere else the two
+	call sites could agree except one function.
+	"""
+	return chunk_size / float(ALT_GROUND_SIDE - 1)
+
+
 func _alt_ground_heightmap(chunk_pos: Vector2i) -> HeightMapShape3D:
 	"""
 	THE FLOOR OF ONE CHUNK, sampled off height_at() — the collision half of the
 	spike, and the only altitude code that allocates anything.
 
 	@param chunk_pos: Chunk coordinates.
-	@return: A HeightMapShape3D on the chunk's own 17 x 17 grid, in SHAPE units
-	         (see the divide below); the caller scales it into metres.
+	@return: A HeightMapShape3D on the chunk's own ALT_GROUND_SIDE^2 grid, in SHAPE
+	         units (see the divide below); the caller scales it into metres.
 
 	ONLY EVER CALLED BEHIND alt_enabled(). With the spike off the chunk keeps its
 	BoxShape3D and this function is never entered, which is the merge condition.
 
-	THE GRID IS THE VISUAL MESH'S GRID. GROUND_SUBDIVISIONS quads per side is
-	GROUND_SUBDIVISIONS + 1 vertices per side, and the sample points below are the
-	PlaneMesh's own vertex positions — so the floor and the drawn surface are the
-	same 17 x 17 samples of the same function and cannot disagree anywhere, not
-	even by an interpolation scheme. That identity is free and it is why the plan
-	refuses to raise the subdivision.
+	THE GRID IS THE VISUAL MESH'S GRID, and ALT_GROUND_SIDE is where that is
+	spelled — Godot's `subdivide_width = N` cuts a PlaneMesh into N + 1 quads and
+	therefore N + 2 vertices per side, NOT N + 1 (measured: 18 x 18 at 50/17 =
+	2.941 m for GROUND_SUBDIVISIONS 16, and the first version of this file sampled
+	17 x 17 at 3.125 m and claimed the identity anyway — a floor that was a
+	DIFFERENT piecewise-linear interpolant of the same function, 5.2 cm off the
+	drawn surface at worst). The sample points below are the PlaneMesh's own vertex
+	positions, so the floor and the drawn surface are the same samples of the same
+	function and cannot disagree anywhere, not even by an interpolation scheme.
+	That identity is free and it is why the plan refuses to raise the subdivision;
+	altitude_selfcheck check 5 reads the mesh's real vertex grid rather than
+	re-deriving it, because a re-derivation is how the claim went unnoticed.
 
 	Row-major, `map_data[z * map_width + x]`, the Godot layout: x runs along +X and
 	z along +Z, both centred on the node, which is exactly how the chunk's own
 	square is centred on its MeshInstance3D.
 	"""
-	var side := GROUND_SUBDIVISIONS + 1
+	var side := ALT_GROUND_SIDE
 	var shape := HeightMapShape3D.new()
 	shape.map_width = side
 	shape.map_depth = side
@@ -10026,7 +10093,7 @@ func _alt_ground_heightmap(chunk_pos: Vector2i) -> HeightMapShape3D:
 	# are DIVIDED by it here so that scale multiplies them back to the metres
 	# height_at() returned — the alternative, a non-uniform scale of (cell, 1,
 	# cell), is a Godot warning and unsupported by the physics server.
-	var cell := chunk_size / float(GROUND_SUBDIVISIONS)
+	var cell := alt_ground_cell()
 	var origin := chunk_to_world(chunk_pos)
 	var half := chunk_size / 2.0
 

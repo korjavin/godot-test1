@@ -19,10 +19,17 @@ matching ground collision shape, and one self-check that pins all of it.
   project's ONE lattice hash (`_biome_hash2` / `_biome_value_noise`, reused, not
   re-spelled) on altitude's own domain (`ALT_CELL_SIZE` 260 m, `ALT_OFFSET_SALT`, so
   hills never line up with biome edges), scaled by a per-biome amplitude ladder
-  (`alt_amplitude_at`) that is `fragment()`'s colour chain with six metres instead of
+  (`_alt_amplitude`) that is `fragment()`'s colour chain with six metres instead of
   six colours: desert 2.5, plains 3.5, the noise city band 1.0, forest 6.0, mountain
-  22.0, snow 16.0. No RNG draw, no hash-stream consumption, no state — a revisited
-  chunk regenerates byte-identically.
+  22.0, snow 16.0. No RNG draw and no hash-stream consumption. It is pure in
+  (x, z, `run_seed`) **except clause 4 of the flat mask**, which reads the cached
+  coarse road polyline: the chord nodes are snapped to a stride lattice so the
+  corridor is bit-identical from every window centre, but a point that falls off the
+  window's end answers differently. The window out-reaches the desktop residency, so
+  no loaded chunk ever sees it move — which is what makes baking the collision
+  heightmap once per chunk safe. **Promoting the spike means either making the
+  corridor position-derived (a distance function of X, or a texture) or re-baking a
+  loaded chunk's floor on refresh.**
 - **`_alt_flat_mask(x, z, biome)`** — the product of four independent 0..1 smoothstep
   factors, so a point in two zones is flat and never twice flat: Budapest's rect
   (delegated to `BudapestPlan`, +120 m skirt), the HQ disc (`TOWER_RADIUS`, +60 m),
@@ -35,11 +42,16 @@ matching ground collision shape, and one self-check that pins all of it.
   displaces `VERTEX.y` and recomputes `NORMAL` from two forward differences — three
   `field_height()` evaluations per vertex, the number this spike exists to measure —
   inside `if (alt_enabled > 0.0)`, so the flag-off path costs one compare per vertex.
-- **`HeightMapShape3D` ground collision** — 17x17 samples on the visual mesh's own
-  grid (`GROUND_SUBDIVISIONS + 1`), the `CollisionShape3D` uniformly scaled by
-  `chunk_size / GROUND_SUBDIVISIONS` with the stored heights pre-divided by the same
-  factor. With the flag off it is byte for byte today's chunk-spanning `BoxShape3D`.
-- **`scripts/altitude_selfcheck.gd`** (988 lines, six checks): `flag_is_off`,
+- **`HeightMapShape3D` ground collision** — 18x18 samples on the visual mesh's own
+  grid (`ALT_GROUND_SIDE`, which is `GROUND_SUBDIVISIONS + 2`: Godot's
+  `subdivide_width = N` gives N+1 quads and N+2 vertices per side), the
+  `CollisionShape3D` uniformly scaled by `alt_ground_cell()` (2.941 m) with the
+  stored heights pre-divided by the same factor. Check 5 reads that grid off the
+  shipped `PlaneMesh`'s vertex array rather than re-deriving it — the first version
+  of this file re-derived it with the builder's own (wrong) formula and certified a
+  floor that was a different interpolant of `height_at()`, 5.2 cm off the drawn
+  surface at worst. With the flag off it is byte for byte today's chunk-spanning `BoxShape3D`.
+- **`scripts/altitude_selfcheck.gd`** (six checks): `flag_is_off`,
   `fp32_parity`, `flat_zones`, `shader_parity`, `ground_collision`,
   `field_is_walkable`.
 - **`ground_collision_usec_total`**, a monotone counter on the terrain, surfaced by
@@ -179,16 +191,17 @@ Two consequences for the migration, and both are load-bearing:
 
 | number | value | how |
 |---|---|---|
-| `HeightMapShape3D` build, per chunk | **2,610 µs** (9 chunks, 23,492 µs total) | `altitude_selfcheck` check 5, `ground_collision_usec_total` |
-| `height_at()` per call | **~9 µs** (289 calls per chunk) | the same, divided out |
-| the synchronous safety ring, one boundary crossing | **~23 ms in ONE frame** | 9 ring chunks × 2,610 µs |
+| `HeightMapShape3D` build, per chunk | **2,741 µs** (9 chunks, 24,672 µs total) | `altitude_selfcheck` check 5, `ground_collision_usec_total` |
+| `height_at()` per call | **~8.5 µs** (324 calls per chunk — `ALT_GROUND_SIDE`² = 18², the mesh's real vertex grid) | the same, divided out |
+| the synchronous safety ring, one boundary crossing | **~25 ms in ONE frame** | 9 ring chunks × 2,741 µs |
 | max height delta per metre, whole field | **0.591 / 0.557 / 0.644** over three seeds | check 6, against a 1.0 (45°) bound |
 | the same, mountain band only | **0.502 / 0.457 / 0.361** | check 6 |
+| the same, on the road corridor's SKIRT | **0.385 / 0.197 / 0.167** | check 6 — sampled separately because the ±5 km box essentially never lands on a 40 m ramp, and the skirts are the steepest ground in the field by construction |
 | jump apex, for comparison | 3.6125 m | `player_controller`, printed beside it |
 
 Two of those are findings and not just numbers:
 
-- **The 23 ms frame is the spike's headline cost.** `update_chunks` gives the safety
+- **The 25 ms frame is the spike's headline cost.** `update_chunks` gives the safety
   ring its GROUND synchronously because the floor is the whole fall-through
   guarantee, and the heightmap build lands inside that synchronous path. It is a
   visible hitch on a chunk-boundary crossing and it is **a migration finding, not
@@ -208,10 +221,10 @@ Two of those are findings and not just numbers:
   displacement is a vertex-stage edit. The per-chunk collision shape is a different
   `Shape3D` on the same `StaticBody3D`.
 - **Node count: unchanged.** Same reason.
-- **Vertex count: unchanged** (289 per chunk). What changes is the work per vertex:
+- **Vertex count: unchanged** (324 per chunk). What changes is the work per vertex:
   **three `field_height()` evaluations** (the displacement plus two forward
   differences for the normal), each two octaves of value noise, in `vertex()` only —
-  ~14,161 evaluated vertices per frame at the web build's 49-chunk residency, ~42,483
+  ~15,876 evaluated vertices per frame at the web build's 49-chunk residency, ~47,628
   `field_height()` calls. That is the one number the web reading is needed for; a
   headless run cannot see the vertex stage at all.
 - **Flag off: one compare per vertex** and nothing else, because the block is guarded
@@ -261,7 +274,7 @@ means the suite certifies the migration silently.
 
 | # | consumer | size | proved by | why here in the order |
 |---|---|---|---|---|
-| 1 | **The ground scheme itself** — the shared `PlaneMesh` + per-chunk collision, and the **23 ms synchronous ring** | **huge** | `chunk_stream_selfcheck` (its `_has_ground_collision` helper first — the one real red) | everything below stands on the floor this bead defines; the frame cost is the gate on the whole epic |
+| 1 | **The ground scheme itself** — the shared `PlaneMesh` + per-chunk collision, and the **25 ms synchronous ring** | **huge** | `chunk_stream_selfcheck` (its `_has_ground_collision` helper first — the one real red) | everything below stands on the floor this bead defines; the frame cost is the gate on the whole epic |
 | 2 | **`height_at` parity + the flat zones** — this spike, promoted | **medium** | `altitude_selfcheck` | already built and pinned; promoting it is deleting the flag, and it is what every consumer below calls |
 | 3 | **Block bases and every `create_box` caller** | **huge** | `prop_selfcheck`, `landmark_selfcheck`, `batch_selfcheck` | ~600 call sites plus `landmark_builders`' contract; every consumer below settles onto or beside a block, so a floating block poisons their measurements |
 | 4 | **Coin settling** — `_settle_coin_y`, `COIN_GROUND_HEIGHT` | **medium** | `prop_selfcheck`, `enemy_spawn_selfcheck` check 14 | perches on a climbable top, which is 3's output; coins are the headline score, so this is the first one a player feels |
@@ -271,6 +284,7 @@ means the suite certifies the migration silently.
 | 8 | **Wading** — `is_on_floor()` AND river-at-XZ | **small** | `wade_selfcheck` | `is_river_at` is XZ-only by documented contract; elevated ground over a river band would wade. Cheap **only** while rivers stay a forced-flat zone — the moment they do not, this is medium |
 | 9 | **Mountain impassability** | **medium** | `enemy_spawn_selfcheck` + a NEW check (there is none today) | jump apex 3.6125 m under `MOUNTAIN_MIN_LAYER_HEIGHT` 4.0, and no skill touches `JUMP_VELOCITY`; a massif's blocks sit at y = 0 while the ground beside them rises. Needs 3 first, because "the wall's base" is a block base |
 | 10 | **The minimap's flat assumptions** | **small** | `minimap_selfcheck` | it reads the world in XZ; last because nothing depends on it |
+| 11 | **The ground plane's shadow flag** | **small** | nothing today | `_ensure_chunk_ground` sets `SHADOW_CASTING_SETTING_OFF` on the comment "a flat ground plane can only ever shadow itself", which stops being true the moment it is displaced — hills would need to shade valleys and today they cannot. **Not a free flip**: it is a shadow-pass cost, which is exactly the cost that produced Budapest's no-shadow ruling (`godot-test1-8gw.9`, 19 ms/frame), so it must be MEASURED on web and not assumed. Visual only, so it can come last |
 
 Two rules the order encodes:
 

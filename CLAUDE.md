@@ -80,6 +80,16 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            glob opens `Sentinel.isolate_user_state()` and names
 #                            no real `user://` path
 #   wade_selfcheck           river wading (player, croc, boss)
+#   altitude_selfcheck       the FIELD ALTITUDE spike (flag off): 0.0 everywhere
+#                            with the flag off, the fp32 CPU/GPU port bit-exact
+#                            against a GLSL-derived oracle (with an f64 negative
+#                            control), the four forced-flat zones each with a
+#                            control outside its skirt PLUS the road window's
+#                            slide (the corridor may not move when the window
+#                            does — a chunk's floor is baked once), every alt_*
+#                            uniform declared, pushed, valued AND defaulted, the
+#                            collision heightmap on the mesh's REAL vertex grid,
+#                            and the field's walkable slope
 #   minimap_selfcheck        the map actually read the world
 #   city_map_selfcheck       the Budapest map panel (B): the key is free against
 #                            the input map AND every other panel's constant, the

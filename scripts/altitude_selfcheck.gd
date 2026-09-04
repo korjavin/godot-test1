@@ -39,7 +39,9 @@ extends SceneTree
 ##      GDScript's, and the road array read back OFF THE MATERIAL to prove it is
 ##      packed (x1, z1, x2, z2) and not, say, (x, z, dx, dz).
 ##   5. THE FLOOR IS THE FIELD. `_ensure_chunk_ground` builds a HeightMapShape3D
-##      on the visual mesh's OWN 17x17 grid with the flag on and today's
+##      on the visual mesh's OWN vertex grid (READ OFF THE MESH, never re-derived
+##      — a re-derivation is how the builder's wrong grid formula went unnoticed)
+##      with the flag on and today's
 ##      BoxShape3D with it off, and the stored samples times the shape's uniform
 ##      scale are height_at() to the millimetre — the ground you stand on and the
 ##      ground the vertex shader drew are the same surface. Check 5, which also
@@ -115,6 +117,18 @@ const FLAT_CONTROL_MARGIN: float = 300.0
 ## How many road stations either side of the origin check 3 walks. The corridor is
 ## a curve, so sampling it means sampling the ROAD rather than a box around it.
 const FLAT_ROAD_STATIONS: int = 40
+
+## Check 3's window-slide leg: how many coarse nodes it plants ramp probes on, and
+## how many chunk-boundary crossings it walks them past. 30 nodes is ~1.4 km of
+## road, comfortably wider than the 20 x 50 m walk, so every probe spends a stretch
+## of the walk inside the residency where the assertion bites.
+const WINDOW_PROBE_STATIONS: int = 30
+const WINDOW_PROBE_STEPS: int = 20
+
+## Check 6's skirt leg: offsets across the road corridor's 40 m ramp, from the flat
+## edge to the open field. 9 is enough to straddle the smoothstep's steepest middle
+## on both banks of every walked station.
+const SKIRT_PROBE_STEPS: int = 9
 
 ## The ground shader — check 4 reads it as TEXT (for the declarations and the
 ## array bound) and as a loaded Shader (for the push), exactly as
@@ -402,7 +416,7 @@ func _check_flat_zones() -> void:
 		# crossing, so a check that sampled height_at() without it would be asserting
 		# against an empty window (INF distance, no corridor at all) and would pass
 		# for the wrong reason. Centred on the origin, which the ±240 m of stations
-		# below sit well inside of ALT_ROAD_WINDOW from.
+		# below sit well inside of _alt_road_window() from.
 		t._alt_road_refresh(0.0)
 		var terminal: int = t._road_terminal_k()
 		var on_road: Array[Vector2] = []
@@ -415,9 +429,11 @@ func _check_flat_zones() -> void:
 		# tolerance.
 		var lateral: float = t.ALT_ROAD_FLAT_HALF - t.ALT_ROAD_SEG_DEV_MAX
 		var worst_dev := 0.0
+		# Once, not per station: the arguments never change and growing the cache is
+		# the expensive part of this leg.
+		t._road_extend_to_x(-SAMPLE_HALF, SAMPLE_HALF)
 		for i in FLAT_ROAD_STATIONS * 2 + 1:
 			var k: int = mini(i - FLAT_ROAD_STATIONS, terminal)
-			t._road_extend_to_x(-SAMPLE_HALF, SAMPLE_HALF)
 			var st: Dictionary = t._road_station(k)
 			var c: Vector2 = st.center
 			# THE CHORD DEVIATION ITSELF, measured on the shipped cache: this is what
@@ -440,6 +456,52 @@ func _check_flat_zones() -> void:
 			seed_value, worst_dev, t.ALT_ROAD_SEG_DEV_MAX, t._alt_road_segs.size()])
 		_assert_flat(t, seed_value, "road corridor", on_road)
 		_assert_alive(t, seed_value, "road corridor", off_road)
+
+		# THE WINDOW MAY SLIDE; THE CORRIDOR MAY NOT. A chunk's collision
+		# HeightMapShape3D is baked ONCE off height_at() and never rebuilt, while
+		# the shader re-evaluates the corridor live off the last-pushed window. So
+		# height_at() at a FIXED world point has to answer the same metre whichever
+		# nearby centre the window was built from, or the floor drifts away from the
+		# surface drawn over it while the player walks. Before the stride-lattice
+		# snap in _alt_road_segments this measured 2.19 m along the coin road — the
+		# spike's own control — and nothing here could see it.
+		#
+		# Walked in chunk_size steps because update_chunks refreshes the window on a
+		# chunk-boundary crossing, and sampled only inside the desktop residency
+		# half-width, which is the ground that is actually loaded and therefore
+		# baked.
+		var residency: float = float(t.render_distance) * t.chunk_size
+		var probe_pts: Array[Vector2] = []
+		for i in WINDOW_PROBE_STATIONS:
+			var st_p: Dictionary = t._road_station(i * t.ALT_ROAD_SEG_STRIDE)
+			var c_p: Vector2 = st_p.center
+			var n_p := Vector2(-sin(st_p.heading), cos(st_p.heading))
+			# Off the centreline and inside the skirt: on the RAMP, where the
+			# corridor distance actually moves the height. A point on the centreline
+			# is 0.0 from every window and would pass vacuously.
+			probe_pts.append(c_p + n_p * (t.ALT_ROAD_FLAT_HALF + t.ALT_ROAD_SKIRT * 0.5))
+		var worst_slide := 0.0
+		var slide_at := Vector2.ZERO
+		var base_center: float = probe_pts[0].x
+		for step in WINDOW_PROBE_STEPS:
+			var cx: float = base_center + float(step) * t.chunk_size
+			t._alt_road_refresh(cx)
+			var heights: Array[float] = []
+			for q: Vector2 in probe_pts:
+				heights.append(t.height_at(q.x, q.y))
+			t._alt_road_refresh(cx + t.chunk_size)
+			for j in probe_pts.size():
+				var q2: Vector2 = probe_pts[j]
+				if absf(q2.x - cx) > residency:
+					continue
+				var slide: float = absf(heights[j] - t.height_at(q2.x, q2.y))
+				if slide > worst_slide:
+					worst_slide = slide
+					slide_at = q2
+		if worst_slide > HEIGHT_EPSILON:
+			_fail("seed %d: height_at%s moved %.4f m when the road window slid one chunk — the corridor's chord nodes are not snapped to the stride lattice, so a chunk's baked floor no longer matches the surface the shader draws over it" % [
+				seed_value, str(slide_at), worst_slide])
+		t._alt_road_refresh(0.0)
 
 		t.free()
 	Sentinel.done("flat_zones")
@@ -516,11 +578,12 @@ func _check_shader_parity() -> void:
 	# of the array, which is an undefined read in GLSL ES 3.00.
 	var shader_text := FileAccess.get_file_as_string(SHADER_PATH)
 	var gpu_seg_max := _shader_int(shader_text, "ALT_ROAD_SEG_MAX")
-	var probe := _make_terrain(SEEDS[0])
-	if gpu_seg_max < probe.ALT_ROAD_SEG_MAX:
+	# Off the constant map, not off a terrain node stood up to read one const.
+	var consts: Dictionary = (load(TERRAIN_SCRIPT) as GDScript).get_script_constant_map()
+	var cpu_seg_max: int = consts["ALT_ROAD_SEG_MAX"]
+	if gpu_seg_max < cpu_seg_max:
 		_fail("ground.gdshader's ALT_ROAD_SEG_MAX is %d against the GDScript's %d — the road corridor would lose its far segments on the GPU while the CPU still flattens them" % [
-			gpu_seg_max, probe.ALT_ROAD_SEG_MAX])
-	probe.free()
+			gpu_seg_max, cpu_seg_max])
 
 	# ---- b + c. drive the SHIPPED push and read it back ----------------------
 	# _ready() returns at its "no player" guard long before it builds the default
@@ -550,7 +613,6 @@ func _check_shader_parity() -> void:
 	t._apply_biome_shader_params()
 
 	# ---- b. every pushed value equals the constant it is named after ---------
-	var consts: Dictionary = (load(TERRAIN_SCRIPT) as GDScript).get_script_constant_map()
 	var value_checked := 0
 	for uniform_name: String in pushed.keys():
 		# The three that cannot follow the naming convention, each for its own
@@ -579,6 +641,32 @@ func _check_shader_parity() -> void:
 			_fail("uniform '%s' was pushed as %s but %s is %s — the hill the player SEES is not the hill they STAND on" % [
 				uniform_name, str(got), const_name, str(want)])
 		value_checked += 1
+	# ---- b'. every DECLARED DEFAULT equals the constant it is named after -----
+	# The shader's own header claims "Every default below equals the GDScript
+	# constant of the same name … a shader loaded by a check that never ran
+	# _apply_biome_shader_params still computes the shipped field". Leg (b) only
+	# measures the value PUSHED, so without this a retuned ALT_CELL_SIZE leaves
+	# `uniform float alt_cell_size = 260.0;` stale and the editor preview — and any
+	# future check that loads the shader without the terrain — draws a field nobody
+	# ships. Scalars only: alt_offset's default is a vec2 and is asserted by hand
+	# below, and the array uniforms carry no meaningful default.
+	var default_re := RegEx.new()
+	default_re.compile("uniform\\s+float\\s+(alt_\\w+)\\s*=\\s*([-0-9.]+)\\s*;")
+	var defaults_checked := 0
+	for m: RegExMatch in default_re.search_all(shader_text):
+		var uniform_name := m.get_string(1)
+		if uniform_name == "alt_enabled":
+			continue  # the gate; its 0.0 default IS the inert-default idiom
+		var const_name := uniform_name.to_upper()
+		if not consts.has(const_name):
+			continue  # leg (b) already failed this one by name
+		if absf(m.get_string(2).to_float() - float(consts[const_name])) > 1e-6:
+			_fail("ground.gdshader declares '%s = %s' but %s is %s — the shader's own header promises they are equal, and a material nobody fed draws a field nobody ships" % [
+				uniform_name, m.get_string(2), const_name, str(consts[const_name])])
+		defaults_checked += 1
+	if defaults_checked == 0:
+		_fail("check 4 parsed ZERO alt_* uniform defaults out of ground.gdshader — the declared-default leg passed vacuously")
+
 	# ALT_OFFSET_SALT by hand, since it is one of the three exceptions and is the
 	# one that would silently move every hill in the world.
 	if (mat.get_shader_parameter("alt_offset") as Vector2).distance_to(t.ALT_OFFSET_SALT) > 1e-6:
@@ -622,8 +710,8 @@ func _check_shader_parity() -> void:
 					i, seg.z, seg.w, i + 1, next_seg.x, next_seg.y])
 				break
 
-	print("[altitude] shader parity: %d alt_* uniforms declared and pushed (%d value-checked), array %d >= %d, %d road segments packed and chained" % [
-		declared.size(), value_checked, gpu_seg_max, t.ALT_ROAD_SEG_MAX, seg_count])
+	print("[altitude] shader parity: %d alt_* uniforms declared and pushed (%d value-checked, %d default-checked), array %d >= %d, %d road segments packed and chained" % [
+		declared.size(), value_checked, defaults_checked, gpu_seg_max, t.ALT_ROAD_SEG_MAX, seg_count])
 	t.free()
 	Sentinel.done("shader_parity")
 
@@ -676,8 +764,30 @@ func _check_ground_collision() -> void:
 	# The shipped refresh seam, so the corridor clause is LIVE in the heights the
 	# chunks around the origin sample (check 3's note, one check along).
 	t._alt_road_refresh(0.0)
-	var side: int = t.GROUND_SUBDIVISIONS + 1
-	var cell: float = t.chunk_size / float(t.GROUND_SUBDIVISIONS)
+	# THE GRID IS READ OFF THE SHIPPED MESH, never re-derived. This check used to
+	# recompute `side` and `cell` with the same formula the builder used, so when
+	# that formula was wrong (GROUND_SUBDIVISIONS + 1 for a PlaneMesh that is
+	# actually GROUND_SUBDIVISIONS + 2 vertices across) the assertion agreed with
+	# the bug and the floor was quietly a different interpolant of height_at() from
+	# the surface drawn over it. The mesh's own vertex array is the only
+	# independent witness there is.
+	var ground_verts: PackedVector3Array = t._get_shared_ground_mesh() \
+			.get_mesh_arrays()[Mesh.ARRAY_VERTEX]
+	var distinct_x: Dictionary = {}
+	for v: Vector3 in ground_verts:
+		distinct_x[snappedf(v.x, 1e-4)] = true
+	var mesh_side: int = distinct_x.size()
+	var mesh_x: Array = distinct_x.keys()
+	mesh_x.sort()
+	var mesh_cell: float = float(mesh_x[1]) - float(mesh_x[0])
+	var side: int = t.ALT_GROUND_SIDE
+	var cell: float = t.alt_ground_cell()
+	if mesh_side != side:
+		_fail("the shared ground PlaneMesh is %d vertices across but ALT_GROUND_SIDE is %d — the collision grid is not the visual mesh's grid and the floor is an approximation of the surface you see" % [
+			mesh_side, side])
+	if not is_equal_approx(mesh_cell, cell):
+		_fail("the shared ground PlaneMesh's vertex spacing is %.6f m but alt_ground_cell() is %.6f m — the heightmap samples land between the drawn vertices" % [
+			mesh_cell, cell])
 	var worst := 0.0
 	var sampled := 0
 	for chunk_pos: Vector2i in GROUND_CHUNKS:
@@ -697,7 +807,7 @@ func _check_ground_collision() -> void:
 		# server; a uniform one of the WRONG size is a floor at the wrong height
 		# with no warning anywhere, which is why the value is asserted too.
 		if not is_equal_approx(cs.scale.x, cell) or cs.scale != Vector3.ONE * cs.scale.x:
-			_fail("chunk %s heightmap scale is %s, not a uniform %.6f (chunk_size / GROUND_SUBDIVISIONS)" % [
+			_fail("chunk %s heightmap scale is %s, not a uniform %.6f (alt_ground_cell())" % [
 				str(chunk_pos), str(cs.scale), cell])
 			continue
 		var origin: Vector3 = t.chunk_to_world(chunk_pos)
@@ -773,14 +883,48 @@ func _check_field_is_walkable() -> void:
 			if t.biome_at(x, z) == t.Biome.MOUNTAIN:
 				mountain_samples += 1
 				worst_mountain = maxf(worst_mountain, slope)
+		# THE SKIRTS, MEASURED RATHER THAN INHERITED. The uniform sample above is a
+		# ±5 km box, and the road corridor only exists within _alt_road_window() of
+		# the window centre — so essentially none of those points land on a SKIRT,
+		# which is where the steepest ground in the whole field is by construction:
+		# a mask ramping full amplitude to zero over 40 m (the road's, the tightest
+		# of the four) against a 22 m mountain band. Reporting the box's maximum as
+		# "the field's worst slope" without this leg overstates what was covered.
+		var worst_skirt := 0.0
+		var skirt_at := Vector2.ZERO
+		var skirt_samples := 0
+		t._road_extend_to_x(-SAMPLE_HALF, SAMPLE_HALF)
+		for i in FLAT_ROAD_STATIONS * 2 + 1:
+			var st: Dictionary = t._road_station(mini(i - FLAT_ROAD_STATIONS, t._road_terminal_k()))
+			var c: Vector2 = st.center
+			var n := Vector2(-sin(st.heading), cos(st.heading))
+			# Straight across the ramp, both banks, at SKIRT_PROBE_STEPS offsets —
+			# the whole smoothstep including its steepest middle.
+			for j in SKIRT_PROBE_STEPS:
+				var frac: float = float(j) / float(SKIRT_PROBE_STEPS - 1)
+				var off: float = t.ALT_ROAD_FLAT_HALF + frac * t.ALT_ROAD_SKIRT
+				for side: float in [1.0, -1.0]:
+					var q: Vector2 = c + n * side * off
+					var hq: float = t.height_at(q.x, q.y)
+					var sdx: float = (t.height_at(q.x + WALK_STEP, q.y) - hq) / WALK_STEP
+					var sdz: float = (t.height_at(q.x, q.y + WALK_STEP) - hq) / WALK_STEP
+					var s: float = Vector2(sdx, sdz).length()
+					skirt_samples += 1
+					if s > worst_skirt:
+						worst_skirt = s
+						skirt_at = q
 		if worst > MAX_WALKABLE_SLOPE:
 			_fail("seed %d: the field reaches %.3f m per metre at (%.1f, %.1f), over MAX_WALKABLE_SLOPE %.1f — that face is a wall the player slides off, not ground" % [
 				seed_value, worst, worst_at.x, worst_at.y, MAX_WALKABLE_SLOPE])
-		# REPORT NUMBERS, all three on one line (plan, Task 5): the field's worst
-		# slope, the worst inside the band impassability depends on, and the jump
-		# apex the massif walls are sized against.
-		print("[altitude] seed %d: max slope %.3f m/m (mountain band %.3f over %d samples), jump apex %.4f m, bound %.1f" % [
-			seed_value, worst, worst_mountain, mountain_samples, apex, MAX_WALKABLE_SLOPE])
+		if worst_skirt > MAX_WALKABLE_SLOPE:
+			_fail("seed %d: the road corridor's SKIRT reaches %.3f m per metre at (%.1f, %.1f), over MAX_WALKABLE_SLOPE %.1f — the coin road sits at the bottom of a wall" % [
+				seed_value, worst_skirt, skirt_at.x, skirt_at.y, MAX_WALKABLE_SLOPE])
+		# REPORT NUMBERS, all on one line (plan, Task 5): the field's worst slope,
+		# the worst inside the band impassability depends on, the worst on the
+		# tightest authored skirt, and the jump apex the massif walls are sized
+		# against.
+		print("[altitude] seed %d: max slope %.3f m/m (mountain band %.3f over %d samples, road skirt %.3f over %d), jump apex %.4f m, bound %.1f" % [
+			seed_value, worst, worst_mountain, mountain_samples, worst_skirt, skirt_samples, apex, MAX_WALKABLE_SLOPE])
 		t.free()
 	Sentinel.done("field_is_walkable")
 
@@ -944,8 +1088,19 @@ func _oracle_pair_f64(p: Vector2, t: Node3D) -> float:
 
 
 func _oracle_amplitude(biome_value: float, t: Node3D) -> float:
-	## GLSL alt_amplitude(): fragment()'s colour chain with six metres in place of
-	## six colours, chained low-to-high over the same thresholds and blend.
+	## fragment()'s colour chain with six metres in place of six colours, chained
+	## low-to-high over the same thresholds and blend.
+	##
+	## HONEST ABOUT WHAT THIS IS: unlike _oracle_pair_f32, which is transcribed from
+	## the GLSL and is the whole basis of check 2's bit-exactness leg, this one is a
+	## SAME-LANGUAGE transcription of _alt_amplitude. It catches a one-sided edit of
+	## the ladder (a threshold paired with the wrong amplitude, a rung dropped) and
+	## it binds height_at()'s composition to a ladder written out independently — it
+	## does NOT prove the GLSL's ladder is the same ladder. What binds the GPU is
+	## check 4: every alt_amp_* uniform declared, pushed, and equal to the constant
+	## it is named after, defaults included. The ORDER of the GLSL's rungs is the
+	## one thing neither check sees; it is the parity contract's edited-together
+	## rule, same as biome_noise's.
 	var amp: float = t.ALT_AMP_DESERT
 	amp = lerpf(amp, t.ALT_AMP_PLAINS,
 			smoothstep(t.BIOME_DESERT_MAX - t.BIOME_BLEND, t.BIOME_DESERT_MAX + t.BIOME_BLEND, biome_value))
