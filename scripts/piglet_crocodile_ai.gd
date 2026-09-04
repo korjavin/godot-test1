@@ -4145,29 +4145,44 @@ func _update_chase_state() -> void:
 			if remote_distance < distance_to_player:
 				distance_to_player = remote_distance
 				chase_target = remote as Vector3
-				quarry = null
-				var best_avatar_dist_sq: float = INF
-				for child in mp_node.get_children():
-					if (child.has_method("is_giant") or "is_giant" in child) and child is Node3D:
-						var d_sq: float = (child as Node3D).global_position.distance_squared_to(chase_target)
-						if d_sq < best_avatar_dist_sq:
-							best_avatar_dist_sq = d_sq
-							quarry = child
 
 	# GIANT TEIBI DETERRENT (owner ruling 2026-09-04, bead godot-test1-upu).
-	# A row carrying fears_giant_radius flees when the quarry answers is_giant().
-	# Refreshed each tick while true, so fear releases ~GIANT_FEAR_HOLD after
-	# the giant reverts or leaves with no persistent state to clear.
+	# A row carrying fears_giant_radius flees when ANY candidate (local player or
+	# remote peer) is giant within fears_giant_radius.
+	# Decided independent of the quarry/scent choice (Codex P1/P2) so a closer normal
+	# teammate or an airborne giant does not suppress fear.
 	# Placed above the acquisition beat so a hunter in the standstill beat flees
 	# immediately instead of standing still to acquire.
 	var fears_giant_radius: float = float(spec.get("fears_giant_radius", 0.0))
-	if fears_giant_radius > 0.0 and _is_quarry_giant(quarry):
-		var quarry_pos: Vector3 = (quarry as Node3D).global_position if (quarry is Node3D) else chase_target
-		if global_position.distance_to(quarry_pos) <= fears_giant_radius:
+	if fears_giant_radius > 0.0:
+		var giant_source: Vector3 = Vector3.ZERO
+		var found_giant: bool = false
+		var nearest_giant_dist: float = INF
+
+		# Check local player candidate
+		if player_node != null and _is_quarry_giant(player_node):
+			var dist: float = global_position.distance_to(player_node.global_position)
+			if dist <= fears_giant_radius:
+				found_giant = true
+				nearest_giant_dist = dist
+				giant_source = player_node.global_position
+
+		# Check remote avatar candidates
+		if mp_node != null and mp_node.has_method("remote_avatars"):
+			for avatar in mp_node.remote_avatars():
+				if avatar != null and _is_quarry_giant(avatar):
+					var avatar_pos: Vector3 = avatar.target_pos if ("target_pos" in avatar and avatar.target_pos is Vector3) else (avatar.global_position if (avatar is Node3D) else Vector3.ZERO)
+					var dist: float = global_position.distance_to(avatar_pos)
+					if dist <= fears_giant_radius and dist < nearest_giant_dist:
+						found_giant = true
+						nearest_giant_dist = dist
+						giant_source = avatar_pos
+
+		if found_giant:
 			spot_clock = 0.0
 			if _spot_label != null:
 				_spot_label.visible = false
-			flee_from(quarry_pos, GIANT_FEAR_HOLD, quarry == player_node)
+			flee_from(giant_source, GIANT_FEAR_HOLD, player_node != null and giant_source == player_node.global_position)
 			return
 
 	if is_fleeing:
@@ -5783,7 +5798,8 @@ func flee_from(source: Vector3, duration: float, tracks_player: bool = true) -> 
 	# remote-driven, gets the real flee from this very call — see
 	# MpManager.request_croc_flee.
 	is_fleeing = true
-	flee_time_remaining = duration
+	# A flee trigger/refresh must never shorten an active flee already in progress (Codex P2).
+	flee_time_remaining = maxf(flee_time_remaining, duration)
 	flee_source = source
 	flee_tracks_player = tracks_player
 	is_chasing = false

@@ -209,6 +209,17 @@ class StubPlayer:
 		return giant
 
 
+class StubMpManager:
+	extends Node
+	var avatars: Array = []
+
+	func remote_avatars() -> Array:
+		return avatars
+
+	func nearest_member_position(_from: Vector3) -> Variant:
+		return null
+
+
 ## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
 ## lands in and lets the script carry on, so a check that dies halfway simply
 ## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
@@ -1432,6 +1443,43 @@ func _check_row_immunities(giant: StubPlayer) -> void:
 			await _frames(45)
 			if body.is_fleeing:
 				_fail("giant fear: fear did not release after GIANT_FEAR_HOLD elapsed")
+
+			# 4. Flee refresh must never shorten an active flee (Codex P2)
+			body.is_fleeing = false
+			body.flee_time_remaining = 0.0
+			body.is_chasing = false
+			body.flee_from(body.global_position + Vector3(3.0, 0.0, 0.0), 10.0)
+			giant.giant = true
+			giant.global_position = body.global_position + Vector3(5.0, 0.0, 0.0)
+			body._update_chase_state()
+			if not body.is_fleeing:
+				_fail("giant fear: hunter failed to maintain flee after giant refresh")
+			if body.flee_time_remaining < 9.0:
+				_fail("giant fear (P2): fear refresh truncated active 10s flee to %.2fs (< 9.0s)" % body.flee_time_remaining)
+
+			# 5. Giant fear must not depend on scent/quarry choice (Codex P1/P2)
+			# Closer normal player (2m) would steal quarry under old code, but
+			# giant teammate (5m) must still trigger fear.
+			body.is_fleeing = false
+			body.flee_time_remaining = 0.0
+			body.is_chasing = false
+			giant.giant = false
+			giant.global_position = body.global_position + Vector3(2.0, 0.0, 0.0)
+			var mock_mp := StubMpManager.new()
+			root.add_child(mock_mp)
+			var remote_giant := RemoteAvatar.new()
+			mock_mp.add_child(remote_giant)
+			remote_giant.ability_bits = 4  # ABILITY_BIT_GIANT
+			remote_giant.target_pos = body.global_position + Vector3(5.0, 0.0, 0.0)
+			# Put interpolated global_position far away to verify authoritative target_pos is read (Codex P2)
+			remote_giant.global_position = body.global_position + Vector3(50.0, 0.0, 0.0)
+			mock_mp.avatars = [remote_giant]
+			body.mp_node = mock_mp
+			body._update_chase_state()
+			if not body.is_fleeing:
+				_fail("giant fear (P1): hunter did not flee giant teammate 5m away when normal player 2m away")
+			body.mp_node = null
+			mock_mp.queue_free()
 
 		body.queue_free()
 		await _frames(2)

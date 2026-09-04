@@ -2089,6 +2089,16 @@ func nearest_member_position(from: Vector3) -> Variant:
 	return best
 
 
+func remote_avatars() -> Array:
+	"""
+	All active RemoteAvatar children for peers in the room.
+	Read by piglet_crocodile_ai to evaluate giant fear across all room members (Codex P1).
+	"""
+	if _state != State.IN_ROOM:
+		return []
+	return _avatars.values()
+
+
 static func peer_color(peer_id: String) -> Color:
 	"""
 	The colour a given peer is drawn in, ANYWHERE it is drawn. A pure function of
