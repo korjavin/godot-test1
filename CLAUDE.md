@@ -42,6 +42,16 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 ./serve.sh                                          # serve a web build (WASM needs http://)
 
 # Self-checks — godot --headless --path . --script res://scripts/<name>.gd
+#   batch_selfcheck          the chunk batch's MESH-KIND slot: every BoxKind's
+#                            unit mesh inscribed in the unit cube (and spanning
+#                            its full height, or the shader gradient never
+#                            reaches full colour), one MultiMeshInstance3D per
+#                            kind PRESENT sharing one material and one shadow
+#                            flag (a cube-only batch still exactly one node
+#                            named BlockMultiMesh, measured over 225 real field
+#                            chunks), the city splitter carrying kind and
+#                            leaving a non-cube WHOLE, and collision staying a
+#                            BoxShape3D of dimensions for every kind
 #   fauna_selfcheck          herd steering + rider carry
 #   mp_selfcheck             multiplayer pure logic (decoders, ids, arithmetic)
 #   locale_selfcheck         en/de table + German fits its controls
@@ -318,6 +328,31 @@ Load-bearing rules:
   and `landmark_builders`' contract are what those two buy; every other caller (the city
   streamer, `budapest_selfcheck`) reaches `ChunkBatch` directly. **New batch machinery
   lands there, not in the world engine.**
+- **A BOX HAS A MESH KIND, AND EVERY UNIT MESH FITS THE UNIT CUBE** (bead
+  `godot-test1-y1o.1`, epic `y1o` "get rid of blocks"). The batch entry is
+  `{transform, color, kind}` — `ChunkBatch.BoxKind` (CUBE / SPHERE / CONE / CYLINDER), a
+  trailing optional on `create_box` defaulting to CUBE, **always written** so the entry
+  shape stays uniform (the whole-dict `var_to_bytes` signatures both `prop_selfcheck` and
+  `budapest_selfcheck` compare would otherwise differ between two runs that agree about
+  every box). Three rules, all pinned by `batch_selfcheck`:
+  **every unit mesh is inscribed in the unit cube** (`ChunkBatch.unit_mesh`, radius 0.5 /
+  height 1.0, lazy and shared like the cube), which is what keeps `dimensions` meaning the
+  entry's BOUNDING BOX for every kind — and therefore keeps `prop_selfcheck`'s cube-corner
+  reach helpers and `landmark_selfcheck`'s extent helpers valid upper bounds with no edit,
+  and `world_block.gdshader`'s model-space -0.5..+0.5 gradient meaningful;
+  **collision is unchanged** — still a `BoxShape3D` of `dimensions` whatever the kind, so a
+  non-CUBE kind is for `collide = false` decoration and NON-CLIMBABLE colliders only,
+  never for anything a player stands on; and
+  **`_build_block_multimesh` emits one `MultiMeshInstance3D` per kind PRESENT** — a
+  cube-only chunk (every chunk the world ships today) builds exactly the one node it always
+  did, still named `BlockMultiMesh`, and every bucket shares the one
+  `_get_shared_block_material` and the chunk's `cast_shadows` flag. That per-kind split is
+  the ONLY sanctioned multiplication of a chunk's MultiMeshInstance3Ds. **Budapest stays
+  pure cube** — no city builder passes a kind, and `budapest_selfcheck` asserts a built
+  city chunk has exactly one MultiMeshInstance3D, which is the after-the-fact half its
+  pre-build sweep cannot see. The city splitter **carries `kind` and leaves a non-CUBE
+  entry whole**: a cut cone is not two cones. Choosing a kind costs **no RNG draw**, so it
+  can never move a spawn.
 - **Chunk-parented, so unloading frees it.** Anything spawned per-chunk parents to the
   chunk MeshInstance3D or it leaks.
 - **Footprints are the shared currency.** Each thing built appends
