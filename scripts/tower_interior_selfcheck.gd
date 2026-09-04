@@ -104,14 +104,6 @@ const PLAYER_SCRIPT: String = "res://scripts/player_controller.gd"
 ## resolve" test. Read rather than restated, so a renamed row fails by name.
 const CROC_SCRIPT: String = "res://scripts/piglet_crocodile_ai.gd"
 
-## Throwaway save file this check points `BestRunStore.config_path` at for its
-## whole run. NOTHING HERE MAY OPEN THE MACHINE'S `user://best_run.cfg`: a shell
-## hydrates from the store on entering the tree and WRITES THROUGH on every gate
-## it opens, so without the redirect checks 7, 8 and 10 would each store tower
-## ids into a developer's real profile — the trap `progression_selfcheck.gd`
-## documents at length, one step worse because this one writes.
-const LOCAL_STORE_PATH: String = "user://tower_interior_selfcheck_best_run.cfg"
-
 ## An id no gate in this game has. Check 10 uses it as "what a second writer
 ## already put on disk", which is the stale copy the union has to survive.
 const FOREIGN_ID: String = "tower_selfcheck_foreign_stop"
@@ -218,12 +210,12 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	_boot()
 
 
 func _boot() -> void:
-	# THE STORE SEAM FIRST, before any shell can exist — see LOCAL_STORE_PATH.
-	BestRunStore.config_path = LOCAL_STORE_PATH
+	# THE STORE SEAM FIRST, before any shell can exist — see BestRunStore.config_path.
 	_fresh_store()
 	# ONE FRAME BEFORE ANYTHING — a node added to `root` from inside _initialize()
 	# is not `is_inside_tree()` until the first frame, so anything reading a global
@@ -2247,7 +2239,7 @@ func _check_earned_state_survives_a_relaunch() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value(BestRunStore.CONFIG_TOWER_SECTION, BestRunStore.CONFIG_TOWER_KEY,
 		"{not json at all")
-	cfg.save(LOCAL_STORE_PATH)
+	cfg.save(BestRunStore.config_path)
 	if not BestRunStore.tower_opened_ids().is_empty():
 		_fail("a corrupt tower record read as opened gates: %s" % [
 			BestRunStore.tower_opened_ids()])
@@ -2255,7 +2247,7 @@ func _check_earned_state_survives_a_relaunch() -> void:
 	# including the duplicate — this is a SET.
 	cfg.set_value(BestRunStore.CONFIG_TOWER_SECTION, BestRunStore.CONFIG_TOWER_KEY,
 		JSON.stringify(["tower_ok", 5, "", "tower_ok", {"a": 1}]))
-	cfg.save(LOCAL_STORE_PATH)
+	cfg.save(BestRunStore.config_path)
 	var salvaged := BestRunStore.tower_opened_ids()
 	if salvaged.size() != 1 or salvaged[0] != "tower_ok":
 		_fail("a half-junk tower record did not salvage to exactly its one real id: %s" % [
@@ -4824,6 +4816,88 @@ func _check_the_dossiers_are_findable() -> void:
 				_fail("check 20: dossier %d's cell %s is covered by %d of storey %d's reservations, expected exactly one" % [
 					index, cell, covered, floor_index])
 
+	# (c3) ...AND THE RESERVATION IS ACTUALLY HANDED OVER, AND ACTUALLY REFUSES.
+	#      (c2) is still a read-back of `marks()`: it says the six footprints are the
+	#      right shape, not that anybody ever gives them to the dresser. Deleting
+	#      `reserved.append_array(TowerDossiers.marks(...))` from `plan_boxes` left
+	#      every check above green (bead `godot-test1-r9e`), because no dresser
+	#      candidate happens to land on one of the six cells today. So the seam is
+	#      driven end to end, in the two halves neither of which implies the other:
+	#
+	#        1. WHAT PRODUCTION BUILT is exactly what the dresser produces when it IS
+	#           handed the marks. `plan_boxes` hands `plan_dressing` everything it drew
+	#           after the slab, so that list is reconstructible from the outside:
+	#           non-`dress` boxes past the slab, in order. Re-run the dresser on it
+	#           twice — with the marks and without — and production must match the
+	#           WITH run. On the storey where the reservation bites, that is the
+	#           mutation's grave; the print below names how many storeys those are, so
+	#           a designer who moves the last influential dossier can see the binding
+	#           go quiet instead of discovering it the way this bead did.
+	#        2. AND THE REFUSAL IS REAL, which no arrangement of today's dossiers can
+	#           show: plant a mark of `marks()`'s own shape on a cell the dresser
+	#           demonstrably furnished, and that cell must come back empty. The
+	#           unplanted run is the negative control, and it is chosen for being
+	#           non-empty, so this half can never go vacuous.
+	var reservation_bites := 0
+	for floor_index: int in range(TowerDossiers.DOSSIER_FLOOR_MIN,
+			TowerDossiers.DOSSIER_FLOOR_MAX + 1):
+		var plan := TowerPlans.storey(floor_index)
+		var marks := TowerDossiers.marks(floor_index)
+		if plan.is_empty() or marks.is_empty():
+			continue
+		var built := TowerInterior.plan_boxes(floor_index)
+		var slab_count: int = TowerInterior._plan_slab(plan).size()
+		var base: Array[Dictionary] = []       # what `plan_boxes` reserves, MINUS the marks
+		var furniture: Array[Dictionary] = []  # what it actually drew
+		for i: int in range(slab_count, built.size()):
+			if bool(built[i].get("dress", false)):
+				furniture.append(built[i])
+			else:
+				base.append(built[i])
+		var with_marks: Array[Dictionary] = base.duplicate()
+		with_marks.append_array(marks)
+		var dressed_with := TowerDressing.plan_dressing(plan, with_marks)
+		var dressed_without := TowerDressing.plan_dressing(plan, base)
+		if _dress_signature(furniture) != _dress_signature(dressed_with):
+			_fail("check 20: storey %d's furniture is not what the dresser makes of the dossier reservations — plan_boxes did not hand them over" % floor_index)
+		if _dress_signature(dressed_with) != _dress_signature(dressed_without):
+			reservation_bites += 1
+		# ...and now the planted candidate. The victim is a cell this storey really
+		# furnished, so `before` is non-zero by construction.
+		var victim := Vector2i(-1, -1)
+		for box: Dictionary in furniture:
+			var here := _cell_of_box(box)
+			if _box_covers_cell(box, here):
+				victim = here
+				break
+		if victim == Vector2i(-1, -1):
+			_fail("check 20: storey %d drew no furniture to plant a reservation under" % floor_index)
+			continue
+		var planted: Array[Dictionary] = base.duplicate()
+		planted.append({
+			"pos": Vector3(TowerInterior._grid_x(float(victim.x) + 0.5),
+					TowerInterior.FLOOR_Y[floor_index],
+					TowerInterior._grid_z(float(victim.y) + 0.5)),
+			"size": Vector3(TowerPlans.PLAN_CELL, TowerInterior.PLAN_PAD_THICK,
+					TowerPlans.PLAN_CELL),
+		})
+		var before := 0
+		for box: Dictionary in furniture:
+			if _box_covers_cell(box, victim):
+				before += 1
+		var after := 0
+		for box: Dictionary in TowerDressing.plan_dressing(plan, planted):
+			if _box_covers_cell(box, victim):
+				after += 1
+		if before <= 0:
+			_fail("check 20: storey %d's planted cell %s carried no furniture to begin with — the control is vacuous" % [
+				floor_index, victim])
+		if after != 0:
+			_fail("check 20: storey %d put %d pieces of furniture on %s even though a dossier footprint reserves it" % [
+				floor_index, after, victim])
+	if reservation_bites <= 0:
+		print("check 20 NOTE: no dossier reservation currently moves its storey's layout — half 1 above is passing vacuously; half 2 still measures the refusal")
+
 	# (d) THE CRAWL GATE, in metres, against the two real capsules.
 	_check_the_crawl_alcove_fits_only_small_teibi(interior)
 
@@ -5125,6 +5199,24 @@ func _box_covers_cell(box: Dictionary, cell: Vector2i) -> bool:
 			and pos.z - half.z < z1 and pos.z + half.z > z0
 
 
+func _cell_of_box(box: Dictionary) -> Vector2i:
+	## Which plan cell a box's CENTRE sits in — `_grid_x` / `_grid_z` run backwards.
+	## Only ever asked of furniture, which is drawn on one cell by construction.
+	return Vector2i(
+			int(floor((box["pos"].x + TowerPlans.PLAN_HALF) / TowerPlans.PLAN_CELL)),
+			int(floor((box["pos"].z + TowerPlans.PLAN_HALF) / TowerPlans.PLAN_CELL)))
+
+
+func _dress_signature(boxes: Array[Dictionary]) -> Array:
+	## One storey's furniture as comparable text, in order. Name, place and size are
+	## what a shifted dresser changes; comparing the dictionaries themselves would
+	## drag colours and flags into an assertion that is about placement.
+	var out: Array = []
+	for box: Dictionary in boxes:
+		out.append("%s|%v|%v" % [box.get("name", ""), box["pos"], box["size"]])
+	return out
+
+
 func _storey_of(mesh: MeshInstance3D) -> int:
 	## Which storey a batch mesh belongs to, off its container's name — the same
 	## `Floor%d` the builder writes. -1 for anything that is not on a storey.
@@ -5138,10 +5230,11 @@ func _fresh_store() -> void:
 	"""
 	Delete the throwaway save, so the next assertion starts from a clean profile.
 
-	Never the real one: `LOCAL_STORE_PATH` is this file's own file and
-	`BestRunStore.config_path` is pointed at it before any shell exists.
+	Never the real one: `Sentinel.isolate_user_state()` pointed
+	`BestRunStore.config_path` at this process's own scratch file before any shell
+	could exist.
 	"""
-	DirAccess.remove_absolute(LOCAL_STORE_PATH)
+	DirAccess.remove_absolute(BestRunStore.config_path)
 
 
 func _fail(message: String) -> void:

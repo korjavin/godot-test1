@@ -37,6 +37,7 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	# `_initialize()` cannot await, so the measuring half runs as its own coroutine
 	# and reports from in there — the tree keeps processing until it calls quit().
 	# Reporting HERE would print a verdict at frame 0, before a single check ran

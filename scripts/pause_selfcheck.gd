@@ -75,6 +75,7 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	# ONE FRAME FIRST. `_initialize()` runs before the main loop, and a node added
 	# to `root` before that answers null to `get_tree()` — so every holder in
 	# check 1 would claim into nothing and the check would fail on its own fixture.

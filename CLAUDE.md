@@ -35,6 +35,20 @@ It is consulted only on the PASSING path — a run that already failed fails any
 twenty-seven unreached checks. A new self-check needs the preload, the stamps and that one
 report line.
 
+**EVERY CHECK ALSO OWNS ITS `user://` STATE, and the seam is the same file.**
+`Sentinel.isolate_user_state()` is the FIRST statement of every check's
+`_initialize()`: it points `BestRunStore.config_path` and
+`StartOverlay.locale_config_path` at a freshly created directory keyed by this
+PROCESS's pid, so a check can neither read the developer's real profile nor be
+trampled by the same check running in another worktree (`user://` is per PROJECT
+NAME, so every checkout on a machine shares one directory) nor inherit the state a
+SIGTERM'd predecessor left behind — bead `godot-test1-3y3`, generalising `t8z`'s
+per-file redirect in `progression_selfcheck`, which was hermetic against the player
+and not against itself. `progression_selfcheck`'s `hermetic_stores` check audits the
+glob for that call, for any other assignment of either seam, and for the real paths
+as literals. **The shipped game is untouched** and still persists to
+`user://best_run.cfg`.
+
 ```bash
 godot --path . scenes/main.tscn                    # run the game
 godot --path . scenes/characters/primm.tscn        # run one scene in isolation
@@ -61,7 +75,10 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #   mp_selfcheck             multiplayer pure logic (decoders, ids, arithmetic)
 #   locale_selfcheck         en/de table + German fits its controls
 #   view_selfcheck           the three camera views C cycles
-#   progression_selfcheck    level curve, skill trees, effects on a live player
+#   progression_selfcheck    level curve, skill trees, effects on a live player,
+#                            plus `hermetic_stores`: every `*_selfcheck.gd` in the
+#                            glob opens `Sentinel.isolate_user_state()` and names
+#                            no real `user://` path
 #   wade_selfcheck           river wading (player, croc, boss)
 #   minimap_selfcheck        the map actually read the world
 #   city_map_selfcheck       the Budapest map panel (B): the key is free against
@@ -339,7 +356,7 @@ Load-bearing rules:
   adds a `CollisionShape3D` to the chunk's single `BlockCollision` `StaticBody3D`. Never
   instance a MeshInstance3D or a physics body per object. **That seam is its own file** —
   `scripts/chunk_batch.gd` (`class_name ChunkBatch`, all static, bead `godot-test1-ftn.1`):
-  `create_box` / `create_block` / `_build_block_multimesh`, the two process-wide shared
+  `create_box` / `_build_block_multimesh`, the two process-wide shared
   resources (`_get_shared_unit_box_mesh` / `_get_shared_block_material` — the latter
   the `world_block.gdshader` material, with `WORLD_BLOCK_SHADER`,
   `BLOCK_BOTTOM_SHADE`, `SHARED_BLOCK_ROUGHNESS` and the `RAMP_*` banner beside
@@ -1073,14 +1090,17 @@ network-spawned, so a hunter one peer capped away and the master did not is a lo
 that can still bite. **In a room the retuned chance IS the whole cap**; that ceiling is
 documented, not a bug. `enemy_spawn_selfcheck` check 13 pins all five clauses.
 
-**It is also the row that proved player abilities can be opted out of as DATA.** A
-machine has no nose and is not flesh, so its row carries `stink_immune` (`flee_from()`
-early-returns) and `crush_immune` (giant Teibi's squash block is skipped and the body
-takes the ordinary bite path). Both are `spec.get(key, false)` reads placed beside the
-existing `is_boss` guards — never a species-name test — so the next armoured or airtight
-predator opts in with a row edit and no code change. `boss_selfcheck` check 8 drives
-**every** row through both real paths, which makes the seven animal rows the negative
-control and anchors the crocodile by name against a stray key.
+**It is also the row that proved player abilities can be opted out of as DATA.** By
+owner ruling 2026-09-04 (bead `godot-test1-bvh`), the hunter's stink exemption is
+reversed — gameplay beats fiction, so Phoboman's Stink Wave scares hunter robots away
+like any ordinary predator. Its row retains `crush_immune` (a machine is not flesh, so
+giant Teibi's squash block is skipped and the body takes the ordinary bite path), and
+adds `fears_giant_radius` (14 m; owner ruling 2026-09-04, bead `godot-test1-upu`: giant Teibi
+scares hunters away instead of crushing them). These are `spec.get(key, default)` reads
+placed beside the existing `is_boss` guards — never a species-name test — so the next
+armoured or airtight predator opts in with a row edit and no code change. `boss_selfcheck`
+check 8 drives **every** row through both real paths and giant fear, which makes the animal
+rows the negative control and anchors the crocodile by name against a stray key.
 
 **The tower guard is the FOURTH door, and it is not in `endless_terrain` at all.** It is
 placed on a post by `TowerInterior` (`GUARD_SPECIES` / `GUARD_SCENE` /
@@ -1090,9 +1110,9 @@ dispatch maps and the hunter spawner alone reports a shipped predator as unspawn
 **It adds no behaviour arm**: "patrols its floor and never leaves it" is the existing
 `set_confinement()` leash the elevated-platform guards already use, so the row is
 `behavior: "solo"` and the patrol is geometry. Its `coin_setback` key is the same
-required row key every predator carries, and it reuses BOTH of the hunter's immunity
-keys AND its `captures_hero` — see the tower section above for why each is a design
-decision and not an inheritance.
+required row key every predator carries, and it keeps BOTH `stink_immune` and `crush_immune`
+(with no `fears_giant_radius`) AND its `captures_hero` — see the tower section above for
+why each is a design decision and not an inheritance.
 
 **The hunt arm has a SECOND LEG: scent tracking, and it is steering, not detection.**
 Out of detection a row carrying `scent_radius` (150 m, the hunter alone) asks the LOD
@@ -1116,8 +1136,8 @@ touches no grab range, collision, speed or detection, and a denied hunter keeps 
 visibly. Rules are bucketed **per quarry by proximity**, never globally — group `"player"`
 is the local player, so a global cap would starve a room. **Absent director = granted**,
 which is what keeps the standalone `hunter_robot.tscn` and every headless harness working;
-that degrade is debug-only, because hunters are Stink-Wave-exempt and uncrushable and the
-open sector is their whole fairness budget. `grant_engagement` / `escape_sector_open` are
+that degrade is debug-only, because hunters are uncrushable and the
+open sector (alongside Phoboman's Stink Wave and giant Teibi) is their fairness budget. `grant_engagement` / `escape_sector_open` are
 static and pure so `hunt_director_selfcheck` drives the shipped geometry. Its numbers (cap
 2, 20 s chase, 15 s lull, 90°) are **provisional, held for the predator-density epic**.
 

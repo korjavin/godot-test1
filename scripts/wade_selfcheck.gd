@@ -127,6 +127,7 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	# _initialize() cannot await, so the measuring half runs as its own coroutine
 	# and reports from in there. Reporting here would print a verdict at frame 0,
 	# before a single physics tick had run — a vacuous pass.
