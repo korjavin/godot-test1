@@ -235,7 +235,10 @@ const VOICE_JS: String = """
 		   (remote) plus one for the local mic. `levels()` reads them all and
 		   answers ONE string — never one bridge call per peer, and never a
 		   boolean. */
-		ctx: null, meterSelf: null
+		ctx: null, meterSelf: null,
+		/* STATS TELEMETRY (bead godot-test1-xtr.4). Cached string, sampled at <= 1 Hz
+		   only while stats() is polled. */
+		statsCache: '', statsSampling: 0, statsLastTime: 0
 	};
 
 	/* Lazily built, and RESUMED every time it is asked for: an AudioContext
@@ -779,9 +782,129 @@ const VOICE_JS: String = """
 		return out.join(',');
 	}
 
+	/* TELEMETRY FOR \fo (bead godot-test1-xtr.4).
+	   One string: local getSettings() ns/ec/agc as 1/0, peer count, per-peer
+	   candidate-pair currentRoundTripTime in ms (or -), and inbound-rtp aggregate
+	   packet loss percentage. Sampled at <= 1 Hz only while asked, cached so
+	   stats() answers synchronously without stalling the frame. */
+	function formatStats(ns, ec, agc, peerKeys, rtts, totalLost, totalRecv) {
+		var peerCount = peerKeys.length;
+		var rttStr = 'rtt=-';
+		if (peerCount > 0 && rtts.length > 0) {
+			rttStr = 'rtt=' + rtts.join('/') + 'ms';
+		}
+		var totalPkts = totalLost + totalRecv;
+		var lossRate = totalPkts > 0 ? (totalLost / totalPkts * 100.0) : 0.0;
+		var lossStr = 'loss=' + lossRate.toFixed(1) + '%';
+		return 'ns=' + ns + ' ec=' + ec + ' agc=' + agc + ' peers=' + peerCount + ' ' + rttStr + ' ' + lossStr;
+	}
+
+	function readLocalConstraints() {
+		var res = { ns: 0, ec: 0, agc: 0 };
+		if (S.stream) {
+			var tracks = S.stream.getAudioTracks();
+			if (tracks && tracks.length > 0 && tracks[0].getSettings) {
+				var st = tracks[0].getSettings();
+				if (st) {
+					res.ns = (st.noiseSuppression === 1 || st.noiseSuppression === true) ? 1 : 0;
+					res.ec = (st.echoCancellation === 1 || st.echoCancellation === true) ? 1 : 0;
+					res.agc = (st.autoGainControl === 1 || st.autoGainControl === true) ? 1 : 0;
+				}
+			}
+		}
+		return res;
+	}
+
+	function sampleStats() {
+		var gen = S.gen;
+		var peerKeys = [];
+		var promises = [];
+		for (var k in S.peers) {
+			peerKeys.push(k);
+			var pc = S.peers[k].pc;
+			if (pc && pc.getStats) {
+				try {
+					promises.push(pc.getStats());
+				} catch (e) {
+					promises.push(Promise.resolve(null));
+				}
+			} else {
+				promises.push(Promise.resolve(null));
+			}
+		}
+
+		Promise.all(promises).then(function (reports) {
+			if (gen !== S.gen) {
+				S.statsSampling = 0;
+				return 0;
+			}
+			var lc = readLocalConstraints();
+			var rtts = [];
+			var totalLost = 0;
+			var totalRecv = 0;
+
+			for (var i = 0; i < reports.length; i++) {
+				var report = reports[i];
+				var peerLost = 0;
+				var peerRecv = 0;
+				var peerRtt = -1;
+
+				if (report && report.forEach) {
+					report.forEach(function (stat) {
+						if (stat && stat.type === 'inbound-rtp' && (stat.kind === 'audio' || stat.mediaType === 'audio')) {
+							if (typeof stat.packetsLost === 'number') {
+								peerLost += stat.packetsLost;
+							}
+							if (typeof stat.packetsReceived === 'number') {
+								peerRecv += stat.packetsReceived;
+							}
+						} else if (stat && stat.type === 'candidate-pair') {
+							var isSelected = (stat.selected === 1 || stat.selected === true);
+							if (isSelected && typeof stat.currentRoundTripTime === 'number') {
+								peerRtt = Math.round(stat.currentRoundTripTime * 1000);
+							} else if (peerRtt < 0 && (stat.nominated === 1 || stat.nominated === true || stat.state === 'succeeded') && typeof stat.currentRoundTripTime === 'number') {
+								peerRtt = Math.round(stat.currentRoundTripTime * 1000);
+							}
+						}
+					});
+				}
+
+				totalLost += peerLost;
+				totalRecv += peerRecv;
+				rtts.push(peerRtt >= 0 ? String(peerRtt) : '-');
+			}
+
+			S.statsCache = formatStats(lc.ns, lc.ec, lc.agc, peerKeys, rtts, totalLost, totalRecv);
+			S.statsSampling = 0;
+			return 1;
+		}).catch(function () {
+			S.statsSampling = 0;
+			return 0;
+		});
+	}
+
+	function stats() {
+		var now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+		if (!S.statsSampling && (now - S.statsLastTime >= 1000 || !S.statsLastTime)) {
+			S.statsSampling = 1;
+			S.statsLastTime = now;
+			sampleStats();
+		}
+		if (S.statsCache) {
+			return S.statsCache;
+		}
+		var lc = readLocalConstraints();
+		var peerKeys = [];
+		for (var k in S.peers) { peerKeys.push(k); }
+		return formatStats(lc.ns, lc.ec, lc.agc, peerKeys, [], 0, 0);
+	}
+
 	function stop() {
 		S.gen = S.gen + 1;
 		S.tx = 0;
+		S.statsCache = '';
+		S.statsSampling = 0;
+		S.statsLastTime = 0;
 		/* THE CAMERA DIES WITH THE ROOM — the opt-in is per room, and a capture
 		   device still running outside the room it was granted for is the worst
 		   possible way to get this wrong. Before `close()` so `detachCam` still
@@ -838,6 +961,7 @@ const VOICE_JS: String = """
 			return on;
 		},
 		levels: levels,
+		stats: stats,
 		setCamera: function (v) { S.camWant = flag(v); return camera(S.camWant); },
 		camState: function () { return S.camState; },
 		setTile: setTile,
@@ -1253,6 +1377,26 @@ func set_mode(new_mode: Mode) -> void:
 
 func is_tx() -> bool:
 	return _tx
+
+
+func debug_line() -> String:
+	"""
+	One-line debug summary for perf_overlay (\\fo).
+	Returns "" when not in a room or off-web.
+	Otherwise: 'Voice: mode=PTT tx=1 ns=1 ec=1 agc=1 peers=3 rtt=42/55/61ms loss=0.0%'
+	"""
+	if not _is_web or not _is_in_room():
+		return ""
+	var mode_str := "PTT" if _mode == Mode.PUSH_TO_TALK else "ALWAYS"
+	var tx_str := "1" if is_tx() else "0"
+	var js_stats := ""
+	if _ck != null and _running:
+		var raw: Variant = _ck.stats()
+		if typeof(raw) == TYPE_STRING:
+			js_stats = str(raw)
+	if js_stats.is_empty():
+		js_stats = "ns=0 ec=0 agc=0 peers=0 rtt=- loss=0.0%"
+	return "Voice: mode=%s tx=%s %s" % [mode_str, tx_str, js_stats]
 
 
 func _is_in_room() -> bool:
