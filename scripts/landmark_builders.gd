@@ -1361,13 +1361,15 @@ static func _landmark_taj(terrain: Node3D, center: Vector3, rng: RandomNumberGen
 	terrain.create_box(center + rot * Vector3(0.0, hall_y + 1.9, HALL.z / 2.0 - 0.05), Vector3(2.4, 3.4, 0.5),
 			yaw, rng, block_batch, block_body, 0.0, LM_MARBLE.darkened(0.72), false)
 
-	# The dome: three shrinking boxes plus a finial. Crude, and unmistakable.
+	# The dome: drum, bulbous dome, and collar plus a finial. Replacing the
+	# stepped flattened-lens tiers with one cubic SPHERE restores the Mughal
+	# silhouette while preserving box count, draw order, and collisions.
 	var y := hall_y + HALL.y
-	# Two SPHERES for the bulb, a CYLINDER for the shoulder it necks into and a
-	# CONE for the finial — _lm_onion's vocabulary, on a stack authored before it.
-	var dome_kinds: Array = [ChunkBatch.BoxKind.SPHERE, ChunkBatch.BoxKind.SPHERE, ChunkBatch.BoxKind.CYLINDER]
+	# A CYLINDER for the drum, a cubic SPHERE for the bulbous dome, and a
+	# CYLINDER for the shoulder necking into the finial.
+	var dome_kinds: Array = [ChunkBatch.BoxKind.CYLINDER, ChunkBatch.BoxKind.SPHERE, ChunkBatch.BoxKind.CYLINDER]
 	var dome_i := 0
-	for dims in [Vector3(3.6, 1.6, 3.6), Vector3(2.6, 1.2, 2.6), Vector3(1.6, 0.9, 1.6)]:
+	for dims in [Vector3(2.8, 1.0, 2.8), Vector3(3.6, 3.0, 3.6), Vector3(1.2, 0.5, 1.2)]:
 		terrain.create_box(center + Vector3(0.0, y + dims.y / 2.0, 0.0), dims, yaw, rng, block_batch, block_body, 0.0, marble,
 				true, dome_kinds[dome_i])
 		dome_i += 1
@@ -2563,15 +2565,13 @@ static func _landmark_kinderdijk(terrain: Node3D, center: Vector3, rng: RandomNu
 			terrain.create_box(center + rot * Vector3(mx, y + 0.95, 0.0), Vector3(w, 1.9, w), yaw,
 					rng, block_batch, block_body, 0.0, _lm_shade(brick, rng, 0.03), true, ChunkBatch.BoxKind.CYLINDER)
 			y += 1.9
-		# The cap: dark thatch, and wider than the body it sits on. A CYLINDER
-		# rather than the cone a mill's cap wants, because this box COLLIDES and
-		# rule 5d refuses a colliding cone — the round tapering body under it is
-		# what turns "the octagonal brick tower in the house's vocabulary" into a
-		# real one.
-		terrain.create_box(center + rot * Vector3(mx, y + 0.75, 0.0), Vector3(2.5, 1.5, 2.5), yaw,
-				rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04), true, ChunkBatch.BoxKind.CYLINDER)
-		y += 1.5
-		var hub_y: float = y - 0.6
+		# The cap: dark thatch, tapering to a cone point. Non-colliding so rule 5d
+		# is respected (no colliding cone); the body cylinders below provide the
+		# collision shape.
+		terrain.create_box(center + rot * Vector3(mx, y + 0.8, 0.0), Vector3(2.4, 1.6, 2.4), yaw,
+				rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04), false, ChunkBatch.BoxKind.CONE)
+		y += 1.6
+		var hub_y: float = y - 0.9
 		terrain.create_box(center + rot * Vector3(mx, hub_y, 1.35), Vector3(0.4, 0.4, 0.9), yaw,
 				rng, block_batch, block_body, 0.0, _lm_shade(LM_BASALT, rng, 0.03), false)
 		# The sails. Trim: a sail 7 m up is not a floor.
