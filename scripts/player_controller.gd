@@ -689,6 +689,7 @@ const CHEAT_CODES: Dictionary = {
 var _cheat_armed: bool = false
 var _cheat_buffer: String = ""
 var _cheat_armed_msec: int = 0
+var _cheat_swallowed_frame: int = -1
 
 ## Reentrancy guard for the teleport below: it awaits a physics frame, and a
 ## second press inside that window must not start a second rebuild.
@@ -1023,6 +1024,43 @@ func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("switch_character") and not is_game_over:
 		switch_to_next_character()
 
+	# CHEAT CODE SEQUENCE RECOGNISER (bead godot-test1-a7i): \fo, \fb, \fh.
+	# Backslash arms an empty buffer; the next two letter keys within ~2 s
+	# complete it. A match dispatches; any other key, a third letter, or the
+	# timeout discards the buffer silently — never a partial action.
+	#
+	# Runs in _input() before any HUD panel's _unhandled_input() sees the keys,
+	# so set_input_as_handled() steals them (e.g. 'b' from CityMapPanel).
+	if is_game_over or get_tree().paused:
+		return
+	var key := event as InputEventKey
+	if key == null or not key.pressed or key.echo:
+		return
+	if key.keycode == CHEAT_ARM_KEY:
+		_cheat_armed = true
+		_cheat_buffer = ""
+		_cheat_armed_msec = Time.get_ticks_msec()
+		get_viewport().set_input_as_handled()
+		return
+	elif _cheat_armed:
+		if Time.get_ticks_msec() - _cheat_armed_msec > CHEAT_TIMEOUT_MS:
+			_cheat_armed = false
+			_cheat_buffer = ""
+		elif key.keycode >= KEY_A and key.keycode <= KEY_Z:
+			# keycode identifies the physical key label regardless of Shift.
+			_cheat_buffer += char(key.keycode).to_lower()
+			_cheat_swallowed_frame = Engine.get_physics_frames()
+			get_viewport().set_input_as_handled()
+			if _cheat_buffer.length() == 2:
+				var code: String = _cheat_buffer
+				_cheat_armed = false
+				_cheat_buffer = ""
+				_dispatch_cheat_code(code)
+			return
+		else:
+			_cheat_armed = false
+			_cheat_buffer = ""
+
 
 func _unhandled_input(event: InputEvent) -> void:
 	"""
@@ -1059,32 +1097,6 @@ func _unhandled_input(event: InputEvent) -> void:
 			# sees the digit.
 			get_viewport().set_input_as_handled()
 			return
-	# CHEAT CODE SEQUENCE RECOGNISER (bead godot-test1-a7i): \fo, \fb, \fh.
-	# Backslash arms an empty buffer; the next two letter keys within ~2 s
-	# complete it. A match dispatches; any other key, a third letter, or the
-	# timeout discards the buffer silently — never a partial action.
-	if key.keycode == CHEAT_ARM_KEY:
-		_cheat_armed = true
-		_cheat_buffer = ""
-		_cheat_armed_msec = Time.get_ticks_msec()
-		get_viewport().set_input_as_handled()
-		return
-	elif _cheat_armed:
-		if Time.get_ticks_msec() - _cheat_armed_msec > CHEAT_TIMEOUT_MS:
-			_cheat_armed = false
-			_cheat_buffer = ""
-		elif key.keycode >= KEY_A and key.keycode <= KEY_Z:
-			_cheat_buffer += char(key.keycode).to_lower()
-			get_viewport().set_input_as_handled()
-			if _cheat_buffer.length() == 2:
-				var code: String = _cheat_buffer
-				_cheat_armed = false
-				_cheat_buffer = ""
-				_dispatch_cheat_code(code)
-			return
-		else:
-			_cheat_armed = false
-			_cheat_buffer = ""
 
 
 func _dispatch_cheat_code(code: String) -> void:
@@ -1431,9 +1443,12 @@ func _physics_process(delta: float) -> void:
 
 	# STEP 0.5: Tick ability cooldowns / the Windman air boost, then read the F key.
 	# Done before gravity so an active boost can soften this frame's fall.
+	# If a cheat sequence is armed or a letter was swallowed on this physics frame,
+	# skip the poll so typing \fo does not trigger special_ability.
 	_update_ability_timers(delta)
-	if Input.is_action_just_pressed("special_ability"):
-		try_activate_ability()
+	if not _cheat_armed and Engine.get_physics_frames() != _cheat_swallowed_frame:
+		if Input.is_action_just_pressed("special_ability"):
+			try_activate_ability()
 
 	# STEP 1: Handle Gravity
 	# If the character is not on the ground, apply gravity. While Windman's Air Rush

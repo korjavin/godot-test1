@@ -29,7 +29,7 @@ extends Label
 ## at 60 and then stops dead for a tenth of a second. The rows above are sampled
 ## at 4 Hz and would never show that frame at all. So on EVERY frame — including
 ## while the overlay is hidden, because the spike we care about most is the one
-## during startup before anyone pressed O — we compare the frame's own delta
+## during startup before anyone typed \fo — we compare the frame's own delta
 ## against two thresholds and, when it is over, log the frame's magnitude
 ## TOGETHER WITH what the engine did on that same frame:
 ##
@@ -43,19 +43,20 @@ extends Label
 ## to move these numbers, not a vibe. Getting the two lined up on the SAME frame
 ## is the one subtle thing in here; see the off-by-one note in `_sample_frame`.
 ## Spikes are also printed (throttled) as `[SPIKE]` lines, so a web run leaves a
-## record in the browser console.
+## readable trail in the browser console with no overlay open.
 ##
-## ----------------------------------------------------------------------------
-## USAGE
-## ----------------------------------------------------------------------------
-## Toggle the on-screen stats with cheat code **\fo**.
+## Read the numbers back with `get_spike_summary()` / `get_spike_log()`, and
+## start a fresh measurement window with `reset_spike_stats()`.
 ##
-## The spike log is read programmatically by tests (`get_spike_log()`) and
-## summarizes cleanly via `get_spike_summary()`.
+## Sampling is POLL-based (we read plain counters off the two managers through
+## their groups) rather than the managers pushing events at us: the measurement
+## must never be able to change what it measures, and a poll that finds no
+## manager simply reports zero, so a scene run standalone still works.
 ##
-## It lives in the HUD CanvasLayer as a plain Label. It does not touch gameplay:
-## it only reads counters and prints them. It ignores mouse input and starts
-## hidden in release builds so it never ends up in a player's face.
+## Toggle the on-screen stats with cheat code **\fo**. It lives in the HUD
+## CanvasLayer as a plain Label. It does not touch gameplay: it only reads
+## counters and prints them. It ignores mouse input and starts hidden in release
+## builds so it never ends up in a player's face.
 ##
 ## **Not localized, deliberately.** This is a debug surface (\fo), read while
 ## tuning against English documentation, and it is excluded from the game's

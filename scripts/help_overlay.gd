@@ -70,7 +70,7 @@ extends Control
 ## font against `DESC_WIDTH`. That is the actual failure mode, and it is the one
 ## thing measured.
 ##
-## Debug rows are deliberately NOT in the CSV — the O/F4 surfaces they describe
+## Debug rows are deliberately NOT in the CSV — the \fo/F4 surfaces they describe
 ## are excluded from localization by design (`locale_selfcheck.gd` says so), and
 ## an untranslated key falls back to readable English for free.
 ##

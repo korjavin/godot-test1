@@ -108,7 +108,7 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            path, the four tile states (captive OUTRANKS
 #                            active), the no-player degrade, and the row's
 #                            fit in main.tscn against every other widget
-#                            pinned to that corner, O included
+#                            pinned to that corner, \fo included
 #   landmark_selfcheck       every builder fits its declared radius AND its
 #                            declared top
 #   landmark_sites_selfcheck THE MUSEUM MILE: every field kind sited AT MOST ONCE
@@ -1293,7 +1293,7 @@ OWN `detection_radius`, both are published every scan, and the vignette's shader
 in different radial bands so neither can suppress the other. A second retrieval unit joins
 the machine channel with its `SPECIES` row and no edit anywhere.
 
-Hunters are in group `"crocodile"`, so **the O overlay's "Crocs (active/total)" counter
+Hunters are in group `"crocodile"`, so **the \fo overlay's "Crocs (active/total)" counter
 means predators + hunters** — which is exactly what the LOD manager manages.
 
 ### Systemic capture — a GD-SURVEY machine takes the HERO
@@ -1403,7 +1403,7 @@ pair in `player_controller`, so the consts stay consts.
 **There is no walk-speed effect and there may never be one** — the catchable-walk contract
 above is the tightest margin in the game.
 
-Panels open on raw keycodes outside the input map (K, M, P, B, L, +/−, O, T, H, F4–F7): named actions are
+Panels open on raw keycodes outside the input map (K, M, P, B, L, +/−, \ arming key, F4–F7): named actions are
 for rebindable *gameplay* input, and a key that only opens a panel has nothing to rebind
 against. Every overlay pauses the tree, because the player reads gameplay through global
 polled `Input`, which a focused `Control` does not suppress.
@@ -1579,7 +1579,7 @@ Almost none of this is our code — it is Godot's built-in `Control` auto-transl
   auto-translation would only see the formatted result, which is a key in no table.
 
 German is ~30% longer and this UI has hard-sized controls, so fit is **measured** by
-`locale_selfcheck.gd`, not eyeballed. Debug surfaces (O, F4, ⚙ telemetry, selfcheck output)
+`locale_selfcheck.gd`, not eyeballed. Debug surfaces (\fo, F4, ⚙ telemetry, selfcheck output)
 are deliberately not localized.
 
 **CI gotcha:** `*.translation` and `*.import` are gitignored, so CI must run an explicit

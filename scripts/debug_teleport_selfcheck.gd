@@ -250,23 +250,34 @@ func _check_absent_in_room() -> void:
 	Sentinel.done("room_absent")
 
 
-func _send_key(player: Node, keycode: Key) -> void:
+func _send_key(keycode: Key) -> void:
 	var event := InputEventKey.new()
 	event.keycode = keycode
+	event.physical_keycode = keycode
 	event.pressed = true
-	player._unhandled_input(event)
+	Input.parse_input_event(event)
+	await physics_frame
+	await process_frame
+	var release := InputEventKey.new()
+	release.keycode = keycode
+	release.physical_keycode = keycode
+	release.pressed = false
+	Input.parse_input_event(release)
+	await physics_frame
+	await process_frame
 
 
 func _check_sequence_recognizer(player: Node) -> void:
 	"""Cheat code recognizer (bead godot-test1-a7i): \\fo, \\fb, \\fh sequence handling.
 
-	Tests:
+	Tests through real Input.parse_input_event dispatch:
 	- Bare fo without backslash does not toggle overlay
 	- Unknown code \\fx does not fire and resets buffer
 	- Non-letter key during sequence discards buffer
 	- Sequence typed after timeout (> CHEAT_TIMEOUT_MS) does not fire
-	- Valid \\fo toggles perf overlay
+	- Valid \\fo toggles perf overlay and DOES NOT fire special ability
 	- Valid \\fh teleports to HQ
+	- Valid \\fb teleports to Budapest gate and DOES NOT open CityMapPanel or pause
 	"""
 	var perf: Node = get_first_node_in_group("perf_overlay")
 	if perf == null:
@@ -277,75 +288,111 @@ func _check_sequence_recognizer(player: Node) -> void:
 	var initial_vis: bool = perf.visible
 
 	# 1. Bare "fo" without backslash does NOT toggle overlay.
-	_send_key(player, KEY_F)
-	_send_key(player, KEY_O)
+	await _send_key(KEY_F)
+	await _send_key(KEY_O)
 	if perf.visible != initial_vis:
 		_fail("bare fo without backslash toggled perf overlay")
 	if player._cheat_armed or not player._cheat_buffer.is_empty():
 		_fail("bare letter keys armed or filled cheat buffer without backslash")
 
 	# 2. Unknown code \\fx does NOT fire anything and resets buffer.
-	_send_key(player, KEY_BACKSLASH)
+	await _send_key(KEY_BACKSLASH)
 	if not player._cheat_armed:
 		_fail("KEY_BACKSLASH did not arm cheat recognizer")
-	_send_key(player, KEY_F)
+	await _send_key(KEY_F)
 	if player._cheat_buffer != "f":
 		_fail("first letter 'f' not recorded in cheat buffer")
-	_send_key(player, KEY_X)
+	await _send_key(KEY_X)
 	if player._cheat_armed or not player._cheat_buffer.is_empty():
 		_fail("unknown cheat code \\fx did not reset armed buffer")
 	if perf.visible != initial_vis:
 		_fail("unknown cheat code \\fx toggled perf overlay")
 
 	# 3. Non-letter key during sequence discards buffer.
-	_send_key(player, KEY_BACKSLASH)
-	_send_key(player, KEY_F)
-	_send_key(player, KEY_SPACE)
+	await _send_key(KEY_BACKSLASH)
+	await _send_key(KEY_F)
+	await _send_key(KEY_SPACE)
 	if player._cheat_armed or not player._cheat_buffer.is_empty():
 		_fail("non-letter key while armed did not discard cheat buffer")
 
 	# 4. Sequence typed after timeout (> CHEAT_TIMEOUT_MS) does NOT fire.
-	_send_key(player, KEY_BACKSLASH)
+	await _send_key(KEY_BACKSLASH)
 	if not player._cheat_armed:
 		_fail("KEY_BACKSLASH did not arm cheat recognizer for timeout test")
 	player._cheat_armed_msec -= (PlayerScript.CHEAT_TIMEOUT_MS + 500)
-	_send_key(player, KEY_F)
+	await _send_key(KEY_F)
 	if player._cheat_armed or not player._cheat_buffer.is_empty():
 		_fail("cheat recognizer remained armed after timeout elapsed")
-	_send_key(player, KEY_O)
+	await _send_key(KEY_O)
 	if perf.visible != initial_vis:
 		_fail("timed-out cheat sequence \\fo toggled perf overlay")
 
-	# 5. Valid \\fo toggles perf overlay.
-	_send_key(player, KEY_BACKSLASH)
-	_send_key(player, KEY_F)
-	_send_key(player, KEY_O)
+	# 5. Valid \\fo toggles perf overlay AND does NOT fire special ability (B2).
+	for i in range(60):
+		if player.is_on_floor():
+			break
+		await physics_frame
+	player.velocity = Vector3.ZERO
+	player.ability_cooldowns[player.current_character_index] = 0.0
+	var pos_before_fo: Vector3 = player.global_position
+	await _send_key(KEY_BACKSLASH)
+	await _send_key(KEY_F)
+	await _send_key(KEY_O)
+	await physics_frame
+	await process_frame
 	if perf.visible == initial_vis:
 		_fail("valid \\fo sequence did not toggle perf overlay")
 	if player._cheat_armed or not player._cheat_buffer.is_empty():
 		_fail("valid \\fo sequence left cheat buffer armed/non-empty")
+	var cd: float = player.ability_cooldowns[player.current_character_index]
+	if cd > 0.001:
+		_fail("valid \\fo fired special ability (cooldown=%.2f s)" % cd)
+	var horiz_moved: float = Vector2(player.global_position.x - pos_before_fo.x, player.global_position.z - pos_before_fo.z).length()
+	if horiz_moved > 0.5:
+		_fail("valid \\fo moved player horizontally (Air Rush fired, dist=%.2f m)" % horiz_moved)
 
-	# Toggle it back to original state
-	_send_key(player, KEY_BACKSLASH)
-	_send_key(player, KEY_F)
-	_send_key(player, KEY_O)
+	# Toggle perf overlay back to original state
+	await _send_key(KEY_BACKSLASH)
+	await _send_key(KEY_F)
+	await _send_key(KEY_O)
+	await physics_frame
+	await process_frame
 	if perf.visible != initial_vis:
 		_fail("second \\fo sequence did not toggle perf overlay back")
 
 	# 6. Valid \\fh teleports to HQ.
 	var hq_dest: Vector3 = player.debug_destination_hq()
-	var pos_before: Vector3 = player.global_position
-	_send_key(player, KEY_BACKSLASH)
-	_send_key(player, KEY_F)
-	_send_key(player, KEY_H)
-	# debug_teleport_to awaits a physics frame:
+	var pos_before_fh: Vector3 = player.global_position
+	await _send_key(KEY_BACKSLASH)
+	await _send_key(KEY_F)
+	await _send_key(KEY_H)
 	await physics_frame
 	await process_frame
 	await physics_frame
 	await process_frame
 	if player.global_position.distance_to(hq_dest) > 20.0:
 		_fail("valid \\fh sequence did not teleport to HQ (distance to HQ: %.1f m)" % player.global_position.distance_to(hq_dest))
-	if player.global_position.distance_to(pos_before) < 50.0:
+	if player.global_position.distance_to(pos_before_fh) < 50.0:
 		_fail("valid \\fh sequence did not move player away from previous position")
+
+	# 7. Valid \\fb teleports to Budapest gate and does NOT open CityMapPanel (B1).
+	var gate_dest: Vector3 = PlayerScript.debug_destination_budapest()
+	var pos_before_fb: Vector3 = player.global_position
+	await _send_key(KEY_BACKSLASH)
+	await _send_key(KEY_F)
+	await _send_key(KEY_B)
+	await physics_frame
+	await process_frame
+	await physics_frame
+	await process_frame
+	if paused:
+		_fail("tree was paused during \\fb (CityMapPanel swallowed 'b')")
+	var city_map: Node = root.get_node_or_null("Main/HUD/CityMapPanel")
+	if city_map != null and bool(city_map.get("_panel_open")):
+		_fail("CityMapPanel opened during \\fb")
+	if player.global_position.distance_to(gate_dest) > 20.0:
+		_fail("valid \\fb sequence did not teleport to Budapest gate (distance: %.1f m)" % player.global_position.distance_to(gate_dest))
+	if player.global_position.distance_to(pos_before_fb) < 50.0:
+		_fail("valid \\fb sequence did not move player away from HQ")
 
 	Sentinel.done("sequence_recognizer")
