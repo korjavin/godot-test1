@@ -49,7 +49,7 @@ extends SceneTree
 ##      CROCODILES. Same shape of check, one scale up: every role builder is run
 ##      against every territory's STRUCTURE_THEMES row and (a) every colour it
 ##      emits must lie on THAT territory's ramp — the negative control for a
-##      builder that quietly fell back to create_block's global RAMP_* pick, which
+##      builder that quietly fell back to create_box's global RAMP_* pick, which
 ##      would look fine and simply stop being themed — and (b) every walkable top
 ##      it registers in `platforms` must be reachable from the ground by untilted
 ##      colliding box tops in steps no taller than PROP_MAX_STEP, or the crocodile
@@ -157,6 +157,7 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	_run()
 
 

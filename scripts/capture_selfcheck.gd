@@ -88,8 +88,10 @@ extends SceneTree
 ## THE STORE IS REDIRECTED FIRST, before any player exists. `player_controller`
 ## builds a `BestRunStore` in `_ready()`, and the arming gate READS the tower set
 ## off disk — so a run against the real `user://best_run.cfg` would both read the
-## player's own save and write to it. `LOCAL_STORE_PATH` is this file's throwaway,
-## pointed at in `_initialize()` and deleted again at the end.
+## player's own save and write to it. `Sentinel.isolate_user_state()`, the first
+## statement of `_initialize()`, points `BestRunStore.config_path` at a fresh
+## directory private to this process instead; `selfcheck_sentinel.gd` says why it
+## is per PROCESS and not merely per file.
 ##
 ## THE CAUGHT FREEZE IS NOT WAITED OUT. `_on_caught_finished()` is called directly
 ## rather than ticking 0.55 s of physics per grab: the freeze is a presentation
@@ -114,9 +116,6 @@ const SETBACK_EPS: float = 1e-3
 ## it cannot overlap and bite on its own during an awaited frame (a chase covers
 ## ~0.09 m in one), near enough to be nothing but a stand-off.
 const PROBE_STANDOFF: float = 3.0
-
-## This check's own profile. Never the real one — see the landmine above.
-const LOCAL_STORE_PATH: String = "user://capture_selfcheck_best_run.cfg"
 
 var _failures: Array[String] = []
 
@@ -275,7 +274,7 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
 func _initialize() -> void:
-	BestRunStore.config_path = LOCAL_STORE_PATH
+	Sentinel.isolate_user_state()
 	_fresh_store()
 	# ONE FRAME BEFORE ANYTHING: a node added to `root` from inside `_initialize()`
 	# is not `is_inside_tree()` until the first frame.
@@ -3068,8 +3067,8 @@ func _beat_done() -> void:
 
 
 func _fresh_store() -> void:
-	"""Delete this check's throwaway profile. Never the real one — see the header."""
-	DirAccess.remove_absolute(LOCAL_STORE_PATH)
+	"""Delete this process's throwaway profile. Never the real one — see the header."""
+	DirAccess.remove_absolute(BestRunStore.config_path)
 
 
 func _fail(message: String) -> void:

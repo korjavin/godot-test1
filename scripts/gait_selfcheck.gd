@@ -77,6 +77,7 @@ var _failures: Array[String] = []
 
 
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	# The measuring half is its own coroutine: `_initialize()` cannot await, and
 	# reporting here would print a verdict at frame 0, before the player scene
 	# has had a single frame to build itself — a vacuous pass.

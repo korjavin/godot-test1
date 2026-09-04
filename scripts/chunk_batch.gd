@@ -272,17 +272,6 @@ static func _get_shared_block_material() -> ShaderMaterial:
 		_shared_block_material.set_shader_parameter("bottom_shade", BLOCK_BOTTOM_SHADE)
 	return _shared_block_material
 
-static func create_block(center_pos: Vector3, size: float, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""
-	Create one cube block. Thin wrapper over create_box for the common case where
-	all three dimensions are equal (scattered blocks, towers, walls, corridors).
-
-	@param block_batch: Out-param forwarded to create_box for MultiMesh batching.
-	@param block_body: The chunk's shared block-collision body, forwarded to
-	                  create_box so this block's shape hangs on it (Task 5).
-	"""
-	create_box(center_pos, Vector3(size, size, size), yaw, rng, block_batch, block_body)
-
 static func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D, tilt: float = 0.0, color_override: Color = Color(0.0, 0.0, 0.0, 0.0), collide: bool = true, kind: int = BoxKind.CUBE) -> void:
 	"""
 	Register one box for rendering AND register its physics collision shape. Used for
