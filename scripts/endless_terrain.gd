@@ -1001,6 +1001,52 @@ const FIELD_BRIDGE_STREAM_SEED: int = 0x0_6021
 ## one stone vocabulary outdoors, and a colour is not worth a hash stream.
 const FIELD_BRIDGE_STONE := Color(0.58, 0.58, 0.60)
 
+## THE TRIM (bead godot-test1-06o.4). Owner on the .2 screenshot, a flat grey
+## deck angled across the water: "parapets/pylons" — a bare slab reads as a
+## floating plate. So every field bridge is dressed in the CITY'S bridge
+## vocabulary (_city_chain_bridge / _city_margaret_bridge are the reference:
+## stone edge walls and a portal pair at the bank), scaled from a 12 m Danube
+## deck to a 1.6 m field one, through the SAME create_box batch, the SAME centre
+## rule and the SAME zero-RNG rule as the deck itself.
+##
+## THE PARAPET'S INNER FACE IS EXACTLY FIELD_BRIDGE_HALF_WIDTH, which is the
+## whole of "it must not narrow the lane": the wall is CANTILEVERED off the deck
+## edge rather than standing on it, so the walkable width, `field_bridge_surface_y`,
+## every wet probe and every span measurement are byte-for-byte what they were
+## and only boxes were added. It reaches DOWN past the deck's own underside too
+## (hence the + FIELD_BRIDGE_THICKNESS on its height), which is what gives the
+## slab a visible edge beam instead of a paper edge.
+##
+## It is the ONE colliding piece of trim — a rail you can walk through is not a
+## rail — and 1.0 m is chest-high on a hero and far under the jump apex, so it
+## fences the drop without fencing anybody in.
+const FIELD_BRIDGE_PARAPET_WIDTH: float = 0.5
+const FIELD_BRIDGE_PARAPET_HEIGHT: float = 1.0
+
+## The pylon pair at each bank — the portal the Chain Bridge puts at each end of
+## its span, four boxes instead of ninety-two. They stand from the GROUND to
+## FIELD_BRIDGE_TOP + rise, so a deck that used to hang in the air is visibly
+## carried at both ends, and they sit on the parapet line (inner face on the
+## parapet's) so nothing of them is ever over the lane.
+##
+## NON-COLLIDING, like every other piece of ornament in this game that nobody
+## needs to climb: they cost the chunk body no shape, and a post at the very
+## edge of a 16 m deck is scenery, not geometry.
+## SQUARE IN PLAN, and it was judged by eye: 0.9 x 1.6 read as a dark FIN
+## standing on the deck rather than as a post. 0.9 is also the ceiling — the
+## pylon shares the parapet's inner face, so anything wider would push the
+## bridge's stone past the "a metre outside the parapet is open water" line
+## check 2 controls on.
+const FIELD_BRIDGE_PYLON_WIDTH: float = 0.9
+const FIELD_BRIDGE_PYLON_DEPTH: float = 0.9
+const FIELD_BRIDGE_PYLON_RISE: float = 3.2
+
+## Trim tones, FIELD_BRIDGE_STONE's neighbours and consts for its reason: a
+## colour is not worth a hash stream, and three flat greys is what tells a
+## parapet from a deck from a pylon at 100 m.
+const FIELD_BRIDGE_PARAPET_STONE := Color(0.66, 0.65, 0.64)
+const FIELD_BRIDGE_PYLON_STONE := Color(0.50, 0.50, 0.53)
+
 ## Feature flag, `spawn_hunters`' precedent: it exists so field_bridge_selfcheck
 ## can generate the same chunk with the bridges OFF and prove that nothing else
 ## in the world moved by a single box (check 6's A/B).
@@ -11538,6 +11584,21 @@ func _field_bridge_run() -> float:
 	return FIELD_BRIDGE_TOP * BudapestPlan.BRIDGE_RAMP_RUN / BudapestPlan.BRIDGE_DECK_TOP
 
 
+static func field_bridge_outer_reach() -> float:
+	"""
+	How far from the walking line ANY of a bridge's stone reaches — the deck's
+	half-width plus the widest piece of trim standing outboard of it.
+
+	The number check 5 measures against every *_ROAD_CLEARANCE in this file, and
+	it is a DERIVATION rather than FIELD_BRIDGE_HALF_WIDTH read a second time:
+	the parapet and the pylons are cantilevered off the deck edge (see the trim
+	const block), so the stone now reaches further than the lane does and the
+	"no prop can ever stand on a deck" contract is about the stone.
+	"""
+	return FIELD_BRIDGE_HALF_WIDTH \
+			+ maxf(FIELD_BRIDGE_PARAPET_WIDTH, FIELD_BRIDGE_PYLON_WIDTH)
+
+
 func _field_bridge_reach() -> float:
 	"""
 	How far in X a bridge's stone can reach from its anchor station — the pad
@@ -11867,6 +11928,44 @@ func _field_bridge_slabs(row: Dictionary) -> Array:
 			"y_a": y_a, "y_b": y_b, "half": half,
 		})
 	row["slabs"] = out
+	return out
+
+
+func _field_bridge_rail_line(poly: PackedVector2Array, offset: float) -> PackedVector2Array:
+	"""
+	The walking line offset sideways by `offset` metres, MITRED at every joint —
+	the line a parapet's boxes are centred on.
+
+	@param offset: SIGNED lateral offset. The normal is (dir.y, -dir.x), which is
+	               the box's own local +X (see spawn_field_bridges_in_chunk).
+	@return: One point per point of `poly`, so segment `i` of the result is the
+	         rail beside slab `i`.
+
+	A MITRE, NOT ONE OFFSET RECTANGLE PER SLAB, and the difference is the lane.
+	A rectangle offset from its own segment stops at the joint's projection, and
+	on the INSIDE of a turn that corner lands `offset * cos(turn)` from the NEXT
+	segment's line — 7.63 m from a line whose deck reaches 8.0 at the road's
+	measured 22.4 degree worst joint, i.e. a rail poking a third of a metre into
+	the lane the deck promises (field_bridge_selfcheck check 11 catches exactly
+	that). The mitre point lies on BOTH offset lines by construction, so no part
+	of the rail is ever nearer the walking line than `offset` — and the OUTER
+	corner closes with no wedge for free, which is why the parapet needs no slab
+	stretch of its own (_field_bridge_joint_ext stays the deck's).
+	"""
+	var out := PackedVector2Array()
+	var n := poly.size()
+	for i in n:
+		var d_in: Vector2 = (poly[i] - poly[i - 1]).normalized() if i > 0 \
+				else (poly[1] - poly[0]).normalized()
+		var d_out: Vector2 = (poly[i + 1] - poly[i]).normalized() if i < n - 1 \
+				else d_in
+		var bis := (Vector2(d_in.y, -d_in.x) + Vector2(d_out.y, -d_out.x)).normalized()
+		# Scale the bisector so its projection on either normal is exactly
+		# `offset`. Floored, because a hairpin sends the mitre to infinity — this
+		# road's heading cap cannot make one, and a floor is cheaper than a
+		# special case nobody can reach.
+		var proj := maxf(bis.dot(Vector2(d_out.y, -d_out.x)), 0.5)
+		out.append(poly[i] + bis * (offset / proj))
 	return out
 
 
@@ -12474,6 +12573,13 @@ func spawn_field_bridges_in_chunk(chunk_pos: Vector2i, block_batch: Array,
 	and before _build_block_multimesh — a deck is one draw call's worth of the
 	chunk's batch like any cactus. It appends NO footprint (see the const block).
 
+	THE TRIM RIDES THE SAME LOOP (bead godot-test1-06o.4): a parapet per slab
+	edge and a pylon pair at each bank, cantilevered OUTBOARD of the deck so the
+	walkable lane, the surface query and every wet probe are untouched and only
+	boxes were added — see the trim const block for the whole argument. Each
+	piece takes the centre rule for ITSELF, because its midpoint is not its
+	slab's.
+
 	NO RNG DRAW from anybody's stream: its own private generator at a fixed seed,
 	whose colour picks are overridden anyway.
 	"""
@@ -12489,16 +12595,23 @@ func spawn_field_bridges_in_chunk(chunk_pos: Vector2i, block_batch: Array,
 	rng.seed = FIELD_BRIDGE_STREAM_SEED
 	for row_v: Variant in rows:
 		var row: Dictionary = row_v
-		for slab_v: Variant in _field_bridge_slabs(row):
-			var slab: Dictionary = slab_v
+		var poly: PackedVector2Array = row["poly"]
+		# The two parapet lines, mitred, one per deck edge — segment `i` of each
+		# belongs to slab `i`. Built once per row, not once per chunk-and-slab.
+		var rail_off: float = float(row["half"]) + FIELD_BRIDGE_PARAPET_WIDTH * 0.5
+		var rails: Array[PackedVector2Array] = [
+			_field_bridge_rail_line(poly, rail_off),
+			_field_bridge_rail_line(poly, -rail_off),
+		]
+		var slabs := _field_bridge_slabs(row)
+		for i in slabs.size():
+			var slab: Dictionary = slabs[i]
 			var dir: Vector2 = slab["dir"]
 			var run_h: float = slab["len"]
 			var y_a: float = slab["y_a"]
 			var y_b: float = slab["y_b"]
 			var half: float = slab["half"]
 			var mid: Vector2 = Vector2(slab["start"]) + dir * run_h * 0.5
-			if world_to_chunk(Vector3(mid.x, 0.0, mid.y)) != chunk_pos:
-				continue
 			var rise := y_b - y_a
 			var length := sqrt(run_h * run_h + rise * rise)
 			# create_box composes Basis(UP, yaw) * Basis(RIGHT, tilt), so a box
@@ -12507,13 +12620,70 @@ func spawn_field_bridges_in_chunk(chunk_pos: Vector2i, block_batch: Array,
 			# on (cos(tilt) * sin(yaw), -sin(tilt), cos(tilt) * cos(yaw)), so
 			# yaw = atan2(dir.x, dir.y) points it along this segment and
 			# tilt = -atan2(rise, run) tips it up that segment's climb.
-			create_box(
-					Vector3(mid.x - centre.x,
-							(y_a + y_b) * 0.5 - FIELD_BRIDGE_THICKNESS * 0.5,
-							mid.y - centre.z),
-					Vector3(half * 2.0, FIELD_BRIDGE_THICKNESS, length),
-					atan2(dir.x, dir.y), rng, block_batch, block_body,
-					-atan2(rise, run_h), FIELD_BRIDGE_STONE)
+			var yaw := atan2(dir.x, dir.y)
+			var tilt := -atan2(rise, run_h)
+			var surface := (y_a + y_b) * 0.5
+			if world_to_chunk(Vector3(mid.x, 0.0, mid.y)) == chunk_pos:
+				create_box(
+						Vector3(mid.x - centre.x,
+								surface - FIELD_BRIDGE_THICKNESS * 0.5,
+								mid.y - centre.z),
+						Vector3(half * 2.0, FIELD_BRIDGE_THICKNESS, length),
+						yaw, rng, block_batch, block_body, tilt,
+						FIELD_BRIDGE_STONE)
+
+			# THE PARAPETS — one per edge of this slab, ramps included, because a
+			# rail that stops where the deck does is a rail you walk off the side
+			# of the approach. A rail segment is parallel to its slab (offset
+			# lines are), so it takes the slab's own `yaw`; only its LENGTH moves,
+			# which is what a mitre does at a turn.
+			#
+			# EACH ONE TAKES THE CENTRE RULE FOR ITSELF: a parapet's midpoint is
+			# 8.25 m off its slab's, so the chunk that owns the slab is routinely
+			# not the chunk that owns the wall — the rule slices a BOX.
+			for rail_v: Variant in rails:
+				var rail: PackedVector2Array = rail_v
+				var r_mid: Vector2 = (rail[i] + rail[i + 1]) * 0.5
+				var r_run: float = rail[i].distance_to(rail[i + 1])
+				if r_run <= EDGE_EPS:
+					continue
+				if world_to_chunk(Vector3(r_mid.x, 0.0, r_mid.y)) != chunk_pos:
+					continue
+				create_box(
+						Vector3(r_mid.x - centre.x,
+								surface + (FIELD_BRIDGE_PARAPET_HEIGHT
+										- FIELD_BRIDGE_THICKNESS) * 0.5,
+								r_mid.y - centre.z),
+						Vector3(FIELD_BRIDGE_PARAPET_WIDTH,
+								FIELD_BRIDGE_PARAPET_HEIGHT + FIELD_BRIDGE_THICKNESS,
+								sqrt(r_run * r_run + rise * rise)),
+						yaw, rng, block_batch, block_body,
+						-atan2(rise, r_run), FIELD_BRIDGE_PARAPET_STONE)
+
+		# THE PYLON PAIR AT EACH BANK. The deck's two ends are poly[1] and
+		# poly[-2] by construction (_field_bridge_row_from appends a ramp foot
+		# outside each of them), and the slab meeting each is COLINEAR with the
+		# deck segment beyond it — so the heading is that segment's and there is
+		# no fourth description of the bridge's shape to keep in step.
+		var last := poly.size() - 1
+		for bank in [
+			{ "at": poly[1], "dir": (poly[2] - poly[1]).normalized() },
+			{ "at": poly[last - 1], "dir": (poly[last - 1] - poly[last - 2]).normalized() },
+		]:
+			var b_dir: Vector2 = bank["dir"]
+			var b_perp := Vector2(b_dir.y, -b_dir.x)
+			var b_top := FIELD_BRIDGE_TOP + FIELD_BRIDGE_PYLON_RISE
+			for side in [-1.0, 1.0]:
+				var at: Vector2 = Vector2(bank["at"]) + b_perp * (side
+						* (float(row["half"]) + FIELD_BRIDGE_PYLON_WIDTH * 0.5))
+				if world_to_chunk(Vector3(at.x, 0.0, at.y)) != chunk_pos:
+					continue
+				create_box(
+						Vector3(at.x - centre.x, b_top * 0.5, at.y - centre.z),
+						Vector3(FIELD_BRIDGE_PYLON_WIDTH, b_top,
+								FIELD_BRIDGE_PYLON_DEPTH),
+						atan2(b_dir.x, b_dir.y), rng, block_batch, block_body,
+						0.0, FIELD_BRIDGE_PYLON_STONE, false)
 
 
 func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
