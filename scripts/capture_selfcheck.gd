@@ -104,7 +104,8 @@ const INTERIOR_SCENE: String = "res://scenes/tower/tower_interior.tscn"
 const CROC_SCRIPT: String = "res://scripts/piglet_crocodile_ai.gd"
 ## Check 10 needs REAL bodies, not the row stubs the checks above use — see there.
 const HUNTER_SCENE: String = "res://scenes/characters/hunter_robot.tscn"
-## The field's retrieval unit, by row name. A literal rather than a read of
+## The field's retrieval unit, by row name — this file's ONE spelling of it, the
+## way `GUARD_SPECIES` beside it is the sentry's. A literal rather than a read of
 ## `endless_terrain.HUNTER_SPECIES` because that script has no `class_name` (see
 ## the cyclic-dependency note in it) — and it needs none: a renamed row resolves
 ## to the crocodile fallback, which check 20 fails BY NAME on `captures_hero`.
@@ -585,7 +586,7 @@ func _check_the_last_free_hero_ends_the_run() -> void:
 	"""
 	_beat_done()
 	var player: Node = null
-	for species: String in ["hunter_robot", GUARD_SPECIES]:
+	for species: String in [HUNTER_ROW, GUARD_SPECIES]:
 		player = await _make_player()
 		var last_one: String = player.hero_name()
 		for hero: String in TowerGraph.HEROES:
@@ -884,9 +885,9 @@ func _check_the_ai_says_who_bit() -> void:
 	row's `behavior` separates them.
 	"""
 	_beat_done()
-	for label: String in ["hunter_robot", "crocodile"]:
+	for label: String in [HUNTER_ROW, "crocodile"]:
 		var player := await _make_player()
-		var body: Node = load(HUNTER_SCENE if label == "hunter_robot" else CROC_SCENE).instantiate()
+		var body: Node = load(HUNTER_SCENE if label == HUNTER_ROW else CROC_SCENE).instantiate()
 		# `species` BEFORE add_child: _ready() is where the row resolves into `spec`.
 		body.species = label
 		# ...and STOOD OFF, for the reason the guard block below spells out and check
@@ -898,7 +899,7 @@ func _check_the_ai_says_who_bit() -> void:
 		(body as Node3D).position = Vector3(PROBE_STANDOFF, 0.0, 0.0)
 		root.add_child(body)
 		await process_frame
-		if String(body.spec.get("behavior", "")) != ("hunt" if label == "hunter_robot" else "solo"):
+		if String(body.spec.get("behavior", "")) != ("hunt" if label == HUNTER_ROW else "solo"):
 			_fail("the '%s' probe resolved behaviour '%s' — this check would measure the wrong thing"
 					% [label, str(body.spec.get("behavior", ""))])
 
@@ -906,7 +907,7 @@ func _check_the_ai_says_who_bit() -> void:
 		body._on_player_collision(player)
 
 		var took: bool = player.captive_heroes.size() > 0
-		if label == "hunter_robot" and not took:
+		if label == HUNTER_ROW and not took:
 			_fail("a LIVE hunter's collision took no hero — _on_player_collision is not telling "
 					+ "hit_by_crocodile who bit, so systemic capture is unreachable in the game "
 					+ "even though every check above passes")
@@ -3025,17 +3026,6 @@ func _check_a_hunter_walks_in_and_takes_a_hero() -> void:
 		# honours: `_ready()` is where the row resolves into `spec`.
 		hunter.species = HUNTER_ROW
 
-		# ...AND SO IS THE POSITION, AND SO IS THE MUTATION. A body added at the
-		# origin is added ON TOP OF the player, and `await process_frame` is one
-		# PROCESS frame but an unbounded number of PHYSICS ticks — up to
-		# `max_physics_steps_per_frame` (8) — so on a loaded runner the shipped
-		# `_physics_process` lands a grab in that window, before either line below
-		# would have run. That takes the subject for a reason this check is not
-		# measuring and, far worse, takes it in the CONTROL with the capsule still
-		# armed. It is `_make_player`'s documented race one body along; reproduce
-		# the old behaviour with `godot --headless --fixed-fps 5 ...`, which fails
-		# every time. `position` rather than `global_position` because the node is
-		# not in the tree yet, and `root`'s transform is identity.
 		var capsule := hunter.get_node_or_null("CollisionShape3D") as CollisionShape3D
 		if capsule == null or capsule.shape == null:
 			_fail("the shipped hunter scene has no CollisionShape3D — this check cannot "
@@ -3046,6 +3036,18 @@ func _check_a_hunter_walks_in_and_takes_a_hero() -> void:
 			await process_frame
 			Sentinel.done("a_hunter_walks_in_and_takes_a_hero")
 			return
+		# THE MUTATION AND THE POSITION BOTH LAND BEFORE `add_child`, and that is
+		# not tidiness. A body added at the origin is added ON TOP OF the player,
+		# and `await process_frame` is one PROCESS frame but an unbounded number of
+		# PHYSICS ticks — up to `max_physics_steps_per_frame` (8) — so on a loaded
+		# runner the shipped `_physics_process` lands a grab in that window, before
+		# either of these lines would have run. That takes the subject for a reason
+		# this check is not measuring and, far worse, takes it in the CONTROL with
+		# the capsule still armed. It is `_make_player`'s documented race one body
+		# along; reproduce it with `godot --headless --fixed-fps 5 ...`, which
+		# failed the control every time. `position` rather than `global_position`
+		# because the node is not in the tree yet and `root`'s transform is
+		# identity.
 		capsule.disabled = not solid
 		(hunter as Node3D).position = Vector3(WALK_IN_START, 0.0, 0.0)
 		root.add_child(hunter)
@@ -3182,7 +3184,7 @@ func _clear(player: Node) -> void:
 
 func _hunter() -> Node:
 	"""The real GD-SURVEY row, by name."""
-	return _attacker_row("hunter_robot")
+	return _attacker_row(HUNTER_ROW)
 
 
 func _attacker_row(species: String) -> Node:
