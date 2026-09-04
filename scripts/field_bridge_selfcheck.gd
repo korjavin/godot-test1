@@ -56,7 +56,7 @@ const PLAYER_SCENE: String = "res://scenes/player.tscn"
 ## so the crossing straddles the handoff between the road and the corridor.
 const CROSSING_SEEDS: Array[int] = [11, 2027, 90210, 777001, 424243, 8, 131313,
 		606060, 5150, 99991, 31337, 271828, 72, 4, 26, 12, 63, 115,
-		218, 203, 224, 202, 206, 409, 535, 532, 404]
+		218, 203, 224, 202, 206, 409, 535, 532, 404, 296]
 
 ## The walk must actually MEET rivers, or check 1 is a green lie about a road
 ## that never got its feet wet. Measured today: 40+ crossings over the 12 seeds.
@@ -360,6 +360,34 @@ func _check_every_crossing_is_bridged() -> void:
 					wet_from = Vector2.INF
 				prev = at
 			prev = to
+		# ...and NO BRIDGE SPANS MORE WATER THAN THE CAP. Measured HERE at half a
+		# metre over the crossing the row claims, because the shipped accumulator
+		# used to add the distances between wet station CENTRES — which omits the
+		# entry station's own share and both partial intervals at the banks, and
+		# bridged seed 296's 124.5 m crossing as if it were 120.0.
+		for row_v: Variant in _all_bridges(terrain):
+			var row: Dictionary = row_v
+			var k_a: int = int(row["k0"])
+			var k_b: int = int(row["k1"])
+			var spanned := 0.0
+			var prev_p: Vector2 = terrain._road_station(k_a).center
+			var probe: Vector2 = prev_p
+			for kk in range(k_a, k_b + 2):
+				var to_p: Vector2 = terrain._road_station(kk).center
+				var steps: int = maxi(1, int(prev_p.distance_to(to_p) * 2.0))
+				for i in range(steps + 1):
+					probe = prev_p.lerp(to_p, float(i) / float(steps))
+					if terrain.is_river_at(Vector3(probe.x, 0.0, probe.y)):
+						spanned += prev_p.distance_to(to_p) / float(steps)
+				prev_p = to_p
+			if spanned > TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN + 1.0:
+				_fail("seed %d: the bridge anchored at station %d spans %.1f m of"
+						% [run_seed, k_a, spanned] + " wet centreline, past the"
+						+ " %.0f m cap — the cap is not counting the water it"
+								% TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN
+						+ " claims to")
+				break
+
 		# ...and NO DECK IS BUILT TWICE. Two crossings that grow onto the same bank
 		# used to produce byte-identical rows under two anchors, and then every
 		# chunk emitted every slab twice — double the boxes, double the collision

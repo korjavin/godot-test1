@@ -961,9 +961,12 @@ const FIELD_BRIDGE_FOOT_PUSH_MAX: float = 30.0
 ## 150 m) leaves no dry section for a foot anywhere near the crossing, and the
 ## alternative to carrying on at 1.6 m is dragging a RAMP along the water — which
 ## is under WADE_SURFACE_MAX for its first 2.4 m, i.e. a hero wading on a bridge.
-## 260 m covers every grazing stretch field_bridge_selfcheck has measured; past
-## it the crossing is refused and the lake rule takes it.
-const FIELD_BRIDGE_BANK_WALK_MAX: float = 600.0
+## 300 m covers every grazing stretch field_bridge_selfcheck has measured (the
+## longest bank actually walked is ~110 m); past it the crossing is refused and
+## the lake rule takes it. It is also the term that dominates
+## _field_bridge_reach(), i.e. how many stations a cold window scan walks — 600
+## here cost the first query of a run 33 ms, one whole frame-spike budget.
+const FIELD_BRIDGE_BANK_WALK_MAX: float = 300.0
 
 ## Slop on a slab's own faces when asking whether a point stands on it. A
 ## millimetre: big enough that the exact edge of a slab answers "yes" whichever
@@ -3299,6 +3302,10 @@ var _field_bridge_cache: Dictionary = {}
 ## corridor that crosses no water is an honest empty answer.
 var _approach_bridge_cache: Array = []
 var _approach_bridge_scanned: bool = false
+
+## Memoized "how much water does station k own", the hot read of the whole
+## feature — see _field_bridge_wet_metres. Same lifetime as the bridges it feeds.
+var _field_bridge_wet_cache: Dictionary = {}
 
 ## THE COARSE ROAD POLYLINE for the currently loaded window, as (x1, z1, x2, z2)
 ## segments — the one cache _alt_flat_mask's clause 4 reads on this side and
@@ -11515,11 +11522,16 @@ func _field_bridge_reach() -> float:
 	costs a few stations of scanning and it is what makes "no chunk misses a piece
 	of a bridge that reaches into it" true by arithmetic.
 	"""
+	# ONE bank walk and ONE ramp, not two of each: this is how far the stone
+	# reaches from its anchor IN ONE DIRECTION, and the scan pads BOTH sides by
+	# it. Doubling them made the window 2.9 km wide and the first cold query of a
+	# run 33 ms — one frame's whole spike budget, spent walking stations whose
+	# decks could never touch the chunk being built.
 	return FIELD_BRIDGE_MAX_SPAN \
 			+ float(2 * FIELD_BRIDGE_DRY_STATIONS + 2) * _road_spacing() \
-			+ 2.0 * (_field_bridge_run() + FIELD_BRIDGE_FOOT_PUSH_MAX) \
+			+ _field_bridge_run() + FIELD_BRIDGE_FOOT_PUSH_MAX \
 			+ 2.0 * FIELD_BRIDGE_HALF_WIDTH \
-			+ 2.0 * FIELD_BRIDGE_BANK_WALK_MAX
+			+ FIELD_BRIDGE_BANK_WALK_MAX
 
 
 func _field_bridge_dry_across(centre: Vector2, dir: Vector2) -> bool:
@@ -11582,12 +11594,37 @@ func _field_bridge_wet(k: int) -> bool:
 	No allocation and no RNG draw: this decides WHERE a bridge is, and a single
 	draw would slide every crocodile in the world.
 	"""
+	return _field_bridge_wet_metres(k) > 0.0
+
+
+func _field_bridge_wet_metres(k: int) -> float:
+	"""
+	How many metres of the CENTRELINE this station owns are in the water.
+
+	@param k: Station index; the cache must already cover k-1 and k+1.
+	@return: The wet length inside the window between the midpoints either side
+	         of station `k`, sampled at FIELD_BRIDGE_PROBE_STEP.
+
+	IT IS A LENGTH, NOT A FLAG, because the span cap is a length: adding up
+	distances between wet station CENTRES omits the entry station's own share and
+	both partial intervals at the banks, which on seed 296 totalled 120.0 m for a
+	124.5 m crossing and bridged past the cap. The flag above is this answer
+	compared to zero, so the two can never disagree about where the water is.
+
+	MEMOIZED per station, and it is the hot path of the whole feature: every
+	station in a scan window is asked as `k` and again as `k - 1`, and the growth
+	loops ask it again. new_run() drops it with the bridges it feeds.
+	"""
+	if _field_bridge_wet_cache.has(k):
+		return _field_bridge_wet_cache[k]
 	var centre: Vector2 = _road_station(k).center
 	var back: Vector2 = (_road_station(k - 1).center + centre) * 0.5 \
 			if k - 1 >= road_k_min else centre
 	var fwd: Vector2 = (_road_station(k + 1).center + centre) * 0.5 \
 			if k + 1 <= road_k_max else centre
-	return _centreline_wet(back, fwd)
+	var wet := _centreline_wet_metres(back, fwd)
+	_field_bridge_wet_cache[k] = wet
+	return wet
 
 
 func _field_bridge_out_dir(k: int, sign: int) -> Vector2:
@@ -11638,20 +11675,30 @@ func _field_bridge_section_dry(k: int) -> bool:
 
 func _centreline_wet(from: Vector2, to: Vector2) -> bool:
 	"""
-	Is any point of this centreline segment in a river band, sampled at
-	FIELD_BRIDGE_PROBE_STEP? Both ends included, so a zero-length segment is one
-	sample.
+	Is any point of this centreline segment in a river band? The length below
+	compared to zero, so "is it wet" and "how wet" are one measurement.
+	"""
+	return _centreline_wet_metres(from, to) > 0.0
 
-	The one home of "the road is in the water HERE", shared by the station walk
-	and the approach corridor's.
+
+func _centreline_wet_metres(from: Vector2, to: Vector2) -> float:
+	"""
+	How many metres of this centreline segment are in a river band, sampled at
+	FIELD_BRIDGE_PROBE_STEP. Both ends included, so a zero-length segment is one
+	sample and answers either 0 or one step.
+
+	The one home of "the road is in the water HERE", shared by the station walk,
+	the approach corridor's and the span cap.
 	"""
 	var span := from.distance_to(to)
 	var steps := int(span / FIELD_BRIDGE_PROBE_STEP)
+	var step_len: float = span / float(steps) if steps > 0 else FIELD_BRIDGE_PROBE_STEP
+	var wet := 0.0
 	for i in range(steps + 1):
 		var at: Vector2 = from.lerp(to, 0.0 if steps == 0 else float(i) / float(steps))
 		if is_river_at(Vector3(at.x, 0.0, at.y)):
-			return true
-	return is_river_at(Vector3(to.x, 0.0, to.y))
+			wet += step_len
+	return wet
 
 
 func _field_bridge_foot(head: Vector2, out_dir: Vector2) -> Vector2:
@@ -11850,7 +11897,13 @@ func field_bridge_at(k0: int) -> Dictionary:
 	# metres of water, and a station budget would be one `road_coin_spacing`
 	# retune away from meaning something else.
 	var k1 := k0
-	var walked := 0.0
+	# THE ENTRY STATION'S OWN WATER COUNTS. `walked` used to start at zero and add
+	# only the distances between subsequent wet station CENTRES, which drops the
+	# entry's share and both partial intervals at the banks — seed 296's 124.5 m
+	# crossing totalled 119.99996 and was bridged as if it were inside the 120 m
+	# cap. Every station contributes the wet METRES of the stretch it owns, and
+	# consecutive stations tile the centreline, so the sum is the crossing.
+	var walked := _field_bridge_wet_metres(k0)
 	while true:
 		var next := k1 + 1
 		if next + FIELD_BRIDGE_DRY_STATIONS > terminal:
@@ -11864,7 +11917,7 @@ func field_bridge_at(k0: int) -> Dictionary:
 			return empty
 		if not _field_bridge_wet(next):
 			break
-		walked += _road_station(next).center.distance_to(_road_station(k1).center)
+		walked += _field_bridge_wet_metres(next)
 		if walked > FIELD_BRIDGE_MAX_SPAN:
 			_field_bridge_cache[k0] = empty   # a lake, see above
 			return empty
@@ -14037,6 +14090,7 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	# crossing is a station index plus the river field, and both moved. The
 	# corridor's are derived from the terminal station, so they go with them.
 	_field_bridge_cache = {}
+	_field_bridge_wet_cache = {}
 	_approach_bridge_cache = []
 	_approach_bridge_scanned = false
 	# ...and the approach coin line with it: it is resampled off that station.

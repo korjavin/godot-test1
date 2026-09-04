@@ -1077,6 +1077,16 @@ DECK CARRIES ON at deck height along the bank (`FIELD_BRIDGE_BANK_WALK_MAX`) rat
 dragging one through the water, and only when even that fails is the crossing refused (the
 lake rule), never given a known-wet foot.
 
+**THE SPAN CAP IS WET METRES, AND THE WINDOW SCAN IS THE FEATURE'S PERF BUDGET.** The cap
+adds up the water each station OWNS (`_field_bridge_wet_metres`, memoized — the hot read of
+the whole feature), never the distances between wet station centres, which drops the entry
+station's share and both partial intervals at the banks and bridged a 124.5 m crossing as
+if it were 120.0. And `_field_bridge_reach()` pads a scan by how far stone reaches from its
+anchor IN ONE DIRECTION: doubling the bank walk and the ramp in it made the window 2.9 km
+wide and the first cold query of a run **33 ms**, one whole frame-spike budget, walking
+1,200 stations whose decks could never touch the chunk being built. One-sided, plus the
+memo and a 300 m bank walk, it is **8-10 ms cold and 0.1 ms warm**.
+
 **THE GROWTH MAY NOT READ THE STATION CACHE'S EDGE, and ONE ANCHOR OWNS A DECK.** Both are
 determinism, and both were wrong once. The growth is memoized, so a loop that stopped at
 whatever the cache happened to hold made the bridge SET a function of the order chunks were
