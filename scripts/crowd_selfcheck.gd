@@ -25,8 +25,11 @@ extends SceneTree
 ##      MANAGER's and nobody else's — every CollisionObject3D under the manager is
 ##      one of at most CITIZEN_PROXY_POOL StaticBody3Ds on the fauna-precedent
 ##      layer, in no group, carrying no mesh — and a REAL player.tscn driven by the
-##      SHIPPED movement is (a) stopped by a citizen and (b) through it within a
-##      beat, each mutation-tested against the other's absence.
+##      SHIPPED movement is (a) stopped by a citizen, (b) through it within a
+##      beat and (c) never SHOVED by one planted on top of him — the crowd's end
+##      of the 3-D no-shove guard bead godot-test1-d5f made 3-D, at a citizen's
+##      own height rather than a car's — each mutation-tested against the
+##      absence of exactly the rule it names.
 ##   9. NO GAMEPLAY GROUP GAINED A MEMBER: the proxy layer is invisible to the
 ##      shipped crocodile's own mask, and the shipped Stink Wave sweep touches the
 ##      crocodiles and nothing of the crowd's with a live crowd in the tree.
@@ -76,6 +79,13 @@ const SOLID_FRAMES: int = 30
 ## The NEVER-TRAPPED window, from the same standing start. Long enough for the
 ## latch to fire and for the hero to walk clear.
 const ESCAPE_FRAMES: int = 200
+
+## THE NO-SHOVE WINDOW (bead godot-test1-d5f). How long a citizen is held ON the
+## hero, and how far he may be moved by it. `traffic_selfcheck`'s check 18(c) is
+## the same probe at a car's height; this one is the CROWD's, because the guard
+## it drives is now 3-D and a citizen is 1.75 m tall where a car is 1.15.
+const ON_TOP_FRAMES: int = 40
+const ON_TOP_MAX_MOVE: float = 0.5
 
 var _root: Node3D = null
 var _manager: Node3D = null
@@ -604,10 +614,58 @@ func _check_solid_and_never_trapped() -> void:
 			+ " anyway — check 8(b) is not measuring the yield, so a build in which a"
 			+ " crowd can cage the player would pass it")
 
+	# ---- (c) ...AND NEVER A SHOVE, AT A CITIZEN'S OWN HEIGHT ---------------
+	# `AmbienceProxies._player_inside()` became 3-D in bead godot-test1-d5f so a
+	# hero could stand on a car ROOF, and the vertical half is measured against
+	# the pool's own height — which is 1.75 m here and 1.15 m over in the
+	# traffic. A grace tuned for one and not the other would leave a citizen
+	# teleported onto the hero (Phase Step, a respawn, the HQ setback) solid, and
+	# `move_and_slide` resolves that overlap by throwing him out of it. So the
+	# crowd asserts its own end of the shared rule: a citizen planted ON him for
+	# ON_TOP_FRAMES moves him nowhere.
+	var stood: Vector3 = Vector3(probe.x, 0.05, probe.z)
+	var moved: float = await _hold_citizen_on_hero(hero, stood, ON_TOP_FRAMES)
+	if moved > ON_TOP_MAX_MOVE:
+		_failures.append("a citizen planted ON the hero threw him %.2f m — a proxy over the"
+			% moved + " hero's own body must not be solid, or every teleport that lands him"
+			+ " in a crowd is a launch")
+	else:
+		print("crowd no-shove: a citizen planted on the hero moved him %.3f m" % moved)
+
+	# ...MUTANT: the guard removed and nothing else. A pool whose roof is at y = 0
+	# finds the hero's feet ABOVE it, decides he is standing ON the citizen and
+	# leaves it solid on him — which is this guard switched off for exactly this
+	# pose, so he must now be thrown. (`traffic_selfcheck`'s roof mutant moves the
+	# same `_height` the other way, out of reach, because there it is the roof
+	# rather than the guard that has to stop existing.)
+	var real_h: float = float(_manager.get("_proxies").get("_height"))
+	_manager.get("_proxies").set("_height", 0.0)
+	var mutant_moved: float = await _hold_citizen_on_hero(hero, stood, ON_TOP_FRAMES)
+	_manager.get("_proxies").set("_height", real_h)
+	if mutant_moved <= ON_TOP_MAX_MOVE:
+		_failures.append("with the pool's height zeroed — the no-shove guard removed — a"
+			+ " citizen planted on the hero STILL moved him only %.2f m, so check 8(c) is"
+			% mutant_moved + " measuring something other than the guard it names")
+
 	hero.queue_free()
 	floor_body.queue_free()
 	await process_frame
 	Sentinel.done("solid_and_never_trapped")
+
+
+func _hold_citizen_on_hero(hero: Node3D, where: Vector3, frames: int) -> float:
+	## Stand the hero on `where` and plant a citizen on exactly the same spot for
+	## `frames` frames, through the shipped `_process`. Returns how far he moved.
+	hero.global_position = where
+	hero.rotation = Vector3.ZERO
+	hero.velocity = Vector3.ZERO
+	await physics_frame
+	var from: Vector3 = hero.global_position
+	for _i in frames:
+		_plant_probe(Vector3(where.x, 0.0, where.z))
+		_manager._process(DT)
+		await physics_frame
+	return hero.global_position.distance_to(from)
 
 
 func _make_floor() -> StaticBody3D:
