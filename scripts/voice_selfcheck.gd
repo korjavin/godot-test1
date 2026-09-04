@@ -559,6 +559,10 @@ const PUBLIC_CALLS: Array = [
 	["camera_denied", []],
 	# Telemetry readout for \fo (bead godot-test1-xtr.4).
 	["debug_line", []],
+	# The hero row's two questions (bead godot-test1-xtr.8) — both must answer the
+	# NOTHING case off-web without ever reaching for `_ck`.
+	["mic_badge", []],
+	["is_hero_speaking", ["windman"]],
 ]
 
 

@@ -41,6 +41,27 @@ extends Control
 ## error — the tile falls back to the procedural placeholder (the hero's identity
 ## colour plus his initial), so a hero added to `CHARACTERS` with no art yet still
 ## gets a legible tile.
+##
+## ---------------------------------------------------------------------------
+## VOICE (bead godot-test1-xtr.8) — TWO GLYPHS, AND ONLY IN A BROWSER ROOM
+## ---------------------------------------------------------------------------
+## The MP panel and the floating name tags are both places you have to be LOOKING
+## to learn that voice works. This row is on screen always, so it carries the two
+## readings the owner asked for: a MIC BADGE on the tile of the hero you are
+## driving (plus a headphone-slash beside it while deafened), and a pulsing green
+## SPEAKING RING on the tile of whichever hero's holder is talking.
+##
+## Both are read off the `"voice"` group through `has_method` guards and both are
+## answered by `voice_chat.gd` — `mic_badge()` and `is_hero_speaking()`. The hero
+## -> holder mapping and the browser's `me` level key stay over there beside the
+## camera tiles that already need them; this widget only draws. Off the web, with
+## no voice node, or outside a room every answer is "nothing" and the row is
+## byte-identical to the one bead .7 shipped.
+##
+## The green is `remote_avatar.gd`'s `LABEL_SPEAKING_COLOR`, mirrored rather than
+## preloaded (the discovery convention refuses a hard reference to another node's
+## script) so a speaking teammate reads the same colour on his name tag and on his
+## tile; `hero_hud_selfcheck` check 7 binds the two numbers.
 
 ## The roster's ONE definition, reached the way `mp_manager` reaches it: the
 ## script's const, not a copy. A fifth playable character is a `CHARACTERS` entry,
@@ -89,6 +110,44 @@ const DIGIT_FONT_SIZE: int = 13
 const BAR_COUNT: int = 3
 const BAR_WIDTH: float = 3.0
 
+# --- Voice (bead godot-test1-xtr.8) -----------------------------------------
+## `voice_chat.MIC_BADGE_*`, mirrored rather than preloaded — the voice node is
+## found through its group like every other system here, and `voice_chat.gd`
+## mirrors this row's `STATE_CAPTIVE` in the other direction for exactly the same
+## reason. `hero_hud_selfcheck` check 7 binds all five numbers.
+const MIC_BADGE_NONE: int = 0
+const MIC_BADGE_OFF: int = 1
+const MIC_BADGE_TX: int = 2
+const MIC_BADGE_MUTED: int = 3
+const MIC_BADGE_DENIED: int = 4
+
+## `remote_avatar.LABEL_SPEAKING_COLOR` — one speaking colour for the whole game.
+const COLOR_SPEAKING: Color = Color(0.55, 1.0, 0.55)
+## The badge palette: idle grey, muted red, denied amber. TX takes the speaking
+## green above, so "my mic is open" and "somebody is talking" are one language.
+const COLOR_MIC_OFF: Color = Color(0.78, 0.78, 0.82, 0.9)
+const COLOR_MIC_MUTED: Color = Color(0.92, 0.30, 0.28)
+const COLOR_MIC_DENIED: Color = Color(0.98, 0.72, 0.20)
+## Dark disc under a glyph, so it reads over a light portrait.
+const COLOR_BADGE_BACKDROP: Color = Color(0, 0, 0, 0.55)
+
+## The speaking ring, drawn INSIDE the frame so it can never be mistaken for the
+## active border it sits next to.
+const RING_INSET: float = 3.0
+const RING_WIDTH: float = 2.0
+## It pulses, and the pulse is QUANTIZED on purpose: this widget repaints only
+## when its snapshot changes (the HUD idiom), so a continuous sine would repaint
+## every frame for as long as anybody talks. Eight steps at 2 Hz is 16 repaints a
+## second while somebody is speaking and none at all otherwise.
+const RING_PULSE_HZ: float = 2.0
+const RING_PULSE_STEPS: int = 8
+const RING_ALPHA_MIN: float = 0.45
+const RING_ALPHA_MAX: float = 1.0
+
+## Glyph geometry, in tile pixels. One badge box in each bottom corner.
+const BADGE_SIZE: float = 15.0
+const BADGE_MARGIN: float = 2.0
+
 ## Cached player reference — re-fetched whenever it goes away (respawn, restart,
 ## character switch all keep the same node, but a scene reload does not).
 var player: Node = null
@@ -105,6 +164,20 @@ var _states: PackedInt32Array = PackedInt32Array()
 ## placeholder" and is never retried — `load()` per frame would be the landmine.
 var _portraits: Dictionary = {}
 
+## Cached voice node, re-fetched like `player` when it goes away. Null on every
+## desktop and headless run — there is no voice node off the web export.
+var voice: Node = null
+
+## The voice snapshot, written by `_process` and read by `_draw` exactly like
+## `_heroes`/`_states`. `_speaking` is a BITMASK over the row (bit i = tile i), so
+## the change-check stays one integer comparison; `_pulse` is the quantized ring
+## phase and is 0 whenever nothing is speaking, which is what stops the pulse from
+## repainting an idle row.
+var _mic_badge: int = MIC_BADGE_NONE
+var _deafened: bool = false
+var _speaking: int = 0
+var _pulse: int = 0
+
 
 func _ready() -> void:
 	add_to_group("hero_hud")
@@ -118,13 +191,81 @@ func _process(_delta: float) -> void:
 
 	var heroes := _read_roster()
 	var states := _read_states(heroes)
+	var badge := _read_mic_badge()
+	var deaf := badge != MIC_BADGE_NONE and _voice_flag("is_deafened")
+	var speaking := _read_speaking(heroes, badge)
+	# The ring's phase is only asked for while something is actually ringing, so
+	# an idle row's snapshot is as static as it was before voice existed.
+	var pulse: int = 0
+	if speaking != 0:
+		pulse = int(fmod(float(Time.get_ticks_msec()) * 0.001 * RING_PULSE_HZ, 1.0)
+			* float(RING_PULSE_STEPS))
 	# Repaint only on change (the HUD widget idiom) — `_draw` is comparatively
 	# expensive and the roster is unchanged on almost every frame of a run.
-	if heroes == _heroes and states == _states:
+	if heroes == _heroes and states == _states and badge == _mic_badge \
+			and deaf == _deafened and speaking == _speaking and pulse == _pulse:
 		return
 	_heroes = heroes
 	_states = states
+	_mic_badge = badge
+	_deafened = deaf
+	_speaking = speaking
+	_pulse = pulse
 	queue_redraw()
+
+
+func _voice_node() -> Node:
+	"""The voice module, or null — group discovery, re-fetched when it goes away."""
+	if voice != null and is_instance_valid(voice):
+		return voice
+	# Outside the tree there is no group to search, and `get_tree()` there is a
+	# logged error rather than a null — `tile_rect()`'s guard, one seam along.
+	if not is_inside_tree():
+		return null
+	voice = get_tree().get_first_node_in_group("voice")
+	return voice
+
+
+func _voice_flag(method: String) -> bool:
+	"""One boolean seam off the voice node, false when it is absent or predates it."""
+	var node := _voice_node()
+	if node == null or not node.has_method(method):
+		return false
+	return bool(node.call(method))
+
+
+func _read_mic_badge() -> int:
+	"""
+	The local microphone's badge state, or `MIC_BADGE_NONE`.
+
+	`voice_chat.mic_badge()` already answers NONE off the web and outside a room,
+	so this is only the `has_method` degrade: a build with no voice node at all
+	(every desktop run, every headless check) draws no badge.
+	"""
+	var node := _voice_node()
+	if node == null or not node.has_method("mic_badge"):
+		return MIC_BADGE_NONE
+	return int(node.mic_badge())
+
+
+func _read_speaking(heroes: PackedStringArray, badge: int) -> int:
+	"""
+	A bitmask of the tiles whose hero's HOLDER is talking, bit i = tile i.
+
+	Gated on `badge` rather than on a second room test: `mic_badge()` is NONE in
+	exactly the cases there is no voice to indicate, so one query decides whether
+	this row says anything about voice at all.
+	"""
+	if badge == MIC_BADGE_NONE or heroes.is_empty():
+		return 0
+	var node := _voice_node()
+	if node == null or not node.has_method("is_hero_speaking"):
+		return 0
+	var mask: int = 0
+	for i: int in heroes.size():
+		if bool(node.is_hero_speaking(heroes[i])):
+			mask |= 1 << i
+	return mask
 
 
 func _read_roster() -> PackedStringArray:
@@ -309,6 +450,28 @@ func _draw() -> void:
 		else:
 			draw_rect(rect, COLOR_FRAME, false, 1.0)
 
+		# VOICE. The ring goes INSIDE the frame so it reads beside the active
+		# border rather than replacing it; a captive tile keeps its bars, and the
+		# ring is drawn over the veil so a HELD teammate talking still shows.
+		if (_speaking & (1 << i)) != 0:
+			var t: float = 0.5 - 0.5 * cos(TAU * float(_pulse) / float(RING_PULSE_STEPS))
+			var ring := COLOR_SPEAKING
+			ring.a = lerp(RING_ALPHA_MIN, RING_ALPHA_MAX, t)
+			draw_rect(rect.grow(-RING_INSET), ring, false, RING_WIDTH)
+
+		# The mic badge rides the tile of the body you are DRIVING, which in a room
+		# is the hero you hold — one badge on the row, never four.
+		if state == STATE_ACTIVE and _mic_badge != MIC_BADGE_NONE:
+			_draw_mic_badge(Rect2(
+				Vector2(rect.position.x + BADGE_MARGIN,
+					rect.end.y - BADGE_SIZE - BADGE_MARGIN),
+				Vector2(BADGE_SIZE, BADGE_SIZE)))
+			if _deafened:
+				_draw_deafen_badge(Rect2(
+					Vector2(rect.end.x - BADGE_SIZE - BADGE_MARGIN,
+						rect.end.y - BADGE_SIZE - BADGE_MARGIN),
+					Vector2(BADGE_SIZE, BADGE_SIZE)))
+
 		# The hotkey digit, top-left of the tile. A LABEL ONLY — this HUD binds
 		# nothing and depends on no hotkey bead; the digits match the 1-4 order
 		# the roster is already in.
@@ -337,6 +500,74 @@ func _draw_digit(font: Font, digit: String, rect: Rect2) -> void:
 		-1, DIGIT_FONT_SIZE, 4, Color(0, 0, 0, 0.9))
 	font.draw_string(get_canvas_item(), pos, digit, HORIZONTAL_ALIGNMENT_LEFT, -1,
 		DIGIT_FONT_SIZE, COLOR_DIGIT)
+
+
+func mic_badge_color(badge: int) -> Color:
+	"""
+	The colour one `MIC_BADGE_*` state is drawn in — a function rather than a
+	dictionary so `hero_hud_selfcheck` can drive every state through the same
+	mapping `_draw` uses, TX included (which is the shared speaking green).
+	"""
+	match badge:
+		MIC_BADGE_TX:
+			return COLOR_SPEAKING
+		MIC_BADGE_MUTED:
+			return COLOR_MIC_MUTED
+		MIC_BADGE_DENIED:
+			return COLOR_MIC_DENIED
+		_:
+			return COLOR_MIC_OFF
+
+
+func _draw_mic_badge(box: Rect2) -> void:
+	"""
+	A microphone, vertex-drawn: capsule, cradle, stem, base — plus a slash when
+	the mic cannot transmit. No texture and no node, like every other mark on this
+	row; at 15 px the shape carries as much as the colour does, which is what
+	makes the badge readable for a player who cannot tell the red from the amber.
+	"""
+	var color := mic_badge_color(_mic_badge)
+	var w := box.size.x
+	var h := box.size.y
+	var cx := box.position.x + w * 0.5
+	draw_rect(box, COLOR_BADGE_BACKDROP)
+	# The capsule, and the cradle that turns it into a microphone rather than a pill.
+	draw_rect(Rect2(Vector2(cx - w * 0.15, box.position.y + h * 0.18),
+		Vector2(w * 0.30, h * 0.34)), color)
+	draw_arc(Vector2(cx, box.position.y + h * 0.50), w * 0.28, 0.0, PI, 6, color, 1.5)
+	draw_line(Vector2(cx, box.position.y + h * 0.50 + w * 0.28),
+		Vector2(cx, box.position.y + h * 0.82), color, 1.5)
+	draw_line(Vector2(cx - w * 0.20, box.position.y + h * 0.82),
+		Vector2(cx + w * 0.20, box.position.y + h * 0.82), color, 1.5)
+	if _mic_badge == MIC_BADGE_MUTED or _mic_badge == MIC_BADGE_DENIED:
+		_draw_slash(box, color)
+
+
+func _draw_deafen_badge(box: Rect2) -> void:
+	"""
+	Headphones with a slash — the SECOND axis, and it gets its own corner rather
+	than a fifth mic state because muting what you say and muting what you hear
+	are independent and can both be true.
+	"""
+	var color := COLOR_MIC_MUTED
+	var w := box.size.x
+	var h := box.size.y
+	var cx := box.position.x + w * 0.5
+	var band_y := box.position.y + h * 0.55
+	draw_rect(box, COLOR_BADGE_BACKDROP)
+	draw_arc(Vector2(cx, band_y), w * 0.32, PI, TAU, 8, color, 1.5)
+	for side: int in [-1, 1]:
+		draw_rect(Rect2(Vector2(cx + float(side) * w * 0.32 - w * 0.08, band_y),
+			Vector2(w * 0.16, h * 0.26)), color)
+	_draw_slash(box, color)
+
+
+func _draw_slash(box: Rect2, color: Color) -> void:
+	"""The "not" stroke, on a dark backing so it stays visible across the glyph."""
+	var a := box.position + box.size * 0.15
+	var b := box.position + box.size * 0.85
+	draw_line(a, b, Color(0, 0, 0, 0.85), 3.5)
+	draw_line(a, b, color, 1.5)
 
 
 func _draw_bars(rect: Rect2) -> void:

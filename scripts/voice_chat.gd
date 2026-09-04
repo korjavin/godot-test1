@@ -1639,6 +1639,75 @@ func _clear_speaking() -> void:
 
 
 # ============================================================================
+# THE HERO ROW'S TWO QUESTIONS (bead godot-test1-xtr.8)
+# ============================================================================
+## The MP panel and the name tags are both places you have to be LOOKING to see
+## that voice is working; the portrait row is on screen always. It asks two
+## questions and they live here rather than in `hero_hud.gd` for the same reason
+## `_poll_tiles` does: the hero -> HOLDER mapping is the lobby's, `SELF_LEVEL_KEY`
+## is the browser module's, and "is there voice at all" is `_is_in_room()`. A row
+## that re-derived any of that would be a second copy of this file's state.
+##
+## Both answer the NOTHING case for a row that is not in a room, not on the web
+## or has no voice node at all, which is what keeps the row byte-identical to the
+## one bead .7 shipped everywhere but a live browser room.
+
+
+## `mic_badge()`'s answer. Numbers, and NONE means "draw nothing" — the badge is
+## about the local microphone, so a row with no voice has no honest badge to draw
+## rather than a grey one that implies a mic exists.
+const MIC_BADGE_NONE: int = 0
+const MIC_BADGE_OFF: int = 1     # a mic, idle: always-on with V off, or PTT unheld
+const MIC_BADGE_TX: int = 2      # open and transmitting right now
+const MIC_BADGE_MUTED: int = 3   # muted by hand — mute WINS over the mode
+const MIC_BADGE_DENIED: int = 4  # the browser refused the microphone
+
+
+func mic_badge() -> int:
+	"""
+	What the local microphone is doing, as one of the `MIC_BADGE_*` numbers.
+
+	The ORDER is the priority the row draws: a denied mic can never transmit, and
+	a hand mute beats whatever the mode says (`applyMic()` in the browser module
+	is `tx && !muted`, and this is that rule read back out).
+	"""
+	if not _is_web or not _is_in_room():
+		return MIC_BADGE_NONE
+	if mic_denied():
+		return MIC_BADGE_DENIED
+	if _mic_muted:
+		return MIC_BADGE_MUTED
+	if _tx:
+		return MIC_BADGE_TX
+	return MIC_BADGE_OFF
+
+
+func is_hero_speaking(hero: String) -> bool:
+	"""
+	Is the peer HOLDING that hero making noise right now?
+
+	The hero row is the LOCAL roster — four heroes, not four players — so a
+	speaking ring resolves through the lobby's `hero_holder()`, exactly like the
+	camera tiles of bead .6. The hero WE hold is the one exception: the browser
+	reports our own microphone under `SELF_LEVEL_KEY` and never under our lobby
+	id, because `S.peers` is remote peers only.
+
+	Everything is `has_method`-guarded and degrades to false: no manager, a
+	manager that predates `hero_holder`, a hero nobody holds.
+	"""
+	if not _is_web or not _is_in_room() or hero.is_empty():
+		return false
+	if _mp == null or not is_instance_valid(_mp) or not _mp.has_method("hero_holder"):
+		return false
+	var holder: String = str(_mp.hero_holder(hero))
+	if holder.is_empty():
+		return false
+	if _mp.has_method("my_id") and holder == str(_mp.my_id()):
+		return is_speaking(SELF_LEVEL_KEY)
+	return is_speaking(holder)
+
+
+# ============================================================================
 # VIDEO — THE CAMERA IN THE TEAMMATE'S HERO TILE (bead godot-test1-xtr.6)
 # ============================================================================
 ## ADDITIVE, and that is the whole design: the camera is one more track on the
