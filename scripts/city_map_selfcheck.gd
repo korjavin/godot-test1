@@ -161,7 +161,15 @@ func _check_key_is_free() -> void:
 					% [OS.get_keycode_string(key), action])
 
 	# --- Against every other raw-keycode panel ------------------------------
-	var owners: Array = panel_key_owners()
+	# OWN ROW SKIPPED BY LABEL, `debug_teleport_selfcheck`'s idiom — the registry
+	# below lists this panel's own key too, because a THIRD subject asking it
+	# "is my key free" (`voice_selfcheck`, bead `godot-test1-xtr.5`) must be told
+	# about B, and a registry that omitted whichever panel happened to be asking
+	# was a hole nothing could see from here.
+	var owners: Array = []
+	for row: Array in panel_key_owners():
+		if String(row[1]) != "city_map_panel.TOGGLE_KEY":
+			owners.append(row)
 	var claimed: String = _owner_claiming(key, owners)
 	if not claimed.is_empty():
 		_fail("TOGGLE_KEY %s is already %s" % [OS.get_keycode_string(key), claimed])
@@ -188,17 +196,21 @@ static func panel_key_owners() -> Array:
 	"""
 	EVERY raw-keycode panel key in the game, `[keycodes, label]` a row.
 
-	One registry, two subjects: this file asks whether the city map's B is free
-	against it, and `debug_teleport_selfcheck` asks the same of KEY_BACKSLASH — a new
+	One registry, three subjects: this file asks whether the city map's B is free
+	against it, `debug_teleport_selfcheck` asks the same of KEY_BACKSLASH and
+	`voice_selfcheck` of the key `voice_mic` ships bound to — a new
 	panel key is still ONE edit, here, and it is compared against everything
 	that already exists in both directions. A subject that appears in the list
-	skips its own row by label.
+	skips its own row by label, which is why the city map's OWN B is a row: a
+	registry that quietly dropped whichever panel was asking told the third
+	subject nothing about the second's key.
 
 	`tower_lift_selfcheck` still carries a fourth copy of this list; pointing it
 	here too is the obvious follow-up and is deliberately not this bead's edit.
 	Its key IS a row below, so a lift key moved onto KEY_BACKSLASH/B is caught here.
 	"""
 	return [
+		[[CityMapPanel.TOGGLE_KEY], "city_map_panel.TOGGLE_KEY"],
 		[[MinimapHud.TOGGLE_KEYCODE], "minimap_hud.TOGGLE_KEYCODE"],
 		[MinimapHud.ZOOM_IN_KEYCODES, "minimap_hud.ZOOM_IN_KEYCODES"],
 		[MinimapHud.ZOOM_OUT_KEYCODES, "minimap_hud.ZOOM_OUT_KEYCODES"],
