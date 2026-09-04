@@ -31,7 +31,10 @@ extends SceneTree
 ##      carrying no mesh — a real player.tscn driven by the SHIPPED movement is
 ##      stopped by a car AND STAYS stopped (the crowd's anti-trap yield is the
 ##      crowd's, with the crowd itself as the control), mutation-tested against an
-##      emptied pool; and a car that has stopped for the hero never moves again,
+##      emptied pool; ITS ROOF IS SOLID TOO (bead godot-test1-d5f — a hero
+##      dropped onto a parked car stands on it and does not sink through,
+##      mutation-tested against a pool that has forgotten how tall it is, which
+##      is the XZ-only rule that shipped the bug); and a car that has stopped for the hero never moves again,
 ##      never displaces him and never damages him, argued from the shipped
 ##      constants and then driven.
 
@@ -83,6 +86,17 @@ const CAR_CREEP_MAX: float = 0.5
 
 ## How long a car is held ON the hero for the no-shove probe.
 const ON_TOP_FRAMES: int = 40
+
+## THE ROOF PROBE (bead godot-test1-d5f). How far above the roof the hero is
+## dropped, how long he must stay up there, and how many of those frames are
+## spent falling and settling before `is_on_floor()` is asked of him.
+const CAR_ROOF_DROP: float = 0.35
+const CAR_ROOF_FRAMES: int = 60
+const CAR_ROOF_SETTLE: int = 12
+
+## The roof mutant: a proxy this tall is one the hero can never be standing on
+## top of, so the guard degrades to the XZ-only rule the bead fixed.
+const MUTANT_ROOF: float = 1.0e9
 
 var _root: Node3D = null
 var _manager: Node3D = null
@@ -982,6 +996,52 @@ func _check_car_is_solid() -> void:
 			+ " with no car collision at all")
 	_manager.set("_proxies", real_pool)
 
+	# ---- ...AND ITS ROOF IS SOLID TOO (bead godot-test1-d5f) ---------------
+	# The owner's second symptom, and the one that named the bug: "if I jump on
+	# it, I go through it to the ground". The no-shove guard used to be an XZ
+	# CENTRE containment, and a hero standing on a car roof has his centre inside
+	# the footprint by definition — so the box switched itself off under his feet.
+	# Driven the way he did it: dropped onto the roof of the parked car and left
+	# there, he must LAND on it and still be standing on it a second later.
+	if Proxies.ROOF_GRACE >= TrafficScript.CAR_PROXY_HEIGHT:
+		_failures.append("ROOF_GRACE (%.2f) is not smaller than a car's own height"
+			% Proxies.ROOF_GRACE + " (%.2f) — every hero standing on the STREET would"
+			% TrafficScript.CAR_PROXY_HEIGHT + " count as standing on the roof, and the"
+			+ " no-shove guard could never fire for a car at all")
+	var roof: float = TrafficScript.CAR_PROXY_HEIGHT
+	var stood: Vector2 = await _stand_on_roof(hero, lane, CAR_ROOF_FRAMES)
+	var drift: float = Vector2(hero.global_position.x - lane.x,
+		hero.global_position.z - lane.z).length()
+	if stood.x < roof - 0.05:
+		_failures.append("the hero dropped onto a car's roof sank to y=%.2f — the roof is"
+			% stood.x + " at %.2f, so he went THROUGH the car he was standing on" % roof)
+	elif int(stood.y) < CAR_ROOF_FRAMES - CAR_ROOF_SETTLE:
+		_failures.append("the hero was on the floor for only %d of the %d frames he spent"
+			% [int(stood.y), CAR_ROOF_FRAMES - CAR_ROOF_SETTLE]
+			+ " on a car's roof — he did not come to rest on it")
+	elif drift > 0.5:
+		_failures.append("the hero slid %.2f m while standing on a car's roof — the roof"
+			% drift + " must be something you stand on, not something you slide off")
+	else:
+		print("car roof solid: hero stood at y=%.2f (roof %.2f) for %d frames, drifting %.3f m"
+			% [hero.global_position.y, roof, int(stood.y), drift])
+
+	# ...MUTANT: the VERTICAL HALF of the guard removed and nothing else. A pool
+	# that believes it reaches the sky can never find the hero ABOVE its roof, so
+	# every pose falls through to the XZ-only footprint question — which is
+	# byte-for-byte the rule that shipped the bug, and under it the hero must sink
+	# straight through to the street. An emptied pool would prove far less here:
+	# it removes the collision this check shares with the drive above, while this
+	# removes only the rule the check was added for.
+	real_pool.set("_height", MUTANT_ROOF)
+	var mutant: Vector2 = await _stand_on_roof(hero, lane, CAR_ROOF_FRAMES)
+	real_pool.set("_height", roof)
+	if mutant.x >= roof - 0.05:
+		_failures.append("with the proxy pool's roof put out of the hero's reach he STILL"
+			+ " stood at y=%.2f on the car — the roof check is measuring something other"
+			% mutant.x + " than the 3-D containment rule, so it would pass the build this"
+			+ " bead fixed")
+
 	_restore_cars()
 	hero.queue_free()
 	floor_body.queue_free()
@@ -1232,6 +1292,31 @@ func _plant_car(car: Dictionary, world: Vector3, speed: float) -> void:
 	car["honk_cooldown"] = 99.0  # the horn is check 6's subject, not this one's
 	car["active"] = true
 	car["lod_debt"] = 0.0
+
+
+func _stand_on_roof(hero: Node3D, lane: Vector3, frames: int) -> Vector2:
+	## Drop the hero CAR_ROOF_DROP above the roof of the car parked on `lane` and
+	## hold him there for `frames` frames, replanting the car every frame the way
+	## `_drive_into_car` does. Returns (the LOWEST y he ever reached, how many of
+	## the frames after CAR_ROOF_SETTLE he was `is_on_floor()`).
+	var car: Dictionary = _solo_car()
+	_plant_car(car, lane, 0.0)
+	hero.global_position = Vector3(lane.x, TrafficScript.CAR_PROXY_HEIGHT + CAR_ROOF_DROP,
+		lane.z)
+	hero.rotation = Vector3.ZERO
+	hero.velocity = Vector3.ZERO
+	await physics_frame
+	var lowest: float = INF
+	var floored: int = 0
+	for i in frames:
+		_plant_car(car, lane, 0.0)
+		_manager._process(DT)
+		await physics_frame
+		if i >= CAR_ROOF_SETTLE:
+			lowest = minf(lowest, hero.global_position.y)
+			if (hero as CharacterBody3D).is_on_floor():
+				floored += 1
+	return Vector2(lowest, float(floored))
 
 
 func _drive_into_car(hero: Node3D, lane: Vector3, frames: int) -> Vector3:
