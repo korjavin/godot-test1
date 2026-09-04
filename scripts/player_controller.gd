@@ -674,14 +674,22 @@ const HERO_KEYCODES: Array = [
 	[KEY_4, KEY_KP_4],
 ]
 
-## Debug-only teleport keys (bead godot-test1-xtl): F2 puts the player at
-## Budapest's gate, F8 at the HQ — one action from a fresh run to wherever an
-## F3 perf reading is needed. Raw keycodes outside the input map (the
-## perf_overlay F3 precedent): nothing gameplay to rebind. F2 sits next to F3
-## on purpose (teleport, then measure); F8 is clear of the F3–F7 debug cluster
-## (perf, motion, touch force-enables, settings).
-const DEBUG_TELEPORT_BUDAPEST_KEY: Key = KEY_F2
-const DEBUG_TELEPORT_HQ_KEY: Key = KEY_F8
+## Cheat-code sequence recogniser (bead godot-test1-a7i): \fo perf overlay,
+## \fb teleport Budapest, \fh teleport HQ. Backslash arms an empty buffer;
+## the next two letter keys within CHEAT_TIMEOUT_MS complete it.
+const CHEAT_ARM_KEY: Key = KEY_BACKSLASH
+const CHEAT_TIMEOUT_MS: int = 2000
+
+const CHEAT_CODES: Dictionary = {
+	"fo": "perf_overlay",
+	"fb": "teleport_budapest",
+	"fh": "teleport_hq",
+}
+
+var _cheat_armed: bool = false
+var _cheat_buffer: String = ""
+var _cheat_armed_msec: int = 0
+var _cheat_swallowed_frame: int = -1
 
 ## Reentrancy guard for the teleport below: it awaits a physics frame, and a
 ## second press inside that window must not start a second rebuild.
@@ -1016,6 +1024,43 @@ func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("switch_character") and not is_game_over:
 		switch_to_next_character()
 
+	# CHEAT CODE SEQUENCE RECOGNISER (bead godot-test1-a7i): \fo, \fb, \fh.
+	# Backslash arms an empty buffer; the next two letter keys within ~2 s
+	# complete it. A match dispatches; any other key, a third letter, or the
+	# timeout discards the buffer silently — never a partial action.
+	#
+	# Runs in _input() before any HUD panel's _unhandled_input() sees the keys,
+	# so set_input_as_handled() steals them (e.g. 'b' from CityMapPanel).
+	if is_game_over or get_tree().paused:
+		return
+	var key := event as InputEventKey
+	if key == null or not key.pressed or key.echo:
+		return
+	if key.keycode == CHEAT_ARM_KEY:
+		_cheat_armed = true
+		_cheat_buffer = ""
+		_cheat_armed_msec = Time.get_ticks_msec()
+		get_viewport().set_input_as_handled()
+		return
+	elif _cheat_armed:
+		if Time.get_ticks_msec() - _cheat_armed_msec > CHEAT_TIMEOUT_MS:
+			_cheat_armed = false
+			_cheat_buffer = ""
+		elif key.keycode >= KEY_A and key.keycode <= KEY_Z:
+			# keycode identifies the physical key label regardless of Shift.
+			_cheat_buffer += char(key.keycode).to_lower()
+			_cheat_swallowed_frame = Engine.get_physics_frames()
+			get_viewport().set_input_as_handled()
+			if _cheat_buffer.length() == 2:
+				var code: String = _cheat_buffer
+				_cheat_armed = false
+				_cheat_buffer = ""
+				_dispatch_cheat_code(code)
+			return
+		else:
+			_cheat_armed = false
+			_cheat_buffer = ""
+
 
 func _unhandled_input(event: InputEvent) -> void:
 	"""
@@ -1052,19 +1097,22 @@ func _unhandled_input(event: InputEvent) -> void:
 			# sees the digit.
 			get_viewport().set_input_as_handled()
 			return
-	# DEBUG TELEPORT (bead godot-test1-xtl): F2 Budapest gate, F8 HQ. The
-	# game-over / paused / quiz guards above already refused panels and cards,
-	# so a press that reaches here is live play; the debug-build and room gates
-	# below are the rest of the bead. Fire and forget: the teleport awaits a
-	# physics frame and the busy flag covers a second press inside it.
-	if key.keycode == DEBUG_TELEPORT_BUDAPEST_KEY or key.keycode == DEBUG_TELEPORT_HQ_KEY:
-		if debug_teleport_allowed(OS.is_debug_build(), _debug_in_room()) \
-				and not _debug_teleport_busy:
-			var dest := debug_destination_budapest() \
-				if key.keycode == DEBUG_TELEPORT_BUDAPEST_KEY else debug_destination_hq()
-			get_viewport().set_input_as_handled()
-			debug_teleport_to(dest)
+
+
+func _dispatch_cheat_code(code: String) -> void:
+	if not CHEAT_CODES.has(code):
 		return
+	match code:
+		"fo":
+			var perf: Node = get_tree().get_first_node_in_group("perf_overlay")
+			if perf != null and perf.has_method("toggle"):
+				perf.toggle()
+		"fb", "fh":
+			if debug_teleport_allowed(OS.is_debug_build(), _debug_in_room()) \
+					and not _debug_teleport_busy:
+				var dest := debug_destination_budapest() \
+					if code == "fb" else debug_destination_hq()
+				debug_teleport_to(dest)
 
 # ============================================================================
 # CAMERA VIEW CYCLE (third-person / first-person / front)
@@ -1395,9 +1443,12 @@ func _physics_process(delta: float) -> void:
 
 	# STEP 0.5: Tick ability cooldowns / the Windman air boost, then read the F key.
 	# Done before gravity so an active boost can soften this frame's fall.
+	# If a cheat sequence is armed or a letter was swallowed on this physics frame,
+	# skip the poll so typing \fo does not trigger special_ability.
 	_update_ability_timers(delta)
-	if Input.is_action_just_pressed("special_ability"):
-		try_activate_ability()
+	if not _cheat_armed and Engine.get_physics_frames() != _cheat_swallowed_frame:
+		if Input.is_action_just_pressed("special_ability"):
+			try_activate_ability()
 
 	# STEP 1: Handle Gravity
 	# If the character is not on the ground, apply gravity. While Windman's Air Rush
@@ -4123,7 +4174,7 @@ func _place_near(anchor: Vector3) -> void:
 
 
 # ============================================================================
-# DEBUG-ONLY TELEPORT (F2 BUDAPEST GATE / F8 HQ — BEAD godot-test1-xtl)
+# DEBUG-ONLY TELEPORT (\fb BUDAPEST GATE / \fh HQ — BEADS godot-test1-xtl / a7i)
 # ============================================================================
 
 static func debug_teleport_allowed(debug_build: bool, in_room: bool) -> bool:
@@ -4137,7 +4188,7 @@ static func debug_teleport_allowed(debug_build: bool, in_room: bool) -> bool:
 
 
 static func debug_destination_budapest() -> Vector3:
-	"""Where F2 lands: inside Budapest past the gate, on the avenue.
+	"""Where \\fb lands: inside Budapest past the gate, on the avenue.
 
 	40 m inside the gate (BudapestPlan.GATE is the rect's west edge) is avenue,
 	not wall; `_place_near()` ring-probes the exact clear spot from there, so
@@ -4147,7 +4198,7 @@ static func debug_destination_budapest() -> Vector3:
 
 
 func debug_destination_hq() -> Vector3:
-	"""Where F8 lands: on the flat HQ ground outside the tower's dry disc.
+	"""Where \\fh lands: on the flat HQ ground outside the tower's dry disc.
 
 	The site plus the disc radius plus a margin — the same "beside it, not in
 	it" the join anchor uses. Read off the terrain (an instance const access,
@@ -4171,7 +4222,7 @@ func _debug_in_room() -> bool:
 
 
 func debug_teleport_to(dest: Vector3) -> bool:
-	"""Put the player at `dest` for an F3 perf reading, rebuilding the world
+	"""Put the player at `dest` for a \fo perf reading, rebuilding the world
 	under them. Returns false — placing NOTHING — when the gates refuse (release
 	build, room, reentrant press) or the world is missing.
 
@@ -4552,22 +4603,31 @@ func _sheltered() -> bool:
 
 func _terrain_is_river_here() -> bool:
 	"""
-	Whether the player is standing in a river band, asked of the terrain through
-	the "terrain" group — the same null-safe group + has_method shape as
+	Whether the player is standing IN a river, asked of the terrain through the
+	"terrain" group — the same null-safe group + has_method shape as
 	_weather_is_raining_here() above and _sfx(), so the player scene run on its
 	own (no EndlessTerrain in the tree) simply answers "no river" instead of
 	erroring.
 
-	EDUCATIONAL NOTE:
-	- is_river_at() is one evaluation of the terrain's biome noise: no allocation,
-	  no physics query, no node lookup beyond this one — cheap enough to ask
-	  every physics tick, which is exactly what _physics_process does.
+	IT ASKS `is_wading_at`, NOT `is_river_at` (bead godot-test1-06o.2), and the
+	difference is the Y. `is_river_at` is the BAND — XZ-only, the same function
+	the ground shader paints, and it stays that way. Whether a BODY is in the
+	water is a narrower question, because the body may be standing on a bridge
+	deck over the band; that rule lives in ONE place on the terrain and this is
+	one of its three callers (the remote avatar and the crocodile's river sink are
+	the others).
 
-	@return bool: true when this exact spot is inside a river band.
+	EDUCATIONAL NOTE:
+	- is_wading_at() is a height compare and, only if that passes, one evaluation
+	  of the terrain's biome noise: no allocation, no physics query, no node
+	  lookup beyond this one — cheap enough to ask every physics tick, which is
+	  exactly what _physics_process does.
+
+	@return bool: true when the player is standing in the water here.
 	"""
 	var terrain := get_tree().get_first_node_in_group("terrain")
-	if terrain and terrain.has_method("is_river_at"):
-		return terrain.is_river_at(global_position)
+	if terrain and terrain.has_method("is_wading_at"):
+		return terrain.is_wading_at(global_position)
 	return false
 
 

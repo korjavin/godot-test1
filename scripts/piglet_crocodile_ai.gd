@@ -3624,7 +3624,7 @@ var model_rest_y: float = 0.0
 ## The terrain, resolved once in _ready() — cached rather than looked up per tick
 ## because _animate_body runs every physics frame on every AWAKE crocodile (the
 ## player affords a per-tick group lookup at 1 node; a pack does not). Held only
-## if it answers `is_river_at`, so the null check below is the whole guard and the
+## if it answers `is_wading_at`, so the null check below is the whole guard and the
 ## standalone piglet_crocodile.tscn simply never sinks.
 var terrain: Node = null
 
@@ -3844,7 +3844,7 @@ func _ready() -> void:
 	# spawn order: endless_terrain joins the "terrain" group at the top of its own
 	# _ready(), long before it generates the chunk this crocodile is parented into.
 	var found_terrain := get_tree().get_first_node_in_group("terrain")
-	if found_terrain and found_terrain.has_method("is_river_at"):
+	if found_terrain and found_terrain.has_method("is_wading_at"):
 		terrain = found_terrain
 
 	# Find the player node (defer to allow scene to fully load)
@@ -6587,7 +6587,12 @@ func _tick_river_sink(delta: float) -> void:
 	to reconcile, because the target is recomputed from scratch every frame.
 	"""
 	var target_y: float = model_rest_y
-	if terrain and is_on_floor() and terrain.is_river_at(global_position):
+	# `is_wading_at`, not `is_river_at` — the Y-AWARE question (bead
+	# godot-test1-06o.2). An animal standing on a bridge deck is over the band and
+	# not in it, so it must not sink through the stone it is standing on. Same one
+	# rule the player and the remote avatar ask; the height compare rejects a body
+	# on a deck before the noise evaluation runs, so it is cheaper too.
+	if terrain and is_on_floor() and terrain.is_wading_at(global_position):
 		target_y = model_rest_y - spec["river_sink_depth"]
 	# THE AMBUSHER'S BURROW COMPOSES HERE rather than in a second easing of its
 	# own, and "whichever target is DEEPER" is the whole composition: a viper that

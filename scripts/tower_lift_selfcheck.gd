@@ -140,7 +140,7 @@ func _check_key_is_free() -> void:
 		[HelpOverlay.HELP_KEYCODES, "help_overlay.HELP_KEYCODES"],
 		[LandmarkToast.ANSWER_KEYCODES, "landmark_toast.ANSWER_KEYCODES"],
 		[PlayerScript.HERO_KEYCODES, "player_controller.HERO_KEYCODES"],
-		[[PerfOverlay.TOGGLE_KEYCODE], "perf_overlay.TOGGLE_KEYCODE"],
+		[[PlayerScript.CHEAT_ARM_KEY], "player_controller.CHEAT_ARM_KEY"],
 		[[MotionDebug.TOGGLE_KEYCODE], "motion_debug.TOGGLE_KEYCODE"],
 		[[MobileInput.FORCE_ENABLE_KEYCODE], "mobile_input.FORCE_ENABLE_KEYCODE"],
 		[[TouchControls.FORCE_SHOW_KEYCODE], "touch_controls.FORCE_SHOW_KEYCODE"],

@@ -13,6 +13,7 @@
   "enemy_behavior_selfcheck": 2,
   "enemy_spawn_selfcheck": 4,
   "fauna_selfcheck": 33,
+  "field_bridge_selfcheck": 48,
   "gait_selfcheck": 2,
   "help_selfcheck": 2,
   "hero_hud_selfcheck": 1,

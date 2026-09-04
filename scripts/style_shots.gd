@@ -8,7 +8,8 @@ extends Node
 ## shipped spike telemetry's summary — taken on the LIVE game before the pose is
 ## frozen, which is the F3 reading the epic asks every child PR for.
 ##
-## Usage: godot --path . scenes/style_shots.tscn -- <outdir>
+## Usage: godot --path . scenes/style_shots.tscn -- <outdir> [only=<substring>]
+##                                                           [hide=<groups>]
 ##        godot --rendering-method gl_compatibility --path . …   (the web renderer)
 ##
 ## It is a DEBUG TOOL and nothing in the game loads it: `scenes/style_shots.tscn`
@@ -19,6 +20,15 @@ const SETTLE_SECONDS: float = 9.0
 const YAW_SECONDS: float = 1.5
 
 var _out_dir: String = "user://shots"
+## Optional `only=<substring>` command-line filter, so a bead that wants two
+## shots does not sit through eleven. Empty means "every shot", which is what CI
+## and the epic's A/B pairs want.
+var _only: String = ""
+
+## Which ambience groups `hide=` suppresses. The default is the y1o list — this
+## tool exists to A/B the BLOCK material and randomized ambience is noise against
+## it — but bead 8gw.23 is about the crowd and the traffic THEMSELVES, so it
+## passes `hide=weather,fauna` and keeps them on screen.
 var _hidden_groups: PackedStringArray = PackedStringArray(["crowd", "traffic", "weather", "fauna"])
 
 func _ready() -> void:
@@ -27,15 +37,13 @@ func _ready() -> void:
 	# is the monitor's, not the renderer's.
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	Engine.max_fps = 0
-	var args := OS.get_cmdline_user_args()
-	if args.size() > 0:
-		_out_dir = args[0]
-	# Second arg: which ambience groups to hide, comma-separated. The default is
-	# the y1o list (this tool exists to A/B the BLOCK material, and randomized
-	# ambience is noise against it) — but bead 8gw.23 is about the crowd and the
-	# traffic themselves, so it passes "weather,fauna" and keeps them on screen.
-	if args.size() > 1:
-		_hidden_groups = args[1].split(",", false)
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("only="):
+			_only = a.substr(5)
+		elif a.begins_with("hide="):
+			_hidden_groups = a.substr(5).split(",", false)
+		else:
+			_out_dir = a
 	DirAccess.make_dir_recursive_absolute(_out_dir)
 	call_deferred("_run")
 
@@ -92,6 +100,10 @@ func _run() -> void:
 	await _shoot(terrain, player, forest, 0.0, "2_forest")
 	await _shoot(terrain, player, street, -PI * 0.5, "3_budapest")
 	await _shoot(terrain, player, avenue, -PI * 0.5, "3b_budapest_avenue")
+
+	# THE FIELD BRIDGES (bead godot-test1-06o.2) — two shots, and the second one
+	# keeps the HUD on because the minimap's river line is half of what it shows.
+	await _shoot_field_bridge(terrain, player)
 
 	# LANDMARKS (bead godot-test1-y1o.6). Each one is found by BUILDER NAME rather
 	# than by a hand-typed chunk: `_landmark_at` is a pure function of (chunk,
@@ -163,6 +175,8 @@ func _shoot_landmark(terrain: Node, player: Node3D, builder: String, dist: float
 	already up, so it needs no rebuild — `_shoot` re-runs the settle anyway, which
 	is what freezes the same camera for both halves of an A/B.
 	"""
+	if _only != "" and not name.contains(_only):
+		return   # the filter is checked HERE too: the sweep below is the cost
 	var kind := _landmark_kind(builder)
 	if kind < 0:
 		print("[SHOTS] no registry row named ", builder)
@@ -198,6 +212,81 @@ func _shoot_landmark(terrain: Node, player: Node3D, builder: String, dist: float
 	await _shoot(terrain, player, at + back + Vector3(0.0, 2.0, 0.0),
 			atan2(back.x, back.z), name)
 
+func _shoot_field_bridge(terrain: Node, player: Node3D) -> void:
+	"""
+	Photograph the first field bridge on this seed twice: from the bank, and
+	standing on the deck with the HUD up.
+
+	The site is a pure function of (station index, run seed) through the road's
+	centreline and the river field, so asking the terrain where the bridge is
+	costs nothing and lands in the same place every run — the same property the
+	landmark shots lean on one table along.
+	"""
+	# THE ROAD CACHE IS NOT DROPPED BY set_run_seed(), only by new_run(), so a
+	# tool that has not taken a shot yet is still holding the BOOT seed's
+	# stations — and every bridge hangs off a station index. Re-seat the world on
+	# SEED first; _shoot does the same thing again for the pose it frames.
+	terrain.new_run(SEED, Vector2i.ZERO)
+	terrain._road_extend_to_x(0.0, 1450.0)
+	var row: Dictionary = {}
+	for k in range(2, terrain._road_terminal_k()):
+		row = terrain.field_bridge_at(k)
+		if not row.is_empty():
+			break
+	if row.is_empty():
+		print("[SHOTS] seed ", SEED, " has no field bridge — skipped")
+		return
+	var poly: PackedVector2Array = row["poly"]
+	var foot: Vector2 = poly[0]
+	var mid: Vector2 = poly[int(poly.size() / 2)]
+
+	# 1. FROM THE BANK: stand back and to one side of the west ramp's foot and
+	# look up the crossing, so the shot carries the ramp, the deck and the water.
+	var to_mid := (mid - foot).normalized()
+	var side := Vector2(-to_mid.y, to_mid.x)
+	var eye := foot - to_mid * 6.0 + side * 16.0
+	var look := Vector3(mid.x - eye.x, 0.0, mid.y - eye.y)
+	await _shoot(terrain, player, Vector3(eye.x, 2.0, eye.y),
+			atan2(-look.x, -look.z), "10_field_bridge_bank")
+
+	# 2. ON THE DECK, MINIMAP UP: the minimap's river line (bead godot-test1-06o.1)
+	# is the other half of this picture — the hero is standing on the blue band.
+	# ONE widget's layer, not every CanvasLayer: a HUD widget hides by flipping
+	# its own layer's `visible`, so showing them all reveals the pause card and
+	# the F3/F4 debug panels over the shot.
+	_show_widget("minimap")
+	var deck_y: float = terrain.field_bridge_surface_y(Vector3(mid.x, 0.0, mid.y))
+	await _shoot(terrain, player, Vector3(mid.x, deck_y + 1.0, mid.y),
+			atan2(-to_mid.x, -to_mid.y), "11_field_bridge_deck")
+	_show_widget("minimap", false)
+
+
+func _show_widget(group: String, on: bool = true) -> void:
+	"""
+	Show ONE HUD widget and nothing else on its layer.
+
+	The HUD is one shared CanvasLayer, so flipping the layer reveals the coin
+	label, the ability dial and the hero row along with the widget asked for —
+	which is three things too many in a shot whose point is the minimap. The
+	layer is turned on and every branch of it that does not lead to the widget is
+	turned off; nothing is restored, because this tool takes its shots and quits.
+	"""
+	for n_v: Variant in get_tree().get_nodes_in_group(group):
+		var n: Node = n_v
+		var branch: Node = n
+		while n != null and not (n is CanvasLayer):
+			branch = n
+			n = n.get_parent()
+		if n == null:
+			continue
+		(n as CanvasLayer).visible = on
+		for sibling in (n as CanvasLayer).get_children():
+			if sibling == branch:
+				continue
+			if sibling is CanvasItem:
+				(sibling as CanvasItem).visible = false
+
+
 func _find_biome(terrain: Node, want: int) -> Vector3:
 	var x: float = 250.0
 	while x < 1500.0:
@@ -217,6 +306,8 @@ func _find_biome(terrain: Node, want: int) -> Vector3:
 	return Vector3(300.0, 2.0, 0.0)
 
 func _shoot(terrain: Node, player: Node3D, where: Vector3, yaw: float, name: String) -> void:
+	if _only != "" and not name.contains(_only):
+		return
 	var chunk := Vector2i(roundi(where.x / 50.0), roundi(where.z / 50.0))
 	# The previous shot froze both ticks (see below) — hand the body back.
 	player.set_physics_process(true)

@@ -189,14 +189,14 @@ static func panel_key_owners() -> Array:
 	EVERY raw-keycode panel key in the game, `[keycodes, label]` a row.
 
 	One registry, two subjects: this file asks whether the city map's B is free
-	against it, and `debug_teleport_selfcheck` asks the same of F2/F8 — a new
+	against it, and `debug_teleport_selfcheck` asks the same of KEY_BACKSLASH — a new
 	panel key is still ONE edit, here, and it is compared against everything
 	that already exists in both directions. A subject that appears in the list
 	skips its own row by label.
 
 	`tower_lift_selfcheck` still carries a fourth copy of this list; pointing it
 	here too is the obvious follow-up and is deliberately not this bead's edit.
-	Its key IS a row below, so a lift key moved onto F2/F8/B is caught here.
+	Its key IS a row below, so a lift key moved onto KEY_BACKSLASH/B is caught here.
 	"""
 	return [
 		[[MinimapHud.TOGGLE_KEYCODE], "minimap_hud.TOGGLE_KEYCODE"],
@@ -208,13 +208,11 @@ static func panel_key_owners() -> Array:
 		[HelpOverlay.HELP_KEYCODES, "help_overlay.HELP_KEYCODES"],
 		[LandmarkToast.ANSWER_KEYCODES, "landmark_toast.ANSWER_KEYCODES"],
 		[PlayerScript.HERO_KEYCODES, "player_controller.HERO_KEYCODES"],
-		[[PerfOverlay.TOGGLE_KEYCODE], "perf_overlay.TOGGLE_KEYCODE"],
 		[[MotionDebug.TOGGLE_KEYCODE], "motion_debug.TOGGLE_KEYCODE"],
 		[[MobileInput.FORCE_ENABLE_KEYCODE], "mobile_input.FORCE_ENABLE_KEYCODE"],
 		[[TouchControls.FORCE_SHOW_KEYCODE], "touch_controls.FORCE_SHOW_KEYCODE"],
 		[[MobileSettingsPanel.FORCE_SHOW_KEYCODE], "mobile_settings_panel.FORCE_SHOW_KEYCODE"],
-		[[PlayerScript.DEBUG_TELEPORT_BUDAPEST_KEY], "player_controller.DEBUG_TELEPORT_BUDAPEST_KEY"],
-		[[PlayerScript.DEBUG_TELEPORT_HQ_KEY], "player_controller.DEBUG_TELEPORT_HQ_KEY"],
+		[[PlayerScript.CHEAT_ARM_KEY], "player_controller.CHEAT_ARM_KEY"],
 	]
 
 

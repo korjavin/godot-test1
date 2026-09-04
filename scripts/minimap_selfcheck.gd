@@ -157,6 +157,11 @@ class StubTerrain extends Node:
 	func is_river_at(_world_pos: Vector3) -> bool:
 		return false
 
+	## The Y-aware half (bead godot-test1-06o.2) — the HUD asks this one for its
+	## "in a river" readout, the map's contour still asks the band above.
+	func is_wading_at(_world_pos: Vector3) -> bool:
+		return false
+
 	func river_field_at(world_x: float, _world_z: float) -> float:
 		river_calls += 1
 		river_min_x = minf(river_min_x, world_x)
