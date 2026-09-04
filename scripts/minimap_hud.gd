@@ -254,7 +254,7 @@ const ZOOM_BUTTON_GAP: float = 4.0
 # block. A live arrow to the jail would rank the corridors for you at every junction
 # — the player walks two steps down each one and keeps whichever improved the
 # bearing — which solves the labyrinth without ever entering it. The horizontal help
-# is authored into the building instead (`TowerInterior.SIGN_PIECES`).
+# is authored into the building instead (`TowerDressing.SIGN_PIECES`).
 #
 # What survives here is the VERTICAL intent, which is honest and unsolvable: the
 # block is on the top storey and saying so costs the maze nothing.
