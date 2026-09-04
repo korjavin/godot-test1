@@ -5794,6 +5794,12 @@ func _prop_boulder_cluster(local: Vector3, size: float, rng: RandomNumberGenerat
 	the returned `top`. The companions carry the tilt that stops the whole thing
 	reading as a cube, and they sit beside it rather than on it (rule 2 above).
 	3 boxes, 3 collide.
+
+	ALL THREE ARE `BoxKind.ROCK` since bead godot-test1-y1o.3 — a faceted dome with
+	the flat lid still exactly at the box top, so the climbable surface, the
+	collider and every number below are byte-for-byte what they were and only the
+	silhouette moved. See ChunkBatch's BoxKind banner for why a squashed sphere was
+	the wrong answer here.
 	"""
 	var r := size * PROP_RADIUS_FACTOR
 	var w := size * 0.9
@@ -5802,7 +5808,8 @@ func _prop_boulder_cluster(local: Vector3, size: float, rng: RandomNumberGenerat
 
 	create_box(
 		local + Vector3(0.0, h * 0.5, 0.0), Vector3(w, h, w * 0.92), yaw,
-		rng, block_batch, block_body, 0.0, PROP_BOULDER_A.lerp(PROP_BOULDER_B, rng.randf())
+		rng, block_batch, block_body, 0.0, PROP_BOULDER_A.lerp(PROP_BOULDER_B, rng.randf()),
+		true, ChunkBatch.BoxKind.ROCK
 	)
 
 	for _i in 2:
@@ -5813,7 +5820,7 @@ func _prop_boulder_cluster(local: Vector3, size: float, rng: RandomNumberGenerat
 			local + Vector3(cos(a) * ring, cs * 0.45, sin(a) * ring),
 			Vector3(cs, cs * 0.9, cs), rng.randf_range(0.0, TAU),
 			rng, block_batch, block_body, rng.randf_range(-0.35, 0.35),
-			PROP_BOULDER_A.lerp(PROP_BOULDER_B, rng.randf())
+			PROP_BOULDER_A.lerp(PROP_BOULDER_B, rng.randf()), true, ChunkBatch.BoxKind.ROCK
 		)
 
 	return { "radius": r, "top": h, "climbable": true }
@@ -5912,6 +5919,10 @@ func _prop_sandstone_stack(local: Vector3, size: float, rng: RandomNumberGenerat
 
 	The slabs are untilted so the stack climbs; the flake is the tilted character
 	and sits BESIDE the stack, never on the top slab. 3-4 boxes, 2-3 collide.
+
+	`BoxKind.ROCK` throughout since bead godot-test1-y1o.3: a wind-worn slab is a
+	dome with a flat lid, which is exactly the kind's shape, and the lid keeps the
+	stack's every step where the ladder already measured it.
 	"""
 	var r := size * PROP_RADIUS_FACTOR
 	var tiers := rng.randi_range(2, 3)
@@ -5924,7 +5935,8 @@ func _prop_sandstone_stack(local: Vector3, size: float, rng: RandomNumberGenerat
 		create_box(
 			local + Vector3(0.0, top + th * 0.5, 0.0), Vector3(w, th, w * 0.82),
 			yaw + rng.randf_range(-0.3, 0.3), rng, block_batch, block_body, 0.0,
-			PROP_SANDSTONE_A.lerp(PROP_SANDSTONE_B, rng.randf() * 0.7)
+			PROP_SANDSTONE_A.lerp(PROP_SANDSTONE_B, rng.randf() * 0.7),
+			true, ChunkBatch.BoxKind.ROCK
 		)
 		top += th
 		w *= 0.82
@@ -5934,7 +5946,8 @@ func _prop_sandstone_stack(local: Vector3, size: float, rng: RandomNumberGenerat
 	create_box(
 		local + Vector3(cos(fa) * size * 0.32, fs * 0.5, sin(fa) * size * 0.32),
 		Vector3(fs, fs * 1.2, fs * 0.25), rng.randf_range(0.0, TAU),
-		rng, block_batch, block_body, rng.randf_range(0.5, 0.9), PROP_SANDSTONE_B, false
+		rng, block_batch, block_body, rng.randf_range(0.5, 0.9), PROP_SANDSTONE_B, false,
+		ChunkBatch.BoxKind.ROCK
 	)
 
 	return { "radius": r, "top": top, "climbable": true }
@@ -6022,6 +6035,11 @@ func _prop_mossy_boulder(local: Vector3, size: float, rng: RandomNumberGenerator
 	the moss rather than clipping into it — and the rock height is derived from
 	PROP_MAX_STEP minus the cap, so cap + rock together still clear in one jump
 	however object_size_max is retuned. 4 boxes, 2 collide.
+
+	`BoxKind.ROCK` throughout since bead godot-test1-y1o.3, THE MOSS CAP INCLUDED —
+	the cap is the surface you stand on, and a cube lid on a domed boulder would
+	read as a plate balanced on it. Both are drawn at the same yaw, so the cap's
+	facets line up with the flanks under them and the two read as one stone.
 	"""
 	var r := size * PROP_RADIUS_FACTOR
 	var yaw := rng.randf_range(0.0, TAU)
@@ -6031,11 +6049,11 @@ func _prop_mossy_boulder(local: Vector3, size: float, rng: RandomNumberGenerator
 
 	create_box(
 		local + Vector3(0.0, bh * 0.5, 0.0), Vector3(bw, bh, bw * 0.9), yaw,
-		rng, block_batch, block_body, 0.0, PROP_MOSS_ROCK
+		rng, block_batch, block_body, 0.0, PROP_MOSS_ROCK, true, ChunkBatch.BoxKind.ROCK
 	)
 	create_box(
 		local + Vector3(0.0, bh + cap_h * 0.5, 0.0), Vector3(bw * 0.96, cap_h, bw * 0.87), yaw,
-		rng, block_batch, block_body, 0.0, PROP_MOSS_CAP
+		rng, block_batch, block_body, 0.0, PROP_MOSS_CAP, true, ChunkBatch.BoxKind.ROCK
 	)
 
 	for _i in 2:
@@ -6044,7 +6062,8 @@ func _prop_mossy_boulder(local: Vector3, size: float, rng: RandomNumberGenerator
 		create_box(
 			local + Vector3(cos(a) * size * 0.34, cs * 0.4, sin(a) * size * 0.34),
 			Vector3(cs, cs * 0.75, cs), rng.randf_range(0.0, TAU),
-			rng, block_batch, block_body, rng.randf_range(-0.45, 0.45), PROP_MOSS_ROCK, false
+			rng, block_batch, block_body, rng.randf_range(-0.45, 0.45), PROP_MOSS_ROCK, false,
+			ChunkBatch.BoxKind.ROCK
 		)
 
 	return { "radius": r, "top": bh + cap_h, "climbable": true }
@@ -6124,6 +6143,12 @@ func _prop_scree_cluster(local: Vector3, size: float, rng: RandomNumberGenerator
 	"""
 	MOUNTAIN — one flat slab of fallen rock with 3-4 shattered chips tumbled round
 	it. The slab is the perch; the chips carry the tilt. 4-5 boxes, 1 collides.
+
+	`BoxKind.ROCK` throughout since bead godot-test1-y1o.3. The chips could have
+	been CONEs — the bead offers both — and are not, on the draw-call bill: a cone
+	bucket would make a mountain chunk carrying scree cost THREE block draw calls
+	where the epic's cap for a chunk is two, and nothing here would look better for
+	it.
 	"""
 	var r := size * PROP_RADIUS_FACTOR
 	var yaw := rng.randf_range(0.0, TAU)
@@ -6132,7 +6157,8 @@ func _prop_scree_cluster(local: Vector3, size: float, rng: RandomNumberGenerator
 
 	create_box(
 		local + Vector3(0.0, sh * 0.5, 0.0), Vector3(sw, sh, sw * 0.88), yaw,
-		rng, block_batch, block_body, 0.0, PROP_SCREE_A.lerp(PROP_SCREE_B, rng.randf())
+		rng, block_batch, block_body, 0.0, PROP_SCREE_A.lerp(PROP_SCREE_B, rng.randf()),
+		true, ChunkBatch.BoxKind.ROCK
 	)
 
 	for _i in rng.randi_range(3, 4):
@@ -6143,7 +6169,7 @@ func _prop_scree_cluster(local: Vector3, size: float, rng: RandomNumberGenerator
 			local + Vector3(cos(a) * ring, cs * 0.45, sin(a) * ring),
 			Vector3(cs, cs * 0.8, cs * 1.2), rng.randf_range(0.0, TAU),
 			rng, block_batch, block_body, rng.randf_range(-0.6, 0.6),
-			PROP_SCREE_A.lerp(PROP_SCREE_B, rng.randf()), false
+			PROP_SCREE_A.lerp(PROP_SCREE_B, rng.randf()), false, ChunkBatch.BoxKind.ROCK
 		)
 
 	return { "radius": r, "top": sh, "climbable": true }
@@ -6157,6 +6183,11 @@ func _prop_cairn(local: Vector3, size: float, rng: RandomNumberGenerator, block_
 	NO CAPSTONE ON TOP, deliberately — a tilted stone crowning the cairn would
 	look right and quietly destroy the flat surface the climbability contract
 	promises. The loose stones go beside it instead. 5 boxes, 3 collide.
+
+	THE TIERS STAY `CUBE`, and that is the bead's own ruling (godot-test1-y1o.3): a
+	cairn IS stacked, split, flat-faced stones, so the one prop in the set that
+	should read as blocks is this one. Only the loose stones at its foot — which
+	were never stacked by anybody — take `BoxKind.ROCK`.
 	"""
 	var r := size * PROP_RADIUS_FACTOR
 	var yaw := rng.randf_range(0.0, TAU)
@@ -6181,7 +6212,7 @@ func _prop_cairn(local: Vector3, size: float, rng: RandomNumberGenerator, block_
 			local + Vector3(cos(a) * ring, cs * 0.45, sin(a) * ring),
 			Vector3(cs, cs * 0.85, cs), rng.randf_range(0.0, TAU),
 			rng, block_batch, block_body, rng.randf_range(-0.5, 0.5),
-			PROP_CAIRN.lerp(PROP_SCREE_B, rng.randf() * 0.5), false
+			PROP_CAIRN.lerp(PROP_SCREE_B, rng.randf() * 0.5), false, ChunkBatch.BoxKind.ROCK
 		)
 
 	return { "radius": r, "top": top, "climbable": true }
@@ -6331,6 +6362,10 @@ func _prop_ice_rock(local: Vector3, size: float, rng: RandomNumberGenerator, blo
 	OPAQUE, never transparent: the blue-white ramp is what has to read as ice, and
 	an alpha-blended box would cost fill rate on a mobile GPU AND drop out of the
 	chunk's one MultiMesh (which has a single opaque material) for the privilege.
+
+	`BoxKind.ROCK` since bead godot-test1-y1o.3 — glacier ice is a weathered lump
+	with a wind-scoured flat top, which is the kind's exact profile, and the shards
+	take it too so a snow chunk pays for ONE extra bucket and not two.
 	"""
 	var r := size * PROP_RADIUS_FACTOR
 	var yaw := rng.randf_range(0.0, TAU)
@@ -6339,7 +6374,8 @@ func _prop_ice_rock(local: Vector3, size: float, rng: RandomNumberGenerator, blo
 
 	create_box(
 		local + Vector3(0.0, h * 0.5, 0.0), Vector3(w, h, w * 0.90), yaw,
-		rng, block_batch, block_body, 0.0, SNOW_ICE_A.lerp(SNOW_ICE_B, rng.randf() * 0.7)
+		rng, block_batch, block_body, 0.0, SNOW_ICE_A.lerp(SNOW_ICE_B, rng.randf() * 0.7),
+		true, ChunkBatch.BoxKind.ROCK
 	)
 
 	# The split shards. Half a shard's 3D diagonal is
@@ -6351,7 +6387,7 @@ func _prop_ice_rock(local: Vector3, size: float, rng: RandomNumberGenerator, blo
 			local + Vector3(cos(a) * size * 0.38, size * 0.24, sin(a) * size * 0.38),
 			Vector3(size * 0.16, size * 0.55, size * 0.20), rng.randf_range(0.0, TAU),
 			rng, block_batch, block_body, rng.randf_range(-0.55, 0.55),
-			SNOW_ICE_A.lerp(SNOW_ICE_B, rng.randf()), false
+			SNOW_ICE_A.lerp(SNOW_ICE_B, rng.randf()), false, ChunkBatch.BoxKind.ROCK
 		)
 
 	return { "radius": r, "top": h, "climbable": true }
@@ -9224,12 +9260,14 @@ func _spawn_desert_oasis(chunk_center: Vector3, chunk_pos: Vector2i, rng: Random
 				continue
 
 			var boulder_size := rng.randf_range(OASIS_BOULDER_SIZE_MIN, OASIS_BOULDER_SIZE_MAX)
-			# Climbable rocks (collide=true) — round-ish color
+			# Climbable rocks (collide=true) — and since bead godot-test1-y1o.3 they
+			# are `BoxKind.ROCK`, the one kind whose lid is flat AT the box top, so
+			# the footprint appended below still records a surface you land on.
 			create_box(
 				Vector3(boulder_x, boulder_size * 0.5, boulder_z),
 				Vector3(boulder_size, boulder_size * 0.8, boulder_size),
 				rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0,
-				Color(0.55, 0.48, 0.40), true
+				Color(0.55, 0.48, 0.40), true, ChunkBatch.BoxKind.ROCK
 			)
 			obstacles.append({ "pos": Vector3(boulder_x, 0, boulder_z), "radius": boulder_size * 0.7, "top": boulder_size * 0.8, "climbable": true })
 

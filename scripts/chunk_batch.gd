@@ -89,8 +89,20 @@ static var _shared_unit_box_mesh: BoxMesh
 ## it" — a cylinder drum has a real flat top and a sphere a real curved one — but
 ## it IS still: a CONE collides as a box, so nothing may stand on a cone, and a
 ## climbable footprint (`obstacles`' flat-top contract, `_settle_coin_y`) wants a
-## CUBE or a CYLINDER and never a SPHERE.
-enum BoxKind { CUBE, SPHERE, CONE, CYLINDER }
+## CUBE, a CYLINDER or a ROCK and never a SPHERE.
+##
+## ROCK IS THE ONE KIND SHAPED BY A GAMEPLAY CONTRACT rather than by a primitive
+## (bead godot-test1-y1o.3). Rocks and boulders are the second-most-frequent block
+## after trees and they are in EVERY biome, and MOST of them carry a CLIMBABLE
+## footprint — the "rest from crocodiles" role the bare cubes used to play. So the
+## silhouette had to lose the crate WITHOUT losing the flat top: a squashed SPHERE
+## would have been the lazy answer and is wrong, because a sphere's surface falls
+## away from the box top and the hero would stand floating over the rim. ROCK is
+## therefore a faceted dome with a FLAT LID at exactly y = +0.5 and a flat base at
+## y = -0.5, and it keeps the `BoxShape3D` of every other flat-topped kind — so
+## every `top` a rock builder already recorded is still the surface you land on,
+## byte for byte, and `_settle_coin_y` perches exactly where it did.
+enum BoxKind { CUBE, SPHERE, CONE, CYLINDER, ROCK }
 
 ## Widest a round box may be, as a multiple of its narrowest axis, before its
 ## collider falls back to the bounding box. Read only by collision_shape_for(),
@@ -110,6 +122,35 @@ const UNIT_SPHERE_RADIAL: int = 8
 const UNIT_SPHERE_RINGS: int = 4
 const UNIT_CYLINDER_RADIAL: int = 8
 const UNIT_CONE_RADIAL: int = 6
+
+## THE ROCK'S PROFILE, and it is the whole of the kind (bead godot-test1-y1o.3).
+## Each row is one horizontal ring: `y` in unit-cube space and `r` as a fraction of
+## the 0.5 half-extent. Read top-down the way the silhouette reads: a flat lid, a
+## shoulder that swells to the full half-extent, and a base tucked back under it.
+##
+##   * The LID sits at y = +0.5 and is WIDE (0.80 of the half-extent). It is the
+##     climbable surface, and the wider it is the less of the `BoxShape3D` top
+##     hangs over open air — the one honest cost of keeping the box collider, and
+##     the reason this is not a taste knob.
+##   * The SHOULDER touches 1.0, so a rock really fills the `dimensions` it
+##     declares on its widest axis instead of rattling around inside it.
+##   * The BASE is tucked in (0.86), which is what makes the thing sit on the
+##     ground like a boulder rather than stand on it like a bollard.
+##
+## `UNIT_ROCK_RADIAL` sides x 3 bands + two caps = 64 triangles, exactly the
+## sphere's bill. `UNIT_ROCK_JITTER` then pulls each vertex's radius IN by up to
+## that fraction off a fixed-seed stream (never `run_seed` — this mesh is built
+## once per PROCESS and shared by every rock in the world), which is what stops
+## eight identical facets reading as a turned prism. It only ever subtracts, so
+## the unit-cube fit is true by construction and not by measurement.
+const UNIT_ROCK_RADIAL: int = 8
+const UNIT_ROCK_JITTER: float = 0.12
+const UNIT_ROCK_PROFILE: Array[Vector2] = [
+	Vector2(0.5, 0.80),    # the flat lid — you stand here
+	Vector2(0.12, 1.00),   # the shoulder — the widest band
+	Vector2(-0.22, 0.94),
+	Vector2(-0.5, 0.86),   # the base
+]
 
 ## Lazily-created shared material for the block MultiMesh. `vertex_color_use_as_albedo`
 ## lets one material show each instance's individual colour. Per-instance roughness
@@ -195,7 +236,10 @@ static func unit_mesh(kind: int) -> Mesh:
 	height 1.0 are both centred on the origin and span -0.5 .. +0.5 on all three
 	axes, and a cone is that cylinder with `top_radius = 0`. An inscribed polygon
 	only ever sits INSIDE the circle it is inscribed in, so lowering a segment
-	count can never break the bound.
+	count can never break the bound. The ROCK is the one kind with no primitive
+	behind it — Godot has no flat-topped dome — so it is built from
+	UNIT_ROCK_PROFILE, whose own rule (radii at or under the half-extent, a jitter
+	that only subtracts) makes the fit structural in the same way.
 
 	An UNKNOWN kind degrades to the cube rather than returning null: a null mesh
 	is an invisible chunk with no error anywhere, and this is the one place a bad
@@ -228,6 +272,8 @@ static func unit_mesh(kind: int) -> Mesh:
 			cone.height = 1.0
 			cone.radial_segments = UNIT_CONE_RADIAL
 			mesh = _flat_faceted_mesh(cone)
+		BoxKind.ROCK:
+			mesh = _build_unit_rock_mesh()
 		_:
 			return _get_shared_unit_box_mesh()
 	_shared_unit_meshes[kind] = mesh
@@ -254,6 +300,75 @@ static func _flat_faceted_mesh(primitive: PrimitiveMesh) -> ArrayMesh:
 			st.set_uv(uvs[i])
 		st.add_vertex(verts[i])
 	st.deindex()
+	st.generate_normals()
+	return st.commit()
+
+static func _build_unit_rock_mesh() -> ArrayMesh:
+	"""
+	The unit ROCK: a faceted boulder inscribed in the unit cube, with a FLAT LID at
+	y = +0.5 (bead godot-test1-y1o.3). See UNIT_ROCK_PROFILE for the silhouette and
+	the BoxKind banner for why the lid — not the roundness — is the point.
+
+	It is hand-built rather than derived from a `PrimitiveMesh` because Godot has
+	no flat-topped dome; the profile table IS the shape, so restyling the rock is
+	editing four numbers rather than this loop.
+
+	THE JITTER ONLY EVER SUBTRACTS, which is the whole of the unit-cube proof: every
+	ring radius starts at or below the 0.5 half-extent and the draw scales it DOWN,
+	so no vertex can leave the cube however the table is retuned. The lid and the
+	base keep their exact y, so the mesh spans the full height batch_selfcheck
+	demands and the collider's top face is the drawn one.
+
+	The stream is a FIXED seed. This mesh is built once per process and shared by
+	every rock in every chunk, so `run_seed` would make one boulder's silhouette a
+	property of the whole world — and it costs the chunk streams nothing either way,
+	since choosing a kind draws nothing at all.
+	"""
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 0x0C0FFEE
+
+	# Radii first, so a ring is one row of numbers and the triangle loop below is
+	# pure topology. rings[band][side] is the horizontal distance from the axis.
+	var rings: Array[PackedFloat32Array] = []
+	for band: Vector2 in UNIT_ROCK_PROFILE:
+		var radii := PackedFloat32Array()
+		for _s in UNIT_ROCK_RADIAL:
+			radii.append(band.y * 0.5 * (1.0 - rng.randf() * UNIT_ROCK_JITTER))
+		rings.append(radii)
+
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_smooth_group(-1)
+
+	var ring_point := func(band: int, side: int) -> Vector3:
+		var a: float = TAU * float(side % UNIT_ROCK_RADIAL) / float(UNIT_ROCK_RADIAL)
+		var r: float = rings[band][side % UNIT_ROCK_RADIAL]
+		return Vector3(cos(a) * r, UNIT_ROCK_PROFILE[band].x, sin(a) * r)
+
+	# The flanks, band by band. Winding is CLOCKWISE seen from OUTSIDE, which is
+	# Godot's front face — get it backwards and every rock in the world is
+	# backface-culled into an invisible hole with no error anywhere.
+	for band in range(UNIT_ROCK_PROFILE.size() - 1):
+		for side in UNIT_ROCK_RADIAL:
+			var t0: Vector3 = ring_point.call(band, side)
+			var t1: Vector3 = ring_point.call(band, side + 1)
+			var b0: Vector3 = ring_point.call(band + 1, side)
+			var b1: Vector3 = ring_point.call(band + 1, side + 1)
+			for v: Vector3 in [t0, b0, b1, t0, b1, t1]:
+				st.add_vertex(v)
+
+	# The lid and the base, each a fan from its own centre. The lid is the surface
+	# the climbability contract is about; the base is drawn because a rock sitting
+	# in a dune's flank or on a slope shows its underside.
+	var lid_c := Vector3(0.0, UNIT_ROCK_PROFILE[0].x, 0.0)
+	var base_band: int = UNIT_ROCK_PROFILE.size() - 1
+	var base_c := Vector3(0.0, UNIT_ROCK_PROFILE[base_band].x, 0.0)
+	for side in UNIT_ROCK_RADIAL:
+		for v: Vector3 in [lid_c, ring_point.call(0, side), ring_point.call(0, side + 1)]:
+			st.add_vertex(v)
+		for v: Vector3 in [base_c, ring_point.call(base_band, side + 1), ring_point.call(base_band, side)]:
+			st.add_vertex(v)
+
 	st.generate_normals()
 	return st.commit()
 
@@ -508,7 +623,16 @@ static func collision_shape_for(kind: int, dimensions: Vector3) -> Shape3D:
 	  SPHERE   -> SphereShape3D, radius = the SMALLEST half-extent
 	  CYLINDER -> CylinderShape3D, radius = the smaller RADIAL half-extent,
 	              height = `dimensions.y`
-	  CONE, CUBE, anything unknown -> BoxShape3D of `dimensions`
+	  ROCK, CONE, CUBE, anything unknown -> BoxShape3D of `dimensions`
+
+	THE ROCK'S BOX IS THE FEATURE, not the fallthrough (bead godot-test1-y1o.3).
+	Its whole reason to be a kind of its own is that its lid is FLAT and at exactly
+	the box's top face, so the boulder you climb has the surface where every rock
+	builder's recorded `top` already promised it. Giving it a round collider would
+	undo precisely the thing it was drawn for. What it costs is the same overhang
+	every flat-topped box has always had at its corners — visible stone stops a
+	little inside the collider on the diagonal — and that is a strictly smaller
+	error than the cube it replaced, whose SIDES were out there too.
 
 	THE RADIUS IS THE SMALLEST HALF-EXTENT, so the collider is INSCRIBED in the
 	entry's bounding box exactly like the unit mesh is (the BoxKind banner's one
