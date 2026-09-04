@@ -118,7 +118,8 @@ func _check_unit_meshes_fit_the_cube() -> void:
 		if mesh.get_surface_count() < 1:
 			_fail("BoxKind.%s's unit mesh has no surface" % name)
 			continue
-		var verts: PackedVector3Array = mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+		var arrays: Array = mesh.surface_get_arrays(0)
+		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
 		if verts.is_empty():
 			_fail("BoxKind.%s's unit mesh has no vertices — nothing was measured" % name)
 			continue
@@ -143,6 +144,25 @@ func _check_unit_meshes_fit_the_cube() -> void:
 					+ "world_block.gdshader's gradient is a model-space "
 					+ "VERTEX.y + 0.5 sweep, so a short mesh never reaches full "
 					+ "colour and every instance of this kind renders dark")
+
+		# FACETED NORMAL CONTRACT (bead godot-test1-y1o.9): the non-cube unit
+		# primitives must be unindexed meshes with flat per-face normals so
+		# style A shades with crisp facets rather than Gouraud-smooth shading.
+		if kind != ChunkBatch.BoxKind.CUBE:
+			var norms: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+			var idx: Variant = arrays[Mesh.ARRAY_INDEX]
+			if norms.size() != verts.size():
+				_fail("BoxKind.%s unit mesh normal count (%d) != vertex count (%d)"
+						% [name, norms.size(), verts.size()])
+			if idx != null and not (idx as PackedInt32Array).is_empty():
+				_fail("BoxKind.%s unit mesh is indexed (%d indices) — style A requires unindexed flat triangles"
+						% [name, (idx as PackedInt32Array).size()])
+			for i in range(0, verts.size(), 3):
+				if i + 2 < norms.size():
+					if not norms[i].is_equal_approx(norms[i + 1]) or not norms[i].is_equal_approx(norms[i + 2]):
+						_fail("BoxKind.%s has smooth or mismatched normals on triangle %d — style A requires flat per-face normals"
+								% [name, i / 3])
+						break
 		measured += 1
 
 	if measured != ChunkBatch.BoxKind.size():

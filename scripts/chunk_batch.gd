@@ -205,25 +205,49 @@ static func unit_mesh(kind: int) -> Mesh:
 			sphere.height = 1.0
 			sphere.radial_segments = UNIT_SPHERE_RADIAL
 			sphere.rings = UNIT_SPHERE_RINGS
-			mesh = sphere
+			mesh = _flat_faceted_mesh(sphere)
 		BoxKind.CYLINDER:
 			var cyl := CylinderMesh.new()
 			cyl.top_radius = 0.5
 			cyl.bottom_radius = 0.5
 			cyl.height = 1.0
 			cyl.radial_segments = UNIT_CYLINDER_RADIAL
-			mesh = cyl
+			mesh = _flat_faceted_mesh(cyl)
 		BoxKind.CONE:
 			var cone := CylinderMesh.new()
 			cone.top_radius = 0.0
 			cone.bottom_radius = 0.5
 			cone.height = 1.0
 			cone.radial_segments = UNIT_CONE_RADIAL
-			mesh = cone
+			mesh = _flat_faceted_mesh(cone)
 		_:
 			return _get_shared_unit_box_mesh()
 	_shared_unit_meshes[kind] = mesh
 	return mesh
+
+static func _flat_faceted_mesh(primitive: PrimitiveMesh) -> ArrayMesh:
+	"""
+	Converts a primitive mesh into an unindexed triangle mesh with flat (per-face)
+	normals (bead godot-test1-y1o.9). Style direction A requires faceted low-poly
+	shading rather than Gouraud-smooth shading.
+	"""
+	var arr: Array = primitive.get_mesh_arrays()
+	var idx: PackedInt32Array = arr[Mesh.ARRAY_INDEX] if arr[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+	var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	var uvs: PackedVector2Array = arr[Mesh.ARRAY_TEX_UV] if arr[Mesh.ARRAY_TEX_UV] != null else PackedVector2Array()
+	var has_uv := not uvs.is_empty()
+	var count := idx.size() if not idx.is_empty() else verts.size()
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_smooth_group(-1)
+	for j in count:
+		var i: int = idx[j] if not idx.is_empty() else j
+		if has_uv:
+			st.set_uv(uvs[i])
+		st.add_vertex(verts[i])
+	st.deindex()
+	st.generate_normals()
+	return st.commit()
 
 static func _get_shared_block_material() -> ShaderMaterial:
 	"""
