@@ -80,10 +80,11 @@ extends RefCounted
 ## The cell block, its four hero segments and the maintenance crawl were authored
 ## here as contracts by phase 4 and BUILT BY PHASE 8 against them: the geometry was
 ## written to satisfy this file rather than the other way round, which is the whole
-## reason the audit had to land first. What is still `false` is phase 7's lift —
-## the `lift_shaft` edge and the `lift_stop_upper` entry it grants. The audit
-## already walks FROM that entry (see `_all_entries`), so building the lift adds a
-## route and can only make the property easier to satisfy.
+## reason the audit had to land first. NOTHING IS `false` ANY MORE: bead
+## `godot-test1-3iy.7` shipped the ground-floor lift menu, so both `lift_shaft`
+## edges and both lift-stop entries are ways a player really has. The audit already
+## walked from those entries (see `_all_entries`), so the flip changed no verdict —
+## a lift only ADDS routes, which is why a mutation may grant one at all.
 ##
 ## ============================================================================
 ## THE SHAPE — one const dict of plain dicts (`SPECIES` / `SKILL_TREES` idiom)
@@ -124,6 +125,13 @@ const GEOMETRY_MASS: String = "mass"
 ## once: the `entries` row below, the mutation that grants it, and
 ## `TowerInterior`'s `LiftStopTrigger` all read this constant.
 const ENTRY_LIFT_MAZE: String = "lift_stop_maze"
+
+## Phase 7's OTHER stop, at the head of the ground floor's ramp. Its `unlock` is
+## `GATE_CHECKPOINT` rather than its own id — lighting the checkpoint is what
+## powers the lift, which is what `lift_activated` has always said — so this
+## constant names a row and is NOT itself a persisted id. Spelled here because the
+## menu, the entries row and the mutation must all mean the same stop.
+const ENTRY_LIFT_UPPER: String = "lift_stop_upper"
 
 # ============================================================================
 # SCAR IDS — the same strings, in the same persisted set
@@ -746,14 +754,14 @@ const TOWER_GRAPH: Dictionary = {
 
 		# --- phase 7: the lift shaft. Exists only once `lift_activated` fires. ---
 		{"id": "lift_shaft", "a": "entry_hall", "b": "upper_landing",
-			"gate": "", "built": false},
+			"gate": "", "built": true},
 
 		# --- phase 16: the SECOND stop on that same shaft, at the labyrinth's foot.
 		# Granted by `lift_stop_maze_unlocked` once somebody has walked up to storey
 		# 8 the long way. Never a shortcut past the maze — it lands you BELOW it, on
 		# the floor the two riddles start from, and both routes up are still walked.
 		{"id": "lift_shaft_maze", "a": "entry_hall", "b": "s8_landing",
-			"gate": "", "built": false},
+			"gate": "", "built": true},
 	],
 
 	# ------------------------------------------------------------------------
@@ -898,20 +906,30 @@ const TOWER_GRAPH: Dictionary = {
 	# ------------------------------------------------------------------------
 	# ENTRIES. Every LEGAL way into the tower. The rule quantifies over all of
 	# them, so a new entry is a new fifteen-subset audit, automatically.
+	#
+	# `unlock` (optional) is the OPENED-SET ID that earns this entry, and it is the
+	# whole of what `lift_stops()` needs: a stop the ground-floor lift may offer is
+	# an entry some mutation grants, and it is offered once that id is in the
+	# tower's monotone set. Written here rather than in the menu because the
+	# mutation that grants the entry is already here — a second table would be the
+	# same fact spelled twice, one file apart.
 	# ------------------------------------------------------------------------
 	"entries": [
 		{"id": "front_door", "room": "entry_hall", "built": true,
 			"note": "The shell doorway. Always open, always legal."},
-		{"id": "lift_stop_upper", "room": "upper_landing", "built": false,
-			"note": "Phase 7's unlockable lift stop, granted by `lift_activated`."},
-		{"id": ENTRY_LIFT_MAZE, "room": "s8_landing", "built": false,
+		{"id": ENTRY_LIFT_UPPER, "room": "upper_landing", "built": true,
+			"unlock": GATE_CHECKPOINT,
+			"note": "Phase 7's unlockable lift stop, granted by `lift_activated` — "
+				+ "which is triggered by the checkpoint, hence the `unlock`."},
+		{"id": ENTRY_LIFT_MAZE, "room": "s8_landing", "built": true,
+			"unlock": ENTRY_LIFT_MAZE,
 			"note": "Phase 16's lift stop at the labyrinth's foot, granted by "
-				+ "`lift_stop_maze_unlocked`. The TRIGGER that earns it ships now "
-				+ "(`LiftStopTrigger`); `built` stays false until the menu that "
-				+ "offers the ride lands (bead godot-test1-3iy.7). The audit walks "
-				+ "from it either way, which is what makes the fifteen-subset "
-				+ "property hold starting at storey 8 — and is where D3 and D4 come "
-				+ "from and why the maze has an ungated route at all."},
+				+ "`lift_stop_maze_unlocked` and earned by `LiftStopTrigger`, which "
+				+ "writes this very id into the opened set — hence `unlock` is the "
+				+ "id itself. The audit walks from it either way, which is what "
+				+ "makes the fifteen-subset property hold starting at storey 8 — and "
+				+ "is where D3 and D4 come from and why the maze has an ungated "
+				+ "route at all."},
 	],
 
 	# ------------------------------------------------------------------------
@@ -929,7 +947,7 @@ const TOWER_GRAPH: Dictionary = {
 			"id": "lift_activated",
 			"trigger": "checkpoint",
 			"adds": ["lift_shaft"],
-			"adds_entries": ["lift_stop_upper"],
+			"adds_entries": [ENTRY_LIFT_UPPER],
 			"note": "Lighting the checkpoint powers the lift. Opens a shaft, closes nothing.",
 		},
 		{
@@ -1087,6 +1105,28 @@ static func entry(id: String) -> Dictionary:
 		if String(row["id"]) == id:
 			return row
 	return {}
+
+
+static func lift_stops() -> Array[Dictionary]:
+	"""
+	Every entry the lift can offer: the ones a MUTATION grants, in `entries` order.
+
+	@return: the entry rows themselves — read-only, like every other lookup here.
+
+	DERIVED, NOT LISTED. "A stop is a place the lift was called to" is exactly "an
+	entry some mutation adds", so the menu asks this instead of carrying a table of
+	its own; the front door is not a stop because nothing has to grant it. Pair it
+	with the row's `unlock` id and the whole feature is two dictionary reads.
+	"""
+	var granted: Dictionary = {}
+	for mut: Dictionary in TOWER_GRAPH["mutations"]:
+		for eid: String in mut.get("adds_entries", []):
+			granted[eid] = true
+	var out: Array[Dictionary] = []
+	for row: Dictionary in TOWER_GRAPH["entries"]:
+		if granted.has(String(row["id"])):
+			out.append(row)
+	return out
 
 
 static func identity_of(id: String) -> String:
