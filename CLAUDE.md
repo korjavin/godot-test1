@@ -308,8 +308,10 @@ Load-bearing rules:
   instance a MeshInstance3D or a physics body per object. **That seam is its own file** —
   `scripts/chunk_batch.gd` (`class_name ChunkBatch`, all static, bead `godot-test1-ftn.1`):
   `create_box` / `create_block` / `_build_block_multimesh`, the two process-wide shared
-  resources (`_get_shared_unit_box_mesh` / `_get_shared_block_material` and their
-  `SHARED_BLOCK_ROUGHNESS` + `RAMP_*` banner), and the city splitter
+  resources (`_get_shared_unit_box_mesh` / `_get_shared_block_material` — the latter
+  the `world_block.gdshader` material, with `WORLD_BLOCK_SHADER`,
+  `BLOCK_BOTTOM_SHADE`, `SHARED_BLOCK_ROUGHNESS` and the `RAMP_*` banner beside
+  it), and the city splitter
   (`split_city_boxes_on_chunk_grid` / `_is_axis_aligned_basis` / `_chunk_grid_spans`).
   `endless_terrain.gd` keeps a one-line forwarder for `create_box` and
   `_build_block_multimesh` and nothing else — the 600-odd `terrain.create_box(` call sites

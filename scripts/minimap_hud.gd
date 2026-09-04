@@ -21,6 +21,11 @@ extends Control
 ##     assets/shaders/ground.gdshader and checked against it by minimap_selfcheck:
 ##     a map that disagrees with the ground about where a band sits is worse than a
 ##     map with no colour (see BIOME_TINTS and _gather_terrain).
+##   * Rivers as a thin blue contour: the ZERO of the raw river field, marched on
+##     the tick off the same lattice the biome layer walks (see _gather_rivers) —
+##     the shader's own river blue, over the terrain it traces and under the road
+##     that bridges it. Inside Budapest the same march follows the authored
+##     Danube's banks instead of the noise field.
 ##   * The player as a triangle at the centre, rotated to the character's facing.
 ##   * The coin road centerline as a polyline, read straight out of the terrain's
 ##     existing station cache (see _gather_road below).
@@ -71,7 +76,8 @@ extends Control
 ##     crocodile pack rather than one circle each, ONE multiline for every landmark
 ##     X on screen rather than a polygon each, one two-line string rather than
 ##     two, ONE multiline of run-length bars for the entire terrain field rather
-##     than a rect per cell. Total cost of the map: +10 draw calls, +1 more while
+##     than a rect per cell, ONE multiline for the marched river contour rather
+##     than a line per segment. Total cost of the map: +11 draw calls, +1 more while
 ##     any landmark is loaded (0 when none is), +1 for the tower cross (which is
 ##     one marker and therefore always exactly one call), no measurable CPU change.
 ##   * The terrain field is the one layer with a real CPU cost: TERRAIN_GRID^2
@@ -79,7 +85,10 @@ extends Control
 ##     the browser — once every 200 ms, against a 33 ms spike threshold. It is
 ##     sampled in `_gather_terrain()` into the same kind of reusable buffer every
 ##     other layer uses; `_draw()` never calls `biome_at()`, and minimap_selfcheck
-##     measures that it doesn't.
+##     measures that it doesn't. The river contour marches the same lattice with
+##     one `river_field_at()` per in-disc cell — the same again, so a tick stays
+##     under 2x the terrain layer's evaluations; `_draw()` never calls that one
+##     either, and the check measures both.
 ##
 ## Toggle with M (a raw keycode like perf_overlay's F3 and motion_debug's F4, so it
 ## stays outside the project input map and can't collide with a gameplay action).
@@ -351,6 +360,22 @@ const COLOR_LANDMARK_DONE := Color(0.55, 0.45, 0.62, 0.75)
 const COLOR_TOWER := Color(0.35, 1.0, 0.6, 0.98)
 const COLOR_TEXT := Color(1, 1, 1, 0.95)
 const COLOR_RIVER_TEXT := Color(0.45, 0.75, 1.0, 0.95)
+## The river contour's ink: the ground shader's OWN river blue. The RGB is not
+## ours to retune, for the BIOME_TINTS reason one banner up — minimap_selfcheck
+## parses `river_color` out of ground.gdshader and fails if this drifts. The
+## ALPHA is ours like every other mark's: a 2 px line at the terrain layer's
+## 0.55 would sink under the backdrop, so this is drawn near-opaque.
+const COLOR_RIVER := Color(0.10, 0.28, 0.34, 0.95)
+## Stroke width of the marched river contour in pixels. FIXED, deliberately not
+## RIVER_HALF_WIDTH / |gradient|: the gradient needs two more field evaluations
+## per segment endpoint, and a constant 2 px reads as a stream at every zoom
+## without them.
+const RIVER_WIDTH: float = 2.0
+## Worst-case river segments per tick: one marching-squares cell per
+## terrain-grid quad ((TERRAIN_GRID-1)^2 cells), two segments in the saddle
+## case. The buffer is sized for exactly that, so the tick never allocates and
+## no segment is ever dropped — the _push_terrain_bar discipline, one layer up.
+const MAX_RIVER_SEGMENTS: int = (TERRAIN_GRID - 1) * (TERRAIN_GRID - 1) * 2
 
 ## Colour of the Budapest line & direction arrow (matches landmark violet).
 const COLOR_BUDAPEST := Color(0.85, 0.72, 1.0, 1.0)
@@ -447,6 +472,26 @@ var _in_river: bool = false
 var _terrain_points: PackedVector2Array = PackedVector2Array()
 var _terrain_colors: PackedColorArray = PackedColorArray()
 var _terrain_count: int = 0
+
+## The river contour, as SEGMENT PAIRS for one draw_multiline() — the crocodile
+## buffer's form minus the colours, because the whole layer is one ink. Each
+## segment is a marching-squares quad's share of the field's zero contour (see
+## _gather_rivers); `_river_field` is the tick's scratch lattice of signed field
+## values in row-major order, NAN wherever unsampled, pre-sized here so the tick
+## never allocates.
+var _river_points: PackedVector2Array = PackedVector2Array()
+var _river_count: int = 0
+var _river_field: PackedFloat32Array = PackedFloat32Array()
+## Which field each lattice sample came from: 1 city (Danube banks in metres),
+## 0 open field (dimensionless noise offset). A quad mixing the two is refused,
+## never marched — marching across the seam paints a dead-straight fake river
+## along the city wall, so each line ends at the wall instead, the way the
+## tower disc's NAN ends it at the grounds. Pre-sized with the lattice so the
+## tick allocates nothing.
+var _river_city: PackedByteArray = PackedByteArray()
+## Set on the first tick that samples the river layer, for the one-line cost
+## print the rivers bead asks for (field evaluations per tick).
+var _river_logged: bool = false
 
 ## Road centerline in ABSOLUTE control-space pixels, already clamped inside the map
 ## disc, ready to hand straight to ONE draw_polyline(). It is resized only when the
@@ -561,6 +606,12 @@ func _ready() -> void:
 	# the tick never allocates and no run is ever dropped (see _gather_terrain).
 	_terrain_points.resize(TERRAIN_GRID * TERRAIN_GRID * 2)
 	_terrain_colors.resize(TERRAIN_GRID * TERRAIN_GRID)
+	# The river contour: worst case is two segments per marching quad (saddles),
+	# two points per segment — and the scratch lattice is one float per
+	# terrain-grid cell. Both sized once, for the _terrain_points reason.
+	_river_points.resize(MAX_RIVER_SEGMENTS * 2)
+	_river_field.resize(TERRAIN_GRID * TERRAIN_GRID)
+	_river_city.resize(TERRAIN_GRID * TERRAIN_GRID)
 	_build_zoom_buttons()
 
 
@@ -699,6 +750,7 @@ func _tick(elapsed: float = TICK_INTERVAL) -> void:
 
 	_gather_world()
 	_gather_terrain()
+	_gather_rivers()
 	_gather_road()
 	_gather_crocodiles()
 	_gather_landmarks()
@@ -720,15 +772,12 @@ func _gather_world() -> void:
 	because the CAPTION must name the biome the player is actually standing in — a
 	grid cell is 12 px of map and its centre is not the player.
 
-	RIVER BANDS ARE STILL NOT DRAWN, and now for a sharper reason than cost. A river
-	is a ~8 m contour of the same field, which is 12 px at the default zoom — one
-	TERRAIN_CELL. Sampling it on the terrain grid would catch roughly every other
-	cell a river crosses, i.e. paint blue confetti along a line that is not the
-	line, and a map that puts the water in the wrong place is exactly the failure
-	the CPU/GPU parity contract exists to prevent. So the river stays what it was:
-	the honest "~ river ~" caption for the band you are standing in. ponytail: if
-	river bands are ever wanted on the disc they need contour tracing off the raw
-	field value, not a denser grid — a denser grid only makes the confetti finer."""
+	RIVERS ARE DRAWN NOW — but as a marched contour, never as sampled cells (see
+	_gather_rivers: a river is a ~8 m contour against a 12 px cell, so sampling
+	the boolean would paint blue confetti along a line that is not the line, and
+	a map that puts the water in the wrong place is exactly the failure the
+	CPU/GPU parity contract exists to prevent). The caption stays regardless:
+	the line says where the water is, only "~ river ~" says you are in it."""
 	_biome = 0
 	_in_river = false
 	if _terrain == null:
@@ -843,6 +892,188 @@ func _push_terrain_bar(x0: float, x1: float, y: float, biome: int) -> void:
 	_terrain_points[p + 1] = Vector2(x1, y)
 	_terrain_colors[_terrain_count] = BIOME_TINTS[biome]
 	_terrain_count += 1
+
+
+func _gather_rivers() -> void:
+	"""March the river's ZERO CONTOUR across the disc — the map's blue line.
+
+	Each in-disc terrain-grid centre takes one `river_field_at()` sample — the
+	SAME lattice `_gather_terrain()` walks, so the reach follows `_map_scale()`
+	with it and the tick stays under 2x that layer's evaluations — and every
+	marching-squares quad of adjacent samples contributes its share of the zero
+	contour: an edge whose endpoint values straddle 0 gets a crossing by linear
+	interpolation, two crossings make a segment, four (a saddle) make two, split
+	by the corner mean as the free centre estimate. A quad short a corner still
+	emits what its sampled edges straddle, so a line leaving the disc ends at
+	the rim instead of a cell early; every endpoint is radially clamped to it.
+
+	INSIDE BUDAPEST the noise field is not the river — the city overrides it
+	with the authored Danube (see is_river_at) — so samples in the rect march
+	`danube_distance - DANUBE_HALF_WIDTH` instead: the SAME zero march draws the
+	Danube's banks. The two fields never share a quad: a per-sample city bit
+	(`_river_city`) refuses mixed quads, because the two values are
+	incommensurable — a dimensionless offset vs metres — and marching across
+	the seam paints a dead-straight fake river along the city wall. Each line
+	ends at the wall instead. Dry-rect cells (bridge decks, Margaret Island)
+	are deliberately NOT cut out of the contour: they are about wading, not
+	about where the water's edge sits, and a bank that stopped at every bridge
+	would be the confetti failure again. Samples inside the tower's dry disc
+	are dropped (NAN), the way is_river_at() and the shader drop the band
+	there — the line ends at the grounds' edge instead of crossing them.
+
+	No terrain with `river_field_at()` (or no terrain at all) means no river
+	layer — the usual has_method() degrade, never an error."""
+	_river_count = 0
+	# _draw() gates on _river_count, so anything below that aborts (a foreign
+	# terrain with tower_site() but no TOWER_RADIUS const) leaves an empty layer
+	# rather than a stale one.
+	if _terrain == null or not _terrain.has_method("river_field_at"):
+		_park_rivers()
+		return
+	var metres_per_px := 1.0 / _map_scale()
+	var origin := MAP_CENTER - Vector2(MAP_RADIUS, MAP_RADIUS)
+	# The tower's dry disc, for the mask below — the _gather_tower discipline
+	# (ask the terrain, guarded). A terrain without a tower masks nothing.
+	var has_tower := _terrain.has_method("tower_site")
+	var site := Vector3.ZERO
+	var tower_r := 0.0
+	if has_tower:
+		site = _terrain.tower_site()
+		tower_r = _terrain.TOWER_RADIUS
+	# 1. Sample the signed field on the terrain lattice. UNSAMPLED (out of the
+	#    disc, or masked by the tower) stays NAN, which is what skips quads.
+	var evals := 0
+	for j in range(TERRAIN_GRID):
+		var py := origin.y + (float(j) + 0.5) * TERRAIN_CELL
+		var wz := _player_pos.z + (py - MAP_CENTER.y) * metres_per_px
+		for i in range(TERRAIN_GRID):
+			var px := origin.x + (float(i) + 0.5) * TERRAIN_CELL
+			var k := j * TERRAIN_GRID + i
+			if (Vector2(px, py) - MAP_CENTER).length() > MAP_RADIUS:
+				_river_field[k] = NAN
+				continue
+			var wx := _player_pos.x + (px - MAP_CENTER.x) * metres_per_px
+			var in_city := BudapestPlan.contains(wx, wz)
+			_river_city[k] = 1 if in_city else 0
+			if has_tower and Vector2(wx - site.x, wz - site.z).length() <= tower_r:
+				_river_field[k] = NAN
+				continue
+			if in_city:
+				_river_field[k] = BudapestPlan.danube_distance(wx, wz) - BudapestPlan.DANUBE_HALF_WIDTH
+			else:
+				_river_field[k] = _terrain.river_field_at(wx, wz)
+			evals += 1
+	if not _river_logged:
+		_river_logged = true
+		print("minimap river: %d field samples on the %dx%d lattice" % [evals, TERRAIN_GRID, TERRAIN_GRID])
+	# 2. March every quad of adjacent lattice points.
+	for j in range(TERRAIN_GRID - 1):
+		var ay := origin.y + (float(j) + 0.5) * TERRAIN_CELL
+		var by := ay + TERRAIN_CELL
+		for i in range(TERRAIN_GRID - 1):
+			var ax := origin.x + (float(i) + 0.5) * TERRAIN_CELL
+			var bx := ax + TERRAIN_CELL
+			# Two fields, one quad is not marchable: the city bit must agree on
+			# all four corners (see _river_city) — the line ends at the wall.
+			var ja := j * TERRAIN_GRID + i
+			if _river_city[ja] != _river_city[ja + 1] \
+					or _river_city[ja] != _river_city[ja + TERRAIN_GRID] \
+					or _river_city[ja] != _river_city[ja + TERRAIN_GRID + 1]:
+				continue
+			# Corners: a top-left, b top-right, c bottom-left, d bottom-right
+			# (j+1 is +Z, which is screen DOWN — north-up, like every layer).
+			var a := _river_field[ja]
+			var b := _river_field[ja + 1]
+			var c := _river_field[ja + TERRAIN_GRID]
+			var d := _river_field[ja + TERRAIN_GRID + 1]
+			# Edge crossings in cyclic order: top, right, bottom, left. INF
+			# means "no crossing on this edge" — fixed locals, no per-quad
+			# allocation on the tick.
+			var e0 := Vector2(INF, INF)
+			var e1 := Vector2(INF, INF)
+			var e2 := Vector2(INF, INF)
+			var e3 := Vector2(INF, INF)
+			if _river_straddles(a, b):
+				e0 = _river_cross(ax, ay, bx, ay, a, b)
+			if _river_straddles(b, d):
+				e1 = _river_cross(bx, ay, bx, by, b, d)
+			if _river_straddles(c, d):
+				e2 = _river_cross(ax, by, bx, by, c, d)
+			if _river_straddles(a, c):
+				e3 = _river_cross(ax, ay, ax, by, a, c)
+			var n := int(e0.x < INF) + int(e1.x < INF) + int(e2.x < INF) + int(e3.x < INF)
+			if n == 4:
+				# Saddle: the corner mean is the free centre estimate. When it
+				# shares a's sign the negative region connects through the
+				# middle, so the two positive corners each get their own arc.
+				var m := (a + b + c + d) * 0.25
+				if (m < 0.0) == (a < 0.0):
+					_river_push(e0, e1)
+					_river_push(e2, e3)
+				else:
+					_river_push(e0, e3)
+					_river_push(e1, e2)
+			elif n == 2:
+				# The two set crossings, in cyclic order.
+				var p := Vector2.ZERO
+				var q := Vector2.ZERO
+				if e0.x < INF:
+					p = e0
+					q = e1 if e1.x < INF else (e2 if e2.x < INF else e3)
+				elif e1.x < INF:
+					p = e1
+					q = e2 if e2.x < INF else e3
+				else:
+					p = e2
+					q = e3
+				_river_push(p, q)
+			# n == 0: dry quad. n == 1: one straddling edge of a partial rim
+			# quad — a crossing with no partner, dropped.
+	# Park the unused tail off-control, for the _gather_terrain reason:
+	# draw_multiline() consumes the whole array.
+	for i in range(_river_count * 2, _river_points.size()):
+		_river_points[i] = PARKED_SEGMENT
+
+
+func _river_straddles(u: float, v: float) -> bool:
+	"""Do two lattice samples straddle the zero contour? NAN (unsampled, or
+	masked by the tower disc) never straddles — it is how rim and tower quads
+	drop out of the march."""
+	return not is_nan(u) and not is_nan(v) and (u < 0.0) != (v < 0.0)
+
+
+func _river_cross(ax: float, ay: float, bx: float, by: float, va: float, vb: float) -> Vector2:
+	"""Zero crossing between two straddling samples, in pixels. va and vb have
+	opposite signs, so the divisor is never zero."""
+	var t := va / (va - vb)
+	return Vector2(ax + (bx - ax) * t, ay + (by - ay) * t)
+
+
+func _river_push(p: Vector2, q: Vector2) -> void:
+	"""Emit one contour segment, radially clamped to the disc. The buffer is
+	sized for the worst case (two segments per quad), so there is no bound to
+	check here and no segment that can ever be silently lost."""
+	var k := _river_count * 2
+	_river_points[k] = _river_clamp(p)
+	_river_points[k + 1] = _river_clamp(q)
+	_river_count += 1
+
+
+func _river_clamp(p: Vector2) -> Vector2:
+	"""Pull a contour endpoint back onto the disc. The branch guards the
+	division: it only fires past the rim, where the length is ~MAP_RADIUS."""
+	var d := p - MAP_CENTER
+	if d.length() > MAP_RADIUS - 1.0:
+		return MAP_CENTER + d.normalized() * (MAP_RADIUS - 1.0)
+	return p
+
+
+func _park_rivers() -> void:
+	"""Push the river buffer off-control, exactly as every other layer parks
+	its unused tail."""
+	_river_count = 0
+	for i in _river_points.size():
+		_river_points[i] = PARKED_SEGMENT
 
 
 func _gather_road() -> void:
@@ -1387,6 +1618,13 @@ func _draw() -> void:
 	draw_circle(MAP_CENTER, MAP_RADIUS, COLOR_BACKDROP)
 	if _terrain_count > 0:
 		draw_multiline_colors(_terrain_points, _terrain_colors, TERRAIN_CELL)
+
+	# 1b. The river contour: ONE multiline for every segment the tick marched.
+	#     Over the terrain it traces, under the road that bridges it — water
+	#     goes under a bridge, never over. Nothing while no river crosses the
+	#     disc, so this is zero calls most of the time.
+	if _river_count > 0:
+		draw_multiline(_river_points, COLOR_RIVER, RIVER_WIDTH)
 
 	# 2. The coin road: ONE polyline for the whole window. The per-segment
 	#    draw_line() version this replaced cost ~20 draw calls on its own — the
