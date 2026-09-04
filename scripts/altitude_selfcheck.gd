@@ -29,6 +29,15 @@ extends SceneTree
 ##      MASK is wrong, never the check. Check 3, with a per-zone negative control
 ##      one full skirt outside, because "flat everywhere" also passes a mask that
 ##      returns zero.
+##   4. THE SHADER IS FED WHAT IT DECLARES. Check 2 proves the CPU port matches an
+##      oracle written off the GLSL text; it cannot see a uniform the GLSL
+##      declares that GDScript never pushes (the GPU silently keeps its own
+##      default and the ground you see is a DIFFERENT field from the one you
+##      stand on) nor the reverse. Check 4 is budapest_selfcheck's _check_parity /
+##      _check_parity_packing idiom over the `alt_*` block: the declarations and
+##      the pushes matched BOTH ways, the shader's array bound at least the
+##      GDScript's, and the road array read back OFF THE MATERIAL to prove it is
+##      packed (x1, z1, x2, z2) and not, say, (x, z, dx, dz).
 ##
 ## CHECK 2 CARRIES ITS OWN NEGATIVE CONTROL, and it is the point of the check: a
 ## naive f64 oracle (bare scalars, no Vector2 anywhere) must DISAGREE with the
@@ -93,6 +102,25 @@ const FLAT_CONTROL_MARGIN: float = 300.0
 ## a curve, so sampling it means sampling the ROAD rather than a box around it.
 const FLAT_ROAD_STATIONS: int = 40
 
+## The ground shader — check 4 reads it as TEXT (for the declarations and the
+## array bound) and as a loaded Shader (for the push), exactly as
+## budapest_selfcheck's parity check reads it.
+const SHADER_PATH: String = "res://assets/shaders/ground.gdshader"
+
+## An `alt_*` uniform the shader must NOT declare. The declared-uniform read is
+## the whole basis of check 4, so a read that answered "declared" to everything
+## would pass it vacuously — prop_selfcheck's ABSENT_UNIFORM control, one block
+## along.
+const ABSENT_ALT_UNIFORM: String = "alt_amp_ocean"
+
+## How close a pushed road-segment endpoint must land to a real station centre
+## before it counts as that station, in metres. The uniform is a
+## PackedVector4Array — Vector4 stores real_t = f32 — so the only error here is
+## the f64 -> f32 rounding of a coordinate that can be kilometres from the origin;
+## a millimetre is orders of magnitude above that and orders of magnitude below
+## the 48 m between two nodes of the polyline.
+const SEG_ENDPOINT_EPSILON: float = 1e-3
+
 var _failures: Array[String] = []
 
 
@@ -112,6 +140,7 @@ func _run() -> void:
 	_check_flag_is_off()
 	_check_fp32_parity()
 	_check_flat_zones()
+	_check_shader_parity()
 	_report()
 
 
@@ -363,6 +392,204 @@ func _check_flat_zones() -> void:
 
 		t.free()
 	Sentinel.done("flat_zones")
+
+
+func _check_shader_parity() -> void:
+	"""
+	Check 4. THE SHADER IS FED WHAT IT DECLARES — budapest_selfcheck's
+	_check_parity / _check_parity_packing idiom over the `alt_*` block.
+
+	Check 2 re-derives the field from the GLSL TEXT and proves the CPU port
+	computes it. What it cannot see is the wiring: a uniform ground.gdshader
+	declares that _apply_biome_shader_params never pushes keeps the shader's own
+	default silently — so the ground the player SEES is a different field from the
+	one the collision heightmap is sampled off, with no error anywhere. The reverse
+	(a push the GLSL never declares) is discarded just as silently.
+
+	Three legs:
+
+	  a. BOTH DIRECTIONS, on the COMPILED uniform list. Declarations come from
+	     `Shader.get_shader_uniform_list()` rather than a text scan, which also
+	     means this check fails on a shader that does not compile; the pushes come
+	     from endless_terrain.gd's source, because a push is a call site and there
+	     is no registry of them to read.
+	  b. THE VALUES, derived rather than listed. A pushed `alt_foo` whose
+	     UPPER-CASED name is a constant of endless_terrain.gd must equal it — so
+	     the naming convention IS the contract and a uniform added tomorrow is
+	     covered the day it lands. The three that cannot follow it are named
+	     explicitly below and each says why.
+	  c. THE PACKING, read back OFF THE MATERIAL. A text scan cannot see that
+	     `alt_road_seg[i]` is pushed as (x1, z1, x2, z2) and not (x, z, dx, dz) —
+	     the second is a plausible line, it type-checks, and it turns the corridor
+	     into a fan of segments radiating from the origin while every other leg of
+	     this file still passes.
+	"""
+	var shader: Shader = load(SHADER_PATH)
+	if shader == null:
+		_fail("could not load %s — the shader half of the altitude parity contract measured nothing (a GLSL error here is a compile failure, not a missing file)" % SHADER_PATH)
+		Sentinel.done("shader_parity")
+		return
+	var declared: Dictionary = {}
+	for entry_variant: Variant in shader.get_shader_uniform_list():
+		var entry: Dictionary = entry_variant
+		var uniform_name := String(entry["name"])
+		if uniform_name.begins_with("alt_"):
+			declared[uniform_name] = true
+	# The vacuity control (prop_selfcheck's ABSENT_UNIFORM): a declared-uniform
+	# read that answers "yes" to everything, or to nothing, would pass leg (a)
+	# while measuring nothing at all.
+	if declared.is_empty() or declared.has(ABSENT_ALT_UNIFORM):
+		_fail("the shader's declared alt_* uniform list is not trustworthy (%d entries, has %s: %s) — check 4 would pass vacuously" % [
+			declared.size(), ABSENT_ALT_UNIFORM, declared.has(ABSENT_ALT_UNIFORM)])
+		Sentinel.done("shader_parity")
+		return
+
+	var terrain_text := FileAccess.get_file_as_string(TERRAIN_SCRIPT)
+	var pushed: Dictionary = {}
+	var push_re := RegEx.new()
+	push_re.compile("set_shader_parameter\\(\"(alt_\\w+)\"")
+	for m: RegExMatch in push_re.search_all(terrain_text):
+		pushed[m.get_string(1)] = true
+
+	# ---- a. both directions --------------------------------------------------
+	for uniform_name: String in declared.keys():
+		if not pushed.has(uniform_name):
+			_fail("ground.gdshader declares '%s' but endless_terrain.gd never pushes it — the GPU keeps its own default and draws a DIFFERENT heightfield from the one the collision shape is sampled off" % uniform_name)
+	for uniform_name: String in pushed.keys():
+		if not declared.has(uniform_name):
+			_fail("endless_terrain.gd pushes '%s' but ground.gdshader declares no such uniform — the value is silently discarded" % uniform_name)
+
+	# The shader's array bound is a number written down in two languages, because a
+	# GLSL array uniform is a fixed size. Only ">=" matters: a shader array bigger
+	# than the polyline wastes a few registers, one smaller is a count past the end
+	# of the array, which is an undefined read in GLSL ES 3.00.
+	var shader_text := FileAccess.get_file_as_string(SHADER_PATH)
+	var gpu_seg_max := _shader_int(shader_text, "ALT_ROAD_SEG_MAX")
+	var probe := _make_terrain(SEEDS[0])
+	if gpu_seg_max < probe.ALT_ROAD_SEG_MAX:
+		_fail("ground.gdshader's ALT_ROAD_SEG_MAX is %d against the GDScript's %d — the road corridor would lose its far segments on the GPU while the CPU still flattens them" % [
+			gpu_seg_max, probe.ALT_ROAD_SEG_MAX])
+	probe.free()
+
+	# ---- b + c. drive the SHIPPED push and read it back ----------------------
+	# _ready() returns at its "no player" guard long before it builds the default
+	# ground material, so the harness stands one up exactly as _ready would — the
+	# PUSH itself is still _apply_biome_shader_params, here and in the game.
+	var t := _make_terrain(SEEDS[0])
+	t.alt_force = true
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+	t.terrain_material = mat
+	# The road window first: _alt_road_refresh is the shipped seam update_chunks
+	# runs on a chunk-boundary crossing, and it re-pushes the material itself, so a
+	# check that skipped it would be reading back an EMPTY array and would pass for
+	# the wrong reason.
+	t._alt_road_refresh(0.0)
+	t._apply_biome_shader_params()
+
+	# The gate, both ways round: forced on here, and off for the world.
+	if float(mat.get_shader_parameter("alt_enabled")) != 1.0:
+		_fail("alt_enabled was pushed as %s with the spike forced on — the GPU would draw the flat world under a displaced collision shape" % str(mat.get_shader_parameter("alt_enabled")))
+	t.alt_force = false
+	t._apply_biome_shader_params()
+	if float(mat.get_shader_parameter("alt_enabled")) != 0.0:
+		_fail("alt_enabled was pushed as %s with the spike OFF — the merge condition is that the flag-off world is byte for byte flat" % str(mat.get_shader_parameter("alt_enabled")))
+	t.alt_force = true
+	t._alt_road_refresh(0.0)
+	t._apply_biome_shader_params()
+
+	# ---- b. every pushed value equals the constant it is named after ---------
+	var consts: Dictionary = (load(TERRAIN_SCRIPT) as GDScript).get_script_constant_map()
+	var value_checked := 0
+	for uniform_name: String in pushed.keys():
+		# The three that cannot follow the naming convention, each for its own
+		# reason: the gate is a FUNCTION (alt_enabled(), so the self-check seam
+		# works) and is asserted above; the domain shift is ALT_OFFSET_SALT, named
+		# for what it is rather than for the uniform; and the road array is data,
+		# asserted by leg (c) below.
+		if uniform_name in ["alt_enabled", "alt_offset", "alt_road_seg", "alt_road_seg_count"]:
+			continue
+		var const_name := uniform_name.to_upper()
+		if not consts.has(const_name):
+			_fail("uniform '%s' has no endless_terrain.gd constant %s — either name it after the constant it carries or add it to check 4's three named exceptions with a reason" % [
+				uniform_name, const_name])
+			continue
+		var got: Variant = mat.get_shader_parameter(uniform_name)
+		if got == null:
+			_fail("_apply_biome_shader_params never pushed '%s' — the shader silently keeps its own default for it" % uniform_name)
+			continue
+		var want: Variant = consts[const_name]
+		var delta := 0.0
+		if got is Vector2:
+			delta = (got as Vector2).distance_to(want as Vector2)
+		else:
+			delta = absf(float(got) - float(want))
+		if delta > 1e-6:
+			_fail("uniform '%s' was pushed as %s but %s is %s — the hill the player SEES is not the hill they STAND on" % [
+				uniform_name, str(got), const_name, str(want)])
+		value_checked += 1
+	# ALT_OFFSET_SALT by hand, since it is one of the three exceptions and is the
+	# one that would silently move every hill in the world.
+	if (mat.get_shader_parameter("alt_offset") as Vector2).distance_to(t.ALT_OFFSET_SALT) > 1e-6:
+		_fail("alt_offset was pushed as %s, not ALT_OFFSET_SALT %s — the GPU's altitude field would be domain-shifted away from the CPU's" % [
+			str(mat.get_shader_parameter("alt_offset")), str(t.ALT_OFFSET_SALT)])
+
+	# ---- c. the road array's packing ----------------------------------------
+	var segs: PackedVector4Array = mat.get_shader_parameter("alt_road_seg")
+	var seg_count: int = mat.get_shader_parameter("alt_road_seg_count")
+	if segs.size() != t.ALT_ROAD_SEG_MAX:
+		_fail("alt_road_seg was pushed with %d entries against ALT_ROAD_SEG_MAX %d — a GLSL array uniform is a fixed size and a short push leaves the tail undefined" % [
+			segs.size(), t.ALT_ROAD_SEG_MAX])
+	if seg_count <= 0 or seg_count != t._alt_road_segs.size():
+		_fail("alt_road_seg_count is %d against the CPU cache's %d — the GPU and the collision heightmap would flatten two different corridors" % [
+			seg_count, t._alt_road_segs.size()])
+	# EVERY ENDPOINT MUST BE A REAL STATION CENTRE. That is what distinguishes the
+	# shipped (x1, z1, x2, z2) from the plausible (x, z, dx, dz): the second packs a
+	# DELTA into zw, which is a few tens of metres from the origin and is a station
+	# centre nowhere on the road. The station set is built independently here, off
+	# _road_station over a range wide enough to contain any window.
+	t._road_extend_to_x(-SAMPLE_HALF, SAMPLE_HALF)
+	var centres: Dictionary = {}
+	var k_centre: int = t._road_first_k_at_or_after_x(0.0)
+	for k in range(k_centre - 400, k_centre + 400):
+		var c: Vector2 = t._road_station(k).center
+		centres["%.2f|%.2f" % [c.x, c.y]] = true
+	for i in seg_count:
+		var seg: Vector4 = segs[i]
+		for end_point: Vector2 in [Vector2(seg.x, seg.y), Vector2(seg.z, seg.w)]:
+			if not centres.has("%.2f|%.2f" % [end_point.x, end_point.y]):
+				_fail("alt_road_seg[%d] has an endpoint at (%.2f, %.2f) that is no road station centre — the array is not packed (x1, z1, x2, z2)" % [
+					i, end_point.x, end_point.y])
+				break
+		# AND THE POLYLINE IS A CHAIN. Segment i's far end is segment i+1's near
+		# end: a walk that packed each segment from the same anchor, or reversed
+		# one, satisfies the endpoint test above and still draws a fan.
+		if i + 1 < seg_count:
+			var next_seg: Vector4 = segs[i + 1]
+			if Vector2(seg.z, seg.w).distance_to(Vector2(next_seg.x, next_seg.y)) > SEG_ENDPOINT_EPSILON:
+				_fail("alt_road_seg[%d] ends at (%.2f, %.2f) but [%d] starts at (%.2f, %.2f) — the corridor is a fan of disconnected chords, not the road" % [
+					i, seg.z, seg.w, i + 1, next_seg.x, next_seg.y])
+				break
+
+	print("[altitude] shader parity: %d alt_* uniforms declared and pushed (%d value-checked), array %d >= %d, %d road segments packed and chained" % [
+		declared.size(), value_checked, gpu_seg_max, t.ALT_ROAD_SEG_MAX, seg_count])
+	t.free()
+	Sentinel.done("shader_parity")
+
+
+func _shader_int(shader: String, name: String) -> int:
+	"""
+	The value of a `const int NAME = n;` line in the shader, or -1 —
+	budapest_selfcheck._shader_int verbatim, and the same one-number-in-two-
+	languages problem it was written for.
+	"""
+	for line in shader.split("\n"):
+		if not line.contains(name) or not line.contains("="):
+			continue
+		var tail := line.split("=")[1].strip_edges().replace(";", "")
+		if tail.is_valid_int():
+			return tail.to_int()
+	return -1
 
 
 func _assert_flat(t: Node3D, seed_value: int, zone: String, points: Array[Vector2]) -> void:

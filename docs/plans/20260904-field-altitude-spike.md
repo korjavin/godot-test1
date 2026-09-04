@@ -282,42 +282,67 @@ burning the budget the measurement needs.
   `0.0` instead of a tolerance.
 ### Task 4: The GPU twin — vertex displacement in `ground.gdshader`
 
-- [ ] add the uniforms, all with INERT defaults: `alt_enabled = 0.0`,
+- [x] add the uniforms, all with INERT defaults: `alt_enabled = 0.0`,
       `alt_offset = vec2(0.0)`, `alt_cell_size = 260.0`, `alt_detail_scale`,
       `alt_detail_weight`, the six `alt_amp_*`, `alt_city_skirt`, `alt_tower_skirt`,
       `alt_river_skirt_k`, `alt_road_flat_half`, `alt_road_skirt`, plus
       `uniform vec4 alt_road_seg[ALT_ROAD_SEG_MAX]` and `alt_road_seg_count = 0`
       (`const int ALT_ROAD_SEG_MAX = 24;` — the `CITY_SEG_MAX` precedent)
-- [ ] add `float alt_road_distance(vec2 p)` — the copy of `city_river_distance`'s loop
+- [x] add `float alt_road_distance(vec2 p)` — the copy of `city_river_distance`'s loop
       over `alt_road_seg`
-- [ ] add `float alt_amplitude(float b)` — the six-amplitude chained smoothstep, the
+- [x] add `float alt_amplitude(float b)` — the six-amplitude chained smoothstep, the
       exact twin of `alt_amplitude_at`, ladder in the same order with the same
       `biome_blend`
-- [ ] add `float alt_flat_mask(vec2 w, float b)` — the four clauses' twin. Budapest's
+- [x] add `float alt_flat_mask(vec2 w, float b)` — the four clauses' twin. Budapest's
       rect comes from the EXISTING `city_rect` uniform (already pushed — do not add a
       second one); the HQ disc from the EXISTING `tower_dry_center` /
       `tower_dry_radius`; the river from `b` and the existing `river_level` /
       `river_half_width`; the road from `alt_road_distance`
-- [ ] add `float field_height(vec2 w)` — the twin of `height_at`, gated by
+- [x] add `float field_height(vec2 w)` — the twin of `height_at`, gated by
       `alt_enabled`
-- [ ] in `vertex()`: after `v_biome` is computed, `VERTEX.y += field_height(world_xz)`,
+- [x] in `vertex()`: after `v_biome` is computed, `VERTEX.y += field_height(world_xz)`,
       and recompute `NORMAL` from two finite differences of `field_height` at
       `± ALT_NORMAL_EPS` (1.0 m) — 3 evals total per vertex. Guard the whole block
       with `if (alt_enabled > 0.0)` so the flag-off path costs one compare
-- [ ] **update the shader's header comment**: the "THE GROUND IS ALWAYS FLAT (y = 0)"
+- [x] **update the shader's header comment**: the "THE GROUND IS ALWAYS FLAT (y = 0)"
       paragraph is now conditional. Say the parity contract covers `field_height` too,
       and that with `alt_enabled = 0` the file draws exactly the world it always drew
-- [ ] extend `_apply_biome_shader_params()` to push every `alt_*` uniform — one
+- [x] extend `_apply_biome_shader_params()` to push every `alt_*` uniform — one
       function feeding the ground material stays the rule — with `alt_enabled` reading
       `FIELD_ALTITUDE`
-- [ ] add **check 4 — TEXT PARITY, BOTH WAYS**: the `budapest_selfcheck._check_parity`
+- [x] add **check 4 — TEXT PARITY, BOTH WAYS**: the `budapest_selfcheck._check_parity`
       idiom. Every `alt_*` uniform declared in `ground.gdshader` must be pushed by
       `endless_terrain.gd` (matched as a DECLARATION regex, not a substring), and every
       `alt_*` uniform pushed must be declared. `ALT_ROAD_SEG_MAX` in the shader must be
       `>=` the GDScript's. Plus the **packing check** (`_check_parity_packing`'s idiom):
       drive the shipped `_apply_biome_shader_params()` and read the array back, asserting
       `alt_road_seg[i]` unpacks as `(x1, z1, x2, z2)`
-- [ ] run the check
+- [x] run the check
+
+  NOTE (deviation, deliberate): two uniforms the plan's list does not name were
+  added, both to keep a number from being written down twice in two languages —
+  `alt_detail_shift` (ALT_DETAIL_SHIFT, the detail octave's own domain shift; a
+  GLSL literal here would be the one constant of the pair the parity check could
+  not see) and `alt_offset` carrying ALT_OFFSET_SALT ALONE rather than
+  `biome_offset + salt` pre-summed, because fp32 addition is not associative and
+  the shader must add the two terms in height_at()'s order.
+
+  NOTE: the normal is TWO FORWARD differences reusing the vertex's own height —
+  3 field_height() evaluations per vertex, which is the number the plan asks for.
+  A centred +/- pair would be 4 and buys nothing at a 260 m wavelength.
+
+  NOTE: `_alt_road_refresh()` now re-pushes the material (through
+  `_apply_biome_shader_params`, so ONE function still feeds the ground material).
+  Without it the CPU's corridor window moves on a chunk-boundary crossing while
+  the GPU keeps the previous one — ground drawn flat where the collision
+  heightmap is not.
+
+  NOTE: check 4's value leg is DERIVED, not listed: a pushed `alt_foo` whose
+  upper-cased name is an endless_terrain.gd constant must equal it, so the naming
+  convention is the contract and a uniform added tomorrow is covered the day it
+  lands. The three that cannot follow it are named in the code with reasons.
+  Mutation-tested: dropping one push and re-packing the road array as
+  (x, z, dx, dz) both go red (3 failures).
 
 ### Task 5: Ground collision — `HeightMapShape3D` per chunk, measured
 

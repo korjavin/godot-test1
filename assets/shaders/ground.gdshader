@@ -4,14 +4,27 @@
 // mountain / snow)
 // and the blue river bands laid over it.
 //
-// THE GROUND IS ALWAYS FLAT (y = 0). Biomes and rivers are a PAINT JOB here plus
-// block geometry and a speed penalty on the CPU side — there is no heightfield,
-// no water mesh, no transparency. See the BIOME FIELD section of
-// scripts/endless_terrain.gd for why (and for the upgrade path).
+// THE GROUND IS FLAT (y = 0) IN EVERYTHING THAT SHIPS, and that paragraph used to
+// be unconditional. It is now conditional on ONE uniform: with `alt_enabled` at
+// its 0.0 default — which is what endless_terrain.gd pushes while
+// `FIELD_ALTITUDE` is false, i.e. always, in every build — this file draws
+// exactly the flat world it always drew, byte for byte, and biomes and rivers
+// stay a PAINT JOB over it (block geometry and a speed penalty on the CPU side,
+// no water mesh, no transparency). See the BIOME FIELD section of
+// scripts/endless_terrain.gd for why.
+//
+// Behind alt_enabled is the FIELD ALTITUDE SPIKE (bead godot-test1-ope.1): a
+// vertex-displaced heightfield, `field_height()` below, whose CPU twin is
+// `height_at()`. It is a MEASUREMENT, not a shipped feature —
+// docs/field-altitude-spike.md is the report and lists everything in this project
+// that still assumes y = 0.
 //
 // CPU/GPU PARITY CONTRACT: biome_noise() below is the GPU copy of _biome_noise()
 // in endless_terrain.gd, built out of the same hash2/value_noise this file
-// already had. The blue band the player SEES and the wading zone the player
+// already had. IT COVERS field_height() TOO, and there with more force: the
+// ground you SEE displaced is the ground you STAND ON (the collision heightmap is
+// sampled off height_at), so a millimetre of disagreement is a player sunk into a
+// hill. altitude_selfcheck.gd is the assertion, both ways. The blue band the player SEES and the wading zone the player
 // FEELS are the same field, so the two copies MUST BE EDITED TOGETHER. The
 // uniforms marked "must match GDScript" are pushed from
 // _apply_biome_shader_params(); the pure-art colours below are shader-side only,
@@ -92,6 +105,72 @@ uniform int city_river_count = 0;
 uniform float city_river_half = 0.0;
 uniform vec4 city_dry[CITY_DRY_MAX];                 // xmin, zmin, xmax, zmax
 uniform int city_dry_count = 0;
+
+// --- FIELD ALTITUDE — the GPU twin of the heightfield SPIKE -----------------
+// The CPU half is `height_at()` in scripts/endless_terrain.gd, behind
+// `FIELD_ALTITUDE`. EVERYTHING BELOW IS EDITED TOGETHER WITH IT — the ground you
+// SEE displaced and the ground you STAND ON are the same surface (the collision
+// heightmap is sampled off height_at), so this is the parity contract
+// _biome_noise/biome_noise already live under, one clause wider.
+//
+// THE GATE IS A UNIFORM, NOT AN #ifdef: alt_enabled multiplies nothing away, it
+// EARLY-RETURNS field_height() and guards the whole vertex() block, so the
+// flag-off path costs exactly one compare per vertex. Its default is 0.0 — the
+// tower_dry_radius = -1 precedent — so a material nobody fed draws exactly the
+// flat world it always drew.
+//
+// Every default below equals the GDScript constant of the same name, for the
+// same reason the biome block's do: a material previewed in the editor, or a
+// shader loaded by a check that never ran _apply_biome_shader_params, still
+// computes the shipped field rather than a made-up one.
+// Restated from GDScript, because a GLSL array uniform is a fixed size —
+// the CITY_SEG_MAX precedent, and altitude_selfcheck check 4 asserts this is
+// >= the GDScript's ALT_ROAD_SEG_MAX. Kept on a line of its own with no
+// trailing comment: that check parses the value off the text.
+const int ALT_ROAD_SEG_MAX = 24;
+// How far apart the two finite differences that rebuild NORMAL are taken, in
+// metres. 1 m against the 260 m ALT_CELL_SIZE wavelength and the ~3.1 m vertex
+// spacing: small enough that the slope it measures is the slope at this vertex,
+// large enough that the fp32 subtraction below has bits left. FORWARD
+// differences, reusing the vertex's own height as the third sample, so the
+// normal costs TWO extra field_height() evaluations and not four — the cost this
+// spike exists to measure.
+const float ALT_NORMAL_EPS = 1.0;
+uniform float alt_enabled = 0.0;                // 0 = the flat world, byte for byte
+uniform vec2 alt_offset = vec2(0.0);            // ALT_OFFSET_SALT: altitude's OWN
+                                                // domain shift, added ON TOP of
+                                                // biome_offset so hills never
+                                                // correlate with biomes
+uniform float alt_cell_size = 260.0;            // wavelength (m), deliberately not
+                                                // biome_cell_size
+uniform float alt_detail_scale = 3.1;
+uniform float alt_detail_weight = 0.3;
+uniform vec2 alt_detail_shift = vec2(17.0, 31.0); // the detail octave's own shift
+// The six per-biome amplitudes, in metres — the half-range of the signed height.
+uniform float alt_amp_desert = 2.5;
+uniform float alt_amp_plains = 3.5;
+uniform float alt_amp_city = 1.0;
+uniform float alt_amp_forest = 6.0;
+uniform float alt_amp_mountain = 22.0;
+uniform float alt_amp_snow = 16.0;
+// The four forced-flat zones' skirts. Budapest's rect is the EXISTING city_rect
+// uniform and the HQ disc the EXISTING tower_dry_center/tower_dry_radius — no
+// second copy of either, the same rule that keeps in_budapest() delegating to
+// BudapestPlan. The river's skirt is in FIELD units (a multiple of
+// river_half_width), which is what keeps the flat edge and the wading edge one
+// number.
+uniform float alt_city_skirt = 120.0;
+uniform float alt_tower_skirt = 60.0;
+uniform float alt_river_skirt_k = 3.5;
+uniform float alt_road_flat_half = 22.0;
+uniform float alt_road_skirt = 40.0;
+// The coin road as a COARSE polyline, packed (x1, z1, x2, z2) per segment — the
+// same array the CPU's _alt_road_distance() reads, built once by
+// _alt_road_segments() and pushed here, so the two corridors are parity BY
+// CONSTRUCTION rather than by re-derivation. Count 0 is inert: no road, no
+// corridor, and alt_road_distance() answers "far away".
+uniform vec4 alt_road_seg[ALT_ROAD_SEG_MAX];
+uniform int alt_road_seg_count = 0;
 
 // --- Biome colours — pure art, never read by GDScript -----------------------
 uniform vec3 desert_color: source_color = vec3(0.78, 0.68, 0.44);   // ochre sand
@@ -212,6 +291,115 @@ float city_river_distance(vec2 p) {
 	return best;
 }
 
+// Shortest distance from a world XZ to the CACHED coarse coin-road polyline —
+// the GPU twin of _alt_road_distance(). It is city_river_distance()'s loop over
+// a different array and nothing else: one clamped point-to-segment projection in
+// this project, so the corridor the ground is FLATTENED along cannot drift from
+// the corridor the CPU flattens. Count 0 (the inert default, and every frame the
+// spike is off) returns the same 1e9 "nowhere near a road" the empty CPU cache
+// answers as INF.
+float alt_road_distance(vec2 p) {
+	float best = 1.0e9;
+	for (int i = 0; i < alt_road_seg_count; i++) {
+		vec2 a = alt_road_seg[i].xy;
+		vec2 b = alt_road_seg[i].zw;
+		vec2 ab = b - a;
+		float len_sq = dot(ab, ab);
+		float t = len_sq <= 0.0 ? 0.0 : clamp(dot(p - a, ab) / len_sq, 0.0, 1.0);
+		best = min(best, distance(p, a + ab * t));
+	}
+	return best;
+}
+
+// The altitude field's two octaves — the GPU twin of _alt_value_noise_pair().
+// Reuses value_noise/hash2 above, which is the whole parity argument: ONE lattice
+// hash in the project, so the GDScript port has exactly one thing to mirror.
+float alt_value_noise_pair(vec2 p) {
+	return value_noise(p) * (1.0 - alt_detail_weight)
+			+ value_noise(p * alt_detail_scale + alt_detail_shift) * alt_detail_weight;
+}
+
+// How tall the ground may be where the biome field reads `b` — the GPU twin of
+// _alt_amplitude(). IT IS fragment()'s COLOUR CHAIN WITH SIX METRES INSTEAD OF
+// SIX COLOURS: same thresholds, same biome_blend, same low-to-high order, so a
+// band cannot be tall where it looks like sand, and adding a band is one extra
+// mix() here exactly as it is one extra mix() down there.
+float alt_amplitude(float b) {
+	float amp = alt_amp_desert;
+	amp = mix(amp, alt_amp_plains,
+			smoothstep(biome_desert_max - biome_blend, biome_desert_max + biome_blend, b));
+	amp = mix(amp, alt_amp_city,
+			smoothstep(biome_plains_max - biome_blend, biome_plains_max + biome_blend, b));
+	amp = mix(amp, alt_amp_forest,
+			smoothstep(biome_city_max - biome_blend, biome_city_max + biome_blend, b));
+	amp = mix(amp, alt_amp_mountain,
+			smoothstep(biome_forest_max - biome_blend, biome_forest_max + biome_blend, b));
+	amp = mix(amp, alt_amp_snow,
+			smoothstep(biome_mountain_max - biome_blend, biome_mountain_max + biome_blend, b));
+	return amp;
+}
+
+// HOW MUCH ALTITUDE THIS POINT IS ALLOWED — the GPU twin of _alt_flat_mask().
+// A PRODUCT OF FOUR INDEPENDENT 0..1 FACTORS, so a point in two zones is flat and
+// never twice flat, and a fifth zone one day is one more factor.
+//
+// `b` is passed in rather than re-derived because vertex() spends it three times
+// over for the finite-difference normals — the same reason the GDScript twin
+// takes it as an argument.
+float alt_flat_mask(vec2 w, float b) {
+	// CLAUSE 1 — BUDAPEST. The EXISTING city_rect uniform: the authored Danube,
+	// the plateaus and every DRY_RECTS row live inside it, so none of them needs a
+	// clause of its own. Inert default (max < min) leaves this factor at 1.
+	float mask = 1.0;
+	if (city_rect.z >= city_rect.x) {
+		vec2 d = max(max(city_rect.xy - w, w - city_rect.zw), vec2(0.0));
+		mask = smoothstep(0.0, alt_city_skirt, length(d));
+	}
+	// CLAUSE 2 — THE HQ DISC. The EXISTING tower_dry_center/tower_dry_radius: the
+	// shell is not chunk-parented and never rebuilt, so the ground under it may not
+	// move by a millimetre. Inert default (radius -1) leaves this factor at 1.
+	if (tower_dry_radius >= 0.0) {
+		mask *= smoothstep(tower_dry_radius, tower_dry_radius + alt_tower_skirt,
+				distance(w, tower_dry_center));
+	}
+	// CLAUSE 3 — EVERY RIVER BAND, IN FIELD UNITS. The same
+	// |b - river_level| < river_half_width test is_river_at() makes, so the flat
+	// edge and the wading edge are readouts of ONE number: rivers stay at y = 0 and
+	// wading stays XZ-only with no edit anywhere. Deliberately the RAW field, like
+	// the CPU twin — the city and tower overrides is_river_at() applies are readout
+	// policy, and both those zones are flattened by the clauses above already.
+	mask *= smoothstep(river_half_width, river_half_width * alt_river_skirt_k,
+			abs(b - river_level));
+	// CLAUSE 4 — THE COIN ROAD CORRIDOR. The road is the spike's CONTROL: the coin
+	// road is where the player walks, so a hilly one would send coin settling, road
+	// bosses and road clearance red at once and hide which breakage is the
+	// heightfield's.
+	mask *= smoothstep(alt_road_flat_half, alt_road_flat_half + alt_road_skirt,
+			alt_road_distance(w));
+	return mask;
+}
+
+// THE FIELD'S ALTITUDE at a world XZ — the GPU twin of height_at().
+// Gated by alt_enabled BEFORE any noise, exactly as height_at() is gated by
+// FIELD_ALTITUDE on its first line: with the spike off the whole heightfield
+// costs one compare per evaluation.
+float field_height(vec2 w) {
+	if (alt_enabled <= 0.0) {
+		return 0.0;
+	}
+	// The same expression in the same ORDER as height_at(): the biome_offset term
+	// is added before alt_offset, because fp32 addition is not associative and a
+	// pre-summed offset would round differently from the CPU's.
+	vec2 p = w / alt_cell_size + biome_offset + alt_offset;
+	float n = alt_value_noise_pair(p);
+	// ONE biome_noise() evaluation, spent twice — the amplitude ladder and the
+	// mask's river clause are readouts of the same number.
+	float b = biome_noise(w);
+	// 0..1 -> -1..1, so the field cuts valleys as well as raising hills and its
+	// mean stays at the y = 0 the whole game is written against.
+	return (n - 0.5) * 2.0 * alt_amplitude(b) * alt_flat_mask(w, b);
+}
+
 void vertex() {
 	// World-space XZ of this vertex — the key to cross-chunk continuity.
 	vec2 world_xz = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;
@@ -232,6 +420,31 @@ void vertex() {
 	if (city_river_count > 0) {
 		v_city_river = 1.0 - smoothstep(city_river_half - CITY_RIVER_EDGE_SOFT,
 				city_river_half + CITY_RIVER_EDGE_SOFT, city_river_distance(world_xz));
+	}
+
+	// THE HEIGHTFIELD — the spike, and the ONE thing in this file that moves a
+	// vertex. Guarded rather than multiplied by zero so the flag-off path costs a
+	// single compare per vertex and not three field evaluations: with alt_enabled
+	// at its 0.0 default this block is skipped entirely and the plane is the flat
+	// plane it has always been, byte for byte.
+	//
+	// VERTEX and NORMAL are MODEL space. A chunk's ground is translated and never
+	// rotated or scaled (see _ensure_chunk_ground), so model Y is world Y here and
+	// the displacement needs no basis transform — if a chunk ever gains a rotation
+	// this is the line that has to learn about it.
+	if (alt_enabled > 0.0) {
+		float h = field_height(world_xz);
+		VERTEX.y += h;
+		// NORMALS ARE RECOMPUTED, because a displaced plane wearing the flat
+		// plane's straight-up normal reads as a shading bug rather than as a hill:
+		// every slope would be lit as though it were level ground. Two FORWARD
+		// differences reusing h, so the whole normal costs TWO extra field_height()
+		// evaluations (three per vertex in total) — the number this spike exists to
+		// measure. The tangent vectors are (eps, dh/dx, 0) and (0, dh/dz, eps);
+		// their cross product, divided through by eps, is what is normalized here.
+		float dhdx = (field_height(world_xz + vec2(ALT_NORMAL_EPS, 0.0)) - h) / ALT_NORMAL_EPS;
+		float dhdz = (field_height(world_xz + vec2(0.0, ALT_NORMAL_EPS)) - h) / ALT_NORMAL_EPS;
+		NORMAL = normalize(vec3(-dhdx, 1.0, -dhdz));
 	}
 }
 

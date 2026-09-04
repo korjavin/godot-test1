@@ -3573,6 +3573,67 @@ func _apply_biome_shader_params() -> void:
 	mat.set_shader_parameter("city_dry", _city_dry_rects())
 	mat.set_shader_parameter("city_dry_count",
 			mini(BudapestPlan.DRY_RECTS.size(), CITY_SHADER_DRY_MAX))
+	# FIELD ALTITUDE, the GPU half of it (the SPIKE — see FIELD_ALTITUDE). Every
+	# uniform below is the twin of a constant height_at() reads, pushed here beside
+	# its siblings because ONE function feeding the ground material is the thing
+	# that makes the parity contract auditable — and because the DISPLACEMENT is
+	# the strongest form of that contract there is: the ground the player sees
+	# raised is the ground the collision heightmap is sampled off, so a uniform
+	# left behind is a player standing in mid-air or buried in a hill.
+	#
+	# THE GATE READS alt_enabled(), not FIELD_ALTITUDE, so altitude_selfcheck can
+	# drive a real push both ways in one process. In the game the two are the same
+	# false and the shader's own 0.0 default already agrees with it.
+	mat.set_shader_parameter("alt_enabled", 1.0 if alt_enabled() else 0.0)
+	# ALT_OFFSET_SALT alone, NOT pre-summed with biome_offset: the shader adds the
+	# two in the same order height_at() does, and fp32 addition is not associative,
+	# so a pre-summed offset would round to a different domain shift.
+	mat.set_shader_parameter("alt_offset", ALT_OFFSET_SALT)
+	mat.set_shader_parameter("alt_cell_size", ALT_CELL_SIZE)
+	mat.set_shader_parameter("alt_detail_scale", ALT_DETAIL_SCALE)
+	mat.set_shader_parameter("alt_detail_weight", ALT_DETAIL_WEIGHT)
+	mat.set_shader_parameter("alt_detail_shift", ALT_DETAIL_SHIFT)
+	mat.set_shader_parameter("alt_amp_desert", ALT_AMP_DESERT)
+	mat.set_shader_parameter("alt_amp_plains", ALT_AMP_PLAINS)
+	mat.set_shader_parameter("alt_amp_city", ALT_AMP_CITY)
+	mat.set_shader_parameter("alt_amp_forest", ALT_AMP_FOREST)
+	mat.set_shader_parameter("alt_amp_mountain", ALT_AMP_MOUNTAIN)
+	mat.set_shader_parameter("alt_amp_snow", ALT_AMP_SNOW)
+	mat.set_shader_parameter("alt_city_skirt", ALT_CITY_SKIRT)
+	mat.set_shader_parameter("alt_tower_skirt", ALT_TOWER_SKIRT)
+	mat.set_shader_parameter("alt_river_skirt_k", ALT_RIVER_SKIRT_K)
+	mat.set_shader_parameter("alt_road_flat_half", ALT_ROAD_FLAT_HALF)
+	mat.set_shader_parameter("alt_road_skirt", ALT_ROAD_SKIRT)
+	# THE ROAD POLYLINE THE CPU IS ALREADY USING — read straight back out of
+	# _alt_road_segs rather than rebuilt, which is the whole reason that cache
+	# exists: parity by construction, so the corridor the GPU flattens and the
+	# corridor the collision heightmap flattens can never be two different windows.
+	mat.set_shader_parameter("alt_road_seg", _alt_road_seg_uniform())
+	# CLAMPED for the same reason city_river_count is: the assert in the padder
+	# below is stripped in an exported build, and a count past the end of a GLSL
+	# array uniform is an undefined read in GLSL ES 3.00.
+	mat.set_shader_parameter("alt_road_seg_count",
+			mini(_alt_road_segs.size(), ALT_ROAD_SEG_MAX))
+
+
+func _alt_road_seg_uniform() -> PackedVector4Array:
+	"""
+	The cached coarse road polyline PADDED to ALT_ROAD_SEG_MAX, for
+	ground.gdshader's `alt_road_seg` array uniform — _city_river_segments()'s twin.
+
+	@return: Exactly ALT_ROAD_SEG_MAX entries. The tail past `alt_road_seg_count`
+	         is zeros and the shader never reads it, but a GLSL array uniform is a
+	         fixed size whatever the polyline's length is, so it has to be filled.
+
+	The entries are copied VERBATIM out of _alt_road_segs — the packing is
+	(x1, z1, x2, z2) on both sides and this function must never re-pack them, which
+	is the failure altitude_selfcheck check 4's packing leg exists to catch.
+	"""
+	var segs := PackedVector4Array()
+	segs.resize(ALT_ROAD_SEG_MAX)
+	for i in mini(_alt_road_segs.size(), ALT_ROAD_SEG_MAX):
+		segs[i] = _alt_road_segs[i]
+	return segs
 
 
 func _city_river_segments() -> PackedVector4Array:
@@ -9738,10 +9799,19 @@ func _alt_road_refresh(center_x: float) -> void:
 
 	THE ONE WRITER of _alt_road_segs, so the CPU's corridor and the array
 	ground.gdshader is fed can never be built from two different windows. Called
-	from update_chunks (chunk-boundary crossings) and, once Task 4 lands, read
-	straight back out by _apply_biome_shader_params().
+	from update_chunks (chunk-boundary crossings), and it re-pushes the material
+	itself: a window that moved on the CPU while the GPU kept the old one is a
+	corridor drawn flat where the ground is not, which is the exact disagreement
+	the shared array exists to make impossible.
+
+	The re-push goes through _apply_biome_shader_params rather than writing the two
+	road uniforms here, because ONE function feeding the ground material is what
+	makes the parity contract auditable. It costs ~25 set_shader_parameter calls per
+	~50 m of walking, against the several hundred vertices per chunk this saves from
+	disagreeing.
 	"""
 	_alt_road_segs = _alt_road_segments(center_x)
+	_apply_biome_shader_params()
 
 
 func _alt_road_distance(world_x: float, world_z: float) -> float:
