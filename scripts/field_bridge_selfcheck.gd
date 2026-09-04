@@ -48,8 +48,11 @@ const PLAYER_SCENE: String = "res://scenes/player.tscn"
 ## Seeds check 1 walks the whole road on. Arbitrary, fixed, and different from
 ## every other check's list in the project — between them the road is asked
 ## about a lot more than one river.
+## 72 is not arbitrary: its road walks 84 m of water through a bend whose CHORD
+## is only 79.2 m, so it is the world where "the cap is metres walked" and "the
+## cap is the straight line across" give different answers — see check 1.
 const CROSSING_SEEDS: Array[int] = [11, 2027, 90210, 777001, 424243, 8, 131313,
-		606060, 5150, 99991, 31337, 271828]
+		606060, 5150, 99991, 31337, 271828, 72]
 
 ## The walk must actually MEET rivers, or check 1 is a green lie about a road
 ## that never got its feet wet. Measured today: 40+ crossings over the 12 seeds.
@@ -329,13 +332,17 @@ func _check_every_crossing_is_bridged() -> void:
 				continue
 			# No bridge: the only sanctioned reason is the span cap. Measure the
 			# water the road walks from here and hold the refusal to it.
-			var start: Vector2 = terrain._road_station(k).center
+			# MEASURED THE WAY THE SHIPPED CAP MEASURES — metres WALKED. Asking
+			# the chord here is the same bug one level up: it reported seed 72's
+			# 84 m crossing as 79.2 m and then failed the build for refusing it.
 			var j := k
 			var wide := false
+			var water := 0.0
 			while j < terminal - 1 and terrain._field_bridge_wet(j + 1):
 				j += 1
-				if terrain._road_station(j).center.distance_to(start) \
-						> TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN:
+				water += terrain._road_station(j).center.distance_to(
+						terrain._road_station(j - 1).center)
+				if water > TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN:
 					wide = true
 					break
 			if wide:
@@ -343,8 +350,8 @@ func _check_every_crossing_is_bridged() -> void:
 				continue
 			if worst == "":
 				worst = ("seed %d: the road enters the water at station %d and"
-						% [run_seed, k] + " crosses %.1f m of it, well inside the"
-						% terrain._road_station(j).center.distance_to(start)
+						% [run_seed, k] + " walks %.1f m of it, well inside the"
+						% water
 						+ " %.0f m cap — and there is NO BRIDGE. That crossing is"
 						% TERRAIN_SCRIPT.FIELD_BRIDGE_MAX_SPAN
 						+ " a softlock the day rivers stop being walkable")
