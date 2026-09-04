@@ -125,10 +125,23 @@ const FLAT_ROAD_STATIONS: int = 40
 const WINDOW_PROBE_STATIONS: int = 30
 const WINDOW_PROBE_STEPS: int = 20
 
-## Check 6's skirt leg: offsets across the road corridor's 40 m ramp, from the flat
-## edge to the open field. 9 is enough to straddle the smoothstep's steepest middle
-## on both banks of every walked station.
+## Check 6's road-skirt leg: offsets across the road corridor's 40 m ramp, from the
+## flat edge to the open field. 9 is enough to straddle the smoothstep's steepest
+## middle on both banks of every walked station.
 const SKIRT_PROBE_STEPS: int = 9
+
+## Check 6's RIVER-skirt leg. The river skirt is the tightest of the four and it is
+## the only one whose width is not a constant: clause 3 ramps in FIELD units, from
+## RIVER_HALF_WIDTH to RIVER_HALF_WIDTH * ALT_RIVER_SKIRT_K, so its width in metres
+## is that 0.0175 of biome field divided by the LOCAL |grad _biome_noise| — about
+## 5-10 m against the road's authored 40, carrying the full plains amplitude to
+## zero across it. So it cannot be walked like the road (there is no polyline) and
+## the uniform box under-samples its tail: ~5.5% of the box lands in the band, so
+## 20,000 uniform points give it ~1,100 and find 0.59 where 10,000 hits find 0.82.
+## Rejection-sampled to a HIT count, with an attempt cap so a field that stopped
+## producing rivers fails loudly instead of spinning.
+const RIVER_SKIRT_HITS: int = 10000
+const RIVER_SKIRT_MAX_ATTEMPTS: int = 400000
 
 ## The ground shader — check 4 reads it as TEXT (for the declarations and the
 ## array bound) and as a loaded Shader (for the push), exactly as
@@ -965,13 +978,18 @@ func _check_field_is_walkable() -> void:
 			if t.biome_at(x, z) == t.Biome.MOUNTAIN:
 				mountain_samples += 1
 				worst_mountain = maxf(worst_mountain, slope)
-		# THE SKIRTS, MEASURED RATHER THAN INHERITED. The uniform sample above is a
-		# ±5 km box, and the road corridor only exists within _alt_road_window() of
-		# the window centre — so essentially none of those points land on a SKIRT,
-		# which is where the steepest ground in the whole field is by construction:
-		# a mask ramping full amplitude to zero over 40 m (the road's, the tightest
-		# of the four) against a 22 m mountain band. Reporting the box's maximum as
-		# "the field's worst slope" without this leg overstates what was covered.
+		# THE SKIRTS, MEASURED RATHER THAN INHERITED, AND THERE ARE TWO LEGS BECAUSE
+		# THE FOUR SKIRTS FAIL THE BOX IN TWO DIFFERENT WAYS. A skirt is where the
+		# steepest ground in the field is by construction — a mask ramping the band's
+		# whole amplitude to zero across it — and the ±5 km box above samples none of
+		# them the way they need sampling.
+		#
+		# The ROAD's (this leg) it essentially never hits at all: the corridor only
+		# exists within _alt_road_window() of the window centre, so it is walked as
+		# the curve it is, straight across the ramp at every station.
+		#
+		# The RIVER's (the leg below) it hits constantly and still under-measures,
+		# which is the subtler failure and the one worth the second loop.
 		var worst_skirt := 0.0
 		var skirt_at := Vector2.ZERO
 		var skirt_samples := 0
@@ -995,15 +1013,47 @@ func _check_field_is_walkable() -> void:
 					if s > worst_skirt:
 						worst_skirt = s
 						skirt_at = q
+		# THE RIVER SKIRT, THE TIGHTEST OF THE FOUR — rejection-sampled, because it
+		# is the one skirt with no geometry to walk. Its band is a FIELD interval
+		# (RIVER_HALF_WIDTH .. * ALT_RIVER_SKIRT_K), so the test here is the same
+		# expression _alt_flat_mask's clause 3 and is_river_at() both read, and the
+		# points that pass it are exactly the bank. The band is ~5.5% of the box, so
+		# the uniform loop above already lands ~1,100 points on it — this leg exists
+		# for the TAIL: ten thousand hits find ~0.82 where those 1,100 find ~0.59,
+		# and the report's headroom against MAX_WALKABLE_SLOPE is read off this one.
+		var worst_river := 0.0
+		var river_at := Vector2.ZERO
+		var river_hits := 0
+		var river_attempts := 0
+		var river_inner: float = t.RIVER_HALF_WIDTH
+		var river_outer: float = t.RIVER_HALF_WIDTH * t.ALT_RIVER_SKIRT_K
+		while river_hits < RIVER_SKIRT_HITS and river_attempts < RIVER_SKIRT_MAX_ATTEMPTS:
+			river_attempts += 1
+			var rx := rng.randf_range(-SAMPLE_HALF, SAMPLE_HALF)
+			var rz := rng.randf_range(-SAMPLE_HALF, SAMPLE_HALF)
+			var d: float = absf(t._biome_noise(rx, rz) - t.RIVER_LEVEL)
+			if d <= river_inner or d >= river_outer:
+				continue
+			river_hits += 1
+			var hr: float = t.height_at(rx, rz)
+			var rdx: float = (t.height_at(rx + WALK_STEP, rz) - hr) / WALK_STEP
+			var rdz: float = (t.height_at(rx, rz + WALK_STEP) - hr) / WALK_STEP
+			var sr: float = Vector2(rdx, rdz).length()
+			if sr > worst_river:
+				worst_river = sr
+				river_at = Vector2(rx, rz)
+		if river_hits < RIVER_SKIRT_HITS:
+			_fail("seed %d: only %d of %d sampled points landed on a river BANK — the tightest skirt in the field would be reported off a sample that does not exist" % [
+				seed_value, river_hits, river_attempts])
 		# THE FIELD HAS TO BE ALIVE FIRST. Every assertion below is an UPPER bound,
 		# so a height_at() that returned 0.0 everywhere — the whole heightfield
 		# deleted, or alt_force silently stopping — leaves worst, worst_skirt and
 		# worst_mountain all exactly 0.0 and this check green. Checks 2-5 all go
 		# red on a dead field; this was the only one that did not, and the printed
 		# report numbers below would have been read off zero samples.
-		if worst <= 0.0 or worst_skirt <= 0.0:
-			_fail("seed %d: the field is FLAT (worst slope %.6f, worst skirt %.6f) with the spike forced on — check 6's bounds would pass on a heightfield that does not exist" % [
-				seed_value, worst, worst_skirt])
+		if worst <= 0.0 or worst_skirt <= 0.0 or worst_river <= 0.0:
+			_fail("seed %d: the field is FLAT (worst slope %.6f, road skirt %.6f, river skirt %.6f) with the spike forced on — check 6's bounds would pass on a heightfield that does not exist" % [
+				seed_value, worst, worst_skirt, worst_river])
 		if mountain_samples == 0:
 			_fail("seed %d: not one of the %d samples landed in the MOUNTAIN band — the mountain figure this check reports, and the impassability argument that reads it, would be printed off nothing" % [
 				seed_value, WALK_SAMPLES])
@@ -1013,12 +1063,17 @@ func _check_field_is_walkable() -> void:
 		if worst_skirt > MAX_WALKABLE_SLOPE:
 			_fail("seed %d: the road corridor's SKIRT reaches %.3f m per metre at (%.1f, %.1f), over MAX_WALKABLE_SLOPE %.1f — the coin road sits at the bottom of a wall" % [
 				seed_value, worst_skirt, skirt_at.x, skirt_at.y, MAX_WALKABLE_SLOPE])
+		if worst_river > MAX_WALKABLE_SLOPE:
+			_fail("seed %d: a river BANK reaches %.3f m per metre at (%.1f, %.1f), over MAX_WALKABLE_SLOPE %.1f — the wading band is at the bottom of a levee, not a ramp" % [
+				seed_value, worst_river, river_at.x, river_at.y, MAX_WALKABLE_SLOPE])
 		# REPORT NUMBERS, all on one line (plan, Task 5): the field's worst slope,
-		# the worst inside the band impassability depends on, the worst on the
-		# tightest authored skirt, and the jump apex the massif walls are sized
-		# against.
-		print("[altitude] seed %d: max slope %.3f m/m (mountain band %.3f over %d samples, road skirt %.3f over %d), jump apex %.4f m, bound %.1f" % [
-			seed_value, worst, worst_mountain, mountain_samples, worst_skirt, skirt_samples, apex, MAX_WALKABLE_SLOPE])
+		# the worst inside the band impassability depends on, the worst on each of
+		# the two skirts that are measured rather than inherited, and the jump apex
+		# the massif walls are sized against. The RIVER figure is the one the
+		# report's headroom is read off — it is the largest of the four.
+		print("[altitude] seed %d: max slope %.3f m/m (mountain band %.3f over %d samples, road skirt %.3f over %d, river skirt %.3f over %d), jump apex %.4f m, bound %.1f" % [
+			seed_value, worst, worst_mountain, mountain_samples, worst_skirt, skirt_samples,
+			worst_river, river_hits, apex, MAX_WALKABLE_SLOPE])
 		t.free()
 	Sentinel.done("field_is_walkable")
 

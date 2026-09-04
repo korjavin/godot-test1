@@ -1859,8 +1859,16 @@ const ALT_TOWER_SKIRT: float = 60.0
 ## reads the same |_biome_noise - RIVER_LEVEL| < RIVER_HALF_WIDTH test, so the
 ## flat edge and the wading edge are two readouts of ONE number and can never
 ## disagree: water stays at y = 0 and the XZ-only wading contract survives with no
-## edit anywhere. 3.5 gives a bank about two and a half river-widths wide, which
-## at the field's local gradient is a shallow ramp rather than a levee.
+## edit anywhere. 3.5 gives a bank about two and a half river-widths wide.
+##
+## IT IS ALSO THE TIGHTEST SKIRT OF THE FOUR, and the only one whose width is not
+## a number written here: the other three ramp over an authored 40-120 m, this one
+## ramps over 0.0175 of BIOME FIELD, whose width in metres is that divided by the
+## local |grad _biome_noise| — about 5-10 m. So it is the steepest ground the
+## spike produces (measured 0.71-0.82 m/m against MAX_WALKABLE_SLOPE 1.0, where
+## the road's ramp is 0.17-0.39), a walkable bank rather than a levee but with
+## the least headroom in the field. altitude_selfcheck check 6 has a leg of its
+## own for it; raising this constant is what widens the bank if a retune needs it.
 const ALT_RIVER_SKIRT_K: float = 3.5
 
 ## The coin road corridor: flat within 22 m of the centreline, level by 40 m

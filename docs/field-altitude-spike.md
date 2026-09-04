@@ -209,9 +209,10 @@ Two consequences for the migration, and both are load-bearing:
 | the synchronous safety ring, one WORLD (RE)BUILD | **~25 ms in ONE frame** | 9 ring chunks × 2,741 µs |
 | the same, per ordinary walking boundary crossing | **0 µs** | `update_chunks` STEP 3 skips a chunk already in `active_chunks`, and `_ensure_chunk_ground` early-returns for one anyway — at `render_distance = 5` the whole `SYNC_RING` 3×3 is already inside the previous 11×11 |
 | what walking DOES pay | **~2.7 ms on each of 11 frames** per crossing (7 on web) | the newly-in-range chunks are grounded inside `create_chunk`, which `_process` drains one per frame |
-| max height delta per metre, whole field | **0.591 / 0.557 / 0.644** over three seeds | check 6, against a 1.0 (45°) bound |
+| max height delta per metre, ±5 km box | **0.591 / 0.557 / 0.644** over three seeds | check 6, against a 1.0 (45°) bound |
 | the same, mountain band only | **0.502 / 0.457 / 0.361** | check 6 |
-| the same, on the road corridor's SKIRT | **0.385 / 0.197 / 0.167** | check 6 — sampled separately because the ±5 km box essentially never lands on a 40 m ramp, and the skirts are the steepest ground in the field by construction |
+| the same, on the road corridor's SKIRT | **0.385 / 0.197 / 0.167** | check 6 — walked as a curve, because the ±5 km box essentially never lands on a 40 m ramp |
+| **the same, on a RIVER BANK — the field's real worst** | **0.789 / 0.705 / 0.824** | check 6, rejection-sampled to 10,000 hits per seed |
 | jump apex, for comparison | 3.6125 m | `player_controller`, printed beside it |
 
 Two of those are findings and not just numbers:
@@ -231,11 +232,22 @@ Two of those are findings and not just numbers:
   spike fixes** — the counter exists to make them visible. The obvious answers (fewer
   samples than the visual grid, a cached noise row, building the shape off the frame)
   are all consumer-1 work below.
-- **The field is walkable with ~35% headroom**, so the residual
-  mountain-impassability risk is a gentle rise against a massif wall and **not** a
-  ramp over it. That is a bound, not a proof: a rise that lifts the ground beside a
-  4.0 m `MOUNTAIN_MIN_LAYER_HEIGHT` block by 2 m halves the wall, and blocks still
-  sit at y = 0. Consumer 9 below owns it.
+- **The field is walkable, but the headroom is ~18% and it is a RIVER BANK that
+  spends it — not the mountains and not the road.** The skirts are the steepest
+  ground in the field by construction (a mask ramping a band's whole amplitude to
+  zero across itself), and the four are not comparable: three ramp over an authored
+  40-120 m, while the river's `ALT_RIVER_SKIRT_K` ramps over **0.0175 of biome
+  field**, whose width in metres is that divided by the local
+  `|grad _biome_noise|` — about 5-10 m carrying the full 3.5 m plains amplitude.
+  That is the tightest skirt in the game and the number the 1.0 bound is really
+  measured against (0.824 worst of three seeds). It is also the one figure a
+  consumer bead cannot read off a constant in the source, because it has no metre
+  value: **widening the bank means raising `ALT_RIVER_SKIRT_K`**. The mountain band
+  is mild by comparison (0.502 worst) — so the residual mountain-impassability risk
+  is still a gentle rise against a massif wall and **not** a ramp over it. That is a
+  bound, not a proof: a rise that lifts the ground beside a 4.0 m
+  `MOUNTAIN_MIN_LAYER_HEIGHT` block by 2 m halves the wall, and blocks still sit at
+  y = 0. Consumer 9 below owns it.
 
 ### Structurally known, flag on vs flag off
 
@@ -246,10 +258,22 @@ Two of those are findings and not just numbers:
 - **Node count: unchanged.** Same reason.
 - **Vertex count: unchanged** (324 per chunk). What changes is the work per vertex:
   **three `field_height()` evaluations** (the displacement plus two forward
-  differences for the normal), each two octaves of value noise, in `vertex()` only —
-  ~15,876 evaluated vertices per frame at the web build's 49-chunk residency, ~47,628
-  `field_height()` calls. That is the one number the web reading is needed for; a
-  headless run cannot see the vertex stage at all.
+  differences for the normal), in `vertex()` only — ~15,876 evaluated vertices per
+  frame at the web build's 49-chunk residency, ~47,628 `field_height()` calls. **One
+  such call is three terms, and the noise is not the big one:**
+  - `alt_value_noise_pair()` — 2 octaves, 8 `hash2`;
+  - `biome_noise()` — a third octave, 4 more `hash2` (and `vertex()` has already
+    computed this exact value into `v_biome` one line above, so one of the four per
+    vertex is redundant — see the migration list);
+  - `alt_flat_mask()` → **`alt_road_distance()`, a loop of up to
+    `ALT_ROAD_SEG_MAX` = 24 clamped point-to-segment projections**, run at every
+    vertex in the world including the kilometres of field where the window holds no
+    road at all.
+
+  So the per-vertex bill is ~36 `hash2` **and up to 72 segment projections**, and
+  the corridor loop is of the same order as all the noise put together. That is the
+  one number the web reading is needed for and the reason it is needed: a headless
+  run cannot see the vertex stage at all, so nothing in this document bounds it.
 - **Flag off: one compare per vertex** and nothing else, because the block is guarded
   rather than multiplied by zero.
 
@@ -309,6 +333,8 @@ means the suite certifies the migration silently.
 | 10 | **The minimap's flat assumptions** | **small** | `minimap_selfcheck` | it reads the world in XZ; last because nothing depends on it |
 | 11 | **The ground plane's shadow flag** | **small** | nothing today | `_ensure_chunk_ground` sets `SHADOW_CASTING_SETTING_OFF` on the comment "a flat ground plane can only ever shadow itself", which stops being true the moment it is displaced — hills would need to shade valleys and today they cannot. **Not a free flip**: it is a shadow-pass cost, which is exactly the cost that produced Budapest's no-shadow ruling (`godot-test1-8gw.9`, 19 ms/frame), so it must be MEASURED on web and not assumed. Visual only, so it can come last |
 | 12 | **The ground plane's CULL VOLUME** | **done in the spike** | `altitude_selfcheck` check 5 | Item 11's neighbour, on the same reasoning one step further: the displacement is a VERTEX SHADER and the renderer culls on the MESH's AABB, which for the shared flat `PlaneMesh` is `chunk_size × 0 × chunk_size`. Without a per-instance `custom_aabb` a chunk whose flat quad falls outside the frustum takes its 22 m hilltop with it and the hillside pops at the screen edge — and it would have quietly understated the draw-call column of every reading in this report. `_ensure_chunk_ground` now sets one from `ALT_AMP_MAX` in the flag-on branch only; check 5 asserts the box CONTAINS each chunk's real height range, which is what keeps `ALT_AMP_MAX` bound to the amplitude ladder rather than hand-picked |
+
+| 13 | **The vertex stage's own cost** | **medium** | nothing — it is a shader-internal edit and every parity assertion is on the VALUE, which does not move | Two waste terms, both named in the per-vertex bill above and both left alone here because the spike's job was to measure, not to tune. (a) `field_height()` recomputes `biome_noise(w)`, which `vertex()` already has in `v_biome` — split it into a `field_height_b(vec2 w, float b)` worker plus a one-line wrapper, pass `v_biome` for the centre sample and keep the wrapper for the two offset samples; the GDScript twin needs **no** edit, so note the asymmetry beside `height_at`. (b) `alt_flat_mask()`'s 24-iteration `alt_road_distance()` loop runs three times per vertex — evaluate the mask ONCE per vertex and reuse it for both finite differences, which costs a slightly less exact normal on a skirt and nothing anywhere else. Both are worth roughly half the vertex-stage bill between them; **do neither until the web F3 pair below says the vertex stage is what hurts** |
 
 Two rules the order encodes:
 
