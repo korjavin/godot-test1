@@ -1872,7 +1872,10 @@ state machine and imports no network types, so tests drive it directly.
 
 ### Mesh (`scripts/mp_manager.gd` and friends)
 `lobby_client.gd` (socket + `/ice`), `mp_manager.gd` (mesh, seed, presence, heroes, shared
-totals, crocodile sync, claims), **`mp_codec.gd` (the pure codec)**, `remote_avatar.gd`
+totals, claims), **`mp_codec.gd` (the pure codec)**, **`mp_croc_sync.gd` (`MpCrocSync`,
+static, manager-first-arg — the crocodile sync send/receive/timeout handlers, the id
+cache and the `kill`/`dead` ruling; the room's state stays on the manager and the
+`CROC_SYNC_*` consts are aliased back)**, `remote_avatar.gd`
 (visual only), `mp_ui.gd`, `teammate_locator.gd`.
 
 **THE PARSERS ARE `MpCodec`, THE HANDLERS ARE `MpManager`, and that seam is the file
