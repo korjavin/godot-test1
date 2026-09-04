@@ -2102,6 +2102,51 @@ const CITY_CHUNK_MS_BUDGET: float = 12.0
 ## from pos to the nearest edge of the UNION (BudapestPlan.rect() plus the corridor
 ## box from the HQ disc to the gate). Measured k at HQ (~2 km) is ~0.25 when measured
 ## off the rect alone; off the union the whole corridor stays at 1.0 (see review).
+##
+## ONE RULE FOR EVERY BIOME (bead `godot-test1-bn8`, owner 2026-09-04: *"i see that
+## object in plains rare and rare when we farther away from center hq+budapest, but
+## I don't see this happening with desert and probably other biomes, it should be one
+## rule for all, we should demotivate players go far away from center"*). The gradient
+## used to be applied per FAMILY and several families never read k, so a desert kept
+## every oasis, every dune and every mammoth on the way out while the plains emptied.
+## The rule now, and the whole of it:
+##
+##   * EVERY CONTENT BUILDER READS k. Scattered props, feature structures,
+##     artifacts, camps, chests, geo landmarks, cacti, oases, dunes, forest trees,
+##     city houses / stalls / lights, snow trees and mammoth skeletons — all of
+##     them, in the three forms below and no fourth one.
+##   * MASSIFS ARE EXEMPT (owner ruling, same date). They are the impassable walls
+##     the flat-world invariant rests on, not decoration: a far mountain band with
+##     no massifs is a plains band painted grey. `_spawn_mountain_content` is
+##     therefore the one biome builder with no k in it at all.
+##   * PREDATORS, HUNTERS, BOSSES AND ROAD COINS ARE NEVER THINNED. Entity counts
+##     are design-only, and fewer predators far out would REWARD leaving — the
+##     opposite of the ruling; the road is the guide to Budapest. There are no
+##     off-road CHUNK coins to thin either: every non-road coin in the world is a
+##     reward inside an artifact, camp, chest or landmark, so it already vanishes
+##     with the feature that carries it.
+##
+## THE THREE FORMS, and never a fourth:
+##
+##   * A COUNT TARGET becomes `roundi(target * k)` (the scattered-prop scatter).
+##   * A RARITY ROLL is compared against `chance * k` — the same roll, no new draw
+##     (structures, artifacts, camps, chests, landmarks, oases, dunes).
+##   * A PER-OBJECT removal inside a loop is a post-draw `continue` on
+##     `_scarcity_keep()`'s own SCARCITY_SALT hash stream (cacti, forest trees,
+##     city furniture, snow trees, mammoths).
+##
+## In all three the shared chunk / biome RNG takes exactly the draws it took
+## before, which is why k = 1 near the centre regenerates byte-identically.
+##
+## AND THERE IS NO `if k <= 0.0: return` SHORTCUT ANY MORE, deliberately. Four
+## biome builders carried one; it emitted the same nothing the per-object rolls do,
+## but it emitted it for the WHOLE FUNCTION — so a builder further down that forgot
+## k (the oasis, which is called from the bottom of `_spawn_desert_content`) looked
+## correct at 4 km and the acceptance check could not tell the difference. The far
+## field is now empty because every builder's own k says so, which is the only
+## version of that measurement a mutation test can fail.
+## `scripts/scarcity_selfcheck.gd` iterates the Biome enum and fails the build for
+## a builder that forgets k.
 const SCARCITY_PLAIN_DISTANCE: float = 4000.0
 const SCARCITY_D0: float = 400.0
 const SCARCITY_SALT: int = 0x5C4177 # own stream for per-object scarcity rolls
@@ -2148,6 +2193,39 @@ func scarcity_at(pos: Vector3) -> float:
 	if d >= SCARCITY_PLAIN_DISTANCE:
 		return 0.0
 	return clampf(1.0 - log(1.0 + d / SCARCITY_D0) / _SCARCITY_DENOM, 0.0, 1.0)
+
+
+func _scarcity_keep(chunk_pos: Vector2i, index: int, k: float) -> bool:
+	"""
+	The ONE home of the per-object scarcity roll — the third of the three forms in
+	the banner above, and the only one that needs a hash stream of its own.
+
+	@param chunk_pos: The chunk the object stands in. NOT the world position: a
+	                  builder is sliced by nothing, and a chunk-keyed roll is what
+	                  makes a revisited chunk regenerate identically.
+	@param index: The object's index within its own loop, plus a per-family offset
+	              where one loop's objects would otherwise share rolls with
+	              another's (the city's stalls take `_i + 1000`, its lights
+	              `_i + 2000`, snow's mammoths `_i + 1000`). THE OFFSETS ARE PART OF
+	              THE WORLD — changing one moves every object of that family.
+	@param k: scarcity_at() at the chunk's centre, read once by the caller.
+	@return: true to build this object, false to thin it away.
+
+	IT COSTS NO DRAW. The roll is a hash of (chunk, run_seed ^ SCARCITY_SALT ^
+	index), not a draw from the caller's RandomNumberGenerator, so the shared
+	biome / chunk stream is exactly the sequence it was before scarcity existed.
+
+	THE CALL MUST BE A POST-DRAW `continue`, the discipline every removal in this
+	file follows: put it after whatever unconditional draws the object takes and
+	immediately before the first create_box. At k = 1 it never skips and the world
+	is byte-identical; below 1 a thinned object's emit-time draws are skipped,
+	which shifts the rest of THAT chunk — deterministic (k is pure in position)
+	and intended.
+	"""
+	var roll := float(hash(Vector3i(
+		chunk_pos.x * 96174811, chunk_pos.y * 18266587, run_seed ^ SCARCITY_SALT ^ index
+	)) % 1000000) / 1000000.0
+	return roll < k
 
 
 # ----------------------------------------------------------------------------
@@ -7996,7 +8074,12 @@ func _oasis_at(chunk_pos: Vector2i) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(Vector3i(chunk_pos.x * 73856093, chunk_pos.y * 19349663, run_seed ^ OASIS_SALT))
 
-	if rng.randf() >= OASIS_CHANCE:
+	# Scarcity thins oases to plain terrain at 4 km — the artifact/camp/chest/
+	# landmark form: the SAME roll compared against chance * k, no new draw on this
+	# stream, so a desert near the centre keeps exactly the oases it always had.
+	# The whole oasis is one roll, which is why its palms, boulders and reeds need
+	# no k of their own.
+	if rng.randf() >= OASIS_CHANCE * scarcity_at(chunk_to_world(chunk_pos)):
 		return {}
 
 	return { "seed": rng.randi() }
@@ -8011,7 +8094,8 @@ func _dune_at(chunk_pos: Vector2i) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(Vector3i(chunk_pos.x * 73856093, chunk_pos.y * 19349663, run_seed ^ DUNE_SALT))
 
-	if rng.randf() >= DUNE_CHANCE:
+	# Scarcity, same form and same reason as _oasis_at above.
+	if rng.randf() >= DUNE_CHANCE * scarcity_at(chunk_to_world(chunk_pos)):
 		return {}
 
 	return { "seed": rng.randi() }
@@ -8166,8 +8250,6 @@ func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 	var count := rng.randi_range(CACTUS_MIN, CACTUS_MAX)
 	var chunk_pos_cactus := world_to_chunk(chunk_center)
 	var k_cactus := scarcity_at(chunk_center)
-	if k_cactus <= 0.0:
-		return
 
 	for _i in count:
 		var local_x := rng.randf_range(-half, half)
@@ -8186,6 +8268,14 @@ func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 		var width := rng.randf_range(CACTUS_WIDTH_MIN, CACTUS_WIDTH_MAX)
 		var segments := rng.randi_range(2, 3)
 		var yaw := rng.randf_range(0.0, TAU)
+		# Per-object scarcity, post-draw and after the three unconditional draws
+		# above — the forest's rule, for the forest's reason. Before bead
+		# `godot-test1-bn8` the desert read k only as the `k_cactus <= 0` bail
+		# above, so a desert kept EVERY cactus right up to the 4 km line and then
+		# lost the lot in one chunk: the "one rule for all" the owner asked for is
+		# a gradient here, not a cliff.
+		if not _scarcity_keep(chunk_pos_cactus, _i, k_cactus):
+			continue
 		var top_y := 0.0
 
 		for _s in segments:
@@ -8449,8 +8539,6 @@ func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 	var count := rng.randi_range(FOREST_TREES_MIN, FOREST_TREES_MAX)
 	var chunk_pos_forest := world_to_chunk(chunk_center)
 	var k_forest := scarcity_at(chunk_center)
-	if k_forest <= 0.0:
-		return
 
 	for _i in count:
 		var local_x := rng.randf_range(-half, half)
@@ -8475,8 +8563,7 @@ func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 		# same green); `lean` is the trunk's tilt.
 		var leaf_t := rng.randf()
 		var lean := rng.randf_range(-TREE_TRUNK_TILT_MAX, TREE_TRUNK_TILT_MAX)
-		var scarcity_roll := float(hash(Vector3i(chunk_pos_forest.x * 96174811, chunk_pos_forest.y * 18266587, run_seed ^ SCARCITY_SALT ^ _i)) % 1000000) / 1000000.0
-		if scarcity_roll >= k_forest:
+		if not _scarcity_keep(chunk_pos_forest, _i, k_forest):
 			continue
 
 		# Trunk: solid, so you bump into it and crocodiles' raycasts see it.
@@ -8580,10 +8667,18 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 	"""
 	var half := chunk_size / 2.0 - MOUNTAIN_EDGE_MARGIN
 	var count := rng.randi_range(MOUNTAIN_MASSIF_MIN, MOUNTAIN_MASSIF_MAX)
-	var chunk_pos_mtn := world_to_chunk(chunk_center)
-	var k_mtn := scarcity_at(chunk_center)
-	if k_mtn <= 0.0:
-		return
+
+	# MASSIFS ARE EXEMPT FROM THE SCARCITY GRADIENT — owner ruling 2026-09-04, bead
+	# `godot-test1-bn8`, and the ONE builder in this file with no k in it at all.
+	# Everything else the world draws is decoration and thins to plain terrain at
+	# 4 km; a massif is not decoration, it is the impassable wall the flat-world
+	# invariant substitutes for raised terrain (see the docstring above). Thinned,
+	# a mountain band 4 km out is a plains band painted grey, and the "you walk
+	# AROUND a mountain" contract quietly stops existing exactly where the player
+	# is least likely to report it. This used to read `k_mtn = scarcity_at(...)`
+	# plus a per-massif post-draw roll; both are deliberately gone, and
+	# `scarcity_selfcheck` asserts the far mountain band still builds stone while
+	# every other family in the same chunks builds none.
 
 	# Massifs are NOT checked against the whole `obstacles` list. A massif's
 	# footprint radius is ~9.7 m, so demanding clearance from all dozen scattered
@@ -8644,12 +8739,7 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 
 		var height := rng.randf_range(MOUNTAIN_HEIGHT_MIN, MOUNTAIN_HEIGHT_MAX)
 		var base_w := rng.randf_range(MOUNTAIN_BASE_WIDTH_MIN, MOUNTAIN_BASE_WIDTH_MAX)
-		# Per-object scarcity: own hash stream, no draw.
-		# Must be the last continue before geometry is emitted, after whatever draws master makes before that point.
-		# At k=1 nothing is skipped and the stream is master's; at k<1 a thinned object's emit-time draws are skipped, which shifts the rest of THIS chunk — deterministic (k is pure in position) and intended.
-		var scarcity_roll_mtn := float(hash(Vector3i(chunk_pos_mtn.x * 96174811, chunk_pos_mtn.y * 18266587, run_seed ^ SCARCITY_SALT ^ _i)) % 1000000) / 1000000.0
-		if scarcity_roll_mtn >= k_mtn:
-			continue
+		# (No scarcity roll here — massifs are exempt; see the note above `avoid`.)
 		# The layer count falls straight out of the height: every step must be too
 		# tall to jump onto. Without that rule an 8 m massif split into 7 layers is
 		# a 1.14 m staircase with a 1.7 m ledge at each level — a walkable ziggurat,
@@ -8729,8 +8819,6 @@ func _spawn_city_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 	var half := chunk_size / 2.0 - CITY_HOUSE_RADIUS_MAX
 	var chunk_pos_city := world_to_chunk(chunk_center)
 	var k_city := scarcity_at(chunk_center)
-	if k_city <= 0.0:
-		return
 
 	# ---- HOUSES ------------------------------------------------------------
 	for _i in rng.randi_range(CITY_HOUSE_TRIES_MIN, CITY_HOUSE_TRIES_MAX):
@@ -8745,8 +8833,7 @@ func _spawn_city_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 		var roof := CITY_ROOF_TILE if rng.randf() < 0.6 else CITY_ROOF_SLATE
 		var windows := rng.randi_range(1, 2)
 		# Per-object scarcity: own hash stream, post-draw skip so k=1 stays identical.
-		var scarcity_roll_house := float(hash(Vector3i(chunk_pos_city.x * 96174811, chunk_pos_city.y * 18266587, run_seed ^ SCARCITY_SALT ^ _i)) % 1000000) / 1000000.0
-		if scarcity_roll_house >= k_city:
+		if not _scarcity_keep(chunk_pos_city, _i, k_city):
 			continue
 		# The snap can push a candidate back outside the margin, so clamp rather
 		# than redraw — a redraw would be a draw, and every rejection in this file
@@ -8823,8 +8910,7 @@ func _spawn_city_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 		var sw := rng.randf_range(CITY_STALL_WIDTH_MIN, CITY_STALL_WIDTH_MAX)
 		var canvas := CITY_ROOF_TILE if rng.randf() < 0.5 else CITY_ROOF_SLATE
 		# Per-object scarcity for stalls (offset 1000 to decorrelate from houses).
-		var scarcity_roll_stall := float(hash(Vector3i(chunk_pos_city.x * 96174811, chunk_pos_city.y * 18266587, run_seed ^ SCARCITY_SALT ^ (_i + 1000))) % 1000000) / 1000000.0
-		if scarcity_roll_stall >= k_city:
+		if not _scarcity_keep(chunk_pos_city, _i + 1000, k_city):
 			continue
 		sx = clampf(sx, -half, half)
 		sz = clampf(sz, -half, half)
@@ -8872,8 +8958,7 @@ func _spawn_city_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 		var lh := rng.randf_range(CITY_LIGHT_HEIGHT_MIN, CITY_LIGHT_HEIGHT_MAX)
 		var is_signal := rng.randf() < CITY_SIGNAL_CHANCE
 		# Per-object scarcity for lights (offset 2000).
-		var scarcity_roll_light := float(hash(Vector3i(chunk_pos_city.x * 96174811, chunk_pos_city.y * 18266587, run_seed ^ SCARCITY_SALT ^ (_i + 2000))) % 1000000) / 1000000.0
-		if scarcity_roll_light >= k_city:
+		if not _scarcity_keep(chunk_pos_city, _i + 2000, k_city):
 			continue
 		lx = clampf(lx, -half, half)
 		lz = clampf(lz, -half, half)
@@ -8983,8 +9068,6 @@ func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 	var tree_half := chunk_size / 2.0 - (FROZEN_TREE_TRUNK_WIDTH_MAX * 0.71 + branch_reach)
 	var chunk_pos_snow := world_to_chunk(chunk_center)
 	var k_snow := scarcity_at(chunk_center)
-	if k_snow <= 0.0:
-		return
 	for _i in rng.randi_range(FROZEN_TREE_MIN, FROZEN_TREE_MAX):
 		var local_x := rng.randf_range(-tree_half, tree_half)
 		var local_z := rng.randf_range(-tree_half, tree_half)
@@ -9012,10 +9095,7 @@ func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 		# toward local +Z, whose world direction under this yaw is (sin, 0, cos).
 		var lean_dir_snow := Vector3(sin(yaw), 0.0, cos(yaw)) * sin(lean_snow)
 		# Per-object scarcity for snow trees: own hash stream, no draw.
-		# Must be the last continue before geometry is emitted, after whatever draws master makes before that point.
-		# At k=1 nothing is skipped and the stream is master's; at k<1 a thinned object's emit-time draws are skipped, which shifts the rest of THIS chunk — deterministic (k is pure in position) and intended.
-		var scarcity_roll_snowt := float(hash(Vector3i(chunk_pos_snow.x * 96174811, chunk_pos_snow.y * 18266587, run_seed ^ SCARCITY_SALT ^ _i)) % 1000000) / 1000000.0
-		if scarcity_roll_snowt >= k_snow:
+		if not _scarcity_keep(chunk_pos_snow, _i, k_snow):
 			continue
 
 		# Trunk: solid, so you bump into it and the crocodiles' raycasts see it.
@@ -9070,6 +9150,12 @@ func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 		if not placed:
 			# Every try failing means NO skeleton. A mammoth shoved through a stand
 			# of trees reads worse than a chunk without one — the camp's rule.
+			continue
+		# Per-object scarcity, post-draw (every placement try above has drawn) and
+		# immediately before the ~17 draws _snow_mammoth spends. Offset 1000 so a
+		# skeleton and the tree of the same index above do not share a roll — the
+		# city's houses/stalls/lights precedent.
+		if not _scarcity_keep(chunk_pos_snow, _i + 1000, k_snow):
 			continue
 
 		var top := _snow_mammoth(Vector3(mx, 0.0, mz), rng, block_batch, block_body)

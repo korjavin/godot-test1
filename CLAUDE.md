@@ -79,6 +79,14 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #   landmark_selfcheck       every builder fits its declared radius AND its
 #                            declared top
 #   prop_selfcheck           prop/structure footprints, budgets, palettes
+#   scarcity_selfcheck       the distance gradient, ONE RULE FOR EVERY BIOME: the
+#                            k curve itself, then a near and a far field per
+#                            `Biome` value built through the shipped spawners —
+#                            far builds nothing, near does (the control), and the
+#                            mountain MASSIF exemption is asserted POSITIVELY;
+#                            plus the spawners that must never read k (predators,
+#                            hunters, bosses, road coins) read as TEXT, with a
+#                            near/far predator count beside it
 #   enemy_spawn_selfcheck    every species: no spawn in stone, deterministic
 #                            placement, biome dispatch, behaviour, MP identity;
 #                            plus check 13 the HUNTER FIELD CAP (the expected
@@ -387,8 +395,19 @@ Load-bearing rules:
   loop in the spawner where `obstacles` exists, judged by `_biome_spot_ok(...)` — the
   single home of the river / road-clearance / overlap rule. The loop must not live in the
   rarity function: there is no geometry to test against there.
-- **Scarcity.** Outside the union of Budapest rect and HQ-to-gate corridor, objects thin
-  logarithmically to plain terrain at 4 km: a rarity roll is compared against `chance * scarcity_at(centre)`, a count target is multiplied by `roundi(target * k)`; never a new draw, per-object post-draw skip on its own `SCARCITY_SALT` hash stream.
+- **Scarcity, and it is ONE RULE FOR EVERY BIOME.** Outside the union of Budapest rect and
+  HQ-to-gate corridor, objects thin logarithmically to plain terrain at 4 km in three forms
+  and no fourth: a rarity roll compared against `chance * scarcity_at(centre)`, a count
+  target multiplied by `roundi(target * k)`, and a per-object post-draw `continue` on
+  `_scarcity_keep()` — the one home of the `SCARCITY_SALT` hash stream, whose per-family
+  index offsets are part of the world. Never a new draw. **EVERY content builder reads k**
+  (bead `godot-test1-bn8` — it shipped as a per-family edit and oases, dunes, cacti and
+  mammoths never got theirs); the mountain MASSIF is the single exemption (owner ruling
+  2026-09-04: it is the impassable wall, not decoration); and predators, hunters, bosses
+  and road coins are **never** thinned, because fewer predators far out would reward
+  leaving. There are no off-road chunk coins — every non-road coin rides an artifact, camp,
+  chest or landmark and vanishes with it. `scarcity_selfcheck` iterates the `Biome` enum
+  over a near and a far field, so a builder that forgets k fails the build.
 - **Ground is one shared `PlaneMesh` at y = 0**, shaded by `assets/shaders/ground.gdshader`.
 
 Features built this way: the coin road (a parametric station-indexed path whose X strictly
