@@ -1220,8 +1220,10 @@ crocodile's own collision handling.
 **Species are data, not subclasses.** Every trait that makes one predator feel different —
 speeds, detection, wander rhythm, obstacle feelers, waddle/bite geometry, river sink, and
 the `coin_setback` bill losing to it costs — is a
-row of the `SPECIES` const dict of plain dicts at the top of `piglet_crocodile_ai.gd`, the
-same shape as `Progression.SKILL_TREES`. An instance's `species` field is a plain public
+row of the `SPECIES` const dict of plain dicts, which lives in `scripts/species_table.gd`
+(`class_name SpeciesTable`, bd `godot-test1-ftn.10`) and is aliased back into
+`piglet_crocodile_ai.gd` as `const SPECIES := SpeciesTable.SPECIES`, so every reader still
+spells it `SPECIES`. Same shape as `Progression.SKILL_TREES`. An instance's `species` field is a plain public
 var assigned **before `add_child`** (same call-order contract as `setup_as_boss()`), and
 `_ready()` resolves it once into `spec`, which the per-frame paths read. A new predator is
 a new entry there plus at most one new arm in a `match` — never a new script and never a
@@ -1765,9 +1767,19 @@ was ever going to stop it. Three parts, all in the two managers, all pinned by
   is in the traffic, but `_pick_next_waypoint` carries straight on 60% of the time and a
   fresh draw there flips the SIGN half of those — a 17.2 m sideways teleport for a citizen
   that never turned. A U-turn keeps its street line, so it flips the stored value rather
-  than re-drawing; the 90° corner is still a `sqrt(2) x lane` jump, which is what the lane
-  model has always cost (±3.2 made it 4.5 m) and `crowd_selfcheck` check 12 BOUNDS rather
-  than forbids. `_pick_lane` tries **both** pavements before giving up, because
+  than re-drawing. **The 90° corner is WALKED since bead `godot-test1-8gw.24`** — it used
+  to be a `sqrt(2) x lane` jump (12.2 m on the pavement, 4.5 m on the old ±3.2 lanes),
+  because the offset paths of two perpendicular streets cross at a point the walker never
+  visited. `_plan_corner` picks the next street's lane ONE BLOCK EARLY and ends the leg at
+  that crossing point, so the walker rounds the corner on foot and the rendered position
+  does not move at the turn at all; both cross terms are axis-aligned, so it is arithmetic
+  (`u` slides the leg's end along the street it is already on — short of the intersection
+  on an inside corner, past it on an outside one — and `s` re-bases onto the new street),
+  the base lands back on an exact grid intersection every leg so nothing drifts, and
+  straight-on and U-turn legs are byte for byte what they were. `crowd_selfcheck` check 12
+  now holds a turn to the SAME per-frame bound as every other step, with the retired
+  arrival branch written out beside it as the mutation control (12.19 m against a 0.093 m
+  bound). `_pick_lane` tries **both** pavements before giving up, because
   `BUDAPEST_MIN.x == GATE.x` puts the gate avenue's west pavement outside the rect and a
   single-draw version dropped half its walkers onto that carriageway's centreline. **And
   a lane is validated along the WHOLE leg, never at its base** (`_lane_walkable`, both ends

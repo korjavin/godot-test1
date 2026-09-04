@@ -31,16 +31,31 @@ var _base_alpha: float = 0.5
 var _material: StandardMaterial3D = null
 
 ## The one unit sphere every wave ever drawn shares (see setup()).
-static var _shared_sphere_mesh: SphereMesh = null
+static var _shared_sphere_mesh: ArrayMesh = null
 
 
-static func _get_shared_sphere_mesh() -> SphereMesh:
+static func _get_shared_sphere_mesh() -> ArrayMesh:
+	"""
+	The shared wave shell, at the world's OWN sphere resolution and faceting
+	(bead godot-test1-y1o.16). It was a 16x8 smooth SphereMesh — the finest
+	sphere anywhere in the game, against the chunk batch's 8x4 blobs and the
+	x7k clouds — which read as a billiard ball rolling out of a faceted world.
+
+	It borrows ChunkBatch's UNIT_SPHERE_* segment counts rather than restating
+	8 and 4, so the shockwave can never drift away from the silhouette the
+	SPHERE box kind draws, and goes through the same _flat_faceted_mesh() as
+	that kind so both are per-face shaded. NOTE: this material is UNSHADED
+	(see setup()), so the facets read today purely as the octagonal SILHOUETTE
+	— the flat normals are what keeps the mesh right if the wave ever takes a
+	lit or toon material.
+	"""
 	if _shared_sphere_mesh == null:
-		_shared_sphere_mesh = SphereMesh.new()
-		_shared_sphere_mesh.radius = 1.0
-		_shared_sphere_mesh.height = 2.0
-		_shared_sphere_mesh.radial_segments = 16
-		_shared_sphere_mesh.rings = 8
+		var sphere := SphereMesh.new()
+		sphere.radius = 1.0
+		sphere.height = 2.0
+		sphere.radial_segments = ChunkBatch.UNIT_SPHERE_RADIAL
+		sphere.rings = ChunkBatch.UNIT_SPHERE_RINGS
+		_shared_sphere_mesh = ChunkBatch._flat_faceted_mesh(sphere)
 	return _shared_sphere_mesh
 
 
