@@ -1223,7 +1223,8 @@ means devices sharing the id, and nothing transfers one.
 ### Synthesized audio — no asset files
 `scripts/sound_manager.gd` generates every sound in code as an `AudioStreamWAV`. **There
 are no audio asset files**; keep it that way. One-shots ride a round-robin player pool;
-named ambient beds come from `get_loop_player(name)`.
+there is no ambient bed running continuously — beds and looping cues are event-driven
+(e.g. heartbeat under danger, rain in storm zones) and fetched via `get_loop_player(name)`.
 
 **Browsers block audio until a user gesture**, so every `play_*` early-returns until
 `unlock_audio()` fires. Don't add a path that bypasses that gate; a `get_loop_player` voice
