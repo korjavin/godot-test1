@@ -162,7 +162,25 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            the row really drawn, `tile_state()` reports CAPTIVE
 #                            so the overlay leaves the cell bars alone, and
 #                            `voice_chat`'s mirrored copy of that constant is
-#                            bound to the real one
+#                            bound to the real one. Check 7 is VOICE ON THE ROW:
+#                            the five MIC_BADGE_* numbers and the speaking green
+#                            bound to voice_chat's and remote_avatar's, the real
+#                            voice module answering NOTHING off-web, a stub
+#                            driven through every mic state (with the four badge
+#                            colours held separable), deafen as a SECOND axis,
+#                            the per-tile ring mask, `badge_on_tile` /
+#                            `deafen_on_tile` as `_draw`'s two decisions (a
+#                            `_draw` outside the tree has no canvas item, so
+#                            they are the only part of the painting a headless
+#                            check can reach) with the BENCHED row — driven hero
+#                            captive, no ACTIVE tile — keeping its badge, and
+#                            the two degrades that matter: no voice node leaves
+#                            the snapshot exactly bead .7's, and a speaking
+#                            claim with no room lights nothing. Check 7b
+#                            EXECUTES the real `voice_chat` ladders with
+#                            `_is_web` forced on and a stub manager, because
+#                            check 7 only meets them off-web where both return
+#                            on their first line
 #   landmark_selfcheck       every builder fits its declared radius AND its
 #                            declared top
 #   landmark_sites_selfcheck THE MUSEUM MILE: every field kind sited AT MOST ONCE
@@ -1183,10 +1201,24 @@ consumer beads are filed from that report.
 `scripts/player_controller.gd` (a `CharacterBody3D`). Character switching on R (`switch_character`) cycles
 `CHARACTERS`, freeing and re-instancing under `$CharacterModel`.
 
+**THE ANIMATION LIVES IN `scripts/player_animation.gd`** (`class_name PlayerAnimation`,
+bd `godot-test1-ftn.9`) — the limb references, `original_rotations`, the `GAITS` table
+and `gait_for()`, the walk / idle / air / sidestep cycles, `relax_gait_extras()` /
+`reset_sidestep_pose()`, and the cel-shading applied to a model on the swap path. The
+body keeps movement, capture, respawn, the input map and every contract method the
+`"player"` group answers. It is a `RefCounted` HOLDING the player (`player.anim`, wired
+in `_init()`), not `landmark_builders.gd`'s static-library contract, because the pose IS
+state; it reaches back through `player` for what the BODY owns (`is_on_floor()`, the
+landing squash, the Teibi scale, the sidestep flags, `_sfx`), and that direction is
+one-way. The reference is deliberately untyped — `player_controller.gd` carries no
+`class_name`, so there is no type to write and no cycle to create. `remote_avatar.gd`
+reads `PlayerAnimation.gait_for()` / `GAIT_HITCH_RATIO` off the class; the four
+selfchecks that drive a real `player.tscn` reach `player.anim.<field>` directly.
+
 **There is no `AnimationPlayer`.** Limb animation is sine waves driven onto child nodes
 looked up **by exact name**: `Body`, and under it `LeftArm` / `RightArm` / `LeftLeg` /
-`RightLeg`. A new playable character scene must use these names or it loads and stays
-frozen.
+`RightLeg` (plus an OPTIONAL `Head`). A new playable character scene must use these names
+or it loads and stays frozen.
 
 **Camera rig is `$CameraPivot/CameraArm/Camera3D`, and `CameraArm` is a `SpringArm3D`,
 which overwrites its children's local position every physics frame.** Nothing may write
@@ -1896,7 +1928,10 @@ state machine and imports no network types, so tests drive it directly.
 
 ### Mesh (`scripts/mp_manager.gd` and friends)
 `lobby_client.gd` (socket + `/ice`), `mp_manager.gd` (mesh, seed, presence, heroes, shared
-totals, crocodile sync, claims), **`mp_codec.gd` (the pure codec)**, `remote_avatar.gd`
+totals, claims), **`mp_codec.gd` (the pure codec)**, **`mp_croc_sync.gd` (`MpCrocSync`,
+static, manager-first-arg — the crocodile sync send/receive/timeout handlers, the id
+cache and the `kill`/`dead` ruling; the room's state stays on the manager and the
+`CROC_SYNC_*` consts are aliased back)**, `remote_avatar.gd`
 (visual only), `mp_ui.gd`, `teammate_locator.gd`.
 
 **THE PARSERS ARE `MpCodec`, THE HANDLERS ARE `MpManager`, and that seam is the file
@@ -2047,8 +2082,9 @@ touches `JavaScriptBridge`.
   `"id:level,…,me:level"` (integers 0-100 — one bridge call per poll, never one per peer,
   and never a boolean) off one `AnalyserNode` per stream; `apply_levels()` parses it at
   10 Hz into a 150 ms HOLD per id, because speech is gaps and a dot driven off the
-  instantaneous level strobes between syllables. It drives two surfaces and no third: the
-  MP panel's per-member row and `RemoteAvatar.set_speaking()`, which only recolours the
+  instantaneous level strobes between syllables. It drives three surfaces and no fourth: the
+  MP panel's per-member row, the hero row's speaking ring (below) and
+  `RemoteAvatar.set_speaking()`, which only recolours the
   `NameTag` `Label3D` that already exists — **the avatar gains no node**, so
   `mp_selfcheck`'s isolation walk is untouched. The avatar is reached by node name
   (`Peer_<id>`) rather than a new getter, which is what keeps the `mp_manager` seam three
@@ -2086,6 +2122,33 @@ touches `JavaScriptBridge`.
   button — mobile is out of scope) would hide it; the browser's own F11 sets no
   `fullscreenElement` and is fine. The documented fallback is the bead's ImageTexture
   frame-copy path.
+- **VOICE IS ON THE ALWAYS-VISIBLE HUD, AS TWO GLYPHS AND NO TEXT** (bead
+  `godot-test1-xtr.8`, owner: *"in MP game there should be an indication on HUD of mic
+  state and when someone is speaking"*). The MP panel and the name tags both have to be
+  LOOKED at; the portrait row does not. `hero_hud.gd` draws a MIC BADGE (idle grey /
+  transmitting green / muted red-slash / denied amber, plus a headphone-slash beside it
+  while deafened — mute and deafen are two axes and get two corners) and a pulsing green
+  SPEAKING RING on the tile of whichever hero's HOLDER is
+  talking. Glyphs, so **nothing was added to `ui.csv`**; vertex-drawn in `_draw()`, so no
+  texture and no node. The two questions are answered by `voice_chat.gd` —
+  `mic_badge()` and `is_hero_speaking()`, which owns the hero -> holder mapping and the
+  browser's `me` level key beside the camera tiles that already need both — and read off
+  group `"voice"` with `has_method` guards, so **off the web, with no voice node, or
+  outside a room the row DRAWS exactly what bead .7's did** and costs two dynamic
+  dispatches a frame. The green is
+  `remote_avatar.LABEL_SPEAKING_COLOR`, mirrored and bound by `hero_hud_selfcheck` check 7.
+  Three rules of its own:
+  **the badge rides the hero you DRIVE, never the ACTIVE tile** — captivity outranks
+  ACTIVE and the prison role never switches character, so a benched peer's row has NO
+  active tile, which is exactly the moment somebody is on the microphone;
+  **`mic_badge()` reads the CACHED `_reported_mic`, never `mic_denied()`** — its caller is
+  a `_process`, and `mic_denied()` is a `JavaScriptBridge` round trip, so a live read there
+  would be 60 bridge calls a second on the one build this epic is for (every other bridge
+  reader in that file is throttled to 2-10 Hz for the same reason; `mp_ui` keeps the live
+  read because it asks once per panel refresh);
+  and **the ring's pulse is QUANTIZED** (`RING_PULSE_STEPS` at `RING_PULSE_HZ`) and folded
+  into the row's repaint-on-change snapshot, because a continuous sine would repaint every
+  frame for as long as anybody talks — the one thing this widget has never done.
 
 ## Performance & web build
 

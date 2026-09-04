@@ -87,7 +87,7 @@ const STRIDE_FREQUENCY: float = 1.6
 
 ## The swing amplitudes are NO LONGER COPIED. They used to be three floats
 ## duplicated out of `animate_walking()` — cheap, until each hero got their own
-## walk. `PLAYER_SCRIPT.gait_for()` is a static, total, pure read of a script
+## walk. `PlayerAnimation.gait_for()` is a static, total, pure read of a script
 ## const (the shape `hero_hud.gd` uses to reach `CHARACTERS`), so this stays a
 ## visual-only node holding no reference to the player controller, and a
 ## teammate's Teibi stomps like yours with no netcode at all.
@@ -165,8 +165,8 @@ var right_leg: Node3D = null
 ## simply gets no bobble.
 var character_head: Node3D = null
 
-## The shown hero's `PlayerController.GAITS` row, resolved once per model swap.
-var _gait: Dictionary = PLAYER_SCRIPT.gait_for("")
+## The shown hero's `PlayerAnimation.GAITS` row, resolved once per model swap.
+var _gait: Dictionary = PlayerAnimation.gait_for("")
 
 ## Rest rotations captured the moment the model is instanced, exactly as
 ## player_controller.setup_animation_references() does — every animated pose is
@@ -312,7 +312,7 @@ func set_character(index: int) -> void:
 	character_index = index
 	# This hero's walk personality, resolved here for the same reason the player
 	# resolves it in set_active_character(): a swap is rare, a frame is not.
-	_gait = PLAYER_SCRIPT.gait_for(String(PLAYER_SCRIPT.CHARACTERS[index]["name"]))
+	_gait = PlayerAnimation.gait_for(String(PLAYER_SCRIPT.CHARACTERS[index]["name"]))
 
 	character_node = scene.instantiate()
 	model_root.add_child(character_node)
@@ -543,7 +543,7 @@ func _animate(delta: float) -> void:
 
 	# The hitch — the player's second, incommensurate sine, off the phase this
 	# node already keeps. It scales AMPLITUDE only, exactly as it does locally.
-	var wobble: float = sin(stride_phase * PLAYER_SCRIPT.GAIT_HITCH_RATIO + float(_gait["phase"]))
+	var wobble: float = sin(stride_phase * PlayerAnimation.GAIT_HITCH_RATIO + float(_gait["phase"]))
 	var hitch: float = 1.0 + float(_gait["hitch"]) * wobble
 	var arm: float = deg_to_rad(float(_gait["arm_deg"])) * hitch
 	var leg: float = deg_to_rad(float(_gait["leg_deg"])) * hitch
