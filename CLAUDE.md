@@ -346,6 +346,18 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            against the real capsule and TEIBI_SCALE_SMALL and
 #                            asserted to be a dead end; and one dossier taken
 #                            for real coins, hidden, and refusing to pay twice
+#   tower_guard_selfcheck    the HQ's guards, split off tower_interior by bd
+#                            godot-test1-ftn.25 (CI shards the glob BY FILE) with
+#                            the check NUMBERS unchanged: 12 the posts (counted off
+#                            the BODIES, GUARDS_PER_STOREY_MAX, the capsule through
+#                            every doorway), 13 the population resets and the opened
+#                            set does not, 14 the leash held against a real 8 s
+#                            chase, and 21/21b the lure — one storey DRIVEN, the
+#                            other seventeen (post, plate) pairs routed on the plans
+#   tower_block_lure_selfcheck
+#                            check 21c ALONE, and alone because it is a minute: the
+#                            cell block's guard walks 60 m of route to a plate, holds
+#                            facing it, and walks off again. Same split
 #   capture_selfcheck        SYSTEMIC CAPTURE and the tower guard's stake: the
 #                            arming gate (pre/post the
 #                            authored beat), attribution (every `captures_hero`
