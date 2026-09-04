@@ -47,6 +47,10 @@ extends Node3D
 ##     STREET NETWORK in the bubble rather than uniformly in r off a snapped
 ##     intersection, MIN_WALKER_SPACING is enforced at spawn, and a recycle goes
 ##     to the far half of the bubble. Read that function for the measurement.
+##   * Corners (bead 8gw.24): a walker WALKS ROUND a 90-degree corner instead of
+##     teleporting sqrt(2) x lane across it. `_plan_corner` picks the next
+##     street's lane one block early and ends the leg at the point where the two
+##     offset paths cross — read that function for the arithmetic.
 
 # ============================================================================
 # CONSTANTS — budgets, distances, and grid
@@ -680,14 +684,12 @@ func _pick_lane(base: Vector3, heading: Vector2, to: Vector3) -> float:
 	## and on an avenue that is a 17.2 m sideways jump across both car lanes in
 	## one frame (6.4 m on an ordinary street). The caller owns that condition.
 	##
-	## ponytail: A 90-DEGREE TURN STILL JUMPS, by `sqrt(2) * lane` (12.2 m on the
-	## pavement, 4.5 m on the ±3.2 lanes it has always cost). A lane is an offset
-	## along the heading's perpendicular, so turning rotates it onto the other
-	## axis — the offset PATHS of two perpendicular streets meet at a corner the
-	## walker never visits. Closing it means walking to that corner, which needs
-	## the NEXT lane before the next street is picked: a two-leg waypoint model,
-	## its own bead. `crowd_selfcheck` check 12 bounds the corner off this
-	## constant so it cannot grow quietly in the meantime.
+	## A 90-degree turn used to JUMP the walker by `sqrt(2) * lane` here, because
+	## the offset paths of two perpendicular streets meet at a corner the old
+	## model never visited. `_plan_corner` walks that corner now (bead
+	## godot-test1-8gw.24) and is this function's one turn-side caller — it asks
+	## one block EARLY, which is the whole point: the corner cannot be placed
+	## without knowing the next lane before the turn.
 	var lane: float
 	if walks_an_avenue(base, heading):
 		lane = PAVEMENT_LANE_OFFSET if _rng.randf() < 0.5 else -PAVEMENT_LANE_OFFSET
@@ -709,6 +711,71 @@ func _pick_lane(base: Vector3, heading: Vector2, to: Vector3) -> float:
 	# degrade rather than a good lane — the car still brakes for whoever stands
 	# there. With the mirror above there is no shipped street that reaches here.
 	return 0.0
+
+
+func _plan_corner(citizen: Dictionary, node: Vector3, heading: Vector2, lane: float) -> void:
+	## THE TWO-LEG CORNER (bead godot-test1-8gw.24), planned ONE BLOCK EARLY.
+	##
+	## A walker is drawn at `base + lane * perp(heading)`, so a 90-degree turn
+	## rotates its lane onto the other axis: the two offset paths are
+	## perpendicular and cross at a point the old model never visited, and the
+	## walker crossed it in a single frame — `sqrt(2) * lane`, 12.2 m on the
+	## pavement. That point is the PAVEMENT CORNER,
+	##
+	##     C = node + lane * perp(heading) + next_lane * perp(next_heading)
+	##
+	## and placing it needs the NEXT street's lane BEFORE the turn — which is why
+	## the next street is chosen here, at the START of the leg that ends at
+	## `node`, rather than on arrival.
+	##
+	## Both cross terms are axis-aligned, which is what makes this arithmetic and
+	## not geometry: on a 90-degree turn `perp(next_heading)` is parallel to
+	## `heading`, so in BASE coordinates C is just `node` slid `u` metres along
+	## the street the walker is already on — SHORT of the intersection on an
+	## inside corner, PAST it on an outside one, exactly like a pedestrian. The
+	## turn then re-bases onto the new street by the mirror term `s`. Both are
+	## exact, so the RENDERED position does not move at all across the turn: the
+	## whole discontinuity now lives in `pos`, which nothing draws, and the base
+	## lands back on an exact grid intersection at the end of every leg so no
+	## drift accumulates.
+	##
+	## Straight on and a U-turn both give u = s = 0 — those legs are byte for
+	## byte what they always were.
+	##
+	## ponytail: a walker SPAWNED within `u` of its first intersection walks the
+	## few metres back to the corner (its first leg points backwards). It is
+	## continuous, it looks like somebody who turned round, and it is the one leg
+	## in a walk that can be short — every later leg is at least
+	## `STREET_PITCH - 2 * PAVEMENT_LANE_OFFSET` (44.8 m) long.
+	var nxt := _pick_next_waypoint(node, heading)
+	var d := Vector2(nxt.x - node.x, nxt.z - node.z)
+	var next_h: Vector2 = d.normalized() if d.length_squared() > 0.01 else heading
+	var next_lane: float
+	if next_h.is_equal_approx(-heading):
+		# A U-TURN walks the SAME street line, so the same pavement is still the
+		# right pavement — but `perp` turns round with the heading, so the stored
+		# value has to turn with it or the citizen crosses the road to stand on
+		# the other side of it.
+		next_lane = -lane
+	elif next_h.is_equal_approx(heading):
+		# Carrying straight on: the lane is NOT re-drawn. A fresh draw is a sign
+		# flip half the time, and on an avenue that is a 17.2 m sideways teleport
+		# across both car lanes for a citizen that never turned.
+		next_lane = lane
+	else:
+		next_lane = _pick_lane(node, next_h, nxt)
+	var u: float = next_lane * Vector2(-next_h.y, next_h.x).dot(heading)
+	var s: float = lane * Vector2(-heading.y, heading.x).dot(next_h)
+	var corner := node + Vector3(heading.x, 0.0, heading.y) * u
+	citizen["target"] = corner
+	# The plan is stamped with the point it is FOR, so a harness that plants a
+	# walker by overwriting `target` invalidates it instead of inheriting a turn
+	# meant for somewhere else.
+	citizen["corner_for"] = corner
+	citizen["corner_pos"] = node + Vector3(next_h.x, 0.0, next_h.y) * s
+	citizen["corner_heading"] = next_h
+	citizen["corner_lane"] = next_lane
+	citizen["corner_node"] = nxt
 
 
 func _too_close_to_walker(world_pos: Vector3) -> bool:
@@ -816,15 +883,18 @@ func _assign_citizen_from_segment(citizen: Dictionary, seg: Dictionary) -> void:
 	# lerped because its start was an intersection, and lerping now would pull
 	# every draw back toward the corners this sampler exists to get away from.
 	citizen["pos"] = start_pt
-	citizen["target"] = end_pt
 	var heading: Vector2 = (seg["dir"] as Vector2).normalized()
 	citizen["heading_dir"] = heading
 	citizen["facing_yaw"] = atan2(-heading.x, -heading.y)
 	# The lane the sampler already cleared against every other walker — re-drawing
 	# it here would throw that clearance away. `_pick_lane` is the fallback for a
 	# caller that built a segment by hand (a harness, a probe).
-	citizen["lane_offset"] = float(seg["lane"]) if seg.has("lane") \
+	var lane: float = float(seg["lane"]) if seg.has("lane") \
 			else _pick_lane(start_pt, heading, end_pt)
+	citizen["lane_offset"] = lane
+	# `end_pt` is the grid intersection this first leg runs to; the leg's real
+	# target is the pavement corner just before or just after it.
+	_plan_corner(citizen, end_pt, heading, lane)
 	citizen["speed"] = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
 	citizen["walk_phase"] = _rng.randf_range(0.0, TAU)
 	citizen["pause_timer"] = 0.0
@@ -933,33 +1003,28 @@ func _update_walkers(delta: float, lod_gated: bool = false) -> void:
 			if dist <= step or dist < 0.05:
 				pos = target
 				citizen["walk_phase"] += dist * STRIDE_FREQUENCY
-				# Reached crossing: chance to pause
+				# Reached the pavement corner: chance to pause
 				if _rng.randf() < 0.25:
 					citizen["pause_timer"] = _rng.randf_range(0.6, 2.0)
-				# Pick next intersection
-				var was_heading: Vector2 = citizen["heading_dir"]
-				var next_target := _pick_next_waypoint(pos, was_heading)
-				citizen["target"] = next_target
-				var delta_x: float = next_target.x - pos.x
-				var delta_z: float = next_target.z - pos.z
-				if Vector2(delta_x, delta_z).length_squared() > 0.01:
-					citizen["heading_dir"] = Vector2(delta_x, delta_z).normalized()
-				# THE LANE IS RE-ASKED ON A TURN AND ONLY ON A TURN. A citizen that
-				# walked off a side street onto an avenue keeping its old ±3.2 m
-				# lane would be standing in the traffic (see PAVEMENT_LANE_OFFSET),
-				# but `_pick_next_waypoint` carries straight on 60% of the time and
-				# a fresh draw there flips the SIGN half of those — a 17.2 m
-				# sideways teleport across both car lanes, once a block, for a
-				# citizen that never turned.
-				var new_h: Vector2 = citizen["heading_dir"]
-				if new_h.is_equal_approx(-was_heading):
-					# A U-TURN walks the SAME street line, so the same pavement is
-					# still the right pavement — but `perp` turned round with the
-					# heading, so the stored value has to turn with it or the
-					# citizen crosses the road to stand on the other side of it.
-					citizen["lane_offset"] = -float(citizen["lane_offset"])
-				elif not new_h.is_equal_approx(was_heading):
-					citizen["lane_offset"] = _pick_lane(pos, new_h, next_target)
+				# THE TURN ITSELF (bead 8gw.24) — the lane, the heading and the
+				# next street were all decided a block ago by `_plan_corner`, and
+				# the walker is standing on the point where the two offset paths
+				# cross, so taking them now moves the RENDERED position nowhere.
+				# The plan is honoured only if it is the plan for the point really
+				# reached; a harness that plants a walker by writing `target`
+				# invalidates it, and this degrades to picking the next street
+				# from wherever the walker stands, which is what it did before.
+				var node: Vector3 = pos
+				var heading: Vector2 = citizen["heading_dir"]
+				var lane: float = float(citizen["lane_offset"])
+				if citizen.get("corner_for", null) == target:
+					pos = citizen["corner_pos"]
+					heading = citizen["corner_heading"]
+					lane = citizen["corner_lane"]
+					node = citizen["corner_node"]
+					citizen["heading_dir"] = heading
+					citizen["lane_offset"] = lane
+				_plan_corner(citizen, node, heading, lane)
 			else:
 				var move_dir := to_target / dist
 				var next_pos := pos + move_dir * step

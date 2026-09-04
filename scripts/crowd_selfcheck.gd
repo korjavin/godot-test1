@@ -52,13 +52,14 @@ extends SceneTree
 ##      a bridge deck's DRY rect covers the centreline but not the lane, so a
 ##      base-only test walked citizens out over the water; non-vacuity is the
 ##      count of walkers that came within reach of the band.
-##  12. A WALKER NEVER TELEPORTS MID-BLOCK (bead 8gw.23): over 2,000 driven
-##      steps, no citizen that did not TURN moves further in one frame than its
-##      own top speed allows — which is how a lane re-drawn on a straight step
-##      shows up (a sign flip is 17.2 m sideways on an avenue) — a turn is
-##      bounded by the lane geometry instead of forbidden (read the check's
-##      header for why the corner is a known discontinuity), and the spawn
-##      clearance is measured on the positions walkers really stand at.
+##  12. A WALKER NEVER TELEPORTS, MID-BLOCK OR AT A CORNER (beads 8gw.23 and
+##      8gw.24): over 2,000 driven steps NO citizen moves further in one frame
+##      than its own top speed allows — on a straight step that is how a lane
+##      re-drawn when nothing turned shows up (a sign flip is 17.2 m sideways on
+##      an avenue), and on a TURN it is the corner waypoint, which since 8gw.24
+##      is held to the very same bound. The retired arrival branch is written
+##      out here as the mutation control and must blow it. The spawn clearance
+##      is measured on the positions walkers really stand at.
 ##   7. THE COARSE TICK (bead 8gw.22): a citizen the camera cannot see is ticked
 ##      a few times a second by the REAL elapsed time — it ADVANCES, it is never
 ##      frozen — a null camera degrades to full-rate updates for everything, and
@@ -1347,17 +1348,22 @@ func _check_car_never_drives_through_a_citizen() -> void:
 #     ordinary street). The proxy pool follows the citizen, so it is a collider
 #     jumping through the hero too.
 #
-#     THE MEASUREMENT IS PER-FRAME WORLD DISPLACEMENT ON A STEP THAT DID NOT
-#     TURN, and the exclusion is not a loophole — it is the shipped lane model.
-#     A lane is an offset along the heading's PERPENDICULAR, so a 90° turn
-#     rotates it: leaving the value alone, a walker at +8.6 m on a street of
-#     constant Z is at -8.6 m along X the instant it turns, `sqrt(2) * lane`
-#     away. That corner has always been a jump (±3.2 m lanes made it 4.5 m; the
-#     pavement makes it 12.2 m) and closing it needs the walker to cut the
-#     corner of its OWN offset path, which means knowing the next lane before it
-#     picks the next street — a waypoint model this bead did not come to write.
-#     So the turn is bounded instead of forbidden, which is what stops it
-#     growing quietly, and `ponytail:` in `_pick_lane` names the upgrade.
+#     THE MEASUREMENT IS PER-FRAME WORLD DISPLACEMENT, and SINCE BEAD 8gw.24 a
+#     TURN IS HELD TO THE SAME BOUND AS ANY OTHER STEP. A lane is an offset
+#     along the heading's PERPENDICULAR, so a 90° turn rotates it: leaving the
+#     value alone, a walker at +8.6 m on a street of constant Z was at -8.6 m
+#     along X the instant it turned, `sqrt(2) * lane` = 12.2 m away, in one
+#     frame. `_plan_corner` closed that by picking the next street's lane one
+#     block EARLY and ending the leg where the two offset paths cross, so the
+#     walker rounds the corner on foot. The turn is still counted separately
+#     here — but only so the check can say a turn was exercised at all and so
+#     the retired model can be run beside it as the mutation control.
+#
+#     THE MUTATION CONTROL is `_retired_turn_step`: the arrival branch exactly as
+#     it stood before the corner leg, driven on the same crowd, which must blow
+#     the same bound. Without it "the corner is bounded" is a claim about code
+#     nobody re-ran — the check-10 precedent, where the retired sampler is
+#     written out and has to fail.
 #
 #     `_update_walkers` is driven DIRECTLY rather than through `_process`: the
 #     spawn/recycle pass legitimately teleports (that is what a recycle IS), so
@@ -1379,16 +1385,78 @@ const WALK_STEPS: int = 2000
 const MAX_STEP_FACTOR: float = 2.0
 
 
+func _retired_turn_step(citizen: Dictionary, dt: float) -> void:
+	## THE RETIRED TURN — the mutation control for the corner waypoint (bead
+	## 8gw.24). This is `_update_walkers`'s arrival branch as it stood before
+	## `_plan_corner` existed: the walker reaches the grid INTERSECTION and its
+	## lane rotates onto the new axis in that same frame. Trimmed to exactly the
+	## state the bound measures (pos / target / heading / lane) — the pause roll,
+	## the kerb rule, the animation and the proxy pool cannot move a walker
+	## sideways, so leaving them out cannot flatter the control.
+	var pos: Vector3 = citizen["pos"]
+	var target: Vector3 = citizen["target"]
+	var to_target: Vector3 = target - pos
+	var dist := to_target.length()
+	var step: float = float(citizen["speed"]) * dt
+	if dist > step and dist >= 0.05:
+		citizen["pos"] = pos + to_target / dist * step
+		return
+	citizen["pos"] = target
+	var was: Vector2 = citizen["heading_dir"]
+	var nxt: Vector3 = _manager._pick_next_waypoint(target, was)
+	citizen["target"] = nxt
+	var d := Vector2(nxt.x - target.x, nxt.z - target.z)
+	if d.length_squared() > 0.01:
+		citizen["heading_dir"] = d.normalized()
+	var now_h: Vector2 = citizen["heading_dir"]
+	if now_h.is_equal_approx(-was):
+		citizen["lane_offset"] = -float(citizen["lane_offset"])
+	elif not now_h.is_equal_approx(was):
+		citizen["lane_offset"] = _manager._pick_lane(target, now_h, nxt)
+
+
+func _worst_turn_jump(cits: Array, retired: bool, bound: float) -> Dictionary:
+	## Walks the live crowd for WALK_STEPS and reports the worst per-frame world
+	## displacement, split on whether the citizen turned that frame. `retired`
+	## drives `_retired_turn_step` instead of the shipped `_update_walkers`, which
+	## is the only difference between the subject and the control.
+	var prev: Array[Vector3] = []
+	var prev_h: Array[Vector2] = []
+	prev.resize(cits.size())
+	prev_h.resize(cits.size())
+	for i in cits.size():
+		prev[i] = CrowdScript._citizen_world_pos(cits[i])
+		prev_h[i] = cits[i]["heading_dir"]
+	var out := {"straight": 0.0, "straight_at": -1, "corner": 0.0, "turns": 0}
+	for _f in WALK_STEPS:
+		if retired:
+			for c: Dictionary in cits:
+				if c["active"]:
+					_retired_turn_step(c, DT)
+		else:
+			_manager._update_walkers(DT, false)
+		for i in cits.size():
+			if not cits[i]["active"]:
+				continue
+			var now: Vector3 = CrowdScript._citizen_world_pos(cits[i])
+			var h: Vector2 = cits[i]["heading_dir"]
+			var moved := Vector2(now.x - prev[i].x, now.z - prev[i].z).length()
+			if h.is_equal_approx(prev_h[i]):
+				if moved > float(out["straight"]):
+					out["straight"] = moved
+					out["straight_at"] = i
+			else:
+				out["turns"] = int(out["turns"]) + 1
+				out["corner"] = maxf(float(out["corner"]), moved)
+			prev[i] = now
+			prev_h[i] = h
+	return out
+
+
 func _check_walkers_never_teleport() -> void:
+	# ONE bound for every frame of a walk, turning or not (bead 8gw.24): nothing
+	# in a walk can outrun its own speed, and rounding a corner is walking.
 	var bound: float = CrowdScript.WALK_SPEED_MAX * DT * MAX_STEP_FACTOR
-	# The corner's own bound, off the lane geometry rather than a number typed
-	# here: the widest lane rotated 90 degrees, plus one step of walking.
-	# A 90-degree turn rotates the lane onto the other axis, so the two offsets are
-	# perpendicular and the jump is sqrt(2) x lane. A U-TURN is not in this bound
-	# on purpose: it keeps the same street line and the shipped code flips the
-	# stored value with the heading, so it moves the walker NOWHERE — leaving the
-	# looser 2 x lane here would stop measuring that.
-	var corner_bound: float = sqrt(2.0) * CrowdScript.PAVEMENT_LANE_OFFSET + bound
 	_manager._hide_all()
 	_player.position = Vector3(2600.0, 1.0, 0.0)
 	# The SPAWN PASS ALONE, not `_process`: the movement pass would step every
@@ -1422,34 +1490,11 @@ func _check_walkers_never_teleport() -> void:
 			% [worst_gap, CrowdScript.MIN_WALKER_SPACING])
 
 	# (a) THE WALK ITSELF, split on whether the citizen turned that frame.
-	var prev: Array[Vector3] = []
-	var prev_h: Array[Vector2] = []
-	prev.resize(cits.size())
-	prev_h.resize(cits.size())
-	for i in cits.size():
-		prev[i] = CrowdScript._citizen_world_pos(cits[i])
-		prev_h[i] = cits[i]["heading_dir"]
-	var worst_step: float = 0.0
-	var worst_at: int = -1
-	var worst_corner: float = 0.0
-	var turns: int = 0
-	for _f in WALK_STEPS:
-		_manager._update_walkers(DT, false)
-		for i in cits.size():
-			if not cits[i]["active"]:
-				continue
-			var now: Vector3 = CrowdScript._citizen_world_pos(cits[i])
-			var h: Vector2 = cits[i]["heading_dir"]
-			var moved := Vector2(now.x - prev[i].x, now.z - prev[i].z).length()
-			if h.is_equal_approx(prev_h[i]):
-				if moved > worst_step:
-					worst_step = moved
-					worst_at = i
-			else:
-				turns += 1
-				worst_corner = maxf(worst_corner, moved)
-			prev[i] = now
-			prev_h[i] = h
+	var walk := _worst_turn_jump(cits, false, bound)
+	var worst_step: float = float(walk["straight"])
+	var worst_at: int = int(walk["straight_at"])
+	var worst_corner: float = float(walk["corner"])
+	var turns: int = int(walk["turns"])
 	if turns < 20:
 		_failures.append("check 12 saw only %d turns in %d steps — the corner bound below"
 			% [turns, WALK_STEPS] + " was never exercised. A 62 m block at ~2.3 m/s is"
@@ -1459,16 +1504,35 @@ func _check_walkers_never_teleport() -> void:
 			+ " bound of %.3f m (WALK_SPEED_MAX x %.3f x %.0f). A walk cannot outrun its own"
 			+ " speed, so this is the lane jumping sideways — _pick_lane must be asked on a"
 			+ " TURN and only on a turn.") % [worst_at, worst_step, bound, DT, MAX_STEP_FACTOR])
-	if worst_corner > corner_bound:
-		_failures.append(("a walker moved %.2f m through a CORNER, past the %.2f m the lane"
-			+ " geometry allows (sqrt(2) x PAVEMENT_LANE_OFFSET + one step). The turn is a"
-			+ " known discontinuity — see this check's header — but it is bounded by the"
-			+ " widest lane, and this is wider than that.") % [worst_corner, corner_bound])
+	if worst_corner > bound:
+		_failures.append(("a walker moved %.2f m through a CORNER, against the same %.3f m"
+			+ " bound every other frame is held to. Rounding a corner is WALKING since bead"
+			+ " 8gw.24: `_plan_corner` picks the next street's lane a block early and ends"
+			+ " the leg where the two offset paths cross, so the rendered position must not"
+			+ " move at the turn at all.") % [worst_corner, bound])
 	else:
 		print("walk continuity: %d walkers, %d steps, worst straight frame %.4f m (bound"
 			% [live, WALK_STEPS, worst_step]
-			+ " %.4f); %d corners, worst %.2f m (bound %.2f); closest spawn pair %.2f m"
-			% [bound, turns, worst_corner, corner_bound, worst_gap])
+			+ " %.4f); %d corners, worst %.4f m (same bound); closest spawn pair %.2f m"
+			% [bound, turns, worst_corner, worst_gap])
+
+	# (c) THE MUTATION CONTROL: the retired arrival branch on a freshly filled
+	# crowd. It has to blow the bound the shipped walk just met, or "the corner is
+	# bounded" is a statement about a model nobody ran.
+	_manager._hide_all()
+	_manager._update_crowd_spawns(DT, _player.position, no_planes)
+	var retired := _worst_turn_jump(_manager.get("_citizens"), true, bound)
+	if int(retired["turns"]) < 20:
+		_failures.append("check 12's mutation control saw only %d turns — it proves nothing"
+			% int(retired["turns"]))
+	elif float(retired["corner"]) <= bound:
+		_failures.append(("check 12's mutation control (the retired turn, which rotates the"
+			+ " lane at the intersection) stayed inside %.3f m at its worst corner (%.4f m)."
+			+ " It is supposed to jump sqrt(2) x lane, so this check can no longer tell the"
+			+ " corner waypoint apart from its absence.") % [bound, float(retired["corner"])])
+	else:
+		print("  mutation control (retired turn): worst corner %.2f m, past the %.3f m bound"
+			% [float(retired["corner"]), bound])
 	_manager._hide_all()
 	Sentinel.done("walkers_never_teleport")
 
