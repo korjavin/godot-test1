@@ -889,6 +889,13 @@ func _check_the_ai_says_who_bit() -> void:
 		var body: Node = load(HUNTER_SCENE if label == "hunter_robot" else CROC_SCENE).instantiate()
 		# `species` BEFORE add_child: _ready() is where the row resolves into `spec`.
 		body.species = label
+		# ...and STOOD OFF, for the reason the guard block below spells out and check
+		# 20 hit for real: a body added at the origin is added on top of the player,
+		# and the awaited frame is an unbounded number of physics ticks. The
+		# explicit call below is what this block measures, and it lands at any
+		# distance; an incidental grab during the staging would only make the
+		# measurement mean something else.
+		(body as Node3D).position = Vector3(PROBE_STANDOFF, 0.0, 0.0)
 		root.add_child(body)
 		await process_frame
 		if String(body.spec.get("behavior", "")) != ("hunt" if label == "hunter_robot" else "solo"):
@@ -3017,24 +3024,35 @@ func _check_a_hunter_walks_in_and_takes_a_hero() -> void:
 		# `species` BEFORE add_child, the same call-order contract every spawner
 		# honours: `_ready()` is where the row resolves into `spec`.
 		hunter.species = HUNTER_ROW
-		root.add_child(hunter)
-		await process_frame
-		(hunter as Node3D).global_position = Vector3(WALK_IN_START, 0.0, 0.0)
 
+		# ...AND SO IS THE POSITION, AND SO IS THE MUTATION. A body added at the
+		# origin is added ON TOP OF the player, and `await process_frame` is one
+		# PROCESS frame but an unbounded number of PHYSICS ticks — up to
+		# `max_physics_steps_per_frame` (8) — so on a loaded runner the shipped
+		# `_physics_process` lands a grab in that window, before either line below
+		# would have run. That takes the subject for a reason this check is not
+		# measuring and, far worse, takes it in the CONTROL with the capsule still
+		# armed. It is `_make_player`'s documented race one body along; reproduce
+		# the old behaviour with `godot --headless --fixed-fps 5 ...`, which fails
+		# every time. `position` rather than `global_position` because the node is
+		# not in the tree yet, and `root`'s transform is identity.
 		var capsule := hunter.get_node_or_null("CollisionShape3D") as CollisionShape3D
 		if capsule == null or capsule.shape == null:
 			_fail("the shipped hunter scene has no CollisionShape3D — this check cannot "
 					+ "measure the contact path and its mutation control is vacuous")
-			_clear(player)
 			hunter.queue_free()
+			_clear(player)
 			probe_floor.queue_free()
 			await process_frame
 			Sentinel.done("a_hunter_walks_in_and_takes_a_hero")
 			return
+		capsule.disabled = not solid
+		(hunter as Node3D).position = Vector3(WALK_IN_START, 0.0, 0.0)
+		root.add_child(hunter)
+		await process_frame
 		if not bool(hunter.spec.get("captures_hero", false)):
 			_fail("the probe hunter resolved a row with no `captures_hero` — it is on the "
 					+ "crocodile fallback, so this check would be asking an animal to arrest")
-		capsule.disabled = not solid
 
 		var took := false
 		for _i: int in WALK_IN_FRAMES:
