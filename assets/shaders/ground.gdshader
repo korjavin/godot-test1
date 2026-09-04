@@ -137,7 +137,7 @@ const int ALT_ROAD_SEG_MAX = 24;
 // spike exists to measure.
 const float ALT_NORMAL_EPS = 1.0;
 uniform float alt_enabled = 0.0;                // 0 = the flat world, byte for byte
-uniform vec2 alt_offset = vec2(0.0);            // ALT_OFFSET_SALT: altitude's OWN
+uniform vec2 alt_offset = vec2(37.0, 71.0);     // ALT_OFFSET_SALT: altitude's OWN
                                                 // domain shift, added ON TOP of
                                                 // biome_offset so hills never
                                                 // correlate with biomes

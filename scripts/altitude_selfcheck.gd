@@ -234,6 +234,30 @@ func _check_flag_is_off() -> void:
 		_fail("alt_force defaults to true — the self-check seam must be off for the game")
 	terrain.free()
 
+	# NOBODY IN THE GAME MAY WRITE alt_force. Reading the default back off a fresh
+	# node (above) cannot see a writer anywhere in scripts/ — and alt_force is a
+	# plain public var whose whole contract, stated in its own docstring and in
+	# alt_enabled()'s, is that only a self-check ever assigns it. pause_selfcheck
+	# scans the same glob for `tree.paused` writers for the same reason: an
+	# invariant a source scan can settle should not be left to review.
+	var writer_re := RegEx.new()
+	if writer_re.compile("alt_force\\s*=[^=]") != OK:
+		_fail("the alt_force-writer regex would not compile — check 1's source scan would pass vacuously")
+	var dir := DirAccess.open("res://scripts")
+	if dir == null:
+		_fail("could not open res://scripts — check 1's source scan would pass vacuously")
+		Sentinel.done("flag_is_off")
+		return
+	var names: PackedStringArray = dir.get_files()
+	if names.size() < 20:
+		_fail("res://scripts listed only %d files — check 1's source scan would pass vacuously" % names.size())
+	for name: String in names:
+		if not name.ends_with(".gd") or name.ends_with("_selfcheck.gd"):
+			continue  # the seam exists FOR the checks; they are the sanctioned writers
+		var source: String = FileAccess.get_file_as_string("res://scripts/" + name)
+		if writer_re.search(source) != null:
+			_fail("scripts/%s assigns alt_force — it is the self-check seam alone, and a game script writing it turns the spike on for players while the shipped FIELD_ALTITUDE is still false" % name)
+
 	for seed_value: int in SEEDS:
 		var t := _make_terrain(seed_value)
 		var rng := RandomNumberGenerator.new()
@@ -648,10 +672,15 @@ func _check_shader_parity() -> void:
 	# measures the value PUSHED, so without this a retuned ALT_CELL_SIZE leaves
 	# `uniform float alt_cell_size = 260.0;` stale and the editor preview — and any
 	# future check that loads the shader without the terrain — draws a field nobody
-	# ships. Scalars only: alt_offset's default is a vec2 and is asserted by hand
-	# below, and the array uniforms carry no meaningful default.
+	# ships. Only the array uniforms are exempt (a GLSL array default carries no
+	# meaningful value); BOTH SHAPES ARE PARSED, float and vec2, because the
+	# float-only version of this leg could not see either vec2 — and alt_offset,
+	# the one uniform that moves every hill in the world at once, was declared
+	# vec2(0.0) against ALT_OFFSET_SALT (37, 71) with nothing red.
 	var default_re := RegEx.new()
 	default_re.compile("uniform\\s+float\\s+(alt_\\w+)\\s*=\\s*([-0-9.]+)\\s*;")
+	var default_vec2_re := RegEx.new()
+	default_vec2_re.compile("uniform\\s+vec2\\s+(alt_\\w+)\\s*=\\s*vec2\\(([^)]*)\\)\\s*;")
 	var defaults_checked := 0
 	for m: RegExMatch in default_re.search_all(shader_text):
 		var uniform_name := m.get_string(1)
@@ -664,11 +693,34 @@ func _check_shader_parity() -> void:
 			_fail("ground.gdshader declares '%s = %s' but %s is %s — the shader's own header promises they are equal, and a material nobody fed draws a field nobody ships" % [
 				uniform_name, m.get_string(2), const_name, str(consts[const_name])])
 		defaults_checked += 1
-	if defaults_checked == 0:
-		_fail("check 4 parsed ZERO alt_* uniform defaults out of ground.gdshader — the declared-default leg passed vacuously")
+	var vec2_defaults_checked := 0
+	for m: RegExMatch in default_vec2_re.search_all(shader_text):
+		var uniform_name := m.get_string(1)
+		var const_name := uniform_name.to_upper()
+		if uniform_name == "alt_offset":
+			const_name = "ALT_OFFSET_SALT"  # the one uniform not named after its const
+		if not consts.has(const_name):
+			continue  # leg (b) already failed this one by name
+		# `vec2(a)` is GLSL's splat, so one argument means both components.
+		var parts := m.get_string(2).split(",", false)
+		var declared_default := Vector2.ZERO
+		if parts.size() == 1:
+			declared_default = Vector2.ONE * parts[0].strip_edges().to_float()
+		elif parts.size() == 2:
+			declared_default = Vector2(parts[0].strip_edges().to_float(), parts[1].strip_edges().to_float())
+		else:
+			_fail("ground.gdshader declares '%s = vec2(%s)' — neither the splat nor the two-component form, so check 4 cannot read its default" % [
+				uniform_name, m.get_string(2)])
+		if declared_default.distance_to(consts[const_name] as Vector2) > 1e-6:
+			_fail("ground.gdshader declares '%s = %s' but %s is %s — the shader's own header promises they are equal, and a material nobody fed draws a field nobody ships" % [
+				uniform_name, str(declared_default), const_name, str(consts[const_name])])
+		vec2_defaults_checked += 1
+	if defaults_checked == 0 or vec2_defaults_checked == 0:
+		_fail("check 4 parsed %d float and %d vec2 alt_* uniform defaults out of ground.gdshader — the declared-default leg passed vacuously" % [
+			defaults_checked, vec2_defaults_checked])
 
-	# ALT_OFFSET_SALT by hand, since it is one of the three exceptions and is the
-	# one that would silently move every hill in the world.
+	# ALT_OFFSET_SALT's PUSHED value by hand, since it is the one uniform not named
+	# after the constant it carries and so leg (b) skips it.
 	if (mat.get_shader_parameter("alt_offset") as Vector2).distance_to(t.ALT_OFFSET_SALT) > 1e-6:
 		_fail("alt_offset was pushed as %s, not ALT_OFFSET_SALT %s — the GPU's altitude field would be domain-shifted away from the CPU's" % [
 			str(mat.get_shader_parameter("alt_offset")), str(t.ALT_OFFSET_SALT)])
@@ -810,6 +862,30 @@ func _check_ground_collision() -> void:
 			_fail("chunk %s heightmap scale is %s, not a uniform %.6f (alt_ground_cell())" % [
 				str(chunk_pos), str(cs.scale), cell])
 			continue
+		# THE SHAPE HAS TO BE WHERE THE CHUNK IS. Every sample below is derived
+		# from chunk_to_world(), so a shape (or the StaticBody3D between it and the
+		# chunk) offset in X, Y or Z leaves all 324 comparisons per chunk passing
+		# while the floor sits somewhere the vertex shader drew nothing. The
+		# heightmap is centred on its own node by Godot, so "centred on the chunk"
+		# is exactly "both intervening transforms are identity".
+		if cs.position != Vector3.ZERO:
+			_fail("chunk %s heightmap shape is offset %s from its body — the floor is displaced from the surface the vertex shader drew, and every sample below would still agree" % [
+				str(chunk_pos), str(cs.position)])
+			continue
+		var ground_body := cs.get_parent() as Node3D
+		if ground_body == null or ground_body.position != Vector3.ZERO:
+			_fail("chunk %s ground body is offset %s from the chunk" % [
+				str(chunk_pos), "missing" if ground_body == null else str(ground_body.position)])
+			continue
+		# THE CULL VOLUME, the other thing a vertex-displaced chunk needs and the
+		# renderer cannot work out for itself: the shared PlaneMesh's AABB is flat,
+		# so without a per-instance custom_aabb a hilltop is culled with the quad
+		# under it. Asserted to CONTAIN this chunk's real height range, which also
+		# pins ALT_AMP_MAX to the ladder — a rung raised past it fails here.
+		var mesh_node := node as MeshInstance3D
+		if mesh_node == null or mesh_node.custom_aabb.size == Vector3.ZERO:
+			_fail("chunk %s has no custom_aabb with the flag on — the displaced ground is frustum-culled against a zero-height box and hillsides pop at the screen edge" % str(chunk_pos))
+			continue
 		var origin: Vector3 = t.chunk_to_world(chunk_pos)
 		var half: float = t.chunk_size / 2.0
 		var data: PackedFloat32Array = shape.map_data
@@ -822,6 +898,12 @@ func _check_ground_collision() -> void:
 				var got: float = float(data[iz * side + ix]) * cs.scale.y
 				var delta: float = absf(got - t.height_at(world_x, world_z))
 				worst = maxf(worst, delta)
+				# Against the cull volume, in the chunk's OWN local space (which is
+				# what custom_aabb is in). This is what makes ALT_AMP_MAX a measured
+				# bound rather than a hand-picked rung of the ladder.
+				if not mesh_node.custom_aabb.has_point(Vector3(world_x - origin.x, got, world_z - origin.z)):
+					_fail("chunk %s: the displaced surface reaches %.3f m at (%.1f, %.1f), outside custom_aabb %s — that hillside is culled while it is on screen, and ALT_AMP_MAX no longer bounds the amplitude ladder" % [
+						str(chunk_pos), got, world_x, world_z, str(mesh_node.custom_aabb)])
 				sampled += 1
 		if worst > HEIGHTMAP_EPSILON:
 			_fail("chunk %s: the collision heightmap is %.6f m off height_at() — the floor you stand on is not the ground you see" % [
@@ -913,6 +995,18 @@ func _check_field_is_walkable() -> void:
 					if s > worst_skirt:
 						worst_skirt = s
 						skirt_at = q
+		# THE FIELD HAS TO BE ALIVE FIRST. Every assertion below is an UPPER bound,
+		# so a height_at() that returned 0.0 everywhere — the whole heightfield
+		# deleted, or alt_force silently stopping — leaves worst, worst_skirt and
+		# worst_mountain all exactly 0.0 and this check green. Checks 2-5 all go
+		# red on a dead field; this was the only one that did not, and the printed
+		# report numbers below would have been read off zero samples.
+		if worst <= 0.0 or worst_skirt <= 0.0:
+			_fail("seed %d: the field is FLAT (worst slope %.6f, worst skirt %.6f) with the spike forced on — check 6's bounds would pass on a heightfield that does not exist" % [
+				seed_value, worst, worst_skirt])
+		if mountain_samples == 0:
+			_fail("seed %d: not one of the %d samples landed in the MOUNTAIN band — the mountain figure this check reports, and the impassability argument that reads it, would be printed off nothing" % [
+				seed_value, WALK_SAMPLES])
 		if worst > MAX_WALKABLE_SLOPE:
 			_fail("seed %d: the field reaches %.3f m per metre at (%.1f, %.1f), over MAX_WALKABLE_SLOPE %.1f — that face is a wall the player slides off, not ground" % [
 				seed_value, worst, worst_at.x, worst_at.y, MAX_WALKABLE_SLOPE])

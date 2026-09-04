@@ -1832,6 +1832,12 @@ const ALT_AMP_FOREST: float = 6.0
 const ALT_AMP_MOUNTAIN: float = 22.0
 const ALT_AMP_SNOW: float = 16.0
 
+## The tallest rung of the ladder above, DERIVED so retuning any amplitude carries
+## the cull volume with it. It is not a shader uniform — nothing in ground.gdshader
+## wants it — it is only what _ensure_chunk_ground sizes a displaced chunk's
+## custom_aabb from, and the field is a SIGNED half-range so the box spans +/- it.
+const ALT_AMP_MAX: float = ALT_AMP_MOUNTAIN
+
 ## THE FOUR FORCED-FLAT ZONES' SKIRTS (see _alt_flat_mask below). Each zone is a
 ## hard inner region where the ground is held at exactly y = 0, plus a smoothstep
 ## SKIRT out to the number here — the ground has to arrive at the authored zone
@@ -4177,6 +4183,16 @@ func _ensure_chunk_ground(chunk_pos: Vector2i) -> MeshInstance3D:
 		# height by the same factor to cancel it back out.
 		collision_shape.scale = Vector3.ONE * alt_ground_cell()
 		ground_collision_usec_total += Time.get_ticks_usec() - started_usec
+		# THE CULL VOLUME, because the displacement is a VERTEX SHADER and the
+		# renderer cannot see it. The shared PlaneMesh's AABB is chunk_size x 0 x
+		# chunk_size, so a chunk whose flat quad is just outside the frustum has
+		# its 22 m hilltop culled with it and the hillside pops. PER-INSTANCE — the
+		# shared mesh resource is untouched, and the flag-off branch below sets
+		# nothing at all, so today's world keeps today's AABB exactly.
+		var half_span := chunk_size / 2.0
+		mesh_instance.custom_aabb = AABB(
+				Vector3(-half_span, -ALT_AMP_MAX, -half_span),
+				Vector3(chunk_size, 2.0 * ALT_AMP_MAX, chunk_size))
 	else:
 		# TODAY'S FLOOR, byte for byte: one box the width of the chunk, 0.1 m
 		# thick. This is what ships (FIELD_ALTITUDE is false) and the branch above
@@ -9800,8 +9816,13 @@ func _alt_road_window() -> float:
 	lattice snap asks for. A straight road needs the bare product; anything else
 	needs the binary search either side of it to land inside the cache.
 	"""
+	# _road_spacing(), NOT the raw road_coin_spacing export: asserts are stripped
+	# from release builds, so a designer's 0 leaves the stations still stepping by
+	# the clamped 0.1 m while this window collapsed to zero — the corridor would
+	# silently stop being flattened while the road it belongs to still existed.
+	# Every road step routes through that one clamp; so does this one.
 	return float(ALT_ROAD_SEG_MAX / 2 * ALT_ROAD_SEG_STRIDE + ALT_ROAD_SEG_STRIDE) \
-			* road_coin_spacing
+			* _road_spacing()
 
 
 func _alt_road_segments(center_x: float) -> PackedVector4Array:

@@ -108,11 +108,24 @@ Four things hold it, and each is an assertion rather than a convention.
    with `biome_offset`, because fp32 addition is not associative and the shader must
    add the two terms in `height_at()`'s order.
 2. **An independent oracle.** `altitude_selfcheck`'s `fp32_parity` re-derives
-   `hash2` / `value_noise` **from the GLSL text**, `Vector2`-routed, and compares it
-   against the shipped `_alt_value_noise_pair` at 10,000 points: bit-exact on the
+   `hash2` / `value_noise` as a SECOND implementation, `Vector2`-routed, and compares
+   it against the shipped `_alt_value_noise_pair` at 10,000 points: bit-exact on the
    noise, ≤ 1e-4 m on the composed height. Its **negative control** is an fp64 oracle
    in bare scalars, which must DISAGREE at > 1% of points — without that leg the check
    has no teeth.
+
+   **Its ceiling, stated because a reader will otherwise over-read it.** The oracle is
+   a hand transcription held current by the same edited-together rule the parity
+   contract already runs on — nothing in the suite *parses* a GLSL function body, so an
+   edit to `hash2`, `value_noise`, `alt_amplitude` or `field_height` inside the shader
+   is invisible to it (`shader_parity` covers uniform names, pushed values, declared
+   defaults and the array packing only). And the routing is strict fp32 inside `hash2`;
+   `value_noise`'s smootherstep and its three blends, and the amplitude ladder's
+   `lerpf`/`smoothstep` rungs, are f64 on both sides of the comparison, so those share
+   a rounding rather than eliminating it. Measured residual against a true fp32 model:
+   ~2–5 µm at the 22 m mountain amplitude, three orders under the 1 mm the collision
+   heightmap is asserted to. It is a bound, not a proof — and it is a bound a consumer
+   bead that tightens a skirt should re-measure rather than inherit.
 3. **Text parity both ways.** `shader_parity` is `budapest_selfcheck._check_parity`'s
    idiom: every `alt_*` uniform DECLARED in the shader must be pushed by
    `endless_terrain.gd`, and every one pushed must be declared, matched as a
@@ -151,8 +164,8 @@ path is inert — which is the branch's merge condition.
 
 | check | verdict | first failure | consumer it guards | migration size |
 |---|---|---|---|---|
-| `altitude_selfcheck` | RED **by design** | `FIELD_ALTITUDE is true in the committed tree — the spike ships false (see the flag's docstring)` | the spike's own merge condition: the flag ships false, `alt_enabled` is pushed as 0.0, the ground shape is a `BoxShape3D` and the timed heightmap block is never entered | none — this check is written to be red exactly while the flag is on locally, and its remaining seven checks all passed with the flag on |
-| `chunk_stream_selfcheck` | RED | `safety-ring chunk (-1, -1) is in active_chunks but has no ground collision box` (all 9 ring chunks) | **the ground floor is a chunk-spanning `BoxShape3D`** — `_has_ground_collision` at `scripts/chunk_stream_selfcheck.gd:312` measures the real shape, and a `HeightMapShape3D` is not one | **small** — the helper becomes "a `BoxShape3D` spanning the chunk, or a `HeightMapShape3D` of `GROUND_SUBDIVISIONS + 1` samples covering it"; one helper, both branches, no other assertion in that file moves |
+| `altitude_selfcheck` | RED **by design** | `FIELD_ALTITUDE is true in the committed tree — the spike ships false (see the flag's docstring)` | the spike's own merge condition: the flag ships false, `alt_enabled` is pushed as 0.0, the ground shape is a `BoxShape3D` and the timed heightmap block is never entered | none — this check is written to be red exactly while the flag is on locally. Its six checks report failures ONLY where they assert the flag itself: `flag_is_off` entirely, `shader_parity`'s off-leg (which re-pushes with `alt_force = false` and demands `alt_enabled == 0.0`) and `ground_collision`'s flag-off leg (which demands a `BoxShape3D` and a zero timer). Every flag-ON leg of all six passed |
+| `chunk_stream_selfcheck` | RED | `safety-ring chunk (-1, -1) is in active_chunks but has no ground collision box` (all 9 ring chunks) | **the ground floor is a chunk-spanning `BoxShape3D`** — `_has_ground_collision` at `scripts/chunk_stream_selfcheck.gd:312` measures the real shape, and a `HeightMapShape3D` is not one | **small** — the helper becomes "a `BoxShape3D` spanning the chunk, or a `HeightMapShape3D` of `ALT_GROUND_SIDE` × `ALT_GROUND_SIDE` samples covering it"; one helper, both branches, no other assertion in that file moves. **Spell it `ALT_GROUND_SIDE`, never `GROUND_SUBDIVISIONS + 1`** — that is the exact off-by-one recorded above, and re-typing it here would certify a floor 5.2 cm off the drawn surface a second time |
 
 ### The finding that matters more than the red list
 
@@ -193,7 +206,9 @@ Two consequences for the migration, and both are load-bearing:
 |---|---|---|
 | `HeightMapShape3D` build, per chunk | **2,741 µs** (9 chunks, 24,672 µs total) | `altitude_selfcheck` check 5, `ground_collision_usec_total` |
 | `height_at()` per call | **~8.5 µs** (324 calls per chunk — `ALT_GROUND_SIDE`² = 18², the mesh's real vertex grid) | the same, divided out |
-| the synchronous safety ring, one boundary crossing | **~25 ms in ONE frame** | 9 ring chunks × 2,741 µs |
+| the synchronous safety ring, one WORLD (RE)BUILD | **~25 ms in ONE frame** | 9 ring chunks × 2,741 µs |
+| the same, per ordinary walking boundary crossing | **0 µs** | `update_chunks` STEP 3 skips a chunk already in `active_chunks`, and `_ensure_chunk_ground` early-returns for one anyway — at `render_distance = 5` the whole `SYNC_RING` 3×3 is already inside the previous 11×11 |
+| what walking DOES pay | **~2.7 ms on each of 11 frames** per crossing (7 on web) | the newly-in-range chunks are grounded inside `create_chunk`, which `_process` drains one per frame |
 | max height delta per metre, whole field | **0.591 / 0.557 / 0.644** over three seeds | check 6, against a 1.0 (45°) bound |
 | the same, mountain band only | **0.502 / 0.457 / 0.361** | check 6 |
 | the same, on the road corridor's SKIRT | **0.385 / 0.197 / 0.167** | check 6 — sampled separately because the ±5 km box essentially never lands on a 40 m ramp, and the skirts are the steepest ground in the field by construction |
@@ -201,13 +216,21 @@ Two consequences for the migration, and both are load-bearing:
 
 Two of those are findings and not just numbers:
 
-- **The 25 ms frame is the spike's headline cost.** `update_chunks` gives the safety
-  ring its GROUND synchronously because the floor is the whole fall-through
-  guarantee, and the heightmap build lands inside that synchronous path. It is a
-  visible hitch on a chunk-boundary crossing and it is **a migration finding, not
-  something the spike fixes** — the counter exists to make it visible. The obvious
-  answers (fewer samples than the visual grid, a cached noise row, building the
-  shape off the frame) are all consumer-1 work below.
+- **The 25 ms frame is the spike's headline cost — but it is paid on a world
+  (RE)BUILD, not on walking.** `update_chunks` gives the safety ring its GROUND
+  synchronously because the floor is the whole fall-through guarantee, and the
+  heightmap build lands inside that synchronous path. Nine chunks land in one frame
+  only when the ring is built from nothing: startup, `new_run()`, and
+  `build_ring_now()` from a join or an F2/F8 teleport — or when the drain is already
+  backlogged. An ordinary one-chunk walking crossing grounds **zero** chunks
+  synchronously (the 3×3 ring is already inside the previous 11×11 and
+  `_ensure_chunk_ground` is idempotent); what it pays instead is **2.7 ms added to
+  each of the 11 one-chunk-per-frame drain steps**, which is the number consumer 1
+  actually has to budget against and the one that decides whether this is a hitch or
+  a sustained frame-time floor. Both are **a migration finding, not something the
+  spike fixes** — the counter exists to make them visible. The obvious answers (fewer
+  samples than the visual grid, a cached noise row, building the shape off the frame)
+  are all consumer-1 work below.
 - **The field is walkable with ~35% headroom**, so the residual
   mountain-impassability risk is a gentle rise against a massif wall and **not** a
   ramp over it. That is a bound, not a proof: a rise that lifts the ground beside a
@@ -285,6 +308,7 @@ means the suite certifies the migration silently.
 | 9 | **Mountain impassability** | **medium** | `enemy_spawn_selfcheck` + a NEW check (there is none today) | jump apex 3.6125 m under `MOUNTAIN_MIN_LAYER_HEIGHT` 4.0, and no skill touches `JUMP_VELOCITY`; a massif's blocks sit at y = 0 while the ground beside them rises. Needs 3 first, because "the wall's base" is a block base |
 | 10 | **The minimap's flat assumptions** | **small** | `minimap_selfcheck` | it reads the world in XZ; last because nothing depends on it |
 | 11 | **The ground plane's shadow flag** | **small** | nothing today | `_ensure_chunk_ground` sets `SHADOW_CASTING_SETTING_OFF` on the comment "a flat ground plane can only ever shadow itself", which stops being true the moment it is displaced — hills would need to shade valleys and today they cannot. **Not a free flip**: it is a shadow-pass cost, which is exactly the cost that produced Budapest's no-shadow ruling (`godot-test1-8gw.9`, 19 ms/frame), so it must be MEASURED on web and not assumed. Visual only, so it can come last |
+| 12 | **The ground plane's CULL VOLUME** | **done in the spike** | `altitude_selfcheck` check 5 | Item 11's neighbour, on the same reasoning one step further: the displacement is a VERTEX SHADER and the renderer culls on the MESH's AABB, which for the shared flat `PlaneMesh` is `chunk_size × 0 × chunk_size`. Without a per-instance `custom_aabb` a chunk whose flat quad falls outside the frustum takes its 22 m hilltop with it and the hillside pops at the screen edge — and it would have quietly understated the draw-call column of every reading in this report. `_ensure_chunk_ground` now sets one from `ALT_AMP_MAX` in the flag-on branch only; check 5 asserts the box CONTAINS each chunk's real height range, which is what keeps `ALT_AMP_MAX` bound to the amplitude ladder rather than hand-picked |
 
 Two rules the order encodes:
 
