@@ -509,11 +509,33 @@ def export_faceted(mesh: trimesh.Trimesh, path) -> None:
     its "averaged" normal IS that face's normal: style A's faceted read, with no
     smoothing groups, no per-face material and no extra draw call. The assert is
     the cheap proof that the unmerge happened, on every build of every model.
+
+    THE NORMALS ARE COMPUTED HERE AND NOT BY TRIMESH, AND THAT IS A PORTABILITY
+    REQUIREMENT, not a preference. `mesh.vertex_normals` goes through
+    `weighted_vertex_normals`, which weights each face by the CORNER ANGLE —
+    `np.arccos` in `trimesh.triangles.angles`. arccos is libm, and libm is not
+    bit-identical between macOS/arm64 and the Linux/x86-64 runner, so the
+    exported floats came out one ulp apart on the three models whose geometry is
+    ROTATED (green_dragon, hydra, roc — the `wings()` and `necks()` consumers;
+    an axis-aligned box has exact normals with nothing to round). CI byte-compares
+    the rebuild against the committed artifact, so an ulp is a red build. Every
+    step below is IEEE-754 correctly rounded — subtract, multiply, add, sqrt,
+    divide, and no transcendental anywhere — so it gives the same bytes on every
+    platform. It is also the RIGHT answer rather than a near one: after the
+    unmerge each vertex belongs to exactly one face, so the angle weighting is a
+    single term and the correct result IS the face normal. `unitize_normals=False`
+    keeps trimesh from re-normalising through `np.dot` on the way out.
     """
     mesh.unmerge_vertices()
     assert len(mesh.vertices) == 3 * len(mesh.faces), \
         f"{path}: {len(mesh.vertices)} verts for {len(mesh.faces)} faces — not unmerged"
-    mesh.export(path, include_normals=True)
+    tri = mesh.vertices[mesh.faces]
+    face_n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    length = np.sqrt((face_n * face_n).sum(axis=1))
+    assert length.min() > 1e-12, \
+        f"{path}: a degenerate (zero-area) face has no normal"
+    mesh.vertex_normals = np.repeat(face_n / length[:, None], 3, axis=0)
+    mesh.export(path, include_normals=True, unitize_normals=False)
 
 
 def save(parts, name: str, scale: float = 1.0, symmetric: bool = True) -> trimesh.Trimesh:
