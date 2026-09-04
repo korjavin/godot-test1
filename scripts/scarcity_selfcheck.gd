@@ -225,6 +225,19 @@ func _check_every_biome(terrain_script: GDScript, consts: Dictionary) -> void:
 	functions `_artifact_at` / `_camp_at` / `_chest_at` / `_landmark_at`. That is
 	every family that puts something on the ground outside Budapest and the HQ.
 
+	`_landmark_at` IS STILL IN THE SWEEP AND STILL ANSWERS 0 OUT THERE, and the
+	reason it does changed under bead `godot-test1-bcf` without this check moving.
+	A field landmark is no longer a rarity roll compared against `chance * k` — it
+	is ONE SITE PER KIND, chosen from `run_seed` alone along the museum mile, so
+	there is no population left for a gradient to thin (see the MUSEUM MILE banner
+	in `endless_terrain.gd` for why multiplying a single existence by k is a
+	lottery and not a gradient). The FAR FIELD is still empty of landmarks and this
+	check still measures it, because every site is placed on the road corridor or
+	in a 2.5 km annulus around it and FAR_CENTRE is 12 km out — the far field holds
+	no site to find. So the row stays in the loop below rather than being exempted
+	by name: it is a real, measured zero, and a future placement that flung a
+	landmark past the plain distance would fail here on purpose.
+
 	THE MASSIF IS THE ONE EXEMPTION and it is asserted POSITIVELY: a far MOUNTAIN
 	chunk must still build biome boxes, because massifs are the impassable walls
 	the flat-world invariant substitutes for terrain (owner ruling 2026-09-04,

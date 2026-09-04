@@ -95,6 +95,20 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            pinned to that corner, F3 included
 #   landmark_selfcheck       every builder fits its declared radius AND its
 #                            declared top
+#   landmark_sites_selfcheck THE MUSEUM MILE: every field kind sited AT MOST ONCE
+#                            (a 31x31 window through the shipped reverse lookup,
+#                            and the whole site table), no site in the HQ disc /
+#                            Budapest rect / spawn bubble / river with four
+#                            mutation controls, >= 2 x LANDMARK_RADIUS between
+#                            real built centres, a site-free chunk byte-identical
+#                            with landmarks on and off (crocodiles included) plus
+#                            `_landmark_at` read as TEXT for a draw or a k, the
+#                            built/on-the-mile floors (measured through the shipped
+#                            `create_chunk`, with the harness read as TEXT so it
+#                            can never drift back to a hand-rolled spawner order
+#                            that skips the artifact and the camp), a REALLY BUILT
+#                            marker walked up to through the shipped toast, and
+#                            check 1b: `set_run_seed()` drops the memo
 #   prop_selfcheck           prop/structure footprints, budgets, palettes
 #   scarcity_selfcheck       the distance gradient, ONE RULE FOR EVERY BIOME: the
 #                            k curve itself, then a near and a far field per
@@ -420,11 +434,29 @@ Load-bearing rules:
   index offsets are part of the world. Never a new draw. **EVERY content builder reads k**
   (bead `godot-test1-bn8` — it shipped as a per-family edit and oases, dunes, cacti and
   mammoths never got theirs); the mountain MASSIF is the single exemption (owner ruling
-  2026-09-04: it is the impassable wall, not decoration); and predators, hunters, bosses
+  2026-09-04: it is the impassable wall, not decoration); predators, hunters, bosses
   and road coins are **never** thinned, because fewer predators far out would reward
-  leaving. There are no off-road chunk coins — every non-road coin rides an artifact, camp,
-  chest or landmark and vanishes with it. `scarcity_selfcheck` iterates the `Biome` enum
+  leaving; and GEO LANDMARKS are outside the gradient entirely since bead
+  `godot-test1-bcf` — one site per kind in the whole world is not a population, so
+  there is nothing to thin (see the next bullet). There are no off-road chunk coins —
+  every non-road coin rides an artifact, camp, chest or landmark and vanishes with it. `scarcity_selfcheck` iterates the `Biome` enum
   over a near and a far field, so a builder that forgets k fails the build.
+- **A GEO LANDMARK KIND EXISTS EXACTLY ONCE IN A WORLD, and the placement is INVERTED**
+  (owner ruling 2026-09-04, bead `godot-test1-bcf`: *"for landmarks they should be
+  unique, each type exists once in our world"*). There is no rarity roll and no
+  `LANDMARK_CHANCE` any more: `landmark_sites()` gives every `LandmarkBuilders.LANDMARKS`
+  row ONE site — a chunk coordinate, pure in `run_seed`, built once per run and **dropped in
+  `set_run_seed()`, the one place the seed is written** (a memo that outlived a re-seed would
+  hand a multiplayer joiner the master's road with the LAST run's landmarks on it;
+  `new_run()` clears it again beside the road station cache it is derived from) — and
+  `_landmark_at` is a reverse lookup in that table. So the chunk stream sees **not one draw and not one hash**,
+  and a site is answerable for a chunk that has never streamed in. Sites are strung along
+  the MUSEUM MILE (the road from the HQ to the terminal station `T`, one kind per
+  `LANDMARK_MILE_SPACING` of X, 60-120 m off alternating sides) with the overflow in a
+  0.5-2.5 km annulus off the same centreline; illegal sites (HQ disc, Budapest rect, spawn
+  bubble, river, a chunk already taken) are resolved by deterministic re-hash, never a
+  draw. **Budapest's `CITY_LANDMARKS` are untouched** — 22 authored slots, a separate table
+  the field placement cannot reach. `landmark_sites_selfcheck` pins all of it.
 - **Ground is one shared `PlaneMesh` at y = 0**, shaded by `assets/shaders/ground.gdshader`.
 
 Features built this way: the coin road (a parametric station-indexed path whose X strictly
