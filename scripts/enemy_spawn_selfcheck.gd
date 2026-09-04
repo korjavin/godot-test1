@@ -4741,12 +4741,20 @@ func _sweep(terrain_script: GDScript, run_seed: int, spawn_height: float, edge_i
 			var solids: Array = []
 			for child in body.get_children():
 				var shape_node := child as CollisionShape3D
-				var box := shape_node.shape as BoxShape3D
+				# EVERY SHAPE AS ITS BOUNDING BOX, whatever create_box hung there.
+				# Since bead godot-test1-y1o.10 a near-round SPHERE / CYLINDER entry
+				# collides as a SphereShape3D / CylinderShape3D
+				# (ChunkBatch.collision_shape_for), so a bare `as BoxShape3D` reads
+				# null here and this loop would crash on `.size` the day a landmark
+				# builder put a boulder in a swept chunk. The bounding box is the
+				# right reduction for THIS check: it is a superset of the round
+				# collider, so "no crocodile spawns inside stone" stays conservative.
+				var half := _shape_half_extents(shape_node.shape)
 				# The shape carries the block's chunk-local transform (create_box
 				# assigns it whole); lift it to world so neighbours are comparable.
 				var world := Transform3D(shape_node.transform.basis,
 						shape_node.transform.origin + origin)
-				solids.append({ "inv": world.affine_inverse(), "half": box.size * 0.5 })
+				solids.append({ "inv": world.affine_inverse(), "half": half })
 			solid_count += solids.size()
 
 			chunk_solids[chunk_pos] = solids
@@ -5034,6 +5042,30 @@ func _sweep(terrain_script: GDScript, run_seed: int, spawn_height: float, edge_i
 			% [run_seed, counts["ground"], counts["platform"], counts["boss"], counts["hunter"], solid_count,
 			   platforms_seen * PLATFORM_ANGLE_SAMPLES, platforms_seen, humped_platforms])
 	print("seed %d: ground predators by species %s" % [run_seed, species_seen])
+
+
+func _shape_half_extents(shape: Shape3D) -> Vector3:
+	"""
+	Half the AABB of any shape `ChunkBatch.create_box` can hang on a chunk body.
+
+	Deliberately a LOCAL helper and not a public seam on ChunkBatch: the shipped
+	game never reads a chunk's collision shapes back, only this sweep does, and a
+	one-caller inverse of collision_shape_for() belongs beside its caller. An
+	unknown shape answers ZERO rather than guessing — a zero half-extent contains
+	nothing, so a shape this file does not understand can never silently PASS a
+	crocodile that is standing in it; the sweep just stops testing against that
+	one piece of stone, and check 4's solid_count still prints how many it saw.
+	"""
+	var box := shape as BoxShape3D
+	if box != null:
+		return box.size * 0.5
+	var sphere := shape as SphereShape3D
+	if sphere != null:
+		return Vector3.ONE * sphere.radius
+	var cyl := shape as CylinderShape3D
+	if cyl != null:
+		return Vector3(cyl.radius, cyl.height * 0.5, cyl.radius)
+	return Vector3.ZERO
 
 
 func _expected_species(terrain: Node, chunk_centre: Vector3) -> String:

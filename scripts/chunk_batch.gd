@@ -78,16 +78,24 @@ static var _shared_unit_box_mesh: BoxMesh
 ## meaningful, since its whole trick is that model-space `VERTEX.y` runs
 ## -0.5 .. +0.5 over any instance. `batch_selfcheck` asserts it per kind.
 ##
-## COLLISION IS UNCHANGED whatever the kind: create_box still hangs a BoxShape3D
-## of `dimensions` on the chunk's one body. It is conservative (a sphere's shape
-## is its bounding box) and the climbable-top contract wants a flat box top
-## anyway. So the RULE FOR CONSUMERS is: a non-CUBE kind is for `collide = false`
-## decoration and for NON-CLIMBABLE colliders — canopies, cacti, dome roofs.
-## Anything a player is meant to stand on stays CUBE.
-## `ponytail:` a tighter shape per kind (SphereShape3D, CylinderShape3D) is one
-## match arm in the collision half below — add it the day a consumer wants a
-## player to slide off a dome, not before.
+## COLLISION FOLLOWS THE KIND since bead godot-test1-y1o.10 — a near-round SPHERE
+## collides as a `SphereShape3D` and a near-round CYLINDER as a `CylinderShape3D`,
+## both INSCRIBED in `dimensions` exactly like the mesh. `collision_shape_for()`
+## below is the one home of that mapping and carries the whole argument, including
+## why a squashed box and every CONE keep their `BoxShape3D`. The shape COUNT is
+## untouched: every colliding entry still hangs exactly one shape.
+##
+## THE RULE FOR CONSUMERS is therefore no longer "non-CUBE means don't stand on
+## it" — a cylinder drum has a real flat top and a sphere a real curved one — but
+## it IS still: a CONE collides as a box, so nothing may stand on a cone, and a
+## climbable footprint (`obstacles`' flat-top contract, `_settle_coin_y`) wants a
+## CUBE or a CYLINDER and never a SPHERE.
 enum BoxKind { CUBE, SPHERE, CONE, CYLINDER }
+
+## Widest a round box may be, as a multiple of its narrowest axis, before its
+## collider falls back to the bounding box. Read only by collision_shape_for(),
+## whose docstring carries the measurement and the reasoning.
+const ROUND_COLLIDER_MAX_ASPECT: float = 1.6
 
 ## Lazily-created shared unit meshes for the NON-CUBE kinds, keyed by BoxKind.
 ## The cube keeps its own `static var` above because it is also handed out on its
@@ -287,7 +295,8 @@ static func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng
 	  the same — same shapes, sizes, yaw and earthy-colour ranges — only how they're
 	  SUBMITTED to the GPU changed.
 	- COLLISION (Task 5): this function no longer creates a per-block StaticBody3D.
-	  Instead it adds just a CollisionShape3D (with a BoxShape3D) as a child of the
+	  Instead it adds just a CollisionShape3D (with the shape collision_shape_for()
+	  picks for this `kind`) as a child of the
 	  CHUNK'S SINGLE shared `block_body`, positioning/rotating that shape node where
 	  the block is.
 
@@ -335,7 +344,8 @@ static func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng
 	                `tilt` and `color_override` this changes NO RNG behaviour: the
 	                colour and roughness draws above happen identically whatever
 	                `collide` is, so the deterministic world layout is untouched.
-	@param kind: OPTIONAL — WHICH SHARED UNIT MESH this entry draws (see the
+	@param kind: OPTIONAL — WHICH SHARED UNIT MESH this entry draws AND, through
+	             collision_shape_for(), which Shape3D it collides as (see the
 	             BoxKind banner up top for the unit-cube rule, the collision rule
 	             and the rule for consumers). Defaults to CUBE, so all 600-odd
 	             existing call sites are byte-for-byte what they were. Like every
@@ -470,19 +480,92 @@ static func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng
 	if not collide:
 		return
 
-	# A BoxShape3D OF `dimensions` WHATEVER THE KIND — the entry's bounding box,
-	# which every unit mesh fits inside. See the BoxKind banner for why that is
-	# conservative rather than wrong, and the rule it puts on consumers.
+	# ONE SHAPE PER KIND, resolved by collision_shape_for() — see its docstring
+	# for the aspect rule and why a squashed round box keeps its box. The shape
+	# node carries the SAME `rot` the visual did, which is what puts a cylinder's
+	# axis and a yawed box's faces where the mesh drew them.
 	var collision_shape := CollisionShape3D.new()
 	collision_shape.transform = Transform3D(rot, center_pos)
-
-	var box_shape := BoxShape3D.new()
-	box_shape.size = dimensions
-	collision_shape.shape = box_shape
+	collision_shape.shape = collision_shape_for(kind, dimensions)
 
 	# Add to the shared per-chunk body. (block_body is parented to the chunk by
 	# create_chunk once generation finishes, so all these shapes unload with the chunk.)
 	block_body.add_child(collision_shape)
+
+
+static func collision_shape_for(kind: int, dimensions: Vector3) -> Shape3D:
+	"""
+	The collision shape one batch entry hangs on the chunk's body — the ONE home
+	of "which `Shape3D` does a `BoxKind` collide as" (bead godot-test1-y1o.10).
+
+	Until this bead every kind collided as a `BoxShape3D` of `dimensions`, which
+	is conservative but WRONG TO WALK INTO: you stop 0.15-0.6 m short of a ball on
+	a diagonal and can stand on an invisible flat square over it. The field spends
+	152 colliding SPHEREs and 852 colliding CYLINDERs (Zugspitze scree, Trevi reef,
+	Space Needle foot pads, Rushmore boulders, Colosseum piers, Kinderdijk drums,
+	the Atomium base), so that is most of the round stone in the game.
+
+	  SPHERE   -> SphereShape3D, radius = the SMALLEST half-extent
+	  CYLINDER -> CylinderShape3D, radius = the smaller RADIAL half-extent,
+	              height = `dimensions.y`
+	  CONE, CUBE, anything unknown -> BoxShape3D of `dimensions`
+
+	THE RADIUS IS THE SMALLEST HALF-EXTENT, so the collider is INSCRIBED in the
+	entry's bounding box exactly like the unit mesh is (the BoxKind banner's one
+	rule). A collider that poked outside `dimensions` would put stone outside the
+	radius a landmark declares and the disc every spawner clears — the footprint
+	currency would stop bounding the geometry. Being inside is free: the box it
+	replaces was outside the mesh everywhere it mattered.
+
+	THE CYLINDER'S AXIS IS LOCAL Y AND IS NEVER SEARCHED FOR. `CylinderMesh` is
+	built along Y and `create_box` scales it with `rot.scaled_local(dimensions)`,
+	so the drawn cylinder's axis IS the entry's local +Y; `CylinderShape3D` is
+	also a Y-axis primitive and the shape node is handed the same `rot`. "The
+	box's long axis" would be a different thing and would stand the collider up
+	across a flat drum.
+
+	A SQUASHED ROUND BOX KEEPS ITS BOX, and `ROUND_COLLIDER_MAX_ASPECT` is where
+	the line is. A non-uniformly scaled sphere mesh draws an ELLIPSOID, and no
+	`SphereShape3D` is an ellipsoid — Godot cannot scale a sphere or a cylinder
+	shape non-uniformly. So the inscribed sphere is honest only while the box is
+	near-cubic: at aspect `a` it falls `(a - 1)` x the small radius short on the
+	LONG axis, while it is exact on the short axes and at every corner and the top
+	— which is where the box is worst (a unit sphere's box misses by 0.73 r at a
+	corner). At 1.6 the long-axis gap is still under the corner gap it removes, so
+	the round shape is never the worse answer; past it the ellipsoid is a real
+	ellipsoid and the bounding box is closer on the axes that matter. MEASURED over
+	all 28 field builders x 4 seeds: every colliding CYLINDER is 1.00-1.25 in plan
+	(84% dead round) and every colliding SPHERE 1.00-1.50 EXCEPT the Taj's dome
+	tiers at 2.25 (3.6 x 1.6 x 3.6), which really are squashed and really do keep
+	their box.
+	"""
+	match kind:
+		BoxKind.SPHERE:
+			var r: float = minf(dimensions.x, minf(dimensions.y, dimensions.z)) * 0.5
+			if maxf(dimensions.x, maxf(dimensions.y, dimensions.z)) <= r * 2.0 * ROUND_COLLIDER_MAX_ASPECT:
+				var sphere := SphereShape3D.new()
+				sphere.radius = r
+				return sphere
+		BoxKind.CYLINDER:
+			# RADIAL only: `dimensions.y` is the axis and is reproduced exactly, so
+			# a 20 m column on a 1 m drum is not "squashed" and stays a cylinder.
+			var radius: float = minf(dimensions.x, dimensions.z) * 0.5
+			if maxf(dimensions.x, dimensions.z) <= radius * 2.0 * ROUND_COLLIDER_MAX_ASPECT:
+				var cyl := CylinderShape3D.new()
+				cyl.radius = radius
+				cyl.height = dimensions.y
+				return cyl
+	# CONE keeps its box DELIBERATELY, and it is the one kind that stays wrong on
+	# purpose: `landmark_builders.gd`'s rule 5c makes a cone the piece that ENDS a
+	# taper, so its stone is a point at the top of a box-shaped ledge. Godot has no
+	# cone primitive, and the honest alternatives are a `ConvexPolygonShape3D` (a
+	# per-entry Resource, so no longer a shared cost) or `collide = false` (which
+	# moves a chunk's shape COUNT and is a builder's call, not this seam's).
+	# `landmark_selfcheck` check 9c is what keeps a cone off anything standable.
+	var box := BoxShape3D.new()
+	box.size = dimensions
+	return box
+
 
 static func _build_block_multimesh(parent_chunk: MeshInstance3D, block_batch: Array,
 		cast_shadows: bool = true) -> void:
@@ -718,14 +801,18 @@ static func split_city_boxes_on_chunk_grid(terrain: Node3D, chunk_center: Vector
 		# boxes; a sphere's are not spheres, so a non-CUBE entry is left whole and
 		# keeps the centre rule, exactly like a rotated box below.
 		#
-		# The COLLISION half further down cannot see this decision — it walks
-		# shapes, and a shape carries no kind — so a colliding non-cube box wider
-		# than a chunk would have its BoxShape3D cut while its visual stayed whole.
-		# That cannot happen today: this is the CITY path and Budapest is pure cube
-		# (budapest_selfcheck asserts a city chunk builds exactly one
-		# MultiMeshInstance3D), and no city builder passes a kind. `ponytail:` if a
-		# kind ever reaches a city builder, pair the two halves by carrying the kind
-		# onto the CollisionShape3D as metadata.
+		# The COLLISION half further down still cannot READ this decision — it walks
+		# shapes, and a shape carries no kind — but since bead godot-test1-y1o.10 it
+		# reaches the same answer on its own for the round cases: a near-round
+		# SPHERE or CYLINDER hangs a SphereShape3D / CylinderShape3D, which its
+		# `as BoxShape3D` cast refuses, so both halves leave that entry whole. The
+		# residual gap is the SQUASHED round box and the CONE, which
+		# collision_shape_for() still gives a BoxShape3D: the collision half would
+		# cut one while the visual stayed whole. That cannot happen today — this is
+		# the CITY path and Budapest is pure cube (budapest_selfcheck asserts a city
+		# chunk builds exactly one MultiMeshInstance3D), and no city builder passes
+		# a kind. `ponytail:` if a kind ever reaches a city builder, close the
+		# residual gap by carrying the kind onto the CollisionShape3D as metadata.
 		if int(entry.get("kind", BoxKind.CUBE)) != BoxKind.CUBE:
 			out.append(entry)
 			continue
