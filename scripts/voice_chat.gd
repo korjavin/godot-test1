@@ -200,14 +200,24 @@ const VOICE_JS: String = """
 	/* Lazily built, and RESUMED every time it is asked for: an AudioContext
 	   created before the tab's first gesture starts suspended, and a suspended
 	   context meters silence. Failure is not an error — no meters means no dots,
-	   which is exactly the graceful degrade an escape hatch may not have. */
+	   which is exactly the graceful degrade an escape hatch may not have.
+
+	   `resume()` RETURNS A PROMISE and a blocked one simply never resolves, so a
+	   synchronous try/catch proves nothing (codex review 2026-09-04): anything not
+	   already running arms the same one-shot gesture listener `<audio>.play()`
+	   uses. That path is NOT reachable through play() alone — a muted or deafened
+	   element autoplays happily while the context stays suspended, and every
+	   analyser would then read zero for the rest of the session. */
 	function ctx() {
 		if (!S.ctx) {
 			var C = window.AudioContext || window.webkitAudioContext;
 			if (!C) { return null; }
 			try { S.ctx = new C(); } catch (e) { return null; }
 		}
-		if (S.ctx.state === 'suspended') { try { S.ctx.resume(); } catch (e) { } }
+		if (S.ctx.state !== 'running') {
+			try { S.ctx.resume(); } catch (e) { }
+			if (S.ctx.state !== 'running') { retry(); }
+		}
 		return S.ctx;
 	}
 

@@ -1239,6 +1239,13 @@ func _make_member_row(entry: Dictionary, you: String) -> HBoxContainer:
 		mute = _make_button("Mute", _on_peer_mute_pressed.bind(id))
 		mute.size_flags_horizontal = Control.SIZE_SHRINK_END
 		mute.custom_minimum_size = Vector2(MUTE_BUTTON_WIDTH, TOUCH_MIN_HEIGHT)
+		# Built always, SHOWN only where there is voice to mute — the availability
+		# check is `_update_member_rows()`'s, not this builder's, because voice is
+		# found through the group and may not be in the tree yet when the first
+		# member list lands. Off the web export it never appears at all, which is
+		# the same gate `_voice_section` is behind (codex review 2026-09-04: a
+		# 104 px button that mutes nothing was eating the name's width on desktop).
+		mute.visible = false
 		row.add_child(mute)
 
 	_member_rows.append({"id": id, "dot": dot, "mute": mute})
@@ -1253,8 +1260,10 @@ func _update_member_rows() -> void:
 	if _member_rows.is_empty():
 		return
 	var voice := _ensure_voice()
-	var speaks: bool = voice != null and voice.has_method("is_speaking")
-	var mutes: bool = voice != null and voice.has_method("is_peer_muted")
+	var available: bool = voice != null and voice.has_method("is_available") \
+			and bool(voice.is_available())
+	var speaks: bool = available and voice.has_method("is_speaking")
+	var mutes: bool = available and voice.has_method("is_peer_muted")
 	var you: String = ""
 	var manager := _ensure_manager()
 	if manager != null and manager.has_method("my_id"):
@@ -1272,8 +1281,9 @@ func _update_member_rows() -> void:
 			dot.modulate = DOT_SPEAKING if on else DOT_IDLE
 		var mute: Button = entry.get("mute", null)
 		if mute != null and is_instance_valid(mute):
-			var muted: bool = mutes and bool(voice.is_peer_muted(id))
-			mute.text = "Muted" if muted else "Mute"
+			mute.visible = mutes
+			if mutes:
+				mute.text = "Muted" if bool(voice.is_peer_muted(id)) else "Mute"
 
 
 # ============================================================================
