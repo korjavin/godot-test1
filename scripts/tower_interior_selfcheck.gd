@@ -3178,16 +3178,16 @@ func _check_guard_capsule_fits_the_doors() -> void:
 		Sentinel.done("guard_capsule_fits_the_doors")
 		return
 	var capsule_hi := capsule.radius * 2.0
-	if capsule_hi >= TowerInterior.DOSSIER_CRAWL_CLEAR:
+	if capsule_hi >= TowerDossiers.DOSSIER_CRAWL_CLEAR:
 		_fail("check 12b: the guard's %.2f m capsule no longer fits under the crawl lintel (%.2f m)" % [
-			capsule_hi, TowerInterior.DOSSIER_CRAWL_CLEAR])
+			capsule_hi, TowerDossiers.DOSSIER_CRAWL_CLEAR])
 	var low := INF
 	for floor_index: int in TowerPlans.floors():
 		low = minf(low, TowerInterior.plan_clear_height(floor_index))
 	if tall >= low:
 		_fail("check 12b: the %.2f m guard does not clear a %.2f m storey" % [tall, low])
 	print("guard capsule: %.2f m wide through %.2f m doors, %.2f m tall under %.2f m ceilings, %.2f m capsule passes under the %.2f m crawl (alcove guard-free by routing, check 20), clearance %.4f" % [
-		diameter, door, tall, low, capsule_hi, TowerInterior.DOSSIER_CRAWL_CLEAR,
+		diameter, door, tall, low, capsule_hi, TowerDossiers.DOSSIER_CRAWL_CLEAR,
 		guard_body_clearance()])
 	probe.free()
 	Sentinel.done("guard_capsule_fits_the_doors")
