@@ -69,6 +69,16 @@ const LABEL_HEIGHT: float = 2.2
 const LABEL_PIXEL_SIZE: float = 0.006
 const LABEL_FONT_SIZE: int = 48
 
+## The name tag's two palettes (bead godot-test1-xtr.3). Voice chat highlights
+## the tag of whoever is talking, which is the ONLY thing this avatar knows about
+## voice: the fill goes warm and the outline lights up, so it reads from behind a
+## crowd and at distance where a small dot would not. Restored exactly, which is
+## why both states are written down rather than one being "the default".
+const LABEL_COLOR: Color = Color(1.0, 1.0, 1.0)
+const LABEL_OUTLINE: Color = Color(0.0, 0.0, 0.0, 0.8)
+const LABEL_SPEAKING_COLOR: Color = Color(0.55, 1.0, 0.55)
+const LABEL_SPEAKING_OUTLINE: Color = Color(0.10, 0.45, 0.10, 0.95)
+
 ## Stride phase advanced per metre walked, for a hero on the DEFAULT gait. A
 ## row with a different `stride_rate` scales this in step (see `_animate()`), so
 ## a slow-striding Teibi covers the same ground in fewer, longer strides here
@@ -131,6 +141,16 @@ var _flap_phase: float = 0.0
 
 ## Container for the instanced character scene.
 var model_root: Node3D = null
+
+## The floating name tag, kept so `set_speaking()` costs no node lookup at the
+## 10 Hz the voice indicator drives it at. It is the SAME Label3D `setup()`
+## builds — this adds nothing to the subtree, which is what keeps the isolation
+## contract (`mp_selfcheck` check 1: no groups, no `CollisionObject3D`) intact.
+var name_tag: Label3D = null
+
+## Whether the tag is currently drawn in the speaking palette, so a repeat call
+## is a comparison and not two material writes.
+var _speaking: bool = false
 
 ## The instanced character scene itself, and the limb nodes found inside it by
 ## the project's exact-name contract (Body / LeftArm / RightArm / LeftLeg /
@@ -204,12 +224,33 @@ func setup(peer_name: String) -> void:
 	tag.pixel_size = LABEL_PIXEL_SIZE
 	tag.font_size = LABEL_FONT_SIZE
 	tag.outline_size = 8
-	tag.modulate = Color(1.0, 1.0, 1.0)
-	tag.outline_modulate = Color(0.0, 0.0, 0.0, 0.8)
+	tag.modulate = LABEL_COLOR
+	tag.outline_modulate = LABEL_OUTLINE
 	tag.position = Vector3(0.0, LABEL_HEIGHT, 0.0)
 	# A name tag is chrome, not scenery: it must not cast shadows onto the world.
 	tag.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(tag)
+	name_tag = tag
+
+
+func set_speaking(on: bool) -> void:
+	"""
+	Light the name tag while this peer is talking (bead godot-test1-xtr.3).
+
+	The whole of the avatar's involvement in voice chat: `voice_chat.gd` polls one
+	levels string and calls this on the EDGE, and this recolours the Label3D
+	`setup()` already built. NO NODE IS ADDED — an icon or a ring would be a
+	second draw call per peer and, more to the point, a second thing
+	`mp_selfcheck`'s isolation walk would have to be taught about.
+
+	Safe before `setup()` (a peer whose first level sample beats its avatar's
+	construction is not a case worth a guard elsewhere) and idempotent.
+	"""
+	if _speaking == on or name_tag == null or not is_instance_valid(name_tag):
+		return
+	_speaking = on
+	name_tag.modulate = LABEL_SPEAKING_COLOR if on else LABEL_COLOR
+	name_tag.outline_modulate = LABEL_SPEAKING_OUTLINE if on else LABEL_OUTLINE
 
 
 func set_character(index: int) -> void:

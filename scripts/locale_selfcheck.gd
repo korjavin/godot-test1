@@ -114,6 +114,18 @@ const WIDTH_BUDGETS: Array = [
 	["Mic: off — hold V", 18, 320.0, "MP panel mic state"],
 	["Mic: transmitting", 18, 320.0, "MP panel mic state"],
 	["Mic: blocked — listening only", 18, 320.0, "MP panel mic state"],
+	["Mic: muted", 18, 320.0, "MP panel mic state"],
+	["Mute mic", 18, 320.0, "MP panel mic mute"],
+	["Mic muted", 18, 320.0, "MP panel mic mute"],
+	["Deafen", 18, 320.0, "MP panel deafen"],
+	["Deafened", 18, 320.0, "MP panel deafen"],
+	# The per-member mute toggle is the one NARROW control in this panel: it sits
+	# at the end of a member row beside a clipping 32-character name, so its
+	# `MUTE_BUTTON_WIDTH` (104) less the default Button stylebox's horizontal
+	# padding is the whole budget. The name label is exempt for the room rows'
+	# reason — `clip_text` makes it structurally unable to overflow.
+	["Mute", 18, 96.0, "MP panel per-peer mute"],
+	["Muted", 18, 96.0, "MP panel per-peer mute"],
 
 	# start_overlay.gd — CARD_WIDTH 420 with a 20 px content margin each side.
 	# One button since bead godot-test1-6pa dropped the SOLO / MULTIPLAYER fork.
