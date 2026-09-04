@@ -641,21 +641,47 @@ const VOICE_JS: String = """
 			if (!p.timer) { p.timer = setTimeout(function () { flush(id); }, 100); }
 		};
 
-		/* A DEAD TRANSPORT REBUILDS ITSELF. A Wi-Fi -> LTE handover, a NAT rebind
-		   or an expiring coturn allocation drops the PC to `failed`, and nothing
-		   else here would ever notice: `members()` only closes a PC when the id
-		   LEAVES the room, so a still-listed peer would stay silent for the life
+		/* A DEAD TRANSPORT REBUILDS ITSELF. A NAT/UDP rebind, a coturn allocation
+		   expiring against the 12-per-user quota, or a path break the lobby's TCP
+		   socket rides out, all drop the PC to `failed` — and nothing else here
+		   would ever notice: `members()` only closes a PC when the id LEAVES the
+		   room, so a still-listed, still-un-muted peer stays silent for the life
 		   of the room. `restartIce()` fires `onnegotiationneeded`, which the
 		   perfect-negotiation queue above already turns into a fresh offer over
 		   the existing "vc" relay — no new signalling kind, no new PC, no timer
 		   loop. Both ends may fire it at once; polite/impolite resolves the glare.
-		   ponytail: ICE only. A DTLS-level `connectionState === 'failed'` would
-		   need the close(id)/open(id) pair from the OFFERER alone; not seen in
-		   practice, so it is not written. */
+		   `disconnected` is deliberately NOT acted on: it is the transient state
+		   that recovers by itself, and restarting on every blip is a re-offer
+		   loop.
+
+		   NOT the whole of "my Wi-Fi dropped": a real interface handover changes
+		   the IP and kills the lobby WEBSOCKET, and `lobby_client` has no
+		   reconnect — `_on_lobby_closed` calls `leave()`, which closes every PC.
+		   That race is usually lost to TCP long before ICE gives up, so the cases
+		   that actually reach here are the three named above.
+
+		   ON THE PEER'S OWN CHAIN, like every other signalling op in this file,
+		   with the state RE-ASKED once it is our turn: a restart fired across an
+		   in-flight renegotiation is the collision `recv` rolls back, and a
+		   connection that recovered while queued must not be restarted for
+		   nothing.
+
+		   ponytail: ICE only, and the intent is NOT sticky. `restartIce()` spends
+		   its credentials-to-replace slot on the offer it triggers, so if that
+		   offer is rolled back by a colliding ORDINARY one (a camera toggle, a
+		   late mic grant) or is simply lost — `post()` swallows every failure —
+		   nothing re-arms it and that pair is left exactly where it was before
+		   this handler existed. Same for a DTLS-level
+		   `connectionState === 'failed'`, whose fallback is the shipped
+		   close(id)/open(id) pair from the OFFERER alone. Both are strictly
+		   better than the status quo and neither is worth a timer until one is
+		   actually seen. */
 		pc.oniceconnectionstatechange = function () {
-			if (pc.iceConnectionState === 'failed') {
+			if (pc.iceConnectionState !== 'failed') { return; }
+			queue(p, function () {
+				if (pc.iceConnectionState !== 'failed') { return; }
 				try { pc.restartIce(); } catch (e) { }
-			}
+			});
 		};
 
 		/* KIND-GUARDED, which is what lets an OLD build ignore a camera it does not
