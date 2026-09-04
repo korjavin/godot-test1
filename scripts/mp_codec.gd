@@ -179,6 +179,25 @@ const MAX_HERO_NAME: int = 32
 ## construction.
 const MAX_STATE_CAPTIVES: int = 8
 
+## Bounds on a `vc` payload — the VOICE signalling family (scripts/voice_chat.gd).
+## It rides the same lobby relay as the mesh's own offer/answer/ice, so it is
+## unvalidated peer input under exactly the rules at the top of this file, and
+## `decode_vc()` is the only place it is trusted.
+##
+## `MAX_VC_SDP` is half the lobby's own 32 KB per-payload cap (server/conn.go
+## maxPayload): a real audio SDP is 3-5 KB and stays well under it because ICE is
+## TRICKLED rather than gathered into the offer. A batch of candidates carries at
+## most `MAX_VC_ICE` entries of `{cand, mid, mline}`, because the JS module
+## coalesces ~100 ms of them into one frame to stay inside conn.go's 120-frame
+## burst / 30-per-second budget; the per-candidate bounds are the shapes the
+## browser's own `RTCIceCandidate` produces (a candidate line is ~100 chars, an
+## `sdpMid` is "0"/"audio"/"video").
+const MAX_VC_SDP: int = 16384
+const MAX_VC_ICE: int = 32
+const MAX_VC_CAND: int = 512
+const MAX_VC_MID: int = 16
+const MAX_VC_MLINE: int = 1024
+
 ## The player script, preloaded ONLY to read the CHARACTERS list — a presence
 ## packet's `c` is an index into it, so the bound is the roster itself and never
 ## a number written down twice. `mp_manager.gd` carries the same preload for the
@@ -942,3 +961,94 @@ static func landmark_claim_in_reach(sender: Vector3, slot: Vector3, radius: floa
 		return false
 	var flat := Vector2(sender.x - slot.x, sender.z - slot.z)
 	return flat.length() <= radius + MAX_LANDMARK_CLAIM_PAD
+
+# =============================================================================
+# VOICE SIGNALLING — the `vc` family
+# =============================================================================
+
+static func decode_vc(payload: Dictionary) -> Dictionary:
+	"""
+	The `vc` parser, and the EIGHTH trust boundary in this file.
+
+	@return: the validated payload — `{"vc": "offer"|"answer", "sdp": String}` or
+	    `{"vc": "ice", "c": Array[Dictionary]}` — or an EMPTY DICTIONARY, trusted
+	    whole or dropped whole like every sibling above.
+
+	WHY THIS EXISTS AT ALL, given that the browser parses the SDP itself. It does,
+	and a bad SDP simply fails `setRemoteDescription` — but the string first has to
+	cross `JavaScriptBridge` and be re-serialised into a JS call, which on a
+	single-threaded web export is main-thread cost a hostile peer would otherwise
+	set the size of. So the shape and the SIZE are settled in GDScript and the
+	browser's parser is the last line, not the first.
+
+	`_is_number` and not `TYPE_INT` for `mline`, for `decode_lmk`'s reason: this
+	verb travels the LOBBY RELAY, where `JSON.parse_string` hands every number back
+	as a FLOAT. Finiteness is checked before the cast (`int(NAN)` is undefined and
+	on wasm the trunc can trap the module outright).
+
+	A `vc` value this build does not know is dropped rather than half-applied:
+	later voice phases add kinds to this same family, and a mixed-build room is a
+	state that really happens (`build_version` refuses to reload a peer in a room).
+	"""
+	var kind: Variant = payload.get("vc", null)
+	if typeof(kind) != TYPE_STRING and typeof(kind) != TYPE_STRING_NAME:
+		return {}
+	match str(kind):
+		"offer", "answer":
+			var sdp: Variant = payload.get("sdp", null)
+			if typeof(sdp) != TYPE_STRING:
+				push_warning("MpCodec: dropped vc %s with a non-string sdp" % kind)
+				return {}
+			var text: String = str(sdp)
+			if text.is_empty() or text.length() > MAX_VC_SDP:
+				push_warning("MpCodec: dropped vc %s with a %d-char sdp" % [kind, text.length()])
+				return {}
+			return {"vc": str(kind), "sdp": text}
+		"ice":
+			var batch: Variant = payload.get("c", null)
+			if typeof(batch) != TYPE_ARRAY:
+				push_warning("MpCodec: dropped vc ice with no candidate array")
+				return {}
+			var raw: Array = batch as Array
+			if raw.is_empty() or raw.size() > MAX_VC_ICE:
+				push_warning("MpCodec: dropped vc ice carrying %d candidates" % raw.size())
+				return {}
+			var clean: Array = []
+			for entry: Variant in raw:
+				if typeof(entry) != TYPE_DICTIONARY:
+					push_warning("MpCodec: dropped vc ice with a non-dictionary candidate")
+					return {}
+				var candidate: Dictionary = _decode_vc_candidate(entry as Dictionary)
+				if candidate.is_empty():
+					return {}
+				clean.append(candidate)
+			return {"vc": "ice", "c": clean}
+	push_warning("MpCodec: dropped unknown vc kind %s" % kind)
+	return {}
+
+
+static func _decode_vc_candidate(entry: Dictionary) -> Dictionary:
+	"""
+	One trickled ICE candidate out of a `vc ice` batch, validated whole or dropped
+	whole. Split out only so `decode_vc`'s two arms stay readable; it is not a
+	trust boundary of its own — nothing calls it with anything but relay input.
+
+	An END-OF-CANDIDATES marker is an EMPTY `cand` string, which is legitimate and
+	has to survive: it is what tells the far end gathering is finished.
+	"""
+	if typeof(entry.get("cand", null)) != TYPE_STRING \
+			or typeof(entry.get("mid", null)) != TYPE_STRING \
+			or not _is_number(entry.get("mline", null)):
+		push_warning("MpCodec: dropped malformed vc ice candidate")
+		return {}
+	var cand: String = str(entry["cand"])
+	var mid: String = str(entry["mid"])
+	if cand.length() > MAX_VC_CAND or mid.is_empty() or mid.length() > MAX_VC_MID:
+		push_warning("MpCodec: dropped oversized vc ice candidate")
+		return {}
+	var mline: float = float(entry["mline"])
+	if not is_finite(mline) or mline < 0.0 or mline > float(MAX_VC_MLINE) \
+			or mline != floorf(mline):
+		push_warning("MpCodec: dropped vc ice candidate with an out-of-range mline")
+		return {}
+	return {"cand": cand, "mid": mid, "mline": int(mline)}
