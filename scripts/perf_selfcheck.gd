@@ -17,7 +17,7 @@ extends SceneTree
 ## What it guards:
 ##
 ##  1. **Sampling runs while the overlay is HIDDEN.** The most valuable spike is
-##     the startup one, long before anyone presses F3, and in a release build the
+##     the startup one, long before anyone types \fo, and in a release build the
 ##     overlay starts hidden. If `_sample_frame` ever drifts below the
 ##     `if not visible: return` early-return, that spike is lost and nothing else
 ##     would notice.

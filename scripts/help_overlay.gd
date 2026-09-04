@@ -70,7 +70,7 @@ extends Control
 ## font against `DESC_WIDTH`. That is the actual failure mode, and it is the one
 ## thing measured.
 ##
-## Debug rows are deliberately NOT in the CSV — the F3/F4 surfaces they describe
+## Debug rows are deliberately NOT in the CSV — the \fo/F4 surfaces they describe
 ## are excluded from localization by design (`locale_selfcheck.gd` says so), and
 ## an untranslated key falls back to readable English for free.
 ##
@@ -92,7 +92,7 @@ extends Control
 # ============================================================================
 
 ## Raw keycodes, outside the project input map — the same rule `perf_overlay`'s
-## F3, `motion_debug`'s F4 and `minimap_hud`'s M follow: a meta/HUD key has no
+## O, `motion_debug`'s F4 and `minimap_hud`'s M follow: a meta/HUD key has no
 ## business in the gameplay map where it could collide with a rebindable action.
 ##
 ## Three aliases because "?" is not one key anywhere. On a US layout it is
@@ -180,15 +180,14 @@ const ROWS: Array = [
 
 	["MP", "Multiplayer: host or join a room for up to 4 players.", Mode.BOTH],
 
-	# Debug builds only, and untranslated on purpose — the surfaces themselves are
-	# excluded from localization (see locale_selfcheck.gd's header).
-	["F2", "Teleport to Budapest's gate — then F3 to measure.", Mode.DEBUG],
-	["F3", "Performance overlay: FPS, draw calls, live crocodiles.", Mode.DEBUG],
+	# Debug builds only.
+	["\\fo", "Performance overlay: FPS, draw calls, live crocodiles.", Mode.DEBUG],
+	["\\fb", "Teleport to Budapest's gate.", Mode.DEBUG],
+	["\\fh", "Teleport to the GastroDefense HQ.", Mode.DEBUG],
 	["F4", "Raw motion-sensor read-out.", Mode.DEBUG],
 	["F5", "Force-enable the touch motion driver.", Mode.DEBUG],
 	["F6", "Force-show the touch controls.", Mode.DEBUG],
 	["F7", "Force-show the ⚙ tuning panel.", Mode.DEBUG],
-	["F8", "Teleport to the GastroDefense HQ.", Mode.DEBUG],
 ]
 
 # ============================================================================

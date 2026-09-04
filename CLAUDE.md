@@ -108,7 +108,7 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            path, the four tile states (captive OUTRANKS
 #                            active), the no-player degrade, and the row's
 #                            fit in main.tscn against every other widget
-#                            pinned to that corner, F3 included
+#                            pinned to that corner, \fo included
 #   landmark_selfcheck       every builder fits its declared radius AND its
 #                            declared top
 #   landmark_sites_selfcheck THE MUSEUM MILE: every field kind sited AT MOST ONCE
@@ -1293,7 +1293,7 @@ OWN `detection_radius`, both are published every scan, and the vignette's shader
 in different radial bands so neither can suppress the other. A second retrieval unit joins
 the machine channel with its `SPECIES` row and no edit anywhere.
 
-Hunters are in group `"crocodile"`, so **the F3 overlay's "Crocs (active/total)" counter
+Hunters are in group `"crocodile"`, so **the \fo overlay's "Crocs (active/total)" counter
 means predators + hunters** — which is exactly what the LOD manager manages.
 
 ### Systemic capture — a GD-SURVEY machine takes the HERO
@@ -1403,7 +1403,7 @@ pair in `player_controller`, so the consts stay consts.
 **There is no walk-speed effect and there may never be one** — the catchable-walk contract
 above is the tightest margin in the game.
 
-Panels open on raw keycodes outside the input map (K, M, P, B, L, +/−, F3–F7): named actions are
+Panels open on raw keycodes outside the input map (K, M, P, B, L, +/−, \ arming key, F4–F7): named actions are
 for rebindable *gameplay* input, and a key that only opens a panel has nothing to rebind
 against. Every overlay pauses the tree, because the player reads gameplay through global
 polled `Input`, which a focused `Control` does not suppress.
@@ -1587,7 +1587,7 @@ Almost none of this is our code — it is Godot's built-in `Control` auto-transl
   auto-translation would only see the formatted result, which is a key in no table.
 
 German is ~30% longer and this UI has hard-sized controls, so fit is **measured** by
-`locale_selfcheck.gd`, not eyeballed. Debug surfaces (F3/F4, ⚙ telemetry, selfcheck output)
+`locale_selfcheck.gd`, not eyeballed. Debug surfaces (\fo, F4, ⚙ telemetry, selfcheck output)
 are deliberately not localized.
 
 **CI gotcha:** `*.translation` and `*.import` are gitignored, so CI must run an explicit
@@ -1689,7 +1689,7 @@ vendored); the web build needs nothing.
 
 The web (WebGL) build is the performance-sensitive target.
 
-- `scripts/perf_overlay.gd` — **F3**. FPS, draw calls, node count, active/total crocs. This
+- `scripts/perf_overlay.gd` — **\fo** (cheat code). FPS, draw calls, node count, active/total crocs. This
   is the measurement tool; use it to prove a change and catch regressions.
 - The same script samples **every frame, hidden or not**, and logs any frame over 33 / 50 ms
   with what the engine did on it (chunks built/freed, whether the LOD scan ticked, node
@@ -1702,20 +1702,20 @@ The web (WebGL) build is the performance-sensitive target.
   `render_distance` at runtime behind `OS.has_feature("web")`.
 - Fog is the one **universal** visual change (owner-approved); only its density is
   platform-gated.
-- **F2 / F8 TELEPORT TO BUDAPEST AND TO THE HQ, so "no web reading" is no longer an
+- **\fb / \fh TELEPORT TO BUDAPEST AND TO THE HQ, so "no web reading" is no longer an
   excuse** (bead `godot-test1-xtl`). Two perf beads in a row shipped headless CPU numbers
   because the city is 1.7 km from spawn and nobody walks a browser build there twice for a
   before/after pair. **A perf bead that touches the city, the crowd, the traffic or the
-  tower is now expected to carry a WEB F3 reading**: teleport, then F3. It is
+  tower is now expected to carry a WEB \fo reading**: teleport, then \fo. It is
   `player_controller.debug_teleport_to()` behind `debug_teleport_allowed()` —
   `OS.is_debug_build()` AND not in a room, so an exported release build cannot reach it
-  and a peer can never publish a teleported position — on raw keycodes outside the input
-  map (the F3–F7 precedent), and it re-seats the world through
+  and a peer can never publish a teleported position — on typed cheat codes outside the input
+  map (the \fo / \fb / \fh and F4–F7 precedent), and it re-seats the world through
   `MpManager._apply_join_placement()`'s own sequence (`new_run` with the CURRENT seed →
   `build_ring_now` → wait a physics frame → `_place_near`) so the body lands on built
   ground with the ring's blocks and crocodiles already there. **TAKE THE READING ON
   `godot --headless --export-debug "Web" build/web/index.html` + `./serve.sh`** — CI and the
-  deployed build export `--export-release`, where `is_debug_build()` is false and F2/F8 are
+  deployed build export `--export-release`, where `is_debug_build()` is false and \fb/\fh are
   dead by design, so a before/after PAIR is comparable on the debug template but the absolute
   numbers are not the deployed build's. It preserves the run —
   coins, streak, mask, heroes — and shifts `own_distance_origin` by the jump so the

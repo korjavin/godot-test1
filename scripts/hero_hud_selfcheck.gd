@@ -275,7 +275,7 @@ func _check_the_row_fits_and_clears_its_neighbours() -> void:
 			and (hero_rect as Rect2).position.y >= 0.0,
 		"the portrait row starts off the top/left edge of the screen")
 	_check(not (hero_rect as Rect2).intersects(perf_rect as Rect2),
-		"the portrait row overlaps the F3 perf overlay — move the overlay clear of it "
+		"the portrait row overlaps the \\fo perf overlay — move the overlay clear of it "
 		+ "(sideways: pushing it DOWN walks its text into the minimap)")
 	# Every OTHER widget pinned to the same corner, read out of the scene rather
 	# than listed here: the row's neighbours are whatever `main.tscn` ships.

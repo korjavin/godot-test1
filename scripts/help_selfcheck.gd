@@ -168,13 +168,10 @@ func _check_table() -> String:
 		[SkillTreeUi.TOGGLE_KEY, "K", "skill_tree_ui.TOGGLE_KEY"],
 		[CityMapPanel.TOGGLE_KEY, "B", "city_map_panel.TOGGLE_KEY"],
 		[TowerLiftMenu.TOGGLE_KEY, "L", "tower_lift_menu.TOGGLE_KEY"],
-		[PerfOverlay.TOGGLE_KEYCODE, "F3", "perf_overlay.TOGGLE_KEYCODE"],
 		[MotionDebug.TOGGLE_KEYCODE, "F4", "motion_debug.TOGGLE_KEYCODE"],
 		[MobileInput.FORCE_ENABLE_KEYCODE, "F5", "mobile_input.FORCE_ENABLE_KEYCODE"],
 		[TouchControls.FORCE_SHOW_KEYCODE, "F6", "touch_controls.FORCE_SHOW_KEYCODE"],
 		[MobileSettingsPanel.FORCE_SHOW_KEYCODE, "F7", "mobile_settings_panel.FORCE_SHOW_KEYCODE"],
-		[PlayerController.DEBUG_TELEPORT_BUDAPEST_KEY, "F2", "player_controller.DEBUG_TELEPORT_BUDAPEST_KEY"],
-		[PlayerController.DEBUG_TELEPORT_HQ_KEY, "F8", "player_controller.DEBUG_TELEPORT_HQ_KEY"],
 		# The zoom pair only asserts that a row for them EXISTS. Their keycodes are
 		# punctuation whose `OS.get_keycode_string` name ("Equal", "Minus") is not the
 		# legend a player reads, and re-listing the accepted keycodes here would only
@@ -194,6 +191,14 @@ func _check_table() -> String:
 		var actual: String = OS.get_keycode_string(int(entry[0]))
 		if actual != legend:
 			return "%s is now %s, but the help row still says \"%s\"" % [entry[2], actual, legend]
+
+	# --- The cheat-code sequences (\fo, \fb, \fh) ---------------------------
+	# Sequences have no single keycode, so we assert the card carries a row
+	# for each code in PlayerController.CHEAT_CODES.
+	for code: String in PlayerController.CHEAT_CODES.keys():
+		var cheat_legend: String = "\\" + code
+		if not legends.has(cheat_legend):
+			return "no help row carries the cheat-code legend \"%s\" (PlayerController.CHEAT_CODES)" % cheat_legend
 
 	# --- The landmark quiz answer keys --------------------------------------
 	# THREE keycodes behind ONE legend, which is why they cannot ride the `raw`
