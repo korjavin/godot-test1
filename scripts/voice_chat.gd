@@ -105,6 +105,7 @@ enum Mode {
 
 signal mode_changed(mode: Mode)
 signal tx_changed(active: bool)
+signal mic_denied_changed(denied: bool)
 
 # ============================================================================
 # TUNABLES
@@ -467,6 +468,10 @@ var _mode: Mode = Mode.ALWAYS_ON
 ## Mic transmit state. Starts FALSE at every join in BOTH modes.
 var _tx: bool = false
 
+## The last room code seen through _on_room_changed, to distinguish real room
+## transitions from roster-only updates (which emit room_changed with the same code).
+var _last_code: String = ""
+
 var _accum: float = 0.0
 
 
@@ -555,6 +560,7 @@ func _start(ice: Dictionary) -> bool:
 		_send_cb = JavaScriptBridge.create_callback(_on_js_send)
 	_ck.start(_mp.my_id() if _mp.has_method("my_id") else "", JSON.stringify(ice), _send_cb)
 	_running = true
+	_ck.setTx(1 if _tx else 0)
 	return true
 
 
@@ -595,6 +601,7 @@ func _report_mic() -> void:
 	if mic == _reported_mic or mic != MIC_DENIED:
 		return
 	_reported_mic = mic
+	mic_denied_changed.emit(true)
 	if _mp.has_signal("status"):
 		_mp.emit_signal("status", MIC_BLOCKED_STATUS)
 
@@ -605,17 +612,21 @@ func _teardown() -> void:
 	device. Idempotent, and called from both ends — the poll noticing the room is
 	gone, and this node leaving the tree.
 	"""
+	_last_code = ""
 	_set_tx(false)
 	# ABOVE the `_running` guard: a room can end while the start-up window is
 
 	# still open, and a queue that survived it would replay the last room's
 	# handshake into the next one.
 	_pending.clear()
+	var had_denial: bool = (_reported_mic == MIC_DENIED)
+	_reported_mic = MIC_IDLE
+	if had_denial:
+		mic_denied_changed.emit(false)
 	if not _running:
 		return
 	_running = false
 	_pushed_members = ""
-	_reported_mic = MIC_IDLE
 	if _ck != null:
 		_ck.stop()
 
@@ -681,7 +692,9 @@ func _on_room_changed(code: String, _members: Array) -> void:
 	A join or a membership change only wakes the poll, which is where the ICE
 	config and the mic state are looked at anyway.
 	"""
-	_set_tx(false)
+	if code != _last_code:
+		_last_code = code
+		_set_tx(false)
 	if code.is_empty():
 		_teardown()
 		return
@@ -691,6 +704,20 @@ func _on_room_changed(code: String, _members: Array) -> void:
 # ============================================================================
 # TRANSMIT MODE & INPUT POLLING (bead godot-test1-xtr.2)
 # ============================================================================
+
+func is_available() -> bool:
+	return _is_web
+
+
+func mic_denied() -> bool:
+	if not _is_web:
+		return false
+	if _ck != null:
+		var state: Variant = _ck.micState()
+		if typeof(state) == TYPE_INT or typeof(state) == TYPE_FLOAT:
+			return int(state) == MIC_DENIED
+	return _reported_mic == MIC_DENIED
+
 
 func get_mode() -> Mode:
 	return _mode
@@ -711,10 +738,6 @@ func set_mode(new_mode: Mode) -> void:
 
 
 func is_tx() -> bool:
-	return _tx
-
-
-func get_tx() -> bool:
 	return _tx
 
 

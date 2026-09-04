@@ -646,6 +646,7 @@ func _on_room_changed(_code: String, _members: Array) -> void:
 func _on_status(message: String) -> void:
 	if _status_label != null:
 		_status_label.text = message
+	_update_voice_ui()
 
 
 # ============================================================================
@@ -1155,6 +1156,8 @@ func _ensure_voice() -> Node:
 			_voice.connect("mode_changed", _on_voice_mode_changed)
 		if _voice.has_signal("tx_changed"):
 			_voice.connect("tx_changed", _on_voice_tx_changed)
+		if _voice.has_signal("mic_denied_changed"):
+			_voice.connect("mic_denied_changed", _on_voice_mic_denied_changed)
 	return _voice
 
 
@@ -1166,42 +1169,32 @@ func _on_voice_tx_changed(_tx: Variant) -> void:
 	_update_voice_ui()
 
 
+func _on_voice_mic_denied_changed(_denied: Variant) -> void:
+	_update_voice_ui()
+
+
 func _on_voice_mode_pressed() -> void:
 	var voice := _ensure_voice()
 	if voice == null:
 		return
-	var current_mode: int = 0
-	if voice.has_method("get_mode"):
-		current_mode = int(voice.get_mode())
-	elif "mode" in voice:
-		current_mode = int(voice.mode)
+	var current_mode: int = voice.get_mode()
 	var new_mode: int = 1 if current_mode == 0 else 0
-	if voice.has_method("set_mode"):
-		voice.set_mode(new_mode)
-	elif "mode" in voice:
-		voice.mode = new_mode
+	voice.set_mode(new_mode)
 	_update_voice_ui()
 
 
 func _update_voice_ui() -> void:
 	if _voice_section == null:
 		return
-	var online := _is_online()
-	_voice_section.visible = online
-	if not online:
-		return
 	var voice := _ensure_voice()
-	var mode: int = 0
-	var tx: bool = false
-	if voice != null:
-		if voice.has_method("get_mode"):
-			mode = int(voice.get_mode())
-		elif "mode" in voice:
-			mode = int(voice.mode)
-		if voice.has_method("get_tx"):
-			tx = bool(voice.get_tx())
-		elif "tx" in voice:
-			tx = bool(voice.tx)
+	var available: bool = voice != null and voice.has_method("is_available") and bool(voice.is_available())
+	var online := _is_online()
+	_voice_section.visible = online and available
+	if not _voice_section.visible or voice == null:
+		return
+
+	var mode: int = voice.get_mode()
+	var tx: bool = voice.is_tx()
 
 	if _voice_mode_button != null:
 		if mode == 1:
@@ -1210,7 +1203,9 @@ func _update_voice_ui() -> void:
 			_voice_mode_button.text = "Voice: always on"
 
 	if _mic_state_label != null:
-		if mode == 1:
+		if voice.has_method("mic_denied") and voice.mic_denied():
+			_mic_state_label.text = "Mic: blocked — listening only"
+		elif mode == 1:
 			_mic_state_label.text = "Mic: transmitting" if tx else "Mic: off — hold V"
 		else:
 			_mic_state_label.text = "Mic: on — press V" if tx else "Mic: off — press V"

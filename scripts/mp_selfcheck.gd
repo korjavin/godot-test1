@@ -201,7 +201,10 @@ func _run_checks() -> String:
 	failure = _check_herd_parser()
 	if not failure.is_empty():
 		return failure
-	return _check_room_pause()
+	failure = _check_room_pause()
+	if not failure.is_empty():
+		return failure
+	return _check_voice_chat_tx()
 
 
 # =============================================================================
@@ -3300,4 +3303,58 @@ func _check_room_pause() -> String:
 	if not fail.is_empty():
 		return fail
 	Sentinel.done("room_pause")
+	return ""
+
+
+func _check_voice_chat_tx() -> String:
+	var VoiceChat := load("res://scripts/voice_chat.gd")
+	if VoiceChat == null:
+		return "could not load voice_chat.gd"
+	var vc: Node = VoiceChat.new()
+	root.add_child(vc)
+
+	# Initial state: mic is not transmitting
+	if vc.is_tx():
+		vc.free()
+		return "VoiceChat initial tx should be false"
+
+	# Simulate user toggling mic on
+	vc._set_tx(true)
+	if not vc.is_tx():
+		vc.free()
+		return "VoiceChat _set_tx(true) failed to activate tx"
+
+	# Entering a room resets tx to false
+	vc._on_room_changed("ROOM_A", [])
+	if vc.is_tx():
+		vc.free()
+		return "VoiceChat entering a room must reset tx to false"
+
+	# User turns mic on in ROOM_A
+	vc._set_tx(true)
+	if not vc.is_tx():
+		vc.free()
+		return "VoiceChat failed to set tx to true in room"
+
+	# A teammate joins or leaves: roster-only room_changed with same room code
+	vc._on_room_changed("ROOM_A", [{"id": "peer2", "name": "teammate"}])
+	if not vc.is_tx():
+		vc.free()
+		return "roster-only room_changed must not clear _tx"
+
+	# Leaving the room (code == "") resets tx to false
+	vc._on_room_changed("", [])
+	if vc.is_tx():
+		vc.free()
+		return "leaving room must reset tx to false"
+
+	# Joining a different room resets tx
+	vc._set_tx(true)
+	vc._on_room_changed("ROOM_B", [])
+	if vc.is_tx():
+		vc.free()
+		return "entering new room must reset tx to false"
+
+	vc.free()
+	Sentinel.done("voice_chat_tx")
 	return ""

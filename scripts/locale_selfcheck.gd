@@ -113,6 +113,7 @@ const WIDTH_BUDGETS: Array = [
 	["Mic: on — press V", 18, 320.0, "MP panel mic state"],
 	["Mic: off — hold V", 18, 320.0, "MP panel mic state"],
 	["Mic: transmitting", 18, 320.0, "MP panel mic state"],
+	["Mic: blocked — listening only", 18, 320.0, "MP panel mic state"],
 
 	# start_overlay.gd — CARD_WIDTH 420 with a 20 px content margin each side.
 	# One button since bead godot-test1-6pa dropped the SOLO / MULTIPLAYER fork.
