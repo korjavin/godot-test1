@@ -656,19 +656,35 @@ static func walks_an_avenue(base: Vector3, heading: Vector2) -> bool:
 
 
 func _pick_lane(base: Vector3, heading: Vector2) -> float:
-	## The lateral offset for a walker on this street line, re-asked EVERY TIME
-	## the heading changes — a lane picked at spawn and never revisited put a
-	## citizen who turned onto an avenue straight into the traffic.
+	## The lateral offset for a walker on this street line, asked whenever the
+	## heading CHANGES — a lane picked at spawn and never revisited put a citizen
+	## who turned onto an avenue straight into the traffic. It must NOT be asked
+	## when the heading is unchanged: a fresh draw is a sign flip half the time,
+	## and on an avenue that is a 17.2 m sideways jump across both car lanes in
+	## one frame (6.4 m on an ordinary street). The caller owns that condition.
 	var lane: float
 	if walks_an_avenue(base, heading):
 		lane = PAVEMENT_LANE_OFFSET if _rng.randf() < 0.5 else -PAVEMENT_LANE_OFFSET
 	else:
 		lane = LANE_OFFSETS[_rng.randi() % LANE_OFFSETS.size()]
 	var lat_dir := Vector3(-heading.y, 0.0, heading.x)
-	var test_pos: Vector3 = base + lat_dir * lane
-	if not is_walkable(test_pos.x, test_pos.z):
-		return 0.0
-	return lane
+	if is_walkable((base + lat_dir * lane).x, (base + lat_dir * lane).z):
+		return lane
+	# THE OTHER PAVEMENT, before giving up. The city's WEST edge is the gate
+	# avenue itself (BUDAPEST_MIN.x == GATE.x), so for a north/south walker there
+	# the western pavement is outside the rect and half of all draws used to fall
+	# through to 0.0 — which parks the citizen on the centreline of the busiest
+	# road in the city, at the one place every player enters it. Both offsets are
+	# symmetric (LANE_OFFSETS as much as the pavement), so the mirror is always a
+	# legitimate lane and not a second rule.
+	var mirrored: Vector3 = base - lat_dir * lane
+	if is_walkable(mirrored.x, mirrored.z):
+		return -lane
+	# Neither side fits. 0.0 is the centreline, which is the one strip of an
+	# avenue no car lane covers (they sit at ±LANE_OFFSET), so it is a safe
+	# degrade rather than a good lane — the car still brakes for whoever stands
+	# there. With the mirror above there is no shipped street that reaches here.
+	return 0.0
 
 
 func _too_close_to_walker(world_pos: Vector3) -> bool:
@@ -752,9 +768,17 @@ func _find_spawn_segment_near(player_pos: Vector3, min_dist: float = SPAWN_MIN_D
 		var target := _next_intersection(base, dir_choice)
 		if not is_walkable(base.x, base.z) or not is_walkable(target.x, target.z):
 			continue
-		if _too_close_to_walker(base):
+		# THE LANE IS CHOSEN HERE, not in `_assign_citizen_from_segment`, because
+		# the spacing test below has to see the position the citizen will really
+		# STAND at. Two candidates on the same street can be 6 m apart on the
+		# centreline, pass a test made against `base`, and then draw the same lane
+		# and land on top of each other — MIN_WALKER_SPACING measured against a
+		# point nobody occupies.
+		var lane := _pick_lane(base, dir_choice)
+		var lat_dir := Vector3(-dir_choice.y, 0.0, dir_choice.x)
+		if _too_close_to_walker(base + lat_dir * lane):
 			continue
-		return {"start": base, "end": target, "dir": dir_choice}
+		return {"start": base, "end": target, "dir": dir_choice, "lane": lane}
 
 	return {}
 
@@ -772,7 +796,11 @@ func _assign_citizen_from_segment(citizen: Dictionary, seg: Dictionary) -> void:
 	var heading: Vector2 = (seg["dir"] as Vector2).normalized()
 	citizen["heading_dir"] = heading
 	citizen["facing_yaw"] = atan2(-heading.x, -heading.y)
-	citizen["lane_offset"] = _pick_lane(start_pt, heading)
+	# The lane the sampler already cleared against every other walker — re-drawing
+	# it here would throw that clearance away. `_pick_lane` is the fallback for a
+	# caller that built a segment by hand (a harness, a probe).
+	citizen["lane_offset"] = float(seg["lane"]) if seg.has("lane") \
+			else _pick_lane(start_pt, heading)
 	citizen["speed"] = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
 	citizen["walk_phase"] = _rng.randf_range(0.0, TAU)
 	citizen["pause_timer"] = 0.0
@@ -881,16 +909,29 @@ func _update_walkers(delta: float, lod_gated: bool = false) -> void:
 				if _rng.randf() < 0.25:
 					citizen["pause_timer"] = _rng.randf_range(0.6, 2.0)
 				# Pick next intersection
-				var next_target := _pick_next_waypoint(pos, citizen["heading_dir"])
+				var was_heading: Vector2 = citizen["heading_dir"]
+				var next_target := _pick_next_waypoint(pos, was_heading)
 				citizen["target"] = next_target
 				var delta_x: float = next_target.x - pos.x
 				var delta_z: float = next_target.z - pos.z
 				if Vector2(delta_x, delta_z).length_squared() > 0.01:
 					citizen["heading_dir"] = Vector2(delta_x, delta_z).normalized()
-				# The lane is re-asked on every turn: a citizen that walked off a
-				# side street onto an avenue keeping its old ±3.2 m lane would be
-				# standing in the traffic. See PAVEMENT_LANE_OFFSET.
-				citizen["lane_offset"] = _pick_lane(pos, citizen["heading_dir"])
+				# THE LANE IS RE-ASKED ON A TURN AND ONLY ON A TURN. A citizen that
+				# walked off a side street onto an avenue keeping its old ±3.2 m
+				# lane would be standing in the traffic (see PAVEMENT_LANE_OFFSET),
+				# but `_pick_next_waypoint` carries straight on 60% of the time and
+				# a fresh draw there flips the SIGN half of those — a 17.2 m
+				# sideways teleport across both car lanes, once a block, for a
+				# citizen that never turned.
+				var new_h: Vector2 = citizen["heading_dir"]
+				if new_h.is_equal_approx(-was_heading):
+					# A U-TURN walks the SAME street line, so the same pavement is
+					# still the right pavement — but `perp` turned round with the
+					# heading, so the stored value has to turn with it or the
+					# citizen crosses the road to stand on the other side of it.
+					citizen["lane_offset"] = -float(citizen["lane_offset"])
+				elif not new_h.is_equal_approx(was_heading):
+					citizen["lane_offset"] = _pick_lane(pos, new_h)
 			else:
 				var move_dir := to_target / dist
 				var next_pos := pos + move_dir * step

@@ -565,7 +565,17 @@ func blocks_crossing(from: Vector3, to: Vector3, heading: Vector2) -> bool:
 		var wpos: Vector3 = _car_world_pos(car)
 		var to_p := Vector2(to.x - wpos.x, to.z - wpos.z)
 		# Walk `to` along the citizen's own heading until it sits on the car's line.
-		var cross := to_p + heading * (-to_p.dot(perp) / denom)
+		var travel := -to_p.dot(perp) / denom
+		# ...but the walker's line is INFINITE, and the car's is too. Without this
+		# bound a citizen stepping onto the z = 0 avenue is held by a car on the
+		# PARALLEL z = 248 avenue, because their lines still cross — 248 m up the
+		# walker's line, which is not a crossing anybody is about to make. A
+		# crossing is at most the carriageway's own width away: the walker starts
+		# at a kerb (AVENUE_HALF_WIDTH out) and the lane it must clear is nearer
+		# still, so twice the half-width is the whole of the geometry.
+		if absf(travel) > 2.0 * PLAN_SCRIPT.AVENUE_HALF_WIDTH:
+			continue
+		var cross := to_p + heading * travel
 		var fwd := cross.dot(h)
 		if fwd > 0.0 and fwd <= YIELD_DISTANCE:
 			return true

@@ -46,6 +46,13 @@ extends SceneTree
 ##      taking the crowd out of its group — the car must then drive over it; and
 ##      a citizen at the KERB waits, measured against the same walk on an empty
 ##      road.
+##  12. A WALKER NEVER TELEPORTS MID-BLOCK (bead 8gw.23): over 2,000 driven
+##      steps, no citizen that did not TURN moves further in one frame than its
+##      own top speed allows — which is how a lane re-drawn on a straight step
+##      shows up (a sign flip is 17.2 m sideways on an avenue) — a turn is
+##      bounded by the lane geometry instead of forbidden (read the check's
+##      header for why the corner is a known discontinuity), and the spawn
+##      clearance is measured on the positions walkers really stand at.
 ##   7. THE COARSE TICK (bead 8gw.22): a citizen the camera cannot see is ticked
 ##      a few times a second by the REAL elapsed time — it ADVANCES, it is never
 ##      frozen — a null camera degrades to full-rate updates for everything, and
@@ -155,6 +162,7 @@ func _run_checks() -> void:
 	_check_spawn_distribution()
 	_check_pavement_lane()
 	await _check_car_never_drives_through_a_citizen()
+	_check_walkers_never_teleport()
 
 	if _failures.is_empty():
 		print("crowd_selfcheck: all checks passed cleanly")
@@ -1184,9 +1192,32 @@ func _check_pavement_lane() -> void:
 				+ " the pavement lane is for AVENUES, and a 62 m street has no traffic to"
 				+ " keep clear of.") % street_lane)
 			break
-	print("pavement lane: avenue walkers at +/-%.1f m (carriageway %.1f, block face %.1f)"
+	# THE GATE AVENUE, which is the city's own western EDGE: BudapestPlan puts
+	# BUDAPEST_MIN.x exactly on GATE.x, so for a north/south walker there the
+	# WESTERN pavement is outside the rect and unwalkable. A `_pick_lane` that
+	# gave up on its first draw fell through to 0.0 half the time — the middle of
+	# the busiest road in the city, at the one place every player walks in.
+	var gate_ns := Vector3(PLAN.GATE.x, 0.0, 3.0 * ave_pitch)
+	var north := Vector2(0.0, 1.0)
+	if not CrowdScript.walks_an_avenue(gate_ns, north):
+		_failures.append("check 11's gate probe at %s is not on an avenue" % str(gate_ns))
+	elif CrowdScript.is_walkable(gate_ns.x - CrowdScript.PAVEMENT_LANE_OFFSET, gate_ns.z):
+		_failures.append("check 11's gate probe has a walkable WEST pavement, so it is not"
+			+ " standing on the city edge the mirror rule exists for")
+	else:
+		for _i in 20:
+			var gate_lane: float = absf(_manager._pick_lane(gate_ns, north))
+			if gate_lane <= PLAN.AVENUE_HALF_WIDTH:
+				_failures.append(("on the GATE avenue — the city's own west edge, where one"
+					+ " pavement is outside the rect — a walker was put %.1f m off the"
+					+ " centreline, inside the %.1f m carriageway. _pick_lane must try the"
+					+ " other pavement before it gives up.")
+					% [gate_lane, PLAN.AVENUE_HALF_WIDTH])
+				break
+	print("pavement lane: avenue walkers at +/-%.1f m (carriageway %.1f, block face %.1f),"
 		% [CrowdScript.PAVEMENT_LANE_OFFSET, PLAN.AVENUE_HALF_WIDTH,
-		PLAN.AVENUE_HALF_WIDTH + PLAN.BLOCK_PAVEMENT])
+		PLAN.AVENUE_HALF_WIDTH + PLAN.BLOCK_PAVEMENT]
+		+ " gate avenue mirrored to the east pavement")
 	Sentinel.done("pavement_lane")
 
 
@@ -1231,8 +1262,177 @@ func _check_car_never_drives_through_a_citizen() -> void:
 		print("kerb rule: crossing took %d frames with a car coming, %d on an empty road"
 			% [waited, clear])
 
+	# A PARALLEL AVENUE IS NOT A CROSSING. Both lines are infinite, so a car on
+	# the z = 248 avenue still "crosses" a northbound walker's line — 248 m up it.
+	# Without the travel bound that car holds a citizen stepping onto z = 0.
+	traffic._hide_all()
+	var far_car: Dictionary = (traffic.get("_cars") as Array)[0]
+	var step_x: float = PLAN.GATE.x + 13.0 * PLAN.STREET_PITCH
+	var ave_pitch: float = PLAN.STREET_PITCH * float(PLAN.CITY_AVENUE_EVERY)
+	far_car["pos"] = Vector3(step_x - 5.0, 0.0, ave_pitch)
+	far_car["heading_dir"] = Vector2(1.0, 0.0)
+	far_car["facing_yaw"] = 0.0
+	far_car["speed"] = 6.0
+	far_car["cruise_speed"] = 6.0
+	far_car["active"] = true
+	# The same step the kerb probe makes, onto the z = 0 avenue.
+	var kerb_from := Vector3(step_x, 0.0, -PLAN.AVENUE_HALF_WIDTH - 0.1)
+	var kerb_to := Vector3(step_x, 0.0, -PLAN.AVENUE_HALF_WIDTH + 0.1)
+	if traffic.blocks_crossing(kerb_from, kerb_to, Vector2(0.0, 1.0)):
+		_failures.append(("a citizen stepping onto the z = 0 avenue was held by a car on the"
+			+ " PARALLEL avenue %.0f m away — blocks_crossing projected onto the walker's"
+			+ " INFINITE line and found a crossing nobody is about to make.") % ave_pitch)
+	# ...and the positive control: the same car moved onto the avenue being
+	# entered must still hold it, or the bound rejected everything.
+	far_car["pos"] = Vector3(step_x - 5.0, 0.0, 0.0)
+	if not traffic.blocks_crossing(kerb_from, kerb_to, Vector2(0.0, 1.0)):
+		_failures.append("with the car on the avenue actually being crossed the kerb rule"
+			+ " did NOT hold — the travel bound is rejecting real crossings too")
+	else:
+		print("kerb rule: a car on the parallel avenue %.0f m away holds nobody;" % ave_pitch
+			+ " the same car on the crossed avenue does")
+
 	traffic._hide_all()
 	traffic.queue_free()
 	_manager._hide_all()
 	await process_frame
 	Sentinel.done("car_never_drives_through_a_citizen")
+
+
+# ============================================================================
+# CHECK 12 — A WALKER NEVER TELEPORTS MID-BLOCK, AND NEVER SPAWNS ON ANOTHER
+# ============================================================================
+#
+# TWO THINGS A LANE CAN DO WRONG, and neither is visible to any check above.
+#
+# (a) The lane is drawn at a TURN, and `_pick_next_waypoint` carries straight on
+#     60% of the time. Re-drawing on those steps flips the SIGN half of them,
+#     which on an avenue is +8.6 m to -8.6 m — a 17.2 m sideways jump across both
+#     car lanes, in one frame, for a citizen that never turned (6.4 m on an
+#     ordinary street). The proxy pool follows the citizen, so it is a collider
+#     jumping through the hero too.
+#
+#     THE MEASUREMENT IS PER-FRAME WORLD DISPLACEMENT ON A STEP THAT DID NOT
+#     TURN, and the exclusion is not a loophole — it is the shipped lane model.
+#     A lane is an offset along the heading's PERPENDICULAR, so a 90° turn
+#     rotates it: leaving the value alone, a walker at +8.6 m on a street of
+#     constant Z is at -8.6 m along X the instant it turns, `sqrt(2) * lane`
+#     away. That corner has always been a jump (±3.2 m lanes made it 4.5 m; the
+#     pavement makes it 12.2 m) and closing it needs the walker to cut the
+#     corner of its OWN offset path, which means knowing the next lane before it
+#     picks the next street — a waypoint model this bead did not come to write.
+#     So the turn is bounded instead of forbidden, which is what stops it
+#     growing quietly, and `ponytail:` in `_pick_lane` names the upgrade.
+#
+#     `_update_walkers` is driven DIRECTLY rather than through `_process`: the
+#     spawn/recycle pass legitimately teleports (that is what a recycle IS), so
+#     leaving it out is what makes any jump here the walk's own.
+#
+# (b) The spawn clearance is `MIN_WALKER_SPACING`, and it used to be measured
+#     against the street CENTRELINE while the lane was chosen afterwards — so two
+#     candidates 6 m apart on the centreline could pass and then draw the same
+#     lane and stand on each other. Measured on the world positions, after a cold
+#     fill, which is where every walker's lane has just been drawn.
+
+## 2,000 steps: ~33 s of walking, so every citizen crosses several intersections
+## and the 60%-straight case is taken thousands of times over the crowd.
+const WALK_STEPS: int = 2000
+
+## The mid-block bound: the fastest walker's own step, doubled. `lod_gated` is
+## false here so every citizen advances by exactly DT, and nothing in a walk can
+## outrun its own speed — a lane re-roll is 6.4 m or 17.2 m against 0.09 m.
+const MAX_STEP_FACTOR: float = 2.0
+
+
+func _check_walkers_never_teleport() -> void:
+	var bound: float = CrowdScript.WALK_SPEED_MAX * DT * MAX_STEP_FACTOR
+	# The corner's own bound, off the lane geometry rather than a number typed
+	# here: the widest lane rotated 90 degrees, plus one step of walking.
+	# A 90-degree turn rotates the lane onto the other axis, so the two offsets are
+	# perpendicular and the jump is sqrt(2) x lane. A U-TURN is not in this bound
+	# on purpose: it keeps the same street line and the shipped code flips the
+	# stored value with the heading, so it moves the walker NOWHERE — leaving the
+	# looser 2 x lane here would stop measuring that.
+	var corner_bound: float = sqrt(2.0) * CrowdScript.PAVEMENT_LANE_OFFSET + bound
+	_manager._hide_all()
+	_player.position = Vector3(2600.0, 1.0, 0.0)
+	# The SPAWN PASS ALONE, not `_process`: the movement pass would step every
+	# walker up to WALK_SPEED_MAX * DT before the clearance below is measured, and
+	# two placed exactly at the floor closing on each other read as a violation the
+	# sampler never committed. This is also the last spawn pass of the check — the
+	# walk below is driven straight into `_update_walkers`.
+	var no_planes: Array[Plane] = []
+	_manager._update_crowd_spawns(DT, _player.position, no_planes)
+
+	var cits: Array = _manager.get("_citizens")
+	# (b) THE SPAWN CLEARANCE, on the positions the walkers really stand at.
+	var world: Array[Vector3] = []
+	for c: Dictionary in cits:
+		if c["active"]:
+			world.append(CrowdScript._citizen_world_pos(c))
+	var live: int = world.size()
+	var worst_gap := INF
+	for a in world.size():
+		for b in range(a + 1, world.size()):
+			var gap := Vector2(world[a].x - world[b].x, world[a].z - world[b].z).length()
+			worst_gap = minf(worst_gap, gap)
+	if live < 20:
+		_failures.append("check 12 filled only %d walkers — too few to mean anything" % live)
+		Sentinel.done("walkers_never_teleport")
+		return
+	if worst_gap < CrowdScript.MIN_WALKER_SPACING:
+		_failures.append(("two walkers spawned %.2f m apart, inside MIN_WALKER_SPACING"
+			+ " (%.2f) — the clearance is being measured somewhere nobody stands, which is"
+			+ " what happens when the lane is drawn after the test.")
+			% [worst_gap, CrowdScript.MIN_WALKER_SPACING])
+
+	# (a) THE WALK ITSELF, split on whether the citizen turned that frame.
+	var prev: Array[Vector3] = []
+	var prev_h: Array[Vector2] = []
+	prev.resize(cits.size())
+	prev_h.resize(cits.size())
+	for i in cits.size():
+		prev[i] = CrowdScript._citizen_world_pos(cits[i])
+		prev_h[i] = cits[i]["heading_dir"]
+	var worst_step: float = 0.0
+	var worst_at: int = -1
+	var worst_corner: float = 0.0
+	var turns: int = 0
+	for _f in WALK_STEPS:
+		_manager._update_walkers(DT, false)
+		for i in cits.size():
+			if not cits[i]["active"]:
+				continue
+			var now: Vector3 = CrowdScript._citizen_world_pos(cits[i])
+			var h: Vector2 = cits[i]["heading_dir"]
+			var moved := Vector2(now.x - prev[i].x, now.z - prev[i].z).length()
+			if h.is_equal_approx(prev_h[i]):
+				if moved > worst_step:
+					worst_step = moved
+					worst_at = i
+			else:
+				turns += 1
+				worst_corner = maxf(worst_corner, moved)
+			prev[i] = now
+			prev_h[i] = h
+	if turns < 20:
+		_failures.append("check 12 saw only %d turns in %d steps — the corner bound below"
+			% [turns, WALK_STEPS] + " was never exercised. A 62 m block at ~2.3 m/s is"
+			+ " ~1,600 frames, so a few dozen is the expected yield; zero is not.")
+	if worst_step > bound:
+		_failures.append(("walker %d moved %.2f m in ONE frame WITHOUT TURNING, against a"
+			+ " bound of %.3f m (WALK_SPEED_MAX x %.3f x %.0f). A walk cannot outrun its own"
+			+ " speed, so this is the lane jumping sideways — _pick_lane must be asked on a"
+			+ " TURN and only on a turn.") % [worst_at, worst_step, bound, DT, MAX_STEP_FACTOR])
+	if worst_corner > corner_bound:
+		_failures.append(("a walker moved %.2f m through a CORNER, past the %.2f m the lane"
+			+ " geometry allows (sqrt(2) x PAVEMENT_LANE_OFFSET + one step). The turn is a"
+			+ " known discontinuity — see this check's header — but it is bounded by the"
+			+ " widest lane, and this is wider than that.") % [worst_corner, corner_bound])
+	else:
+		print("walk continuity: %d walkers, %d steps, worst straight frame %.4f m (bound"
+			% [live, WALK_STEPS, worst_step]
+			+ " %.4f); %d corners, worst %.2f m (bound %.2f); closest spawn pair %.2f m"
+			% [bound, turns, worst_corner, corner_bound, worst_gap])
+	_manager._hide_all()
+	Sentinel.done("walkers_never_teleport")

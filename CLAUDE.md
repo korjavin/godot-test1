@@ -1686,8 +1686,16 @@ was ever going to stop it. Three parts, all in the two managers, all pinned by
   8.6 m — outside `AVENUE_HALF_WIDTH` and inside the block face at
   `AVENUE_HALF_WIDTH + BLOCK_PAVEMENT`). The ordinary `LANE_OFFSETS` (±3.2) put a walker
   0.8 m from a car lane, which is inside both boxes — that, and not the crossings, is
-  most of what the owner saw. The lane is **re-asked on every turn** (`_pick_lane`), or a
-  citizen that walked off a side street onto an avenue keeps a lane that is now traffic.
+  most of what the owner saw. **The lane is re-asked on a TURN and only on a turn**
+  (`_pick_lane`): a walker that came off a side street onto an avenue keeping its old lane
+  is in the traffic, but `_pick_next_waypoint` carries straight on 60% of the time and a
+  fresh draw there flips the SIGN half of those — a 17.2 m sideways teleport for a citizen
+  that never turned. A U-turn keeps its street line, so it flips the stored value rather
+  than re-drawing; the 90° corner is still a `sqrt(2) x lane` jump, which is what the lane
+  model has always cost (±3.2 made it 4.5 m) and `crowd_selfcheck` check 12 BOUNDS rather
+  than forbids. `_pick_lane` tries **both** pavements before giving up, because
+  `BUDAPEST_MIN.x == GATE.x` puts the gate avenue's west pavement outside the rect and a
+  single-draw version dropped half its walkers onto that carriageway's centreline.
 - **The car brakes for a citizen on the carriageway through the SHIPPED yield path** —
   `_distance_to_citizen_ahead` feeds `crowd_manager.blocking_citizen_distance` into
   `target_speed_for_distance` beside the hero's own distance. It is deliberately its own
@@ -1700,6 +1708,9 @@ was ever going to stop it. Three parts, all in the two managers, all pinned by
   once it is already in the road. One already crossing is let through (the car brakes for
   it instead: freezing somebody mid-road is the one place to be run over), and a car on
   the citizen's OWN axis is ignored, or a walker on an avenue would stand still forever.
+  Both lines are INFINITE, so the projection is bounded by the carriageway's own width —
+  without that a citizen stepping onto the z = 0 avenue is held by a car on the parallel
+  one 248 m up its own line.
 - **Discovery is the group, both ways, `has_method`-guarded** — a preload between these
   two would be a cycle, and a harness with only one of them behaves exactly as before.
 
@@ -1716,7 +1727,9 @@ bubble filled FROM COLD and the metric is RADIAL (the share inside half the spaw
 a quarter of the area, so uniform is 25%) rather than a cell histogram whose tiling sits
 on the street lines. Measured over 1,200 arrivals at four spots: **36% → 21%**. The
 retired sampler is written out in the check as the mutation control and must fail the
-same bound. `MIN_WALKER_SPACING` is finally enforced (at spawn), and a RECYCLE goes to
+same bound. `MIN_WALKER_SPACING` is finally enforced — at spawn, and against the LANE the
+candidate will really stand in rather than the centreline, or two walkers 6 m apart on the
+line pass and then draw the same lane — and a RECYCLE goes to
 the FAR half of the bubble (`RECYCLE_MIN_DIST`) — a walker leaving at 145 m used to pop
 back 15 m from the hero's nose, a second pump concentrating the crowd as he walks.
 
