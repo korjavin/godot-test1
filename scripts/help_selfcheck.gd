@@ -87,7 +87,9 @@ const ACTION_ROWS: Array = [
 	["switch_character", "R"],
 	["special_ability", "F"],
 	["toggle_camera", "C"],
+	["voice_mic", "V"],
 ]
+
 
 var _overlay: Control = null
 
