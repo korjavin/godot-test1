@@ -497,6 +497,34 @@ func _check_room_pause_holder() -> String:
 	if controller.is_pausing():
 		return "is_pausing() answered true with nothing pressed"
 
+	# --- THE CARD, and the escape hatch it must not block ---------------------
+	# Under our OWN pause the way out is P. Under a teammate's, P is inert by
+	# design, so the only way out of a peer who never resumes is the MP panel's
+	# Leave — which lives on the HUD CanvasLayer UNDER this layer-90 overlay. A
+	# dim that swallows clicks there strands the player with no way out at all.
+	controller._show_remote_card("Ada")
+	if not bool(controller.get("_overlay").get("visible")):
+		return "the remote card did not show"
+	if controller.get("_label").text != tr(PauseController.REMOTE_PAUSE_TEXT) % "Ada":
+		return "the remote card does not name the peer holding the pause"
+	if controller.get("_dim").mouse_filter != Control.MOUSE_FILTER_IGNORE:
+		return ("the remote card swallows clicks — the MP panel's Leave is under it " \
+			+ "and P is inert, so a peer who never resumes strands this player")
+	# ...and OUR OWN card takes the clicks back, because there the world underneath
+	# must not be pokeable and P is right there.
+	await _press(KEY_P)
+	if not bool(controller.get("_paused_by_us")):
+		return "P did not pause with only a remote CARD up (nothing was holding a claim)"
+	if controller.get("_label").text != tr(PauseController.PAUSE_TEXT):
+		return ("our own pause card still names a teammate — the label was never reset, " \
+			+ "so it tells the player to wait for somebody who is not pausing")
+	if controller.get("_dim").mouse_filter != Control.MOUSE_FILTER_STOP:
+		return "our own pause card lets clicks through to the world underneath"
+	await _press(KEY_P)
+	if paused or PauseHub.holder_count() != 0:
+		return "the card probe left a claim behind (holders=%d)" % PauseHub.holder_count()
+	controller._show_remote_card("")
+
 	# `mp_manager`'s claim, stood in for by a plain node (the hub keys on identity).
 	var remote := Node.new()
 	root.add_child(remote)

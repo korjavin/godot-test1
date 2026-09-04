@@ -1893,8 +1893,12 @@ The sharpest rules, in rough order of how badly they bite:
   the peer who resumes; the escape hatch for one who never does is the MP panel's Leave,
   which is `PROCESS_MODE_ALWAYS`. The local **game-over refusal** is re-asked every frame
   (`mp_ui._apply_pause`'s reason: `GameOverUI` is PAUSABLE and Play Again would die).
-  Known ceiling, documented at the line: a touch session shows "Paused — tap to resume"
-  whose tap is gated on `paused_by_driver`, so under a remote pause the tap does nothing.
+  **The REMOTE card is not the local one**: it releases a captured mouse and its dim
+  IGNOREs clicks, because the way out of a peer who never resumes is the MP panel's
+  Leave, which lives on the HUD canvas UNDER the layer-90 overlay — the local card keeps
+  swallowing clicks, since there P is right in front of you. Known ceiling, documented at
+  the line: a touch session shows "Paused — tap to resume" whose tap is gated on
+  `paused_by_driver`, so under a remote pause the tap does nothing.
 - The stall heartbeat rides the lobby relay, not the mesh, because a throttled tab stops
   polling both.
 

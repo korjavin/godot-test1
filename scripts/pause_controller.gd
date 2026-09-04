@@ -57,6 +57,10 @@ const REMOTE_PAUSE_TEXT: String = "PAUSED by %s\n\nThey resume"
 var _overlay: CanvasLayer = null
 var _label: Label = null
 
+## The full-screen dim. Held because its `mouse_filter` differs between the two
+## cards — see `_show_remote_card()`.
+var _dim: ColorRect = null
+
 ## The name of the room member currently pausing us, `""` for nobody. Cached so
 ## `_process` writes the label only on a change rather than 60 times a second.
 var _remote_pauser: String = ""
@@ -108,11 +112,10 @@ func _toggle_pause() -> void:
 		PauseHub.release(self)
 		_overlay.visible = false
 		# A room member may still be pausing underneath us — `_process` sees the
-		# cleared cache next frame and puts their card back up.
+		# cleared cache next frame and puts their card back up (and takes the mouse
+		# straight back off us, which is what it is for).
 		_remote_pauser = ""
-		if _recapture_mouse:
-			_recapture_mouse = false
-			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+		_recapture_mouse_if_released()
 		return
 	# P IS INERT UNDER SOMEBODY ELSE'S PAUSE, unchanged by the refcount. This is a
 	# CONDITION read — "is the world already stopped" — not an ownership question:
@@ -128,11 +131,15 @@ func _toggle_pause() -> void:
 		return
 	PauseHub.take(self)
 	_paused_by_us = true
+	# Restore OUR message and OUR dim. A remote card may have been up a moment ago
+	# (a teammate resumed, then we pressed P), and a label left saying "PAUSED by
+	# Ada — they resume" over our own pause names the wrong person to wait for.
+	_label.text = PAUSE_TEXT
+	_dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	_remote_pauser = ""
 	_overlay.visible = true
 	# Free the mouse so a paused player can reach their browser/OS.
-	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
-		_recapture_mouse = true
+	_release_mouse()
 
 
 func _build_overlay() -> void:
@@ -146,12 +153,13 @@ func _build_overlay() -> void:
 	_overlay.visible = false
 	add_child(_overlay)
 
-	var dim := ColorRect.new()
-	dim.color = DIM_COLOR
-	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	# Swallow clicks while paused so the game underneath can't be poked.
-	dim.mouse_filter = Control.MOUSE_FILTER_STOP
-	_overlay.add_child(dim)
+	_dim = ColorRect.new()
+	_dim.color = DIM_COLOR
+	_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	# Swallow clicks while paused so the game underneath can't be poked. Flipped to
+	# IGNORE for the REMOTE card — see `_show_remote_card()`.
+	_dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	_overlay.add_child(_dim)
 
 	_label = Label.new()
 	_label.text = PAUSE_TEXT
@@ -162,6 +170,11 @@ func _build_overlay() -> void:
 	_label.add_theme_color_override("font_color", Color.WHITE)
 	_label.add_theme_color_override("font_outline_color", Color.BLACK)
 	_label.add_theme_constant_override("outline_size", 8)
+	# The dim is the only thing that decides whether this card eats clicks; a
+	# second Control quietly doing it too is how the remote card's escape hatch
+	# would come back blocked. (IGNORE is `Label`'s default — said out loud
+	# because the behaviour is now load-bearing.)
+	_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_overlay.add_child(_label)
 
 
@@ -192,6 +205,45 @@ func _process(_delta: float) -> void:
 	if who == _remote_pauser:
 		return
 	_remote_pauser = who
+	_show_remote_card(who)
+
+
+func _show_remote_card(who: String) -> void:
+	"""
+	Put up (or take down) the card for a teammate's pause.
+
+	THE ESCAPE HATCH IS WHY THIS IS NOT JUST A LABEL SWAP. Under our OWN pause the
+	way out is P; under a teammate's, P is inert by design, so the only way out of
+	a peer who never resumes is the MP panel's Leave — which is PROCESS_MODE_ALWAYS
+	and opens under a foreign pause, but lives on the HUD CanvasLayer UNDER this
+	overlay. So the remote card releases a captured mouse (a captured cursor cannot
+	click anything) and lets the dim IGNORE clicks, which leaves the HUD's MP
+	button reachable through it. The local card keeps swallowing them: there the
+	world underneath must not be pokeable and P is right there.
+	"""
 	_overlay.visible = not who.is_empty()
-	if not who.is_empty():
-		_label.text = tr(REMOTE_PAUSE_TEXT) % who
+	if who.is_empty():
+		_dim.mouse_filter = Control.MOUSE_FILTER_STOP
+		_recapture_mouse_if_released()
+		return
+	_label.text = tr(REMOTE_PAUSE_TEXT) % who
+	_dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_release_mouse()
+
+
+func _release_mouse() -> void:
+	"""Free a captured cursor and remember to hand it back on resume."""
+	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+		_recapture_mouse = true
+
+
+func _recapture_mouse_if_released() -> void:
+	"""
+	The other half of `_release_mouse()`. The resume is a user gesture (a keypress
+	or a teammate's packet arriving on a frame we are awake for), which is what
+	browser pointer-lock needs, so this works on desktop web too.
+	"""
+	if _recapture_mouse:
+		_recapture_mouse = false
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
