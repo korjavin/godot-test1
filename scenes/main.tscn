@@ -57,7 +57,9 @@ glow_bloom = 0.05
 glow_hdr_threshold = 0.85
 adjustment_enabled = true
 adjustment_contrast = 1.08
-adjustment_saturation = 1.26
+adjustment_saturation = 1.12
+ambient_light_source = 3
+ambient_light_energy = 0.85
 
 [node name="Main" type="Node3D"]
 
@@ -106,8 +108,8 @@ script = ExtResource("27_version")
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
 transform = Transform3D(-0.573576, 0.469846, -0.67101, 0, 0.819152, 0.573576, 0.819152, 0.32899, -0.469846, 0, 10, 0)
 light_color = Color(1, 0.94, 0.82, 1)
-light_energy = 1.15
-light_angular_distance = 1.5
+light_energy = 1.25
+light_angular_distance = 0.5
 shadow_enabled = true
 shadow_normal_bias = 0.8
 directional_shadow_mode = 1
