@@ -389,17 +389,17 @@ burning the budget the measurement needs.
 
 ### Task 6: The RED-CHECK LIST — run the whole suite both ways
 
-- [ ] with `FIELD_ALTITUDE = false`, run **every** `scripts/*_selfcheck.gd` as CI does,
+- [x] with `FIELD_ALTITUDE = false`, run **every** `scripts/*_selfcheck.gd` as CI does,
       one at a time, capturing rc, whether `SELFCHECK OK` was printed and whether any
       `SCRIPT ERROR` appeared. **All 36 must be green.** Any red one is a bug in this
       branch — fix it, the flag-off path is meant to be inert
-- [ ] flip `FIELD_ALTITUDE = true` **locally, without committing the flip**, and run
+- [x] flip `FIELD_ALTITUDE = true` **locally, without committing the flip**, and run
       the whole suite again the same way. Record for EACH check: green/red, the first
       failure line, and **which flat-world consumer from the epic's list it guards**
-- [ ] flip it back to `false` and re-run the suite once to prove the flip is clean
-- [ ] write the red list into `docs/field-altitude-spike.md` as a table:
+- [x] flip it back to `false` and re-run the suite once to prove the flip is clean
+- [x] write the red list into `docs/field-altitude-spike.md` as a table:
       check | verdict | first failure | consumer it guards | migration size
-- [ ] expected reds, to be confirmed or refuted by measurement, NOT assumed:
+- [x] expected reds, to be confirmed or refuted by measurement, NOT assumed:
       `chunk_stream_selfcheck` (the ground box at :161), coin settling
       (`_settle_coin_y` and `COIN_GROUND_HEIGHT` in `prop_selfcheck` /
       `enemy_spawn_selfcheck` check 14), road stations at y = 0
@@ -409,6 +409,17 @@ burning the budget the measurement needs.
       (`is_on_floor()` AND river-at-XZ), `minimap_selfcheck`. **`budapest_selfcheck`,
       `tower_*_selfcheck` and `capture_selfcheck` MUST STAY GREEN** — their zones are
       forced flat and that is the whole point of Task 2; a red one there is a mask bug
+
+
+  NOTE (measurement, Task 6): 36/36 green with the flag off, **34/36 with it on**,
+  36/36 again after the flip back. The only reds are `altitude_selfcheck` (red BY
+  DESIGN with the flag on — it asserts the spike ships false) and
+  `chunk_stream_selfcheck` (`_has_ground_collision` measures a chunk-spanning
+  `BoxShape3D`, which a `HeightMapShape3D` is not). **Every other expected red came
+  back GREEN**, because `height_at()` has exactly one production consumer — the
+  chunk ground shape — so every other flat-world system still writes y = 0 and its
+  check still asserts y = 0. The red list is therefore NOT a migration to-do list;
+  see `docs/field-altitude-spike.md`.
 
 ### Task 7: The report — web numbers and the migration order
 
