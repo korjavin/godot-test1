@@ -1148,6 +1148,16 @@ func _check_forest_content(terrain_script: GDScript, consts: Dictionary) -> void
 	     half of the Minecraft read the owner reported) and its trunks must
 	     actually lean. Both are measured off the emitted batch, so reverting
 	     either one in the builder fails here.
+	  5. THE SILHOUETTE (bead godot-test1-y1o.2, retuning what u7a left here).
+	     u7a asserted the canopy's PITCH, because a stack of level SLABS was the
+	     shape that still read as a cube once the colours and the yaw were fixed.
+	     A pitched sphere is the same sphere, so that clause measured nothing the
+	     day the canopy stopped being a box: it is replaced by the thing that now
+	     carries the silhouette — EVERY canopy entry is BoxKind.SPHERE and EVERY
+	     trunk is BoxKind.CUBE. Both halves matter. A canopy that reverts to a
+	     cube is the Minecraft read back; a TRUNK that drifts to a round kind is
+	     the collision bug ChunkBatch's banner warns about, since the trunk is the
+	     one colliding box in a tree and a shape carries no kind.
 
 	The negative controls are the non-empty assertions: an empty batch would
 	satisfy the seam bound, the equality and the climbable count perfectly.
@@ -1199,7 +1209,8 @@ func _check_forest_content(terrain_script: GDScript, consts: Dictionary) -> void
 	var trunks := 0
 	var leaning := 0
 	var leaves := 0
-	var pitched := 0
+	var boxy_leaves := 0
+	var round_trunks := 0
 	var shades: Dictionary = {}
 	var worst_reach := 0.0
 
@@ -1229,13 +1240,14 @@ func _check_forest_content(terrain_script: GDScript, consts: Dictionary) -> void
 				# greens rather than of float noise.
 				shades[Vector3i(roundi(c.r * 400.0), roundi(c.g * 400.0), roundi(c.b * 400.0))] = true
 				leaves += 1
-				var lup: Vector3 = (entry["transform"] as Transform3D).basis.y.normalized()
-				if lup.distance_to(Vector3.UP) > EPSILON:
-					pitched += 1
+				if int(entry["kind"]) != ChunkBatch.BoxKind.SPHERE:
+					boxy_leaves += 1
 				continue
 			# Not a leaf: it is a trunk. Its local UP is only Vector3.UP when the
 			# lean was zero.
 			trunks += 1
+			if int(entry["kind"]) != ChunkBatch.BoxKind.CUBE:
+				round_trunks += 1
 			var up: Vector3 = (entry["transform"] as Transform3D).basis.y.normalized()
 			if up.distance_to(Vector3.UP) > EPSILON:
 				leaning += 1
@@ -1259,24 +1271,28 @@ func _check_forest_content(terrain_script: GDScript, consts: Dictionary) -> void
 		_fail("a wood of %d trees shows only %d distinct leaf shades (floor %d) — one flat green is the Minecraft read bead u7a exists to remove"
 				% [footprints, shades.size(), FOREST_MIN_LEAF_SHADES])
 	if trunks == 0:
-		_fail("no forest box was coloured OFF the leaf ramp — the trunk sample is empty, so the lean below measured nothing")
-	elif float(leaning) / float(trunks) < FOREST_MIN_LEANING_FRACTION:
-		_fail("only %d of %d forest trunks lean off vertical (floor %.0f%%) — an upright box on flat ground is a fence post, not a tree"
-				% [leaning, trunks, FOREST_MIN_LEANING_FRACTION * 100.0])
-	# The canopy's own pitch, measured for the trunk lean's reason: a stack of
-	# LEVEL slabs was the shape that still read as a cube after the colours and
-	# the yaw step were fixed. Not every layer pitches (the alternation is by
-	# index and a one-layer tree exists), so this is a floor on the count, and
-	# `leaves == 0` is its negative control.
+		_fail("no forest box was coloured OFF the leaf ramp — the trunk sample is empty, so the lean and the kind below measured nothing")
+	else:
+		if float(leaning) / float(trunks) < FOREST_MIN_LEANING_FRACTION:
+			_fail("only %d of %d forest trunks lean off vertical (floor %.0f%%) — an upright box on flat ground is a fence post, not a tree"
+					% [leaning, trunks, FOREST_MIN_LEANING_FRACTION * 100.0])
+		if round_trunks > 0:
+			_fail("%d of %d forest trunks are not BoxKind.CUBE — a trunk is the ONE colliding box in a tree and a collision shape carries no kind, so a round trunk is a box you bump into that is not where you see it"
+					% [round_trunks, trunks])
+	# THE SILHOUETTE, replacing u7a's canopy-pitch clause (see clause 5 above): a
+	# pitched sphere is the same sphere, so pitch stopped measuring anything the
+	# day the canopy stopped being a box. This is an equality on EVERY canopy
+	# entry rather than a fraction — there is no index alternation to excuse a
+	# cube here — and `leaves == 0` is still its negative control.
 	if leaves == 0:
-		_fail("no forest box was coloured ON the leaf ramp — the canopy sample is empty, so the pitch below measured nothing")
-	elif pitched * 2 < leaves:
-		_fail("only %d of %d forest canopy slabs are pitched off level — a stack of level slabs is the flat-topped cube this restyle removes"
-				% [pitched, leaves])
+		_fail("no forest box was coloured ON the leaf ramp — the canopy sample is empty, so the kind below measured nothing")
+	elif boxy_leaves > 0:
+		_fail("%d of %d forest canopy blobs are not BoxKind.SPHERE — a canopy back on the shared unit CUBE is the Minecraft silhouette bead y1o.2 exists to remove"
+				% [boxy_leaves, leaves])
 
-	print("  forest     %d chunks, %d boxes (%d collide, %d footprints, 0 climbable), %d leaf shades, %d/%d trunks lean, %d/%d canopy slabs pitched, reach %.2f / %.1f m"
+	print("  forest     %d chunks, %d boxes (%d collide, %d footprints, 0 climbable), %d leaf shades, %d/%d trunks lean, %d/%d canopy blobs are spheres, %d/%d trunks are cubes, reach %.2f / %.1f m"
 			% [forest_chunks.size(), boxes, solids, footprints, shades.size(), leaning, trunks,
-			   pitched, leaves, worst_reach, half_chunk])
+			   leaves - boxy_leaves, leaves, trunks - round_trunks, trunks, worst_reach, half_chunk])
 	terrain.free()
 	Sentinel.done("forest_content")
 

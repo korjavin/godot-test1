@@ -75,6 +75,7 @@ const MobileInput := preload("res://scripts/mobile_input.gd")
 const TouchControls := preload("res://scripts/touch_controls.gd")
 const MobileSettingsPanel := preload("res://scripts/mobile_settings_panel.gd")
 const SkillTreeUi := preload("res://scripts/skill_tree_ui.gd")
+const TowerLiftMenu := preload("res://scripts/tower_lift_menu.gd")
 const LandmarkToast := preload("res://scripts/landmark_toast.gd")
 
 const PLAYER_SCENE: String = "res://scenes/player.tscn"
@@ -160,21 +161,7 @@ func _check_key_is_free() -> void:
 					% [OS.get_keycode_string(key), action])
 
 	# --- Against every other raw-keycode panel ------------------------------
-	var owners: Array = [
-		[[MinimapHud.TOGGLE_KEYCODE], "minimap_hud.TOGGLE_KEYCODE"],
-		[MinimapHud.ZOOM_IN_KEYCODES, "minimap_hud.ZOOM_IN_KEYCODES"],
-		[MinimapHud.ZOOM_OUT_KEYCODES, "minimap_hud.ZOOM_OUT_KEYCODES"],
-		[[PauseController.PAUSE_KEY], "pause_controller.PAUSE_KEY"],
-		[[SkillTreeUi.TOGGLE_KEY], "skill_tree_ui.TOGGLE_KEY"],
-		[HelpOverlay.HELP_KEYCODES, "help_overlay.HELP_KEYCODES"],
-		[LandmarkToast.ANSWER_KEYCODES, "landmark_toast.ANSWER_KEYCODES"],
-		[PlayerScript.HERO_KEYCODES, "player_controller.HERO_KEYCODES"],
-		[[PerfOverlay.TOGGLE_KEYCODE], "perf_overlay.TOGGLE_KEYCODE"],
-		[[MotionDebug.TOGGLE_KEYCODE], "motion_debug.TOGGLE_KEYCODE"],
-		[[MobileInput.FORCE_ENABLE_KEYCODE], "mobile_input.FORCE_ENABLE_KEYCODE"],
-		[[TouchControls.FORCE_SHOW_KEYCODE], "touch_controls.FORCE_SHOW_KEYCODE"],
-		[[MobileSettingsPanel.FORCE_SHOW_KEYCODE], "mobile_settings_panel.FORCE_SHOW_KEYCODE"],
-	]
+	var owners: Array = panel_key_owners()
 	var claimed: String = _owner_claiming(key, owners)
 	if not claimed.is_empty():
 		_fail("TOGGLE_KEY %s is already %s" % [OS.get_keycode_string(key), claimed])
@@ -195,6 +182,40 @@ func _check_key_is_free() -> void:
 			+ "landmark_toast.ANSWER_KEYCODES and player_controller.HERO_KEYCODES "
 			+ "are exactly that shape, so their keys are not really being compared")
 	Sentinel.done("key_is_free")
+
+
+static func panel_key_owners() -> Array:
+	"""
+	EVERY raw-keycode panel key in the game, `[keycodes, label]` a row.
+
+	One registry, two subjects: this file asks whether the city map's B is free
+	against it, and `debug_teleport_selfcheck` asks the same of F2/F8 — a new
+	panel key is still ONE edit, here, and it is compared against everything
+	that already exists in both directions. A subject that appears in the list
+	skips its own row by label.
+
+	`tower_lift_selfcheck` still carries a fourth copy of this list; pointing it
+	here too is the obvious follow-up and is deliberately not this bead's edit.
+	Its key IS a row below, so a lift key moved onto F2/F8/B is caught here.
+	"""
+	return [
+		[[MinimapHud.TOGGLE_KEYCODE], "minimap_hud.TOGGLE_KEYCODE"],
+		[MinimapHud.ZOOM_IN_KEYCODES, "minimap_hud.ZOOM_IN_KEYCODES"],
+		[MinimapHud.ZOOM_OUT_KEYCODES, "minimap_hud.ZOOM_OUT_KEYCODES"],
+		[[PauseController.PAUSE_KEY], "pause_controller.PAUSE_KEY"],
+		[[SkillTreeUi.TOGGLE_KEY], "skill_tree_ui.TOGGLE_KEY"],
+		[[TowerLiftMenu.TOGGLE_KEY], "tower_lift_menu.TOGGLE_KEY"],
+		[HelpOverlay.HELP_KEYCODES, "help_overlay.HELP_KEYCODES"],
+		[LandmarkToast.ANSWER_KEYCODES, "landmark_toast.ANSWER_KEYCODES"],
+		[PlayerScript.HERO_KEYCODES, "player_controller.HERO_KEYCODES"],
+		[[PerfOverlay.TOGGLE_KEYCODE], "perf_overlay.TOGGLE_KEYCODE"],
+		[[MotionDebug.TOGGLE_KEYCODE], "motion_debug.TOGGLE_KEYCODE"],
+		[[MobileInput.FORCE_ENABLE_KEYCODE], "mobile_input.FORCE_ENABLE_KEYCODE"],
+		[[TouchControls.FORCE_SHOW_KEYCODE], "touch_controls.FORCE_SHOW_KEYCODE"],
+		[[MobileSettingsPanel.FORCE_SHOW_KEYCODE], "mobile_settings_panel.FORCE_SHOW_KEYCODE"],
+		[[PlayerScript.DEBUG_TELEPORT_BUDAPEST_KEY], "player_controller.DEBUG_TELEPORT_BUDAPEST_KEY"],
+		[[PlayerScript.DEBUG_TELEPORT_HQ_KEY], "player_controller.DEBUG_TELEPORT_HQ_KEY"],
+	]
 
 
 static func _flatten_keycodes(value: Variant) -> Array:

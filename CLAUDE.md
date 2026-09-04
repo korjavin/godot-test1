@@ -65,7 +65,12 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            named BlockMultiMesh, measured over 225 real field
 #                            chunks), the city splitter carrying kind and
 #                            leaving a non-cube WHOLE, and collision staying a
-#                            BoxShape3D of dimensions for every kind
+#                            BoxShape3D of dimensions for every kind. Check 5 is
+#                            the PER-BIOME DRAW-CALL BILL, iterating the Biome
+#                            enum over both shipped field spawners: a forest
+#                            chunk builds exactly TWO nodes (BlockMultiMesh +
+#                            BlockMultiMesh_SPHERE, the canopies) and every
+#                            other biome exactly one
 #   fauna_selfcheck          herd steering + rider carry
 #   mp_selfcheck             multiplayer pure logic (decoders, ids, arithmetic)
 #   locale_selfcheck         en/de table + German fits its controls
@@ -370,7 +375,7 @@ Load-bearing rules:
   non-CUBE kind is for `collide = false` decoration and NON-CLIMBABLE colliders only,
   never for anything a player stands on; and
   **`_build_block_multimesh` emits one `MultiMeshInstance3D` per kind PRESENT** — a
-  cube-only chunk (every chunk the world ships today) builds exactly the one node it always
+  cube-only chunk builds exactly the one node it always
   did, still named `BlockMultiMesh`, and every bucket shares the one
   `_get_shared_block_material` and the chunk's `cast_shadows` flag. That per-kind split is
   the ONLY sanctioned multiplication of a chunk's MultiMeshInstance3Ds. **Budapest stays
@@ -379,6 +384,16 @@ Load-bearing rules:
   pre-build sweep cannot see. The city splitter **carries `kind` and leaves a non-CUBE
   entry whole**: a cut cone is not two cones. Choosing a kind costs **no RNG draw**, so it
   can never move a spawn.
+  **THE FOREST IS THE FIRST CONSUMER AND SO FAR THE ONLY ONE** (bead
+  `godot-test1-y1o.2`): every tree's 2-3 canopy layers are `BoxKind.SPHERE` blobs
+  (`TREE_CANOPY_BLOB_HEIGHT` / `_OVERLAP`, both DERIVED from the width the layer
+  already drew — so not one RNG draw moved and the biome stream is byte-identical),
+  the trunk stays a `CUBE` because it is the one COLLIDING box in a tree, and a
+  forest chunk therefore costs **+1 draw call and nothing else in the world costs
+  anything**. `batch_selfcheck` check 5 bills that per biome off the `Biome` enum;
+  `prop_selfcheck` check 10 asserts the two kinds tree by tree. **A new consumer is a
+  named bead judged BY EYE by the owner** — the epic's rule — plus whatever that
+  check-5 bill has to become.
 - **Chunk-parented, so unloading frees it.** Anything spawned per-chunk parents to the
   chunk MeshInstance3D or it leaks.
 - **Footprints are the shared currency.** Each thing built appends
@@ -1572,6 +1587,25 @@ The web (WebGL) build is the performance-sensitive target.
   `render_distance` at runtime behind `OS.has_feature("web")`.
 - Fog is the one **universal** visual change (owner-approved); only its density is
   platform-gated.
+- **F2 / F8 TELEPORT TO BUDAPEST AND TO THE HQ, so "no web reading" is no longer an
+  excuse** (bead `godot-test1-xtl`). Two perf beads in a row shipped headless CPU numbers
+  because the city is 1.7 km from spawn and nobody walks a browser build there twice for a
+  before/after pair. **A perf bead that touches the city, the crowd, the traffic or the
+  tower is now expected to carry a WEB F3 reading**: teleport, then F3. It is
+  `player_controller.debug_teleport_to()` behind `debug_teleport_allowed()` —
+  `OS.is_debug_build()` AND not in a room, so an exported release build cannot reach it
+  and a peer can never publish a teleported position — on raw keycodes outside the input
+  map (the F3–F7 precedent), and it re-seats the world through
+  `MpManager._apply_join_placement()`'s own sequence (`new_run` with the CURRENT seed →
+  `build_ring_now` → wait a physics frame → `_place_near`) so the body lands on built
+  ground with the ring's blocks and crocodiles already there. **TAKE THE READING ON
+  `godot --headless --export-debug "Web" build/web/index.html` + `./serve.sh`** — CI and the
+  deployed build export `--export-release`, where `is_debug_build()` is false and F2/F8 are
+  dead by design, so a before/after PAIR is comparable on the debug template but the absolute
+  numbers are not the deployed build's. It preserves the run —
+  coins, streak, mask, heroes — and shifts `own_distance_origin` by the jump so the
+  personal record is not banked from a place nobody walked to. `debug_teleport_selfcheck`
+  pins all of it.
 
 ### Performance conventions
 - **Visual-affecting changes are web-gated.** Desktop and editor stay at full quality.

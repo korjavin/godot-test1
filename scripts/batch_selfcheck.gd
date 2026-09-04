@@ -1,6 +1,7 @@
 extends SceneTree
 ## ============================================================================
-## CHUNK BATCH SELF-CHECK — the mesh-kind slot (bead godot-test1-y1o.1)
+## CHUNK BATCH SELF-CHECK — the mesh-kind slot (bead godot-test1-y1o.1) and the
+## per-biome draw-call bill its consumers run up (check 5, bead godot-test1-y1o.2)
 ## ============================================================================
 ##
 ## Run headless:
@@ -21,9 +22,11 @@ extends SceneTree
 ##      meaningful. A SphereMesh left at its default radius 1.0 breaks all of it
 ##      and looks like nothing worse than a big canopy.
 ##   2. ONE MultiMeshInstance3D PER KIND PRESENT — and, above all, exactly ONE for
-##      a batch of nothing but cubes, which is every chunk the world ships today.
-##      A bucketing bug that emitted an empty node per kind would quadruple the
-##      world's draw calls with no visual difference at all.
+##      a batch of nothing but cubes, which is every chunk the world ships bar a
+##      forest one. A bucketing bug that emitted an empty node per kind would
+##      quadruple the world's draw calls with no visual difference at all. Check 5
+##      is the same rule billed per BIOME on the shipped spawners: forest 2,
+##      everything else 1.
 ##   3. THE CITY SPLITTER LEAVES A NON-CUBE WHOLE. A cut cone is not two cones;
 ##      cutting works only because a box's pieces are boxes.
 ##   4. COLLISION IS UNCHANGED BY KIND — still a BoxShape3D of `dimensions`, the
@@ -49,6 +52,14 @@ const EPS: float = 1e-5
 ## that chunk happened to pick.
 const FIELD_SWEEP: int = 7
 
+## CHECK 5's sweep: how far out to walk looking for chunks of every biome, and how
+## many chunks of each to bill. SNOW and CITY are the rare bands, so the square has
+## to be wide; four samples each is enough that a per-chunk fluke cannot pass for a
+## biome-wide answer, and small enough that the sweep stops early in the common
+## bands rather than building 2,000 chunks.
+const BIOME_SWEEP: int = 22
+const BIOME_SAMPLES: int = 4
+
 var _failures: Array[String] = []
 
 
@@ -66,6 +77,7 @@ func _initialize() -> void:
 	_check_multimesh_per_kind()
 	_check_splitter_carries_kind()
 	_check_collision_is_unchanged_by_kind()
+	_check_draw_calls_per_biome()
 	_report()
 
 
@@ -284,14 +296,17 @@ func _check_multimesh_per_kind() -> void:
 		_fail("only %d of %d field chunks produced boxes — nothing was measured"
 				% [sampled, (2 * FIELD_SWEEP + 1) * (2 * FIELD_SWEEP + 1)])
 	if non_cube > 0:
-		_fail("the shipped field spawner emitted %d non-CUBE boxes over %d chunks. "
+		_fail("the SCATTERED-BLOCK spawner emitted %d non-CUBE boxes over %d chunks. "
 				% [non_cube, sampled]
-				+ "This bead adds the SLOT only: nothing in the world may change "
-				+ "silhouette until its own consumer bead lands and is judged by eye")
+				+ "Consumers of the kind slot are named beads judged by eye (the "
+				+ "forest canopies are y1o.2's, and they are BIOME content, not "
+				+ "these blocks) — a silhouette that changed here changed nowhere "
+				+ "anybody asked for")
 	if many_mmis > 0:
-		_fail("%d of %d real field chunks built more than one MultiMeshInstance3D — "
-				% [many_mmis, sampled] + "with no consumer yet, every chunk must "
-				+ "build exactly one")
+		_fail("%d of %d real field chunks built more than one MultiMeshInstance3D from "
+				% [many_mmis, sampled] + "the scattered blocks alone — every kind they "
+				+ "emit is the cube, so this must be exactly one. Check 5 bills the "
+				+ "biome CONTENT, which is where the forest's second bucket lives")
 
 	var planted_rng := RandomNumberGenerator.new()
 	planted_rng.seed = 99
@@ -430,3 +445,103 @@ func _check_collision_is_unchanged_by_kind() -> void:
 		body.free()
 		no_body.free()
 	Sentinel.done("collision_by_kind")
+
+
+# ---------------------------------------------------------------------------
+# CHECK 5 — the draw-call bill, per biome (bead godot-test1-y1o.2)
+# ---------------------------------------------------------------------------
+
+func _check_draw_calls_per_biome() -> void:
+	"""
+	THE PRICE OF THE FIRST CONSUMER, measured where it is paid.
+
+	Check 2 proved the MACHINERY costs nothing; this proves the FOREST costs
+	exactly one draw call and that nothing else in the field learned to. A forest
+	chunk builds TWO MultiMeshInstance3Ds — the cube bucket (trunks, scattered
+	blocks) and the sphere bucket (canopies) — and every other biome builds the
+	ONE it always did. That is the whole web budget of bead y1o.2, and it is the
+	kind of number that drifts silently: a `kind` argument left on a shared
+	helper, or a builder copied from the forest, doubles a biome's block draw
+	calls with no visual difference worth noticing.
+
+	BUDAPEST IS NOT SWEPT HERE and does not need to be — `spawn_biome_content_in_chunk`
+	returns early inside the rect, and budapest_selfcheck check 4 already asserts
+	"1 MultiMeshInstance3D" over real city chunks built by the real city builders.
+	Two homes for one rule is how they drift apart.
+
+	IT ITERATES THE Biome ENUM, never a list of its own, so a biome added later is
+	billed the day its row lands (the BIOME_SPECIES / SPECIES idiom).
+
+	The batch is BOTH field spawners into one array, which is what a real chunk
+	does: `spawn_objects_in_chunk` (scattered blocks — every biome's cube bucket)
+	plus `spawn_biome_content_in_chunk` (the biome's own content). A chunk that
+	drew nothing at all is skipped rather than counted as a pass, and the
+	per-biome sample counts are asserted so an unreachable biome is a failure
+	instead of a silent zero.
+	"""
+	var terrain := Node3D.new()
+	terrain.set_script(load(TERRAIN_SCRIPT) as GDScript)
+	root.add_child(terrain)
+	terrain.set_run_seed(20260904)
+
+	var biome_enum: Dictionary = (terrain.get_script() as GDScript).get_script_constant_map()["Biome"]
+	var forest_value: int = int(biome_enum["FOREST"])
+
+	# How many MultiMeshInstance3Ds a chunk of each biome may build. One for
+	# everybody; the forest's canopies are the one sanctioned second bucket.
+	var sampled: Dictionary = {}   # biome value -> chunks measured
+	var wrong: Dictionary = {}     # biome value -> "got n, wanted m" for the first offender
+
+	for cx in range(-BIOME_SWEEP, BIOME_SWEEP + 1):
+		for cz in range(-BIOME_SWEEP, BIOME_SWEEP + 1):
+			var chunk := Vector2i(cx, cz)
+			var centre: Vector3 = terrain.chunk_to_world(chunk)
+			if terrain.in_budapest(centre.x, centre.z):
+				continue
+			var biome: int = terrain.biome_at(centre.x, centre.z)
+			if int(sampled.get(biome, 0)) >= BIOME_SAMPLES:
+				continue
+			var batch: Array = []
+			var body := StaticBody3D.new()
+			var platforms: Array = []
+			var obstacles: Array = []
+			terrain.spawn_objects_in_chunk(chunk, platforms, batch, body)
+			terrain.spawn_biome_content_in_chunk(chunk, obstacles, batch, body)
+			body.free()
+			if batch.is_empty():
+				continue
+			sampled[biome] = int(sampled.get(biome, 0)) + 1
+			var parent := MeshInstance3D.new()
+			ChunkBatch._build_block_multimesh(parent, batch)
+			var nodes: Array = _multimeshes(parent)
+			var want: int = 2 if biome == forest_value else 1
+			if nodes.size() != want and not wrong.has(biome):
+				var names: Array = []
+				for n_v: Variant in nodes:
+					names.append((n_v as Node).name)
+				wrong[biome] = "chunk %s built %d (%s), wanted %d" % [chunk, nodes.size(), ", ".join(names), want]
+			# The forest's two must be exactly the cube and the sphere bucket —
+			# "two nodes" alone would also be satisfied by a cone canopy.
+			if biome == forest_value and nodes.size() == 2:
+				for want_name: String in ["BlockMultiMesh", "BlockMultiMesh_SPHERE"]:
+					if parent.get_node_or_null(NodePath(want_name)) == null:
+						_fail("a forest chunk's two block buckets do not include '%s' — "
+								% want_name + "the canopies are BoxKind.SPHERE and the "
+								+ "trunks BoxKind.CUBE, nothing else")
+			parent.free()
+
+	for biome_name_v: Variant in biome_enum:
+		var biome_name: String = biome_name_v
+		var value: int = int(biome_enum[biome_name])
+		var n: int = int(sampled.get(value, 0))
+		if n < BIOME_SAMPLES:
+			_fail("only %d chunks of biome %s were measured (wanted %d) in a %dx%d sweep — "
+					% [n, biome_name, BIOME_SAMPLES, 2 * BIOME_SWEEP + 1, 2 * BIOME_SWEEP + 1]
+					+ "the draw-call bill for that biome is unmeasured, not proven")
+		if wrong.has(value):
+			_fail("biome %s: %s. A forest chunk pays +1 draw call for its sphere canopies "
+					% [biome_name, wrong[value]]
+					+ "and NOTHING ELSE IN THE FIELD PAYS ANYTHING — that is bead y1o.2's "
+					+ "whole web budget")
+	terrain.free()
+	Sentinel.done("draw_calls_per_biome")
