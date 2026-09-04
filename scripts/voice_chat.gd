@@ -411,6 +411,10 @@ const VOICE_JS: String = """
 		var p = S.peers[id];
 		var t = S.tiles[id];
 		if (!p || !p.video || !t) { return 0; }
+		/* A REMEMBERED RECT IS NOT A REASON TO SHOW SOMETHING. `blankTile` keeps the
+		   rect through a stall on purpose, so the `resize` listener below — which
+		   walks every remembered rect — would otherwise un-blank a frozen frame. */
+		if (p.hasVideo !== 1) { return 0; }
 		var r = canvasBox();
 		if (!r || t[2] <= 0 || t[3] <= 0) { return 0; }
 		p.video.style.cssText = 'position:fixed;pointer-events:none;object-fit:cover;' +
