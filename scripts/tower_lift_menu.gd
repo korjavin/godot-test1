@@ -5,8 +5,8 @@ extends Control
 ##
 ## Bead `godot-test1-3iy.7`, the last item of tower phase 7 (the wing builder and
 ## the staged growth it was filed with were superseded by phase 14's ASCII plans).
-## The tower is ten storeys and the labyrinth is on eight of them; walking back up
-## is the tax a SECOND visit pays, and this is the receipt for the first one.
+## The tower is ten storeys and the labyrinth starts eight of them up; walking back
+## up is the tax a SECOND visit pays, and this is the receipt for the first one.
 ##
 ## ============================================================================
 ## A STOP IS AN ENTRY, AND UNLOCKED MEANS "IN THE OPENED SET"
@@ -33,8 +33,8 @@ extends Control
 ##
 ## At the GROUND landing (`TowerInterior.lift_stand(0)`), within `CALL_RADIUS` —
 ## the foot of the ramp you climb anyway, so the call point is a place you already
-## walk through rather than a thing to find. The two refusals are `city_map_panel`'s
-## and `landmark_toast`'s, for their reasons: IN A ROOM (the world is not yours to
+## walk through rather than a thing to find. The refusals are `city_map_panel`'s and
+## `landmark_toast`'s, for their reasons: IN A ROOM (the world is not yours to
 ## freeze, and a body that vanishes eight storeys up is a teleport three teammates
 ## did not agree to) and OVER GAME OVER (`GameOverUI` is pausable — a pause there
 ## kills Play Again). A caught hero is refused too: the freeze after a bite is a
