@@ -433,15 +433,19 @@ func _terrain_is_river_at(pos: Vector3) -> bool:
 	Null-safe group lookup, the shape player_controller._terrain_is_river_here()
 	uses: false when there is no terrain (the avatar must still run in a scene
 	without one), and the has_method guard covers an older/stubbed terrain.
+
+	`is_wading_at`, not `is_river_at` — the Y-aware question (bead
+	godot-test1-06o.2): a teammate standing on a bridge deck is over the band, not
+	in it, and their model must not sink. One rule, on the terrain, three callers.
 	"""
 	if _terrain == null or not is_instance_valid(_terrain):
 		# Re-resolved rather than latched: an avatar can be built before the
 		# terrain node exists, and a latched null would stay null for the room's
 		# life. Once found it is cached, so the steady state is zero lookups.
 		_terrain = get_tree().get_first_node_in_group("terrain")
-	if _terrain == null or not _terrain.has_method("is_river_at"):
+	if _terrain == null or not _terrain.has_method("is_wading_at"):
 		return false
-	return _terrain.is_river_at(pos)
+	return _terrain.is_wading_at(pos)
 
 
 func _animate(delta: float) -> void:

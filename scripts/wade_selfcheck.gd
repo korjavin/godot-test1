@@ -111,11 +111,21 @@ var _failures: Array[String] = []
 ## for, with a switch on it. Using the real endless_terrain would make "is this
 ## spot a river" a search problem; the contract under test is only that the
 ## player reacts to the answer.
+##
+## `is_wading_at` IS THE SHIPPED RULE, not a second stub answer (bead
+## godot-test1-06o.2): the band stays the switch above, and the HEIGHT clause is
+## the real one, read off the file that owns it. So every check in here also
+## drives the Y-aware gate at its own y — and the deck case, where a body stands
+## on real stone over a real river, is field_bridge_selfcheck's, because it needs
+## a real world to have a deck in.
 class StubTerrain:
 	extends Node
+	const TERRAIN: GDScript = preload("res://scripts/endless_terrain.gd")
 	var river: bool = false
 	func is_river_at(_pos: Vector3) -> bool:
 		return river
+	func is_wading_at(pos: Vector3) -> bool:
+		return pos.y < TERRAIN.WADE_SURFACE_MAX and river
 
 
 ## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
