@@ -64,8 +64,14 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            flag (a cube-only batch still exactly one node
 #                            named BlockMultiMesh, measured over 225 real field
 #                            chunks), the city splitter carrying kind and
-#                            leaving a non-cube WHOLE, and collision staying a
-#                            BoxShape3D of dimensions for every kind. Check 5 is
+#                            leaving a non-cube WHOLE on BOTH halves (the mesh on
+#                            kind, the body on its BoxShape3D cast) with the wide
+#                            CUBE cut into equal piece counts either side, and
+#                            check 4 the PER-KIND COLLISION SHAPE: the type per
+#                            kind, the radius/height, the collider INSCRIBED in
+#                            dimensions, one shape per colliding entry and none
+#                            without, and the aspect fallback driven at BOTH ends
+#                            of ROUND_COLLIDER_MAX_ASPECT. Check 5 is
 #                            the PER-BIOME DRAW-CALL BILL, iterating the Biome
 #                            enum over both shipped field spawners: a forest
 #                            chunk builds exactly TWO nodes (BlockMultiMesh +
@@ -131,15 +137,28 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            plus the spawners that must never read k (predators,
 #                            hunters, bosses, road coins) read as TEXT, with a
 #                            near/far predator count beside it
-#   enemy_spawn_selfcheck    every species: no spawn in stone, deterministic
-#                            placement, biome dispatch, behaviour, MP identity;
-#                            plus check 13 the HUNTER FIELD CAP (the expected
-#                            desktop residency under HUNTER_FIELD_CAP off the
-#                            consts, and the live cap firing, reading the COUNT,
-#                            excluding the HQ by PARENT, off in a room, and
-#                            moving nothing else) and check 14 a ROAD BOSS'S
+#   enemy_spawn_selfcheck    every species PLACED: no spawn in stone,
+#                            deterministic placement, the SPECIES table and both
+#                            dispatch maps, MP identity, and the coverage
+#                            verdict; plus check 13 the HUNTER FIELD CAP (the
+#                            expected desktop residency under HUNTER_FIELD_CAP
+#                            off the consts, and the live cap firing, reading the
+#                            COUNT, excluding the HQ by PARENT, off in a room,
+#                            and moving nothing else) and check 14 a ROAD BOSS'S
 #                            FOOTPRINT (its own column refused by the shipped
 #                            _settle_coin_y, and no coin inside one over 25 roads)
+#   enemy_behavior_selfcheck what a predator DOES once it has seen you — one
+#                            probe per arm on a live body against a live stub:
+#                            pack surround, the ambush trip-wire, the charge
+#                            sidestep, the burst and leap races (both ends: a
+#                            run escapes, a walk is caught), the ranged cadence,
+#                            the hunt ring and its scent nose, the tracker's
+#                            chunk-to-chunk adoption, the view cone's telegraph
+#                            and the Budapest crowd false-arrest. Split from
+#                            enemy_spawn by bd godot-test1-ftn.13 (CI shards the
+#                            glob BY FILE); the two stay bound through
+#                            enemy_spawn's PROBED_BEHAVIORS, which fails BY NAME
+#                            a `behavior` string with no probe here
 #   boss_selfcheck           EVERY BIOME_BOSS kind: the territory leash (hunts
 #                            inside, never leaves), crush immunity is an
 #                            ORDERING, the row's boss speed is the one resolved,
@@ -175,24 +194,38 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            at T, the five per-system spawner answers (with the
 #                            hunters as the positive control), the Danube
 #                            crocodiles' own stream A/B'd against the shared one,
-#                            the plateau ramps' slope, the difficulty clamp at
-#                            both ends, the gate-to-river avenue walkable, and
-#                            — check 14 — THE FOUR BRIDGES: each deck rect bound
-#                            to the SLOTS row its pylons stand on, both abutments
-#                            on the bank, the crossing DRY metre by metre with a
-#                            wet control off the parapet, and the surface the
-#                            chunks really build measured against the plan's
-#                            profile (flush, no step, no seam gap on either
-#                            axis); plus Margaret Island dry and inside the band,
-#                            the Danube's crocodiles bucketed north/middle/
-#                            south so the policy is proved along the WHOLE river,
-#                            and NOTHING STANDS IN THE RIVER OR IN A MASSIF —
-#                            every landmark's COLLIDING STONE measured against
-#                            the band (never its disc, which for a 268 m
-#                            Parliament is a bound 33 m into the water while not
-#                            one stone of it is) and every disc against every
-#                            plateau, exempting only slots on a DRY_RECTS row or
-#                            a plateau lid plus the one named
+#                            the difficulty clamp at both ends, and check 4's WEB
+#                            RESIDENCY window — the only thing that can see a
+#                            cost that moved out of one chunk and into 1,631,
+#                            which also names the Parliament and Chain Bridge
+#                            7x7 windows as info beside the densest one it
+#                            asserts, with city coins inside the timed window.
+#                            Check 18 DETERMINISM: every city chunk
+#                            byte-identical across the two seeds and the
+#                            crocodile stream outside the rect plus the hunter
+#                            stream on the north field outside, both A/B'd
+#                            against city-disabled builds with non-empty body
+#                            counts
+#   budapest_city_selfcheck  the city the CHUNKS BUILD, split from
+#                            budapest_selfcheck by bd godot-test1-ftn.13 (CI
+#                            shards the glob BY FILE) with the check NUMBERS
+#                            unchanged: 11 the plateau ramps' slope, 13 the
+#                            gate-to-river avenue walkable, and 14 THE FOUR
+#                            BRIDGES — each deck rect bound to the SLOTS row its
+#                            pylons stand on, both abutments on the bank, the
+#                            crossing DRY metre by metre with a wet control off
+#                            the parapet, and the surface the chunks really build
+#                            measured against the plan's profile (flush, no step,
+#                            no seam gap on either axis); plus Margaret Island
+#                            dry and inside the band, the Danube's crocodiles
+#                            bucketed north/middle/south so the policy is proved
+#                            along the WHOLE river, and NOTHING STANDS IN THE
+#                            RIVER OR IN A MASSIF — every landmark's COLLIDING
+#                            STONE measured against the band (never its disc,
+#                            which for a 268 m Parliament is a bound 33 m into
+#                            the water while not one stone of it is) and every
+#                            disc against every plateau, exempting only slots on
+#                            a DRY_RECTS row or a plateau lid plus the one named
 #                            `shoes_on_the_danube`; with a mutation control that
 #                            runs a shipped builder mid-channel. Check 15 is THE
 #                            CITY IS FULL: every grid cell the plan does not
@@ -201,24 +234,13 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            own cells, the plateaus and the decks exempted and
 #                            counted), every courtyard hollow, and the coin
 #                            routes on the avenues with a gem at a square and a
-#                            line across every bridge — plus check 4's WEB
-#                            RESIDENCY window, the only thing that can see a
-#                            cost that moved out of one chunk and into 1,631.
-#                            Check 16 REACHABILITY: one hero, no ability —
-#                            every slot flood-reachable from the gate over
-#                            streets/decks/ramps/plateau tops, every .7 block
-#                            and .6a–c footprint as stone, the flood
-#                            height-gated at 2.6 m or a ramp; two negative
-#                            controls (a wall on Margaret Bridge, Castle
-#                            Hill's ramp removed). Check 4 also names the
-#                            Parliament and Chain Bridge 7×7 windows as info
-#                            beside the densest one it asserts, with city
-#                            coins inside the timed window. Check 18
-#                            DETERMINISM: every city chunk byte-identical
-#                            across the two seeds and the crocodile stream
-#                            outside the rect plus the hunter stream on
-#                            the north field outside, both A/B'd against
-#                            city-disabled builds with non-empty body counts
+#                            line across every bridge. Check 16 REACHABILITY:
+#                            one hero, no ability — every slot flood-reachable
+#                            from the gate over streets/decks/ramps/plateau
+#                            tops, every .7 block and .6a-c footprint as stone,
+#                            the flood height-gated at 2.6 m or a ramp; two
+#                            negative controls (a wall on Margaret Bridge,
+#                            Castle Hill's ramp removed)
 #   landmark_progress_selfcheck
 #                            BUDAPEST'S WIN: the catalogue (every slot resolves a
 #                            CITY_LANDMARKS row by BUILDER NAME, a wave-C
@@ -406,9 +428,15 @@ Load-bearing rules:
   entry's BOUNDING BOX for every kind — and therefore keeps `prop_selfcheck`'s cube-corner
   reach helpers and `landmark_selfcheck`'s extent helpers valid upper bounds with no edit,
   and `world_block.gdshader`'s model-space -0.5..+0.5 gradient meaningful;
-  **collision is unchanged** — still a `BoxShape3D` of `dimensions` whatever the kind, so a
-  non-CUBE kind is for `collide = false` decoration and NON-CLIMBABLE colliders only,
-  never for anything a player stands on; and
+  **collision FOLLOWS the kind** (bead `godot-test1-y1o.10`) — `ChunkBatch.collision_shape_for`
+  is the one home of the mapping: a near-round SPHERE hangs a `SphereShape3D`, a near-round
+  CYLINDER a `CylinderShape3D` (radius = the smallest half-extent, so the collider is
+  INSCRIBED in `dimensions` exactly like the mesh; the cylinder's axis is local Y, where
+  `CylinderMesh` puts it, never "the long axis"), and a CONE plus anything squashed past
+  `ROUND_COLLIDER_MAX_ASPECT` (1.6 — no `SphereShape3D` is an ellipsoid) keeps the bounding
+  box. The shape COUNT is untouched, which every collision budget in the suite rests on.
+  **The CONE is the one kind still wrong on purpose** (Godot has no cone primitive), so
+  nothing a player can reach may be a colliding cone — `landmark_selfcheck` check 9c; and
   **`_build_block_multimesh` emits one `MultiMeshInstance3D` per kind PRESENT** — a
   cube-only chunk builds exactly the one node it always
   did, still named `BlockMultiMesh`, and every bucket shares the one
@@ -506,7 +534,9 @@ CITY ground, the authored Danube band and the dry cutouts (bridge decks, Margare
 live in `biome_at`/`is_river_at` **and** `ground.gdshader`, edited together (`_biome_noise`
 itself is untouched — the city is an OVERRIDE above the field, not a change to it).
 
-Three rules of the city's own, all pinned by `budapest_selfcheck`:
+Three rules of the city's own, all pinned by `budapest_selfcheck` (the plan and the
+streaming contract) and `budapest_city_selfcheck` (the city the chunks build) —
+one 4,100-line file until bd `godot-test1-ftn.13` split it by check family:
 
 - **A landmark bigger than a chunk is SLICED, not re-homed.** The Parliament is 268 m
   long; the chunk that "owns" it has unloaded by the time you reach its far end. So every
@@ -564,7 +594,7 @@ Three rules of the city's own, all pinned by `budapest_selfcheck`:
   Pest 4-6 storeys and Buda 2-3, picked off `is_buda()` against the river's own
   polyline. **The streets are clear BY CONSTRUCTION**: nothing is ever drawn outside
   `block_rect`, which is the whole of "a solid piece must never sever a street", and
-  `budapest_selfcheck` check 15 sweeps the collision shapes anyway because a
+  `budapest_city_selfcheck` check 15 sweeps the collision shapes anyway because a
   construction argument fails silently.
 - **A FACADE IS BANDS, NEVER A BOX PER WINDOW, and `_city_band` is the whole
   vocabulary.** One colliding hull, then ONE window course per storey (proud, glass
@@ -610,7 +640,8 @@ Three rules of the city's own, all pinned by `budapest_selfcheck`:
   change to entity counts, which is the one reason the performance conventions allow
   them to move). The two pitches are two constants because the approach corridor is a
   GUIDE and has to read as a continuous trail; it is untouched. Check 15 holds the
-  walked avenue and every deck to a floor AND a **ceiling** derived from the constant,
+  walked avenue and every deck to a floor AND a **ceiling** derived from the constant
+  (it is `budapest_city_selfcheck`'s since bd `godot-test1-ftn.13`),
   and asserts the constant itself against `CITY_STREET_COIN_MIN_PITCH` — a derived
   expectation would otherwise follow a one-character revert back down in silence.
   Three rules and each is a bug avoided: no coin west of
@@ -1076,9 +1107,10 @@ reason, as `CITY_CROC_DIVISOR` and `DESERT_BLOCK_KEEP_EVERY`. Adding a predator 
 `SPECIES` row, a `.tscn` beside `sand_viper.tscn`, and one line in that map;
 `enemy_spawn_selfcheck` fails if the row is incomplete, breaks the speed lattice, is
 assigned after `add_child`, is reachable from no biome, or carries a `behavior` string
-no probe in that file measures. **It iterates `SPECIES`, `BIOME_SPECIES` and the `Biome`
-enum, never a list of its own** — so a new predator is covered the day its row lands, and
-a new behaviour arm has to bring a probe with it. Keep it that way.
+no probe in **`enemy_behavior_selfcheck`** measures. **It iterates `SPECIES`,
+`BIOME_SPECIES` and the `Biome` enum, never a list of its own** — so a new predator is
+covered the day its row lands, and a new behaviour arm has to bring a probe with it.
+Keep it that way.
 
 **A cone is DETECTION, so it is data and it lives above the dispatch.** `view_cone_deg`
 is an optional row field defaulting to 360 — the tower guard's 120 is the only one — read
@@ -1090,7 +1122,7 @@ feelers and both leashes, because a body that walks through its own warning turn
 goes and rolls the quarry back out of its own cone. And a bearing test is blind to height,
 so a cone also carries `VIEW_CONE_HEIGHT_BAND`: without it a guard smells the player
 through the floor slab above it. It costs no RNG draw, so adding it to a row moves no
-spawn. `enemy_spawn_selfcheck` check 8e probes every
+spawn. `enemy_behavior_selfcheck` check 8e probes every
 row that carries the field, from behind and ahead, with the crocodile as the no-cone
 control.
 
@@ -1150,7 +1182,7 @@ bound ("walking is caught") is asked of ordinary predators; a boss ignores its r
 speed entirely and takes `BOSS_CHASE_SPEED` unless the row opts out with
 `boss_chase_speed`, which exists for a species whose threat is its **shot** and not its
 feet — the titan and the ice cream clown, both of them archers a walking player must be
-able to stroll away from. The exemption is paid for, not free: `enemy_spawn_selfcheck`'s ranged probe
+able to stroll away from. The exemption is paid for, not free: `enemy_behavior_selfcheck`'s ranged probe
 *asserts* every `"ranged"` row's speeds are sub-walk, and `boss_selfcheck` — which runs
 every check over every `BIOME_BOSS` kind, not just the crocodile — asserts the body really
 resolved the speed its row asked for.
@@ -1210,8 +1242,8 @@ nobody, and travels at the row's OWN `chase_speed`, which `_ready()` has already
 to `MAX_CHASE_SPEED` — so walking (5.0) lets a tracker arrive, which IS the pressure the
 owner asked for, and running (9.0) still leaves it behind, and no retune of a row can
 reach around either. Mercy is still decided at ENGAGEMENT by the director: the nose
-brings hunters near you, it does not grant anybody a grab. `enemy_spawn_selfcheck` check
-8f is the acceptance — a walk that must be caught up with and a run that must not,
+brings hunters near you, it does not grant anybody a grab. `enemy_behavior_selfcheck`
+check 8f is the acceptance — a walk that must be caught up with and a run that must not,
 iterating every row that declares a nose.
 
 **Hunter mercy is tuned BEFORE contact and never by a hunter pulling its punch.**
@@ -1240,7 +1272,7 @@ river wade factor is floored for the same reason.
 9.0 run), then pay it back in a mandatory recovery leg. So the promise is not "nothing is
 ever faster than 8.5" but **running escapes across the whole pounce-and-recovery cycle** —
 a claim about a gap over time, and measured at both ends (a walking player must still be
-caught) by `enemy_spawn_selfcheck` check 8, which probes *every* row carrying the
+caught) by `enemy_behavior_selfcheck` check 8, which probes *every* row carrying the
 behaviour — a second burst species needs no edit there.
 
 **Ranged attacks are `scripts/boss_projectile.gd`, and it is a CAPABILITY, not a boss.**
