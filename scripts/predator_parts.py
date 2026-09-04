@@ -34,6 +34,8 @@ THE THREE CONTRACTS A PREDATOR MODEL MUST HONOUR
 Geometry is deliberately blocky: axis-aligned boxes plus the occasional 4-sided
 cone, matching the faceted art direction and keeping each animal near ~350
 triangles (the crocodile is 1856, so a whole pack is cheaper than it looks).
+And the SHADING is faceted too, which is a property of the export rather than of
+the shape — see `export_faceted`, the one seam every model is written through.
 
 Run this file directly to build every species and check it:
     python3 scripts/predator_parts.py     # -> SELFCHECK OK
@@ -481,12 +483,45 @@ def verify(mesh: trimesh.Trimesh, name: str, symmetric: bool = True) -> None:
         f"{name}: vertex colours missing — Godot would render it untinted white"
 
 
+def export_faceted(mesh: trimesh.Trimesh, path) -> None:
+    """
+    Write the GLB with FLAT (per-face) normals. THE ONE EXPORT SEAM — every enemy
+    model goes through it, including the three that stack their own mesh instead
+    of calling `save` (hunter, titan, clown) and the older crocodile.
+
+    Two things were wrong with the plain `mesh.export(path)` this replaced, and
+    neither shows up in a file listing. FIRST, trimesh only writes a NORMAL
+    attribute when `vertex_normals` happens to be sitting in the mesh cache, so
+    every shipped model carried NONE — and Godot does not generate them on import
+    either (the imported ArrayMesh has no `ARRAY_FORMAT_NORMAL` bit; check it with
+    `surface_get_format`). An unbound normal attribute is a constant, so the whole
+    predator cast was lit as one flat silhouette: not a facet caught the key light,
+    which is the "it doesn't read as low-poly" the faceted world is measured
+    against. SECOND, asking for normals on a WELDED mesh would be worse than none:
+    trimesh's box is 8 vertices for 12 faces and its cylinder 18 for 32, so the
+    averaged corner normals would round every block and blob off into Gouraud mush
+    — the round primitives (`creation.cylinder` / `creation.icosphere`, which the
+    crocodile is almost entirely built from) worst of all.
+
+    So: unmerge first — one vertex per face corner, the FACE COUNT untouched,
+    which is what every `len(mesh.faces)` budget and invariant in this file rests
+    on — and then ask for normals. Each vertex now belongs to exactly one face, so
+    its "averaged" normal IS that face's normal: style A's faceted read, with no
+    smoothing groups, no per-face material and no extra draw call. The assert is
+    the cheap proof that the unmerge happened, on every build of every model.
+    """
+    mesh.unmerge_vertices()
+    assert len(mesh.vertices) == 3 * len(mesh.faces), \
+        f"{path}: {len(mesh.vertices)} verts for {len(mesh.faces)} faces — not unmerged"
+    mesh.export(path, include_normals=True)
+
+
 def save(parts, name: str, scale: float = 1.0, symmetric: bool = True) -> trimesh.Trimesh:
     """Weld, check, export, report. The tail end of every generate_*.py main()."""
     mesh = build(parts, scale)
     verify(mesh, name, symmetric)
     path = OUT_DIR / f"{name}.glb"
-    mesh.export(path)
+    export_faceted(mesh, path)
     lo, hi = mesh.bounds
     print(f"✓ {name}: {path}")
     print(f"  {len(mesh.vertices)} verts / {len(mesh.faces)} faces")
