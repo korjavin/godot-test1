@@ -267,6 +267,13 @@ func _update_text() -> void:
 	else:
 		text += "Last: none"
 
+	# --- Voice telemetry (bead godot-test1-xtr.4) -------------------------
+	var voice: Node = get_tree().get_first_node_in_group("voice")
+	if is_instance_valid(voice) and voice.has_method("debug_line"):
+		var vline: String = str(voice.debug_line())
+		if not vline.is_empty():
+			text += "\n" + vline
+
 
 # ============================================================================
 # FRAME-SPIKE TELEMETRY

@@ -494,6 +494,8 @@ func _check_no_js_bool() -> void:
 	if not module.contains("window.ckVoice"):
 		_fail("the extracted VOICE_JS block does not mention window.ckVoice — the "
 			+ "extraction is reading the wrong text")
+	if not module.contains("stats:"):
+		_fail("the extracted VOICE_JS block does not export stats")
 	var offence: String = _js_bool_offence(module)
 	if not offence.is_empty():
 		_fail("voice_chat.gd's VOICE_JS hands a JS boolean back over the bridge "
@@ -555,6 +557,8 @@ const PUBLIC_CALLS: Array = [
 	["set_camera_enabled", [true]],
 	["is_camera_on", []],
 	["camera_denied", []],
+	# Telemetry readout for \fo (bead godot-test1-xtr.4).
+	["debug_line", []],
 ]
 
 
@@ -574,6 +578,9 @@ func _check_inert_offweb() -> void:
 	if node.is_available():
 		_fail("is_available() answered true off-web — the whole file is supposed "
 			+ "to be gated on OS.has_feature(\"web\")")
+
+	if node.debug_line() != "":
+		_fail("debug_line() answered non-empty off-web — voice is web-only")
 
 	# THE CAMERA IS THE SAME PROMISE ONE FEATURE ALONG (bead godot-test1-xtr.6).
 	# Driving it below proves it reaches no bridge; this proves it does not quietly
