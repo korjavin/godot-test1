@@ -52,6 +52,9 @@ extends SceneTree
 
 const HUD_SCRIPT := preload("res://scripts/hero_hud.gd")
 const PLAYER_SCRIPT := preload("res://scripts/player_controller.gd")
+## The camera overlay's mirrored copy of `STATE_CAPTIVE` — check 6 binds it. A
+## SCRIPT dependency for one constant, not a node reference.
+const VOICE_SCRIPT := preload("res://scripts/voice_chat.gd")
 const MAIN_SCENE_PATH := "res://scenes/main.tscn"
 
 var _failures: Array[String] = []
@@ -109,6 +112,7 @@ func _run() -> void:
 	_check_the_four_states()
 	_check_the_standalone_degrade()
 	_check_the_row_fits_and_clears_its_neighbours()
+	_check_the_video_tile_lookup()
 
 
 func _hero_names() -> PackedStringArray:
@@ -291,6 +295,99 @@ func _check_the_row_fits_and_clears_its_neighbours() -> void:
 			% neighbours.size()
 		+ "stopped seeing the scene, so this check would pass on anything")
 	Sentinel.done("the_row_fits_and_clears_its_neighbours")
+
+
+func _check_the_video_tile_lookup() -> void:
+	"""
+	6. The three seams the camera overlay reads (bead godot-test1-xtr.6):
+	`hero_names()` is the row this widget is really drawing, `tile_rect()` is where
+	a tile is, and `tile_state()` is what that tile is saying.
+
+	The overlay is a DOM <video> positioned at that rect, so a `tile_rect` that
+	drifted from `_draw`'s arithmetic puts a teammate's face beside their portrait
+	instead of on it — and no self-check can see that in a browser. TWO HALVES,
+	because neither sees the other: the geometry below is `tile_rect` measured
+	against the row's own pitch (self-consistency — a +1 px offset applied to BOTH
+	`_draw` and `tile_rect` is not a bug, it is a moved row), and the TEXT read is
+	what binds them, asserting `_draw` steps by `_tile_rect_local` rather than
+	arithmetic of its own. Plus: an off-roster name answers an EMPTY rect rather
+	than tile zero (which would park a picture over Windman for every hero nobody
+	holds), a CAPTIVE tile reports itself so the overlay can leave its cell bars
+	alone, and `voice_chat`'s mirrored copy of that constant is the real one.
+	"""
+	var hud: Control = HUD_SCRIPT.new()
+	var stub := StubPlayer.new()
+	hud.player = stub
+	# The row is measured OUT of the tree, where `tile_rect` answers its own local
+	# arithmetic: this check is about that arithmetic agreeing with `_draw`'s, and
+	# the screen transform above it is Godot's, not ours, to get right.
+	# Nothing is drawn until `_process` has read the roster, so the empty answer is
+	# the standalone degrade AND the state the overlay meets on its first poll.
+	_check(hud.hero_names().is_empty(),
+		"hero_names() answered %s before the row read a roster" % [hud.hero_names()])
+	_check(hud.tile_rect(_hero_names()[0]) == Rect2(),
+		"tile_rect() offered a rect for a row that is drawing nothing")
+
+	hud._process(0.0)
+	var names: PackedStringArray = hud.hero_names()
+	_check(names == _hero_names(),
+		"hero_names() is %s, but the roster is %s" % [names, _hero_names()])
+
+	# The pitch between two tiles is what `_draw` steps by, and `tile_rect` is the
+	# one description both now read.
+	var pitch: float = float(HUD_SCRIPT.TILE_SIZE) + float(HUD_SCRIPT.TILE_GAP)
+	var previous := Rect2()
+	for i: int in names.size():
+		var rect: Rect2 = hud.tile_rect(names[i])
+		_check(rect.size.x == float(HUD_SCRIPT.TILE_SIZE)
+				and rect.size.y == float(HUD_SCRIPT.TILE_SIZE),
+			"tile_rect(%s) is %s, not one TILE_SIZE square" % [names[i], rect])
+		if i > 0:
+			_check(is_equal_approx(rect.position.x - previous.position.x, pitch),
+				"tile %d starts %.1f px after tile %d, not the row's %.1f pitch"
+					% [i, rect.position.x - previous.position.x, i - 1, pitch])
+			_check(rect.position.y == previous.position.y,
+				"tile %d is not on the same line as tile %d" % [i, i - 1])
+		previous = rect
+
+	_check(hud.tile_rect("no_such_hero") == Rect2(),
+		"tile_rect() answered a real rect for a hero that is not on the row")
+
+	# CAPTIVITY IS THE ONE STATE DRAWN AS A SHAPE — bars ACROSS the whole tile —
+	# so the overlay has to be able to ask, and skips those tiles entirely.
+	stub.captive = [names[1]]
+	hud._process(0.0)
+	_check(hud.tile_state(names[1]) == HUD_SCRIPT.STATE_CAPTIVE,
+		"tile_state(%s) is %d, not STATE_CAPTIVE" % [names[1], hud.tile_state(names[1])])
+	_check(hud.tile_state(names[0]) != HUD_SCRIPT.STATE_CAPTIVE,
+		"tile_state() called a free hero captive")
+	_check(hud.tile_state("no_such_hero") == HUD_SCRIPT.STATE_FREE,
+		"tile_state() answered a real state for a hero that is not on the row")
+	_check(VOICE_SCRIPT.HERO_HUD_STATE_CAPTIVE == HUD_SCRIPT.STATE_CAPTIVE,
+		"voice_chat mirrors STATE_CAPTIVE as %d, but it is %d — the overlay would "
+			% [VOICE_SCRIPT.HERO_HUD_STATE_CAPTIVE, HUD_SCRIPT.STATE_CAPTIVE]
+		+ "cover the cell bars")
+	hud.free()
+	stub.free()
+
+	# THE TEXT HALF, and it is the only thing that binds the two. Everything above
+	# measures `tile_rect` against itself, so a +1 px offset in BOTH it and `_draw`
+	# passes — correctly, that is a moved row — and one in `tile_rect` alone passes
+	# too, which is the bug. `_draw` reading the shared `_tile_rect_local` is what
+	# makes them one description.
+	var source := FileAccess.get_file_as_string("res://scripts/hero_hud.gd")
+	if source.is_empty():
+		_fail("could not read hero_hud.gd — check 6's binding would pass vacuously")
+		Sentinel.done("the_video_tile_lookup")
+		return
+	var draw_body := source.substr(source.find("func _draw() -> void:"))
+	var next_func := draw_body.find("\nfunc ")
+	if next_func > 0:
+		draw_body = draw_body.substr(0, next_func)
+	_check(draw_body.contains("_tile_rect_local("),
+		"_draw() no longer steps by _tile_rect_local() — it and tile_rect() are two "
+		+ "descriptions of the row again, and check 6 cannot see them disagree")
+	Sentinel.done("the_video_tile_lookup")
 
 
 func _hud_absolute_rects(text: String) -> Dictionary:

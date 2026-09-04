@@ -192,6 +192,72 @@ func _read_states(heroes: PackedStringArray) -> PackedInt32Array:
 	return out
 
 
+func hero_names() -> PackedStringArray:
+	"""
+	The roster this row is drawing, in `CHARACTERS` order — EMPTY with no player.
+
+	Exists for `voice_chat.gd` (bead godot-test1-xtr.6), which needs the hero list
+	to ask the lobby who HOLDS each one. It reads the same `_heroes` snapshot
+	`_draw` does, so a caller can never be handed a name this row is not drawing.
+	"""
+	return _heroes
+
+
+func tile_state(hero: String) -> int:
+	"""
+	That hero's tile state (the STATE_* consts), or `STATE_FREE` for a name this
+	row is not drawing.
+
+	Exists beside `tile_rect()` for the camera overlay: a picture drawn over a
+	CAPTIVE tile hides the cell bars, which are the one state this row says with a
+	SHAPE rather than a brightness. Reads the same `_states` snapshot `_draw` does.
+	"""
+	var index := _index_of(hero)
+	if index < 0 or index >= _states.size():
+		return STATE_FREE
+	return _states[index]
+
+
+func tile_rect(hero: String) -> Rect2:
+	"""
+	Where that hero's tile is ON SCREEN, in window pixels — an empty `Rect2` when
+	the hero is not on this row (no player, or a name that is not in `CHARACTERS`).
+
+	The arithmetic is `_draw`'s, moved into a helper both call, so the video
+	overlay of bead godot-test1-xtr.6 can never drift from the tile it covers.
+	`get_screen_transform()` is what turns the control-local rect into the window
+	pixels the browser's canvas is measured in — it folds in this widget's anchors,
+	its CanvasLayer and the project's stretch scale, none of which the caller
+	should have to know about.
+	"""
+	var index := _index_of(hero)
+	if index < 0:
+		return Rect2()
+	var local := _tile_rect_local(index)
+	# Outside the tree there is no screen to map onto and Godot logs an error for
+	# asking — a headless harness reads the row's own arithmetic instead.
+	if not is_inside_tree():
+		return local
+	var xform := get_screen_transform()
+	return Rect2(xform * local.position, xform.basis_xform(local.size))
+
+
+func _index_of(hero: String) -> int:
+	"""That hero's slot in the row this widget is drawing, or -1."""
+	for i: int in _heroes.size():
+		if _heroes[i] == hero:
+			return i
+	return -1
+
+
+func _tile_rect_local(index: int) -> Rect2:
+	"""One tile's rect in this control's own space. The row's ONE description."""
+	return Rect2(
+		Vector2(index * (TILE_SIZE + TILE_GAP), 0.0),
+		Vector2(TILE_SIZE, TILE_SIZE)
+	)
+
+
 func _portrait(hero: String) -> Texture2D:
 	"""The hero's portrait, or null to fall back to the placeholder. Cached both
 	ways so the filesystem is touched at most once per hero per run."""
@@ -214,10 +280,7 @@ func _draw() -> void:
 	for i: int in _heroes.size():
 		var hero := _heroes[i]
 		var state: int = _states[i]
-		var rect := Rect2(
-			Vector2(i * (TILE_SIZE + TILE_GAP), 0.0),
-			Vector2(TILE_SIZE, TILE_SIZE)
-		)
+		var rect := _tile_rect_local(i)
 		var tint: Color = HERO_COLORS.get(hero, FALLBACK_COLOR)
 
 		# Backdrop, so a portrait with light edges still reads over a bright sky.

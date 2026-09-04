@@ -119,6 +119,9 @@ const WIDTH_BUDGETS: Array = [
 	["Mic muted", 18, 320.0, "MP panel mic mute"],
 	["Deafen", 18, 320.0, "MP panel deafen"],
 	["Deafened", 18, 320.0, "MP panel deafen"],
+	["Camera off", 18, 320.0, "MP panel camera toggle"],
+	["Camera on", 18, 320.0, "MP panel camera toggle"],
+	["Camera blocked", 18, 320.0, "MP panel camera toggle"],
 	# The per-member mute toggle is the one NARROW control in this panel: it sits
 	# at the end of a member row beside a clipping 32-character name, so its
 	# `MUTE_BUTTON_WIDTH` (104) less the default Button stylebox's horizontal

@@ -551,6 +551,10 @@ const PUBLIC_CALLS: Array = [
 	["is_peer_muted", ["deadbeef"]],
 	["is_speaking", ["deadbeef"]],
 	["apply_levels", ["deadbeef:42.0,me:0.1,,bad,x:y"]],
+	# The camera (bead godot-test1-xtr.6) — web-only exactly like the microphone.
+	["set_camera_enabled", [true]],
+	["is_camera_on", []],
+	["camera_denied", []],
 ]
 
 
@@ -570,6 +574,16 @@ func _check_inert_offweb() -> void:
 	if node.is_available():
 		_fail("is_available() answered true off-web — the whole file is supposed "
 			+ "to be gated on OS.has_feature(\"web\")")
+
+	# THE CAMERA IS THE SAME PROMISE ONE FEATURE ALONG (bead godot-test1-xtr.6).
+	# Driving it below proves it reaches no bridge; this proves it does not quietly
+	# take EFFECT either — a camera reading as ON with no browser under it is a lie
+	# `mp_ui` and every future reader of `is_camera_on()` would inherit.
+	node.set_camera_enabled(true)
+	if node.is_camera_on() or node.camera_denied():
+		_fail("off-web set_camera_enabled(true) took effect (on=%s denied=%s) — the "
+			% [node.is_camera_on(), node.camera_denied()]
+			+ "camera is web-only like the rest of the file")
 
 	# --- COMPLETENESS: the list must name every public method ---------------
 	var driven: Dictionary = {}
