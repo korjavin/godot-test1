@@ -1868,7 +1868,7 @@ const CITY_DISTRICT_PROP_SIZE: float = 2.0
 ## blow CITY_CHUNK_BOX_BUDGET on the first cell.
 ##
 ## THE STREAM IS PER-CELL AND FIXED-SALT — the tower furniture precedent
-## (`_plan_dressing`'s FIXED salt, never run_seed). Budapest is authored, so the
+## (`TowerDressing.plan_dressing`'s FIXED salt, never run_seed). Budapest is authored, so the
 ## facade a player photographs has to be the same facade every run and for every
 ## peer; and a cell's stream must not depend on which chunk is asking, because a
 ## block straddles up to four of them. Both fall out of seeding one RNG off

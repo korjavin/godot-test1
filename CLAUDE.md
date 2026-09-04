@@ -502,7 +502,13 @@ two-storey keep, plus eight hand-planned storeys over it (see below) rising to t
 BLOCK under the sealed roof, assembled onto the
 shell by
 `endless_terrain` (one direction only — the interior reads the shell's constants, so a
-shell that knew about the interior would be a cyclic `class_name`). Four rules of its
+shell that knew about the interior would be a cyclic `class_name`). **Two families were
+lifted out of it whole** by bd `godot-test1-ftn.12` and neither may drift back:
+`scripts/tower_dressing.gd` (`TowerDressing` — the office, corridor and wayfinding
+dressers) and `scripts/tower_dossiers.gd` (`TowerDossiers` — the evidence dossiers).
+Both are static libraries in `landmark_builders.gd`'s idiom, reaching back into
+`TowerInterior` for the plan-grid readers and the palette; that direction is one-way and
+`plan_boxes()` is the single seam the dressing enters through. Four rules of its
 own, all pinned by `tower_interior_selfcheck`:
 
 - **No interior traversal may demand a jump-height.** The base apex (3.6125 m) is what
@@ -679,7 +685,11 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   that counts draws**; check 5 asserts both. Read `DRAW_BUDGET` as "nothing left the
   batch", not as a draw count.
 - **The EVIDENCE DOSSIERS are the one MultiMesh in the building, and one is the cap.**
-  Six authored folders (`DOSSIERS`, a const table of `{floor, cell, lore}` — floors 2-6
+  They live in `scripts/tower_dossiers.gd` (`class_name TowerDossiers`, bd
+  `godot-test1-ftn.12`), a static library the interior hands itself to; the four state
+  vars and the `body_entered` handler stay on the node, and the seams are four lines in
+  `tower_interior.gd`.
+  Six authored folders (`TowerDossiers.DOSSIERS`, a const table of `{floor, cell, lore}` — floors 2-6
   only, never the labyrinth or the block) pay `DOSSIER_VALUE` coins and a localized line
   on the `landmark_toast` card when you walk into one. A pickup has to vanish on its own,
   which a merged storey batch cannot do, and six meshes would be six SURFACES — so they
@@ -697,7 +707,7 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   watched stretch, which is pure cell choice and must stay takeable by timing the patrol
   alone.
 - **The offices are FURNISHED, and the furniture is derived rather than drawn.** No
-  glyph was added to `TowerPlans` for it: `_plan_dressing` walks each storey's rooms
+  glyph was added to `TowerPlans` for it: `TowerDressing.plan_dressing` walks each storey's rooms
   and puts desks, chairs, cabinets, bookshelves, meeting tables, coolers, plants and
   framed diplomas/photos on the cells that touch a wall, off a FIXED salt (never
   `run_seed` — the tower is authored). It is all vertex-coloured boxes in the storey's
@@ -707,7 +717,7 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   turnstile came out). Furniture has its own
   per-storey budget (`PLAN_DRESS_BUDGET` 580) so `PLAN_BOX_BUDGET` keeps measuring
   exactly what it always did. **The CORRIDORS are dressed too** (benches and planters,
-  `_hall_dressing`), on cells whose four neighbours are all stone or open floor and whose
+  `TowerDressing._hall_dressing`), on cells whose four neighbours are all stone or open floor and whose
   hall is two cells wide — never in the labyrinth or the block, and **never solid**, which
   is why the halls need no connectivity fill of their own. **The WAYFINDING PLAQUES ride the same dresser** — one
   per office room, on the bare wall nearest the way out, its arrow pointing along that
@@ -716,7 +726,7 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   live bearing arrow would rank the corridors at every junction and quietly solve the
   maze, so the horizontal help is authored, coarse and in the world. **Three rules keep it safe and check 18 asserts all
   three**: nothing lands on a doorway cell or beside one; a solid piece is committed only
-  if the room's connectivity is unchanged (`_still_connected`); and a cell carrying
+  if the room's connectivity is unchanged (`TowerDressing._still_connected`); and a cell carrying
   anything else the storey draws — a pad, a lock plate, a set piece — or standing under
   the storey above's stairwell hole is refused. Only waist-high-or-taller pieces collide.
 - **The labyrinth's rule is TWO ROUTES, and the spines walk the ungated one.** Each maze
