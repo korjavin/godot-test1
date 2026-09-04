@@ -188,10 +188,12 @@ const GROUND_CHUNKS: Array[Vector2i] = [
 ## and the sample POSITION is now the PlaneMesh's own f32 vertex coordinate while
 ## the builder walks the same grid in f64, so the two evaluate height_at() at
 ## points up to an f32 ulp apart on a field whose steepest slope is ~0.8 m/m.
-## MEASURED worst 1.1e-4 m across the nine chunks (it was 4.8e-7 while this check
+## MEASURED worst printed by check 5 itself (it was 4.8e-7 while this check
 ## re-derived the builder's own f64 positions and therefore could not see a wrong
-## grid at all — see the note over the grid read in check 5). A millimetre keeps a
-## 9x margin over that and is still two orders under a visible seam.
+## grid at all — see the note over the grid read in check 5). A millimetre is
+## orders above that and still two orders under a visible seam; it is deliberately
+## NOT tightened to the residual, because the number that must not be reachable is
+## the 5.2 cm wrong-grid bug the check exists to catch.
 const HEIGHTMAP_EPSILON: float = 1e-3
 
 ## Check 6's sample count per seed, and the step it measures the slope over. ONE
@@ -454,9 +456,17 @@ func _check_flat_zones() -> void:
 		# Walked as the curve it is: FLAT_ROAD_STATIONS stations either side of the
 		# origin, every one of them a centre the player really walks over, plus a
 		# lateral offset. Stations only at or west of the terminal — CAP 5 OF THE
-		# ROAD'S CONSUMERS (bead godot-test1-8gw.3): east of T there is no road, and
-		# the approach corridor that carries the walk on from there is inside
-		# Budapest's rect and already flat by zone 1.
+		# ROAD'S CONSUMERS (bead godot-test1-8gw.3). East of T the seeded road ends
+		# and the authored approach corridor carries the walk on — and that stretch
+		# is NOT covered here and NOT flat: ROAD_TERMINAL_X is 1450 while the city
+		# rect starts at 1600 and clause 1's skirt is only ALT_CITY_SKIRT (120 m),
+		# so ~110 m of the approach centreline stands in the open field carrying
+		# most of the local amplitude. That is the one gap the spike leaves open,
+		# recorded as the `ponytail:` ceiling on _alt_road_segments and as migration
+		# row 6a in docs/field-altitude-spike.md, which also names the leg that
+		# closes it (walk BudapestPlan.road_approach_point from T to the gate).
+		# Harmless today because the flag ships false; deliberately unasserted so
+		# nobody closes 6a by reading this comment.
 		#
 		# THE SHIPPED REFRESH SEAM IS DRIVEN, not bypassed: the corridor is measured
 		# against the COARSE polyline _alt_road_refresh() caches on a chunk-boundary
@@ -549,14 +559,27 @@ func _check_flat_zones() -> void:
 		var slide_at := Vector2.ZERO
 		var slide_compared := 0
 		var base_center: float = probe_pts[0].x
+		# DID THE WINDOW MOVE AT ALL? worst_slide is 0.0 for free whenever
+		# _alt_road_refresh stops depending on its centre — a no-op refresh, a cache
+		# that never invalidates, a snap widened to a lattice coarser than a chunk.
+		# Each of those is itself a bug (the corridor stops following the player and
+		# the far end of the road un-flattens), and each would leave this leg green
+		# while it certifies the very snap it was written to test. Every other leg in
+		# this file carries a control of exactly this shape.
+		var window_moved := false
 		for step in WINDOW_PROBE_STEPS:
 			var cx: float = base_center + float(step) * t.chunk_size
 			t._alt_road_refresh(cx)
 			var reach: float = minf(residency, _alt_window_reach(t, cx))
+			var before: PackedVector4Array = t._alt_road_segs.duplicate()
 			var heights: Array[float] = []
 			for q: Vector2 in probe_pts:
 				heights.append(t.height_at(q.x, q.y))
 			t._alt_road_refresh(cx + t.chunk_size)
+			window_moved = window_moved or t._alt_road_segs != before
+			# REACH AROUND cx, MEASURED ON BOTH WINDOWS: the probes are filtered by
+			# their distance from cx, so the second window's coverage has to be asked
+			# about cx too — not about its own centre.
 			reach = minf(reach, _alt_window_reach(t, cx))
 			for j in probe_pts.size():
 				var q2: Vector2 = probe_pts[j]
@@ -569,6 +592,9 @@ func _check_flat_zones() -> void:
 					slide_at = q2
 		if slide_compared == 0:
 			_fail("seed %d: the window-slide leg compared no probe at all — every one fell outside both windows' X reach, so the lattice snap is unmeasured" % seed_value)
+		if not window_moved:
+			_fail("seed %d: the road corridor's cached polyline was IDENTICAL at every one of the %d probe centres — the window never slid, so this leg proved the lattice snap against a window that does not move with the player" % [
+				seed_value, WINDOW_PROBE_STEPS])
 		if worst_slide > HEIGHT_EPSILON:
 			_fail("seed %d: height_at%s moved %.4f m when the road window slid one chunk — the corridor's chord nodes are not snapped to the stride lattice, so a chunk's baked floor no longer matches the surface the shader draws over it" % [
 				seed_value, str(slide_at), worst_slide])
@@ -842,16 +868,24 @@ func _check_shader_parity() -> void:
 	# DELTA into zw, which is a few tens of metres from the origin and is a station
 	# centre nowhere on the road. The station set is built independently here, off
 	# _road_station over a range wide enough to contain any window.
+	# MATCHED WITH SEG_ENDPOINT_EPSILON, which is what that constant is FOR. The
+	# endpoints are f32 (a Vector4 stores real_t) and the stations are f64, so a
+	# quantized exact match — the "%.2f|%.2f" dictionary key this used to be — puts
+	# a coordinate landing near a 1 cm boundary on either side of the round and
+	# fails the check on correct code. Two nodes of the polyline are 48 m apart, so
+	# a nearest-centre scan cannot be ambiguous and there is nothing to bucket.
 	t._road_extend_to_x(-SAMPLE_HALF, SAMPLE_HALF)
-	var centres: Dictionary = {}
+	var centres: Array[Vector2] = []
 	var k_centre: int = t._road_first_k_at_or_after_x(0.0)
 	for k in range(k_centre - 400, k_centre + 400):
-		var c: Vector2 = t._road_station(k).center
-		centres["%.2f|%.2f" % [c.x, c.y]] = true
+		centres.append(t._road_station(k).center)
 	for i in seg_count:
 		var seg: Vector4 = segs[i]
 		for end_point: Vector2 in [Vector2(seg.x, seg.y), Vector2(seg.z, seg.w)]:
-			if not centres.has("%.2f|%.2f" % [end_point.x, end_point.y]):
+			var nearest := INF
+			for c: Vector2 in centres:
+				nearest = minf(nearest, end_point.distance_to(c))
+			if nearest > SEG_ENDPOINT_EPSILON:
 				_fail("alt_road_seg[%d] has an endpoint at (%.2f, %.2f) that is no road station centre — the array is not packed (x1, z1, x2, z2)" % [
 					i, end_point.x, end_point.y])
 				break
@@ -880,12 +914,17 @@ func _check_ground_collision() -> void:
 	whole fall-through guarantee. So this check has three jobs:
 
 	  a. WITH THE FLAG OFF the shape is still a BoxShape3D of exactly
-	     Vector3(chunk_size, 0.1, chunk_size), and ground_collision_usec_total is
-	     still 0. That is the merge condition restated where the collision half of
-	     it lives; chunk_stream_selfcheck asserts the same box from the other side.
+	     Vector3(chunk_size, GROUND_COLLISION_THICK, chunk_size), and
+	     ground_collision_usec_total is still 0. That is the merge condition
+	     restated where the collision half of it lives; chunk_stream_selfcheck
+	     asserts the same box from the other side.
 	  b. WITH THE FLAG ON the shape is a HeightMapShape3D whose stored samples,
 	     multiplied back by the CollisionShape3D's uniform scale, equal height_at()
-	     at the corresponding world points. THAT PRODUCT IS THE POINT: the heights
+	     PLUS GROUND_COLLISION_TOP at the corresponding world points — the box in
+	     (a) is a solid the player stands on the top face of, so the surface that
+	     replaces it has to sit where that face did or the flag-on floor drops
+	     5 cm everywhere, INCLUDING inside the four forced-flat zones whose whole
+	     promise is that the flag moves nothing there. THAT PRODUCT IS THE POINT: the heights
 	     are pre-divided by the scale so the scale can be uniform, and a check that
 	     read map_data raw would happily pass a floor sitting at a third of the
 	     height the player sees. The scale is asserted uniform for the same reason.
@@ -903,7 +942,7 @@ func _check_ground_collision() -> void:
 	elif not (flat_shape.shape is BoxShape3D):
 		_fail("the flag-off chunk's ground shape is a %s, not a BoxShape3D — the merge condition is that FIELD_ALTITUDE false is byte for byte today's world" % flat_shape.shape.get_class())
 	else:
-		var want := Vector3(flat.chunk_size, 0.1, flat.chunk_size)
+		var want := Vector3(flat.chunk_size, flat.GROUND_COLLISION_THICK, flat.chunk_size)
 		if (flat_shape.shape as BoxShape3D).size != want:
 			_fail("the flag-off ground box is %s, not %s — chunk_stream_selfcheck asserts this box from the other side" % [
 				str((flat_shape.shape as BoxShape3D).size), str(want)])
@@ -939,13 +978,20 @@ func _check_ground_collision() -> void:
 			.get_mesh_arrays()[Mesh.ARRAY_VERTEX]
 	var distinct_x: Dictionary = {}
 	var distinct_z: Dictionary = {}
+	# THE SNAP IS THE BUCKET KEY, THE VALUE IS THE RAW COORDINATE. A PlaneMesh's
+	# vertices repeat a column's x exactly, but only to f32, so the 0.1 mm key is
+	# what collapses a column into one entry. Sampling at the KEY instead of the
+	# vertex would put every probe up to half a bucket (5e-5 m) off the vertex it
+	# claims to be — an error this check INTRODUCES, ~20x the f32-vs-f64 residual
+	# HEIGHTMAP_EPSILON is reasoned from, and one that grows into a false failure
+	# of the spacing assertion below the moment GROUND_SUBDIVISIONS is raised.
 	for v: Vector3 in ground_verts:
-		distinct_x[snappedf(v.x, 1e-4)] = true
-		distinct_z[snappedf(v.z, 1e-4)] = true
+		distinct_x[snappedf(v.x, 1e-4)] = v.x
+		distinct_z[snappedf(v.z, 1e-4)] = v.z
 	var mesh_side: int = distinct_x.size()
-	var mesh_x: Array = distinct_x.keys()
+	var mesh_x: Array = distinct_x.values()
 	mesh_x.sort()
-	var mesh_z: Array = distinct_z.keys()
+	var mesh_z: Array = distinct_z.values()
 	mesh_z.sort()
 	var mesh_cell: float = float(mesh_x[1]) - float(mesh_x[0])
 	var side: int = t.ALT_GROUND_SIDE
@@ -968,6 +1014,11 @@ func _check_ground_collision() -> void:
 				amp_name, float(t.get(amp_name)), t.ALT_AMP_MAX])
 	var worst := 0.0
 	var sampled := 0
+	# THE FIELD HAS TO BE ALIVE, check 6's rule one check along: every comparison
+	# below is `collider == drawn + top`, which a height_at() returning 0.0
+	# everywhere satisfies exactly. Without this leg check 5 certifies "the floor
+	# you stand on is the ground you see" on a heightfield that does not exist.
+	var alive := 0.0
 	for chunk_pos: Vector2i in GROUND_CHUNKS:
 		var node: Node = t._ensure_chunk_ground(chunk_pos)
 		var cs := _ground_collision_shape(node)
@@ -1012,8 +1063,30 @@ func _check_ground_collision() -> void:
 		if mesh_node == null or mesh_node.custom_aabb.size == Vector3.ZERO:
 			_fail("chunk %s has no custom_aabb with the flag on — the displaced ground is frustum-culled against a zero-height box and hillsides pop at the screen edge" % str(chunk_pos))
 			continue
+		# THE VOLUME IS TWO CLAIMS AND THEY ARE ASSERTED SEPARATELY. Its XZ footprint
+		# must be the chunk's own square (a box narrower than the quad culls the quad
+		# itself); its Y span must contain every height the field reaches here, which
+		# is what pins ALT_AMP_MAX to the amplitude ladder. A single has_point() over
+		# the whole vertex is what one WANTS to write and it does not work: the
+		# PlaneMesh's edge vertices are f32 at exactly +/- half a chunk, so an edge
+		# sample lands an ulp OUTSIDE a box that is exactly chunk_size wide and the
+		# check fails on a correct cull volume. The height leg below carries the real
+		# assertion; this one carries the footprint, exactly and with no epsilon.
+		var aabb: AABB = mesh_node.custom_aabb
+		var half_span: float = t.chunk_size / 2.0
+		if not (is_equal_approx(aabb.position.x, -half_span) and is_equal_approx(aabb.size.x, t.chunk_size) \
+				and is_equal_approx(aabb.position.z, -half_span) and is_equal_approx(aabb.size.z, t.chunk_size)):
+			_fail("chunk %s custom_aabb is %s — its XZ footprint is not the chunk's own %.1f m square, so the ground quad is culled before its hilltop ever is" % [
+				str(chunk_pos), str(aabb), t.chunk_size])
+			continue
 		var origin: Vector3 = t.chunk_to_world(chunk_pos)
 		var data: PackedFloat32Array = shape.map_data
+		# THE COLLIDER IS THE DRAWN SURFACE PLUS GROUND_COLLISION_TOP, because the
+		# BoxShape3D it replaces is a solid the player stands on the TOP FACE of.
+		# See the const in endless_terrain.gd: dropping the offset drops the floor
+		# 5 cm everywhere the flag is on, forced-flat zones included, and this is
+		# the only check that could have seen it.
+		var top: float = t.GROUND_COLLISION_TOP
 		# THE MESH'S OWN VERTICES, offset to this chunk. Not `origin - half + i *
 		# cell`: see the note above the grid read — that formula is the builder's,
 		# and a check that repeats it agrees with the builder about a wrong grid.
@@ -1024,19 +1097,26 @@ func _check_ground_collision() -> void:
 				# UN-SCALED: the stored sample times the scale is the metres the
 				# player stands at, and height_at is the metres the shader drew.
 				var got: float = float(data[iz * side + ix]) * cs.scale.y
-				var delta: float = absf(got - t.height_at(world_x, world_z))
+				var drawn: float = t.height_at(world_x, world_z)
+				var delta: float = absf(got - (drawn + top))
 				worst = maxf(worst, delta)
-				# Against the cull volume, in the chunk's OWN local space (which is
-				# what custom_aabb is in). This is what makes ALT_AMP_MAX a measured
-				# bound rather than a hand-picked rung of the ladder.
-				if not mesh_node.custom_aabb.has_point(Vector3(world_x - origin.x, got, world_z - origin.z)):
+				alive = maxf(alive, absf(drawn))
+				# Against the cull volume's HEIGHT, in the chunk's own local space
+				# (which is what custom_aabb is in). This is what makes ALT_AMP_MAX a
+				# measured bound rather than a hand-picked rung of the ladder.
+				# AGAINST THE DRAWN SURFACE, not the collider: custom_aabb bounds the
+				# MESH, and the mesh is displaced to `drawn`. Feeding it `got` would
+				# fail the top rung of the amplitude ladder by GROUND_COLLISION_TOP.
+				if drawn < aabb.position.y or drawn > aabb.end.y:
 					_fail("chunk %s: the displaced surface reaches %.3f m at (%.1f, %.1f), outside custom_aabb %s — that hillside is culled while it is on screen, and ALT_AMP_MAX no longer bounds the amplitude ladder" % [
-						str(chunk_pos), got, world_x, world_z, str(mesh_node.custom_aabb)])
+						str(chunk_pos), drawn, world_x, world_z, str(aabb)])
 				sampled += 1
 		if worst > HEIGHTMAP_EPSILON:
-			_fail("chunk %s: the collision heightmap is %.6f m off height_at() — the floor you stand on is not the ground you see" % [
+			_fail("chunk %s: the collision heightmap is %.6f m off height_at() + GROUND_COLLISION_TOP — the floor you stand on is not the ground you see" % [
 				str(chunk_pos), worst])
 			break
+	if alive <= 0.0:
+		_fail("every one of the %d grid samples came back at height 0.0 with the spike forced on — check 5's comparison is 0 == 0 and the surface it certifies does not exist" % sampled)
 	if t.ground_collision_usec_total <= 0:
 		_fail("ground_collision_usec_total is still 0 after %d flag-on chunks — the counter perf_overlay polls measures nothing" % GROUND_CHUNKS.size())
 	# THE REPORT NUMBER (plan, Task 5): the synchronous safety ring is 9 chunks on
@@ -1163,9 +1243,12 @@ func _check_field_is_walkable() -> void:
 		# THE FIELD HAS TO BE ALIVE FIRST. Every assertion below is an UPPER bound,
 		# so a height_at() that returned 0.0 everywhere — the whole heightfield
 		# deleted, or alt_force silently stopping — leaves worst, worst_skirt and
-		# worst_mountain all exactly 0.0 and this check green. Checks 2-5 all go
-		# red on a dead field; this was the only one that did not, and the printed
-		# report numbers below would have been read off zero samples.
+		# worst_mountain all exactly 0.0 and this check green, and the printed
+		# report numbers below would have been read off zero samples. Only checks 2
+		# and 3 go red on a dead field on their own: check 4 reads uniforms and the
+		# road array and never evaluates the field, and check 5 compares the floor
+		# against the drawn surface, which 0 == 0 satisfies — so check 5 carries the
+		# same aliveness leg, spelled the same way.
 		if worst <= 0.0 or worst_skirt <= 0.0 or worst_river <= 0.0:
 			_fail("seed %d: the field is FLAT (worst slope %.6f, road skirt %.6f, river skirt %.6f) with the spike forced on — check 6's bounds would pass on a heightfield that does not exist" % [
 				seed_value, worst, worst_skirt, worst_river])

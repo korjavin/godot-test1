@@ -3381,6 +3381,23 @@ const GROUND_SUBDIVISIONS: int = 16
 ## different piecewise-linear interpolant of height_at() from the drawn surface.
 const ALT_GROUND_SIDE: int = GROUND_SUBDIVISIONS + 2
 
+## Thickness of the ground's collision box, in metres — the number _ensure_chunk_ground
+## has always built its BoxShape3D with, now spelled once because the ALTITUDE path
+## needs its HALF.
+##
+## THE SHIPPED FLOOR IS NOT THE DRAWN PLANE: the box is centred on the chunk node, so
+## its walkable TOP FACE is half a thickness above the mesh (y = +0.05, not 0.0), and
+## every body in this game has stood there since the first chunk. The heightmap the
+## spike builds is a SURFACE, not a solid, so sampling height_at() into it raw would
+## drop the floor 5 cm everywhere the flag is on — INCLUDING inside the four zones
+## _alt_flat_mask forces flat, whose whole promise (clause 2: "may not move by so much
+## as a millimetre") is that flipping the flag moves nothing there. That is why
+## _alt_ground_heightmap adds GROUND_COLLISION_TOP to every sample: with the flag on
+## the collider keeps exactly today's offset above the drawn ground, so a red check in
+## a forced-flat zone means the MASK is wrong and never the shape swap.
+const GROUND_COLLISION_THICK: float = 0.1
+const GROUND_COLLISION_TOP: float = GROUND_COLLISION_THICK * 0.5
+
 ## Lazily-created shared material for artifact glow accents (rune strips, eyes,
 ## missing keystones — see the ARTIFACTS section). ONE material shared by every
 ## accent in the world, same lazy-singleton discipline as ChunkBatch's own two.
@@ -4215,7 +4232,7 @@ func _ensure_chunk_ground(chunk_pos: Vector2i) -> MeshInstance3D:
 		# thick. This is what ships (FIELD_ALTITUDE is false) and the branch above
 		# is unreachable in every build the player ever runs.
 		var box_shape := BoxShape3D.new()
-		box_shape.size = Vector3(chunk_size, 0.1, chunk_size)
+		box_shape.size = Vector3(chunk_size, GROUND_COLLISION_THICK, chunk_size)
 		collision_shape.shape = box_shape
 
 	static_body.add_child(collision_shape)
@@ -10039,11 +10056,17 @@ func _alt_flat_mask(world_x: float, world_z: float, biome_value: float) -> float
 	# the last chunk-boundary crossing, so outside it the corridor is simply not
 	# flattened — a debug teleport far up the road sees hills on it until the next
 	# crossing refreshes the polyline, one chunk of walking away. A hard-curving
-	# stretch shortens the window in X too (96 stations is 576 m of straight road
-	# but only ~120 m of a road at the 78-degree heading cap), which is inside the
-	# 250 m residency. KNOWN SPIKE CEILING, both halves; the upgrade path is a
-	# distance texture (no window at all) or, cheaper, a bigger ALT_ROAD_SEG_MAX in
-	# both languages.
+	# stretch shortens the window in X too: 96 stations is 576 m of straight road
+	# but only ~120 m of a road at the 78-degree heading cap, and 120 m is INSIDE
+	# the 250 m desktop residency (and inside web's 150 m) — which is the condition
+	# under which the baked-floor guarantee FAILS, not a reassurance. On such a
+	# stretch a chunk loaded BY PROXIMITY can have its collision heightmap baked
+	# while _alt_road_distance still answers INF over it, and a chunk's floor is
+	# baked exactly once; two crossings later the vertex shader flattens a corridor
+	# the floor under it still carries as a hill. KNOWN SPIKE CEILING, all of it;
+	# the upgrade path is a distance texture (no window at all) or, cheaper, a
+	# bigger ALT_ROAD_SEG_MAX in both languages — sized so _alt_road_window() clears
+	# the residency half-width at the heading cap and not merely on a straight.
 	mask *= smoothstep(ALT_ROAD_FLAT_HALF, ALT_ROAD_FLAT_HALF + ALT_ROAD_SKIRT,
 			_alt_road_distance(world_x, world_z))
 
@@ -10070,11 +10093,15 @@ func height_at(world_x: float, world_z: float) -> float:
 	is bit-identical from every centre INSIDE the window, but a point that falls
 	off the window's end when the player walks away answers a different height. The
 	window reaches _alt_road_window() metres either side, comfortably past the
-	250 m desktop residency half-width on a straight road, so no chunk loaded BY
-	PROXIMITY sees it move — which is what makes the baked collision heightmap safe.
-	A chunk pinned by set_focus_points() (a far multiplayer teammate) is the
-	exception and is loaded at unbounded distance, so its floor is baked off
-	whatever the local player's window held — possibly no corridor at all. Promoting
+	250 m desktop residency half-width ON A STRAIGHT ROAD, so there no chunk loaded
+	BY PROXIMITY sees it move — which is what makes the baked collision heightmap
+	safe. TWO CASES ESCAPE THAT, and neither is exotic: a hard-CURVING stretch,
+	where 96 stations is only ~120 m of X and the window ends INSIDE the residency
+	(clause 4's note has the arithmetic), and a chunk pinned by set_focus_points()
+	(a far multiplayer teammate), loaded at unbounded distance so its floor is baked
+	off whatever the local player's window held — possibly no corridor at all. In
+	both the floor is baked once and the shader is not, so the two disagree by the
+	local amplitude over the corridor. Promoting
 	the spike means either making the corridor position-derived (a distance function
 	of X, or a texture) or re-baking loaded chunks on refresh; both close the focus
 	case with the residency one. See docs/field-altitude-spike.md.
@@ -10157,7 +10184,11 @@ func _alt_ground_heightmap(chunk_pos: Vector2i) -> HeightMapShape3D:
 		var world_z := origin.z - half + float(iz) * cell
 		for ix in side:
 			var world_x := origin.x - half + float(ix) * cell
-			data[iz * side + ix] = height_at(world_x, world_z) / cell
+			# + GROUND_COLLISION_TOP: the box this replaces is a SOLID centred on the
+			# chunk and the player stands on its top face, half a thickness up. See
+			# the const — without this the flag-on floor sits 5 cm below the flag-off
+			# one everywhere, forced-flat zones included.
+			data[iz * side + ix] = (height_at(world_x, world_z) + GROUND_COLLISION_TOP) / cell
 	shape.map_data = data
 	return shape
 
