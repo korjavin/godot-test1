@@ -104,14 +104,6 @@ const PLAYER_SCRIPT: String = "res://scripts/player_controller.gd"
 ## resolve" test. Read rather than restated, so a renamed row fails by name.
 const CROC_SCRIPT: String = "res://scripts/piglet_crocodile_ai.gd"
 
-## Throwaway save file this check points `BestRunStore.config_path` at for its
-## whole run. NOTHING HERE MAY OPEN THE MACHINE'S `user://best_run.cfg`: a shell
-## hydrates from the store on entering the tree and WRITES THROUGH on every gate
-## it opens, so without the redirect checks 7, 8 and 10 would each store tower
-## ids into a developer's real profile — the trap `progression_selfcheck.gd`
-## documents at length, one step worse because this one writes.
-const LOCAL_STORE_PATH: String = "user://tower_interior_selfcheck_best_run.cfg"
-
 ## An id no gate in this game has. Check 10 uses it as "what a second writer
 ## already put on disk", which is the stale copy the union has to survive.
 const FOREIGN_ID: String = "tower_selfcheck_foreign_stop"
@@ -218,12 +210,12 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	_boot()
 
 
 func _boot() -> void:
-	# THE STORE SEAM FIRST, before any shell can exist — see LOCAL_STORE_PATH.
-	BestRunStore.config_path = LOCAL_STORE_PATH
+	# THE STORE SEAM FIRST, before any shell can exist — see BestRunStore.config_path.
 	_fresh_store()
 	# ONE FRAME BEFORE ANYTHING — a node added to `root` from inside _initialize()
 	# is not `is_inside_tree()` until the first frame, so anything reading a global
@@ -2247,7 +2239,7 @@ func _check_earned_state_survives_a_relaunch() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value(BestRunStore.CONFIG_TOWER_SECTION, BestRunStore.CONFIG_TOWER_KEY,
 		"{not json at all")
-	cfg.save(LOCAL_STORE_PATH)
+	cfg.save(BestRunStore.config_path)
 	if not BestRunStore.tower_opened_ids().is_empty():
 		_fail("a corrupt tower record read as opened gates: %s" % [
 			BestRunStore.tower_opened_ids()])
@@ -2255,7 +2247,7 @@ func _check_earned_state_survives_a_relaunch() -> void:
 	# including the duplicate — this is a SET.
 	cfg.set_value(BestRunStore.CONFIG_TOWER_SECTION, BestRunStore.CONFIG_TOWER_KEY,
 		JSON.stringify(["tower_ok", 5, "", "tower_ok", {"a": 1}]))
-	cfg.save(LOCAL_STORE_PATH)
+	cfg.save(BestRunStore.config_path)
 	var salvaged := BestRunStore.tower_opened_ids()
 	if salvaged.size() != 1 or salvaged[0] != "tower_ok":
 		_fail("a half-junk tower record did not salvage to exactly its one real id: %s" % [
@@ -5238,10 +5230,11 @@ func _fresh_store() -> void:
 	"""
 	Delete the throwaway save, so the next assertion starts from a clean profile.
 
-	Never the real one: `LOCAL_STORE_PATH` is this file's own file and
-	`BestRunStore.config_path` is pointed at it before any shell exists.
+	Never the real one: `Sentinel.isolate_user_state()` pointed
+	`BestRunStore.config_path` at this process's own scratch file before any shell
+	could exist.
 	"""
-	DirAccess.remove_absolute(LOCAL_STORE_PATH)
+	DirAccess.remove_absolute(BestRunStore.config_path)
 
 
 func _fail(message: String) -> void:

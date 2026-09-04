@@ -20,6 +20,7 @@ var _failures: Array[String] = []
 
 
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	_run()
 
 

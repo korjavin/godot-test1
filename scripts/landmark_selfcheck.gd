@@ -338,6 +338,7 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	# _initialize() cannot await, and check 4 has to let the toast's _ready() run
 	# before it can touch the labels that _ready() builds — so the whole run is a
 	# coroutine and the tree keeps processing until it calls quit().

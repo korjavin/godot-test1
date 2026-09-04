@@ -81,9 +81,9 @@ extends SceneTree
 ## and `pause_selfcheck` presses P at a game-over screen: two unrelated checks
 ## turned red by this one's leftovers, in a suite that shares one `user://`.
 ##
-## So the store is pointed at this file's own throwaway in `_initialize()`,
-## deleted at both ends, and NEVER the player's own save.
-const LOCAL_STORE_PATH: String = "user://landmark_progress_selfcheck_best_run.cfg"
+## So the store is pointed at a directory private to THIS PROCESS, created empty,
+## in the first statement of `_initialize()` — and NEVER the player's own save.
+## `selfcheck_sentinel.gd` carries the whole reasoning.
 
 const PLAYER_SCENE: String = "res://scenes/player.tscn"
 const TOAST_SCRIPT: GDScript = preload("res://scripts/landmark_toast.gd")
@@ -107,9 +107,9 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 func _initialize() -> void:
 	# FIRST, BEFORE ANY PLAYER EXISTS — see the LANDMINE banner. This check wins a
-	# run for real, and a win archives the world.
-	BestRunStore.config_path = LOCAL_STORE_PATH
-	DirAccess.remove_absolute(LOCAL_STORE_PATH)
+	# run for real, and a win archives the world; the store it archives into is the
+	# empty one this process just made for itself, never anybody's real profile.
+	Sentinel.isolate_user_state()
 	# ONE FRAME FIRST: `_initialize()` runs before the main loop, and a node added
 	# to `root` before that answers null to `get_tree()`. The same lesson
 	# `pause_selfcheck` and `minimap_selfcheck` both record.
@@ -122,9 +122,6 @@ func _initialize() -> void:
 	_check_claim_verb()
 	await _check_trigger()
 	await _check_room_hygiene()
-
-	# ...and at the other end, so nothing this file wrote survives it.
-	DirAccess.remove_absolute(LOCAL_STORE_PATH)
 
 	if _failures.is_empty():
 		Sentinel.finish(self)

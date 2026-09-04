@@ -2731,32 +2731,25 @@ const SPECIES: Dictionary = {
 		## running (9.0 at the slowest character) still leaves it behind.
 		"scent_radius": 150.0,
 
-		# ----- Immunities (the two keys that say "this row is a machine") -----
-		## THE ONLY TWO PLAYER ABILITIES THAT DO NOT APPLY TO A CHASSIS, and they
-		## are keys rather than a species check in the two guards for the reason
-		## the whole table exists: the next armoured or airtight predator turns
-		## them on by editing its row, and neither guard changes.
+		# ----- Immunities & Fear (beads godot-test1-bvh, godot-test1-upu) -----
+		## STINK IMMUNITY DROPPED: by owner ruling 2026-09-04 (bead godot-test1-bvh),
+		## gameplay beats fiction — Phoboman's Stink Wave scares hunter robots away
+		## as well. "stink_immune": true is removed from this row, so a hunter takes
+		## the ordinary flee_from() path like any animal.
 		##
-		## Both DEFAULT TO FALSE and are absent from every other row on purpose —
-		## absent is the statement, exactly as PLAINS is absent from
-		## BIOME_SPECIES. Adding either to an animal's row would quietly make the
-		## ordinary enemy unkillable, so boss_selfcheck check 8 asserts the
-		## crocodile carries neither, by name.
-		##
-		## STINK: phoboman's wave reaches every body in group "crocodile" and
-		## `flee_from()` early-returns on this. A GD-SURVEY unit is sealed; there
-		## is nothing on it a smell weapon acts on, so the wave passes over it and
-		## it keeps closing. That is a real hole in the player's kit and it is the
-		## point — the corporation is the one thing the toolbox does not answer.
-		"stink_immune": true,
-
-		## CRUSH: giant-form teibi squashes predators on contact
+		## CRUSH IMMUNITY STAYS: giant-form teibi squashes predators on contact
 		## (`_on_player_collision`); this row falls through that block to the
 		## ordinary bite path instead, so a giant who steps on a hunter GETS
 		## GRABBED rather than popping it. Same sentence as the boss immunity one
 		## block up, for a different reason: a boss is too big to squash, this
 		## thing is too hard.
 		"crush_immune": true,
+
+		## GIANT FEAR (owner ruling 2026-09-04, bead godot-test1-upu): giant Teibi
+		## is a deterrent to GD-SURVEY hunters, not a killer. A hunter within this
+		## radius of a giant quarry flees (flee_from) every frame while giant, holding
+		## for GIANT_FEAR_HOLD after revert. Absent = fearless.
+		"fears_giant_radius": 14.0,
 
 		## THE STAKE (see the crocodile row): a corporate grab you escaped costs
 		## the most in the table — the one contact that can also take a hero.
@@ -2946,15 +2939,17 @@ const SPECIES: Dictionary = {
 		## which stopped meaning anything the day every row grew one.
 		"sweep_exempt": true,
 
-		# ----- Immunities: it is the hunter's chassis, so it is sealed and hard --
-		## Verbatim the hunter row's two keys and verbatim its argument (read it
-		## there). Stated as a DESIGN CHOICE rather than inherited by accident,
-		## because the bead asked for the decision out loud: a phoboman must not be
-		## able to clear a floor of the tower with a smell weapon, and a giant teibi
-		## must not be able to walk through it — the corporation is the one thing
-		## the toolbox does not answer, indoors as well as out. Guards stay in group
-		## "crocodile" (the scene declares it, `_ready` re-adds it) so the LOD
-		## manager still sleeps a distant one and the MP relay still sees it;
+		# ----- Immunities: sealed and hard chassis inside a stealth building ----
+		## Stated as a DESIGN CHOICE rather than inherited by accident, because the
+		## bead asked for the decision out loud (bead godot-test1-bvh): the guard
+		## keeps stink_immune even after the hunter lost it by owner ruling 2026-09-04.
+		## The guard stands inside a STEALTH BUILDING: a wave that scatters guards
+		## turns "time the patrol and walk past" into "press F".
+		## Likewise, crush_immune stays, and this row does NOT get fears_giant_radius
+		## (bead godot-test1-upu): giants cannot exist indoors anyway (indoor refusal
+		## + threshold auto-revert), so the building stays a stealth problem.
+		## Guards stay in group "crocodile" (the scene declares it, `_ready` re-adds it)
+		## so the LOD manager still sleeps a distant one and the MP relay still sees it;
 		## immunity lives in these keys, never in group tricks.
 		"stink_immune": true,
 		"crush_immune": true,
@@ -3089,6 +3084,12 @@ const SPOT_TELEGRAPH_TIME: float = 0.6
 ## so a field predator still smells a quarry stood on a block above it exactly as
 ## it always did.
 const VIEW_CONE_HEIGHT_BAND: float = 3.0
+
+## How long fear holds after seeing giant Teibi, in seconds (bead godot-test1-upu).
+## Refreshed every frame while a giant quarry remains in fears_giant_radius, so fear
+## releases ~1.0 s after the giant leaves or reverts with no persistent state to clear.
+const GIANT_FEAR_HOLD: float = 1.0
+
 
 ## Boss territory radius: the LEASH, and the whole of this bead. A boss hunts
 ## you normally anywhere inside `home_position` + this, and never steps outside
@@ -3950,6 +3951,9 @@ func _physics_process(delta: float) -> void:
 				_choose_new_direction()
 
 		if is_fleeing:
+			# If this row fears giant Teibi, refresh fear each frame while the giant remains in range.
+			if float(spec.get("fears_giant_radius", 0.0)) > 0.0 and player_node != null:
+				_update_chase_state()
 			# Run directly away from the player.
 			_flee()
 		else:
@@ -4023,10 +4027,10 @@ func _physics_process(delta: float) -> void:
 			var current_speed := chase_speed_instance if (is_chasing or is_fleeing or is_tracking) else _wander_speed(delta)
 			# The burst arm's one output (see `burst_factor`). It is 1.0 for every
 			# species but the mountain cougar and the city alley hound, so this is
-			# a no-op multiply for all four older rows. Gated on `is_chasing` and
-			# NOT on `is_fleeing`: the flee branch above sits over
-			# _update_chase_state, so a fleeing predator never runs the arm and
-			# would otherwise carry whatever factor it held when the wave hit.
+			# a no-op multiply for all four older rows.
+			# Gated on `is_chasing` and NOT on `is_fleeing`: fleeing predators never
+			# run the chase dispatch and would otherwise carry whatever factor it held
+			# when the wave hit.
 			if is_chasing:
 				current_speed *= burst_factor
 			if avoiding:
@@ -4080,6 +4084,10 @@ func _find_player() -> void:
 		mp_node = mp
 
 
+static func _is_quarry_giant(q: Node) -> bool:
+	return q != null and q.has_method("crushes_crocodiles") and q.crushes_crocodiles()
+
+
 func _update_chase_state() -> void:
 	"""Check distance to the nearest quarry and update chase state."""
 	if not player_node:
@@ -4097,6 +4105,7 @@ func _update_chase_state() -> void:
 	# one airborne peer vetoes the scent of a grounded teammate standing right
 	# beside it, and on the master (which simulates the pack for everybody) that is
 	# one player bunny-hopping to call every crocodile in range off their friend.
+	var quarry: Node = player_node
 	chase_target = player_node.global_position
 	var distance_to_player: float = INF
 	if player_is_grounded:
@@ -4130,6 +4139,45 @@ func _update_chase_state() -> void:
 			if remote_distance < distance_to_player:
 				distance_to_player = remote_distance
 				chase_target = remote as Vector3
+
+	# GIANT TEIBI DETERRENT (owner ruling 2026-09-04, bead godot-test1-upu).
+	# A row carrying fears_giant_radius flees when ANY candidate (local player or
+	# remote peer) is giant within fears_giant_radius.
+	# Decided independent of the quarry/scent choice (Codex P1/P2) so a closer normal
+	# teammate or an airborne giant does not suppress fear.
+	# Placed above the acquisition beat so a hunter in the standstill beat flees
+	# immediately instead of standing still to acquire.
+	var fears_giant_radius: float = float(spec.get("fears_giant_radius", 0.0))
+	if fears_giant_radius > 0.0:
+		var giant_source: Vector3 = Vector3.ZERO
+		var found_giant: bool = false
+		var nearest_giant_dist: float = INF
+
+		# Check local player candidate
+		if player_node != null and _is_quarry_giant(player_node):
+			var dist: float = global_position.distance_to(player_node.global_position)
+			if dist <= fears_giant_radius:
+				found_giant = true
+				nearest_giant_dist = dist
+				giant_source = player_node.global_position
+
+		# Check remote avatar candidates
+		if mp_node != null and mp_node.has_method("remote_avatars"):
+			for avatar in mp_node.remote_avatars():
+				if avatar != null and _is_quarry_giant(avatar):
+					var avatar_pos: Vector3 = avatar.target_pos if ("target_pos" in avatar and avatar.target_pos is Vector3) else (avatar.global_position if (avatar is Node3D) else Vector3.ZERO)
+					var dist: float = global_position.distance_to(avatar_pos)
+					if dist <= fears_giant_radius and dist < nearest_giant_dist:
+						found_giant = true
+						nearest_giant_dist = dist
+						giant_source = avatar_pos
+
+		if found_giant:
+			flee_from(giant_source, GIANT_FEAR_HOLD, player_node != null and giant_source == player_node.global_position)
+			return
+
+	if is_fleeing:
+		return
 
 	# TERRITORIAL LEASH (bosses only — and every boss KIND inherits it, because
 	# boss is a MODIFIER on a species, so this one gate already covers the titan
@@ -5741,10 +5789,14 @@ func flee_from(source: Vector3, duration: float, tracks_player: bool = true) -> 
 	# remote-driven, gets the real flee from this very call — see
 	# MpManager.request_croc_flee.
 	is_fleeing = true
-	flee_time_remaining = duration
+	# A flee trigger/refresh must never shorten an active flee already in progress (Codex P2).
+	flee_time_remaining = maxf(flee_time_remaining, duration)
 	flee_source = source
 	flee_tracks_player = tracks_player
 	is_chasing = false
+	spot_clock = 0.0
+	if _spot_label != null:
+		_spot_label.visible = false
 
 
 func _wander(delta: float) -> void:

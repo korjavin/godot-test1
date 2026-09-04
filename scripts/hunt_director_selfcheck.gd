@@ -109,6 +109,7 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	# The live probe in check 6 needs the tree to have settled, so the measuring
 	# half runs as its own coroutine and reports from in there. Reporting from
 	# here would print a verdict at frame 0 — the vacuous pass every sibling

@@ -45,11 +45,18 @@ extends SceneTree
 ## Restoring afterwards cannot help — the merge happens while the check runs —
 ## and it left a real record one crashed assertion away from being clobbered.
 ##
-## So `BestRunStore.config_path` is pointed at `LOCAL_STORE_PATH` for the whole
-## run, before anything can build a store. Every assertion here is then made
+## So `Sentinel.isolate_user_state()` is the first statement of `_initialize()`,
+## before anything can build a store: it points `BestRunStore.config_path` at a
+## file in a directory private to THIS PROCESS. Every assertion here is then made
 ## against state this file arranged; the developer's `user://best_run.cfg` is
 ## never opened, read, written or deleted, whatever it happens to hold and
 ## however this run ends.
+##
+## PER PROCESS, not per file (bead `godot-test1-3y3`). This file's own throwaway
+## NAME was hermetic against the player's profile and against the other checks,
+## and not against ITSELF running in another git worktree — `user://` is per
+## PROJECT NAME, so every checkout on one machine shares one directory and five
+## parallel sweeps trampled each other. `selfcheck_sentinel.gd` carries the rest.
 ##
 ## Deliberately NOT localized (a debug surface, per CLAUDE.md).
 
@@ -59,10 +66,9 @@ const PLAYER_SCENE: String = "res://scenes/player.tscn"
 ## `scripts/mp_selfcheck.gd` carries, for the same reason.
 const Coin: GDScript = preload("res://scripts/coin.gd")
 
-## The throwaway profile this run reads and writes instead of the real one (see
-## the header). Deleted on the way in as well as out, so a run killed halfway
-## leaves nothing for the next one to inherit and read as its own arranged state.
-const LOCAL_STORE_PATH: String = "user://progression_selfcheck_best_run.cfg"
+## The other `user://` seam the hermeticity audit below reads. Preloaded by path
+## for the same reason: `start_overlay.gd` has no `class_name` either.
+const StartOverlay := preload("res://scripts/start_overlay.gd")
 
 var _failures: Array[String] = []
 
@@ -75,12 +81,8 @@ var _failures: Array[String] = []
 const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 
-func _isolate_local_store() -> void:
-	BestRunStore.config_path = LOCAL_STORE_PATH
-	DirAccess.remove_absolute(LOCAL_STORE_PATH)
-
-
 func _initialize() -> void:
+	Sentinel.isolate_user_state()
 	# The measuring half runs as its own coroutine: `_initialize()` cannot await,
 	# and a verdict printed from here would be a frame-0 vacuous pass — the exact
 	# failure the sibling self-checks in this repo document.
@@ -92,7 +94,6 @@ func _fail(message: String) -> void:
 
 
 func _report() -> void:
-	DirAccess.remove_absolute(LOCAL_STORE_PATH)
 	if _failures.is_empty():
 		Sentinel.finish(self)
 	else:
@@ -100,6 +101,121 @@ func _report() -> void:
 			printerr("FAIL: %s" % line)
 		printerr("SELFCHECK FAILED (%d)" % _failures.size())
 		quit(1)
+
+
+## Where the self-checks live, for the hermeticity audit below.
+const SELFCHECK_DIR: String = "res://scripts"
+
+
+func _check_every_selfcheck_is_hermetic() -> void:
+	"""
+	NO SELF-CHECK MAY TOUCH THE PLAYER'S REAL `user://` STATE — bead
+	`godot-test1-3y3`, and this is the assertion that keeps it true for checks
+	nobody has written yet.
+
+	It is a SOURCE SCAN over every `scripts/*_selfcheck.gd`, in
+	`pause_selfcheck`'s idiom (which scans the same directory for writes to
+	`tree.paused`), because the property is about files this process does not run.
+	It iterates the glob and never a list of its own, so a check added tomorrow is
+	audited the day it lands.
+
+	Three rules, and each one is a way the isolation was actually lost:
+
+	  1. `Sentinel.isolate_user_state()` is the FIRST statement of `_initialize()`.
+	     Not merely present: `player_controller._ready()` builds a `BestRunStore`
+	     and `tower_shell` hydrates its opened set on entering the tree, so a
+	     redirect one line below the first `add_child()` is a redirect that already
+	     read the real profile.
+	  2. Nothing else assigns either path seam. A check that sets its own path is
+	     hermetic against the player and NOT against itself running in another git
+	     worktree — `user://` is per PROJECT NAME, so every checkout on a machine
+	     shares one directory. That is the concurrency half of the bead.
+	  3. No check spells a real path at all. This is the one rule that catches the
+	     mutation the bead asks for — pointing a check back at the profile — however
+	     it is spelled, since a literal is the only way to name it now that
+	     `Sentinel.REAL_PATHS` is where they are written down.
+
+	Then the live process: this run's own seams must resolve under the scratch
+	root, which is what proves the helper did anything at all.
+	"""
+	# BOTH RULES MATCH THE MEMBER, NEVER THE ALIAS — `pause_selfcheck`'s own idiom
+	# (`\.paused\\s*=[^=]`, one table along), and here it is load-bearing rather than
+	# stylistic: `start_overlay.gd` has NO `class_name`, so every check names that
+	# preload itself and nothing makes the next author spell it `StartOverlay`. A
+	# name-based rule reads an aliased preload's own fixed-path assignment as
+	# innocent, which is exactly the bug this bead exists to abolish. The
+	# `[^=]` tail is what keeps `==` out, and requiring the `=` at all is what lets a
+	# seam PASSED as an argument or listed in an array through. Rule 3 takes either
+	# quote, because a single-quoted literal is the same literal.
+	# NOTE: this file is in the glob it audits, so neither pattern may appear in its
+	# own source outside these two `compile()` calls — hence the circumlocution.
+	# `ponytail:` a literal SPLIT across a concatenation ("user://" + "best_run.cfg")
+	# still walks past rule 3; the live rule below catches it in this process and the
+	# `finish()` guard catches it in every other. Widen only if one ever ships.
+	var seam_re := RegEx.new()
+	var real_re := RegEx.new()
+	if seam_re.compile("\\.(config_path|locale_config_path)\\s*=[^=]") != OK \
+			or real_re.compile("[\"']user://(best_run|locale)\\.cfg[\"']") != OK:
+		_fail("the hermeticity regexes would not compile — the audit would pass vacuously")
+		Sentinel.done("hermetic_stores")
+		return
+	var files: PackedStringArray = DirAccess.get_files_at(SELFCHECK_DIR)
+	var audited: int = 0
+	for file_name: String in files:
+		if not file_name.ends_with("_selfcheck.gd"):
+			continue
+		audited += 1
+		var path: String = "%s/%s" % [SELFCHECK_DIR, file_name]
+		var source: String = FileAccess.get_file_as_string(path)
+		if source.is_empty():
+			_fail("%s could not be read, so its hermeticity is unknown" % file_name)
+			continue
+		var lines: PackedStringArray = source.split("\n")
+
+		# 1. the call, and its position.
+		var entry: int = lines.find("func _initialize() -> void:")
+		if entry < 0:
+			_fail("%s has no `func _initialize() -> void:` to isolate from" % file_name)
+		else:
+			var first: String = ""
+			for i: int in range(entry + 1, lines.size()):
+				var line: String = lines[i].strip_edges()
+				if line.is_empty() or line.begins_with("#"):
+					continue
+				first = line
+				break
+			if first != "Sentinel.isolate_user_state()":
+				_fail(("%s starts `_initialize()` with `%s`, not " % [file_name, first])
+					+ "`Sentinel.isolate_user_state()` — anything before the redirect "
+					+ "runs against the machine's real profile")
+
+		# 2 and 3. nothing else names or moves a real store.
+		for i: int in lines.size():
+			var line: String = lines[i]
+			if seam_re.search(line) != null:
+				_fail("%s:%d assigns a store path seam itself — the per-process seam is "
+					% [file_name, i + 1]
+					+ "`Sentinel.isolate_user_state()`, and a path of one file's own is "
+					+ "not private against that file running in another worktree")
+			if real_re.search(line) != null:
+				_fail("%s:%d names a real `user://` path as a literal — a self-check "
+					% [file_name, i + 1]
+					+ "may never resolve one, whatever it means to do with it")
+
+	if audited < 20:
+		_fail("the hermeticity audit found only %d self-checks in %s — the glob is broken"
+			% [audited, SELFCHECK_DIR])
+
+	# And this very process: the helper must have moved the seams somewhere private.
+	var live: Array[String] = [BestRunStore.config_path, StartOverlay.locale_config_path]
+	for resolved: String in live:
+		if Sentinel.REAL_PATHS.has(resolved):
+			_fail("this run resolves %s, which is the shipped game's own file" % resolved)
+		elif not resolved.begins_with(Sentinel.SCRATCH_ROOT + "/"):
+			_fail("this run resolves %s, which is outside %s — it is somebody's fixed "
+				% [resolved, Sentinel.SCRATCH_ROOT]
+				+ "throwaway name, shared by every worktree on this machine")
+	Sentinel.done("hermetic_stores")
 
 
 func _make_progression() -> Progression:
@@ -1118,7 +1234,7 @@ func _check_ranks_survive_a_relaunch() -> void:
 
 	Driven against the LOCAL layer only — a second `BestRunStore` reading what the
 	first wrote IS what "relaunch" means here — so it makes no network request and
-	POSTs nothing. That local layer is `LOCAL_STORE_PATH`, not the machine's
+	POSTs nothing. That local layer is `BestRunStore.config_path`, not the machine's
 	profile (see the header): the write below is a monotone merge, so against a
 	real profile this would read back that profile's numbers instead of its own.
 	"""
@@ -1736,9 +1852,6 @@ func _run() -> void:
 	# built before the first frame has run its own setup yet. One frame here makes
 	# every later `add_child()` ready synchronously.
 	await process_frame
-	# Before anything can build a BestRunStore — the relaunch check below, and the
-	# player scene, which mints a profile id into whatever path is set here.
-	_isolate_local_store()
 	_check_curve()
 	_check_points_and_levelling()
 	_check_store_load_is_monotone()
@@ -1747,6 +1860,7 @@ func _run() -> void:
 	_check_caps()
 	_check_ranks_merge_is_monotone()
 	_check_ranks_survive_a_relaunch()
+	_check_every_selfcheck_is_hermetic()
 	await _check_streak_does_not_inflate_lifetime()
 	await _check_skill_effects_on_player()
 	await _check_active_skills_on_player()
