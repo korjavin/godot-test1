@@ -4318,9 +4318,9 @@ func _check_mp_contract(croc: Node, species_name: String, chunk_pos: Vector2i,
 		var bit: int = int(_mp_consts[flag_name])
 		for value: bool in [true, false]:
 			croc.set(member, value)
-			var carried: bool = (MpManager._croc_flags(croc) & bit) != 0
+			var carried: bool = (MpCodec._croc_flags(croc) & bit) != 0
 			if carried != value:
-				_fail("'%s': MpManager._croc_flags() wrote %s for %s = %s —" % [
+				_fail("'%s': MpCodec._croc_flags() wrote %s for %s = %s —" % [
 						species_name, "1" if carried else "0", member, value]
 						+ " the master's byte does not describe this species, so"
 						+ " every peer draws it in a pose it is not in")

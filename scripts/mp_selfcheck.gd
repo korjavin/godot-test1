@@ -85,6 +85,10 @@ extends SceneTree
 ##      against SIM_RADIUS, with the memory cap and the release both pinned.
 
 const MPManager: GDScript = preload("res://scripts/mp_manager.gd")
+## The codec is reached through the `MpCodec` global class name everywhere it is
+## CALLED; this preload exists only for `get_script_constant_map()`, which is a
+## Script method and not something a class name resolves to.
+const MP_CODEC: GDScript = preload("res://scripts/mp_codec.gd")
 const Terrain: GDScript = preload("res://scripts/endless_terrain.gd")
 const Coin: GDScript = preload("res://scripts/coin.gd")
 const Player: GDScript = preload("res://scripts/player_controller.gd")
@@ -256,7 +260,7 @@ func _check_presence_parser() -> String:
 		"s": 4.0,
 		"g": true,
 	}
-	var decoded: Dictionary = MPManager.decode_presence(var_to_bytes(good))
+	var decoded: Dictionary = MpCodec.decode_presence(var_to_bytes(good))
 	if decoded.is_empty():
 		return "parser rejected a well-formed packet"
 	if decoded["p"] != good["p"] or decoded["c"] != 0 or decoded["g"] != true:
@@ -265,7 +269,7 @@ func _check_presence_parser() -> String:
 	# A finite but absurd yaw must come out BOUNDED, not merely accepted: it is
 	# assigned straight to RemoteAvatar.rotation.y, and lerp_angle's `from +
 	# short_way * weight` leaves 1e30 at 1e30 forever.
-	var wild: Dictionary = MPManager.decode_presence(var_to_bytes({
+	var wild: Dictionary = MpCodec.decode_presence(var_to_bytes({
 		"p": Vector3.ZERO, "y": 1.0e30, "c": 0, "s": 0.0, "g": true
 	}))
 	if wild.is_empty() or absf(wild["y"]) > TAU:
@@ -304,7 +308,7 @@ func _check_presence_parser() -> String:
 		})],
 	]
 	for case in bad:
-		var result: Dictionary = MPManager.decode_presence(case[1])
+		var result: Dictionary = MpCodec.decode_presence(case[1])
 		if not result.is_empty():
 			return "parser accepted a bad packet (%s): %s" % [case[0], result]
 	Sentinel.done("presence_parser")
@@ -361,7 +365,7 @@ func _check_peer_ids() -> String:
 	]
 	var seen: Dictionary = {}
 	for id in samples:
-		var value: int = MPManager.peer_int_id(id)
+		var value: int = MpCodec.peer_int_id(id)
 		if value < 2:
 			return "peer_int_id(%s) == %d — must clear the reserved 0 and 1" % [id, value]
 		if seen.has(value):
@@ -450,7 +454,7 @@ func _check_state_parser() -> String:
 		"px": 10.0, "py": 2.0, "pz": -5.0,
 		"ids": [111.0, 222.0, -333.0],
 	}
-	var snapshot: Dictionary = MPManager.decode_state(good)
+	var snapshot: Dictionary = MpCodec.decode_state(good)
 	if snapshot.is_empty():
 		return "state parser rejected a well-formed snapshot"
 	if snapshot["cc"] != 42 or snapshot["dd"] != 1337:
@@ -467,7 +471,7 @@ func _check_state_parser() -> String:
 	# carries none, so it must read as an empty list rather than dropping.
 	if snapshot["dead"] != ([] as Array[int]):
 		return "state parser invented a kill list: %s" % snapshot["dead"]
-	var with_dead: Dictionary = MPManager.decode_state({
+	var with_dead: Dictionary = MpCodec.decode_state({
 		"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0,
 		"ids": [], "dead": [7.0, -8.0],
 	})
@@ -480,7 +484,7 @@ func _check_state_parser() -> String:
 	# accepted and the field is never read.
 	if snapshot["gc"] != 0:
 		return "state parser invented a departed-member bank: %s" % snapshot
-	var with_gone: Dictionary = MPManager.decode_state({
+	var with_gone: Dictionary = MpCodec.decode_state({
 		"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0,
 		"gc": 500.0, "gs": 3.0, "ids": [],
 	})
@@ -493,29 +497,29 @@ func _check_state_parser() -> String:
 	# most-recent-first, so the head is the part nearest the joiner, and the
 	# counters and position are still worth having.
 	var long_ids: Array = []
-	for i: int in range(MPManager.MAX_STATE_IDS + 64):
+	for i: int in range(MpCodec.MAX_STATE_IDS + 64):
 		long_ids.append(float(i))
-	var truncated: Dictionary = MPManager.decode_state({
+	var truncated: Dictionary = MpCodec.decode_state({
 		"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0,
 		"ids": long_ids,
 	})
 	if truncated.is_empty():
 		return "state parser dropped an over-long snapshot instead of truncating it"
-	if (truncated["ids"] as Array).size() != MPManager.MAX_STATE_IDS:
+	if (truncated["ids"] as Array).size() != MpCodec.MAX_STATE_IDS:
 		return "state parser truncated to %d ids, expected %d" % [
-			(truncated["ids"] as Array).size(), MPManager.MAX_STATE_IDS
+			(truncated["ids"] as Array).size(), MpCodec.MAX_STATE_IDS
 		]
 	# The kill list is bounded by the SAME cap at the SAME end, or a hostile peer
 	# buys an unbounded `_dead_crocs` write with one snapshot.
-	var long_dead: Dictionary = MPManager.decode_state({
+	var long_dead: Dictionary = MpCodec.decode_state({
 		"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0,
 		"ids": [], "dead": long_ids,
 	})
 	if long_dead.is_empty():
 		return "state parser dropped an over-long kill list instead of truncating it"
-	if (long_dead["dead"] as Array).size() != MPManager.MAX_STATE_IDS:
+	if (long_dead["dead"] as Array).size() != MpCodec.MAX_STATE_IDS:
 		return "state parser truncated the kill list to %d ids, expected %d" % [
-			(long_dead["dead"] as Array).size(), MPManager.MAX_STATE_IDS
+			(long_dead["dead"] as Array).size(), MpCodec.MAX_STATE_IDS
 		]
 
 	# Each of these must be dropped WHOLE — a snapshot is trusted entire or not
@@ -592,7 +596,7 @@ func _check_state_parser() -> String:
 		}],
 	]
 	for case in bad:
-		var result: Dictionary = MPManager.decode_state(case[1])
+		var result: Dictionary = MpCodec.decode_state(case[1])
 		if not result.is_empty():
 			return "state parser accepted a bad snapshot (%s): %s" % [case[0], result]
 
@@ -601,7 +605,7 @@ func _check_state_parser() -> String:
 	# make an old peer's honest `gs: 3` one refactor away from being a disconnect.
 	# The negative `gs` below sat in the `bad` table above until bead
 	# godot-test1-0bc; this is the same row, on the other side of the ledger.
-	var stale: Dictionary = MPManager.decode_state({
+	var stale: Dictionary = MpCodec.decode_state({
 		"cc": 7.0, "dd": 9.0, "px": 0.0, "py": 0.0, "pz": 0.0, "ids": [],
 		"ls": -1.0, "gs": -1.0,
 	})
@@ -624,7 +628,7 @@ func _check_presence_backcompat() -> String:
 	would make that peer INVISIBLE rather than merely uncounted, so absent must read
 	as 0 — only a field that is present and bad may drop the packet.
 	"""
-	var legacy: Dictionary = MPManager.decode_presence(var_to_bytes({
+	var legacy: Dictionary = MpCodec.decode_presence(var_to_bytes({
 		"p": Vector3(3.0, 1.0, 4.0), "y": 0.25, "c": 1, "s": 2.0, "g": false
 	}))
 	if legacy.is_empty():
@@ -638,7 +642,7 @@ func _check_presence_backcompat() -> String:
 		return "the presence parser still publishes a retired heart field: %s" % legacy
 
 	# Present-and-bad still drops the packet whole.
-	var poisoned: Dictionary = MPManager.decode_presence(var_to_bytes({
+	var poisoned: Dictionary = MpCodec.decode_presence(var_to_bytes({
 		"p": Vector3.ZERO, "y": 0.0, "c": 0, "s": 0.0, "g": true, "cc": -5
 	}))
 	if not poisoned.is_empty():
@@ -656,10 +660,10 @@ func _check_presence_backcompat() -> String:
 		"t": "zzz_a_verb_from_a_later_build",
 		"p": Vector3.ZERO, "y": 0.0, "c": 0, "s": 0.0, "g": true, "cc": 99,
 	}
-	if MPManager.packet_kind(later_build) != "zzz_a_verb_from_a_later_build":
+	if MpCodec.packet_kind(later_build) != "zzz_a_verb_from_a_later_build":
 		return "a packet carrying an unknown verb did not read as that verb"
 	var phase4: Dictionary = {"p": Vector3.ZERO, "y": 0.0, "c": 0, "s": 0.0, "g": true}
-	if MPManager.packet_kind(phase4) != "":
+	if MpCodec.packet_kind(phase4) != "":
 		return "a phase-3/4 packet with no \"t\" did not read as presence"
 	Sentinel.done("presence_backcompat")
 	return ""
@@ -704,7 +708,7 @@ func _check_retired_heart_keys_are_tolerated() -> String:
 	would also be true of a decoder that had stopped checking anything at all.
 	"""
 	# (a) PRESENCE. A full phase-5 packet plus the two retired keys, hostile.
-	var presence: Dictionary = MPManager.decode_presence(var_to_bytes({
+	var presence: Dictionary = MpCodec.decode_presence(var_to_bytes({
 		"p": Vector3(1.0, 2.0, 3.0), "y": 0.5, "c": 0, "s": 1.0, "g": true,
 		"cc": 40, "dd": 12, "lv": -7, "rl": "three hearts",
 	}))
@@ -715,7 +719,7 @@ func _check_retired_heart_keys_are_tolerated() -> String:
 		return "a packet carrying retired fields lost its live counters: %s" % presence
 
 	# (b) THE JOIN SNAPSHOT, the other transport, the other two keys.
-	var snapshot: Dictionary = MPManager.decode_state({
+	var snapshot: Dictionary = MpCodec.decode_state({
 		"cc": 40.0, "dd": 12.0, "px": 1.0, "py": 2.0, "pz": 3.0, "ids": [],
 		"ls": -7.0, "gs": "three hearts",
 	})
@@ -734,13 +738,13 @@ func _check_retired_heart_keys_are_tolerated() -> String:
 
 	# (d) THE MIRROR: a LIVE field beside them is still validated, so (a) and (b)
 	#     are tolerance rather than a decoder that has stopped looking.
-	if not MPManager.decode_presence(var_to_bytes({
+	if not MpCodec.decode_presence(var_to_bytes({
 		"p": Vector3.ZERO, "y": 0.0, "c": 0, "s": 0.0, "g": true,
 		"cc": -5, "lv": 0,
 	})).is_empty():
 		return "the presence parser accepted a negative LIVE counter — relaxing the retired "\
 			+ "keys has relaxed the trust boundary with them"
-	if not MPManager.decode_state({
+	if not MpCodec.decode_state({
 		"cc": -1.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0, "ids": [], "ls": 0.0,
 	}).is_empty():
 		return "the snapshot parser accepted a negative LIVE counter — relaxing the retired "\
@@ -775,14 +779,14 @@ func _check_retired_heart_keys_are_tolerated() -> String:
 	# never leave: the master's verdict is its only exit from the scene, so a peer
 	# reading OVERTAKEN as "still going" is sealed in the block on a dead clock for
 	# the room's whole life.
-	var stale: Dictionary = MPManager.decode_room({"cap": ["primm"], "cd": 12.0, "co": 3})
+	var stale: Dictionary = MpCodec.decode_room({"cap": ["primm"], "cd": 12.0, "co": 3})
 	if stale.is_empty():
 		return "decode_room dropped a packet over a retired verdict — an old master's "\
 			+ "OVERTAKEN would cost the room its captive-set repair, not just the verdict"
-	if stale["co"] != MPManager.CUSTODY_VERDICT_MAX or stale["cap"] != ["primm"]:
+	if stale["co"] != MpCodec.CUSTODY_VERDICT_MAX or stale["cap"] != ["primm"]:
 		return "decode_room read a retired verdict as %s — an unreadable outcome must "\
 			% str(stale) + "fold to FAILED, or the peer never leaves the break-out"
-	if MPManager.decode_room({"cap": [], "cd": 12.0, "co": 2})["co"] != 2:
+	if MpCodec.decode_room({"cap": [], "cd": 12.0, "co": 2})["co"] != 2:
 		return "decode_room lost a verdict this build DOES know — the fold above is "\
 			+ "swallowing live outcomes with the retired one"
 	Sentinel.done("retired_heart_keys_are_tolerated")
@@ -830,9 +834,9 @@ func _check_croc_sync_parser() -> String:
 			1.0, 0.0, 2.0, 0.5,
 			-3.0, 0.0, 4.0, 1.25,
 		]),
-		"f": PackedByteArray([MPManager.CROC_FLAG_CHASING, 0]),
+		"f": PackedByteArray([MpCodec.CROC_FLAG_CHASING, 0]),
 	}
-	var sync: Dictionary = MPManager.decode_croc_sync(good)
+	var sync: Dictionary = MpCodec.decode_croc_sync(good)
 	if sync.is_empty():
 		return "croc-sync parser rejected a well-formed packet"
 	var ids: PackedInt32Array = sync["ids"]
@@ -842,7 +846,7 @@ func _check_croc_sync_parser() -> String:
 		return "croc-sync parser mangled the entry counts: %d/%d/%d" % [
 			ids.size(), xf.size(), flags.size()
 		]
-	if ids[1] != 22 or flags[0] != MPManager.CROC_FLAG_CHASING \
+	if ids[1] != 22 or flags[0] != MpCodec.CROC_FLAG_CHASING \
 			or not is_equal_approx(xf[4], -3.0):
 		return "croc-sync parser mangled a well-formed packet: %s" % sync
 
@@ -850,7 +854,7 @@ func _check_croc_sync_parser() -> String:
 	# than-refuse rule `decode_presence` applies to `y`, and for the same reason:
 	# the receiver eases it with lerp_angle, which is `from + short_way * weight`,
 	# and `1e30 + anything small IS 1e30`.
-	var wild: Dictionary = MPManager.decode_croc_sync({
+	var wild: Dictionary = MpCodec.decode_croc_sync({
 		"i": PackedInt32Array([1]),
 		"x": PackedFloat32Array([0.0, 0.0, 0.0, 1.0e30]),
 		"f": PackedByteArray([0]),
@@ -866,7 +870,7 @@ func _check_croc_sync_parser() -> String:
 	var over_ids := PackedInt32Array()
 	var over_xf := PackedFloat32Array()
 	var over_flags := PackedByteArray()
-	for i: int in range(MPManager.MAX_CROC_SYNC + 1):
+	for i: int in range(MpCodec.MAX_CROC_SYNC + 1):
 		over_ids.append(i)
 		over_flags.append(0)
 		over_xf.append_array(PackedFloat32Array([0.0, 0.0, 0.0, 0.0]))
@@ -923,7 +927,7 @@ func _check_croc_sync_parser() -> String:
 		["coordinate past MAX_PRESENCE_COORD", {
 			"i": PackedInt32Array([1]),
 			"x": PackedFloat32Array([
-				0.0, 0.0, MPManager.MAX_PRESENCE_COORD * 10.0, 0.0
+				0.0, 0.0, MpCodec.MAX_PRESENCE_COORD * 10.0, 0.0
 			]),
 			"f": PackedByteArray([0])
 		}],
@@ -933,7 +937,7 @@ func _check_croc_sync_parser() -> String:
 		}],
 	]
 	for case in bad:
-		var result: Dictionary = MPManager.decode_croc_sync(case[1])
+		var result: Dictionary = MpCodec.decode_croc_sync(case[1])
 		if not result.is_empty():
 			return "croc-sync parser accepted a bad packet (%s): %s" % [case[0], result]
 	Sentinel.done("croc_sync_parser")
@@ -1220,7 +1224,7 @@ func _check_kill_list_authority(mp: Node) -> String:
 	root.add_child(victim)
 	var hostile: Dictionary = snapshot.duplicate()
 	hostile["dead"] = [float(victim.croc_id())]
-	mp._receive_state("some-other-member", MPManager.decode_state(hostile))
+	mp._receive_state("some-other-member", MpCodec.decode_state(hostile))
 	var survived: bool = victim.is_in_group("crocodile")
 	var leaked: bool = mp._dead_crocs.has(victim.croc_id())
 	victim.free()
@@ -1235,7 +1239,7 @@ func _check_kill_list_authority(mp: Node) -> String:
 	root.add_child(doomed)
 	var ruling: Dictionary = snapshot.duplicate()
 	ruling["dead"] = [float(doomed.croc_id())]
-	mp._receive_state("the-real-master", MPManager.decode_state(ruling))
+	mp._receive_state("the-real-master", MpCodec.decode_state(ruling))
 	var still_alive: bool = doomed.is_in_group("crocodile")
 	doomed.free()
 	if still_alive:
@@ -1399,7 +1403,7 @@ func _check_claim_base_value() -> String:
 
 	var count: int = 3
 	var value: int = Coin.GEM_VALUE
-	mp._resolve_claim(12345, MPManager.peer_int_id(mp._you), count, value)
+	mp._resolve_claim(12345, MpCodec.peer_int_id(mp._you), count, value)
 
 	var banked: int = stub.banked
 	var base_seen: int = stub.base_seen
@@ -1455,7 +1459,7 @@ func _check_confirm_base_is_unforgeable() -> String:
 	mp._state = MPManager.State.IN_ROOM
 	mp._you = "0123456789abcdef"
 	mp._master = "fedcba9876543210"
-	var me: int = MPManager.peer_int_id(mp._you)
+	var me: int = MpCodec.peer_int_id(mp._you)
 
 	# FORGED: a confirm naming us the winner of a pickup we never claimed, with a
 	# `b` a hostile master would love us to believe. The coin is still banked (the
@@ -1695,22 +1699,23 @@ func _check_hunter_sync() -> String:
 	]
 
 	# THE SWEEP IS ONLY AS COMPLETE AS THIS LIST, so the list is checked against
-	# the protocol rather than trusted. Every CROC_FLAG_* the manager declares is
+	# the protocol rather than trusted. Every CROC_FLAG_* the CODEC declares is
 	# a bit the encoder can put on the wire; if the five fields above cannot
 	# between them light all of them, a sixth flag has been added and this sweep
 	# would round-trip a byte that never contains it — passing while the exact
 	# drift it exists to catch ships. Read off the const map so a new bit needs no
-	# edit here to be NOTICED, only to be covered.
+	# edit here to be NOTICED, only to be covered — and off `mp_codec.gd`'s map,
+	# which is where both halves of the flag byte now live (bead godot-test1-ftn.11).
 	var declared: int = 0
-	for key: String in MPManager.get_script_constant_map().keys():
+	for key: String in MP_CODEC.get_script_constant_map().keys():
 		if key.begins_with("CROC_FLAG_"):
-			declared |= int(MPManager.get_script_constant_map()[key])
+			declared |= int(MP_CODEC.get_script_constant_map()[key])
 	for bit: int in range(fields.size()):
 		sender.set(fields[bit], true)
-	var full: int = MPManager._croc_flags(sender)
+	var full: int = MpCodec._croc_flags(sender)
 	if full != declared:
 		return ("the flag sweep drives %d of the declared CROC_FLAG_* mask %d — a bit was added to "
-				+ "mp_manager without a field here, so the round-trip below cannot see it") % [full, declared]
+				+ "mp_codec without a field here, so the round-trip below cannot see it") % [full, declared]
 	for combo: int in range(1 << fields.size()):
 		for bit: int in range(fields.size()):
 			sender.set(fields[bit], (combo & (1 << bit)) != 0)
@@ -1720,9 +1725,9 @@ func _check_hunter_sync() -> String:
 			# animation does that). Carrying it over would fail the sweep for a
 			# decoder that is behaving exactly as specified.
 			receiver.set(fields[bit], false)
-		var sent: int = MPManager._croc_flags(sender)
+		var sent: int = MpCodec._croc_flags(sender)
 		receiver.set_remote_state(Vector3(12.0, 0.0, -3.0), 1.25, sent)
-		var back: int = MPManager._croc_flags(receiver)
+		var back: int = MpCodec._croc_flags(receiver)
 		if back != sent:
 			return "hunter state byte %d round-tripped as %d — set_remote_state drops a bit the encoder sends" % [
 				sent, back
@@ -1854,18 +1859,18 @@ func _check_acquisition_cue() -> String:
 	var remote: Node = _spawn_hunter("Hunter_9_9_1")
 	var here := Vector3(3.0, 0.0, 0.0)
 	sound.pings = 0
-	remote.set_remote_state(here, 0.0, MPManager.CROC_FLAG_CHASING)
+	remote.set_remote_state(here, 0.0, MpCodec.CROC_FLAG_CHASING)
 	if sound.pings != 1:
 		return ("a remote-driven hunter whose first sample says CHASING rang %d pings, expected 1 — "
 				+ "the peer is deaf to the master's lock-on") % sound.pings
-	remote.set_remote_state(here, 0.0, MPManager.CROC_FLAG_CHASING)
-	remote.set_remote_state(here, 0.0, MPManager.CROC_FLAG_CHASING)
+	remote.set_remote_state(here, 0.0, MpCodec.CROC_FLAG_CHASING)
+	remote.set_remote_state(here, 0.0, MpCodec.CROC_FLAG_CHASING)
 	if sound.pings != 1:
 		return "the remote ping fires per SAMPLE, not per engagement (%d pings over 3 chasing samples)" % sound.pings
 	remote.set_remote_state(here, 0.0, 0)
 	if sound.pings != 1:
 		return "a sample that drops CHASING rang a ping (%d) — only the false->true edge may" % sound.pings
-	remote.set_remote_state(here, 0.0, MPManager.CROC_FLAG_CHASING)
+	remote.set_remote_state(here, 0.0, MpCodec.CROC_FLAG_CHASING)
 	if sound.pings != 2:
 		return "a remote hunter re-acquiring did not ping again (%d pings, expected 2)" % sound.pings
 
@@ -1884,7 +1889,7 @@ func _check_acquisition_cue() -> String:
 	if not croc.is_chasing:
 		return "the control crocodile did not acquire the quarry — claim 4 would be vacuous"
 	croc.set_remote_state(here, 0.0, 0)
-	croc.set_remote_state(here, 0.0, MPManager.CROC_FLAG_CHASING)
+	croc.set_remote_state(here, 0.0, MpCodec.CROC_FLAG_CHASING)
 	if sound.pings != 0:
 		return "a plain crocodile rang the hunter's lock-on ping %d times — the cue is not keyed on the behaviour" % sound.pings
 	if sound.hisses != 0 or sound.growls != 0:
@@ -1987,10 +1992,10 @@ func _check_captive_parser() -> String:
 	returns `{}` for everything passes every rejection below, so the acceptances
 	are what stop this check being vacuous.
 	"""
-	var good: Dictionary = MPManager.decode_captive({"t": "cap", "h": "primm", "c": true})
+	var good: Dictionary = MpCodec.decode_captive({"t": "cap", "h": "primm", "c": true})
 	if good.get("h", "") != "primm" or good.get("c", null) != true:
 		return "decode_captive dropped an honest capture (%s)" % str(good)
-	var release: Dictionary = MPManager.decode_captive({"t": "cap", "h": "teibi", "c": false})
+	var release: Dictionary = MpCodec.decode_captive({"t": "cap", "h": "teibi", "c": false})
 	if release.get("h", "") != "teibi" or release.get("c", null) != false:
 		return "decode_captive dropped an honest release (%s)" % str(release)
 
@@ -2001,14 +2006,14 @@ func _check_captive_parser() -> String:
 		{"t": "cap", "c": true},                                   # no hero at all
 		{"t": "cap", "h": 7, "c": true},                            # hero is a number
 		{"t": "cap", "h": "", "c": true},                           # hero is empty
-		{"t": "cap", "h": "x".repeat(MPManager.MAX_HERO_NAME + 1), "c": true},
+		{"t": "cap", "h": "x".repeat(MpCodec.MAX_HERO_NAME + 1), "c": true},
 		{"t": "cap", "h": "primm"},                                 # no direction
 		{"t": "cap", "h": "primm", "c": 1},                         # direction is a number
 		{"t": "cap", "h": "primm", "c": "true"},                    # ...or a string
 		{"t": "cap", "h": ["primm"], "c": true},                    # hero is an array
 	]
 	for packet: Dictionary in hostile:
-		if not MPManager.decode_captive(packet).is_empty():
+		if not MpCodec.decode_captive(packet).is_empty():
 			return "decode_captive accepted the hostile packet %s" % str(packet)
 	Sentinel.done("captive_parser")
 	return ""
@@ -2025,10 +2030,10 @@ func _check_pad_parser() -> String:
 	are asserted first, or a parser that dropped everything would pass every
 	rejection below.
 	"""
-	var good: Dictionary = MPManager.decode_pad({"t": "pad", "f": 3, "p": 1})
+	var good: Dictionary = MpCodec.decode_pad({"t": "pad", "f": 3, "p": 1})
 	if int(good.get("f", -1)) != 3 or int(good.get("p", -1)) != 1:
 		return "decode_pad dropped an honest press (%s)" % str(good)
-	if MPManager.decode_pad({"t": "pad", "f": 0, "p": 0}).is_empty():
+	if MpCodec.decode_pad({"t": "pad", "f": 0, "p": 0}).is_empty():
 		return "decode_pad dropped storey 0 pad 0 — the keep's own plate"
 
 	# `var_to_bytes` round-trips real types, so a float or a numeric string in
@@ -2044,22 +2049,22 @@ func _check_pad_parser() -> String:
 		{"t": "pad", "f": true, "p": 1},            # ...or a bool
 	]
 	for packet: Dictionary in hostile:
-		if not MPManager.decode_pad(packet).is_empty():
+		if not MpCodec.decode_pad(packet).is_empty():
 			return "decode_pad accepted the hostile packet %s" % str(packet)
 
 	# ...and the second half: a press is only a press if the sender was there. The
 	# plate is a 1.94 m cell and a storey is ~78 m across, so "somewhere on the
 	# floor" must NOT pass — that is the whole attack this half exists to stop.
 	var plate := Vector3(120.0, 40.0, -8.0)
-	if not MPManager.pad_press_in_reach(plate + Vector3(1.0, 0.0, 1.0), plate):
+	if not MpCodec.pad_press_in_reach(plate + Vector3(1.0, 0.0, 1.0), plate):
 		return "pad_press_in_reach refused a peer standing on the plate"
-	if MPManager.pad_press_in_reach(plate + Vector3(0.0, 0.0, 40.0), plate):
+	if MpCodec.pad_press_in_reach(plate + Vector3(0.0, 0.0, 40.0), plate):
 		return "pad_press_in_reach accepted a peer 40 m from the plate — a modified"\
 				+ " client could divert any guard in the building from anywhere"
-	if MPManager.pad_press_in_reach(plate, Vector3.INF):
+	if MpCodec.pad_press_in_reach(plate, Vector3.INF):
 		return "pad_press_in_reach accepted a plate no plan draws (Vector3.INF is"\
 				+ " pad_world's refusal, and it must not read as a distance)"
-	if MPManager.pad_press_in_reach(Vector3(NAN, 0.0, 0.0), plate):
+	if MpCodec.pad_press_in_reach(Vector3(NAN, 0.0, 0.0), plate):
 		return "pad_press_in_reach accepted a NaN sender position"
 	Sentinel.done("pad_parser")
 	return ""
@@ -2173,7 +2178,7 @@ func _check_captive_set() -> String:
 			return "the cap budget refused spend %d of its own %d" % [spend, budget]
 	if mp._verb_rate_ok("eve", "cap"):
 		return "the cap budget of %d let a peer spend %d in one second" % [budget, budget + 1]
-	if MPManager.packet_kind({"t": "cap", "h": "primm", "c": true}) != "cap":
+	if MpCodec.packet_kind({"t": "cap", "h": "primm", "c": true}) != "cap":
 		return "a cap packet does not identify itself as a verb — it would decode as presence"
 	# THE RELEASE TOMBSTONE IS CLEARED BETWEEN THESE SUB-CLAIMS, deliberately and
 	# with its own claim (11) to itself. It refuses a capture that arrives within
@@ -2265,26 +2270,26 @@ func _check_captive_set() -> String:
 	}
 	var honest: Dictionary = base.duplicate()
 	honest["cap"] = ["primm"]
-	var parsed: Dictionary = MPManager.decode_state(honest)
+	var parsed: Dictionary = MpCodec.decode_state(honest)
 	if parsed.is_empty() or parsed.get("cap", []) != ["primm"]:
 		return "decode_state dropped an honest captive list (%s)" % str(parsed)
 	# MISSING IS NOT MALFORMED — an older peer is still worth its position.
-	if MPManager.decode_state(base).is_empty():
+	if MpCodec.decode_state(base).is_empty():
 		return "decode_state now requires the cap field, so an older peer's snapshot is lost"
 	var bad_caps: Array = [
 		"primm",                                          # not an array
 		[42],                                             # not a string
 		[""],                                             # an empty name
-		["x".repeat(MPManager.MAX_HERO_NAME + 1)],        # an unbounded name
+		["x".repeat(MpCodec.MAX_HERO_NAME + 1)],        # an unbounded name
 	]
 	var too_long: Array[String] = []
-	for i: int in MPManager.MAX_STATE_CAPTIVES + 1:
+	for i: int in MpCodec.MAX_STATE_CAPTIVES + 1:
 		too_long.append("primm")
 	bad_caps.append(too_long)
 	for cap: Variant in bad_caps:
 		var hostile: Dictionary = base.duplicate()
 		hostile["cap"] = cap
-		if not MPManager.decode_state(hostile).is_empty():
+		if not MpCodec.decode_state(hostile).is_empty():
 			return "decode_state accepted the hostile captive list %s" % str(cap)
 
 	# ...and the replay is the MASTER's alone. Driven through `_receive_state`, the
@@ -2292,7 +2297,7 @@ func _check_captive_set() -> String:
 	# satisfy this by accident.
 	var fresh: Node = _room_manager("me")
 	fresh._master = "themaster"
-	var snapshot: Dictionary = MPManager.decode_state(honest)
+	var snapshot: Dictionary = MpCodec.decode_state(honest)
 	fresh._receive_state("stranger", snapshot)
 	if fresh.is_hero_captive("primm"):
 		return "a non-master's join snapshot wrote the room's captive set — every member "\
@@ -2328,7 +2333,7 @@ func _check_captive_set() -> String:
 	# one peer with no way to notice.
 	var stale: Dictionary = base.duplicate()
 	stale["cap"] = ["teibi"]
-	fresh._receive_state("themaster", MPManager.decode_state(stale))
+	fresh._receive_state("themaster", MpCodec.decode_state(stale))
 	if fresh.is_hero_captive("teibi"):
 		return "the master's snapshot resurrected a hero the room had already freed — the "\
 			+ "replay path skips the release guard the live verb goes through"
@@ -2402,7 +2407,7 @@ func _check_room_publish() -> String:
 	"""
 	# --- 1. the parser.
 	var honest: Dictionary = {"t": "room", "cap": ["primm"], "cd": 12.5, "co": 0}
-	var parsed: Dictionary = MPManager.decode_room(honest)
+	var parsed: Dictionary = MpCodec.decode_room(honest)
 	if parsed.get("cap", []) != ["primm"] or absf(float(parsed.get("cd", -1.0)) - 12.5) > 0.001 \
 			or int(parsed.get("co", -1)) != 0:
 		return "decode_room dropped an honest publish (%s)" % str(parsed)
@@ -2414,24 +2419,24 @@ func _check_room_publish() -> String:
 	# channel and a drop costs the room its cells.
 	for outcome: int in 3:
 		var probe: Dictionary = {"t": "room", "cap": [], "cd": 1.0, "co": outcome}
-		if int(MPManager.decode_room(probe).get("co", -1)) != outcome:
+		if int(MpCodec.decode_room(probe).get("co", -1)) != outcome:
 			return "decode_room dropped the verdict %d, which an older master can send" % outcome
 	var over_long: Array[String] = []
-	for i: int in MPManager.MAX_STATE_CAPTIVES + 1:
+	for i: int in MpCodec.MAX_STATE_CAPTIVES + 1:
 		over_long.append("primm")
 	var hostile: Array[Dictionary] = [
 		{"t": "room", "cd": 1.0, "co": 0},                                  # no set
 		{"t": "room", "cap": "primm", "cd": 1.0, "co": 0},                  # set is a string
 		{"t": "room", "cap": [7], "cd": 1.0, "co": 0},                      # entry is a number
 		{"t": "room", "cap": [""], "cd": 1.0, "co": 0},                     # empty name
-		{"t": "room", "cap": ["x".repeat(MPManager.MAX_HERO_NAME + 1)], "cd": 1.0, "co": 0},
+		{"t": "room", "cap": ["x".repeat(MpCodec.MAX_HERO_NAME + 1)], "cd": 1.0, "co": 0},
 		{"t": "room", "cap": over_long, "cd": 1.0, "co": 0},
 		{"t": "room", "cap": [], "co": 0},                                  # no clock
 		{"t": "room", "cap": [], "cd": "soon", "co": 0},                    # clock is a string
 		{"t": "room", "cap": [], "cd": NAN, "co": 0},
 		{"t": "room", "cap": [], "cd": INF, "co": 0},
 		{"t": "room", "cap": [], "cd": -1.0, "co": 0},
-		{"t": "room", "cap": [], "cd": MPManager.MAX_CUSTODY_SECONDS + 1.0, "co": 0},
+		{"t": "room", "cap": [], "cd": MpCodec.MAX_CUSTODY_SECONDS + 1.0, "co": 0},
 		{"t": "room", "cap": [], "cd": 1.0},                                # no verdict
 		# NOTE: `co: 3` is NOT here. An unreadable verdict is folded to
 		# `CUSTODY_VERDICT_MAX` (FAILED) rather than dropped, so an older master's
@@ -2441,7 +2446,7 @@ func _check_room_publish() -> String:
 		{"t": "room", "cap": [], "cd": 1.0, "co": NAN},
 	]
 	for packet: Dictionary in hostile:
-		if not MPManager.decode_room(packet).is_empty():
+		if not MpCodec.decode_room(packet).is_empty():
 			return "decode_room accepted the hostile publish %s" % str(packet)
 
 	var player: Node = _captive_player()
@@ -2532,7 +2537,7 @@ func _check_room_publish() -> String:
 	mp._receive_mesh_verb("themaster", "room", {"t": "room", "cap": [], "cd": 0.0, "co": 0})
 
 	# --- 7. dispatched on both transports, metered, and actually published.
-	if MPManager.packet_kind({"t": "room", "cap": [], "cd": 1.0, "co": 0}) != "room":
+	if MpCodec.packet_kind({"t": "room", "cap": [], "cd": 1.0, "co": 0}) != "room":
 		return "a room packet does not identify itself as a verb"
 	if not MPManager.VERB_BUDGET_PER_SEC.has("room"):
 		return "the room verb has no rate budget — it is applied wholesale, which is the "\
@@ -2965,14 +2970,14 @@ func _check_ability_visual_state() -> String:
 	}
 
 	# Absent: a peer that never sends the field draws the plain pose.
-	var legacy: Dictionary = MPManager.decode_presence(var_to_bytes(base))
+	var legacy: Dictionary = MpCodec.decode_presence(var_to_bytes(base))
 	if legacy.is_empty() or int(legacy["ab"]) != 0:
 		return "a presence packet without `ab` did not read as no ability: %s" % legacy
 
 	# Present and honest: the bits survive the wire intact.
 	var giant: Dictionary = base.duplicate()
 	giant["ab"] = Player.ABILITY_BIT_GIANT | Player.ABILITY_BIT_FLYING
-	var flown: Dictionary = MPManager.decode_presence(var_to_bytes(giant))
+	var flown: Dictionary = MpCodec.decode_presence(var_to_bytes(giant))
 	if flown.is_empty() or int(flown["ab"]) != int(giant["ab"]):
 		return "the ability bits did not survive the packet: %s" % flown
 
@@ -2980,7 +2985,7 @@ func _check_ability_visual_state() -> String:
 	for bad: Variant in ["giant", -1, 300, NAN, INF]:
 		var poison: Dictionary = base.duplicate()
 		poison["ab"] = bad
-		if not MPManager.decode_presence(var_to_bytes(poison)).is_empty():
+		if not MpCodec.decode_presence(var_to_bytes(poison)).is_empty():
 			return "the parser accepted a malformed ability field: %s" % str(bad)
 
 	# The SCALE a watcher draws is the player's own constant, not a second copy,

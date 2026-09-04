@@ -1385,8 +1385,21 @@ state machine and imports no network types, so tests drive it directly.
 
 ### Mesh (`scripts/mp_manager.gd` and friends)
 `lobby_client.gd` (socket + `/ice`), `mp_manager.gd` (mesh, seed, presence, heroes, shared
-totals, crocodile sync, claims), `remote_avatar.gd` (visual only), `mp_ui.gd`,
-`teammate_locator.gd`.
+totals, crocodile sync, claims), **`mp_codec.gd` (the pure codec)**, `remote_avatar.gd`
+(visual only), `mp_ui.gd`, `teammate_locator.gd`.
+
+**THE PARSERS ARE `MpCodec`, THE HANDLERS ARE `MpManager`, and that seam is the file
+boundary.** `scripts/mp_codec.gd` (`class_name MpCodec`, all `static`) holds every
+`decode_*` — `decode_presence`, `decode_state`, `decode_croc_sync`, `decode_captive`,
+`decode_room`, `decode_pad`, `decode_lmk` — plus `packet_kind`, the `_croc_flags` byte
+packing and the `CROC_FLAG_*` constants both ends of it read, the two `*_in_reach`
+proximity tests, `peer_int_id`, and the wire-format bounds (`MAX_STATE_IDS`,
+`MAX_HERO_NAME`, `MAX_CROC_SYNC`, `MAX_LANDMARK_CLAIM_PAD`, …) they are written against.
+It reads no instance state and knows about no room. Everything with a socket or state —
+the mesh, presence, the verbs, authority, rate limits, the hero pool — stays in
+`mp_manager.gd`. **A new verb is a parser in `mp_codec.gd` beside its siblings and a
+handler in `mp_manager.gd`**; a bound belongs with the parser that enforces it, so the
+encoder reads it back as `MpCodec.X` rather than re-typing the number.
 
 The sharpest rules, in rough order of how badly they bite:
 
