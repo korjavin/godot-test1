@@ -1895,9 +1895,14 @@ func _check_kinds(terrain_script: GDScript, builders_script: GDScript, registry:
 	      and that direction is what is asserted there instead of equality.
 	  (c) NO COLLIDING BOX IS A CONE. Collision is a BoxShape3D whatever the kind
 	      (ChunkBatch's banner), and a cone is a point at the top of that box —
-	      a ledge made of nothing. A sphere and a cylinder both fill their box
-	      along its axis, so those may collide. This is the taper rule's other
-	      half: the CONE goes where nothing collides.
+	      a ledge made of nothing. A colliding SPHERE or CYLINDER is a mismatch
+	      too, and this check DELIBERATELY ALLOWS IT: you stop 0.15-0.6 m short of
+	      a ball on a diagonal and can stand on an invisible square over it. That
+	      is a known, accepted trade (rule 5d in landmark_builders.gd) whose
+	      honest fix is a per-kind collision shape and its own bead — the cone is
+	      where the line is drawn because its box has no stone under the top face
+	      AT ALL. So this asserts the CONE half only, and is not a statement that
+	      the other two are correct.
 	  (d) THE FIELD REALLY SPENDS ALL THREE non-cube kinds. A revert to all-cubes
 	      — a merge that drops an argument, a refactor that loses it — is
 	      otherwise invisible: every other assertion in this file passes on cubes.
@@ -2097,7 +2102,8 @@ func _check_kind_negative_controls() -> void:
 	if _cone_collides(ChunkBatch.BoxKind.CONE, at + Vector3(0.0, 1.0, 0.0), colliders):
 		_fail("check 9 negative control: a CONE with no collision shape under it was reported as colliding")
 	if _cone_collides(ChunkBatch.BoxKind.CYLINDER, at, colliders):
-		_fail("check 9 negative control: a colliding CYLINDER was refused — a cylinder fills its box along its axis and may collide")
+		_fail("check 9 negative control: a colliding CYLINDER was refused — (c) asserts the CONE half only, deliberately (rule 5d)")
+	Sentinel.done("kind_negative_controls")
 
 
 var _unit_verts_cache: Dictionary = {}

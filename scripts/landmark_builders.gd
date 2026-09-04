@@ -874,16 +874,30 @@ static func quiz_options(kind: int, landmark_id: int, run_seed: int) -> Array[in
 ##      builder's own radius arithmetic is untouched. It also REACHES the cube's
 ##      top face at its axis, which is what keeps a returned `top` (and
 ##      rotated_box_top) the DRAWN apex rather than merely an upper bound —
-##      landmark_selfcheck's check 8 asserts exactly that, per kind.
+##      landmark_selfcheck's check 9 asserts exactly that, per kind.
 ##  5c. THE TAPER RULE. A spire in this file is a stack of shrinking boxes, and
 ##      a stack of CONES is a stack of POINTS with an overhanging disc above each
 ##      one. So a taper is CYLINDER all the way up and CONE only on the piece
 ##      that ends it. The same reasoning is why a shrinking stack that carries
 ##      something above it (a finial, a lantern) keeps CYLINDER to the top.
-##  5d. COLLISION IS STILL A BOX WHATEVER THE KIND, so a CONE — whose stone is
-##      a point at the top of a box-shaped collider — is never `collide = true`.
-##      SPHERE and CYLINDER are, because both fill their box along its axis.
-##      Check 8 asserts the CONE half; the rest is ChunkBatch's own banner.
+##  5d. COLLISION IS STILL A BOX WHATEVER THE KIND, and that is a KNOWN,
+##      ACCEPTED MISMATCH here — not a claim that a round collider is fine.
+##      ChunkBatch's own banner is the rule (a non-CUBE kind is for
+##      `collide = false` decoration and NON-CLIMBABLE colliders; anything a
+##      player stands on stays CUBE), and this file bends it: a colliding SPHERE
+##      or CYLINDER is a ball or a column you bump into 0.15-0.6 m before you
+##      touch it on a diagonal, and can be stood on where the eye sees nothing
+##      — measured on the Zugspitze's scree, the Trevi's reef and the Space
+##      Needle's foot pads, all of them reachable. The trade was taken because
+##      the alternative was leaving every column, drum and boulder a box, and
+##      because a `collide` flag is not this bead's to move (that changes the
+##      chunk's collision shapes and its A/B). The CONE is where the line is
+##      drawn, because its stone is a POINT at the top of a box-shaped ledge —
+##      a floor made of nothing — and check 9 asserts that half.
+##      `ponytail:` the honest fix is a per-kind CollisionShape3D
+##      (SphereShape3D / CylinderShape3D), which is one match arm in
+##      chunk_batch.gd's collision half; that is its own bead. Until it lands,
+##      prefer CUBE for anything a player is meant to STAND on.
 ##
 ## The 22 Budapest builders below take NO kind at all and must not: a city box is
 ## sliced on the chunk grid, and a rotated or non-cube one keeps the centre rule
