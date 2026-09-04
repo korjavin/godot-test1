@@ -172,6 +172,8 @@ func _check_table() -> String:
 		[MobileInput.FORCE_ENABLE_KEYCODE, "F5", "mobile_input.FORCE_ENABLE_KEYCODE"],
 		[TouchControls.FORCE_SHOW_KEYCODE, "F6", "touch_controls.FORCE_SHOW_KEYCODE"],
 		[MobileSettingsPanel.FORCE_SHOW_KEYCODE, "F7", "mobile_settings_panel.FORCE_SHOW_KEYCODE"],
+		[PlayerController.DEBUG_TELEPORT_BUDAPEST_KEY, "F2", "player_controller.DEBUG_TELEPORT_BUDAPEST_KEY"],
+		[PlayerController.DEBUG_TELEPORT_HQ_KEY, "F8", "player_controller.DEBUG_TELEPORT_HQ_KEY"],
 		# The zoom pair only asserts that a row for them EXISTS. Their keycodes are
 		# punctuation whose `OS.get_keycode_string` name ("Equal", "Minus") is not the
 		# legend a player reads, and re-listing the accepted keycodes here would only
