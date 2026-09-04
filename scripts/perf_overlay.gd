@@ -252,6 +252,15 @@ func _update_text() -> void:
 	# and it makes the spike rows below readable at a glance.
 	if is_instance_valid(_terrain) and _terrain.has_method("get_chunk_count"):
 		text += "Chunks: %d\n" % int(_terrain.get_chunk_count())
+	# FIELD ALTITUDE (the spike, bead godot-test1-ope.1): the per-chunk ground
+	# collision heightmap is built inside update_chunks' SYNCHRONOUS safety-ring
+	# path, so its lifetime cost is polled here like every other spike source.
+	# The counter is 0 with FIELD_ALTITUDE off — the shipped world builds a
+	# BoxShape3D and never enters the timed block — so the row is absent entirely
+	# and the overlay the player sees is byte for byte the one it always was.
+	var ground_usec: int = _read_counter(_terrain, "ground_collision_usec_total")
+	if ground_usec > 0:
+		text += "Ground collision: %.1f ms total\n" % (float(ground_usec) / 1000.0)
 	var summary: Dictionary = get_spike_summary()
 	# Thresholds come from the constants, not typed into the string, so retuning
 	# one can't leave the label claiming a number the code no longer uses.

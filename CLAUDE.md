@@ -86,6 +86,16 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            glob opens `Sentinel.isolate_user_state()` and names
 #                            no real `user://` path
 #   wade_selfcheck           river wading (player, croc, boss)
+#   altitude_selfcheck       the FIELD ALTITUDE spike (flag off): 0.0 everywhere
+#                            with the flag off, the fp32 CPU/GPU port bit-exact
+#                            against a GLSL-derived oracle (with an f64 negative
+#                            control), the four forced-flat zones each with a
+#                            control outside its skirt PLUS the road window's
+#                            slide (the corridor may not move when the window
+#                            does — a chunk's floor is baked once), every alt_*
+#                            uniform declared, pushed, valued AND defaulted, the
+#                            collision heightmap on the mesh's REAL vertex grid,
+#                            and the field's walkable slope
 #   minimap_selfcheck        the map actually read the world
 #   city_map_selfcheck       the Budapest map panel (B): the key is free against
 #                            the input map AND every other panel's constant, the
@@ -560,10 +570,12 @@ one 4,100-line file until bd `godot-test1-ftn.13` split it by check family:
   shares the plateaus' `_city_ramp_slice` and is held to `TowerInterior.PLAN_RAMP_MAX_SLOPE`.
   **Margaret Island is the same mechanism**, one `DRY_RECTS` row, no machinery of its own.
   Known and documented: `DRY_RECTS` is XZ-only, so the river bed *under* a deck is dry too.
-- **The road's four CONSUMERS stop at the terminal station `T`; the road itself does not.**
+- **The road's five CONSUMERS stop at the terminal station `T`; the road itself does not.**
   `_road_terminal_k()` is the last station at or west of `ROAD_TERMINAL_X`, and the caps
-  are numbered 1–4 in the code: road coins, road clearance, road bosses
-  (`endless_terrain.gd`) and the minimap's drawn line (`minimap_hud.gd`).
+  are numbered in the code: road coins, road clearance, road bosses
+  (`endless_terrain.gd`) and the minimap's drawn line (`minimap_hud.gd`) are 1–4;
+  CAP 5 is `_alt_road_segments`, the `FIELD_ALTITUDE` spike's flat corridor, which is
+  inert while the flag is false.
   **`_road_extend_to_x` is deliberately NOT capped** — it is the station cache, and a cache
   that stops growing hangs every forward loop that walks it until it passes an X. From `T`
   the player is carried on by `spawn_approach_coins_in_chunk`, a deterministic corridor
@@ -983,6 +995,15 @@ and the hash amplifies: a float64 port gives a *different field*, not a more pre
 Don't simplify any line of it back to scalar arithmetic.
 
 `biome_at()` / `is_river_at()` are the public API — pure, allocation-free, safe per tick.
+
+**There is a SPIKE behind `FIELD_ALTITUDE` (`endless_terrain.gd`) and it ships `false`.**
+Bead `godot-test1-ope.1` built a vertex-displaced heightfield with the parity contract one
+clause wider (`height_at()` / `field_height()`), Budapest, the HQ disc, every river band
+and the coin road corridor held at y = 0, and a `HeightMapShape3D` ground shape — all of it
+inert with the flag false and `alt_enabled = 0.0`, which is byte for byte the flat world
+above. **The flat world is still what ships**; the measurement, the red-check list and the
+migration order of the consumer list live in `docs/field-altitude-spike.md`, and the epic's
+consumer beads are filed from that report.
 
 ### Player
 `scripts/player_controller.gd` (a `CharacterBody3D`). Character switching on R (`switch_character`) cycles
