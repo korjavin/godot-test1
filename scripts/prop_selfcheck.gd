@@ -473,7 +473,12 @@ func _check_chunk_purity(terrain_script: GDScript, consts: Dictionary) -> void:
 		for i in a.size():
 			var ea: Dictionary = a[i]
 			var eb: Dictionary = b[i]
-			if ea["transform"] != eb["transform"] or ea["color"] != eb["color"]:
+			# KIND IS COMPARED TOO (bead godot-test1-y1o.1). A batch entry now
+			# carries which shared unit mesh it draws, and a field nobody compares
+			# is a field nobody tests: a builder that picked a sphere off a random
+			# draw would regenerate as a cone here and this loop would shrug.
+			if (ea["transform"] != eb["transform"] or ea["color"] != eb["color"]
+					or ea["kind"] != eb["kind"]):
 				_fail("chunk %s box %d differs between two generations of the same chunk" % [chunk, i])
 				break
 

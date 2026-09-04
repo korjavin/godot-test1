@@ -3912,9 +3912,10 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	#
 	#   1. block_batch — the VISUAL half (Task 4). As blocks are created they no
 	#      longer instance their own MeshInstance3D; each appends a
-	#      { "transform": Transform3D, "color": Color } entry here, and AFTER
-	#      generation we build ONE MultiMeshInstance3D rendering all of them in a
-	#      single draw call.
+	#      { "transform": Transform3D, "color": Color, "kind": int }
+	#      entry here, and AFTER generation we build ONE MultiMeshInstance3D per
+	#      mesh KIND present rendering all of them in a single draw call each
+	#      (a chunk of nothing but cubes -- every chunk today -- is still one).
 	#
 	#   2. block_body — the COLLISION half (Task 5). ONE StaticBody3D for the WHOLE
 	#      chunk's blocks; each block adds its own CollisionShape3D child to it
@@ -4129,8 +4130,9 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: 
 	@param platforms: Out-param; feature structures append walkable-top descriptors
 	                  here for patrolling crocodiles.
 	@param block_batch: Out-param; each block created appends its
-	                  { "transform": Transform3D, "color": Color } here so the
-	                  caller can render them all as one MultiMesh (visual batching).
+	                  { "transform": Transform3D, "color": Color, "kind": int } here so the
+	                  caller can render them all as one MultiMesh per kind present
+	                  (visual batching).
 	@param block_body: The chunk's single shared block-collision StaticBody3D; each
 	                  block adds its CollisionShape3D child to this body (Task 5).
 	@return Array of obstacle footprints ({ "pos": Vector3, "radius": float }) so
@@ -5739,21 +5741,23 @@ func _prop_frozen_stump(local: Vector3, size: float, rng: RandomNumberGenerator,
 
 	return { "radius": r, "top": h, "climbable": true }
 
-func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D, tilt: float = 0.0, color_override: Color = Color(0.0, 0.0, 0.0, 0.0), collide: bool = true) -> void:
+func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D, tilt: float = 0.0, color_override: Color = Color(0.0, 0.0, 0.0, 0.0), collide: bool = true, kind: int = ChunkBatch.BoxKind.CUBE) -> void:
 	"""
 	THE ONE FORWARDER (bead godot-test1-ftn.1). The box seam itself is
 	`chunk_batch.gd` — read ChunkBatch.create_box for what a box costs the
-	caller's RNG, why the visual and the collision share one basis, and why the
-	colour is converted to linear here instead of by the material.
+	caller's RNG, why the visual and the collision share one basis, why the
+	colour is converted to linear here instead of by the material, and what
+	`kind` may and may not be used for (ChunkBatch.BoxKind's banner).
 
 	It stays a method on the terrain because `terrain.create_box(...)` IS the
 	contract 600-odd call sites and every landmark builder are written against
 	(landmark_builders.gd's header: a builder's whole job is appending boxes
 	through the terrain's own create_box). Rewriting them all is the opposite of
-	a mechanical move.
+	a mechanical move — and `kind` being the LAST optional is what keeps that
+	true for the mesh-kind slot (bead godot-test1-y1o.1) too.
 	"""
 	ChunkBatch.create_box(center_pos, dimensions, yaw, rng, block_batch, block_body,
-			tilt, color_override, collide)
+			tilt, color_override, collide, kind)
 
 func _build_block_multimesh(parent_chunk: MeshInstance3D, block_batch: Array,
 		cast_shadows: bool = true) -> void:
