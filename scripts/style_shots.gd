@@ -48,11 +48,16 @@ func _run() -> void:
 
 	# The ambience managers all use randomize()d RNG, so their content differs
 	# between two runs of this tool and would drown the A/B in noise. None of
-	# them uses the block material this bead touches — hide them.
-	for g in ["crowd", "traffic", "weather"]:
-		var amb := get_tree().get_first_node_in_group(g)
-		if amb is Node3D:
-			(amb as Node3D).visible = false
+	# them uses the block material this tool exists to compare — hide them.
+	#
+	# HIDE THE DESCENDANTS, NOT THE MANAGER. `crowd` and `traffic` are Node3Ds
+	# whose root flip would do, but `weather` is a plain `Node` (WeatherManager
+	# extends Node and parents its cloud/rain/bird MultiMeshes to itself), so a
+	# `manager is Node3D` test silently skips the one system whose randomized
+	# clouds actually show up in the sky of every shot.
+	for g in ["crowd", "traffic", "weather", "fauna"]:
+		for amb in get_tree().get_nodes_in_group(g):
+			_hide_visuals(amb)
 
 	var terrain := get_tree().get_first_node_in_group("terrain")
 	var player := get_tree().get_first_node_in_group("player")
@@ -98,7 +103,9 @@ func _find_biome(terrain: Node, want: int) -> Vector3:
 
 func _shoot(terrain: Node, player: Node3D, where: Vector3, yaw: float, name: String) -> void:
 	var chunk := Vector2i(roundi(where.x / 50.0), roundi(where.z / 50.0))
+	# The previous shot froze both ticks (see below) — hand the body back.
 	player.set_physics_process(true)
+	player.set_process(true)
 	terrain.new_run(SEED, chunk)
 	player.global_position = where
 	player.rotation.y = yaw
@@ -108,10 +115,15 @@ func _shoot(terrain: Node, player: Node3D, where: Vector3, yaw: float, name: Str
 	# Always the same hero, whatever a crocodile did while the chunks landed.
 	player.set_active_character(0)
 	await get_tree().create_timer(YAW_SECONDS, true, false, true).timeout
-	# Re-assert the pose and FREEZE it: the camera pivot is written every physics
-	# frame from a LAGGED yaw, so a run where a bite nudged the body frames the
-	# street differently. Writing the pivot and stopping the physics tick is what
-	# makes the before/after pair the same camera.
+	# Re-assert the pose and FREEZE it: the camera pivot is written from a LAGGED
+	# yaw plus a shake offset, so a run where a bite nudged the body frames the
+	# street differently. Writing the pivot and stopping the tick is what makes
+	# the before/after pair the same camera.
+	#
+	# BOTH TICKS, and that is the whole point: `player_controller` writes
+	# `camera_pivot.rotation` in `_process`, not in `_physics_process`, so
+	# stopping physics alone leaves the rig free to drift back over the frames
+	# this waits for before grabbing the buffer.
 	player.global_position = where
 	player.rotation.y = yaw
 	player.velocity = Vector3.ZERO
@@ -123,6 +135,7 @@ func _shoot(terrain: Node, player: Node3D, where: Vector3, yaw: float, name: Str
 	if model is Node3D:
 		(model as Node3D).visible = true
 	player.set_physics_process(false)
+	player.set_process(false)
 	await get_tree().process_frame
 	await get_tree().process_frame
 	await RenderingServer.frame_post_draw
@@ -150,6 +163,14 @@ func _measure(name: String) -> void:
 		spikes = perf.get_spike_summary()
 	print("[PERF] ", name, " avg_ms=%.2f fps=%.1f worst_ms=%.1f draws=%d spikes=%s"
 			% [ms, 1000.0 / maxf(ms, 0.001), worst, draws / frames, str(spikes)])
+
+## Hide everything drawable under `root`, root included. Walks the subtree rather
+## than flipping one `visible`, because an ambience manager may be a plain `Node`
+## with drawable children (WeatherManager is).
+func _hide_visuals(root: Node) -> void:
+	for n in _all_nodes(root):
+		if n is Node3D:
+			(n as Node3D).visible = false
 
 func _all_nodes(root: Node) -> Array:
 	var out: Array = [root]
