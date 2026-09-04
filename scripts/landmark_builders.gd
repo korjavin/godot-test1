@@ -6,9 +6,10 @@ extends RefCounted
 ## nothing else in the project has to know about.
 ##
 ## THE SPLIT, and why it falls exactly here. endless_terrain.gd keeps the
-## POLICY — how rare a landmark is (LANDMARK_CHANCE), which hash stream decides
-## it (_landmark_at), how far off the coin road it must sit, how its reward ring
-## and its crocodile-exclusion footprint are sized (spawn_landmark_in_chunk).
+## POLICY — WHERE each place stands (the MUSEUM MILE: one site per kind, chosen
+## from run_seed alone and read back by `_landmark_at`), how far off the coin road
+## it must sit, how its reward ring and its crocodile-exclusion footprint are
+## sized (spawn_landmark_in_chunk).
 ## This file keeps the CONTENT — the palette, the registry, and the builder that
 ## turns a spot into stone. Policy is about the WORLD and reads a dozen sibling
 ## constants; content is about a PLACE and reads none of them. That is the whole
@@ -116,10 +117,12 @@ const CITY_PARK_GREEN := Color(0.20, 0.42, 0.22) # Margaret Island foliage (dE 0
 ## invents a sixth word or forgets the field, because a missing region silently
 ## degrades that place's quiz to whole-table distractors rather than erroring.
 ##
-## ORDER IS LOAD-BEARING ONLY IN THAT IT IS THE KIND ROLL — _landmark_at draws
-## randi_range(0, LANDMARKS.size() - 1) into this array, so appending is safe and
-## reordering re-rolls every landmark in every existing world (harmless: worlds
-## are per-run anyway).
+## ORDER IS LOAD-BEARING ONLY IN THAT AN INDEX IS AN IDENTITY — since bead
+## godot-test1-bcf a kind is unique in the world and its ROW INDEX is what
+## `landmark_sites()` places, what the marker's `kind` meta carries and what
+## `quiz_options` keys on. So APPENDING is free (a new row simply gets its own
+## site) and REORDERING moves every landmark in every existing world, which is
+## harmless because worlds are per-run anyway.
 const LANDMARKS: Array = [
 	{
 		"builder": "_landmark_stonehenge",
@@ -551,14 +554,13 @@ const LANDMARKS: Array = [
 # ----------------------------------------------------------------------------
 ##
 ## A SEPARATE const, not a `city: true` flag on the rows above, and the reason is
-## the field's landmark roll. `_landmark_at` draws
-## randi_range(0, LANDMARKS.size() - 1) out of the chunk's own hash stream, so a
-## flag would mean either a post-draw `continue` (a filter nobody can forget, but
-## still one more thing between a draw and a placement) or a resized array (which
-## re-rolls every landmark in every world). A table endless_terrain.gd has never
-## heard of cannot reach the field roll AT ALL: the draw sequence is not changed,
-## it is not reachable. That is the cheapest possible answer to "keep these out of
-## the countryside", and it costs one extra line in landmark_selfcheck.
+## the field's placement. `landmark_sites()` walks LANDMARKS by index and gives
+## every row a site, so a flag would mean a filter in that walk — one more thing
+## nobody may forget — and a shared array would mean the 22 city rows shifting the
+## index of every field row. A table endless_terrain.gd has never heard of cannot
+## reach the field placement AT ALL: it is not filtered out, it is not reachable.
+## That is the cheapest possible answer to "keep these out of the countryside",
+## and it costs one extra line in landmark_selfcheck.
 ##
 ## It also keeps check 2 honest. Every row up there must satisfy
 ## radius <= LANDMARK_RADIUS (9.5) because that is the bound _biome_spot_ok is
