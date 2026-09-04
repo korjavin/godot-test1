@@ -250,6 +250,7 @@ func _run() -> void:
 	await _check_the_scar_is_drawn_and_permanent()
 	await _check_spines_and_liberation()
 	await _check_guards_stand_their_posts()
+	_check_guard_capsule_fits_the_doors()
 	await _check_guards_reset_on_re_entry()
 	await _check_the_leash_holds_under_a_chase()
 	await _check_the_lure_diverts_a_guard()
@@ -2847,19 +2848,42 @@ func _check_spines_and_liberation() -> void:
 # ============================================================================
 
 ## How much room a guard's body needs around its post before "clear of the
-## stonework" means anything. The `tower_guard.tscn` capsule is 0.28125 m in
-## radius (the 1.5x chassis of bead godot-test1-6bj; it was 0.1875); this is
-## still over it, so a post that merely GRAZES a jamb is a failure rather than a
-## lucky pass. Read as: nothing solid may come within this of a post, at any
-## height a standing body occupies.
-const GUARD_BODY_CLEARANCE: float = 0.45
+## stonework" means anything: nothing solid may come within this of a post, at
+## any height a standing body occupies, so a post that merely GRAZES a jamb is
+## a failure rather than a lucky pass. Derived from the LIVE capsule (see
+## `guard_body_clearance`), never hand-copied — the next chassis growth scales
+## the threshold instead of silently shrinking its headroom.
+const GUARD_CLEARANCE_FACTOR: float = 1.0667  # == 0.45 at the 2.25x radius
 
-## How tall a standing guard is, for the same test. The chassis stands 1.5 m
+static var _guard_capsule_radius: float = -1.0
+
+
+static func guard_body_clearance() -> float:
+	"""Room a guard's body needs around its post, from the live capsule.
+
+	The `tower_guard.tscn` capsule radius times GUARD_CLEARANCE_FACTOR (which
+	reproduces the old hand-copied 0.45 at the 2.25x radius, so the threshold
+	is unchanged today). Falls back to 0.45 when the scene is unreadable —
+	everything downstream fails loudly in that case anyway.
+	"""
+	if _guard_capsule_radius < 0.0:
+		_guard_capsule_radius = 0.45 / GUARD_CLEARANCE_FACTOR
+		var scene := TowerInterior.guard_scene()
+		if scene != null:
+			var probe := scene.instantiate() as Node3D
+			var shape_node := probe.find_child("CollisionShape3D", true, false) as CollisionShape3D
+			var capsule := (shape_node.shape if shape_node != null else null) as CapsuleShape3D
+			if capsule != null:
+				_guard_capsule_radius = capsule.radius
+			probe.free()
+	return _guard_capsule_radius * GUARD_CLEARANCE_FACTOR
+
+## How tall a standing guard is, for the same test. The chassis stands 2.25 m
 ## (the capsule lies on the travel axis, so it is the MODEL's height that this
-## has to cover, not the capsule's 2.025 m length); a little over it, so a post
+## has to cover, not the capsule's 3.0375 m length); a little over it, so a post
 ## under the crawl lintel (top at 2.8 m, underside 2.0) or under a raised mass
 ## would be caught.
-const GUARD_BODY_HEIGHT: float = 1.6
+const GUARD_BODY_HEIGHT: float = 2.4
 
 func _check_guards_stand_their_posts() -> void:
 	"""
@@ -3074,10 +3098,11 @@ func _guard_footprint(yaw: float) -> Rect2:
 	## READ OFF `tower_guard.tscn`, never restated here: the capsule's own transform
 	## and dimensions are the thing under test, so a scene whose shape stopped
 	## matching its model must not be measured against a copy of the number it used
-	## to carry. Degrades to the plain `GUARD_BODY_CLEARANCE` disc if the scene is
+	## to carry. Degrades to the plain derived-clearance disc if the scene is
 	## ever reshaped into something this cannot read.
-	var lo := Vector2(-GUARD_BODY_CLEARANCE, -GUARD_BODY_CLEARANCE)
-	var hi := Vector2(GUARD_BODY_CLEARANCE, GUARD_BODY_CLEARANCE)
+	var clearance := guard_body_clearance()
+	var lo := Vector2(-clearance, -clearance)
+	var hi := Vector2(clearance, clearance)
 	var scene := TowerInterior.guard_scene()
 	if scene != null:
 		var probe := scene.instantiate()
@@ -3103,6 +3128,106 @@ func _guard_footprint(yaw: float) -> Rect2:
 				hi.y = maxf(hi.y, z + r)
 		probe.free()
 	return Rect2(lo, hi - lo)
+
+
+func _check_guard_capsule_fits_the_doors() -> void:
+	"""
+	Check 12b. The real guard capsule fits a spine door, clears every storey,
+	and does NOT fit the crawl alcove.
+
+	The capsule AND the model height are read off a live `tower_guard.tscn`
+	instance — the `_guard_footprint` discipline — because the whole claim is
+	about the body this bead grew, and a copy of 0.84 here would keep passing
+	after a retune broke the scene. Three assertions:
+
+	  * DOORWAY: the capsule's diameter clears one PLAN_CELL (a spine door is
+	    one cell wide). The capsule lies on the travel axis, so length along
+	    travel never gates a doorway — width does.
+	  * STOREYS: the model's height clears every planned storey's air.
+	  * CRAWL: the capsule's vertical extent passes under DOSSIER_CRAWL_CLEAR
+	    (pinned, so outgrowing it fails) — and the alcove stays guard-free by
+	    ROUTING, not by height: it is a dead end (check 20) and no post,
+	    patrol lane or lure plate is inside it. The old mesh-height clause
+	    stated something false of the physics body, which is the capsule.
+	"""
+	var scene := TowerInterior.guard_scene()
+	if scene == null:
+		_fail("check 12b: tower_guard.tscn is missing — the fit cannot be measured")
+		Sentinel.done("guard_capsule_fits_the_doors")
+		return
+	var probe := scene.instantiate() as Node3D
+	var shape_node := probe.find_child("CollisionShape3D", true, false) as CollisionShape3D
+	var capsule := (shape_node.shape if shape_node != null else null) as CapsuleShape3D
+	if capsule == null:
+		_fail("check 12b: tower_guard.tscn has no readable capsule — the fit cannot be measured")
+		probe.free()
+		Sentinel.done("guard_capsule_fits_the_doors")
+		return
+	var diameter := capsule.radius * 2.0
+	var door := TowerPlans.PLAN_CELL
+	if diameter >= door:
+		_fail("check 12b: the guard's %.2f m capsule does not fit a %.2f m spine door" % [diameter, door])
+	# Measured from the probe ROOT, not the Model node: a retune of the model's
+	# in-game size is a transform on Model itself, and measuring under it would
+	# bless that away (the F1 mutation: Model scaled 2.5x must fail the storey
+	# clause, not print 2.25 m).
+	var tall := _visual_height(probe)
+	if tall <= 0.0:
+		_fail("check 12b: tower_guard.tscn draws no mesh — the height cannot be measured")
+		probe.free()
+		Sentinel.done("guard_capsule_fits_the_doors")
+		return
+	var capsule_hi := capsule.radius * 2.0
+	if capsule_hi >= TowerInterior.DOSSIER_CRAWL_CLEAR:
+		_fail("check 12b: the guard's %.2f m capsule no longer fits under the crawl lintel (%.2f m)" % [
+			capsule_hi, TowerInterior.DOSSIER_CRAWL_CLEAR])
+	var low := INF
+	for floor_index: int in TowerPlans.floors():
+		low = minf(low, TowerInterior.plan_clear_height(floor_index))
+	if tall >= low:
+		_fail("check 12b: the %.2f m guard does not clear a %.2f m storey" % [tall, low])
+	print("guard capsule: %.2f m wide through %.2f m doors, %.2f m tall under %.2f m ceilings, %.2f m capsule passes under the %.2f m crawl (alcove guard-free by routing, check 20), clearance %.4f" % [
+		diameter, door, tall, low, capsule_hi, TowerInterior.DOSSIER_CRAWL_CLEAR,
+		guard_body_clearance()])
+	probe.free()
+	Sentinel.done("guard_capsule_fits_the_doors")
+
+
+func _visual_height(body: Node3D) -> float:
+	## Top of the highest drawn mesh under `body`, in body space — the number a
+	## lintel or a ceiling actually meets. Walks every MeshInstance3D (the hunter
+	## exports welded, but the mesh count is the exporter's business, not this
+	## check's), composing each node's LOCAL transform down from `body`, so
+	## nesting never silently drops a part and the probe never needs the tree —
+	## `get_global_transform()` on an unparented probe logs an inside-tree
+	## condition and answers identity, which would bless any nested transform
+	## away. 0 when nothing is drawn at all.
+	var lo := Vector3(INF, INF, INF)
+	var hi := Vector3(-INF, -INF, -INF)
+	var stack: Array = [[body, Transform3D.IDENTITY]]
+	while not stack.is_empty():
+		var item: Array = stack.pop_back()
+		var n := item[0] as Node3D
+		var xf: Transform3D = item[1]
+		if n == null:
+			continue
+		for c in n.get_children():
+			var cn := c as Node3D
+			if cn != null:
+				stack.append([cn, xf * cn.transform])
+		var mi := n as MeshInstance3D
+		if mi == null or mi.mesh == null:
+			continue
+		var box := xf * mi.get_aabb()
+		lo.x = minf(lo.x, box.position.x)
+		lo.y = minf(lo.y, box.position.y)
+		lo.z = minf(lo.z, box.position.z)
+		hi.x = maxf(hi.x, box.end.x)
+		hi.y = maxf(hi.y, box.end.y)
+		hi.z = maxf(hi.z, box.end.z)
+	if lo.x >= INF:
+		return 0.0
+	return hi.y - lo.y
 
 
 func _standable(x: float, z: float, foot_y: float) -> bool:
