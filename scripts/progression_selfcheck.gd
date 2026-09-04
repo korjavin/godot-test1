@@ -138,7 +138,27 @@ func _check_every_selfcheck_is_hermetic() -> void:
 	Then the live process: this run's own seams must resolve under the scratch
 	root, which is what proves the helper did anything at all.
 	"""
-	var seams: Array[String] = ["BestRunStore.config_path", "StartOverlay.locale_config_path"]
+	# BOTH RULES MATCH THE MEMBER, NEVER THE ALIAS — `pause_selfcheck`'s own idiom
+	# (`\.paused\\s*=[^=]`, one table along), and here it is load-bearing rather than
+	# stylistic: `start_overlay.gd` has NO `class_name`, so every check names that
+	# preload itself and nothing makes the next author spell it `StartOverlay`. A
+	# name-based rule reads an aliased preload's own fixed-path assignment as
+	# innocent, which is exactly the bug this bead exists to abolish. The
+	# `[^=]` tail is what keeps `==` out, and requiring the `=` at all is what lets a
+	# seam PASSED as an argument or listed in an array through. Rule 3 takes either
+	# quote, because a single-quoted literal is the same literal.
+	# NOTE: this file is in the glob it audits, so neither pattern may appear in its
+	# own source outside these two `compile()` calls — hence the circumlocution.
+	# `ponytail:` a literal SPLIT across a concatenation ("user://" + "best_run.cfg")
+	# still walks past rule 3; the live rule below catches it in this process and the
+	# `finish()` guard catches it in every other. Widen only if one ever ships.
+	var seam_re := RegEx.new()
+	var real_re := RegEx.new()
+	if seam_re.compile("\\.(config_path|locale_config_path)\\s*=[^=]") != OK \
+			or real_re.compile("[\"']user://(best_run|locale)\\.cfg[\"']") != OK:
+		_fail("the hermeticity regexes would not compile — the audit would pass vacuously")
+		Sentinel.done("hermetic_stores")
+		return
 	var files: PackedStringArray = DirAccess.get_files_at(SELFCHECK_DIR)
 	var audited: int = 0
 	for file_name: String in files:
@@ -172,17 +192,15 @@ func _check_every_selfcheck_is_hermetic() -> void:
 		# 2 and 3. nothing else names or moves a real store.
 		for i: int in lines.size():
 			var line: String = lines[i]
-			for seam: String in seams:
-				if line.strip_edges().begins_with("%s = " % seam):
-					_fail("%s:%d assigns %s itself — the per-process seam is "
-						% [file_name, i + 1, seam]
-						+ "`Sentinel.isolate_user_state()`, and a path of one file's own is "
-						+ "not private against that file running in another worktree")
-			for real_path: String in Sentinel.REAL_PATHS:
-				if line.contains('"%s"' % real_path):
-					_fail("%s:%d names the real profile path as a literal — a self-check "
-						% [file_name, i + 1]
-						+ "may never resolve one, whatever it means to do with it")
+			if seam_re.search(line) != null:
+				_fail("%s:%d assigns a store path seam itself — the per-process seam is "
+					% [file_name, i + 1]
+					+ "`Sentinel.isolate_user_state()`, and a path of one file's own is "
+					+ "not private against that file running in another worktree")
+			if real_re.search(line) != null:
+				_fail("%s:%d names a real `user://` path as a literal — a self-check "
+					% [file_name, i + 1]
+					+ "may never resolve one, whatever it means to do with it")
 
 	if audited < 20:
 		_fail("the hermeticity audit found only %d self-checks in %s — the glob is broken"

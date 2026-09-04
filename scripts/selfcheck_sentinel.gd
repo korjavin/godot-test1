@@ -119,17 +119,52 @@ const _StartOverlayScript := preload("res://scripts/start_overlay.gd")
 static var _scratch_dir: String = ""
 
 
-static func isolate_user_state() -> void:
-	"""Redirect every persisted `user://` file at a fresh directory private to
-	this process. First statement of every check's `_initialize()`."""
-	_purge_stale_scratch()
+static func _static_init() -> void:
+	"""THE SEAMS MOVE THE MOMENT THIS SCRIPT LOADS, WHICH IS BEFORE ANY CHECK RUNS.
+
+	A GDScript runtime error aborts only the function it lands in, so a redirect
+	that lives in an ordinary function has a window: anything that throws with the
+	assignments still pending returns to the check with both seams on the SHIPPED
+	paths, and the check carries on. That is not merely unhermetic — `_fresh_store()`
+	is `remove_absolute(config_path)`, so the next line the check runs DELETES the
+	player's real profile. Measured on this branch's first head with an
+	out-of-bounds index planted in `isolate_user_state()`.
+
+	Godot's static constructor closes the window instead of narrowing it: it runs
+	once, on class load, which is the `preload` at the top of every check — before
+	`_initialize()` exists to abort in. Nothing here can throw (two assignments and a
+	format string) and nothing here touches the disk, which is the other half of the
+	argument: the filesystem work stays in `isolate_user_state()` where a failure is
+	survivable.
+
+	THE SHIPPED GAME NEVER LOADS THIS FILE — only `scripts/*_selfcheck.gd` and
+	`best_run_e2e.gd` preload it — so the game still persists to its own paths."""
+	_point_seams_at_scratch()
+
+
+static func _point_seams_at_scratch() -> void:
 	_scratch_dir = "%s/pid_%d" % [SCRATCH_ROOT, OS.get_process_id()]
-	# Wiped rather than merely created: pids are reused, and inheriting a
-	# same-pid predecessor's file is the very failure this is here to stop.
-	_remove_scratch(_scratch_dir)
-	DirAccess.make_dir_recursive_absolute(_scratch_dir)
 	_BestRunStoreScript.config_path = _scratch_dir.path_join("best_run.cfg")
 	_StartOverlayScript.locale_config_path = _scratch_dir.path_join("locale.cfg")
+
+
+static func isolate_user_state() -> void:
+	"""Give this process an EMPTY private scratch directory. First statement of
+	every check's `_initialize()`.
+
+	The seams are already pointed at it by `_static_init()` above — they are
+	re-asserted here so this function is the whole story at its call site, and so a
+	check that somehow ran after a `release_user_state()` still lands somewhere
+	private. What only this can do is make the directory FRESH, which is the half of
+	the bead that stops a SIGTERM'd predecessor's store being inherited."""
+	_point_seams_at_scratch()
+	_purge_stale_scratch()
+	# Wiped rather than merely created: pids are reused, and inheriting a
+	# same-pid predecessor's file is the very failure this is here to stop. If the
+	# mkdir fails, `ConfigFile.save` into a missing directory fails and the store
+	# reads empty — wrong, but still nobody else's file.
+	_remove_scratch(_scratch_dir)
+	DirAccess.make_dir_recursive_absolute(_scratch_dir)
 
 
 static func release_user_state() -> void:
@@ -165,6 +200,15 @@ static func _purge_stale_scratch() -> void:
 			_remove_scratch(path)
 
 
+static func _isolated() -> bool:
+	"""Did `isolate_user_state()` actually finish? Both seams under the scratch
+	root is the whole of it — the shipped defaults are not, and neither is a fixed
+	throwaway name of somebody's own, which is shared by every worktree on the box."""
+	var prefix: String = SCRATCH_ROOT + "/"
+	return (_BestRunStoreScript.config_path.begins_with(prefix)
+		and _StartOverlayScript.locale_config_path.begins_with(prefix))
+
+
 static func done(name: String) -> void:
 	"""Stamp `name` as having run to a deliberate exit."""
 	_reached[name] = true
@@ -174,15 +218,27 @@ static func finish(tree: SceneTree) -> void:
 	"""The passing report site: print `SELFCHECK OK` and exit 0 only if every
 	stamp the script's own source declares was actually reached."""
 	var missed: Array[String] = missing(tree.get_script())
+	# EVERY CHECK'S PASSING SITE IS WHERE THE ISOLATION IS RE-ASKED, because this is
+	# the only place that can see an `isolate_user_state()` that aborted halfway in
+	# a check with no live rule of its own — and a check whose stores were the
+	# player's may not report OK whatever else it proved. `progression_selfcheck`
+	# asserts the same property over the whole glob by reading SOURCE; this asserts
+	# it for the process actually running.
+	var stray: bool = not _isolated()
 	release_user_state()
-	if missed.is_empty():
+	if missed.is_empty() and not stray:
 		print("SELFCHECK OK")
 		tree.quit(0)
 		return
+	if stray:
+		printerr("FAIL: this run's %s / %s are not under %s — `isolate_user_state()` "
+			% [_BestRunStoreScript.config_path, _StartOverlayScript.locale_config_path,
+				SCRATCH_ROOT]
+			+ "never finished, so every store this check touched was somebody else's")
 	for name: String in missed:
 		printerr("FAIL: check \"%s\" never reached its end — a runtime error " % name
 			+ "aborted it and every assertion after that point was skipped")
-	printerr("SELFCHECK FAILED (%d)" % missed.size())
+	printerr("SELFCHECK FAILED (%d)" % (missed.size() + (1 if stray else 0)))
 	tree.quit(1)
 
 
