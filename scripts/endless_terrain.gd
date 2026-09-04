@@ -2240,6 +2240,35 @@ const TREE_TRUNK_TILT_MAX: float = 0.08  # radians of lean, either way
 const TREE_CANOPY_TILT_MAX: float = 0.16   # radians, alternating sign per layer
 const TREE_CANOPY_SLIDE: float = 0.14      # fraction of a layer's width it slides off axis
 
+## FOREST — THE CANOPY IS A BLOB, NOT A SLAB (bead godot-test1-y1o.2, epic y1o
+## "get rid of blocks"; the honest caveat u7a's developer left behind — "still
+## built from boxes, still reads as low-poly blocks at distance"). u7a's whole
+## set above is transforms and colours, because a batch entry could not carry a
+## SHAPE; bead y1o.1 gave it one, and the forest is its first consumer. Every
+## canopy layer is now `ChunkBatch.BoxKind.SPHERE` — the shared unit sphere at
+## UNIT_SPHERE_RADIAL x UNIT_SPHERE_RINGS (8 x 4, faceted on purpose: the facets
+## ARE style direction A, and that one number lives in chunk_batch.gd so the
+## whole world's roundness is retuned in one place).
+##
+## NOT ONE RNG DRAW MOVED. The two numbers below are DERIVED from the width this
+## layer already drew, so the biome stream is byte-identical and every site after
+## the forest in the same chunk stays where it was — which is what makes this
+## bead's A/B against master read "only `kind` and the canopy box dimensions".
+##
+##   * TREE_CANOPY_BLOB_HEIGHT: a sphere squashed into u7a's flat 1.0 m slab box
+##     is a flying saucer, and three of them a pagoda. A blob is nearly as tall as
+##     it is wide, so its height comes off its own width.
+##   * TREE_CANOPY_BLOB_OVERLAP: the next blob starts HALF way up the last one, so
+##     the crown is one lumpy mass rather than beads on a string. Under 0.5 the
+##     blobs fuse into a ball; over it they separate and the tree is a lollipop
+##     stack again.
+##
+## The crown's `canopy_y` also stopped being a layer CENTRE and became the crown's
+## FOOT — see the builder. A blob is up to 2.5 m tall where a slab was 1.0, and
+## centring it on the old y hung a fat crown down to head height on a short trunk.
+const TREE_CANOPY_BLOB_HEIGHT: float = 0.70
+const TREE_CANOPY_BLOB_OVERLAP: float = 0.50
+
 ## MOUNTAIN — massifs per mountain chunk. Each is a stack of shrinking boxes, so
 ## a "range" is 2-4 crude peaks per chunk and the biome band is several chunks
 ## across.
@@ -8371,8 +8400,9 @@ func _spawn_desert_dunes(chunk_center: Vector3, chunk_pos: Vector2i, rng: Random
 
 func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
-	FOREST — many simple trees: one solid trunk box plus a stack of visual-only
-	canopy boxes.
+	FOREST — many simple trees: one solid trunk BOX plus a stack of visual-only
+	canopy BLOBS (bead godot-test1-y1o.2 — the canopy layers are the world's first
+	non-cube batch entries; see the TREE_CANOPY_BLOB_* block above).
 
 	@param chunk_center: World centre of the chunk (create_box takes chunk-LOCAL).
 	@param rng: The biome stream's private RNG.
@@ -8380,10 +8410,16 @@ func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 	@param block_batch / block_body: The chunk's single MultiMesh + collision body.
 
 	PERF (the reason a forest is affordable at all): 25-40 trees × ~4 boxes are all
-	create_box entries, so they join the chunk's ONE MultiMeshInstance3D — a forest
-	chunk is the SAME single block draw call as a plains chunk. Only the trunks pay
-	a CollisionShape3D: the canopies pass collide = false, which is exactly why that
-	parameter exists. Leaves you can walk under cost nothing but instances.
+	create_box entries, so a forest chunk is TWO block draw calls — the cube bucket
+	(trunks) and the sphere bucket (canopies) — against a plains chunk's one. That
+	+1 is the whole cost of this restyle and it is paid by forest chunks ALONE:
+	every other biome and every Budapest chunk passes no kind and emits exactly the
+	one node it always did (batch_selfcheck check 5 sweeps the biomes for it,
+	budapest_selfcheck check 4 the city). The box COUNT is unchanged — the same
+	create_box calls in the same order. Only the trunks pay a CollisionShape3D: the
+	canopies pass collide = false, which is exactly why that parameter exists (and
+	is also the rule a non-cube kind has to obey, since a shape carries no kind).
+	Leaves you can walk under cost nothing but instances.
 
 	EDGE FEATHERING: each tree re-tests biome_at at ITS OWN position, not just the
 	chunk centre's. Without that, a forest would stop dead along a straight chunk
@@ -8400,6 +8436,13 @@ func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 	# the arithmetic rather than a number: the highest canopy centre sits about
 	# three layer-heights above the trunk's mid-point, and sin(lean) times that is
 	# how far it can travel. Retune the lean or the layer height and this follows.
+	#
+	# STILL AN OVER-ESTIMATE after y1o.2 made the layers blobs: the tallest crown
+	# this builder can draw puts its top blob's centre 4.3 m over the trunk's
+	# mid-point against the 4.9 m below, and a sphere inscribed in the same box
+	# reaches LESS far sideways than the slab did. prop_selfcheck check 10 measures
+	# the real reach against the real seam either way, which is what would catch a
+	# retune that broke the estimate rather than this comment.
 	var lean_reach := sin(TREE_TRUNK_TILT_MAX) * (TREE_TRUNK_HEIGHT_MAX * 0.5 + TREE_CANOPY_LAYER_HEIGHT * 3.0)
 	var widest_layer := TREE_CANOPY_WIDTH_MAX * TREE_CANOPY_WIDTH_JITTER_MAX
 	var half := chunk_size / 2.0 - (widest_layer * (0.71 + TREE_CANOPY_SLIDE) + lean_reach)
@@ -8455,13 +8498,21 @@ func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 		var lean_dir := Vector3(sin(yaw), 0.0, cos(yaw)) * sin(lean)
 		var layers := rng.randi_range(TREE_CANOPY_LAYERS_MIN, TREE_CANOPY_LAYERS_MAX)
 		var canopy_w := rng.randf_range(TREE_CANOPY_WIDTH_MIN, TREE_CANOPY_WIDTH_MAX)
+		# `canopy_y` is the crown's FOOT, not a layer centre: a blob is up to 2.5 m
+		# tall where u7a's slab was 1.0, so centring one here would hang the leaves
+		# of a fat crown down past a short trunk's head height. Still dipped
+		# TREE_CANOPY_LAYER_HEIGHT * 0.3 into the trunk top so no gap shows.
 		var canopy_y := trunk_h - TREE_CANOPY_LAYER_HEIGHT * 0.3
 		var leaf_base := TREE_LEAF_COLOR.lerp(TREE_LEAF_COLOR_WARM, leaf_t)
 		for _l in layers:
 			# One draw per layer, so no two layers of one tree are the same width —
 			# the taper alone made every tree the same tapering stack.
 			var w := canopy_w * rng.randf_range(TREE_CANOPY_WIDTH_JITTER_MIN, TREE_CANOPY_WIDTH_JITTER_MAX)
-			var mid_y := canopy_y + TREE_CANOPY_LAYER_HEIGHT * 0.5
+			# Both DERIVED from the width just drawn, so neither costs an rng draw
+			# and neither can move a spawn — the whole reason this bead's diff
+			# against master is `kind` plus these dimensions and nothing else.
+			var blob_h := w * TREE_CANOPY_BLOB_HEIGHT
+			var mid_y := canopy_y + blob_h * 0.5
 			# Crown lift: the top of a real canopy catches the light. Derived from
 			# the layer INDEX, so it costs no draw.
 			var crown := 0.0 if layers <= 1 else float(_l) / float(layers - 1)
@@ -8475,13 +8526,24 @@ func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 			# by prop_selfcheck's forest seam clause.
 			var layer_tilt := TREE_CANOPY_TILT_MAX * (0.4 + 0.6 * leaf_t) * (1.0 if _l % 2 == 0 else -1.0)
 			var slide := Vector3(sin(layer_yaw), 0.0, cos(layer_yaw)) * (w * TREE_CANOPY_SLIDE * crown)
+			# BoxKind.SPHERE, and the trunk above deliberately stays a CUBE: the
+			# unit sphere is inscribed in the unit cube, so `dimensions` still means
+			# this blob's BOUNDING BOX and every reach/seam bound in this file and
+			# in prop_selfcheck stays the over-estimate it always was. A canopy is
+			# also already collide = false, which is the rule ChunkBatch's BoxKind
+			# banner asks of a non-cube kind (its collision shape would still be a
+			# box). The plan stays a RECTANGLE (TREE_CANOPY_DEPTH_RATIO), so the
+			# blobs are squashed ellipsoids the yaw step still turns visibly —
+			# a stack of perfect spheres is rotationally symmetric and reads as one
+			# smooth ball.
 			create_box(
 				Vector3(local_x, mid_y, local_z) + lean_dir * (mid_y - trunk_h * 0.5) + slide,
-				Vector3(w, TREE_CANOPY_LAYER_HEIGHT, w * TREE_CANOPY_DEPTH_RATIO),
+				Vector3(w, blob_h, w * TREE_CANOPY_DEPTH_RATIO),
 				layer_yaw, rng, block_batch, block_body, layer_tilt,
-				leaf_base.lerp(TREE_LEAF_COLOR_WARM, crown * TREE_LEAF_CROWN_LIFT), false
+				leaf_base.lerp(TREE_LEAF_COLOR_WARM, crown * TREE_LEAF_CROWN_LIFT), false,
+				ChunkBatch.BoxKind.SPHERE
 			)
-			canopy_y += TREE_CANOPY_LAYER_HEIGHT * 0.8
+			canopy_y += blob_h * TREE_CANOPY_BLOB_OVERLAP
 			canopy_w *= TREE_CANOPY_TAPER
 
 		# Footprint stops at the TRUNK top, and is NOT climbable, on purpose: a

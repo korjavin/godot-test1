@@ -51,7 +51,12 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            named BlockMultiMesh, measured over 225 real field
 #                            chunks), the city splitter carrying kind and
 #                            leaving a non-cube WHOLE, and collision staying a
-#                            BoxShape3D of dimensions for every kind
+#                            BoxShape3D of dimensions for every kind. Check 5 is
+#                            the PER-BIOME DRAW-CALL BILL, iterating the Biome
+#                            enum over both shipped field spawners: a forest
+#                            chunk builds exactly TWO nodes (BlockMultiMesh +
+#                            BlockMultiMesh_SPHERE, the canopies) and every
+#                            other biome exactly one
 #   fauna_selfcheck          herd steering + rider carry
 #   mp_selfcheck             multiplayer pure logic (decoders, ids, arithmetic)
 #   locale_selfcheck         en/de table + German fits its controls
@@ -344,7 +349,7 @@ Load-bearing rules:
   non-CUBE kind is for `collide = false` decoration and NON-CLIMBABLE colliders only,
   never for anything a player stands on; and
   **`_build_block_multimesh` emits one `MultiMeshInstance3D` per kind PRESENT** — a
-  cube-only chunk (every chunk the world ships today) builds exactly the one node it always
+  cube-only chunk builds exactly the one node it always
   did, still named `BlockMultiMesh`, and every bucket shares the one
   `_get_shared_block_material` and the chunk's `cast_shadows` flag. That per-kind split is
   the ONLY sanctioned multiplication of a chunk's MultiMeshInstance3Ds. **Budapest stays
@@ -353,6 +358,16 @@ Load-bearing rules:
   pre-build sweep cannot see. The city splitter **carries `kind` and leaves a non-CUBE
   entry whole**: a cut cone is not two cones. Choosing a kind costs **no RNG draw**, so it
   can never move a spawn.
+  **THE FOREST IS THE FIRST CONSUMER AND SO FAR THE ONLY ONE** (bead
+  `godot-test1-y1o.2`): every tree's 2-3 canopy layers are `BoxKind.SPHERE` blobs
+  (`TREE_CANOPY_BLOB_HEIGHT` / `_OVERLAP`, both DERIVED from the width the layer
+  already drew — so not one RNG draw moved and the biome stream is byte-identical),
+  the trunk stays a `CUBE` because it is the one COLLIDING box in a tree, and a
+  forest chunk therefore costs **+1 draw call and nothing else in the world costs
+  anything**. `batch_selfcheck` check 5 bills that per biome off the `Biome` enum;
+  `prop_selfcheck` check 10 asserts the two kinds tree by tree. **A new consumer is a
+  named bead judged BY EYE by the owner** — the epic's rule — plus whatever that
+  check-5 bill has to become.
 - **Chunk-parented, so unloading frees it.** Anything spawned per-chunk parents to the
   chunk MeshInstance3D or it leaks.
 - **Footprints are the shared currency.** Each thing built appends
