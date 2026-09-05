@@ -2678,6 +2678,27 @@ TAGGED and a dangling-only prune reclaims nothing. Six rules:
 - **A keep-last-N tag policy on GHCR is not the alternative it looks like** — it frees the
   REGISTRY, and the disk that filled was the HOST's, which had already pulled them.
 
+**THE PRUNE ONLY RUNS ON A MASTER PUSH, AND THE SECOND FILLER IS BOUNDED IN THE COMPOSE
+FILE** (bead `godot-test1-drf`). Two things follow from that cadence, and both are answers
+rather than gaps:
+
+- **Every service caps its own log.** `server/docker-compose.yml` gives lobby, web and
+  coturn `logging: *default-logging` — json-file, `max-size: 10m`, `max-file: "3"`, one
+  anchor so the number is tuned in one place. Docker's default driver **rotates nothing**,
+  and the lobby logged `best: dump failed: … no space left on device` every 30 seconds
+  *precisely while the disk was full* — a service that logs faster the worse things get
+  must not own an unbounded file. 30 MB per service, 90 MB for the stack, against tens of
+  GB of images. `docker compose -f server/docker-compose.yml config` expands the anchor and
+  is the check.
+- **A Portainer-side scheduled prune is NOT worth adding** (the bead asks explicitly).
+  Images only appear on the host when a master push deploys one, so the same push that
+  creates the garbage collects the previous generation — a quiet week adds nothing to
+  prune. With the logs now capped, the remaining unbounded consumers are outside this
+  stack (other stacks' images are already swept, since the prune is host-wide, and
+  Traefik's `acme.json` and access log are Traefik's). A second scheduler would be a
+  cron nobody reads, in a UI outside version control, for a filler that no longer exists.
+  Revisit only if a deploy-free filler is ever measured.
+
 The other half of that incident is in the lobby, and it is **a rule made explicit rather
 than a behaviour change**: **`/healthz` reports on SIGNALLING ONLY and must never consult
 the best-scores store.** It never did — the container went UNHEALTHY because a 100%-full
