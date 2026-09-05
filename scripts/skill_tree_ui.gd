@@ -94,9 +94,9 @@ extends Control
 ## consts and the card's hand-built `StyleBoxFlat` are gone; not one colour is
 ## typed in this file.
 ##
-## THE RANK IS PIPS, NOT A COUNTER. `max_ranks` is 1 or 2 across the whole table,
-## so a node's rank is a row of small squares — STEEL for a rank you have not
-## bought, VISOR_AMBER for one you have — and the `"   %d/%d"` that used to be
+## THE RANK IS PIPS, NOT A COUNTER. `max_ranks` runs 1 to 3 across the whole of
+## `Progression`, so a node's rank is a row of small squares — STEEL for a rank
+## you have not bought, VISOR_AMBER for one you have — and the `"   %d/%d"` that used to be
 ## composed onto every node name is gone with it. That is the card region's ONE
 ## amber; the opener button's `(N)` is the other region's, and the tabs, headings
 ## and node labels are BONE / UNIT_KHAKI so the accent stays rationed.
@@ -154,8 +154,8 @@ const NODE_FONT_SIZE: int = 18
 const DESC_FONT_SIZE: int = 14
 const TAB_FONT_SIZE: int = 16
 
-## One rank pip. `max_ranks` is 1 or 2 across the whole of `Progression`, so this
-## is at most two squares per node and never a bar worth measuring.
+## One rank pip. `max_ranks` runs 1 to 3 across the whole of `Progression`, so
+## this is at most three squares per node and never a bar worth measuring.
 const PIP_SIZE: float = 10.0
 const PIP_GAP: int = 4
 
@@ -398,8 +398,8 @@ func _rule(colour: Color) -> ColorRect:
 ## STEEL for the ranks left. It replaces the `"   %d/%d"` that used to be composed
 ## onto the node's own name, which is why the button below carries the name alone.
 ##
-## ponytail: a row of `ColorRect`s and not a drawn widget — `max_ranks` is 1 or 2
-## everywhere in `Progression`, so this is at most two nodes per skill. A real
+## ponytail: a row of `ColorRect`s and not a drawn widget — `max_ranks` never
+## exceeds 3 in `Progression`, so this is at most three nodes per skill. A real
 ## meter is worth writing the day a node has ten ranks.
 func _pips(rank: int, max_ranks: int) -> HBoxContainer:
 	var row := HBoxContainer.new()
