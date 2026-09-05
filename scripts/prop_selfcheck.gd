@@ -91,6 +91,49 @@ const BUILDERS: Array = [
 	["SNOW", "_prop_frozen_stump"],
 ]
 
+## CHECK 11 — WHICH SILHOUETTES EACH BUILDER MAY DRAW (bead godot-test1-y1o.3).
+##
+## Every `ChunkBatch.BoxKind` a builder is allowed to emit, by name. It is read
+## BOTH WAYS over the same 120-prop sweep checks 1-3 already run, which is what
+## makes it a measurement rather than a restatement of the code:
+##
+##   * nothing outside the row may appear — a builder quietly reaching for a
+##     SPHERE gets a boulder you slide off, and a CONE gets a colliding cone,
+##     which ChunkBatch's banner forbids anything standable from being;
+##   * every kind IN the row must really appear — the half that fails a REVERT.
+##     Swap a rock builder's `ROCK` back to a cube and the props still fit their
+##     radius, still climb and still balance their budget, so checks 1-3 pass and
+##     the epic's whole deliverable is gone with nothing red.
+##
+## THE ROCK BUILDERS ARE THE SIX THE BEAD NAMES, and the two rows worth reading
+## on their own are the exceptions:
+##   `_prop_cairn` keeps CUBE tiers (a cairn IS stacked flat stones — the bead's
+##   own ruling) and its loose foot stones alone are ROCK, so it is the one row
+##   carrying both;
+##   the three CITY builders are CUBE-only, which is where "the city band's props
+##   are crates, garden walls and paving, not rocks" is asserted builder by
+##   builder — batch_selfcheck check 5 cannot see it, because a city-band CHUNK
+##   near a plains edge legitimately grows a plains boulder.
+const BUILDER_KINDS: Dictionary = {
+	"_prop_boulder_cluster": ["ROCK"],
+	"_prop_ruin_fragment": ["CUBE"],
+	"_prop_bale_pile": ["CUBE"],
+	"_prop_sandstone_stack": ["ROCK"],
+	"_prop_broken_column": ["CUBE"],
+	"_prop_bone_pile": ["CUBE"],
+	"_prop_mossy_boulder": ["ROCK"],
+	"_prop_tree_stump": ["CUBE"],
+	"_prop_log_pile": ["CUBE"],
+	"_prop_scree_cluster": ["ROCK"],
+	"_prop_cairn": ["CUBE", "ROCK"],
+	"_prop_crate_stack": ["CUBE"],
+	"_prop_garden_wall": ["CUBE"],
+	"_prop_paving_stack": ["CUBE"],
+	"_prop_ice_rock": ["ROCK"],
+	"_prop_snow_drift": ["CUBE"],
+	"_prop_frozen_stump": ["CUBE"],
+}
+
 ## Seeds per builder per size. Every variant is random-driven (tier heights,
 ## companion rings, chip counts), so one seed proves nothing — 24 seeds across 5
 ## sizes is 120 real props per builder, enough that a variant overflowing its
@@ -179,6 +222,7 @@ func _run() -> void:
 		_check_city_content(terrain_script, consts)
 		_check_snow_content(terrain_script, consts)
 		_check_forest_content(terrain_script, consts)
+		_check_prop_kinds(terrain_script)
 
 	if _failures.is_empty():
 		print("props: %d builders x %d seeds x %d sizes measured; radius bound, climb ladder, box budget and chunk purity OK"
@@ -188,6 +232,7 @@ func _run() -> void:
 		print("bands:      threshold chain, river-in-plains, interior band widths and the shader parity uniforms OK")
 		print("snow:       mammoth radius bound, 2-collider budget, non-climbable footprints and the chunk seam OK")
 		print("forest:     chunk seam, one collider per tree, non-climbable footprints, leaf-shade spread and trunk lean OK")
+		print("kinds:      every builder's BoxKind set asserted both ways, plus the oasis boulders OK")
 		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
@@ -1345,3 +1390,122 @@ func _axis_reach(batch: Array) -> float:
 			var p := xform * corner
 			worst = maxf(worst, maxf(absf(p.x), absf(p.z)))
 	return worst
+
+
+# ============================================================================
+# CHECK 11 — the BoxKind each builder draws (bead godot-test1-y1o.3)
+# ============================================================================
+
+func _check_prop_kinds(terrain_script: GDScript) -> void:
+	"""
+	Every prop builder emits exactly the silhouettes BUILDER_KINDS declares for it,
+	and the OASIS boulders are rocks too.
+
+	See BUILDER_KINDS up top for why the table is read in both directions and what
+	the cairn and the city rows are doing. Both halves run over the SAME sweep
+	checks 1-3 use (SEEDS_PER_BUILDER x SIZES), so a kind that only appears on an
+	unlucky variant is still seen and one that appears on none is still missed.
+
+	THE CLIMB LADDER IS NOT DUPLICATED HERE. Check 2 already reads the real
+	`BoxShape3D` collision shapes, and ROCK collides as a box exactly like CUBE —
+	which is the whole reason bead y1o.3 drew a flat-lidded dome instead of taking
+	the squashed sphere. So a rock builder's rest spot is measured by the ladder
+	unchanged, and this check is only ever about what is DRAWN.
+	"""
+	var terrain := Node3D.new()
+	terrain.set_script(terrain_script)
+
+	for entry_variant: Variant in BUILDERS:
+		var entry: Array = entry_variant
+		var builder: String = String(entry[1])
+		if not terrain.has_method(builder):
+			continue   # check 1 already failed this by name
+		if not BUILDER_KINDS.has(builder):
+			_fail("%s has no BUILDER_KINDS row — a builder whose silhouette nobody "
+					% builder + "declared is one that can drift to any kind unnoticed")
+			continue
+
+		var allowed: Dictionary = {}
+		for kind_name_v: Variant in BUILDER_KINDS[builder]:
+			var kind_name: String = kind_name_v
+			if not ChunkBatch.BoxKind.has(kind_name):
+				_fail("%s's BUILDER_KINDS row names '%s', which is not a BoxKind"
+						% [builder, kind_name])
+				continue
+			allowed[int(ChunkBatch.BoxKind[kind_name])] = kind_name
+
+		var seen: Dictionary = {}
+		var strays: Dictionary = {}
+		for size: float in SIZES:
+			for s in SEEDS_PER_BUILDER:
+				var rng := RandomNumberGenerator.new()
+				rng.seed = hash(Vector2i(s, int(size * 1000.0)))
+				var batch: Array = []
+				var body := StaticBody3D.new()
+				terrain.call(builder, Vector3.ZERO, size, rng, batch, body)
+				for box_v: Variant in batch:
+					var kind: int = int((box_v as Dictionary).get("kind", ChunkBatch.BoxKind.CUBE))
+					seen[kind] = int(seen.get(kind, 0)) + 1
+					if not allowed.has(kind):
+						strays[kind] = int(strays.get(kind, 0)) + 1
+				body.free()
+
+		for stray_v: Variant in strays:
+			var stray: int = stray_v
+			_fail("%s drew %d box(es) of kind %s, which its BUILDER_KINDS row does not "
+					% [builder, strays[stray], ChunkBatch.BoxKind.find_key(stray)]
+					+ "allow. A silhouette is a named bead judged by eye, and a "
+					+ "colliding SPHERE or CONE under a climbable prop is a rest spot "
+					+ "you slide off")
+		for want_v: Variant in allowed:
+			var want: int = want_v
+			if not seen.has(want):
+				_fail("%s never drew a %s box in %d props, though its BUILDER_KINDS row "
+						% [builder, allowed[want], SEEDS_PER_BUILDER * SIZES.size()]
+						+ "declares one. This is the half that catches a REVERT: the "
+						+ "prop still fits its radius, still climbs and still balances "
+						+ "its budget with the kind put back to CUBE")
+
+	# --- THE OASIS BOULDERS -------------------------------------------------
+	# They are not prop builders — they live inside `_spawn_desert_oasis` — so
+	# nothing above reaches them, and a revert of that one line would be silent.
+	# The assertion is an EQUALITY against the footprints the same call appended:
+	# an oasis draws a water disc, a rim, palm trunks, fronds and reeds beside its
+	# boulders, and the boulders are exactly the pieces it records as CLIMBABLE.
+	var placed: bool = false
+	for attempt in 40:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 8000 + attempt
+		var batch: Array = []
+		var body := StaticBody3D.new()
+		var obstacles: Array = []
+		# Far from the road and the spawn bubble so _biome_spot_ok has a chance;
+		# the chunk COORDS only feed the placement test, never a hash here.
+		terrain.call("_spawn_desert_oasis", Vector3(4000.0, 0.0, 4000.0),
+				Vector2i(80, 80), rng, obstacles, batch, body)
+		body.free()
+		if batch.is_empty():
+			continue
+		placed = true
+		var rocks: int = 0
+		for box_v: Variant in batch:
+			if int((box_v as Dictionary).get("kind", ChunkBatch.BoxKind.CUBE)) == ChunkBatch.BoxKind.ROCK:
+				rocks += 1
+		var climbable: int = 0
+		for ob_v: Variant in obstacles:
+			if bool((ob_v as Dictionary).get("climbable", false)):
+				climbable += 1
+		if climbable == 0:
+			_fail("an oasis placed no climbable boulder at all — the check below would "
+					+ "then pass on 0 == 0")
+		elif rocks != climbable:
+			_fail("an oasis drew %d ROCK box(es) against %d climbable footprints — its "
+					% [rocks, climbable] + "boulders are the climbable pieces and they "
+					+ "are BoxKind.ROCK (bead godot-test1-y1o.3); the palms, the water "
+					+ "disc and the reeds are neither")
+		break
+	if not placed:
+		_fail("no oasis was built in 40 attempts — the boulder-kind assertion never ran")
+
+	terrain.free()
+	Sentinel.done("prop_kinds")
