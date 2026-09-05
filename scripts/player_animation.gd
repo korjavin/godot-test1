@@ -141,12 +141,21 @@ const GAITS: Dictionary = {
 ## needs no netcode. `remote_avatar.gd` does not draw a strafe at all today;
 ## if it ever does, it can read this off the same two numbers.
 ##
-## The degrees below are the DEFAULT hero's and every one of them is scaled by
-## that hero's own `GAITS` row (`leg_deg` / `arm_deg` / `bob` / `stride_rate`)
-## relative to DEFAULT, so a heavy Teibi shuffles slow and wide and a twitchy
-## Primm quick and small — the walk's personality, sideways, with no second
-## table. `SPLAY` and `LEAN` and the arm bias are today's numbers kept as the
-## BIAS the cycle rides on, which is why a strafe still reads as a lean.
+## The degrees below are the DEFAULT hero's. The LEG amplitudes are scaled by
+## the row's `leg_deg`, the ARM ones by its `arm_deg`, the bob by its `bob` and
+## the phase rate by its `stride_rate`, each relative to DEFAULT — so a heavy
+## Teibi shuffles slow and wide and a twitchy Primm quick and small, the walk's
+## personality sideways with no second table. **`SIDESTEP_LEAN_DEG` is the one
+## that is NOT scaled**: the row field it would ride is `sway_deg`, which is 0
+## for windman on purpose, and a hero who stopped leaning into their own strafe
+## would read as sliding. `gait_selfcheck` check 6 measures the three that do
+## scale and asserts the heroes really differ on each.
+##
+## The BIAS the cycle rides on is what keeps a strafe reading as a lean, and it
+## is the old pose RETUNED rather than kept: `LEAN` (8) and the arm bias (20)
+## are today's numbers, but `SPLAY` came down from 28 to 20 to leave room for
+## the reach and the lift on top of it without the legs ending up wider than the
+## old static splay ever was.
 const SIDESTEP_PHASE_PER_METRE: float = 3.2  ## ~0.98 m per step for DEFAULT
 const SIDESTEP_SPLAY_DEG: float = 20.0       ## standing bias, both legs, toward the step
 const SIDESTEP_STEP_DEG: float = 18.0        ## the alternating reach/close
@@ -602,15 +611,18 @@ func relax_gait_extras(weight: float) -> void:
 
 func sidestep_pose(phase: float, direction: float) -> void:
 	"""
-	Write ONE frame of the sideways shuffle: the whole pose as a pure function
-	of (phase, direction), with no reads of the clock, the player or anything
-	else. `animate_sidestep()` is the half that decides what `phase` is.
+	Write ONE frame of the sideways shuffle: for a GIVEN HERO, the whole pose as
+	a deterministic pure function of (phase, direction). It reads no clock and
+	nothing on the player; what it does read is this object's own hero state —
+	`_gait`, `original_rotations` and the five limb refs — all of which a
+	character swap replaces. `animate_sidestep()` is the half that decides what
+	`phase` is.
 
-	The split is the bead's own requirement — the pose has to be a deterministic
-	pure function of (phase, direction) so it stays MP-safe and needs no
-	netcode — and it is also what makes the pose answerable at a phase nobody
-	walked to, which is how a future remote avatar would draw a strafe off two
-	numbers on the wire.
+	The split is the bead's own requirement (the pose has to be deterministic and
+	MP-safe, needing no netcode) and it is also what makes the pose answerable at
+	a phase nobody walked to. A future remote avatar would drive it off phase and
+	direction on the wire plus the hero it is already told about — three numbers,
+	not two, because the gait row is per hero.
 
 	Unlike walking (which swings the limbs forward/back on the X axis), the
 	sidestep rolls them on the Z axis so the motion reads as sideways. The two
@@ -650,8 +662,16 @@ func sidestep_pose(phase: float, direction: float) -> void:
 	# beat reads as one foot going out and the other following rather than as
 	# two legs scissoring. It fades to nothing at the close, where both feet are
 	# planted and neither is "the" reaching one.
+	#
+	# THE REACHER IS `cycle * direction`, NOT `cycle`. The reaching leg is the
+	# one whose roll is furthest in the STEP's direction, and `splay` already
+	# carries that sign — so on a LEFT strafe (direction -1) the leg with the
+	# positive `reach` is the TRAILING one. Testing `cycle` alone put the lift on
+	# it and cancelled half the reach, which left a left strafe with exactly half
+	# the leg amplitude of a right one. `gait_selfcheck` check 6 now drives both
+	# directions and asserts they mirror.
 	var lift: float = direction * deg_to_rad(SIDESTEP_LIFT_DEG) * leg_scale * absf(cycle)
-	if cycle >= 0.0:
+	if cycle * direction >= 0.0:
 		left_leg.rotation.z += lift
 	else:
 		right_leg.rotation.z += lift
