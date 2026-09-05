@@ -241,14 +241,31 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            glob BY FILE); the two stay bound through
 #                            enemy_spawn's PROBED_BEHAVIORS, which fails BY NAME
 #                            a `behavior` string with no probe here
-#   boss_selfcheck           EVERY BIOME_BOSS kind: the territory leash (hunts
-#                            inside, never leaves), crush immunity is an
-#                            ORDERING, the row's boss speed is the one resolved,
-#                            and a ranged boss really fires — only in its band,
-#                            on its cooldown, inside its area, while chasing.
-#                            Plus check 8: EVERY SPECIES row through the
-#                            stink_immune / crush_immune guards, animals as the
-#                            negative control
+#   boss_selfcheck           EVERY BIOME_BOSS kind, driven through the shared
+#                            harness `scripts/boss_probe.gd`: the const chain,
+#                            the territory SEAM at both ends of the boundary,
+#                            that a boss HUNTS inside its area, the row's boss
+#                            speed is the one resolved, the animated model stays
+#                            RIGID mid-chase and the capsule fits the spawner's
+#                            clearance. FOUR SIBLINGS carry the rest, split from
+#                            it by bd godot-test1-ftn.24 (CI shards the glob BY
+#                            FILE and this was 181 s of a 505 s suite — every
+#                            phase is wall clock, `await physics_frame` at the
+#                            real 60 Hz):
+#   boss_leash_selfcheck     the fence chase and THE LEASH — one state chain, so
+#                            one file, and the heaviest of the five
+#   boss_wander_selfcheck    it still WANDERS, contained, after disengaging (the
+#                            leash's negative control; the only check that
+#                            exercises the steer and the clamp at all)
+#   boss_arms_selfcheck      what a boss kind ADDS: a ranged boss really fires —
+#                            only in its band, on its cooldown, inside its area,
+#                            while chasing — and a leaping one really leaves the
+#                            ground, lands, hops on a clock and cannot bound
+#                            over its own fence
+#   boss_immunity_selfcheck  crush immunity is an ORDERING, with a non-boss
+#                            control; plus check 8: EVERY SPECIES row through
+#                            the stink_immune / crush_immune guards, animals as
+#                            the negative control
 #   projectile_selfcheck     boss projectiles: the per-style FAIRNESS contract
 #                            (a walking player always clears it; nothing outruns
 #                            a fleeing one), straight + lob flight, both dodge
@@ -1505,7 +1522,7 @@ ORDERING (the `is_boss` early return in `_on_player_collision` sits above the gi
 crush block; swap them and Teibi one-shots the boss with no error anywhere). The territory
 is deliberately ONE queryable seam — `home_position` + `territory_radius()` +
 `in_territory()` — because the owner intends the zone to grow gameplay later; `is_boss` is
-never a bare radius comparison. `boss_selfcheck` pins both.
+never a bare radius comparison. The `boss_*_selfcheck` family pins both.
 
 **Which boss kind a road station gets is its own dispatch, `BIOME_BOSS`** — same shape and
 same no-RNG-draw rule as `BIOME_SPECIES`, but keyed on the **owning station's centre**
@@ -1514,8 +1531,8 @@ and has no chunk centre. It is now **TOTAL over the `Biome` enum** — SNOW → 
 FOREST → green dragon, PLAINS → hydra, DESERT → naga, MOUNTAIN → roc, CITY → ice cream
 clown — which leaves the crocodile as a boss on exactly two paths: a station standing in
 a **river**, and the degrade path for a row that fails to resolve. Both stay measured
-(`enemy_spawn_selfcheck` fails if its road walk never crosses water; `boss_selfcheck`
-drives the crocodile as a subject beside every `BIOME_BOSS` kind). The
+(`enemy_spawn_selfcheck` fails if its road walk never crosses water; the boss checks
+drive the crocodile as a subject beside every `BIOME_BOSS` kind). The
 row is resolved *above* the candidate walk so the kind stays a pure function of the boss
 index. Adding a boss is a `SPECIES` row, a `.tscn`, and one line there —
 `enemy_spawn_selfcheck` check 11 walks the road, asks the rule at every station, fails a
@@ -1540,7 +1557,7 @@ speed entirely and takes `BOSS_CHASE_SPEED` unless the row opts out with
 feet — the titan and the ice cream clown, both of them archers a walking player must be
 able to stroll away from. The exemption is paid for, not free: `enemy_behavior_selfcheck`'s ranged probe
 *asserts* every `"ranged"` row's speeds are sub-walk, and `boss_selfcheck` — which runs
-every check over every `BIOME_BOSS` kind, not just the crocodile — asserts the body really
+over every `BIOME_BOSS` kind, not just the crocodile — asserts the body really
 resolved the speed its row asked for.
 
 **The GD-SURVEY hunter robot is dispatched on nothing.** The
@@ -1573,8 +1590,8 @@ giant Teibi's squash block is skipped and the body takes the ordinary bite path)
 adds `fears_giant_radius` (14 m; owner ruling 2026-09-04, bead `godot-test1-upu`: giant Teibi
 scares hunters away instead of crushing them). These are `spec.get(key, default)` reads
 placed beside the existing `is_boss` guards — never a species-name test — so the next
-armoured or airtight predator opts in with a row edit and no code change. `boss_selfcheck`
-check 8 drives **every** row through both real paths and giant fear, which makes the animal
+armoured or airtight predator opts in with a row edit and no code change.
+`boss_immunity_selfcheck` check 8 drives **every** row through both real paths and giant fear, which makes the animal
 rows the negative control and anchors the crocodile by name against a stray key.
 
 **The tower guard is the FOURTH door, and it is not in `endless_terrain` at all.** It is
@@ -2070,6 +2087,28 @@ Authored in `main.tscn` (key light, ProceduralSky, glow, BCS grade) plus
 hundreds of crocodiles get one styled duplicate per source material, never one per instance.
 Fog colour must equal the sky horizon colours — if the sky changes, all three move together.
 Verified against the web `gl_compatibility` renderer; SSAO/DOF/volumetrics don't exist there.
+
+**THE GRADE IS TUNED FOR FACETS** (bead `godot-test1-y1o.18`, style direction A). A
+faceted silhouette reads from a CRISP facet-to-facet value step, so the key light is a
+hard sun (`light_angular_distance` 0.5, `light_energy` 1.25), ambient is deliberately
+UNDER-filled (`ambient_light_sky_contribution` 0.85) because full sky ambient refills
+exactly the faces `world_block.gdshader`'s top-lit gradient darkens, and
+`adjustment_saturation` is 1.12 for the same reason: louder chroma turns that gradient
+into two equally loud hues instead of one colour lit from above. **Retune them as a set,
+and re-shoot the pair** — `godot --path . scenes/style_shots.tscn -- <outdir>` is the
+acceptance tool, on both renderers.
+
+**THE AMBIENT KNOB IS `sky_contribution`, NOT `ambient_light_energy`, and that is not a
+preference.** With `ambient_light_sky_contribution` at its default 1.0 the shader is
+`mix(ambient_color * ambient_energy, sky_cubemap * bg_energy, sky_mix)` — at `sky_mix`
+1.0 the energy-scaled term is discarded outright, so `ambient_light_energy` is a
+**no-op** and dimming the sky through `bg_energy_multiplier` would dim the visible sky
+with it. Measured on both renderers with the key light off: energy 1.0 vs 0.85 gives a
+bit-identical face (0.38347 / 0.35915), `sky_contribution` 0.85 really darkens it
+(0.35674 / 0.33242), and 0.0 is black. **`light_angular_distance` is Forward+ ONLY** —
+Compatibility has no PCSS, so the crisp sun is a desktop/editor change and the web build
+sees the saturation and the ambient alone. Both were caught by review after shipping in
+the first draft of this bead.
 
 ### Mobile / touch controls
 `scripts/mobile_sensors.gd` (native `Input` sensors or a `JavaScriptBridge` DOM shim),
