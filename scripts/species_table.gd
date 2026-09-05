@@ -2908,8 +2908,9 @@ const SPECIES: Dictionary = {
 		## checkpoint knockback that used to be the guard's whole distinguishing
 		## stake is skipped on exactly the contacts that arrest, so the surviving
 		## heroes carry on from where the party fell. The knockback still catches
-		## every OTHER way to lose inside the building (a pre-beat guard, the
-		## press) and it was never this row's anyway — `_pay_coin_setback()`
+		## every OTHER way to lose inside the building (the press, a boss
+		## projectile, an animal that followed you in) and it was never this
+		## row's anyway — `_pay_coin_setback()`
 		## relocates whoever bit you, gated on standing inside the walls.
 		##
 		## THE NUMBER IS THE LOWEST IN THE TABLE ON PURPOSE, and the arrest is why
@@ -2926,10 +2927,10 @@ const SPECIES: Dictionary = {
 		## of it. What the corporation does with a body it catches is a separate
 		## question, so it is a separate key, read by
 		## `player_controller._takes_a_hero()` beside `stink_immune` and
-		## `crush_immune`. The arming gate is unchanged and is REQUIRED here: the
-		## authored Primm rescue happens inside this building, so pre-beat a guard
-		## still charges coins and the knockback and takes nobody — a tutorial visit
-		## may not strip the roster before the scene that teaches the rule.
+		## `crush_immune`. THERE IS NO LONGER AN ARMING GATE (owner ruling
+		## 2026-09-05, bead godot-test1-bxx, "yes, from start"): this row arrests
+		## from the first second of a run, so a guard met on a tutorial visit CAN
+		## cost a hero — the ruling's accepted consequence, not an oversight.
 		"captures_hero": true,
 
 		## AUTHORED FURNITURE, SO THE RESPAWN SWEEP LEAVES IT ALONE.

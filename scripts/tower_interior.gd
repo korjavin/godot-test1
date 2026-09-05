@@ -3558,10 +3558,10 @@ func setback_point() -> Vector3:
 	Where a knockback taken inside this tower drops the player: the last checkpoint
 	they activated in it, or the doorway if they have not activated one yet.
 
-	NOT "A GUARD'S", since bead godot-test1-3iy.19: a post-beat guard ARRESTS, and
+	NOT "A GUARD'S", since bead godot-test1-3iy.19: a guard ARRESTS, and
 	an arrest is the one contact whose knockback is waived (the surviving heroes
 	carry on from where the party fell). This is the plate for everything else the
-	building can do to you — a pre-beat guard, the press, an animal that followed
+	building can do to you — the press, a boss projectile, an animal that followed
 	you through the door.
 
 	@return: a WORLD position, standable, on the storey the checkpoint is on.

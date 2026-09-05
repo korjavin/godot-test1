@@ -423,7 +423,7 @@ var caught_setback: float = 0.0
 ## survivor to the doorway plate would be a second, unruled penalty on top of the
 ## one the owner asked for — and on the storey where the arrest happened, the way
 ## back to the cells. The knockback still catches every OTHER way to lose in the
-## building: a pre-beat guard, the press, an animal that followed
+## building: the press, a boss projectile, an animal that followed
 ## you through the door.
 var caught_captured: bool = false
 
@@ -3352,7 +3352,7 @@ func _show_respawn_countdown() -> void:
 
 	TWO CAPTIONS, AND THE SPLIT IS THE OWNER'S (2026-09-04, bead godot-test1-tuc).
 	"Caught!" is what happens to a HERO: an arrest by a `captures_hero` machine,
-	post-beat, which really does put them in a cell and hand you the next one. An
+	which really does put them in a cell and hand you the next one. An
 	ordinary predator does no such thing — CLAUDE.md's "every other contact is a
 	TAX, never an ending" — so a crocodile that bites you says "Robbed!", which is
 	exactly what it did: it took the attacker's slice of the run's coins and you

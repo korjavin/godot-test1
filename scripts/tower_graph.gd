@@ -1045,9 +1045,10 @@ const TOWER_GRAPH: Dictionary = {
 
 	# ------------------------------------------------------------------------
 	# THE READINESS FLOOR — `{hero: {skill_id: rank}}`, the ranks the authored beat
-	# GUARANTEES a hero has before systemic capture arms. Capture arms only after
-	# the beat, so the beat's floor IS the spine rank budget and the check reads
-	# one from the other rather than restating a number.
+	# GUARANTEES a hero has by the time a rescue spine has to be walked. Capture no
+	# longer waits for the beat (owner ruling 2026-09-05, bead godot-test1-bxx), so
+	# this is now the STRICTER reading of the same number: a hero can be in a cell
+	# before the beat, and the floor is what the spine may assume regardless.
 	#
 	# IT IS EMPTY TODAY, AND EMPTY IS THE STRICTEST CASE: every spine is passable
 	# on base capability alone, so no beat has to promise anything and no save can
