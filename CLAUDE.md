@@ -683,10 +683,12 @@ Load-bearing rules:
   ftn.7 lesson) — while `budapest_city_selfcheck` and `field_bridge_selfcheck`
   keep the forwarders. The three city rules below are untouched by the move, the
   ONE `MultiMeshInstance3D` per city chunk and its no-shadow flag included.
-- **BUDAPEST'S 22 BUILDERS ARE `scripts/city_builders.gd`** (`class_name CityBuilders`,
+- **BUDAPEST'S 22 LANDMARKS ARE `scripts/city_builders.gd`** (`class_name CityBuilders`,
   all static, bd `godot-test1-ftn.17`) — the `CITY_LANDMARKS` registry with its
   "why a SECOND table" banner, the two city palette entries and the 26 `_city_*`
-  builders, in `landmark_builders.gd`'s own idiom; that file keeps `LANDMARKS`, the
+  functions that draw them (22 builders + the four shared shape helpers `_city_dome`
+  / `_city_spire` / `_city_bays` / `_city_cable`),
+  in `landmark_builders.gd`'s own idiom; that file keeps `LANDMARKS`, the
   quiz picker, the `_lm_*` primitives and the 48 FIELD builders. **THE DEPENDENCY IS
   ONE WAY AS A `const` AND THE OTHER WAY ONLY IN A BODY**: `landmark_builders.gd`
   carries `const CITY_LANDMARKS := CityBuilders.CITY_LANDMARKS` (so `landmark_toast`,

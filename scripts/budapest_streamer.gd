@@ -602,7 +602,7 @@ static func spawn_city_bridges_in_chunk(terrain: Node3D, chunk_center: Vector3, 
 	and not two.
 
 	WHAT IT DOES NOT BUILD is the bridge: the towers, chains, trusses, cutwaters and
-	lions belong to landmark_builders.gd's `_city_*_bridge` rows, which stand on the
+	lions belong to city_builders.gd's `_city_*_bridge` rows, which stand on the
 	SLOTS entry of the same id. The deck is placed off the DRY_RECTS row the band is
 	already punched out by, and check 14 asserts the two agree on where the bridge
 	is — the ornament hangs its chains at exactly BRIDGE_DECK_TOP.
@@ -691,7 +691,7 @@ static func _spawn_city_landmarks_in_chunk(terrain: Node3D, chunk_center: Vector
 	      budget the decision was made to protect.
 
 	WHY (a) IS NEARLY FREE: the city builders are PURE FUNCTIONS OF (centre, rng)
-	whose random stream touches COLOUR ONLY — landmark_builders.gd's own banner
+	whose random stream touches COLOUR ONLY — city_builders.gd's own banner
 	says so, and not one dimension, offset or count is drawn. Run the same builder
 	from the same seed in a neighbouring chunk and it emits the SAME boxes at the
 	SAME world positions, so clipping is a filter on the output and needs no edit

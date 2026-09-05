@@ -110,7 +110,7 @@ extends RefCounted
 ## ============================================================================
 ##
 ## GEOMETRY. A slot is a position and a radius; the stone is
-## `landmark_builders.gd`'s, addressed by the METHOD-NAME STRING its registry
+## `city_builders.gd`'s, addressed by the METHOD-NAME STRING its registry
 ## already dispatches on. A slot whose builder has not landed yet carries
 ## `"builder": ""` and is skipped by the streamer — that is the whole of "leave
 ## the slot empty", and it is what lets the seven wave-C places below exist as
@@ -199,7 +199,7 @@ const DRY_RECTS: Array = [
 ## A BRIDGE IS TWO FILES, and this table is the joint.
 ##
 ## The PYLONS, towers, chains, trusses, cutwaters and lions are
-## `landmark_builders.gd`'s — placed on the `SLOTS` row of the same id, which is
+## `city_builders.gd`'s — placed on the `SLOTS` row of the same id, which is
 ## where a bridge IS. The DECK — the flat roadway you walk and the ramp at each
 ## end that gets you up onto it — is `endless_terrain.gd`'s, built off this table.
 ## Every one of those builders' docstrings says "the deck is bead .4's" and hangs

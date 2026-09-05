@@ -41,7 +41,7 @@ extends RefCounted
 
 ## BUDAPEST (the city registry below). TWO new entries for nine new places, which
 ## is the wave-2 palette rule again — everything else the Danube core needs is
-## already in the table above and is reused where it is honestly the right colour
+## already in `LandmarkBuilders`' own palette and is reused where it is honestly right
 ## (see CITY_LANDMARKS' banner for the whole mapping). Wave B — Pest's inner
 ## city, six more places — adds NOTHING to the palette: its brick is LM_OCHRE
 ## (dE 0.200, the warm family's one member that is dark enough to meet pavement),
@@ -66,8 +66,8 @@ const CITY_PARK_GREEN := Color(0.20, 0.42, 0.22) # Margaret Island foliage (dE 0
 # THE CITY REGISTRY — Budapest, and why it is a SECOND TABLE
 # ----------------------------------------------------------------------------
 ##
-## A SEPARATE const, not a `city: true` flag on the rows above, and the reason is
-## the field's placement. `landmark_sites()` walks LANDMARKS by index and gives
+## A SEPARATE const, not a `city: true` flag on `LandmarkBuilders.LANDMARKS`' rows, and
+## the reason is the field's placement. `landmark_sites()` walks LANDMARKS by index and
 ## every row a site, so a flag would mean a filter in that walk — one more thing
 ## nobody may forget — and a shared array would mean the 22 city rows shifting the
 ## index of every field row. A table endless_terrain.gd has never heard of cannot
@@ -75,7 +75,7 @@ const CITY_PARK_GREEN := Color(0.20, 0.42, 0.22) # Margaret Island foliage (dE 0
 ## That is the cheapest possible answer to "keep these out of the countryside",
 ## and it costs one extra line in landmark_selfcheck.
 ##
-## It also keeps check 2 honest. Every row up there must satisfy
+## It also keeps check 2 honest. Every row in the FIELD table must satisfy
 ## radius <= LANDMARK_RADIUS (9.5) because that is the bound _biome_spot_ok is
 ## handed before a builder runs. A city row's radius is 56–156 m — the Parliament
 ## alone is 268 m long — so folding the two tables together would have meant

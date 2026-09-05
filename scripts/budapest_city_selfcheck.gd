@@ -610,7 +610,7 @@ func _check_bridges(terrain: Node3D) -> void:
 	  TowerInterior.PLAN_RAMP_MAX_SLOPE, READ from there and never restated.
 
 	AND THE ORNAMENT HAS TO AGREE. The pylons, towers, chains and lions are
-	landmark_builders.gd's, standing on the SLOTS row of the same id; the deck is
+	city_builders.gd's, standing on the SLOTS row of the same id; the deck is
 	built off the DRY_RECTS row. Nothing in the engine binds those two, so this is
 	where they are bound: every BRIDGES row names a slot that exists, has a
 	builder, and sits at the deck rect's own centre.
