@@ -232,13 +232,17 @@ jobs:
       # ride out a sync; the step's own 4-minute cap turns a hung mirror into a
       # retry instead of eating the job's 15 minutes. `apt-get update` is
       # inside the loop on purpose: the index is what the mirror was mid-way
-      # through rewriting.
+      # through rewriting. Each ATTEMPT has its own `timeout(1)` and apt's own
+      # socket timeouts, because the first cut of this loop had only the step
+      # cap and a mirror that accepted the connection and then sent nothing hung
+      # attempt 1 for the whole four minutes — the retry never fired.
       - name: 🔤 Install fonts (locale_selfcheck measures real glyph widths)
-        timeout-minutes: 4
+        timeout-minutes: 6
         run: |
+          APT="apt-get -o Acquire::http::Timeout=20 -o Acquire::Retries=2"
           for attempt in 1 2 3; do
-            if apt-get update -qq \
-               && apt-get install -y -qq --no-install-recommends libfontconfig1 fonts-dejavu-core; then
+            if timeout 75 $APT update -qq \
+               && timeout 90 $APT install -y -qq --no-install-recommends libfontconfig1 fonts-dejavu-core; then
               exit 0
             fi
             echo "::warning::apt attempt $attempt failed (mirror mid-sync?), retrying in 20 s"
