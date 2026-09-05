@@ -934,10 +934,16 @@ func _strip_shader_comments(shader_text: String) -> String:
 	identity leg reported `albedo` as MISSING. Caught by check 6 on its own first
 	run against the shipped file. A shader whose comments cannot say the word
 	"uniform" is not a shader anybody should have to write.
+
+	ONE PASS WITH AN ALTERNATION, never two passes. Two passes have to pick an
+	order and BOTH orders leave a hole: strip block comments first and a `/*`
+	written inside a `//` line opens a block that runs to the next `*/` anywhere
+	below, deleting every real declaration in between; strip line comments first
+	and a `//` inside a block comment ends that line early, leaving the block's
+	`*/` to be parsed as code. A single alternation has no order to get wrong —
+	whichever delimiter appears FIRST wins, which is exactly what a compiler does.
 	"""
-	var line_comments := RegEx.create_from_string("//[^\\n]*")
-	var block_comments := RegEx.create_from_string("/\\*[\\s\\S]*?\\*/")
-	return line_comments.sub(block_comments.sub(shader_text, "", true), "", true)
+	return RegEx.create_from_string("//[^\\n]*|/\\*[\\s\\S]*?\\*/").sub(shader_text, "", true)
 
 
 func _glsl_default_value(text: String, type_name: String) -> PackedFloat32Array:
@@ -1053,7 +1059,9 @@ func _block_shader_problems(shader_text: String, batch_text: String) -> Array:
 	# (fauna herds, crowd/traffic) bind their own spans deliberately, and
 	# crowd_selfcheck / traffic_selfcheck assert those against the mesh they draw.
 	# This leg is the chunk batch's alone.
-	var start := batch_text.find("static func _get_shared_block_material")
+	# The "(" closes the PREFIX case: a plain name find would also match a
+	# `_get_shared_block_material_web` sibling and audit the wrong function's body.
+	var start := batch_text.find("static func _get_shared_block_material(")
 	if start < 0:
 		problems.append(("%s has no _get_shared_block_material() — check 6 cannot tell what "
 				% CHUNK_BATCH_SCRIPT) + "the shared material pushes")
@@ -1158,9 +1166,20 @@ func _check_block_shader_uniforms() -> void:
 			_fail(("check 6's leg %s did not fire on a source mutated to break it — " % leg)
 					+ "that leg passes vacuously")
 
+	# "declared", not "declared and defaulted": this counts DECLARATIONS. On a
+	# passing run leg (a) has already proved every one of them carries a default,
+	# but the number itself is the declared set and the line must say so.
+	#
+	# COVERAGE, stated rather than asserted: only the two IDENTITY defaults are
+	# value-checked. `bottom_shade` (0.78) and `block_roughness` (0.85) are checked
+	# for EXISTENCE alone, deliberately — the chunk batch pushes its own
+	# `BLOCK_BOTTOM_SHADE` (0.60) over the first, so binding the shader default to
+	# that constant would encode an equality the code does not claim, while the
+	# other two consumers (fauna, crowd/traffic) legitimately run the shader
+	# default. Those two numbers are art, not an identity argument.
 	var counter := RegEx.new()
 	counter.compile(UNIFORM_RE)
-	print("[batch] block shader: %d uniform(s) declared and defaulted, %d identity default(s) held, %d negative control(s) fired"
+	print("[batch] block shader: %d uniform(s) declared, %d identity default(s) value-checked, %d negative control(s) fired"
 			% [counter.search_all(_strip_shader_comments(shader_text)).size(),
 					BLOCK_IDENTITY_DEFAULTS.size(),
 					mutations.size()])
