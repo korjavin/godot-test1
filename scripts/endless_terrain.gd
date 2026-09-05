@@ -9208,8 +9208,27 @@ func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 	rule is that entity counts are never trimmed, so a desert feels empty through
 	decoration alone.
 
-	A cactus is 2-3 thin tall green boxes stacked, sometimes with one short arm box
+	A cactus is 2-3 thin tall green CYLINDERS stacked, sometimes with one short arm
 	off to the side — enough silhouette to read at distance, four boxes at most.
+
+	`BoxKind.CYLINDER` on the SEGMENTS since bead godot-test1-y1o.4: a saguaro is a
+	fluted column, which is what the shared unit cylinder draws, and stacking three
+	of them at one yaw reads as one trunk because the facets line up.
+
+	THE COLLIDER FOLLOWS THE KIND AND THAT IS A REAL CHANGE, contrary to this
+	bead's own note — which was written before `collision_shape_for` existed
+	(bead y1o.10). A segment is `width x width` in plan, so its radial aspect is
+	exactly 1.0 and it hangs a `CylinderShape3D` of radius `width * 0.5` rather
+	than the old box. The shape COUNT is untouched and the collider is INSCRIBED,
+	so this can only ever un-block a spot that used to be stone, and the footprint
+	below is NON-CLIMBABLE, so nothing stands on the difference. It is also simply
+	the right shape for a round trunk — refusing it would mean special-casing the
+	desert out of the machinery the epic just built.
+
+	THE ARM IS A CYLINDER TOO, LAID DOWN — the two quarter turns that do it are
+	derived at the call site and explained there. A cube arm on round trunks was
+	tried first and rendered, and it read as a square nub bolted onto a column;
+	that picture is why the arm's dimensions are allowed to swap.
 	"""
 	var half := chunk_size / 2.0 - 3.0
 	var count := rng.randi_range(CACTUS_MIN, CACTUS_MAX)
@@ -9248,7 +9267,8 @@ func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 			create_box(
 				Vector3(local_x, top_y + seg_h * 0.5, local_z),
 				Vector3(width, seg_h, width),
-				yaw, rng, block_batch, block_body, 0.0, CACTUS_COLOR
+				yaw, rng, block_batch, block_body, 0.0, CACTUS_COLOR,
+				true, ChunkBatch.BoxKind.CYLINDER
 			)
 			top_y += seg_h
 
@@ -9262,10 +9282,43 @@ func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 			# gets shoved sideways instead of outwards and floats detached from the
 			# trunk (worst at yaw = 45 deg, where the two are 90 deg apart).
 			var arm_dir := (Basis(Vector3.UP, yaw) * Vector3.RIGHT) * (arm_len * 0.5 + width * 0.5)
+			# THE ARM IS A CYLINDER LAID DOWN, and the quarter turns are the whole
+			# of it (bead godot-test1-y1o.4). The unit cylinder's axis is LOCAL Y
+			# while the arm's LENGTH has always been on local X, so passing CYLINDER
+			# with the old dimensions draws a flat disc standing on edge — which is
+			# what the first render of this bead showed, square nubs on round
+			# trunks, and it looked worse than the boxes it replaced.
+			#
+			# `create_box` builds `Basis(UP, yaw) * Basis(RIGHT, tilt)`, so local +Y
+			# comes out at `(sin yaw', 0, cos yaw')` once tilt is a quarter turn.
+			# Setting `yaw' = yaw + PI/2` makes that `(cos yaw, 0, -sin yaw)` — which
+			# is exactly the direction `arm_dir` above already points, because that
+			# is local +X under the ORIGINAL yaw. So the drum lies along the arm.
+			# The length moves into the Y slot to match, and `arm_dir` and the centre
+			# are untouched: same volume, same place, same reach out of the trunk.
+			#
+			# NOT ONE RNG DRAW MOVED — both turns are constants and the dimensions
+			# are the same two numbers in a different order (bead y1o.2's canopy
+			# rule). The collider follows the kind and becomes a CylinderShape3D of
+			# radius `width * 0.5` about that same axis, which is the honest shape
+			# for a round limb; the shape COUNT is unchanged and the cactus footprint
+			# is non-climbable, so nothing stands on the difference.
+			#
+			# `ponytail:` THE JOINT IS TANGENT, NOT SUNK, and that is a known
+			# cosmetic ceiling rather than an oversight. `arm_dir` puts the arm's
+			# inner cap plane exactly `width * 0.5` from the trunk axis — flush
+			# against the flat face of a BOX trunk, but only touching a ROUND one
+			# along a single line, so from a high or oblique angle a crescent of air
+			# up to `width * 0.5` (0.22-0.37 m) shows at the T. The fix is one number
+			# (pull `arm_dir` in by about `width * 0.25`) and it costs no RNG draw —
+			# but it MOVES this entry's origin, which is more than "only the
+			# silhouette changed", so it belongs to a bead that is allowed to move
+			# geometry and should be judged on a render rather than on arithmetic.
 			create_box(
 				Vector3(local_x, arm_y, local_z) + arm_dir,
-				Vector3(arm_len, width, width),
-				yaw, rng, block_batch, block_body, 0.0, CACTUS_COLOR
+				Vector3(width, arm_len, width),
+				yaw + PI * 0.5, rng, block_batch, block_body, PI * 0.5, CACTUS_COLOR,
+				true, ChunkBatch.BoxKind.CYLINDER
 			)
 
 		# NOT climbable: a cactus is a thing you walk around, and a coin perched on
@@ -9341,11 +9394,17 @@ func _spawn_desert_oasis(chunk_center: Vector3, chunk_pos: Vector2i, rng: Random
 			# palm's crown hangs.
 			var palm_lean := rng.randf_range(-OASIS_PALM_TILT_MAX, OASIS_PALM_TILT_MAX)
 			var droop := rng.randf_range(OASIS_PALM_DROOP_MIN, OASIS_PALM_DROOP_MAX)
-			# Trunk (colliding)
+			# Trunk (colliding) — `BoxKind.CYLINDER` since bead godot-test1-y1o.4.
+			# The unit cylinder's axis is LOCAL Y, which is exactly the axis
+			# `palm_lean` already leans, so a curved palm trunk costs nothing but
+			# the kind. It is square in plan (radial aspect 1.0), so it also hangs
+			# a real CylinderShape3D — the shape COUNT is unchanged, the collider
+			# is inscribed, and the footprint below stays non-climbable.
 			create_box(
 				Vector3(palm_x, OASIS_PALM_TRUNK_HEIGHT * 0.5, palm_z),
 				Vector3(OASIS_PALM_TRUNK_WIDTH, OASIS_PALM_TRUNK_HEIGHT, OASIS_PALM_TRUNK_WIDTH),
-				trunk_yaw, rng, block_batch, block_body, palm_lean, Color(0.40, 0.32, 0.22)
+				trunk_yaw, rng, block_batch, block_body, palm_lean, Color(0.40, 0.32, 0.22),
+				true, ChunkBatch.BoxKind.CYLINDER
 			)
 
 			# Fronds (visual only, collide=false) — each starts at the crown and
@@ -9357,10 +9416,29 @@ func _spawn_desert_oasis(chunk_center: Vector3, chunk_pos: Vector2i, rng: Random
 				var frond_yaw := trunk_yaw + (TAU / OASIS_PALM_FROND_COUNT) * _f
 				var f_droop := droop * (1.0 if _f % 2 == 0 else OASIS_PALM_DROOP_ALT)
 				var frond_rot := Basis(Vector3.UP, frond_yaw) * Basis(Vector3.RIGHT, f_droop)
+				# A FROND IS A CONE, TIP OUT (bead godot-test1-y1o.4), and getting
+				# the tip pointing the right way is the whole of this edit.
+				#
+				# The unit cone tapers along LOCAL Y (tip at +Y), while the frond's
+				# LENGTH has always been on local Z — so passing CONE with the old
+				# dimensions draws a squat pyramid pointing at the sky. Two DERIVED
+				# changes fix it and nothing else moves:
+				#   * the length moves from the Z slot to the Y slot, so the taper
+				#     runs down the frond;
+				#   * the tilt gains a quarter turn, which maps local +Y onto the
+				#     direction local +Z used to face — i.e. outward, along the
+				#     frond, which is where the tip belongs. `frond_rot` above is
+				#     unchanged and still places the CENTRE, so the frond hangs off
+				#     exactly the crown point and at exactly the droop it did.
+				# Both are functions of numbers already drawn: NOT ONE RNG DRAW
+				# MOVED, which is bead y1o.2's canopy rule and the reason this
+				# bead's A/B still reads "kind, plus these fronds' dimensions".
+				# Fronds pass collide = false, so no collision shape moved either.
 				create_box(
 					crown + frond_rot * Vector3(0.0, 0.0, flen * 0.5),
-					Vector3(0.42, 0.30, flen),
-					frond_yaw, rng, block_batch, block_body, f_droop, OASIS_PALM_FROND_COLOR, false
+					Vector3(0.42, flen, 0.30),
+					frond_yaw, rng, block_batch, block_body, f_droop + PI * 0.5,
+					OASIS_PALM_FROND_COLOR, false, ChunkBatch.BoxKind.CONE
 				)
 
 			# Small trunk footprint
@@ -9414,6 +9492,29 @@ func _spawn_desert_dunes(chunk_center: Vector3, chunk_pos: Vector2i, rng: Random
 	"""
 	Build sand dunes: low, wide, climbable mounds (~1.5 m max height). Same split-placement
 	pattern as oases: DUNE_PLACE_TRIES candidates, pick the first that passes spot checks.
+
+	THE DUNE STAYS TWO CUBES, and bead godot-test1-y1o.4 asked for that decision
+	rather than assuming it: "a flattened SPHERE for the LOWER tier ONLY IF the top
+	tier keeps a CUBE-collided flat top the coin/climb rule needs, else leave dunes
+	as they are and say so". The gameplay half of the condition passes — the top
+	tier is a separate entry and would have kept its cube and its `BoxShape3D` flat
+	top at `height`, which is what the climbable footprint and `_settle_coin_y`
+	promise. It was BUILT that way, rendered, and refused ON THE PICTURE:
+
+	  A dune is 6-12 m wide and each tier is only 0.4-0.75 m tall, so an inscribed
+	  sphere there is not a mound but a LENS ~1/16th as tall as it is wide. Its
+	  surface has already fallen most of the way to the ground by the time it
+	  reaches the top tier's footprint (at the upper cube's own half-width the lens
+	  is 0.13 m below that cube's flat base), so the square top tier visibly
+	  OVERHANGS into open air on all four sides — a slab balanced on a saucer. Two
+	  honest cubes read better than that.
+
+	The two ways to make a real dune both move geometry, which is not this bead's
+	to move: give the lower tier the height a hemisphere needs (changing dimensions
+	the A/B is written against), or draw the whole dune as ONE squashed sphere and
+	give up the flat cube top the climb contract rests on. `ponytail:` if a rounded
+	dune is wanted, that is its own bead and it starts by choosing which of those
+	two costs is acceptable.
 	"""
 	var half := chunk_size / 2.0 - DUNE_WIDTH_MAX * 0.71
 	for _try in DUNE_PLACE_TRIES:
@@ -9433,7 +9534,7 @@ func _spawn_desert_dunes(chunk_center: Vector3, chunk_pos: Vector2i, rng: Random
 		var top_width := width * 0.75
 		var color := DUNE_COLOR_A.lerp(DUNE_COLOR_B, rng.randf())
 
-		# Base layer (wider)
+		# Base layer (wider). STILL A CUBE — see the docstring.
 		create_box(
 			Vector3(local_x, layer_height * 0.5, local_z),
 			Vector3(base_width, layer_height, base_width),
