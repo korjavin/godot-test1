@@ -148,7 +148,20 @@ const FILM_STALL_LIMIT_SEC: float = IntroVideo.START_TIMEOUT_SEC + IntroVideo.ST
 
 const TITLE_FONT_SIZE: int = 40
 const BUTTON_FONT_SIZE: int = 24
+## 40% of the title, which is where the film's own subtitle sits.
 const HINT_FONT_SIZE: int = 16
+
+## How far the world behind the card is dimmed. The COLOUR is `HudTheme.INK`;
+## only "how much of the world still shows through" is this card's own number,
+## and it is not `PANEL_ALPHA` — that one is what a PANEL sits at over the world,
+## and this is the world seen through a full-screen veil behind one.
+const DIM_ALPHA: float = 0.78
+
+## The film's letterbox line: a 1 px BONE hairline across the top of the card.
+## `HudTheme` has no `hairline()` builder — its own note says the modal-card beads
+## are its first consumers — so it is a `ColorRect` here rather than a seventh
+## StyleBox; the day a second card wants one, that is the builder to add.
+const HAIRLINE_PX: float = 1.0
 
 # ============================================================================
 # CONSTANTS — language switcher
@@ -181,8 +194,13 @@ const LOCALE_BUTTON_SIZE: Vector2 = Vector2(52.0, 36.0)
 ## Font colours marking which language is active. The inactive one is dimmed
 ## rather than disabled — a disabled Button greys its label to near-invisible,
 ## and this row has to stay readable to a player who is in the wrong language.
-const LOCALE_ACTIVE_COLOR: Color = Color(1.0, 0.92, 0.6)
-const LOCALE_INACTIVE_COLOR: Color = Color(0.62, 0.65, 0.72)
+##
+## Off `HudTheme` since bead `godot-test1-y1o.25`'s siblings: the active pill is
+## THIS CARD'S ONE AMBER THING (the spec rations the accent to one per region),
+## and the inactive one takes the corporation's neutral khaki, which is the
+## palette's own "not this one" and is still a readable label.
+const LOCALE_ACTIVE_COLOR: Color = HudTheme.VISOR_AMBER
+const LOCALE_INACTIVE_COLOR: Color = HudTheme.UNIT_KHAKI
 
 # ============================================================================
 # STATE
@@ -478,6 +496,14 @@ func _touch_modal_up() -> bool:
 # ============================================================================
 
 func _build_ui() -> void:
+	# THE HUD SKIN, adopted on THIS ROOT and nowhere else (bead
+	# `godot-test1-y1o.32`). `HudTheme.theme()` is inherited by every Control
+	# built below, which is what pays for the Button faces, the BONE Label colour
+	# and Oswald without eleven more `add_theme_*` calls — and a project-wide flip
+	# would restyle every panel in the game at once, which is exactly what the
+	# per-panel beads exist to avoid.
+	theme = HudTheme.theme()
+
 	_body = Control.new()
 	_body.name = "Body"
 	_body.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -492,7 +518,7 @@ func _build_ui() -> void:
 	# would only be one more thing to art-direct.
 	var dim := ColorRect.new()
 	dim.name = "Dim"
-	dim.color = Color(0.02, 0.03, 0.05, 0.78)
+	dim.color = Color(HudTheme.INK, DIM_ALPHA)
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_body.add_child(dim)
@@ -509,31 +535,45 @@ func _build_ui() -> void:
 	var card := PanelContainer.new()
 	card.name = "Card"
 	card.custom_minimum_size = Vector2(CARD_WIDTH, 0.0)
-	var card_style := StyleBoxFlat.new()
-	card_style.bg_color = Color(0.05, 0.06, 0.09, 0.94)
-	card_style.set_corner_radius_all(14)
-	card_style.set_content_margin_all(20)
-	card.add_theme_stylebox_override("panel", card_style)
+	# THE TITLE CARD: opaque INK, a 2 px STEEL frame, square corners and a hard
+	# offset shadow — `HudTheme.card(true)` is all four, so this card owns no
+	# StyleBox of its own any more. Its padding is the theme's 12 px rather than
+	# the old 20; `locale_selfcheck`'s 380 px budget for PLAY is now 16 px
+	# CONSERVATIVE against a 396 px content width, so it stays a real gate.
+	card.add_theme_stylebox_override("panel", HudTheme.card(true))
 	centre.add_child(card)
 
 	var vbox := VBoxContainer.new()
 	vbox.name = "Choices"
-	vbox.add_theme_constant_override("separation", 12)
+	vbox.add_theme_constant_override("separation", HudTheme.CARD_PADDING)
 	card.add_child(vbox)
+
+	# The film's letterbox line, hard against the top of the card above the title.
+	var hairline := ColorRect.new()
+	hairline.name = "Hairline"
+	hairline.color = HudTheme.BONE
+	hairline.custom_minimum_size = Vector2(0.0, HAIRLINE_PX)
+	hairline.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(hairline)
 
 	var title := Label.new()
 	# Read from the project settings rather than hardcoded, so the game's name
 	# lives in exactly one place and a rename never leaves the title screen
-	# saying something else.
+	# saying something else. `.to_upper()` is safe on THIS one and on nothing else
+	# on the card: the game's name is not a translated string (see the subtitle).
 	title.text = String(ProjectSettings.get_setting("application/config/name", "")).to_upper()
-	title.add_theme_font_size_override("font_size", TITLE_FONT_SIZE)
+	_title_lettering(title, TITLE_FONT_SIZE)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vbox.add_child(title)
 
 	var subtitle := Label.new()
+	# NOT `.to_upper()`, and that is a correctness rule rather than a style one: a
+	# `Label.text` IS the translation key, so an upper-cased one is a key in no
+	# table and this line would fall back to English capitals for every German
+	# player. The spec's caps rule is for headings; body text stays sentence case.
 	subtitle.text = "Run the road. Outrun the crocodiles."
-	subtitle.add_theme_font_size_override("font_size", HINT_FONT_SIZE)
+	_title_lettering(subtitle, HINT_FONT_SIZE)
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(subtitle)
 
@@ -544,6 +584,9 @@ func _build_ui() -> void:
 	# corner it is parked in and the key that frees the cursor to click it,
 	# because the reported bug was never "there is no way in" — the MP button was
 	# always there — it was "no idea multiplayer exists".
+	# Fine print: the theme's own face and BONE, so it takes no override but its
+	# size — the film sets its small print in the condensed REGULAR weight, which
+	# is what `HudTheme.theme()`'s `default_font` already is.
 	var hint := Label.new()
 	hint.text = "Multiplayer anytime — the MP button, bottom left (ESC frees the cursor). Up to 4 friends in one world."
 	hint.add_theme_font_size_override("font_size", HINT_FONT_SIZE)
@@ -552,6 +595,26 @@ func _build_ui() -> void:
 	vbox.add_child(hint)
 
 	vbox.add_child(_build_locale_row())
+
+
+## THE FILM'S TITLE-CARD LETTERING, on the two lines that carry it: the condensed
+## BOLD face in BONE with a HARD drop shadow down-right — `shadow_outline_size 0`
+## is what keeps it hard, because Godot's shadow outline is the only blur a Label
+## has and it defaults on.
+##
+## The shadow is `INK_RAISED` and not `INK`, which is the whole reason this is a
+## function and not two lines inlined: the card's ground IS `INK`, so an ink
+## shadow on it is invisible. The spec measured the film's own shadow at #1f2428
+## and called it "INK_RAISED-dark" — the palette's nearest is the one that makes
+## the letters stand off the card, and it is the palette's, so no seventh hex.
+func _title_lettering(label: Label, font_size: int) -> void:
+	label.add_theme_font_override("font", HudTheme.heading_font())
+	label.add_theme_font_size_override("font_size", font_size)
+	label.add_theme_color_override("font_color", HudTheme.BONE)
+	label.add_theme_color_override("font_shadow_color", HudTheme.INK_RAISED)
+	label.add_theme_constant_override("shadow_offset_x", HudTheme.SHADOW_PANEL_OFFSET.x)
+	label.add_theme_constant_override("shadow_offset_y", HudTheme.SHADOW_PANEL_OFFSET.y)
+	label.add_theme_constant_override("shadow_outline_size", 0)
 
 
 ## The EN / DE pills, centred under the hint. One press sets the locale, saves it

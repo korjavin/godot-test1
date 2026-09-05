@@ -193,7 +193,18 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            EXECUTES the real `voice_chat` ladders with
 #                            `_is_web` forced on and a stub manager, because
 #                            check 7 only meets them off-web where both return
-#                            on their first line
+#                            on their first line. Check 8 is THE HUD SKIN
+#                            (`hud_theme.gd`, bead y1o.24): the six film hexes
+#                            DERIVED from the consts and grepped across
+#                            scripts/, every StyleBox builder hard-edged with
+#                            the exact spec shadow and the amber rationed to
+#                            hover/focus, the veil measured at both ends (it
+#                            must darken, and by enough to read), both Oswald
+#                            weights loaded and distinct, ONE shared Theme with
+#                            no project-wide flip, the pilot's colours bound to
+#                            the palette, and locale_selfcheck's ruler read as
+#                            TEXT so the German budgets cannot drift back onto
+#                            a face nothing draws with
 #   landmark_selfcheck       every builder fits its declared radius AND its
 #                            declared top
 #   landmark_sites_selfcheck THE MUSEUM MILE: every field kind sited AT MOST ONCE
@@ -2191,6 +2202,57 @@ candidate will really stand in rather than the centreline, or two walkers 6 m ap
 line pass and then draw the same lane — and a RECYCLE goes to
 the FAR half of the bubble (`RECYCLE_MIN_DIST`) — a walker leaving at 145 m used to pop
 back 15 m from the hero's nose, a second pump concentrating the crowd as he walks.
+
+### The HUD skin — `scripts/hud_theme.gd` is the ONE style source
+Owner ruling 2026-09-05 (epic `godot-test1-y1o`): the HUD's reference is the intro and
+ending **films** — a graphic-novel corporate-dystopia card. Ink-black grounds, tall
+condensed BONE-white capitals with a hard drop shadow, cold steel-blue night light, and
+exactly one warm accent. **Nothing is rounded, nothing glows softly, nothing is
+translucent-glassy.**
+
+`HudTheme` (`class_name`, all static) holds the six film-derived colours — INK,
+INK_RAISED, STEEL, BONE, UNIT_KHAKI, VISOR_AMBER — the two **Oswald** weights
+(`assets/fonts/`, SIL OFL 1.1, `OFL.txt` ships beside them), the sizes, the StyleBox
+builders (`card` / `strip` / `button`) and one lazy `theme()`. Four rules:
+
+- **The six hexes are typed there and NOWHERE else in `scripts/`.**
+  `hero_hud_selfcheck` check 8 derives the hex strings from the consts themselves and
+  greps the tree, so a pasted `Color("#526671")` fails the build and the check can never
+  go stale. Documented ceiling: it matches the HEX, so the same colour re-typed as a
+  float triple slips past — check 8 binds the pilot's own consts to the palette instead,
+  which is the half that catches it where it would matter.
+  What is deliberately outside the palette is SEMANTIC and must stay: the per-hero
+  identity tints, the captive bars' red, the speaking green, the minimap's biome RGB.
+- **Two kinds of consumer.** A Control-based panel adopts `theme = HudTheme.theme()` on
+  its own ROOT — **never a project-wide flip**, which would restyle every `Control` at
+  once and move every German width budget in one PR. `draw_*`-based HUDs (`hero_hud`,
+  `ability_hud`, `minimap_hud`) read the consts directly: a `Theme` has nothing to say
+  to `draw_rect`.
+- **`locale_selfcheck._check_widths` measures on EVERY face a budgeted string could be
+  drawn in and keeps the WIDEST answer.** A budget measured on a face nobody draws with
+  passes vacuously in both directions, and there are three faces, not one: Oswald Regular
+  (`theme()`'s default, so every `Label` on a migrated panel), Oswald **Bold** (its
+  `Button` font — 45 of the 73 rows are on Button-class controls, and Bold is ~9 points of
+  budget wider), and the **engine default**, because ~24 rows belong to `draw_string` HUDs
+  and unmigrated panels no `Theme` can reach (`minimap_hud` is the tightest budget in the
+  table at 96.2% of its limit). Widest-of-three is conservative by construction, is never
+  weaker than the pre-HudTheme gate, and needs no edit as the nine per-panel beads
+  migrate. The check also asserts ß/ä/ö/ü on the shipped faces through `Font.has_char` —
+  **never a width**, since a missing glyph still measures a non-zero notdef box — which is
+  why Oswald was picked over Bebas Neue.
+- **`hero_hud` is the PILOT** (bead `y1o.24`) and the per-panel beads follow it one file
+  at a time. Its tile geometry did not move — `voice_chat` places the teammate camera on
+  `tile_rect()`. The active ring is FLAT `VISOR_AMBER` and no longer lerped toward the
+  hero tint: the accent is rationed to one amber thing per screen region, and the tint
+  already owns the whole placeholder tile. **A veil composites toward its OWN luminance**,
+  so everything darker than it comes out BRIGHTER: at a quarter khaki `HudTheme.veil()`
+  lifted a fifth of Primm's portrait instead of dimming it and halved the FREE-vs-HELD
+  read. At 0.08 it lifts 5-15% of a portrait's darkest pixels and dims the rest by
+  79-90% of what the retired plain-black veil managed; check 8 holds both ends — the
+  ceiling on that luminance and the floor on the dim — because "unavailable" reading as
+  "slightly greyer" is invisible in a diff. A/B crops in `docs/style/`,
+  captured with
+  `godot --path . scenes/style_shots.tscn -- <outdir> only=hero_row`.
 
 ### Art direction
 Authored in `main.tscn` (key light, ProceduralSky, glow, BCS grade) plus

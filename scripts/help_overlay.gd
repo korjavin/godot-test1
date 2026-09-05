@@ -86,6 +86,24 @@ extends Control
 ## improvement. The touch rows are what a tablet with a keyboard sees.
 ## ponytail: if the ⚙ card is ever retired, the lazy replacement is one
 ## `_make_button` in `touch_controls._build_ui()` calling `toggle()` here.
+##
+## ----------------------------------------------------------------------------
+## The skin is `HudTheme`'s, and this file owns none of it (bead godot-test1-y1o.28)
+## ----------------------------------------------------------------------------
+## The root adopts `theme = HudTheme.theme()` — on THIS Control and nowhere
+## higher, which is the seam's rule: a project-wide flip would restyle every
+## `Control` in the game at once. Everything below inherits it, so the card is an
+## opaque INK modal with a 2 px STEEL frame and a hard shadow (`HudTheme.card(true)`),
+## the descriptions are Oswald Regular in BONE and the Close button is the theme's
+## own button with no override left here at all.
+##
+## Not one colour and not one `StyleBoxFlat` is built in this file any more. The
+## two things it still draws itself are one pixel tall each — the BONE letterbox
+## hairline over the card's top edge and the STEEL rule under the heading — and
+## they are `_rule()`, six lines, because `HudTheme` has no builder for either
+## (its own closing note says the modal-card beads are the first consumers that
+## would want one). If a second panel wants a hairline, that is the theme's to
+## absorb.
 
 # ============================================================================
 # THE KEYS THAT OPEN IT
@@ -202,21 +220,38 @@ const ROWS: Array = [
 ## is the number `help_selfcheck.gd` measures German words against; the key
 ## column is wide enough for the widest legend ("SPECIAL\n(F)" wraps itself at
 ## the newline).
+##
+## THESE TWO ARE TEXT BUDGETS AND STAYED PUT. A key legend now sits inside an
+## INK_RAISED chip, so the CONTROL is `KEY_WIDTH + KEY_CHIP_PADDING` wide — the
+## chip's own margins are added to the control rather than taken out of the
+## budget, because `help_selfcheck` measures the LEGEND against `KEY_WIDTH` and
+## silently swallowing 16 px of it here is exactly the kind of budget that passes
+## vacuously.
 const KEY_WIDTH: float = 116.0
 const DESC_WIDTH: float = 430.0
+
+## What `HudTheme.strip()` costs a chip horizontally (`GRID` each side).
+const KEY_CHIP_PADDING: float = 2.0 * HudTheme.GRID
 
 ## Margin from the screen edge to the card. The card FILLS what is left
 ## vertically and scrolls its list — which is why no amount of German, and no
 ## number of extra rows in a debug build, can push content off the screen.
 const SCREEN_MARGIN: int = 28
 
+## The title-card size. `HudTheme` ships `HEADING_FONT_SIZE` (20) for a section
+## heading and has no TITLE size yet — its own closing note names that gap and
+## the modal-card beads (.28/.31/.32) as the consumers that would fill it. 32 is
+## this card's, kept from before the skin so the heading did not shrink in the
+## same PR that changed its face.
 const TITLE_FONT_SIZE: int = 32
-const ROW_FONT_SIZE: int = 18
-const HINT_FONT_SIZE: int = 15
-const BUTTON_FONT_SIZE: int = 18
 
-## Tint of the key column, so the eye can run down it.
-const KEY_COLOR: Color = Color(1.0, 0.92, 0.6)
+## The row size, and it is the number `help_selfcheck` budgets German against —
+## unchanged on purpose, so the re-measurement in that check is of the FONT and
+## nothing else.
+const ROW_FONT_SIZE: int = 18
+
+## How dark the scrim over the world is. INK, like everything else here.
+const DIM_ALPHA: float = 0.82
 
 # ============================================================================
 # STATE
@@ -247,6 +282,9 @@ func _ready() -> void:
 	# The root spans the screen but never hit-tests; `_body` is the modal.
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	# THE SKIN, adopted on our own root and inherited by everything under it.
+	# Never on the scene root and never in ProjectSettings — see `hud_theme.gd`.
+	theme = HudTheme.theme()
 	_is_touch = MobileSensors.is_touch_session()
 	_build_ui()
 
@@ -364,7 +402,7 @@ func _build_ui() -> void:
 
 	var dim := ColorRect.new()
 	dim.name = "Dim"
-	dim.color = Color(0.02, 0.03, 0.05, 0.82)
+	dim.color = Color(HudTheme.INK, DIM_ALPHA)
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_body.add_child(dim)
@@ -382,26 +420,43 @@ func _build_ui() -> void:
 		margin.add_theme_constant_override("margin_" + side, SCREEN_MARGIN)
 	_body.add_child(margin)
 
+	# The stack the card lives in, so the letterbox hairline can sit ON its top
+	# edge rather than inside its padding: a `StyleBoxFlat` has ONE border colour,
+	# so a BONE top edge on a STEEL frame is not something `HudTheme.card()` can
+	# express — it is a sibling one pixel tall. Separation 0 keeps the two flush.
+	var stack := VBoxContainer.new()
+	stack.name = "Stack"
+	stack.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	stack.add_theme_constant_override("separation", 0)
+	margin.add_child(stack)
+	stack.add_child(_rule(HudTheme.BONE, "Hairline"))
+
 	var card := PanelContainer.new()
 	card.name = "Card"
-	card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	var card_style := StyleBoxFlat.new()
-	card_style.bg_color = Color(0.05, 0.06, 0.09, 0.96)
-	card_style.set_corner_radius_all(14)
-	card_style.set_content_margin_all(20)
-	card.add_theme_stylebox_override("panel", card_style)
-	margin.add_child(card)
+	# The modal case: opaque INK, a 2 px STEEL frame, a hard offset shadow and
+	# square corners — the whole panel language, typed nowhere in this file.
+	card.add_theme_stylebox_override("panel", HudTheme.card(true))
+	card.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	stack.add_child(card)
 
 	var vbox := VBoxContainer.new()
 	vbox.name = "Content"
-	vbox.add_theme_constant_override("separation", 12)
+	vbox.add_theme_constant_override("separation", HudTheme.GRID)
 	card.add_child(vbox)
 
 	var title := Label.new()
+	# Already capitals in BOTH tables ("CONTROLS" / "STEUERUNG"), so the spec's
+	# caps heading needs no `.to_upper()` at the draw site and the literal stays a
+	# plain auto-translated one. Oswald BOLD is the heading face; BONE comes off
+	# the theme's `Label` colour.
 	title.text = "CONTROLS"
+	title.add_theme_font_override("font", HudTheme.heading_font())
 	title.add_theme_font_size_override("font_size", TITLE_FONT_SIZE)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(title)
+
+	# The STEEL rule the spec puts under every section heading.
+	vbox.add_child(_rule(HudTheme.STEEL, "TitleRule"))
 
 	var scroll := ScrollContainer.new()
 	scroll.name = "List"
@@ -412,8 +467,8 @@ func _build_ui() -> void:
 	var grid := GridContainer.new()
 	grid.name = "Keymap"
 	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", 18)
-	grid.add_theme_constant_override("v_separation", 9)
+	grid.add_theme_constant_override("h_separation", HudTheme.GRID * 2)
+	grid.add_theme_constant_override("v_separation", HudTheme.GRID)
 	scroll.add_child(grid)
 	for row: Array in visible_rows(_is_touch):
 		grid.add_child(_make_key_label(String(row[0])))
@@ -421,19 +476,27 @@ func _build_ui() -> void:
 
 	var hint := Label.new()
 	hint.text = "Press ? or Esc to close"
-	hint.add_theme_font_size_override("font_size", HINT_FONT_SIZE)
+	# Secondary text is STEEL, and the size is the theme's body default — the two
+	# font-size overrides this label and the Close button used to carry are gone,
+	# which is what "the panel renders from HudTheme alone" means in practice.
+	hint.add_theme_color_override("font_color", HudTheme.STEEL)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vbox.add_child(hint)
 
 	var close := Button.new()
+	# ponytail: NOT `.to_upper()`. Godot has no single-character uppercase for ß,
+	# so the German "Schließen" comes out "SCHLIEßEN" — a lowercase letter in the
+	# middle of a capitalised word, which is worse than sentence case. The spec's
+	# caps-button rule wants a CSV-side or font-feature answer; named for the
+	# theme bead rather than shipped broken here. The heading above needs none of
+	# this because both its rows are already capitals.
 	close.text = "Close"
 	# FOCUS_NONE, like every button in this project — `ui_accept` is SPACE, SPACE
 	# is also `jump`, and `BaseButton` KEEPS focus after a click, so a focused
 	# Close would re-fire on the player's very first jump. See
 	# `mp_ui._make_button()` for the full version of this warning.
 	close.focus_mode = Control.FOCUS_NONE
-	close.add_theme_font_size_override("font_size", BUTTON_FONT_SIZE)
 	close.pressed.connect(_set_open.bind(false))
 	vbox.add_child(close)
 
@@ -453,13 +516,23 @@ static func visible_rows(is_touch: bool) -> Array:
 	return out
 
 
+## A KEY CAP: `HudTheme.strip()` is the chip (INK_RAISED face, STEEL frame, no
+## shadow — it is already on a card) and the letters are Oswald Bold in BONE off
+## the theme. The colour override the key column used to carry — a warm yellow
+## repeated thirty times — is gone: the spec rations VISOR_AMBER to ONE element
+## per region, and thirty amber-ish chips is the opposite of that.
+##
+## ponytail: SHRINK_BEGIN vertically so the chip is the height of the legend and
+## not of the two-line German description beside it — a key cap, not a column.
 func _make_key_label(text: String) -> Label:
 	var label := Label.new()
 	label.text = text
+	label.add_theme_font_override("font", HudTheme.heading_font())
 	label.add_theme_font_size_override("font_size", ROW_FONT_SIZE)
-	label.add_theme_color_override("font_color", KEY_COLOR)
-	label.custom_minimum_size = Vector2(KEY_WIDTH, 0.0)
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	label.add_theme_stylebox_override("normal", HudTheme.strip())
+	label.custom_minimum_size = Vector2(KEY_WIDTH + KEY_CHIP_PADDING, 0.0)
+	label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	return label
 
 
@@ -472,3 +545,16 @@ func _make_desc_label(text: String) -> Label:
 	label.custom_minimum_size = Vector2(DESC_WIDTH, 0.0)
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	return label
+
+
+## One hairline. `HudTheme` has no builder for either of the two this card wants
+## (BONE letterbox line, STEEL heading rule) and its closing note says the modal
+## beads are the first that would need one — so it lives here, six lines, until a
+## second panel asks for it.
+func _rule(color: Color, name: String) -> ColorRect:
+	var rect := ColorRect.new()
+	rect.name = name
+	rect.color = color
+	rect.custom_minimum_size = Vector2(0.0, 1.0)
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return rect
