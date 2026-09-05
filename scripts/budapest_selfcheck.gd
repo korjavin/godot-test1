@@ -80,6 +80,14 @@ extends SceneTree
 ## unit box mesh, the crocodile/coin PackedScenes). They are not a failure — the
 ## same note enemy_spawn_selfcheck.gd's header carries.
 
+## THE BUILDERS ARE CALLED ON `BudapestStreamer` DIRECTLY, not on the terrain
+## (bd `godot-test1-ftn.8`). The streamer left `endless_terrain.gd` and the
+## terrain kept eight one-line forwarders for the names other files reach — but
+## this is the FAMILY's own check, and `scarcity_selfcheck` learned at ftn.7 what
+## a check that reads its subject through a forwarder is worth: it measures the
+## forwarder. Eleven call sites here name the class, which is the epic's
+## acceptance (d), and `budapest_city_selfcheck` and `field_bridge_selfcheck`
+## keep using the forwarders because the city is not the family they are about.
 const PLAN_PATH: String = "res://scripts/budapest_plan.gd"
 const TERRAIN_PATH: String = "res://scripts/endless_terrain.gd"
 const SHADER_PATH: String = "res://assets/shaders/ground.gdshader"
@@ -263,9 +271,9 @@ func _build_city_chunk(terrain: Node3D, chunk_pos: Vector2i, include_coins: bool
 		root.add_child(coin_parent)
 		coin_parent.position = terrain.chunk_to_world(chunk_pos)
 	var t0 := Time.get_ticks_usec()
-	terrain.spawn_city_in_chunk(chunk_pos, parent, obstacles, batch, body)
+	BudapestStreamer.spawn_city_in_chunk(terrain, chunk_pos, parent, obstacles, batch, body)
 	if include_coins:
-		terrain.spawn_city_coins_in_chunk(chunk_pos, coin_parent, obstacles)
+		BudapestStreamer.spawn_city_coins_in_chunk(terrain, chunk_pos, coin_parent, obstacles)
 	var msec := float(Time.get_ticks_usec() - t0) / 1000.0
 	var out := {"parent": parent, "batch": batch, "body": body,
 			"obstacles": obstacles, "msec": msec}
@@ -296,7 +304,7 @@ func _generate_chunk(terrain: Node3D, chunk_pos: Vector2i) -> MeshInstance3D:
 	terrain.spawn_camp_in_chunk(chunk_pos, parent, obstacles, batch, body)
 	terrain.spawn_landmark_in_chunk(chunk_pos, parent, obstacles, batch, body)
 	terrain.spawn_chest_in_chunk(chunk_pos, parent, obstacles, batch, body)
-	terrain.spawn_city_in_chunk(chunk_pos, parent, obstacles, batch, body)
+	BudapestStreamer.spawn_city_in_chunk(terrain, chunk_pos, parent, obstacles, batch, body)
 	terrain.spawn_crocodiles_in_chunk(chunk_pos, parent, obstacles)
 	terrain.spawn_platform_crocodiles(chunk_pos, parent, platforms)
 	terrain.spawn_danube_crocodiles_in_chunk(chunk_pos, parent)
@@ -620,7 +628,7 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 		# ruled out — which is what asking about the chunk's CENTRE used to do all
 		# the way round the rect's edge.
 		var centre_w: Vector3 = terrain.chunk_to_world(chunk_pos)
-		var is_city: bool = terrain.city_chunk(centre_w)
+		var is_city: bool = BudapestStreamer.city_chunk(terrain, centre_w)
 		if not batch.is_empty() and not is_city:
 			_fail("city chunk %s emitted %d boxes but city_chunk() answers false "
 					% [chunk_pos, batch.size()] + "— its batch would cast shadows "
@@ -766,14 +774,14 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 	if terrain.in_budapest(outside.x, outside.z):
 		_fail("check 4's shadow probe is not outside the rect at all (%.0f) — it "
 				% outside.x + "proves nothing")
-	if not terrain.city_chunk(outside):
+	if not BudapestStreamer.city_chunk(terrain, outside):
 		_fail("city_chunk() answers false for a chunk centred %.0f m outside the "
 				% (BudapestPlan.BUDAPEST_MIN.x - outside.x) + "west edge whose "
 				+ "SQUARE still meets Budapest — it is asking about the centre "
 				+ "again, so every chunk on the rect's edge builds city stone that "
 				+ "casts a shadow the owner ruled out")
 	# The other end of the same predicate: a chunk that touches nothing.
-	if terrain.city_chunk(Vector3(BudapestPlan.BUDAPEST_MIN.x - cell_m * 4.0, 0.0, 0.0)):
+	if BudapestStreamer.city_chunk(terrain, Vector3(BudapestPlan.BUDAPEST_MIN.x - cell_m * 4.0, 0.0, 0.0)):
 		_fail("city_chunk() answers true four chunks clear of the rect — it would "
 				+ "strip shadows from ordinary world geometry")
 	print("  shadow: predicate is the chunk SQUARE (probed both ways); %d edge "
@@ -972,7 +980,7 @@ func _check_slicing(terrain: Node3D) -> void:
 				var batch: Array = []
 				var body := StaticBody3D.new()
 				var obstacles: Array = []
-				terrain._spawn_city_landmarks_in_chunk(centre, parent, obstacles, batch, body)
+				BudapestStreamer._spawn_city_landmarks_in_chunk(terrain, centre, parent, obstacles, batch, body)
 				var kept := 0
 				for entry_v: Variant in batch:
 					var key := var_to_bytes(entry_v)
@@ -1619,7 +1627,7 @@ func _check_approach_corridor(terrain_script: GDScript) -> void:
 		# nothing else to read. Measured on the shipped line, between consecutive
 		# coins, which is the only thing the player can see.
 		var pitch: float = BudapestPlan.CITY_COIN_SPACING
-		var line: PackedVector2Array = terrain._approach_coin_line()
+		var line: PackedVector2Array = BudapestStreamer._approach_coin_line(terrain)
 		if line.size() < 2:
 			_fail("seed %d: the approach coin line has %d coins"
 					% [RUN_SEED + s * 977, line.size()])
@@ -1825,7 +1833,7 @@ func _check_spawner_policy(terrain: Node3D) -> void:
 					+ "city rect is supposed to answer no to all five")
 
 		# ...and then the predators, through the same sequence create_chunk runs.
-		terrain.spawn_city_in_chunk(chunk_pos, parent, obstacles, batch, body)
+		BudapestStreamer.spawn_city_in_chunk(terrain, chunk_pos, parent, obstacles, batch, body)
 		terrain.spawn_crocodiles_in_chunk(chunk_pos, parent, obstacles)
 		terrain.spawn_platform_crocodiles(chunk_pos, parent, platforms)
 		terrain.spawn_danube_crocodiles_in_chunk(chunk_pos, parent)
@@ -1979,7 +1987,7 @@ func _croc_ab_field(terrain_script: GDScript, city_on: bool, at: Vector3, reach:
 			terrain.spawn_landmark_in_chunk(chunk_pos, parent, obstacles, batch, body)
 			terrain.spawn_chest_in_chunk(chunk_pos, parent, obstacles, batch, body)
 			if city_on:
-				terrain.spawn_city_in_chunk(chunk_pos, parent, obstacles, batch, body)
+				BudapestStreamer.spawn_city_in_chunk(terrain, chunk_pos, parent, obstacles, batch, body)
 			terrain.spawn_crocodiles_in_chunk(chunk_pos, parent, obstacles)
 			terrain.spawn_platform_crocodiles(chunk_pos, parent, platforms)
 			# ALWAYS, in both legs: the Danube's spawner is a SUBJECT of this
@@ -2166,7 +2174,7 @@ func _outside_predator_field(terrain_script: GDScript, city_on: bool, at: Vector
 			terrain.spawn_landmark_in_chunk(chunk_pos, parent, obstacles, batch, body)
 			terrain.spawn_chest_in_chunk(chunk_pos, parent, obstacles, batch, body)
 			if city_on:
-				terrain.spawn_city_in_chunk(chunk_pos, parent, obstacles, batch, body)
+				BudapestStreamer.spawn_city_in_chunk(terrain, chunk_pos, parent, obstacles, batch, body)
 			terrain.spawn_crocodiles_in_chunk(chunk_pos, parent, obstacles)
 			terrain.spawn_platform_crocodiles(chunk_pos, parent, platforms)
 			terrain.spawn_danube_crocodiles_in_chunk(chunk_pos, parent)
