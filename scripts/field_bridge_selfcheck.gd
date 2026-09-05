@@ -1867,6 +1867,24 @@ func _check_trim_clears_the_lane() -> void:
 	# `_bridge_boxes`' "is this on the deck" filter would drop the very pieces
 	# this check is about.
 	var boxes := _chunk_bridge_boxes(terrain, poly, 2)
+
+	# NON-VACUITY, check 10's `joints < 1` guard one bead along. The lane sweep's
+	# whole subject is the MITRE, and a mitre is only a thing at a TURN — a
+	# straight bridge passes it however the rail is built, so the day seed 11's
+	# first crossing comes out straight this stops measuring in silence.
+	var turns := 0
+	var worst_turn := 0.0
+	for i in range(1, poly.size() - 1):
+		var a: Vector2 = (poly[i] - poly[i - 1]).normalized()
+		var b: Vector2 = (poly[i + 1] - poly[i]).normalized()
+		var turn := acos(clampf(a.dot(b), -1.0, 1.0))
+		if turn > 0.001:
+			turns += 1
+			worst_turn = maxf(worst_turn, turn)
+	if turns < 1:
+		_fail("check 11's bridge (seed %d) is dead straight — its lane sweep"
+				% CROSSING_SEEDS[0] + " cannot see the mitre it exists to"
+				+ " measure, so pick a seed whose first crossing turns")
 	# A hero's body over the deck: ankles, waist, head.
 	var heights: Array[float] = [0.2, 1.0, 1.8]
 	var lanes: Array[float] = []
@@ -1935,21 +1953,82 @@ func _check_trim_clears_the_lane() -> void:
 			if _covered(boxes, Vector3(at.x, b_top - 0.5, at.y)):
 				pylons += 1
 
-	# THE BILL. Trim is boxes, and the bead's own ceiling for a bridge chunk is
-	# the city's per-chunk box budget — the densest thing this engine streams.
-	var per_chunk: Dictionary = {}
+	# THE CENTRE RULE, FOR THE TRIM. Check 2 asks this of the deck, but through
+	# `_bridge_boxes`, which drops every box whose centre is off the walking rect
+	# — i.e. every parapet and every pylon. So the rule the bead names ("each
+	# piece takes it for itself") had no test at all until here.
+	var seen: Dictionary = {}
+	var chunk_m: float = terrain.chunk_size
 	for box_v: Variant in boxes:
-		var cp: Vector2i = box_v["chunk"]
-		per_chunk[cp] = int(per_chunk.get(cp, 0)) + 1
+		var box: Dictionary = box_v
+		var xf: Transform3D = box["xform"]
+		var size := Vector3(xf.basis.x.length(), xf.basis.y.length(), xf.basis.z.length())
+		if size.x > chunk_m or size.z > chunk_m:
+			_fail("a bridge box is %.1f x %.1f m, bigger than the %.0f m chunk"
+					% [size.x, size.z, chunk_m] + " that owns it by the CENTRE rule")
+			break
+		var key := "%.3f|%.3f|%.3f" % [xf.origin.x, xf.origin.y, xf.origin.z]
+		if seen.has(key):
+			_fail("two chunks (%s and %s) both built the bridge piece at %s —"
+					% [seen[key], box["chunk"], key] + " the centre rule must be"
+					+ " half-open on both axes, and it is asked of EVERY box,"
+					+ " not just the deck's")
+			break
+		seen[key] = box["chunk"]
+		# AND THE RULE ITSELF: the chunk that built a box must be the chunk that
+		# CONTAINS it. Dedup alone cannot see this — a parapet emitted under its
+		# SLAB's centre rule is still built exactly once, by a chunk up to 8.25 m
+		# away, and simply pops in and out with the wrong square at the web
+		# build's residency edge. That mutation passes every other assertion in
+		# this file, which is why this line exists.
+		var owner: Vector2i = terrain.world_to_chunk(xf.origin)
+		if owner != box["chunk"]:
+			_fail("chunk %s built a bridge piece whose centre stands in %s —"
+					% [box["chunk"], owner] + " every box takes the centre rule"
+					+ " for ITSELF, and this one took its slab's")
+			break
+
+	# THE BILL, and it is the WHOLE chunk. The bead's ceiling for a bridge chunk
+	# is CITY_CHUNK_BOX_BUDGET, which is a whole-chunk number covering every
+	# spawner — tallying only the bridge's own boxes against it would be an
+	# assertion that can never fire. `_generate` runs create_chunk's real
+	# sequence, so this is the count the streamer actually builds.
+	var budget: int = int(TERRAIN_SCRIPT.get_script_constant_map()["CITY_CHUNK_BOX_BUDGET"])
 	var worst_chunk := Vector2i.ZERO
 	var worst_boxes := 0
-	for cp_v: Variant in per_chunk.keys():
-		if int(per_chunk[cp_v]) > worst_boxes:
-			worst_boxes = int(per_chunk[cp_v])
-			worst_chunk = cp_v
-	var budget: int = int(TERRAIN_SCRIPT.get_script_constant_map()["CITY_CHUNK_BOX_BUDGET"])
-	print("field bridges: densest bridge chunk %s carries %d boxes against"
-			% [worst_chunk, worst_boxes] + " CITY_CHUNK_BOX_BUDGET %d" % budget)
+	var worst_share := 0
+	var deck_chunk := Vector2i.ZERO
+	var deck_boxes := 0
+	var deck_share := 0
+	var billed: Dictionary = {}
+	for p in poly:
+		var cp: Vector2i = terrain.world_to_chunk(Vector3(p.x, 0.0, p.y))
+		for dx in range(-1, 2):
+			for dz in range(-1, 2):
+				var at := cp + Vector2i(dx, dz)
+				if billed.has(at):
+					continue
+				billed[at] = true
+				var built := _generate(CROSSING_SEEDS[0], at, true)
+				var total: int = (built["batch"] as Array).size()
+				var share: int = int(built["bridge_boxes"])
+				if total > worst_boxes:
+					worst_boxes = total
+					worst_share = share
+					worst_chunk = at
+				# The densest chunk in the ring often carries no bridge at all —
+				# it is the budget's subject either way, but the number this bead
+				# moved is the one on a chunk that really holds stone.
+				if share > 0 and total > deck_boxes:
+					deck_boxes = total
+					deck_share = share
+					deck_chunk = at
+				built["terrain"].free()
+	print("field bridges: densest chunk around the bridge %s builds %d boxes"
+			% [worst_chunk, worst_boxes] + " (%d the bridge's); densest chunk"
+			% worst_share + " CARRYING stone %s builds %d (%d the bridge's);"
+			% [deck_chunk, deck_boxes, deck_share]
+			+ " CITY_CHUNK_BOX_BUDGET %d" % budget)
 	if worst_boxes > budget:
 		_fail("a bridge chunk builds %d boxes, over CITY_CHUNK_BOX_BUDGET %d —"
 				% [worst_boxes, budget] + " the trim outgrew the densest thing"
@@ -1957,8 +2036,8 @@ func _check_trim_clears_the_lane() -> void:
 
 	print("field bridges: trim on seed %d — %d stone samples inside the lane,"
 			% [CROSSING_SEEDS[0], blocked] + " %d rail samples missing, %d/4 bank"
-			% [missing_rail, pylons] + " pylons, parapet %.2f m outboard of the"
-			% TERRAIN_SCRIPT.FIELD_BRIDGE_PARAPET_WIDTH + " %.1f m half-width" % half)
+			% [missing_rail, pylons] + " pylons, over %d turning joint(s) (worst"
+			% turns + " %.2f degrees)" % rad_to_deg(worst_turn))
 	if blocked > 0:
 		_fail("%d sample(s) of the deck's own lane have stone in them — the trim"
 				% blocked + " narrowed the walkable width. First: %s" % worst)

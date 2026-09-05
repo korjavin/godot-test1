@@ -1020,23 +1020,40 @@ const FIELD_BRIDGE_STONE := Color(0.58, 0.58, 0.60)
 ## It is the ONE colliding piece of trim — a rail you can walk through is not a
 ## rail — and 1.0 m is chest-high on a hero and far under the jump apex, so it
 ## fences the drop without fencing anybody in.
+##
+## KNOWN CEILING, measured (16 seeds, 458 bridge chunks): every spawner that
+## drops something near a deck reads `field_bridge_surface_y`, which knows the
+## 8 m walking rect and can never see trim — so at a RAMP FOOT, where the rail
+## descends through coin and animal height, 3 road coins in 517 stood inside a
+## parapet and 1 crocodile in ~450 spawned in one. Both are thin-wall cases that
+## depenetration and a 0.6 m pickup sphere resolve, and the alternative is an
+## `obstacles` footprint, which this feature is forbidden (it would push
+## crocodiles off the road and make _settle_coin_y skip the deck's own coins).
 const FIELD_BRIDGE_PARAPET_WIDTH: float = 0.5
 const FIELD_BRIDGE_PARAPET_HEIGHT: float = 1.0
 
 ## The pylon pair at each bank — the portal the Chain Bridge puts at each end of
 ## its span, four boxes instead of ninety-two. They stand from the GROUND to
 ## FIELD_BRIDGE_TOP + rise, so a deck that used to hang in the air is visibly
-## carried at both ends, and they sit on the parapet line (inner face on the
-## parapet's) so nothing of them is ever over the lane.
+## carried at both ends, and they straddle the parapet OUTBOARD of its centre
+## line (see the builder) so nothing of them is ever over the lane.
+##
+## NOT FLUSH WITH THE PARAPET, and that is the whole of the offset: a pylon
+## whose inner face shares the parapet's plane is two coincident opaque faces at
+## every bank of every bridge, i.e. z-fighting on the one thing this bead exists
+## to make look right. It is pushed out half a parapet so the two solids
+## interpenetrate instead of touching.
 ##
 ## NON-COLLIDING, like every other piece of ornament in this game that nobody
 ## needs to climb: they cost the chunk body no shape, and a post at the very
 ## edge of a 16 m deck is scenery, not geometry.
+##
+## The width's real ceiling is `field_bridge_outer_reach()` against the tightest
+## *_ROAD_CLEARANCE (check 5) — 2.0 m of headroom over the deck's half-width,
+## not check 2's "a metre outside the parapet" control, which reads a box list
+## FILTERED to the deck rect and can see no trim at all.
 ## SQUARE IN PLAN, and it was judged by eye: 0.9 x 1.6 read as a dark FIN
-## standing on the deck rather than as a post. 0.9 is also the ceiling — the
-## pylon shares the parapet's inner face, so anything wider would push the
-## bridge's stone past the "a metre outside the parapet is open water" line
-## check 2 controls on.
+## standing on the deck rather than as a post.
 const FIELD_BRIDGE_PYLON_WIDTH: float = 0.9
 const FIELD_BRIDGE_PYLON_DEPTH: float = 0.9
 const FIELD_BRIDGE_PYLON_RISE: float = 3.2
@@ -11595,8 +11612,8 @@ static func field_bridge_outer_reach() -> float:
 	const block), so the stone now reaches further than the lane does and the
 	"no prop can ever stand on a deck" contract is about the stone.
 	"""
-	return FIELD_BRIDGE_HALF_WIDTH \
-			+ maxf(FIELD_BRIDGE_PARAPET_WIDTH, FIELD_BRIDGE_PYLON_WIDTH)
+	return FIELD_BRIDGE_HALF_WIDTH + maxf(FIELD_BRIDGE_PARAPET_WIDTH,
+			FIELD_BRIDGE_PARAPET_WIDTH * 0.5 + FIELD_BRIDGE_PYLON_WIDTH)
 
 
 func _field_bridge_reach() -> float:
@@ -11961,9 +11978,14 @@ func _field_bridge_rail_line(poly: PackedVector2Array, offset: float) -> PackedV
 				else d_in
 		var bis := (Vector2(d_in.y, -d_in.x) + Vector2(d_out.y, -d_out.x)).normalized()
 		# Scale the bisector so its projection on either normal is exactly
-		# `offset`. Floored, because a hairpin sends the mitre to infinity — this
-		# road's heading cap cannot make one, and a floor is cheaper than a
-		# special case nobody can reach.
+		# `offset`. Floored because a hairpin sends the mitre to infinity, and
+		# the floor is NOT a graceful cap: under it the rail lands at
+		# 2 * offset * proj, i.e. INSIDE the lane, which is the very thing this
+		# function exists to prevent. It is unreachable on this road — proj is
+		# cos(turn / 2) and needs a 120 degree joint against a measured worst of
+		# 22.41 (minimum proj over 45 bridges: 0.9809) — so it is a guard against
+		# a division, not a supported case. Widen the turn cap and this needs a
+		# real answer.
 		var proj := maxf(bis.dot(Vector2(d_out.y, -d_out.x)), 0.5)
 		out.append(poly[i] + bis * (offset / proj))
 	return out
@@ -12597,7 +12619,10 @@ func spawn_field_bridges_in_chunk(chunk_pos: Vector2i, block_batch: Array,
 		var row: Dictionary = row_v
 		var poly: PackedVector2Array = row["poly"]
 		# The two parapet lines, mitred, one per deck edge — segment `i` of each
-		# belongs to slab `i`. Built once per row, not once per chunk-and-slab.
+		# belongs to slab `i`. Once per row per CHUNK, not once per slab: it is
+		# pure in the row (so it is cached nowhere and can leak across no
+		# re-seed) and it is a couple of dozen normalises against a window scan
+		# this feature already budgets in milliseconds.
 		var rail_off: float = float(row["half"]) + FIELD_BRIDGE_PARAPET_WIDTH * 0.5
 		var rails: Array[PackedVector2Array] = [
 			_field_bridge_rail_line(poly, rail_off),
@@ -12674,8 +12699,12 @@ func spawn_field_bridges_in_chunk(chunk_pos: Vector2i, block_batch: Array,
 			var b_perp := Vector2(b_dir.y, -b_dir.x)
 			var b_top := FIELD_BRIDGE_TOP + FIELD_BRIDGE_PYLON_RISE
 			for side in [-1.0, 1.0]:
+				# OUTBOARD OF THE PARAPET'S CENTRE LINE by half a pylon, so the
+				# two solids interpenetrate rather than share a face — see the
+				# const block for why flush is z-fighting and not tidiness.
 				var at: Vector2 = Vector2(bank["at"]) + b_perp * (side
-						* (float(row["half"]) + FIELD_BRIDGE_PYLON_WIDTH * 0.5))
+						* (float(row["half"]) + FIELD_BRIDGE_PARAPET_WIDTH * 0.5
+								+ FIELD_BRIDGE_PYLON_WIDTH * 0.5))
 				if world_to_chunk(Vector3(at.x, 0.0, at.y)) != chunk_pos:
 					continue
 				create_box(
