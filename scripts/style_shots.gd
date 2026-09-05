@@ -125,8 +125,8 @@ func _run() -> void:
 	if camp != Vector3.INF:
 		# Stand off the camp and look back at it, the field bridge's idiom: the
 		# huts are the subject, so the camera wants them in front of it.
-		await _shoot(terrain, player, camp + Vector3(-11.0, 0.0, -7.0),
-				atan2(-11.0, -7.0), "2c_camp")
+		await _shoot(terrain, player, camp + Vector3(-16.0, 0.0, -10.0),
+				atan2(-16.0, -10.0), "2c_camp")
 	else:
 		print("[SHOTS] no camp within the sweep on seed ", SEED, " — skipped")
 	await _shoot(terrain, player, street, -PI * 0.5, "3_budapest")
@@ -353,23 +353,34 @@ func _find_camp(terrain: Node) -> Vector3:
 		for cz in range(-6, 7):
 			var chunk := Vector2i(cx, cz)
 			var parent := MeshInstance3D.new()
+			parent.position = terrain.chunk_to_world(chunk)
 			var batch: Array = []
 			var body := StaticBody3D.new()
-			var obstacles: Array = []
+			var platforms: Array = []
+			# THE REAL SEQUENCE, not the camp call on its own: a camp accepts the
+			# first spot that clears `_biome_spot_ok`, which reads the `obstacles`
+			# the earlier spawners filled — so probing with an empty list picks a
+			# spot the shipped chunk rejects, and the camera then frames bare grass
+			# beside the camp (measured the slow way).
+			var obstacles: Array = terrain.spawn_objects_in_chunk(chunk, platforms, batch, body)
+			terrain.spawn_biome_content_in_chunk(chunk, obstacles, batch, body)
+			var before: int = batch.size()
 			terrain.spawn_camp_in_chunk(chunk, parent, obstacles, batch, body)
-			var built := not batch.is_empty()
+			var built: int = batch.size() - before
 			body.free()
 			parent.free()
-			if not built:
+			if built == 0:
 				continue
-			# The camp's own centre, not the chunk's: a camp sits wherever inside
-			# its chunk the spawner put it, and a 50 m chunk is wide enough that
-			# framing the chunk centre shows you empty grass next to a camp.
+			# The camp's own centre, not the chunk's, and only the CAMP's boxes: a
+			# 50 m chunk is wide enough that framing its centre shows you empty
+			# grass next to a village.
 			var mean := Vector3.ZERO
-			for entry_v: Variant in batch:
-				mean += (entry_v as Dictionary)["transform"].origin
-			mean /= float(batch.size())
-			return terrain.chunk_to_world(chunk) + Vector3(mean.x, 2.0, mean.z)
+			for i in range(before, batch.size()):
+				mean += (batch[i] as Dictionary)["transform"].origin
+			mean /= float(built)
+			var at: Vector3 = terrain.chunk_to_world(chunk) + Vector3(mean.x, 2.0, mean.z)
+			print("[SHOTS] camp in chunk ", chunk, ": ", built, " boxes, centre ", at)
+			return at
 	return Vector3.INF
 
 func _shoot(terrain: Node, player: Node3D, where: Vector3, yaw: float, name: String) -> void:
