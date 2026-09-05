@@ -73,10 +73,13 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            without, and the aspect fallback driven at BOTH ends
 #                            of ROUND_COLLIDER_MAX_ASPECT. Check 5 is
 #                            the PER-BIOME DRAW-CALL BILL, iterating the Biome
-#                            enum over both shipped field spawners: a forest
-#                            chunk builds exactly TWO nodes (BlockMultiMesh +
-#                            BlockMultiMesh_SPHERE, the canopies) and every
-#                            other biome exactly one
+#                            enum over both shipped field spawners: one node per
+#                            kind PRESENT and never more than that biome's
+#                            KIND_CAP_BY_NAME row (desert 4 — its oasis adds
+#                            CYLINDER palms and CONE fronds to the ROCK it
+#                            already had; forest 3 — cubes, SPHERE canopies and
+#                            ROCK boulders; every other band 2), with the SHARE
+#                            of chunks paying printed beside the worst case
 #   fauna_selfcheck          herd steering + rider carry, plus row 6 the MP
 #                            REPLAY: one seed gives two byte-identical builds, a
 #                            joiner is snapped onto the live sample, a replay
@@ -112,7 +115,17 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            plus `hermetic_stores`: every `*_selfcheck.gd` in the
 #                            glob opens `Sentinel.isolate_user_state()` and names
 #                            no real `user://` path
-#   wade_selfcheck           river wading (player, croc, boss)
+#   wade_selfcheck           river wading (player, croc, boss) — plus the DEEP
+#                            CHANNEL (bd godot-test1-06o.3): check 8 the rule on
+#                            the real field (the strip inside the band, the outer
+#                            band free, Y-aware, the push climbing OUT, the
+#                            Danube's centre impassable, every authored deck dry
+#                            above and wet below, Margaret Island dry), check 9
+#                            the SOFTLOCK GATE (20 seeds of road plus the T ->
+#                            gate corridor: every crossing bridged or forded),
+#                            check 10 a REAL player.tscn walked into a REAL
+#                            channel and held out, with the seam switched off as
+#                            the mutation control
 #   field_bridge_selfcheck   FIELD BRIDGES where the road crosses a river: every
 #                            crossing under the span cap bridged exactly once
 #                            over 12 seeds (with the lake case counted), the
@@ -364,10 +377,26 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            against the real capsule and TEIBI_SCALE_SMALL and
 #                            asserted to be a dead end; and one dossier taken
 #                            for real coins, hidden, and refusing to pay twice
+#   tower_guard_selfcheck    the HQ's guards, split off tower_interior by bd
+#                            godot-test1-ftn.25 (CI shards the glob BY FILE) with
+#                            the check NUMBERS unchanged: 12 the posts (counted off
+#                            the BODIES, GUARDS_PER_STOREY_MAX, the capsule through
+#                            every doorway), 13 the population resets and the opened
+#                            set does not, 14 the leash held against a real 8 s
+#                            chase, and 21/21b the lure — one storey DRIVEN, the
+#                            other seventeen (post, plate) pairs routed on the plans
+#   tower_block_lure_selfcheck
+#                            check 21c ALONE, and alone because it is a minute: the
+#                            cell block's guard walks 60 m of route to a plate, holds
+#                            facing it, and walks off again. Same split
 #   capture_selfcheck        SYSTEMIC CAPTURE and the tower guard's stake: the
 #                            arming gate (pre/post the
 #                            authored beat), attribution (every `captures_hero`
 #                            row takes one, animals and row-less hazards none),
+#                            THE CAPTION either path draws on a real
+#                            `respawn_label` Label ("Caught!" for the arrest,
+#                            "Robbed!" for the bite, each asserting the OTHER
+#                            sentence is absent so a swap fails twice),
 #                            the guard's arrest in place vs its PRE-BEAT
 #                            setback+knockback, invulnerability covering the hero too, the
 #                            clean auto-switch, liberation, the empty-roster game
@@ -423,7 +452,7 @@ before `locale_selfcheck`** — otherwise it reports the stale imported table.
 The lobby in `server/` is a separate Go service with its own `go test` suite.
 
 3D character models are **generated by Python** (`python3 scripts/generate_*.py`, needs
-the PINNED `trimesh` + `numpy` of `scripts/requirements.txt` — CI compares the rebuilt
+the PINNED toolchain of `scripts/requirements.txt` — CI compares the rebuilt
 `.glb` bytes against the committed ones, so an unpinned install is a red build, not a
 convenience), output to `assets/models/characters/`. The live Windman is the
 separate parts in `windman_parts/`, assembled by `scenes/characters/windman_updated.tscn`
@@ -433,10 +462,44 @@ The biome-predator models — five animals, the GD-SURVEY hunter robot and the n
 hydra, green dragon and roc bosses — share one
 toolkit, `scripts/predator_parts.py`, which carries the orientation / feet-at-y=0 /
 one-vertex-coloured-mesh contract an enemy model must honour and asserts it on every
-build. Running it directly rebuilds and checks all TWELVE models:
+build. Running it directly rebuilds and checks all THIRTEEN models:
 `python3 scripts/predator_parts.py` -> `SELFCHECK OK`. The two HUMANOID bosses (titan,
 clown) are rebuilt by that loop but carry their own `verify_*`, because the shared one
-demands a quadruped's longer-than-wide silhouette — see the note over the loop. Two of its primitives are
+demands a quadruped's longer-than-wide silhouette — see the note over the loop; the
+CROCODILE is the thirteenth and owes none of the three contracts (it predates the
+toolkit), but it shares `export_faceted`, so the loop rebuilds it or the one model the
+seam could rot is the only one CI's staleness gate cannot see.
+
+**A FOURTH CONTRACT, AND IT IS A PROPERTY OF THE EXPORT RATHER THAN OF THE SHAPE**
+(bead `godot-test1-y1o.20`, epic `y1o`'s style A): `export_faceted()` is the ONE
+seam every `.glb` THE BUILD SHIPS is written through — the dead `windman.glb` is
+the one exception and is still unfaceted — and it unmerges the mesh
+(per-face vertices, face count untouched) before asking for normals — trimesh writes no
+NORMAL attribute unless asked and Godot generates none on import, so the cast
+used to render with a constant normal and no facet caught the key light; asking
+without unmerging would instead have Gouraud-rounded every block. It computes the
+normals BY HAND off the float32 positions, because `mesh.vertex_normals` weights
+by `arccos` and rotated parts come out of `sin`/`cos` — libm is not bit-identical
+across platforms, and CI byte-compares the rebuild. Read the docstring before
+touching it.
+
+**THE FOUR HEROES ARE ON IT TOO** (bead `godot-test1-y1o.21`, owner ruling
+2026-09-05 asked whether to facet the heroes as well: *"all"*). The four
+`generate_*_separate.py` import `export_faceted` from the predator toolkit — the
+function is the whole cast's, not the predators', and a module for one function
+is a file to keep in step for no gain. They owe none of the three contracts above
+and gain none by importing it; vertex colours, part names and the
+`Body` / `LeftArm` / `RightArm` / `LeftLeg` / `RightLeg` node-name animation
+contract are untouched. **They are NOT in `predator_parts.py`'s loop**, and that
+is deliberate: Primm's trim and Windman's emblem are `extrude_polygon`, so they
+need `shapely` + `mapbox-earcut` (pinned beside trimesh), and folding them in
+would make the documented predator rebuild hard-fail for anyone without them. CI
+runs them as their own `build.yml` step instead; the staleness gate below already
+globs the whole of `assets/models/characters`, `*_parts/` included, so it covers
+them with no edit. The monolithic `windman.glb` and its two generators are DEAD
+ART and deliberately untouched — bead `godot-test1-y1o.19`'s.
+
+Two of `predator_parts`' primitives are
 composed INTO models rather than being models — `wings()` (the winged bosses' folded
 silhouette; they hop, nothing in this game flies) and `necks()` (a fan of necks and
 heads off ONE point on the spine, the multi-head capability the hydra spends) — so each
@@ -499,7 +562,8 @@ Load-bearing rules:
   lands there, not in the world engine.**
 - **A BOX HAS A MESH KIND, AND EVERY UNIT MESH FITS THE UNIT CUBE** (bead
   `godot-test1-y1o.1`, epic `y1o` "get rid of blocks"). The batch entry is
-  `{transform, color, kind}` — `ChunkBatch.BoxKind` (CUBE / SPHERE / CONE / CYLINDER), a
+  `{transform, color, kind}` — `ChunkBatch.BoxKind` (CUBE / SPHERE / CONE / CYLINDER /
+  ROCK), a
   trailing optional on `create_box` defaulting to CUBE, **always written** so the entry
   shape stays uniform (the whole-dict `var_to_bytes` signatures both `prop_selfcheck` and
   `budapest_selfcheck` compare would otherwise differ between two runs that agree about
@@ -515,7 +579,9 @@ Load-bearing rules:
   INSCRIBED in `dimensions` exactly like the mesh; the cylinder's axis is local Y, where
   `CylinderMesh` puts it, never "the long axis"), and a CONE plus anything squashed past
   `ROUND_COLLIDER_MAX_ASPECT` (1.6 — no `SphereShape3D` is an ellipsoid) keeps the bounding
-  box. The shape COUNT is untouched, which every collision budget in the suite rests on.
+  box, **and so does every ROCK, at every aspect and on purpose** (bead `godot-test1-y1o.3`:
+  a rock's flat lid IS the box's top face, which is the whole reason the kind exists).
+  The shape COUNT is untouched, which every collision budget in the suite rests on.
   **The CONE is the one kind still wrong on purpose** (Godot has no cone primitive), so
   nothing a player can reach may be a colliding cone — `landmark_selfcheck` check 9c; and
   **`_build_block_multimesh` emits one `MultiMeshInstance3D` per kind PRESENT** — a
@@ -528,16 +594,55 @@ Load-bearing rules:
   pre-build sweep cannot see. The city splitter **carries `kind` and leaves a non-CUBE
   entry whole**: a cut cone is not two cones. Choosing a kind costs **no RNG draw**, so it
   can never move a spawn.
-  **THE FOREST IS THE FIRST CONSUMER AND SO FAR THE ONLY ONE** (bead
-  `godot-test1-y1o.2`): every tree's 2-3 canopy layers are `BoxKind.SPHERE` blobs
-  (`TREE_CANOPY_BLOB_HEIGHT` / `_OVERLAP`, both DERIVED from the width the layer
-  already drew — so not one RNG draw moved and the biome stream is byte-identical),
-  the trunk stays a `CUBE` because it is the one COLLIDING box in a tree, and a
-  forest chunk therefore costs **+1 draw call and nothing else in the world costs
-  anything**. `batch_selfcheck` check 5 bills that per biome off the `Biome` enum;
-  `prop_selfcheck` check 10 asserts the two kinds tree by tree. **A new consumer is a
-  named bead judged BY EYE by the owner** — the epic's rule — plus whatever that
-  check-5 bill has to become.
+  **THE FOREST WAS THE FIRST CONSUMER** (bead `godot-test1-y1o.2`): every tree's 2-3
+  canopy layers are `BoxKind.SPHERE` blobs (`TREE_CANOPY_BLOB_HEIGHT` / `_OVERLAP`,
+  both DERIVED from the width the layer already drew — so not one RNG draw moved and
+  the biome stream is byte-identical), and the trunk stays a `CUBE` because it is the
+  one COLLIDING box in a tree. `prop_selfcheck` check 10 asserts the two kinds tree by
+  tree.
+  **ROCKS ARE THE SECOND, AND THEY ARE IN EVERY BIOME** (bead `godot-test1-y1o.3`).
+  `BoxKind.ROCK` is a faceted dome with a FLAT LID at exactly y = +0.5 (built from
+  `UNIT_ROCK_PROFILE`, whose jitter only ever SUBTRACTS so the unit-cube fit is
+  structural) that keeps its `BoxShape3D`, because most rocks carry a CLIMBABLE
+  footprint and a squashed sphere's surface falls away from the box top — the hero
+  would stand floating over the rim. Six prop builders and the oasis boulders take it;
+  the **cairn's tiers stay CUBE** (a cairn IS stacked flat stones) and only its loose
+  foot stones are rocks. `prop_selfcheck` check 11 reads `BUILDER_KINDS` BOTH ways, so
+  a revert to CUBE is a red build.
+  **THE DESERT IS THE THIRD** (bead `godot-test1-y1o.4`): cactus segments and their
+  ARMS plus the oasis palm TRUNKS are `BoxKind.CYLINDER`, and the palm FRONDS are
+  `BoxKind.CONE`, tip out. Two of those needed the LOCAL-Y problem solved — the unit
+  cylinder and cone both taper/extend along local Y, while an arm's length was on
+  local X and a frond's on local Z, so each swaps its dimensions into the Y slot and
+  gains a quarter turn of tilt. Both are DERIVED from numbers already drawn (bead
+  y1o.2's canopy rule), so **not one RNG draw moved and not one footprint changed**;
+  what does change is those entries' dimensions and, for the near-cubic-in-plan
+  segments and trunks, their collider — `collision_shape_for` now gives them a real
+  `CylinderShape3D`, which is the honest shape for a round trunk, leaves the shape
+  COUNT untouched and can only ever un-block a spot (the cactus and palm footprints
+  are both non-climbable, so nothing stands on the difference).
+  **THE DUNES STAYED CUBE, and that is a measured refusal, not an omission.** The bead
+  offered the lower tier a flattened SPHERE *if* the top tier kept its cube flat top;
+  the gameplay half passed, it was built and rendered, and a tier 6-12 m wide and
+  under 0.8 m tall makes a LENS the square top tier visibly overhangs. The picture is
+  written up in `_spawn_desert_dunes`' docstring and `prop_selfcheck` check 11 fails
+  any non-CUBE dune tier so the refusal cannot be quietly undone.
+  **THE BILL IS NO LONGER "NOTHING ELSE COSTS ANYTHING", AND THE FREQUENCY IS THE
+  NUMBER THAT MATTERS.** `batch_selfcheck` check 5 is now one node per kind PRESENT
+  against `KIND_CAP_BY_NAME` (desert 4, forest 3, every other band 2) and prints the SHARE of
+  chunks paying beside the worst case: measured at bead y1o.3, **89% of stone-bearing
+  field chunks gained a block draw call** and the field's total went 709 -> 1262
+  (+78%), ~56 -> ~100 in the web build's 49-chunk residency. The CITY band's cap is 2
+  even though no city builder draws a rock, because `_build_prop` themes per PROP
+  POSITION rather than per chunk centre — a city chunk on a plains edge grows a plains
+  boulder. **The DESERT's cap is 4 and it is the one row past the epic's "+2"** — bead
+  y1o.4's own budget was written before its dependency y1o.3 gave the band a ROCK, and
+  the fourth bucket is the CONE fronds, which appear in the OASIS and nowhere else:
+  measured over 2,814 stone-bearing desert chunks, 3.9% carry four and 20.9% three.
+  The one-line way back under three (fronds share the trunks' CYLINDER, losing their
+  taper) is written at `KIND_CAP_BY_NAME` and is an owner's call about a picture.
+  **A new consumer is a named bead judged BY EYE by the owner** — the epic's
+  rule — plus whatever that check-5 bill has to become.
 - **Chunk-parented, so unloading frees it.** Anything spawned per-chunk parents to the
   chunk MeshInstance3D or it leaks.
 - **Footprints are the shared currency.** Each thing built appends
@@ -774,8 +879,17 @@ lifted out of it whole** by bd `godot-test1-ftn.12` and neither may drift back:
 dressers) and `scripts/tower_dossiers.gd` (`TowerDossiers` — the evidence dossiers).
 Both are static libraries in `landmark_builders.gd`'s idiom, reaching back into
 `TowerInterior` for the plan-grid readers and the palette; that direction is one-way and
-`plan_boxes()` is the single seam the dressing enters through. Four rules of its
-own, all pinned by `tower_interior_selfcheck`:
+`plan_boxes()` is the single seam the dressing enters through. **A THIRD family went the
+same way** (bd `godot-test1-ftn.19`): `scripts/tower_plan_boxes.gd` (`TowerPlanBoxes`) is
+the plan walker and the geometry banner it reads — `plan_boxes` / `all_boxes` /
+`_merge_walls` / the `plan_route` BFS, plus `FLOOR_Y`, `SLAB_*`, `PLAN_RAMP_MAX_SLOPE` and
+the two budgets — with `TowerInterior` keeping a `const` alias or a one-line static
+forwarder for every name anything calls, so its forty-four `FLOOR_Y` readers and
+thirty-seven `_grid_x`/`_grid_z` readers were untouched by the move. **The const
+direction is ONE WAY** (`TowerInterior` → `TowerPlanBoxes`); the reach back for the
+palette and the set-piece builders is only ever inside a function body, which is the same
+shape as the dressing above and the only reason neither pair is a parse-time cycle. Four
+rules of its own, all pinned by `tower_interior_selfcheck`:
 
 - **No interior traversal may demand a jump-height.** The base apex (3.6125 m) is what
   mountain impassability rests on, so a storey you can jump onto is a bug the day
@@ -1083,27 +1197,65 @@ Don't simplify any line of it back to scalar arithmetic.
 **WADING IS Y-AWARE; THE BAND IS NOT** (bead `godot-test1-06o.2`). `is_river_at()` stays
 XZ-only — it is the band the shader paints, and the parity contract above is about it.
 Whether a *body* is in the water is the narrower question `is_wading_at(pos)` answers:
-`pos.y < WADE_SURFACE_MAX` (0.6 m) **and** `is_river_at`. That rule has ONE home and
+`pos.y < WADE_SURFACE_MAX` (0.6 m) **and** the band. That rule has ONE home and
 three callers — the player's `is_wading`, the remote avatar's sink, the crocodile's
 `_tick_river_sink` (plus the minimap's "in a river" readout) — because a fourth caller
-would be a fourth chance to forget the height. It needs **no shader edit**: the water is
-still painted under a bridge, which is correct.
+would be a fourth chance to forget the height. The water is still *painted* under a
+bridge, which is correct.
 
-**It does NOT close Budapest's "walk the river bed under a deck" gap, and the reason is one
-layer down**: inside the rect `is_river_at` delegates to `BudapestPlan.danube_wet()`, which
-already subtracts every `DRY_RECTS` row — so the bed under the four authored decks answers
-DRY before the height rule is ever asked, for players, avatars, crocodiles and the map
-alike. Closing it means asking the band WITHOUT the cutout on the low-Y path, and the
-cutout is shared with MARGARET ISLAND, which is dry LAND at y = 0 and must stay dry — so it
-is a bridge-rects-only exception, a Budapest behaviour change, and bead
-`godot-test1-06o.3`'s to make with the not-walkable ruling in hand.
+**AND THE MIDDLE OF EVERY RIVER IS NOT WALKABLE** (bead `godot-test1-06o.3`, owner
+ruling 2026-09-04 re-asked 2026-09-05: *"why rivers, and danube are still walkable? fix
+this"*). The inner `RIVER_DEEP_FRACTION` (0.4) of a band is a DEEP CHANNEL a body is
+pushed back out of; the outer band still wades at exactly today's numbers, so
+`WADE_SPEED_FACTOR` / `WADE_RUN_MIN_SPEED` and the catchable-walk chain are untouched.
+Four rules, all pinned by `wade_selfcheck` checks 8-10:
 
-**THE ROAD CROSSES A RIVER ON A BRIDGE, and that is what keeps a run crossable** when
-bead `godot-test1-06o.3` makes a channel not walkable. `spawn_field_bridges_in_chunk`
+- **ONE FIELD FOR BOTH RIVERS.** `river_depth_at()` normalises the noise contour and the
+  authored Danube to the same 0 (centreline) .. 1 (bank) number; `is_wading_at` is
+  `< 1.0` on it and `deep_channel_push()` is `< RIVER_DEEP_FRACTION` on it. The push
+  DIRECTION is finite-differenced off `_river_signed_raw` — the same field without the
+  absolute value and without the masks — because `river_depth_at` has a KINK on the
+  centreline that pointed 1% of pushes back into the water, and because a probe that
+  stepped onto the tower disc or Margaret Island would read a cliff. Two extra
+  evaluations, paid only by a body already inside a strip. The Danube is in scope by
+  name — its channel is impassable and the four authored decks are the crossing.
+- **THE ROAD IS THE WAY THROUGH, and `_deep_channel_ford` is the one exemption.** A road
+  crossing the field bridges REFUSED (past `FIELD_BRIDGE_MAX_SPAN` of walked water)
+  keeps a road-width ford through the strip, because walling it would softlock the road
+  it stands on. Two wrong answers are recorded at the function: a WIDTH THRESHOLD (the
+  cap counts the water the road WALKS, and a band crossed at an angle walks more of it
+  than it is wide — one blocked crossing in 39), and `field_bridge_at(k0).is_empty()`,
+  which is `{}` for three reasons and only two of them mean unbridged (a MERGED deck's
+  row belongs to its western anchor, and two of its returns are un-memoized "the cache
+  is short right now"). It asks `field_bridge_surface_y` — is there STONE here — which
+  is the query `wade_selfcheck` check 9 itself uses.
+- **A CHANNEL CAN BE JUMPED, and that is a measured ceiling rather than a hole.** The
+  push is the player's STEP 8.5, gated on `is_wading`, so an airborne body is never
+  pushed — deliberately, since flying over the band always was legal. A typical field
+  river's strip is ~4.8 m across (median over 178 samples; p90 11 m) against a ~9.6 m
+  wading jump, so an ordinary Space press clears the median river; the Danube's 96 m
+  channel and the wide bands do not budge. Closing it means pushing an airborne body,
+  which is an invisible air wall and needs an owner ruling.
+- **`is_river_at` DID NOT MOVE.** The band is still XZ-only and still subtracts every
+  `DRY_RECTS` row, so the shader, every spawner and the minimap see exactly what they
+  saw. The shader gained one smoothstep and one mix — the strip painted darker off the
+  same normalised depth, in both languages — and deliberately does NOT run the ford
+  exemption (a station search per fragment for a gap at one crossing in 39).
+- **BUDAPEST'S UNDER-DECK GAP IS CLOSED, bridge-rects-only.** The low-Y path subtracts
+  only the `DRY_RECTS` rows that are dry LAND (`BudapestPlan.is_dry_land`, read off
+  `BRIDGES` so "which rows are decks" is never a second list): at y = 0 under an
+  authored deck you are in the Danube, at deck height you are not, and MARGARET ISLAND
+  keeps its cutout because it is land. `budapest_city_selfcheck` check 14 is unmoved —
+  it asks `is_river_at`.
+
+**THE ROAD CROSSES A RIVER ON A BRIDGE, and that is what keeps a run crossable** now
+that bead `godot-test1-06o.3` has made the channel not walkable.
+`spawn_field_bridges_in_chunk`
 builds one low stone footbridge per road river crossing — the anchor is the station that
 ENTERS the water (wet here, dry behind), so "one bridge per crossing" is a definition and
 not a de-duplication pass; the span walks forward to the far bank and refuses past
-`FIELD_BRIDGE_MAX_SPAN` (a lake, which wades and is 06o.3's problem). Five rules:
+`FIELD_BRIDGE_MAX_SPAN` (a lake, which wades — and which `_deep_channel_ford` therefore
+leaves a road-width gap in the deep channel for). Five rules:
 **zero RNG** (the site is the road's centreline plus the river field, both pure; the boxes
 come off a private fixed-seed stream), so the A/B proves every other spawner is
 byte-identical; **no `obstacles` footprint** — a bridge is meant to be walked, and a
@@ -1225,7 +1377,21 @@ Transient ability state is cleared on respawn and on character switch, so a powe
 bleeds across a death or a swap.
 
 ### Per-character special abilities (F)
-All in `player_controller.gd`; `try_activate_ability()` dispatches on character name and
+**The ARMS live in `scripts/player_abilities.gd`** (`class_name PlayerAbilities`, bd
+`godot-test1-ftn.15`) — `player_animation.gd`'s `RefCounted`-holding-the-player idiom one
+concern along, created in `_init()` and handed `self`. The ability constant banner moved
+with them and is **aliased back** on the player (`const TEIBI_SCALE_BIG :=
+PlayerAbilities.TEIBI_SCALE_BIG`), so every outside reader is untouched. Two things
+deliberately stayed: the ability **STATE VARS** (`ability_cooldowns`, the two Windman
+timers, `teibi_size_state` / `teibi_form_timer` / `is_giant`, …), because `mp_manager`'s
+`ab` presence bits, the HUD getters, `player_animation` and four self-checks bind them on
+the NODE; and **every function NAME**, as a one-line forwarder — the "player" group answers
+to one node, and `ability_hud.gd`, `mp_manager.gd`, `tower_interior.gd`,
+`player_animation.gd`, `coin.gd` and six self-checks call these names on it. `WINDMAN_AIR_SPEED`
+is the one const that could not move: it is `WALK_SPEED * 5.0`, and a `preload` back would
+be the cycle.
+
+All dispatched from `player_controller.gd`; `try_activate_ability()` dispatches on character name and
 every ability is gated by a per-character cooldown. windman → Air Rush (fly fast, softened
 gravity); primm → Phase Step (blink that scans outward for a spot the body fits, so it can
 never land inside geometry); teibi → Resize (small/giant, auto-reverts on a timer, giant
@@ -1305,6 +1471,17 @@ above the dispatch. The timber wolf is the first: each one steers to its own slo
 ring around the quarry, derived from its own deterministic id, so the pack surrounds with
 no coordinator, no registry and no group scan — which is also what makes it LOD-safe (a
 slept wolf corrupts nothing, a waking one recomputes with no lurch).
+
+**WHERE A UNIT AIMS IS `scripts/croc_steering.gd`; WHAT IT DOES ABOUT IT IS THE ARM.**
+`CrocSteering` (all static, bd `godot-test1-ftn.16`) holds the eight PURE functions —
+`hunt_steer_point`, `charge_steer_point`, `pack_steer_point`, `ranged_shot_due`,
+`leap_airtime` / `leap_reach` / `leap_due`, `burst_cycle_factor` — each taking its quarry,
+position, lock Dictionary and `SPECIES` row explicitly and answering a point, a number or
+a bool. That purity is what lets `enemy_behavior_selfcheck` measure the pack surround, the
+charge sidestep and both races with no body in the tree, so **keep them pure**. The
+`_behave_*` arms stay on the body with the dozen instance vars they drive, and
+`PACK_FLANK_TAPER` moved with the one function that reads it (aliased back, so
+`get_script_constant_map()` still answers).
 
 Per-instance speed and size rolls are **not** deterministic (they use a `randomize()`d
 RNG); only *positions* are. Bosses skip both rolls — `setup_as_boss()` must be called
@@ -1557,6 +1734,16 @@ Every other contact is a TAX, never an ending: `hit_by_crocodile()` → freeze/f
 tower press, a boss projectile — pays `DEFAULT_COIN_SETBACK`) → **soft respawn in place** (frozen
 grace, then invulnerable blinking). **Lifetime coins are never deducted** — the bill comes
 off the RUN's coins alone.
+
+**AND THE CAPTION SAYS WHICH ONE HAPPENED** (owner 2026-09-04, bead `godot-test1-tuc`).
+The respawn countdown used to read "Caught!" for every contact, which told the player they
+had lost a hero to every crocodile in the field. "Caught!" is now the ARREST alone — a
+`captures_hero` row, post-beat, that really does put a hero in a cell — and an ordinary
+bite reads **"Robbed!"**, which is what it did. It is decided by `caught_was_arrest`, a
+SECOND latch beside `caught_captured` and deliberately not a reuse of it: the bill SPENDS
+`caught_captured` (`capture_selfcheck` asserts that clearing by name, because a latch left
+armed waives the next indoor hit's knockback), and the countdown is drawn a whole freeze
+later. One evidence site in `hit_by_crocodile()`, two lifetimes.
 
 **A BITE IS WHERE A LEG IS BANKED**, though, so a death is not store-free:
 `_on_caught_finished()` calls `_bank_records()`. With no hearts most runs never reach an

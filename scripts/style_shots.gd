@@ -101,6 +101,12 @@ func _run() -> void:
 	# pair lands on byte-identical world content.
 	var field := _find_biome(terrain, terrain.Biome.PLAINS)
 	var forest := _find_biome(terrain, terrain.Biome.FOREST)
+	# DESERT and SNOW join the set for bead godot-test1-y1o.23: that bead repaints
+	# the GROUND, and these are the two bands where the ground is most of the frame
+	# — a forest shot is mostly canopy. Additive, so every existing shot name and
+	# every earlier A/B pair is untouched.
+	var desert := _find_biome(terrain, terrain.Biome.DESERT)
+	var snow := _find_biome(terrain, terrain.Biome.SNOW)
 	var street := Vector3(1600.0 + 5.0 * 62.0, 0.0, 3.0 * 62.0)
 	# ...and one on a real AVENUE (bead 8gw.23): every CITY_AVENUE_EVERY-th grid
 	# line is the only place traffic_manager puts a car, so an ordinary street is
@@ -108,6 +114,13 @@ func _run() -> void:
 	var avenue := Vector3(1600.0 + 5.0 * 62.0, 0.0, 0.0)
 
 	print("[SHOTS] field=", field, " forest=", forest, " street=", street, " avenue=", avenue)
+	# _find_biome SILENTLY falls back to a fixed spot when its sweep finds nothing,
+	# which would hand you a "snow" shot of plains and no way to tell. Print the
+	# biome each spot actually resolved to, so a fallback is visible in the log.
+	for probe: Array in [[field, "1_field"], [forest, "2_forest"],
+			[desert, "1b_desert"], [snow, "1c_snow"]]:
+		var p: Vector3 = probe[0]
+		print("[SHOTS] ", probe[1], " at ", p, " is biome ", terrain.biome_at(p.x, p.z))
 
 	# THE CAST (bead godot-test1-y1o.22) — a hero AND a predator in frame, at three
 	# light levels, so the owner can rule on `DIFFUSE_TOON` vs the world's Burley
@@ -121,6 +134,8 @@ func _run() -> void:
 	await _shoot(terrain, player, street, -PI * 0.5, "cast_3_budapest")
 
 	await _shoot(terrain, player, field, 0.0, "1_field")
+	await _shoot(terrain, player, desert, 0.0, "1b_desert")
+	await _shoot(terrain, player, snow, 0.0, "1c_snow")
 	await _shoot(terrain, player, forest, 0.0, "2_forest")
 	await _shoot(terrain, player, street, -PI * 0.5, "3_budapest")
 	await _shoot(terrain, player, avenue, -PI * 0.5, "3b_budapest_avenue")
@@ -246,10 +261,12 @@ func _shoot_field_bridge(terrain: Node, player: Node3D) -> void:
 	costs nothing and lands in the same place every run — the same property the
 	landmark shots lean on one table along.
 	"""
-	# THE ROAD CACHE IS NOT DROPPED BY set_run_seed(), only by new_run(), so a
-	# tool that has not taken a shot yet is still holding the BOOT seed's
-	# stations — and every bridge hangs off a station index. Re-seat the world on
-	# SEED first; _shoot does the same thing again for the pose it frames.
+	# EVERY BRIDGE HANGS OFF A STATION INDEX, so a tool that has not taken a shot
+	# yet is still holding the BOOT seed's road. `new_run(SEED)` re-seats the
+	# whole world on SEED — which since bead godot-test1-bvq drops the road memos
+	# through `set_run_seed()`, so a bare `set_run_seed(SEED)` would do for the
+	# road alone; the full `new_run` stays because this also wants the chunks.
+	# _shoot does the same thing again for the pose it frames.
 	terrain.new_run(SEED, Vector2i.ZERO)
 	terrain._road_extend_to_x(0.0, 1450.0)
 	var row: Dictionary = {}

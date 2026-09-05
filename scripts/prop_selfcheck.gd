@@ -91,6 +91,49 @@ const BUILDERS: Array = [
 	["SNOW", "_prop_frozen_stump"],
 ]
 
+## CHECK 11 — WHICH SILHOUETTES EACH BUILDER MAY DRAW (bead godot-test1-y1o.3).
+##
+## Every `ChunkBatch.BoxKind` a builder is allowed to emit, by name. It is read
+## BOTH WAYS over the same 120-prop sweep checks 1-3 already run, which is what
+## makes it a measurement rather than a restatement of the code:
+##
+##   * nothing outside the row may appear — a builder quietly reaching for a
+##     SPHERE gets a boulder you slide off, and a CONE gets a colliding cone,
+##     which ChunkBatch's banner forbids anything standable from being;
+##   * every kind IN the row must really appear — the half that fails a REVERT.
+##     Swap a rock builder's `ROCK` back to a cube and the props still fit their
+##     radius, still climb and still balance their budget, so checks 1-3 pass and
+##     the epic's whole deliverable is gone with nothing red.
+##
+## THE ROCK BUILDERS ARE THE SIX THE BEAD NAMES, and the two rows worth reading
+## on their own are the exceptions:
+##   `_prop_cairn` keeps CUBE tiers (a cairn IS stacked flat stones — the bead's
+##   own ruling) and its loose foot stones alone are ROCK, so it is the one row
+##   carrying both;
+##   the three CITY builders are CUBE-only, which is where "the city band's props
+##   are crates, garden walls and paving, not rocks" is asserted builder by
+##   builder — batch_selfcheck check 5 cannot see it, because a city-band CHUNK
+##   near a plains edge legitimately grows a plains boulder.
+const BUILDER_KINDS: Dictionary = {
+	"_prop_boulder_cluster": ["ROCK"],
+	"_prop_ruin_fragment": ["CUBE"],
+	"_prop_bale_pile": ["CUBE"],
+	"_prop_sandstone_stack": ["ROCK"],
+	"_prop_broken_column": ["CUBE"],
+	"_prop_bone_pile": ["CUBE"],
+	"_prop_mossy_boulder": ["ROCK"],
+	"_prop_tree_stump": ["CUBE"],
+	"_prop_log_pile": ["CUBE"],
+	"_prop_scree_cluster": ["ROCK"],
+	"_prop_cairn": ["CUBE", "ROCK"],
+	"_prop_crate_stack": ["CUBE"],
+	"_prop_garden_wall": ["CUBE"],
+	"_prop_paving_stack": ["CUBE"],
+	"_prop_ice_rock": ["ROCK"],
+	"_prop_snow_drift": ["CUBE"],
+	"_prop_frozen_stump": ["CUBE"],
+}
+
 ## Seeds per builder per size. Every variant is random-driven (tier heights,
 ## companion rings, chip counts), so one seed proves nothing — 24 seeds across 5
 ## sizes is 120 real props per builder, enough that a variant overflowing its
@@ -179,6 +222,7 @@ func _run() -> void:
 		_check_city_content(terrain_script, consts)
 		_check_snow_content(terrain_script, consts)
 		_check_forest_content(terrain_script, consts)
+		_check_prop_kinds(terrain_script, consts)
 
 	if _failures.is_empty():
 		print("props: %d builders x %d seeds x %d sizes measured; radius bound, climb ladder, box budget and chunk purity OK"
@@ -188,6 +232,7 @@ func _run() -> void:
 		print("bands:      threshold chain, river-in-plains, interior band widths and the shader parity uniforms OK")
 		print("snow:       mammoth radius bound, 2-collider budget, non-climbable footprints and the chunk seam OK")
 		print("forest:     chunk seam, one collider per tree, non-climbable footprints, leaf-shade spread and trunk lean OK")
+		print("kinds:      every builder's BoxKind set asserted both ways, plus the oasis boulders OK")
 		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
@@ -1345,3 +1390,267 @@ func _axis_reach(batch: Array) -> float:
 			var p := xform * corner
 			worst = maxf(worst, maxf(absf(p.x), absf(p.z)))
 	return worst
+
+
+# ============================================================================
+# CHECK 11 — the BoxKind each builder draws (bead godot-test1-y1o.3)
+# ============================================================================
+
+func _check_prop_kinds(terrain_script: GDScript, consts: Dictionary) -> void:
+	"""
+	Every prop builder emits exactly the silhouettes BUILDER_KINDS declares for it,
+	and the OASIS boulders are rocks too.
+
+	See BUILDER_KINDS up top for why the table is read in both directions and what
+	the cairn and the city rows are doing. Both halves run over the SAME sweep
+	checks 1-3 use (SEEDS_PER_BUILDER x SIZES), so a kind that only appears on an
+	unlucky variant is still seen and one that appears on none is still missed.
+
+	THE CLIMB LADDER IS NOT DUPLICATED HERE. Check 2 already reads the real
+	`BoxShape3D` collision shapes, and ROCK collides as a box exactly like CUBE —
+	which is the whole reason bead y1o.3 drew a flat-lidded dome instead of taking
+	the squashed sphere. So a rock builder's rest spot is measured by the ladder
+	unchanged, and this check is only ever about what is DRAWN.
+	"""
+	var terrain := Node3D.new()
+	terrain.set_script(terrain_script)
+
+	for entry_variant: Variant in BUILDERS:
+		var entry: Array = entry_variant
+		var builder: String = String(entry[1])
+		if not terrain.has_method(builder):
+			continue   # check 1 already failed this by name
+		if not BUILDER_KINDS.has(builder):
+			_fail("%s has no BUILDER_KINDS row — a builder whose silhouette nobody "
+					% builder + "declared is one that can drift to any kind unnoticed")
+			continue
+
+		var allowed: Dictionary = {}
+		for kind_name_v: Variant in BUILDER_KINDS[builder]:
+			var kind_name: String = kind_name_v
+			if not ChunkBatch.BoxKind.has(kind_name):
+				_fail("%s's BUILDER_KINDS row names '%s', which is not a BoxKind"
+						% [builder, kind_name])
+				continue
+			allowed[int(ChunkBatch.BoxKind[kind_name])] = kind_name
+
+		var seen: Dictionary = {}
+		var strays: Dictionary = {}
+		for size: float in SIZES:
+			for s in SEEDS_PER_BUILDER:
+				var rng := RandomNumberGenerator.new()
+				rng.seed = hash(Vector2i(s, int(size * 1000.0)))
+				var batch: Array = []
+				var body := StaticBody3D.new()
+				terrain.call(builder, Vector3.ZERO, size, rng, batch, body)
+				for box_v: Variant in batch:
+					var kind: int = int((box_v as Dictionary).get("kind", ChunkBatch.BoxKind.CUBE))
+					seen[kind] = int(seen.get(kind, 0)) + 1
+					if not allowed.has(kind):
+						strays[kind] = int(strays.get(kind, 0)) + 1
+				body.free()
+
+		for stray_v: Variant in strays:
+			var stray: int = stray_v
+			_fail("%s drew %d box(es) of kind %s, which its BUILDER_KINDS row does not "
+					% [builder, strays[stray], ChunkBatch.BoxKind.find_key(stray)]
+					+ "allow. A silhouette is a named bead judged by eye, and a "
+					+ "colliding SPHERE or CONE under a climbable prop is a rest spot "
+					+ "you slide off")
+		for want_v: Variant in allowed:
+			var want: int = want_v
+			if not seen.has(want):
+				_fail("%s never drew a %s box in %d props, though its BUILDER_KINDS row "
+						% [builder, allowed[want], SEEDS_PER_BUILDER * SIZES.size()]
+						+ "declares one. This is the half that catches a REVERT: the "
+						+ "prop still fits its radius, still climbs and still balances "
+						+ "its budget with the kind put back to CUBE")
+
+	# --- THE OASIS BOULDERS -------------------------------------------------
+	# They are not prop builders — they live inside `_spawn_desert_oasis` — so
+	# nothing above reaches them, and a revert of that one line would be silent.
+	# The assertion is an EQUALITY against the footprints the same call appended:
+	# an oasis draws a water disc, a rim, palm trunks, fronds and reeds beside its
+	# boulders, and the boulders are exactly the pieces it records as CLIMBABLE.
+	var placed: bool = false
+	for attempt in 40:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 8000 + attempt
+		var batch: Array = []
+		var body := StaticBody3D.new()
+		var obstacles: Array = []
+		# Far from the road and the spawn bubble so _biome_spot_ok has a chance;
+		# the chunk COORDS only feed the placement test, never a hash here.
+		terrain.call("_spawn_desert_oasis", Vector3(4000.0, 0.0, 4000.0),
+				Vector2i(80, 80), rng, obstacles, batch, body)
+		body.free()
+		if batch.is_empty():
+			continue
+		placed = true
+		var rocks: int = 0
+		for box_v: Variant in batch:
+			if int((box_v as Dictionary).get("kind", ChunkBatch.BoxKind.CUBE)) == ChunkBatch.BoxKind.ROCK:
+				rocks += 1
+		var climbable: int = 0
+		for ob_v: Variant in obstacles:
+			if bool((ob_v as Dictionary).get("climbable", false)):
+				climbable += 1
+		if climbable == 0:
+			_fail("an oasis placed no climbable boulder at all — the check below would "
+					+ "then pass on 0 == 0")
+		elif rocks != climbable:
+			_fail("an oasis drew %d ROCK box(es) against %d climbable footprints — its "
+					% [rocks, climbable] + "boulders are the climbable pieces and they "
+					+ "are BoxKind.ROCK (bead godot-test1-y1o.3); the palms, the water "
+					+ "disc and the reeds are neither")
+		# THE PALMS (bead godot-test1-y1o.4). A trunk is a CYLINDER and a frond a
+		# CONE, and both are asserted by COUNT against the footprints, for the
+		# boulder clause's reason one row along: a palm records exactly one
+		# non-climbable trunk footprint (the water disc's is the other one, and it
+		# is the only non-climbable footprint that is not a palm), so the trunk
+		# count is knowable without re-deriving the builder here.
+		#
+		# THE IDENTITY'S PREMISE, written down because nothing else pins it: in this
+		# builder the PALM TRUNK is the only CYLINDER. The water disc, the rim and
+		# the reeds are CUBE and the boulders are ROCK, so `cylinders` IS the palm
+		# count — and a palm rejected by the edge margin `continue`s ABOVE its own
+		# trunk, so a trunk and its fronds are dropped together and the equality
+		# survives. The REEDS are the obvious next candidate for a cylinder (they
+		# are thin round stalks); give them one and this line starts failing with a
+		# message about a revert that did not happen. Change the message with the
+		# kind.
+		var cylinders: int = 0
+		var cones: int = 0
+		for box_v: Variant in batch:
+			match int((box_v as Dictionary).get("kind", ChunkBatch.BoxKind.CUBE)):
+				ChunkBatch.BoxKind.CYLINDER:
+					cylinders += 1
+				ChunkBatch.BoxKind.CONE:
+					cones += 1
+		var frond_count: int = int(consts["OASIS_PALM_FROND_COUNT"])
+		if cylinders == 0:
+			_fail("an oasis drew NO cylinder — a palm trunk is BoxKind.CYLINDER "
+					+ "(bead godot-test1-y1o.4) and a revert to CUBE is invisible to "
+					+ "every other assertion in this file")
+		elif cones != cylinders * frond_count:
+			_fail("an oasis drew %d CONE frond(s) against %d CYLINDER trunk(s) x "
+					% [cones, cylinders]
+					+ "OASIS_PALM_FROND_COUNT %d — every palm carries exactly that "
+					% frond_count
+					+ "many fronds, so the two counts move together or one of the "
+					+ "two kinds has been reverted")
+		break
+	if not placed:
+		_fail("no oasis was built in 40 attempts — the boulder-kind assertion never ran")
+
+	# --- THE CACTI, AND THE DUNES THAT DELIBERATELY DID NOT MOVE -------------
+	# Same reasoning as the oasis: `_spawn_desert_content` and `_spawn_desert_dunes`
+	# are biome content, not entries in BUILDERS, so nothing above reaches them.
+	#
+	# A CACTUS IS ALL CYLINDER (bead godot-test1-y1o.4) — 2-3 stacked segments plus
+	# an optional arm laid on its side — so the assertion is simply that it draws
+	# cylinders and NOTHING else. That is stronger than a count here: the arm is a
+	# coin flip per cactus, so an exact number would be a re-derivation of the
+	# builder rather than a measurement of it.
+	#
+	# A DUNE IS ALL CUBE, and this is the durable half of that decision. Bead
+	# y1o.4 offered the lower tier a flattened SPHERE and it was built, rendered and
+	# REFUSED (see _spawn_desert_dunes' docstring for the picture). Without a line
+	# here the refusal is a comment somebody deletes; with it, changing a dune's
+	# kinds is a red build that points at the reasoning.
+	# A REAL DESERT CHUNK, found the way batch_selfcheck check 5 finds one, and a
+	# chunk carrying NEITHER an oasis NOR a dune. Three gates make a hand-picked
+	# coordinate useless here and all three are silent:
+	#
+	#   * every cactus re-tests `biome_at` at its OWN position (the edge
+	#     feathering), so a non-desert spot draws nothing;
+	#   * the whole builder bails on `scarcity_at`, which is ~0 several km out;
+	#   * and `_spawn_desert_content` IS NOT ONLY CACTI — it dispatches
+	#     `_spawn_desert_oasis` and `_spawn_desert_dunes` at its own tail, on their
+	#     own hash streams. An oasis chunk therefore adds CUBE (the water disc, the
+	#     rim, the reeds), ROCK (boulders) and CONE (fronds) to this very batch, and
+	#     the all-CYLINDER assertion below would fail BLAMING THE CACTUS for a palm
+	#     frond. Measured at this seed: 58 of 294 desert chunks (19.7%) carry one,
+	#     so leaving it to whichever chunk the sweep hit first was a 1-in-5 coin
+	#     that any change to the seed, the bounds or `_biome_noise` re-flips.
+	#
+	# The assertion below is about the CACTUS half of a multi-feature builder; the
+	# oasis and the dune have their own clauses above and below.
+	terrain.set_run_seed(20260904)
+	var desert_centre := Vector3.ZERO
+	var found_desert: bool = false
+	for cx in range(-24, 25):
+		for cz in range(-24, 25):
+			var cp := Vector2i(cx, cz)
+			var c: Vector3 = terrain.chunk_to_world(cp)
+			if terrain.in_budapest(c.x, c.z):
+				continue
+			if terrain.biome_at(c.x, c.z) != int(consts["Biome"]["DESERT"]):
+				continue
+			if not (terrain.call("_oasis_at", cp) as Dictionary).is_empty():
+				continue
+			if not (terrain.call("_dune_at", cp) as Dictionary).is_empty():
+				continue
+			desert_centre = c
+			found_desert = true
+			break
+		if found_desert:
+			break
+	var cactus_batch: Array = []
+	var cactus_body := StaticBody3D.new()
+	var cactus_obstacles: Array = []
+	if not found_desert:
+		_fail("no oasis-free, dune-free desert chunk in a 49x49 sweep — the cactus "
+				+ "kind assertion never ran")
+	else:
+		for attempt in 30:
+			var rng := RandomNumberGenerator.new()
+			rng.seed = 300 + attempt
+			terrain.call("_spawn_desert_content", desert_centre, rng,
+					cactus_obstacles, cactus_batch, cactus_body)
+			if cactus_batch.size() > 20:
+				break
+	cactus_body.free()
+	if found_desert and cactus_batch.size() <= 20:
+		_fail("only %d cactus boxes in 30 desert chunks — the kind assertion below "
+				% cactus_batch.size() + "would pass vacuously")
+	else:
+		var bad_cactus: Dictionary = {}
+		for box_v: Variant in cactus_batch:
+			var k: int = int((box_v as Dictionary).get("kind", ChunkBatch.BoxKind.CUBE))
+			if k != ChunkBatch.BoxKind.CYLINDER:
+				bad_cactus[k] = int(bad_cactus.get(k, 0)) + 1
+		for bad_v: Variant in bad_cactus:
+			var bad: int = bad_v
+			_fail("_spawn_desert_content drew %d box(es) of kind %s — every piece of "
+					% [bad_cactus[bad], ChunkBatch.BoxKind.find_key(bad)]
+					+ "a cactus is BoxKind.CYLINDER (bead godot-test1-y1o.4): the "
+					+ "segments stand up and the arm is one laid on its side")
+
+	var dune_batch: Array = []
+	var dune_body := StaticBody3D.new()
+	var dune_obstacles: Array = []
+	for attempt in 80:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 500 + attempt
+		terrain.call("_spawn_desert_dunes", Vector3(4000.0, 0.0, 4000.0),
+				Vector2i(80, 80), rng, dune_obstacles, dune_batch, dune_body)
+		if not dune_batch.is_empty():
+			break
+	dune_body.free()
+	if dune_batch.is_empty():
+		_fail("no dune was built in 80 attempts — the cube assertion never ran")
+	else:
+		for box_v: Variant in dune_batch:
+			var k: int = int((box_v as Dictionary).get("kind", ChunkBatch.BoxKind.CUBE))
+			if k != ChunkBatch.BoxKind.CUBE:
+				_fail("a dune tier is BoxKind.%s — dunes stay CUBE. Bead y1o.4 built "
+						% ChunkBatch.BoxKind.find_key(k)
+						+ "the SPHERE version and refused it on the render: a tier is "
+						+ "6-12 m wide and under 0.8 m tall, so an inscribed sphere is "
+						+ "a lens the square top tier visibly overhangs. Read "
+						+ "_spawn_desert_dunes' docstring before changing this")
+				break
+
+	terrain.free()
+	Sentinel.done("prop_kinds")

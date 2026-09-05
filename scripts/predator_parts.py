@@ -11,7 +11,18 @@ code lives here once and each generate_*.py is a short table of proportions and
 colours. The hunter robot is the one customer that skips `quadruped()` and stacks
 its own boxes — it still owes the three contracts below, it just isn't an animal.
 The older per-character generators (generate_crocodile_model.py,
-generate_*_separate.py) predate this and are left alone.
+generate_*_separate.py) predate this and are left alone — with ONE exception,
+which is `export_faceted()`. THAT FUNCTION IS THE WHOLE CAST'S, not the
+predators': the crocodile and the four HEROES import it too (bead
+`godot-test1-y1o.21`, owner ruling 2026-09-05 "facet ALL"), because flat normals
+are a property of the EXPORT and every model in this game wants the same one.
+They owe none of the three contracts below and gain none of them by importing it.
+It lives here rather than in a `model_export.py` of its own because a module for
+one function is a file to keep in step for no gain — if a third kind of model
+ever needs a second shared thing, that is when to split. The crocodile is
+rebuilt by the loop at the bottom of this file; the heroes are NOT, and CI runs
+them as their own step (see build.yml) so that this file stays runnable without
+shapely.
 
 THE THREE CONTRACTS A PREDATOR MODEL MUST HONOUR
 ------------------------------------------------
@@ -34,6 +45,8 @@ THE THREE CONTRACTS A PREDATOR MODEL MUST HONOUR
 Geometry is deliberately blocky: axis-aligned boxes plus the occasional 4-sided
 cone, matching the faceted art direction and keeping each animal near ~350
 triangles (the crocodile is 1856, so a whole pack is cheaper than it looks).
+And the SHADING is faceted too, which is a property of the export rather than of
+the shape — see `export_faceted`, the one seam every model is written through.
 
 Run this file directly to build every species and check it:
     python3 scripts/predator_parts.py     # -> SELFCHECK OK
@@ -481,12 +494,80 @@ def verify(mesh: trimesh.Trimesh, name: str, symmetric: bool = True) -> None:
         f"{name}: vertex colours missing — Godot would render it untinted white"
 
 
+def export_faceted(mesh: trimesh.Trimesh, path) -> None:
+    """
+    Write the GLB with FLAT (per-face) normals. THE ONE EXPORT SEAM — every enemy
+    model goes through it, including the three that stack their own mesh instead
+    of calling `save` (hunter, titan, clown) and the older crocodile.
+
+    Two things were wrong with the plain `mesh.export(path)` this replaced, and
+    neither shows up in a file listing. FIRST, trimesh only writes a NORMAL
+    attribute when `vertex_normals` happens to be sitting in the mesh cache, so
+    every shipped model carried NONE — and Godot does not generate them on import
+    either (the imported ArrayMesh has no `ARRAY_FORMAT_NORMAL` bit; check it with
+    `surface_get_format`). An unbound normal attribute is a constant, so the whole
+    predator cast was lit as one flat silhouette: not a facet caught the key light,
+    which is the "it doesn't read as low-poly" the faceted world is measured
+    against. SECOND, asking for normals on a WELDED mesh would be worse than none:
+    trimesh's box is 8 vertices for 12 faces and its cylinder 18 for 32, so the
+    averaged corner normals would round every block and blob off into Gouraud mush
+    — the round primitives (`creation.cylinder` / `creation.icosphere`, which the
+    crocodile is almost entirely built from) worst of all.
+
+    So: unmerge first — one vertex per face corner, the FACE COUNT untouched,
+    which is what every `len(mesh.faces)` budget and invariant in this file rests
+    on — and then ask for normals. Each vertex now belongs to exactly one face, so
+    its "averaged" normal IS that face's normal: style A's faceted read, with no
+    smoothing groups, no per-face material and no extra draw call. The assert is
+    the cheap proof that the unmerge happened, on every build of every model.
+
+    THE NORMALS ARE COMPUTED HERE, FROM THE FLOAT32 POSITIONS, AND BOTH HALVES OF
+    THAT ARE A PORTABILITY REQUIREMENT RATHER THAN A PREFERENCE. CI rebuilds every
+    model and byte-compares it against the committed artifact, so one ulp is a red
+    build — and adding normals opened two ways to produce one. Both showed up on
+    exactly the same three models, green_dragon / hydra / roc, which are the
+    `wings()` and `necks()` consumers and the only ones whose geometry is ROTATED.
+
+    FIRST, `mesh.vertex_normals` weights each face by its CORNER ANGLE, and
+    `trimesh.triangles.angles` is `np.arccos`. arccos is libm and libm is not
+    bit-identical between macOS/arm64 and the Linux/x86-64 runner. So the maths
+    below is done by hand: subtract, multiply, add, sqrt, divide — every one
+    IEEE-754 correctly rounded, no transcendental anywhere — and
+    `unitize_normals=False` stops trimesh re-normalising through `np.dot` on the
+    way out. It is the exactly right answer and not merely a near one: after the
+    unmerge each vertex belongs to one face, so the angle weighting is a single
+    term and the correct normal IS that face's.
+
+    SECOND — and this is the subtle one — the input is `astype(float32)` rather
+    than the mesh's own float64 vertices. A rotated part's coordinates come out of
+    `rotation_matrix`, i.e. out of libm `sin`/`cos`, so they ALREADY differ by an
+    ulp between the two platforms. That never mattered before because the buffer
+    is written as float32 and the difference rounds away. A normalised cross
+    product does not round it away: it takes differences of nearby coordinates,
+    which is where a last-bit disagreement gets amplified into the float32 result.
+    Deriving the normal from the float32 positions the file is about to carry
+    makes the input identical on both platforms, and identical input through
+    exact operations is identical output. Widening float32 back to float64 for the
+    arithmetic is lossless, so this costs no precision that survives the export.
+    """
+    mesh.unmerge_vertices()
+    assert len(mesh.vertices) == 3 * len(mesh.faces), \
+        f"{path}: {len(mesh.vertices)} verts for {len(mesh.faces)} faces — not unmerged"
+    shipped = mesh.vertices.astype(np.float32)[mesh.faces].astype(np.float64)
+    face_n = np.cross(shipped[:, 1] - shipped[:, 0], shipped[:, 2] - shipped[:, 0])
+    length = np.sqrt((face_n * face_n).sum(axis=1))
+    assert length.min() > 1e-12, \
+        f"{path}: a degenerate (zero-area) face has no normal"
+    mesh.vertex_normals = np.repeat(face_n / length[:, None], 3, axis=0)
+    mesh.export(path, include_normals=True, unitize_normals=False)
+
+
 def save(parts, name: str, scale: float = 1.0, symmetric: bool = True) -> trimesh.Trimesh:
     """Weld, check, export, report. The tail end of every generate_*.py main()."""
     mesh = build(parts, scale)
     verify(mesh, name, symmetric)
     path = OUT_DIR / f"{name}.glb"
-    mesh.export(path)
+    export_faceted(mesh, path)
     lo, hi = mesh.bounds
     print(f"✓ {name}: {path}")
     print(f"  {len(mesh.vertices)} verts / {len(mesh.faces)} faces")
@@ -716,6 +797,12 @@ if __name__ == "__main__":
     for species in ("wolf", "cougar", "bear", "hound", "snake", "hunter",
                     "naga", "hydra", "green_dragon", "roc", "titan", "clown"):
         runpy.run_path(str(here / f"generate_{species}.py"), run_name="__main__")
+    # THE CROCODILE IS BUILT HERE TOO, AND IT IS THE ODD ONE OUT. It predates the
+    # toolkit, has no `verify()` of its own and is not a "species" in the loop's
+    # sense — but it is a CUSTOMER of `export_faceted` now, and CI's staleness gate
+    # is "did running THIS FILE dirty assets/models/characters". Left out, the one
+    # model the seam could silently rot is the only one nothing rebuilds.
+    runpy.run_path(str(here / "generate_crocodile_model.py"), run_name="__main__")
     # `wings` HAS consumers now (the dragon and the roc, both above), but `verify`
     # only ever sees the finished animal — one welded mesh in which the pair is no
     # longer a separable thing, and in which a wing that stopped mirroring would

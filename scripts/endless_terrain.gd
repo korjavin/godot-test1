@@ -1001,6 +1001,69 @@ const FIELD_BRIDGE_STREAM_SEED: int = 0x0_6021
 ## one stone vocabulary outdoors, and a colour is not worth a hash stream.
 const FIELD_BRIDGE_STONE := Color(0.58, 0.58, 0.60)
 
+## THE TRIM (bead godot-test1-06o.4). Owner on the .2 screenshot, a flat grey
+## deck angled across the water: "parapets/pylons" — a bare slab reads as a
+## floating plate. So every field bridge is dressed in the CITY'S bridge
+## vocabulary (_city_chain_bridge / _city_margaret_bridge are the reference:
+## stone edge walls and a portal pair at the bank), scaled from a 12 m Danube
+## deck to a 1.6 m field one, through the SAME create_box batch, the SAME centre
+## rule and the SAME zero-RNG rule as the deck itself.
+##
+## THE PARAPET'S INNER FACE IS EXACTLY FIELD_BRIDGE_HALF_WIDTH, which is the
+## whole of "it must not narrow the lane": the wall is CANTILEVERED off the deck
+## edge rather than standing on it, so the walkable width, `field_bridge_surface_y`,
+## every wet probe and every span measurement are byte-for-byte what they were
+## and only boxes were added. It reaches DOWN past the deck's own underside too
+## (hence the + FIELD_BRIDGE_THICKNESS on its height), which is what gives the
+## slab a visible edge beam instead of a paper edge.
+##
+## It is the ONE colliding piece of trim — a rail you can walk through is not a
+## rail — and 1.0 m is chest-high on a hero and far under the jump apex, so it
+## fences the drop without fencing anybody in.
+##
+## KNOWN CEILING, measured (16 seeds, 458 bridge chunks): every spawner that
+## drops something near a deck reads `field_bridge_surface_y`, which knows the
+## 8 m walking rect and can never see trim — so at a RAMP FOOT, where the rail
+## descends through coin and animal height, 3 road coins in 517 stood inside a
+## parapet and 1 crocodile in ~450 spawned in one. Both are thin-wall cases that
+## depenetration and a 0.6 m pickup sphere resolve, and the alternative is an
+## `obstacles` footprint, which this feature is forbidden (it would push
+## crocodiles off the road and make _settle_coin_y skip the deck's own coins).
+const FIELD_BRIDGE_PARAPET_WIDTH: float = 0.5
+const FIELD_BRIDGE_PARAPET_HEIGHT: float = 1.0
+
+## The pylon pair at each bank — the portal the Chain Bridge puts at each end of
+## its span, four boxes instead of ninety-two. They stand from the GROUND to
+## FIELD_BRIDGE_TOP + rise, so a deck that used to hang in the air is visibly
+## carried at both ends, and they straddle the parapet OUTBOARD of its centre
+## line (see the builder) so nothing of them is ever over the lane.
+##
+## NOT FLUSH WITH THE PARAPET, and that is the whole of the offset: a pylon
+## whose inner face shares the parapet's plane is two coincident opaque faces at
+## every bank of every bridge, i.e. z-fighting on the one thing this bead exists
+## to make look right. It is pushed out half a parapet so the two solids
+## interpenetrate instead of touching.
+##
+## NON-COLLIDING, like every other piece of ornament in this game that nobody
+## needs to climb: they cost the chunk body no shape, and a post at the very
+## edge of a 16 m deck is scenery, not geometry.
+##
+## The width's real ceiling is `field_bridge_outer_reach()` against the tightest
+## *_ROAD_CLEARANCE (check 5) — 2.0 m of headroom over the deck's half-width,
+## not check 2's "a metre outside the parapet" control, which reads a box list
+## FILTERED to the deck rect and can see no trim at all.
+## SQUARE IN PLAN, and it was judged by eye: 0.9 x 1.6 read as a dark FIN
+## standing on the deck rather than as a post.
+const FIELD_BRIDGE_PYLON_WIDTH: float = 0.9
+const FIELD_BRIDGE_PYLON_DEPTH: float = 0.9
+const FIELD_BRIDGE_PYLON_RISE: float = 3.2
+
+## Trim tones, FIELD_BRIDGE_STONE's neighbours and consts for its reason: a
+## colour is not worth a hash stream, and three flat greys is what tells a
+## parapet from a deck from a pylon at 100 m.
+const FIELD_BRIDGE_PARAPET_STONE := Color(0.66, 0.65, 0.64)
+const FIELD_BRIDGE_PYLON_STONE := Color(0.50, 0.50, 0.53)
+
 ## Feature flag, `spawn_hunters`' precedent: it exists so field_bridge_selfcheck
 ## can generate the same chunk with the bridges OFF and prove that nothing else
 ## in the world moved by a single box (check 6's A/B).
@@ -2927,7 +2990,7 @@ const BIOME_SPECIES: Dictionary = {
 	## The forest is the one band that already crowds the player's SIGHT — it is
 	## the densest tree cover in the world — so it is the right one to put an
 	## enemy in that crowds their SPACE. The wolf's pack steering (see
-	## piglet_crocodile_ai.pack_steer_point) has each animal swing to its own slot
+	## croc_steering.pack_steer_point) has each animal swing to its own slot
 	## on a ring, and trunks are what make that read: the wolf you lost behind one
 	## is the wolf arriving from the side.
 	Biome.FOREST: {
@@ -2939,7 +3002,7 @@ const BIOME_SPECIES: Dictionary = {
 	## the ice you can climb onto. It is also the most OPEN ground in the world (a
 	## handful of dead trees per chunk and a lot of nothing between them), which is
 	## the one place a straight-line charger belongs: the frost bear's committed
-	## charge (see piglet_crocodile_ai.charge_steer_point) is only fair if you can
+	## charge (see croc_steering.charge_steer_point) is only fair if you can
 	## see it coming and have somewhere to step, and both of those are what open
 	## ground is. The forest is the exact inverse — put this animal among trunks
 	## and it would spend its life shouldering into them.
@@ -2950,7 +3013,7 @@ const BIOME_SPECIES: Dictionary = {
 	## A massif band is a MAZE — impassable block walls with long straight
 	## corridors between them (see the MOUNTAIN section: mountains are things you
 	## route around, never terrain you climb). That is the one place a burst
-	## predator belongs. The cougar's pounce (see piglet_crocodile_ai's
+	## predator belongs. The cougar's pounce (see croc_steering's
 	## burst_cycle_factor) is the only thing in this game that goes above
 	## MAX_CHASE_SPEED, and it is only fair where a corridor gives you the sight
 	## line to see it start and the walls give its recovery leg somewhere to break
@@ -3286,7 +3349,8 @@ var road_k_max: int = 0
 ## Memoized result of _road_terminal_k() — the last station at or west of
 ## ROAD_TERMINAL_X. It is a pure function of run_seed and the road config (both
 ## constant within a run) and EVERY road consumer asks for it, so it is computed
-## once and reset in new_run() beside the station cache it is derived from.
+## once and dropped by `_drop_seeded_memos()` beside the station cache it is
+## derived from — see there for why that lives under the SEED WRITE.
 ##
 ## The sentinel is a station index nothing can legitimately be: the cache grows
 ## contiguously outward from station 0 and a run would have to walk ~10^9
@@ -3296,8 +3360,8 @@ var _road_terminal_k_cache: int = ROAD_TERMINAL_K_UNSET
 
 ## Memoized field bridges, keyed by ANCHOR STATION index — `{}` for a station
 ## that anchors none, which is most of them (see field_bridge_at). It rides the
-## station cache: derived from it plus the river field, so new_run() clears the
-## two together. Every chunk within a bridge's reach asks the same question, and
+## station cache: derived from it plus the river field, so `_drop_seeded_memos()`
+## clears the two together. Every chunk within a bridge's reach asks the same question, and
 ## the answer costs a walk across the water each time it is not remembered.
 var _field_bridge_cache: Dictionary = {}
 
@@ -3335,13 +3399,14 @@ var _approach_coin_east_end_cache: float = INF
 
 ## Memoized result of _approach_coin_line() — the whole approach + avenue coin
 ## line, resampled by arc length. It rides the TERMINAL STATION, so unlike the
-## east end above it IS seeded, and new_run() resets it beside the terminal cache.
+## east end above it IS seeded, and `_drop_seeded_memos()` drops it beside the
+## terminal cache.
 var _approach_coin_line_cache: PackedVector2Array = PackedVector2Array()
 
 ## Memoized result of _build_landmark_sites() — chunk Vector2i -> LANDMARKS kind,
 ## the whole field landmark placement for this run (see the MUSEUM MILE banner).
 ## It rides the road centreline, so like the two caches above it IS seeded and
-## new_run() resets it beside them. The `_built` flag is separate because an empty
+## `_drop_seeded_memos()` drops it beside them. The `_built` flag is separate because an empty
 ## table is a legitimate answer (spawn_landmarks off, or a degenerate road) and
 ## `is_empty()` alone would rebuild it on every chunk.
 var _landmark_sites_cache: Dictionary = {}
@@ -3830,17 +3895,9 @@ func set_run_seed(value: int) -> void:
 	# the paths of the run you just lost. Hung off the seed write for the same
 	# reason `_tower_reset()` is: every path that starts a world comes through here.
 	_migrated_units.clear()
-	# ...and the MUSEUM MILE, for the same reason and one worse. The site table is
-	# memoized and pure in run_seed, so a table built BEFORE this write survives it
-	# and hands the new world the OLD run's landmarks while every other seed-derived
-	# stream has moved. new_run() resets it too (beside the road cache it is derived
-	# from), but new_run() is not the only door: a multiplayer joiner takes the
-	# master's seed through set_run_seed() after its own _ready() roll, and anything
-	# that streamed a chunk in between has already built the table. THE SEED WRITE IS
-	# THE ONLY PLACE THAT SEES EVERY DOOR — which is exactly why _tower_reset() and
-	# the trail purge hang here too.
-	_landmark_sites_cache = {}
-	_landmark_sites_built = false
+	# ...and every memo that is a pure function of run_seed — the road centreline
+	# and the whole family strung along it. See `_drop_seeded_memos()`.
+	_drop_seeded_memos()
 	var lod := get_tree().get_first_node_in_group("lod_manager") if is_inside_tree() else null
 	if lod != null and lod.has_method("reset_trails"):
 		lod.reset_trails()
@@ -3852,6 +3909,60 @@ func set_run_seed(value: int) -> void:
 	# roll, a restart, a multiplayer peer being handed the room's seed — goes
 	# through here, so none of them can forget.
 	_tower_reset()
+
+
+func _drop_seeded_memos() -> void:
+	"""
+	Drop every memo that is a PURE FUNCTION OF `run_seed`, so the next reader
+	rebuilds it for the world we have just moved to.
+
+	CALLED FROM `set_run_seed()` AND NOWHERE ELSE, which is the whole bead
+	(godot-test1-bvq). These used to be reset in `new_run()` instead, one level
+	up — and `new_run()` is not the only door. `set_run_seed()` is, by CLAUDE.md's
+	rule: it is the ONLY place `run_seed` is written, so it is the only seam that
+	sees `_ready()`'s roll, a restart AND a multiplayer joiner being handed the
+	room's seed after it has already streamed chunks. A memo dropped one level up
+	is a memo the third caller forgets, and this whole family is memoized off the
+	seed exactly like the site table that was moved here first (PR #228). Nothing
+	shipped could reach the bug — `_ready()`'s roll predates any road and the MP
+	path is `new_run()` — which is precisely why it had to be closed before a
+	fourth caller arrived rather than after.
+
+	EVERYTHING HERE IS DERIVED FROM THE ROAD CENTRELINE, which is itself pure in
+	the seed, so they are one family and are reset together — the reason this is
+	one function and not eleven lines copied into every door.
+	"""
+	# The station cache, back to its declared empty state (min > max is the "no
+	# stations" sentinel, so the next `_road_extend_to_x` re-seeds station 0).
+	# Its entries were computed with the OLD seed and would poison the new road:
+	# the cache is "correct forever" only while the seed is constant.
+	road_stations = {}
+	road_k_min = 1
+	road_k_max = 0
+	# The terminal station is derived from that centreline, so it is exactly as
+	# stale: a new seed puts a different station at ROAD_TERMINAL_X. Reset it HERE,
+	# beside what it is derived from, so the two can never be reset apart.
+	_road_terminal_k_cache = ROAD_TERMINAL_K_UNSET
+	# ...and the field bridges, for the same reason one step further out: a
+	# crossing is a station index plus the river field, and both moved. The
+	# corridor's are derived from the terminal station, so they go with them.
+	_field_bridge_cache = {}
+	_field_bridge_wet_cache = {}
+	_approach_bridge_cache = []
+	_approach_bridge_scanned = false
+	# ...and the approach coin line with it: it is resampled off that station.
+	_approach_coin_line_cache = PackedVector2Array()
+	# ...and the MUSEUM MILE: every site is a station index on the centreline
+	# above, so a table kept across a re-seed would string this run's landmarks
+	# along the LAST run's road (see the MUSEUM MILE banner). This is the one that
+	# was already here before the bead, and moving the road beside it is what
+	# makes `landmark_sites_selfcheck` check 1b able to stop clearing the road by
+	# hand and assert the centreline itself instead.
+	_landmark_sites_cache = {}
+	_landmark_sites_built = false
+	# ...and the FIELD_ALTITUDE spike's coarse road polyline, which is a window
+	# onto the same centreline. `update_chunks` rebuilds it for the new world.
+	_alt_road_segs = PackedVector4Array()
 
 
 func _roll_biome_offset() -> void:
@@ -3920,6 +4031,15 @@ func _apply_biome_shader_params() -> void:
 	mat.set_shader_parameter("biome_mountain_max", BIOME_MOUNTAIN_MAX)
 	mat.set_shader_parameter("river_level", RIVER_LEVEL)
 	mat.set_shader_parameter("river_half_width", RIVER_HALF_WIDTH)
+	# THE DEEP CHANNEL's darker centre strip (bead godot-test1-06o.3). Parity in
+	# the ordinary sense: the strip you cannot walk into has to be the strip you
+	# can SEE, and both are readouts of the same normalised depth — the fraction
+	# is pushed rather than restated in GLSL. It shades the NOISE river and the
+	# Danube from the one number. The shader deliberately does NOT run the FORD
+	# exemption (`_deep_channel_ford` — a road-width gap at one refused crossing
+	# in thirty-nine, which would cost a station search per fragment): the tint
+	# says "deep water", the CPU says who may walk it.
+	mat.set_shader_parameter("river_deep_fraction", RIVER_DEEP_FRACTION)
 	mat.set_shader_parameter("biome_blend", BIOME_BLEND)
 	# THE DRY DISC, the GPU half of it: is_river_at() refuses to call the tower's
 	# footprint water, so the shader must refuse to paint it blue. Parity-critical
@@ -5794,6 +5914,12 @@ func _prop_boulder_cluster(local: Vector3, size: float, rng: RandomNumberGenerat
 	the returned `top`. The companions carry the tilt that stops the whole thing
 	reading as a cube, and they sit beside it rather than on it (rule 2 above).
 	3 boxes, 3 collide.
+
+	ALL THREE ARE `BoxKind.ROCK` since bead godot-test1-y1o.3 — a faceted dome with
+	the flat lid still exactly at the box top, so the climbable surface, the
+	collider and every number below are byte-for-byte what they were and only the
+	silhouette moved. See ChunkBatch's BoxKind banner for why a squashed sphere was
+	the wrong answer here.
 	"""
 	var r := size * PROP_RADIUS_FACTOR
 	var w := size * 0.9
@@ -5802,7 +5928,8 @@ func _prop_boulder_cluster(local: Vector3, size: float, rng: RandomNumberGenerat
 
 	create_box(
 		local + Vector3(0.0, h * 0.5, 0.0), Vector3(w, h, w * 0.92), yaw,
-		rng, block_batch, block_body, 0.0, PROP_BOULDER_A.lerp(PROP_BOULDER_B, rng.randf())
+		rng, block_batch, block_body, 0.0, PROP_BOULDER_A.lerp(PROP_BOULDER_B, rng.randf()),
+		true, ChunkBatch.BoxKind.ROCK
 	)
 
 	for _i in 2:
@@ -5813,7 +5940,7 @@ func _prop_boulder_cluster(local: Vector3, size: float, rng: RandomNumberGenerat
 			local + Vector3(cos(a) * ring, cs * 0.45, sin(a) * ring),
 			Vector3(cs, cs * 0.9, cs), rng.randf_range(0.0, TAU),
 			rng, block_batch, block_body, rng.randf_range(-0.35, 0.35),
-			PROP_BOULDER_A.lerp(PROP_BOULDER_B, rng.randf())
+			PROP_BOULDER_A.lerp(PROP_BOULDER_B, rng.randf()), true, ChunkBatch.BoxKind.ROCK
 		)
 
 	return { "radius": r, "top": h, "climbable": true }
@@ -5912,6 +6039,10 @@ func _prop_sandstone_stack(local: Vector3, size: float, rng: RandomNumberGenerat
 
 	The slabs are untilted so the stack climbs; the flake is the tilted character
 	and sits BESIDE the stack, never on the top slab. 3-4 boxes, 2-3 collide.
+
+	`BoxKind.ROCK` throughout since bead godot-test1-y1o.3: a wind-worn slab is a
+	dome with a flat lid, which is exactly the kind's shape, and the lid keeps the
+	stack's every step where the ladder already measured it.
 	"""
 	var r := size * PROP_RADIUS_FACTOR
 	var tiers := rng.randi_range(2, 3)
@@ -5924,7 +6055,8 @@ func _prop_sandstone_stack(local: Vector3, size: float, rng: RandomNumberGenerat
 		create_box(
 			local + Vector3(0.0, top + th * 0.5, 0.0), Vector3(w, th, w * 0.82),
 			yaw + rng.randf_range(-0.3, 0.3), rng, block_batch, block_body, 0.0,
-			PROP_SANDSTONE_A.lerp(PROP_SANDSTONE_B, rng.randf() * 0.7)
+			PROP_SANDSTONE_A.lerp(PROP_SANDSTONE_B, rng.randf() * 0.7),
+			true, ChunkBatch.BoxKind.ROCK
 		)
 		top += th
 		w *= 0.82
@@ -5934,7 +6066,8 @@ func _prop_sandstone_stack(local: Vector3, size: float, rng: RandomNumberGenerat
 	create_box(
 		local + Vector3(cos(fa) * size * 0.32, fs * 0.5, sin(fa) * size * 0.32),
 		Vector3(fs, fs * 1.2, fs * 0.25), rng.randf_range(0.0, TAU),
-		rng, block_batch, block_body, rng.randf_range(0.5, 0.9), PROP_SANDSTONE_B, false
+		rng, block_batch, block_body, rng.randf_range(0.5, 0.9), PROP_SANDSTONE_B, false,
+		ChunkBatch.BoxKind.ROCK
 	)
 
 	return { "radius": r, "top": top, "climbable": true }
@@ -6022,6 +6155,11 @@ func _prop_mossy_boulder(local: Vector3, size: float, rng: RandomNumberGenerator
 	the moss rather than clipping into it — and the rock height is derived from
 	PROP_MAX_STEP minus the cap, so cap + rock together still clear in one jump
 	however object_size_max is retuned. 4 boxes, 2 collide.
+
+	`BoxKind.ROCK` throughout since bead godot-test1-y1o.3, THE MOSS CAP INCLUDED —
+	the cap is the surface you stand on, and a cube lid on a domed boulder would
+	read as a plate balanced on it. Both are drawn at the same yaw, so the cap's
+	facets line up with the flanks under them and the two read as one stone.
 	"""
 	var r := size * PROP_RADIUS_FACTOR
 	var yaw := rng.randf_range(0.0, TAU)
@@ -6031,11 +6169,11 @@ func _prop_mossy_boulder(local: Vector3, size: float, rng: RandomNumberGenerator
 
 	create_box(
 		local + Vector3(0.0, bh * 0.5, 0.0), Vector3(bw, bh, bw * 0.9), yaw,
-		rng, block_batch, block_body, 0.0, PROP_MOSS_ROCK
+		rng, block_batch, block_body, 0.0, PROP_MOSS_ROCK, true, ChunkBatch.BoxKind.ROCK
 	)
 	create_box(
 		local + Vector3(0.0, bh + cap_h * 0.5, 0.0), Vector3(bw * 0.96, cap_h, bw * 0.87), yaw,
-		rng, block_batch, block_body, 0.0, PROP_MOSS_CAP
+		rng, block_batch, block_body, 0.0, PROP_MOSS_CAP, true, ChunkBatch.BoxKind.ROCK
 	)
 
 	for _i in 2:
@@ -6044,7 +6182,8 @@ func _prop_mossy_boulder(local: Vector3, size: float, rng: RandomNumberGenerator
 		create_box(
 			local + Vector3(cos(a) * size * 0.34, cs * 0.4, sin(a) * size * 0.34),
 			Vector3(cs, cs * 0.75, cs), rng.randf_range(0.0, TAU),
-			rng, block_batch, block_body, rng.randf_range(-0.45, 0.45), PROP_MOSS_ROCK, false
+			rng, block_batch, block_body, rng.randf_range(-0.45, 0.45), PROP_MOSS_ROCK, false,
+			ChunkBatch.BoxKind.ROCK
 		)
 
 	return { "radius": r, "top": bh + cap_h, "climbable": true }
@@ -6124,6 +6263,12 @@ func _prop_scree_cluster(local: Vector3, size: float, rng: RandomNumberGenerator
 	"""
 	MOUNTAIN — one flat slab of fallen rock with 3-4 shattered chips tumbled round
 	it. The slab is the perch; the chips carry the tilt. 4-5 boxes, 1 collides.
+
+	`BoxKind.ROCK` throughout since bead godot-test1-y1o.3. The chips could have
+	been CONEs — the bead offers both — and are not, on the draw-call bill: a cone
+	bucket would make a mountain chunk carrying scree cost THREE block draw calls
+	where the epic's cap for a chunk is two, and nothing here would look better for
+	it.
 	"""
 	var r := size * PROP_RADIUS_FACTOR
 	var yaw := rng.randf_range(0.0, TAU)
@@ -6132,7 +6277,8 @@ func _prop_scree_cluster(local: Vector3, size: float, rng: RandomNumberGenerator
 
 	create_box(
 		local + Vector3(0.0, sh * 0.5, 0.0), Vector3(sw, sh, sw * 0.88), yaw,
-		rng, block_batch, block_body, 0.0, PROP_SCREE_A.lerp(PROP_SCREE_B, rng.randf())
+		rng, block_batch, block_body, 0.0, PROP_SCREE_A.lerp(PROP_SCREE_B, rng.randf()),
+		true, ChunkBatch.BoxKind.ROCK
 	)
 
 	for _i in rng.randi_range(3, 4):
@@ -6143,7 +6289,7 @@ func _prop_scree_cluster(local: Vector3, size: float, rng: RandomNumberGenerator
 			local + Vector3(cos(a) * ring, cs * 0.45, sin(a) * ring),
 			Vector3(cs, cs * 0.8, cs * 1.2), rng.randf_range(0.0, TAU),
 			rng, block_batch, block_body, rng.randf_range(-0.6, 0.6),
-			PROP_SCREE_A.lerp(PROP_SCREE_B, rng.randf()), false
+			PROP_SCREE_A.lerp(PROP_SCREE_B, rng.randf()), false, ChunkBatch.BoxKind.ROCK
 		)
 
 	return { "radius": r, "top": sh, "climbable": true }
@@ -6157,6 +6303,11 @@ func _prop_cairn(local: Vector3, size: float, rng: RandomNumberGenerator, block_
 	NO CAPSTONE ON TOP, deliberately — a tilted stone crowning the cairn would
 	look right and quietly destroy the flat surface the climbability contract
 	promises. The loose stones go beside it instead. 5 boxes, 3 collide.
+
+	THE TIERS STAY `CUBE`, and that is the bead's own ruling (godot-test1-y1o.3): a
+	cairn IS stacked, split, flat-faced stones, so the one prop in the set that
+	should read as blocks is this one. Only the loose stones at its foot — which
+	were never stacked by anybody — take `BoxKind.ROCK`.
 	"""
 	var r := size * PROP_RADIUS_FACTOR
 	var yaw := rng.randf_range(0.0, TAU)
@@ -6181,7 +6332,7 @@ func _prop_cairn(local: Vector3, size: float, rng: RandomNumberGenerator, block_
 			local + Vector3(cos(a) * ring, cs * 0.45, sin(a) * ring),
 			Vector3(cs, cs * 0.85, cs), rng.randf_range(0.0, TAU),
 			rng, block_batch, block_body, rng.randf_range(-0.5, 0.5),
-			PROP_CAIRN.lerp(PROP_SCREE_B, rng.randf() * 0.5), false
+			PROP_CAIRN.lerp(PROP_SCREE_B, rng.randf() * 0.5), false, ChunkBatch.BoxKind.ROCK
 		)
 
 	return { "radius": r, "top": top, "climbable": true }
@@ -6331,6 +6482,10 @@ func _prop_ice_rock(local: Vector3, size: float, rng: RandomNumberGenerator, blo
 	OPAQUE, never transparent: the blue-white ramp is what has to read as ice, and
 	an alpha-blended box would cost fill rate on a mobile GPU AND drop out of the
 	chunk's one MultiMesh (which has a single opaque material) for the privilege.
+
+	`BoxKind.ROCK` since bead godot-test1-y1o.3 — glacier ice is a weathered lump
+	with a wind-scoured flat top, which is the kind's exact profile, and the shards
+	take it too so a snow chunk pays for ONE extra bucket and not two.
 	"""
 	var r := size * PROP_RADIUS_FACTOR
 	var yaw := rng.randf_range(0.0, TAU)
@@ -6339,7 +6494,8 @@ func _prop_ice_rock(local: Vector3, size: float, rng: RandomNumberGenerator, blo
 
 	create_box(
 		local + Vector3(0.0, h * 0.5, 0.0), Vector3(w, h, w * 0.90), yaw,
-		rng, block_batch, block_body, 0.0, SNOW_ICE_A.lerp(SNOW_ICE_B, rng.randf() * 0.7)
+		rng, block_batch, block_body, 0.0, SNOW_ICE_A.lerp(SNOW_ICE_B, rng.randf() * 0.7),
+		true, ChunkBatch.BoxKind.ROCK
 	)
 
 	# The split shards. Half a shard's 3D diagonal is
@@ -6351,7 +6507,7 @@ func _prop_ice_rock(local: Vector3, size: float, rng: RandomNumberGenerator, blo
 			local + Vector3(cos(a) * size * 0.38, size * 0.24, sin(a) * size * 0.38),
 			Vector3(size * 0.16, size * 0.55, size * 0.20), rng.randf_range(0.0, TAU),
 			rng, block_batch, block_body, rng.randf_range(-0.55, 0.55),
-			SNOW_ICE_A.lerp(SNOW_ICE_B, rng.randf()), false
+			SNOW_ICE_A.lerp(SNOW_ICE_B, rng.randf()), false, ChunkBatch.BoxKind.ROCK
 		)
 
 	return { "radius": r, "top": h, "climbable": true }
@@ -8412,8 +8568,9 @@ func landmark_sites() -> Dictionary:
 	Pure in `run_seed` (and in the road centreline, which is itself pure in
 	run_seed), so every peer in a room and every regeneration of the same run agree
 	for free — the same argument the old per-chunk roll made, one level up. Built
-	lazily on the first ask and dropped by new_run() beside the station cache it is
-	derived from; see the MUSEUM MILE banner for the design.
+	lazily on the first ask and dropped by `set_run_seed()` (through
+	`_drop_seeded_memos()`) beside the station cache it is derived from; see the
+	MUSEUM MILE banner for the design.
 	"""
 	if _landmark_sites_built:
 		return _landmark_sites_cache
@@ -9051,8 +9208,27 @@ func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 	rule is that entity counts are never trimmed, so a desert feels empty through
 	decoration alone.
 
-	A cactus is 2-3 thin tall green boxes stacked, sometimes with one short arm box
+	A cactus is 2-3 thin tall green CYLINDERS stacked, sometimes with one short arm
 	off to the side — enough silhouette to read at distance, four boxes at most.
+
+	`BoxKind.CYLINDER` on the SEGMENTS since bead godot-test1-y1o.4: a saguaro is a
+	fluted column, which is what the shared unit cylinder draws, and stacking three
+	of them at one yaw reads as one trunk because the facets line up.
+
+	THE COLLIDER FOLLOWS THE KIND AND THAT IS A REAL CHANGE, contrary to this
+	bead's own note — which was written before `collision_shape_for` existed
+	(bead y1o.10). A segment is `width x width` in plan, so its radial aspect is
+	exactly 1.0 and it hangs a `CylinderShape3D` of radius `width * 0.5` rather
+	than the old box. The shape COUNT is untouched and the collider is INSCRIBED,
+	so this can only ever un-block a spot that used to be stone, and the footprint
+	below is NON-CLIMBABLE, so nothing stands on the difference. It is also simply
+	the right shape for a round trunk — refusing it would mean special-casing the
+	desert out of the machinery the epic just built.
+
+	THE ARM IS A CYLINDER TOO, LAID DOWN — the two quarter turns that do it are
+	derived at the call site and explained there. A cube arm on round trunks was
+	tried first and rendered, and it read as a square nub bolted onto a column;
+	that picture is why the arm's dimensions are allowed to swap.
 	"""
 	var half := chunk_size / 2.0 - 3.0
 	var count := rng.randi_range(CACTUS_MIN, CACTUS_MAX)
@@ -9091,7 +9267,8 @@ func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 			create_box(
 				Vector3(local_x, top_y + seg_h * 0.5, local_z),
 				Vector3(width, seg_h, width),
-				yaw, rng, block_batch, block_body, 0.0, CACTUS_COLOR
+				yaw, rng, block_batch, block_body, 0.0, CACTUS_COLOR,
+				true, ChunkBatch.BoxKind.CYLINDER
 			)
 			top_y += seg_h
 
@@ -9105,10 +9282,43 @@ func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 			# gets shoved sideways instead of outwards and floats detached from the
 			# trunk (worst at yaw = 45 deg, where the two are 90 deg apart).
 			var arm_dir := (Basis(Vector3.UP, yaw) * Vector3.RIGHT) * (arm_len * 0.5 + width * 0.5)
+			# THE ARM IS A CYLINDER LAID DOWN, and the quarter turns are the whole
+			# of it (bead godot-test1-y1o.4). The unit cylinder's axis is LOCAL Y
+			# while the arm's LENGTH has always been on local X, so passing CYLINDER
+			# with the old dimensions draws a flat disc standing on edge — which is
+			# what the first render of this bead showed, square nubs on round
+			# trunks, and it looked worse than the boxes it replaced.
+			#
+			# `create_box` builds `Basis(UP, yaw) * Basis(RIGHT, tilt)`, so local +Y
+			# comes out at `(sin yaw', 0, cos yaw')` once tilt is a quarter turn.
+			# Setting `yaw' = yaw + PI/2` makes that `(cos yaw, 0, -sin yaw)` — which
+			# is exactly the direction `arm_dir` above already points, because that
+			# is local +X under the ORIGINAL yaw. So the drum lies along the arm.
+			# The length moves into the Y slot to match, and `arm_dir` and the centre
+			# are untouched: same volume, same place, same reach out of the trunk.
+			#
+			# NOT ONE RNG DRAW MOVED — both turns are constants and the dimensions
+			# are the same two numbers in a different order (bead y1o.2's canopy
+			# rule). The collider follows the kind and becomes a CylinderShape3D of
+			# radius `width * 0.5` about that same axis, which is the honest shape
+			# for a round limb; the shape COUNT is unchanged and the cactus footprint
+			# is non-climbable, so nothing stands on the difference.
+			#
+			# `ponytail:` THE JOINT IS TANGENT, NOT SUNK, and that is a known
+			# cosmetic ceiling rather than an oversight. `arm_dir` puts the arm's
+			# inner cap plane exactly `width * 0.5` from the trunk axis — flush
+			# against the flat face of a BOX trunk, but only touching a ROUND one
+			# along a single line, so from a high or oblique angle a crescent of air
+			# up to `width * 0.5` (0.22-0.37 m) shows at the T. The fix is one number
+			# (pull `arm_dir` in by about `width * 0.25`) and it costs no RNG draw —
+			# but it MOVES this entry's origin, which is more than "only the
+			# silhouette changed", so it belongs to a bead that is allowed to move
+			# geometry and should be judged on a render rather than on arithmetic.
 			create_box(
 				Vector3(local_x, arm_y, local_z) + arm_dir,
-				Vector3(arm_len, width, width),
-				yaw, rng, block_batch, block_body, 0.0, CACTUS_COLOR
+				Vector3(width, arm_len, width),
+				yaw + PI * 0.5, rng, block_batch, block_body, PI * 0.5, CACTUS_COLOR,
+				true, ChunkBatch.BoxKind.CYLINDER
 			)
 
 		# NOT climbable: a cactus is a thing you walk around, and a coin perched on
@@ -9184,11 +9394,17 @@ func _spawn_desert_oasis(chunk_center: Vector3, chunk_pos: Vector2i, rng: Random
 			# palm's crown hangs.
 			var palm_lean := rng.randf_range(-OASIS_PALM_TILT_MAX, OASIS_PALM_TILT_MAX)
 			var droop := rng.randf_range(OASIS_PALM_DROOP_MIN, OASIS_PALM_DROOP_MAX)
-			# Trunk (colliding)
+			# Trunk (colliding) — `BoxKind.CYLINDER` since bead godot-test1-y1o.4.
+			# The unit cylinder's axis is LOCAL Y, which is exactly the axis
+			# `palm_lean` already leans, so a curved palm trunk costs nothing but
+			# the kind. It is square in plan (radial aspect 1.0), so it also hangs
+			# a real CylinderShape3D — the shape COUNT is unchanged, the collider
+			# is inscribed, and the footprint below stays non-climbable.
 			create_box(
 				Vector3(palm_x, OASIS_PALM_TRUNK_HEIGHT * 0.5, palm_z),
 				Vector3(OASIS_PALM_TRUNK_WIDTH, OASIS_PALM_TRUNK_HEIGHT, OASIS_PALM_TRUNK_WIDTH),
-				trunk_yaw, rng, block_batch, block_body, palm_lean, Color(0.40, 0.32, 0.22)
+				trunk_yaw, rng, block_batch, block_body, palm_lean, Color(0.40, 0.32, 0.22),
+				true, ChunkBatch.BoxKind.CYLINDER
 			)
 
 			# Fronds (visual only, collide=false) — each starts at the crown and
@@ -9200,10 +9416,29 @@ func _spawn_desert_oasis(chunk_center: Vector3, chunk_pos: Vector2i, rng: Random
 				var frond_yaw := trunk_yaw + (TAU / OASIS_PALM_FROND_COUNT) * _f
 				var f_droop := droop * (1.0 if _f % 2 == 0 else OASIS_PALM_DROOP_ALT)
 				var frond_rot := Basis(Vector3.UP, frond_yaw) * Basis(Vector3.RIGHT, f_droop)
+				# A FROND IS A CONE, TIP OUT (bead godot-test1-y1o.4), and getting
+				# the tip pointing the right way is the whole of this edit.
+				#
+				# The unit cone tapers along LOCAL Y (tip at +Y), while the frond's
+				# LENGTH has always been on local Z — so passing CONE with the old
+				# dimensions draws a squat pyramid pointing at the sky. Two DERIVED
+				# changes fix it and nothing else moves:
+				#   * the length moves from the Z slot to the Y slot, so the taper
+				#     runs down the frond;
+				#   * the tilt gains a quarter turn, which maps local +Y onto the
+				#     direction local +Z used to face — i.e. outward, along the
+				#     frond, which is where the tip belongs. `frond_rot` above is
+				#     unchanged and still places the CENTRE, so the frond hangs off
+				#     exactly the crown point and at exactly the droop it did.
+				# Both are functions of numbers already drawn: NOT ONE RNG DRAW
+				# MOVED, which is bead y1o.2's canopy rule and the reason this
+				# bead's A/B still reads "kind, plus these fronds' dimensions".
+				# Fronds pass collide = false, so no collision shape moved either.
 				create_box(
 					crown + frond_rot * Vector3(0.0, 0.0, flen * 0.5),
-					Vector3(0.42, 0.30, flen),
-					frond_yaw, rng, block_batch, block_body, f_droop, OASIS_PALM_FROND_COLOR, false
+					Vector3(0.42, flen, 0.30),
+					frond_yaw, rng, block_batch, block_body, f_droop + PI * 0.5,
+					OASIS_PALM_FROND_COLOR, false, ChunkBatch.BoxKind.CONE
 				)
 
 			# Small trunk footprint
@@ -9224,12 +9459,14 @@ func _spawn_desert_oasis(chunk_center: Vector3, chunk_pos: Vector2i, rng: Random
 				continue
 
 			var boulder_size := rng.randf_range(OASIS_BOULDER_SIZE_MIN, OASIS_BOULDER_SIZE_MAX)
-			# Climbable rocks (collide=true) — round-ish color
+			# Climbable rocks (collide=true) — and since bead godot-test1-y1o.3 they
+			# are `BoxKind.ROCK`, the one kind whose lid is flat AT the box top, so
+			# the footprint appended below still records a surface you land on.
 			create_box(
 				Vector3(boulder_x, boulder_size * 0.5, boulder_z),
 				Vector3(boulder_size, boulder_size * 0.8, boulder_size),
 				rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0,
-				Color(0.55, 0.48, 0.40), true
+				Color(0.55, 0.48, 0.40), true, ChunkBatch.BoxKind.ROCK
 			)
 			obstacles.append({ "pos": Vector3(boulder_x, 0, boulder_z), "radius": boulder_size * 0.7, "top": boulder_size * 0.8, "climbable": true })
 
@@ -9255,6 +9492,29 @@ func _spawn_desert_dunes(chunk_center: Vector3, chunk_pos: Vector2i, rng: Random
 	"""
 	Build sand dunes: low, wide, climbable mounds (~1.5 m max height). Same split-placement
 	pattern as oases: DUNE_PLACE_TRIES candidates, pick the first that passes spot checks.
+
+	THE DUNE STAYS TWO CUBES, and bead godot-test1-y1o.4 asked for that decision
+	rather than assuming it: "a flattened SPHERE for the LOWER tier ONLY IF the top
+	tier keeps a CUBE-collided flat top the coin/climb rule needs, else leave dunes
+	as they are and say so". The gameplay half of the condition passes — the top
+	tier is a separate entry and would have kept its cube and its `BoxShape3D` flat
+	top at `height`, which is what the climbable footprint and `_settle_coin_y`
+	promise. It was BUILT that way, rendered, and refused ON THE PICTURE:
+
+	  A dune is 6-12 m wide and each tier is only 0.4-0.75 m tall, so an inscribed
+	  sphere there is not a mound but a LENS ~1/16th as tall as it is wide. Its
+	  surface has already fallen most of the way to the ground by the time it
+	  reaches the top tier's footprint (at the upper cube's own half-width the lens
+	  is 0.13 m below that cube's flat base), so the square top tier visibly
+	  OVERHANGS into open air on all four sides — a slab balanced on a saucer. Two
+	  honest cubes read better than that.
+
+	The two ways to make a real dune both move geometry, which is not this bead's
+	to move: give the lower tier the height a hemisphere needs (changing dimensions
+	the A/B is written against), or draw the whole dune as ONE squashed sphere and
+	give up the flat cube top the climb contract rests on. `ponytail:` if a rounded
+	dune is wanted, that is its own bead and it starts by choosing which of those
+	two costs is acceptable.
 	"""
 	var half := chunk_size / 2.0 - DUNE_WIDTH_MAX * 0.71
 	for _try in DUNE_PLACE_TRIES:
@@ -9274,7 +9534,7 @@ func _spawn_desert_dunes(chunk_center: Vector3, chunk_pos: Vector2i, rng: Random
 		var top_width := width * 0.75
 		var color := DUNE_COLOR_A.lerp(DUNE_COLOR_B, rng.randf())
 
-		# Base layer (wider)
+		# Base layer (wider). STILL A CUBE — see the docstring.
 		create_box(
 			Vector3(local_x, layer_height * 0.5, local_z),
 			Vector3(base_width, layer_height, base_width),
@@ -10313,20 +10573,256 @@ func is_wading_at(world_pos: Vector3) -> bool:
 	parity contract is about `is_river_at`, which is unchanged, and this is a
 	strictly narrower question that only a body can ask.
 
-	IT DOES NOT CLOSE BUDAPEST'S UNDER-DECK GAP, which an earlier version of this
-	docstring claimed. Inside the rect `is_river_at` answers
-	`BudapestPlan.danube_wet()`, and that already subtracts every DRY_RECTS row —
-	so the bed under an authored deck is dry before the height is ever compared.
-	Asking the band without the cutout would also flood MARGARET ISLAND, which is
-	the same mechanism holding dry LAND at y = 0; the bridge-rects-only exception
-	that would close it belongs to bead godot-test1-06o.3.
+	IT CLOSES BUDAPEST'S UNDER-DECK GAP (bead godot-test1-06o.3) by asking
+	`river_depth_at`, which subtracts only the DRY_RECTS rows that are real LAND.
+	`is_river_at` still subtracts every row — it is the band the shader paints and
+	a deck must read dry to it — but a BODY at y = 0 under a deck 12 m up is
+	standing in the Danube, and the height compare above is what makes that
+	distinction safe: a body ON the deck never reaches this line. Margaret Island
+	keeps its cutout because it is land, not a lid.
 
 	Cheap in the order that matters: the height compare is free and rejects every
 	body on a deck before the noise evaluation runs.
 	"""
 	if world_pos.y >= WADE_SURFACE_MAX:
 		return false
-	return is_river_at(world_pos)
+	return river_depth_at(world_pos.x, world_pos.z) < 1.0
+
+
+## ============================================================================
+## THE DEEP CHANNEL — rivers are not walkable down the middle
+## ============================================================================
+##
+## OWNER RULING 2026-09-04, re-asked with urgency 2026-09-05 ("why rivers, and
+## danube are still walkable? fix this") — bead godot-test1-06o.3. The inner
+## fraction of every river band is IMPASSABLE: a body that gets into it is pushed
+## back out along the field's own gradient. The outer band still wades at exactly
+## today's numbers (WADE_SPEED_FACTOR / WADE_RUN_MIN_SPEED are untouched), so the
+## thing that made wading a decision rather than a trap survives on the banks.
+##
+## WHY A FRACTION AND NOT A WALL: a hard wall across an endless procedural field
+## is a softlock generator. A centre channel leaves the banks walkable, keeps the
+## river readable as water you can stand in, and puts the crossing where the
+## bridges are — the road's (spawn_field_bridges_in_chunk), the corridor's
+## (approach_bridges) and Budapest's four authored decks.
+const RIVER_DEEP_FRACTION: float = 0.4
+
+## Finite-difference step for the push direction, in metres. Small against a band
+## (~10-20 m across) and large against fp32 noise, so the two extra evaluations
+## give a direction and not rounding noise.
+##
+## IT IS DIFFERENCED ON THE SIGNED FIELD, NOT ON THE DEPTH, and that is a
+## correctness fix rather than a preference. `river_depth_at` is an ABSOLUTE
+## value, so it has a KINK on the centreline: a forward difference taken within
+## RIVER_DEEP_PROBE of it lands on the far bank and reads the wrong side's slope,
+## which points the push INTO the channel. Measured on the shipped field before
+## the fix: 42 of 4,000 channel samples (1.05%), all at depth < 0.1 — a jitter
+## rather than a trap, because the body drifts off the kink and the next frame is
+## right, but the docstring claimed it could not happen and it could.
+## `_river_signed_raw` has no kink, so the difference is honest everywhere.
+const RIVER_DEEP_PROBE: float = 0.5
+
+## THE FORD's half-width — how far off the road's CENTRELINE the one exemption
+## reaches, in metres. The deck's own half-width plus a station, so the gap in the
+## wall is the width of the road and a metre of slop, never a beach: off the road
+## the same water is still walled.
+const RIVER_DEEP_FORD_HALF: float = FIELD_BRIDGE_HALF_WIDTH + 4.0
+
+
+func river_depth_at(world_x: float, world_z: float) -> float:
+	"""
+	How deep into a river this XZ is, NORMALISED: 0 on the centreline, 1 at the
+	bank, > 1 on dry land.
+
+	@param world_x, world_z: World-space point (metres). XZ-only, like the band.
+	@return: |field| / half-width for the noise river, distance / half-width for
+	         the authored Danube, and DRY_MARGIN for anything masked dry.
+
+	ONE FIELD FOR TWO RIVERS, which is the whole point: the deep channel, the
+	push gradient and the Y-aware wade test all read this, so the procedural river
+	and the Danube get the same rule with no second implementation and no second
+	set of constants. It is the same cost shape as `is_river_at` — the tower disc
+	first (no noise evaluation), then Budapest, then one `_biome_noise`.
+
+	IT IS NOT `is_river_at`, and the difference is exactly one clause: inside the
+	city it subtracts only the dry LAND rows (`BudapestPlan.is_dry_land`), never
+	the four bridge decks. See `is_wading_at` — a deck is dry to the shader and to
+	every spawner, and is water to a body standing under it.
+	"""
+	# Far enough out that no caller can mistake it for a bank; a plain INF would
+	# poison the finite difference in deep_channel_push().
+	const DRY_MARGIN: float = 4.0
+	var site := tower_site()
+	# Vector2, not scalar math: fp32, the same fp32 is_river_at() runs in.
+	if Vector2(world_x - site.x, world_z - site.z).length() <= TOWER_RADIUS:
+		return DRY_MARGIN
+	if BudapestPlan.contains(world_x, world_z):
+		if BudapestPlan.is_dry_land(world_x, world_z):
+			return DRY_MARGIN
+		return BudapestPlan.danube_distance(world_x, world_z) \
+				/ BudapestPlan.DANUBE_HALF_WIDTH
+	return absf(_biome_noise(world_x, world_z) - RIVER_LEVEL) / RIVER_HALF_WIDTH
+
+
+func _river_signed_raw(world_x: float, world_z: float) -> float:
+	"""
+	`river_depth_at` WITHOUT the absolute value and without the masks — the field
+	the push gradient is differenced on.
+
+	@return: The noise river's SIGNED normalised field (negative on one bank,
+	         positive on the other, zero mid-channel), or the Danube's distance in
+	         the same units, which is already non-negative.
+
+	TWO DIFFERENCES FROM `river_depth_at`, and each buys the gradient something:
+
+	  NO ABSOLUTE VALUE, so there is no kink on the centreline. `absf` is what
+	  made a forward difference read the wrong bank's slope within one probe step
+	  of the middle (see RIVER_DEEP_PROBE); the signed field is smooth through it,
+	  and `deep_channel_push` restores the direction by multiplying by the sign it
+	  already has. The Danube's distance has a kink of its own, but only ON the
+	  polyline itself, where every direction is outward and the difference is
+	  right by construction.
+
+	  NO MASKS, which is `river_field_at`'s own rule one caller along: the tower
+	  disc and Margaret Island are hard-edged READOUT policy, so a probe that
+	  stepped onto one would read a 4.0 cliff and the gradient would point at the
+	  mask instead of at the bank. Whether a body is IN a channel is
+	  `river_depth_at`'s question, masks and all; which way is OUT is this one's.
+	"""
+	if BudapestPlan.contains(world_x, world_z):
+		return BudapestPlan.danube_distance(world_x, world_z) \
+				/ BudapestPlan.DANUBE_HALF_WIDTH
+	return (_biome_noise(world_x, world_z) - RIVER_LEVEL) / RIVER_HALF_WIDTH
+
+
+func deep_channel_push(world_pos: Vector3) -> Vector3:
+	"""
+	The way OUT of the impassable centre channel, or ZERO if this body is not in
+	one.
+
+	@param world_pos: The BODY's world position — Y matters, exactly as in
+	                  is_wading_at.
+	@return: A horizontal UNIT vector pointing at the nearest bank, or
+	         Vector3.ZERO when the body is free to move.
+
+	THE ONE HOME OF THE RULE, beside `is_wading_at` for the same reason that one
+	exists: the player pushes with it, the self-check measures it, and a second
+	consumer must not get a second idea of where the channel is.
+
+	COST: the height compare and one `river_depth_at` reject every body that is
+	not already mid-channel; only a body INSIDE the strip pays the two extra
+	evaluations for the gradient. Zero allocation past the two Vector2s.
+
+	IT DOES NOT REACH AN AIRBORNE BODY, and that is the design as far as the
+	ruling goes: the push is the player's STEP 8.5, which is gated on `is_wading`,
+	so flying over a channel is exactly as legal as flying over the band always
+	was. KNOWN CEILING, measured and written down rather than discovered: the
+	strip of a typical field river is ~4.8 m across (median over 178 centreline
+	samples; p90 is 11 m) against a ~9.6 m wading jump, so an ordinary Space press
+	clears the median river. Budapest's 96 m Danube channel and the wide bands are
+	genuinely impassable. Closing that would mean pushing an airborne body, which
+	is an invisible air wall and an owner call — bead godot-test1-06o.3's report
+	raises it.
+
+	NOT A COLLISION SHAPE, deliberately. The world is flat and the river is a
+	shader tint — giving it a StaticBody would put thousands of bodies in the
+	world, break the "no water mesh" invariant and still not follow a contour.
+	"""
+	if world_pos.y >= WADE_SURFACE_MAX:
+		return Vector3.ZERO
+	var depth := river_depth_at(world_pos.x, world_pos.z)
+	if depth >= RIVER_DEEP_FRACTION:
+		return Vector3.ZERO
+	# THE ONE EXEMPTION, and it asks the AUTHORITY rather than a threshold: a road
+	# crossing the field bridges REFUSED (a lake, past FIELD_BRIDGE_MAX_SPAN of
+	# walked water) is left wadeable on purpose, and walling it would softlock the
+	# road it stands on. Asked last because it is the only expensive line here and
+	# only a body already inside a strip ever reaches it.
+	if _deep_channel_ford(world_pos.x, world_pos.z):
+		return Vector3.ZERO
+	# THE GRADIENT OF THE SIGNED FIELD, TURNED OUTWARD BY ITS OWN SIGN — never a
+	# difference of `river_depth_at`, which has a kink on the centreline that
+	# points 1% of pushes back into the water (see RIVER_DEEP_PROBE).
+	var e := RIVER_DEEP_PROBE
+	var signed := _river_signed_raw(world_pos.x, world_pos.z)
+	var grad := Vector2(
+			_river_signed_raw(world_pos.x + e, world_pos.z) - signed,
+			_river_signed_raw(world_pos.x, world_pos.z + e) - signed)
+	# Exactly on the contour every direction is outward, so the sign is +1 there
+	# rather than the 0 `signf` would hand back.
+	if signed < 0.0:
+		grad = -grad
+	if grad.length_squared() <= 0.0:
+		return Vector3.ZERO
+	var out := grad.normalized()
+	return Vector3(out.x, 0.0, out.y)
+
+
+func _deep_channel_ford(world_x: float, world_z: float) -> bool:
+	"""
+	Is this point standing in the ONE thing the deep channel yields to — a road
+	river crossing the field bridges REFUSED?
+
+	@return: true when the road is wet at the nearest station, the point is on the
+	         road, and NO STONE stands over that station.
+
+	WHY THE AUTHORITY AND NOT A WIDTH THRESHOLD. The first version of this asked
+	the field's own gradient — a band wider than FIELD_BRIDGE_MAX_SPAN
+	perpendicular is a lake — which is cheap, pointwise and WRONG: the cap counts
+	the water the road WALKS, and a road crossing a 100 m band at an angle walks
+	124 m of it. Measured over 20 seeds, that left exactly one crossing (seed 10,
+	x = 443) unbridged AND walled, which is the softlock this bead exists to
+	avoid.
+
+	AND THE AUTHORITY IS THE STONE, NOT THE ANCHOR ROW. This asked
+	`field_bridge_at(k0).is_empty()` for one round, walking back to the crossing
+	entry to find `k0` — and `field_bridge_at` answers `{}` for THREE reasons, only
+	two of which mean "unbridged": the lake, the no-dry-abutment refusal, and "an
+	earlier WESTERN anchor already owns this merged deck", where stone demonstrably
+	exists. Measured over 40 seeds: 3 of 103 channel points on the road were both
+	bridged and forded (seed 19 station 148, owned by anchor 131). Two of its
+	returns are also un-memoized "the station cache is short right now", which
+	would make the wall a function of where the player had walked — the exact class
+	CLAUDE.md documents as "THE GROWTH MAY NOT READ THE STATION CACHE'S EDGE", and
+	in a room two peers would disagree about a wall. `field_bridge_surface_y` is
+	the query with none of those hazards: it extends the cache by
+	`_field_bridge_reach()` itself, it sees merged decks and corridor decks alike,
+	and it is the same question `wade_selfcheck` check 9 asks. Asking it also
+	deleted the walk-back and its budget.
+
+	IT IS THE ROAD'S WIDTH AND NOT THE RIVER'S. Off the centreline by more than
+	RIVER_DEEP_FORD_HALF the same water is walled again, so a lake is a lake
+	everywhere except at the ford the road drives through it.
+
+	COST: only a body already INSIDE a deep strip ever calls this, and the two
+	cheap rejects (the station's distance, and whether the road is even wet there)
+	stand above the one expensive line. Warm it is 5-7 us; the first call of a run
+	that lands a body in a channel near the road pays `field_bridge_at`'s cold scan
+	(measured 2.3-2.7 ms), which ordinary chunk streaming has already warmed —
+	a `\\fb` teleport straight into one is the case that would see it.
+	"""
+	var spacing := _road_spacing()
+	_road_extend_to_x(world_x - spacing * 2.0, world_x + spacing * 2.0)
+	var k := _road_first_k_at_or_after_x(world_x)
+	if k <= road_k_min or k > road_k_max:
+		return false
+	# The nearer of the two stations bracketing this X — the road is a polyline
+	# and the point may sit either side of the sample.
+	var here: Vector2 = _road_station(k).center
+	var back: Vector2 = _road_station(k - 1).center
+	if absf(back.x - world_x) < absf(here.x - world_x):
+		k -= 1
+		here = back
+	# CAP 5 again: east of the terminal station the road has no bridges of its own
+	# (the corridor's are approach_bridges', and they cover every wet stretch), so
+	# there is nothing here to exempt.
+	if k > _road_terminal_k():
+		return false
+	if Vector2(world_x, world_z).distance_to(here) > RIVER_DEEP_FORD_HALF:
+		return false
+	if not _field_bridge_wet(k):
+		return false
+	return field_bridge_surface_y(Vector3(here.x, 0.0, here.y)) <= -INF
 
 
 func river_field_at(world_x: float, world_z: float) -> float:
@@ -11031,7 +11527,8 @@ func _tower_reset() -> void:
 	is about the BUILDING: a shell carries the old world's opened gates, captives
 	and guards, and a new run must not inherit them.
 
-	Called from new_run() after the seed is set and before any chunk is rebuilt.
+	Called from `set_run_seed()` — the seed write, every door — and so before any
+	chunk is rebuilt.
 	The shell is the one thing in this file that survives a chunk wipe, so it is
 	also the one thing a new run has to free by hand; the impostor is repositioned
 	rather than rebuilt, because its geometry does not depend on the seed.
@@ -11058,7 +11555,9 @@ func _tower_reset() -> void:
 # the per-run run_seed (constant for the whole run). There is no per-chunk RNG and no
 # per-frame state, so the road is identical for a given `k` no matter which chunk asks
 # for it or in what order — that is what makes the trail seamless across chunk
-# boundaries and reproducible on revisit. Only new_run() (a fresh run) changes it.
+# boundaries and reproducible on revisit. Only a new seed changes it, and the
+# memos derived from it are dropped where that seed is WRITTEN — see
+# `_drop_seeded_memos()`.
 
 func _road_hash01(k: int) -> float:
 	"""
@@ -11268,7 +11767,8 @@ func _road_terminal_k() -> int:
 	west of ROAD_TERMINAL_X. Every road CONSUMER stops here (bead godot-test1-8gw.3).
 
 	@return: The terminal station index. Memoized for the run in
-	         `_road_terminal_k_cache`, which new_run() resets with the station cache.
+	         `_road_terminal_k_cache`, which `set_run_seed()` drops beside the
+	         station cache it is derived from (`_drop_seeded_memos()`).
 
 	WHY THE CAP IS ON THE CONSUMERS AND NOT ON _road_extend_to_x.
 	It would be tempting to simply stop growing the cache past the terminal. That
@@ -11538,6 +12038,21 @@ func _field_bridge_run() -> float:
 	return FIELD_BRIDGE_TOP * BudapestPlan.BRIDGE_RAMP_RUN / BudapestPlan.BRIDGE_DECK_TOP
 
 
+static func field_bridge_outer_reach() -> float:
+	"""
+	How far from the walking line ANY of a bridge's stone reaches — the deck's
+	half-width plus the widest piece of trim standing outboard of it.
+
+	The number check 5 measures against every *_ROAD_CLEARANCE in this file, and
+	it is a DERIVATION rather than FIELD_BRIDGE_HALF_WIDTH read a second time:
+	the parapet and the pylons are cantilevered off the deck edge (see the trim
+	const block), so the stone now reaches further than the lane does and the
+	"no prop can ever stand on a deck" contract is about the stone.
+	"""
+	return FIELD_BRIDGE_HALF_WIDTH + maxf(FIELD_BRIDGE_PARAPET_WIDTH,
+			FIELD_BRIDGE_PARAPET_WIDTH * 0.5 + FIELD_BRIDGE_PYLON_WIDTH)
+
+
 func _field_bridge_reach() -> float:
 	"""
 	How far in X a bridge's stone can reach from its anchor station — the pad
@@ -11641,7 +12156,7 @@ func _field_bridge_wet_metres(k: int) -> float:
 
 	MEMOIZED per station, and it is the hot path of the whole feature: every
 	station in a scan window is asked as `k` and again as `k - 1`, and the growth
-	loops ask it again. new_run() drops it with the bridges it feeds.
+	loops ask it again. `_drop_seeded_memos()` drops it with the bridges it feeds.
 	"""
 	if _field_bridge_wet_cache.has(k):
 		return _field_bridge_wet_cache[k]
@@ -11870,6 +12385,49 @@ func _field_bridge_slabs(row: Dictionary) -> Array:
 	return out
 
 
+func _field_bridge_rail_line(poly: PackedVector2Array, offset: float) -> PackedVector2Array:
+	"""
+	The walking line offset sideways by `offset` metres, MITRED at every joint —
+	the line a parapet's boxes are centred on.
+
+	@param offset: SIGNED lateral offset. The normal is (dir.y, -dir.x), which is
+	               the box's own local +X (see spawn_field_bridges_in_chunk).
+	@return: One point per point of `poly`, so segment `i` of the result is the
+	         rail beside slab `i`.
+
+	A MITRE, NOT ONE OFFSET RECTANGLE PER SLAB, and the difference is the lane.
+	A rectangle offset from its own segment stops at the joint's projection, and
+	on the INSIDE of a turn that corner lands `offset * cos(turn)` from the NEXT
+	segment's line — 7.63 m from a line whose deck reaches 8.0 at the road's
+	measured 22.4 degree worst joint, i.e. a rail poking a third of a metre into
+	the lane the deck promises (field_bridge_selfcheck check 11 catches exactly
+	that). The mitre point lies on BOTH offset lines by construction, so no part
+	of the rail is ever nearer the walking line than `offset` — and the OUTER
+	corner closes with no wedge for free, which is why the parapet needs no slab
+	stretch of its own (_field_bridge_joint_ext stays the deck's).
+	"""
+	var out := PackedVector2Array()
+	var n := poly.size()
+	for i in n:
+		var d_in: Vector2 = (poly[i] - poly[i - 1]).normalized() if i > 0 \
+				else (poly[1] - poly[0]).normalized()
+		var d_out: Vector2 = (poly[i + 1] - poly[i]).normalized() if i < n - 1 \
+				else d_in
+		var bis := (Vector2(d_in.y, -d_in.x) + Vector2(d_out.y, -d_out.x)).normalized()
+		# Scale the bisector so its projection on either normal is exactly
+		# `offset`. Floored because a hairpin sends the mitre to infinity, and
+		# the floor is NOT a graceful cap: under it the rail lands at
+		# 2 * offset * proj, i.e. INSIDE the lane, which is the very thing this
+		# function exists to prevent. It is unreachable on this road — proj is
+		# cos(turn / 2) and needs a 120 degree joint against a measured worst of
+		# 22.41 (minimum proj over 45 bridges: 0.9809) — so it is a guard against
+		# a division, not a supported case. Widen the turn cap and this needs a
+		# real answer.
+		var proj := maxf(bis.dot(Vector2(d_out.y, -d_out.x)), 0.5)
+		out.append(poly[i] + bis * (offset / proj))
+	return out
+
+
 func field_bridge_at(k0: int) -> Dictionary:
 	"""
 	THE BRIDGE ANCHORED AT STATION `k0`, or {} when there is none.
@@ -11888,7 +12446,8 @@ func field_bridge_at(k0: int) -> Dictionary:
 
 	MEMOIZED, because every chunk within a bridge's reach re-asks this and the
 	answer is a pure function of (k0, run_seed) through the road cache and the
-	river field. new_run() clears it beside the station cache it is derived from.
+	river field. `_drop_seeded_memos()` clears it beside the station cache it is
+	derived from.
 
 	THE CAP IS A LAKE, NOT A LONGER BRIDGE. Past FIELD_BRIDGE_MAX_SPAN of wet
 	centreline the road is not crossing a river, it is running into standing
@@ -12474,6 +13033,13 @@ func spawn_field_bridges_in_chunk(chunk_pos: Vector2i, block_batch: Array,
 	and before _build_block_multimesh — a deck is one draw call's worth of the
 	chunk's batch like any cactus. It appends NO footprint (see the const block).
 
+	THE TRIM RIDES THE SAME LOOP (bead godot-test1-06o.4): a parapet per slab
+	edge and a pylon pair at each bank, cantilevered OUTBOARD of the deck so the
+	walkable lane, the surface query and every wet probe are untouched and only
+	boxes were added — see the trim const block for the whole argument. Each
+	piece takes the centre rule for ITSELF, because its midpoint is not its
+	slab's.
+
 	NO RNG DRAW from anybody's stream: its own private generator at a fixed seed,
 	whose colour picks are overridden anyway.
 	"""
@@ -12489,16 +13055,26 @@ func spawn_field_bridges_in_chunk(chunk_pos: Vector2i, block_batch: Array,
 	rng.seed = FIELD_BRIDGE_STREAM_SEED
 	for row_v: Variant in rows:
 		var row: Dictionary = row_v
-		for slab_v: Variant in _field_bridge_slabs(row):
-			var slab: Dictionary = slab_v
+		var poly: PackedVector2Array = row["poly"]
+		# The two parapet lines, mitred, one per deck edge — segment `i` of each
+		# belongs to slab `i`. Once per row per CHUNK, not once per slab: it is
+		# pure in the row (so it is cached nowhere and can leak across no
+		# re-seed) and it is a couple of dozen normalises against a window scan
+		# this feature already budgets in milliseconds.
+		var rail_off: float = float(row["half"]) + FIELD_BRIDGE_PARAPET_WIDTH * 0.5
+		var rails: Array[PackedVector2Array] = [
+			_field_bridge_rail_line(poly, rail_off),
+			_field_bridge_rail_line(poly, -rail_off),
+		]
+		var slabs := _field_bridge_slabs(row)
+		for i in slabs.size():
+			var slab: Dictionary = slabs[i]
 			var dir: Vector2 = slab["dir"]
 			var run_h: float = slab["len"]
 			var y_a: float = slab["y_a"]
 			var y_b: float = slab["y_b"]
 			var half: float = slab["half"]
 			var mid: Vector2 = Vector2(slab["start"]) + dir * run_h * 0.5
-			if world_to_chunk(Vector3(mid.x, 0.0, mid.y)) != chunk_pos:
-				continue
 			var rise := y_b - y_a
 			var length := sqrt(run_h * run_h + rise * rise)
 			# create_box composes Basis(UP, yaw) * Basis(RIGHT, tilt), so a box
@@ -12507,13 +13083,74 @@ func spawn_field_bridges_in_chunk(chunk_pos: Vector2i, block_batch: Array,
 			# on (cos(tilt) * sin(yaw), -sin(tilt), cos(tilt) * cos(yaw)), so
 			# yaw = atan2(dir.x, dir.y) points it along this segment and
 			# tilt = -atan2(rise, run) tips it up that segment's climb.
-			create_box(
-					Vector3(mid.x - centre.x,
-							(y_a + y_b) * 0.5 - FIELD_BRIDGE_THICKNESS * 0.5,
-							mid.y - centre.z),
-					Vector3(half * 2.0, FIELD_BRIDGE_THICKNESS, length),
-					atan2(dir.x, dir.y), rng, block_batch, block_body,
-					-atan2(rise, run_h), FIELD_BRIDGE_STONE)
+			var yaw := atan2(dir.x, dir.y)
+			var tilt := -atan2(rise, run_h)
+			var surface := (y_a + y_b) * 0.5
+			if world_to_chunk(Vector3(mid.x, 0.0, mid.y)) == chunk_pos:
+				create_box(
+						Vector3(mid.x - centre.x,
+								surface - FIELD_BRIDGE_THICKNESS * 0.5,
+								mid.y - centre.z),
+						Vector3(half * 2.0, FIELD_BRIDGE_THICKNESS, length),
+						yaw, rng, block_batch, block_body, tilt,
+						FIELD_BRIDGE_STONE)
+
+			# THE PARAPETS — one per edge of this slab, ramps included, because a
+			# rail that stops where the deck does is a rail you walk off the side
+			# of the approach. A rail segment is parallel to its slab (offset
+			# lines are), so it takes the slab's own `yaw`; only its LENGTH moves,
+			# which is what a mitre does at a turn.
+			#
+			# EACH ONE TAKES THE CENTRE RULE FOR ITSELF: a parapet's midpoint is
+			# 8.25 m off its slab's, so the chunk that owns the slab is routinely
+			# not the chunk that owns the wall — the rule slices a BOX.
+			for rail_v: Variant in rails:
+				var rail: PackedVector2Array = rail_v
+				var r_mid: Vector2 = (rail[i] + rail[i + 1]) * 0.5
+				var r_run: float = rail[i].distance_to(rail[i + 1])
+				if r_run <= EDGE_EPS:
+					continue
+				if world_to_chunk(Vector3(r_mid.x, 0.0, r_mid.y)) != chunk_pos:
+					continue
+				create_box(
+						Vector3(r_mid.x - centre.x,
+								surface + (FIELD_BRIDGE_PARAPET_HEIGHT
+										- FIELD_BRIDGE_THICKNESS) * 0.5,
+								r_mid.y - centre.z),
+						Vector3(FIELD_BRIDGE_PARAPET_WIDTH,
+								FIELD_BRIDGE_PARAPET_HEIGHT + FIELD_BRIDGE_THICKNESS,
+								sqrt(r_run * r_run + rise * rise)),
+						yaw, rng, block_batch, block_body,
+						-atan2(rise, r_run), FIELD_BRIDGE_PARAPET_STONE)
+
+		# THE PYLON PAIR AT EACH BANK. The deck's two ends are poly[1] and
+		# poly[-2] by construction (_field_bridge_row_from appends a ramp foot
+		# outside each of them), and the slab meeting each is COLINEAR with the
+		# deck segment beyond it — so the heading is that segment's and there is
+		# no fourth description of the bridge's shape to keep in step.
+		var last := poly.size() - 1
+		for bank in [
+			{ "at": poly[1], "dir": (poly[2] - poly[1]).normalized() },
+			{ "at": poly[last - 1], "dir": (poly[last - 1] - poly[last - 2]).normalized() },
+		]:
+			var b_dir: Vector2 = bank["dir"]
+			var b_perp := Vector2(b_dir.y, -b_dir.x)
+			var b_top := FIELD_BRIDGE_TOP + FIELD_BRIDGE_PYLON_RISE
+			for side in [-1.0, 1.0]:
+				# OUTBOARD OF THE PARAPET'S CENTRE LINE by half a pylon, so the
+				# two solids interpenetrate rather than share a face — see the
+				# const block for why flush is z-fighting and not tidiness.
+				var at: Vector2 = Vector2(bank["at"]) + b_perp * (side
+						* (float(row["half"]) + FIELD_BRIDGE_PARAPET_WIDTH * 0.5
+								+ FIELD_BRIDGE_PYLON_WIDTH * 0.5))
+				if world_to_chunk(Vector3(at.x, 0.0, at.y)) != chunk_pos:
+					continue
+				create_box(
+						Vector3(at.x - centre.x, b_top * 0.5, at.y - centre.z),
+						Vector3(FIELD_BRIDGE_PYLON_WIDTH, b_top,
+								FIELD_BRIDGE_PYLON_DEPTH),
+						atan2(b_dir.x, b_dir.y), rng, block_batch, block_body,
+						0.0, FIELD_BRIDGE_PYLON_STONE, false)
 
 
 func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
@@ -13765,8 +14402,8 @@ func _approach_coin_line() -> PackedVector2Array:
 	@return: The shared, memoized line. Callers must not mutate it.
 
 	Memoized because every chunk in the world asks for it and it is a pure function
-	of the terminal station — which is fixed for the run. new_run() resets it
-	beside _road_terminal_k_cache, the one seeded input it has.
+	of the terminal station — which is fixed for the run. `_drop_seeded_memos()`
+	drops it beside _road_terminal_k_cache, the one seeded input it has.
 
 	The resampling itself lives in BudapestPlan.approach_coin_line(), with the rest
 	of the corridor's arithmetic, so the coins and the clearance swath keep reading
@@ -14110,11 +14747,11 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	1. Set run_seed — re-rolled at random, or taken from forced_seed. Every hash
 	   site mixes it in, so all downstream content (blocks, crocodiles, road,
 	   coins) comes out of that one number.
-	2. Clear the road station cache — its entries were computed with the OLD seed
-	   and would poison the new road (the cache is "correct forever" only while the
-	   seed is constant). Reset the bounds to the empty sentinel (min > max) exactly
-	   as declared, so the next _road_extend_to_x re-seeds station 0. Also clear both
-	   pending queues — anything queued was computed for the old world.
+	2. Clear both pending queues — anything queued was computed for the old world.
+	   The SEED-derived memos (the road station cache and everything strung along
+	   it) are NOT cleared here: step 1's seed write drops them, in
+	   `_drop_seeded_memos()`, because `set_run_seed()` is the only seam every
+	   door goes through. These two queues are CHUNK state, so they stay.
 	3. Free every active chunk and clear the dictionary — old-world geometry.
 	4. Rebuild around chunk `around` (the spawn chunk (0,0) unless a caller says
 	   otherwise) via update_chunks — which floors that chunk + SYNC_RING ring 1
@@ -14136,37 +14773,18 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 		set_run_seed(int(forced_seed))
 	_apply_biome_shader_params()
 
-	# 2. Road cache back to its declared empty state, and BOTH old-world pending
-	# queues emptied (update_chunks below rebuilds them for the new world anyway;
-	# clearing here just makes the invariant explicit). The removal queue in
-	# particular holds bare coordinates, and step 3 is about to free everything
-	# they name — leaving stale ones around a rebuild that re-uses the same
-	# coordinates is how a brand-new chunk would get freed a frame later.
-	road_stations = {}
-	road_k_min = 1
-	road_k_max = 0
-	# The terminal station is derived from the centreline, so it is exactly as
-	# stale as the cache above: a new seed puts a different station at
-	# ROAD_TERMINAL_X. Reset it HERE, beside what it is derived from, so the two
-	# can never be reset apart.
-	_road_terminal_k_cache = ROAD_TERMINAL_K_UNSET
-	# ...and the field bridges, for the same reason one step further out: a
-	# crossing is a station index plus the river field, and both moved. The
-	# corridor's are derived from the terminal station, so they go with them.
-	_field_bridge_cache = {}
-	_field_bridge_wet_cache = {}
-	_approach_bridge_cache = []
-	_approach_bridge_scanned = false
-	# ...and the approach coin line with it: it is resampled off that station.
-	_approach_coin_line_cache = PackedVector2Array()
-	# ...and the museum mile: every site is a station index on the centreline
-	# above, so a table kept across a re-seed would string this run's landmarks
-	# along the LAST run's road (see the MUSEUM MILE banner).
-	_landmark_sites_cache = {}
-	_landmark_sites_built = false
-	# ...and the spike's coarse road polyline, which is a window onto the same
-	# centreline. update_chunks in step 4 below rebuilds it for the new world.
-	_alt_road_segs = PackedVector4Array()
+	# 2. BOTH old-world pending queues emptied (update_chunks below rebuilds them
+	# for the new world anyway; clearing here just makes the invariant explicit).
+	# The removal queue in particular holds bare coordinates, and step 3 is about
+	# to free everything they name — leaving stale ones around a rebuild that
+	# re-uses the same coordinates is how a brand-new chunk would get freed a
+	# frame later.
+	#
+	# THE ROAD MEMOS ARE NOT HERE ANY MORE (bead godot-test1-bvq). The station
+	# cache and everything derived from it are SEED-derived, so they are dropped
+	# by `_drop_seeded_memos()` inside `set_run_seed()`, which step 1 above has
+	# already called down both branches. These two queues stay because they are
+	# CHUNK state, not seed state: a bare re-seed does not free a chunk.
 	pending_chunks.clear()
 	pending_removals.clear()
 
