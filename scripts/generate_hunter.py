@@ -35,7 +35,7 @@ import trimesh
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from predator_parts import OUT_DIR, MAX_FACES, box, build, rgba, spike  # noqa: E402
+from predator_parts import OUT_DIR, MAX_FACES, box, build, export_faceted, rgba, spike  # noqa: E402
 
 # --- Palette. THESE HEXES ARE LINEAR, NOT sRGB — see the long gamma note at the
 # top of generate_snake.py's palette; the same trap applies here. Each constant
@@ -219,7 +219,7 @@ def save_hunter() -> trimesh.Trimesh:
     verify_hunter(mesh)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     path = OUT_DIR / "hunter.glb"
-    mesh.export(path)
+    export_faceted(mesh, path)
     lo, hi = mesh.bounds
     print(f"✓ hunter: {path}")
     print(f"  {len(mesh.vertices)} verts / {len(mesh.faces)} faces")
