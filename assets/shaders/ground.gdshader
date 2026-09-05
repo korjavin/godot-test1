@@ -89,6 +89,22 @@ uniform float biome_forest_max = 0.75;        // n < this  -> forest
 uniform float biome_mountain_max = 0.83;      // n < this  -> mountain, else snow
 uniform float river_level = 0.5;              // the contour rivers follow
 uniform float river_half_width = 0.007;       // half-thickness of that contour
+// THE DEEP CHANNEL's share of the band (bead godot-test1-06o.3, owner ruling
+// 2026-09-04/09-05 "why rivers, and danube are still walkable? fix this"). The
+// inner `river_deep_fraction` of every band is IMPASSABLE on the CPU, so it is
+// painted darker here off the SAME normalised depth — one number, two languages,
+// the ordinary parity rule. Pushed by _apply_biome_shader_params beside
+// river_half_width; the default matches RIVER_DEEP_FRACTION so a material that
+// never met that function still paints what the terrain enforces.
+//
+// The CPU adds one clause this does not: a road crossing the field bridges
+// REFUSED keeps a road-width FORD through the strip, or the road it stands on is
+// softlocked. Running that here would cost a station search per fragment on a
+// fill-rate-bound WebGL2 target for a gap at one crossing in thirty-nine, so the
+// tint is the field value alone — see _deep_channel_ford in endless_terrain.gd,
+// which carries this ceiling. The paint says "deep water"; the CPU says who may
+// walk it.
+uniform float river_deep_fraction = 0.4;
 uniform float biome_blend = 0.05;             // smoothstep radius at each threshold
 // THE TOWER'S DRY DISC — the GPU half of the mask in is_river_at(). The tower
 // stands at a fixed, hand-planned address (endless_terrain.gd tower_site()), so
@@ -227,6 +243,12 @@ const float RIVER_EDGE_SOFT = 0.2;
 // unavoidable error goes on each bank.
 const float CITY_RIVER_EDGE_SOFT = 2.0;
 
+// How much darker the impassable deep channel is than the wadeable band around
+// it. A multiplier on the SAME river_color rather than a second uniform: the
+// strip has to read as deeper water, not as a different material, and the
+// gradient between the two is what tells a player where the wall is.
+const float RIVER_DEEP_SHADE = 0.45;
+
 // Ground mottling computed per-vertex, interpolated for free across the triangle.
 varying float v_noise;
 // The raw biome field value at this vertex — thresholded in fragment(), and the
@@ -247,6 +269,11 @@ varying vec2 v_world_xz;
 // part of the city river, the dry-deck mask, stays per-fragment for the mirror
 // image of this reason (see fragment()).
 varying float v_city_river;
+// The same for the Danube's DEEP CHANNEL — 1 mid-channel, 0 at the strip's edge.
+// Per-vertex for exactly v_city_river's reason: 0.4 x 120 m of half-width against
+// 3 m of vertex spacing is oversampled many times over, and it rides the one
+// city_river_distance() call the vertex already pays for.
+varying float v_city_river_deep;
 
 // Sine-free 2D lattice hash: turns a lattice point into a pseudo-random 0..1
 // value. Deterministic (pure function of position), so the pattern never
@@ -434,9 +461,14 @@ void vertex() {
 	// to interpolate and the noise river is not. Zero when no city is fed, which
 	// is what makes the inert defaults inert.
 	v_city_river = 0.0;
+	v_city_river_deep = 0.0;
 	if (city_river_count > 0) {
+		float city_d = city_river_distance(world_xz);
 		v_city_river = 1.0 - smoothstep(city_river_half - CITY_RIVER_EDGE_SOFT,
-				city_river_half + CITY_RIVER_EDGE_SOFT, city_river_distance(world_xz));
+				city_river_half + CITY_RIVER_EDGE_SOFT, city_d);
+		float city_deep_half = city_river_half * river_deep_fraction;
+		v_city_river_deep = 1.0 - smoothstep(city_deep_half - CITY_RIVER_EDGE_SOFT,
+				city_deep_half + CITY_RIVER_EDGE_SOFT, city_d);
 	}
 
 	// THE HEIGHTFIELD — the spike, and the ONE thing in this file that moves a
@@ -550,6 +582,15 @@ void fragment() {
 	float v_river = 1.0 - smoothstep(river_half_width * (1.0 - RIVER_EDGE_SOFT),
 			river_half_width * (1.0 + RIVER_EDGE_SOFT), abs(v_biome - river_level));
 
+	// THE DEEP CHANNEL, the GPU half of it — the same expression one factor in,
+	// so the darker water and the wall a body meets are readouts of ONE number.
+	// Per-fragment for v_river's own sampling reason: 0.4 of an ~8 m band is
+	// 3 m wide, under the ~3 m vertex spacing.
+	float v_deep = 1.0 - smoothstep(
+			river_half_width * river_deep_fraction * (1.0 - RIVER_EDGE_SOFT),
+			river_half_width * river_deep_fraction * (1.0 + RIVER_EDGE_SOFT),
+			abs(v_biome - river_level));
+
 	// River last, on top of whatever biome it cuts through — rivers are an
 	// overlay, not a biome (same rule as is_river_at() on the CPU side).
 	//
@@ -569,12 +610,22 @@ void fragment() {
 	// vertex spacing it would fade, and the blue you see would stand a metre and
 	// a half off the deck the CPU answers exactly. Up to 8 rects, four compares
 	// each, and only for pixels actually inside the city.
+	// KNOWN CPU/GPU DIVERGENCE, and it is the under-deck exception's shadow: the
+	// dry rects below zero BOTH factors, so the bed at y = 0 under an authored
+	// deck is painted DRY while a BODY there wades and meets the deep channel.
+	// That is `is_river_at` (this) and `is_wading_at` (the CPU) answering two
+	// different questions on purpose — see is_wading_at in endless_terrain.gd —
+	// and it is only ever seen from under a 12 m bridge. Painting it wet instead
+	// would put blue on the deck's own footprint at every other viewing angle,
+	// which is the bug DRY_RECTS exists for.
 	if (in_city) {
 		v_river = v_city_river;
+		v_deep = v_city_river_deep;
 		for (int i = 0; i < city_dry_count; i++) {
 			if (v_world_xz.x >= city_dry[i].x && v_world_xz.x <= city_dry[i].z
 					&& v_world_xz.y >= city_dry[i].y && v_world_xz.y <= city_dry[i].w) {
 				v_river = 0.0;
+				v_deep = 0.0;
 			}
 		}
 	}
@@ -591,6 +642,10 @@ void fragment() {
 				* sin(v_world_xz.y * 2.3 - TIME * 0.9);
 		vec3 wet = river_color * (1.0 + shimmer * 0.12);
 		albedo = mix(albedo, wet, v_river);
+		// ...and the impassable centre strip darker still, on top of the band it
+		// sits inside. One more mix and no new colour uniform: deep water is the
+		// same water with less light coming back out of it.
+		albedo = mix(albedo, wet * RIVER_DEEP_SHADE, v_deep);
 		// Wet sheen for free — no transparency, no reflection, no extra pass.
 		roughness = mix(roughness, 0.3, v_river);
 	}

@@ -75,7 +75,7 @@ const MAX_STATE_COUNTER: int = 1000000000
 ## that range, so anything beyond it is refused before the cast.
 const MAX_STATE_ID_MAGNITUDE: float = 9007199254740992.0
 
-## State byte carried by a crocodile sync entry (see `_send_croc_sync()` and
+## State byte carried by a crocodile sync entry (see `MpCrocSync.send_croc_sync()` and
 ## `decode_croc_sync()`). Declared HERE, once, so the encoder on the master and
 ## the decoder in `piglet_crocodile_ai.set_remote_state()` cannot drift apart.
 const CROC_FLAG_CHASING: int = 1

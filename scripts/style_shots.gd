@@ -253,10 +253,12 @@ func _shoot_field_bridge(terrain: Node, player: Node3D) -> void:
 	costs nothing and lands in the same place every run — the same property the
 	landmark shots lean on one table along.
 	"""
-	# THE ROAD CACHE IS NOT DROPPED BY set_run_seed(), only by new_run(), so a
-	# tool that has not taken a shot yet is still holding the BOOT seed's
-	# stations — and every bridge hangs off a station index. Re-seat the world on
-	# SEED first; _shoot does the same thing again for the pose it frames.
+	# EVERY BRIDGE HANGS OFF A STATION INDEX, so a tool that has not taken a shot
+	# yet is still holding the BOOT seed's road. `new_run(SEED)` re-seats the
+	# whole world on SEED — which since bead godot-test1-bvq drops the road memos
+	# through `set_run_seed()`, so a bare `set_run_seed(SEED)` would do for the
+	# road alone; the full `new_run` stays because this also wants the chunks.
+	# _shoot does the same thing again for the pose it frames.
 	terrain.new_run(SEED, Vector2i.ZERO)
 	terrain._road_extend_to_x(0.0, 1450.0)
 	var row: Dictionary = {}

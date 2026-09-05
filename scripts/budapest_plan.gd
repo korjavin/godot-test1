@@ -825,6 +825,45 @@ static func is_dry(x: float, z: float) -> bool:
 	return false
 
 
+static func is_bridge_deck_rect(i: int) -> bool:
+	"""
+	Is `DRY_RECTS[i]` a BRIDGE DECK rather than dry LAND?
+
+	Read off `BRIDGES` — the joint that already names a deck by its `dry` index —
+	so "which rows are decks" is never a second list to keep in step. Four int
+	compares; the only caller is the wading path below, which asks it at most five
+	times per body per tick and only inside the city rect.
+	"""
+	for row_v: Variant in BRIDGES:
+		if int((row_v as Dictionary)["dry"]) == i:
+			return true
+	return false
+
+
+static func is_dry_land(x: float, z: float) -> bool:
+	"""
+	Is this world XZ standing on dry LAND inside the band — i.e. Margaret Island,
+	and NOT a bridge deck?
+
+	THE BRIDGE-RECTS-ONLY EXCEPTION (bead `godot-test1-06o.3`). `is_dry()` above
+	answers the XZ question `is_river_at()` asks and must keep subtracting every
+	row: a deck is dry to the shader, to every spawner and to the minimap. But a
+	BODY at y = 0 under a deck 12 m up is standing in the river, and `DRY_RECTS`
+	being XZ-only is what used to make it dry — the gap 06o.2 measured and left
+	here. So the Y-AWARE path asks this instead, which subtracts only the rows
+	that are real LAND. Margaret Island keeps its cutout because it IS land; the
+	four decks lose theirs because the water runs on underneath them.
+	"""
+	for i in range(DRY_RECTS.size()):
+		if is_bridge_deck_rect(i):
+			continue
+		var r: Rect2 = DRY_RECTS[i]
+		if x >= r.position.x and x <= r.position.x + r.size.x \
+				and z >= r.position.y and z <= r.position.y + r.size.y:
+			return true
+	return false
+
+
 static func danube_wet(x: float, z: float) -> bool:
 	"""
 	Is this world XZ WATER? Inside the band and not on a dry rect.

@@ -71,7 +71,7 @@ const BIOME_SAMPLES: int = 4
 ##
 ##   FOREST   3 — cubes (trunks, blocks) + SPHERE canopies + ROCK mossy boulders
 ##   PLAINS   2 — cubes + ROCK boulder clusters
-##   DESERT   2 — cubes + ROCK sandstone stacks and oasis boulders
+##   DESERT   4 — and it is the one row that needs its own paragraph, below
 ##   MOUNTAIN 2 — cubes (massifs, cairn tiers) + ROCK scree
 ##   SNOW     2 — cubes (drifts, stumps) + ROCK glacier ice
 ##   CITY     2 — and the reason is worth knowing, because the field city band's
@@ -84,11 +84,34 @@ const BIOME_SAMPLES: int = 4
 ##                where it can be asserted builder by builder instead of being
 ##                inferred from a chunk that may be nowhere near an edge.
 ##
-## ONLY THE FOREST GETS A THIRD, and that asymmetry is structural rather than
-## tuning: canopies come from `_spawn_forest_content`, which `spawn_biome_content_in_chunk`
-## dispatches on the CHUNK CENTRE, so a SPHERE can only ever appear in a chunk
-## whose centre is forest. Rocks come from the per-position prop themer and can
-## appear anywhere.
+## THE DESERT IS FOUR, AND THAT IS ONE MORE THAN BEAD y1o.4 BUDGETED FOR — it is
+## flagged here rather than quietly absorbed, because the number wants an owner's
+## eye. That bead asked for "F3 at most +2 per desert chunk" and was written on
+## 2026-09-03, when the desert drew nothing but CUBEs; its own dependency y1o.3
+## then gave every sandstone stack and every oasis boulder a ROCK, so the band was
+## already at 2 before this bead added a single cylinder. The four are CUBE
+## (scattered blocks, dunes, the oasis water disc, rim and reeds), CYLINDER (cactus
+## segments and arms, palm trunks), ROCK (sandstone, boulders) and CONE (palm
+## fronds).
+##
+## MEASURED over 2,814 stone-bearing desert chunks at run_seed 20260904:
+##   1 bucket   500 chunks (17.8%)
+##   2 buckets 1616 chunks (57.4%)
+##   3 buckets  587 chunks (20.9%)
+##   4 buckets  111 chunks ( 3.9%)  <- exactly the chunks carrying an OASIS
+## CONE appears in 111 chunks and nowhere else, so the fourth bucket IS the oasis
+## and nothing but the oasis — a rare authored-feeling set piece, not the common
+## desert. `ponytail:` the one-line way back under three is to give the fronds the
+## trunks' CYLINDER instead of their own CONE; that costs the frond its taper (a
+## palm blade becomes a round stick) and is a swap of two arguments in
+## `_spawn_desert_oasis`, so it is an owner's call about a picture and not a
+## refactor.
+##
+## ONLY THE FOREST AND THE DESERT GO PAST TWO, and the forest's asymmetry is
+## structural rather than tuning: canopies come from `_spawn_forest_content`, which
+## `spawn_biome_content_in_chunk` dispatches on the CHUNK CENTRE, so a SPHERE can
+## only ever appear in a chunk whose centre is forest. Rocks come from the
+## per-position prop themer and can appear anywhere.
 ##
 ## KEYED BY NAME and resolved against the live `Biome` enum, so this table reads as
 ## design intent rather than as ints, and a biome MISSING a row is failed by name.
@@ -104,7 +127,7 @@ const BIOME_SAMPLES: int = 4
 const KIND_CAP_BY_NAME: Dictionary = {
 	"FOREST": 3,
 	"PLAINS": 2,
-	"DESERT": 2,
+	"DESERT": 4,
 	"MOUNTAIN": 2,
 	"SNOW": 2,
 	"CITY": 4,
