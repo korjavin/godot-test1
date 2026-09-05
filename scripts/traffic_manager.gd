@@ -199,7 +199,6 @@ const CAR_MESH_TOP: float = 1.15
 
 static var _shared_material: ShaderMaterial = null
 static var _shared_mesh: ArrayMesh = null
-static var _box_cache: Dictionary = {}
 
 static func _get_shared_material() -> Material:
 	## The ONE material of the ONE traffic MultiMesh — now the WORLD'S OWN block
@@ -222,32 +221,20 @@ static func _get_shared_material() -> Material:
 	## ROUGHNESS and nothing else, so the cars lose a very slight sheen. That is
 	## the bead's own call — if the owner misses it, it is one more uniform on a
 	## shader every chunk in the world already runs.
+	##
+	## The BUILD is `CityAgents.gradient_material` since bead
+	## `godot-test1-ftn.22`; the lazy singleton stays here, because "ONE material
+	## for the one traffic MultiMesh" is this manager's invariant and
+	## `traffic_selfcheck` asserts it off the live `material_override`.
 	if _shared_material == null:
-		_shared_material = ShaderMaterial.new()
-		_shared_material.shader = ChunkBatch.WORLD_BLOCK_SHADER
-		_shared_material.set_shader_parameter("height_range",
-				Vector2(0.0, CAR_MESH_TOP))
-		_shared_material.set_shader_parameter("block_roughness", 0.78)
-		_shared_material.set_shader_parameter("bottom_shade",
-				ChunkBatch.BLOCK_BOTTOM_SHADE)
+		_shared_material = CityAgents.gradient_material(CAR_MESH_TOP, 0.78)
 	return _shared_material
 
-static func _box_mesh(size: Vector3) -> BoxMesh:
-	if not _box_cache.has(size):
-		var bm := BoxMesh.new()
-		bm.size = size
-		_box_cache[size] = bm
-	return _box_cache[size]
-
 static func _add_box(st: SurfaceTool, center: Vector3, size: Vector3, col: Color) -> void:
-	var arrays: Array = _box_mesh(size).get_mesh_arrays()
-	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-	var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
-	var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
-	for i in indices:
-		st.set_color(col)
-		st.set_normal(normals[i])
-		st.add_vertex(center + verts[i])
+	## One-line forwarder to `CityAgents.add_box` (bead `godot-test1-ftn.22`),
+	## which is where the body lives now — shared with `crowd_manager.gd`, whose
+	## copy was verbatim. The 13 call sites below keep their spelling.
+	CityAgents.add_box(st, center, size, col)
 
 static func _get_car_mesh() -> ArrayMesh:
 	if _shared_mesh != null:
@@ -361,42 +348,22 @@ func _process(delta: float) -> void:
 # QUERIES
 # ============================================================================
 
+# THE THREE LOOKUPS BELOW ARE ONE-LINE FORWARDERS to `scripts/city_agents.gd`
+# (bead `godot-test1-ftn.22`), which is where the bodies live now — shared with
+# `crowd_manager.gd`, whose copies were verbatim. `WALKABLE_LANDMARK_IDS` went
+# with them: two copies of a table naming which slots are open plazas is exactly
+# the drift this refactor is against, and it is aliased back here because
+# `is_traffic_walkable` reads through the alias and so may anything else.
+const WALKABLE_LANDMARK_IDS := CityAgents.WALKABLE_LANDMARK_IDS
+
 func _find_player() -> Node3D:
-	var p := get_tree().get_first_node_in_group("player")
-	if p is Node3D:
-		return p
-	return null
+	return CityAgents.find_player(get_tree())
 
 func _is_near_budapest(player_pos: Vector3) -> bool:
-	return PLAN_SCRIPT.rect().grow(100.0).has_point(Vector2(player_pos.x, player_pos.z))
-
-const WALKABLE_LANDMARK_IDS: Dictionary = {
-	"heroes_square": true,
-	"budapest_eye": true,
-	"vaci_utca": true,
-	"shoes_on_the_danube": true,
-	"chain_bridge": true,
-	"liberty_bridge": true,
-	"elisabeth_bridge": true,
-	"margaret_bridge": true,
-	"margaret_island": true,
-	"buda_castle": true,
-	"matthias": true,
-	"citadella": true,
-}
+	return CityAgents.is_near_budapest(player_pos)
 
 static func _is_inside_solid_landmark(x: float, z: float) -> bool:
-	for slot: Dictionary in PLAN_SCRIPT.SLOTS:
-		var slot_id: String = slot.get("id", "")
-		if WALKABLE_LANDMARK_IDS.has(slot_id):
-			continue
-		var spos: Vector3 = slot["pos"]
-		var r: float = slot["radius"]
-		var dx: float = x - spos.x
-		var dz: float = z - spos.z
-		if dx * dx + dz * dz < r * r:
-			return true
-	return false
+	return CityAgents.is_inside_solid_landmark(x, z)
 
 static func _is_on_avenue_carriageway(x: float, z: float) -> bool:
 	# Distance to nearest AVENUE line (every CITY_AVENUE_EVERY-th grid line) < AVENUE_HALF_WIDTH

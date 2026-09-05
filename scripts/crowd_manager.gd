@@ -216,7 +216,6 @@ const CITIZEN_MESH_TOP: float = 1.78
 
 static var _shared_material: ShaderMaterial = null
 static var _archetype_meshes: Array = [null, null, null, null]
-static var _box_cache: Dictionary = {}
 
 
 static func _get_shared_material() -> Material:
@@ -250,39 +249,21 @@ static func _get_shared_material() -> Material:
 	## applied it and only the desktop look moves — that reading is the shipped
 	## docs' and is NOT something this change measured, so treat the size of the
 	## shift as "seen in the y1o.15 before/after shots", not as derived.
+	##
+	## The BUILD is `CityAgents.gradient_material` since bead
+	## `godot-test1-ftn.22`; the lazy singleton stays here, because "ONE material
+	## for all four crowd MultiMeshes" is this manager's invariant and
+	## `crowd_selfcheck` asserts it off the live `material_override`.
 	if _shared_material == null:
-		_shared_material = ShaderMaterial.new()
-		_shared_material.shader = ChunkBatch.WORLD_BLOCK_SHADER
-		_shared_material.set_shader_parameter("height_range",
-				Vector2(0.0, CITIZEN_MESH_TOP))
-		_shared_material.set_shader_parameter("block_roughness", 0.85)
-		_shared_material.set_shader_parameter("bottom_shade",
-				ChunkBatch.BLOCK_BOTTOM_SHADE)
+		_shared_material = CityAgents.gradient_material(CITIZEN_MESH_TOP, 0.85)
 	return _shared_material
 
 
-static func _box_mesh(size: Vector3) -> BoxMesh:
-	## Cached BoxMesh generator to ensure engine-accurate standard normals,
-	## vertex winding, and UVs.
-	if not _box_cache.has(size):
-		var bm := BoxMesh.new()
-		bm.size = size
-		_box_cache[size] = bm
-	return _box_cache[size]
-
-
 static func _add_box(st: SurfaceTool, center: Vector3, size: Vector3, col: Color) -> void:
-	## Adds an engine-accurate 6-sided box with correct outward CCW winding
-	## and vertex color to a SurfaceTool.
-	var arrays: Array = _box_mesh(size).get_mesh_arrays()
-	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-	var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
-	var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
-
-	for i: int in indices:
-		st.set_color(col)
-		st.set_normal(normals[i])
-		st.add_vertex(center + verts[i])
+	## One-line forwarder to `CityAgents.add_box` (bead `godot-test1-ftn.22`) —
+	## 81 call sites in this file build the four archetypes with it, which is
+	## what a forwarder buys over rewriting every one of them.
+	CityAgents.add_box(st, center, size, col)
 
 
 static func _get_archetype_mesh(archetype: int) -> ArrayMesh:
@@ -564,50 +545,28 @@ func _process(delta: float) -> void:
 # CROWD LOGIC & WAYFINDING
 # ============================================================================
 
+# THE THREE LOOKUPS BELOW ARE ONE-LINE FORWARDERS to `scripts/city_agents.gd`
+# (bead `godot-test1-ftn.22`), which is where the bodies live now — shared with
+# `traffic_manager.gd`, whose copies were verbatim. `WALKABLE_LANDMARK_IDS` went
+# with them: two copies of a table naming which slots are open plazas is exactly
+# the drift this refactor is against, and it is aliased back here because
+# `is_walkable` reads through the alias and so may anything else.
+const WALKABLE_LANDMARK_IDS := CityAgents.WALKABLE_LANDMARK_IDS
+
+
 func _find_player() -> Node3D:
 	## Locate the local player through the "player" group.
-	var player := get_tree().get_first_node_in_group("player")
-	if player is Node3D:
-		return player
-	return null
+	return CityAgents.find_player(get_tree())
 
 
 func _is_near_budapest(player_pos: Vector3) -> bool:
 	## True when player is inside or within 100m margin of Budapest rect.
-	return PLAN_SCRIPT.rect().grow(100.0).has_point(Vector2(player_pos.x, player_pos.z))
-
-
-## Slots that are open plazas, pedestrian streets, bridges, or plateaus
-## where ground-level street path checks should not block walkers.
-const WALKABLE_LANDMARK_IDS: Dictionary = {
-	"heroes_square": true,
-	"budapest_eye": true,
-	"vaci_utca": true,
-	"shoes_on_the_danube": true,
-	"chain_bridge": true,
-	"liberty_bridge": true,
-	"elisabeth_bridge": true,
-	"margaret_bridge": true,
-	"margaret_island": true,
-	"buda_castle": true,   # plateau_top_at handles plateau
-	"matthias": true,      # plateau_top_at handles plateau
-	"citadella": true,     # plateau_top_at handles plateau
-}
+	return CityAgents.is_near_budapest(player_pos)
 
 
 static func _is_inside_solid_landmark(x: float, z: float) -> bool:
 	## Checks dynamically against BudapestPlan.SLOTS using exact authored radii.
-	for slot: Dictionary in PLAN_SCRIPT.SLOTS:
-		var slot_id: String = slot.get("id", "")
-		if WALKABLE_LANDMARK_IDS.has(slot_id):
-			continue
-		var spos: Vector3 = slot["pos"]
-		var r: float = slot["radius"]
-		var dx: float = x - spos.x
-		var dz: float = z - spos.z
-		if dx * dx + dz * dz < r * r:
-			return true
-	return false
+	return CityAgents.is_inside_solid_landmark(x, z)
 
 
 static func is_walkable(x: float, z: float) -> bool:
