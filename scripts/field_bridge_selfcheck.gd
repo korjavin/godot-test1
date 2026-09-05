@@ -32,6 +32,11 @@ extends SceneTree
 ##      across a REAL deck metre by metre, with two controls — a metre off the
 ##      parapet, and the same walk with the bridges switched off.
 ##
+##   6. TRIM THAT NARROWED THE BRIDGE. The parapets and bank pylons of bead
+##      godot-test1-06o.4 are cantilevered off the deck edge precisely so the
+##      lane does not shrink; check 11 sweeps the full width at a hero's three
+##      heights and asserts the rail and the pylons are really there.
+##
 ## And two contract checks that are not about softlocks: check 5 (the deck is
 ## narrower than every road clearance in the file, so no prop can ever stand on
 ## one) and check 6 (the A/B — with the feature off, every crocodile, hunter,
@@ -72,6 +77,12 @@ const FIELD_TOP: float = TERRAIN_SCRIPT.FIELD_BRIDGE_TOP
 ## terrain's own FIELD_BRIDGE_PROBE_STEP: a check that samples exactly where the
 ## code samples can only ever agree with it.
 const FOOT_LANE_STEP: float = 0.25
+
+## How far OUTBOARD of the deck edge check 11 looks for the parapet. 1.5 m, and
+## the number is the MITRE: the rail cuts the corner at an inside joint, so at
+## the apex it stands `half / cos(turn)` from the walking line — 8.66 m at the
+## road's measured 22.4 degree worst, against a deck edge at 8.0.
+const RAIL_PROBE_REACH: float = 1.5
 
 ## Physics frames allowed for the player to fall onto a deck and settle.
 const SETTLE_FRAMES: int = 40
@@ -144,6 +155,7 @@ func _run() -> void:
 	_check_deck_coins_stand_on_stone()
 	_check_the_approach_corridor_is_bridged()
 	_check_no_wedge_at_any_joint()
+	_check_trim_clears_the_lane()
 	await _check_the_crossing_is_dry_underfoot()
 	_report()
 
@@ -828,15 +840,21 @@ func _check_deck_fits_every_clearance() -> void:
 	A deck has NO `obstacles` footprint (it is meant to be walked), so nothing
 	downstream will move a prop out of its way. What keeps a cactus, a chest or a
 	camp off a bridge is that every one of them is placed at least its own
-	*_ROAD_CLEARANCE from the road centreline, and the deck reaches only
-	FIELD_BRIDGE_HALF_WIDTH from it.
+	*_ROAD_CLEARANCE from the road centreline, and the bridge's stone reaches
+	only `field_bridge_outer_reach()` from it.
+
+	THE REACH, NOT THE HALF-WIDTH, since bead godot-test1-06o.4: the parapet and
+	the bank pylons stand OUTBOARD of the lane, so the deck's half-width stopped
+	being the furthest thing a prop could be standing inside. The shipped
+	derivation is asked for it rather than a sum typed here, so retuning a piece
+	of trim is measured.
 
 	ITERATED OFF THE CONSTANT MAP, never a list typed here: a new spawner with a
-	tighter clearance than the deck's half-width is exactly the regression this
+	tighter clearance than the bridge's reach is exactly the regression this
 	is for, and it should fail the day that constant lands.
 	"""
 	var consts: Dictionary = TERRAIN_SCRIPT.get_script_constant_map()
-	var half: float = float(consts["FIELD_BRIDGE_HALF_WIDTH"])
+	var half: float = TERRAIN_SCRIPT.field_bridge_outer_reach()
 	var tightest := INF
 	var tightest_name := ""
 	for name_v: Variant in consts.keys():
@@ -852,10 +870,12 @@ func _check_deck_fits_every_clearance() -> void:
 				+ " it is measuring nothing")
 		Sentinel.done("deck_fits_every_clearance")
 		return
-	print("field bridges: deck half-width %.1f m against the tightest road"
-			% half + " clearance %s = %.1f m" % [tightest_name, tightest])
+	print("field bridges: outer reach %.1f m (deck half-width %.1f + trim)"
+			% [half, float(consts["FIELD_BRIDGE_HALF_WIDTH"])]
+			+ " against the tightest road clearance %s = %.1f m"
+			% [tightest_name, tightest])
 	if half >= tightest:
-		_fail("FIELD_BRIDGE_HALF_WIDTH %.1f m reaches at least as far as %s"
+		_fail("a field bridge's stone reaches %.1f m, at least as far as %s"
 				% [half, tightest_name] + " (%.1f m), so that spawner can stand"
 				% tightest + " something on a bridge deck")
 	Sentinel.done("deck_fits_every_clearance")
@@ -1803,3 +1823,245 @@ func _check_no_wedge_at_any_joint() -> void:
 		_fail("%d joint(s) leave a wedge of open air at the parapet — the slab"
 				% gaps + " stretch is not covering the turn. First: %s" % worst)
 	Sentinel.done("no_wedge_at_any_joint")
+
+
+# ============================================================================
+# CHECK 11 — the trim dresses the bridge without narrowing the lane
+# ============================================================================
+
+func _check_trim_clears_the_lane() -> void:
+	"""
+	BEAD godot-test1-06o.4's acceptance. The owner asked for parapets and pylons
+	because a bare slab reads as a floating plate; the one thing that must not
+	buy is a narrower bridge, so the parapet is CANTILEVERED off the deck edge
+	with its inner face exactly on FIELD_BRIDGE_HALF_WIDTH.
+
+	Three measurements, on the stone the CHUNKS build and never on the plan:
+
+	  1. THE LANE IS EMPTY. Walk the whole bridge metre by metre and sweep the
+	     full width at a hero's three heights — nothing the builder emits may be
+	     standing in it. That is what "keep the walkable width" means, and it is
+	     the assertion the bead names.
+	  2. THE PARAPET IS THERE, both sides, the whole way — or (1) passes
+	     trivially on a bridge with no trim at all. It is probed at the wall's
+	     INNER edge, because the slab stretch that closes a turn's wedge is
+	     derived at the deck's half-width and so leaves the outer few centimetres
+	     of a sharp joint's rail open (cosmetic; it is the DECK that has to be
+	     continuous, which check 2 and check 10 own).
+	  3. THE PYLONS ARE THERE — four of them, above deck height, at the two banks.
+
+	And a MUTATION CONTROL for (1): a box planted on the walking line must be
+	caught by the same coverage test, or the sweep is measuring nothing.
+	"""
+	var terrain := _terrain(CROSSING_SEEDS[0])
+	var row := _first_bridge(terrain, CROSSING_SEEDS[0])
+	if row.is_empty():
+		_fail("check 11 found no bridge on seed %d" % CROSSING_SEEDS[0])
+		terrain.free()
+		Sentinel.done("trim_clears_the_lane")
+		return
+
+	var poly: PackedVector2Array = row["poly"]
+	var half: float = row["half"]
+	# EVERY box, unfiltered: the trim stands OFF the walking rect, so
+	# `_bridge_boxes`' "is this on the deck" filter would drop the very pieces
+	# this check is about.
+	var boxes := _chunk_bridge_boxes(terrain, poly, 2)
+
+	# NON-VACUITY, check 10's `joints < 1` guard one bead along. The lane sweep's
+	# whole subject is the MITRE, and a mitre is only a thing at a TURN — a
+	# straight bridge passes it however the rail is built, so the day seed 11's
+	# first crossing comes out straight this stops measuring in silence.
+	var turns := 0
+	var worst_turn := 0.0
+	for i in range(1, poly.size() - 1):
+		var a: Vector2 = (poly[i] - poly[i - 1]).normalized()
+		var b: Vector2 = (poly[i + 1] - poly[i]).normalized()
+		var turn := acos(clampf(a.dot(b), -1.0, 1.0))
+		if turn > 0.001:
+			turns += 1
+			worst_turn = maxf(worst_turn, turn)
+	if turns < 1:
+		_fail("check 11's bridge (seed %d) is dead straight — its lane sweep"
+				% CROSSING_SEEDS[0] + " cannot see the mitre it exists to"
+				+ " measure, so pick a seed whose first crossing turns")
+	# A hero's body over the deck: ankles, waist, head.
+	var heights: Array[float] = [0.2, 1.0, 1.8]
+	var lanes: Array[float] = []
+	var lane := -(half - 0.1)
+	while lane <= half - 0.1 + 0.001:
+		lanes.append(lane)
+		lane += 0.5
+
+	var blocked := 0
+	var worst := ""
+	var missing_rail := 0
+	var worst_rail := ""
+	for sample_v: Variant in _walk(row, 1.0):
+		var sample: Dictionary = sample_v
+		var p: Vector2 = sample["pos"]
+		var perp: Vector2 = sample["perp"]
+		var surface: float = terrain.field_bridge_surface_y(Vector3(p.x, 0.0, p.y))
+		if surface <= -INF:
+			continue   # check 2 owns "the plan says there is deck here"
+		for at_lane: float in lanes:
+			var at := p + perp * at_lane
+			for h: float in heights:
+				if not _covered(boxes, Vector3(at.x, surface + h, at.y)):
+					continue
+				blocked += 1
+				if worst == "":
+					worst = ("stone %.1f m above the walking surface at s = %.1f m,"
+							% [h, float(sample["s"])] + " lane %.1f m of %.1f —"
+							% [at_lane, half] + " the trim is standing in the lane")
+		# The rail itself, both sides, at its own mid-height. Probed as a short
+		# OUTWARD RAY rather than one point, because the mitre CUTS THE CORNER:
+		# at an inside joint the rail legitimately stands further out than a
+		# constant offset from the walking line, and the question here is "is
+		# there a wall beside this piece of deck", not "is it at exactly 8.05".
+		for side: float in [-1.0, 1.0]:
+			var found := false
+			var out := half + 0.05
+			while out <= half + RAIL_PROBE_REACH:
+				var rail: Vector2 = p + perp * (side * out)
+				if _covered(boxes, Vector3(rail.x,
+						surface + TERRAIN_SCRIPT.FIELD_BRIDGE_PARAPET_HEIGHT * 0.5,
+						rail.y)):
+					found = true
+					break
+				out += 0.05
+			if not found:
+				missing_rail += 1
+				if worst_rail == "":
+					worst_rail = ("s = %.1f m, side %.0f, world (%.2f, %.2f),"
+							% [float(sample["s"]), side, p.x, p.y]
+							+ " surface %.2f" % surface)
+
+	# The pylons: above the deck, at the two banks, one either side.
+	var pylons := 0
+	var b_top: float = FIELD_TOP + TERRAIN_SCRIPT.FIELD_BRIDGE_PYLON_RISE
+	var last := poly.size() - 1
+	for bank in [
+		{ "at": poly[1], "dir": (poly[2] - poly[1]).normalized() },
+		{ "at": poly[last - 1], "dir": (poly[last - 1] - poly[last - 2]).normalized() },
+	]:
+		var b_dir: Vector2 = bank["dir"]
+		var b_perp := Vector2(b_dir.y, -b_dir.x)
+		for side: float in [-1.0, 1.0]:
+			var at: Vector2 = Vector2(bank["at"]) + b_perp * (side
+					* (half + TERRAIN_SCRIPT.FIELD_BRIDGE_PYLON_WIDTH * 0.5))
+			if _covered(boxes, Vector3(at.x, b_top - 0.5, at.y)):
+				pylons += 1
+
+	# THE CENTRE RULE, FOR THE TRIM. Check 2 asks this of the deck, but through
+	# `_bridge_boxes`, which drops every box whose centre is off the walking rect
+	# — i.e. every parapet and every pylon. So the rule the bead names ("each
+	# piece takes it for itself") had no test at all until here.
+	var seen: Dictionary = {}
+	var chunk_m: float = terrain.chunk_size
+	for box_v: Variant in boxes:
+		var box: Dictionary = box_v
+		var xf: Transform3D = box["xform"]
+		var size := Vector3(xf.basis.x.length(), xf.basis.y.length(), xf.basis.z.length())
+		if size.x > chunk_m or size.z > chunk_m:
+			_fail("a bridge box is %.1f x %.1f m, bigger than the %.0f m chunk"
+					% [size.x, size.z, chunk_m] + " that owns it by the CENTRE rule")
+			break
+		var key := "%.3f|%.3f|%.3f" % [xf.origin.x, xf.origin.y, xf.origin.z]
+		if seen.has(key):
+			_fail("two chunks (%s and %s) both built the bridge piece at %s —"
+					% [seen[key], box["chunk"], key] + " the centre rule must be"
+					+ " half-open on both axes, and it is asked of EVERY box,"
+					+ " not just the deck's")
+			break
+		seen[key] = box["chunk"]
+		# AND THE RULE ITSELF: the chunk that built a box must be the chunk that
+		# CONTAINS it. Dedup alone cannot see this — a parapet emitted under its
+		# SLAB's centre rule is still built exactly once, by a chunk up to 8.25 m
+		# away, and simply pops in and out with the wrong square at the web
+		# build's residency edge. That mutation passes every other assertion in
+		# this file, which is why this line exists.
+		var owner: Vector2i = terrain.world_to_chunk(xf.origin)
+		if owner != box["chunk"]:
+			_fail("chunk %s built a bridge piece whose centre stands in %s —"
+					% [box["chunk"], owner] + " every box takes the centre rule"
+					+ " for ITSELF, and this one took its slab's")
+			break
+
+	# THE BILL, and it is the WHOLE chunk. The bead's ceiling for a bridge chunk
+	# is CITY_CHUNK_BOX_BUDGET, which is a whole-chunk number covering every
+	# spawner — tallying only the bridge's own boxes against it would be an
+	# assertion that can never fire. `_generate` runs create_chunk's real
+	# sequence, so this is the count the streamer actually builds.
+	var budget: int = int(TERRAIN_SCRIPT.get_script_constant_map()["CITY_CHUNK_BOX_BUDGET"])
+	var worst_chunk := Vector2i.ZERO
+	var worst_boxes := 0
+	var worst_share := 0
+	var deck_chunk := Vector2i.ZERO
+	var deck_boxes := 0
+	var deck_share := 0
+	var billed: Dictionary = {}
+	for p in poly:
+		var cp: Vector2i = terrain.world_to_chunk(Vector3(p.x, 0.0, p.y))
+		for dx in range(-1, 2):
+			for dz in range(-1, 2):
+				var at := cp + Vector2i(dx, dz)
+				if billed.has(at):
+					continue
+				billed[at] = true
+				var built := _generate(CROSSING_SEEDS[0], at, true)
+				var total: int = (built["batch"] as Array).size()
+				var share: int = int(built["bridge_boxes"])
+				if total > worst_boxes:
+					worst_boxes = total
+					worst_share = share
+					worst_chunk = at
+				# The densest chunk in the ring often carries no bridge at all —
+				# it is the budget's subject either way, but the number this bead
+				# moved is the one on a chunk that really holds stone.
+				if share > 0 and total > deck_boxes:
+					deck_boxes = total
+					deck_share = share
+					deck_chunk = at
+				built["terrain"].free()
+	print("field bridges: densest chunk around the bridge %s builds %d boxes"
+			% [worst_chunk, worst_boxes] + " (%d the bridge's); densest chunk"
+			% worst_share + " CARRYING stone %s builds %d (%d the bridge's);"
+			% [deck_chunk, deck_boxes, deck_share]
+			+ " CITY_CHUNK_BOX_BUDGET %d" % budget)
+	if worst_boxes > budget:
+		_fail("a bridge chunk builds %d boxes, over CITY_CHUNK_BOX_BUDGET %d —"
+				% [worst_boxes, budget] + " the trim outgrew the densest thing"
+				+ " this engine streams")
+
+	print("field bridges: trim on seed %d — %d stone samples inside the lane,"
+			% [CROSSING_SEEDS[0], blocked] + " %d rail samples missing, %d/4 bank"
+			% [missing_rail, pylons] + " pylons, over %d turning joint(s) (worst"
+			% turns + " %.2f degrees)" % rad_to_deg(worst_turn))
+	if blocked > 0:
+		_fail("%d sample(s) of the deck's own lane have stone in them — the trim"
+				% blocked + " narrowed the walkable width. First: %s" % worst)
+	if missing_rail > 0:
+		_fail("%d sample(s) of the deck edge have NO parapet beside them — check"
+				% missing_rail + " 11's lane sweep would pass on a bridge with no"
+				+ " trim at all. First: %s" % worst_rail)
+	if pylons < 4:
+		_fail("only %d of the 4 bank pylons are standing — the deck still has"
+				% pylons + " nothing carrying it at the banks")
+
+	# THE CONTROL: the sweep must catch a box that really is in the lane.
+	var walk := _walk(row, 1.0)
+	var mid: Dictionary = walk[int(walk.size() / 2)]
+	var mp: Vector2 = mid["pos"]
+	var m_surface: float = terrain.field_bridge_surface_y(Vector3(mp.x, 0.0, mp.y))
+	var mutant := boxes.duplicate()
+	mutant.append({
+		"xform": Transform3D(Basis().scaled(Vector3(2.0, 2.0, 2.0)),
+				Vector3(mp.x, m_surface + 1.0, mp.y)),
+		"chunk": Vector2i.ZERO,
+	})
+	if not _covered(mutant, Vector3(mp.x, m_surface + 1.0, mp.y)):
+		_fail("check 11's control is inert: a 2 m box planted on the walking line"
+				+ " is not seen by the same coverage test the lane sweep uses")
+	terrain.free()
+	Sentinel.done("trim_clears_the_lane")
