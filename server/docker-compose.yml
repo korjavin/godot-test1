@@ -15,11 +15,36 @@
 # so the lobby's narrow rule at 10 beats the client's catch-all at 1. Consequence
 # worth knowing: the lobby's embedded test page at `/` is shadowed in production.
 
+# ⚠️ EVERY SERVICE BINDS ITS LOG, and it is a disk-space rule rather than tidiness
+# (bead godot-test1-drf, from the 2026-09-05 incident review). Docker's default
+# json-file driver rotates NOTHING: a container's log grows without bound under
+# /var/lib/docker until the filesystem is full. That is the SECOND filler behind
+# that outage — the first was ~500 unpruned images (build.yml's deploy-stack now
+# prunes) — and the two compound in the nastiest possible way, because the lobby
+# logged `best: dump failed: … no space left on device` every 30 seconds
+# PRECISELY WHILE THE DISK WAS FULL. A service that logs faster the worse things
+# get must not own an unbounded file.
+#
+# 10m x 3 is 30 MB per service, 90 MB for the stack — a ceiling, not a budget, and
+# small against the tens of GB the images cost. Anchored rather than typed three
+# times so the number is tuned in one place; `docker compose config` expands it,
+# which is how the PR proves all three services really carry it.
+#
+# ponytail: no `labels:`/`tag:` options and no second driver. The default tag (the
+# container id prefix) plus `container_name` is enough to tell three containers
+# apart, and journald/loki would be an operations decision nobody has asked for.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   lobby:
     image: ${LOBBY_IMAGE:-ghcr.io/korjavin/godot-test1-lobby:latest}
     container_name: ${LOBBY_CONTAINER_NAME:-godot-lobby}
     restart: unless-stopped
+    logging: *default-logging
     networks:
       - traefik_network
     environment:
@@ -64,6 +89,7 @@ services:
     image: ${WEB_IMAGE:-ghcr.io/korjavin/godot-test1-web:latest}
     container_name: ${WEB_CONTAINER_NAME:-godot-web}
     restart: unless-stopped
+    logging: *default-logging
     networks:
       - traefik_network
     labels:
@@ -83,6 +109,7 @@ services:
     image: ${COTURN_IMAGE:-coturn/coturn:4.6-alpine}
     container_name: ${COTURN_CONTAINER_NAME:-godot-coturn}
     restart: unless-stopped
+    logging: *default-logging
     network_mode: host
     # NOTE: `command:` below is a YAML LIST, not a `>` folded scalar. In a folded
     # scalar `#` does NOT start a comment — the prose that used to sit inline here
