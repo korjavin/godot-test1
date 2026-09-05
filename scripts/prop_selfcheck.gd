@@ -1509,6 +1509,16 @@ func _check_prop_kinds(terrain_script: GDScript, consts: Dictionary) -> void:
 		# non-climbable trunk footprint (the water disc's is the other one, and it
 		# is the only non-climbable footprint that is not a palm), so the trunk
 		# count is knowable without re-deriving the builder here.
+		#
+		# THE IDENTITY'S PREMISE, written down because nothing else pins it: in this
+		# builder the PALM TRUNK is the only CYLINDER. The water disc, the rim and
+		# the reeds are CUBE and the boulders are ROCK, so `cylinders` IS the palm
+		# count — and a palm rejected by the edge margin `continue`s ABOVE its own
+		# trunk, so a trunk and its fronds are dropped together and the equality
+		# survives. The REEDS are the obvious next candidate for a cylinder (they
+		# are thin round stalks); give them one and this line starts failing with a
+		# message about a revert that did not happen. Change the message with the
+		# kind.
 		var cylinders: int = 0
 		var cones: int = 0
 		for box_v: Variant in batch:
@@ -1548,31 +1558,50 @@ func _check_prop_kinds(terrain_script: GDScript, consts: Dictionary) -> void:
 	# REFUSED (see _spawn_desert_dunes' docstring for the picture). Without a line
 	# here the refusal is a comment somebody deletes; with it, changing a dune's
 	# kinds is a red build that points at the reasoning.
-	# A REAL DESERT CHUNK, found the way batch_selfcheck check 5 finds one. Two
-	# gates make a hand-picked coordinate useless here and both are silent: every
-	# cactus re-tests `biome_at` at its OWN position (the edge feathering), and the
-	# whole builder bails on `scarcity_at`, which is ~0 several km out. A spot that
-	# is neither desert nor near enough draws nothing at all and every assertion
-	# below would pass on an empty batch.
+	# A REAL DESERT CHUNK, found the way batch_selfcheck check 5 finds one, and a
+	# chunk carrying NEITHER an oasis NOR a dune. Three gates make a hand-picked
+	# coordinate useless here and all three are silent:
+	#
+	#   * every cactus re-tests `biome_at` at its OWN position (the edge
+	#     feathering), so a non-desert spot draws nothing;
+	#   * the whole builder bails on `scarcity_at`, which is ~0 several km out;
+	#   * and `_spawn_desert_content` IS NOT ONLY CACTI — it dispatches
+	#     `_spawn_desert_oasis` and `_spawn_desert_dunes` at its own tail, on their
+	#     own hash streams. An oasis chunk therefore adds CUBE (the water disc, the
+	#     rim, the reeds), ROCK (boulders) and CONE (fronds) to this very batch, and
+	#     the all-CYLINDER assertion below would fail BLAMING THE CACTUS for a palm
+	#     frond. Measured at this seed: 58 of 294 desert chunks (19.7%) carry one,
+	#     so leaving it to whichever chunk the sweep hit first was a 1-in-5 coin
+	#     that any change to the seed, the bounds or `_biome_noise` re-flips.
+	#
+	# The assertion below is about the CACTUS half of a multi-feature builder; the
+	# oasis and the dune have their own clauses above and below.
 	terrain.set_run_seed(20260904)
 	var desert_centre := Vector3.ZERO
 	var found_desert: bool = false
 	for cx in range(-24, 25):
 		for cz in range(-24, 25):
-			var c: Vector3 = terrain.chunk_to_world(Vector2i(cx, cz))
+			var cp := Vector2i(cx, cz)
+			var c: Vector3 = terrain.chunk_to_world(cp)
 			if terrain.in_budapest(c.x, c.z):
 				continue
-			if terrain.biome_at(c.x, c.z) == int(consts["Biome"]["DESERT"]):
-				desert_centre = c
-				found_desert = true
-				break
+			if terrain.biome_at(c.x, c.z) != int(consts["Biome"]["DESERT"]):
+				continue
+			if not (terrain.call("_oasis_at", cp) as Dictionary).is_empty():
+				continue
+			if not (terrain.call("_dune_at", cp) as Dictionary).is_empty():
+				continue
+			desert_centre = c
+			found_desert = true
+			break
 		if found_desert:
 			break
 	var cactus_batch: Array = []
 	var cactus_body := StaticBody3D.new()
 	var cactus_obstacles: Array = []
 	if not found_desert:
-		_fail("no desert chunk in a 49x49 sweep — the cactus kind assertion never ran")
+		_fail("no oasis-free, dune-free desert chunk in a 49x49 sweep — the cactus "
+				+ "kind assertion never ran")
 	else:
 		for attempt in 30:
 			var rng := RandomNumberGenerator.new()

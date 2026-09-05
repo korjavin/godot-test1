@@ -9182,6 +9182,17 @@ func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 			# radius `width * 0.5` about that same axis, which is the honest shape
 			# for a round limb; the shape COUNT is unchanged and the cactus footprint
 			# is non-climbable, so nothing stands on the difference.
+			#
+			# `ponytail:` THE JOINT IS TANGENT, NOT SUNK, and that is a known
+			# cosmetic ceiling rather than an oversight. `arm_dir` puts the arm's
+			# inner cap plane exactly `width * 0.5` from the trunk axis — flush
+			# against the flat face of a BOX trunk, but only touching a ROUND one
+			# along a single line, so from a high or oblique angle a crescent of air
+			# up to `width * 0.5` (0.22-0.37 m) shows at the T. The fix is one number
+			# (pull `arm_dir` in by about `width * 0.25`) and it costs no RNG draw —
+			# but it MOVES this entry's origin, which is more than "only the
+			# silhouette changed", so it belongs to a bead that is allowed to move
+			# geometry and should be judged on a render rather than on arithmetic.
 			create_box(
 				Vector3(local_x, arm_y, local_z) + arm_dir,
 				Vector3(width, arm_len, width),

@@ -75,10 +75,11 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            the PER-BIOME DRAW-CALL BILL, iterating the Biome
 #                            enum over both shipped field spawners: one node per
 #                            kind PRESENT and never more than that biome's
-#                            KIND_CAP_BY_NAME row (forest 3 — cubes, SPHERE
-#                            canopies and ROCK boulders; every other band 2),
-#                            with the SHARE of chunks paying printed beside the
-#                            worst case
+#                            KIND_CAP_BY_NAME row (desert 4 — its oasis adds
+#                            CYLINDER palms and CONE fronds to the ROCK it
+#                            already had; forest 3 — cubes, SPHERE canopies and
+#                            ROCK boulders; every other band 2), with the SHARE
+#                            of chunks paying printed beside the worst case
 #   fauna_selfcheck          herd steering + rider carry, plus row 6 the MP
 #                            REPLAY: one seed gives two byte-identical builds, a
 #                            joiner is snapped onto the live sample, a replay
@@ -568,7 +569,7 @@ Load-bearing rules:
   any non-CUBE dune tier so the refusal cannot be quietly undone.
   **THE BILL IS NO LONGER "NOTHING ELSE COSTS ANYTHING", AND THE FREQUENCY IS THE
   NUMBER THAT MATTERS.** `batch_selfcheck` check 5 is now one node per kind PRESENT
-  against `KIND_CAP_BY_NAME` (forest 3, every other band 2) and prints the SHARE of
+  against `KIND_CAP_BY_NAME` (desert 4, forest 3, every other band 2) and prints the SHARE of
   chunks paying beside the worst case: measured at bead y1o.3, **89% of stone-bearing
   field chunks gained a block draw call** and the field's total went 709 -> 1262
   (+78%), ~56 -> ~100 in the web build's 49-chunk residency. The CITY band's cap is 2
