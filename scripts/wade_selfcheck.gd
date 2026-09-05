@@ -118,14 +118,30 @@ var _failures: Array[String] = []
 ## drives the Y-aware gate at its own y — and the deck case, where a body stands
 ## on real stone over a real river, is field_bridge_selfcheck's, because it needs
 ## a real world to have a deck in.
+##
+## THE DEEP CHANNEL (check 9) is the one thing the switch cannot stand in for: an
+## impassable strip is a SHAPE, so that check hands this node a REAL terrain in
+## `real` and every answer below forwards to it. It is the same node so the group
+## lookup the player already made keeps working; `real` is null for every check
+## above, which is exactly the standalone-scene degrade (`deep_channel_push`
+## answers ZERO and nothing is ever pushed). `deep_off` is check 9's MUTATION
+## CONTROL — the feature switched off at the seam, with the walk unchanged.
 class StubTerrain:
 	extends Node
 	const TERRAIN: GDScript = preload("res://scripts/endless_terrain.gd")
 	var river: bool = false
-	func is_river_at(_pos: Vector3) -> bool:
-		return river
+	var real: Node = null
+	var deep_off: bool = false
+	func is_river_at(pos: Vector3) -> bool:
+		return real.is_river_at(pos) if real != null else river
 	func is_wading_at(pos: Vector3) -> bool:
+		if real != null:
+			return real.is_wading_at(pos)
 		return pos.y < TERRAIN.WADE_SURFACE_MAX and river
+	func deep_channel_push(pos: Vector3) -> Vector3:
+		if real == null or deep_off:
+			return Vector3.ZERO
+		return real.deep_channel_push(pos)
 
 
 ## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
@@ -228,6 +244,12 @@ func _run() -> void:
 	await _frames(2)
 	await _check_croc_sink(terrain)
 	await _check_boss_sink_scales(terrain)
+
+	# THE DEEP CHANNEL (bead godot-test1-06o.3). Last, because check 10 puts a
+	# REAL terrain behind the stub and every check above wants the switch.
+	_check_deep_channel_field()
+	_check_deep_channel_crossings()
+	await _check_deep_channel_expels(terrain, packed, floor_body)
 
 	_report()
 
@@ -813,3 +835,460 @@ func _check_default_gait(player: CharacterBody3D, terrain: StubTerrain) -> void:
 	print("gait: default %.2f m/s (running), modifier held %.2f m/s (walking)"
 			% [default_speed, held_speed])
 	Sentinel.done("default_gait")
+
+
+# ============================================================================
+# THE DEEP CHANNEL — bead godot-test1-06o.3
+# ============================================================================
+#
+# OWNER RULING 2026-09-04, re-asked 2026-09-05 ("why rivers, and danube are still
+# walkable? fix this"): the inner RIVER_DEEP_FRACTION of every band is
+# IMPASSABLE, and the banks still wade at exactly today's numbers. So checks 3
+# and 5 above are RETUNED BY BEING LEFT ALONE — WADE_SPEED_FACTOR and
+# WADE_RUN_MIN_SPEED did not move, because the outer band is the part of the
+# feature the ruling did not touch, and a check that had to change to stay green
+# would have meant the ruling reached further than it said.
+#
+# Three checks, and each measures something the other two cannot see:
+#   8  THE RULE, on the real field: the strip is inside the band, it is Y-aware,
+#      the push points at the nearest bank, the outer band is free — plus the
+#      Budapest answers, including the under-deck gap this bead closes.
+#   9  THE ROAD IS STILL CROSSABLE. 20 seeds of road, plus the authored approach
+#      corridor: every wet crossing is bridged or forded. This is the softlock
+#      gate, and it is why this bead waited for 06o.2.
+#  10  A REAL BODY IS REALLY EXPELLED, driven on the shipped movement through the
+#      shipped seam, with the seam switched off as the mutation control.
+
+## The seed check 10 walks a hero on. Any seed makes it deterministic; this one
+## also has a river within the searched box whose band is narrow enough that a
+## two-second walk crosses it, which is what makes the control a real crossing
+## rather than a slow drift.
+const DEEP_SEED: int = 4242
+
+## The worlds check 8 measures the RULE on — several, and that is a fix rather
+## than thoroughness for its own sake. The gradient defect the signed-field port
+## repaired showed up in about 1% of channel samples, so a single (world seed,
+## rng seed) pair with ~40 samples missed it roughly two runs in three: nine of
+## twenty-five pairs swept caught it and this one did not. A check whose verdict
+## turns on which pair it happened to be given is a check that goes red on an
+## unrelated retune, so it sweeps.
+const DEEP_FIELD_SEEDS: Array[int] = [4242, 7, 909, 31337]
+
+## How far from the searched centre check 10 looks for a river, in metres, and how
+## finely. 600 m at 3 m finds several bands on every seed tried.
+const DEEP_SEARCH_HALF: float = 600.0
+const DEEP_SEARCH_STEP: float = 3.0
+
+## Road seeds for check 9. The ruling asked for twenty; it is forty because the
+## FORD — the one place in the world the wall may be opened — is exercised by
+## roughly one crossing in forty, and a rule proved on a single data point is a
+## rule nobody has measured. Forty gives 2-3, and `forded >= 1` below is what
+## fails if a retune ever takes the last one away.
+const DEEP_ROAD_SEEDS: int = 40
+
+## Physics frames check 10 drives the walk for: two seconds at 60 Hz, which even
+## at the wading walk speed is metres and crosses any band this file will accept.
+const DEEP_WALK_FRAMES: int = 120
+
+
+func _deep_terrain(run_seed: int) -> Node3D:
+	"""A real EndlessTerrain script on a bare Node3D and OUT of the tree — the
+	field_bridge_selfcheck idiom. In the tree it would start streaming chunks
+	around a player these checks teleport about."""
+	var terrain := Node3D.new()
+	terrain.set_script(StubTerrain.TERRAIN)
+	terrain.set_run_seed(run_seed)
+	return terrain
+
+
+func _deep_find_river(terrain: Node3D, centre: Vector2) -> Dictionary:
+	"""
+	The first point near `centre` that is mid-channel AND impassable, with the
+	bank point a walk toward it should start from.
+
+	@return {} or {"deep": Vector2, "bank": Vector2, "band": float}.
+
+	The bank is found by walking OUT along the push vector until the depth passes
+	1 — i.e. by using the very function under test as a compass, which is safe
+	only because check 8 has already asserted the compass points outward.
+	"""
+	var x := centre.x - DEEP_SEARCH_HALF
+	while x <= centre.x + DEEP_SEARCH_HALF:
+		var z := centre.y - DEEP_SEARCH_HALF
+		while z <= centre.y + DEEP_SEARCH_HALF:
+			var at := Vector2(x, z)
+			z += DEEP_SEARCH_STEP
+			if terrain.river_depth_at(at.x, at.y) > 0.05:
+				continue
+			var push: Vector3 = terrain.deep_channel_push(Vector3(at.x, 0.0, at.y))
+			if push == Vector3.ZERO:
+				continue
+			var out := Vector2(push.x, push.z)
+			var walked := 0.0
+			while walked < 200.0:
+				walked += 1.0
+				var probe := at + out * walked
+				if terrain.river_depth_at(probe.x, probe.y) >= 1.0:
+					return {"deep": at, "bank": probe, "band": walked}
+			return {}
+		x += DEEP_SEARCH_STEP
+	return {}
+
+
+func _check_deep_channel_field() -> void:
+	"""
+	CHECK 8 — THE RULE ITSELF, on the shipped field.
+
+	All of it driven on `river_depth_at`, `is_wading_at` and `deep_channel_push` —
+	the three functions the player, the remote avatar, the crocodile and the
+	minimap all reach the water through:
+
+	  a. THE STRIP IS INSIDE THE BAND. Deep implies wading, always: a channel
+	     outside the water it belongs to is an invisible wall on dry land.
+	  b. THE OUTER BAND IS FREE. A point past RIVER_DEEP_FRACTION wades and is
+	     pushed by nobody — the banks are exactly what they were, which is what
+	     makes checks 3 and 5 above still the right numbers.
+	  c. IT IS Y-AWARE. The same XZ at WADE_SURFACE_MAX is neither wading nor
+	     deep, or a bridge deck over a channel would be a wall.
+	  d. THE PUSH POINTS AT THE NEAREST BANK — stepping along it strictly
+	     INCREASES the depth. Measured rather than assumed: the gradient is a
+	     finite difference over an fp32 field, and a sign error there shoves
+	     bodies into the middle of the river instead of out of it.
+	  e. BUDAPEST'S DANUBE IS IN SCOPE (the owner named it): its centre channel is
+	     impassable, and Margaret Island is still dry LAND.
+	  f. THE UNDER-DECK GAP IS CLOSED (bead notes, from 06o.2 round 9): at y = 0
+	     under an authored deck a body is in the water, while `is_river_at` — the
+	     band the shader paints and every spawner reads — still answers DRY there.
+	     Both halves are asserted, because closing the gap by moving `is_river_at`
+	     would have moved the blue.
+	"""
+	var fraction: float = StubTerrain.TERRAIN.RIVER_DEEP_FRACTION
+	var deep_seen := 0
+	var outer_seen := 0
+	var broke := false
+	for field_seed: int in DEEP_FIELD_SEEDS:
+		if broke:
+			break
+		var world := _deep_terrain(field_seed)
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 99
+		for _i in 4000:
+			var at := Vector2(rng.randf_range(-3000.0, 3000.0),
+					rng.randf_range(-3000.0, 3000.0))
+			var depth: float = world.river_depth_at(at.x, at.y)
+			if depth >= 1.0:
+				continue
+			var low := Vector3(at.x, 0.0, at.y)
+			var push: Vector3 = world.deep_channel_push(low)
+			if not world.is_wading_at(low):
+				_fail("deep channel: seed %d (%.0f, %.0f) reads depth %.2f — inside a "
+						% [field_seed, at.x, at.y, depth] + "band — but is_wading_at() "
+						+ "says no; the two are the same field and must agree")
+				broke = true
+				break
+			if depth < fraction:
+				if push == Vector3.ZERO:
+					continue   # a FORD, which check 9 owns
+				deep_seen += 1
+				var step: float = StubTerrain.TERRAIN.RIVER_DEEP_PROBE
+				var out_depth: float = world.river_depth_at(
+						at.x + push.x * step, at.y + push.z * step)
+				if out_depth <= depth:
+					_fail("deep channel: seed %d, the push at (%.0f, %.0f) points from "
+							% [field_seed, at.x, at.y] + "depth %.3f to depth %.3f — it "
+									% [depth, out_depth] + "points INTO the channel, "
+							+ "which shoves bodies to the middle of the river")
+					broke = true
+					break
+				var high := Vector3(at.x, StubTerrain.TERRAIN.WADE_SURFACE_MAX, at.y)
+				if world.is_wading_at(high) \
+						or world.deep_channel_push(high) != Vector3.ZERO:
+					_fail("deep channel: seed %d (%.0f, %.0f) at y = WADE_SURFACE_MAX "
+							% [field_seed, at.x, at.y] + "still reads as water — a "
+							+ "bridge deck over a channel would be a wall")
+					broke = true
+					break
+			else:
+				outer_seen += 1
+				if push != Vector3.ZERO:
+					_fail("deep channel: seed %d (%.0f, %.0f) is in the OUTER band "
+							% [field_seed, at.x, at.y] + "(depth %.2f, past the %.2f "
+									% [depth, fraction] + "fraction) and is still pushed "
+							+ "— the banks must stay wadeable at today's numbers")
+					broke = true
+					break
+		world.free()
+	if deep_seen < 20 or outer_seen < 20:
+		_fail("deep channel: check 8 found only %d channel and %d bank samples over "
+				% [deep_seen, outer_seen] + "%d worlds (wanted >= 20 of each) — it is "
+						% DEEP_FIELD_SEEDS.size() + "not measuring what it claims to")
+
+	# (e) and (f) — BUDAPEST, which is AUTHORED and so needs only one world.
+	var terrain := _deep_terrain(DEEP_SEED)
+	var danube_deep := 0
+	for z: float in [-300.0, 200.0, 700.0]:
+		var best := INF
+		var best_x := 0.0
+		var x := BudapestPlan.BUDAPEST_MIN.x
+		while x < BudapestPlan.BUDAPEST_MAX.x:
+			var d: float = terrain.river_depth_at(x, z)
+			if d < best:
+				best = d
+				best_x = x
+			x += 2.0
+		if terrain.deep_channel_push(Vector3(best_x, 0.0, z)) != Vector3.ZERO:
+			danube_deep += 1
+		else:
+			_fail("deep channel: the Danube's centre at (%.0f, %.0f) — depth %.2f — "
+					% [best_x, z, best] + "is WALKABLE; the owner put the Danube in "
+					+ "scope by name and the four authored bridges are the crossing")
+	var island_index: int = BudapestPlan.DRY_RECTS.size() - 1
+	var island: Rect2 = BudapestPlan.DRY_RECTS[island_index]
+	var decks_asserted := 0
+	for row_v: Variant in BudapestPlan.BRIDGES:
+		var row: Dictionary = row_v
+		var deck: Rect2 = BudapestPlan.bridge_deck(row)
+		var c: Vector2 = deck.get_center()
+		# The Margaret Bridge crosses Margaret ISLAND, so its deck's centre stands
+		# over dry land with no bed under it to flood. A legitimate exception and
+		# not a hole in the rule — the island's own row is what keeps it dry, and
+		# that is the assertion below this loop.
+		#
+		# THE SKIP READS THE ISLAND'S RECT, NOT `is_dry_land`. Asking the function
+		# under test whether to test it is how a check disables itself: a mutant
+		# `is_dry_land` that falls back to `is_dry` answers true for all four decks,
+		# every one of them `continue`s, and this loop prints its verdict having
+		# asserted nothing. (Measured — that mutation went red only by accident,
+		# through one of clause (e)'s three cuts.)
+		if island.has_point(c):
+			continue
+		decks_asserted += 1
+		var under := Vector3(c.x, 0.0, c.y)
+		var on := Vector3(c.x, BudapestPlan.BRIDGE_DECK_TOP, c.y)
+		if terrain.is_river_at(under):
+			_fail("deep channel: is_river_at() says the %s deck rect is WET — the "
+					% row["id"] + "band is what the shader paints and what every "
+					+ "spawner reads, and a deck must stay dry to it")
+		if not terrain.is_wading_at(under):
+			_fail("deep channel: the bed under the %s at y = 0 is still DRY — the "
+					% row["id"] + "under-deck gap 06o.2 measured is exactly what this "
+					+ "bead closes")
+		if terrain.is_wading_at(on):
+			_fail("deep channel: standing ON the %s deck at %.0f m reads as wading"
+					% [row["id"], BudapestPlan.BRIDGE_DECK_TOP])
+	# The VACUITY GUARD for the loop above: three of the four decks stand over
+	# water and must all be asserted. Only the Margaret is legitimately skipped.
+	if decks_asserted != BudapestPlan.BRIDGES.size() - 1:
+		_fail("deep channel: only %d of the %d authored decks were asserted — the "
+				% [decks_asserted, BudapestPlan.BRIDGES.size()] + "under-deck clause "
+				+ "skipped a deck that stands over the Danube")
+	var ic: Vector2 = island.get_center()
+	if terrain.is_wading_at(Vector3(ic.x, 0.0, ic.y)) \
+			or terrain.deep_channel_push(Vector3(ic.x, 0.0, ic.y)) != Vector3.ZERO:
+		_fail("deep channel: MARGARET ISLAND is under water — it is dry LAND at "
+				+ "y = 0 and the bridge-rects-only exception must not reach it")
+
+	print("deep channel: %d channel / %d bank samples over %d worlds; the Danube's "
+			% [deep_seen, outer_seen, DEEP_FIELD_SEEDS.size()]
+			+ "centre impassable at %d of 3 cuts, %d decks dry above and wet below"
+					% [danube_deep, decks_asserted])
+	terrain.free()
+	Sentinel.done("deep_channel_field")
+
+
+func _check_deep_channel_crossings() -> void:
+	"""
+	CHECK 9 — THE SOFTLOCK GATE, and the reason this bead waited for the field
+	bridges: over DEEP_ROAD_SEEDS worlds, walk the road's centreline metre by
+	metre to the terminal station and then the AUTHORED APPROACH CORRIDOR on to
+	the city rect, and fail on any wet stretch that is neither bridged nor
+	walkable.
+
+	A river you cannot enter is a WALL across an endless field, and the road is
+	the only guaranteed way through it. `spawn_field_bridges_in_chunk` bridges
+	every crossing under FIELD_BRIDGE_MAX_SPAN and leaves the rest — genuine
+	standing water — wading BY DESIGN, so the deep channel yields to exactly those
+	through `_deep_channel_ford`. This walks both halves of that bargain.
+
+	DRIVEN ON THE SHIPPED FUNCTIONS, never a re-implementation: `is_river_at` for
+	the band, `field_bridge_surface_y` for the stone, `deep_channel_push` for the
+	wall. A crossing passes when a deck covers its middle OR not one metre of it
+	is impassable.
+	"""
+	var crossings := 0
+	var bridged := 0
+	var forded := 0
+	var blocked := 0
+	var corridor_wet := 0
+	for run_seed in range(1, DEEP_ROAD_SEEDS + 1):
+		var terrain := _deep_terrain(run_seed)
+		terrain._road_extend_to_x(0.0, StubTerrain.TERRAIN.ROAD_TERMINAL_X)
+		var terminal_k: int = terrain._road_terminal_k()
+		var line := PackedVector2Array()
+		var prev := Vector2.INF
+		for k in range(1, terminal_k + 2):
+			if k > terrain.road_k_max:
+				break
+			var to: Vector2 = terrain._road_station(k).center
+			var from: Vector2 = prev if prev != Vector2.INF else to
+			var steps: int = maxi(1, int(from.distance_to(to)))
+			for i in range(1, steps + 1):
+				line.append(from.lerp(to, float(i) / float(steps)))
+			prev = to
+		# ...and on past T along the corridor the player is actually handed.
+		var terminal: Vector2 = terrain._road_station(terminal_k).center
+		var cx: float = minf(StubTerrain.TERRAIN.ROAD_TERMINAL_X, terminal.x)
+		while cx <= BudapestPlan.BUDAPEST_MIN.x:
+			line.append(BudapestPlan.road_approach_point(terminal, cx))
+			cx += 1.0
+
+		var wet := PackedVector2Array()
+		var deep_run := 0
+		for at: Vector2 in line:
+			var p := Vector3(at.x, 0.0, at.y)
+			if terrain.is_river_at(p):
+				if at.x > StubTerrain.TERRAIN.ROAD_TERMINAL_X:
+					corridor_wet += 1
+				wet.append(at)
+				if terrain.deep_channel_push(p) != Vector3.ZERO:
+					deep_run += 1
+			elif wet.size() > 0:
+				crossings += 1
+				var mid: Vector2 = wet[wet.size() / 2]
+				if terrain.field_bridge_surface_y(Vector3(mid.x, 0.0, mid.y)) > -INF:
+					bridged += 1
+					# ...AND A BRIDGED CROSSING IS NEVER A FORD. The two branches
+					# below both PASS, so nothing else here can see the wall being
+					# opened where stone already stands — which is exactly what
+					# asking `field_bridge_at(k0).is_empty()` did at a MERGED deck,
+					# whose row is owned by an earlier western anchor (measured: 3
+					# of 103 channel points on the road, seed 19 station 148).
+					if terrain._deep_channel_ford(mid.x, mid.y):
+						_fail("deep channel: seed %d has a DECK over the water at "
+								% run_seed + "(%.0f, %.0f) and still fords it — the "
+										% [mid.x, mid.y] + "wall is open at a crossing "
+								+ "that has stone across it")
+				elif deep_run == 0:
+					forded += 1
+				else:
+					blocked += 1
+					_fail("deep channel: seed %d walks %d m of water at (%.0f, %.0f)"
+							% [run_seed, wet.size(), mid.x, mid.y] + " with NO deck"
+							+ " over it and %d impassable metres in it — the road is"
+									% deep_run + " the guaranteed way across, and this"
+							+ " run is softlocked there")
+				wet = PackedVector2Array()
+				deep_run = 0
+		terrain.free()
+		if blocked > 0:
+			break
+	if crossings < 8:
+		_fail("deep channel: check 9 found only %d road crossings over %d seeds — "
+				% [crossings, DEEP_ROAD_SEEDS] + "it never got its feet wet and is "
+				+ "asserting nothing")
+	if corridor_wet < 1:
+		_fail("deep channel: check 9 never found water on the T -> gate corridor over "
+				+ "%d seeds, so the half of the walk with no stations went unmeasured"
+						% DEEP_ROAD_SEEDS)
+	if forded < 1 and blocked == 0:
+		_fail("deep channel: check 9 forded NOTHING over %d seeds — `_deep_channel_ford`"
+				% DEEP_ROAD_SEEDS + " is the one place the wall may be opened, and this"
+				+ " run never took that branch, so nothing here measures it")
+	print("deep channel: %d road+corridor crossings over %d seeds — %d bridged, "
+			% [crossings, DEEP_ROAD_SEEDS, bridged] + "%d forded (past the span cap), "
+					% forded + "%d blocked; %d wet corridor metres"
+							% [blocked, corridor_wet])
+	Sentinel.done("deep_channel_crossings")
+
+
+func _check_deep_channel_expels(terrain: StubTerrain, packed: PackedScene,
+		floor_body: StaticBody3D) -> void:
+	"""
+	CHECK 10 — A REAL BODY IS REALLY EXPELLED, with the seam switched off as the
+	control.
+
+	Everything above this is arithmetic on the terrain. This one stands a real
+	`player.tscn` on a real bank of a real river, points it at the channel, holds
+	the real "move_forward" action for two seconds and watches the shipped
+	`_physics_process` — STEP 8.5, the only place a body does anything about the
+	rule — decide what happens.
+
+	THE MUTATION CONTROL IS THE WHOLE SECOND HALF. "The hero did not reach the
+	middle" is also true of a rig where the walk never started, the body never
+	grounded or the action never fired, so the identical walk runs again with
+	`deep_off` on the stub — the seam answering ZERO, which is exactly what a
+	terrain-free scene answers — and it MUST cross. The two runs differ in one
+	boolean and in nothing else.
+	"""
+	var real := _deep_terrain(DEEP_SEED)
+	real._road_extend_to_x(0.0, StubTerrain.TERRAIN.ROAD_TERMINAL_X)
+	# Deliberately far off the road: the FORD is a road-width gap in the wall, and
+	# a walk that started inside one would measure the exemption, not the rule.
+	var spot := _deep_find_river(real, Vector2(0.0, 1500.0))
+	if spot.is_empty():
+		_fail("deep channel: check 10 found no impassable river within %.0f m of "
+				% DEEP_SEARCH_HALF + "(0, 1500) on seed %d — it can assert nothing"
+						% DEEP_SEED)
+		real.free()
+		Sentinel.done("deep_channel_expels")
+		return
+	var deep_at: Vector2 = spot["deep"]
+	var bank: Vector2 = spot["bank"]
+
+	# The world moves to the river rather than the river to the world: the slab
+	# _run() already built, re-centred under the crossing.
+	floor_body.position = Vector3(deep_at.x, 0.0, deep_at.y)
+	terrain.real = real
+
+	var held: float = await _deep_walk(packed, bank, deep_at, real)
+	terrain.deep_off = true
+	var loose: float = await _deep_walk(packed, bank, deep_at, real)
+	terrain.deep_off = false
+	terrain.real = null
+
+	var fraction: float = StubTerrain.TERRAIN.RIVER_DEEP_FRACTION
+	# HALF the fraction, not the fraction itself: the push fires the frame AFTER a
+	# body crosses the boundary, so a hero grazes a few centimetres into the strip
+	# and is carried back out. What this asserts is the gap between "grazed the
+	# edge" and "walked to the middle", and the control is what proves it is real.
+	if held < fraction * 0.5:
+		_fail("deep channel: a hero walking into the channel at (%.0f, %.0f) reached "
+				% [deep_at.x, deep_at.y] + "depth %.3f — past half the %.2f fraction, "
+						% [held, fraction] + "i.e. properly inside the strip; STEP 8.5 "
+				+ "is not holding the wall")
+	if loose >= fraction * 0.5:
+		_fail("deep channel: with the push switched off the SAME walk only reached "
+				+ "depth %.3f — it never got near the middle, so the held run above "
+						% loose + "proves nothing about the channel")
+	print("deep channel: a hero walked into the band at (%.0f, %.0f) — held at "
+			% [deep_at.x, deep_at.y] + "depth %.3f, and %.3f with the push off "
+					% [held, loose] + "(bank %.0f m out)" % float(spot["band"]))
+	real.free()
+	Sentinel.done("deep_channel_expels")
+
+
+func _deep_walk(packed: PackedScene, from: Vector2, toward: Vector2,
+		real: Node3D) -> float:
+	"""
+	Walk a fresh player from `from` toward `toward` for DEEP_WALK_FRAMES and answer
+	the SHALLOWEST river depth its body ever stood in.
+
+	A fresh body per run so the two walks share no momentum, no wade sink and no
+	grounded state, and freed at the end so the second is not shadowed by the
+	first.
+	"""
+	var player: CharacterBody3D = packed.instantiate()
+	player.position = Vector3(from.x, 1.0, from.y)
+	root.add_child(player)
+	await _frames(SETTLE_FRAMES)
+	player.look_at(Vector3(toward.x, player.global_position.y, toward.y), Vector3.UP)
+	var lowest := INF
+	Input.action_press("move_forward")
+	for _i in DEEP_WALK_FRAMES:
+		await physics_frame
+		var p: Vector3 = player.global_position
+		lowest = minf(lowest, real.river_depth_at(p.x, p.z))
+	Input.action_release("move_forward")
+	player.queue_free()
+	await _frames(2)
+	return lowest
