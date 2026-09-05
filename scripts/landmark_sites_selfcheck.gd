@@ -58,6 +58,18 @@ extends SceneTree
 ##      asks for now that `kind` is unique.
 
 const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
+## EVERY FILE CHECK 4 READS `_landmark_at` OUT OF, and it is a LIST because the
+## spawners keep moving house: the section left for `terrain_landmarks.gd` at bd
+## `godot-test1-ftn.26` and `endless_terrain.gd` kept a one-line forwarder.
+## Reading the terrain alone would therefore still FIND the name and read a body
+## that is a single call — passing for the wrong reason, with a `randf` added to
+## the real reverse lookup sailing through. `scarcity_selfcheck.SPAWNER_SCRIPTS`
+## is the same shape for the same reason (bd ftn.7); a name found in NONE of
+## these still fails by name, so the next extraction adds one line here.
+const SOURCE_SCRIPTS: Array[String] = [
+	"res://scripts/endless_terrain.gd",
+	"res://scripts/terrain_landmarks.gd",
+]
 ## This file, for check 5's guard on its own harness.
 const SELF_SCRIPT: String = "res://scripts/landmark_sites_selfcheck.gd"
 const BUILDERS_SCRIPT: String = "res://scripts/landmark_builders.gd"
@@ -220,7 +232,7 @@ func _check_unique(terrain_script: GDScript, registry: Array) -> void:
 	var total_sites := 0
 	for seed_value: int in SEEDS:
 		var terrain := _terrain(terrain_script, seed_value)
-		var sites: Dictionary = terrain.landmark_sites()
+		var sites: Dictionary = TerrainLandmarks.landmark_sites(terrain)
 		total_sites += sites.size()
 
 		# --- The table, over the whole world.
@@ -242,7 +254,7 @@ func _check_unique(terrain_script: GDScript, registry: Array) -> void:
 		for cx in range(-FIELD_HALF, FIELD_HALF + 1):
 			for cz in range(-FIELD_HALF, FIELD_HALF + 1):
 				var chunk: Vector2i = centre_chunk + Vector2i(cx, cz)
-				var lm: Dictionary = terrain._landmark_at(chunk)
+				var lm: Dictionary = TerrainLandmarks._landmark_at(terrain, chunk)
 				if lm.is_empty():
 					continue
 				in_window += 1
@@ -313,13 +325,27 @@ func _check_seed_reseats_the_table(terrain_script: GDScript) -> void:
 	`set_run_seed()` calls `_drop_seeded_memos()`, so the road is asserted here
 	directly instead of being papered over.
 
-	MUTATION-TESTED, both halves: drop the `_landmark_sites_cache` reset from
+	AND THE CORRIDOR'S EAST END IS ASSERTED THE OTHER WAY UP (bd
+	`godot-test1-2iu`). It was filed as a missing reset — it is the one memo in
+	this family `_drop_seeded_memos()` does not clear — and it is not one: the
+	function scans `BudapestPlan`'s authored polyline from the gate, so it is
+	SEED-INDEPENDENT and clearing it would imply a dependency that does not exist.
+	The bead's real product is the assertion below, which pins that property
+	instead of leaving it to be re-derived from a docstring.
+
+	MUTATION-TESTED, all three: drop the `_landmark_sites_cache` reset from
 	`_drop_seeded_memos()` and the first assertion goes red; drop the
-	`road_stations` reset and the CENTRELINE assertion does.
+	`road_stations` reset and the CENTRELINE assertion does; make
+	`_approach_coin_east_end()` read `run_seed` and the EAST END one does.
 	"""
 	var terrain := _terrain(terrain_script, SEEDS[0])
 	# Build it, exactly as a chunk streaming in would.
-	var first: Dictionary = terrain.landmark_sites().duplicate()
+	var first: Dictionary = TerrainLandmarks.landmark_sites(terrain).duplicate()
+	# ...and POISON THE APPROACH CORRIDOR'S EAST END the same way (bd
+	# `godot-test1-2iu`). It is memoized on first ask like the table above, so an
+	# assertion that does not fill the cache HERE would pass on a terrain that
+	# simply never cached — which is why this line is the setup and not the test.
+	var first_east: float = terrain._approach_coin_east_end()
 	if first.is_empty():
 		_fail("seed %d sited nothing — check 1b cannot run" % SEEDS[0])
 		terrain.free()
@@ -329,7 +355,7 @@ func _check_seed_reseats_the_table(terrain_script: GDScript) -> void:
 	# ...then hand it another seed, the way a multiplayer joiner is handed the
 	# room's, and ask again.
 	terrain.set_run_seed(SEEDS[1])
-	var second: Dictionary = terrain.landmark_sites()
+	var second: Dictionary = TerrainLandmarks.landmark_sites(terrain)
 	if second == first:
 		_fail("the site table survived set_run_seed(%d) — it is still seed %d's %d sites, "
 				% [SEEDS[1], SEEDS[0], first.size()]
@@ -343,9 +369,9 @@ func _check_seed_reseats_the_table(terrain_script: GDScript) -> void:
 	# godot-test1-bvq): the bare `set_run_seed()` above is the whole setup, so if
 	# the road survived the re-seed the sites would be strung along the LAST run's
 	# centreline and this comparison is what says so.
-	var rebuilt: Dictionary = terrain.landmark_sites()
+	var rebuilt: Dictionary = TerrainLandmarks.landmark_sites(terrain)
 	var fresh := _terrain(terrain_script, SEEDS[1])
-	var expected: Dictionary = fresh.landmark_sites()
+	var expected: Dictionary = TerrainLandmarks.landmark_sites(fresh)
 	if rebuilt != expected:
 		_fail("after set_run_seed(%d) the table has %d sites but a terrain "
 				% [SEEDS[1], rebuilt.size()]
@@ -372,6 +398,25 @@ func _check_seed_reseats_the_table(terrain_script: GDScript) -> void:
 					% want
 					+ "so every seeded consumer is being built onto the PREVIOUS run's road")
 			break
+	# ...AND THE ONE MEMO IN THIS FAMILY THAT IS *NOT* CLEARED, asserted from the
+	# other side (bd `godot-test1-2iu`). `_approach_coin_east_end_cache` looks
+	# exactly like `_approach_coin_line_cache`'s twin, and two readers in one day
+	# filed it as a missing reset — but east of the gate the corridor IS the
+	# avenue at z = 0, so that function scans `BudapestPlan`'s authored polyline
+	# and takes a bridge's abutment: every term is a designer's constant, with no
+	# `run_seed` in it. It is therefore SEED-INDEPENDENT, which is what makes
+	# never clearing it correct, and this is the assertion that pins the claim so
+	# nobody has to re-derive it from the docstring a third time. `first_east` was
+	# taken BEFORE the re-seed, so the memo really was populated under SEEDS[0].
+	var east: float = terrain._approach_coin_east_end()
+	var want_east: float = fresh._approach_coin_east_end()
+	if absf(east - want_east) > 1e-4 or absf(first_east - want_east) > 1e-4:
+		_fail("the approach corridor's east end moved with the seed: %.3f under %d, "
+				% [first_east, SEEDS[0]]
+				+ "%.3f after set_run_seed(%d), %.3f on a terrain born there — it is "
+				% [east, SEEDS[1], want_east]
+				+ "supposed to be a pure function of BudapestPlan's authored polyline, "
+				+ "which is the whole reason _drop_seeded_memos() does not clear its memo")
 	fresh.free()
 	terrain.free()
 	print("  set_run_seed drops the memo: %d sites -> %d, and they are the new seed's own"
@@ -400,7 +445,7 @@ func _check_legal_sites(terrain_script: GDScript, consts: Dictionary) -> void:
 	for seed_value: int in SEEDS:
 		var terrain := _terrain(terrain_script, seed_value)
 		var chunk_size: float = float(terrain.chunk_size)
-		for chunk: Vector2i in terrain.landmark_sites():
+		for chunk: Vector2i in TerrainLandmarks.landmark_sites(terrain):
 			var world: Vector3 = terrain.chunk_to_world(chunk)
 			if terrain.in_budapest(world.x, world.z):
 				_fail("seed %d: site %s stands in the Budapest rect — the city's landmarks are "
@@ -434,23 +479,23 @@ func _check_legal_sites(terrain_script: GDScript, consts: Dictionary) -> void:
 		_fail("check 2 found no river chunk within 3 km of the road on seed %d — the river "
 				% SEEDS[0] + "rule's control could not run")
 	for row: Array in controls:
-		if t._landmark_site_ok(row[1] as Vector2i, {}):
+		if TerrainLandmarks._landmark_site_ok(t, row[1] as Vector2i, {}):
 			_fail("_landmark_site_ok accepted a chunk inside %s (%s) — that rule is gone"
 					% [String(row[0]), str(row[1])])
 	# The positive control: an accepted site's own chunk must still be accepted
 	# when nothing is taken, or every refusal above proves only that the predicate
 	# refuses everything.
 	var legal: Vector2i = Vector2i(0x7FFFFFFF, 0x7FFFFFFF)
-	for chunk2: Vector2i in t.landmark_sites():
+	for chunk2: Vector2i in TerrainLandmarks.landmark_sites(t):
 		legal = chunk2
 		break
 	if legal == Vector2i(0x7FFFFFFF, 0x7FFFFFFF):
 		_fail("seed %d sited nothing at all — check 2's positive control cannot run" % SEEDS[0])
-	elif not t._landmark_site_ok(legal, {}):
+	elif not TerrainLandmarks._landmark_site_ok(t, legal, {}):
 		_fail("_landmark_site_ok refuses %s, which is one of its OWN sites — the four "
 				% str(legal) + "refusals above prove nothing")
 	# ...and the "somebody already took it" rule, which is the pairwise spacing.
-	elif t._landmark_site_ok(legal, {legal: 0}):
+	elif TerrainLandmarks._landmark_site_ok(t, legal, {legal: 0}):
 		_fail("_landmark_site_ok accepted %s twice — two kinds would share one chunk"
 				% str(legal))
 	t.free()
@@ -515,7 +560,7 @@ func _build_every_site(terrain_script: GDScript) -> Array:
 	var out: Array = []
 	for seed_value: int in SEEDS:
 		var terrain := _terrain(terrain_script, seed_value)
-		var sites: Dictionary = terrain.landmark_sites()
+		var sites: Dictionary = TerrainLandmarks.landmark_sites(terrain)
 		for chunk: Vector2i in sites:
 			terrain.create_chunk(chunk)
 			var chunk_node: Node3D = terrain.active_chunks.get(chunk)
@@ -629,13 +674,20 @@ func _check_no_draw(terrain_script: GDScript, built: Array) -> void:
 	monument is what it is for. Asserting BOTH directions is what stops the check
 	passing on a comparator that always answers "same".
 	"""
-	var source: String = FileAccess.get_file_as_string(TERRAIN_SCRIPT)
-	if source.is_empty():
-		_fail("could not read %s as text — check 4's text half cannot run" % TERRAIN_SCRIPT)
+	var body := ""
+	var unread := ""
+	for path: String in SOURCE_SCRIPTS:
+		var source: String = FileAccess.get_file_as_string(path)
+		if source.is_empty():
+			unread = path
+			break
+		body += _function_body(source, "_landmark_at") + "\n"
+	if not unread.is_empty():
+		_fail("could not read %s as text — check 4's text half cannot run" % unread)
 	else:
-		var body := _function_body(source, "_landmark_at")
-		if body.is_empty():
-			_fail("check 4 found no `_landmark_at` in endless_terrain.gd — it was renamed, and "
+		if body.strip_edges().is_empty():
+			_fail("check 4 found no `_landmark_at` in any of %s — it was renamed, and "
+					% ", ".join(SOURCE_SCRIPTS)
 					+ "this assertion now measures nothing")
 		for forbidden: String in ["RandomNumberGenerator", "randf", "randi", "scarcity_at("]:
 			if body.contains(forbidden):
@@ -643,7 +695,7 @@ func _check_no_draw(terrain_script: GDScript, built: Array) -> void:
 						% forbidden + "no gradient (see the MUSEUM MILE banner)")
 
 	var terrain := _terrain(terrain_script, SEEDS[0])
-	var sites: Dictionary = terrain.landmark_sites()
+	var sites: Dictionary = TerrainLandmarks.landmark_sites(terrain)
 	# The subject must be a site that really BUILT something, or the comparator's
 	# own control below ("with a landmark, the boxes differ") is measuring a chunk
 	# whose candidate loop failed and would fail for the wrong reason. It is taken
@@ -715,7 +767,7 @@ func _signature(terrain_script: GDScript, chunk: Vector2i, landmarks_on: bool) -
 	terrain.spawn_artifact_in_chunk(chunk, chunk_node, obstacles, batch, body)
 	terrain.spawn_camp_in_chunk(chunk, chunk_node, obstacles, batch, body)
 	var pre: PackedByteArray = var_to_bytes(batch) + var_to_bytes(obstacles)
-	terrain.spawn_landmark_in_chunk(chunk, chunk_node, obstacles, batch, body)
+	TerrainLandmarks.spawn_landmark_in_chunk(terrain, chunk, chunk_node, obstacles, batch, body)
 	terrain.spawn_chest_in_chunk(chunk, chunk_node, obstacles, batch, body)
 	var croc_parent := MeshInstance3D.new()
 	croc_parent.position = terrain.chunk_to_world(chunk)
@@ -735,15 +787,25 @@ func _function_body(source: String, name: String) -> String:
 	The lines of `func <name>(...)` up to the next top-level `func` — the crude
 	reader `scarcity_selfcheck.gd` uses, and for the same reason: GDScript's
 	one-function-per-column-0-`func` layout is the whole grammar this needs.
+
+	IT MATCHES `static func` TOO (bd `godot-test1-ftn.26`), and that one word is
+	the difference between this check measuring the reverse lookup and measuring
+	nothing. `_landmark_at` moved to `terrain_landmarks.gd` as a STATIC function,
+	so a reader that only knew `func ` found the terrain's one-line forwarder,
+	read a body with no `randf` in it, and passed — which is exactly the vacuous
+	pass the SOURCE_SCRIPTS list was added to prevent. Caught by planting a
+	`randf()` in the real function and watching the check stay green;
+	`scarcity_selfcheck` learned the same thing at ftn.6.
 	"""
 	var out := ""
 	var inside := false
 	for line: String in source.split("\n"):
-		if line.begins_with("func " + name + "("):
+		if line.begins_with("func " + name + "(") \
+				or line.begins_with("static func " + name + "("):
 			inside = true
 			continue
 		if inside:
-			if line.begins_with("func "):
+			if line.begins_with("func ") or line.begins_with("static func "):
 				break
 			out += line + "\n"
 	return out
