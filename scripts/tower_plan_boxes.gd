@@ -46,8 +46,8 @@ extends RefCounted
 # GEOMETRY — metres, LOCAL to the shell's origin, feet at y = 0
 # ============================================================================
 #
-# THERE ARE NO AUTHORED WIDTHS IN HERE ANY MORE. Every horizontal number this file
-# used to carry — the keep's inner faces, the slab's west edge, the vault's jambs,
+# THERE ARE NO AUTHORED WIDTHS IN HERE ANY MORE. Every horizontal number the
+# interior used to carry — the keep's inner faces, the slab's west edge, the jambs,
 # the ramp's lane, the secure partition — described the phase-3 KEEP, a windowless
 # 20 m box standing in the middle of the 80 m hall. Bead `godot-test1-dn8`
 # demolished it and drew floors 0 and 1 on `TowerPlans`' grid like every other
