@@ -180,7 +180,18 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            EXECUTES the real `voice_chat` ladders with
 #                            `_is_web` forced on and a stub manager, because
 #                            check 7 only meets them off-web where both return
-#                            on their first line
+#                            on their first line. Check 8 is THE HUD SKIN
+#                            (`hud_theme.gd`, bead y1o.24): the six film hexes
+#                            DERIVED from the consts and grepped across
+#                            scripts/, every StyleBox builder hard-edged with
+#                            the exact spec shadow and the amber rationed to
+#                            hover/focus, the veil measured at both ends (it
+#                            must darken, and by enough to read), both Oswald
+#                            weights loaded and distinct, ONE shared Theme with
+#                            no project-wide flip, the pilot's colours bound to
+#                            the palette, and locale_selfcheck's ruler read as
+#                            TEXT so the German budgets cannot drift back onto
+#                            a face nothing draws with
 #   landmark_selfcheck       every builder fits its declared radius AND its
 #                            declared top
 #   landmark_sites_selfcheck THE MUSEUM MILE: every field kind sited AT MOST ONCE
@@ -1874,7 +1885,10 @@ builders (`card` / `strip` / `button`) and one lazy `theme()`. Four rules:
 
 - **The six hexes are typed there and NOWHERE else in `scripts/`.**
   `hero_hud_selfcheck` check 8 derives the hex strings from the consts themselves and
-  greps the tree, so a second copy fails the build and the check can never go stale.
+  greps the tree, so a pasted `Color("#526671")` fails the build and the check can never
+  go stale. Documented ceiling: it matches the HEX, so the same colour re-typed as a
+  float triple slips past — check 8 binds the pilot's own consts to the palette instead,
+  which is the half that catches it where it would matter.
   What is deliberately outside the palette is SEMANTIC and must stay: the per-hero
   identity tints, the captive bars' red, the speaking green, the minimap's biome RGB.
 - **Two kinds of consumer.** A Control-based panel adopts `theme = HudTheme.theme()` on
@@ -1885,14 +1899,22 @@ builders (`card` / `strip` / `button`) and one lazy `theme()`. Four rules:
 - **`locale_selfcheck._check_widths` measures on `HudTheme.body_font()`**, not on
   `ThemeDB`'s default. A budget measured on a face nobody draws with passes vacuously in
   both directions, and Oswald is condensed — measured over the 73 budgets, the worst
-  German string went from **96.2%** of its budget on the engine default to **75.0%** on
-  Oswald. The check also asserts ß/ä/ö/ü exist, which is why Oswald was picked over
-  Bebas Neue.
+  German string went from **96.2%** of its budget on the engine default to **83.8%** on
+  Oswald. It measures on **BOTH weights and keeps the wider answer**: `theme()` gives
+  `Label` Regular and `Button`/`CheckBox` BOLD, 45 of the 73 rows are on Button-class
+  controls, and a single-weight ruler would reproduce the same vacuous-budget bug one
+  weight over. The check also asserts ß/ä/ö/ü through `Font.has_char` — **never a
+  width**, since a missing glyph still measures a non-zero notdef box — which is why
+  Oswald was picked over Bebas Neue.
 - **`hero_hud` is the PILOT** (bead `y1o.24`) and the per-panel beads follow it one file
   at a time. Its tile geometry did not move — `voice_chat` places the teammate camera on
   `tile_rect()`. The active ring is FLAT `VISOR_AMBER` and no longer lerped toward the
   hero tint: the accent is rationed to one amber thing per screen region, and the tint
-  already owns the whole placeholder tile. A/B crops in `docs/style/`, captured with
+  already owns the whole placeholder tile. **A veil has to DARKEN every pixel it
+  covers** — `HudTheme.veil()` composites toward its own luminance, so a quarter-khaki
+  veil lifted a fifth of Primm's portrait instead of dimming it; check 8 holds both the
+  ceiling on that luminance and the floor on the dim. A/B crops in `docs/style/`,
+  captured with
   `godot --path . scenes/style_shots.tscn -- <outdir> only=hero_row`.
 
 ### Art direction

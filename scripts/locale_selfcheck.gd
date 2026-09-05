@@ -404,25 +404,40 @@ func _check_locale_config() -> void:
 ## whether the control overflows.
 func _check_widths(rows: Array) -> void:
 	# THE RULER IS THE FACE WE DRAW WITH (bead godot-test1-y1o.24). It used to be
-	# `ThemeDB.get_default_theme()`'s Button font — right while every panel drew
+	# the engine default theme's Button font — right while every panel drew
 	# in the engine default, and WRONG the moment one adopts `HudTheme.theme()`,
 	# whose default font is Oswald. A budget measured on a font nobody draws with
 	# passes vacuously in both directions: Oswald is CONDENSED, so it would hide a
 	# real overflow if the panels were wider, and flag a fit that is fine if they
 	# were narrower. One seam, so every per-panel bead after this one inherits it.
-	var font: Font = HudTheme.body_font()
-	if font == null:
-		font = ThemeDB.fallback_font
-	if font == null:
+	# BOTH WEIGHTS, AND THE WIDER ANSWER WINS. `HudTheme.theme()` gives `Label`
+	# Oswald Regular and `Button`/`CheckBox` Oswald BOLD, and 45 of the 73 rows
+	# below are on Button-class controls — so a single-weight ruler reproduces the
+	# very bug this seam was moved to fix, one weight over (Bold is ~9 points of
+	# budget wider). Rather than classify 73 rows by their `where` string, which
+	# would go wrong silently the day a control changes class, every row is held
+	# to whichever face is WIDER. That is conservative by construction: a string
+	# that fits the wider face fits the one it is actually drawn in.
+	var fonts: Array[Font] = []
+	for f: Font in [HudTheme.body_font(), HudTheme.heading_font()]:
+		if f != null:
+			fonts.append(f)
+	if fonts.is_empty() and ThemeDB.fallback_font != null:
+		fonts.append(ThemeDB.fallback_font)
+	if fonts.is_empty():
 		_fail("no font available — the width check would pass vacuously")
 		Sentinel.done("widths")
 		return
+	var font: Font = fonts[0]
 	# German needs ß and the umlauts, which is the whole reason Oswald was chosen
-	# over Bebas Neue — a face missing them measures a tofu box and passes.
+	# over Bebas Neue. `has_char`, NOT a width: a glyph the face is missing still
+	# measures a non-zero advance (the notdef box), so a width test here would be
+	# true of a tofu and would guard exactly nothing.
 	for glyph: String in ["ß", "ä", "ö", "ü", "Ä"]:
-		if font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, 26).x <= 0.0:
-			_fail("the HUD font has no '%s' — the German budgets would be measured "
-				% glyph + "on a missing glyph")
+		for f: Font in fonts:
+			if not f.has_char(glyph.unicode_at(0)):
+				_fail("the HUD font has no '%s' — the German budgets would be "
+					% glyph + "measured on a notdef box")
 	# Prove the ruler works before trusting any measurement it makes. A headless
 	# build configured with the dummy text server measures everything as 0, which
 	# would turn every assertion below into a silent pass.
@@ -445,8 +460,10 @@ func _check_widths(rows: Array) -> void:
 			continue
 		for text: String in [key, String(german[key])]:
 			for line: String in text.split("\n"):
-				var width: float = font.get_string_size(
-					line, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+				var width: float = 0.0
+				for f: Font in fonts:
+					width = maxf(width, f.get_string_size(
+						line, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x)
 				if width > limit:
 					_fail("%s: %s is %.1f px wide at font size %d, over the %.0f px budget"
 						% [where, line.c_escape(), width, font_size, limit])

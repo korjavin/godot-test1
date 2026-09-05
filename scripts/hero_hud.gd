@@ -478,10 +478,10 @@ func _draw() -> void:
 		# Held and captive are both unavailable, so both take the veil; only
 		# captivity adds the bars on top of it.
 		if state == STATE_HELD or state == STATE_CAPTIVE:
-			# `HudTheme.VEIL` and not a const of our own: it is the palette's
+			# `HudTheme.veil()` and not a const of our own: it is the palette's
 			# answer to "you cannot have this", and the skill tree and the MP
 			# panel will want the same grey-brown.
-			draw_rect(rect, HudTheme.VEIL)
+			draw_rect(rect, HudTheme.veil())
 		if state == STATE_CAPTIVE:
 			_draw_bars(rect)
 

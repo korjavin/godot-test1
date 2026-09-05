@@ -792,17 +792,66 @@ func _check_the_hud_theme() -> void:
 		for corner: int in 4:
 			_check(box.get_corner_radius(corner as Corner) == 0,
 				"%s has a rounded corner — the reference has none anywhere" % name)
+		# `anti_aliasing` feathers the box's own EDGE (it does not touch the
+		# shadow, which `shadow_size` expands solidly). It is off everywhere so a
+		# radius added later cannot bring a soft edge with it.
 		_check(not box.anti_aliasing,
-			"%s is anti-aliased, which turns its shadow_size into a BLUR — the "
-				% name + "reference's shadows are hard offsets")
+			"%s is anti-aliased — nothing in the reference has a feathered edge"
+				% name)
 		_check(box.border_width_top > 0,
 			"%s has no border — every surface in the reference is framed" % name)
-	_check(THEME_SCRIPT.card().shadow_size > 0
-			and THEME_SCRIPT.card().shadow_offset != Vector2.ZERO,
-		"the card has no offset shadow — that IS the panel language")
+	# THE SPEC'S OWN NUMBERS, written down once. Binding the builders to the
+	# consts is only half of it — retuning a const retunes both sides and the
+	# relation stays green, so the panel language itself (1-px frame, 2-px on a
+	# modal, a 2-px shadow offset (2,2) at 60%) is asserted against the epic's
+	# figures. Changing one is an owner decision and should edit this line too.
+	_check(THEME_SCRIPT.BORDER_PX == 1 and THEME_SCRIPT.BORDER_MODAL_PX == 2
+			and THEME_SCRIPT.SHADOW_PX == 2
+			and THEME_SCRIPT.SHADOW_PANEL_OFFSET == Vector2i(2, 2)
+			and is_equal_approx(THEME_SCRIPT.SHADOW_ALPHA, 0.6),
+		"the panel language has drifted off the film spec: border %d/%d, shadow "
+			% [THEME_SCRIPT.BORDER_PX, THEME_SCRIPT.BORDER_MODAL_PX]
+			+ "%d at %s alpha %.2f" % [THEME_SCRIPT.SHADOW_PX,
+				THEME_SCRIPT.SHADOW_PANEL_OFFSET, THEME_SCRIPT.SHADOW_ALPHA])
+
+	# The EXACT numbers, not just "some shadow": a 40 px shadow at (40,40) is as
+	# wrong as none, and "> 0" is green for both.
+	_check(THEME_SCRIPT.card().shadow_size == THEME_SCRIPT.SHADOW_PX,
+		"the card's shadow is %d px, not the spec's %d"
+			% [THEME_SCRIPT.card().shadow_size, THEME_SCRIPT.SHADOW_PX])
+	_check(THEME_SCRIPT.card().shadow_offset
+			== Vector2(THEME_SCRIPT.SHADOW_PANEL_OFFSET),
+		"the card's shadow is offset %s, not the spec's %s"
+			% [THEME_SCRIPT.card().shadow_offset,
+				Vector2(THEME_SCRIPT.SHADOW_PANEL_OFFSET)])
+	# THE ACCENT IS RATIONED: only hover and focus take amber, and they must.
+	for state: String in ["normal", "pressed", "disabled"]:
+		_check(THEME_SCRIPT.button(state).border_color == THEME_SCRIPT.STEEL,
+			"the %s button's frame is not STEEL — the amber accent is hover and "
+				% state + "focus only")
+	for state: String in ["hover", "focus"]:
+		_check(THEME_SCRIPT.button(state).border_color == THEME_SCRIPT.VISOR_AMBER,
+			"the %s button's frame is not VISOR_AMBER" % state)
+	_check(THEME_SCRIPT.button("disabled").bg_color == THEME_SCRIPT.INK,
+		"a disabled button has the raised face of a live one — the spec puts its "
+		+ "khaki text on INK")
 	_check(THEME_SCRIPT.card(true).bg_color.a == 1.0
 			and THEME_SCRIPT.card().bg_color.a < 1.0,
 		"a modal card must be opaque and an ordinary panel must not be")
+
+	# --- THE VEIL MUST DARKEN, and by enough to read --------------------------
+	# A veil composites toward its OWN luminance, so anything darker than it comes
+	# out BRIGHTER — which is how a khaki-tinted veil silently turned "a teammate
+	# has him" into "very slightly greyer". Two ends: a ceiling on the veil's own
+	# luminance, and a floor on the dim it puts on a mid-grey tile.
+	var veil: Color = THEME_SCRIPT.veil()
+	_check(veil.get_luminance() < 0.16,
+		"the veil's own luminance is %.3f — it would LIGHTEN the dark half of "
+			% veil.get_luminance() + "every portrait it covers")
+	var dimmed: float = 0.5 * (1.0 - veil.a) + veil.get_luminance() * veil.a
+	_check(0.5 - dimmed >= 0.25,
+		"the veil dims a mid-grey tile by only %.3f — 'you cannot have him' has "
+			% (0.5 - dimmed) + "to read at 48 px")
 
 	# --- the fonts --------------------------------------------------------------
 	# A missing TTF resolves to null and every `draw_string` silently draws
@@ -855,6 +904,24 @@ func _check_the_hud_theme() -> void:
 	_check(not draw_body.contains("COLOR_ACTIVE_BORDER.lerp"),
 		"_draw() tints the active ring per hero again — the amber accent is one "
 		+ "colour, and the hero tint already owns the whole placeholder tile")
+	# --- THE LOCALE RULER IS THIS FILE'S FACE ----------------------------------
+	# THE GATES paragraph of the epic exists because that ruler goes wrong in
+	# SILENCE: a German budget measured on a font nobody draws with passes
+	# vacuously in both directions. Installing the right ruler fixed it once;
+	# this is what stops it being reverted without anybody noticing.
+	var locale_src := FileAccess.get_file_as_string("res://scripts/locale_selfcheck.gd")
+	var widths := locale_src.substr(locale_src.find("func _check_widths("))
+	var end_of := widths.find("\nfunc ")
+	if end_of > 0:
+		widths = widths.substr(0, end_of)
+	_check(widths.contains("HudTheme.body_font()")
+			and widths.contains("HudTheme.heading_font()"),
+		"locale_selfcheck._check_widths no longer measures on BOTH HudTheme "
+		+ "weights — Buttons draw Bold and Labels Regular, and one ruler for both "
+		+ "is the bug this bead moved the seam to fix")
+	_check(not widths.contains("ThemeDB.get_default_theme()"),
+		"locale_selfcheck._check_widths is measuring German on ThemeDB's default "
+		+ "font again — that is the face nothing draws with")
 	Sentinel.done("the_hud_theme")
 
 

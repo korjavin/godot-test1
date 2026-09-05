@@ -63,12 +63,29 @@ const VISOR_AMBER: Color = Color("#f2a33a")
 const PANEL_ALPHA: float = 0.88
 
 ## THE VEIL over something you cannot have — a held hero's tile, a disabled row.
-## INK to dim it, pulled a quarter of the way to the corporation's own khaki so
+## INK to dim it, pulled a little way toward the corporation's own khaki so
 ## "GD-RTV has this" reads as their grey-brown rather than as a plain shadow.
-## A `static var` and not a `const` because a `const` may not call a method, and
+##
+## A VEIL HAS TO DARKEN EVERY PIXEL IT COVERS, and the lerp is 0.08 rather than
+## anything prettier for exactly that reason: a veil composites toward its own
+## luminance, so anything DARKER than the veil colour comes out BRIGHTER. At a
+## quarter khaki the veil's luminance is 0.23, which lifted a fifth of Primm's
+## portrait instead of dimming it and halved the FREE-vs-HELD read; at 0.08 it is
+## 0.13, and the alpha is 0.72 rather than 0.62 to put the dim back where the old
+## plain black veil had it. `hero_hud_selfcheck` check 8 measures both ends —
+## the ceiling on the veil's own luminance and the floor on how much it dims —
+## because "unavailable" reading as "slightly greyer" is invisible in a diff.
+##
+## A `static func` and not a `const` because a `const` may not call a method, and
 ## the alternative was a seventh hex nobody could trace back to the two it came
-## from — which is the one thing this file exists to prevent.
-static var VEIL: Color = Color(INK.lerp(UNIT_KHAKI, 0.25), 0.62)
+## from — which is the one thing this file exists to prevent. A func rather than
+## a `static var` so nothing can assign it, like `heading_font()` below.
+const VEIL_KHAKI_MIX: float = 0.08
+const VEIL_ALPHA: float = 0.72
+
+
+static func veil() -> Color:
+	return Color(INK.lerp(UNIT_KHAKI, VEIL_KHAKI_MIX), VEIL_ALPHA)
 
 # ============================================================================
 # TYPOGRAPHY
@@ -92,12 +109,22 @@ const BODY_FONT_SIZE: int = 14
 ## on a card gets a hard 2 px INK outline and a 1 px down-right shadow — which is
 ## the `draw_string_outline` idiom `hero_hud` and `ability_hud` already use, now
 ## fed the palette instead of black.
+##
+## READ THE UNIT BEFORE YOU PASS IT: this is 2 px OF INK, but Godot's
+## `draw_string_outline(..., size, ...)` grows the glyph in BOTH directions, so a
+## 2 px stroke is `OUTLINE_PX * 2` at the call site — which is what `hero_hud`
+## passes, and what every panel bead after it must pass. Doubling at the call
+## rather than storing 4 here keeps the constant meaning the thing the spec says.
 const OUTLINE_PX: int = 2
 const SHADOW_OFFSET: Vector2 = Vector2(1.0, 1.0)
 
-## The panel language: hard edges, and a HARD shadow. `shadow_size` in Godot is a
-## blur radius when `anti_aliasing` is on, so every builder below turns that off —
-## the film has no soft shadow anywhere in it.
+## The panel language: hard edges, and a HARD shadow. `StyleBoxFlat.shadow_size`
+## is a solid EXPANSION of the shadow rect and never a blur, so the offset shadow
+## below is hard by construction; `anti_aliasing` only feathers the box's own edge
+## by `anti_aliasing_size` and is documented as visible on rounded corners and
+## skew, neither of which this file permits. It is turned off anyway, because a
+## feathered edge is the one thing that could creep back in the day somebody adds
+## a radius — belt and braces, not the mechanism.
 const BORDER_PX: int = 1
 const BORDER_MODAL_PX: int = 2
 const SHADOW_PX: int = 2
@@ -161,7 +188,9 @@ static func button(state: String = "normal") -> StyleBoxFlat:
 	press (INK_RAISED -> INK): the film has no lit-up buttons, and the accent is
 	rationed to one amber thing per region.
 	"""
-	var box := _flat(INK if state == "pressed" else INK_RAISED)
+	# The spec gives DISABLED the same ink ground as a pressed button: a control
+	# you cannot use must not share the raised face of one you can.
+	var box := _flat(INK if state == "pressed" or state == "disabled" else INK_RAISED)
 	box.set_border_width_all(BORDER_PX)
 	box.border_color = VISOR_AMBER if state == "hover" or state == "focus" else STEEL
 	if state == "focus":
@@ -208,7 +237,7 @@ static func theme() -> Theme:
 		t.set_stylebox(state, "Button", button(state))
 	t.set_color("font_color", "Button", BONE)
 	t.set_color("font_hover_color", "Button", BONE)
-	t.set_color("font_pressed_color", "Button", VISOR_AMBER)
+	t.set_color("font_pressed_color", "Button", BONE)
 	t.set_color("font_disabled_color", "Button", UNIT_KHAKI)
 	t.set_font("font", "Button", FONT_BOLD)   # button labels are caps at the draw site
 
@@ -224,6 +253,9 @@ static func theme() -> Theme:
 	_theme = t
 	return _theme
 
-# ponytail: no title size and no BONE hairline builder yet — the modal card beads
-# (y1o.28/.31/.32) are the only consumers and can add both when they land, rather
-# than this file shipping two constants nothing draws.
+# ponytail: no title font size and no BONE-hairline builder yet — the modal card
+# beads (y1o.28/.31/.32) are their only consumers and can add both when they land.
+# `HEADING_FONT_SIZE` and `SHADOW_OFFSET` have no reader yet either, and unlike
+# those two they STAY: the bead names both as part of the seam it is measured on,
+# and a per-panel bead that had to invent its own heading size is the drift this
+# file exists to stop.
