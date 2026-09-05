@@ -89,7 +89,10 @@ static var _shared_unit_box_mesh: BoxMesh
 ## it" — a cylinder drum has a real flat top and a sphere a real curved one — but
 ## it IS still: a CONE collides as a box, so nothing may stand on a cone, and a
 ## climbable footprint (`obstacles`' flat-top contract, `_settle_coin_y`) wants a
-## CUBE, a CYLINDER or a ROCK and never a SPHERE.
+## CUBE, a CYLINDER or a ROCK and never a SPHERE — or a WEDGE, which since bead
+## godot-test1-y1o.36 is climbable and is the one kind that is NOT flat-topped:
+## its perch is the ridge LINE, and the cost of naming a line in a scalar `top`
+## is written out at the one consumer (`_spawn_city_content`'s house footprint).
 ##
 ## ROCK IS THE ONE KIND SHAPED BY A GAMEPLAY CONTRACT rather than by a primitive
 ## (bead godot-test1-y1o.3). Rocks and boulders are the second-most-frequent block

@@ -1778,6 +1778,12 @@ const HOLD_FRAMES: int = 60
 
 ## How far he may drift horizontally over that hold. Depenetration nudges a
 ## capsule a few millimetres on the frame it lands; sliding is decimetres.
+##
+## It is the SECOND net and says so: `floor_max_angle` is the shipped 45 degrees
+## (gradient 1.0), well past the 0.575 the pitch assertion already holds, so a
+## gradient steep enough to slide would fail `_stand` and be counted as a miss
+## first. This is what catches a slide that is NOT about the angle — a floor
+## snap that stopped working, a collider whose face is not where the mesh is.
 const HOLD_DRIFT_MAX: float = 0.05
 
 ## How close a settled hero's feet must be to the analytic roof surface, and it
@@ -1969,25 +1975,28 @@ func _check_hero_on_city_roof(terrain_script: GDScript) -> void:
 
 	var missed := 0
 	var worst_gap := 0.0
-	var worst := ""
+	# TWO messages, not one shared string: a sample that never landed and a sample
+	# that landed in the wrong place are different failures, and a single `worst`
+	# lets the later one describe the earlier one's assertion.
+	var first_miss := ""
+	var worst_gap_note := ""
 	for frac: float in walk:
 		var at: Vector3 = base + across * (half_depth * frac)
 		var u: Vector3 = to_local * (at - roof.origin)
 		var want: float = roof.origin.y + rise * (0.5 - 2.0 * absf(u.z))
 		if not await _stand(player, Vector3(at.x, ridge_y + 1.5, at.z)):
 			missed += 1
-			if worst == "":
-				worst = "the hero never settled at %.2f of the half-depth (y = %.2f, wanted %.2f)" \
+			if first_miss == "":
+				first_miss = "the hero never settled at %.2f of the half-depth (y = %.2f, wanted %.2f)" \
 						% [frac, player.global_position.y, want]
 			continue
 		var got: float = player.global_position.y - foot_offset
 		var gap: float = absf(got - want)
 		if gap > worst_gap:
 			worst_gap = gap
-			if gap > SURFACE_EPSILON:
-				worst = ("at %.2f of the half-depth his feet rest at %.3f m; the pitch "
-						% [frac, got] + "there is %.3f m (hull top %.3f, ridge %.3f)"
-						% [want, eave_y, ridge_y])
+			worst_gap_note = ("at %.2f of the half-depth his feet rest at %.3f m; the pitch "
+					% [frac, got] + "there is %.3f m (hull top %.3f, ridge %.3f)"
+					% [want, eave_y, ridge_y])
 
 	# ---- he does not slide -------------------------------------------------
 	var hold_at: Vector3 = base + across * (half_depth * 0.55)
@@ -2017,10 +2026,10 @@ func _check_hero_on_city_roof(terrain_script: GDScript) -> void:
 
 	if missed > 0:
 		_fail("%d of %d pitch samples never put the hero on the roof at all — the WEDGE hull has a hole in it or stands somewhere else entirely. First: %s"
-				% [missed, walk.size(), worst])
+				% [missed, walk.size(), first_miss])
 	elif worst_gap > SURFACE_EPSILON:
 		_fail("the hero does not rest ON the pitch: %s. A collider that is the drawn prism puts him on the slope; a BoxShape3D over it floats him at ridge height, and no collider at all drops him onto the hull top INSIDE the roof"
-				% worst)
+				% worst_gap_note)
 	if drift > HOLD_DRIFT_MAX:
 		_fail("standing on the pitch with no input the hero slid %.3f m in %d frames (limit %.2f) — the roof gradient is past what CharacterBody3D treats as floor; hold 2 x CITY_ROOF_RISE_FACTOR under TowerInterior.PLAN_RAMP_MAX_SLOPE"
 				% [drift, HOLD_FRAMES, HOLD_DRIFT_MAX])

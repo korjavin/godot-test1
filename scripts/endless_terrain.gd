@@ -2112,8 +2112,11 @@ const MOUNTAIN_SNOW_COLOR := Color(0.92, 0.94, 0.96)
 ## AWAY (a cactus, a tree trunk and a massif all record NON-climbable footprints,
 ## so a road coin over one is skipped rather than perched). The city gives it back
 ## at scale: every house is capped at CITY_HOUSE_HEIGHT_MAX = PROP_MAX_STEP, so
-## every flat roof in a city is one jump from the pavement and a city block is a
-## field of croc-free perches. That is what pays for the reduced croc density
+## every roof EAVE in a city is one jump from the pavement and a city block is a
+## field of croc-free perches. (It said "every FLAT roof" until bead y1o.5 made
+## them pitched and y1o.36 made the pitch solid: what you land on is the eave,
+## flush with the hull top, and the ridge is walked up to.) That is what pays for
+## the reduced croc density
 ## below reading as "a safer place" rather than as "an emptier place".
 ##
 ## NO EMISSIVE ANYTHING, and the budget spent is exactly ZERO of the four
@@ -8480,9 +8483,16 @@ func _spawn_gate_district_in_chunk(chunk_center: Vector3, obstacles: Array, bloc
 	code motion changed no draw.
 
 	EVERY HOUSE ROOF IS STILL A REST SPOT. The plan caps every authored `height`
-	at PROP_MAX_STEP (2.6) and the footprint is climbable: true at the HULL top,
-	exactly as the procedural city's is — a gate district whose roofs you could
-	not reach would quietly be the one city block that is not a city block.
+	at PROP_MAX_STEP (2.6) and the footprint is climbable: true at the HULL top —
+	which since bead godot-test1-y1o.36 is NO LONGER "exactly as the procedural
+	city's is". Out in the band the roof is a solid WEDGE and the footprint names
+	the RIDGE; here the roof is still a flat `CITY_ROOF_THICKNESS` CUBE film drawn
+	`collide = false`, so the hull top IS the surface and the hero's feet are
+	inside 0.14 m of trim. The owner's "make roofs standable" ruling was about the
+	pitched roofs it is impossible to stand ON; a 0.14 m film is not that, and
+	Budapest stays pure CUBE by the city's own rule — so this builder is
+	deliberately untouched. A gate district whose roofs you could not reach would
+	quietly be the one city block that is not a city block.
 	"""
 	var half := chunk_size / 2.0
 	if not _city_chunk_slice(chunk_center, BudapestPlan.DISTRICT).has_area():

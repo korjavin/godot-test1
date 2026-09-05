@@ -1023,8 +1023,23 @@ static func _spawn_city_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 		# is what `_settle_coin_y` perches a coin on: with the roof solid, the hull
 		# top is inside stone, so a coin recorded there is buried in the roof and
 		# unreachable. The ridge line runs along local X straight through this
-		# centre, so a coin at `top + COIN_BLOCK_OFFSET` stands ON the ridge and is
-		# walked up to over the pitch.
+		# centre, so a coin on the centre column stands ON the ridge.
+		#
+		# AND HERE IS WHAT THAT COSTS, because `top` is a SCALAR over a DISC and a
+		# ridge is a LINE. `_settle_coin_y` perches every column the footprint
+		# covers at the ridge height, so a coin displaced along local Z FLOATS
+		# `2 * CITY_ROOF_RISE_FACTOR * |dz|` over the pitch beneath it — up to the
+		# full rise at the eave, and up to `ridge + COIN_BLOCK_OFFSET` over bare
+		# ground out in the annulus between the roof edge and the footprint's
+		# radius. Before this bead every such coin sat 0.6 m over the walkable hull
+		# top. It is still COLLECTIBLE (the pickup radius plus a 2 m capsule
+		# standing on the pitch reaches it) and the alternative buries it in stone,
+		# so the ridge is the right answer — but it is a real cost and not a
+		# rounding one. The only live consumer is the geo-landmark reward ring,
+		# which has no biome exclusion and runs after biome content; road coins
+		# cannot reach a house at all (CITY_ROAD_CLEARANCE 13 m against a 3.47 m
+		# radius). A per-column perch would mean `obstacles` carrying a shape
+		# instead of a top, which is the footprint currency's whole simplicity.
 		#
 		# THE JUMP IS STILL MEASURED AT THE EAVE, not here. `PROP_MAX_STEP` asks
 		# "can this be mounted from flat ground", and what you land on is the eave

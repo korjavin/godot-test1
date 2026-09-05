@@ -639,7 +639,7 @@ Load-bearing rules:
 - **A BOX HAS A MESH KIND, AND EVERY UNIT MESH FITS THE UNIT CUBE** (bead
   `godot-test1-y1o.1`, epic `y1o` "get rid of blocks"). The batch entry is
   `{transform, color, kind}` — `ChunkBatch.BoxKind` (CUBE / SPHERE / CONE / CYLINDER /
-  ROCK), a
+  ROCK / WEDGE), a
   trailing optional on `create_box` defaulting to CUBE, **always written** so the entry
   shape stays uniform (the whole-dict `var_to_bytes` signatures both `prop_selfcheck` and
   `budapest_selfcheck` compare would otherwise differ between two runs that agree about
