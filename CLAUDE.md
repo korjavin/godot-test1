@@ -1329,7 +1329,7 @@ speed entirely and takes `BOSS_CHASE_SPEED` unless the row opts out with
 feet — the titan and the ice cream clown, both of them archers a walking player must be
 able to stroll away from. The exemption is paid for, not free: `enemy_behavior_selfcheck`'s ranged probe
 *asserts* every `"ranged"` row's speeds are sub-walk, and `boss_selfcheck` — which runs
-every check over every `BIOME_BOSS` kind, not just the crocodile — asserts the body really
+over every `BIOME_BOSS` kind, not just the crocodile — asserts the body really
 resolved the speed its row asked for.
 
 **The GD-SURVEY hunter robot is dispatched on nothing.** The

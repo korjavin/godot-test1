@@ -232,6 +232,16 @@ func _check_model_rigid(boss: CharacterBody3D) -> void:
 	replaced those placeholders with purpose-built meshes worn at IDENTITY, and
 	the clown's phoboman at (0.75, 1, 0.75) is what still carries the case.
 
+	AND AS OF 2026-09-05 THAT LAST SENTENCE IS NO LONGER TRUE, WHICH IS WORTH
+	SAYING OUT LOUD: every shipped boss scene's `Model` node now sits at identity
+	(the clown's included), so `model_base_scale` is Vector3.ONE and the two
+	compositions are indistinguishable — mutating `scaled_local` to `scaled` in
+	both `_animate_*` sites passes this check, on this file AND on the one it was
+	split out of. The check is DORMANT, not wrong: it costs nothing, it is asked
+	of every kind, and it bites again the day an art bead ships a stretched model.
+	Restoring its teeth needs a subject with a non-uniform rest scale, which is a
+	bead of its own and not a line to add here.
+
 	Orthogonality is the exact test rather than a proxy: a rotation scaled along
 	its OWN axes keeps mutually perpendicular columns (each is a unit column times
 	one factor), and a shear is precisely the loss of that. So this passes for a

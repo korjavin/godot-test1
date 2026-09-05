@@ -160,6 +160,22 @@ func _check_crush_immunity(packed: PackedScene, species_name: String,
 	root.add_child(victim)
 	await _frames(BossProbe.SETTLE_FRAMES)
 
+	# The harness guards `BossProbe.drive()` asks on every other file's behalf.
+	# They are asked here too, because before the split this check ran at the
+	# BOTTOM of `_run_subject` and so was simply never reached for a kind that
+	# failed one of them. Without this a scene whose script did not attach reports
+	# "a boss was squashed by giant Teibi", which sends the reader to the crush
+	# ordering instead of to the missing import.
+	var bad: String = BossProbe.ready_failure(boss, species_name)
+	if not bad.is_empty():
+		_fail(bad)
+		giant.giant = false
+		boss.queue_free()
+		victim.queue_free()
+		await _frames(2)
+		Sentinel.done("crush_immunity")
+		return
+
 	giant.global_position = boss.global_position
 	var before: int = giant.bitten
 	boss._on_player_collision(giant)

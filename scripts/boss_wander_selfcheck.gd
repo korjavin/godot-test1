@@ -18,6 +18,17 @@ extends SceneTree
 ## leash phase leaves behind: it PLANTS the boss against its own fence and aims it
 ## outward itself, which is exactly what makes it the control.
 ##
+## ONE THING THE SPLIT DID CHANGE, and it is worth naming because it is invisible:
+## the boss now arrives here FRESHLY SETTLED rather than off the back of the leash
+## phase, so it has spent its 30 settle frames chasing (and biting) the shared stub
+## the harness parks at the origin, and it can enter the window inside a
+## `_pause_and_change_direction` beat or, for a leaping row, mid-arc. The check is
+## unaffected — the quarry is teleported 300 m away and the body is planted and
+## aimed before the first frame — but under a MUTATION (steer and clamp deleted)
+## the winged kinds sometimes escape here and sometimes do not, 6 or 7 of 7 across
+## runs. Nothing is lost: `boss_leash_selfcheck`'s fence walk catches every kind
+## this one can miss, which is what makes the pair, and not either file, the audit.
+##
 ## Deliberately NOT localized (a debug surface, per CLAUDE.md).
 
 ## How far the boss must travel after disengaging for "it still wanders" to be
