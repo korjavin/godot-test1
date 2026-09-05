@@ -592,6 +592,14 @@ func _build_ui() -> void:
 	_code_input.add_theme_color_override("font_color", HudTheme.BONE)
 	_code_input.add_theme_color_override("font_placeholder_color", HudTheme.STEEL)
 	_code_input.add_theme_color_override("caret_color", HudTheme.VISOR_AMBER)
+	# AND THE READ-ONLY STATE, which is the one this panel spends most of its life
+	# in: `_refresh()` sets `editable = false` the moment you are in a room, and a
+	# `LineEdit` then draws its `read_only` box and `font_uneditable_color` instead
+	# of the two overridden above — so the engine's rounded grey field came back on
+	# the online panel (codex review 2026-09-05). Disabled is UNIT_KHAKI on the ink
+	# ground, exactly as `HudTheme.button("disabled")` spells it for a Button.
+	_code_input.add_theme_stylebox_override("read_only", HudTheme.button("disabled"))
+	_code_input.add_theme_color_override("font_uneditable_color", HudTheme.UNIT_KHAKI)
 	# Upper-case as it is typed: the lobby upper-cases anyway, but showing the
 	# player the code in the form they were given avoids a "did I mistype it?"
 	# moment. Re-setting `text` moves the caret, so restore it.
