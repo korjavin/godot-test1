@@ -1440,10 +1440,7 @@ static func portrait_material(hero: String) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_texture = load(path) as Texture2D
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.diffuse_mode = BaseMaterial3D.DIFFUSE_TOON
-	mat.rim_enabled = true
-	mat.rim = 0.4
-	mat.rim_tint = 0.25
+	ToonShading.style(mat)
 	_portrait_materials[hero] = mat
 	return mat
 
@@ -3956,10 +3953,7 @@ static func _batch_material(glow: bool, wall: bool = false) -> StandardMaterial3
 		return hit
 	var mat := StandardMaterial3D.new()
 	mat.vertex_color_use_as_albedo = true
-	mat.diffuse_mode = BaseMaterial3D.DIFFUSE_TOON
-	mat.rim_enabled = true
-	mat.rim = 0.4
-	mat.rim_tint = 0.25
+	ToonShading.style(mat)
 	# BOTH HALVES ARE UNSHADED, and since bead 99j that is the interior's whole
 	# lighting model rather than a light-panel special case.
 	#
@@ -4160,10 +4154,7 @@ static func _material(color: Color) -> StandardMaterial3D:
 		return hit
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = color
-	mat.diffuse_mode = BaseMaterial3D.DIFFUSE_TOON
-	mat.rim_enabled = true
-	mat.rim = 0.4
-	mat.rim_tint = 0.25
+	ToonShading.style(mat)
 	if GLOW_COLORS.has(color):
 		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		mat.emission_enabled = true
