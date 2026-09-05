@@ -117,17 +117,29 @@ const BUTTON_STACK_GAP: float = 8.0
 ## `TOUCH_MIN_HEIGHT` button plus the VBox separation and the row's own label,
 ## which is what the hero picker added.
 ##
-## 368 AND NOT 360 SINCE THE HUD SKIN (bead godot-test1-y1o.29), and the eight
-## pixels are a locale budget rather than taste. `HudTheme.card()` pads a panel by
-## `CARD_PADDING` (12) a side where this panel used to pad by 10, and
-## `HudTheme.button()` pads a button face by another 12 a side where the engine
-## default theme padded by 4. `locale_selfcheck`'s MP rows are all written against
-## a 320 px usable width; at 360 a full-width button would have had 312, which is
-## a budget measured 8 px wider than the control it is measuring. Widening the
-## panel keeps every one of those rows true with no edit in that file — which is
-## also what keeps this bead's diff to the one script it owns.
-const PANEL_WIDTH: float = 368.0
+## 376 AND NOT 360 SINCE THE HUD SKIN (bead godot-test1-y1o.29), and the sixteen
+## pixels are a locale budget rather than taste. `locale_selfcheck`'s MP rows are
+## every one of them written against a **320 px usable width**, and the skin spends
+## into that from both sides: `HudTheme.card()` pads the panel by `CARD_PADDING`
+## (12) a side where this panel used to pad by 10, and `HudTheme.button()` pads a
+## button face by another 12 a side where the engine default theme padded by 4. At
+## 360 a full-width button would have had 304, which is a budget measured 16 px
+## wider than the control it measures. The arithmetic that has to hold is
+##
+##   PANEL_WIDTH - 2*CARD_PADDING - SCROLLBAR_WIDTH - 2*CARD_PADDING == 320
+##
+## and it is what `vbox.custom_minimum_size` below is derived from too. Keeping the
+## budgets true this way is what keeps this bead's diff to the one script it owns.
+const PANEL_WIDTH: float = 376.0
 const PANEL_HEIGHT: float = 620.0
+
+## The scroll bar's own width, on the spec's 8 px grid and the same 8 px the engine
+## default theme gives it. Declared rather than assumed because the body's width —
+## and therefore every budget above — is the panel less the card padding less THIS
+## (codex review 2026-09-05: the first draft's styleboxes carried no margins, so
+## the bar computed a width of 0, which both hid the thumb and made the 320 px come
+## out right by accident).
+const SCROLLBAR_WIDTH: float = 8.0
 
 ## Minimum height for every interactive row (button, LineEdit). Past the ~44-48
 ## pt minimum touch target so the panel is thumb-usable on a phone.
@@ -466,15 +478,33 @@ func _build_ui() -> void:
 	vbar.add_theme_stylebox_override("scroll", track)
 	for state: String in ["grabber", "grabber_highlight", "grabber_pressed"]:
 		vbar.add_theme_stylebox_override(state, grabber)
+	# A `ScrollBar`'s minimum cross-axis size comes from its styleboxes' MARGINS, so
+	# a flat box with none makes the bar 0 px wide: the thumb vanishes and there is
+	# nothing left to drag. Pin the width instead of margin-padding four boxes.
+	vbar.custom_minimum_size = Vector2(SCROLLBAR_WIDTH, 0.0)
+
+	# A `ScrollContainer` does NOT reserve its bar's width — the bar is drawn OVER
+	# the content — so without this gutter the right-hand STEEL border of every
+	# button and every member strip sits under it. One `MarginContainer` is cheaper
+	# than a right margin on each of the four sections, and it makes
+	# `PANEL_WIDTH`'s arithmetic literally true rather than true-once-you-know.
+	var gutter := MarginContainer.new()
+	gutter.name = "Gutter"
+	gutter.add_theme_constant_override("margin_right", int(SCROLLBAR_WIDTH))
+	gutter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(gutter)
 
 	var vbox := VBoxContainer.new()
 	vbox.name = "Body"
-	# The spec's 8 px grid. `PANEL_WIDTH - 24` is the card's own padding (12 a
-	# side) subtracted, so the stack is exactly the ground it is drawn on.
+	# The spec's 8 px grid. The minimum width is the card less its own padding (12 a
+	# side) less the scroll bar's gutter, which is exactly the space the body gets —
+	# a minimum any wider than that is clipped by the ScrollContainer, since
+	# horizontal scrolling is disabled. See `PANEL_WIDTH`'s arithmetic.
 	vbox.add_theme_constant_override("separation", HudTheme.GRID)
 	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	vbox.custom_minimum_size = Vector2(PANEL_WIDTH - HudTheme.CARD_PADDING * 2.0, 0.0)
-	scroll.add_child(vbox)
+	vbox.custom_minimum_size = Vector2(
+		PANEL_WIDTH - HudTheme.CARD_PADDING * 2.0 - SCROLLBAR_WIDTH, 0.0)
+	gutter.add_child(vbox)
 
 	_add_heading(vbox, "MULTIPLAYER")
 
