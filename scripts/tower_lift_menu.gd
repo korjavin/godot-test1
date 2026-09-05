@@ -97,9 +97,22 @@ const CARD_PADDING: int = 18
 const TITLE_FONT_SIZE: int = 22
 const LINE_FONT_SIZE: int = 18
 const HINT_FONT_SIZE: int = 14
-const COLOR_TITLE: Color = Color(1.0, 0.84, 0.26)
-const COLOR_TEXT: Color = Color(0.90, 0.92, 0.95)
-const COLOR_HINT: Color = Color(0.62, 0.66, 0.72)
+## The card's chrome, off `HudTheme` (bead `godot-test1-y1o.33`): a BONE heading
+## over a STEEL rule, BONE stops, and the corporation's own khaki for the fine
+## print AND for "no floors unlocked yet" — the palette's `UNIT_KHAKI` is
+## literally its "neutral / disabled" value, which is what an empty offer is.
+const COLOR_TITLE: Color = HudTheme.BONE
+const COLOR_TEXT: Color = HudTheme.BONE
+const COLOR_HINT: Color = HudTheme.UNIT_KHAKI
+## The 1 px STEEL rule under the heading — `city_map_panel`'s, and neither is a
+## `HudTheme` builder yet; a third caller is the moment to lift it in.
+const RULE_PX: float = 1.0
+
+## The corporate stamp: GastroDefense's crossed fork and knife, small and khaki
+## in the bottom-right of a card the CORPORATION is speaking on — and this lift
+## is theirs. Drawn rather than a texture, because the HUD ships no image assets.
+const STAMP_SIZE: float = 18.0
+const STAMP_LINE: float = 1.5
 
 ## The composed lines. RULE 2: `tr()` runs on these, never on the result — except
 ## `STOP_LINE`, which is a frame of punctuation with no words in it and so has no
@@ -358,8 +371,7 @@ func _refresh() -> void:
 		# RULE 2 twice over, and deliberately: the storey number is the minimap's
 		# own "Floor %d" row, and the bracketed key is this panel's frame round it.
 		var floor_name: String = tr(FLOOR_LINE) % (_offered[i] + 1)
-		_rows.add_child(_line(STOP_LINE % [i + 1, floor_name],
-				LINE_FONT_SIZE, COLOR_TEXT))
+		_rows.add_child(_stop_strip(STOP_LINE % [i + 1, floor_name]))
 	if _hint_label != null:
 		_hint_label.text = tr(CLOSE_HINT) % OS.get_keycode_string(TOGGLE_KEY)
 
@@ -373,7 +385,72 @@ func _line(text: String, size: int, colour: Color) -> Label:
 	return label
 
 
+func _stop_strip(text: String) -> PanelContainer:
+	"""
+	ONE STOP, as the spec's raised strip: `HudTheme.strip()` (INK_RAISED, a STEEL
+	frame, no shadow — it is already on a card) carrying the line in Oswald BOLD,
+	so the bracketed digit you actually press reads as the chip it is.
+
+	The line stays ONE label and `STOP_LINE` stays one format string. Splitting
+	the digit into its own chip Label buys a little typography and costs the one
+	string in this panel that is deliberately not translated (see `STOP_LINE`) —
+	`locale_selfcheck` reasons about that row's absence, so it is not a shape to
+	change for a border.
+	"""
+	var strip := PanelContainer.new()
+	strip.add_theme_stylebox_override("panel", HudTheme.strip())
+	var label := _line(text, LINE_FONT_SIZE, COLOR_TEXT)
+	label.add_theme_font_override("font", HudTheme.heading_font())
+	strip.add_child(label)
+	return strip
+
+
+func _rule() -> ColorRect:
+	"""The 1 px STEEL rule the spec puts under a section heading."""
+	var rule := ColorRect.new()
+	rule.name = "Rule"
+	rule.color = HudTheme.STEEL
+	rule.custom_minimum_size = Vector2(0.0, RULE_PX)
+	rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return rule
+
+
+func _stamp() -> Control:
+	"""
+	The corporate cutlery stamp, bottom-right. A knife (one stroke with a spine)
+	crossed with a fork (one stroke with three tines) in `UNIT_KHAKI` — flat,
+	single-colour, no gradient, which is the spec's whole icon language.
+	"""
+	var stamp := Control.new()
+	stamp.name = "Stamp"
+	stamp.custom_minimum_size = Vector2(STAMP_SIZE, STAMP_SIZE)
+	stamp.size_flags_horizontal = Control.SIZE_SHRINK_END
+	stamp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	stamp.draw.connect(_paint_stamp.bind(stamp))
+	return stamp
+
+
+func _paint_stamp(stamp: Control) -> void:
+	var s: float = STAMP_SIZE
+	# The two handles, crossed.
+	stamp.draw_line(Vector2(s * 0.15, s * 0.9), Vector2(s * 0.85, s * 0.1),
+			COLOR_HINT, STAMP_LINE)
+	stamp.draw_line(Vector2(s * 0.85, s * 0.9), Vector2(s * 0.15, s * 0.1),
+			COLOR_HINT, STAMP_LINE)
+	# Three tines on the fork's head (top left) and a blade on the knife's.
+	for k in range(3):
+		var x: float = s * (0.06 + 0.09 * k)
+		stamp.draw_line(Vector2(x, s * 0.04), Vector2(x + s * 0.1, s * 0.28),
+				COLOR_HINT, STAMP_LINE)
+	stamp.draw_line(Vector2(s * 0.72, s * 0.06), Vector2(s * 0.94, s * 0.06),
+			COLOR_HINT, STAMP_LINE)
+
+
 func _build_ui() -> void:
+	# THE HUD SKIN, on THIS ROOT and nowhere else (bead `godot-test1-y1o.33`) —
+	# the card's INK ground, its STEEL frame and its hard shadow arrive with it.
+	theme = HudTheme.theme()
+
 	# A CenterContainer so the card sizes to its own content and stays centred at
 	# any resolution — `city_map_panel`'s and `start_overlay`'s shape. It also means
 	# German grows the card instead of overflowing it, which is why this panel has
@@ -404,12 +481,17 @@ func _build_ui() -> void:
 	var title := Label.new()
 	title.text = "SERVICE LIFT"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_override("font", HudTheme.heading_font())
 	title.add_theme_font_size_override("font_size", TITLE_FONT_SIZE)
 	title.add_theme_color_override("font_color", COLOR_TITLE)
 	column.add_child(title)
+	# BONE caps over a STEEL rule. The caps are the CSV row's own ("SERVICE LIFT"
+	# / "LASTENAUFZUG"), never a `.to_upper()`: a `Label.text` IS the key.
+	column.add_child(_rule())
 
 	_rows = VBoxContainer.new()
 	_rows.name = "Stops"
+	_rows.add_theme_constant_override("separation", HudTheme.GRID / 2)
 	column.add_child(_rows)
 
 	_hint_label = Label.new()
@@ -417,3 +499,5 @@ func _build_ui() -> void:
 	_hint_label.add_theme_font_size_override("font_size", HINT_FONT_SIZE)
 	_hint_label.add_theme_color_override("font_color", COLOR_HINT)
 	column.add_child(_hint_label)
+
+	column.add_child(_stamp())
