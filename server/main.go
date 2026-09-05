@@ -60,10 +60,7 @@ func main() {
 	// — the game client's catch-all owns `/` in production, so a route missing
 	// from the lobby's narrow rule silently serves index.html instead.
 	mux.HandleFunc("/best", best.handler)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(mustJSON(map[string]any{"ok": true, "rooms": hub.Rooms()}))
-	})
+	mux.HandleFunc("/healthz", healthzHandler(hub))
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		log.Fatalf("lobby: embedded static: %v", err)
@@ -86,6 +83,35 @@ func main() {
 	// SIGTERM the peers reconnect and re-create their room from its invite code.
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("lobby: %v", err)
+	}
+}
+
+// healthzHandler answers the Docker HEALTHCHECK, and it reports on SIGNALLING ONLY.
+//
+// ⚠️ IT MUST NEVER CONSULT THE BEST-SCORES STORE, AND THAT IS A POST-INCIDENT RULE
+// rather than an accident of how it was first written (bead godot-test1-xuz,
+// 2026-09-05). The prod host filled its disk, every `bestStore.dump` started
+// failing with ENOSPC, the container went UNHEALTHY, and Traefik dropped the
+// unhealthy router — so /ws, /ice, /rooms and /best all fell through to the web
+// client's catch-all and multiplayer was down. The disk was the real fault (the
+// deploy job now prunes; see .github/workflows/build.yml), but the blast radius is
+// this decision: what this service is FOR is signalling, and signalling holds no
+// disk, no database and no file handle. A lobby that can still introduce two peers
+// to each other is healthy, however broken its optional scoreboard is.
+//
+// So: an unwritable /best is a LOG LINE (bestStore.runDumper) and nothing more —
+// records stay correct in memory and keep serving, and the store's `dirty` flag
+// survives the failure so one recovered write flushes everything. There is no
+// health signal to plumb in here, and adding one is the regression this handler is
+// guarded against: it takes the hub and NOTHING ELSE, which is exactly what
+// TestHealthzSurvivesFailedDump measures.
+//
+// A free function taking the hub, rather than the closure it used to be, purely so
+// a test can drive it without standing up a listener.
+func healthzHandler(hub *Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(mustJSON(map[string]any{"ok": true, "rooms": hub.Rooms()}))
 	}
 }
 

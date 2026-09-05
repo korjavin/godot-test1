@@ -570,6 +570,10 @@ jobs:
     # ordinary variable rather than the secrets context (same as lobby.yml).
     env:
       PORTAINER_HOOK: ${{ secrets.PORTAINER_REDEPLOY_HOOK }}
+      # Portainer API key for the image prune below — see that step. Absent, the
+      # prune is SKIPPED and everything else about the deploy is unchanged, which
+      # is deliberate: this secret can be added after the workflow merges.
+      PORTAINER_API_KEY: ${{ secrets.PORTAINER_API_KEY }}
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
@@ -627,6 +631,78 @@ jobs:
           git add server/docker-compose.yml
           git commit -m "ci: pin lobby and web images to ${COMMIT_SHA}" || echo "nothing to commit"
           git push origin deploy --force
+
+      # ======================================================================
+      # 🧹 PRUNE THE HOST'S UNUSED IMAGES — and note it runs BEFORE the redeploy
+      # ======================================================================
+      # THE INCIDENT (2026-09-05, bead godot-test1-xuz). This job pins TWO images
+      # by commit SHA on every master push and never removed one; the host reached
+      # 495 images / 43 GB with 29 GB unused, filled its disk, and the lobby went
+      # UNHEALTHY because its best-scores dump hit ENOSPC. Traefik drops an
+      # unhealthy router, so /ws /ice /rooms /best /healthz all fell through to the
+      # web client's catch-all and multiplayer was simply down. `server/main.go`
+      # fixes the blast radius; this fixes the cause. Fifty merges in a day is a
+      # hundred images, so the host needs a policy, not a bigger disk.
+      #
+      # WHY IT RUNS BEFORE THE WEBHOOK AND NOT AFTER, which is the one thing to
+      # understand here. The webhook is FIRE-AND-FORGET: it returns as soon as
+      # Portainer accepts it, while the pull and the container swap happen
+      # afterwards. A prune racing that would delete the image Portainer had just
+      # pulled and not yet started a container from — `dangling=false` means "every
+      # image no container references", and for those few seconds that is exactly
+      # the NEW image. Pruning first has no race at all: the running containers
+      # hold the CURRENT images (so those are referenced and kept), the new ones do
+      # not exist on the host yet, and everything else is genuinely garbage. The
+      # steady state is two generations — the running deploy and the one landing —
+      # instead of every deploy since the host was built. The alternative
+      # (sleep-then-prune, or poll until the containers report the new SHA) buys
+      # one generation of disk for a race and a timeout, which is a bad trade.
+      #
+      # A KEEP-LAST-N TAG POLICY IS NOT THE ALTERNATIVE IT LOOKS LIKE: deleting old
+      # package versions from GHCR frees space in the REGISTRY, and the incident was
+      # the HOST's disk, which had already pulled them. Retention on GHCR is worth
+      # doing for its own reasons; it would not have prevented this.
+      #
+      # THE BASE URL IS DERIVED FROM THE WEBHOOK SECRET rather than being a second
+      # secret to add and keep in step: a Portainer stack webhook is by construction
+      # `<portainer>/api/stacks/webhooks/<uuid>`, so everything before `/api/` is
+      # the API root the prune posts to. It is masked before it is used, because a
+      # substring of a secret is not masked by Actions on its own.
+      #
+      # It NEVER fails the deploy. The images are published and the branch is
+      # pinned by the time this runs; reporting a red deploy because a housekeeping
+      # call timed out would be a lie about what shipped. A failure is a ::warning::
+      # and the next push tries again.
+      - name: 🧹 Prune unused images on the host
+        if: env.PORTAINER_HOOK != '' && env.PORTAINER_API_KEY != ''
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          base="${PORTAINER_HOOK%%/api/*}"
+          if [ "${base}" = "${PORTAINER_HOOK}" ] || [ -z "${base}" ]; then
+            echo "::warning::PORTAINER_REDEPLOY_HOOK does not look like a Portainer webhook URL (no /api/ segment) — skipping the image prune"
+            exit 0
+          fi
+          echo "::add-mask::${base}"
+          # `dangling=false` is Portainer's spelling of `docker image prune -a`:
+          # remove every image no container references, not just untagged layers.
+          # The old SHA-pinned pins are all TAGGED, so a dangling-only prune — the
+          # default — would have reclaimed nothing at all.
+          body=$(curl -sS --fail-with-body --max-time 120 -X POST \
+            -H "X-API-Key: ${PORTAINER_API_KEY}" \
+            "${base}/api/endpoints/2/docker/images/prune?filters=%7B%22dangling%22%3A%7B%22false%22%3Atrue%7D%7D") || {
+              echo "::warning::image prune call failed; the deploy is unaffected and the next push will retry"
+              exit 0
+            }
+          # ACCEPTANCE (the bead asks for the count in the log): ImagesDeleted is a
+          # list of {Deleted|Untagged} entries, SpaceReclaimed a byte count. `jq` is
+          # on the ubuntu-latest runner; the fallback keeps this honest rather than
+          # silently printing nothing if that ever stops being true.
+          if command -v jq >/dev/null 2>&1; then
+            echo "pruned: $(echo "${body}" | jq '(.ImagesDeleted // []) | length') image layers, $(echo "${body}" | jq '((.SpaceReclaimed // 0) / 1073741824 * 100 | round) / 100') GB reclaimed"
+          else
+            echo "pruned (raw): ${body}"
+          fi
 
       # Skipped when the secret is absent, so the images still publish without it.
       - name: 🪝 Trigger Portainer redeploy

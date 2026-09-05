@@ -2621,6 +2621,42 @@ Portainer reads: it builds both production images, pins them by commit SHA (**ne
 in that one job** — the branch is maintained by force-push, so a second workflow writing it
 would clobber the other's pin.
 
+**AND IT PRUNES THE HOST'S UNUSED IMAGES, BEFORE the redeploy rather than after** (bead
+`godot-test1-xuz`). Two SHA-pinned images per master push and nothing removing one filled
+the prod disk on 2026-09-05 — 495 images, 43 GB, 29 GB of it unused — which took the lobby
+down: its best-scores dump hit ENOSPC, the container went UNHEALTHY, and **Traefik drops an
+unhealthy router**, so `/ws /ice /rooms /best /healthz` fell through to the web client's
+catch-all and multiplayer was gone. Fifty merges is a hundred images; a bigger disk is not
+a policy. The step POSTs Portainer's
+`/api/endpoints/2/docker/images/prune?filters={"dangling":{"false":true}}` — Portainer's
+spelling of `docker image prune -a`, and the whole point, because every stale pin is
+TAGGED and a dangling-only prune reclaims nothing. Four rules:
+
+- **BEFORE the webhook is not a style choice.** The webhook is fire-and-forget, so a prune
+  after it races Portainer's pull: `dangling=false` means "no container references this",
+  and for those few seconds that is exactly the image just pulled and not yet started.
+  Pruning first has no race — the running containers hold the current images, the new ones
+  are not on the host yet — and the steady state is two generations instead of every
+  deploy ever. A sleep or a poll would buy one generation of disk for a race and a timeout.
+- **It never fails the deploy** (`continue-on-error`, warnings not errors): the images are
+  published and the branch is pinned by the time it runs, so a red job would misreport what
+  shipped. The next push retries. It logs the layer count and the GB reclaimed, which is
+  the bead's acceptance.
+- **It needs `PORTAINER_API_KEY`** and is **skipped when that secret is absent**, exactly
+  like the redeploy webhook's own gate — so the workflow can merge before the secret is
+  added without breaking a single deploy.
+- **The API base is DERIVED from `PORTAINER_REDEPLOY_HOOK`**, not a second secret: a stack
+  webhook is by construction `<portainer>/api/stacks/webhooks/<uuid>`. It is `::add-mask::`ed
+  first, because a substring of a secret is not masked on its own.
+- **A keep-last-N tag policy on GHCR is not the alternative it looks like** — it frees the
+  REGISTRY, and the disk that filled was the HOST's, which had already pulled them.
+
+The other half of that incident is in the lobby and is a rule, not a workaround: **`/healthz`
+reports on SIGNALLING ONLY and must never consult the best-scores store.** Signalling holds
+no disk, so a lobby that can still introduce two peers is healthy however broken its optional
+scoreboard is; an unwritable `/best` is a log line and records keep serving from memory.
+`server/health_test.go` pins both halves against a store whose every write fails.
+
 ## Conventions
 
 - GDScript with explicit type hints; tunable constants declared at the top of each script.
