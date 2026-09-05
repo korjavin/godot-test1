@@ -1374,6 +1374,23 @@ const CAMP_HUT_TIER_MIN: int = 2
 const CAMP_HUT_TIER_MAX: int = 3
 const CAMP_HUT_TIER_HEIGHT: float = 0.9   # each tier's height
 const CAMP_HUT_TIER_SHRINK: float = 0.62  # each tier's width vs the one below
+
+## How much taller than its tier a hut's DOME is drawn (bead godot-test1-y1o.5).
+## A tier is a `BoxKind.SPHERE` whose TOP is pinned at the tier's own top, so the
+## silhouette height, the stack arithmetic and the footprint's `top` are all
+## exactly what the box stack recorded — the stretch only sinks the sphere's
+## lower half INTO the tier below, which is what closes the waist two ellipsoids
+## resting apex-to-nadir would otherwise show.
+##
+## 1.6 IS A CEILING AND NOT A TASTE KNOB: `ChunkBatch.collision_shape_for` turns a
+## near-round SPHERE into a `SphereShape3D`, and the GROUND tier must keep its
+## box or the hut becomes a 0.8 m bump you walk over. At the narrowest hut
+## (CAMP_HUT_WIDTH_MIN 2.6 on a 0.9 tier) the stretched dims are (2.6, 1.44, 2.6)
+## and 1.44 * ROUND_COLLIDER_MAX_ASPECT = 2.30 < 2.6, so the ground tier is a box
+## for every hut in the world. The tiers ABOVE it are rounder than that and DO
+## take sphere colliders — deliberately: they sit on a solid base, so what they
+## change is the shape you brush past at head height, not whether a hut is solid.
+const CAMP_HUT_DOME_STRETCH: float = 1.6
 const CAMP_HUT_YAW_JITTER: float = 0.25   # per-tier yaw wobble (radians)
 ## Door height MUST stay under CAMP_HUT_TIER_HEIGHT (0.9): the doorway sits on
 ## the ground tier's outer face, and the tier above is narrower (TIER_SHRINK), so
@@ -2909,6 +2926,19 @@ const CITY_HOUSE_HEIGHT_MAX: float = 2.6
 ## the film is what the player's feet are inside while standing on the roof.
 const CITY_ROOF_EAVES: float = 0.25
 const CITY_ROOF_THICKNESS: float = 0.14
+
+## THE ROOF'S RISE, as a fraction of the roofed DEPTH (bead godot-test1-y1o.5).
+## A `BoxKind.WEDGE` roof needs a height to be a pitch at all, and this is where
+## it comes from: it is DERIVED from the house the roof is going on, so it costs
+## no RNG draw (a draw here would slide every later object in the chunk) and a
+## deep house gets a deep roof rather than every roof being the same slab.
+##
+## 0.34 of the depth is a ~34-degree pitch, which is the terraced-town read the
+## band is after; steeper starts looking alpine and flatter stops reading as a
+## pitch at play distance. The house's CLIMBABLE top is unchanged — it is the
+## HULL's, and the roof is `collide = false` trim above it — so this number moves
+## nothing in the gameplay contract, only the silhouette.
+const CITY_ROOF_RISE_FACTOR: float = 0.34
 
 ## HOUSE — the widest footprint a house can claim, used as the "widest this could
 ## be" radius handed to _biome_spot_ok before the real width is drawn:
@@ -6460,6 +6490,25 @@ func _prop_snow_drift(local: Vector3, size: float, rng: RandomNumberGenerator, b
 	SNOW — a wind-packed drift: two wide shallow tiers with a couple of scour lumps
 	tumbled off the lee side. The lowest, widest prop in the whole set — a drift is
 	a shape the wind made, so it spreads rather than stacks. 4-5 boxes, 2 collide.
+
+	THE LOWER TIER IS A `BoxKind.ROCK` AND THE UPPER ONE STAYS A CUBE (bead
+	godot-test1-y1o.5). Wind-packed snow is a swell, so the base wanted to stop
+	being a slab — but this prop is one of the three that carry the SNOW band's
+	entire "rest from crocodiles" role (`climbable: true`, and `_settle_coin_y`
+	perches a road coin on the returned `top`), so the LANDING has to stay a real
+	flat top and the cap stays a cube.
+
+	ROCK RATHER THAN THE SPHERE THE BEAD SKETCHED, and the reason is the draw-call
+	bill, not taste. A prop's theme is picked at ITS OWN position (that is what
+	feathers a biome edge), so a snow drift appears in every band that borders
+	snow — measured: it put a SPHERE bucket into MOUNTAIN chunks as well as SNOW
+	ones, i.e. a new MultiMeshInstance3D in three or four biomes for one prop.
+	ROCK is already in every biome (bead y1o.3), so the same faceted swell costs
+	**nothing anywhere**, and a wind-carved drift is closer to the rock's
+	irregular faceting than to a smooth ellipsoid anyway.
+
+	NOT ONE DIMENSION OR CENTRE MOVED, and ROCK keeps the `BoxShape3D` every
+	flat-topped kind has — so the collider is byte-for-byte the one it always had.
 	"""
 	var r := size * PROP_RADIUS_FACTOR
 	var yaw := rng.randf_range(0.0, TAU)
@@ -6468,12 +6517,13 @@ func _prop_snow_drift(local: Vector3, size: float, rng: RandomNumberGenerator, b
 	var w := size * 0.95
 	var top := 0.0
 
-	for _i in 2:
+	for i in 2:
 		var th := minf(size * rng.randf_range(0.20, 0.32), PROP_MAX_STEP)
 		create_box(
 			local + Vector3(0.0, top + th * 0.5, 0.0), Vector3(w, th, w * 0.89),
 			yaw + rng.randf_range(-0.18, 0.18), rng, block_batch, block_body, 0.0,
-			SNOW_PACK.lerp(SNOW_ICE_A, rng.randf() * 0.5)
+			SNOW_PACK.lerp(SNOW_ICE_A, rng.randf() * 0.5), true,
+			ChunkBatch.BoxKind.ROCK if i == 0 else ChunkBatch.BoxKind.CUBE
 		)
 		top += th
 		w *= 0.80
@@ -7964,12 +8014,21 @@ func _camp_at(chunk_pos: Vector2i) -> Dictionary:
 
 func _camp_hut(center: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
 	"""
-	Build ONE dome hut: 2-3 stacked box tiers, widest on the ground and each one
-	narrower than the tier below, which is what turns a stack of cubes into an
-	igloo read at a glance. The top tier is also SHORTER (its height takes the same
-	CAMP_HUT_TIER_SHRINK factor), so the silhouette caps off as a dome rather than
+	Build ONE dome hut: 2-3 stacked DOME tiers, widest on the ground and each one
+	narrower than the tier below. The top tier is also SHORTER (its height takes
+	the same CAMP_HUT_TIER_SHRINK factor), so the silhouette caps off rather than
 	ending in a flat chimney. Each tier gets its own small yaw wobble, so no two
 	huts look stamped from the same mould.
+
+	SINCE BEAD godot-test1-y1o.5 A TIER IS A `BoxKind.SPHERE`, not a box, and the
+	hut is finally the dome its own docstring always claimed — a stack of narrowing
+	cubes was the thing this epic exists to remove. Each sphere's TOP is pinned at
+	the tier's own top and its lower half is sunk into the tier below by
+	CAMP_HUT_DOME_STRETCH (see that constant for the sink, the waist it closes and
+	the collider ceiling it is set by), so `y`, the stack arithmetic and the
+	returned `top` are all byte-for-byte what the box stack recorded. The DOORWAY
+	stays a CUBE: it is a rectangular opening, and rounding it would only make it
+	stop reading as a door.
 
 	@param center: Hut centre on the ground (chunk-local, y = 0).
 	@param yaw: Facing. The doorway goes on the hut's local +Z face, so the caller
@@ -7991,7 +8050,11 @@ func _camp_hut(center: Vector3, yaw: float, rng: RandomNumberGenerator, block_ba
 		# Bone white, a fresh spot on the A→B ramp per tier so the shell is not one
 		# flat colour (the artifacts' _artifact_stone_color trick, one lerp).
 		var shell := CAMP_HUT_A.lerp(CAMP_HUT_B, rng.randf())
-		create_box(center + Vector3(0.0, y + tier_height / 2.0, 0.0), Vector3(width, tier_height, width), tier_yaw, rng, block_batch, block_body, 0.0, shell)
+		# The dome: as tall as CAMP_HUT_DOME_STRETCH says, with its TOP on the
+		# tier's own top (hence the half-height subtracted from `y + tier_height`
+		# rather than added to `y`), so only the sunk half moves.
+		var dome_h := tier_height * CAMP_HUT_DOME_STRETCH
+		create_box(center + Vector3(0.0, y + tier_height - dome_h * 0.5, 0.0), Vector3(width, dome_h, width), tier_yaw, rng, block_batch, block_body, 0.0, shell, true, ChunkBatch.BoxKind.SPHERE)
 		y += tier_height
 		width *= CAMP_HUT_TIER_SHRINK
 		i += 1
@@ -9720,10 +9783,13 @@ func _spawn_city_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 	biome_at at ITS OWN position, so a city dissolves into the plain along the
 	noise contour instead of stopping dead on a chunk seam.
 
-	PERF: everything here is a create_box entry, so a city chunk is the SAME single
-	block draw call as a plains chunk; only hulls, counters and masts pay a
-	CollisionShape3D. There are ZERO emissive accent nodes — lamps are bright
-	albedo boxes in the batch.
+	PERF: everything here is a create_box entry, so the band still costs NO node
+	per object; only hulls, counters and masts pay a CollisionShape3D, and there
+	are ZERO emissive accent nodes — lamps are bright albedo entries in the batch.
+	Since bead godot-test1-y1o.5 a city-band chunk is no longer ONE block draw
+	call, though: the wedge roofs and the cylinder masts are two more buckets in
+	`ChunkBatch._build_block_multimesh`, which is what `batch_selfcheck` check 5's
+	per-biome cap is for. That is the cost the pitched roof is bought with.
 	"""
 	var half := chunk_size / 2.0 - CITY_HOUSE_RADIUS_MAX
 	var chunk_pos_city := world_to_chunk(chunk_center)
@@ -9765,14 +9831,22 @@ func _spawn_city_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 			yaw, rng, block_batch, block_body, 0.0, wall
 		)
 
-		# Roof: a thin film over the hull top, collide = false, oversailing the
-		# walls as eaves. The player stands on the HULL, inside this film — the
-		# same arrangement STRUCTURE_THEMES' `cap` uses over a wall's ridge, and
-		# the reason CITY_ROOF_THICKNESS is small.
+		# Roof: a PITCHED wedge over the hull top, collide = false, oversailing the
+		# walls as eaves. The player stands on the HULL, under this roof — the same
+		# arrangement STRUCTURE_THEMES' `cap` uses over a wall's ridge, and the
+		# reason nothing here is allowed to collide.
+		#
+		# THE RIDGE RUNS ALONG LOCAL X, which is the house's `width` — so a house
+		# is gabled on its narrow ends and the slopes face the long walls, the way
+		# a terrace is. `dimensions.z` is what the pitch is measured over, hence
+		# the rise coming off the roofed DEPTH (see CITY_ROOF_RISE_FACTOR).
+		var roof_d := depth + CITY_ROOF_EAVES * 2.0
+		var roof_rise := roof_d * CITY_ROOF_RISE_FACTOR
 		create_box(
-			local + Vector3(0.0, height + CITY_ROOF_THICKNESS * 0.5, 0.0),
-			Vector3(width + CITY_ROOF_EAVES * 2.0, CITY_ROOF_THICKNESS, depth + CITY_ROOF_EAVES * 2.0),
-			yaw, rng, block_batch, block_body, 0.0, roof, false
+			local + Vector3(0.0, height + roof_rise * 0.5, 0.0),
+			Vector3(width + CITY_ROOF_EAVES * 2.0, roof_rise, roof_d),
+			yaw, rng, block_batch, block_body, 0.0, roof, false,
+			ChunkBatch.BoxKind.WEDGE
 		)
 
 		# Door, on the front face. Visual only — it is inside the hull's own
@@ -9879,11 +9953,18 @@ func _spawn_city_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 		var l_local := Vector3(lx, 0.0, lz)
 		var l_front := Vector3(-sin(lyaw), 0.0, cos(lyaw))
 
-		# Mast — the one colliding box.
+		# Mast — the one colliding box, and a `BoxKind.CYLINDER` since bead
+		# godot-test1-y1o.5: a pole is the shape a cylinder IS, and the entry is
+		# already square in plan so this is a pure kind flip with not one
+		# dimension moved. Its collider follows the kind (a `CylinderShape3D` of
+		# the inscribed radius, `ChunkBatch.collision_shape_for`'s designed
+		# behaviour) — same shape COUNT, and a round pole is what you were
+		# bumping into anyway.
 		create_box(
 			l_local + Vector3(0.0, lh * 0.5, 0.0),
 			Vector3(CITY_LIGHT_MAST_WIDTH, lh, CITY_LIGHT_MAST_WIDTH), lyaw,
-			rng, block_batch, block_body, 0.0, CITY_METAL
+			rng, block_batch, block_body, 0.0, CITY_METAL, true,
+			ChunkBatch.BoxKind.CYLINDER
 		)
 
 		if is_signal:
@@ -9891,6 +9972,16 @@ func _spawn_city_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 			# "traffic light" at 30 m, which is why the three lamp colours are the
 			# only colours the city palette spends on furniture. BRIGHT ALBEDO,
 			# never emissive: this is one MultiMesh instance each, not a node.
+			#
+			# THE HEAD AND THE LENSES STAY CUBES, and that is bead y1o.5's one
+			# deliberate departure from its own sketch ("lamp heads -> SPHERE").
+			# Two reasons, and the second is the load-bearing one: a signal head
+			# IS a box in the world, so a ball on a pole would be less like a
+			# traffic light and not more; and a SPHERE here is a whole extra
+			# MultiMeshInstance3D on every city-band chunk (see the KIND_CAP
+			# table in batch_selfcheck) bought for a 0.22 m object nobody looks
+			# at. The mast and the lamp shade take CYLINDER instead — one new
+			# bucket for the whole street-furniture family.
 			var head_h := CITY_LIGHT_LAMP * 3.4
 			create_box(
 				l_local + Vector3(0.0, lh + head_h * 0.5, 0.0),
@@ -9912,10 +10003,14 @@ func _spawn_city_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 				l_local + l_front * (arm * 0.5) + Vector3(0.0, lh, 0.0),
 				Vector3(0.09, 0.09, arm), lyaw, rng, block_batch, block_body, 0.0, CITY_METAL, false
 			)
+			# The shade is a DRUM (`BoxKind.CYLINDER`), the bucket the mast has
+			# already paid for — see the traffic-light note below for why this is
+			# not the SPHERE the bead sketched.
 			create_box(
 				l_local + l_front * arm + Vector3(0.0, lh - CITY_LIGHT_LAMP * 0.5, 0.0),
 				Vector3(CITY_LIGHT_LAMP * 1.6, CITY_LIGHT_LAMP, CITY_LIGHT_LAMP * 1.6), lyaw,
-				rng, block_batch, block_body, 0.0, CITY_LAMP_AMBER, false
+				rng, block_batch, block_body, 0.0, CITY_LAMP_AMBER, false,
+				ChunkBatch.BoxKind.CYLINDER
 			)
 
 		# NON-climbable: a mast has no top to stand on, and its "top" is 4 m up.

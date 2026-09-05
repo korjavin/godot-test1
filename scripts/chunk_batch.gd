@@ -102,7 +102,20 @@ static var _shared_unit_box_mesh: BoxMesh
 ## y = -0.5, and it keeps the `BoxShape3D` of every other flat-topped kind — so
 ## every `top` a rock builder already recorded is still the surface you land on,
 ## byte for byte, and `_settle_coin_y` perches exactly where it did.
-enum BoxKind { CUBE, SPHERE, CONE, CYLINDER, ROCK }
+##
+## THE WEDGE IS THE OTHER SHAPE A GAMEPLAY CONTRACT PICKED (bead
+## godot-test1-y1o.5), and it is the cheapest kind in the table: a triangular
+## prism, ridge along local X, 8 triangles against the sphere's 64. It exists
+## because a PITCHED ROOF is the single biggest de-block change a house can get
+## and NONE of the four round kinds can make one — a CONE (squashed or not) has a
+## circular base under a rectangular hull, so it leaves the hull's four corners
+## bare and reads as a turret rather than a terrace. It keeps the `BoxShape3D`
+## like every other flat-based kind, which costs nothing today because the one
+## consumer (the city band's roof film) is `collide = false` and the hull under
+## it is the climbable surface. **Nothing may stand on a wedge**: its top is a
+## RIDGE, so a climbable footprint naming a wedge's `top` would perch a coin on a
+## line — the CONE's rule for the same reason.
+enum BoxKind { CUBE, SPHERE, CONE, CYLINDER, ROCK, WEDGE }
 
 ## Widest a round box may be, as a multiple of its narrowest axis, before its
 ## collider falls back to the bounding box. Read only by collision_shape_for(),
@@ -276,6 +289,8 @@ static func unit_mesh(kind: int) -> Mesh:
 			mesh = _flat_faceted_mesh(cone)
 		BoxKind.ROCK:
 			mesh = _build_unit_rock_mesh()
+		BoxKind.WEDGE:
+			mesh = _build_unit_wedge_mesh()
 		_:
 			return _get_shared_unit_box_mesh()
 	_shared_unit_meshes[kind] = mesh
@@ -373,6 +388,50 @@ static func _build_unit_rock_mesh() -> ArrayMesh:
 
 	st.generate_normals()
 	return st.commit()
+
+static func _build_unit_wedge_mesh() -> ArrayMesh:
+	"""
+	The unit WEDGE: a triangular prism inscribed in the unit cube, ridge along
+	local X at y = +0.5, base square at y = -0.5 (bead godot-test1-y1o.5).
+
+	EIGHT TRIANGLES — two gable ends, two slopes and the base — which makes it the
+	cheapest kind in the table by a factor of eight, and it is the whole reason a
+	pitched roof is affordable on every house in the city band.
+
+	It SPANS THE FULL UNIT CUBE on all three axes (the base square reaches
+	+/- 0.5 in X and Z, the base and the ridge sit exactly on -0.5 and +0.5 in Y),
+	which is what keeps `dimensions` the entry's real bounding box and keeps
+	`world_block.gdshader`'s model-space gradient reaching full colour — the same
+	contract `batch_selfcheck` check 1 asks of every kind.
+
+	Written out as explicit triangles rather than built from a primitive: there is
+	no `PrismMesh` with this cross-section, and the winding is the thing to get
+	right (the rock's first draft had both cap fans backwards). Every face below
+	was derived by taking (v1-v0) x (v2-v0) and checking it points OUT of the
+	solid; check 1's own normal sweep is what keeps that true.
+	"""
+	# a-d: the base square, west to east and back to front. e/f: the ridge ends.
+	var a := Vector3(-0.5, -0.5, -0.5)
+	var b := Vector3(0.5, -0.5, -0.5)
+	var c := Vector3(0.5, -0.5, 0.5)
+	var d := Vector3(-0.5, -0.5, 0.5)
+	var e := Vector3(-0.5, 0.5, 0.0)
+	var f := Vector3(0.5, 0.5, 0.0)
+	var tris: Array[Vector3] = [
+		a, b, c, a, c, d,      # base, normal (0, -1, 0)
+		d, c, f, d, f, e,      # the +Z slope
+		b, a, e, b, e, f,      # the -Z slope
+		a, d, e,               # the -X gable
+		c, b, f,               # the +X gable
+	]
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_smooth_group(-1)
+	for v: Vector3 in tris:
+		st.add_vertex(v)
+	st.generate_normals()
+	return st.commit()
+
 
 static func _get_shared_block_material() -> ShaderMaterial:
 	"""
@@ -625,7 +684,12 @@ static func collision_shape_for(kind: int, dimensions: Vector3) -> Shape3D:
 	  SPHERE   -> SphereShape3D, radius = the SMALLEST half-extent
 	  CYLINDER -> CylinderShape3D, radius = the smaller RADIAL half-extent,
 	              height = `dimensions.y`
-	  ROCK, CONE, CUBE, anything unknown -> BoxShape3D of `dimensions`
+	  ROCK, CONE, WEDGE, CUBE, anything unknown -> BoxShape3D of `dimensions`
+
+	THE WEDGE'S BOX IS FREE TODAY and is written down so it does not surprise
+	anybody: its one consumer (the city band's roof) is `collide = false`, so no
+	shape is hung at all. If a wedge is ever made solid, the box fills the empty
+	air over both slopes — the CONE's overhang with one axis fewer.
 
 	THE ROCK'S BOX IS THE FEATURE, not the fallthrough (bead godot-test1-y1o.3).
 	Its whole reason to be a kind of its own is that its lid is FLAT and at exactly
