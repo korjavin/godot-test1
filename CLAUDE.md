@@ -1333,7 +1333,21 @@ Transient ability state is cleared on respawn and on character switch, so a powe
 bleeds across a death or a swap.
 
 ### Per-character special abilities (F)
-All in `player_controller.gd`; `try_activate_ability()` dispatches on character name and
+**The ARMS live in `scripts/player_abilities.gd`** (`class_name PlayerAbilities`, bd
+`godot-test1-ftn.15`) — `player_animation.gd`'s `RefCounted`-holding-the-player idiom one
+concern along, created in `_init()` and handed `self`. The ability constant banner moved
+with them and is **aliased back** on the player (`const TEIBI_SCALE_BIG :=
+PlayerAbilities.TEIBI_SCALE_BIG`), so every outside reader is untouched. Two things
+deliberately stayed: the ability **STATE VARS** (`ability_cooldowns`, the two Windman
+timers, `teibi_size_state` / `teibi_form_timer` / `is_giant`, …), because `mp_manager`'s
+`ab` presence bits, the HUD getters, `player_animation` and four self-checks bind them on
+the NODE; and **every function NAME**, as a one-line forwarder — the "player" group answers
+to one node, and `ability_hud.gd`, `mp_manager.gd`, `tower_interior.gd`,
+`player_animation.gd`, `coin.gd` and six self-checks call these names on it. `WINDMAN_AIR_SPEED`
+is the one const that could not move: it is `WALK_SPEED * 5.0`, and a `preload` back would
+be the cycle.
+
+All dispatched from `player_controller.gd`; `try_activate_ability()` dispatches on character name and
 every ability is gated by a per-character cooldown. windman → Air Rush (fly fast, softened
 gravity); primm → Phase Step (blink that scans outward for a spot the body fits, so it can
 never land inside geometry); teibi → Resize (small/giant, auto-reverts on a timer, giant
