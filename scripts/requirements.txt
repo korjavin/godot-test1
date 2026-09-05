@@ -9,3 +9,13 @@
 # .glb diff to come with the bump.
 trimesh==5.0.0
 numpy==2.5.2
+
+# The HERO generators only (bead godot-test1-y1o.21). Primm's cyan trim and
+# Windman's emblem are `trimesh.creation.extrude_polygon`, which wants a shapely
+# polygon and a triangulation engine — trimesh ships neither and raises
+# "No available triangulation engine!" without the second one. Pinned for the
+# same reason as the two above and one reason more: a triangulator is free to
+# emit the same polygon as a different fan, which is a geometry diff and not an
+# ulp. These two reproduce the committed hero parts byte for byte.
+shapely==2.1.2
+mapbox-earcut==2.0.0
