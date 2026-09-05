@@ -1038,7 +1038,7 @@ func _check_ranged(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> 
 	allowed to. Skipped entirely for a kind whose row is not `behavior: "ranged"`.
 
 	enemy_spawn_selfcheck already drives the pure firing RULE
-	(piglet_crocodile_ai.ranged_shot_due) over its whole band and cadence. What
+	(croc_steering.ranged_shot_due) over its whole band and cadence. What
 	only a live world can show is the three things the ARM adds around it, and
 	each of the phases below is one of them:
 

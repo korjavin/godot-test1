@@ -186,13 +186,13 @@ func _run() -> void:
 	# burst row is measured the moment its row lands.
 	_check_pack_surround(croc_ai)
 	_check_ambush_trip_wire()
-	_check_charge_dodge(croc_ai)
-	_check_burst_escape(croc_ai)
-	_check_ranged_cadence(croc_ai)
-	_check_hunt_pacing(croc_ai)
+	_check_charge_dodge()
+	_check_burst_escape()
+	_check_ranged_cadence()
+	_check_hunt_pacing()
 	_check_scent_tracking()
 	_check_wanderer_adoption(terrain_script)
-	_check_leap_cycle(croc_ai)
+	_check_leap_cycle()
 	_check_view_cone(croc_ai)
 	_check_crowd_confusion(croc_ai)
 
@@ -386,7 +386,8 @@ func _probe_pack(croc_ai: GDScript, wolf_species: String) -> void:
 	"""
 	Run the whole surround measurement against ONE pack species.
 
-	@param croc_ai: the AI script, for its static pack_steer_point
+	@param croc_ai: the AI script, for its static croc_id_for (the steering
+	       itself is CrocSteering's)
 	@param wolf_species: the SPECIES key to probe
 
 	Split out of _check_pack_surround — which holds the argument for all of this
@@ -848,7 +849,7 @@ const CHARGE_DODGE_MIN: float = 1.5
 const CHARGE_TRACK_MAX: float = 1.0
 
 
-func _check_charge_dodge(croc_ai: GDScript) -> void:
+func _check_charge_dodge() -> void:
 	"""
 	MEASURE the dodge. Do not assert it.
 
@@ -885,15 +886,14 @@ func _check_charge_dodge(croc_ai: GDScript) -> void:
 		Sentinel.done("charge_dodge")
 		return
 	for charge_species: String in names:
-		_probe_charge(croc_ai, charge_species)
+		_probe_charge(charge_species)
 	Sentinel.done("charge_dodge")
 
 
-func _probe_charge(croc_ai: GDScript, charge_species: String) -> void:
+func _probe_charge(charge_species: String) -> void:
 	"""
 	Run the whole dodge measurement against ONE charging species.
 
-	@param croc_ai: the AI script, for its static charge_steer_point
 	@param charge_species: the SPECIES key to probe
 
 	Split out of _check_charge_dodge — which holds the argument for all of this —
@@ -913,8 +913,8 @@ func _probe_charge(croc_ai: GDScript, charge_species: String) -> void:
 	var committed := 0.0
 	var tracking := 0.0
 	for dodge_at: float in CHARGE_DODGE_AT:
-		committed += _charge_miss(croc_ai, row, dodge_at, true)
-		tracking += _charge_miss(croc_ai, row, dodge_at, false)
+		committed += _charge_miss(row, dodge_at, true)
+		tracking += _charge_miss(row, dodge_at, false)
 	committed /= float(CHARGE_DODGE_AT.size())
 	tracking /= float(CHARGE_DODGE_AT.size())
 
@@ -933,12 +933,11 @@ func _probe_charge(croc_ai: GDScript, charge_species: String) -> void:
 				% committed + " turn_smoothness, not from charge_steer_point")
 
 
-func _charge_miss(croc_ai: GDScript, row: Dictionary, dodge_at: float,
+func _charge_miss(row: Dictionary, dodge_at: float,
 		committed: bool) -> float:
 	"""
 	Run one charge against one sidestep and report the closest the bear ever got.
 
-	@param croc_ai: the AI script, for its static charge_steer_point
 	@param row: the SPECIES row to simulate
 	@param dodge_at: how close the bear is when the quarry starts moving
 	@param committed: true to run the shipped steering, false for the control
@@ -1036,7 +1035,7 @@ const BURST_CIRCLE_RADIUS: float = 1.5
 const BURST_CIRCLE_DUTY_MAX: float = 0.60
 
 
-func _check_burst_escape(croc_ai: GDScript) -> void:
+func _check_burst_escape() -> void:
 	"""
 	MEASURE the escape. Do not assert it.
 
@@ -1124,13 +1123,13 @@ func _check_burst_escape(croc_ai: GDScript) -> void:
 					+ " permanent speed-up over the whole cycle")
 
 		# 1. The runner, against the fastest this species can ever be.
-		var runner := _burst_race(croc_ai, row, _max_chase_speed, _slowest_run_speed, false)
+		var runner := _burst_race(row, _max_chase_speed, _slowest_run_speed, false)
 		# 2. The walker, against the nominal animal.
-		var walker := _burst_race(croc_ai, row, chase, _walk_speed, false)
+		var walker := _burst_race(row, chase, _walk_speed, false)
 		# 3. The control: same worst-case animal, recovery removed.
-		var control := _burst_race(croc_ai, row, _max_chase_speed, _slowest_run_speed, true)
+		var control := _burst_race(row, _max_chase_speed, _slowest_run_speed, true)
 		# 4. The circling probe — see BURST_CIRCLE_RADIUS.
-		var duty := _burst_circle_duty(croc_ai, row, _max_chase_speed)
+		var duty := _burst_circle_duty(row, _max_chase_speed)
 
 		print("burst escape (%s): peak %.2f m/s vs the %.2f ceiling; a %.1f m/s run"
 				% [species_name, burst_peak, _max_chase_speed, _slowest_run_speed]
@@ -1172,11 +1171,10 @@ func _check_burst_escape(croc_ai: GDScript) -> void:
 	Sentinel.done("burst_escape")
 
 
-func _burst_circle_duty(croc_ai: GDScript, row: Dictionary, chase: float) -> float:
+func _burst_circle_duty(row: Dictionary, chase: float) -> float:
 	"""
 	Walk a burst predator round a tight circle and report how much it spends bursting.
 
-	@param croc_ai: the AI script, for its static burst_cycle_factor
 	@param row: the SPECIES row to simulate
 	@param chase: the predator's clamped chase speed
 	@return the fraction of frames the cycle spent on the burst leg
@@ -1202,12 +1200,11 @@ func _burst_circle_duty(croc_ai: GDScript, row: Dictionary, chase: float) -> flo
 	return float(bursts) / float(steps)
 
 
-func _burst_race(croc_ai: GDScript, row: Dictionary, chase: float, quarry_speed: float,
+func _burst_race(row: Dictionary, chase: float, quarry_speed: float,
 		no_recovery: bool) -> float:
 	"""
 	Race one burst predator against one quarry down a straight line.
 
-	@param croc_ai: the AI script, for its static burst_cycle_factor
 	@param row: the SPECIES row to simulate
 	@param chase: the predator's clamped chase speed (what _ready() resolved)
 	@param quarry_speed: the quarry's constant speed
@@ -1254,7 +1251,7 @@ const RANGED_PROBE_DT: float = 1.0 / 60.0
 const RANGED_BAND_MARGIN: float = 0.5
 
 
-func _check_ranged_cadence(croc_ai: GDScript) -> void:
+func _check_ranged_cadence() -> void:
 	"""
 	THE FIFTH ARM'S PROBE. Drive the shipped firing rule and count the shots.
 
@@ -1298,15 +1295,14 @@ func _check_ranged_cadence(croc_ai: GDScript) -> void:
 		Sentinel.done("ranged_cadence")
 		return
 	for species_name: String in shooters:
-		_probe_ranged(croc_ai, species_name)
+		_probe_ranged(species_name)
 	Sentinel.done("ranged_cadence")
 
 
-func _probe_ranged(croc_ai: GDScript, species_name: String) -> void:
+func _probe_ranged(species_name: String) -> void:
 	"""
 	One ranged species: its speeds, its band, and its cadence.
 
-	@param croc_ai: piglet_crocodile_ai.gd, for the shipped ranged_shot_due()
 	@param species_name: the SPECIES key to probe
 	"""
 	var row: Dictionary = _species_table[species_name]
@@ -1371,14 +1367,14 @@ func _probe_ranged(croc_ai: GDScript, species_name: String) -> void:
 				+ " while chasing, so those metres of reach do not exist")
 
 	# ---- 2. THE BAND HAS EDGES ---------------------------------------------
-	var too_close: Array[int] = _ranged_shots(croc_ai, ranged, min_range - RANGED_BAND_MARGIN)
+	var too_close: Array[int] = _ranged_shots(ranged, min_range - RANGED_BAND_MARGIN)
 	if not too_close.is_empty():
 		_fail("SPECIES['%s']: %d shot(s) fired from %.2f m, inside its own %.1f m"
 				% [species_name, too_close.size(), min_range - RANGED_BAND_MARGIN, min_range]
 				+ " minimum — a bolt from there arrives before a walking player"
 				+ " can clear its hit radius, which is the one thing the fairness"
 				+ " contract cannot fix from inside the projectile")
-	var too_far: Array[int] = _ranged_shots(croc_ai, ranged, max_range + RANGED_BAND_MARGIN)
+	var too_far: Array[int] = _ranged_shots(ranged, max_range + RANGED_BAND_MARGIN)
 	if not too_far.is_empty():
 		_fail("SPECIES['%s']: %d shot(s) fired from %.2f m, past its own %.1f m"
 				% [species_name, too_far.size(), max_range + RANGED_BAND_MARGIN, max_range]
@@ -1391,7 +1387,7 @@ func _probe_ranged(croc_ai: GDScript, species_name: String) -> void:
 	# to be "fixed" by loosening the assertion. Gaps have no such edge, and they
 	# are the thing the cooldown actually is.
 	var mid: float = (min_range + max_range) * 0.5
-	var fired: Array[int] = _ranged_shots(croc_ai, ranged, mid)
+	var fired: Array[int] = _ranged_shots(ranged, mid)
 	var gap_frames: int = int(round(cooldown / RANGED_PROBE_DT))
 	var expected_shots: int = int(RANGED_PROBE_SECONDS / cooldown)
 	if fired.size() < expected_shots - 1 or fired.size() > expected_shots + 1:
@@ -1419,11 +1415,10 @@ func _probe_ranged(croc_ai: GDScript, species_name: String) -> void:
 			return
 
 
-func _ranged_shots(croc_ai: GDScript, ranged: Dictionary, distance: float) -> Array[int]:
+func _ranged_shots(ranged: Dictionary, distance: float) -> Array[int]:
 	"""
 	Every frame on which the SHIPPED firing rule releases a shot, at a fixed range.
 
-	@param croc_ai: piglet_crocodile_ai.gd
 	@param ranged: the row's "ranged" dict, passed through untouched
 	@param distance: the quarry's flat distance, held constant for the window
 	@return the frame indices where ranged_shot_due() answered true
@@ -1483,7 +1478,7 @@ const HUNT_RING_TOLERANCE: float = 0.35
 const HUNT_CONTACT: float = 1.0
 
 
-func _check_hunt_pacing(croc_ai: GDScript) -> void:
+func _check_hunt_pacing() -> void:
 	"""
 	MEASURE the pacing. Do not assert it.
 
@@ -1526,16 +1521,15 @@ func _check_hunt_pacing(croc_ai: GDScript) -> void:
 		Sentinel.done("hunt_pacing")
 		return
 	for hunt_species: String in names:
-		_probe_hunt_geometry(croc_ai, hunt_species)
+		_probe_hunt_geometry(hunt_species)
 		_probe_hunt_dispatch(hunt_species)
 	Sentinel.done("hunt_pacing")
 
 
-func _probe_hunt_geometry(croc_ai: GDScript, hunt_species: String) -> void:
+func _probe_hunt_geometry(hunt_species: String) -> void:
 	"""
 	Walk one hunt species in, out and around its ring, through the SHIPPED steering.
 
-	@param croc_ai: the AI script, for its static hunt_steer_point
 	@param hunt_species: the SPECIES key to probe
 
 	Split out of _check_hunt_pacing — which holds the argument for all of this —
@@ -1579,9 +1573,9 @@ func _probe_hunt_geometry(croc_ai: GDScript, hunt_species: String) -> void:
 		return
 
 	var start: float = minf(standoff * HUNT_PROBE_START_FACTOR, detection)
-	var shadow: Dictionary = _hunt_walk(croc_ai, row, start, false)
-	var close: Dictionary = _hunt_walk(croc_ai, row, start, true)
-	var withdraw: Dictionary = _hunt_walk(croc_ai, row, HUNT_WITHDRAW_START, false)
+	var shadow: Dictionary = _hunt_walk(row, start, false)
+	var close: Dictionary = _hunt_walk(row, start, true)
+	var withdraw: Dictionary = _hunt_walk(row, HUNT_WITHDRAW_START, false)
 
 	print("hunt pacing: %s shadows from %.0f m to %.2f m (closest %.2f m, ring"
 			% [hunt_species, start, float(shadow["final"]),
@@ -1619,12 +1613,11 @@ func _probe_hunt_geometry(croc_ai: GDScript, hunt_species: String) -> void:
 				+ " no longer running it")
 
 
-func _hunt_walk(croc_ai: GDScript, row: Dictionary, start: float,
+func _hunt_walk(row: Dictionary, start: float,
 		closing: bool) -> Dictionary:
 	"""
 	Walk one hunter at a stationary quarry and report where it ended up.
 
-	@param croc_ai: the AI script, for its static hunt_steer_point
 	@param row: the SPECIES row to simulate
 	@param start: the unit's opening distance from the quarry, metres
 	@param closing: the one boolean the geometry takes — false shadows, true commits
@@ -2276,7 +2269,7 @@ const LEAP_APEX_MIN: float = 1.0
 const LEAP_HOP_COUNT_SLACK: float = 1.0
 
 
-func _check_leap_cycle(croc_ai: GDScript) -> void:
+func _check_leap_cycle() -> void:
 	"""
 	THE SEVENTH ARM'S PROBE. Drive the shipped hop rule and race what it produces.
 
@@ -2348,15 +2341,14 @@ func _check_leap_cycle(croc_ai: GDScript) -> void:
 		Sentinel.done("leap_cycle")
 		return
 	for species_name: String in leapers:
-		_probe_leap(croc_ai, species_name)
+		_probe_leap(species_name)
 	Sentinel.done("leap_cycle")
 
 
-func _probe_leap(croc_ai: GDScript, species_name: String) -> void:
+func _probe_leap(species_name: String) -> void:
 	"""
 	One leaping species: its arc, its reach, its cadence and its escape.
 
-	@param croc_ai: piglet_crocodile_ai.gd, for the shipped leap_* statics
 	@param species_name: the SPECIES key to probe
 	"""
 	var row: Dictionary = _species_table[species_name]
@@ -2418,10 +2410,10 @@ func _probe_leap(croc_ai: GDScript, species_name: String) -> void:
 				+ " has closed to nothing and the boss can never leave the ground")
 
 	# ---- 4 and 5. THE CADENCE AND THE ESCAPE, over repeated cycles ---------
-	var runner: Dictionary = _leap_race(croc_ai, row, _max_chase_speed,
+	var runner: Dictionary = _leap_race(row, _max_chase_speed,
 			_slowest_run_speed, false)
-	var walker: Dictionary = _leap_race(croc_ai, row, nominal, _walk_speed, false)
-	var control: Dictionary = _leap_race(croc_ai, row, _max_chase_speed,
+	var walker: Dictionary = _leap_race(row, nominal, _walk_speed, false)
+	var control: Dictionary = _leap_race(row, _max_chase_speed,
 			_slowest_run_speed, true)
 
 	print("leap cycle (%s): %.2f m apex over %.2f s, reach %.1f m inside a %.1f m"
@@ -2468,7 +2460,7 @@ func _probe_leap(croc_ai: GDScript, species_name: String) -> void:
 	# driven from both sides here. Refused for a whole window it must never fire —
 	# and the positive control at the same clock must, or the refusal proves
 	# nothing about the gate and everything about a broken cooldown.
-	var refused: Dictionary = _leap_race(croc_ai, row, nominal, _walk_speed, false, false)
+	var refused: Dictionary = _leap_race(row, nominal, _walk_speed, false, false)
 	if int(refused["hops"]) > 0:
 		_fail("a %s launched %d time(s) with the projected landing REFUSED —"
 				% [species_name, int(refused["hops"])] + " leap_due() is ignoring"
@@ -2481,12 +2473,11 @@ func _probe_leap(croc_ai: GDScript, species_name: String) -> void:
 				+ " hops at all")
 
 
-func _leap_race(croc_ai: GDScript, row: Dictionary, chase: float, quarry_speed: float,
+func _leap_race(row: Dictionary, chase: float, quarry_speed: float,
 		no_recovery: bool, landing_ok: bool = true) -> Dictionary:
 	"""
 	Race one leaping predator against one quarry down a straight line.
 
-	@param croc_ai: the AI script, for its static leap_due / leap_airtime
 	@param row: the SPECIES row to simulate
 	@param chase: the predator's resolved chase speed (what _ready() left it at)
 	@param quarry_speed: the quarry's constant speed

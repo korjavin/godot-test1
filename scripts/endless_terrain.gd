@@ -2990,7 +2990,7 @@ const BIOME_SPECIES: Dictionary = {
 	## The forest is the one band that already crowds the player's SIGHT — it is
 	## the densest tree cover in the world — so it is the right one to put an
 	## enemy in that crowds their SPACE. The wolf's pack steering (see
-	## piglet_crocodile_ai.pack_steer_point) has each animal swing to its own slot
+	## croc_steering.pack_steer_point) has each animal swing to its own slot
 	## on a ring, and trunks are what make that read: the wolf you lost behind one
 	## is the wolf arriving from the side.
 	Biome.FOREST: {
@@ -3002,7 +3002,7 @@ const BIOME_SPECIES: Dictionary = {
 	## the ice you can climb onto. It is also the most OPEN ground in the world (a
 	## handful of dead trees per chunk and a lot of nothing between them), which is
 	## the one place a straight-line charger belongs: the frost bear's committed
-	## charge (see piglet_crocodile_ai.charge_steer_point) is only fair if you can
+	## charge (see croc_steering.charge_steer_point) is only fair if you can
 	## see it coming and have somewhere to step, and both of those are what open
 	## ground is. The forest is the exact inverse — put this animal among trunks
 	## and it would spend its life shouldering into them.
@@ -3013,7 +3013,7 @@ const BIOME_SPECIES: Dictionary = {
 	## A massif band is a MAZE — impassable block walls with long straight
 	## corridors between them (see the MOUNTAIN section: mountains are things you
 	## route around, never terrain you climb). That is the one place a burst
-	## predator belongs. The cougar's pounce (see piglet_crocodile_ai's
+	## predator belongs. The cougar's pounce (see croc_steering's
 	## burst_cycle_factor) is the only thing in this game that goes above
 	## MAX_CHASE_SPEED, and it is only fair where a corridor gives you the sight
 	## line to see it start and the walls give its recovery leg somewhere to break
