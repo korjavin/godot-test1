@@ -114,7 +114,17 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            plus `hermetic_stores`: every `*_selfcheck.gd` in the
 #                            glob opens `Sentinel.isolate_user_state()` and names
 #                            no real `user://` path
-#   wade_selfcheck           river wading (player, croc, boss)
+#   wade_selfcheck           river wading (player, croc, boss) — plus the DEEP
+#                            CHANNEL (bd godot-test1-06o.3): check 8 the rule on
+#                            the real field (the strip inside the band, the outer
+#                            band free, Y-aware, the push climbing OUT, the
+#                            Danube's centre impassable, every authored deck dry
+#                            above and wet below, Margaret Island dry), check 9
+#                            the SOFTLOCK GATE (20 seeds of road plus the T ->
+#                            gate corridor: every crossing bridged or forded),
+#                            check 10 a REAL player.tscn walked into a REAL
+#                            channel and held out, with the seam switched off as
+#                            the mutation control
 #   field_bridge_selfcheck   FIELD BRIDGES where the road crosses a river: every
 #                            crossing under the span cap bridged exactly once
 #                            over 12 seeds (with the lake case counted), the
@@ -1130,27 +1140,65 @@ Don't simplify any line of it back to scalar arithmetic.
 **WADING IS Y-AWARE; THE BAND IS NOT** (bead `godot-test1-06o.2`). `is_river_at()` stays
 XZ-only — it is the band the shader paints, and the parity contract above is about it.
 Whether a *body* is in the water is the narrower question `is_wading_at(pos)` answers:
-`pos.y < WADE_SURFACE_MAX` (0.6 m) **and** `is_river_at`. That rule has ONE home and
+`pos.y < WADE_SURFACE_MAX` (0.6 m) **and** the band. That rule has ONE home and
 three callers — the player's `is_wading`, the remote avatar's sink, the crocodile's
 `_tick_river_sink` (plus the minimap's "in a river" readout) — because a fourth caller
-would be a fourth chance to forget the height. It needs **no shader edit**: the water is
-still painted under a bridge, which is correct.
+would be a fourth chance to forget the height. The water is still *painted* under a
+bridge, which is correct.
 
-**It does NOT close Budapest's "walk the river bed under a deck" gap, and the reason is one
-layer down**: inside the rect `is_river_at` delegates to `BudapestPlan.danube_wet()`, which
-already subtracts every `DRY_RECTS` row — so the bed under the four authored decks answers
-DRY before the height rule is ever asked, for players, avatars, crocodiles and the map
-alike. Closing it means asking the band WITHOUT the cutout on the low-Y path, and the
-cutout is shared with MARGARET ISLAND, which is dry LAND at y = 0 and must stay dry — so it
-is a bridge-rects-only exception, a Budapest behaviour change, and bead
-`godot-test1-06o.3`'s to make with the not-walkable ruling in hand.
+**AND THE MIDDLE OF EVERY RIVER IS NOT WALKABLE** (bead `godot-test1-06o.3`, owner
+ruling 2026-09-04 re-asked 2026-09-05: *"why rivers, and danube are still walkable? fix
+this"*). The inner `RIVER_DEEP_FRACTION` (0.4) of a band is a DEEP CHANNEL a body is
+pushed back out of; the outer band still wades at exactly today's numbers, so
+`WADE_SPEED_FACTOR` / `WADE_RUN_MIN_SPEED` and the catchable-walk chain are untouched.
+Four rules, all pinned by `wade_selfcheck` checks 8-10:
 
-**THE ROAD CROSSES A RIVER ON A BRIDGE, and that is what keeps a run crossable** when
-bead `godot-test1-06o.3` makes a channel not walkable. `spawn_field_bridges_in_chunk`
+- **ONE FIELD FOR BOTH RIVERS.** `river_depth_at()` normalises the noise contour and the
+  authored Danube to the same 0 (centreline) .. 1 (bank) number; `is_wading_at` is
+  `< 1.0` on it and `deep_channel_push()` is `< RIVER_DEEP_FRACTION` on it. The push
+  DIRECTION is finite-differenced off `_river_signed_raw` — the same field without the
+  absolute value and without the masks — because `river_depth_at` has a KINK on the
+  centreline that pointed 1% of pushes back into the water, and because a probe that
+  stepped onto the tower disc or Margaret Island would read a cliff. Two extra
+  evaluations, paid only by a body already inside a strip. The Danube is in scope by
+  name — its channel is impassable and the four authored decks are the crossing.
+- **THE ROAD IS THE WAY THROUGH, and `_deep_channel_ford` is the one exemption.** A road
+  crossing the field bridges REFUSED (past `FIELD_BRIDGE_MAX_SPAN` of walked water)
+  keeps a road-width ford through the strip, because walling it would softlock the road
+  it stands on. Two wrong answers are recorded at the function: a WIDTH THRESHOLD (the
+  cap counts the water the road WALKS, and a band crossed at an angle walks more of it
+  than it is wide — one blocked crossing in 39), and `field_bridge_at(k0).is_empty()`,
+  which is `{}` for three reasons and only two of them mean unbridged (a MERGED deck's
+  row belongs to its western anchor, and two of its returns are un-memoized "the cache
+  is short right now"). It asks `field_bridge_surface_y` — is there STONE here — which
+  is the query `wade_selfcheck` check 9 itself uses.
+- **A CHANNEL CAN BE JUMPED, and that is a measured ceiling rather than a hole.** The
+  push is the player's STEP 8.5, gated on `is_wading`, so an airborne body is never
+  pushed — deliberately, since flying over the band always was legal. A typical field
+  river's strip is ~4.8 m across (median over 178 samples; p90 11 m) against a ~9.6 m
+  wading jump, so an ordinary Space press clears the median river; the Danube's 96 m
+  channel and the wide bands do not budge. Closing it means pushing an airborne body,
+  which is an invisible air wall and needs an owner ruling.
+- **`is_river_at` DID NOT MOVE.** The band is still XZ-only and still subtracts every
+  `DRY_RECTS` row, so the shader, every spawner and the minimap see exactly what they
+  saw. The shader gained one smoothstep and one mix — the strip painted darker off the
+  same normalised depth, in both languages — and deliberately does NOT run the ford
+  exemption (a station search per fragment for a gap at one crossing in 39).
+- **BUDAPEST'S UNDER-DECK GAP IS CLOSED, bridge-rects-only.** The low-Y path subtracts
+  only the `DRY_RECTS` rows that are dry LAND (`BudapestPlan.is_dry_land`, read off
+  `BRIDGES` so "which rows are decks" is never a second list): at y = 0 under an
+  authored deck you are in the Danube, at deck height you are not, and MARGARET ISLAND
+  keeps its cutout because it is land. `budapest_city_selfcheck` check 14 is unmoved —
+  it asks `is_river_at`.
+
+**THE ROAD CROSSES A RIVER ON A BRIDGE, and that is what keeps a run crossable** now
+that bead `godot-test1-06o.3` has made the channel not walkable.
+`spawn_field_bridges_in_chunk`
 builds one low stone footbridge per road river crossing — the anchor is the station that
 ENTERS the water (wet here, dry behind), so "one bridge per crossing" is a definition and
 not a de-duplication pass; the span walks forward to the far bank and refuses past
-`FIELD_BRIDGE_MAX_SPAN` (a lake, which wades and is 06o.3's problem). Five rules:
+`FIELD_BRIDGE_MAX_SPAN` (a lake, which wades — and which `_deep_channel_ford` therefore
+leaves a road-width gap in the deep channel for). Five rules:
 **zero RNG** (the site is the road's centreline plus the river field, both pure; the boxes
 come off a private fixed-seed stream), so the A/B proves every other spawner is
 byte-identical; **no `obstacles` footprint** — a bridge is meant to be walked, and a

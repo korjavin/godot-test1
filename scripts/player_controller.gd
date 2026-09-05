@@ -49,6 +49,20 @@ const WADE_SPEED_FACTOR: float = 0.5
 ## full drag and the run is floored here instead.
 const WADE_RUN_MIN_SPEED: float = 9.0
 
+## How hard a river's IMPASSABLE CENTRE CHANNEL expels a body, in m/s — bead
+## `godot-test1-06o.3`. WHERE the channel is belongs to the terrain
+## (`deep_channel_push`, beside `is_wading_at`); this is the only half of it that
+## is about a body, so it lives here beside the other two wading numbers.
+##
+## Deliberately UNDER WALK_SPEED, and that is the design: the rule is "you cannot
+## walk in", not "you are launched". Step 8.5 cancels the inward component of your
+## own velocity first — which is what makes the channel read as a wall you stop
+## against — and this is only the drift that carries a body back out if it started
+## inside one (a teleport, a respawn, a phase step). Raise it and a river edge
+## starts flinging heroes; drop it to zero and a body dropped mid-channel stays
+## there.
+const DEEP_CHANNEL_PUSH_SPEED: float = 2.5
+
 ## How deep the MODEL sinks into a river, in metres, and how fast the offset
 ## eases in and out (metres per second — depth / ~0.2 s, so stepping in or out
 ## of the water takes about a fifth of a second instead of popping).
@@ -1460,6 +1474,34 @@ func _physics_process(delta: float) -> void:
 		# No input: gradually slow down (friction)
 		velocity.x = move_toward(velocity.x, 0, current_speed * delta * 10.0)
 		velocity.z = move_toward(velocity.z, 0, current_speed * delta * 10.0)
+
+	# STEP 8.5: THE DEEP CHANNEL. A river's centre strip is not walkable (bead
+	# godot-test1-06o.3, owner ruling 2026-09-04, re-asked 2026-09-05); the
+	# terrain owns where it is and which way is out, and this is what a body does
+	# about it.
+	#
+	# GATED ON `is_wading`, so the two extra noise evaluations are paid by a
+	# grounded body already standing in water and by nobody else — a jumping,
+	# flying or dry player never asks. That is also the design: Windman's Air Rush
+	# clears a channel exactly as it clears the band, because being over the water
+	# has never been wading.
+	#
+	# IT READS AS A WALL, NOT AS A LAUNCHER. The inward component of your own
+	# velocity is cancelled (walk into the channel and you simply stop, the way you
+	# stop against a massif), and only then is a drift added — so a body that
+	# started inside one, teleported or spawned, is carried back out at
+	# DEEP_CHANNEL_PUSH_SPEED instead of being flung. Applied AFTER step 8 wrote this
+	# frame's velocity and BEFORE move_and_slide, or the input would win.
+	if is_wading:
+		var deep_push := _terrain_deep_push_here()
+		if deep_push != Vector3.ZERO:
+			var flat := Vector3(velocity.x, 0.0, velocity.z)
+			var into := flat.dot(deep_push)
+			if into < 0.0:
+				flat -= deep_push * into
+			flat += deep_push * DEEP_CHANNEL_PUSH_SPEED
+			velocity.x = flat.x
+			velocity.z = flat.z
 
 	# STEP 9: Move the character using Godot's built-in physics
 	# This handles collisions automatically
@@ -4014,6 +4056,27 @@ func _terrain_is_river_here() -> bool:
 	if terrain and terrain.has_method("is_wading_at"):
 		return terrain.is_wading_at(global_position)
 	return false
+
+
+func _terrain_deep_push_here() -> Vector3:
+	"""
+	The way OUT of a river's impassable centre channel, or ZERO — asked of the
+	terrain through the "terrain" group, the same null-safe shape as
+	_terrain_is_river_here() above, so the player scene run standalone simply
+	never meets a channel.
+
+	THE RULE ITSELF IS THE TERRAIN'S (bead godot-test1-06o.3, owner ruling
+	2026-09-04/09-05): where the channel is, how wide it is, which way is out and
+	which crossings are exempt all live in `deep_channel_push` beside
+	`is_wading_at`, so the ground you SEE painted dark and the wall you MEET are
+	one function. Nothing about the geometry is decided here.
+
+	@return Vector3: a horizontal unit vector at the nearest bank, or ZERO.
+	"""
+	var terrain := get_tree().get_first_node_in_group("terrain")
+	if terrain and terrain.has_method("deep_channel_push"):
+		return terrain.deep_channel_push(global_position)
+	return Vector3.ZERO
 
 
 # --- Meta-progression skills (bead godot-test1-20z.3) ------------------------
