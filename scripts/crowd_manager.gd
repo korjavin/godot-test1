@@ -23,7 +23,8 @@ extends Node3D
 ##     Phoboman), costing exactly 4 draw calls for the entire crowd (shadows off).
 ##   * Shared static resources: one shared composite mesh per archetype with
 ##     baked vertex colors derived from the hero specifications, and ONE shared
-##     StandardMaterial3D across all archetypes (never duplicate() per citizen).
+##     ShaderMaterial across all archetypes, on the world's own block shader
+##     since bead y1o.15 (never duplicate() per citizen).
 ##   * Waypoint walk: citizens follow BudapestPlan.STREET_PITCH street grid, spread
 ##     across lateral street lanes, maintaining walking queues, never walking into
 ##     the Danube river, plateau cliffs, or solid landmark buildings.
@@ -191,45 +192,78 @@ const CITIZEN_PROXY_HEIGHT: float = 1.75
 # SHARED RESOURCES (static — one per PROCESS, not per citizen/manager)
 # ============================================================================
 
-static var _shared_material: StandardMaterial3D = null
+## How tall the TALLEST citizen's welded mesh is, boots to hat — the span the
+## top-lit gradient is measured over (bead `godot-test1-y1o.15`).
+##
+## THE FOUR ARCHETYPES ARE NOT THE SAME HEIGHT and share ONE material, so this
+## is one number for all of them: measured, Windman 1.72, Primm 1.70, Teibi 1.78
+## and PHOBOMAN 1.40 — he is the short stout one, and he is why this is worth a
+## comment. It is the MAXIMUM rather than a mean because the span is a divisor:
+## a shorter citizen simply tops out at `1.40 / 1.78` of the ramp, a head 8%
+## short of full colour that nobody will pick out of a crowd, whereas a span
+## UNDER an archetype's height clamps its whole hat flat at full colour and
+## throws the gradient away over the part of a body you actually look at.
+##
+## The alternative — a material per archetype, exact for all four and still four
+## draw calls, since each MultiMesh already owns one — was weighed against that
+## 8% and refused: it trades a documented one-shared-material invariant for
+## something invisible. If a future archetype is dwarfed further, that is the
+## upgrade path.
+##
+## It is deliberately NOT `CITIZEN_PROXY_HEIGHT`: that is a collider, sized to
+## be forgiving, and a shading span and a physics box must not be one constant.
+const CITIZEN_MESH_TOP: float = 1.78
+
+static var _shared_material: ShaderMaterial = null
 static var _archetype_meshes: Array = [null, null, null, null]
-static var _box_cache: Dictionary = {}
 
 
-static func _get_shared_material() -> StandardMaterial3D:
-	## The ONE standard material with vertex colors and sRGB conversion enabled,
-	## shared by all four crowd MultiMeshes across the entire session.
+static func _get_shared_material() -> Material:
+	## The ONE material, shared by all four crowd MultiMeshes across the entire
+	## session — now the WORLD'S OWN block shader (bead `godot-test1-y1o.15`,
+	## style direction A), so a citizen is lit like the street they walk down
+	## instead of standing flat against a gradient-shaded city.
+	##
+	## `_add_box` welds every box at its BODY offset, so model-space `VERTEX.y`
+	## runs boots-to-hat over the whole citizen rather than -0.5..+0.5 over one
+	## box — which is exactly what `height_range` exists for (bead y1o.14 added
+	## it for this consumer). One span for the whole body reads as contact
+	## shading: boots and shins darken toward the pavement, the head catches the
+	## key light.
+	##
+	## The tint still arrives through `COLOR`: the archetype meshes carry vertex
+	## colours, so the shader's `albedo` uniform stays at its white default and
+	## nothing here has to be re-authored.
+	##
+	## TWO StandardMaterial3D PROPERTIES ARE GONE. `cull_mode = CULL_BACK` is
+	## `world_block.gdshader`'s own `render_mode`, so that one is free.
+	##
+	## `vertex_color_is_srgb` has no equivalent, and dropping it IS A VISIBLE
+	## CHANGE ON DESKTOP: the citizens come out a shade brighter than they were.
+	## It is deliberate rather than incidental, for the reason the whole bead
+	## exists — every `create_box` colour in Budapest is consumed by this shader
+	## as plain `COLOR.rgb`, so a crowd that kept its own conversion would be the
+	## one thing in the city in a different colour space from the facades behind
+	## it. Godot documents the flag as effective on Forward+/Mobile only, which
+	## would mean the web `gl_compatibility` build this game targets never
+	## applied it and only the desktop look moves — that reading is the shipped
+	## docs' and is NOT something this change measured, so treat the size of the
+	## shift as "seen in the y1o.15 before/after shots", not as derived.
+	##
+	## The BUILD is `CityAgents.gradient_material` since bead
+	## `godot-test1-ftn.22`; the lazy singleton stays here, because "ONE material
+	## for all four crowd MultiMeshes" is this manager's invariant and
+	## `crowd_selfcheck` asserts it off the live `material_override`.
 	if _shared_material == null:
-		_shared_material = StandardMaterial3D.new()
-		_shared_material.vertex_color_use_as_albedo = true
-		_shared_material.vertex_color_is_srgb = true
-		_shared_material.roughness = 0.85
-		_shared_material.cull_mode = BaseMaterial3D.CULL_BACK
+		_shared_material = CityAgents.gradient_material(CITIZEN_MESH_TOP, 0.85)
 	return _shared_material
 
 
-static func _box_mesh(size: Vector3) -> BoxMesh:
-	## Cached BoxMesh generator to ensure engine-accurate standard normals,
-	## vertex winding, and UVs.
-	if not _box_cache.has(size):
-		var bm := BoxMesh.new()
-		bm.size = size
-		_box_cache[size] = bm
-	return _box_cache[size]
-
-
 static func _add_box(st: SurfaceTool, center: Vector3, size: Vector3, col: Color) -> void:
-	## Adds an engine-accurate 6-sided box with correct outward CCW winding
-	## and vertex color to a SurfaceTool.
-	var arrays: Array = _box_mesh(size).get_mesh_arrays()
-	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-	var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
-	var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
-
-	for i: int in indices:
-		st.set_color(col)
-		st.set_normal(normals[i])
-		st.add_vertex(center + verts[i])
+	## One-line forwarder to `CityAgents.add_box` (bead `godot-test1-ftn.22`) —
+	## 81 call sites in this file build the four archetypes with it, which is
+	## what a forwarder buys over rewriting every one of them.
+	CityAgents.add_box(st, center, size, col)
 
 
 static func _get_archetype_mesh(archetype: int) -> ArrayMesh:
@@ -511,50 +545,28 @@ func _process(delta: float) -> void:
 # CROWD LOGIC & WAYFINDING
 # ============================================================================
 
+# THE THREE LOOKUPS BELOW ARE ONE-LINE FORWARDERS to `scripts/city_agents.gd`
+# (bead `godot-test1-ftn.22`), which is where the bodies live now — shared with
+# `traffic_manager.gd`, whose copies were verbatim. `WALKABLE_LANDMARK_IDS` went
+# with them: two copies of a table naming which slots are open plazas is exactly
+# the drift this refactor is against, and it is aliased back here because
+# `is_walkable` reads through the alias and so may anything else.
+const WALKABLE_LANDMARK_IDS := CityAgents.WALKABLE_LANDMARK_IDS
+
+
 func _find_player() -> Node3D:
 	## Locate the local player through the "player" group.
-	var player := get_tree().get_first_node_in_group("player")
-	if player is Node3D:
-		return player
-	return null
+	return CityAgents.find_player(get_tree())
 
 
 func _is_near_budapest(player_pos: Vector3) -> bool:
 	## True when player is inside or within 100m margin of Budapest rect.
-	return PLAN_SCRIPT.rect().grow(100.0).has_point(Vector2(player_pos.x, player_pos.z))
-
-
-## Slots that are open plazas, pedestrian streets, bridges, or plateaus
-## where ground-level street path checks should not block walkers.
-const WALKABLE_LANDMARK_IDS: Dictionary = {
-	"heroes_square": true,
-	"budapest_eye": true,
-	"vaci_utca": true,
-	"shoes_on_the_danube": true,
-	"chain_bridge": true,
-	"liberty_bridge": true,
-	"elisabeth_bridge": true,
-	"margaret_bridge": true,
-	"margaret_island": true,
-	"buda_castle": true,   # plateau_top_at handles plateau
-	"matthias": true,      # plateau_top_at handles plateau
-	"citadella": true,     # plateau_top_at handles plateau
-}
+	return CityAgents.is_near_budapest(player_pos)
 
 
 static func _is_inside_solid_landmark(x: float, z: float) -> bool:
 	## Checks dynamically against BudapestPlan.SLOTS using exact authored radii.
-	for slot: Dictionary in PLAN_SCRIPT.SLOTS:
-		var slot_id: String = slot.get("id", "")
-		if WALKABLE_LANDMARK_IDS.has(slot_id):
-			continue
-		var spos: Vector3 = slot["pos"]
-		var r: float = slot["radius"]
-		var dx: float = x - spos.x
-		var dz: float = z - spos.z
-		if dx * dx + dz * dz < r * r:
-			return true
-	return false
+	return CityAgents.is_inside_solid_landmark(x, z)
 
 
 static func is_walkable(x: float, z: float) -> bool:

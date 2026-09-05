@@ -26,7 +26,8 @@ extends Node3D
 ##     blocked > hold-off → HONK with per-car cooldown; blocked far too long →
 ##     recycle out of sight (never drive through the player).
 ##   * Budget: hard TRAFFIC_MAX (16 web / 32 desktop, was 30/60) rendered via ONE
-##     MultiMeshInstance3D (one mesh, one shared StandardMaterial3D, colour
+##     MultiMeshInstance3D (one mesh, one shared ShaderMaterial on the world's
+##     own block shader since bead y1o.15, colour
 ##     variety via per-instance colours, never a material per car) → 1 draw call.
 ##     Density cut roughly in half on web (≈1 car per 35m of avenue within the
 ##     110m bubble) so gaps read, not clumps; SPAWN_RADIUS kept at 110m so
@@ -189,36 +190,51 @@ const CAR_PROXY_REACH: float = 8.0
 const CAR_PROXY_HALF := Vector2(CAR_WIDTH * 0.5, CAR_LENGTH * 0.5)
 const CAR_PROXY_HEIGHT: float = 1.15
 
-static var _shared_material: StandardMaterial3D = null
-static var _shared_mesh: ArrayMesh = null
-static var _box_cache: Dictionary = {}
+## How tall the welded car mesh is, tyre contact patch to roof trim — the span
+## the top-lit gradient is measured over (bead `godot-test1-y1o.15`). It is NOT
+## `CAR_PROXY_HEIGHT`, which happens to be the same number for an unrelated
+## reason (that one is a collider, deliberately "the chassis and cabin, not the
+## roof trim"); a shading span and a physics box must not be one constant.
+const CAR_MESH_TOP: float = 1.15
 
-static func _get_shared_material() -> StandardMaterial3D:
+static var _shared_material: ShaderMaterial = null
+static var _shared_mesh: ArrayMesh = null
+
+static func _get_shared_material() -> Material:
+	## The ONE material of the ONE traffic MultiMesh — now the WORLD'S OWN block
+	## shader (bead `godot-test1-y1o.15`, style direction A), the crowd's change
+	## one file along and for the same reason: a flat-lit car parked against a
+	## gradient-shaded street reads as a decal.
+	##
+	## `_add_box` welds every box at its BODY offset, so model-space `VERTEX.y`
+	## runs wheels-to-roof over the whole car — `height_range`'s reason to exist.
+	## The paint still arrives through `COLOR` (the mesh's vertex colours times
+	## the per-instance colour of a `use_colors` MultiMesh), so `albedo` stays at
+	## its white default.
+	##
+	## THREE StandardMaterial3D PROPERTIES ARE GONE. `cull_mode = CULL_BACK` is
+	## `world_block.gdshader`'s own `render_mode`, so that one is free.
+	## `vertex_color_is_srgb` has no equivalent either, and dropping it makes the
+	## cars a shade brighter on desktop — see the crowd's copy of that note for
+	## why it is the consistent answer and for what about it was NOT measured.
+	## `metallic = 0.08` HAS no equivalent: the shader writes ALBEDO and
+	## ROUGHNESS and nothing else, so the cars lose a very slight sheen. That is
+	## the bead's own call — if the owner misses it, it is one more uniform on a
+	## shader every chunk in the world already runs.
+	##
+	## The BUILD is `CityAgents.gradient_material` since bead
+	## `godot-test1-ftn.22`; the lazy singleton stays here, because "ONE material
+	## for the one traffic MultiMesh" is this manager's invariant and
+	## `traffic_selfcheck` asserts it off the live `material_override`.
 	if _shared_material == null:
-		_shared_material = StandardMaterial3D.new()
-		_shared_material.vertex_color_use_as_albedo = true
-		_shared_material.vertex_color_is_srgb = true
-		_shared_material.roughness = 0.78
-		_shared_material.metallic = 0.08
-		_shared_material.cull_mode = BaseMaterial3D.CULL_BACK
+		_shared_material = CityAgents.gradient_material(CAR_MESH_TOP, 0.78)
 	return _shared_material
 
-static func _box_mesh(size: Vector3) -> BoxMesh:
-	if not _box_cache.has(size):
-		var bm := BoxMesh.new()
-		bm.size = size
-		_box_cache[size] = bm
-	return _box_cache[size]
-
 static func _add_box(st: SurfaceTool, center: Vector3, size: Vector3, col: Color) -> void:
-	var arrays: Array = _box_mesh(size).get_mesh_arrays()
-	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-	var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
-	var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
-	for i in indices:
-		st.set_color(col)
-		st.set_normal(normals[i])
-		st.add_vertex(center + verts[i])
+	## One-line forwarder to `CityAgents.add_box` (bead `godot-test1-ftn.22`),
+	## which is where the body lives now — shared with `crowd_manager.gd`, whose
+	## copy was verbatim. The 13 call sites below keep their spelling.
+	CityAgents.add_box(st, center, size, col)
 
 static func _get_car_mesh() -> ArrayMesh:
 	if _shared_mesh != null:
@@ -332,42 +348,22 @@ func _process(delta: float) -> void:
 # QUERIES
 # ============================================================================
 
+# THE THREE LOOKUPS BELOW ARE ONE-LINE FORWARDERS to `scripts/city_agents.gd`
+# (bead `godot-test1-ftn.22`), which is where the bodies live now — shared with
+# `crowd_manager.gd`, whose copies were verbatim. `WALKABLE_LANDMARK_IDS` went
+# with them: two copies of a table naming which slots are open plazas is exactly
+# the drift this refactor is against, and it is aliased back here because
+# `is_traffic_walkable` reads through the alias and so may anything else.
+const WALKABLE_LANDMARK_IDS := CityAgents.WALKABLE_LANDMARK_IDS
+
 func _find_player() -> Node3D:
-	var p := get_tree().get_first_node_in_group("player")
-	if p is Node3D:
-		return p
-	return null
+	return CityAgents.find_player(get_tree())
 
 func _is_near_budapest(player_pos: Vector3) -> bool:
-	return PLAN_SCRIPT.rect().grow(100.0).has_point(Vector2(player_pos.x, player_pos.z))
-
-const WALKABLE_LANDMARK_IDS: Dictionary = {
-	"heroes_square": true,
-	"budapest_eye": true,
-	"vaci_utca": true,
-	"shoes_on_the_danube": true,
-	"chain_bridge": true,
-	"liberty_bridge": true,
-	"elisabeth_bridge": true,
-	"margaret_bridge": true,
-	"margaret_island": true,
-	"buda_castle": true,
-	"matthias": true,
-	"citadella": true,
-}
+	return CityAgents.is_near_budapest(player_pos)
 
 static func _is_inside_solid_landmark(x: float, z: float) -> bool:
-	for slot: Dictionary in PLAN_SCRIPT.SLOTS:
-		var slot_id: String = slot.get("id", "")
-		if WALKABLE_LANDMARK_IDS.has(slot_id):
-			continue
-		var spos: Vector3 = slot["pos"]
-		var r: float = slot["radius"]
-		var dx: float = x - spos.x
-		var dz: float = z - spos.z
-		if dx * dx + dz * dz < r * r:
-			return true
-	return false
+	return CityAgents.is_inside_solid_landmark(x, z)
 
 static func _is_on_avenue_carriageway(x: float, z: float) -> bool:
 	# Distance to nearest AVENUE line (every CITY_AVENUE_EVERY-th grid line) < AVENUE_HALF_WIDTH

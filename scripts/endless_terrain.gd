@@ -114,183 +114,63 @@ const FOG_DENSITY_DESKTOP: float = 0.0022
 @export var wall_max_length: int = 7
 
 # ----------------------------------------------------------------------------
-# THEMED SCATTERED PROPS — the re-skin of the old bare cube / cube-tower scatter
+# THEMED SCATTERED PROPS — the constants, re-exported from TerrainProps
 # ----------------------------------------------------------------------------
-# The scatter loop in spawn_objects_in_chunk is UNCHANGED in everything that has
-# consequences — same position draws, same min_object_spacing, same river skip,
-# same DESERT_BLOCK_KEEP_EVERY target, same footprint entry. The only thing that
-# changed is the GEOMETRY emitted at an accepted spot: instead of one cube (plus
-# an occasional cube tower, which is why the old `stack_chance` / `stack_max_extra`
-# exports are gone — the cairn and slab-stack VARIANTS are those towers now), a
-# themed prop builder runs, chosen by biome_at at the PROP'S OWN position so the
-# themes feather across a biome edge exactly like the biome content does.
-#
-# SHARED-STREAM RULE (the one thing a prop builder may never break): the chunk's
-# RNG pays a FIXED cost per accepted spot — one randf_range for `size`, then ONE
-# randi() as the prop SEED — whatever the variant. Builders run on a PRIVATE
-# RandomNumberGenerator built from that seed (the artifact/camp private-RNG
-# pattern, one level down) and are handed no shared rng at all, so a 3-box stump
-# and an 8-box bone pile advance the chunk stream identically and prop complexity
-# can never reshuffle the crocodiles, coins or structures that draw after them.
-# Byte-identity with the PRE-prop world is deliberately not preserved (the same
-# licence CLAUDE.md's biome feature-skip note takes); within-run purity is, and
-# it holds unconditionally because every placement is still a pure function of
-# chunk coords + run_seed.
-
-## Footprint radius of a prop as a fraction of its drawn `size`. Every builder
-## keeps ALL of its geometry — including tilted decoration — inside this radius
-## of the prop's centre, so the returned radius stays an HONEST bound: it is what
-## _settle_coin_y perches road coins against, what spawn_crocodiles_in_chunk
-## keeps its NPCs out of, and what the mountain massifs avoid-list reads.
-##
-## 0.71 IS THE BARE CUBE'S OWN FACTOR, kept deliberately: the footprint rule is
-## then literally unchanged from the cubes, so `size` still means the same thing,
-## the range is still 0.71-1.78 m, and the value stays under MOUNTAIN_AVOID_RADIUS
-## (2.0) — props remain "fair game" to bury in a massif exactly as cubes were, and
-## the constant chain around that inequality needed no re-derivation.
-const PROP_RADIUS_FACTOR: float = 0.71
-
-## THE CLIMBABILITY CONTRACT, as a number. A prop that records `climbable: true`
-## must be mountable from flat ground in steps no taller than this, each step
-## landing on a FLAT (untilted) top — that is the "rest spot from crocodiles"
-## role the bare cubes carried, and it breaks difficulty silently if it is lost.
-## 2.6 sits under the player's jump apex (JUMP_VELOCITY^2 / 2*gravity = 3.6125 m)
-## with room for the arc, and matches the old 2.5 m single-cube step that has
-## been the proven size since the first chunk was generated.
-## prop_selfcheck.gd measures the emitted geometry against this, per variant.
-const PROP_MAX_STEP: float = 2.6
-
-## --- Prop palettes. Deliberately distinct from the warm RAMP_* block ramps (the
-## feature structures still use those), the artifacts' grey-green, the camps'
-## bone white and the landmarks' place-specific colours — a themed prop should
-## read as belonging to its BIOME, not to the generic block palette.
-const PROP_BOULDER_A := Color(0.54, 0.52, 0.47)   # plains fieldstone …
-const PROP_BOULDER_B := Color(0.40, 0.39, 0.36)   # … to darker granite
-const PROP_RUIN_STONE := Color(0.68, 0.64, 0.55)  # cut, weathered masonry
-const PROP_HAY := Color(0.79, 0.66, 0.31)         # straw bale
-const PROP_CRATE := Color(0.44, 0.31, 0.18)       # cart timber
-const PROP_SANDSTONE_A := Color(0.82, 0.67, 0.43) # wind-worn desert sandstone …
-const PROP_SANDSTONE_B := Color(0.66, 0.50, 0.32) # … to its shaded underside
-const PROP_BONE := Color(0.89, 0.87, 0.79)        # sun-bleached bone
-const PROP_MOSS_ROCK := Color(0.39, 0.44, 0.32)   # damp forest boulder
-const PROP_MOSS_CAP := Color(0.26, 0.41, 0.23)    # the moss growing on it
-const PROP_STUMP := Color(0.35, 0.25, 0.16)       # cut stump / root flare
-const PROP_LOG := Color(0.44, 0.32, 0.21)         # fallen log bark
-const PROP_SCREE_A := Color(0.57, 0.57, 0.59)     # mountain scree …
-const PROP_SCREE_B := Color(0.39, 0.40, 0.43)     # … to shadowed rock
-const PROP_CAIRN := Color(0.50, 0.49, 0.46)       # stacked cairn slabs
-
-## --- CITY palette. Eight new colours for a whole territory, and the count is a
-## decision rather than an accident: the phase-1 rule is that every colour added
-## is one more thing for a MultiMesh of boxes to fail to be distinct from, so the
-## city reuses PROP_CRATE for every piece of timber it owns (doors, stall
-## counters, market crates) and PROP_RUIN_STONE for its paving and garden walls,
-## and spends new constants only where a city is unmistakable: limewashed
-## plaster, a tiled or slated roof, and the three signal lamps.
-##
-## THE PLASTER RAMP IS DELIBERATELY BRIGHTER THAN EVERY OTHER TERRITORY'S STONE
-## (r 0.71-0.87 against a highest-elsewhere 0.82 at the desert's sandstone, which
-## is two bands away and can never touch it). That is not taste — prop_selfcheck
-## requires each territory's stone_a to lie off every other territory's ramp, and
-## the near-miss it is dodging is the mountain's PROP_SCREE_A, which sits almost
-## exactly on a cooler grey plaster ramp.
-const CITY_PLASTER_A := Color(0.87, 0.85, 0.79)   # limewashed wall, sunlit …
-const CITY_PLASTER_B := Color(0.71, 0.66, 0.58)   # … to weathered render
-const CITY_ROOF_TILE := Color(0.55, 0.29, 0.21)   # terracotta pantile
-const CITY_ROOF_SLATE := Color(0.33, 0.34, 0.37)  # slate roof / awning canvas
-const CITY_METAL := Color(0.26, 0.27, 0.29)       # lamp post, signal mast, head
-const CITY_LAMP_AMBER := Color(0.96, 0.82, 0.36)  # bright ALBEDO, never emissive
-const CITY_LAMP_RED := Color(0.86, 0.24, 0.20)
-const CITY_LAMP_GREEN := Color(0.32, 0.76, 0.36)
-
-## --- SNOW palette. FOUR new colours for a whole territory — the leanest of the
-## six, and deliberately so: a tundra is a place with almost nothing in it, so the
-## one thing it must not do is arrive with a paint box. Ice gets a ramp (it is the
-## territory's stone), snow gets one flat near-white, and dead timber gets one
-## grey-brown. Everything BONE reuses PROP_BONE, which the desert's bone pile
-## already defines — the desert band (n < 0.34) and the snow band (n >= 0.83) can
-## never touch, and a mammoth's ribs and a camel's ribs are honestly the same
-## colour, so a fifth constant would buy nothing but one more near-white for a
-## MultiMesh of boxes to fail to be distinct from.
-##
-## SNOW_ICE_A IS THE ONLY ONE WITH A CONSTRAINT ON IT: prop_selfcheck requires each
-## territory's structure `stone_a` to lie off every other territory's ramp, and the
-## near-miss it is dodging here is CITY_PLASTER_A — a bright off-white that a
-## desaturated pale ice would sit straight on top of. The blue cast (b 0.96 against
-## a red 0.80) is what separates them, not the brightness.
-const SNOW_ICE_A := Color(0.80, 0.90, 0.96)     # sunlit glacier ice …
-const SNOW_ICE_B := Color(0.50, 0.66, 0.80)     # … to its blue shadowed core
-const SNOW_PACK := Color(0.95, 0.96, 0.98)      # wind-packed drift snow
-const SNOW_DEADWOOD := Color(0.47, 0.44, 0.42)  # frost-bleached dead timber
+# The section itself (the banner, the seventeen builders and these constants'
+# real declarations) moved to `scripts/terrain_props.gd` in bead
+# godot-test1-ftn.2. Each name is aliased back because each is ALSO read from
+# outside the prop family — the feature structures and the biome content share
+# every territory palette, and PROP_MAX_STEP is read by budapest_plan.gd and two
+# self-checks. This is `species_table.gd`'s `const SPECIES := SpeciesTable.SPECIES`
+# precedent: the declaration has one home, and every existing reader (including
+# `get_script_constant_map()`) is untouched.
+const PROP_RADIUS_FACTOR := TerrainProps.PROP_RADIUS_FACTOR
+const PROP_MAX_STEP := TerrainProps.PROP_MAX_STEP
+const PROP_BOULDER_A := TerrainProps.PROP_BOULDER_A
+const PROP_BOULDER_B := TerrainProps.PROP_BOULDER_B
+const PROP_RUIN_STONE := TerrainProps.PROP_RUIN_STONE
+const PROP_HAY := TerrainProps.PROP_HAY
+const PROP_CRATE := TerrainProps.PROP_CRATE
+const PROP_SANDSTONE_A := TerrainProps.PROP_SANDSTONE_A
+const PROP_SANDSTONE_B := TerrainProps.PROP_SANDSTONE_B
+const PROP_BONE := TerrainProps.PROP_BONE
+const PROP_MOSS_ROCK := TerrainProps.PROP_MOSS_ROCK
+const PROP_MOSS_CAP := TerrainProps.PROP_MOSS_CAP
+const PROP_STUMP := TerrainProps.PROP_STUMP
+const PROP_LOG := TerrainProps.PROP_LOG
+const PROP_SCREE_A := TerrainProps.PROP_SCREE_A
+const PROP_SCREE_B := TerrainProps.PROP_SCREE_B
+const PROP_CAIRN := TerrainProps.PROP_CAIRN
+const CITY_PLASTER_A := TerrainProps.CITY_PLASTER_A
+const CITY_PLASTER_B := TerrainProps.CITY_PLASTER_B
+const CITY_ROOF_TILE := TerrainProps.CITY_ROOF_TILE
+const CITY_ROOF_SLATE := TerrainProps.CITY_ROOF_SLATE
+const CITY_METAL := TerrainProps.CITY_METAL
+const CITY_LAMP_AMBER := TerrainProps.CITY_LAMP_AMBER
+const CITY_LAMP_RED := TerrainProps.CITY_LAMP_RED
+const CITY_LAMP_GREEN := TerrainProps.CITY_LAMP_GREEN
+const SNOW_ICE_A := TerrainProps.SNOW_ICE_A
+const SNOW_ICE_B := TerrainProps.SNOW_ICE_B
+const SNOW_PACK := TerrainProps.SNOW_PACK
+const SNOW_DEADWOOD := TerrainProps.SNOW_DEADWOOD
 
 # ----------------------------------------------------------------------------
-# THEMED FEATURE STRUCTURES — the same re-skin, one scale up from the props
+# THEMED FEATURE STRUCTURES — the two tables that could not leave
 # ----------------------------------------------------------------------------
-# spawn_feature_structure used to pick wall / corridor / gate / Mayan step-pyramid
-# from ONE global table, so the identical grey boxes stood in every region and the
-# pyramid (the owner's "especially ugly") stood in all four. It now picks from a
-# PER-TERRITORY table and dresses whichever ROLE it picked in that territory's
-# materials — exactly the phase-1 prop move, one scale up:
+# The section's banner, its four role builders and its STRUCT_GATE_* / MOUND_*
+# knobs moved to `scripts/terrain_structures.gd` in bead godot-test1-ftn.3. The
+# two tables below did NOT, and the reason is a hard one rather than a
+# preference: they are KEYED BY `Biome`, an enum declared in this file, and a
+# `const` in another script cannot name it (`terrain.Biome.X` resolves on an
+# INSTANCE, which no const initialiser has). A table keyed by the world engine's
+# own enum is world-engine data anyway; `TerrainStructures` reads these two off
+# the terrain it is already handed, and takes the chosen `theme` as a plain
+# parameter exactly as the four role builders always did.
 #
-#   * THE FOUR ROLES ARE FIXED and each keeps its gameplay job. A wall is a
-#     barrier with a walkable ridge; a corridor is a lane you sprint down; a gate
-#     is a thing you run under; the mound is the climbable stepped centrepiece
-#     with a platform on top — the pyramid's ROLE, none of its look.
-#   * WHAT CHANGES PER TERRITORY is the mix (which roles come up, and how often),
-#     the palette, and a handful of shape knobs in STRUCTURE_THEMES below. That is
-#     what makes a desert colonnade, a forest log bridge and a mountain fort out of
-#     three lines of table instead of twelve builders.
-#   * ONE rng.randf() PICK DRAW, exactly as before. The biome is read from
-#     chunk_center — a pure function of chunk coords — so choosing the table costs
-#     no draw at all and the dispatch stays post-draw.
-#   * TRIM NEVER GOES ON A WALKABLE TOP. Themed clutter (rubble, moss, cornices,
-#     capstones) is `collide = false` and either beside the structure or a thin
-#     film over it; the box whose top face a platform or a climbable footprint
-#     names is always an untilted, colliding, full-size one. That is prop rule 2
-#     restated for structures, and prop_selfcheck.gd measures it.
-#
-# DRAW-COUNT CONSEQUENCE, stated plainly: the builders draw a different number of
-# randoms than they used to, so a chunk's scattered blocks, crocodiles and coins
-# shuffle relative to the pre-theme world. That is the same licence the biome
-# feature-skip note and the phase-1 prop re-skin already took — WITHIN-RUN purity
-# is the load-bearing half, and it holds unconditionally because every placement
-# is still a pure function of chunk coords + run_seed.
-
-## The gate's three dressings. A `gate_style` in STRUCTURE_THEMES picks one.
-const STRUCT_GATE_ARCH: int = 0   # broken arch: one stunted pillar, a stub lintel
-const STRUCT_GATE_LINTEL: int = 1 # intact monumental gate (+ a cornice if capped)
-const STRUCT_GATE_LOG: int = 2    # a felled giant on two stumps — a WALKABLE deck
-
-## The widest a mound terrace can reach in WORLD X/Z as a fraction of base_size.
-## A terrace is a (w, d) slab turned by up to MOUND_TERRACE_YAW, so its rotated
-## world half-extent is 0.5 * (w * cos + d * sin) — at the base terrace's widest
-## (d == w == base_size) and the full yaw, 0.5 * (cos 0.35 + sin 0.35) = 0.641 of
-## base_size, NOT the 0.5 the unrotated half-width suggests. That difference is up
-## to 2.8 m on a 20 m mound, which is enough to hang a terrace over the chunk seam
-## — and a mound's mesh and collision belong to ONE chunk, so the overhang would
-## vanish the moment that chunk unloaded while its neighbour stayed loaded.
-## 0.65 bounds 0.641 with slack; it stays under the footprint radius factor 0.71,
-## so the obstacle circle is still an honest bound on the stone.
-const MOUND_ROT_EXTENT: float = 0.65
-
-## The most a terrace may be turned. Bounded rather than free because
-## MOUND_ROT_EXTENT above is derived from it — widen one and re-derive the other.
-const MOUND_TERRACE_YAW: float = 0.35
-
-## Lateral wobble (metres) allowed per terrace of a terraced mound. Bounded, not
-## chosen by eye: the mound's footprint radius is base_size * 0.71 and a terrace
-## above the base is at most 0.72 * base_size wide, i.e. 0.51 * base_size of
-## half-diagonal, so 0.9 m of wobble still fits inside the declared radius for the
-## smallest mound the builder can draw (8 m base: 4.07 + 0.9 = 4.97 < 5.68).
-const MOUND_TERRACE_JITTER: float = 0.9
-
-## Mountain chunks build a feature structure a bit less often — massifs already
-## dominate the skyline there, and a fort stub competing with a 20 m wall of rock
-## reads as clutter. THIS IS A THRESHOLD, NOT AN EXTRA ROLL: _structure_chance_at
-## scales the number the ONE existing rng.randf() is compared against, so no draw
-## is inserted anywhere and the gate stays a pure function of chunk coords (the
-## same discipline DESERT_BLOCK_KEEP_EVERY follows for scattered blocks).
-const MOUNTAIN_STRUCTURE_CHANCE_FACTOR: float = 0.55
+# NOTHING ELSE IS ALIASED BACK, and that is a MEASUREMENT rather than a change of
+# heart from bead ftn.2's wholesale re-export: the seven knobs are read nowhere
+# but the builders that moved with them. The palette names below are this file's
+# own TerrainProps aliases, so they read exactly as they did.
 
 ## Cumulative pick thresholds for the four roles, in the order
 ## [wall, corridor, gate, mound]. A role whose band has zero width never comes up
@@ -327,7 +207,7 @@ const STRUCTURE_THEMES: Dictionary = {
 		"cap": Color(0.0, 0.0, 0.0, 0.0),
 		"gap_chance": 0.20, "double_chance": 0.30,
 		"lane_spaced": false, "lintel_chance": 0.0,
-		"gate_style": STRUCT_GATE_ARCH,
+		"gate_style": TerrainStructures.STRUCT_GATE_ARCH,
 	},
 	# DESERT — a temple bleached by the sun. The lane becomes a COLONNADE (column
 	# pairs, half of them still carrying their lintel), which keeps the sprint
@@ -337,7 +217,7 @@ const STRUCTURE_THEMES: Dictionary = {
 		"cap": Color(0.0, 0.0, 0.0, 0.0),
 		"gap_chance": 0.08, "double_chance": 0.10,
 		"lane_spaced": true, "lintel_chance": 0.55,
-		"gate_style": STRUCT_GATE_LINTEL,
+		"gate_style": TerrainStructures.STRUCT_GATE_LINTEL,
 	},
 	# FOREST — overgrown stone and dead wood. The lane is a corridor of standing
 	# dead trunks; the gate is a felled giant you can walk along.
@@ -346,7 +226,7 @@ const STRUCTURE_THEMES: Dictionary = {
 		"cap": PROP_MOSS_CAP,
 		"gap_chance": 0.25, "double_chance": 0.15,
 		"lane_spaced": true, "lintel_chance": 0.0,
-		"gate_style": STRUCT_GATE_LOG,
+		"gate_style": TerrainStructures.STRUCT_GATE_LOG,
 	},
 	# MOUNTAIN — a stone fort. Solid (no gaps), heavily battlemented, capped in
 	# pale slab; no mound, because the massifs are the hills here.
@@ -355,7 +235,7 @@ const STRUCTURE_THEMES: Dictionary = {
 		"cap": PROP_CAIRN,
 		"gap_chance": 0.0, "double_chance": 0.45,
 		"lane_spaced": false, "lintel_chance": 0.0,
-		"gate_style": STRUCT_GATE_LINTEL,
+		"gate_style": TerrainStructures.STRUCT_GATE_LINTEL,
 	},
 	# CITY — a street block. The four roles need no new builder to read as urban:
 	# the SOLID lane (lane_spaced false) is two building faces with an alley
@@ -368,7 +248,7 @@ const STRUCTURE_THEMES: Dictionary = {
 		"cap": CITY_ROOF_TILE,
 		"gap_chance": 0.10, "double_chance": 0.35,
 		"lane_spaced": false, "lintel_chance": 0.0,
-		"gate_style": STRUCT_GATE_LINTEL,
+		"gate_style": TerrainStructures.STRUCT_GATE_LINTEL,
 	},
 	# SNOW — ice cut into blocks and left to weather. The wall is a wind-break with
 	# a snow cornice on every doubled hump (`cap` SNOW_PACK, which is also the free
@@ -383,7 +263,7 @@ const STRUCTURE_THEMES: Dictionary = {
 		"cap": SNOW_PACK,
 		"gap_chance": 0.22, "double_chance": 0.25,
 		"lane_spaced": true, "lintel_chance": 0.0,
-		"gate_style": STRUCT_GATE_ARCH,
+		"gate_style": TerrainStructures.STRUCT_GATE_ARCH,
 	},
 }
 
@@ -459,109 +339,6 @@ const SPAWN_SAFE_RADIUS: float = 25.0
 ## false the hunter stream is never touched at all and every crocodile must come
 ## out where it already was.
 @export var spawn_hunters: bool = true
-
-## The SPECIES row these bodies resolve to, and the scene they wear. Named consts
-## rather than literals at the spawn site because enemy_spawn_selfcheck reads them:
-## the reachability gate in check 4 unions BIOME_SPECIES and BIOME_BOSS, and this
-## is the third door into the world — a row reachable only from here would
-## otherwise be reported as one nothing can spawn.
-const HUNTER_SPECIES: String = "hunter_robot"
-const HUNTER_SCENE := preload("res://scenes/characters/hunter_robot.tscn")
-
-## Chance that a chunk gets a hunter at all — ~1 in 12.5 chunks, dropping to ~1 in
-## 13 once the placement loop's rejections are counted.
-##
-## 0.30 -> 0.15: the predator-density call this const was left provisional for
-## (owner pacing ruling, 2026-08-29), made across the species at once. The hunter
-## carries the widest detection radius in the table (25 m), so at 1-in-3 its discs
-## did more to erase standable ground than its body count suggested. Halved with
-## the ground density, it stays an order of magnitude commoner than the reward
-## family two sections down (chest ~1 in 13, artifact ~1 in 23, landmark ~1 in 40)
-## — it is a THREAT, and a threat you meet once an hour teaches nothing — while
-## leaving whole stretches of walking with no encounter in them.
-##
-## 0.15 -> 0.08 IS THE OWNER'S FIELD CAP, AND IT IS THE HALF THAT DOES THE WORK
-## (bead godot-test1-fhu, owner 2026-09-02: "limit hunters on field with total
-## number 10 (inside HQ doesn't count)"). THE ARITHMETIC, stated here because a
-## number tuned against a residency is meaningless without the residency:
-##
-##   desktop residency = (2 * render_distance + 1)^2 = (2*5 + 1)^2 = 121 chunks
-##   expected hunters  = 121 * 0.08                  = 9.68 bodies
-##   ...minus the placement loop's rejections (river / bubble / stone / tower),
-##      which only ever REMOVE a hunter                <= 9.68 < HUNTER_FIELD_CAP
-##
-## Web (render_distance 3) is 49 chunks, so ~3.9. So the EXPECTED field is under
-## the cap on both platforms without the cap ever having to fire — which is the
-## point: the chance is a pure function of (chunk, run_seed) and the hard cap
-## below is not. `enemy_spawn_selfcheck` check 13a asserts that inequality off
-## these two consts, so a retune that breaks it fails the build.
-const HUNTER_CHANCE: float = 0.08
-
-## The HARD ceiling on hunters standing in the FIELD at once — the owner's ten.
-##
-## WHY THIS IS THE SECOND HALF AND NOT THE ONLY HALF. A live "count the bodies,
-## skip the spawn" cap is NOT a pure function of (chunk, run_seed): it depends on
-## the order chunks happened to load, which is where the player walked. And
-## crocodiles are master-simulated but never network-spawned (CLAUDE.md), so a
-## hunter one peer spawned and the master did not is a local ghost that can still
-## bite you. So the retuned chance above is what actually holds the number down,
-## everywhere and for everybody; this is the backstop for the tail — the walk that
-## happens to cross a dozen lucky chunks.
-##
-## THREE RULES, all of them load-bearing:
-##
-##   * IT IS A POST-DRAW SKIP (CLAUDE.md's rule), placed below every draw in
-##     spawn_hunters_in_chunk, so a capped chunk consumes exactly the stream a
-##     spawning one does and nothing else in the world slides.
-##   * IT COUNTS BY PARENT, NOT BY GROUP. The HQ's guards are in group
-##     "crocodile" like everything else and are parented to the BUILDING, so they
-##     are excluded by asking `tower_shell()` whether it is their ancestor —
-##     "inside HQ doesn't count" is the owner's own clause.
-##   * IT IS OFF IN A ROOM. In a room the retuned chance is the WHOLE cap, and
-##     that ceiling is deliberate: two peers who have walked different routes hold
-##     different body counts, so a live cap would have them disagree about which
-##     hunters exist — the ghost above. Documented, not fixed.
-const HUNTER_FIELD_CAP: int = 10
-
-## Salt for the hunter's independent hash stream, in the ARTIFACT_SALT /
-## CAMP_SALT / CHEST_SALT / LANDMARK_SALT / BIOME_SALT / BOSS_SEED family: an
-## arbitrary fixed constant XORed into run_seed so this stream can never collide
-## with (or perturb) any other deterministic site.
-const HUNTER_SALT: int = 0x40_7E5  # "HUNTER"-ish; arbitrary fixed constant
-
-## Coordinate multiplier primes for the hunter stream, deliberately DIFFERENT from
-## every other stream in this file — object/artifact (73856093 / 19349663), camp
-## (40960001 / 26463089), biome (83492791 / 15485863), croc-roll (179424673 /
-## 32452843), chest (86028121 / 50331653) — so no two streams can correlate on a
-## shared lattice. (These two are the 7,000,000th and 6,000,000th primes.)
-const HUNTER_HASH_PRIME_X: int = 122949829
-const HUNTER_HASH_PRIME_Y: int = 104395301
-
-## Candidate spots tried before giving up on this chunk's hunter. Every try
-## failing means NO hunter — a unit fused into a mountain massif is worse than an
-## empty chunk, and the chance above already absorbs the loss.
-const HUNTER_PLACE_TRIES: int = 6
-
-## Keep candidate spots this far inside the chunk, so a 1.35 m chassis never
-## straddles a seam. A metre more than the crocodile spawner's 3.0, and the reason
-## is the retry budget rather than the body: a crocodile chunk makes up to five
-## attempts PER crocodile and simply finds another spot, while a hunter gets
-## HUNTER_PLACE_TRIES for its single unit and a rejection near a seam costs it one
-## of six. Buying the margin up front is cheaper than spending tries on it.
-const HUNTER_EDGE_MARGIN: float = 4.0
-
-## Spawn height above the flat y = 0 ground, like the crocodile's. The capsule's
-## bottom sits on the body origin (radius == centre y in hunter_robot.tscn), so
-## gravity settles the chassis onto the plane from here.
-const HUNTER_SPAWN_HEIGHT: float = 0.5
-
-## Which slice of _croc_roll_seed's index space a hunter takes. Ground crocodiles
-## use 0, 1, 2, …; platform guards use -1, -2, …; a hunter is the only one of its
-## kind in a chunk and takes this single far-away index, so no two bodies in the
-## same chunk can ever be handed the same size/speed roll seed. (The seed mixes
-## `chunk_pos.x * 179424673 + index`, and 179424673 dwarfs this, so it cannot
-## alias into a neighbouring chunk's slice either.)
-const HUNTER_ROLL_INDEX: int = 100000
 
 # ----------------------------------------------------------------------------
 # THE TOWER SITE — GastroDefense HQ (epic godot-test1-3iy, phase 1)
@@ -713,20 +490,6 @@ const TOWER_INTERIOR_SCENE: PackedScene = preload("res://scenes/tower/tower_inte
 ## of them made the rest spots themselves populated. One in five still means the
 ## high ground has to be read before it is trusted.
 @export var platform_crocodile_chance: float = 0.2
-
-## How far ABOVE a platform's `top` (its tallest stone, NOT the surface it paces)
-## a patrol guard is dropped in, so gravity settles it onto the structure.
-##
-## THIS IS THE PENETRATION DEPTH WHEN THE DROP-IN HEIGHT IS WRONG, which is why
-## it is a named constant rather than a literal at the one call site: a guard
-## dropped from a height that some stone in its own footprint reaches ends up
-## this far INSIDE that stone. See the platform "top" note in spawn_wall.
-const PLATFORM_SPAWN_HEIGHT: float = 0.6
-
-## How far in from a platform's edge the guard's spawn point is drawn, so it
-## lands cleanly on the surface rather than half off it. Read by
-## enemy_spawn_selfcheck.gd, which walks the same inset ellipse at every angle.
-const PLATFORM_SPAWN_EDGE_INSET: float = 1.0
 
 ## Enable/disable collectible coin spawning on terrain
 @export var spawn_coins: bool = true
@@ -1069,477 +832,46 @@ const FIELD_BRIDGE_PYLON_STONE := Color(0.50, 0.50, 0.53)
 ## in the world moved by a single box (check 6's A/B).
 @export var spawn_field_bridges: bool = true
 
-# ----------------------------------------------------------------------------
-# BOSS CROCODILES (deterministic, station-indexed placement along the coin road)
-# ----------------------------------------------------------------------------
-## A boss crocodile stands on the road every BOSS_INTERVAL_STATIONS stations —
-## at 6 m/station that's one boss roughly every 300 m of road. Boss index `i`
-## (1, 2, 3, ...) owns station k = i * BOSS_INTERVAL_STATIONS; station 0 is the
-## player spawn and the road trends +X, so only forward stations get bosses.
-const BOSS_INTERVAL_STATIONS: int = 50
-
-## Size schedule: boss `i` scales the whole croc body by
-## min(BOSS_BASE_SCALE * (1 + (i-1) * BOSS_GROWTH), BOSS_MAX_SCALE)
-## → 3.75, 5.0625, 6.375, 7.6875, 9.0, 9.0, ... Each boss is visibly bigger than the
-## last until the cap. BOSS_BASE_SCALE (3.75x) is clearly bigger than the biggest
-## regular croc's random +25% size roll, so a boss always reads as "not a normal one".
-const BOSS_BASE_SCALE: float = 3.75
-const BOSS_GROWTH: float = 0.35
-const BOSS_MAX_SCALE: float = 9.0
-
-## A small deterministic lateral offset off the centerline (±this, in meters), so
-## bosses don't all stand dead-center on the road like a row of toll booths.
-##
-## WIDENED 4.0 -> 9.0 WITH THE 1.5x SIZE BUMP (bead godot-test1-9k7), and it is
-## the half of that bump that actually cost something. The candidate walk in
-## spawn_bosses_in_chunk rejects any spot within BOSS_FOOTPRINT_RADIUS_PER_SCALE
-## * scale of an obstacle — 6.3 m at the new 9x cap where it was 4.2 m at 6x — so
-## at the old ±4 m every candidate a boss had lay inside one 8 m-wide window and
-## a single mound near the station killed all of them. MEASURED over 25 seeds /
-## 126 road stations: 105 bosses reached the world at the old scales, 91 at the
-## new ones with this still at 4.0, and 106 with 9.0 + BOSS_PLACE_TRIES 8. More
-## tries alone bought 1 (92) — the band, not the draw count, was the bound.
-##
-## THE CEILING ON THIS NUMBER IS THE CAMP/LANDMARK EXCLUSION, which is one
-## inequality per feature and is stated at CAMP_ROAD_CLEARANCE and
-## LANDMARK_ROAD_CLEARANCE (landmark_selfcheck re-checks its half from the live
-## constants). With BOSS_FORWARD_OFFSET 8.0 the boss's reach off a station centre
-## is hypot(8, 9) = 12.04 m, and the tightest of the two bounds allows
-## 22.0 - 9.5 = 12.5 — i.e. 0.46 m of slack. Raising this further means raising
-## those clearances first.
-const BOSS_LATERAL_MAX: float = 9.0
-
-## Spawn a bit AHEAD of the owning station along the road tangent, so the player
-## sees the boss looming up the road rather than materializing beside them.
-const BOSS_FORWARD_OFFSET: float = 8.0
-
-## How much ground a boss actually occupies, per unit of body scale. The
-## crocodile's collision capsule LIES DOWN (piglet_crocodile.tscn rotates the
-## 1.4 m capsule onto its side), so its widest horizontal reach is half that
-## length — 0.7 m at body scale 1. Multiplying by the boss's scale is the whole
-## point: a 9x boss (BOSS_MAX_SCALE) needs ~6.3 m of clearance from a block where
-## a normal crocodile needs ~0.7, so the fixed min_object_clearance that the
-## ordinary crocodile spawner uses would be far too small here.
-const BOSS_FOOTPRINT_RADIUS_PER_SCALE: float = 0.7
-
-## How many deterministic lateral candidates a boss tries before it is skipped
-## entirely (the same "try a few spots, else give up" shape as artifacts). Every
-## candidate comes from the SAME BOSS_SEED stream and the FIRST one is exactly
-## the draw that existed before this list did, so the boss schedule (which
-## station, what size) and the placement of every unobstructed boss are
-## byte-for-byte what they were.
-##
-## 4 -> 8 with the 1.5x size bump, and the honest measurement is that this is the
-## SMALLER half of that fix: at ±4 m lateral, 8 tries bought one extra boss over
-## 126 stations. It is worth having beside the widened BOSS_LATERAL_MAX (which
-## bought 8 more) because the two multiply — a wider band with too few draws
-## samples it too sparsely — but 12 tries bought only one further boss (107), so
-## this is where the curve flattens.
-const BOSS_PLACE_TRIES: int = 8
-
-## Fixed seed for the boss placement RNG — its OWN independent hash stream (like
-## ROAD_COIN_SEED), mixed with the boss index and run_seed as
-## hash(Vector3i(i, BOSS_SEED, run_seed)). It never consumes a draw from any
-## existing chunk/coin/croc RNG sequence, so adding bosses regenerates the rest
-## of the procedural world byte-for-byte identically.
-const BOSS_SEED: int = 0xB0_55  # "BOSS"-ish; arbitrary fixed constant
-
-## Fixed salt for the per-crocodile SIZE/SPEED roll seed — its OWN independent
-## hash stream (the BOSS_SEED / ARTIFACT_SALT / CAMP_SALT pattern). See
-## _croc_roll_seed() below: it consumes ZERO draws from the crocodile spawner's
-## RNG, so every crocodile's POSITION is byte-for-byte what it was before the
-## rolls were determinized — only the size/speed a crocodile rolls for itself
-## changed, from "randomize() per instance" to "a pure function of chunk coords,
-## croc index and run_seed".
-const CROC_ROLL_SALT: int = 0xC20_C  # "CROC"-ish; arbitrary fixed constant
 
 # ----------------------------------------------------------------------------
-# ARTIFACTS (rare deterministic "lost civilization" landmarks, off the road)
+# THE PRIVATE-STREAM FEATURES — the three feature flags
 # ----------------------------------------------------------------------------
-##
-## An artifact is a rare, weathered landmark (a leaning monolith, a broken arch,
-## a stone circle, a half-buried colossus head, a spiral of steps) built entirely
-## from the same block primitives as ordinary chunk scenery — its stone rides the
-## chunk's MultiMesh + BlockCollision body, so it costs zero extra draw calls.
-## Placement uses its OWN independent hash stream (the BOSS_SEED / ROAD_COIN_SEED
-## pattern): a private RNG seeded from chunk coords + run_seed ^ ARTIFACT_SALT.
-## It consumes NO draw from the shared chunk RNG, so on the ~19 of 20 chunks
-## without an artifact the generated world is byte-for-byte identical to before.
-##
-## The determinism contract, spelled out:
-## - INDEPENDENT STREAM: _artifact_at() is a pure function of chunk coords +
-##   run_seed. No draw from the shared chunk RNG is consumed, inserted, or
-##   moved — every existing block/crocodile/coin stays exactly where it was.
-## - WITHIN A RUN: a revisited chunk regenerates the identical artifact (same
-##   shape, same spot, same stones), just like blocks and crocodile positions.
-## - ACROSS RUNS: new_run() re-rolls run_seed, so artifacts land elsewhere —
-##   run 2 is a fresh world, artifacts included.
-## - PER-CHUNK PARENTING: everything an artifact spawns (accents, coins, gem)
-##   is a child of the chunk MeshInstance3D, so it unloads with the chunk and
-##   nothing leaks.
-## - RENDER SPLIT: all SOLID geometry routes through create_box into the
-##   chunk's single MultiMesh + single BlockCollision body (zero extra draws,
-##   zero extra bodies); only the GLOW accents are real MeshInstance3Ds — at
-##   most ARTIFACT_MAX_ACCENTS of them, cast_shadow OFF.
-##
-## Honest deferral: an optional proximity "shimmer" hum per artifact was
-## SKIPPED. sound_manager.get_loop_player() returns a non-positional
-## AudioStreamPlayer, so a per-artifact 3D hum would need a new positional
-## audio path plus a per-frame proximity scan against artifact centres —
-## out of proportion to the quiet polish it buys.
-
-## Kill switch, mirrors spawn_coins / spawn_crocodiles.
+# These three stayed when the families moved (bead godot-test1-ftn.4): an
+# `@export` is inspector-facing world-engine configuration and a static library
+# has no inspector, so they sit with `spawn_crocodiles` and the rest of the
+# flags. `TerrainFeatures` reads them off the terrain it is handed.
 @export var spawn_artifacts: bool = true
-
-## Per-chunk chance of ROLLING an artifact, before the candidate loop rejects
-## spots on the road, in a river, or on stone already in the chunk. Measured
-## survival across a 61x61 field is 59.5%, so 0.08 lands ~1 built artifact per 24
-## chunks — the same rarity the 0.05 roll produced when placement was unchecked
-## and the one-per-15-to-25 target band. Retuned alongside the overlap test: with
-## rejections added and the chance left at 0.05 the rate fell to 1 per 38.
-## Rarity is also the draw-call budget (see ARTIFACT_MAX_ACCENTS below).
-const ARTIFACT_CHANCE: float = 0.08
-
-## Fixed salt XORed into run_seed for the artifact hash stream — same spirit as
-## BOSS_SEED / ROAD_COIN_SEED: an arbitrary constant that keeps this stream
-## independent of every other deterministic spawn site.
-const ARTIFACT_SALT: int = 0xA27_1FA
-
-## Candidate spots tried inside a chunk before giving up (a try is rejected when
-## it lands too close to the coin road, in a river, or on stone that is already
-## there — see spawn_artifact_in_chunk, which owns the loop).
-const ARTIFACT_PLACE_TRIES: int = 4
-
-## Placement radius (metres) — the WIDEST footprint any of the five shapes can
-## return, used by the candidate test because the real radius is only known once
-## the builder has run. Bounded by the stone circle, the widest of the five:
-##     stone circle: ring_r (4..6) + 1.0        -> 7.0   <- the max
-##     arch:         radius (fixed 5.0) + 1.0   -> 6.0
-##     spiral:       spiral_r (3..4) + 1.2      -> 5.2
-##     colossus head: 3.2      monolith: 2.5
-## Must stay under ARTIFACT_EDGE_MARGIN (12) or an artifact could straddle a chunk
-## seam. Retune any builder's radius and this moves with it.
-const ARTIFACT_RADIUS: float = 7.0
-
-## Minimum lateral distance from the road centerline. The widest coin band
-## half-width is road_width_max * 0.5 = 10, so 14 keeps artifacts clear of the
-## coin swath (never on the road, always a deliberate detour) while still
-## leaving them visible from it.
-const ARTIFACT_ROAD_CLEARANCE: float = 14.0
-
-## Keeps the whole artifact inside its chunk so nothing straddles a seam
-## (an artifact is spawned and parented by exactly one chunk).
-const ARTIFACT_EDGE_MARGIN: float = 12.0
-
-## Weathered stone palette — deliberately DISTINCT from the curated block ramps
-## (ChunkBatch's RAMP_SANDSTONE_* / RAMP_SLATE_* / RAMP_MOSS_*): neutral greys
-## plus a dead-moss green, no warm sandstone undertone, no blue slate. The point
-## is that an artifact reads as "from another age" next to ordinary blocks.
-const ARTIFACT_STONE_A := Color(0.40, 0.41, 0.39)
-const ARTIFACT_STONE_B := Color(0.60, 0.61, 0.58)
-const ARTIFACT_MOSS := Color(0.33, 0.40, 0.30)
-const ARTIFACT_MOSS_MAX: float = 0.35  # max lerp toward moss per stone
-
-## Emissive accent glow: cold cyan — nothing else in the world is this colour.
-## main.tscn has glow_enabled with glow_hdr_threshold = 0.85, so an emission
-## energy of 3.0 pushes the accents over the threshold and they bloom for free.
-const ARTIFACT_GLOW_COLOR := Color(0.45, 0.95, 1.0)
-const ARTIFACT_GLOW_ENERGY: float = 3.0
-
-## Hard cap on real emissive MeshInstance3Ds per artifact — the draw-call
-## budget. Accents can't join the block MultiMesh (one shared non-emissive
-## material), so each is a real instance; rarity × this cap keeps the worst
-## case on screen to a handful of extra unshadowed draws.
-const ARTIFACT_MAX_ACCENTS: int = 4
-
-## Coin reward: 2-4 ordinary coins ring the artifact's base (ring radius =
-## footprint radius + a pad in [PAD_MIN, PAD_MAX]) plus exactly one gem at the
-## centre — the incentive to detour off the coin road.
-##
-## 3-5 -> 2-4 with every other reward pair, bead godot-test1-7ed (owner, 2026-09-02:
-## "scale down amount of coins, 30% less"). The GEM is untouched: it is the
-## artifact's whole distinction, and one is already the minimum a thing can pay.
-const ARTIFACT_COIN_MIN: int = 2
-const ARTIFACT_COIN_MAX: int = 4
-const ARTIFACT_COIN_RING_PAD_MIN: float = 1.5
-const ARTIFACT_COIN_RING_PAD_MAX: float = 4.0
-
-# ----------------------------------------------------------------------------
-# NOMAD CAMPS (rare dome-hut villages of caravan herders, off the road)
-# ----------------------------------------------------------------------------
-##
-## A camp is a loose circle of 3-6 white/bone DOME huts (an igloo read, built from
-## stacked shrinking box tiers) around a dark stone fire pit with one glowing
-## ember, plus crates/bundles and tether posts. It is the ARTIFACTS section's twin
-## in every structural way — its own independent hash stream, all solid geometry
-## through create_box into the chunk's ONE MultiMesh + ONE BlockCollision body,
-## one emissive MeshInstance3D for the ember — and differs only in flavour:
-##
-## - PALETTE: bone white huts + dark stone + weathered wood. Deliberately distinct
-##   from BOTH the warm RAMP_* block ramps (sandstone/slate/olive) AND the
-##   artifacts' desaturated grey-green: a camp should read as "someone LIVES here",
-##   not "ruins".
-## - EMBER: warm ORANGE, where the artifacts' accents are cold cyan. Two glows,
-##   two meanings, no ambiguity at a distance.
-## - NO GEM: a camp pays a couple of ordinary scattered coins. The guaranteed gem
-##   stays the artifacts' distinction, so the two landmark types keep separate
-##   reward identities.
-## - CALM POCKET: the camp's single round footprint is what keeps crocodiles out
-##   (see spawn_camp_in_chunk) — the herders' home is a place to breathe.
-##
-## Determinism contract: identical to the artifact one — pure function of chunk
-## coords + run_seed, ZERO draws from the shared chunk RNG, so the ~30 of 31 chunks
-## without a camp regenerate byte-for-byte as they did before camps existed.
-
-## Kill switch, mirrors spawn_artifacts / spawn_biome_content / spawn_coins.
 @export var spawn_camps: bool = true
-
-## Per-chunk chance of hosting a camp, BEFORE the placement rejections in
-## spawn_camp_in_chunk. Those rejections are severe and that is why this number
-## looks large: a camp needs a CAMP_RADIUS (9.4 m) circle clear of the ~12
-## scattered blocks a chunk already holds, and 12 exclusion discs of radius
-## (9 + block radius) cover more than a chunk's area, so most tries lose. Measured
-## over 5 x 121 startup chunks with the roll forced to 1.0: 14% of rolled camps
-## survive all four tries (overlap rejects ~86% of failures, road and river the
-## rest). 0.18 x 14% ≈ ONE CAMP PER 31 CHUNKS as actually built — measured over
-## 8 x 121 chunks at this value, 31 camps — against the artifacts' ~1 per 24, so
-## a village still reads as the rarer find. Retune by MEASURING, not by algebra:
-## the survival rate depends on the block density the biome mix produces.
-## (Those runs were measured at CAMP_RADIUS 9.0; the 9.4 it takes to bound the
-## huts is marginally stricter, so the built rate is a shade under 1 in 31.)
-const CAMP_CHANCE: float = 0.18
-
-## Fixed salt XORed into run_seed for the camp hash stream — same spirit as
-## ARTIFACT_SALT / BIOME_SALT / BOSS_SEED / ROAD_COIN_SEED: an arbitrary constant
-## that keeps this stream independent of every other deterministic spawn site.
-const CAMP_SALT: int = 0xCA_1117  # "CAMP"-ish; arbitrary fixed constant
-
-## Candidate spots tried inside a chunk before giving up. The tries live in
-## spawn_camp_in_chunk, not in _camp_at, so each one is judged by _biome_spot_ok
-## against the finished obstacle list — the test that actually rejects. Kept at 4:
-## raising it to 16 was measured at 36% survival vs 14%, but four cheap tries plus
-## a higher CAMP_CHANCE reaches the same built rate, and letting crowded chunks
-## lose is what puts camps in open ground where a village belongs.
-const CAMP_PLACE_TRIES: int = 4
-
-## Radius of the camp circle: the fire pit sits at the centre and the huts ring
-## it, so this covers the whole village plus a walking margin. It MUST cover the
-## widest hut on the outermost ring, because the same number is both the
-## placement test (_biome_spot_ok) and the footprint appended afterwards:
-##     CAMP_HUT_RING_MAX + (CAMP_HUT_WIDTH_MAX * 0.71 + 0.3)
-##     6.5              + (3.6 * 0.71 + 0.3) = 9.36    <= 9.4  ✓
-## At 9.0 the outer third of a metre of hut stone stood in ground the placement
-## test never checked; 9.4 makes the circle a true bound, which is also why no
-## per-hut footprint is appended (spawn_camp_in_chunk, step 5).
-const CAMP_RADIUS: float = 9.4
-
-## Minimum lateral distance from the coin-road centerline.
-##
-## INVARIANT — "no boss ever stands inside a camp". The camp test measures the
-## distance to STATION CENTRES (that is all _road_lateral_distance computes), and
-## a boss does NOT stand on its station centre: _boss_at offsets it
-## BOSS_FORWARD_OFFSET (8.0 m) along the tangent AND up to BOSS_LATERAL_MAX
-## (9.0 m) across it. Both legs must appear in the bound, or the invariant is
-## checked against a number 8 m smaller than the real one:
-##     CAMP_ROAD_CLEARANCE > CAMP_RADIUS + sqrt(BOSS_FORWARD_OFFSET^2 + BOSS_LATERAL_MAX^2)
-##     22.0                > 9.4         + sqrt(8.0^2 + 9.0^2) = 9.4 + 12.04 = 21.44  ✓
-## i.e. 0.56 m of slack — it was 3.66 before bead godot-test1-9k7 widened the
-## lateral band from 4.0 to 9.0 to find spots for a 9x boss. (The landmark's
-## copy of this inequality is tighter still, 0.46 m, and is the one that binds.)
-## (The real
-## clearance is larger still — stations are only _road_spacing() 6 m apart, so
-## the boss is in practice closer to its NEAREST station centre than the
-## hypotenuse says — but the hypotenuse is the bound that holds without assuming anything
-## about station spacing.) That inequality is the WHOLE boss exclusion —
-## spawn_bosses_in_chunk needs no edit and no extra test. Re-check this line if
-## ANY of the four constants named in it is retuned, BOSS_FORWARD_OFFSET included.
-##
-## 22 also clears the widest coin swath (road_width_max * 0.5 = 10 m) by a wide
-## margin, so camp coins can never be confused with road coins.
-const CAMP_ROAD_CLEARANCE: float = 22.0
-
-## Keeps the whole camp inside its own chunk so no hut straddles a seam (same rule
-## as ARTIFACT_EDGE_MARGIN). MUST exceed CAMP_RADIUS: 12.0 > 9.4 ✓.
-## With chunk_size 50 that still leaves a 26x26 m placement box.
-const CAMP_EDGE_MARGIN: float = 12.0
-
-## --- Hut geometry: an igloo read from 2-3 stacked, shrinking box tiers.
-const CAMP_HUT_MIN: int = 3
-const CAMP_HUT_MAX: int = 6
-const CAMP_HUT_RING_MIN: float = 4.0   # hut distance from the fire pit
-const CAMP_HUT_RING_MAX: float = 6.5
-const CAMP_HUT_WIDTH_MIN: float = 2.6  # widest (ground) tier
-const CAMP_HUT_WIDTH_MAX: float = 3.6
-const CAMP_HUT_TIER_MIN: int = 2
-const CAMP_HUT_TIER_MAX: int = 3
-const CAMP_HUT_TIER_HEIGHT: float = 0.9   # each tier's height
-const CAMP_HUT_TIER_SHRINK: float = 0.62  # each tier's width vs the one below
-const CAMP_HUT_YAW_JITTER: float = 0.25   # per-tier yaw wobble (radians)
-## Door height MUST stay under CAMP_HUT_TIER_HEIGHT (0.9): the doorway sits on
-## the ground tier's outer face, and the tier above is narrower (TIER_SHRINK), so
-## anything taller than one tier pokes out over the roofline as a dark nub.
-const CAMP_HUT_DOOR_SIZE := Vector3(0.7, 0.8, 0.5)
-
-## --- Fire pit: a ring of small dark stones + one emissive ember at the centre.
-const CAMP_FIRE_STONES: int = 7
-const CAMP_FIRE_RING_RADIUS: float = 1.1
-const CAMP_FIRE_STONE_SIZE := Vector3(0.45, 0.35, 0.45)
-const CAMP_EMBER_SIZE := Vector3(0.6, 0.35, 0.6)
-
-## --- Props: crates/bundles and tall thin tether posts on a ring between the
-## fire and the huts.
-const CAMP_CRATE_MIN: int = 3
-const CAMP_CRATE_MAX: int = 6
-const CAMP_CRATE_SIZE_MIN: float = 0.5
-const CAMP_CRATE_SIZE_MAX: float = 0.9
-const CAMP_POST_MIN: int = 2
-const CAMP_POST_MAX: int = 3
-const CAMP_POST_SIZE := Vector3(0.22, 1.8, 0.22)
-const CAMP_PROP_RING_MIN: float = 2.0
-const CAMP_PROP_RING_MAX: float = 4.0
-
-## --- Palette. Bone white for the hut shells (a spot on A→B per tier), near-black
-## stone for the fire ring, weathered brown for wood. See the banner above: this
-## is deliberately neither the warm RAMP_* ramps nor the artifacts' grey-green.
-const CAMP_HUT_A := Color(0.88, 0.87, 0.82)
-const CAMP_HUT_B := Color(0.74, 0.73, 0.69)
-const CAMP_STONE := Color(0.22, 0.21, 0.20)
-const CAMP_WOOD := Color(0.42, 0.31, 0.20)
-
-## Ember glow: WARM ORANGE (the artifacts' accents are cold cyan). main.tscn's
-## glow_hdr_threshold is 0.85, so an energy of 2.5 blooms for free.
-const CAMP_EMBER_COLOR := Color(1.0, 0.55, 0.18)
-const CAMP_EMBER_ENERGY: float = 2.5
-
-## Coin reward: a couple of scattered coins near the fire. NO gem — see the banner.
-## 2-4 -> 1-3, the 30% reward trim of bead godot-test1-7ed.
-const CAMP_COIN_MIN: int = 1
-const CAMP_COIN_MAX: int = 3
-
-# ----------------------------------------------------------------------------
-# TREASURE CHESTS (small, common, opened on touch for a coin shower)
-# ----------------------------------------------------------------------------
-##
-## The third landmark in the artifact / camp family, and deliberately the SMALLEST
-## and COMMONEST of the three — a snack, not a monument. The reward hierarchy is
-## the whole reason each exists at its own rarity:
-##
-##   artifact  ~1 chunk in 23  huge ruin, 2-4 coins AND the one guaranteed GEM
-##   camp      ~1 chunk in 31  a whole village, 1-3 coins, no gem
-##   chest     ~1 chunk in 13  a 1.3 m box, 6-11 coins in a burst, NO GEM
-##
-## A chest gets NO gem for exactly the reason a camp gets none: the guaranteed gem
-## is the artifacts' distinction, and handing one to the commonest landmark in the
-## world would flatten "an ancient prize worth a detour" into "a box I walked past".
-##
-## Structurally this is the artifact/camp recipe with nothing added:
-##   - _chest_at()          the rarity roll ALONE, on its own independent hash
-##                          stream (CHEST_SALT + its own coordinate primes), so it
-##                          consumes ZERO draws from the shared chunk RNG.
-##   - spawn_chest_in_chunk() holds the candidate loop, because that is the only
-##                          place `obstacles` exists — see _chest_at's docstring
-##                          for why putting the loop in the roll is the bug both
-##                          artifacts and camps had to have moved out of it.
-##   - all wood and brass goes through create_box into the chunk's ONE MultiMesh
-##     and ONE BlockCollision body, so a chest costs ZERO extra draw calls and
-##     ZERO extra physics bodies. Its single non-batched node is the open trigger.
-##
-## OPENED STATE IS PER-RUN AND CHUNK-LOCAL, ON PURPOSE. A chest is rebuilt closed
-## when its chunk unloads and regenerates — there is no opened-chest registry.
-## That is exactly what ROAD COINS already do (they respawn with their chunk too),
-## and the road's strictly-increasing X (see the coin-road section) makes walking
-## far enough backwards to re-farm a chest a deliberate, slow act rather than an
-## accident. A registry would need per-run persistence keyed by a stable chest id
-## and would buy nothing a player would notice; skipped.
-
-## Kill switch, mirroring spawn_artifacts / spawn_camps.
 @export var spawn_chests: bool = true
 
-## Probability that a chunk ROLLS a chest. This is NOT the built rate: the
-## candidate loop below rejects spots that are in a river, too near the coin road,
-## or overlapping stone already in the chunk.
-##
-## MEASURED (throwaway headless generator sweep, 41x41 = 1681 chunks, run_seed
-## 12345): 136 chunks rolled a chest and 134 BUILT one — 98.5% survival, i.e.
-## 1 built chest per 12.5 chunks, inside the intended 1-in-12-to-15 band.
-##
-## Survival is that high because CHEST_RADIUS (1.5 m) is a sixth of a camp's 9.4
-## and a fifth of an artifact's 7.0: the overlap test, which rejects 86% of camp
-## candidates, almost never fires on something this small, and four tries make the
-## remaining road/river rejections cheap. Survival barely moves with the chance, so
-## the built rate scales essentially linearly — 0.05 would give ~1 in 20, 0.14 ~1
-## in 7. Note 0.08 is coincidentally the same number as ARTIFACT_CHANCE and means
-## something completely different there: an artifact survives placement only 59.5%
-## of the time, so the same roll yields 1 in 23.
-const CHEST_CHANCE: float = 0.08
-
-## Salt for the chest's independent hash stream, in the ARTIFACT_SALT / CAMP_SALT /
-## BIOME_SALT / BOSS_SEED family: an arbitrary fixed constant XORed into run_seed so
-## this stream can never collide with (or perturb) any other deterministic site.
-const CHEST_SALT: int = 0xC4_E57  # "CHEST"-ish; arbitrary fixed constant
-
-## Coordinate multiplier primes for the chest stream, deliberately DIFFERENT from
-## every other stream in this file — object/artifact (73856093 / 19349663), camp
-## (40960001 / 26463089), biome (83492791 / 15485863) and croc-roll (179424673 /
-## 32452843) — so no two streams can correlate on a shared lattice.
-const CHEST_HASH_PRIME_X: int = 86028121
-const CHEST_HASH_PRIME_Y: int = 50331653
-
-## Candidate spots tried before giving up on this chunk's chest. Every try failing
-## means NO chest — a chest fused into a mountain massif is worse than no chest, and
-## a higher CHEST_CHANCE reaches the same built rate.
-const CHEST_PLACE_TRIES: int = 4
-
-## Footprint radius, and the value handed to _biome_spot_ok as "the widest this
-## could be". The chest box is 1.3 x 0.9 m, whose rotated half-diagonal is 0.79 m;
-## 1.5 rounds that generously up so a chest never quite touches a neighbouring
-## block, and it is also the radius of the obstacle appended to `obstacles`
-## (crocodile spawn rejection + the road-coin perch rule).
-const CHEST_RADIUS: float = 1.5
-
-## Minimum distance from the coin-road CENTERLINE. Equal to road_width_max / 2
-## (10 m), the outer edge of the widest coin scatter band, so a chest is never
-## standing in the middle of the trail you are already following — it always sits
-## at the swath's edge or beyond, which is what makes finding one feel like
-## looking around rather than walking forward. A road coin CAN still perch on the
-## lid at the exact boundary; that is harmless because the chest footprint is
-## climbable (see spawn_chest_in_chunk).
-const CHEST_ROAD_CLEARANCE: float = 10.0
-
-## Keep candidate spots this far inside the chunk. MUST exceed CHEST_RADIUS (1.5)
-## so no chest box straddles a seam, and it also exceeds TreasureChest's
-## TRIGGER_RADIUS (2.0) so the whole pickup volume stays in its own chunk.
-const CHEST_EDGE_MARGIN: float = 4.0
-
-## Chest geometry (metres). The body is a squat box, the lid a slab tilted open.
-const CHEST_BODY_SIZE := Vector3(1.3, 0.75, 0.9)
-const CHEST_LID_SIZE := Vector3(1.36, 0.26, 0.96)
-## How far the lid leans back off the body, radians about its local X axis. Enough
-## to read as "already ajar" at a distance without looking knocked off.
-const CHEST_LID_TILT_MIN: float = 0.35
-const CHEST_LID_TILT_MAX: float = 0.6
-## The brass band across the chest's waist. Visual only (collide = false) — it is
-## 6 cm of trim and the body box underneath already carries the collision.
-const CHEST_BAND_SIZE := Vector3(1.34, 0.14, 0.94)
-
-## Palette — dark oiled wood and warm brass, deliberately distinct from the warm
-## RAMP_* block ramps, the artifacts' grey-green stone and the camps' bone white.
-const CHEST_WOOD := Color(0.30, 0.19, 0.11)
-const CHEST_BRASS := Color(0.72, 0.55, 0.20)
-
-## Payout: how many SINGLE-coin awards a chest pays, and over how long. The count
-## is drawn from the chest's own seeded RNG, so it is deterministic within a run.
-## See treasure_chest.gd for why this is N x collect_coin(1) and never
-## collect_coin(N): the streak machinery counts pickups, not value.
-## 8-15 -> 6-11, the 30% reward trim of bead godot-test1-7ed.
-const CHEST_COINS_MIN: int = 6
-const CHEST_COINS_MAX: int = 11
-## Comfortably inside the player's STREAK_WINDOW (2.5 s), so the whole burst is
-## one unbroken streak chain.
-const CHEST_BURST_DURATION: float = 0.8
-
-## The chest's one non-batched node.
-const TREASURE_CHEST_SCRIPT := preload("res://scripts/treasure_chest.gd")
+# ----------------------------------------------------------------------------
+# THE PRIVATE-STREAM FEATURES — what anything outside the family still reads
+# ----------------------------------------------------------------------------
+# The artifacts, the nomad camps and the treasure chests moved to
+# `scripts/terrain_features.gd` in bead godot-test1-ftn.4, salts and coordinate
+# primes with them. These seventeen names are aliased back because each is read
+# from OUTSIDE that family — the three SALTs by landmark_builders.gd and
+# landmark_toast.gd, the three CHEST_* by treasure_chest.gd and mp_manager.gd,
+# and the rest by spawners still here. Measured, not assumed: the other
+# fifty-nine constants are read nowhere but the builders that moved with them,
+# so they are not re-exported. `species_table.gd`'s precedent.
+const ARTIFACT_SALT := TerrainFeatures.ARTIFACT_SALT
+const ARTIFACT_RADIUS := TerrainFeatures.ARTIFACT_RADIUS
+const ARTIFACT_ROAD_CLEARANCE := TerrainFeatures.ARTIFACT_ROAD_CLEARANCE
+const ARTIFACT_EDGE_MARGIN := TerrainFeatures.ARTIFACT_EDGE_MARGIN
+const ARTIFACT_GLOW_COLOR := TerrainFeatures.ARTIFACT_GLOW_COLOR
+const ARTIFACT_GLOW_ENERGY := TerrainFeatures.ARTIFACT_GLOW_ENERGY
+const ARTIFACT_MAX_ACCENTS := TerrainFeatures.ARTIFACT_MAX_ACCENTS
+const CAMP_SALT := TerrainFeatures.CAMP_SALT
+const CAMP_ROAD_CLEARANCE := TerrainFeatures.CAMP_ROAD_CLEARANCE
+const CAMP_EDGE_MARGIN := TerrainFeatures.CAMP_EDGE_MARGIN
+const CAMP_EMBER_COLOR := TerrainFeatures.CAMP_EMBER_COLOR
+const CAMP_EMBER_ENERGY := TerrainFeatures.CAMP_EMBER_ENERGY
+const CHEST_SALT := TerrainFeatures.CHEST_SALT
+const CHEST_ROAD_CLEARANCE := TerrainFeatures.CHEST_ROAD_CLEARANCE
+const CHEST_COINS_MIN := TerrainFeatures.CHEST_COINS_MIN
+const CHEST_COINS_MAX := TerrainFeatures.CHEST_COINS_MAX
+const CHEST_BURST_DURATION := TerrainFeatures.CHEST_BURST_DURATION
 
 # ----------------------------------------------------------------------------
 # GEO LANDMARKS (rare recognizable famous places)
@@ -2408,69 +1740,6 @@ const CITY_BALCONY_CHANCE: float = 0.42
 ## reading as one period.
 const CITY_BLOCK_STOREY_JITTER: int = 1
 
-## THE DANUBE'S CROCODILES — the one predator the city rect does NOT turn off,
-## and the whole reason the spawner policy is per-system instead of one
-## tower_excludes() disc (DEC-9). Pest gets no cacti, no camps and no biome
-## predators; the river gets crocodiles, because the owner's standing rule is
-## "river -> crocodile" (it is what _boss_row_at already answers on a wet
-## station) and a 240 m band of empty water reads as scenery rather than as a
-## crossing you have to think about.
-##
-## ITS OWN HASH STREAM, for the reason stated five times in this file already:
-## the chunk's crocodile RNG is one shared sequence, and a single extra draw
-## taken from it slides every crocodile in the world. Own salt, own coordinate
-## primes, the ARTIFACT_SALT / CAMP_SALT / HUNTER_SALT family — and
-## budapest_selfcheck's A/B measures it the way enemy_spawn_selfcheck check 12
-## measures the hunter's.
-const DANUBE_SALT: int = 0xDA_11BE  # "DANUBE"-ish; arbitrary fixed constant
-
-## Coordinate multiplier primes for the Danube stream, DIFFERENT from every other
-## stream in this file — object/artifact (73856093 / 19349663), camp (40960001 /
-## 26463089), biome (83492791 / 15485863), croc-roll (179424673 / 32452843),
-## chest (86028121 / 50331653), hunter (122949829 / 104395301) — so no two
-## streams can correlate on a shared lattice.
-const DANUBE_HASH_PRIME_X: int = 141650939
-const DANUBE_HASH_PRIME_Y: int = 175961107
-
-## Chance a wet chunk gets crocodiles at all, and how many it may hold. Higher
-## than any land rarity roll on purpose: the river is a THREAT LINE across the
-## middle of the city, and one you can wade through unopposed half the time is
-## not one.
-const DANUBE_CROC_CHANCE: float = 0.55
-const DANUBE_CROC_MAX: int = 2
-
-## How far off a DRY RECT a Danube crocodile has to stand, and it is the ONE
-## obstacle test this spawner has.
-##
-## A bridge's STONE OVERHANGS ITS DECK. The Margaret Bridge's cutwaters are 10 m
-## boxes turned 45 degrees at z = +/-13 off a deck rect only 32 m deep, so their
-## corners reach 20.07 m out on Z against the rect's 16 — 4.07 m of solid, colliding
-## stone standing in open water. The Chain Bridge's tower piers overhang by 0.5 m
-## the same way. `danube_wet()` answers true there (it is off the rect), so the
-## per-body re-test that keeps a crocodile off the DECK does not keep it out of the
-## PIER, and it is reachable: chunk (2425, -675) is wet and its candidate square
-## covers the western cutwater's overhang.
-##
-## Every sibling spawner rejects a candidate standing in stone against `obstacles`;
-## this one cannot, because a city landmark's footprint is ONE disc up to 156 m
-## across and passing the list would empty the whole reach of the river. So the
-## test is the deck rect grown by the widest measured overhang plus a body's width
-## instead — bounded, allocation-free, and in WORLD space, which matters because
-## the box in the way may be owned by the neighbouring chunk (the centre rule homes
-## a landmark box by its own centre, not by where it reaches).
-const DANUBE_CROC_DECK_MARGIN: float = 8.0
-
-## Which slice of the spawn-slot index space the Danube takes — for BOTH the
-## node name and _croc_roll_seed, one number because they are one identity.
-##
-## The name keeps the "Crocodile_" prefix (croc_id_for hashes it; the four
-## prefixes are the whole naming scheme enemy_spawn_selfcheck classifies by), and
-## the two spawners are mutually exclusive by construction anyway —
-## spawn_crocodiles_in_chunk returns before drawing anything inside the rect. The
-## index base is belt-and-braces on top of that exclusion, so re-enabling ground
-## crocodiles here could never claim a name twice.
-const DANUBE_SLOT_BASE: int = 500
-
 ## THE CITY'S PER-CHUNK CEILINGS — what a Budapest chunk is allowed to cost.
 ##
 ## A chunk in Pest is an ordinary chunk: ONE MultiMesh, ONE collision body, built
@@ -2910,6 +2179,19 @@ const CITY_HOUSE_HEIGHT_MAX: float = 2.6
 const CITY_ROOF_EAVES: float = 0.25
 const CITY_ROOF_THICKNESS: float = 0.14
 
+## THE ROOF'S RISE, as a fraction of the roofed DEPTH (bead godot-test1-y1o.5).
+## A `BoxKind.WEDGE` roof needs a height to be a pitch at all, and this is where
+## it comes from: it is DERIVED from the house the roof is going on, so it costs
+## no RNG draw (a draw here would slide every later object in the chunk) and a
+## deep house gets a deep roof rather than every roof being the same slab.
+##
+## 0.34 of the depth is a ~34-degree pitch, which is the terraced-town read the
+## band is after; steeper starts looking alpine and flatter stops reading as a
+## pitch at play distance. The house's CLIMBABLE top is unchanged — it is the
+## HULL's, and the roof is `collide = false` trim above it — so this number moves
+## nothing in the gameplay contract, only the silhouette.
+const CITY_ROOF_RISE_FACTOR: float = 0.34
+
 ## HOUSE — the widest footprint a house can claim, used as the "widest this could
 ## be" radius handed to _biome_spot_ok before the real width is drawn:
 ## 0.5 * hypot(W_MAX + 2*EAVES, W_MAX + 2*EAVES) = 0.5 * hypot(4.9, 4.9) = 3.47.
@@ -2939,15 +2221,6 @@ const CITY_LIGHT_MAST_WIDTH: float = 0.20
 const CITY_LIGHT_LAMP: float = 0.22       # one signal lamp box, a side
 const CITY_LIGHT_RADIUS_MAX: float = 0.95
 const CITY_SIGNAL_CHANCE: float = 0.55    # else a lamp post
-
-## CITY — the crocodile TARGET is divided by this in the city band. Owner call
-## (2026-08-26): a city is not croc-free, it is quieter. This is a DESIGN number
-## exactly like DESERT_BLOCK_KEEP_EVERY and the distance gradient, not a perf
-## trim, so the "entity counts are never reduced as an optimization" convention is
-## intact. Like the desert's, it lowers a TARGET and inserts NO RNG DRAW anywhere:
-## the surviving crocodiles are byte-for-byte the FIRST target/N of the undivided
-## stream, in the same positions, with the tail simply not spawned.
-const CITY_CROC_DIVISOR: float = 2.5
 
 # ============================================================================
 # WHICH PREDATOR A BIOME GETS
@@ -2990,7 +2263,7 @@ const BIOME_SPECIES: Dictionary = {
 	## The forest is the one band that already crowds the player's SIGHT — it is
 	## the densest tree cover in the world — so it is the right one to put an
 	## enemy in that crowds their SPACE. The wolf's pack steering (see
-	## piglet_crocodile_ai.pack_steer_point) has each animal swing to its own slot
+	## croc_steering.pack_steer_point) has each animal swing to its own slot
 	## on a ring, and trunks are what make that read: the wolf you lost behind one
 	## is the wolf arriving from the side.
 	Biome.FOREST: {
@@ -3002,7 +2275,7 @@ const BIOME_SPECIES: Dictionary = {
 	## the ice you can climb onto. It is also the most OPEN ground in the world (a
 	## handful of dead trees per chunk and a lot of nothing between them), which is
 	## the one place a straight-line charger belongs: the frost bear's committed
-	## charge (see piglet_crocodile_ai.charge_steer_point) is only fair if you can
+	## charge (see croc_steering.charge_steer_point) is only fair if you can
 	## see it coming and have somewhere to step, and both of those are what open
 	## ground is. The forest is the exact inverse — put this animal among trunks
 	## and it would spend its life shouldering into them.
@@ -3013,7 +2286,7 @@ const BIOME_SPECIES: Dictionary = {
 	## A massif band is a MAZE — impassable block walls with long straight
 	## corridors between them (see the MOUNTAIN section: mountains are things you
 	## route around, never terrain you climb). That is the one place a burst
-	## predator belongs. The cougar's pounce (see piglet_crocodile_ai's
+	## predator belongs. The cougar's pounce (see croc_steering's
 	## burst_cycle_factor) is the only thing in this game that goes above
 	## MAX_CHASE_SPEED, and it is only fair where a corridor gives you the sight
 	## line to see it start and the walls give its recovery leg somewhere to break
@@ -3151,7 +2424,7 @@ const BIOME_BOSS: Dictionary = {
 ## record climbable footprints and everything the builder below adds does not.
 ##
 ## THE BUILDER ADDS THE BIG, SPARSE THINGS ONLY. Ice rocks and drifts are SCATTERED
-## PROPS (the phase-1 machinery — see _prop_ice_rock and friends), because they are
+## PROPS (the phase-1 machinery — see TerrainProps' _prop_ice_rock and friends), because they are
 ## exactly the 0.7-1.8 m clutter the bare cubes used to be. What lives here is what
 ## a prop cannot be: a 4 m dead tree, and a skeleton the size of a small building.
 
@@ -3349,7 +2622,8 @@ var road_k_max: int = 0
 ## Memoized result of _road_terminal_k() — the last station at or west of
 ## ROAD_TERMINAL_X. It is a pure function of run_seed and the road config (both
 ## constant within a run) and EVERY road consumer asks for it, so it is computed
-## once and reset in new_run() beside the station cache it is derived from.
+## once and dropped by `_drop_seeded_memos()` beside the station cache it is
+## derived from — see there for why that lives under the SEED WRITE.
 ##
 ## The sentinel is a station index nothing can legitimately be: the cache grows
 ## contiguously outward from station 0 and a run would have to walk ~10^9
@@ -3359,8 +2633,8 @@ var _road_terminal_k_cache: int = ROAD_TERMINAL_K_UNSET
 
 ## Memoized field bridges, keyed by ANCHOR STATION index — `{}` for a station
 ## that anchors none, which is most of them (see field_bridge_at). It rides the
-## station cache: derived from it plus the river field, so new_run() clears the
-## two together. Every chunk within a bridge's reach asks the same question, and
+## station cache: derived from it plus the river field, so `_drop_seeded_memos()`
+## clears the two together. Every chunk within a bridge's reach asks the same question, and
 ## the answer costs a walk across the water each time it is not remembered.
 var _field_bridge_cache: Dictionary = {}
 
@@ -3398,13 +2672,14 @@ var _approach_coin_east_end_cache: float = INF
 
 ## Memoized result of _approach_coin_line() — the whole approach + avenue coin
 ## line, resampled by arc length. It rides the TERMINAL STATION, so unlike the
-## east end above it IS seeded, and new_run() resets it beside the terminal cache.
+## east end above it IS seeded, and `_drop_seeded_memos()` drops it beside the
+## terminal cache.
 var _approach_coin_line_cache: PackedVector2Array = PackedVector2Array()
 
 ## Memoized result of _build_landmark_sites() — chunk Vector2i -> LANDMARKS kind,
 ## the whole field landmark placement for this run (see the MUSEUM MILE banner).
 ## It rides the road centreline, so like the two caches above it IS seeded and
-## new_run() resets it beside them. The `_built` flag is separate because an empty
+## `_drop_seeded_memos()` drops it beside them. The `_built` flag is separate because an empty
 ## table is a legitimate answer (spawn_landmarks off, or a degenerate road) and
 ## `is_empty()` alone would rebuild it on every chunk.
 var _landmark_sites_cache: Dictionary = {}
@@ -3893,17 +3168,9 @@ func set_run_seed(value: int) -> void:
 	# the paths of the run you just lost. Hung off the seed write for the same
 	# reason `_tower_reset()` is: every path that starts a world comes through here.
 	_migrated_units.clear()
-	# ...and the MUSEUM MILE, for the same reason and one worse. The site table is
-	# memoized and pure in run_seed, so a table built BEFORE this write survives it
-	# and hands the new world the OLD run's landmarks while every other seed-derived
-	# stream has moved. new_run() resets it too (beside the road cache it is derived
-	# from), but new_run() is not the only door: a multiplayer joiner takes the
-	# master's seed through set_run_seed() after its own _ready() roll, and anything
-	# that streamed a chunk in between has already built the table. THE SEED WRITE IS
-	# THE ONLY PLACE THAT SEES EVERY DOOR — which is exactly why _tower_reset() and
-	# the trail purge hang here too.
-	_landmark_sites_cache = {}
-	_landmark_sites_built = false
+	# ...and every memo that is a pure function of run_seed — the road centreline
+	# and the whole family strung along it. See `_drop_seeded_memos()`.
+	_drop_seeded_memos()
 	var lod := get_tree().get_first_node_in_group("lod_manager") if is_inside_tree() else null
 	if lod != null and lod.has_method("reset_trails"):
 		lod.reset_trails()
@@ -3915,6 +3182,60 @@ func set_run_seed(value: int) -> void:
 	# roll, a restart, a multiplayer peer being handed the room's seed — goes
 	# through here, so none of them can forget.
 	_tower_reset()
+
+
+func _drop_seeded_memos() -> void:
+	"""
+	Drop every memo that is a PURE FUNCTION OF `run_seed`, so the next reader
+	rebuilds it for the world we have just moved to.
+
+	CALLED FROM `set_run_seed()` AND NOWHERE ELSE, which is the whole bead
+	(godot-test1-bvq). These used to be reset in `new_run()` instead, one level
+	up — and `new_run()` is not the only door. `set_run_seed()` is, by CLAUDE.md's
+	rule: it is the ONLY place `run_seed` is written, so it is the only seam that
+	sees `_ready()`'s roll, a restart AND a multiplayer joiner being handed the
+	room's seed after it has already streamed chunks. A memo dropped one level up
+	is a memo the third caller forgets, and this whole family is memoized off the
+	seed exactly like the site table that was moved here first (PR #228). Nothing
+	shipped could reach the bug — `_ready()`'s roll predates any road and the MP
+	path is `new_run()` — which is precisely why it had to be closed before a
+	fourth caller arrived rather than after.
+
+	EVERYTHING HERE IS DERIVED FROM THE ROAD CENTRELINE, which is itself pure in
+	the seed, so they are one family and are reset together — the reason this is
+	one function and not eleven lines copied into every door.
+	"""
+	# The station cache, back to its declared empty state (min > max is the "no
+	# stations" sentinel, so the next `_road_extend_to_x` re-seeds station 0).
+	# Its entries were computed with the OLD seed and would poison the new road:
+	# the cache is "correct forever" only while the seed is constant.
+	road_stations = {}
+	road_k_min = 1
+	road_k_max = 0
+	# The terminal station is derived from that centreline, so it is exactly as
+	# stale: a new seed puts a different station at ROAD_TERMINAL_X. Reset it HERE,
+	# beside what it is derived from, so the two can never be reset apart.
+	_road_terminal_k_cache = ROAD_TERMINAL_K_UNSET
+	# ...and the field bridges, for the same reason one step further out: a
+	# crossing is a station index plus the river field, and both moved. The
+	# corridor's are derived from the terminal station, so they go with them.
+	_field_bridge_cache = {}
+	_field_bridge_wet_cache = {}
+	_approach_bridge_cache = []
+	_approach_bridge_scanned = false
+	# ...and the approach coin line with it: it is resampled off that station.
+	_approach_coin_line_cache = PackedVector2Array()
+	# ...and the MUSEUM MILE: every site is a station index on the centreline
+	# above, so a table kept across a re-seed would string this run's landmarks
+	# along the LAST run's road (see the MUSEUM MILE banner). This is the one that
+	# was already here before the bead, and moving the road beside it is what
+	# makes `landmark_sites_selfcheck` check 1b able to stop clearing the road by
+	# hand and assert the centreline itself instead.
+	_landmark_sites_cache = {}
+	_landmark_sites_built = false
+	# ...and the FIELD_ALTITUDE spike's coarse road polyline, which is a window
+	# onto the same centreline. `update_chunks` rebuilds it for the new world.
+	_alt_road_segs = PackedVector4Array()
 
 
 func _roll_biome_offset() -> void:
@@ -3983,6 +3304,15 @@ func _apply_biome_shader_params() -> void:
 	mat.set_shader_parameter("biome_mountain_max", BIOME_MOUNTAIN_MAX)
 	mat.set_shader_parameter("river_level", RIVER_LEVEL)
 	mat.set_shader_parameter("river_half_width", RIVER_HALF_WIDTH)
+	# THE DEEP CHANNEL's darker centre strip (bead godot-test1-06o.3). Parity in
+	# the ordinary sense: the strip you cannot walk into has to be the strip you
+	# can SEE, and both are readouts of the same normalised depth — the fraction
+	# is pushed rather than restated in GLSL. It shades the NOISE river and the
+	# Danube from the one number. The shader deliberately does NOT run the FORD
+	# exemption (`_deep_channel_ford` — a road-width gap at one refused crossing
+	# in thirty-nine, which would cost a station search per fragment): the tint
+	# says "deep water", the CPU says who may walk it.
+	mat.set_shader_parameter("river_deep_fraction", RIVER_DEEP_FRACTION)
 	mat.set_shader_parameter("biome_blend", BIOME_BLEND)
 	# THE DRY DISC, the GPU half of it: is_river_at() refuses to call the tower's
 	# footprint water, so the shader must refuse to paint it blue. Parity-critical
@@ -4700,7 +4030,7 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# finished obstacles list, and before _build_block_multimesh / the block_body
 	# attach so all its stone and wood joins the chunk's ONE MultiMesh draw call
 	# and ONE collision body.
-	spawn_biome_content_in_chunk(chunk_pos, obstacles, block_batch, block_body)
+	TerrainBiomes.spawn_biome_content_in_chunk(self, chunk_pos, obstacles, block_batch, block_body)
 
 	# Rare nomad camp — a dome-hut village round a fire pit (independent CAMP_SALT
 	# hash stream, no shared RNG draws consumed). SAME ORDERING REQUIREMENT as the
@@ -4823,9 +4153,9 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 
 	# Spawn crocodiles in this chunk if enabled
 	if spawn_crocodiles:
-		spawn_crocodiles_in_chunk(chunk_pos, mesh_instance, obstacles)
+		TerrainPredators.spawn_crocodiles_in_chunk(self, chunk_pos, mesh_instance, obstacles)
 		# Rare crocodiles that patrol an elevated platform (mound summit / wall ridge)
-		spawn_platform_crocodiles(chunk_pos, mesh_instance, platforms)
+		TerrainPredators.spawn_platform_crocodiles(self, chunk_pos, mesh_instance, platforms)
 		# ...and the DANUBE's crocodiles, the one predator the authored city rect
 		# keeps (bead godot-test1-8gw.3, DEC-9). Same flag as its siblings — a
 		# check that turns predators off must turn off all of them — but its own
@@ -4835,12 +4165,12 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 		# which would empty the whole river — and clears stone with its own
 		# danube_wet() re-test at each body plus a deck-rect margin for the pier
 		# and cutwater stone that hangs off a deck (DANUBE_CROC_DECK_MARGIN).
-		spawn_danube_crocodiles_in_chunk(chunk_pos, mesh_instance)
+		TerrainPredators.spawn_danube_crocodiles_in_chunk(self, chunk_pos, mesh_instance)
 		# Rare BOSS crocodiles guarding the coin road (deterministic, station-
 		# indexed — its own BOSS_SEED hash stream, no shared RNG draws consumed).
 		# Gets `obstacles` like its siblings so a 3.75x-9x boss is never wedged
 		# inside a wall/mound/tree/mountain right on the player's path.
-		spawn_bosses_in_chunk(chunk_pos, mesh_instance, obstacles)
+		TerrainPredators.spawn_bosses_in_chunk(self, chunk_pos, mesh_instance, obstacles)
 
 	# GD-SURVEY hunter robots — the corporation's retrieval units, gated on their
 	# OWN flag rather than `spawn_crocodiles` because that flag is also check 12's
@@ -4848,7 +4178,7 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# draw from the crocodile spawner above and every crocodile in the world stands
 	# exactly where it stood before hunters existed. Gets `obstacles` like its
 	# siblings so a 1.35 m chassis is never wedged inside a wall or a massif.
-	spawn_hunters_in_chunk(chunk_pos, mesh_instance, obstacles)
+	TerrainPredators.spawn_hunters_in_chunk(self, chunk_pos, mesh_instance, obstacles)
 
 	# Lay this chunk's slice of the coin road (deterministic station-indexed trail;
 	# coins sit at ground height, perching on a climbable block where the road
@@ -4878,7 +4208,7 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 
 func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> Array:
 	"""
-	Spawns this chunk's ground clutter: themed scattered props (see _build_prop)
+	Spawns this chunk's ground clutter: themed scattered props (see TerrainProps.build_prop)
 	and — sometimes — one themed feature structure (barrier wall / run-through
 	lane / gate / terraced mound, dressed for the territory it stands in).
 
@@ -4940,8 +4270,8 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: 
 	# Scarcity thins feature structures to plain at 4 km — compare the same
 	# roll against chance * k, no new draw.
 	var k_struct := scarcity_at(chunk_center)
-	if rng.randf() < _structure_chance_at(chunk_center) * k_struct:
-		spawn_feature_structure(rng, half_chunk, chunk_center, obstacles, platforms, block_batch, block_body)
+	if rng.randf() < TerrainStructures._structure_chance_at(self, chunk_center) * k_struct:
+		TerrainStructures.spawn_feature_structure(self, rng, half_chunk, chunk_center, obstacles, platforms, block_batch, block_body)
 
 	# Is this a DESERT chunk? A desert keeps only one scattered block in
 	# DESERT_BLOCK_KEEP_EVERY, which is what makes it read as sparse.
@@ -5038,11 +4368,11 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: 
 		var prop_seed := rng.randi()
 		spawned_positions.append(object_pos)
 
-		# Everything below this line runs on the PRIVATE prop RNG. _build_prop is
+		# Everything below this line runs on the PRIVATE prop RNG. TerrainProps.build_prop is
 		# handed no shared rng at all, which is what makes the rule above
 		# structural rather than a discipline somebody has to remember.
-		var prop := _build_prop(
-			Vector3(random_x, 0.0, random_z), size, prop_seed, chunk_center, block_batch, block_body
+		var prop := TerrainProps.build_prop(
+			self, Vector3(random_x, 0.0, random_z), size, prop_seed, chunk_center, block_batch, block_body
 		)
 
 		# Record the footprint exactly as the bare cube did — same keys, same
@@ -5061,1477 +4391,7 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: 
 
 	return obstacles
 
-func _structure_chance_at(chunk_center: Vector3) -> float:
-	"""
-	How likely THIS chunk is to get a feature structure.
 
-	@param chunk_center: World-space centre of the chunk.
-	@return: structure_chance, scaled down in the mountain band.
-
-	A THRESHOLD, NOT A ROLL. spawn_objects_in_chunk still draws exactly one
-	rng.randf() and compares it against this number, so no draw is inserted or
-	removed anywhere and the shared chunk stream is untouched by the biome —
-	the same discipline DESERT_BLOCK_KEEP_EVERY follows by lowering a TARGET
-	rather than rolling per candidate. biome_at is a pure function of world
-	position, so the gate stays a pure function of chunk coords + run_seed.
-
-	The consequence when the gate DOES reject is the documented one: the whole
-	structure's draw sequence is skipped, so that mountain chunk's scattered
-	blocks land differently than they would have. Within-run purity is unharmed.
-	"""
-	if biome_at(chunk_center.x, chunk_center.z) == Biome.MOUNTAIN:
-		return structure_chance * MOUNTAIN_STRUCTURE_CHANCE_FACTOR
-	return structure_chance
-
-func _structure_stone(theme: Dictionary, rng: RandomNumberGenerator) -> Color:
-	"""
-	One solid box's colour, sampled off this territory's two-colour ramp.
-
-	@param theme: A STRUCTURE_THEMES row.
-	@param rng: The chunk's seeded RNG — one draw, so the sequence cost of a
-	            themed box is a constant the builders can reason about.
-	@return: The colour to hand create_box as its color_override.
-
-	One lerp off a curated pair, exactly like the RAMP_* blocks it replaces —
-	so a structure varies stone to stone without any territory's structures
-	ever sharing a colour with another's. prop_selfcheck.gd measures that: it
-	requires every emitted colour to lie on its own theme's segment, and the
-	four segments to be pairwise distinct.
-	"""
-	var a: Color = theme["stone_a"]
-	var b: Color = theme["stone_b"]
-	return a.lerp(b, rng.randf())
-
-func spawn_feature_structure(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vector3, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""
-	Pick and build one "feature" structure for variety, dressed in the territory
-	it stands in: a barrier wall, a run-through lane, a gate, or a terraced mound.
-	Walls, mounds and the forest's log bridge also register a walkable top
-	(platforms) that a patrolling crocodile can be placed on.
-
-	@param rng: The chunk's seeded RNG (so the choice is deterministic)
-	@param half_chunk: Half the chunk width, for bounds
-	@param chunk_center: World-space centre of the chunk. TWO jobs: it picks the
-	                  territory (a pure function of chunk coords, so choosing the
-	                  mix and the palette costs no RNG draw), and each builder
-	                  turns its chunk-LOCAL centre into a world position for the
-	                  river test — structures never stand in the water.
-	@param obstacles: Footprint list each piece is appended to (crocodiles + coins)
-	@param platforms: Walkable-top descriptors for patrolling crocodiles
-	@param block_batch: Out-param threaded down to create_box for MultiMesh batching
-	@param block_body: The chunk's shared block-collision body, threaded down to
-	                  create_box so each block's shape hangs on it (Task 5)
-
-	THE MAYAN STEP-PYRAMID IS GONE and is not coming back here. The owner called
-	it out as the ugliest thing in the field, and the ROLE it played — a climbable
-	stepped centrepiece with a flat platform top — is now spawn_terraced_mound's.
-	A properly-built Giza trio exists, in the geo-landmark registry
-	(landmark_builders.gd), where a named recognizable DESTINATION belongs;
-	territories stay anonymous ambience. Don't reintroduce a "nicer pyramid" here.
-
-	EDUCATIONAL NOTE — the river rule for structures: a structure is placed as ONE
-	object, so it gets ONE test, on its chosen centre, taken right after the draws
-	that produced that centre. A footprint-vs-band intersection test would be more
-	precise and much fiddlier for a band that winds; a centre test is enough to keep
-	walls and mounds out of the water, which is all the rule is for.
-
-	ONE PICK DRAW, POST-DRAW DISPATCH. The `rng.randf()` below is the same single
-	draw the global table used; only the thresholds it is compared against are now
-	per-territory (STRUCTURE_MIX). A band of zero width is how mountain declines
-	the mound with no special case here.
-	"""
-	var biome := biome_at(chunk_center.x, chunk_center.z)
-	var theme: Dictionary = STRUCTURE_THEMES[biome]
-	var mix: Array = STRUCTURE_MIX[biome]
-
-	var pick := rng.randf()
-	if pick < mix[0]:
-		spawn_wall(rng, half_chunk, chunk_center, theme, obstacles, platforms, block_batch, block_body)
-	elif pick < mix[1]:
-		spawn_corridor(rng, half_chunk, chunk_center, theme, obstacles, block_batch, block_body)
-	elif pick < mix[2]:
-		spawn_gate(rng, half_chunk, chunk_center, theme, obstacles, platforms, block_batch, block_body)
-	else:
-		spawn_terraced_mound(rng, half_chunk, chunk_center, theme, obstacles, platforms, block_batch, block_body)
-
-func spawn_terraced_mound(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vector3, theme: Dictionary, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""
-	Build a terraced mound — the climbable stepped centrepiece that REPLACES the
-	Mayan step-pyramid. A plains ruin mound, a desert mesa, a forest tor: 2-4 wide
-	irregular terraces, each yawed and nudged off the one below, with a flat top
-	you can stand on.
-
-	@param rng: The chunk's seeded RNG
-	@param half_chunk: Half the chunk width, for bounds
-	@param chunk_center: World centre of the chunk, for the river test on the base
-	@param theme: This territory's STRUCTURE_THEMES row
-	@param obstacles: Footprint list (one entry for the whole base, with the top
-	                  height as its top so a coin can perch up there)
-	@param platforms: Gets the flat top registered as a patrol platform
-	@param block_batch: Out-param threaded down to create_box for MultiMesh batching
-	@param block_body: The chunk's shared block-collision body (Task 5)
-
-	WHY THIS IS NOT A PYRAMID, in the two ways that matter:
-	  * FEW, WIDE terraces (2-4, each 1.2-2.2 m) instead of 3-15 thin concentric
-	    slabs. That is what makes it read as a weathered hill rather than a temple.
-	  * Every terrace is a NON-SQUARE slab carrying its own yaw and a lateral
-	    nudge, so no two edges line up and there is no axis to sight down.
-
-	WHAT IT KEEPS, because these are the pyramid's gameplay job and not its look:
-	  * ONE round footprint of radius base_size * 0.71 with the summit as its top.
-	    That radius stays well above MOUNTAIN_AVOID_RADIUS (2.0) at every drawable
-	    base size (8 m base -> 5.68 m), so a massif still refuses to grow through a
-	    mound exactly as it refused to grow through a pyramid.
-	  * A PLATFORM at the summit, so patrol crocodiles keep their perch.
-	  * A CLIMBABLE ladder: terrace height is drawn at or under PROP_MAX_STEP, so
-	    every step up is inside the player's jump arc. prop_selfcheck.gd measures
-	    the emitted boxes rather than trusting this comment.
-	"""
-	# Bases run from a modest hummock to a real mesa. Terraces are FEW and TALL,
-	# which is the whole difference from a ziggurat.
-	var base_size := rng.randf_range(8.0, 20.0)
-	var terraces := rng.randi_range(2, 4)
-	# Capped at PROP_MAX_STEP: a terrace taller than the jump arc turns the
-	# "climbable" footprint into a lie and floats any road coin that perches on it.
-	var terrace_h := minf(rng.randf_range(1.2, 2.2), PROP_MAX_STEP)
-
-	# Keep the whole base inside the chunk. The jitter allowance is in the bound
-	# because an upper terrace may sit that far off the base's centre.
-	# The ROTATED extent, not the half-width — see MOUND_ROT_EXTENT for why the
-	# difference is load-bearing at a chunk seam.
-	var limit := half_chunk - (base_size * MOUND_ROT_EXTENT + 1.0 + MOUND_TERRACE_JITTER)
-	if limit <= 0.0:
-		return  # chunk too small for this mound; skip it
-	var cx := rng.randf_range(-limit, limit)
-	var cz := rng.randf_range(-limit, limit)
-
-	# No mounds in the water (centre test, taken right after the centre draws).
-	# ...and none on the tower's site, judged with `half_chunk` as the extent: a
-	# structure never leaves its own chunk by construction (see the `limit`
-	# above), so half a chunk is a conservative bound on how far its blocks reach.
-	if is_river_at(chunk_center + Vector3(cx, 0.0, cz)) \
-			or tower_excludes(chunk_center.x + cx, chunk_center.z + cz, half_chunk):
-		return
-
-	var y := 0.0
-	var w := base_size
-	var top_span := base_size * 0.5   # the summit slab's own half-width (for the cap)
-	var top_half := base_size * 0.5   # the largest AXIS-ALIGNED square inside it
-	var top_x := cx
-	var top_z := cz
-
-	for i in terraces:
-		# The base terrace sits square on the spot so the footprint circle is
-		# honest; everything above it wanders.
-		var jx := 0.0
-		var jz := 0.0
-		if i > 0:
-			jx = rng.randf_range(-MOUND_TERRACE_JITTER, MOUND_TERRACE_JITTER)
-			jz = rng.randf_range(-MOUND_TERRACE_JITTER, MOUND_TERRACE_JITTER)
-		var d := w * rng.randf_range(0.78, 1.0)
-		# YAW, never tilt: a yawed box still presents a flat top to stand on,
-		# which is what the climb ladder and the patrol platform both need.
-		var yaw := rng.randf_range(-MOUND_TERRACE_YAW, MOUND_TERRACE_YAW)
-		create_box(
-			Vector3(cx + jx, y + terrace_h * 0.5, cz + jz), Vector3(w, terrace_h, d), yaw,
-			rng, block_batch, block_body, 0.0, _structure_stone(theme, rng)
-		)
-		y += terrace_h
-		# THE PLATFORM MUST BE MEASURED IN THE SLAB'S OWN YAW FRAME. set_confinement
-		# clamps a patrol crocodile against WORLD X/Z extents, but the summit slab is
-		# turned by `yaw`, so the largest axis-aligned square that really fits inside
-		# a (w, d) box turned by yaw has half-extent min(w, d)/2 / (|cos| + |sin|) —
-		# the corner of the square projects onto BOTH box axes. Take the plain
-		# half-width and a guard paces off the corner of a yawed summit and falls:
-		# measured before this divisor, a 11.34 x 9.87 slab at yaw 0.087 registered
-		# 4.63 m of half-extent whose corner reached 5.02 m along the slab's own Z,
-		# past its 4.93 m half-depth.
-		top_span = minf(w, d) * 0.5
-		top_half = top_span / (absf(cos(yaw)) + absf(sin(yaw)))
-		top_x = cx + jx
-		top_z = cz + jz
-		w *= rng.randf_range(0.58, 0.72)
-
-	# A thin themed film over the summit — snow-pale slab on a mountain fort's
-	# stub, moss on a forest tor. collide = false, so it cannot raise or roughen
-	# the surface the platform and the climbable footprint both name.
-	var cap: Color = theme["cap"]
-	if cap.a > 0.0:
-		create_box(
-			Vector3(top_x, y + 0.06, top_z), Vector3(top_span * 1.9, 0.12, top_span * 1.9),
-			rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, cap, false
-		)
-
-	# Fallen stone shed off the terraces, ringed OUTSIDE the base slab but inside
-	# the declared footprint radius, so it never obstructs the climb.
-	var trim: Color = theme["trim"]
-	for _i in 3:
-		var ts := base_size * rng.randf_range(0.05, 0.09)
-		var ta := rng.randf_range(0.0, TAU)
-		var ring := base_size * 0.58
-		create_box(
-			Vector3(cx + cos(ta) * ring, ts * 0.4, cz + sin(ta) * ring),
-			Vector3(ts, ts * 0.8, ts * 1.2), rng.randf_range(0.0, TAU),
-			rng, block_batch, block_body, rng.randf_range(-0.4, 0.4), trim, false
-		)
-
-	# One footprint for the whole base; top = summit height. Mounds are climbable
-	# via their terraces, so a coin on the summit is reachable (just a climb).
-	#
-	# ponytail: ONE CIRCLE WITH ONE TOP is the whole vocabulary the coin and
-	# crocodile rules speak (the same ceiling CLAUDE.md records for landmarks), so
-	# a road coin landing near the rim is perched at the SUMMIT height with only
-	# the base terrace under it. That is inherited from the pyramid, not
-	# introduced here, and it is the cheaper end of it: measured over 25x25 chunks
-	# x 4 seeds, perched road coins with no floor under them went 15 -> 13 and the
-	# worst air gap 4.43 m -> 2.86 m (coins buried IN stone stayed 0). The real fix
-	# is a richer footprint (per-tier tops, or a solid-centre height) in
-	# _settle_coin_y, which every landmark, camp and artifact would have to learn
-	# — deliberately out of this bead.
-	obstacles.append({ "pos": Vector3(cx, 0, cz), "radius": base_size * 0.71, "top": y, "climbable": true })
-
-	# Register the flat summit as a patrol platform (if it's big enough to stand on).
-	# `top` equals `center.y` here — the summit slab IS the tallest SOLID thing in
-	# its own footprint (the themed cap above it is collide = false, and the fallen
-	# trim is ringed outside the slab), so the patrol guard's drop-in height is the
-	# surface height. A wall's is not; see the platform "top" note in spawn_wall
-	# for why the two are separate fields at all.
-	var plat_half := top_half - 0.3
-	if plat_half > 0.4:
-		platforms.append({ "center": Vector3(top_x, y, top_z), "half": Vector2(plat_half, plat_half), "top": y })
-
-func spawn_gate(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vector3, theme: Dictionary, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""
-	Build a gate: two uprights with a beam across the top, leaving an opening to
-	walk through. The territory decides which KIND of gate:
-
-	  * STRUCT_GATE_LINTEL (desert, mountain) — the shipped monumental gate. The
-	    pillars are about as tall as a full jump, so reaching the coin that perches
-	    on the lintel is genuinely hard: hop onto a pillar, then up onto the beam.
-	    That's intentional "hard to reach" gameplay and is deliberately NOT held to
-	    the PROP_MAX_STEP climb rule.
-	  * STRUCT_GATE_ARCH (plains) — the same gate, broken: one pillar stunted, the
-	    beam a stub that no longer spans the opening.
-	  * STRUCT_GATE_LOG (forest) — a felled giant across two stumps. The deck is
-	    low and wide enough to be a WALKABLE TOP, so this one registers a patrol
-	    platform and a climbable perch, and its whole height stays inside
-	    PROP_MAX_STEP so you can hop straight onto it from the ground.
-
-	@param rng: The chunk's seeded RNG
-	@param half_chunk: Half the chunk width, for bounds
-	@param chunk_center: World centre of the chunk, for the river test on the gate
-	@param theme: This territory's STRUCTURE_THEMES row
-	@param obstacles: Footprint list (pillars, plus a perch on the beam)
-	@param platforms: Gets the log bridge's deck registered as a patrol platform
-	@param block_batch: Out-param threaded down to create_box for MultiMesh batching
-	@param block_body: The chunk's shared block-collision body (Task 5)
-	"""
-	var style := int(theme["gate_style"])
-	var log_bridge := style == STRUCT_GATE_LOG
-
-	var pillar_w := rng.randf_range(1.3, 1.8)
-	# ONE height draw for every style, scaled rather than re-drawn, so the draw
-	# count does not depend on the territory. A log bridge's stumps are low: the
-	# 0.40 factor puts the finished deck at 1.98-2.54 m, i.e. inside PROP_MAX_STEP
-	# (2.6) and therefore mountable from flat ground in a single hop.
-	var pillar_h := rng.randf_range(2.7, 3.1)
-	if log_bridge:
-		pillar_h *= 0.40
-	var depth := rng.randf_range(1.3, 2.0)
-	if log_bridge:
-		depth *= 1.15  # a giant trunk is deep enough to walk along
-	var opening := rng.randf_range(3.0, 4.5)
-	var lintel_h := rng.randf_range(0.9, 1.3)
-	var total_w := opening + 2.0 * pillar_w  # full span across both uprights
-
-	# A broken arch loses one upright to time. Drawn unconditionally so the
-	# sequence is style-independent; only used by the arch.
-	var stunt := rng.randf_range(0.5, 0.72)
-	var stub := rng.randf_range(0.45, 0.7)
-
-	# Pillars are separated along X (and you walk through along Z) or vice-versa.
-	var along_x := rng.randf() < 0.5
-
-	# Conservative bound that fits the gate whichever way it's turned.
-	var limit := half_chunk - (total_w * 0.5 + 1.0)
-	if limit <= 0.0:
-		return
-	var cx := rng.randf_range(-limit, limit)
-	var cz := rng.randf_range(-limit, limit)
-
-	# No gates in the water (centre test, taken right after the centre draws).
-	# ...and none on the tower's site, judged with `half_chunk` as the extent: a
-	# structure never leaves its own chunk by construction (see the `limit`
-	# above), so half a chunk is a conservative bound on how far its blocks reach.
-	if is_river_at(chunk_center + Vector3(cx, 0.0, cz)) \
-			or tower_excludes(chunk_center.x + cx, chunk_center.z + cz, half_chunk):
-		return
-
-	# Distance from the gate centre to each pillar's centre.
-	var half_span := opening * 0.5 + pillar_w * 0.5
-
-	for pillar_sign in 2:
-		var s := -1.0 if pillar_sign == 0 else 1.0
-		var px: float = cx + (s * half_span if along_x else 0.0)
-		var pz: float = cz + (0.0 if along_x else s * half_span)
-		# The broken arch's second upright is a stump.
-		var ph := pillar_h
-		if style == STRUCT_GATE_ARCH and pillar_sign == 1:
-			ph *= stunt
-		# Pillar is pillar_w across the span axis and `depth` across the other.
-		var pillar_dims: Vector3 = Vector3(pillar_w, ph, depth) if along_x else Vector3(depth, ph, pillar_w)
-		create_box(
-			Vector3(px, ph * 0.5, pz), pillar_dims, 0.0,
-			rng, block_batch, block_body, 0.0, _structure_stone(theme, rng)
-		)
-		# Each pillar is its own footprint, so crocodiles can still pass through
-		# the opening between them.
-		# `guarded` only for the log bridge — it is the one gate style that registers
-		# a patrol deck, so it is the one whose stone a massif must keep off.
-		obstacles.append({ "pos": Vector3(px, 0, pz), "radius": maxf(pillar_w, depth) * 0.71, "top": ph, "climbable": true, "guarded": log_bridge })
-
-	# The beam. An arch's is a shortened stub pushed back over the tall upright;
-	# every style keeps it UNTILTED, because a tilted beam has no flat top and the
-	# perch footprint below promises one.
-	var beam_w := total_w
-	var beam_shift := 0.0
-	if style == STRUCT_GATE_ARCH:
-		beam_w = total_w * stub
-		beam_shift = -(total_w - beam_w) * 0.5  # slid onto the surviving pillar
-	var beam_dims: Vector3 = Vector3(beam_w, lintel_h, depth) if along_x else Vector3(depth, lintel_h, beam_w)
-	var beam_x: float = cx + (beam_shift if along_x else 0.0)
-	var beam_z: float = cz + (0.0 if along_x else beam_shift)
-	create_box(
-		Vector3(beam_x, pillar_h + lintel_h * 0.5, beam_z), beam_dims, 0.0,
-		rng, block_batch, block_body, 0.0, _structure_stone(theme, rng)
-	)
-
-	var beam_top := pillar_h + lintel_h
-
-	# A cornice over an intact lintel — collide = false, so it can never raise the
-	# surface the perch footprint (and, for a log bridge, the platform) names.
-	var cap: Color = theme["cap"]
-	if cap.a > 0.0 and not log_bridge:
-		var cornice: Vector3 = Vector3(beam_w * 1.06, 0.16, depth * 1.2) if along_x else Vector3(depth * 1.2, 0.16, beam_w * 1.06)
-		create_box(
-			Vector3(beam_x, beam_top + 0.08, beam_z), cornice, 0.0,
-			rng, block_batch, block_body, 0.0, cap, false
-		)
-
-	# Register the beam centre as a coin perch. For a log bridge it is a genuine
-	# rest spot one hop off the ground; for the other styles it is the shipped
-	# deliberately-awkward one.
-	obstacles.append({ "pos": Vector3(beam_x, 0, beam_z), "radius": 1.0, "top": beam_top, "climbable": true, "guarded": log_bridge })
-
-	# THE LOG BRIDGE IS THE ONE GATE WITH A WALKABLE DECK, so it is the one gate
-	# that feeds spawn_platform_crocodiles. Half-extents are the beam's own, inset
-	# so a patrol never paces off the end.
-	#
-	# `top` equals `center.y` here — the beam IS the tallest solid thing in its own
-	# footprint, and the one thing that could stand above it (the cornice) is built
-	# only for a NON-log-bridge gate, so it can never be over this deck. See the
-	# platform "top" note in spawn_wall for why the field exists at all: the patrol
-	# guard is dropped in from it, and a `top` that under-declares its stone puts
-	# the guard inside that stone.
-	if log_bridge:
-		var half_along := beam_w * 0.5 - 0.4
-		var half_across := depth * 0.5 - 0.3
-		var deck_half: Vector2 = Vector2(half_along, half_across) if along_x else Vector2(half_across, half_along)
-		if half_along > 1.0 and half_across > 0.2:
-			platforms.append({ "center": Vector3(beam_x, beam_top, beam_z), "half": deck_half, "top": beam_top })
-
-func spawn_corridor(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vector3, theme: Dictionary, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""
-	Build a corridor: two parallel two-block-high sides with a gap between them
-	that the player can sprint down. THE LANE IS THE POINT — it is the one feature
-	structure with movement value, so every territory's re-dress keeps a clear
-	run-through, and only the SIDES change:
-
-	  * solid walls (plains ruin lane, mountain fort passage), or
-	  * COLUMN PAIRS with `lane_spaced` (a desert temple colonnade, a forest
-	    corridor of standing dead trunks), some of them still bridged overhead by
-	    a portico beam.
-
-	@param rng: The chunk's seeded RNG
-	@param half_chunk: Half the chunk width, for bounds
-	@param chunk_center: World centre of the chunk, for the river test on the
-	                  corridor's midpoint
-	@param theme: This territory's STRUCTURE_THEMES row
-	@param obstacles: Footprint list each block is appended to
-	@param block_batch: Out-param threaded down to create_box for MultiMesh batching
-	@param block_body: The chunk's shared block-collision body (Task 5)
-	"""
-	var block_size := rng.randf_range(1.8, 2.4)
-	var step := block_size * 0.98
-	var length := rng.randi_range(wall_min_length + 1, wall_max_length + 1)
-	# Width of the walkable gap between the two sides.
-	var gap := rng.randf_range(2.5, 4.0)
-
-	var along_x := rng.randf() < 0.5
-	var limit := half_chunk - 2.0
-
-	# Trim the corridor if it's longer than the chunk can hold.
-	var span := (length - 1) * step
-	if span > 2.0 * limit:
-		length = int(floor((2.0 * limit) / step)) + 1
-		span = (length - 1) * step
-
-	# Bail if the chunk can't fit the corridor's width.
-	if limit - gap * 0.5 <= -limit + gap * 0.5:
-		return
-	var start := rng.randf_range(-limit, limit - span)
-	# Centreline of the corridor on the perpendicular axis.
-	var center_perp := rng.randf_range(-limit + gap * 0.5, limit - gap * 0.5)
-
-	# No corridors in the water. The corridor's centre is the midpoint of its run
-	# along one axis and the centreline on the other (centre test, taken right
-	# after the draws that fixed both).
-	var mid_along := start + span * 0.5
-	var corridor_center: Vector3 = Vector3(mid_along, 0.0, center_perp) if along_x else Vector3(center_perp, 0.0, mid_along)
-	# ...and none on the tower's site, judged with `half_chunk` as the extent: a
-	# structure never leaves its own chunk by construction (see the `limit`
-	# above), so half a chunk is a conservative bound on how far its blocks reach.
-	if is_river_at(chunk_center + corridor_center) \
-			or tower_excludes(chunk_center.x + corridor_center.x, chunk_center.z + corridor_center.z, half_chunk):
-		return
-
-	var spaced: bool = theme["lane_spaced"]
-	var gap_chance: float = theme["gap_chance"]
-	var lintel_chance: float = theme["lintel_chance"]
-	var trim: Color = theme["trim"]
-
-	for i in length:
-		# A colonnade stands on every OTHER slot — that is what turns the same
-		# loop into columns instead of a wall, at the cost of no extra draw.
-		if spaced and i % 2 == 1:
-			continue
-
-		var along := start + i * step
-		# A ruin is missing pieces. Post-draw skip, exactly like the scatter
-		# loop's river test: the draw has already happened, so nothing shifts.
-		var fallen := rng.randf() < gap_chance
-
-		for side_sign in 2:
-			var side := -1.0 if side_sign == 0 else 1.0
-			var perp := center_perp + side * gap * 0.5
-			var x := along if along_x else perp
-			var z := perp if along_x else along
-
-			if fallen:
-				# Rubble where the section came down: visual-only, and no
-				# footprint, because nothing solid stands here any more.
-				var rs := block_size * rng.randf_range(0.28, 0.42)
-				create_box(
-					Vector3(x, rs * 0.4, z), Vector3(rs, rs * 0.75, rs * 1.15),
-					rng.randf_range(0.0, TAU), rng, block_batch, block_body,
-					rng.randf_range(-0.45, 0.45), trim, false
-				)
-				continue
-
-			# Two blocks tall so it reads as an enclosed passage. Sheer and taller
-			# than a jump, so it's not climbable (no coins perch on the roof).
-			create_box(
-				Vector3(x, block_size * 0.5, z), Vector3(block_size, block_size, block_size), 0.0,
-				rng, block_batch, block_body, 0.0, _structure_stone(theme, rng)
-			)
-			create_box(
-				Vector3(x, block_size * 1.5, z), Vector3(block_size, block_size, block_size), 0.0,
-				rng, block_batch, block_body, 0.0, _structure_stone(theme, rng)
-			)
-			obstacles.append({ "pos": Vector3(x, 0, z), "radius": block_size * 0.71, "top": 2.0 * block_size, "climbable": false })
-
-		# A portico beam bridging the pair, well above head height so the sprint
-		# lane is untouched. NO FOOTPRINT: footprints model ground occupancy and
-		# there is nothing on the ground under a beam — a crocodile walks under it
-		# and a road coin may sit beneath it, both correctly.
-		if spaced and not fallen and lintel_chance > 0.0 and rng.randf() < lintel_chance:
-			var beam_span := gap + block_size
-			var beam_dims: Vector3 = Vector3(block_size * 0.8, block_size * 0.55, beam_span) if along_x else Vector3(beam_span, block_size * 0.55, block_size * 0.8)
-			var bx := along if along_x else center_perp
-			var bz := center_perp if along_x else along
-			create_box(
-				Vector3(bx, 2.0 * block_size + block_size * 0.275, bz), beam_dims, 0.0,
-				rng, block_batch, block_body, 0.0, _structure_stone(theme, rng)
-			)
-
-func spawn_wall(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vector3, theme: Dictionary, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""
-	Build a single barrier wall — a line of touching blocks the player must run
-	around — somewhere inside the chunk, dressed in this territory's stone: a
-	broken-backed plains ruin, a low desert temple wall, an overgrown forest wall,
-	a solid battlemented mountain fort wall.
-
-	@param rng: The chunk's seeded RNG (so the wall is deterministic)
-	@param half_chunk: Half the chunk width, for bounds
-	@param chunk_center: World centre of the chunk, for the river test on the
-	                  wall's midpoint
-	@param theme: This territory's STRUCTURE_THEMES row
-	@param obstacles: Footprint list to append each wall block to (for crocodiles)
-	@param platforms: Gets the wall ridge registered as a patrol platform
-	@param block_batch: Out-param threaded down to create_box for MultiMesh batching
-	@param block_body: The chunk's shared block-collision body (Task 5)
-
-	THE RIDGE PLATFORM IS THE LONGEST UNBROKEN RUN, not the whole span, and that
-	is the one behavioural change a ruined wall forced. A doubled hump is fine to
-	pace over (the shipped comment's point — the guard's feelers turn it back), but
-	a MISSING segment is a hole, and a crocodile confined to a ridge box spanning
-	one would walk into thin air. So the run is broken by gaps only; a territory
-	with gap_chance 0 registers exactly the ridge it always did.
-	"""
-	# Uniform block size so the wall reads as one solid line.
-	var block_size := rng.randf_range(1.6, 2.4)
-	# Step slightly less than the block size so neighbours overlap — no gaps.
-	var step := block_size * 0.98
-	var length := rng.randi_range(wall_min_length, wall_max_length)
-
-	# Run the wall along X or along Z.
-	var along_x := rng.randf() < 0.5
-	var margin := 2.0
-	var limit := half_chunk - margin
-
-	# Distance from the first block centre to the last. Trim the wall if it would
-	# be longer than the chunk can hold.
-	var span := (length - 1) * step
-	if span > 2.0 * limit:
-		length = int(floor((2.0 * limit) / step)) + 1
-		span = (length - 1) * step
-
-	# Pick where the wall starts along its axis, and its fixed perpendicular coord.
-	var start := rng.randf_range(-limit, limit - span)
-	var fixed := rng.randf_range(-limit, limit)
-
-	# Midpoint of the wall's run — used for the river test here; the patrol ridge
-	# at the bottom of this function is measured off its own surviving run.
-	var mid_along := start + (length - 1) * step * 0.5
-
-	# No walls in the water (centre test, taken right after the draws that placed
-	# the wall).
-	var wall_center: Vector3 = Vector3(mid_along, 0.0, fixed) if along_x else Vector3(fixed, 0.0, mid_along)
-	# ...and none on the tower's site, judged with `half_chunk` as the extent: a
-	# structure never leaves its own chunk by construction (see the `limit`
-	# above), so half a chunk is a conservative bound on how far its blocks reach.
-	if is_river_at(chunk_center + wall_center) \
-			or tower_excludes(chunk_center.x + wall_center.x, chunk_center.z + wall_center.z, half_chunk):
-		return
-
-	var gap_chance: float = theme["gap_chance"]
-	var double_chance: float = theme["double_chance"]
-	var cap: Color = theme["cap"]
-	var trim: Color = theme["trim"]
-
-	# Longest unbroken run of standing segments — see the docstring.
-	var run_start := 0
-	var run_len := 0
-	var best_start := 0
-	var best_len := 0
-
-	# Each section's own top, so the patrol platform below can take the MAXIMUM over
-	# the surviving run it actually registers rather than over the whole wall. A
-	# fallen section keeps its 0.0 and is never inside a run by construction. See
-	# the platform "top" note at the bottom of this function for why the maximum
-	# (and not the walkable height) is what the patrol spawner needs.
-	var section_top := PackedFloat32Array()
-	section_top.resize(length)
-
-	for i in length:
-		var along := start + i * step
-		var x := along if along_x else fixed
-		var z := fixed if along_x else along
-
-		# This section fell. Post-draw skip: the randf() above has already
-		# advanced the stream, so removing the block inserts no draw anywhere.
-		if rng.randf() < gap_chance:
-			if run_len > best_len:
-				best_len = run_len
-				best_start = run_start
-			run_len = 0
-			# Its stones, scattered where they landed. Visual-only trim, and no
-			# footprint — nothing solid stands here now.
-			var rs := block_size * rng.randf_range(0.26, 0.4)
-			create_box(
-				Vector3(x, rs * 0.4, z), Vector3(rs, rs * 0.75, rs * 1.15),
-				rng.randf_range(0.0, TAU), rng, block_batch, block_body,
-				rng.randf_range(-0.45, 0.45), trim, false
-			)
-			continue
-
-		if run_len == 0:
-			run_start = i
-		run_len += 1
-
-		# Wall blocks are axis-aligned (yaw 0) so they sit flush against each other.
-		create_box(
-			Vector3(x, block_size * 0.5, z), Vector3(block_size, block_size, block_size), 0.0,
-			rng, block_batch, block_body, 0.0, _structure_stone(theme, rng)
-		)
-		var top := block_size
-		# A single-block section is low enough to hop onto; a doubled one is not.
-		var climbable := true
-
-		# Now and then double a section up so the wall isn't a uniform single row.
-		if rng.randf() < double_chance:
-			create_box(
-				Vector3(x, block_size * 1.5, z), Vector3(block_size, block_size, block_size), 0.0,
-				rng, block_batch, block_body, 0.0, _structure_stone(theme, rng)
-			)
-			top = 2.0 * block_size
-			climbable = false
-			# A capstone crowns the HUMP only, never the ridge — the ridge is the
-			# surface a patrol paces and a player stands on. collide = false makes
-			# it inert either way; keeping it off the ridge keeps the rule simple.
-			if cap.a > 0.0:
-				create_box(
-					Vector3(x, top + 0.07, z), Vector3(block_size * 1.05, 0.14, block_size * 1.05), 0.0,
-					rng, block_batch, block_body, 0.0, cap, false
-				)
-
-		section_top[i] = top
-		# `guarded` marks stone that a patrol crocodile is going to be dropped onto,
-		# and it exists for exactly one reader: _spawn_mountain_content's avoid-list.
-		# A massif must clear it whatever its radius or height — see the note there.
-		obstacles.append({ "pos": Vector3(x, 0, z), "radius": block_size * 0.71, "top": top, "climbable": climbable, "guarded": true })
-
-	if run_len > best_len:
-		best_len = run_len
-		best_start = run_start
-
-	# Register the surviving ridge as a thin patrol platform (a crocodile can pace
-	# it end to end). Surface is the single-block height; doubled humps just become
-	# obstacles its feelers turn it back at.
-	#
-	# WHY THE DICT CARRIES BOTH `center.y` AND `top`, and why they differ here:
-	# `center.y` is the SURFACE the guard paces — the single-block height, and the
-	# height set_confinement is handed (which reads only .x/.z, so nothing else
-	# consumes it). `top` is the TALLEST SOLID STONE standing anywhere inside the
-	# platform's footprint, which for a wall is the doubled humps.
-	# spawn_platform_crocodiles drops its guard in from `top`, not from `center.y`,
-	# and that distinction is the whole bug this pair exists to close: a share of a
-	# wall's sections are doubled, occupying y in [block_size, 2 * block_size], and
-	# the spawner picks a point at a RANDOM ANGLE along the ridge with no idea
-	# which sections those are. Dropping in at `center.y + PLATFORM_SPAWN_HEIGHT`
-	# therefore put the guard INSIDE a hump whenever the angle landed on one —
-	# penetrating by up to the full drop-in offset. Measured over a 17x17 chunk
-	# field on four run seeds: 3-7 patrol crocodiles per field stood in solid
-	# stone, i.e. 12-18% of every platform guard the world spawned, and EVERY
-	# crocodile-in-stone in the whole field was one of them (the ground and boss
-	# spawners, which do test `obstacles`, were clean at 0). Dropping in from the
-	# maximum instead lands the guard on the ridge or on a hump's top face and
-	# gravity settles it either way.
-	#
-	# The maximum is taken over the SURVIVING RUN this platform actually covers,
-	# not over the whole wall: a hump in a section that fell, or in a stretch on
-	# the far side of a gap, is not inside this footprint and would only lift the
-	# drop-in for nothing. The hump capstones are collide = false, so they are
-	# correctly not part of it.
-	if best_len > 0:
-		var ridge_along := start + (best_start + (best_len - 1) * 0.5) * step
-		var ridge_center: Vector3 = Vector3(ridge_along, block_size, fixed) if along_x else Vector3(fixed, block_size, ridge_along)
-		var half_along := (best_len - 1) * step * 0.5 + block_size * 0.5 - 0.4
-		var half_across := block_size * 0.5 - 0.3
-		var ridge_half: Vector2 = Vector2(half_along, half_across) if along_x else Vector2(half_across, half_along)
-		var ridge_top := block_size
-		for i in range(best_start, best_start + best_len):
-			ridge_top = maxf(ridge_top, section_top[i])
-		if half_along > 1.0 and half_across > 0.2:
-			platforms.append({ "center": ridge_center, "half": ridge_half, "top": ridge_top })
-
-# ============================================================================
-# THEMED SCATTERED PROPS
-# ============================================================================
-# Everything below runs on a PRIVATE RandomNumberGenerator seeded from the one
-# randi() the scatter loop drew for it. NONE of these functions takes the chunk
-# RNG, which is what makes the fixed-shared-stream-cost rule structural instead
-# of a discipline somebody has to remember. Draw as many or as few numbers as a
-# variant needs.
-#
-# THREE RULES EVERY BUILDER OBEYS, because breaking any of them fails silently:
-#
-#  1. EVERY BOX STAYS INSIDE `size * PROP_RADIUS_FACTOR` OF THE PROP CENTRE.
-#     That radius is the number returned, and it is what _settle_coin_y perches
-#     road coins against, what spawn_crocodiles_in_chunk keeps crocodiles out of,
-#     and what the massif avoid-list reads. A box poking outside it means a
-#     crocodile spawned inside stone or a coin buried in it, with no error
-#     anywhere. The bound used when sizing an offset decoration is half its own
-#     3D DIAGONAL (`0.5 * dims.length()`), because a box carrying both a yaw and
-#     a tilt can present a corner in any direction. prop_selfcheck.gd measures the
-#     real emitted corners rather than trusting these comments.
-#
-#  2. A CLIMBABLE PROP IS ACTUALLY CLIMBABLE. The box whose top face is the
-#     returned `top` is UNTILTED (a tilted box has no flat top to stand on) and
-#     centred on the prop, and the untilted collidable tops form a ladder from
-#     the ground up with no gap over PROP_MAX_STEP. Tilted decoration is welcome
-#     — it is what stops a prop reading as a box — but it goes BESIDE the prop,
-#     never on the surface the contract promises. This is the "rest spot from
-#     crocodiles" role the bare cubes carried.
-#
-#  3. 3-8 BOXES, OF WHICH 1-3 COLLIDE. The whole chunk draws in one MultiMesh
-#     whatever the box count, so instances are nearly free — but each colliding
-#     box is a real CollisionShape3D node on the chunk's shared body, and that is
-#     the budget the per-chunk node count lives on. Trim (chips, rubble, root
-#     flares, ribs, loose stones) passes `collide = false`, exactly as a forest
-#     canopy does.
-
-func _build_prop(local: Vector3, size: float, prop_seed: int, chunk_center: Vector3, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	Build ONE themed scattered prop at a spot the scatter loop already accepted.
-
-	@param local: The prop's chunk-LOCAL position, y = 0 (it sits on the ground).
-	@param size: The prop's overall scale — the same object_size_min..max draw the
-	             bare cube used, so props inherit the field's existing size spread.
-	@param prop_seed: The one randi() the chunk stream paid for this prop. Every
-	                  choice below hangs off it, so the prop is a pure function of
-	                  chunk coords + run_seed like everything else in generation.
-	@param chunk_center: World centre of the chunk — the prop's own WORLD position
-	                     is what picks the theme (see below).
-	@param block_batch / block_body: The chunk's single MultiMesh batch and single
-	                     collision body. A prop adds ZERO draw calls and at most
-	                     three collision shapes.
-	@return { "radius": float, "top": float, "climbable": bool } — the footprint
-	        the caller appends to `obstacles`, in exactly the shape the bare cube
-	        used to append.
-
-	THE THEME IS PICKED PER POSITION, NOT PER CHUNK CENTRE. That is deliberate and
-	it is the same rule the biome content builders follow: a chunk straddling a
-	forest edge grows stumps on the wooded half and boulders on the open half, so
-	the transition follows the noise contour instead of stopping dead on a straight
-	chunk seam. One extra noise evaluation per prop (~12 a chunk) buys it.
-	"""
-	var rng := RandomNumberGenerator.new()
-	rng.seed = prop_seed
-
-	match biome_at(chunk_center.x + local.x, chunk_center.z + local.z):
-		Biome.DESERT:
-			match rng.randi_range(0, 2):
-				0:
-					return _prop_sandstone_stack(local, size, rng, block_batch, block_body)
-				1:
-					return _prop_broken_column(local, size, rng, block_batch, block_body)
-				_:
-					return _prop_bone_pile(local, size, rng, block_batch, block_body)
-		Biome.FOREST:
-			match rng.randi_range(0, 2):
-				0:
-					return _prop_mossy_boulder(local, size, rng, block_batch, block_body)
-				1:
-					return _prop_tree_stump(local, size, rng, block_batch, block_body)
-				_:
-					return _prop_log_pile(local, size, rng, block_batch, block_body)
-		Biome.MOUNTAIN:
-			match rng.randi_range(0, 1):
-				0:
-					return _prop_scree_cluster(local, size, rng, block_batch, block_body)
-				_:
-					return _prop_cairn(local, size, rng, block_batch, block_body)
-		Biome.CITY:
-			match rng.randi_range(0, 2):
-				0:
-					return _prop_crate_stack(local, size, rng, block_batch, block_body)
-				1:
-					return _prop_garden_wall(local, size, rng, block_batch, block_body)
-				_:
-					return _prop_paving_stack(local, size, rng, block_batch, block_body)
-		Biome.SNOW:
-			match rng.randi_range(0, 2):
-				0:
-					return _prop_ice_rock(local, size, rng, block_batch, block_body)
-				1:
-					return _prop_snow_drift(local, size, rng, block_batch, block_body)
-				_:
-					return _prop_frozen_stump(local, size, rng, block_batch, block_body)
-		_:  # PLAINS — also the fallback, so a future biome band still gets props.
-			match rng.randi_range(0, 2):
-				0:
-					return _prop_boulder_cluster(local, size, rng, block_batch, block_body)
-				1:
-					return _prop_ruin_fragment(local, size, rng, block_batch, block_body)
-				_:
-					return _prop_bale_pile(local, size, rng, block_batch, block_body)
-
-# ----- PLAINS ---------------------------------------------------------------
-
-func _prop_boulder_cluster(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	PLAINS — a field boulder with two smaller rocks nestled against it.
-
-	The big rock is the climbable one, so it stays UNTILTED and its top face is
-	the returned `top`. The companions carry the tilt that stops the whole thing
-	reading as a cube, and they sit beside it rather than on it (rule 2 above).
-	3 boxes, 3 collide.
-
-	ALL THREE ARE `BoxKind.ROCK` since bead godot-test1-y1o.3 — a faceted dome with
-	the flat lid still exactly at the box top, so the climbable surface, the
-	collider and every number below are byte-for-byte what they were and only the
-	silhouette moved. See ChunkBatch's BoxKind banner for why a squashed sphere was
-	the wrong answer here.
-	"""
-	var r := size * PROP_RADIUS_FACTOR
-	var w := size * 0.9
-	var h := minf(size * 0.85, PROP_MAX_STEP)
-	var yaw := rng.randf_range(0.0, TAU)
-
-	create_box(
-		local + Vector3(0.0, h * 0.5, 0.0), Vector3(w, h, w * 0.92), yaw,
-		rng, block_batch, block_body, 0.0, PROP_BOULDER_A.lerp(PROP_BOULDER_B, rng.randf()),
-		true, ChunkBatch.BoxKind.ROCK
-	)
-
-	for _i in 2:
-		var cs := size * rng.randf_range(0.28, 0.42)
-		var a := rng.randf_range(0.0, TAU)
-		var ring := size * 0.32
-		create_box(
-			local + Vector3(cos(a) * ring, cs * 0.45, sin(a) * ring),
-			Vector3(cs, cs * 0.9, cs), rng.randf_range(0.0, TAU),
-			rng, block_batch, block_body, rng.randf_range(-0.35, 0.35),
-			PROP_BOULDER_A.lerp(PROP_BOULDER_B, rng.randf()), true, ChunkBatch.BoxKind.ROCK
-		)
-
-	return { "radius": r, "top": h, "climbable": true }
-
-func _prop_ruin_fragment(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	PLAINS — a stub of broken wall with one block fallen off it and rubble around.
-
-	The wall stub is the climbable perch (untilted, flat top). 4 boxes, 2 collide
-	— the chips are trim and would only make the base a snag to walk into.
-	"""
-	var r := size * PROP_RADIUS_FACTOR
-	var yaw := rng.randf_range(0.0, TAU)
-	# The tallest prop step in the set, and deliberately capped at the bare cube's
-	# own proven 2.5 m rather than at PROP_MAX_STEP: a stub that needed the very
-	# last centimetre of the jump arc would be a rest spot only in theory.
-	var h := minf(size * 1.05, 2.5)
-
-	create_box(
-		local + Vector3(0.0, h * 0.5, 0.0), Vector3(size * 0.85, h, size * 0.42), yaw,
-		rng, block_batch, block_body, 0.0, PROP_RUIN_STONE
-	)
-
-	# The fallen block, tilted where it came to rest, thrown clear of the wall face.
-	var bs := size * rng.randf_range(0.30, 0.42)
-	var ba := yaw + PI * 0.5 + rng.randf_range(-0.5, 0.5)
-	create_box(
-		local + Vector3(cos(ba) * size * 0.32, bs * 0.42, sin(ba) * size * 0.32),
-		Vector3(bs, bs * 0.85, bs * 1.1), rng.randf_range(0.0, TAU),
-		rng, block_batch, block_body, rng.randf_range(0.2, 0.5), PROP_RUIN_STONE
-	)
-
-	for _i in 2:
-		var cs := size * rng.randf_range(0.12, 0.22)
-		var a := rng.randf_range(0.0, TAU)
-		var ring := size * rng.randf_range(0.30, 0.45)
-		create_box(
-			local + Vector3(cos(a) * ring, cs * 0.4, sin(a) * ring),
-			Vector3(cs, cs * 0.7, cs), rng.randf_range(0.0, TAU),
-			rng, block_batch, block_body, rng.randf_range(-0.4, 0.4), PROP_RUIN_STONE, false
-		)
-
-	return { "radius": r, "top": h, "climbable": true }
-
-func _prop_bale_pile(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	PLAINS — two stacked hay bales with a cart crate against them and loose planks.
-
-	The two-bale stack IS the old cube tower, re-skinned: both tiers are untilted
-	and each is one easy step, so the climb the towers provided survives intact.
-	5 boxes, 3 collide.
-	"""
-	var r := size * PROP_RADIUS_FACTOR
-	var yaw := rng.randf_range(0.0, TAU)
-
-	var h1 := minf(size * 0.66, PROP_MAX_STEP)
-	var w1 := size * 0.82
-	create_box(
-		local + Vector3(0.0, h1 * 0.5, 0.0), Vector3(w1, h1, w1 * 0.9), yaw,
-		rng, block_batch, block_body, 0.0, PROP_HAY
-	)
-
-	var h2 := minf(h1 * 0.8, PROP_MAX_STEP)
-	var w2 := w1 * 0.78
-	create_box(
-		local + Vector3(0.0, h1 + h2 * 0.5, 0.0), Vector3(w2, h2, w2 * 0.9),
-		yaw + rng.randf_range(-0.4, 0.4), rng, block_batch, block_body, 0.0, PROP_HAY
-	)
-
-	var cs := size * rng.randf_range(0.22, 0.34)
-	var ca := rng.randf_range(0.0, TAU)
-	create_box(
-		local + Vector3(cos(ca) * size * 0.38, cs * 0.5, sin(ca) * size * 0.38),
-		Vector3(cs, cs, cs), rng.randf_range(0.0, TAU),
-		rng, block_batch, block_body, rng.randf_range(-0.25, 0.25), PROP_CRATE
-	)
-
-	for _i in 2:
-		var pl := size * rng.randf_range(0.30, 0.45)
-		var pa := rng.randf_range(0.0, TAU)
-		var ring := size * rng.randf_range(0.25, 0.40)
-		create_box(
-			local + Vector3(cos(pa) * ring, size * 0.05, sin(pa) * ring),
-			Vector3(pl, size * 0.08, size * 0.16), pa + rng.randf_range(-0.5, 0.5),
-			rng, block_batch, block_body, rng.randf_range(-0.15, 0.15), PROP_CRATE, false
-		)
-
-	return { "radius": r, "top": h1 + h2, "climbable": true }
-
-# ----- DESERT ---------------------------------------------------------------
-
-func _prop_sandstone_stack(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	DESERT — 2-3 wind-worn sandstone slabs stacked and shrinking, with one broken
-	flake leaning at the base.
-
-	The slabs are untilted so the stack climbs; the flake is the tilted character
-	and sits BESIDE the stack, never on the top slab. 3-4 boxes, 2-3 collide.
-
-	`BoxKind.ROCK` throughout since bead godot-test1-y1o.3: a wind-worn slab is a
-	dome with a flat lid, which is exactly the kind's shape, and the lid keeps the
-	stack's every step where the ladder already measured it.
-	"""
-	var r := size * PROP_RADIUS_FACTOR
-	var tiers := rng.randi_range(2, 3)
-	var yaw := rng.randf_range(0.0, TAU)
-	var w := size * 0.88
-	var top := 0.0
-
-	for _i in tiers:
-		var th := minf(size * rng.randf_range(0.42, 0.68), PROP_MAX_STEP)
-		create_box(
-			local + Vector3(0.0, top + th * 0.5, 0.0), Vector3(w, th, w * 0.82),
-			yaw + rng.randf_range(-0.3, 0.3), rng, block_batch, block_body, 0.0,
-			PROP_SANDSTONE_A.lerp(PROP_SANDSTONE_B, rng.randf() * 0.7),
-			true, ChunkBatch.BoxKind.ROCK
-		)
-		top += th
-		w *= 0.82
-
-	var fs := size * rng.randf_range(0.30, 0.45)
-	var fa := rng.randf_range(0.0, TAU)
-	create_box(
-		local + Vector3(cos(fa) * size * 0.32, fs * 0.5, sin(fa) * size * 0.32),
-		Vector3(fs, fs * 1.2, fs * 0.25), rng.randf_range(0.0, TAU),
-		rng, block_batch, block_body, rng.randf_range(0.5, 0.9), PROP_SANDSTONE_B, false,
-		ChunkBatch.BoxKind.ROCK
-	)
-
-	return { "radius": r, "top": top, "climbable": true }
-
-func _prop_broken_column(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	DESERT — a half-buried column: one surviving drum still standing on its broken
-	flat top, the toppled shaft lying beside it, chips around the base.
-	4 boxes, 2 collide.
-	"""
-	var r := size * PROP_RADIUS_FACTOR
-	var yaw := rng.randf_range(0.0, TAU)
-	var dw := size * 0.62
-	var dh := minf(size * rng.randf_range(0.7, 1.0), PROP_MAX_STEP)
-
-	create_box(
-		local + Vector3(0.0, dh * 0.5, 0.0), Vector3(dw, dh, dw), yaw,
-		rng, block_batch, block_body, 0.0, PROP_SANDSTONE_A
-	)
-
-	# The fallen shaft, offset PERPENDICULAR to its own long axis so its length
-	# stays inside the radius (offsetting along the axis would push a corner out).
-	var sa := rng.randf_range(0.0, TAU)
-	var sl := size * rng.randf_range(0.55, 0.75)
-	var perp := Vector3(cos(sa + PI * 0.5), 0.0, sin(sa + PI * 0.5)) * size * 0.26
-	create_box(
-		local + perp + Vector3(0.0, dw * 0.28, 0.0),
-		Vector3(sl, dw * 0.56, dw * 0.56), sa,
-		rng, block_batch, block_body, rng.randf_range(-0.15, 0.15),
-		PROP_SANDSTONE_A.lerp(PROP_SANDSTONE_B, 0.5)
-	)
-
-	for _i in 2:
-		var cs := size * rng.randf_range(0.12, 0.20)
-		var a := rng.randf_range(0.0, TAU)
-		var ring := size * rng.randf_range(0.30, 0.42)
-		create_box(
-			local + Vector3(cos(a) * ring, cs * 0.45, sin(a) * ring),
-			Vector3(cs, cs * 0.8, cs), rng.randf_range(0.0, TAU),
-			rng, block_batch, block_body, rng.randf_range(-0.5, 0.5), PROP_SANDSTONE_B, false
-		)
-
-	return { "radius": r, "top": dh, "climbable": true }
-
-func _prop_bone_pile(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	DESERT — a bleached ribcage scattered in the sand. THE ONE NON-CLIMBABLE
-	VARIANT: a heap of tilted ribs has no flat top to stand on, so it honestly
-	records climbable = false and _settle_coin_y SKIPS a road coin over it rather
-	than floating one on a surface that is not there (the tree-canopy rule).
-
-	Keeping it to one variant of eleven is deliberate — the bare cubes' rest-spot
-	role is the thing this whole re-skin must not quietly delete, so desert still
-	offers two climbable props in three and every other biome offers three.
-	5-7 boxes, 1 collides (the skull lump, so the heap is not walk-through).
-	"""
-	var r := size * PROP_RADIUS_FACTOR
-	var yaw := rng.randf_range(0.0, TAU)
-	var ss := size * rng.randf_range(0.30, 0.42)
-
-	create_box(
-		local + Vector3(0.0, ss * 0.45, 0.0), Vector3(ss, ss * 0.85, ss * 1.15), yaw,
-		rng, block_batch, block_body, rng.randf_range(-0.2, 0.2), PROP_BONE
-	)
-
-	for _i in rng.randi_range(4, 6):
-		var rib := size * rng.randf_range(0.35, 0.60)
-		var a := rng.randf_range(0.0, TAU)
-		var ring := size * rng.randf_range(0.0, 0.22)
-		create_box(
-			local + Vector3(cos(a) * ring, size * rng.randf_range(0.05, 0.18), sin(a) * ring),
-			Vector3(rib, size * 0.07, size * 0.09), a + rng.randf_range(-0.6, 0.6),
-			rng, block_batch, block_body, rng.randf_range(-0.5, 0.5), PROP_BONE, false
-		)
-
-	return { "radius": r, "top": ss * 0.9, "climbable": false }
-
-# ----- FOREST ---------------------------------------------------------------
-
-func _prop_mossy_boulder(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	FOREST — a damp boulder wearing a cap of moss, with two small rocks at its foot.
-
-	The moss cap COLLIDES and its top face is the returned `top`, so you stand on
-	the moss rather than clipping into it — and the rock height is derived from
-	PROP_MAX_STEP minus the cap, so cap + rock together still clear in one jump
-	however object_size_max is retuned. 4 boxes, 2 collide.
-
-	`BoxKind.ROCK` throughout since bead godot-test1-y1o.3, THE MOSS CAP INCLUDED —
-	the cap is the surface you stand on, and a cube lid on a domed boulder would
-	read as a plate balanced on it. Both are drawn at the same yaw, so the cap's
-	facets line up with the flanks under them and the two read as one stone.
-	"""
-	var r := size * PROP_RADIUS_FACTOR
-	var yaw := rng.randf_range(0.0, TAU)
-	var cap_h := size * 0.14
-	var bh := minf(size * 0.72, PROP_MAX_STEP - cap_h)
-	var bw := size * 0.88
-
-	create_box(
-		local + Vector3(0.0, bh * 0.5, 0.0), Vector3(bw, bh, bw * 0.9), yaw,
-		rng, block_batch, block_body, 0.0, PROP_MOSS_ROCK, true, ChunkBatch.BoxKind.ROCK
-	)
-	create_box(
-		local + Vector3(0.0, bh + cap_h * 0.5, 0.0), Vector3(bw * 0.96, cap_h, bw * 0.87), yaw,
-		rng, block_batch, block_body, 0.0, PROP_MOSS_CAP, true, ChunkBatch.BoxKind.ROCK
-	)
-
-	for _i in 2:
-		var cs := size * rng.randf_range(0.22, 0.34)
-		var a := rng.randf_range(0.0, TAU)
-		create_box(
-			local + Vector3(cos(a) * size * 0.34, cs * 0.4, sin(a) * size * 0.34),
-			Vector3(cs, cs * 0.75, cs), rng.randf_range(0.0, TAU),
-			rng, block_batch, block_body, rng.randf_range(-0.45, 0.45), PROP_MOSS_ROCK, false,
-			ChunkBatch.BoxKind.ROCK
-		)
-
-	return { "radius": r, "top": bh + cap_h, "climbable": true }
-
-func _prop_tree_stump(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	FOREST — a wide cut stump with three root flares splaying out at ground level.
-
-	The roots are VISUAL ONLY: they spread past the stump's own width, and making
-	them solid would turn every stump into a ring of ankle-height snags. The flat
-	saw-cut top is the perch. 4 boxes, 1 collides.
-	"""
-	var r := size * PROP_RADIUS_FACTOR
-	var yaw := rng.randf_range(0.0, TAU)
-	var sw := size * 0.86
-	var sh := minf(size * rng.randf_range(0.55, 0.80), PROP_MAX_STEP)
-
-	create_box(
-		local + Vector3(0.0, sh * 0.5, 0.0), Vector3(sw, sh, sw * 0.94), yaw,
-		rng, block_batch, block_body, 0.0, PROP_STUMP
-	)
-
-	for i in 3:
-		var a := yaw + TAU * float(i) / 3.0 + rng.randf_range(-0.35, 0.35)
-		var rl := size * rng.randf_range(0.36, 0.50)
-		create_box(
-			local + Vector3(cos(a) * size * 0.36, size * 0.09, sin(a) * size * 0.36),
-			Vector3(rl, size * 0.18, size * 0.22), a,
-			rng, block_batch, block_body, rng.randf_range(-0.25, -0.05), PROP_STUMP, false
-		)
-
-	return { "radius": r, "top": sh, "climbable": true }
-
-func _prop_log_pile(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	FOREST — two felled logs side by side with a third laid across them, plus a
-	couple of loose branches.
-
-	The upper log's top face is flat and one short step up, so the pile stays a
-	rest spot. 5 boxes, 3 collide.
-	"""
-	var r := size * PROP_RADIUS_FACTOR
-	var a := rng.randf_range(0.0, TAU)
-	var log_len := size * 0.9
-	var log_d := size * 0.30
-	var perp := Vector3(cos(a + PI * 0.5), 0.0, sin(a + PI * 0.5)) * log_d * 0.55
-
-	for i in 2:
-		var s := 1.0 if i == 0 else -1.0
-		create_box(
-			local + perp * s + Vector3(0.0, log_d * 0.5, 0.0),
-			Vector3(log_len, log_d, log_d), a,
-			rng, block_batch, block_body, 0.0, PROP_LOG
-		)
-
-	create_box(
-		local + Vector3(0.0, log_d * 1.5, 0.0),
-		Vector3(log_len * 0.85, log_d, log_d), a + rng.randf_range(-0.5, 0.5),
-		rng, block_batch, block_body, 0.0, PROP_LOG
-	)
-
-	for _i in 2:
-		var bl := size * rng.randf_range(0.25, 0.40)
-		var ba := rng.randf_range(0.0, TAU)
-		var ring := size * rng.randf_range(0.30, 0.42)
-		create_box(
-			local + Vector3(cos(ba) * ring, size * 0.05, sin(ba) * ring),
-			Vector3(bl, size * 0.10, size * 0.12), ba + rng.randf_range(-0.6, 0.6),
-			rng, block_batch, block_body, rng.randf_range(-0.3, 0.3), PROP_LOG, false
-		)
-
-	return { "radius": r, "top": log_d * 2.0, "climbable": true }
-
-# ----- MOUNTAIN -------------------------------------------------------------
-
-func _prop_scree_cluster(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	MOUNTAIN — one flat slab of fallen rock with 3-4 shattered chips tumbled round
-	it. The slab is the perch; the chips carry the tilt. 4-5 boxes, 1 collides.
-
-	`BoxKind.ROCK` throughout since bead godot-test1-y1o.3. The chips could have
-	been CONEs — the bead offers both — and are not, on the draw-call bill: a cone
-	bucket would make a mountain chunk carrying scree cost THREE block draw calls
-	where the epic's cap for a chunk is two, and nothing here would look better for
-	it.
-	"""
-	var r := size * PROP_RADIUS_FACTOR
-	var yaw := rng.randf_range(0.0, TAU)
-	var sw := size * 0.84
-	var sh := minf(size * rng.randf_range(0.45, 0.70), PROP_MAX_STEP)
-
-	create_box(
-		local + Vector3(0.0, sh * 0.5, 0.0), Vector3(sw, sh, sw * 0.88), yaw,
-		rng, block_batch, block_body, 0.0, PROP_SCREE_A.lerp(PROP_SCREE_B, rng.randf()),
-		true, ChunkBatch.BoxKind.ROCK
-	)
-
-	for _i in rng.randi_range(3, 4):
-		var cs := size * rng.randf_range(0.16, 0.30)
-		var a := rng.randf_range(0.0, TAU)
-		var ring := size * rng.randf_range(0.30, 0.42)
-		create_box(
-			local + Vector3(cos(a) * ring, cs * 0.45, sin(a) * ring),
-			Vector3(cs, cs * 0.8, cs * 1.2), rng.randf_range(0.0, TAU),
-			rng, block_batch, block_body, rng.randf_range(-0.6, 0.6),
-			PROP_SCREE_A.lerp(PROP_SCREE_B, rng.randf()), false, ChunkBatch.BoxKind.ROCK
-		)
-
-	return { "radius": r, "top": sh, "climbable": true }
-
-func _prop_cairn(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	MOUNTAIN — a three-slab cairn with two loose stones at its foot. THIS IS THE
-	OLD CUBE TOWER, re-skinned: the tallest prop in the set, all three tiers
-	untilted and each one a short step, so the tower's climb survives its cube.
-
-	NO CAPSTONE ON TOP, deliberately — a tilted stone crowning the cairn would
-	look right and quietly destroy the flat surface the climbability contract
-	promises. The loose stones go beside it instead. 5 boxes, 3 collide.
-
-	THE TIERS STAY `CUBE`, and that is the bead's own ruling (godot-test1-y1o.3): a
-	cairn IS stacked, split, flat-faced stones, so the one prop in the set that
-	should read as blocks is this one. Only the loose stones at its foot — which
-	were never stacked by anybody — take `BoxKind.ROCK`.
-	"""
-	var r := size * PROP_RADIUS_FACTOR
-	var yaw := rng.randf_range(0.0, TAU)
-	var w := size * 0.72
-	var top := 0.0
-
-	for _i in 3:
-		var th := minf(size * rng.randf_range(0.38, 0.58), PROP_MAX_STEP)
-		create_box(
-			local + Vector3(0.0, top + th * 0.5, 0.0), Vector3(w, th, w * 0.9),
-			yaw + rng.randf_range(-0.5, 0.5), rng, block_batch, block_body, 0.0,
-			PROP_CAIRN.lerp(PROP_SCREE_B, rng.randf() * 0.5)
-		)
-		top += th
-		w *= 0.8
-
-	for _i in 2:
-		var cs := size * rng.randf_range(0.18, 0.28)
-		var a := rng.randf_range(0.0, TAU)
-		var ring := size * rng.randf_range(0.32, 0.44)
-		create_box(
-			local + Vector3(cos(a) * ring, cs * 0.45, sin(a) * ring),
-			Vector3(cs, cs * 0.85, cs), rng.randf_range(0.0, TAU),
-			rng, block_batch, block_body, rng.randf_range(-0.5, 0.5),
-			PROP_CAIRN.lerp(PROP_SCREE_B, rng.randf() * 0.5), false, ChunkBatch.BoxKind.ROCK
-		)
-
-	return { "radius": r, "top": top, "climbable": true }
-
-# ----- CITY -----------------------------------------------------------------
-#
-# Street clutter, at the same scale the bare cubes were: crates against a wall, a
-# low garden wall with its planter, a pallet of paving slabs from the roadworks.
-# All three keep the climbability contract (the box whose top face is the returned
-# `top` is untilted, colliding and centred on the prop), and all three reuse the
-# existing PROP_CRATE / PROP_RUIN_STONE timber and stone rather than adding a
-# colour — the CITY_* palette is spent on the buildings, which is where a person
-# actually reads "city".
-
-func _prop_crate_stack(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	CITY — two market crates stacked against each other with a third tipped over
-	beside them. The stack is the perch: both crates untilted, colliding and
-	centred, each one a short step. The tipped crate carries the tilt and is trim.
-	3 boxes, 2 collide.
-	"""
-	var r := size * PROP_RADIUS_FACTOR
-	var yaw := rng.randf_range(0.0, TAU)
-	var w := size * 0.62
-	var top := 0.0
-
-	for i in 2:
-		var th := minf(size * rng.randf_range(0.42, 0.60), PROP_MAX_STEP)
-		create_box(
-			local + Vector3(0.0, top + th * 0.5, 0.0), Vector3(w, th, w * 0.95),
-			yaw + rng.randf_range(-0.25, 0.25), rng, block_batch, block_body, 0.0,
-			PROP_CRATE.lerp(CITY_PLASTER_B, rng.randf() * 0.35)
-		)
-		top += th
-		w *= 0.88
-
-	# The tipped crate. Its offset is bounded by half its own 3D diagonal
-	# (cs * 0.866 for a near-cube), because a box carrying a yaw AND a tilt can
-	# present a corner in any direction: 0.30 + 0.32 * 0.866 = 0.577 of size,
-	# inside PROP_RADIUS_FACTOR 0.71.
-	var cs := size * rng.randf_range(0.24, 0.32)
-	var a := rng.randf_range(0.0, TAU)
-	create_box(
-		local + Vector3(cos(a) * size * 0.30, cs * 0.45, sin(a) * size * 0.30),
-		Vector3(cs, cs * 0.9, cs), rng.randf_range(0.0, TAU),
-		rng, block_batch, block_body, rng.randf_range(-0.5, 0.5),
-		PROP_CRATE.lerp(CITY_PLASTER_B, rng.randf() * 0.35), false
-	)
-
-	return { "radius": r, "top": top, "climbable": true }
-
-func _prop_garden_wall(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	CITY — a stub of low garden wall with a planter box set against it and a
-	couple of pots tipped at its foot.
-
-	The wall is the perch and is CENTRED on the prop, which is the part that
-	matters: prop_selfcheck's climb ladder only counts untilted colliding boxes
-	whose footprint covers the prop's centre, so a pair of offset wall segments
-	with nothing in the middle would be a prop that records climbable = true and
-	has nothing to stand on. 4 boxes, 2 collide.
-	"""
-	var r := size * PROP_RADIUS_FACTOR
-	var yaw := rng.randf_range(0.0, TAU)
-	var h := minf(size * rng.randf_range(0.55, 0.80), PROP_MAX_STEP)
-	var wall_len := size * 1.02
-	var wall_d := size * 0.28
-
-	create_box(
-		local + Vector3(0.0, h * 0.5, 0.0), Vector3(wall_len, h, wall_d), yaw,
-		rng, block_batch, block_body, 0.0,
-		PROP_RUIN_STONE.lerp(CITY_PLASTER_B, rng.randf())
-	)
-
-	# Planter, set against the wall's face. Reach = 0.40 + 0.5*hypot(0.34, 0.34)
-	# = 0.64 of size, inside the declared 0.71.
-	var pw := size * 0.34
-	var side := 1.0 if rng.randf() < 0.5 else -1.0
-	var normal := Vector3(cos(yaw + PI * 0.5), 0.0, sin(yaw + PI * 0.5))
-	create_box(
-		local + normal * (size * 0.40 * side) + Vector3(0.0, pw * 0.5, 0.0),
-		Vector3(pw, pw, pw), yaw, rng, block_batch, block_body, 0.0, PROP_CRATE
-	)
-
-	for _i in 2:
-		var cs := size * rng.randf_range(0.13, 0.18)
-		var a := rng.randf_range(0.0, TAU)
-		create_box(
-			local + Vector3(cos(a) * size * 0.42, cs * 0.45, sin(a) * size * 0.42),
-			Vector3(cs, cs * 1.1, cs), rng.randf_range(0.0, TAU),
-			rng, block_batch, block_body, rng.randf_range(-0.4, 0.4),
-			CITY_ROOF_TILE, false
-		)
-
-	return { "radius": r, "top": h, "climbable": true }
-
-func _prop_paving_stack(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	CITY — a pallet of paving slabs from the roadworks, with a couple of loose
-	slabs leaning against it. Flat, wide and low: the shortest climb in the set.
-	4-5 boxes, 2-3 collide.
-	"""
-	var r := size * PROP_RADIUS_FACTOR
-	var yaw := rng.randf_range(0.0, TAU)
-	var w := size * 0.72
-	var top := 0.0
-
-	for _i in rng.randi_range(2, 3):
-		var th := minf(size * rng.randf_range(0.22, 0.34), PROP_MAX_STEP)
-		create_box(
-			local + Vector3(0.0, top + th * 0.5, 0.0), Vector3(w, th, w * 0.82),
-			yaw + rng.randf_range(-0.12, 0.12), rng, block_batch, block_body, 0.0,
-			PROP_RUIN_STONE.lerp(CITY_METAL, rng.randf() * 0.35)
-		)
-		top += th
-		w *= 0.94
-
-	# Loose slabs, leaning. Half their 3D diagonal is 0.5 * |(0.50, 0.09, 0.42)|
-	# = 0.338 of size, so a 0.34 ring reaches 0.678 — inside the declared 0.71.
-	for _i in 2:
-		var a := rng.randf_range(0.0, TAU)
-		create_box(
-			local + Vector3(cos(a) * size * 0.34, size * 0.10, sin(a) * size * 0.34),
-			Vector3(size * 0.50, size * 0.09, size * 0.42), rng.randf_range(0.0, TAU),
-			rng, block_batch, block_body, rng.randf_range(-0.7, 0.7),
-			PROP_RUIN_STONE.lerp(CITY_METAL, rng.randf() * 0.35), false
-		)
-
-	return { "radius": r, "top": top, "climbable": true }
-
-# ----- SNOW -----------------------------------------------------------------
-#
-# The tundra's small clutter, at the same scale the bare cubes were. All three are
-# CLIMBABLE, and in this one territory that is a design statement rather than an
-# incidental: snow is the most hostile band in the game (croc density is the
-# ordinary distance-scaled figure — only the city thins it), so the ice you can
-# stand on top of is the whole of the rest-from-crocodiles role out here. Every
-# perch is therefore an untilted, colliding, centred box whose top face IS the
-# returned `top`; the shards, scour lumps and broken branches carry the tilt and
-# sit beside the prop, never on it.
-
-func _prop_ice_rock(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	SNOW — a flat-topped block of glacier ice with two or three shards split off it
-	and leaning against its flanks. The block is the perch. 3-4 boxes, 1 collides.
-
-	OPAQUE, never transparent: the blue-white ramp is what has to read as ice, and
-	an alpha-blended box would cost fill rate on a mobile GPU AND drop out of the
-	chunk's one MultiMesh (which has a single opaque material) for the privilege.
-
-	`BoxKind.ROCK` since bead godot-test1-y1o.3 — glacier ice is a weathered lump
-	with a wind-scoured flat top, which is the kind's exact profile, and the shards
-	take it too so a snow chunk pays for ONE extra bucket and not two.
-	"""
-	var r := size * PROP_RADIUS_FACTOR
-	var yaw := rng.randf_range(0.0, TAU)
-	var w := size * 0.86
-	var h := minf(size * rng.randf_range(0.60, 0.95), PROP_MAX_STEP)
-
-	create_box(
-		local + Vector3(0.0, h * 0.5, 0.0), Vector3(w, h, w * 0.90), yaw,
-		rng, block_batch, block_body, 0.0, SNOW_ICE_A.lerp(SNOW_ICE_B, rng.randf() * 0.7),
-		true, ChunkBatch.BoxKind.ROCK
-	)
-
-	# The split shards. Half a shard's 3D diagonal is
-	# 0.5 * |(0.16, 0.55, 0.20)| = 0.303 of size, so a 0.38 ring reaches 0.683 —
-	# inside the declared 0.71, whatever yaw and tilt it ends up carrying.
-	for _i in rng.randi_range(2, 3):
-		var a := rng.randf_range(0.0, TAU)
-		create_box(
-			local + Vector3(cos(a) * size * 0.38, size * 0.24, sin(a) * size * 0.38),
-			Vector3(size * 0.16, size * 0.55, size * 0.20), rng.randf_range(0.0, TAU),
-			rng, block_batch, block_body, rng.randf_range(-0.55, 0.55),
-			SNOW_ICE_A.lerp(SNOW_ICE_B, rng.randf()), false, ChunkBatch.BoxKind.ROCK
-		)
-
-	return { "radius": r, "top": h, "climbable": true }
-
-func _prop_snow_drift(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	SNOW — a wind-packed drift: two wide shallow tiers with a couple of scour lumps
-	tumbled off the lee side. The lowest, widest prop in the whole set — a drift is
-	a shape the wind made, so it spreads rather than stacks. 4-5 boxes, 2 collide.
-	"""
-	var r := size * PROP_RADIUS_FACTOR
-	var yaw := rng.randf_range(0.0, TAU)
-	# Half-diagonal of the base tier is 0.5 * |(0.95, 0.85)| = 0.637 of size, so
-	# even at full yaw the widest tier stays inside the declared 0.71.
-	var w := size * 0.95
-	var top := 0.0
-
-	for _i in 2:
-		var th := minf(size * rng.randf_range(0.20, 0.32), PROP_MAX_STEP)
-		create_box(
-			local + Vector3(0.0, top + th * 0.5, 0.0), Vector3(w, th, w * 0.89),
-			yaw + rng.randf_range(-0.18, 0.18), rng, block_batch, block_body, 0.0,
-			SNOW_PACK.lerp(SNOW_ICE_A, rng.randf() * 0.5)
-		)
-		top += th
-		w *= 0.80
-
-	# Scour lumps. Half a lump's 3D diagonal at its widest is
-	# 0.5 * 0.22 * |(1, 0.7, 1.3)| = 0.196 of size; a 0.42 ring reaches 0.616.
-	for _i in rng.randi_range(1, 2):
-		var cs := size * rng.randf_range(0.14, 0.22)
-		var a := rng.randf_range(0.0, TAU)
-		create_box(
-			local + Vector3(cos(a) * size * 0.42, cs * 0.42, sin(a) * size * 0.42),
-			Vector3(cs, cs * 0.7, cs * 1.3), rng.randf_range(0.0, TAU),
-			rng, block_batch, block_body, rng.randf_range(-0.35, 0.35),
-			SNOW_PACK.lerp(SNOW_ICE_A, rng.randf() * 0.5), false
-		)
-
-	return { "radius": r, "top": top, "climbable": true }
-
-func _prop_frozen_stump(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	SNOW — the frost-split stump of a dead tree, with two or three broken branch
-	stubs still jutting out of it and a cap of drifted snow on the break.
-
-	The stump is the perch, so the snow cap is a THIN FILM over it (collide = false,
-	the STRUCTURE_THEMES `cap` arrangement) rather than another tier: the surface
-	the player stands on is the stump's own top face, which is the height returned.
-	4-6 boxes, 1 collides.
-	"""
-	var r := size * PROP_RADIUS_FACTOR
-	var yaw := rng.randf_range(0.0, TAU)
-	var w := size * 0.62
-	# Capped at the bare cube's proven 2.5 m rather than at PROP_MAX_STEP (2.6), the
-	# same call _prop_ruin_fragment makes and for the same reason: a perch that
-	# needed the very last centimetre of the jump arc is a rest spot only on paper.
-	var h := minf(size * rng.randf_range(0.70, 1.05), 2.5)
-
-	create_box(
-		local + Vector3(0.0, h * 0.5, 0.0), Vector3(w, h, w * 0.94), yaw,
-		rng, block_batch, block_body, 0.0, SNOW_DEADWOOD
-	)
-
-	# Snow on the break: a film, not a step. 6 cm of it at size 1.
-	create_box(
-		local + Vector3(0.0, h + size * 0.03, 0.0), Vector3(w * 1.05, size * 0.06, w * 0.99),
-		yaw, rng, block_batch, block_body, 0.0, SNOW_PACK, false
-	)
-
-	# Broken branch stubs. Half a stub's 3D diagonal is
-	# 0.5 * |(0.10, 0.42, 0.10)| = 0.222 of size; a 0.24 ring reaches 0.462.
-	for _i in rng.randi_range(2, 3):
-		var a := rng.randf_range(0.0, TAU)
-		create_box(
-			local + Vector3(cos(a) * size * 0.24, h * rng.randf_range(0.45, 0.85), sin(a) * size * 0.24),
-			Vector3(size * 0.10, size * 0.42, size * 0.10), a,
-			rng, block_batch, block_body, rng.randf_range(0.7, 1.2), SNOW_DEADWOOD, false
-		)
-
-	return { "radius": r, "top": h, "climbable": true }
 
 func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D, tilt: float = 0.0, color_override: Color = Color(0.0, 0.0, 0.0, 0.0), collide: bool = true, kind: int = ChunkBatch.BoxKind.CUBE) -> void:
 	"""
@@ -6561,1940 +4421,67 @@ func _build_block_multimesh(parent_chunk: MeshInstance3D, block_batch: Array,
 	"""
 	ChunkBatch._build_block_multimesh(parent_chunk, block_batch, cast_shadows)
 
+# ----------------------------------------------------------------------------
+# THE PREDATOR SPAWNERS — one-line forwarders, the code is in terrain_predators.gd
+# ----------------------------------------------------------------------------
+##
+## Bead godot-test1-ftn.6. `create_chunk` below calls `TerrainPredators` DIRECTLY
+## (it owns the call-order list and should say so); these six exist for
+## `create_box`'s reason one seam along — ninety-odd call sites across
+## `piglet_crocodile_ai.gd`, `tower_guards.gd`, `budapest_plan.gd` and a dozen
+## self-checks are written against `terrain.spawn_x_in_chunk(...)`, and rewriting
+## them all is the opposite of a mechanical move. The population rules, the
+## salts and every comment are over there.
+
 func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array = []) -> void:
-	"""
-	Spawns crocodile NPCs within a terrain chunk.
-
-	@param chunk_pos: Chunk coordinates for seeded random generation
-	@param parent_chunk: The chunk mesh to attach crocodiles to
-	@param obstacles: Block footprints to keep crocodiles out of, so they don't
-	                  spawn partially buried inside a block (see spawn_objects_in_chunk)
-
-	EDUCATIONAL NOTE:
-	- Crocodiles are spawned dynamically with the terrain
-	- They are parented to the chunk so they're removed when chunk is removed
-	- This creates an endless stream of enemies as you explore
-	"""
-
-	if not crocodile_scene:
-		return
-
-	# BUDAPEST — biome predators are OFF inside the city rect (bead
-	# godot-test1-8gw.3, DEC-9), and this is the early return the whole per-system
-	# policy exists for: the rect forces the CITY band, so without it Pest would
-	# get alley hounds wandering the Parliament's steps while the RIVER — the one
-	# place the city DOES want predators — got the same treatment as the streets.
-	# The Danube's own spawner below is the yes half of that split, on its own
-	# stream. NOT tower_excludes(), which has exactly one answer for everybody.
-	#
-	# BEFORE the seed is even mixed, because there is no stream to advance: a city
-	# chunk never consults this sequence at all, so nothing outside the rect can
-	# shift by one draw.
-	var croc_center := chunk_to_world(chunk_pos)
-	if in_budapest(croc_center.x, croc_center.z):
-		return
-
-	# Use chunk coordinates (+ this run's seed) to create a unique but consistent seed.
-	# Different multipliers than the object seed give different positions than objects;
-	# run_seed makes crocodile placement differ run-to-run (constant within a run).
-	var seed_value := hash(Vector3i(chunk_pos.x * 83492791, chunk_pos.y * 28411639, run_seed))
-	var rng := RandomNumberGenerator.new()
-	rng.seed = seed_value
-
-	# Calculate the world position of this chunk's corner
-	var chunk_world_pos := chunk_to_world(chunk_pos)
-	var half_chunk := chunk_size / 2.0
-
-	# Store positions of spawned crocodiles to check spacing
-	var spawned_positions: Array[Vector3] = []
-
-	# Difficulty gradient: chunks farther from origin (along the road's +X axis) hold
-	# MORE crocodiles — +1 per 10 chunks of |x| distance, capped at +4 over the base,
-	# so the undivided target runs 3..7; after the halving below the field really
-	# holds 1..2 near the origin and 3..4 far out. Rescaled with the base
-	# count (owner pacing ruling, 2026-08-29): the gradient must stay a slope you
-	# feel, not one that restores the wall-to-wall density further out.
-	# A pure function of chunk coords, so within-run determinism is untouched (the
-	# same chunk always regenerates the same count). The LOD manager keeps the extra
-	# distant crocodiles cheap: they are slept (frozen, monitoring off), never removed.
-	#
-	# HALVED (owner pacing ruling, 2026-09-02, bead godot-test1-7ed: "reduce
-	# predator amount in half"). This is a TARGET, not a roll — the same
-	# discipline as CITY_CROC_DIVISOR right below and DESERT_BLOCK_KEEP_EVERY:
-	# the halving costs the chunk RNG ZERO draws, so the surviving crocodiles are
-	# byte-for-byte the FIRST half of the undivided stream, standing exactly where
-	# they always stood, with the tail simply never spawned.
-	#
-	# WHY THE `posmod(chunk_pos.y, 2)`: the undivided targets are 3..7, whose
-	# halves are 1.5..3.5. Rounding every one of them the same way gives 57% (up)
-	# or 43% (down), not half — and the base band, where the player spends most of
-	# the run, would sit at 2/3. Adding the chunk ROW's parity before the integer
-	# divide rounds odd targets up on every other row of chunks and down on the
-	# rest, so the field averages EXACTLY half at every distance while staying a
-	# pure function of chunk coordinates. A target of 3 therefore yields 1 or 2 —
-	# "1 stays possible", and a base of 0 still yields 0.
-	var chunk_croc_target := (crocodiles_per_chunk
-			+ mini(4, absi(chunk_pos.x) / 10)
-			+ posmod(chunk_pos.y, 2)) / 2
-
-	# CITY — the one band whose croc target is divided (owner call, 2026-08-26: a
-	# city is not croc-free, it is QUIETER; the roofs are the real safety).
-	#
-	# A TARGET, NOT A ROLL, exactly like DESERT_BLOCK_KEEP_EVERY: the biome is a
-	# pure function of chunk coords, so the branch costs no RNG draw and inserts
-	# none. The consequence is worth stating precisely — the surviving crocodiles
-	# are byte-for-byte the FIRST target/N of the undivided stream, standing in the
-	# same positions, with the tail simply never spawned. Nothing shifts.
-	#
-	# This is a DESIGN number (the difficulty gradient's sibling), not a perf trim,
-	# so the "entity counts are never reduced as an optimization" convention holds.
-	var chunk_biome: Biome = biome_at(chunk_world_pos.x, chunk_world_pos.z)
-	if chunk_biome == Biome.CITY:
-		chunk_croc_target = maxi(1, int(roundf(float(chunk_croc_target) / CITY_CROC_DIVISOR)))
-
-	# WHICH PREDATOR THIS CHUNK GETS — one table lookup on the biome already
-	# resolved above, and NOT ONE RNG DRAW (see BIOME_SPECIES for why that is a
-	# constraint rather than a preference). The whole chunk gets one species,
-	# because the biome field is what varies and it varies at the ~8-chunk scale
-	# of BIOME_CELL_SIZE; picking per crocodile would need a draw, and a draw is
-	# exactly what is not allowed here.
-	#
-	# `rng` is untouched by any of this, so a PLAINS chunk generates the identical
-	# crocodiles it always did, down to the last float.
-	#
-	# The crocodile stays the default, and a biome with no BIOME_SPECIES entry
-	# never even reaches the load: PLAINS takes the `crocodile_scene` it always
-	# took. A species whose scene fails to load also falls back rather than
-	# spawning nothing — same degrade-don't-crash rule as the AI's own unknown-
-	# species warning, and a visibly wrong animal beats an invisibly empty chunk.
-	var chunk_species: String = "crocodile"
-	var species_scene: PackedScene = crocodile_scene
-	if BIOME_SPECIES.has(chunk_biome):
-		var row: Dictionary = BIOME_SPECIES[chunk_biome]
-		if not _species_scenes.has(chunk_biome):
-			_species_scenes[chunk_biome] = load(row["scene"])
-			if not _species_scenes[chunk_biome]:
-				push_warning("endless_terrain: failed to load %s, using the crocodile"
-						% row["scene"])
-		var scene: PackedScene = _species_scenes[chunk_biome]
-		if scene:
-			chunk_species = row["species"]
-			species_scene = scene
-
-	# Try to spawn crocodiles with proper spacing
-	var attempts := 0
-	var max_attempts := chunk_croc_target * 5  # Allow multiple attempts per crocodile
-
-	while spawned_positions.size() < chunk_croc_target and attempts < max_attempts:
-		attempts += 1
-
-		# Generate random position within chunk bounds
-		var margin := 3.0  # Keep away from edges
-		var random_x := rng.randf_range(-half_chunk + margin, half_chunk - margin)
-		var random_z := rng.randf_range(-half_chunk + margin, half_chunk - margin)
-		var crocodile_pos := Vector3(random_x, 0.5, random_z)  # Y=0.5 to spawn above ground
-
-		# Check if this position is far enough from existing crocodiles
-		var valid_position := true
-		for existing_pos in spawned_positions:
-			if crocodile_pos.distance_to(existing_pos) < min_crocodile_spacing:
-				valid_position = false
-				break
-
-		# Also reject positions that overlap a block, so crocodiles never spawn
-		# partially inside one. We compare horizontal distance against the block's
-		# footprint radius plus a clearance margin.
-		if valid_position:
-			for ob in obstacles:
-				var horizontal := Vector2(crocodile_pos.x - ob.pos.x, crocodile_pos.z - ob.pos.z).length()
-				if horizontal < ob.radius + min_object_clearance:
-					valid_position = false
-					break
-
-		# Crocodiles don't stand in rivers — the water is the player's, and a river
-		# reads as a small safe(r) crossing. Rejected AFTER the position draws, so
-		# the candidate itself costs the stream nothing extra — but a rejection
-		# still skips the successful spawn's `rotation.y` draw below, so the rest
-		# of this chunk's crocodile positions shift. Deterministic within a run
-		# (is_river_at is pure), just not identical to a river-free chunk.
-		#
-		# chunk_croc_target is deliberately NOT reduced: density is a DESIGN number
-		# (the difficulty gradient), never trimmed for a biome. The while loop's
-		# generous retry budget (5 tries per crocodile) simply finds dry spots
-		# instead, so a chunk merely grazed by a river keeps its full count; only a
-		# chunk almost entirely under water ends up with fewer.
-		if valid_position and is_river_at(chunk_world_pos + crocodile_pos):
-			valid_position = false
-
-		# Keep the spawn point clear (see SPAWN_SAFE_RADIUS). Same post-draw `continue`
-		# discipline as the river skip directly above — the candidate's own draws are
-		# already spent, so nothing upstream shifts; only the handful of chunks touching
-		# the origin bubble are affected, and identically on every run.
-		var croc_world := chunk_world_pos + crocodile_pos
-		if valid_position and Vector2(croc_world.x, croc_world.z).length() < SPAWN_SAFE_RADIUS:
-			valid_position = false
-
-		# Keep the tower's site clear too — the same rule as the spawn bubble above
-		# (a fixed disc nothing procedural may stand in), enforced with the same
-		# post-draw `continue`. min_object_clearance is the margin the block test
-		# already uses for "a crocodile is not a point".
-		if valid_position and tower_excludes(croc_world.x, croc_world.z, min_object_clearance):
-			valid_position = false
-
-		if not valid_position:
-			continue
-
-		# ...and a FIELD BRIDGE is a floor, not an obstacle: a spot on a deck
-		# keeps its XZ and is lifted onto the stone (see field_bridge_stand_y).
-		crocodile_pos.y = field_bridge_stand_y(croc_world.x, croc_world.z,
-				crocodile_pos.y)
-
-		# Instantiate this chunk's predator (crocodile everywhere but the desert)
-		var crocodile_instance = species_scene.instantiate()
-		# NAMED "Crocodile_…" WHATEVER THE SPECIES, deliberately. The name is this
-		# spawn SLOT's identity, not a label: piglet_crocodile_ai.croc_id_for()
-		# hashes it into the room-wide id multiplayer syncs on, and
-		# enemy_spawn_selfcheck classifies ground spawns by the prefix. Species is
-		# a pure function of position, so every peer already agrees on it — a
-		# per-species prefix would only churn every id for nothing.
-		crocodile_instance.name = "Crocodile_%d_%d_%d" % [chunk_pos.x, chunk_pos.y, spawned_positions.size()]
-
-		# Position relative to chunk
-		crocodile_instance.position = crocodile_pos
-
-		# Random initial rotation for variety
-		crocodile_instance.rotation.y = rng.randf_range(0, TAU)
-
-		# CALL-ORDER CONTRACT (the setup_as_boss shape): hand over the deterministic
-		# size/speed roll seed BEFORE add_child, so the croc's _ready() sees it and
-		# seeds its own rng from it instead of randomize()ing. Non-negative index =
-		# the ground crocodile stream (see _croc_roll_seed).
-		crocodile_instance.setup_roll_seed(_croc_roll_seed(chunk_pos, spawned_positions.size()))
-		# SAME CALL-ORDER CONTRACT, and it is the reason `species` is a plain
-		# public field: _ready() is where it is resolved into `spec` and where the
-		# size/speed rolls that READ that spec happen, so assigning it after
-		# add_child() would roll a crocodile's numbers onto a viper's body.
-		crocodile_instance.species = chunk_species
-
-		# Add to chunk (so it gets removed when chunk is removed)
-		parent_chunk.add_child(crocodile_instance)
-		spawned_positions.append(crocodile_pos)
+	TerrainPredators.spawn_crocodiles_in_chunk(self, chunk_pos, parent_chunk, obstacles)
 
 func spawn_danube_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -> void:
-	"""
-	Put crocodiles in the Danube — the city rect's ONE yes in a policy of noes.
-
-	@param chunk_pos: Chunk coordinates — the only spatial input, so placement is a
-	                  pure function of (chunk, run_seed)
-	@param parent_chunk: The chunk mesh they parent to, so they are freed when the
-	                     chunk unloads (the per-chunk parenting rule everything follows)
-
-	WHY THIS FUNCTION EXISTS SEPARATELY, and it is the same answer the hunter's
-	spawner gives: its OWN hash stream. DANUBE_SALT plus DANUBE_HASH_PRIME_X/Y
-	give a private RNG that touches no other sequence, so every crocodile OUTSIDE
-	the city stands byte-for-byte where it stood before the city existed. Folding
-	this into spawn_crocodiles_in_chunk as a branch would have been fewer lines and
-	would have slid the whole world by one draw.
-
-	WHY CROCODILES and not one of the six biome rows: the owner's standing rule is
-	"river -> crocodile", the same one _boss_row_at applies to a station standing
-	in water. The city forces the CITY band, so BIOME_SPECIES would have answered
-	"alley hound" — a dog treading water.
-
-	EVERY REJECTION IS A POST-DRAW SKIP, the discipline the whole file runs on:
-	both position draws and the facing draw are spent before the first test, so a
-	candidate costs this stream exactly three draws whether it is taken or thrown
-	away, and a bridge deck can never slide a later candidate.
-	"""
-	if not crocodile_scene:
-		return
-
-	# The rect first, and it is not redundant with danube_wet below: the polyline
-	# runs to the rect's north and south edges, so a chunk 40 m outside the city
-	# can still sit inside the 120 m band. is_river_at() already asks the two
-	# questions in this order; so does this.
-	var chunk_world_pos := chunk_to_world(chunk_pos)
-	if not in_budapest(chunk_world_pos.x, chunk_world_pos.z):
-		return
-	if not BudapestPlan.danube_wet(chunk_world_pos.x, chunk_world_pos.z):
-		return
-
-	# Chunk coords + run_seed ^ DANUBE_SALT, with this stream's own primes.
-	var rng := RandomNumberGenerator.new()
-	rng.seed = hash(Vector3i(
-		chunk_pos.x * DANUBE_HASH_PRIME_X,
-		chunk_pos.y * DANUBE_HASH_PRIME_Y,
-		run_seed ^ DANUBE_SALT
-	))
-
-	# The rarity roll, first draw of the stream and taken before anything else so
-	# geometry can never perturb it — the _chest_at / spawn_hunters_in_chunk shape.
-	if rng.randf() > DANUBE_CROC_CHANCE:
-		return
-
-	var half_span := chunk_size / 2.0 - 3.0
-	var spawned := 0
-	for _try in DANUBE_CROC_MAX * 3:
-		if spawned >= DANUBE_CROC_MAX:
-			break
-
-		# THE THREE DRAWS. All of them, unconditionally, before any test below.
-		var local := Vector3(
-			rng.randf_range(-half_span, half_span),
-			0.5,
-			rng.randf_range(-half_span, half_span))
-		var facing := rng.randf_range(0.0, TAU)
-		var world := chunk_world_pos + local
-
-		# Re-asked AT THE BODY, not just at the chunk centre: a chunk on the bank
-		# is half dry land, and the bridge decks and Margaret Island are dry rects
-		# INSIDE the band. This is what keeps a crocodile off the Chain Bridge.
-		if not BudapestPlan.danube_wet(world.x, world.z):
-			continue
-
-		# ...and off the stone that HANGS OFF the deck it stands on, which the test
-		# above cannot see. See DANUBE_CROC_DECK_MARGIN.
-		if _near_dry_rect(world.x, world.z, DANUBE_CROC_DECK_MARGIN):
-			continue
-
-		var croc := crocodile_scene.instantiate()
-		# "Crocodile_<cx>_<cy>_<i>", the ground spawner's own prefix and namespace
-		# — croc_id_for() hashes the name into the room-wide id, and the four
-		# prefixes are the whole scheme every peer and every self-check reads. The
-		# two spawners cannot both run in a chunk (the one above returns inside the
-		# rect), and DANUBE_SLOT_BASE puts the indices out of reach anyway.
-		croc.name = "Crocodile_%d_%d_%d" % [chunk_pos.x, chunk_pos.y, DANUBE_SLOT_BASE + spawned]
-		croc.position = local
-		croc.rotation.y = facing
-		# CALL-ORDER CONTRACT (the setup_as_boss / spawn_crocodiles_in_chunk
-		# shape): both of these BEFORE add_child, because _ready() is where
-		# `species` is resolved into `spec` and where the size/speed rolls that
-		# READ that spec happen.
-		croc.setup_roll_seed(_croc_roll_seed(chunk_pos, DANUBE_SLOT_BASE + spawned))
-		croc.species = "crocodile"
-		parent_chunk.add_child(croc)
-		spawned += 1
-
-
-func _near_dry_rect(x: float, z: float, margin: float) -> bool:
-	"""
-	Is this world XZ within `margin` of a Danube DRY RECT (a bridge deck, or the
-	island)?
-
-	@param x, z: world XZ
-	@param margin: how far outside a rect still counts as "near"
-	@return: whether any DRY_RECTS row, grown by `margin` on all four sides,
-	         contains the point
-
-	`BudapestPlan.is_dry` asks the same question with margin 0 and cannot be given
-	one: it is half of the wading contract and is mirrored in `ground.gdshader`, so
-	a margin there would move the shoreline. This is a SPAWNER-side clearance test
-	over the same table and touches neither language of that contract.
-	"""
-	for i in range(BudapestPlan.DRY_RECTS.size()):
-		var r: Rect2 = BudapestPlan.DRY_RECTS[i]
-		if x >= r.position.x - margin and x <= r.position.x + r.size.x + margin \
-				and z >= r.position.y - margin and z <= r.position.y + r.size.y + margin:
-			return true
-	return false
-
-
-func adopt_wanderer(unit: Node3D) -> void:
-	"""
-	Re-parent a body that has walked off its birth chunk to the chunk under it.
-
-	@param unit: the wandering body — today only a scent-tracking hunter, which is
-	             the only thing in this game that moves while the LOD manager has
-	             it asleep
-
-	EVERYTHING SPAWNED PER CHUNK IS PARENTED TO THAT CHUNK so unloading frees it,
-	and that rule is exactly right for a body that stays where it was put. A
-	tracker does not: it follows a trail toward the player, so its birth chunk
-	falls out of `render_distance` behind it and takes it with it — deleting the
-	unit for doing the one thing the feature exists to make it do. Re-parenting
-	restores the rule instead of exempting the unit from it: the body still dies
-	when the ground it is ACTUALLY standing on unloads, which is still the correct
-	streaming lifetime, just measured against the right chunk.
-
-	THE NAME IS NOT TOUCHED, because the name IS the room-wide crocodile id
-	(`croc_id_for` hashes it) and every peer derives it from the birth chunk. What
-	the move does create is the possibility of that birth chunk regenerating while
-	this body is still alive, which would build a second unit with the same id —
-	so the slot is recorded in `_migrated_units` and `spawn_hunters_in_chunk`
-	refuses to fill a slot that is already standing somewhere.
-
-	Silently does nothing when the destination chunk is not loaded (leaving the
-	unit parented where it is, which is the pre-existing behaviour) or when it is
-	already parented correctly — so this is safe to call every scan, which is what
-	`advance_tracking` does.
-	"""
-	if not is_instance_valid(unit) or not unit.is_inside_tree():
-		return
-	var chunk_pos := world_to_chunk(unit.global_position)
-	if not active_chunks.has(chunk_pos):
-		return
-	var host: Node = active_chunks[chunk_pos]
-	if unit.get_parent() == host:
-		return
-	_migrated_units[unit.name] = unit
-	unit.reparent(host, true)
-
+	TerrainPredators.spawn_danube_crocodiles_in_chunk(self, chunk_pos, parent_chunk)
 
 func spawn_hunters_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array = []) -> void:
-	"""
-	Place this chunk's GD-SURVEY hunter robot, if it gets one.
-
-	@param chunk_pos: Chunk coordinates — the only spatial input, so placement is a
-	                  pure function of (chunk, run_seed)
-	@param parent_chunk: The chunk mesh the unit parents to, so it is freed when the
-	                     chunk unloads (the per-chunk parenting rule everything follows)
-	@param obstacles: Block footprints already built in this chunk, so a hunter is
-	                  never wedged inside one (see spawn_objects_in_chunk)
-
-	ITS OWN HASH STREAM, AND THAT IS THE WHOLE POINT OF THIS FUNCTION EXISTING
-	SEPARATELY. HUNTER_SALT plus HUNTER_HASH_PRIME_X/Y give a private RNG that
-	touches no other stream, so spawn_crocodiles_in_chunk's sequence — and
-	therefore every crocodile POSITION in the world — is byte-for-byte what it was
-	before hunters existed. The same discipline as _artifact_at / _camp_at /
-	_chest_at / _landmark_at; enemy_spawn_selfcheck check 12 is the A/B that
-	measures it.
-
-	IT JOINS GROUP "crocodile", VIA ITS SCENE, AND THAT IS DELIBERATE — it is what
-	gets it the LOD manager's sleep, the danger vignette, the multiplayer crocodile
-	sync and the inherited `_on_player_collision` -> `player.hit_by_crocodile()` for
-	free. The visible consequence: the F3 perf overlay's "active/total crocs"
-	counters include hunters. That is correct rather than a mislabel — those
-	counters measure the simulation load the LOD manager is managing, and a hunter
-	is exactly one more body in it.
-
-	AND EVERY REJECTION IS A POST-DRAW SKIP. Both position draws AND the facing
-	draw are spent BEFORE the first test, so a candidate costs this stream exactly
-	three draws whether it is accepted or thrown away. That is stricter than the
-	crocodile spawner (which draws its rotation only on success, so a rejection
-	there shifts the rest of its own chunk) and it is worth the one extra line: it
-	makes "hunter 4 of 6 was rejected" cost the same as "hunter 1 of 6 was taken",
-	so nothing about a chunk's river, blocks or distance from the origin can slide
-	a LATER candidate to a different place than it would otherwise have had.
-	"""
-	if not spawn_hunters:
-		return
-
-	# Chunk coords + run_seed ^ HUNTER_SALT, with this stream's own primes.
-	var rng := RandomNumberGenerator.new()
-	rng.seed = hash(Vector3i(
-		chunk_pos.x * HUNTER_HASH_PRIME_X,
-		chunk_pos.y * HUNTER_HASH_PRIME_Y,
-		run_seed ^ HUNTER_SALT
-	))
-
-	# The rarity roll, first draw of the stream and taken before anything else so
-	# it can never be perturbed by geometry — the _chest_at / _landmark_at shape.
-	# NO BIOME LOOKUP: the corporation hunts every band (see HUNTER_SPECIES).
-	if rng.randf() > HUNTER_CHANCE:
-		return
-
-	var chunk_world_pos := chunk_to_world(chunk_pos)
-	var half_span := chunk_size / 2.0 - HUNTER_EDGE_MARGIN
-
-	for _try in HUNTER_PLACE_TRIES:
-		# THE THREE DRAWS. All of them, unconditionally, before any test below.
-		var local := Vector3(
-			rng.randf_range(-half_span, half_span),
-			HUNTER_SPAWN_HEIGHT,
-			rng.randf_range(-half_span, half_span))
-		var facing := rng.randf_range(0.0, TAU)
-		var world := chunk_world_pos + local
-
-		# Not inside a block. Horizontal distance against the footprint radius plus
-		# the same clearance margin the crocodile spawner uses — a hunter is not a
-		# point, and min_object_clearance (1.5) is the project's answer to that.
-		var blocked := false
-		for ob in obstacles:
-			if Vector2(local.x - ob.pos.x, local.z - ob.pos.z).length() < ob.radius + min_object_clearance:
-				blocked = true
-				break
-		if blocked:
-			continue
-
-		# Not standing in a river. Same reading as the crocodile's: the water is the
-		# player's, and a crossing should read as safer ground.
-		if is_river_at(world):
-			continue
-
-		# Not in the spawn bubble (SPAWN_SAFE_RADIUS) — a hunter's detection radius
-		# is 25 m, the widest in the table, so one placed at the edge of the bubble
-		# would be chasing on frame one of a fresh boot.
-		if Vector2(world.x, world.z).length() < SPAWN_SAFE_RADIUS:
-			continue
-
-		# Not on the tower's site — the same fixed disc nothing procedural may stand
-		# in that the crocodile spawner already respects.
-		if tower_excludes(world.x, world.z, min_object_clearance):
-			continue
-
-		# ...and a FIELD BRIDGE is a floor: a spot on a deck keeps its XZ and is
-		# lifted onto the stone (see field_bridge_stand_y).
-		local.y = field_bridge_stand_y(world.x, world.z, local.y)
-
-		# ONE SLOT, ONE BODY. A hunter that walked off this chunk while tracking is
-		# re-parented to the ground under it (`adopt_wanderer`), so this chunk can
-		# unload and regenerate while that unit is still alive — and filling the
-		# slot again would build a second body carrying the same name, which is the
-		# room-wide crocodile id. The registry is reaped here rather than watched:
-		# a slot whose body has since been freed is simply forgotten and refilled.
-		#
-		# BELOW EVERY DRAW, like every other rejection in this function, so the
-		# stream is identical whether or not the slot happens to be occupied.
-		var slot := "Hunter_%d_%d_0" % [chunk_pos.x, chunk_pos.y]
-		if _migrated_units.has(slot):
-			if is_instance_valid(_migrated_units[slot]):
-				return
-			_migrated_units.erase(slot)
-
-		# THE OWNER'S TEN (HUNTER_FIELD_CAP). Last rejection in the function and
-		# BELOW EVERY DRAW, like all the others: a capped chunk spends exactly the
-		# stream a spawning one does, so turning the cap on slides nothing.
-		if _field_hunters_full(parent_chunk):
-			return
-
-		var hunter := HUNTER_SCENE.instantiate()
-		# "Hunter_<cx>_<cy>_<i>", its own namespace beside "Crocodile_" /
-		# "PatrolCrocodile_" / "BossCrocodile_". The name IS the room-wide id
-		# (piglet_crocodile_ai.croc_id_for hashes it), so it has to be derivable by
-		# every peer — which it is, being a pure function of the chunk — and it has
-		# to be collision-free with the other spawners' names, which is exactly why
-		# this one does NOT reuse the "Crocodile_" prefix: the two index sequences
-		# are independent, so "Crocodile_3_4_0" would be claimed twice in a chunk
-		# that has both.
-		# The trailing 0 is this chunk's hunter INDEX, kept in the name even though
-		# a chunk gets at most one today: the three-part shape is what makes the
-		# name a spawn SLOT rather than a label, the way the crocodile spawner's is.
-		hunter.name = slot
-		hunter.position = local
-		hunter.rotation.y = facing
-		# CALL-ORDER CONTRACT (the setup_as_boss / spawn_crocodiles_in_chunk shape):
-		# BOTH of these go in BEFORE add_child, because _ready() is where `species`
-		# is resolved into `spec` and where the size/speed rolls that READ that spec
-		# happen. Assigned after, a hunter would roll a crocodile's numbers onto its
-		# body and every per-frame path would read the wrong row.
-		hunter.setup_roll_seed(_croc_roll_seed(chunk_pos, HUNTER_ROLL_INDEX))
-		hunter.species = HUNTER_SPECIES
-		parent_chunk.add_child(hunter)
-		return
-
-
-func _field_hunters_full(parent_chunk: Node) -> bool:
-	"""
-	Are there already HUNTER_FIELD_CAP hunters standing in the FIELD?
-
-	@param parent_chunk: the chunk the caller is filling — it is what supplies the
-	                     SceneTree, because this node is driven DETACHED by several
-	                     self-checks while the chunk parent they hand it is real
-	@return true when spawn_hunters_in_chunk must skip (post-draw) this hunter
-
-	THREE THINGS IT IS CAREFUL ABOUT, and each is a way to get this wrong:
-
-	  * THE HQ DOESN'T COUNT, and the exclusion is BY PARENT — `tower_shell()` is
-	    asked whether it is the body's ancestor. Not by group (a guard is in
-	    "crocodile" like everything else), and not by position either: a guard
-	    chasing you onto the doorstep is still the building's.
-	  * OFF IN A ROOM. `is_online()` is "a room exists", the window in which every
-	    peer must agree about which bodies the world holds; a live body count
-	    differs per peer by where they walked, so in a room HUNTER_CHANCE is the
-	    whole cap (see the const).
-	  * A DETACHED / TREE-LESS CALLER COUNTS NOTHING, so the cap simply does not
-	    fire — the degrade every group lookup in this project takes.
-
-	The species field rather than the "Hunter_" name prefix, because the name is a
-	spawn SLOT and the row is what makes a body a retrieval unit; the tower guard
-	is a different row and would be excluded by this line too, which is belt to the
-	parent test's braces.
-	"""
-	var tree := parent_chunk.get_tree()
-	if tree == null:
-		return false
-	var mp: Node = tree.get_first_node_in_group("mp")
-	if mp != null and mp.has_method("is_online") and bool(mp.is_online()):
-		return false
-	var shell: Node = tower_shell()
-	var count := 0
-	for body: Node in tree.get_nodes_in_group("crocodile"):
-		if String(body.get("species")) != HUNTER_SPECIES:
-			continue
-		if shell != null and shell.is_ancestor_of(body):
-			continue
-		count += 1
-		if count >= HUNTER_FIELD_CAP:
-			return true
-	return false
-
+	TerrainPredators.spawn_hunters_in_chunk(self, chunk_pos, parent_chunk, obstacles)
 
 func spawn_platform_crocodiles(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, platforms: Array) -> void:
-	"""
-	Place rare crocodiles that patrol an elevated structure top (a terraced mound's
-	summit, a wall ridge or a forest log bridge). They can't jump or climb, so each is confined to its platform —
-	it paces around but never walks off the edge (see set_confinement in the AI).
-
-	@param chunk_pos: Chunk coordinates for seeded random generation
-	@param parent_chunk: The chunk mesh to attach the crocodiles to
-	@param platforms: Walkable-top descriptors
-	                  ({ "center": Vector3, "half": Vector2, "top": float }) —
-	                  `center.y` is the surface the guard paces, `top` is the
-	                  TALLEST stone inside the footprint, which is what the guard
-	                  is dropped in from (see the note in spawn_wall).
-	"""
-	if not crocodile_scene or platforms.is_empty():
-		return
-
-	# Chunk coords + run_seed, like every other seed site (see the run_seed doc block).
-	var seed_value := hash(Vector3i(chunk_pos.x * 40499, chunk_pos.y * 86969, run_seed))
-	var rng := RandomNumberGenerator.new()
-	rng.seed = seed_value
-
-	var count := 0
-	for platform in platforms:
-		# Only some platforms get a guard, so they stay a rare surprise.
-		if rng.randf() > platform_crocodile_chance:
-			continue
-
-		var center: Vector3 = platform.center
-		var half: Vector2 = platform.half
-
-		# Start a little in from the edges so it lands cleanly on the surface.
-		var ang := rng.randf_range(0.0, TAU)
-		var sx := maxf(0.0, half.x - PLATFORM_SPAWN_EDGE_INSET) * cos(ang)
-		var sz := maxf(0.0, half.y - PLATFORM_SPAWN_EDGE_INSET) * sin(ang)
-
-		var crocodile := crocodile_scene.instantiate()
-		crocodile.name = "PatrolCrocodile_%d_%d_%d" % [chunk_pos.x, chunk_pos.y, count]
-		# Spawn just above the TALLEST stone in the platform's footprint, not above
-		# the paced surface, so gravity settles it onto the ridge or onto a hump
-		# instead of dropping it INSIDE one. `sx`/`sz` above pick a random angle
-		# along the platform and nothing here knows which sections are doubled, so
-		# the maximum is the only height that is clear at every angle — see the
-		# platform "top" note in spawn_wall for the measurement.
-		crocodile.position = Vector3(center.x + sx, platform.top + PLATFORM_SPAWN_HEIGHT, center.z + sz)
-		crocodile.rotation.y = rng.randf_range(0.0, TAU)
-		# Same BEFORE-add_child contract as the ground spawner above. NEGATIVE indices
-		# (-1, -2, …) keep the platform guards on their own slice of the roll stream,
-		# so platform guard #0 and ground crocodile #0 in the same chunk don't roll
-		# the identical size and speed.
-		crocodile.setup_roll_seed(_croc_roll_seed(chunk_pos, -1 - count))
-		parent_chunk.add_child(crocodile)
-
-		# Confine it to this platform (in world space) so it can never wander off.
-		if crocodile.has_method("set_confinement"):
-			var center_global: Vector3 = parent_chunk.global_position + center
-			crocodile.set_confinement(center_global, half)
-
-		count += 1
-
-func _croc_roll_seed(chunk_pos: Vector2i, index: int) -> int:
-	"""
-	Deterministic seed for one crocodile's per-instance SIZE/SPEED rolls.
-
-	@param chunk_pos: Chunk that spawns the crocodile
-	@param index: Which crocodile in that chunk. Ground crocodiles pass their
-	              spawn slot (0, 1, 2, …); platform guards pass -1 - count, so the
-	              two spawners can never hand the same seed to two crocodiles in
-	              the same chunk.
-	@return: Seed to hand the instance via setup_roll_seed()
-
-	This is its OWN independent hash stream — the _boss_at / _artifact_at /
-	_camp_at pattern — mixing chunk coords, the croc index and run_seed with
-	coordinate primes distinct from the object (73856093 / 19349663), biome
-	(83492791 / 15485863) and camp (40960001 / 26463089) streams. It draws from NO
-	RandomNumberGenerator at all, so the crocodile spawner's own sequence — and
-	therefore every crocodile POSITION — is byte-for-byte unchanged.
-
-	WHY it exists: multiplayer needs every peer to compute identical crocodile
-	spawn state from the shared run_seed. Everything else in world generation was
-	already a pure function of chunk coords + run_seed; the crocodile's size/speed
-	rolls were the one single-player-era exception (a randomize()d per-instance
-	RNG), and this is what closes it.
-	"""
-	return hash(Vector3i(
-		chunk_pos.x * 179424673 + index,
-		chunk_pos.y * 32452843,
-		run_seed ^ CROC_ROLL_SALT
-	))
-
-func _boss_at(i: int) -> Dictionary:
-	"""
-	Deterministic placement + size for boss index `i` (>= 1). Pure function of
-	`i` + run_seed via the independent BOSS_SEED hash stream — no shared RNG is
-	touched, so the rest of the world regenerates byte-identically.
-
-	@param i: Boss index (1-based). Owns station k = i * BOSS_INTERVAL_STATIONS.
-	          ASSUMES the station cache already covers `k` (callers
-	          _road_extend_to_x first, like _road_coins_at).
-	@return: { "positions": Array[Vector3] (world-space candidates, best first),
-	           "scale": float (body scale) }.
-
-	EDUCATIONAL NOTE:
-	- The RNG draws ONLY lateral offsets (BOSS_PLACE_TRIES draws, fixed order),
-	  so boss placement is stable within a run: revisiting a chunk regenerates
-	  the identical boss. Across runs, run_seed changes BOTH the road and this
-	  stream, so bosses land elsewhere.
-	- positions[0] is the ONE draw this function used to make, and it is drawn
-	  FIRST, so it is bit-identical to the pre-obstacle-check behaviour. The
-	  extra candidates are appended AFTER it and only ever consulted when the
-	  spawner rejects an earlier one for standing in a block footprint — nothing
-	  in the schedule (station, size, rarity) moves.
-	- Y sits a little above ground; gravity settles the body (the croc's capsule
-	  bottom is at its origin, so this works at any scale).
-	"""
-	var k := i * BOSS_INTERVAL_STATIONS
-	var st: Dictionary = _road_station(k)
-	var heading: float = st.heading
-	# Same tangent/perp construction as _road_coins_at (XZ plane; Vector2.x ->
-	# world X, Vector2.y -> world Z).
-	var tangent := Vector2(cos(heading), sin(heading))
-	var perp := Vector2(-sin(heading), cos(heading))
-
-	var rng := RandomNumberGenerator.new()
-	rng.seed = hash(Vector3i(i, BOSS_SEED, run_seed))
-	# Candidate lateral offsets, drawn in one fixed order. The first draw is the
-	# original (and overwhelmingly the used) one; the rest are fallbacks for a
-	# boss whose primary spot happens to sit inside a block/tree/mountain
-	# footprint — see spawn_bosses_in_chunk.
-	var positions: Array[Vector3] = []
-	for _try in BOSS_PLACE_TRIES:
-		var lateral := rng.randf_range(-1.0, 1.0) * BOSS_LATERAL_MAX
-		var p: Vector2 = st.center + tangent * BOSS_FORWARD_OFFSET + perp * lateral
-		positions.append(Vector3(p.x, 0.6, p.y))
-
-	# Size schedule: boss 1 is exactly BOSS_BASE_SCALE, each successive boss is
-	# BOSS_GROWTH of base bigger, capped at BOSS_MAX_SCALE (see the consts above).
-	var body_scale := minf(BOSS_BASE_SCALE * (1.0 + float(i - 1) * BOSS_GROWTH), BOSS_MAX_SCALE)
-	return { "positions": positions, "scale": body_scale }
-
-func _boss_row_at(station_centre: Vector2) -> Dictionary:
-	"""
-	Which animal guards the boss station whose centreline point is `station_centre`.
-
-	@param station_centre: The OWNING STATION's centre in world coordinates,
-	                       packed the way the road cache packs it (Vector2.x is
-	                       world X, Vector2.y is world Z). Pure in the boss index
-	                       + run_seed, which is what makes this answer pure in the
-	                       boss index too — see BIOME_BOSS for why it must be.
-	@return: { "species": String, "scene": PackedScene }. Never empty: the
-	         crocodile is the fallback for a river station, for a band with no
-	         BIOME_BOSS row, and for a row whose scene fails to load.
-
-	NOT ONE RNG DRAW, and that is a constraint rather than a preference (CLAUDE.md's
-	determinism section; the same rule BIOME_SPECIES and CITY_CROC_DIVISOR are held
-	to). biome_at() and is_river_at() are the pure, allocation-free public API — one
-	noise evaluation each, no shared stream touched — so inserting this call left
-	_boss_at's BOSS_SEED stream consuming byte-identical draws in the same order.
-
-	With BIOME_BOSS empty every path here returns the crocodile, which is the seam
-	landing with zero behaviour change.
-	"""
-	var fallback := { "species": "crocodile", "scene": crocodile_scene }
-	# Rivers first, and unconditionally: the owner's rule is that water is the
-	# crocodile's, whichever band the noise field says the station stands in.
-	if is_river_at(Vector3(station_centre.x, 0.0, station_centre.y)):
-		return fallback
-	var biome: Biome = biome_at(station_centre.x, station_centre.y)
-	if not BIOME_BOSS.has(biome):
-		return fallback
-	var row: Dictionary = BIOME_BOSS[biome]
-	# Lazily loaded and cached per band, exactly like _species_scenes: a run may
-	# never walk far enough to meet a snow boss, and the one that does should not
-	# re-load() the scene at every station.
-	if not _boss_scenes.has(biome):
-		_boss_scenes[biome] = load(row["scene"])
-		if not _boss_scenes[biome]:
-			push_warning("endless_terrain: boss scene %s failed to load, using the crocodile"
-					% row["scene"])
-	var scene: PackedScene = _boss_scenes[biome]
-	if not scene:
-		return fallback
-	return { "species": String(row["species"]), "scene": scene }
-
+	TerrainPredators.spawn_platform_crocodiles(self, chunk_pos, parent_chunk, platforms)
 
 func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array = []) -> void:
-	"""
-	Spawn this chunk's boss crocodiles — the rare road-guarding giants placed every
-	BOSS_INTERVAL_STATIONS stations along the coin road (see the BOSS CROCODILES
-	config section near the top).
+	TerrainPredators.spawn_bosses_in_chunk(self, chunk_pos, parent_chunk, obstacles)
 
-	Follows spawn_coins_in_chunk's seam-claim pattern exactly: extend the shared
-	station cache over this chunk's padded X-window, walk the boss indices whose
-	stations fall inside it, and spawn ONLY the bosses whose FINAL world position
-	lands in THIS chunk (world_to_chunk(pos) == chunk_pos) — each boss is claimed
-	by exactly one chunk, so there are no seam gaps or duplicates.
+func adopt_wanderer(unit: Node3D) -> void:
+	TerrainPredators.adopt_wanderer(self, unit)
 
-	A boss is 3.75x–9x the size of a normal crocodile and stands ON the road, so a
-	boss wedged into a wall/mound/tree/mountain sits right on the player's path.
-	Each boss therefore walks its deterministic candidate list (see _boss_at) and
-	takes the first spot clear of every footprint in `obstacles`, exactly like the
-	sibling spawners — and is skipped entirely if none is clear.
+## The two the self-checks reach for by name: `_boss_at` is how
+## `enemy_spawn_selfcheck` walks the road's bosses and `_croc_roll_seed` is the
+## per-instance roll `budapest_selfcheck` A/Bs. Same forwarder, same reason.
 
-	THE CLAIM RULE (why the candidate walk stops early): `obstacles` only
-	describes THIS chunk, so a chunk can only judge candidates that land inside
-	itself. The loop therefore stops at the first candidate outside this chunk —
-	from there on, another chunk owns the decision. That makes duplicates
-	impossible: a chunk can only spawn a boss whose FIRST candidate already lies
-	inside it, and only one chunk can contain that first candidate. The price is
-	that a boss whose first candidate is blocked and whose next clear candidate
-	falls in a NEIGHBOURING chunk is skipped rather than moved — a rare
-	no-boss-here, which is an outcome the design already allows.
+func _boss_at(i: int) -> Dictionary:
+	return TerrainPredators._boss_at(self, i)
 
-	@param chunk_pos: Chunk coordinates this call is generating bosses for.
-	@param parent_chunk: The chunk mesh to attach bosses to. Chunk parenting is a
-	                     FEATURE here: outrunning a boss far enough unloads its
-	                     chunk and frees the boss with it — which reads to the
-	                     player as "you escaped it".
-	@param obstacles: This chunk's block footprints ({ pos (chunk-LOCAL), radius,
-	                  top, climbable }), as built by spawn_objects_in_chunk and
-	                  extended by the artifact/biome builders.
-	"""
-	if not crocodile_scene:
-		return
+func _croc_roll_seed(chunk_pos: Vector2i, index: int) -> int:
+	return TerrainPredators._croc_roll_seed(self, chunk_pos, index)
 
-	# Padded chunk X-window, same shape as the coin scan: a boss's world X can
-	# differ from its station's centerline X by at most the forward offset plus
-	# the lateral offset (each projection is bounded by its magnitude), so this
-	# pad guarantees no boss near a seam is ever missed by the chunk that owns it.
-	var center := chunk_to_world(chunk_pos)
-	var half_chunk := chunk_size / 2.0
-	var x0 := center.x - half_chunk
-	var x1 := center.x + half_chunk
-	var pad := BOSS_LATERAL_MAX + BOSS_FORWARD_OFFSET + 2.0
+func _near_dry_rect(x: float, z: float, margin: float) -> bool:
+	return TerrainPredators._near_dry_rect(self, x, z, margin)
 
-	_road_extend_to_x(x0 - pad, x1 + pad)
-
-	# Smallest boss index whose station could fall at/after the window start:
-	# round the first in-window station up to the next interval multiple. Bosses
-	# start at index 1 — station 0 is the player spawn, no boss there.
-	var k_start := _road_first_k_at_or_after_x(x0 - pad)
-	var i := maxi(1, ceili(float(k_start) / float(BOSS_INTERVAL_STATIONS)))
-	while true:
-		var cur_i := i
-		i += 1
-		var k := cur_i * BOSS_INTERVAL_STATIONS
-		# Past the cache = past this chunk's padded window (the cache spans it and
-		# centerline X is strictly increasing in k), so we're done either way.
-		if k > road_k_max:
-			break
-		# CAP 3 OF 5 — no boss stands past the road's terminal station (bead
-		# godot-test1-8gw.3). Bosses GUARD the coin road; east of T there is no road
-		# to guard, and the city's own predator policy is Budapest's to decide.
-		#
-		# It sits ABOVE _boss_row_at below, deliberately: the BIOME_BOSS dispatch
-		# must never fire for a station the road does not reach, or the city would
-		# be picking boss kinds for bosses that are never placed. `break`, not
-		# `continue` — k = cur_i * BOSS_INTERVAL_STATIONS is strictly increasing in
-		# `i`, so once one index is past T every later one is too. No RNG has been
-		# drawn at this point (_boss_at is a pure hash stream), so leaving early
-		# consumes nothing and slides nothing.
-		#
-		# The cap is on this CONSUMER and not on _road_extend_to_x, whose forward
-		# loop hangs when the cache stops growing (see _road_terminal_k) and whose
-		# binary-search callers — the k_start above is one — assume it spans any X.
-		if k > _road_terminal_k():
-			break
-		# The station's centreline point, read ONCE: it bounds the window scan
-		# below AND it is what this boss's species is dispatched on (see
-		# _boss_row_at) — the only coordinate a boss has that is pure in `cur_i`.
-		var station_centre: Vector2 = _road_station(k).center
-		if station_centre.x > x1 + pad:
-			break
-
-		# WHICH BOSS THIS STATION GETS, decided HERE — above the candidate walk,
-		# and that position in the function is the point. Dispatching on the
-		# station centre is what makes the boss KIND a pure function of `cur_i`;
-		# the walk below only decides WHERE the animal stands (or whether it fits
-		# at all), by testing BOSS_PLACE_TRIES offsets against this chunk's
-		# geometry. Compute the kind before `local_pos` exists and keying on the
-		# placed candidate — which is neither pure in `cur_i` nor guaranteed to be
-		# in the same biome band — is not a mistake that can be made by accident.
-		# Pure function calls, no RNG draw, so the stream below is untouched.
-		var boss_row: Dictionary = _boss_row_at(station_centre)
-
-		var boss: Dictionary = _boss_at(cur_i)
-		var boss_scale: float = boss.scale
-		# Clearance this boss needs, SCALED BY ITS SIZE — a 9x boss reaches ~6.3 m
-		# where a normal crocodile reaches ~0.7, so the crocodile spawner's fixed
-		# min_object_clearance would be nowhere near enough (see the constant).
-		var footprint: float = BOSS_FOOTPRINT_RADIUS_PER_SCALE * boss_scale
-
-		# Walk the deterministic candidates: take the first one that is both ours
-		# (the claim rule in the docstring) and clear of every footprint.
-		var local_pos := Vector3.ZERO
-		var placed := false
-		for candidate in boss.positions:
-			# Exactly-one-chunk claim: the moment a candidate lands elsewhere, that
-			# chunk owns the rest of this boss's decision — stop, don't skip ahead.
-			if world_to_chunk(candidate) != chunk_pos:
-				break
-			# Obstacle footprints are stored chunk-LOCAL, so compare in that space.
-			var local := Vector3(candidate.x - center.x, candidate.y, candidate.z - center.z)
-			var clear := true
-			for ob in obstacles:
-				var horizontal := Vector2(local.x - ob.pos.x, local.z - ob.pos.z).length()
-				if horizontal < ob.radius + footprint:
-					clear = false
-					break
-			# The tower's site is one more thing a boss may not stand in — its own
-			# scaled footprint again, so a 9x boss cannot lean into the doorway.
-			# Post-draw by construction: _boss_at already computed this whole
-			# candidate list on its own hash stream, so skipping one costs nothing.
-			if clear and tower_excludes(candidate.x, candidate.z, footprint):
-				clear = false
-			if clear:
-				local_pos = local
-				placed = true
-				break
-		# Not ours, or every candidate of ours was buried in geometry: no boss here.
-		if not placed:
-			continue
-
-		var croc = boss_row["scene"].instantiate()
-		# THE NAME IS "BossCrocodile_%d" FOR EVERY SPECIES, deliberately. croc_id
-		# derives from the deterministic node name, so it is this body's
-		# multiplayer identity, and enemy_spawn_selfcheck's sweep classifies
-		# bodies by exactly these three prefixes. A per-species name would buy
-		# nothing and churn both.
-		# A FIELD BRIDGE IS A FLOOR: a boss whose spot is on a deck stands ON it
-		# rather than inside the slab (see field_bridge_stand_y). A river station
-		# dispatches the crocodile, and a river station is exactly where a deck
-		# is, so this is the common case and not a corner of one.
-		local_pos.y = field_bridge_stand_y(
-				chunk_to_world(chunk_pos).x + local_pos.x,
-				chunk_to_world(chunk_pos).z + local_pos.z, local_pos.y)
-
-		croc.name = "BossCrocodile_%d" % cur_i
-		# Chunk-LOCAL position (relative to the chunk center), like every other
-		# chunk-parented node. Default rotation — the wander AI turns it within a
-		# second anyway, and drawing a rotation would add an RNG draw for nothing.
-		croc.position = local_pos
-		# CALL-ORDER CONTRACT, one line longer than it used to be: `species`
-		# BEFORE setup_as_boss BEFORE add_child. _ready() runs on add_child
-		# (terrain-parented) and it is where BOTH halves are read — it resolves
-		# `spec` from `species` exactly once, and it sees the boss flags and skips
-		# the random speed/size rolls in favour of the schedule. Assign either one
-		# after add_child and the body keeps a crocodile's spec, or takes rolls a
-		# boss must not have, with no error anywhere. This is the same contract
-		# the ground spawner's `species` assignment has, for the same reason.
-		croc.species = boss_row["species"]
-		croc.setup_as_boss(boss.scale)
-		parent_chunk.add_child(croc)
-
-		# THE BOSS IS A THING BUILT, SO IT PAYS THE SHARED CURRENCY (bead
-		# godot-test1-6op, found by the 9k7 review of PR #187 — a coin sitting at
-		# the crocodile's flank in the PR's own screenshot). Every other spawner
-		# appends its footprint to `obstacles` and the later ones read it; a boss
-		# appended nothing, so `spawn_coins_in_chunk` — which runs AFTER this
-		# function in create_chunk, so no reordering was needed — laid its road
-		# coins straight through a body up to 6.3 m across (~125 m² swallowed per
-		# boss at 9x scale).
-		#
-		# `top: 0.0, climbable: false` is the whole point and not a placeholder: a
-		# non-climbable footprint makes `_settle_coin_y` SKIP the coin rather than
-		# perch it, which is the right answer for a body — the cactus / camp /
-		# canopy call, one home for the rule. The radius is the same scaled
-		# clearance the candidate walk above judged this boss's own spot by, so the
-		# stone a boss is kept out of and the coins kept out of a boss are one
-		# number.
-		#
-		# COSTS NO DRAW and appends AFTER placement, so it perturbs nothing on this
-		# boss's own stream. It IS visible to the spawners below this one in
-		# create_chunk (a later boss in the same chunk, and the hunter), which is
-		# correct in exactly the same way: neither should be standing inside it.
-		obstacles.append({
-			"pos": Vector3(local_pos.x, 0.0, local_pos.z),
-			"radius": footprint,
-			"top": 0.0,
-			"climbable": false,
-		})
-
-func _artifact_at(chunk_pos: Vector2i) -> Dictionary:
-	"""
-	Deterministic artifact placement for one chunk — the _boss_at of artifacts.
-	Pure function of chunk coords + run_seed via the independent ARTIFACT_SALT
-	hash stream: it consumes NO draw from the shared chunk RNG, so every existing
-	block/crocodile/coin is exactly where it was before artifacts existed.
-
-	@param chunk_pos: Chunk coordinates to decide for.
-	@return: {} when this chunk has no artifact (the ~19-in-20 case); otherwise
-	         { "seed": int } — the seed for the artifact's private RNG, which
-	         spawn_artifact_in_chunk uses for placement, shape and geometry.
-
-	WHY THE CANDIDATE LOOP IS NOT HERE — same split, for the same reason, as
-	_camp_at / spawn_camp_in_chunk: when this runs the chunk has no geometry yet,
-	so the only tests available are road + river, and neither rejects the thing
-	that actually matters. Judging candidates here left artifacts placed with NO
-	obstacle test at all: measured over a 61x61 chunk field, 51.5% of artifacts
-	interpenetrated a scattered block or a feature structure, one of them buried
-	16.5 m deep inside a pyramid — taking its coin ring and its ONE guaranteed gem,
-	the whole reason to detour off the road, into the stone with it. That is
-	exactly the fused-solids bug _camp_spot_clear exists to prevent, one landmark
-	over. The loop therefore lives in spawn_artifact_in_chunk, where `obstacles`
-	exists.
-
-	EDUCATIONAL NOTE — the determinism contract:
-	- Within a run the same chunk yields the IDENTICAL artifact (same spot, same
-	  shape, same stones) no matter how often it unloads and regenerates: the RNG
-	  is seeded purely from chunk coords + run_seed, and every draw downstream
-	  comes off that one seeded stream in a fixed order.
-	- Across runs, new_run() re-rolls run_seed, so artifacts land elsewhere.
-	- The road-clearance test reads the station cache (pure in `k`), the river test
-	  reads the biome field (pure in world position + run_seed), and the overlap
-	  test reads the chunk's own obstacle list (pure in chunk coords + run_seed) —
-	  so all three are load-order independent: rejection is a property of the
-	  POSITION, not of when the chunk happened to generate.
-	"""
-	var rng := RandomNumberGenerator.new()
-	# Same coordinate mixing as the chunk object seed, but salted so this stream
-	# never collides with (or perturbs) any other deterministic spawn site.
-	rng.seed = hash(Vector3i(chunk_pos.x * 73856093, chunk_pos.y * 19349663, run_seed ^ ARTIFACT_SALT))
-
-	# Rarity roll — most chunks bail here. This is the ONLY draw taken from the
-	# stream at this point; the rest happen in spawn_artifact_in_chunk off an RNG
-	# re-seeded from `seed`, so the two stay a single fixed sequence per chunk.
-	# Scarcity thins to plain terrain at 4 km: compare against chance * k (post-draw, no new draw).
-	var k_art := scarcity_at(chunk_to_world(chunk_pos))
-	if rng.randf() >= ARTIFACT_CHANCE * k_art:
-		return {}
-
-	return { "seed": rng.randi() }
 
 # ============================================================================
-# ARTIFACT SHAPE BUILDERS (the five code-built "lost civilization" landmarks)
+# THE PRIVATE-STREAM FEATURES — three one-line forwarders (bead godot-test1-ftn.4)
 # ============================================================================
-#
-# Every builder shares ONE signature and ONE contract:
-#   _artifact_<shape>(center, rng, parent_chunk, block_batch, block_body)
-#     -> { "radius": float, "top": float, "gem_offset": Vector3 }
-# - ALL solid stone goes through create_box(..., tilt, _artifact_stone_color(rng)),
-#   so it joins the chunk's single block MultiMesh and single BlockCollision body:
-#   an artifact's stone costs ZERO extra draw calls and ZERO extra physics bodies.
-# - ALL glow goes through _spawn_artifact_accent — real MeshInstance3Ds, at most
-#   ARTIFACT_MAX_ACCENTS per artifact. That is the entire per-artifact draw budget.
-# - `rng` is the artifact's PRIVATE RNG (seeded from _artifact_at's "seed"), so
-#   builders draw as freely as they like without touching any shared stream.
-# - The returned radius/top approximate the footprint for the chunk's `obstacles`
-#   list (crocodile spawn rejection + the coin perch rule). Conservative (a touch
-#   generous) is fine; exact is not required.
-# - gem_offset is where the single reward gem goes, as an offset from `center` on
-#   the ground plane: Vector3.ZERO for the shapes with an open middle, and a step
-#   clear of the stone for the two whose centre is solid (monolith, colossus
-#   head) so the prize is never spawned inside a block.
-
-func _artifact_stone_color(rng: RandomNumberGenerator) -> Color:
-	"""
-	One weathered stone colour: a random spot on the ARTIFACT_STONE_A → B grey
-	ramp, then pushed a random amount (up to ARTIFACT_MOSS_MAX) toward dead-moss
-	green. Every stone comes out a slightly different grey-green — deliberately
-	DISTINCT from the warm/blue curated RAMP_* block colours, so an artifact reads
-	as "from another age" at a glance.
-	"""
-	var grey := ARTIFACT_STONE_A.lerp(ARTIFACT_STONE_B, rng.randf())
-	return grey.lerp(ARTIFACT_MOSS, rng.randf() * ARTIFACT_MOSS_MAX)
-
-func _artifact_monolith(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	Shape 0 — LEANING HALF-BURIED MONOLITH: one tall slab sunk into the ground at
-	a drunken angle, with three glowing rune strips stacked up its exposed face.
-	The tilt is the whole point (it is why create_box grew the tilt parameter).
-	"""
-	var yaw := rng.randf_range(0.0, TAU)
-	# Lean 0.12..0.25 rad to a random side — enough to read as "toppling for a
-	# thousand years", not enough to look knocked over.
-	var tilt := rng.randf_range(0.12, 0.25) * (1.0 if rng.randf() < 0.5 else -1.0)
-	var dims := Vector3(1.8, 8.0, 1.1)
-	var buried := rng.randf_range(1.2, 2.2)
-	# Centre BELOW y=0 by `buried`, so the base is swallowed by the ground.
-	var slab_center := center + Vector3(0.0, dims.y / 2.0 - buried, 0.0)
-	create_box(slab_center, dims, yaw, rng, block_batch, block_body, tilt, _artifact_stone_color(rng))
-	# Three rune strips up the slab's front (+Z) face. Positions are rotated by
-	# the SAME yaw*tilt basis as the slab, then pushed just past the face along
-	# its normal so each strip sits proud of the stone instead of z-fighting it.
-	var rot := Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, tilt)
-	for i in 3:
-		var local_offset := Vector3(0.0, 0.6 + 1.5 * float(i), dims.z / 2.0 + 0.06)
-		_spawn_artifact_accent(parent_chunk, slab_center + rot * local_offset, Vector3(1.1, 0.35, 0.08), yaw, tilt)
-	# Horizontal reach ≈ half width + the lean's horizontal throw; 2.5 covers it.
-	# gem_offset: the centre column is solid slab, so the prize sits just off the
-	# runed face where the player can actually reach it (rotated by the slab yaw).
-	return {
-		"radius": 2.5,
-		"top": slab_center.y + (dims.y / 2.0) * cos(tilt),
-		"gem_offset": Basis(Vector3.UP, yaw) * Vector3(0.0, 0.0, dims.z / 2.0 + 1.2),
-	}
-
-func _artifact_arch(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	Shape 1 — BROKEN ARCH OF FLOATING STONES: 7-9 rough blocks along a vertical
-	half-circle, with 1-2 consecutive stones MISSING so the arc reads as broken;
-	a single glowing accent hangs in the gap — the keystone that is not there.
-	(Static geometry needs no support, so the remaining stones simply float.)
-	"""
-	var yaw := rng.randf_range(0.0, TAU)
-	var radius := 5.0
-	var count := rng.randi_range(7, 9)
-	var gap_len := rng.randi_range(1, 2)
-	# Gap somewhere in the upper body of the arc — never the feet, so both ends
-	# still stand on the ground and the silhouette stays readable as an arch.
-	var gap_start := rng.randi_range(2, count - 2 - gap_len)
-	var rot_arch := Basis(Vector3.UP, yaw)
-	var i := 0
-	while i < count:
-		var a := PI * float(i) / float(count - 1)  # 0..PI sweeps foot → top → foot
-		if i >= gap_start and i < gap_start + gap_len:
-			i += 1
-			continue  # the broken part — no stone, no RNG draws (sequence still fixed: gap indices were drawn above)
-		var pos := center + rot_arch * Vector3(cos(a) * radius, sin(a) * radius, 0.0)
-		var dims := Vector3(rng.randf_range(1.1, 1.5), rng.randf_range(0.9, 1.3), 1.0)
-		create_box(pos, dims, yaw + rng.randf_range(-0.15, 0.15), rng, block_batch, block_body, rng.randf_range(-0.2, 0.2), _artifact_stone_color(rng))
-		i += 1
-	# The missing keystone: one accent floating at the gap's mid-angle.
-	var a_mid := PI * (float(gap_start) + float(gap_len - 1) / 2.0) / float(count - 1)
-	_spawn_artifact_accent(parent_chunk, center + rot_arch * Vector3(cos(a_mid) * radius, sin(a_mid) * radius, 0.0), Vector3(0.7, 0.7, 0.7), yaw, 0.0)
-	# Hollow centre — the gem sits on the ground under the arch (offset ZERO).
-	return { "radius": radius + 1.0, "top": radius + 1.0, "gem_offset": Vector3.ZERO }
-
-func _artifact_stone_circle(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	Shape 2 — CIRCLE OF TILTED STANDING STONES: 6-9 slabs on a ring, each facing
-	the centre and leaning drunkenly inward or outward, around a low central slab
-	with one wide flat glowing panel lying on its top face.
-	"""
-	var base_yaw := rng.randf_range(0.0, TAU)
-	var ring_r := rng.randf_range(4.0, 6.0)
-	var count := rng.randi_range(6, 9)
-	# Low central slab — the "altar" the glow panel lies on.
-	var slab_dims := Vector3(3.0, 0.6, 3.0)
-	create_box(center + Vector3(0.0, slab_dims.y / 2.0, 0.0), slab_dims, base_yaw, rng, block_batch, block_body, 0.0, _artifact_stone_color(rng))
-	var tallest_top := slab_dims.y
-	var i := 0
-	while i < count:
-		var a := base_yaw + TAU * float(i) / float(count)
-		# yaw = PI/2 - a points the slab's local Z (its thin depth axis) along the
-		# radial direction — i.e. the slab FACES the centre — which makes tilt
-		# (about local X, the tangent) lean it radially inward/outward.
-		var stone_yaw := PI / 2.0 - a
-		var lean := rng.randf_range(-0.3, 0.3)
-		var stone_dims := Vector3(1.3, rng.randf_range(2.8, 4.0), 0.7)
-		var sink := rng.randf_range(0.3, 0.7)  # half-buried, like the monolith
-		var pos := center + Vector3(cos(a) * ring_r, stone_dims.y / 2.0 - sink, sin(a) * ring_r)
-		create_box(pos, stone_dims, stone_yaw, rng, block_batch, block_body, lean, _artifact_stone_color(rng))
-		tallest_top = maxf(tallest_top, pos.y + (stone_dims.y / 2.0) * cos(lean))
-		i += 1
-	# One wide, nearly-flat glow panel on the centre slab's top face.
-	_spawn_artifact_accent(parent_chunk, center + Vector3(0.0, slab_dims.y + 0.05, 0.0), Vector3(2.0, 0.08, 2.0), base_yaw, 0.0)
-	# Offset ZERO: the gem sits dead centre, hovering just over the glowing altar
-	# slab (COIN_GROUND_HEIGHT 0.9 clears its 0.6 top) — the obvious prize spot.
-	return { "radius": ring_r + 1.0, "top": tallest_top, "gem_offset": Vector3.ZERO }
-
-func _artifact_colossus_head(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	Shape 3 — HALF-BURIED COLOSSUS HEAD: a huge jaw box sunk into the ground, a
-	narrower brow box stacked on top, a slab nose on the front face, all sharing
-	one yaw so they read as a single fallen statue; two glowing eyes inset under
-	the brow. Ozymandias, in cubes.
-	"""
-	var yaw := rng.randf_range(0.0, TAU)
-	var rot := Basis(Vector3.UP, yaw)
-	var stone := _artifact_stone_color(rng)  # ONE colour for the whole head — it is one statue, not a pile
-	var jaw := Vector3(3.6, 2.4, 3.0)
-	var jaw_center := center + Vector3(0.0, jaw.y / 2.0 - rng.randf_range(0.8, 1.4), 0.0)
-	create_box(jaw_center, jaw, yaw, rng, block_batch, block_body, 0.0, stone)
-	# Brow: narrower, pushed slightly back so the face has a step.
-	var brow := Vector3(3.2, 1.4, 2.4)
-	var brow_center := jaw_center + rot * Vector3(0.0, jaw.y / 2.0 + brow.y / 2.0, -0.3)
-	create_box(brow_center, brow, yaw, rng, block_batch, block_body, 0.0, stone)
-	# Nose: a thin slab proud of the jaw's front (+Z) face, reaching up to the brow.
-	var nose := Vector3(0.8, 1.7, 0.6)
-	create_box(jaw_center + rot * Vector3(0.0, jaw.y / 2.0 + 0.2, jaw.z / 2.0 - 0.1), nose, yaw, rng, block_batch, block_body, 0.0, stone)
-	# Two eyes, inset just under the brow's front face, either side of the nose.
-	for side in [-1.0, 1.0]:
-		var eye_pos := brow_center + rot * Vector3(side * 0.9, -brow.y / 2.0 - 0.15, brow.z / 2.0 + 0.05)
-		_spawn_artifact_accent(parent_chunk, eye_pos, Vector3(0.5, 0.3, 0.12), yaw, 0.0)
-	# gem_offset: the centre column is solid head, so the prize lies on the ground
-	# in front of the face — under its gaze, and reachable.
-	return {
-		"radius": 3.2,
-		"top": brow_center.y + brow.y / 2.0,
-		"gem_offset": rot * Vector3(0.0, 0.0, jaw.z / 2.0 + 1.2),
-	}
-
-func _artifact_spiral_steps(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	Shape 4 — SPIRAL OF STEPS TO NOWHERE: 10-16 floating step slabs winding up a
-	helix, each facing the centre so its long edge follows the curve (a climbable
-	staircase); one glowing accent hovers over the final, highest step — the
-	destination that is not there.
-	"""
-	var base_a := rng.randf_range(0.0, TAU)
-	var spiral_r := rng.randf_range(3.0, 4.0)
-	var count := rng.randi_range(10, 16)
-	var rise := 0.55  # per-step climb — jumpable by every character
-	var step_dims := Vector3(1.6, 0.4, 0.9)
-	var last_pos := center
-	var last_yaw := 0.0
-	var i := 0
-	while i < count:
-		var a := base_a + 0.6 * float(i)
-		var pos := center + Vector3(cos(a) * spiral_r, step_dims.y / 2.0 + rise * float(i), sin(a) * spiral_r)
-		# Same face-the-centre yaw as the stone circle: local Z radial, long X tangent.
-		last_yaw = PI / 2.0 - a
-		create_box(pos, step_dims, last_yaw, rng, block_batch, block_body, 0.0, _artifact_stone_color(rng))
-		last_pos = pos
-		i += 1
-	# The non-destination: one small glow hovering above the top step.
-	_spawn_artifact_accent(parent_chunk, last_pos + Vector3(0.0, 0.6, 0.0), Vector3(0.5, 0.5, 0.5), last_yaw, 0.0)
-	# The helix winds AROUND an empty core, so the gem sits on the ground at the
-	# centre of the spiral (offset ZERO) — you walk into the eye of the staircase.
-	return { "radius": spiral_r + 1.2, "top": rise * float(count - 1) + step_dims.y, "gem_offset": Vector3.ZERO }
+# The bodies are `TerrainFeatures`'. These three stay as methods for
+# `create_box`'s reason and no other: `terrain.spawn_artifact_in_chunk(...)` IS
+# the contract `budapest_selfcheck` (twelve call sites), `landmark_sites_selfcheck`
+# and `create_chunk`'s call-order list are written against, and rewriting them all
+# is the opposite of a mechanical move. Nothing else of the family is forwarded.
 
 func spawn_artifact_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""
-	Spawn this chunk's artifact, if _artifact_at says it has one (~1 in 20), plus
-	its coin reward. Called from create_chunk AFTER spawn_objects_in_chunk and
-	BEFORE _build_block_multimesh / the block_body attach, so the artifact's stone
-	joins the chunk's single MultiMesh and single BlockCollision body.
-
-	@param chunk_pos: Chunk coordinates being generated.
-	@param parent_chunk: The chunk mesh — accents and reward coins parent here
-	                     (per-chunk parenting rule: they unload with the chunk).
-	@param obstacles: The chunk's block-footprint list — READ to reject candidate
-	                  spots that would bury the artifact in existing stone, then
-	                  appended to with the artifact's own footprint (see below).
-	@param block_batch / block_body: The chunk's visual batch + collision body,
-	                                 threaded through to create_box.
-	"""
-	# BUDAPEST — no lost-civilization artifacts in the city (DEC-9): the rect's
-	# monuments are its 22 authored landmark slots, and a procedural monolith
-	# beside the Parliament reads as a bug. NOT tower_excludes(): that disc is one
-	# answer for everything, and the city's answer differs per system.
-	var art_center := chunk_to_world(chunk_pos)
-	if in_budapest(art_center.x, art_center.z):
-		return
-	if not spawn_artifacts:
-		return
-	var art := _artifact_at(chunk_pos)
-	if art.is_empty():
-		return
-
-	# Everything below draws from ONE private RNG seeded by _artifact_at's roll, so
-	# each builder can consume as many draws as its shape needs without any other
-	# stream caring.
-	var rng := RandomNumberGenerator.new()
-	rng.seed = art.seed
-
-	var chunk_center := chunk_to_world(chunk_pos)
-	# Candidates stay ARTIFACT_EDGE_MARGIN (12) inside the chunk so the whole
-	# artifact (widest footprint ARTIFACT_RADIUS 7.0 < the margin) never straddles
-	# a seam.
-	var half := chunk_size / 2.0 - ARTIFACT_EDGE_MARGIN
-
-	# Try a few candidate spots; accept the FIRST one that clears the road, the
-	# water AND the stone already in this chunk. The road rejection is what
-	# produces the off-road bias and the hard "never on the centerline" rule;
-	# the overlap rejection is what keeps the landmark readable (see _artifact_at
-	# for the 51.5%-interpenetration measurement that put it here). Every try
-	# failing means NO artifact — a monolith fused into a mountain massif reads
-	# worse than a chunk without one, which is the same call camps make.
-	# _biome_spot_ok is the single home of that whole rule; ARTIFACT_RADIUS is the
-	# widest any of the five shapes can be, since the real one is only known after
-	# its builder runs.
-	var local_x := 0.0
-	var local_z := 0.0
-	var placed := false
-	var tries := 0
-	while tries < ARTIFACT_PLACE_TRIES and not placed:
-		tries += 1
-		local_x = rng.randf_range(-half, half)
-		local_z = rng.randf_range(-half, half)
-		if _biome_spot_ok(chunk_center, local_x, local_z, ARTIFACT_RADIUS, ARTIFACT_ROAD_CLEARANCE, obstacles):
-			placed = true
-	if not placed:
-		return
-
-	# Which of the five shapes.
-	var kind := rng.randi_range(0, 4)
-	var center := Vector3(local_x, 0.0, local_z)
-
-	var footprint: Dictionary
-	match kind:
-		0: footprint = _artifact_monolith(center, rng, parent_chunk, block_batch, block_body)
-		1: footprint = _artifact_arch(center, rng, parent_chunk, block_batch, block_body)
-		2: footprint = _artifact_stone_circle(center, rng, parent_chunk, block_batch, block_body)
-		3: footprint = _artifact_colossus_head(center, rng, parent_chunk, block_batch, block_body)
-		_: footprint = _artifact_spiral_steps(center, rng, parent_chunk, block_batch, block_body)
-
-	# --- The reward: a ring of ordinary coins around the base + ONE gem at the
-	# artifact's centre (the incentive to detour off the coin road). Guarded like
-	# every other coin spawn; these are ordinary chunk-local coins parented to the
-	# chunk — the road's station-claim logic is not involved in any way.
-	#
-	# ORDER MATTERS: the artifact's own footprint is appended to `obstacles` only
-	# AFTER these coins are placed. Its footprint is a CIRCLE, but three of the
-	# five shapes (arch, stone circle, spiral) are mostly HOLLOW — settling their
-	# reward coins against that circle would perch them on the silhouette top,
-	# i.e. floating several metres up in open air. Placing the reward first means
-	# it settles only against real block stone, so it lies on the ground where the
-	# player can actually pick it up.
-	if spawn_coins and coin_scene != null:
-		var coin_count := rng.randi_range(ARTIFACT_COIN_MIN, ARTIFACT_COIN_MAX)
-		var ring_radius: float = footprint.radius + rng.randf_range(ARTIFACT_COIN_RING_PAD_MIN, ARTIFACT_COIN_RING_PAD_MAX)
-		var i := 0
-		while i < coin_count:
-			i += 1
-			var a := rng.randf_range(0.0, TAU)
-			var cx := center.x + cos(a) * ring_radius
-			var cz := center.z + sin(a) * ring_radius
-			# Same perch-or-skip rule as road coins (one home: _settle_coin_y):
-			# the ring can graze a neighbouring block, so a coin perches on a
-			# climbable top or is dropped under a sheer wall.
-			var cy := _settle_coin_y(cx, cz, COIN_GROUND_HEIGHT, obstacles)
-			if is_inf(cy):
-				continue
-			var coin := coin_scene.instantiate()
-			coin.position = Vector3(cx, cy, cz)
-			parent_chunk.add_child(coin)
-
-		# Exactly ONE gem, at the artifact's centre — offset by the shape's own
-		# `gem_offset` for the two shapes whose centre is solid stone (monolith,
-		# colossus head), so the prize sits at the foot of the landmark instead of
-		# inside it. Hollow shapes return ZERO and keep the gem dead centre.
-		# make_gem() BEFORE add_child, per coin.gd's contract (it fetches nodes
-		# with get_node, not @onready).
-		var gem_pos: Vector3 = center + footprint.gem_offset
-		var gem_y := _settle_coin_y(gem_pos.x, gem_pos.z, COIN_GROUND_HEIGHT, obstacles)
-		if not is_inf(gem_y):
-			var gem := coin_scene.instantiate()
-			gem.position = Vector3(gem_pos.x, gem_y, gem_pos.z)
-			gem.make_gem()
-			parent_chunk.add_child(gem)
-
-	# Register the artifact as one round obstacle footprint, exactly like a normal
-	# block. CONSEQUENCE (deliberate): crocodiles reject spawn points inside it,
-	# and any ROAD coin whose column crosses it PERCHES on its top (climbable =
-	# true) instead of being buried in the stone — artifact stone behaves like
-	# ordinary block stone everywhere downstream.
-	# ponytail: a hollow artifact (arch/circle/spiral) can float a road coin over
-	# its empty middle, because one circle+top is the whole footprint vocabulary
-	# the coin rule speaks. Erring this way never BURIES a coin in stone, which is
-	# the failure the rule exists to prevent; if it ever looks wrong, give the
-	# footprint a per-shape "solid centre height" rather than a taller vocabulary.
-	obstacles.append({ "pos": center, "radius": footprint.radius, "top": footprint.top, "climbable": true })
-
-# ============================================================================
-# NOMAD CAMPS (rare dome-hut villages — see the NOMAD CAMPS constant banner)
-# ============================================================================
-
-func _camp_at(chunk_pos: Vector2i) -> Dictionary:
-	"""
-	Deterministic nomad-camp placement for one chunk — _artifact_at for camps,
-	line for line. Pure function of chunk coords + run_seed via the independent
-	CAMP_SALT hash stream: it consumes NO draw from the shared chunk RNG, so every
-	existing block/crocodile/coin/artifact is exactly where it was before camps
-	existed.
-
-	@param chunk_pos: Chunk coordinates to decide for.
-	@return: {} when this chunk has no camp (the overwhelming majority); otherwise
-	         { "seed": int (seeds the camp builders' AND the candidate loop's own
-	           private RNG) }.
-	         There is no "kind": a camp is ONE layout whose variety comes from the
-	         builder RNG (hut count, ring radii, yaws), not from a shape enum.
-	         There is no "local" either — WHERE the camp goes is decided in
-	         spawn_camp_in_chunk, see below.
-
-	WHY THE CANDIDATE LOOP IS NOT HERE (it used to be, measured and moved):
-	this function runs before the chunk has any geometry, so the only tests it can
-	make are the road and the river — and those reject almost nothing (measured:
-	11 of 121 chunks). The test that actually rejects is the obstacle overlap
-	against the chunk's ~12 scattered blocks plus its biome geometry, which needs
-	the finished `obstacles` list and therefore lives in spawn_camp_in_chunk. With
-	the loop here, all four tries varied a test that always passed and the single
-	surviving spot then met the real test once: ~9% of rolled camps were built, so
-	camps landed ~10x rarer than intended. The loop now sits where `obstacles`
-	exists, so all CAMP_PLACE_TRIES tries vary the test that does the rejecting.
-
-	EDUCATIONAL NOTE — the determinism contract (identical to _artifact_at's):
-	- WITHIN A RUN the same chunk yields the IDENTICAL camp (same builder seed, and
-	  hence the same candidate sequence downstream) no matter how often it unloads
-	  and regenerates — the RNG is seeded purely from chunk coords + run_seed, and
-	  its draw order is fixed (chance roll, then the builder seed).
-	- ACROSS RUNS new_run() re-rolls run_seed, so camps land elsewhere.
-	- The placement tests downstream read the station cache (pure in `k`), the
-	  biome field (pure in world position + run_seed) and the chunk's own
-	  obstacles (rebuilt identically from the chunk RNG), so all three are
-	  load-order independent: a rejection is a property of the POSITION and the
-	  CHUNK, not of when the chunk happened to generate.
-	"""
-	var rng := RandomNumberGenerator.new()
-	# DIFFERENT coordinate primes from the artifact stream (73856093 / 19349663)
-	# and the biome stream (83492791 / 15485863), so camp placement can never
-	# correlate with either — a chunk that hosts an artifact is not thereby more
-	# (or less) likely to host a camp.
-	rng.seed = hash(Vector3i(chunk_pos.x * 40960001, chunk_pos.y * 26463089, run_seed ^ CAMP_SALT))
-
-	# 1. Rarity roll — the overwhelming majority of chunks bail here.
-	# Scarcity thins camps logarithmically to plain terrain at 4 km.
-	var k := scarcity_at(chunk_to_world(chunk_pos))
-	if rng.randf() >= CAMP_CHANCE * k:
-		return {}
-
-	# 2. A further seed for the camp's own RNG, which both picks the spot and
-	# builds the geometry, so neither cares how many draws the other needs.
-	return { "seed": rng.randi() }
-
-# ----------------------------------------------------------------------------
-# CAMP GEOMETRY BUILDERS (dome huts, fire pit, crates + tether posts)
-# ----------------------------------------------------------------------------
-#
-# The ARTIFACT SHAPE BUILDERS' contract, reused wholesale:
-# - ALL solid geometry goes through create_box(..., color_override), so a whole
-#   village joins the chunk's single block MultiMesh and single BlockCollision
-#   body: a camp costs ZERO extra draw calls and ZERO extra physics bodies.
-# - The ONE exception is the ember, a real MeshInstance3D through
-#   _spawn_artifact_accent — one extra unshadowed draw per camp, that's the lot.
-# - `rng` is always the camp's PRIVATE RNG (seeded from _camp_at's "seed"), so
-#   these builders draw as freely as their geometry needs without ever touching
-#   the shared chunk stream.
-# - Small decoration (doorways, fire stones) is spawned with collide = false, the
-#   same call create_box already grew for forest canopies: ankle-high scenery you
-#   should be able to walk over is not worth a CollisionShape3D each.
-
-func _camp_hut(center: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	Build ONE dome hut: 2-3 stacked box tiers, widest on the ground and each one
-	narrower than the tier below, which is what turns a stack of cubes into an
-	igloo read at a glance. The top tier is also SHORTER (its height takes the same
-	CAMP_HUT_TIER_SHRINK factor), so the silhouette caps off as a dome rather than
-	ending in a flat chimney. Each tier gets its own small yaw wobble, so no two
-	huts look stamped from the same mould.
-
-	@param center: Hut centre on the ground (chunk-local, y = 0).
-	@param yaw: Facing. The doorway goes on the hut's local +Z face, so the caller
-	            points +Z at the fire pit and every door faces the flames.
-	@param rng: The camp's private RNG (see the section note above).
-	@param block_batch / block_body: The chunk's visual batch + collision body.
-	@return: { "radius": float, "top": float } — a conservative footprint for the
-	         chunk's `obstacles` list, same shape the artifact builders return.
-	"""
-	var base_width := rng.randf_range(CAMP_HUT_WIDTH_MIN, CAMP_HUT_WIDTH_MAX)
-	var tiers := rng.randi_range(CAMP_HUT_TIER_MIN, CAMP_HUT_TIER_MAX)
-	var width := base_width
-	var y := 0.0  # running height of the stack: the top of the tier placed so far
-	var i := 0
-	while i < tiers:
-		# The last tier is squashed as well as narrowed — that is the dome cap.
-		var tier_height: float = CAMP_HUT_TIER_HEIGHT * (CAMP_HUT_TIER_SHRINK if i == tiers - 1 else 1.0)
-		var tier_yaw := yaw + rng.randf_range(-CAMP_HUT_YAW_JITTER, CAMP_HUT_YAW_JITTER)
-		# Bone white, a fresh spot on the A→B ramp per tier so the shell is not one
-		# flat colour (the artifacts' _artifact_stone_color trick, one lerp).
-		var shell := CAMP_HUT_A.lerp(CAMP_HUT_B, rng.randf())
-		create_box(center + Vector3(0.0, y + tier_height / 2.0, 0.0), Vector3(width, tier_height, width), tier_yaw, rng, block_batch, block_body, 0.0, shell)
-		y += tier_height
-		width *= CAMP_HUT_TIER_SHRINK
-		i += 1
-
-	# The doorway: one small dark box set into the fire-facing (+Z) wall. Half of it
-	# sits inside the shell, so it reads as an opening rather than a porch.
-	# collide = false — it is a 0.5 m thick decoration flush with a wall that
-	# already collides, so a shape here would only add cost.
-	var door_offset := Basis(Vector3.UP, yaw) * Vector3(0.0, CAMP_HUT_DOOR_SIZE.y / 2.0, base_width / 2.0)
-	create_box(center + door_offset, CAMP_HUT_DOOR_SIZE, yaw, rng, block_batch, block_body, 0.0, CAMP_STONE, false)
-
-	# Radius is the half-DIAGONAL of the widest tier (tiers are yawed, so the
-	# half-width would under-cover a corner), plus a little for the doorway.
-	return { "radius": base_width * 0.71 + 0.3, "top": y }
-
-func _camp_fire_pit(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""
-	Build the camp's heart: a ring of CAMP_FIRE_STONES small dark stones around the
-	centre plus ONE emissive ember sitting in the middle of them.
-
-	The ember is the camp's ENTIRE extra draw budget — one unshadowed MeshInstance3D
-	through the shared _spawn_artifact_accent path, carrying the shared warm-orange
-	material. The stones are ordinary batched boxes with collide = false: they are
-	ankle-high scenery you should be able to step over, and skipping them saves
-	CAMP_FIRE_STONES collision shapes per camp for no visible difference.
-
-	@param center: Fire-pit centre on the ground (chunk-local, y = 0).
-	@param rng: The camp's private RNG.
-	@param parent_chunk: The chunk mesh — the ember parents here so it unloads with
-	                     the chunk (per-chunk parenting rule).
-	@param block_batch / block_body: The chunk's visual batch + collision body.
-	"""
-	var base_angle := rng.randf_range(0.0, TAU)
-	var i := 0
-	while i < CAMP_FIRE_STONES:
-		# Even spacing round the ring plus a nudge, so it looks laid by hand.
-		var a := base_angle + TAU * float(i) / float(CAMP_FIRE_STONES) + rng.randf_range(-0.15, 0.15)
-		var r := CAMP_FIRE_RING_RADIUS + rng.randf_range(-0.12, 0.12)
-		var pos := center + Vector3(cos(a) * r, CAMP_FIRE_STONE_SIZE.y / 2.0, sin(a) * r)
-		create_box(pos, CAMP_FIRE_STONE_SIZE, rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, CAMP_STONE, false)
-		i += 1
-
-	# The one ember. Sits just clear of the ground so it never z-fights the plane.
-	_spawn_artifact_accent(parent_chunk, center + Vector3(0.0, CAMP_EMBER_SIZE.y / 2.0 + 0.05, 0.0), CAMP_EMBER_SIZE, rng.randf_range(0.0, TAU), 0.0, _get_camp_ember_material())
-
-func _camp_props(center: Vector3, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D, huts: Array) -> void:
-	"""
-	Scatter the lived-in clutter on a jittered ring between the fire and the huts:
-	a few weathered crates/bundles and 2-3 tall thin tether posts (where the pack
-	beasts would be tied). Both are solid — they are knee-to-chest height, so they
-	keep their collision and you walk around them like any block.
-
-	@param center: Camp centre (chunk-local, y = 0); the ring is measured from here.
-	@param rng: The camp's private RNG.
-	@param block_batch / block_body: The chunk's visual batch + collision body.
-	@param huts: The huts already built ({ "pos", "radius" }), so a prop never ends
-	             up buried in a wall — see _camp_spot_clear.
-
-	A candidate that lands in a hut is DROPPED, not retried: the counts are pure
-	ambience, and one crate fewer reads better than a loop that can still fail.
-
-	EACH ACCEPTED PROP JOINS THE TEST LIST. Testing only against the huts was the
-	same bug one scale down: 3-6 crates and 2-3 posts share ONE 2.0-4.0 m ring, so
-	two crates land within a crate's width of each other often — measured a third of
-	camps had an interpenetrating solid pair, and both crates and posts collide, so
-	it was a merged blob the player walked into.
-
-	DETERMINISM, HONESTLY: a drop does NOT consume the same draws as a placement —
-	it skips create_box's yaw argument plus its colour selector, ramp and discarded
-	roughness draws (and a dropped hut skips the whole of _camp_hut). That is
-	harmless ONLY because this rng is private to the camp and the placement/rarity
-	streams are decided before any geometry is drawn. Never lift this drop-mid-build
-	pattern onto a shared chunk stream.
-	"""
-	# huts is the caller's list — copy it, so growing it here can never leak a prop
-	# into the hut footprints the caller still holds.
-	var solids: Array = huts.duplicate()
-
-	var crates := rng.randi_range(CAMP_CRATE_MIN, CAMP_CRATE_MAX)
-	var i := 0
-	while i < crates:
-		i += 1
-		var a := rng.randf_range(0.0, TAU)
-		var r := rng.randf_range(CAMP_PROP_RING_MIN, CAMP_PROP_RING_MAX)
-		# Cubes, not slabs: one size draw keeps a crate reading as a crate.
-		var s := rng.randf_range(CAMP_CRATE_SIZE_MIN, CAMP_CRATE_SIZE_MAX)
-		var pos := center + Vector3(cos(a) * r, s / 2.0, sin(a) * r)
-		var crate_radius := s * 0.71
-		if not _camp_spot_clear(pos, crate_radius, solids):
-			continue
-		create_box(pos, Vector3(s, s, s), rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, CAMP_WOOD)
-		solids.append({ "pos": pos, "radius": crate_radius })
-
-	var posts := rng.randi_range(CAMP_POST_MIN, CAMP_POST_MAX)
-	i = 0
-	while i < posts:
-		i += 1
-		var a := rng.randf_range(0.0, TAU)
-		var r := rng.randf_range(CAMP_PROP_RING_MIN, CAMP_PROP_RING_MAX)
-		var pos := center + Vector3(cos(a) * r, CAMP_POST_SIZE.y / 2.0, sin(a) * r)
-		var post_radius := CAMP_POST_SIZE.x * 0.71
-		if not _camp_spot_clear(pos, post_radius, solids):
-			continue
-		create_box(pos, CAMP_POST_SIZE, rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, CAMP_WOOD)
-		solids.append({ "pos": pos, "radius": post_radius })
-
-func _camp_spot_clear(pos: Vector3, radius: float, solids: Array) -> bool:
-	"""
-	True when a `radius` circle at `pos` clears every solid thing built so far
-	({ "pos", "radius" } records). It is the camp's ONE overlap rule, and every
-	solid the camp builds is judged by it against everything solid before it:
-
-	- PROPS vs PROPS: 3-6 crates and 2-3 posts all sit on the same 2.0-4.0 m ring,
-	  so without this a third of camps had at least one interpenetrating pair.
-	- PROPS vs huts: the prop ring (CAMP_PROP_RING_*) and the hut ring
-	  (CAMP_HUT_RING_*) touch at 4 m, but a hut is up to 2.9 m of radius around ITS
-	  ring position, so its stone reaches inward to ~1.1 m — well into the prop
-	  band. Without this test roughly a fifth of all props spawned inside a hut
-	  wall, and props collide, so the player bumped geometry they could not see.
-	- HUTS vs each other: the ring radius is drawn PER HUT over a 2.5 m range and
-	  the angle is jittered, so evenly-spaced slots are no guarantee. At
-	  CAMP_HUT_MAX (6) the nominal step is TAU/6 = 1.047 rad and the ±0.25 jitter
-	  can shrink an adjacent gap to 0.547 rad; two huts both at CAMP_HUT_RING_MIN
-	  are then 2 * 4.0 * sin(0.547/2) = 2.16 m apart while their radii sum to at
-	  least 4.29 m. Measured over 163 camps with the roll forced to 1.0 BEFORE this
-	  test existed: 38% of camps had a pair of fused, interpenetrating domes — 35 of
-	  36 six-hut camps and half of the five-hut ones. Both huts collide, so that was
-	  a merged, unreadable blob the player walked into. After: 0 of 175.
-	"""
-	for other in solids:
-		if Vector2(pos.x - other.pos.x, pos.z - other.pos.z).length() < other.radius + radius:
-			return false
-	return true
+	TerrainFeatures.spawn_artifact_in_chunk(self, chunk_pos, parent_chunk, obstacles, block_batch, block_body)
 
 func spawn_camp_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""
-	Spawn this chunk's nomad camp, if _camp_at says it has one. Called from
-	create_chunk AFTER spawn_biome_content_in_chunk and BEFORE
-	_build_block_multimesh / the block_body attach, so every hut, stone, crate and
-	post joins the chunk's SINGLE MultiMesh draw call and its SINGLE
-	BlockCollision body — a whole village costs one extra draw call (the ember)
-	and zero extra physics bodies.
-
-	That ordering is also WHY the camp's candidate-spot loop lives here rather
-	than in _camp_at: by this point the chunk's scattered blocks, feature
-	structure, artifact and biome geometry are all in `obstacles`, so every try
-	can be judged against the test that actually rejects (see _camp_at's docstring
-	for the measurement that moved it).
-
-	@param chunk_pos: Chunk coordinates being generated.
-	@param parent_chunk: The chunk mesh — the ember and the camp's coins parent
-	                     here (per-chunk parenting rule: they unload with it).
-	@param obstacles: The chunk's block-footprint list. Read to place the camp,
-	                  then extended with ONE round footprint over the whole
-	                  village, which is what keeps crocodiles out — see the bottom.
-	@param block_batch / block_body: The chunk's visual batch + collision body.
-	"""
-	# BUDAPEST — no nomad camps in the city (DEC-9): a dome-hut village pitched on
-	# Andrassy Avenue is the clearest case of the procedural world contradicting
-	# the plan. NOT tower_excludes(); see in_budapest for why the city takes one
-	# answer per system.
-	var camp_center := chunk_to_world(chunk_pos)
-	if in_budapest(camp_center.x, camp_center.z):
-		return
-	if not spawn_camps:
-		return
-	var camp := _camp_at(chunk_pos)
-	if camp.is_empty():
-		return
-
-	# The camp's OWN RNG, seeded by _camp_at's "seed" draw: it picks the spot AND
-	# feeds every builder, so each consumes as many draws as it needs without the
-	# placement roll (or any other stream) caring.
-	var rng := RandomNumberGenerator.new()
-	rng.seed = camp.seed
-
-	var chunk_center := chunk_to_world(chunk_pos)
-	# Candidates stay CAMP_EDGE_MARGIN (> CAMP_RADIUS) inside the chunk so the
-	# whole village fits in one chunk and never straddles a seam.
-	var half := chunk_size / 2.0 - CAMP_EDGE_MARGIN
-
-	# Try a few spots; accept the FIRST that clears _biome_spot_ok — the single
-	# home of the "would something solid here spoil what is already there?" rule,
-	# covering river + road clearance + overlap with everything already placed in
-	# one call. The road half of it is also the BOSS exclusion, see
-	# CAMP_ROAD_CLEARANCE. Bailing after every try is deliberate: a camp shoved
-	# through a mountain massif reads far worse than a chunk with no camp, and
-	# camps are ambience — nothing downstream expects one to exist.
-	var center := Vector3.ZERO
-	var placed := false
-	var tries := 0
-	while tries < CAMP_PLACE_TRIES and not placed:
-		tries += 1
-		center = Vector3(rng.randf_range(-half, half), 0.0, rng.randf_range(-half, half))
-		placed = _biome_spot_ok(chunk_center, center.x, center.z, CAMP_RADIUS, CAMP_ROAD_CLEARANCE, obstacles)
-	if not placed:
-		return
-
-	# 1. The fire pit at the camp's heart — built first because everything else is
-	# arranged around it (the huts face it, the props ring it).
-	_camp_fire_pit(center, rng, parent_chunk, block_batch, block_body)
-
-	# 2. The huts, on a jittered ring around the fire. Angles are evenly spread and
-	# then nudged, so the circle reads as pitched by people rather than stamped by
-	# a compass, and each hut is yawed so its doorway (+Z, see _camp_hut) points at
-	# the flames.
-	var hut_count := rng.randi_range(CAMP_HUT_MIN, CAMP_HUT_MAX)
-	var base_angle := rng.randf_range(0.0, TAU)
-	var hut_footprints: Array = []
-	var camp_top := 0.0
-	var h := 0
-	while h < hut_count:
-		var a := base_angle + TAU * float(h) / float(hut_count) + rng.randf_range(-0.25, 0.25)
-		var r := rng.randf_range(CAMP_HUT_RING_MIN, CAMP_HUT_RING_MAX)
-		var hut_center := center + Vector3(cos(a) * r, 0.0, sin(a) * r)
-		h += 1
-		# A hut that would grow through a neighbour is DROPPED, same rule as the
-		# props below: an evenly-spaced slot is no guarantee once the ring radius is
-		# drawn per hut and the angle is jittered (see _camp_spot_clear for the
-		# arithmetic). The test uses CAMP_HUT_WIDTH_MAX because _camp_hut draws the
-		# real width itself — testing conservatively costs a hut now and then, which
-		# is cheaper than a rebuilt one and reads as a village pitched around what
-		# fits. A camp is 3-6 huts MINUS these drops — measured 3.7 built on
-		# average, and 6-hut camps now land as 4s and 5s.
-		if not _camp_spot_clear(hut_center, CAMP_HUT_WIDTH_MAX * 0.71 + 0.3, hut_footprints):
-			continue
-		# Point the hut's local +Z back at the fire: Basis(UP, yaw) * (0,0,1) is
-		# (sin yaw, 0, cos yaw), and we want that to equal -(cos a, sin a).
-		var yaw := atan2(-cos(a), -sin(a))
-		var footprint := _camp_hut(hut_center, yaw, rng, block_batch, block_body)
-		# Only "pos"/"radius" — this list never reaches `obstacles` (see step 5), so
-		# the "top"/"climbable" an obstacle record carries would be read by nothing.
-		hut_footprints.append({ "pos": hut_center, "radius": footprint.radius })
-		camp_top = maxf(camp_top, footprint.top)
-
-	# 3. The lived-in clutter, on its own tighter ring between fire and huts. The
-	# huts go in FIRST so the props can be tested against them: the two rings
-	# touch, and a hut is nearly 3 m of radius around its ring position.
-	_camp_props(center, rng, block_batch, block_body, hut_footprints)
-
-	# 4. A couple of scattered coins by the fire — a small "someone lives here"
-	# reward, NOT a treasure haul. There is deliberately NO GEM: the guaranteed gem
-	# is the ARTIFACTS' distinction (see spawn_artifact_in_chunk), and giving camps
-	# one too would flatten the difference between "an ancient prize worth a detour"
-	# and "a village you happened to walk through".
-	#
-	# These are ordinary chunk-local coins parented to the chunk. They CANNOT
-	# collide with the road's station-claim logic: a camp centre is at least
-	# CAMP_ROAD_CLEARANCE (22 m) from the road centerline while the widest scatter
-	# band reaches road_width_max / 2 (10 m) plus ROAD_COIN_LONG_JITTER, so the two
-	# coin populations never share ground — no double-claim, no gap.
-	#
-	# ORDER MATTERS, exactly as for the artifact reward: these settle through
-	# _settle_coin_y BEFORE the camp's own footprint is appended below. Settling
-	# after would meet a non-climbable CAMP_RADIUS circle covering the whole
-	# village and skip every single coin.
-	if spawn_coins and coin_scene != null:
-		var coin_count := rng.randi_range(CAMP_COIN_MIN, CAMP_COIN_MAX)
-		var c := 0
-		while c < coin_count:
-			c += 1
-			var a := rng.randf_range(0.0, TAU)
-			# Just outside the fire stones (CAMP_FIRE_RING_RADIUS) and inside the
-			# prop RING (CAMP_PROP_RING_MIN). That compares ring centres, so it is
-			# not a guarantee: a crate's own half-diagonal reaches inward to
-			# 2.0 - 0.9 * 0.71 = 1.36 m, under the coin band's 1.9 m outer edge, and
-			# ~2% of camp coins do land on a crate. Harmless, so deliberately not
-			# tested: a crate is at most CAMP_CRATE_SIZE_MAX (0.9) tall, which is
-			# exactly COIN_GROUND_HEIGHT, so the coin rests on the lid, and the
-			# pickup sphere (0.6 m) far exceeds the crate's 0.45 m half-width, so it
-			# stays collectible from any side.
-			var r := CAMP_FIRE_RING_RADIUS + rng.randf_range(0.4, 0.8)
-			var cx := center.x + cos(a) * r
-			var cz := center.z + sin(a) * r
-			# Same perch-or-skip rule as every other coin (one home).
-			var cy := _settle_coin_y(cx, cz, COIN_GROUND_HEIGHT, obstacles)
-			if is_inf(cy):
-				continue
-			var coin := coin_scene.instantiate()
-			coin.position = Vector3(cx, cy, cz)
-			parent_chunk.add_child(coin)
-
-	# 5. ONE round footprint over the whole camp circle. THIS IS THE CROCODILE
-	# EXCLUSION, and it needs no edit anywhere else: spawn_crocodiles_in_chunk
-	# already rejects any spawn candidate within ob.radius + min_object_clearance of
-	# a footprint, so a CAMP_RADIUS circle simply reads as "occupied" and the camp
-	# stays the calm pocket it is meant to be — with NO EDIT to the crocodile
-	# spawner. Its retry budget absorbs the rejections, so the croc COUNT is
-	# unchanged; the positions are not. A rejected candidate skips the successful
-	# spawn's `rotation.y` draw, so the rest of that chunk's crocodile stream
-	# shifts — same as the river skip just above it. Harmless (within-run
-	# determinism holds: the camp is a pure function of chunk coords + run_seed),
-	# but do not read this as "camp chunks generate crocodiles byte-identically".
-	# climbable = false: a road coin over a camp would be skipped rather than
-	# perched on thin air. That cannot happen given CAMP_ROAD_CLEARANCE, but the
-	# rule stays honest either way.
-	# ONE circle is enough: CAMP_RADIUS is chosen to bound the widest hut on the
-	# outermost ring (9.36 <= 9.4, see the constant), so per-hut footprints would
-	# add 3-6 entries to a list every _settle_coin_y / _point_over_block call scans
-	# and reject nothing the circle does not already reject. `hut_footprints` stays
-	# a local, read by _camp_props above.
-	obstacles.append({ "pos": center, "radius": CAMP_RADIUS, "top": camp_top, "climbable": false })
-
-# ============================================================================
-# TREASURE CHESTS (see the TREASURE CHESTS constant banner)
-# ============================================================================
-
-func _chest_at(chunk_pos: Vector2i) -> Dictionary:
-	"""
-	Deterministic treasure-chest placement for one chunk — _artifact_at / _camp_at
-	for chests, same shape, same guarantees. Pure function of chunk coords +
-	run_seed via the independent CHEST_SALT hash stream, so it consumes NO draw
-	from the shared chunk RNG: every block, crocodile and coin the generator
-	produced before chests existed is still exactly where it was.
-
-	@param chunk_pos: Chunk coordinates to decide for.
-	@return: {} when this chunk rolled no chest (the ~12-in-13 case); otherwise
-	         { "seed": int } — the seed for the chest's private RNG, which
-	         spawn_chest_in_chunk uses for placement, geometry and payout.
-
-	WHY THERE IS NO CANDIDATE LOOP HERE. This is the landmine both artifacts and
-	camps had to be dug out of, and it is worth restating rather than cross-
-	referencing: when this function runs the chunk has NO GEOMETRY YET. The only
-	tests available are river and road, and neither rejects the thing that actually
-	matters — overlap with the chunk's ~12 scattered blocks and its feature
-	structure. Camps measured 11 rejections in 121 chunks from river+road alone,
-	then ~9% survival once the real test was applied where it belongs, landing
-	camps ~10x rarer than the constant said. So the CHEST_PLACE_TRIES loop lives in
-	spawn_chest_in_chunk, where `obstacles` exists, and this function does exactly
-	one thing: roll.
-
-	EDUCATIONAL NOTE — the determinism contract:
-	- Within a run the same chunk yields the IDENTICAL chest (same spot, same lid
-	  angle, same payout) however often it unloads and regenerates: the RNG is
-	  seeded purely from chunk coords + run_seed, and every draw downstream comes
-	  off that one stream in a fixed order.
-	- Across runs, new_run() re-rolls run_seed, so chests land elsewhere.
-	- Whether a candidate is ACCEPTED is likewise load-order independent: the road
-	  test reads the station cache (pure in `k`), the river test reads the biome
-	  field (pure in world position + run_seed) and the overlap test reads the
-	  chunk's own obstacle list (pure in chunk coords + run_seed).
-	"""
-	var rng := RandomNumberGenerator.new()
-	# Own coordinate primes AND own salt — see the CHEST_HASH_PRIME_* constants for
-	# why they differ from every other stream in this file.
-	rng.seed = hash(Vector3i(chunk_pos.x * CHEST_HASH_PRIME_X, chunk_pos.y * CHEST_HASH_PRIME_Y, run_seed ^ CHEST_SALT))
-
-	# The rarity roll — most chunks bail here, and this is the ONLY draw taken from
-	# the stream at this point. The rest happen in spawn_chest_in_chunk off an RNG
-	# re-seeded from `seed`, so the two together stay one fixed sequence per chunk.
-	# Scarcity thins to plain terrain at 4 km: compare against chance * k (post-draw, no new draw).
-	var k_chest := scarcity_at(chunk_to_world(chunk_pos))
-	if rng.randf() >= CHEST_CHANCE * k_chest:
-		return {}
-
-	return { "seed": rng.randi() }
-
+	TerrainFeatures.spawn_camp_in_chunk(self, chunk_pos, parent_chunk, obstacles, block_batch, block_body)
 
 func spawn_chest_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""
-	Spawn this chunk's treasure chest, if _chest_at says it has one. Called from
-	create_chunk AFTER spawn_biome_content_in_chunk / spawn_camp_in_chunk and
-	BEFORE _build_block_multimesh + the block_body attach, so the chest's wood and
-	brass join the chunk's SINGLE MultiMesh draw call and its SINGLE BlockCollision
-	body — a chest costs ZERO extra draw calls and ZERO extra physics bodies. Its
-	one non-batched node is the open trigger (treasure_chest.gd), which has no mesh.
-
-	That ordering is also WHY the candidate loop lives here rather than in
-	_chest_at: by this point the chunk's scattered blocks, feature structure,
-	artifact, biome geometry and camp are all in `obstacles`, so every try is judged
-	against the test that actually rejects.
-
-	@param chunk_pos: Chunk coordinates being generated.
-	@param parent_chunk: The chunk mesh — the trigger parents here (per-chunk
-	                     parenting rule: it unloads with the chunk, which is also
-	                     what makes a chest regenerate closed; see the banner).
-	@param obstacles: The chunk's footprint list. READ to place the chest, then
-	                  appended to with the chest's own small climbable footprint.
-	@param block_batch / block_body: The chunk's visual batch + collision body.
-	"""
-	# BUDAPEST — no treasure chests in the city (DEC-9): the rect's reward line is
-	# the authored avenue coins, so a chest here would be loot the plan never
-	# placed. NOT tower_excludes(); the city answers per system.
-	var chest_center := chunk_to_world(chunk_pos)
-	if in_budapest(chest_center.x, chest_center.z):
-		return
-	if not spawn_chests:
-		return
-	var chest := _chest_at(chunk_pos)
-	if chest.is_empty():
-		return
-
-	# The chest's OWN RNG, seeded by _chest_at's roll: it picks the spot AND feeds
-	# the geometry AND draws the payout, so each consumes as many draws as it needs
-	# without the rarity roll (or any other stream) caring.
-	var rng := RandomNumberGenerator.new()
-	rng.seed = chest.seed
-
-	var chunk_center := chunk_to_world(chunk_pos)
-	# Candidates stay CHEST_EDGE_MARGIN (> CHEST_RADIUS, and > the trigger radius)
-	# inside the chunk, so neither the box nor its pickup sphere straddles a seam.
-	var half := chunk_size / 2.0 - CHEST_EDGE_MARGIN
-
-	# Try a few spots; accept the FIRST that clears _biome_spot_ok — the single home
-	# of the river + road-clearance + overlap rule. The road half is what keeps
-	# chests off the coin swath (see CHEST_ROAD_CLEARANCE); the overlap half is what
-	# stops one appearing half-swallowed by a wall. Bailing after every try is
-	# deliberate and matches artifacts and camps: nothing downstream expects a chest.
-	var local_x := 0.0
-	var local_z := 0.0
-	var placed := false
-	var tries := 0
-	while tries < CHEST_PLACE_TRIES and not placed:
-		tries += 1
-		local_x = rng.randf_range(-half, half)
-		local_z = rng.randf_range(-half, half)
-		if _biome_spot_ok(chunk_center, local_x, local_z, CHEST_RADIUS, CHEST_ROAD_CLEARANCE, obstacles):
-			placed = true
-	if not placed:
-		return
-
-	var center := Vector3(local_x, 0.0, local_z)
-	var yaw := rng.randf_range(0.0, TAU)
-
-	# --- The box itself. All three parts go through create_box, so all three land
-	# in the chunk's one MultiMesh; only the body carries collision.
-	# The body sits ON the ground: centre at half its height.
-	create_box(center + Vector3(0.0, CHEST_BODY_SIZE.y / 2.0, 0.0), CHEST_BODY_SIZE, yaw, rng, block_batch, block_body, 0.0, CHEST_WOOD)
-
-	# The brass band across the waist — collide = false, exactly like a tree canopy
-	# or a camp fire stone: it is 6 cm of trim sitting inside the body's own
-	# collision box, so a shape for it would be pure cost.
-	create_box(center + Vector3(0.0, CHEST_BODY_SIZE.y * 0.55, 0.0), CHEST_BAND_SIZE, yaw, rng, block_batch, block_body, 0.0, CHEST_BRASS, false)
-
-	# The lid, TILTED OPEN. This is the same `tilt` parameter the artifacts' leaning
-	# monolith uses, and create_box applies it identically to the visual basis and to
-	# the CollisionShape3D transform, so the lid you see is the lid you bump into.
-	#
-	# THE LID IS HINGED, NOT JUST TILTED, and the difference is visible. create_box
-	# rotates a box about its own CENTRE, so simply tilting a lid parked on the rim
-	# drives its rear half straight down through the body — at the widest angle here
-	# the back corner would sink 0.25 m into a 0.75 m box, reading as a lid melting
-	# into the chest rather than opening. So we place the centre where a lid hinged
-	# on the REAR RIM would actually end up: take the hinge at (0, body top, -half
-	# depth), and rotate the lid's rest offset from that hinge, (0, +half height,
-	# +half depth), by the same angle. Three lines of trig, and the lid pivots.
-	#
-	# Sign: Basis(RIGHT, t) sends z toward -y, so a POSITIVE tilt would push the
-	# FRONT edge down. The lid opens with a negative tilt and `theta` below is the
-	# positive open angle.
-	var theta := rng.randf_range(CHEST_LID_TILT_MIN, CHEST_LID_TILT_MAX)
-	var hy := CHEST_LID_SIZE.y * 0.5
-	var hz := CHEST_LID_SIZE.z * 0.5
-	var lid_local := Vector3(
-		0.0,
-		CHEST_BODY_SIZE.y + hy * cos(theta) + hz * sin(theta),
-		-hz - hy * sin(theta) + hz * cos(theta)
-	)
-	create_box(center + Basis(Vector3.UP, yaw) * lid_local, CHEST_LID_SIZE, yaw, rng, block_batch, block_body, -theta, CHEST_WOOD)
-
-	# --- The open trigger: the chest's ONE non-batched node. No mesh, no material,
-	# so the F3 overlay's draw-call count does not move. Parented to the chunk like
-	# every other per-chunk node, so it frees with the chunk.
-	#
-	# The payout count is drawn from the chest's own RNG, so two visits to the same
-	# chunk in one run find the same chest holding the same number of coins.
-	var coin_count := rng.randi_range(CHEST_COINS_MIN, CHEST_COINS_MAX)
-	var trigger := Area3D.new()
-	trigger.name = "TreasureChest"
-	trigger.set_script(TREASURE_CHEST_SCRIPT)
-	# Centred on the box so the sphere reaches equally from every side.
-	trigger.position = center + Vector3(0.0, CHEST_BODY_SIZE.y / 2.0, 0.0)
-	parent_chunk.add_child(trigger)
-	# setup() AFTER add_child, per treasure_chest.gd's contract (it builds its own
-	# CollisionShape3D child and connects its own signal there) — the same
-	# add-then-setup shape ability_effect.gd uses.
-	trigger.setup(coin_count, CHEST_BURST_DURATION)
-
-	# --- One small CLIMBABLE footprint. Climbable is the right call for a 1 m box:
-	# a road coin whose column crosses it perches on the lid (reachable, and a nice
-	# accident) instead of being skipped, which is what a non-climbable footprint
-	# would do — that rule exists for trees and cacti, where the top is 5 m up in a
-	# canopy. Crocodiles reject spawn candidates inside the footprint either way, so
-	# a chest is never found already occupied by a crocodile standing in it.
-	#
-	# MEASURED (same sweep, 17x17 chunks with every spawner on, chests on vs off):
-	# the only chunks whose block MultiMesh changed are the 20 that actually built a
-	# chest, and NOT ONE crocodile or coin moved anywhere — 289/289 chunks identical
-	# on both. That is stronger than camps manage (a 9.4 m camp circle does shift the
-	# croc stream), because a 1.5 m circle plus min_object_clearance is a 3 m disc in
-	# a 50 m chunk and the croc spawner's retry budget never had to touch it here.
-	# The mechanism still exists in principle — a rejected croc candidate skips the
-	# successful spawn's rotation.y draw — so do not read this as a guarantee, only
-	# as "this footprint is small enough that it did not fire". Within-run
-	# determinism holds unconditionally either way (the chest is a pure function of
-	# chunk coords + run_seed): the same sweep regenerated 289 chunks twice and got
-	# byte-identical blocks, crocodiles, coins and chest spots both times.
-	#
-	# MULTIPLAYER (phase 1, known and accepted): opening is per-peer and local — the
-	# trigger fires for whoever walks into their OWN copy, and a chest one peer has
-	# opened still stands closed for another. Contested-chest arbitration belongs to
-	# the same claim machinery the epic defers for coins (godot-test1-s86.5).
-	obstacles.append({ "pos": center, "radius": CHEST_RADIUS, "top": CHEST_BODY_SIZE.y, "climbable": true })
+	TerrainFeatures.spawn_chest_in_chunk(self, chunk_pos, parent_chunk, obstacles, block_batch, block_body)
 
 # ============================================================================
 # GEO LANDMARKS (see the GEO LANDMARKS constant banner)
@@ -8511,8 +4498,9 @@ func landmark_sites() -> Dictionary:
 	Pure in `run_seed` (and in the road centreline, which is itself pure in
 	run_seed), so every peer in a room and every regeneration of the same run agree
 	for free — the same argument the old per-chunk roll made, one level up. Built
-	lazily on the first ask and dropped by new_run() beside the station cache it is
-	derived from; see the MUSEUM MILE banner for the design.
+	lazily on the first ask and dropped by `set_run_seed()` (through
+	`_drop_seeded_memos()`) beside the station cache it is derived from; see the
+	MUSEUM MILE banner for the design.
 	"""
 	if _landmark_sites_built:
 		return _landmark_sites_cache
@@ -8954,1258 +4942,56 @@ func spawn_landmark_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 	# a per-shape solid-centre height rather than a richer vocabulary.
 	obstacles.append({ "pos": center, "radius": footprint.radius, "top": footprint.top, "climbable": false })
 # ============================================================================
-# BIOME CONTENT (the geometry each biome adds on top of the ordinary blocks)
+# BIOME CONTENT — forwarders; the builders are in terrain_biomes.gd
 # ============================================================================
-#
-# One entry point, one independent RNG stream, three builders. Structured
-# exactly like the artifact spawner above and for the same reasons:
-#   - INDEPENDENT STREAM: seeded from chunk coords + run_seed ^ BIOME_SALT, so it
-#     consumes ZERO draws from the shared chunk RNG — every block, crocodile and
-#     coin the old generator produced is still exactly where it was.
-#   - BATCHED: every solid thing built here goes through create_box into the
-#     chunk's single MultiMesh (block_batch) and single BlockCollision body
-#     (block_body), so a forest chunk is still ONE block draw call.
-#   - FOOTPRINTS: each thing built appends a round obstacle to `obstacles`, which
-#     later spawners (crocodiles, coins) already know how to read.
-
-func _oasis_at(chunk_pos: Vector2i) -> Dictionary:
-	"""
-	Deterministic oasis placement for one desert chunk — the pattern of _artifact_at
-	/ _camp_at applied to rare water features. Pure function of chunk coords + run_seed
-	on its own independent hash stream (OASIS_SALT): consumes NO draw from the shared
-	biome RNG, so every existing cactus/dune is exactly where it was before oases existed.
-
-	@return: {} when this chunk has no oasis (the common case); otherwise { "seed": int }
-	         used by _spawn_desert_oasis for placement and geometry.
-	"""
-	var rng := RandomNumberGenerator.new()
-	rng.seed = hash(Vector3i(chunk_pos.x * 73856093, chunk_pos.y * 19349663, run_seed ^ OASIS_SALT))
-
-	# Scarcity thins oases to plain terrain at 4 km — the artifact/camp/chest/
-	# landmark form: the SAME roll compared against chance * k, no new draw on this
-	# stream, so a desert near the centre keeps exactly the oases it always had.
-	# The whole oasis is one roll, which is why its palms, boulders and reeds need
-	# no k of their own.
-	if rng.randf() >= OASIS_CHANCE * scarcity_at(chunk_to_world(chunk_pos)):
-		return {}
-
-	return { "seed": rng.randi() }
-
-func _dune_at(chunk_pos: Vector2i) -> Dictionary:
-	"""
-	Deterministic sand dune placement for one desert chunk — same split-placement
-	pattern as oases, with its own independent DUNE_SALT hash stream.
-
-	@return: {} when this chunk has no dunes; otherwise { "seed": int } for dune RNG.
-	"""
-	var rng := RandomNumberGenerator.new()
-	rng.seed = hash(Vector3i(chunk_pos.x * 73856093, chunk_pos.y * 19349663, run_seed ^ DUNE_SALT))
-
-	# Scarcity, same form and same reason as _oasis_at above.
-	if rng.randf() >= DUNE_CHANCE * scarcity_at(chunk_to_world(chunk_pos)):
-		return {}
-
-	return { "seed": rng.randi() }
+##
+## Bead godot-test1-ftn.5 moved the eight `_spawn_*_content` builders, the oasis
+## and dune site rolls, `_snow_mammoth`, `_city_snap` and `_biome_spot_ok` to
+## `scripts/terrain_biomes.gd`. The BIOME FIELD did not go with them —
+## `_biome_noise`, `biome_at`, `is_river_at` and the `Biome` enum are still
+## below, because the noise is one half of the CPU/GPU parity contract and the
+## enum cannot leave a file whose const Dictionaries are keyed by it.
+##
+## These two are forwarders for `create_box`'s reason (bead ftn.1):
+## `spawn_biome_content_in_chunk` is called on the terrain by a dozen
+## self-checks, and `_biome_spot_ok` is the single home of the placement rule —
+## the artifact, camp, chest and landmark spawners still in this file all place
+## through it, and so do six self-checks. The six builders below them are
+## reached BY STRING (`terrain.call("_spawn_city_content", ...)`), which no
+## rename-aware tool would have caught.
 
 func spawn_biome_content_in_chunk(chunk_pos: Vector2i, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""
-	Build this chunk's biome-specific geometry (cacti / trees / massifs). Called
-	from create_chunk AFTER spawn_artifact_in_chunk and BEFORE
-	_build_block_multimesh / the block_body attach, so the geometry joins the
-	chunk's single MultiMesh and single collision body and its footprints are in
-	`obstacles` before crocodiles and coins are placed.
-
-	@param chunk_pos: Chunk coordinates being generated.
-	@param obstacles: The chunk's block-footprint list; builders append theirs.
-	@param block_batch / block_body: The chunk's visual batch + collision body,
-	                                 threaded through to create_box.
-
-	The CHUNK CENTRE decides the biome for the whole chunk's content budget (how
-	many trees, how many massifs); individual builders re-test biome_at at each
-	object's OWN position, which is what feathers a forest edge across a chunk
-	seam instead of stopping dead at it.
-
-	NOTE (deviation from the plan's stated signature): there is no parent_chunk
-	param. Everything a biome builds is a create_box entry — no builder has a node
-	to parent — so the argument would be dead weight at every call site.
-	"""
-	# BUDAPEST — no biome geometry in the city (DEC-9). The rect forces the CITY
-	# band, so this would draw _spawn_city_content's procedural blocks straight
-	# through the authored streets. NOT tower_excludes(): per-system answers, and
-	# the Danube's crocodiles are the system that says yes.
-	var biome_center := chunk_to_world(chunk_pos)
-	if in_budapest(biome_center.x, biome_center.z):
-		return
-
-	if not spawn_biome_content:
-		return
-
-	# Own stream. Different coordinate multipliers than the chunk-object /
-	# artifact streams (which both use 73856093 / 19349663) so the two hash
-	# sequences never correlate — biome content and artifacts must not agree
-	# about where "interesting" spots are.
-	var rng := RandomNumberGenerator.new()
-	rng.seed = hash(Vector3i(chunk_pos.x * 83492791, chunk_pos.y * 15485863, run_seed ^ BIOME_SALT))
-
-	var center := chunk_to_world(chunk_pos)
-	match biome_at(center.x, center.z):
-		Biome.DESERT:
-			_spawn_desert_content(center, rng, obstacles, block_batch, block_body)
-		Biome.FOREST:
-			_spawn_forest_content(center, rng, obstacles, block_batch, block_body)
-		Biome.MOUNTAIN:
-			_spawn_mountain_content(center, rng, obstacles, block_batch, block_body)
-		Biome.CITY:
-			_spawn_city_content(center, rng, obstacles, block_batch, block_body)
-		Biome.SNOW:
-			_spawn_snow_content(center, rng, obstacles, block_batch, block_body)
-		_:
-			# PLAINS is the baseline look — the ordinary scattered blocks ARE its
-			# content, so it deliberately builds nothing extra here.
-			pass
-
+	TerrainBiomes.spawn_biome_content_in_chunk(self, chunk_pos, obstacles, block_batch, block_body)
 
 func _biome_spot_ok(chunk_center: Vector3, local_x: float, local_z: float, radius: float, road_clearance: float, obstacles: Array) -> bool:
-	"""
-	The single home of the "is this a legal spot for biome geometry" rule.
-
-	@param chunk_center: World centre of the chunk (create_box and `obstacles` are
-	                     both chunk-LOCAL; the river/road field is asked in WORLD
-	                     space, so the conversion happens here once).
-	@param local_x, local_z: Candidate position, chunk-local.
-	@param radius: Footprint radius of the thing about to be built, used for the
-	               overlap test. Pass the WIDEST the thing could be — the actual
-	               width is usually drawn after this call, and reordering the draws
-	               to know it exactly would shift the biome stream for nothing.
-	@param road_clearance: Minimum distance to the coin-road centerline (metres).
-	@param obstacles: Footprints already placed in this chunk (scattered blocks,
-	                  feature structures, artifacts, and earlier biome geometry).
-	@return: true when the spot is NOT in a river, NOT on the tower's site, is at
-	         least `road_clearance` from the road centerline, and overlaps nothing
-	         already placed.
-
-	WHY THE TESTS LIVE TOGETHER: they answer one question — "would putting
-	something solid here spoil what is already there?". Rivers must stay wadeable
-	(a tree in the water is nonsense and a massif would dam it), the coin road must
-	stay followable — a forest leaves the coin swath clear, and a mountain range
-	leaves a canyon through itself, purely by asking for a bigger clearance — and
-	nothing may grow THROUGH something else: without the overlap test a massif
-	(radius ~7 m, covering an eighth of a chunk) entombs the scattered blocks under
-	it and trees sprout out of walls. The overlap test also gives massifs their
-	mutual spacing for free, since each appends its own footprint before the next
-	is tried.
-
-	Callers pass DIFFERENT clearances (trees a little, massifs a lot), which is why
-	the clearance is a parameter rather than a constant read in here; it is handed
-	straight to _road_lateral_distance, which sizes its scan window from it.
-
-	THE RIVER TEST IS LIVE — do not delete it as dead code. It is inert for the
-	three BIOME callers (cactus/forest/mountain), because RIVER_LEVEL (0.5) sits
-	inside the PLAINS band and those three only ever place geometry in
-	desert/forest/mountain. But spawn_camp_in_chunk is a fourth caller and camps are
-	PLAINS-CAPABLE, so for camps this branch actually rejects — it is the whole of
-	the "no village pitched mid-river" rule. The other river exclusions live in the
-	plains-capable spawners: the scattered-block scatter, the four feature-structure
-	builders, the crocodiles and _artifact_at.
-
-	ponytail: like every other caller, the test is asked at the spot's CENTRE only,
-	not over its `radius`. For a 1-2 m cactus that is exact; for a 9.4 m camp it
-	means a village centred near a bank can still put a hut in the band (~5% of
-	camps, by the measured ~8 m band width). Cosmetic — a river is a flat tint with
-	no mesh — so it is left alone; the upgrade is four extra is_river_at evals at
-	`radius` on the cardinals.
-	"""
-	var world_x := chunk_center.x + local_x
-	var world_z := chunk_center.z + local_z
-	if is_river_at(Vector3(world_x, 0.0, world_z)):
-		return false
-	# The tower's site is kept clear of everything procedural (see TOWER_RADIUS).
-	# Judged with the candidate's OWN radius — the same "widest this could be"
-	# number the overlap test below uses — so the thing's whole footprint stays
-	# outside the disc, not merely its centre.
-	if tower_excludes(world_x, world_z, radius):
-		return false
-	if _road_lateral_distance(world_x, world_z, road_clearance) < road_clearance:
-		return false
-	for ob in obstacles:
-		if Vector2(local_x - ob.pos.x, local_z - ob.pos.z).length() < radius + ob.radius:
-			return false
-	return true
-
+	return TerrainBiomes._biome_spot_ok(self, chunk_center, local_x, local_z, radius, road_clearance, obstacles)
 
 func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""
-	DESERT — a handful of cactus stacks on an otherwise thinned-out plain.
-
-	@param chunk_center: World centre of the chunk (positions handed to create_box
-	                     are chunk-LOCAL; the biome/road questions are asked in
-	                     WORLD space, so the two are converted here).
-	@param rng: The biome stream's private RNG — draws here touch nothing else.
-	@param obstacles: Each cactus appends one small NON-climbable footprint.
-	@param block_batch / block_body: The chunk's single MultiMesh + collision body.
-
-	The emptiness of a desert is NOT made here — it is made by the one-in-N skip in
-	spawn_objects_in_chunk. This function only adds the thing that says "desert" at
-	a glance. Crocodile density is deliberately UNCHANGED in a desert: the project
-	rule is that entity counts are never trimmed, so a desert feels empty through
-	decoration alone.
-
-	A cactus is 2-3 thin tall green boxes stacked, sometimes with one short arm box
-	off to the side — enough silhouette to read at distance, four boxes at most.
-	"""
-	var half := chunk_size / 2.0 - 3.0
-	var count := rng.randi_range(CACTUS_MIN, CACTUS_MAX)
-	var chunk_pos_cactus := world_to_chunk(chunk_center)
-	var k_cactus := scarcity_at(chunk_center)
-
-	for _i in count:
-		var local_x := rng.randf_range(-half, half)
-		var local_z := rng.randf_range(-half, half)
-		# Rejections are `continue`s AFTER the position draws, so a rejected cactus
-		# costs a spot and not a shift in this (or any) RNG sequence.
-		if not _biome_spot_ok(chunk_center, local_x, local_z, CACTUS_WIDTH_MAX * 1.2, CACTUS_ROAD_CLEARANCE, obstacles):
-			continue
-		# Edge feathering, same rule as the forest and the mountains: the chunk
-		# CENTRE chose this builder, but each cactus re-tests the biome at its OWN
-		# position, so the sand dissolves into the plain along the noise contour
-		# instead of stopping dead on a straight chunk seam.
-		if biome_at(chunk_center.x + local_x, chunk_center.z + local_z) != Biome.DESERT:
-			continue
-
-		var width := rng.randf_range(CACTUS_WIDTH_MIN, CACTUS_WIDTH_MAX)
-		var segments := rng.randi_range(2, 3)
-		var yaw := rng.randf_range(0.0, TAU)
-		# Per-object scarcity, post-draw and after the three unconditional draws
-		# above — the forest's rule, for the forest's reason. Before bead
-		# `godot-test1-bn8` the desert read k only as the `k_cactus <= 0` bail
-		# above, so a desert kept EVERY cactus right up to the 4 km line and then
-		# lost the lot in one chunk: the "one rule for all" the owner asked for is
-		# a gradient here, not a cliff.
-		if not _scarcity_keep(chunk_pos_cactus, _i, k_cactus):
-			continue
-		var top_y := 0.0
-
-		for _s in segments:
-			var seg_h := rng.randf_range(CACTUS_SEGMENT_MIN, CACTUS_SEGMENT_MAX)
-			create_box(
-				Vector3(local_x, top_y + seg_h * 0.5, local_z),
-				Vector3(width, seg_h, width),
-				yaw, rng, block_batch, block_body, 0.0, CACTUS_COLOR
-			)
-			top_y += seg_h
-
-		# Optional arm: a short horizontal box budding from the middle of the stack.
-		if rng.randf() < CACTUS_ARM_CHANCE:
-			var arm_len := width * rng.randf_range(2.0, 3.0)
-			var arm_y := top_y * rng.randf_range(0.45, 0.7)
-			# Push the arm out along its OWN long axis, which create_box orients with
-			# Basis(UP, yaw) — that maps local +X to (cos yaw, 0, -sin yaw). Writing
-			# the +sin form here rotates the offset the wrong way round, so the arm
-			# gets shoved sideways instead of outwards and floats detached from the
-			# trunk (worst at yaw = 45 deg, where the two are 90 deg apart).
-			var arm_dir := (Basis(Vector3.UP, yaw) * Vector3.RIGHT) * (arm_len * 0.5 + width * 0.5)
-			create_box(
-				Vector3(local_x, arm_y, local_z) + arm_dir,
-				Vector3(arm_len, width, width),
-				yaw, rng, block_batch, block_body, 0.0, CACTUS_COLOR
-			)
-
-		# NOT climbable: a cactus is a thing you walk around, and a coin perched on
-		# a spiky 3 m pole would be unreachable anyway (see _settle_coin_y).
-		obstacles.append({ "pos": Vector3(local_x, 0, local_z), "radius": width * 1.2, "top": top_y, "climbable": false })
-
-	# Rare oases and dunes. Placements are deterministic on their own hash streams
-	# (like artifacts/camps), so they consume zero draws from the biome RNG and
-	# cacti are byte-identically placed whether oases/dunes exist or not.
-	var chunk_pos := world_to_chunk(chunk_center)
-	var oasis_data := _oasis_at(chunk_pos)
-	if not oasis_data.is_empty():
-		var oasis_rng := RandomNumberGenerator.new()
-		oasis_rng.seed = oasis_data["seed"]
-		_spawn_desert_oasis(chunk_center, chunk_pos, oasis_rng, obstacles, block_batch, block_body)
-
-	var dune_data := _dune_at(chunk_pos)
-	if not dune_data.is_empty():
-		var dune_rng := RandomNumberGenerator.new()
-		dune_rng.seed = dune_data["seed"]
-		_spawn_desert_dunes(chunk_center, chunk_pos, dune_rng, obstacles, block_batch, block_body)
-
+	TerrainBiomes._spawn_desert_content(self, chunk_center, rng, obstacles, block_batch, block_body)
 
 func _spawn_desert_oasis(chunk_center: Vector3, chunk_pos: Vector2i, rng: RandomNumberGenerator, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""
-	Build one desert oasis: a flat water slab, palm trees, reeds, and climbable boulders.
-	Uses the split-placement pattern: this function tries OASIS_PLACE_TRIES candidates
-	and picks the first one that passes _biome_spot_ok (not in river, far from road,
-	no overlap with existing obstacles).
-	"""
-	var half := chunk_size / 2.0 - OASIS_RADIUS - 2.0
-	for _try in OASIS_PLACE_TRIES:
-		var local_x := rng.randf_range(-half, half)
-		var local_z := rng.randf_range(-half, half)
-
-		if not _biome_spot_ok(chunk_center, local_x, local_z, OASIS_RADIUS, OASIS_ROAD_CLEARANCE, obstacles):
-			continue
-
-		# Build water slab: a flat disk (visual only, collide=false)
-		create_box(
-			Vector3(local_x, OASIS_WATER_TOP_Y - OASIS_WATER_DEPTH * 0.5, local_z),
-			Vector3(OASIS_WATER_RADIUS * 2.0, OASIS_WATER_DEPTH, OASIS_WATER_RADIUS * 2.0),
-			0.0, rng, block_batch, block_body, 0.0, OASIS_WATER_COLOR, false
-		)
-
-		# Dark rim: a slightly wider ring to frame the water
-		var rim_radius := OASIS_WATER_RADIUS * 1.15
-		create_box(
-			Vector3(local_x, OASIS_RIM_TOP_Y - OASIS_WATER_DEPTH * 0.5, local_z),
-			Vector3(rim_radius * 2.0, OASIS_WATER_DEPTH, rim_radius * 2.0),
-			0.0, rng, block_batch, block_body, 0.0, OASIS_WATER_RIM_COLOR, false
-		)
-
-		# Non-climbable footprint so coins don't perch on water
-		obstacles.append({ "pos": Vector3(local_x, 0, local_z), "radius": OASIS_RADIUS, "top": OASIS_WATER_TOP_Y, "climbable": false })
-
-		# Palm trees around the oasis
-		var palm_count := rng.randi_range(OASIS_PALM_MIN, OASIS_PALM_MAX)
-		for _p in palm_count:
-			var palm_angle := rng.randf_range(0.0, TAU)
-			var palm_dist := rng.randf_range(OASIS_WATER_RADIUS * 1.15, OASIS_WATER_RADIUS * 2.0)
-			var palm_x := local_x + cos(palm_angle) * palm_dist
-			var palm_z := local_z + sin(palm_angle) * palm_dist
-
-			# Keep palm within chunk bounds. The margin carries the trunk's lean now
-			# (see OASIS_PALM_TILT_MAX); the drooping fronds span LESS than the old
-			# flat ones did, so they did not move it.
-			if absf(palm_x) > chunk_size * 0.5 - OASIS_PALM_EDGE_MARGIN or absf(palm_z) > chunk_size * 0.5 - OASIS_PALM_EDGE_MARGIN:
-				continue
-
-			var trunk_yaw := rng.randf_range(0.0, TAU)
-			# Two unconditional per-palm draws: the trunk's curve and how hard this
-			# palm's crown hangs.
-			var palm_lean := rng.randf_range(-OASIS_PALM_TILT_MAX, OASIS_PALM_TILT_MAX)
-			var droop := rng.randf_range(OASIS_PALM_DROOP_MIN, OASIS_PALM_DROOP_MAX)
-			# Trunk (colliding)
-			create_box(
-				Vector3(palm_x, OASIS_PALM_TRUNK_HEIGHT * 0.5, palm_z),
-				Vector3(OASIS_PALM_TRUNK_WIDTH, OASIS_PALM_TRUNK_HEIGHT, OASIS_PALM_TRUNK_WIDTH),
-				trunk_yaw, rng, block_batch, block_body, palm_lean, Color(0.40, 0.32, 0.22)
-			)
-
-			# Fronds (visual only, collide=false) — each starts at the crown and
-			# hangs outward and down, alternating how far (see the const block).
-			var crown := Vector3(palm_x, OASIS_PALM_TRUNK_HEIGHT - 0.15, palm_z) \
-					+ Vector3(sin(trunk_yaw), 0.0, cos(trunk_yaw)) * sin(palm_lean) * (OASIS_PALM_TRUNK_HEIGHT * 0.5)
-			for _f in OASIS_PALM_FROND_COUNT:
-				var flen := OASIS_PALM_FROND_WIDTH * rng.randf_range(OASIS_PALM_FROND_JITTER_MIN, 1.0)
-				var frond_yaw := trunk_yaw + (TAU / OASIS_PALM_FROND_COUNT) * _f
-				var f_droop := droop * (1.0 if _f % 2 == 0 else OASIS_PALM_DROOP_ALT)
-				var frond_rot := Basis(Vector3.UP, frond_yaw) * Basis(Vector3.RIGHT, f_droop)
-				create_box(
-					crown + frond_rot * Vector3(0.0, 0.0, flen * 0.5),
-					Vector3(0.42, 0.30, flen),
-					frond_yaw, rng, block_batch, block_body, f_droop, OASIS_PALM_FROND_COLOR, false
-				)
-
-			# Small trunk footprint
-			obstacles.append({ "pos": Vector3(palm_x, 0, palm_z), "radius": OASIS_PALM_TRUNK_WIDTH * 0.71, "top": OASIS_PALM_TRUNK_HEIGHT, "climbable": false })
-
-		# Climbable boulders scattered around. The 0.8 upper bound is not taste: the ring
-		# max plus OASIS_BOULDER_SIZE_MAX * 0.7 has to stay inside OASIS_RADIUS, or a
-		# boulder lands outside the circle _biome_spot_ok actually cleared.
-		var boulder_count := rng.randi_range(OASIS_BOULDER_MIN, OASIS_BOULDER_MAX)
-		for _b in boulder_count:
-			var boulder_angle := rng.randf_range(0.0, TAU)
-			var boulder_dist := rng.randf_range(OASIS_WATER_RADIUS * 1.5, OASIS_RADIUS * 0.8)
-			var boulder_x := local_x + cos(boulder_angle) * boulder_dist
-			var boulder_z := local_z + sin(boulder_angle) * boulder_dist
-
-			# Keep within chunk
-			if absf(boulder_x) > chunk_size * 0.5 - 1.5 or absf(boulder_z) > chunk_size * 0.5 - 1.5:
-				continue
-
-			var boulder_size := rng.randf_range(OASIS_BOULDER_SIZE_MIN, OASIS_BOULDER_SIZE_MAX)
-			# Climbable rocks (collide=true) — and since bead godot-test1-y1o.3 they
-			# are `BoxKind.ROCK`, the one kind whose lid is flat AT the box top, so
-			# the footprint appended below still records a surface you land on.
-			create_box(
-				Vector3(boulder_x, boulder_size * 0.5, boulder_z),
-				Vector3(boulder_size, boulder_size * 0.8, boulder_size),
-				rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0,
-				Color(0.55, 0.48, 0.40), true, ChunkBatch.BoxKind.ROCK
-			)
-			obstacles.append({ "pos": Vector3(boulder_x, 0, boulder_z), "radius": boulder_size * 0.7, "top": boulder_size * 0.8, "climbable": true })
-
-		# Optional reed clusters around the edge
-		if rng.randf() < OASIS_REED_CHANCE:
-			for _r in rng.randi_range(1, 3):
-				var reed_angle := rng.randf_range(0.0, TAU)
-				var reed_x := local_x + cos(reed_angle) * OASIS_WATER_RADIUS * 1.05
-				var reed_z := local_z + sin(reed_angle) * OASIS_WATER_RADIUS * 1.05
-				# Thin visual-only reeds (collide=false)
-				create_box(
-					Vector3(reed_x, 1.0, reed_z),
-					Vector3(0.3, 2.0, 0.3),
-					rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0,
-					Color(0.35, 0.45, 0.25), false
-				)
-
-		# Success — one oasis placed
-		return
-
+	TerrainBiomes._spawn_desert_oasis(self, chunk_center, chunk_pos, rng, obstacles, block_batch, block_body)
 
 func _spawn_desert_dunes(chunk_center: Vector3, chunk_pos: Vector2i, rng: RandomNumberGenerator, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""
-	Build sand dunes: low, wide, climbable mounds (~1.5 m max height). Same split-placement
-	pattern as oases: DUNE_PLACE_TRIES candidates, pick the first that passes spot checks.
-	"""
-	var half := chunk_size / 2.0 - DUNE_WIDTH_MAX * 0.71
-	for _try in DUNE_PLACE_TRIES:
-		var local_x := rng.randf_range(-half, half)
-		var local_z := rng.randf_range(-half, half)
-
-		if not _biome_spot_ok(chunk_center, local_x, local_z, DUNE_WIDTH_MAX * 0.71, DUNE_ROAD_CLEARANCE, obstacles):
-			continue
-
-		# Pick dune height and width
-		var height := rng.randf_range(DUNE_HEIGHT_MIN, DUNE_HEIGHT_MAX)
-		var width := rng.randf_range(DUNE_WIDTH_MIN, DUNE_WIDTH_MAX)
-
-		# Build dune as a slightly tapered stack (wider at base, narrower at top)
-		var layer_height := height / 2.0  # two layers
-		var base_width := width
-		var top_width := width * 0.75
-		var color := DUNE_COLOR_A.lerp(DUNE_COLOR_B, rng.randf())
-
-		# Base layer (wider)
-		create_box(
-			Vector3(local_x, layer_height * 0.5, local_z),
-			Vector3(base_width, layer_height, base_width),
-			rng.randf_range(0.0, 0.3), rng, block_batch, block_body, 0.0, color
-		)
-
-		# Top layer (narrower, for taper)
-		create_box(
-			Vector3(local_x, layer_height + layer_height * 0.5, local_z),
-			Vector3(top_width, layer_height, top_width),
-			rng.randf_range(0.0, 0.3), rng, block_batch, block_body, 0.0, color
-		)
-
-		# Climbable footprint (slightly conservative to stay within chunk)
-		var footprint_radius := width * 0.5
-		obstacles.append({ "pos": Vector3(local_x, 0, local_z), "radius": footprint_radius, "top": height, "climbable": true })
-
-		# Success — one dune placed
-		return
-
+	TerrainBiomes._spawn_desert_dunes(self, chunk_center, chunk_pos, rng, obstacles, block_batch, block_body)
 
 func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""
-	FOREST — many simple trees: one solid trunk BOX plus a stack of visual-only
-	canopy BLOBS (bead godot-test1-y1o.2 — the canopy layers are the world's first
-	non-cube batch entries; see the TREE_CANOPY_BLOB_* block above).
-
-	@param chunk_center: World centre of the chunk (create_box takes chunk-LOCAL).
-	@param rng: The biome stream's private RNG.
-	@param obstacles: One NON-climbable footprint per trunk.
-	@param block_batch / block_body: The chunk's single MultiMesh + collision body.
-
-	PERF (the reason a forest is affordable at all): 25-40 trees × ~4 boxes are all
-	create_box entries, so a forest chunk is TWO block draw calls — the cube bucket
-	(trunks) and the sphere bucket (canopies) — against a plains chunk's one. That
-	+1 is the whole cost of this restyle and it is paid by forest chunks ALONE:
-	every other biome and every Budapest chunk passes no kind and emits exactly the
-	one node it always did (batch_selfcheck check 5 sweeps the biomes for it,
-	budapest_selfcheck check 4 the city). The box COUNT is unchanged — the same
-	create_box calls in the same order. Only the trunks pay a CollisionShape3D: the
-	canopies pass collide = false, which is exactly why that parameter exists (and
-	is also the rule a non-cube kind has to obey, since a shape carries no kind).
-	Leaves you can walk under cost nothing but instances.
-
-	EDGE FEATHERING: each tree re-tests biome_at at ITS OWN position, not just the
-	chunk centre's. Without that, a forest would stop dead along a straight chunk
-	seam; with it, the tree line follows the noise contour and the wood dissolves
-	into the plain the way a real one does. One extra noise eval per candidate.
-	"""
-	# Canopy slabs are yawed, so the half-DIAGONAL is what has to stay inside the
-	# chunk (same reasoning as MOUNTAIN_EDGE_MARGIN). A flat 2.0 m margin left the
-	# widest canopy poking 0.4 m past the seam, where it would vanish with its own
-	# chunk while the neighbour still renders.
-	#
-	# The lean added by TREE_TRUNK_TILT_MAX slides the canopy sideways along the
-	# trunk's own axis, so the margin now carries that offset too. It is written as
-	# the arithmetic rather than a number: the highest canopy centre sits about
-	# three layer-heights above the trunk's mid-point, and sin(lean) times that is
-	# how far it can travel. Retune the lean or the layer height and this follows.
-	#
-	# STILL AN OVER-ESTIMATE after y1o.2 made the layers blobs: the tallest crown
-	# this builder can draw puts its top blob's centre 4.3 m over the trunk's
-	# mid-point against the 4.9 m below, and a sphere inscribed in the same box
-	# reaches LESS far sideways than the slab did. prop_selfcheck check 10 measures
-	# the real reach against the real seam either way, which is what would catch a
-	# retune that broke the estimate rather than this comment.
-	var lean_reach := sin(TREE_TRUNK_TILT_MAX) * (TREE_TRUNK_HEIGHT_MAX * 0.5 + TREE_CANOPY_LAYER_HEIGHT * 3.0)
-	var widest_layer := TREE_CANOPY_WIDTH_MAX * TREE_CANOPY_WIDTH_JITTER_MAX
-	var half := chunk_size / 2.0 - (widest_layer * (0.71 + TREE_CANOPY_SLIDE) + lean_reach)
-	var count := rng.randi_range(FOREST_TREES_MIN, FOREST_TREES_MAX)
-	var chunk_pos_forest := world_to_chunk(chunk_center)
-	var k_forest := scarcity_at(chunk_center)
-
-	for _i in count:
-		var local_x := rng.randf_range(-half, half)
-		var local_z := rng.randf_range(-half, half)
-		var world_x := chunk_center.x + local_x
-		var world_z := chunk_center.z + local_z
-		# Both rejections are post-draw `continue`s (see _spawn_desert_content).
-		# The radius is the widest a TRUNK can be — the canopy is visual-only, and
-		# leaves brushing a nearby block is exactly what a real wood looks like.
-		if not _biome_spot_ok(chunk_center, local_x, local_z, TREE_TRUNK_WIDTH_MAX * 0.71 + 0.3, FOREST_ROAD_CLEARANCE, obstacles):
-			continue
-		if biome_at(world_x, world_z) != Biome.FOREST:
-			continue
-
-		var trunk_w := rng.randf_range(TREE_TRUNK_WIDTH_MIN, TREE_TRUNK_WIDTH_MAX)
-		var trunk_h := rng.randf_range(TREE_TRUNK_HEIGHT_MIN, TREE_TRUNK_HEIGHT_MAX)
-		var yaw := rng.randf_range(0.0, TAU)
-		# The two anti-Minecraft per-tree draws, taken UNCONDITIONALLY and in a fixed
-		# order right here — above the scarcity roll, so a thinned tree cannot make
-		# the stream depend on the roll's branch. `leaf_t` mixes this tree's foliage
-		# somewhere along TREE_LEAF_COLOR -> TREE_LEAF_COLOR_WARM (no two trees the
-		# same green); `lean` is the trunk's tilt.
-		var leaf_t := rng.randf()
-		var lean := rng.randf_range(-TREE_TRUNK_TILT_MAX, TREE_TRUNK_TILT_MAX)
-		if not _scarcity_keep(chunk_pos_forest, _i, k_forest):
-			continue
-
-		# Trunk: solid, so you bump into it and crocodiles' raycasts see it.
-		create_box(
-			Vector3(local_x, trunk_h * 0.5, local_z),
-			Vector3(trunk_w, trunk_h, trunk_w),
-			yaw, rng, block_batch, block_body, lean, TREE_TRUNK_COLOR
-		)
-
-		# Canopy: 2-3 shrinking slabs stacked from just below the trunk top, each
-		# VISUAL ONLY (collide = false) — you walk under a tree, not into its leaves.
-		#
-		# THE CANOPY RIDES THE LEANING TRUNK. create_box's tilt is Basis(UP, yaw) *
-		# Basis(RIGHT, lean), which tips the box's local +Y toward its local +Z — so
-		# the trunk's axis drifts along the world direction of that local +Z,
-		# (sin yaw, 0, cos yaw), by sin(lean) per metre above the trunk box's CENTRE.
-		# Leaving the canopy on the vertical would hang the crown off the side of a
-		# leaning trunk, which is the one way this could look worse than a cube.
-		var lean_dir := Vector3(sin(yaw), 0.0, cos(yaw)) * sin(lean)
-		var layers := rng.randi_range(TREE_CANOPY_LAYERS_MIN, TREE_CANOPY_LAYERS_MAX)
-		var canopy_w := rng.randf_range(TREE_CANOPY_WIDTH_MIN, TREE_CANOPY_WIDTH_MAX)
-		# `canopy_y` is the crown's FOOT, not a layer centre: a blob is up to 2.5 m
-		# tall where u7a's slab was 1.0, so centring one here would hang the leaves
-		# of a fat crown down past a short trunk's head height. Still dipped
-		# TREE_CANOPY_LAYER_HEIGHT * 0.3 into the trunk top so no gap shows.
-		var canopy_y := trunk_h - TREE_CANOPY_LAYER_HEIGHT * 0.3
-		var leaf_base := TREE_LEAF_COLOR.lerp(TREE_LEAF_COLOR_WARM, leaf_t)
-		for _l in layers:
-			# One draw per layer, so no two layers of one tree are the same width —
-			# the taper alone made every tree the same tapering stack.
-			var w := canopy_w * rng.randf_range(TREE_CANOPY_WIDTH_JITTER_MIN, TREE_CANOPY_WIDTH_JITTER_MAX)
-			# Both DERIVED from the width just drawn, so neither costs an rng draw
-			# and neither can move a spawn — the whole reason this bead's diff
-			# against master is `kind` plus these dimensions and nothing else.
-			var blob_h := w * TREE_CANOPY_BLOB_HEIGHT
-			var mid_y := canopy_y + blob_h * 0.5
-			# Crown lift: the top of a real canopy catches the light. Derived from
-			# the layer INDEX, so it costs no draw.
-			var crown := 0.0 if layers <= 1 else float(_l) / float(layers - 1)
-			var layer_yaw := yaw + TREE_CANOPY_YAW_STEP * float(_l)
-			# THE LAST TWO ARE FREE — both derived from values already drawn, so
-			# neither costs an rng draw and neither can move a spawn. A flat-topped
-			# stack of level slabs is the shape that still read as a cube once the
-			# colours and the yaw were fixed, so each layer PITCHES (alternating
-			# sign, magnitude off this tree's own leaf_t) and SLIDES off the trunk
-			# axis along its own yaw. Both bounded by the constants, both measured
-			# by prop_selfcheck's forest seam clause.
-			var layer_tilt := TREE_CANOPY_TILT_MAX * (0.4 + 0.6 * leaf_t) * (1.0 if _l % 2 == 0 else -1.0)
-			var slide := Vector3(sin(layer_yaw), 0.0, cos(layer_yaw)) * (w * TREE_CANOPY_SLIDE * crown)
-			# BoxKind.SPHERE, and the trunk above deliberately stays a CUBE: the
-			# unit sphere is inscribed in the unit cube, so `dimensions` still means
-			# this blob's BOUNDING BOX and every reach/seam bound in this file and
-			# in prop_selfcheck stays the over-estimate it always was. A canopy is
-			# also already collide = false, which is the rule ChunkBatch's BoxKind
-			# banner asks of a non-cube kind (its collision shape would still be a
-			# box). The plan stays a RECTANGLE (TREE_CANOPY_DEPTH_RATIO), so the
-			# blobs are squashed ellipsoids the yaw step still turns visibly —
-			# a stack of perfect spheres is rotationally symmetric and reads as one
-			# smooth ball.
-			create_box(
-				Vector3(local_x, mid_y, local_z) + lean_dir * (mid_y - trunk_h * 0.5) + slide,
-				Vector3(w, blob_h, w * TREE_CANOPY_DEPTH_RATIO),
-				layer_yaw, rng, block_batch, block_body, layer_tilt,
-				leaf_base.lerp(TREE_LEAF_COLOR_WARM, crown * TREE_LEAF_CROWN_LIFT), false,
-				ChunkBatch.BoxKind.SPHERE
-			)
-			canopy_y += blob_h * TREE_CANOPY_BLOB_OVERLAP
-			canopy_w *= TREE_CANOPY_TAPER
-
-		# Footprint stops at the TRUNK top, and is NOT climbable, on purpose: a
-		# climbable footprint would let _settle_coin_y perch a road coin on the
-		# obstacle's `top`, and with the canopy height that coin would float 5 m up
-		# a tree where nobody can reach it. Non-climbable means such a coin is
-		# SKIPPED instead. Crocodiles read the same footprint and steer around the
-		# trunk.
-		obstacles.append({ "pos": Vector3(local_x, 0, local_z), "radius": trunk_w * 0.71 + 0.3, "top": trunk_h, "climbable": false })
-
-
-func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""
-	MOUNTAIN — 2-4 impassable massifs, each a stack of progressively smaller boxes.
-
-	@param chunk_center: World centre of the chunk (create_box takes chunk-LOCAL).
-	@param rng: The biome stream's private RNG.
-	@param obstacles: One NON-climbable footprint per massif, with its real height.
-	@param block_batch / block_body: The chunk's single MultiMesh + collision body.
-
-	THE FLAT-WORLD INVARIANT IS WHY THIS EXISTS AT ALL: the ground stays a flat
-	y = 0 plane (see the ponytail note in the BIOME FIELD CONFIGURATION block), so a
-	mountain is not raised terrain — it is a pile of ordinary blocks, 8-20 m tall
-	and several metres wide, that you walk AROUND. It rides the chunk's single
-	MultiMesh and single collision body like everything else.
-
-	THE ROAD IS NEVER BLOCKED: every massif must sit at least
-	MOUNTAIN_ROAD_CLEARANCE from the coin-road centerline. That one rule is what
-	carves a canyon through a range for free — the peaks refuse to stand near the
-	road, so the road threads between them and stays followable.
-
-	Per layer the box is narrower, a touch shorter, randomly yawed and laterally
-	jittered, so a massif reads as a crude rocky peak rather than a wedding cake.
-	"""
-	var half := chunk_size / 2.0 - MOUNTAIN_EDGE_MARGIN
-	var count := rng.randi_range(MOUNTAIN_MASSIF_MIN, MOUNTAIN_MASSIF_MAX)
-
-	# MASSIFS ARE EXEMPT FROM THE SCARCITY GRADIENT — owner ruling 2026-09-04, bead
-	# `godot-test1-bn8`, and the ONE builder in this file with no k in it at all.
-	# Everything else the world draws is decoration and thins to plain terrain at
-	# 4 km; a massif is not decoration, it is the impassable wall the flat-world
-	# invariant substitutes for raised terrain (see the docstring above). Thinned,
-	# a mountain band 4 km out is a plains band painted grey, and the "you walk
-	# AROUND a mountain" contract quietly stops existing exactly where the player
-	# is least likely to report it. This used to read `k_mtn = scarcity_at(...)`
-	# plus a per-massif post-draw roll; both are deliberately gone, and
-	# `scarcity_selfcheck` asserts the far mountain band still builds stone while
-	# every other family in the same chunks builds none.
-
-	# Massifs are NOT checked against the whole `obstacles` list. A massif's
-	# footprint radius is ~9.7 m, so demanding clearance from all dozen scattered
-	# blocks would cover the entire chunk and mountains would essentially stop
-	# generating. Overlapping a scattered block is also harmless — the block ends up
-	# INSIDE the rock, invisible, at worst reading as a boulder at the foot of the
-	# flank.
-	#
-	# What DOES matter goes in this list: every massif placed so far (without it,
-	# 2-4 peaks drawn from the same box merge into one lumpy blob), plus anything
-	# already in the chunk too big to be a scattered block — in practice an artifact
-	# or a feature structure. Burying an artifact hides its emissive accents, its
-	# coin ring and the one guaranteed gem that is its whole reward, and that is
-	# cheap to avoid: see MOUNTAIN_AVOID_RADIUS.
-	# ...and so does anything TALL enough to be climbed onto the massif from (see
-	# MOUNTAIN_AVOID_TOP) — a block tower is narrow but it is still a staircase.
-	#
-	# ...and so does anything a PATROL CROCODILE is going to be dropped onto, which
-	# is what the `guarded` key marks (spawn_wall's blocks and the log bridge's
-	# stone). This third clause closes the one hazard CLAUDE.md recorded as
-	# deliberately unfired: a wall block's footprint is only block_size * 0.71 =
-	# 1.14-1.70 m wide and a doubled section tops out at 2 * block_size = 3.2 m, so
-	# BOTH of the tests above miss it (radius < MOUNTAIN_AVOID_RADIUS 2.0, top <
-	# MOUNTAIN_AVOID_TOP 3.61) and a massif was free to grow straight over a ridge,
-	# burying the guard in rock the platform descriptor knows nothing about. It went
-	# unfired through 4 x 289 chunks — and then fired the moment the snow band's
-	# threshold retune reshuffled the field, at 1.14 m deep, caught by
-	# enemy_spawn_selfcheck.gd's check 1 exactly as that note predicted it would be.
-	# The mound needs no marking: its footprint radius is base_size * 0.71 >= 5.68,
-	# so the first clause has always covered it.
-	var avoid: Array = []
-	for ob in obstacles:
-		if ob.radius >= MOUNTAIN_AVOID_RADIUS or ob.top >= MOUNTAIN_AVOID_TOP or ob.get("guarded", false):
-			avoid.append(ob)
-
-	for _i in count:
-		# Try a few spots; take the first that clears the road, the river and is
-		# still inside the mountain band at its OWN position (edge feathering, same
-		# as the forest). Every draw happens whether or not a try is accepted.
-		var local_x := 0.0
-		var local_z := 0.0
-		var placed := false
-		var tries := 0
-		while tries < MOUNTAIN_PLACE_TRIES and not placed:
-			tries += 1
-			local_x = rng.randf_range(-half, half)
-			local_z = rng.randf_range(-half, half)
-			var wx := chunk_center.x + local_x
-			var wz := chunk_center.z + local_z
-			# MOUNTAIN_BASE_WIDTH_MAX is the widest base that could be drawn below —
-			# the real width is drawn after this test, and reordering the draws to
-			# know it exactly would shift the biome stream for nothing.
-			if _biome_spot_ok(chunk_center, local_x, local_z, MOUNTAIN_BASE_WIDTH_MAX * 0.71 + MOUNTAIN_LAYER_JITTER, MOUNTAIN_ROAD_CLEARANCE, avoid) \
-					and biome_at(wx, wz) == Biome.MOUNTAIN:
-				placed = true
-		if not placed:
-			continue
-
-		var height := rng.randf_range(MOUNTAIN_HEIGHT_MIN, MOUNTAIN_HEIGHT_MAX)
-		var base_w := rng.randf_range(MOUNTAIN_BASE_WIDTH_MIN, MOUNTAIN_BASE_WIDTH_MAX)
-		# (No scarcity roll here — massifs are exempt; see the note above `avoid`.)
-		# The layer count falls straight out of the height: every step must be too
-		# tall to jump onto. Without that rule an 8 m massif split into 7 layers is
-		# a 1.14 m staircase with a 1.7 m ledge at each level — a walkable ziggurat,
-		# which would break the "impassable, you go around" contract that the whole
-		# mountains-as-blocks design rests on under the flat-world invariant. With
-		# heights of 8-20 m this gives 2-5 layers.
-		var layers := maxi(2, int(height / MOUNTAIN_MIN_LAYER_HEIGHT))
-		var snowy := height >= MOUNTAIN_SNOW_HEIGHT
-		# Index of the first snow layer. Always leaves at least one rock layer
-		# showing: a 14-15.9 m massif gets exactly 3 layers, and a flat
-		# "top MOUNTAIN_SNOW_LAYERS" rule would paint 2 of those 3 white, so the
-		# peak read as a snow pillar rather than rock wearing a cap.
-		var snow_from := maxi(1, layers - MOUNTAIN_SNOW_LAYERS)
-		var layer_h := height / float(layers)
-
-		var width := base_w
-		var y := 0.0
-		for layer_index in layers:
-			# The top boxes of a tall massif are forced white: a snow cap is the
-			# cheapest possible "this one is high" signal.
-			var is_snow := snowy and layer_index >= snow_from
-			var color: Color = MOUNTAIN_SNOW_COLOR if is_snow else MOUNTAIN_ROCK_A.lerp(MOUNTAIN_ROCK_B, rng.randf())
-			var jitter_x := rng.randf_range(-MOUNTAIN_LAYER_JITTER, MOUNTAIN_LAYER_JITTER)
-			var jitter_z := rng.randf_range(-MOUNTAIN_LAYER_JITTER, MOUNTAIN_LAYER_JITTER)
-			create_box(
-				Vector3(local_x + jitter_x, y + layer_h * 0.5, local_z + jitter_z),
-				Vector3(width, layer_h, width),
-				rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, color
-			)
-			y += layer_h
-			width *= MOUNTAIN_LAYER_TAPER
-
-		# One footprint for the whole massif, NOT climbable and carrying the real
-		# top height: crocodiles avoid it, and a road coin that would otherwise be
-		# perched 15 m up a peak is skipped instead (see _settle_coin_y). It goes
-		# into `avoid` too, so the next massif keeps its distance from it.
-		var footprint := { "pos": Vector3(local_x, 0, local_z), "radius": base_w * 0.71 + MOUNTAIN_LAYER_JITTER, "top": height, "climbable": false }
-		obstacles.append(footprint)
-		avoid.append(footprint)
-
+	TerrainBiomes._spawn_forest_content(self, chunk_center, rng, obstacles, block_batch, block_body)
 
 func _spawn_city_content(chunk_center: Vector3, rng: RandomNumberGenerator, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""
-	CITY — small flat-roofed houses, market stalls under awnings, and traffic
-	signals / lamp posts along the street lines.
-
-	@param chunk_center: World centre of the chunk (create_box takes chunk-LOCAL).
-	@param rng: The biome stream's private RNG.
-	@param obstacles: One footprint per building — CLIMBABLE for houses (see
-	                  below), non-climbable for stalls and street furniture.
-	@param block_batch / block_body: The chunk's single MultiMesh + collision body.
-
-	EVERY HOUSE ROOF IS A REST SPOT, and that is this territory's whole gameplay
-	contribution. `CITY_HOUSE_HEIGHT_MAX` is `PROP_MAX_STEP` (2.6), so a hull top
-	is one jump from the pavement; the footprint records `climbable: true` at that
-	hull height, so crocodiles keep off it and `_settle_coin_y` perches a road coin
-	on it rather than skipping. Every other biome's content is non-climbable — the
-	city is the one that gives the bare cubes' role back at scale.
-
-	CROC DENSITY IS REDUCED HERE and it is the ONE band where that is true; the
-	division lives in spawn_crocodiles_in_chunk (see CITY_CROC_DIVISOR), not here.
-
-	THE STREET READ COSTS TWO LINES, and there is deliberately NO road network:
-	candidate positions are snapped to a coarse CITY_BLOCK_PITCH grid with jitter,
-	and house yaws are quantised to quarter turns. Parallel facades along shared
-	lines is what reads as a town. See the CITY banner in SECTION 1.
-
-	EDGE FEATHERING: like the forest and the mountains, every candidate re-tests
-	biome_at at ITS OWN position, so a city dissolves into the plain along the
-	noise contour instead of stopping dead on a chunk seam.
-
-	PERF: everything here is a create_box entry, so a city chunk is the SAME single
-	block draw call as a plains chunk; only hulls, counters and masts pay a
-	CollisionShape3D. There are ZERO emissive accent nodes — lamps are bright
-	albedo boxes in the batch.
-	"""
-	var half := chunk_size / 2.0 - CITY_HOUSE_RADIUS_MAX
-	var chunk_pos_city := world_to_chunk(chunk_center)
-	var k_city := scarcity_at(chunk_center)
-
-	# ---- HOUSES ------------------------------------------------------------
-	for _i in rng.randi_range(CITY_HOUSE_TRIES_MIN, CITY_HOUSE_TRIES_MAX):
-		var local_x := _city_snap(rng.randf_range(-half, half), rng)
-		var local_z := _city_snap(rng.randf_range(-half, half), rng)
-		# Quarter-turn yaw plus a little slop: facades line up along the grid.
-		var yaw := float(rng.randi_range(0, 3)) * (PI * 0.5) + rng.randf_range(-0.08, 0.08)
-		var width := rng.randf_range(CITY_HOUSE_WIDTH_MIN, CITY_HOUSE_WIDTH_MAX)
-		var depth := width * rng.randf_range(CITY_HOUSE_DEPTH_FACTOR_MIN, CITY_HOUSE_DEPTH_FACTOR_MAX)
-		var height := rng.randf_range(CITY_HOUSE_HEIGHT_MIN, CITY_HOUSE_HEIGHT_MAX)
-		var wall := CITY_PLASTER_A.lerp(CITY_PLASTER_B, rng.randf())
-		var roof := CITY_ROOF_TILE if rng.randf() < 0.6 else CITY_ROOF_SLATE
-		var windows := rng.randi_range(1, 2)
-		# Per-object scarcity: own hash stream, post-draw skip so k=1 stays identical.
-		if not _scarcity_keep(chunk_pos_city, _i, k_city):
-			continue
-		# The snap can push a candidate back outside the margin, so clamp rather
-		# than redraw — a redraw would be a draw, and every rejection in this file
-		# is a post-draw `continue` for exactly that reason.
-		local_x = clampf(local_x, -half, half)
-		local_z = clampf(local_z, -half, half)
-		if not _biome_spot_ok(chunk_center, local_x, local_z, CITY_HOUSE_RADIUS_MAX, CITY_ROAD_CLEARANCE, obstacles):
-			continue
-		if biome_at(chunk_center.x + local_x, chunk_center.z + local_z) != Biome.CITY:
-			continue
-
-		var local := Vector3(local_x, 0.0, local_z)
-		var right := Vector3(cos(yaw), 0.0, sin(yaw))
-		var front := Vector3(-sin(yaw), 0.0, cos(yaw))
-
-		# Hull: the ONLY colliding box, and the one whose top face the footprint
-		# names. Untilted, full size, centred — the climbability contract.
-		create_box(
-			local + Vector3(0.0, height * 0.5, 0.0), Vector3(width, height, depth),
-			yaw, rng, block_batch, block_body, 0.0, wall
-		)
-
-		# Roof: a thin film over the hull top, collide = false, oversailing the
-		# walls as eaves. The player stands on the HULL, inside this film — the
-		# same arrangement STRUCTURE_THEMES' `cap` uses over a wall's ridge, and
-		# the reason CITY_ROOF_THICKNESS is small.
-		create_box(
-			local + Vector3(0.0, height + CITY_ROOF_THICKNESS * 0.5, 0.0),
-			Vector3(width + CITY_ROOF_EAVES * 2.0, CITY_ROOF_THICKNESS, depth + CITY_ROOF_EAVES * 2.0),
-			yaw, rng, block_batch, block_body, 0.0, roof, false
-		)
-
-		# Door, on the front face. Visual only — it is inside the hull's own
-		# collision box, so making it solid would buy nothing but a snag.
-		var door_h := height * 0.62
-		create_box(
-			local + front * (depth * 0.5) + Vector3(0.0, door_h * 0.5, 0.0),
-			Vector3(width * 0.24, door_h, 0.10), yaw,
-			rng, block_batch, block_body, 0.0, PROP_CRATE, false
-		)
-
-		# Windows, spread SYMMETRICALLY about the door and sitting ABOVE its head.
-		# Both halves of that matter and both were wrong: a `+ width * 0.26` bias
-		# used to push the whole run onto one side (a two-window facade came out
-		# lopsided with a blank wall opposite), and at `height * 0.62` the inner
-		# window's box spanned the door's own box — same front face, same local Z
-		# extent, same yaw, so the two were exactly COPLANAR and z-fought in the
-		# chunk's one MultiMesh. Door head is 0.62h and the window is 0.22h tall,
-		# so 0.78h clears it for every window count, centred one included.
-		for w in windows:
-			var offset := (float(w) - float(windows - 1) * 0.5) * width * 0.32
-			create_box(
-				local + front * (depth * 0.5) + right * offset
-						+ Vector3(0.0, height * 0.78, 0.0),
-				Vector3(width * 0.16, height * 0.22, 0.10), yaw,
-				rng, block_batch, block_body, 0.0, CITY_ROOF_SLATE, false
-			)
-
-		# ONE circle per house, CLIMBABLE, with the hull top as its height. The
-		# radius is the honest bound on the roof slab's rotated half-diagonal, so
-		# it is above MOUNTAIN_AVOID_RADIUS (2.0) — deliberately, see the constant.
-		obstacles.append({
-			"pos": local,
-			"radius": 0.5 * sqrt(pow(width + CITY_ROOF_EAVES * 2.0, 2.0) + pow(depth + CITY_ROOF_EAVES * 2.0, 2.0)),
-			"top": height,
-			"climbable": true,
-		})
-
-	# ---- MARKET STALLS -----------------------------------------------------
-	for _i in rng.randi_range(CITY_STALL_TRIES_MIN, CITY_STALL_TRIES_MAX):
-		var sx := _city_snap(rng.randf_range(-half, half), rng)
-		var sz := _city_snap(rng.randf_range(-half, half), rng)
-		var syaw := float(rng.randi_range(0, 3)) * (PI * 0.5) + rng.randf_range(-0.15, 0.15)
-		var sw := rng.randf_range(CITY_STALL_WIDTH_MIN, CITY_STALL_WIDTH_MAX)
-		var canvas := CITY_ROOF_TILE if rng.randf() < 0.5 else CITY_ROOF_SLATE
-		# Per-object scarcity for stalls (offset 1000 to decorrelate from houses).
-		if not _scarcity_keep(chunk_pos_city, _i + 1000, k_city):
-			continue
-		sx = clampf(sx, -half, half)
-		sz = clampf(sz, -half, half)
-		if not _biome_spot_ok(chunk_center, sx, sz, CITY_STALL_RADIUS_MAX, CITY_ROAD_CLEARANCE, obstacles):
-			continue
-		if biome_at(chunk_center.x + sx, chunk_center.z + sz) != Biome.CITY:
-			continue
-
-		var s_local := Vector3(sx, 0.0, sz)
-		var s_right := Vector3(cos(syaw), 0.0, sin(syaw))
-
-		# Counter — solid, so you bump into it and the crocodiles' raycasts see it.
-		create_box(
-			s_local + Vector3(0.0, CITY_STALL_COUNTER_HEIGHT * 0.5, 0.0),
-			Vector3(sw, CITY_STALL_COUNTER_HEIGHT, sw * 0.5), syaw,
-			rng, block_batch, block_body, 0.0, PROP_CRATE
-		)
-		# Awning + its two posts — all visual, you walk under a stall.
-		create_box(
-			s_local + Vector3(0.0, CITY_STALL_AWNING_HEIGHT, 0.0),
-			Vector3(sw * 1.25, 0.12, sw * 0.85), syaw,
-			rng, block_batch, block_body, rng.randf_range(-0.14, 0.14), canvas, false
-		)
-		for p in 2:
-			var s := 1.0 if p == 0 else -1.0
-			create_box(
-				s_local + s_right * (sw * 0.5 * s) + Vector3(0.0, CITY_STALL_AWNING_HEIGHT * 0.5, 0.0),
-				Vector3(0.10, CITY_STALL_AWNING_HEIGHT, 0.10), syaw,
-				rng, block_batch, block_body, 0.0, CITY_METAL, false
-			)
-		# NON-climbable: the awning hangs over the counter, so a road coin perched
-		# on it would sit inside canvas. Skipped is the right answer.
-		obstacles.append({
-			"pos": s_local,
-			"radius": sw * 0.68,
-			"top": CITY_STALL_COUNTER_HEIGHT,
-			"climbable": false,
-		})
-
-	# ---- TRAFFIC SIGNALS / LAMP POSTS --------------------------------------
-	for _i in rng.randi_range(CITY_LIGHT_TRIES_MIN, CITY_LIGHT_TRIES_MAX):
-		var lx := _city_snap(rng.randf_range(-half, half), rng)
-		var lz := _city_snap(rng.randf_range(-half, half), rng)
-		var lyaw := float(rng.randi_range(0, 3)) * (PI * 0.5)
-		var lh := rng.randf_range(CITY_LIGHT_HEIGHT_MIN, CITY_LIGHT_HEIGHT_MAX)
-		var is_signal := rng.randf() < CITY_SIGNAL_CHANCE
-		# Per-object scarcity for lights (offset 2000).
-		if not _scarcity_keep(chunk_pos_city, _i + 2000, k_city):
-			continue
-		lx = clampf(lx, -half, half)
-		lz = clampf(lz, -half, half)
-		if not _biome_spot_ok(chunk_center, lx, lz, CITY_LIGHT_RADIUS_MAX, CITY_ROAD_CLEARANCE, obstacles):
-			continue
-		if biome_at(chunk_center.x + lx, chunk_center.z + lz) != Biome.CITY:
-			continue
-
-		var l_local := Vector3(lx, 0.0, lz)
-		var l_front := Vector3(-sin(lyaw), 0.0, cos(lyaw))
-
-		# Mast — the one colliding box.
-		create_box(
-			l_local + Vector3(0.0, lh * 0.5, 0.0),
-			Vector3(CITY_LIGHT_MAST_WIDTH, lh, CITY_LIGHT_MAST_WIDTH), lyaw,
-			rng, block_batch, block_body, 0.0, CITY_METAL
-		)
-
-		if is_signal:
-			# Head + the three-lamp stack. The stack IS the silhouette that says
-			# "traffic light" at 30 m, which is why the three lamp colours are the
-			# only colours the city palette spends on furniture. BRIGHT ALBEDO,
-			# never emissive: this is one MultiMesh instance each, not a node.
-			var head_h := CITY_LIGHT_LAMP * 3.4
-			create_box(
-				l_local + Vector3(0.0, lh + head_h * 0.5, 0.0),
-				Vector3(CITY_LIGHT_LAMP * 1.5, head_h, CITY_LIGHT_LAMP * 1.4), lyaw,
-				rng, block_batch, block_body, 0.0, CITY_METAL, false
-			)
-			var lamps := [CITY_LAMP_RED, CITY_LAMP_AMBER, CITY_LAMP_GREEN]
-			for j in 3:
-				create_box(
-					l_local + l_front * (CITY_LIGHT_LAMP * 0.75)
-							+ Vector3(0.0, lh + head_h - CITY_LIGHT_LAMP * (0.7 + float(j) * 1.05), 0.0),
-					Vector3(CITY_LIGHT_LAMP, CITY_LIGHT_LAMP, CITY_LIGHT_LAMP * 0.4), lyaw,
-					rng, block_batch, block_body, 0.0, lamps[j], false
-				)
-		else:
-			# Lamp post: a cantilever arm with one shade on the end.
-			var arm := rng.randf_range(0.7, 1.1)
-			create_box(
-				l_local + l_front * (arm * 0.5) + Vector3(0.0, lh, 0.0),
-				Vector3(0.09, 0.09, arm), lyaw, rng, block_batch, block_body, 0.0, CITY_METAL, false
-			)
-			create_box(
-				l_local + l_front * arm + Vector3(0.0, lh - CITY_LIGHT_LAMP * 0.5, 0.0),
-				Vector3(CITY_LIGHT_LAMP * 1.6, CITY_LIGHT_LAMP, CITY_LIGHT_LAMP * 1.6), lyaw,
-				rng, block_batch, block_body, 0.0, CITY_LAMP_AMBER, false
-			)
-
-		# NON-climbable: a mast has no top to stand on, and its "top" is 4 m up.
-		obstacles.append({
-			"pos": l_local,
-			"radius": CITY_LIGHT_RADIUS_MAX,
-			"top": lh,
-			"climbable": false,
-		})
-
+	TerrainBiomes._spawn_city_content(self, chunk_center, rng, obstacles, block_batch, block_body)
 
 func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""
-	SNOW — bare frozen trees scattered thinly, and the occasional mammoth skeleton.
-
-	@param chunk_center: World centre of the chunk (create_box takes chunk-LOCAL).
-	@param rng: The biome stream's private RNG.
-	@param obstacles: One NON-climbable footprint per trunk, one per skeleton.
-	@param block_batch / block_body: The chunk's single MultiMesh + collision body.
-
-	EVERYTHING HERE IS NON-CLIMBABLE, and that is the deliberate half of the
-	territory's shape. The three SNOW scattered props (ice rock, drift, stump) carry
-	the whole rest-from-crocodiles role out here; a dead tree's top is 4 m up in the
-	branches and a skeleton's "top" is its spine ridge with a ribcage arched over
-	it, so a road coin perched on either would be unreachable. Non-climbable means
-	_settle_coin_y SKIPS such a coin instead — the cactus / tree-canopy call.
-
-	CROC DENSITY IS UNTOUCHED. The city is the one band whose target is divided
-	(owner call, and it buys back the safety with its roofs); snow is deliberately
-	the hostile end of the same spectrum, so nothing here thins the pack.
-
-	EDGE FEATHERING: like every other biome builder, each candidate re-tests
-	biome_at at ITS OWN position, so a tundra dissolves into the rock along the
-	noise contour instead of stopping dead on a chunk seam.
-
-	PERF: every box is a create_box entry, so a snow chunk is the SAME single block
-	draw call as a plains chunk. A whole mammoth pays exactly TWO CollisionShape3Ds
-	(the skull and the spine); its 8-10 ribs and 6 tusk segments are visual-only
-	trim, the forest-canopy rule at a different scale.
-	"""
-	# ---- FROZEN DEAD TREES -------------------------------------------------
-	# THE SEAM MARGIN AND THE FOOTPRINT RADIUS ARE TWO DIFFERENT NUMBERS HERE, the
-	# same split the forest makes and for the same two reasons.
-	#
-	# The seam margin has to bound EVERY box, visual-only ones included — a branch
-	# that hangs over the seam vanishes when its chunk unloads while the neighbour
-	# is still drawn, and a disappearing branch looks exactly as broken as a
-	# disappearing trunk. A branch is OFFSET from the trunk and THEN carries a yaw
-	# and a tilt, so its reach is the offset PLUS half its own 3D diagonal — writing
-	# only the half-diagonal (the bound a prop builder's centred decoration needs)
-	# understates it by the offset, which is 0.63 m of the 1.40 and measured 24.81 m
-	# of a 25.00 m seam over just fourteen chunks.
-	#
-	# The lean added by FROZEN_TREE_TILT_MAX carries the branches sideways with the
-	# trunk, so the margin gains sin(lean) times the tallest trunk. Written as the
-	# arithmetic, so retuning the lean or the height retunes this with it.
-	var branch_reach := FROZEN_TREE_BRANCH_LEN * 0.42 + 0.5 * Vector3(FROZEN_TREE_BRANCH_LEN, 0.22, 0.22).length()
-	branch_reach += sin(FROZEN_TREE_TILT_MAX) * FROZEN_TREE_HEIGHT_MAX
-	var tree_half := chunk_size / 2.0 - (FROZEN_TREE_TRUNK_WIDTH_MAX * 0.71 + branch_reach)
-	var chunk_pos_snow := world_to_chunk(chunk_center)
-	var k_snow := scarcity_at(chunk_center)
-	for _i in rng.randi_range(FROZEN_TREE_MIN, FROZEN_TREE_MAX):
-		var local_x := rng.randf_range(-tree_half, tree_half)
-		var local_z := rng.randf_range(-tree_half, tree_half)
-		# The FOOTPRINT, by contrast, bounds the TRUNK only — the forest's rule
-		# verbatim: branches are collide = false, so nothing can be stuck inside one,
-		# and demanding clearance for the whole span would space dead trees out like
-		# massifs. `+ 0.3` is the forest's own slack figure.
-		#
-		# Both rejections are post-draw `continue`s, the discipline every removal in
-		# this file follows: the draws still advance the stream.
-		if not _biome_spot_ok(chunk_center, local_x, local_z, FROZEN_TREE_TRUNK_WIDTH_MAX * 0.71 + 0.3, FROZEN_TREE_ROAD_CLEARANCE, obstacles):
-			continue
-		if biome_at(chunk_center.x + local_x, chunk_center.z + local_z) != Biome.SNOW:
-			continue
-
-		var trunk_w := rng.randf_range(FROZEN_TREE_TRUNK_WIDTH_MIN, FROZEN_TREE_TRUNK_WIDTH_MAX)
-		var trunk_h := rng.randf_range(FROZEN_TREE_HEIGHT_MIN, FROZEN_TREE_HEIGHT_MAX)
-		var yaw := rng.randf_range(0.0, TAU)
-		# The two per-tree restyle draws, unconditional and above the scarcity roll —
-		# the forest builder's rule, for the forest builder's reason.
-		var wood_t := rng.randf()
-		var lean_snow := rng.randf_range(-FROZEN_TREE_TILT_MAX, FROZEN_TREE_TILT_MAX)
-		var wood := SNOW_DEADWOOD.lerp(SNOW_DEADWOOD_DARK, wood_t)
-		# Same axis arithmetic the forest canopy uses: create_box tips local +Y
-		# toward local +Z, whose world direction under this yaw is (sin, 0, cos).
-		var lean_dir_snow := Vector3(sin(yaw), 0.0, cos(yaw)) * sin(lean_snow)
-		# Per-object scarcity for snow trees: own hash stream, no draw.
-		if not _scarcity_keep(chunk_pos_snow, _i, k_snow):
-			continue
-
-		# Trunk: solid, so you bump into it and the crocodiles' raycasts see it.
-		create_box(
-			Vector3(local_x, trunk_h * 0.5, local_z), Vector3(trunk_w, trunk_h, trunk_w),
-			yaw, rng, block_batch, block_body, lean_snow, wood
-		)
-
-		# Bare branches — no canopy, that is the point of a dead tree. Visual only:
-		# you walk under them exactly as you walk under a forest canopy.
-		for _b in rng.randi_range(2, 3):
-			var a := rng.randf_range(0.0, TAU)
-			var by := trunk_h * rng.randf_range(0.55, 0.92)
-			# One draw per branch: four identical sticks is the read this bead is
-			# here to kill. Shrink-only (see FROZEN_TREE_BRANCH_JITTER_MIN).
-			var blen := FROZEN_TREE_BRANCH_LEN * rng.randf_range(FROZEN_TREE_BRANCH_JITTER_MIN, 1.0)
-			var dir := Vector3(cos(a), 0.0, sin(a)) * (blen * 0.42)
-			create_box(
-				Vector3(local_x, by, local_z) + dir + lean_dir_snow * (by - trunk_h * 0.5),
-				Vector3(blen, 0.22, 0.22),
-				a + PI * 0.5, rng, block_batch, block_body, rng.randf_range(-0.5, 0.5),
-				wood.lerp(SNOW_DEADWOOD_DARK, 0.25), false
-			)
-
-		# Footprint stops at the TRUNK top and is NOT climbable — the forest's rule,
-		# for the forest's reason.
-		obstacles.append({
-			"pos": Vector3(local_x, 0, local_z),
-			"radius": trunk_w * 0.71 + 0.3,
-			"top": trunk_h,
-			"climbable": false,
-		})
-
-	# ---- MAMMOTH SKELETONS -------------------------------------------------
-	var mammoth_half := chunk_size / 2.0 - MAMMOTH_EDGE_MARGIN
-	for _i in rng.randi_range(0, MAMMOTH_MAX):
-		# The candidate loop lives HERE rather than in a rarity roll, for the reason
-		# camps and artifacts both had theirs moved: this is where `obstacles`
-		# exists, and overlap is the test that actually rejects. Every draw happens
-		# whether or not a try is accepted.
-		var mx := 0.0
-		var mz := 0.0
-		var placed := false
-		var tries := 0
-		while tries < MAMMOTH_PLACE_TRIES and not placed:
-			tries += 1
-			mx = rng.randf_range(-mammoth_half, mammoth_half)
-			mz = rng.randf_range(-mammoth_half, mammoth_half)
-			if _biome_spot_ok(chunk_center, mx, mz, MAMMOTH_RADIUS, MAMMOTH_ROAD_CLEARANCE, obstacles) \
-					and biome_at(chunk_center.x + mx, chunk_center.z + mz) == Biome.SNOW:
-				placed = true
-		if not placed:
-			# Every try failing means NO skeleton. A mammoth shoved through a stand
-			# of trees reads worse than a chunk without one — the camp's rule.
-			continue
-		# Per-object scarcity, post-draw (every placement try above has drawn) and
-		# immediately before the ~17 draws _snow_mammoth spends. Offset 1000 so a
-		# skeleton and the tree of the same index above do not share a roll — the
-		# city's houses/stalls/lights precedent.
-		if not _scarcity_keep(chunk_pos_snow, _i + 1000, k_snow):
-			continue
-
-		var top := _snow_mammoth(Vector3(mx, 0.0, mz), rng, block_batch, block_body)
-
-		obstacles.append({
-			"pos": Vector3(mx, 0, mz),
-			"radius": MAMMOTH_RADIUS,
-			"top": top,
-			"climbable": false,
-		})
-
+	TerrainBiomes._spawn_snow_content(self, chunk_center, rng, obstacles, block_batch, block_body)
 
 func _snow_mammoth(local: Vector3, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> float:
-	"""
-	Build one mammoth skeleton and return the height of its spine ridge.
+	return TerrainBiomes._snow_mammoth(self, local, rng, block_batch, block_body)
 
-	@param local: Chunk-local position of the ribcage's rear end (see the frame
-	              note below); the skeleton lies along its own yaw from there.
-	@param rng: The biome stream's private RNG.
-	@param block_batch / block_body: The chunk's single MultiMesh + collision body.
-	@return: The top of the spine slab — the `top` its footprint records.
+func _oasis_at(chunk_pos: Vector2i) -> Dictionary:
+	return TerrainBiomes._oasis_at(self, chunk_pos)
 
-	16-18 boxes, EXACTLY TWO OF WHICH COLLIDE (the skull and the spine slab). The
-	ribs and the tusks are silhouette, and a silhouette does not need to be solid;
-	making them solid would take one skeleton from 2 collision shapes to 18 and put
-	a snag in the middle of the tundra for no gameplay at all.
-
-	THE FRAME: everything below is written in the skeleton's own coordinates —
-	local +X runs nose-forward along the animal, local Z is lateral — and every
-	offset is rotated into the chunk by `yaw` before it is handed to create_box.
-	The spine spans x in [-spine_len, 0] and the skull sits at x = +0.7, so the
-	piece is roughly centred on `local` and the one round footprint circle is a
-	tight-ish bound in both directions rather than a tight one forward and a wasteful
-	one behind.
-
-	A SKELETON READS BY SILHOUETTE AND NOTHING ELSE, which is the whole reason the
-	box budget is spent where it is: two tusk curves and a row of rib arches are what
-	a person names a mammoth by at 30 m. There are deliberately no legs, no pelvis
-	and no detail — at that distance they are noise, and every one would be another
-	box in the chunk's MultiMesh.
-	"""
-	var yaw := rng.randf_range(0.0, TAU)
-	var fwd := Vector3(cos(yaw), 0.0, -sin(yaw))   # Basis(UP, yaw) * Vector3.RIGHT
-	var side := Vector3(sin(yaw), 0.0, cos(yaw))   # Basis(UP, yaw) * Vector3.BACK
-	var spine_len := rng.randf_range(MAMMOTH_SPINE_LEN_MIN, MAMMOTH_SPINE_LEN_MAX)
-	var pairs := rng.randi_range(MAMMOTH_RIB_PAIRS_MIN, MAMMOTH_RIB_PAIRS_MAX)
-	var rib_top := MAMMOTH_RIB_HEIGHT * cos(MAMMOTH_RIB_TILT)
-	var bone := PROP_BONE.lerp(SNOW_ICE_B, rng.randf() * 0.18)
-
-	# --- RIBS. Each pair is two thin boxes whose BASES sit wide on the ground and
-	# whose TOPS lean in over the spine. The tilt sign is what does that: a tilt
-	# about the box's local X sends its up-vector toward local +Z, so the rib on
-	# the -Z side takes a POSITIVE tilt and its mirror a negative one. Get the sign
-	# backwards and the ribcage splays outward like a flower, which looks wrong and
-	# raises nothing.
-	for i in pairs:
-		var t := (float(i) + 0.5) / float(pairs)
-		var x := -spine_len * (0.08 + 0.84 * t)
-		var rib_h := MAMMOTH_RIB_HEIGHT * rng.randf_range(0.88, 1.05)
-		for s: float in [-1.0, 1.0]:
-			create_box(
-				local + fwd * x + side * (MAMMOTH_RIB_HALF_SPREAD * s)
-						+ Vector3(0.0, rib_h * 0.5 * cos(MAMMOTH_RIB_TILT), 0.0),
-				Vector3(0.16, rib_h, 0.30), yaw,
-				rng, block_batch, block_body, -MAMMOTH_RIB_TILT * s,
-				bone, false
-			)
-
-	# --- SPINE. One slab lying along the top of the ribcage, and one of the two
-	# boxes that collide. It spans exactly x in [-spine_len, 0], so the footprint's
-	# rear reach is spine_len and needs no separate bound.
-	var spine_top := rib_top + 0.30
-	create_box(
-		local + fwd * (-spine_len * 0.5) + Vector3(0.0, rib_top + 0.15, 0.0),
-		Vector3(spine_len, 0.30, 0.45), yaw,
-		rng, block_batch, block_body, 0.0, bone
-	)
-
-	# --- SKULL. The other colliding box: a blunt mass at the front, which is what
-	# the tusks have to come out of for the pair to read as one animal.
-	create_box(
-		local + fwd * 0.70 + Vector3(0.0, 0.60, 0.0),
-		Vector3(1.40, 1.15, 1.25), yaw,
-		rng, block_batch, block_body, 0.0, bone
-	)
-
-	# --- TUSKS. Two curves of three boxes, walked segment by segment from the
-	# skull's front face. See the MAMMOTH_TUSK_SEGMENTS banner for why the yaw
-	# carries a quarter turn: it is the only way to make a box lean along the
-	# skeleton's LENGTH rather than across it.
-	var tusk_yaw := yaw + PI * 0.5
-	for s: float in [-1.0, 1.0]:
-		var pos := local + fwd * 1.35 + side * (0.40 * s) + Vector3(0.0, 0.45, 0.0)
-		for seg_variant: Variant in MAMMOTH_TUSK_SEGMENTS:
-			var seg: Array = seg_variant
-			var seg_len: float = float(seg[0])
-			var tilt: float = float(seg[1])
-			# The segment's own up-vector, in world terms: Basis(UP, yaw + PI/2) *
-			# Basis(RIGHT, tilt) * UP works out to fwd * sin(tilt) + UP * cos(tilt).
-			var dir := fwd * sin(tilt) + Vector3.UP * cos(tilt)
-			create_box(
-				pos + dir * (seg_len * 0.5), Vector3(0.18, seg_len, 0.18),
-				tusk_yaw, rng, block_batch, block_body, tilt, bone, false
-			)
-			pos += dir * seg_len
-
-	return spine_top
-
-
-func _city_snap(value: float, rng: RandomNumberGenerator) -> float:
-	"""
-	Snap one chunk-local coordinate onto the city's coarse street grid, plus a
-	little jitter so the result reads as a town rather than as graph paper.
-
-	@param value: The raw chunk-local coordinate already drawn by the caller.
-	@param rng: The biome stream's private RNG — one draw, for the jitter.
-	@return: The snapped coordinate.
-
-	The snap is world-independent (it works in CHUNK-local space) on purpose: a
-	world-space grid would have to survive the chunk-local/world conversion at
-	every call site for nothing, since a 50 m chunk is a whole number of 9 m
-	pitches nowhere and the grid is a READ, not a layout system. Neighbouring
-	chunks therefore have their own street lines, which is exactly what a town
-	that grew looks like.
-	"""
-	return roundf(value / CITY_BLOCK_PITCH) * CITY_BLOCK_PITCH + rng.randf_range(-CITY_BLOCK_JITTER, CITY_BLOCK_JITTER)
-
-# ============================================================================
-# BIOME FIELD (one noise field; six biomes + rivers read out of it)
-# ============================================================================
-#
-# ponytail: the ground stays a FLAT y = 0 plane — see the full note in the BIOME
-# FIELD CONFIGURATION block at the top of the file for why (coin heights, road
-# placement, croc gravity settle, spawn, and the box ground collision all assume
-# it) and for the heightfield upgrade path.
-#
-# Everything below is a PURE function of world position plus biome_offset (which
-# is constant for a whole run), so:
-#   - a revisited chunk classifies identically no matter when it is built, which
-#     is what makes the time-sliced, arbitrary-order chunk generation safe;
-#   - no RNG stream is touched anywhere in here — there are no draws at all.
+func _dune_at(chunk_pos: Vector2i) -> Dictionary:
+	return TerrainBiomes._dune_at(self, chunk_pos)
 
 func _biome_hash2(p: Vector2) -> float:
 	"""
@@ -10414,20 +5200,256 @@ func is_wading_at(world_pos: Vector3) -> bool:
 	parity contract is about `is_river_at`, which is unchanged, and this is a
 	strictly narrower question that only a body can ask.
 
-	IT DOES NOT CLOSE BUDAPEST'S UNDER-DECK GAP, which an earlier version of this
-	docstring claimed. Inside the rect `is_river_at` answers
-	`BudapestPlan.danube_wet()`, and that already subtracts every DRY_RECTS row —
-	so the bed under an authored deck is dry before the height is ever compared.
-	Asking the band without the cutout would also flood MARGARET ISLAND, which is
-	the same mechanism holding dry LAND at y = 0; the bridge-rects-only exception
-	that would close it belongs to bead godot-test1-06o.3.
+	IT CLOSES BUDAPEST'S UNDER-DECK GAP (bead godot-test1-06o.3) by asking
+	`river_depth_at`, which subtracts only the DRY_RECTS rows that are real LAND.
+	`is_river_at` still subtracts every row — it is the band the shader paints and
+	a deck must read dry to it — but a BODY at y = 0 under a deck 12 m up is
+	standing in the Danube, and the height compare above is what makes that
+	distinction safe: a body ON the deck never reaches this line. Margaret Island
+	keeps its cutout because it is land, not a lid.
 
 	Cheap in the order that matters: the height compare is free and rejects every
 	body on a deck before the noise evaluation runs.
 	"""
 	if world_pos.y >= WADE_SURFACE_MAX:
 		return false
-	return is_river_at(world_pos)
+	return river_depth_at(world_pos.x, world_pos.z) < 1.0
+
+
+## ============================================================================
+## THE DEEP CHANNEL — rivers are not walkable down the middle
+## ============================================================================
+##
+## OWNER RULING 2026-09-04, re-asked with urgency 2026-09-05 ("why rivers, and
+## danube are still walkable? fix this") — bead godot-test1-06o.3. The inner
+## fraction of every river band is IMPASSABLE: a body that gets into it is pushed
+## back out along the field's own gradient. The outer band still wades at exactly
+## today's numbers (WADE_SPEED_FACTOR / WADE_RUN_MIN_SPEED are untouched), so the
+## thing that made wading a decision rather than a trap survives on the banks.
+##
+## WHY A FRACTION AND NOT A WALL: a hard wall across an endless procedural field
+## is a softlock generator. A centre channel leaves the banks walkable, keeps the
+## river readable as water you can stand in, and puts the crossing where the
+## bridges are — the road's (spawn_field_bridges_in_chunk), the corridor's
+## (approach_bridges) and Budapest's four authored decks.
+const RIVER_DEEP_FRACTION: float = 0.4
+
+## Finite-difference step for the push direction, in metres. Small against a band
+## (~10-20 m across) and large against fp32 noise, so the two extra evaluations
+## give a direction and not rounding noise.
+##
+## IT IS DIFFERENCED ON THE SIGNED FIELD, NOT ON THE DEPTH, and that is a
+## correctness fix rather than a preference. `river_depth_at` is an ABSOLUTE
+## value, so it has a KINK on the centreline: a forward difference taken within
+## RIVER_DEEP_PROBE of it lands on the far bank and reads the wrong side's slope,
+## which points the push INTO the channel. Measured on the shipped field before
+## the fix: 42 of 4,000 channel samples (1.05%), all at depth < 0.1 — a jitter
+## rather than a trap, because the body drifts off the kink and the next frame is
+## right, but the docstring claimed it could not happen and it could.
+## `_river_signed_raw` has no kink, so the difference is honest everywhere.
+const RIVER_DEEP_PROBE: float = 0.5
+
+## THE FORD's half-width — how far off the road's CENTRELINE the one exemption
+## reaches, in metres. The deck's own half-width plus a station, so the gap in the
+## wall is the width of the road and a metre of slop, never a beach: off the road
+## the same water is still walled.
+const RIVER_DEEP_FORD_HALF: float = FIELD_BRIDGE_HALF_WIDTH + 4.0
+
+
+func river_depth_at(world_x: float, world_z: float) -> float:
+	"""
+	How deep into a river this XZ is, NORMALISED: 0 on the centreline, 1 at the
+	bank, > 1 on dry land.
+
+	@param world_x, world_z: World-space point (metres). XZ-only, like the band.
+	@return: |field| / half-width for the noise river, distance / half-width for
+	         the authored Danube, and DRY_MARGIN for anything masked dry.
+
+	ONE FIELD FOR TWO RIVERS, which is the whole point: the deep channel, the
+	push gradient and the Y-aware wade test all read this, so the procedural river
+	and the Danube get the same rule with no second implementation and no second
+	set of constants. It is the same cost shape as `is_river_at` — the tower disc
+	first (no noise evaluation), then Budapest, then one `_biome_noise`.
+
+	IT IS NOT `is_river_at`, and the difference is exactly one clause: inside the
+	city it subtracts only the dry LAND rows (`BudapestPlan.is_dry_land`), never
+	the four bridge decks. See `is_wading_at` — a deck is dry to the shader and to
+	every spawner, and is water to a body standing under it.
+	"""
+	# Far enough out that no caller can mistake it for a bank; a plain INF would
+	# poison the finite difference in deep_channel_push().
+	const DRY_MARGIN: float = 4.0
+	var site := tower_site()
+	# Vector2, not scalar math: fp32, the same fp32 is_river_at() runs in.
+	if Vector2(world_x - site.x, world_z - site.z).length() <= TOWER_RADIUS:
+		return DRY_MARGIN
+	if BudapestPlan.contains(world_x, world_z):
+		if BudapestPlan.is_dry_land(world_x, world_z):
+			return DRY_MARGIN
+		return BudapestPlan.danube_distance(world_x, world_z) \
+				/ BudapestPlan.DANUBE_HALF_WIDTH
+	return absf(_biome_noise(world_x, world_z) - RIVER_LEVEL) / RIVER_HALF_WIDTH
+
+
+func _river_signed_raw(world_x: float, world_z: float) -> float:
+	"""
+	`river_depth_at` WITHOUT the absolute value and without the masks — the field
+	the push gradient is differenced on.
+
+	@return: The noise river's SIGNED normalised field (negative on one bank,
+	         positive on the other, zero mid-channel), or the Danube's distance in
+	         the same units, which is already non-negative.
+
+	TWO DIFFERENCES FROM `river_depth_at`, and each buys the gradient something:
+
+	  NO ABSOLUTE VALUE, so there is no kink on the centreline. `absf` is what
+	  made a forward difference read the wrong bank's slope within one probe step
+	  of the middle (see RIVER_DEEP_PROBE); the signed field is smooth through it,
+	  and `deep_channel_push` restores the direction by multiplying by the sign it
+	  already has. The Danube's distance has a kink of its own, but only ON the
+	  polyline itself, where every direction is outward and the difference is
+	  right by construction.
+
+	  NO MASKS, which is `river_field_at`'s own rule one caller along: the tower
+	  disc and Margaret Island are hard-edged READOUT policy, so a probe that
+	  stepped onto one would read a 4.0 cliff and the gradient would point at the
+	  mask instead of at the bank. Whether a body is IN a channel is
+	  `river_depth_at`'s question, masks and all; which way is OUT is this one's.
+	"""
+	if BudapestPlan.contains(world_x, world_z):
+		return BudapestPlan.danube_distance(world_x, world_z) \
+				/ BudapestPlan.DANUBE_HALF_WIDTH
+	return (_biome_noise(world_x, world_z) - RIVER_LEVEL) / RIVER_HALF_WIDTH
+
+
+func deep_channel_push(world_pos: Vector3) -> Vector3:
+	"""
+	The way OUT of the impassable centre channel, or ZERO if this body is not in
+	one.
+
+	@param world_pos: The BODY's world position — Y matters, exactly as in
+	                  is_wading_at.
+	@return: A horizontal UNIT vector pointing at the nearest bank, or
+	         Vector3.ZERO when the body is free to move.
+
+	THE ONE HOME OF THE RULE, beside `is_wading_at` for the same reason that one
+	exists: the player pushes with it, the self-check measures it, and a second
+	consumer must not get a second idea of where the channel is.
+
+	COST: the height compare and one `river_depth_at` reject every body that is
+	not already mid-channel; only a body INSIDE the strip pays the two extra
+	evaluations for the gradient. Zero allocation past the two Vector2s.
+
+	IT DOES NOT REACH AN AIRBORNE BODY, and that is the design as far as the
+	ruling goes: the push is the player's STEP 8.5, which is gated on `is_wading`,
+	so flying over a channel is exactly as legal as flying over the band always
+	was. KNOWN CEILING, measured and written down rather than discovered: the
+	strip of a typical field river is ~4.8 m across (median over 178 centreline
+	samples; p90 is 11 m) against a ~9.6 m wading jump, so an ordinary Space press
+	clears the median river. Budapest's 96 m Danube channel and the wide bands are
+	genuinely impassable. Closing that would mean pushing an airborne body, which
+	is an invisible air wall and an owner call — bead godot-test1-06o.3's report
+	raises it.
+
+	NOT A COLLISION SHAPE, deliberately. The world is flat and the river is a
+	shader tint — giving it a StaticBody would put thousands of bodies in the
+	world, break the "no water mesh" invariant and still not follow a contour.
+	"""
+	if world_pos.y >= WADE_SURFACE_MAX:
+		return Vector3.ZERO
+	var depth := river_depth_at(world_pos.x, world_pos.z)
+	if depth >= RIVER_DEEP_FRACTION:
+		return Vector3.ZERO
+	# THE ONE EXEMPTION, and it asks the AUTHORITY rather than a threshold: a road
+	# crossing the field bridges REFUSED (a lake, past FIELD_BRIDGE_MAX_SPAN of
+	# walked water) is left wadeable on purpose, and walling it would softlock the
+	# road it stands on. Asked last because it is the only expensive line here and
+	# only a body already inside a strip ever reaches it.
+	if _deep_channel_ford(world_pos.x, world_pos.z):
+		return Vector3.ZERO
+	# THE GRADIENT OF THE SIGNED FIELD, TURNED OUTWARD BY ITS OWN SIGN — never a
+	# difference of `river_depth_at`, which has a kink on the centreline that
+	# points 1% of pushes back into the water (see RIVER_DEEP_PROBE).
+	var e := RIVER_DEEP_PROBE
+	var signed := _river_signed_raw(world_pos.x, world_pos.z)
+	var grad := Vector2(
+			_river_signed_raw(world_pos.x + e, world_pos.z) - signed,
+			_river_signed_raw(world_pos.x, world_pos.z + e) - signed)
+	# Exactly on the contour every direction is outward, so the sign is +1 there
+	# rather than the 0 `signf` would hand back.
+	if signed < 0.0:
+		grad = -grad
+	if grad.length_squared() <= 0.0:
+		return Vector3.ZERO
+	var out := grad.normalized()
+	return Vector3(out.x, 0.0, out.y)
+
+
+func _deep_channel_ford(world_x: float, world_z: float) -> bool:
+	"""
+	Is this point standing in the ONE thing the deep channel yields to — a road
+	river crossing the field bridges REFUSED?
+
+	@return: true when the road is wet at the nearest station, the point is on the
+	         road, and NO STONE stands over that station.
+
+	WHY THE AUTHORITY AND NOT A WIDTH THRESHOLD. The first version of this asked
+	the field's own gradient — a band wider than FIELD_BRIDGE_MAX_SPAN
+	perpendicular is a lake — which is cheap, pointwise and WRONG: the cap counts
+	the water the road WALKS, and a road crossing a 100 m band at an angle walks
+	124 m of it. Measured over 20 seeds, that left exactly one crossing (seed 10,
+	x = 443) unbridged AND walled, which is the softlock this bead exists to
+	avoid.
+
+	AND THE AUTHORITY IS THE STONE, NOT THE ANCHOR ROW. This asked
+	`field_bridge_at(k0).is_empty()` for one round, walking back to the crossing
+	entry to find `k0` — and `field_bridge_at` answers `{}` for THREE reasons, only
+	two of which mean "unbridged": the lake, the no-dry-abutment refusal, and "an
+	earlier WESTERN anchor already owns this merged deck", where stone demonstrably
+	exists. Measured over 40 seeds: 3 of 103 channel points on the road were both
+	bridged and forded (seed 19 station 148, owned by anchor 131). Two of its
+	returns are also un-memoized "the station cache is short right now", which
+	would make the wall a function of where the player had walked — the exact class
+	CLAUDE.md documents as "THE GROWTH MAY NOT READ THE STATION CACHE'S EDGE", and
+	in a room two peers would disagree about a wall. `field_bridge_surface_y` is
+	the query with none of those hazards: it extends the cache by
+	`_field_bridge_reach()` itself, it sees merged decks and corridor decks alike,
+	and it is the same question `wade_selfcheck` check 9 asks. Asking it also
+	deleted the walk-back and its budget.
+
+	IT IS THE ROAD'S WIDTH AND NOT THE RIVER'S. Off the centreline by more than
+	RIVER_DEEP_FORD_HALF the same water is walled again, so a lake is a lake
+	everywhere except at the ford the road drives through it.
+
+	COST: only a body already INSIDE a deep strip ever calls this, and the two
+	cheap rejects (the station's distance, and whether the road is even wet there)
+	stand above the one expensive line. Warm it is 5-7 us; the first call of a run
+	that lands a body in a channel near the road pays `field_bridge_at`'s cold scan
+	(measured 2.3-2.7 ms), which ordinary chunk streaming has already warmed —
+	a `\\fb` teleport straight into one is the case that would see it.
+	"""
+	var spacing := _road_spacing()
+	_road_extend_to_x(world_x - spacing * 2.0, world_x + spacing * 2.0)
+	var k := _road_first_k_at_or_after_x(world_x)
+	if k <= road_k_min or k > road_k_max:
+		return false
+	# The nearer of the two stations bracketing this X — the road is a polyline
+	# and the point may sit either side of the sample.
+	var here: Vector2 = _road_station(k).center
+	var back: Vector2 = _road_station(k - 1).center
+	if absf(back.x - world_x) < absf(here.x - world_x):
+		k -= 1
+		here = back
+	# CAP 5 again: east of the terminal station the road has no bridges of its own
+	# (the corridor's are approach_bridges', and they cover every wet stretch), so
+	# there is nothing here to exempt.
+	if k > _road_terminal_k():
+		return false
+	if Vector2(world_x, world_z).distance_to(here) > RIVER_DEEP_FORD_HALF:
+		return false
+	if not _field_bridge_wet(k):
+		return false
+	return field_bridge_surface_y(Vector3(here.x, 0.0, here.y)) <= -INF
 
 
 func river_field_at(world_x: float, world_z: float) -> float:
@@ -11132,7 +6154,8 @@ func _tower_reset() -> void:
 	is about the BUILDING: a shell carries the old world's opened gates, captives
 	and guards, and a new run must not inherit them.
 
-	Called from new_run() after the seed is set and before any chunk is rebuilt.
+	Called from `set_run_seed()` — the seed write, every door — and so before any
+	chunk is rebuilt.
 	The shell is the one thing in this file that survives a chunk wipe, so it is
 	also the one thing a new run has to free by hand; the impostor is repositioned
 	rather than rebuilt, because its geometry does not depend on the seed.
@@ -11159,7 +6182,9 @@ func _tower_reset() -> void:
 # the per-run run_seed (constant for the whole run). There is no per-chunk RNG and no
 # per-frame state, so the road is identical for a given `k` no matter which chunk asks
 # for it or in what order — that is what makes the trail seamless across chunk
-# boundaries and reproducible on revisit. Only new_run() (a fresh run) changes it.
+# boundaries and reproducible on revisit. Only a new seed changes it, and the
+# memos derived from it are dropped where that seed is WRITTEN — see
+# `_drop_seeded_memos()`.
 
 func _road_hash01(k: int) -> float:
 	"""
@@ -11369,7 +6394,8 @@ func _road_terminal_k() -> int:
 	west of ROAD_TERMINAL_X. Every road CONSUMER stops here (bead godot-test1-8gw.3).
 
 	@return: The terminal station index. Memoized for the run in
-	         `_road_terminal_k_cache`, which new_run() resets with the station cache.
+	         `_road_terminal_k_cache`, which `set_run_seed()` drops beside the
+	         station cache it is derived from (`_drop_seeded_memos()`).
 
 	WHY THE CAP IS ON THE CONSUMERS AND NOT ON _road_extend_to_x.
 	It would be tempting to simply stop growing the cache past the terminal. That
@@ -11757,7 +6783,7 @@ func _field_bridge_wet_metres(k: int) -> float:
 
 	MEMOIZED per station, and it is the hot path of the whole feature: every
 	station in a scan window is asked as `k` and again as `k - 1`, and the growth
-	loops ask it again. new_run() drops it with the bridges it feeds.
+	loops ask it again. `_drop_seeded_memos()` drops it with the bridges it feeds.
 	"""
 	if _field_bridge_wet_cache.has(k):
 		return _field_bridge_wet_cache[k]
@@ -12047,7 +7073,8 @@ func field_bridge_at(k0: int) -> Dictionary:
 
 	MEMOIZED, because every chunk within a bridge's reach re-asks this and the
 	answer is a pure function of (k0, run_seed) through the road cache and the
-	river field. new_run() clears it beside the station cache it is derived from.
+	river field. `_drop_seeded_memos()` clears it beside the station cache it is
+	derived from.
 
 	THE CAP IS A LAKE, NOT A LONGER BRIDGE. Past FIELD_BRIDGE_MAX_SPAN of wet
 	centreline the road is not crossing a river, it is running into standing
@@ -13518,7 +8545,7 @@ func _spawn_gate_district_in_chunk(chunk_center: Vector3, obstacles: Array, bloc
 
 	# ---- STREET DRESSING ----------------------------------------------------
 	# The three jb7 CITY prop builders, called DIRECTLY rather than through
-	# _build_prop: that function's job is to pick a theme from biome_at, and here
+	# TerrainProps.build_prop: that function's job is to pick a theme from biome_at, and here
 	# the theme is not in question — this is Budapest, so it is the city arm or
 	# nothing. One piece in each gap between neighbouring houses on the north row
 	# (seven today), alternating sides and cycling the three builders. The row is
@@ -13548,11 +8575,11 @@ func _spawn_gate_district_in_chunk(chunk_center: Vector3, obstacles: Array, bloc
 		var foot: Dictionary
 		match i % 3:
 			0:
-				foot = _prop_crate_stack(p_local, CITY_DISTRICT_PROP_SIZE, prng, block_batch, block_body)
+				foot = TerrainProps._prop_crate_stack(self, p_local, CITY_DISTRICT_PROP_SIZE, prng, block_batch, block_body)
 			1:
-				foot = _prop_garden_wall(p_local, CITY_DISTRICT_PROP_SIZE, prng, block_batch, block_body)
+				foot = TerrainProps._prop_garden_wall(self, p_local, CITY_DISTRICT_PROP_SIZE, prng, block_batch, block_body)
 			_:
-				foot = _prop_paving_stack(p_local, CITY_DISTRICT_PROP_SIZE, prng, block_batch, block_body)
+				foot = TerrainProps._prop_paving_stack(self, p_local, CITY_DISTRICT_PROP_SIZE, prng, block_batch, block_body)
 		obstacles.append({
 			"pos": p_local,
 			"radius": foot["radius"],
@@ -14002,8 +9029,8 @@ func _approach_coin_line() -> PackedVector2Array:
 	@return: The shared, memoized line. Callers must not mutate it.
 
 	Memoized because every chunk in the world asks for it and it is a pure function
-	of the terminal station — which is fixed for the run. new_run() resets it
-	beside _road_terminal_k_cache, the one seeded input it has.
+	of the terminal station — which is fixed for the run. `_drop_seeded_memos()`
+	drops it beside _road_terminal_k_cache, the one seeded input it has.
 
 	The resampling itself lives in BudapestPlan.approach_coin_line(), with the rest
 	of the corridor's arithmetic, so the coins and the clearance swath keep reading
@@ -14347,11 +9374,11 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	1. Set run_seed — re-rolled at random, or taken from forced_seed. Every hash
 	   site mixes it in, so all downstream content (blocks, crocodiles, road,
 	   coins) comes out of that one number.
-	2. Clear the road station cache — its entries were computed with the OLD seed
-	   and would poison the new road (the cache is "correct forever" only while the
-	   seed is constant). Reset the bounds to the empty sentinel (min > max) exactly
-	   as declared, so the next _road_extend_to_x re-seeds station 0. Also clear both
-	   pending queues — anything queued was computed for the old world.
+	2. Clear both pending queues — anything queued was computed for the old world.
+	   The SEED-derived memos (the road station cache and everything strung along
+	   it) are NOT cleared here: step 1's seed write drops them, in
+	   `_drop_seeded_memos()`, because `set_run_seed()` is the only seam every
+	   door goes through. These two queues are CHUNK state, so they stay.
 	3. Free every active chunk and clear the dictionary — old-world geometry.
 	4. Rebuild around chunk `around` (the spawn chunk (0,0) unless a caller says
 	   otherwise) via update_chunks — which floors that chunk + SYNC_RING ring 1
@@ -14373,37 +9400,18 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 		set_run_seed(int(forced_seed))
 	_apply_biome_shader_params()
 
-	# 2. Road cache back to its declared empty state, and BOTH old-world pending
-	# queues emptied (update_chunks below rebuilds them for the new world anyway;
-	# clearing here just makes the invariant explicit). The removal queue in
-	# particular holds bare coordinates, and step 3 is about to free everything
-	# they name — leaving stale ones around a rebuild that re-uses the same
-	# coordinates is how a brand-new chunk would get freed a frame later.
-	road_stations = {}
-	road_k_min = 1
-	road_k_max = 0
-	# The terminal station is derived from the centreline, so it is exactly as
-	# stale as the cache above: a new seed puts a different station at
-	# ROAD_TERMINAL_X. Reset it HERE, beside what it is derived from, so the two
-	# can never be reset apart.
-	_road_terminal_k_cache = ROAD_TERMINAL_K_UNSET
-	# ...and the field bridges, for the same reason one step further out: a
-	# crossing is a station index plus the river field, and both moved. The
-	# corridor's are derived from the terminal station, so they go with them.
-	_field_bridge_cache = {}
-	_field_bridge_wet_cache = {}
-	_approach_bridge_cache = []
-	_approach_bridge_scanned = false
-	# ...and the approach coin line with it: it is resampled off that station.
-	_approach_coin_line_cache = PackedVector2Array()
-	# ...and the museum mile: every site is a station index on the centreline
-	# above, so a table kept across a re-seed would string this run's landmarks
-	# along the LAST run's road (see the MUSEUM MILE banner).
-	_landmark_sites_cache = {}
-	_landmark_sites_built = false
-	# ...and the spike's coarse road polyline, which is a window onto the same
-	# centreline. update_chunks in step 4 below rebuilds it for the new world.
-	_alt_road_segs = PackedVector4Array()
+	# 2. BOTH old-world pending queues emptied (update_chunks below rebuilds them
+	# for the new world anyway; clearing here just makes the invariant explicit).
+	# The removal queue in particular holds bare coordinates, and step 3 is about
+	# to free everything they name — leaving stale ones around a rebuild that
+	# re-uses the same coordinates is how a brand-new chunk would get freed a
+	# frame later.
+	#
+	# THE ROAD MEMOS ARE NOT HERE ANY MORE (bead godot-test1-bvq). The station
+	# cache and everything derived from it are SEED-derived, so they are dropped
+	# by `_drop_seeded_memos()` inside `set_run_seed()`, which step 1 above has
+	# already called down both branches. These two queues stay because they are
+	# CHUNK state, not seed state: a bare re-seed does not free a chunk.
 	pending_chunks.clear()
 	pending_removals.clear()
 
@@ -14494,3 +9502,51 @@ func _to_string() -> String:
 		get_chunk_count(),
 		last_player_chunk
 	]
+
+
+# ----------------------------------------------------------------------------
+# THE PREDATOR CONSTANTS — aliases, the code is in terrain_predators.gd
+# ----------------------------------------------------------------------------
+##
+## Bead godot-test1-ftn.6 moved every predator spawner and its constant banner
+## to `scripts/terrain_predators.gd`. These names are aliased back because
+## `enemy_spawn_selfcheck`, `boss_selfcheck`, `budapest_selfcheck` and
+## `scarcity_selfcheck` read them off THIS script's
+## `get_script_constant_map()`, and a mechanical move may not break a reader.
+## The prose, the derivations and the measurements moved WITH the code — read
+## them there, not here.
+##
+## `BIOME_SPECIES`, `BIOME_BOSS` and `SPAWN_SAFE_RADIUS` are NOT in this list:
+## they stayed on this script for the reasons in TerrainPredators' header.
+
+const HUNTER_SPECIES := TerrainPredators.HUNTER_SPECIES
+const HUNTER_SCENE := TerrainPredators.HUNTER_SCENE
+const HUNTER_CHANCE := TerrainPredators.HUNTER_CHANCE
+const HUNTER_FIELD_CAP := TerrainPredators.HUNTER_FIELD_CAP
+const HUNTER_SALT := TerrainPredators.HUNTER_SALT
+const HUNTER_HASH_PRIME_X := TerrainPredators.HUNTER_HASH_PRIME_X
+const HUNTER_HASH_PRIME_Y := TerrainPredators.HUNTER_HASH_PRIME_Y
+const HUNTER_PLACE_TRIES := TerrainPredators.HUNTER_PLACE_TRIES
+const HUNTER_EDGE_MARGIN := TerrainPredators.HUNTER_EDGE_MARGIN
+const HUNTER_SPAWN_HEIGHT := TerrainPredators.HUNTER_SPAWN_HEIGHT
+const HUNTER_ROLL_INDEX := TerrainPredators.HUNTER_ROLL_INDEX
+const PLATFORM_SPAWN_HEIGHT := TerrainPredators.PLATFORM_SPAWN_HEIGHT
+const PLATFORM_SPAWN_EDGE_INSET := TerrainPredators.PLATFORM_SPAWN_EDGE_INSET
+const BOSS_INTERVAL_STATIONS := TerrainPredators.BOSS_INTERVAL_STATIONS
+const BOSS_BASE_SCALE := TerrainPredators.BOSS_BASE_SCALE
+const BOSS_GROWTH := TerrainPredators.BOSS_GROWTH
+const BOSS_MAX_SCALE := TerrainPredators.BOSS_MAX_SCALE
+const BOSS_LATERAL_MAX := TerrainPredators.BOSS_LATERAL_MAX
+const BOSS_FORWARD_OFFSET := TerrainPredators.BOSS_FORWARD_OFFSET
+const BOSS_FOOTPRINT_RADIUS_PER_SCALE := TerrainPredators.BOSS_FOOTPRINT_RADIUS_PER_SCALE
+const BOSS_PLACE_TRIES := TerrainPredators.BOSS_PLACE_TRIES
+const BOSS_SEED := TerrainPredators.BOSS_SEED
+const CROC_ROLL_SALT := TerrainPredators.CROC_ROLL_SALT
+const DANUBE_SALT := TerrainPredators.DANUBE_SALT
+const DANUBE_HASH_PRIME_X := TerrainPredators.DANUBE_HASH_PRIME_X
+const DANUBE_HASH_PRIME_Y := TerrainPredators.DANUBE_HASH_PRIME_Y
+const DANUBE_CROC_CHANCE := TerrainPredators.DANUBE_CROC_CHANCE
+const DANUBE_CROC_MAX := TerrainPredators.DANUBE_CROC_MAX
+const DANUBE_CROC_DECK_MARGIN := TerrainPredators.DANUBE_CROC_DECK_MARGIN
+const DANUBE_SLOT_BASE := TerrainPredators.DANUBE_SLOT_BASE
+const CITY_CROC_DIVISOR := TerrainPredators.CITY_CROC_DIVISOR

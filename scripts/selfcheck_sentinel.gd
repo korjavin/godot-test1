@@ -77,8 +77,8 @@ static var _reached: Dictionary = {}
 #
 #   * SEQUENTIALLY — a check SIGTERM'd under host load (boss_selfcheck, rc=143)
 #     runs no cleanup at all and leaves a store carrying `tower_rescue_primm`,
-#     which ARMS systemic capture; `capture_selfcheck`'s pre-beat cases then
-#     legitimately fail three checks later. No `finally`-style teardown can fix
+#     which `capture_selfcheck` stages and un-stages around its own cases; those
+#     then legitimately fail three checks later. No `finally`-style teardown can fix
 #     that, because the killed process never reaches one.
 #
 # THE ANSWER IS THE SAME FOR BOTH, and it is arranged at ENTRY rather than

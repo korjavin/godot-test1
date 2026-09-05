@@ -131,6 +131,10 @@ const CONFIG_PROGRESSION_SECTION: String = "progression"
 ## Desktop section and localStorage key for voice chat mode (bead godot-test1-xtr.2).
 const CONFIG_VOICE_SECTION: String = "voice"
 const LS_VOICE_MODE: String = "ck_voice_mode"
+## Incoming voice volume, an integer percent 0-100 (bead godot-test1-xtr.9). It
+## shares the section above rather than opening a third `user://` path, which
+## `progression_selfcheck`'s hermetic_stores audit would fail.
+const LS_VOICE_VOLUME: String = "ck_voice_volume"
 
 
 ## Desktop section for THE TOWER'S EARNED STATE — one monotone set of ids (see

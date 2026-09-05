@@ -71,12 +71,12 @@ const BIOME_SAMPLES: int = 4
 ##
 ##   FOREST   3 — cubes (trunks, blocks) + SPHERE canopies + ROCK mossy boulders
 ##   PLAINS   2 — cubes + ROCK boulder clusters
-##   DESERT   2 — cubes + ROCK sandstone stacks and oasis boulders
+##   DESERT   4 — and it is the one row that needs its own paragraph, below
 ##   MOUNTAIN 2 — cubes (massifs, cairn tiers) + ROCK scree
 ##   SNOW     2 — cubes (drifts, stumps) + ROCK glacier ice
 ##   CITY     2 — and the reason is worth knowing, because the field city band's
 ##                OWN props are crates, garden walls and paving and not one of
-##                them is a rock. `_build_prop` picks its theme at each PROP's
+##                them is a rock. `TerrainProps.build_prop` picks its theme at each PROP's
 ##                world position, not at the chunk centre, which is what feathers
 ##                a biome edge across a chunk seam — so a city-band chunk on a
 ##                plains boundary legitimately grows a plains boulder. That the
@@ -84,21 +84,53 @@ const BIOME_SAMPLES: int = 4
 ##                where it can be asserted builder by builder instead of being
 ##                inferred from a chunk that may be nowhere near an edge.
 ##
-## ONLY THE FOREST GETS A THIRD, and that asymmetry is structural rather than
-## tuning: canopies come from `_spawn_forest_content`, which `spawn_biome_content_in_chunk`
-## dispatches on the CHUNK CENTRE, so a SPHERE can only ever appear in a chunk
-## whose centre is forest. Rocks come from the per-position prop themer and can
-## appear anywhere.
+## THE DESERT IS FOUR, AND THAT IS ONE MORE THAN BEAD y1o.4 BUDGETED FOR — it is
+## flagged here rather than quietly absorbed, because the number wants an owner's
+## eye. That bead asked for "F3 at most +2 per desert chunk" and was written on
+## 2026-09-03, when the desert drew nothing but CUBEs; its own dependency y1o.3
+## then gave every sandstone stack and every oasis boulder a ROCK, so the band was
+## already at 2 before this bead added a single cylinder. The four are CUBE
+## (scattered blocks, dunes, the oasis water disc, rim and reeds), CYLINDER (cactus
+## segments and arms, palm trunks), ROCK (sandstone, boulders) and CONE (palm
+## fronds).
+##
+## MEASURED over 2,814 stone-bearing desert chunks at run_seed 20260904:
+##   1 bucket   500 chunks (17.8%)
+##   2 buckets 1616 chunks (57.4%)
+##   3 buckets  587 chunks (20.9%)
+##   4 buckets  111 chunks ( 3.9%)  <- exactly the chunks carrying an OASIS
+## CONE appears in 111 chunks and nowhere else, so the fourth bucket IS the oasis
+## and nothing but the oasis — a rare authored-feeling set piece, not the common
+## desert. `ponytail:` the one-line way back under three is to give the fronds the
+## trunks' CYLINDER instead of their own CONE; that costs the frond its taper (a
+## palm blade becomes a round stick) and is a swap of two arguments in
+## `_spawn_desert_oasis`, so it is an owner's call about a picture and not a
+## refactor.
+##
+## ONLY THE FOREST AND THE DESERT GO PAST TWO, and the forest's asymmetry is
+## structural rather than tuning: canopies come from `_spawn_forest_content`, which
+## `spawn_biome_content_in_chunk` dispatches on the CHUNK CENTRE, so a SPHERE can
+## only ever appear in a chunk whose centre is forest. Rocks come from the
+## per-position prop themer and can appear anywhere.
 ##
 ## KEYED BY NAME and resolved against the live `Biome` enum, so this table reads as
 ## design intent rather than as ints, and a biome MISSING a row is failed by name.
+##
+## CITY IS 4 SINCE BEAD godot-test1-y1o.5 and it is the most expensive band in the
+## world: CUBE (hulls, doors, windows, stalls) + WEDGE (the pitched roofs) +
+## CYLINDER (the lamp masts and shades) + ROCK, which the per-position prop themer
+## can put in any chunk. That is the price of the pitched roof and it is written
+## down here rather than discovered later — the roofs are the single biggest
+## de-block change a house gets, and the masts are the one other thing in the band
+## that was obviously a stack of boxes. Nothing else moved: the drift's swell took
+## ROCK precisely so no OTHER biome's cap had to rise.
 const KIND_CAP_BY_NAME: Dictionary = {
 	"FOREST": 3,
 	"PLAINS": 2,
-	"DESERT": 2,
+	"DESERT": 4,
 	"MOUNTAIN": 2,
 	"SNOW": 2,
-	"CITY": 2,
+	"CITY": 4,
 }
 
 var _failures: Array[String] = []
@@ -119,6 +151,7 @@ func _initialize() -> void:
 	_check_splitter_carries_kind()
 	_check_collision_is_unchanged_by_kind()
 	_check_draw_calls_per_biome()
+	_check_block_shader_uniforms()
 	_report()
 
 
@@ -329,13 +362,17 @@ func _check_multimesh_per_kind() -> void:
 	# world has changed silhouette" a sweep rather than a spot check.
 	#
 	# THE SCATTERED BLOCKS ARE WHERE THE PROPS LIVE, so this sweep's allow-list is
-	# not "CUBE only" any more (bead godot-test1-y1o.3): `_build_prop` runs inside
-	# `spawn_objects_in_chunk`, and six of its builders now draw ROCK. What the
-	# sweep still refuses is a THIRD kind arriving here unannounced — a SPHERE, a
-	# CONE or a CYLINDER in the scatter is a consumer nobody filed a bead for, and
-	# the allow-list is what makes that a build failure instead of a rendering
-	# surprise. Note it is a set and not a count: whether a chunk drew a rock is a
-	# draw of the scatter stream, so "how many" is not a stable number.
+	# not "CUBE only" any more (bead godot-test1-y1o.3): `TerrainProps.build_prop` runs inside
+	# `spawn_objects_in_chunk`, and six of its builders now draw ROCK. Bead
+	# godot-test1-y1o.5's snow drift joins them and needed NO widening here: its
+	# swell is a ROCK, deliberately, because a prop's theme is picked at its own
+	# position and a SPHERE drift would have put a new bucket into every band that
+	# borders snow. What the sweep still refuses is a kind arriving here
+	# unannounced — a SPHERE, a CONE, a CYLINDER or a WEDGE in the scatter is a
+	# consumer nobody filed a bead for, and the allow-list is what makes that a
+	# build failure instead of a rendering surprise. Note it is a set and not a
+	# count: whether a chunk drew a rock is a draw of the scatter stream, so "how
+	# many" is not a stable number.
 	var field_batch: Array = []
 	var field_body := StaticBody3D.new()
 	var allowed_kinds: Array[int] = [ChunkBatch.BoxKind.CUBE, ChunkBatch.BoxKind.ROCK]
@@ -589,6 +626,7 @@ func _check_collision_is_unchanged_by_kind() -> void:
 		ChunkBatch.BoxKind.CONE: "BoxShape3D",
 		ChunkBatch.BoxKind.CYLINDER: "CylinderShape3D",
 		ChunkBatch.BoxKind.ROCK: "BoxShape3D",
+		ChunkBatch.BoxKind.WEDGE: "BoxShape3D",
 	}
 	for kind: int in ChunkBatch.BoxKind.values():
 		var batch: Array = []
@@ -871,3 +909,315 @@ func _check_draw_calls_per_biome() -> void:
 						n, kind_cap.get(value, "-")])
 	terrain.free()
 	Sentinel.done("draw_calls_per_biome")
+
+
+# ============================================================================
+# CHECK 6 — world_block.gdshader's UNIFORMS: declared, valued, defaulted
+# (bead godot-test1-y1o.35)
+# ============================================================================
+
+## The shared block material's shader, and the file that builds that material.
+## Read as TEXT rather than through `load()`: headless Godot is the dummy
+## rendering driver, so a shader's DEFAULTS come back from the RenderingServer
+## unreliably — the same trap as tower_interior's dossier rack, which is why that
+## writes `multimesh.buffer` instead of calling `set_instance_transform`. The
+## source text is the only thing here that is a measurement.
+const BLOCK_SHADER_PATH: String = "res://assets/shaders/world_block.gdshader"
+const CHUNK_BATCH_SCRIPT: String = "res://scripts/chunk_batch.gd"
+
+## THE TWO IDENTITY DEFAULTS, and the whole reason this check exists.
+##
+## Bead y1o.14 added `albedo` and `height_range` to a shader that already drew
+## every chunk in the world, and the ENTIRE argument for that being a safe change
+## is that both defaults are the IDENTITY of what the shader computed before them:
+##
+##   albedo        vec4(1.0)        -> `COLOR.rgb * 1.0` is the pre-uniform
+##                                     expression bit for bit.
+##   height_range  vec2(-0.5, 0.5)  -> `(VERTEX.y - -0.5) / (0.5 - -0.5)` is
+##                                     `VERTEX.y + 0.5`, the sweep this shader has
+##                                     always computed — a subtraction of -0.5 and
+##                                     a division by 1.0, both EXACT in fp32.
+##
+## So every existing chunk batch renders bit-identically, which is what this
+## file's own shared-material assertions rest on. A ONE-CHARACTER edit to either
+## number silently re-shades the whole world, and since bead y1o.15 this shader
+## has THREE consumers (the chunk batch, fauna herds, the crowd and traffic
+## bodies), so more edits are coming. Nothing in the suite read these until now.
+const BLOCK_IDENTITY_DEFAULTS: Dictionary = {
+	"albedo": [1.0, 1.0, 1.0, 1.0],
+	"height_range": [-0.5, 0.5],
+}
+
+## The one uniform-declaration pattern, used by the audit and by its own count.
+## `uniform <type> <name><rest>;` where <rest> carries the optional hint and the
+## optional `= <default>`. Splitting <rest> on its first "=" rather than matching
+## the default in the same pattern is what keeps a bare
+## `uniform vec2 height_range;` — legal GLSL, silently zero-filled by the
+## compiler — VISIBLE as a declaration with no default, instead of simply not
+## matching and being compared to nothing. That is altitude_selfcheck's hard-won
+## lesson at its own `alt_*` defaults, one shader along.
+const UNIFORM_RE: String = "uniform\\s+(\\w+)\\s+(\\w+)([^;]*);"
+
+
+func _strip_shader_comments(shader_text: String) -> String:
+	"""
+	Removes `//` and block comments before any uniform is parsed.
+
+	NOT optional, and not defensive: this shader's own header explains `albedo` in
+	PROSE that contains the words "as a uniform instead. The default vec4(1.0)",
+	and `UNIFORM_RE`'s `[^;]*` tail then ran from that sentence all the way to the
+	real declaration's semicolon four lines later — inventing a uniform called
+	`tint` with no default AND swallowing the `albedo` declaration whole, so the
+	identity leg reported `albedo` as MISSING. Caught by check 6 on its own first
+	run against the shipped file. A shader whose comments cannot say the word
+	"uniform" is not a shader anybody should have to write.
+
+	ONE PASS WITH AN ALTERNATION, never two passes. Two passes have to pick an
+	order and BOTH orders leave a hole: strip block comments first and a `/*`
+	written inside a `//` line opens a block that runs to the next `*/` anywhere
+	below, deleting every real declaration in between; strip line comments first
+	and a `//` inside a block comment ends that line early, leaving the block's
+	`*/` to be parsed as code. A single alternation has no order to get wrong —
+	whichever delimiter appears FIRST wins, which is exactly what a compiler does.
+	"""
+	return RegEx.create_from_string("//[^\\n]*|/\\*[\\s\\S]*?\\*/").sub(shader_text, "", true)
+
+
+func _glsl_default_value(text: String, type_name: String) -> PackedFloat32Array:
+	"""
+	Parses a GLSL scalar or vector literal into its components.
+
+	Handles the SPLAT — `vec4(1.0)` means all four components — which is exactly
+	how the shader spells `albedo`'s identity, so a parser that read only the
+	comma-separated form would have skipped the one default this check is most
+	about.
+
+	@param text: the literal, e.g. "0.78" or "vec2(-0.5, 0.5)"
+	@param type_name: the uniform's declared type, e.g. "float" or "vec4"
+	@return: its components, or an EMPTY array if this is not a literal the
+	         parser understands — the caller reports that rather than silently
+	         comparing against zeros.
+	"""
+	var body := text.strip_edges()
+	var want := 1
+	if type_name.begins_with("vec"):
+		want = type_name.trim_prefix("vec").to_int()
+		var open := body.find("(")
+		if open < 0 or not body.ends_with(")"):
+			return PackedFloat32Array()
+		body = body.substr(open + 1, body.length() - open - 2)
+	var out := PackedFloat32Array()
+	for part: String in body.split(",", false):
+		if not part.strip_edges().is_valid_float():
+			return PackedFloat32Array()
+		out.append(part.strip_edges().to_float())
+	if out.size() == 1 and want > 1:
+		while out.size() < want:  # GLSL's splat: one argument fills every component
+			out.append(out[0])
+	if out.size() != want:
+		return PackedFloat32Array()
+	return out
+
+
+func _block_shader_problems(shader_text: String, batch_text: String) -> Array:
+	"""
+	The whole of check 6 as a PURE function of the two source texts, so the
+	negative controls can drive it on a MUTATED copy and prove each leg really
+	bites. A mutation control that has to re-implement the check is a control that
+	measures its own copy.
+
+	@param shader_text: world_block.gdshader's source
+	@param batch_text: chunk_batch.gd's source
+	@return: one string per problem; empty means the pair is well formed.
+	"""
+	var problems: Array = []
+	var uniform_re := RegEx.new()
+	uniform_re.compile(UNIFORM_RE)
+	var declared: Dictionary = {}    # name -> type
+	var defaults: Dictionary = {}    # name -> literal text; ABSENT means no default
+	for m: RegExMatch in uniform_re.search_all(_strip_shader_comments(shader_text)):
+		declared[m.get_string(2)] = m.get_string(1)
+		var rest := m.get_string(3)
+		var eq := rest.find("=")
+		if eq >= 0:
+			defaults[m.get_string(2)] = rest.substr(eq + 1).strip_edges()
+
+	# NON-VACUITY, before anything is asserted about the set: a regex that matched
+	# nothing would pass every loop below by having nothing to loop over, and a
+	# RENAME would silently retire both identity legs while looking green.
+	if declared.is_empty():
+		problems.append("no uniform declaration was parsed out of %s — check 6 measured nothing"
+				% BLOCK_SHADER_PATH)
+	for uniform_name: String in BLOCK_IDENTITY_DEFAULTS:
+		if not declared.has(uniform_name):
+			problems.append(("%s declares no '%s' uniform. It is one of the two IDENTITY "
+					% [BLOCK_SHADER_PATH, uniform_name])
+					+ "defaults bead y1o.14's safety argument rests on — renaming it does not "
+					+ "retire that argument, it only stops anything from checking it")
+
+	# ---- a. every declared uniform is DEFAULTED ------------------------------
+	# The chunk batch pushes two of the four and leaves the rest to the shader's
+	# own defaults, so an undefaulted uniform is not a style nit: it is a value
+	# nobody supplies, which GLSL zero-fills. `height_range` at vec2(0.0) is a
+	# division by zero across every box in the world.
+	for uniform_name: String in declared:
+		if not defaults.has(uniform_name):
+			problems.append(("%s declares 'uniform %s %s;' with NO default. "
+					% [BLOCK_SHADER_PATH, declared[uniform_name], uniform_name])
+					+ "Every consumer that does not push it then draws GLSL's zero-fill "
+					+ "instead of the value the shader's own header promises")
+
+	# ---- b. the two identity defaults ARE the identity -----------------------
+	for uniform_name: String in BLOCK_IDENTITY_DEFAULTS:
+		if not defaults.has(uniform_name):
+			continue  # leg (a) has already reported it
+		var want: Array = BLOCK_IDENTITY_DEFAULTS[uniform_name]
+		var got := _glsl_default_value(defaults[uniform_name], String(declared[uniform_name]))
+		if got.is_empty():
+			problems.append("%s declares '%s = %s', which check 6 cannot read as a %s literal"
+					% [BLOCK_SHADER_PATH, uniform_name, defaults[uniform_name],
+							declared[uniform_name]])
+			continue
+		var same := got.size() == want.size()
+		if same:
+			for i in got.size():
+				if absf(got[i] - float(want[i])) > EPS:
+					same = false
+		if not same:
+			problems.append(("%s declares '%s = %s' but the IDENTITY is %s. "
+					% [BLOCK_SHADER_PATH, uniform_name, defaults[uniform_name], str(want)])
+					+ "That default is not a preference: it is the whole argument that adding "
+					+ "this uniform left every existing chunk batch rendering BIT-IDENTICALLY "
+					+ "(COLOR.rgb * 1.0, and (VERTEX.y - -0.5) / 1.0 = VERTEX.y + 0.5, both "
+					+ "exact in fp32). Change it and the world is re-shaded with nothing red")
+
+	# ---- c + d. what the SHARED material actually pushes ---------------------
+	# Scoped to _get_shared_block_material's own body: the other two consumers
+	# (fauna herds, crowd/traffic) bind their own spans deliberately, and
+	# crowd_selfcheck / traffic_selfcheck assert those against the mesh they draw.
+	# This leg is the chunk batch's alone.
+	# The "(" closes the PREFIX case: a plain name find would also match a
+	# `_get_shared_block_material_web` sibling and audit the wrong function's body.
+	var start := batch_text.find("static func _get_shared_block_material(")
+	if start < 0:
+		problems.append(("%s has no _get_shared_block_material() — check 6 cannot tell what "
+				% CHUNK_BATCH_SCRIPT) + "the shared material pushes")
+		return problems
+	var end := batch_text.find("\nstatic func ", start + 1)
+	if end < 0:
+		end = batch_text.length()
+	var push_re := RegEx.new()
+	push_re.compile("set_shader_parameter\\(\"(\\w+)\"")
+	var pushed: Dictionary = {}
+	for m: RegExMatch in push_re.search_all(batch_text.substr(start, end - start)):
+		pushed[m.get_string(1)] = true
+	if pushed.is_empty():
+		problems.append("_get_shared_block_material() pushes no shader parameter at all — "
+				+ "legs (c) and (d) would pass vacuously")
+
+	# c. the identity only holds while the chunk batch LEAVES THEM ALONE.
+	for uniform_name: String in BLOCK_IDENTITY_DEFAULTS:
+		if pushed.has(uniform_name):
+			problems.append(("_get_shared_block_material() pushes '%s'. " % uniform_name)
+					+ "The shared material must leave both identity uniforms at their declared "
+					+ "defaults — a pushed value is a SECOND place the world's shading is "
+					+ "decided, and the one the shader's header argues from would no longer be "
+					+ "the one that runs")
+
+	# d. a set_shader_parameter typo is SILENT in Godot: no error, no warning, the
+	# value simply goes nowhere and the uniform keeps its default. That is
+	# `block_roughness` quietly reverting to 0.85 with SHARED_BLOCK_ROUGHNESS
+	# still sitting in the source looking authoritative.
+	for uniform_name: String in pushed:
+		if not declared.has(uniform_name):
+			problems.append(("_get_shared_block_material() pushes '%s' but %s declares no such "
+					% [uniform_name, BLOCK_SHADER_PATH])
+					+ "uniform. Godot discards an unknown shader parameter SILENTLY, so the "
+					+ "constant beside that call reads as authoritative while the GPU goes on "
+					+ "using the shader's default")
+	return problems
+
+
+func _check_block_shader_uniforms() -> void:
+	"""
+	CHECK 6: every uniform world_block.gdshader declares is DEFAULTED, the two
+	IDENTITY defaults are exactly the identity, and the shared block material
+	pushes only uniforms that exist and neither of the two identities.
+
+	altitude_selfcheck's `alt_*` audit one shader along, and for the same reason:
+	the shader's header ARGUES its defaults are safe, and until this bead nothing
+	in the suite read them. Grep the glob before y1o.35 and no *_selfcheck.gd
+	mentions `bottom_shade`, `world_block` or `WORLD_BLOCK_SHADER` outside two
+	comments in this file.
+
+	FOUR NEGATIVE CONTROLS, one per leg, each driven on a MUTATED COPY of the
+	source through the same pure function the real text goes through. Each
+	mutation asserts it actually CHANGED the text first — a search string that
+	stopped matching would otherwise make its control pass by mutating nothing,
+	which is the exact failure a mutation control exists to be immune to.
+	"""
+	var shader_text := FileAccess.get_file_as_string(BLOCK_SHADER_PATH)
+	var batch_text := FileAccess.get_file_as_string(CHUNK_BATCH_SCRIPT)
+	if shader_text.is_empty() or batch_text.is_empty():
+		_fail("check 6 could not read %s (%d chars) / %s (%d chars)"
+				% [BLOCK_SHADER_PATH, shader_text.length(),
+						CHUNK_BATCH_SCRIPT, batch_text.length()])
+		Sentinel.done("block_shader_uniforms")
+		return
+
+	for problem: String in _block_shader_problems(shader_text, batch_text):
+		_fail(problem)
+
+	# [which leg, which text to mutate, the search string, its replacement]
+	var mutations: Array = [
+		["b (the identity default)", "shader",
+			"uniform vec4 albedo : source_color = vec4(1.0);",
+			"uniform vec4 albedo : source_color = vec4(1.0, 0.0, 0.0, 1.0);"],
+		["a (every uniform defaulted)", "shader",
+			"uniform vec2 height_range = vec2(-0.5, 0.5);",
+			"uniform vec2 height_range;"],
+		["c (the batch leaves the identities alone)", "batch",
+			"_shared_block_material.shader = WORLD_BLOCK_SHADER",
+			"_shared_block_material.shader = WORLD_BLOCK_SHADER\n\t\t"
+					+ "_shared_block_material.set_shader_parameter(\"albedo\", Color.RED)"],
+		["d (a pushed name the shader declares)", "batch",
+			"set_shader_parameter(\"block_roughness\"",
+			"set_shader_parameter(\"block_roughnes\""],
+	]
+	for row: Array in mutations:
+		var leg: String = row[0]
+		var mutated_shader := shader_text
+		var mutated_batch := batch_text
+		if String(row[1]) == "shader":
+			mutated_shader = shader_text.replace(String(row[2]), String(row[3]))
+		else:
+			mutated_batch = batch_text.replace(String(row[2]), String(row[3]))
+		if mutated_shader == shader_text and mutated_batch == batch_text:
+			_fail(("check 6's negative control for leg %s mutated NOTHING — its search string "
+					% leg)
+					+ "'%s' no longer appears in the source, so the control 'proved' the leg "
+							% row[2]
+					+ "bites by running it on the unmodified text")
+			continue
+		if _block_shader_problems(mutated_shader, mutated_batch).is_empty():
+			_fail(("check 6's leg %s did not fire on a source mutated to break it — " % leg)
+					+ "that leg passes vacuously")
+
+	# "declared", not "declared and defaulted": this counts DECLARATIONS. On a
+	# passing run leg (a) has already proved every one of them carries a default,
+	# but the number itself is the declared set and the line must say so.
+	#
+	# COVERAGE, stated rather than asserted: only the two IDENTITY defaults are
+	# value-checked. `bottom_shade` (0.78) and `block_roughness` (0.85) are checked
+	# for EXISTENCE alone, deliberately — the chunk batch pushes its own
+	# `BLOCK_BOTTOM_SHADE` (0.60) over the first, so binding the shader default to
+	# that constant would encode an equality the code does not claim, while the
+	# other two consumers (fauna, crowd/traffic) legitimately run the shader
+	# default. Those two numbers are art, not an identity argument.
+	var counter := RegEx.new()
+	counter.compile(UNIFORM_RE)
+	print("[batch] block shader: %d uniform(s) declared, %d identity default(s) value-checked, %d negative control(s) fired"
+			% [counter.search_all(_strip_shader_comments(shader_text)).size(),
+					BLOCK_IDENTITY_DEFAULTS.size(),
+					mutations.size()])
+	Sentinel.done("block_shader_uniforms")

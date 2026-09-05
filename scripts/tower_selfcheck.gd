@@ -624,8 +624,10 @@ func _check_spines_at_the_readiness_floor() -> void:
 	Check 3. Each hero's rescue spine is a real path, and he can walk it ALONE at
 	the rank budget the authored beat guarantees.
 
-	THE RANK BUDGET IS THE POINT. Systemic capture arms only after the beat, so the
-	beat's readiness floor IS the spine's budget — and it is read out of
+	THE RANK BUDGET IS THE POINT. Since capture stopped waiting for the beat (owner
+	ruling 2026-09-05, bead godot-test1-bxx) a hero can be in a cell before it has
+	been walked, so the beat's readiness floor is a CEILING on what a spine may
+	assume — and it is read out of
 	`readiness_floor` rather than restated here, so the day somebody authors a beat
 	that grants less, this fails instead of the player's save quietly becoming
 	unfinishable. Current-save ranks are the wrong budget for the same reason a

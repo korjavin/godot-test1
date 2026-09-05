@@ -75,10 +75,11 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            the PER-BIOME DRAW-CALL BILL, iterating the Biome
 #                            enum over both shipped field spawners: one node per
 #                            kind PRESENT and never more than that biome's
-#                            KIND_CAP_BY_NAME row (forest 3 — cubes, SPHERE
-#                            canopies and ROCK boulders; every other band 2),
-#                            with the SHARE of chunks paying printed beside the
-#                            worst case
+#                            KIND_CAP_BY_NAME row (desert 4 — its oasis adds
+#                            CYLINDER palms and CONE fronds to the ROCK it
+#                            already had; forest 3 — cubes, SPHERE canopies and
+#                            ROCK boulders; every other band 2), with the SHARE
+#                            of chunks paying printed beside the worst case
 #   fauna_selfcheck          herd steering + rider carry, plus row 6 the MP
 #                            REPLAY: one seed gives two byte-identical builds, a
 #                            joiner is snapped onto the live sample, a replay
@@ -114,7 +115,17 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            plus `hermetic_stores`: every `*_selfcheck.gd` in the
 #                            glob opens `Sentinel.isolate_user_state()` and names
 #                            no real `user://` path
-#   wade_selfcheck           river wading (player, croc, boss)
+#   wade_selfcheck           river wading (player, croc, boss) — plus the DEEP
+#                            CHANNEL (bd godot-test1-06o.3): check 8 the rule on
+#                            the real field (the strip inside the band, the outer
+#                            band free, Y-aware, the push climbing OUT, the
+#                            Danube's centre impassable, every authored deck dry
+#                            above and wet below, Margaret Island dry), check 9
+#                            the SOFTLOCK GATE (20 seeds of road plus the T ->
+#                            gate corridor: every crossing bridged or forded),
+#                            check 10 a REAL player.tscn walked into a REAL
+#                            channel and held out, with the seam switched off as
+#                            the mutation control
 #   field_bridge_selfcheck   FIELD BRIDGES where the road crosses a river: every
 #                            crossing under the span cap bridged exactly once
 #                            over 12 seeds (with the lake case counted), the
@@ -241,14 +252,31 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            glob BY FILE); the two stay bound through
 #                            enemy_spawn's PROBED_BEHAVIORS, which fails BY NAME
 #                            a `behavior` string with no probe here
-#   boss_selfcheck           EVERY BIOME_BOSS kind: the territory leash (hunts
-#                            inside, never leaves), crush immunity is an
-#                            ORDERING, the row's boss speed is the one resolved,
-#                            and a ranged boss really fires — only in its band,
-#                            on its cooldown, inside its area, while chasing.
-#                            Plus check 8: EVERY SPECIES row through the
-#                            stink_immune / crush_immune guards, animals as the
-#                            negative control
+#   boss_selfcheck           EVERY BIOME_BOSS kind, driven through the shared
+#                            harness `scripts/boss_probe.gd`: the const chain,
+#                            the territory SEAM at both ends of the boundary,
+#                            that a boss HUNTS inside its area, the row's boss
+#                            speed is the one resolved, the animated model stays
+#                            RIGID mid-chase and the capsule fits the spawner's
+#                            clearance. FOUR SIBLINGS carry the rest, split from
+#                            it by bd godot-test1-ftn.24 (CI shards the glob BY
+#                            FILE and this was 181 s of a 505 s suite — every
+#                            phase is wall clock, `await physics_frame` at the
+#                            real 60 Hz):
+#   boss_leash_selfcheck     the fence chase and THE LEASH — one state chain, so
+#                            one file, and the heaviest of the five
+#   boss_wander_selfcheck    it still WANDERS, contained, after disengaging (the
+#                            leash's negative control; the only check that
+#                            exercises the steer and the clamp at all)
+#   boss_arms_selfcheck      what a boss kind ADDS: a ranged boss really fires —
+#                            only in its band, on its cooldown, inside its area,
+#                            while chasing — and a leaping one really leaves the
+#                            ground, lands, hops on a clock and cannot bound
+#                            over its own fence
+#   boss_immunity_selfcheck  crush immunity is an ORDERING, with a non-boss
+#                            control; plus check 8: EVERY SPECIES row through
+#                            the stink_immune / crush_immune guards, animals as
+#                            the negative control
 #   projectile_selfcheck     boss projectiles: the per-style FAIRNESS contract
 #                            (a walking player always clears it; nothing outruns
 #                            a fleeing one), straight + lob flight, both dodge
@@ -389,11 +417,16 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            check 21c ALONE, and alone because it is a minute: the
 #                            cell block's guard walks 60 m of route to a plate, holds
 #                            facing it, and walks off again. Same split
-#   capture_selfcheck        SYSTEMIC CAPTURE and the tower guard's stake: the
-#                            arming gate (pre/post the
-#                            authored beat), attribution (every `captures_hero`
+#   capture_selfcheck        SYSTEMIC CAPTURE and the tower guard's stake: that
+#                            there is NO arming gate (a FRESH profile arrests, the
+#                            beat changes nothing, and `_capture_is_armed` is gone
+#                            by name), attribution (every `captures_hero`
 #                            row takes one, animals and row-less hazards none),
-#                            the guard's arrest in place vs its PRE-BEAT
+#                            THE CAPTION either path draws on a real
+#                            `respawn_label` Label ("Caught!" for the arrest,
+#                            "Robbed!" for the bite, each asserting the OTHER
+#                            sentence is absent so a swap fails twice),
+#                            the guard's arrest in place vs the ordinary predator's
 #                            setback+knockback, invulnerability covering the hero too, the
 #                            clean auto-switch, liberation, the empty-roster game
 #                            over as the ONLY game over there is, that the set
@@ -448,7 +481,7 @@ before `locale_selfcheck`** — otherwise it reports the stale imported table.
 The lobby in `server/` is a separate Go service with its own `go test` suite.
 
 3D character models are **generated by Python** (`python3 scripts/generate_*.py`, needs
-the PINNED `trimesh` + `numpy` of `scripts/requirements.txt` — CI compares the rebuilt
+the PINNED toolchain of `scripts/requirements.txt` — CI compares the rebuilt
 `.glb` bytes against the committed ones, so an unpinned install is a red build, not a
 convenience), output to `assets/models/characters/`. The live Windman is the
 separate parts in `windman_parts/`, assembled by `scenes/characters/windman_updated.tscn`
@@ -468,15 +501,34 @@ seam could rot is the only one CI's staleness gate cannot see.
 
 **A FOURTH CONTRACT, AND IT IS A PROPERTY OF THE EXPORT RATHER THAN OF THE SHAPE**
 (bead `godot-test1-y1o.20`, epic `y1o`'s style A): `export_faceted()` is the ONE
-seam every enemy `.glb` is written through, and it unmerges the mesh (per-face
-vertices, face count untouched) before asking for normals — trimesh writes no
+seam every `.glb` THE BUILD SHIPS is written through — the dead `windman.glb` is
+the one exception and is still unfaceted — and it unmerges the mesh
+(per-face vertices, face count untouched) before asking for normals — trimesh writes no
 NORMAL attribute unless asked and Godot generates none on import, so the cast
 used to render with a constant normal and no facet caught the key light; asking
 without unmerging would instead have Gouraud-rounded every block. It computes the
 normals BY HAND off the float32 positions, because `mesh.vertex_normals` weights
 by `arccos` and rotated parts come out of `sin`/`cos` — libm is not bit-identical
 across platforms, and CI byte-compares the rebuild. Read the docstring before
-touching it. Two of its primitives are
+touching it.
+
+**THE FOUR HEROES ARE ON IT TOO** (bead `godot-test1-y1o.21`, owner ruling
+2026-09-05 asked whether to facet the heroes as well: *"all"*). The four
+`generate_*_separate.py` import `export_faceted` from the predator toolkit — the
+function is the whole cast's, not the predators', and a module for one function
+is a file to keep in step for no gain. They owe none of the three contracts above
+and gain none by importing it; vertex colours, part names and the
+`Body` / `LeftArm` / `RightArm` / `LeftLeg` / `RightLeg` node-name animation
+contract are untouched. **They are NOT in `predator_parts.py`'s loop**, and that
+is deliberate: Primm's trim and Windman's emblem are `extrude_polygon`, so they
+need `shapely` + `mapbox-earcut` (pinned beside trimesh), and folding them in
+would make the documented predator rebuild hard-fail for anyone without them. CI
+runs them as their own `build.yml` step instead; the staleness gate below already
+globs the whole of `assets/models/characters`, `*_parts/` included, so it covers
+them with no edit. The monolithic `windman.glb` and its two generators are DEAD
+ART and deliberately untouched — bead `godot-test1-y1o.19`'s.
+
+Two of `predator_parts`' primitives are
 composed INTO models rather than being models — `wings()` (the winged bosses' folded
 silhouette; they hop, nothing in this game flies) and `necks()` (a fan of necks and
 heads off ONE point on the spine, the multi-head capability the hydra spends) — so each
@@ -537,6 +589,48 @@ Load-bearing rules:
   and `landmark_builders`' contract are what those two buy; every other caller (the city
   streamer, `budapest_selfcheck`) reaches `ChunkBatch` directly. **New batch machinery
   lands there, not in the world engine.**
+- **THE THEMED SCATTERED PROPS ARE `scripts/terrain_props.gd`** (`class_name TerrainProps`,
+  all static, bd `godot-test1-ftn.2`) — `build_prop`'s biome dispatch, the seventeen
+  `_prop_*` builders and the family's whole constant banner, in `landmark_builders.gd`'s
+  idiom (`terrain: Node3D` first, `terrain.create_box` back through the reference).
+  `endless_terrain.gd` keeps the SCATTER LOOP — where a prop goes, its spacing, its river
+  skip and its `obstacles` append — and **const-aliases all 29 names back**
+  (`const PROP_MAX_STEP := TerrainProps.PROP_MAX_STEP`, the `species_table.gd` precedent),
+  because every territory palette is shared with the feature structures and the biome
+  content and `PROP_MAX_STEP` is read as far away as `budapest_plan.gd`. The two dynamic
+  callers (`prop_selfcheck`'s `BUILDERS` table) go through a `preload`ed SCRIPT OBJECT, not
+  the class — `TerrainProps.call(...)` is a parse error, the trap `_landmark_builders`
+  already documents.
+- **THE FEATURE STRUCTURES ARE `scripts/terrain_structures.gd`** (`class_name
+  TerrainStructures`, all static, bd `godot-test1-ftn.3`) — `spawn_feature_structure`'s
+  per-territory role pick, the four role builders (mound / gate / corridor / wall),
+  `_structure_chance_at`, `_structure_stone` and the `STRUCT_GATE_*` / `MOUND_*` knobs,
+  in `terrain_props.gd`'s idiom. **`STRUCTURE_MIX` and `STRUCTURE_THEMES` stayed in
+  `endless_terrain.gd`** and that is a hard constraint rather than taste: they are keyed by
+  `Biome`, an enum declared there, and a `const` in another script cannot name it
+  (`terrain.Biome.X` resolves on an INSTANCE, which no const initialiser has). **Nothing
+  else is aliased back** — measured: the seven knobs are read only by the builders that
+  moved with them, which is why this is a smaller re-export than ftn.2's. **The territory
+  palettes did NOT move again**: they are `TerrainProps`' since ftn.2 and the one table
+  naming them stayed put, so a third "shared colours" file would be a file to keep in step
+  for no behavioural gain — revisit only if a THIRD family needs them.
+- **THE PRIVATE-STREAM FEATURES ARE `scripts/terrain_features.gd`** (`class_name
+  TerrainFeatures`, all static, bd `godot-test1-ftn.4`) — lost-civilization ARTIFACTS,
+  nomad CAMPS and treasure CHESTS, each with its own salt and coordinate primes beside
+  the code. They are one family because **none of them draws from the shared chunk
+  stream**: each is placed by its own `_x_at(chunk_pos)` rarity function on its own hash
+  stream. `endless_terrain.gd` keeps **three one-line forwarders** for
+  `spawn_artifact_in_chunk` / `spawn_camp_in_chunk` / `spawn_chest_in_chunk` — the
+  `create_box` precedent, because `terrain.spawn_*_in_chunk(...)` is what
+  `budapest_selfcheck`'s twelve call sites and `create_chunk`'s call-order list are
+  written against — plus **seventeen const aliases**, measured: the three `*_SALT`s are
+  read by `landmark_builders.gd` and `landmark_toast.gd` and the `CHEST_*` payouts by
+  `treasure_chest.gd` and `mp_manager.gd`, while the other fifty-nine constants are read
+  nowhere but the builders that moved. **`_spawn_artifact_accent` and
+  `_get_camp_ember_material` stayed** — they are node/material work that
+  `landmark_builders.gd` already calls through the terrain reference. **The GEO-LANDMARK
+  spawner did NOT move**: its site table is `run_seed`-memoized INSTANCE state that
+  `_drop_seeded_memos()` owns (bd `bvq`), so it stays with the memo.
 - **A BOX HAS A MESH KIND, AND EVERY UNIT MESH FITS THE UNIT CUBE** (bead
   `godot-test1-y1o.1`, epic `y1o` "get rid of blocks"). The batch entry is
   `{transform, color, kind}` — `ChunkBatch.BoxKind` (CUBE / SPHERE / CONE / CYLINDER /
@@ -586,15 +680,39 @@ Load-bearing rules:
   the **cairn's tiers stay CUBE** (a cairn IS stacked flat stones) and only its loose
   foot stones are rocks. `prop_selfcheck` check 11 reads `BUILDER_KINDS` BOTH ways, so
   a revert to CUBE is a red build.
+  **THE DESERT IS THE THIRD** (bead `godot-test1-y1o.4`): cactus segments and their
+  ARMS plus the oasis palm TRUNKS are `BoxKind.CYLINDER`, and the palm FRONDS are
+  `BoxKind.CONE`, tip out. Two of those needed the LOCAL-Y problem solved — the unit
+  cylinder and cone both taper/extend along local Y, while an arm's length was on
+  local X and a frond's on local Z, so each swaps its dimensions into the Y slot and
+  gains a quarter turn of tilt. Both are DERIVED from numbers already drawn (bead
+  y1o.2's canopy rule), so **not one RNG draw moved and not one footprint changed**;
+  what does change is those entries' dimensions and, for the near-cubic-in-plan
+  segments and trunks, their collider — `collision_shape_for` now gives them a real
+  `CylinderShape3D`, which is the honest shape for a round trunk, leaves the shape
+  COUNT untouched and can only ever un-block a spot (the cactus and palm footprints
+  are both non-climbable, so nothing stands on the difference).
+  **THE DUNES STAYED CUBE, and that is a measured refusal, not an omission.** The bead
+  offered the lower tier a flattened SPHERE *if* the top tier kept its cube flat top;
+  the gameplay half passed, it was built and rendered, and a tier 6-12 m wide and
+  under 0.8 m tall makes a LENS the square top tier visibly overhangs. The picture is
+  written up in `_spawn_desert_dunes`' docstring and `prop_selfcheck` check 11 fails
+  any non-CUBE dune tier so the refusal cannot be quietly undone.
   **THE BILL IS NO LONGER "NOTHING ELSE COSTS ANYTHING", AND THE FREQUENCY IS THE
   NUMBER THAT MATTERS.** `batch_selfcheck` check 5 is now one node per kind PRESENT
-  against `KIND_CAP_BY_NAME` (forest 3, every other band 2) and prints the SHARE of
+  against `KIND_CAP_BY_NAME` (desert 4, forest 3, every other band 2) and prints the SHARE of
   chunks paying beside the worst case: measured at bead y1o.3, **89% of stone-bearing
   field chunks gained a block draw call** and the field's total went 709 -> 1262
   (+78%), ~56 -> ~100 in the web build's 49-chunk residency. The CITY band's cap is 2
   even though no city builder draws a rock, because `_build_prop` themes per PROP
   POSITION rather than per chunk centre — a city chunk on a plains edge grows a plains
-  boulder. **A new consumer is a named bead judged BY EYE by the owner** — the epic's
+  boulder. **The DESERT's cap is 4 and it is the one row past the epic's "+2"** — bead
+  y1o.4's own budget was written before its dependency y1o.3 gave the band a ROCK, and
+  the fourth bucket is the CONE fronds, which appear in the OASIS and nowhere else:
+  measured over 2,814 stone-bearing desert chunks, 3.9% carry four and 20.9% three.
+  The one-line way back under three (fronds share the trunks' CYLINDER, losing their
+  taper) is written at `KIND_CAP_BY_NAME` and is an owner's call about a picture.
+  **A new consumer is a named bead judged BY EYE by the owner** — the epic's
   rule — plus whatever that check-5 bill has to become.
 - **Chunk-parented, so unloading frees it.** Anything spawned per-chunk parents to the
   chunk MeshInstance3D or it leaks.
@@ -832,8 +950,34 @@ lifted out of it whole** by bd `godot-test1-ftn.12` and neither may drift back:
 dressers) and `scripts/tower_dossiers.gd` (`TowerDossiers` — the evidence dossiers).
 Both are static libraries in `landmark_builders.gd`'s idiom, reaching back into
 `TowerInterior` for the plan-grid readers and the palette; that direction is one-way and
-`plan_boxes()` is the single seam the dressing enters through. Four rules of its
-own, all pinned by `tower_interior_selfcheck`:
+`plan_boxes()` is the single seam the dressing enters through. **A THIRD family went the
+same way** (bd `godot-test1-ftn.19`): `scripts/tower_plan_boxes.gd` (`TowerPlanBoxes`) is
+the plan walker and the geometry banner it reads — `plan_boxes` / `all_boxes` /
+`_merge_walls` / the `plan_route` BFS, plus `FLOOR_Y`, `SLAB_*`, `PLAN_RAMP_MAX_SLOPE` and
+the two budgets — with `TowerInterior` keeping a `const` alias or a one-line static
+forwarder for every name anything calls, so its forty-four `FLOOR_Y` readers and
+thirty-seven `_grid_x`/`_grid_z` readers were untouched by the move. **The const
+direction is ONE WAY** (`TowerInterior` → `TowerPlanBoxes`); the reach back for the
+palette and the set-piece builders is only ever inside a function body, which is the same
+shape as the dressing above and the only reason neither pair is a parse-time cycle. **A
+FOURTH is `scripts/tower_guards.gd`** (`TowerGuards`, bd `godot-test1-ftn.20`) — the posts,
+the beat, the scene and the free-and-rebuild, with the three population rulings written
+where they are enforced; `TowerInterior` const-aliases `GUARD_SPECIES` and its three
+siblings and forwards five calls, so `enemy_spawn_selfcheck`'s FOURTH-DOOR gate and every
+guard check are untouched. **Its two `interior` parameters are deliberately UNTYPED**, and
+that is the rule the pair teaches: a type annotation is a parse-time reference exactly like
+a `const`, so a file that is BOTH handed the node AND const-aliased from it can annotate
+neither. `TowerDressing` and `TowerDossiers` may type theirs only because nothing on the
+interior points back at them with a `const`. **And a FIFTH is
+`scripts/tower_gates.gd`** (`TowerGates`, bd `godot-test1-ftn.21`) — where a gate is,
+what it looks like and where you stand to work it: `gate_slots` / `_plan_gates`, the
+riddle banner and `clue_strip`, the gate and doorway rect readers, the three stands and
+the demand/checkpoint box builders. **The gate RUNTIME did not move** — the dozen
+per-gate dictionaries, `_tick_gates` and its `_place_*` writers, and above all
+`_apply_opened()`, the one place state becomes geometry — because all of it writes
+instance state and none of it is a function of the plan alone. It needs no interior at
+all, so it pays nothing for the cycle rule. Four
+rules of its own, all pinned by `tower_interior_selfcheck`:
 
 - **No interior traversal may demand a jump-height.** The base apex (3.6125 m) is what
   mountain impassability rests on, so a storey you can jump onto is a bug the day
@@ -871,7 +1015,7 @@ own, all pinned by `tower_interior_selfcheck`:
   turns a room you were meant to time and walk past into a chase; the count is asserted
   off the BODIES in the tree, never off the table. **Losing to one is an ARREST** (owner ruling 2026-09-01, bead
   `godot-test1-3iy.19`, superseding the third stake): to the player the thing that
-  grabbed them in the HQ is a hunter — it is the same chassis — so a post-beat
+  grabbed them in the HQ is a hunter — it is the same chassis — so a
   guard grab imprisons the hero exactly like a field grab, through the `captures_hero`
   ROW KEY the two GD-SURVEY rows share (`behavior` stays `"solo"`: behaviour is
   STEERING, and a sentry must not have the hunt arm's nose or its director seams).
@@ -880,14 +1024,17 @@ own, all pinned by `tower_interior_selfcheck`:
   contacts that arrest**, latched in `hit_by_crocodile()` (`caught_captured`) and
   read in `_pay_coin_setback()`, because the ruling's second half is that the
   surviving heroes carry on from where the party fell. It still catches every other
-  way to lose indoors — a PRE-BEAT guard, the press, an animal that
+  way to lose indoors — the press, a boss projectile, an animal that
   followed you in — and it is the building's, not the row's
   (`_pay_coin_setback()` relocates whoever bit you, gated on
   `TowerInterior.inside_walls()` — the group ANSWERING is not the test, because the
-  shell streams in at 360 m and is never freed again). The arming gate is
-  unchanged and is REQUIRED here: the authored Primm rescue is a room in this
-  building, so pre-beat a guard is byte-for-byte today's setback-plus-knockback or a
-  tutorial visit could strip the roster. An arrest ends a run only by being the
+  shell streams in at 360 m and is never freed again). **The arming gate that used to
+  exempt a guard met before the authored rescue is GONE** (owner ruling 2026-09-05,
+  bead `godot-test1-bxx`): every guard grab is an arrest, so a tutorial visit CAN now
+  cost a hero — accepted by the ruling — and `capture_selfcheck` check 11 measures the
+  guard arresting on a FRESH profile, with the two branches of the checkpoint knockback
+  driven on an ordinary predator instead, which is the body that still takes them.
+  An arrest ends a run only by being the
   FOURTH one — the empty free set is the game's one ending, raised where it lands.
   Guards stay in group
   `"crocodile"` (LOD sleep and the MP relay still want them) and refuse the Stink Wave
@@ -1141,27 +1288,65 @@ Don't simplify any line of it back to scalar arithmetic.
 **WADING IS Y-AWARE; THE BAND IS NOT** (bead `godot-test1-06o.2`). `is_river_at()` stays
 XZ-only — it is the band the shader paints, and the parity contract above is about it.
 Whether a *body* is in the water is the narrower question `is_wading_at(pos)` answers:
-`pos.y < WADE_SURFACE_MAX` (0.6 m) **and** `is_river_at`. That rule has ONE home and
+`pos.y < WADE_SURFACE_MAX` (0.6 m) **and** the band. That rule has ONE home and
 three callers — the player's `is_wading`, the remote avatar's sink, the crocodile's
 `_tick_river_sink` (plus the minimap's "in a river" readout) — because a fourth caller
-would be a fourth chance to forget the height. It needs **no shader edit**: the water is
-still painted under a bridge, which is correct.
+would be a fourth chance to forget the height. The water is still *painted* under a
+bridge, which is correct.
 
-**It does NOT close Budapest's "walk the river bed under a deck" gap, and the reason is one
-layer down**: inside the rect `is_river_at` delegates to `BudapestPlan.danube_wet()`, which
-already subtracts every `DRY_RECTS` row — so the bed under the four authored decks answers
-DRY before the height rule is ever asked, for players, avatars, crocodiles and the map
-alike. Closing it means asking the band WITHOUT the cutout on the low-Y path, and the
-cutout is shared with MARGARET ISLAND, which is dry LAND at y = 0 and must stay dry — so it
-is a bridge-rects-only exception, a Budapest behaviour change, and bead
-`godot-test1-06o.3`'s to make with the not-walkable ruling in hand.
+**AND THE MIDDLE OF EVERY RIVER IS NOT WALKABLE** (bead `godot-test1-06o.3`, owner
+ruling 2026-09-04 re-asked 2026-09-05: *"why rivers, and danube are still walkable? fix
+this"*). The inner `RIVER_DEEP_FRACTION` (0.4) of a band is a DEEP CHANNEL a body is
+pushed back out of; the outer band still wades at exactly today's numbers, so
+`WADE_SPEED_FACTOR` / `WADE_RUN_MIN_SPEED` and the catchable-walk chain are untouched.
+Four rules, all pinned by `wade_selfcheck` checks 8-10:
 
-**THE ROAD CROSSES A RIVER ON A BRIDGE, and that is what keeps a run crossable** when
-bead `godot-test1-06o.3` makes a channel not walkable. `spawn_field_bridges_in_chunk`
+- **ONE FIELD FOR BOTH RIVERS.** `river_depth_at()` normalises the noise contour and the
+  authored Danube to the same 0 (centreline) .. 1 (bank) number; `is_wading_at` is
+  `< 1.0` on it and `deep_channel_push()` is `< RIVER_DEEP_FRACTION` on it. The push
+  DIRECTION is finite-differenced off `_river_signed_raw` — the same field without the
+  absolute value and without the masks — because `river_depth_at` has a KINK on the
+  centreline that pointed 1% of pushes back into the water, and because a probe that
+  stepped onto the tower disc or Margaret Island would read a cliff. Two extra
+  evaluations, paid only by a body already inside a strip. The Danube is in scope by
+  name — its channel is impassable and the four authored decks are the crossing.
+- **THE ROAD IS THE WAY THROUGH, and `_deep_channel_ford` is the one exemption.** A road
+  crossing the field bridges REFUSED (past `FIELD_BRIDGE_MAX_SPAN` of walked water)
+  keeps a road-width ford through the strip, because walling it would softlock the road
+  it stands on. Two wrong answers are recorded at the function: a WIDTH THRESHOLD (the
+  cap counts the water the road WALKS, and a band crossed at an angle walks more of it
+  than it is wide — one blocked crossing in 39), and `field_bridge_at(k0).is_empty()`,
+  which is `{}` for three reasons and only two of them mean unbridged (a MERGED deck's
+  row belongs to its western anchor, and two of its returns are un-memoized "the cache
+  is short right now"). It asks `field_bridge_surface_y` — is there STONE here — which
+  is the query `wade_selfcheck` check 9 itself uses.
+- **A CHANNEL CAN BE JUMPED, and that is a measured ceiling rather than a hole.** The
+  push is the player's STEP 8.5, gated on `is_wading`, so an airborne body is never
+  pushed — deliberately, since flying over the band always was legal. A typical field
+  river's strip is ~4.8 m across (median over 178 samples; p90 11 m) against a ~9.6 m
+  wading jump, so an ordinary Space press clears the median river; the Danube's 96 m
+  channel and the wide bands do not budge. Closing it means pushing an airborne body,
+  which is an invisible air wall and needs an owner ruling.
+- **`is_river_at` DID NOT MOVE.** The band is still XZ-only and still subtracts every
+  `DRY_RECTS` row, so the shader, every spawner and the minimap see exactly what they
+  saw. The shader gained one smoothstep and one mix — the strip painted darker off the
+  same normalised depth, in both languages — and deliberately does NOT run the ford
+  exemption (a station search per fragment for a gap at one crossing in 39).
+- **BUDAPEST'S UNDER-DECK GAP IS CLOSED, bridge-rects-only.** The low-Y path subtracts
+  only the `DRY_RECTS` rows that are dry LAND (`BudapestPlan.is_dry_land`, read off
+  `BRIDGES` so "which rows are decks" is never a second list): at y = 0 under an
+  authored deck you are in the Danube, at deck height you are not, and MARGARET ISLAND
+  keeps its cutout because it is land. `budapest_city_selfcheck` check 14 is unmoved —
+  it asks `is_river_at`.
+
+**THE ROAD CROSSES A RIVER ON A BRIDGE, and that is what keeps a run crossable** now
+that bead `godot-test1-06o.3` has made the channel not walkable.
+`spawn_field_bridges_in_chunk`
 builds one low stone footbridge per road river crossing — the anchor is the station that
 ENTERS the water (wet here, dry behind), so "one bridge per crossing" is a definition and
 not a de-duplication pass; the span walks forward to the far bank and refuses past
-`FIELD_BRIDGE_MAX_SPAN` (a lake, which wades and is 06o.3's problem). Five rules:
+`FIELD_BRIDGE_MAX_SPAN` (a lake, which wades — and which `_deep_channel_ford` therefore
+leaves a road-width gap in the deep channel for). Five rules:
 **zero RNG** (the site is the road's centreline plus the river field, both pure; the boxes
 come off a private fixed-seed stream), so the A/B proves every other spawner is
 byte-identical; **no `obstacles` footprint** — a bridge is meant to be walked, and a
@@ -1283,7 +1468,21 @@ Transient ability state is cleared on respawn and on character switch, so a powe
 bleeds across a death or a swap.
 
 ### Per-character special abilities (F)
-All in `player_controller.gd`; `try_activate_ability()` dispatches on character name and
+**The ARMS live in `scripts/player_abilities.gd`** (`class_name PlayerAbilities`, bd
+`godot-test1-ftn.15`) — `player_animation.gd`'s `RefCounted`-holding-the-player idiom one
+concern along, created in `_init()` and handed `self`. The ability constant banner moved
+with them and is **aliased back** on the player (`const TEIBI_SCALE_BIG :=
+PlayerAbilities.TEIBI_SCALE_BIG`), so every outside reader is untouched. Two things
+deliberately stayed: the ability **STATE VARS** (`ability_cooldowns`, the two Windman
+timers, `teibi_size_state` / `teibi_form_timer` / `is_giant`, …), because `mp_manager`'s
+`ab` presence bits, the HUD getters, `player_animation` and four self-checks bind them on
+the NODE; and **every function NAME**, as a one-line forwarder — the "player" group answers
+to one node, and `ability_hud.gd`, `mp_manager.gd`, `tower_interior.gd`,
+`player_animation.gd`, `coin.gd` and six self-checks call these names on it. `WINDMAN_AIR_SPEED`
+is the one const that could not move: it is `WALK_SPEED * 5.0`, and a `preload` back would
+be the cycle.
+
+All dispatched from `player_controller.gd`; `try_activate_ability()` dispatches on character name and
 every ability is gated by a per-character cooldown. windman → Air Rush (fly fast, softened
 gravity); primm → Phase Step (blink that scans outward for a spot the body fits, so it can
 never land inside geometry); teibi → Resize (small/giant, auto-reverts on a timer, giant
@@ -1327,6 +1526,28 @@ var assigned **before `add_child`** (same call-order contract as `setup_as_boss(
 a new entry there plus at most one new arm in a `match` — never a new script and never a
 subclass. Game-wide contracts stay top-level consts and no species may opt out of them.
 
+**WHAT EACH BAND IS MADE OF IS `scripts/terrain_biomes.gd`** (`class_name
+TerrainBiomes`, all static, bd `godot-test1-ftn.5`) — the eight `_spawn_*_content`
+builders, the oasis and dune site rolls, `_snow_mammoth`, and `_biome_spot_ok`, which
+stays ONE function because it is the single home of the river / road-clearance / overlap
+rule every builder places through. **The biome FIELD did not move**: `_biome_noise`,
+`biome_at`, `is_river_at` and the `Biome` enum stay on `endless_terrain.gd` (the noise is
+half the CPU/GPU parity contract, and the enum cannot leave a file whose const
+Dictionaries are keyed by it). Its ~160 TUNING CONSTANTS also stayed, read as
+`terrain.CACTUS_WIDTH_MAX` — they are a dozen themed banners interleaved with non-biome
+siblings, and cutting them out is its own mechanical pass.
+
+**EVERY PREDATOR SPAWNER IS `scripts/terrain_predators.gd`** (`class_name
+TerrainPredators`, all static, bd `godot-test1-ftn.6`) — the chunk's crocodiles, the
+Danube's, the hunters, a platform's guards and the road's bosses, with `HUNTER_SALT` /
+`DANUBE_SALT` / `CROC_ROLL_SALT` and their coordinate primes beside the loops that spend
+them (all const-aliased back, so every reader of the terrain's constant map is
+untouched). It RECEIVES the terrain and calls `terrain.biome_at` / `terrain.is_river_at`
+back through it; `create_chunk` calls the library directly and every other caller keeps a
+one-line forwarder on the terrain (`create_box`'s precedent). **`BIOME_SPECIES` and
+`BIOME_BOSS` stayed on `endless_terrain.gd`**, because a `const` Dictionary keyed by its
+`Biome` enum cannot be declared in a file that cannot reach the enum.
+
 **Which species a chunk spawns is PURE DISPATCH on `biome_at(chunk_centre)`** —
 `BIOME_SPECIES` in `endless_terrain.gd`, a biome with no entry getting the crocodile.
 It must never cost an RNG draw: the chunk's crocodile RNG is one shared stream, so a
@@ -1364,6 +1585,17 @@ ring around the quarry, derived from its own deterministic id, so the pack surro
 no coordinator, no registry and no group scan — which is also what makes it LOD-safe (a
 slept wolf corrupts nothing, a waking one recomputes with no lurch).
 
+**WHERE A UNIT AIMS IS `scripts/croc_steering.gd`; WHAT IT DOES ABOUT IT IS THE ARM.**
+`CrocSteering` (all static, bd `godot-test1-ftn.16`) holds the eight PURE functions —
+`hunt_steer_point`, `charge_steer_point`, `pack_steer_point`, `ranged_shot_due`,
+`leap_airtime` / `leap_reach` / `leap_due`, `burst_cycle_factor` — each taking its quarry,
+position, lock Dictionary and `SPECIES` row explicitly and answering a point, a number or
+a bool. That purity is what lets `enemy_behavior_selfcheck` measure the pack surround, the
+charge sidestep and both races with no body in the tree, so **keep them pure**. The
+`_behave_*` arms stay on the body with the dozen instance vars they drive, and
+`PACK_FLANK_TAPER` moved with the one function that reads it (aliased back, so
+`get_script_constant_map()` still answers).
+
 Per-instance speed and size rolls are **not** deterministic (they use a `randomize()`d
 RNG); only *positions* are. Bosses skip both rolls — `setup_as_boss()` must be called
 **before** `add_child`, because `_ready()` is where the rolls happen.
@@ -1377,7 +1609,7 @@ ORDERING (the `is_boss` early return in `_on_player_collision` sits above the gi
 crush block; swap them and Teibi one-shots the boss with no error anywhere). The territory
 is deliberately ONE queryable seam — `home_position` + `territory_radius()` +
 `in_territory()` — because the owner intends the zone to grow gameplay later; `is_boss` is
-never a bare radius comparison. `boss_selfcheck` pins both.
+never a bare radius comparison. The `boss_*_selfcheck` family pins both.
 
 **Which boss kind a road station gets is its own dispatch, `BIOME_BOSS`** — same shape and
 same no-RNG-draw rule as `BIOME_SPECIES`, but keyed on the **owning station's centre**
@@ -1386,8 +1618,8 @@ and has no chunk centre. It is now **TOTAL over the `Biome` enum** — SNOW → 
 FOREST → green dragon, PLAINS → hydra, DESERT → naga, MOUNTAIN → roc, CITY → ice cream
 clown — which leaves the crocodile as a boss on exactly two paths: a station standing in
 a **river**, and the degrade path for a row that fails to resolve. Both stay measured
-(`enemy_spawn_selfcheck` fails if its road walk never crosses water; `boss_selfcheck`
-drives the crocodile as a subject beside every `BIOME_BOSS` kind). The
+(`enemy_spawn_selfcheck` fails if its road walk never crosses water; the boss checks
+drive the crocodile as a subject beside every `BIOME_BOSS` kind). The
 row is resolved *above* the candidate walk so the kind stays a pure function of the boss
 index. Adding a boss is a `SPECIES` row, a `.tscn`, and one line there —
 `enemy_spawn_selfcheck` check 11 walks the road, asks the rule at every station, fails a
@@ -1412,7 +1644,7 @@ speed entirely and takes `BOSS_CHASE_SPEED` unless the row opts out with
 feet — the titan and the ice cream clown, both of them archers a walking player must be
 able to stroll away from. The exemption is paid for, not free: `enemy_behavior_selfcheck`'s ranged probe
 *asserts* every `"ranged"` row's speeds are sub-walk, and `boss_selfcheck` — which runs
-every check over every `BIOME_BOSS` kind, not just the crocodile — asserts the body really
+over every `BIOME_BOSS` kind, not just the crocodile — asserts the body really
 resolved the speed its row asked for.
 
 **The GD-SURVEY hunter robot is dispatched on nothing.** The
@@ -1445,8 +1677,8 @@ giant Teibi's squash block is skipped and the body takes the ordinary bite path)
 adds `fears_giant_radius` (14 m; owner ruling 2026-09-04, bead `godot-test1-upu`: giant Teibi
 scares hunters away instead of crushing them). These are `spec.get(key, default)` reads
 placed beside the existing `is_boss` guards — never a species-name test — so the next
-armoured or airtight predator opts in with a row edit and no code change. `boss_selfcheck`
-check 8 drives **every** row through both real paths and giant fear, which makes the animal
+armoured or airtight predator opts in with a row edit and no code change.
+`boss_immunity_selfcheck` check 8 drives **every** row through both real paths and giant fear, which makes the animal
 rows the negative control and anchors the crocodile by name against a stray key.
 
 **The tower guard is the FOURTH door, and it is not in `endless_terrain` at all.** It is
@@ -1559,9 +1791,9 @@ Hunters are in group `"crocodile"`, so **the \fo overlay's "Crocs (active/total)
 means predators + hunters** — which is exactly what the LOD manager manages.
 
 ### Systemic capture — a GD-SURVEY machine takes the HERO
-A post-beat grab by a predator whose `SPECIES` row carries `captures_hero` puts the
+A grab by a predator whose `SPECIES` row carries `captures_hero` puts the
 ACTIVE hero in `player_controller`'s `captive_heroes` and steps into the next free
-one. **It is a ROW KEY, not the `"hunt"` behaviour** (bead `godot-test1-3iy.19`):
+one, from the first second of a run. **It is a ROW KEY, not the `"hunt"` behaviour** (bead `godot-test1-3iy.19`):
 the field's retrieval unit and the HQ's sentry both arrest, and only the first is on
 that arm — behaviour is steering, and the guard's patrol is `set_confinement()`.
 Four rules:
@@ -1571,9 +1803,18 @@ Four rules:
   intersection there. There is no second roster system, and there may not be one.
 - **The auto-switch goes through `set_active_character()`**, never the R-cycle: that is where
   `_reset_ability_states()` lives, and the cycle refuses a press mid-Air-Rush anyway.
-- **It arms only after the authored Primm rescue** (`TowerInterior.RESCUE_DONE` in the stored
-  tower set) — the beat is where the rule is taught. Before it, a grab is an ordinary bite.
-  That gate is load-bearing for the guard, not incidental: the beat happens INSIDE the HQ.
+- **THERE IS NO ARMING GATE — the arrest is live from the first second of a run**
+  (owner ruling 2026-09-05, bead `godot-test1-bxx`, verbatim *"yes, from start"*,
+  answering whether to redo the beat or drop the sequencing). It used to arm only after
+  the authored Primm rescue (`TowerInterior.RESCUE_DONE` in the stored tower set, bead
+  `godot-test1-3iy.9`); `_capture_is_armed()` is gone and `hit_by_crocodile()`'s test is
+  the row key alone. **Two consequences, both accepted by the ruling**: a tutorial visit
+  to the HQ can cost a hero, and the four-capture ending is reachable before the beat has
+  ever been walked. **The rescue beat stays as content** — Primm's cell, the spine doors
+  and liberation are unchanged, and `RESCUE_DONE` is still written and persisted so her
+  cell un-stages for good; it simply arms nothing. `capture_selfcheck` check 1 drives the
+  grab on a FRESH profile and asserts `_capture_is_armed` is gone BY NAME, so re-adding
+  the read is a red build.
 - **The set is NON-MONOTONE** (captures add, liberations remove), so it stays out of
   `best_run_store`'s union/max merge, which the tower's opened-gate ids *do* ride. A captive
   folded into a union could never be freed.
@@ -1615,6 +1856,16 @@ Every other contact is a TAX, never an ending: `hit_by_crocodile()` → freeze/f
 tower press, a boss projectile — pays `DEFAULT_COIN_SETBACK`) → **soft respawn in place** (frozen
 grace, then invulnerable blinking). **Lifetime coins are never deducted** — the bill comes
 off the RUN's coins alone.
+
+**AND THE CAPTION SAYS WHICH ONE HAPPENED** (owner 2026-09-04, bead `godot-test1-tuc`).
+The respawn countdown used to read "Caught!" for every contact, which told the player they
+had lost a hero to every crocodile in the field. "Caught!" is now the ARREST alone — a
+`captures_hero` row that really does put a hero in a cell — and an ordinary
+bite reads **"Robbed!"**, which is what it did. It is decided by `caught_was_arrest`, a
+SECOND latch beside `caught_captured` and deliberately not a reuse of it: the bill SPENDS
+`caught_captured` (`capture_selfcheck` asserts that clearing by name, because a latch left
+armed waives the next indoor hit's knockback), and the countdown is drawn a whole freeze
+later. One evidence site in `hit_by_crocodile()`, two lifetimes.
 
 **A BITE IS WHERE A LEG IS BANKED**, though, so a death is not store-free:
 `_on_caught_finished()` calls `_bank_records()`. With no hearts most runs never reach an
@@ -1785,6 +2036,17 @@ sharing one `StandardMaterial3D` with vertex colors across the process. Budget i
 pausing at crossings, strictly avoiding the wet Danube and plateau cliffs, with feet at y = 0.
 Ambient spawns bubble around the local player inside `BudapestPlan.rect()`, recycling when out
 of range and sleeping when outside the city. Pinned by `crowd_selfcheck`.
+
+**WHAT THE TWO CROWDS SHARE IS `scripts/city_agents.gd`** (`class_name CityAgents`, all
+static, bd `godot-test1-ftn.22`): the `BoxMesh` cache and the `SurfaceTool` box welder
+both build their meshes with, the shared `gradient_material` builder, the player and
+Budapest lookups, and `WALKABLE_LANDMARK_IDS` + `is_inside_solid_landmark` — that table
+is the reason the file exists, because two copies of "which slots are open plazas" drift
+in silence. Each manager keeps its own lazy material singleton (one per manager is what
+the two checks assert) and a one-line forwarder for the names with many call sites, which
+is `endless_terrain.create_box`'s precedent. Everything that makes the two features
+DIFFERENT — the spawn samplers, the LOD step, the proxy pools, the kerb rule, the
+braking — stays in its own manager.
 
 **THE AMBIENCE BUDGET IS A COARSE TICK, NEVER A FREEZE, and `scripts/ambience_lod.gd` is
 its one home** (owner, bead `godot-test1-8gw.22`: *"we may use the same trick - only those
@@ -1984,6 +2246,28 @@ hundreds of crocodiles get one styled duplicate per source material, never one p
 Fog colour must equal the sky horizon colours — if the sky changes, all three move together.
 Verified against the web `gl_compatibility` renderer; SSAO/DOF/volumetrics don't exist there.
 
+**THE GRADE IS TUNED FOR FACETS** (bead `godot-test1-y1o.18`, style direction A). A
+faceted silhouette reads from a CRISP facet-to-facet value step, so the key light is a
+hard sun (`light_angular_distance` 0.5, `light_energy` 1.25), ambient is deliberately
+UNDER-filled (`ambient_light_sky_contribution` 0.85) because full sky ambient refills
+exactly the faces `world_block.gdshader`'s top-lit gradient darkens, and
+`adjustment_saturation` is 1.12 for the same reason: louder chroma turns that gradient
+into two equally loud hues instead of one colour lit from above. **Retune them as a set,
+and re-shoot the pair** — `godot --path . scenes/style_shots.tscn -- <outdir>` is the
+acceptance tool, on both renderers.
+
+**THE AMBIENT KNOB IS `sky_contribution`, NOT `ambient_light_energy`, and that is not a
+preference.** With `ambient_light_sky_contribution` at its default 1.0 the shader is
+`mix(ambient_color * ambient_energy, sky_cubemap * bg_energy, sky_mix)` — at `sky_mix`
+1.0 the energy-scaled term is discarded outright, so `ambient_light_energy` is a
+**no-op** and dimming the sky through `bg_energy_multiplier` would dim the visible sky
+with it. Measured on both renderers with the key light off: energy 1.0 vs 0.85 gives a
+bit-identical face (0.38347 / 0.35915), `sky_contribution` 0.85 really darkens it
+(0.35674 / 0.33242), and 0.0 is black. **`light_angular_distance` is Forward+ ONLY** —
+Compatibility has no PCSS, so the crisp sun is a desktop/editor change and the web build
+sees the saturation and the ambient alone. Both were caught by review after shipping in
+the first draft of this bead.
+
 ### Mobile / touch controls
 `scripts/mobile_sensors.gd` (native `Input` sensors or a `JavaScriptBridge` DOM shim),
 `scripts/mobile_input.gd` (step detection → walk, tilt/twist → steer),
@@ -2182,7 +2466,13 @@ touches `JavaScriptBridge`.
   `tx AND NOT micMuted`, so un-muting restores whatever `V` last said — and all three are
   SESSION state nothing persists. Per-peer mutes die with the room on both sides of the
   bridge, which is also the documented ceiling: a peer who rejoins gets a fresh lobby id
-  and is no longer muted.
+  and is no longer muted. **The INCOMING VOLUME (bead `godot-test1-xtr.9`) is the one
+  control here that IS persisted** — one slider, `<audio>.volume` on every remote peer,
+  through the same `[voice]` / `localStorage` seam the mode uses, because how loud other
+  people are is a property of your speakers and not of the room. It is a SEPARATE AXIS
+  from deafen (`volume` vs `muted`), which is the whole of why deafening remembers it and
+  undeafening restores it with no code saving or restoring anything. No per-peer dial:
+  the member row carries the one control it fits, and an escape hatch is binary.
 - **THE SPEAKING INDICATOR IS ONE POLLED STRING.** `ckVoice.levels()` answers
   `"id:level,…,me:level"` (integers 0-100 — one bridge call per poll, never one per peer,
   and never a boolean) off one `AnalyserNode` per stream; `apply_levels()` parses it at
