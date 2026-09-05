@@ -60,8 +60,19 @@ func _ready() -> void:
 	add_theme_color_override("font_color", HudTheme.VISOR_AMBER)
 	add_theme_color_override("font_outline_color", HudTheme.INK)
 	add_theme_constant_override("outline_size", OUTLINE_INK_PX * 2)
-	# A HARD shadow: an offset solid copy, never a blur. Godot's Label shadow is
-	# exactly that, so the panel language's (2,2) in INK at 0.6 transfers as is.
+	# A HARD shadow: an offset solid copy, never a blur — which is what Godot's
+	# Label shadow already is, so the panel language's (2,2) in INK at 0.6 needs no
+	# translating.
+	#
+	# IT IS THE PANEL OFFSET AND NOT `HudTheme.SHADOW_OFFSET` (1,1), AND THE
+	# OUTLINE IS WHY. `Label` draws shadow, then OUTLINE, then fill, and an
+	# outline is the glyph DILATED and filled — not a ring — so `outline_size = 6`
+	# paints opaque INK over everything within 3 px of the glyph. The shadow's own
+	# reach is the offset plus its 1 px `shadow_outline_size`: (1,1) reaches 2.41
+	# px and is swallowed WHOLE, (2,2) reaches 3.83 and leaves a ~0.8 px hairline
+	# down-right of the outline. So this is a hairline, deliberately — the spec's
+	# (2,2) is the smallest offset that survives its own outline at this stroke,
+	# and anything more legible means moving a number the spec fixed.
 	add_theme_color_override("font_shadow_color",
 		Color(HudTheme.INK, HudTheme.SHADOW_ALPHA))
 	add_theme_constant_override("shadow_offset_x", HudTheme.SHADOW_PANEL_OFFSET.x)
