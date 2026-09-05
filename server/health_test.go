@@ -43,7 +43,18 @@ func unwritableStore(t *testing.T) *bestStore {
 	return newBestStore(filepath.Join(blocker, "sub", "best.json"))
 }
 
-// TestHealthzSurvivesFailedDump — the acceptance criterion of the bead.
+// TestHealthzSurvivesFailedDump — the acceptance criterion of the bead, and an
+// HONEST account of what it can and cannot measure.
+//
+// It measures: /healthz answers 200 with ok:true and a live room count. It does
+// NOT measure "an unwritable store cannot affect it" — `healthzHandler` takes the
+// hub and nothing else, so the store is not reachable from the code under test and
+// no assertion here could see it. Deleting the failing-store setup below leaves
+// this test passing, which was verified. The store is here as SCENARIO
+// DOCUMENTATION — this is the shape of the world during the incident — and the
+// real guard against somebody plumbing dump health into /healthz is the
+// signature: widening it is a compile-level change that lands the author in this
+// file and in healthzHandler's comment.
 func TestHealthzSurvivesFailedDump(t *testing.T) {
 	hub := NewHub()
 	store := unwritableStore(t)
@@ -94,11 +105,12 @@ func TestHealthzSurvivesFailedDump(t *testing.T) {
 // records themselves keep working out of memory, so a full disk costs DURABILITY
 // (the records do not survive a redeploy) and nothing else. Without this, "healthz
 // stays up" could be true of a service that had silently stopped answering.
+// It writes no `Origin` header and `bestStore.handler` only uses `corsOrigin` to
+// SET a response header — it never rejects — so this needs no `allowedOrigins`
+// mutation, and deliberately does not make one: that global is shared with
+// best_test.go and lobby_test.go, and a package-global write for nothing is churn
+// (verified: adding it changes no outcome).
 func TestBestServesWhileDumpFails(t *testing.T) {
-	restore := allowedOrigins
-	t.Cleanup(func() { allowedOrigins = restore })
-	allowedOrigins = []string{"*"}
-
 	store := unwritableStore(t)
 
 	const id = "player-bbbb"

@@ -88,23 +88,35 @@ func main() {
 
 // healthzHandler answers the Docker HEALTHCHECK, and it reports on SIGNALLING ONLY.
 //
-// ⚠️ IT MUST NEVER CONSULT THE BEST-SCORES STORE, AND THAT IS A POST-INCIDENT RULE
-// rather than an accident of how it was first written (bead godot-test1-xuz,
-// 2026-09-05). The prod host filled its disk, every `bestStore.dump` started
-// failing with ENOSPC, the container went UNHEALTHY, and Traefik dropped the
-// unhealthy router — so /ws, /ice, /rooms and /best all fell through to the web
-// client's catch-all and multiplayer was down. The disk was the real fault (the
-// deploy job now prunes; see .github/workflows/build.yml), but the blast radius is
-// this decision: what this service is FOR is signalling, and signalling holds no
-// disk, no database and no file handle. A lobby that can still introduce two peers
-// to each other is healthy, however broken its optional scoreboard is.
+// ⚠️ IT MUST NEVER CONSULT THE BEST-SCORES STORE (bead godot-test1-xuz,
+// 2026-09-05). It never has — this is a rule written down, not a bug fixed, and
+// saying so plainly matters because the incident is easy to misread.
 //
-// So: an unwritable /best is a LOG LINE (bestStore.runDumper) and nothing more —
-// records stay correct in memory and keep serving, and the store's `dirty` flag
-// survives the failure so one recovered write flushes everything. There is no
-// health signal to plumb in here, and adding one is the regression this handler is
-// guarded against: it takes the hub and NOTHING ELSE, which is exactly what
-// TestHealthzSurvivesFailedDump measures.
+// WHAT ACTUALLY HAPPENED: the prod host filled its disk, every `bestStore.dump`
+// began failing with ENOSPC, the container went UNHEALTHY, Traefik dropped the
+// unhealthy router, and /ws /ice /rooms /best all fell through to the web client's
+// catch-all. But the dump failure did not cause the UNHEALTHY — this handler was
+// already answering `ok:true` unconditionally. On a 100%-full disk the Docker
+// daemon cannot exec the container's HEALTHCHECK or write its state file, so the
+// probe fails whatever we answer. **The lobby is therefore NOT hardened against a
+// full disk, and any other filler reproduces the same chain.** The fix for the
+// cause is the deploy job's image prune (.github/workflows/build.yml).
+//
+// WHAT THE RULE IS FOR, then: the obvious future "improvement" — reporting dump
+// health here so operators can see a broken scoreboard — is precisely the change
+// that would make a disk fault take signalling down for real. What this service is
+// FOR is introducing peers, and that holds no disk, no database and no file handle.
+// A lobby that can still do it is healthy however broken its optional scoreboard
+// is; an unwritable /best is a LOG LINE (bestStore.runDumper) and records stay
+// correct in memory, with the store's `dirty` flag surviving the failure so one
+// recovered write flushes everything.
+//
+// THE GUARD IS THE SIGNATURE, not a test assertion: this takes `*Hub` and nothing
+// else, so widening it to reach a store is a compile-level change that drags the
+// author through server/health_test.go and this comment. (That file's
+// TestHealthzSurvivesFailedDump is an honest unit test of the handler — 200,
+// ok:true, a live room count — and its failing-store fixture documents the scenario
+// rather than measuring it; the store is not reachable from here to measure.)
 //
 // A free function taking the hub, rather than the closure it used to be, purely so
 // a test can drive it without standing up a listener.

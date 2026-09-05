@@ -2630,32 +2630,50 @@ catch-all and multiplayer was gone. Fifty merges is a hundred images; a bigger d
 a policy. The step POSTs Portainer's
 `/api/endpoints/2/docker/images/prune?filters={"dangling":{"false":true}}` — Portainer's
 spelling of `docker image prune -a`, and the whole point, because every stale pin is
-TAGGED and a dangling-only prune reclaims nothing. Four rules:
+TAGGED and a dangling-only prune reclaims nothing. Six rules:
 
-- **BEFORE the webhook is not a style choice.** The webhook is fire-and-forget, so a prune
-  after it races Portainer's pull: `dangling=false` means "no container references this",
-  and for those few seconds that is exactly the image just pulled and not yet started.
-  Pruning first has no race — the running containers hold the current images, the new ones
-  are not on the host yet — and the steady state is two generations instead of every
-  deploy ever. A sleep or a poll would buy one generation of disk for a race and a timeout.
-- **It never fails the deploy** (`continue-on-error`, warnings not errors): the images are
-  published and the branch is pinned by the time it runs, so a red job would misreport what
-  shipped. The next push retries. It logs the layer count and the GB reclaimed, which is
-  the bead's acceptance.
+- **It sits ABOVE the branch pin, and therefore above the webhook.** Docker builds its
+  in-use set from ALL containers, running or stopped, so the current deploy's images are
+  safe by construction; what is not safe is an image Portainer has just PULLED and not yet
+  started a container from. Two things can start a redeploy — our webhook, and Portainer's
+  own GitOps polling of the `deploy` branch if the stack has it — and sitting above the
+  force-push closes both, because at that instant the new images are on the host by no
+  route at all. The steady state is two generations rather than every deploy ever.
+- **The honest ceiling**: a master run cancelled by `concurrency` cannot un-fire a webhook
+  it already sent, so run A's redeploy could overlap run B's prune. B needs the build and
+  every self-check first (~10 min) against a pull of seconds, and the failure mode is one
+  deploy re-pulling rather than an outage.
+- **It is HOST-WIDE**, not stack-wide — unused images of every other stack on that box go
+  too. That is what was done by hand to recover (495 → 52) and is the intent, but it is
+  not scoped to us.
+- **It never fails the deploy, and never fails QUIETLY either.** `continue-on-error` plus
+  warnings, because the images are published and the branch pinned by the time it runs, so
+  a red job would misreport what shipped. But a wrong endpoint id or an expired key is
+  exactly the shape of this incident — a thing nobody reads for months — so the step
+  captures the HTTP status, prints the response body, and **shape-asserts the 200** against
+  Docker's own prune JSON rather than printing an empty count forever.
 - **It needs `PORTAINER_API_KEY`** and is **skipped when that secret is absent**, exactly
   like the redeploy webhook's own gate — so the workflow can merge before the secret is
-  added without breaking a single deploy.
+  added without breaking a single deploy. `PORTAINER_ENDPOINT_ID` is a named job env
+  because nothing binds it to the environment the webhook's uuid targets.
 - **The API base is DERIVED from `PORTAINER_REDEPLOY_HOOK`**, not a second secret: a stack
   webhook is by construction `<portainer>/api/stacks/webhooks/<uuid>`. It is `::add-mask::`ed
-  first, because a substring of a secret is not masked on its own.
+  in BOTH forms — with the scheme and bare — because Actions masks by exact substring and
+  curl's own diagnostics print the bare host.
 - **A keep-last-N tag policy on GHCR is not the alternative it looks like** — it frees the
   REGISTRY, and the disk that filled was the HOST's, which had already pulled them.
 
-The other half of that incident is in the lobby and is a rule, not a workaround: **`/healthz`
-reports on SIGNALLING ONLY and must never consult the best-scores store.** Signalling holds
-no disk, so a lobby that can still introduce two peers is healthy however broken its optional
-scoreboard is; an unwritable `/best` is a log line and records keep serving from memory.
-`server/health_test.go` pins both halves against a store whose every write fails.
+The other half of that incident is in the lobby, and it is **a rule made explicit rather
+than a behaviour change**: **`/healthz` reports on SIGNALLING ONLY and must never consult
+the best-scores store.** It never did — the container went UNHEALTHY because a 100%-full
+disk stops the Docker daemon exec'ing the `HEALTHCHECK` and writing container state at all,
+not because the dump result reached the handler — so **the lobby is not now hardened
+against a full disk, and any other filler reproduces the same chain**. What the rule buys
+is that the obvious future "improvement", reporting dump health at `/healthz`, is the one
+change that would re-cause it. Signalling holds no disk: an unwritable `/best` is a log
+line and records keep serving from memory. `healthzHandler(hub)` takes the hub and nothing
+else — that signature IS the guard, since widening it forces an author through
+`server/health_test.go`, which drives both halves against a store whose every write fails.
 
 ## Conventions
 
