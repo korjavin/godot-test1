@@ -11,10 +11,18 @@ code lives here once and each generate_*.py is a short table of proportions and
 colours. The hunter robot is the one customer that skips `quadruped()` and stacks
 its own boxes — it still owes the three contracts below, it just isn't an animal.
 The older per-character generators (generate_crocodile_model.py,
-generate_*_separate.py) predate this and are left alone — with ONE exception, and
-it is the reason the crocodile is rebuilt by the loop at the bottom of this file:
-it shares `export_faceted`, so it shares the shading contract even though it owes
-none of the three below.
+generate_*_separate.py) predate this and are left alone — with ONE exception,
+which is `export_faceted()`. THAT FUNCTION IS THE WHOLE CAST'S, not the
+predators': the crocodile and the four HEROES import it too (bead
+`godot-test1-y1o.21`, owner ruling 2026-09-05 "facet ALL"), because flat normals
+are a property of the EXPORT and every model in this game wants the same one.
+They owe none of the three contracts below and gain none of them by importing it.
+It lives here rather than in a `model_export.py` of its own because a module for
+one function is a file to keep in step for no gain — if a third kind of model
+ever needs a second shared thing, that is when to split. The crocodile is
+rebuilt by the loop at the bottom of this file; the heroes are NOT, and CI runs
+them as their own step (see build.yml) so that this file stays runnable without
+shapely.
 
 THE THREE CONTRACTS A PREDATOR MODEL MUST HONOUR
 ------------------------------------------------
