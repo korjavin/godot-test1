@@ -577,6 +577,18 @@ Load-bearing rules:
   and `landmark_builders`' contract are what those two buy; every other caller (the city
   streamer, `budapest_selfcheck`) reaches `ChunkBatch` directly. **New batch machinery
   lands there, not in the world engine.**
+- **THE THEMED SCATTERED PROPS ARE `scripts/terrain_props.gd`** (`class_name TerrainProps`,
+  all static, bd `godot-test1-ftn.2`) — `build_prop`'s biome dispatch, the seventeen
+  `_prop_*` builders and the family's whole constant banner, in `landmark_builders.gd`'s
+  idiom (`terrain: Node3D` first, `terrain.create_box` back through the reference).
+  `endless_terrain.gd` keeps the SCATTER LOOP — where a prop goes, its spacing, its river
+  skip and its `obstacles` append — and **const-aliases all 29 names back**
+  (`const PROP_MAX_STEP := TerrainProps.PROP_MAX_STEP`, the `species_table.gd` precedent),
+  because every territory palette is shared with the feature structures and the biome
+  content and `PROP_MAX_STEP` is read as far away as `budapest_plan.gd`. The two dynamic
+  callers (`prop_selfcheck`'s `BUILDERS` table) go through a `preload`ed SCRIPT OBJECT, not
+  the class — `TerrainProps.call(...)` is a parse error, the trap `_landmark_builders`
+  already documents.
 - **A BOX HAS A MESH KIND, AND EVERY UNIT MESH FITS THE UNIT CUBE** (bead
   `godot-test1-y1o.1`, epic `y1o` "get rid of blocks"). The batch entry is
   `{transform, color, kind}` — `ChunkBatch.BoxKind` (CUBE / SPHERE / CONE / CYLINDER /

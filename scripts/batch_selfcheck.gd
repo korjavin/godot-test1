@@ -76,7 +76,7 @@ const BIOME_SAMPLES: int = 4
 ##   SNOW     2 — cubes (drifts, stumps) + ROCK glacier ice
 ##   CITY     2 — and the reason is worth knowing, because the field city band's
 ##                OWN props are crates, garden walls and paving and not one of
-##                them is a rock. `_build_prop` picks its theme at each PROP's
+##                them is a rock. `TerrainProps.build_prop` picks its theme at each PROP's
 ##                world position, not at the chunk centre, which is what feathers
 ##                a biome edge across a chunk seam — so a city-band chunk on a
 ##                plains boundary legitimately grows a plains boulder. That the
@@ -362,7 +362,7 @@ func _check_multimesh_per_kind() -> void:
 	# world has changed silhouette" a sweep rather than a spot check.
 	#
 	# THE SCATTERED BLOCKS ARE WHERE THE PROPS LIVE, so this sweep's allow-list is
-	# not "CUBE only" any more (bead godot-test1-y1o.3): `_build_prop` runs inside
+	# not "CUBE only" any more (bead godot-test1-y1o.3): `TerrainProps.build_prop` runs inside
 	# `spawn_objects_in_chunk`, and six of its builders now draw ROCK. Bead
 	# godot-test1-y1o.5's snow drift joins them and needed NO widening here: its
 	# swell is a ROCK, deliberately, because a prop's theme is picked at its own

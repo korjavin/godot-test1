@@ -67,6 +67,17 @@ extends SceneTree
 
 const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
 
+## The prop builders, held as a SCRIPT OBJECT rather than referenced as the
+## `TerrainProps` class, purely so `call()` and `has_method()` work on it — the
+## trap `endless_terrain.gd` already documents for `_landmark_builders`:
+## `TerrainProps.call(name, ...)` is a PARSE ERROR ("Cannot call non-static
+## function call() on the class ... directly"), while a GDScript-TYPED variable
+## holds a real Object at runtime and dispatches the script's static methods
+## perfectly. Constants are the other half and stay compile-time lookups
+## (`TerrainProps.PROP_MAX_STEP`), so a renamed constant is still a parse error
+## while only the dynamic dispatch goes through here.
+const PROPS_SCRIPT: GDScript = preload("res://scripts/terrain_props.gd")
+
 ## Every prop builder, with the biome it themes. Written out rather than derived,
 ## because the dispatch in _build_prop is a `match` over an enum — there is no
 ## registry to read, and a builder that exists but is never listed here is
@@ -269,8 +280,8 @@ func _check_builders(terrain_script: GDScript, consts: Dictionary) -> void:
 		var biome: String = String(entry[0])
 		var builder: String = String(entry[1])
 
-		if not terrain.has_method(builder):
-			_fail("%s: no such builder method %s" % [biome, builder])
+		if not PROPS_SCRIPT.has_method(builder):
+			_fail("%s: no such builder method %s on TerrainProps" % [biome, builder])
 			continue
 
 		# Worst case across the whole sweep, printed so the report says how much
@@ -289,8 +300,8 @@ func _check_builders(terrain_script: GDScript, consts: Dictionary) -> void:
 
 				var batch: Array = []
 				var body := StaticBody3D.new()
-				var prop: Dictionary = terrain.call(
-					builder, Vector3.ZERO, size, rng, batch, body
+				var prop: Dictionary = PROPS_SCRIPT.call(
+					builder, terrain, Vector3.ZERO, size, rng, batch, body
 				)
 
 				var solids: Array = body.get_children()
@@ -1452,7 +1463,7 @@ func _check_prop_kinds(terrain_script: GDScript, consts: Dictionary) -> void:
 	for entry_variant: Variant in BUILDERS:
 		var entry: Array = entry_variant
 		var builder: String = String(entry[1])
-		if not terrain.has_method(builder):
+		if not PROPS_SCRIPT.has_method(builder):
 			continue   # check 1 already failed this by name
 		if not BUILDER_KINDS.has(builder):
 			_fail("%s has no BUILDER_KINDS row — a builder whose silhouette nobody "
@@ -1476,7 +1487,7 @@ func _check_prop_kinds(terrain_script: GDScript, consts: Dictionary) -> void:
 				rng.seed = hash(Vector2i(s, int(size * 1000.0)))
 				var batch: Array = []
 				var body := StaticBody3D.new()
-				terrain.call(builder, Vector3.ZERO, size, rng, batch, body)
+				PROPS_SCRIPT.call(builder, terrain, Vector3.ZERO, size, rng, batch, body)
 				for box_v: Variant in batch:
 					var kind: int = int((box_v as Dictionary).get("kind", ChunkBatch.BoxKind.CUBE))
 					seen[kind] = int(seen.get(kind, 0)) + 1
