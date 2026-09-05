@@ -566,7 +566,12 @@ func _build_ui() -> void:
 	_volume_slider.name = "VoiceVolumeSlider"
 	_volume_slider.min_value = 0.0
 	_volume_slider.max_value = 100.0
-	_volume_slider.step = 5.0
+	# STEP 1, and not a nicer 5 (codex review 2026-09-05): `Range` snaps `value` to
+	# `step` even through `set_value_no_signal`, so a stored 37% would draw its
+	# thumb at 35 while the label and the audio said 37, and the first drag would
+	# jump the setting. A step of 1 is the whole fix — quantizing on load instead
+	# would be a second rounding rule to keep in step with this number.
+	_volume_slider.step = 1.0
 	_volume_slider.value = 100.0
 	# Same reason every button in this panel is FOCUS_NONE: a focused Range eats
 	# the arrow keys and `ui_accept`, both of which are gameplay input here.

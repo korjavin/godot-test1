@@ -309,7 +309,20 @@ const VOICE_JS: String = """
 	}
 
 	/* Deafen and per-peer mute are the same switch on a different set; the
-	   volume is the third, independent axis over the same elements. */
+	   volume is the third, independent axis over the same elements.
+
+	   ponytail: `<audio>.volume` is IGNORED on iOS Safari (the element stays at 1
+	   and the assignment is silently dropped), so on an iPhone this dial moves the
+	   label and nothing else. Accepted: MOBILE IS OUT OF SCOPE for this whole epic
+	   by owner ruling 2026-09-04 — no touch control, no mobile verification, no
+	   mobile clause in any child — and `muted` and `track.enabled`, which every
+	   escape hatch here rides, do work there. The upgrade path if that ruling ever
+	   changes is a `GainNode` per remote stream (the analyser graph already has the
+	   AudioContext), and it is NOT free: the element has to keep playing for Chrome
+	   to pump a remote track at all, so it would have to be muted and routed
+	   through the graph, which puts every remote voice behind a context that starts
+	   SUSPENDED until a gesture — silence on the platforms that work today, to fix
+	   a dial on one that is out of scope. */
 	function applyAudio() {
 		for (var k in S.peers) {
 			var a = S.peers[k].audio;
