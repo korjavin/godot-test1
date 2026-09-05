@@ -113,6 +113,14 @@ const RIVER_WINDOW_PAD: float = BudapestPlan.DANUBE_HALF_WIDTH + 8.0
 # --- The baked palette ------------------------------------------------------
 # Deliberately muted: the map's only bright ink is the landmark icons and the
 # dots, because those are the two things a player opened this panel to read.
+#
+# NOT `HudTheme`'S, AND DELIBERATELY LEFT THAT WAY by the palette pass (bead
+# `godot-test1-y1o.33`). This is CARTOGRAPHY — water, park, hill, deck — and it
+# is the `minimap_hud` biome-RGB case one panel along: a map says what a thing IS
+# and a green park may not become a khaki one because the HUD went monochrome.
+# None of these is a colour `HudTheme` owns, so the "no second copy of a film
+# hex" rule has nothing to say about them, and `city_map_selfcheck` samples four
+# of them by name.
 const COLOR_LAND: Color = Color(0.13, 0.14, 0.13, 1.0)
 const COLOR_STREET: Color = Color(0.20, 0.21, 0.20, 1.0)
 const COLOR_WATER: Color = Color(0.13, 0.28, 0.46, 1.0)
@@ -122,13 +130,18 @@ const COLOR_HILL: Color = Color(0.28, 0.25, 0.21, 1.0)
 const COLOR_RAMP: Color = Color(0.40, 0.36, 0.29, 1.0)
 const COLOR_BORDER: Color = Color(0.46, 0.49, 0.53, 1.0)
 
-# --- The live palette -------------------------------------------------------
+# --- The live palette, off `HudTheme` ---------------------------------------
 ## An explored landmark and an unexplored one. The whole panel turns on telling
-## these two apart at a glance, so they differ in HUE and in VALUE, not in alpha —
-## a dimmed gold reads as "far away" on a map, which is a different claim.
-const COLOR_FOUND: Color = Color(1.0, 0.84, 0.26, 1.0)
-const COLOR_UNFOUND: Color = Color(0.42, 0.45, 0.50, 1.0)
-const COLOR_PLAYER: Color = Color(0.45, 1.0, 0.55, 1.0)
+## these two apart at a glance, so they differ in VALUE and in SHAPE, never in
+## alpha — a dimmed mark reads as "far away" on a map, which is a different
+## claim. BONE is the palette's own lettering value against STEEL's inactive
+## one, and `_paint_marks` fills the first and hollows the second.
+const COLOR_FOUND: Color = HudTheme.BONE
+const COLOR_UNFOUND: Color = HudTheme.STEEL
+## THE ONE AMBER on this panel: you are the focus, and the palette says focus is
+## the accent. It also has to out-shout 22 marks and a teammate's identity dot,
+## which on an INK/STEEL/BONE map only the accent does.
+const COLOR_PLAYER: Color = HudTheme.VISOR_AMBER
 
 ## Side of a landmark icon and of the ring drawn round an explored one, in pixels.
 const ICON_SIZE: float = 9.0
@@ -148,9 +161,15 @@ const LINE_FONT_SIZE: int = 18
 const HINT_FONT_SIZE: int = 15
 const CARD_PADDING: int = 18
 
-const COLOR_TITLE: Color = Color(1.0, 0.92, 0.6)
-const COLOR_TEXT: Color = Color(0.86, 0.88, 0.92)
-const COLOR_HINT: Color = Color(0.66, 0.69, 0.75)
+## The card's chrome, off `HudTheme`: a BONE heading over a STEEL rule, BONE body
+## and the corporation's khaki for fine print — the spec's three, and no hex here.
+const COLOR_TITLE: Color = HudTheme.BONE
+const COLOR_TEXT: Color = HudTheme.BONE
+const COLOR_HINT: Color = HudTheme.UNIT_KHAKI
+## The 1 px rule under a section heading. `HudTheme` has no `rule()` builder — a
+## `ColorRect` is the whole of it — so it is one here and in `tower_lift_menu`;
+## a third caller is the moment to lift it into the theme.
+const RULE_PX: float = 1.0
 
 ## How often the live marks are recomputed while the panel is up. 5 Hz, the rate
 ## `mp_manager.peer_markers()` documents for its two HUD callers — it allocates,
@@ -499,6 +518,11 @@ func _fill_world_rect(image: Image, world_rect: Rect2, colour: Color) -> void:
 # ============================================================================
 
 func _build_ui() -> void:
+	# THE HUD SKIN, on THIS ROOT and nowhere else (bead `godot-test1-y1o.33`).
+	# The card's INK ground, its STEEL frame and its hard shadow all arrive with
+	# it, which is why this panel has no `StyleBoxFlat` of its own.
+	theme = HudTheme.theme()
+
 	# A CenterContainer so the card sizes to its own content and stays centred at
 	# any resolution — `start_overlay.gd`'s and `skill_tree_ui.gd`'s shape.
 	var centre := CenterContainer.new()
@@ -528,9 +552,15 @@ func _build_ui() -> void:
 	var title := Label.new()
 	title.text = "MAP OF BUDAPEST"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_override("font", HudTheme.heading_font())
 	title.add_theme_font_size_override("font_size", TITLE_FONT_SIZE)
 	title.add_theme_color_override("font_color", COLOR_TITLE)
 	column.add_child(title)
+	# The spec's section heading: BONE caps with a STEEL rule under them. The caps
+	# are the CSV row's own ("MAP OF BUDAPEST" / "KARTE VON BUDAPEST"), so no
+	# `.to_upper()` — a `Label.text` IS the translation key, and upper-casing one
+	# is a key in no table.
+	column.add_child(_rule())
 
 	_map_rect = TextureRect.new()
 	_map_rect.name = "Plan"
@@ -566,6 +596,16 @@ func _build_ui() -> void:
 	column.add_child(_hint_label)
 
 
+func _rule() -> ColorRect:
+	"""The 1 px STEEL rule the spec puts under a section heading."""
+	var rule := ColorRect.new()
+	rule.name = "Rule"
+	rule.color = HudTheme.STEEL
+	rule.custom_minimum_size = Vector2(0.0, RULE_PX)
+	rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return rule
+
+
 func _paint_marks() -> void:
 	"""
 	Paint what `_refresh()` computed, and nothing else — no sampling, no group
@@ -578,15 +618,23 @@ func _paint_marks() -> void:
 	for i in range(_icon_points.size()):
 		var point: Vector2 = _icon_points[i]
 		var colour: Color = _icon_colors[i]
+		# THE TWO STATES STILL DIFFER IN SHAPE, and since the palette pass they
+		# differ in it MORE: explored is a filled BONE square inside a ring,
+		# unexplored is a hollow STEEL outline. The map has to read for a
+		# colour-blind player, and BONE against STEEL is one value step where the
+		# retired gold-against-grey was two.
+		var found: bool = colour.is_equal_approx(COLOR_FOUND)
+		# `-1.0` and not 1.5 on the filled branch: Godot WARNS (with a backtrace)
+		# that `width` has no effect when `filled` is true, and this repaints at
+		# 5 Hz with up to 22 marks — a hundred backtraces a second into the web
+		# build's console for a number that was never read.
 		_marks.draw_rect(Rect2(point - Vector2(half, half),
-			Vector2(ICON_SIZE, ICON_SIZE)), colour, true)
-		# An explored place also gets an outline, so the two states differ in SHAPE
-		# as well as in colour — the map has to read for a colour-blind player.
-		if colour.is_equal_approx(COLOR_FOUND):
+			Vector2(ICON_SIZE, ICON_SIZE)), colour, found, -1.0 if found else 1.5)
+		if found:
 			_marks.draw_rect(Rect2(point - Vector2(half + 2.0, half + 2.0),
 				Vector2(ICON_SIZE + 4.0, ICON_SIZE + 4.0)), colour, false, 1.5)
 	for i in range(_peer_points.size()):
 		_marks.draw_circle(_peer_points[i], DOT_RADIUS, _peer_colors[i])
 	if _player_shown:
-		_marks.draw_circle(_player_point, DOT_RADIUS + 1.5, Color(0, 0, 0, 0.7))
+		_marks.draw_circle(_player_point, DOT_RADIUS + 1.5, Color(HudTheme.INK, 0.7))
 		_marks.draw_circle(_player_point, DOT_RADIUS, _player_color)
