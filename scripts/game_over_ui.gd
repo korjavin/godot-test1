@@ -113,19 +113,22 @@ func _build_ui() -> void:
 
 	# THE CARD. `card(true)` is the modal case — opaque INK, a 2 px STEEL frame,
 	# the hard (2,2) shadow — and it hands out a FRESH box (documented in
-	# `HudTheme`), so widening its padding here restyles nothing else. The TOP
-	# margin goes to zero because the hairline below has to sit on the very edge.
+	# `HudTheme`), so editing its margins here restyles nothing else.
+	#
+	# **THE BOX CARRIES NO PADDING AND THE MARGIN CONTAINER BELOW DOES.** A
+	# `PanelContainer` lays every child out inside the stylebox's content margins,
+	# so a hairline that is meant to span the card's TOP EDGE cannot be a child of
+	# a padded box — it comes out 2 x 36 px short of both ends, which is what the
+	# first draft of this shipped (caught in review).
 	var card_box := HudTheme.card(true)
-	card_box.set_content_margin_all(HudTheme.CARD_PADDING * 3)
-	card_box.content_margin_top = 0
+	card_box.set_content_margin_all(0)
 	var card := PanelContainer.new()
 	card.add_theme_stylebox_override("panel", card_box)
 	center.add_child(card)
 
-	var vbox := VBoxContainer.new()
-	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	vbox.add_theme_constant_override("separation", HudTheme.GRID * 3)
-	card.add_child(vbox)
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 0)
+	card.add_child(outer)
 
 	# THE FILM'S LETTERBOX LINE: a 1 px BONE hairline across the top edge of the
 	# modal card. `HudTheme` has no builder for it (its own note says the modal
@@ -136,7 +139,18 @@ func _build_ui() -> void:
 	hairline.color = HudTheme.BONE
 	hairline.custom_minimum_size = Vector2(0.0, float(HudTheme.BORDER_PX))
 	hairline.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(hairline)
+	outer.add_child(hairline)
+
+	# The card's padding, on everything BUT the hairline.
+	var pad := MarginContainer.new()
+	for side: String in ["margin_left", "margin_right", "margin_bottom", "margin_top"]:
+		pad.add_theme_constant_override(side, HudTheme.CARD_PADDING * 3)
+	outer.add_child(pad)
+
+	var vbox := VBoxContainer.new()
+	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_theme_constant_override("separation", HudTheme.GRID * 3)
+	pad.add_child(vbox)
 
 	# Title (GAME OVER or VICTORY!) — the card's lettering, and the whole reason a
 	# font ships. The shadow is INK_RAISED rather than INK: a shadow in the card's

@@ -184,20 +184,22 @@ func _build_overlay() -> void:
 	_overlay.add_child(center)
 
 	# `card(true)` is the modal case — opaque INK, a 2 px STEEL frame, the hard
-	# (2,2) shadow — and it returns a FRESH box, so widening the padding restyles
-	# no other panel. The top margin is zero for the hairline's sake.
+	# (2,2) shadow — and it returns a FRESH box, so editing the margins restyles no
+	# other panel. THE BOX CARRIES NO PADDING AND THE MARGIN CONTAINER BELOW DOES,
+	# for `game_over_ui`'s reason: a `PanelContainer` lays its children out INSIDE
+	# the stylebox's margins, so a hairline meant to span the top edge cannot be a
+	# child of a padded one.
 	var card_box := HudTheme.card(true)
-	card_box.set_content_margin_all(HudTheme.CARD_PADDING * 3)
-	card_box.content_margin_top = 0
+	card_box.set_content_margin_all(0)
 	var card := PanelContainer.new()
 	card.add_theme_stylebox_override("panel", card_box)
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	center.add_child(card)
 
-	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", HudTheme.GRID * 2)
-	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card.add_child(vbox)
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 0)
+	outer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(outer)
 
 	# The film's letterbox line across the top edge — `game_over_ui`'s hairline,
 	# and one ColorRect for its reason: a StyleBoxFlat carries ONE border colour
@@ -206,7 +208,19 @@ func _build_overlay() -> void:
 	hairline.color = HudTheme.BONE
 	hairline.custom_minimum_size = Vector2(0.0, float(HudTheme.BORDER_PX))
 	hairline.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(hairline)
+	outer.add_child(hairline)
+
+	# The card's padding, on everything BUT the hairline.
+	var pad := MarginContainer.new()
+	for side: String in ["margin_left", "margin_right", "margin_bottom", "margin_top"]:
+		pad.add_theme_constant_override(side, HudTheme.CARD_PADDING * 3)
+	pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	outer.add_child(pad)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", HudTheme.GRID * 2)
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pad.add_child(vbox)
 
 	_label = Label.new()
 	_label.text = PAUSE_TEXT
@@ -219,6 +233,14 @@ func _build_overlay() -> void:
 	# `OUTLINE_PX` is 2 px OF INK and Godot grows a glyph BOTH ways, so this is the
 	# spec's 1 px card outline — `game_over_ui`'s note, same card.
 	_label.add_theme_constant_override("outline_size", HudTheme.OUTLINE_PX)
+	# And the same hard (2,2) drop shadow in INK_RAISED: it is the title card's
+	# lettering that makes it a title card, so half size does not mean half the
+	# treatment (caught in review).
+	_label.add_theme_color_override("font_shadow_color", HudTheme.INK_RAISED)
+	_label.add_theme_constant_override("shadow_offset_x",
+			HudTheme.SHADOW_PANEL_OFFSET.x)
+	_label.add_theme_constant_override("shadow_offset_y",
+			HudTheme.SHADOW_PANEL_OFFSET.y)
 	_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(_label)
 
