@@ -424,7 +424,7 @@ static func spawn_landmark_in_chunk(terrain: Node3D, chunk_pos: Vector2i, parent
 	# is that a typo'd method name is caught at call time, which is why
 	# landmark_selfcheck.gd calls every builder in the table.
 	#
-	# `self` is passed as the builder's first argument because the builders are
+	# `terrain` is passed as the builder's first argument because the builders are
 	# STATIC on LandmarkBuilders: they hold no state, they only need this terrain's
 	# create_box / _spawn_artifact_accent. Object.call() dispatches a GDScript
 	# static method exactly as it dispatched these when they were methods here.

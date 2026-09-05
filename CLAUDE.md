@@ -649,9 +649,10 @@ Load-bearing rules:
   `terrain.LANDMARK_RADIUS` — `terrain_biomes.gd`'s precedent, and every check
   reading it off `get_script_constant_map()` is untouched. Three forwarders:
   `_landmark_at` is reached BY STRING (`scarcity_selfcheck`'s
-  `terrain.call("_landmark_at", chunk)`), `spawn_landmark_in_chunk` is
-  `create_chunk`'s call-order list plus four checks, `landmark_sites` is read by
-  two files; `landmark_site(kind)` gets none because nothing calls it. It was
+  `terrain.call("_landmark_at", chunk)`), and `spawn_landmark_in_chunk` is
+  `create_chunk`'s call-order list plus four checks. The two PUBLIC site queries
+  (`landmark_sites` / `landmark_site`) get none, measured: nothing reaches either
+  through the group. It was
   left behind TWICE before this (ftn.4, ftn.7) and both reasons had dissolved.
 - **THE COIN ROAD IS `scripts/coin_road.gd`** (`class_name CoinRoad`, all static,
   bd `godot-test1-ftn.7`) — the whole `_road_*` centreline family and

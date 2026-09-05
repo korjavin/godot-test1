@@ -4196,7 +4196,7 @@ func spawn_chest_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 	TerrainFeatures.spawn_chest_in_chunk(self, chunk_pos, parent_chunk, obstacles, block_batch, block_body)
 
 # ============================================================================
-# GEO LANDMARKS — three forwarders into `TerrainLandmarks` (bd godot-test1-ftn.26)
+# GEO LANDMARKS — two forwarders into `TerrainLandmarks` (bd godot-test1-ftn.26)
 # ============================================================================
 #
 # The section is `scripts/terrain_landmarks.gd` now; read that file's header for
@@ -4208,21 +4208,19 @@ func spawn_chest_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 #     find — and by `style_shots`;
 #   * `spawn_landmark_in_chunk` is `create_chunk`'s call-order list plus four
 #     self-checks (budapest, enemy_spawn, field_bridge, landmark_sites);
-#   * `landmark_sites` is read by `landmark_sites_selfcheck` and `style_shots`.
 #
-# `landmark_site(kind)` gets NO forwarder and is not an oversight: it is the
-# documented "a site is computable without its chunk" seam and has no caller
-# anywhere in the project, so a forwarder would be dead weight. It moved with its
-# family and is spelled `TerrainLandmarks.landmark_site(terrain, kind)`.
+# NEITHER PUBLIC SITE QUERY GETS ONE, and that is measured rather than assumed:
+# `landmark_sites()` and `landmark_site(kind)` are the "a site is computable
+# without its chunk" seam, and nothing in the project reaches either through the
+# `terrain` group — `landmark_sites_selfcheck` names the class (it is the
+# family's own check) and `style_shots` uses `_landmark_at`. They are spelled
+# `TerrainLandmarks.landmark_sites(terrain)`; a forwarder for a name with no
+# caller is dead weight, and this file has enough of those to carry already.
 #
 # `landmark_sites_selfcheck` — the FAMILY's own check — names the class directly
 # instead, which is the epic's acceptance (d) and `scarcity_selfcheck`'s ftn.7
 # lesson: a check that reads its subject through a forwarder measures the
 # forwarder.
-
-func landmark_sites() -> Dictionary:
-	return TerrainLandmarks.landmark_sites(self)
-
 
 func _landmark_at(chunk_pos: Vector2i) -> Dictionary:
 	return TerrainLandmarks._landmark_at(self, chunk_pos)
