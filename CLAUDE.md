@@ -2391,7 +2391,13 @@ touches `JavaScriptBridge`.
   `tx AND NOT micMuted`, so un-muting restores whatever `V` last said — and all three are
   SESSION state nothing persists. Per-peer mutes die with the room on both sides of the
   bridge, which is also the documented ceiling: a peer who rejoins gets a fresh lobby id
-  and is no longer muted.
+  and is no longer muted. **The INCOMING VOLUME (bead `godot-test1-xtr.9`) is the one
+  control here that IS persisted** — one slider, `<audio>.volume` on every remote peer,
+  through the same `[voice]` / `localStorage` seam the mode uses, because how loud other
+  people are is a property of your speakers and not of the room. It is a SEPARATE AXIS
+  from deafen (`volume` vs `muted`), which is the whole of why deafening remembers it and
+  undeafening restores it with no code saving or restoring anything. No per-peer dial:
+  the member row carries the one control it fits, and an escape hatch is binary.
 - **THE SPEAKING INDICATOR IS ONE POLLED STRING.** `ckVoice.levels()` answers
   `"id:level,…,me:level"` (integers 0-100 — one bridge call per poll, never one per peer,
   and never a boolean) off one `AnalyserNode` per stream; `apply_levels()` parses it at

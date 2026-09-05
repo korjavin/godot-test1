@@ -222,6 +222,14 @@ const VOICE_JS: String = """
 		   `muted` is keyed by lobby id and outlives its connection, so a peer that
 		   blips through a renegotiation stays muted. */
 		deaf: 0, micMuted: 0, muted: {},
+		/* INCOMING VOLUME (bead godot-test1-xtr.9), 0-100 as an integer PERCENT
+		   because that is the only shape allowed across the bridge — a fraction
+		   would round-trip as a float, which is fine, but the percent is also
+		   what the panel's slider already is, so there is one unit and no
+		   conversion to get wrong. It is a SEPARATE axis from `deaf`/`muted`: an
+		   element is silenced by `muted` and quietened by `volume`, so deafening
+		   remembers the volume for free and undeafening restores it. */
+		vol: 100,
 		/* THE CAMERA (bead godot-test1-xtr.6). A SECOND TRACK on the same
 		   connections — never a second RTCPeerConnection and never a second
 		   signalling family: `addTrack` fires `onnegotiationneeded` and the
@@ -300,11 +308,15 @@ const VOICE_JS: String = """
 		return out > 100 ? 100 : out;
 	}
 
-	/* Deafen and per-peer mute are the same switch on a different set. */
+	/* Deafen and per-peer mute are the same switch on a different set; the
+	   volume is the third, independent axis over the same elements. */
 	function applyAudio() {
 		for (var k in S.peers) {
 			var a = S.peers[k].audio;
-			if (a) { a.muted = (S.deaf === 1 || S.muted[k] === 1); }
+			if (a) {
+				a.muted = (S.deaf === 1 || S.muted[k] === 1);
+				a.volume = S.vol / 100;
+			}
 		}
 		return 1;
 	}
@@ -355,6 +367,7 @@ const VOICE_JS: String = """
 		/* Re-applied on every track, not just the first: a renegotiation hands us
 		   a new stream for a peer whose mute the player set before it arrived. */
 		p.audio.muted = (S.deaf === 1 || S.muted[id] === 1);
+		p.audio.volume = S.vol / 100;
 		unmeter(p.meter);
 		p.meter = meter(stream);
 		var pr = p.audio.play();
@@ -588,6 +601,18 @@ const VOICE_JS: String = """
 
 	function flag(val) {
 		return (val === 1 || val === '1' || val === true) ? 1 : 0;
+	}
+
+	/* An integer percent 0-100 out of whatever crossed the bridge. GDScript
+	   clamps too — this is the browser refusing to set `<audio>.volume` outside
+	   0..1, which throws in every engine. */
+	function pct(val) {
+		var n = Math.round(Number(val));
+		/* Unreadable falls to 100, never to 0 — the GDScript loader's rule for the
+		   same reason: a value nobody can explain must not silence the room. */
+		if (!isFinite(n)) { return 100; }
+		if (n < 0) { return 0; }
+		return n > 100 ? 100 : n;
 	}
 
 	function setTx(val) {
@@ -997,6 +1022,7 @@ const VOICE_JS: String = """
 		setTx: setTx,
 		setMicMuted: function (v) { S.micMuted = flag(v); applyMic(); return S.micMuted; },
 		setDeafened: function (v) { S.deaf = flag(v); applyAudio(); return S.deaf; },
+		setVolume: function (v) { S.vol = pct(v); applyAudio(); return S.vol; },
 		setPeerMuted: function (id, v) {
 			var on = flag(v);
 			if (on) { S.muted[String(id)] = 1; } else { delete S.muted[String(id)]; }
@@ -1073,6 +1099,15 @@ var _accum: float = 0.0
 ## `BestRunStore` or `localStorage`, unlike `_mode`.
 var _mic_muted: bool = false
 var _deafened: bool = false
+
+## INCOMING voice volume, 0.0-1.0 (bead godot-test1-xtr.9). Unlike the three
+## switches above this one IS persisted, through the same `[voice]` /
+## `localStorage` seam `_mode` uses — how loud other people are is a property of
+## your speakers, not of the room you happen to be in. It is a third axis over
+## the same `<audio>` elements rather than a variation on deafen, which is what
+## makes "deafen remembers the volume" true with no code: `set_deafened()` never
+## reads or writes this.
+var _volume: float = 1.0
 var _peer_muted: Dictionary = {}
 
 ## `id -> the msec at which its dot goes out`, re-armed by every loud sample.
@@ -1106,6 +1141,7 @@ func _ready() -> void:
 	# Voice must keep flowing under every overlay and under the room-wide pause.
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_load_mode()
+	_load_volume()
 	_is_web = OS.has_feature("web")
 	if not _is_web:
 		set_process(false)
@@ -1206,6 +1242,9 @@ func _start(ice: Dictionary) -> bool:
 	# worth of presses and never the last room's.
 	_ck.setMicMuted(1 if _mic_muted else 0)
 	_ck.setDeafened(1 if _deafened else 0)
+	# The volume is the one replayed value that came off DISK rather than out of
+	# this session's window of presses — every room starts at the remembered one.
+	_ck.setVolume(_volume_pct())
 	_ck.setCamera(1 if _camera_on else 0)
 	for id: Variant in _peer_muted:
 		_ck.setPeerMuted(str(id), 1)
@@ -1513,6 +1552,92 @@ func _save_mode() -> void:
 		var cfg := ConfigFile.new()
 		cfg.load(BestRunStore.config_path)
 		cfg.set_value(BestRunStore.CONFIG_VOICE_SECTION, "mode", mode_str)
+		cfg.save(BestRunStore.config_path)
+
+
+# ============================================================================
+# INCOMING VOICE VOLUME (bead godot-test1-xtr.9)
+# ============================================================================
+## ONE slider in the MP panel's voice section, applied as `<audio>.volume` on
+## every remote peer. Three things it deliberately is not:
+##
+##  * NOT a fourth escape hatch — deafen is still the switch and volume is the
+##    dial. They are separate axes on the same elements (`muted` vs `volume`), so
+##    the volume is simply remembered under a deafen and is back the moment it is
+##    lifted, with nothing saving or restoring anything.
+##  * NOT per peer. One control, one number, no new packet — a per-peer dial was
+##    the bead's optional half and is skipped: the member row already carries the
+##    one control it can fit (Mute), and the escape hatch a hostile mic needs is
+##    binary anyway.
+##  * NOT the microphone's. This is the RECEIVE side only; the browser's
+##    `autoGainControl` owns the send side and no slider should fight it.
+##
+## Stored as an integer PERCENT string in the same `[voice]` / `localStorage`
+## seam `_mode` uses, which is also the unit the bridge and the slider speak, so
+## the fraction exists in exactly one place: this file's public API.
+
+
+## The persisted key's spelling and the default, kept beside each other so a
+## corrupted value and a missing one land on the same number.
+const VOLUME_DEFAULT: float = 1.0
+
+
+func get_volume() -> float:
+	"""Incoming voice volume, 0.0 (silent) to 1.0 (unattenuated)."""
+	return _volume
+
+
+func set_volume(value: float) -> void:
+	"""
+	Set and persist the incoming voice volume. Clamped rather than rejected — a
+	slider hands us its own range and a stored file hands us anything at all, and
+	`<audio>.volume` throws outside 0..1.
+	"""
+	var clamped: float = clampf(value, 0.0, 1.0)
+	if is_equal_approx(clamped, _volume):
+		return
+	_volume = clamped
+	_save_volume()
+	if _is_web and _running and _ck != null:
+		_ck.setVolume(_volume_pct())
+
+
+func _volume_pct() -> int:
+	"""The bridge's and the store's unit. A NUMBER crosses, never a boolean."""
+	return int(roundf(_volume * 100.0))
+
+
+func _load_volume() -> void:
+	"""
+	Load the volume from `localStorage` on web or the `[voice]` ConfigFile section
+	on desktop, exactly as `_load_mode()` does. Anything unreadable — absent,
+	empty, non-numeric, out of range — is `VOLUME_DEFAULT`, because a stored value
+	nobody can explain must not be able to make the room silent.
+	"""
+	var raw: String = ""
+	if OS.has_feature("web"):
+		raw = BestRunStore.ls_get(BestRunStore.LS_VOICE_VOLUME)
+	else:
+		var cfg := ConfigFile.new()
+		if cfg.load(BestRunStore.config_path) == OK:
+			raw = str(cfg.get_value(BestRunStore.CONFIG_VOICE_SECTION, "volume", ""))
+	if not raw.is_valid_int():
+		_volume = VOLUME_DEFAULT
+		return
+	var pct: int = raw.to_int()
+	if pct < 0 or pct > 100:
+		_volume = VOLUME_DEFAULT
+		return
+	_volume = float(pct) / 100.0
+
+
+func _save_volume() -> void:
+	if OS.has_feature("web"):
+		BestRunStore.ls_set(BestRunStore.LS_VOICE_VOLUME, str(_volume_pct()))
+	else:
+		var cfg := ConfigFile.new()
+		cfg.load(BestRunStore.config_path)
+		cfg.set_value(BestRunStore.CONFIG_VOICE_SECTION, "volume", str(_volume_pct()))
 		cfg.save(BestRunStore.config_path)
 
 

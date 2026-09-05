@@ -233,6 +233,9 @@ var _voice_mode_button: Button = null
 var _mic_state_label: Label = null
 var _mic_mute_button: Button = null
 var _deafen_button: Button = null
+## The incoming-volume dial and its readout (bead godot-test1-xtr.9).
+var _volume_label: Label = null
+var _volume_slider: HSlider = null
 ## The opt-in camera toggle (bead godot-test1-xtr.6).
 var _camera_button: Button = null
 var _voice: Node = null
@@ -547,6 +550,31 @@ func _build_ui() -> void:
 
 	_deafen_button = _make_button("Deafen", _on_deafen_pressed)
 	_voice_section.add_child(_deafen_button)
+
+	# INCOMING VOLUME (bead godot-test1-xtr.9) — the dial beside the switch. A
+	# label carrying the value plus a slider, because a bare slider on a panel
+	# with no tooltips says nothing about what it does or where it is set.
+	_volume_label = Label.new()
+	_volume_label.name = "VoiceVolume"
+	_volume_label.text = tr("Voice volume: %d%%") % 100
+	_volume_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_volume_label.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
+	_volume_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_voice_section.add_child(_volume_label)
+
+	_volume_slider = HSlider.new()
+	_volume_slider.name = "VoiceVolumeSlider"
+	_volume_slider.min_value = 0.0
+	_volume_slider.max_value = 100.0
+	_volume_slider.step = 5.0
+	_volume_slider.value = 100.0
+	# Same reason every button in this panel is FOCUS_NONE: a focused Range eats
+	# the arrow keys and `ui_accept`, both of which are gameplay input here.
+	_volume_slider.focus_mode = Control.FOCUS_NONE
+	_volume_slider.custom_minimum_size = Vector2(0.0, TOUCH_MIN_HEIGHT)
+	_volume_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_volume_slider.value_changed.connect(_on_voice_volume_changed)
+	_voice_section.add_child(_volume_slider)
 
 	# OPT-IN AND OFF BY DEFAULT (owner ruling 2026-09-04, bead godot-test1-xtr.6):
 	# the camera permission prompt is asked on the FIRST PRESS of this button and
@@ -1388,6 +1416,16 @@ func _on_peer_mute_pressed(id: String) -> void:
 	_update_member_rows()
 
 
+## The slider moved. The percent is the panel's unit and the voice node's API is
+## the fraction, so the one conversion in the feature happens here.
+func _on_voice_volume_changed(value: float) -> void:
+	var voice := _ensure_voice()
+	if voice == null or not voice.has_method("set_volume"):
+		return
+	voice.set_volume(value / 100.0)
+	_update_voice_ui()
+
+
 func _update_voice_ui() -> void:
 	if _voice_section == null:
 		return
@@ -1414,6 +1452,17 @@ func _update_voice_ui() -> void:
 	if _deafen_button != null:
 		var deaf: bool = voice.has_method("is_deafened") and bool(voice.is_deafened())
 		_deafen_button.text = "Deafened" if deaf else "Deafen"
+
+	if _volume_slider != null and voice.has_method("get_volume"):
+		var pct: int = int(roundf(float(voice.get_volume()) * 100.0))
+		# `set_value_no_signal` or this write re-enters `_on_voice_volume_changed`
+		# on every panel refresh — and the step would quantise the value back into
+		# the store each time.
+		_volume_slider.set_value_no_signal(float(pct))
+		if _volume_label != null:
+			# tr() on the FORMAT string (CLAUDE.md localization rule 2) — the
+			# formatted result is a key in no table.
+			_volume_label.text = tr("Voice volume: %d%%") % pct
 
 	if _camera_button != null:
 		var can_cam: bool = voice.has_method("set_camera_enabled")

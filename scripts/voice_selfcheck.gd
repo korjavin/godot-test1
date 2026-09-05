@@ -125,6 +125,7 @@ func _initialize() -> void:
 	_check_vc_parser()
 	_check_relay_gate()
 	_check_setting_roundtrip()
+	_check_volume_roundtrip()
 	_check_mic_key_free()
 	_check_help_row()
 	_check_no_js_bool()
@@ -348,6 +349,82 @@ func _check_setting_roundtrip() -> void:
 
 	DirAccess.remove_absolute(BestRunStore.config_path)
 	Sentinel.done("setting_roundtrip")
+
+
+# ============================================================================
+# 3b. THE INCOMING VOLUME ROUND-TRIPS, CLAMPS, AND SURVIVES A DEAFEN
+# ============================================================================
+
+func _check_volume_roundtrip() -> void:
+	"""
+	The bead's four promises about the volume dial (godot-test1-xtr.9), driven
+	through the same isolated store check 3 uses.
+
+	The last one is the interesting one and the one a refactor breaks silently:
+	DEAFEN AND VOLUME ARE SEPARATE AXES. Deafen is `<audio>.muted` and the volume
+	is `<audio>.volume`, so "the volume is remembered under a deafen" holds with
+	no code saving or restoring anything — and any future `set_deafened()` that
+	starts writing the volume (to 0 on the way in, to 1 on the way out) turns this
+	check red, which is exactly the mutation the bead named.
+	"""
+	# A fresh profile is FULL volume, and the constant is what says so.
+	var first: Node = _voice_node()
+	if not is_equal_approx(first.get_volume(), VoiceChat.VOLUME_DEFAULT):
+		_fail("a voice node on an empty profile came up at volume %f, not the %f default"
+			% [first.get_volume(), VoiceChat.VOLUME_DEFAULT])
+
+	# CLAMPED, not rejected and not wrapped — a `<audio>.volume` outside 0..1
+	# throws, so the GD side may never hand one across.
+	for pair: Array in [[2.5, 1.0], [-1.0, 0.0], [1.0, 1.0], [0.0, 0.0], [0.4, 0.4]]:
+		first.set_volume(float(pair[0]))
+		if not is_equal_approx(first.get_volume(), float(pair[1])):
+			_fail("set_volume(%f) settled at %f, expected %f"
+				% [pair[0], first.get_volume(), pair[1]])
+
+	# ...and it persists. 0.4 is what the loop above left set.
+	first.free()
+	var second: Node = _voice_node()
+	if not is_equal_approx(second.get_volume(), 0.4):
+		_fail("volume 0.4 did not survive a restart — a fresh node loaded %f"
+			% second.get_volume())
+
+	# DEAFEN DOES NOT TOUCH IT, in either direction.
+	second.set_deafened(true)
+	if not is_equal_approx(second.get_volume(), 0.4):
+		_fail("deafening changed the volume to %f — deafen is `muted`, volume is "
+			% second.get_volume() + "`volume`, and they are separate axes")
+	second.set_deafened(false)
+	if not is_equal_approx(second.get_volume(), 0.4):
+		_fail("undeafening reset the volume to %f instead of leaving the remembered "
+			% second.get_volume() + "0.4 alone (bead godot-test1-xtr.9's named mutation)")
+	second.free()
+
+	# A CORRUPTED STORED VALUE is FULL volume, never silence: a room that cannot
+	# be heard and offers no reason why is the worst failure this dial has.
+	for junk: Variant in ["", "loud", "-5", "101", 1.5, {"volume": 50}, "50.5"]:
+		var cfg := ConfigFile.new()
+		cfg.set_value(BestRunStore.CONFIG_VOICE_SECTION, "volume", junk)
+		if cfg.save(BestRunStore.config_path) != OK:
+			_fail("could not write the isolated store — check 3b would pass vacuously")
+			break
+		var node: Node = _voice_node()
+		if not is_equal_approx(node.get_volume(), VoiceChat.VOLUME_DEFAULT):
+			_fail("the stored volume %s loaded as %f, not the %f default"
+				% [str(junk), node.get_volume(), VoiceChat.VOLUME_DEFAULT])
+		node.free()
+
+	# ...and an honest one still loads, or the fallback above is passing because
+	# NOTHING is ever read.
+	var honest := ConfigFile.new()
+	honest.set_value(BestRunStore.CONFIG_VOICE_SECTION, "volume", "35")
+	honest.save(BestRunStore.config_path)
+	var loaded: Node = _voice_node()
+	if not is_equal_approx(loaded.get_volume(), 0.35):
+		_fail("the stored volume 35 loaded as %f, not 0.35" % loaded.get_volume())
+	loaded.free()
+
+	DirAccess.remove_absolute(BestRunStore.config_path)
+	Sentinel.done("volume_roundtrip")
 
 
 func _voice_node() -> Node:
@@ -606,6 +683,9 @@ const PUBLIC_CALLS: Array = [
 	["is_mic_muted", []],
 	["set_deafened", [true]],
 	["is_deafened", []],
+	# The incoming volume (bead godot-test1-xtr.9).
+	["set_volume", [0.5]],
+	["get_volume", []],
 	["set_peer_muted", ["deadbeef", true]],
 	["is_peer_muted", ["deadbeef"]],
 	["is_speaking", ["deadbeef"]],
