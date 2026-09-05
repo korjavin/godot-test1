@@ -26,16 +26,19 @@ extends Control
 ##     the shader's own river blue, over the terrain it traces and under the road
 ##     that bridges it. Inside Budapest the same march follows the authored
 ##     Danube's banks instead of the noise field.
-##   * The player as a triangle at the centre, rotated to the character's facing.
+##   * The player as a triangle at the centre, rotated to the character's facing,
+##     in the HERO's own identity tint (`hero_hud.HERO_COLORS` — the same colour
+##     his portrait tile carries, so "which of these dots is me" is answered by
+##     the row above without a legend).
 ##   * The coin road centerline as a polyline, read straight out of the terrain's
 ##     existing station cache (see _gather_road below).
 ##   * Hunters within range as small red dots (species rows carrying `captures_hero`).
 ##     Animals and bosses draw no dots. HQ guards indoors keep theirs.
 ##   * Geo landmarks (Stonehenge, Giza, the Eiffel Tower — see endless_terrain's
-##     GEO LANDMARKS banner) as small violet X marks, clamped to the rim and
+##     GEO LANDMARKS banner) as small BONE X marks, clamped to the rim and
 ##     dimmed when they are off the map. They are destinations, so a rim hint is
 ##     the point: at the default zoom most loaded landmarks are past the disc.
-##   * THE TOWER (GastroDefense HQ) as a mint UPRIGHT CROSS at `tower_site()`, also
+##   * THE TOWER (GastroDefense HQ) as a BONE UPRIGHT CROSS at `tower_site()`, also
 ##     rim-clamped and dimmed off-disc. Unlike every other layer it is not read off
 ##     a group — the terrain is asked where the tower is, not where its geometry
 ##     currently stands — so the bearing to it is on the map from the first frame
@@ -46,7 +49,7 @@ extends Control
 ##   * World X / Z coordinates and the biome underfoot as text, with a "~ river ~"
 ##     marker while the player is standing in a wading band.
 ##   * OUTDOORS: the Budapest countdown ("Budapest: 1.4 km") or explored count
-##     ("Budapest 3/22") beside the coordinates, plus a small violet arrow at the
+##     ("Budapest 3/22") beside the coordinates, plus a small BONE arrow at the
 ##     rim pointing toward Budapest's gate until inside the city rectangle.
 ##   * INSIDE THE HQ ONLY: the storey beside the coordinates and the cell block's
 ##     storey beside the biome ("Floor 6" / "JAIL F10  ^4"), taking priority over
@@ -92,6 +95,24 @@ extends Control
 ##
 ## Toggle with M (a raw keycode like perf_overlay's F3 and motion_debug's F4, so it
 ## stays outside the project input map and can't collide with a gameplay action).
+
+## THE SKIN IS `HudTheme`'S, THE MAP'S HUES ARE NOT (bead godot-test1-y1o.27).
+## The CHROME — the disc's ground, its frame, the caption, the destination marks
+## and the anti-stall arrow — is the film palette and is typed nowhere in this
+## file; `hero_hud_selfcheck` check 8a greps every script for a second copy of a
+## palette hex. Everything that MEANS something keeps the colour it means:
+##   * `BIOME_TINTS` and `COLOR_RIVER` are copied from `ground.gdshader` and are
+##     checked against it — see their banners; a map that invents its own greens
+##     lies about where the desert is.
+##   * `COLOR_ROAD` is the coins' own gold and `COLOR_CROC` the vignette's threat
+##     red — both are "this thing on the map is that thing in the world".
+##   * The player triangle and the teammate dots carry an IDENTITY tint (the
+##     hero's, the peer's), which the epic's palette note lists as semantic.
+## `HudTheme` is a `class_name`, so it needs no preload; `hero_hud.gd` is not one.
+## The A/B crops are `docs/style/y1o.27_minimap_*.png`, shot with
+## `godot --path . scenes/style_shots.tscn -- <outdir> only=field_bridge_deck`
+## — the one shot in that tool that keeps this widget on screen.
+const HeroHudScript := preload("res://scripts/hero_hud.gd")
 
 # ============================================================================
 # CONFIGURATION
@@ -212,7 +233,7 @@ const LANDMARK_EDGE_ALPHA: float = 0.7
 ##
 ## AN UPRIGHT CROSS, NOT AN X, and that is the whole design. There is exactly ONE
 ## tower in a world and the map has to say "that one, over there" at a glance while
-## a handful of violet X marks may be on the disc at the same time — so it is
+## a handful of BONE X marks may be on the disc at the same time — so it is
 ## distinguished by SHAPE first (a + reads differently from an × even at four
 ## pixels, where two colours a hue apart do not) and by colour second. Bigger than
 ## the landmark X for the same reason: the tower is the destination, the landmarks
@@ -283,9 +304,12 @@ const MAZE_BEARING_STEP: float = PI / 4.0
 const JAIL_ARROW_LENGTH: float = 8.0
 const JAIL_ARROW_HALF_WIDTH: float = 5.0
 
-## Amber: the one warm hue on the disc that is not the road's gold, and it is the
-## colour of the plaques in the building the arrow points into.
-const COLOR_JAIL := Color(1.0, 0.62, 0.15, 1.0)
+## THE ONE AMBER ELEMENT ON THIS WIDGET. The palette rations the accent to one
+## thing per screen region, and this is the map's: an arrow that appears only
+## after 90 s of no progress inside the HQ, in the colour of the plaques in the
+## building it points into. It is drawn on the rim the Budapest arrow otherwise
+## owns and the two are mutually exclusive, which is what keeps the ration whole.
+const COLOR_JAIL := HudTheme.VISOR_AMBER
 
 ## Where unused crocodile dot slots are parked. Well outside the control on both
 ## axes, so the segments drawn there land off-screen no matter where the HUD puts
@@ -331,35 +355,45 @@ const TERRAIN_CELL: float = MAP_RADIUS * 2.0 / TERRAIN_GRID
 const TERRAIN_ALPHA: float = 0.55
 
 # --- Colours ----------------------------------------------------------------
-const COLOR_BACKDROP := Color(0.0, 0.0, 0.0, 0.5)   # dark disc under everything
-const COLOR_RIM := Color(1, 1, 1, 0.35)              # thin ring round the disc
+## The panel language, drawn rather than styled: a hard-edged INK ground at the
+## panel alpha inside a 1 px STEEL frame. No radius to set — the disc is a circle
+## — and no shadow, because a `draw_circle` HUD has nothing to cast one onto.
+const COLOR_BACKDROP := Color(HudTheme.INK, HudTheme.PANEL_ALPHA)
+const COLOR_RIM := HudTheme.STEEL                    # thin frame round the disc
 
-## Width of that ring in pixels. The rim is a slightly LARGER filled circle drawn
-## underneath the disc rather than a draw_arc(): an antialiased arc cost 3 draw
-## calls on its own where a plain filled circle costs 1, and at 1.5 px the two are
-## indistinguishable.
-const RIM_WIDTH: float = 1.5
+## Width of that frame in pixels — the spec's 1 px border, and the same number
+## every framed surface in the HUD uses. The rim is a slightly LARGER filled
+## circle drawn underneath the disc rather than a draw_arc(): an antialiased arc
+## cost 3 draw calls on its own where a plain filled circle costs 1, and at this
+## width the two are indistinguishable.
+const RIM_WIDTH: float = float(HudTheme.BORDER_PX)
+## NOT the palette's, and deliberately: the road IS the coins and the dots ARE
+## the hunters, so both wear the colour that thing wears in the world. See the
+## skin banner at the top of the file.
 const COLOR_ROAD := Color(1.0, 0.85, 0.15, 0.9)      # coin gold, matches the coins
 const COLOR_CROC := Color(0.95, 0.25, 0.2, 0.95)     # threat red, matches the vignette
-const COLOR_PLAYER := Color(0.4, 0.95, 1.0, 1.0)     # cyan, nothing else on the map is
-## Violet, deliberately away from every other hue on the disc — the road's gold,
-## the crocodiles' red, the player's cyan — and legible on all four biome tints.
-const COLOR_LANDMARK := Color(0.85, 0.55, 1.0, 0.95)
-## An EXPLORED Budapest slot: the same violet, dimmed and desaturated toward the
-## background. Deliberately not a new hue — an explored landmark is the same kind
-## of thing as an unexplored one and the map is already at its colour budget —
-## and deliberately the DIMMER of the two, because what the player is looking for
-## on this disc is the ones still to walk. Bead godot-test1-8gw.5.
-const COLOR_LANDMARK_DONE := Color(0.55, 0.45, 0.62, 0.75)
-## The tower's mint green. Every other hue on the disc is taken — the road's gold,
-## the crocodiles' red, the landmarks' violet, the player's cyan — and the biome
-## tints are all dark and desaturated, so a saturated mint sits on top of any of
-## them. It is closest to the player's cyan and that is fine: the player is a large
-## triangle permanently at the exact centre of the disc, so nothing at the rim is
-## ever mistaken for it.
-const COLOR_TOWER := Color(0.35, 1.0, 0.6, 0.98)
-const COLOR_TEXT := Color(1, 1, 1, 0.95)
-const COLOR_RIVER_TEXT := Color(0.45, 0.75, 1.0, 0.95)
+## The player triangle's DEGRADE, for a hero with no `HERO_COLORS` row — the same
+## neutral `hero_hud` puts on his portrait tile, read off that table rather than
+## re-typed. The colour actually drawn is `_player_color`, snapshot on the tick.
+const COLOR_PLAYER := HeroHudScript.FALLBACK_COLOR
+## A destination is a BONE glyph — the icon language's single flat colour, drawn
+## on the INK disc that is already the ink ground behind it. The landmark X and
+## the tower cross now share it, which costs nothing: they were told apart by
+## SHAPE and not by hue long before this bead (see TOWER_MARK_RADIUS).
+const COLOR_LANDMARK := HudTheme.BONE
+## An EXPLORED Budapest slot: STEEL, the palette's own "done with, inactive".
+## Deliberately not a new hue — an explored landmark is the same kind of thing as
+## an unexplored one — and deliberately the DIMMER of the two, because what the
+## player is looking for on this disc is the ones still to walk. Bead
+## godot-test1-8gw.5, re-skinned by godot-test1-y1o.27.
+const COLOR_LANDMARK_DONE := HudTheme.STEEL
+## The tower. Same BONE as a landmark X on purpose (above): its UPRIGHT CROSS is
+## what tells it from one, at every zoom and on every biome tint.
+const COLOR_TOWER := HudTheme.BONE
+## The caption under the disc — including the "~ river ~" readout and the indoor
+## storey / jail-intent fragments, which are the same two lines with more words
+## in them and not a second colour.
+const COLOR_TEXT := HudTheme.BONE
 ## The river contour's ink: the ground shader's OWN river blue. The RGB is not
 ## ours to retune, for the BIOME_TINTS reason one banner up — minimap_selfcheck
 ## parses `river_color` out of ground.gdshader and fails if this drifts. The
@@ -377,8 +411,10 @@ const RIVER_WIDTH: float = 2.0
 ## no segment is ever dropped — the _push_terrain_bar discipline, one layer up.
 const MAX_RIVER_SEGMENTS: int = (TERRAIN_GRID - 1) * (TERRAIN_GRID - 1) * 2
 
-## Colour of the Budapest line & direction arrow (matches landmark violet).
-const COLOR_BUDAPEST := Color(0.85, 0.72, 1.0, 1.0)
+## The Budapest line & direction arrow. BONE, which is the landmark marks' colour
+## for the reason it is theirs: the arrow is a destination glyph and the line is
+## a label, and neither may spend the amber the anti-stall arrow is holding.
+const COLOR_BUDAPEST := HudTheme.BONE
 
 ## The small Budapest direction arrow on the rim.
 const BUDAPEST_ARROW_LENGTH: float = 7.0
@@ -452,6 +488,9 @@ var _player_pos: Vector3 = Vector3.ZERO
 ## Player facing as a screen-space unit vector (+X right, +Z down), already mapped
 ## out of the 3D basis so _draw() does no trigonometry.
 var _facing: Vector2 = Vector2(1.0, 0.0)
+## The hero's identity tint, snapshot on the tick like everything else `_draw`
+## paints with — R switches character mid-run, so this is a read and not a latch.
+var _player_color: Color = COLOR_PLAYER
 
 ## Snapshot of the world under the player.
 var _biome: int = 0
@@ -744,6 +783,13 @@ func _tick(elapsed: float = TICK_INTERVAL) -> void:
 	# World (x, z) maps to screen (x, y): north-up, +X right, +Z down.
 	var facing := Vector2(forward.x, forward.z)
 	_facing = facing.normalized() if facing.length_squared() > 0.0001 else Vector2(1.0, 0.0)
+	# WHO is standing here, in his own tile's colour. `hero_name()` is the ability
+	# HUD's existing contract and is has_method()-guarded like every other reach
+	# across a node boundary here, so a player scene without it keeps the neutral.
+	_player_color = COLOR_PLAYER
+	if _player.has_method("hero_name"):
+		_player_color = HeroHudScript.HERO_COLORS.get(
+			String(_player.call("hero_name")), COLOR_PLAYER)
 
 	if _terrain == null or not is_instance_valid(_terrain):
 		_terrain = get_tree().get_first_node_in_group("terrain")
@@ -1335,7 +1381,7 @@ func _gather_city_landmarks(scale: float, arm: float) -> void:
 
 
 func _gather_tower() -> void:
-	"""The tower — GastroDefense HQ — as a mint cross, on the same ~5 Hz tick.
+	"""The tower — GastroDefense HQ — as a BONE cross, on the same ~5 Hz tick.
 
 	THE ONE MARKER THAT IS NOT READ OFF A GROUP, and deliberately so. Every other
 	layer here draws things that exist as nodes: a landmark is on the map because
@@ -1488,7 +1534,7 @@ func _gather_jail_arrow(jail: int, degraded: bool) -> void:
 func _gather_budapest() -> void:
 	"""Budapest line status and small directional arrow at the rim.
 
-	Outdoors: points a small violet arrow toward BudapestPlan.GATE until inside the
+	Outdoors: points a small BONE arrow toward BudapestPlan.GATE until inside the
 	Budapest rectangle (then hides the arrow), and displays the countdown or
 	explored landmark count under the minimap in the storey line slot.
 	Indoors (HQ): hidden completely in favour of the indoor storey line and anti-stall arrow."""
@@ -1641,6 +1687,15 @@ func _draw() -> void:
 	# 2b. Landmarks — ONE draw call for every X on screen (see _gather_landmarks),
 	#     and ZERO while no landmark chunk is loaded. Under the crocodiles on
 	#     purpose: a destination must never hide a threat.
+	#
+	# ponytail: NO INK HALO under these two layers, though the icon language asks
+	# for one. A landmark X is a 1.6 px stroke across 6.8 px, so the spec's 2 px
+	# of ink is wider than the glyph it would outline — the X comes out a blob —
+	# and the halo would also have to be added to LANDMARK_MARK_REACH /
+	# TOWER_MARK_REACH (the rim inset is derived from the stroke width) for two
+	# more draw calls. They are drawn ON the INK disc, which is the ink ground the
+	# language wants; if the owner's eye wants the outline anyway it is a halo
+	# pass at width + 2 px and those two REACH constants.
 	if _landmark_count > 0:
 		draw_multiline_colors(_landmark_points, _landmark_colors, LANDMARK_MARK_WIDTH)
 
@@ -1667,11 +1722,11 @@ func _draw() -> void:
 	_arrow_points[0] = MAP_CENTER + _facing * ARROW_LENGTH
 	_arrow_points[1] = tail + perp * ARROW_HALF_WIDTH
 	_arrow_points[2] = tail - perp * ARROW_HALF_WIDTH
-	draw_colored_polygon(_arrow_points, COLOR_PLAYER)
+	draw_colored_polygon(_arrow_points, _player_color)
 
 	# 4b. The anti-stall arrow indoors, or the Budapest direction arrow outdoors.
 	#     Both are ONE draw call, and the two are mutually exclusive: indoors the
-	#     anti-stall arrow owns the rim; outdoors the small violet Budapest arrow
+	#     anti-stall arrow owns the rim; outdoors the small BONE Budapest arrow
 	#     points toward the gate until inside the city rect.
 	if _jail_alpha > 0.0:
 		draw_colored_polygon(_jail_points, Color(COLOR_JAIL, _jail_alpha))
@@ -1695,26 +1750,36 @@ func _draw() -> void:
 	if not _floor_text.is_empty():
 		text += "   " + _floor_text
 	text += "\n" + tr(BIOME_NAMES[_biome])
-	var color := COLOR_TEXT
 	if _in_river:
+		# The readout is WORDS and not a tint since bead godot-test1-y1o.27: the
+		# caption is one BONE label in one face, and "~ river ~" already says the
+		# thing the blue used to say twice.
 		text += tr("  ~ river ~")
-		color = COLOR_RIVER_TEXT
 	if not _jail_text.is_empty():
 		text += "   " + _jail_text
 	# draw_multiline_string* is what keeps this at 2 draw calls instead of 4: the
 	# per-line draw_string()/draw_string_outline() pair it replaced cost one each.
-	var font := get_theme_default_font()
+	#
+	# THE FACE IS THE FILM'S (bead godot-test1-y1o.27): Oswald Regular, body
+	# weight — this caption is sentence-case body text, not a heading, and a
+	# `Theme` has nothing to say to `draw_multiline_string`, so the font comes off
+	# `HudTheme` directly. The outline is the world-side lettering contract's:
+	# `OUTLINE_PX` of INK, doubled at the call site because Godot grows the glyph
+	# in both directions (`hero_hud` passes it exactly this way).
+	var font: Font = HudTheme.body_font()
 	var pos := Vector2(0.0, MAP_CENTER.y + MAP_RADIUS + TEXT_TOP_GAP)
 	font.draw_multiline_string_outline(get_canvas_item(), pos, text,
-		HORIZONTAL_ALIGNMENT_CENTER, size.x, TEXT_SIZE, -1, 4, Color(0, 0, 0, 0.85))
+		HORIZONTAL_ALIGNMENT_CENTER, size.x, TEXT_SIZE, -1,
+		HudTheme.OUTLINE_PX * 2, HudTheme.INK)
 	font.draw_multiline_string(get_canvas_item(), pos, text,
-		HORIZONTAL_ALIGNMENT_CENTER, size.x, TEXT_SIZE, -1, color)
+		HORIZONTAL_ALIGNMENT_CENTER, size.x, TEXT_SIZE, -1, COLOR_TEXT)
 
 	# 5b. OUTDOORS: the Budapest countdown / explored count on its own third line,
 	#     smaller, in COLOR_BUDAPEST.
 	if _floor_text.is_empty() and not _budapest_text.is_empty():
 		var b_pos := Vector2(0.0, pos.y + font.get_height(TEXT_SIZE) * 2.0 + 2.0)
 		font.draw_multiline_string_outline(get_canvas_item(), b_pos, _budapest_text,
-			HORIZONTAL_ALIGNMENT_CENTER, size.x, BUDAPEST_TEXT_SIZE, -1, 4, Color(0, 0, 0, 0.85))
+			HORIZONTAL_ALIGNMENT_CENTER, size.x, BUDAPEST_TEXT_SIZE, -1,
+			HudTheme.OUTLINE_PX * 2, HudTheme.INK)
 		font.draw_multiline_string(get_canvas_item(), b_pos, _budapest_text,
 			HORIZONTAL_ALIGNMENT_CENTER, size.x, BUDAPEST_TEXT_SIZE, -1, COLOR_BUDAPEST)
