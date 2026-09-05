@@ -548,6 +548,24 @@ Load-bearing rules:
   the **cairn's tiers stay CUBE** (a cairn IS stacked flat stones) and only its loose
   foot stones are rocks. `prop_selfcheck` check 11 reads `BUILDER_KINDS` BOTH ways, so
   a revert to CUBE is a red build.
+  **THE DESERT IS THE THIRD** (bead `godot-test1-y1o.4`): cactus segments and their
+  ARMS plus the oasis palm TRUNKS are `BoxKind.CYLINDER`, and the palm FRONDS are
+  `BoxKind.CONE`, tip out. Two of those needed the LOCAL-Y problem solved — the unit
+  cylinder and cone both taper/extend along local Y, while an arm's length was on
+  local X and a frond's on local Z, so each swaps its dimensions into the Y slot and
+  gains a quarter turn of tilt. Both are DERIVED from numbers already drawn (bead
+  y1o.2's canopy rule), so **not one RNG draw moved and not one footprint changed**;
+  what does change is those entries' dimensions and, for the near-cubic-in-plan
+  segments and trunks, their collider — `collision_shape_for` now gives them a real
+  `CylinderShape3D`, which is the honest shape for a round trunk, leaves the shape
+  COUNT untouched and can only ever un-block a spot (the cactus and palm footprints
+  are both non-climbable, so nothing stands on the difference).
+  **THE DUNES STAYED CUBE, and that is a measured refusal, not an omission.** The bead
+  offered the lower tier a flattened SPHERE *if* the top tier kept its cube flat top;
+  the gameplay half passed, it was built and rendered, and a tier 6-12 m wide and
+  under 0.8 m tall makes a LENS the square top tier visibly overhangs. The picture is
+  written up in `_spawn_desert_dunes`' docstring and `prop_selfcheck` check 11 fails
+  any non-CUBE dune tier so the refusal cannot be quietly undone.
   **THE BILL IS NO LONGER "NOTHING ELSE COSTS ANYTHING", AND THE FREQUENCY IS THE
   NUMBER THAT MATTERS.** `batch_selfcheck` check 5 is now one node per kind PRESENT
   against `KIND_CAP_BY_NAME` (forest 3, every other band 2) and prints the SHARE of
@@ -556,7 +574,13 @@ Load-bearing rules:
   (+78%), ~56 -> ~100 in the web build's 49-chunk residency. The CITY band's cap is 2
   even though no city builder draws a rock, because `_build_prop` themes per PROP
   POSITION rather than per chunk centre — a city chunk on a plains edge grows a plains
-  boulder. **A new consumer is a named bead judged BY EYE by the owner** — the epic's
+  boulder. **The DESERT's cap is 4 and it is the one row past the epic's "+2"** — bead
+  y1o.4's own budget was written before its dependency y1o.3 gave the band a ROCK, and
+  the fourth bucket is the CONE fronds, which appear in the OASIS and nowhere else:
+  measured over 2,814 stone-bearing desert chunks, 3.9% carry four and 20.9% three.
+  The one-line way back under three (fronds share the trunks' CYLINDER, losing their
+  taper) is written at `KIND_CAP_BY_NAME` and is an owner's call about a picture.
+  **A new consumer is a named bead judged BY EYE by the owner** — the epic's
   rule — plus whatever that check-5 bill has to become.
 - **Chunk-parented, so unloading frees it.** Anything spawned per-chunk parents to the
   chunk MeshInstance3D or it leaks.
