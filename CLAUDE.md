@@ -1494,6 +1494,17 @@ var assigned **before `add_child`** (same call-order contract as `setup_as_boss(
 a new entry there plus at most one new arm in a `match` — never a new script and never a
 subclass. Game-wide contracts stay top-level consts and no species may opt out of them.
 
+**EVERY PREDATOR SPAWNER IS `scripts/terrain_predators.gd`** (`class_name
+TerrainPredators`, all static, bd `godot-test1-ftn.6`) — the chunk's crocodiles, the
+Danube's, the hunters, a platform's guards and the road's bosses, with `HUNTER_SALT` /
+`DANUBE_SALT` / `CROC_ROLL_SALT` and their coordinate primes beside the loops that spend
+them (all const-aliased back, so every reader of the terrain's constant map is
+untouched). It RECEIVES the terrain and calls `terrain.biome_at` / `terrain.is_river_at`
+back through it; `create_chunk` calls the library directly and every other caller keeps a
+one-line forwarder on the terrain (`create_box`'s precedent). **`BIOME_SPECIES` and
+`BIOME_BOSS` stayed on `endless_terrain.gd`**, because a `const` Dictionary keyed by its
+`Biome` enum cannot be declared in a file that cannot reach the enum.
+
 **Which species a chunk spawns is PURE DISPATCH on `biome_at(chunk_centre)`** —
 `BIOME_SPECIES` in `endless_terrain.gd`, a biome with no entry getting the crocodile.
 It must never cost an RNG draw: the chunk's crocodile RNG is one shared stream, so a
