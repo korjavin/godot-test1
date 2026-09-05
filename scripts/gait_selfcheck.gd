@@ -73,6 +73,31 @@ const TODAY: Dictionary = {
 	"hitch": 0.0, "phase": 0.0, "idle_rate": 2.0, "idle_bob": 0.01,
 }
 
+## THE SIDESTEP SWEEP (bead godot-test1-3ek). Metres of held strafe, and the
+## speed the probe drives them at — the cycle is DISTANCE-driven, so what the
+## sweep has to cover is ground, not seconds. 6 m is a little over three full
+## DEFAULT cycles (TAU / SIDESTEP_PHASE_PER_METRE = 1.96 m each), which is
+## enough for every hero's slower or faster rate to close at least one.
+const STRAFE_METRES: float = 6.0
+const STRAFE_SPEED: float = 5.0
+
+## How far apart two poses in one strafe must get before the cycle counts as a
+## cycle. Same reasoning and the same number as `HITCH_EPS_DEG`: far below every
+## row's amplitude, far above float noise.
+const STRAFE_EPS_DEG: float = 1.0
+
+## How far apart the roster's WIDEST and NARROWEST strafe must be on each of the
+## three personality axes (leg amplitude, arm amplitude, step rate).
+##
+## A SPREAD and not "the four numbers differ", which is the trap this replaced:
+## the amplitudes are a SAMPLED max and min of a sine, so four heroes whose
+## phases land at slightly different points on the peak read as four distinct
+## numbers even with the scaling pinned to 1.0 — measured, they differed in the
+## fourth decimal and a distinctness test passed. The rows really spread these by
+## 1.9x, 2.0x and 1.6x, so 1.1 is far above the sampling noise and far below
+## every real spread.
+const PERSONALITY_SPREAD: float = 1.1
+
 var _failures: Array[String] = []
 
 
@@ -108,6 +133,7 @@ func _run() -> void:
 		Sentinel.done("relax")
 		Sentinel.done("personality")
 		Sentinel.done("footsteps")
+		Sentinel.done("sidestep")
 		_report()
 		return
 
@@ -126,6 +152,7 @@ func _run() -> void:
 		Sentinel.done("relax")
 		Sentinel.done("personality")
 		Sentinel.done("footsteps")
+		Sentinel.done("sidestep")
 		player.queue_free()
 		_report()
 		return
@@ -134,6 +161,7 @@ func _run() -> void:
 	_check_relax(player)
 	_check_personality(player)
 	_check_footsteps(player)
+	_check_sidestep(player)
 
 	player.queue_free()
 	await process_frame
@@ -375,7 +403,7 @@ func _check_relax(player: Node3D) -> void:
 		player.anim.animation_time = 0.4
 		player.anim.animate_walking(step, 1.0)
 		player.step_direction = 1.0
-		player.anim.animate_sidestep()
+		player.anim.animate_sidestep(step)
 		var body_rest: Vector3 = player.anim.original_rotations["body"]
 		if absf(player.anim.character_body.rotation.x - body_rest.x) > 1e-6:
 			_fail("%s: a sidestep straight out of a walk left the body pitched %.4f rad "
@@ -602,3 +630,222 @@ func _check_footsteps(player: Node3D) -> void:
 				+ "footstep of an unknown hero would be retimed")
 
 	Sentinel.done("footsteps")
+
+
+# ============================================================================
+# CHECK 6 — THE SIDESTEP IS A CYCLE, AND ITS PHASE IS METRES
+# ============================================================================
+
+func _check_sidestep(player: Node3D) -> void:
+	"""
+	Holding A / D has to look like STEPPING, not like leaning (bead
+	godot-test1-3ek; owner: *"left-right movement should have better animation
+	like steps left and right"*).
+
+	Six things:
+
+	  (a) the pose MOVES over a held strafe, and the two legs take TURNS being
+	      the one that has reached out — measured as the roll GAP between them
+	      taking both signs. The control is the SHIPPED `sidestep_pose()` driven
+	      at a FROZEN phase, swept identically, which must FAIL that bound: a
+	      lean held for as long as the key is down has one gap, one sign,
+	      forever. Driving the shipped function rather than a local copy of the
+	      retired pose is the point — a re-implementation could only ever fail
+	      the bound by construction, which measures nothing.
+	  (b) BOTH DIRECTIONS MIRROR. A left strafe and a right one must reach the
+	      same distance, and this is not decoration: the lift used to be steered
+	      by `sign(cycle)` alone, which on a LEFT strafe put it on the trailing
+	      leg and cancelled half the reach. A one-direction probe was green
+	      throughout.
+	  (c) the phase is DISTANCE, so the same ground covered at half the speed
+	      over twice the frames is the SAME pose. Nothing else in this file can
+	      see a regression to `animation_time`, and a time-driven strafe is
+	      exactly what the bead replaced.
+	  (d) `reset_sidestep_pose()` still puts every limb roll back, because that
+	      is the key-order bug `capture_selfcheck` guards from the other side —
+	      and it must now also drop the PHASE, or the next strafe starts
+	      mid-stride.
+	  (e) the FOOTSTEP BEAT, counted the way check 5 counts the walk's: sign
+	      flips of the sidestep's own sentinel over a known distance. The `_sfx`
+	      call itself is gated on `is_on_floor()`, which no headless harness
+	      satisfies, so the sentinel is the measurable half — and it is the half
+	      that carries the bug, since the beat IS the phase and the phase is
+	      where a retune goes wrong.
+	  (f) the per-hero personality is REAL, on all three axes the banner claims:
+	      the LEG amplitude (off `leg_deg`), the ARM amplitude (off `arm_deg`)
+	      and the step RATE (off `stride_rate`). Each is asserted as a SPREAD
+	      across the roster, because "the four numbers are distinct" passes on
+	      sampling noise alone — measured, `leg_scale` pinned to 1.0 still gave
+	      four amplitudes differing in the fourth decimal.
+	"""
+	var step: float = 1.0 / SWEEP_HZ
+	var eps: float = deg_to_rad(STRAFE_EPS_DEG)
+	var frames: int = int(STRAFE_METRES / (STRAFE_SPEED * step))
+	var leg_amps: Array[float] = []
+	var arm_amps: Array[float] = []
+	var beats: Array[float] = []
+
+	for index: int in PlayerController.CHARACTERS.size():
+		var hero: String = String(PlayerController.CHARACTERS[index]["name"])
+		player.set_active_character(index)
+		var anim = player.anim
+		var per_direction: Array[float] = []
+
+		for direction: float in [1.0, -1.0]:
+			var swept: Dictionary = _strafe_sweep(anim, direction, STRAFE_SPEED, step, frames)
+			var gap_min: float = float(swept["leg_min"])
+			var gap_max: float = float(swept["leg_max"])
+			if gap_min >= -eps or gap_max <= eps:
+				_fail("%s (direction %+.0f): over %.1f m of held strafe the roll gap "
+						% [hero, direction, STRAFE_METRES]
+						+ "between the legs stayed in [%.4f, %.4f] rad — one leg never "
+						% [gap_min, gap_max]
+						+ "took its turn reaching out, so the strafe is still a static "
+						+ "splay and not a stepping cycle")
+			per_direction.append(gap_max - gap_min)
+
+			var lift_seen: float = float(swept["bob"])
+			if lift_seen <= 0.0:
+				_fail("%s (direction %+.0f): the body never left its rest height over a "
+						% [hero, direction]
+						+ "whole strafe — the bob on the close beat is not being drawn")
+			# The bob rides inside the same band the walk is held to, or the model
+			# stops looking attached to a collision capsule that does not move.
+			if lift_seen > BODY_Y_MAX:
+				_fail("%s (direction %+.0f): the strafe bob reached %.4f m, past the "
+						% [hero, direction, lift_seen]
+						+ "%.4f m the walk cycle is held to" % BODY_Y_MAX)
+
+			# (a)'s CONTROL, on the shipped function: the same sweep with the phase
+			# never advancing. A static pose draws ONE gap, so it cannot take both
+			# signs — and if it ever does, the bound above has stopped measuring.
+			var s_min: float = INF
+			var s_max: float = -INF
+			for i: int in frames:
+				anim.sidestep_pose(0.0, direction)
+				var s_gap: float = anim.left_leg.rotation.z - anim.right_leg.rotation.z
+				s_min = minf(s_min, s_gap)
+				s_max = maxf(s_max, s_gap)
+			if s_min < -eps and s_max > eps:
+				_fail("%s (direction %+.0f): a FROZEN phase passed the alternation bound "
+						% [hero, direction]
+						+ "— the check would not go red on a strafe that stopped moving")
+
+		# (b) THE TWO DIRECTIONS MIRROR.
+		if not is_equal_approx(per_direction[0], per_direction[1]):
+			_fail("%s: a right strafe reaches %.4f rad and a left one %.4f — the two "
+					% [hero, per_direction[0], per_direction[1]]
+					+ "directions must mirror, so the reaching leg is being picked off "
+					+ "the cycle's sign without the step's")
+
+		# (c) THE PHASE IS METRES. Same ground, half the speed, twice the frames.
+		var fast: Array[float] = _strafe_pose(anim, 1.0, STRAFE_SPEED, step, frames)
+		var slow: Array[float] = _strafe_pose(anim, 1.0, STRAFE_SPEED * 0.5, step, frames * 2)
+		for k: int in fast.size():
+			if absf(fast[k] - slow[k]) > 1e-5:
+				_fail("%s: the same %.1f m walked at half the speed gave a different pose "
+						% [hero, STRAFE_METRES]
+						+ "(%.5f vs %.5f) — the sidestep phase is running on TIME, not "
+						% [fast[k], slow[k]] + "on distance")
+				break
+
+		# (d) RELEASE PUTS IT BACK, phase included.
+		player.step_direction = 1.0
+		player.velocity = Vector3(0.0, 0.0, STRAFE_SPEED)
+		anim.animate_sidestep(step)
+		anim.reset_sidestep_pose()
+		for key: String in ["left_arm", "right_arm", "left_leg", "right_leg"]:
+			var limb: Node3D = anim.get(key)
+			if limb == null:
+				continue
+			var off: float = absf(limb.rotation.z - float(anim.original_rotations[key].z))
+			if off > 1e-6:
+				_fail("%s: releasing the strafe left %s rolled %.5f rad off rest"
+						% [hero, key, off])
+		if absf(float(anim._sidestep_phase)) > 0.0 or int(anim._last_sidestep_sine_sign) != 0:
+			_fail("%s: releasing the strafe kept the cycle's phase (%.4f) or its footstep "
+					% [hero, float(anim._sidestep_phase)]
+					+ "sentinel (%d) — the next strafe would start mid-stride"
+					% int(anim._last_sidestep_sine_sign))
+		player.step_direction = 0.0
+		player.velocity = Vector3.ZERO
+
+		var measured: Dictionary = _strafe_sweep(anim, 1.0, STRAFE_SPEED, step, frames)
+		leg_amps.append(float(measured["leg_max"]) - float(measured["leg_min"]))
+		arm_amps.append(float(measured["arm_max"]) - float(measured["arm_min"]))
+		beats.append(float(measured["flips"]))
+		# (e) THE BEAT IS THE PHASE. One sign flip every PI of phase, and the
+		#     phase is metres x the rate — so the count is arithmetic, not a
+		#     tuning constant, and a bug that moved the phase instead of the
+		#     amplitude would show up here as the wrong number of steps.
+		var rate: float = PlayerAnimation.SIDESTEP_PHASE_PER_METRE \
+				* float(PlayerAnimation.gait_for(hero)["stride_rate"]) \
+				/ float(PlayerAnimation.GAITS["DEFAULT"]["stride_rate"])
+		var expected: float = STRAFE_METRES * rate / PI
+		if absf(float(measured["flips"]) - expected) > 1.0:
+			_fail("%s: %d footstep beats over %.1f m, but the row's rate predicts %.1f "
+					% [hero, int(measured["flips"]), STRAFE_METRES, expected]
+					+ "— the close beat is not riding the cycle's own phase")
+
+	# (f) THE PERSONALITY IS REAL, on each of the three axes separately.
+	for axis: Array in [["leg amplitude", leg_amps, "leg_deg"],
+			["arm amplitude", arm_amps, "arm_deg"],
+			["step rate", beats, "stride_rate"]]:
+		var values: Array = axis[1]
+		var lo: float = INF
+		var hi: float = -INF
+		for v: float in values:
+			lo = minf(lo, v)
+			hi = maxf(hi, v)
+		if lo <= 0.0 or hi < lo * PERSONALITY_SPREAD:
+			_fail("every hero's strafe %s sits in [%.4f, %.4f] — the rows spread `%s` "
+					% [axis[0], lo, hi, axis[2]]
+					+ "far wider than that, so that scaling is not reaching the pose")
+
+	Sentinel.done("sidestep")
+
+
+func _strafe_sweep(anim, direction: float, speed: float, step: float,
+		frames: int) -> Dictionary:
+	"""
+	Drive one held strafe from a clean start and report what it did: the range
+	of the LEG roll gap and of the ARM roll gap, the worst body rise, and how
+	many times the footstep sentinel flipped (the close beats).
+	"""
+	anim.player.step_direction = direction
+	anim.reset_sidestep_pose()
+	var out: Dictionary = {"leg_min": INF, "leg_max": -INF,
+			"arm_min": INF, "arm_max": -INF, "bob": 0.0, "flips": 0.0}
+	var last_sign: int = 0
+	for i: int in frames:
+		anim.player.velocity = Vector3(0.0, 0.0, speed)
+		anim.animate_sidestep(step)
+		var leg: float = anim.left_leg.rotation.z - anim.right_leg.rotation.z
+		out["leg_min"] = minf(float(out["leg_min"]), leg)
+		out["leg_max"] = maxf(float(out["leg_max"]), leg)
+		var arm: float = anim.left_arm.rotation.z - anim.right_arm.rotation.z
+		out["arm_min"] = minf(float(out["arm_min"]), arm)
+		out["arm_max"] = maxf(float(out["arm_max"]), arm)
+		out["bob"] = maxf(float(out["bob"]), absf(anim.character_body.position.y))
+		var now: int = int(anim._last_sidestep_sine_sign)
+		if last_sign != 0 and now != last_sign:
+			out["flips"] = float(out["flips"]) + 1.0
+		last_sign = now
+	anim.player.step_direction = 0.0
+	anim.player.velocity = Vector3.ZERO
+	return out
+
+
+func _strafe_pose(anim, direction: float, speed: float, step: float,
+		frames: int) -> Array[float]:
+	"""Walk one strafe from a clean start and return the pose it ends on."""
+	anim.player.step_direction = direction
+	anim.reset_sidestep_pose()
+	for i: int in frames:
+		anim.player.velocity = Vector3(0.0, 0.0, speed)
+		anim.animate_sidestep(step)
+	anim.player.step_direction = 0.0
+	anim.player.velocity = Vector3.ZERO
+	return [anim.left_leg.rotation.z, anim.right_leg.rotation.z,
+			anim.left_arm.rotation.z, anim.right_arm.rotation.z,
+			anim.character_body.position.y]

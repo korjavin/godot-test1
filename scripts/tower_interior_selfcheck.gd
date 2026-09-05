@@ -92,17 +92,23 @@ extends SceneTree
 ##      across a rebuilt tower, because that one fact is the only liberation state
 ##      that persists.
 ##
+## THE GUARDS LEFT THIS FILE, AND THE CHECK NUMBERS DID NOT (bead
+## `godot-test1-ftn.25`, the ftn.13 shape). Checks 12, 13, 14 and 21/21b — the
+## posts, the reset, the leash and the lure — are `tower_guard_selfcheck.gd`, and
+## check 21c, the cell block's own errand, is `tower_block_lure_selfcheck.gd`. Not
+## one assertion moved and not one name changed; the split is by RUNTIME, because
+## those six checks are eighty of the old file's ninety seconds (every one of them a
+## real body walking a real floor under real physics) and the twenty-two left here
+## are the other eight. A CI shard cannot break a file apart, so a file the size of
+## the old one is a brick the packer has to build a bin around. The shared rig —
+## the scene paths, the shell/interior instancing, the teardown — is
+## `scripts/tower_probe.gd`.
+##
 ## The "RID allocations … were leaked at exit" lines after the verdict are the
 ## engine reporting this project's deliberate static shared caches — same note as
 ## the other tower self-checks.
 
-const SHELL_SCENE: String = "res://scenes/tower/tower_shell.tscn"
-const INTERIOR_SCENE: String = "res://scenes/tower/tower_interior.tscn"
-const PLAYER_SCENE: String = "res://scenes/player.tscn"
 const PLAYER_SCRIPT: String = "res://scripts/player_controller.gd"
-## The AI's SPECIES table, for check 12's "which row did this body actually
-## resolve" test. Read rather than restated, so a renamed row fails by name.
-const CROC_SCRIPT: String = "res://scripts/piglet_crocodile_ai.gd"
 
 ## An id no gate in this game has. Check 10 uses it as "what a second writer
 ## already put on disk", which is the stale copy the union has to survive.
@@ -121,15 +127,6 @@ const CAMERA_CLEARANCE: float = 0.2
 
 ## Floating-point slack for geometry that is supposed to be EXACTLY flush.
 const EPS: float = 1e-4
-## Check 13 reads a re-built guard's position one process frame AFTER the
-## doorway signal, and one process frame is an unbounded number of physics ticks
-## on a loaded CI runner (up to 8) - gravity settles the spawn lift and the wander
-## arm drifts a few centimetres before the assertion runs. The question the check
-## asks is "was the population RESET to its posts, not left where it stood?", and
-## the displaced bodies sit 2.83 m away, so half a metre still separates the two
-## answers while admitting every tick the runner sneaks in. Master went red on
-## 2026-08-30 at 4 mm off with EPS; this is the tolerance the measurement earns.
-const POST_SETTLE_EPS: float = 0.5
 
 ## THE CEILING ON THE ONE INTERIOR COST THE DRAW BUDGET CANNOT SEE: static box
 ## shapes on the single `InteriorCollision` body, one per solid box.
@@ -216,7 +213,7 @@ func _initialize() -> void:
 
 func _boot() -> void:
 	# THE STORE SEAM FIRST, before any shell can exist — see BestRunStore.config_path.
-	_fresh_store()
+	TowerProbe.fresh_store()
 	# ONE FRAME BEFORE ANYTHING — a node added to `root` from inside _initialize()
 	# is not `is_inside_tree()` until the first frame, so anything reading a global
 	# transform measures a detached world (tower_shell_selfcheck's note).
@@ -241,12 +238,6 @@ func _run() -> void:
 	_check_the_scar_plan()
 	await _check_the_scar_is_drawn_and_permanent()
 	await _check_spines_and_liberation()
-	await _check_guards_stand_their_posts()
-	_check_guard_capsule_fits_the_doors()
-	await _check_guards_reset_on_re_entry()
-	await _check_the_leash_holds_under_a_chase()
-	await _check_the_lure_diverts_a_guard()
-	await _check_the_block_floor_lure_completes()
 	_check_the_offices_are_furnished_and_still_walkable()
 	_check_the_plaques_point_at_the_stairs()
 	await _check_air_sight_shows_through_walls_only()
@@ -392,7 +383,7 @@ func _fit_boxes(boxes: Array[Dictionary], bound: float, floors: Array[int],
 		# And the doorway stays a hole. Asked of every population: a planned storey
 		# whose ramp came down into the entrance would block the front door as
 		# thoroughly as a wall does.
-		if _overlaps(pos, box["size"], door["pos"], door["size"]):
+		if TowerProbe.overlaps(pos, box["size"], door["pos"], door["size"]):
 			_fail("%s stands in the shell's doorway volume" % box_name)
 
 
@@ -822,10 +813,10 @@ func _check_headroom_clears_the_camera() -> void:
 	so a low ceiling has exactly one symptom — the arm collapses and the third-person
 	view becomes the back of a head — and exactly one fix, which is the room.
 	"""
-	var player := (load(PLAYER_SCENE) as PackedScene).instantiate() as Node3D
+	var player := (load(TowerProbe.PLAYER_SCENE) as PackedScene).instantiate() as Node3D
 	root.add_child(player)
 	player.global_position = Vector3.ZERO
-	await _settle_physics()
+	await TowerProbe.settle_physics(self)
 	var camera := player.get_node_or_null("CameraPivot/CameraArm/Camera3D") as Camera3D
 	var arm := player.get_node_or_null("CameraPivot/CameraArm") as SpringArm3D
 	if camera == null or arm == null:
@@ -882,7 +873,7 @@ func _check_headroom_clears_the_camera() -> void:
 	# doorway is a 6 x 4 m hole the boom trails straight through, so a snap would
 	# cut the camera 4.3 m forward on every entry; `_tick_arm_length` eases it
 	# instead, and this sample is what fails if somebody puts the snap back.
-	await _settle_physics()
+	await TowerProbe.settle_physics(self)
 	var mid_reach := _camera_reach(player, camera)
 	await _ease_arm()
 	var indoor_reach := _camera_reach(player, camera)
@@ -960,7 +951,7 @@ func _check_node_shape() -> void:
 	corner, or forgot the ramp's tilt, fails here — and none of those would move any
 	count at all.
 	"""
-	var interior := await _make_interior()
+	var interior := await TowerProbe.make_interior(self)
 	var boxes := TowerInterior.all_boxes()
 	var meshes := _all_meshes(interior)
 	# THE DOSSIER RACK COUNTS, and it counts in BOTH numbers. It is a
@@ -1157,8 +1148,8 @@ func _check_materials_are_shared_and_already_toon() -> void:
 	every mesh to `ToonShading.apply_to_mesh()` and assert it changed nothing, which
 	states "toon-compatible" as an effect rather than as a property read.
 	"""
-	var a := await _make_interior()
-	var b := await _make_interior()
+	var a := await TowerProbe.make_interior(self)
+	var b := await TowerProbe.make_interior(self)
 	var mesh_a := _all_meshes(a)
 	var mesh_b := _all_meshes(b)
 	var distinct := {}
@@ -1313,7 +1304,7 @@ func _check_the_interior_is_lit_and_off_white() -> void:
 	if carpet.get_luminance() < INTERIOR_MIN_LUMINANCE:
 		_fail("COLOR_CARPET is too dark (%.2f) to read as carpet under flat light" % carpet.get_luminance())
 
-	var interior := load(INTERIOR_SCENE).instantiate() as Node3D
+	var interior := load(TowerProbe.INTERIOR_SCENE).instantiate() as Node3D
 	root.add_child(interior)
 	await process_frame
 	var darkest := 1.0
@@ -1419,12 +1410,12 @@ func _check_gate_lifecycle() -> void:
 	# This check asserts "a fresh tower has nothing open", so it starts from a
 	# profile that has nothing in it — an earlier check's write-through would
 	# otherwise hydrate straight into the assertion.
-	_fresh_store()
-	var shell := await _make_tower()
+	TowerProbe.fresh_store()
+	var shell := await TowerProbe.make_tower(self)
 	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
 	if interior == null:
 		_fail("the tower has no TowerInterior child — the interior is not being assembled")
-		await _clear(null, shell)
+		await TowerProbe.clear(self, null, shell)
 		Sentinel.done("gate_lifecycle")
 		return
 
@@ -1453,7 +1444,7 @@ func _check_gate_lifecycle() -> void:
 	var shutter := interior.find_child("DemandShutter", true, false) as MeshInstance3D
 	if mass == null:
 		_fail("the secure door built no mass — check 7 has nothing to open")
-		await _clear(null, shell)
+		await TowerProbe.clear(self, null, shell)
 		Sentinel.done("gate_lifecycle")
 		return
 	var mass_rest: float = mass.position.y
@@ -1483,11 +1474,11 @@ func _check_gate_lifecycle() -> void:
 	var pad_area := interior.get_node_or_null("Floor1/IdentityTrigger") as Area3D
 	if pad_area == null:
 		_fail("there is no IdentityTrigger Area3D on the upper storey")
-		await _clear(hero, shell)
+		await TowerProbe.clear(self, hero, shell)
 		Sentinel.done("gate_lifecycle")
 		return
 	hero.global_position = pad_area.global_position
-	await _settle_physics()
+	await TowerProbe.settle_physics(self)
 	interior._process(0.1)
 	if not shell.is_opened(TowerInterior.GATE_IDENTITY):
 		_fail("a party without Teibi could not open the base-kit secure door while standing on its pad")
@@ -1512,13 +1503,13 @@ func _check_gate_lifecycle() -> void:
 	var demand_area := interior.get_node_or_null("Floor0/DemandTrigger") as Area3D
 	if demand_area == null:
 		_fail("there is no DemandTrigger Area3D")
-		await _clear(hero, shell)
+		await TowerProbe.clear(self, hero, shell)
 		Sentinel.done("gate_lifecycle")
 		return
 	hero.hero = "primm"
 	hero.reach = TowerInterior.DEMAND_TARGET * 0.6
 	hero.global_position = demand_area.global_position
-	await _settle_physics()
+	await TowerProbe.settle_physics(self)
 	if shell.is_opened(TowerInterior.GATE_DEMAND):
 		_fail("a reading of %.1f m opened a gate calibrated to %.1f m" % [
 			hero.reach, TowerInterior.DEMAND_TARGET])
@@ -1564,11 +1555,11 @@ func _check_gate_lifecycle() -> void:
 	var check_area := interior.get_node_or_null("Floor1/CheckpointTrigger") as Area3D
 	if check_area == null:
 		_fail("there is no CheckpointTrigger Area3D")
-		await _clear(hero, shell)
+		await TowerProbe.clear(self, hero, shell)
 		Sentinel.done("gate_lifecycle")
 		return
 	hero.global_position = check_area.global_position
-	await _settle_physics()
+	await TowerProbe.settle_physics(self)
 	if not shell.is_opened(TowerInterior.GATE_CHECKPOINT):
 		_fail("standing on the checkpoint did not record it")
 	var plate := interior.find_child("CheckpointPlate", true, false) as MeshInstance3D
@@ -1611,7 +1602,7 @@ func _check_gate_lifecycle() -> void:
 		# Step off, so the first digit of the real answer reads as a fresh press
 		# rather than as the pad the player was already standing on.
 		hero.global_position = lock.global_position
-		await _settle_physics()
+		await TowerProbe.settle_physics(self)
 		interior._process(0.05)
 		# ...then the sequence, in order, from the top.
 		for step in answer:
@@ -1639,7 +1630,7 @@ func _check_gate_lifecycle() -> void:
 		# ...and a sequence COMPLETED BUT NEVER RECORDED starts again from the top
 		# instead of indexing past its own answer. That is not hypothetical: the
 		# open state lives on the shell, so an interior built with no tower over it
-		# — which is what `_make_interior()` does twice in this file — finishes the
+		# — which is what `TowerProbe.make_interior()` does twice here — finishes the
 		# answer, records nothing and steps on the next pad. Driven directly,
 		# because the assertion is about the index and the walk above already
 		# covers the trigger path.
@@ -1667,7 +1658,7 @@ func _check_gate_lifecycle() -> void:
 			if shell.is_opened(TowerGraph.ENTRY_LIFT_MAZE):
 				_fail("the lift stop armed for a body that is not in group \"player\"")
 			hero.global_position = stop_area.global_position
-			await _settle_physics()
+			await TowerProbe.settle_physics(self)
 			if not shell.is_opened(TowerGraph.ENTRY_LIFT_MAZE):
 				_fail(("standing on the lift stop did not record '%s' — the trigger is wired "
 					+ "to nothing the graph names") % TowerGraph.ENTRY_LIFT_MAZE)
@@ -1683,10 +1674,10 @@ func _check_gate_lifecycle() -> void:
 		# Stand clear first: `body_entered` fires on ENTRY, so a probe that happened
 		# to be inside the volume already would count nothing.
 		hero.global_position = hazard.global_position + Vector3(0.0, 0.0, 40.0)
-		await _settle_physics()
+		await TowerProbe.settle_physics(self)
 		var before: int = hero.hits
 		hero.global_position = hazard.global_position
-		await _settle_physics()
+		await TowerProbe.settle_physics(self)
 		if hero.hits == before:
 			_fail("the crawl press swept through the player and cost nothing")
 
@@ -1707,7 +1698,7 @@ func _press_pad(hero: Node3D, interior: TowerInterior, gate_id: String, digit: i
 		_fail("riddle '%s' has no trigger volume for pad %d" % [gate_id, digit])
 		return
 	hero.global_position = area.global_position
-	await _settle_physics()
+	await TowerProbe.settle_physics(self)
 	interior._process(0.05)
 
 
@@ -1723,8 +1714,8 @@ func _check_opened_state_is_reapplied() -> void:
 	nothing in play does: it pre-loads the set on the shell and asserts the geometry
 	that comes out.
 	"""
-	_fresh_store()  # the set below is meant to be the WHOLE set — see check 7's note
-	var shell := load(SHELL_SCENE).instantiate() as Node3D
+	TowerProbe.fresh_store()  # the set below is meant to be the WHOLE set — see check 7's note
+	var shell := load(TowerProbe.SHELL_SCENE).instantiate() as Node3D
 	var riddles := TowerInterior.riddle_ids()
 	shell.opened = {
 		TowerInterior.GATE_DEMAND: true,
@@ -1737,7 +1728,7 @@ func _check_opened_state_is_reapplied() -> void:
 	# a gate somebody earned.
 	for gid: String in riddles:
 		shell.opened[gid] = true
-	shell.add_child(load(INTERIOR_SCENE).instantiate())
+	shell.add_child(load(TowerProbe.INTERIOR_SCENE).instantiate())
 	root.add_child(shell)
 	await process_frame
 
@@ -1910,7 +1901,7 @@ func _check_visibility_gating() -> void:
 			_fail("%.2f m — a hysteresis under storey %d — read as storey %d, expected %d" % [
 				below, i, TowerInterior.current_floor(below), want_below])
 
-	var shell := await _make_tower()
+	var shell := await TowerProbe.make_tower(self)
 	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
 	var hero := ProbePlayer.new()
 	hero.add_to_group("player")
@@ -2010,25 +2001,6 @@ func _check_visibility_gating() -> void:
 # HELPERS
 # ============================================================================
 
-func _make_interior() -> Node3D:
-	## A bare interior in the tree — no shell above it, so `_tower()` finds nothing
-	## and every gate reads shut. That is what checks 5 and 6 want: the geometry, with
-	## no state.
-	var interior := load(INTERIOR_SCENE).instantiate() as Node3D
-	root.add_child(interior)
-	await process_frame
-	return interior
-
-
-func _make_tower() -> Node3D:
-	## Shell plus interior, assembled the way endless_terrain assembles them — the
-	## interior added BEFORE the shell enters the tree, so it can see its parent.
-	var shell := load(SHELL_SCENE).instantiate() as Node3D
-	shell.add_child(load(INTERIOR_SCENE).instantiate())
-	root.add_child(shell)
-	await process_frame
-	return shell
-
 
 func _batch_vertices(interior: Node3D, floor_index: int) -> Dictionary:
 	## Every vertex of one storey's batch, as a set of quantized keys.
@@ -2104,7 +2076,8 @@ func _descendants(node: Node) -> Array[Node]:
 	## a claim about STATIC GEOMETRY (see check 5's docstring: the batch, the 67
 	## draw calls, the frame spikes), and would hand a `.glb`'s materials to a
 	## palette assertion they were never part of. The guards are not unmeasured for
-	## it — check 12 counts and places them, and check 13 resets them.
+	## it — `tower_guard_selfcheck`'s check 12 counts and places them, and its check
+	## 13 resets them.
 	var out: Array[Node] = []
 	for child: Node in node.get_children():
 		if String(child.name) == "VaultGem" or String(child.name) == "Guards":
@@ -2123,43 +2096,6 @@ func _lit_bands(interior: TowerInterior) -> int:
 		if band != null and band.material_override == on:
 			lit += 1
 	return lit
-
-
-func _overlaps(a_pos: Vector3, a_size: Vector3, b_pos: Vector3, b_size: Vector3) -> bool:
-	## Axis-aligned three-interval overlap, with a tolerance so two boxes that merely
-	## share a face do not read as intersecting.
-	const TOUCH: float = 0.001
-	var a := a_size * 0.5
-	var b := b_size * 0.5
-	return absf(a_pos.x - b_pos.x) < a.x + b.x - TOUCH \
-			and absf(a_pos.y - b_pos.y) < a.y + b.y - TOUCH \
-			and absf(a_pos.z - b_pos.z) < a.z + b.z - TOUCH
-
-
-func _clear(hero: Node, shell: Node) -> void:
-	"""
-	Free a check's probe player and tower before bailing out.
-
-	NOT TIDINESS. A check that `return`s on a failure and leaves its probe in the
-	tree leaves a second node in group "player", and the next check's
-	`get_first_node_in_group("player")` picks one of them at random — so one real
-	failure grows a train of invented ones in checks that are fine. (Happened while
-	this file was being written: a missing `IdentityTrigger` reported itself as "the
-	interior still draws with the player 240 m away".)
-	"""
-	if hero != null:
-		hero.queue_free()
-	if shell != null:
-		shell.queue_free()
-	await process_frame
-
-
-func _settle_physics() -> void:
-	## Four physics frames — the number `tower_shell_selfcheck` MEASURED: a body added
-	## and positioned in the same frame is reported by an area on the THIRD frame, so
-	## two reads as "nothing fired" and passes every mutant.
-	for _i in 4:
-		await physics_frame
 
 
 # ============================================================================
@@ -2184,10 +2120,10 @@ func _check_earned_state_survives_a_relaunch() -> void:
 	somebody earned, which is exactly what must never happen. So the check puts a
 	foreign id on disk behind this tower's back and demands both survive.
 	"""
-	_fresh_store()
+	TowerProbe.fresh_store()
 
 	# --- (a) a fresh profile builds a shut tower, and opening a gate reaches disk ---
-	var first := await _make_tower()
+	var first := await TowerProbe.make_tower(self)
 	if not first.opened_ids().is_empty():
 		_fail("a tower built against an empty save came up with %s already open" % [
 			first.opened_ids()])
@@ -2201,7 +2137,7 @@ func _check_earned_state_survives_a_relaunch() -> void:
 	await process_frame
 
 	# --- (b) "relaunch": a brand-new tower, open, geometry and all ---
-	var second := await _make_tower()
+	var second := await TowerProbe.make_tower(self)
 	if not second.is_opened(TowerInterior.GATE_IDENTITY):
 		_fail("a gate opened before the quit came back shut after the relaunch")
 	var interior := second.get_node_or_null("TowerInterior") as TowerInterior
@@ -2235,7 +2171,7 @@ func _check_earned_state_survives_a_relaunch() -> void:
 			bounded.size(), BestRunStore.MAX_TOWER_IDS])
 
 	# --- (e) a corrupt or hand-edited record reads as "nothing earned" ---
-	_fresh_store()
+	TowerProbe.fresh_store()
 	var cfg := ConfigFile.new()
 	cfg.set_value(BestRunStore.CONFIG_TOWER_SECTION, BestRunStore.CONFIG_TOWER_KEY,
 		"{not json at all")
@@ -2252,7 +2188,7 @@ func _check_earned_state_survives_a_relaunch() -> void:
 	if salvaged.size() != 1 or salvaged[0] != "tower_ok":
 		_fail("a half-junk tower record did not salvage to exactly its one real id: %s" % [
 			salvaged])
-	_fresh_store()
+	TowerProbe.fresh_store()
 	Sentinel.done("earned_state_survives_a_relaunch")
 
 
@@ -2568,7 +2504,7 @@ func _spring_length() -> float:
 	The same discipline check 4 uses: a shorter arm is a `player_controller`
 	decision this file must MOVE with rather than re-assert against.
 	"""
-	var player: Node3D = load(PLAYER_SCENE).instantiate() as Node3D
+	var player: Node3D = load(TowerProbe.PLAYER_SCENE).instantiate() as Node3D
 	var arm: SpringArm3D = player.get_node_or_null("CameraPivot/CameraArm") as SpringArm3D
 	var length := arm.spring_length if arm != null else 0.0
 	player.free()
@@ -2593,12 +2529,12 @@ func _check_the_scar_is_drawn_and_permanent() -> void:
 	stays because the scar id is PERSISTED: profiles carrying it must still draw
 	their rubble, which is exactly why the row was kept rather than retired.
 	"""
-	_fresh_store()
-	var shell := await _make_tower()
+	TowerProbe.fresh_store()
+	var shell := await TowerProbe.make_tower(self)
 	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
 	if interior == null:
 		_fail("scar: the tower has no TowerInterior child")
-		await _clear(null, shell)
+		await TowerProbe.clear(self, null, shell)
 		Sentinel.done("the_scar_is_drawn_and_permanent")
 		return
 	var body := interior.get_node_or_null("InteriorCollision") as StaticBody3D
@@ -2607,7 +2543,7 @@ func _check_the_scar_is_drawn_and_permanent() -> void:
 		"%sShape" % TowerInterior.SCAR_BOX) as CollisionShape3D
 	if rubble == null or rubble_shape == null:
 		_fail("scar: the interior builds no '%s' mesh + shape" % TowerInterior.SCAR_BOX)
-		await _clear(null, shell)
+		await TowerProbe.clear(self, null, shell)
 		Sentinel.done("the_scar_is_drawn_and_permanent")
 		return
 	if rubble.visible or not rubble_shape.disabled:
@@ -2626,18 +2562,18 @@ func _check_the_scar_is_drawn_and_permanent() -> void:
 	# scar" is whatever the caller felt like.
 	if interior.apply_scar("custody_made_up_scar"):
 		_fail("scar: the interior accepted an unauthored scar id")
-	await _clear(null, shell)
+	await TowerProbe.clear(self, null, shell)
 
 	# ...and a tower REBUILT from the store comes up scarred, which is the whole
 	# meaning of permanent. Same union merge, same lesson as check 10.
-	var relaunched := await _make_tower()
+	var relaunched := await TowerProbe.make_tower(self)
 	var reborn := relaunched.get_node_or_null("TowerInterior") as TowerInterior
 	var reborn_rubble := reborn.find_child(TowerInterior.SCAR_BOX, true, false) as MeshInstance3D
 	if reborn_rubble == null or not reborn_rubble.visible:
 		_fail("scar: a tower rebuilt from the store came up unscarred — the collapse "
 			+ "healed itself across a relaunch")
-	await _clear(null, relaunched)
-	_fresh_store()
+	await TowerProbe.clear(self, null, relaunched)
+	TowerProbe.fresh_store()
 	print("scar: '%s' drawn, solid, and still there after a relaunch"
 		% TowerGraph.SCAR_CUSTODY)
 	Sentinel.done("the_scar_is_drawn_and_permanent")
@@ -2668,12 +2604,12 @@ func _check_spines_and_liberation() -> void:
 	  g. `set_captive()` — phase 9's seam — puts somebody back in, and freeing him
 	     costs the opened set nothing, because systemic captivity is per-run.
 	"""
-	_fresh_store()
-	var shell := await _make_tower()
+	TowerProbe.fresh_store()
+	var shell := await TowerProbe.make_tower(self)
 	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
 	if interior == null:
 		_fail("the tower has no TowerInterior child")
-		await _clear(null, shell)
+		await TowerProbe.clear(self, null, shell)
 		Sentinel.done("spines_and_liberation")
 		return
 
@@ -2714,14 +2650,14 @@ func _check_spines_and_liberation() -> void:
 	var pad_area := interior.get_node_or_null("%s/SpineTrigger1" % block) as Area3D
 	if pad_area == null:
 		_fail("there is no SpineTrigger1 Area3D — the first spine door has no pad")
-		await _clear(hero_body, shell)
+		await TowerProbe.clear(self, hero_body, shell)
 		Sentinel.done("spines_and_liberation")
 		return
 	var mass := interior.find_child(String(door["mass"]), true, false) as MeshInstance3D
 	var mass_rest: float = mass.position.y
 	hero_body.hero = wrong
 	hero_body.global_position = pad_area.global_position
-	await _settle_physics()
+	await TowerProbe.settle_physics(self)
 	interior._process(0.1)
 	if shell.is_opened(gate_id):
 		_fail("%s opened '%s', which answers to %s — the spine door is keyed on nobody" % [
@@ -2758,12 +2694,12 @@ func _check_spines_and_liberation() -> void:
 		"%s/CellTrigger%s" % [block, TowerInterior.AUTHORED_CAPTIVE.capitalize()]) as Area3D
 	if cell_area == null:
 		_fail("there is no cell volume for %s — his cell cannot be entered" % TowerInterior.AUTHORED_CAPTIVE)
-		await _clear(hero_body, shell)
+		await TowerProbe.clear(self, hero_body, shell)
 		Sentinel.done("spines_and_liberation")
 		return
 	hero_body.hero = "windman" if TowerInterior.AUTHORED_CAPTIVE != "windman" else "teibi"
 	hero_body.global_position = cell_area.global_position
-	await _settle_physics()
+	await TowerProbe.settle_physics(self)
 	if interior.is_captive(TowerInterior.AUTHORED_CAPTIVE):
 		_fail("%s walked into %s's cell and nothing happened — liberation is asking who you are" % [
 			hero_body.hero, TowerInterior.AUTHORED_CAPTIVE])
@@ -2782,9 +2718,9 @@ func _check_spines_and_liberation() -> void:
 	var empty_area := interior.get_node_or_null(
 		"%s/CellTrigger%s" % [block, other.capitalize()]) as Area3D
 	hero_body.global_position = cell_area.global_position + Vector3(0.0, 0.0, -30.0)
-	await _settle_physics()
+	await TowerProbe.settle_physics(self)
 	hero_body.global_position = empty_area.global_position
-	await _settle_physics()
+	await TowerProbe.settle_physics(self)
 	if shell.opened_ids() != before:
 		_fail("walking into an empty cell changed the tower's opened set: %s -> %s" % [
 			before, shell.opened_ids()])
@@ -2800,9 +2736,9 @@ func _check_spines_and_liberation() -> void:
 	if frame_other.material_override != TowerInterior._material(TowerInterior.COLOR_CELL):
 		_fail("%s's cell did not light up when he was taken" % other)
 	hero_body.global_position = cell_area.global_position + Vector3(0.0, 0.0, -30.0)
-	await _settle_physics()
+	await TowerProbe.settle_physics(self)
 	hero_body.global_position = empty_area.global_position
-	await _settle_physics()
+	await TowerProbe.settle_physics(self)
 	if interior.is_captive(other):
 		_fail("%s was not freed by walking into his cell" % other)
 	if shell.opened_ids() != before:
@@ -2816,11 +2752,11 @@ func _check_spines_and_liberation() -> void:
 	await process_frame
 
 	# (f) a NEW tower, built from what is on disk
-	var again := await _make_tower()
+	var again := await TowerProbe.make_tower(self)
 	var inside := again.get_node_or_null("TowerInterior") as TowerInterior
 	if inside == null:
 		_fail("the rebuilt tower has no interior")
-		await _clear(null, again)
+		await TowerProbe.clear(self, null, again)
 		Sentinel.done("spines_and_liberation")
 		return
 	if not inside.captives().is_empty():
@@ -2833,1317 +2769,6 @@ func _check_spines_and_liberation() -> void:
 	again.queue_free()
 	await process_frame
 	Sentinel.done("spines_and_liberation")
-
-
-# ============================================================================
-# CHECK 12 — the guards are standing, on the right posts, in the right rows
-# ============================================================================
-
-## How much room a guard's body needs around its post before "clear of the
-## stonework" means anything: nothing solid may come within this of a post, at
-## any height a standing body occupies, so a post that merely GRAZES a jamb is
-## a failure rather than a lucky pass. Derived from the LIVE capsule (see
-## `guard_body_clearance`), never hand-copied — the next chassis growth scales
-## the threshold instead of silently shrinking its headroom.
-const GUARD_CLEARANCE_FACTOR: float = 1.0667  # == 0.45 at the 2.25x radius
-
-static var _guard_capsule_radius: float = -1.0
-
-
-static func guard_body_clearance() -> float:
-	"""Room a guard's body needs around its post, from the live capsule.
-
-	The `tower_guard.tscn` capsule radius times GUARD_CLEARANCE_FACTOR (which
-	reproduces the old hand-copied 0.45 at the 2.25x radius, so the threshold
-	is unchanged today). Falls back to 0.45 when the scene is unreadable —
-	everything downstream fails loudly in that case anyway.
-	"""
-	if _guard_capsule_radius < 0.0:
-		_guard_capsule_radius = 0.45 / GUARD_CLEARANCE_FACTOR
-		var scene := TowerInterior.guard_scene()
-		if scene != null:
-			var probe := scene.instantiate() as Node3D
-			var shape_node := probe.find_child("CollisionShape3D", true, false) as CollisionShape3D
-			var capsule := (shape_node.shape if shape_node != null else null) as CapsuleShape3D
-			if capsule != null:
-				_guard_capsule_radius = capsule.radius
-			probe.free()
-	return _guard_capsule_radius * GUARD_CLEARANCE_FACTOR
-
-## How tall a standing guard is, for the same test. The chassis stands 2.25 m
-## (the capsule lies on the travel axis, so it is the MODEL's height that this
-## has to cover, not the capsule's 3.0375 m length); a little over it, so a post
-## under the crawl lintel (top at 2.8 m, underside 2.0) or under a raised mass
-## would be caught.
-const GUARD_BODY_HEIGHT: float = 2.4
-
-func _check_guards_stand_their_posts() -> void:
-	"""
-	Check 12. Three guards, on their authored posts, carrying the guard ROW, each
-	leashed to a box that is inside its own storey.
-
-	FOUR FAILURES, AND EVERY ONE OF THEM IS SILENT IN THE GAME:
-
-	  * A POST INSIDE THE STONEWORK. The body settles half in a jamb, `move_and_slide`
-	    shoves it somewhere arbitrary on the first frame, and what you see is a guard
-	    standing somewhere nobody authored. Measured against BOTH box tables — the
-	    interior's and the shell's — because a post that is clear of the furniture
-	    and buried in the outer wall is exactly as wrong.
-	  * `species` ASSIGNED AFTER `add_child`. The body would run on the CROCODILE's
-	    row: a 15 m detection radius indoors, a crocodile's gait, a 120° view cone
-	    it never had, its own `coin_setback` instead of the guard's, and — the one
-	    that undoes the ruling outright — no `sweep_exempt` and no immunities, so
-	    the respawn sweep would clear the floor and a Stink Wave would empty the
-	    building. Asserted on the resolved `spec`, not on the `species` string,
-	    because the string is right in both worlds — only `spec` knows which row
-	    `_ready()` actually read.
-	  * A LEASH THAT WAS NEVER APPLIED. `is_confined` false means a guard walks out
-	    of the building, or off the upper slab and down into the courtyard.
-	  * A LEASH BOX BIGGER THAN ITS STOREY. The upper guard's box must stay over the
-	    slab and WEST of the secure partition — that second half is what makes the
-	    checkpoint beyond the secure door a safe haven by construction, which the
-	    setback path in `player_controller` relies on and cannot check for itself.
-
-	The count is taken from the BODIES IN THE TREE (`guard_posts()`), never from
-	the table, so a spawner that quietly stopped instancing fails here
-	instead of being reported as three guards by a check reading the same table it
-	is meant to be auditing.
-	"""
-	var shell := await _make_tower()
-	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
-	if interior == null:
-		_fail("no TowerInterior under the shell — check 12 has nothing to measure")
-		await _clear(null, shell)
-		Sentinel.done("guards_stand_their_posts")
-		return
-
-	var live: Array = interior.guard_posts()
-	if live.size() != TowerInterior.guard_posts_table().size():
-		_fail("the tower stood up %d guard(s) for %d authored post(s)"
-			% [live.size(), TowerInterior.guard_posts_table().size()])
-	if live.size() < 2:
-		_fail("only %d guard(s) in the building — a tower with no population is not"
-			% live.size() + " the stealth problem the epic is about")
-
-	# ---- THE DENSITY RULE, COUNTED OFF THE BODIES ---------------------------
-	# Owner ruling 2026-08-30: at most one guard per storey. Read from the tree and
-	# NEVER from `guard_posts_table()` — the table is the thing under audit here,
-	# and a derived reader that started emitting two posts for one plan storey (a
-	# second `G` typed into a grid, a cache merging two floors) would otherwise be
-	# reported as correct by a check asking the same function it is checking.
-	# Storey is resolved from the body's own height against FLOOR_Y, so a guard
-	# that was dropped on the wrong slab lands in the wrong bucket and shows up.
-	var per_storey: Dictionary = {}
-	for entry: Dictionary in live:
-		var at: Vector3 = entry["position"]
-		var best := -1
-		var best_gap := INF
-		for i in TowerInterior.FLOOR_Y.size():
-			var gap: float = absf(at.y - (interior.global_position.y + TowerInterior.FLOOR_Y[i]))
-			if gap < best_gap:
-				best_gap = gap
-				best = i
-		per_storey[best] = int(per_storey.get(best, 0)) + 1
-	# ...AND THE OTHER HALF, ON THE PLANS THEMSELVES. The body count above cannot
-	# see a storey that drew TWO `G` cells: `_plan_guard_post` takes the first and
-	# stops, so an invalid plan stands up exactly one guard and reads as correct
-	# here. Counting the markers is what makes the ruling a property of the DESIGN
-	# RECORD — the grid is what an author edits — and not merely of the reader.
-	for floor_index: int in TowerPlans.floors():
-		var plan: Dictionary = TowerPlans.storey(floor_index)
-		var marks := 0
-		for row_v: Variant in plan["rows"]:
-			marks += String(row_v).count(TowerPlans.POST_CHAR)
-		if marks > TowerInterior.GUARDS_PER_STOREY_MAX:
-			_fail("storey %d's plan draws %d '%s' posts, over GUARDS_PER_STOREY_MAX"
-					% [floor_index + 1, marks, TowerPlans.POST_CHAR]
-					+ " of %d — the derived reader takes the first and silently"
-					% TowerInterior.GUARDS_PER_STOREY_MAX + " drops the rest, so the"
-					+ " body count above would report this floor as correct")
-
-	for floor_v: Variant in per_storey:
-		if int(per_storey[floor_v]) > TowerInterior.GUARDS_PER_STOREY_MAX:
-			_fail("storey %d carries %d guards, over the owner's GUARDS_PER_STOREY_MAX"
-					% [int(floor_v) + 1, int(per_storey[floor_v])]
-					+ " of %d — two on one floor turns a room the player is meant to"
-					% TowerInterior.GUARDS_PER_STOREY_MAX + " time and walk past into"
-					+ " a chase")
-
-	var guard_row: Dictionary = load(CROC_SCRIPT).get_script_constant_map() \
-			.get("SPECIES", {}).get(TowerInterior.GUARD_SPECIES, {})
-	if guard_row.is_empty():
-		_fail("SPECIES has no '%s' row — every guard would fall back to a crocodile"
-			% TowerInterior.GUARD_SPECIES)
-
-	var guards := interior.get_node_or_null("Guards")
-	if guards == null:
-		_fail("the interior has no Guards container — nothing was ever stood up")
-		await _clear(null, shell)
-		Sentinel.done("guards_stand_their_posts")
-		return
-
-	for i in TowerInterior.guard_posts_table().size():
-		var authored: Dictionary = TowerInterior.guard_posts_table()[i]
-		var label: String = String(authored["name"])
-		var body := guards.get_node_or_null("TowerGuard%s" % label) as Node3D
-		if body == null:
-			_fail("no guard body for the '%s' post" % label)
-			continue
-
-		# THE ROW IT ACTUALLY RESOLVED. `spec` is written once, in `_ready()`, from
-		# whatever `species` held at that moment — so this is the call-order contract
-		# measured at the only place it leaves a trace.
-		var got: Variant = body.get("spec")
-		if not (got is Dictionary) or (got as Dictionary) != guard_row:
-			_fail("the '%s' guard resolved %s, not the '%s' row — `species` was"
-					% [label, ("no spec" if not (got is Dictionary)
-						else "a different row"), TowerInterior.GUARD_SPECIES]
-					+ " assigned after add_child, so it is running on the fallback")
-
-		# ...and the leash.
-		if not bool(body.get("is_confined")):
-			_fail("the '%s' guard is not confined — it can walk out of the building"
-				% label)
-		var want_centre: Vector3 = interior.global_position + (authored["patrol_center"] as Vector3)
-		var got_centre: Vector3 = body.get("confine_center")
-		var got_half: Vector2 = body.get("confine_half")
-		if got_centre.distance_to(want_centre) > EPS:
-			_fail("the '%s' guard is leashed to %s, not to its authored %s — the box"
-					% [label, str(got_centre), str(want_centre)]
-					+ " was computed before the shell was parked on the site")
-		if got_half != (authored["patrol_half"] as Vector2):
-			_fail("the '%s' guard's leash box is %s, not the authored %s"
-				% [label, str(got_half), str(authored["patrol_half"])])
-
-		# THE POST IS STANDABLE. Both tables, at every height a body occupies.
-		var post: Vector3 = interior.global_position + (authored["post"] as Vector3)
-		var blocker := _solid_near(post, float(authored["yaw"]))
-		if blocker != "":
-			_fail("the '%s' post at %s is inside '%s' — the body would settle in the"
-					% [label, str(authored["post"]), blocker]
-					+ " stonework and be shoved somewhere nobody authored")
-
-		# THE BODY IS INSIDE ITS OWN BOX. A post outside its leash is clamped to the
-		# boundary on frame one, which moves a guard nobody moved.
-		var off := body.global_position - want_centre
-		if absf(off.x) > got_half.x + EPS or absf(off.z) > got_half.y + EPS:
-			_fail("the '%s' guard stands outside its own leash box and is clamped"
-					% label + " onto the boundary on its first frame")
-
-		# THE BOX IS INSIDE ITS STOREY. Walked as the four corners of the leash box
-		# at the post's own height: a guard may not be able to reach a spot the
-		# building has no floor under.
-		for corner: Vector3 in [
-				Vector3(got_half.x, 0.0, got_half.y), Vector3(got_half.x, 0.0, -got_half.y),
-				Vector3(-got_half.x, 0.0, got_half.y), Vector3(-got_half.x, 0.0, -got_half.y)]:
-			var at := want_centre + corner
-			if not _standable(at.x, at.z, post.y):
-				_fail("the '%s' guard's leash box reaches (%.2f, %.2f), where its"
-						% [label, at.x, at.z] + " storey has no floor — it can walk"
-						+ " off the edge and land on the one below")
-
-	print("tower guards: %d on post, leashed to their own storeys; per storey %s"
-			% [live.size(), str(per_storey)])
-	await _clear(null, shell)
-	Sentinel.done("guards_stand_their_posts")
-
-
-func _solid_near(world_pos: Vector3, yaw: float) -> String:
-	## The name of the first solid box a standing body at `world_pos`, facing `yaw`,
-	## would be inside of, or "" when the spot is clear. Both tables — the interior's
-	## furniture and the shell's outer walls — because either one buries a guard.
-	## `all_boxes()` is every storey's plan boxes and the hand-built parts among
-	## them — since bd godot-test1-dn8 there is no second table, so the walls a post
-	## could be buried in are all in there.
-	##
-	## A DISC WAS NOT ENOUGH ONCE THE CHASSIS GREW (bead `godot-test1-6bj`). The
-	## capsule is 2.025 m long and a plan cell is 1.94 m, so the body reaches into
-	## the NEIGHBOURING cells along its facing, and a symmetric
-	## `GUARD_BODY_CLEARANCE` box measured only the 0.28125 m radius — it passed a
-	## post standing broadside inside a corridor wall. The footprint is therefore
-	## measured off `tower_guard.tscn`'s own shape, turned to the spawn yaw, and
-	## then widened to at least the old clearance on both axes so the margin that
-	## test bought is still bought.
-	var span := _guard_footprint(yaw)
-	var half := Vector3(span.size.x * 0.5, GUARD_BODY_HEIGHT * 0.5, span.size.y * 0.5)
-	var body_centre := Vector3(world_pos.x + span.position.x + half.x,
-			world_pos.y + GUARD_BODY_HEIGHT * 0.5,
-			world_pos.z + span.position.y + half.z)
-	for box: Dictionary in TowerInterior.all_boxes() + TowerShell.boxes():
-		if not box["collide"]:
-			continue
-		# The ramp is the one tilted box in either table and an AABB test over it is
-		# a lie in both directions; it is also 5 m from the nearest post. Skipped by
-		# name rather than silently mistested.
-		if String(box["name"]) == "Ramp":
-			continue
-		if _overlaps(body_centre, half * 2.0, box["pos"], box["size"]):
-			return String(box["name"])
-	return ""
-
-
-func _guard_footprint(yaw: float) -> Rect2:
-	## The ground footprint a guard standing at the origin facing `yaw` occupies, as
-	## a Rect2 in (x, z) RELATIVE TO THE POST — asymmetric, because the capsule is
-	## offset back along the body (the chassis is built forward of its origin).
-	##
-	## READ OFF `tower_guard.tscn`, never restated here: the capsule's own transform
-	## and dimensions are the thing under test, so a scene whose shape stopped
-	## matching its model must not be measured against a copy of the number it used
-	## to carry. Degrades to the plain derived-clearance disc if the scene is
-	## ever reshaped into something this cannot read.
-	var clearance := guard_body_clearance()
-	var lo := Vector2(-clearance, -clearance)
-	var hi := Vector2(clearance, clearance)
-	var scene := TowerInterior.guard_scene()
-	if scene != null:
-		var probe := scene.instantiate()
-		var shape_node := probe.find_child("CollisionShape3D", true, false) as CollisionShape3D
-		var capsule := (shape_node.shape if shape_node != null else null) as CapsuleShape3D
-		if capsule != null:
-			# The two HEMISPHERE CENTRES in body space, turned to the spawn yaw, then
-			# inflated by the radius: that is the capsule's exact ground AABB.
-			# `CapsuleShape3D.height` is tip to tip, caps included, so the centres are
-			# a radius short of each end — take `height * 0.5` for the reach and the
-			# inflation below counts both caps twice, quietly lengthening the body by
-			# a whole diameter and failing posts that are fine.
-			var turn := Basis(Vector3.UP, yaw)
-			var axis: Vector3 = turn * (shape_node.transform.basis.y.normalized())
-			var mid: Vector3 = turn * shape_node.position
-			var reach: Vector3 = axis * maxf(capsule.height * 0.5 - capsule.radius, 0.0)
-			var r: float = capsule.radius
-			for x: float in [mid.x - reach.x, mid.x + reach.x]:
-				lo.x = minf(lo.x, x - r)
-				hi.x = maxf(hi.x, x + r)
-			for z: float in [mid.z - reach.z, mid.z + reach.z]:
-				lo.y = minf(lo.y, z - r)
-				hi.y = maxf(hi.y, z + r)
-		probe.free()
-	return Rect2(lo, hi - lo)
-
-
-func _check_guard_capsule_fits_the_doors() -> void:
-	"""
-	Check 12b. The real guard capsule fits a spine door, clears every storey,
-	and does NOT fit the crawl alcove.
-
-	The capsule AND the model height are read off a live `tower_guard.tscn`
-	instance — the `_guard_footprint` discipline — because the whole claim is
-	about the body this bead grew, and a copy of 0.84 here would keep passing
-	after a retune broke the scene. Three assertions:
-
-	  * DOORWAY: the capsule's diameter clears one PLAN_CELL (a spine door is
-	    one cell wide). The capsule lies on the travel axis, so length along
-	    travel never gates a doorway — width does.
-	  * STOREYS: the model's height clears every planned storey's air.
-	  * CRAWL: the capsule's vertical extent passes under DOSSIER_CRAWL_CLEAR
-	    (pinned, so outgrowing it fails) — and the alcove stays guard-free by
-	    ROUTING, not by height: it is a dead end (check 20) and no post,
-	    patrol lane or lure plate is inside it. The old mesh-height clause
-	    stated something false of the physics body, which is the capsule.
-	"""
-	var scene := TowerInterior.guard_scene()
-	if scene == null:
-		_fail("check 12b: tower_guard.tscn is missing — the fit cannot be measured")
-		Sentinel.done("guard_capsule_fits_the_doors")
-		return
-	var probe := scene.instantiate() as Node3D
-	var shape_node := probe.find_child("CollisionShape3D", true, false) as CollisionShape3D
-	var capsule := (shape_node.shape if shape_node != null else null) as CapsuleShape3D
-	if capsule == null:
-		_fail("check 12b: tower_guard.tscn has no readable capsule — the fit cannot be measured")
-		probe.free()
-		Sentinel.done("guard_capsule_fits_the_doors")
-		return
-	var diameter := capsule.radius * 2.0
-	var door := TowerPlans.PLAN_CELL
-	if diameter >= door:
-		_fail("check 12b: the guard's %.2f m capsule does not fit a %.2f m spine door" % [diameter, door])
-	# Measured from the probe ROOT, not the Model node: a retune of the model's
-	# in-game size is a transform on Model itself, and measuring under it would
-	# bless that away (the F1 mutation: Model scaled 2.5x must fail the storey
-	# clause, not print 2.25 m).
-	var tall := _visual_height(probe)
-	if tall <= 0.0:
-		_fail("check 12b: tower_guard.tscn draws no mesh — the height cannot be measured")
-		probe.free()
-		Sentinel.done("guard_capsule_fits_the_doors")
-		return
-	var capsule_hi := capsule.radius * 2.0
-	if capsule_hi >= TowerDossiers.DOSSIER_CRAWL_CLEAR:
-		_fail("check 12b: the guard's %.2f m capsule no longer fits under the crawl lintel (%.2f m)" % [
-			capsule_hi, TowerDossiers.DOSSIER_CRAWL_CLEAR])
-	var low := INF
-	for floor_index: int in TowerPlans.floors():
-		low = minf(low, TowerInterior.plan_clear_height(floor_index))
-	if tall >= low:
-		_fail("check 12b: the %.2f m guard does not clear a %.2f m storey" % [tall, low])
-	print("guard capsule: %.2f m wide through %.2f m doors, %.2f m tall under %.2f m ceilings, %.2f m capsule passes under the %.2f m crawl (alcove guard-free by routing, check 20), clearance %.4f" % [
-		diameter, door, tall, low, capsule_hi, TowerDossiers.DOSSIER_CRAWL_CLEAR,
-		guard_body_clearance()])
-	probe.free()
-	Sentinel.done("guard_capsule_fits_the_doors")
-
-
-func _visual_height(body: Node3D) -> float:
-	## Top of the highest drawn mesh under `body`, in body space — the number a
-	## lintel or a ceiling actually meets. Walks every MeshInstance3D (the hunter
-	## exports welded, but the mesh count is the exporter's business, not this
-	## check's), composing each node's LOCAL transform down from `body`, so
-	## nesting never silently drops a part and the probe never needs the tree —
-	## `get_global_transform()` on an unparented probe logs an inside-tree
-	## condition and answers identity, which would bless any nested transform
-	## away. 0 when nothing is drawn at all.
-	var lo := Vector3(INF, INF, INF)
-	var hi := Vector3(-INF, -INF, -INF)
-	var stack: Array = [[body, Transform3D.IDENTITY]]
-	while not stack.is_empty():
-		var item: Array = stack.pop_back()
-		var n := item[0] as Node3D
-		var xf: Transform3D = item[1]
-		if n == null:
-			continue
-		for c in n.get_children():
-			var cn := c as Node3D
-			if cn != null:
-				stack.append([cn, xf * cn.transform])
-		var mi := n as MeshInstance3D
-		if mi == null or mi.mesh == null:
-			continue
-		var box := xf * mi.get_aabb()
-		lo.x = minf(lo.x, box.position.x)
-		lo.y = minf(lo.y, box.position.y)
-		lo.z = minf(lo.z, box.position.z)
-		hi.x = maxf(hi.x, box.end.x)
-		hi.y = maxf(hi.y, box.end.y)
-		hi.z = maxf(hi.z, box.end.z)
-	if lo.x >= INF:
-		return 0.0
-	return hi.y - lo.y
-
-
-func _standable(x: float, z: float, foot_y: float) -> bool:
-	## Is there a solid top at `foot_y` under (x, z)? Ground level is the world's
-	## own floor and always true; anything else has to be a box the interior really
-	## builds, which is what makes the upper storey's leash box measurable at all.
-	## Every storey's boxes, for the same reason `_solid_near` reads them all: a
-	## derived post's leash box hangs over a PLAN slab, which `boxes()` cannot see.
-	if is_zero_approx(foot_y):
-		return true
-	for box: Dictionary in TowerInterior.all_boxes():
-		if not box["collide"] or String(box["name"]) == "Ramp":
-			continue
-		var pos: Vector3 = box["pos"]
-		var half: Vector3 = box["size"] * 0.5
-		if absf(pos.y + half.y - foot_y) > EPS:
-			continue
-		if absf(x - pos.x) <= half.x and absf(z - pos.z) <= half.z:
-			return true
-	return false
-
-
-# ============================================================================
-# CHECK 13 — the population resets, and nothing else does
-# ============================================================================
-
-func _check_guards_reset_on_re_entry() -> void:
-	"""
-	Check 13. Cross the doorway and every guard is a FRESH body on its post; the
-	opened gates are untouched.
-
-	THIS IS THE WHOLE PERSISTENCE CONTRACT FOR PHASE 6 and it is implemented by an
-	absence, which is exactly the kind of thing that ships broken and looks fine.
-	Three assertions, and each one kills a different plausible half-implementation:
-
-	  * FRESH INSTANCES, not repositioned ones. A reset that teleports the same
-	    bodies back leaves a chasing guard chasing, a bitten guard's pause running,
-	    and a leash recomputed against nothing. Measured on the object ids, so
-	    "moved it back" cannot pass.
-	  * THE STATE IS GONE WITH THEM. The old body is put into a chase before the
-	    reset and the new one must not be in one — the id test alone would pass a
-	    reset that re-instanced and then copied the state across.
-	  * THE OPENED SET IS UNTOUCHED. "Structure persists, population resets" is one
-	    sentence with two halves, and a reset that reached into the shell's set
-	    would undo phase 5 from the inside. A gate is opened before the crossing and
-	    must still be open after it.
-
-	Driven through the SHELL'S OWN `player_entered` SIGNAL rather than by calling
-	`reset_guards()`, because the wiring is the part that can be missing: an
-	interior that never connects resets nothing in the real game and everything in
-	a check that calls the function itself.
-	"""
-	var shell := await _make_tower()
-	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
-	if interior == null:
-		_fail("no TowerInterior under the shell — check 13 has nothing to measure")
-		await _clear(null, shell)
-		Sentinel.done("guards_reset_on_re_entry")
-		return
-
-	shell.call("mark_opened", TowerInterior.GATE_CHECKPOINT)
-	var opened_before: Array = shell.call("opened_ids")
-
-	var guards := interior.get_node_or_null("Guards")
-	var before_ids: Array = []
-	for child in guards.get_children():
-		before_ids.append(child.get_instance_id())
-		# Put every one of them into a state a reset has to lose, and walk it off
-		# its post so a no-op reset cannot pass by leaving things where they are.
-		child.set("is_chasing", true)
-		(child as Node3D).global_position += Vector3(2.0, 0.0, 2.0)
-	if before_ids.is_empty():
-		_fail("no guards to reset — check 13 would pass against an empty building")
-		await _clear(null, shell)
-		Sentinel.done("guards_reset_on_re_entry")
-		return
-
-	# THE REAL TRIGGER. `_on_door_body_entered` filters to group "player", so this
-	# is the shell's own emission — the signal, not the private handler.
-	shell.emit_signal("player_entered", null)
-	await process_frame
-
-	var after := interior.get_node_or_null("Guards")
-	if after == null or after == guards:
-		_fail("the doorway crossing did not rebuild the Guards container — either"
-				+ " nothing is connected to player_entered, or the reset reuses it")
-		await _clear(null, shell)
-		Sentinel.done("guards_reset_on_re_entry")
-		return
-
-	var after_ids: Array = []
-	for child in after.get_children():
-		after_ids.append(child.get_instance_id())
-	if after_ids.size() != before_ids.size():
-		_fail("re-entry left %d guard(s) where there were %d"
-			% [after_ids.size(), before_ids.size()])
-	for id_v: Variant in after_ids:
-		if before_ids.has(id_v):
-			_fail("re-entry kept guard %s alive — the population is repositioned,"
-					% str(id_v) + " not reset, so whatever it was doing survives")
-
-	for i in TowerInterior.guard_posts_table().size():
-		var authored: Dictionary = TowerInterior.guard_posts_table()[i]
-		var body := after.get_node_or_null("TowerGuard%s" % String(authored["name"])) as Node3D
-		if body == null:
-			_fail("the '%s' post is empty after re-entry" % authored["name"])
-			continue
-		var want: Vector3 = interior.global_position + (authored["post"] as Vector3) \
-				+ Vector3(0.0, TowerInterior.GUARD_SPAWN_LIFT, 0.0)
-		if body.global_position.distance_to(want) > POST_SETTLE_EPS:
-			_fail("the '%s' guard came back at %s, not on its post %s"
-				% [authored["name"], str(body.global_position), str(want)])
-		if bool(body.get("is_chasing")):
-			_fail("the '%s' guard came back already chasing — the reset re-instanced"
-					% authored["name"] + " the body but carried its state across")
-
-	var opened_after: Array = shell.call("opened_ids")
-	if opened_after != opened_before:
-		_fail("re-entry changed the opened set from %s to %s — structure persists,"
-				% [str(opened_before), str(opened_after)] + " only the population resets")
-	print("tower guards: re-entry rebuilt %d fresh bodies, opened set %s untouched"
-		% [after_ids.size(), str(opened_after)])
-	await _clear(null, shell)
-	Sentinel.done("guards_reset_on_re_entry")
-
-
-# ============================================================================
-# CHECK 14 — the leash HOLDS, under real physics, against a real chase
-# ============================================================================
-
-## How long check 14 lets a guard try to reach a quarry it cannot have.
-const LEASH_PROBE_SECONDS: float = 8.0
-
-## How far outside its own leash box the probe quarry stands. Over the row's
-## detection radius it would never be seen; under the two bodies' capsule radii it
-## would be BITTEN, and a bite teleports the quarry (the guard setback) which takes
-## the load off the leash halfway through the probe. 1.5 m is comfortably between.
-const LEASH_PROBE_GAP: float = 1.5
-
-## How fast a guard may still be travelling during its telegraph and be called
-## still. Not zero: `move_and_slide` resolves a settling body against the slab and
-## the reported velocity carries a little of that. Far under the row's 1.4 m/s
-## walk, which is what the assertion is actually about.
-const TELEGRAPH_STILL_SPEED: float = 0.05
-
-func _check_the_leash_holds_under_a_chase() -> void:
-	"""
-	Check 14. A guard that has seen the player and is running at it stays inside
-	its own box and on its own storey — for the whole chase.
-
-	THE DIFFERENCE BETWEEN THIS AND CHECK 12 IS THE DIFFERENCE BETWEEN A DECLARED
-	LEASH AND A LEASH. Check 12 asserts `set_confinement` was called with the right
-	numbers; this one runs the shipped `_physics_process` with a real player in the
-	tree, a real chase, real gravity and real `move_and_slide`, and measures where
-	the body actually ends up. A confinement that was applied but never enforced —
-	`_steer_within_platform` unhooked from the frame, `_clamp_to_platform` moved
-	below the early return — passes check 12 and fails here.
-
-	THE QUARRY IS PLACED JUST OUTSIDE THE BOX AND WELL INSIDE DETECTION, which is
-	the one arrangement that makes the chase pull AGAINST the leash every frame. A
-	player standing in the middle of the box would be caught in a second and prove
-	nothing.
-
-	AND THE STOREY IS MEASURED, not just the XZ box: `_clamp_to_platform` does not
-	touch Y (nothing in this game does — the world is flat and gravity settles), so
-	"never left its floor" is a claim about the box being over solid ground, which
-	is check 12's corner walk, plus this: the body's own feet never fell.
-	"""
-	var shell := await _make_tower()
-	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
-	var guards: Node = interior.get_node_or_null("Guards") if interior != null else null
-	if guards == null:
-		_fail("no guards in the building — check 14 has nothing to chase with")
-		await _clear(null, shell)
-		Sentinel.done("the_leash_holds_under_a_chase")
-		return
-
-	# The UPPER guard, because it is the one with somewhere to fall to. Chosen by
-	# height off the authored table, never by index, so re-ordering the posts moves
-	# this with them.
-	var authored: Dictionary = TowerInterior.guard_posts_table()[0]
-	for post: Dictionary in TowerInterior.guard_posts_table():
-		if (post["post"] as Vector3).y > (authored["post"] as Vector3).y:
-			authored = post
-	var body: Node3D = guards.get_node_or_null("TowerGuard%s" % String(authored["name"])) as Node3D
-	var centre: Vector3 = interior.global_position + (authored["patrol_center"] as Vector3)
-	var half: Vector2 = authored["patrol_half"]
-	var floor_y: float = (authored["post"] as Vector3).y + interior.global_position.y
-
-	# A real player, standing `LEASH_PROBE_GAP` outside the box's +Z face — inside
-	# the row's detection radius, outside the leash, and far enough out that a guard
-	# pinned on the boundary cannot actually reach it (a bite would teleport the
-	# quarry through the setback path and take the load off mid-probe).
-	var hero: Node3D = load(PLAYER_SCENE).instantiate() as Node3D
-	root.add_child(hero)
-	hero.global_position = Vector3(centre.x, floor_y + 0.2,
-			centre.z + half.y + LEASH_PROBE_GAP)
-	# LEFT FULLY SIMULATED, and that is a finding rather than an oversight: a
-	# predator only smells a GROUNDED quarry (`_update_chase_state` asks
-	# `is_on_floor()`, which is the jump hatch), and a body with its physics
-	# switched off never runs `move_and_slide` and is therefore never on a floor.
-	# A frozen probe reads as "airborne" forever and no guard in the game would
-	# ever chase it — the check would have measured a leash under no load and said
-	# so, which is exactly what it did the first time this was written. There is no
-	# input in a headless run, so the quarry stands still on its own.
-	# ...and NOW stand the guards up, through the shipped reset. A predator resolves
-	# its quarry once, from group "player", in a `call_deferred` off its own
-	# `_ready()` — so the bodies the tower built before this probe existed found no
-	# player and would never chase anything. In the real game the player is in the
-	# tree long before the tower streams in; here the order has to be arranged.
-	interior.reset_guards()
-	await process_frame
-	guards = interior.get_node_or_null("Guards")
-	body = guards.get_node_or_null("TowerGuard%s" % String(authored["name"])) as Node3D
-	await _settle_physics()
-
-	# UNDO WHATEVER THE BUILDING LANDED WHILE WE WERE STAGING, and then keep it from
-	# landing anything else — the same landmine `capture_selfcheck._make_player`
-	# documents, which bit here the day the coin bill became universal (bead
-	# godot-test1-0bc). The probe stands inside the guard's own reach, so a
-	# hit is not a slow-machine race but a certainty, and since that bead EVERY hit
-	# taken inside the HQ ends at `setback_point()`: the quarry vanishes to the
-	# doorway plate nine floors down, the guard has nothing to smell, and check 14
-	# reports a leash it never put under load. (Before the bead the same hit spent a
-	# heart and respawned in place, which is why this staging survived so long.)
-	#
-	# Held with the shipped BLINK i-frames rather than by re-planting the body:
-	# blinking does not freeze movement, so the guard is still chasing a live
-	# `CharacterBody3D`, and it goes through `hit_by_crocodile()`'s one early return
-	# instead of inventing a second way to be invulnerable.
-	hero.is_caught = false
-	hero.caught_timer = 0.0
-	hero.caught_setback = 0.0
-	hero.is_respawning = false
-	hero.respawn_timer = 0.0
-	hero.global_position = Vector3(centre.x, floor_y + 0.2, centre.z + half.y + LEASH_PROBE_GAP)
-
-	var ticks := int(LEASH_PROBE_SECONDS / (1.0 / 60.0))
-	var chased := false
-	var worst := 0.0
-	## The fastest the body moved on any frame of its telegraph — see the beat
-	## assertion in the loop below.
-	var telegraph_speed := 0.0
-	for _i in ticks:
-		# HOLD IT LOOKING AT THE QUARRY UNTIL IT ACQUIRES. A guard's detection has
-		# been CONED since phase 17 (120 degrees, on the acquisition edge only,
-		# after a 0.6 s telegraph it has to hold the arc for), so a body left on
-		# whatever heading its wander picked acquires the probe if and when it
-		# happens to turn — which makes this check's verdict a coin flip on a
-		# mechanic that is not its subject. The cone itself is measured by
-		# enemy_spawn_selfcheck's check 8e; what THIS check owns is the leash, and
-		# a leash is only under load while a chase is on. Dropped the moment the
-		# chase starts, so every frame that is actually being measured is the
-		# shipped body steering itself.
-		if not chased:
-			body.rotation.y = atan2(hero.global_position.x - body.global_position.x,
-					hero.global_position.z - body.global_position.z)
-		# Topped up every frame — see the block above the loop. The window is 2.5 s
-		# and the probe runs 8, so one write at the start would wear off halfway.
-		hero.respawn_blink_timer = hero.RESPAWN_BLINK_DURATION
-		await physics_frame
-		# THE BEAT IS A STANDSTILL, measured under real physics because that is the
-		# only place it exists: `_update_chase_state` decides the beat, but what
-		# freezes the body is the heading override in `_physics_process`. A guard
-		# that kept walking through its own warning would turn as it went, roll the
-		# quarry back out of its 120 degree cone and reset the clock — a sentry that
-		# notices you forever and never engages, which passes every other assertion
-		# in this file.
-		if not chased and float(body.get("spot_clock")) > 0.0:
-			telegraph_speed = maxf(telegraph_speed,
-					Vector2(body.velocity.x, body.velocity.z).length())
-		if bool(body.get("is_chasing")):
-			chased = true
-		var off := body.global_position - centre
-		worst = maxf(worst, maxf(absf(off.x) - half.x, absf(off.z) - half.y))
-		if body.global_position.y < floor_y - 1.0:
-			_fail("the '%s' guard fell off its storey (y %.2f, floor %.2f) while chasing"
-				% [authored["name"], body.global_position.y, floor_y])
-			break
-
-	if not chased:
-		_fail("the '%s' guard never chased the probe standing %.1f m away — check 14"
-				% [authored["name"], half.y + LEASH_PROBE_GAP] + " measured a leash"
-				+ " under no load, which every mutant passes")
-	if telegraph_speed > TELEGRAPH_STILL_SPEED:
-		_fail("the '%s' guard walked at %.2f m/s during its telegraph — the beat is"
-				% [authored["name"], telegraph_speed] + " meant to be a standstill,"
-				+ " and a body that moves through its own warning turns as it goes,"
-				+ " rolls the quarry out of its own cone and resets the clock")
-	if worst > EPS:
-		_fail("the '%s' guard reached %.3f m outside its leash box while chasing —"
-				% [authored["name"], worst] + " the confinement was declared but is"
-				+ " not enforced every frame")
-
-	# ---- THE HARD BACKSTOP, ON ITS OWN -------------------------------------
-	# The steer (`_steer_within_platform`) and the clamp (`_clamp_to_platform`) are
-	# two separate mechanisms and the chase above only exercises the first: with the
-	# clamp deleted the steer alone still held the box for the whole eight seconds,
-	# so that probe passes a mutant that removed the backstop entirely. The backstop
-	# exists for what the steer cannot out-vote — turn lag, a bite lunge, a shove
-	# from another body — so it is measured the only way that is honest: SHOVE the
-	# guard clean out of its box and require the very next physics frame to have put
-	# it back.
-	body.global_position = centre + Vector3(half.x + 3.0, 0.0, half.y + 3.0)
-	await physics_frame
-	var shoved := body.global_position - centre
-	if absf(shoved.x) > half.x + EPS or absf(shoved.z) > half.y + EPS:
-		_fail("the '%s' guard was shoved %s outside its box and stayed there — the"
-				% [authored["name"], str(Vector2(absf(shoved.x) - half.x,
-					absf(shoved.z) - half.y))]
-				+ " hard clamp is gone, so anything the steer cannot out-vote"
-				+ " (a lunge, a shove) leaves a guard off its floor for good")
-
-	# ...and the NEGATIVE CONTROL for the whole check: the same shove, on a body
-	# whose leash was never applied, must NOT come back. Without it "it was inside
-	# the box" is also true of a guard that simply never went anywhere.
-	body.set("is_confined", false)
-	body.global_position = centre + Vector3(half.x + 3.0, 0.0, half.y + 3.0)
-	await physics_frame
-	var loose := body.global_position - centre
-	if absf(loose.x) <= half.x + EPS and absf(loose.z) <= half.y + EPS:
-		_fail("an UNCONFINED body was pulled back into the box too — the probe is"
-				+ " measuring something other than the leash")
-
-	print("tower guards: the leash held a %.0f s chase, worst excursion %.4f m,"
-		% [LEASH_PROBE_SECONDS, worst] + " and re-caught a shove")
-	await _clear(hero, shell)
-	Sentinel.done("the_leash_holds_under_a_chase")
-
-
-# ============================================================================
-# CHECK 21 — THE LURE (bead godot-test1-3iy.22)
-# ============================================================================
-#
-# The `P` plates divert the storey's guard: it walks over at its patrol pace,
-# stands facing the plate, and walks back. THE WHOLE THING IS DRIVEN ON A REAL
-# BODY UNDER REAL PHYSICS, on the storey the plans actually draw it on, because
-# every interesting claim here is about interaction between three systems that
-# each pass their own checks — the AI's flag state, the interior's trigger, and
-# the leash. A lure that set every flag correctly and never moved a metre, or one
-# that moved and never came home, is what this exists to catch.
-
-## How long the guard is given to walk to its plate before the check gives up.
-## The nearest authored pad is about 10 m from its post and a guard patrols at
-## ~1.2 m/s, so an honest walk lands inside 10 s; the rest is slack for the sniff
-## pause it may be standing in when the plate goes off.
-const LURE_WALK_BUDGET: float = 18.0
-
-## How far the probe player stands from the guard when it is the guard's turn to
-## spot it. Inside the row's 9 m detection, outside its reach — a bite would take
-## the body through the setback path mid-probe (check 14's landmine, verbatim).
-const LURE_SPOT_GAP: float = 2.5
-
-## Radians of slop allowed on "it is looking at the plate". A whole degree, which
-## is far tighter than a 120-degree cone and far looser than float noise.
-const LURE_FACING_EPS: float = 0.02
-
-## How far from the guard's post the probe player has to be parked while the walk
-## is being measured: comfortably outside the row's 9 m detection, so the guard is
-## not chasing anything the errand could be blamed on.
-const LURE_PARK_MIN: float = 15.0
-
-
-func _check_the_lure_diverts_a_guard() -> void:
-	"""
-	Check 21. A plate goes off; the storey's guard walks to it, looks at it, and
-	nothing about the lure can be used to puppet it.
-
-	  (a) the walk REACHES the plate and never leaves the confinement box it is
-	      being run under — the box is grown to contain the plate and the steer and
-	      the hard clamp keep running the whole way, which is the difference
-	      between a bigger leash and no leash;
-	  (b) detection is untouched: the probe walks into the guard's cone and is
-	      acquired through the ordinary telegraph, and that acquisition cancels the
-	      errand — the guard does not resume walking to the plate afterwards;
-	  (c) `investigate_point()` refuses a body that is chasing, biting or already
-	      on an errand;
-	  (d) the plate refuses a re-press until its hold and cooldown have run;
-	  (e) a SLEPT guard still walks: the lure wakes it and `set_lod_active(false)`
-	      refuses to put it back down mid-errand. Without this the far plate on a
-	      78 m storey lures a body that runs no `_physics_process` at all.
-	"""
-	var shell := await _make_tower()
-	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
-	if interior == null:
-		_fail("no interior in the tower — check 21 has nothing to press")
-		await _clear(null, shell)
-		Sentinel.done("the_lure_diverts_a_guard")
-		return
-
-	# WHICH STOREY IS A QUESTION FOR THE PLANS, never a number written here: the
-	# first floor that draws both a `G` and a `P`, and the plate NEAREST that post,
-	# which is also the one a player would actually use.
-	var floor_index := -1
-	var pad_index := -1
-	var pad_gap := INF
-	for candidate: int in TowerPlans.floors():
-		var post: Dictionary = TowerInterior._plan_guard_post(candidate)
-		if post.is_empty():
-			continue
-		var cells := TowerInterior.pad_cells(TowerPlans.storey(candidate))
-		for i: int in cells.size():
-			var gap: float = (TowerInterior.pad_point(candidate, i)
-					- (post["post"] as Vector3)).length()
-			if floor_index >= 0 and candidate != floor_index:
-				continue
-			if gap < pad_gap:
-				floor_index = candidate
-				pad_index = i
-				pad_gap = gap
-	if floor_index < 0:
-		_fail("no planned storey carries both a guard post and a lure plate —"
-				+ " check 21 would pass vacuously")
-		await _clear(null, shell)
-		Sentinel.done("the_lure_diverts_a_guard")
-		return
-
-	# The probe player, parked on the SAME storey but far outside the guard's 9 m
-	# detection — in the tree before `reset_guards()`, because a predator resolves
-	# its quarry once from group "player" in a deferred call off its own `_ready()`
-	# (check 14's note). Standing on real floor, so it is grounded and therefore
-	# smellable when its turn comes; a body in the air is unsmellable forever.
-	#
-	# ON THE STAIR LANDING, and this file learned that the way you would hope: it
-	# was parked on the storey's OTHER plate first, which pressed it — the guard
-	# was already on an errand before the check had asked for one. An `s` cell is
-	# flush floor and is never a `P`.
-	var landing := TowerInterior.landing_rect(floor_index)
-	if landing.size == Vector2i.ZERO:
-		_fail("storey %d draws no landing to park the probe on" % floor_index)
-		await _clear(null, shell)
-		Sentinel.done("the_lure_diverts_a_guard")
-		return
-	var park := Vector3(TowerInterior._grid_x(landing.position.x + landing.size.x * 0.5),
-			TowerInterior.FLOOR_Y[floor_index] + 0.2,
-			TowerInterior._grid_z(landing.position.y + landing.size.y * 0.5))
-	var post_at: Vector3 = TowerInterior._plan_guard_post(floor_index)["post"]
-	if park.distance_to(post_at) < LURE_PARK_MIN:
-		_fail("the probe's parking spot is %.1f m from the guard's post — it would"
-				% park.distance_to(post_at) + " be smelled before the lure was pressed")
-	var hero: Node3D = load(PLAYER_SCENE).instantiate() as Node3D
-	root.add_child(hero)
-	hero.global_position = interior.global_position + park
-	interior.reset_guards()
-	await process_frame
-	# LET IT LAND, and half a second rather than `_settle_physics()`'s four frames:
-	# a guard is stood up `GUARD_SPAWN_LIFT` over its post and `set_lod_active()`
-	# refuses to sleep a body that has not landed — so probe (e) would be measuring
-	# that older refusal instead of its own.
-	for _i in 30:
-		await physics_frame
-
-	var guard: Node3D = interior.call("_guard_on", floor_index) as Node3D
-	if guard == null:
-		_fail("storey %d draws a `G` but the building stood no guard on it" % floor_index)
-		await _clear(hero, shell)
-		Sentinel.done("the_lure_diverts_a_guard")
-		return
-	var authored_centre: Vector3 = guard.get("confine_center")
-	var authored_half: Vector2 = guard.get("confine_half")
-	var pad: Vector3 = interior.pad_world(floor_index, pad_index)
-	if not pad.is_finite():
-		_fail("pad %d of storey %d has no world position" % [pad_index, floor_index])
-		await _clear(hero, shell)
-		Sentinel.done("the_lure_diverts_a_guard")
-		return
-
-	# ---- (e) THE SLEEP, FIRST: press the plate on a body that is asleep --------
-	guard.set_lod_active(false)
-	if bool(guard.get("lod_active")):
-		_fail("the guard refused to sleep before the lure — check 21(e) would"
-				+ " have measured nothing")
-	if not interior.lure_guard(floor_index, pad_index):
-		_fail("the plate on storey %d did not divert the guard" % floor_index)
-		await _clear(hero, shell)
-		Sentinel.done("the_lure_diverts_a_guard")
-		return
-	if not bool(guard.get("lod_active")):
-		_fail("the lure left the guard asleep — a slept body runs no"
-				+ " _physics_process, so it neither walks to the plate nor reaches"
-				+ " any other peer's screen (mp_manager skips sleepers)")
-	guard.set_lod_active(false)
-	if not bool(guard.get("lod_active")):
-		_fail("the guard was slept mid-errand — set_lod_active must refuse while"
-				+ " is_investigating, exactly as it refuses a body that has not landed")
-
-	# ---- (c) the busy refusal, while that errand is live ----------------------
-	if guard.call("investigate_point", pad, 5.0):
-		_fail("a second lure was accepted mid-errand — a diversion that queues is"
-				+ " a puppet string")
-
-	# ---- (a) THE WALK ---------------------------------------------------------
-	# The box is grown, frame by frame, to reach whichever waypoint the guard is
-	# walking at — so the excursion is measured against the box AS IT STANDS THAT
-	# FRAME, which is the only honest reading of "the clamp kept running".
-	var arrive: float = float(load(CROC_SCRIPT).get_script_constant_map()["INVESTIGATE_ARRIVE"])
-	var ticks := int(LURE_WALK_BUDGET / (1.0 / 60.0))
-	var arrived := false
-	var worst := 0.0
-	var walked := 0.0
-	var shrank := false
-	var start := guard.global_position
-	for _i in ticks:
-		await physics_frame
-		var box: Vector2 = guard.get("confine_half")
-		var centre: Vector3 = guard.get("confine_center")
-		shrank = shrank or box.x < authored_half.x - EPS or box.y < authored_half.y - EPS
-		var off := guard.global_position - centre
-		worst = maxf(worst, maxf(absf(off.x) - box.x, absf(off.z) - box.y))
-		walked = maxf(walked, (guard.global_position - start).length())
-		if Vector2(guard.global_position.x - pad.x,
-				guard.global_position.z - pad.z).length() <= arrive:
-			arrived = true
-			break
-	if shrank:
-		_fail("the lure SHRANK the guard's leash below its authored extents %s"
-				% authored_half)
-	var grown: Vector2 = guard.get("confine_half")
-	var pad_off := Vector2(pad.x - authored_centre.x, pad.z - authored_centre.z)
-	if arrived and (absf(pad_off.x) > grown.x or absf(pad_off.y) > grown.y):
-		_fail("the leash never grew to contain the plate the guard walked to — the"
-				+ " clamp would have stopped it short and the errand never ends")
-	if not arrived:
-		_fail("the guard never reached its plate %.1f m away in %.0f s (it moved"
-				% [pad_gap, LURE_WALK_BUDGET] + " %.1f m) — the lure is a flag" % walked
-				+ " nothing acts on, or the leash is holding it back")
-	if worst > EPS:
-		_fail("the lured guard reached %.3f m outside the box it was being run"
-				% worst + " under — the confinement is not enforced during an errand")
-
-	# ---- the HOLD: standing still, looking at the plate ------------------------
-	var facing_off := 0.0
-	var moved := 0.0
-	for _i in 30:
-		await physics_frame
-		moved = maxf(moved, Vector2(guard.velocity.x, guard.velocity.z).length())
-		facing_off = maxf(facing_off, absf(angle_difference(float(guard.rotation.y),
-				atan2(pad.x - guard.global_position.x, pad.z - guard.global_position.z))))
-	if arrived and moved > TELEGRAPH_STILL_SPEED:
-		_fail("the guard kept moving at %.2f m/s while holding on its plate — the"
-				% moved + " hold is what turns the cone away, so it has to be a stand")
-	if arrived and facing_off > LURE_FACING_EPS:
-		_fail("the guard held %.3f rad off the plate it walked to — the point of"
-				% facing_off + " the diversion is where the 120-degree cone ends up")
-
-	# ---- (b) DETECTION IS UNCHANGED, AND IT CANCELS THE ERRAND ----------------
-	# The probe steps into the guard's cone. Nothing about the lure may make it
-	# harder or easier to be seen: the acquisition runs the shipped telegraph.
-	hero.global_position = guard.global_position + Vector3(0.0, 0.2, LURE_SPOT_GAP)
-	var chased := false
-	for _i in 300:
-		if not chased:
-			guard.rotation.y = atan2(hero.global_position.x - guard.global_position.x,
-					hero.global_position.z - guard.global_position.z)
-		hero.respawn_blink_timer = hero.RESPAWN_BLINK_DURATION
-		await physics_frame
-		if bool(guard.get("is_chasing")):
-			chased = true
-			break
-	if not chased:
-		_fail("an investigating guard never acquired a probe %.1f m inside its own"
-				% LURE_SPOT_GAP + " cone — the lure changed detection, which it may not")
-	if guard.call("investigate_point", pad, 5.0):
-		_fail("a chasing guard took a lure — the diversion may never pull a body"
-				+ " off the player it has already committed to")
-	var target: Vector3 = guard.get("investigate_target")
-	if Vector2(target.x - pad.x, target.z - pad.z).length() < 1.0:
-		_fail("the guard is still aimed at its plate after acquiring the player —"
-				+ " an errand that survives an acquisition is resumed the moment you"
-				+ " break line of sight")
-	# ...AND THE GROWTH IS HANDED BACK ON THE SPOT. The errand opened the storey
-	# up; the chase that interrupted it must be fought over a beat-sized patch, or
-	# a lure is a way to buy a guard that pursues you across the whole floor.
-	var chase_box: Vector2 = guard.get("confine_half")
-	if absf(chase_box.x - authored_half.x) > EPS or absf(chase_box.y - authored_half.y) > EPS:
-		_fail("the guard kept its grown leash %s into the chase (authored %s) —"
-				% [chase_box, authored_half] + " an acquisition has to take the"
-				+ " growth back, or the lure sells a floor-wide pursuit")
-
-	# ---- IT WALKS HOME, and the leash comes back where it moves nothing --------
-	# The probe leaves, the chase drops, and the guard finishes the errand the only
-	# way it is allowed to: on its own feet, back down the route it came. Driven
-	# rather than teleported, because "restoring the authored box teleports nobody"
-	# is only true if the body is standing at the post when it happens.
-	hero.global_position = interior.global_position + park
-	var home := false
-	for _i in ticks:
-		await physics_frame
-		if not bool(guard.get("is_investigating")):
-			home = true
-			break
-	if not home:
-		_fail("the guard never finished its errand and went back on post within"
-				+ " %.0f s" % LURE_WALK_BUDGET)
-	var post_off := guard.global_position - authored_centre
-	if absf(post_off.x) > authored_half.x + EPS or absf(post_off.z) > authored_half.y + EPS:
-		_fail("the guard ended its errand %s outside its authored box — the"
-				% str(Vector2(post_off.x, post_off.z)) + " restore teleports it back"
-				+ " on the next frame, which is a guard that blinks across the floor")
-	var back: Vector2 = guard.get("confine_half")
-	if absf(back.x - authored_half.x) > EPS or absf(back.y - authored_half.y) > EPS:
-		_fail("the guard kept its grown leash after the errand (%s, authored %s) —"
-				% [back, authored_half] + " a lure that permanently widens a patrol"
-				+ " box is a lure that deletes the beat it was diverting")
-
-	# ---- (f) A HOLD THAT SIMPLY RUNS OUT ends the same way ---------------------
-	# The probe above cancelled its errand by being SEEN, which is the interesting
-	# path and not the common one. An expiring hold reaches the turn-around
-	# through a different door (`_investigate_go_home` rather than
-	# `_abandon_investigation`, which refuses a body whose hold is already spent) —
-	# and when that door was missing, a guard stood on its plate for the rest of
-	# the run with every assertion above still green.
-	var beside := guard.global_position + Vector3(0.5, 0.0, 0.0)
-	if not guard.call("investigate_point", beside, 0.3):
-		_fail("an idle guard back on its post refused a lure")
-	var expired := false
-	var turned := false
-	for _i in 240:
-		await physics_frame
-		# THE TURN IS THE ASSERTION, not the ending. A body whose expiry never
-		# reached the turn-around ALSO stops investigating — one frame later, by
-		# handing its leash back where it stands, which on a real errand is a plate
-		# tens of metres from the post and a hard clamp that teleports it there.
-		# So what is measured is that it aimed at its POST before it finished.
-		var aim: Vector3 = guard.get("investigate_target")
-		turned = turned or Vector2(aim.x - authored_centre.x,
-				aim.z - authored_centre.z).length() < EPS
-		if not bool(guard.get("is_investigating")):
-			expired = true
-			break
-	if not expired:
-		_fail("the guard never came off a hold that ran out — an expiring hold has"
-				+ " to turn the errand round, or the plate parks a sentry for good")
-	if not turned:
-		_fail("the guard finished a spent hold without ever aiming at its post —"
-				+ " it ended the errand where it stood, so on a real plate the hard"
-				+ " clamp would have teleported it home")
-
-	# ---- (c) the other two refusals, on an idle body --------------------------
-	guard.set("is_biting", true)
-	if guard.call("investigate_point", pad, 5.0):
-		_fail("a biting guard took a lure")
-	guard.set("is_biting", false)
-
-	# ---- (d) THE PLATE'S OWN COOLDOWN ----------------------------------------
-	# Driven through the press, not through `lure_guard()`: the cooldown is the
-	# half of the anti-puppet rule that lives on the pad, and it is what stops two
-	# players alternating a pair to walk a guard wherever they like.
-	interior.call("_press_lure_pad", floor_index, pad_index)
-	if not bool(guard.get("is_investigating")):
-		_fail("stepping on the plate diverted nobody")
-	guard.call("_end_investigation")
-	interior.call("_press_lure_pad", floor_index, pad_index)
-	if bool(guard.get("is_investigating")):
-		_fail("the plate re-armed the moment the errand ended — the cooldown has to"
-				+ " outlast the walk, or the pair is a joystick")
-	interior.call("_tick_lure_pads",
-			TowerInterior.LURE_HOLD_SECONDS + TowerInterior.LURE_COOLDOWN)
-	interior.call("_press_lure_pad", floor_index, pad_index)
-	if not bool(guard.get("is_investigating")):
-		_fail("the plate never re-armed — a one-shot lure is a decoration")
-
-	print("tower lure: storey %d plate %d — walked %.1f m to it, worst excursion %.4f m, held %.3f rad off, cancelled on acquisition, walked home, re-armed on its cooldown"
-		% [floor_index, pad_index, walked, worst, facing_off])
-	await _clear(hero, shell)
-	_check_every_plate_has_a_way_to_it()
-	Sentinel.done("the_lure_diverts_a_guard")
-
-
-func _check_every_plate_has_a_way_to_it() -> void:
-	"""
-	Check 21b — THE ROUTER, on the plans, with no physics in the way.
-
-	The walk above is one plate on one storey; this is the other seventeen. It
-	exists because the first cut of this bead steered by BEARING, and exactly ONE
-	of the building's (post, plate) pairs has a clear straight line — the very one
-	a "nearest plate" probe picks. Fifteen guards would have walked into a wall
-	while every assertion above stayed green.
-
-	WHAT IS ASSERTED, per storey that draws a `G`:
-	  * at least one of its plates is reachable — a storey where neither is means
-	    a guard nobody can call;
-	  * every route returned is WALKABLE: consecutive corners are axis-aligned and
-	    every cell between them is open on the plan. A router that returned the
-	    straight line, or cut a corner through stone, fails here;
-	  * and the negative control: a destination inside the shell's wall has no
-	    route at all, or "reachable" would be true of anything.
-	"""
-	var pairs := 0
-	var routed := 0
-	var corners := 0
-	for floor_index: int in TowerPlans.floors():
-		var post: Dictionary = TowerInterior._plan_guard_post(floor_index)
-		if post.is_empty():
-			continue
-		var from: Vector3 = post["post"]
-		var here := 0
-		var cells := TowerInterior.pad_cells(TowerPlans.storey(floor_index))
-		for i: int in cells.size():
-			pairs += 1
-			var to := TowerInterior.pad_point(floor_index, i)
-			var route := TowerInterior.plan_route(floor_index, from, to)
-			if route.is_empty():
-				continue
-			here += 1
-			routed += 1
-			corners += route.size()
-			var walk := from
-			for point: Vector3 in route:
-				var bad := _route_leg_blocked(floor_index, walk, point)
-				if bad != "":
-					_fail("storey %d plate %d: the route's leg %s -> %s %s"
-							% [floor_index, i, str(walk), str(point), bad])
-				walk = point
-			if not walk.is_equal_approx(to):
-				_fail("storey %d plate %d: the route ends at %s, not at the plate"
-						% [floor_index, i, str(walk)])
-		if here == 0:
-			_fail("storey %d stands a guard and draws %d plates, and the plan"
-					% [floor_index, cells.size()] + " offers a way to none of them")
-	# The negative control: the middle of the outer wall is on no floor plan.
-	var walled := Vector3(TowerPlans.PLAN_HALF + 1.0, 0.0, 0.0)
-	if not TowerInterior.plan_route(0, Vector3.ZERO, walled).is_empty():
-		_fail("the router found a way into the shell's wall — it is not reading"
-				+ " the plan, and every route above is worth nothing")
-	print("tower lure: %d of %d (post, plate) pairs routed, %d corners in total"
-		% [routed, pairs, corners])
-	Sentinel.done("every_plate_has_a_way_to_it")
-
-
-func _route_leg_blocked(floor_index: int, from: Vector3, to: Vector3) -> String:
-	"""One leg of a route: "" when it is a clear axis-aligned walk, else why not."""
-	var plan := TowerPlans.storey(floor_index)
-	var rows: Array = plan["rows"]
-	var a := TowerInterior._plan_cell_of(from)
-	var b := TowerInterior._plan_cell_of(to)
-	if a.x != b.x and a.y != b.y:
-		return "turns a corner mid-leg (%s -> %s cells)" % [str(a), str(b)]
-	var step := Vector2i(signi(b.x - a.x), signi(b.y - a.y))
-	var at := a
-	while at != b:
-		at += step
-		var ch := String(rows[at.y])[at.x]
-		if not TowerInterior._route_open(ch):
-			return "crosses '%s' at cell %s" % [ch, str(at)]
-	return ""
-
-
-# ============================================================================
-# CHECK 21c — THE CLIMAX FLOOR'S LURE, DRIVEN (bead godot-test1-3iy.24)
-# ============================================================================
-#
-# Check 21 drives the FIRST storey drawing both a `G` and a `P`, which is the
-# ground floor and an 11.6 m errand; 21b routes the other seventeen pairs on the
-# plans, with no body in them. THE ONE ERRAND THE CAMPAIGN ACTUALLY SPENDS is
-# neither: the cell block's, where you pull the sentry off the muster floor to
-# reach the doorway. It is 60 m of route on the far side of the building from the
-# floor 21 measures, and until bead `godot-test1-3iy.24` moved these two plates
-# out of the service corridor it did not complete at all — the guard walked into
-# the block's doorway, wedged on the jamb and gave up on `INVESTIGATE_STALL_TIME`,
-# which every check in this file was happy with.
-#
-# So this is the acceptance for that move and nothing else. The lure's rules are
-# check 21's and are not re-asked here; what is measured is that on THIS floor the
-# errand completes — it arrives at the plate, it stands facing it, and it walks
-# off again when the hold runs out.
-
-## The pace slack on the derived budget: turns, the obstacle feelers, and the sniff
-## pause the body may be standing in when the plate goes off.
-const LURE_SLOW_LANE: float = 1.6
-
-
-func _check_the_block_floor_lure_completes() -> void:
-	"""
-	Check 21c. The cell block's guard walks the length of the muster floor to a
-	plate, holds on it, and walks off it again.
-
-	THE BUDGET IS DERIVED AND THAT IS THE POINT. `LURE_WALK_BUDGET` is 18 s because
-	the ground floor's nearest plate is 11.6 m from its post; the same constant here
-	would be a coin toss on a walk five times as long, and a coin toss is not an
-	assertion. The budget is the PLAN'S OWN route length over the BODY'S OWN worst
-	sustained pace — a wander speed oscillates between `min_wander_speed_factor` and
-	1.0 of the instance's rolled `move_speed`, and the slow half of that swing is
-	what a budget has to survive — times `LURE_SLOW_LANE`. Move a plate, retune the
-	row, and the number this check holds the guard to moves with it.
-	"""
-	var floor_index := TowerInterior.block_floor()
-	if floor_index < 0:
-		_fail("no storey draws the cell block — check 21c has no climax to drive")
-		Sentinel.done("the_block_floor_lure_completes")
-		return
-	var post: Dictionary = TowerInterior._plan_guard_post(floor_index)
-	var cells := TowerInterior.pad_cells(TowerPlans.storey(floor_index))
-	if post.is_empty() or cells.is_empty():
-		_fail("the cell block's storey draws %d plates and %s guard post — the floor"
-				% [cells.size(), "no" if post.is_empty() else "a"]
-				+ " the campaign ends on is the one floor whose lure has to work")
-		Sentinel.done("the_block_floor_lure_completes")
-		return
-
-	# The plate this guard reaches soonest, measured on the ROUTE it would walk and
-	# not as the crow flies — the two disagree by 20 m on this floor.
-	var from: Vector3 = post["post"]
-	var pad_index := -1
-	var route_len := INF
-	for i: int in cells.size():
-		var route := TowerInterior.plan_route(floor_index, from,
-				TowerInterior.pad_point(floor_index, i))
-		if route.is_empty():
-			continue
-		var walked_plan := 0.0
-		var at := from
-		for point: Vector3 in route:
-			walked_plan += Vector2(point.x - at.x, point.z - at.z).length()
-			at = point
-		if walked_plan < route_len:
-			route_len = walked_plan
-			pad_index = i
-	if pad_index < 0:
-		_fail("the plan offers this guard no way to either of the block floor's"
-				+ " plates — check 21b would have said so; this drive cannot run")
-		Sentinel.done("the_block_floor_lure_completes")
-		return
-
-	var shell := await _make_tower()
-	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
-	if interior == null:
-		_fail("no interior in the tower — check 21c has nothing to press")
-		await _clear(null, shell)
-		Sentinel.done("the_block_floor_lure_completes")
-		return
-
-	# A probe player in the tree before `reset_guards()`, because a predator resolves
-	# its quarry once from group "player" in a deferred call off its own `_ready()`
-	# (check 14's note). Parked in the muster floor's far north-west corner: tens of
-	# metres outside the row's 9 m detection, and — the trap check 21 fell into —
-	# nowhere near either plate, which a standing body would press.
-	var park := Vector3(TowerInterior._grid_x(3.5), TowerInterior.FLOOR_Y[floor_index] + 0.2,
-			TowerInterior._grid_z(3.5))
-	if park.distance_to(from) < LURE_PARK_MIN:
-		_fail("the probe's corner is %.1f m from the post — it would be smelled"
-				% park.distance_to(from))
-	var hero: Node3D = load(PLAYER_SCENE).instantiate() as Node3D
-	root.add_child(hero)
-	hero.global_position = interior.global_position + park
-	interior.reset_guards()
-	await process_frame
-	for _i in 30:
-		await physics_frame   # Let it land: a guard is stood up `GUARD_SPAWN_LIFT` high.
-
-	var guard: Node3D = interior.call("_guard_on", floor_index) as Node3D
-	if guard == null:
-		_fail("storey %d draws a `G` but the building stood no guard on it" % floor_index)
-		await _clear(hero, shell)
-		Sentinel.done("the_block_floor_lure_completes")
-		return
-	var pad: Vector3 = interior.pad_world(floor_index, pad_index)
-	var spec: Dictionary = guard.get("spec")
-	var pace: float = float(guard.get("move_speed_instance")) \
-			* float(spec["min_wander_speed_factor"])
-	if pace <= 0.0:
-		_fail("the guard resolved a zero patrol pace — the budget below is infinite")
-		await _clear(hero, shell)
-		Sentinel.done("the_block_floor_lure_completes")
-		return
-	var budget: float = route_len / pace * LURE_SLOW_LANE
-	if not interior.lure_guard(floor_index, pad_index):
-		_fail("the block floor's plate %d diverted nobody" % pad_index)
-		await _clear(hero, shell)
-		Sentinel.done("the_block_floor_lure_completes")
-		return
-
-	# ---- THE WALK, then the HOLD, then off the plate again --------------------
-	var arrive: float = float(load(CROC_SCRIPT).get_script_constant_map()["INVESTIGATE_ARRIVE"])
-	var reached := 0.0
-	var closest := INF
-	for _i in int(budget / (1.0 / 60.0)):
-		await physics_frame
-		reached += 1.0 / 60.0
-		closest = minf(closest, Vector2(guard.global_position.x - pad.x,
-				guard.global_position.z - pad.z).length())
-		if closest <= arrive:
-			break
-	if closest > arrive:
-		_fail(("the block floor's guard got %.1f m from its plate in %.0f s, walking a"
-				+ " %.1f m route at %.2f m/s — the climax's lure does not complete")
-				% [closest, budget, route_len, pace])
-		await _clear(hero, shell)
-		Sentinel.done("the_block_floor_lure_completes")
-		return
-
-	# THE HOLD IS THE PAYLOAD: 120 degrees of cone pointing at a plate, on the far
-	# side of the floor from the doorway you are walking to.
-	var facing_off := 0.0
-	var moved := 0.0
-	for _i in 30:
-		await physics_frame
-		moved = maxf(moved, Vector2(guard.velocity.x, guard.velocity.z).length())
-		facing_off = maxf(facing_off, absf(angle_difference(float(guard.rotation.y),
-				atan2(pad.x - guard.global_position.x, pad.z - guard.global_position.z))))
-	if moved > TELEGRAPH_STILL_SPEED:
-		_fail("the guard kept moving at %.2f m/s on its plate — the hold is a stand" % moved)
-	if facing_off > LURE_FACING_EPS:
-		_fail("the guard held %.3f rad off the plate it walked to" % facing_off)
-
-	# ...AND IT LEAVES THE PLATE ON ITS OWN FEET when the hold runs out. Measured as
-	# the plate getting further away rather than as arrival at the post (check 21's
-	# probe (f), for its reason): the walk home is another minute of physics, and
-	# what can actually break is a sentry that stands on this plate for the rest of
-	# the run — which is the same failure at a hundredth of the runtime.
-	var left := false
-	for _i in int((TowerInterior.LURE_HOLD_SECONDS + 6.0) / (1.0 / 60.0)):
-		await physics_frame
-		if Vector2(guard.global_position.x - pad.x,
-				guard.global_position.z - pad.z).length() > arrive * 2.0:
-			left = true
-			break
-	if not left:
-		_fail("the guard's hold ran out on the block floor and it never walked off the"
-				+ " plate — the lure parks the climax's sentry for good")
-	print("tower lure: storey %d plate %d — %.1f m of route walked in %.1f s (budget %.0f s at %.2f m/s), held %.3f rad off, walked back off the plate"
-		% [floor_index, pad_index, route_len, reached, budget, pace, facing_off])
-	await _clear(hero, shell)
-	Sentinel.done("the_block_floor_lure_completes")
 
 
 # ============================================================================
@@ -4610,7 +3235,7 @@ func _check_air_sight_shows_through_walls_only() -> void:
 	BUILDING's materials, so "cleared on the timer, on a switch, on a respawn" has to
 	mean the overrides are gone — not merely that a timer read zero.
 	"""
-	var interior := await _make_interior()
+	var interior := await TowerProbe.make_interior(self)
 
 	# The independent derivation: which storeys own a wall surface, and where it is.
 	var wall_floors := {}
@@ -4699,7 +3324,7 @@ func _check_the_dossiers_are_findable() -> void:
 	the trigger calls it and the coins, the hidden instance and the refusal to pay twice
 	are read back off the real player and the real rack.
 	"""
-	var interior := await _make_interior()
+	var interior := await TowerProbe.make_interior(self)
 	var rack := interior.get_node_or_null("DossierRack") as MultiMeshInstance3D
 	if rack == null:
 		_fail("check 20: the interior builds no DossierRack")
@@ -4904,7 +3529,7 @@ func _check_the_dossiers_are_findable() -> void:
 	# (e) ...AND ONE IS ACTUALLY TAKEN. Driven through the same call the trigger
 	#     makes, on a real player, so "it pays coins and then it is gone" is a
 	#     measurement rather than a reading of the code.
-	var hero: Node3D = load(PLAYER_SCENE).instantiate() as Node3D
+	var hero: Node3D = load(TowerProbe.PLAYER_SCENE).instantiate() as Node3D
 	root.add_child(hero)
 	await process_frame
 	var before: int = hero.get("coins_collected")
@@ -5130,7 +3755,7 @@ func _rack_origin(rack: MultiMeshInstance3D, index: int) -> Vector3:
 func _player_capsule_height() -> float:
 	## The player's real collision capsule height, off `player.tscn` — the same
 	## "never a literal" discipline `_spring_length()` follows.
-	var player: Node3D = load(PLAYER_SCENE).instantiate() as Node3D
+	var player: Node3D = load(TowerProbe.PLAYER_SCENE).instantiate() as Node3D
 	var shape := player.get_node_or_null("CollisionShape3D") as CollisionShape3D
 	var capsule: CapsuleShape3D = (shape.shape if shape != null else null) as CapsuleShape3D
 	var height := capsule.height if capsule != null else 0.0
@@ -5224,17 +3849,6 @@ func _storey_of(mesh: MeshInstance3D) -> int:
 	if parent == null or not String(parent.name).begins_with("Floor"):
 		return -1
 	return String(parent.name).trim_prefix("Floor").to_int()
-
-
-func _fresh_store() -> void:
-	"""
-	Delete the throwaway save, so the next assertion starts from a clean profile.
-
-	Never the real one: `Sentinel.isolate_user_state()` pointed
-	`BestRunStore.config_path` at this process's own scratch file before any shell
-	could exist.
-	"""
-	DirAccess.remove_absolute(BestRunStore.config_path)
 
 
 func _fail(message: String) -> void:
