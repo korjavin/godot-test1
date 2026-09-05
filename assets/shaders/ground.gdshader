@@ -37,10 +37,11 @@
 //   each, not per pixel.
 // - fragment() does a handful of mix()/smoothstep() ops on interpolated
 //   varyings: no noise, no texture fetch, no branching for the 95% of the world
-//   that is dry land. The colour-cell quantiser (GROUND_COLOR_STEPS) adds ONE
-//   floor() and two multiply-adds to that handful — it has to live in fragment()
-//   rather than vertex(), see the note at its computation — and it is still none
-//   of the three things this bullet forbids.
+//   that is dry land. The colour-cell quantiser (GROUND_COLOR_STEPS) adds a
+//   multiply, an add, a floor() and a divide by a compile-time constant to that
+//   handful — it has to live in fragment() rather than vertex(), see the note at
+//   its computation — and it is still none of the three things this bullet
+//   forbids.
 // - The river band factor is the ONE thing derived per-pixel (a subtract, an
 //   abs and a smoothstep off the interpolated field value — still no noise), and
 //   it has to be: see the note at its computation in fragment(). The shimmer on
@@ -492,7 +493,7 @@ void fragment() {
 			/ (GROUND_COLOR_STEPS - 1.0);
 	// Plains is still the two-green mottle — now in flat patches, not a wash.
 	vec3 albedo = mix(green_a, green_b, cells);
-	// The same mottle, as a brightness wobble, keeps the other three biomes
+	// The same mottle, as a brightness wobble, keeps the other five biomes
 	// from reading as flat painted plastic. Three multiplies, no extra noise.
 	// It reads `cells` too, or plains would be the only celled biome and the
 	// desert next door would still be airbrushed.
