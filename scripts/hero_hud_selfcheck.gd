@@ -53,6 +53,11 @@ extends SceneTree
 ##      and a `StubMp` in the manager's place, because check 7 only ever meets
 ##      them off-web, where both return on their first line — so the priority
 ##      order and the self/remote key split would otherwise be untested code.
+##   8. **THE HUD SKIN, and this row is its PILOT** (bead godot-test1-y1o.24):
+##      the six film-derived hexes typed in `hud_theme.gd` and NOWHERE else in
+##      `scripts/`, every StyleBox builder hard-edged and un-blurred, both Oswald
+##      weights loaded and distinct, one shared `Theme` with no project-wide
+##      flip, and the pilot's own colours bound to the palette.
 ##
 ##      IT MOVED SIDEWAYS AND NOT DOWN, which is worth knowing before you "fix" it:
 ##      `PerfOverlay` is a Label whose real height is its TEXT's minimum size (316
@@ -68,6 +73,8 @@ const VOICE_SCRIPT := preload("res://scripts/voice_chat.gd")
 ## Check 7 binds the speaking green: one colour for a talking teammate, on his
 ## name tag and on his tile. A SCRIPT dependency for one constant, as above.
 const AVATAR_SCRIPT := preload("res://scripts/remote_avatar.gd")
+## The HUD skin this row pilots (bead godot-test1-y1o.24) — check 8.
+const THEME_SCRIPT := preload("res://scripts/hud_theme.gd")
 const MAIN_SCENE_PATH := "res://scenes/main.tscn"
 
 var _failures: Array[String] = []
@@ -166,6 +173,7 @@ func _run() -> void:
 	_check_the_video_tile_lookup()
 	_check_voice_on_the_row()
 	_check_the_voice_seams_in_a_room()
+	_check_the_hud_theme()
 
 
 func _hero_names() -> PackedStringArray:
@@ -728,6 +736,142 @@ func _check_the_voice_seams_in_a_room() -> void:
 	mp.free()
 	voice.free()
 	Sentinel.done("the_voice_seams_in_a_room")
+
+
+func _check_the_hud_theme() -> void:
+	"""
+	8. THE HUD SKIN (bead godot-test1-y1o.24), and this row is its PILOT.
+
+	Three things, and each is an acceptance criterion the epic will be held to by
+	nine more per-panel beads:
+
+	  a. **ONE HOME FOR THE PALETTE.** Every one of the six film-derived hexes is
+	     typed in `hud_theme.gd` and nowhere else in `scripts/`. A second copy is
+	     how a palette drifts — the tenth panel is styled off a number somebody
+	     eyeballed, and no check can see it.
+	  b. **HARD EDGES, HARD SHADOWS.** The reference has no rounded corner and no
+	     blur in it. `shadow_size` on a `StyleBoxFlat` is a BLUR radius while
+	     `anti_aliasing` is on, so "no blur" is a property of the builder rather
+	     than of the caller, and asserting it here is what stops the next panel
+	     from getting a soft drop shadow by simply not knowing.
+	  c. **THE ROW REALLY DRAWS OFF IT.** The pilot's own colours are bound to the
+	     palette, so a hand-tweaked tile fails rather than quietly diverging.
+	"""
+	# --- a. one home ------------------------------------------------------------
+	# DERIVED from the consts, never typed here — a check that spelled the six
+	# hexes out would itself be the second copy it is looking for, and would go
+	# stale the day the owner retunes one.
+	var hexes: Array[String] = []
+	for c: Color in [THEME_SCRIPT.INK, THEME_SCRIPT.INK_RAISED, THEME_SCRIPT.STEEL,
+			THEME_SCRIPT.BONE, THEME_SCRIPT.UNIT_KHAKI, THEME_SCRIPT.VISOR_AMBER]:
+		hexes.append(c.to_html(false).to_lower())
+	var owners: Dictionary = {}
+	for path: String in _script_paths():
+		var body := FileAccess.get_file_as_string(path).to_lower()
+		for hex: String in hexes:
+			if body.contains(hex):
+				var seen: Array = owners.get(hex, [])
+				seen.append(path.get_file())
+				owners[hex] = seen
+	for hex: String in hexes:
+		var seen: Array = owners.get(hex, [])
+		_check(seen == ["hud_theme.gd"],
+			"palette #%s is typed in %s — HudTheme must be its one home"
+				% [hex, seen if not seen.is_empty() else "NO script at all"])
+
+	# --- b. hard edges, hard shadows -------------------------------------------
+	var boxes: Dictionary = {
+		"card": THEME_SCRIPT.card(),
+		"card(modal)": THEME_SCRIPT.card(true),
+		"strip": THEME_SCRIPT.strip(),
+	}
+	for state: String in ["normal", "hover", "pressed", "disabled", "focus"]:
+		boxes["button(%s)" % state] = THEME_SCRIPT.button(state)
+	for name: String in boxes:
+		var box: StyleBoxFlat = boxes[name]
+		for corner: int in 4:
+			_check(box.get_corner_radius(corner as Corner) == 0,
+				"%s has a rounded corner — the reference has none anywhere" % name)
+		_check(not box.anti_aliasing,
+			"%s is anti-aliased, which turns its shadow_size into a BLUR — the "
+				% name + "reference's shadows are hard offsets")
+		_check(box.border_width_top > 0,
+			"%s has no border — every surface in the reference is framed" % name)
+	_check(THEME_SCRIPT.card().shadow_size > 0
+			and THEME_SCRIPT.card().shadow_offset != Vector2.ZERO,
+		"the card has no offset shadow — that IS the panel language")
+	_check(THEME_SCRIPT.card(true).bg_color.a == 1.0
+			and THEME_SCRIPT.card().bg_color.a < 1.0,
+		"a modal card must be opaque and an ordinary panel must not be")
+
+	# --- the fonts --------------------------------------------------------------
+	# A missing TTF resolves to null and every `draw_string` silently draws
+	# nothing, which no geometry check in this file would notice.
+	for pair: Array in [["heading", THEME_SCRIPT.heading_font()],
+			["body", THEME_SCRIPT.body_font()]]:
+		var f: Font = pair[1]
+		_check(f != null, "HudTheme's %s font did not load" % pair[0])
+		if f != null:
+			_check(f.get_string_size("MMMM", HORIZONTAL_ALIGNMENT_LEFT, -1, 26).x > 0.0,
+				"HudTheme's %s font measures a string as 0 wide" % pair[0])
+	_check(THEME_SCRIPT.heading_font() != THEME_SCRIPT.body_font(),
+		"the heading and body fonts are the same resource — Bold and Regular are "
+		+ "two weights and the title card needs the heavier one")
+
+	# --- the Theme is built ONCE and adopted per root ---------------------------
+	var t: Theme = THEME_SCRIPT.theme()
+	_check(t != null and THEME_SCRIPT.theme() == t,
+		"HudTheme.theme() built a second Theme — ten panels adopting it must cost "
+		+ "one resource, not ten")
+	if t != null:
+		_check(t.default_font == THEME_SCRIPT.body_font(),
+			"the Theme's default font is not HudTheme's body font, which is the "
+			+ "face locale_selfcheck measures the German budgets on")
+	# NO PROJECT-WIDE FLIP: a theme in project.godot restyles every Control at
+	# once and moves every width budget in one PR, which is the thing the ten
+	# per-panel beads exist to do one at a time.
+	_check(String(ProjectSettings.get_setting("gui/theme/custom", "")).is_empty(),
+		"a project-wide custom theme has been set — the HUD skin is adopted per "
+		+ "root Control, never globally")
+
+	# --- c. the pilot draws off the palette -------------------------------------
+	_check(HUD_SCRIPT.COLOR_FRAME == THEME_SCRIPT.STEEL,
+		"the tile frame is not STEEL")
+	_check(HUD_SCRIPT.COLOR_ACTIVE_BORDER == THEME_SCRIPT.VISOR_AMBER,
+		"the active ring is not the one amber accent")
+	_check(HUD_SCRIPT.COLOR_DIGIT == THEME_SCRIPT.BONE,
+		"the hotkey digit is not BONE")
+	_check(Color(HUD_SCRIPT.COLOR_BACKDROP, 1.0) == THEME_SCRIPT.INK
+			and is_equal_approx(HUD_SCRIPT.COLOR_BACKDROP.a, THEME_SCRIPT.PANEL_ALPHA),
+		"the tile backdrop is not INK at the panel alpha")
+	# The active ring must NOT be re-tinted per hero: the accent is rationed to
+	# one amber thing per screen region, and `_draw` doing its own lerp is exactly
+	# how that ration gets spent four times over.
+	var draw_body := FileAccess.get_file_as_string("res://scripts/hero_hud.gd")
+	draw_body = draw_body.substr(draw_body.find("func _draw() -> void:"))
+	var next_func := draw_body.find("\nfunc ")
+	if next_func > 0:
+		draw_body = draw_body.substr(0, next_func)
+	_check(not draw_body.contains("COLOR_ACTIVE_BORDER.lerp"),
+		"_draw() tints the active ring per hero again — the amber accent is one "
+		+ "colour, and the hero tint already owns the whole placeholder tile")
+	Sentinel.done("the_hud_theme")
+
+
+func _script_paths() -> PackedStringArray:
+	"""Every `scripts/*.gd`, so check 8a scans the tree rather than a list."""
+	var out := PackedStringArray()
+	var dir := DirAccess.open("res://scripts")
+	if dir == null:
+		_fail("could not open res://scripts — check 8a would pass vacuously")
+		return out
+	for f: String in dir.get_files():
+		if f.ends_with(".gd"):
+			out.append("res://scripts/%s" % f)
+	if out.size() < 20:
+		_fail("only %d scripts found — check 8a's palette scan stopped seeing the "
+			% out.size() + "tree and would pass on anything")
+	return out
 
 
 func _hud_absolute_rects(text: String) -> Dictionary:

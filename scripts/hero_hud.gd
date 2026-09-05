@@ -103,13 +103,18 @@ const STATE_ACTIVE: int = 1
 const STATE_HELD: int = 2
 const STATE_CAPTIVE: int = 3
 
-# --- Colours ----------------------------------------------------------------
-const COLOR_BACKDROP: Color = Color(0, 0, 0, 0.45)      # dark disc behind a tile
-const COLOR_FRAME: Color = Color(0, 0, 0, 0.75)         # thin outline, every tile
-const COLOR_ACTIVE_BORDER: Color = Color(1, 1, 1, 0.95) # the "this is you" ring
-const COLOR_DIM: Color = Color(0, 0, 0, 0.62)           # veil over held/captive
+# --- Colours, and they all come off `HudTheme` -------------------------------
+## THE PILOT PANEL for bead `godot-test1-y1o.24`: this row is the first thing in
+## the game drawn in the films' palette, and it is what the owner rules the whole
+## HUD spec from. Not one of the six hexes is typed here — `hud_theme.gd` is their
+## one home and `hero_hud_selfcheck` check 8 greps the tree to keep it that way.
+const COLOR_BACKDROP: Color = Color(HudTheme.INK, HudTheme.PANEL_ALPHA)
+const COLOR_FRAME: Color = HudTheme.STEEL                # thin frame, every tile
+const COLOR_ACTIVE_BORDER: Color = HudTheme.VISOR_AMBER  # the "this is you" ring
+## SEMANTIC, not stylistic — the one colour on this row the palette does not own.
+## A cell is a cell; see the note at the foot of `HudTheme`'s palette.
 const COLOR_BARS: Color = Color(0.85, 0.16, 0.14, 0.92) # the cell bars
-const COLOR_DIGIT: Color = Color(1, 1, 1, 0.9)
+const COLOR_DIGIT: Color = HudTheme.BONE
 
 const ACTIVE_BORDER_WIDTH: float = 3.0
 const DIGIT_FONT_SIZE: int = 13
@@ -128,15 +133,19 @@ const MIC_BADGE_TX: int = 2
 const MIC_BADGE_MUTED: int = 3
 const MIC_BADGE_DENIED: int = 4
 
-## `remote_avatar.LABEL_SPEAKING_COLOR` — one speaking colour for the whole game.
+## `remote_avatar.LABEL_SPEAKING_COLOR` — one speaking colour for the whole game,
+## and SEMANTIC like the bars: a talking teammate must read the same on his name
+## tag and on his tile, and the palette has no green.
 const COLOR_SPEAKING: Color = Color(0.55, 1.0, 0.55)
-## The badge palette: idle grey, muted red, denied amber. TX takes the speaking
-## green above, so "my mic is open" and "somebody is talking" are one language.
-const COLOR_MIC_OFF: Color = Color(0.78, 0.78, 0.82, 0.9)
-const COLOR_MIC_MUTED: Color = Color(0.92, 0.30, 0.28)
-const COLOR_MIC_DENIED: Color = Color(0.98, 0.72, 0.20)
-## Dark disc under a glyph, so it reads over a light portrait.
-const COLOR_BADGE_BACKDROP: Color = Color(0, 0, 0, 0.55)
+## The badge palette, off `HudTheme`: an idle mic is the corporation's neutral
+## khaki, a refused one is the single amber accent, and a hand mute takes the
+## cell bars' red because both mean "this is shut". TX takes the speaking green
+## above, so "my mic is open" and "somebody is talking" are one language.
+const COLOR_MIC_OFF: Color = HudTheme.UNIT_KHAKI
+const COLOR_MIC_MUTED: Color = COLOR_BARS
+const COLOR_MIC_DENIED: Color = HudTheme.VISOR_AMBER
+## Ink disc under a glyph, so it reads over a light portrait.
+const COLOR_BADGE_BACKDROP: Color = Color(HudTheme.INK, 0.72)
 
 ## The speaking ring, drawn INSIDE the frame so it can never be mistaken for the
 ## active border it sits next to.
@@ -446,7 +455,9 @@ func _portrait(hero: String) -> Texture2D:
 func _draw() -> void:
 	# Drawn entirely from the _process snapshot — no player reads in here. An empty
 	# roster draws nothing, which is also how the control clears itself.
-	var font := get_theme_default_font()
+	# THE FILMS' FACE, not the engine's: Oswald Bold, tall and condensed, is what
+	# makes a 13 px digit legible over a bright sky at all (bead y1o.24).
+	var font: Font = HudTheme.heading_font()
 	for i: int in _heroes.size():
 		var hero := _heroes[i]
 		var state: int = _states[i]
@@ -467,15 +478,20 @@ func _draw() -> void:
 		# Held and captive are both unavailable, so both take the veil; only
 		# captivity adds the bars on top of it.
 		if state == STATE_HELD or state == STATE_CAPTIVE:
-			draw_rect(rect, COLOR_DIM)
+			# `HudTheme.VEIL` and not a const of our own: it is the palette's
+			# answer to "you cannot have this", and the skill tree and the MP
+			# panel will want the same grey-brown.
+			draw_rect(rect, HudTheme.VEIL)
 		if state == STATE_CAPTIVE:
 			_draw_bars(rect)
 
-		# Frame: a bright tinted ring for the body you are driving, a thin dark
-		# outline for everyone else so the tiles stay separable against the sky.
+		# Frame: the one amber accent for the body you are driving, a thin STEEL
+		# frame for everyone else so the tiles stay separable against the sky.
+		# The ring is FLAT amber and no longer lerped toward the hero tint — the
+		# accent is rationed to one amber thing per screen region, and the tint
+		# already has the whole placeholder tile to say who this is.
 		if state == STATE_ACTIVE:
-			draw_rect(rect, COLOR_ACTIVE_BORDER.lerp(tint, 0.35), false,
-				ACTIVE_BORDER_WIDTH)
+			draw_rect(rect, COLOR_ACTIVE_BORDER, false, ACTIVE_BORDER_WIDTH)
 		else:
 			draw_rect(rect, COLOR_FRAME, false, 1.0)
 
@@ -505,7 +521,8 @@ func _draw() -> void:
 
 
 func _draw_initial(font: Font, letter: String, rect: Rect2) -> void:
-	"""The placeholder's big centred initial, with a dark outline for legibility."""
+	"""The placeholder's big centred initial: BONE on the hero tint, with the
+	palette's INK outline — the world-side lettering contract (`HudTheme.OUTLINE_PX`)."""
 	var font_size := int(TILE_SIZE * 0.6)
 	var width := font.get_string_size(letter, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
 	# Baseline placed so the cap-height block sits visually centred in the tile.
@@ -514,16 +531,16 @@ func _draw_initial(font: Font, letter: String, rect: Rect2) -> void:
 		rect.size.y * 0.5 + font_size * 0.36
 	)
 	font.draw_string_outline(get_canvas_item(), pos, letter, HORIZONTAL_ALIGNMENT_LEFT,
-		-1, font_size, 4, Color(0, 0, 0, 0.8))
+		-1, font_size, HudTheme.OUTLINE_PX * 2, HudTheme.INK)
 	font.draw_string(get_canvas_item(), pos, letter, HORIZONTAL_ALIGNMENT_LEFT, -1,
-		font_size, Color(1, 1, 1, 0.95))
+		font_size, HudTheme.BONE)
 
 
 func _draw_digit(font: Font, digit: String, rect: Rect2) -> void:
 	"""The 1-4 hotkey hint in the tile's top-left corner."""
 	var pos := rect.position + Vector2(3.0, DIGIT_FONT_SIZE + 1.0)
 	font.draw_string_outline(get_canvas_item(), pos, digit, HORIZONTAL_ALIGNMENT_LEFT,
-		-1, DIGIT_FONT_SIZE, 4, Color(0, 0, 0, 0.9))
+		-1, DIGIT_FONT_SIZE, HudTheme.OUTLINE_PX * 2, HudTheme.INK)
 	font.draw_string(get_canvas_item(), pos, digit, HORIZONTAL_ALIGNMENT_LEFT, -1,
 		DIGIT_FONT_SIZE, COLOR_DIGIT)
 
@@ -621,7 +638,7 @@ func _draw_slash(box: Rect2, color: Color) -> void:
 	"""The "not" stroke, on a dark backing so it stays visible across the glyph."""
 	var a := box.position + box.size * 0.15
 	var b := box.position + box.size * 0.85
-	draw_line(a, b, Color(0, 0, 0, 0.85), 3.5)
+	draw_line(a, b, Color(HudTheme.INK, 0.9), 3.5)
 	draw_line(a, b, color, 1.5)
 
 

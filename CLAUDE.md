@@ -1860,6 +1860,41 @@ line pass and then draw the same lane — and a RECYCLE goes to
 the FAR half of the bubble (`RECYCLE_MIN_DIST`) — a walker leaving at 145 m used to pop
 back 15 m from the hero's nose, a second pump concentrating the crowd as he walks.
 
+### The HUD skin — `scripts/hud_theme.gd` is the ONE style source
+Owner ruling 2026-09-05 (epic `godot-test1-y1o`): the HUD's reference is the intro and
+ending **films** — a graphic-novel corporate-dystopia card. Ink-black grounds, tall
+condensed BONE-white capitals with a hard drop shadow, cold steel-blue night light, and
+exactly one warm accent. **Nothing is rounded, nothing glows softly, nothing is
+translucent-glassy.**
+
+`HudTheme` (`class_name`, all static) holds the six film-derived colours — INK,
+INK_RAISED, STEEL, BONE, UNIT_KHAKI, VISOR_AMBER — the two **Oswald** weights
+(`assets/fonts/`, SIL OFL 1.1, `OFL.txt` ships beside them), the sizes, the StyleBox
+builders (`card` / `strip` / `button`) and one lazy `theme()`. Four rules:
+
+- **The six hexes are typed there and NOWHERE else in `scripts/`.**
+  `hero_hud_selfcheck` check 8 derives the hex strings from the consts themselves and
+  greps the tree, so a second copy fails the build and the check can never go stale.
+  What is deliberately outside the palette is SEMANTIC and must stay: the per-hero
+  identity tints, the captive bars' red, the speaking green, the minimap's biome RGB.
+- **Two kinds of consumer.** A Control-based panel adopts `theme = HudTheme.theme()` on
+  its own ROOT — **never a project-wide flip**, which would restyle every `Control` at
+  once and move every German width budget in one PR. `draw_*`-based HUDs (`hero_hud`,
+  `ability_hud`, `minimap_hud`) read the consts directly: a `Theme` has nothing to say
+  to `draw_rect`.
+- **`locale_selfcheck._check_widths` measures on `HudTheme.body_font()`**, not on
+  `ThemeDB`'s default. A budget measured on a face nobody draws with passes vacuously in
+  both directions, and Oswald is condensed — measured over the 73 budgets, the worst
+  German string went from **96.2%** of its budget on the engine default to **75.0%** on
+  Oswald. The check also asserts ß/ä/ö/ü exist, which is why Oswald was picked over
+  Bebas Neue.
+- **`hero_hud` is the PILOT** (bead `y1o.24`) and the per-panel beads follow it one file
+  at a time. Its tile geometry did not move — `voice_chat` places the teammate camera on
+  `tile_rect()`. The active ring is FLAT `VISOR_AMBER` and no longer lerped toward the
+  hero tint: the accent is rationed to one amber thing per screen region, and the tint
+  already owns the whole placeholder tile. A/B crops in `docs/style/`, captured with
+  `godot --path . scenes/style_shots.tscn -- <outdir> only=hero_row`.
+
 ### Art direction
 Authored in `main.tscn` (key light, ProceduralSky, glow, BCS grade) plus
 `scripts/toon_shading.gd`, whose **static cache keyed by source material id** is the point:

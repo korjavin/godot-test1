@@ -101,6 +101,13 @@ func _run() -> void:
 	await _shoot(terrain, player, street, -PI * 0.5, "3_budapest")
 	await _shoot(terrain, player, avenue, -PI * 0.5, "3b_budapest_avenue")
 
+	# THE HERO ROW (bead godot-test1-y1o.24) — the HUD skin's pilot, and the pair
+	# the owner rules the whole style spec from. Two spots because the row is
+	# drawn OVER the world: a bright field and a dark city street are the two
+	# grounds an ink-on-bone palette has to stay legible against.
+	await _shoot_hero_row(terrain, player, field, 0.0, "12_hero_row_field")
+	await _shoot_hero_row(terrain, player, street, -PI * 0.5, "13_hero_row_budapest")
+
 	# THE FIELD BRIDGES (bead godot-test1-06o.2) — two shots, and the second one
 	# keeps the HUD on because the minimap's river line is half of what it shows.
 	await _shoot_field_bridge(terrain, player)
@@ -211,6 +218,23 @@ func _shoot_landmark(terrain: Node, player: Node3D, builder: String, dist: float
 	var back := Vector3(0.7, 0.0, 0.7).normalized() * dist
 	await _shoot(terrain, player, at + back + Vector3(0.0, 2.0, 0.0),
 			atan2(back.x, back.z), name)
+
+func _shoot_hero_row(terrain: Node, player: Node3D, at: Vector3, yaw: float,
+		name: String) -> void:
+	"""
+	One shot of a spot with ONLY the hero portrait row on screen.
+
+	`_show_widget` is bead 06o.2's and does exactly this job already — the HUD is
+	one shared CanvasLayer, so it turns that layer on and every branch of it that
+	is not the row off. Nothing is restored, which is why the row's shots are
+	taken LAST-but-one and why this tool quits when it is done.
+	"""
+	if _only != "" and not name.contains(_only):
+		return
+	_show_widget("hero_hud")
+	await _shoot(terrain, player, at, yaw, name)
+	_show_widget("hero_hud", false)
+
 
 func _shoot_field_bridge(terrain: Node, player: Node3D) -> void:
 	"""

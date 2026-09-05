@@ -403,13 +403,26 @@ func _check_locale_config() -> void:
 ## multi-line label is judged on its widest line, which is what actually decides
 ## whether the control overflows.
 func _check_widths(rows: Array) -> void:
-	var font: Font = ThemeDB.get_default_theme().get_font("font", "Button")
+	# THE RULER IS THE FACE WE DRAW WITH (bead godot-test1-y1o.24). It used to be
+	# `ThemeDB.get_default_theme()`'s Button font — right while every panel drew
+	# in the engine default, and WRONG the moment one adopts `HudTheme.theme()`,
+	# whose default font is Oswald. A budget measured on a font nobody draws with
+	# passes vacuously in both directions: Oswald is CONDENSED, so it would hide a
+	# real overflow if the panels were wider, and flag a fit that is fine if they
+	# were narrower. One seam, so every per-panel bead after this one inherits it.
+	var font: Font = HudTheme.body_font()
 	if font == null:
 		font = ThemeDB.fallback_font
 	if font == null:
 		_fail("no font available — the width check would pass vacuously")
 		Sentinel.done("widths")
 		return
+	# German needs ß and the umlauts, which is the whole reason Oswald was chosen
+	# over Bebas Neue — a face missing them measures a tofu box and passes.
+	for glyph: String in ["ß", "ä", "ö", "ü", "Ä"]:
+		if font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, 26).x <= 0.0:
+			_fail("the HUD font has no '%s' — the German budgets would be measured "
+				% glyph + "on a missing glyph")
 	# Prove the ruler works before trusting any measurement it makes. A headless
 	# build configured with the dummy text server measures everything as 0, which
 	# would turn every assertion below into a silent pass.
