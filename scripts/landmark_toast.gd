@@ -444,13 +444,20 @@ func _ready() -> void:
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
 	var style := HudTheme.strip()
-	# TWO LOCAL ADJUSTMENTS, and both are because `strip()` is written for a strip
-	# that already sits ON a card: it pads by 8/4 where a card wants the spec's
-	# 12 all round, and it carries no shadow because "it is already on a card".
-	# This one is the card — it floats over the world — so it takes the panel
-	# language's hard 2 px offset INK shadow. `strip()` hands back a FRESH box, so
-	# tuning it here cannot reach any other panel. **A theme gap, named in the PR**:
-	# a `HudTheme.card(raised)` would make both of these disappear.
+	# THREE LOCAL ADJUSTMENTS, and all three are because `strip()` is written for a
+	# strip that already sits ON a card, while this one IS the card and floats over
+	# the world. It pads by 8/4 where a card wants the spec's 12 all round; it
+	# carries no shadow because "it is already on a card", so this one takes the
+	# panel language's hard 2 px offset INK shadow; and it is OPAQUE, where a panel
+	# over the world sits at `PANEL_ALPHA` — which `HudTheme.card()` applies and is
+	# the one `strip()` difference the first draft missed (independent review
+	# 2026-09-05). That alpha is load-bearing rather than decorative: the world
+	# reading through the card is why every label below keeps an outline at all, and
+	# it is why the option Buttons — whose own faces ARE opaque — need none.
+	# `strip()` hands back a FRESH box, so tuning it here cannot reach any other
+	# panel. **A theme gap, named in the PR**: a `HudTheme.card(raised)` would make
+	# all three of these disappear.
+	style.bg_color = Color(HudTheme.INK_RAISED, HudTheme.PANEL_ALPHA)
 	style.set_content_margin_all(HudTheme.CARD_PADDING)
 	style.shadow_color = Color(HudTheme.INK, HudTheme.SHADOW_ALPHA)
 	style.shadow_size = HudTheme.SHADOW_PX
@@ -560,6 +567,14 @@ func _ready() -> void:
 		# look like, and the border is what makes three of them read as three
 		# choices rather than three lines of prose. No colour or outline override
 		# either: BONE and the four states are the theme's.
+		#
+		# AND NO OUTLINE IS THE POINT, not an omission — it is why the digit badge
+		# one row over has one and this does not. `HudTheme.button()`'s face is
+		# OPAQUE INK_RAISED, so an option's text is already on a solid ground; the
+		# badge is a bare Label on the card, which sits at `PANEL_ALPHA` and lets
+		# the world through. Outline the ones over the world, not the ones over a
+		# button (independent review 2026-09-05 flagged the asymmetry — it is real
+		# and deliberate, and it is only true while the card keeps its alpha).
 		option.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		option.add_theme_font_size_override("font_size", OPTION_FONT_SIZE)
 		option.pressed.connect(_answer.bind(slot))
