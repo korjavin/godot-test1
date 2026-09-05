@@ -2,9 +2,11 @@
 """
 Generate Windman 3D model with SEPARATE body parts for individual animation.
 
-Requires: trimesh, numpy, shapely, scipy  (shapely+scipy power the extruded "W"
-emblem on the chest). Install with:  pip install trimesh numpy shapely scipy
-
+Requires the PINNED toolchain of `scripts/requirements.txt` — trimesh + numpy, and
+shapely + mapbox-earcut for the extruded "W" emblem on the chest (`extrude_polygon`
+wants the polygon from one and the triangulation from the other, and without the
+second it raises "No available triangulation engine!").
+    pip install -r scripts/requirements.txt
 
 Each limb is exported as its own GLB file. `scenes/characters/windman_updated.tscn`
 assembles them under a `Body` node whose `LeftArm` / `RightArm` / `LeftLeg` /

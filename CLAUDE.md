@@ -457,7 +457,8 @@ seam could rot is the only one CI's staleness gate cannot see.
 
 **A FOURTH CONTRACT, AND IT IS A PROPERTY OF THE EXPORT RATHER THAN OF THE SHAPE**
 (bead `godot-test1-y1o.20`, epic `y1o`'s style A): `export_faceted()` is the ONE
-seam every `.glb` in this game is written through, and it unmerges the mesh
+seam every `.glb` THE BUILD SHIPS is written through — the dead `windman.glb` is
+the one exception and is still unfaceted — and it unmerges the mesh
 (per-face vertices, face count untouched) before asking for normals — trimesh writes no
 NORMAL attribute unless asked and Godot generates none on import, so the cast
 used to render with a constant normal and no facet caught the key light; asking
