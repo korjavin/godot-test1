@@ -143,6 +143,12 @@ func _run() -> void:
 	await _shoot_hero_row(terrain, player, field, 0.0, "12_hero_row_field")
 	await _shoot_hero_row(terrain, player, street, -PI * 0.5, "13_hero_row_budapest")
 
+	# THE SCORE LINE (bead godot-test1-y1o.26) — the same two grounds, for the same
+	# reason: the coin counter is the one place the palette's amber is the TEXT
+	# colour, and amber-on-INK has to read over bright grass AND a dark street.
+	await _shoot_coin_line(terrain, player, field, 0.0, "14_coin_line_field")
+	await _shoot_coin_line(terrain, player, street, -PI * 0.5, "15_coin_line_budapest")
+
 	# LANDMARKS (bead godot-test1-y1o.6). Each one is found by BUILDER NAME rather
 	# than by a hand-typed chunk: `_landmark_at` is a pure function of (chunk,
 	# run_seed), so sweeping it answers "where is the Taj in this world" without
@@ -267,6 +273,37 @@ func _shoot_hero_row(terrain: Node, player: Node3D, at: Vector3, yaw: float,
 	_show_widget("hero_hud")
 	await _shoot(terrain, player, at, yaw, name)
 	_show_widget("hero_hud", false)
+
+
+func _shoot_coin_line(terrain: Node, player: Node3D, at: Vector3, yaw: float,
+		name: String) -> void:
+	"""
+	One shot of a spot with ONLY the score line on screen — `_shoot_hero_row`'s
+	twin, one group along.
+
+	The line is SET first, because the one the owner has to rule on is the FULL
+	one (level, coins, the skill-point suffix) and a fresh harness reads
+	"Lv 1 Coins: 0" — a shot of three glyphs says nothing about how a long amber
+	string sits over a street.
+
+	**Both halves are pinned, and the level is the half that matters**: coins are
+	a run number this tool owns, but `Progression` is LIFETIME state loaded from
+	`user://`, so it climbs between two runs of this tool — the before shot of an
+	A/B pair read "Lv 15 … 8 SP" against the after shot's "Lv 5", which is two
+	different strings and therefore not a comparison. It is a debug tool that
+	quits when it is done, so nothing restores either.
+	"""
+	if _only != "" and not name.contains(_only):
+		return
+	if "coins_collected" in player:
+		player.coins_collected = 1287
+	var progression := get_tree().get_first_node_in_group("progression")
+	if progression != null and "level" in progression and "spent_points" in progression:
+		progression.level = 12
+		progression.spent_points = 0
+	_show_widget("coin_hud")
+	await _shoot(terrain, player, at, yaw, name)
+	_show_widget("coin_hud", false)
 
 
 func _shoot_field_bridge(terrain: Node, player: Node3D) -> void:
