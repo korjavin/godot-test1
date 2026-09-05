@@ -439,13 +439,14 @@ func _check_the_caption_says_which_one_happened() -> void:
 	asking the player which caption it WOULD choose — is a second copy of the
 	branch and cannot see a `label.text` that never gets written.
 
-	THE MUTATION IS BUILT IN: both paths assert their EXACT string, so swapping
-	the two arms of the branch fails twice, and collapsing them back into one
-	caption fails once. The third failure mode is subtler and gets its own
-	assertion — `caught_captured` is SPENT by the bill before the countdown is
-	ever drawn, so a caption that read it instead of `caught_was_arrest` would say
-	"Robbed!" for an arrest too, and would pass any check that only looked at the
-	bite.
+	THE MUTATION IS BUILT IN, and all three were measured. Each path asserts the
+	sentence it MUST open with and the sentence it must NOT, so swapping the two
+	arms of the branch fails 4 times and collapsing them back into one caption
+	fails 2. The third failure mode is subtler and gets its own assertion —
+	`caught_captured` is SPENT by the bill before the countdown is ever drawn, so
+	a caption that read it instead of `caught_was_arrest` would say "Robbed!" for
+	an arrest too, and would pass any check that only looked at the bite (that one
+	fails 2).
 
 	The subjects come off the SPECIES table, not a literal: the arresting row is
 	whatever carries `captures_hero`, the control is the ordinary predator.
@@ -464,9 +465,6 @@ func _check_the_caption_says_which_one_happened() -> void:
 	## Generous: the grace window is 1.5 s (~90 frames) and this only has to
 	## outlast the one or two frames the freeze's own return costs.
 	const CAPTION_DRAW_FRAMES := 8
-	if CAUGHT == ROBBED:
-		_fail("the two captions are the same string — an arrest and a bite are"
-			+ " different events (owner 2026-09-04) and must not read alike")
 
 	for subject: Array in [[HUNTER_ROW, CAUGHT, ROBBED, true], [CONTROL_SPECIES, ROBBED, CAUGHT, false]]:
 		var species: String = subject[0]
