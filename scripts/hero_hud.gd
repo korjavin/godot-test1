@@ -471,7 +471,7 @@ func _draw() -> void:
 			draw_texture_rect(portrait, rect, false)
 		else:
 			# Placeholder: the identity colour plus the hero's initial, drawn the
-			# way ability_hud draws its labels (default font, dark outline).
+			# way ability_hud draws its labels (Oswald Bold, INK outline).
 			draw_rect(rect, tint)
 			_draw_initial(font, hero.substr(0, 1).to_upper(), rect)
 

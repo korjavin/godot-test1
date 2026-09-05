@@ -5,16 +5,16 @@ extends Control
 ## empties as the ability cools down, plus the ability's name and the seconds left.
 ##
 ## THREE STATES, NOT TWO — and this is the point of the contract below:
-##   COOLING (amber arc, seconds)  the charge is still filling; wait.
-##   GATED   (blue ring, a word)   charged, but something refuses the press right
-##                                 now — Windman airborne ("LAND") or in the rain
-##                                 ("RAIN"). There is nothing to wait for, so it
-##                                 must NOT render as still cooling: the dial
-##                                 names the fix instead of counting down at a
-##                                 player who has already paid.
-##   READY   (green ring)          press it.
+##   COOLING (khaki arc, seconds) the charge is still filling; wait.
+##   GATED   (bone ring, a word)  charged, but something refuses the press right
+##                                now — Windman airborne ("LAND") or in the rain
+##                                ("RAIN"). There is nothing to wait for, so it
+##                                must NOT render as still cooling: the dial
+##                                names the fix instead of counting down at a
+##                                player who has already paid.
+##   READY   (amber ring)         press it.
 ## Before godot-test1-tw6 the gates were invisible here and a gated-but-charged
-## ability painted a green READY ring while every press bounced.
+## ability painted a READY ring while every press bounced.
 ##
 ## Like the rest of the HUD it uses GROUP-BASED discovery — it finds the player via
 ## the "player" group rather than a hard reference — so it keeps working across
@@ -55,20 +55,33 @@ var _last_tenths: int = -1
 ## render in COLOR_BLOCKED, overriding all three states above.
 var _blocked_timer: float = 0.0
 
-# --- Layout / colours (tweak here) ------------------------------------------
+# --- Layout ------------------------------------------------------------------
 const DIAL_RADIUS: float = 40.0
 const RING_WIDTH: float = 6.0
 ## Vertical centre of the dial within this control.
 const DIAL_CENTER_Y: float = 56.0
-const COLOR_TRACK := Color(1, 1, 1, 0.16)         # faint full ring behind the arc
-const COLOR_COOLING := Color(1.0, 0.62, 0.12, 0.95)  # amber arc while on cooldown
-const COLOR_READY := Color(0.35, 1.0, 0.45, 0.95)    # bright green when ready
-## Charged but gated: a cool blue full ring — deliberately NOT the amber cooling
-## arc (nothing is filling) and NOT the ready green (the press would bounce).
-const COLOR_GATED := Color(0.42, 0.72, 1.0, 0.95)
-const COLOR_BACKDROP := Color(0.0, 0.0, 0.0, 0.45)   # dark disc for contrast
-const COLOR_BLOCKED := Color(1.0, 0.25, 0.2)          # red flash on a blocked press
 const BLOCKED_FLASH_DURATION: float = 0.15
+
+# --- Colours, and they all come off `HudTheme` -------------------------------
+## Bead `godot-test1-y1o.25`, the HUD style spec: not one hex is typed here.
+## THE THREE STATES ABOVE STAY THREE COLOURS, drawn out of the six the films
+## gave us — the ring is the only thing on this region carrying the state, so
+## two of them sharing a colour would put the whole readout on "arc or full
+## ring", which at ratio ≈ 1 is no difference at all.
+const COLOR_BACKDROP: Color = Color(HudTheme.INK, HudTheme.PANEL_ALPHA)
+## The track the arc rides on: a frame, so the palette's frame colour.
+const COLOR_TRACK: Color = HudTheme.STEEL
+## Cooling: the corporation's neutral khaki — "not yours yet".
+const COLOR_COOLING: Color = HudTheme.UNIT_KHAKI
+## READY is this region's ONE amber thing, which is the whole rationing rule.
+const COLOR_READY: Color = HudTheme.VISOR_AMBER
+## Charged but gated: a BONE full ring — deliberately NOT the amber ready ring
+## (the press would bounce) and NOT the khaki cooling arc (nothing is filling).
+const COLOR_GATED: Color = HudTheme.BONE
+## SEMANTIC, not stylistic, and so the one literal the palette does not own — the
+## refused-press flash is the same "no" red as the captive cell bars, and
+## `hero_hud`'s `COLOR_BARS` note one file along says why that stays a literal.
+const COLOR_BLOCKED := Color(1.0, 0.25, 0.2)          # red flash on a blocked press
 
 
 func _ready() -> void:
@@ -140,7 +153,9 @@ func _draw() -> void:
 	# Blocked-press flash: while it runs, the arc and the F hint go red.
 	var blocked := _blocked_timer > 0.0
 
-	var font := get_theme_default_font()
+	# Oswald Bold — the film's title-card face. HUD lettering and numerals are
+	# the heading weight throughout (`hero_hud` does the same one file along).
+	var font: Font = HudTheme.heading_font()
 	var center := Vector2(size.x * 0.5, DIAL_CENTER_Y)
 
 	# Dark disc behind everything so the dial reads over the bright sky.
@@ -171,13 +186,14 @@ func _draw() -> void:
 
 	# Big "F" key hint in the centre of the dial.
 	var key_size := 30
-	var key_col := Color(1, 1, 1, 0.95) if cooling and not blocked else ring_col
+	var key_col := HudTheme.BONE if cooling and not blocked else ring_col
 	_draw_centered(font, "F", center + Vector2(0.0, key_size * 0.36), key_size, key_col)
 
-	# Ability name below the dial.
+	# Ability name below the dial, in caps at the DRAW SITE — never in ui.csv,
+	# where the translation key is the English source string (CLAUDE.md rule 1).
 	var name_size := 18
-	_draw_centered(font, ability_name, Vector2(center.x, center.y + DIAL_RADIUS + 24.0),
-		name_size, Color(1, 1, 1, 0.97))
+	_draw_centered(font, ability_name.to_upper(),
+		Vector2(center.x, center.y + DIAL_RADIUS + 24.0), name_size, HudTheme.BONE)
 
 	# Inside the dial: the seconds left while cooling, otherwise the gate that is
 	# holding a full charge back — "LAND", "RAIN" — so the player is told what to
@@ -185,19 +201,21 @@ func _draw() -> void:
 	# per CLAUDE.md rule 2: a drawn string is not an auto-translated Control.text.
 	if cooling:
 		_draw_centered(font, "%.1f" % _secs, Vector2(center.x, center.y + 22.0),
-			14, Color(1, 0.85, 0.6, 0.95))
+			14, HudTheme.BONE)
 	elif _block_reason != "":
 		_draw_centered(font, tr(_block_reason), Vector2(center.x, center.y + 22.0),
 			14, COLOR_GATED)
 
 
 func _draw_centered(font: Font, text: String, baseline_center: Vector2, font_size: int, color: Color) -> void:
-	"""Draw `text` horizontally centred on `baseline_center` with a dark outline
-	for legibility over any background."""
+	"""Draw `text` horizontally centred on `baseline_center` with the palette's
+	INK outline — the world-side lettering contract (`HudTheme.OUTLINE_PX`, which
+	is 2 px OF INK and so doubles at the call, since Godot grows the glyph in both
+	directions)."""
 	var width := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
 	var pos := Vector2(baseline_center.x - width * 0.5, baseline_center.y)
 	# Outline first (drawn slightly thicker), then the fill on top.
 	font.draw_string_outline(get_canvas_item(), pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1,
-		font_size, 4, Color(0, 0, 0, 0.85))
+		font_size, HudTheme.OUTLINE_PX * 2, HudTheme.INK)
 	font.draw_string(get_canvas_item(), pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1,
 		font_size, color)
