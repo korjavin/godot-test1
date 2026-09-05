@@ -406,15 +406,16 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            check 21c ALONE, and alone because it is a minute: the
 #                            cell block's guard walks 60 m of route to a plate, holds
 #                            facing it, and walks off again. Same split
-#   capture_selfcheck        SYSTEMIC CAPTURE and the tower guard's stake: the
-#                            arming gate (pre/post the
-#                            authored beat), attribution (every `captures_hero`
+#   capture_selfcheck        SYSTEMIC CAPTURE and the tower guard's stake: that
+#                            there is NO arming gate (a FRESH profile arrests, the
+#                            beat changes nothing, and `_capture_is_armed` is gone
+#                            by name), attribution (every `captures_hero`
 #                            row takes one, animals and row-less hazards none),
 #                            THE CAPTION either path draws on a real
 #                            `respawn_label` Label ("Caught!" for the arrest,
 #                            "Robbed!" for the bite, each asserting the OTHER
 #                            sentence is absent so a swap fails twice),
-#                            the guard's arrest in place vs its PRE-BEAT
+#                            the guard's arrest in place vs the ordinary predator's
 #                            setback+knockback, invulnerability covering the hero too, the
 #                            clean auto-switch, liberation, the empty-roster game
 #                            over as the ONLY game over there is, that the set
@@ -1003,7 +1004,7 @@ rules of its own, all pinned by `tower_interior_selfcheck`:
   turns a room you were meant to time and walk past into a chase; the count is asserted
   off the BODIES in the tree, never off the table. **Losing to one is an ARREST** (owner ruling 2026-09-01, bead
   `godot-test1-3iy.19`, superseding the third stake): to the player the thing that
-  grabbed them in the HQ is a hunter — it is the same chassis — so a post-beat
+  grabbed them in the HQ is a hunter — it is the same chassis — so a
   guard grab imprisons the hero exactly like a field grab, through the `captures_hero`
   ROW KEY the two GD-SURVEY rows share (`behavior` stays `"solo"`: behaviour is
   STEERING, and a sentry must not have the hunt arm's nose or its director seams).
@@ -1012,14 +1013,17 @@ rules of its own, all pinned by `tower_interior_selfcheck`:
   contacts that arrest**, latched in `hit_by_crocodile()` (`caught_captured`) and
   read in `_pay_coin_setback()`, because the ruling's second half is that the
   surviving heroes carry on from where the party fell. It still catches every other
-  way to lose indoors — a PRE-BEAT guard, the press, an animal that
+  way to lose indoors — the press, a boss projectile, an animal that
   followed you in — and it is the building's, not the row's
   (`_pay_coin_setback()` relocates whoever bit you, gated on
   `TowerInterior.inside_walls()` — the group ANSWERING is not the test, because the
-  shell streams in at 360 m and is never freed again). The arming gate is
-  unchanged and is REQUIRED here: the authored Primm rescue is a room in this
-  building, so pre-beat a guard is byte-for-byte today's setback-plus-knockback or a
-  tutorial visit could strip the roster. An arrest ends a run only by being the
+  shell streams in at 360 m and is never freed again). **The arming gate that used to
+  exempt a guard met before the authored rescue is GONE** (owner ruling 2026-09-05,
+  bead `godot-test1-bxx`): every guard grab is an arrest, so a tutorial visit CAN now
+  cost a hero — accepted by the ruling — and `capture_selfcheck` check 11 measures the
+  guard arresting on a FRESH profile, with the two branches of the checkpoint knockback
+  driven on an ordinary predator instead, which is the body that still takes them.
+  An arrest ends a run only by being the
   FOURTH one — the empty free set is the game's one ending, raised where it lands.
   Guards stay in group
   `"crocodile"` (LOD sleep and the MP relay still want them) and refuse the Stink Wave
@@ -1776,9 +1780,9 @@ Hunters are in group `"crocodile"`, so **the \fo overlay's "Crocs (active/total)
 means predators + hunters** — which is exactly what the LOD manager manages.
 
 ### Systemic capture — a GD-SURVEY machine takes the HERO
-A post-beat grab by a predator whose `SPECIES` row carries `captures_hero` puts the
+A grab by a predator whose `SPECIES` row carries `captures_hero` puts the
 ACTIVE hero in `player_controller`'s `captive_heroes` and steps into the next free
-one. **It is a ROW KEY, not the `"hunt"` behaviour** (bead `godot-test1-3iy.19`):
+one, from the first second of a run. **It is a ROW KEY, not the `"hunt"` behaviour** (bead `godot-test1-3iy.19`):
 the field's retrieval unit and the HQ's sentry both arrest, and only the first is on
 that arm — behaviour is steering, and the guard's patrol is `set_confinement()`.
 Four rules:
@@ -1788,9 +1792,18 @@ Four rules:
   intersection there. There is no second roster system, and there may not be one.
 - **The auto-switch goes through `set_active_character()`**, never the R-cycle: that is where
   `_reset_ability_states()` lives, and the cycle refuses a press mid-Air-Rush anyway.
-- **It arms only after the authored Primm rescue** (`TowerInterior.RESCUE_DONE` in the stored
-  tower set) — the beat is where the rule is taught. Before it, a grab is an ordinary bite.
-  That gate is load-bearing for the guard, not incidental: the beat happens INSIDE the HQ.
+- **THERE IS NO ARMING GATE — the arrest is live from the first second of a run**
+  (owner ruling 2026-09-05, bead `godot-test1-bxx`, verbatim *"yes, from start"*,
+  answering whether to redo the beat or drop the sequencing). It used to arm only after
+  the authored Primm rescue (`TowerInterior.RESCUE_DONE` in the stored tower set, bead
+  `godot-test1-3iy.9`); `_capture_is_armed()` is gone and `hit_by_crocodile()`'s test is
+  the row key alone. **Two consequences, both accepted by the ruling**: a tutorial visit
+  to the HQ can cost a hero, and the four-capture ending is reachable before the beat has
+  ever been walked. **The rescue beat stays as content** — Primm's cell, the spine doors
+  and liberation are unchanged, and `RESCUE_DONE` is still written and persisted so her
+  cell un-stages for good; it simply arms nothing. `capture_selfcheck` check 1 drives the
+  grab on a FRESH profile and asserts `_capture_is_armed` is gone BY NAME, so re-adding
+  the read is a red build.
 - **The set is NON-MONOTONE** (captures add, liberations remove), so it stays out of
   `best_run_store`'s union/max merge, which the tower's opened-gate ids *do* ride. A captive
   folded into a union could never be freed.
@@ -1836,7 +1849,7 @@ off the RUN's coins alone.
 **AND THE CAPTION SAYS WHICH ONE HAPPENED** (owner 2026-09-04, bead `godot-test1-tuc`).
 The respawn countdown used to read "Caught!" for every contact, which told the player they
 had lost a hero to every crocodile in the field. "Caught!" is now the ARREST alone — a
-`captures_hero` row, post-beat, that really does put a hero in a cell — and an ordinary
+`captures_hero` row that really does put a hero in a cell — and an ordinary
 bite reads **"Robbed!"**, which is what it did. It is decided by `caught_was_arrest`, a
 SECOND latch beside `caught_captured` and deliberately not a reuse of it: the bill SPENDS
 `caught_captured` (`capture_selfcheck` asserts that clearing by name, because a latch left
