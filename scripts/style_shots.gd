@@ -136,6 +136,13 @@ func _run() -> void:
 	# keeps the HUD on because the minimap's river line is half of what it shows.
 	await _shoot_field_bridge(terrain, player)
 
+	# THE HERO ROW (bead godot-test1-y1o.24) — the HUD skin's pilot, and the pair
+	# the owner rules the whole style spec from. Two spots because the row is
+	# drawn OVER the world: a bright field and a dark city street are the two
+	# grounds an ink-on-bone palette has to stay legible against.
+	await _shoot_hero_row(terrain, player, field, 0.0, "12_hero_row_field")
+	await _shoot_hero_row(terrain, player, street, -PI * 0.5, "13_hero_row_budapest")
+
 	# LANDMARKS (bead godot-test1-y1o.6). Each one is found by BUILDER NAME rather
 	# than by a hand-typed chunk: `_landmark_at` is a pure function of (chunk,
 	# run_seed), so sweeping it answers "where is the Taj in this world" without
@@ -243,6 +250,25 @@ func _shoot_landmark(terrain: Node, player: Node3D, builder: String, dist: float
 	await _shoot(terrain, player, at + back + Vector3(0.0, 2.0, 0.0),
 			atan2(back.x, back.z), name)
 
+func _shoot_hero_row(terrain: Node, player: Node3D, at: Vector3, yaw: float,
+		name: String) -> void:
+	"""
+	One shot of a spot with ONLY the hero portrait row on screen.
+
+	`_show_widget` is bead 06o.2's and does exactly this job already — the HUD is
+	one shared CanvasLayer, so it turns that layer on, the row's own branch on and
+	every other branch off. It hides siblings and never restores them, so the two
+	shot families used to clobber whichever ran second; that is fixed in
+	`_show_widget` itself rather than by an ordering rule here, because an
+	ordering rule is invisible to the next person who appends a shot.
+	"""
+	if _only != "" and not name.contains(_only):
+		return
+	_show_widget("hero_hud")
+	await _shoot(terrain, player, at, yaw, name)
+	_show_widget("hero_hud", false)
+
+
 func _shoot_field_bridge(terrain: Node, player: Node3D) -> void:
 	"""
 	Photograph the first field bridge on this seed twice: from the bank, and
@@ -302,7 +328,16 @@ func _show_widget(group: String, on: bool = true) -> void:
 	label, the ability dial and the hero row along with the widget asked for —
 	which is three things too many in a shot whose point is the minimap. The
 	layer is turned on and every branch of it that does not lead to the widget is
-	turned off; nothing is restored, because this tool takes its shots and quits.
+	turned off.
+
+	IT SHOWS THE TARGET BRANCH TOO, and that line is the whole reason two callers
+	can coexist. Turning the LAYER on says nothing about a branch a PREVIOUS call
+	hid: `_show_widget("minimap")` hides `HeroHUD`, and a later
+	`_show_widget("hero_hud")` that only flipped the layer would photograph an
+	empty corner — which is exactly what happened to whichever of the two shot
+	families ran second, in both orders. Nothing is restored on the way OUT (the
+	tool takes its shots and quits), and it does not need to be: every caller
+	states what it wants shown.
 	"""
 	for n_v: Variant in get_tree().get_nodes_in_group(group):
 		var n: Node = n_v
@@ -313,6 +348,8 @@ func _show_widget(group: String, on: bool = true) -> void:
 		if n == null:
 			continue
 		(n as CanvasLayer).visible = on
+		if on and branch is CanvasItem:
+			(branch as CanvasItem).visible = true
 		for sibling in (n as CanvasLayer).get_children():
 			if sibling == branch:
 				continue
