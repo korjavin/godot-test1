@@ -914,7 +914,15 @@ guard check are untouched. **Its two `interior` parameters are deliberately UNTY
 that is the rule the pair teaches: a type annotation is a parse-time reference exactly like
 a `const`, so a file that is BOTH handed the node AND const-aliased from it can annotate
 neither. `TowerDressing` and `TowerDossiers` may type theirs only because nothing on the
-interior points back at them with a `const`. Four
+interior points back at them with a `const`. **And a FIFTH is
+`scripts/tower_gates.gd`** (`TowerGates`, bd `godot-test1-ftn.21`) — where a gate is,
+what it looks like and where you stand to work it: `gate_slots` / `_plan_gates`, the
+riddle banner and `clue_strip`, the gate and doorway rect readers, the three stands and
+the demand/checkpoint box builders. **The gate RUNTIME did not move** — the dozen
+per-gate dictionaries, `_tick_gates` and its `_place_*` writers, and above all
+`_apply_opened()`, the one place state becomes geometry — because all of it writes
+instance state and none of it is a function of the plan alone. It needs no interior at
+all, so it pays nothing for the cycle rule. Four
 rules of its own, all pinned by `tower_interior_selfcheck`:
 
 - **No interior traversal may demand a jump-height.** The base apex (3.6125 m) is what
