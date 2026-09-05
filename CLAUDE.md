@@ -806,8 +806,17 @@ lifted out of it whole** by bd `godot-test1-ftn.12` and neither may drift back:
 dressers) and `scripts/tower_dossiers.gd` (`TowerDossiers` — the evidence dossiers).
 Both are static libraries in `landmark_builders.gd`'s idiom, reaching back into
 `TowerInterior` for the plan-grid readers and the palette; that direction is one-way and
-`plan_boxes()` is the single seam the dressing enters through. Four rules of its
-own, all pinned by `tower_interior_selfcheck`:
+`plan_boxes()` is the single seam the dressing enters through. **A THIRD family went the
+same way** (bd `godot-test1-ftn.19`): `scripts/tower_plan_boxes.gd` (`TowerPlanBoxes`) is
+the plan walker and the geometry banner it reads — `plan_boxes` / `all_boxes` /
+`_merge_walls` / the `plan_route` BFS, plus `FLOOR_Y`, `SLAB_*`, `PLAN_RAMP_MAX_SLOPE` and
+the two budgets — with `TowerInterior` keeping a `const` alias or a one-line static
+forwarder for every name anything calls, so its forty-four `FLOOR_Y` readers and
+thirty-seven `_grid_x`/`_grid_z` readers were untouched by the move. **The const
+direction is ONE WAY** (`TowerInterior` → `TowerPlanBoxes`); the reach back for the
+palette and the set-piece builders is only ever inside a function body, which is the same
+shape as the dressing above and the only reason neither pair is a parse-time cycle. Four
+rules of its own, all pinned by `tower_interior_selfcheck`:
 
 - **No interior traversal may demand a jump-height.** The base apex (3.6125 m) is what
   mountain impassability rests on, so a storey you can jump onto is a bug the day
