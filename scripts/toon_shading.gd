@@ -36,6 +36,31 @@ const BOSS_TINT := Color(0.85, 0.4, 0.4)
 static var _boss_styled_cache: Dictionary = {}
 
 
+static func style(mat: BaseMaterial3D) -> void:
+	"""
+	THE CAST'S TOON RECIPE, and the one place it is written down.
+
+	@param mat: the material to style, in place.
+
+	It was typed out six times — twice here, once in `tower_shell.gd` and three
+	times in `tower_interior.gd` — so retuning the rim was six edits and the cast
+	and the building were one missed edit away from reading differently. That is
+	the whole of bead `godot-test1-ftn.23`; the values are unchanged.
+
+	IT SETS THESE FOUR PROPERTIES AND NOTHING ELSE. Every caller has its own
+	business around the call — an albedo colour or texture, `UNSHADED`,
+	`vertex_color_use_as_albedo`, emission, the boss tint — and that stays at the
+	call site, because it is what makes each material different. `DIFFUSE_TOON` is
+	load-bearing for the tower in particular: `apply_to_mesh` SKIPS a material that
+	already carries it, which is how the building's shared materials avoid being
+	duplicated per mesh.
+	"""
+	mat.diffuse_mode = BaseMaterial3D.DIFFUSE_TOON
+	mat.rim_enabled = true
+	mat.rim = 0.4
+	mat.rim_tint = 0.25
+
+
 static func apply_to_mesh(mesh: MeshInstance3D) -> void:
 	"""
 	Add soft toon diffuse + rim light to a mesh's materials, matching the look
@@ -57,10 +82,7 @@ static func apply_to_mesh(mesh: MeshInstance3D) -> void:
 			var styled: BaseMaterial3D = _styled_cache.get(key)
 			if styled == null:
 				styled = mat.duplicate() as BaseMaterial3D
-				styled.diffuse_mode = BaseMaterial3D.DIFFUSE_TOON
-				styled.rim_enabled = true
-				styled.rim = 0.4
-				styled.rim_tint = 0.25
+				style(styled)
 				_styled_cache[key] = styled
 			mesh.set_surface_override_material(surface, styled)
 
@@ -86,10 +108,7 @@ static func apply_boss_to_mesh(mesh: MeshInstance3D) -> void:
 			var styled: BaseMaterial3D = _boss_styled_cache.get(key)
 			if styled == null:
 				styled = mat.duplicate() as BaseMaterial3D
-				styled.diffuse_mode = BaseMaterial3D.DIFFUSE_TOON
-				styled.rim_enabled = true
-				styled.rim = 0.4
-				styled.rim_tint = 0.25
+				style(styled)
 				styled.albedo_color = styled.albedo_color * BOSS_TINT
 				_boss_styled_cache[key] = styled
 			mesh.set_surface_override_material(surface, styled)

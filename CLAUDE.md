@@ -577,6 +577,18 @@ Load-bearing rules:
   and `landmark_builders`' contract are what those two buy; every other caller (the city
   streamer, `budapest_selfcheck`) reaches `ChunkBatch` directly. **New batch machinery
   lands there, not in the world engine.**
+- **THE THEMED SCATTERED PROPS ARE `scripts/terrain_props.gd`** (`class_name TerrainProps`,
+  all static, bd `godot-test1-ftn.2`) — `build_prop`'s biome dispatch, the seventeen
+  `_prop_*` builders and the family's whole constant banner, in `landmark_builders.gd`'s
+  idiom (`terrain: Node3D` first, `terrain.create_box` back through the reference).
+  `endless_terrain.gd` keeps the SCATTER LOOP — where a prop goes, its spacing, its river
+  skip and its `obstacles` append — and **const-aliases all 29 names back**
+  (`const PROP_MAX_STEP := TerrainProps.PROP_MAX_STEP`, the `species_table.gd` precedent),
+  because every territory palette is shared with the feature structures and the biome
+  content and `PROP_MAX_STEP` is read as far away as `budapest_plan.gd`. The two dynamic
+  callers (`prop_selfcheck`'s `BUILDERS` table) go through a `preload`ed SCRIPT OBJECT, not
+  the class — `TerrainProps.call(...)` is a parse error, the trap `_landmark_builders`
+  already documents.
 - **A BOX HAS A MESH KIND, AND EVERY UNIT MESH FITS THE UNIT CUBE** (bead
   `godot-test1-y1o.1`, epic `y1o` "get rid of blocks"). The batch entry is
   `{transform, color, kind}` — `ChunkBatch.BoxKind` (CUBE / SPHERE / CONE / CYLINDER /
@@ -914,7 +926,15 @@ guard check are untouched. **Its two `interior` parameters are deliberately UNTY
 that is the rule the pair teaches: a type annotation is a parse-time reference exactly like
 a `const`, so a file that is BOTH handed the node AND const-aliased from it can annotate
 neither. `TowerDressing` and `TowerDossiers` may type theirs only because nothing on the
-interior points back at them with a `const`. Four
+interior points back at them with a `const`. **And a FIFTH is
+`scripts/tower_gates.gd`** (`TowerGates`, bd `godot-test1-ftn.21`) — where a gate is,
+what it looks like and where you stand to work it: `gate_slots` / `_plan_gates`, the
+riddle banner and `clue_strip`, the gate and doorway rect readers, the three stands and
+the demand/checkpoint box builders. **The gate RUNTIME did not move** — the dozen
+per-gate dictionaries, `_tick_gates` and its `_place_*` writers, and above all
+`_apply_opened()`, the one place state becomes geometry — because all of it writes
+instance state and none of it is a function of the plan alone. It needs no interior at
+all, so it pays nothing for the cycle rule. Four
 rules of its own, all pinned by `tower_interior_selfcheck`:
 
 - **No interior traversal may demand a jump-height.** The base apex (3.6125 m) is what
