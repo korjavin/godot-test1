@@ -6330,6 +6330,12 @@ func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 func _snow_mammoth(local: Vector3, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> float:
 	return TerrainBiomes._snow_mammoth(self, local, rng, block_batch, block_body)
 
+func _oasis_at(chunk_pos: Vector2i) -> Dictionary:
+	return TerrainBiomes._oasis_at(self, chunk_pos)
+
+func _dune_at(chunk_pos: Vector2i) -> Dictionary:
+	return TerrainBiomes._dune_at(self, chunk_pos)
+
 func _biome_hash2(p: Vector2) -> float:
 	"""
 	GDScript port of `hash2` in assets/shaders/ground.gdshader.
