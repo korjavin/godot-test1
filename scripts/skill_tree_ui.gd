@@ -101,14 +101,15 @@ extends Control
 ## amber; the opener button's `(N)` is the other region's, and the tabs, headings
 ## and node labels are BONE / UNIT_KHAKI so the accent stays rationed.
 ##
-## Two `.to_upper()` decisions, because they are not the same decision:
-## the CARD TITLE is composed at runtime (`tr()` on the format string, RULE 2) so
-## capitalising the formatted result is exactly the spec's draw-site idiom and the
-## German row carries no ß. The BRANCH HEADINGS are plain auto-translated literals
-## — uppercasing one would mean assigning `tr(...)` myself and losing the free
-## live-switch, AND "Windstoß" / "Größe" uppercase to `WINDSTOß` / `GRÖßE` in
-## Godot (no single-character uppercase for ß). They stay sentence case, in Oswald
-## Bold BONE under a STEEL rule.
+## EVERY HEADING IS CAPS, AND `_caps()` IS WHY IT CAN BE. Godot's `to_upper()`
+## has no single-character uppercase for ß, so a bare `.to_upper()` renders the
+## German branch names "Windstoß" and "Größe" as `WINDSTOß` / `GRÖßE` — a
+## lowercase letter stranded mid-word. German's own rule is that the capital of ß
+## is SS (Duden), which is one `replace` and is what this file's headings go
+## through. Losing the free auto-translation is not a cost here: `_notification`
+## rebuilds an open panel on a locale change and a closed one rebuilds on open,
+## so a heading assigned `tr(...)` live-switches exactly like a plain literal —
+## the help card (bead y1o.28) had no such rebuild and left its button alone.
 
 # ============================================================================
 # CONSTANTS — layout
@@ -382,6 +383,15 @@ func _make_button(label: String, handler: Callable, height: float) -> Button:
 	return button
 
 
+## THE CAPS RULE, and it is German orthography rather than a style choice.
+## `String.to_upper()` maps ß to itself — Godot has no single-character uppercase
+## for it — so "Windstoß" comes back as `WINDSTOß`. German capitalises ß as SS,
+## which is one `replace` and correct in both languages (English carries no ß, so
+## this is `to_upper()` exactly). Every caps heading in this file goes through it.
+static func _caps(text: String) -> String:
+	return text.replace("ß", "ss").to_upper()
+
+
 ## One hairline. `HudTheme` has no builder for either of the two this card wants
 ## (the BONE letterbox line over the card, the STEEL rule under a heading) and its
 ## closing note names the modal beads as the first that would need one — so it
@@ -566,7 +576,7 @@ func _rebuild() -> void:
 	_rebuild_columns(progression)
 
 	if progression == null:
-		_title_label.text = tr("Skills").to_upper()
+		_title_label.text = _caps(tr("Skills"))
 		_hint_label.text = tr("No progression in this scene.")
 		return
 	var points: int = int(progression.unspent_points())
@@ -578,9 +588,9 @@ func _rebuild() -> void:
 	# composed here, so there is no auto-translation to lose, and the German row
 	# ("%s — Stufe %d,  %d Punkte") carries no ß to mangle. The branch headings
 	# below are the opposite case on both counts and stay sentence case.
-	_title_label.text = (tr("%s — Level %d,  %d points") % [
+	_title_label.text = _caps(tr("%s — Level %d,  %d points") % [
 		_view_hero.capitalize(), int(progression.level), points
-	]).to_upper()
+	])
 	if points > 0:
 		_hint_label.text = tr("Press a skill to spend a point.")
 	else:
@@ -638,10 +648,11 @@ func _rebuild_columns(progression: Node) -> void:
 		column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 		var heading := Label.new()
-		# A plain literal: auto-translated, RULE 1 — which is half of why there is
-		# no `.to_upper()` here (the other half is "Windstoß" / "Größe"; see the
-		# header). Oswald BOLD, BONE off the theme, with a STEEL rule under it.
-		heading.text = branch
+		# `tr()` + `_caps()` rather than the plain literal RULE 1 would allow: the
+		# spec wants caps, and two of the five German branch names carry a ß. The
+		# live switch survives because `_notification` rebuilds an open panel and
+		# opening rebuilds a closed one. Oswald BOLD, BONE off the theme.
+		heading.text = _caps(tr(branch))
 		heading.add_theme_font_override("font", HudTheme.heading_font())
 		heading.add_theme_font_size_override("font_size", BRANCH_FONT_SIZE)
 		column.add_child(heading)
