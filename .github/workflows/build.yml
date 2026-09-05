@@ -240,9 +240,17 @@ jobs:
         timeout-minutes: 6
         run: |
           APT="apt-get -o Acquire::http::Timeout=20 -o Acquire::Retries=2"
+          # The runners live in Azure; archive.ubuntu.com refused every
+          # connection for an hour on 2026-09-05 while Azure's own mirror of it
+          # answered. Attempts 1-2 go to the Azure mirror, attempt 3 to the
+          # original, so a dead mirror on either side still gets the fonts.
+          mirror_azure() { sed -i 's|http://archive.ubuntu.com|http://azure.archive.ubuntu.com|g; s|http://security.ubuntu.com|http://azure.archive.ubuntu.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true; }
+          mirror_back()  { sed -i 's|http://azure.archive.ubuntu.com|http://archive.ubuntu.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true; }
+          mirror_azure
           for attempt in 1 2 3; do
-            if timeout 75 $APT update -qq \
-               && timeout 90 $APT install -y -qq --no-install-recommends libfontconfig1 fonts-dejavu-core; then
+            [ "$attempt" = 3 ] && mirror_back
+            if timeout 75 $APT update \
+               && timeout 90 $APT install -y --no-install-recommends libfontconfig1 fonts-dejavu-core; then
               exit 0
             fi
             echo "::warning::apt attempt $attempt failed (mirror mid-sync?), retrying in 20 s"
