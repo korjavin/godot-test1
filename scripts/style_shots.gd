@@ -143,6 +143,12 @@ func _run() -> void:
 	await _shoot_hero_row(terrain, player, field, 0.0, "12_hero_row_field")
 	await _shoot_hero_row(terrain, player, street, -PI * 0.5, "13_hero_row_budapest")
 
+	# THE SCORE LINE (bead godot-test1-y1o.26) — the same two grounds, for the same
+	# reason: the coin counter is the one place the palette's amber is the TEXT
+	# colour, and amber-on-INK has to read over bright grass AND a dark street.
+	await _shoot_coin_line(terrain, player, field, 0.0, "14_coin_line_field")
+	await _shoot_coin_line(terrain, player, street, -PI * 0.5, "15_coin_line_budapest")
+
 	# LANDMARKS (bead godot-test1-y1o.6). Each one is found by BUILDER NAME rather
 	# than by a hand-typed chunk: `_landmark_at` is a pure function of (chunk,
 	# run_seed), so sweeping it answers "where is the Taj in this world" without
@@ -267,6 +273,27 @@ func _shoot_hero_row(terrain: Node, player: Node3D, at: Vector3, yaw: float,
 	_show_widget("hero_hud")
 	await _shoot(terrain, player, at, yaw, name)
 	_show_widget("hero_hud", false)
+
+
+func _shoot_coin_line(terrain: Node, player: Node3D, at: Vector3, yaw: float,
+		name: String) -> void:
+	"""
+	One shot of a spot with ONLY the score line on screen — `_shoot_hero_row`'s
+	twin, one group along.
+
+	The counter is SET first, because the line the owner has to rule on is the
+	full one (level, coins, the streak suffix) and a fresh harness reads
+	"Lv 1 Coins: 0" — a shot of three glyphs says nothing about how a long amber
+	string sits over a street. It is a debug tool that quits when it is done, so
+	nothing restores the count.
+	"""
+	if _only != "" and not name.contains(_only):
+		return
+	if "coins_collected" in player:
+		player.coins_collected = 1287
+	_show_widget("coin_hud")
+	await _shoot(terrain, player, at, yaw, name)
+	_show_widget("coin_hud", false)
 
 
 func _shoot_field_bridge(terrain: Node, player: Node3D) -> void:
