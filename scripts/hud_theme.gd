@@ -66,13 +66,14 @@ const PANEL_ALPHA: float = 0.88
 ## INK to dim it, pulled a little way toward the corporation's own khaki so
 ## "GD-RTV has this" reads as their grey-brown rather than as a plain shadow.
 ##
-## A VEIL HAS TO DARKEN EVERY PIXEL IT COVERS, and the lerp is 0.08 rather than
-## anything prettier for exactly that reason: a veil composites toward its own
-## luminance, so anything DARKER than the veil colour comes out BRIGHTER. At a
-## quarter khaki the veil's luminance is 0.23, which lifted a fifth of Primm's
-## portrait instead of dimming it and halved the FREE-vs-HELD read; at 0.08 it is
-## 0.13, and the alpha is 0.72 rather than 0.62 to put the dim back where the old
-## plain black veil had it. `hero_hud_selfcheck` check 8 measures both ends —
+## A VEIL COMPOSITES TOWARD ITS OWN LUMINANCE, so everything DARKER than it comes
+## out BRIGHTER — and the lerp is 0.08 rather than anything prettier for exactly
+## that reason. At a quarter khaki the veil's luminance is 0.23, which lifted a
+## fifth of Primm's portrait instead of dimming it and halved the FREE-vs-HELD
+## read; at 0.08 it is 0.13, which still lifts the darkest 5-15% of a portrait
+## (any veil above pure black lifts something — the honest claim is a BOUND, not
+## "every pixel") and dims the rest to 79-90% of what the retired plain black
+## veil managed, with the alpha raised 0.62 -> 0.72 to buy most of that back. `hero_hud_selfcheck` check 8 measures both ends —
 ## the ceiling on the veil's own luminance and the floor on how much it dims —
 ## because "unavailable" reading as "slightly greyer" is invisible in a diff.
 ##
@@ -244,6 +245,11 @@ static func theme() -> Theme:
 	t.set_color("font_color", "Label", BONE)
 	t.set_font("font", "Label", FONT_REGULAR)
 
+	# ponytail: the bead names CheckBox and this project instantiates none — its one
+	# checkbox-shaped control is `mobile_settings_panel`'s CheckButton, which
+	# inherits Button's slots through the class chain and so is already styled.
+	# Left as the bead specified rather than silently retargeted; `.29`/`.30` own
+	# the call, and either way the locale ruler covers both weights.
 	t.set_color("font_color", "CheckBox", BONE)
 	t.set_color("font_disabled_color", "CheckBox", UNIT_KHAKI)
 	t.set_font("font", "CheckBox", FONT_REGULAR)

@@ -919,9 +919,13 @@ func _check_the_hud_theme() -> void:
 		"locale_selfcheck._check_widths no longer measures on BOTH HudTheme "
 		+ "weights — Buttons draw Bold and Labels Regular, and one ruler for both "
 		+ "is the bug this bead moved the seam to fix")
-	_check(not widths.contains("ThemeDB.get_default_theme()"),
-		"locale_selfcheck._check_widths is measuring German on ThemeDB's default "
-		+ "font again — that is the face nothing draws with")
+	# The engine default stays in the ruler ON PURPOSE — see that function's
+	# comment: ~24 rows are drawn by `draw_string` HUDs and unmigrated panels no
+	# `Theme` can reach, and the tightest budget in the table is one of them. What
+	# must never come back is measuring on it ALONE.
+	_check(widths.contains("maxf(width,"),
+		"locale_selfcheck._check_widths is no longer taking the WIDEST face — one "
+		+ "ruler for three faces is the vacuous budget this bead exists to stop")
 	Sentinel.done("the_hud_theme")
 
 

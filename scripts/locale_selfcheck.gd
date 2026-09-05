@@ -410,16 +410,34 @@ func _check_widths(rows: Array) -> void:
 	# passes vacuously in both directions: Oswald is CONDENSED, so it would hide a
 	# real overflow if the panels were wider, and flag a fit that is fine if they
 	# were narrower. One seam, so every per-panel bead after this one inherits it.
-	# BOTH WEIGHTS, AND THE WIDER ANSWER WINS. `HudTheme.theme()` gives `Label`
-	# Oswald Regular and `Button`/`CheckBox` Oswald BOLD, and 45 of the 73 rows
-	# below are on Button-class controls — so a single-weight ruler reproduces the
-	# very bug this seam was moved to fix, one weight over (Bold is ~9 points of
-	# budget wider). Rather than classify 73 rows by their `where` string, which
-	# would go wrong silently the day a control changes class, every row is held
-	# to whichever face is WIDER. That is conservative by construction: a string
-	# that fits the wider face fits the one it is actually drawn in.
+	# EVERY FACE A BUDGETED STRING COULD BE DRAWN IN, AND THE WIDEST ANSWER WINS.
+	#
+	# There are three, and picking any ONE of them is the vacuous-budget bug this
+	# seam exists to stop:
+	#
+	#   * Oswald REGULAR — `HudTheme.theme()`'s default, so every `Label` on a
+	#     panel that has adopted it;
+	#   * Oswald BOLD — the theme's `Button` font, and 45 of the 73 rows below are
+	#     on Button-class controls. Bold is ~9 points of budget wider than
+	#     Regular, so a Regular-only ruler repeats the same mistake one weight on;
+	#   * THE ENGINE DEFAULT — because ~24 rows are drawn by things `theme()` can
+	#     never reach: `minimap_hud` paints its labels with `draw_string`, where a
+	#     `Theme` has nothing to say (bead y1o.27 restyles its chrome, not its
+	#     face), and the touch controls and the mobile tuning panel have no bead
+	#     in the epic at all. The tightest budget in the whole table is one of
+	#     those minimap rows, and it sits at 96.2% of its limit in the face it is
+	#     really drawn in against 83.8% in Oswald — measuring it on Oswald alone
+	#     would hand it 10 px of headroom that does not exist.
+	#
+	# Rather than classify 73 rows by their `where` string — which goes wrong in
+	# silence the day a control changes class or a panel bead lands — every row is
+	# held to whichever face is WIDEST. That is conservative by construction (a
+	# string that fits the widest face fits the one it is actually drawn in), it
+	# is never weaker than the pre-HudTheme gate, and it needs no edit as the nine
+	# per-panel beads migrate their controls one at a time.
 	var fonts: Array[Font] = []
-	for f: Font in [HudTheme.body_font(), HudTheme.heading_font()]:
+	for f: Font in [HudTheme.body_font(), HudTheme.heading_font(),
+			ThemeDB.get_default_theme().get_font("font", "Button")]:
 		if f != null:
 			fonts.append(f)
 	if fonts.is_empty() and ThemeDB.fallback_font != null:
@@ -433,9 +451,11 @@ func _check_widths(rows: Array) -> void:
 	# over Bebas Neue. `has_char`, NOT a width: a glyph the face is missing still
 	# measures a non-zero advance (the notdef box), so a width test here would be
 	# true of a tofu and would guard exactly nothing.
+	# Asked of the SHIPPED faces only: the engine default is above as a ruler for
+	# the rows nothing has migrated yet, not as a face this project chose.
 	for glyph: String in ["ß", "ä", "ö", "ü", "Ä"]:
-		for f: Font in fonts:
-			if not f.has_char(glyph.unicode_at(0)):
+		for f: Font in [HudTheme.body_font(), HudTheme.heading_font()]:
+			if f != null and not f.has_char(glyph.unicode_at(0)):
 				_fail("the HUD font has no '%s' — the German budgets would be "
 					% glyph + "measured on a notdef box")
 	# Prove the ruler works before trusting any measurement it makes. A headless

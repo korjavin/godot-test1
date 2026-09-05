@@ -240,11 +240,11 @@ func _shoot_hero_row(terrain: Node, player: Node3D, at: Vector3, yaw: float,
 	One shot of a spot with ONLY the hero portrait row on screen.
 
 	`_show_widget` is bead 06o.2's and does exactly this job already — the HUD is
-	one shared CanvasLayer, so it turns that layer on and every branch of it that
-	is not the row off. IT DOES NOT PUT THE OTHERS BACK: the `false` call flips
-	the LAYER, not the branches, so every sibling it hid stays hidden for the rest
-	of the run. That is why these two shots sit AFTER `_shoot_field_bridge` —
-	shot 11's whole point is the minimap, and taking the row first left it black.
+	one shared CanvasLayer, so it turns that layer on, the row's own branch on and
+	every other branch off. It hides siblings and never restores them, so the two
+	shot families used to clobber whichever ran second; that is fixed in
+	`_show_widget` itself rather than by an ordering rule here, because an
+	ordering rule is invisible to the next person who appends a shot.
 	"""
 	if _only != "" and not name.contains(_only):
 		return
@@ -310,7 +310,16 @@ func _show_widget(group: String, on: bool = true) -> void:
 	label, the ability dial and the hero row along with the widget asked for —
 	which is three things too many in a shot whose point is the minimap. The
 	layer is turned on and every branch of it that does not lead to the widget is
-	turned off; nothing is restored, because this tool takes its shots and quits.
+	turned off.
+
+	IT SHOWS THE TARGET BRANCH TOO, and that line is the whole reason two callers
+	can coexist. Turning the LAYER on says nothing about a branch a PREVIOUS call
+	hid: `_show_widget("minimap")` hides `HeroHUD`, and a later
+	`_show_widget("hero_hud")` that only flipped the layer would photograph an
+	empty corner — which is exactly what happened to whichever of the two shot
+	families ran second, in both orders. Nothing is restored on the way OUT (the
+	tool takes its shots and quits), and it does not need to be: every caller
+	states what it wants shown.
 	"""
 	for n_v: Variant in get_tree().get_nodes_in_group(group):
 		var n: Node = n_v
@@ -321,6 +330,8 @@ func _show_widget(group: String, on: bool = true) -> void:
 		if n == null:
 			continue
 		(n as CanvasLayer).visible = on
+		if on and branch is CanvasItem:
+			(branch as CanvasItem).visible = true
 		for sibling in (n as CanvasLayer).get_children():
 			if sibling == branch:
 				continue

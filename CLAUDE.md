@@ -1951,24 +1951,29 @@ builders (`card` / `strip` / `button`) and one lazy `theme()`. Four rules:
   once and move every German width budget in one PR. `draw_*`-based HUDs (`hero_hud`,
   `ability_hud`, `minimap_hud`) read the consts directly: a `Theme` has nothing to say
   to `draw_rect`.
-- **`locale_selfcheck._check_widths` measures on `HudTheme.body_font()`**, not on
-  `ThemeDB`'s default. A budget measured on a face nobody draws with passes vacuously in
-  both directions, and Oswald is condensed — measured over the 73 budgets, the worst
-  German string went from **96.2%** of its budget on the engine default to **83.8%** on
-  Oswald. It measures on **BOTH weights and keeps the wider answer**: `theme()` gives
-  `Label` Regular and `Button`/`CheckBox` BOLD, 45 of the 73 rows are on Button-class
-  controls, and a single-weight ruler would reproduce the same vacuous-budget bug one
-  weight over. The check also asserts ß/ä/ö/ü through `Font.has_char` — **never a
-  width**, since a missing glyph still measures a non-zero notdef box — which is why
-  Oswald was picked over Bebas Neue.
+- **`locale_selfcheck._check_widths` measures on EVERY face a budgeted string could be
+  drawn in and keeps the WIDEST answer.** A budget measured on a face nobody draws with
+  passes vacuously in both directions, and there are three faces, not one: Oswald Regular
+  (`theme()`'s default, so every `Label` on a migrated panel), Oswald **Bold** (its
+  `Button` font — 45 of the 73 rows are on Button-class controls, and Bold is ~9 points of
+  budget wider), and the **engine default**, because ~24 rows belong to `draw_string` HUDs
+  and unmigrated panels no `Theme` can reach (`minimap_hud` is the tightest budget in the
+  table at 96.2% of its limit). Widest-of-three is conservative by construction, is never
+  weaker than the pre-HudTheme gate, and needs no edit as the nine per-panel beads
+  migrate. The check also asserts ß/ä/ö/ü on the shipped faces through `Font.has_char` —
+  **never a width**, since a missing glyph still measures a non-zero notdef box — which is
+  why Oswald was picked over Bebas Neue.
 - **`hero_hud` is the PILOT** (bead `y1o.24`) and the per-panel beads follow it one file
   at a time. Its tile geometry did not move — `voice_chat` places the teammate camera on
   `tile_rect()`. The active ring is FLAT `VISOR_AMBER` and no longer lerped toward the
   hero tint: the accent is rationed to one amber thing per screen region, and the tint
-  already owns the whole placeholder tile. **A veil has to DARKEN every pixel it
-  covers** — `HudTheme.veil()` composites toward its own luminance, so a quarter-khaki
-  veil lifted a fifth of Primm's portrait instead of dimming it; check 8 holds both the
-  ceiling on that luminance and the floor on the dim. A/B crops in `docs/style/`,
+  already owns the whole placeholder tile. **A veil composites toward its OWN luminance**,
+  so everything darker than it comes out BRIGHTER: at a quarter khaki `HudTheme.veil()`
+  lifted a fifth of Primm's portrait instead of dimming it and halved the FREE-vs-HELD
+  read. At 0.08 it lifts 5-15% of a portrait's darkest pixels and dims the rest by
+  79-90% of what the retired plain-black veil managed; check 8 holds both ends — the
+  ceiling on that luminance and the floor on the dim — because "unavailable" reading as
+  "slightly greyer" is invisible in a diff. A/B crops in `docs/style/`,
   captured with
   `godot --path . scenes/style_shots.tscn -- <outdir> only=hero_row`.
 
