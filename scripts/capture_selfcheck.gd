@@ -104,6 +104,12 @@ const INTERIOR_SCENE: String = "res://scenes/tower/tower_interior.tscn"
 const CROC_SCRIPT: String = "res://scripts/piglet_crocodile_ai.gd"
 ## Check 10 needs REAL bodies, not the row stubs the checks above use — see there.
 const HUNTER_SCENE: String = "res://scenes/characters/hunter_robot.tscn"
+## The field's retrieval unit, by row name — this file's ONE spelling of it, the
+## way `GUARD_SPECIES` beside it is the sentry's. A literal rather than a read of
+## `endless_terrain.HUNTER_SPECIES` because that script has no `class_name` (see
+## the cyclic-dependency note in it) — and it needs none: a renamed row resolves
+## to the crocodile fallback, which check 20 fails BY NAME on `captures_hero`.
+const HUNTER_ROW: String = "hunter_robot"
 const CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
 ## The tower's sentry: the scene, its SPECIES row's name, and the tolerance the
 ## knockback is measured to. The row name is read from `TowerInterior` rather than
@@ -302,6 +308,7 @@ func _run() -> void:
 	await _check_resize_is_not_a_lift()
 	await _check_air_sight_is_the_indoor_air_rush()
 	await _check_no_second_way_to_lose()
+	await _check_a_hunter_walks_in_and_takes_a_hero()
 	_report()
 
 
@@ -579,7 +586,7 @@ func _check_the_last_free_hero_ends_the_run() -> void:
 	"""
 	_beat_done()
 	var player: Node = null
-	for species: String in ["hunter_robot", GUARD_SPECIES]:
+	for species: String in [HUNTER_ROW, GUARD_SPECIES]:
 		player = await _make_player()
 		var last_one: String = player.hero_name()
 		for hero: String in TowerGraph.HEROES:
@@ -878,14 +885,21 @@ func _check_the_ai_says_who_bit() -> void:
 	row's `behavior` separates them.
 	"""
 	_beat_done()
-	for label: String in ["hunter_robot", "crocodile"]:
+	for label: String in [HUNTER_ROW, "crocodile"]:
 		var player := await _make_player()
-		var body: Node = load(HUNTER_SCENE if label == "hunter_robot" else CROC_SCENE).instantiate()
+		var body: Node = load(HUNTER_SCENE if label == HUNTER_ROW else CROC_SCENE).instantiate()
 		# `species` BEFORE add_child: _ready() is where the row resolves into `spec`.
 		body.species = label
+		# ...and STOOD OFF, for the reason the guard block below spells out and check
+		# 20 hit for real: a body added at the origin is added on top of the player,
+		# and the awaited frame is an unbounded number of physics ticks. The
+		# explicit call below is what this block measures, and it lands at any
+		# distance; an incidental grab during the staging would only make the
+		# measurement mean something else.
+		(body as Node3D).position = Vector3(PROBE_STANDOFF, 0.0, 0.0)
 		root.add_child(body)
 		await process_frame
-		if String(body.spec.get("behavior", "")) != ("hunt" if label == "hunter_robot" else "solo"):
+		if String(body.spec.get("behavior", "")) != ("hunt" if label == HUNTER_ROW else "solo"):
 			_fail("the '%s' probe resolved behaviour '%s' — this check would measure the wrong thing"
 					% [label, str(body.spec.get("behavior", ""))])
 
@@ -893,7 +907,7 @@ func _check_the_ai_says_who_bit() -> void:
 		body._on_player_collision(player)
 
 		var took: bool = player.captive_heroes.size() > 0
-		if label == "hunter_robot" and not took:
+		if label == HUNTER_ROW and not took:
 			_fail("a LIVE hunter's collision took no hero — _on_player_collision is not telling "
 					+ "hit_by_crocodile who bit, so systemic capture is unreachable in the game "
 					+ "even though every check above passes")
@@ -2937,6 +2951,138 @@ func _check_no_second_way_to_lose() -> void:
 	Sentinel.done("no_second_way_to_lose")
 
 
+# ============================================================================
+# 20. A HUNTER WALKS IN AND TAKES A HERO — the CONTACT path, under real physics
+# ============================================================================
+
+## Where the probe hunter is stood up, in metres from the player. Inside the row's
+## 25 m detection (so it acquires on the first tick and the measurement is about
+## the grab, not about wandering into range) and far enough outside the 10 m
+## `hunt_standoff` ring that the arm really has to close the distance.
+const WALK_IN_START: float = 14.0
+
+## How long the walk-in is given, in physics frames. Measured at 188-192 frames
+## over repeated runs — 1.8 s of owed telegraph plus 14 m closed at ~6 m/s — so
+## 600 (10 s at 60 Hz) is three times the observed cost, which covers a wander
+## heading that points the wrong way for a beat. The SUBJECT exits the frame it
+## sees the capture, so this number is really the MUTATION CONTROL's bill: it has
+## to run the budget out to prove nothing was taken, and doubling it would double
+## the check's CI weight for no assertion.
+const WALK_IN_FRAMES: int = 600
+
+## The floor the probe stands on, big enough that neither body can walk off it.
+## LAYER 1, which is the player's own layer: the hunter's `collision_mask = 3`
+## and the player's `collision_mask = 5` both read it, so both bodies settle under
+## gravity exactly as they do in a chunk.
+const PROBE_FLOOR_SIZE: Vector3 = Vector3(400.0, 1.0, 400.0)
+
+
+func _check_a_hunter_walks_in_and_takes_a_hero() -> void:
+	"""
+	Check 20. A REAL hunter, at the shipped scale, GRABS a real player on its own —
+	no hand-made collision call anywhere in this check.
+
+	THIS IS THE ONE CHECK THAT CAN SEE THE CHASSIS MOVE. Check 10 above drives
+	`_on_player_collision(player)` directly, which is the right way to measure who
+	tells whom what; it is also perfectly indifferent to whether anything in the
+	game ever REACHES that function. Everything between the two — the capsule the
+	`.tscn` declares, its origin and its rotation, the collision layer and mask on
+	both bodies, `move_and_slide`, and `_handle_collisions`' group test — is
+	unmeasured by every other check in this file, and all of it moved on the day
+	bead godot-test1-5ow put the GD-SURVEY chassis at 2.25x. So this one plants the
+	shipped scene on a floor, runs the shipped `_physics_process`, and asserts the
+	hero is in a cell at the end of it.
+
+	It is bead `godot-test1-8eh`'s coverage, and the bug it was filed for turned out
+	NOT to be here — the owner's profile was PRE-BEAT, which check 1 already pins
+	and which is by design (a grab before the authored Primm rescue is an ordinary
+	bite). The gap the report exposed is the one above: a hunter that could no
+	longer physically touch a player would have left all nineteen checks green.
+
+	THE MUTATION CONTROL IS THE HUNTER'S OWN COLLISION SHAPE. Disable it and the
+	body walks straight through the player, `get_slide_collision_count()` never
+	names one, and nothing must be imprisoned — which is what proves the capture
+	above came through the contact path rather than from some other body, some
+	other frame, or a harness that would pass with the hunter deleted.
+	"""
+	_beat_done()
+	for solid: bool in [true, false]:
+		var probe_floor := StaticBody3D.new()
+		probe_floor.collision_layer = 1
+		probe_floor.collision_mask = 0
+		var shape := CollisionShape3D.new()
+		var box := BoxShape3D.new()
+		box.size = PROBE_FLOOR_SIZE
+		shape.shape = box
+		probe_floor.add_child(shape)
+		probe_floor.position = Vector3(0.0, -0.5 * PROBE_FLOOR_SIZE.y, 0.0)
+		root.add_child(probe_floor)
+
+		var player := await _make_player()
+		(player as Node3D).global_position = Vector3.ZERO
+
+		var hunter: Node = load(HUNTER_SCENE).instantiate()
+		# `species` BEFORE add_child, the same call-order contract every spawner
+		# honours: `_ready()` is where the row resolves into `spec`.
+		hunter.species = HUNTER_ROW
+
+		var capsule := hunter.get_node_or_null("CollisionShape3D") as CollisionShape3D
+		if capsule == null or capsule.shape == null:
+			_fail("the shipped hunter scene has no CollisionShape3D — this check cannot "
+					+ "measure the contact path and its mutation control is vacuous")
+			hunter.queue_free()
+			_clear(player)
+			probe_floor.queue_free()
+			await process_frame
+			Sentinel.done("a_hunter_walks_in_and_takes_a_hero")
+			return
+		# THE MUTATION AND THE POSITION BOTH LAND BEFORE `add_child`, and that is
+		# not tidiness. A body added at the origin is added ON TOP OF the player,
+		# and `await process_frame` is one PROCESS frame but an unbounded number of
+		# PHYSICS ticks — up to `max_physics_steps_per_frame` (8) — so on a loaded
+		# runner the shipped `_physics_process` lands a grab in that window, before
+		# either of these lines would have run. That takes the subject for a reason
+		# this check is not measuring and, far worse, takes it in the CONTROL with
+		# the capsule still armed. It is `_make_player`'s documented race one body
+		# along; reproduce it with `godot --headless --fixed-fps 5 ...`, which
+		# failed the control every time. `position` rather than `global_position`
+		# because the node is not in the tree yet and `root`'s transform is
+		# identity.
+		capsule.disabled = not solid
+		(hunter as Node3D).position = Vector3(WALK_IN_START, 0.0, 0.0)
+		root.add_child(hunter)
+		await process_frame
+		if not bool(hunter.spec.get("captures_hero", false)):
+			_fail("the probe hunter resolved a row with no `captures_hero` — it is on the "
+					+ "crocodile fallback, so this check would be asking an animal to arrest")
+
+		var took := false
+		for _i: int in WALK_IN_FRAMES:
+			await physics_frame
+			if player.captive_heroes.size() > 0:
+				took = true
+				break
+
+		if solid and not took:
+			_fail(("a REAL hunter walked at a REAL player for %d frames and imprisoned nobody. "
+					% WALK_IN_FRAMES)
+					+ "Nothing between the .tscn and hit_by_crocodile() is measured anywhere "
+					+ "else: check the capsule (%s), the layers (hunter %d/%d, player %d/%d) "
+							% [str(capsule.shape), hunter.collision_layer, hunter.collision_mask,
+								player.collision_layer, player.collision_mask]
+					+ "and _handle_collisions' group test")
+		if not solid and took:
+			_fail("the hunter imprisoned a hero with its own collision shape DISABLED — the "
+					+ "capture above did not come through the contact path, so this check "
+					+ "would pass with the chassis broken")
+
+		_clear(player)
+		hunter.queue_free()
+		probe_floor.queue_free()
+		await process_frame
+	Sentinel.done("a_hunter_walks_in_and_takes_a_hero")
+
+
 func _become(player: Node, hero: String) -> bool:
 	"""Switch through `set_active_character()` — the same door capture uses."""
 	var characters: Array = player.CHARACTERS
@@ -3038,7 +3184,7 @@ func _clear(player: Node) -> void:
 
 func _hunter() -> Node:
 	"""The real GD-SURVEY row, by name."""
-	return _attacker_row("hunter_robot")
+	return _attacker_row(HUNTER_ROW)
 
 
 func _attacker_row(species: String) -> Node:

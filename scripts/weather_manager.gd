@@ -422,17 +422,30 @@ func _build_cloud_multimesh() -> void:
 	# visibly polygonal silhouette — a low-poly puff, not a smooth ball and not
 	# the cube it used to be (bug godot-test1-x7k: "too minecraft-ish"). Unit
 	# diameter, so the per-instance basis carries the size exactly as it did for
-	# the box and nothing downstream changed. ~64 tris x 234 slots = ~15k tris,
+	# the box and nothing downstream changed. 80 tris x 234 slots = ~19k tris,
 	# nothing on gl_compatibility, and still ONE draw call.
-	# ponytail: smooth normals. Hard facets would mean hand-building a deindexed
-	# mesh with per-face normals; the octagonal outline already carries the
-	# low-poly read. Build that mesh if the owner asks for visible facets.
+	# FLAT (per-face) normals, bead godot-test1-y1o.12: the owner picked style A
+	# (faceted low-poly), so the puff goes through the same deindexing helper as
+	# every SPHERE/CONE/CYLINDER in the chunk batch. Segments, radius, height and
+	# the per-instance basis are untouched — same 80 triangles, same 234 slots,
+	# same ONE draw call, only shaded with hard facets instead of Gouraud-smooth.
+	# (Deindexing multiplies the VERTEX count 54 -> 240, on the single shared
+	# mesh: a few kilobytes once, for the whole sky.) This retires the x7k
+	# ponytail marker that said to build this mesh if the owner ever asked for
+	# visible facets — he did.
+	#
+	# ponytail: the helper, NOT `ChunkBatch.unit_mesh(SPHERE)`, whose cached mesh
+	# happens to be identical today. Sharing it would silently tie the cloud's
+	# tessellation to UNIT_SPHERE_RADIAL/_RINGS — the world block's number, tuned
+	# for a canopy blob a few metres wide, not for a 14 m puff whose "visibly
+	# polygonal" 8 x 4 is the art decision two comments up. The duplicate is ~11 kB
+	# once at _ready. Share it the day the two are deliberately one silhouette.
 	var puff := SphereMesh.new()
 	puff.radial_segments = 8
 	puff.rings = 4
 	puff.radius = 0.5
 	puff.height = 1.0
-	mm.mesh = puff
+	mm.mesh = ChunkBatch._flat_faceted_mesh(puff)
 	# ponytail: fixed allocation at the worst case (every cloud rolls max boxes);
 	# unused slots are parked with a zero-scale basis instead of repacking the
 	# buffer each tick — cheaper and simpler, the GPU skips degenerate boxes.

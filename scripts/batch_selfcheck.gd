@@ -25,8 +25,8 @@ extends SceneTree
 ##      a batch of nothing but cubes, which is every chunk the world ships bar a
 ##      forest one. A bucketing bug that emitted an empty node per kind would
 ##      quadruple the world's draw calls with no visual difference at all. Check 5
-##      is the same rule billed per BIOME on the shipped spawners: forest 2,
-##      everything else 1.
+##      is the same rule billed per BIOME on the shipped spawners, against the
+##      per-biome ceiling in KIND_CAP_BY_NAME.
 ##   3. THE CITY SPLITTER LEAVES A NON-CUBE WHOLE. A cut cone is not two cones;
 ##      cutting works only because a box's pieces are boxes.
 ##   4. COLLISION FOLLOWS THE KIND (bead godot-test1-y1o.10) — a near-round SPHERE
@@ -62,6 +62,44 @@ const FIELD_SWEEP: int = 7
 ## bands rather than building 2,000 chunks.
 const BIOME_SWEEP: int = 22
 const BIOME_SAMPLES: int = 4
+
+## CHECK 5's CEILING: the most block draw calls a chunk of each biome may spend,
+## which is epic y1o's "a chunk with trees AND rocks is +2" written down per band.
+## It is a CAP and not an expected count, because whether a chunk drew a rock is a
+## draw of the prop scatter — see the check's own docstring for why the floor is
+## held by the per-kind bucket equality and prop_selfcheck instead.
+##
+##   FOREST   3 — cubes (trunks, blocks) + SPHERE canopies + ROCK mossy boulders
+##   PLAINS   2 — cubes + ROCK boulder clusters
+##   DESERT   2 — cubes + ROCK sandstone stacks and oasis boulders
+##   MOUNTAIN 2 — cubes (massifs, cairn tiers) + ROCK scree
+##   SNOW     2 — cubes (drifts, stumps) + ROCK glacier ice
+##   CITY     2 — and the reason is worth knowing, because the field city band's
+##                OWN props are crates, garden walls and paving and not one of
+##                them is a rock. `_build_prop` picks its theme at each PROP's
+##                world position, not at the chunk centre, which is what feathers
+##                a biome edge across a chunk seam — so a city-band chunk on a
+##                plains boundary legitimately grows a plains boulder. That the
+##                city builders themselves stay cube is prop_selfcheck check 11's,
+##                where it can be asserted builder by builder instead of being
+##                inferred from a chunk that may be nowhere near an edge.
+##
+## ONLY THE FOREST GETS A THIRD, and that asymmetry is structural rather than
+## tuning: canopies come from `_spawn_forest_content`, which `spawn_biome_content_in_chunk`
+## dispatches on the CHUNK CENTRE, so a SPHERE can only ever appear in a chunk
+## whose centre is forest. Rocks come from the per-position prop themer and can
+## appear anywhere.
+##
+## KEYED BY NAME and resolved against the live `Biome` enum, so this table reads as
+## design intent rather than as ints, and a biome MISSING a row is failed by name.
+const KIND_CAP_BY_NAME: Dictionary = {
+	"FOREST": 3,
+	"PLAINS": 2,
+	"DESERT": 2,
+	"MOUNTAIN": 2,
+	"SNOW": 2,
+	"CITY": 2,
+}
 
 var _failures: Array[String] = []
 
@@ -289,10 +327,21 @@ func _check_multimesh_per_kind() -> void:
 	# measures whichever one that chunk happened to draw and shrugs at a kind
 	# planted anywhere else. FIELD_SWEEP squares is what makes "nothing in the
 	# world has changed silhouette" a sweep rather than a spot check.
+	#
+	# THE SCATTERED BLOCKS ARE WHERE THE PROPS LIVE, so this sweep's allow-list is
+	# not "CUBE only" any more (bead godot-test1-y1o.3): `_build_prop` runs inside
+	# `spawn_objects_in_chunk`, and six of its builders now draw ROCK. What the
+	# sweep still refuses is a THIRD kind arriving here unannounced — a SPHERE, a
+	# CONE or a CYLINDER in the scatter is a consumer nobody filed a bead for, and
+	# the allow-list is what makes that a build failure instead of a rendering
+	# surprise. Note it is a set and not a count: whether a chunk drew a rock is a
+	# draw of the scatter stream, so "how many" is not a stable number.
 	var field_batch: Array = []
 	var field_body := StaticBody3D.new()
-	var non_cube: int = 0
-	var many_mmis: int = 0
+	var allowed_kinds: Array[int] = [ChunkBatch.BoxKind.CUBE, ChunkBatch.BoxKind.ROCK]
+	var stray: Dictionary = {}     # kind -> boxes seen, for kinds not on the list
+	var seen_kinds: Dictionary = {}
+	var wrong_bucket_count: int = 0
 	var sampled: int = 0
 	for cx in range(-FIELD_SWEEP, FIELD_SWEEP + 1):
 		for cz in range(-FIELD_SWEEP, FIELD_SWEEP + 1):
@@ -304,13 +353,20 @@ func _check_multimesh_per_kind() -> void:
 				one_body.free()
 				continue
 			sampled += 1
+			var here: Dictionary = {}
 			for entry_v: Variant in one_batch:
-				if int((entry_v as Dictionary)["kind"]) != ChunkBatch.BoxKind.CUBE:
-					non_cube += 1
+				var k: int = int((entry_v as Dictionary)["kind"])
+				here[k] = true
+				seen_kinds[k] = true
+				if not allowed_kinds.has(k):
+					stray[k] = int(stray.get(k, 0)) + 1
 			var one_parent := MeshInstance3D.new()
 			ChunkBatch._build_block_multimesh(one_parent, one_batch)
-			if _multimeshes(one_parent).size() != 1:
-				many_mmis += 1
+			# One bucket per kind PRESENT, measured on the real world rather than
+			# on planted boxes — an empty bucket or a missing one shows up here on
+			# whatever the scatter actually drew.
+			if _multimeshes(one_parent).size() != here.size():
+				wrong_bucket_count += 1
 			one_parent.free()
 			one_body.free()
 			if field_batch.is_empty():
@@ -318,19 +374,30 @@ func _check_multimesh_per_kind() -> void:
 	if sampled < 10:
 		_fail("only %d of %d field chunks produced boxes — nothing was measured"
 				% [sampled, (2 * FIELD_SWEEP + 1) * (2 * FIELD_SWEEP + 1)])
-	if non_cube > 0:
-		_fail("the SCATTERED-BLOCK spawner emitted %d non-CUBE boxes over %d chunks. "
-				% [non_cube, sampled]
-				+ "Consumers of the kind slot are named beads judged by eye (the "
-				+ "forest canopies are y1o.2's, and they are BIOME content, not "
-				+ "these blocks) — a silhouette that changed here changed nowhere "
-				+ "anybody asked for")
-	if many_mmis > 0:
-		_fail("%d of %d real field chunks built more than one MultiMeshInstance3D from "
-				% [many_mmis, sampled] + "the scattered blocks alone — every kind they "
-				+ "emit is the cube, so this must be exactly one. Check 5 bills the "
-				+ "biome CONTENT, which is where the forest's second bucket lives")
+	for stray_kind_v: Variant in stray:
+		var stray_kind: int = stray_kind_v
+		_fail("the SCATTERED-BLOCK spawner emitted %d boxes of kind %s over %d chunks. "
+				% [stray[stray_kind], ChunkBatch.BoxKind.find_key(stray_kind), sampled]
+				+ "Only CUBE and ROCK belong here — consumers of the kind slot are "
+				+ "named beads judged BY EYE by the owner, so a silhouette that "
+				+ "changed here changed nowhere anybody asked for")
+	# The positive control for the allow-list: a sweep that drew no rock at all
+	# would satisfy every line above and prove nothing about bead y1o.3.
+	if not seen_kinds.has(ChunkBatch.BoxKind.ROCK):
+		_fail("no ROCK box in %d field chunks — bead y1o.3 put rocks in every biome, "
+				% sampled + "so this sweep is passing vacuously")
+	if wrong_bucket_count > 0:
+		_fail("%d of %d real field chunks did not build exactly one MultiMeshInstance3D "
+				% [wrong_bucket_count, sampled] + "per kind PRESENT in their batch — an "
+				+ "empty bucket is a free draw call, a missing one is invisible stone")
 
+	# A PLANTED SPHERE COSTS EXACTLY ONE MORE BUCKET, whatever the chunk already
+	# held — measured as a delta rather than against the literal 2 it was, because
+	# the sampled chunk may legitimately carry rocks now.
+	var before_parent := MeshInstance3D.new()
+	ChunkBatch._build_block_multimesh(before_parent, field_batch)
+	var before: int = _multimeshes(before_parent).size()
+	before_parent.free()
 	var planted_rng := RandomNumberGenerator.new()
 	planted_rng.seed = 99
 	ChunkBatch.create_box(Vector3(1.0, 4.0, 1.0), Vector3(3.0, 3.0, 3.0), 0.0,
@@ -339,13 +406,16 @@ func _check_multimesh_per_kind() -> void:
 	var planted_parent := MeshInstance3D.new()
 	ChunkBatch._build_block_multimesh(planted_parent, field_batch)
 	var planted: Array = _multimeshes(planted_parent)
-	if planted.size() != 2:
-		_fail("a field chunk carrying one SPHERE built %d MultiMeshInstance3Ds, not 2 "
-				% planted.size() + "— a consumer costs exactly +1 draw call per kind")
+	if planted.size() != before + 1:
+		_fail("a field chunk of %d bucket(s) carrying one planted SPHERE built %d, not %d "
+				% [before, planted.size(), before + 1]
+				+ "— a consumer costs exactly +1 draw call per kind")
 	else:
 		var mat: Material = (planted[0] as MultiMeshInstance3D).material_override
-		if (planted[1] as MultiMeshInstance3D).material_override != mat:
-			_fail("the planted SPHERE's batch does not share the cube batch's material")
+		for extra_v: Variant in planted:
+			if (extra_v as MultiMeshInstance3D).material_override != mat:
+				_fail("bucket '%s' does not share the cube batch's material"
+						% (extra_v as Node).name)
 	planted_parent.free()
 	field_body.free()
 	terrain.free()
@@ -507,12 +577,18 @@ func _check_collision_is_unchanged_by_kind() -> void:
 	# Near-cubic on purpose: this is (a)'s subject, and a 2 x 5 x 3 box is past
 	# the aspect gate — (d) drives that end deliberately, below.
 	var dims := Vector3(3.0, 3.6, 3.2)
-	# The type every kind must hang at this aspect. CONE is the deliberate box.
+	# The type every kind must hang at this aspect. CONE is the deliberate box;
+	# ROCK's box is the FEATURE (bead godot-test1-y1o.3) — its flat lid is at the
+	# box's own top face, which is the whole reason the kind exists, and a round
+	# collider under it would drop the climbable surface every rock builder's
+	# recorded `top` promises. The dict is a TOTAL map over the enum: a kind added
+	# without a row here fails below by name rather than crashing this loop.
 	var want_type: Dictionary = {
 		ChunkBatch.BoxKind.CUBE: "BoxShape3D",
 		ChunkBatch.BoxKind.SPHERE: "SphereShape3D",
 		ChunkBatch.BoxKind.CONE: "BoxShape3D",
 		ChunkBatch.BoxKind.CYLINDER: "CylinderShape3D",
+		ChunkBatch.BoxKind.ROCK: "BoxShape3D",
 	}
 	for kind: int in ChunkBatch.BoxKind.values():
 		var batch: Array = []
@@ -521,6 +597,12 @@ func _check_collision_is_unchanged_by_kind() -> void:
 				0.0, Color(0, 0, 0, 0), true, kind)
 		var shapes: Array = body.get_children()
 		var name: String = ChunkBatch.BoxKind.find_key(kind)
+		if not want_type.has(kind):
+			_fail("BoxKind.%s has no row in this check's want_type table — a new kind "
+					% name + "must declare which Shape3D it collides as, or its collider "
+					+ "is unasserted rather than correct")
+			body.free()
+			continue
 		if shapes.size() != 1:
 			_fail("create_box(kind = %s, collide = true) hung %d shapes, not 1"
 					% [name, shapes.size()])
@@ -637,16 +719,35 @@ func _shape_problems(label: String, shape: Shape3D, dims: Vector3) -> Array[Stri
 
 func _check_draw_calls_per_biome() -> void:
 	"""
-	THE PRICE OF THE FIRST CONSUMER, measured where it is paid.
+	THE PRICE OF THE CONSUMERS, measured where it is paid.
 
-	Check 2 proved the MACHINERY costs nothing; this proves the FOREST costs
-	exactly one draw call and that nothing else in the field learned to. A forest
-	chunk builds TWO MultiMeshInstance3Ds — the cube bucket (trunks, scattered
-	blocks) and the sphere bucket (canopies) — and every other biome builds the
-	ONE it always did. That is the whole web budget of bead y1o.2, and it is the
-	kind of number that drifts silently: a `kind` argument left on a shared
-	helper, or a builder copied from the forest, doubles a biome's block draw
-	calls with no visual difference worth noticing.
+	Check 2 proved the MACHINERY costs nothing; this bills what the field really
+	spends, biome by biome, on the shipped spawners. It is the kind of number that
+	drifts silently: a `kind` argument left on a shared helper, or a builder copied
+	from the forest, doubles a biome's block draw calls with no visual difference
+	worth noticing.
+
+	TWO ASSERTIONS, AND THE SECOND IS WHY THE FIRST IS NOT A TAUTOLOGY.
+
+	  (a) A chunk builds exactly one node PER DISTINCT KIND IN ITS BATCH — no empty
+	      bucket, no missing one. Measured on real chunks rather than check 2's
+	      planted ones, so it also covers a builder that emits a kind nothing else
+	      in the suite knows about.
+	  (b) A biome may not build MORE than KIND_CAP allows. That ceiling is the epic
+	      y1o cap ("a chunk with trees AND rocks is +2") written down per biome, and
+	      it is what makes a new consumer a DECISION instead of a drift.
+
+	Why a cap rather than the exact count bead y1o.2 asserted: a rock is a PROP, and
+	whether a given chunk drew one is a draw of the scatter stream. Demanding "2"
+	of every plains chunk would fail on the ones that legitimately drew no prop; the
+	old exact form worked only while the sole consumer was the forest, whose canopy
+	is on every tree in a wood. The floor is kept honestly instead by (a) plus the
+	forest's named buckets below and prop_selfcheck check 11, which asserts the
+	rock builders emit ROCK entry by entry.
+
+	THE BILL AS OF BEAD godot-test1-y1o.3 (rocks and boulders) is KIND_CAP_BY_NAME
+	up top, which carries the per-biome reasoning including why the city band's
+	cap is two despite having no rock builder of its own.
 
 	BUDAPEST IS NOT SWEPT HERE and does not need to be — `spawn_biome_content_in_chunk`
 	returns early inside the rect, and budapest_selfcheck check 4 already asserts
@@ -654,7 +755,9 @@ func _check_draw_calls_per_biome() -> void:
 	Two homes for one rule is how they drift apart.
 
 	IT ITERATES THE Biome ENUM, never a list of its own, so a biome added later is
-	billed the day its row lands (the BIOME_SPECIES / SPECIES idiom).
+	billed the day its row lands (the BIOME_SPECIES / SPECIES idiom) — and a biome
+	KIND_CAP forgets is failed BY NAME rather than silently defaulted, which is the
+	same discipline one table along.
 
 	The batch is BOTH field spawners into one array, which is what a real chunk
 	does: `spawn_objects_in_chunk` (scattered blocks — every biome's cube bucket)
@@ -671,9 +774,19 @@ func _check_draw_calls_per_biome() -> void:
 	var biome_enum: Dictionary = (terrain.get_script() as GDScript).get_script_constant_map()["Biome"]
 	var forest_value: int = int(biome_enum["FOREST"])
 
-	# How many MultiMeshInstance3Ds a chunk of each biome may build. One for
-	# everybody; the forest's canopies are the one sanctioned second bucket.
+	# KIND_CAP_BY_NAME resolved against the live enum, so the cap table is written
+	# in the names a reader recognises and can never drift onto a stale int.
+	var kind_cap: Dictionary = {}
+	for cap_name_v: Variant in KIND_CAP_BY_NAME:
+		var cap_name: String = cap_name_v
+		if biome_enum.has(cap_name):
+			kind_cap[int(biome_enum[cap_name])] = int(KIND_CAP_BY_NAME[cap_name])
+		else:
+			_fail("KIND_CAP_BY_NAME names biome '%s', which the Biome enum does not have" % cap_name)
+
 	var sampled: Dictionary = {}   # biome value -> chunks measured
+	var worst: Dictionary = {}     # biome value -> most buckets any sampled chunk built
+	var paying: Dictionary = {}    # biome value -> chunks that built MORE than one
 	var wrong: Dictionary = {}     # biome value -> "got n, wanted m" for the first offender
 
 	for cx in range(-BIOME_SWEEP, BIOME_SWEEP + 1):
@@ -698,18 +811,34 @@ func _check_draw_calls_per_biome() -> void:
 			var parent := MeshInstance3D.new()
 			ChunkBatch._build_block_multimesh(parent, batch)
 			var nodes: Array = _multimeshes(parent)
-			var want: int = 2 if biome == forest_value else 1
-			if nodes.size() != want and not wrong.has(biome):
+			worst[biome] = maxi(int(worst.get(biome, 0)), nodes.size())
+			if nodes.size() > 1:
+				paying[biome] = int(paying.get(biome, 0)) + 1
+
+			# (a) ONE BUCKET PER DISTINCT KIND PRESENT, no more and no fewer. The
+			# expectation is read off the batch the shipped spawners just filled,
+			# so a builder emitting a kind this check has never heard of is still
+			# billed correctly — and an empty bucket is caught for every biome, not
+			# just the ones KIND_CAP happens to bound tightly.
+			var kinds_present: Dictionary = {}
+			for entry_v: Variant in batch:
+				kinds_present[int((entry_v as Dictionary).get("kind", ChunkBatch.BoxKind.CUBE))] = true
+			# (b) …and never more than this biome is allowed to spend.
+			var cap: int = int(kind_cap.get(biome, -1))
+			var want: int = kinds_present.size()
+			if (nodes.size() != want or cap < 0 or nodes.size() > cap) and not wrong.has(biome):
 				var names: Array = []
 				for n_v: Variant in nodes:
 					names.append((n_v as Node).name)
-				wrong[biome] = "chunk %s built %d (%s), wanted %d" % [chunk, nodes.size(), ", ".join(names), want]
-			# The forest's two must be exactly the cube and the sphere bucket —
-			# "two nodes" alone would also be satisfied by a cone canopy.
-			if biome == forest_value and nodes.size() == 2:
+				wrong[biome] = ("chunk %s built %d (%s); its batch holds %d distinct kinds and its cap is %d"
+						% [chunk, nodes.size(), ", ".join(names), want, cap])
+			# The forest's cube and sphere buckets by NAME — a count alone would also
+			# be satisfied by a cone canopy. It is the one biome whose second bucket
+			# is on EVERY tree, so it is the one that can be named unconditionally.
+			if biome == forest_value:
 				for want_name: String in ["BlockMultiMesh", "BlockMultiMesh_SPHERE"]:
 					if parent.get_node_or_null(NodePath(want_name)) == null:
-						_fail("a forest chunk's two block buckets do not include '%s' — "
+						_fail("a forest chunk's block buckets do not include '%s' — "
 								% want_name + "the canopies are BoxKind.SPHERE and the "
 								+ "trunks BoxKind.CUBE, nothing else")
 			parent.free()
@@ -722,10 +851,23 @@ func _check_draw_calls_per_biome() -> void:
 			_fail("only %d chunks of biome %s were measured (wanted %d) in a %dx%d sweep — "
 					% [n, biome_name, BIOME_SAMPLES, 2 * BIOME_SWEEP + 1, 2 * BIOME_SWEEP + 1]
 					+ "the draw-call bill for that biome is unmeasured, not proven")
+		if not kind_cap.has(value):
+			_fail("biome %s has no KIND_CAP_BY_NAME row — a new biome must declare how many "
+					% biome_name + "block draw calls a chunk of it may spend, or its bill "
+					+ "is unbilled rather than free")
 		if wrong.has(value):
-			_fail("biome %s: %s. A forest chunk pays +1 draw call for its sphere canopies "
+			_fail("biome %s: %s. One MultiMeshInstance3D per kind PRESENT, and never "
 					% [biome_name, wrong[value]]
-					+ "and NOTHING ELSE IN THE FIELD PAYS ANYTHING — that is bead y1o.2's "
-					+ "whole web budget")
+					+ "more than that biome's KIND_CAP_BY_NAME — the epic y1o ceiling is a chunk "
+					+ "with trees AND rocks, which is two extra buckets and no third")
+		# HOW OFTEN, not just how bad. The worst case alone reads as "some chunks"
+		# when it may be nearly all of them — a cost that is under the cap on every
+		# chunk and paid on 90% of them is still most of a web frame, and it is the
+		# number an owner's by-eye ruling on a new consumer needs. Printed rather
+		# than asserted: the frequency is a design fact for the reader, while the
+		# thing that must not drift is the cap above.
+		print("  %-8s worst %d block draw call(s), >1 on %d of %d chunks (cap %s)"
+				% [biome_name, int(worst.get(value, 0)), int(paying.get(value, 0)),
+						n, kind_cap.get(value, "-")])
 	terrain.free()
 	Sentinel.done("draw_calls_per_biome")

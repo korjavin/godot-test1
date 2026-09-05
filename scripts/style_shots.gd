@@ -88,6 +88,12 @@ func _run() -> void:
 	# pair lands on byte-identical world content.
 	var field := _find_biome(terrain, terrain.Biome.PLAINS)
 	var forest := _find_biome(terrain, terrain.Biome.FOREST)
+	# DESERT and SNOW join the set for bead godot-test1-y1o.23: that bead repaints
+	# the GROUND, and these are the two bands where the ground is most of the frame
+	# — a forest shot is mostly canopy. Additive, so every existing shot name and
+	# every earlier A/B pair is untouched.
+	var desert := _find_biome(terrain, terrain.Biome.DESERT)
+	var snow := _find_biome(terrain, terrain.Biome.SNOW)
 	var street := Vector3(1600.0 + 5.0 * 62.0, 0.0, 3.0 * 62.0)
 	# ...and one on a real AVENUE (bead 8gw.23): every CITY_AVENUE_EVERY-th grid
 	# line is the only place traffic_manager puts a car, so an ordinary street is
@@ -95,8 +101,17 @@ func _run() -> void:
 	var avenue := Vector3(1600.0 + 5.0 * 62.0, 0.0, 0.0)
 
 	print("[SHOTS] field=", field, " forest=", forest, " street=", street, " avenue=", avenue)
+	# _find_biome SILENTLY falls back to a fixed spot when its sweep finds nothing,
+	# which would hand you a "snow" shot of plains and no way to tell. Print the
+	# biome each spot actually resolved to, so a fallback is visible in the log.
+	for probe: Array in [[field, "1_field"], [forest, "2_forest"],
+			[desert, "1b_desert"], [snow, "1c_snow"]]:
+		var p: Vector3 = probe[0]
+		print("[SHOTS] ", probe[1], " at ", p, " is biome ", terrain.biome_at(p.x, p.z))
 
 	await _shoot(terrain, player, field, 0.0, "1_field")
+	await _shoot(terrain, player, desert, 0.0, "1b_desert")
+	await _shoot(terrain, player, snow, 0.0, "1c_snow")
 	await _shoot(terrain, player, forest, 0.0, "2_forest")
 	await _shoot(terrain, player, street, -PI * 0.5, "3_budapest")
 	await _shoot(terrain, player, avenue, -PI * 0.5, "3b_budapest_avenue")
