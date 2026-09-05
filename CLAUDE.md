@@ -659,6 +659,30 @@ Load-bearing rules:
   terrain, and only calls WITHIN a family go direct. `scarcity_selfcheck`'s check
   3 now reads its subjects out of a LIST of spawner files (`SPAWNER_SCRIPTS`), so
   the next extraction adds one line there rather than passing on a forwarder.
+- **THE BUDAPEST STREAMER IS `scripts/budapest_streamer.gd`** (`class_name
+  BudapestStreamer`, all static, bd `godot-test1-ftn.8`) — the whole "BUDAPEST,
+  STREAMED THROUGH ORDINARY CHUNKS" section (24 functions: `city_chunk`, the two
+  slicers, `spawn_city_in_chunk` and its landmark / gate-district / block
+  builders, the `_city_*` facade vocabulary, the approach and city coin lines),
+  its 40 `CITY_*` constants, and the two shader array-uniform BUILDERS. **The
+  PUSH stayed**: `_apply_biome_shader_params` still sets `city_river` /
+  `city_dry` beside the twenty other uniforms it sits among, and those two calls
+  are the only internal call sites the move rewrote — every other caller,
+  `create_chunk`'s call-order list included, goes through one of **eight
+  forwarders** that keep the old spelling. **Nine consts are aliased back**, all
+  read through `get_script_constant_map()` by three checks; the other 31 are
+  family-internal. What deliberately STAYED, each for its own reason: `in_budapest()`
+  (the public membership test, the way `tower_excludes()` is the tower's),
+  `_settle_coin_y` / `_block_overlaps` / `_point_over_block` (the FIELD's perch
+  rule, shared with road and artifact coins — the city must not own a field
+  rule), the `Biome` enum and the parity pair, the two approach-coin memo caches
+  (`_drop_seeded_memos()` owns them, `coin_road.gd`'s precedent), and
+  `CITY_SHADER_SEG_MAX` / `CITY_SHADER_DRY_MAX`, which the push that stayed also
+  reads. **`budapest_selfcheck` calls the CLASS directly** — the family's own
+  check may not read its subject through a forwarder (`scarcity_selfcheck`'s
+  ftn.7 lesson) — while `budapest_city_selfcheck` and `field_bridge_selfcheck`
+  keep the forwarders. The three city rules below are untouched by the move, the
+  ONE `MultiMeshInstance3D` per city chunk and its no-shadow flag included.
 - **A BOX HAS A MESH KIND, AND EVERY UNIT MESH FITS THE UNIT CUBE** (bead
   `godot-test1-y1o.1`, epic `y1o` "get rid of blocks"). The batch entry is
   `{transform, color, kind}` — `ChunkBatch.BoxKind` (CUBE / SPHERE / CONE / CYLINDER /
@@ -859,7 +883,7 @@ one 4,100-line file until bd `godot-test1-ftn.13` split it by check family:
 - **A BRIDGE IS TWO FILES, and `BudapestPlan.BRIDGES` is the joint.** The pylons, towers,
   chains, trusses and lions are `landmark_builders.gd`'s, on the `SLOTS` row of the id;
   the DECK — a level slab at `BRIDGE_DECK_TOP` (12 m, where every builder's ornament
-  stops) plus one ramped approach at each end — is `endless_terrain.gd`'s
+  stops) plus one ramped approach at each end — is `budapest_streamer.gd`'s
   `spawn_city_bridges_in_chunk`, built off the row's `DRY_RECTS` entry so **the rect the
   band is punched out by and the rect the stone stands on are one number**. Both ramps
   live INSIDE that rect, which is why the approach needed no new dry row and **no shader
