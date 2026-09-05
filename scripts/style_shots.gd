@@ -281,16 +281,26 @@ func _shoot_coin_line(terrain: Node, player: Node3D, at: Vector3, yaw: float,
 	One shot of a spot with ONLY the score line on screen — `_shoot_hero_row`'s
 	twin, one group along.
 
-	The counter is SET first, because the line the owner has to rule on is the
-	full one (level, coins, the streak suffix) and a fresh harness reads
+	The line is SET first, because the one the owner has to rule on is the FULL
+	one (level, coins, the skill-point suffix) and a fresh harness reads
 	"Lv 1 Coins: 0" — a shot of three glyphs says nothing about how a long amber
-	string sits over a street. It is a debug tool that quits when it is done, so
-	nothing restores the count.
+	string sits over a street.
+
+	**Both halves are pinned, and the level is the half that matters**: coins are
+	a run number this tool owns, but `Progression` is LIFETIME state loaded from
+	`user://`, so it climbs between two runs of this tool — the before shot of an
+	A/B pair read "Lv 15 … 8 SP" against the after shot's "Lv 5", which is two
+	different strings and therefore not a comparison. It is a debug tool that
+	quits when it is done, so nothing restores either.
 	"""
 	if _only != "" and not name.contains(_only):
 		return
 	if "coins_collected" in player:
 		player.coins_collected = 1287
+	var progression := get_tree().get_first_node_in_group("progression")
+	if progression != null and "level" in progression and "spent_points" in progression:
+		progression.level = 12
+		progression.spent_points = 0
 	_show_widget("coin_hud")
 	await _shoot(terrain, player, at, yaw, name)
 	_show_widget("coin_hud", false)
