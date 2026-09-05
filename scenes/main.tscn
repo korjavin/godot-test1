@@ -58,8 +58,7 @@ glow_hdr_threshold = 0.85
 adjustment_enabled = true
 adjustment_contrast = 1.08
 adjustment_saturation = 1.12
-ambient_light_source = 3
-ambient_light_energy = 0.85
+ambient_light_sky_contribution = 0.85
 
 [node name="Main" type="Node3D"]
 
