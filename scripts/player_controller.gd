@@ -2313,23 +2313,26 @@ func _pay_coin_setback(fraction: float) -> bool:
 	return true
 
 
-func _capture_is_armed() -> bool:
-	"""
-	May a hunter take a hero yet? Only after the authored Primm rescue.
-
-	@return: true once `TowerInterior.RESCUE_DONE` is in the stored tower set.
-
-	OWNER-RULED SEQUENCING: the authored beat is where the rule is TAUGHT, so
-	before it a grab costs the ordinary predator arithmetic and nothing else — a
-	systemic mechanic that fires before the scene that explains it reads as a bug.
-
-	Read from the store rather than from the tower, because the tower is a streamed
-	landmark and a grab in the field is nowhere near it, while `TowerShell.mark_opened()`
-	writes through to disk on the opening itself. One `ConfigFile` read per grab.
-	ponytail: cache it if capture ever stops being a once-in-a-run event — the
-	answer only changes at the beat, which happens inside the building.
-	"""
-	return BestRunStore.tower_opened_ids().has(TowerInterior.RESCUE_DONE)
+# THERE IS NO ARMING GATE, AND THAT IS AN OWNER RULING (2026-09-05, bead
+# `godot-test1-bxx`, verbatim: *"yes, from start"*). `_capture_is_armed()` used to
+# live here and answered `BestRunStore.tower_opened_ids().has(TowerInterior.RESCUE_DONE)`
+# — a grab before the authored Primm rescue was an ordinary bite, on the reading
+# (bead `godot-test1-3iy.9`) that a systemic mechanic firing before the scene that
+# explains it reads as a bug. The owner was asked directly whether to redo the beat
+# or drop the sequencing and answered the second: the corporation arrests from the
+# first second of a run.
+#
+# TWO CONSEQUENCES, BOTH ACCEPTED BY THE RULING and neither a bug to be fixed
+# later: a tutorial visit to the HQ can cost a hero, and the four-capture ending is
+# reachable before the beat has ever been walked. The RESCUE BEAT STAYS — Primm's
+# cell, the spine doors and liberation are content, and `TowerInterior.RESCUE_DONE`
+# is still written and still persisted (it un-stages her cell for good); it simply
+# arms nothing any more.
+#
+# It is written as an ABSENCE rather than as a `return true` stub on purpose:
+# `capture_selfcheck` check 1 asserts the roster moves on a FRESH profile with the
+# gate-restored mutation as its control, so re-adding the read is a red build and
+# not a silent regression.
 
 
 func preload_all_characters() -> void:
@@ -2583,16 +2586,22 @@ func hit_by_crocodile(attacker: Node = null) -> void:
 	# SYSTEMIC CAPTURE. Deliberately BELOW the invulnerability early-return, for
 	# the same reason the streak reset is: a bite that costs nothing must not cost
 	# a hero either, and the blink window after a capture would otherwise strip the
-	# roster one frame at a time. Both gates are cheap and both are `false` for
-	# every contact in the game that is not a post-beat GD-SURVEY machine — the
-	# field's retrieval unit or the HQ's sentry, which carry one row key between
-	# them and no shared behaviour arm.
+	# roster one frame at a time. The test is cheap and it is `false` for every
+	# contact in the game that is not a GD-SURVEY machine — the field's retrieval
+	# unit or the HQ's sentry, which carry one row key between them and no shared
+	# behaviour arm.
+	#
+	# ONE TEST, NOT TWO, SINCE THE OWNER'S "yes, from start" (2026-09-05, bead
+	# `godot-test1-bxx`): the second half used to be `_capture_is_armed()`, the
+	# authored-rescue gate, and it is gone — see the note where that function was.
+	# The corporation arrests from the first second of a run.
+	#
 	# ...and the LATCH, which is what "the survivors carry on from the same place"
 	# costs in code: `_pay_coin_setback()` runs a whole caught freeze later, with
 	# the attacker long gone, so the one thing it cannot re-derive is whether this
 	# contact was an arrest. Written here, where the evidence is, exactly like the
 	# bill below.
-	caught_captured = _takes_a_hero(attacker) and _capture_is_armed()
+	caught_captured = _takes_a_hero(attacker)
 	# The caption's copy of the same answer, taken here and not re-derived, for the
 	# reason the declaration gives: the bill SPENDS `caught_captured`, and the
 	# countdown is drawn long after the bill. One evidence site, two lifetimes.
