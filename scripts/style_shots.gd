@@ -94,6 +94,14 @@ func _run() -> void:
 	# every earlier A/B pair is untouched.
 	var desert := _find_biome(terrain, terrain.Biome.DESERT)
 	var snow := _find_biome(terrain, terrain.Biome.SNOW)
+	# The CITY BAND (bead godot-test1-y1o.5) is the procedural biome, NOT Budapest
+	# — the two shots below it are the authored city and have nothing to do with
+	# this one. Its houses, stalls and lamps are `_spawn_city_content`'s.
+	var band := _find_biome(terrain, terrain.Biome.CITY)
+	# ...and a real NOMAD CAMP, found by asking the shipped spawner rather than by
+	# a hand-typed chunk: a camp is a pure function of (chunk, run_seed), so the
+	# same SEED puts it in the same place for the before shot and the after shot.
+	var camp := _find_camp(terrain)
 	var street := Vector3(1600.0 + 5.0 * 62.0, 0.0, 3.0 * 62.0)
 	# ...and one on a real AVENUE (bead 8gw.23): every CITY_AVENUE_EVERY-th grid
 	# line is the only place traffic_manager puts a car, so an ordinary street is
@@ -113,6 +121,14 @@ func _run() -> void:
 	await _shoot(terrain, player, desert, 0.0, "1b_desert")
 	await _shoot(terrain, player, snow, 0.0, "1c_snow")
 	await _shoot(terrain, player, forest, 0.0, "2_forest")
+	await _shoot(terrain, player, band, 0.0, "2b_city_band")
+	if camp != Vector3.INF:
+		# Stand off the camp and look back at it, the field bridge's idiom: the
+		# huts are the subject, so the camera wants them in front of it.
+		await _shoot(terrain, player, camp + Vector3(-16.0, 0.0, -10.0),
+				atan2(-16.0, -10.0), "2c_camp")
+	else:
+		print("[SHOTS] no camp within the sweep on seed ", SEED, " — skipped")
 	await _shoot(terrain, player, street, -PI * 0.5, "3_budapest")
 	await _shoot(terrain, player, avenue, -PI * 0.5, "3b_budapest_avenue")
 
@@ -321,6 +337,55 @@ func _find_biome(terrain: Node, want: int) -> Vector3:
 				return Vector3(x, 2.0, z)
 		x += 25.0
 	return Vector3(300.0, 2.0, 0.0)
+
+func _find_camp(terrain: Node) -> Vector3:
+	"""
+	A spot a few metres off a REAL nomad camp's huts, or Vector3.INF when the
+	sweep finds none (bead godot-test1-y1o.5).
+
+	Found by running the SHIPPED spawner over a chunk window and keeping the first
+	chunk that actually built something — the landmark sweep's idiom, and the
+	reason it is not a hand-typed coordinate: a camp is a pure function of (chunk,
+	run_seed), so this lands on the same camp for the before shot and the after
+	shot, and it keeps working the day the camp rate is retuned.
+	"""
+	for cx in range(2, 30):
+		for cz in range(-6, 7):
+			var chunk := Vector2i(cx, cz)
+			var parent := MeshInstance3D.new()
+			parent.position = terrain.chunk_to_world(chunk)
+			var batch: Array = []
+			var body := StaticBody3D.new()
+			var platforms: Array = []
+			# THE REAL SEQUENCE, not the camp call on its own: a camp accepts the
+			# first spot that clears `_biome_spot_ok`, which reads the `obstacles`
+			# the earlier spawners filled — so probing with an empty list picks a
+			# spot the shipped chunk rejects, and the camera then frames bare grass
+			# beside the camp (measured the slow way). EVERY spawner create_chunk
+			# runs before the camp has to be here, the ARTIFACT included: it lands
+			# a footprint too, and on seed 57 leaving it out picked chunk (4, -2)
+			# where the live path's first camp is (6, -1).
+			var obstacles: Array = terrain.spawn_objects_in_chunk(chunk, platforms, batch, body)
+			terrain.spawn_artifact_in_chunk(chunk, parent, obstacles, batch, body)
+			terrain.spawn_biome_content_in_chunk(chunk, obstacles, batch, body)
+			var before: int = batch.size()
+			terrain.spawn_camp_in_chunk(chunk, parent, obstacles, batch, body)
+			var built: int = batch.size() - before
+			body.free()
+			parent.free()
+			if built == 0:
+				continue
+			# The camp's own centre, not the chunk's, and only the CAMP's boxes: a
+			# 50 m chunk is wide enough that framing its centre shows you empty
+			# grass next to a village.
+			var mean := Vector3.ZERO
+			for i in range(before, batch.size()):
+				mean += (batch[i] as Dictionary)["transform"].origin
+			mean /= float(built)
+			var at: Vector3 = terrain.chunk_to_world(chunk) + Vector3(mean.x, 2.0, mean.z)
+			print("[SHOTS] camp in chunk ", chunk, ": ", built, " boxes, centre ", at)
+			return at
+	return Vector3.INF
 
 func _shoot(terrain: Node, player: Node3D, where: Vector3, yaw: float, name: String) -> void:
 	if _only != "" and not name.contains(_only):

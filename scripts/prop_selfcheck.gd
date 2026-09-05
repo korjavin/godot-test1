@@ -130,7 +130,7 @@ const BUILDER_KINDS: Dictionary = {
 	"_prop_garden_wall": ["CUBE"],
 	"_prop_paving_stack": ["CUBE"],
 	"_prop_ice_rock": ["ROCK"],
-	"_prop_snow_drift": ["CUBE"],
+	"_prop_snow_drift": ["CUBE", "ROCK"],
 	"_prop_frozen_stump": ["CUBE"],
 }
 
@@ -954,6 +954,14 @@ func _check_city_content(terrain_script: GDScript, consts: Dictionary) -> void:
 	var solids := 0
 	var worst_top := 0.0
 	var worst_reach := 0.0
+	# THE BAND'S SILHOUETTES (bead godot-test1-y1o.5). Check 11's BUILDER_KINDS
+	# covers the `_prop_*` builders; `_spawn_city_content` is not one of them, so
+	# its kinds are read HERE, on the same real chunks this check already builds,
+	# and in both directions like check 11 — the half that catches a revert is
+	# "the WEDGE and the CYLINDER must really appear", because a roof quietly put
+	# back to a flat slab still fits its radius, still climbs and still balances
+	# its collider budget.
+	var kinds_seen: Dictionary = {}
 
 	for chunk: Vector2i in city_chunks:
 		var centre: Vector3 = terrain.chunk_to_world(chunk)
@@ -971,6 +979,7 @@ func _check_city_content(terrain_script: GDScript, consts: Dictionary) -> void:
 		for entry_variant: Variant in batch:
 			var entry: Dictionary = entry_variant
 			var xform: Transform3D = entry["transform"]
+			kinds_seen[int(entry["kind"])] = int(kinds_seen.get(int(entry["kind"]), 0)) + 1
 			for corner: Vector3 in UNIT_CORNERS:
 				var p: Vector3 = xform * corner
 				worst_reach = maxf(worst_reach, maxf(absf(p.x), absf(p.z)))
@@ -1000,10 +1009,35 @@ func _check_city_content(terrain_script: GDScript, consts: Dictionary) -> void:
 		_fail("%d city buildings produced %d collision shapes — one per building is the budget; roofs, doors, windows, awnings, posts and lamps are supposed to be visual-only trim"
 				% [footprints, solids])
 
-	print("  city       %d chunks, %d boxes (%d collide, %d buildings), %d roofs, tallest %.2f m, reach %.2f / %.1f m"
-			% [city_chunks.size(), boxes, solids, footprints, climbable, worst_top, worst_reach, half_chunk])
+	# Both directions, over the same real chunks. The allowed SET first…
+	var allowed_city: Array[int] = [ChunkBatch.BoxKind.CUBE, ChunkBatch.BoxKind.WEDGE,
+			ChunkBatch.BoxKind.CYLINDER]
+	for kind_v: Variant in kinds_seen.keys():
+		if allowed_city.has(int(kind_v)):
+			continue
+		_fail("the city band drew %d box(es) of kind %s — only CUBE (hulls, doors, windows, stalls), WEDGE (roofs) and CYLINDER (lamp masts and shades) belong there, and a fourth kind is a whole extra MultiMeshInstance3D on every city chunk"
+				% [kinds_seen[kind_v], ChunkBatch.BoxKind.find_key(int(kind_v))])
+	# …then the half that catches a revert: each one must REALLY be drawn.
+	for want: int in [ChunkBatch.BoxKind.WEDGE, ChunkBatch.BoxKind.CYLINDER]:
+		if kinds_seen.has(want):
+			continue
+		_fail("the city band drew NO %s box over %d chunks — bead y1o.5 put pitched roofs on every house and a cylinder mast under every lamp, so this check would be passing over a band that quietly went back to boxes"
+				% [ChunkBatch.BoxKind.find_key(want), city_chunks.size()])
+
+	print("  city       %d chunks, %d boxes (%d collide, %d buildings), %d roofs, tallest %.2f m, reach %.2f / %.1f m, kinds %s"
+			% [city_chunks.size(), boxes, solids, footprints, climbable, worst_top, worst_reach, half_chunk,
+					_kind_tally(kinds_seen)])
 	terrain.free()
 	Sentinel.done("city_content")
+
+
+func _kind_tally(kinds_seen: Dictionary) -> String:
+	"""One readable `NAME xN` list of a batch's kinds, for check 7's print line."""
+	var parts: Array[String] = []
+	for kind_v: Variant in kinds_seen.keys():
+		parts.append("%s x%d" % [ChunkBatch.BoxKind.find_key(int(kind_v)), kinds_seen[kind_v]])
+	parts.sort()
+	return ", ".join(parts)
 
 
 # ============================================================================

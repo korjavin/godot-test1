@@ -115,13 +115,22 @@ const BIOME_SAMPLES: int = 4
 ##
 ## KEYED BY NAME and resolved against the live `Biome` enum, so this table reads as
 ## design intent rather than as ints, and a biome MISSING a row is failed by name.
+##
+## CITY IS 4 SINCE BEAD godot-test1-y1o.5 and it is the most expensive band in the
+## world: CUBE (hulls, doors, windows, stalls) + WEDGE (the pitched roofs) +
+## CYLINDER (the lamp masts and shades) + ROCK, which the per-position prop themer
+## can put in any chunk. That is the price of the pitched roof and it is written
+## down here rather than discovered later — the roofs are the single biggest
+## de-block change a house gets, and the masts are the one other thing in the band
+## that was obviously a stack of boxes. Nothing else moved: the drift's swell took
+## ROCK precisely so no OTHER biome's cap had to rise.
 const KIND_CAP_BY_NAME: Dictionary = {
 	"FOREST": 3,
 	"PLAINS": 2,
 	"DESERT": 4,
 	"MOUNTAIN": 2,
 	"SNOW": 2,
-	"CITY": 2,
+	"CITY": 4,
 }
 
 var _failures: Array[String] = []
@@ -354,12 +363,16 @@ func _check_multimesh_per_kind() -> void:
 	#
 	# THE SCATTERED BLOCKS ARE WHERE THE PROPS LIVE, so this sweep's allow-list is
 	# not "CUBE only" any more (bead godot-test1-y1o.3): `_build_prop` runs inside
-	# `spawn_objects_in_chunk`, and six of its builders now draw ROCK. What the
-	# sweep still refuses is a THIRD kind arriving here unannounced — a SPHERE, a
-	# CONE or a CYLINDER in the scatter is a consumer nobody filed a bead for, and
-	# the allow-list is what makes that a build failure instead of a rendering
-	# surprise. Note it is a set and not a count: whether a chunk drew a rock is a
-	# draw of the scatter stream, so "how many" is not a stable number.
+	# `spawn_objects_in_chunk`, and six of its builders now draw ROCK. Bead
+	# godot-test1-y1o.5's snow drift joins them and needed NO widening here: its
+	# swell is a ROCK, deliberately, because a prop's theme is picked at its own
+	# position and a SPHERE drift would have put a new bucket into every band that
+	# borders snow. What the sweep still refuses is a kind arriving here
+	# unannounced — a SPHERE, a CONE, a CYLINDER or a WEDGE in the scatter is a
+	# consumer nobody filed a bead for, and the allow-list is what makes that a
+	# build failure instead of a rendering surprise. Note it is a set and not a
+	# count: whether a chunk drew a rock is a draw of the scatter stream, so "how
+	# many" is not a stable number.
 	var field_batch: Array = []
 	var field_body := StaticBody3D.new()
 	var allowed_kinds: Array[int] = [ChunkBatch.BoxKind.CUBE, ChunkBatch.BoxKind.ROCK]
@@ -613,6 +626,7 @@ func _check_collision_is_unchanged_by_kind() -> void:
 		ChunkBatch.BoxKind.CONE: "BoxShape3D",
 		ChunkBatch.BoxKind.CYLINDER: "CylinderShape3D",
 		ChunkBatch.BoxKind.ROCK: "BoxShape3D",
+		ChunkBatch.BoxKind.WEDGE: "BoxShape3D",
 	}
 	for kind: int in ChunkBatch.BoxKind.values():
 		var batch: Array = []
