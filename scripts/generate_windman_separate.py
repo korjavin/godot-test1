@@ -2,9 +2,11 @@
 """
 Generate Windman 3D model with SEPARATE body parts for individual animation.
 
-Requires: trimesh, numpy, shapely, scipy  (shapely+scipy power the extruded "W"
-emblem on the chest). Install with:  pip install trimesh numpy shapely scipy
-
+Requires the PINNED toolchain of `scripts/requirements.txt` — trimesh + numpy, and
+shapely + mapbox-earcut for the extruded "W" emblem on the chest (`extrude_polygon`
+wants the polygon from one and the triangulation from the other, and without the
+second it raises "No available triangulation engine!").
+    pip install -r scripts/requirements.txt
 
 Each limb is exported as its own GLB file. `scenes/characters/windman_updated.tscn`
 assembles them under a `Body` node whose `LeftArm` / `RightArm` / `LeftLeg` /
@@ -39,6 +41,14 @@ from trimesh.creation import cylinder, box, icosphere, extrude_polygon
 from trimesh.transformations import rotation_matrix
 from shapely.geometry import LineString
 from pathlib import Path
+
+# THE ONE EXPORT SEAM for every model in this game (bead godot-test1-y1o.21,
+# owner ruling 2026-09-05 "facet ALL"): it unmerges the mesh and writes flat
+# per-face normals. It lives in predator_parts.py because the predators got it
+# first — read its docstring before touching anything about normals here.
+import sys  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from predator_parts import export_faceted  # noqa: E402
 
 
 class WindmanSeparateMeshGenerator:
@@ -348,7 +358,7 @@ class WindmanSeparateMeshGenerator:
         for name, mesh in parts.items():
             filename = output_dir / f"windman_{name}.glb"
             print(f"  Saving {name}... ({len(mesh.vertices)} vertices)")
-            mesh.export(str(filename))
+            export_faceted(mesh, str(filename))
 
         print(f"\n  All parts saved to {output_dir}")
         print(f"  Total parts: {len(parts)}")

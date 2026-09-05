@@ -2990,7 +2990,7 @@ const BIOME_SPECIES: Dictionary = {
 	## The forest is the one band that already crowds the player's SIGHT — it is
 	## the densest tree cover in the world — so it is the right one to put an
 	## enemy in that crowds their SPACE. The wolf's pack steering (see
-	## piglet_crocodile_ai.pack_steer_point) has each animal swing to its own slot
+	## croc_steering.pack_steer_point) has each animal swing to its own slot
 	## on a ring, and trunks are what make that read: the wolf you lost behind one
 	## is the wolf arriving from the side.
 	Biome.FOREST: {
@@ -3002,7 +3002,7 @@ const BIOME_SPECIES: Dictionary = {
 	## the ice you can climb onto. It is also the most OPEN ground in the world (a
 	## handful of dead trees per chunk and a lot of nothing between them), which is
 	## the one place a straight-line charger belongs: the frost bear's committed
-	## charge (see piglet_crocodile_ai.charge_steer_point) is only fair if you can
+	## charge (see croc_steering.charge_steer_point) is only fair if you can
 	## see it coming and have somewhere to step, and both of those are what open
 	## ground is. The forest is the exact inverse — put this animal among trunks
 	## and it would spend its life shouldering into them.
@@ -3013,7 +3013,7 @@ const BIOME_SPECIES: Dictionary = {
 	## A massif band is a MAZE — impassable block walls with long straight
 	## corridors between them (see the MOUNTAIN section: mountains are things you
 	## route around, never terrain you climb). That is the one place a burst
-	## predator belongs. The cougar's pounce (see piglet_crocodile_ai's
+	## predator belongs. The cougar's pounce (see croc_steering's
 	## burst_cycle_factor) is the only thing in this game that goes above
 	## MAX_CHASE_SPEED, and it is only fair where a corridor gives you the sight
 	## line to see it start and the walls give its recovery leg somewhere to break
@@ -3349,7 +3349,8 @@ var road_k_max: int = 0
 ## Memoized result of _road_terminal_k() — the last station at or west of
 ## ROAD_TERMINAL_X. It is a pure function of run_seed and the road config (both
 ## constant within a run) and EVERY road consumer asks for it, so it is computed
-## once and reset in new_run() beside the station cache it is derived from.
+## once and dropped by `_drop_seeded_memos()` beside the station cache it is
+## derived from — see there for why that lives under the SEED WRITE.
 ##
 ## The sentinel is a station index nothing can legitimately be: the cache grows
 ## contiguously outward from station 0 and a run would have to walk ~10^9
@@ -3359,8 +3360,8 @@ var _road_terminal_k_cache: int = ROAD_TERMINAL_K_UNSET
 
 ## Memoized field bridges, keyed by ANCHOR STATION index — `{}` for a station
 ## that anchors none, which is most of them (see field_bridge_at). It rides the
-## station cache: derived from it plus the river field, so new_run() clears the
-## two together. Every chunk within a bridge's reach asks the same question, and
+## station cache: derived from it plus the river field, so `_drop_seeded_memos()`
+## clears the two together. Every chunk within a bridge's reach asks the same question, and
 ## the answer costs a walk across the water each time it is not remembered.
 var _field_bridge_cache: Dictionary = {}
 
@@ -3398,13 +3399,14 @@ var _approach_coin_east_end_cache: float = INF
 
 ## Memoized result of _approach_coin_line() — the whole approach + avenue coin
 ## line, resampled by arc length. It rides the TERMINAL STATION, so unlike the
-## east end above it IS seeded, and new_run() resets it beside the terminal cache.
+## east end above it IS seeded, and `_drop_seeded_memos()` drops it beside the
+## terminal cache.
 var _approach_coin_line_cache: PackedVector2Array = PackedVector2Array()
 
 ## Memoized result of _build_landmark_sites() — chunk Vector2i -> LANDMARKS kind,
 ## the whole field landmark placement for this run (see the MUSEUM MILE banner).
 ## It rides the road centreline, so like the two caches above it IS seeded and
-## new_run() resets it beside them. The `_built` flag is separate because an empty
+## `_drop_seeded_memos()` drops it beside them. The `_built` flag is separate because an empty
 ## table is a legitimate answer (spawn_landmarks off, or a degenerate road) and
 ## `is_empty()` alone would rebuild it on every chunk.
 var _landmark_sites_cache: Dictionary = {}
@@ -3893,17 +3895,9 @@ func set_run_seed(value: int) -> void:
 	# the paths of the run you just lost. Hung off the seed write for the same
 	# reason `_tower_reset()` is: every path that starts a world comes through here.
 	_migrated_units.clear()
-	# ...and the MUSEUM MILE, for the same reason and one worse. The site table is
-	# memoized and pure in run_seed, so a table built BEFORE this write survives it
-	# and hands the new world the OLD run's landmarks while every other seed-derived
-	# stream has moved. new_run() resets it too (beside the road cache it is derived
-	# from), but new_run() is not the only door: a multiplayer joiner takes the
-	# master's seed through set_run_seed() after its own _ready() roll, and anything
-	# that streamed a chunk in between has already built the table. THE SEED WRITE IS
-	# THE ONLY PLACE THAT SEES EVERY DOOR — which is exactly why _tower_reset() and
-	# the trail purge hang here too.
-	_landmark_sites_cache = {}
-	_landmark_sites_built = false
+	# ...and every memo that is a pure function of run_seed — the road centreline
+	# and the whole family strung along it. See `_drop_seeded_memos()`.
+	_drop_seeded_memos()
 	var lod := get_tree().get_first_node_in_group("lod_manager") if is_inside_tree() else null
 	if lod != null and lod.has_method("reset_trails"):
 		lod.reset_trails()
@@ -3915,6 +3909,60 @@ func set_run_seed(value: int) -> void:
 	# roll, a restart, a multiplayer peer being handed the room's seed — goes
 	# through here, so none of them can forget.
 	_tower_reset()
+
+
+func _drop_seeded_memos() -> void:
+	"""
+	Drop every memo that is a PURE FUNCTION OF `run_seed`, so the next reader
+	rebuilds it for the world we have just moved to.
+
+	CALLED FROM `set_run_seed()` AND NOWHERE ELSE, which is the whole bead
+	(godot-test1-bvq). These used to be reset in `new_run()` instead, one level
+	up — and `new_run()` is not the only door. `set_run_seed()` is, by CLAUDE.md's
+	rule: it is the ONLY place `run_seed` is written, so it is the only seam that
+	sees `_ready()`'s roll, a restart AND a multiplayer joiner being handed the
+	room's seed after it has already streamed chunks. A memo dropped one level up
+	is a memo the third caller forgets, and this whole family is memoized off the
+	seed exactly like the site table that was moved here first (PR #228). Nothing
+	shipped could reach the bug — `_ready()`'s roll predates any road and the MP
+	path is `new_run()` — which is precisely why it had to be closed before a
+	fourth caller arrived rather than after.
+
+	EVERYTHING HERE IS DERIVED FROM THE ROAD CENTRELINE, which is itself pure in
+	the seed, so they are one family and are reset together — the reason this is
+	one function and not eleven lines copied into every door.
+	"""
+	# The station cache, back to its declared empty state (min > max is the "no
+	# stations" sentinel, so the next `_road_extend_to_x` re-seeds station 0).
+	# Its entries were computed with the OLD seed and would poison the new road:
+	# the cache is "correct forever" only while the seed is constant.
+	road_stations = {}
+	road_k_min = 1
+	road_k_max = 0
+	# The terminal station is derived from that centreline, so it is exactly as
+	# stale: a new seed puts a different station at ROAD_TERMINAL_X. Reset it HERE,
+	# beside what it is derived from, so the two can never be reset apart.
+	_road_terminal_k_cache = ROAD_TERMINAL_K_UNSET
+	# ...and the field bridges, for the same reason one step further out: a
+	# crossing is a station index plus the river field, and both moved. The
+	# corridor's are derived from the terminal station, so they go with them.
+	_field_bridge_cache = {}
+	_field_bridge_wet_cache = {}
+	_approach_bridge_cache = []
+	_approach_bridge_scanned = false
+	# ...and the approach coin line with it: it is resampled off that station.
+	_approach_coin_line_cache = PackedVector2Array()
+	# ...and the MUSEUM MILE: every site is a station index on the centreline
+	# above, so a table kept across a re-seed would string this run's landmarks
+	# along the LAST run's road (see the MUSEUM MILE banner). This is the one that
+	# was already here before the bead, and moving the road beside it is what
+	# makes `landmark_sites_selfcheck` check 1b able to stop clearing the road by
+	# hand and assert the centreline itself instead.
+	_landmark_sites_cache = {}
+	_landmark_sites_built = false
+	# ...and the FIELD_ALTITUDE spike's coarse road polyline, which is a window
+	# onto the same centreline. `update_chunks` rebuilds it for the new world.
+	_alt_road_segs = PackedVector4Array()
 
 
 func _roll_biome_offset() -> void:
@@ -8520,8 +8568,9 @@ func landmark_sites() -> Dictionary:
 	Pure in `run_seed` (and in the road centreline, which is itself pure in
 	run_seed), so every peer in a room and every regeneration of the same run agree
 	for free — the same argument the old per-chunk roll made, one level up. Built
-	lazily on the first ask and dropped by new_run() beside the station cache it is
-	derived from; see the MUSEUM MILE banner for the design.
+	lazily on the first ask and dropped by `set_run_seed()` (through
+	`_drop_seeded_memos()`) beside the station cache it is derived from; see the
+	MUSEUM MILE banner for the design.
 	"""
 	if _landmark_sites_built:
 		return _landmark_sites_cache
@@ -11478,7 +11527,8 @@ func _tower_reset() -> void:
 	is about the BUILDING: a shell carries the old world's opened gates, captives
 	and guards, and a new run must not inherit them.
 
-	Called from new_run() after the seed is set and before any chunk is rebuilt.
+	Called from `set_run_seed()` — the seed write, every door — and so before any
+	chunk is rebuilt.
 	The shell is the one thing in this file that survives a chunk wipe, so it is
 	also the one thing a new run has to free by hand; the impostor is repositioned
 	rather than rebuilt, because its geometry does not depend on the seed.
@@ -11505,7 +11555,9 @@ func _tower_reset() -> void:
 # the per-run run_seed (constant for the whole run). There is no per-chunk RNG and no
 # per-frame state, so the road is identical for a given `k` no matter which chunk asks
 # for it or in what order — that is what makes the trail seamless across chunk
-# boundaries and reproducible on revisit. Only new_run() (a fresh run) changes it.
+# boundaries and reproducible on revisit. Only a new seed changes it, and the
+# memos derived from it are dropped where that seed is WRITTEN — see
+# `_drop_seeded_memos()`.
 
 func _road_hash01(k: int) -> float:
 	"""
@@ -11715,7 +11767,8 @@ func _road_terminal_k() -> int:
 	west of ROAD_TERMINAL_X. Every road CONSUMER stops here (bead godot-test1-8gw.3).
 
 	@return: The terminal station index. Memoized for the run in
-	         `_road_terminal_k_cache`, which new_run() resets with the station cache.
+	         `_road_terminal_k_cache`, which `set_run_seed()` drops beside the
+	         station cache it is derived from (`_drop_seeded_memos()`).
 
 	WHY THE CAP IS ON THE CONSUMERS AND NOT ON _road_extend_to_x.
 	It would be tempting to simply stop growing the cache past the terminal. That
@@ -12103,7 +12156,7 @@ func _field_bridge_wet_metres(k: int) -> float:
 
 	MEMOIZED per station, and it is the hot path of the whole feature: every
 	station in a scan window is asked as `k` and again as `k - 1`, and the growth
-	loops ask it again. new_run() drops it with the bridges it feeds.
+	loops ask it again. `_drop_seeded_memos()` drops it with the bridges it feeds.
 	"""
 	if _field_bridge_wet_cache.has(k):
 		return _field_bridge_wet_cache[k]
@@ -12393,7 +12446,8 @@ func field_bridge_at(k0: int) -> Dictionary:
 
 	MEMOIZED, because every chunk within a bridge's reach re-asks this and the
 	answer is a pure function of (k0, run_seed) through the road cache and the
-	river field. new_run() clears it beside the station cache it is derived from.
+	river field. `_drop_seeded_memos()` clears it beside the station cache it is
+	derived from.
 
 	THE CAP IS A LAKE, NOT A LONGER BRIDGE. Past FIELD_BRIDGE_MAX_SPAN of wet
 	centreline the road is not crossing a river, it is running into standing
@@ -14348,8 +14402,8 @@ func _approach_coin_line() -> PackedVector2Array:
 	@return: The shared, memoized line. Callers must not mutate it.
 
 	Memoized because every chunk in the world asks for it and it is a pure function
-	of the terminal station — which is fixed for the run. new_run() resets it
-	beside _road_terminal_k_cache, the one seeded input it has.
+	of the terminal station — which is fixed for the run. `_drop_seeded_memos()`
+	drops it beside _road_terminal_k_cache, the one seeded input it has.
 
 	The resampling itself lives in BudapestPlan.approach_coin_line(), with the rest
 	of the corridor's arithmetic, so the coins and the clearance swath keep reading
@@ -14693,11 +14747,11 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	1. Set run_seed — re-rolled at random, or taken from forced_seed. Every hash
 	   site mixes it in, so all downstream content (blocks, crocodiles, road,
 	   coins) comes out of that one number.
-	2. Clear the road station cache — its entries were computed with the OLD seed
-	   and would poison the new road (the cache is "correct forever" only while the
-	   seed is constant). Reset the bounds to the empty sentinel (min > max) exactly
-	   as declared, so the next _road_extend_to_x re-seeds station 0. Also clear both
-	   pending queues — anything queued was computed for the old world.
+	2. Clear both pending queues — anything queued was computed for the old world.
+	   The SEED-derived memos (the road station cache and everything strung along
+	   it) are NOT cleared here: step 1's seed write drops them, in
+	   `_drop_seeded_memos()`, because `set_run_seed()` is the only seam every
+	   door goes through. These two queues are CHUNK state, so they stay.
 	3. Free every active chunk and clear the dictionary — old-world geometry.
 	4. Rebuild around chunk `around` (the spawn chunk (0,0) unless a caller says
 	   otherwise) via update_chunks — which floors that chunk + SYNC_RING ring 1
@@ -14719,37 +14773,18 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 		set_run_seed(int(forced_seed))
 	_apply_biome_shader_params()
 
-	# 2. Road cache back to its declared empty state, and BOTH old-world pending
-	# queues emptied (update_chunks below rebuilds them for the new world anyway;
-	# clearing here just makes the invariant explicit). The removal queue in
-	# particular holds bare coordinates, and step 3 is about to free everything
-	# they name — leaving stale ones around a rebuild that re-uses the same
-	# coordinates is how a brand-new chunk would get freed a frame later.
-	road_stations = {}
-	road_k_min = 1
-	road_k_max = 0
-	# The terminal station is derived from the centreline, so it is exactly as
-	# stale as the cache above: a new seed puts a different station at
-	# ROAD_TERMINAL_X. Reset it HERE, beside what it is derived from, so the two
-	# can never be reset apart.
-	_road_terminal_k_cache = ROAD_TERMINAL_K_UNSET
-	# ...and the field bridges, for the same reason one step further out: a
-	# crossing is a station index plus the river field, and both moved. The
-	# corridor's are derived from the terminal station, so they go with them.
-	_field_bridge_cache = {}
-	_field_bridge_wet_cache = {}
-	_approach_bridge_cache = []
-	_approach_bridge_scanned = false
-	# ...and the approach coin line with it: it is resampled off that station.
-	_approach_coin_line_cache = PackedVector2Array()
-	# ...and the museum mile: every site is a station index on the centreline
-	# above, so a table kept across a re-seed would string this run's landmarks
-	# along the LAST run's road (see the MUSEUM MILE banner).
-	_landmark_sites_cache = {}
-	_landmark_sites_built = false
-	# ...and the spike's coarse road polyline, which is a window onto the same
-	# centreline. update_chunks in step 4 below rebuilds it for the new world.
-	_alt_road_segs = PackedVector4Array()
+	# 2. BOTH old-world pending queues emptied (update_chunks below rebuilds them
+	# for the new world anyway; clearing here just makes the invariant explicit).
+	# The removal queue in particular holds bare coordinates, and step 3 is about
+	# to free everything they name — leaving stale ones around a rebuild that
+	# re-uses the same coordinates is how a brand-new chunk would get freed a
+	# frame later.
+	#
+	# THE ROAD MEMOS ARE NOT HERE ANY MORE (bead godot-test1-bvq). The station
+	# cache and everything derived from it are SEED-derived, so they are dropped
+	# by `_drop_seeded_memos()` inside `set_run_seed()`, which step 1 above has
+	# already called down both branches. These two queues stay because they are
+	# CHUNK state, not seed state: a bare re-seed does not free a chunk.
 	pending_chunks.clear()
 	pending_removals.clear()
 

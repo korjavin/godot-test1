@@ -26,7 +26,8 @@ extends Node3D
 ##     blocked > hold-off → HONK with per-car cooldown; blocked far too long →
 ##     recycle out of sight (never drive through the player).
 ##   * Budget: hard TRAFFIC_MAX (16 web / 32 desktop, was 30/60) rendered via ONE
-##     MultiMeshInstance3D (one mesh, one shared StandardMaterial3D, colour
+##     MultiMeshInstance3D (one mesh, one shared ShaderMaterial on the world's
+##     own block shader since bead y1o.15, colour
 ##     variety via per-instance colours, never a material per car) → 1 draw call.
 ##     Density cut roughly in half on web (≈1 car per 35m of avenue within the
 ##     110m bubble) so gaps read, not clumps; SPAWN_RADIUS kept at 110m so
@@ -189,18 +190,46 @@ const CAR_PROXY_REACH: float = 8.0
 const CAR_PROXY_HALF := Vector2(CAR_WIDTH * 0.5, CAR_LENGTH * 0.5)
 const CAR_PROXY_HEIGHT: float = 1.15
 
-static var _shared_material: StandardMaterial3D = null
+## How tall the welded car mesh is, tyre contact patch to roof trim — the span
+## the top-lit gradient is measured over (bead `godot-test1-y1o.15`). It is NOT
+## `CAR_PROXY_HEIGHT`, which happens to be the same number for an unrelated
+## reason (that one is a collider, deliberately "the chassis and cabin, not the
+## roof trim"); a shading span and a physics box must not be one constant.
+const CAR_MESH_TOP: float = 1.15
+
+static var _shared_material: ShaderMaterial = null
 static var _shared_mesh: ArrayMesh = null
 static var _box_cache: Dictionary = {}
 
-static func _get_shared_material() -> StandardMaterial3D:
+static func _get_shared_material() -> Material:
+	## The ONE material of the ONE traffic MultiMesh — now the WORLD'S OWN block
+	## shader (bead `godot-test1-y1o.15`, style direction A), the crowd's change
+	## one file along and for the same reason: a flat-lit car parked against a
+	## gradient-shaded street reads as a decal.
+	##
+	## `_add_box` welds every box at its BODY offset, so model-space `VERTEX.y`
+	## runs wheels-to-roof over the whole car — `height_range`'s reason to exist.
+	## The paint still arrives through `COLOR` (the mesh's vertex colours times
+	## the per-instance colour of a `use_colors` MultiMesh), so `albedo` stays at
+	## its white default.
+	##
+	## THREE StandardMaterial3D PROPERTIES ARE GONE. `cull_mode = CULL_BACK` is
+	## `world_block.gdshader`'s own `render_mode`, so that one is free.
+	## `vertex_color_is_srgb` has no equivalent either, and dropping it makes the
+	## cars a shade brighter on desktop — see the crowd's copy of that note for
+	## why it is the consistent answer and for what about it was NOT measured.
+	## `metallic = 0.08` HAS no equivalent: the shader writes ALBEDO and
+	## ROUGHNESS and nothing else, so the cars lose a very slight sheen. That is
+	## the bead's own call — if the owner misses it, it is one more uniform on a
+	## shader every chunk in the world already runs.
 	if _shared_material == null:
-		_shared_material = StandardMaterial3D.new()
-		_shared_material.vertex_color_use_as_albedo = true
-		_shared_material.vertex_color_is_srgb = true
-		_shared_material.roughness = 0.78
-		_shared_material.metallic = 0.08
-		_shared_material.cull_mode = BaseMaterial3D.CULL_BACK
+		_shared_material = ShaderMaterial.new()
+		_shared_material.shader = ChunkBatch.WORLD_BLOCK_SHADER
+		_shared_material.set_shader_parameter("height_range",
+				Vector2(0.0, CAR_MESH_TOP))
+		_shared_material.set_shader_parameter("block_roughness", 0.78)
+		_shared_material.set_shader_parameter("bottom_shade",
+				ChunkBatch.BLOCK_BOTTOM_SHADE)
 	return _shared_material
 
 static func _box_mesh(size: Vector3) -> BoxMesh:
