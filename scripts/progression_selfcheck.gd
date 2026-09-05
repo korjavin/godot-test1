@@ -1395,6 +1395,14 @@ func _check_panel_spends_and_releases_its_pause() -> void:
 	# "not paused afterwards" is true of a panel that never pauses at all.
 	if not root.get_tree().paused:
 		_fail("opening the skill panel did not pause the tree")
+	# ...AND THE CARD IS ON SCREEN. Everything else here drives methods, so an open
+	# panel that draws nothing passes the whole check: bead godot-test1-y1o.30 moved
+	# the card one level deeper (a hairline stack above it) and `_set_panel_open`'s
+	# `_card.get_parent()` then flipped the wrong node's `visible` — a panel that
+	# paused the world and showed a black screen, invisible to every assertion here.
+	if not _panel_card_visible(panel):
+		_fail("the skill card is not visible after opening — the panel paused the "
+			+ "world and drew nothing")
 
 	var hero: String = String(Progression.SKILL_TREES.keys()[0])
 	panel._view_hero = hero
@@ -1414,10 +1422,22 @@ func _check_panel_spends_and_releases_its_pause() -> void:
 	panel._set_panel_open(false)
 	if root.get_tree().paused:
 		_fail("closing the skill panel left the tree paused")
+	if _panel_card_visible(panel):
+		_fail("closing the skill panel left the card on screen")
 
 	panel.queue_free()
 	progression.free()
 	Sentinel.done("panel_spends_and_releases_its_pause")
+
+
+## Is the card really on screen? `is_visible_in_tree()` off the CARD, so it asks
+## every ancestor between the card and the root — which is the whole point: the
+## bug this catches was one wrapper in the middle left hidden while the node the
+## panel flipped was visible. Reached by NAME rather than through a member var,
+## so the panel is free to re-parent its own card without editing this check.
+func _panel_card_visible(panel: Control) -> bool:
+	var card := panel.find_child("Card", true, false) as CanvasItem
+	return card != null and card.is_visible_in_tree()
 
 
 # =============================================================================

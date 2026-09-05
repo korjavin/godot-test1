@@ -84,6 +84,32 @@ extends Control
 ## fixed column width and the card grows downward; the only strings measured
 ## against a hard width in `locale_selfcheck.gd` are the ones that cannot wrap —
 ## the node names on their buttons.
+##
+## ----------------------------------------------------------------------------
+## The skin is `HudTheme`'s, and this file owns none of it (bead godot-test1-y1o.30)
+## ----------------------------------------------------------------------------
+## The root adopts `theme = HudTheme.theme()` — on THIS Control and nowhere higher,
+## which is the seam's rule — so the card is an opaque INK modal with a 2 px STEEL
+## frame and a hard shadow, and every button is the theme's. The five `COLOR_*`
+## consts and the card's hand-built `StyleBoxFlat` are gone; not one colour is
+## typed in this file.
+##
+## THE RANK IS PIPS, NOT A COUNTER. `max_ranks` runs 1 to 3 across the whole of
+## `Progression`, so a node's rank is a row of small squares — STEEL for a rank
+## you have not bought, VISOR_AMBER for one you have — and the `"   %d/%d"` that used to be
+## composed onto every node name is gone with it. That is the card region's ONE
+## amber; the opener button's `(N)` is the other region's, and the tabs, headings
+## and node labels are BONE / UNIT_KHAKI so the accent stays rationed.
+##
+## EVERY HEADING IS CAPS, AND `_caps()` IS WHY IT CAN BE. Godot's `to_upper()`
+## has no single-character uppercase for ß, so a bare `.to_upper()` renders the
+## German branch names "Windstoß" and "Größe" as `WINDSTOß` / `GRÖßE` — a
+## lowercase letter stranded mid-word. German's own rule is that the capital of ß
+## is SS (Duden), which is one `replace` and is what this file's headings go
+## through. Losing the free auto-translation is not a cost here: `_notification`
+## rebuilds an open panel on a locale change and a closed one rebuilds on open,
+## so a heading assigned `tr(...)` live-switches exactly like a plain literal —
+## the help card (bead y1o.28) had no such rebuild and left its button alone.
 
 # ============================================================================
 # CONSTANTS — layout
@@ -91,7 +117,14 @@ extends Control
 
 ## The always-visible opener, parked top-right under the ability dial (which ends
 ## at y = 270 in `main.tscn`).
-const BUTTON_WIDTH: float = 124.0
+##
+## 124 -> 138 WITH THE SKIN, and the 14 px is `HudTheme`'s button padding rather
+## than taste: `HudTheme.button()` puts `CARD_PADDING` (12) on each side against
+## the engine default's ~4, and `locale_selfcheck` budgets "Skills" at 84 px with
+## a further ~30 reserved for the " (N)" suffix. 138 - 24 = 114 = 84 + 30, so the
+## shipped budget stays exactly as true as it was; leaving it at 124 would have
+## made that budget loose by 14 px without a line of the check changing.
+const BUTTON_WIDTH: float = 138.0
 const BUTTON_HEIGHT: float = 34.0
 const BUTTON_TOP: float = 278.0
 const EDGE_MARGIN: float = 16.0
@@ -109,21 +142,23 @@ const NODE_HEIGHT: float = 48.0
 const TAB_HEIGHT: float = 40.0
 const ACTION_HEIGHT: float = 44.0
 
+## EVERY ONE OF THESE IS THE SIZE `locale_selfcheck`'s budget table names, so they
+## did not move with the skin: a budget row carries its font size, and changing
+## one here without the matching edit there measures German at a size nothing
+## draws. `HudTheme` ships `HEADING_FONT_SIZE` (20) and `BODY_FONT_SIZE` (14) —
+## the title's 22 is this card's own title size and is the theme gap the modal
+## beads leave open; `DESC_FONT_SIZE` happens to equal the theme's body size and
+## is kept as a named constant only because the budget comments point at it.
 const TITLE_FONT_SIZE: int = 22
 const BRANCH_FONT_SIZE: int = 16
 const NODE_FONT_SIZE: int = 18
 const DESC_FONT_SIZE: int = 14
 const TAB_FONT_SIZE: int = 16
 
-## Node colouring. A node you can buy right now is the only one that is bright —
-## everything else is dimmed rather than `disabled`, because Godot greys a
-## disabled Button's label to near-unreadable and "what does this do?" is exactly
-## what a locked node still has to answer.
-const COLOR_AVAILABLE: Color = Color(1.0, 0.92, 0.6)
-const COLOR_MAXED: Color = Color(0.55, 0.85, 0.55)
-const COLOR_LOCKED: Color = Color(0.58, 0.61, 0.68)
-const COLOR_DESC: Color = Color(0.72, 0.75, 0.82)
-const COLOR_HEADING: Color = Color(0.7, 0.85, 1.0)
+## One rank pip. `max_ranks` runs 1 to 3 across the whole of `Progression`, so
+## this is at most three squares per node and never a bar worth measuring.
+const PIP_SIZE: float = 10.0
+const PIP_GAP: int = 4
 
 ## The open/close key. Raw keycode, outside the input map — see the header.
 const TOGGLE_KEY: Key = KEY_K
@@ -152,6 +187,8 @@ var _last_points: int = -1
 # --- Child node references (built in _ready, not from a .tscn) --------------
 
 var _open_button: Button = null
+## The full-rect modal wrapper — the node whose `visible` IS "the panel is open".
+var _centre: CenterContainer = null
 var _card: PanelContainer = null
 var _title_label: Label = null
 var _hint_label: Label = null
@@ -170,6 +207,9 @@ func _ready() -> void:
 	# empty space still reach the HUD siblings drawn beneath it. The open button
 	# and the card carry their own STOP filter.
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# THE SKIN, adopted on our own root and inherited by everything under it.
+	# Never on the scene root and never in ProjectSettings — see `hud_theme.gd`.
+	theme = HudTheme.theme()
 	add_to_group("skill_tree_ui")
 	_build_ui()
 
@@ -253,24 +293,32 @@ func _build_ui() -> void:
 	# --- The card --------------------------------------------------------
 	# A CenterContainer so the card sizes to its own content and stays centred at
 	# any resolution, exactly like `start_overlay.gd`'s.
-	var centre := CenterContainer.new()
-	centre.name = "Centre"
-	centre.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_centre = CenterContainer.new()
+	_centre.name = "Centre"
+	_centre.set_anchors_preset(Control.PRESET_FULL_RECT)
 	# STOP, not IGNORE: while the card is up it is a modal and has to swallow every
 	# click, or the desktop-web click-to-capture fires through it.
-	centre.mouse_filter = Control.MOUSE_FILTER_STOP
-	centre.visible = false
-	add_child(centre)
+	_centre.mouse_filter = Control.MOUSE_FILTER_STOP
+	_centre.visible = false
+	add_child(_centre)
+
+	# The stack the card lives in, so the BONE letterbox hairline can sit ON its
+	# top edge: a `StyleBoxFlat` has ONE border colour, so a BONE top edge over a
+	# STEEL frame is not something `HudTheme.card()` can express — it is a sibling
+	# one pixel tall. Separation 0 keeps the two flush.
+	var stack := VBoxContainer.new()
+	stack.name = "Stack"
+	stack.add_theme_constant_override("separation", 0)
+	_centre.add_child(stack)
+	stack.add_child(_rule(HudTheme.BONE))
 
 	_card = PanelContainer.new()
 	_card.name = "Card"
 	_card.custom_minimum_size = Vector2(CARD_WIDTH, 0.0)
-	var card_style := StyleBoxFlat.new()
-	card_style.bg_color = Color(0.05, 0.06, 0.09, 0.94)
-	card_style.set_corner_radius_all(14)
-	card_style.set_content_margin_all(18)
-	_card.add_theme_stylebox_override("panel", card_style)
-	centre.add_child(_card)
+	# The modal case: opaque INK, a 2 px STEEL frame, a hard offset shadow and
+	# square corners — the whole panel language, typed nowhere in this file.
+	_card.add_theme_stylebox_override("panel", HudTheme.card(true))
+	stack.add_child(_card)
 
 	var scroll := ScrollContainer.new()
 	scroll.name = "Scroll"
@@ -287,14 +335,19 @@ func _build_ui() -> void:
 
 	_title_label = Label.new()
 	_title_label.name = "Title"
+	# Oswald BOLD; BONE comes off the theme's `Label` colour. The caps are applied
+	# where the string is COMPOSED (`_rebuild`), which is the spec's draw site.
+	_title_label.add_theme_font_override("font", HudTheme.heading_font())
 	_title_label.add_theme_font_size_override("font_size", TITLE_FONT_SIZE)
-	_title_label.add_theme_color_override("font_color", COLOR_HEADING)
 	vbox.add_child(_title_label)
+	# The STEEL rule the spec puts under every section heading.
+	vbox.add_child(_rule(HudTheme.STEEL))
 
 	_hint_label = Label.new()
 	_hint_label.name = "Hint"
+	# Secondary text is STEEL.
 	_hint_label.add_theme_font_size_override("font_size", DESC_FONT_SIZE)
-	_hint_label.add_theme_color_override("font_color", COLOR_DESC)
+	_hint_label.add_theme_color_override("font_color", HudTheme.STEEL)
 	_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vbox.add_child(_hint_label)
 
@@ -303,14 +356,18 @@ func _build_ui() -> void:
 	_tab_row.add_theme_constant_override("separation", 6)
 	vbox.add_child(_tab_row)
 
-	vbox.add_child(HSeparator.new())
+	# A STEEL rule, not an `HSeparator`: the separator's line comes off the engine
+	# default theme, which is a colour this file would then not own.
+	vbox.add_child(_rule(HudTheme.STEEL))
 
 	_columns = HBoxContainer.new()
 	_columns.name = "Branches"
 	_columns.add_theme_constant_override("separation", 16)
 	vbox.add_child(_columns)
 
-	vbox.add_child(HSeparator.new())
+	# A STEEL rule, not an `HSeparator`: the separator's line comes off the engine
+	# default theme, which is a colour this file would then not own.
+	vbox.add_child(_rule(HudTheme.STEEL))
 	vbox.add_child(_make_button("Close", _on_close_pressed, ACTION_HEIGHT))
 
 
@@ -324,6 +381,49 @@ func _make_button(label: String, handler: Callable, height: float) -> Button:
 	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	button.pressed.connect(handler)
 	return button
+
+
+## THE CAPS RULE, and it is German orthography rather than a style choice.
+## `String.to_upper()` maps ß to itself — Godot has no single-character uppercase
+## for it — so "Windstoß" comes back as `WINDSTOß`. German capitalises ß as SS,
+## which is one `replace` and correct in both languages (English carries no ß, so
+## this is `to_upper()` exactly). Every caps heading in this file goes through it.
+static func _caps(text: String) -> String:
+	return text.replace("ß", "ss").to_upper()
+
+
+## One hairline. `HudTheme` has no builder for either of the two this card wants
+## (the BONE letterbox line over the card, the STEEL rule under a heading) and its
+## closing note names the modal beads as the first that would need one — so it
+## lives here, six lines, until a second panel asks for it.
+func _rule(colour: Color) -> ColorRect:
+	var rect := ColorRect.new()
+	rect.color = colour
+	rect.custom_minimum_size = Vector2(0.0, 1.0)
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return rect
+
+
+## The rank readout: one square per rank, VISOR_AMBER for the ranks bought and
+## STEEL for the ranks left. It replaces the `"   %d/%d"` that used to be composed
+## onto the node's own name, which is why the button below carries the name alone.
+##
+## ponytail: a row of `ColorRect`s and not a drawn widget — `max_ranks` never
+## exceeds 3 in `Progression`, so this is at most three nodes per skill. A real
+## meter is worth writing the day a node has ten ranks.
+func _pips(rank: int, max_ranks: int) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.name = "Ranks"
+	row.alignment = BoxContainer.ALIGNMENT_END
+	row.add_theme_constant_override("separation", PIP_GAP)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for i in maxi(max_ranks, 1):
+		var pip := ColorRect.new()
+		pip.color = HudTheme.VISOR_AMBER if i < rank else HudTheme.STEEL
+		pip.custom_minimum_size = Vector2(PIP_SIZE, PIP_SIZE)
+		pip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(pip)
+	return row
 
 
 # ============================================================================
@@ -380,9 +480,12 @@ func _set_panel_open(open: bool) -> void:
 		# tree looked at — the tree you want is almost always the one you are in.
 		_view_hero = _active_hero()
 	_panel_open = open
-	var centre := _card.get_parent() as Control
-	if centre != null:
-		centre.visible = open
+	# `_centre`, NOT `_card.get_parent()`: the card's parent is the hairline stack
+	# since the skin landed, and walking up one level silently flipped the wrong
+	# node's `visible` — the panel opened and drew nothing. A modal this file
+	# builds is a modal this file should hold a name for.
+	if _centre != null:
+		_centre.visible = open
 	if open:
 		# Clamp the card to the visible viewport on every open (a phone's scaled
 		# viewport is much shorter than a desktop one, and an orientation change
@@ -455,8 +558,11 @@ func _refresh_open_button() -> void:
 		return
 	_last_points = points
 	_open_button.text = tr("Skills") + (" (%d)" % points if points > 0 else "")
+	# THE OPENER'S REGION GETS THE AMBER: an unspent point is the one thing on this
+	# corner of the screen the player is meant to act on. BONE when there is
+	# nothing to spend — never pure white, which is the palette's own rule.
 	_open_button.add_theme_color_override(
-		"font_color", COLOR_AVAILABLE if points > 0 else Color.WHITE
+		"font_color", HudTheme.VISOR_AMBER if points > 0 else HudTheme.BONE
 	)
 
 
@@ -470,16 +576,21 @@ func _rebuild() -> void:
 	_rebuild_columns(progression)
 
 	if progression == null:
-		_title_label.text = tr("Skills")
+		_title_label.text = _caps(tr("Skills"))
 		_hint_label.text = tr("No progression in this scene.")
 		return
 	var points: int = int(progression.unspent_points())
 	# RULE 2: `tr()` on the FORMAT STRING, never on the formatted result. The hero
 	# name is a proper noun (Windman, Primm, Teibi, Phoboman) and stays as it is in
 	# every language, like the EN/DE pills on the start screen.
-	_title_label.text = tr("%s — Level %d,  %d points") % [
+	#
+	# `.to_upper()` AT THE DRAW SITE, which this legitimately is: the string is
+	# composed here, so there is no auto-translation to lose, and the German row
+	# ("%s — Stufe %d,  %d Punkte") carries no ß to mangle. The branch headings
+	# below are the opposite case on both counts and stay sentence case.
+	_title_label.text = _caps(tr("%s — Level %d,  %d points") % [
 		_view_hero.capitalize(), int(progression.level), points
-	]
+	])
 	if points > 0:
 		_hint_label.text = tr("Press a skill to spend a point.")
 	else:
@@ -501,8 +612,14 @@ func _rebuild_tabs(progression: Node) -> void:
 		button.add_theme_font_size_override("font_size", TAB_FONT_SIZE)
 		button.custom_minimum_size = Vector2(0.0, TAB_HEIGHT)
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		# THE SELECTED TAB IS A PRESSED BUTTON, not an amber one: the spec rations
+		# the accent to one thing per region and the card's is the rank pips, so
+		# "which tree am I looking at" is said with the INK face the theme already
+		# gives a pressed button, plus BONE letters against the others' khaki.
+		if hero == _view_hero:
+			button.add_theme_stylebox_override("normal", HudTheme.button("pressed"))
 		button.add_theme_color_override(
-			"font_color", COLOR_AVAILABLE if hero == _view_hero else COLOR_LOCKED
+			"font_color", HudTheme.BONE if hero == _view_hero else HudTheme.UNIT_KHAKI
 		)
 		button.pressed.connect(_on_hero_tab_pressed.bind(hero))
 		_tab_row.add_child(button)
@@ -531,10 +648,15 @@ func _rebuild_columns(progression: Node) -> void:
 		column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 		var heading := Label.new()
-		heading.text = branch  # a plain literal: auto-translated, RULE 1
+		# `tr()` + `_caps()` rather than the plain literal RULE 1 would allow: the
+		# spec wants caps, and two of the five German branch names carry a ß. The
+		# live switch survives because `_notification` rebuilds an open panel and
+		# opening rebuilds a closed one. Oswald BOLD, BONE off the theme.
+		heading.text = _caps(tr(branch))
+		heading.add_theme_font_override("font", HudTheme.heading_font())
 		heading.add_theme_font_size_override("font_size", BRANCH_FONT_SIZE)
-		heading.add_theme_color_override("font_color", COLOR_HEADING)
 		column.add_child(heading)
+		column.add_child(_rule(HudTheme.STEEL))
 
 		for def: Dictionary in by_branch[branch]:
 			_add_node_row(column, progression, def)
@@ -545,30 +667,32 @@ func _add_node_row(column: VBoxContainer, progression: Node, def: Dictionary) ->
 	var skill_id := String(def["id"])
 	var rank: int = int(progression.rank_of(_view_hero, skill_id))
 	var max_ranks: int = int(def.get("max_ranks", 1))
-	var unlocked: bool = bool(progression.is_unlocked(_view_hero, skill_id))
 	var affordable: bool = bool(progression.can_spend(_view_hero, skill_id))
 
 	var button := Button.new()
 	button.focus_mode = Control.FOCUS_NONE  # see `_build_ui`
-	# RULE 2 again: the name is its own translation key, and the rank counter is
-	# composed onto it, so the `tr()` goes on the name before the `%`.
-	button.text = "%s   %d/%d" % [tr(String(def.get("name", skill_id))), rank, max_ranks]
+	# THE NAME ALONE. The `"   %d/%d"` counter that used to be composed on here is
+	# the pip row below, so this is a plain `tr()` of the name and nothing else —
+	# which also hands `locale_selfcheck`'s 232 px node-name budget back the ~48 px
+	# it reserved for that counter (see the PR: the budget is now conservative, and
+	# tightening it is the shared check's edit, not this file's).
+	button.text = tr(String(def.get("name", skill_id)))
 	button.add_theme_font_size_override("font_size", NODE_FONT_SIZE)
 	button.custom_minimum_size = Vector2(0.0, NODE_HEIGHT)
 	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var colour: Color = COLOR_LOCKED
-	if rank >= max_ranks:
-		colour = COLOR_MAXED
-	elif affordable:
-		colour = COLOR_AVAILABLE
+	# BONE for a node you can buy now, UNIT_KHAKI — the palette's neutral/disabled
+	# role — for everything else. A MAXED node needs no colour of its own any more:
+	# its pips are all amber, which says "done" better than a green label did.
 	for state: String in ["font_color", "font_hover_color", "font_pressed_color"]:
-		button.add_theme_color_override(state, colour)
+		button.add_theme_color_override(
+			state, HudTheme.BONE if affordable else HudTheme.UNIT_KHAKI)
 	# Not `disabled`: a greyed Button's label is close to unreadable, and a locked
 	# node still has to say what it would do. The press is validated by
 	# `Progression.can_spend()` inside `spend()` anyway, so an unaffordable press
 	# is simply a no-op — the rules stay in one place.
 	button.pressed.connect(_on_node_pressed.bind(skill_id))
 	column.add_child(button)
+	column.add_child(_pips(rank, max_ranks))
 
 	var desc := Label.new()
 	# Autowrap inside the fixed column, which is how German (~30% longer) is
@@ -577,7 +701,12 @@ func _add_node_row(column: VBoxContainer, progression: Node, def: Dictionary) ->
 	desc.text = String(def.get("desc", ""))  # a plain literal: auto-translated
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	desc.add_theme_font_size_override("font_size", DESC_FONT_SIZE)
-	desc.add_theme_color_override("font_color", COLOR_DESC if unlocked else COLOR_LOCKED)
+	# ponytail: ONE colour for every description, where there used to be two — and
+	# `is_unlocked()` is no longer asked here at all. The locked/available read is
+	# the button's own label plus the pips; a second dim grey under them said
+	# nothing the row was not already saying, and STEEL is the palette's own
+	# "inactive text". Re-split it the day a description has to differ by state.
+	desc.add_theme_color_override("font_color", HudTheme.STEEL)
 	desc.custom_minimum_size = Vector2(COLUMN_WIDTH - 8.0, 0.0)
 	column.add_child(desc)
 
