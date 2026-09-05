@@ -57,6 +57,15 @@ extends SceneTree
 ##      is asserted here too, with its replacement's geometry as the positive
 ##      control (an absent method is otherwise indistinguishable from a typo).
 ##
+##   6. THE CITY-BAND ROOF IS STANDABLE, measured with a REAL HERO (bead
+##      godot-test1-y1o.36, owner ruling 2026-09-05). The band's advertised rest
+##      spot is a pitched WEDGE, and since that bead it COLLIDES as the drawn
+##      prism rather than as a box over it — a difference every static
+##      measurement in this file reads identically and only a settled
+##      CharacterBody3D can see. Check 12 drops a player.tscn across one slope,
+##      holds him there with no input, and frees the roof's hulls as the mutation
+##      control.
+##
 ## HOUSE RULE, followed throughout: every check is an EFFECT measurement with a
 ## negative control, never a getter read-back. Check 1 is vacuous against a
 ## builder that emits nothing, so check 3's lower bound runs on the same batch;
@@ -239,6 +248,10 @@ func _run() -> void:
 		_check_snow_content(terrain_script, consts)
 		_check_forest_content(terrain_script, consts)
 		_check_prop_kinds(terrain_script, consts)
+		# The one check that runs a hero, so the one that needs physics frames.
+		# It is last for that reason: everything above is a pure measurement and
+		# stays synchronous.
+		await _check_hero_on_city_roof(terrain_script)
 
 	if _failures.is_empty():
 		print("props: %d builders x %d seeds x %d sizes measured; radius bound, climb ladder, box budget and chunk purity OK"
@@ -249,6 +262,7 @@ func _run() -> void:
 		print("snow:       mammoth radius bound, 2-collider budget, non-climbable footprints and the chunk seam OK")
 		print("forest:     chunk seam, one collider per tree, non-climbable footprints, leaf-shade spread and trunk lean OK")
 		print("kinds:      every builder's BoxKind set asserted both ways, plus the oasis boulders OK")
+		print("roof:       a real hero rests ON the city-band pitch, walks it, holds it and falls through with the hull freed OK")
 		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
@@ -1008,12 +1022,45 @@ func _check_city_content(terrain_script: GDScript, consts: Dictionary) -> void:
 			climbable += 1
 			worst_top = maxf(worst_top, float(ob["top"]))
 
+	# THE ROOF IS STANDABLE, so the jump is measured at the EAVE and the footprint's
+	# `top` is the RIDGE (bead godot-test1-y1o.36). Three assertions replace the
+	# one `top <= PROP_MAX_STEP` that used to stand here, and they are three
+	# because the footprint alone can no longer say all of it:
+	#   (a) the EAVE — the hull top, where a hero jumping from the pavement lands
+	#       — is one step. That is `CITY_HOUSE_HEIGHT_MAX` and it is read off the
+	#       constants, because a footprint records the ridge and not the eave.
+	#   (b) the PITCH is walkable. Each slope rises `roof_rise` over half the
+	#       roofed depth, so its gradient is `2 * CITY_ROOF_RISE_FACTOR` and it
+	#       must stay under TowerInterior.PLAN_RAMP_MAX_SLOPE — READ from that
+	#       script, never restated, exactly as every other outdoor slope in the
+	#       project reads it. Without this the hero slides off the roof he
+	#       just landed on and the ruling is undone by one constant.
+	#   (c) the measured `top` really IS the ridge and no higher: bounded by the
+	#       tallest house carrying the deepest roof. A `top` left at the hull would
+	#       pass (a) and (b) and quietly bury every perched coin inside the roof.
+	var height_max: float = float(consts["CITY_HOUSE_HEIGHT_MAX"])
+	var rise_factor: float = float(consts["CITY_ROOF_RISE_FACTOR"])
+	var eaves: float = float(consts["CITY_ROOF_EAVES"])
+	var roof_d_max: float = float(consts["CITY_HOUSE_WIDTH_MAX"]) \
+			* float(consts["CITY_HOUSE_DEPTH_FACTOR_MAX"]) + eaves * 2.0
+	var ridge_ceiling: float = height_max + roof_d_max * rise_factor
+	var slope: float = 2.0 * rise_factor
 	if climbable == 0:
 		_fail("%d city chunks produced NO climbable footprint at all — the roofs that are supposed to be the city's rest spots are not being recorded"
 				% city_chunks.size())
-	elif worst_top > max_step + EPSILON:
-		_fail("a city roof is recorded at %.3f m, past PROP_MAX_STEP %.2f — it cannot be jumped onto from the pavement"
-				% [worst_top, max_step])
+	else:
+		if height_max > max_step + EPSILON:
+			_fail("a city house hull reaches %.3f m, past PROP_MAX_STEP %.2f — the roof's EAVE is what you jump onto, so it cannot be higher than one step"
+					% [height_max, max_step])
+		if slope > TowerInterior.PLAN_RAMP_MAX_SLOPE + EPSILON:
+			_fail("the city roof pitch rises %.3f per metre of run (2 x CITY_ROOF_RISE_FACTOR %.3f), past TowerInterior.PLAN_RAMP_MAX_SLOPE %.3f — a hero who jumps onto the eave slides back off"
+					% [slope, rise_factor, TowerInterior.PLAN_RAMP_MAX_SLOPE])
+		if worst_top > ridge_ceiling + EPSILON:
+			_fail("a city roof footprint is recorded at %.3f m, above the tallest possible RIDGE %.3f — `top` must be the highest solid point over the house's own centre"
+					% [worst_top, ridge_ceiling])
+		elif worst_top <= max_step + EPSILON:
+			_fail("the tallest city roof footprint is %.3f m, at or under the hull ceiling %.2f — `top` is still the flat hull top, so every coin perched on a house is buried inside the pitched roof above it"
+					% [worst_top, max_step])
 
 	if worst_reach > half_chunk + EPSILON:
 		_fail("city geometry reaches %.2f m from the chunk centre, past the %.2f m seam — it would vanish with its own chunk"
@@ -1021,9 +1068,14 @@ func _check_city_content(terrain_script: GDScript, consts: Dictionary) -> void:
 
 	if boxes == 0:
 		_fail("the city builder emitted no geometry at all across %d city chunks" % city_chunks.size())
-	elif solids != footprints:
-		_fail("%d city buildings produced %d collision shapes — one per building is the budget; roofs, doors, windows, awnings, posts and lamps are supposed to be visual-only trim"
-				% [footprints, solids])
+	elif solids != footprints + climbable:
+		# EXACT, not a bound. A house is TWO shapes since bead godot-test1-y1o.36 —
+		# the hull and its standable WEDGE roof — and every other footprint here (a
+		# stall counter, a lamp mast) is still one. `climbable` IS the house count:
+		# the roofs are the only climbable footprints the band records, which is
+		# what lets this stay an equality rather than becoming "at most 2N".
+		_fail("%d city footprints (%d of them houses) produced %d collision shapes, wanted %d — a house is its hull plus its standable roof and everything else is one; doors, windows, awnings, posts and lamp shades are supposed to be visual-only trim"
+				% [footprints, climbable, solids, footprints + climbable])
 
 	# Both directions, over the same real chunks. The allowed SET first…
 	var allowed_city: Array[int] = [ChunkBatch.BoxKind.CUBE, ChunkBatch.BoxKind.WEDGE,
@@ -1704,3 +1756,292 @@ func _check_prop_kinds(terrain_script: GDScript, consts: Dictionary) -> void:
 
 	terrain.free()
 	Sentinel.done("prop_kinds")
+
+
+# ============================================================================
+# CHECK 12 — a REAL hero on a REAL city roof (bead godot-test1-y1o.36)
+# ============================================================================
+
+## The player scene the roof is measured with. A real body, a real capsule and
+## the shipped gravity — the only thing that can tell "the collider IS the prism"
+## apart from "the collider is a box over the prism", which every static
+## measurement in this file reads identically.
+const PLAYER_SCENE: String = "res://scenes/player.tscn"
+
+## How many physics frames a drop is given to settle before it counts as a hole.
+const SETTLE_FRAMES: int = 90
+
+## How long the hero is left standing on the pitch with no input, to see whether
+## he slides. One second at 60 Hz: a gradient CharacterBody3D refused to treat as
+## floor would carry him metres in that time.
+const HOLD_FRAMES: int = 60
+
+## How far he may drift horizontally over that hold. Depenetration nudges a
+## capsule a few millimetres on the frame it lands; sliding is decimetres.
+##
+## It is the SECOND net and says so: `floor_max_angle` is the shipped 45 degrees
+## (gradient 1.0), well past the 0.575 the pitch assertion already holds, so a
+## gradient steep enough to slide would fail `_stand` and be counted as a miss
+## first. This is what catches a slide that is NOT about the angle — a floor
+## snap that stopped working, a collider whose face is not where the mesh is.
+const HOLD_DRIFT_MAX: float = 0.05
+
+## How close a settled hero's feet must be to the analytic roof surface, and it
+## is DERIVED rather than fitted. A capsule resting on a plane tilted by `t`
+## touches it off to the side, so the point under its own axis — which is what
+## `global_position` reports — floats `r * (1 / cos t - 1)` above the plane. At
+## the shipped 0.5 m radius and the 0.56 gradient that is 0.072 m, and the
+## measured worst sample is 0.073. The bound is that with room for the tilt to be
+## retuned, and it is still far under the 1.0 m rise it would have to swallow to
+## confuse the pitch with the ridge or the eave.
+const SURFACE_EPSILON: float = 0.12
+
+## Where along the pitch the hero is dropped, as a fraction of the half-depth
+## measured from the RIDGE (0.0) out to the EAVE (1.0). Both ends are excluded
+## deliberately: the ridge is a line and the eave is an edge, and what is being
+## measured is the SLOPE between them.
+const PITCH_SAMPLES: Array[float] = [0.15, 0.35, 0.55, 0.75, 0.9]
+
+
+func _frames(n: int) -> void:
+	for _i in n:
+		await physics_frame
+
+
+func _stand(player: CharacterBody3D, at: Vector3) -> bool:
+	"""
+	Drop the hero at `at` and let him settle.
+
+	@return whether he ended on a floor — false is a hole in whatever he was
+	        aimed at, which is a finding and not an error.
+	"""
+	player.global_position = at
+	player.velocity = Vector3.ZERO
+	for _i in SETTLE_FRAMES:
+		await physics_frame
+		if player.is_on_floor():
+			return true
+	return false
+
+
+func _check_hero_on_city_roof(terrain_script: GDScript) -> void:
+	"""
+	THE ACCEPTANCE for the owner's "make roofs standable" (2026-09-05).
+
+	A REAL player.tscn is dropped onto a REAL city-band roof — the collision
+	shapes the shipped `_spawn_city_content` hung on the chunk's own body — at
+	five points across one slope, and at every one of them his feet must land on
+	the ANALYTIC PITCH: not on the hull top under it (which is what a
+	`collide = false` roof gives, and is the bug this bead exists for), and not on
+	a flat lid at ridge height (which is what a `BoxShape3D` over the prism would
+	give, and is why the WEDGE is the one kind that collides as a hull).
+
+	The pitch height is derived from the WEDGE's OWN BATCH ENTRY rather than from
+	the constants: the entry's basis is `rot.scaled_local(dimensions)`, so
+	`basis.inverse() * (p - origin)` puts a world column into unit-cube space,
+	where the prism's surface is exactly `y = 0.5 - 2 * |z|`. Measuring against
+	the drawn transform is the point — it makes "the solid is the prism" an
+	assertion about the two halves agreeing rather than about one of them.
+
+	THE FOOT OFFSET IS MEASURED, not assumed: the same body is first settled on a
+	flat slab at y = 0, and the difference between its origin and its feet is
+	whatever the shipped capsule says. So this check knows nothing about
+	`player.tscn`'s collision shape and does not rot when that changes.
+
+	THREE THINGS BEYOND THE HEIGHT, none of which the height alone can see:
+	  * HE DOES NOT SLIDE. A gradient past `floor_max_angle` is not floor, and
+	    `CharacterBody3D` walks it downhill for as long as you watch. One second
+	    of no input at mid-slope, against HOLD_DRIFT_MAX.
+	  * HE WALKS UP AND DOWN. The samples are driven ridge-ward and then
+	    eave-ward, and every one must land — a pitch with a hole in it settles him
+	    on the ground metres below, and this is what says so.
+	  * THE MUTATION: the roof's own hulls are freed and mid-slope re-driven. He
+	    must then fall THROUGH to the hull top, i.e. INSIDE the pitch — which is
+	    exactly the pre-bead world, and is what stops this check passing
+	    vacuously the day a roof stops colliding.
+	"""
+	var terrain := Node3D.new()
+	terrain.set_script(terrain_script)
+	terrain.set_run_seed(20260905)
+	var consts: Dictionary = terrain_script.get_script_constant_map()
+	var city_value: int = int((consts["Biome"] as Dictionary)["CITY"])
+
+	# A real city chunk, found the way check 7 finds its twelve.
+	var batch: Array = []
+	var body := StaticBody3D.new()
+	var obstacles: Array = []
+	var found_chunk := false
+	for cx in range(-40, 41):
+		for cz in range(-40, 41):
+			var centre: Vector3 = terrain.chunk_to_world(Vector2i(cx, cz))
+			if terrain.biome_at(centre.x, centre.z) != city_value:
+				continue
+			var rng := RandomNumberGenerator.new()
+			rng.seed = hash(Vector3i(cx, cz, 4242))
+			batch.clear()
+			obstacles.clear()
+			for old: Node in body.get_children():
+				body.remove_child(old)
+				old.free()
+			terrain.call("_spawn_city_content", centre, rng, obstacles, batch, body)
+			for ob_v: Variant in obstacles:
+				if bool((ob_v as Dictionary)["climbable"]):
+					found_chunk = true
+					break
+			if found_chunk:
+				break
+		if found_chunk:
+			break
+	if not found_chunk:
+		_fail("check 12 found no city chunk carrying a house — the acceptance never ran")
+		body.free()
+		terrain.free()
+		Sentinel.done("hero_on_city_roof")
+		return
+
+	# The house: its climbable footprint, and the WEDGE entry over that column.
+	var house: Dictionary = {}
+	var roof: Transform3D = Transform3D.IDENTITY
+	for ob_v: Variant in obstacles:
+		var ob: Dictionary = ob_v
+		if not bool(ob["climbable"]):
+			continue
+		for entry_v: Variant in batch:
+			var entry: Dictionary = entry_v
+			if int(entry["kind"]) != ChunkBatch.BoxKind.WEDGE:
+				continue
+			var xform: Transform3D = entry["transform"]
+			if Vector2(xform.origin.x - ob.pos.x, xform.origin.z - ob.pos.z).length() > 0.01:
+				continue
+			house = ob
+			roof = xform
+			break
+		if not house.is_empty():
+			break
+	if house.is_empty():
+		_fail("check 12 found a climbable city footprint with no WEDGE roof over it — "
+				+ "the house and its roof no longer share a centre column")
+		body.free()
+		terrain.free()
+		Sentinel.done("hero_on_city_roof")
+		return
+
+	# The prism, in its own frame. `basis.y` is (0, rise, 0) because a house
+	# carries yaw and no tilt, so the ridge is `origin.y + rise * 0.5`.
+	var rise: float = roof.basis.y.length()
+	var half_depth: float = roof.basis.z.length() * 0.5
+	var ridge_y: float = roof.origin.y + rise * 0.5
+	var eave_y: float = roof.origin.y - rise * 0.5
+	var to_local: Basis = roof.basis.inverse()
+	var across: Vector3 = roof.basis.z.normalized()
+	var base := Vector3(house.pos.x, 0.0, house.pos.z)
+
+	# ---- the tree: the chunk's real body, a ground slab, a real hero --------
+	root.add_child(body)
+	var ground := StaticBody3D.new()
+	var ground_shape := CollisionShape3D.new()
+	var ground_box := BoxShape3D.new()
+	ground_box.size = Vector3(200.0, 1.0, 200.0)
+	ground_shape.shape = ground_box
+	ground_shape.position = Vector3(base.x, -0.5, base.z)
+	ground.add_child(ground_shape)
+	root.add_child(ground)
+
+	var flat: Vector3 = base + across * (half_depth + 8.0) + Vector3(0.0, 1.0, 0.0)
+	var player: CharacterBody3D = (load(PLAYER_SCENE) as PackedScene).instantiate()
+	player.position = flat
+	root.add_child(player)
+	await _frames(4)
+
+	# The foot offset, measured on the flat slab beside the house.
+	if not await _stand(player, flat):
+		_fail("check 12's hero never landed on the flat ground beside the house — the harness is broken, not the roof")
+		player.queue_free()
+		ground.queue_free()
+		body.queue_free()
+		await _frames(2)
+		terrain.free()
+		Sentinel.done("hero_on_city_roof")
+		return
+	var foot_offset: float = player.global_position.y
+
+	# ---- the walk: ridge-ward, then eave-ward -------------------------------
+	var walk: Array[float] = []
+	walk.assign(PITCH_SAMPLES)
+	var back: Array[float] = []
+	back.assign(PITCH_SAMPLES)
+	back.reverse()
+	walk.append_array(back)
+
+	var missed := 0
+	var worst_gap := 0.0
+	# TWO messages, not one shared string: a sample that never landed and a sample
+	# that landed in the wrong place are different failures, and a single `worst`
+	# lets the later one describe the earlier one's assertion.
+	var first_miss := ""
+	var worst_gap_note := ""
+	for frac: float in walk:
+		var at: Vector3 = base + across * (half_depth * frac)
+		var u: Vector3 = to_local * (at - roof.origin)
+		var want: float = roof.origin.y + rise * (0.5 - 2.0 * absf(u.z))
+		if not await _stand(player, Vector3(at.x, ridge_y + 1.5, at.z)):
+			missed += 1
+			if first_miss == "":
+				first_miss = "the hero never settled at %.2f of the half-depth (y = %.2f, wanted %.2f)" \
+						% [frac, player.global_position.y, want]
+			continue
+		var got: float = player.global_position.y - foot_offset
+		var gap: float = absf(got - want)
+		if gap > worst_gap:
+			worst_gap = gap
+			worst_gap_note = ("at %.2f of the half-depth his feet rest at %.3f m; the pitch "
+					% [frac, got] + "there is %.3f m (hull top %.3f, ridge %.3f)"
+					% [want, eave_y, ridge_y])
+
+	# ---- he does not slide -------------------------------------------------
+	var hold_at: Vector3 = base + across * (half_depth * 0.55)
+	var drift := 0.0
+	if await _stand(player, Vector3(hold_at.x, ridge_y + 1.5, hold_at.z)):
+		var before: Vector3 = player.global_position
+		await _frames(HOLD_FRAMES)
+		drift = Vector2(player.global_position.x - before.x,
+				player.global_position.z - before.z).length()
+
+	# ---- the mutation: the roof stops colliding -----------------------------
+	# Freeing the hulls is "collide = false" after the fact, and the hull is the
+	# only shape type this body carries that is not a box.
+	var freed := 0
+	for child: Node in body.get_children():
+		var cs := child as CollisionShape3D
+		if cs != null and cs.shape is ConvexPolygonShape3D:
+			cs.queue_free()
+			freed += 1
+	await _frames(4)
+	var without: float = INF
+	if await _stand(player, Vector3(hold_at.x, ridge_y + 1.5, hold_at.z)):
+		without = player.global_position.y - foot_offset
+
+	print("  roof       %d pitch samples on a %.2f m rise (eave %.2f, ridge %.2f); worst gap %.3f m, drift %.3f m over %d frames; with %d roof hull(s) freed he rests at %.2f m"
+			% [walk.size(), rise, eave_y, ridge_y, worst_gap, drift, HOLD_FRAMES, freed, without])
+
+	if missed > 0:
+		_fail("%d of %d pitch samples never put the hero on the roof at all — the WEDGE hull has a hole in it or stands somewhere else entirely. First: %s"
+				% [missed, walk.size(), first_miss])
+	elif worst_gap > SURFACE_EPSILON:
+		_fail("the hero does not rest ON the pitch: %s. A collider that is the drawn prism puts him on the slope; a BoxShape3D over it floats him at ridge height, and no collider at all drops him onto the hull top INSIDE the roof"
+				% worst_gap_note)
+	if drift > HOLD_DRIFT_MAX:
+		_fail("standing on the pitch with no input the hero slid %.3f m in %d frames (limit %.2f) — the roof gradient is past what CharacterBody3D treats as floor; hold 2 x CITY_ROOF_RISE_FACTOR under TowerInterior.PLAN_RAMP_MAX_SLOPE"
+				% [drift, HOLD_FRAMES, HOLD_DRIFT_MAX])
+	if freed == 0:
+		_fail("the mutation control freed NO ConvexPolygonShape3D from the city chunk's body — the roof is not colliding as a hull, so check 12 is measuring something else")
+	elif absf(without - eave_y) > SURFACE_EPSILON:
+		_fail("with the roof's hulls freed the hero rests at %.3f m, not on the hull top %.3f — the mutation control does not reproduce the pre-bead world, so a roof that stopped colliding would not fail this check"
+				% [without, eave_y])
+
+	player.queue_free()
+	ground.queue_free()
+	body.queue_free()
+	await _frames(2)
+	terrain.free()
+	Sentinel.done("hero_on_city_roof")

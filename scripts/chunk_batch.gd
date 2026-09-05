@@ -89,7 +89,10 @@ static var _shared_unit_box_mesh: BoxMesh
 ## it" — a cylinder drum has a real flat top and a sphere a real curved one — but
 ## it IS still: a CONE collides as a box, so nothing may stand on a cone, and a
 ## climbable footprint (`obstacles`' flat-top contract, `_settle_coin_y`) wants a
-## CUBE, a CYLINDER or a ROCK and never a SPHERE.
+## CUBE, a CYLINDER or a ROCK and never a SPHERE — or a WEDGE, which since bead
+## godot-test1-y1o.36 is climbable and is the one kind that is NOT flat-topped:
+## its perch is the ridge LINE, and the cost of naming a line in a scalar `top`
+## is written out at the one consumer (`_spawn_city_content`'s house footprint).
 ##
 ## ROCK IS THE ONE KIND SHAPED BY A GAMEPLAY CONTRACT rather than by a primitive
 ## (bead godot-test1-y1o.3). Rocks and boulders are the second-most-frequent block
@@ -109,12 +112,18 @@ static var _shared_unit_box_mesh: BoxMesh
 ## because a PITCHED ROOF is the single biggest de-block change a house can get
 ## and NONE of the four round kinds can make one — a CONE (squashed or not) has a
 ## circular base under a rectangular hull, so it leaves the hull's four corners
-## bare and reads as a turret rather than a terrace. It keeps the `BoxShape3D`
-## like every other flat-based kind, which costs nothing today because the one
-## consumer (the city band's roof film) is `collide = false` and the hull under
-## it is the climbable surface. **Nothing may stand on a wedge**: its top is a
-## RIDGE, so a climbable footprint naming a wedge's `top` would perch a coin on a
-## line — the CONE's rule for the same reason.
+## bare and reads as a turret rather than a terrace.
+##
+## **YOU STAND ON A WEDGE** (owner ruling 2026-09-05, bead godot-test1-y1o.36) —
+## which reverses the note that used to be here. It is the one kind whose collider
+## is a `ConvexPolygonShape3D`: the six points of `UNIT_WEDGE_POINTS` scaled by
+## `dimensions`, so the solid IS the drawn prism and a hero walks the pitch
+## instead of standing inside it. A climbable footprint over a wedge therefore
+## names the RIDGE — the highest solid point over its own centre column, which is
+## what `_settle_coin_y` perches on; naming the eave instead would bury the coin
+## in the roof it is standing under. The CONE's "nothing may stand here" rule is
+## untouched: a cone's collider is still its bounding box, and it has no
+## climbable consumer.
 enum BoxKind { CUBE, SPHERE, CONE, CYLINDER, ROCK, WEDGE }
 
 ## Widest a round box may be, as a multiple of its narrowest axis, before its
@@ -165,6 +174,24 @@ const UNIT_ROCK_PROFILE: Array[Vector2] = [
 	Vector2(0.12, 1.00),   # the shoulder — the widest band
 	Vector2(-0.22, 0.94),
 	Vector2(-0.5, 0.86),   # the base
+]
+
+## THE UNIT WEDGE, AS SIX POINTS — the ONE description of the prism (bead
+## godot-test1-y1o.36). `_build_unit_wedge_mesh` triangulates them and
+## `collision_shape_for` hands the same six, scaled by `dimensions`, to a
+## `ConvexPolygonShape3D`, so the slope you SEE and the slope you STAND ON are
+## the same six numbers rather than two lists that agree today.
+##
+## Order is load-bearing for the mesh's winding, which is why it is written as a
+## named order and not a set: 0-3 are the base square (west-back, east-back,
+## east-front, west-front) and 4-5 are the ridge ends (west, east).
+const UNIT_WEDGE_POINTS: Array[Vector3] = [
+	Vector3(-0.5, -0.5, -0.5),
+	Vector3(0.5, -0.5, -0.5),
+	Vector3(0.5, -0.5, 0.5),
+	Vector3(-0.5, -0.5, 0.5),
+	Vector3(-0.5, 0.5, 0.0),
+	Vector3(0.5, 0.5, 0.0),
 ]
 
 ## Lazily-created shared material for the block MultiMesh. `vertex_color_use_as_albedo`
@@ -411,12 +438,16 @@ static func _build_unit_wedge_mesh() -> ArrayMesh:
 	solid; check 1's own normal sweep is what keeps that true.
 	"""
 	# a-d: the base square, west to east and back to front. e/f: the ridge ends.
-	var a := Vector3(-0.5, -0.5, -0.5)
-	var b := Vector3(0.5, -0.5, -0.5)
-	var c := Vector3(0.5, -0.5, 0.5)
-	var d := Vector3(-0.5, -0.5, 0.5)
-	var e := Vector3(-0.5, 0.5, 0.0)
-	var f := Vector3(0.5, 0.5, 0.0)
+	# READ OFF `UNIT_WEDGE_POINTS` rather than restated, because the COLLIDER is
+	# built from the same six points (bead godot-test1-y1o.36): a second spelling
+	# of the prism is how a drawn slope and a solid slope drift apart, which is
+	# the splitter's "two spellings of axis-aligned" trap one shape along.
+	var a: Vector3 = UNIT_WEDGE_POINTS[0]
+	var b: Vector3 = UNIT_WEDGE_POINTS[1]
+	var c: Vector3 = UNIT_WEDGE_POINTS[2]
+	var d: Vector3 = UNIT_WEDGE_POINTS[3]
+	var e: Vector3 = UNIT_WEDGE_POINTS[4]
+	var f: Vector3 = UNIT_WEDGE_POINTS[5]
 	var tris: Array[Vector3] = [
 		a, b, c, a, c, d,      # base, normal (0, -1, 0)
 		d, c, f, d, f, e,      # the +Z slope
@@ -684,12 +715,29 @@ static func collision_shape_for(kind: int, dimensions: Vector3) -> Shape3D:
 	  SPHERE   -> SphereShape3D, radius = the SMALLEST half-extent
 	  CYLINDER -> CylinderShape3D, radius = the smaller RADIAL half-extent,
 	              height = `dimensions.y`
-	  ROCK, CONE, WEDGE, CUBE, anything unknown -> BoxShape3D of `dimensions`
+	  WEDGE    -> ConvexPolygonShape3D, `UNIT_WEDGE_POINTS` scaled by `dimensions`
+	  ROCK, CONE, CUBE, anything unknown -> BoxShape3D of `dimensions`
 
-	THE WEDGE'S BOX IS FREE TODAY and is written down so it does not surprise
-	anybody: its one consumer (the city band's roof) is `collide = false`, so no
-	shape is hung at all. If a wedge is ever made solid, the box fills the empty
-	air over both slopes — the CONE's overhang with one axis fewer.
+	THE WEDGE IS THE ONE HULL, AND IT IS A GAMEPLAY SURFACE (owner ruling
+	2026-09-05, bead godot-test1-y1o.36: "make roofs standable"). Its one consumer
+	is the city band's pitched roof, which used to be `collide = false` with the
+	hull's flat top as the rest spot — so a hero resting there stood INSIDE the
+	roof. Now the roof collides, and a BOX would have been the wrong solid twice
+	over: it fills the empty air over both slopes (the CONE's overhang with one
+	axis fewer), which is exactly the "standing on an invisible flat square" this
+	function exists to stop, and it would put the walkable surface back at the
+	ridge height with no pitch to walk. The hull is EXACT — six points, one shape,
+	no approximation anywhere — and it is inscribed in `dimensions` by
+	construction, because every point of `UNIT_WEDGE_POINTS` is on the unit cube's
+	own surface.
+
+	ONE SHAPE, WHICH IS WHY IT IS A HULL AND NOT TWO SLABS. Two thin rotated
+	`BoxShape3D`s hinged at the ridge would model the same solid and is what the
+	bead offered as the alternative; it doubles the shape COUNT of every roof in
+	the band, and every collision budget in the suite (prop_selfcheck's
+	one-per-building, budapest's per-chunk, the tower's 640) counts shapes.
+	`CharacterBody3D` walks a convex hull's face exactly as it walks a box's, so
+	the cheaper answer is also the correct one.
 
 	THE ROCK'S BOX IS THE FEATURE, not the fallthrough (bead godot-test1-y1o.3).
 	Its whole reason to be a kind of its own is that its lid is FLAT and at exactly
@@ -760,12 +808,24 @@ static func collision_shape_for(kind: int, dimensions: Vector3) -> Shape3D:
 				cyl.radius = radius
 				cyl.height = dimensions.y
 				return cyl
+		BoxKind.WEDGE:
+			# The prism itself, from the same six points the mesh is welded out of.
+			# No aspect gate: a hull is exact at every aspect, so there is nothing
+			# here for `ROUND_COLLIDER_MAX_ASPECT` to protect against.
+			var hull := ConvexPolygonShape3D.new()
+			var pts := PackedVector3Array()
+			for p: Vector3 in UNIT_WEDGE_POINTS:
+				pts.append(p * dimensions)
+			hull.points = pts
+			return hull
 	# CONE keeps its box DELIBERATELY, and it is the one kind that stays wrong on
 	# purpose: `landmark_builders.gd`'s rule 5c makes a cone the piece that ENDS a
 	# taper, so its stone is a point at the top of a box-shaped ledge. Godot has no
-	# cone primitive, and the honest alternatives are a `ConvexPolygonShape3D` (a
-	# per-entry Resource, so no longer a shared cost) or `collide = false` (which
-	# moves a chunk's shape COUNT and is a builder's call, not this seam's).
+	# cone primitive, and the honest alternatives are a `ConvexPolygonShape3D` (what
+	# the WEDGE above now does — a fan of `UNIT_CONE_RADIAL` base points plus the
+	# apex) or `collide = false` (which moves a chunk's shape COUNT and is a
+	# builder's call, not this seam's). Neither has a consumer asking for it:
+	# nothing standable is a cone, which is the rule that makes the box harmless.
 	# `landmark_selfcheck` check 9c is what keeps a cone off anything standable.
 	var box := BoxShape3D.new()
 	box.size = dimensions

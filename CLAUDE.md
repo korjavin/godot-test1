@@ -221,7 +221,12 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            that skips the artifact and the camp), a REALLY BUILT
 #                            marker walked up to through the shipped toast, and
 #                            check 1b: `set_run_seed()` drops the memo
-#   prop_selfcheck           prop/structure footprints, budgets, palettes
+#   prop_selfcheck           prop/structure footprints, budgets, palettes, plus
+#                            check 12: a REAL player.tscn dropped across a REAL
+#                            city-band roof rests on the PITCH (not on the hull
+#                            top under it, not floating at ridge height), holds
+#                            it with no input, and falls through to the hull top
+#                            with the roof's hulls freed as the mutation control
 #   scarcity_selfcheck       the distance gradient, ONE RULE FOR EVERY BIOME: the
 #                            k curve itself, then a near and a far field per
 #                            `Biome` value built through the shipped spawners —
@@ -634,7 +639,7 @@ Load-bearing rules:
 - **A BOX HAS A MESH KIND, AND EVERY UNIT MESH FITS THE UNIT CUBE** (bead
   `godot-test1-y1o.1`, epic `y1o` "get rid of blocks"). The batch entry is
   `{transform, color, kind}` — `ChunkBatch.BoxKind` (CUBE / SPHERE / CONE / CYLINDER /
-  ROCK), a
+  ROCK / WEDGE), a
   trailing optional on `create_box` defaulting to CUBE, **always written** so the entry
   shape stays uniform (the whole-dict `var_to_bytes` signatures both `prop_selfcheck` and
   `budapest_selfcheck` compare would otherwise differ between two runs that agree about
@@ -652,7 +657,17 @@ Load-bearing rules:
   `ROUND_COLLIDER_MAX_ASPECT` (1.6 — no `SphereShape3D` is an ellipsoid) keeps the bounding
   box, **and so does every ROCK, at every aspect and on purpose** (bead `godot-test1-y1o.3`:
   a rock's flat lid IS the box's top face, which is the whole reason the kind exists).
-  The shape COUNT is untouched, which every collision budget in the suite rests on.
+  **The WEDGE is the one HULL** (owner ruling 2026-09-05, bead `godot-test1-y1o.36`,
+  *"make roofs standable"*): a `ConvexPolygonShape3D` of `UNIT_WEDGE_POINTS` scaled by
+  `dimensions` — the same six points `_build_unit_wedge_mesh` welds, so the slope drawn
+  and the slope walked cannot drift — because you now STAND on a city-band roof instead
+  of inside it. A climbable footprint over a wedge names the **RIDGE**, never the eave
+  (`top` is what `_settle_coin_y` perches on, and the eave is inside the stone above it);
+  `PROP_MAX_STEP` is asked of the eave instead, which is what you jump onto. Its pitch is
+  a traversal, so `CITY_ROOF_RISE_FACTOR * 2` is held under
+  `TowerInterior.PLAN_RAMP_MAX_SLOPE` like every other outdoor slope.
+  The shape COUNT is untouched, which every collision budget in the suite rests on —
+  a hull is ONE shape, which is why the wedge is not two hinged slabs.
   **The CONE is the one kind still wrong on purpose** (Godot has no cone primitive), so
   nothing a player can reach may be a colliding cone — `landmark_selfcheck` check 9c; and
   **`_build_block_multimesh` emits one `MultiMeshInstance3D` per kind PRESENT** — a
