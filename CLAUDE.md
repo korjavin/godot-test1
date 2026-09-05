@@ -407,10 +407,25 @@ The biome-predator models — five animals, the GD-SURVEY hunter robot and the n
 hydra, green dragon and roc bosses — share one
 toolkit, `scripts/predator_parts.py`, which carries the orientation / feet-at-y=0 /
 one-vertex-coloured-mesh contract an enemy model must honour and asserts it on every
-build. Running it directly rebuilds and checks all TWELVE models:
+build. Running it directly rebuilds and checks all THIRTEEN models:
 `python3 scripts/predator_parts.py` -> `SELFCHECK OK`. The two HUMANOID bosses (titan,
 clown) are rebuilt by that loop but carry their own `verify_*`, because the shared one
-demands a quadruped's longer-than-wide silhouette — see the note over the loop. Two of its primitives are
+demands a quadruped's longer-than-wide silhouette — see the note over the loop; the
+CROCODILE is the thirteenth and owes none of the three contracts (it predates the
+toolkit), but it shares `export_faceted`, so the loop rebuilds it or the one model the
+seam could rot is the only one CI's staleness gate cannot see.
+
+**A FOURTH CONTRACT, AND IT IS A PROPERTY OF THE EXPORT RATHER THAN OF THE SHAPE**
+(bead `godot-test1-y1o.20`, epic `y1o`'s style A): `export_faceted()` is the ONE
+seam every enemy `.glb` is written through, and it unmerges the mesh (per-face
+vertices, face count untouched) before asking for normals — trimesh writes no
+NORMAL attribute unless asked and Godot generates none on import, so the cast
+used to render with a constant normal and no facet caught the key light; asking
+without unmerging would instead have Gouraud-rounded every block. It computes the
+normals BY HAND off the float32 positions, because `mesh.vertex_normals` weights
+by `arccos` and rotated parts come out of `sin`/`cos` — libm is not bit-identical
+across platforms, and CI byte-compares the rebuild. Read the docstring before
+touching it. Two of its primitives are
 composed INTO models rather than being models — `wings()` (the winged bosses' folded
 silhouette; they hop, nothing in this game flies) and `necks()` (a fan of necks and
 heads off ONE point on the spine, the multi-head capability the hydra spends) — so each

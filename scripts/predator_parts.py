@@ -11,7 +11,10 @@ code lives here once and each generate_*.py is a short table of proportions and
 colours. The hunter robot is the one customer that skips `quadruped()` and stacks
 its own boxes — it still owes the three contracts below, it just isn't an animal.
 The older per-character generators (generate_crocodile_model.py,
-generate_*_separate.py) predate this and are left alone.
+generate_*_separate.py) predate this and are left alone — with ONE exception, and
+it is the reason the crocodile is rebuilt by the loop at the bottom of this file:
+it shares `export_faceted`, so it shares the shading contract even though it owes
+none of the three below.
 
 THE THREE CONTRACTS A PREDATOR MODEL MUST HONOUR
 ------------------------------------------------
@@ -510,27 +513,40 @@ def export_faceted(mesh: trimesh.Trimesh, path) -> None:
     smoothing groups, no per-face material and no extra draw call. The assert is
     the cheap proof that the unmerge happened, on every build of every model.
 
-    THE NORMALS ARE COMPUTED HERE AND NOT BY TRIMESH, AND THAT IS A PORTABILITY
-    REQUIREMENT, not a preference. `mesh.vertex_normals` goes through
-    `weighted_vertex_normals`, which weights each face by the CORNER ANGLE —
-    `np.arccos` in `trimesh.triangles.angles`. arccos is libm, and libm is not
-    bit-identical between macOS/arm64 and the Linux/x86-64 runner, so the
-    exported floats came out one ulp apart on the three models whose geometry is
-    ROTATED (green_dragon, hydra, roc — the `wings()` and `necks()` consumers;
-    an axis-aligned box has exact normals with nothing to round). CI byte-compares
-    the rebuild against the committed artifact, so an ulp is a red build. Every
-    step below is IEEE-754 correctly rounded — subtract, multiply, add, sqrt,
-    divide, and no transcendental anywhere — so it gives the same bytes on every
-    platform. It is also the RIGHT answer rather than a near one: after the
-    unmerge each vertex belongs to exactly one face, so the angle weighting is a
-    single term and the correct result IS the face normal. `unitize_normals=False`
-    keeps trimesh from re-normalising through `np.dot` on the way out.
+    THE NORMALS ARE COMPUTED HERE, FROM THE FLOAT32 POSITIONS, AND BOTH HALVES OF
+    THAT ARE A PORTABILITY REQUIREMENT RATHER THAN A PREFERENCE. CI rebuilds every
+    model and byte-compares it against the committed artifact, so one ulp is a red
+    build — and adding normals opened two ways to produce one. Both showed up on
+    exactly the same three models, green_dragon / hydra / roc, which are the
+    `wings()` and `necks()` consumers and the only ones whose geometry is ROTATED.
+
+    FIRST, `mesh.vertex_normals` weights each face by its CORNER ANGLE, and
+    `trimesh.triangles.angles` is `np.arccos`. arccos is libm and libm is not
+    bit-identical between macOS/arm64 and the Linux/x86-64 runner. So the maths
+    below is done by hand: subtract, multiply, add, sqrt, divide — every one
+    IEEE-754 correctly rounded, no transcendental anywhere — and
+    `unitize_normals=False` stops trimesh re-normalising through `np.dot` on the
+    way out. It is the exactly right answer and not merely a near one: after the
+    unmerge each vertex belongs to one face, so the angle weighting is a single
+    term and the correct normal IS that face's.
+
+    SECOND — and this is the subtle one — the input is `astype(float32)` rather
+    than the mesh's own float64 vertices. A rotated part's coordinates come out of
+    `rotation_matrix`, i.e. out of libm `sin`/`cos`, so they ALREADY differ by an
+    ulp between the two platforms. That never mattered before because the buffer
+    is written as float32 and the difference rounds away. A normalised cross
+    product does not round it away: it takes differences of nearby coordinates,
+    which is where a last-bit disagreement gets amplified into the float32 result.
+    Deriving the normal from the float32 positions the file is about to carry
+    makes the input identical on both platforms, and identical input through
+    exact operations is identical output. Widening float32 back to float64 for the
+    arithmetic is lossless, so this costs no precision that survives the export.
     """
     mesh.unmerge_vertices()
     assert len(mesh.vertices) == 3 * len(mesh.faces), \
         f"{path}: {len(mesh.vertices)} verts for {len(mesh.faces)} faces — not unmerged"
-    tri = mesh.vertices[mesh.faces]
-    face_n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    shipped = mesh.vertices.astype(np.float32)[mesh.faces].astype(np.float64)
+    face_n = np.cross(shipped[:, 1] - shipped[:, 0], shipped[:, 2] - shipped[:, 0])
     length = np.sqrt((face_n * face_n).sum(axis=1))
     assert length.min() > 1e-12, \
         f"{path}: a degenerate (zero-area) face has no normal"
@@ -773,6 +789,12 @@ if __name__ == "__main__":
     for species in ("wolf", "cougar", "bear", "hound", "snake", "hunter",
                     "naga", "hydra", "green_dragon", "roc", "titan", "clown"):
         runpy.run_path(str(here / f"generate_{species}.py"), run_name="__main__")
+    # THE CROCODILE IS BUILT HERE TOO, AND IT IS THE ODD ONE OUT. It predates the
+    # toolkit, has no `verify()` of its own and is not a "species" in the loop's
+    # sense — but it is a CUSTOMER of `export_faceted` now, and CI's staleness gate
+    # is "did running THIS FILE dirty assets/models/characters". Left out, the one
+    # model the seam could silently rot is the only one nothing rebuilds.
+    runpy.run_path(str(here / "generate_crocodile_model.py"), run_name="__main__")
     # `wings` HAS consumers now (the dragon and the roc, both above), but `verify`
     # only ever sees the finished animal — one welded mesh in which the pair is no
     # longer a separable thing, and in which a wing that stopped mirroring would
