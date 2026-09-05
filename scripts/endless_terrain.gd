@@ -2966,6 +2966,16 @@ func _drop_seeded_memos() -> void:
 	_approach_bridge_scanned = false
 	# ...and the approach coin line with it: it is resampled off that station.
 	_approach_coin_line_cache = PackedVector2Array()
+	# `_approach_coin_east_end_cache` is DELIBERATELY NOT HERE, and bd
+	# `godot-test1-2iu` is the bead that established it rather than the bead that
+	# fixed it. It looks like the line cache's twin and it is not: east of the
+	# gate the corridor IS the avenue at z = 0, so that function scans
+	# `BudapestPlan`'s authored polyline from `GATE.x` and takes the western
+	# abutment of whichever bridge stands on it — every term is a constant a
+	# designer typed, with no `run_seed` and no road station in it anywhere (its
+	# own docstring says so, and `landmark_sites_selfcheck` check 1b now asserts
+	# it across two seeds with a mutation control). A reset here would imply a
+	# dependency that does not exist, which is the one thing this list must not do.
 	# ...and the MUSEUM MILE: every site is a station index on the centreline
 	# above, so a table kept across a re-seed would string this run's landmarks
 	# along the LAST run's road (see the MUSEUM MILE banner). This is the one that

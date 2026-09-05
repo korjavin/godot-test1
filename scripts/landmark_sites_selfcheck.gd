@@ -313,13 +313,27 @@ func _check_seed_reseats_the_table(terrain_script: GDScript) -> void:
 	`set_run_seed()` calls `_drop_seeded_memos()`, so the road is asserted here
 	directly instead of being papered over.
 
-	MUTATION-TESTED, both halves: drop the `_landmark_sites_cache` reset from
+	AND THE CORRIDOR'S EAST END IS ASSERTED THE OTHER WAY UP (bd
+	`godot-test1-2iu`). It was filed as a missing reset — it is the one memo in
+	this family `_drop_seeded_memos()` does not clear — and it is not one: the
+	function scans `BudapestPlan`'s authored polyline from the gate, so it is
+	SEED-INDEPENDENT and clearing it would imply a dependency that does not exist.
+	The bead's real product is the assertion below, which pins that property
+	instead of leaving it to be re-derived from a docstring.
+
+	MUTATION-TESTED, all three: drop the `_landmark_sites_cache` reset from
 	`_drop_seeded_memos()` and the first assertion goes red; drop the
-	`road_stations` reset and the CENTRELINE assertion does.
+	`road_stations` reset and the CENTRELINE assertion does; make
+	`_approach_coin_east_end()` read `run_seed` and the EAST END one does.
 	"""
 	var terrain := _terrain(terrain_script, SEEDS[0])
 	# Build it, exactly as a chunk streaming in would.
 	var first: Dictionary = terrain.landmark_sites().duplicate()
+	# ...and POISON THE APPROACH CORRIDOR'S EAST END the same way (bd
+	# `godot-test1-2iu`). It is memoized on first ask like the table above, so an
+	# assertion that does not fill the cache HERE would pass on a terrain that
+	# simply never cached — which is why this line is the setup and not the test.
+	var first_east: float = terrain._approach_coin_east_end()
 	if first.is_empty():
 		_fail("seed %d sited nothing — check 1b cannot run" % SEEDS[0])
 		terrain.free()
@@ -372,6 +386,25 @@ func _check_seed_reseats_the_table(terrain_script: GDScript) -> void:
 					% want
 					+ "so every seeded consumer is being built onto the PREVIOUS run's road")
 			break
+	# ...AND THE ONE MEMO IN THIS FAMILY THAT IS *NOT* CLEARED, asserted from the
+	# other side (bd `godot-test1-2iu`). `_approach_coin_east_end_cache` looks
+	# exactly like `_approach_coin_line_cache`'s twin, and two readers in one day
+	# filed it as a missing reset — but east of the gate the corridor IS the
+	# avenue at z = 0, so that function scans `BudapestPlan`'s authored polyline
+	# and takes a bridge's abutment: every term is a designer's constant, with no
+	# `run_seed` in it. It is therefore SEED-INDEPENDENT, which is what makes
+	# never clearing it correct, and this is the assertion that pins the claim so
+	# nobody has to re-derive it from the docstring a third time. `first_east` was
+	# taken BEFORE the re-seed, so the memo really was populated under SEEDS[0].
+	var east: float = terrain._approach_coin_east_end()
+	var want_east: float = fresh._approach_coin_east_end()
+	if absf(east - want_east) > 1e-4 or absf(first_east - want_east) > 1e-4:
+		_fail("the approach corridor's east end moved with the seed: %.3f under %d, "
+				% [first_east, SEEDS[0]]
+				+ "%.3f after set_run_seed(%d), %.3f on a terrain born there — it is "
+				% [east, SEEDS[1], want_east]
+				+ "supposed to be a pure function of BudapestPlan's authored polyline, "
+				+ "which is the whole reason _drop_seeded_memos() does not clear its memo")
 	fresh.free()
 	terrain.free()
 	print("  set_run_seed drops the memo: %d sites -> %d, and they are the new seed's own"
