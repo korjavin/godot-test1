@@ -361,8 +361,12 @@ func _find_camp(terrain: Node) -> Vector3:
 			# first spot that clears `_biome_spot_ok`, which reads the `obstacles`
 			# the earlier spawners filled — so probing with an empty list picks a
 			# spot the shipped chunk rejects, and the camera then frames bare grass
-			# beside the camp (measured the slow way).
+			# beside the camp (measured the slow way). EVERY spawner create_chunk
+			# runs before the camp has to be here, the ARTIFACT included: it lands
+			# a footprint too, and on seed 57 leaving it out picked chunk (4, -2)
+			# where the live path's first camp is (6, -1).
 			var obstacles: Array = terrain.spawn_objects_in_chunk(chunk, platforms, batch, body)
+			terrain.spawn_artifact_in_chunk(chunk, parent, obstacles, batch, body)
 			terrain.spawn_biome_content_in_chunk(chunk, obstacles, batch, body)
 			var before: int = batch.size()
 			terrain.spawn_camp_in_chunk(chunk, parent, obstacles, batch, body)
