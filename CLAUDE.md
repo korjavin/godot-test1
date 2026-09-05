@@ -638,6 +638,21 @@ Load-bearing rules:
   `_drop_seeded_memos()` owns (bd `bvq`), so it stays with the memo — and bd
   `godot-test1-ftn.7` re-read that and left it there for a BETTER reason: a geo
   landmark is the LANDMARK family, and the road is only its coordinate system.
+- **THE GEO LANDMARKS ARE `scripts/terrain_landmarks.gd`** (`class_name
+  TerrainLandmarks`, all static, bd `godot-test1-ftn.26`) — `landmark_sites()`,
+  `landmark_site()`, the site walk and its deterministic re-hash of illegal sites,
+  `_landmark_at`'s reverse lookup and `spawn_landmark_in_chunk`. **The SITE MEMO
+  stayed** (`_landmark_sites_cache` / `_built`), exactly as the road's station
+  cache did at ftn.7: `_drop_seeded_memos()` is one function under the seed write
+  and a table kept across a re-seed would string this run's landmarks along the
+  LAST run's road (bd `bvq`). **The `LANDMARK_*` banner stayed too**, read as
+  `terrain.LANDMARK_RADIUS` — `terrain_biomes.gd`'s precedent, and every check
+  reading it off `get_script_constant_map()` is untouched. Three forwarders:
+  `_landmark_at` is reached BY STRING (`scarcity_selfcheck`'s
+  `terrain.call("_landmark_at", chunk)`), `spawn_landmark_in_chunk` is
+  `create_chunk`'s call-order list plus four checks, `landmark_sites` is read by
+  two files; `landmark_site(kind)` gets none because nothing calls it. It was
+  left behind TWICE before this (ftn.4, ftn.7) and both reasons had dissolved.
 - **THE COIN ROAD IS `scripts/coin_road.gd`** (`class_name CoinRoad`, all static,
   bd `godot-test1-ftn.7`) — the whole `_road_*` centreline family and
   `spawn_coins_in_chunk`, with the nine `ROAD_*` constants that describe the road
@@ -804,8 +819,8 @@ Load-bearing rules:
 - **A GEO LANDMARK KIND EXISTS EXACTLY ONCE IN A WORLD, and the placement is INVERTED**
   (owner ruling 2026-09-04, bead `godot-test1-bcf`: *"for landmarks they should be
   unique, each type exists once in our world"*). There is no rarity roll and no
-  `LANDMARK_CHANCE` any more: `landmark_sites()` gives every `LandmarkBuilders.LANDMARKS`
-  row ONE site — a chunk coordinate, pure in `run_seed`, built once per run and **dropped in
+  `LANDMARK_CHANCE` any more: `TerrainLandmarks.landmark_sites()` gives every
+  `LandmarkBuilders.LANDMARKS` row ONE site — a chunk coordinate, pure in `run_seed`, built once per run and **dropped in
   `set_run_seed()`, the one place the seed is written** (a memo that outlived a re-seed would
   hand a multiplayer joiner the master's road with the LAST run's landmarks on it;
   `new_run()` clears it again beside the road station cache it is derived from) — and
