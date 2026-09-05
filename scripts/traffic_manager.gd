@@ -26,7 +26,8 @@ extends Node3D
 ##     blocked > hold-off → HONK with per-car cooldown; blocked far too long →
 ##     recycle out of sight (never drive through the player).
 ##   * Budget: hard TRAFFIC_MAX (16 web / 32 desktop, was 30/60) rendered via ONE
-##     MultiMeshInstance3D (one mesh, one shared StandardMaterial3D, colour
+##     MultiMeshInstance3D (one mesh, one shared ShaderMaterial on the world's
+##     own block shader since bead y1o.15, colour
 ##     variety via per-instance colours, never a material per car) → 1 draw call.
 ##     Density cut roughly in half on web (≈1 car per 35m of avenue within the
 ##     110m bubble) so gaps read, not clumps; SPAWN_RADIUS kept at 110m so
@@ -214,9 +215,9 @@ static func _get_shared_material() -> Material:
 	##
 	## THREE StandardMaterial3D PROPERTIES ARE GONE. `cull_mode = CULL_BACK` is
 	## `world_block.gdshader`'s own `render_mode`, so that one is free.
-	## `vertex_color_is_srgb` was only ever effective on Forward+/Mobile and
-	## never on the web `gl_compatibility` build this game targets — see the
-	## crowd's copy of this note for why dropping it is the consistent answer.
+	## `vertex_color_is_srgb` has no equivalent either, and dropping it makes the
+	## cars a shade brighter on desktop — see the crowd's copy of that note for
+	## why it is the consistent answer and for what about it was NOT measured.
 	## `metallic = 0.08` HAS no equivalent: the shader writes ALBEDO and
 	## ROUGHNESS and nothing else, so the cars lose a very slight sheen. That is
 	## the bead's own call — if the owner misses it, it is one more uniform on a

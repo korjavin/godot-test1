@@ -23,7 +23,8 @@ extends Node3D
 ##     Phoboman), costing exactly 4 draw calls for the entire crowd (shadows off).
 ##   * Shared static resources: one shared composite mesh per archetype with
 ##     baked vertex colors derived from the hero specifications, and ONE shared
-##     StandardMaterial3D across all archetypes (never duplicate() per citizen).
+##     ShaderMaterial across all archetypes, on the world's own block shader
+##     since bead y1o.15 (never duplicate() per citizen).
 ##   * Waypoint walk: citizens follow BudapestPlan.STREET_PITCH street grid, spread
 ##     across lateral street lanes, maintaining walking queues, never walking into
 ##     the Danube river, plateau cliffs, or solid landmark buildings.
@@ -235,15 +236,20 @@ static func _get_shared_material() -> Material:
 	## colours, so the shader's `albedo` uniform stays at its white default and
 	## nothing here has to be re-authored.
 	##
-	## TWO StandardMaterial3D PROPERTIES ARE GONE and neither is a loss.
-	## `cull_mode = CULL_BACK` is `world_block.gdshader`'s own `render_mode`.
-	## `vertex_color_is_srgb` has no equivalent — and it was only ever effective
-	## on Forward+/Mobile, never on the web `gl_compatibility` build this game
-	## targets, so the desktop crowd was already a shade darker than the crowd
-	## every browser has ever shown. Dropping it settles that split the way the
-	## rest of the world is settled: every `create_box` colour in Budapest is
-	## consumed exactly like this, so the citizens now sit in the same colour
-	## space as the facades behind them.
+	## TWO StandardMaterial3D PROPERTIES ARE GONE. `cull_mode = CULL_BACK` is
+	## `world_block.gdshader`'s own `render_mode`, so that one is free.
+	##
+	## `vertex_color_is_srgb` has no equivalent, and dropping it IS A VISIBLE
+	## CHANGE ON DESKTOP: the citizens come out a shade brighter than they were.
+	## It is deliberate rather than incidental, for the reason the whole bead
+	## exists — every `create_box` colour in Budapest is consumed by this shader
+	## as plain `COLOR.rgb`, so a crowd that kept its own conversion would be the
+	## one thing in the city in a different colour space from the facades behind
+	## it. Godot documents the flag as effective on Forward+/Mobile only, which
+	## would mean the web `gl_compatibility` build this game targets never
+	## applied it and only the desktop look moves — that reading is the shipped
+	## docs' and is NOT something this change measured, so treat the size of the
+	## shift as "seen in the y1o.15 before/after shots", not as derived.
 	if _shared_material == null:
 		_shared_material = ShaderMaterial.new()
 		_shared_material.shader = ChunkBatch.WORLD_BLOCK_SHADER
