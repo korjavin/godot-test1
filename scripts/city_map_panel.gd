@@ -624,8 +624,12 @@ func _paint_marks() -> void:
 		# colour-blind player, and BONE against STEEL is one value step where the
 		# retired gold-against-grey was two.
 		var found: bool = colour.is_equal_approx(COLOR_FOUND)
+		# `-1.0` and not 1.5 on the filled branch: Godot WARNS (with a backtrace)
+		# that `width` has no effect when `filled` is true, and this repaints at
+		# 5 Hz with up to 22 marks — a hundred backtraces a second into the web
+		# build's console for a number that was never read.
 		_marks.draw_rect(Rect2(point - Vector2(half, half),
-			Vector2(ICON_SIZE, ICON_SIZE)), colour, found, 1.5)
+			Vector2(ICON_SIZE, ICON_SIZE)), colour, found, -1.0 if found else 1.5)
 		if found:
 			_marks.draw_rect(Rect2(point - Vector2(half + 2.0, half + 2.0),
 				Vector2(ICON_SIZE + 4.0, ICON_SIZE + 4.0)), colour, false, 1.5)
