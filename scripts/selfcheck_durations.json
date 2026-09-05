@@ -32,7 +32,9 @@
   "prop_selfcheck": 1,
   "scarcity_selfcheck": 2,
   "sound_selfcheck": 1,
-  "tower_interior_selfcheck": 90,
+  "tower_block_lure_selfcheck": 60,
+  "tower_guard_selfcheck": 26,
+  "tower_interior_selfcheck": 8,
   "tower_lift_selfcheck": 2,
   "tower_selfcheck": 1,
   "tower_shell_selfcheck": 5,
@@ -40,5 +42,5 @@
   "traffic_selfcheck": 14,
   "view_selfcheck": 1,
   "voice_selfcheck": 1,
-  "wade_selfcheck": 11
+  "wade_selfcheck": 19
 }

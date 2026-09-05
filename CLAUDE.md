@@ -73,10 +73,12 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            without, and the aspect fallback driven at BOTH ends
 #                            of ROUND_COLLIDER_MAX_ASPECT. Check 5 is
 #                            the PER-BIOME DRAW-CALL BILL, iterating the Biome
-#                            enum over both shipped field spawners: a forest
-#                            chunk builds exactly TWO nodes (BlockMultiMesh +
-#                            BlockMultiMesh_SPHERE, the canopies) and every
-#                            other biome exactly one
+#                            enum over both shipped field spawners: one node per
+#                            kind PRESENT and never more than that biome's
+#                            KIND_CAP_BY_NAME row (forest 3 — cubes, SPHERE
+#                            canopies and ROCK boulders; every other band 2),
+#                            with the SHARE of chunks paying printed beside the
+#                            worst case
 #   fauna_selfcheck          herd steering + rider carry, plus row 6 the MP
 #                            REPLAY: one seed gives two byte-identical builds, a
 #                            joiner is snapped onto the live sample, a replay
@@ -112,7 +114,17 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            plus `hermetic_stores`: every `*_selfcheck.gd` in the
 #                            glob opens `Sentinel.isolate_user_state()` and names
 #                            no real `user://` path
-#   wade_selfcheck           river wading (player, croc, boss)
+#   wade_selfcheck           river wading (player, croc, boss) — plus the DEEP
+#                            CHANNEL (bd godot-test1-06o.3): check 8 the rule on
+#                            the real field (the strip inside the band, the outer
+#                            band free, Y-aware, the push climbing OUT, the
+#                            Danube's centre impassable, every authored deck dry
+#                            above and wet below, Margaret Island dry), check 9
+#                            the SOFTLOCK GATE (20 seeds of road plus the T ->
+#                            gate corridor: every crossing bridged or forded),
+#                            check 10 a REAL player.tscn walked into a REAL
+#                            channel and held out, with the seam switched off as
+#                            the mutation control
 #   field_bridge_selfcheck   FIELD BRIDGES where the road crosses a river: every
 #                            crossing under the span cap bridged exactly once
 #                            over 12 seeds (with the lake case counted), the
@@ -364,6 +376,18 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            against the real capsule and TEIBI_SCALE_SMALL and
 #                            asserted to be a dead end; and one dossier taken
 #                            for real coins, hidden, and refusing to pay twice
+#   tower_guard_selfcheck    the HQ's guards, split off tower_interior by bd
+#                            godot-test1-ftn.25 (CI shards the glob BY FILE) with
+#                            the check NUMBERS unchanged: 12 the posts (counted off
+#                            the BODIES, GUARDS_PER_STOREY_MAX, the capsule through
+#                            every doorway), 13 the population resets and the opened
+#                            set does not, 14 the leash held against a real 8 s
+#                            chase, and 21/21b the lure — one storey DRIVEN, the
+#                            other seventeen (post, plate) pairs routed on the plans
+#   tower_block_lure_selfcheck
+#                            check 21c ALONE, and alone because it is a minute: the
+#                            cell block's guard walks 60 m of route to a plate, holds
+#                            facing it, and walks off again. Same split
 #   capture_selfcheck        SYSTEMIC CAPTURE and the tower guard's stake: the
 #                            arming gate (pre/post the
 #                            authored beat), attribution (every `captures_hero`
@@ -433,10 +457,25 @@ The biome-predator models — five animals, the GD-SURVEY hunter robot and the n
 hydra, green dragon and roc bosses — share one
 toolkit, `scripts/predator_parts.py`, which carries the orientation / feet-at-y=0 /
 one-vertex-coloured-mesh contract an enemy model must honour and asserts it on every
-build. Running it directly rebuilds and checks all TWELVE models:
+build. Running it directly rebuilds and checks all THIRTEEN models:
 `python3 scripts/predator_parts.py` -> `SELFCHECK OK`. The two HUMANOID bosses (titan,
 clown) are rebuilt by that loop but carry their own `verify_*`, because the shared one
-demands a quadruped's longer-than-wide silhouette — see the note over the loop. Two of its primitives are
+demands a quadruped's longer-than-wide silhouette — see the note over the loop; the
+CROCODILE is the thirteenth and owes none of the three contracts (it predates the
+toolkit), but it shares `export_faceted`, so the loop rebuilds it or the one model the
+seam could rot is the only one CI's staleness gate cannot see.
+
+**A FOURTH CONTRACT, AND IT IS A PROPERTY OF THE EXPORT RATHER THAN OF THE SHAPE**
+(bead `godot-test1-y1o.20`, epic `y1o`'s style A): `export_faceted()` is the ONE
+seam every enemy `.glb` is written through, and it unmerges the mesh (per-face
+vertices, face count untouched) before asking for normals — trimesh writes no
+NORMAL attribute unless asked and Godot generates none on import, so the cast
+used to render with a constant normal and no facet caught the key light; asking
+without unmerging would instead have Gouraud-rounded every block. It computes the
+normals BY HAND off the float32 positions, because `mesh.vertex_normals` weights
+by `arccos` and rotated parts come out of `sin`/`cos` — libm is not bit-identical
+across platforms, and CI byte-compares the rebuild. Read the docstring before
+touching it. Two of its primitives are
 composed INTO models rather than being models — `wings()` (the winged bosses' folded
 silhouette; they hop, nothing in this game flies) and `necks()` (a fan of necks and
 heads off ONE point on the spine, the multi-head capability the hydra spends) — so each
@@ -499,7 +538,8 @@ Load-bearing rules:
   lands there, not in the world engine.**
 - **A BOX HAS A MESH KIND, AND EVERY UNIT MESH FITS THE UNIT CUBE** (bead
   `godot-test1-y1o.1`, epic `y1o` "get rid of blocks"). The batch entry is
-  `{transform, color, kind}` — `ChunkBatch.BoxKind` (CUBE / SPHERE / CONE / CYLINDER), a
+  `{transform, color, kind}` — `ChunkBatch.BoxKind` (CUBE / SPHERE / CONE / CYLINDER /
+  ROCK), a
   trailing optional on `create_box` defaulting to CUBE, **always written** so the entry
   shape stays uniform (the whole-dict `var_to_bytes` signatures both `prop_selfcheck` and
   `budapest_selfcheck` compare would otherwise differ between two runs that agree about
@@ -515,7 +555,9 @@ Load-bearing rules:
   INSCRIBED in `dimensions` exactly like the mesh; the cylinder's axis is local Y, where
   `CylinderMesh` puts it, never "the long axis"), and a CONE plus anything squashed past
   `ROUND_COLLIDER_MAX_ASPECT` (1.6 — no `SphereShape3D` is an ellipsoid) keeps the bounding
-  box. The shape COUNT is untouched, which every collision budget in the suite rests on.
+  box, **and so does every ROCK, at every aspect and on purpose** (bead `godot-test1-y1o.3`:
+  a rock's flat lid IS the box's top face, which is the whole reason the kind exists).
+  The shape COUNT is untouched, which every collision budget in the suite rests on.
   **The CONE is the one kind still wrong on purpose** (Godot has no cone primitive), so
   nothing a player can reach may be a colliding cone — `landmark_selfcheck` check 9c; and
   **`_build_block_multimesh` emits one `MultiMeshInstance3D` per kind PRESENT** — a
@@ -528,16 +570,31 @@ Load-bearing rules:
   pre-build sweep cannot see. The city splitter **carries `kind` and leaves a non-CUBE
   entry whole**: a cut cone is not two cones. Choosing a kind costs **no RNG draw**, so it
   can never move a spawn.
-  **THE FOREST IS THE FIRST CONSUMER AND SO FAR THE ONLY ONE** (bead
-  `godot-test1-y1o.2`): every tree's 2-3 canopy layers are `BoxKind.SPHERE` blobs
-  (`TREE_CANOPY_BLOB_HEIGHT` / `_OVERLAP`, both DERIVED from the width the layer
-  already drew — so not one RNG draw moved and the biome stream is byte-identical),
-  the trunk stays a `CUBE` because it is the one COLLIDING box in a tree, and a
-  forest chunk therefore costs **+1 draw call and nothing else in the world costs
-  anything**. `batch_selfcheck` check 5 bills that per biome off the `Biome` enum;
-  `prop_selfcheck` check 10 asserts the two kinds tree by tree. **A new consumer is a
-  named bead judged BY EYE by the owner** — the epic's rule — plus whatever that
-  check-5 bill has to become.
+  **THE FOREST WAS THE FIRST CONSUMER** (bead `godot-test1-y1o.2`): every tree's 2-3
+  canopy layers are `BoxKind.SPHERE` blobs (`TREE_CANOPY_BLOB_HEIGHT` / `_OVERLAP`,
+  both DERIVED from the width the layer already drew — so not one RNG draw moved and
+  the biome stream is byte-identical), and the trunk stays a `CUBE` because it is the
+  one COLLIDING box in a tree. `prop_selfcheck` check 10 asserts the two kinds tree by
+  tree.
+  **ROCKS ARE THE SECOND, AND THEY ARE IN EVERY BIOME** (bead `godot-test1-y1o.3`).
+  `BoxKind.ROCK` is a faceted dome with a FLAT LID at exactly y = +0.5 (built from
+  `UNIT_ROCK_PROFILE`, whose jitter only ever SUBTRACTS so the unit-cube fit is
+  structural) that keeps its `BoxShape3D`, because most rocks carry a CLIMBABLE
+  footprint and a squashed sphere's surface falls away from the box top — the hero
+  would stand floating over the rim. Six prop builders and the oasis boulders take it;
+  the **cairn's tiers stay CUBE** (a cairn IS stacked flat stones) and only its loose
+  foot stones are rocks. `prop_selfcheck` check 11 reads `BUILDER_KINDS` BOTH ways, so
+  a revert to CUBE is a red build.
+  **THE BILL IS NO LONGER "NOTHING ELSE COSTS ANYTHING", AND THE FREQUENCY IS THE
+  NUMBER THAT MATTERS.** `batch_selfcheck` check 5 is now one node per kind PRESENT
+  against `KIND_CAP_BY_NAME` (forest 3, every other band 2) and prints the SHARE of
+  chunks paying beside the worst case: measured at bead y1o.3, **89% of stone-bearing
+  field chunks gained a block draw call** and the field's total went 709 -> 1262
+  (+78%), ~56 -> ~100 in the web build's 49-chunk residency. The CITY band's cap is 2
+  even though no city builder draws a rock, because `_build_prop` themes per PROP
+  POSITION rather than per chunk centre — a city chunk on a plains edge grows a plains
+  boulder. **A new consumer is a named bead judged BY EYE by the owner** — the epic's
+  rule — plus whatever that check-5 bill has to become.
 - **Chunk-parented, so unloading frees it.** Anything spawned per-chunk parents to the
   chunk MeshInstance3D or it leaks.
 - **Footprints are the shared currency.** Each thing built appends
@@ -1083,27 +1140,65 @@ Don't simplify any line of it back to scalar arithmetic.
 **WADING IS Y-AWARE; THE BAND IS NOT** (bead `godot-test1-06o.2`). `is_river_at()` stays
 XZ-only — it is the band the shader paints, and the parity contract above is about it.
 Whether a *body* is in the water is the narrower question `is_wading_at(pos)` answers:
-`pos.y < WADE_SURFACE_MAX` (0.6 m) **and** `is_river_at`. That rule has ONE home and
+`pos.y < WADE_SURFACE_MAX` (0.6 m) **and** the band. That rule has ONE home and
 three callers — the player's `is_wading`, the remote avatar's sink, the crocodile's
 `_tick_river_sink` (plus the minimap's "in a river" readout) — because a fourth caller
-would be a fourth chance to forget the height. It needs **no shader edit**: the water is
-still painted under a bridge, which is correct.
+would be a fourth chance to forget the height. The water is still *painted* under a
+bridge, which is correct.
 
-**It does NOT close Budapest's "walk the river bed under a deck" gap, and the reason is one
-layer down**: inside the rect `is_river_at` delegates to `BudapestPlan.danube_wet()`, which
-already subtracts every `DRY_RECTS` row — so the bed under the four authored decks answers
-DRY before the height rule is ever asked, for players, avatars, crocodiles and the map
-alike. Closing it means asking the band WITHOUT the cutout on the low-Y path, and the
-cutout is shared with MARGARET ISLAND, which is dry LAND at y = 0 and must stay dry — so it
-is a bridge-rects-only exception, a Budapest behaviour change, and bead
-`godot-test1-06o.3`'s to make with the not-walkable ruling in hand.
+**AND THE MIDDLE OF EVERY RIVER IS NOT WALKABLE** (bead `godot-test1-06o.3`, owner
+ruling 2026-09-04 re-asked 2026-09-05: *"why rivers, and danube are still walkable? fix
+this"*). The inner `RIVER_DEEP_FRACTION` (0.4) of a band is a DEEP CHANNEL a body is
+pushed back out of; the outer band still wades at exactly today's numbers, so
+`WADE_SPEED_FACTOR` / `WADE_RUN_MIN_SPEED` and the catchable-walk chain are untouched.
+Four rules, all pinned by `wade_selfcheck` checks 8-10:
 
-**THE ROAD CROSSES A RIVER ON A BRIDGE, and that is what keeps a run crossable** when
-bead `godot-test1-06o.3` makes a channel not walkable. `spawn_field_bridges_in_chunk`
+- **ONE FIELD FOR BOTH RIVERS.** `river_depth_at()` normalises the noise contour and the
+  authored Danube to the same 0 (centreline) .. 1 (bank) number; `is_wading_at` is
+  `< 1.0` on it and `deep_channel_push()` is `< RIVER_DEEP_FRACTION` on it. The push
+  DIRECTION is finite-differenced off `_river_signed_raw` — the same field without the
+  absolute value and without the masks — because `river_depth_at` has a KINK on the
+  centreline that pointed 1% of pushes back into the water, and because a probe that
+  stepped onto the tower disc or Margaret Island would read a cliff. Two extra
+  evaluations, paid only by a body already inside a strip. The Danube is in scope by
+  name — its channel is impassable and the four authored decks are the crossing.
+- **THE ROAD IS THE WAY THROUGH, and `_deep_channel_ford` is the one exemption.** A road
+  crossing the field bridges REFUSED (past `FIELD_BRIDGE_MAX_SPAN` of walked water)
+  keeps a road-width ford through the strip, because walling it would softlock the road
+  it stands on. Two wrong answers are recorded at the function: a WIDTH THRESHOLD (the
+  cap counts the water the road WALKS, and a band crossed at an angle walks more of it
+  than it is wide — one blocked crossing in 39), and `field_bridge_at(k0).is_empty()`,
+  which is `{}` for three reasons and only two of them mean unbridged (a MERGED deck's
+  row belongs to its western anchor, and two of its returns are un-memoized "the cache
+  is short right now"). It asks `field_bridge_surface_y` — is there STONE here — which
+  is the query `wade_selfcheck` check 9 itself uses.
+- **A CHANNEL CAN BE JUMPED, and that is a measured ceiling rather than a hole.** The
+  push is the player's STEP 8.5, gated on `is_wading`, so an airborne body is never
+  pushed — deliberately, since flying over the band always was legal. A typical field
+  river's strip is ~4.8 m across (median over 178 samples; p90 11 m) against a ~9.6 m
+  wading jump, so an ordinary Space press clears the median river; the Danube's 96 m
+  channel and the wide bands do not budge. Closing it means pushing an airborne body,
+  which is an invisible air wall and needs an owner ruling.
+- **`is_river_at` DID NOT MOVE.** The band is still XZ-only and still subtracts every
+  `DRY_RECTS` row, so the shader, every spawner and the minimap see exactly what they
+  saw. The shader gained one smoothstep and one mix — the strip painted darker off the
+  same normalised depth, in both languages — and deliberately does NOT run the ford
+  exemption (a station search per fragment for a gap at one crossing in 39).
+- **BUDAPEST'S UNDER-DECK GAP IS CLOSED, bridge-rects-only.** The low-Y path subtracts
+  only the `DRY_RECTS` rows that are dry LAND (`BudapestPlan.is_dry_land`, read off
+  `BRIDGES` so "which rows are decks" is never a second list): at y = 0 under an
+  authored deck you are in the Danube, at deck height you are not, and MARGARET ISLAND
+  keeps its cutout because it is land. `budapest_city_selfcheck` check 14 is unmoved —
+  it asks `is_river_at`.
+
+**THE ROAD CROSSES A RIVER ON A BRIDGE, and that is what keeps a run crossable** now
+that bead `godot-test1-06o.3` has made the channel not walkable.
+`spawn_field_bridges_in_chunk`
 builds one low stone footbridge per road river crossing — the anchor is the station that
 ENTERS the water (wet here, dry behind), so "one bridge per crossing" is a definition and
 not a de-duplication pass; the span walks forward to the far bank and refuses past
-`FIELD_BRIDGE_MAX_SPAN` (a lake, which wades and is 06o.3's problem). Five rules:
+`FIELD_BRIDGE_MAX_SPAN` (a lake, which wades — and which `_deep_channel_ford` therefore
+leaves a road-width gap in the deep channel for). Five rules:
 **zero RNG** (the site is the road's centreline plus the river field, both pure; the boxes
 come off a private fixed-seed stream), so the A/B proves every other spawner is
 byte-identical; **no `obstacles` footprint** — a bridge is meant to be walked, and a
