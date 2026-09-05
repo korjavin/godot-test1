@@ -2062,6 +2062,28 @@ hundreds of crocodiles get one styled duplicate per source material, never one p
 Fog colour must equal the sky horizon colours — if the sky changes, all three move together.
 Verified against the web `gl_compatibility` renderer; SSAO/DOF/volumetrics don't exist there.
 
+**THE GRADE IS TUNED FOR FACETS** (bead `godot-test1-y1o.18`, style direction A). A
+faceted silhouette reads from a CRISP facet-to-facet value step, so the key light is a
+hard sun (`light_angular_distance` 0.5, `light_energy` 1.25), ambient is deliberately
+UNDER-filled (`ambient_light_sky_contribution` 0.85) because full sky ambient refills
+exactly the faces `world_block.gdshader`'s top-lit gradient darkens, and
+`adjustment_saturation` is 1.12 for the same reason: louder chroma turns that gradient
+into two equally loud hues instead of one colour lit from above. **Retune them as a set,
+and re-shoot the pair** — `godot --path . scenes/style_shots.tscn -- <outdir>` is the
+acceptance tool, on both renderers.
+
+**THE AMBIENT KNOB IS `sky_contribution`, NOT `ambient_light_energy`, and that is not a
+preference.** With `ambient_light_sky_contribution` at its default 1.0 the shader is
+`mix(ambient_color * ambient_energy, sky_cubemap * bg_energy, sky_mix)` — at `sky_mix`
+1.0 the energy-scaled term is discarded outright, so `ambient_light_energy` is a
+**no-op** and dimming the sky through `bg_energy_multiplier` would dim the visible sky
+with it. Measured on both renderers with the key light off: energy 1.0 vs 0.85 gives a
+bit-identical face (0.38347 / 0.35915), `sky_contribution` 0.85 really darkens it
+(0.35674 / 0.33242), and 0.0 is black. **`light_angular_distance` is Forward+ ONLY** —
+Compatibility has no PCSS, so the crisp sun is a desktop/editor change and the web build
+sees the saturation and the ambient alone. Both were caught by review after shipping in
+the first draft of this bead.
+
 ### Mobile / touch controls
 `scripts/mobile_sensors.gd` (native `Input` sensors or a `JavaScriptBridge` DOM shim),
 `scripts/mobile_input.gd` (step detection → walk, tilt/twist → steer),
