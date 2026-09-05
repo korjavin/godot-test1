@@ -350,20 +350,20 @@ static func spawn_crocodiles_in_chunk(terrain: Node3D, chunk_pos: Vector2i, pare
 	# BEFORE the seed is even mixed, because there is no stream to advance: a city
 	# chunk never consults this sequence at all, so nothing outside the rect can
 	# shift by one draw.
-	var croc_center := terrain.chunk_to_world(chunk_pos)
+	var croc_center: Vector3 = terrain.chunk_to_world(chunk_pos)
 	if terrain.in_budapest(croc_center.x, croc_center.z):
 		return
 
 	# Use chunk coordinates (+ this run's seed) to create a unique but consistent seed.
 	# Different multipliers than the object seed give different positions than objects;
 	# run_seed makes crocodile placement differ run-to-run (constant within a run).
-	var seed_value := hash(Vector3i(chunk_pos.x * 83492791, chunk_pos.y * 28411639, terrain.run_seed))
+	var seed_value: int = hash(Vector3i(chunk_pos.x * 83492791, chunk_pos.y * 28411639, terrain.run_seed))
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
 
 	# Calculate the world position of this chunk's corner
-	var chunk_world_pos := terrain.chunk_to_world(chunk_pos)
-	var half_chunk := terrain.chunk_size / 2.0
+	var chunk_world_pos: Vector3 = terrain.chunk_to_world(chunk_pos)
+	var half_chunk: float = terrain.chunk_size / 2.0
 
 	# Store positions of spawned crocodiles to check spacing
 	var spawned_positions: Array[Vector3] = []
@@ -393,7 +393,7 @@ static func spawn_crocodiles_in_chunk(terrain: Node3D, chunk_pos: Vector2i, pare
 	# rest, so the field averages EXACTLY half at every distance while staying a
 	# pure function of chunk coordinates. A target of 3 therefore yields 1 or 2 —
 	# "1 stays possible", and a base of 0 still yields 0.
-	var chunk_croc_target := (terrain.crocodiles_per_chunk
+	var chunk_croc_target: int = (terrain.crocodiles_per_chunk
 			+ mini(4, absi(chunk_pos.x) / 10)
 			+ posmod(chunk_pos.y, 2)) / 2
 
@@ -408,7 +408,7 @@ static func spawn_crocodiles_in_chunk(terrain: Node3D, chunk_pos: Vector2i, pare
 	#
 	# This is a DESIGN number (the difficulty gradient's sibling), not a perf trim,
 	# so the "entity counts are never reduced as an optimization" convention holds.
-	var chunk_biome: terrain.Biome = terrain.biome_at(chunk_world_pos.x, chunk_world_pos.z)
+	var chunk_biome: int = terrain.biome_at(chunk_world_pos.x, chunk_world_pos.z)
 	if chunk_biome == terrain.Biome.CITY:
 		chunk_croc_target = maxi(1, int(roundf(float(chunk_croc_target) / CITY_CROC_DIVISOR)))
 
@@ -573,7 +573,7 @@ static func spawn_danube_crocodiles_in_chunk(terrain: Node3D, chunk_pos: Vector2
 	# runs to the rect's north and south edges, so a chunk 40 m outside the city
 	# can still sit inside the 120 m band. is_river_at() already asks the two
 	# questions in this order; so does this.
-	var chunk_world_pos := terrain.chunk_to_world(chunk_pos)
+	var chunk_world_pos: Vector3 = terrain.chunk_to_world(chunk_pos)
 	if not terrain.in_budapest(chunk_world_pos.x, chunk_world_pos.z):
 		return
 	if not BudapestPlan.danube_wet(chunk_world_pos.x, chunk_world_pos.z):
@@ -592,7 +592,7 @@ static func spawn_danube_crocodiles_in_chunk(terrain: Node3D, chunk_pos: Vector2
 	if rng.randf() > DANUBE_CROC_CHANCE:
 		return
 
-	var half_span := terrain.chunk_size / 2.0 - 3.0
+	var half_span: float = terrain.chunk_size / 2.0 - 3.0
 	var spawned := 0
 	for _try in DANUBE_CROC_MAX * 3:
 		if spawned >= DANUBE_CROC_MAX:
@@ -617,7 +617,7 @@ static func spawn_danube_crocodiles_in_chunk(terrain: Node3D, chunk_pos: Vector2
 		if _near_dry_rect(terrain, world.x, world.z, DANUBE_CROC_DECK_MARGIN):
 			continue
 
-		var croc := terrain.crocodile_scene.instantiate()
+		var croc: Node = terrain.crocodile_scene.instantiate()
 		# "Crocodile_<cx>_<cy>_<i>", the ground spawner's own prefix and namespace
 		# — croc_id_for() hashes the name into the room-wide id, and the four
 		# prefixes are the whole scheme every peer and every self-check reads. The
@@ -690,7 +690,7 @@ static func adopt_wanderer(terrain: Node3D, unit: Node3D) -> void:
 	"""
 	if not is_instance_valid(unit) or not unit.is_inside_tree():
 		return
-	var chunk_pos := terrain.world_to_chunk(unit.global_position)
+	var chunk_pos: Vector2i = terrain.world_to_chunk(unit.global_position)
 	if not terrain.active_chunks.has(chunk_pos):
 		return
 	var host: Node = terrain.active_chunks[chunk_pos]
@@ -753,8 +753,8 @@ static func spawn_hunters_in_chunk(terrain: Node3D, chunk_pos: Vector2i, parent_
 	if rng.randf() > HUNTER_CHANCE:
 		return
 
-	var chunk_world_pos := terrain.chunk_to_world(chunk_pos)
-	var half_span := terrain.chunk_size / 2.0 - HUNTER_EDGE_MARGIN
+	var chunk_world_pos: Vector3 = terrain.chunk_to_world(chunk_pos)
+	var half_span: float = terrain.chunk_size / 2.0 - HUNTER_EDGE_MARGIN
 
 	for _try in HUNTER_PLACE_TRIES:
 		# THE THREE DRAWS. All of them, unconditionally, before any test below.
@@ -907,7 +907,7 @@ static func spawn_platform_crocodiles(terrain: Node3D, chunk_pos: Vector2i, pare
 		return
 
 	# Chunk coords + run_seed, like every other seed site (see the run_seed doc block).
-	var seed_value := hash(Vector3i(chunk_pos.x * 40499, chunk_pos.y * 86969, terrain.run_seed))
+	var seed_value: int = hash(Vector3i(chunk_pos.x * 40499, chunk_pos.y * 86969, terrain.run_seed))
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
 
@@ -925,7 +925,7 @@ static func spawn_platform_crocodiles(terrain: Node3D, chunk_pos: Vector2i, pare
 		var sx := maxf(0.0, half.x - PLATFORM_SPAWN_EDGE_INSET) * cos(ang)
 		var sz := maxf(0.0, half.y - PLATFORM_SPAWN_EDGE_INSET) * sin(ang)
 
-		var crocodile := terrain.crocodile_scene.instantiate()
+		var crocodile: Node = terrain.crocodile_scene.instantiate()
 		crocodile.name = "PatrolCrocodile_%d_%d_%d" % [chunk_pos.x, chunk_pos.y, count]
 		# Spawn just above the TALLEST stone in the platform's footprint, not above
 		# the paced surface, so gravity settles it onto the ridge or onto a hump
@@ -1051,12 +1051,12 @@ static func _boss_row_at(terrain: Node3D, station_centre: Vector2) -> Dictionary
 	With BIOME_BOSS empty every path here returns the crocodile, which is the seam
 	landing with zero behaviour change.
 	"""
-	var fallback := { "species": "crocodile", "scene": terrain.crocodile_scene }
+	var fallback: Dictionary = { "species": "crocodile", "scene": terrain.crocodile_scene }
 	# Rivers first, and unconditionally: the owner's rule is that water is the
 	# crocodile's, whichever band the noise field says the station stands in.
 	if terrain.is_river_at(Vector3(station_centre.x, 0.0, station_centre.y)):
 		return fallback
-	var biome: terrain.Biome = terrain.biome_at(station_centre.x, station_centre.y)
+	var biome: int = terrain.biome_at(station_centre.x, station_centre.y)
 	if not terrain.BIOME_BOSS.has(biome):
 		return fallback
 	var row: Dictionary = terrain.BIOME_BOSS[biome]
@@ -1118,8 +1118,8 @@ static func spawn_bosses_in_chunk(terrain: Node3D, chunk_pos: Vector2i, parent_c
 	# differ from its station's centerline X by at most the forward offset plus
 	# the lateral offset (each projection is bounded by its magnitude), so this
 	# pad guarantees no boss near a seam is ever missed by the chunk that owns it.
-	var center := terrain.chunk_to_world(chunk_pos)
-	var half_chunk := terrain.chunk_size / 2.0
+	var center: Vector3 = terrain.chunk_to_world(chunk_pos)
+	var half_chunk: float = terrain.chunk_size / 2.0
 	var x0 := center.x - half_chunk
 	var x1 := center.x + half_chunk
 	var pad := BOSS_LATERAL_MAX + BOSS_FORWARD_OFFSET + 2.0
@@ -1129,7 +1129,7 @@ static func spawn_bosses_in_chunk(terrain: Node3D, chunk_pos: Vector2i, parent_c
 	# Smallest boss index whose station could fall at/after the window start:
 	# round the first in-window station up to the next interval multiple. Bosses
 	# start at index 1 — station 0 is the player spawn, no boss there.
-	var k_start := terrain._road_first_k_at_or_after_x(x0 - pad)
+	var k_start: int = terrain._road_first_k_at_or_after_x(x0 - pad)
 	var i := maxi(1, ceili(float(k_start) / float(BOSS_INTERVAL_STATIONS)))
 	while true:
 		var cur_i := i
