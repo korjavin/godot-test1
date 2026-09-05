@@ -55,6 +55,17 @@ extends Control
 ## on a phone for free.
 ##
 ## ----------------------------------------------------------------------------
+## It is drawn in the HUD SKIN, and that is one line on the root
+## ----------------------------------------------------------------------------
+## Bead `godot-test1-y1o.29`: `theme = HudTheme.theme()` in `_build_ui()` is where
+## every colour, face and StyleBox in this file comes from — the panel owns no hex
+## of its own any more. What the theme does NOT reach is the handful of classes it
+## has no slot for (`LineEdit`, `Slider`, the scroll bar) and the three things this
+## panel decides for itself: the caps SECTION HEADINGS (`_heading_label()`), the
+## per-hero chip TINTS, and the speaking DOT — see `DOT_SPEAKING`, which is green
+## on purpose and against the bead's letter.
+##
+## ----------------------------------------------------------------------------
 ## The tree IS paused while the panel is open
 ## ----------------------------------------------------------------------------
 ## See `_set_panel_open()` for why (clicks re-capturing the mouse, and an invite
@@ -105,8 +116,30 @@ const BUTTON_STACK_GAP: float = 8.0
 ## short phone screen can still reach the bottom row. Grown from 420 by one
 ## `TOUCH_MIN_HEIGHT` button plus the VBox separation and the row's own label,
 ## which is what the hero picker added.
-const PANEL_WIDTH: float = 360.0
+##
+## 376 AND NOT 360 SINCE THE HUD SKIN (bead godot-test1-y1o.29), and the sixteen
+## pixels are a locale budget rather than taste. `locale_selfcheck`'s MP rows are
+## every one of them written against a **320 px usable width**, and the skin spends
+## into that from both sides: `HudTheme.card()` pads the panel by `CARD_PADDING`
+## (12) a side where this panel used to pad by 10, and `HudTheme.button()` pads a
+## button face by another 12 a side where the engine default theme padded by 4. At
+## 360 a full-width button would have had 304, which is a budget measured 16 px
+## wider than the control it measures. The arithmetic that has to hold is
+##
+##   PANEL_WIDTH - 2*CARD_PADDING - SCROLLBAR_WIDTH - 2*CARD_PADDING == 320
+##
+## and it is what `vbox.custom_minimum_size` below is derived from too. Keeping the
+## budgets true this way is what keeps this bead's diff to the one script it owns.
+const PANEL_WIDTH: float = 376.0
 const PANEL_HEIGHT: float = 620.0
+
+## The scroll bar's own width, on the spec's 8 px grid and the same 8 px the engine
+## default theme gives it. Declared rather than assumed because the body's width —
+## and therefore every budget above — is the panel less the card padding less THIS
+## (codex review 2026-09-05: the first draft's styleboxes carried no margins, so
+## the bar computed a width of 0, which both hid the thumb and made the 320 px come
+## out right by accident).
+const SCROLLBAR_WIDTH: float = 8.0
 
 ## Minimum height for every interactive row (button, LineEdit). Past the ~44-48
 ## pt minimum touch target so the panel is thumb-usable on a phone.
@@ -142,10 +175,45 @@ const BODY_FONT_SIZE: int = 18
 
 ## The member row (bead godot-test1-xtr.3): a speaking dot, the name, and a mute
 ## toggle narrow enough to leave a 32-character lobby name room to clip in.
+##
+## 120 AND NOT 104 SINCE THE HUD SKIN, for `PANEL_WIDTH`'s reason exactly: this is
+## the one NARROW control in the panel and `locale_selfcheck` budgets "Mute" /
+## "Muted" at `MUTE_BUTTON_WIDTH` less the button stylebox's horizontal padding —
+## 96 px, written when that padding was the engine default's 8. `HudTheme.button()`
+## pads by `CARD_PADDING` (12) a side, so 104 would leave 80 and the check would be
+## measuring 16 px that are not there. The name label beside it still clips.
 const DOT_WIDTH: float = 18.0
-const MUTE_BUTTON_WIDTH: float = 104.0
-const DOT_IDLE: Color = Color(1.0, 1.0, 1.0, 0.25)
-const DOT_SPEAKING: Color = Color(0.45, 1.0, 0.45, 1.0)
+const MUTE_BUTTON_WIDTH: float = 120.0
+
+## THE SPEAKING DOT IS GREEN AND THAT IS DELIBERATE — read the note before
+## changing it (bead godot-test1-y1o.29).
+##
+## The bead asked for `VISOR_AMBER` here. It does not ship, because the HUD skin
+## that landed BEFORE it (the pilot, bead y1o.24) ruled the other way and is the
+## authority on how a panel consumes the palette: `hud_theme.gd`'s own palette note
+## lists the speaking green among the colours that are SEMANTIC rather than
+## stylistic and that "a palette pass may not quietly recolour", and `hero_hud.gd`
+## mirrors it under "one speaking colour for the whole game, and the palette has no
+## green". A talking teammate is already green on his `RemoteAvatar` name tag and
+## green on his hero tile; amber HERE would be the same fact in two colours on
+## three surfaces, and amber is also the colour the row next door uses for a mic
+## that was DENIED. So the value is `remote_avatar.LABEL_SPEAKING_COLOR`, mirrored
+## the way `hero_hud` mirrors it (both are `draw`/`modulate` consumers of a script
+## that owns no `class_name`, so neither can preload it) rather than the panel's own
+## slightly different green — which IS the bead's "today's dot colour moves to the
+## palette", one word of it aside. **The owner's eye rules; flagged in the PR.**
+const DOT_SPEAKING: Color = Color(0.55, 1.0, 0.55)
+## An idle dot is inactive, and inactive is STEEL — the panel's own 25% white is
+## gone with every other literal `HudTheme` owns.
+const DOT_IDLE: Color = HudTheme.STEEL
+
+## The per-hero identity tints, so a hero chip reads as that hero. `hero_hud.gd`
+## owns the table (`hud_theme.gd` names it as the one home of the tints and
+## deliberately keeps them out of the palette, being identity and not style); it
+## carries no `class_name`, so the script object is the only way to reach it — a
+## const table is exactly what CLAUDE.md allows a script dependency to be, and
+## nothing is instanced here.
+const HeroHud := preload("res://scripts/hero_hud.gd")
 
 ## The key `voice_chat.gd` reports the LOCAL microphone's level under. Mirrored
 ## rather than preloaded: `voice_chat.gd` is found through the group like every
@@ -250,6 +318,11 @@ var _members_box: VBoxContainer = null
 var _member_rows: Array = []
 var _member_sig: String = ""
 
+## The panel's caps SECTION HEADINGS, as `{label, source}` — see `_heading_label()`.
+## They carry their own English source because `.to_upper()` at the draw site means
+## the label cannot auto-translate, so a live language switch has to re-resolve them.
+var _headings: Array = []
+
 
 
 func _ready() -> void:
@@ -328,6 +401,15 @@ func _process(_delta: float) -> void:
 ## Build the MP button and the collapsible panel, and wire every signal. Called
 ## once from `_ready()`; anchored so it repositions on any screen size.
 func _build_ui() -> void:
+	# THE SKIN, AND IT IS ONE LINE ON THIS ROOT (bead godot-test1-y1o.29). Every
+	# colour, face and StyleBox below comes off `HudTheme` from here on: the panel's
+	# ground, every Button's four states, every Label's BONE. **On this node and
+	# never on `ProjectSettings`** — a project-wide flip would restyle every
+	# `Control` in the game at once and move every German width budget in one PR,
+	# which is exactly what the per-panel beads exist to do one file at a time. It
+	# covers the MP toggle too, which is the point: the button IS this panel.
+	theme = HudTheme.theme()
+
 	# --- "MP" toggle, BOTTOM-LEFT above the ⚙ Tune gear -------------------
 	_mp_button = Button.new()
 	_mp_button.name = "MPButton"
@@ -368,11 +450,10 @@ func _build_ui() -> void:
 	_panel_body.offset_right = EDGE_MARGIN + PANEL_WIDTH
 	_panel_body.offset_bottom = _mp_button.offset_top - BUTTON_STACK_GAP
 	_panel_body.offset_top = _panel_body.offset_bottom - PANEL_HEIGHT
-	var panel_style := StyleBoxFlat.new()
-	panel_style.bg_color = Color(0.05, 0.06, 0.09, 0.9)
-	panel_style.set_corner_radius_all(10)
-	panel_style.set_content_margin_all(10)
-	_panel_body.add_theme_stylebox_override("panel", panel_style)
+	# No stylebox override: the theme's `PanelContainer` slot IS `HudTheme.card()` —
+	# INK at the panel alpha, square corners, a 1 px STEEL frame and the hard 2 px
+	# offset shadow. The rounded translucent-blue box that used to be typed here is
+	# the literal this bead deletes.
 	_panel_body.visible = false
 	add_child(_panel_body)
 
@@ -381,18 +462,51 @@ func _build_ui() -> void:
 	scroll.name = "Scroll"
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_panel_body.add_child(scroll)
+	# The scrollbar is a `VScrollBar` CHILD, so `theme()`'s Panel/Button/Label slots
+	# never reach it and it stays the engine's light-grey pill on an INK card. INK
+	# track, STEEL grabber — the palette's own "frame / inactive" pair. Reached
+	# through `get_v_scroll_bar()` because that is the only handle to it.
+	var track := StyleBoxFlat.new()
+	track.bg_color = HudTheme.INK
+	track.set_corner_radius_all(0)
+	track.anti_aliasing = false
+	var grabber := StyleBoxFlat.new()
+	grabber.bg_color = HudTheme.STEEL
+	grabber.set_corner_radius_all(0)
+	grabber.anti_aliasing = false
+	var vbar := scroll.get_v_scroll_bar()
+	vbar.add_theme_stylebox_override("scroll", track)
+	for state: String in ["grabber", "grabber_highlight", "grabber_pressed"]:
+		vbar.add_theme_stylebox_override(state, grabber)
+	# A `ScrollBar`'s minimum cross-axis size comes from its styleboxes' MARGINS, so
+	# a flat box with none makes the bar 0 px wide: the thumb vanishes and there is
+	# nothing left to drag. Pin the width instead of margin-padding four boxes.
+	vbar.custom_minimum_size = Vector2(SCROLLBAR_WIDTH, 0.0)
+
+	# A `ScrollContainer` does NOT reserve its bar's width — the bar is drawn OVER
+	# the content — so without this gutter the right-hand STEEL border of every
+	# button and every member strip sits under it. One `MarginContainer` is cheaper
+	# than a right margin on each of the four sections, and it makes
+	# `PANEL_WIDTH`'s arithmetic literally true rather than true-once-you-know.
+	var gutter := MarginContainer.new()
+	gutter.name = "Gutter"
+	gutter.add_theme_constant_override("margin_right", int(SCROLLBAR_WIDTH))
+	gutter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(gutter)
 
 	var vbox := VBoxContainer.new()
 	vbox.name = "Body"
-	vbox.add_theme_constant_override("separation", 10)
+	# The spec's 8 px grid. The minimum width is the card less its own padding (12 a
+	# side) less the scroll bar's gutter, which is exactly the space the body gets —
+	# a minimum any wider than that is clipped by the ScrollContainer, since
+	# horizontal scrolling is disabled. See `PANEL_WIDTH`'s arithmetic.
+	vbox.add_theme_constant_override("separation", HudTheme.GRID)
 	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	vbox.custom_minimum_size = Vector2(PANEL_WIDTH - 24.0, 0.0)
-	scroll.add_child(vbox)
+	vbox.custom_minimum_size = Vector2(
+		PANEL_WIDTH - HudTheme.CARD_PADDING * 2.0 - SCROLLBAR_WIDTH, 0.0)
+	gutter.add_child(vbox)
 
-	var title := Label.new()
-	title.text = "MULTIPLAYER"
-	title.add_theme_font_size_override("font_size", 20)
-	vbox.add_child(title)
+	_add_heading(vbox, "MULTIPLAYER")
 
 	# --- Status line ------------------------------------------------------
 	# Every manager failure path emits a `status` string; this is where they land.
@@ -420,15 +534,17 @@ func _build_ui() -> void:
 	rooms_header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_rooms_section.add_child(rooms_header)
 
-	var rooms_title := Label.new()
-	rooms_title.text = "Open rooms"
-	rooms_title.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
-	rooms_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# The one heading that shares its line with a control, so the rule goes under
+	# the whole header row rather than under the label.
+	var rooms_title := _heading_label("Open rooms")
+	rooms_title.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	rooms_header.add_child(rooms_title)
 
 	var refresh_button := _make_button("Refresh", _on_refresh_rooms_pressed)
 	refresh_button.size_flags_horizontal = Control.SIZE_SHRINK_END
 	rooms_header.add_child(refresh_button)
+
+	_add_rule(_rooms_section)
 
 	_rooms_status = Label.new()
 	_rooms_status.name = "RoomsStatus"
@@ -449,11 +565,7 @@ func _build_ui() -> void:
 	vbox.add_child(_host_button)
 
 	# --- Join by code (the FALLBACK, for reaching one specific friend) -----
-	var code_title := Label.new()
-	code_title.text = "…or join by invite code"
-	code_title.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
-	code_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	vbox.add_child(code_title)
+	_add_heading(vbox, "…or join by invite code")
 
 	var join_row := HBoxContainer.new()
 	join_row.add_theme_constant_override("separation", 8)
@@ -469,6 +581,25 @@ func _build_ui() -> void:
 	_code_input.custom_minimum_size = Vector2(0.0, TOUCH_MIN_HEIGHT)
 	_code_input.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
 	_code_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# `HudTheme.theme()` styles Panel / Button / Label / CheckBox and stops there —
+	# a `LineEdit` left alone keeps the engine's rounded grey field on an INK card.
+	# Three overrides off the palette rather than a fifth `theme()` slot: this is
+	# the ONE text field in the HUD, and `hud_theme.gd` is not this bead's file.
+	# **A theme gap, named in the PR**: a second panel with a field should promote
+	# these into `HudTheme` rather than copy them.
+	_code_input.add_theme_stylebox_override("normal", HudTheme.strip())
+	_code_input.add_theme_stylebox_override("focus", HudTheme.button("focus"))
+	_code_input.add_theme_color_override("font_color", HudTheme.BONE)
+	_code_input.add_theme_color_override("font_placeholder_color", HudTheme.STEEL)
+	_code_input.add_theme_color_override("caret_color", HudTheme.VISOR_AMBER)
+	# AND THE READ-ONLY STATE, which is the one this panel spends most of its life
+	# in: `_refresh()` sets `editable = false` the moment you are in a room, and a
+	# `LineEdit` then draws its `read_only` box and `font_uneditable_color` instead
+	# of the two overridden above — so the engine's rounded grey field came back on
+	# the online panel (codex review 2026-09-05). Disabled is UNIT_KHAKI on the ink
+	# ground, exactly as `HudTheme.button("disabled")` spells it for a Button.
+	_code_input.add_theme_stylebox_override("read_only", HudTheme.button("disabled"))
+	_code_input.add_theme_color_override("font_uneditable_color", HudTheme.UNIT_KHAKI)
 	# Upper-case as it is typed: the lobby upper-cases anyway, but showing the
 	# player the code in the form they were given avoids a "did I mistype it?"
 	# moment. Re-setting `text` moves the caret, so restore it.
@@ -493,10 +624,7 @@ func _build_ui() -> void:
 	_hero_row.visible = false
 	vbox.add_child(_hero_row)
 
-	var hero_title := Label.new()
-	hero_title.text = "Hero"
-	hero_title.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
-	_hero_row.add_child(hero_title)
+	_add_heading(_hero_row, "Hero")
 
 	# --- Current room code + Copy (shown only while in a room) ------------
 	_code_row = HBoxContainer.new()
@@ -508,6 +636,12 @@ func _build_ui() -> void:
 	_code_label = Label.new()
 	_code_label.name = "RoomCode"
 	_code_label.text = ""
+	# THE PANEL'S ONE AMBER, and it is the number a player reads out loud — the
+	# spec rations the accent to one thing per screen region and lists "the coin
+	# counter" as exactly this shape of element. Oswald BOLD and already all-caps:
+	# the lobby's alphabet has no lower case, so there is nothing to `to_upper()`.
+	_code_label.add_theme_font_override("font", HudTheme.heading_font())
+	_code_label.add_theme_color_override("font_color", HudTheme.VISOR_AMBER)
 	_code_label.add_theme_font_size_override("font_size", CODE_FONT_SIZE)
 	_code_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_code_row.add_child(_code_label)
@@ -517,15 +651,14 @@ func _build_ui() -> void:
 	_code_row.add_child(copy_button)
 
 	# --- Member list ------------------------------------------------------
-	# The heading stays a plain Label; the names below it are one ROW each since
-	# bead godot-test1-xtr.3, because a speaking dot and a per-peer mute toggle
-	# are not things a joined string can carry.
-	_members_label = Label.new()
+	# The heading is a heading like every other; the names below it are one ROW
+	# each since bead godot-test1-xtr.3, because a speaking dot and a per-peer mute
+	# toggle are not things a joined string can carry. NO rule under this one: the
+	# strips underneath draw their own 1 px STEEL frame, and the heading is empty
+	# (nobody in the room) exactly as often as it is not.
+	_members_label = _heading_label("")
 	_members_label.name = "Members"
-	_members_label.text = ""
 	_members_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_members_label.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
-	_members_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vbox.add_child(_members_label)
 
 	_members_box = VBoxContainer.new()
@@ -576,6 +709,18 @@ func _build_ui() -> void:
 	# Same reason every button in this panel is FOCUS_NONE: a focused Range eats
 	# the arrow keys and `ui_accept`, both of which are gameplay input here.
 	_volume_slider.focus_mode = Control.FOCUS_NONE
+	# A `Slider` is another class `HudTheme.theme()` says nothing about, and the
+	# engine's grey pill on an INK card is the one control that still reads as
+	# somebody else's UI. The TRACK is a STEEL strip and the FILLED part is amber —
+	# the spec's ability-dial language, and this section's single accent. The
+	# grabber keeps its default texture: it is a knob, not a colour.
+	_volume_slider.add_theme_stylebox_override("slider", HudTheme.strip())
+	var volume_fill := StyleBoxFlat.new()
+	volume_fill.bg_color = HudTheme.VISOR_AMBER
+	volume_fill.set_corner_radius_all(0)
+	volume_fill.anti_aliasing = false
+	_volume_slider.add_theme_stylebox_override("grabber_area", volume_fill)
+	_volume_slider.add_theme_stylebox_override("grabber_area_highlight", volume_fill)
 	_volume_slider.custom_minimum_size = Vector2(0.0, TOUCH_MIN_HEIGHT)
 	_volume_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_volume_slider.value_changed.connect(_on_voice_volume_changed)
@@ -601,6 +746,67 @@ func _build_ui() -> void:
 	vbox.add_child(_leave_button)
 
 	vbox.add_child(_make_button("Close", _on_mp_button_pressed))
+
+
+## One SECTION HEADING: Oswald Bold, ALL CAPS, BONE — the spec's, and the caps are
+## applied `.to_upper()` at the DRAW SITE, never in `ui.csv`, where the translation
+## key IS the English source string (CLAUDE.md localization rule 1).
+##
+## Which is why the label cannot auto-translate: its `text` is the already-resolved
+## German, upper-cased, and that string is a key in no table. So the source is kept
+## in `_headings` and re-applied on `NOTIFICATION_TRANSLATION_CHANGED`, which is the
+## notification Godot's own auto-translation rides and which `skill_tree_ui.gd`
+## already hooks for the same reason (it composes its titles).
+##
+## Registration is skipped for an empty source: the member heading is a heading in
+## LOOK only — `_rebuild_member_rows()` writes its text on every refresh.
+func _heading_label(source: String) -> Label:
+	var label := Label.new()
+	label.auto_translate_mode = Node.AUTO_TRANSLATE_MODE_DISABLED
+	label.add_theme_font_override("font", HudTheme.heading_font())
+	label.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
+	label.add_theme_color_override("font_color", HudTheme.BONE)
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	if not source.is_empty():
+		_headings.append({"label": label, "source": source})
+		label.text = tr(source).to_upper()
+	return label
+
+
+## A heading plus the STEEL rule the spec puts under one, both parented to `parent`.
+func _add_heading(parent: Control, source: String) -> void:
+	parent.add_child(_heading_label(source))
+	_add_rule(parent)
+
+
+## The rule itself: a 1 px STEEL line, hard-edged like everything else here.
+## `HSeparator` draws its `separator` StyleBox centred in `separation` px of space.
+func _add_rule(parent: Control) -> void:
+	var line := StyleBoxLine.new()
+	line.color = HudTheme.STEEL
+	line.thickness = HudTheme.BORDER_PX
+	var rule := HSeparator.new()
+	rule.add_theme_stylebox_override("separator", line)
+	rule.add_theme_constant_override("separation", HudTheme.GRID / 2)
+	parent.add_child(rule)
+
+
+## Re-resolve every registered heading when the language changes. Without this a
+## live `TranslationServer.set_locale()` would leave the caps headings in the
+## language they were built in — the price of `.to_upper()` at the draw site.
+func _notification(what: int) -> void:
+	if what != NOTIFICATION_TRANSLATION_CHANGED:
+		return
+	for entry: Variant in _headings:
+		var row: Dictionary = entry as Dictionary
+		var label: Label = row.get("label", null)
+		if label != null and is_instance_valid(label):
+			label.text = tr(String(row.get("source", ""))).to_upper()
+	# The member heading composes its own text; `_refresh()` is where that happens.
+	# Guarded on a built panel: this notification also arrives while the node is
+	# entering the tree, which is before `_build_ui()` has made anything to refresh.
+	if _members_label != null:
+		_refresh()
 
 
 ## Make one full-width, thumb-sized button wired to `handler`. Every button in
@@ -936,6 +1142,17 @@ func _rebuild_hero_buttons(pool: Array[String]) -> void:
 		# `bind` rather than a capturing lambda so the hero name a button sends
 		# is fixed at build time and cannot drift with the loop variable.
 		var button := _make_button(hero.capitalize(), _on_hero_pressed.bind(hero))
+		# THE CHIP WEARS THE HERO'S OWN TINT — the identity colour the portrait row
+		# already paints that hero's tile in, so the picker and the HUD agree.
+		# Overriding only `font_color` leaves `font_disabled_color` alone, which the
+		# theme has already set to UNIT_KHAKI: the corporation's neutral is exactly
+		# the spec's "a teammate has him" / "she is in a cell" state, and it comes
+		# out of the palette for free rather than being a second decision here.
+		var tint: Variant = HeroHud.HERO_COLORS.get(hero, null)
+		if tint != null:
+			button.add_theme_color_override("font_color", tint as Color)
+			button.add_theme_color_override("font_hover_color", tint as Color)
+			button.add_theme_color_override("font_pressed_color", tint as Color)
 		_hero_row.add_child(button)
 		_hero_buttons.append(button)
 
@@ -1245,20 +1462,32 @@ func _rebuild_member_rows(manager: Node) -> String:
 	if _members_box != null:
 		_members_box.visible = not entries.is_empty()
 	_update_member_rows()
-	return tr("In room:") if not entries.is_empty() else ""
+	# `.to_upper()` at the draw site, like every other heading here.
+	return tr("In room:").to_upper() if not entries.is_empty() else ""
 
 
-func _make_member_row(entry: Dictionary, you: String) -> HBoxContainer:
+## One member as an INK_RAISED STRIP (bead godot-test1-y1o.29) — the spec's raised
+## secondary row, `HudTheme.strip()`, which is why this returns the wrapper and not
+## the `HBoxContainer` it used to. Everything else about the row is unchanged.
+func _make_member_row(entry: Dictionary, you: String) -> PanelContainer:
+	var strip := PanelContainer.new()
+	strip.add_theme_stylebox_override("panel", HudTheme.strip())
+	strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
+	row.add_theme_constant_override("separation", HudTheme.GRID / 2)
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	strip.add_child(row)
 
 	# The dot is a glyph, not a word — nothing to translate and nothing to fit.
+	# `font_color` and NOT `modulate`: the theme paints a `Label` BONE, and a
+	# modulate MULTIPLIES that, so a STEEL dot would come out a muddy two-thirds
+	# STEEL. The override replaces the colour outright.
 	var dot := Label.new()
 	dot.text = "●"
 	dot.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
 	dot.custom_minimum_size = Vector2(DOT_WIDTH, 0.0)
-	dot.modulate = DOT_IDLE
+	dot.add_theme_color_override("font_color", DOT_IDLE)
 	row.add_child(dot)
 
 	# `clip_text` is the room rows' own rule (see `locale_selfcheck`'s header):
@@ -1296,7 +1525,7 @@ func _make_member_row(entry: Dictionary, you: String) -> HBoxContainer:
 		row.add_child(mute)
 
 	_member_rows.append({"id": id, "dot": dot, "mute": mute})
-	return row
+	return strip
 
 
 ## Repaint the dots and relabel the per-peer buttons. Driven from `_process`,
@@ -1325,7 +1554,8 @@ func _update_member_rows() -> void:
 			# id (nothing on the wire carries your own audio back to you).
 			var key: String = VOICE_SELF_KEY if (not you.is_empty() and id == you) else id
 			var on: bool = speaks and not key.is_empty() and bool(voice.is_speaking(key))
-			dot.modulate = DOT_SPEAKING if on else DOT_IDLE
+			# `font_color`, not `modulate` — see `_make_member_row()`.
+			dot.add_theme_color_override("font_color", DOT_SPEAKING if on else DOT_IDLE)
 		var mute: Button = entry.get("mute", null)
 		if mute != null and is_instance_valid(mute):
 			mute.visible = mutes
