@@ -84,6 +84,17 @@ extends RefCounted
 ## it has nothing to seed from anyway — this stream exists only to feed those
 ## discarded draws.
 ##
+## THE CITY BUILDERS, REACHED AS A SCRIPT OBJECT AND NOT AS A CLASS (bd
+## `godot-test1-ftn.17`). A `SLOTS` row names its builder with a METHOD-NAME
+## STRING, so the call has to go through `.call(name, ...)` — and
+## `CityBuilders.call(...)` on the `class_name` is a PARSE ERROR, exactly as
+## `endless_terrain.gd` documents beside its own `_landmark_builders` preload.
+## A `const` rather than that file's `var` because every function here is static
+## and there is no instance to hang one on; `budapest_selfcheck` and
+## `budapest_city_selfcheck` dispatch through THIS name, so the preload has one
+## home and cannot drift from the one the game uses.
+const CITY_BUILDERS: GDScript = preload("res://scripts/city_builders.gd")
+
 ## CONSTANT rather than per-chunk, because every box the streamer places passes
 ## an explicit color_override and a plateau whose slices each drew their own
 ## colour would be a different grey on either side of every chunk seam. One seed,
@@ -591,7 +602,7 @@ static func spawn_city_bridges_in_chunk(terrain: Node3D, chunk_center: Vector3, 
 	and not two.
 
 	WHAT IT DOES NOT BUILD is the bridge: the towers, chains, trusses, cutwaters and
-	lions belong to landmark_builders.gd's `_city_*_bridge` rows, which stand on the
+	lions belong to city_builders.gd's `_city_*_bridge` rows, which stand on the
 	SLOTS entry of the same id. The deck is placed off the DRY_RECTS row the band is
 	already punched out by, and check 14 asserts the two agree on where the bridge
 	is — the ornament hangs its chains at exactly BRIDGE_DECK_TOP.
@@ -680,7 +691,7 @@ static func _spawn_city_landmarks_in_chunk(terrain: Node3D, chunk_center: Vector
 	      budget the decision was made to protect.
 
 	WHY (a) IS NEARLY FREE: the city builders are PURE FUNCTIONS OF (centre, rng)
-	whose random stream touches COLOUR ONLY — landmark_builders.gd's own banner
+	whose random stream touches COLOUR ONLY — city_builders.gd's own banner
 	says so, and not one dimension, offset or count is drawn. Run the same builder
 	from the same seed in a neighbouring chunk and it emits the SAME boxes at the
 	SAME world positions, so clipping is a filter on the output and needs no edit
@@ -780,7 +791,7 @@ static func _spawn_city_landmarks_in_chunk(terrain: Node3D, chunk_center: Vector
 		# through unchanged, which is how the three slots on a plateau stand on the
 		# lid instead of inside the hill.
 		var center := Vector3(pos.x - chunk_center.x, pos.y, pos.z - chunk_center.z)
-		var footprint: Dictionary = terrain._landmark_builders.call(
+		var footprint: Dictionary = CITY_BUILDERS.call(
 				builder, terrain, center, rng, scratch_chunk, scratch_batch, scratch_body)
 
 		# Rule 2a: a box WIDER THAN A CHUNK is cut on the grid first (see the

@@ -266,7 +266,10 @@ func _run_builder(terrain: Node3D, index: int, center: Vector3, chunk_center: Ve
 	var chunk := MeshInstance3D.new()
 	var batch: Array = []
 	var body := StaticBody3D.new()
-	terrain._landmark_builders.call(String(slot["builder"]), terrain, center, rng,
+	# THE SAME SCRIPT OBJECT THE STREAMER DISPATCHES THROUGH (bd
+	# `godot-test1-ftn.17`): a builder is a METHOD-NAME STRING, and
+	# `CityBuilders.call(...)` on the class_name is a parse error.
+	BudapestStreamer.CITY_BUILDERS.call(String(slot["builder"]), terrain, center, rng,
 			chunk, batch, body)
 	ChunkBatch.split_city_boxes_on_chunk_grid(terrain, chunk_center, batch, body)
 	return {"batch": batch, "body": body, "chunk": chunk,
@@ -607,7 +610,7 @@ func _check_bridges(terrain: Node3D) -> void:
 	  TowerInterior.PLAN_RAMP_MAX_SLOPE, READ from there and never restated.
 
 	AND THE ORNAMENT HAS TO AGREE. The pylons, towers, chains and lions are
-	landmark_builders.gd's, standing on the SLOTS row of the same id; the deck is
+	city_builders.gd's, standing on the SLOTS row of the same id; the deck is
 	built off the DRY_RECTS row. Nothing in the engine binds those two, so this is
 	where they are bound: every BRIDGES row names a slot that exists, has a
 	builder, and sits at the deck rect's own centre.

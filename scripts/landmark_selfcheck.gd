@@ -291,6 +291,10 @@ const TOAST_SCRIPT: String = "res://scripts/landmark_toast.gd"
 ## inequality chain spans the seam — an entry's own `radius` comes from this file,
 ## the LANDMARK_RADIUS that must bound it comes from the terrain.
 const BUILDERS_SCRIPT: String = "res://scripts/landmark_builders.gd"
+## Budapest's 22 builders, split off by bd `godot-test1-ftn.17`. Loaded rather
+## than `preload`ed for BUILDERS_SCRIPT's reason: this file dispatches by
+## METHOD-NAME STRING off a script OBJECT, which a `class_name` cannot do.
+const CITY_BUILDERS_SCRIPT: String = "res://scripts/city_builders.gd"
 
 ## Seeds per builder for check 1. The shapes are random-driven (stone jitter,
 ## per-tier yaw, leg splay), so one seed proves nothing — 25 is enough that a
@@ -352,6 +356,15 @@ func _run() -> void:
 	# check written that way would pass vacuously against nothing at all.
 	var consts: Dictionary = terrain_script.get_script_constant_map()
 	var builders_script: GDScript = load(BUILDERS_SCRIPT)
+	# THE CITY BUILDERS ARE A SECOND SCRIPT since bd `godot-test1-ftn.17`, and the
+	# registry is still read off the FIRST one: `landmark_builders.gd` keeps
+	# `const CITY_LANDMARKS := CityBuilders.CITY_LANDMARKS`, which
+	# `get_script_constant_map()` answers exactly as it did — so the two
+	# "has a CITY_LANDMARKS registry" assertions below are unmoved on purpose.
+	# What DID move is where a `_city_*` method-name string resolves, and a check
+	# that kept dispatching through `builders_script` would fail every city row on
+	# `has_method` rather than measure it.
+	var city_script: GDScript = load(CITY_BUILDERS_SCRIPT)
 	var registry: Array = builders_script.get_script_constant_map().get("LANDMARKS", [])
 	var city: Array = builders_script.get_script_constant_map().get("CITY_LANDMARKS", [])
 
@@ -361,7 +374,7 @@ func _run() -> void:
 		_fail("landmark_builders.gd has no CITY_LANDMARKS registry")
 	else:
 		_check_radii(terrain_script, builders_script, registry, "field")
-		_check_radii(terrain_script, builders_script, city, "city")
+		_check_radii(terrain_script, city_script, city, "city")
 		_check_top_negative_control()
 		_check_constants(consts, registry)
 		_check_facts(registry)
@@ -370,7 +383,7 @@ func _run() -> void:
 		_check_quiz_options(builders_script, registry)
 		await _check_quiz_toast(registry)
 		_check_city_registry(registry, city)
-		_check_kinds(terrain_script, builders_script, registry, city)
+		_check_kinds(terrain_script, builders_script, city_script, registry, city)
 
 	if _failures.is_empty():
 		print("landmarks: %d field + %d city builders × %d seeds measured, toast once-per-approach + radius-derived trigger + first-visit treasure OK, quiz options over %d × %d seeds × %d ids OK, quiz card ask/answer/tap/timeout/re-visit OK"
@@ -1871,7 +1884,7 @@ func _city_rows_ok(registry: Array, city: Array, report_as: String) -> Array[Str
 # CHECK 9 — the SHAPE KINDS are honest: the drawn apex IS the declared top
 # ============================================================================
 
-func _check_kinds(terrain_script: GDScript, builders_script: GDScript, registry: Array, city: Array) -> void:
+func _check_kinds(terrain_script: GDScript, builders_script: GDScript, city_script: GDScript, registry: Array, city: Array) -> void:
 	"""
 	Bead godot-test1-y1o.6 gave the FIELD builders the batch's mesh-kind slot —
 	domes are spheres, columns and drums cylinders, spires end in a cone — and
@@ -1924,6 +1937,9 @@ func _check_kinds(terrain_script: GDScript, builders_script: GDScript, registry:
 	for pass_i in 2:
 		var table: Array = registry if pass_i == 0 else city
 		var bucket: Dictionary = kinds_seen if pass_i == 0 else city_kinds
+		# The two tables live on two scripts since bd `godot-test1-ftn.17`; the
+		# dispatch is the same method-name string either way.
+		var table_script: GDScript = builders_script if pass_i == 0 else city_script
 		for entry_variant: Variant in table:
 			var row: Dictionary = entry_variant
 			var builder: String = String(row.get("builder", ""))
@@ -1937,7 +1953,7 @@ func _check_kinds(terrain_script: GDScript, builders_script: GDScript, registry:
 				var chunk := MeshInstance3D.new()
 				var rng := RandomNumberGenerator.new()
 				rng.seed = hash(Vector3i(seed_index, builder.hash(), 9))
-				builders_script.call(builder, terrain, Vector3.ZERO, rng, chunk, block_batch, block_body)
+				table_script.call(builder, terrain, Vector3.ZERO, rng, chunk, block_batch, block_body)
 
 				# WHICH BOXES COLLIDE, by their own centre. create_box gives the
 				# shape the SAME centre as the batch entry, so an origin match is

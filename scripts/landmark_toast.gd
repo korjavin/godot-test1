@@ -734,7 +734,8 @@ func _scan() -> void:
 # yet, so a picker over `CITY_LANDMARKS` could not even name the place it was
 # asking about. Upgrade path, if a later pass wants a city question that gates
 # the COINS ONLY (never the bit): a `city_quiz_options()` beside `quiz_options()`
-# in `landmark_builders.gd`, once wave C has filled that table to 22 rows.
+# in `city_builders.gd`, where CITY_LANDMARKS now lives, once wave C has filled
+# that table to 22 rows.
 
 ## The line the first arrival at a named city landmark shows under the fact — the
 ## "+N coins" the burst is about to pay. COMPOSED at runtime, so this is the

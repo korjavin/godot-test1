@@ -683,6 +683,25 @@ Load-bearing rules:
   ftn.7 lesson) — while `budapest_city_selfcheck` and `field_bridge_selfcheck`
   keep the forwarders. The three city rules below are untouched by the move, the
   ONE `MultiMeshInstance3D` per city chunk and its no-shadow flag included.
+- **BUDAPEST'S 22 LANDMARKS ARE `scripts/city_builders.gd`** (`class_name CityBuilders`,
+  all static, bd `godot-test1-ftn.17`) — the `CITY_LANDMARKS` registry with its
+  "why a SECOND table" banner, the two city palette entries and the 26 `_city_*`
+  functions that draw them (22 builders + the four shared shape helpers `_city_dome`
+  / `_city_spire` / `_city_bays` / `_city_cable`),
+  in `landmark_builders.gd`'s own idiom; that file keeps `LANDMARKS`, the
+  quiz picker, the `_lm_*` primitives and the 48 FIELD builders. **THE DEPENDENCY IS
+  ONE WAY AS A `const` AND THE OTHER WAY ONLY IN A BODY**: `landmark_builders.gd`
+  carries `const CITY_LANDMARKS := CityBuilders.CITY_LANDMARKS` (so `landmark_toast`,
+  `landmark_progress_selfcheck` and both registry assertions are untouched — a `const`
+  alias still answers `get_script_constant_map()`), while the city builders reach back
+  for the shared `LM_*` palette and `_lm_shade` / `_lm_onion` as `LandmarkBuilders.X`
+  INSIDE function bodies, which is a runtime lookup — `TowerInterior` / `TowerPlanBoxes`'
+  rule, and the only reason this pair is not a parse-time cycle. **Dispatch is by
+  METHOD-NAME STRING through a preloaded SCRIPT OBJECT** (`BudapestStreamer.CITY_BUILDERS`,
+  which `budapest_selfcheck` and `budapest_city_selfcheck` call through as well, so the
+  preload has one home), never the `class_name`: `CityBuilders.call(...)` is a parse
+  error, the trap `_landmark_builders` already documents. `landmark_selfcheck` dispatches
+  the two registries through their two scripts and reads BOTH tables off the first.
 - **A BOX HAS A MESH KIND, AND EVERY UNIT MESH FITS THE UNIT CUBE** (bead
   `godot-test1-y1o.1`, epic `y1o` "get rid of blocks"). The batch entry is
   `{transform, color, kind}` — `ChunkBatch.BoxKind` (CUBE / SPHERE / CONE / CYLINDER /

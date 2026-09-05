@@ -1156,7 +1156,10 @@ func _run_builder(terrain: Node3D, index: int, center: Vector3, chunk_center: Ve
 	var chunk := MeshInstance3D.new()
 	var batch: Array = []
 	var body := StaticBody3D.new()
-	terrain._landmark_builders.call(String(slot["builder"]), terrain, center, rng,
+	# THE SAME SCRIPT OBJECT THE STREAMER DISPATCHES THROUGH (bd
+	# `godot-test1-ftn.17`): a builder is a METHOD-NAME STRING, and
+	# `CityBuilders.call(...)` on the class_name is a parse error.
+	BudapestStreamer.CITY_BUILDERS.call(String(slot["builder"]), terrain, center, rng,
 			chunk, batch, body)
 	ChunkBatch.split_city_boxes_on_chunk_grid(terrain, chunk_center, batch, body)
 	return {"batch": batch, "body": body, "chunk": chunk,
