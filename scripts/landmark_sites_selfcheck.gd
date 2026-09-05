@@ -98,11 +98,18 @@ const CORRIDOR_PAD: float = 40.0
 ## Stations to compare between the re-seeded road and a freshly born one. Spread
 ## far enough apart that a road agreeing at all four by luck is not a thing that
 ## happens: the centreline is a random walk in heading, so two seeds diverge
-## within a few stations and stay diverged. `ROAD_PROBE_X` is walked first,
-## because `_road_station()` READS the cache and `_road_extend_to_x()` is what
-## grows it — which is also what makes this assert the road was REBUILT and not
-## merely emptied.
-const ROAD_PROBE_STATIONS: Array[int] = [1, 40, 200, 900]
+## within a few stations and stay diverged.
+##
+## IT STARTS AT 2, NOT AT 1. Station 0 is the origin and station 1 is (6, 0) for
+## EVERY seed — the recurrence has drawn no turn yet — so probing either of them
+## is vacuous: they agree between two seeds because they agree between all seeds.
+## The first station a seed can move is 2.
+##
+## `ROAD_PROBE_X` is walked first, because `_road_station()` only READS the cache
+## (an index it does not hold is an out-of-bounds error, not a rebuild) and
+## `_road_extend_to_x()` is what grows it — which is also what makes this assert
+## the road was REBUILT and not merely emptied.
+const ROAD_PROBE_STATIONS: Array[int] = [2, 40, 200, 900]
 const ROAD_PROBE_X: float = 8000.0
 
 var _failures: Array[String] = []
@@ -349,9 +356,10 @@ func _check_seed_reseats_the_table(terrain_script: GDScript) -> void:
 	# THE CENTRELINE ITSELF, directly. The table comparison above is transitive —
 	# the sites ARE station indices — but "the sites match" is a long way from
 	# "the road matches", and a future placement rule that leaned less on the road
-	# would quietly stop asserting it. So walk the two roads station by station.
-	# `_road_station()` extends the cache on demand, so this also proves the
-	# re-seeded terrain REBUILDS one rather than merely having dropped it.
+	# would quietly stop asserting it. So walk the two roads station by station,
+	# after growing BOTH caches over the same X through the shipped
+	# `_road_extend_to_x()` — which is also what makes this prove the re-seeded
+	# terrain REBUILDS a road rather than merely having dropped one.
 	terrain._road_extend_to_x(0.0, ROAD_PROBE_X)
 	fresh._road_extend_to_x(0.0, ROAD_PROBE_X)
 	for k: int in ROAD_PROBE_STATIONS:

@@ -8559,8 +8559,9 @@ func landmark_sites() -> Dictionary:
 	Pure in `run_seed` (and in the road centreline, which is itself pure in
 	run_seed), so every peer in a room and every regeneration of the same run agree
 	for free — the same argument the old per-chunk roll made, one level up. Built
-	lazily on the first ask and dropped by new_run() beside the station cache it is
-	derived from; see the MUSEUM MILE banner for the design.
+	lazily on the first ask and dropped by `set_run_seed()` (through
+	`_drop_seeded_memos()`) beside the station cache it is derived from; see the
+	MUSEUM MILE banner for the design.
 	"""
 	if _landmark_sites_built:
 		return _landmark_sites_cache
@@ -11180,7 +11181,8 @@ func _tower_reset() -> void:
 	is about the BUILDING: a shell carries the old world's opened gates, captives
 	and guards, and a new run must not inherit them.
 
-	Called from new_run() after the seed is set and before any chunk is rebuilt.
+	Called from `set_run_seed()` — the seed write, every door — and so before any
+	chunk is rebuilt.
 	The shell is the one thing in this file that survives a chunk wipe, so it is
 	also the one thing a new run has to free by hand; the impostor is repositioned
 	rather than rebuilt, because its geometry does not depend on the seed.
@@ -11207,7 +11209,9 @@ func _tower_reset() -> void:
 # the per-run run_seed (constant for the whole run). There is no per-chunk RNG and no
 # per-frame state, so the road is identical for a given `k` no matter which chunk asks
 # for it or in what order — that is what makes the trail seamless across chunk
-# boundaries and reproducible on revisit. Only new_run() (a fresh run) changes it.
+# boundaries and reproducible on revisit. Only a new seed changes it, and the
+# memos derived from it are dropped where that seed is WRITTEN — see
+# `_drop_seeded_memos()`.
 
 func _road_hash01(k: int) -> float:
 	"""
@@ -11806,7 +11810,7 @@ func _field_bridge_wet_metres(k: int) -> float:
 
 	MEMOIZED per station, and it is the hot path of the whole feature: every
 	station in a scan window is asked as `k` and again as `k - 1`, and the growth
-	loops ask it again. new_run() drops it with the bridges it feeds.
+	loops ask it again. `_drop_seeded_memos()` drops it with the bridges it feeds.
 	"""
 	if _field_bridge_wet_cache.has(k):
 		return _field_bridge_wet_cache[k]
@@ -14397,11 +14401,11 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	1. Set run_seed — re-rolled at random, or taken from forced_seed. Every hash
 	   site mixes it in, so all downstream content (blocks, crocodiles, road,
 	   coins) comes out of that one number.
-	2. Clear the road station cache — its entries were computed with the OLD seed
-	   and would poison the new road (the cache is "correct forever" only while the
-	   seed is constant). Reset the bounds to the empty sentinel (min > max) exactly
-	   as declared, so the next _road_extend_to_x re-seeds station 0. Also clear both
-	   pending queues — anything queued was computed for the old world.
+	2. Clear both pending queues — anything queued was computed for the old world.
+	   The SEED-derived memos (the road station cache and everything strung along
+	   it) are NOT cleared here: step 1's seed write drops them, in
+	   `_drop_seeded_memos()`, because `set_run_seed()` is the only seam every
+	   door goes through. These two queues are CHUNK state, so they stay.
 	3. Free every active chunk and clear the dictionary — old-world geometry.
 	4. Rebuild around chunk `around` (the spawn chunk (0,0) unless a caller says
 	   otherwise) via update_chunks — which floors that chunk + SYNC_RING ring 1
