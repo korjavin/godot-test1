@@ -35,6 +35,57 @@ const BOSS_TINT := Color(0.85, 0.4, 0.4)
 ## number of bosses add exactly one material per distinct source.
 static var _boss_styled_cache: Dictionary = {}
 
+## SCRATCH A/B SWITCH for bead `godot-test1-y1o.22`, and it ships `false` — which
+## is byte for byte the cel-banded cast this game has always had.
+##
+## The epic's question is whether the CAST should keep `DIFFUSE_TOON`'s hard bands
+## now that the WORLD is `diffuse_burley` plus `world_block.gdshader`'s top-lit
+## gradient, or join it. Flipping this to `true` gives every hero and predator the
+## world's diffuse response while KEEPING the rim (0.4 / tint 0.25) that reads as
+## the cel outline — the two are independent, and only the first is in question.
+## The owner rules from the rendered pair; `style_shots.gd`'s `cast=burley`
+## argument is the only thing that writes it.
+##
+## ponytail: a bool and no enum. There are exactly two candidates and the loser is
+## deleted with this var — a mode enum would outlive the decision it exists for.
+static var cast_diffuse_burley: bool = false
+
+
+## The diffuse mode a styled duplicate gets. One reader for both caches so the
+## two `apply_*` functions can never disagree about the answer.
+##
+## ponytail: `apply_to_mesh`'s "already toon, skip it" guard is what makes a
+## SECOND apply on the same mesh a no-op, and under Burley that guard no longer
+## recognises this file's own output — a double apply would duplicate again. No
+## caller does one (each node is styled once, on instance), and the tower checks
+## that assert "applying changed nothing" run on materials authored DIFFUSE_TOON
+## in the scene, which are skipped under either mode. If Burley wins, the guard
+## becomes `!= _cast_diffuse_mode()` in the same commit that deletes the flag.
+static func _cast_diffuse_mode() -> int:
+	if cast_diffuse_burley:
+		return BaseMaterial3D.DIFFUSE_BURLEY
+	return BaseMaterial3D.DIFFUSE_TOON
+
+
+static func set_cast_burley(on: bool) -> void:
+	"""
+	Set the A/B switch AND drop both caches, which is the whole reason this is a
+	function and not a bare assignment.
+
+	`scenes/style_shots.tscn` instances `main.tscn` as an EARLIER SIBLING, so the
+	player's model is styled — and its source material cached — before the tool's
+	own `_ready()` ever runs. The caches are keyed by source material id alone and
+	know nothing about the mode, so a plain assignment would leave every hero
+	wearing the duplicate made a frame ago under the old mode, and the A/B pair
+	would come out identical for the most important body in the shot.
+
+	Everything the cast is made of is re-styled after this: `_shoot()` re-runs
+	`set_active_character()` and `new_run()` respawns the predators.
+	"""
+	cast_diffuse_burley = on
+	_styled_cache.clear()
+	_boss_styled_cache.clear()
+
 
 static func apply_to_mesh(mesh: MeshInstance3D) -> void:
 	"""
@@ -57,7 +108,7 @@ static func apply_to_mesh(mesh: MeshInstance3D) -> void:
 			var styled: BaseMaterial3D = _styled_cache.get(key)
 			if styled == null:
 				styled = mat.duplicate() as BaseMaterial3D
-				styled.diffuse_mode = BaseMaterial3D.DIFFUSE_TOON
+				styled.diffuse_mode = _cast_diffuse_mode()
 				styled.rim_enabled = true
 				styled.rim = 0.4
 				styled.rim_tint = 0.25
@@ -86,7 +137,7 @@ static func apply_boss_to_mesh(mesh: MeshInstance3D) -> void:
 			var styled: BaseMaterial3D = _boss_styled_cache.get(key)
 			if styled == null:
 				styled = mat.duplicate() as BaseMaterial3D
-				styled.diffuse_mode = BaseMaterial3D.DIFFUSE_TOON
+				styled.diffuse_mode = _cast_diffuse_mode()
 				styled.rim_enabled = true
 				styled.rim = 0.4
 				styled.rim_tint = 0.25

@@ -23,6 +23,12 @@ var _out_dir: String = "user://shots"
 ## Optional `only=<substring>` command-line filter, so a bead that wants two
 ## shots does not sit through eleven. Empty means "every shot", which is what CI
 ## and the epic's A/B pairs want.
+##
+## ponytail: a filter that skips the EARLIER shots also skips their settles, and
+## some of what a shot photographs is populated by the ones before it — `only=cast_2`
+## renders the forest with group `"crocodile"` empty and quietly poses nobody, where
+## `only=cast` renders all three and finds one. Filter to a GROUP (`only=cast`), not
+## to a single late shot, unless the shot stands alone.
 var _only: String = ""
 
 ## Which ambience groups `hide=` suppresses. The default is the y1o list — this
@@ -42,6 +48,13 @@ func _ready() -> void:
 			_only = a.substr(5)
 		elif a.begins_with("hide="):
 			_hidden_groups = a.substr(5).split(",", false)
+		elif a.begins_with("cast="):
+			# THE CAST'S DIFFUSE MODE (bead godot-test1-y1o.22). `cast=burley` is the
+			# only writer of `ToonShading.cast_diffuse_burley`; anything else — and
+			# the absence of the argument — is the shipped cel banding. Through the
+			# setter, never the var: `main.tscn` is an EARLIER SIBLING of this node,
+			# so the hero has already been styled and cached by the time this runs.
+			ToonShading.set_cast_burley(a.substr(5) == "burley")
 		else:
 			_out_dir = a
 	DirAccess.make_dir_recursive_absolute(_out_dir)
@@ -95,6 +108,17 @@ func _run() -> void:
 	var avenue := Vector3(1600.0 + 5.0 * 62.0, 0.0, 0.0)
 
 	print("[SHOTS] field=", field, " forest=", forest, " street=", street, " avenue=", avenue)
+
+	# THE CAST (bead godot-test1-y1o.22) — a hero AND a predator in frame, at three
+	# light levels, so the owner can rule on `DIFFUSE_TOON` vs the world's Burley
+	# from pictures. They share the `cast` prefix so `only=cast` renders exactly
+	# these three and skips the six landmark sweeps, which are about the WORLD and
+	# cost minutes each. Budapest gets no posed predator: the rect spawns no
+	# ordinary crocodile, and dragging one onto a street would be a photograph of
+	# something the game never shows.
+	await _shoot(terrain, player, field, 0.0, "cast_1_field", true)
+	await _shoot(terrain, player, forest, 0.0, "cast_2_forest", true)
+	await _shoot(terrain, player, street, -PI * 0.5, "cast_3_budapest")
 
 	await _shoot(terrain, player, field, 0.0, "1_field")
 	await _shoot(terrain, player, forest, 0.0, "2_forest")
@@ -305,7 +329,42 @@ func _find_biome(terrain: Node, want: int) -> Vector3:
 		x += 25.0
 	return Vector3(300.0, 2.0, 0.0)
 
-func _shoot(terrain: Node, player: Node3D, where: Vector3, yaw: float, name: String) -> void:
+# ============================================================================
+# THE CAST CLOSE-UP (bead godot-test1-y1o.22)
+# ============================================================================
+# The gameplay rig frames the WORLD: `$CameraPivot/CameraArm/Camera3D` sits ten-odd
+# metres back and high, which puts the hero at about 5% of the frame — fine for
+# judging a biome's blocks, useless for ruling on how a 2 m body's diffuse falls
+# off. So a cast shot gets its OWN camera, close and level, and stands the nearest
+# predator beside the hero. Nothing about the gameplay rig is touched: a second
+# `Camera3D` is added under the tree root and made `current`, which is also why it
+# can be posed at all — a `SpringArm3D` overwrites its children's local position on
+# its own internal physics tick, so writing the shipped camera's transform is
+# silently undone.
+
+## Where the cast camera stands relative to the hero: `CAST_CAM_BACK` metres along
+## a FIXED world bearing (so the key light falls the same way in every cast shot
+## and in both halves of every pair), `CAST_CAM_HEIGHT` up, aimed at chest height.
+const CAST_CAM_BEARING := Vector3(0.72, 0.0, 0.69)
+const CAST_CAM_BACK: float = 5.6
+const CAST_CAM_HEIGHT: float = 2.0
+const CAST_CAM_AIM_Y: float = 1.15
+
+## Where the posed predator stands relative to the hero — beside him, slightly
+## forward, so the two silhouettes never stack and both are square to the light.
+const PREDATOR_POSE_SIDE: float = 2.5
+const PREDATOR_POSE_AHEAD: float = 0.6
+
+## A predator further than this was not in this neighbourhood, and dragging one
+## across the world would photograph something the game never shows. Budapest is
+## the case that matters: the rect spawns no ordinary crocodile, so the nearest is
+## the Danube's, hundreds of metres off — that shot gets the hero alone, which is
+## the honest picture of a city street.
+const PREDATOR_POSE_MAX_DIST: float = 120.0
+
+
+func _shoot(terrain: Node, player: Node3D, where: Vector3, yaw: float,
+		name: String, cast_closeup: bool = false) -> void:
 	if _only != "" and not name.contains(_only):
 		return
 	var chunk := Vector2i(roundi(where.x / 50.0), roundi(where.z / 50.0))
@@ -347,12 +406,112 @@ func _shoot(terrain: Node, player: Node3D, where: Vector3, yaw: float, name: Str
 		(model as Node3D).visible = true
 	player.set_physics_process(false)
 	player.set_process(false)
+	# THE PREDATORS ARE FROZEN TOO (bead godot-test1-y1o.22), for the reason the
+	# camera above is: a body mid-waddle in one half of an A/B pair and mid-turn in
+	# the other is noise in the only thing the pair is asked to show. The LOD
+	# manager would wake one inside the frames below — it ticks at ~9 Hz and
+	# `set_lod_active(true)` restores exactly the `_physics_process` this clears —
+	# so it stops first. Nothing is restored; this tool takes its shots and quits.
+	var lod := get_tree().get_first_node_in_group("lod_manager")
+	if lod != null:
+		lod.set_physics_process(false)
+		lod.set_process(false)
+	for c_v: Variant in get_tree().get_nodes_in_group("crocodile"):
+		(c_v as Node).set_physics_process(false)
+	if cast_closeup:
+		_frame_cast(player, where)
 	await get_tree().process_frame
 	await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 	var img := get_viewport().get_texture().get_image()
 	img.save_png(_out_dir + "/" + name + ".png")
 	print("[SHOTS] wrote ", name, " at ", where)
+
+func _frame_cast(player: Node3D, where: Vector3) -> void:
+	"""
+	Re-frame a cast shot: a close, level camera on the hero, and the nearest
+	predator stood beside him.
+
+	WHY A SECOND CAMERA. The shipped rig is a `SpringArm3D` that rewrites its
+	child's local position on its own internal physics tick, so posing
+	`$CameraPivot/CameraArm/Camera3D` is silently undone however frozen the player
+	is. A plain `Camera3D` added under the tree root and made `current` is both
+	controllable and completely inert as far as the game is concerned — this tool
+	takes its shots and quits, so nothing is restored.
+
+	WHY THE PREDATOR IS POSED AND NOT FOUND. Its SPAWN is deterministic in the seed
+	but its wander is not (`piglet_crocodile_ai` rolls speed and rhythm off a
+	`randomize()`d RNG), so "photograph whatever walked into shot" gives one half of
+	the pair a crocodile and the other half an empty field — and a comparison of how
+	the CAST is shaded needs a body in both frames or it shows nothing. Both
+	variants stand the same species at the same metre under the same light, so the
+	only difference left between the two PNGs is the material.
+
+	It runs AFTER the freeze in `_shoot`, so nothing walks back out of frame in the
+	two frames before the grab.
+	"""
+	var bearing: Vector3 = CAST_CAM_BEARING.normalized()
+	var side := Vector3(bearing.z, 0.0, -bearing.x)
+
+	# THE PREDATOR FIRST, so a refusal still leaves the camera framed on the hero.
+	#
+	# CHOSEN BY NAME, NEVER BY DISTANCE. A crocodile's node name is deterministic in
+	# (chunk, seed) but its WANDER is not, so "the nearest one" answered a different
+	# body in each half of the pair — and on the forest spot that was a white wolf
+	# against a green crocodile, which is a photograph of two different animals and
+	# says nothing at all about a material. The in-range set is the same in both
+	# runs because the same seed loads the same chunks; sorting it makes the pick
+	# the same too. (The per-instance SIZE roll is still random — documented noise,
+	# and far quieter than a change of species.)
+	var names: Array[String] = []
+	var by_name: Dictionary = {}
+	var best_d: float = INF
+	for c_v: Variant in get_tree().get_nodes_in_group("crocodile"):
+		var c := c_v as Node3D
+		if c == null or not c.is_inside_tree():
+			continue
+		var d: float = c.global_position.distance_to(where)
+		best_d = minf(best_d, d)
+		if d > PREDATOR_POSE_MAX_DIST:
+			continue
+		names.append(String(c.name))
+		by_name[String(c.name)] = c
+	names.sort()
+	var best: Node3D = null
+	if not names.is_empty():
+		best = by_name[names[0]]
+	if best != null:
+		best.global_position = Vector3(
+				where.x + side.x * PREDATOR_POSE_SIDE + bearing.x * PREDATOR_POSE_AHEAD,
+				where.y,
+				where.z + side.z * PREDATOR_POSE_SIDE + bearing.z * PREDATOR_POSE_AHEAD)
+		# Square to the lens, so the lit front and the shaded flank are both in
+		# shot — the whole diffuse falloff the pair exists to compare.
+		best.rotation.y = atan2(bearing.x, bearing.z)
+		print("[SHOTS] posed ", best.name, " (was ", "%.1f" % best_d, " m away)")
+	else:
+		print("[SHOTS] no predator within ", PREDATOR_POSE_MAX_DIST, " m of ", where,
+				" — hero alone (nearest ", "%.1f" % best_d, " m)")
+
+	var cam := _cast_camera()
+	var eye: Vector3 = where + bearing * CAST_CAM_BACK + Vector3(0.0, CAST_CAM_HEIGHT, 0.0)
+	cam.global_position = eye
+	cam.look_at(Vector3(where.x, where.y + CAST_CAM_AIM_Y, where.z), Vector3.UP)
+
+
+func _cast_camera() -> Camera3D:
+	"""The cast close-up camera, made once and reused, `current` from the moment it
+	exists. Parented to the tree root rather than to the player, so nothing the
+	body does between shots can move it."""
+	var existing := get_tree().root.get_node_or_null("CastShotCamera")
+	if existing is Camera3D:
+		return existing as Camera3D
+	var cam := Camera3D.new()
+	cam.name = "CastShotCamera"
+	get_tree().root.add_child(cam)
+	cam.current = true
+	return cam
+
 
 ## 300 frames of the game running normally at this spot: frame time, draw calls,
 ## and whatever the shipped spike telemetry logged. Taken BEFORE the pose is
