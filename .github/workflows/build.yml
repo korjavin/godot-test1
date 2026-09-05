@@ -224,10 +224,40 @@ jobs:
       # measuring a fiction, so give the container the fonts a real machine has.
       # EVERY shard installs them: the partition is dynamic, so any shard can draw
       # locale_selfcheck.
+      # RETRIED, with its own clock (bead godot-test1-i3e). On 2026-09-05 a
+      # mid-sync Ubuntu mirror ("File has unexpected size", "Hash Sum mismatch",
+      # apt exit 100) or a hung fetch killed shard after shard across a dozen
+      # PRs and master itself BEFORE a single self-check ran — every one a
+      # manual `gh run rerun --failed`. Three attempts twenty seconds apart
+      # ride out a sync; the step's own 4-minute cap turns a hung mirror into a
+      # retry instead of eating the job's 15 minutes. `apt-get update` is
+      # inside the loop on purpose: the index is what the mirror was mid-way
+      # through rewriting. Each ATTEMPT has its own `timeout(1)` and apt's own
+      # socket timeouts, because the first cut of this loop had only the step
+      # cap and a mirror that accepted the connection and then sent nothing hung
+      # attempt 1 for the whole four minutes — the retry never fired.
       - name: 🔤 Install fonts (locale_selfcheck measures real glyph widths)
+        timeout-minutes: 6
         run: |
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends libfontconfig1 fonts-dejavu-core
+          APT="apt-get -o Acquire::http::Timeout=20 -o Acquire::Retries=2"
+          # The runners live in Azure; archive.ubuntu.com refused every
+          # connection for an hour on 2026-09-05 while Azure's own mirror of it
+          # answered. Attempts 1-2 go to the Azure mirror, attempt 3 to the
+          # original, so a dead mirror on either side still gets the fonts.
+          mirror_azure() { sed -i 's|http://archive.ubuntu.com|http://azure.archive.ubuntu.com|g; s|http://security.ubuntu.com|http://azure.archive.ubuntu.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true; }
+          mirror_back()  { sed -i 's|http://azure.archive.ubuntu.com|http://archive.ubuntu.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true; }
+          mirror_azure
+          for attempt in 1 2 3; do
+            [ "$attempt" = 3 ] && mirror_back
+            if timeout 75 $APT update \
+               && timeout 90 $APT install -y --no-install-recommends libfontconfig1 fonts-dejavu-core; then
+              exit 0
+            fi
+            echo "::warning::apt attempt $attempt failed (mirror mid-sync?), retrying in 20 s"
+            sleep 20
+          done
+          echo "::error::apt failed three times — the Ubuntu mirror, not this branch"
+          exit 1
 
       # NOT optional, and not merely a speed-up. A cold checkout has no .godot
       # cache and both `*.import` and `*.translation` are gitignored, so without
@@ -442,8 +472,27 @@ jobs:
           }
           printf '%s\n' "$out"
 
-      # THE STEP ABOVE GRADES ITS OWN HOMEWORK. It rebuilds all ten models and
-      # then asserts the toolkit's contract on what it just built — never on the
+      # THE FOUR HEROES, and they are a SEPARATE step on purpose. They share the
+      # predators' `export_faceted` seam (bead godot-test1-y1o.21) and so share
+      # the staleness gate below — the dirty check already globs the whole of
+      # assets/models/characters, `*_parts/` included, so it needed no edit — but
+      # they owe none of the toolkit's three contracts and print no SELFCHECK OK,
+      # so there is no two-part verdict to ask for here: a generator that fails
+      # exits non-zero, and one that silently builds the wrong thing is caught by
+      # the dirty check. Folding them into predator_parts.py's loop instead would
+      # have made `python3 scripts/predator_parts.py` — the documented way to
+      # rebuild the PREDATORS — hard-fail for anyone without shapely.
+      - name: 🦸 Rebuild every hero model
+        run: |
+          for hero in windman primm teibi phoboman; do
+            python3 "scripts/generate_${hero}_separate.py" || {
+              echo "::error::scripts/generate_${hero}_separate.py failed"
+              exit 1
+            }
+          done
+
+      # THE STEPS ABOVE GRADE THEIR OWN HOMEWORK. They rebuild every model and
+      # then assert what they can on what they just built — never on the
       # bytes the repo ships. So a committed .glb that no generator produces
       # passes forever, which is exactly how the hydra shipped for a day with
       # 18 mm neck stubs and 80 mm holes at its elbows: the artifact had been
@@ -468,7 +517,7 @@ jobs:
           [ -z "$dirty" ] || {
             printf '%s\n' "$dirty"
             git diff --stat -- assets/models/characters
-            echo "::error::rebuilding dirtied the models listed above — the committed .glb is not what its generator produces. Run 'pip install -r scripts/requirements.txt && python3 scripts/predator_parts.py' and commit the result."
+            echo "::error::rebuilding dirtied the models listed above — the committed .glb is not what its generator produces. Run 'pip install -r scripts/requirements.txt && python3 scripts/predator_parts.py' (predators + crocodile) and 'python3 scripts/generate_<hero>_separate.py' (heroes) and commit the result."
             exit 1
           }
           echo "every committed model matches its generator"

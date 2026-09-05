@@ -44,6 +44,14 @@ from trimesh.creation import cylinder, box, icosphere
 from trimesh.transformations import rotation_matrix
 from pathlib import Path
 
+# THE ONE EXPORT SEAM for every model in this game (bead godot-test1-y1o.21,
+# owner ruling 2026-09-05 "facet ALL"): it unmerges the mesh and writes flat
+# per-face normals. It lives in predator_parts.py because the predators got it
+# first — read its docstring before touching anything about normals here.
+import sys  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from predator_parts import export_faceted  # noqa: E402
+
 
 class TeibiSeparateMeshGenerator:
     def __init__(self):
@@ -355,7 +363,7 @@ class TeibiSeparateMeshGenerator:
         for name, mesh in parts.items():
             filename = output_dir / f"teibi_{name}.glb"
             print(f"  Saving {name}... ({len(mesh.vertices)} vertices)")
-            mesh.export(str(filename))
+            export_faceted(mesh, str(filename))
 
         print(f"\n  All parts saved to {output_dir}")
         print(f"  Total parts: {len(parts)}")

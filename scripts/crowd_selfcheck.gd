@@ -10,8 +10,9 @@ extends SceneTree
 ##      join NO gameplay groups ("player", "crocodile", "enemy", "boss", "terrain"),
 ##      and carry NO collision bodies or Area3Ds (recursive check).
 ##   2. Mesh and material sharing: 4 MultiMeshInstance3D nodes (Windman, Primm,
-##      Teibi, Phoboman), shared StandardMaterial3D with vertex colors and sRGB,
-##      shared archetype meshes with feet at y = 0.
+##      Teibi, Phoboman), ONE shared ShaderMaterial on world_block.gdshader
+##      whose height_range is the archetypes' own boots-to-hat span (bead
+##      godot-test1-y1o.15), shared archetype meshes with feet at y = 0.
 ##   3. City boundaries and terrain safety: citizens spawn and walk strictly inside
 ##      BudapestPlan.rect(), never enter the wet Danube, never enter plateaus,
 ##      and maintain feet at y = 0.
@@ -252,6 +253,50 @@ func _check_multimesh_resources() -> void:
 	var shared_mat: Material = mm_nodes[0].material_override
 	if shared_mat == null:
 		_failures.append("MultiMesh material_override is null")
+
+	# THE MATERIAL IS THE WORLD'S OWN BLOCK SHADER since bead
+	# `godot-test1-y1o.15`, and `height_range` is the one parameter that is this
+	# consumer's own: the shader's default is the chunk batch's unit cube, and a
+	# citizen left on it would take their whole gradient inside the bottom metre
+	# of their boots. It is measured against the MESHES THE MULTIMESHES ARE
+	# DRAWING rather than against the constant that produced it — comparing a
+	# const to itself proves nothing, and the failure this guards is an
+	# archetype that grew a taller hat while the number stayed behind.
+	#
+	# ONE SPAN SERVES FOUR ARCHETYPES OF DIFFERENT HEIGHTS (Phoboman is 1.40 m
+	# against Teibi's 1.78), so the rule is not an equality: the span must COVER
+	# every one of them — a span under an archetype clamps its whole head flat at
+	# full colour, throwing the gradient away over the part of a body you look at
+	# — and must not overshoot the tallest, which would waste the ramp on empty
+	# air above every citizen in the city.
+	var shader_mat: ShaderMaterial = shared_mat as ShaderMaterial
+	if shared_mat != null and shader_mat == null:
+		_failures.append("Crowd shared material is not a ShaderMaterial")
+	elif shader_mat != null:
+		if shader_mat.shader != ChunkBatch.WORLD_BLOCK_SHADER:
+			_failures.append("Crowd shared material must run world_block.gdshader")
+		var span: Variant = shader_mat.get_shader_parameter("height_range")
+		if not (span is Vector2):
+			_failures.append("Crowd height_range is %s, not a Vector2" % span)
+		else:
+			var got: Vector2 = span
+			if absf(got.x) > 0.01:
+				_failures.append("Crowd height_range starts at %.3f, not at the feet" % got.x)
+			var tallest := 0.0
+			for k in mm_nodes.size():
+				var node_k: MultiMeshInstance3D = mm_nodes[k]
+				if node_k == null or node_k.multimesh == null or node_k.multimesh.mesh == null:
+					continue
+				var top: float = node_k.multimesh.mesh.get_aabb().end.y
+				tallest = maxf(tallest, top)
+				if got.y < top - 0.01:
+					_failures.append("Crowd height_range top %.3f is UNDER %s's own %.3f"
+							% [got.y, node_k.name, top])
+			if got.y > tallest + 0.05:
+				_failures.append("Crowd height_range top %.3f overshoots the tallest citizen %.3f"
+						% [got.y, tallest])
+			print("crowd shading: height_range %s over archetype tops (tallest %.2f m)"
+					% [got, tallest])
 
 	for k in 4:
 		var node: MultiMeshInstance3D = mm_nodes[k]
