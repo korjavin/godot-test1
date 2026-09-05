@@ -442,8 +442,27 @@ jobs:
           }
           printf '%s\n' "$out"
 
-      # THE STEP ABOVE GRADES ITS OWN HOMEWORK. It rebuilds all ten models and
-      # then asserts the toolkit's contract on what it just built — never on the
+      # THE FOUR HEROES, and they are a SEPARATE step on purpose. They share the
+      # predators' `export_faceted` seam (bead godot-test1-y1o.21) and so share
+      # the staleness gate below — the dirty check already globs the whole of
+      # assets/models/characters, `*_parts/` included, so it needed no edit — but
+      # they owe none of the toolkit's three contracts and print no SELFCHECK OK,
+      # so there is no two-part verdict to ask for here: a generator that fails
+      # exits non-zero, and one that silently builds the wrong thing is caught by
+      # the dirty check. Folding them into predator_parts.py's loop instead would
+      # have made `python3 scripts/predator_parts.py` — the documented way to
+      # rebuild the PREDATORS — hard-fail for anyone without shapely.
+      - name: 🦸 Rebuild every hero model
+        run: |
+          for hero in windman primm teibi phoboman; do
+            python3 "scripts/generate_${hero}_separate.py" || {
+              echo "::error::scripts/generate_${hero}_separate.py failed"
+              exit 1
+            }
+          done
+
+      # THE STEPS ABOVE GRADE THEIR OWN HOMEWORK. They rebuild every model and
+      # then assert what they can on what they just built — never on the
       # bytes the repo ships. So a committed .glb that no generator produces
       # passes forever, which is exactly how the hydra shipped for a day with
       # 18 mm neck stubs and 80 mm holes at its elbows: the artifact had been
@@ -468,7 +487,7 @@ jobs:
           [ -z "$dirty" ] || {
             printf '%s\n' "$dirty"
             git diff --stat -- assets/models/characters
-            echo "::error::rebuilding dirtied the models listed above — the committed .glb is not what its generator produces. Run 'pip install -r scripts/requirements.txt && python3 scripts/predator_parts.py' and commit the result."
+            echo "::error::rebuilding dirtied the models listed above — the committed .glb is not what its generator produces. Run 'pip install -r scripts/requirements.txt && python3 scripts/predator_parts.py' (predators + crocodile) and 'python3 scripts/generate_<hero>_separate.py' (heroes) and commit the result."
             exit 1
           }
           echo "every committed model matches its generator"
