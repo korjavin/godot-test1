@@ -224,10 +224,28 @@ jobs:
       # measuring a fiction, so give the container the fonts a real machine has.
       # EVERY shard installs them: the partition is dynamic, so any shard can draw
       # locale_selfcheck.
+      # RETRIED, with its own clock (bead godot-test1-i3e). On 2026-09-05 a
+      # mid-sync Ubuntu mirror ("File has unexpected size", "Hash Sum mismatch",
+      # apt exit 100) or a hung fetch killed shard after shard across a dozen
+      # PRs and master itself BEFORE a single self-check ran — every one a
+      # manual `gh run rerun --failed`. Three attempts twenty seconds apart
+      # ride out a sync; the step's own 4-minute cap turns a hung mirror into a
+      # retry instead of eating the job's 15 minutes. `apt-get update` is
+      # inside the loop on purpose: the index is what the mirror was mid-way
+      # through rewriting.
       - name: 🔤 Install fonts (locale_selfcheck measures real glyph widths)
+        timeout-minutes: 4
         run: |
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends libfontconfig1 fonts-dejavu-core
+          for attempt in 1 2 3; do
+            if apt-get update -qq \
+               && apt-get install -y -qq --no-install-recommends libfontconfig1 fonts-dejavu-core; then
+              exit 0
+            fi
+            echo "::warning::apt attempt $attempt failed (mirror mid-sync?), retrying in 20 s"
+            sleep 20
+          done
+          echo "::error::apt failed three times — the Ubuntu mirror, not this branch"
+          exit 1
 
       # NOT optional, and not merely a speed-up. A cold checkout has no .godot
       # cache and both `*.import` and `*.translation` are gitignored, so without
