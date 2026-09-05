@@ -9,7 +9,9 @@ extends SceneTree
 ##   1. Isolation: TrafficManager in group "traffic", no descendant joins a
 ##      gameplay group and carries no CollisionObject3D/Area3D.
 ##   2. Mesh/material/draw budget: ONE MultiMeshInstance3D, use_colors true,
-##      stride 16, shared material, feet at y=0, web cap constant relation.
+##      stride 16, ONE shared ShaderMaterial on world_block.gdshader whose
+##      height_range is the car mesh's own wheels-to-roof span (bead
+##      godot-test1-y1o.15), feet at y=0, web cap constant relation.
 ##   3. Placement: every active car y==0 on carriageway, never in Danube,
 ##      plateau, solid landmark, dry rect; plus direct is_traffic_walkable
 ##      negative controls at bad coords (Danube, plateau, deck, block).
@@ -237,11 +239,39 @@ func _check_multimesh_resources() -> void:
 	if mm_node.material_override == null:
 		_failures.append("Traffic material_override is null")
 	else:
-		var mat: StandardMaterial3D = mm_node.material_override as StandardMaterial3D
-		if mat != null and not mat.vertex_color_use_as_albedo:
-			_failures.append("Traffic shared material must have vertex_color_use_as_albedo=true")
-		if mat != null and not mat.vertex_color_is_srgb:
-			_failures.append("Traffic shared material must have vertex_color_is_srgb=true")
+		# THE MATERIAL IS THE WORLD'S OWN BLOCK SHADER since bead
+		# `godot-test1-y1o.15`. What this used to assert — vertex colours drive
+		# albedo — is `world_block.gdshader`'s `COLOR.rgb` and is now proved by
+		# naming the shader; what it must ALSO assert is the one parameter that
+		# is this consumer's own, `height_range`, because the shader's default
+		# is the chunk batch's unit cube and a car left on it would take its
+		# whole gradient inside the bottom 1 m of its wheels.
+		#
+		# A `null` CAST IS THE FAILURE, not a reason to skip: the retired
+		# version cast to StandardMaterial3D and guarded every assertion on
+		# `mat != null`, so a swapped material class would have passed this
+		# check in silence.
+		var mat: ShaderMaterial = mm_node.material_override as ShaderMaterial
+		if mat == null:
+			_failures.append("Traffic shared material is not a ShaderMaterial")
+		elif mat.shader != ChunkBatch.WORLD_BLOCK_SHADER:
+			_failures.append("Traffic shared material must run world_block.gdshader")
+		else:
+			# The span is measured against the MESH THE MULTIMESH IS DRAWING, not
+			# against the constant that produced it — comparing a const to itself
+			# proves nothing, and the failure this guards is precisely a mesh that
+			# grew a roof rack while the number stayed behind.
+			var box: AABB = mm.mesh.get_aabb()
+			var span: Variant = mat.get_shader_parameter("height_range")
+			if not (span is Vector2):
+				_failures.append("Traffic height_range is %s, not a Vector2" % span)
+			else:
+				var got: Vector2 = span
+				if absf(got.x - box.position.y) > 0.02 \
+						or absf(got.y - box.end.y) > 0.02:
+					_failures.append("Traffic height_range %s != the car mesh's own "
+							% got + "vertical span (%.3f .. %.3f)"
+							% [box.position.y, box.end.y])
 	if mm_node.cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
 		_failures.append("Traffic MultiMeshInstance3D must have cast_shadow OFF (1 draw call budget, no shadow pass)")
 	var mgr_script: GDScript = load("res://scripts/traffic_manager.gd")

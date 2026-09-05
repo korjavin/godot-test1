@@ -151,7 +151,7 @@ func _check_ranged(boss: CharacterBody3D, player: BossProbe.StubPlayer,
 	allowed to. Skipped entirely for a kind whose row is not `behavior: "ranged"`.
 
 	enemy_behavior_selfcheck already drives the pure firing RULE
-	(piglet_crocodile_ai.ranged_shot_due) over its whole band and cadence. What
+	(croc_steering.ranged_shot_due) over its whole band and cadence. What
 	only a live world can show is the three things the ARM adds around it, and
 	each of the phases below is one of them:
 
@@ -325,7 +325,7 @@ func _check_leap(boss: CharacterBody3D, player: BossProbe.StubPlayer,
 	if String(row.get("behavior", "")) != "leap":
 		Sentinel.done("leap")
 		return
-	var airtime: float = BossProbe.CROC_SCRIPT.leap_airtime(row)
+	var airtime: float = CrocSteering.leap_airtime(row)
 	if airtime <= 0.0:
 		_fail("leap: behaviour is 'leap' but the row's arc constants give no"
 				+ " airtime — already reported in enemy_behavior_selfcheck")
@@ -449,7 +449,7 @@ func _check_leap(boss: CharacterBody3D, player: BossProbe.StubPlayer,
 	# function, and both halves are taken at the SAME position with the SAME spent
 	# clock, so only the BEARING differs and the control isolates the guard.
 	player.global_position = home + Vector3(300.0, 0.0, 0.0)
-	var reach: float = BossProbe.CROC_SCRIPT.leap_reach(boss.chase_speed_instance, row)
+	var reach: float = CrocSteering.leap_reach(boss.chase_speed_instance, row)
 	# TWO METRES INSIDE THE FENCE, the same spot check 8 parks a ranged boss at.
 	# It is the geometry where the two bearings differ in the only way that
 	# matters: outward the projected landing clears the circle, inward it does not.
