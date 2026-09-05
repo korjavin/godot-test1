@@ -829,12 +829,12 @@ var _probe_exclude: Array[RID] = []
 # that would defeat batching and grow memory with every herd.
 
 static var _shared_box_mesh: BoxMesh = null
-static var _elephant_material: StandardMaterial3D = null
-static var _giraffe_material: StandardMaterial3D = null
-static var _accent_material: StandardMaterial3D = null
-static var _patch_material: StandardMaterial3D = null
-static var _cloak_material: StandardMaterial3D = null
-static var _wool_material: StandardMaterial3D = null
+static var _elephant_material: ShaderMaterial = null
+static var _giraffe_material: ShaderMaterial = null
+static var _accent_material: ShaderMaterial = null
+static var _patch_material: ShaderMaterial = null
+static var _cloak_material: ShaderMaterial = null
+static var _wool_material: ShaderMaterial = null
 
 
 static func _get_shared_box_mesh() -> BoxMesh:
@@ -847,69 +847,89 @@ static func _get_shared_box_mesh() -> BoxMesh:
 	return _shared_box_mesh
 
 
-static func _get_elephant_material() -> StandardMaterial3D:
+static func _gradient_material(tone: Color, roughness: float) -> ShaderMaterial:
+	## One fauna material on the WORLD'S OWN block shader (bead
+	## `godot-test1-y1o.14`, style direction A). The herds were the last
+	## scaled-unit-box objects in the game still painted FLAT, which is exactly
+	## the "Minecraft mob" read the epic is against: beside a gradient-shaded
+	## forest a flat grey elephant is a stack of grey slabs.
+	##
+	## It is the SHIPPED shader, not a fauna one — `ChunkBatch.WORLD_BLOCK_SHADER`
+	## with its `albedo` uniform carrying what `albedo_color` used to and its
+	## `block_roughness` carrying `roughness`. Two things make that a swap and
+	## not a rewrite: a fauna part is the same unit cube the chunk batch draws,
+	## scaled by its NODE transform (which never reaches model-space `VERTEX`),
+	## so the shader's default `height_range` gives each leg, trunk and barrel
+	## its own top-lit fall-off exactly as it gives a prop's boxes theirs; and a
+	## MeshInstance3D has no vertex colours, so `COLOR` is white and the tint has
+	## to be the uniform — which is the whole reason that uniform exists.
+	##
+	## `bottom_shade` is the WORLD's `ChunkBatch.BLOCK_BOTTOM_SHADE` rather than
+	## the shader's own default: the point of the bead is that a herd reads like
+	## the scenery around it, and a shallower gradient on the animals would be a
+	## second look, not the same one.
+	##
+	## `ToonShading.apply_to_mesh` tests `mat is BaseMaterial3D`, so a
+	## ShaderMaterial is skipped there — never duplicated, never restyled.
+	var mat := ShaderMaterial.new()
+	mat.shader = ChunkBatch.WORLD_BLOCK_SHADER
+	mat.set_shader_parameter("albedo", tone)
+	mat.set_shader_parameter("block_roughness", roughness)
+	mat.set_shader_parameter("bottom_shade", ChunkBatch.BLOCK_BOTTOM_SHADE)
+	return mat
+
+
+static func _get_elephant_material() -> Material:
 	## The ONE elephant material (grey hide). Shared by every box of every
 	## elephant ever spawned — N animals must never add N materials.
 	if _elephant_material == null:
-		_elephant_material = StandardMaterial3D.new()
-		_elephant_material.albedo_color = Color(0.52, 0.52, 0.55)
-		_elephant_material.roughness = 0.9
+		_elephant_material = _gradient_material(Color(0.52, 0.52, 0.55), 0.9)
 	return _elephant_material
 
 
-static func _get_giraffe_material() -> StandardMaterial3D:
+static func _get_giraffe_material() -> Material:
 	## The ONE giraffe material (tan-orange coat). Same sharing rule as the
 	## elephant material above.
 	if _giraffe_material == null:
-		_giraffe_material = StandardMaterial3D.new()
-		_giraffe_material.albedo_color = Color(0.85, 0.62, 0.30)
-		_giraffe_material.roughness = 0.9
+		_giraffe_material = _gradient_material(Color(0.85, 0.62, 0.30), 0.9)
 	return _giraffe_material
 
 
-static func _get_accent_material() -> StandardMaterial3D:
+static func _get_accent_material() -> Material:
 	## The ONE light accent material (off-white elephant tusks). Shared by
 	## every tusk of every elephant ever spawned — accents follow the same
 	## one-shared-material rule as the species hides.
 	if _accent_material == null:
-		_accent_material = StandardMaterial3D.new()
-		_accent_material.albedo_color = Color(0.92, 0.90, 0.82)
-		_accent_material.roughness = 0.7
+		_accent_material = _gradient_material(Color(0.92, 0.90, 0.82), 0.7)
 	return _accent_material
 
 
-static func _get_patch_material() -> StandardMaterial3D:
+static func _get_patch_material() -> Material:
 	## The ONE dark accent material (darker-brown giraffe coat patches and
 	## horn nubs — both need a darker-than-coat read, so they share it). The
 	## caravan reuses it as-is for staffs, straps and bundles rather than adding
 	## a third brown, so the feature's total material count is a constant 6,
 	## independent of how many animals ever spawn.
 	if _patch_material == null:
-		_patch_material = StandardMaterial3D.new()
-		_patch_material.albedo_color = Color(0.48, 0.32, 0.16)
-		_patch_material.roughness = 0.9
+		_patch_material = _gradient_material(Color(0.48, 0.32, 0.16), 0.9)
 	return _patch_material
 
 
-static func _get_cloak_material() -> StandardMaterial3D:
+static func _get_cloak_material() -> Material:
 	## The ONE herder material (muted dusty mauve cloak). Picked to sit apart
 	## from BOTH herd hides (elephant grey, giraffe tan) and from the nomad
 	## camps' bone-white huts, so a caravan reads as "people" at a glance.
 	## Same sharing rule as every material above — never duplicate() per herder.
 	if _cloak_material == null:
-		_cloak_material = StandardMaterial3D.new()
-		_cloak_material.albedo_color = Color(0.43, 0.34, 0.40)
-		_cloak_material.roughness = 0.95
+		_cloak_material = _gradient_material(Color(0.43, 0.34, 0.40), 0.95)
 	return _cloak_material
 
 
-static func _get_wool_material() -> StandardMaterial3D:
+static func _get_wool_material() -> Material:
 	## The ONE pack-beast material (cream wool). Shared by every body, leg,
 	## neck and shag slab of every beast ever spawned.
 	if _wool_material == null:
-		_wool_material = StandardMaterial3D.new()
-		_wool_material.albedo_color = Color(0.86, 0.79, 0.63)
-		_wool_material.roughness = 0.95
+		_wool_material = _gradient_material(Color(0.86, 0.79, 0.63), 0.95)
 	return _wool_material
 
 
@@ -919,7 +939,7 @@ static func _get_wool_material() -> StandardMaterial3D:
 # ============================================================================
 
 static func _make_box_part(part_name: String, size: Vector3, local_pos: Vector3,
-		material: StandardMaterial3D, casts_shadow: bool) -> MeshInstance3D:
+		material: Material, casts_shadow: bool) -> MeshInstance3D:
 	## One box-shaped body part: the ONE shared unit BoxMesh scaled to `size`
 	## via the node's own scale (never a new mesh resource), painted with a
 	## shared species material. `casts_shadow` is a per-part choice: the big
@@ -994,7 +1014,7 @@ static func _make_rideable_root(root_name: String, barrel_size: Vector3,
 
 
 static func _make_leg(leg_name: String, hip_pos: Vector3, leg_size: Vector3,
-		material: StandardMaterial3D, casts_shadow: bool) -> Node3D:
+		material: Material, casts_shadow: bool) -> Node3D:
 	## One leg = a bare pivot Node3D AT HIP HEIGHT with the visible box hung
 	## half a leg-length BELOW it. That offset is the whole trick: rotating
 	## the pivot about X swings the leg from the hip like a real limb, instead

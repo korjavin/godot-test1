@@ -641,6 +641,49 @@ const VOICE_JS: String = """
 			if (!p.timer) { p.timer = setTimeout(function () { flush(id); }, 100); }
 		};
 
+		/* A DEAD TRANSPORT REBUILDS ITSELF. A NAT/UDP rebind, a coturn allocation
+		   expiring against the 12-per-user quota, or a path break the lobby's TCP
+		   socket rides out, all drop the PC to `failed` — and nothing else here
+		   would ever notice: `members()` only closes a PC when the id LEAVES the
+		   room, so a still-listed, still-un-muted peer stays silent for the life
+		   of the room. `restartIce()` fires `onnegotiationneeded`, which the
+		   perfect-negotiation queue above already turns into a fresh offer over
+		   the existing "vc" relay — no new signalling kind, no new PC, no timer
+		   loop. Both ends may fire it at once; polite/impolite resolves the glare.
+		   `disconnected` is deliberately NOT acted on: it is the transient state
+		   that recovers by itself, and restarting on every blip is a re-offer
+		   loop.
+
+		   NOT the whole of "my Wi-Fi dropped": a real interface handover changes
+		   the IP and kills the lobby WEBSOCKET, and `lobby_client` has no
+		   reconnect — `_on_lobby_closed` calls `leave()`, which closes every PC.
+		   That race is usually lost to TCP long before ICE gives up, so the cases
+		   that actually reach here are the three named above.
+
+		   ON THE PEER'S OWN CHAIN, like every other signalling op in this file,
+		   with the state RE-ASKED once it is our turn: a restart fired across an
+		   in-flight renegotiation is the collision `recv` rolls back, and a
+		   connection that recovered while queued must not be restarted for
+		   nothing.
+
+		   ponytail: ICE only, and the intent is NOT sticky. `restartIce()` spends
+		   its credentials-to-replace slot on the offer it triggers, so if that
+		   offer is rolled back by a colliding ORDINARY one (a camera toggle, a
+		   late mic grant) or is simply lost — `post()` swallows every failure —
+		   nothing re-arms it and that pair is left exactly where it was before
+		   this handler existed. Same for a DTLS-level
+		   `connectionState === 'failed'`, whose fallback is the shipped
+		   close(id)/open(id) pair from the OFFERER alone. Both are strictly
+		   better than the status quo and neither is worth a timer until one is
+		   actually seen. */
+		pc.oniceconnectionstatechange = function () {
+			if (pc.iceConnectionState !== 'failed') { return; }
+			queue(p, function () {
+				if (pc.iceConnectionState !== 'failed') { return; }
+				try { pc.restartIce(); } catch (e) { }
+			});
+		};
+
 		/* KIND-GUARDED, which is what lets an OLD build ignore a camera it does not
 		   know about and what keeps a peer's video out of the <audio> element. */
 		pc.ontrack = function (ev) {
@@ -1636,6 +1679,88 @@ func _clear_speaking() -> void:
 			avatar.set_speaking(false)
 	_speaking_pushed.clear()
 	_speaking_until.clear()
+
+
+# ============================================================================
+# THE HERO ROW'S TWO QUESTIONS (bead godot-test1-xtr.8)
+# ============================================================================
+## The MP panel and the name tags are both places you have to be LOOKING to see
+## that voice is working; the portrait row is on screen always. It asks two
+## questions and they live here rather than in `hero_hud.gd` for the same reason
+## `_poll_tiles` does: the hero -> HOLDER mapping is the lobby's, `SELF_LEVEL_KEY`
+## is the browser module's, and "is there voice at all" is `_is_in_room()`. A row
+## that re-derived any of that would be a second copy of this file's state.
+##
+## Both answer the NOTHING case for a row that is not in a room, not on the web
+## or has no voice node at all, which is what keeps the row byte-identical to the
+## one bead .7 shipped everywhere but a live browser room.
+
+
+## `mic_badge()`'s answer. Numbers, and NONE means "draw nothing" — the badge is
+## about the local microphone, so a row with no voice has no honest badge to draw
+## rather than a grey one that implies a mic exists.
+const MIC_BADGE_NONE: int = 0
+const MIC_BADGE_OFF: int = 1     # a mic, idle: always-on with V off, or PTT unheld
+const MIC_BADGE_TX: int = 2      # open and transmitting right now
+const MIC_BADGE_MUTED: int = 3   # muted by hand — mute WINS over the mode
+const MIC_BADGE_DENIED: int = 4  # the browser refused the microphone
+
+
+func mic_badge() -> int:
+	"""
+	What the local microphone is doing, as one of the `MIC_BADGE_*` numbers.
+
+	The ORDER is the priority the row draws: a denied mic can never transmit, and
+	a hand mute beats whatever the mode says (`applyMic()` in the browser module
+	is `tx && !muted`, and this is that rule read back out).
+
+	IT READS `_reported_mic`, NOT `mic_denied()`, AND THAT IS THE WHOLE POINT OF
+	THIS COMMENT. Its caller is a HUD widget's `_process`, so this runs 60 times a
+	second in a browser room, and `mic_denied()` asks `_ck.micState()` — a
+	`JavaScriptBridge` round trip — on every call. Every other bridge reader in
+	this file is throttled and one-call-per-poll for exactly that reason
+	(`LEVELS_INTERVAL` 10 Hz, `TILE_INTERVAL` 5 Hz, `POLL_INTERVAL` 2 Hz), and the
+	permission answer is the slowest-moving fact here: it changes once per room
+	join, when the user answers a prompt. `_report_mic()` already refreshes
+	`_reported_mic` off that same 2 Hz `_tick` and fires `mic_denied_changed` on
+	the edge, so the cached value is never more than half a second stale and the
+	frame path pays nothing. `mp_ui` keeps the live read — it asks once per panel
+	refresh, not once per frame.
+	"""
+	if not _is_web or not _is_in_room():
+		return MIC_BADGE_NONE
+	if _reported_mic == MIC_DENIED:
+		return MIC_BADGE_DENIED
+	if _mic_muted:
+		return MIC_BADGE_MUTED
+	if _tx:
+		return MIC_BADGE_TX
+	return MIC_BADGE_OFF
+
+
+func is_hero_speaking(hero: String) -> bool:
+	"""
+	Is the peer HOLDING that hero making noise right now?
+
+	The hero row is the LOCAL roster — four heroes, not four players — so a
+	speaking ring resolves through the lobby's `hero_holder()`, exactly like the
+	camera tiles of bead .6. The hero WE hold is the one exception: the browser
+	reports our own microphone under `SELF_LEVEL_KEY` and never under our lobby
+	id, because `S.peers` is remote peers only.
+
+	Everything is `has_method`-guarded and degrades to false: no manager, a
+	manager that predates `hero_holder`, a hero nobody holds.
+	"""
+	if not _is_web or not _is_in_room() or hero.is_empty():
+		return false
+	if _mp == null or not is_instance_valid(_mp) or not _mp.has_method("hero_holder"):
+		return false
+	var holder: String = str(_mp.hero_holder(hero))
+	if holder.is_empty():
+		return false
+	if _mp.has_method("my_id") and holder == str(_mp.my_id()):
+		return is_speaking(SELF_LEVEL_KEY)
+	return is_speaking(holder)
 
 
 # ============================================================================
