@@ -10358,10 +10358,17 @@ const RIVER_DEEP_FRACTION: float = 0.4
 
 ## Finite-difference step for the push direction, in metres. Small against a band
 ## (~10-20 m across) and large against fp32 noise, so the two extra evaluations
-## give a direction and not rounding noise. At the CENTRELINE the field has a
-## kink (it is an absolute value), and a FORWARD difference is exactly right
-## there: every step off the centre increases the depth, so the answer is always
-## outward — which is what un-sticks a body teleported mid-channel.
+## give a direction and not rounding noise.
+##
+## IT IS DIFFERENCED ON THE SIGNED FIELD, NOT ON THE DEPTH, and that is a
+## correctness fix rather than a preference. `river_depth_at` is an ABSOLUTE
+## value, so it has a KINK on the centreline: a forward difference taken within
+## RIVER_DEEP_PROBE of it lands on the far bank and reads the wrong side's slope,
+## which points the push INTO the channel. Measured on the shipped field before
+## the fix: 42 of 4,000 channel samples (1.05%), all at depth < 0.1 — a jitter
+## rather than a trap, because the body drifts off the kink and the next frame is
+## right, but the docstring claimed it could not happen and it could.
+## `_river_signed_raw` has no kink, so the difference is honest everywhere.
 const RIVER_DEEP_PROBE: float = 0.5
 
 ## THE FORD's half-width — how far off the road's CENTRELINE the one exemption
@@ -10406,6 +10413,37 @@ func river_depth_at(world_x: float, world_z: float) -> float:
 	return absf(_biome_noise(world_x, world_z) - RIVER_LEVEL) / RIVER_HALF_WIDTH
 
 
+func _river_signed_raw(world_x: float, world_z: float) -> float:
+	"""
+	`river_depth_at` WITHOUT the absolute value and without the masks — the field
+	the push gradient is differenced on.
+
+	@return: The noise river's SIGNED normalised field (negative on one bank,
+	         positive on the other, zero mid-channel), or the Danube's distance in
+	         the same units, which is already non-negative.
+
+	TWO DIFFERENCES FROM `river_depth_at`, and each buys the gradient something:
+
+	  NO ABSOLUTE VALUE, so there is no kink on the centreline. `absf` is what
+	  made a forward difference read the wrong bank's slope within one probe step
+	  of the middle (see RIVER_DEEP_PROBE); the signed field is smooth through it,
+	  and `deep_channel_push` restores the direction by multiplying by the sign it
+	  already has. The Danube's distance has a kink of its own, but only ON the
+	  polyline itself, where every direction is outward and the difference is
+	  right by construction.
+
+	  NO MASKS, which is `river_field_at`'s own rule one caller along: the tower
+	  disc and Margaret Island are hard-edged READOUT policy, so a probe that
+	  stepped onto one would read a 4.0 cliff and the gradient would point at the
+	  mask instead of at the bank. Whether a body is IN a channel is
+	  `river_depth_at`'s question, masks and all; which way is OUT is this one's.
+	"""
+	if BudapestPlan.contains(world_x, world_z):
+		return BudapestPlan.danube_distance(world_x, world_z) \
+				/ BudapestPlan.DANUBE_HALF_WIDTH
+	return (_biome_noise(world_x, world_z) - RIVER_LEVEL) / RIVER_HALF_WIDTH
+
+
 func deep_channel_push(world_pos: Vector3) -> Vector3:
 	"""
 	The way OUT of the impassable centre channel, or ZERO if this body is not in
@@ -10424,6 +10462,17 @@ func deep_channel_push(world_pos: Vector3) -> Vector3:
 	not already mid-channel; only a body INSIDE the strip pays the two extra
 	evaluations for the gradient. Zero allocation past the two Vector2s.
 
+	IT DOES NOT REACH AN AIRBORNE BODY, and that is the design as far as the
+	ruling goes: the push is the player's STEP 8.5, which is gated on `is_wading`,
+	so flying over a channel is exactly as legal as flying over the band always
+	was. KNOWN CEILING, measured and written down rather than discovered: the
+	strip of a typical field river is ~4.8 m across (median over 178 centreline
+	samples; p90 is 11 m) against a ~9.6 m wading jump, so an ordinary Space press
+	clears the median river. Budapest's 96 m Danube channel and the wide bands are
+	genuinely impassable. Closing that would mean pushing an airborne body, which
+	is an invisible air wall and an owner call — bead godot-test1-06o.3's report
+	raises it.
+
 	NOT A COLLISION SHAPE, deliberately. The world is flat and the river is a
 	shader tint — giving it a StaticBody would put thousands of bodies in the
 	world, break the "no water mesh" invariant and still not follow a contour.
@@ -10440,10 +10489,18 @@ func deep_channel_push(world_pos: Vector3) -> Vector3:
 	# only a body already inside a strip ever reaches it.
 	if _deep_channel_ford(world_pos.x, world_pos.z):
 		return Vector3.ZERO
+	# THE GRADIENT OF THE SIGNED FIELD, TURNED OUTWARD BY ITS OWN SIGN — never a
+	# difference of `river_depth_at`, which has a kink on the centreline that
+	# points 1% of pushes back into the water (see RIVER_DEEP_PROBE).
 	var e := RIVER_DEEP_PROBE
+	var signed := _river_signed_raw(world_pos.x, world_pos.z)
 	var grad := Vector2(
-			river_depth_at(world_pos.x + e, world_pos.z) - depth,
-			river_depth_at(world_pos.x, world_pos.z + e) - depth) / e
+			_river_signed_raw(world_pos.x + e, world_pos.z) - signed,
+			_river_signed_raw(world_pos.x, world_pos.z + e) - signed)
+	# Exactly on the contour every direction is outward, so the sign is +1 there
+	# rather than the 0 `signf` would hand back.
+	if signed < 0.0:
+		grad = -grad
 	if grad.length_squared() <= 0.0:
 		return Vector3.ZERO
 	var out := grad.normalized()
@@ -10455,27 +10512,43 @@ func _deep_channel_ford(world_x: float, world_z: float) -> bool:
 	Is this point standing in the ONE thing the deep channel yields to — a road
 	river crossing the field bridges REFUSED?
 
-	@return: true when the road is wet here, the point is on the road, and no
-	         bridge was built for the crossing it belongs to.
+	@return: true when the road is wet at the nearest station, the point is on the
+	         road, and NO STONE stands over that station.
 
 	WHY THE AUTHORITY AND NOT A WIDTH THRESHOLD. The first version of this asked
 	the field's own gradient — a band wider than FIELD_BRIDGE_MAX_SPAN
 	perpendicular is a lake — which is cheap, pointwise and WRONG: the cap counts
 	the water the road WALKS, and a road crossing a 100 m band at an angle walks
-	124 m of it. Measured over 20 seeds x 4 km, that left exactly one crossing
-	(seed 10, x = 443) unbridged AND walled, which is the softlock this bead
-	exists to avoid. `field_bridge_at` is the function that decides, so it is the
-	function that is asked.
+	124 m of it. Measured over 20 seeds, that left exactly one crossing (seed 10,
+	x = 443) unbridged AND walled, which is the softlock this bead exists to
+	avoid.
+
+	AND THE AUTHORITY IS THE STONE, NOT THE ANCHOR ROW. This asked
+	`field_bridge_at(k0).is_empty()` for one round, walking back to the crossing
+	entry to find `k0` — and `field_bridge_at` answers `{}` for THREE reasons, only
+	two of which mean "unbridged": the lake, the no-dry-abutment refusal, and "an
+	earlier WESTERN anchor already owns this merged deck", where stone demonstrably
+	exists. Measured over 40 seeds: 3 of 103 channel points on the road were both
+	bridged and forded (seed 19 station 148, owned by anchor 131). Two of its
+	returns are also un-memoized "the station cache is short right now", which
+	would make the wall a function of where the player had walked — the exact class
+	CLAUDE.md documents as "THE GROWTH MAY NOT READ THE STATION CACHE'S EDGE", and
+	in a room two peers would disagree about a wall. `field_bridge_surface_y` is
+	the query with none of those hazards: it extends the cache by
+	`_field_bridge_reach()` itself, it sees merged decks and corridor decks alike,
+	and it is the same question `wade_selfcheck` check 9 asks. Asking it also
+	deleted the walk-back and its budget.
 
 	IT IS THE ROAD'S WIDTH AND NOT THE RIVER'S. Off the centreline by more than
 	RIVER_DEEP_FORD_HALF the same water is walled again, so a lake is a lake
 	everywhere except at the ford the road drives through it.
 
-	COST: only a body already INSIDE a deep strip ever calls this, and everything
-	it reads is memoized — `field_bridge_at` and `_field_bridge_wet` for the run,
-	the station cache by X. The walk back to the crossing entry is bounded by the
-	span cap itself: a run longer than that is over the cap by definition, so it
-	answers true without walking any further.
+	COST: only a body already INSIDE a deep strip ever calls this, and the two
+	cheap rejects (the station's distance, and whether the road is even wet there)
+	stand above the one expensive line. Warm it is 5-7 us; the first call of a run
+	that lands a body in a channel near the road pays `field_bridge_at`'s cold scan
+	(measured 2.3-2.7 ms), which ordinary chunk streaming has already warmed —
+	a `\\fb` teleport straight into one is the case that would see it.
 	"""
 	var spacing := _road_spacing()
 	_road_extend_to_x(world_x - spacing * 2.0, world_x + spacing * 2.0)
@@ -10498,17 +10571,7 @@ func _deep_channel_ford(world_x: float, world_z: float) -> bool:
 		return false
 	if not _field_bridge_wet(k):
 		return false
-	# Back to the crossing ENTRY, which is the index field_bridge_at is keyed on.
-	var budget := int(FIELD_BRIDGE_MAX_SPAN / maxf(spacing, 0.1)) + 4
-	var k0 := k
-	while k0 > road_k_min and _field_bridge_wet(k0 - 1):
-		k0 -= 1
-		budget -= 1
-		if budget <= 0:
-			# More wet stations than the cap can possibly span: refused for sure,
-			# and walking the rest of a lake to prove it buys nothing.
-			return true
-	return field_bridge_at(k0).is_empty()
+	return field_bridge_surface_y(Vector3(here.x, 0.0, here.y)) <= -INF
 
 
 func river_field_at(world_x: float, world_z: float) -> float:

@@ -1082,16 +1082,30 @@ Four rules, all pinned by `wade_selfcheck` checks 8-10:
 
 - **ONE FIELD FOR BOTH RIVERS.** `river_depth_at()` normalises the noise contour and the
   authored Danube to the same 0 (centreline) .. 1 (bank) number; `is_wading_at` is
-  `< 1.0` on it, `deep_channel_push()` is `< RIVER_DEEP_FRACTION` on it, and the push
-  direction is that same function FINITE-DIFFERENCED (two extra evaluations, paid only
-  by a body already inside a strip). The Danube is in scope by name — its channel is
-  impassable and the four authored decks are the crossing.
+  `< 1.0` on it and `deep_channel_push()` is `< RIVER_DEEP_FRACTION` on it. The push
+  DIRECTION is finite-differenced off `_river_signed_raw` — the same field without the
+  absolute value and without the masks — because `river_depth_at` has a KINK on the
+  centreline that pointed 1% of pushes back into the water, and because a probe that
+  stepped onto the tower disc or Margaret Island would read a cliff. Two extra
+  evaluations, paid only by a body already inside a strip. The Danube is in scope by
+  name — its channel is impassable and the four authored decks are the crossing.
 - **THE ROAD IS THE WAY THROUGH, and `_deep_channel_ford` is the one exemption.** A road
   crossing the field bridges REFUSED (past `FIELD_BRIDGE_MAX_SPAN` of walked water)
   keeps a road-width ford through the strip, because walling it would softlock the road
-  it stands on. It asks `field_bridge_at` — the function that *decides* — and not a
-  width threshold: the cap counts the water the road WALKS, and a band crossed at an
-  angle walks more of it than it is wide (measured: one crossing in 39 over 20 seeds).
+  it stands on. Two wrong answers are recorded at the function: a WIDTH THRESHOLD (the
+  cap counts the water the road WALKS, and a band crossed at an angle walks more of it
+  than it is wide — one blocked crossing in 39), and `field_bridge_at(k0).is_empty()`,
+  which is `{}` for three reasons and only two of them mean unbridged (a MERGED deck's
+  row belongs to its western anchor, and two of its returns are un-memoized "the cache
+  is short right now"). It asks `field_bridge_surface_y` — is there STONE here — which
+  is the query `wade_selfcheck` check 9 itself uses.
+- **A CHANNEL CAN BE JUMPED, and that is a measured ceiling rather than a hole.** The
+  push is the player's STEP 8.5, gated on `is_wading`, so an airborne body is never
+  pushed — deliberately, since flying over the band always was legal. A typical field
+  river's strip is ~4.8 m across (median over 178 samples; p90 11 m) against a ~9.6 m
+  wading jump, so an ordinary Space press clears the median river; the Danube's 96 m
+  channel and the wide bands do not budge. Closing it means pushing an airborne body,
+  which is an invisible air wall and needs an owner ruling.
 - **`is_river_at` DID NOT MOVE.** The band is still XZ-only and still subtracts every
   `DRY_RECTS` row, so the shader, every spawner and the minimap see exactly what they
   saw. The shader gained one smoothstep and one mix — the strip painted darker off the

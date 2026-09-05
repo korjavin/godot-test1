@@ -566,6 +566,14 @@ void fragment() {
 	// vertex spacing it would fade, and the blue you see would stand a metre and
 	// a half off the deck the CPU answers exactly. Up to 8 rects, four compares
 	// each, and only for pixels actually inside the city.
+	// KNOWN CPU/GPU DIVERGENCE, and it is the under-deck exception's shadow: the
+	// dry rects below zero BOTH factors, so the bed at y = 0 under an authored
+	// deck is painted DRY while a BODY there wades and meets the deep channel.
+	// That is `is_river_at` (this) and `is_wading_at` (the CPU) answering two
+	// different questions on purpose — see is_wading_at in endless_terrain.gd —
+	// and it is only ever seen from under a 12 m bridge. Painting it wet instead
+	// would put blue on the deck's own footprint at every other viewing angle,
+	// which is the bug DRY_RECTS exists for.
 	if (in_city) {
 		v_river = v_city_river;
 		v_deep = v_city_river_deep;
