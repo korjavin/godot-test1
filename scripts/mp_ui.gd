@@ -1461,8 +1461,7 @@ func _update_voice_ui() -> void:
 	if _volume_slider != null and voice.has_method("get_volume"):
 		var pct: int = int(roundf(float(voice.get_volume()) * 100.0))
 		# `set_value_no_signal` or this write re-enters `_on_voice_volume_changed`
-		# on every panel refresh — and the step would quantise the value back into
-		# the store each time.
+		# on every panel refresh, which would write the store on every repaint.
 		_volume_slider.set_value_no_signal(float(pct))
 		if _volume_label != null:
 			# tr() on the FORMAT string (CLAUDE.md localization rule 2) — the
