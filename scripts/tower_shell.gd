@@ -1373,19 +1373,17 @@ static func _material(color: Color) -> StandardMaterial3D:
 	ALREADY TOON, on purpose. `ToonShading.apply_to_mesh()` skips a material whose
 	`diffuse_mode` is already `DIFFUSE_TOON`, so authoring these the way that helper
 	would have left them means the tower matches the cast's cel-shaded look AND can
-	never be handed to the styler for a per-instance `duplicate()`. The rim numbers
-	are copied from `ToonShading` deliberately — same look, one source of truth for
-	what that look is, and `tower_shell_selfcheck` asserts they still agree.
+	never be handed to the styler for a per-instance `duplicate()`. The rim numbers are
+	not copied from `ToonShading` any more, they ARE `ToonShading.style()` (bd
+	`godot-test1-ftn.23`) — one source of truth for what that look is, so the cast and
+	the building cannot drift; `tower_shell_selfcheck` asserts they still agree.
 	"""
 	var hit: StandardMaterial3D = _materials.get(color)
 	if hit != null:
 		return hit
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = color
-	mat.diffuse_mode = BaseMaterial3D.DIFFUSE_TOON
-	mat.rim_enabled = true
-	mat.rim = 0.4
-	mat.rim_tint = 0.25
+	ToonShading.style(mat)
 	if color == COLOR_BEACON:
 		# The beacon is a light, not a stone: unshaded and emissive so it holds its
 		# colour at any hour and at any angle. It is the one part of the real shell
