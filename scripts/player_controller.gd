@@ -3722,10 +3722,14 @@ func _room_group_anchor() -> Variant:
 
 # ----------------------------------------------------------------------------
 ## THE ABILITY CONSTANT BANNER LIVES IN `PlayerAbilities` (bd godot-test1-ftn.15)
-## and is aliased back here, unchanged, because `tower_interior.gd`,
-## `capture_selfcheck`, `progression_selfcheck`, `tower_interior_selfcheck` and
-## `help_selfcheck` read these off the PLAYER script. An alias is a constant, so
-## every reader — and every use below — is byte-for-byte what it was.
+## and is aliased back here, unchanged, because `tower_shell_selfcheck`,
+## `tower_selfcheck`, `capture_selfcheck` and `progression_selfcheck` read these
+## out of THIS script's `get_script_constant_map()` — and the first two fail by
+## name on a missing one. An alias is a constant, so every reader, the static
+## `ability_visual_scale()` below included, is byte-for-byte what it was.
+##
+## The whole banner is aliased rather than a curated list of what is read today:
+## a const alias costs nothing at runtime, and a list is the thing that rots.
 const ABILITY_EFFECT := PlayerAbilities.ABILITY_EFFECT
 const ABILITY_COOLDOWN := PlayerAbilities.ABILITY_COOLDOWN
 const ABILITY_NAME := PlayerAbilities.ABILITY_NAME

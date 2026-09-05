@@ -46,8 +46,10 @@ var player = null
 # ============================================================================
 ## Moved here whole with the arms, and ALIASED BACK on the player
 ## (`const TEIBI_SCALE_BIG := PlayerAbilities.TEIBI_SCALE_BIG` and so on),
-## because `tower_interior.gd`, `capture_selfcheck`, `progression_selfcheck` and
-## `tower_interior_selfcheck` read them off the player script.
+## because `tower_shell_selfcheck`, `tower_selfcheck`, `capture_selfcheck` and
+## `progression_selfcheck` read them out of the PLAYER script's own
+## `get_script_constant_map()`. The first two HARD-FAIL on a missing one, which
+## is what turns "an alias is really a script constant" into a measurement.
 ##
 ## TWO STAYED BEHIND and both are on the player for a reason:
 ##   * `CHARACTER_SPEED` is a MOVEMENT multiplier — `calculate_current_speed()`
