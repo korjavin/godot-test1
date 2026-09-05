@@ -191,20 +191,67 @@ const CITIZEN_PROXY_HEIGHT: float = 1.75
 # SHARED RESOURCES (static — one per PROCESS, not per citizen/manager)
 # ============================================================================
 
-static var _shared_material: StandardMaterial3D = null
+## How tall the TALLEST citizen's welded mesh is, boots to hat — the span the
+## top-lit gradient is measured over (bead `godot-test1-y1o.15`).
+##
+## THE FOUR ARCHETYPES ARE NOT THE SAME HEIGHT and share ONE material, so this
+## is one number for all of them: measured, Windman 1.72, Primm 1.70, Teibi 1.78
+## and PHOBOMAN 1.40 — he is the short stout one, and he is why this is worth a
+## comment. It is the MAXIMUM rather than a mean because the span is a divisor:
+## a shorter citizen simply tops out at `1.40 / 1.78` of the ramp, a head 8%
+## short of full colour that nobody will pick out of a crowd, whereas a span
+## UNDER an archetype's height clamps its whole hat flat at full colour and
+## throws the gradient away over the part of a body you actually look at.
+##
+## The alternative — a material per archetype, exact for all four and still four
+## draw calls, since each MultiMesh already owns one — was weighed against that
+## 8% and refused: it trades a documented one-shared-material invariant for
+## something invisible. If a future archetype is dwarfed further, that is the
+## upgrade path.
+##
+## It is deliberately NOT `CITIZEN_PROXY_HEIGHT`: that is a collider, sized to
+## be forgiving, and a shading span and a physics box must not be one constant.
+const CITIZEN_MESH_TOP: float = 1.78
+
+static var _shared_material: ShaderMaterial = null
 static var _archetype_meshes: Array = [null, null, null, null]
 static var _box_cache: Dictionary = {}
 
 
-static func _get_shared_material() -> StandardMaterial3D:
-	## The ONE standard material with vertex colors and sRGB conversion enabled,
-	## shared by all four crowd MultiMeshes across the entire session.
+static func _get_shared_material() -> Material:
+	## The ONE material, shared by all four crowd MultiMeshes across the entire
+	## session — now the WORLD'S OWN block shader (bead `godot-test1-y1o.15`,
+	## style direction A), so a citizen is lit like the street they walk down
+	## instead of standing flat against a gradient-shaded city.
+	##
+	## `_add_box` welds every box at its BODY offset, so model-space `VERTEX.y`
+	## runs boots-to-hat over the whole citizen rather than -0.5..+0.5 over one
+	## box — which is exactly what `height_range` exists for (bead y1o.14 added
+	## it for this consumer). One span for the whole body reads as contact
+	## shading: boots and shins darken toward the pavement, the head catches the
+	## key light.
+	##
+	## The tint still arrives through `COLOR`: the archetype meshes carry vertex
+	## colours, so the shader's `albedo` uniform stays at its white default and
+	## nothing here has to be re-authored.
+	##
+	## TWO StandardMaterial3D PROPERTIES ARE GONE and neither is a loss.
+	## `cull_mode = CULL_BACK` is `world_block.gdshader`'s own `render_mode`.
+	## `vertex_color_is_srgb` has no equivalent — and it was only ever effective
+	## on Forward+/Mobile, never on the web `gl_compatibility` build this game
+	## targets, so the desktop crowd was already a shade darker than the crowd
+	## every browser has ever shown. Dropping it settles that split the way the
+	## rest of the world is settled: every `create_box` colour in Budapest is
+	## consumed exactly like this, so the citizens now sit in the same colour
+	## space as the facades behind them.
 	if _shared_material == null:
-		_shared_material = StandardMaterial3D.new()
-		_shared_material.vertex_color_use_as_albedo = true
-		_shared_material.vertex_color_is_srgb = true
-		_shared_material.roughness = 0.85
-		_shared_material.cull_mode = BaseMaterial3D.CULL_BACK
+		_shared_material = ShaderMaterial.new()
+		_shared_material.shader = ChunkBatch.WORLD_BLOCK_SHADER
+		_shared_material.set_shader_parameter("height_range",
+				Vector2(0.0, CITIZEN_MESH_TOP))
+		_shared_material.set_shader_parameter("block_roughness", 0.85)
+		_shared_material.set_shader_parameter("bottom_shade",
+				ChunkBatch.BLOCK_BOTTOM_SHADE)
 	return _shared_material
 
 
