@@ -4,8 +4,18 @@ Generate a 3D model of a Piglet Crocodile character.
 Creates a GLB file that can be imported into Godot.
 """
 
+import pathlib
+import sys
+
 import trimesh
 import numpy as np
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+# The one export seam: flat per-face normals. This model is almost entirely
+# `creation.cylinder` / `creation.icosphere`, which weld — see the docstring
+# there for what that cost us. Predates predator_parts and is otherwise untouched.
+from predator_parts import export_faceted  # noqa: E402
 
 def create_crocodile_model():
     """Create a complete piglet crocodile 3D model."""
@@ -207,8 +217,9 @@ def main():
     crocodile = create_crocodile_model()
 
     # Save as GLB (binary GLTF)
-    output_path = "assets/models/characters/piglet_crocodile.glb"
-    crocodile.export(output_path)
+    output_path = pathlib.Path(__file__).resolve().parent.parent / \
+        "assets" / "models" / "characters" / "piglet_crocodile.glb"
+    export_faceted(crocodile, output_path)
 
     print(f"✓ Model saved to: {output_path}")
     print(f"  Vertices: {len(crocodile.vertices)}")

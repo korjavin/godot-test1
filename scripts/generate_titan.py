@@ -20,6 +20,11 @@ import sys
 import numpy as np
 import trimesh
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+# The one export seam: flat per-face normals. See predator_parts.export_faceted.
+from predator_parts import export_faceted  # noqa: E402
+
 OUT_DIR = pathlib.Path(__file__).resolve().parent.parent / "assets" / "models" / "characters"
 
 # --- Palette. READ THE GAMMA NOTE BEFORE EDITING. -----------------------------
@@ -232,7 +237,7 @@ def save_titan() -> trimesh.Trimesh:
     verify_titan(mesh)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     path = OUT_DIR / "titan.glb"
-    mesh.export(path)
+    export_faceted(mesh, path)
     lo, hi = mesh.bounds
     print(f"✓ titan: {path}")
     print(f"  {len(mesh.vertices)} verts / {len(mesh.faces)} faces")
