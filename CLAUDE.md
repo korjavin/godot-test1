@@ -602,6 +602,23 @@ Load-bearing rules:
   palettes did NOT move again**: they are `TerrainProps`' since ftn.2 and the one table
   naming them stayed put, so a third "shared colours" file would be a file to keep in step
   for no behavioural gain — revisit only if a THIRD family needs them.
+- **THE PRIVATE-STREAM FEATURES ARE `scripts/terrain_features.gd`** (`class_name
+  TerrainFeatures`, all static, bd `godot-test1-ftn.4`) — lost-civilization ARTIFACTS,
+  nomad CAMPS and treasure CHESTS, each with its own salt and coordinate primes beside
+  the code. They are one family because **none of them draws from the shared chunk
+  stream**: each is placed by its own `_x_at(chunk_pos)` rarity function on its own hash
+  stream. `endless_terrain.gd` keeps **three one-line forwarders** for
+  `spawn_artifact_in_chunk` / `spawn_camp_in_chunk` / `spawn_chest_in_chunk` — the
+  `create_box` precedent, because `terrain.spawn_*_in_chunk(...)` is what
+  `budapest_selfcheck`'s twelve call sites and `create_chunk`'s call-order list are
+  written against — plus **seventeen const aliases**, measured: the three `*_SALT`s are
+  read by `landmark_builders.gd` and `landmark_toast.gd` and the `CHEST_*` payouts by
+  `treasure_chest.gd` and `mp_manager.gd`, while the other fifty-nine constants are read
+  nowhere but the builders that moved. **`_spawn_artifact_accent` and
+  `_get_camp_ember_material` stayed** — they are node/material work that
+  `landmark_builders.gd` already calls through the terrain reference. **The GEO-LANDMARK
+  spawner did NOT move**: its site table is `run_seed`-memoized INSTANCE state that
+  `_drop_seeded_memos()` owns (bd `bvq`), so it stays with the memo.
 - **A BOX HAS A MESH KIND, AND EVERY UNIT MESH FITS THE UNIT CUBE** (bead
   `godot-test1-y1o.1`, epic `y1o` "get rid of blocks"). The batch entry is
   `{transform, color, kind}` — `ChunkBatch.BoxKind` (CUBE / SPHERE / CONE / CYLINDER /
