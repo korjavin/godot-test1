@@ -21,6 +21,11 @@ import sys
 import numpy as np
 import trimesh
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+# The one export seam: flat per-face normals. See predator_parts.export_faceted.
+from predator_parts import export_faceted  # noqa: E402
+
 OUT_DIR = pathlib.Path(__file__).resolve().parent.parent / "assets" / "models" / "characters"
 
 # --- Palette. READ THE GAMMA NOTE BEFORE EDITING. -----------------------------
@@ -247,7 +252,7 @@ def save_clown() -> trimesh.Trimesh:
     verify_clown(mesh)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     path = OUT_DIR / "clown.glb"
-    mesh.export(path)
+    export_faceted(mesh, path)
     lo, hi = mesh.bounds
     print(f"✓ clown: {path}")
     print(f"  {len(mesh.vertices)} verts / {len(mesh.faces)} faces")

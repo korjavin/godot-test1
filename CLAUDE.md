@@ -73,10 +73,12 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            without, and the aspect fallback driven at BOTH ends
 #                            of ROUND_COLLIDER_MAX_ASPECT. Check 5 is
 #                            the PER-BIOME DRAW-CALL BILL, iterating the Biome
-#                            enum over both shipped field spawners: a forest
-#                            chunk builds exactly TWO nodes (BlockMultiMesh +
-#                            BlockMultiMesh_SPHERE, the canopies) and every
-#                            other biome exactly one
+#                            enum over both shipped field spawners: one node per
+#                            kind PRESENT and never more than that biome's
+#                            KIND_CAP_BY_NAME row (forest 3 — cubes, SPHERE
+#                            canopies and ROCK boulders; every other band 2),
+#                            with the SHARE of chunks paying printed beside the
+#                            worst case
 #   fauna_selfcheck          herd steering + rider carry, plus row 6 the MP
 #                            REPLAY: one seed gives two byte-identical builds, a
 #                            joiner is snapped onto the live sample, a replay
@@ -162,7 +164,25 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            the row really drawn, `tile_state()` reports CAPTIVE
 #                            so the overlay leaves the cell bars alone, and
 #                            `voice_chat`'s mirrored copy of that constant is
-#                            bound to the real one
+#                            bound to the real one. Check 7 is VOICE ON THE ROW:
+#                            the five MIC_BADGE_* numbers and the speaking green
+#                            bound to voice_chat's and remote_avatar's, the real
+#                            voice module answering NOTHING off-web, a stub
+#                            driven through every mic state (with the four badge
+#                            colours held separable), deafen as a SECOND axis,
+#                            the per-tile ring mask, `badge_on_tile` /
+#                            `deafen_on_tile` as `_draw`'s two decisions (a
+#                            `_draw` outside the tree has no canvas item, so
+#                            they are the only part of the painting a headless
+#                            check can reach) with the BENCHED row — driven hero
+#                            captive, no ACTIVE tile — keeping its badge, and
+#                            the two degrades that matter: no voice node leaves
+#                            the snapshot exactly bead .7's, and a speaking
+#                            claim with no room lights nothing. Check 7b
+#                            EXECUTES the real `voice_chat` ladders with
+#                            `_is_web` forced on and a stub manager, because
+#                            check 7 only meets them off-web where both return
+#                            on their first line
 #   landmark_selfcheck       every builder fits its declared radius AND its
 #                            declared top
 #   landmark_sites_selfcheck THE MUSEUM MILE: every field kind sited AT MOST ONCE
@@ -363,6 +383,18 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            against the real capsule and TEIBI_SCALE_SMALL and
 #                            asserted to be a dead end; and one dossier taken
 #                            for real coins, hidden, and refusing to pay twice
+#   tower_guard_selfcheck    the HQ's guards, split off tower_interior by bd
+#                            godot-test1-ftn.25 (CI shards the glob BY FILE) with
+#                            the check NUMBERS unchanged: 12 the posts (counted off
+#                            the BODIES, GUARDS_PER_STOREY_MAX, the capsule through
+#                            every doorway), 13 the population resets and the opened
+#                            set does not, 14 the leash held against a real 8 s
+#                            chase, and 21/21b the lure — one storey DRIVEN, the
+#                            other seventeen (post, plate) pairs routed on the plans
+#   tower_block_lure_selfcheck
+#                            check 21c ALONE, and alone because it is a minute: the
+#                            cell block's guard walks 60 m of route to a plate, holds
+#                            facing it, and walks off again. Same split
 #   capture_selfcheck        SYSTEMIC CAPTURE and the tower guard's stake: the
 #                            arming gate (pre/post the
 #                            authored beat), attribution (every `captures_hero`
@@ -377,7 +409,15 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            the run in the same frame chain and archives the world
 #                            without touching the building (Continue reopens the
 #                            ending, New Game clears it), plus the vocabulary of
-#                            both retired models — hearts and the vetoed break-out
+#                            both retired models — hearts and the vetoed break-out.
+#                            Check 20 is the CONTACT PATH, and it is the only one
+#                            that can see the chassis move: a real
+#                            hunter_robot.tscn at its shipped 2.25x scale walks at
+#                            a real player.tscn on a floor, through the shipped
+#                            _physics_process / move_and_slide / _handle_collisions
+#                            with NO hand-made collision call, and must imprison the
+#                            hero; the mutation control disables its own capsule and
+#                            must imprison nobody
 #   tower_lift_selfcheck     the HQ's service lift (L): the key is free against the
 #                            input map AND every other panel's constant, every stop
 #                            is a built `entries` row with an `unlock` id landing on
@@ -424,10 +464,25 @@ The biome-predator models — five animals, the GD-SURVEY hunter robot and the n
 hydra, green dragon and roc bosses — share one
 toolkit, `scripts/predator_parts.py`, which carries the orientation / feet-at-y=0 /
 one-vertex-coloured-mesh contract an enemy model must honour and asserts it on every
-build. Running it directly rebuilds and checks all TWELVE models:
+build. Running it directly rebuilds and checks all THIRTEEN models:
 `python3 scripts/predator_parts.py` -> `SELFCHECK OK`. The two HUMANOID bosses (titan,
 clown) are rebuilt by that loop but carry their own `verify_*`, because the shared one
-demands a quadruped's longer-than-wide silhouette — see the note over the loop. Two of its primitives are
+demands a quadruped's longer-than-wide silhouette — see the note over the loop; the
+CROCODILE is the thirteenth and owes none of the three contracts (it predates the
+toolkit), but it shares `export_faceted`, so the loop rebuilds it or the one model the
+seam could rot is the only one CI's staleness gate cannot see.
+
+**A FOURTH CONTRACT, AND IT IS A PROPERTY OF THE EXPORT RATHER THAN OF THE SHAPE**
+(bead `godot-test1-y1o.20`, epic `y1o`'s style A): `export_faceted()` is the ONE
+seam every enemy `.glb` is written through, and it unmerges the mesh (per-face
+vertices, face count untouched) before asking for normals — trimesh writes no
+NORMAL attribute unless asked and Godot generates none on import, so the cast
+used to render with a constant normal and no facet caught the key light; asking
+without unmerging would instead have Gouraud-rounded every block. It computes the
+normals BY HAND off the float32 positions, because `mesh.vertex_normals` weights
+by `arccos` and rotated parts come out of `sin`/`cos` — libm is not bit-identical
+across platforms, and CI byte-compares the rebuild. Read the docstring before
+touching it. Two of its primitives are
 composed INTO models rather than being models — `wings()` (the winged bosses' folded
 silhouette; they hop, nothing in this game flies) and `necks()` (a fan of necks and
 heads off ONE point on the spine, the multi-head capability the hydra spends) — so each
@@ -490,7 +545,8 @@ Load-bearing rules:
   lands there, not in the world engine.**
 - **A BOX HAS A MESH KIND, AND EVERY UNIT MESH FITS THE UNIT CUBE** (bead
   `godot-test1-y1o.1`, epic `y1o` "get rid of blocks"). The batch entry is
-  `{transform, color, kind}` — `ChunkBatch.BoxKind` (CUBE / SPHERE / CONE / CYLINDER), a
+  `{transform, color, kind}` — `ChunkBatch.BoxKind` (CUBE / SPHERE / CONE / CYLINDER /
+  ROCK), a
   trailing optional on `create_box` defaulting to CUBE, **always written** so the entry
   shape stays uniform (the whole-dict `var_to_bytes` signatures both `prop_selfcheck` and
   `budapest_selfcheck` compare would otherwise differ between two runs that agree about
@@ -506,7 +562,9 @@ Load-bearing rules:
   INSCRIBED in `dimensions` exactly like the mesh; the cylinder's axis is local Y, where
   `CylinderMesh` puts it, never "the long axis"), and a CONE plus anything squashed past
   `ROUND_COLLIDER_MAX_ASPECT` (1.6 — no `SphereShape3D` is an ellipsoid) keeps the bounding
-  box. The shape COUNT is untouched, which every collision budget in the suite rests on.
+  box, **and so does every ROCK, at every aspect and on purpose** (bead `godot-test1-y1o.3`:
+  a rock's flat lid IS the box's top face, which is the whole reason the kind exists).
+  The shape COUNT is untouched, which every collision budget in the suite rests on.
   **The CONE is the one kind still wrong on purpose** (Godot has no cone primitive), so
   nothing a player can reach may be a colliding cone — `landmark_selfcheck` check 9c; and
   **`_build_block_multimesh` emits one `MultiMeshInstance3D` per kind PRESENT** — a
@@ -519,16 +577,31 @@ Load-bearing rules:
   pre-build sweep cannot see. The city splitter **carries `kind` and leaves a non-CUBE
   entry whole**: a cut cone is not two cones. Choosing a kind costs **no RNG draw**, so it
   can never move a spawn.
-  **THE FOREST IS THE FIRST CONSUMER AND SO FAR THE ONLY ONE** (bead
-  `godot-test1-y1o.2`): every tree's 2-3 canopy layers are `BoxKind.SPHERE` blobs
-  (`TREE_CANOPY_BLOB_HEIGHT` / `_OVERLAP`, both DERIVED from the width the layer
-  already drew — so not one RNG draw moved and the biome stream is byte-identical),
-  the trunk stays a `CUBE` because it is the one COLLIDING box in a tree, and a
-  forest chunk therefore costs **+1 draw call and nothing else in the world costs
-  anything**. `batch_selfcheck` check 5 bills that per biome off the `Biome` enum;
-  `prop_selfcheck` check 10 asserts the two kinds tree by tree. **A new consumer is a
-  named bead judged BY EYE by the owner** — the epic's rule — plus whatever that
-  check-5 bill has to become.
+  **THE FOREST WAS THE FIRST CONSUMER** (bead `godot-test1-y1o.2`): every tree's 2-3
+  canopy layers are `BoxKind.SPHERE` blobs (`TREE_CANOPY_BLOB_HEIGHT` / `_OVERLAP`,
+  both DERIVED from the width the layer already drew — so not one RNG draw moved and
+  the biome stream is byte-identical), and the trunk stays a `CUBE` because it is the
+  one COLLIDING box in a tree. `prop_selfcheck` check 10 asserts the two kinds tree by
+  tree.
+  **ROCKS ARE THE SECOND, AND THEY ARE IN EVERY BIOME** (bead `godot-test1-y1o.3`).
+  `BoxKind.ROCK` is a faceted dome with a FLAT LID at exactly y = +0.5 (built from
+  `UNIT_ROCK_PROFILE`, whose jitter only ever SUBTRACTS so the unit-cube fit is
+  structural) that keeps its `BoxShape3D`, because most rocks carry a CLIMBABLE
+  footprint and a squashed sphere's surface falls away from the box top — the hero
+  would stand floating over the rim. Six prop builders and the oasis boulders take it;
+  the **cairn's tiers stay CUBE** (a cairn IS stacked flat stones) and only its loose
+  foot stones are rocks. `prop_selfcheck` check 11 reads `BUILDER_KINDS` BOTH ways, so
+  a revert to CUBE is a red build.
+  **THE BILL IS NO LONGER "NOTHING ELSE COSTS ANYTHING", AND THE FREQUENCY IS THE
+  NUMBER THAT MATTERS.** `batch_selfcheck` check 5 is now one node per kind PRESENT
+  against `KIND_CAP_BY_NAME` (forest 3, every other band 2) and prints the SHARE of
+  chunks paying beside the worst case: measured at bead y1o.3, **89% of stone-bearing
+  field chunks gained a block draw call** and the field's total went 709 -> 1262
+  (+78%), ~56 -> ~100 in the web build's 49-chunk residency. The CITY band's cap is 2
+  even though no city builder draws a rock, because `_build_prop` themes per PROP
+  POSITION rather than per chunk centre — a city chunk on a plains edge grows a plains
+  boulder. **A new consumer is a named bead judged BY EYE by the owner** — the epic's
+  rule — plus whatever that check-5 bill has to become.
 - **Chunk-parented, so unloading frees it.** Anything spawned per-chunk parents to the
   chunk MeshInstance3D or it leaks.
 - **Footprints are the shared currency.** Each thing built appends
@@ -1188,10 +1261,24 @@ consumer beads are filed from that report.
 `scripts/player_controller.gd` (a `CharacterBody3D`). Character switching on R (`switch_character`) cycles
 `CHARACTERS`, freeing and re-instancing under `$CharacterModel`.
 
+**THE ANIMATION LIVES IN `scripts/player_animation.gd`** (`class_name PlayerAnimation`,
+bd `godot-test1-ftn.9`) — the limb references, `original_rotations`, the `GAITS` table
+and `gait_for()`, the walk / idle / air / sidestep cycles, `relax_gait_extras()` /
+`reset_sidestep_pose()`, and the cel-shading applied to a model on the swap path. The
+body keeps movement, capture, respawn, the input map and every contract method the
+`"player"` group answers. It is a `RefCounted` HOLDING the player (`player.anim`, wired
+in `_init()`), not `landmark_builders.gd`'s static-library contract, because the pose IS
+state; it reaches back through `player` for what the BODY owns (`is_on_floor()`, the
+landing squash, the Teibi scale, the sidestep flags, `_sfx`), and that direction is
+one-way. The reference is deliberately untyped — `player_controller.gd` carries no
+`class_name`, so there is no type to write and no cycle to create. `remote_avatar.gd`
+reads `PlayerAnimation.gait_for()` / `GAIT_HITCH_RATIO` off the class; the four
+selfchecks that drive a real `player.tscn` reach `player.anim.<field>` directly.
+
 **There is no `AnimationPlayer`.** Limb animation is sine waves driven onto child nodes
 looked up **by exact name**: `Body`, and under it `LeftArm` / `RightArm` / `LeftLeg` /
-`RightLeg`. A new playable character scene must use these names or it loads and stays
-frozen.
+`RightLeg` (plus an OPTIONAL `Head`). A new playable character scene must use these names
+or it loads and stays frozen.
 
 **Camera rig is `$CameraPivot/CameraArm/Camera3D`, and `CameraArm` is a `SpringArm3D`,
 which overwrites its children's local position every physics frame.** Nothing may write
@@ -1237,8 +1324,10 @@ crocodile's own collision handling.
 **Species are data, not subclasses.** Every trait that makes one predator feel different —
 speeds, detection, wander rhythm, obstacle feelers, waddle/bite geometry, river sink, and
 the `coin_setback` bill losing to it costs — is a
-row of the `SPECIES` const dict of plain dicts at the top of `piglet_crocodile_ai.gd`, the
-same shape as `Progression.SKILL_TREES`. An instance's `species` field is a plain public
+row of the `SPECIES` const dict of plain dicts, which lives in `scripts/species_table.gd`
+(`class_name SpeciesTable`, bd `godot-test1-ftn.10`) and is aliased back into
+`piglet_crocodile_ai.gd` as `const SPECIES := SpeciesTable.SPECIES`, so every reader still
+spells it `SPECIES`. Same shape as `Progression.SKILL_TREES`. An instance's `species` field is a plain public
 var assigned **before `add_child`** (same call-order contract as `setup_as_boss()`), and
 `_ready()` resolves it once into `spec`, which the per-frame paths read. A new predator is
 a new entry there plus at most one new arm in a `match` — never a new script and never a
@@ -1782,9 +1871,19 @@ was ever going to stop it. Three parts, all in the two managers, all pinned by
   is in the traffic, but `_pick_next_waypoint` carries straight on 60% of the time and a
   fresh draw there flips the SIGN half of those — a 17.2 m sideways teleport for a citizen
   that never turned. A U-turn keeps its street line, so it flips the stored value rather
-  than re-drawing; the 90° corner is still a `sqrt(2) x lane` jump, which is what the lane
-  model has always cost (±3.2 made it 4.5 m) and `crowd_selfcheck` check 12 BOUNDS rather
-  than forbids. `_pick_lane` tries **both** pavements before giving up, because
+  than re-drawing. **The 90° corner is WALKED since bead `godot-test1-8gw.24`** — it used
+  to be a `sqrt(2) x lane` jump (12.2 m on the pavement, 4.5 m on the old ±3.2 lanes),
+  because the offset paths of two perpendicular streets cross at a point the walker never
+  visited. `_plan_corner` picks the next street's lane ONE BLOCK EARLY and ends the leg at
+  that crossing point, so the walker rounds the corner on foot and the rendered position
+  does not move at the turn at all; both cross terms are axis-aligned, so it is arithmetic
+  (`u` slides the leg's end along the street it is already on — short of the intersection
+  on an inside corner, past it on an outside one — and `s` re-bases onto the new street),
+  the base lands back on an exact grid intersection every leg so nothing drifts, and
+  straight-on and U-turn legs are byte for byte what they were. `crowd_selfcheck` check 12
+  now holds a turn to the SAME per-frame bound as every other step, with the retired
+  arrival branch written out beside it as the mutation control (12.19 m against a 0.093 m
+  bound). `_pick_lane` tries **both** pavements before giving up, because
   `BUDAPEST_MIN.x == GATE.x` puts the gate avenue's west pavement outside the rect and a
   single-draw version dropped half its walkers onto that carriageway's centreline. **And
   a lane is validated along the WHOLE leg, never at its base** (`_lane_walkable`, both ends
@@ -1889,7 +1988,10 @@ state machine and imports no network types, so tests drive it directly.
 
 ### Mesh (`scripts/mp_manager.gd` and friends)
 `lobby_client.gd` (socket + `/ice`), `mp_manager.gd` (mesh, seed, presence, heroes, shared
-totals, crocodile sync, claims), **`mp_codec.gd` (the pure codec)**, `remote_avatar.gd`
+totals, claims), **`mp_codec.gd` (the pure codec)**, **`mp_croc_sync.gd` (`MpCrocSync`,
+static, manager-first-arg — the crocodile sync send/receive/timeout handlers, the id
+cache and the `kill`/`dead` ruling; the room's state stays on the manager and the
+`CROC_SYNC_*` consts are aliased back)**, `remote_avatar.gd`
 (visual only), `mp_ui.gd`, `teammate_locator.gd`.
 
 **THE PARSERS ARE `MpCodec`, THE HANDLERS ARE `MpManager`, and that seam is the file
@@ -2040,8 +2142,9 @@ touches `JavaScriptBridge`.
   `"id:level,…,me:level"` (integers 0-100 — one bridge call per poll, never one per peer,
   and never a boolean) off one `AnalyserNode` per stream; `apply_levels()` parses it at
   10 Hz into a 150 ms HOLD per id, because speech is gaps and a dot driven off the
-  instantaneous level strobes between syllables. It drives two surfaces and no third: the
-  MP panel's per-member row and `RemoteAvatar.set_speaking()`, which only recolours the
+  instantaneous level strobes between syllables. It drives three surfaces and no fourth: the
+  MP panel's per-member row, the hero row's speaking ring (below) and
+  `RemoteAvatar.set_speaking()`, which only recolours the
   `NameTag` `Label3D` that already exists — **the avatar gains no node**, so
   `mp_selfcheck`'s isolation walk is untouched. The avatar is reached by node name
   (`Peer_<id>`) rather than a new getter, which is what keeps the `mp_manager` seam three
@@ -2079,6 +2182,33 @@ touches `JavaScriptBridge`.
   button — mobile is out of scope) would hide it; the browser's own F11 sets no
   `fullscreenElement` and is fine. The documented fallback is the bead's ImageTexture
   frame-copy path.
+- **VOICE IS ON THE ALWAYS-VISIBLE HUD, AS TWO GLYPHS AND NO TEXT** (bead
+  `godot-test1-xtr.8`, owner: *"in MP game there should be an indication on HUD of mic
+  state and when someone is speaking"*). The MP panel and the name tags both have to be
+  LOOKED at; the portrait row does not. `hero_hud.gd` draws a MIC BADGE (idle grey /
+  transmitting green / muted red-slash / denied amber, plus a headphone-slash beside it
+  while deafened — mute and deafen are two axes and get two corners) and a pulsing green
+  SPEAKING RING on the tile of whichever hero's HOLDER is
+  talking. Glyphs, so **nothing was added to `ui.csv`**; vertex-drawn in `_draw()`, so no
+  texture and no node. The two questions are answered by `voice_chat.gd` —
+  `mic_badge()` and `is_hero_speaking()`, which owns the hero -> holder mapping and the
+  browser's `me` level key beside the camera tiles that already need both — and read off
+  group `"voice"` with `has_method` guards, so **off the web, with no voice node, or
+  outside a room the row DRAWS exactly what bead .7's did** and costs two dynamic
+  dispatches a frame. The green is
+  `remote_avatar.LABEL_SPEAKING_COLOR`, mirrored and bound by `hero_hud_selfcheck` check 7.
+  Three rules of its own:
+  **the badge rides the hero you DRIVE, never the ACTIVE tile** — captivity outranks
+  ACTIVE and the prison role never switches character, so a benched peer's row has NO
+  active tile, which is exactly the moment somebody is on the microphone;
+  **`mic_badge()` reads the CACHED `_reported_mic`, never `mic_denied()`** — its caller is
+  a `_process`, and `mic_denied()` is a `JavaScriptBridge` round trip, so a live read there
+  would be 60 bridge calls a second on the one build this epic is for (every other bridge
+  reader in that file is throttled to 2-10 Hz for the same reason; `mp_ui` keeps the live
+  read because it asks once per panel refresh);
+  and **the ring's pulse is QUANTIZED** (`RING_PULSE_STEPS` at `RING_PULSE_HZ`) and folded
+  into the row's repaint-on-change snapshot, because a continuous sine would repaint every
+  frame for as long as anybody talks — the one thing this widget has never done.
 
 ## Performance & web build
 

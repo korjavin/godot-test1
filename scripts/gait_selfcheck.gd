@@ -73,6 +73,31 @@ const TODAY: Dictionary = {
 	"hitch": 0.0, "phase": 0.0, "idle_rate": 2.0, "idle_bob": 0.01,
 }
 
+## THE SIDESTEP SWEEP (bead godot-test1-3ek). Metres of held strafe, and the
+## speed the probe drives them at — the cycle is DISTANCE-driven, so what the
+## sweep has to cover is ground, not seconds. 6 m is a little over three full
+## DEFAULT cycles (TAU / SIDESTEP_PHASE_PER_METRE = 1.96 m each), which is
+## enough for every hero's slower or faster rate to close at least one.
+const STRAFE_METRES: float = 6.0
+const STRAFE_SPEED: float = 5.0
+
+## How far apart two poses in one strafe must get before the cycle counts as a
+## cycle. Same reasoning and the same number as `HITCH_EPS_DEG`: far below every
+## row's amplitude, far above float noise.
+const STRAFE_EPS_DEG: float = 1.0
+
+## How far apart the roster's WIDEST and NARROWEST strafe must be on each of the
+## three personality axes (leg amplitude, arm amplitude, step rate).
+##
+## A SPREAD and not "the four numbers differ", which is the trap this replaced:
+## the amplitudes are a SAMPLED max and min of a sine, so four heroes whose
+## phases land at slightly different points on the peak read as four distinct
+## numbers even with the scaling pinned to 1.0 — measured, they differed in the
+## fourth decimal and a distinctness test passed. The rows really spread these by
+## 1.9x, 2.0x and 1.6x, so 1.1 is far above the sampling noise and far below
+## every real spread.
+const PERSONALITY_SPREAD: float = 1.1
+
 var _failures: Array[String] = []
 
 
@@ -108,6 +133,7 @@ func _run() -> void:
 		Sentinel.done("relax")
 		Sentinel.done("personality")
 		Sentinel.done("footsteps")
+		Sentinel.done("sidestep")
 		_report()
 		return
 
@@ -118,7 +144,7 @@ func _run() -> void:
 	await process_frame
 	await physics_frame
 
-	if player.left_arm == null or player.character_body == null:
+	if player.anim.left_arm == null or player.anim.character_body == null:
 		_fail("player.tscn produced no limb references — the Body/LeftArm/... "
 				+ "node-name contract is broken, and no pose below could be measured")
 		Sentinel.done("bounds")
@@ -126,6 +152,7 @@ func _run() -> void:
 		Sentinel.done("relax")
 		Sentinel.done("personality")
 		Sentinel.done("footsteps")
+		Sentinel.done("sidestep")
 		player.queue_free()
 		_report()
 		return
@@ -134,6 +161,7 @@ func _run() -> void:
 	_check_relax(player)
 	_check_personality(player)
 	_check_footsteps(player)
+	_check_sidestep(player)
 
 	player.queue_free()
 	await process_frame
@@ -149,7 +177,7 @@ func _check_catalogue() -> void:
 	Every hero has a row, the DEFAULT row is still today's walk, and no row
 	carries a field the animation never reads.
 	"""
-	var default_row: Dictionary = PlayerController.GAITS.get("DEFAULT", {})
+	var default_row: Dictionary = PlayerAnimation.GAITS.get("DEFAULT", {})
 	if default_row.is_empty():
 		_fail("GAITS has no DEFAULT row — an unknown hero would resolve nothing")
 		Sentinel.done("catalogue")
@@ -173,13 +201,13 @@ func _check_catalogue() -> void:
 	#     total: an unknown name must come back as DEFAULT rather than empty.
 	for entry: Dictionary in PlayerController.CHARACTERS:
 		var hero: String = String(entry["name"])
-		if not PlayerController.GAITS.has(hero):
+		if not PlayerAnimation.GAITS.has(hero):
 			_fail("no GAITS row for hero '%s'" % hero)
-		var row: Dictionary = PlayerController.gait_for(hero)
+		var row: Dictionary = PlayerAnimation.gait_for(hero)
 		for key: String in TODAY:
 			if not row.has(key):
 				_fail("resolved gait for '%s' is missing field '%s'" % [hero, key])
-	var unknown: Dictionary = PlayerController.gait_for("no-such-hero")
+	var unknown: Dictionary = PlayerAnimation.gait_for("no-such-hero")
 	for key: String in TODAY:
 		if not unknown.has(key) or not is_equal_approx(float(unknown[key]), float(TODAY[key])):
 			_fail("gait_for('no-such-hero')['%s'] is not the DEFAULT value — a fifth "
@@ -187,15 +215,15 @@ func _check_catalogue() -> void:
 
 	# (c) A typo'd field is the silent failure this catches: it merges in, the
 	#     animation never reads it, and the hero walks on the DEFAULT value.
-	for hero: String in PlayerController.GAITS:
-		for key: String in PlayerController.GAITS[hero]:
+	for hero: String in PlayerAnimation.GAITS:
+		for key: String in PlayerAnimation.GAITS[hero]:
 			if not TODAY.has(key):
 				_fail("GAITS['%s'] carries field '%s', which DEFAULT does not declare — "
 						% [hero, key] + "the animation never reads it")
 		# (d) The hitch modulates amplitude by `1 + hitch * sin(...)`. At 1.0 or
 		#     above that factor reaches zero and then goes NEGATIVE, which
 		#     inverts the legs mid-step.
-		var amount: float = float(PlayerController.GAITS[hero].get("hitch", 0.0))
+		var amount: float = float(PlayerAnimation.GAITS[hero].get("hitch", 0.0))
 		if amount < 0.0 or amount >= 1.0:
 			_fail("GAITS['%s']['hitch'] is %.3f — it must stay in [0, 1) or the "
 					% [hero, amount] + "amplitude factor reaches zero and flips the limbs")
@@ -221,8 +249,8 @@ func _check_bounds(player: Node3D) -> void:
 		var hero: String = String(PlayerController.CHARACTERS[index]["name"])
 		player.set_active_character(index)
 		var head_rest: float = 0.0
-		if player.character_head and player.original_rotations.has("head"):
-			head_rest = float(player.original_rotations["head"].z)
+		if player.anim.character_head and player.anim.original_rotations.has("head"):
+			head_rest = float(player.anim.original_rotations["head"].z)
 
 		# The widest excursion each of the row's own axes actually reached, for
 		# the "a declared field reaches the pose" assertion below.
@@ -236,10 +264,10 @@ func _check_bounds(player: Node3D) -> void:
 			var worst_head: float = 0.0
 			var bad_finite: bool = false
 			for i: int in samples:
-				player.animation_time = float(i) * step
-				player.animate_walking(step, multiplier)
+				player.anim.animation_time = float(i) * step
+				player.anim.animate_walking(step, multiplier)
 				for key: String in ["left_arm", "right_arm", "left_leg", "right_leg"]:
-					var limb: Node3D = player.get(key)
+					var limb: Node3D = player.anim.get(key)
 					if limb == null:
 						continue
 					if not is_finite(limb.rotation.x):
@@ -248,23 +276,23 @@ func _check_bounds(player: Node3D) -> void:
 					worst_limb = maxf(worst_limb, absf(limb.rotation.x))
 					if key == "left_arm" or key == "right_arm":
 						reach[key] = maxf(float(reach[key]), absf(
-								limb.rotation.x - float(player.original_rotations[key].x)))
-				var body: Node3D = player.character_body
+								limb.rotation.x - float(player.anim.original_rotations[key].x)))
+				var body: Node3D = player.anim.character_body
 				if not is_finite(body.position.y) or not is_finite(body.rotation.z) \
 						or not is_finite(body.rotation.x):
 					bad_finite = true
 				else:
 					worst_y_lo = minf(worst_y_lo, body.position.y)
 					worst_y_hi = maxf(worst_y_hi, body.position.y)
-					var body_rest: Vector3 = player.original_rotations["body"]
+					var body_rest: Vector3 = player.anim.original_rotations["body"]
 					reach["sway"] = maxf(float(reach["sway"]), absf(body.rotation.z - body_rest.z))
 					reach["lean"] = maxf(float(reach["lean"]), absf(body.rotation.x - body_rest.x))
-				if player.character_head:
-					if not is_finite(player.character_head.rotation.z):
+				if player.anim.character_head:
+					if not is_finite(player.anim.character_head.rotation.z):
 						bad_finite = true
 					else:
 						worst_head = maxf(worst_head,
-								absf(player.character_head.rotation.z - head_rest))
+								absf(player.anim.character_head.rotation.z - head_rest))
 						reach["head"] = maxf(float(reach["head"]), worst_head)
 
 			var tag: String = "%s @ x%.1f" % [hero, multiplier]
@@ -284,7 +312,7 @@ func _check_bounds(player: Node3D) -> void:
 		# keys are ones the table knows; only this proves the VALUE is wired to
 		# something — an axis the walk stopped writing, or a node left out of
 		# the rest-pose table so the write is skipped, is otherwise silent.
-		var row: Dictionary = PlayerController.gait_for(hero)
+		var row: Dictionary = PlayerAnimation.gait_for(hero)
 		var wants: Dictionary = {
 			"sway": float(row["sway_deg"]), "lean": float(row["lean_deg"]),
 			"head": float(row["head_deg"]),
@@ -293,7 +321,7 @@ func _check_bounds(player: Node3D) -> void:
 			var want: float = float(wants[axis])
 			if want <= 0.0:
 				continue
-			if axis == "head" and player.character_head == null:
+			if axis == "head" and player.anim.character_head == null:
 				continue  # optional node, per the row's own docs
 			if float(reach[axis]) < deg_to_rad(want) * 0.5:
 				_fail("%s: the row asks for %.1f deg of '%s' but the pose never moved "
@@ -312,10 +340,10 @@ func _check_bounds(player: Node3D) -> void:
 		# FINITE — a run left going overnight must not put a NaN into a
 		# transform, which surfaces as a physics error rather than a wobble.
 		for far: float in [1.0e5, 1.0e6]:
-			player.animation_time = far
-			player.animate_walking(step, 1.0)
-			if not is_finite(player.left_leg.rotation.x) \
-					or not is_finite(player.character_body.position.y):
+			player.anim.animation_time = far
+			player.anim.animate_walking(step, 1.0)
+			if not is_finite(player.anim.left_leg.rotation.x) \
+					or not is_finite(player.anim.character_body.position.y):
 				_fail("%s: the pose went non-finite at animation_time = %.0f s" % [hero, far])
 
 	Sentinel.done("bounds")
@@ -344,7 +372,7 @@ func _check_relax(player: Node3D) -> void:
 	var step: float = 1.0 / SWEEP_HZ
 	for index: int in PlayerController.CHARACTERS.size():
 		var hero: String = String(PlayerController.CHARACTERS[index]["name"])
-		var row: Dictionary = PlayerController.gait_for(hero)
+		var row: Dictionary = PlayerAnimation.gait_for(hero)
 		if float(row["sway_deg"]) <= 0.0 and float(row["lean_deg"]) <= 0.0 \
 				and float(row["head_deg"]) <= 0.0:
 			continue  # nothing to put back — see the docstring
@@ -353,8 +381,8 @@ func _check_relax(player: Node3D) -> void:
 		# Walk far enough into the cycle for every one of those axes to be off
 		# rest, then confirm it: a probe that measured a pose already at rest
 		# would pass no matter what the relax did.
-		player.animation_time = 0.4
-		player.animate_walking(step, 1.0)
+		player.anim.animation_time = 0.4
+		player.anim.animate_walking(step, 1.0)
 		if _off_rest(player) <= REST_EPS:
 			_fail("%s: the walk pose is already at rest, so this check would be "
 					% hero + "vacuous — pick a different sample time")
@@ -362,8 +390,8 @@ func _check_relax(player: Node3D) -> void:
 		# IDLE eases back. 120 frames is 2 s at 60 Hz; the lerp is 0.15 a frame,
 		# so anything that is still moving has arrived long before that.
 		for i: int in RELAX_FRAMES:
-			player.animation_time = 0.4 + float(i) * step
-			player.animate_idle(step)
+			player.anim.animation_time = 0.4 + float(i) * step
+			player.anim.animate_idle(step)
 		var idle_off: float = _off_rest(player)
 		if idle_off > REST_EPS:
 			_fail("%s: standing still for %d frames left the body/head %.4f rad off "
@@ -372,20 +400,20 @@ func _check_relax(player: Node3D) -> void:
 
 		# SIDESTEP snaps. It writes the body's roll itself, so only the pitch and
 		# the head are this call's business — and they must be exactly at rest.
-		player.animation_time = 0.4
-		player.animate_walking(step, 1.0)
+		player.anim.animation_time = 0.4
+		player.anim.animate_walking(step, 1.0)
 		player.step_direction = 1.0
-		player.animate_sidestep()
-		var body_rest: Vector3 = player.original_rotations["body"]
-		if absf(player.character_body.rotation.x - body_rest.x) > 1e-6:
+		player.anim.animate_sidestep(step)
+		var body_rest: Vector3 = player.anim.original_rotations["body"]
+		if absf(player.anim.character_body.rotation.x - body_rest.x) > 1e-6:
 			_fail("%s: a sidestep straight out of a walk left the body pitched %.4f rad "
-					% [hero, absf(player.character_body.rotation.x - body_rest.x)]
+					% [hero, absf(player.anim.character_body.rotation.x - body_rest.x)]
 					+ "off rest — the gait's lean is stuck on")
-		if player.character_head and player.original_rotations.has("head"):
-			var head_rest: float = float(player.original_rotations["head"].z)
-			if absf(player.character_head.rotation.z - head_rest) > 1e-6:
+		if player.anim.character_head and player.anim.original_rotations.has("head"):
+			var head_rest: float = float(player.anim.original_rotations["head"].z)
+			if absf(player.anim.character_head.rotation.z - head_rest) > 1e-6:
 				_fail("%s: a sidestep straight out of a walk left the head %.4f rad off "
-						% [hero, absf(player.character_head.rotation.z - head_rest)]
+						% [hero, absf(player.anim.character_head.rotation.z - head_rest)]
 						+ "rest — the gait's bobble is stuck on")
 		player.step_direction = 0.0
 
@@ -394,12 +422,12 @@ func _check_relax(player: Node3D) -> void:
 
 func _off_rest(player: Node3D) -> float:
 	"""How far the three gait-only axes are from rest, in radians (the worst one)."""
-	var body_rest: Vector3 = player.original_rotations["body"]
-	var worst: float = maxf(absf(player.character_body.rotation.x - body_rest.x),
-			absf(player.character_body.rotation.z - body_rest.z))
-	if player.character_head and player.original_rotations.has("head"):
+	var body_rest: Vector3 = player.anim.original_rotations["body"]
+	var worst: float = maxf(absf(player.anim.character_body.rotation.x - body_rest.x),
+			absf(player.anim.character_body.rotation.z - body_rest.z))
+	if player.anim.character_head and player.anim.original_rotations.has("head"):
 		worst = maxf(worst, absf(
-				player.character_head.rotation.z - float(player.original_rotations["head"].z)))
+				player.anim.character_head.rotation.z - float(player.anim.original_rotations["head"].z)))
 	return worst
 
 
@@ -419,7 +447,7 @@ func _check_personality(player: Node3D) -> void:
 	var periods: Dictionary = {}
 	for entry: Dictionary in PlayerController.CHARACTERS:
 		var hero: String = String(entry["name"])
-		var rate: float = float(PlayerController.gait_for(hero)["stride_rate"])
+		var rate: float = float(PlayerAnimation.gait_for(hero)["stride_rate"])
 		if rate <= 0.0:
 			_fail("'%s' has stride_rate %.3f — a walk cycle needs a positive rate" % [hero, rate])
 			continue
@@ -434,7 +462,7 @@ func _check_personality(player: Node3D) -> void:
 	for index: int in PlayerController.CHARACTERS.size():
 		var hero: String = String(PlayerController.CHARACTERS[index]["name"])
 		player.set_active_character(index)
-		var rate: float = float(PlayerController.gait_for(hero)["stride_rate"])
+		var rate: float = float(PlayerAnimation.gait_for(hero)["stride_rate"])
 		if rate <= 0.0:
 			continue
 		var period: float = TAU / rate
@@ -442,11 +470,11 @@ func _check_personality(player: Node3D) -> void:
 		var samples: int = int(HITCH_SECONDS / step)
 		for i: int in samples:
 			var t: float = float(i) * step
-			player.animation_time = t
-			player.animate_walking(step, 1.0)
+			player.anim.animation_time = t
+			player.anim.animate_walking(step, 1.0)
 			var a: Array[float] = _pose(player)
-			player.animation_time = t + period
-			player.animate_walking(step, 1.0)
+			player.anim.animation_time = t + period
+			player.anim.animate_walking(step, 1.0)
 			var b: Array[float] = _pose(player)
 			for k: int in a.size():
 				worst = maxf(worst, absf(a[k] - b[k]))
@@ -462,17 +490,17 @@ func _pose(player: Node3D) -> Array[float]:
 	"""Every animated angle of the current pose, for comparing two moments."""
 	var out: Array[float] = []
 	for key: String in ["left_arm", "right_arm", "left_leg", "right_leg"]:
-		var limb: Node3D = player.get(key)
+		var limb: Node3D = player.anim.get(key)
 		out.append(0.0 if limb == null else limb.rotation.x)
-	var body: Node3D = player.character_body
+	var body: Node3D = player.anim.character_body
 	# The bob is metres and everything else radians; it rides the same array
 	# because the assertion is "these two moments are not the same pose", and a
 	# 0.03 m bob is well above the epsilon either way.
 	out.append(body.position.y)
 	out.append(body.rotation.z)
 	out.append(body.rotation.x)
-	if player.character_head:
-		out.append(player.character_head.rotation.z)
+	if player.anim.character_head:
+		out.append(player.anim.character_head.rotation.z)
 	return out
 
 
@@ -511,21 +539,21 @@ func _check_footsteps(player: Node3D) -> void:
 			# binds the hero to their row. A build that resolved `_gait` once and
 			# never again on a swap answers every hero with the first hero's
 			# walk, and a self-consistent measurement would never see it.
-			rate = float(PlayerController.gait_for(label)["stride_rate"])
+			rate = float(PlayerAnimation.gait_for(label)["stride_rate"])
 		else:
 			player.set_active_character(0)
-			player._gait = PlayerController.gait_for("no-such-hero")
-			rate = float(player._gait["stride_rate"])
+			player.anim._gait = PlayerAnimation.gait_for("no-such-hero")
+			rate = float(player.anim._gait["stride_rate"])
 
 		# Sign 0 is the "just started walking" sentinel: the first sample records
 		# its sign silently, exactly as the first frame of a real walk does.
-		player._last_walk_sine_sign = 0
+		player.anim._last_walk_sine_sign = 0
 		var flips: int = 0
 		var previous: int = 0
 		for i: int in samples:
-			player.animation_time = float(i) * step
-			player.animate_walking(step, 1.0)
-			var sign_now: int = int(player._last_walk_sine_sign)
+			player.anim.animation_time = float(i) * step
+			player.anim.animate_walking(step, 1.0)
+			var sign_now: int = int(player.anim._last_walk_sine_sign)
 			if previous != 0 and sign_now != previous:
 				flips += 1
 			previous = sign_now
@@ -549,9 +577,9 @@ func _check_footsteps(player: Node3D) -> void:
 		for b: int in PlayerController.CHARACTERS.size():
 			if a == b:
 				continue
-			var rate_a: float = float(PlayerController.gait_for(
+			var rate_a: float = float(PlayerAnimation.gait_for(
 					String(PlayerController.CHARACTERS[a]["name"]))["stride_rate"])
-			var rate_b: float = float(PlayerController.gait_for(
+			var rate_b: float = float(PlayerAnimation.gait_for(
 					String(PlayerController.CHARACTERS[b]["name"]))["stride_rate"])
 			# A moment where the two rows genuinely disagree about which foot is
 			# down. Without one this assertion would be vacuous, which is why the
@@ -567,13 +595,13 @@ func _check_footsteps(player: Node3D) -> void:
 			flip_found = true
 
 			player.set_active_character(a)
-			player._last_walk_sine_sign = 0
-			player.animation_time = t
-			player.animate_walking(step, 1.0)
-			var outgoing: int = int(player._last_walk_sine_sign)
+			player.anim._last_walk_sine_sign = 0
+			player.anim.animation_time = t
+			player.anim.animate_walking(step, 1.0)
+			var outgoing: int = int(player.anim._last_walk_sine_sign)
 
 			player.set_active_character(b)
-			if int(player._last_walk_sine_sign) != 0:
+			if int(player.anim._last_walk_sine_sign) != 0:
 				_fail("swapping %s -> %s left the previous hero's stride sign (%d) on the "
 						% [String(PlayerController.CHARACTERS[a]["name"]),
 								String(PlayerController.CHARACTERS[b]["name"]), outgoing]
@@ -584,8 +612,8 @@ func _check_footsteps(player: Node3D) -> void:
 			# ...and the hazard was real: the incoming hero's first frame really
 			# does record the OPPOSITE sign, which without the clear above is
 			# precisely the spurious flip.
-			player.animate_walking(step, 1.0)
-			if int(player._last_walk_sine_sign) == outgoing:
+			player.anim.animate_walking(step, 1.0)
+			if int(player.anim._last_walk_sine_sign) == outgoing:
 				_fail("the %s -> %s swap probe picked t = %.2f where the two strides agree "
 						% [String(PlayerController.CHARACTERS[a]["name"]),
 								String(PlayerController.CHARACTERS[b]["name"]), t]
@@ -595,10 +623,229 @@ func _check_footsteps(player: Node3D) -> void:
 				+ "the phantom-footstep assertion above never ran")
 
 	# And the rate the DEFAULT row fires at is the one the old literal fired at.
-	var default_rate: float = float(PlayerController.gait_for("no-such-hero")["stride_rate"])
+	var default_rate: float = float(PlayerAnimation.gait_for("no-such-hero")["stride_rate"])
 	if not is_equal_approx(default_rate, float(TODAY["stride_rate"])):
 		_fail("the DEFAULT stride_rate is %.3f, not the pre-table %.3f — every "
 				% [default_rate, TODAY["stride_rate"]]
 				+ "footstep of an unknown hero would be retimed")
 
 	Sentinel.done("footsteps")
+
+
+# ============================================================================
+# CHECK 6 — THE SIDESTEP IS A CYCLE, AND ITS PHASE IS METRES
+# ============================================================================
+
+func _check_sidestep(player: Node3D) -> void:
+	"""
+	Holding A / D has to look like STEPPING, not like leaning (bead
+	godot-test1-3ek; owner: *"left-right movement should have better animation
+	like steps left and right"*).
+
+	Six things:
+
+	  (a) the pose MOVES over a held strafe, and the two legs take TURNS being
+	      the one that has reached out — measured as the roll GAP between them
+	      taking both signs. The control is the SHIPPED `sidestep_pose()` driven
+	      at a FROZEN phase, swept identically, which must FAIL that bound: a
+	      lean held for as long as the key is down has one gap, one sign,
+	      forever. Driving the shipped function rather than a local copy of the
+	      retired pose is the point — a re-implementation could only ever fail
+	      the bound by construction, which measures nothing.
+	  (b) BOTH DIRECTIONS MIRROR. A left strafe and a right one must reach the
+	      same distance, and this is not decoration: the lift used to be steered
+	      by `sign(cycle)` alone, which on a LEFT strafe put it on the trailing
+	      leg and cancelled half the reach. A one-direction probe was green
+	      throughout.
+	  (c) the phase is DISTANCE, so the same ground covered at half the speed
+	      over twice the frames is the SAME pose. Nothing else in this file can
+	      see a regression to `animation_time`, and a time-driven strafe is
+	      exactly what the bead replaced.
+	  (d) `reset_sidestep_pose()` still puts every limb roll back, because that
+	      is the key-order bug `capture_selfcheck` guards from the other side —
+	      and it must now also drop the PHASE, or the next strafe starts
+	      mid-stride.
+	  (e) the FOOTSTEP BEAT, counted the way check 5 counts the walk's: sign
+	      flips of the sidestep's own sentinel over a known distance. The `_sfx`
+	      call itself is gated on `is_on_floor()`, which no headless harness
+	      satisfies, so the sentinel is the measurable half — and it is the half
+	      that carries the bug, since the beat IS the phase and the phase is
+	      where a retune goes wrong.
+	  (f) the per-hero personality is REAL, on all three axes the banner claims:
+	      the LEG amplitude (off `leg_deg`), the ARM amplitude (off `arm_deg`)
+	      and the step RATE (off `stride_rate`). Each is asserted as a SPREAD
+	      across the roster, because "the four numbers are distinct" passes on
+	      sampling noise alone — measured, `leg_scale` pinned to 1.0 still gave
+	      four amplitudes differing in the fourth decimal.
+	"""
+	var step: float = 1.0 / SWEEP_HZ
+	var eps: float = deg_to_rad(STRAFE_EPS_DEG)
+	var frames: int = int(STRAFE_METRES / (STRAFE_SPEED * step))
+	var leg_amps: Array[float] = []
+	var arm_amps: Array[float] = []
+	var beats: Array[float] = []
+
+	for index: int in PlayerController.CHARACTERS.size():
+		var hero: String = String(PlayerController.CHARACTERS[index]["name"])
+		player.set_active_character(index)
+		var anim = player.anim
+		var per_direction: Array[float] = []
+
+		for direction: float in [1.0, -1.0]:
+			var swept: Dictionary = _strafe_sweep(anim, direction, STRAFE_SPEED, step, frames)
+			var gap_min: float = float(swept["leg_min"])
+			var gap_max: float = float(swept["leg_max"])
+			if gap_min >= -eps or gap_max <= eps:
+				_fail("%s (direction %+.0f): over %.1f m of held strafe the roll gap "
+						% [hero, direction, STRAFE_METRES]
+						+ "between the legs stayed in [%.4f, %.4f] rad — one leg never "
+						% [gap_min, gap_max]
+						+ "took its turn reaching out, so the strafe is still a static "
+						+ "splay and not a stepping cycle")
+			per_direction.append(gap_max - gap_min)
+
+			var lift_seen: float = float(swept["bob"])
+			if lift_seen <= 0.0:
+				_fail("%s (direction %+.0f): the body never left its rest height over a "
+						% [hero, direction]
+						+ "whole strafe — the bob on the close beat is not being drawn")
+			# The bob rides inside the same band the walk is held to, or the model
+			# stops looking attached to a collision capsule that does not move.
+			if lift_seen > BODY_Y_MAX:
+				_fail("%s (direction %+.0f): the strafe bob reached %.4f m, past the "
+						% [hero, direction, lift_seen]
+						+ "%.4f m the walk cycle is held to" % BODY_Y_MAX)
+
+			# (a)'s CONTROL, on the shipped function: the same sweep with the phase
+			# never advancing. A static pose draws ONE gap, so it cannot take both
+			# signs — and if it ever does, the bound above has stopped measuring.
+			var s_min: float = INF
+			var s_max: float = -INF
+			for i: int in frames:
+				anim.sidestep_pose(0.0, direction)
+				var s_gap: float = anim.left_leg.rotation.z - anim.right_leg.rotation.z
+				s_min = minf(s_min, s_gap)
+				s_max = maxf(s_max, s_gap)
+			if s_min < -eps and s_max > eps:
+				_fail("%s (direction %+.0f): a FROZEN phase passed the alternation bound "
+						% [hero, direction]
+						+ "— the check would not go red on a strafe that stopped moving")
+
+		# (b) THE TWO DIRECTIONS MIRROR.
+		if not is_equal_approx(per_direction[0], per_direction[1]):
+			_fail("%s: a right strafe reaches %.4f rad and a left one %.4f — the two "
+					% [hero, per_direction[0], per_direction[1]]
+					+ "directions must mirror, so the reaching leg is being picked off "
+					+ "the cycle's sign without the step's")
+
+		# (c) THE PHASE IS METRES. Same ground, half the speed, twice the frames.
+		var fast: Array[float] = _strafe_pose(anim, 1.0, STRAFE_SPEED, step, frames)
+		var slow: Array[float] = _strafe_pose(anim, 1.0, STRAFE_SPEED * 0.5, step, frames * 2)
+		for k: int in fast.size():
+			if absf(fast[k] - slow[k]) > 1e-5:
+				_fail("%s: the same %.1f m walked at half the speed gave a different pose "
+						% [hero, STRAFE_METRES]
+						+ "(%.5f vs %.5f) — the sidestep phase is running on TIME, not "
+						% [fast[k], slow[k]] + "on distance")
+				break
+
+		# (d) RELEASE PUTS IT BACK, phase included.
+		player.step_direction = 1.0
+		player.velocity = Vector3(0.0, 0.0, STRAFE_SPEED)
+		anim.animate_sidestep(step)
+		anim.reset_sidestep_pose()
+		for key: String in ["left_arm", "right_arm", "left_leg", "right_leg"]:
+			var limb: Node3D = anim.get(key)
+			if limb == null:
+				continue
+			var off: float = absf(limb.rotation.z - float(anim.original_rotations[key].z))
+			if off > 1e-6:
+				_fail("%s: releasing the strafe left %s rolled %.5f rad off rest"
+						% [hero, key, off])
+		if absf(float(anim._sidestep_phase)) > 0.0 or int(anim._last_sidestep_sine_sign) != 0:
+			_fail("%s: releasing the strafe kept the cycle's phase (%.4f) or its footstep "
+					% [hero, float(anim._sidestep_phase)]
+					+ "sentinel (%d) — the next strafe would start mid-stride"
+					% int(anim._last_sidestep_sine_sign))
+		player.step_direction = 0.0
+		player.velocity = Vector3.ZERO
+
+		var measured: Dictionary = _strafe_sweep(anim, 1.0, STRAFE_SPEED, step, frames)
+		leg_amps.append(float(measured["leg_max"]) - float(measured["leg_min"]))
+		arm_amps.append(float(measured["arm_max"]) - float(measured["arm_min"]))
+		beats.append(float(measured["flips"]))
+		# (e) THE BEAT IS THE PHASE. One sign flip every PI of phase, and the
+		#     phase is metres x the rate — so the count is arithmetic, not a
+		#     tuning constant, and a bug that moved the phase instead of the
+		#     amplitude would show up here as the wrong number of steps.
+		var rate: float = PlayerAnimation.SIDESTEP_PHASE_PER_METRE \
+				* float(PlayerAnimation.gait_for(hero)["stride_rate"]) \
+				/ float(PlayerAnimation.GAITS["DEFAULT"]["stride_rate"])
+		var expected: float = STRAFE_METRES * rate / PI
+		if absf(float(measured["flips"]) - expected) > 1.0:
+			_fail("%s: %d footstep beats over %.1f m, but the row's rate predicts %.1f "
+					% [hero, int(measured["flips"]), STRAFE_METRES, expected]
+					+ "— the close beat is not riding the cycle's own phase")
+
+	# (f) THE PERSONALITY IS REAL, on each of the three axes separately.
+	for axis: Array in [["leg amplitude", leg_amps, "leg_deg"],
+			["arm amplitude", arm_amps, "arm_deg"],
+			["step rate", beats, "stride_rate"]]:
+		var values: Array = axis[1]
+		var lo: float = INF
+		var hi: float = -INF
+		for v: float in values:
+			lo = minf(lo, v)
+			hi = maxf(hi, v)
+		if lo <= 0.0 or hi < lo * PERSONALITY_SPREAD:
+			_fail("every hero's strafe %s sits in [%.4f, %.4f] — the rows spread `%s` "
+					% [axis[0], lo, hi, axis[2]]
+					+ "far wider than that, so that scaling is not reaching the pose")
+
+	Sentinel.done("sidestep")
+
+
+func _strafe_sweep(anim, direction: float, speed: float, step: float,
+		frames: int) -> Dictionary:
+	"""
+	Drive one held strafe from a clean start and report what it did: the range
+	of the LEG roll gap and of the ARM roll gap, the worst body rise, and how
+	many times the footstep sentinel flipped (the close beats).
+	"""
+	anim.player.step_direction = direction
+	anim.reset_sidestep_pose()
+	var out: Dictionary = {"leg_min": INF, "leg_max": -INF,
+			"arm_min": INF, "arm_max": -INF, "bob": 0.0, "flips": 0.0}
+	var last_sign: int = 0
+	for i: int in frames:
+		anim.player.velocity = Vector3(0.0, 0.0, speed)
+		anim.animate_sidestep(step)
+		var leg: float = anim.left_leg.rotation.z - anim.right_leg.rotation.z
+		out["leg_min"] = minf(float(out["leg_min"]), leg)
+		out["leg_max"] = maxf(float(out["leg_max"]), leg)
+		var arm: float = anim.left_arm.rotation.z - anim.right_arm.rotation.z
+		out["arm_min"] = minf(float(out["arm_min"]), arm)
+		out["arm_max"] = maxf(float(out["arm_max"]), arm)
+		out["bob"] = maxf(float(out["bob"]), absf(anim.character_body.position.y))
+		var now: int = int(anim._last_sidestep_sine_sign)
+		if last_sign != 0 and now != last_sign:
+			out["flips"] = float(out["flips"]) + 1.0
+		last_sign = now
+	anim.player.step_direction = 0.0
+	anim.player.velocity = Vector3.ZERO
+	return out
+
+
+func _strafe_pose(anim, direction: float, speed: float, step: float,
+		frames: int) -> Array[float]:
+	"""Walk one strafe from a clean start and return the pose it ends on."""
+	anim.player.step_direction = direction
+	anim.reset_sidestep_pose()
+	for i: int in frames:
+		anim.player.velocity = Vector3(0.0, 0.0, speed)
+		anim.animate_sidestep(step)
+	anim.player.step_direction = 0.0
+	anim.player.velocity = Vector3.ZERO
+	return [anim.left_leg.rotation.z, anim.right_leg.rotation.z,
+			anim.left_arm.rotation.z, anim.right_arm.rotation.z,
+			anim.character_body.position.y]
