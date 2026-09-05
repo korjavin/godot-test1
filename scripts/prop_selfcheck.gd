@@ -78,6 +78,11 @@ const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
 ## while only the dynamic dispatch goes through here.
 const PROPS_SCRIPT: GDScript = preload("res://scripts/terrain_props.gd")
 
+## The feature structures, held as a SCRIPT OBJECT for PROPS_SCRIPT's reason
+## (bead godot-test1-ftn.3) — the ROLES table below dispatches its four builders
+## by name, and `TerrainStructures.call(...)` is the same parse error.
+const STRUCT_SCRIPT: GDScript = preload("res://scripts/terrain_structures.gd")
+
 ## Every prop builder, with the biome it themes. Written out rather than derived,
 ## because the dispatch in _build_prop is a `match` over an enum — there is no
 ## registry to read, and a builder that exists but is never listed here is
@@ -610,8 +615,8 @@ func _check_structures(terrain_script: GDScript, consts: Dictionary) -> void:
 		var method: String = String(role[1])
 		var takes_platforms: bool = bool(role[2])
 
-		if not terrain.has_method(method):
-			_fail("no such structure builder %s (role %s)" % [method, label])
+		if not STRUCT_SCRIPT.has_method(method):
+			_fail("no such structure builder %s (role %s) on TerrainStructures" % [method, label])
 			continue
 
 		for territory: String in TERRITORIES:
@@ -634,9 +639,9 @@ func _check_structures(terrain_script: GDScript, consts: Dictionary) -> void:
 				var obstacles: Array = []
 				var platforms: Array = []
 				if takes_platforms:
-					terrain.call(method, rng, half_chunk, chunk_center, theme, obstacles, platforms, batch, body)
+					STRUCT_SCRIPT.call(method, terrain, rng, half_chunk, chunk_center, theme, obstacles, platforms, batch, body)
 				else:
-					terrain.call(method, rng, half_chunk, chunk_center, theme, obstacles, batch, body)
+					STRUCT_SCRIPT.call(method, terrain, rng, half_chunk, chunk_center, theme, obstacles, batch, body)
 
 				if batch.is_empty():
 					body.free()
