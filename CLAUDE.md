@@ -905,7 +905,16 @@ forwarder for every name anything calls, so its forty-four `FLOOR_Y` readers and
 thirty-seven `_grid_x`/`_grid_z` readers were untouched by the move. **The const
 direction is ONE WAY** (`TowerInterior` → `TowerPlanBoxes`); the reach back for the
 palette and the set-piece builders is only ever inside a function body, which is the same
-shape as the dressing above and the only reason neither pair is a parse-time cycle. Four
+shape as the dressing above and the only reason neither pair is a parse-time cycle. **A
+FOURTH is `scripts/tower_guards.gd`** (`TowerGuards`, bd `godot-test1-ftn.20`) — the posts,
+the beat, the scene and the free-and-rebuild, with the three population rulings written
+where they are enforced; `TowerInterior` const-aliases `GUARD_SPECIES` and its three
+siblings and forwards five calls, so `enemy_spawn_selfcheck`'s FOURTH-DOOR gate and every
+guard check are untouched. **Its two `interior` parameters are deliberately UNTYPED**, and
+that is the rule the pair teaches: a type annotation is a parse-time reference exactly like
+a `const`, so a file that is BOTH handed the node AND const-aliased from it can annotate
+neither. `TowerDressing` and `TowerDossiers` may type theirs only because nothing on the
+interior points back at them with a `const`. Four
 rules of its own, all pinned by `tower_interior_selfcheck`:
 
 - **No interior traversal may demand a jump-height.** The base apex (3.6125 m) is what
