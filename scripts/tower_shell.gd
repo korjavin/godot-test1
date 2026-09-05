@@ -983,6 +983,14 @@ static func _shape_mesh(box: Dictionary) -> Mesh:
 	THE AABB CONTRACT is what lets the rest of the file — and every check in
 	`tower_shell_selfcheck` — go on treating the table as boxes: a cone declares the
 	box it fits in, and the self-check asserts that rather than trusting it.
+
+	THE ROUND KINDS ARE FACETED, and that is the whole of bead godot-test1-y1o.13.
+	The HQ is the only building in the world with round parts, so a Gouraud-smooth
+	spire stood out as the counter-example to every faceted rock, tree and cloud
+	around it. `ChunkBatch._flat_faceted_mesh` is the SAME helper the chunk batch's
+	round `BoxKind`s go through, so there is one description of "faceted" in the
+	project rather than two — it deindexes and regenerates per-face normals, which
+	moves no vertex and therefore leaves the AABB contract above exactly as it was.
 	"""
 	var size: Vector3 = box["size"]
 	match box.get("mesh", "box"):
@@ -996,7 +1004,7 @@ static func _shape_mesh(box: Dictionary) -> Mesh:
 			# untextured and unlit-by-vertex, so subdividing its height buys nothing.
 			cyl.radial_segments = 12
 			cyl.rings = 1
-			return cyl
+			return ChunkBatch._flat_faceted_mesh(cyl)
 		"cone":
 			# A cone IS a cylinder with no top — Godot has no ConeMesh and does not
 			# need one.
@@ -1006,7 +1014,7 @@ static func _shape_mesh(box: Dictionary) -> Mesh:
 			cone.height = size.y
 			cone.radial_segments = 12
 			cone.rings = 1
-			return cone
+			return ChunkBatch._flat_faceted_mesh(cone)
 		"crenellation":
 			return _crenellation_mesh(size)
 		"plaster", "fachwerk", "windows", "bars":

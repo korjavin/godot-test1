@@ -128,6 +128,7 @@ func _initialize() -> void:
 	_check_mic_key_free()
 	_check_help_row()
 	_check_no_js_bool()
+	_check_ice_restart()
 	_check_inert_offweb()
 	_check_always_process()
 	await _check_mic_key_semantics()
@@ -512,6 +513,62 @@ func _js_bool_offence(source: String) -> String:
 	return ""
 
 
+# ============================================================================
+# 6b. A FAILED ICE TRANSPORT REBUILDS ITSELF
+# ============================================================================
+
+## The three spellings that together ARE the recovery (bead `godot-test1-xtr.7`),
+## in the order the browser reaches them: the handler that notices, the state it
+## acts on, and the call that repairs.
+##
+## Each is spelled as CODE rather than as a bare word, because the explanation
+## beside the call names `restartIce()` too — a check on the word alone survives
+## the deletion of the call it guards, which is not a hypothetical: it is what the
+## first draft of this check did, measured.
+const ICE_RESTART_NEEDLES: Array[String] = [
+	"pc.oniceconnectionstatechange",
+	"iceConnectionState !== 'failed'",
+	"pc.restartIce()",
+]
+
+
+func _check_ice_restart() -> void:
+	"""
+	`VOICE_JS` read as TEXT again — this file's own `_check_no_js_bool` idiom, but
+	its OWN check with its own stamp, because the two ask unrelated questions and
+	a later edit that retires the boolean scan must not take this with it.
+
+	WHAT IT DEFENDS. `members(json)` closes a `RTCPeerConnection` only when the id
+	LEAVES `_members`, so a live member whose transport has died is never rebuilt
+	by anything: the peer stays listed, stays un-muted, keeps its video tile, and
+	is silent for the rest of the room with no status line and nothing retrying.
+	`open()` answers that by restarting ICE, which rides the perfect-negotiation
+	queue out over the existing `"vc"` relay as an ordinary offer — so there is no
+	new signalling kind here to test, and `MpCodec.decode_vc` is untouched. The
+	only thing a headless check CAN see is that the code is still there.
+
+	THE STATE GUARD IS ONE OF THE THREE ON PURPOSE. `'disconnected'` is transient
+	and self-healing; acting on it turns the handler into a re-offer loop on every
+	path blip. A check that pinned only the handler and the call passed happily
+	with `'failed'` swapped for `'disconnected'` — so the comparison is pinned too.
+	"""
+	var module: String = _voice_js_module()
+	if module.length() < 500:
+		_fail("could not read VOICE_JS out of voice_chat.gd (%d chars) — check 6b "
+			% module.length() + "would pass vacuously")
+		Sentinel.done("ice_restart")
+		return
+	for needle: String in ICE_RESTART_NEEDLES:
+		if module.contains(needle):
+			continue
+		_fail("voice_chat.gd's VOICE_JS is missing `%s`, so a PeerConnection that "
+			% needle + "drops to iceConnectionState 'failed' (a NAT rebind, an "
+			+ "expiring coturn allocation, a path break) stays dead for the whole "
+			+ "life of the room — nothing else rebuilds a still-listed member's "
+			+ "connection (godot-test1-xtr.7)")
+	Sentinel.done("ice_restart")
+
+
 func _voice_js_module() -> String:
 	"""The text between `const VOICE_JS`'s two triple-quotes, or "" if either end
 	moved. The delimiter is built at runtime so this file can hold it without
@@ -559,6 +616,10 @@ const PUBLIC_CALLS: Array = [
 	["camera_denied", []],
 	# Telemetry readout for \fo (bead godot-test1-xtr.4).
 	["debug_line", []],
+	# The hero row's two questions (bead godot-test1-xtr.8) — both must answer the
+	# NOTHING case off-web without ever reaching for `_ck`.
+	["mic_badge", []],
+	["is_hero_speaking", ["windman"]],
 ]
 
 
