@@ -291,6 +291,7 @@ func _initialize() -> void:
 func _run() -> void:
 	await _check_the_arming_gate()
 	await _check_only_a_hunter_takes_a_hero()
+	await _check_the_caption_says_which_one_happened()
 	await _check_invulnerability_covers_the_hero_too()
 	await _check_the_cycle_loses_him_and_the_switch_is_clean()
 	await _check_liberation_restores_the_index()
@@ -422,6 +423,103 @@ func _check_only_a_hunter_takes_a_hero() -> void:
 				% label + " `coin_setback` row key does that (check 11)")
 		_clear(player)
 	Sentinel.done("only_a_hunter_takes_a_hero")
+
+
+func _check_the_caption_says_which_one_happened() -> void:
+	"""
+	WHAT THE PLAYER IS TOLD, and it is the same split one line down (bead
+	godot-test1-tuc). An arrest says "Caught!"; an ordinary bite says "Robbed!",
+	because a bite is a coin tax and a soft respawn in place — the hero is still
+	in your hand.
+
+	MEASURED THROUGH THE REAL LABEL, not through a getter written for this check.
+	A `Label` in group `respawn_label` is what `main.tscn` hangs on the HUD, and
+	`_show_respawn_countdown()` finds it by group like every other widget in this
+	project, so planting one here is the whole of the wiring. The alternative —
+	asking the player which caption it WOULD choose — is a second copy of the
+	branch and cannot see a `label.text` that never gets written.
+
+	THE MUTATION IS BUILT IN: both paths assert their EXACT string, so swapping
+	the two arms of the branch fails twice, and collapsing them back into one
+	caption fails once. The third failure mode is subtler and gets its own
+	assertion — `caught_captured` is SPENT by the bill before the countdown is
+	ever drawn, so a caption that read it instead of `caught_was_arrest` would say
+	"Robbed!" for an arrest too, and would pass any check that only looked at the
+	bite.
+
+	The subjects come off the SPECIES table, not a literal: the arresting row is
+	whatever carries `captures_hero`, the control is the ordinary predator.
+	"""
+	_beat_done()
+
+	# The HUD's own widget, by the group `_show_respawn_countdown()` looks it up in.
+	var label := Label.new()
+	label.add_to_group("respawn_label")
+	root.add_child(label)
+	await process_frame
+
+	const CAUGHT := "Caught! Back in %.1f..."
+	const ROBBED := "Robbed! Back in %.1f..."
+	## How many physics frames the countdown's first write is given to appear.
+	## Generous: the grace window is 1.5 s (~90 frames) and this only has to
+	## outlast the one or two frames the freeze's own return costs.
+	const CAPTION_DRAW_FRAMES := 8
+	if CAUGHT == ROBBED:
+		_fail("the two captions are the same string — an arrest and a bite are"
+			+ " different events (owner 2026-09-04) and must not read alike")
+
+	for subject: Array in [[HUNTER_ROW, CAUGHT, ROBBED, true], [CONTROL_SPECIES, ROBBED, CAUGHT, false]]:
+		var species: String = subject[0]
+		var wanted: String = subject[1]
+		var forbidden: String = subject[2]
+		var arrest: bool = subject[3]
+		var player := await _make_player()
+		label.text = ""
+		player.hit_by_crocodile(_attacker_row(species))
+		if player.caught_was_arrest != arrest:
+			_fail("a '%s' bite latched caught_was_arrest = %s, expected %s — the"
+				% [species, str(player.caught_was_arrest), str(arrest)]
+				+ " caption is decided where the attacker is still in hand")
+		# Skip the 0.55 s freeze rather than sit through 33 physics frames of it.
+		# Then WAIT FOR THE WRITE rather than counting frames to it: the `is_caught`
+		# branch returns, so the countdown is drawn on some frame after
+		# `_on_caught_finished()` opens the grace window, and exactly which one is
+		# the engine's business (`physics_frame` fires either side of the tick
+		# depending on how the frame was scheduled, which is what made a fixed
+		# two-frame wait read an empty label on the first run of this check).
+		player.caught_timer = 0.0
+		for _i in CAPTION_DRAW_FRAMES:
+			await physics_frame
+			if label.text != "":
+				break
+		if not player.is_respawning:
+			_fail("a '%s' bite opened no grace window, so this check watched a"
+				% species + " caption that is never drawn")
+		# The countdown's own seconds tick every frame, so the assertion is on the
+		# SENTENCE either side of the number — which is the whole of what the owner
+		# ruled on, and is still exact: it names the string that must be there and
+		# the string that must not.
+		var wanted_head: String = tr(wanted).get_slice("%", 0)
+		var forbidden_head: String = tr(forbidden).get_slice("%", 0)
+		if not label.text.begins_with(wanted_head):
+			_fail("a '%s' bite captioned %s, expected it to open %s — an arrest says"
+				% [species, label.text.c_escape(), wanted_head.c_escape()]
+				+ " 'Caught!' because it really takes a hero; an ordinary bite says"
+				+ " 'Robbed!' because it takes coins and hands the hero straight back")
+		if label.text.begins_with(forbidden_head):
+			_fail("a '%s' bite captioned %s — that is the OTHER event's sentence"
+				% [species, label.text.c_escape()])
+		# ...and the latch it must NOT be reading: the bill has already spent
+		# `caught_captured`, so a caption wired to that would be wrong for the
+		# arrest and right for the bite by accident.
+		if player.caught_captured:
+			_fail("caught_captured survived a '%s' bill — the caption's own latch"
+				% species + " exists precisely because this one does not last")
+		_clear(player)
+
+	label.queue_free()
+	await process_frame
+	Sentinel.done("the_caption_says_which_one_happened")
 
 
 # ============================================================================
