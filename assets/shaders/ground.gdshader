@@ -37,7 +37,11 @@
 //   each, not per pixel.
 // - fragment() does a handful of mix()/smoothstep() ops on interpolated
 //   varyings: no noise, no texture fetch, no branching for the 95% of the world
-//   that is dry land.
+//   that is dry land. The colour-cell quantiser (GROUND_COLOR_STEPS) adds a
+//   multiply, an add, a floor() and a divide by a compile-time constant to that
+//   handful — it has to live in fragment() rather than vertex(), see the note at
+//   its computation — and it is still none of the three things this bullet
+//   forbids.
 // - The river band factor is the ONE thing derived per-pixel (a subtract, an
 //   abs and a smoothstep off the interpolated field value — still no noise), and
 //   it has to be: see the note at its computation in fragment(). The shimmer on
@@ -59,6 +63,19 @@ shader_type spatial;
 // can retint the ground from the material without touching this file.
 uniform vec3 green_a: source_color = vec3(0.42, 0.55, 0.24); // sunlit grass
 uniform vec3 green_b: source_color = vec3(0.20, 0.44, 0.26); // shaded moss
+
+// COLOUR CELLS — how many flat levels the mottle is allowed (bead
+// godot-test1-y1o.23, style direction A). Style A is faceted low-poly and a flat
+// plane has no facets to catch the key light, so the ground joins the style by
+// COLOUR instead: the mottle's smooth 0..1 blend is snapped to this many evenly
+// spaced levels, and the floor reads as painted colour cells rather than as an
+// airbrushed wash. The owner's eye decides the count; 4 is the shipped default.
+//
+// 1.0 would be a bug, not a monochrome floor (it divides by STEPS - 1.0). 2.0 is
+// the legitimate minimum — two flat colours, green_a and green_b and nothing
+// between. Raise it and the cells shrink back toward the smooth gradient; at
+// about 16 the banding is below an 8-bit channel and this is the old look again.
+const float GROUND_COLOR_STEPS = 4.0;
 
 // --- Biome field parameters — MUST MATCH the GDScript constants -------------
 // Defaults equal the GDScript values, so the shader still looks right if
@@ -481,11 +498,38 @@ void vertex() {
 }
 
 void fragment() {
-	// Plains stays exactly what it always was: the two-green mottle.
-	vec3 albedo = mix(green_a, green_b, v_noise);
-	// The same mottle, as a brightness wobble, keeps the other three biomes
+	// THE COLOUR CELLS. The mottle's blend factor, snapped to GROUND_COLOR_STEPS
+	// evenly spaced levels — round-to-nearest, so 4 steps are {0, 1/3, 2/3, 1} and
+	// BOTH ENDPOINTS SURVIVE: pure green_a and pure green_b are still painted, and
+	// the quantiser stays symmetric about 0.5. That symmetry is load-bearing off
+	// this file — scripts/minimap_hud.gd paints PLAINS as the MIDPOINT of
+	// green_a/green_b "because that is what the mottle averages to", and bucket
+	// CENTRES (0.125..0.875) would have shrunk the range and moved that claim.
+	//
+	// IT IS QUANTISED HERE, PER FRAGMENT, AND THAT IS THE WHOLE TRICK: v_noise is
+	// a varying, so snapping it in vertex() would hand the rasteriser four levels
+	// and get a smooth gradient straight back out of the interpolation between
+	// vertices ~3 m apart. Quantising after the interpolation is what puts a hard
+	// edge inside the triangle, which is what a colour cell is.
+	//
+	// The PERFORMANCE CONTRACT at the top of this file holds: this is one multiply,
+	// one add, one floor and one multiply on a value that is already in a register
+	// — no noise, no texture fetch, no branch — and it REPLACES v_noise in both
+	// consumers below rather than adding a pass over them.
+	//
+	// The SEAMLESSNESS CONTRACT holds too, and for the same reason it always did:
+	// the quantiser is a pure function of v_noise, which is sampled at world-space
+	// XZ. Two chunks meeting at a seam quantise the same field value to the same
+	// level, so a cell crosses a chunk edge without knowing it is there.
+	float cells = floor(v_noise * (GROUND_COLOR_STEPS - 1.0) + 0.5)
+			/ (GROUND_COLOR_STEPS - 1.0);
+	// Plains is still the two-green mottle — now in flat patches, not a wash.
+	vec3 albedo = mix(green_a, green_b, cells);
+	// The same mottle, as a brightness wobble, keeps the other five biomes
 	// from reading as flat painted plastic. Three multiplies, no extra noise.
-	float mottle = mix(0.88, 1.12, v_noise);
+	// It reads `cells` too, or plains would be the only celled biome and the
+	// desert next door would still be airbrushed.
+	float mottle = mix(0.88, 1.12, cells);
 	// Blend across each threshold with smoothstep over biome_blend, so a biome
 	// boundary is a soft gradient several metres wide rather than a hard line.
 	// Chained low-to-high: desert below, then plains, city, forest, mountain, snow.
