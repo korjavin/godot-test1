@@ -48,6 +48,11 @@ extends SceneTree
 ## the far count's own non-zero as its control.
 
 const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
+
+## The private-stream features, as a SCRIPT OBJECT so `call()` reaches their
+## static rarity functions (bd godot-test1-ftn.4) — `TerrainFeatures.call(...)`
+## is a parse error, the trap endless_terrain.gd documents for _landmark_builders.
+const FEATURES_SCRIPT: GDScript = preload("res://scripts/terrain_features.gd")
 const CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
 
 ## CHECK 2's two sweeps, and they are DELIBERATELY LOPSIDED.
@@ -368,10 +373,16 @@ func _sweep(terrain: Node3D, centre: Vector3, into: Dictionary, want_zero_k: boo
 			biome_body.free()
 
 			var features := 0
-			for fn: String in ["_artifact_at", "_camp_at", "_chest_at", "_landmark_at"]:
-				var d: Dictionary = terrain.call(fn, chunk)
+			# The first three moved to TerrainFeatures (bd godot-test1-ftn.4) and are
+			# reached through a preloaded SCRIPT OBJECT for `create_box`'s documented
+			# reason; `_landmark_at` stayed on the terrain with the run_seed memo
+			# `_drop_seeded_memos()` owns.
+			for fn: String in ["_artifact_at", "_camp_at", "_chest_at"]:
+				var d: Dictionary = FEATURES_SCRIPT.call(fn, terrain, chunk)
 				if not d.is_empty():
 					features += 1
+			if not (terrain.call("_landmark_at", chunk) as Dictionary).is_empty():
+				features += 1
 
 			row["chunks"] = int(row["chunks"]) + 1
 			row["props"] = int(row["props"]) + prop_batch.size()
