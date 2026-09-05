@@ -392,6 +392,10 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            arming gate (pre/post the
 #                            authored beat), attribution (every `captures_hero`
 #                            row takes one, animals and row-less hazards none),
+#                            THE CAPTION either path draws on a real
+#                            `respawn_label` Label ("Caught!" for the arrest,
+#                            "Robbed!" for the bite, each asserting the OTHER
+#                            sentence is absent so a swap fails twice),
 #                            the guard's arrest in place vs its PRE-BEAT
 #                            setback+knockback, invulnerability covering the hero too, the
 #                            clean auto-switch, liberation, the empty-roster game
@@ -1661,6 +1665,16 @@ Every other contact is a TAX, never an ending: `hit_by_crocodile()` → freeze/f
 tower press, a boss projectile — pays `DEFAULT_COIN_SETBACK`) → **soft respawn in place** (frozen
 grace, then invulnerable blinking). **Lifetime coins are never deducted** — the bill comes
 off the RUN's coins alone.
+
+**AND THE CAPTION SAYS WHICH ONE HAPPENED** (owner 2026-09-04, bead `godot-test1-tuc`).
+The respawn countdown used to read "Caught!" for every contact, which told the player they
+had lost a hero to every crocodile in the field. "Caught!" is now the ARREST alone — a
+`captures_hero` row, post-beat, that really does put a hero in a cell — and an ordinary
+bite reads **"Robbed!"**, which is what it did. It is decided by `caught_was_arrest`, a
+SECOND latch beside `caught_captured` and deliberately not a reuse of it: the bill SPENDS
+`caught_captured` (`capture_selfcheck` asserts that clearing by name, because a latch left
+armed waives the next indoor hit's knockback), and the countdown is drawn a whole freeze
+later. One evidence site in `hit_by_crocodile()`, two lifetimes.
 
 **A BITE IS WHERE A LEG IS BANKED**, though, so a death is not store-free:
 `_on_caught_finished()` calls `_bank_records()`. With no hearts most runs never reach an
