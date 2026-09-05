@@ -1941,6 +1941,17 @@ pausing at crossings, strictly avoiding the wet Danube and plateau cliffs, with 
 Ambient spawns bubble around the local player inside `BudapestPlan.rect()`, recycling when out
 of range and sleeping when outside the city. Pinned by `crowd_selfcheck`.
 
+**WHAT THE TWO CROWDS SHARE IS `scripts/city_agents.gd`** (`class_name CityAgents`, all
+static, bd `godot-test1-ftn.22`): the `BoxMesh` cache and the `SurfaceTool` box welder
+both build their meshes with, the shared `gradient_material` builder, the player and
+Budapest lookups, and `WALKABLE_LANDMARK_IDS` + `is_inside_solid_landmark` — that table
+is the reason the file exists, because two copies of "which slots are open plazas" drift
+in silence. Each manager keeps its own lazy material singleton (one per manager is what
+the two checks assert) and a one-line forwarder for the names with many call sites, which
+is `endless_terrain.create_box`'s precedent. Everything that makes the two features
+DIFFERENT — the spawn samplers, the LOD step, the proxy pools, the kerb rule, the
+braking — stays in its own manager.
+
 **THE AMBIENCE BUDGET IS A COARSE TICK, NEVER A FREEZE, and `scripts/ambience_lod.gd` is
 its one home** (owner, bead `godot-test1-8gw.22`: *"we may use the same trick - only those
 moving who we can see"*, in the same sentence as *"I want this natural"*). The crowd and
