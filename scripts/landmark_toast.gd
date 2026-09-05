@@ -151,17 +151,36 @@ const TOAST_DURATION: float = 6.0
 ## Seconds the card takes to fade in and to fade out, via modulate.a.
 const FADE_DURATION: float = 0.5
 
-## Card colours. Translucent dark backing so the world reads through it — no
-## texture assets, in keeping with the rest of this HUD.
-const PANEL_COLOR := Color(0.05, 0.06, 0.09, 0.78)
-const PANEL_BORDER := Color(1.0, 0.87, 0.55, 0.55)
-const NAME_COLOR := Color(1.0, 0.93, 0.72, 1.0)
-const FACT_COLOR := Color(0.92, 0.94, 0.97, 1.0)
+## Card colours — ALL OF THEM ARE `HudTheme`'s SINCE BEAD `godot-test1-y1o.34`, so
+## there are no colour constants left here to declare. The five this file used to
+## own (a translucent navy panel, a warm gold border, cream name, near-white fact,
+## gold coins) are deleted rather than re-typed: the skin's whole point is that a
+## second copy of a palette colour cannot exist, and `hero_hud_selfcheck` check 8
+## greps `scripts/` for exactly that. What the card takes:
+##
+##   * the ground is `HudTheme.strip()` — the INK_RAISED raised strip with its 1 px
+##     STEEL border — plus this file's own 12 px padding and the spec's hard 2 px
+##     INK shadow, because `strip()` is written for a strip already sitting ON a
+##     card and this one floats over the world (see `_ready`);
+##   * the NAME is Oswald Bold in BONE, the fact and the options Oswald Regular in
+##     BONE off the theme's own `Label` slot;
+##   * VISOR_AMBER is spent ONCE per card state, which is the spec's rationing: on
+##     the digit BADGES while a question is up, and on the "+N coins" line on the
+##     reveal. The two states never coexist — `_start_quiz` hides the treasure line
+##     and `_answer` hides the options.
+##
+## The lettering keeps its outline (this card is translucent and the world reads
+## through it), now `HudTheme.INK` at the palette's own width rather than black.
+
+## Godot's `outline_size` grows the glyph in BOTH directions, exactly like
+## `draw_string_outline`, so the spec's 2 px of ink is `OUTLINE_PX * 2` at the call
+## site — the same doubling `hero_hud` does, and the reason the constant is not
+## simply stored as 4.
+const OUTLINE_SIZE: int = HudTheme.OUTLINE_PX * 2
 
 const NAME_FONT_SIZE: int = 28
 const FACT_FONT_SIZE: int = 18
 const TREASURE_FONT_SIZE: int = 20
-const TREASURE_COLOR := Color(1.0, 0.85, 0.35, 1.0)
 
 
 # ============================================================================
@@ -299,7 +318,6 @@ const ANSWER_KEYCODES: Array = [
 ]
 
 const OPTION_FONT_SIZE: int = 20
-const BADGE_COLOR := Color(1.0, 0.85, 0.35, 1.0)
 
 # ============================================================================
 # STATE
@@ -412,17 +430,31 @@ func _ready() -> void:
 	# other cross-system hookup in this project.
 	add_to_group("landmark_toast")
 
-	# Backing panel. A PanelContainer + StyleBoxFlat is the cheapest rounded,
-	# translucent card Godot has that needs no texture.
+	# THE SKIN, AND IT IS ONE LINE ON THIS ROOT (bead godot-test1-y1o.34). Every
+	# face and colour below comes off `HudTheme` from here on. **On this node and
+	# never on `ProjectSettings`** — a project-wide flip would restyle every
+	# `Control` in the game at once and move every German width budget in one PR,
+	# which is what the per-panel beads exist to do one file at a time.
+	theme = HudTheme.theme()
+
+	# Backing panel: the spec's RAISED STRIP — INK_RAISED with a 1 px STEEL border,
+	# square corners, no glow. The rounded translucent navy box with the warm gold
+	# border that used to be typed here is the literal this bead deletes.
 	var panel := PanelContainer.new()
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
-	var style := StyleBoxFlat.new()
-	style.bg_color = PANEL_COLOR
-	style.border_color = PANEL_BORDER
-	style.set_border_width_all(2)
-	style.set_corner_radius_all(10)
-	style.set_content_margin_all(14)
+	var style := HudTheme.strip()
+	# TWO LOCAL ADJUSTMENTS, and both are because `strip()` is written for a strip
+	# that already sits ON a card: it pads by 8/4 where a card wants the spec's
+	# 12 all round, and it carries no shadow because "it is already on a card".
+	# This one is the card — it floats over the world — so it takes the panel
+	# language's hard 2 px offset INK shadow. `strip()` hands back a FRESH box, so
+	# tuning it here cannot reach any other panel. **A theme gap, named in the PR**:
+	# a `HudTheme.card(raised)` would make both of these disappear.
+	style.set_content_margin_all(HudTheme.CARD_PADDING)
+	style.shadow_color = Color(HudTheme.INK, HudTheme.SHADOW_ALPHA)
+	style.shadow_size = HudTheme.SHADOW_PX
+	style.shadow_offset = Vector2(HudTheme.SHADOW_PANEL_OFFSET)
 	panel.add_theme_stylebox_override("panel", style)
 	add_child(panel)
 
@@ -434,9 +466,27 @@ func _ready() -> void:
 	name_label = Label.new()
 	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	name_label.add_theme_color_override("font_color", NAME_COLOR)
-	name_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
-	name_label.add_theme_constant_override("outline_size", 6)
+	# THE NAME IS OSWALD BOLD IN BONE — AND IT IS *NOT* UPPER-CASED. The skin's
+	# heading rule is caps via `.to_upper()` at the draw site, and this one heading
+	# is the documented exception, for two independent reasons either of which is
+	# enough:
+	#
+	#   * the string assigned here is a `ui.csv` KEY (see the ⚠ LOCALIZATION banner
+	#     at the top of this file) — the registry's raw English name, translated by
+	#     Godot's own `Control` auto-translation. `.to_upper()` would hand the
+	#     TranslationServer a key that is in no table and silently lose German for
+	#     every landmark name and for the quiz prompt;
+	#   * three self-checks read this label's `text` back and compare it to the
+	#     source string — `landmark_selfcheck` against `QUIZ_PROMPT` and against
+	#     each registry `name`, `tower_interior_selfcheck` check 20 against a
+	#     dossier's `lore`. Upper-casing here is a red build in files this bead
+	#     does not own.
+	#
+	# The BOLD FACE and BONE are the half of the heading rule that costs nothing.
+	name_label.add_theme_font_override("font", HudTheme.heading_font())
+	name_label.add_theme_color_override("font_color", HudTheme.BONE)
+	name_label.add_theme_color_override("font_outline_color", HudTheme.INK)
+	name_label.add_theme_constant_override("outline_size", OUTLINE_SIZE)
 	name_label.add_theme_font_size_override("font_size", NAME_FONT_SIZE)
 	box.add_child(name_label)
 
@@ -449,9 +499,10 @@ func _ready() -> void:
 	# controls; an autowrapping label inside a container that grows is exempt by
 	# construction, exactly like the start-overlay and game-over labels).
 	fact_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	fact_label.add_theme_color_override("font_color", FACT_COLOR)
-	fact_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
-	fact_label.add_theme_constant_override("outline_size", 5)
+	# No `font_color` override: the theme paints every `Label` BONE, which is the
+	# body colour the spec asks for. Only the outline is ours.
+	fact_label.add_theme_color_override("font_outline_color", HudTheme.INK)
+	fact_label.add_theme_constant_override("outline_size", OUTLINE_SIZE)
 	fact_label.add_theme_font_size_override("font_size", FACT_FONT_SIZE)
 	box.add_child(fact_label)
 
@@ -485,9 +536,14 @@ func _ready() -> void:
 		var badge := Label.new()
 		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		badge.text = str(slot + 1)
-		badge.add_theme_color_override("font_color", BADGE_COLOR)
-		badge.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
-		badge.add_theme_constant_override("outline_size", 5)
+		# THE QUESTION'S ONE AMBER. The digit is the thing you press, so it is the
+		# accent while a question is up — and the treasure line, which is the
+		# accent on the reveal, is hidden for exactly as long (`_start_quiz` hides
+		# it, `_answer` hides these), so the card never shows two.
+		badge.add_theme_font_override("font", HudTheme.heading_font())
+		badge.add_theme_color_override("font_color", HudTheme.VISOR_AMBER)
+		badge.add_theme_color_override("font_outline_color", HudTheme.INK)
+		badge.add_theme_constant_override("outline_size", OUTLINE_SIZE)
 		badge.add_theme_font_size_override("font_size", OPTION_FONT_SIZE)
 		row.add_child(badge)
 
@@ -497,14 +553,14 @@ func _ready() -> void:
 		option.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		option.focus_mode = Control.FOCUS_NONE
 		option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		# `flat` so the default theme's grey button panel does not sit on the dark
-		# card: the option reads as a line of the card that happens to be tappable,
-		# and hover/pressed still draw, so a mouse still gets feedback.
-		option.flat = true
+		# NOT `flat` ANY MORE. It was flat because the engine default theme's grey
+		# button panel sat badly on the dark card; the skin's own face is the
+		# spec's — INK_RAISED with a 1 px STEEL border, an amber border on hover
+		# and an ink face when pressed — which is exactly what an option should
+		# look like, and the border is what makes three of them read as three
+		# choices rather than three lines of prose. No colour or outline override
+		# either: BONE and the four states are the theme's.
 		option.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		option.add_theme_color_override("font_color", FACT_COLOR)
-		option.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
-		option.add_theme_constant_override("outline_size", 5)
 		option.add_theme_font_size_override("font_size", OPTION_FONT_SIZE)
 		option.pressed.connect(_answer.bind(slot))
 		row.add_child(option)
@@ -516,9 +572,13 @@ func _ready() -> void:
 	treasure_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	treasure_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	treasure_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	treasure_label.add_theme_color_override("font_color", TREASURE_COLOR)
-	treasure_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
-	treasure_label.add_theme_constant_override("outline_size", 5)
+	# THE REVEAL'S ONE AMBER: the coin number, which is exactly the shape of
+	# element the spec rations the accent to ("the coin counter", "NEW BEST!").
+	# Bold, because it is the only line on the card anybody reads twice.
+	treasure_label.add_theme_font_override("font", HudTheme.heading_font())
+	treasure_label.add_theme_color_override("font_color", HudTheme.VISOR_AMBER)
+	treasure_label.add_theme_color_override("font_outline_color", HudTheme.INK)
+	treasure_label.add_theme_constant_override("outline_size", OUTLINE_SIZE)
 	treasure_label.add_theme_font_size_override("font_size", TREASURE_FONT_SIZE)
 	treasure_label.visible = false
 	box.add_child(treasure_label)
