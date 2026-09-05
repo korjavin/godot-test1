@@ -32,11 +32,12 @@ extends SceneTree
 ## WHAT IT GUARDS, check by check
 ## ============================================================================
 ##
-##   1. **THE ARMING GATE.** Pre-beat, an earned hunter grab costs the ordinary
-##      predator arithmetic and no hero. Post-beat it takes the active one. The
-##      beat is `TowerInterior.RESCUE_DONE` in the stored tower set, which is what
-##      the authored rescue writes.
-##   2. **ATTRIBUTION.** Post-beat, the two GD-SURVEY rows — the field's retrieval
+##   1. **THERE IS NO ARMING GATE.** On a FRESH profile — no `RESCUE_DONE` in the
+##      store, the authored rescue never walked — a hunter grab takes the active
+##      hero and switches off it, and the beat landing changes nothing (owner
+##      ruling 2026-09-05, bead `godot-test1-bxx`: *"yes, from start"*). The gate
+##      is also asserted gone BY NAME, which is this check's mutation control.
+##   2. **ATTRIBUTION.** The two GD-SURVEY rows — the field's retrieval
 ##      unit and the HQ's sentry — take the hero; an animal, a body with no row at
 ##      all, and a contact that names no attacker take nobody. Keyed on the
 ##      `captures_hero` ROW KEY and not on `behavior` (bead godot-test1-3iy.19), so
@@ -314,31 +315,55 @@ func _run() -> void:
 
 
 # ============================================================================
-# 1. THE ARMING GATE
+# 1. THERE IS NO ARMING GATE — the arrest is from the first second of a run
 # ============================================================================
 
 func _check_the_arming_gate() -> void:
 	"""
-	Owner-ruled sequencing: capture arms only after the authored Primm beat.
+	Owner ruling 2026-09-05 (bead `godot-test1-bxx`, verbatim: *"yes, from start"*):
+	a GD-SURVEY grab imprisons the active hero whether or not the authored Primm
+	rescue has ever been walked.
 
-	BOTH HALVES, because only the pair is a gate. "Nothing happened pre-beat" is
-	also true of a capture path wired to nothing at all, and "the hero was taken"
-	is also true of one with no gate on it.
+	THIS CHECK USED TO BE THE GATE and it is now its own negative: the FIRST half
+	drives the grab on a FRESH profile — no `TowerInterior.RESCUE_DONE` anywhere —
+	and the hero must be taken and switched away from. Under bead
+	`godot-test1-3iy.9`'s sequencing that was the half that asserted *nothing*
+	happened.
+
+	THE SECOND HALF IS WHAT KEEPS IT A MEASUREMENT: the beat lands, and the answer
+	does not move. "The hero was taken" is also true of a build that still gates
+	and happens to be tested after the rescue, so the pair is what says the store
+	is not being consulted at all.
+
+	AND THE THIRD IS THE MUTATION CONTROL, BUILT IN. Both halves above pass on a
+	build that gates and is simply never run pre-beat by accident — so the gate is
+	also asserted GONE BY NAME. `_capture_is_armed()` was the one function that
+	read `BestRunStore.tower_opened_ids()` on the capture path; re-adding it, in
+	any form that `hit_by_crocodile` could call, fails here rather than quietly
+	restoring the sequencing the owner retired. It is check 17's spelling-test
+	idiom, one file along, and for the same reason: a re-introduced gate would
+	change no behaviour on the day it landed if nothing pre-beat were driven.
 	"""
 	_fresh_store()
 	var player := await _make_player()
+	if player.has_method("_capture_is_armed"):
+		_fail("player_controller declares `_capture_is_armed()` again — the authored-rescue "
+			+ "arming gate was RETIRED by owner ruling 2026-09-05 (bead godot-test1-bxx, "
+			+ "\"yes, from start\"), and re-reading the stored tower set on the capture "
+			+ "path puts back the sequencing that ruling removed")
 	var before: String = player.hero_name()
 	player.hit_by_crocodile(_hunter())
-	if player.captive_heroes.size() != 0:
-		_fail(("PRE-BEAT: a hunter grab took %s before the authored rescue — capture must "
-			+ "arm on TowerInterior.RESCUE_DONE, because the beat is where the rule is "
-			+ "taught") % str(player.captive_heroes.keys()))
-	if player.hero_name() != before:
-		_fail("PRE-BEAT: the grab switched the hero away from %s" % before)
+	if not player.is_hero_captive(before):
+		_fail(("FRESH PROFILE: a hunter grab left %s free with no rescue in the store — "
+			+ "the corporation arrests from the first second of a run (owner ruling "
+			+ "2026-09-05), so there is nothing left to arm") % before)
+	if player.hero_name() == before:
+		_fail("FRESH PROFILE: the grab did not auto-switch off the captured hero %s" % before)
 	_clear(player)
 
 	# ...and now the beat lands. This is the id the authored rescue writes through
-	# `TowerShell.mark_opened()`, so the check arms capture exactly as the game does.
+	# `TowerShell.mark_opened()` — it still un-stages Primm's cell for good, it just
+	# arms nothing any more, and the grab below has to be indistinguishable.
 	_beat_done()
 	player = await _make_player()
 	before = player.hero_name()
@@ -358,7 +383,7 @@ func _check_the_arming_gate() -> void:
 
 func _check_only_a_hunter_takes_a_hero() -> void:
 	"""
-	Post-beat, WHO TAKES A HERO IS A ROW KEY — `captures_hero` — and nothing else.
+	WHO TAKES A HERO IS A ROW KEY — `captures_hero` — and nothing else.
 
 	BOTH SIDES OF THE KEY, because either alone is satisfied by a build that has
 	stopped reading it. The POSITIVE side is the whole of bead godot-test1-3iy.19:
@@ -1091,22 +1116,33 @@ const CONTROL_SPECIES: String = "crocodile"
 
 func _check_a_guard_takes_coins_and_ground() -> void:
 	"""
-	The tower's own stake, ON BOTH SIDES OF THE ARMING GATE — which is what makes
-	this one check instead of two, because the guard's two behaviours are the same
-	contact told a different thing about the world.
+	The tower's own stake: WHO IS KNOCKED BACK AND WHO IS ARRESTED, which is what
+	makes it one check instead of two — the two outcomes are the same contact told
+	a different thing about who is biting.
 
-	PRE-BEAT (the first half) IS TODAY'S GUARD, BYTE FOR BYTE: coins plus the
-	knockback to the last checkpoint, and no hero. That is not legacy left standing
-	— it is required (bead godot-test1-3iy.19). The authored Primm rescue happens
-	INSIDE this building, so the first guards a player ever meets are met before the
-	scene that teaches capture; a tutorial visit that stripped the roster would be
-	the mechanic firing before its own lesson.
+	THE GUARD ARRESTS, FULL STOP, AND ON A FRESH PROFILE (owner ruling 2026-09-05,
+	bead `godot-test1-bxx`, verbatim *"yes, from start"*). This block used to have a
+	PRE-BEAT half in which a guard billed coins, knocked the player back to the last
+	checkpoint and took no hero, because the authored Primm rescue happens inside
+	this building and bead `godot-test1-3iy.9` held that the mechanic must not fire
+	before the scene that teaches it. The owner retired that sequencing: a tutorial
+	visit CAN now cost a hero, and that consequence is the ruling rather than a bug.
+	So the arrest below is driven with the store deliberately empty.
 
-	POST-BEAT (the second half) IS THE 2026-09-01 RULING: the same grab imprisons
+	THE ARREST IS STILL THE 2026-09-01 RULING in everything else: the grab imprisons
 	the hero exactly as a field hunter's does, and the hero who steps in RESUMES
 	WHERE THE PARTY FELL — no knockback, because the survivors "continue to play
 	from the same place after cooldown". The coin bill is not waived by the arrest:
 	one arithmetic everywhere.
+
+	WHICH LEAVES THE KNOCKBACK WITHOUT A GUARD TO MEASURE IT ON, and it still has
+	to be measured: it is the BUILDING's rule (the press, a boss projectile, an
+	animal that followed you through the doorway) and only an ARREST waives it. So
+	the two branches of `setback_point()` — the lit checkpoint and the doorway
+	fallback — are driven on the ordinary predator row instead, which is the body
+	that still takes them. Control (b) below drives the doorway branch again from
+	the field side; this loop is the only thing in the file that reaches the LIT
+	one.
 
 	THE GROUND IS STILL THE BUILDING'S AND NOT THE ROW'S. `_pay_coin_setback()`
 	asks the `tower_interior` group for a `setback_point()` and takes it if one
@@ -1116,18 +1152,19 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	exactly that: an animal in the field left standing where it fell, and the same
 	animal INSIDE the building knocked back to the plate like everybody else.
 
-	FOUR THINGS ARE MEASURED ON THE PRE-BEAT GUARD AND ALL FOUR ARE SEPARATE
+	FOUR THINGS ARE MEASURED ON THE KNOCKED-BACK ANIMAL AND ALL FOUR ARE SEPARATE
 	FAILURES:
 
 	  * the coins: exactly `floor(own_coins x coin_setback)`, off BOTH the displayed
 	    figure and this peer's own contribution, read from the ROW rather than from
-	    a 0.07 typed in here — retune the row and this check retunes with it;
+	    a number typed in here — retune the row and this check retunes with it;
 	  * the run: no game over, which is the ruling itself. It is a weaker claim than
 	    it once was (nothing ends a run but the empty roster now) and it is kept
 	    because it is free and it is the sentence the owner wrote;
-	  * the hero: untaken, WITH THE BEAT UNPLAYED, which is the arming gate seen
-	    from inside the building — the one place it decides anything, since the
-	    beat itself is a room in here;
+	  * the hero: untaken, because an animal carries no `captures_hero` — the
+	    NEGATIVE half of the row key, measured inside the building where the
+	    positive half is measured too, so the two cannot be confused for "indoors
+	    takes a hero";
 	  * the ground: the body is standing on the last checkpoint it lit — and on the
 	    doorway instead when it has lit none, which is the other branch of
 	    `setback_point()` and would otherwise never be executed by anything.
@@ -1156,6 +1193,23 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 		Sentinel.done("a_guard_takes_coins_and_ground")
 		return
 
+	# THE KNOCKED-BACK SUBJECT IS THE ANIMAL, and its bill is read from its OWN row
+	# and must differ from the guard's, or "the two paths charge different amounts"
+	# would be satisfied by a build that charges everybody the same.
+	var control_fraction: float = float(species.get(CONTROL_SPECIES, {}).get("coin_setback", 0.0))
+	if control_fraction <= 0.0:
+		_fail("SPECIES['%s'] carries no coin_setback — the control is not on the" % CONTROL_SPECIES
+				+ " ordinary predator path, so the guard branch above proves nothing")
+		Sentinel.done("a_guard_takes_coins_and_ground")
+		return
+	var control_loss: int = int(floor(float(SETBACK_PROBE_COINS) * control_fraction))
+	if control_loss <= 0 or control_loss == expected_loss:
+		_fail("a %.3f control setback on %d coins bills %d, the guard's %d — the two"
+			% [control_fraction, SETBACK_PROBE_COINS, control_loss, expected_loss]
+			+ " arithmetics must be distinguishable or this control measures nothing")
+		Sentinel.done("a_guard_takes_coins_and_ground")
+		return
+
 	for lit: bool in [false, true]:
 		var shell := await _make_tower()
 		var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
@@ -1177,43 +1231,49 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 		player.own_coins = SETBACK_PROBE_COINS
 		var hero: String = player.hero_name()
 
-		player.hit_by_crocodile(_attacker_row(GUARD_SPECIES))
+		player.hit_by_crocodile(_attacker_row(CONTROL_SPECIES))
 		player.is_caught = false
 		player.call("_on_caught_finished")
 
 		if player.is_game_over:
-			_fail("a guard's hit ended the run — the tower is not allowed to game-over"
-					+ " the player mid-rescue")
+			_fail("an indoor bite ended the run — nothing ends a run but the empty roster")
 		if player.captive_heroes.has(hero):
-			_fail("a PRE-BEAT guard took %s — the authored Primm rescue is a room in" % hero
-					+ " this building, so the guards met on the way to it must charge"
-					+ " the ordinary tax and nothing more; capture arms at the beat")
-		if player.coins_collected != SETBACK_PROBE_COINS - expected_loss:
-			_fail("a pre-beat guard's setback left %d of %d displayed coins, expected %d"
+			_fail("an animal took %s INSIDE the HQ — arrest is a `captures_hero` ROW KEY" % hero
+					+ " and nothing about being indoors, so a crocodile that followed you"
+					+ " through the doorway charges the ordinary tax and nothing more")
+		if player.coins_collected != SETBACK_PROBE_COINS - control_loss:
+			_fail("an indoor bite's setback left %d of %d displayed coins, expected %d"
 				% [player.coins_collected, SETBACK_PROBE_COINS,
-					SETBACK_PROBE_COINS - expected_loss])
-		if player.own_coins != SETBACK_PROBE_COINS - expected_loss:
-			_fail("a pre-beat guard's setback left %d of %d own_coins, expected %d — in a room"
+					SETBACK_PROBE_COINS - control_loss])
+		if player.own_coins != SETBACK_PROBE_COINS - control_loss:
+			_fail("an indoor bite's setback left %d of %d own_coins, expected %d — in a room"
 				% [player.own_coins, SETBACK_PROBE_COINS,
-					SETBACK_PROBE_COINS - expected_loss]
+					SETBACK_PROBE_COINS - control_loss]
 				+ " that is this peer's contribution to the shared bank")
 		if (player as Node3D).global_position.distance_to(want_spot) > SETBACK_EPS:
-			_fail("a pre-beat guard's setback left the player at %s, not on the %s at %s"
+			_fail("an indoor bite's setback left the player at %s, not on the %s at %s"
 				% [str((player as Node3D).global_position),
 					("checkpoint" if lit else "doorway"), str(want_spot)])
 		if not player.is_respawning:
-			_fail("a pre-beat guard's setback did not open a grace window — the guard that just"
+			_fail("an indoor bite's setback did not open a grace window — whatever just"
 					+ " hit you gets a free second bite")
 		_clear(player)
 		shell.queue_free()
 		await process_frame
 
-	# ---- POST-BEAT: THE ARREST, AND THE GROUND THAT DOES NOT MOVE -------------
+	# ---- THE ARREST, AND THE GROUND THAT DOES NOT MOVE ------------------------
 	#
 	# The owner ruling of 2026-09-01 in one contact: the hero goes to prison exactly
 	# as a field grab sends them, the coins are billed exactly as the row asks, and
 	# the hero who steps in is standing where the party fell — "if other characters
 	# left not caught they continue to play from the same place after cooldown".
+	#
+	# ON A FRESH PROFILE, and that is the 2026-09-05 half. `_fresh_store()` ran at
+	# the top of this check and NOTHING has re-armed since: no `RESCUE_DONE` is in
+	# the store, the authored rescue has never been walked, and the guard arrests
+	# anyway. Check 1 makes the same measurement on the field's hunter; this is the
+	# one that makes it inside the building, where the retired gate used to be
+	# load-bearing.
 	#
 	# THE CHECKPOINT IS DELIBERATELY LIT AND THE BODY IS DELIBERATELY NOWHERE NEAR
 	# IT. Without both, "no knockback" is unfalsifiable: an unlit plate or a player
@@ -1221,7 +1281,6 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	# stand is the cell block's, which is inside the walls (so `inside_walls()` says
 	# yes and the relocation is genuinely one `if` away) and ten storeys above the
 	# checkpoint the arrest must NOT drag them to.
-	_beat_done()
 	var arrest_shell := await _make_tower()
 	var arrest_interior := arrest_shell.get_node_or_null("TowerInterior") as TowerInterior
 	arrest_shell.call("mark_opened", TowerInterior.GATE_CHECKPOINT)
@@ -1244,7 +1303,7 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	arrested.is_caught = false
 	arrested.call("_on_caught_finished")
 	if not arrested.is_hero_captive(arrested_hero):
-		_fail("a post-beat guard left %s free — a catch inside the HQ follows the"
+		_fail("a guard left %s free — a catch inside the HQ follows the"
 			% arrested_hero + " same procedure as a catch outside it (owner ruling"
 			+ " 2026-09-01), so the hero goes to a cell")
 	if arrested.hero_name() == arrested_hero:
@@ -1273,25 +1332,14 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	_clear(arrested)
 	arrest_shell.queue_free()
 	await process_frame
+	# ...and the rescue id goes back into the store, so what runs AFTER this check
+	# sees exactly the world it always did. It arms nothing since bead
+	# godot-test1-bxx; every check below that calls `_beat_done()` itself is
+	# unchanged, and check 6 genuinely asserts on the stored set.
+	_beat_done()
 
 	# ---- THE CONTROLS: an ordinary animal, outside and then inside ------------
 	#
-	# The bill it is expected to pay is read from its OWN row and must differ from
-	# the guard's, or "the two paths charge different amounts" would be satisfied by
-	# a build that charges everybody 7%.
-	var control_fraction: float = float(species.get(CONTROL_SPECIES, {}).get("coin_setback", 0.0))
-	if control_fraction <= 0.0:
-		_fail("SPECIES['%s'] carries no coin_setback — the control is not on the" % CONTROL_SPECIES
-				+ " ordinary predator path, so the guard branch above proves nothing")
-		Sentinel.done("a_guard_takes_coins_and_ground")
-		return
-	var control_loss: int = int(floor(float(SETBACK_PROBE_COINS) * control_fraction))
-	if control_loss <= 0 or control_loss == expected_loss:
-		_fail("a %.3f control setback on %d coins bills %d, the guard's %d — the two"
-			% [control_fraction, SETBACK_PROBE_COINS, control_loss, expected_loss]
-			+ " arithmetics must be distinguishable or this control measures nothing")
-		Sentinel.done("a_guard_takes_coins_and_ground")
-		return
 
 	# (a) IN THE FIELD, WITH THE BUILDING STANDING: the bill lands, the ground does
 	#     not move. THE TOWER IS STOOD UP ON PURPOSE, and staging it is the whole
@@ -3090,10 +3138,14 @@ func _check_a_hunter_walks_in_and_takes_a_hero() -> void:
 	hero is in a cell at the end of it.
 
 	It is bead `godot-test1-8eh`'s coverage, and the bug it was filed for turned out
-	NOT to be here — the owner's profile was PRE-BEAT, which check 1 already pins
-	and which is by design (a grab before the authored Primm rescue is an ordinary
-	bite). The gap the report exposed is the one above: a hunter that could no
-	longer physically touch a player would have left all nineteen checks green.
+	NOT to be here — the owner's profile was PRE-BEAT, and pre-beat a grab was an
+	ordinary bite. The OWNER THEN RETIRED THAT SEQUENCING (2026-09-05, bead
+	`godot-test1-bxx`: *"yes, from start"*), so this probe now runs on a FRESH
+	profile with nothing merged and has to arrest anyway — which makes it the
+	acceptance for both beads at once, the second one measured through the shipped
+	physics rather than through a hand-made call. The gap 8eh exposed is still the
+	one above: a hunter that could no longer physically touch a player would have
+	left every other check in this file green.
 
 	THE MUTATION CONTROL IS THE HUNTER'S OWN COLLISION SHAPE. Disable it and the
 	body walks straight through the player, `get_slide_collision_count()` never
@@ -3101,7 +3153,11 @@ func _check_a_hunter_walks_in_and_takes_a_hero() -> void:
 	above came through the contact path rather than from some other body, some
 	other frame, or a harness that would pass with the hunter deleted.
 	"""
-	_beat_done()
+	# NOTHING IS ARMED, and that is the point since bead godot-test1-bxx: the store
+	# is emptied rather than merged into, so a gate re-added on the capture path
+	# fails HERE too — through the real contact — and not only in check 1's
+	# by-name assertion.
+	_fresh_store()
 	for solid: bool in [true, false]:
 		var probe_floor := StaticBody3D.new()
 		probe_floor.collision_layer = 1

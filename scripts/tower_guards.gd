@@ -23,7 +23,7 @@ extends RefCounted
 ##   * `setback_point()` — it sits under the interior's GUARDS banner by accident
 ##     of history and its own docstring says it is NOT a guard's: since bd
 ##     `godot-test1-3iy.19` an arrest waives the knockback, so that function is the
-##     plate for the press, a pre-beat guard and an animal that followed you in. It
+##     plate for the press, a boss projectile and an animal that followed you in. It
 ##     reads `_is_open(GATE_CHECKPOINT)`, `checkpoint_stand()` and `entry_stand()`
 ##     — the GATE family, which is bd `godot-test1-ftn.21`'s. Moving it here would
 ##     put a gate reader in a file about guards and hand ftn.21 a dependency it
