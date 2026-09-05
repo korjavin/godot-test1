@@ -53,9 +53,19 @@ const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
 ## static rarity functions (bd godot-test1-ftn.4) — `TerrainFeatures.call(...)`
 ## is a parse error, the trap endless_terrain.gd documents for _landmark_builders.
 const FEATURES_SCRIPT: GDScript = preload("res://scripts/terrain_features.gd")
-## The predator spawners live here since bead godot-test1-ftn.6 — check 3 reads
-## its subjects as TEXT, so it has to know which file to read them out of.
-const PREDATOR_SCRIPT: String = "res://scripts/terrain_predators.gd"
+## EVERY FILE CHECK 3 READS ITS SUBJECTS OUT OF, and it is a LIST because the
+## spawners keep moving house: the predators left for `terrain_predators.gd` at
+## bd `godot-test1-ftn.6` and the coin road for `coin_road.gd` at `ftn.7`, and
+## `endless_terrain.gd` kept a one-line forwarder for each. Reading the terrain
+## alone would therefore FIND every name and read a body that is a single call —
+## passing for the wrong reason, with a `scarcity_at(` in the real spawner
+## sailing through. A name found in NONE of these still fails by name, so the
+## next extraction adds one line here and nothing else.
+const SPAWNER_SCRIPTS: Array[String] = [
+	"res://scripts/endless_terrain.gd",
+	"res://scripts/terrain_predators.gd",
+	"res://scripts/coin_road.gd",
+]
 const CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
 
 ## CHECK 2's two sweeps, and they are DELIBERATELY LOPSIDED.
@@ -420,28 +430,29 @@ func _check_never_thinned() -> void:
 	`>=` rather than `==` is the honest relation — "unchanged" was never true here
 	and a check that demanded it would fail on the shipped difficulty curve.
 	"""
-	var source: String = FileAccess.get_file_as_string(TERRAIN_SCRIPT)
-	if source.is_empty():
-		_fail("could not read %s as text — check 3 cannot run" % TERRAIN_SCRIPT)
-		Sentinel.done("never_thinned")
-		return
-	# THE PREDATORS MOVED HOUSE (bead godot-test1-ftn.6) and the terrain kept a
-	# one-line forwarder for each, so reading `endless_terrain.gd` alone would
-	# find `spawn_crocodiles_in_chunk` — and read a body that is a single call.
-	# That passes for the wrong reason: it is the forwarder, not the loop, and a
-	# `scarcity_at(` added to the real spawner would sail through. So the search
-	# is over BOTH files, and a name found in NEITHER still fails by name.
-	var predators: String = FileAccess.get_file_as_string(PREDATOR_SCRIPT)
-	if predators.is_empty():
-		_fail("could not read %s as text — check 3 cannot run" % PREDATOR_SCRIPT)
-		Sentinel.done("never_thinned")
-		return
+	# THE SPAWNERS MOVED HOUSE — the predators at bd `godot-test1-ftn.6`, the coin
+	# road at `ftn.7` — and the terrain kept a one-line forwarder for each, so
+	# reading `endless_terrain.gd` alone would find every name and read a body
+	# that is a single call. That passes for the wrong reason: it is the
+	# forwarder, not the loop, and a `scarcity_at(` added to the real spawner
+	# would sail through. So the search is over EVERY file in SPAWNER_SCRIPTS,
+	# and a name found in NONE of them still fails by name.
+	var sources: Array[String] = []
+	for path: String in SPAWNER_SCRIPTS:
+		var text: String = FileAccess.get_file_as_string(path)
+		if text.is_empty():
+			_fail("could not read %s as text — check 3 cannot run" % path)
+			Sentinel.done("never_thinned")
+			return
+		sources.append(text)
 	for fn: String in NEVER_THINNED:
-		var body := _function_body(source, fn) + "\n" + _function_body(predators, fn)
+		var body := ""
+		for text: String in sources:
+			body += _function_body(text, fn) + "\n"
 		if body.strip_edges().is_empty():
-			_fail("check 3 found no function `%s` in endless_terrain.gd or " % fn
-					+ "terrain_predators.gd — it was renamed or removed, and this "
-					+ "assertion is now measuring nothing")
+			_fail("check 3 found no function `%s` in any of %s — it was renamed "
+					% [fn, ", ".join(SPAWNER_SCRIPTS)]
+					+ "or removed, and this assertion is now measuring nothing")
 			continue
 		for forbidden: String in ["scarcity_at(", "_scarcity_keep("]:
 			if body.contains(forbidden):
