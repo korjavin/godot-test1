@@ -60,10 +60,7 @@ func main() {
 	// — the game client's catch-all owns `/` in production, so a route missing
 	// from the lobby's narrow rule silently serves index.html instead.
 	mux.HandleFunc("/best", best.handler)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(mustJSON(map[string]any{"ok": true, "rooms": hub.Rooms()}))
-	})
+	mux.HandleFunc("/healthz", healthzHandler(hub))
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		log.Fatalf("lobby: embedded static: %v", err)
@@ -86,6 +83,47 @@ func main() {
 	// SIGTERM the peers reconnect and re-create their room from its invite code.
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("lobby: %v", err)
+	}
+}
+
+// healthzHandler answers the Docker HEALTHCHECK, and it reports on SIGNALLING ONLY.
+//
+// ⚠️ IT MUST NEVER CONSULT THE BEST-SCORES STORE (bead godot-test1-xuz,
+// 2026-09-05). It never has — this is a rule written down, not a bug fixed, and
+// saying so plainly matters because the incident is easy to misread.
+//
+// WHAT ACTUALLY HAPPENED: the prod host filled its disk, every `bestStore.dump`
+// began failing with ENOSPC, the container went UNHEALTHY, Traefik dropped the
+// unhealthy router, and /ws /ice /rooms /best all fell through to the web client's
+// catch-all. But the dump failure did not cause the UNHEALTHY — this handler was
+// already answering `ok:true` unconditionally. On a 100%-full disk the Docker
+// daemon cannot exec the container's HEALTHCHECK or write its state file, so the
+// probe fails whatever we answer. **The lobby is therefore NOT hardened against a
+// full disk, and any other filler reproduces the same chain.** The fix for the
+// cause is the deploy job's image prune (.github/workflows/build.yml).
+//
+// WHAT THE RULE IS FOR, then: the obvious future "improvement" — reporting dump
+// health here so operators can see a broken scoreboard — is precisely the change
+// that would make a disk fault take signalling down for real. What this service is
+// FOR is introducing peers, and that holds no disk, no database and no file handle.
+// A lobby that can still do it is healthy however broken its optional scoreboard
+// is; an unwritable /best is a LOG LINE (bestStore.runDumper) and records stay
+// correct in memory, with the store's `dirty` flag surviving the failure so one
+// recovered write flushes everything.
+//
+// THE GUARD IS THE SIGNATURE, not a test assertion: this takes `*Hub` and nothing
+// else, so widening it to reach a store is a compile-level change that drags the
+// author through server/health_test.go and this comment. (That file's
+// TestHealthzSurvivesFailedDump is an honest unit test of the handler — 200,
+// ok:true, a live room count — and its failing-store fixture documents the scenario
+// rather than measuring it; the store is not reachable from here to measure.)
+//
+// A free function taking the hub, rather than the closure it used to be, purely so
+// a test can drive it without standing up a listener.
+func healthzHandler(hub *Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(mustJSON(map[string]any{"ok": true, "rooms": hub.Rooms()}))
 	}
 }
 

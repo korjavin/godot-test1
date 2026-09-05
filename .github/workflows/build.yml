@@ -570,6 +570,18 @@ jobs:
     # ordinary variable rather than the secrets context (same as lobby.yml).
     env:
       PORTAINER_HOOK: ${{ secrets.PORTAINER_REDEPLOY_HOOK }}
+      # Portainer API key for the image prune below — see that step. Absent, the
+      # prune is SKIPPED and everything else about the deploy is unchanged, which
+      # is deliberate: this secret can be added after the workflow merges.
+      PORTAINER_API_KEY: ${{ secrets.PORTAINER_API_KEY }}
+      # WHICH DOCKER HOST THE PRUNE TALKS TO, and it is an ASSUMPTION worth naming:
+      # the redeploy webhook's uuid carries its own endpoint, so nothing here binds
+      # this id to the environment the stack actually runs on. It is 2 because that
+      # is the endpoint the incident was recovered through by hand. If Portainer
+      # ever manages a second environment, a wrong id prunes the wrong machine —
+      # which is why the step SHAPE-ASSERTS its 200 and warns loudly rather than
+      # printing an empty count forever.
+      PORTAINER_ENDPOINT_ID: "2"
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
@@ -604,6 +616,99 @@ jobs:
           context: web
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/godot-test1-web:${{ github.sha }}
+
+      # ======================================================================
+      # 🧹 PRUNE THE HOST'S UNUSED IMAGES — BEFORE the pin, deliberately
+      # ======================================================================
+      # THE INCIDENT (2026-09-05, bead godot-test1-xuz). This job pins TWO images
+      # by commit SHA on every master push and never removed one; the host reached
+      # 495 images / 43 GB with 29 GB unused, filled its disk, and the lobby went
+      # UNHEALTHY. Traefik drops an unhealthy router, so /ws /ice /rooms /best
+      # /healthz all fell through to the web client's catch-all and multiplayer was
+      # simply down. Fifty merges in a day is a hundred images, so the host needs a
+      # policy, not a bigger disk.
+      #
+      # WHY IT RUNS HERE — before the branch pin, and therefore before the webhook.
+      # `dangling=false` is Portainer's spelling of `docker image prune -a`: it
+      # removes every image no container references. Docker builds that in-use set
+      # from ALL containers, running or stopped, so the CURRENT deploy's images are
+      # safe by construction. What is NOT safe is an image Portainer has just
+      # PULLED and not yet started a container from — for those seconds it is
+      # referenced by nothing. So the prune must not race a redeploy, and there are
+      # two ways to start one: our webhook (fired last, below) and Portainer's own
+      # GitOps polling of the `deploy` branch, if that is enabled on the stack.
+      # Sitting above the force-push closes both, because at this instant the new
+      # images are not on the host by any route.
+      #
+      # HONEST CEILING, since "no race at all" would be an overclaim: a master run
+      # cancelled by `concurrency` (line 28) cannot un-fire a webhook it already
+      # sent, so run A's redeploy could in principle overlap run B's prune. B needs
+      # the build and every self-check first (~10 min), which is far longer than a
+      # pull, and the failure mode is one deploy needing a re-pull rather than an
+      # outage — the compose file still names a tag the registry has.
+      #
+      # IT IS HOST-WIDE, not stack-wide: unused images belonging to every other
+      # stack on that box go too. That is exactly what was done by hand to recover
+      # (495 -> 52) and is the intent, but it is worth knowing it is not scoped to
+      # us.
+      #
+      # A KEEP-LAST-N TAG POLICY IS NOT THE ALTERNATIVE IT LOOKS LIKE: deleting old
+      # package versions from GHCR frees space in the REGISTRY, and the incident was
+      # the HOST's disk, which had already pulled them. Worth doing for its own
+      # reasons; it would not have prevented this.
+      #
+      # It NEVER fails the deploy — but it must never fail QUIETLY either, which is
+      # the whole shape of the incident it fixes (nobody read the log). A wrong
+      # endpoint id, an expired key or a key without DockerOperation permission all
+      # produce a LOUD warning naming the status and the response body, not the same
+      # opaque line a timeout gives.
+      - name: 🧹 Prune unused images on the host
+        if: env.PORTAINER_HOOK != '' && env.PORTAINER_API_KEY != ''
+        continue-on-error: true  # belt and braces: every path below already exits 0
+        run: |
+          set -uo pipefail
+          base="${PORTAINER_HOOK%%/api/*}"
+          if [ "${base}" = "${PORTAINER_HOOK}" ] || [ -z "${base}" ]; then
+            echo "::warning::PORTAINER_REDEPLOY_HOOK does not look like a Portainer webhook URL (no /api/ segment) — skipping the image prune"
+            exit 0
+          fi
+          # THREE FORMS, and none of them is redundant. Actions masks by exact
+          # SUBSTRING, and curl's diagnostics print neither of the first two: a
+          # failure line is `curl: (6) Could not resolve host: <authority>` — no
+          # scheme AND no path — so for a path-hosted Portainer
+          # (https://host/portainer/api/…) only the third registration covers it.
+          # Verified by running this script against an unresolvable host.
+          host="${base#*://}"
+          echo "::add-mask::${base}"
+          echo "::add-mask::${host}"
+          echo "::add-mask::${host%%/*}"
+          body="${RUNNER_TEMP:-/tmp}/prune-body.json"
+          err="${RUNNER_TEMP:-/tmp}/prune-err.txt"
+          status=$(curl -sS --max-time 120 -X POST \
+            -H "X-API-Key: ${PORTAINER_API_KEY}" \
+            -o "${body}" -w '%{http_code}' \
+            "${base}/api/endpoints/${PORTAINER_ENDPOINT_ID}/docker/images/prune?filters=%7B%22dangling%22%3A%7B%22false%22%3Atrue%7D%7D" \
+            2>"${err}") || status="000"
+          if [ "${status}" != "200" ]; then
+            echo "::warning::image prune failed (HTTP ${status}) — check PORTAINER_API_KEY and PORTAINER_ENDPOINT_ID. The deploy is unaffected; the next push retries."
+            echo "::warning::prune response: $(head -c 400 "${body}" 2>/dev/null | tr -d '\n')"
+            echo "::warning::curl: $(head -c 200 "${err}" 2>/dev/null | tr -d '\n')"
+            exit 0
+          fi
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "prune succeeded (jq unavailable to summarise): $(head -c 400 "${body}" | tr -d '\n')"
+            exit 0
+          fi
+          # SHAPE-ASSERT the 200, because a Portainer error page is still a 200 in
+          # some proxy configurations and would otherwise print "pruned:  ,  GB".
+          if ! jq -e 'has("SpaceReclaimed")' "${body}" >/dev/null 2>&1; then
+            echo "::warning::image prune returned HTTP 200 but not Docker's prune JSON — the endpoint id or the key is probably wrong. First 400 bytes: $(head -c 400 "${body}" | tr -d '\n')"
+            exit 0
+          fi
+          # `ImagesDeleted` is a list of Untagged/Deleted image REFERENCES (not
+          # layers), and Docker returns `null` rather than `[]` when it removed
+          # nothing — which is what the `// []` is for.
+          echo "pruned: $(jq '(.ImagesDeleted // []) | length' "${body}") image references, $(jq '((.SpaceReclaimed // 0) / 1073741824 * 100 | round) / 100' "${body}") GB reclaimed"
 
       # Both pins land in one commit, after both images exist in the registry.
       - name: 🌿 Pin both images on the deploy branch
