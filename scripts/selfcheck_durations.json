@@ -1,7 +1,11 @@
 {
   "altitude_selfcheck": 5,
   "batch_selfcheck": 1,
-  "boss_selfcheck": 181,
+  "boss_arms_selfcheck": 56,
+  "boss_immunity_selfcheck": 14,
+  "boss_leash_selfcheck": 61,
+  "boss_selfcheck": 33,
+  "boss_wander_selfcheck": 33,
   "budapest_city_selfcheck": 13,
   "budapest_selfcheck": 5,
   "build_version_selfcheck": 1,
