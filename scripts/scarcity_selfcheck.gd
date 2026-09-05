@@ -53,6 +53,9 @@ const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
 ## static rarity functions (bd godot-test1-ftn.4) — `TerrainFeatures.call(...)`
 ## is a parse error, the trap endless_terrain.gd documents for _landmark_builders.
 const FEATURES_SCRIPT: GDScript = preload("res://scripts/terrain_features.gd")
+## The predator spawners live here since bead godot-test1-ftn.6 — check 3 reads
+## its subjects as TEXT, so it has to know which file to read them out of.
+const PREDATOR_SCRIPT: String = "res://scripts/terrain_predators.gd"
 const CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
 
 ## CHECK 2's two sweeps, and they are DELIBERATELY LOPSIDED.
@@ -422,11 +425,23 @@ func _check_never_thinned() -> void:
 		_fail("could not read %s as text — check 3 cannot run" % TERRAIN_SCRIPT)
 		Sentinel.done("never_thinned")
 		return
+	# THE PREDATORS MOVED HOUSE (bead godot-test1-ftn.6) and the terrain kept a
+	# one-line forwarder for each, so reading `endless_terrain.gd` alone would
+	# find `spawn_crocodiles_in_chunk` — and read a body that is a single call.
+	# That passes for the wrong reason: it is the forwarder, not the loop, and a
+	# `scarcity_at(` added to the real spawner would sail through. So the search
+	# is over BOTH files, and a name found in NEITHER still fails by name.
+	var predators: String = FileAccess.get_file_as_string(PREDATOR_SCRIPT)
+	if predators.is_empty():
+		_fail("could not read %s as text — check 3 cannot run" % PREDATOR_SCRIPT)
+		Sentinel.done("never_thinned")
+		return
 	for fn: String in NEVER_THINNED:
-		var body := _function_body(source, fn)
-		if body.is_empty():
-			_fail("check 3 found no function `%s` in endless_terrain.gd — it was renamed or " % fn
-					+ "removed, and this assertion is now measuring nothing")
+		var body := _function_body(source, fn) + "\n" + _function_body(predators, fn)
+		if body.strip_edges().is_empty():
+			_fail("check 3 found no function `%s` in endless_terrain.gd or " % fn
+					+ "terrain_predators.gd — it was renamed or removed, and this "
+					+ "assertion is now measuring nothing")
 			continue
 		for forbidden: String in ["scarcity_at(", "_scarcity_keep("]:
 			if body.contains(forbidden):
@@ -478,16 +493,23 @@ func _function_body(source: String, name: String) -> String:
 	there is no such function. Crude on purpose: GDScript's one-function-per-
 	column-0-`func` layout is the whole grammar this needs, and a parser would be
 	a second thing to keep right.
+
+	`static func` COUNTS, and that is not a nicety: since bead godot-test1-ftn.6
+	the predator spawners this check reads live in `terrain_predators.gd` as
+	statics, and a matcher that only knew the instance spelling found nothing
+	there — leaving check 3 reading the terrain's one-line FORWARDER and passing
+	on a body with nothing in it. Measured: with the static spelling missing, a
+	`scarcity_at()` planted in the real spawner was NOT caught.
 	"""
 	var lines: PackedStringArray = source.split("\n")
 	var out: PackedStringArray = PackedStringArray()
 	var inside := false
 	for line: String in lines:
-		if line.begins_with("func " + name + "("):
+		if line.begins_with("func " + name + "(") or line.begins_with("static func " + name + "("):
 			inside = true
 			continue
 		if inside:
-			if line.begins_with("func "):
+			if line.begins_with("func ") or line.begins_with("static func "):
 				break
 			out.append(line)
 	return "\n".join(out)

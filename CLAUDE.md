@@ -1511,6 +1511,28 @@ var assigned **before `add_child`** (same call-order contract as `setup_as_boss(
 a new entry there plus at most one new arm in a `match` — never a new script and never a
 subclass. Game-wide contracts stay top-level consts and no species may opt out of them.
 
+**WHAT EACH BAND IS MADE OF IS `scripts/terrain_biomes.gd`** (`class_name
+TerrainBiomes`, all static, bd `godot-test1-ftn.5`) — the eight `_spawn_*_content`
+builders, the oasis and dune site rolls, `_snow_mammoth`, and `_biome_spot_ok`, which
+stays ONE function because it is the single home of the river / road-clearance / overlap
+rule every builder places through. **The biome FIELD did not move**: `_biome_noise`,
+`biome_at`, `is_river_at` and the `Biome` enum stay on `endless_terrain.gd` (the noise is
+half the CPU/GPU parity contract, and the enum cannot leave a file whose const
+Dictionaries are keyed by it). Its ~160 TUNING CONSTANTS also stayed, read as
+`terrain.CACTUS_WIDTH_MAX` — they are a dozen themed banners interleaved with non-biome
+siblings, and cutting them out is its own mechanical pass.
+
+**EVERY PREDATOR SPAWNER IS `scripts/terrain_predators.gd`** (`class_name
+TerrainPredators`, all static, bd `godot-test1-ftn.6`) — the chunk's crocodiles, the
+Danube's, the hunters, a platform's guards and the road's bosses, with `HUNTER_SALT` /
+`DANUBE_SALT` / `CROC_ROLL_SALT` and their coordinate primes beside the loops that spend
+them (all const-aliased back, so every reader of the terrain's constant map is
+untouched). It RECEIVES the terrain and calls `terrain.biome_at` / `terrain.is_river_at`
+back through it; `create_chunk` calls the library directly and every other caller keeps a
+one-line forwarder on the terrain (`create_box`'s precedent). **`BIOME_SPECIES` and
+`BIOME_BOSS` stayed on `endless_terrain.gd`**, because a `const` Dictionary keyed by its
+`Biome` enum cannot be declared in a file that cannot reach the enum.
+
 **Which species a chunk spawns is PURE DISPATCH on `biome_at(chunk_centre)`** —
 `BIOME_SPECIES` in `endless_terrain.gd`, a biome with no entry getting the crocodile.
 It must never cost an RNG draw: the chunk's crocodile RNG is one shared stream, so a
