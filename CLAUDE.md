@@ -630,7 +630,30 @@ Load-bearing rules:
   `_get_camp_ember_material` stayed** — they are node/material work that
   `landmark_builders.gd` already calls through the terrain reference. **The GEO-LANDMARK
   spawner did NOT move**: its site table is `run_seed`-memoized INSTANCE state that
-  `_drop_seeded_memos()` owns (bd `bvq`), so it stays with the memo.
+  `_drop_seeded_memos()` owns (bd `bvq`), so it stays with the memo — and bd
+  `godot-test1-ftn.7` re-read that and left it there for a BETTER reason: a geo
+  landmark is the LANDMARK family, and the road is only its coordinate system.
+- **THE COIN ROAD IS `scripts/coin_road.gd`** (`class_name CoinRoad`, all static,
+  bd `godot-test1-ftn.7`) — the whole `_road_*` centreline family and
+  `spawn_coins_in_chunk`, with the nine `ROAD_*` constants that describe the road
+  itself. **The STATION CACHE STAYED ON THE TERRAIN**, and that is the decision
+  the bead was really about: `road_stations` / `road_k_min` / `road_k_max` and the
+  `_road_terminal_k_cache` are cleared by `_drop_seeded_memos()`, which is
+  deliberately ONE function under the seed write clearing SEVEN caches derived
+  from this centreline (bd `bvq`), and `minimap_hud` plus six self-checks read the
+  three as MEMBERS through the `terrain` group. So the FUNCTIONS moved and the
+  STATE did not — which is also what keeps this file static like its five
+  siblings. The `@export var road_*` config stayed too (a static library has no
+  inspector, ftn.4's lesson), and only `ROAD_TERMINAL_X` is const-aliased back,
+  because it is the one read from outside — the other eight appear elsewhere only
+  in prose. The terrain keeps **twelve one-line forwarders**: two are reached BY
+  STRING (`minimap_hud`'s two `has_method` guards), nine self-checks and
+  `style_shots` call them on the terrain, and two SIBLING families
+  (`terrain_predators`, `terrain_biomes`) reach the road through the terrain
+  reference they already hold — a family reaches a sibling family through the
+  terrain, and only calls WITHIN a family go direct. `scarcity_selfcheck`'s check
+  3 now reads its subjects out of a LIST of spawner files (`SPAWNER_SCRIPTS`), so
+  the next extraction adds one line there rather than passing on a forwarder.
 - **A BOX HAS A MESH KIND, AND EVERY UNIT MESH FITS THE UNIT CUBE** (bead
   `godot-test1-y1o.1`, epic `y1o` "get rid of blocks"). The batch entry is
   `{transform, color, kind}` — `ChunkBatch.BoxKind` (CUBE / SPHERE / CONE / CYLINDER /

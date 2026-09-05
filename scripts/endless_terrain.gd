@@ -579,62 +579,24 @@ const COIN_TOWER_CLEARANCE: float = 0.7
 ## keeps increasing with `k` (asserted in _road_extend_to_x). 78° still allows steep,
 ## road-like diagonal bends while guaranteeing forward progress.
 @export var road_max_heading_deg: float = 78.0
-
-## Heading restoring pull toward +X applied every station BEFORE the turn noise:
-## heading *= (1 - ROAD_RESTORE). Without it the random turns would random-walk the
-## heading and pin it against the cap; this gentle pull keeps the road trending
-## forward and gives it a natural "return to course" feel after a bend.
-const ROAD_RESTORE: float = 0.06
-
-## Fixed seed mixed into the per-station hash for the CENTERLINE, distinct from the
-## per-chunk object/crocodile seeds (it is its OWN world). The per-run run_seed is
-## mixed in alongside it, so the road is stable for the duration of a run but takes
-## a different path each run. Changing this constant reshapes every road ever rolled.
-const ROAD_WORLD_SEED: int = 0x5_0AD  # "ROAD"-ish; arbitrary fixed constant
-
-## Separate fixed seed for the per-slice COIN SCATTER RNG (the lateral/along-road jitter
-## and the per-coin spawn chance). Kept distinct from ROAD_WORLD_SEED so reshaping the
-## scatter doesn't move the centerline, and vice-versa.
-const ROAD_COIN_SEED: int = 0xC0_1A  # "coin"-ish; arbitrary fixed constant
-
-## Chance that a scattered road coin spawns as a rare purple GEM worth 10 (see
-## coin.gd make_gem). Rolled as one extra draw from the same per-station scatter
-## RNG right after a coin's position draws, so gem placement is exactly as
-## deterministic and seam-correct as the coins themselves.
-const ROAD_GEM_CHANCE: float = 0.04
-
-## How fast the band width breathes (radians of cos() per station). Lower = the band
-## swells wide and narrows over MORE stations. At 0.08 the cosine's period is
-## ~2π/0.08 ≈ 78 stations, so the width cycles slowly enough to feel smooth, not pulsey.
-const ROAD_WIDTH_FREQ: float = 0.08
-
-## Difficulty gradient: the coin band NARROWS with distance. Over the first
-## ROAD_NARROW_STATIONS stations the oscillating width is lerped toward a floor of
-## road_width_min * ROAD_NARROW_FLOOR_FACTOR, so far into a run the coin swath is a
-## tight ribbon that demands precise steering to keep the streak alive.
-const ROAD_NARROW_STATIONS: int = 2000
-const ROAD_NARROW_FLOOR_FACTOR: float = 0.4
-
-## Fraction of road_coin_spacing a coin may jitter ALONG the road from its slice center
-## (±this × spacing). Without it, every slice's coins would sit on the same cross-line
-## and the eye would read regular rows; this staggers them so the swath looks organic.
-const ROAD_COIN_LONG_JITTER: float = 0.5
-
-## THE ROAD'S TERMINAL X — where the coin road stops being the thing you follow
-## and the city takes over (bead godot-test1-8gw.3).
+## THE ROAD'S CONSTANTS MOVED TO `CoinRoad` (bd godot-test1-ftn.7), and exactly
+## ONE of them is aliased back — the `species_table.gd` / `terrain_props.gd`
+## precedent of re-exporting only what is really read from outside.
 ##
-## The centreline's Z is a function of run_seed (only station 0 is fixed), so a
-## road that wandered on would arrive at Budapest's west edge at a different Z
-## every run — and Budapest is AUTHORED at a fixed rect. The road therefore ends
-## at a TERMINAL STATION west of the gate, and BudapestPlan.road_approach_point()
-## eases the corridor from that station's Z to the gate's z = 0 (see
-## spawn_approach_coins_in_chunk).
+## `ROAD_TERMINAL_X` is read four ways by five other files: through
+## `get_script_constant_map()` (budapest_selfcheck, landmark_sites_selfcheck),
+## as `TERRAIN_SCRIPT.ROAD_TERMINAL_X` (field_bridge_selfcheck, six sites), as
+## `StubTerrain.TERRAIN.ROAD_TERMINAL_X` (wade_selfcheck) and by name in
+## enemy_spawn_selfcheck's own banner. A `const` alias keeps every one of those
+## answering, `get_script_constant_map()` included.
 ##
-## 1450 is 150 m west of the gate (BudapestPlan.GATE.x = 1600) — far enough that
-## the last road boss (BOSS_INTERVAL_STATIONS at ~6 m/station) can never be
-## standing in the gate district, close enough that the corridor's ease is short
-## enough to read as one continuous route rather than a dogleg.
-const ROAD_TERMINAL_X: float = 1450.0
+## The other eight — ROAD_RESTORE, ROAD_WORLD_SEED, ROAD_COIN_SEED,
+## ROAD_GEM_CHANCE, ROAD_WIDTH_FREQ, ROAD_NARROW_STATIONS,
+## ROAD_NARROW_FLOOR_FACTOR, ROAD_COIN_LONG_JITTER — were measured, not assumed:
+## they appear outside `coin_road.gd` only in PROSE (two comments in
+## `terrain_features.gd`, one in `terrain_predators.gd`, one in `coin.gd`), so
+## they are family-internal and stay there alone.
+const ROAD_TERMINAL_X := CoinRoad.ROAD_TERMINAL_X
 
 # ----------------------------------------------------------------------------
 # FIELD BRIDGES — the road crosses a river ON something (bead godot-test1-06o.2)
@@ -4392,7 +4354,6 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: 
 	return obstacles
 
 
-
 func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D, tilt: float = 0.0, color_override: Color = Color(0.0, 0.0, 0.0, 0.0), collide: bool = true, kind: int = ChunkBatch.BoxKind.CUBE) -> void:
 	"""
 	THE ONE FORWARDER (bead godot-test1-ftn.1). The box seam itself is
@@ -4749,7 +4710,6 @@ func _landmark_at(chunk_pos: Vector2i) -> Dictionary:
 		"seed": hash(Vector3i(kind, LANDMARK_SALT, run_seed)),
 		"kind": kind,
 	}
-
 
 
 func spawn_landmark_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
@@ -5918,7 +5878,6 @@ func _alt_ground_heightmap(chunk_pos: Vector2i) -> HeightMapShape3D:
 	return shape
 
 
-
 func in_budapest(world_x: float, world_z: float) -> bool:
 	"""
 	Is this world XZ inside the authored Budapest rect?
@@ -6175,464 +6134,77 @@ func _tower_reset() -> void:
 
 
 # ============================================================================
-# COIN ROAD MATH (deterministic, pure-in-k parametric centerline + coin placement)
+# COIN ROAD — twelve one-line forwarders into `CoinRoad` (bd godot-test1-ftn.7)
 # ============================================================================
 #
-# Everything below is a pure function of the station index `k`, ROAD_WORLD_SEED, and
-# the per-run run_seed (constant for the whole run). There is no per-chunk RNG and no
-# per-frame state, so the road is identical for a given `k` no matter which chunk asks
-# for it or in what order — that is what makes the trail seamless across chunk
-# boundaries and reproducible on revisit. Only a new seed changes it, and the
-# memos derived from it are dropped where that seed is WRITTEN — see
-# `_drop_seeded_memos()`.
+# The math itself is `scripts/coin_road.gd` now; read that file's header for why
+# the STATION CACHE above stayed here while the functions left.
+#
+# EVERY ONE OF THESE IS EARNED, and the list is grep-driven rather than guessed
+# — `create_box`'s precedent (ftn.1) and `terrain_biomes`' eleven (ftn.5):
+#
+#   * TWO ARE REACHED BY STRING and no rename-aware tool would find them —
+#     `minimap_hud` guards its road line with
+#     `has_method("_road_first_k_at_or_after_x")` and `has_method("_road_terminal_k")`,
+#     and `minimap_selfcheck` asserts the first of those by name.
+#   * NINE SELF-CHECKS call them on the terrain (budapest, field_bridge,
+#     landmark_sites, altitude, enemy_spawn, wade, minimap, tower_site,
+#     tower_shell), as does `style_shots`.
+#   * `terrain_predators` and `terrain_biomes` — two sibling families — call
+#     `_road_station`, `_road_extend_to_x`, `_road_first_k_at_or_after_x`,
+#     `_road_terminal_k` and `_road_lateral_distance` through the terrain
+#     reference they are already handed. A family reaches a SIBLING family
+#     through the terrain; only calls WITHIN a family go direct.
+#
+# Rewriting those call sites to `CoinRoad.x(terrain, ...)` buys this bead nothing
+# and is the same clean follow-up ftn.5 left behind for its own eleven.
 
 func _road_hash01(k: int) -> float:
-	"""
-	Deterministic pseudo-random float in [0, 1) for station `k`.
+	return CoinRoad._road_hash01(self, k)
 
-	@param k: Station index (may be negative).
-	@return: A stable [0,1) value; same `k` always yields the same result.
-
-	EDUCATIONAL NOTE:
-	- We mix `k` with the fixed ROAD_WORLD_SEED via Godot's hash(), so the road's
-	  randomness is reproducible (no RNG state) yet distinct from the seeds used for
-	  blocks/crocodiles. hash() returns a 32-bit-ish int; we fold it into [0,1) by
-	  masking to a positive range and dividing by that range's size.
-	"""
-	# Three ints in a Vector3i give hash() plenty to mix; run_seed rides along as a
-	# real third input so each run gets its own road shape (constant within a run).
-	var h := hash(Vector3i(k, ROAD_WORLD_SEED, run_seed))
-	# Mask to 24 positive bits and normalise to [0, 1). (Plenty of resolution for an
-	# angle, and avoids sign issues from hash() possibly returning negatives.)
-	return float(h & 0xFFFFFF) / float(0x1000000)
 
 func _road_turn(k: int) -> float:
-	"""
-	Signed per-station turn angle (radians) for station `k`.
+	return CoinRoad._road_turn(self, k)
 
-	@param k: Station index.
-	@return: A deterministic angle in [-road_turn_rate_deg, +road_turn_rate_deg],
-	         expressed in radians; this is the heading "jitter" added at station `k`.
-
-	EDUCATIONAL NOTE:
-	- _road_hash01 gives [0,1); we remap it to [-1,1] and scale by the configured
-	  turn rate. This is the only source of curviness in the path.
-	"""
-	var signed_unit := _road_hash01(k) * 2.0 - 1.0  # [0,1) -> [-1,1)
-	return deg_to_rad(road_turn_rate_deg) * signed_unit
 
 func _road_extend_to_x(x_min: float, x_max: float) -> void:
-	"""
-	Grow the station cache (in BOTH directions, contiguously from station 0) until the
-	cached centerline spans the world X-range [x_min, x_max].
+	CoinRoad._road_extend_to_x(self, x_min, x_max)
 
-	@param x_min: Smallest world X that must be covered by a cached station.
-	@param x_max: Largest world X that must be covered by a cached station.
-
-	EDUCATIONAL NOTE — the heading-integrated recurrence (the heart of the road):
-	  heading[k+1] = clamp( heading[k]*(1-ROAD_RESTORE) + turn_noise(k), -CAP, +CAP )
-	  center[k+1]  = center[k] + _road_spacing() * Vector2(cos heading[k], sin heading[k])
-	The backward step (k-1) MIRRORS this exactly so the cache stays a single pure
-	function of `k`: from station k we know heading[k-1] is whatever produced heading[k]
-	via the forward rule, but rather than invert the clamp we simply recompute the
-	backward heading with the same recurrence using turn_noise(k-1) and the heading we
-	are stepping FROM. Concretely, to add station (k-1) we treat (k-1) as the "current"
-	station and station k as its "next": heading[k-1] is derived so that stepping it
-	forward lands at center[k], and center[k-1] is found by stepping BACKWARD from
-	center[k] along heading[k-1]. (See the symmetric construction below.)
-
-	Because |heading| < 90° (asserted), cos(heading) > 0 always, so each forward step
-	strictly INCREASES X and each backward step strictly DECREASES it. That monotonicity
-	is what makes "extend until we span this X-range" terminate and gives every chunk a
-	bounded, contiguous range of stations.
-	"""
-	# Safety: the whole monotonic-X guarantee depends on the heading staying under 90°.
-	# road_max_heading_deg is an @export, so a designer could set it >= 90 — and an
-	# assert is STRIPPED in release builds, so it can't be our only guard. If the cap
-	# were >= 90, cos(heading) could reach 0 or go negative and the "extend until X
-	# reaches the target" while-loops below would stop advancing in X and HANG (or run
-	# the road backward). We therefore use a CLAMPED effective cap everywhere in here;
-	# the assert stays as a loud editor-time warning, but the clamp is what actually
-	# keeps release builds safe. _road_max_heading() returns the same clamped value so
-	# every road helper agrees on the cap.
-	assert(road_max_heading_deg < 90.0,
-		"road_max_heading_deg must be < 90 so the centerline's X stays strictly increasing")
-	# The same termination depends on the STEP distance being strictly positive: a zero or
-	# negative road_coin_spacing freezes/reverses X so the while-loops below never reach
-	# their target and HANG. Loud editor-time hint; _road_spacing() is the release-safe guard.
-	assert(road_coin_spacing > 0.0,
-		"road_coin_spacing must be > 0 so each station strictly advances the centerline's X")
-
-	var max_heading := _road_max_heading()
-	# Clamped effective step distance — strictly positive, so X always advances and the
-	# extend loops below terminate. At the default 6.0 this is inert (returns 6.0).
-	var spacing := _road_spacing()
-
-	# First-time seeding: station 0 at world origin, heading along +X (0 rad).
-	if road_k_min > road_k_max:
-		road_stations = { 0: { "center": Vector2(0.0, 0.0), "heading": 0.0 } }
-		road_k_min = 0
-		road_k_max = 0
-
-	# Grow FORWARD (increasing k) until the last cached station's X reaches x_max.
-	# We append station (k+1) computed from station k's center+heading.
-	while _road_station(road_k_max).center.x < x_max:
-		var cur: Dictionary = _road_station(road_k_max)
-		var cur_heading: float = cur.heading
-		# New center: step the (clamped) spacing along the CURRENT heading.
-		var next_center: Vector2 = cur.center + spacing * Vector2(cos(cur_heading), sin(cur_heading))
-		# New heading for the NEXT step: restore toward +X, add this station's turn, clamp.
-		var next_heading: float = clampf(
-			cur_heading * (1.0 - ROAD_RESTORE) + _road_turn(road_k_max),
-			-max_heading, max_heading)
-		# O(1) Dictionary insert keyed by the new station index (no array-shift).
-		road_stations[road_k_max + 1] = { "center": next_center, "heading": next_heading }
-		road_k_max += 1
-
-	# Grow BACKWARD (decreasing k) until the first cached station's X reaches x_min.
-	# To prepend station (k-1) we need heading[k-1] and center[k-1] such that stepping
-	# station (k-1) FORWARD reproduces station k. We mirror the forward rule:
-	#   - heading[k-1] is the heading that, after restore+turn(k-1)+clamp, yields
-	#     heading[k]. Inverting the clamp+restore exactly is not generally possible, so
-	#     we instead define the backward heading directly with the SAME recurrence shape
-	#     using turn_noise(k-1), which keeps the cache a deterministic function of k.
-	#   - center[k-1] = center[k] - _road_spacing() * dir(heading[k-1]).
-	while _road_station(road_k_min).center.x > x_min:
-		var first: Dictionary = _road_station(road_k_min)
-		var first_heading: float = first.heading
-		# Reconstruct the heading at (k-1). Forward rule from (k-1) to (k) is:
-		#   heading[k] = clamp(heading[k-1]*(1-RESTORE) + turn(k-1), ...)
-		# Solve for heading[k-1] (un-clamped form, which is exact whenever heading[k]
-		# is off the cap — and on the cap the road is straightened anyway, so the small
-		# discrepancy is invisible and, crucially, still fully deterministic in k):
-		var prev_heading: float = clampf(
-			(first_heading - _road_turn(road_k_min - 1)) / (1.0 - ROAD_RESTORE),
-			-max_heading, max_heading)
-		# Step BACKWARD from the first cached center along the reconstructed heading
-		# (same clamped, strictly-positive spacing as the forward step).
-		var prev_center: Vector2 = first.center - spacing * Vector2(cos(prev_heading), sin(prev_heading))
-		# O(1) Dictionary insert keyed by (k-1) — this is the whole reason the cache is a
-		# Dictionary and not an Array: an Array would need push_front here (O(n) shift).
-		road_stations[road_k_min - 1] = { "center": prev_center, "heading": prev_heading }
-		road_k_min -= 1
 
 func _road_max_heading() -> float:
-	"""
-	The EFFECTIVE heading cap in radians: road_max_heading_deg clamped to [0, 89°].
+	return CoinRoad._road_max_heading(self)
 
-	@return: deg_to_rad(clamp(road_max_heading_deg, 0, 89)).
-
-	EDUCATIONAL NOTE:
-	- road_max_heading_deg is an @export a designer can set to anything. The road's
-	  monotonic-X guarantee (and thus loop termination in _road_extend_to_x) requires
-	  the cap to stay strictly under 90°. Asserts are stripped from release builds, so
-	  we ALSO clamp at read time here — every road helper routes its cap through this so
-	  a misconfigured export can never make the centerline stall or run backward.
-	"""
-	return deg_to_rad(clampf(road_max_heading_deg, 0.0, 89.0))
 
 func _road_spacing() -> float:
-	"""
-	The EFFECTIVE per-station step distance (world metres): road_coin_spacing clamped
-	to a small positive minimum.
+	return CoinRoad._road_spacing(self)
 
-	@return: maxf(road_coin_spacing, 0.1).
-
-	EDUCATIONAL NOTE:
-	- road_coin_spacing is an @export a designer can set to anything, but it is the STEP
-	  magnitude in the recurrence (center advances by spacing * (cos heading, sin heading)
-	  each station). The "extend until the centerline spans this X-range" while-loops in
-	  _road_extend_to_x only terminate while X keeps strictly advancing — which requires
-	  the step to be strictly POSITIVE. A spacing of 0 freezes X (loop never reaches its
-	  target → editor/game HANG); a negative spacing runs X backward (same hang). Asserts
-	  are stripped from release builds, so — exactly like _road_max_heading() — we ALSO
-	  clamp at read time here and route EVERY road step through this. At the default 6.0
-	  the clamp is inert (returns 6.0), so coin positions are unchanged.
-	"""
-	return maxf(road_coin_spacing, 0.1)
 
 func _road_station(k: int) -> Dictionary:
-	"""
-	Return the cached station Dictionary { center: Vector2, heading: float } for index
-	`k`. ASSUMES `k` is within [road_k_min, road_k_max] (callers extend the cache
-	first). The cache is a Dictionary keyed directly by `k`, so this is an O(1) lookup.
-	"""
-	return road_stations[k]
+	return CoinRoad._road_station(self, k)
+
 
 func _road_first_k_at_or_after_x(x: float) -> int:
-	"""
-	Return the smallest cached station index `k` whose centerline X is >= `x`, by binary
-	search over [road_k_min, road_k_max]. If every cached station is left of `x`, returns
-	road_k_max + 1 (an empty window).
+	return CoinRoad._road_first_k_at_or_after_x(self, x)
 
-	@param x: World X to search for.
-	@return: First station index with center.x >= x (clamped to the cached range).
-
-	EDUCATIONAL NOTE:
-	- ASSUMES the cache already spans `x` (callers _road_extend_to_x first) and relies on
-	  the road's centerline X being STRICTLY INCREASING in `k` (guaranteed by the < 90°
-	  heading cap) — that monotonicity is exactly what makes a binary search valid. This
-	  lets a chunk jump straight to its station window in O(log cache) instead of scanning
-	  every cached station from road_k_min (which would be O(cache size) = O(distance from
-	  origin) on every chunk load).
-	"""
-	var lo := road_k_min
-	var hi := road_k_max
-	# Standard lower-bound binary search: narrow toward the first index satisfying
-	# center.x >= x. `lo` ends one past the last station strictly left of x.
-	while lo <= hi:
-		var mid := lo + (hi - lo) / 2  # integer division → floor of the midpoint
-		if _road_station(mid).center.x < x:
-			lo = mid + 1
-		else:
-			hi = mid - 1
-	return lo
 
 func _road_terminal_k() -> int:
-	"""
-	The LAST station of the coin road: the largest `k` whose centreline X is at or
-	west of ROAD_TERMINAL_X. Every road CONSUMER stops here (bead godot-test1-8gw.3).
+	return CoinRoad._road_terminal_k(self)
 
-	@return: The terminal station index. Memoized for the run in
-	         `_road_terminal_k_cache`, which `set_run_seed()` drops beside the
-	         station cache it is derived from (`_drop_seeded_memos()`).
-
-	WHY THE CAP IS ON THE CONSUMERS AND NOT ON _road_extend_to_x.
-	It would be tempting to simply stop growing the cache past the terminal. That
-	HANGS the game. _road_extend_to_x's forward loop runs `while` the cached X has
-	not yet reached the requested x_max — a cache that refuses to grow past T never
-	reaches any x_max east of T and spins forever. And all three binary-search
-	callers (_road_first_k_at_or_after_x's own contract, the coin scan and the boss
-	scan) ASSUME the cache spans whatever X they asked for; a short cache silently
-	answers them with the terminal station for every chunk in the city. So the
-	centreline cache stays infinite and honest — it is the five things that READ it
-	(road coins, road clearance, road bosses, the minimap line, and the
-	FIELD_ALTITUDE spike's flat corridor `_alt_road_segments`) that stop at T.
-
-	The definition is the one the machinery already provides: extend so the cache
-	covers T, binary-search the first station at or after T, and step back one. The
-	road's X is strictly increasing in `k`, so that is exactly "the last station at
-	or west of T" and there is no edge case in between.
-	"""
-	if _road_terminal_k_cache != ROAD_TERMINAL_K_UNSET:
-		return _road_terminal_k_cache
-	_road_extend_to_x(ROAD_TERMINAL_X, ROAD_TERMINAL_X)
-	_road_terminal_k_cache = _road_first_k_at_or_after_x(ROAD_TERMINAL_X) - 1
-	return _road_terminal_k_cache
 
 func _road_width(k: int) -> float:
-	"""
-	Smoothly-varying coin BAND width (metres) at station `k`, oscillating between
-	road_width_min and road_width_max.
+	return CoinRoad._road_width(self, k)
 
-	@param k: Station index.
-	@return: Width in [road_width_min * ROAD_NARROW_FLOOR_FACTOR, road_width_max]
-	         (the upper reaches only near the origin; distance narrows the range).
-
-	EDUCATIONAL NOTE:
-	- A low-frequency cosine of `k` gives a slow, smooth swell/narrowing of the band
-	  (no per-station jumps), so the coin swath visibly breathes wide and narrow as you
-	  travel. We remap cos()'s [-1,1] to [0,1] then lerp between the bounds.
-	- Difficulty gradient: the whole band then narrows with distance, lerping toward
-	  road_width_min * ROAD_NARROW_FLOOR_FACTOR over the first ROAD_NARROW_STATIONS
-	  stations. Still a pure function of `k`, so determinism within a run holds. The
-	  seam-scan `pad` in spawn_coins_in_chunk stays a safe upper bound: narrowing only
-	  ever SHRINKS the band below maxf(road_width_min, road_width_max).
-	"""
-	var t := (cos(float(k) * ROAD_WIDTH_FREQ) + 1.0) * 0.5  # smooth [0,1], period ~78 stations
-	var width := lerpf(road_width_min, road_width_max, t)
-	var narrow_t := clampf(float(absi(k)) / float(ROAD_NARROW_STATIONS), 0.0, 1.0)
-	return lerpf(width, road_width_min * ROAD_NARROW_FLOOR_FACTOR, narrow_t)
 
 func _road_coins_at(k: int) -> Array:
-	"""
-	Deterministic list of world-space coin positions SCATTERED across the road band at
-	station `k`. Replaces the old one-coin-on-a-smooth-weave model: instead of a single
-	coin on a tidy line, each station drops a few coins at RANDOM lateral offsets within
-	±band/2 of the centerline (plus a little along-road jitter), so the road reads as a
-	loose swath of territory a few coins wide rather than an obvious conga-line.
+	return CoinRoad._road_coins_at(self, k)
 
-	@param k: Station index (the cache MUST already cover it — callers extend first).
-	@return: Array of { "pos": Vector3, "gem": bool } dictionaries "owned" by station
-	         `k` — `pos` is the world-space coin position, `gem` marks the rare purple
-	         gem variant (ROAD_GEM_CHANCE). May be EMPTY when the per-coin spawn rolls
-	         come up short — that is exactly what keeps the trail sparse and irregular.
-	         Three slots in ten are then dropped outright by the 30% thinning at the
-	         bottom of the loop; see there for why that lives here and not on the
-	         station spacing.
-
-	EDUCATIONAL NOTE — why this stays deterministic & seam-correct:
-	- The scatter RNG is seeded ONLY from `k` (+ ROAD_COIN_SEED + the run-constant
-	  run_seed), so a station's coins are
-	  identical no matter which chunk computes them or in what order — the property the
-	  seam bucketing in spawn_coins_in_chunk relies on. Each coin is still assigned to
-	  whichever chunk its FINAL position lands in, so there are no gaps or duplicates.
-	- A coin's offset from the centerline is bounded by band/2 (lateral) plus
-	  ROAD_COIN_LONG_JITTER*spacing (along-road); spawn_coins_in_chunk's `pad` is derived
-	  from exactly that bound so the scan window can never miss a scattered coin at a seam.
-	"""
-	# CAP 1 OF 5 — the road's coins stop at the terminal station (bead
-	# godot-test1-8gw.3). Past T the coin line is the city's authored approach
-	# corridor instead (spawn_approach_coins_in_chunk), so a road coin here would
-	# be a second, wandering trail crossing the avenue.
-	#
-	# The cap is on this CONSUMER and not on _road_extend_to_x because that
-	# function's forward loop only terminates while the cached X keeps advancing
-	# toward the requested x_max — refusing to grow past T hangs it outright, and
-	# its three binary-search callers all assume the cache spans any X. Skipping a
-	# station perturbs no other station: every station's scatter RNG is seeded from
-	# `k` alone, so there is no shared stream here to keep in step.
-	if k > _road_terminal_k():
-		return []
-
-	var st: Dictionary = _road_station(k)
-	var center: Vector2 = st.center
-	var heading: float = st.heading
-	# Unit vectors ALONG (tangent) and PERPENDICULAR (left-hand normal) to the heading,
-	# in the XZ plane. Vector2.x -> world X, Vector2.y -> world Z.
-	var tangent := Vector2(cos(heading), sin(heading))
-	var perp := Vector2(-sin(heading), cos(heading))
-	var half_band := _road_width(k) * 0.5
-
-	# Per-station RNG seeded purely from `k` (+ a coin-specific seed + this run's seed):
-	# deterministic and load-order independent within a run. The draw order below is
-	# fixed, so the coin set is stable; new_run() re-rolls run_seed for a fresh scatter.
-	var rng := RandomNumberGenerator.new()
-	rng.seed = hash(Vector3i(k, ROAD_COIN_SEED, run_seed))
-
-	var coins: Array = []
-	for slot in road_coin_slots:
-		# Rolling each slot (rather than always placing a coin) is what makes the swath
-		# sparse and irregular instead of a regular grid. A skipped slot still consumes
-		# one draw, so the RNG sequence — and thus every later coin — stays deterministic.
-		if rng.randf() >= road_coin_chance:
-			continue
-		var lat := rng.randf_range(-1.0, 1.0) * half_band                               # across the band
-		var lon := rng.randf_range(-1.0, 1.0) * ROAD_COIN_LONG_JITTER * _road_spacing()  # along the road
-		var p := center + perp * lat + tangent * lon
-		# One extra draw AFTER the position: is this coin a rare gem? The draw order
-		# (chance, lat, lon, gem) is fixed, so the whole station stays deterministic.
-		var gem := rng.randf() < ROAD_GEM_CHANCE
-		# THE 30% THINNING (owner, 2026-09-02, bead godot-test1-7ed: "scale down
-		# amount of coins, 30% less"), and it is here rather than on
-		# road_coin_spacing DELIBERATELY. That export is the road's STATION STEP,
-		# not a coin gap: _road_extend_to_x integrates the centerline by it, so
-		# widening it to 8.6 would move every station, every boss (which owns every
-		# BOSS_INTERVAL_STATIONS-th one), and the terminal station the city's
-		# approach corridor hangs off. So the SPACING IS UNTOUCHED and the coin is
-		# thinned PER STATION instead.
-		#
-		# A POST-DRAW SKIP, exactly like the river/spawn-bubble rejections in
-		# spawn_crocodiles_in_chunk: all four of this slot's draws are already spent
-		# above, and the test itself is a pure function of (k, slot) that costs the
-		# stream nothing. The surviving coins therefore sit byte-for-byte where they
-		# always sat — this drops 3 of every 10 slots, it does not re-scatter the
-		# road. posmod because stations west of the origin have negative k.
-		#
-		# Interleaving on (k * slots + slot) rather than on `slot` alone is what
-		# keeps the pattern from landing on the same slot index every station (which
-		# at road_coin_slots == 3 would thin one third of the band's WIDTH instead of
-		# one third of its coins): over any 10 consecutive stations the residues 0..29
-		# are hit once each, so exactly 9 of 30 slots go.
-		if posmod(k * road_coin_slots + slot, 10) < 3:
-			continue
-		coins.append({ "pos": Vector3(p.x, COIN_GROUND_HEIGHT, p.y), "gem": gem })
-	return coins
 
 func _road_lateral_distance(world_x: float, world_z: float, clearance: float) -> float:
-	"""
-	Minimum distance (world metres, XZ plane) from the point (world_x, world_z)
-	to any road centerline station near it. Used by artifact placement to keep
-	landmarks off the coin road (see ARTIFACT_ROAD_CLEARANCE) and by biome
-	geometry to keep the coin swath clear (see _biome_spot_ok).
+	return CoinRoad._road_lateral_distance(self, world_x, world_z, clearance)
 
-	@param world_x, world_z: World-space point to test.
-	@param clearance: The distance the caller is about to compare against. Only
-	                  used to size the scan window — pass the SAME value you test
-	                  with, or the answer may be capped short of it. Deliberately
-	                  has NO default: a default is exactly the footgun this
-	                  parameter exists to close.
-	@return: Distance to the nearest scanned station centre, or INF when no
-	         station falls in the scan window (the point is far off-road in X —
-	         "very far from the road" and "no road here" both mean "clear").
 
-	EDUCATIONAL NOTE:
-	- We only need to know whether the point is WITHIN `clearance` of the
-	  centerline, so scanning the stations inside a padded X-window around the
-	  point suffices: any station outside that window is already further away in X
-	  alone than the clearance we test against. The pad adds two station spacings
-	  so the sampled polyline can't cut a corner past the window edge. Deriving the
-	  pad from the caller's own clearance is what keeps that guarantee true for
-	  every caller — an earlier version hardcoded ARTIFACT_ROAD_CLEARANCE, which
-	  left MOUNTAIN_ROAD_CLEARANCE (24) a hair under the honest-answer bound.
-	- Same manual-counter scan as spawn_coins_in_chunk — NOT `for k in range(...)`,
-	  which would eagerly materialise an O(total cached suffix) int Array per call
-	  just to visit a handful of stations (see the allocation note there).
-	- Reads only the station cache (pure in `k`), so the answer for a given point
-	  is deterministic and load-order independent.
-	"""
-	var pad := clearance + _road_spacing() * 2.0
-	_road_extend_to_x(world_x - pad, world_x + pad)
-
-	var best := INF
-	var k := _road_first_k_at_or_after_x(world_x - pad)
-	# CAP 2 OF 5 — the road's CLEARANCE stops at the terminal station too (bead
-	# godot-test1-8gw.3): east of T there is no road, so nothing out there should be
-	# shoved aside to keep a coin swath clear that does not exist. Past T the scan
-	# window is empty and this returns INF, which every caller already reads as
-	# "nowhere near the road" — the same answer it has always given for a point far
-	# off-road in X, so no caller needed an edit. The ONE stretch that still wants a
-	# clear swath is the approach corridor, added back below the loop.
-	#
-	# The cap is on this CONSUMER and not on _road_extend_to_x: that function's
-	# forward loop hangs if the cache stops growing (see _road_terminal_k), and the
-	# _road_extend_to_x call above is what makes the binary search below valid.
-	var k_last := mini(road_k_max, _road_terminal_k())
-	while k <= k_last:
-		var st: Dictionary = _road_station(k)
-		k += 1
-		if st.center.x > world_x + pad:
-			break  # past the window — X only grows from here, so stop
-		var d := Vector2(world_x, world_z).distance_to(st.center)
-		if d < best:
-			best = d
-	# CAP 2's ONE SEAM — between the terminal station and the gate the APPROACH
-	# CORRIDOR carries the trail (spawn_approach_coins_in_chunk), so it inherits the
-	# clearance the road used to give this stretch. Drop it and a massif, a forest,
-	# a camp or a geo landmark can be generated straight across the walk into
-	# Budapest: massifs are climbable: false, so _settle_coin_y skips every coin
-	# behind one and the line into the city dead-ends against a wall. East of the
-	# gate there is nothing to keep clear — in_budapest() has already turned every
-	# one of those spawners off inside the rect.
-	#
-	# Asked as a distance to the corridor as a CURVE — BudapestPlan.road_approach_distance,
-	# the same pure geometry the coin line rides, so the swath and the coins stay
-	# on one centreline with no second copy of the corridor here. NOT the corridor
-	# point at this candidate's own X: the road's Z at the terminal is seeded and
-	# the smoothstep can be far steeper than 45 degrees, on which a same-X reading
-	# overstates the distance by sqrt(1 + slope^2) and waves a massif through at a
-	# few metres (see that function).
-	# The window is the corridor's own X span WIDENED BY THE CLEARANCE, because the
-	# nearest point of a curve is not at the candidate's X: a candidate `clearance`
-	# metres west of the terminal can still be inside the swath, and one further
-	# west than that cannot be (the corridor's X never goes below the terminal's).
-	if world_x > ROAD_TERMINAL_X - clearance and world_x < BudapestPlan.GATE.x + clearance:
-		var terminal: Vector2 = _road_station(_road_terminal_k()).center
-		# THE Z REJECT IS NOT AN OPTIMIZATION FOR ITS OWN SAKE. road_approach_distance
-		# walks ~150 polyline segments, and this runs once per PLACEMENT CANDIDATE —
-		# _spawn_forest_content alone tries up to FOREST_TREES_MAX per chunk — on the
-		# handful of chunk columns either side of T, which are exactly the frames the
-		# player is walking into Budapest on. The corridor's Z never leaves
-		# [min(terminal.z, GATE.z), max(...)], so a point outside that span grown by
-		# `clearance` is provably further than `clearance` away and skipping it can
-		# only leave `best` capped short of the clearance — which this function's
-		# contract above already says may happen, and which its one caller
-		# (_biome_spot_ok, comparing `< clearance`) cannot tell apart.
-		var lo := minf(terminal.y, BudapestPlan.GATE.z) - clearance
-		var hi := maxf(terminal.y, BudapestPlan.GATE.z) + clearance
-		if world_z > lo and world_z < hi:
-			best = minf(best, BudapestPlan.road_approach_distance(terminal, Vector2(world_x, world_z)))
-	return best
+func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
+	CoinRoad.spawn_coins_in_chunk(self, chunk_pos, parent_chunk, obstacles)
 
 # ============================================================================
 # SECTION — FIELD BRIDGES (bead godot-test1-06o.2)
@@ -7779,156 +7351,6 @@ func spawn_field_bridges_in_chunk(chunk_pos: Vector2i, block_batch: Array,
 						atan2(b_dir.x, b_dir.y), rng, block_batch, block_body,
 						0.0, FIELD_BRIDGE_PYLON_STONE, false)
 
-
-func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
-	"""
-	Lay this chunk's slice of the COIN ROAD — the single continuous, deterministic
-	trail that carries every coin in the world (see the COIN ROAD math section above
-	and the COIN ROAD CONFIGURATION section near the top).
-
-	The road centerline is a pure, deterministic function of the integer station index
-	`k`. Each station then SCATTERS a few coins at random offsets within a band around
-	the centerline (see _road_coins_at), so the trail reads as a loose swath of territory
-	a few coins wide — not a single line — while still being a clear "go this way" route.
-	Off-road areas get NO coins. Everything is seeded only from `k` (+ the road seeds), so
-	it regenerates byte-identically and is seam-correct.
-
-	@param chunk_pos: Chunk coordinates this body is generating coins for.
-	@param parent_chunk: The chunk mesh the coins attach to (it sits at the chunk
-	                     center, so we store coin positions chunk-LOCAL — relative to
-	                     that center — exactly like blocks/crocodiles).
-	@param obstacles: Block footprints (with their top heights) from
-	                  spawn_objects_in_chunk, used to perch a road coin on a climbable
-	                  block (or skip it) when the road runs through a block footprint.
-
-	EDUCATIONAL NOTE — why this is seam-correct (no gaps, no duplicates):
-	- The road is global and station-indexed, but each chunk generates independently.
-	  A station whose coin lands exactly on a chunk seam must be spawned by EXACTLY
-	  one chunk. We guarantee that by bucketing each coin to the chunk its FINAL world
-	  position falls in: `world_to_chunk(coin_world) == chunk_pos`. Every other chunk
-	  that scans the same station skips it, so it is spawned once and only once.
-	- Because |heading| < 90° keeps the centerline's world X strictly increasing in
-	  `k`, a chunk's X-range maps to a CONTIGUOUS range of stations. We extend the
-	  shared station cache to span this chunk's (widened) X-range, then scan it.
-	- Off-road is empty: only stations whose coin actually lands inside this chunk
-	  spawn anything, so far-from-road chunks spawn zero coins.
-	"""
-	if not spawn_coins or coin_scene == null:
-		return
-
-	# This chunk's world center and its world X-range. We pad the range because a
-	# station's CENTERLINE can sit just outside the chunk while one of its scattered coins
-	# falls back inside it — widening the scanned X-range makes sure we never miss such a
-	# coin (a missed coin = a permanent gap, since no other chunk would scan that station).
-	#
-	# SEAM-CORRECTNESS INVARIANT: pad MUST be >= the largest amount a scattered coin's WORLD
-	# X can differ from its station's centerline X. A coin is offset up to band/2
-	# PERPENDICULAR to the heading and up to ROAD_COIN_LONG_JITTER*spacing ALONG it. The X
-	# projections of those (sin·lat and cos·lon) are each bounded by their magnitude, so the
-	# worst-case X excursion is band/2 + ROAD_COIN_LONG_JITTER*spacing. The band's largest
-	# value is maxf(road_width_min, road_width_max) — NOT bare road_width_max — so a designer
-	# swapping the bounds (min > max) still can't under-pad. We DERIVE pad from exactly that
-	# geometry (plus a small margin) so the invariant survives retuning of width OR spacing.
-	var center := chunk_to_world(chunk_pos)
-	var half_chunk := chunk_size / 2.0
-	var x0 := center.x - half_chunk
-	var x1 := center.x + half_chunk
-	var pad := maxf(road_width_min, road_width_max) * 0.5 + ROAD_COIN_LONG_JITTER * _road_spacing() + 2.0
-
-	# Grow the shared station cache so it covers this chunk's widened X-range. The
-	# cache is a pure function of `k`, so this is idempotent across chunks and load
-	# order doesn't matter — it just grows contiguously and is reused.
-	_road_extend_to_x(x0 - pad, x1 + pad)
-
-	# Find the FIRST station whose centerline X is >= the window start by binary search.
-	# Because X is strictly increasing in `k`, the window of stations covering this chunk
-	# is a contiguous range, and we can jump straight to its start instead of scanning
-	# the whole cache from road_k_min (which would be O(total cache) = O(distance from
-	# origin) every chunk load — a latent web-perf regression). The loop over the window
-	# then touches only O(window) stations, independent of how far the road has grown.
-	#
-	# WHY a `while` (NOT `for k in range(k_start, road_k_max + 1)`): in GDScript `range(a, b)`
-	# eagerly MATERIALISES a full Array of every int in [a, b) before the loop body runs.
-	# Even though we `break` the instant a station's X passes the window, that array is
-	# already allocated at size O(road_k_max - k_start) = O(total cached suffix). After the
-	# player runs far in +X (road_k_max large) then backtracks/respawns to an early chunk
-	# (small k_start), every one of up to ~121 chunk loads per boundary crossing would alloc
-	# a huge int array just to visit a handful of stations — defeating the O(window) intent
-	# and churning memory. A manual counter allocates nothing, so the early break makes the
-	# scan truly O(window) in BOTH iteration AND allocation. Same stations, same order →
-	# byte-identical coins.
-	# THIS CHUNK'S FIELD BRIDGES, looked up ONCE for the whole coin scan rather
-	# than per coin (bead godot-test1-06o.2). A coin that lands on a deck rides
-	# the deck; every other coin takes the ground rule below, untouched.
-	var bridges: Array = field_bridges_near(x0 - pad, x1 + pad) if spawn_field_bridges else []
-
-	var k_start := _road_first_k_at_or_after_x(x0 - pad)
-	# We index stations with the captured `cur_k` and advance the cursor `k` once at the
-	# TOP of every iteration (before any `continue`), so both early-skip paths below still
-	# move forward — a `while` has no implicit step, so a `continue` past an unincremented
-	# counter would spin forever. The `break` (window exhausted) exits outright, no step
-	# needed. Iteration order over k is identical to the old `for k in range(...)`.
-	var k := k_start
-	while k <= road_k_max:
-		var cur_k := k
-		k += 1
-		var st: Dictionary = _road_station(cur_k)
-		var cx: float = st.center.x
-		if cx > x1 + pad:
-			break  # past this chunk's window — and X only grows from here, so stop
-
-		# This station scatters a handful of coins across the band; place each one that
-		# actually lands inside THIS chunk. Each entry is { "pos": Vector3, "gem": bool }.
-		for cw in _road_coins_at(cur_k):
-			var cw_pos: Vector3 = cw.pos
-			# Bucket by final chunk: spawn this coin only from the chunk it actually lands
-			# in. This is what makes seams gap-free and duplicate-free.
-			if world_to_chunk(cw_pos) != chunk_pos:
-				continue
-
-			# Convert to chunk-LOCAL (relative to the chunk center, like every other
-			# chunk-parented node), so the coin sits at the right world spot.
-			var local := Vector3(cw_pos.x - center.x, cw_pos.y, cw_pos.z - center.z)
-
-			# Perch-or-skip against the chunk's block footprints. The rule lives in
-			# _settle_coin_y (ONE home, shared with artifact reward coins so the two
-			# spawners can never drift apart); INF means "skip this coin".
-			local.y = _settle_coin_y(local.x, local.z, local.y, obstacles)
-			if is_inf(local.y):
-				continue
-
-			# ...and against THE TOWER, which is authored geometry and therefore in
-			# no chunk's `obstacles` list for _settle_coin_y to have seen. Same
-			# post-draw `continue`, same rule (a coin inside stone is dropped, not
-			# moved) — see tower_blocks_coin for why the road is filtered here
-			# rather than excluded wholesale.
-			if tower_blocks_coin(cw_pos.x, local.y, cw_pos.z):
-				continue
-
-			# ...and LAST, the field bridge: a coin standing over a deck rides the
-			# deck instead of the river bed under it (bead godot-test1-06o.2), at
-			# the ramp's own height where the deck is climbing. The city's deck
-			# line is the precedent (_place_city_coin) and this is its one
-			# difference: `_settle_coin_y` still ran, ABOVE. There it is skipped
-			# because the perch rule is about the ground under a column and a
-			# 12 m deck has none — here a road boss stands ON the crossing (a
-			# river station dispatches the crocodile), and its footprint is the
-			# one thing under a deck that must still refuse a coin outright.
-			# enemy_spawn_selfcheck check 14 is what that ordering keeps green.
-			for row_v: Variant in bridges:
-				var deck_y := _field_bridge_surface_on(row_v, cw_pos)
-				if deck_y > -INF:
-					local.y = deck_y + COIN_GROUND_HEIGHT
-					break
-
-			# Spawn the coin (position is local to the chunk, like blocks/crocodiles).
-			# A gem entry is upgraded BEFORE entering the tree (make_gem recolours a
-			# duplicated material and scales the whole pickup — see coin.gd).
-			var coin := coin_scene.instantiate()
-			coin.position = local
-			if cw.gem:
-				coin.make_gem()
-			parent_chunk.add_child(coin)
 
 # ============================================================================
 # SECTION — BUDAPEST, STREAMED THROUGH ORDINARY CHUNKS
