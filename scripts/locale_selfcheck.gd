@@ -119,6 +119,10 @@ const WIDTH_BUDGETS: Array = [
 	["Mic muted", 18, 320.0, "MP panel mic mute"],
 	["Deafen", 18, 320.0, "MP panel deafen"],
 	["Deafened", 18, 320.0, "MP panel deafen"],
+	# The volume readout is a FORMAT string, measured raw like the minimap's
+	# countdowns above: "%d" stands in for at most three digits, and the label
+	# autowraps in a container that grows, so the budget is the panel's own width.
+	["Voice volume: %d%%", 18, 320.0, "MP panel voice volume"],
 	["Camera off", 18, 320.0, "MP panel camera toggle"],
 	["Camera on", 18, 320.0, "MP panel camera toggle"],
 	["Camera blocked", 18, 320.0, "MP panel camera toggle"],
