@@ -1490,7 +1490,7 @@ func _physics_process(delta: float) -> void:
 	# velocity is cancelled (walk into the channel and you simply stop, the way you
 	# stop against a massif), and only then is a drift added — so a body that
 	# started inside one, teleported or spawned, is carried back out at
-	# RIVER_DEEP_PUSH_SPEED instead of being flung. Applied AFTER step 8 wrote this
+	# DEEP_CHANNEL_PUSH_SPEED instead of being flung. Applied AFTER step 8 wrote this
 	# frame's velocity and BEFORE move_and_slide, or the input would win.
 	if is_wading:
 		var deep_push := _terrain_deep_push_here()
