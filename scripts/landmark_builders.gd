@@ -959,11 +959,13 @@ static func _landmark_stonehenge(terrain: Node3D, center: Vector3, rng: RandomNu
 	THE STANDING STONES ARE CYLINDERS, THE LINTELS STAY CUBES (bead
 	godot-test1-y1o.17). A menhir is a weathered pillar and a sarsen upright reads
 	as one; a lintel is a DRESSED beam laid flat across two of them, and a round
-	lintel is a log. Both uprights and bluestones are near-square in plan
-	(1.0 x 1.0 and 1.0 x 0.7), so both stay well inside
-	ChunkBatch.ROUND_COLLIDER_MAX_ASPECT and collide as the CylinderShape3D they
-	draw — which matters here more than anywhere else in the registry, because
-	these are the one landmark whose stones you walk between at head height.
+	lintel is a log. Both collide as the CylinderShape3D they draw — which matters
+	here more than anywhere else in the registry, because these are the one
+	landmark whose stones you walk between at head height. The upright is 1.00 in
+	plan; the BLUESTONE is 1.0 x 0.7, i.e. **1.43 against the 1.6 gate**, the
+	second-tightest colliding round box in this file after the Taj's dome — thin
+	it and it silently goes back to being a box, so widen the 0.7 rather than
+	narrowing it if this stone is ever retuned.
 	"""
 	const RING_R := 5.6
 	const TRILITHONS := 5
@@ -2178,12 +2180,18 @@ static func _landmark_sydney_opera(terrain: Node3D, center: Vector3, rng: Random
 	but a SPHERE tapers to nothing at the box's FLOOR, and the shells stand on a
 	1.1 m podium a player can walk onto, so a lens-shaped sail would put a 3.4 m
 	wide invisible wall around a needle at foot height. A CYLINDER fills its box
-	top to bottom, so the only mismatch left is the four plan corners of each
-	slab, and the sail is round where you see it edge on. It is past
-	ChunkBatch.ROUND_COLLIDER_MAX_ASPECT in plan (4.0), so the collider is the
-	same BoxShape3D these slabs have always had — nothing about walking into the
-	Opera House changed. Making the FRONT silhouette a curve means splitting a
-	shell into more pieces, which is boxes and its own bead.
+	top to bottom, so there is no foot-height hole at all — every height of the
+	box is filled to the inscribed ellipse — and the sail is round where you see
+	it edge on. It is past ChunkBatch.ROUND_COLLIDER_MAX_ASPECT in plan (4.0), so
+	the collider is the same BoxShape3D these slabs have always had and nothing
+	about walking into the Opera House changed. **What it costs is named
+	honestly**: the ellipse leaves the box everywhere but its four tangent
+	points, worst along the long face — on the widest slab (3.4 x 0.85) the
+	drawn surface at x = +/-1.5 is 0.20 m off the axis while the collider's face
+	is still at 0.425, and the gap at a box corner is about 0.51 m. That is
+	invisible stone along the outer third of each long face, on a podium a player
+	can walk onto, and it is the price of a round sail until a shell is drawn as
+	more than one piece — which is boxes and its own bead.
 
 	RADIUS ARITHMETIC (declared 8.2). The podium is the widest box, 14.0 x 6.0, so
 	0.5*sqrt(14.0^2 + 6.0^2) = 7.62. The furthest shell slab is the small group's
@@ -2564,8 +2572,13 @@ static func _landmark_pont_du_gard(terrain: Node3D, center: Vector3, rng: Random
 	Every tier's uprights become round weathered stone — a tier-1 pier is 1.44 in
 	plan, inside ChunkBatch.ROUND_COLLIDER_MAX_ASPECT, so the piers a player
 	actually walks between collide as the CylinderShape3D they draw; the tier-2
-	piers are 1.83 and keep their box, which costs nothing because they start
-	6 m up. The lintels and the channel deck stay CUBE: they are the flat courses
+	piers are 1.83 and keep their box. **That box is a real 0.37 m of invisible
+	stone at their corners, and it is REACHABLE by an ability, not unreachable**:
+	they stand at t2_y = 6.0, which is exactly where the tier-1 lintels top out,
+	so there is a colliding ledge at their feet — it is over the 3.6125 m jump
+	apex, so a walking hero cannot get there, but Windman's Air Rush can. It is
+	accepted at that size rather than claimed to be free. The lintels and the
+	channel deck stay CUBE: they are the flat courses
 	laid ACROSS the piers, and a round one is a log. What is still missing is the
 	ARCH itself — a semicircle of voussoirs is a ring of new boxes, i.e. a
 	different draw count in this builder, so it is its own bead and not a kind.
