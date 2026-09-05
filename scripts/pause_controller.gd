@@ -43,8 +43,19 @@ extends Node
 ## collide with rebindable gameplay actions.
 const PAUSE_KEY: Key = KEY_P
 
-## Overlay look: dim strength and the message shown while frozen.
-const DIM_COLOR: Color = Color(0.0, 0.0, 0.0, 0.55)
+## Overlay look: the veil over the world, and the message shown while frozen.
+##
+## THE CARD IS `game_over_ui`'S AT HALF SIZE (bead godot-test1-y1o.31): the same
+## modal `HudTheme.card(true)` under the same 1 px BONE hairline, with the message
+## in Oswald Bold at half the ending card's title size. Nothing here types a
+## colour; the RGB is INK and this alpha is the dim the overlay has always used.
+const DIM_ALPHA: float = 0.55
+const DIM_COLOR: Color = Color(HudTheme.INK, DIM_ALPHA)
+## Half of `game_over_ui.TITLE_FONT_SIZE`, written down rather than read across:
+## the two panels are two files by the bead's own split, and a `preload` of a
+## sibling HUD script for one integer is a dependency for nothing. A title-card
+## size ladder has no home in `HudTheme` yet — named in the PR.
+const PAUSE_FONT_SIZE: int = 36
 const PAUSE_TEXT: String = "PAUSED\n\nPress P to resume"
 
 ## Shown instead while a ROOM MEMBER holds the pause. `%s` is their lobby name.
@@ -161,21 +172,55 @@ func _build_overlay() -> void:
 	_dim.mouse_filter = Control.MOUSE_FILTER_STOP
 	_overlay.add_child(_dim)
 
+	# THE CARD. Everything from here down is IGNORE for clicks: the dim is the ONLY
+	# thing that decides whether this overlay eats them, and a second Control
+	# quietly doing it too is how the remote card's escape hatch (see
+	# `_show_remote_card`) would come back blocked over the card's own rect.
+	# `Control`'s default is STOP for a Panel and IGNORE for a Label, so both are
+	# said out loud — the behaviour is load-bearing.
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_overlay.add_child(center)
+
+	# `card(true)` is the modal case — opaque INK, a 2 px STEEL frame, the hard
+	# (2,2) shadow — and it returns a FRESH box, so widening the padding restyles
+	# no other panel. The top margin is zero for the hairline's sake.
+	var card_box := HudTheme.card(true)
+	card_box.set_content_margin_all(HudTheme.CARD_PADDING * 3)
+	card_box.content_margin_top = 0
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", card_box)
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.add_child(card)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", HudTheme.GRID * 2)
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(vbox)
+
+	# The film's letterbox line across the top edge — `game_over_ui`'s hairline,
+	# and one ColorRect for its reason: a StyleBoxFlat carries ONE border colour
+	# and this card's frame is STEEL.
+	var hairline := ColorRect.new()
+	hairline.color = HudTheme.BONE
+	hairline.custom_minimum_size = Vector2(0.0, float(HudTheme.BORDER_PX))
+	hairline.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(hairline)
+
 	_label = Label.new()
 	_label.text = PAUSE_TEXT
 	_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_label.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_label.add_theme_font_size_override("font_size", 48)
-	_label.add_theme_color_override("font_color", Color.WHITE)
-	_label.add_theme_color_override("font_outline_color", Color.BLACK)
-	_label.add_theme_constant_override("outline_size", 8)
-	# The dim is the only thing that decides whether this card eats clicks; a
-	# second Control quietly doing it too is how the remote card's escape hatch
-	# would come back blocked. (IGNORE is `Label`'s default — said out loud
-	# because the behaviour is now load-bearing.)
+	_label.add_theme_font_override("font", HudTheme.heading_font())
+	_label.add_theme_font_size_override("font_size", PAUSE_FONT_SIZE)
+	_label.add_theme_color_override("font_color", HudTheme.BONE)
+	_label.add_theme_color_override("font_outline_color", HudTheme.INK)
+	# `OUTLINE_PX` is 2 px OF INK and Godot grows a glyph BOTH ways, so this is the
+	# spec's 1 px card outline — `game_over_ui`'s note, same card.
+	_label.add_theme_constant_override("outline_size", HudTheme.OUTLINE_PX)
 	_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_overlay.add_child(_label)
+	vbox.add_child(_label)
 
 
 func _process(_delta: float) -> void:
