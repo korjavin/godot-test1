@@ -589,6 +589,19 @@ Load-bearing rules:
   callers (`prop_selfcheck`'s `BUILDERS` table) go through a `preload`ed SCRIPT OBJECT, not
   the class — `TerrainProps.call(...)` is a parse error, the trap `_landmark_builders`
   already documents.
+- **THE FEATURE STRUCTURES ARE `scripts/terrain_structures.gd`** (`class_name
+  TerrainStructures`, all static, bd `godot-test1-ftn.3`) — `spawn_feature_structure`'s
+  per-territory role pick, the four role builders (mound / gate / corridor / wall),
+  `_structure_chance_at`, `_structure_stone` and the `STRUCT_GATE_*` / `MOUND_*` knobs,
+  in `terrain_props.gd`'s idiom. **`STRUCTURE_MIX` and `STRUCTURE_THEMES` stayed in
+  `endless_terrain.gd`** and that is a hard constraint rather than taste: they are keyed by
+  `Biome`, an enum declared there, and a `const` in another script cannot name it
+  (`terrain.Biome.X` resolves on an INSTANCE, which no const initialiser has). **Nothing
+  else is aliased back** — measured: the seven knobs are read only by the builders that
+  moved with them, which is why this is a smaller re-export than ftn.2's. **The territory
+  palettes did NOT move again**: they are `TerrainProps`' since ftn.2 and the one table
+  naming them stayed put, so a third "shared colours" file would be a file to keep in step
+  for no behavioural gain — revisit only if a THIRD family needs them.
 - **A BOX HAS A MESH KIND, AND EVERY UNIT MESH FITS THE UNIT CUBE** (bead
   `godot-test1-y1o.1`, epic `y1o` "get rid of blocks"). The batch entry is
   `{transform, color, kind}` — `ChunkBatch.BoxKind` (CUBE / SPHERE / CONE / CYLINDER /
