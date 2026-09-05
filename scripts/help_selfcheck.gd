@@ -50,7 +50,9 @@ extends SceneTree
 ##     break a single unbreakable compound noun, which is the one German string
 ##     that can still overflow the card. So the longest WORD of each German
 ##     description is measured in the real font against `DESC_WIDTH`, and each
-##     German key legend against `KEY_WIDTH`.
+##     German key legend against `KEY_WIDTH`. "The real font" is `HudTheme`'s
+##     since bead `godot-test1-y1o.28` — Oswald Bold for a key chip, Oswald
+##     Regular for a description — because that is what the card draws with now.
 ##
 ## Deliberately NOT covered: the mouse-capture handover (headless has no pointer
 ## lock to take — what IS checked is the half that works without one: opening
@@ -352,16 +354,28 @@ func _check_translations() -> String:
 # ============================================================================
 
 func _check_german_widths() -> String:
-	var font: Font = ThemeDB.get_default_theme().get_font("font", "Label")
-	if font == null:
-		font = ThemeDB.fallback_font
-	if font == null:
-		return "no font available — the width check would pass vacuously"
+	# THE RULER IS THE FACE THE CARD DRAWS WITH (bead godot-test1-y1o.28).
+	# It used to be `ThemeDB.get_default_theme()`'s Label font — right while the
+	# card rendered in the engine default, and wrong the moment its root adopted
+	# `HudTheme.theme()`. A budget measured on a font nobody draws with passes
+	# vacuously in both directions, and Oswald is CONDENSED, so the old ruler is
+	# the LOOSE direction: it would fail a German row that actually fits.
+	#
+	# Unlike `locale_selfcheck`, which holds 73 rows from nine panels to whichever
+	# of three faces is widest because it cannot know which one drew them, this
+	# check owns exactly one card and knows both draw sites exactly: a key legend
+	# is a chip in Oswald BOLD (`_make_key_label`) and a description is Oswald
+	# REGULAR (`_make_desc_label`), both at `ROW_FONT_SIZE`.
+	var key_font: Font = HudTheme.heading_font()
+	var desc_font: Font = HudTheme.body_font()
+	if key_font == null or desc_font == null:
+		return "HudTheme's fonts did not load — the width check would pass vacuously"
 	# Prove the ruler works first: a headless build on the dummy text server
 	# measures everything as 0, which turns every assertion below into a pass.
-	if font.get_string_size("MMMM", HORIZONTAL_ALIGNMENT_LEFT, -1,
-			HelpOverlay.ROW_FONT_SIZE).x <= 0.0:
-		return "font measured a non-empty string as 0 wide — the width check would pass vacuously"
+	for font: Font in [key_font, desc_font]:
+		if font.get_string_size("MMMM", HORIZONTAL_ALIGNMENT_LEFT, -1,
+				HelpOverlay.ROW_FONT_SIZE).x <= 0.0:
+			return "font measured a non-empty string as 0 wide — the width check would pass vacuously"
 
 	var previous: String = TranslationServer.get_locale()
 	TranslationServer.set_locale("de")
@@ -371,7 +385,7 @@ func _check_german_widths() -> String:
 		# The KEY column does not wrap, so the whole legend has to fit. Multi-line
 		# legends ("SPECIAL\n(F)") are judged per line, like locale_selfcheck does.
 		for line: String in tr(String(row[0])).split("\n"):
-			var key_width: float = font.get_string_size(
+			var key_width: float = key_font.get_string_size(
 				line, HORIZONTAL_ALIGNMENT_LEFT, -1, HelpOverlay.ROW_FONT_SIZE).x
 			if key_width > HelpOverlay.KEY_WIDTH:
 				failure = "key legend %s is %.1f px, over the %.0f px key column" \
@@ -382,7 +396,7 @@ func _check_german_widths() -> String:
 		# The DESCRIPTION column wraps, so only a single unbreakable word can
 		# overflow it — measure the longest one.
 		for word: String in tr(String(row[1])).replace("\n", " ").split(" ", false):
-			var word_width: float = font.get_string_size(
+			var word_width: float = desc_font.get_string_size(
 				word, HORIZONTAL_ALIGNMENT_LEFT, -1, HelpOverlay.ROW_FONT_SIZE).x
 			widest = maxf(widest, word_width)
 			if word_width > HelpOverlay.DESC_WIDTH:
