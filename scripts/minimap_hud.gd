@@ -109,6 +109,9 @@ extends Control
 ##   * The player triangle and the teammate dots carry an IDENTITY tint (the
 ##     hero's, the peer's), which the epic's palette note lists as semantic.
 ## `HudTheme` is a `class_name`, so it needs no preload; `hero_hud.gd` is not one.
+## The A/B crops are `docs/style/y1o.27_minimap_*.png`, shot with
+## `godot --path . scenes/style_shots.tscn -- <outdir> only=field_bridge_deck`
+## — the one shot in that tool that keeps this widget on screen.
 const HeroHudScript := preload("res://scripts/hero_hud.gd")
 
 # ============================================================================
