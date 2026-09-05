@@ -897,12 +897,14 @@ static func _spawn_city_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 	                  below), non-climbable for stalls and street furniture.
 	@param block_batch / block_body: The chunk's single MultiMesh + collision body.
 
-	EVERY HOUSE ROOF IS A REST SPOT, and that is this territory's whole gameplay
-	contribution. `CITY_HOUSE_HEIGHT_MAX` is `PROP_MAX_STEP` (2.6), so a hull top
-	is one jump from the pavement; the footprint records `climbable: true` at that
-	hull height, so crocodiles keep off it and `_settle_coin_y` perches a road coin
-	on it rather than skipping. Every other biome's content is non-climbable — the
-	city is the one that gives the bare cubes' role back at scale.
+	EVERY HOUSE ROOF IS A REST SPOT, and since bead godot-test1-y1o.36 that is
+	literal: the WEDGE roof COLLIDES, so you land on its eave (flush with the hull
+	top — `CITY_HOUSE_HEIGHT_MAX` is `PROP_MAX_STEP` (2.6), one jump from the
+	pavement) and walk up the pitch to the ridge, which is where the footprint's
+	`top` is recorded and where `_settle_coin_y` perches a road coin. That makes a
+	house TWO collision shapes, hull and roof, and it is the only thing in the band
+	that is more than one. Every other biome's content is non-climbable — the city
+	is the one that gives the bare cubes' role back at scale.
 
 	CROC DENSITY IS REDUCED HERE and it is the ONE band where that is true; the
 	division lives in spawn_crocodiles_in_chunk (see CITY_CROC_DIVISOR), not here.
@@ -917,7 +919,7 @@ static func _spawn_city_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 	noise contour instead of stopping dead on a chunk seam.
 
 	PERF: everything here is a create_box entry, so the band still costs NO node
-	per object; only hulls, counters and masts pay a CollisionShape3D, and there
+	per object; only hulls, ROOFS, counters and masts pay a CollisionShape3D, and there
 	are ZERO emissive accent nodes — lamps are bright albedo entries in the batch.
 	Since bead godot-test1-y1o.5 a city-band chunk is no longer ONE block draw
 	call, though: the wedge roofs and the cylinder masts are two more buckets in
@@ -964,10 +966,17 @@ static func _spawn_city_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 			yaw, rng, block_batch, block_body, 0.0, wall
 		)
 
-		# Roof: a PITCHED wedge over the hull top, collide = false, oversailing the
-		# walls as eaves. The player stands on the HULL, under this roof — the same
-		# arrangement STRUCTURE_THEMES' `cap` uses over a wall's ridge, and the
-		# reason nothing here is allowed to collide.
+		# Roof: a PITCHED wedge over the hull top, and SOLID since bead
+		# godot-test1-y1o.36 (owner ruling 2026-09-05, "make roofs standable"). It
+		# used to be `collide = false` trim over the hull's flat top, which meant
+		# the band's advertised rest spot put the hero INSIDE the pitch. Now
+		# `ChunkBatch.collision_shape_for` gives a WEDGE a ConvexPolygonShape3D of
+		# the drawn prism, so you land on the eave — flush with the hull top,
+		# oversailing the wall by CITY_ROOF_EAVES — and walk up the slope.
+		#
+		# IT IS THE HOUSE'S SECOND COLLIDER AND THE ONLY ONE, so a building is two
+		# shapes and not one; `prop_selfcheck` check 7 counts it as
+		# `footprints + climbable` rather than loosening to a bound.
 		#
 		# THE RIDGE RUNS ALONG LOCAL X, which is the house's `width` — so a house
 		# is gabled on its narrow ends and the slopes face the long walls, the way
@@ -978,7 +987,7 @@ static func _spawn_city_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 		terrain.create_box(
 			local + Vector3(0.0, height + roof_rise * 0.5, 0.0),
 			Vector3(width + terrain.CITY_ROOF_EAVES * 2.0, roof_rise, roof_d),
-			yaw, rng, block_batch, block_body, 0.0, roof, false,
+			yaw, rng, block_batch, block_body, 0.0, roof, true,
 			ChunkBatch.BoxKind.WEDGE
 		)
 
@@ -1008,13 +1017,27 @@ static func _spawn_city_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 				rng, block_batch, block_body, 0.0, terrain.CITY_ROOF_SLATE, false
 			)
 
-		# ONE circle per house, CLIMBABLE, with the hull top as its height. The
-		# radius is the honest bound on the roof slab's rotated half-diagonal, so
+		# ONE circle per house, CLIMBABLE, with THE RIDGE as its height (bead
+		# godot-test1-y1o.36 — it was the hull top while the roof was trim). `top`
+		# is the highest SOLID point over the footprint's own centre column, which
+		# is what `_settle_coin_y` perches a coin on: with the roof solid, the hull
+		# top is inside stone, so a coin recorded there is buried in the roof and
+		# unreachable. The ridge line runs along local X straight through this
+		# centre, so a coin at `top + COIN_BLOCK_OFFSET` stands ON the ridge and is
+		# walked up to over the pitch.
+		#
+		# THE JUMP IS STILL MEASURED AT THE EAVE, not here. `PROP_MAX_STEP` asks
+		# "can this be mounted from flat ground", and what you land on is the eave
+		# — flush with `height`, which `CITY_HOUSE_HEIGHT_MAX` caps at exactly
+		# PROP_MAX_STEP. The ridge is above that on purpose and is reached by
+		# WALKING, which is the whole of the ruling; check 7 asserts both halves.
+		#
+		# The radius is the honest bound on the roof slab's rotated half-diagonal, so
 		# it is above MOUNTAIN_AVOID_RADIUS (2.0) — deliberately, see the constant.
 		obstacles.append({
 			"pos": local,
 			"radius": 0.5 * sqrt(pow(width + terrain.CITY_ROOF_EAVES * 2.0, 2.0) + pow(depth + terrain.CITY_ROOF_EAVES * 2.0, 2.0)),
-			"top": height,
+			"top": height + roof_rise,
 			"climbable": true,
 		})
 

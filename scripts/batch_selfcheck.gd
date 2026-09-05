@@ -620,13 +620,16 @@ func _check_collision_is_unchanged_by_kind() -> void:
 	# collider under it would drop the climbable surface every rock builder's
 	# recorded `top` promises. The dict is a TOTAL map over the enum: a kind added
 	# without a row here fails below by name rather than crashing this loop.
+	# The WEDGE is the one HULL (bead godot-test1-y1o.36): its roof is standable,
+	# so its collider has to BE the drawn prism — the box over it is the "invisible
+	# flat square" this whole check exists to forbid.
 	var want_type: Dictionary = {
 		ChunkBatch.BoxKind.CUBE: "BoxShape3D",
 		ChunkBatch.BoxKind.SPHERE: "SphereShape3D",
 		ChunkBatch.BoxKind.CONE: "BoxShape3D",
 		ChunkBatch.BoxKind.CYLINDER: "CylinderShape3D",
 		ChunkBatch.BoxKind.ROCK: "BoxShape3D",
-		ChunkBatch.BoxKind.WEDGE: "BoxShape3D",
+		ChunkBatch.BoxKind.WEDGE: "ConvexPolygonShape3D",
 	}
 	for kind: int in ChunkBatch.BoxKind.values():
 		var batch: Array = []
@@ -718,6 +721,7 @@ func _shape_problems(label: String, shape: Shape3D, dims: Vector3) -> Array[Stri
 	var sphere := shape as SphereShape3D
 	var cyl := shape as CylinderShape3D
 	var box := shape as BoxShape3D
+	var hull := shape as ConvexPolygonShape3D
 	if sphere != null:
 		half = Vector3.ONE * sphere.radius
 		var want_r: float = minf(dims.x, minf(dims.y, dims.z)) * 0.5
@@ -738,6 +742,33 @@ func _shape_problems(label: String, shape: Shape3D, dims: Vector3) -> Array[Stri
 		half = box.size * 0.5
 		if box.size != dims:
 			out.append("%s: BoxShape3D sized %s, not the dimensions %s" % [label, box.size, dims])
+	elif hull != null:
+		# The WEDGE, and the only hull in the table. The measurement is the POINT
+		# SET itself against `ChunkBatch.UNIT_WEDGE_POINTS` scaled by `dims` — not
+		# an AABB, which a hull that had lost its ridge and become a box would
+		# still pass. Order is not asserted (the collider does not care), so this
+		# is a set comparison; the mesh's winding depends on the order and check 1
+		# is what measures that.
+		var want_pts: Array[Vector3] = []
+		for p: Vector3 in ChunkBatch.UNIT_WEDGE_POINTS:
+			want_pts.append(p * dims)
+		var got_pts: PackedVector3Array = hull.points
+		if got_pts.size() != want_pts.size():
+			out.append("%s: ConvexPolygonShape3D carries %d points, wanted the prism's %d"
+					% [label, got_pts.size(), want_pts.size()])
+		for want_p: Vector3 in want_pts:
+			var found := false
+			for got_p: Vector3 in got_pts:
+				if got_p.is_equal_approx(want_p):
+					found = true
+					break
+			if not found:
+				out.append("%s: the hull has no vertex at %s — it is not the prism "
+						% [label, want_p] + "`_build_unit_wedge_mesh` draws, so the "
+						+ "slope you stand on is not the slope you see")
+		for got_p: Vector3 in got_pts:
+			half = Vector3(maxf(half.x, absf(got_p.x)), maxf(half.y, absf(got_p.y)),
+					maxf(half.z, absf(got_p.z)))
 	else:
 		out.append("%s: collided as a %s, which this check cannot measure at all"
 				% [label, shape.get_class()])

@@ -2171,11 +2171,16 @@ const CITY_HOUSE_DEPTH_FACTOR_MAX: float = 1.00
 const CITY_HOUSE_HEIGHT_MIN: float = 2.0
 const CITY_HOUSE_HEIGHT_MAX: float = 2.6
 
-## HOUSE — the roof slab: how far it oversails the walls, and how thick it is. The
-## slab is collide = false, so the surface the player actually stands on is the
-## HULL top (the height recorded as the footprint's `top`) and the slab is a thin
-## film over it — exactly the rule STRUCTURE_THEMES' `cap` follows. Keep it thin:
-## the film is what the player's feet are inside while standing on the roof.
+## HOUSE — how far the roof oversails the walls. Since bead godot-test1-y1o.36 the
+## eave is SOLID: it is the lip of the pitch, at exactly the hull top, hanging
+## `CITY_ROOF_EAVES` past the wall — so it is also the surface a hero jumping from
+## the pavement lands on, which is why `CITY_HOUSE_HEIGHT_MAX` is the number held
+## against PROP_MAX_STEP and the ridge is not.
+##
+## CITY_ROOF_THICKNESS is the FLAT slab of Budapest's authored GATE DISTRICT
+## houses (`_spawn_district_houses`), which are pure CUBE and deliberately
+## untouched by this bead — the procedural band's roof is a WEDGE and has no
+## thickness, it has a pitch.
 const CITY_ROOF_EAVES: float = 0.25
 const CITY_ROOF_THICKNESS: float = 0.14
 
@@ -2185,12 +2190,20 @@ const CITY_ROOF_THICKNESS: float = 0.14
 ## no RNG draw (a draw here would slide every later object in the chunk) and a
 ## deep house gets a deep roof rather than every roof being the same slab.
 ##
-## 0.34 of the depth is a ~34-degree pitch, which is the terraced-town read the
-## band is after; steeper starts looking alpine and flatter stops reading as a
-## pitch at play distance. The house's CLIMBABLE top is unchanged — it is the
-## HULL's, and the roof is `collide = false` trim above it — so this number moves
-## nothing in the gameplay contract, only the silhouette.
-const CITY_ROOF_RISE_FACTOR: float = 0.34
+## IT IS NOW A WALKABLE SURFACE AND THEREFORE A CEILING, not a taste knob (bead
+## godot-test1-y1o.36). The ridge is at the middle of the roofed depth, so each
+## slope's rise over run is `2 * CITY_ROOF_RISE_FACTOR` — and that has to stay
+## under `TowerInterior.PLAN_RAMP_MAX_SLOPE` (0.575), the project's one "no
+## traversal may demand more than this" number, or the hero slides back down the
+## roof he just jumped onto. 0.34 was 0.68 and was over it; 0.28 is a slope of
+## 0.56 (~29 degrees), which still reads as a terraced-town pitch and no longer
+## reads as alpine. `prop_selfcheck` check 7 asserts the arithmetic against
+## `PLAN_RAMP_MAX_SLOPE` directly, so this constant cannot drift back up quietly.
+##
+## Changing it moves NO RNG DRAW — the rise is derived from the depth already
+## drawn — so the only thing that differs from the pre-bead world is the roof
+## entries' own dimensions.
+const CITY_ROOF_RISE_FACTOR: float = 0.28
 
 ## HOUSE — the widest footprint a house can claim, used as the "widest this could
 ## be" radius handed to _biome_spot_ok before the real width is drawn:
