@@ -39,10 +39,16 @@ extends RefCounted
 ##   (`_city_river_segments` / `_city_dry_rects`, at the bottom of this file); the
 ##   `set_shader_parameter` calls stayed with the other twenty uniforms they sit
 ##   among. Builder here, push there — the same split the bead names.
-## * **`_approach_coin_line_cache` / `_approach_coin_east_end_cache`** —
-##   `_drop_seeded_memos()` owns them beside the station cache, which is
-##   `coin_road.gd`'s own precedent (bd ftn.7): the FUNCTIONS move, the seeded
-##   STATE stays under the one seed write that clears it.
+## * **`_approach_coin_line_cache` / `_approach_coin_east_end_cache`** — seeded
+##   memo state beside the station cache, which is `coin_road.gd`'s own precedent
+##   (bd ftn.7): the FUNCTIONS move, the seeded STATE stays with the seed write.
+##   **Only the first is actually cleared**, and that is a PRE-EXISTING gap this
+##   extraction neither introduces nor widens — `_drop_seeded_memos()` is byte
+##   for byte master's, and `_approach_coin_east_end_cache` was already outside
+##   it. The east end walks from `_road_station(_road_terminal_k())`, so it IS
+##   seed-derived and a re-seed leaves it stale; that is a bug and therefore its
+##   own bead, not a line of a mechanical move (the epic: "a bug found on the way
+##   is a separate bead").
 ## * **`CITY_SHADER_SEG_MAX` / `CITY_SHADER_DRY_MAX`** — read by the push that
 ##   stayed as well as by the builders that left, so they stay where both can
 ##   reach them; and the ROOF / PLASTER / `PROP_CRATE` colours, which belong to
