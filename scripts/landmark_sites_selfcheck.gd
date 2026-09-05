@@ -95,6 +95,23 @@ const MILE_MIN_IN_CORRIDOR: int = 12
 ## band has to be at least that much wider or the check measures its own slack.
 const CORRIDOR_PAD: float = 40.0
 
+## Stations to compare between the re-seeded road and a freshly born one. Spread
+## far enough apart that a road agreeing at all four by luck is not a thing that
+## happens: the centreline is a random walk in heading, so two seeds diverge
+## within a few stations and stay diverged.
+##
+## IT STARTS AT 2, NOT AT 1. Station 0 is the origin and station 1 is (6, 0) for
+## EVERY seed — the recurrence has drawn no turn yet — so probing either of them
+## is vacuous: they agree between two seeds because they agree between all seeds.
+## The first station a seed can move is 2.
+##
+## `ROAD_PROBE_X` is walked first, because `_road_station()` only READS the cache
+## (an index it does not hold is an out-of-bounds error, not a rebuild) and
+## `_road_extend_to_x()` is what grows it — which is also what makes this assert
+## the road was REBUILT and not merely emptied.
+const ROAD_PROBE_STATIONS: Array[int] = [2, 40, 200, 900]
+const ROAD_PROBE_X: float = 8000.0
+
 var _failures: Array[String] = []
 
 
@@ -281,14 +298,24 @@ func _check_seed_reseats_the_table(terrain_script: GDScript) -> void:
 	Codex review of PR #228 found it.
 
 	THE ASSERTION IS ON `set_run_seed()` AND NOT ON `new_run()`, deliberately.
-	`new_run()` resets it too and would pass this check on its own, but CLAUDE.md's
-	rule is that `set_run_seed()` is the ONLY place the seed is written — so it is
-	the only seam that sees every door, and it is the one a future joiner path has
-	to be safe through. Driving `new_run()` here would certify the door this bug
-	came through as unlocked.
+	CLAUDE.md's rule is that `set_run_seed()` is the ONLY place the seed is
+	written — so it is the only seam that sees every door, and it is the one a
+	future joiner path has to be safe through. Driving `new_run()` here would
+	certify the door this bug came through as unlocked.
 
-	MUTATION-TESTED: delete the two reset lines from `set_run_seed()` and this goes
-	red on the first assertion.
+	AND THE ROAD GOES WITH IT (bead godot-test1-bvq). The mile is strung along the
+	centreline, and `road_stations` / `_road_terminal_k_cache` /
+	`_approach_coin_line_cache` are memoized off the seed exactly like the site
+	table — so while they were reset one level up, in `new_run()`, a BARE
+	`set_run_seed()` rebuilt this run's sites onto the PREVIOUS run's road. This
+	check used to clear them by hand before comparing, with a `ponytail:` note
+	saying the move belonged to whoever owned the road. It does not any more:
+	`set_run_seed()` calls `_drop_seeded_memos()`, so the road is asserted here
+	directly instead of being papered over.
+
+	MUTATION-TESTED, both halves: drop the `_landmark_sites_cache` reset from
+	`_drop_seeded_memos()` and the first assertion goes red; drop the
+	`road_stations` reset and the CENTRELINE assertion does.
 	"""
 	var terrain := _terrain(terrain_script, SEEDS[0])
 	# Build it, exactly as a chunk streaming in would.
@@ -311,35 +338,40 @@ func _check_seed_reseats_the_table(terrain_script: GDScript) -> void:
 
 	# ...and it must be the RIGHT new table, not merely a different one: identical
 	# to what a terrain born on that seed builds. Without this, a reset that
-	# cleared the memo but left some other stale state would still pass above.
-	#
-	# THE ROAD CACHE IS THAT OTHER STALE STATE, and it is `new_run()`'s to clear,
-	# not `set_run_seed()`'s. The mile is strung along the centreline, and
-	# `road_stations` / `_road_terminal_k_cache` / `_approach_coin_line_cache` are
-	# memoized off the seed exactly like the site table but reset one level up —
-	# so a bare `set_run_seed()` rebuilds the sites onto the PREVIOUS run's road.
-	# This step therefore clears the road the way `new_run()` does before comparing,
-	# which is what every shipped caller of `set_run_seed` already does (`_ready`'s
-	# roll happens before any road exists; the multiplayer path is `new_run`).
-	#
-	# ponytail: the road memos stay in `new_run()` — moving them into the seed write
-	# is the same fix one seam wider and it belongs to whoever owns the road, not to
-	# this bead. If a third caller of `set_run_seed` ever appears, move them and
-	# delete these four lines.
-	terrain.road_stations = {}
-	terrain.road_k_min = 1
-	terrain.road_k_max = 0
-	terrain._road_terminal_k_cache = terrain.ROAD_TERMINAL_K_UNSET
-	terrain.set_run_seed(SEEDS[1])
+	# cleared the memo but left some other stale state would still pass above —
+	# and THE ROAD IS THAT OTHER STALE STATE. No hand-clearing here any more (bead
+	# godot-test1-bvq): the bare `set_run_seed()` above is the whole setup, so if
+	# the road survived the re-seed the sites would be strung along the LAST run's
+	# centreline and this comparison is what says so.
 	var rebuilt: Dictionary = terrain.landmark_sites()
 	var fresh := _terrain(terrain_script, SEEDS[1])
 	var expected: Dictionary = fresh.landmark_sites()
 	if rebuilt != expected:
-		_fail("after set_run_seed(%d) on a cleared road the table has %d sites but a terrain "
+		_fail("after set_run_seed(%d) the table has %d sites but a terrain "
 				% [SEEDS[1], rebuilt.size()]
 				+ "born on that seed builds %d — the rebuild is not a pure function of the "
 				% expected.size()
-				+ "new seed")
+				+ "new seed (a road memo that outlived the seed write is how)")
+
+	# THE CENTRELINE ITSELF, directly. The table comparison above is transitive —
+	# the sites ARE station indices — but "the sites match" is a long way from
+	# "the road matches", and a future placement rule that leaned less on the road
+	# would quietly stop asserting it. So walk the two roads station by station,
+	# after growing BOTH caches over the same X through the shipped
+	# `_road_extend_to_x()` — which is also what makes this prove the re-seeded
+	# terrain REBUILDS a road rather than merely having dropped one.
+	terrain._road_extend_to_x(0.0, ROAD_PROBE_X)
+	fresh._road_extend_to_x(0.0, ROAD_PROBE_X)
+	for k: int in ROAD_PROBE_STATIONS:
+		var got: Vector2 = terrain._road_station(k)["center"]
+		var want: Vector2 = fresh._road_station(k)["center"]
+		if got.distance_to(want) > 1e-4:
+			_fail("after set_run_seed(%d) road station %d is at %s but a terrain born on "
+					% [SEEDS[1], k, got]
+					+ "that seed puts it at %s — the station cache outlived the seed write, "
+					% want
+					+ "so every seeded consumer is being built onto the PREVIOUS run's road")
+			break
 	fresh.free()
 	terrain.free()
 	print("  set_run_seed drops the memo: %d sites -> %d, and they are the new seed's own"
