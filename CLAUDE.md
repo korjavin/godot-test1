@@ -2696,6 +2696,30 @@ touches `JavaScriptBridge`.
   button — mobile is out of scope) would hide it; the browser's own F11 sets no
   `fullscreenElement` and is fine. The documented fallback is the bead's ImageTexture
   frame-copy path.
+  **THE CARTOON'S STRENGTH IS FOUR CONSOLE KNOBS** (bead `godot-test1-xtr.16`, owner:
+  *"is it configurable? can we make it a bit less agressive?"*) — `levels`, `mix`,
+  `edge`, `shadow`, held in `S.style`, clamped and persisted to `localStorage`
+  (`ck_voice_style`) by the one writer `setStyle`, and read back by `getStyle()` and by
+  \fo's `style=` column (`l4 m1.00 e1 s0.45`). From the SENDER's browser console:
+  `window.ckVoice.setStyle(6, 0.6, 1, 0.5)` softens it on every receiver's tile within a
+  frame; `window.ckVoice.getStyle()` answers `"4,1,1,0.45"` and `setStyle(4, 1, 1, 0.45)`
+  is the way back. `mix` is the knob that did not exist — how much of the REAL pixel
+  survives — and at the shipped **1.0 the blend is `orig * 0 + ramp * 1`, so the defaults
+  paint byte for byte what they always did**; the ramp resamples its four control stops at
+  `levels` points, which lands exactly on them at 4. **THE FORCED RULE HAS TWO HALVES AND
+  `styleStream()` IS ONLY THE TRANSPORT ONE.** What may never leave a sender is the RAW
+  DEVICE TRACK, and at every setting the wire carries the canvas capture instead — the
+  160x120 crop, downscaled to 128 and re-encoded at 12 fps under 150 kbps. But the owner's
+  ruling (*"a receiver never sees the raw face"*) is about the PICTURE, and `mix` is how
+  much of that crop the ramp REPLACES: at 0 it replaces nothing, so the canvas would carry
+  the crop UNPOSTERIZED — the raw face, through a compliant transport. So **`mix` has a
+  floor, `STYLE_MIX_MIN` (0.25)**, where a quarter of every pixel is still ramp; the number
+  is the orchestrator's (2026-09-06) and the owner can lower it by ruling. It is one
+  constant read by the one clamp, and `loadStyle` goes through `setStyle`, so a stored or
+  hand-edited row below the floor is raised to it on load like any other out-of-range
+  value. `voice_selfcheck` check 6b pins the defaults, the paint loop's reads, both
+  clamps, the mix floor and that the clamp really reads it, the blank-field fallback, the
+  persistence and the four \fo columns.
   **A STUCK PICTURE IS MEASURABLE, AND THE SAMPLER IS NOT \fo'S** (bead
   `godot-test1-xtr.17`): `sampleStats()` gained the video half — per peer
   `ice=`/`con=`/`sig=`/`sdp=`/`vin=`/`vout=` (the two transport states, the negotiation
