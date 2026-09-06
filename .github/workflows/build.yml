@@ -711,7 +711,14 @@ jobs:
           echo "pruned: $(jq '(.ImagesDeleted // []) | length' "${body}") image references, $(jq '((.SpaceReclaimed // 0) / 1073741824 * 100 | round) / 100' "${body}") GB reclaimed"
 
       # Both pins land in one commit, after both images exist in the registry.
+      # `id: pin` + the `sha` output: the verification step below compares the
+      # stack's `GitConfig.ConfigHash` against THIS commit, which is the deploy
+      # branch's HEAD and NOT `github.sha` — Portainer records the commit it
+      # cloned, and a re-run whose compose file is already pinned commits
+      # nothing, leaving HEAD at the previous pin. `git rev-parse` after the
+      # commit is the only spelling that is right in both cases.
       - name: 🌿 Pin both images on the deploy branch
+        id: pin
         env:
           REPO_OWNER: ${{ github.repository_owner }}
           COMMIT_SHA: ${{ github.sha }}
@@ -732,6 +739,7 @@ jobs:
           git add server/docker-compose.yml
           git commit -m "ci: pin lobby and web images to ${COMMIT_SHA}" || echo "nothing to commit"
           git push origin deploy --force
+          echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
 
       # Skipped when the secret is absent, so the images still publish without it.
       - name: 🪝 Trigger Portainer redeploy
@@ -740,6 +748,94 @@ jobs:
         with:
           webhook_url: ${{ secrets.PORTAINER_REDEPLOY_HOOK }}
           webhook_secret: "trigger"
+
+      # ======================================================================
+      # ✅ THE WEBHOOK'S 204 IS NOT A DEPLOY — bead godot-test1-6b8
+      # ======================================================================
+      # Portainer answers the stack webhook 204 and redeploys AFTERWARDS, so a
+      # redeploy that throws is invisible to the caller: the step above went
+      # green sixteen master merges in a row (#293-#308) while prod served the
+      # build from #292. The failure was on the host — a leftover clone
+      # directory from the 2026-09-05 disk-full recovery, so every redeploy died
+      # with `failed to do a fresh clone of stack:209: repository already
+      # exists`, logged by Portainer and by nobody else. Two weeks of "deployed"
+      # in the Actions UI is the actual bug; this step is what makes the job
+      # honest about it.
+      #
+      # WHAT IT ASKS. Portainer records the commit it cloned as the stack's
+      # `GitConfig.ConfigHash`, so "did the redeploy land" is one comparison
+      # against the commit the pin step just pushed. The stack is found BY THE
+      # WEBHOOK'S OWN UUID (`AutoUpdate.Webhook` over `GET /api/stacks`) rather
+      # than a new secret — the id and the hook would be two things to keep in
+      # step, and the hook already names the stack uniquely.
+      #
+      # IT FAILS THE JOB, unlike the prune above, and that difference is the
+      # whole point: the prune is housekeeping whose failure costs disk, this is
+      # the deploy itself. A red job here means the images are published and the
+      # branch pinned but prod is still on the old build, which is exactly what
+      # the log should say.
+      #
+      # THREE MINUTES AT 10 s. A redeploy is a git clone plus `compose up` on
+      # images the prune step's sibling has usually already pulled; the observed
+      # time is seconds. The generous cap is for a cold pull of two images.
+      # A run superseded by a later master push is CANCELLED by `concurrency`
+      # (line 28) rather than failing here, so a second push during the poll
+      # cannot report a spurious red.
+      - name: ✅ Verify Portainer actually redeployed
+        if: env.PORTAINER_HOOK != '' && env.PORTAINER_API_KEY != ''
+        env:
+          PIN_SHA: ${{ steps.pin.outputs.sha }}
+        run: |
+          set -uo pipefail
+          base="${PORTAINER_HOOK%%/api/*}"
+          uuid="${PORTAINER_HOOK##*/}"
+          # RED, where the prune's identical guard only warns: the webhook above
+          # HAS been fired, so a URL we cannot derive an API base from means the
+          # deploy is unverifiable — and an unverifiable deploy reported green is
+          # the exact bug this step exists to remove.
+          if [ "${base}" = "${PORTAINER_HOOK}" ] || [ -z "${base}" ] || [ -z "${uuid}" ]; then
+            echo "::error::PORTAINER_REDEPLOY_HOOK does not look like a Portainer webhook URL (expected <portainer>/api/stacks/webhooks/<uuid>) — the redeploy cannot be verified, so this job will not claim it landed"
+            exit 1
+          fi
+          # Same three masks as the prune step: Actions masks by exact
+          # substring and curl prints the bare authority in its own errors.
+          host="${base#*://}"
+          echo "::add-mask::${base}"
+          echo "::add-mask::${host}"
+          echo "::add-mask::${host%%/*}"
+
+          body="${RUNNER_TEMP:-/tmp}/stacks.json"
+          fetch() {
+            curl -sS --max-time 60 -H "X-API-Key: ${PORTAINER_API_KEY}" \
+              -o "${body}" -w '%{http_code}' "${base}/api/stacks" 2>/dev/null || echo "000"
+          }
+
+          deadline=$(( $(date +%s) + 180 ))
+          hash=""
+          status=""
+          while :; do
+            status=$(fetch)
+            if [ "${status}" = "200" ]; then
+              # `.AutoUpdate.Webhook` is null on stacks without a hook, which
+              # compares unequal rather than erroring — no `?` needed.
+              # `|| hash=""` because Actions runs a `run:` under `bash -e` and
+              # `set -uo pipefail` does not clear it: a transient 200 carrying a
+              # proxy's HTML makes jq exit non-zero, which would kill the step
+              # on the spot instead of retrying and printing the diagnosis.
+              hash=$(jq -r --arg u "${uuid}" \
+                '[.[] | select(.AutoUpdate.Webhook == $u) | .GitConfig.ConfigHash] | first // ""' \
+                "${body}" 2>/dev/null) || hash=""
+              [ "${hash}" = "${PIN_SHA}" ] && { echo "Portainer redeployed onto ${PIN_SHA}"; exit 0; }
+            fi
+            [ "$(date +%s)" -ge "${deadline}" ] && break
+            sleep 10
+          done
+
+          echo "::error::Portainer accepted the webhook but never redeployed: the stack is still on ConfigHash '${hash:-<not found>}', expected '${PIN_SHA}'. The images are published and the deploy branch is pinned — prod is serving the OLD build. Read the Portainer container's log for the redeploy error (a stale clone directory under its /data/compose/<stack id> is what caused bead godot-test1-6b8)."
+          echo "last GET /api/stacks HTTP ${status}; matching stack row:"
+          jq --arg u "${uuid}" '.[] | select(.AutoUpdate.Webhook == $u) | {Id, Name, Status, GitConfig: (.GitConfig | del(.Authentication))}' "${body}" 2>/dev/null \
+            || head -c 400 "${body}" 2>/dev/null
+          exit 1
 
   # ============================================================================
   # Deploy to GitHub Pages (only from master branch)

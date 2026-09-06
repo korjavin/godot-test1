@@ -2718,6 +2718,20 @@ Portainer reads: it builds both production images, pins them by commit SHA (**ne
 in that one job** — the branch is maintained by force-push, so a second workflow writing it
 would clobber the other's pin.
 
+**AND IT VERIFIES THE REDEPLOY LANDED, because the webhook's 204 is not a deploy**
+(bead `godot-test1-6b8`). Portainer answers the stack webhook and redeploys
+*afterwards*, so a redeploy that throws is invisible to the caller: the trigger step
+went green for sixteen master merges while prod served the build from #292 — a
+leftover clone directory from the disk-full recovery made every redeploy die with
+`failed to do a fresh clone of stack:209: repository already exists`, logged by
+Portainer and by nobody else. The step after the webhook polls `GET /api/stacks` for
+three minutes until the stack's `GitConfig.ConfigHash` equals **the commit the pin step
+pushed** (`steps.pin.outputs.sha`, `git rev-parse HEAD` — never `github.sha`, since a
+re-run whose compose file is already pinned commits nothing), finding the stack by the
+**webhook's own uuid** (`AutoUpdate.Webhook`) rather than a second secret. Unlike the
+prune it **fails the job**, loudly: the images are published and the branch is pinned,
+so a green job there means prod is serving the old build.
+
 **AND IT PRUNES THE HOST'S UNUSED IMAGES, BEFORE the redeploy rather than after** (bead
 `godot-test1-xuz`). Two SHA-pinned images per master push and nothing removing one filled
 the prod disk on 2026-09-05 — 495 images, 43 GB, 29 GB of it unused — which took the lobby
