@@ -83,9 +83,14 @@ const PLAYER_SCRIPT := preload("res://scripts/player_controller.gd")
 ## portraits bigger"). It went 48 -> 80; everything that has to grow with a tile is
 ## DERIVED from it below, so the next resize is one edit. What bounds it is
 ## `hero_hud_selfcheck` check 5 — the row's fit against every widget `main.tscn`
-## pins to that corner — and it is the \fo PerfOverlay that binds: 80 needed it
-## moved right (240..544 -> 376..680). The ceiling is 96, where the row starts
-## crowding the minimap's top at the widest expand case.
+## pins to that corner — and it is the \fo PerfOverlay that binds, on the WIDTH:
+## 80 needed it moved right (240..544 -> 376..680). Raising the tile again costs
+## another move of that SAME neighbour and nothing else — a 96 px tile is a 402 px
+## row ending at x = 418, past the overlay's new 376, and there is room (the design
+## width is 1920 at its narrowest under either aspect). The MINIMAP is not what
+## binds at any size anyone has proposed: it is anchored at 0.5 with
+## `offset_top = -126` and the design height is never under 1080, so its top is
+## never under 414 against this row's bottom of 152 — it would take a 342 px tile.
 const TILE_SIZE: float = 80.0
 const TILE_GAP: float = 6.0
 
@@ -430,8 +435,10 @@ func tile_rect(hero: String) -> Rect2:
 	back the rect in the 1920x1080 DESIGN space of the `canvas_items` stretch, with
 	the stretch scale dropped, while the one caller (`voice_chat._poll_tiles`)
 	divides by `get_window().size` — the canvas BACKING size in the browser. The
-	fraction came out short by the whole stretch scale, and a teammate's camera
-	landed above and left of the tile and smaller than it.
+	fraction came out short by the whole stretch scale, so a teammate's camera
+	missed the tile by the whole of it — above-left and smaller wherever the window
+	is bigger than the design (the reported retina case), below-right and larger
+	wherever it is smaller.
 	`get_viewport().get_final_transform()` is the aspect-keep letterbox margin times
 	that stretch, so the rect comes out in the same window pixels the divisor
 	measures, on every stretch mode.

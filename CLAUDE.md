@@ -2344,9 +2344,11 @@ builders (`card` / `strip` / `button`) and one lazy `theme()`. Four rules:
   widget `main.tscn` pins to that corner, and the binding neighbour is the \fo
   PerfOverlay — 80 moved it right (240..544 -> 376..680), never down, where its text
   walks into the minimap. 96 is the ceiling the bead names, and what it costs is a
-  SECOND PerfOverlay move (a 402 px row ends at x = 418, past the overlay's new 376) —
-  the minimap is not what binds either size, its top being 285 px at the narrowest
-  expand case against the row's 152. `voice_chat` places the teammate camera on `tile_rect()`, so
+  SECOND move of that SAME neighbour — a 402 px row ends at x = 418, past the overlay's
+  new 376, and there is room (the design width is 1920 at its narrowest under either
+  aspect). **The minimap is not what binds at any proposed size**: it is anchored at
+  0.5 with `offset_top = -126` and the design height is never under 1080, so its top is
+  never under 414 against the row's bottom of 152 — it would take a 342 px tile. `voice_chat` places the teammate camera on `tile_rect()`, so
   the picture grew with the tile. The active ring is FLAT `VISOR_AMBER` and no longer lerped toward the
   hero tint: the accent is rationed to one amber thing per screen region, and the tint
   already owns the whole placeholder tile. **A veil composites toward its OWN luminance**,

@@ -37,7 +37,7 @@ extends SceneTree
 ##      "a teammate has him" reading as HELD rather than as free.
 ##   4. **THE STANDALONE DEGRADE**: no player in the group -> an empty row.
 ##   5. **THE ROW FITS ITS CONTROL AND CLEARS ITS NEIGHBOURS** in `main.tscn` —
-##      four tiles need 210 px, and no other top-left-anchored HUD widget may sit
+##      four tiles need 338 px, and no other top-left-anchored HUD widget may sit
 ##      in the band. The neighbours are ENUMERATED OUT OF THE SCENE (every
 ##      `parent="HUD"` block at `anchors_preset = 0`) rather than named here, so
 ##      the row is measured against whatever the HUD actually carries — which is
@@ -206,8 +206,9 @@ func _check_every_hero_has_art_and_an_identity() -> void:
 		var tex := load(path) as Texture2D
 		_check(tex != null, "%s did not load as a Texture2D" % path)
 		if tex != null:
-			# A HUD tile is 48 px; anything under that is upscaled mush, and the
-			# owner's art is 256x256, so this is a floor and not the exact size.
+			# A HUD tile is `TILE_SIZE` px; anything under that is upscaled mush,
+			# and the owner's art is 256x256, so this is a floor, not the exact
+			# size — which is why it is read off the const rather than typed.
 			_check(tex.get_width() >= int(HUD_SCRIPT.TILE_SIZE)
 					and tex.get_height() >= int(HUD_SCRIPT.TILE_SIZE),
 				"%s is %dx%d, smaller than one %d px tile"
@@ -525,10 +526,19 @@ func _check_tile_rect_under_a_stretch() -> void:
 	# this was reported. The width binds, so the scale is 1.5 either way and the
 	# two aspects differ only by the letterbox margin.
 	const WINDOW := Vector2i(2880, 1800)
-	# main.tscn's own corner offsets, so the assertion covers the control's
-	# position and not just the tile pitch — the offset is scaled too, and the
-	# retired mapping got that wrong as well.
-	const OFFSET := Vector2(16.0, 72.0)
+	# THE ROW'S REAL CORNER, read out of `main.tscn` (check 5's own helper), so the
+	# assertion covers the control's POSITION and not just the tile pitch — the
+	# offset is scaled too, and the retired mapping got that wrong as well. Reading
+	# it rather than typing it is the difference between a comment that claims to
+	# be main.tscn's offsets and one that is still true after somebody moves the row.
+	var scene_text := FileAccess.get_file_as_string(MAIN_SCENE_PATH)
+	var hero_rect: Variant = _node_rect(scene_text, "HeroHUD")
+	if hero_rect == null:
+		_fail("could not read HeroHUD's rect out of %s — check 6b has no corner to "
+			% MAIN_SCENE_PATH + "measure against")
+		Sentinel.done("tile_rect_under_a_stretch")
+		return
+	var offset: Vector2 = (hero_rect as Rect2).position
 	var was_size: Vector2i = root.size
 	var was_aspect: int = root.content_scale_aspect
 	root.size = WINDOW
@@ -539,7 +549,7 @@ func _check_tile_rect_under_a_stretch() -> void:
 	var hud: Control = HUD_SCRIPT.new()
 	var stub := StubPlayer.new()
 	hud.player = stub
-	hud.position = OFFSET
+	hud.position = offset
 	layer.add_child(hud)
 	hud._process(0.0)
 	var names: PackedStringArray = hud.hero_names()
@@ -565,7 +575,7 @@ func _check_tile_rect_under_a_stretch() -> void:
 		for i: int in names.size():
 			var local := Rect2(Vector2(float(i) * pitch, 0.0),
 				Vector2(float(HUD_SCRIPT.TILE_SIZE), float(HUD_SCRIPT.TILE_SIZE)))
-			var want := Rect2(margin + (OFFSET + local.position) * s, local.size * s)
+			var want := Rect2(margin + (offset + local.position) * s, local.size * s)
 			var got: Rect2 = hud.tile_rect(names[i])
 			_check(got.is_equal_approx(want),
 				"tile_rect(%s) is %s under a %.2fx stretch (aspect %d), not %s — it is "
@@ -580,11 +590,11 @@ func _check_tile_rect_under_a_stretch() -> void:
 		var zero := Rect2(Vector2.ZERO,
 			Vector2(float(HUD_SCRIPT.TILE_SIZE), float(HUD_SCRIPT.TILE_SIZE)))
 		var bugged := Rect2(retired * zero.position, retired.basis_xform(zero.size))
-		_check(bugged.is_equal_approx(Rect2(OFFSET, zero.size)),
+		_check(bugged.is_equal_approx(Rect2(offset, zero.size)),
 			"the retired get_screen_transform() mapping answered %s at aspect %d, not "
 				% [bugged, aspect]
 			+ "the unscaled %s — the harness is not reproducing the stretch, so check "
-				% Rect2(OFFSET, zero.size)
+				% Rect2(offset, zero.size)
 			+ "6b proves nothing")
 
 	hud.free()
@@ -996,7 +1006,7 @@ func _check_the_hud_theme() -> void:
 	var dimmed: float = 0.5 * (1.0 - veil.a) + veil.get_luminance() * veil.a
 	_check(0.5 - dimmed >= 0.25,
 		"the veil dims a mid-grey tile by only %.3f — 'you cannot have him' has "
-			% (0.5 - dimmed) + "to read at 48 px")
+			% (0.5 - dimmed) + "to read at a tile's size")
 
 	# --- the fonts --------------------------------------------------------------
 	# A missing TTF resolves to null and every `draw_string` silently draws
