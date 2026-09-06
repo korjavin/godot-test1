@@ -37,6 +37,12 @@ extends SceneTree
 ##  6. **No managers in the scene is not an error.** A character scene run
 ##     standalone has no terrain and no LOD manager; sampling must degrade to
 ##     zeros instead of crashing (the project's has_method/`in` guard rule).
+##  7. **The overlay is `PROCESS_MODE_ALWAYS`** (bead `godot-test1-xtr.15`).
+##     Guards 1-6 all feed `_process` by hand, so none of them can see the node
+##     never being ticked at all: under any `PauseHub` claim a pausable overlay
+##     records no spike and refreshes no text, and the text it keeps showing is
+##     from before the panel opened. That is what made the \fo Voice row look
+##     permanently empty in a room.
 ##
 ## Deliberately NOT covered: the actual frame times of the real game — that is
 ## what the tool measures, not something a headless check can assert.
@@ -52,6 +58,18 @@ extends Node
 var chunks_created_total: int = 0
 var chunks_removed_total: int = 0
 var lod_scans_total: int = 0
+"""
+
+## The one sentence guard 7 looks for in the paused overlay's text. Distinctive
+## on purpose: a substring the real `debug_line()` could produce would let the
+## row pass on any string at all.
+const VOICE_MARKER := "Voice: PERF_SELFCHECK_ROW"
+
+## Source for a stand-in `"voice"` group member — see `_make_voice_stub()`.
+const VOICE_STUB_SOURCE := """
+extends Node
+func debug_line() -> String:
+	return "Voice: PERF_SELFCHECK_ROW"
 """
 
 
@@ -86,6 +104,8 @@ func _run() -> void:
 		failure = _check_first_frame()
 	if failure.is_empty():
 		failure = _check_standalone()
+	if failure.is_empty():
+		failure = await _check_runs_under_pause()
 	if failure.is_empty():
 		Sentinel.finish(self)
 	else:
@@ -258,6 +278,61 @@ func _check_standalone() -> String:
 	return ""
 
 
+func _check_runs_under_pause() -> String:
+	"""Guard 7: the overlay really keeps working under a PAUSED tree, and the
+	Voice row it draws there is the one the voice module answers (bead
+	godot-test1-xtr.15).
+
+	Everything above feeds `_process` BY HAND, which is exactly the blind spot: a
+	pausable overlay passes every one of them and still measures nothing the moment
+	any panel takes a `PauseHub` claim. That is how the \\fo Voice row read as
+	permanently empty — the MP panel is how you enter a room, and the last refresh
+	before it opened happened while still offline.
+
+	So this one is driven by the ENGINE instead: a real `get_tree().paused`, real
+	frames, and an overlay whose `_process` nothing has switched off. Writing
+	`.paused` here is legal and not a loophole — `pause_selfcheck`'s scan of
+	`scripts/*.gd` skips every `*_selfcheck.gd`, because a harness driving the
+	rule is not a tenth pauser.
+
+	It runs LAST, and has to: every guard above asserts exact frame counts fed by
+	hand, and this is the only one that lets the engine tick.
+
+	The Voice row is asserted END TO END through a stub in group `"voice"` —
+	`voice_selfcheck` check 8b owns what `debug_line()` ANSWERS, and only this
+	side can see the overlay's group lookup, its `has_method` guard and the
+	append."""
+	var voice := _make_voice_stub()
+	var overlay := _make_live_overlay()
+	var tree_was_paused: bool = paused
+	paused = true
+	# Three frames: `_time_until_refresh` starts at 0.0, so the first `_process`
+	# that arrives rebuilds the text — the rest are slack for the engine's own
+	# scheduling, and the assertion below is on the RESULT rather than a count.
+	await process_frame
+	await process_frame
+	await process_frame
+	var mode: int = overlay.process_mode
+	var sampled: int = overlay._frames_sampled
+	var text: String = overlay.text
+	paused = tree_was_paused
+	_destroy(overlay)
+	_destroy(voice)
+
+	if mode != Node.PROCESS_MODE_ALWAYS:
+		return ("perf_overlay's process_mode is %d, not PROCESS_MODE_ALWAYS (%d) — "
+			% [mode, Node.PROCESS_MODE_ALWAYS]
+			+ "under any overlay's pause it stops sampling frames and stops "
+			+ "refreshing its text, which is the \\fo Voice row's bug")
+	if sampled <= 0:
+		return "the overlay sampled no frame at all while the tree was paused"
+	if not text.contains(VOICE_MARKER):
+		return ("the paused overlay's text does not carry the voice module's row "
+			+ "(`%s`) — it reads:\n%s" % [VOICE_MARKER, text])
+	Sentinel.done("runs_under_pause")
+	return ""
+
+
 # ============================================================================
 # FIXTURES
 # ============================================================================
@@ -272,6 +347,33 @@ func _make_overlay() -> Node:
 	# the very counters we are asserting exact values for.
 	overlay.set_process(false)
 	return overlay
+
+
+func _make_live_overlay() -> Node:
+	## `_make_overlay()`'s twin for guard 7, and the ONE difference is the whole
+	## point: the engine's own `_process` is left ON, because what that guard
+	## measures is whether the engine ticks this node at all under a paused tree.
+	## Visible, too — `_update_text()` sits under a `visible` early-return, and
+	## `_ready()`'s `OS.is_debug_build()` default is not something to bet on.
+	var overlay := Label.new()
+	overlay.set_script(PerfOverlay)
+	root.add_child(overlay)
+	overlay.visible = true
+	return overlay
+
+
+func _make_voice_stub() -> Node:
+	## The one method the overlay asks of group `"voice"`. A real `voice_chat.gd`
+	## would answer "" off-web (it is web-only, and correctly so), which is the
+	## one answer that cannot tell a working row from the bug.
+	var script := GDScript.new()
+	script.source_code = VOICE_STUB_SOURCE
+	script.reload()
+	var stub := Node.new()
+	stub.set_script(script)
+	stub.add_to_group("voice")
+	root.add_child(stub)
+	return stub
 
 
 func _destroy(node: Node) -> void:
