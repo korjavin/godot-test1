@@ -709,6 +709,50 @@ func _check_style_mirrors() -> void:
 			+ "unstyled face reaches a peer on the one browser that cannot capture "
 			+ "a canvas. The degrade is NO VIDEO (owner ruling 2026-09-06)")
 
+	# --- THE STRENGTH KNOBS (bead godot-test1-xtr.16) -----------------------
+	# The owner drives these from the browser console, so nothing in GDScript
+	# calls them and nothing but this reads them. Four things have to hold, and
+	# each is invisible in a diff: the SHIPPED defaults (a knob whose default
+	# drifted silently restyles every room), the paint loop really reading them
+	# (a leftover `STYLE_LEVELS` literal makes `setStyle(8, ...)` a no-op with an
+	# undefined ramp slot behind it), the PERSISTENCE (an experiment that does not
+	# survive a reload is not the knob that was asked for), and the four numbers
+	# reaching \fo, which is where the owner reads back what is live.
+	if not module.contains("var STYLE_DEFAULT = [4, 1.0, 1, 0.45];"):
+		_fail("VOICE_JS declares no `var STYLE_DEFAULT = [4, 1.0, 1, 0.45]` — the "
+			+ "cartoon camera's shipped look (bead godot-test1-xtr.16) is what the "
+			+ "knobs fall back to and what a fresh profile paints; a drifted default "
+			+ "restyles every room silently")
+	var paint_body: String = _js_function_body(module, "paint")
+	if paint_body.is_empty():
+		_fail("VOICE_JS has no `function paint(` — the strength knobs' subject is gone")
+	else:
+		for needle: String in ["S.style[0]", "S.style[1]", "S.style[2]"]:
+			if not paint_body.contains(needle):
+				_fail("paint() does not read `%s` — a hard-coded level count, mix or "
+					% needle + "edge flag makes setStyle() a no-op, and a stale level "
+					+ "count indexes a ramp slot that is not there")
+		if not paint_body.contains("* keep + "):
+			_fail("paint() no longer blends the band colour over the ORIGINAL pixel — "
+				+ "`mix` is the whole of the owner's \"a bit less agressive\", and "
+				+ "without the blend the ramp REPLACES the face at every setting")
+	var set_style: String = _js_function_body(module, "setStyle")
+	if set_style.is_empty():
+		_fail("VOICE_JS has no `function setStyle(` — there is no knob to turn")
+	else:
+		if not set_style.contains("STYLE_KEY"):
+			_fail("setStyle does not persist under STYLE_KEY — an experiment that dies "
+				+ "on reload is not the console knob the bead ships")
+		if not set_style.contains("styleNum(levels, 2, 8"):
+			_fail("setStyle does not clamp `levels` to 2..8 — one band is not a picture "
+				+ "and nine is not a cel look; a hand-edited localStorage row reaches "
+				+ "this function unchecked")
+	for knob: String in ["' l' + S.style[0]", "' m' + S.style[1]",
+			"' e' + S.style[2]", "' s' + S.style[3]"]:
+		if not module.contains(knob):
+			_fail("formatStats does not print `%s` — \fo is where the owner reads "
+				% knob.strip_edges() + "back which four numbers are actually live")
+
 	# --- BLANK, NEVER DELETE (the self-view's sticky wedge) ------------------
 	# `hideSelf` deleting the rect instead of blanking it leaves GDScript's change
 	# gate holding a rect the browser has forgotten, so a fast camera off/on shows
@@ -974,7 +1018,8 @@ func _check_video_health() -> void:
 	# applied to it, on a sample of the real format.
 	var node: Node = _voice_node()
 	var sample_row: String = ("Voice: mode=ALWAYS tx=0 ns=1 ec=1 agc=1 peers=1 "
-		+ "rtt=42ms loss=0.0% style=0.42ms ice=connected con=connected sig=stable "
+		+ "rtt=42ms loss=0.0% style=0.42ms l4 m1.00 e1 s0.45 "
+		+ "ice=connected con=connected sig=stable "
 		+ "sdp=5312 vin=12 vout=12 paint=61 src=1")
 	var wrapped: String = str(node._wrap_stats(sample_row))
 	var lines: PackedStringArray = wrapped.split("\n")

@@ -2696,6 +2696,20 @@ touches `JavaScriptBridge`.
   button — mobile is out of scope) would hide it; the browser's own F11 sets no
   `fullscreenElement` and is fine. The documented fallback is the bead's ImageTexture
   frame-copy path.
+  **THE CARTOON'S STRENGTH IS FOUR CONSOLE KNOBS** (bead `godot-test1-xtr.16`, owner:
+  *"is it configurable? can we make it a bit less agressive?"*) — `levels`, `mix`,
+  `edge`, `shadow`, held in `S.style`, clamped and persisted to `localStorage`
+  (`ck_voice_style`) by the one writer `setStyle`, and read back by `getStyle()` and by
+  \fo's `style=` column (`l4 m1.00 e1 s0.45`). From the SENDER's browser console:
+  `window.ckVoice.setStyle(6, 0.6, 1, 0.5)` softens it on every receiver's tile within a
+  frame; `window.ckVoice.getStyle()` answers `"4,1,1,0.45"` and `setStyle(4, 1, 1, 0.45)`
+  is the way back. `mix` is the knob that did not exist — how much of the REAL pixel
+  survives — and at the shipped **1.0 the blend is `orig * 0 + ramp * 1`, so the defaults
+  paint byte for byte what they always did**; the ramp resamples its four control stops at
+  `levels` points, which lands exactly on them at 4. **mix 0 is still the posterized crop
+  through the canvas, never the raw device** — the forced rule is `styleStream()`'s and no
+  knob reaches it. `voice_selfcheck` check 6b pins the defaults, the paint loop's reads,
+  the clamp, the persistence and the four \fo columns.
   **A STUCK PICTURE IS MEASURABLE, AND THE SAMPLER IS NOT \fo'S** (bead
   `godot-test1-xtr.17`): `sampleStats()` gained the video half — per peer
   `ice=`/`con=`/`sig=`/`sdp=`/`vin=`/`vout=` (the two transport states, the negotiation

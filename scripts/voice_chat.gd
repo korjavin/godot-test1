@@ -189,7 +189,10 @@ const TILE_INTERVAL: float = 0.2
 ## picture straight over the green ring, which is the row's only "who is talking"
 ## read. A fraction clears that band at every scale, which is the whole point.
 ##
-## The number is `(RING_INSET + RING_WIDTH) / TILE_SIZE` in `hero_hud`'s terms,
+## The number is `(RING_INSET + RING_WIDTH) / TILE_SIZE` in `hero_hud`'s terms —
+## 5 / 92 since the tile grew from 80 to 92 (bead `godot-test1-y1o.37`), and the
+## denominator is the half that rots silently: a stale 80 still passes check 6b's
+## `>=`, it just eats 0.75 design px more of the picture than the ring needs.
 ## MIRRORED rather than preloaded exactly like `HERO_HUD_STATE_CAPTIVE` below — and
 ## `hero_hud_selfcheck` check 6b binds it to those real consts through the real
 ## stretched rect, so it cannot drift and cannot go back to an absolute grow.
@@ -198,7 +201,7 @@ const TILE_INTERVAL: float = 0.2
 ## a CAPTIVE tile takes no picture at all: its cell bars are drawn ACROSS the whole
 ## tile and no inset can save them, and they are the one state this row says with a
 ## shape rather than a brightness. `_poll_tiles` skips those.
-const TILE_INSET_FRAC: float = 5.0 / 80.0
+const TILE_INSET_FRAC: float = 5.0 / 92.0
 
 ## `hero_hud.STATE_CAPTIVE`, mirrored rather than preloaded — the row is found
 ## through its group like every other widget here, and a preload would be a hard
@@ -266,11 +269,17 @@ const VOICE_JS: String = """
 		   hero-tinted, ink-outlined crop into. `styleSrc` is a hidden <video> fed
 		   by `cam` (a MediaStream cannot be drawn; an element can), `styleLv` is
 		   the per-pixel quantised level the second pass reads to find its edges,
-		   and `styleRamp` is the four colours that level indexes. `paintMs` is the
-		   last frame's cost, reported in `stats()` for \fo. */
+		   and `styleRamp` is the colours that level indexes. `paintMs` is the
+		   last frame's cost, reported in `stats()` for \fo.
+
+		   THE STRENGTH KNOBS (bead godot-test1-xtr.16). `style` is the live
+		   [levels, mix, edge, shadow], loaded from localStorage at install and
+		   rewritten by `setStyle`; `styleTint` is the hero's rgb, remembered so the
+		   ramp can be rebuilt when a knob moves rather than only when GDScript
+		   pushes a new hero. */
 		styled: null, styleSrc: null, styleCanvas: null, styleCtx: null,
 		styleLv: null, styleRamp: null, styleRvfc: 0, styleTimer: null,
-		styleWatch: null, paintMs: 0,
+		styleWatch: null, paintMs: 0, style: null, styleTint: [140, 140, 150],
 		/* THE SENDER'S SELF-HEAL (bead godot-test1-xtr.18). `styleW` is the Worker
 		   whose timer drives the paint loop in a HIDDEN tab, where rVFC never fires
 		   and `setInterval` is throttled to 1 Hz; `recamN`/`recamWin`/`recamBusy`
@@ -743,9 +752,26 @@ const VOICE_JS: String = """
 	   160x120 edges away on every receiver, so cropping here spends the 150 kbps
 	   cap on the pixels that are actually drawn. */
 	var STYLE_SIZE = 128;
-	/* Four bands is the cel look — INK ground, two tinted mid-tones, BONE
-	   highlight. Three reads as a stencil, five stops reading as steps at all. */
-	var STYLE_LEVELS = 4;
+	/* THE STRENGTH KNOBS, AND THE SHIPPED LOOK IS THEIR DEFAULT (bead
+	   godot-test1-xtr.16, owner: "is it configurable? can we make it a bit less
+	   agressive? i'd like to experiment with this").
+
+	   [levels, mix, edge, shadow]. Four bands is the cel look — INK ground, two
+	   tinted mid-tones, BONE highlight; three reads as a stencil, five stops
+	   reading as steps at all, which is why `levels` alone was never the knob the
+	   owner was asking for. `mix` is: how much of the REAL pixel survives the
+	   ramp, which before this bead was nothing at all. `edge` is whether a band
+	   boundary is inked, and `shadow` is where the ramp's dark tint sits.
+
+	   AT THESE VALUES THE PAINT IS BYTE FOR BYTE WHAT IT WAS: the blend below is
+	   `orig * (1 - 1) + ramp * 1`, i.e. the assignment it replaced, and the ramp
+	   samples its four control stops at exactly the four points that ARE them.
+
+	   ponytail: a console knob and no panel — the owner is choosing numbers, and
+	   whichever four they settle on become these defaults. `setStyle` from the
+	   browser console, remembered here so a reload keeps the experiment. */
+	var STYLE_DEFAULT = [4, 1.0, 1, 0.45];
+	var STYLE_KEY = 'ck_voice_style';
 	var STYLE_FPS = 12;
 	var STYLE_PERIOD_MS = Math.round(1000 / STYLE_FPS);
 	/* The watchdog's period — slow on purpose. It is not a frame rate, it is the
@@ -773,16 +799,85 @@ const VOICE_JS: String = """
 	   boolean scan reads this string too. */
 	var STYLE_WORKER_SRC = 'var t = 0; onmessage = function (e) { var ms = Number(e.data); if (!(ms > 0)) { ms = 83; } if (t) { clearInterval(t); } t = setInterval(function () { postMessage(1); }, ms); };';
 
-	/* The four colours a quantised level indexes: INK, the tint at shadow value,
-	   the tint, BONE. Rebuilt only when GDScript pushes a new hero. */
+	/* The colours a quantised level indexes, sampled off FOUR control stops: INK,
+	   the tint at shadow value, the tint, BONE. Rebuilt when GDScript pushes a new
+	   hero and when a knob moves.
+
+	   THE RAMP HAS TO BE `levels` LONG — `paint`'s second pass indexes it by band
+	   — so the four stops are RESAMPLED rather than listed. At the default 4 the
+	   sample points (t = 0, 1, 2, 3 in stop units) land exactly on the stops, so
+	   the shipped ramp is unchanged to the byte. */
 	function styleRamp(r, g, b) {
-		return [
+		var sh = S.style[3];
+		var stops = [
 			STYLE_INK,
-			[Math.round(r * 0.45), Math.round(g * 0.45), Math.round(b * 0.45)],
+			[Math.round(r * sh), Math.round(g * sh), Math.round(b * sh)],
 			[r, g, b],
 			STYLE_BONE
 		];
+		var n = S.style[0];
+		var out = [];
+		for (var i = 0; i < n; i++) {
+			var t = n > 1 ? (i * 3) / (n - 1) : 0;
+			var j = t | 0;
+			if (j > 2) { j = 2; }
+			var f = t - j;
+			var a = stops[j];
+			var c = stops[j + 1];
+			out.push([
+				Math.round(a[0] + (c[0] - a[0]) * f),
+				Math.round(a[1] + (c[1] - a[1]) * f),
+				Math.round(a[2] + (c[2] - a[2]) * f)
+			]);
+		}
+		return out;
 	}
+
+	function rebuildRamp() {
+		S.styleRamp = styleRamp(S.styleTint[0], S.styleTint[1], S.styleTint[2]);
+		return 1;
+	}
+
+	/* One knob, clamped, with the shipped value as the answer for anything that is
+	   not a finite number — which is what a hand-edited localStorage row, a typo in
+	   the console and a missing field all look like by the time they get here. */
+	function styleNum(v, lo, hi, dflt) {
+		var n = Number(v);
+		if (!isFinite(n)) { return dflt; }
+		if (n < lo) { return lo; }
+		if (n > hi) { return hi; }
+		return n;
+	}
+
+	/* THE ONE WRITER of the four knobs: clamps, rebuilds the ramp and persists.
+	   Stored as one comma-joined row under one key, because four keys is four ways
+	   to be half-written. */
+	function setStyle(levels, mix, edge, shadow) {
+		S.style = [
+			Math.round(styleNum(levels, 2, 8, STYLE_DEFAULT[0])),
+			styleNum(mix, 0, 1, STYLE_DEFAULT[1]),
+			styleNum(edge, 0, 1, STYLE_DEFAULT[2]) >= 0.5 ? 1 : 0,
+			styleNum(shadow, 0, 1, STYLE_DEFAULT[3])
+		];
+		rebuildRamp();
+		try { window.localStorage.setItem(STYLE_KEY, S.style.join(',')); } catch (e) { }
+		return 1;
+	}
+
+	/* Read at install, so an experiment survives a reload. A row of any other
+	   length is not a row this module wrote — take the shipped four. */
+	function loadStyle() {
+		var raw = '';
+		try { raw = window.localStorage.getItem(STYLE_KEY); } catch (e) { raw = ''; }
+		var p = String(raw === null || raw === undefined ? '' : raw).split(',');
+		if (p.length !== 4) { p = STYLE_DEFAULT; }
+		return setStyle(p[0], p[1], p[2], p[3]);
+	}
+
+	/* Before anything can paint, and before `setStyleTint` can be pushed a hero:
+	   `styleRamp` reads `S.style`, so the knobs are the first thing this module
+	   owns. */
+	loadStyle();
 
 	function styleNow() {
 		return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
@@ -829,7 +924,7 @@ const VOICE_JS: String = """
 			/* Body, and the little viewfinder hump on top of it. */
 			cx.fillRect(n * 0.22, n * 0.38, n * 0.50, n * 0.30);
 			cx.fillRect(n * 0.34, n * 0.32, n * 0.16, n * 0.06);
-			/* The lens, punched back to INK so the glyph reads at 80 px. */
+			/* The lens, punched back to INK so the glyph reads at 92 px. */
 			cx.fillStyle = ink;
 			cx.fillRect(n * 0.33, n * 0.46, n * 0.16, n * 0.14);
 			/* The barrel sticking out of the right-hand side. */
@@ -969,27 +1064,37 @@ const VOICE_JS: String = """
 		var lv = S.styleLv;
 		var ramp = S.styleRamp;
 		var i, k;
-		var top = STYLE_LEVELS - 1;
+		var levels = S.style[0];
+		var mix = S.style[1];
+		var inked = S.style[2];
+		var keep = 1 - mix;
+		var top = levels - 1;
 		/* PASS 1 — luminance, quantised. Kept in its own array because pass 2 has
 		   to compare a pixel's band with its NEIGHBOURS', which it cannot do once
 		   they have been recoloured. */
 		for (i = 0, k = 0; k < d.length; i++, k += 4) {
 			var l = (d[k] * 0.299 + d[k + 1] * 0.587 + d[k + 2] * 0.114) / 255;
-			var q = (l * STYLE_LEVELS) | 0;
+			var q = (l * levels) | 0;
 			lv[i] = q > top ? top : q;
 		}
 		/* PASS 2 — the band's colour, or INK where the band CHANGES. A level edge
 		   is exactly the contour a cel artist would ink, and it costs two integer
 		   compares against a Sobel's nine multiplies. Right and down only: an
-		   outline drawn from both sides of a boundary is two pixels thick. */
+		   outline drawn from both sides of a boundary is two pixels thick.
+		   Then the STRENGTH KNOB (bead godot-test1-xtr.16): the band colour blended
+		   back over the real pixel. At the shipped mix of 1 that is `d * 0 + c * 1`
+		   — an exact integer, and a Uint8ClampedArray store of an exact integer is
+		   the assignment this replaced, so the default output is unchanged to the
+		   byte. Three multiplies and three adds on 16k pixels is the whole bill. */
 		for (i = 0, k = 0; k < d.length; i++, k += 4) {
 			var b = lv[i];
 			var x = i % n;
-			var edge = (x + 1 < n && lv[i + 1] !== b) || (i + n < lv.length && lv[i + n] !== b);
+			var edge = inked === 1
+				&& ((x + 1 < n && lv[i + 1] !== b) || (i + n < lv.length && lv[i + n] !== b));
 			var c = edge ? STYLE_INK : ramp[b];
-			d[k] = c[0];
-			d[k + 1] = c[1];
-			d[k + 2] = c[2];
+			d[k] = d[k] * keep + c[0] * mix;
+			d[k + 1] = d[k + 1] * keep + c[1] * mix;
+			d[k + 2] = d[k + 2] * keep + c[2] * mix;
 		}
 		try { cx.putImageData(img, 0, 0); } catch (e) { return 0; }
 		S.paintMs = styleNow() - t0;
@@ -1111,7 +1216,7 @@ const VOICE_JS: String = """
 		S.styleCanvas = c;
 		S.styleCtx = cx;
 		S.styleLv = new Uint8Array(STYLE_SIZE * STYLE_SIZE);
-		if (!S.styleRamp) { S.styleRamp = styleRamp(140, 140, 150); }
+		if (!S.styleRamp) { rebuildRamp(); }
 		var st = null;
 		try { st = c.captureStream(STYLE_FPS); } catch (e) { st = null; }
 		if (!st) {
@@ -1283,7 +1388,7 @@ const VOICE_JS: String = """
 			S.camState = 1;
 			var gen = S.gen;
 			/* Portrait size and portrait frame rate: the picture is drawn in an
-			   80 px tile (`hero_hud.TILE_SIZE`), so anything larger is bytes
+			   92 px tile (`hero_hud.TILE_SIZE`), so anything larger is bytes
 			   nobody can see. */
 			navigator.mediaDevices.getUserMedia({
 				audio: false,
@@ -1644,8 +1749,13 @@ const VOICE_JS: String = """
 		var lossStr = 'loss=' + lossRate.toFixed(1) + '%';
 		/* THE CARTOON CAMERA'S BILL (bead godot-test1-xtr.11), last painted frame.
 		   It is the before/after evidence: the paint runs on the browser's main
-		   thread, which on this single-threaded export IS Godot's frame. */
-		var styleStr = 'style=' + S.paintMs.toFixed(2) + 'ms';
+		   thread, which on this single-threaded export IS Godot's frame.
+		   The four STRENGTH KNOBS ride it (bead godot-test1-xtr.16): the owner
+		   experiments from the console, and \fo is where they read back what is
+		   actually live — `l` levels, `m` mix, `e` edge, `s` shadow. */
+		var styleStr = 'style=' + S.paintMs.toFixed(2) + 'ms'
+			+ ' l' + S.style[0] + ' m' + S.style[1].toFixed(2)
+			+ ' e' + S.style[2] + ' s' + S.style[3].toFixed(2);
 		/* THE VIDEO HALF (bead godot-test1-xtr.17), and it is APPENDED: every key
 		   above keeps its spelling and its order, so xtr.15's parse and anybody
 		   grepping an old log are untouched.
@@ -1897,9 +2007,16 @@ const VOICE_JS: String = """
 		   than a hero NAME, so `hero_hud.HERO_COLORS` stays the one table: a name
 		   would need a second copy of it here, in a language that cannot read it. */
 		setStyleTint: function (r, g, b) {
-			S.styleRamp = styleRamp(chan(r), chan(g), chan(b));
-			return 1;
+			S.styleTint = [chan(r), chan(g), chan(b)];
+			return rebuildRamp();
 		},
+		/* THE STRENGTH KNOBS (bead godot-test1-xtr.16), driven from the browser
+		   console: `window.ckVoice.setStyle(6, 0.6, 1, 0.5)` softens the picture on
+		   every receiver's tile within a frame and is remembered across reloads.
+		   `getStyle` answers all four as ONE comma-joined string — one bridge call,
+		   and a string rather than the four-number array a bridge cannot marshal. */
+		setStyle: setStyle,
+		getStyle: function () { return S.style.join(','); },
 		setTile: setTile,
 		hideTile: hideTile,
 		videoPeers: videoPeers,
