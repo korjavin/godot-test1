@@ -94,3 +94,6 @@ __pycache__/
 web/vendor/mediapipe/vision_bundle.js
 web/vendor/mediapipe/wasm/
 web/vendor/mediapipe/*.tflite
+
+# revmux run archives (task dirs); the config, lenses, prompts and profile.md are tracked
+.revmux/tasks/
