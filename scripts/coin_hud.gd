@@ -20,16 +20,6 @@ extends Label
 ## `locale_selfcheck` moves.
 const FONT_SIZE: int = 40
 
-## The transient-shout stroke: 3 px of INK, per the spec's SFX rule (the coin
-## counter and "NEW BEST!" are the two things it names). `HudTheme.OUTLINE_PX` is
-## the 2 px WORLD-lettering stroke and is a different number, so it is not reused
-## here.
-## ponytail: the theme has no 3 px SFX const — a gap named in the PR, for the
-## next bead that needs the same stroke to promote this line into `HudTheme`.
-## Doubled at the call site like `hero_hud`'s: Godot grows an outline in BOTH
-## directions, so a 3 px stroke is `outline_size = 6`.
-const OUTLINE_INK_PX: int = 3
-
 ## How big the label pops when a coin is picked up (1.25 = 25% oversized).
 const POP_SCALE: float = 1.25
 
@@ -59,7 +49,13 @@ func _ready() -> void:
 	add_theme_font_size_override("font_size", FONT_SIZE)
 	add_theme_color_override("font_color", HudTheme.VISOR_AMBER)
 	add_theme_color_override("font_outline_color", HudTheme.INK)
-	add_theme_constant_override("outline_size", OUTLINE_INK_PX * 2)
+	# The transient-shout stroke, promoted into `HudTheme` by bead
+	# godot-test1-y1o.38 when `world_caption.gd` became its second consumer —
+	# `HudTheme.OUTLINE_PX` is the 2 px WORLD-lettering stroke and is a different
+	# number, so it is not what this wants. Doubled at the call site like
+	# `hero_hud`'s: Godot grows an outline in BOTH directions, so a 3 px stroke is
+	# `outline_size = 6`.
+	add_theme_constant_override("outline_size", HudTheme.OUTLINE_SFX_PX * 2)
 	# A HARD shadow: an offset solid copy, never a blur — which is what Godot's
 	# Label shadow already is, so the panel language's (2,2) in INK at 0.6 needs no
 	# translating.

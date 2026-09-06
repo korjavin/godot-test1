@@ -119,6 +119,17 @@ const BODY_FONT_SIZE: int = 14
 const OUTLINE_PX: int = 2
 const SHADOW_OFFSET: Vector2 = Vector2(1.0, 1.0)
 
+## THE TRANSIENT-SHOUT STROKE, one step up from the world-lettering one: 3 px of
+## INK for the spec's SFX lettering — the coin counter, "NEW BEST!", the respawn
+## countdown and the level-up line, which are big, brief and have to survive
+## being read over anything. Same doubling rule as `OUTLINE_PX`.
+##
+## It lived in `coin_hud.gd` with a `ponytail:` note inviting exactly this
+## promotion once a second consumer needed the same stroke; `world_caption.gd`
+## (bead `godot-test1-y1o.38`) is that consumer, and a third copy of `3` is the
+## drift this file exists to stop.
+const OUTLINE_SFX_PX: int = 3
+
 ## The panel language: hard edges, and a HARD shadow. `StyleBoxFlat.shadow_size`
 ## is a solid EXPANSION of the shadow rect and never a blur, so the offset shadow
 ## below is hard by construction; `anti_aliasing` only feathers the box's own edge
