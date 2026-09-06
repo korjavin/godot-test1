@@ -31,6 +31,12 @@ var _only: String = ""
 ## passes `hide=weather,fauna` and keeps them on screen.
 var _hidden_groups: PackedStringArray = PackedStringArray(["crowd", "traffic", "weather", "fauna"])
 
+## Set by a shot that POSES a HUD widget, spent by `_shoot` just after it freezes
+## the body — see the call site for why a posed widget needs re-asserting at all.
+## A Callable rather than a (node, text) pair because the caller already holds
+## both and this file should not learn what a caption is.
+var _repose: Callable = Callable()
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	# Without this the desktop window vsyncs at 60 and every frame-time reading
@@ -330,6 +336,15 @@ func _shoot_caption(terrain: Node, player: Node3D, at: Vector3, yaw: float,
 	The label is the widget under test and its writers are untouched by the bead
 	this serves, so posing it is honest. It is a debug tool that quits when it is
 	done, so nothing restores the text.
+
+	BUT THE RESPAWN LABEL HAS A LIVE PER-FRAME WRITER, so the pose is handed to
+	`_shoot` as `_repose` and re-applied after the freeze. A crocodile arriving
+	during the 9 s settle makes `player_controller._show_respawn_countdown()`
+	rewrite the text and `_hide_respawn_message()` hide the label, and the shot
+	came out EMPTY — reproduced on the shipped seed, one run in a few, with no
+	error anywhere. (The level-up label has no such writer — `progression`
+	`set_process(false)`s itself until a level-up — but it costs nothing to
+	re-assert both through one seam.)
 	"""
 	if _only != "" and not name.contains(_only):
 		return
@@ -337,9 +352,13 @@ func _shoot_caption(terrain: Node, player: Node3D, at: Vector3, yaw: float,
 	if label == null:
 		print("[SHOTS] no node in group ", group)
 		return
-	label.text = line
-	_show_widget(group)
+	var pose := func() -> void:
+		label.text = line
+		_show_widget(group)
+	pose.call()
+	_repose = pose
 	await _shoot(terrain, player, at, yaw, name)
+	_repose = Callable()
 	_show_widget(group, false)
 
 
@@ -538,8 +557,19 @@ func _shoot(terrain: Node, player: Node3D, where: Vector3, yaw: float, name: Str
 	var model := player.get_node_or_null("CharacterModel")
 	if model is Node3D:
 		(model as Node3D).visible = true
+	# ...and the HUD's pose is re-asserted the same way, for the same bite. A
+	# caller that POSES a widget (`_shoot_caption`) is posing something with a
+	# live per-frame writer: `player_controller._show_respawn_countdown()` rewrites
+	# the respawn label every frame of a real bite and `_hide_respawn_message()`
+	# then hides it, so a crocodile arriving during the 9 s settle captured an
+	# empty frame — reproduced, and it is a COIN FLIP rather than an error, which
+	# is the worst shape for an acceptance tool. It goes here rather than in the
+	# caller because it belongs BELOW the freeze on the next two lines: re-posing
+	# above them leaves the writer one more tick to undo it.
 	player.set_physics_process(false)
 	player.set_process(false)
+	if _repose.is_valid():
+		_repose.call()
 	await get_tree().process_frame
 	await get_tree().process_frame
 	await RenderingServer.frame_post_draw
