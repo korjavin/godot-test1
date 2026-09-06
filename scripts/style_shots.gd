@@ -62,6 +62,10 @@ var _repose: Callable = Callable()
 ## Empty means "today's head" — the control cell of the grid.
 var _head_variant: String = ""
 
+## Whether a head close-up has already teleported, settled and FROZEN the hero, so a
+## second framing may reuse the pose. See `_shoot_head_closeup`'s `settle`.
+var _head_pose_settled: bool = false
+
 const SPIKE_HEAD_SMOOTH: String = \
 		"res://assets/models/characters/windman_parts/windman_head_authored.glb"
 const SPIKE_HEAD_FLAT: String = \
@@ -463,10 +467,16 @@ func _shoot_head_closeup(terrain: Node, player: Node3D, at: Vector3, fov: float,
 	`settle` is false for a SECOND framing of a body that is already posed and already
 	frozen: the world is built, nothing is ticking, and only the lens changes. Sixteen
 	runs of this spike each paid a 9 s settle and a 300-frame measure for that.
+
+	IT IS A REQUEST, NOT AN ASSERTION, and `_head_pose_settled` is why: `only=` can
+	filter out the shot that was supposed to have done the settling, and a false here
+	would then photograph the boot pose — a live, unfrozen hero on chunks that have
+	not streamed in. So the caller says "reuse if there is anything to reuse" and this
+	decides.
 	"""
 	if _only != "" and not name.contains(_only):
 		return
-	if settle:
+	if settle or not _head_pose_settled:
 		var chunk := Vector2i(roundi(at.x / 50.0), roundi(at.z / 50.0))
 		player.set_physics_process(true)
 		player.set_process(true)
@@ -489,6 +499,7 @@ func _shoot_head_closeup(terrain: Node, player: Node3D, at: Vector3, fov: float,
 			(model as Node3D).visible = true
 		player.set_physics_process(false)
 		player.set_process(false)
+		_head_pose_settled = true
 		await get_tree().process_frame
 
 	var hero: Node = player.character_instances[0]
