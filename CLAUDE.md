@@ -2628,6 +2628,19 @@ touches `JavaScriptBridge`.
   on the first press of the MP panel's Camera button and nowhere else, a refusal sticks
   for the room, and the device is released on toggle-off and on leave — a tab's recording
   light outliving the room it was granted for is the way this gets badly wrong.
+  **THE FACE IS CARTOONED BEFORE IT IS ENCODED, AND THAT IS FORCED FOR THE ROOM**
+  (bead `godot-test1-xtr.11`, owner ruling 2026-09-06): the sender centre-crops its own
+  webcam square into a hidden 128x128 2D canvas, posterizes it to four bands, colours
+  them INK / the driven hero's `hero_hud.HERO_COLORS` tint / BONE and inks the band
+  edges, and `canvas.captureStream(12)` is the ONLY video track `attachCam` ever adds —
+  so there is no toggle, no MP-panel button, no `ui.csv` row and nothing in the `[voice]`
+  store, and a receiver on an older build gets the effect because it travels as pixels.
+  Sender-side is where the hero is known, where the crop raises effective resolution
+  before the encoder, and where a posterized frame's lower entropy makes the same
+  150 kbps cap go further. **2D canvas, never WebGL** (a second GL context beside
+  Godot's on this single-threaded export is contention for a job a CPU loop does in
+  half a millisecond) and **the posterize is in the pixel loop, never `ctx.filter`**
+  (Safari). Its cost rides `stats()` as `style=N.NNms`, which is what \fo shows.
   **THE PICTURE IS A DOM `<video>` OVER THE CANVAS, not a frame copy** (`intro_video.gd`'s
   precedent): the browser decodes and composites, so the per-frame cost on the
   single-threaded export is zero and GDScript's whole contribution is one rect at 5 Hz,
