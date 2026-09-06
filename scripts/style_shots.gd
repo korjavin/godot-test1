@@ -149,6 +149,16 @@ func _run() -> void:
 	await _shoot_coin_line(terrain, player, field, 0.0, "14_coin_line_field")
 	await _shoot_coin_line(terrain, player, street, -PI * 0.5, "15_coin_line_budapest")
 
+	# THE CAPTIONS (bead godot-test1-y1o.38) — the respawn countdown and the
+	# level-up line, the two biggest strings the game ever puts over the world.
+	# One ground each rather than both: they are drawn dead centre at 48/40 px, so
+	# the question is whether BONE-on-INK survives a bright field (the harder of
+	# the two grounds for a light letter), not how they sit in a corner.
+	await _shoot_caption(terrain, player, field, 0.0, "respawn_label",
+		"Caught! Back in %.1f..." % 1.2, "16_caption_respawn")
+	await _shoot_caption(terrain, player, field, 0.0, "level_up_label",
+		"LEVEL 12\n+1 skill point", "17_caption_level_up")
+
 	# LANDMARKS (bead godot-test1-y1o.6). Each one is found by BUILDER NAME rather
 	# than by a hand-typed chunk: `_landmark_at` is a pure function of (chunk,
 	# run_seed), so sweeping it answers "where is the Taj in this world" without
@@ -304,6 +314,33 @@ func _shoot_coin_line(terrain: Node, player: Node3D, at: Vector3, yaw: float,
 	_show_widget("coin_hud")
 	await _shoot(terrain, player, at, yaw, name)
 	_show_widget("coin_hud", false)
+
+
+func _shoot_caption(terrain: Node, player: Node3D, at: Vector3, yaw: float,
+		group: String, line: String, name: String) -> void:
+	"""
+	One shot of a big centred caption — `_shoot_coin_line`'s twin, one group
+	along, with the string passed in because the two captions this serves live in
+	two different scripts.
+
+	THE TEXT IS WRITTEN STRAIGHT ONTO THE LABEL rather than by provoking the
+	event. The respawn countdown only exists inside a 1.5 s freeze that follows a
+	real bite, and the level-up line inside a lifetime-coin threshold crossing —
+	staging either would make this tool simulate gameplay to photograph a font.
+	The label is the widget under test and its writers are untouched by the bead
+	this serves, so posing it is honest. It is a debug tool that quits when it is
+	done, so nothing restores the text.
+	"""
+	if _only != "" and not name.contains(_only):
+		return
+	var label := get_tree().get_first_node_in_group(group)
+	if label == null:
+		print("[SHOTS] no node in group ", group)
+		return
+	label.text = line
+	_show_widget(group)
+	await _shoot(terrain, player, at, yaw, name)
+	_show_widget(group, false)
 
 
 func _shoot_field_bridge(terrain: Node, player: Node3D) -> void:
