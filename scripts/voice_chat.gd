@@ -937,7 +937,16 @@ const VOICE_JS: String = """
 		var now = styleNow();
 		if (v.currentTime !== S.srcTime) {
 			S.srcTime = v.currentTime;
-			S.srcAt = now;
+			/* A MUTED TRACK IS NOT A LIVE ONE, even while its element keeps
+			   ticking (codex review 2026-09-06). A lid closing, an OS privacy
+			   switch or another app taking the device MUTES the track: the element
+			   goes on playing black frames off the stream's own clock, so
+			   `currentTime` alone would refresh this stamp forever and neither the
+			   card nor the re-acquisition would ever fire — every receiver would
+			   sit on a black tile indefinitely, which is the exact failure this
+			   whole rung exists to close. `srcState()` is xtr.17's own reader and
+			   answers 1 only for a live track. */
+			if (srcState() === 1) { S.srcAt = now; }
 		}
 		if (!S.srcAt) { S.srcAt = now; }
 		if (now - S.srcAt > STYLE_STALE_MS) {
@@ -1707,15 +1716,26 @@ const VOICE_JS: String = """
 				var peerRtt = -1;
 				/* ABSOLUTE counters this sample, turned into a delta below against
 				   the peer's own previous pair. -1 is "the report did not carry
-				   one", which is not the same as zero and must not read as a stall. */
+				   one", which is not the same as zero and must not read as a stall.
+				   SUMMED over every video record rather than taking the last one
+				   (codex review 2026-09-06): a peer on an OLD build has one inactive
+				   video m-section per camera toggle it ever made, so `getStats()`
+				   carries several `inbound-rtp` video rows. Whichever the iteration
+				   happened to end on could be a dead one with a frozen counter,
+				   which would dim a perfectly live tile. Every row is monotone, so
+				   the sum's DELTA is the live row's growth. */
 				var vFrames = [-1, -1];
 
 				if (report && report.forEach) {
 					report.forEach(function (stat) {
 						if (stat && stat.type === 'inbound-rtp' && (stat.kind === 'video' || stat.mediaType === 'video')) {
-							if (typeof stat.framesDecoded === 'number') { vFrames[0] = stat.framesDecoded; }
+							if (typeof stat.framesDecoded === 'number') {
+								vFrames[0] = (vFrames[0] < 0 ? 0 : vFrames[0]) + stat.framesDecoded;
+							}
 						} else if (stat && stat.type === 'outbound-rtp' && (stat.kind === 'video' || stat.mediaType === 'video')) {
-							if (typeof stat.framesEncoded === 'number') { vFrames[1] = stat.framesEncoded; }
+							if (typeof stat.framesEncoded === 'number') {
+								vFrames[1] = (vFrames[1] < 0 ? 0 : vFrames[1]) + stat.framesEncoded;
+							}
 						} else if (stat && stat.type === 'inbound-rtp' && (stat.kind === 'audio' || stat.mediaType === 'audio')) {
 							if (typeof stat.packetsLost === 'number') {
 								peerLost += stat.packetsLost;
