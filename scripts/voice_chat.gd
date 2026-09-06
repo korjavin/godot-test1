@@ -271,6 +271,22 @@ const VOICE_JS: String = """
 		styled: null, styleSrc: null, styleCanvas: null, styleCtx: null,
 		styleLv: null, styleRamp: null, styleRvfc: 0, styleTimer: null,
 		styleWatch: null, paintMs: 0,
+		/* THE SENDER'S SELF-HEAL (bead godot-test1-xtr.18). `styleW` is the Worker
+		   whose timer drives the paint loop in a HIDDEN tab, where rVFC never fires
+		   and `setInterval` is throttled to 1 Hz; `recamN`/`recamWin`/`recamBusy`
+		   bound the device re-acquisition to STYLE_RECAM_MAX a minute so a camera
+		   that is gone for good settles on the signal-lost card instead of
+		   hammering getUserMedia for the life of the room. */
+		styleW: null, recamN: 0, recamWin: 0, recamBusy: 0,
+		/* THE SENDER'S OWN HEALTH (bead godot-test1-xtr.17). `paintAt` is when
+		   `paint()` last put pixels on the canvas — the only thing that can tell a
+		   stalled paint loop from a working one, and reported as `paint=` — and
+		   `srcTime`/`srcAt` are the SOURCE's clock: the last `currentTime` seen off
+		   `styleSrc` and when it last moved. A frozen device (lid shut, another app
+		   took the camera, a backgrounded tab) keeps decoding nothing while the
+		   element happily reports its last frame, so a stopped `currentTime` is the
+		   one signal that sees all three. */
+		paintAt: 0, srcTime: -1, srcAt: 0,
 		/* THE SELF-VIEW (bead godot-test1-xtr.14): one more <video>, fed the
 		   STYLED stream so what you see of yourself is exactly what the room sees,
 		   and placed through the same `S.tiles` / `placeTile` path as every
@@ -491,6 +507,53 @@ const VOICE_JS: String = """
 	   microphone's level under the same name. */
 	var SELF_TILE = 'me';
 
+	/* HOW MANY 1 Hz SAMPLES OF ZERO DECODED FRAMES MAKE A STALL (bead
+	   godot-test1-xtr.17). Three, because that is the bead's three seconds and
+	   because one is noise: a sample straddling a keyframe gap, a tab that just
+	   came back, a peer whose first frame has not landed. */
+	var STALL_SAMPLES = 3;
+
+	/* THE RECEIVER'S MARK, AND IT IS A FILTER RATHER THAN A COLOUR. `hero_hud`'s
+	   ring is untouched and nothing is drawn under a picture nobody can see: the
+	   <video> element itself goes grey and INK-dim, which is the film language
+	   spelled in the two things CSS can do without naming a hue. It may NOT name
+	   one — `hero_hud_selfcheck` check 8 greps `scripts/` for the six film hexes
+	   and they may be typed in `hud_theme.gd` alone.
+
+	   `placeTile` rewrites `cssText` wholesale, so the mark has to be re-applied
+	   there or every resize and every rect push clears it. */
+	function stallFilter(id) {
+		if (id === SELF_TILE) { return ''; }
+		var p = S.peers[id];
+		if (p && p.stalled === 1) { return 'filter:grayscale(1) brightness(0.35);'; }
+		return '';
+	}
+
+	/* ONE PEER'S VERDICT, off one sample's framesDecoded DELTA. This is the only
+	   class of stuck picture a receiver can see by itself: a sender whose paint
+	   loop stopped (a hidden tab, a throw inside paint) stops shipping frames, so
+	   the delta goes to zero while the element keeps showing its last one forever.
+	   A sender whose DEVICE froze is deliberately not detectable here — the delta
+	   keeps advancing — and is captioned in the pixels by the sender instead
+	   (bead godot-test1-xtr.18's card). */
+	function markStall(id, p, dIn) {
+		/* `dIn` is NEGATIVE for "unknown" — the report carried no `framesDecoded`,
+		   or this is the peer's first sample. Only a KNOWN zero is a stall: folding
+		   unknown into zero would dim every tile on a browser that does not report
+		   the field and never let one recover (codex review 2026-09-06). */
+		if (p.hasVideo !== 1 || dIn !== 0) {
+			p.vinZero = 0;
+			if (p.stalled === 1) { p.stalled = 0; placeTile(id); }
+			return 0;
+		}
+		p.vinZero = p.vinZero + 1;
+		if (p.vinZero >= STALL_SAMPLES && p.stalled !== 1) {
+			p.stalled = 1;
+			placeTile(id);
+		}
+		return 1;
+	}
+
 	/* THE TWO QUESTIONS EVERY TILE ASKS, and the only two places the self-view is
 	   a special case: which element draws this key, and does it have a picture.
 	   Everything below — placing, blanking, the resize walk, GDScript's rect —
@@ -524,7 +587,7 @@ const VOICE_JS: String = """
 			'left:' + (r.left + t[0] * r.width) + 'px;' +
 			'top:' + (r.top + t[1] * r.height) + 'px;' +
 			'width:' + (t[2] * r.width) + 'px;' +
-			'height:' + (t[3] * r.height) + 'px;';
+			'height:' + (t[3] * r.height) + 'px;' + stallFilter(id);
 		/* Explicit rather than relying on `cssText` having cleared it: this is the
 		   one line that undoes a `blankTile`, and it should say so. */
 		el.style.display = '';
@@ -684,9 +747,31 @@ const VOICE_JS: String = """
 	   highlight. Three reads as a stencil, five stops reading as steps at all. */
 	var STYLE_LEVELS = 4;
 	var STYLE_FPS = 12;
+	var STYLE_PERIOD_MS = Math.round(1000 / STYLE_FPS);
 	/* The watchdog's period — slow on purpose. It is not a frame rate, it is the
-	   longest a frozen paint loop may go unnoticed. */
+	   longest a frozen paint loop may go unnoticed. Only reached on a browser
+	   with no `Worker`/`Blob`; the worker clock below replaced it otherwise. */
 	var STYLE_WATCHDOG_MS = 500;
+	/* HOW LONG A FROZEN SOURCE IS TOLERATED before the card goes out and a
+	   re-acquisition is tried (bead godot-test1-xtr.18). Two seconds, because a
+	   camera coming back from a device switch legitimately stalls for about one
+	   and a card that flickers is worse than no card. */
+	var STYLE_STALE_MS = 2000;
+	/* And how often a re-acquisition may be attempted. Three a minute: enough to
+	   ride out a lid-open or an app releasing the camera, few enough that a
+	   permanently gone device settles on the card instead of hammering
+	   getUserMedia for the life of the room. */
+	var STYLE_RECAM_MAX = 3;
+	var STYLE_RECAM_WINDOW_MS = 60000;
+
+	/* THE BACKGROUND CLOCK'S WHOLE SOURCE (bead godot-test1-xtr.18, root cause 3).
+	   `requestVideoFrameCallback` never fires in a hidden tab and `setInterval` is
+	   throttled to 1 Hz there, so a sender who tabbed away dropped every receiver
+	   to a slideshow. A WORKER's timers are exempt from that throttling, and a
+	   page in a voice room is audible, so intensive throttling does not apply
+	   either. It answers a NUMBER like everything else in this module — the
+	   boolean scan reads this string too. */
+	var STYLE_WORKER_SRC = 'var t = 0; onmessage = function (e) { var ms = Number(e.data); if (!(ms > 0)) { ms = 83; } if (t) { clearInterval(t); } t = setInterval(function () { postMessage(1); }, ms); };';
 
 	/* The four colours a quantised level indexes: INK, the tint at shadow value,
 	   the tint, BONE. Rebuilt only when GDScript pushes a new hero. */
@@ -703,10 +788,171 @@ const VOICE_JS: String = """
 		return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
 	}
 
+	/* A CANVAS NOBODY COMPOSITES EMITS NO FRAME. `captureStream(fps)` samples the
+	   canvas when it is PRESENTED, so in a hidden tab the worker above can paint
+	   all it likes and the encoder still sees nothing. `requestFrame()` is the
+	   explicit push for exactly that case — and it is asked for ONLY while hidden,
+	   because on a visible tab it would double the frame rate against a fixed
+	   150 kbps cap, i.e. spend the budget on twice as many worse frames. */
+	function pushFrame() {
+		if (!S.styled || !document) { return 0; }
+		if (document.visibilityState !== 'hidden') { return 0; }
+		var t = S.styled.getVideoTracks()[0];
+		if (!t || !t.requestFrame) { return 0; }
+		try { t.requestFrame(); } catch (e) { }
+		return 1;
+	}
+
+	/* THE SIGNAL-LOST CARD (bead godot-test1-xtr.18, root cause 2). A device that
+	   ended or muted — lid shut, another app took the camera, the OS privacy
+	   switch, a backgrounded Safari — leaves `styleSrc` showing its last frame
+	   while `paint()` keeps shipping it: RTP flows, `framesDecoded` advances, no
+	   `mute` fires, and the receiver has NOTHING to detect. So the sender says so
+	   in PIXELS, which every receiver on every build understands for free and
+	   which costs no signalling, no verb and no new packet. The self-view is drawn
+	   from the same canvas, so the sender sees it too.
+
+	   INK ground, BONE glyph: a camera body with an INK lens punched back out of
+	   it and a BONE slash across it, in fillRects and one rotated bar. NO HEX
+	   STRINGS — the palette lives in the two triples above (hero_hud_selfcheck
+	   check 8 greps `scripts/` for the six film hexes). */
+	function paintCard() {
+		var cx = S.styleCtx;
+		if (!cx) { return 0; }
+		var n = STYLE_SIZE;
+		var ink = 'rgb(' + STYLE_INK[0] + ',' + STYLE_INK[1] + ',' + STYLE_INK[2] + ')';
+		var bone = 'rgb(' + STYLE_BONE[0] + ',' + STYLE_BONE[1] + ',' + STYLE_BONE[2] + ')';
+		try {
+			cx.fillStyle = ink;
+			cx.fillRect(0, 0, n, n);
+			cx.fillStyle = bone;
+			/* Body, and the little viewfinder hump on top of it. */
+			cx.fillRect(n * 0.22, n * 0.38, n * 0.50, n * 0.30);
+			cx.fillRect(n * 0.34, n * 0.32, n * 0.16, n * 0.06);
+			/* The lens, punched back to INK so the glyph reads at 80 px. */
+			cx.fillStyle = ink;
+			cx.fillRect(n * 0.33, n * 0.46, n * 0.16, n * 0.14);
+			/* The barrel sticking out of the right-hand side. */
+			cx.fillStyle = bone;
+			cx.fillRect(n * 0.72, n * 0.44, n * 0.10, n * 0.18);
+			/* And the slash. Drawn twice — INK under BONE — so it reads as a bar
+			   laid ON the camera rather than as part of it. */
+			cx.save();
+			cx.translate(n * 0.5, n * 0.5);
+			cx.rotate(-Math.PI / 4);
+			cx.fillStyle = ink;
+			cx.fillRect(n * -0.42, n * -0.07, n * 0.84, n * 0.14);
+			cx.fillStyle = bone;
+			cx.fillRect(n * -0.40, n * -0.04, n * 0.80, n * 0.08);
+			cx.restore();
+		} catch (e) { return 0; }
+		S.paintAt = styleNow();
+		pushFrame();
+		return 1;
+	}
+
+	/* RE-ACQUIRE THE DEVICE, AND SWAP ONLY THE HIDDEN SOURCE ELEMENT. The canvas
+	   capture track on the wire is untouched, so this is a heal with ZERO
+	   renegotiation — and it is also why the forced-cartoon rule survives it: the
+	   fresh device stream reaches `styleSrc.srcObject` and nothing else, never a
+	   connection. Permission is already granted, so there is no second prompt; a
+	   refusal sticks as CAM_DENIED exactly like the first one. */
+	function recam() {
+		if (S.camState !== 2 || S.camWant !== 1 || S.recamBusy === 1) { return 0; }
+		if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { return 0; }
+		var now = styleNow();
+		if (!S.recamWin || now - S.recamWin > STYLE_RECAM_WINDOW_MS) {
+			S.recamWin = now;
+			S.recamN = 0;
+		}
+		if (S.recamN >= STYLE_RECAM_MAX) { return 0; }
+		S.recamN = S.recamN + 1;
+		S.recamBusy = 1;
+		var gen = S.gen;
+		navigator.mediaDevices.getUserMedia({
+			audio: false,
+			video: { width: 160, height: 120, frameRate: 12 }
+		}).then(function (st) {
+			S.recamBusy = 0;
+			if (gen !== S.gen || S.camWant === 0 || !S.styleSrc) {
+				stopTracks(st);
+				return;
+			}
+			var old = S.cam;
+			S.cam = st;
+			camWatch(st);
+			S.styleSrc.srcObject = st;
+			var pr = S.styleSrc.play();
+			if (pr && pr.catch) { pr.catch(function () { }); }
+			stopTracks(old);
+			/* Re-arm the staleness clock, or the very next paint would card again
+			   on the two seconds this took. */
+			S.srcTime = -1;
+			S.srcAt = styleNow();
+		}).catch(function () {
+			/* A FAILURE HERE IS NOT A DENIAL, and marking it one is a one-way door
+			   (codex review 2026-09-06). Permission was already granted; what
+			   rejects at this point is a device that is busy, asleep or briefly
+			   gone. Writing CAM_DENIED would fail the `camState !== 2` guard above
+			   for the rest of the room — so the three-attempt budget would never be
+			   spent, the panel would read "Camera blocked", and all of that while
+			   the canvas sender is still attached and would resume the moment the
+			   source came back. The rate limiter is the only bound this needs; the
+			   signal-lost card is what the room sees meanwhile. */
+			S.recamBusy = 0;
+		});
+		return 1;
+	}
+
+	function stopTracks(st) {
+		if (!st) { return 0; }
+		var ts = st.getTracks();
+		for (var i = 0; i < ts.length; i++) { ts[i].stop(); }
+		return 1;
+	}
+
+	/* The one event the page gets for free when a device disappears. `mute` is
+	   deliberately NOT hooked: it is indistinguishable from an ordinary media
+	   stall, and the staleness clock in `paint()` below already covers both after
+	   two seconds — one signal, not two. */
+	function camWatch(st) {
+		var t = st ? st.getVideoTracks()[0] : null;
+		if (!t) { return 0; }
+		t.onended = function () { recam(); };
+		return 1;
+	}
+
 	function paint() {
 		var cx = S.styleCtx;
 		var v = S.styleSrc;
 		if (!cx || !v) { return 0; }
+		/* THE SOURCE'S OWN CLOCK, and it is the one signal that sees every way a
+		   source can freeze — an ended track, a muted one, a decoder that stopped,
+		   a device that was never going to produce a frame at all. Checked BEFORE
+		   the `videoWidth` guard below, or a camera that never decodes returns 0
+		   forever and is never carded. It is deliberately NOT gated on
+		   `visibilityState`: the orchestrator's ruling of 2026-09-06 is that a
+		   hidden sender's receivers get the card within 3 s, so if the worker
+		   clock cannot keep the picture alive the card is what they get. */
+		var now = styleNow();
+		if (v.currentTime !== S.srcTime) {
+			S.srcTime = v.currentTime;
+			/* A MUTED TRACK IS NOT A LIVE ONE, even while its element keeps
+			   ticking (codex review 2026-09-06). A lid closing, an OS privacy
+			   switch or another app taking the device MUTES the track: the element
+			   goes on playing black frames off the stream's own clock, so
+			   `currentTime` alone would refresh this stamp forever and neither the
+			   card nor the re-acquisition would ever fire — every receiver would
+			   sit on a black tile indefinitely, which is the exact failure this
+			   whole rung exists to close. `srcState()` is xtr.17's own reader and
+			   answers 1 only for a live track. */
+			if (srcState() === 1) { S.srcAt = now; }
+		}
+		if (!S.srcAt) { S.srcAt = now; }
+		if (now - S.srcAt > STYLE_STALE_MS) {
+			recam();
+			return paintCard();
+		}
 		var vw = v.videoWidth;
 		var vh = v.videoHeight;
 		/* Nothing decoded yet — the first frames after a grant. */
@@ -747,6 +993,8 @@ const VOICE_JS: String = """
 		}
 		try { cx.putImageData(img, 0, 0); } catch (e) { return 0; }
 		S.paintMs = styleNow() - t0;
+		S.paintAt = styleNow();
+		pushFrame();
 		return 1;
 	}
 
@@ -775,9 +1023,48 @@ const VOICE_JS: String = """
 			} catch (e) { }
 		}
 		if (!S.styleTimer) {
-			S.styleTimer = setInterval(paint, Math.round(1000 / STYLE_FPS));
+			S.styleTimer = setInterval(paint, STYLE_PERIOD_MS);
 		}
 		return 1;
+	}
+
+	/* THE BACKGROUND CLOCK (bead godot-test1-xtr.18, root cause 3), and it is the
+	   WATCHDOG'S REPLACEMENT rather than a third frame rate: rVFC still drives the
+	   loop while the tab is visible, and this tick only paints when a whole period
+	   has gone by with no frame — which in a visible tab is almost never and in a
+	   hidden one is every time. A worker's `setInterval` is exempt from Chrome's
+	   1 Hz background throttling, and a page in a voice room is audible, so
+	   intensive throttling does not apply either.
+
+	   The Blob URL is revoked immediately: the Worker holds its own reference to
+	   the script it was constructed from. Anything missing (`Worker`, `Blob`,
+	   `createObjectURL`) or a construction that throws falls through to the old
+	   500 ms watchdog, which is what a browser without workers had anyway. */
+	function styleWorker() {
+		if (S.styleW) { return 1; }
+		if (typeof Worker === 'undefined' || typeof Blob === 'undefined') { return 0; }
+		if (!window.URL || !window.URL.createObjectURL) { return 0; }
+		var w = null;
+		try {
+			var url = window.URL.createObjectURL(new Blob([STYLE_WORKER_SRC], { type: 'text/javascript' }));
+			w = new Worker(url);
+			window.URL.revokeObjectURL(url);
+		} catch (e) { w = null; }
+		if (!w) { return 0; }
+		w.onmessage = function () {
+			if (styleNow() - S.paintAt >= STYLE_PERIOD_MS) { paint(); }
+		};
+		w.postMessage(STYLE_PERIOD_MS);
+		S.styleW = w;
+		return 1;
+	}
+
+	/* One of the two, never both: the worker ticks at the frame rate, the
+	   watchdog at 2 Hz, and a browser that can run the first does not want the
+	   second. */
+	function styleClock() {
+		if (styleWorker() === 1) { return 1; }
+		return styleWatchdog();
 	}
 
 	/* THE WATCHDOG, and it is armed even when rVFC is (measured working on Chrome
@@ -832,14 +1119,27 @@ const VOICE_JS: String = """
 			return 0;
 		}
 		S.styled = st;
+		/* Armed BEFORE the first paint, so the staleness clock starts here rather
+		   than at whatever moment a frame first arrives: a camera that never
+		   decodes one gets the card after STYLE_STALE_MS like any other dead
+		   source, instead of sitting on a black tile forever. */
+		S.srcTime = -1;
+		S.srcAt = styleNow();
+		S.recamN = 0;
+		S.recamWin = 0;
+		camWatch(S.cam);
 		styleSchedule();
-		styleWatchdog();
+		styleClock();
 		return 1;
 	}
 
 	function styleStop() {
 		if (S.styleTimer) { clearInterval(S.styleTimer); S.styleTimer = null; }
 		if (S.styleWatch) { clearInterval(S.styleWatch); S.styleWatch = null; }
+		if (S.styleW) {
+			try { S.styleW.terminate(); } catch (e) { }
+			S.styleW = null;
+		}
 		if (S.styleSrc && S.styleRvfc && S.styleSrc.cancelVideoFrameCallback) {
 			try { S.styleSrc.cancelVideoFrameCallback(S.styleRvfc); } catch (e) { }
 		}
@@ -860,6 +1160,9 @@ const VOICE_JS: String = """
 			S.styleSrc = null;
 		}
 		S.paintMs = 0;
+		S.paintAt = 0;
+		S.srcTime = -1;
+		S.srcAt = 0;
 		return 1;
 	}
 
@@ -875,11 +1178,69 @@ const VOICE_JS: String = """
 		return S.styled;
 	}
 
+	/* THE DEVICE'S OWN STATE, as the one number `stats()` reports under `src=`
+	   (bead godot-test1-xtr.17): 0 none, 1 live, 2 muted, 3 ended. It is the only
+	   half of a frozen picture the SENDER can see and the receiver cannot — a
+	   muted or ended device keeps the last frame on the canvas and the wire keeps
+	   carrying it, so nothing downstream ever notices. Numbers, never a boolean:
+	   `track.muted` is compared rather than returned. */
+	function srcState() {
+		if (!S.cam) { return 0; }
+		var t = S.cam.getVideoTracks()[0];
+		if (!t) { return 0; }
+		if (t.readyState === 'ended') { return 3; }
+		if (t.muted === 1 || t.muted === true) { return 2; }
+		return 1;
+	}
+
+	/* Milliseconds since the last frame `paint()` actually put on the canvas, or
+	   -1 if it has never painted one. This is the number that separates class B
+	   (the paint loop stalled) from a live sender, and it is only ever readable
+	   HERE — a receiver sees the same last frame either way. */
+	function paintAge() {
+		if (!S.paintAt) { return -1; }
+		return Math.round(styleNow() - S.paintAt);
+	}
+
+	/* ONE VIDEO SENDER PER CONNECTION, FOR THE LIFE OF THAT CONNECTION (bead
+	   godot-test1-xtr.18, and this is the whole of root cause 1).
+
+	   `addTrack` only REUSES a transceiver that has NEVER SENT — Chromium's
+	   `RtpTransceiver::has_ever_been_used_to_send()` — so a `removeTrack` /
+	   `addTrack` pair per camera toggle appends a NEW video m-section to every
+	   later offer and leaves the old one behind as an inactive line, for the life
+	   of the PC. MEASURED in a two-tab room on the debug web export: audio alone
+	   3,090 chars, the first camera ON 9,338, and after ONE off/on cycle
+	   **16,586** — past `MpCodec.MAX_VC_SDP`, so the receiver dropped the offer
+	   with a `push_warning` and nothing else, the toggler's PC sat in
+	   `have-local-offer` forever, `onnegotiationneeded` could never fire on it
+	   again, and (being the impolite peer) it ignored every offer the far side
+	   sent from then on. That pair was dead for video, for an ICE restart and for
+	   a late microphone — and the gesture that caused it is the Camera button,
+	   which is exactly the button the owner reaches for to "restart" a stuck
+	   picture.
+
+	   `replaceTrack` swaps the track on an EXISTING sender and renegotiates
+	   NOTHING, so the description never grows and there is no offer to lose. The
+	   receiver's experience is unchanged: `replaceTrack(null)` stops the RTP and
+	   arrives as the same `mute` `removeTrack` did, and the unmute on the way back
+	   is the handler `ontrack` already installs. */
 	function attachCam(p) {
 		var src = styleStream();
-		if (!src || p.vsend) { return 0; }
+		if (!src) { return 0; }
 		var t = src.getVideoTracks()[0];
 		if (!t) { return 0; }
+		if (p.vsend) {
+			/* THE HEAL. Also what makes the Camera button work as the manual
+			   escape hatch for EVERY class of stuck picture: off/on swaps a fresh
+			   canvas track onto the sender the far end is already receiving. The
+			   150 kbps cap survives a replaceTrack, so it is not re-applied. */
+			try {
+				var rp = p.vsend.replaceTrack(t);
+				if (rp && rp.catch) { rp.catch(function () { }); }
+			} catch (e) { }
+			return 1;
+		}
 		try {
 			p.vsend = p.pc.addTrack(t, src);
 			/* THE BANDWIDTH BUDGET, and the only place it is written down on this
@@ -901,10 +1262,13 @@ const VOICE_JS: String = """
 
 	function detachCam(p) {
 		if (!p.vsend) { return 0; }
-		/* removeTrack fires onnegotiationneeded, so switching the camera off is
-		   the same one renegotiation switching it on was. */
-		try { p.pc.removeTrack(p.vsend); } catch (e) { }
-		p.vsend = null;
+		/* THE SENDER STAYS. Dropping it is what forced the next `attachCam` to
+		   `addTrack` a second m-section — see the essay above. A null track stops
+		   the RTP, which the receiver sees as the `mute` it always saw. */
+		try {
+			var rn = p.vsend.replaceTrack(null);
+			if (rn && rn.catch) { rn.catch(function () { }); }
+		} catch (e) { }
 		return 1;
 	}
 
@@ -929,8 +1293,7 @@ const VOICE_JS: String = """
 				   changed their mind — RELEASES the device. The mic's rule, and for
 				   the camera the tab's recording light makes it visible. */
 				if (gen !== S.gen || S.camWant === 0) {
-					var stale = st.getTracks();
-					for (var j = 0; j < stale.length; j++) { stale[j].stop(); }
+					stopTracks(st);
 					if (gen === S.gen) { S.camState = 0; }
 					return;
 				}
@@ -958,8 +1321,7 @@ const VOICE_JS: String = """
 		hideSelf();
 		styleStop();
 		if (S.cam) {
-			var ts = S.cam.getTracks();
-			for (var i = 0; i < ts.length; i++) { ts[i].stop(); }
+			stopTracks(S.cam);
 			S.cam = null;
 		}
 		/* ASKING SURVIVES AN OFF-PRESS, and it has to. Dropping back to IDLE lets
@@ -976,6 +1338,10 @@ const VOICE_JS: String = """
 	/* Who has a live picture right now, as one string — `levels()`'s format rule:
 	   one bridge call, never one per peer, and never a boolean. */
 	function videoPeers() {
+		/* The stall sampler's clock — see `sampleTick`. This call is GDScript's
+		   5 Hz tile poll and is the only thing running for the whole life of a
+		   room, so the health sample rides it instead of a timer of its own. */
+		sampleTick();
 		var out = [];
 		for (var k in S.peers) { if (S.peers[k].hasVideo === 1) { out.push(k); } }
 		return out.join(',');
@@ -1032,7 +1398,13 @@ const VOICE_JS: String = """
 		var p = {
 			pc: pc, polite: (S.self > id), making: 0, sent: 0,
 			audio: null, meter: null, cand: [], timer: null, q: Promise.resolve(),
-			video: null, vsend: null, hasVideo: 0
+			video: null, vsend: null, hasVideo: 0,
+			/* THE STALL COUNTERS (bead godot-test1-xtr.17). `vinPrev`/`voutPrev` are
+			   the last ABSOLUTE framesDecoded/framesEncoded this peer reported, so
+			   the sampler can answer a DELTA — which is the number that means "is
+			   the picture moving". -1 is "never sampled", which must not read as a
+			   frame drop on the first sample. */
+			vinPrev: -1, voutPrev: -1, vinZero: 0, stalled: 0
 		};
 		S.peers[id] = p;
 
@@ -1247,7 +1619,21 @@ const VOICE_JS: String = """
 	   candidate-pair currentRoundTripTime in ms (or -), and inbound-rtp aggregate
 	   packet loss percentage. Sampled at <= 1 Hz only while asked, cached so
 	   stats() answers synchronously without stalling the frame. */
-	function formatStats(ns, ec, agc, peerKeys, rtts, totalLost, totalRecv) {
+	/* One per-peer column, in `rtt=`'s own shape: the peers in `peerKeys` order,
+	   joined by `/`, and a bare `-` when there are none. */
+	function column(a) {
+		if (a && a.length) { return a.join('/'); }
+		return '-';
+	}
+
+	/* The empty video half, so `stats()`'s synchronous fallback and a sampler that
+	   has not answered yet print the same KEYS as a live sample. A row whose keys
+	   appear and disappear is a row nobody can read at a glance. */
+	function noVideo() {
+		return { ice: [], con: [], sig: [], sdp: [], vin: [], vout: [] };
+	}
+
+	function formatStats(ns, ec, agc, peerKeys, rtts, totalLost, totalRecv, vid) {
 		var peerCount = peerKeys.length;
 		var rttStr = 'rtt=-';
 		if (peerCount > 0 && rtts.length > 0) {
@@ -1260,7 +1646,22 @@ const VOICE_JS: String = """
 		   It is the before/after evidence: the paint runs on the browser's main
 		   thread, which on this single-threaded export IS Godot's frame. */
 		var styleStr = 'style=' + S.paintMs.toFixed(2) + 'ms';
-		return 'ns=' + ns + ' ec=' + ec + ' agc=' + agc + ' peers=' + peerCount + ' ' + rttStr + ' ' + lossStr + ' ' + styleStr;
+		/* THE VIDEO HALF (bead godot-test1-xtr.17), and it is APPENDED: every key
+		   above keeps its spelling and its order, so xtr.15's parse and anybody
+		   grepping an old log are untouched.
+		   Per peer, in `peerKeys` order: the two transport states, the negotiation
+		   state, the size of our own last local description, and the decoded /
+		   encoded frame DELTAS over the last sample — which at 12 fps read ~12 and
+		   go to 0 the moment a picture stops moving. Then, once for this browser:
+		   how long ago the paint loop last put pixels on the canvas, and what the
+		   capture device itself is doing. Between them they name all four classes
+		   of stuck picture the bead enumerates. */
+		var vid2 = vid || noVideo();
+		var videoStr = ' ice=' + column(vid2.ice) + ' con=' + column(vid2.con)
+			+ ' sig=' + column(vid2.sig) + ' sdp=' + column(vid2.sdp)
+			+ ' vin=' + column(vid2.vin) + ' vout=' + column(vid2.vout)
+			+ ' paint=' + paintAge() + ' src=' + srcState();
+		return 'ns=' + ns + ' ec=' + ec + ' agc=' + agc + ' peers=' + peerCount + ' ' + rttStr + ' ' + lossStr + ' ' + styleStr + videoStr;
 	}
 
 	function readLocalConstraints() {
@@ -1306,16 +1707,36 @@ const VOICE_JS: String = """
 			var rtts = [];
 			var totalLost = 0;
 			var totalRecv = 0;
+			var vid = noVideo();
 
 			for (var i = 0; i < reports.length; i++) {
 				var report = reports[i];
 				var peerLost = 0;
 				var peerRecv = 0;
 				var peerRtt = -1;
+				/* ABSOLUTE counters this sample, turned into a delta below against
+				   the peer's own previous pair. -1 is "the report did not carry
+				   one", which is not the same as zero and must not read as a stall.
+				   SUMMED over every video record rather than taking the last one
+				   (codex review 2026-09-06): a peer on an OLD build has one inactive
+				   video m-section per camera toggle it ever made, so `getStats()`
+				   carries several `inbound-rtp` video rows. Whichever the iteration
+				   happened to end on could be a dead one with a frozen counter,
+				   which would dim a perfectly live tile. Every row is monotone, so
+				   the sum's DELTA is the live row's growth. */
+				var vFrames = [-1, -1];
 
 				if (report && report.forEach) {
 					report.forEach(function (stat) {
-						if (stat && stat.type === 'inbound-rtp' && (stat.kind === 'audio' || stat.mediaType === 'audio')) {
+						if (stat && stat.type === 'inbound-rtp' && (stat.kind === 'video' || stat.mediaType === 'video')) {
+							if (typeof stat.framesDecoded === 'number') {
+								vFrames[0] = (vFrames[0] < 0 ? 0 : vFrames[0]) + stat.framesDecoded;
+							}
+						} else if (stat && stat.type === 'outbound-rtp' && (stat.kind === 'video' || stat.mediaType === 'video')) {
+							if (typeof stat.framesEncoded === 'number') {
+								vFrames[1] = (vFrames[1] < 0 ? 0 : vFrames[1]) + stat.framesEncoded;
+							}
+						} else if (stat && stat.type === 'inbound-rtp' && (stat.kind === 'audio' || stat.mediaType === 'audio')) {
 							if (typeof stat.packetsLost === 'number') {
 								peerLost += stat.packetsLost;
 							}
@@ -1336,9 +1757,36 @@ const VOICE_JS: String = """
 				totalLost += peerLost;
 				totalRecv += peerRecv;
 				rtts.push(peerRtt >= 0 ? String(peerRtt) : '-');
+
+				/* THE PER-PEER HEALTH COLUMN, and the receiver's stall verdict with
+				   it (bead godot-test1-xtr.17). A peer that left between the request
+				   and its answer simply contributes nothing. */
+				var pv = S.peers[peerKeys[i]];
+				if (!pv) { continue; }
+				/* -1 is UNKNOWN and is NOT zero: the report carried no counter, or
+				   this is this peer's first sample. `markStall` refuses to count it
+				   and the row prints `-` for it — a zero here would dim every tile
+				   on a browser that does not report the field, permanently (codex
+				   review 2026-09-06). */
+				var dIn = (vFrames[0] >= 0 && pv.vinPrev >= 0) ? (vFrames[0] - pv.vinPrev) : -1;
+				var dOut = (vFrames[1] >= 0 && pv.voutPrev >= 0) ? (vFrames[1] - pv.voutPrev) : -1;
+				pv.vinPrev = vFrames[0];
+				pv.voutPrev = vFrames[1];
+				markStall(peerKeys[i], pv, dIn);
+				vid.ice.push(pv.pc ? pv.pc.iceConnectionState : '-');
+				vid.con.push(pv.pc ? pv.pc.connectionState : '-');
+				vid.sig.push(pv.pc ? pv.pc.signalingState : '-');
+				/* OUR OWN last offer/answer to this peer, in characters. It is the
+				   one number that makes bead xtr.18's root cause visible: a video
+				   sender removed and re-added grows the description by a whole
+				   m-section per toggle, and `MpCodec.MAX_VC_SDP` drops it silently
+				   somewhere past the second one. Flat here means flat on the wire. */
+				vid.sdp.push((pv.pc && pv.pc.localDescription) ? pv.pc.localDescription.sdp.length : 0);
+				vid.vin.push(dIn >= 0 ? dIn : '-');
+				vid.vout.push(dOut >= 0 ? dOut : '-');
 			}
 
-			S.statsCache = formatStats(lc.ns, lc.ec, lc.agc, peerKeys, rtts, totalLost, totalRecv);
+			S.statsCache = formatStats(lc.ns, lc.ec, lc.agc, peerKeys, rtts, totalLost, totalRecv, vid);
 			S.statsSampling = 0;
 			return 1;
 		}).catch(function () {
@@ -1347,20 +1795,35 @@ const VOICE_JS: String = """
 		});
 	}
 
-	function stats() {
-		var now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+	/* THE 1 Hz THROTTLE, LIFTED OUT OF `stats()` (bead godot-test1-xtr.17).
+	   The sampler is also what marks a stalled tile, and a mark that only happened
+	   while \fo was open would be a debug feature rather than a fix. `videoPeers()`
+	   is already called at 5 Hz by `_poll_tiles` for the whole life of a room, so
+	   nudging it from there costs no new clock, no new bridge call and no GD edit —
+	   the throttle below is what keeps it one `getStats()` per peer per second.
+
+	   ponytail: the ceiling is that the sampler runs only while GDScript is polling
+	   tiles, i.e. in a room with the module started. Outside a room there is no
+	   picture to mark. */
+	function sampleTick() {
+		var now = styleNow();
 		if (!S.statsSampling && (now - S.statsLastTime >= 1000 || !S.statsLastTime)) {
 			S.statsSampling = 1;
 			S.statsLastTime = now;
 			sampleStats();
 		}
+		return 1;
+	}
+
+	function stats() {
+		sampleTick();
 		if (S.statsCache) {
 			return S.statsCache;
 		}
 		var lc = readLocalConstraints();
 		var peerKeys = [];
 		for (var k in S.peers) { peerKeys.push(k); }
-		return formatStats(lc.ns, lc.ec, lc.agc, peerKeys, [], 0, 0);
+		return formatStats(lc.ns, lc.ec, lc.agc, peerKeys, [], 0, 0, noVideo());
 	}
 
 	function stop() {
@@ -1890,7 +2353,21 @@ func debug_line() -> String:
 			js_stats = str(raw)
 	if js_stats.is_empty():
 		js_stats = "ns=0 ec=0 agc=0 peers=0 rtt=- loss=0.0%"
-	return "Voice: mode=%s tx=%s %s" % [mode_str, tx_str, js_stats]
+	return _wrap_stats("Voice: mode=%s tx=%s %s" % [mode_str, tx_str, js_stats])
+
+
+## The video half onto its own line (bead godot-test1-xtr.17).
+##
+## The browser answers ONE string — that is `levels()`'s rule and the reason the
+## bridge is cheap — but \fo's Label neither autowraps nor clips, and the audio
+## half alone already reaches the right edge of a 1152 px window at font 18. So
+## the row is split HERE, where the width problem is, rather than by teaching the
+## JS about a newline it cannot even spell inside a GDScript `\"\"\"` block.
+##
+## Keyed on `ice=`, the first video key, so a build whose bridge answered nothing
+## (the placeholder above) is returned byte for byte unchanged.
+func _wrap_stats(line: String) -> String:
+	return line.replace(" ice=", "\n  ice=")
 
 
 func _is_in_room() -> bool:

@@ -184,15 +184,25 @@ const MAX_STATE_CAPTIVES: int = 8
 ## unvalidated peer input under exactly the rules at the top of this file, and
 ## `decode_vc()` is the only place it is trusted.
 ##
-## `MAX_VC_SDP` is half the lobby's own 32 KB per-payload cap (server/conn.go
-## maxPayload): a real audio SDP is 3-5 KB and stays well under it because ICE is
-## TRICKLED rather than gathered into the offer. A batch of candidates carries at
+## `MAX_VC_SDP` is the lobby's own 32 KB per-payload cap (server/conn.go
+## maxPayload), and it is that rather than half of it since bead
+## `godot-test1-xtr.18`. MEASURED on the debug web export in a two-tab room: an
+## audio-only offer is 3,090 chars and one carrying the camera is 9,338 — ICE is
+## TRICKLED rather than gathered, so neither grows with the candidates. What broke
+## the old 16,384 was the CAMERA TOGGLE: a `removeTrack`/`addTrack` pair appended
+## a fresh video m-section per cycle, and ONE off/on took the offer to 16,586,
+## where this bound dropped it with a `push_warning` and wedged that pair for the
+## rest of the room. The sender no longer grows the description (it swaps the
+## track on the existing sender), so this bound is now a BELT: it refuses only
+## what the relay could never have delivered anyway, which means a receiver on
+## this build can still talk to a sender on an older one that does grow.
+## A batch of candidates carries at
 ## most `MAX_VC_ICE` entries of `{cand, mid, mline}`, because the JS module
 ## coalesces ~100 ms of them into one frame to stay inside conn.go's 120-frame
 ## burst / 30-per-second budget; the per-candidate bounds are the shapes the
 ## browser's own `RTCIceCandidate` produces (a candidate line is ~100 chars, an
 ## `sdpMid` is "0"/"audio"/"video").
-const MAX_VC_SDP: int = 16384
+const MAX_VC_SDP: int = 32768
 const MAX_VC_ICE: int = 32
 const MAX_VC_CAND: int = 512
 const MAX_VC_MID: int = 16

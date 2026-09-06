@@ -161,6 +161,8 @@ func _initialize() -> void:
 	_check_no_js_bool()
 	_check_style_mirrors()
 	_check_ice_restart()
+	_check_video_health()
+	_check_sender_heal()
 	_check_inert_offweb()
 	_check_always_process()
 	_check_debug_line_in_a_room()
@@ -860,6 +862,276 @@ func _check_ice_restart() -> void:
 			+ "life of the room — nothing else rebuilds a still-listed member's "
 			+ "connection (godot-test1-xtr.7)")
 	Sentinel.done("ice_restart")
+
+
+# ============================================================================
+# 6d. A STUCK PICTURE IS MEASURABLE (bead godot-test1-xtr.17)
+# ============================================================================
+
+## The six per-peer keys plus the two sender-side ones that together name all
+## four classes of stuck picture the bead enumerates. Spelled with their `=` so
+## the check is reading a FORMAT and not a word that also appears in prose.
+const VIDEO_STAT_KEYS: Array[String] = [
+	" ice=", " con=", " sig=", " sdp=", " vin=", " vout=", " paint=", " src=",
+]
+
+
+func _check_video_health() -> void:
+	"""
+	`VOICE_JS` read as TEXT once more (this file's `_check_no_js_bool` idiom), for
+	the half of bead `godot-test1-xtr.17` a headless machine can reach.
+
+	WHAT IT DEFENDS. Before this bead nothing in the game could tell a frozen
+	picture from a working one: `sampleStats()` read audio `inbound-rtp` and the
+	selected candidate pair, so a receiver whose `framesDecoded` had stopped, a
+	sender whose paint loop had stalled, a transport in `failed` and a peer wedged
+	in `have-local-offer` all reported an identical row. Deleting any one of the
+	assertions below is green everywhere else in the suite — the numbers only
+	exist in a browser — so the text IS the pin.
+
+	THE ORDER MATTERS. The keys must be inside `formatStats`, because that is the
+	one function whose answer reaches \\fo; `framesDecoded`/`framesEncoded` must be
+	inside `sampleStats`, because a key with nothing collecting its number prints
+	`-` forever and looks like a working feature.
+	"""
+	var module: String = _voice_js_module()
+	if module.length() < 500:
+		_fail("could not read VOICE_JS out of voice_chat.gd (%d chars) — check 6d "
+			% module.length() + "would pass vacuously")
+		Sentinel.done("video_health")
+		return
+
+	var fmt: String = _js_function_body(module, "formatStats")
+	if fmt.is_empty():
+		_fail("VOICE_JS has no `function formatStats(` — the \\fo row's whole "
+			+ "vocabulary is unreadable")
+	else:
+		for key: String in VIDEO_STAT_KEYS:
+			if not fmt.contains(key):
+				_fail("formatStats does not emit `%s` — that class of stuck picture "
+					% key.strip_edges() + "(bead godot-test1-xtr.17) is invisible in "
+					+ "\\fo, which is the whole of what this bead ships")
+
+	var sample: String = _js_function_body(module, "sampleStats")
+	if sample.is_empty():
+		_fail("VOICE_JS has no `function sampleStats(` — nothing collects the "
+			+ "numbers formatStats prints")
+	else:
+		for needle: String in ["framesDecoded", "framesEncoded", "markStall(",
+				"localDescription.sdp.length", "signalingState"]:
+			if not sample.contains(needle):
+				_fail("sampleStats does not read `%s` — the matching key in the \\fo "
+					% needle + "row would print a placeholder forever, which reads "
+					+ "exactly like a healthy peer")
+
+	# --- THE RECEIVER'S MARK, AND THAT A RE-PLACE KEEPS IT ------------------
+	# `placeTile` rewrites `cssText` wholesale, so a mark applied anywhere else is
+	# cleared by the next resize or rect push. That is the one ordering bug this
+	# feature has, and it is invisible in a diff.
+	var place: String = _js_function_body(module, "placeTile")
+	if place.is_empty():
+		_fail("VOICE_JS has no `function placeTile(` — check 6d cannot see whether "
+			+ "the stall mark survives a re-place")
+	elif not place.contains("stallFilter(id)"):
+		_fail("placeTile does not append stallFilter(id) — it rewrites cssText "
+			+ "wholesale, so the dim would be cleared by the next resize or rect "
+			+ "push and a stuck tile would look live again")
+	var filt: String = _js_function_body(module, "stallFilter")
+	if filt.is_empty():
+		_fail("VOICE_JS has no `function stallFilter(` — a receiver whose "
+			+ "framesDecoded stopped is drawn exactly like a live one")
+	else:
+		if not filt.contains("grayscale(1)") or not filt.contains("brightness("):
+			_fail("stallFilter does not dim with grayscale/brightness — it reads `%s`"
+				% filt.strip_edges())
+		# NO HUE, and that is a repo rule rather than taste: `hero_hud_selfcheck`
+		# check 8 greps `scripts/` for the six film hexes and they may be typed in
+		# `hud_theme.gd` alone, so the mark must be spelled in the two things CSS
+		# can do without naming a colour at all.
+		if filt.contains("#") or filt.contains("rgb("):
+			_fail("stallFilter names a colour — the film palette may not be typed "
+				+ "outside hud_theme.gd (hero_hud_selfcheck check 8), which is why "
+				+ "the mark is a filter")
+	if not module.contains("var STALL_SAMPLES = 3;"):
+		_fail("VOICE_JS does not declare `var STALL_SAMPLES = 3` — the bead's three "
+			+ "seconds at the 1 Hz sample rate. One sample is noise (a keyframe "
+			+ "gap, a tab that just came back) and would flicker every tile")
+
+	# --- AND THE SAMPLER HAS A CLOCK THAT IS NOT \fo ------------------------
+	# `sampleStats` used to be driven by `stats()` alone, which only runs while the
+	# perf overlay is open. A stall mark that needs a debug overlay to appear is a
+	# debug feature, not a fix.
+	var vp: String = _js_function_body(module, "videoPeers")
+	if vp.is_empty() or not vp.contains("sampleTick()"):
+		_fail("videoPeers() does not call sampleTick() — the health sample would "
+			+ "run only while \\fo is open, so no player would ever see a tile dim")
+
+	# --- THE ROW IS WRAPPED, DRIVEN ON THE SHIPPED HELPER -------------------
+	# \fo's Label neither autowraps nor clips and the audio half alone already
+	# reaches the right edge, so the video half has to start a second line or it
+	# is drawn off screen — which is the same as not shipping it. The live
+	# `stats()` string needs a browser; this drives the transformation that is
+	# applied to it, on a sample of the real format.
+	var node: Node = _voice_node()
+	var sample_row: String = ("Voice: mode=ALWAYS tx=0 ns=1 ec=1 agc=1 peers=1 "
+		+ "rtt=42ms loss=0.0% style=0.42ms ice=connected con=connected sig=stable "
+		+ "sdp=5312 vin=12 vout=12 paint=61 src=1")
+	var wrapped: String = str(node._wrap_stats(sample_row))
+	var lines: PackedStringArray = wrapped.split("\n")
+	if lines.size() != 2:
+		_fail("_wrap_stats left the \\fo row on %d line(s) — the video half is "
+			% lines.size() + "drawn past the right edge of the window")
+	elif not lines[1].contains("vin=") or not lines[0].contains("loss="):
+		_fail("_wrap_stats split the row in the wrong place: `%s`" % wrapped)
+	# ...and a row with no video half is untouched, which is what a bridge that
+	# said nothing (`_ck` null, the module not installed) still produces.
+	var audio_only: String = "Voice: mode=PTT tx=1 ns=0 ec=0 agc=0 peers=0 rtt=- loss=0.0%"
+	if str(node._wrap_stats(audio_only)) != audio_only:
+		_fail("_wrap_stats rewrote a row with no video half")
+	node.free()
+	Sentinel.done("video_health")
+
+
+# ============================================================================
+# 6e. THE SENDER HEALS ITSELF (bead godot-test1-xtr.18)
+# ============================================================================
+
+func _check_sender_heal() -> void:
+	"""
+	`VOICE_JS` as TEXT again, for the three root causes of "video gets stuck and
+	there is no way to restart it" — every one of which lives in a browser this
+	suite cannot open, so the shipped text is the only thing a headless check can
+	hold.
+
+	1. THE CAMERA TOGGLE MUST NOT GROW THE SDP. `addTrack` only reuses a
+	   transceiver that has never sent, so a `removeTrack`/`addTrack` pair per
+	   toggle appends a video m-section every time. MEASURED in a two-tab room on
+	   the debug web export: 3,090 chars audio-only, 9,338 with the camera, and
+	   **16,586 after ONE off/on** — past the old `MAX_VC_SDP`, so the receiver
+	   dropped the offer (`MpCodec: dropped vc offer with a 16586-char sdp` in its
+	   console), the toggler sat in `have-local-offer` for the rest of the room and
+	   nine further toggles changed nothing. `replaceTrack` renegotiates nothing.
+	2. A FROZEN DEVICE MUST BE NOTICED AND SAID OUT LOUD. The receiver cannot see
+	   it — framesDecoded keeps advancing on a repainted still — so the sender
+	   re-acquires and, failing that, paints a card INTO the canvas, which travels
+	   as pixels to every receiver on every build.
+	3. A HIDDEN TAB MUST KEEP PAINTING, which is the Worker clock.
+
+	Deleting any of these is green everywhere else in the suite.
+	"""
+	var module: String = _voice_js_module()
+	if module.length() < 500:
+		_fail("could not read VOICE_JS out of voice_chat.gd (%d chars) — check 6e "
+			% module.length() + "would pass vacuously")
+		Sentinel.done("sender_heal")
+		return
+
+	# --- 1. NEVER remove/add the video sender again --------------------------
+	# Scoped to the two function BODIES rather than the whole module, because the
+	# essay above `attachCam` names the retired call to explain the measurement —
+	# and a check worked around by rewording prose is a check nobody keeps.
+	# `_js_function_body` starts at the `function` keyword, so that essay is out of
+	# scope by construction and these two are the whole of the video send path.
+	var attach: String = _js_function_body(module, "attachCam")
+	var detach: String = _js_function_body(module, "detachCam")
+	if attach.is_empty() or detach.is_empty():
+		_fail("VOICE_JS has no attachCam/detachCam — check 6e cannot see how the "
+			+ "camera toggle reaches a connection")
+	else:
+		if attach.contains("removeTrack") or detach.contains("removeTrack"):
+			_fail("the video send path still calls removeTrack — every camera off/on "
+				+ "then appends a video m-section to the offer (MEASURED: 9,338 -> "
+				+ "16,586 chars on ONE toggle), the receiver drops it over "
+				+ "MAX_VC_SDP and the pair wedges in have-local-offer for the rest "
+				+ "of the room (godot-test1-xtr.18)")
+		if not attach.contains("replaceTrack("):
+			_fail("attachCam does not replaceTrack onto an existing sender — a "
+				+ "second addTrack is what grows the SDP past MAX_VC_SDP")
+		if not attach.contains("p.pc.addTrack("):
+			_fail("attachCam never addTrack()s — the FIRST attach has to create the "
+				+ "sender, or no video is ever negotiated at all")
+		if not attach.contains("150000"):
+			_fail("attachCam no longer sets the 150 kbps cap (owner ruling) on the "
+				+ "sender it creates")
+		if not detach.contains("replaceTrack(null)"):
+			_fail("detachCam does not replaceTrack(null) — switching the camera off "
+				+ "must stop the RTP while KEEPING the sender, which is what makes "
+				+ "the next ON a heal instead of a second m-section")
+		if detach.contains("p.vsend = null"):
+			_fail("detachCam drops p.vsend — the next attachCam would addTrack a "
+				+ "second sender, which is the whole bug")
+	# ...and the belt on the receiving side, for a sender on an OLD build that
+	# still grows. The lobby's own frame cap is the real outer bound.
+	if MpCodec.MAX_VC_SDP < 32768:
+		_fail("MpCodec.MAX_VC_SDP is %d — a real audio+video offer measured 9,338 "
+			% MpCodec.MAX_VC_SDP + "chars and an old build's toggled one 16,586, so "
+			+ "the bound belongs at the lobby's own 32 KB frame cap (server/conn.go "
+			+ "maxPayload) rather than at half of it")
+
+	# --- 2. THE FROZEN SOURCE, AND THAT IT IS SAID IN PIXELS ----------------
+	var watch: String = _js_function_body(module, "camWatch")
+	if watch.is_empty() or not watch.contains("t.onended"):
+		_fail("VOICE_JS has no camWatch() hooking the device track's onended — a "
+			+ "camera taken by another app, a shut lid or an unplugged device "
+			+ "leaves the last frame painted forever, which no receiver can detect")
+	if _js_function_body(module, "recam").is_empty():
+		_fail("VOICE_JS has no recam() — nothing re-acquires a device that ended")
+	if not module.contains("var STYLE_RECAM_MAX = 3;"):
+		_fail("VOICE_JS does not bound the re-acquisition at STYLE_RECAM_MAX = 3 — "
+			+ "a device that is gone for good would hammer getUserMedia for the "
+			+ "life of the room")
+	var card: String = _js_function_body(module, "paintCard")
+	if card.is_empty():
+		_fail("VOICE_JS has no paintCard() — the sender's frozen source reaches "
+			+ "every receiver as a still picture with nothing saying so")
+	else:
+		# The palette, because a card drawn in some other colour is a card that
+		# does not read as this game's (and a HEX here fails check 8 instead).
+		if not card.contains("STYLE_INK") or not card.contains("STYLE_BONE"):
+			_fail("paintCard does not draw in STYLE_INK/STYLE_BONE — the film "
+				+ "palette is the only one this HUD has")
+		if card.contains("#"):
+			_fail("paintCard types a hex colour — the six film hexes may be typed "
+				+ "in hud_theme.gd alone (hero_hud_selfcheck check 8)")
+	# The STALE BRANCH IS IN paint(), which is the only function both clocks call.
+	var paint_fn: String = _js_function_body(module, "paint")
+	if paint_fn.is_empty():
+		_fail("VOICE_JS has no function paint( — the whole cartoon camera is gone")
+	else:
+		if not paint_fn.contains("paintCard()") or not paint_fn.contains("recam()"):
+			_fail("paint() does not reach the stale branch (recam + paintCard) — the "
+				+ "card would exist and never be drawn")
+		if not paint_fn.contains("currentTime"):
+			_fail("paint() does not watch the source's currentTime — that is the ONE "
+				+ "signal that sees an ended track, a muted one and a stopped "
+				+ "decoder alike")
+	if not module.contains("var STYLE_STALE_MS = 2000;"):
+		_fail("VOICE_JS does not declare STYLE_STALE_MS = 2000 — a card with no "
+			+ "grace period flickers on every legitimate device hiccup")
+
+	# --- 3. THE BACKGROUND CLOCK --------------------------------------------
+	var worker: String = _js_function_body(module, "styleWorker")
+	if worker.is_empty() or not worker.contains("new Worker("):
+		_fail("VOICE_JS has no styleWorker() building a real Worker — rVFC never "
+			+ "fires in a hidden tab and setInterval is throttled to 1 Hz there, so "
+			+ "a sender who tabs away drops every receiver to a slideshow")
+	if not module.contains("var STYLE_WORKER_SRC ="):
+		_fail("VOICE_JS declares no STYLE_WORKER_SRC — there is nothing for the "
+			+ "worker to run")
+	if _js_function_body(module, "pushFrame").is_empty():
+		_fail("VOICE_JS has no pushFrame() — captureStream samples a canvas only "
+			+ "when it is PRESENTED, so a hidden tab's painted frames never reach "
+			+ "the encoder without an explicit requestFrame()")
+	elif not module.contains("requestFrame()"):
+		_fail("VOICE_JS never calls requestFrame() on the capture track")
+	# The worker REPLACES the watchdog rather than running beside it; a build that
+	# armed both would paint at 12 + 12 + 2 a second on a visible tab.
+	var start: String = _js_function_body(module, "styleStart")
+	if not start.is_empty() and start.contains("styleWatchdog()"):
+		_fail("styleStart arms styleWatchdog() directly — it must go through "
+			+ "styleClock(), which prefers the worker and falls back to the 2 Hz "
+			+ "watchdog only where there is none")
+	Sentinel.done("sender_heal")
 
 
 func _voice_js_module() -> String:
