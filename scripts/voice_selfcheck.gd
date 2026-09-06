@@ -67,6 +67,14 @@ extends SceneTree
 ##     `voice_chat.gd` AS TEXT and scans that block alone, so the failure names
 ##     the voice module and cannot be diluted by a rename of the file.
 ##
+## 6b. **THE VALUES `VOICE_JS` MIRRORS BY HAND.** A string of JavaScript cannot
+##     `preload` a `Color` or a `const`, so the cartoon camera's film palette
+##     (bead `godot-test1-xtr.11`) and the self-view's reserved tile key (bead
+##     `godot-test1-xtr.14`) are typed twice. The palette in particular CANNOT be
+##     bound by `hero_hud_selfcheck` check 8's hex grep — it is deliberately
+##     written as rgb triples so that grep does not fire — so it is bound here by
+##     value instead.
+##
 ##  7. **INERT OFF-WEB.** Every public method called on a real node on a build
 ##     with no bridge at all: an unguarded `JavaScriptBridge` touch is a
 ##     `SCRIPT ERROR`, which CI treats as red, and a runtime error would abort
@@ -129,6 +137,7 @@ func _initialize() -> void:
 	_check_mic_key_free()
 	_check_help_row()
 	_check_no_js_bool()
+	_check_style_mirrors()
 	_check_ice_restart()
 	_check_inert_offweb()
 	_check_always_process()
@@ -580,6 +589,73 @@ func _check_no_js_bool() -> void:
 			+ "(`%s`) — answer `? 1 : 0` and compare numerically (godot-test1-8f8)"
 			% offence)
 	Sentinel.done("no_js_bool")
+
+
+# ============================================================================
+# 6b. THE THREE VALUES VOICE_JS MIRRORS BY HAND (beads xtr.11 / xtr.14)
+# ============================================================================
+
+func _check_style_mirrors() -> void:
+	"""
+	A string of JavaScript cannot `preload` anything, so the cartoon camera's film
+	palette and the self-view's tile key are TYPED TWICE — once in GDScript, once
+	inside `VOICE_JS`. That is the drift this check exists for, and both mirrors
+	are load-bearing:
+
+	  * `STYLE_INK` / `STYLE_BONE` are `HudTheme.INK` / `HudTheme.BONE` as rgb
+	    triples, which is the shape they must be in: `hero_hud_selfcheck` check 8
+	    greps `scripts/` for the six film HEXES and they may be typed in
+	    `hud_theme.gd` alone (CLAUDE.md records the non-hex spelling as the
+	    sanctioned escape). So they cannot be bound by that grep, and this binds
+	    them by VALUE instead.
+	  * `SELF_TILE` is `SELF_LEVEL_KEY`, the reserved key the self-view's tile and
+	    the browser's own microphone level both travel under. A key that drifted
+	    would put nobody's picture anywhere and say nothing about it.
+
+	Read as TEXT, so the assertions are all "we found the right number" — which is
+	also what a matcher looking in the wrong place would report if it found
+	nothing. Each therefore fails LOUDLY on no match rather than passing.
+	"""
+	var module: String = _voice_js_module()
+	if module.length() < 500:
+		_fail("could not read VOICE_JS out of voice_chat.gd (%d chars) — check 6b "
+			% module.length() + "would pass vacuously")
+		Sentinel.done("style_mirrors")
+		return
+
+	_check_js_triple(module, "STYLE_INK", HudTheme.INK)
+	_check_js_triple(module, "STYLE_BONE", HudTheme.BONE)
+
+	var key := RegEx.create_from_string("var\\s+SELF_TILE\\s*=\\s*'([^']*)'")
+	var hit: RegExMatch = key.search(module) if key != null else null
+	if hit == null:
+		_fail("VOICE_JS declares no `var SELF_TILE = '...'` — the self-view's "
+			+ "reserved tile key (bead godot-test1-xtr.14) is unreadable, so this "
+			+ "check cannot bind it to SELF_LEVEL_KEY")
+	elif hit.get_string(1) != VoiceChat.SELF_LEVEL_KEY:
+		_fail("VOICE_JS's SELF_TILE is '%s' but voice_chat.SELF_LEVEL_KEY is '%s' — "
+			% [hit.get_string(1), VoiceChat.SELF_LEVEL_KEY]
+			+ "the self-view's rect would be pushed under a key the browser does "
+			+ "not draw")
+	Sentinel.done("style_mirrors")
+
+
+func _check_js_triple(module: String, name: String, want: Color) -> void:
+	## One `var NAME = [r, g, b];` in `VOICE_JS`, against the `HudTheme` colour it
+	## is a copy of. 0-255 channels, which is the only unit a canvas has.
+	var re := RegEx.create_from_string(
+		"var\\s+%s\\s*=\\s*\\[\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\]" % name)
+	var hit: RegExMatch = re.search(module) if re != null else null
+	if hit == null:
+		_fail("VOICE_JS declares no `var %s = [r, g, b]` — the cartoon camera's " % name
+			+ "film palette (bead godot-test1-xtr.11) cannot be bound to HudTheme")
+		return
+	var got := Vector3i(int(hit.get_string(1)), int(hit.get_string(2)), int(hit.get_string(3)))
+	var expect := Vector3i(want.r8, want.g8, want.b8)
+	if got != expect:
+		_fail("VOICE_JS's %s is %s but the HudTheme colour it mirrors is %s — the "
+			% [name, got, expect] + "cartoon camera would paint a palette the rest "
+			+ "of the HUD does not use")
 
 
 func _js_bool_offence(source: String) -> String:

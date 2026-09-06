@@ -654,24 +654,39 @@ func _check_tile_rect_under_a_stretch() -> void:
 	root.size = was_size
 
 	# AND THE TEXT HALF, for the same reason check 6 has one: everything above
-	# re-derives `_poll_tiles`' arithmetic from the constant, so a `_poll_tiles`
-	# that went back to a pixel pad while the constant stayed a fraction would pass
-	# every line of it. Reading the one line that spends the constant is what binds
-	# the two descriptions.
+	# re-derives the camera pad's arithmetic from the constant, so a version that
+	# went back to a pixel pad while the constant stayed a fraction would pass every
+	# line of it. Reading the one line that spends the constant is what binds the
+	# two descriptions.
+	#
+	# The line lives in `_tile_fraction` since bead `godot-test1-xtr.14`, which is
+	# the ONE home of the pad and of the captive refusal for both callers — the
+	# teammate's tile and, since that bead, our own self-view. So this reads that
+	# function and asserts `_poll_tiles` really goes through it: a `_poll_tiles`
+	# that grew a second, unpadded copy of the arithmetic is exactly the regression.
 	var voice_source := FileAccess.get_file_as_string("res://scripts/voice_chat.gd")
-	var poll_start := voice_source.find("func _poll_tiles() -> void:")
-	if poll_start < 0:
-		_fail("_poll_tiles moved — check 6b cannot see what the camera pad really is")
+	var pad_start := voice_source.find("func _tile_fraction(")
+	if pad_start < 0:
+		_fail("_tile_fraction moved — check 6b cannot see what the camera pad really is")
 		Sentinel.done("tile_rect_under_a_stretch")
 		return
-	var poll_body := voice_source.substr(poll_start)
+	var pad_body := voice_source.substr(pad_start)
+	var after_pad := pad_body.find("\nfunc ")
+	if after_pad > 0:
+		pad_body = pad_body.substr(0, after_pad)
+	_check(pad_body.contains("tile.size.x * TILE_INSET_FRAC"),
+		"_tile_fraction no longer pads the tile by a FRACTION of it — a pad in window "
+		+ "pixels is pad/s design px and swallows the speaking ring as the window "
+		+ "grows (bead godot-test1-xtr.10)")
+	var poll_start := voice_source.find("func _poll_tiles() -> void:")
+	var poll_body := voice_source.substr(poll_start) if poll_start >= 0 else ""
 	var after_poll := poll_body.find("\nfunc ")
 	if after_poll > 0:
 		poll_body = poll_body.substr(0, after_poll)
-	_check(poll_body.contains("tile.size.x * TILE_INSET_FRAC"),
-		"_poll_tiles no longer pads the tile by a FRACTION of it — a pad in window "
-		+ "pixels is pad/s design px and swallows the speaking ring as the window "
-		+ "grows (bead godot-test1-xtr.10)")
+	_check(poll_body.contains("_tile_fraction("),
+		"_poll_tiles no longer asks _tile_fraction where a picture goes — the pad "
+		+ "and the captive refusal have one home, and a second copy is how one of "
+		+ "them silently stops being applied")
 	Sentinel.done("tile_rect_under_a_stretch")
 
 

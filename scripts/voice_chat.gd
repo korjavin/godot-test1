@@ -271,6 +271,11 @@ const VOICE_JS: String = """
 		styled: null, styleSrc: null, styleCanvas: null, styleCtx: null,
 		styleLv: null, styleRamp: null, styleRvfc: 0, styleTimer: null,
 		paintMs: 0,
+		/* THE SELF-VIEW (bead godot-test1-xtr.14): one more <video>, fed the
+		   STYLED stream so what you see of yourself is exactly what the room sees,
+		   and placed through the same `S.tiles` / `placeTile` path as every
+		   teammate's under the reserved key `SELF_TILE`. */
+		selfVideo: null,
 		/* One AudioContext for the whole module, and one AnalyserNode per stream
 		   (remote) plus one for the local mic. `levels()` reads them all and
 		   answers ONE string — never one bridge call per peer, and never a
@@ -480,17 +485,41 @@ const VOICE_JS: String = """
 		return c.getBoundingClientRect();
 	}
 
-	function placeTile(id) {
+	/* THE RESERVED TILE KEY FOR OUR OWN PICTURE (bead godot-test1-xtr.14). A lobby
+	   id is 32 hex characters, so this can never collide with one, and it is
+	   `SELF_LEVEL_KEY` on the GDScript side — the browser already reports the local
+	   microphone's level under the same name. */
+	var SELF_TILE = 'me';
+
+	/* THE TWO QUESTIONS EVERY TILE ASKS, and the only two places the self-view is
+	   a special case: which element draws this key, and does it have a picture.
+	   Everything below — placing, blanking, the resize walk, GDScript's rect —
+	   then treats our own tile exactly like a teammate's. */
+	function tileEl(id) {
+		if (id === SELF_TILE) { return S.selfVideo; }
 		var p = S.peers[id];
+		return p ? p.video : null;
+	}
+
+	function tileLive(id) {
+		/* The self-view is fed by a stream this module built, so there is no
+		   `mute`/`unmute` to wait for: the element existing IS the picture. */
+		if (id === SELF_TILE) { return S.selfVideo ? 1 : 0; }
+		var p = S.peers[id];
+		return (p && p.hasVideo === 1) ? 1 : 0;
+	}
+
+	function placeTile(id) {
+		var el = tileEl(id);
 		var t = S.tiles[id];
-		if (!p || !p.video || !t) { return 0; }
+		if (!el || !t) { return 0; }
 		/* A REMEMBERED RECT IS NOT A REASON TO SHOW SOMETHING. `blankTile` keeps the
 		   rect through a stall on purpose, so the `resize` listener below — which
 		   walks every remembered rect — would otherwise un-blank a frozen frame. */
-		if (p.hasVideo !== 1) { return 0; }
+		if (tileLive(id) !== 1) { return 0; }
 		var r = canvasBox();
 		if (!r || t[2] <= 0 || t[3] <= 0) { return 0; }
-		p.video.style.cssText = 'position:fixed;pointer-events:none;object-fit:cover;' +
+		el.style.cssText = 'position:fixed;pointer-events:none;object-fit:cover;' +
 			'background:#000;z-index:2147482000;' +
 			'left:' + (r.left + t[0] * r.width) + 'px;' +
 			'top:' + (r.top + t[1] * r.height) + 'px;' +
@@ -498,7 +527,7 @@ const VOICE_JS: String = """
 			'height:' + (t[3] * r.height) + 'px;';
 		/* Explicit rather than relying on `cssText` having cleared it: this is the
 		   one line that undoes a `blankTile`, and it should say so. */
-		p.video.style.display = '';
+		el.style.display = '';
 		return 1;
 	}
 
@@ -520,8 +549,8 @@ const VOICE_JS: String = """
 	}
 
 	function blankTile(id) {
-		var p = S.peers[String(id)];
-		if (p && p.video) { p.video.style.display = 'none'; }
+		var el = tileEl(String(id));
+		if (el) { el.style.display = 'none'; }
 		return 1;
 	}
 
@@ -557,6 +586,54 @@ const VOICE_JS: String = """
 		/* Nothing is shown until GDScript says where the tile is — a picture
 		   parked at 0,0 over the corner of the screen is worse than none. */
 		placeTile(id);
+		return 1;
+	}
+
+	/* THE SELF-VIEW (bead godot-test1-xtr.14, owner: "file a bead to see own video
+	   stream also"). One local element fed the SAME stream the room is being sent,
+	   which is the rule that made this depend on the cartoon: a self-view of the
+	   raw face would lie about what the other three see.
+
+	   It costs NOTHING on the wire — no track, no signalling, no verb — and
+	   nothing on the frame: the browser was already decoding this stream for the
+	   encoder, and GDScript's whole contribution is one more rect in the 5 Hz poll
+	   it was already running.
+
+	   NOT MIRRORED, and that is a decision rather than an oversight: a video app
+	   mirrors your self-view because you are looking at yourself, but this tile is
+	   a portrait of the CHARACTER and sits in a row of three others drawn the way
+	   the room sees them. */
+	function showSelf() {
+		var st = styleStream();
+		if (!st || !document || !document.body) { return 0; }
+		if (!S.selfVideo) {
+			var v = document.createElement('video');
+			v.autoplay = true;
+			/* MUTED, always — and here it is not even an echo question: this is our
+			   own microphone coming straight back out of our own speakers. */
+			v.muted = true;
+			v.className = 'ck-voice-self';
+			v.setAttribute('playsinline', '');
+			v.style.cssText = 'display:none;';
+			document.body.appendChild(v);
+			S.selfVideo = v;
+		}
+		S.selfVideo.srcObject = st;
+		var pr = S.selfVideo.play();
+		if (pr && pr.catch) { pr.catch(function () { }); }
+		/* Nothing is shown until GDScript says where the tile is — `showVideo`'s
+		   rule, for the same reason. */
+		placeTile(SELF_TILE);
+		return 1;
+	}
+
+	function hideSelf() {
+		delete S.tiles[SELF_TILE];
+		if (S.selfVideo) {
+			S.selfVideo.srcObject = null;
+			if (S.selfVideo.parentNode) { S.selfVideo.parentNode.removeChild(S.selfVideo); }
+			S.selfVideo = null;
+		}
 		return 1;
 	}
 
@@ -826,6 +903,7 @@ const VOICE_JS: String = """
 				   that got the raw track would keep it until the next
 				   renegotiation. */
 				styleStart();
+				showSelf();
 				for (var q in S.peers) { attachCam(S.peers[q]); }
 			}).catch(function () { if (gen === S.gen) { S.camState = 3; } });
 			return 1;
@@ -834,9 +912,12 @@ const VOICE_JS: String = """
 		   picture — hiding them here would black out every teammate because you
 		   switched your own camera off. */
 		for (k in S.peers) { detachCam(S.peers[k]); }
-		/* THE PAINT LOOP GOES FIRST, the device last: the canvas capture is fed by
-		   an element fed by `S.cam`, so stopping the device under a running loop
-		   paints stale frames into a track nobody is sending. */
+		/* THE SELF-VIEW AND THE PAINT LOOP GO FIRST, the device last: the canvas
+		   capture is fed by an element fed by `S.cam`, so stopping the device under
+		   a running loop paints stale frames into a track nobody is sending — and
+		   the self-view is drawn from that same canvas, so it comes down with it.
+		   `stop()` reaches both through its own `camera(0)`. */
+		hideSelf();
 		styleStop();
 		if (S.cam) {
 			var ts = S.cam.getTracks();
@@ -2273,38 +2354,41 @@ func _poll_tiles() -> void:
 	var hud: Node = get_tree().get_first_node_in_group("hero_hud")
 	_push_style_tint(hud)
 	var win: Vector2 = Vector2(get_window().size) if get_window() != null else Vector2.ZERO
-	var ready: bool = not senders.is_empty() \
-		and hud != null and hud.has_method("tile_rect") and hud.has_method("hero_names") \
-		and hud.has_method("tile_state") \
-		and _mp != null and is_instance_valid(_mp) and _mp.has_method("hero_holder") \
+	var row_ready: bool = hud != null and hud.has_method("tile_rect") \
+		and hud.has_method("hero_names") and hud.has_method("tile_state") \
 		and win.x > 0.0 and win.y > 0.0
-	if ready:
+	var mp_ready: bool = _mp != null and is_instance_valid(_mp)
+	if row_ready and mp_ready and _mp.has_method("hero_holder") and not senders.is_empty():
 		for hero: String in hud.hero_names():
 			var holder: String = str(_mp.hero_holder(hero))
 			# Not a sender covers "nobody holds him", "I hold him" and "he has no
 			# camera" in one test: our own id is never in the browser's peer set.
 			if not senders.has(holder):
 				continue
-			# A CAPTIVE TILE KEEPS ITS BARS. They are drawn across the whole tile,
-			# so no inset leaves them visible — and a benched peer still HOLDS the
-			# hero they are locked up as, which is exactly when this fires.
-			if int(hud.tile_state(hero)) == HERO_HUD_STATE_CAPTIVE:
+			var frac: Rect2 = _tile_fraction(hud, hero, win)
+			if frac.size.x <= 0.0:
 				continue
-			var tile: Rect2 = hud.tile_rect(hero)
-			# The pad is a FRACTION of the tile, never a pixel count: this rect is in
-			# WINDOW pixels, so an absolute pad shrinks in design space as the window
-			# grows and eats hero_hud's speaking ring. Taken off the width so a tile
-			# that is not square (it always is) still pads evenly.
-			var pad: float = tile.size.x * TILE_INSET_FRAC
-			if tile.size.x <= pad * 2.0 or tile.size.y <= pad * 2.0:
-				continue
-			var inset: Rect2 = tile.grow(-pad)
-			var frac := Rect2(inset.position / win, inset.size / win)
 			live[holder] = true
 			if _pushed_tiles.get(holder, Rect2()) == frac:
 				continue
 			_pushed_tiles[holder] = frac
 			_ck.setTile(holder, frac.position.x, frac.position.y, frac.size.x, frac.size.y)
+
+	# THE SELF-VIEW (bead godot-test1-xtr.14): our own outgoing picture on the tile
+	# of the hero we DRIVE, through this same path. `CAM_ON` and not `_camera_on` is
+	# the test, because the latter is only what was asked for — while the permission
+	# prompt is up there is no stream and the browser would place an empty element.
+	# `senders` says nothing about us: `S.peers` is remote peers only.
+	if row_ready and mp_ready and _reported_cam == CAM_ON and _mp.has_method("my_hero"):
+		var mine: String = str(_mp.my_hero())
+		if not mine.is_empty():
+			var self_frac: Rect2 = _tile_fraction(hud, mine, win)
+			if self_frac.size.x > 0.0:
+				live[SELF_LEVEL_KEY] = true
+				if _pushed_tiles.get(SELF_LEVEL_KEY, Rect2()) != self_frac:
+					_pushed_tiles[SELF_LEVEL_KEY] = self_frac
+					_ck.setTile(SELF_LEVEL_KEY, self_frac.position.x, self_frac.position.y,
+						self_frac.size.x, self_frac.size.y)
 
 	# A hero handed back, a camera switched off, a peer gone: whatever we placed
 	# and can no longer justify comes down. The browser also hides on its own
@@ -2314,6 +2398,35 @@ func _poll_tiles() -> void:
 			continue
 		_pushed_tiles.erase(id)
 		_ck.hideTile(str(id))
+
+
+func _tile_fraction(hud: Node, hero: String, win: Vector2) -> Rect2:
+	"""
+	Where a picture goes for one hero, as a fraction of the canvas — or an EMPTY
+	rect where no picture may be drawn at all.
+
+	ONE home for the two refusals, because a teammate's tile and our own
+	(bead `godot-test1-xtr.14`) have to answer them the same way:
+
+	  * A CAPTIVE TILE KEEPS ITS BARS. They are drawn across the whole tile, so no
+	    inset leaves them visible — and a benched peer still HOLDS the hero they
+	    are locked up as, which is exactly when this fires. It is the same for the
+	    hero we drive ourselves.
+	  * A tile smaller than its own padding has nothing left to draw in.
+
+	The pad is a FRACTION of the tile, never a pixel count: `tile_rect` is in WINDOW
+	pixels, so an absolute pad shrinks in design space as the window grows and eats
+	`hero_hud`'s speaking ring. Taken off the width so a tile that is not square (it
+	always is) still pads evenly.
+	"""
+	if int(hud.tile_state(hero)) == HERO_HUD_STATE_CAPTIVE:
+		return Rect2()
+	var tile: Rect2 = hud.tile_rect(hero)
+	var pad: float = tile.size.x * TILE_INSET_FRAC
+	if tile.size.x <= pad * 2.0 or tile.size.y <= pad * 2.0:
+		return Rect2()
+	var inset: Rect2 = tile.grow(-pad)
+	return Rect2(inset.position / win, inset.size / win)
 
 
 # ============================================================================
