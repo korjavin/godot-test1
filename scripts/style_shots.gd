@@ -37,6 +37,43 @@ var _hidden_groups: PackedStringArray = PackedStringArray(["crowd", "traffic", "
 ## both and this file should not learn what a caption is.
 var _repose: Callable = Callable()
 
+# ============================================================================
+# SPIKE godot-test1-z3e.1 — THE HERO HEAD VARIANTS
+#
+# A scratch-branch-only addition. `head=<a|b|c>` swaps the Windman Head node's
+# mesh for the MPFB2/MakeHuman head that `scripts/spike_z3e_head.py` builds, and
+# nothing else in this file changes; with the argument absent every shot is
+# byte-for-byte the one it always was, which is what makes the "today" cell of
+# the grid a real control rather than a re-render.
+#
+# THE SWAP IS AT RUNTIME AND THE .tscn IS UNTOUCHED, deliberately: three variants
+# need three heads, the difference between A and B is not the mesh at all (it is
+# whether `apply_character_style` ever sees it), and `capture_selfcheck` /
+# `hero_hud_selfcheck` / `view_selfcheck` / `progression_selfcheck` all load the
+# REAL `windman_updated.tscn` and have to stay green on this branch.
+#
+#   a  the mesh with its baked albedo, through apply_character_style — so it gets
+#      DIFFUSE_TOON + rim + the inverted-hull outline, exactly as the cast ships
+#   b  the same mesh with the cast path SKIPPED: the glTF material Godot imported,
+#      whose diffuse_mode is StandardMaterial3D's default BURLEY, and no outline
+#   c  the faceted, vertex-coloured, textureless head through the cast path
+# ============================================================================
+
+## Empty means "today's head" — the control cell of the grid.
+var _head_variant: String = ""
+
+const SPIKE_HEAD_SMOOTH: String = \
+		"res://assets/models/characters/windman_parts/windman_head_authored.glb"
+const SPIKE_HEAD_FLAT: String = \
+		"res://assets/models/characters/windman_parts/windman_head_authored_flat.glb"
+
+## Metres from the face. The bead's framing: "a ~2 m hero close-up".
+const HEAD_SHOT_DISTANCE: float = 2.0
+## The second framing, same camera position, a long lens instead — 2 m of a 75-degree
+## default FOV puts a 0.26 m head across 8% of the frame, which is the honest in-game
+## read and useless for judging a nose.
+const FACE_SHOT_FOV: float = 16.0
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	# Without this the desktop window vsyncs at 60 and every frame-time reading
@@ -48,6 +85,8 @@ func _ready() -> void:
 			_only = a.substr(5)
 		elif a.begins_with("hide="):
 			_hidden_groups = a.substr(5).split(",", false)
+		elif a.begins_with("head="):
+			_head_variant = a.substr(5)
 		else:
 			_out_dir = a
 	DirAccess.make_dir_recursive_absolute(_out_dir)
@@ -123,6 +162,10 @@ func _run() -> void:
 		var p: Vector3 = probe[0]
 		print("[SHOTS] ", probe[1], " at ", p, " is biome ", terrain.biome_at(p.x, p.z))
 
+	# SPIKE godot-test1-z3e.1 — swap the head BEFORE anything is shot, so the close-up
+	# and every other shot see the same body. No-op without `head=`.
+	_apply_head_variant(player)
+
 	await _shoot(terrain, player, field, 0.0, "1_field")
 	await _shoot(terrain, player, desert, 0.0, "1b_desert")
 	await _shoot(terrain, player, snow, 0.0, "1c_snow")
@@ -154,6 +197,12 @@ func _run() -> void:
 	# colour, and amber-on-INK has to read over bright grass AND a dark street.
 	await _shoot_coin_line(terrain, player, field, 0.0, "14_coin_line_field")
 	await _shoot_coin_line(terrain, player, street, -PI * 0.5, "15_coin_line_budapest")
+
+	# THE HERO HEAD (spike godot-test1-z3e.1) — two framings from ONE camera spot,
+	# because they answer two different questions: 16 is what a player at two metres
+	# actually sees, 17 is whether the thing has a nose.
+	await _shoot_head_closeup(terrain, player, field, 75.0, "16_head_2m")
+	await _shoot_head_closeup(terrain, player, field, FACE_SHOT_FOV, "17_head_face", false)
 
 	# THE CAPTIONS (bead godot-test1-y1o.38) — the respawn countdown and the
 	# level-up line, the two biggest strings the game ever puts over the world.
@@ -362,6 +411,112 @@ func _shoot_caption(terrain: Node, player: Node3D, at: Vector3, yaw: float,
 	_show_widget(group, false)
 
 
+func _apply_head_variant(player: Node3D) -> void:
+	"""
+	SPIKE godot-test1-z3e.1. Replace the Windman Head node's contents with the
+	spike head, once, before any shot is taken.
+
+	`Head` is itself the instanced `windman_head.glb` scene (see
+	scenes/characters/windman_updated.tscn), so what is replaced is its CHILDREN —
+	the node keeps its own name, its Body y = 1.62 origin and its Rx(-90) basis, and
+	therefore `PlayerAnimation.GAITS.head_deg` and `capture_rest_pose` keep meaning
+	exactly what they meant.
+	"""
+	if _head_variant == "":
+		return
+	var path := SPIKE_HEAD_FLAT if _head_variant == "c" else SPIKE_HEAD_SMOOTH
+	var scene := load(path) as PackedScene
+	if scene == null:
+		push_error("[SHOTS] no spike head at " + path)
+		return
+	# Every hero is preloaded and parked; windman is CHARACTERS[0].
+	var hero: Node = player.character_instances[0]
+	var head := hero.get_node_or_null("Body/Head") as Node3D
+	if head == null:
+		push_error("[SHOTS] no Body/Head under the windman instance")
+		return
+	for child in head.get_children():
+		head.remove_child(child)
+		child.queue_free()
+	var swapped := scene.instantiate()
+	head.add_child(swapped)
+	# VARIANT B IS THE ONE THAT SKIPS THE CAST PATH, and skipping it is the whole
+	# of B: `apply_character_style` is what hangs the inverted-hull outline overlay
+	# and rewrites the material to DIFFUSE_TOON + rim, so not calling it leaves the
+	# imported glTF material — Burley diffuse, no outline — on a toon body.
+	if _head_variant != "b":
+		player.anim.apply_character_style(swapped)
+	print("[SHOTS] head variant ", _head_variant, " -> ", path,
+			" (cast path ", "skipped" if _head_variant == "b" else "applied", ")")
+
+
+func _shoot_head_closeup(terrain: Node, player: Node3D, at: Vector3, fov: float,
+		name: String, settle: bool = true) -> void:
+	"""
+	SPIKE godot-test1-z3e.1. One shot of the hero's face from `HEAD_SHOT_DISTANCE`.
+
+	It cannot reuse `_shoot`: the rig camera is `$CameraPivot/CameraArm/Camera3D` on
+	a SpringArm3D behind the hero at chase distance, and this needs a camera in FRONT
+	of the face at two metres. So it does `_shoot`'s own settle / measure / freeze
+	sequence and then makes a throwaway Camera3D current for the grab.
+
+	`settle` is false for a SECOND framing of a body that is already posed and already
+	frozen: the world is built, nothing is ticking, and only the lens changes. Sixteen
+	runs of this spike each paid a 9 s settle and a 300-frame measure for that.
+	"""
+	if _only != "" and not name.contains(_only):
+		return
+	if settle:
+		var chunk := Vector2i(roundi(at.x / 50.0), roundi(at.z / 50.0))
+		player.set_physics_process(true)
+		player.set_process(true)
+		terrain.new_run(SEED, chunk)
+		player.global_position = at
+		player.rotation.y = 0.0
+		player.velocity = Vector3.ZERO
+		await get_tree().create_timer(SETTLE_SECONDS, true, false, true).timeout
+		player.set_active_character(0)
+		await get_tree().create_timer(YAW_SECONDS, true, false, true).timeout
+		await _measure(name)
+		# Re-assert and freeze, `_shoot`'s reasoning verbatim — both ticks, because
+		# the rig is written in `_process` and the body in `_physics_process`.
+		player.global_position = at
+		player.rotation.y = 0.0
+		player.velocity = Vector3.ZERO
+		player.visible = true
+		var model := player.get_node_or_null("CharacterModel")
+		if model is Node3D:
+			(model as Node3D).visible = true
+		player.set_physics_process(false)
+		player.set_process(false)
+		await get_tree().process_frame
+
+	var hero: Node = player.character_instances[0]
+	var head := hero.get_node_or_null("Body/Head") as Node3D
+	var focus: Vector3 = head.global_position if head != null \
+			else player.global_position + Vector3(0.0, 1.62, 0.0)
+	var cam := Camera3D.new()
+	cam.fov = fov
+	add_child(cam)
+	# A three-quarter front view: dead-on hides the nose and the ears both, which
+	# are the two things this spike is about.
+	var basis := player.global_transform.basis
+	var forward := -basis.z
+	var right := basis.x
+	cam.global_position = focus + forward * (HEAD_SHOT_DISTANCE * 0.88) \
+			+ right * (HEAD_SHOT_DISTANCE * 0.42) + Vector3(0.0, 0.10, 0.0)
+	cam.look_at(focus, Vector3.UP)
+	cam.make_current()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	var img := get_viewport().get_texture().get_image()
+	img.save_png(_out_dir + "/" + name + ".png")
+	cam.queue_free()
+	print("[SHOTS] wrote ", name, " at ", at, " head=",
+			_head_variant if _head_variant != "" else "today")
+
+
 func _shoot_field_bridge(terrain: Node, player: Node3D) -> void:
 	"""
 	Photograph the first field bridge on this seed twice: from the bank, and
@@ -372,6 +527,13 @@ func _shoot_field_bridge(terrain: Node, player: Node3D) -> void:
 	costs nothing and lands in the same place every run — the same property the
 	landmark shots lean on one table along.
 	"""
+	# THE FILTER IS CHECKED HERE TOO, `_shoot_landmark`'s reasoning one family along
+	# (spike godot-test1-z3e.1): the road growth and the two settles below run
+	# BEFORE any `_shoot`, so `only=` on a shot in another family paid ~15 minutes of
+	# river search and chunk streaming for two pictures it then threw away.
+	if _only != "" and not "10_field_bridge_bank11_field_bridge_deck".contains(_only):
+		return
+
 	# EVERY BRIDGE HANGS OFF A STATION INDEX, so a tool that has not taken a shot
 	# yet is still holding the BOOT seed's road. `new_run(SEED)` re-seats the
 	# whole world on SEED — which since bead godot-test1-bvq drops the road memos
