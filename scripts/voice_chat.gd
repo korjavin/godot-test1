@@ -801,9 +801,16 @@ const VOICE_JS: String = """
 	   ramp, which before this bead was nothing at all. `edge` is whether a band
 	   boundary is inked, and `shadow` is where the ramp's dark tint sits.
 
-	   AT THESE VALUES THE PAINT IS BYTE FOR BYTE WHAT IT WAS: the blend below is
-	   `orig * (1 - 1) + ramp * 1`, i.e. the assignment it replaced, and the ramp
-	   samples its four control stops at exactly the four points that ARE them.
+	   THE DEFAULT IS THE OWNER'S OWN DIAL (bead `godot-test1-xtr.22`, verbatim:
+	   *"i tried and i like window.ckVoice.setStyle(8, 0.4, 0, 0.6) better, let's
+	   make it default for everyone"*), superseding xtr.16's aggressive cel look
+	   (4, 1.0, 1, 0.45) because it *"makes faces almost unrecognizable"*.
+	   Recognisability comes from keeping the real pixel and dropping the ink
+	   lines: eight bands read as shading rather than as a stencil, mix 0.4 lets
+	   most of the face through (still well clear of `STYLE_MIX_MIN`), edge 0 inks
+	   no band boundary, and the darker shadow stop keeps the picture from
+	   flattening. A stored `ck_voice_style` row from an earlier experiment still
+	   wins over this on that one browser — deliberately, per the same ruling.
 
 	   AND `mix` HAS A FLOOR, BECAUSE THE OWNER'S RULING IS ABOUT THE PICTURE AND
 	   NOT ABOUT THE TRANSPORT (codex review 2026-09-06, orchestrator ruling the
@@ -818,10 +825,10 @@ const VOICE_JS: String = """
 	   stored row from before the floor is raised to it on load like any other
 	   out-of-range value.
 
-	   ponytail: a console knob and no panel — the owner is choosing numbers, and
-	   whichever four they settle on become these defaults. `setStyle` from the
-	   browser console, remembered here so a reload keeps the experiment. */
-	var STYLE_DEFAULT = [4, 1.0, 1, 0.45];
+	   ponytail: a console knob and no panel — the owner chose the numbers this way
+	   and they are the defaults below. `setStyle` from the browser console,
+	   remembered here so a reload keeps the experiment. */
+	var STYLE_DEFAULT = [8, 0.4, 0, 0.6];
 	var STYLE_MIX_MIN = 0.25;
 	var STYLE_KEY = 'ck_voice_style';
 	var STYLE_FPS = 12;
@@ -856,9 +863,10 @@ const VOICE_JS: String = """
 	   hero and when a knob moves.
 
 	   THE RAMP HAS TO BE `levels` LONG — `paint`'s second pass indexes it by band
-	   — so the four stops are RESAMPLED rather than listed. At the default 4 the
-	   sample points (t = 0, 1, 2, 3 in stop units) land exactly on the stops, so
-	   the shipped ramp is unchanged to the byte. */
+	   — so the four stops are RESAMPLED rather than listed. At `levels` 4 the
+	   sample points (t = 0, 1, 2, 3 in stop units) land exactly on the stops; at
+	   the shipped 8 they interpolate between them, which is the whole of why
+	   eight bands read as shading and four read as a stencil. */
 	function styleRamp(r, g, b) {
 		var sh = S.style[3];
 		var stops = [
