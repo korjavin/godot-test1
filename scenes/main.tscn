@@ -1,4 +1,4 @@
-[gd_scene load_steps=37 format=3 uid="uid://clqb4rcmjrpgs"]
+[gd_scene load_steps=38 format=3 uid="uid://clqb4rcmjrpgs"]
 
 [ext_resource type="PackedScene" uid="uid://bqtq2xtxqnvvr" path="res://scenes/player.tscn" id="1_main"]
 [ext_resource type="Script" uid="uid://b07rwceo0eo4o" path="res://scripts/endless_terrain.gd" id="2_terrain"]
@@ -34,6 +34,7 @@
 [ext_resource type="Script" path="res://scripts/traffic_manager.gd" id="32_traffic"]
 [ext_resource type="Script" path="res://scripts/city_map_panel.gd" id="31_citymap"]
 [ext_resource type="Script" path="res://scripts/tower_lift_menu.gd" id="33_lift"]
+[ext_resource type="Script" path="res://scripts/world_caption.gd" id="34_caption"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.25, 0.45, 0.75, 1)
@@ -223,13 +224,10 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
-theme_override_colors/font_color = Color(1, 1, 1, 1)
-theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
-theme_override_constants/outline_size = 8
-theme_override_font_sizes/font_size = 48
 text = ""
 horizontal_alignment = 1
 vertical_alignment = 1
+script = ExtResource("34_caption")
 
 [node name="LevelUpLabel" type="Label" parent="HUD" groups=["level_up_label"]]
 visible = false
@@ -240,13 +238,11 @@ offset_top = -140.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
-theme_override_colors/font_color = Color(1, 0.93, 0.55, 1)
-theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
-theme_override_constants/outline_size = 8
-theme_override_font_sizes/font_size = 40
 text = ""
 horizontal_alignment = 1
 vertical_alignment = 1
+script = ExtResource("34_caption")
+font_size = 40
 
 [node name="CaptureHint" type="Label" parent="HUD"]
 visible = false

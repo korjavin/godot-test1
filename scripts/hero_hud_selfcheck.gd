@@ -77,6 +77,30 @@ const AVATAR_SCRIPT := preload("res://scripts/remote_avatar.gd")
 const THEME_SCRIPT := preload("res://scripts/hud_theme.gd")
 const MAIN_SCENE_PATH := "res://scenes/main.tscn"
 
+## THE WORLD-LETTERING CONSUMERS, and their one distinguishing colour (bead
+## godot-test1-y1o.38). These are the `Label`s drawn ON the world rather than on
+## a card, so they take `HudTheme` as `_ready()` OVERRIDES and never
+## `HudTheme.theme()`; check 8d reads each body as TEXT.
+##
+## TEXT and not behaviour, deliberately: instantiating either node means standing
+## up `main.tscn`, and what would go wrong here is a line DELETED — measured,
+## because deleting `world_caption`'s `HudTheme.BONE` left this check,
+## `capture_selfcheck` and `locale_selfcheck` all green. A grep for the four
+## shared names plus the file's own colour fails that by name.
+##
+## A new consumer is one row, which is the whole reason it is a table: the coin
+## line came first and this bead's two captions second, and the third pays no
+## edit here beyond its own line.
+const WORLD_LETTERING := {
+	"res://scripts/world_caption.gd": "HudTheme.BONE",
+	"res://scripts/coin_hud.gd": "HudTheme.VISOR_AMBER",
+}
+## What every one of them must spell, whatever colour it draws in.
+const WORLD_LETTERING_SHARED: Array[String] = [
+	"HudTheme.heading_font()", "HudTheme.INK", "HudTheme.OUTLINE_SFX_PX",
+	"HudTheme.SHADOW_PANEL_OFFSET",
+]
+
 var _failures: Array[String] = []
 
 
@@ -742,7 +766,7 @@ func _check_the_hud_theme() -> void:
 	"""
 	8. THE HUD SKIN (bead godot-test1-y1o.24), and this row is its PILOT.
 
-	Three things, and each is an acceptance criterion the epic will be held to by
+	Four things, and each is an acceptance criterion the epic will be held to by
 	nine more per-panel beads:
 
 	  a. **ONE HOME FOR THE PALETTE.** Every one of the six film-derived hexes is
@@ -756,6 +780,10 @@ func _check_the_hud_theme() -> void:
 	     from getting a soft drop shadow by simply not knowing.
 	  c. **THE ROW REALLY DRAWS OFF IT.** The pilot's own colours are bound to the
 	     palette, so a hand-tweaked tile fails rather than quietly diverging.
+	  d. **LETTERING ON THE WORLD READS THE CONTRACT** (bead godot-test1-y1o.38).
+	     `coin_hud` and `world_caption` are `Label`s over the world rather than on
+	     a card, so they dress themselves in `_ready()` off the consts. Nothing
+	     else in the suite can see one of those lines deleted — measured.
 	"""
 	# --- a. one home ------------------------------------------------------------
 	# DERIVED from the consts, never typed here — a check that spelled the six
@@ -778,6 +806,25 @@ func _check_the_hud_theme() -> void:
 		_check(seen == ["hud_theme.gd"],
 			"palette #%s is typed in %s — HudTheme must be its one home"
 				% [hex, seen if not seen.is_empty() else "NO script at all"])
+
+	# --- d. the world-lettering consumers really read the contract --------------
+	# Same scan, one table along. See `WORLD_LETTERING` for why this is TEXT.
+	for path: String in WORLD_LETTERING:
+		var body := FileAccess.get_file_as_string(path)
+		_check(not body.is_empty(),
+			"%s is missing — the world-lettering contract has lost a consumer"
+				% path.get_file())
+		for name: String in WORLD_LETTERING_SHARED + [WORLD_LETTERING[path]]:
+			_check(body.contains(name),
+				"%s never names %s — lettering on the world takes the heading "
+					% [path.get_file(), name]
+					+ "face, an INK stroke at OUTLINE_SFX_PX and the hard "
+					+ "SHADOW_PANEL_OFFSET shadow, off HudTheme in _ready()")
+	# ponytail: no "and never `HudTheme.theme()`" clause. Both files say that
+	# phrase in the COMMENT explaining why they don't call it, so a text scan
+	# fires on the documentation — and a scan that has to tell code from prose is
+	# a parser. The positive assertions above already fail a file that swapped
+	# the overrides for a Theme, because the four names would go with them.
 
 	# --- b. hard edges, hard shadows -------------------------------------------
 	var boxes: Dictionary = {
@@ -805,14 +852,25 @@ func _check_the_hud_theme() -> void:
 	# relation stays green, so the panel language itself (1-px frame, 2-px on a
 	# modal, a 2-px shadow offset (2,2) at 60%) is asserted against the epic's
 	# figures. Changing one is an owner decision and should edit this line too.
+	# The two STROKES are on this line for the same reason. `OUTLINE_SFX_PX` was
+	# unpinned when it landed (bead y1o.38): setting it to 2 left every check
+	# green AND made both call-site comments — `coin_hud` and `world_caption`
+	# each say "`OUTLINE_PX` is the 2 px WORLD-lettering stroke and is a
+	# different number" — false. So the value AND the relation are asserted.
 	_check(THEME_SCRIPT.BORDER_PX == 1 and THEME_SCRIPT.BORDER_MODAL_PX == 2
 			and THEME_SCRIPT.SHADOW_PX == 2
 			and THEME_SCRIPT.SHADOW_PANEL_OFFSET == Vector2i(2, 2)
+			and THEME_SCRIPT.OUTLINE_PX == 2
+			and THEME_SCRIPT.OUTLINE_SFX_PX == 3
+			and THEME_SCRIPT.OUTLINE_SFX_PX > THEME_SCRIPT.OUTLINE_PX
 			and is_equal_approx(THEME_SCRIPT.SHADOW_ALPHA, 0.6),
 		"the panel language has drifted off the film spec: border %d/%d, shadow "
 			% [THEME_SCRIPT.BORDER_PX, THEME_SCRIPT.BORDER_MODAL_PX]
-			+ "%d at %s alpha %.2f" % [THEME_SCRIPT.SHADOW_PX,
-				THEME_SCRIPT.SHADOW_PANEL_OFFSET, THEME_SCRIPT.SHADOW_ALPHA])
+			+ "%d at %s alpha %.2f, outline %d/%d (world/SFX, and the SFX stroke "
+				% [THEME_SCRIPT.SHADOW_PX, THEME_SCRIPT.SHADOW_PANEL_OFFSET,
+					THEME_SCRIPT.SHADOW_ALPHA, THEME_SCRIPT.OUTLINE_PX,
+					THEME_SCRIPT.OUTLINE_SFX_PX]
+			+ "must be the wider of the two)")
 
 	# The EXACT numbers, not just "some shadow": a 40 px shadow at (40,40) is as
 	# wrong as none, and "> 0" is green for both.
