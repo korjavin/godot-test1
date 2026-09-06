@@ -9,7 +9,7 @@ extends Control
 ## to read as *taken*, not merely as "not selected".
 ##
 ## Four states, and they are deliberately three different visual languages so none
-## of them can be mistaken for another at 48 px:
+## of them can be mistaken for another at 80 px:
 ##
 ##   ACTIVE   full brightness + a bright border   this is the body you are driving
 ##   FREE     full brightness, no border          yours to switch to
@@ -77,8 +77,21 @@ extends Control
 ## found through the "player" group, per the discovery convention.)
 const PLAYER_SCRIPT := preload("res://scripts/player_controller.gd")
 
-## One tile, and the gap between two of them. Four tiles = 4*48 + 3*6 = 210 px.
-const TILE_SIZE: float = 48.0
+## One tile, and the gap between two of them. Four tiles = 4*80 + 3*6 = 338 px.
+##
+## TILE_SIZE IS THE ONE NUMBER (bead godot-test1-y1o.37, owner: "make heroes'
+## portraits bigger"). It went 48 -> 80; everything that has to grow with a tile is
+## DERIVED from it below, so the next resize is one edit. What bounds it is
+## `hero_hud_selfcheck` check 5 — the row's fit against every widget `main.tscn`
+## pins to that corner — and it is the \fo PerfOverlay that binds, on the WIDTH:
+## 80 needed it moved right (240..544 -> 376..680). Raising the tile again costs
+## another move of that SAME neighbour and nothing else — a 96 px tile is a 402 px
+## row ending at x = 418, past the overlay's new 376, and there is room (the design
+## width is 1920 at its narrowest under either aspect). The MINIMAP is not what
+## binds at any size anyone has proposed: it is anchored at 0.5 with
+## `offset_top = -126` and the design height is never under 1080, so its top is
+## never under 414 against this row's bottom of 152 — it would take a 342 px tile.
+const TILE_SIZE: float = 80.0
 const TILE_GAP: float = 6.0
 
 ## Hero identity colours — the placeholder fill, and the tint of the active border.
@@ -116,8 +129,17 @@ const COLOR_ACTIVE_BORDER: Color = HudTheme.VISOR_AMBER  # the "this is you" rin
 const COLOR_BARS: Color = Color(0.85, 0.16, 0.14, 0.92) # the cell bars
 const COLOR_DIGIT: Color = HudTheme.BONE
 
+## Line WEIGHTS are a style decision (the y1o spec's hard 1-3 px edges), not a
+## proportion, so they do not follow the tile: `ACTIVE_BORDER_WIDTH`, `RING_INSET`,
+## `RING_WIDTH`, `BAR_WIDTH` and `BADGE_MARGIN` are all absolute on purpose.
+## `voice_chat.TILE_INSET_FRAC` is the one that had to become a FRACTION instead:
+## it pads a rect in WINDOW pixels, so an absolute pad shrinks in design space as
+## the window grows and swallows `RING_INSET`..`RING_INSET + RING_WIDTH` — the
+## speaking ring — at exactly the retina scale bead xtr.10 was reported from.
 const ACTIVE_BORDER_WIDTH: float = 3.0
-const DIGIT_FONT_SIZE: int = 13
+## The hotkey digit, DERIVED — the ratio the 48 px row shipped with, written as the
+## division so 48 still reproduces 13 exactly.
+const DIGIT_FONT_SIZE: int = int(TILE_SIZE * 13.0 / 48.0)
 ## Three bars across a captive tile, Commandos-style.
 const BAR_COUNT: int = 3
 const BAR_WIDTH: float = 3.0
@@ -160,8 +182,11 @@ const RING_PULSE_STEPS: int = 8
 const RING_ALPHA_MIN: float = 0.45
 const RING_ALPHA_MAX: float = 1.0
 
-## Glyph geometry, in tile pixels. One badge box in each bottom corner.
-const BADGE_SIZE: float = 15.0
+## Glyph geometry, in tile pixels. One badge box in each bottom corner. The box is
+## DERIVED like the digit above (15/48, so 48 reproduces 15); the margin is a line
+## weight and stays absolute. Everything inside `_draw_mic_badge` is already a
+## fraction of the box, so the glyph follows for free.
+const BADGE_SIZE: float = TILE_SIZE * 15.0 / 48.0
 const BADGE_MARGIN: float = 2.0
 
 ## Cached player reference — re-fetched whenever it goes away (respawn, restart,
@@ -404,10 +429,34 @@ func tile_rect(hero: String) -> Rect2:
 
 	The arithmetic is `_draw`'s, moved into a helper both call, so the video
 	overlay of bead godot-test1-xtr.6 can never drift from the tile it covers.
-	`get_screen_transform()` is what turns the control-local rect into the window
-	pixels the browser's canvas is measured in — it folds in this widget's anchors,
-	its CanvasLayer and the project's stretch scale, none of which the caller
-	should have to know about.
+
+	THE TRANSFORM IS THE VIEWPORT'S FINAL ONE, NOT `get_screen_transform()` (bead
+	godot-test1-xtr.10, and this was a shipped bug). `get_screen_transform()` is
+	`get_viewport().get_popup_base_transform() * get_global_transform_with_canvas()`,
+	and a Window that EMBEDS its subwindows answers IDENTITY for the first factor —
+	which is the project default and is unconditional on the web export. So it hands
+	back the rect in the 1920x1080 DESIGN space of the `canvas_items` stretch, with
+	the stretch scale dropped, while the one caller (`voice_chat._poll_tiles`)
+	divides by `get_window().size` — the canvas BACKING size in the browser. The
+	fraction came out short by the whole stretch scale, so a teammate's camera
+	missed the tile by the whole of it — above-left and smaller wherever the window
+	is bigger than the design (the reported retina case), below-right and larger
+	wherever it is smaller.
+	`get_viewport().get_final_transform()` is the aspect-keep letterbox margin times
+	that stretch, so the rect comes out in the same window pixels the divisor
+	measures, on every stretch mode. It assumes this row's viewport IS the caller's
+	window, which it is (the HUD is a CanvasLayer on the root) — and that assumption
+	is why a SubViewport makes a useless harness for the bug: inside one, even
+	`get_screen_transform()` comes out right.
+
+	CONSEQUENCE, and it is the reason the comments around the caller say what they
+	say: the fraction the caller derives is NOT resize-invariant. A resize that
+	keeps the window's ASPECT moves nothing (rect and window scale together), but
+	one that changes it moves which axis BINDS the stretch — and under `keep` the
+	letterbox margin with it — while the divisor changes on both axes. That is fine
+	rather than a hole: `_poll_tiles` is change-gated at 5 Hz and pushes the new
+	fraction within 200 ms, and the browser re-places the picture against the new
+	canvas box on its own `resize` listener meanwhile.
 	"""
 	var index := _index_of(hero)
 	if index < 0:
@@ -417,7 +466,7 @@ func tile_rect(hero: String) -> Rect2:
 	# asking — a headless harness reads the row's own arithmetic instead.
 	if not is_inside_tree():
 		return local
-	var xform := get_screen_transform()
+	var xform := get_viewport().get_final_transform() * get_global_transform_with_canvas()
 	return Rect2(xform * local.position, xform.basis_xform(local.size))
 
 
@@ -456,7 +505,7 @@ func _draw() -> void:
 	# Drawn entirely from the _process snapshot — no player reads in here. An empty
 	# roster draws nothing, which is also how the control clears itself.
 	# THE FILMS' FACE, not the engine's: Oswald Bold, tall and condensed, is what
-	# makes a 13 px digit legible over a bright sky at all (bead y1o.24).
+	# makes a digit this small legible over a bright sky at all (bead y1o.24).
 	var font: Font = HudTheme.heading_font()
 	for i: int in _heroes.size():
 		var hero := _heroes[i]
@@ -595,8 +644,9 @@ func _draw_mic_badge(box: Rect2, badge: int) -> void:
 	"""
 	A microphone, vertex-drawn: capsule, cradle, stem, base — plus a slash when
 	the mic cannot transmit. No texture and no node, like every other mark on this
-	row; at 15 px the shape carries as much as the colour does, which is what
+	row; at this size the shape carries as much as the colour does, which is what
 	makes the badge readable for a player who cannot tell the red from the amber.
+	Every measurement below is a fraction of `box`, so it follows `BADGE_SIZE`.
 	"""
 	var color := mic_badge_color(badge)
 	var w := box.size.x

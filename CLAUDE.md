@@ -175,7 +175,16 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            the row really drawn, `tile_state()` reports CAPTIVE
 #                            so the overlay leaves the cell bars alone, and
 #                            `voice_chat`'s mirrored copy of that constant is
-#                            bound to the real one. Check 7 is VOICE ON THE ROW:
+#                            bound to the real one. Check 6b is the THIRD half
+#                            and the only one that can see a TRANSFORM: the REAL
+#                            root window resized to 2880x1800 over the project's
+#                            1920x1080, driven at BOTH shipped aspects (web
+#                            `expand`, desktop `keep` with its letterbox margin),
+#                            with the retired `get_screen_transform()` mapping as
+#                            the mutation control — it must answer the UNSCALED
+#                            rect, which is bead xtr.10's shipped bug. A
+#                            SubViewport cannot host it (its own screen transform
+#                            already folds the stretch in, so the bug passes). Check 7 is VOICE ON THE ROW:
 #                            the five MIC_BADGE_* numbers and the speaking green
 #                            bound to voice_chat's and remote_avatar's, the real
 #                            voice module answering NOTHING off-web, a stub
@@ -2323,8 +2332,28 @@ builders (`card` / `strip` / `button`) and one lazy `theme()`. Four rules:
   **never a width**, since a missing glyph still measures a non-zero notdef box — which is
   why Oswald was picked over Bebas Neue.
 - **`hero_hud` is the PILOT** (bead `y1o.24`) and the per-panel beads follow it one file
-  at a time. Its tile geometry did not move — `voice_chat` places the teammate camera on
-  `tile_rect()`. The active ring is FLAT `VISOR_AMBER` and no longer lerped toward the
+  at a time. **`TILE_SIZE` IS THE ONE NUMBER** (bead `y1o.37`, owner: *"make heroes'
+  portraits bigger"*): it went 48 -> 80, the row is `4*80 + 3*6 = 338` px, and everything
+  that has to grow with a tile is DERIVED from it — `DIGIT_FONT_SIZE` at 13/48 and
+  `BADGE_SIZE` at 15/48, both written as the division so 48 still reproduces 13 and 15
+  exactly. Line WEIGHTS do not follow it and that is deliberate (`ACTIVE_BORDER_WIDTH`,
+  `RING_INSET`/`RING_WIDTH`, `BAR_WIDTH`, `BADGE_MARGIN`): the y1o spec's hard 1-3 px
+  edges are a style decision. **`voice_chat.TILE_INSET_FRAC` is the one that had to
+  become a FRACTION** (`(RING_INSET + RING_WIDTH) / TILE_SIZE`): it pads a rect that is
+  in WINDOW pixels since bead `xtr.10`, so an absolute pad is `pad / s` design px and
+  swallows the green speaking ring — the row's only "who is talking" read — at exactly
+  the retina scale that bug was reported from. `hero_hud_selfcheck` check 6b binds it
+  to the real ring consts through the real stretched rect.
+  What BOUNDS the tile is `hero_hud_selfcheck` check 5, the row's fit against every
+  widget `main.tscn` pins to that corner, and the binding neighbour is the \fo
+  PerfOverlay — 80 moved it right (240..544 -> 376..680), never down, where its text
+  walks into the minimap. 96 is the ceiling the bead names, and what it costs is a
+  SECOND move of that SAME neighbour — a 402 px row ends at x = 418, past the overlay's
+  new 376, and there is room (the design width is 1920 at its narrowest under either
+  aspect). **The minimap is not what binds at any proposed size**: it is anchored at
+  0.5 with `offset_top = -126` and the design height is never under 1080, so its top is
+  never under 414 against the row's bottom of 152 — it would take a 342 px tile. `voice_chat` places the teammate camera on `tile_rect()`, so
+  the picture grew with the tile. The active ring is FLAT `VISOR_AMBER` and no longer lerped toward the
   hero tint: the accent is rationed to one amber thing per screen region, and the tint
   already owns the whole placeholder tile. **A veil composites toward its OWN luminance**,
   so everything darker than it comes out BRIGHTER: at a quarter khaki `HudTheme.veil()`
@@ -2603,9 +2632,19 @@ touches `JavaScriptBridge`.
   precedent): the browser decodes and composites, so the per-frame cost on the
   single-threaded export is zero and GDScript's whole contribution is one rect at 5 Hz,
   pushed only when it CHANGES. **The rect crosses as FRACTIONS of the canvas**, so
-  `devicePixelRatio`, CSS scaling and every resize belong to the browser (which re-places
-  the tiles on its own `resize` listener — a resize moves no fraction, so nothing is
-  pushed). It lands on the tile of the hero that peer HOLDS, resolved through the lobby's
+  `devicePixelRatio` and CSS scaling belong to the browser, which also re-places the tiles
+  against the new canvas box on its own `resize` listener. **The fraction is NOT
+  resize-invariant, and believing it was is what shipped bead `godot-test1-xtr.10`**: a
+  resize that KEEPS the window's aspect moves nothing, but one that changes it moves which
+  axis binds the `canvas_items` stretch (and, under the desktop's `keep`, the letterbox
+  margin) while the divisor changes on both — so the 5 Hz poll's change gate is what
+  pushes the new one, within 200 ms. **`tile_rect()` answers in WINDOW pixels through
+  `get_viewport().get_final_transform()`, never `get_screen_transform()`**, whose
+  `get_popup_base_transform()` factor is the IDENTITY on a window that embeds its
+  subwindows — the project default, and unconditional on the web export — so it answered
+  in 1920x1080 DESIGN pixels while `_poll_tiles` divided by the canvas BACKING size, and
+  a teammate's camera sat above and left of the tile and smaller than it on every
+  non-1:1 display. It lands on the tile of the hero that peer HOLDS, resolved through the lobby's
   `hero_holder()` — which is exactly `hero_hud`'s STATE_HELD — **except a CAPTIVE tile,
   which takes no picture at all**: its cell bars are drawn ACROSS the tile, no inset saves
   them, and a benched peer still HOLDS the hero they are locked up as. `hero_hud` gained

@@ -167,18 +167,38 @@ const CAM_ON: int = 2
 const CAM_DENIED: int = 3
 
 ## How often the video tiles are reconciled with the hero row. The row is pinned
-## to a screen corner and only moves when the viewport does, and the browser
-## re-places a tile on its own `resize` listener, so 5 Hz is generous — it is
-## really the rate at which a hero CHANGES HANDS or a camera comes and goes.
+## to a screen corner, and the browser re-places a tile against the new canvas box
+## on its own `resize` listener, so 5 Hz is generous — it is mostly the rate at
+## which a hero CHANGES HANDS or a camera comes and goes. It is ALSO what covers a
+## resize that changes the window's ASPECT: `hero_hud.tile_rect` answers in WINDOW
+## pixels, and an aspect change moves which axis binds the stretch (and, under the
+## desktop's `keep`, the letterbox margin) while the divisor changes on both — so
+## such a resize really does move the fraction, and this poll pushes it in 200 ms.
 const TILE_INTERVAL: float = 0.2
 
-## How far inside a tile the picture is drawn, in window pixels — enough to leave
-## `hero_hud`'s frame and its active ring showing around the video. The overlay is
-## ABOVE the canvas, so anything it covers is simply gone, which is why a CAPTIVE
-## tile takes no picture at all: its cell bars are drawn ACROSS the whole tile and
-## no inset can save them, and they are the one state this row says with a shape
-## rather than a brightness. `_poll_tiles` skips those.
-const TILE_INSET: float = 3.0
+## How far inside a tile the picture is drawn, AS A FRACTION OF THE TILE — enough to
+## leave `hero_hud`'s frame, its active ring and its SPEAKING ring showing around the
+## video.
+##
+## IT WAS 3 ABSOLUTE PIXELS, AND THAT WAS ONLY EVER RIGHT BY ACCIDENT (bead
+## `godot-test1-xtr.10`). `hero_hud.tile_rect()` used to answer in 1920x1080 DESIGN
+## pixels, so a constant pad was a constant DESIGN pad; it answers in WINDOW pixels
+## now, where 3 px is 3/s design px — 2.0 at the retina s = 1.5 the camera bug was
+## reported from. `hero_hud` draws the speaking ring in a band `RING_INSET` (3) to
+## `RING_INSET + RING_WIDTH` (5) DESIGN px inside the tile, so a 2 px pad puts the
+## picture straight over the green ring, which is the row's only "who is talking"
+## read. A fraction clears that band at every scale, which is the whole point.
+##
+## The number is `(RING_INSET + RING_WIDTH) / TILE_SIZE` in `hero_hud`'s terms,
+## MIRRORED rather than preloaded exactly like `HERO_HUD_STATE_CAPTIVE` below — and
+## `hero_hud_selfcheck` check 6b binds it to those real consts through the real
+## stretched rect, so it cannot drift and cannot go back to an absolute grow.
+##
+## The overlay is ABOVE the canvas, so anything it covers is simply gone, which is why
+## a CAPTIVE tile takes no picture at all: its cell bars are drawn ACROSS the whole
+## tile and no inset can save them, and they are the one state this row says with a
+## shape rather than a brightness. `_poll_tiles` skips those.
+const TILE_INSET_FRAC: float = 5.0 / 80.0
 
 ## `hero_hud.STATE_CAPTIVE`, mirrored rather than preloaded — the row is found
 ## through its group like every other widget here, and a preload would be a hard
@@ -237,7 +257,8 @@ const VOICE_JS: String = """
 		   `camWant` is what the player last asked for, `camState` is where the
 		   permission prompt got to; the two differ while it is on screen.
 		   `tiles` remembers each peer's rect as a FRACTION of the canvas, so a
-		   resize is re-applied here instead of re-measured in GDScript. */
+		   resize is re-applied here at once; GDScript re-measures only when the
+		   fraction itself moved, which an aspect-changing resize does. */
 		cam: null, camState: 0, camWant: 0, tiles: {},
 		/* One AudioContext for the whole module, and one AnalyserNode per stream
 		   (remote) plus one for the local mic. `levels()` reads them all and
@@ -430,7 +451,10 @@ const VOICE_JS: String = """
 	   window pixels; the canvas's CSS box is those pixels divided by
 	   devicePixelRatio and moved by whatever the page's layout says. Multiplying a
 	   fraction by `getBoundingClientRect()` is that whole conversion, and it is
-	   also why a resize needs no new measurement from GDScript.
+	   also why a resize is re-applied here without waiting for GDScript. It does
+	   NOT make the fraction resize-invariant: a resize that KEEPS the window's
+	   aspect moves nothing, but one that changes it moves the fraction too (see
+	   `hero_hud.tile_rect`), which the 5 Hz poll pushes within 200 ms.
 
 	   ponytail: mounted on `document.body`, so Godot's own canvas-only fullscreen
 	   (`DisplayServer.WINDOW_MODE_FULLSCREEN` calls `canvas.requestFullscreen()`)
@@ -490,8 +514,12 @@ const VOICE_JS: String = """
 		return 1;
 	}
 
-	/* A resize moves the canvas without moving the fraction, so the GD side has
-	   nothing to push and this is the only thing that can re-place the pictures. */
+	/* Re-place every remembered rect against the new canvas box. For a resize that
+	   keeps the window's ASPECT that is the whole fix — the fraction did not move.
+	   One that CHANGES the aspect moves the fraction as well (the axis that binds
+	   the canvas_items stretch changes, and the divisor changes on both), and the
+	   GD poll pushes that within 200 ms; this keeps the picture on the canvas in
+	   the meantime. */
 	function replaceTiles() {
 		for (var k in S.tiles) { placeTile(k); }
 		return 1;
@@ -563,8 +591,9 @@ const VOICE_JS: String = """
 			}
 			S.camState = 1;
 			var gen = S.gen;
-			/* Portrait size and portrait frame rate: the picture is drawn in a
-			   48 px tile, so anything larger is bytes nobody can see. */
+			/* Portrait size and portrait frame rate: the picture is drawn in an
+			   80 px tile (`hero_hud.TILE_SIZE`), so anything larger is bytes
+			   nobody can see. */
 			navigator.mediaDevices.getUserMedia({
 				audio: false,
 				video: { width: 160, height: 120, frameRate: 12 }
@@ -1014,8 +1043,9 @@ const VOICE_JS: String = """
 		return 1;
 	}
 
-	/* ONE listener for the whole module: the fractions do not change when the
-	   window does, so this is the only thing that can follow the canvas. */
+	/* ONE listener for the whole module, and it is what follows the canvas without
+	   a round trip through GDScript — see `replaceTiles` for the one resize shape
+	   whose fraction the GD poll still has to re-push. */
 	try {
 		window.addEventListener('resize', replaceTiles);
 		document.addEventListener('fullscreenchange', replaceTiles);
@@ -1970,8 +2000,11 @@ func _poll_tiles() -> void:
 	ONE bridge call for the roll-call (`videoPeers()`, `levels()`'s one-string
 	rule), then at most one `setTile` per peer whose rect actually MOVED — the
 	hero row is pinned to a screen corner, so in the steady state that is nothing
-	at all. A resize does not move the FRACTION, which is why the browser re-places
-	the pictures on its own listener and this poll stays silent through one.
+	at all. The browser re-places the pictures against the new canvas box on its own
+	`resize` listener, so this poll stays silent through a resize that keeps the
+	window's ASPECT; one that changes it moves the fraction too (`tile_rect` answers
+	in window pixels, and an aspect change moves the binding axis of the stretch and
+	the letterbox margin) and the change-gate below pushes the new one.
 
 	Everything is `has_method`-guarded and degrades to no pictures: a scene with no
 	hero row, a manager that predates `hero_holder`, a peer holding no hero.
@@ -2007,9 +2040,14 @@ func _poll_tiles() -> void:
 			if int(hud.tile_state(hero)) == HERO_HUD_STATE_CAPTIVE:
 				continue
 			var tile: Rect2 = hud.tile_rect(hero)
-			if tile.size.x <= TILE_INSET * 2.0 or tile.size.y <= TILE_INSET * 2.0:
+			# The pad is a FRACTION of the tile, never a pixel count: this rect is in
+			# WINDOW pixels, so an absolute pad shrinks in design space as the window
+			# grows and eats hero_hud's speaking ring. Taken off the width so a tile
+			# that is not square (it always is) still pads evenly.
+			var pad: float = tile.size.x * TILE_INSET_FRAC
+			if tile.size.x <= pad * 2.0 or tile.size.y <= pad * 2.0:
 				continue
-			var inset: Rect2 = tile.grow(-TILE_INSET)
+			var inset: Rect2 = tile.grow(-pad)
 			var frac := Rect2(inset.position / win, inset.size / win)
 			live[holder] = true
 			if _pushed_tiles.get(holder, Rect2()) == frac:
