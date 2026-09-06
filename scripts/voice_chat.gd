@@ -287,6 +287,18 @@ const VOICE_JS: String = """
 		   that is gone for good settles on the signal-lost card instead of
 		   hammering getUserMedia for the life of the room. */
 		styleW: null, recamN: 0, recamWin: 0, recamBusy: 0,
+		/* THE FACE-REGISTERED CROP (bead godot-test1-xtr.12). `faceState` is the
+		   rung of the ladder this browser landed on — 0 not asked yet, 1 loading,
+		   2 the vendored detector in `faceW`, 3 unavailable (centre crop for the
+		   life of the room), 4 the browser's own `FaceDetector`. `faceTarget` is
+		   where the detector last said the head is, `faceBox` is the box actually
+		   drawn, lerping toward it; `faceHit` is when a face was last SEEN, which
+		   is what expires a target back to the centre. `faceMs` is the detector's
+		   round trip (off this thread on rung 2) and `faceMainMs` is the share of
+		   it that was paid HERE — the two numbers the bead asks for separately. */
+		faceW: null, faceNative: null, faceNoNative: 0, faceState: 0, faceBusy: 0, faceAt: 0,
+		faceSent: 0, faceMs: 0, faceMainMs: 0, faceHit: 0, faceLerpAt: 0,
+		faceBox: null, faceTarget: null,
 		/* THE SENDER'S OWN HEALTH (bead godot-test1-xtr.17). `paintAt` is when
 		   `paint()` last put pixels on the canvas — the only thing that can tell a
 		   stalled paint loop from a working one, and reported as `paint=` — and
@@ -1041,6 +1053,389 @@ const VOICE_JS: String = """
 		return 1;
 	}
 
+	/* ------------------------------------------------------------------------
+	   THE FACE-REGISTERED CROP (bead godot-test1-xtr.12)
+	   ------------------------------------------------------------------------
+	   THE MVP CROPPED THE CENTRE SQUARE, AND THE OWNER'S FIELD REPORT IS WHAT
+	   THIS IS FOR (2026-09-06, verbatim): *"croping works good on laptops, just
+	   great, but on my desktop when camera is a bit far away it doesn't trace
+	   head well, it shows me not only face."* A laptop lid puts a face across
+	   most of the frame, so the centre square happens to BE the face; a desktop
+	   camera two metres away frames a torso, and the centre square of a torso is
+	   a chest. So the box has to ZOOM as well as pan — `FACE_ZOOM` times the
+	   detected face, which at two metres is a fraction of the source and fills
+	   the 92 px tile exactly as the lid does.
+
+	   THE LADDER, and every rung below the first is reached by a browser that
+	   simply cannot do the one above:
+
+	     4. `window.FaceDetector`, the Shape Detection API — FREE when it is
+	        there (no download, no worker, the platform's own detector). It is
+	        Chromium behind #enable-experimental-web-platform-features and is in
+	        no shipping browser, so it is taken opportunistically and is never
+	        the plan.
+	     2. the VENDORED MediaPipe BlazeFace short-range in a Web Worker, which
+	        is what actually ships. `web/vendor/mediapipe/` — read its README for
+	        the pin, the licence and why the files are ours and not a CDN's.
+	     3/0. the CENTRE CROP, i.e. the MVP unchanged: while the module is still
+	        downloading, on a browser with no module worker or no
+	        `createImageBitmap`, when the files 404, when the detector throws, and
+	        when there is simply no face in shot for `FACE_LOST_MS`.
+
+	   The rung is INVISIBLE to every receiver — the same canvas capture track is
+	   on the wire either way, so nothing is signalled, no verb is added and a
+	   teammate on any build sees a picture rather than an error.
+
+	   IT DOES TAKE A WebGL2 CONTEXT, AND THAT IS FINE BECAUSE OF WHERE. The
+	   library's graph runner asks for one on an `OffscreenCanvas(1, 1)` even on
+	   the CPU delegate. The bead's "no WebGL context" rule is about CONTENTION
+	   with Godot's on this single-threaded export; a context on the worker's
+	   thread is not Godot's thread and not Godot's context. Where
+	   `OffscreenCanvas` is missing — Safari 16 and older, which the library
+	   sniffs for by name — it falls back to `document.createElement('canvas')`
+	   and rejects inside a worker, which is rung 3 and a centre crop. Honest
+	   ceiling, not a hole.
+
+	   THE COST, and it is deliberately two numbers. Inference is ~5-15 ms and it
+	   is paid on the WORKER's thread, which on this single-threaded export is the
+	   only thread that is not Godot's frame. What is paid HERE is one
+	   `createImageBitmap` of a 160x120 element and one transfer, at 3.3 Hz;
+	   `stats()` reports both (`face=` the round trip, `fm` the main-thread
+	   share), because a single summed figure would hide exactly the thing the
+	   worker was chosen for. */
+
+	/* Relative to the DOCUMENT, never to the origin: the Pages deploy serves the
+	   whole export out of `/<repo>/`, so an absolute path would 404 there and
+	   settle every Pages player on the centre crop. */
+	var FACE_DIR = 'vendor/mediapipe/';
+	/* 3.3 Hz. The bead's window is 2-4 and the box is smoothed anyway — a head
+	   does not move at 12 Hz, and each call is an ImageBitmap this thread pays
+	   for. */
+	var FACE_PERIOD_MS = 300;
+	/* The smoothing time constant, applied as a REAL exponential over the
+	   elapsed milliseconds rather than a fixed per-frame alpha: the paint loop
+	   runs at 12 Hz visible, at the worker clock's rate hidden and at 2 Hz on the
+	   watchdog, and a fixed alpha would make the crop snap on one and crawl on
+	   another. */
+	var FACE_LERP_TAU_MS = 300;
+	/* Face box -> head. BlazeFace's box is the face alone (brow to chin), which
+	   cropped tight is a portrait with the top of the head sliced off. */
+	var FACE_ZOOM = 1.8;
+	/* And a floor on how far it may zoom in, in SOURCE pixels. A 160x120 device
+	   has 120 to give; below this the tile is upscaled mush, and a spuriously
+	   tiny detection would otherwise blow one eye up to fill the tile. */
+	var FACE_MIN_SIDE = 56;
+	/* No face for this long and the box goes home to the centre. The player who
+	   stood up must not leave the crop parked on the chair they left. */
+	var FACE_LOST_MS = 2000;
+
+	/* THE WORKER, and it is a CLASSIC one loading the IIFE bundle with
+	   `importScripts`. THAT IS NOT A STYLE CHOICE — a module worker cannot run
+	   this library at all. MediaPipe loads its own wasm loader through
+
+	       if (typeof importScripts !== 'function') { document.createElement('script') … }
+
+	   so on the one branch a module worker takes it reaches for a `document`
+	   that no worker has, and `createFromOptions` rejects every time. A classic
+	   worker has `importScripts`, which is the branch the library is written
+	   for, and it is also as old as Workers themselves — no module-worker
+	   support needed, no dynamic `import()` in a worker needed. (This is why the
+	   pin is 1.0.1: the 0.10.x line ships ESM and CommonJS only. See the
+	   README.)
+
+	   Written as a string here for the same reason `STYLE_WORKER_SRC` is:
+	   `intro_selfcheck`'s boolean scan reads `VOICE_JS` as TEXT, so a worker in
+	   a file of its own would be a second dialect nothing checks. Every message
+	   it sends is a STRING — '+' ready, '!' this browser cannot, '' nothing in
+	   shot, and 'x,y,w,h' in source pixels — never a boolean.
+
+	   The urls arrive in the FIRST message rather than being baked in, so the
+	   `document.baseURI` resolution happens once, on the thread that has a
+	   document. */
+	var FACE_WORKER_SRC = ''
+		+ 'var D = null;'
+		+ 'onmessage = function (e) {'
+		+ '  var m = e.data;'
+		+ '  if (m.u) {'
+		+ '    try {'
+		+ '      importScripts(m.u);'
+		+ '      var V = self.Vision;'
+		+ '      V.FilesetResolver.forVisionTasks(m.w).then(function (fs) {'
+		+ '        return V.FaceDetector.createFromOptions(fs, {'
+		+ '          baseOptions: { modelAssetPath: m.m, delegate: "CPU" },'
+		+ '          runningMode: "IMAGE", minDetectionConfidence: 0.4'
+		+ '        });'
+		+ '      }).then(function (d) { D = d; postMessage("+"); })'
+		+ '        .catch(function () { postMessage("!"); });'
+		+ '    } catch (err) { postMessage("!"); }'
+		+ '    return;'
+		+ '  }'
+		+ '  var b = m.b;'
+		+ '  var r = "";'
+		+ '  if (D && b) {'
+		+ '    try {'
+		+ '      var out = D.detect(b);'
+		+ '      var ds = (out && out.detections) ? out.detections : [];'
+		+ '      var best = null;'
+		+ '      for (var i = 0; i < ds.length; i++) {'
+		+ '        var bb = ds[i].boundingBox;'
+		+ '        if (!bb) { continue; }'
+		+ '        if (!best || bb.width * bb.height > best.width * best.height) { best = bb; }'
+		+ '      }'
+		+ '      if (best) { r = best.originX + "," + best.originY + "," + best.width + "," + best.height; }'
+		+ '    } catch (err2) { r = ""; }'
+		+ '  }'
+		+ '  if (b && b.close) { b.close(); }'
+		+ '  postMessage(r);'
+		+ '};';
+
+	function faceUrl(rel) {
+		try { return new URL(FACE_DIR + rel, document.baseURI).href; } catch (e) { return FACE_DIR + rel; }
+	}
+
+	/* Called from the first `paint()` that has a real frame, which is the whole
+	   of the lazy-load rule: `paint()` only ever runs inside a room, with the
+	   camera granted and the styled canvas live, so a player who never presses
+	   Camera never asks for a byte of this. A rung-3 verdict is FINAL — a 404 or
+	   a missing `Worker` will not fix itself, and retrying would be a 9.5 MB
+	   request per paint. */
+	function faceStart() {
+		if (S.faceState !== 0) { return 0; }
+		/* THE FREE RUNG. `fastMode` is BlazeFace's own trade in the platform's
+		   spelling: one nearby face, quickly. `faceNoNative` is set once this
+		   browser has PROVED it cannot really do it — see `faceNativeFailed`. */
+		if (S.faceNoNative !== 1 && typeof FaceDetector !== 'undefined') {
+			try {
+				S.faceNative = new FaceDetector({ fastMode: true, maxDetectedFaces: 1 });
+				S.faceState = 4;
+				return 1;
+			} catch (e) { S.faceNative = null; }
+		}
+		if (typeof Worker === 'undefined' || typeof Blob === 'undefined'
+			|| typeof createImageBitmap === 'undefined'
+			|| !window.URL || !window.URL.createObjectURL) {
+			S.faceState = 3;
+			return 0;
+		}
+		var w = null;
+		try {
+			var url = window.URL.createObjectURL(new Blob([FACE_WORKER_SRC], { type: 'text/javascript' }));
+			w = new Worker(url);
+			window.URL.revokeObjectURL(url);
+		} catch (e2) { w = null; }
+		if (!w) {
+			S.faceState = 3;
+			return 0;
+		}
+		w.onmessage = function (ev) { faceMessage(String(ev.data)); };
+		/* A throw the worker's own try/catch never sees arrives here instead, and
+		   it is the same verdict: this browser gets the centre crop. */
+		w.onerror = function () { S.faceState = 3; };
+		S.faceW = w;
+		S.faceState = 1;
+		w.postMessage({
+			u: faceUrl('vision_bundle.js'),
+			w: faceUrl('wasm'),
+			m: faceUrl('blaze_face_short_range.tflite')
+		});
+		return 1;
+	}
+
+	function faceMessage(s) {
+		if (s === '+') {
+			S.faceState = 2;
+			return 1;
+		}
+		if (s === '!') {
+			/* Order matters: `faceStop()` resets the rung to 0 so a fresh camera
+			   session may try again, and this verdict has to survive it. */
+			faceStop();
+			S.faceState = 3;
+			return 0;
+		}
+		S.faceBusy = 0;
+		S.faceMs = styleNow() - S.faceSent;
+		return faceSeen(s);
+	}
+
+	/* 'x,y,w,h' in SOURCE pixels -> where the crop should aim. One parser for
+	   both detector rungs: the platform's `DOMRect` is formatted into the same
+	   string rather than given a second reader. */
+	function faceSeen(s) {
+		if (!s) { return 0; }
+		var p = s.split(',');
+		if (p.length !== 4) { return 0; }
+		var x = Number(p[0]);
+		var y = Number(p[1]);
+		var w = Number(p[2]);
+		var h = Number(p[3]);
+		if (!isFinite(x) || !isFinite(y) || !(w > 0) || !(h > 0)) { return 0; }
+		/* The LONGER side, so a box that is taller than it is wide still contains
+		   the whole head once it is squared off. */
+		S.faceTarget = [x + w / 2, y + h / 2, (w > h ? w : h) * FACE_ZOOM];
+		S.faceHit = styleNow();
+		return 1;
+	}
+
+	/* A RUNG THAT FAILS MUST FALL THROUGH, NOT TRAP (codex review 2026-09-06).
+	   `new FaceDetector()` can SUCCEED on a browser whose platform backend is
+	   missing and then reject every `detect()` with `NotSupportedError` — Chromium
+	   with the flag on and no OS detector under it. Merely clearing `faceBusy`
+	   there left `faceState` on rung 4 for the life of the room, so the vendored
+	   detector was never loaded and the player kept the centre crop: the exact
+	   outcome this bead exists to remove, on a browser that could have done it.
+
+	   So the first native failure retires the rung for this browser — `faceNoNative`
+	   is deliberately NOT cleared by `faceStop`, because a missing backend is a
+	   property of the browser and not of the room — and re-enters `faceStart`,
+	   which now picks the worker. Falling through on the FIRST failure (rather than
+	   after a run of them) costs at most one 3.5 MB download on a browser that
+	   merely hiccuped, and can only ever move to the rung that actually ships. */
+	function faceNativeFailed() {
+		S.faceNative = null;
+		S.faceNoNative = 1;
+		S.faceState = 0;
+		S.faceBusy = 0;
+		return faceStart();
+	}
+
+	/* Rung 4. Async like the worker and rate-limited by the same clock, so the
+	   two are one cadence and one set of numbers.
+
+	   BOTH CALLBACKS ARE GATED ON THE DETECTOR THEY WERE ASKED OF (codex review
+	   2026-09-06), and that is `S.gen`'s reasoning one promise along: a `detect()`
+	   is in flight for as long as it likes, so it routinely outlives the camera it
+	   was asked for. `faceStop()` nulls `S.faceNative`, so a completion that lands
+	   after teardown finds `d !== S.faceNative` and does nothing. Without it a late
+	   REJECTION reached `faceNativeFailed()` and started a whole MediaPipe worker —
+	   a 12 MB download — with the camera off, and a late RESOLVE wrote a face
+	   target the NEXT session would lerp toward for FACE_LOST_MS. Measured on a
+	   deferred-rejection harness: a live worker was created after `faceStop()`. */
+	function faceNativeTick(v, now) {
+		var d = S.faceNative;
+		S.faceAt = now;
+		S.faceBusy = 1;
+		S.faceSent = now;
+		try {
+			d.detect(v).then(function (list) {
+				if (d !== S.faceNative) { return; }
+				S.faceBusy = 0;
+				S.faceMs = styleNow() - S.faceSent;
+				var best = null;
+				for (var i = 0; i < list.length; i++) {
+					var b = list[i].boundingBox;
+					if (!b) { continue; }
+					if (!best || b.width * b.height > best.width * best.height) { best = b; }
+				}
+				if (best) { faceSeen(best.x + ',' + best.y + ',' + best.width + ',' + best.height); }
+			}).catch(function () {
+				if (d !== S.faceNative) { return; }
+				faceNativeFailed();
+			});
+		} catch (e) { faceNativeFailed(); }
+		return 1;
+	}
+
+	/* One dispatch per FACE_PERIOD_MS, and never two in flight: a detector that
+	   fell behind must drop frames rather than queue them, or a slow machine
+	   would aim the crop at where the head was a second ago. */
+	function faceTick(v) {
+		if (S.faceState === 0) { faceStart(); }
+		var now = styleNow();
+		if (S.faceBusy === 1 || now - S.faceAt < FACE_PERIOD_MS) { return 0; }
+		if (S.faceState === 4) { return faceNativeTick(v, now); }
+		if (S.faceState !== 2) { return 0; }
+		S.faceAt = now;
+		S.faceBusy = 1;
+		S.faceSent = now;
+		var t0 = now;
+		try {
+			createImageBitmap(v).then(function (b) {
+				var t1 = styleNow();
+				if (!S.faceW) {
+					if (b.close) { b.close(); }
+					S.faceBusy = 0;
+					return;
+				}
+				S.faceW.postMessage({ b: b }, [b]);
+				S.faceMainMs = S.faceMainMs + (styleNow() - t1);
+			}).catch(function () { S.faceBusy = 0; });
+		} catch (e) { S.faceBusy = 0; }
+		/* The synchronous share, assigned before the continuation above adds its
+		   own — which runs strictly later, being a promise callback. */
+		S.faceMainMs = styleNow() - t0;
+		return 1;
+	}
+
+	/* WHERE THE CROP ACTUALLY IS, and every rung of the ladder comes out of this
+	   one function: with no target, a stale one, or a detector that never
+	   answered, `cx/cy/side` are the MVP's centre square to the pixel.
+
+	   Clamped AFTER the lerp rather than before it, so the box that is drawn is
+	   always inside the source even while it is still travelling toward a target
+	   that hangs over the edge. */
+	function cropBox(vw, vh, now) {
+		var full = vw < vh ? vw : vh;
+		var cx = vw / 2;
+		var cy = vh / 2;
+		var side = full;
+		var t = S.faceTarget;
+		if (t && now - S.faceHit <= FACE_LOST_MS) {
+			cx = t[0];
+			cy = t[1];
+			side = t[2];
+			if (side < FACE_MIN_SIDE) { side = FACE_MIN_SIDE; }
+			if (side > full) { side = full; }
+		}
+		var b = S.faceBox;
+		if (!b) {
+			b = [cx, cy, side];
+			S.faceBox = b;
+		} else {
+			var dt = now - S.faceLerpAt;
+			if (!(dt > 0)) { dt = 0; }
+			/* A tab that was hidden for a minute must not lerp for a minute; one
+			   second of catch-up is already a complete transition at this tau. */
+			if (dt > 1000) { dt = 1000; }
+			var a = 1 - Math.exp(-dt / FACE_LERP_TAU_MS);
+			b[0] = b[0] + (cx - b[0]) * a;
+			b[1] = b[1] + (cy - b[1]) * a;
+			b[2] = b[2] + (side - b[2]) * a;
+		}
+		S.faceLerpAt = now;
+		var s = b[2];
+		if (s > full) { s = full; }
+		var x = b[0] - s / 2;
+		var y = b[1] - s / 2;
+		if (x < 0) { x = 0; }
+		if (y < 0) { y = 0; }
+		if (x + s > vw) { x = vw - s; }
+		if (y + s > vh) { y = vh - s; }
+		return [x, y, s];
+	}
+
+	/* Torn down with the styled canvas, because the detector exists only to aim
+	   its crop. The vendored files stay in the browser's HTTP cache, so a camera
+	   toggled off and on again costs four conditional requests and no megabytes. */
+	function faceStop() {
+		if (S.faceW) {
+			try { S.faceW.terminate(); } catch (e) { }
+			S.faceW = null;
+		}
+		S.faceNative = null;
+		S.faceState = 0;
+		S.faceBusy = 0;
+		S.faceAt = 0;
+		S.faceSent = 0;
+		S.faceMs = 0;
+		S.faceMainMs = 0;
+		S.faceHit = 0;
+		S.faceLerpAt = 0;
+		S.faceBox = null;
+		S.faceTarget = null;
+		return 1;
+	}
+
 	function paint() {
 		var cx = S.styleCtx;
 		var v = S.styleSrc;
@@ -1076,11 +1471,17 @@ const VOICE_JS: String = """
 		var vh = v.videoHeight;
 		/* Nothing decoded yet — the first frames after a grant. */
 		if (!vw || !vh) { return 0; }
+		/* ABOVE `t0` ON PURPOSE (bead godot-test1-xtr.12). `style=` has to keep
+		   meaning exactly what it meant before this bead or the before/after
+		   reading is not a comparison; the detector's own main-thread share is
+		   `fm`, reported beside it. */
+		faceTick(v);
 		var t0 = styleNow();
 		var n = STYLE_SIZE;
-		var side = vw < vh ? vw : vh;
+		/* THE CROP, which is the centre square until a detector says otherwise. */
+		var box = cropBox(vw, vh, now);
 		try {
-			cx.drawImage(v, (vw - side) / 2, (vh - side) / 2, side, side, 0, 0, n, n);
+			cx.drawImage(v, box[0], box[1], box[2], box[2], 0, 0, n, n);
 		} catch (e) { return 0; }
 		var img;
 		try { img = cx.getImageData(0, 0, n, n); } catch (e) { return 0; }
@@ -1263,6 +1664,7 @@ const VOICE_JS: String = """
 	}
 
 	function styleStop() {
+		faceStop();
 		if (S.styleTimer) { clearInterval(S.styleTimer); S.styleTimer = null; }
 		if (S.styleWatch) { clearInterval(S.styleWatch); S.styleWatch = null; }
 		if (S.styleW) {
@@ -1794,7 +2196,16 @@ const VOICE_JS: String = """
 		var videoStr = ' ice=' + column(vid2.ice) + ' con=' + column(vid2.con)
 			+ ' sig=' + column(vid2.sig) + ' sdp=' + column(vid2.sdp)
 			+ ' vin=' + column(vid2.vin) + ' vout=' + column(vid2.vout)
-			+ ' paint=' + paintAge() + ' src=' + srcState();
+			+ ' paint=' + paintAge() + ' src=' + srcState()
+			/* THE FACE DETECTOR'S BILL (bead godot-test1-xtr.12), and it is THREE
+			   numbers because one would hide the answer. `face=` is the round
+			   trip — inference included, and on rung 2 that is the WORKER's
+			   thread; `f` is which rung of the ladder this browser landed on
+			   (0 not asked, 1 loading, 2 vendored worker, 3 centre crop for good,
+			   4 the platform's own); `fm` is what Godot's frame actually paid,
+			   which is one `createImageBitmap` and one transfer at 3.3 Hz. */
+			+ ' face=' + S.faceMs.toFixed(1) + 'ms f' + S.faceState
+			+ ' fm' + S.faceMainMs.toFixed(2);
 		return 'ns=' + ns + ' ec=' + ec + ' agc=' + agc + ' peers=' + peerCount + ' ' + rttStr + ' ' + lossStr + ' ' + styleStr + videoStr;
 	}
 

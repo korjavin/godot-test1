@@ -75,6 +75,15 @@ extends SceneTree
 ##     written as rgb triples so that grep does not fire — so it is bound here by
 ##     value instead.
 ##
+## 6f. **THE FACE CROP'S VENDORING** (bead `godot-test1-xtr.12`). The detector's
+##     worst failure is the invisible one: a vendored file lost, a url renamed or
+##     the `build.yml` copy deleted all land on the centre crop, which is the MVP
+##     and looks like a working game. So every `faceUrl()` in the module is
+##     checked against the tree, the licence is checked beside it, `build.yml` is
+##     read for the copy AND its assertion, and `cropBox` is read for the centre
+##     square that IS the fallback rung. The arithmetic is deliberately not here
+##     — a wrong lerp shows up in one glance at a tile.
+##
 ##  7. **INERT OFF-WEB.** Every public method called on a real node on a build
 ##     with no bridge at all: an unguarded `JavaScriptBridge` touch is a
 ##     `SCRIPT ERROR`, which CI treats as red, and a runtime error would abort
@@ -163,6 +172,7 @@ func _initialize() -> void:
 	_check_ice_restart()
 	_check_video_health()
 	_check_sender_heal()
+	_check_face_crop()
 	_check_inert_offweb()
 	_check_always_process()
 	_check_debug_line_in_a_room()
@@ -1265,6 +1275,175 @@ const PUBLIC_CALLS: Array = [
 	["mic_badge", []],
 	["is_hero_speaking", ["windman"]],
 ]
+
+
+func _check_face_crop() -> void:
+	"""
+	THE FACE-REGISTERED CROP'S VENDORING (bead `godot-test1-xtr.12`), and this
+	check exists because that feature's worst failure is INVISIBLE.
+
+	Every other way the detector can fail announces itself: a browser with no
+	`OffscreenCanvas`, a 404, a throw — all of them land on the centre crop,
+	which is the MVP and looks like a working game. So does a build that shipped
+	no detector at all. A url renamed in `VOICE_JS` that the lock no longer
+	fetches, a row dropped from `vendor.lock`, or the fetch step deleted from
+	`build.yml` produce a picture NOBODY CAN TELL from the intended one — they
+	cost the owner the exact fix they asked for and report nothing.
+
+	THE BINARIES ARE NOT IN THE TREE (they are ~12 MB, fetched at build time), so
+	what is checked is the MANIFEST and the two callers of the fetch script —
+	which is the stronger end anyway, because the lock is what CI actually
+	downloads and `fetch_vendor.sh` refuses any file whose sha256 misses.
+
+	So the four things asserted here are all of that class, and none of them is
+	the crop ARITHMETIC: a wrong lerp or a wrong zoom is visible in one glance at
+	a tile, and the maths is driven in a browser at review time.
+
+	ponytail: no JS unit test in CI. This repo has no node toolchain and the
+	logic that would need one fails visibly; add one when a second JS module
+	arrives that a headless check cannot reach.
+	"""
+	var module: String = _voice_js_module()
+	if module.length() < 500:
+		_fail("could not read VOICE_JS out of voice_chat.gd (%d chars) — the face "
+			% module.length() + "crop check would pass vacuously")
+		Sentinel.done("face_crop")
+		return
+
+	# --- 1. EVERY URL THE MODULE ASKS FOR IS A ROW IN THE LOCK ---------------
+	# THE BINARIES ARE NOT IN THE TREE — they are ~12 MB and are fetched at build
+	# time by `scripts/fetch_vendor.sh` against `vendor.lock`, so this cannot
+	# check the files and must check the MANIFEST instead. That is the stronger
+	# end anyway: the lock is what CI fetches, and `fetch_vendor.sh` already
+	# refuses to install anything whose sha256 does not match it.
+	#
+	# Reading the names OUT of the shipped text rather than listing them here is
+	# what makes a rename fail: a list would simply stop describing the module.
+	var dir: String = "res://web/vendor/mediapipe/"
+	var lf: FileAccess = FileAccess.open(dir + "vendor.lock", FileAccess.READ)
+	if lf == null:
+		_fail("web/vendor/mediapipe/vendor.lock is missing — it is the only place "
+			+ "the detector's version, urls and checksums are written, so the "
+			+ "build has nothing to fetch and every player gets the centre crop")
+		Sentinel.done("face_crop")
+		return
+	var lock: String = lf.get_as_text()
+	lf.close()
+
+	# The lock's `file`/`model` rows, as dest -> sha.
+	var locked: Dictionary = {}
+	var pkg: String = ""
+	for line: String in lock.split("\n"):
+		var row: PackedStringArray = line.strip_edges().split(" ", false)
+		if row.size() < 2 or row[0].begins_with("#"):
+			continue
+		if row[0] == "npm":
+			pkg = row[1]
+		elif (row[0] == "file" or row[0] == "model") and row.size() >= 4:
+			locked[row[1]] = row[2]
+	if pkg.is_empty():
+		_fail("vendor.lock names no `npm` package — the fetch has no version to pin")
+	if locked.size() < 3:
+		_fail("vendor.lock lists %d file/model row(s) — expected at least the " % locked.size()
+			+ "bundle, the wasm loader, the wasm binary and the model")
+	for dest: String in locked:
+		var sha: String = String(locked[dest])
+		if sha.length() != 64 or sha.to_lower() != sha or not sha.is_valid_hex_number():
+			_fail("vendor.lock's row for `%s` has no valid sha256 (%s) — the fetch " % [dest, sha]
+				+ "would install whatever the network handed it")
+
+	var asked: Array[String] = []
+	var from: int = 0
+	while true:
+		var i: int = module.find("faceUrl('", from)
+		if i < 0:
+			break
+		var start: int = i + "faceUrl('".length()
+		var end: int = module.find("'", start)
+		if end < 0:
+			break
+		asked.append(module.substr(start, end - start))
+		from = end
+	if asked.size() < 3:
+		_fail("VOICE_JS asks for %d vendored file(s) via faceUrl() — expected the "
+			% asked.size() + "bundle, the wasm directory and the model, so either "
+			+ "the detector's loader is gone or it stopped going through faceUrl()")
+	for rel: String in asked:
+		# The wasm DIRECTORY is passed whole to `FilesetResolver.forVisionTasks`,
+		# which appends `/vision_wasm_internal.js` and `.wasm` itself — so the
+		# directory argument is checked as the two files it really stands for.
+		var wanted: Array[String] = [rel]
+		if rel == "wasm":
+			wanted = ["wasm/vision_wasm_internal.js", "wasm/vision_wasm_internal.wasm"]
+		for w: String in wanted:
+			if not locked.has(w):
+				_fail("VOICE_JS loads `%s`, which vendor.lock does not fetch — " % w
+					+ "the file would 404 and every player would silently fall back "
+					+ "to the centre crop, which is the picture the owner asked to "
+					+ "have fixed")
+
+	# --- 2. THE LICENCE SHIPS BESIDE THE CODE -------------------------------
+	# `assets/fonts/OFL.txt`'s rule: a vendored Apache-2.0 artifact carries its
+	# licence in the tree it is redistributed from. This one IS committed —
+	# it is the licence, not a 12 MB binary.
+	if not FileAccess.file_exists(dir + "LICENSE"):
+		_fail("web/vendor/mediapipe/LICENSE is missing — MediaPipe is Apache-2.0 "
+			+ "and this build redistributes it, so the licence ships beside the "
+			+ "files (the assets/fonts/OFL.txt rule)")
+
+	# --- 3. THE BUILD REALLY FETCHES AND INSTALLS THEM ----------------------
+	# The lock being right proves nothing on its own: both deploy targets are cut
+	# from `build/web`, and the Godot export writes only the game into it. Without
+	# the fetch the detector 404s in production and nowhere else — and the game
+	# looks exactly the same, which is why this is asserted as TEXT.
+	if not FileAccess.file_exists("res://scripts/fetch_vendor.sh"):
+		_fail("scripts/fetch_vendor.sh is missing — nothing fetches or verifies the "
+			+ "vendored detector, and the lock describes a download nobody makes")
+	var wf: FileAccess = FileAccess.open("res://.github/workflows/build.yml", FileAccess.READ)
+	if wf == null:
+		_fail("could not read .github/workflows/build.yml")
+	else:
+		var yml: String = wf.get_as_text()
+		wf.close()
+		if not yml.contains("sh scripts/fetch_vendor.sh build/web"):
+			_fail("build.yml no longer installs the vendored detector into build/web "
+				+ "via scripts/fetch_vendor.sh — it would be fetched and then absent "
+				+ "from both deploy targets, and the game would look fine")
+		if not yml.contains("sh scripts/fetch_vendor.sh\n"):
+			_fail("build.yml no longer runs the fetch BEFORE the export — a bad pin "
+				+ "or an unreachable registry would fail after the export instead of "
+				+ "in seconds")
+	# The developer rig runs the SAME script, which is the whole reason it is one.
+	var sf: FileAccess = FileAccess.open("res://serve.sh", FileAccess.READ)
+	if sf != null:
+		var sh: String = sf.get_as_text()
+		sf.close()
+		if not sh.contains("scripts/fetch_vendor.sh"):
+			_fail("serve.sh no longer installs the vendored detector — a local debug "
+				+ "export would serve the game with no detector, so the developer rig "
+				+ "and CI would disagree about what the camera does")
+
+	# --- 4. THE FALLBACK RUNG IS STILL THE MVP'S CENTRE CROP ----------------
+	# `cropBox` answers the centre square whenever there is no fresh face, and
+	# THAT expression is the whole of "the detector's absence is invisible to the
+	# receiver". If it is ever rewritten into something else, a browser on the
+	# fallback rung stops matching the build that shipped before this bead.
+	var crop: String = _js_function_body(module, "cropBox")
+	if crop.is_empty():
+		_fail("VOICE_JS has no `function cropBox(` — the crop box this bead moved "
+			+ "is gone")
+	else:
+		if not (crop.contains("vw / 2") and crop.contains("vh / 2")
+				and crop.contains("vw < vh ? vw : vh")):
+			_fail("cropBox no longer spells the MVP's centre square (vw/2, vh/2, "
+				+ "min(vw, vh)) — that expression IS the fallback rung every "
+				+ "browser without a detector lands on")
+		if not crop.contains("FACE_LOST_MS"):
+			_fail("cropBox no longer expires a stale face target against "
+				+ "FACE_LOST_MS — a player who walked away would leave the crop "
+				+ "parked on the chair they left")
+
+	Sentinel.done("face_crop")
 
 
 func _check_inert_offweb() -> void:

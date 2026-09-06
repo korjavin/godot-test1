@@ -2720,6 +2720,52 @@ touches `JavaScriptBridge`.
   value. `voice_selfcheck` check 6b pins the defaults, the paint loop's reads, both
   clamps, the mix floor and that the clamp really reads it, the blank-field fallback, the
   persistence and the four \fo columns.
+  **THE CROP BOX FOLLOWS THE FACE, AND IT ZOOMS RATHER THAN ONLY PANS** (bead
+  `godot-test1-xtr.12`, owner: *"on my desktop when camera is a bit far away it
+  doesn't trace head well, it shows me not only face"*). A laptop lid puts a face
+  across most of the frame, so the MVP's centre square happened to BE the face; a
+  desktop camera two metres away frames a torso, whose centre square is a chest.
+  So `cropBox()` aims a square at the detected face centre, sized `FACE_ZOOM`
+  (1.8) x the face box, clamped inside the source and lerped on a real
+  exponential over ELAPSED ms (the paint loop runs at three different rates).
+  **A LADDER, and every rung below the first is a browser that cannot do the one
+  above**: `window.FaceDetector` when present (free, and in no shipping browser —
+  Chromium behind a flag, so it is opportunistic and never the plan), else
+  vendored MediaPipe BlazeFace in a Web Worker at 3.3 Hz, else the **centre crop,
+  which is the MVP unchanged** — while loading, with no `OffscreenCanvas`
+  (Safari 16 and older), on a 404, on a throw, and whenever nothing has been seen
+  for `FACE_LOST_MS`. The rung is invisible to receivers: the same canvas capture
+  is on the wire either way, so nothing is signalled and no verb was added.
+  **THE DETECTOR IS FETCHED AT BUILD TIME AND SERVED BY OUR NGINX — never
+  committed, never a runtime CDN** (owner ruling 2026-09-06). The ruling is
+  about what the PLAYER'S BROWSER loads, and that is only ever our own origin;
+  what CI does at build time is not that. `web/vendor/mediapipe/vendor.lock` is
+  the bill of materials — package, version, per-file sha256, the model's url —
+  and `scripts/fetch_vendor.sh` is the ONE script that downloads it, **refuses
+  any file whose sha256 misses**, and installs it into `build/web/vendor/`
+  beside the service-worker tombstone's `cp`, into the one directory both deploy
+  targets are cut from. `build.yml` calls it twice (fetch before the export so a
+  bad pin fails in seconds, install after) and `./serve.sh` calls it once, so
+  the developer rig and CI cannot drift; it fails the build when a file is
+  missing. **The binaries are `.gitignore`d**: ~12 MB in history is permanent
+  weight on every clone and every CI checkout, for bytes a build can fetch and
+  verify. Only the lock, the LICENSE (Apache-2.0, beside the files like
+  `assets/fonts/OFL.txt`) and the README are in git. The pin is **1.0.1
+  because it is the first version shipping an IIFE bundle**: the worker is a
+  CLASSIC worker doing `importScripts`, and a module worker has no
+  `importScripts`, so the library's own wasm loader takes its
+  `document.createElement('script')` branch and rejects in any worker. Nothing is
+  fetched until a room is joined AND the camera is on — `faceTick` calls
+  `faceStart()` from the first `paint()` that has a frame, so a player who never
+  presses Camera downloads none of it. **Measured** through the pinned nginx image: 11.76 MB of wasm on disk,
+  3.43 MB over the wire and 3.58 MB for all four files — under the owner's ~4 MB (`web/nginx.conf` gzips `/vendor/` on the fly; nginx maps
+  no `.mjs`, which is a second reason the IIFE `.js` is the one vendored), 5.2 s
+  of transfer on a throttled 5 Mbit/s link behind the centre crop,
+  detection **2.6 ms mean off-thread** and **0.15 ms on Godot's**, reported
+  separately as `face=`/`fm` because one summed figure would hide what the worker
+  was chosen for. `voice_selfcheck`'s face-crop check guards the INVISIBLE failure
+  — a lost file, a renamed url or a deleted `cp` all degrade to a working-looking
+  centre crop — and deliberately not the arithmetic, which shows in one glance.
   **A STUCK PICTURE IS MEASURABLE, AND THE SAMPLER IS NOT \fo'S** (bead
   `godot-test1-xtr.17`): `sampleStats()` gained the video half — per peer
   `ice=`/`con=`/`sig=`/`sdp=`/`vin=`/`vout=` (the two transport states, the negotiation
