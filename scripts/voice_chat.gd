@@ -765,8 +765,14 @@ const VOICE_JS: String = """
 		var v = S.styleSrc;
 		if (!v || !S.styleCtx) { return 0; }
 		if (v.requestVideoFrameCallback) {
-			try { S.styleRvfc = v.requestVideoFrameCallback(styleTick); } catch (e) { }
-			return 1;
+			/* The `return` is INSIDE the try on purpose: a registration that throws
+			   would otherwise report success and leave nothing driving the loop but
+			   the watchdog, i.e. that room at 2 fps. Falling through to the interval
+			   costs nothing and is the same answer the browsers without rVFC get. */
+			try {
+				S.styleRvfc = v.requestVideoFrameCallback(styleTick);
+				return 1;
+			} catch (e) { }
 		}
 		if (!S.styleTimer) {
 			S.styleTimer = setInterval(paint, Math.round(1000 / STYLE_FPS));
@@ -780,8 +786,9 @@ const VOICE_JS: String = """
 	   present a non-composited video simply never calls back, and a registration
 	   that throws leaves the chain dead too. Either way the room would see a still
 	   portrait with no recovery and no telemetry saying so. `paint()` is idempotent
-	   and costs a fraction of a millisecond, so a slow second hand is the whole
-	   fix; it is not the frame rate, which stays rVFC's. */
+	   and costs a fraction of a millisecond, so a slow second hand is the whole fix.
+	   It is not free of the rate, though, and the comment should not pretend it is:
+	   with rVFC working this is 12 + 2 paints a second, not 12. */
 	function styleWatchdog() {
 		if (S.styleWatch) { return 0; }
 		S.styleWatch = setInterval(paint, STYLE_WATCHDOG_MS);
@@ -2512,18 +2519,22 @@ func _push_style_tint(hud: Node) -> void:
 
 func _hero_tint(hud: Node, hero: String) -> Color:
 	## A hero with no colour — offline, benched, or a `CHARACTERS` entry the row
-	## has no row for — gets the grey `hero_hud` gives such a tile, mirrored here
-	## because the fallback is not in the table it would be read out of.
-	var fallback := Color(0.55, 0.55, 0.60)
-	if hero.is_empty() or hud == null:
-		return fallback
-	var script: Script = hud.get_script() as Script
-	if script == null:
-		return fallback
-	var colors: Variant = script.get_script_constant_map().get("HERO_COLORS", null)
+	## has no row for — gets the grey `hero_hud` gives such a tile, and that grey is
+	## read out of the SAME constant map as the table beside it (`FALLBACK_COLOR`)
+	## rather than hand-copied: it is right there, and a mirrored colour is a
+	## mirrored colour. The literal is only for a row that answers neither.
+	var consts: Dictionary = {}
+	if hud != null and hud.get_script() != null:
+		consts = (hud.get_script() as Script).get_script_constant_map()
+	var fallback: Variant = consts.get("FALLBACK_COLOR", null)
+	if typeof(fallback) != TYPE_COLOR:
+		fallback = Color(0.55, 0.55, 0.60)
+	if hero.is_empty():
+		return fallback as Color
+	var colors: Variant = consts.get("HERO_COLORS", null)
 	if typeof(colors) != TYPE_DICTIONARY:
-		return fallback
+		return fallback as Color
 	var row: Variant = (colors as Dictionary).get(hero, null)
 	if typeof(row) != TYPE_COLOR:
-		return fallback
+		return fallback as Color
 	return row as Color

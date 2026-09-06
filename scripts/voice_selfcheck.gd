@@ -120,6 +120,19 @@ class RoomStub extends Node:
 		return online
 
 
+## The two questions `_tile_fraction` asks a hero row, and nothing else. A real
+## `hero_hud` would drag the whole portrait widget into a question about ONE early
+## return; `hero_hud_selfcheck` owns the real row, and this owns the refusal.
+class RowStub extends Node:
+	var captive: String = ""
+
+	func tile_state(hero: String) -> int:
+		return VoiceChat.HERO_HUD_STATE_CAPTIVE if hero == captive else 0
+
+	func tile_rect(_hero: String) -> Rect2:
+		return Rect2(0.0, 0.0, 80.0, 80.0)
+
+
 var _failures: Array[String] = []
 
 
@@ -656,7 +669,94 @@ func _check_style_mirrors() -> void:
 	# that fires on the word in a COMMENT, and a check that has to be worked
 	# around by rewording prose is a check nobody keeps.
 	_check_js_used(module, "SELF_TILE", 4)
+
+	# --- THE FORCED RULE ITSELF (owner ruling 2026-09-06) -------------------
+	# "A receiver never sees the raw face" is the whole of bead xtr.11, and until
+	# these three lines it was asserted by NOTHING: `return S.styled ? S.styled :
+	# S.cam;` ships the unstyled webcam and every check in the suite stays green.
+	# Both halves are needed — the first says the send path asks for the styled
+	# stream, the second says the styled stream is the only thing that answer can
+	# ever be — because either alone leaves the other path open.
+	var attach: String = _js_function_body(module, "attachCam")
+	if attach.is_empty():
+		_fail("VOICE_JS has no `function attachCam(` — check 6b cannot see what the "
+			+ "send path attaches, which is the forced rule's whole subject")
+	else:
+		if not attach.contains("styleStream()"):
+			_fail("attachCam does not ask styleStream() for its track — the cartoon "
+				+ "(bead godot-test1-xtr.11) is FORCED for the room, so the styled "
+				+ "canvas is the only source a sender may attach")
+		if attach.contains("S.cam"):
+			_fail("attachCam names S.cam — that is the RAW device, and the owner's "
+				+ "ruling is that a receiver never sees the raw face")
+	var forced := RegEx.create_from_string(
+		"function\\s+styleStream\\(\\)\\s*\\{\\s*return S\\.styled;\\s*\\}")
+	if forced == null or forced.search(module) == null:
+		_fail("styleStream() is not exactly `return S.styled;` — a fallback there "
+			+ "(`S.styled || S.cam`, `S.styled ? S.styled : S.cam`) is how the "
+			+ "unstyled face reaches a peer on the one browser that cannot capture "
+			+ "a canvas. The degrade is NO VIDEO (owner ruling 2026-09-06)")
+
+	# --- BLANK, NEVER DELETE (the self-view's sticky wedge) ------------------
+	# `hideSelf` deleting the rect instead of blanking it leaves GDScript's change
+	# gate holding a rect the browser has forgotten, so a fast camera off/on shows
+	# the room your face and shows you nothing, for the rest of the room. It is
+	# green everywhere without this line.
+	var hide_self: String = _js_function_body(module, "hideSelf")
+	if hide_self.is_empty():
+		_fail("VOICE_JS has no `function hideSelf(` — the self-view's teardown "
+			+ "(bead godot-test1-xtr.14) is unreadable")
+	else:
+		if not hide_self.contains("blankTile(SELF_TILE)"):
+			_fail("hideSelf does not blankTile(SELF_TILE) — the rect must SURVIVE a "
+				+ "camera toggle, or `placeTile` has nothing to place when it comes "
+				+ "back and the change gate pushes nothing")
+		# The CALL, not the word: `hideSelf`'s own comment names `hideTile` as the
+		# slow path's job, and a check worked around by rewording prose is a check
+		# nobody keeps. The other spelling (`hideTile('me')`) takes `SELF_TILE`'s
+		# use count under its floor above, so both shapes are covered.
+		if hide_self.contains("hideTile(SELF_TILE)"):
+			_fail("hideSelf calls hideTile() — that DELETES the remembered rect, "
+				+ "which is the wedge `blankTile`'s own comment documents. Deleting "
+				+ "is `_poll_tiles`' job, on the slow path where the camera is "
+				+ "really off")
+
+	# --- AND THE CAPTIVE REFUSAL, DRIVEN (xtr.14 rule 3) ---------------------
+	# `_tile_fraction` is the ONE home of the pad and of "a captive tile takes no
+	# picture", for the teammate's tile and for the self-view alike. Deleting that
+	# early return is green everywhere else — `hero_hud_selfcheck` only reads the
+	# call site as text — so the rule is executed here against the smallest row a
+	# GDScript can be handed. A captive hero must answer EMPTY and a free one must
+	# not, or the check would pass on a function that refused everybody.
+	var node: Node = _voice_node()
+	var row := RowStub.new()
+	row.captive = "primm"
+	var free_rect: Rect2 = node._tile_fraction(row, "windman", Vector2(800.0, 600.0))
+	if free_rect.size.x <= 0.0 or free_rect.size.y <= 0.0:
+		_fail("_tile_fraction answered EMPTY for a FREE hero (%s) — the self-view "
+			% free_rect + "and every teammate tile would be refused a picture")
+	var captive_rect: Rect2 = node._tile_fraction(row, "primm", Vector2(800.0, 600.0))
+	if captive_rect.size.x > 0.0 or captive_rect.size.y > 0.0:
+		_fail("_tile_fraction answered %s for a CAPTIVE hero — the cell bars are "
+			% captive_rect + "drawn across the whole tile and no inset saves them, "
+			+ "so a captive tile takes no picture at all (bead xtr.14 rule 3)")
+	row.free()
+	node.free()
 	Sentinel.done("style_mirrors")
+
+
+func _js_function_body(module: String, name: String) -> String:
+	## One `function <name>(...) { … }` out of `VOICE_JS`, or "" if there is none.
+	## Every function in that module is indented one tab and closed by `\n\t}`, so
+	## the first such line after the header is the end — blunt, and blunt is right
+	## for a check whose job is to read the shipped text rather than parse JS.
+	var start: int = module.find("function %s(" % name)
+	if start < 0:
+		return ""
+	var end: int = module.find("\n\t}", start)
+	if end < 0:
+		return ""
+	return module.substr(start, end - start)
 
 
 func _check_js_used(module: String, name: String, want: int) -> void:
