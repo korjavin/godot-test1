@@ -2231,7 +2231,21 @@ const VOICE_JS: String = """
 			if (S.peers[id] !== p) { return; }
 			if (pc.signalingState !== 'have-local-offer') { return; }
 			p.offerN = p.offerN + 1;
-			if (p.offerN >= HEAL_OFFER_TRIES_MAX) { healRebuild(id); return; }
+			if (p.offerN >= HEAL_OFFER_TRIES_MAX) {
+				if (healRebuild(id)) { return; }
+				/* THE REBUILD WAS REFUSED BY ITS COOLDOWN, AND GIVING UP HERE IS
+				   THE ONE THING THIS LADDER MAY NOT DO (codex review 2026-09-06).
+				   Three 8 s timeouts spend the budget in 24 s, which is INSIDE the
+				   30 s rebuild cooldown, so a peer whose offers are still being
+				   lost after one rebuild would return from here having rolled
+				   nothing back and armed nothing — and a PC fresh out of `open()`
+				   sits in `new`, so R2's watch is not running either. That is the
+				   wedge this rung exists to break, re-created by its own bound.
+				   So the budget starts again and the rollback below still runs:
+				   the BOUND is the 8 s cadence, not a number of attempts, and the
+				   next expiry re-asks for the rebuild once the cooldown is out. */
+				p.offerN = 0;
+			}
 			healBump(id, 0);
 			queue(p, function () {
 				if (pc.signalingState !== 'have-local-offer') { return; }
@@ -2583,19 +2597,29 @@ const VOICE_JS: String = """
 			var collision = (m.vc === 'offer') && (p.making || p.pc.signalingState !== 'stable');
 			if (!p.polite && collision) { return; }
 			return p.pc.setRemoteDescription({ type: m.vc, sdp: m.sdp }).then(function () {
-				/* R1's DISARM, and it is keyed on the STATE rather than on the
-				   packet: an answer returns us to `stable`, and so does a colliding
-				   offer a polite peer implicitly rolled its own back for. Either way
-				   the negotiation this timer was watching is over, and `offerN` is
-				   the count of CONSECUTIVE unanswered offers. */
-				if (p.pc.signalingState === 'stable') {
-					healClearOffer(p);
-					p.offerN = 0;
-				}
 				if (m.vc !== 'offer') { return; }
 				return p.pc.setLocalDescription().then(function () {
 					post(id, { vc: p.pc.localDescription.type, sdp: p.pc.localDescription.sdp });
 				});
+			}).then(function () {
+				/* R1's DISARM, and it is keyed on the STATE rather than on the
+				   packet: whatever just happened, being back at `stable` means the
+				   negotiation this timer was watching is over and `offerN` — the
+				   count of CONSECUTIVE unanswered offers — starts again.
+
+				   IT SITS AFTER THE ANSWER, NOT AFTER THE REMOTE DESCRIPTION
+				   (codex review 2026-09-06). An incoming OFFER leaves us in
+				   `have-remote-offer`, so a disarm on the first `then` skipped
+				   every glare a polite peer resolved: the timer that our own
+				   rolled-back offer had armed kept counting, and unanswered
+				   timeouts SEPARATED by perfectly successful remote-initiated
+				   negotiations added up until the third one tore a healthy
+				   connection down. A failure rejects before this runs, so nothing
+				   is cleared on the path that should still be counted. */
+				if (p.pc.signalingState === 'stable') {
+					healClearOffer(p);
+					p.offerN = 0;
+				}
 			});
 		});
 		return 1;
