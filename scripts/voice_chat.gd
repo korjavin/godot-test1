@@ -260,6 +260,22 @@ const VOICE_JS: String = """
 		   resize is re-applied here at once; GDScript re-measures only when the
 		   fraction itself moved, which an aspect-changing resize does. */
 		cam: null, camState: 0, camWant: 0, tiles: {},
+		/* THE CARTOON CAMERA (bead godot-test1-xtr.11). `cam` above is the RAW
+		   device; what is ever ATTACHED to a connection is `styled`, the capture
+		   stream of a 2D canvas the paint loop below draws the posterized,
+		   hero-tinted, ink-outlined crop into. `styleSrc` is a hidden <video> fed
+		   by `cam` (a MediaStream cannot be drawn; an element can), `styleLv` is
+		   the per-pixel quantised level the second pass reads to find its edges,
+		   and `styleRamp` is the four colours that level indexes. `paintMs` is the
+		   last frame's cost, reported in `stats()` for \fo. */
+		styled: null, styleSrc: null, styleCanvas: null, styleCtx: null,
+		styleLv: null, styleRamp: null, styleRvfc: 0, styleTimer: null,
+		styleWatch: null, paintMs: 0,
+		/* THE SELF-VIEW (bead godot-test1-xtr.14): one more <video>, fed the
+		   STYLED stream so what you see of yourself is exactly what the room sees,
+		   and placed through the same `S.tiles` / `placeTile` path as every
+		   teammate's under the reserved key `SELF_TILE`. */
+		selfVideo: null,
 		/* One AudioContext for the whole module, and one AnalyserNode per stream
 		   (remote) plus one for the local mic. `levels()` reads them all and
 		   answers ONE string — never one bridge call per peer, and never a
@@ -469,17 +485,41 @@ const VOICE_JS: String = """
 		return c.getBoundingClientRect();
 	}
 
-	function placeTile(id) {
+	/* THE RESERVED TILE KEY FOR OUR OWN PICTURE (bead godot-test1-xtr.14). A lobby
+	   id is 32 hex characters, so this can never collide with one, and it is
+	   `SELF_LEVEL_KEY` on the GDScript side — the browser already reports the local
+	   microphone's level under the same name. */
+	var SELF_TILE = 'me';
+
+	/* THE TWO QUESTIONS EVERY TILE ASKS, and the only two places the self-view is
+	   a special case: which element draws this key, and does it have a picture.
+	   Everything below — placing, blanking, the resize walk, GDScript's rect —
+	   then treats our own tile exactly like a teammate's. */
+	function tileEl(id) {
+		if (id === SELF_TILE) { return S.selfVideo; }
 		var p = S.peers[id];
+		return p ? p.video : null;
+	}
+
+	function tileLive(id) {
+		/* The self-view is fed by a stream this module built, so there is no
+		   `mute`/`unmute` to wait for: the element existing IS the picture. */
+		if (id === SELF_TILE) { return S.selfVideo ? 1 : 0; }
+		var p = S.peers[id];
+		return (p && p.hasVideo === 1) ? 1 : 0;
+	}
+
+	function placeTile(id) {
+		var el = tileEl(id);
 		var t = S.tiles[id];
-		if (!p || !p.video || !t) { return 0; }
+		if (!el || !t) { return 0; }
 		/* A REMEMBERED RECT IS NOT A REASON TO SHOW SOMETHING. `blankTile` keeps the
 		   rect through a stall on purpose, so the `resize` listener below — which
 		   walks every remembered rect — would otherwise un-blank a frozen frame. */
-		if (p.hasVideo !== 1) { return 0; }
+		if (tileLive(id) !== 1) { return 0; }
 		var r = canvasBox();
 		if (!r || t[2] <= 0 || t[3] <= 0) { return 0; }
-		p.video.style.cssText = 'position:fixed;pointer-events:none;object-fit:cover;' +
+		el.style.cssText = 'position:fixed;pointer-events:none;object-fit:cover;' +
 			'background:#000;z-index:2147482000;' +
 			'left:' + (r.left + t[0] * r.width) + 'px;' +
 			'top:' + (r.top + t[1] * r.height) + 'px;' +
@@ -487,7 +527,7 @@ const VOICE_JS: String = """
 			'height:' + (t[3] * r.height) + 'px;';
 		/* Explicit rather than relying on `cssText` having cleared it: this is the
 		   one line that undoes a `blankTile`, and it should say so. */
-		p.video.style.display = '';
+		el.style.display = '';
 		return 1;
 	}
 
@@ -509,8 +549,8 @@ const VOICE_JS: String = """
 	}
 
 	function blankTile(id) {
-		var p = S.peers[String(id)];
-		if (p && p.video) { p.video.style.display = 'none'; }
+		var el = tileEl(String(id));
+		if (el) { el.style.display = 'none'; }
 		return 1;
 	}
 
@@ -549,12 +589,299 @@ const VOICE_JS: String = """
 		return 1;
 	}
 
+	/* THE SELF-VIEW (bead godot-test1-xtr.14, owner: "file a bead to see own video
+	   stream also"). One local element fed the SAME stream the room is being sent,
+	   which is the rule that made this depend on the cartoon: a self-view of the
+	   raw face would lie about what the other three see.
+
+	   It costs NOTHING on the wire — no track, no signalling, no verb — and
+	   nothing on the frame: the browser was already decoding this stream for the
+	   encoder, and GDScript's whole contribution is one more rect in the 5 Hz poll
+	   it was already running.
+
+	   NOT MIRRORED, and that is a decision rather than an oversight: a video app
+	   mirrors your self-view because you are looking at yourself, but this tile is
+	   a portrait of the CHARACTER and sits in a row of three others drawn the way
+	   the room sees them. */
+	function showSelf() {
+		var st = styleStream();
+		if (!st || !document || !document.body) { return 0; }
+		if (!S.selfVideo) {
+			var v = document.createElement('video');
+			v.autoplay = true;
+			/* MUTED, always — and here it is not even an echo question: this is our
+			   own microphone coming straight back out of our own speakers. */
+			v.muted = true;
+			v.className = 'ck-voice-self';
+			v.setAttribute('playsinline', '');
+			v.style.cssText = 'display:none;';
+			document.body.appendChild(v);
+			S.selfVideo = v;
+		}
+		S.selfVideo.srcObject = st;
+		var pr = S.selfVideo.play();
+		if (pr && pr.catch) { pr.catch(function () { }); }
+		/* Nothing is shown until GDScript says where the tile is — `showVideo`'s
+		   rule, for the same reason. */
+		placeTile(SELF_TILE);
+		return 1;
+	}
+
+	function hideSelf() {
+		/* BLANK, NEVER DELETE THE RECT — `blankTile`'s own rule, and this function
+		   is the browser's end of exactly the wedge documented there. GDScript's
+		   change gate (`_pushed_tiles`) keeps our rect across a camera toggle, and
+		   `_reported_cam` is only refreshed at 2 Hz: an off-press and an on-press
+		   inside one of those windows leaves the gate holding a rect the browser
+		   had forgotten, so `_poll_tiles` pushes nothing and `showSelf`'s
+		   `placeTile` has no rect to place — teammates would still see you while
+		   your own tile stayed dark, for the rest of the room. The slow path still
+		   deletes it: `_poll_tiles` calls `hideTile('me')` when the camera really
+		   is off. */
+		blankTile(SELF_TILE);
+		if (S.selfVideo) {
+			S.selfVideo.srcObject = null;
+			if (S.selfVideo.parentNode) { S.selfVideo.parentNode.removeChild(S.selfVideo); }
+			S.selfVideo = null;
+		}
+		return 1;
+	}
+
+	/* ------------------------------------------------------------------------
+	   THE CARTOON CAMERA (bead godot-test1-xtr.11)
+	   ------------------------------------------------------------------------
+	   FORCED FOR THE ROOM (owner ruling 2026-09-06): a receiver never sees the raw
+	   face, so there is no toggle, no button and nothing persisted — the styled
+	   canvas track is the only video track that is ever attached. That is also why
+	   this lives on the SENDER: the crop raises the effective resolution before the
+	   encoder sees it, the hero is only known here, and the effect travels as
+	   PIXELS, so a receiver on an older build gets it too.
+
+	   THE WHOLE COST, measured against the source that already exists: 160x120 at
+	   12 fps in, one drawImage (crop + scale, the browser's own path) and two
+	   passes over 128x128 out. `stats()` reports the millisecond figure so \fo can
+	   read it, which is the before/after evidence the bead asks for.
+
+	   A 2D CANVAS AND NOT WebGL, deliberately: a second GL context beside Godot's
+	   on this single-threaded export is contention for a job a CPU loop does in
+	   half a millisecond. And the posterize is in the PIXEL LOOP rather than
+	   `ctx.filter` — Safari's filter support is unreliable and cannot posterize at
+	   all portably. */
+
+	/* The film palette (`hud_theme.gd`: INK, BONE) as rgb triples rather than as
+	   its hex strings, and that is a rule and not a style: `hero_hud_selfcheck`
+	   check 8 greps `scripts/` for those six hexes, which may be typed in
+	   `hud_theme.gd` alone. CLAUDE.md records the non-hex spelling as the
+	   sanctioned shape for a value that cannot preload a `Color` — which a string
+	   of JavaScript cannot. Keep them in step BY HAND if the palette moves. */
+	var STYLE_INK = [19, 23, 27];
+	var STYLE_BONE = [230, 228, 216];
+	/* Square, because the tile is: `object-fit:cover` was already throwing the
+	   160x120 edges away on every receiver, so cropping here spends the 150 kbps
+	   cap on the pixels that are actually drawn. */
+	var STYLE_SIZE = 128;
+	/* Four bands is the cel look — INK ground, two tinted mid-tones, BONE
+	   highlight. Three reads as a stencil, five stops reading as steps at all. */
+	var STYLE_LEVELS = 4;
+	var STYLE_FPS = 12;
+	/* The watchdog's period — slow on purpose. It is not a frame rate, it is the
+	   longest a frozen paint loop may go unnoticed. */
+	var STYLE_WATCHDOG_MS = 500;
+
+	/* The four colours a quantised level indexes: INK, the tint at shadow value,
+	   the tint, BONE. Rebuilt only when GDScript pushes a new hero. */
+	function styleRamp(r, g, b) {
+		return [
+			STYLE_INK,
+			[Math.round(r * 0.45), Math.round(g * 0.45), Math.round(b * 0.45)],
+			[r, g, b],
+			STYLE_BONE
+		];
+	}
+
+	function styleNow() {
+		return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+	}
+
+	function paint() {
+		var cx = S.styleCtx;
+		var v = S.styleSrc;
+		if (!cx || !v) { return 0; }
+		var vw = v.videoWidth;
+		var vh = v.videoHeight;
+		/* Nothing decoded yet — the first frames after a grant. */
+		if (!vw || !vh) { return 0; }
+		var t0 = styleNow();
+		var n = STYLE_SIZE;
+		var side = vw < vh ? vw : vh;
+		try {
+			cx.drawImage(v, (vw - side) / 2, (vh - side) / 2, side, side, 0, 0, n, n);
+		} catch (e) { return 0; }
+		var img;
+		try { img = cx.getImageData(0, 0, n, n); } catch (e) { return 0; }
+		var d = img.data;
+		var lv = S.styleLv;
+		var ramp = S.styleRamp;
+		var i, k;
+		var top = STYLE_LEVELS - 1;
+		/* PASS 1 — luminance, quantised. Kept in its own array because pass 2 has
+		   to compare a pixel's band with its NEIGHBOURS', which it cannot do once
+		   they have been recoloured. */
+		for (i = 0, k = 0; k < d.length; i++, k += 4) {
+			var l = (d[k] * 0.299 + d[k + 1] * 0.587 + d[k + 2] * 0.114) / 255;
+			var q = (l * STYLE_LEVELS) | 0;
+			lv[i] = q > top ? top : q;
+		}
+		/* PASS 2 — the band's colour, or INK where the band CHANGES. A level edge
+		   is exactly the contour a cel artist would ink, and it costs two integer
+		   compares against a Sobel's nine multiplies. Right and down only: an
+		   outline drawn from both sides of a boundary is two pixels thick. */
+		for (i = 0, k = 0; k < d.length; i++, k += 4) {
+			var b = lv[i];
+			var x = i % n;
+			var edge = (x + 1 < n && lv[i + 1] !== b) || (i + n < lv.length && lv[i + n] !== b);
+			var c = edge ? STYLE_INK : ramp[b];
+			d[k] = c[0];
+			d[k + 1] = c[1];
+			d[k + 2] = c[2];
+		}
+		try { cx.putImageData(img, 0, 0); } catch (e) { return 0; }
+		S.paintMs = styleNow() - t0;
+		return 1;
+	}
+
+	/* The paint loop, at the SOURCE's rate rather than the display's:
+	   `requestVideoFrameCallback` fires once per decoded frame (12 a second here),
+	   so nothing is painted twice and nothing is missed. The interval is the
+	   fallback for a browser without it. */
+	function styleTick() {
+		if (!S.styleCtx) { return 0; }
+		paint();
+		styleSchedule();
+		return 1;
+	}
+
+	function styleSchedule() {
+		var v = S.styleSrc;
+		if (!v || !S.styleCtx) { return 0; }
+		if (v.requestVideoFrameCallback) {
+			/* The `return` is INSIDE the try on purpose: a registration that throws
+			   would otherwise report success and leave nothing driving the loop but
+			   the watchdog, i.e. that room at 2 fps. Falling through to the interval
+			   costs nothing and is the same answer the browsers without rVFC get. */
+			try {
+				S.styleRvfc = v.requestVideoFrameCallback(styleTick);
+				return 1;
+			} catch (e) { }
+		}
+		if (!S.styleTimer) {
+			S.styleTimer = setInterval(paint, Math.round(1000 / STYLE_FPS));
+		}
+		return 1;
+	}
+
+	/* THE WATCHDOG, and it is armed even when rVFC is (measured working on Chrome
+	   with this very element). `requestVideoFrameCallback` fires when a frame is
+	   PRESENTED, and `styleSrc` is `display:none` — an engine that declines to
+	   present a non-composited video simply never calls back, and a registration
+	   that throws leaves the chain dead too. Either way the room would see a still
+	   portrait with no recovery and no telemetry saying so. `paint()` is idempotent
+	   and costs a fraction of a millisecond, so a slow second hand is the whole fix.
+	   It is not free of the rate, though, and the comment should not pretend it is:
+	   with rVFC working this is 12 + 2 paints a second, not 12. */
+	function styleWatchdog() {
+		if (S.styleWatch) { return 0; }
+		S.styleWatch = setInterval(paint, STYLE_WATCHDOG_MS);
+		return 1;
+	}
+
+	function styleStart() {
+		if (S.styled || !S.cam) { return 0; }
+		if (!document || !document.body) { return 0; }
+		var c = document.createElement('canvas');
+		if (!c.captureStream) { return 0; }
+		c.width = STYLE_SIZE;
+		c.height = STYLE_SIZE;
+		var cx = null;
+		/* `willReadFrequently` is what keeps a canvas read every frame off the GPU
+		   readback path, which is the one way this gets expensive. */
+		try { cx = c.getContext('2d', { willReadFrequently: true }); } catch (e) { cx = null; }
+		if (!cx) { try { cx = c.getContext('2d'); } catch (e2) { cx = null; } }
+		if (!cx) { return 0; }
+		/* A MediaStream cannot be drawn; an element can. IN the DOM and hidden,
+		   because a detached <video> is not guaranteed to be decoded at all. */
+		var v = document.createElement('video');
+		v.autoplay = true;
+		v.muted = true;
+		v.className = 'ck-voice-src';
+		v.setAttribute('playsinline', '');
+		v.style.cssText = 'display:none;';
+		document.body.appendChild(v);
+		v.srcObject = S.cam;
+		var pr = v.play();
+		if (pr && pr.catch) { pr.catch(function () { }); }
+		S.styleSrc = v;
+		S.styleCanvas = c;
+		S.styleCtx = cx;
+		S.styleLv = new Uint8Array(STYLE_SIZE * STYLE_SIZE);
+		if (!S.styleRamp) { S.styleRamp = styleRamp(140, 140, 150); }
+		var st = null;
+		try { st = c.captureStream(STYLE_FPS); } catch (e) { st = null; }
+		if (!st) {
+			styleStop();
+			return 0;
+		}
+		S.styled = st;
+		styleSchedule();
+		styleWatchdog();
+		return 1;
+	}
+
+	function styleStop() {
+		if (S.styleTimer) { clearInterval(S.styleTimer); S.styleTimer = null; }
+		if (S.styleWatch) { clearInterval(S.styleWatch); S.styleWatch = null; }
+		if (S.styleSrc && S.styleRvfc && S.styleSrc.cancelVideoFrameCallback) {
+			try { S.styleSrc.cancelVideoFrameCallback(S.styleRvfc); } catch (e) { }
+		}
+		S.styleRvfc = 0;
+		/* Cleared BEFORE the element goes, so a callback already queued for this
+		   frame finds nothing to paint into. */
+		S.styleCtx = null;
+		S.styleCanvas = null;
+		S.styleLv = null;
+		if (S.styled) {
+			var ts = S.styled.getTracks();
+			for (var i = 0; i < ts.length; i++) { ts[i].stop(); }
+			S.styled = null;
+		}
+		if (S.styleSrc) {
+			S.styleSrc.srcObject = null;
+			if (S.styleSrc.parentNode) { S.styleSrc.parentNode.removeChild(S.styleSrc); }
+			S.styleSrc = null;
+		}
+		S.paintMs = 0;
+		return 1;
+	}
+
+	/* WHAT GOES ON THE WIRE, AND THE RAW DEVICE IS NOT ON THE LIST. The owner's
+	   ruling is that a receiver never sees the raw face, so where the browser
+	   cannot give us a canvas capture at all the degrade is NO VIDEO — not the
+	   unstyled webcam, which is the one outcome the ruling was written to
+	   prevent. `attachCam` and `showSelf` both already answer 0 on a null stream,
+	   so that degrade costs no branch anywhere. (`canvas.captureStream` is Chrome
+	   51+ / Firefox 43+ / Safari 11+, so this is a corner nothing shipping
+	   reaches.) */
+	function styleStream() {
+		return S.styled;
+	}
+
 	function attachCam(p) {
-		if (!S.cam || p.vsend) { return 0; }
-		var t = S.cam.getVideoTracks()[0];
+		var src = styleStream();
+		if (!src || p.vsend) { return 0; }
+		var t = src.getVideoTracks()[0];
 		if (!t) { return 0; }
 		try {
-			p.vsend = p.pc.addTrack(t, S.cam);
+			p.vsend = p.pc.addTrack(t, src);
 			/* THE BANDWIDTH BUDGET, and the only place it is written down on this
 			   side: 150 kbps caps one portrait-sized stream, so a 4-peer mesh is
 			   3 up + 3 down under half a megabit each way. */
@@ -609,6 +936,12 @@ const VOICE_JS: String = """
 				}
 				S.cam = st;
 				S.camState = 2;
+				/* THE STYLED TRACK IS BUILT BEFORE ANYTHING IS ATTACHED, because
+				   `attachCam` sends whatever `styleStream()` answers and a peer
+				   that got the raw track would keep it until the next
+				   renegotiation. */
+				styleStart();
+				showSelf();
 				for (var q in S.peers) { attachCam(S.peers[q]); }
 			}).catch(function () { if (gen === S.gen) { S.camState = 3; } });
 			return 1;
@@ -617,6 +950,13 @@ const VOICE_JS: String = """
 		   picture — hiding them here would black out every teammate because you
 		   switched your own camera off. */
 		for (k in S.peers) { detachCam(S.peers[k]); }
+		/* THE SELF-VIEW AND THE PAINT LOOP GO FIRST, the device last: the canvas
+		   capture is fed by an element fed by `S.cam`, so stopping the device under
+		   a running loop paints stale frames into a track nobody is sending — and
+		   the self-view is drawn from that same canvas, so it comes down with it.
+		   `stop()` reaches both through its own `camera(0)`. */
+		hideSelf();
+		styleStop();
 		if (S.cam) {
 			var ts = S.cam.getTracks();
 			for (var i = 0; i < ts.length; i++) { ts[i].stop(); }
@@ -655,6 +995,16 @@ const VOICE_JS: String = """
 		if (!isFinite(n)) { return 100; }
 		if (n < 0) { return 0; }
 		return n > 100 ? 100 : n;
+	}
+
+	/* One 0-255 colour channel out of whatever crossed the bridge. Unreadable
+	   falls to a mid grey rather than to 0, `pct`'s rule: a tint nobody can
+	   explain must not paint every face black. */
+	function chan(val) {
+		var n = Math.round(Number(val));
+		if (!isFinite(n)) { return 128; }
+		if (n < 0) { return 0; }
+		return n > 255 ? 255 : n;
 	}
 
 	function setTx(val) {
@@ -906,7 +1256,11 @@ const VOICE_JS: String = """
 		var totalPkts = totalLost + totalRecv;
 		var lossRate = totalPkts > 0 ? (totalLost / totalPkts * 100.0) : 0.0;
 		var lossStr = 'loss=' + lossRate.toFixed(1) + '%';
-		return 'ns=' + ns + ' ec=' + ec + ' agc=' + agc + ' peers=' + peerCount + ' ' + rttStr + ' ' + lossStr;
+		/* THE CARTOON CAMERA'S BILL (bead godot-test1-xtr.11), last painted frame.
+		   It is the before/after evidence: the paint runs on the browser's main
+		   thread, which on this single-threaded export IS Godot's frame. */
+		var styleStr = 'style=' + S.paintMs.toFixed(2) + 'ms';
+		return 'ns=' + ns + ' ec=' + ec + ' agc=' + agc + ' peers=' + peerCount + ' ' + rttStr + ' ' + lossStr + ' ' + styleStr;
 	}
 
 	function readLocalConstraints() {
@@ -1076,6 +1430,13 @@ const VOICE_JS: String = """
 		stats: stats,
 		setCamera: function (v) { S.camWant = flag(v); return camera(S.camWant); },
 		camState: function () { return S.camState; },
+		/* THE HERO TINT (bead godot-test1-xtr.11). Three 0-255 channels rather
+		   than a hero NAME, so `hero_hud.HERO_COLORS` stays the one table: a name
+		   would need a second copy of it here, in a language that cannot read it. */
+		setStyleTint: function (r, g, b) {
+			S.styleRamp = styleRamp(chan(r), chan(g), chan(b));
+			return 1;
+		},
 		setTile: setTile,
 		hideTile: hideTile,
 		videoPeers: videoPeers,
@@ -1177,6 +1538,11 @@ var _reported_cam: int = CAM_IDLE
 var _pushed_tiles: Dictionary = {}
 
 var _tile_accum: float = 0.0
+
+## The hero whose colour the browser's cartoon ramp was last built from (bead
+## `godot-test1-xtr.11`), so the push is change-gated exactly like `_pushed_tiles`.
+## Empty means "nothing pushed", which is also what a re-join has to see.
+var _pushed_tint_hero: String = ""
 
 
 func _ready() -> void:
@@ -1372,6 +1738,9 @@ func _teardown() -> void:
 	# device and removes every <video> — this side only has to agree about it, and
 	# has to agree ABOVE the `_running` guard for the same reason `_pending` does.
 	_pushed_tiles.clear()
+	# The next room may hand us a different hero, and the browser module is about
+	# to be stopped: forget what we pushed so the change gate re-pushes.
+	_pushed_tint_hero = ""
 	var had_camera: bool = _camera_on
 	_camera_on = false
 	_reported_cam = CAM_IDLE
@@ -1973,8 +2342,13 @@ func set_camera_enabled(on: bool) -> void:
 	if on and camera_denied():
 		return
 	_camera_on = on
-	# `_pushed_tiles` is deliberately NOT cleared: it tracks the pictures TEAMMATES
-	# are sending, and switching your own camera off does not take one of those down.
+	# `_pushed_tiles` is deliberately NOT cleared, and since the self-view (bead
+	# `godot-test1-xtr.14`) put our OWN tile in it that is load-bearing rather than
+	# merely harmless: most of the dictionary is the pictures TEAMMATES are sending,
+	# which switching your own camera off does not take down, and the `me` row is a
+	# rect the browser's `hideSelf` deliberately keeps too — so a fast off/on inside
+	# one `_report_camera` window brings the picture straight back instead of leaving
+	# both ends waiting for the other.
 	if _is_web and _running and _ck != null:
 		_ck.setCamera(1 if on else 0)
 	camera_changed.emit(on)
@@ -2021,39 +2395,43 @@ func _poll_tiles() -> void:
 
 	var live: Dictionary = {}
 	var hud: Node = get_tree().get_first_node_in_group("hero_hud")
+	_push_style_tint(hud)
 	var win: Vector2 = Vector2(get_window().size) if get_window() != null else Vector2.ZERO
-	var ready: bool = not senders.is_empty() \
-		and hud != null and hud.has_method("tile_rect") and hud.has_method("hero_names") \
-		and hud.has_method("tile_state") \
-		and _mp != null and is_instance_valid(_mp) and _mp.has_method("hero_holder") \
+	var row_ready: bool = hud != null and hud.has_method("tile_rect") \
+		and hud.has_method("hero_names") and hud.has_method("tile_state") \
 		and win.x > 0.0 and win.y > 0.0
-	if ready:
+	var mp_ready: bool = _mp != null and is_instance_valid(_mp)
+	if row_ready and mp_ready and _mp.has_method("hero_holder") and not senders.is_empty():
 		for hero: String in hud.hero_names():
 			var holder: String = str(_mp.hero_holder(hero))
 			# Not a sender covers "nobody holds him", "I hold him" and "he has no
 			# camera" in one test: our own id is never in the browser's peer set.
 			if not senders.has(holder):
 				continue
-			# A CAPTIVE TILE KEEPS ITS BARS. They are drawn across the whole tile,
-			# so no inset leaves them visible — and a benched peer still HOLDS the
-			# hero they are locked up as, which is exactly when this fires.
-			if int(hud.tile_state(hero)) == HERO_HUD_STATE_CAPTIVE:
+			var frac: Rect2 = _tile_fraction(hud, hero, win)
+			if frac.size.x <= 0.0:
 				continue
-			var tile: Rect2 = hud.tile_rect(hero)
-			# The pad is a FRACTION of the tile, never a pixel count: this rect is in
-			# WINDOW pixels, so an absolute pad shrinks in design space as the window
-			# grows and eats hero_hud's speaking ring. Taken off the width so a tile
-			# that is not square (it always is) still pads evenly.
-			var pad: float = tile.size.x * TILE_INSET_FRAC
-			if tile.size.x <= pad * 2.0 or tile.size.y <= pad * 2.0:
-				continue
-			var inset: Rect2 = tile.grow(-pad)
-			var frac := Rect2(inset.position / win, inset.size / win)
 			live[holder] = true
 			if _pushed_tiles.get(holder, Rect2()) == frac:
 				continue
 			_pushed_tiles[holder] = frac
 			_ck.setTile(holder, frac.position.x, frac.position.y, frac.size.x, frac.size.y)
+
+	# THE SELF-VIEW (bead godot-test1-xtr.14): our own outgoing picture on the tile
+	# of the hero we DRIVE, through this same path. `CAM_ON` and not `_camera_on` is
+	# the test, because the latter is only what was asked for — while the permission
+	# prompt is up there is no stream and the browser would place an empty element.
+	# `senders` says nothing about us: `S.peers` is remote peers only.
+	if row_ready and mp_ready and _reported_cam == CAM_ON and _mp.has_method("my_hero"):
+		var mine: String = str(_mp.my_hero())
+		if not mine.is_empty():
+			var self_frac: Rect2 = _tile_fraction(hud, mine, win)
+			if self_frac.size.x > 0.0:
+				live[SELF_LEVEL_KEY] = true
+				if _pushed_tiles.get(SELF_LEVEL_KEY, Rect2()) != self_frac:
+					_pushed_tiles[SELF_LEVEL_KEY] = self_frac
+					_ck.setTile(SELF_LEVEL_KEY, self_frac.position.x, self_frac.position.y,
+						self_frac.size.x, self_frac.size.y)
 
 	# A hero handed back, a camera switched off, a peer gone: whatever we placed
 	# and can no longer justify comes down. The browser also hides on its own
@@ -2063,3 +2441,100 @@ func _poll_tiles() -> void:
 			continue
 		_pushed_tiles.erase(id)
 		_ck.hideTile(str(id))
+
+
+func _tile_fraction(hud: Node, hero: String, win: Vector2) -> Rect2:
+	"""
+	Where a picture goes for one hero, as a fraction of the canvas — or an EMPTY
+	rect where no picture may be drawn at all.
+
+	ONE home for the two refusals, because a teammate's tile and our own
+	(bead `godot-test1-xtr.14`) have to answer them the same way:
+
+	  * A CAPTIVE TILE KEEPS ITS BARS. They are drawn across the whole tile, so no
+	    inset leaves them visible — and a benched peer still HOLDS the hero they
+	    are locked up as, which is exactly when this fires. It is the same for the
+	    hero we drive ourselves.
+	  * A tile smaller than its own padding has nothing left to draw in.
+
+	The pad is a FRACTION of the tile, never a pixel count: `tile_rect` is in WINDOW
+	pixels, so an absolute pad shrinks in design space as the window grows and eats
+	`hero_hud`'s speaking ring. Taken off the width so a tile that is not square (it
+	always is) still pads evenly.
+	"""
+	if int(hud.tile_state(hero)) == HERO_HUD_STATE_CAPTIVE:
+		return Rect2()
+	var tile: Rect2 = hud.tile_rect(hero)
+	var pad: float = tile.size.x * TILE_INSET_FRAC
+	if tile.size.x <= pad * 2.0 or tile.size.y <= pad * 2.0:
+		return Rect2()
+	var inset: Rect2 = tile.grow(-pad)
+	return Rect2(inset.position / win, inset.size / win)
+
+
+# ============================================================================
+# THE CARTOON CAMERA'S HERO TINT (bead godot-test1-xtr.11)
+# ============================================================================
+## FORCED FOR THE ROOM (owner ruling 2026-09-06): the styled canvas track is the
+## only video track that is ever attached, so there is no toggle here, no button
+## in the MP panel, no `ui.csv` row and nothing in the `[voice]` store. The whole
+## GDScript half of the effect is the four numbers below — the browser owns the
+## pixels, as it owns the tiles.
+
+
+func _push_style_tint(hud: Node) -> void:
+	"""
+	Tell the browser which hero's colour to tint the mid-tones with.
+
+	It is the hero this peer DRIVES (`MpManager.my_hero()`), not the active tile:
+	the face in the picture is the player's, and the character they are playing is
+	the one the room reads them as. `hero_hud.gd`'s badge rule, one feature along.
+
+	CHANGE-GATED like `_pushed_tiles`, so in the steady state this whole function
+	is one `my_hero()` and a string compare — the browser is only reached when the
+	hero really changes hands.
+
+	THE TABLE IS `hero_hud.HERO_COLORS` AND IS NOT COPIED. It is read off the row's
+	own SCRIPT through the group node this poll already resolved — a mirrored copy
+	of four colours is four chances to drift, and `hero_hud.gd` may not be edited
+	to hand them out (the tile geometry is two other beads'). A row it has no
+	colour for, or no row at all, degrades to a neutral grey and still cartoons.
+	"""
+	if _ck == null or not _running:
+		return
+	# THE GATE IS KEYED ON THE HERO, SO THE ROW HAS TO BE THERE TO ANSWER FOR HIM.
+	# With no `hero_hud` the answer is the grey fallback, and latching that would
+	# leave a hero who is never asked about again wearing it for the whole room.
+	if hud == null:
+		return
+	var hero: String = ""
+	if _mp != null and is_instance_valid(_mp) and _mp.has_method("my_hero"):
+		hero = str(_mp.my_hero())
+	if hero == _pushed_tint_hero:
+		return
+	_pushed_tint_hero = hero
+	var tint: Color = _hero_tint(hud, hero)
+	_ck.setStyleTint(int(tint.r8), int(tint.g8), int(tint.b8))
+
+
+func _hero_tint(hud: Node, hero: String) -> Color:
+	## A hero with no colour — offline, benched, or a `CHARACTERS` entry the row
+	## has no row for — gets the grey `hero_hud` gives such a tile, and that grey is
+	## read out of the SAME constant map as the table beside it (`FALLBACK_COLOR`)
+	## rather than hand-copied: it is right there, and a mirrored colour is a
+	## mirrored colour. The literal is only for a row that answers neither.
+	var consts: Dictionary = {}
+	if hud != null and hud.get_script() != null:
+		consts = (hud.get_script() as Script).get_script_constant_map()
+	var fallback: Variant = consts.get("FALLBACK_COLOR", null)
+	if typeof(fallback) != TYPE_COLOR:
+		fallback = Color(0.55, 0.55, 0.60)
+	if hero.is_empty():
+		return fallback as Color
+	var colors: Variant = consts.get("HERO_COLORS", null)
+	if typeof(colors) != TYPE_DICTIONARY:
+		return fallback as Color
+	var row: Variant = (colors as Dictionary).get(hero, null)
+	if typeof(row) != TYPE_COLOR:
+		return fallback as Color
+	return row as Color

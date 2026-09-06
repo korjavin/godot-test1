@@ -2628,6 +2628,37 @@ touches `JavaScriptBridge`.
   on the first press of the MP panel's Camera button and nowhere else, a refusal sticks
   for the room, and the device is released on toggle-off and on leave — a tab's recording
   light outliving the room it was granted for is the way this gets badly wrong.
+  **THE FACE IS CARTOONED BEFORE IT IS ENCODED, AND THAT IS FORCED FOR THE ROOM**
+  (bead `godot-test1-xtr.11`, owner ruling 2026-09-06): the sender centre-crops its own
+  webcam square into a hidden 128x128 2D canvas, posterizes it to four bands, colours
+  them INK / the driven hero's `hero_hud.HERO_COLORS` tint / BONE and inks the band
+  edges, and `canvas.captureStream(12)` is the ONLY video track `attachCam` ever adds —
+  so there is no toggle, no MP-panel button, no `ui.csv` row and nothing in the `[voice]`
+  store, and a receiver on an older build gets the effect because it travels as pixels.
+  **A browser that cannot capture a canvas sends NO VIDEO, never the raw device**
+  (`styleStream()` answers `S.styled` and nothing else): "forced for the room" means
+  the unstyled face is the one outcome that may not reach a peer, so the fallback is
+  silence — and `attachCam` / `showSelf` already answer 0 on a null stream, so that
+  degrade costs no branch.
+  Sender-side is where the hero is known, where the crop raises effective resolution
+  before the encoder, and where a posterized frame's lower entropy makes the same
+  150 kbps cap go further. **2D canvas, never WebGL** (a second GL context beside
+  Godot's on this single-threaded export is contention for a job a CPU loop does in
+  half a millisecond) and **the posterize is in the pixel loop, never `ctx.filter`**
+  (Safari). Its cost rides `stats()` as `style=N.NNms`, which is what \fo shows.
+  `VOICE_JS` cannot preload a `Color`, so `STYLE_INK` / `STYLE_BONE` are typed twice
+  and `voice_selfcheck` check 6b binds them to `HudTheme` BY VALUE — check 8's hex
+  grep cannot, since the whole point of the triples is not to fire it.
+  **THE SELF-VIEW IS THAT SAME STREAM ON YOUR OWN TILE** (bead `godot-test1-xtr.14`,
+  owner: *"file a bead to see own video stream also"*): one muted local `<video>` on
+  the tile of the hero this peer DRIVES (`MpManager.my_hero()`), placed through the
+  same `S.tiles` / `placeTile` path under the reserved key `me` (`SELF_LEVEL_KEY`,
+  bound to its JS copy by that same check 6b), **NOT mirrored** — a video app mirrors
+  a self-view, but this tile is a portrait of the CHARACTER and of what the room
+  sees. Taken down with the camera and on leave, and refused on a CAPTIVE tile like
+  any other (`_tile_fraction` is the one home of both refusals). It costs **zero
+  signalling and zero bandwidth**: the browser was already decoding that stream for
+  the encoder.
   **THE PICTURE IS A DOM `<video>` OVER THE CANVAS, not a frame copy** (`intro_video.gd`'s
   precedent): the browser decodes and composites, so the per-frame cost on the
   single-threaded export is zero and GDScript's whole contribution is one rect at 5 Hz,

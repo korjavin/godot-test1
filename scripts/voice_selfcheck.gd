@@ -67,6 +67,14 @@ extends SceneTree
 ##     `voice_chat.gd` AS TEXT and scans that block alone, so the failure names
 ##     the voice module and cannot be diluted by a rename of the file.
 ##
+## 6b. **THE VALUES `VOICE_JS` MIRRORS BY HAND.** A string of JavaScript cannot
+##     `preload` a `Color` or a `const`, so the cartoon camera's film palette
+##     (bead `godot-test1-xtr.11`) and the self-view's reserved tile key (bead
+##     `godot-test1-xtr.14`) are typed twice. The palette in particular CANNOT be
+##     bound by `hero_hud_selfcheck` check 8's hex grep — it is deliberately
+##     written as rgb triples so that grep does not fire — so it is bound here by
+##     value instead.
+##
 ##  7. **INERT OFF-WEB.** Every public method called on a real node on a build
 ##     with no bridge at all: an unguarded `JavaScriptBridge` touch is a
 ##     `SCRIPT ERROR`, which CI treats as red, and a runtime error would abort
@@ -112,6 +120,19 @@ class RoomStub extends Node:
 		return online
 
 
+## The two questions `_tile_fraction` asks a hero row, and nothing else. A real
+## `hero_hud` would drag the whole portrait widget into a question about ONE early
+## return; `hero_hud_selfcheck` owns the real row, and this owns the refusal.
+class RowStub extends Node:
+	var captive: String = ""
+
+	func tile_state(hero: String) -> int:
+		return VoiceChat.HERO_HUD_STATE_CAPTIVE if hero == captive else 0
+
+	func tile_rect(_hero: String) -> Rect2:
+		return Rect2(0.0, 0.0, 80.0, 80.0)
+
+
 var _failures: Array[String] = []
 
 
@@ -129,6 +150,7 @@ func _initialize() -> void:
 	_check_mic_key_free()
 	_check_help_row()
 	_check_no_js_bool()
+	_check_style_mirrors()
 	_check_ice_restart()
 	_check_inert_offweb()
 	_check_always_process()
@@ -580,6 +602,190 @@ func _check_no_js_bool() -> void:
 			+ "(`%s`) — answer `? 1 : 0` and compare numerically (godot-test1-8f8)"
 			% offence)
 	Sentinel.done("no_js_bool")
+
+
+# ============================================================================
+# 6b. THE THREE VALUES VOICE_JS MIRRORS BY HAND (beads xtr.11 / xtr.14)
+# ============================================================================
+
+func _check_style_mirrors() -> void:
+	"""
+	A string of JavaScript cannot `preload` anything, so the cartoon camera's film
+	palette and the self-view's tile key are TYPED TWICE — once in GDScript, once
+	inside `VOICE_JS`. That is the drift this check exists for, and both mirrors
+	are load-bearing:
+
+	  * `STYLE_INK` / `STYLE_BONE` are `HudTheme.INK` / `HudTheme.BONE` as rgb
+	    triples, which is the shape they must be in: `hero_hud_selfcheck` check 8
+	    greps `scripts/` for the six film HEXES and they may be typed in
+	    `hud_theme.gd` alone (CLAUDE.md records the non-hex spelling as the
+	    sanctioned escape). So they cannot be bound by that grep, and this binds
+	    them by VALUE instead.
+	  * `SELF_TILE` is `SELF_LEVEL_KEY`, the reserved key the self-view's tile and
+	    the browser's own microphone level both travel under. A key that drifted
+	    would put nobody's picture anywhere and say nothing about it.
+
+	Read as TEXT, so the assertions are all "we found the right number" — which is
+	also what a matcher looking in the wrong place would report if it found
+	nothing. Each therefore fails LOUDLY on no match rather than passing.
+	"""
+	var module: String = _voice_js_module()
+	if module.length() < 500:
+		_fail("could not read VOICE_JS out of voice_chat.gd (%d chars) — check 6b "
+			% module.length() + "would pass vacuously")
+		Sentinel.done("style_mirrors")
+		return
+
+	_check_js_triple(module, "STYLE_INK", HudTheme.INK)
+	_check_js_triple(module, "STYLE_BONE", HudTheme.BONE)
+	# AND THAT THEY ARE SPENT. Binding a DECLARATION says nothing about the paint
+	# loop: an edge colour changed from `STYLE_INK` to a literal drifts from the
+	# palette on every inked contour while the declaration still matches. That
+	# mutation was driven and these three counts are what fail it — each name is
+	# declared once and used at least once.
+	# The counts are the REAL SITES, not a token floor: INK is declared, is the
+	# ramp's ground band and is the ink the edge test paints; BONE is declared and
+	# is the ramp's highlight. A threshold slack enough to survive losing one of
+	# them is the vacuous check this is replacing.
+	_check_js_used(module, "STYLE_INK", 3)
+	_check_js_used(module, "STYLE_BONE", 2)
+
+	var key := RegEx.create_from_string("var\\s+SELF_TILE\\s*=\\s*'([^']*)'")
+	var hit: RegExMatch = key.search(module) if key != null else null
+	if hit == null:
+		_fail("VOICE_JS declares no `var SELF_TILE = '...'` — the self-view's "
+			+ "reserved tile key (bead godot-test1-xtr.14) is unreadable, so this "
+			+ "check cannot bind it to SELF_LEVEL_KEY")
+	elif hit.get_string(1) != VoiceChat.SELF_LEVEL_KEY:
+		_fail("VOICE_JS's SELF_TILE is '%s' but voice_chat.SELF_LEVEL_KEY is '%s' — "
+			% [hit.get_string(1), VoiceChat.SELF_LEVEL_KEY]
+			+ "the self-view's rect would be pushed under a key the browser does "
+			+ "not draw")
+	# Declared once, then asked by `tileEl`, by `tileLive` and by the two ends of
+	# the self-view itself: four real sites, so losing any one of them to a
+	# hard-coded 'me' takes the count under the floor.
+	#
+	# ponytail: the count is the binding, not a scan for stray `'me'` literals —
+	# that fires on the word in a COMMENT, and a check that has to be worked
+	# around by rewording prose is a check nobody keeps.
+	_check_js_used(module, "SELF_TILE", 4)
+
+	# --- THE FORCED RULE ITSELF (owner ruling 2026-09-06) -------------------
+	# "A receiver never sees the raw face" is the whole of bead xtr.11, and until
+	# these three lines it was asserted by NOTHING: `return S.styled ? S.styled :
+	# S.cam;` ships the unstyled webcam and every check in the suite stays green.
+	# Both halves are needed — the first says the send path asks for the styled
+	# stream, the second says the styled stream is the only thing that answer can
+	# ever be — because either alone leaves the other path open.
+	var attach: String = _js_function_body(module, "attachCam")
+	if attach.is_empty():
+		_fail("VOICE_JS has no `function attachCam(` — check 6b cannot see what the "
+			+ "send path attaches, which is the forced rule's whole subject")
+	else:
+		if not attach.contains("styleStream()"):
+			_fail("attachCam does not ask styleStream() for its track — the cartoon "
+				+ "(bead godot-test1-xtr.11) is FORCED for the room, so the styled "
+				+ "canvas is the only source a sender may attach")
+		if attach.contains("S.cam"):
+			_fail("attachCam names S.cam — that is the RAW device, and the owner's "
+				+ "ruling is that a receiver never sees the raw face")
+	var forced := RegEx.create_from_string(
+		"function\\s+styleStream\\(\\)\\s*\\{\\s*return S\\.styled;\\s*\\}")
+	if forced == null or forced.search(module) == null:
+		_fail("styleStream() is not exactly `return S.styled;` — a fallback there "
+			+ "(`S.styled || S.cam`, `S.styled ? S.styled : S.cam`) is how the "
+			+ "unstyled face reaches a peer on the one browser that cannot capture "
+			+ "a canvas. The degrade is NO VIDEO (owner ruling 2026-09-06)")
+
+	# --- BLANK, NEVER DELETE (the self-view's sticky wedge) ------------------
+	# `hideSelf` deleting the rect instead of blanking it leaves GDScript's change
+	# gate holding a rect the browser has forgotten, so a fast camera off/on shows
+	# the room your face and shows you nothing, for the rest of the room. It is
+	# green everywhere without this line.
+	var hide_self: String = _js_function_body(module, "hideSelf")
+	if hide_self.is_empty():
+		_fail("VOICE_JS has no `function hideSelf(` — the self-view's teardown "
+			+ "(bead godot-test1-xtr.14) is unreadable")
+	else:
+		if not hide_self.contains("blankTile(SELF_TILE)"):
+			_fail("hideSelf does not blankTile(SELF_TILE) — the rect must SURVIVE a "
+				+ "camera toggle, or `placeTile` has nothing to place when it comes "
+				+ "back and the change gate pushes nothing")
+		# The CALL, not the word: `hideSelf`'s own comment names `hideTile` as the
+		# slow path's job, and a check worked around by rewording prose is a check
+		# nobody keeps. The other spelling (`hideTile('me')`) takes `SELF_TILE`'s
+		# use count under its floor above, so both shapes are covered.
+		if hide_self.contains("hideTile(SELF_TILE)"):
+			_fail("hideSelf calls hideTile() — that DELETES the remembered rect, "
+				+ "which is the wedge `blankTile`'s own comment documents. Deleting "
+				+ "is `_poll_tiles`' job, on the slow path where the camera is "
+				+ "really off")
+
+	# --- AND THE CAPTIVE REFUSAL, DRIVEN (xtr.14 rule 3) ---------------------
+	# `_tile_fraction` is the ONE home of the pad and of "a captive tile takes no
+	# picture", for the teammate's tile and for the self-view alike. Deleting that
+	# early return is green everywhere else — `hero_hud_selfcheck` only reads the
+	# call site as text — so the rule is executed here against the smallest row a
+	# GDScript can be handed. A captive hero must answer EMPTY and a free one must
+	# not, or the check would pass on a function that refused everybody.
+	var node: Node = _voice_node()
+	var row := RowStub.new()
+	row.captive = "primm"
+	var free_rect: Rect2 = node._tile_fraction(row, "windman", Vector2(800.0, 600.0))
+	if free_rect.size.x <= 0.0 or free_rect.size.y <= 0.0:
+		_fail("_tile_fraction answered EMPTY for a FREE hero (%s) — the self-view "
+			% free_rect + "and every teammate tile would be refused a picture")
+	var captive_rect: Rect2 = node._tile_fraction(row, "primm", Vector2(800.0, 600.0))
+	if captive_rect.size.x > 0.0 or captive_rect.size.y > 0.0:
+		_fail("_tile_fraction answered %s for a CAPTIVE hero — the cell bars are "
+			% captive_rect + "drawn across the whole tile and no inset saves them, "
+			+ "so a captive tile takes no picture at all (bead xtr.14 rule 3)")
+	row.free()
+	node.free()
+	Sentinel.done("style_mirrors")
+
+
+func _js_function_body(module: String, name: String) -> String:
+	## One `function <name>(...) { … }` out of `VOICE_JS`, or "" if there is none.
+	## Every function in that module is indented one tab and closed by `\n\t}`, so
+	## the first such line after the header is the end — blunt, and blunt is right
+	## for a check whose job is to read the shipped text rather than parse JS.
+	var start: int = module.find("function %s(" % name)
+	if start < 0:
+		return ""
+	var end: int = module.find("\n\t}", start)
+	if end < 0:
+		return ""
+	return module.substr(start, end - start)
+
+
+func _check_js_used(module: String, name: String, want: int) -> void:
+	## `name` must appear at least `want` times in `VOICE_JS`: once where it is
+	## declared and once per place the value is really spent.
+	var seen: int = module.count(name)
+	if seen < want:
+		_fail("VOICE_JS names `%s` %d time(s), expected at least %d — a constant "
+			% [name, seen, want]
+			+ "that is declared and not SPENT binds nothing, which is how a "
+			+ "literal in the paint loop drifts from HudTheme in silence")
+
+
+func _check_js_triple(module: String, name: String, want: Color) -> void:
+	## One `var NAME = [r, g, b];` in `VOICE_JS`, against the `HudTheme` colour it
+	## is a copy of. 0-255 channels, which is the only unit a canvas has.
+	var re := RegEx.create_from_string(
+		"var\\s+%s\\s*=\\s*\\[\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\]" % name)
+	var hit: RegExMatch = re.search(module) if re != null else null
+	if hit == null:
+		_fail("VOICE_JS declares no `var %s = [r, g, b]` — the cartoon camera's " % name
+			+ "film palette (bead godot-test1-xtr.11) cannot be bound to HudTheme")
+		return
+	var got := Vector3i(int(hit.get_string(1)), int(hit.get_string(2)), int(hit.get_string(3)))
+	var expect := Vector3i(want.r8, want.g8, want.b8)
+	if got != expect:
+		_fail("VOICE_JS's %s is %s but the HudTheme colour it mirrors is %s — the "
+			% [name, got, expect] + "cartoon camera would paint a palette the rest "
+			+ "of the HUD does not use")
 
 
 func _js_bool_offence(source: String) -> String:
