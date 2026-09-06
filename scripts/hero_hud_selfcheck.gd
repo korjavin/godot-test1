@@ -463,7 +463,13 @@ func _check_the_video_tile_lookup() -> void:
 	# AND THE TRANSFORM, BY NAME. Check 6b measures the answer, but a revert that
 	# happened to be measured on an unstretched viewport would slip past it; the
 	# name is the cheap half of the same gate.
-	var rect_body := source.substr(source.find("func tile_rect(hero: String) -> Rect2:"))
+	var rect_start := source.find("func tile_rect(hero: String) -> Rect2:")
+	if rect_start < 0:
+		_fail("tile_rect's signature moved — check 6's TEXT read is blind, and a "
+			+ "revert to get_screen_transform() would pass it")
+		Sentinel.done("the_video_tile_lookup")
+		return
+	var rect_body := source.substr(rect_start)
 	var after_rect := rect_body.find("\nfunc ")
 	if after_rect > 0:
 		rect_body = rect_body.substr(0, after_rect)
@@ -582,6 +588,25 @@ func _check_tile_rect_under_a_stretch() -> void:
 					% [names[i], got, s, aspect, want]
 				+ "answering in design pixels while voice_chat divides by the window size")
 
+		# AND THE CAMERA'S PAD SURVIVES THE STRETCH. `_poll_tiles` insets the rect
+		# above before turning it into a fraction, and the row draws its SPEAKING
+		# ring in a band RING_INSET..RING_INSET + RING_WIDTH *design* px inside the
+		# tile — the only "who is talking" read on this row. So the pad, converted
+		# back to design px, has to clear that band. A pad in absolute window pixels
+		# does not: it is `pad / s` design px and vanishes as the window grows, which
+		# is what bead xtr.10's fix would otherwise have introduced. Reverting
+		# `TILE_INSET_FRAC` to an absolute constant makes this line error, and the
+		# Sentinel then names the missing stamp — the revert is red either way.
+		var first: Rect2 = hud.tile_rect(names[0])
+		var pad_design: float = first.size.x * VOICE_SCRIPT.TILE_INSET_FRAC / s
+		var ring_edge: float = float(HUD_SCRIPT.RING_INSET) + float(HUD_SCRIPT.RING_WIDTH)
+		_check(pad_design >= ring_edge,
+			"the camera picture is inset %.2f design px at a %.2fx stretch, inside the "
+				% [pad_design, s]
+			+ "speaking ring's %.0f px band — it would cover the row's only 'who is "
+				% ring_edge
+			+ "talking' read")
+
 		# THE MUTATION CONTROL: the mapping this bead retired, in this same
 		# harness. It must come out UNSCALED and unmargined — that is the shipped
 		# bug — and if it does not, the harness is reproducing nothing and every
@@ -603,6 +628,26 @@ func _check_tile_rect_under_a_stretch() -> void:
 	# Hand the window back exactly as the rest of the run found it.
 	root.content_scale_aspect = was_aspect
 	root.size = was_size
+
+	# AND THE TEXT HALF, for the same reason check 6 has one: everything above
+	# re-derives `_poll_tiles`' arithmetic from the constant, so a `_poll_tiles`
+	# that went back to a pixel pad while the constant stayed a fraction would pass
+	# every line of it. Reading the one line that spends the constant is what binds
+	# the two descriptions.
+	var voice_source := FileAccess.get_file_as_string("res://scripts/voice_chat.gd")
+	var poll_start := voice_source.find("func _poll_tiles() -> void:")
+	if poll_start < 0:
+		_fail("_poll_tiles moved — check 6b cannot see what the camera pad really is")
+		Sentinel.done("tile_rect_under_a_stretch")
+		return
+	var poll_body := voice_source.substr(poll_start)
+	var after_poll := poll_body.find("\nfunc ")
+	if after_poll > 0:
+		poll_body = poll_body.substr(0, after_poll)
+	_check(poll_body.contains("tile.size.x * TILE_INSET_FRAC"),
+		"_poll_tiles no longer pads the tile by a FRACTION of it — a pad in window "
+		+ "pixels is pad/s design px and swallows the speaking ring as the window "
+		+ "grows (bead godot-test1-xtr.10)")
 	Sentinel.done("tile_rect_under_a_stretch")
 
 

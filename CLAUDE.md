@@ -2337,9 +2337,13 @@ builders (`card` / `strip` / `button`) and one lazy `theme()`. Four rules:
   that has to grow with a tile is DERIVED from it — `DIGIT_FONT_SIZE` at 13/48 and
   `BADGE_SIZE` at 15/48, both written as the division so 48 still reproduces 13 and 15
   exactly. Line WEIGHTS do not follow it and that is deliberate (`ACTIVE_BORDER_WIDTH`,
-  `RING_INSET`/`RING_WIDTH`, `BAR_WIDTH`, `BADGE_MARGIN`, `voice_chat.TILE_INSET`): the
-  y1o spec's hard 1-3 px edges are a style decision, and the 3 px inset is what keeps
-  the amber active ring and the green speaking ring visible around a teammate's camera.
+  `RING_INSET`/`RING_WIDTH`, `BAR_WIDTH`, `BADGE_MARGIN`): the y1o spec's hard 1-3 px
+  edges are a style decision. **`voice_chat.TILE_INSET_FRAC` is the one that had to
+  become a FRACTION** (`(RING_INSET + RING_WIDTH) / TILE_SIZE`): it pads a rect that is
+  in WINDOW pixels since bead `xtr.10`, so an absolute pad is `pad / s` design px and
+  swallows the green speaking ring — the row's only "who is talking" read — at exactly
+  the retina scale that bug was reported from. `hero_hud_selfcheck` check 6b binds it
+  to the real ring consts through the real stretched rect.
   What BOUNDS the tile is `hero_hud_selfcheck` check 5, the row's fit against every
   widget `main.tscn` pins to that corner, and the binding neighbour is the \fo
   PerfOverlay — 80 moved it right (240..544 -> 376..680), never down, where its text

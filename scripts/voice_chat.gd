@@ -176,13 +176,29 @@ const CAM_DENIED: int = 3
 ## such a resize really does move the fraction, and this poll pushes it in 200 ms.
 const TILE_INTERVAL: float = 0.2
 
-## How far inside a tile the picture is drawn, in window pixels — enough to leave
-## `hero_hud`'s frame and its active ring showing around the video. The overlay is
-## ABOVE the canvas, so anything it covers is simply gone, which is why a CAPTIVE
-## tile takes no picture at all: its cell bars are drawn ACROSS the whole tile and
-## no inset can save them, and they are the one state this row says with a shape
-## rather than a brightness. `_poll_tiles` skips those.
-const TILE_INSET: float = 3.0
+## How far inside a tile the picture is drawn, AS A FRACTION OF THE TILE — enough to
+## leave `hero_hud`'s frame, its active ring and its SPEAKING ring showing around the
+## video.
+##
+## IT WAS 3 ABSOLUTE PIXELS, AND THAT WAS ONLY EVER RIGHT BY ACCIDENT (bead
+## `godot-test1-xtr.10`). `hero_hud.tile_rect()` used to answer in 1920x1080 DESIGN
+## pixels, so a constant pad was a constant DESIGN pad; it answers in WINDOW pixels
+## now, where 3 px is 3/s design px — 2.0 at the retina s = 1.5 the camera bug was
+## reported from. `hero_hud` draws the speaking ring in a band `RING_INSET` (3) to
+## `RING_INSET + RING_WIDTH` (5) DESIGN px inside the tile, so a 2 px pad puts the
+## picture straight over the green ring, which is the row's only "who is talking"
+## read. A fraction clears that band at every scale, which is the whole point.
+##
+## The number is `(RING_INSET + RING_WIDTH) / TILE_SIZE` in `hero_hud`'s terms,
+## MIRRORED rather than preloaded exactly like `HERO_HUD_STATE_CAPTIVE` below — and
+## `hero_hud_selfcheck` check 6b binds it to those real consts through the real
+## stretched rect, so it cannot drift and cannot go back to an absolute grow.
+##
+## The overlay is ABOVE the canvas, so anything it covers is simply gone, which is why
+## a CAPTIVE tile takes no picture at all: its cell bars are drawn ACROSS the whole
+## tile and no inset can save them, and they are the one state this row says with a
+## shape rather than a brightness. `_poll_tiles` skips those.
+const TILE_INSET_FRAC: float = 5.0 / 80.0
 
 ## `hero_hud.STATE_CAPTIVE`, mirrored rather than preloaded — the row is found
 ## through its group like every other widget here, and a preload would be a hard
@@ -2024,9 +2040,14 @@ func _poll_tiles() -> void:
 			if int(hud.tile_state(hero)) == HERO_HUD_STATE_CAPTIVE:
 				continue
 			var tile: Rect2 = hud.tile_rect(hero)
-			if tile.size.x <= TILE_INSET * 2.0 or tile.size.y <= TILE_INSET * 2.0:
+			# The pad is a FRACTION of the tile, never a pixel count: this rect is in
+			# WINDOW pixels, so an absolute pad shrinks in design space as the window
+			# grows and eats hero_hud's speaking ring. Taken off the width so a tile
+			# that is not square (it always is) still pads evenly.
+			var pad: float = tile.size.x * TILE_INSET_FRAC
+			if tile.size.x <= pad * 2.0 or tile.size.y <= pad * 2.0:
 				continue
-			var inset: Rect2 = tile.grow(-TILE_INSET)
+			var inset: Rect2 = tile.grow(-pad)
 			var frac := Rect2(inset.position / win, inset.size / win)
 			live[holder] = true
 			if _pushed_tiles.get(holder, Rect2()) == frac:

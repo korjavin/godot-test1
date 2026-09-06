@@ -131,8 +131,11 @@ const COLOR_DIGIT: Color = HudTheme.BONE
 
 ## Line WEIGHTS are a style decision (the y1o spec's hard 1-3 px edges), not a
 ## proportion, so they do not follow the tile: `ACTIVE_BORDER_WIDTH`, `RING_INSET`,
-## `RING_WIDTH`, `BAR_WIDTH`, `BADGE_MARGIN` and `voice_chat.TILE_INSET` are all
-## absolute on purpose.
+## `RING_WIDTH`, `BAR_WIDTH` and `BADGE_MARGIN` are all absolute on purpose.
+## `voice_chat.TILE_INSET_FRAC` is the one that had to become a FRACTION instead:
+## it pads a rect in WINDOW pixels, so an absolute pad shrinks in design space as
+## the window grows and swallows `RING_INSET`..`RING_INSET + RING_WIDTH` — the
+## speaking ring — at exactly the retina scale bead xtr.10 was reported from.
 const ACTIVE_BORDER_WIDTH: float = 3.0
 ## The hotkey digit, DERIVED — the ratio the 48 px row shipped with, written as the
 ## division so 48 still reproduces 13 exactly.
@@ -441,7 +444,10 @@ func tile_rect(hero: String) -> Rect2:
 	wherever it is smaller.
 	`get_viewport().get_final_transform()` is the aspect-keep letterbox margin times
 	that stretch, so the rect comes out in the same window pixels the divisor
-	measures, on every stretch mode.
+	measures, on every stretch mode. It assumes this row's viewport IS the caller's
+	window, which it is (the HUD is a CanvasLayer on the root) — and that assumption
+	is why a SubViewport makes a useless harness for the bug: inside one, even
+	`get_screen_transform()` comes out right.
 
 	CONSEQUENCE, and it is the reason the comments around the caller say what they
 	say: the fraction the caller derives is NOT resize-invariant. A resize that
