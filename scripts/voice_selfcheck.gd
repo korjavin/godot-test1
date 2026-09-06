@@ -90,6 +90,15 @@ extends SceneTree
 ##     here is that this file is in that population and that the node really
 ##     carries the mode.
 ##
+## 8b. **`debug_line()` ANSWERS SOMETHING IN A ROOM** (bead `godot-test1-xtr.15`).
+##     Check 7 meets it only off-web, where it returns on its first line — so an
+##     EMPTY answer in a real browser room failed nothing here. This forces
+##     `_is_web` on over a `RoomStub` (check 7b's idiom in `hero_hud_selfcheck`)
+##     and drives the mode and transmit halves at both ends, with "out of the
+##     room it is empty" as the negative control. The \fo ROW is the other half
+##     and lives in `perf_selfcheck` guard 7, which drives a real overlay under a
+##     real pause — that is where the shipped bug actually was.
+##
 ##  9. **WHAT V ACTUALLY DOES**, driven on the shipped `_poll_input()` with
 ##     `Input.action_press` / `action_release` (`mobile_input`'s synthesis idiom,
 ##     and no bridge needed because `_tx` is GDScript state). Always-on TOGGLES,
@@ -154,6 +163,7 @@ func _initialize() -> void:
 	_check_ice_restart()
 	_check_inert_offweb()
 	_check_always_process()
+	_check_debug_line_in_a_room()
 	await _check_mic_key_semantics()
 
 	if _failures.is_empty():
@@ -998,6 +1008,77 @@ func _check_always_process() -> void:
 		_fail("voice_chat.gd assigns `.paused` — `PauseHub` is the only writer "
 			+ "(CLAUDE.md), and a voice module must not be a tenth pauser")
 	Sentinel.done("always_process")
+
+
+# ============================================================================
+# 8b. `debug_line()` ANSWERS SOMETHING IN A ROOM
+# ============================================================================
+
+func _check_debug_line_in_a_room() -> void:
+	"""
+	`debug_line()` executed rather than short-circuited (bead `godot-test1-xtr.15`).
+
+	THIS IS THE PRODUCER'S HALF ONLY. What the \\fo overlay does with the answer —
+	the group lookup, the `has_method` guard, the append, and whether the node is
+	ticked at all — is `perf_selfcheck` guard 7's, which drives a real overlay
+	under a real paused tree. Neither can see the other's half, and the shipped
+	bug was in that one.
+
+	Check 7 only ever meets it OFF-web, where its first line returns "" and the
+	assertion is that it does. So the whole body — the two early-return operands,
+	the mode/tx spelling and the bridge fallback — ran nowhere in this suite, and
+	an empty answer in a real room would have failed nothing. `hero_hud_selfcheck`
+	check 7b's idiom: force `_is_web` on and hang a `RoomStub` off `_mp`, which is
+	exactly what a browser in a room presents to these two operands.
+
+	`_ck` stays null, which is a real state (the `/ice` round trip has not landed
+	yet, or the module failed to install) and the one the bridge fallback exists
+	for — so this drives the branch where the browser says nothing and the row
+	must STILL name the mode and the transmit state. What it cannot reach is the
+	live `stats()` string, which needs a browser; `_check_no_js_bool` and check 6b
+	read that half as TEXT.
+	"""
+	var node: Node = _voice_node()
+	var room := RoomStub.new()
+	node._is_web = true
+	node._mp = room
+
+	var line: String = node.debug_line()
+	if line.is_empty():
+		_fail("debug_line() answered EMPTY on the web in a room — there is nothing "
+			+ "for \\fo to draw on the one build this telemetry exists for")
+	if not line.begins_with("Voice: mode="):
+		_fail("debug_line() answered `%s`, which perf_overlay would draw as a row "
+			% line + "that does not say what it is")
+	# The two things this half of the line is FOR: which mode V is in, and whether
+	# the microphone is open right now. Both driven at both ends, because a line
+	# that always said ALWAYS/0 would satisfy a `contains` on one state. The mode
+	# is SET rather than assumed: `_load_mode()` reads the store, which check 3
+	# has already written in this process.
+	node.set_mode(VoiceChat.Mode.ALWAYS_ON)
+	line = node.debug_line()
+	if not line.contains("mode=ALWAYS") or not line.contains("tx=0"):
+		_fail("always-on with the mic closed reads `%s`" % line)
+	node.set_mode(VoiceChat.Mode.PUSH_TO_TALK)
+	node._tx = true
+	line = node.debug_line()
+	if not line.contains("mode=PTT") or not line.contains("tx=1"):
+		_fail("push-to-talk with the mic open reads `%s` — the row is not tracking "
+			% line + "the two states it exists to show")
+	# The bridge fallback: no `_ck`, so the stats half is the placeholder rather
+	# than a truncated line.
+	if not line.contains("peers="):
+		_fail("with no bridge the row is `%s` — the stats half must degrade to the "
+			% line + "placeholder, not vanish")
+	# AND THE NEGATIVE CONTROL, which is the half check 7 already owns from the
+	# other side: out of the room there is nothing to report.
+	room.online = false
+	if node.debug_line() != "":
+		_fail("debug_line() answered non-empty outside a room")
+
+	node.free()
+	room.free()
+	Sentinel.done("debug_line_in_a_room")
 
 
 # ============================================================================

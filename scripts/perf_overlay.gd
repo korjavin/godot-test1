@@ -142,6 +142,22 @@ func _ready() -> void:
 	# Never let this debug label eat mouse clicks meant for the game/UI.
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
+	# MEASURE UNDER THE PAUSE TOO (bead godot-test1-xtr.15). This file's own two
+	# promises — "samples EVERY frame, hidden or not", and `_sample_frame`'s note
+	# that it takes the ENGINE's delta precisely so a paused tree cannot be read as
+	# a 60,000 ms spike — are both false for a PAUSABLE node: `PauseHub` stops
+	# `_process` outright, so under any overlay the spike log stops recording and
+	# the text freezes at whatever it last said. That is not cosmetic. Every panel
+	# that puts the game into a state worth measuring pauses to do it — the MP
+	# panel is how you get INTO a room, so the Voice row (bead xtr.4) was reported
+	# as permanently empty by everyone who read \fo with that panel open: the last
+	# refresh had happened while still OFFLINE, where `debug_line()` correctly
+	# answers "". What it costs is what it always cost — a handful of counter
+	# reads per frame, plus the 4 Hz group walk and voice query behind the
+	# `visible` gate — and none of it MUTATES anything, which is the property a
+	# measurement tool needs while the thing it measures is stopped.
+	process_mode = Node.PROCESS_MODE_ALWAYS
+
 	# Make the readout legible over the bright sky: pale text with a dark outline,
 	# pinned to the top-left so it never overlaps the top-right coin counter.
 	add_theme_color_override("font_color", Color(0.9, 1.0, 0.9, 1.0))
@@ -284,10 +300,12 @@ func _sample_frame(delta: float) -> void:
 	## nothing unless the frame was slow.
 	##
 	## `delta` is the engine's own frame delta, deliberately NOT a wall-clock
-	## difference we measure ourselves: a paused tree stops calling `_process`,
-	## and wall-clock would then report the whole pause (a skill tree left open
-	## for a minute) as a 60,000 ms "spike". The engine's delta is the frame's
-	## real duration either way.
+	## difference we measure ourselves. That matters most under a PAUSE, which
+	## this node runs through (`PROCESS_MODE_ALWAYS`, see `_ready()`): a skill
+	## tree left open for a minute is still sixty seconds of ordinary 16 ms
+	## frames, and a wall-clock reading taken across a `_process` the engine had
+	## skipped would report the whole pause as one 60,000 ms "spike". The
+	## engine's delta is the frame's real duration either way.
 	_refresh_manager_refs()
 	_frames_sampled += 1
 

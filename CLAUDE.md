@@ -106,7 +106,10 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            checked for COMPLETENESS against the script's own
 #                            method list (a new public method fails by name
 #                            until it is proved bridge-free), PROCESS_MODE_ALWAYS
-#                            and no `.paused`, and what V really does —
+#                            and no `.paused`, `debug_line()` EXECUTED over a
+#                            room stub with `_is_web` forced on (it may never
+#                            answer empty in a room — bd xtr.15; the \fo ROW is
+#                            perf_selfcheck guard 7's), and what V really does —
 #                            always-on TOGGLES, push-to-talk HOLDS, a mode switch
 #                            or a leaving room drops the mic
 #   locale_selfcheck         en/de table + German fits its controls
@@ -2727,6 +2730,16 @@ The web (WebGL) build is the performance-sensitive target.
 
 - `scripts/perf_overlay.gd` — **\fo** (cheat code). FPS, draw calls, node count, active/total crocs. This
   is the measurement tool; use it to prove a change and catch regressions.
+- **It is `PROCESS_MODE_ALWAYS`, and that is load-bearing** (bead `godot-test1-xtr.15`).
+  Every panel worth measuring behind takes a `PauseHub` claim, so a pausable overlay
+  records no spike and refreshes no text for as long as one is open — it just keeps
+  showing what it last said. That is how the \fo **Voice** row (bead `xtr.4`) read as
+  permanently empty: you enter a room through the MP panel, and the last refresh had
+  happened while still offline, where `voice_chat.debug_line()` correctly answers `""`.
+  `perf_selfcheck` guard 7 drives a REAL overlay under a REAL `paused` tree with a stub
+  in group `"voice"`, because guards 1-6 all feed `_process` by hand and none of them can
+  see the node never being ticked at all; it is also the only end that sees the row's
+  group lookup and append, `voice_selfcheck` check 8b owning what `debug_line()` answers.
 - The same script samples **every frame, hidden or not**, and logs any frame over 33 / 50 ms
   with what the engine did on it (chunks built/freed, whether the LOD scan ticked, node
   count) — to the console as `[SPIKE] …` and to `get_spike_log()` / `get_spike_summary()`.
