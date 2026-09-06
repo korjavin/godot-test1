@@ -1,0 +1,36 @@
+# THE FACE DETECTOR'S BILL OF MATERIALS (bead godot-test1-xtr.12).
+#
+# `scripts/fetch_vendor.sh` reads this file, downloads exactly what it names,
+# and refuses to install anything whose sha256 does not match. It is the ONLY
+# place a version or a url is written down: CI and the developer rig run that
+# one script, so there is no second list to keep in step.
+#
+# WHY THESE FILES ARE NOT IN GIT: they are 11.76 MB of binaries, and a binary in
+# history is permanent weight on every clone and every CI checkout forever. They
+# are fetched at BUILD time and baked into the image instead. That is not a
+# runtime CDN and does not weaken the owner's ruling of 2026-09-06 — the rule is
+# about what the PLAYER'S BROWSER loads, which is still only ever our own nginx.
+#
+# Columns, whitespace-separated:
+#   npm   <package@version>  <registry url of the tarball>
+#   file  <path under here>  <sha256>  <member path inside the tarball>
+#   model <path under here>  <sha256>  <absolute url>
+#
+# The TARBALL itself carries no sha here on purpose: the per-file hashes below
+# are the control that matters, because they are checked against what actually
+# lands on disk and therefore what actually ships. A tarball hash would be a
+# second checksum to update on every re-pin, guarding a step whose output is
+# already verified — and extraction names its members explicitly, so a hostile
+# archive cannot write outside the directory either way.
+#
+# WHY 1.0.1, why only these files, and why the IIFE bundle rather than the ES
+# module: see README.md next to this file. Re-pinning means new shas here and
+# nothing else.
+
+npm    @mediapipe/tasks-vision@1.0.1  https://registry.npmjs.org/@mediapipe/tasks-vision/-/tasks-vision-1.0.1.tgz
+
+file   vision_bundle.js                98db72469ffb176f5e9f2687be0f70783893aca681f7789c34b872b0a764371a  package/vision_bundle.js
+file   wasm/vision_wasm_internal.js    e170ee67dd4e16c1a6fcd8840a206687e5a59b22c20e4a902bc445b095454d73  package/wasm/vision_wasm_internal.js
+file   wasm/vision_wasm_internal.wasm  8da277a733926eacd0474b8704b36742d6ec3231c57a860c5b889dff8f1df886  package/wasm/vision_wasm_internal.wasm
+
+model  blaze_face_short_range.tflite   b4578f35940bf5a1a655214a1cce5cab13eba73c1297cd78e1a04c2380b0152f  https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite

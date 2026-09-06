@@ -68,6 +68,19 @@ extends Node
 ## prompt has not been answered yet, and adding the real track when it lands just
 ## renegotiates.
 ##
+## **PERFECT NEGOTIATION ASSUMES RELIABLE SIGNALLING AND OURS IS A BEST-EFFORT
+## RELAY**, which is the fourth rung the pattern does not come with (bead
+## `godot-test1-xtr.19`). `post()` swallows every failure and `MpCodec.decode_vc`
+## drops a malformed or oversized payload with a `push_warning` nobody reads, so
+## an offer can simply vanish — and a PC left in `have-local-offer` can never fire
+## `onnegotiationneeded` again, has nothing for `restartIce()` to ride, and (when
+## impolite) treats every later offer as a collision to ignore. So an unanswered
+## offer ROLLS ITSELF BACK on a timer, which returns the state to stable and lets
+## the browser re-offer by itself. That is R1 of the heal ladder in `VOICE_JS`;
+## R2 restarts ICE on a HELD `disconnected`, R3 rebuilds the one PC on both ends
+## off a changed `a=fingerprint:`, and R4 re-plays a paused element. Every rung is
+## bounded, and `heal=` in \fo says which one fired.
+##
 ## ----------------------------------------------------------------------------
 ## THE MIC STARTS OFF (owner ruling 2026-09-04)
 ## ----------------------------------------------------------------------------
@@ -280,6 +293,13 @@ const VOICE_JS: String = """
 		styled: null, styleSrc: null, styleCanvas: null, styleCtx: null,
 		styleLv: null, styleRamp: null, styleRvfc: 0, styleTimer: null,
 		styleWatch: null, paintMs: 0, style: null, styleTint: [140, 140, 150],
+		/* THE HERO'S NAME (bead godot-test1-xtr.13), pushed beside the tint by the
+		   one GDScript writer that already knows it. The tint is a colour and
+		   cannot say which ACCESSORY to draw, and a name cannot say which colour
+		   to use (`hero_hud.HERO_COLORS` stays the one table, in a language this
+		   string cannot read) — so both travel, on one change-gated call. Empty
+		   until GDScript speaks, which draws nothing. */
+		styleHero: '',
 		/* THE SENDER'S SELF-HEAL (bead godot-test1-xtr.18). `styleW` is the Worker
 		   whose timer drives the paint loop in a HIDDEN tab, where rVFC never fires
 		   and `setInterval` is throttled to 1 Hz; `recamN`/`recamWin`/`recamBusy`
@@ -287,6 +307,18 @@ const VOICE_JS: String = """
 		   that is gone for good settles on the signal-lost card instead of
 		   hammering getUserMedia for the life of the room. */
 		styleW: null, recamN: 0, recamWin: 0, recamBusy: 0,
+		/* THE FACE-REGISTERED CROP (bead godot-test1-xtr.12). `faceState` is the
+		   rung of the ladder this browser landed on — 0 not asked yet, 1 loading,
+		   2 the vendored detector in `faceW`, 3 unavailable (centre crop for the
+		   life of the room), 4 the browser's own `FaceDetector`. `faceTarget` is
+		   where the detector last said the head is, `faceBox` is the box actually
+		   drawn, lerping toward it; `faceHit` is when a face was last SEEN, which
+		   is what expires a target back to the centre. `faceMs` is the detector's
+		   round trip (off this thread on rung 2) and `faceMainMs` is the share of
+		   it that was paid HERE — the two numbers the bead asks for separately. */
+		faceW: null, faceNative: null, faceNoNative: 0, faceState: 0, faceBusy: 0, faceAt: 0,
+		faceSent: 0, faceMs: 0, faceMainMs: 0, faceHit: 0, faceLerpAt: 0,
+		faceBox: null, faceTarget: null,
 		/* THE SENDER'S OWN HEALTH (bead godot-test1-xtr.17). `paintAt` is when
 		   `paint()` last put pixels on the canvas — the only thing that can tell a
 		   stalled paint loop from a working one, and reported as `paint=` — and
@@ -301,6 +333,12 @@ const VOICE_JS: String = """
 		   and placed through the same `S.tiles` / `placeTile` path as every
 		   teammate's under the reserved key `SELF_TILE`. */
 		selfVideo: null,
+		/* THE HEAL TALLY (bead godot-test1-xtr.19), keyed by lobby id and
+		   deliberately NOT on the peer row: rung 3 IS `close(id); open(id)`, so a
+		   counter living on `p` would be zeroed by the very event it counts. Four
+		   slots — [rollback, ice, rebuild, lastRebuildAt] — reported as `heal=`
+		   so \fo says which rung fired rather than only that something did. */
+		heal: {},
 		/* One AudioContext for the whole module, and one AnalyserNode per stream
 		   (remote) plus one for the local mic. `levels()` reads them all and
 		   answers ONE string — never one bridge call per peer, and never a
@@ -935,12 +973,20 @@ const VOICE_JS: String = """
 	   it and a BONE slash across it, in fillRects and one rotated bar. NO HEX
 	   STRINGS — the palette lives in the two triples above (hero_hud_selfcheck
 	   check 8 greps `scripts/` for the six film hexes). */
+	/* One rgb triple as a canvas fill string. The triples themselves are the rule
+	   (`hero_hud_selfcheck` check 8 greps `scripts/` for the six film hexes, which
+	   may be typed in `hud_theme.gd` alone) — this is only how they are spelled at
+	   the one place a 2D context wants a string. */
+	function rgb(t) {
+		return 'rgb(' + t[0] + ',' + t[1] + ',' + t[2] + ')';
+	}
+
 	function paintCard() {
 		var cx = S.styleCtx;
 		if (!cx) { return 0; }
 		var n = STYLE_SIZE;
-		var ink = 'rgb(' + STYLE_INK[0] + ',' + STYLE_INK[1] + ',' + STYLE_INK[2] + ')';
-		var bone = 'rgb(' + STYLE_BONE[0] + ',' + STYLE_BONE[1] + ',' + STYLE_BONE[2] + ')';
+		var ink = rgb(STYLE_INK);
+		var bone = rgb(STYLE_BONE);
 		try {
 			cx.fillStyle = ink;
 			cx.fillRect(0, 0, n, n);
@@ -1041,6 +1087,552 @@ const VOICE_JS: String = """
 		return 1;
 	}
 
+	/* ------------------------------------------------------------------------
+	   THE FACE-REGISTERED CROP (bead godot-test1-xtr.12)
+	   ------------------------------------------------------------------------
+	   THE MVP CROPPED THE CENTRE SQUARE, AND THE OWNER'S FIELD REPORT IS WHAT
+	   THIS IS FOR (2026-09-06, verbatim): *"croping works good on laptops, just
+	   great, but on my desktop when camera is a bit far away it doesn't trace
+	   head well, it shows me not only face."* A laptop lid puts a face across
+	   most of the frame, so the centre square happens to BE the face; a desktop
+	   camera two metres away frames a torso, and the centre square of a torso is
+	   a chest. So the box has to ZOOM as well as pan — `FACE_ZOOM` times the
+	   detected face, which at two metres is a fraction of the source and fills
+	   the 92 px tile exactly as the lid does.
+
+	   THE LADDER, and every rung below the first is reached by a browser that
+	   simply cannot do the one above:
+
+	     4. `window.FaceDetector`, the Shape Detection API — FREE when it is
+	        there (no download, no worker, the platform's own detector). It is
+	        Chromium behind #enable-experimental-web-platform-features and is in
+	        no shipping browser, so it is taken opportunistically and is never
+	        the plan.
+	     2. the VENDORED MediaPipe BlazeFace short-range in a Web Worker, which
+	        is what actually ships. `web/vendor/mediapipe/` — read its README for
+	        the pin, the licence and why the files are ours and not a CDN's.
+	     3/0. the CENTRE CROP, i.e. the MVP unchanged: while the module is still
+	        downloading, on a browser with no module worker or no
+	        `createImageBitmap`, when the files 404, when the detector throws, and
+	        when there is simply no face in shot for `FACE_LOST_MS`.
+
+	   The rung is INVISIBLE to every receiver — the same canvas capture track is
+	   on the wire either way, so nothing is signalled, no verb is added and a
+	   teammate on any build sees a picture rather than an error.
+
+	   IT DOES TAKE A WebGL2 CONTEXT, AND THAT IS FINE BECAUSE OF WHERE. The
+	   library's graph runner asks for one on an `OffscreenCanvas(1, 1)` even on
+	   the CPU delegate. The bead's "no WebGL context" rule is about CONTENTION
+	   with Godot's on this single-threaded export; a context on the worker's
+	   thread is not Godot's thread and not Godot's context. Where
+	   `OffscreenCanvas` is missing — Safari 16 and older, which the library
+	   sniffs for by name — it falls back to `document.createElement('canvas')`
+	   and rejects inside a worker, which is rung 3 and a centre crop. Honest
+	   ceiling, not a hole.
+
+	   THE COST, and it is deliberately two numbers. Inference is ~5-15 ms and it
+	   is paid on the WORKER's thread, which on this single-threaded export is the
+	   only thread that is not Godot's frame. What is paid HERE is one
+	   `createImageBitmap` of a 160x120 element and one transfer, at 3.3 Hz;
+	   `stats()` reports both (`face=` the round trip, `fm` the main-thread
+	   share), because a single summed figure would hide exactly the thing the
+	   worker was chosen for. */
+
+	/* Relative to the DOCUMENT, never to the origin: the Pages deploy serves the
+	   whole export out of `/<repo>/`, so an absolute path would 404 there and
+	   settle every Pages player on the centre crop. */
+	var FACE_DIR = 'vendor/mediapipe/';
+	/* 3.3 Hz. The bead's window is 2-4 and the box is smoothed anyway — a head
+	   does not move at 12 Hz, and each call is an ImageBitmap this thread pays
+	   for. */
+	var FACE_PERIOD_MS = 300;
+	/* The smoothing time constant, applied as a REAL exponential over the
+	   elapsed milliseconds rather than a fixed per-frame alpha: the paint loop
+	   runs at 12 Hz visible, at the worker clock's rate hidden and at 2 Hz on the
+	   watchdog, and a fixed alpha would make the crop snap on one and crawl on
+	   another. */
+	var FACE_LERP_TAU_MS = 300;
+	/* Face box -> head. BlazeFace's box is the face alone (brow to chin), which
+	   cropped tight is a portrait with the top of the head sliced off. */
+	var FACE_ZOOM = 1.8;
+	/* And a floor on how far it may zoom in, in SOURCE pixels. A 160x120 device
+	   has 120 to give; below this the tile is upscaled mush, and a spuriously
+	   tiny detection would otherwise blow one eye up to fill the tile. */
+	var FACE_MIN_SIDE = 56;
+	/* No face for this long and the box goes home to the centre. The player who
+	   stood up must not leave the crop parked on the chair they left. */
+	var FACE_LOST_MS = 2000;
+
+	/* THE WORKER, and it is a CLASSIC one loading the IIFE bundle with
+	   `importScripts`. THAT IS NOT A STYLE CHOICE — a module worker cannot run
+	   this library at all. MediaPipe loads its own wasm loader through
+
+	       if (typeof importScripts !== 'function') { document.createElement('script') … }
+
+	   so on the one branch a module worker takes it reaches for a `document`
+	   that no worker has, and `createFromOptions` rejects every time. A classic
+	   worker has `importScripts`, which is the branch the library is written
+	   for, and it is also as old as Workers themselves — no module-worker
+	   support needed, no dynamic `import()` in a worker needed. (This is why the
+	   pin is 1.0.1: the 0.10.x line ships ESM and CommonJS only. See the
+	   README.)
+
+	   Written as a string here for the same reason `STYLE_WORKER_SRC` is:
+	   `intro_selfcheck`'s boolean scan reads `VOICE_JS` as TEXT, so a worker in
+	   a file of its own would be a second dialect nothing checks. Every message
+	   it sends is a STRING — '+' ready, '!' this browser cannot, '' nothing in
+	   shot, and 'x,y,w,h' in source pixels — never a boolean.
+
+	   The urls arrive in the FIRST message rather than being baked in, so the
+	   `document.baseURI` resolution happens once, on the thread that has a
+	   document. */
+	var FACE_WORKER_SRC = ''
+		+ 'var D = null;'
+		+ 'onmessage = function (e) {'
+		+ '  var m = e.data;'
+		+ '  if (m.u) {'
+		+ '    try {'
+		+ '      importScripts(m.u);'
+		+ '      var V = self.Vision;'
+		+ '      V.FilesetResolver.forVisionTasks(m.w).then(function (fs) {'
+		+ '        return V.FaceDetector.createFromOptions(fs, {'
+		+ '          baseOptions: { modelAssetPath: m.m, delegate: "CPU" },'
+		+ '          runningMode: "IMAGE", minDetectionConfidence: 0.4'
+		+ '        });'
+		+ '      }).then(function (d) { D = d; postMessage("+"); })'
+		+ '        .catch(function () { postMessage("!"); });'
+		+ '    } catch (err) { postMessage("!"); }'
+		+ '    return;'
+		+ '  }'
+		+ '  var b = m.b;'
+		+ '  var r = "";'
+		+ '  if (D && b) {'
+		+ '    try {'
+		+ '      var out = D.detect(b);'
+		+ '      var ds = (out && out.detections) ? out.detections : [];'
+		+ '      var best = null;'
+		+ '      for (var i = 0; i < ds.length; i++) {'
+		+ '        var bb = ds[i].boundingBox;'
+		+ '        if (!bb) { continue; }'
+		+ '        if (!best || bb.width * bb.height > best.width * best.height) { best = bb; }'
+		+ '      }'
+		+ '      if (best) { r = best.originX + "," + best.originY + "," + best.width + "," + best.height; }'
+		+ '    } catch (err2) { r = ""; }'
+		+ '  }'
+		+ '  if (b && b.close) { b.close(); }'
+		+ '  postMessage(r);'
+		+ '};';
+
+	function faceUrl(rel) {
+		try { return new URL(FACE_DIR + rel, document.baseURI).href; } catch (e) { return FACE_DIR + rel; }
+	}
+
+	/* Called from the first `paint()` that has a real frame, which is the whole
+	   of the lazy-load rule: `paint()` only ever runs inside a room, with the
+	   camera granted and the styled canvas live, so a player who never presses
+	   Camera never asks for a byte of this. A rung-3 verdict is FINAL — a 404 or
+	   a missing `Worker` will not fix itself, and retrying would be a 9.5 MB
+	   request per paint. */
+	function faceStart() {
+		if (S.faceState !== 0) { return 0; }
+		/* THE FREE RUNG. `fastMode` is BlazeFace's own trade in the platform's
+		   spelling: one nearby face, quickly. `faceNoNative` is set once this
+		   browser has PROVED it cannot really do it — see `faceNativeFailed`. */
+		if (S.faceNoNative !== 1 && typeof FaceDetector !== 'undefined') {
+			try {
+				S.faceNative = new FaceDetector({ fastMode: true, maxDetectedFaces: 1 });
+				S.faceState = 4;
+				return 1;
+			} catch (e) { S.faceNative = null; }
+		}
+		if (typeof Worker === 'undefined' || typeof Blob === 'undefined'
+			|| typeof createImageBitmap === 'undefined'
+			|| !window.URL || !window.URL.createObjectURL) {
+			S.faceState = 3;
+			return 0;
+		}
+		var w = null;
+		try {
+			var url = window.URL.createObjectURL(new Blob([FACE_WORKER_SRC], { type: 'text/javascript' }));
+			w = new Worker(url);
+			window.URL.revokeObjectURL(url);
+		} catch (e2) { w = null; }
+		if (!w) {
+			S.faceState = 3;
+			return 0;
+		}
+		w.onmessage = function (ev) { faceMessage(String(ev.data)); };
+		/* A throw the worker's own try/catch never sees arrives here instead, and
+		   it is the same verdict: this browser gets the centre crop. */
+		w.onerror = function () { S.faceState = 3; };
+		S.faceW = w;
+		S.faceState = 1;
+		w.postMessage({
+			u: faceUrl('vision_bundle.js'),
+			w: faceUrl('wasm'),
+			m: faceUrl('blaze_face_short_range.tflite')
+		});
+		return 1;
+	}
+
+	function faceMessage(s) {
+		if (s === '+') {
+			S.faceState = 2;
+			return 1;
+		}
+		if (s === '!') {
+			/* Order matters: `faceStop()` resets the rung to 0 so a fresh camera
+			   session may try again, and this verdict has to survive it. */
+			faceStop();
+			S.faceState = 3;
+			return 0;
+		}
+		S.faceBusy = 0;
+		S.faceMs = styleNow() - S.faceSent;
+		return faceSeen(s);
+	}
+
+	/* 'x,y,w,h' in SOURCE pixels -> where the crop should aim. One parser for
+	   both detector rungs: the platform's `DOMRect` is formatted into the same
+	   string rather than given a second reader. */
+	function faceSeen(s) {
+		if (!s) { return 0; }
+		var p = s.split(',');
+		if (p.length !== 4) { return 0; }
+		var x = Number(p[0]);
+		var y = Number(p[1]);
+		var w = Number(p[2]);
+		var h = Number(p[3]);
+		if (!isFinite(x) || !isFinite(y) || !(w > 0) || !(h > 0)) { return 0; }
+		/* The LONGER side, so a box that is taller than it is wide still contains
+		   the whole head once it is squared off. */
+		S.faceTarget = [x + w / 2, y + h / 2, (w > h ? w : h) * FACE_ZOOM];
+		S.faceHit = styleNow();
+		return 1;
+	}
+
+	/* A RUNG THAT FAILS MUST FALL THROUGH, NOT TRAP (codex review 2026-09-06).
+	   `new FaceDetector()` can SUCCEED on a browser whose platform backend is
+	   missing and then reject every `detect()` with `NotSupportedError` — Chromium
+	   with the flag on and no OS detector under it. Merely clearing `faceBusy`
+	   there left `faceState` on rung 4 for the life of the room, so the vendored
+	   detector was never loaded and the player kept the centre crop: the exact
+	   outcome this bead exists to remove, on a browser that could have done it.
+
+	   So the first native failure retires the rung for this browser — `faceNoNative`
+	   is deliberately NOT cleared by `faceStop`, because a missing backend is a
+	   property of the browser and not of the room — and re-enters `faceStart`,
+	   which now picks the worker. Falling through on the FIRST failure (rather than
+	   after a run of them) costs at most one 3.5 MB download on a browser that
+	   merely hiccuped, and can only ever move to the rung that actually ships. */
+	function faceNativeFailed() {
+		S.faceNative = null;
+		S.faceNoNative = 1;
+		S.faceState = 0;
+		S.faceBusy = 0;
+		return faceStart();
+	}
+
+	/* Rung 4. Async like the worker and rate-limited by the same clock, so the
+	   two are one cadence and one set of numbers.
+
+	   BOTH CALLBACKS ARE GATED ON THE DETECTOR THEY WERE ASKED OF (codex review
+	   2026-09-06), and that is `S.gen`'s reasoning one promise along: a `detect()`
+	   is in flight for as long as it likes, so it routinely outlives the camera it
+	   was asked for. `faceStop()` nulls `S.faceNative`, so a completion that lands
+	   after teardown finds `d !== S.faceNative` and does nothing. Without it a late
+	   REJECTION reached `faceNativeFailed()` and started a whole MediaPipe worker —
+	   a 12 MB download — with the camera off, and a late RESOLVE wrote a face
+	   target the NEXT session would lerp toward for FACE_LOST_MS. Measured on a
+	   deferred-rejection harness: a live worker was created after `faceStop()`. */
+	function faceNativeTick(v, now) {
+		var d = S.faceNative;
+		S.faceAt = now;
+		S.faceBusy = 1;
+		S.faceSent = now;
+		try {
+			d.detect(v).then(function (list) {
+				if (d !== S.faceNative) { return; }
+				S.faceBusy = 0;
+				S.faceMs = styleNow() - S.faceSent;
+				var best = null;
+				for (var i = 0; i < list.length; i++) {
+					var b = list[i].boundingBox;
+					if (!b) { continue; }
+					if (!best || b.width * b.height > best.width * best.height) { best = b; }
+				}
+				if (best) { faceSeen(best.x + ',' + best.y + ',' + best.width + ',' + best.height); }
+			}).catch(function () {
+				if (d !== S.faceNative) { return; }
+				faceNativeFailed();
+			});
+		} catch (e) { faceNativeFailed(); }
+		return 1;
+	}
+
+	/* One dispatch per FACE_PERIOD_MS, and never two in flight: a detector that
+	   fell behind must drop frames rather than queue them, or a slow machine
+	   would aim the crop at where the head was a second ago. */
+	function faceTick(v) {
+		if (S.faceState === 0) { faceStart(); }
+		var now = styleNow();
+		if (S.faceBusy === 1 || now - S.faceAt < FACE_PERIOD_MS) { return 0; }
+		if (S.faceState === 4) { return faceNativeTick(v, now); }
+		if (S.faceState !== 2) { return 0; }
+		S.faceAt = now;
+		S.faceBusy = 1;
+		S.faceSent = now;
+		var t0 = now;
+		try {
+			createImageBitmap(v).then(function (b) {
+				var t1 = styleNow();
+				if (!S.faceW) {
+					if (b.close) { b.close(); }
+					S.faceBusy = 0;
+					return;
+				}
+				S.faceW.postMessage({ b: b }, [b]);
+				S.faceMainMs = S.faceMainMs + (styleNow() - t1);
+			}).catch(function () { S.faceBusy = 0; });
+		} catch (e) { S.faceBusy = 0; }
+		/* The synchronous share, assigned before the continuation above adds its
+		   own — which runs strictly later, being a promise callback. */
+		S.faceMainMs = styleNow() - t0;
+		return 1;
+	}
+
+	/* WHERE THE CROP ACTUALLY IS, and every rung of the ladder comes out of this
+	   one function: with no target, a stale one, or a detector that never
+	   answered, `cx/cy/side` are the MVP's centre square to the pixel.
+
+	   Clamped AFTER the lerp rather than before it, so the box that is drawn is
+	   always inside the source even while it is still travelling toward a target
+	   that hangs over the edge. */
+	function cropBox(vw, vh, now) {
+		var full = vw < vh ? vw : vh;
+		var cx = vw / 2;
+		var cy = vh / 2;
+		var side = full;
+		var t = S.faceTarget;
+		if (t && now - S.faceHit <= FACE_LOST_MS) {
+			cx = t[0];
+			cy = t[1];
+			side = t[2];
+			if (side < FACE_MIN_SIDE) { side = FACE_MIN_SIDE; }
+			if (side > full) { side = full; }
+		}
+		var b = S.faceBox;
+		if (!b) {
+			b = [cx, cy, side];
+			S.faceBox = b;
+		} else {
+			var dt = now - S.faceLerpAt;
+			if (!(dt > 0)) { dt = 0; }
+			/* A tab that was hidden for a minute must not lerp for a minute; one
+			   second of catch-up is already a complete transition at this tau. */
+			if (dt > 1000) { dt = 1000; }
+			var a = 1 - Math.exp(-dt / FACE_LERP_TAU_MS);
+			b[0] = b[0] + (cx - b[0]) * a;
+			b[1] = b[1] + (cy - b[1]) * a;
+			b[2] = b[2] + (side - b[2]) * a;
+		}
+		S.faceLerpAt = now;
+		var s = b[2];
+		if (s > full) { s = full; }
+		var x = b[0] - s / 2;
+		var y = b[1] - s / 2;
+		if (x < 0) { x = 0; }
+		if (y < 0) { y = 0; }
+		if (x + s > vw) { x = vw - s; }
+		if (y + s > vh) { y = vh - s; }
+		return [x, y, s];
+	}
+
+	/* Torn down with the styled canvas, because the detector exists only to aim
+	   its crop. The vendored files stay in the browser's HTTP cache, so a camera
+	   toggled off and on again costs four conditional requests and no megabytes. */
+	function faceStop() {
+		if (S.faceW) {
+			try { S.faceW.terminate(); } catch (e) { }
+			S.faceW = null;
+		}
+		S.faceNative = null;
+		S.faceState = 0;
+		S.faceBusy = 0;
+		S.faceAt = 0;
+		S.faceSent = 0;
+		S.faceMs = 0;
+		S.faceMainMs = 0;
+		S.faceHit = 0;
+		S.faceLerpAt = 0;
+		S.faceBox = null;
+		S.faceTarget = null;
+		return 1;
+	}
+
+	/* ------------------------------------------------------------------------
+	   THE HERO ACCESSORY (bead godot-test1-xtr.13)
+	   ------------------------------------------------------------------------
+	   "look similar to a character he is playing" — the last of the three
+	   follow-ups, and the one that makes a tinted face read as THAT hero at 92 px.
+	   The tint (bead .11) says which palette you are in; the ACCESSORY says who
+	   you are, because at tile size a hue is a mood and a shape is a name.
+
+	   THE ART IS THE FOUR SHIPPED PORTRAITS and the owner's ruling of 2026-09-06
+	   settles what each one is: `assets/portraits/windman.png` is a blue BLINDFOLD
+	   band with a red mark across the eyes, `primm.png` cyan VISOR GOGGLES,
+	   `teibi.png` a dark BERET on the crown, `phoboman.png` a glass FISHBOWL
+	   HELMET around the whole head. (The owner's original message said "Windman's
+	   goggles, Primm's beret, Teibi's helmet"; the pictures disagree and the
+	   ruling is that the pictures win.)
+
+	   DRAWN CLEAN, AFTER THE POSTERIZE (owner ruling, same day). The stylize pass
+	   is `putImageData`; this runs after it, so Primm's cyan stays cyan and the
+	   ink edges of the face do not cut the visor into bands. Under the pass would
+	   have been one line further up and reads worse at 92 px — the accessory is
+	   the thing that has to survive the downscale.
+
+	   VECTOR fillRects AND TWO ARCS, NOT PNGs. The bead offered four data-URI
+	   PNGs; four `<img>` loads with their own ready state, ~40 KB of base64 in
+	   this string and four committed source files buy nothing a dozen rects do
+	   not, and they cannot follow the face box for free the way a parameterised
+	   shape does. The colours are rgb TRIPLES like `STYLE_INK`/`STYLE_BONE`, never
+	   hex (`hero_hud_selfcheck` check 8), and they are SEMANTIC identity art in
+	   `hero_hud.HERO_COLORS`' own sense rather than film-palette colours — the
+	   ink and the highlight are the palette's.
+
+	   REGISTERED ON THE FACE BOX the tracker already provides (bead .12), so it
+	   follows the head. With no detector — the centre-crop rung — `S.faceBox` IS
+	   the centre square, so the same arithmetic lands the accessory on the
+	   crop's implied face and there is no second code path to keep in step. */
+	var ACC_WINDMAN_BAND = [74, 111, 165];
+	var ACC_WINDMAN_MARK = [193, 57, 47];
+	var ACC_PRIMM_FRAME = [46, 74, 84];
+	var ACC_PRIMM_LENS = [128, 232, 224];
+	var ACC_TEIBI_BERET = [43, 50, 69];
+	var ACC_PHOBO_RIM = [207, 214, 218];
+
+	/* WHERE THE FACE IS ON THE 128 px CANVAS, as [cx, cy, side] — the detected
+	   face, not the crop: `S.faceBox` is the LERPED crop box and the crop is
+	   `FACE_ZOOM` times the face, so dividing it back out is the whole mapping.
+	   Off the lerped box rather than the raw target so the accessory travels with
+	   the picture instead of snapping ahead of it. */
+	function faceOnCanvas(box) {
+		var n = STYLE_SIZE;
+		var b = S.faceBox;
+		if (!b || !(box[2] > 0)) { return [n / 2, n / 2, n / FACE_ZOOM]; }
+		return [
+			(b[0] - box[0]) / box[2] * n,
+			(b[1] - box[1]) / box[2] * n,
+			(b[2] / FACE_ZOOM) / box[2] * n
+		];
+	}
+
+	/* A blue band across the eyes with the red mark in the middle of it, inked
+	   all round so it reads against a face of any brightness. */
+	function accWindman(r, g) {
+		var cx = r[0], cy = r[1], s = r[2];
+		var w = s * 1.12, h = s * 0.20;
+		var x = cx - w / 2, y = cy - s * 0.5 + s * 0.24;
+		g.fillStyle = rgb(STYLE_INK);
+		g.fillRect(x - s * 0.02, y - s * 0.02, w + s * 0.04, h + s * 0.04);
+		g.fillStyle = rgb(ACC_WINDMAN_BAND);
+		g.fillRect(x, y, w, h);
+		g.fillStyle = rgb(ACC_WINDMAN_MARK);
+		g.fillRect(cx - w * 0.17, y, w * 0.34, h);
+		return 1;
+	}
+
+	/* A dark strap with two cyan lenses in it: the strap is what makes goggles
+	   read as goggles rather than as a stripe. */
+	function accPrimm(r, g) {
+		var cx = r[0], cy = r[1], s = r[2];
+		var w = s * 1.10, h = s * 0.19;
+		var x = cx - w / 2, y = cy - s * 0.5 + s * 0.25;
+		g.fillStyle = rgb(STYLE_INK);
+		g.fillRect(x, y - s * 0.02, w, h + s * 0.04);
+		g.fillStyle = rgb(ACC_PRIMM_FRAME);
+		g.fillRect(x + w * 0.13, y, w * 0.74, h);
+		g.fillStyle = rgb(ACC_PRIMM_LENS);
+		var lw = w * 0.30, lh = h * 0.58, ly = y + h * 0.21;
+		g.fillRect(cx - w * 0.36, ly, lw, lh);
+		g.fillRect(cx + w * 0.06, ly, lw, lh);
+		return 1;
+	}
+
+	/* ABOVE the face box, which is what "on the crown" means when the box is
+	   brow-to-chin: an ellipse sitting on the top edge, tipped by nothing at all
+	   because a beret that leans is a beret that slides off a moving head.
+
+	   IT SITS AS LOW AS "ON THE CROWN" ALLOWS, and that is measured rather than
+	   taste. The crop is `FACE_ZOOM` (1.8) times the face, so the face box's top
+	   edge lands at 22% of the canvas and everything above it has 28 px to live
+	   in; the first draft put the beret's top at 7 px, and on a detection sitting
+	   even slightly high in frame the hat was clipped by the canvas edge. Its top
+	   is now `0.24 * side` above the box (11 px on a centred face) with the stalk
+	   inside that, so a high detection loses nothing. */
+	function accTeibi(r, g) {
+		var cx = r[0], cy = r[1], s = r[2];
+		var top = cy - s * 0.5;
+		var rx = s * 0.58, ry = s * 0.22;
+		var yc = top - s * 0.02;
+		g.fillStyle = rgb(ACC_TEIBI_BERET);
+		g.strokeStyle = rgb(STYLE_INK);
+		g.lineWidth = Math.max(1, s * 0.03);
+		g.beginPath();
+		g.ellipse(cx, yc, rx, ry, 0, 0, Math.PI * 2);
+		g.fill();
+		g.stroke();
+		g.fillStyle = rgb(ACC_TEIBI_BERET);
+		g.fillRect(cx - s * 0.03, yc - ry - s * 0.07, s * 0.06, s * 0.09);
+		return 1;
+	}
+
+	/* A ring around the WHOLE head — the one accessory that is not on the face —
+	   plus the BONE highlight that is the only reason it reads as glass rather
+	   than as a hoop. The soup is deliberately not drawn: what is inside the
+	   helmet is the player's own face, which is the whole point of the feature. */
+	function accPhoboman(r, g) {
+		var cx = r[0], cy = r[1], s = r[2];
+		var rad = s * 0.78;
+		var yc = cy - s * 0.06;
+		g.strokeStyle = rgb(ACC_PHOBO_RIM);
+		g.lineWidth = Math.max(2, s * 0.09);
+		g.beginPath();
+		g.arc(cx, yc, rad, 0, Math.PI * 2);
+		g.stroke();
+		g.strokeStyle = rgb(STYLE_INK);
+		g.lineWidth = Math.max(1, s * 0.02);
+		g.beginPath();
+		g.arc(cx, yc, rad + s * 0.055, 0, Math.PI * 2);
+		g.stroke();
+		g.strokeStyle = rgb(STYLE_BONE);
+		g.lineWidth = Math.max(1, s * 0.045);
+		g.beginPath();
+		g.arc(cx, yc, rad * 0.78, Math.PI * 1.10, Math.PI * 1.42);
+		g.stroke();
+		return 1;
+	}
+
+	/* A HERO WITH NO ACCESSORY DRAWS NOTHING AND LOGS NOTHING — `hero_hud`'s "a
+	   missing portrait is not an error" rule, so a fifth `CHARACTERS` entry ships
+	   a tinted face and no console noise until somebody draws it one. A plain
+	   chain of compares rather than a lookup table on purpose: an object keyed by
+	   a name off the wire answers `constructor` and `toString` with functions. */
+	function paintAccessory(box) {
+		var g = S.styleCtx;
+		if (!g) { return 0; }
+		var r = faceOnCanvas(box);
+		if (!(r[2] > 0)) { return 0; }
+		try {
+			if (S.styleHero === 'windman') { return accWindman(r, g); }
+			if (S.styleHero === 'primm') { return accPrimm(r, g); }
+			if (S.styleHero === 'teibi') { return accTeibi(r, g); }
+			if (S.styleHero === 'phoboman') { return accPhoboman(r, g); }
+		} catch (e) { return 0; }
+		return 0;
+	}
+
 	function paint() {
 		var cx = S.styleCtx;
 		var v = S.styleSrc;
@@ -1076,11 +1668,17 @@ const VOICE_JS: String = """
 		var vh = v.videoHeight;
 		/* Nothing decoded yet — the first frames after a grant. */
 		if (!vw || !vh) { return 0; }
+		/* ABOVE `t0` ON PURPOSE (bead godot-test1-xtr.12). `style=` has to keep
+		   meaning exactly what it meant before this bead or the before/after
+		   reading is not a comparison; the detector's own main-thread share is
+		   `fm`, reported beside it. */
+		faceTick(v);
 		var t0 = styleNow();
 		var n = STYLE_SIZE;
-		var side = vw < vh ? vw : vh;
+		/* THE CROP, which is the centre square until a detector says otherwise. */
+		var box = cropBox(vw, vh, now);
 		try {
-			cx.drawImage(v, (vw - side) / 2, (vh - side) / 2, side, side, 0, 0, n, n);
+			cx.drawImage(v, box[0], box[1], box[2], box[2], 0, 0, n, n);
 		} catch (e) { return 0; }
 		var img;
 		try { img = cx.getImageData(0, 0, n, n); } catch (e) { return 0; }
@@ -1121,6 +1719,12 @@ const VOICE_JS: String = """
 			d[k + 2] = d[k + 2] * keep + c[2] * mix;
 		}
 		try { cx.putImageData(img, 0, 0); } catch (e) { return 0; }
+		/* THE HERO ACCESSORY (bead godot-test1-xtr.13), and it is AFTER the
+		   posterize by owner ruling: drawn clean over the inked face, on the same
+		   crop box, so the cyan visor stays cyan and the band edges are not cut
+		   into levels. ABOVE the `paintMs` stamp so `style=` in \fo keeps billing
+		   everything this frame really cost. */
+		paintAccessory(box);
 		S.paintMs = styleNow() - t0;
 		S.paintAt = styleNow();
 		pushFrame();
@@ -1263,6 +1867,7 @@ const VOICE_JS: String = """
 	}
 
 	function styleStop() {
+		faceStop();
 		if (S.styleTimer) { clearInterval(S.styleTimer); S.styleTimer = null; }
 		if (S.styleWatch) { clearInterval(S.styleWatch); S.styleWatch = null; }
 		if (S.styleW) {
@@ -1508,6 +2113,242 @@ const VOICE_JS: String = """
 		return S.tx;
 	}
 
+	/* ------------------------------------------------------------------------
+	   THE RECEIVER / TRANSPORT HEAL LADDER (bead godot-test1-xtr.19)
+	   ------------------------------------------------------------------------
+	   OWNER, 2026-09-06: *"video ... sometimes gets stuck for some of
+	   participants, and there is no way to restart it"*. The SENDER's half of that
+	   is bead .18 (`replaceTrack`, the re-acquisition, the signal-lost card); this
+	   is what a peer does when its OWN end of a pair is dead. Four rungs, in the
+	   order the browser reaches them, and EVERY ONE IS BOUNDED — an unbounded rung
+	   is a re-offer loop, which is precisely the fear the old `failed`-only guard
+	   was written against.
+
+	   R1 A LOST OFFER WEDGES THE PC FOREVER, and there are two silent drop points
+	      on the way: `post()` swallows every failure and `MpCodec.decode_vc` drops
+	      a malformed or oversized payload with a `push_warning` nobody reads. The
+	      PC then sits in `have-local-offer` — `onnegotiationneeded` cannot fire
+	      again, `restartIce()` has nothing to ride, and an IMPOLITE peer treats
+	      every incoming offer as a collision and ignores it. So an offer that goes
+	      unanswered for `HEAL_OFFER_TIMEOUT_MS` is ROLLED BACK: the state returns
+	      to stable and the browser re-evaluates its own negotiation-needed flag and
+	      re-offers. Bounded at `HEAL_OFFER_TRIES_MAX` in a row, then R3.
+	   R2 `disconnected` IS NOW ACTED ON, WHICH REVERSES THE PREVIOUS RULING. It
+	      was left alone as "transient and self-healing", and it is — but Chrome
+	      reaches `failed` only after ICE consent freshness expires (~30 s) and
+	      sometimes never from `disconnected`, so a coturn allocation expiring or a
+	      NAT rebind left a pair silent for the life of the room. The re-offer-loop
+	      fear is answered by the BOUND rather than by ignoring the state: held for
+	      `HEAL_ICE_HOLD_MS`, at most one restart per `HEAL_ICE_COOLDOWN_MS`, at
+	      most `HEAL_ICE_TRIES_MAX` in a row, then R3. `failed` still fires at once.
+	      Counters reset on `connected`/`completed`.
+	   R3 REBUILD ONE PC, ON BOTH ENDS, WITH NO SIGNALLING CHANGE. A one-sided
+	      rebuild does not work: the remote applies the fresh PC's offer to its OLD
+	      PC, whose DTLS fingerprint differs, and `setRemoteDescription` rejects
+	      (swallowed). So the REMOTE detects the rebuild in `recv` off the one thing
+	      it already has — an incoming offer whose `a=fingerprint:` differs from the
+	      one on `pc.remoteDescription` — and rebuilds first, then applies the offer
+	      to a PC that is `stable`. NO new `vc` kind, no `mp_codec` edit, and
+	      `mp_manager`'s seam stays three functions; the fingerprint compare is the
+	      whole reason a `bye`/`reset` verb is not needed.
+	   R4 A PAUSED `<video>` IS ONE LINE. `showVideo` calls `play()` once and
+	      swallows the rejection; an element that pauses later (an autoplay policy
+	      after a srcObject swap, a media suspend) is never kicked again.
+
+	   TARGET: Chrome and Firefox. Safari is a documented ceiling (orchestrator
+	   ruling 2026-09-06) — rollback and `restartIce` are both there, but its ICE
+	   state reporting is its own, and mobile is out of scope for the whole epic. */
+	var HEAL_OFFER_TIMEOUT_MS = 8000;
+	var HEAL_OFFER_TRIES_MAX = 3;
+	var HEAL_ICE_HOLD_MS = 5000;
+	var HEAL_ICE_COOLDOWN_MS = 15000;
+	var HEAL_ICE_TRIES_MAX = 3;
+	/* R3's OWN bound, and it is a floor on the CADENCE rather than a budget: the
+	   rungs above already gate how fast a peer can reach a rebuild (three 8 s
+	   offers, or three restarts 15 s apart), so this only stops the two of them
+	   compounding into a rebuild every few seconds on a link that is simply gone.
+	   It survives the rebuild because the tally does. */
+	var HEAL_REBUILD_COOLDOWN_MS = 30000;
+
+	/* [rollback, ice, rebuild, lastRebuildAt] for one peer, created on demand. */
+	function healOf(id) {
+		var h = S.heal[id];
+		if (!h) { h = [0, 0, 0, 0]; S.heal[id] = h; }
+		return h;
+	}
+
+	function healBump(id, slot) {
+		var h = healOf(id);
+		h[slot] = h[slot] + 1;
+		return h[slot];
+	}
+
+	/* THE RECT SURVIVES THE REBUILD, and that is not a nicety — it is the sticky
+	   change-gate `hideSelf` documents, seen from the remote side. `close()`
+	   deletes `S.tiles[id]`, but GDScript's `_pushed_tiles` still holds the same
+	   fraction; if the fresh track arrives inside one 5 Hz poll window the poll
+	   sees the id in `videoPeers()` again, compares an identical rect and pushes
+	   NOTHING, leaving the browser with no rect and the tile dark for the rest of
+	   the room. Keeping the rect makes GDScript's gate correct instead of wedged —
+	   `placeTile` is refused while `tileLive` is 0, so nothing is shown early. */
+	function healSwap(id) {
+		if (!S.peers[id]) { return 0; }
+		var keep = S.tiles[id];
+		close(id);
+		if (!open(id)) { return 0; }
+		if (keep) { S.tiles[id] = keep; }
+		return 1;
+	}
+
+	/* R3 from OUR side: we gave up on this transport. Rate-limited; the remote
+	   half in `recv` deliberately is not, because by then the other end has
+	   already spent its own budget and refusing would wedge us against a PC that
+	   no longer exists. */
+	function healRebuild(id) {
+		var h = healOf(id);
+		var now = styleNow();
+		if (h[3] && now - h[3] < HEAL_REBUILD_COOLDOWN_MS) { return 0; }
+		if (!healSwap(id)) { return 0; }
+		h[2] = h[2] + 1;
+		h[3] = now;
+		return 1;
+	}
+
+	function healClearOffer(p) {
+		if (p.offerTimer) { clearTimeout(p.offerTimer); }
+		p.offerTimer = null;
+		return 1;
+	}
+
+	/* R1. Armed on every offer we POST and cleared the moment a description comes
+	   back that returns us to `stable` — an answer, or a colliding offer a polite
+	   peer rolled its own back for. */
+	function healArmOffer(id, p, pc) {
+		healClearOffer(p);
+		p.offerTimer = setTimeout(function () {
+			p.offerTimer = null;
+			/* The peer was rebuilt or left while this was armed. */
+			if (S.peers[id] !== p) { return; }
+			if (pc.signalingState !== 'have-local-offer') { return; }
+			p.offerN = p.offerN + 1;
+			if (p.offerN >= HEAL_OFFER_TRIES_MAX) {
+				if (healRebuild(id)) { return; }
+				/* THE REBUILD WAS REFUSED BY ITS COOLDOWN, AND GIVING UP HERE IS
+				   THE ONE THING THIS LADDER MAY NOT DO (codex review 2026-09-06).
+				   Three 8 s timeouts spend the budget in 24 s, which is INSIDE the
+				   30 s rebuild cooldown, so a peer whose offers are still being
+				   lost after one rebuild would return from here having rolled
+				   nothing back and armed nothing — and a PC fresh out of `open()`
+				   sits in `new`, so R2's watch is not running either. That is the
+				   wedge this rung exists to break, re-created by its own bound.
+				   So the budget starts again and the rollback below still runs:
+				   the BOUND is the 8 s cadence, not a number of attempts, and the
+				   next expiry re-asks for the rebuild once the cooldown is out. */
+				p.offerN = 0;
+			}
+			healBump(id, 0);
+			queue(p, function () {
+				if (pc.signalingState !== 'have-local-offer') { return; }
+				return pc.setLocalDescription({ type: 'rollback' }).catch(function () { });
+			});
+		}, HEAL_OFFER_TIMEOUT_MS);
+		return 1;
+	}
+
+	function healClearIce(p) {
+		if (p.iceTimer) { clearTimeout(p.iceTimer); }
+		p.iceTimer = null;
+		p.iceN = 0;
+		p.iceLast = 0;
+		return 1;
+	}
+
+	/* R2's ACT. Refused inside the cooldown — the watch below re-arms, so a
+	   refusal is a wait and never a dead end, which is what "the intent is not
+	   sticky" used to be. */
+	function healIce(id, p, pc) {
+		if (p.iceN >= HEAL_ICE_TRIES_MAX) { return healRebuild(id); }
+		var now = styleNow();
+		if (p.iceLast && now - p.iceLast < HEAL_ICE_COOLDOWN_MS) { return 0; }
+		p.iceLast = now;
+		p.iceN = p.iceN + 1;
+		healBump(id, 1);
+		/* ON THE PEER'S OWN CHAIN, like every other signalling op here, with the
+		   state RE-ASKED once it is our turn: a restart fired across an in-flight
+		   renegotiation is the collision `recv` rolls back, and a connection that
+		   recovered while queued must not be restarted for nothing. */
+		queue(p, function () {
+			var st = pc.iceConnectionState;
+			if (st !== 'failed' && st !== 'disconnected') { return; }
+			try { pc.restartIce(); } catch (e) { }
+		});
+		return 1;
+	}
+
+	/* R2's CLOCK. One self-re-arming timer per peer while the transport is not
+	   healthy, so a state that never changes again (Chrome sitting in
+	   `disconnected` forever) is still walked up the ladder. It stops on its own
+	   the moment the peer recovers, is closed or is rebuilt. */
+	function healIceWatch(id, p, pc) {
+		/* `healIce` above may have REBUILT this peer on its way here, which closed
+		   `p`; arming a clock on a connection nobody holds is five seconds of dead
+		   timer and one more way to reason wrongly about this ladder later. */
+		if (S.peers[id] !== p) { return 0; }
+		if (p.iceTimer) { return 0; }
+		p.iceTimer = setTimeout(function () {
+			p.iceTimer = null;
+			if (S.peers[id] !== p) { return; }
+			var st = pc.iceConnectionState;
+			if (st === 'connected' || st === 'completed' || st === 'closed') { return; }
+			healIce(id, p, pc);
+			if (S.peers[id] === p) { healIceWatch(id, p, pc); }
+		}, HEAL_ICE_HOLD_MS);
+		return 1;
+	}
+
+	/* The `a=fingerprint:` line of an SDP, or '' — the DTLS certificate is per
+	   RTCPeerConnection, so this string changing in a peer's offer means the peer
+	   threw its connection away and built a new one. Every m-section carries the
+	   same one, so the first is the answer. */
+	function sdpFingerprint(sdp) {
+		if (!sdp) { return ''; }
+		var s = String(sdp);
+		var i = s.indexOf('a=fingerprint:');
+		if (i < 0) { return ''; }
+		/* `String.fromCharCode(10)` rather than a newline escape: this whole module
+		   is a GDScript triple-quoted string, which processes escapes of its own,
+		   and one backslash of drift here silently makes every fingerprint compare
+		   read to the end of the SDP. */
+		var j = s.indexOf(String.fromCharCode(10), i);
+		return (j < 0 ? s.substr(i) : s.substring(i, j)).trim();
+	}
+
+	/* R3's REMOTE HALF. `!was` is "our PC is fresh" — nothing has been applied to
+	   it yet, so there is nothing to have changed and two ends that rebuilt at the
+	   same moment do not chase each other. */
+	function healRemoteRebuilt(p, sdp) {
+		var rd = p.pc.remoteDescription;
+		if (!rd) { return 0; }
+		var was = sdpFingerprint(rd.sdp);
+		var now = sdpFingerprint(sdp);
+		if (!was || !now) { return 0; }
+		return was === now ? 0 : 1;
+	}
+
+	/* R4. A `<video>` that paused after its one `play()` shows its last frame
+	   forever with a perfectly healthy track behind it. Asked on the 1 Hz sampler
+	   that already walks every peer; `retry()` arms the same one-shot gesture
+	   listener a blocked `<audio>` uses. */
+	function healPaused() {
+		for (var k in S.peers) {
+			var p = S.peers[k];
+			if (p.hasVideo !== 1 || !p.video || !p.video.paused) { continue; }
+			var pr = p.video.play();
+			if (pr && pr.catch) { pr.catch(function () { retry(); }); }
+		}
+		return 1;
+	}
+
 	function flush(id) {
 
 		var p = S.peers[id];
@@ -1533,7 +2374,12 @@ const VOICE_JS: String = """
 			   the sampler can answer a DELTA — which is the number that means "is
 			   the picture moving". -1 is "never sampled", which must not read as a
 			   frame drop on the first sample. */
-			vinPrev: -1, voutPrev: -1, vinZero: 0, stalled: 0
+			vinPrev: -1, voutPrev: -1, vinZero: 0, stalled: 0,
+			/* THE HEAL LADDER'S PER-CONNECTION STATE (bead godot-test1-xtr.19).
+			   `offerTimer`/`offerN` are R1's; `iceTimer`/`iceN`/`iceLast` are R2's.
+			   All five belong to THIS `RTCPeerConnection` and are meant to die with
+			   it — the counts that have to survive a rebuild live in `S.heal`. */
+			offerTimer: null, offerN: 0, iceTimer: null, iceN: 0, iceLast: 0
 		};
 		S.peers[id] = p;
 
@@ -1542,6 +2388,11 @@ const VOICE_JS: String = """
 				p.making = 1;
 				return pc.setLocalDescription().then(function () {
 					post(id, { vc: pc.localDescription.type, sdp: pc.localDescription.sdp });
+					/* R1: the relay is best-effort and `post()` swallows every
+					   failure, so an offer that is never answered is armed to roll
+					   itself back rather than wedging this PC in
+					   `have-local-offer` for the life of the room. */
+					if (pc.localDescription.type === 'offer') { healArmOffer(id, p, pc); }
 				}).catch(function () { }).then(function () { p.making = 0; });
 			});
 		};
@@ -1561,16 +2412,25 @@ const VOICE_JS: String = """
 
 		/* A DEAD TRANSPORT REBUILDS ITSELF. A NAT/UDP rebind, a coturn allocation
 		   expiring against the 12-per-user quota, or a path break the lobby's TCP
-		   socket rides out, all drop the PC to `failed` — and nothing else here
-		   would ever notice: `members()` only closes a PC when the id LEAVES the
-		   room, so a still-listed, still-un-muted peer stays silent for the life
-		   of the room. `restartIce()` fires `onnegotiationneeded`, which the
-		   perfect-negotiation queue above already turns into a fresh offer over
-		   the existing "vc" relay — no new signalling kind, no new PC, no timer
-		   loop. Both ends may fire it at once; polite/impolite resolves the glare.
-		   `disconnected` is deliberately NOT acted on: it is the transient state
-		   that recovers by itself, and restarting on every blip is a re-offer
-		   loop.
+		   socket rides out, all drop the PC to `disconnected` and eventually to
+		   `failed` — and nothing else here would ever notice: `members()` only
+		   closes a PC when the id LEAVES the room, so a still-listed, still-un-muted
+		   peer stays silent for the life of the room. `restartIce()` fires
+		   `onnegotiationneeded`, which the perfect-negotiation queue above already
+		   turns into a fresh offer over the existing "vc" relay — no new signalling
+		   kind and no new PC. Both ends may fire it at once; polite/impolite
+		   resolves the glare.
+
+		   `disconnected` IS ACTED ON SINCE BEAD godot-test1-xtr.19, WHICH REVERSES
+		   WHAT USED TO BE WRITTEN HERE. The old rule — "the transient state that
+		   recovers by itself, and restarting on every blip is a re-offer loop" —
+		   is true of the blip and false of the case the owner reported: Chrome
+		   reaches `failed` only when ICE consent freshness expires (~30 s) and
+		   sometimes never leaves `disconnected` at all, so a whole class of dead
+		   pair sat silent forever under a handler that was watching the wrong
+		   state. The loop it feared is answered by R2's BOUNDS (a 5 s hold, one
+		   restart per 15 s, three in a row, then a rebuild) rather than by
+		   declining to look. `failed` still acts immediately.
 
 		   NOT the whole of "my Wi-Fi dropped": a real interface handover changes
 		   the IP and kills the lobby WEBSOCKET, and `lobby_client` has no
@@ -1578,28 +2438,22 @@ const VOICE_JS: String = """
 		   That race is usually lost to TCP long before ICE gives up, so the cases
 		   that actually reach here are the three named above.
 
-		   ON THE PEER'S OWN CHAIN, like every other signalling op in this file,
-		   with the state RE-ASKED once it is our turn: a restart fired across an
-		   in-flight renegotiation is the collision `recv` rolls back, and a
-		   connection that recovered while queued must not be restarted for
-		   nothing.
-
-		   ponytail: ICE only, and the intent is NOT sticky. `restartIce()` spends
-		   its credentials-to-replace slot on the offer it triggers, so if that
-		   offer is rolled back by a colliding ORDINARY one (a camera toggle, a
-		   late mic grant) or is simply lost — `post()` swallows every failure —
-		   nothing re-arms it and that pair is left exactly where it was before
-		   this handler existed. Same for a DTLS-level
-		   `connectionState === 'failed'`, whose fallback is the shipped
-		   close(id)/open(id) pair from the OFFERER alone. Both are strictly
-		   better than the status quo and neither is worth a timer until one is
-		   actually seen. */
+		   `connectionState === 'failed'` (DTLS rather than ICE) is deliberately
+		   still not hooked, and that is not an omission: a DTLS failure takes the
+		   ICE state with it, so R2's watch already walks this pair to R3 — which
+		   is the rebuild the old comment named as a fallback and nothing
+		   implemented. One clock, not two. */
 		pc.oniceconnectionstatechange = function () {
-			if (pc.iceConnectionState !== 'failed') { return; }
-			queue(p, function () {
-				if (pc.iceConnectionState !== 'failed') { return; }
-				try { pc.restartIce(); } catch (e) { }
-			});
+			var st = pc.iceConnectionState;
+			if (st === 'connected' || st === 'completed') { healClearIce(p); return; }
+			if (st === 'failed') { healIce(id, p, pc); healIceWatch(id, p, pc); return; }
+			if (st === 'disconnected') { healIceWatch(id, p, pc); return; }
+			/* `new` / `checking` / `closed` are left alone ON PURPOSE. Clearing the
+			   counters here would be the hole, not the tidy-up: `restartIce()` puts
+			   the transport straight into `checking`, so a reset there hands every
+			   restart a fresh budget and the bound this rung is built on stops
+			   existing. The watch below re-asks the state on its own clock and stops
+			   itself on `closed`. */
 		};
 
 		/* KIND-GUARDED, which is what lets an OLD build ignore a camera it does not
@@ -1635,6 +2489,12 @@ const VOICE_JS: String = """
 		var p = S.peers[id];
 		if (!p) { return 0; }
 		if (p.timer) { clearTimeout(p.timer); }
+		/* The heal ladder's two clocks belong to this connection and must not
+		   outlive it (bead godot-test1-xtr.19): both callbacks re-check
+		   `S.peers[id] !== p` and would do nothing, but a rebuild leaves them
+		   ticking against a PC nobody holds for another eight seconds. */
+		healClearOffer(p);
+		healClearIce(p);
 		unmeter(p.meter);
 		if (p.audio) {
 			p.audio.srcObject = null;
@@ -1693,7 +2553,9 @@ const VOICE_JS: String = """
 		var want = {};
 		var i;
 		for (i = 0; i < ids.length; i++) { want[ids[i]] = 1; }
-		for (var k in S.peers) { if (!want[k]) { close(k); } }
+		/* A LEAVE DROPS THE HEAL TALLY, A REBUILD DOES NOT — that difference is the
+		   whole reason `S.heal` is keyed by id rather than held on the peer row. */
+		for (var k in S.peers) { if (!want[k]) { close(k); delete S.heal[k]; } }
 		for (i = 0; i < ids.length; i++) { open(ids[i]); }
 		return 1;
 	}
@@ -1704,6 +2566,18 @@ const VOICE_JS: String = """
 		if (!S.peers[id]) { open(id); }
 		var p = S.peers[id];
 		if (!p) { return 0; }
+		/* R3's REMOTE HALF (bead godot-test1-xtr.19), and it happens SYNCHRONOUSLY
+		   rather than inside the queued job below: the swap replaces `p.q`, so
+		   deciding it on the chain would leave this description on the OLD chain
+		   while the next ICE batch went to the new one and arrived first. Deciding
+		   it here keeps every job for this peer in arrival order on one chain.
+		   Nothing is signalled — the peer rebuilt, and its new certificate says so
+		   in the offer it already sends. */
+		if (m.vc === 'offer' && healRemoteRebuilt(p, m.sdp) === 1) {
+			if (!healSwap(id)) { return 0; }
+			p = S.peers[id];
+			healBump(id, 2);
+		}
 		if (m.vc === 'ice') {
 			queue(p, function () {
 				var jobs = [];
@@ -1727,6 +2601,25 @@ const VOICE_JS: String = """
 				return p.pc.setLocalDescription().then(function () {
 					post(id, { vc: p.pc.localDescription.type, sdp: p.pc.localDescription.sdp });
 				});
+			}).then(function () {
+				/* R1's DISARM, and it is keyed on the STATE rather than on the
+				   packet: whatever just happened, being back at `stable` means the
+				   negotiation this timer was watching is over and `offerN` — the
+				   count of CONSECUTIVE unanswered offers — starts again.
+
+				   IT SITS AFTER THE ANSWER, NOT AFTER THE REMOTE DESCRIPTION
+				   (codex review 2026-09-06). An incoming OFFER leaves us in
+				   `have-remote-offer`, so a disarm on the first `then` skipped
+				   every glare a polite peer resolved: the timer that our own
+				   rolled-back offer had armed kept counting, and unanswered
+				   timeouts SEPARATED by perfectly successful remote-initiated
+				   negotiations added up until the third one tore a healthy
+				   connection down. A failure rejects before this runs, so nothing
+				   is cleared on the path that should still be counted. */
+				if (p.pc.signalingState === 'stable') {
+					healClearOffer(p);
+					p.offerN = 0;
+				}
 			});
 		});
 		return 1;
@@ -1759,7 +2652,7 @@ const VOICE_JS: String = """
 	   has not answered yet print the same KEYS as a live sample. A row whose keys
 	   appear and disappear is a row nobody can read at a glance. */
 	function noVideo() {
-		return { ice: [], con: [], sig: [], sdp: [], vin: [], vout: [] };
+		return { ice: [], con: [], sig: [], sdp: [], vin: [], vout: [], heal: [] };
 	}
 
 	function formatStats(ns, ec, agc, peerKeys, rtts, totalLost, totalRecv, vid) {
@@ -1794,7 +2687,24 @@ const VOICE_JS: String = """
 		var videoStr = ' ice=' + column(vid2.ice) + ' con=' + column(vid2.con)
 			+ ' sig=' + column(vid2.sig) + ' sdp=' + column(vid2.sdp)
 			+ ' vin=' + column(vid2.vin) + ' vout=' + column(vid2.vout)
-			+ ' paint=' + paintAge() + ' src=' + srcState();
+			/* WHICH RUNG OF THE HEAL LADDER FIRED (bead godot-test1-xtr.19), per
+			   peer in `peerKeys` order and in the ladder's own order:
+			   `rollback:ice:rebuild`. It is a running TALLY rather than an event,
+			   because \fo is polled and a one-frame flash is a thing nobody sees;
+			   the counts survive a rebuild because `S.heal` is keyed by lobby id
+			   and the peer row is not. `0:0:0` for a pair that has never needed
+			   healing, which is what a healthy room reads. */
+			+ ' heal=' + column(vid2.heal)
+			+ ' paint=' + paintAge() + ' src=' + srcState()
+			/* THE FACE DETECTOR'S BILL (bead godot-test1-xtr.12), and it is THREE
+			   numbers because one would hide the answer. `face=` is the round
+			   trip — inference included, and on rung 2 that is the WORKER's
+			   thread; `f` is which rung of the ladder this browser landed on
+			   (0 not asked, 1 loading, 2 vendored worker, 3 centre crop for good,
+			   4 the platform's own); `fm` is what Godot's frame actually paid,
+			   which is one `createImageBitmap` and one transfer at 3.3 Hz. */
+			+ ' face=' + S.faceMs.toFixed(1) + 'ms f' + S.faceState
+			+ ' fm' + S.faceMainMs.toFixed(2);
 		return 'ns=' + ns + ' ec=' + ec + ' agc=' + agc + ' peers=' + peerCount + ' ' + rttStr + ' ' + lossStr + ' ' + styleStr + videoStr;
 	}
 
@@ -1918,6 +2828,8 @@ const VOICE_JS: String = """
 				vid.sdp.push((pv.pc && pv.pc.localDescription) ? pv.pc.localDescription.sdp.length : 0);
 				vid.vin.push(dIn >= 0 ? dIn : '-');
 				vid.vout.push(dOut >= 0 ? dOut : '-');
+				var hp = healOf(peerKeys[i]);
+				vid.heal.push(hp[0] + ':' + hp[1] + ':' + hp[2]);
 			}
 
 			S.statsCache = formatStats(lc.ns, lc.ec, lc.agc, peerKeys, rtts, totalLost, totalRecv, vid);
@@ -1944,6 +2856,11 @@ const VOICE_JS: String = """
 		if (!S.statsSampling && (now - S.statsLastTime >= 1000 || !S.statsLastTime)) {
 			S.statsSampling = 1;
 			S.statsLastTime = now;
+			/* R4 (bead godot-test1-xtr.19) rides this throttle rather than a clock
+			   of its own: it is the one loop in the module that already walks every
+			   peer once a second for the life of a room. Inside the gate, not above
+			   it — `videoPeers()` calls this at 5 Hz. */
+			healPaused();
 			sampleStats();
 		}
 		return 1;
@@ -1979,6 +2896,10 @@ const VOICE_JS: String = """
 		   are about YOU and survive to the next room, all three being session
 		   state that nothing ever persists. */
 		S.muted = {};
+		/* AND SO DOES THE HEAL TALLY (bead godot-test1-xtr.19): it is keyed by
+		   lobby id, and a rejoin gets a fresh one — a count carried into the next
+		   room would report healing that never happened in it. */
+		S.heal = {};
 		unmeter(S.meterSelf);
 		S.meterSelf = null;
 		for (var k in S.peers) { close(k); }
@@ -2027,11 +2948,19 @@ const VOICE_JS: String = """
 		stats: stats,
 		setCamera: function (v) { S.camWant = flag(v); return camera(S.camWant); },
 		camState: function () { return S.camState; },
-		/* THE HERO TINT (bead godot-test1-xtr.11). Three 0-255 channels rather
-		   than a hero NAME, so `hero_hud.HERO_COLORS` stays the one table: a name
-		   would need a second copy of it here, in a language that cannot read it. */
-		setStyleTint: function (r, g, b) {
+		/* THE HERO'S IDENTITY (bead godot-test1-xtr.11, plus the NAME since bead
+		   godot-test1-xtr.13). Three 0-255 channels rather than a hero name for
+		   the TINT, so `hero_hud.HERO_COLORS` stays the one table: a name would
+		   need a second copy of it here, in a language that cannot read it. The
+		   name rides along anyway because the ACCESSORY is a SHAPE, which no
+		   colour can name and no GDScript table can hold — and it is a fourth
+		   ARGUMENT rather than a second bridge function because the one writer,
+		   `_push_style_tint`, is already change-gated on exactly this hero. An
+		   older caller passing three arguments leaves it `undefined`, which draws
+		   no accessory and tints as before. */
+		setStyleTint: function (r, g, b, hero) {
 			S.styleTint = [chan(r), chan(g), chan(b)];
+			S.styleHero = (typeof hero === 'string') ? hero : '';
 			return rebuildRamp();
 		},
 		/* THE STRENGTH KNOBS (bead godot-test1-xtr.16), driven from the browser
@@ -3132,7 +4061,14 @@ func _push_style_tint(hud: Node) -> void:
 		return
 	_pushed_tint_hero = hero
 	var tint: Color = _hero_tint(hud, hero)
-	_ck.setStyleTint(int(tint.r8), int(tint.g8), int(tint.b8))
+	# AND THE NAME WITH IT (bead godot-test1-xtr.13). The ACCESSORY the browser
+	# draws over the face — Windman's blindfold, Primm's goggles, Teibi's beret,
+	# Phoboman's fishbowl — is a SHAPE, which no colour can name and no table on
+	# this side can hold. It is a fourth ARGUMENT rather than a second bridge
+	# function because this is already the one writer and it is already gated on
+	# exactly this hero: a swap (R, or a capture reassignment) repaints the
+	# accessory on the next 5 Hz poll and renegotiates nothing.
+	_ck.setStyleTint(int(tint.r8), int(tint.g8), int(tint.b8), hero)
 
 
 func _hero_tint(hud: Node, hero: String) -> Color:

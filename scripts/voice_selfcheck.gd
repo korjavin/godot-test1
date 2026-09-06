@@ -75,6 +75,15 @@ extends SceneTree
 ##     written as rgb triples so that grep does not fire — so it is bound here by
 ##     value instead.
 ##
+## 6f. **THE FACE CROP'S VENDORING** (bead `godot-test1-xtr.12`). The detector's
+##     worst failure is the invisible one: a vendored file lost, a url renamed or
+##     the `build.yml` copy deleted all land on the centre crop, which is the MVP
+##     and looks like a working game. So every `faceUrl()` in the module is
+##     checked against the tree, the licence is checked beside it, `build.yml` is
+##     read for the copy AND its assertion, and `cropBox` is read for the centre
+##     square that IS the fallback rung. The arithmetic is deliberately not here
+##     — a wrong lerp shows up in one glance at a tile.
+##
 ##  7. **INERT OFF-WEB.** Every public method called on a real node on a build
 ##     with no bridge at all: an unguarded `JavaScriptBridge` touch is a
 ##     `SCRIPT ERROR`, which CI treats as red, and a runtime error would abort
@@ -114,6 +123,10 @@ const VoiceChat := preload("res://scripts/voice_chat.gd")
 const HelpOverlay := preload("res://scripts/help_overlay.gd")
 const CityMapSelfcheck: GDScript = preload("res://scripts/city_map_selfcheck.gd")
 const IntroSelfcheck: GDScript = preload("res://scripts/intro_selfcheck.gd")
+## The roster the hero accessories (bead `godot-test1-xtr.13`) are bound to. The
+## SCRIPT, never an instance: `CHARACTERS` is a const and nothing here needs a
+## body to ask it.
+const PlayerScript: GDScript = preload("res://scripts/player_controller.gd")
 
 ## The action the whole of bead `godot-test1-xtr.2` hangs off.
 const MIC_ACTION: StringName = &"voice_mic"
@@ -163,6 +176,7 @@ func _initialize() -> void:
 	_check_ice_restart()
 	_check_video_health()
 	_check_sender_heal()
+	_check_face_crop()
 	_check_inert_offweb()
 	_check_always_process()
 	_check_debug_line_in_a_room()
@@ -829,6 +843,72 @@ func _check_style_mirrors() -> void:
 			+ "so a captive tile takes no picture at all (bead xtr.14 rule 3)")
 	row.free()
 	node.free()
+
+	# --- THE HERO ACCESSORY (bead godot-test1-xtr.13) ------------------------
+	# The tint says which palette you are in; the ACCESSORY says who you are, and
+	# at 92 px it is the half that actually names the hero. None of it is visible
+	# to a headless machine — it is a dozen fillRects on a canvas in a browser — so
+	# the shipped text is the pin, exactly as it is for the cartoon above.
+	#
+	# WHY THE ORDER IS ASSERTED. The owner ruled the accessory is drawn CLEAN over
+	# the inked face; moving the call one line up, above `putImageData`, is a
+	# one-character edit that puts it UNDER the posterize instead — the cyan visor
+	# comes out in four bands and the ruling is silently reversed. An index compare
+	# is the only thing that can see it.
+	var acc: String = _js_function_body(module, "paintAccessory")
+	if acc.is_empty():
+		_fail("VOICE_JS has no `function paintAccessory(` — the hero's blindfold / "
+			+ "goggles / beret / fishbowl (bead godot-test1-xtr.13) is what makes a "
+			+ "tinted face read as THAT hero at 92 px, and it is gone")
+	else:
+		var roster: Array[String] = []
+		for entry: Dictionary in PlayerScript.CHARACTERS:
+			roster.append(str(entry.get("name", "")))
+		for hero: String in ACCESSORY_HEROES:
+			if not roster.has(hero):
+				_fail("ACCESSORY_HEROES names `%s`, which is not a CHARACTERS row "
+					% hero + "any more — a renamed hero must not silently lose the "
+					+ "accessory that names him at 92 px")
+			if acc.contains("'%s'" % hero):
+				continue
+			_fail("paintAccessory does not draw for `%s` — the four shipped "
+				% hero + "portraits are the art contract (owner ruling 2026-09-06)")
+
+	var body: String = _js_function_body(module, "paint")
+	var put: int = body.find("putImageData")
+	var call: int = body.find("paintAccessory(")
+	if body.is_empty() or put < 0 or call < 0:
+		_fail("VOICE_JS's `paint()` no longer both posterizes and draws the hero "
+			+ "accessory — bead godot-test1-xtr.13's whole output is that one call")
+	elif call < put:
+		_fail("paint() draws the accessory BEFORE putImageData, so it goes through "
+			+ "the posterize instead of over it — the owner ruled it is drawn CLEAN "
+			+ "over the inked face (2026-09-06), and Primm's cyan visor banded into "
+			+ "four levels is what this reverses")
+
+	# THE FACE BOX IS WHAT IT IS REGISTERED ON, and with no detector `S.faceBox` is
+	# the centre square — so the fallback is the same arithmetic and not a second
+	# path. A `paintAccessory` that stopped reading the box would paint a fixed
+	# centre guess that slides off the face the moment the player moves, which is
+	# exactly why this bead came third.
+	var on_canvas: String = _js_function_body(module, "faceOnCanvas")
+	if on_canvas.is_empty() or not on_canvas.contains("S.faceBox") \
+			or not on_canvas.contains("FACE_ZOOM"):
+		_fail("VOICE_JS has no `faceOnCanvas` reading `S.faceBox` and dividing "
+			+ "`FACE_ZOOM` back out — the accessory would sit on a fixed centre "
+			+ "guess rather than on the face the tracker found (bead xtr.13)")
+
+	# AND THE NAME HAS TO REACH THE BROWSER. It rides `setStyleTint`'s fourth
+	# argument rather than a second bridge function; both ends are asserted,
+	# because either half alone is a hero that never changes his hat.
+	if not module.contains("function (r, g, b, hero)"):
+		_fail("VOICE_JS's setStyleTint no longer takes the hero NAME — the tint is "
+			+ "a colour and cannot say which SHAPE to draw (bead xtr.13)")
+	var gd: String = FileAccess.get_file_as_string("res://scripts/voice_chat.gd")
+	if not gd.contains("_ck.setStyleTint(int(tint.r8), int(tint.g8), int(tint.b8), hero)"):
+		_fail("_push_style_tint no longer pushes the hero name beside the tint, so "
+			+ "the browser draws no accessory at all (bead xtr.13)")
+
 	Sentinel.done("style_mirrors")
 
 
@@ -887,19 +967,54 @@ func _js_bool_offence(source: String) -> String:
 # 6b. A FAILED ICE TRANSPORT REBUILDS ITSELF
 # ============================================================================
 
-## The three spellings that together ARE the recovery (bead `godot-test1-xtr.7`),
-## in the order the browser reaches them: the handler that notices, the state it
-## acts on, and the call that repairs.
-##
-## Each is spelled as CODE rather than as a bare word, because the explanation
-## beside the call names `restartIce()` too — a check on the word alone survives
-## the deletion of the call it guards, which is not a hypothetical: it is what the
-## first draft of this check did, measured.
+## The spellings that together ARE the recovery, in the order the browser reaches
+## them: the handler that notices, the states it acts on, and the calls that
+## repair. Each is spelled as CODE rather than as a bare word, because the
+## explanation beside the call names `restartIce()` too — a check on the word
+## alone survives the deletion of the call it guards, which is not a
+## hypothetical: it is what the first draft of this check did, measured.
+## The four heroes the shipped portraits give an accessory to (bead
+## `godot-test1-xtr.13`, owner ruling 2026-09-06: windman blindfold, primm
+## goggles, teibi beret, phoboman fishbowl helmet). It is a LIST rather than
+## `CHARACTERS` itself because a fifth hero deliberately draws nothing — the
+## bead's own acceptance, `hero_hud`'s "a missing portrait is not an error" rule
+## — but every name in it is bound to the real roster below, so a hero RENAMED
+## in `CHARACTERS` fails here instead of quietly losing his hat.
+const ACCESSORY_HEROES: Array[String] = ["windman", "primm", "teibi", "phoboman"]
+
+
 const ICE_RESTART_NEEDLES: Array[String] = [
 	"pc.oniceconnectionstatechange",
-	"iceConnectionState !== 'failed'",
 	"pc.restartIce()",
+	# R2's two states, and BOTH of them: `failed` alone is what shipped before
+	# bead godot-test1-xtr.19 and is exactly the half that never fired.
+	"st === 'failed'",
+	"st === 'disconnected'",
+	# R1 — the rollback that unwedges a PC whose offer was lost.
+	"type: 'rollback'",
+	"'have-local-offer'",
+	# R3 — the fingerprint compare and the one-PC rebuild it triggers.
+	"a=fingerprint:",
+	"healRemoteRebuilt",
 ]
+
+## R2's bound, R1's bound and R3's, each as the CONSTANT that carries it. A rung
+## with no bound is the re-offer loop the pre-xtr.19 ruling refused to risk, so
+## the bound is the thing this check is really pinning: `_check_js_used` demands
+## each name appear twice — declared, and SPENT.
+const HEAL_BOUND_CONSTS: Array[String] = [
+	"HEAL_OFFER_TIMEOUT_MS",
+	"HEAL_OFFER_TRIES_MAX",
+	"HEAL_ICE_HOLD_MS",
+	"HEAL_ICE_COOLDOWN_MS",
+	"HEAL_ICE_TRIES_MAX",
+	"HEAL_REBUILD_COOLDOWN_MS",
+]
+
+## The exact spelling of the retired guard. It is the NEGATIVE control: a
+## `disconnected` that is acted on only behind a timer and a cap cannot be
+## written as the bare "act on anything that is not failed" test this replaced.
+const BARE_ICE_GUARD: String = "iceConnectionState !== 'failed'"
 
 
 func _check_ice_restart() -> void:
@@ -909,18 +1024,33 @@ func _check_ice_restart() -> void:
 	a later edit that retires the boolean scan must not take this with it.
 
 	WHAT IT DEFENDS. `members(json)` closes a `RTCPeerConnection` only when the id
-	LEAVES `_members`, so a live member whose transport has died is never rebuilt
-	by anything: the peer stays listed, stays un-muted, keeps its video tile, and
-	is silent for the rest of the room with no status line and nothing retrying.
-	`open()` answers that by restarting ICE, which rides the perfect-negotiation
-	queue out over the existing `"vc"` relay as an ordinary offer — so there is no
-	new signalling kind here to test, and `MpCodec.decode_vc` is untouched. The
+	LEAVES `_members`, so a live member whose own end has died is never rebuilt by
+	anything: the peer stays listed, stays un-muted, keeps its video tile, and is
+	silent for the rest of the room with no status line and nothing retrying. The
+	repairs all ride the perfect-negotiation queue out over the existing `"vc"`
+	relay as ordinary offers — there is no new signalling kind to test and
+	`MpCodec.decode_vc` is untouched (check 1 proves that half byte for byte). The
 	only thing a headless check CAN see is that the code is still there.
 
-	THE STATE GUARD IS ONE OF THE THREE ON PURPOSE. `'disconnected'` is transient
-	and self-healing; acting on it turns the handler into a re-offer loop on every
-	path blip. A check that pinned only the handler and the call passed happily
-	with `'failed'` swapped for `'disconnected'` — so the comparison is pinned too.
+	THIS CHECK WAS REWRITTEN BY BEAD `godot-test1-xtr.19` AND THE OLD RULING IS
+	REVERSED. It used to pin `iceConnectionState !== 'failed'` as a THIRD needle,
+	with this docstring explaining that `'disconnected'` is transient and
+	self-healing and that acting on it turns the handler into a re-offer loop on
+	every path blip. The fear was real; the ruling was wrong about the case the
+	owner reported. Chrome reaches `failed` only when ICE consent freshness
+	expires (~30 s) and sometimes never leaves `disconnected` at all, so a coturn
+	allocation expiring or a NAT rebind left a pair silent — audio AND video — for
+	the life of the room, under a handler watching a state it would never see. The
+	answer to a loop is a BOUND, not a blind spot: so `'disconnected'` is now acted
+	on behind a 5 s hold, one restart per 15 s and three in a row, and what this
+	check pins is that every one of those bounds is still a spent constant. The
+	retired bare guard is asserted ABSENT, which is this check's negative control.
+
+	THE OTHER THREE RUNGS ARE PINNED THE SAME WAY, because each is invisible to
+	every other check in the suite: a lost offer rolled back (R1), the one-PC
+	rebuild the REMOTE detects off a changed `a=fingerprint:` (R3 — and that
+	compare is the whole reason no `vc` kind was added), and a paused element
+	re-played (R4).
 	"""
 	var module: String = _voice_js_module()
 	if module.length() < 500:
@@ -928,14 +1058,85 @@ func _check_ice_restart() -> void:
 			% module.length() + "would pass vacuously")
 		Sentinel.done("ice_restart")
 		return
+
 	for needle: String in ICE_RESTART_NEEDLES:
 		if module.contains(needle):
 			continue
-		_fail("voice_chat.gd's VOICE_JS is missing `%s`, so a PeerConnection that "
-			% needle + "drops to iceConnectionState 'failed' (a NAT rebind, an "
-			+ "expiring coturn allocation, a path break) stays dead for the whole "
-			+ "life of the room — nothing else rebuilds a still-listed member's "
-			+ "connection (godot-test1-xtr.7)")
+		_fail("voice_chat.gd's VOICE_JS is missing `%s`, so a peer whose own end "
+			% needle + "has died (a NAT rebind, an expiring coturn allocation, a "
+			+ "lost offer, a dead DTLS transport) stays stuck for the whole life "
+			+ "of the room — nothing else rebuilds a still-listed member's "
+			+ "connection (beads godot-test1-xtr.7 and godot-test1-xtr.19)")
+
+	# --- THE BOUNDS, which are what make acting on `disconnected` safe ---------
+	for name: String in HEAL_BOUND_CONSTS:
+		_check_js_used(module, name, 2)
+
+	# --- THE NEGATIVE CONTROL -------------------------------------------------
+	if module.contains(BARE_ICE_GUARD):
+		_fail("VOICE_JS still spells `%s`, the pre-xtr.19 guard: acting on every "
+			% BARE_ICE_GUARD + "state that is not `failed` is the unbounded "
+			+ "re-offer loop this ladder replaced with a held timer and a cap")
+
+	# --- R1, R3 AND R4 IN THE FUNCTIONS THAT OWN THEM -------------------------
+	# Scoped to bodies rather than the whole module, because the essays above them
+	# name every one of these calls to explain the measurement — and a check that
+	# a reworded comment satisfies is a check nobody keeps.
+	var arm: String = _js_function_body(module, "healArmOffer")
+	if arm.is_empty():
+		_fail("VOICE_JS has no `function healArmOffer(` — R1's offer timeout, the "
+			+ "only thing that unwedges a PC left in `have-local-offer` by a lost "
+			+ "offer, is gone")
+	elif not (arm.contains("type: 'rollback'") and arm.contains("HEAL_OFFER_TRIES_MAX")):
+		_fail("healArmOffer no longer rolls a timed-out offer back under "
+			+ "HEAL_OFFER_TRIES_MAX — an unbounded rollback is a re-offer loop and "
+			+ "an absent one is the wedge (bead godot-test1-xtr.19 R1)")
+
+	var recv: String = _js_function_body(module, "recv")
+	if recv.is_empty():
+		_fail("VOICE_JS has no `function recv(` — check 6b cannot see how an "
+			+ "incoming offer reaches a connection")
+	elif not (recv.contains("healRemoteRebuilt") and recv.contains("healSwap")):
+		_fail("recv no longer detects a REBUILT remote off its fingerprint and "
+			+ "swaps our PC for a fresh one, so a one-sided rebuild leaves the "
+			+ "other end applying the new offer to its old PC — where the DTLS "
+			+ "fingerprint differs and setRemoteDescription rejects, swallowed "
+			+ "(bead godot-test1-xtr.19 R3)")
+
+	var swap: String = _js_function_body(module, "healSwap")
+	if swap.is_empty():
+		_fail("VOICE_JS has no `function healSwap(` — R3's rebuild is gone")
+	else:
+		if not (swap.contains("close(id)") and swap.contains("open(id)")):
+			_fail("healSwap no longer does close(id) then open(id) — the rebuild "
+				+ "has to re-run `open`, which is what re-attaches the mic and the "
+				+ "cartoon track so the fresh offer carries everything")
+		if not swap.contains("S.tiles[id] = keep"):
+			_fail("healSwap no longer carries the tile rect across the rebuild: "
+				+ "`close` forgets it while GDScript's `_pushed_tiles` still holds "
+				+ "the identical fraction, so a track that comes back inside one "
+				+ "5 Hz poll window is never given a rect and the tile stays dark "
+				+ "for the rest of the room (hideSelf's wedge, remote side)")
+
+	var paused: String = _js_function_body(module, "healPaused")
+	if paused.is_empty() or not paused.contains(".paused"):
+		_fail("VOICE_JS has no `function healPaused(` reading `.paused` — a "
+			+ "<video> that paused after `showVideo`'s one swallowed play() shows "
+			+ "its last frame forever behind a perfectly healthy track (bead "
+			+ "godot-test1-xtr.19 R4)")
+
+	var tick: String = _js_function_body(module, "sampleTick")
+	if tick.is_empty() or not tick.contains("healPaused()"):
+		_fail("healPaused is not driven from sampleTick — R4 with no clock is a "
+			+ "function nothing calls")
+
+	# --- THE EVIDENCE \fo SHOWS ----------------------------------------------
+	var fmt: String = _js_function_body(module, "formatStats")
+	if fmt.is_empty() or not fmt.contains(" heal="):
+		_fail("formatStats does not emit ` heal=` — which rung fired is then "
+			+ "unmeasurable in \\fo, and every rung here is bounded precisely so "
+			+ "that its firing is worth reading (bead godot-test1-xtr.19)")
+
 	Sentinel.done("ice_restart")
 
 
@@ -1265,6 +1466,175 @@ const PUBLIC_CALLS: Array = [
 	["mic_badge", []],
 	["is_hero_speaking", ["windman"]],
 ]
+
+
+func _check_face_crop() -> void:
+	"""
+	THE FACE-REGISTERED CROP'S VENDORING (bead `godot-test1-xtr.12`), and this
+	check exists because that feature's worst failure is INVISIBLE.
+
+	Every other way the detector can fail announces itself: a browser with no
+	`OffscreenCanvas`, a 404, a throw — all of them land on the centre crop,
+	which is the MVP and looks like a working game. So does a build that shipped
+	no detector at all. A url renamed in `VOICE_JS` that the lock no longer
+	fetches, a row dropped from `vendor.lock`, or the fetch step deleted from
+	`build.yml` produce a picture NOBODY CAN TELL from the intended one — they
+	cost the owner the exact fix they asked for and report nothing.
+
+	THE BINARIES ARE NOT IN THE TREE (they are ~12 MB, fetched at build time), so
+	what is checked is the MANIFEST and the two callers of the fetch script —
+	which is the stronger end anyway, because the lock is what CI actually
+	downloads and `fetch_vendor.sh` refuses any file whose sha256 misses.
+
+	So the four things asserted here are all of that class, and none of them is
+	the crop ARITHMETIC: a wrong lerp or a wrong zoom is visible in one glance at
+	a tile, and the maths is driven in a browser at review time.
+
+	ponytail: no JS unit test in CI. This repo has no node toolchain and the
+	logic that would need one fails visibly; add one when a second JS module
+	arrives that a headless check cannot reach.
+	"""
+	var module: String = _voice_js_module()
+	if module.length() < 500:
+		_fail("could not read VOICE_JS out of voice_chat.gd (%d chars) — the face "
+			% module.length() + "crop check would pass vacuously")
+		Sentinel.done("face_crop")
+		return
+
+	# --- 1. EVERY URL THE MODULE ASKS FOR IS A ROW IN THE LOCK ---------------
+	# THE BINARIES ARE NOT IN THE TREE — they are ~12 MB and are fetched at build
+	# time by `scripts/fetch_vendor.sh` against `vendor.lock`, so this cannot
+	# check the files and must check the MANIFEST instead. That is the stronger
+	# end anyway: the lock is what CI fetches, and `fetch_vendor.sh` already
+	# refuses to install anything whose sha256 does not match it.
+	#
+	# Reading the names OUT of the shipped text rather than listing them here is
+	# what makes a rename fail: a list would simply stop describing the module.
+	var dir: String = "res://web/vendor/mediapipe/"
+	var lf: FileAccess = FileAccess.open(dir + "vendor.lock", FileAccess.READ)
+	if lf == null:
+		_fail("web/vendor/mediapipe/vendor.lock is missing — it is the only place "
+			+ "the detector's version, urls and checksums are written, so the "
+			+ "build has nothing to fetch and every player gets the centre crop")
+		Sentinel.done("face_crop")
+		return
+	var lock: String = lf.get_as_text()
+	lf.close()
+
+	# The lock's `file`/`model` rows, as dest -> sha.
+	var locked: Dictionary = {}
+	var pkg: String = ""
+	for line: String in lock.split("\n"):
+		var row: PackedStringArray = line.strip_edges().split(" ", false)
+		if row.size() < 2 or row[0].begins_with("#"):
+			continue
+		if row[0] == "npm":
+			pkg = row[1]
+		elif (row[0] == "file" or row[0] == "model") and row.size() >= 4:
+			locked[row[1]] = row[2]
+	if pkg.is_empty():
+		_fail("vendor.lock names no `npm` package — the fetch has no version to pin")
+	if locked.size() < 3:
+		_fail("vendor.lock lists %d file/model row(s) — expected at least the " % locked.size()
+			+ "bundle, the wasm loader, the wasm binary and the model")
+	for dest: String in locked:
+		var sha: String = String(locked[dest])
+		if sha.length() != 64 or sha.to_lower() != sha or not sha.is_valid_hex_number():
+			_fail("vendor.lock's row for `%s` has no valid sha256 (%s) — the fetch " % [dest, sha]
+				+ "would install whatever the network handed it")
+
+	var asked: Array[String] = []
+	var from: int = 0
+	while true:
+		var i: int = module.find("faceUrl('", from)
+		if i < 0:
+			break
+		var start: int = i + "faceUrl('".length()
+		var end: int = module.find("'", start)
+		if end < 0:
+			break
+		asked.append(module.substr(start, end - start))
+		from = end
+	if asked.size() < 3:
+		_fail("VOICE_JS asks for %d vendored file(s) via faceUrl() — expected the "
+			% asked.size() + "bundle, the wasm directory and the model, so either "
+			+ "the detector's loader is gone or it stopped going through faceUrl()")
+	for rel: String in asked:
+		# The wasm DIRECTORY is passed whole to `FilesetResolver.forVisionTasks`,
+		# which appends `/vision_wasm_internal.js` and `.wasm` itself — so the
+		# directory argument is checked as the two files it really stands for.
+		var wanted: Array[String] = [rel]
+		if rel == "wasm":
+			wanted = ["wasm/vision_wasm_internal.js", "wasm/vision_wasm_internal.wasm"]
+		for w: String in wanted:
+			if not locked.has(w):
+				_fail("VOICE_JS loads `%s`, which vendor.lock does not fetch — " % w
+					+ "the file would 404 and every player would silently fall back "
+					+ "to the centre crop, which is the picture the owner asked to "
+					+ "have fixed")
+
+	# --- 2. THE LICENCE SHIPS BESIDE THE CODE -------------------------------
+	# `assets/fonts/OFL.txt`'s rule: a vendored Apache-2.0 artifact carries its
+	# licence in the tree it is redistributed from. This one IS committed —
+	# it is the licence, not a 12 MB binary.
+	if not FileAccess.file_exists(dir + "LICENSE"):
+		_fail("web/vendor/mediapipe/LICENSE is missing — MediaPipe is Apache-2.0 "
+			+ "and this build redistributes it, so the licence ships beside the "
+			+ "files (the assets/fonts/OFL.txt rule)")
+
+	# --- 3. THE BUILD REALLY FETCHES AND INSTALLS THEM ----------------------
+	# The lock being right proves nothing on its own: both deploy targets are cut
+	# from `build/web`, and the Godot export writes only the game into it. Without
+	# the fetch the detector 404s in production and nowhere else — and the game
+	# looks exactly the same, which is why this is asserted as TEXT.
+	if not FileAccess.file_exists("res://scripts/fetch_vendor.sh"):
+		_fail("scripts/fetch_vendor.sh is missing — nothing fetches or verifies the "
+			+ "vendored detector, and the lock describes a download nobody makes")
+	var wf: FileAccess = FileAccess.open("res://.github/workflows/build.yml", FileAccess.READ)
+	if wf == null:
+		_fail("could not read .github/workflows/build.yml")
+	else:
+		var yml: String = wf.get_as_text()
+		wf.close()
+		if not yml.contains("sh scripts/fetch_vendor.sh build/web"):
+			_fail("build.yml no longer installs the vendored detector into build/web "
+				+ "via scripts/fetch_vendor.sh — it would be fetched and then absent "
+				+ "from both deploy targets, and the game would look fine")
+		if not yml.contains("sh scripts/fetch_vendor.sh\n"):
+			_fail("build.yml no longer runs the fetch BEFORE the export — a bad pin "
+				+ "or an unreachable registry would fail after the export instead of "
+				+ "in seconds")
+	# The developer rig runs the SAME script, which is the whole reason it is one.
+	var sf: FileAccess = FileAccess.open("res://serve.sh", FileAccess.READ)
+	if sf != null:
+		var sh: String = sf.get_as_text()
+		sf.close()
+		if not sh.contains("scripts/fetch_vendor.sh"):
+			_fail("serve.sh no longer installs the vendored detector — a local debug "
+				+ "export would serve the game with no detector, so the developer rig "
+				+ "and CI would disagree about what the camera does")
+
+	# --- 4. THE FALLBACK RUNG IS STILL THE MVP'S CENTRE CROP ----------------
+	# `cropBox` answers the centre square whenever there is no fresh face, and
+	# THAT expression is the whole of "the detector's absence is invisible to the
+	# receiver". If it is ever rewritten into something else, a browser on the
+	# fallback rung stops matching the build that shipped before this bead.
+	var crop: String = _js_function_body(module, "cropBox")
+	if crop.is_empty():
+		_fail("VOICE_JS has no `function cropBox(` — the crop box this bead moved "
+			+ "is gone")
+	else:
+		if not (crop.contains("vw / 2") and crop.contains("vh / 2")
+				and crop.contains("vw < vh ? vw : vh")):
+			_fail("cropBox no longer spells the MVP's centre square (vw/2, vh/2, "
+				+ "min(vw, vh)) — that expression IS the fallback rung every "
+				+ "browser without a detector lands on")
+		if not crop.contains("FACE_LOST_MS"):
+			_fail("cropBox no longer expires a stale face target against "
+				+ "FACE_LOST_MS — a player who walked away would leave the crop "
+				+ "parked on the chair they left")
+
+	Sentinel.done("face_crop")
 
 
 func _check_inert_offweb() -> void:

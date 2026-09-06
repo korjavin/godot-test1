@@ -85,3 +85,12 @@ __pycache__/
 
 # ralphex run artifacts
 .ralphex/
+
+# The vendored face detector (bead godot-test1-xtr.12) is FETCHED AT BUILD TIME
+# by scripts/fetch_vendor.sh against web/vendor/mediapipe/vendor.lock, never
+# committed: it is ~12 MB of binaries, and a binary in history is permanent
+# weight on every clone and every CI checkout. The lock, the LICENSE and the
+# README stay in git — they are what the fetch is driven by.
+web/vendor/mediapipe/vision_bundle.js
+web/vendor/mediapipe/wasm/
+web/vendor/mediapipe/*.tflite

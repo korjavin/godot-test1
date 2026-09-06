@@ -2720,6 +2720,73 @@ touches `JavaScriptBridge`.
   value. `voice_selfcheck` check 6b pins the defaults, the paint loop's reads, both
   clamps, the mix floor and that the clamp really reads it, the blank-field fallback, the
   persistence and the four \fo columns.
+  **AND THE HERO'S ACCESSORY IS DRAWN OVER THE FACE** (bead `godot-test1-xtr.13`,
+  the last of the three follow-ups to *"look similar to a character he is
+  playing"*): the tint says which palette you are in, the ACCESSORY says who you
+  are, because at 92 px a hue is a mood and a shape is a name. **The art is the
+  four shipped portraits and the owner ruled the pictures win** (2026-09-06) —
+  windman a blue BLINDFOLD band with a red mark, primm cyan VISOR GOGGLES, teibi
+  a dark BERET, phoboman a glass FISHBOWL HELMET ring (his soup is not drawn; what
+  is inside the helmet is the player's own face, which is the point) — **drawn
+  CLEAN after the posterize**, so the cyan stays cyan and the face's ink edges do
+  not band it. A dozen `fillRect`s and two arcs in rgb TRIPLES (never hex —
+  `hero_hud_selfcheck` check 8), **not the four data-URI PNGs the bead offered**:
+  four `<img>` ready states and ~40 KB of base64 buy nothing a parameterised shape
+  does not, and a shape follows the face box for free. It is REGISTERED on bead
+  .12's box (`faceOnCanvas` divides `FACE_ZOOM` back out), and the centre-crop rung
+  needs no second path because `S.faceBox` there IS the centre square. The hero
+  NAME rides `setStyleTint`'s **fourth argument** rather than a second bridge
+  function — `_push_style_tint` is already the one writer and already change-gated
+  on exactly that hero, so R/a capture reassignment repaints on the next 5 Hz poll
+  and renegotiates nothing. A hero with no accessory draws nothing and logs nothing
+  (`hero_hud`'s missing-portrait rule); \fo's `style=` still bills it, because the
+  call sits above the `paintMs` stamp.
+  **THE CROP BOX FOLLOWS THE FACE, AND IT ZOOMS RATHER THAN ONLY PANS** (bead
+  `godot-test1-xtr.12`, owner: *"on my desktop when camera is a bit far away it
+  doesn't trace head well, it shows me not only face"*). A laptop lid puts a face
+  across most of the frame, so the MVP's centre square happened to BE the face; a
+  desktop camera two metres away frames a torso, whose centre square is a chest.
+  So `cropBox()` aims a square at the detected face centre, sized `FACE_ZOOM`
+  (1.8) x the face box, clamped inside the source and lerped on a real
+  exponential over ELAPSED ms (the paint loop runs at three different rates).
+  **A LADDER, and every rung below the first is a browser that cannot do the one
+  above**: `window.FaceDetector` when present (free, and in no shipping browser —
+  Chromium behind a flag, so it is opportunistic and never the plan), else
+  vendored MediaPipe BlazeFace in a Web Worker at 3.3 Hz, else the **centre crop,
+  which is the MVP unchanged** — while loading, with no `OffscreenCanvas`
+  (Safari 16 and older), on a 404, on a throw, and whenever nothing has been seen
+  for `FACE_LOST_MS`. The rung is invisible to receivers: the same canvas capture
+  is on the wire either way, so nothing is signalled and no verb was added.
+  **THE DETECTOR IS FETCHED AT BUILD TIME AND SERVED BY OUR NGINX — never
+  committed, never a runtime CDN** (owner ruling 2026-09-06). The ruling is
+  about what the PLAYER'S BROWSER loads, and that is only ever our own origin;
+  what CI does at build time is not that. `web/vendor/mediapipe/vendor.lock` is
+  the bill of materials — package, version, per-file sha256, the model's url —
+  and `scripts/fetch_vendor.sh` is the ONE script that downloads it, **refuses
+  any file whose sha256 misses**, and installs it into `build/web/vendor/`
+  beside the service-worker tombstone's `cp`, into the one directory both deploy
+  targets are cut from. `build.yml` calls it twice (fetch before the export so a
+  bad pin fails in seconds, install after) and `./serve.sh` calls it once, so
+  the developer rig and CI cannot drift; it fails the build when a file is
+  missing. **The binaries are `.gitignore`d**: ~12 MB in history is permanent
+  weight on every clone and every CI checkout, for bytes a build can fetch and
+  verify. Only the lock, the LICENSE (Apache-2.0, beside the files like
+  `assets/fonts/OFL.txt`) and the README are in git. The pin is **1.0.1
+  because it is the first version shipping an IIFE bundle**: the worker is a
+  CLASSIC worker doing `importScripts`, and a module worker has no
+  `importScripts`, so the library's own wasm loader takes its
+  `document.createElement('script')` branch and rejects in any worker. Nothing is
+  fetched until a room is joined AND the camera is on — `faceTick` calls
+  `faceStart()` from the first `paint()` that has a frame, so a player who never
+  presses Camera downloads none of it. **Measured** through the pinned nginx image: 11.76 MB of wasm on disk,
+  3.43 MB over the wire and 3.58 MB for all four files — under the owner's ~4 MB (`web/nginx.conf` gzips `/vendor/` on the fly; nginx maps
+  no `.mjs`, which is a second reason the IIFE `.js` is the one vendored), 5.2 s
+  of transfer on a throttled 5 Mbit/s link behind the centre crop,
+  detection **2.6 ms mean off-thread** and **0.15 ms on Godot's**, reported
+  separately as `face=`/`fm` because one summed figure would hide what the worker
+  was chosen for. `voice_selfcheck`'s face-crop check guards the INVISIBLE failure
+  — a lost file, a renamed url or a deleted `cp` all degrade to a working-looking
+  centre crop — and deliberately not the arithmetic, which shows in one glance.
   **A STUCK PICTURE IS MEASURABLE, AND THE SAMPLER IS NOT \fo'S** (bead
   `godot-test1-xtr.17`): `sampleStats()` gained the video half — per peer
   `ice=`/`con=`/`sig=`/`sdp=`/`vin=`/`vout=` (the two transport states, the negotiation
@@ -2757,6 +2824,35 @@ touches `JavaScriptBridge`.
   1 Hz background throttle) plus a `requestFrame()` while hidden, because a canvas
   the compositor never presents emits no frame: a backgrounded sender measured
   ~7 decoded frames/s at the receiver over 70 s instead of a slideshow.
+  **AND THE RECEIVER/TRANSPORT END HEALS TOO, AS A BOUNDED FOUR-RUNG LADDER**
+  (bead `godot-test1-xtr.19`, the other half of *"video ... sometimes gets stuck
+  for some of participants, and there is no way to restart it"*). Perfect
+  negotiation assumes reliable signalling and ours is a best-effort relay with
+  two silent drop points (`post()` swallows every failure, `decode_vc` drops a
+  bad payload with a `push_warning`), so R1 arms an 8 s timer on every offer we
+  post and rolls it back on expiry — a PC left in `have-local-offer` can never
+  fire `onnegotiationneeded` again, has nothing for `restartIce()` to ride and,
+  impolite, ignores every later offer. R2 **REVERSES the pre-xtr.19 ruling that
+  `disconnected` is deliberately not acted on**: Chrome reaches `failed` only
+  when ICE consent freshness expires (~30 s) and sometimes never leaves
+  `disconnected`, so the answer to the re-offer loop that ruling feared is the
+  BOUND — held 5 s, one `restartIce()` per 15 s, three in a row — and not the
+  blind spot. R3 is `close(id); open(id)` on **both** ends with no signalling
+  change: a one-sided rebuild is applied by the remote to its OLD PC, whose DTLS
+  fingerprint differs and whose `setRemoteDescription` rejects (swallowed), so
+  the remote detects it in `recv` off a changed `a=fingerprint:` — **that compare
+  is the whole reason no `vc` kind was added, `mp_codec` is untouched and
+  `mp_manager`'s seam stays three functions**. It carries `S.tiles[id]` across
+  the swap, because `close()` forgets the rect while GDScript's `_pushed_tiles`
+  still holds it and a track back inside one 5 Hz poll would otherwise never be
+  given one (`hideSelf`'s wedge, remote side). R4 re-plays a `<video>` that
+  paused after `showVideo`'s one swallowed `play()`, on the 1 Hz sampler. Every
+  rung is bounded by a spent constant and every firing is a running tally in
+  \fo's `heal=<rollback>:<ice>:<rebuild>` per peer — kept in `S.heal` by lobby id
+  precisely because R3 destroys the peer row. `voice_selfcheck` check 6 was
+  REWRITTEN rather than loosened: it pins all four rungs, every bound constant,
+  and the retired `iceConnectionState !== 'failed'` guard as its negative
+  control. Chrome + Firefox; Safari is a documented ceiling.
 - **VOICE IS ON THE ALWAYS-VISIBLE HUD, AS TWO GLYPHS AND NO TEXT** (bead
   `godot-test1-xtr.8`, owner: *"in MP game there should be an indication on HUD of mic
   state and when someone is speaking"*). The MP panel and the name tags both have to be
