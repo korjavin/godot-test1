@@ -9,7 +9,7 @@ extends Control
 ## to read as *taken*, not merely as "not selected".
 ##
 ## Four states, and they are deliberately three different visual languages so none
-## of them can be mistaken for another at 48 px:
+## of them can be mistaken for another at 80 px:
 ##
 ##   ACTIVE   full brightness + a bright border   this is the body you are driving
 ##   FREE     full brightness, no border          yours to switch to
@@ -77,8 +77,16 @@ extends Control
 ## found through the "player" group, per the discovery convention.)
 const PLAYER_SCRIPT := preload("res://scripts/player_controller.gd")
 
-## One tile, and the gap between two of them. Four tiles = 4*48 + 3*6 = 210 px.
-const TILE_SIZE: float = 48.0
+## One tile, and the gap between two of them. Four tiles = 4*80 + 3*6 = 338 px.
+##
+## TILE_SIZE IS THE ONE NUMBER (bead godot-test1-y1o.37, owner: "make heroes'
+## portraits bigger"). It went 48 -> 80; everything that has to grow with a tile is
+## DERIVED from it below, so the next resize is one edit. What bounds it is
+## `hero_hud_selfcheck` check 5 — the row's fit against every widget `main.tscn`
+## pins to that corner — and it is the \fo PerfOverlay that binds: 80 needed it
+## moved right (240..544 -> 376..680). The ceiling is 96, where the row starts
+## crowding the minimap's top at the widest expand case.
+const TILE_SIZE: float = 80.0
 const TILE_GAP: float = 6.0
 
 ## Hero identity colours — the placeholder fill, and the tint of the active border.
@@ -116,8 +124,14 @@ const COLOR_ACTIVE_BORDER: Color = HudTheme.VISOR_AMBER  # the "this is you" rin
 const COLOR_BARS: Color = Color(0.85, 0.16, 0.14, 0.92) # the cell bars
 const COLOR_DIGIT: Color = HudTheme.BONE
 
+## Line WEIGHTS are a style decision (the y1o spec's hard 1-3 px edges), not a
+## proportion, so they do not follow the tile: `ACTIVE_BORDER_WIDTH`, `RING_INSET`,
+## `RING_WIDTH`, `BAR_WIDTH`, `BADGE_MARGIN` and `voice_chat.TILE_INSET` are all
+## absolute on purpose.
 const ACTIVE_BORDER_WIDTH: float = 3.0
-const DIGIT_FONT_SIZE: int = 13
+## The hotkey digit, DERIVED — the ratio the 48 px row shipped with, written as the
+## division so 48 still reproduces 13 exactly.
+const DIGIT_FONT_SIZE: int = int(TILE_SIZE * 13.0 / 48.0)
 ## Three bars across a captive tile, Commandos-style.
 const BAR_COUNT: int = 3
 const BAR_WIDTH: float = 3.0
@@ -160,8 +174,11 @@ const RING_PULSE_STEPS: int = 8
 const RING_ALPHA_MIN: float = 0.45
 const RING_ALPHA_MAX: float = 1.0
 
-## Glyph geometry, in tile pixels. One badge box in each bottom corner.
-const BADGE_SIZE: float = 15.0
+## Glyph geometry, in tile pixels. One badge box in each bottom corner. The box is
+## DERIVED like the digit above (15/48, so 48 reproduces 15); the margin is a line
+## weight and stays absolute. Everything inside `_draw_mic_badge` is already a
+## fraction of the box, so the glyph follows for free.
+const BADGE_SIZE: float = TILE_SIZE * 15.0 / 48.0
 const BADGE_MARGIN: float = 2.0
 
 ## Cached player reference — re-fetched whenever it goes away (respawn, restart,
@@ -475,7 +492,7 @@ func _draw() -> void:
 	# Drawn entirely from the _process snapshot — no player reads in here. An empty
 	# roster draws nothing, which is also how the control clears itself.
 	# THE FILMS' FACE, not the engine's: Oswald Bold, tall and condensed, is what
-	# makes a 13 px digit legible over a bright sky at all (bead y1o.24).
+	# makes a digit this small legible over a bright sky at all (bead y1o.24).
 	var font: Font = HudTheme.heading_font()
 	for i: int in _heroes.size():
 		var hero := _heroes[i]
@@ -614,8 +631,9 @@ func _draw_mic_badge(box: Rect2, badge: int) -> void:
 	"""
 	A microphone, vertex-drawn: capsule, cradle, stem, base — plus a slash when
 	the mic cannot transmit. No texture and no node, like every other mark on this
-	row; at 15 px the shape carries as much as the colour does, which is what
+	row; at this size the shape carries as much as the colour does, which is what
 	makes the badge readable for a player who cannot tell the red from the amber.
+	Every measurement below is a fraction of `box`, so it follows `BADGE_SIZE`.
 	"""
 	var color := mic_badge_color(badge)
 	var w := box.size.x

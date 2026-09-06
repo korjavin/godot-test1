@@ -575,8 +575,9 @@ const VOICE_JS: String = """
 			}
 			S.camState = 1;
 			var gen = S.gen;
-			/* Portrait size and portrait frame rate: the picture is drawn in a
-			   48 px tile, so anything larger is bytes nobody can see. */
+			/* Portrait size and portrait frame rate: the picture is drawn in an
+			   80 px tile (`hero_hud.TILE_SIZE`), so anything larger is bytes
+			   nobody can see. */
 			navigator.mediaDevices.getUserMedia({
 				audio: false,
 				video: { width: 160, height: 120, frameRate: 12 }

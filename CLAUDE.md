@@ -2332,8 +2332,20 @@ builders (`card` / `strip` / `button`) and one lazy `theme()`. Four rules:
   **never a width**, since a missing glyph still measures a non-zero notdef box — which is
   why Oswald was picked over Bebas Neue.
 - **`hero_hud` is the PILOT** (bead `y1o.24`) and the per-panel beads follow it one file
-  at a time. Its tile geometry did not move — `voice_chat` places the teammate camera on
-  `tile_rect()`. The active ring is FLAT `VISOR_AMBER` and no longer lerped toward the
+  at a time. **`TILE_SIZE` IS THE ONE NUMBER** (bead `y1o.37`, owner: *"make heroes'
+  portraits bigger"*): it went 48 -> 80, the row is `4*80 + 3*6 = 338` px, and everything
+  that has to grow with a tile is DERIVED from it — `DIGIT_FONT_SIZE` at 13/48 and
+  `BADGE_SIZE` at 15/48, both written as the division so 48 still reproduces 13 and 15
+  exactly. Line WEIGHTS do not follow it and that is deliberate (`ACTIVE_BORDER_WIDTH`,
+  `RING_INSET`/`RING_WIDTH`, `BAR_WIDTH`, `BADGE_MARGIN`, `voice_chat.TILE_INSET`): the
+  y1o spec's hard 1-3 px edges are a style decision, and the 3 px inset is what keeps
+  the amber active ring and the green speaking ring visible around a teammate's camera.
+  What BOUNDS the tile is `hero_hud_selfcheck` check 5, the row's fit against every
+  widget `main.tscn` pins to that corner, and the binding neighbour is the \fo
+  PerfOverlay — 80 moved it right (240..544 -> 376..680), never down, where its text
+  walks into the minimap. 96 is the ceiling before the row crowds the minimap's top at
+  the widest expand case. `voice_chat` places the teammate camera on `tile_rect()`, so
+  the picture grew with the tile. The active ring is FLAT `VISOR_AMBER` and no longer lerped toward the
   hero tint: the accent is rationed to one amber thing per screen region, and the tint
   already owns the whole placeholder tile. **A veil composites toward its OWN luminance**,
   so everything darker than it comes out BRIGHTER: at a quarter khaki `HudTheme.veil()`
