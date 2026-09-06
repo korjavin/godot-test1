@@ -404,10 +404,29 @@ func tile_rect(hero: String) -> Rect2:
 
 	The arithmetic is `_draw`'s, moved into a helper both call, so the video
 	overlay of bead godot-test1-xtr.6 can never drift from the tile it covers.
-	`get_screen_transform()` is what turns the control-local rect into the window
-	pixels the browser's canvas is measured in — it folds in this widget's anchors,
-	its CanvasLayer and the project's stretch scale, none of which the caller
-	should have to know about.
+
+	THE TRANSFORM IS THE VIEWPORT'S FINAL ONE, NOT `get_screen_transform()` (bead
+	godot-test1-xtr.10, and this was a shipped bug). `get_screen_transform()` is
+	`get_viewport().get_popup_base_transform() * get_global_transform_with_canvas()`,
+	and a Window that EMBEDS its subwindows answers IDENTITY for the first factor —
+	which is the project default and is unconditional on the web export. So it hands
+	back the rect in the 1920x1080 DESIGN space of the `canvas_items` stretch, with
+	the stretch scale dropped, while the one caller (`voice_chat._poll_tiles`)
+	divides by `get_window().size` — the canvas BACKING size in the browser. The
+	fraction came out short by the whole stretch scale, and a teammate's camera
+	landed above and left of the tile and smaller than it.
+	`get_viewport().get_final_transform()` is the aspect-keep letterbox margin times
+	that stretch, so the rect comes out in the same window pixels the divisor
+	measures, on every stretch mode.
+
+	CONSEQUENCE, and it is the reason the comments around the caller say what they
+	say: the fraction the caller derives is NOT resize-invariant. A resize that
+	keeps the window's ASPECT moves nothing (rect and window scale together), but
+	one that changes it moves which axis BINDS the stretch — and under `keep` the
+	letterbox margin with it — while the divisor changes on both axes. That is fine
+	rather than a hole: `_poll_tiles` is change-gated at 5 Hz and pushes the new
+	fraction within 200 ms, and the browser re-places the picture against the new
+	canvas box on its own `resize` listener meanwhile.
 	"""
 	var index := _index_of(hero)
 	if index < 0:
@@ -417,7 +436,7 @@ func tile_rect(hero: String) -> Rect2:
 	# asking — a headless harness reads the row's own arithmetic instead.
 	if not is_inside_tree():
 		return local
-	var xform := get_screen_transform()
+	var xform := get_viewport().get_final_transform() * get_global_transform_with_canvas()
 	return Rect2(xform * local.position, xform.basis_xform(local.size))
 
 

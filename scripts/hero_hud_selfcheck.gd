@@ -145,7 +145,15 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 func _initialize() -> void:
 	Sentinel.isolate_user_state()
+	# `_initialize()` cannot await, and check 6b has to: the SceneTree's root
+	# Window is not itself in the tree on frame 0, so a Control parented under it
+	# here answers `is_inside_tree() == false` and `tile_rect` never reaches the
+	# transform this check exists to measure. So the run is a coroutine and
+	# reports from in there — `wade_selfcheck`'s pattern, same reason.
 	_run()
+
+
+func _report() -> void:
 	if _failures.is_empty():
 		Sentinel.finish(self)
 	else:
@@ -171,9 +179,11 @@ func _run() -> void:
 	_check_the_standalone_degrade()
 	_check_the_row_fits_and_clears_its_neighbours()
 	_check_the_video_tile_lookup()
+	await _check_tile_rect_under_a_stretch()
 	_check_voice_on_the_row()
 	_check_the_voice_seams_in_a_room()
 	_check_the_hud_theme()
+	_report()
 
 
 func _hero_names() -> PackedStringArray:
@@ -380,8 +390,9 @@ func _check_the_video_tile_lookup() -> void:
 	var stub := StubPlayer.new()
 	hud.player = stub
 	# The row is measured OUT of the tree, where `tile_rect` answers its own local
-	# arithmetic: this check is about that arithmetic agreeing with `_draw`'s, and
-	# the screen transform above it is Godot's, not ours, to get right.
+	# arithmetic: this half is about that arithmetic agreeing with `_draw`'s. The
+	# TRANSFORM above it is very much ours to get right — it was wrong for a whole
+	# release (bead godot-test1-xtr.10) — and check 6b below is where it is pinned.
 	# Nothing is drawn until `_process` has read the roster, so the empty answer is
 	# the standalone degrade AND the state the overlay meets on its first poll.
 	_check(hud.hero_names().is_empty(),
@@ -448,7 +459,141 @@ func _check_the_video_tile_lookup() -> void:
 	_check(draw_body.contains("_tile_rect_local("),
 		"_draw() no longer steps by _tile_rect_local() — it and tile_rect() are two "
 		+ "descriptions of the row again, and check 6 cannot see them disagree")
+	# AND THE TRANSFORM, BY NAME. Check 6b measures the answer, but a revert that
+	# happened to be measured on an unstretched viewport would slip past it; the
+	# name is the cheap half of the same gate.
+	var rect_body := source.substr(source.find("func tile_rect(hero: String) -> Rect2:"))
+	var after_rect := rect_body.find("\nfunc ")
+	if after_rect > 0:
+		rect_body = rect_body.substr(0, after_rect)
+	# Past the docstring, which NAMES the retired call to explain why it is not
+	# used — reading the whole function would fail on its own explanation.
+	rect_body = rect_body.substr(rect_body.rfind('\"\"\"') + 3)
+	_check(rect_body.contains("get_final_transform()"),
+		"tile_rect() no longer maps through get_viewport().get_final_transform() — "
+		+ "get_screen_transform() drops the canvas_items stretch when the root embeds "
+		+ "subwindows, which is the web export, and the camera picture goes back to "
+		+ "sitting above and left of the tile (bead godot-test1-xtr.10)")
+	_check(not rect_body.contains("get_screen_transform()"),
+		"tile_rect() is back on get_screen_transform(), which answers in DESIGN px "
+		+ "while voice_chat divides by the window's own size")
 	Sentinel.done("the_video_tile_lookup")
+
+
+func _check_tile_rect_under_a_stretch() -> void:
+	"""
+	6b. `tile_rect()` answers in the pixels its one caller DIVIDES BY, under a
+	non-identity stretch (bead godot-test1-xtr.10 — this shipped broken).
+
+	Check 6 measures the row OUT of the tree, against its own arithmetic, so it
+	cannot see the transform at all — and the transform is what was wrong.
+	`voice_chat._poll_tiles` divides this rect by `get_window().size`, so the rect
+	has to be in WINDOW pixels; `get_screen_transform()` is not, because it is
+	`get_popup_base_transform() * get_global_transform_with_canvas()` and a Window
+	that EMBEDS its subwindows answers the IDENTITY for the first factor — which
+	is the project default and is unconditional on the web export, whose
+	DisplayServer has no native subwindows. It therefore handed back the
+	1920x1080 DESIGN rect with the `canvas_items` stretch dropped, the fraction
+	came out short by the whole stretch scale, and a teammate's camera landed
+	above and left of the tile and smaller than it. Invisible to anybody whose
+	window happened to be 1:1, which is why it shipped.
+
+	THE HARNESS IS THE REAL ROOT WINDOW, and it has to be: a SubViewport does not
+	reproduce this at all — its `get_screen_transform()` already folds in its own
+	final transform, so the retired mapping passes in one and the check would be
+	vacuous. Resizing the root to 2880x1800 against the project's own 1920x1080
+	content scale is exactly the retina web case (s = 1.5, the width being the
+	axis that binds under `expand`), and the MUTATION CONTROL is the retired
+	mapping driven in that same harness: it must answer the UNSCALED rect, which
+	is the shipped bug reproduced headless.
+	"""
+	# The root Window is not itself in the tree on frame 0, and a Control that is
+	# not in the tree never reaches `tile_rect`'s transform at all — the check
+	# would measure the out-of-tree degrade and pass on the bug.
+	await process_frame
+	# The project's own content scale is the premise, not something this check
+	# sets up: if `[display]` ever stopped stretching, the mutation control below
+	# is what says so rather than everything passing for free.
+	_check(root.content_scale_size == Vector2i(1920, 1080)
+			and root.content_scale_mode == Window.CONTENT_SCALE_MODE_CANVAS_ITEMS,
+		"the project's content scale is %s / mode %d, not the 1920x1080 canvas_items "
+			% [root.content_scale_size, root.content_scale_mode]
+		+ "this check's arithmetic is written against")
+
+	const DESIGN := Vector2(1920.0, 1080.0)
+	# 2880x1800 over 1920x1080: a retina 1440x900 browser window, which is where
+	# this was reported. The width binds, so the scale is 1.5 either way and the
+	# two aspects differ only by the letterbox margin.
+	const WINDOW := Vector2i(2880, 1800)
+	# main.tscn's own corner offsets, so the assertion covers the control's
+	# position and not just the tile pitch — the offset is scaled too, and the
+	# retired mapping got that wrong as well.
+	const OFFSET := Vector2(16.0, 72.0)
+	var was_size: Vector2i = root.size
+	var was_aspect: int = root.content_scale_aspect
+	root.size = WINDOW
+	# A CanvasLayer, because that is where this row really lives (main.tscn's HUD)
+	# and it is one more factor in `get_global_transform_with_canvas()`.
+	var layer := CanvasLayer.new()
+	root.add_child(layer)
+	var hud: Control = HUD_SCRIPT.new()
+	var stub := StubPlayer.new()
+	hud.player = stub
+	hud.position = OFFSET
+	layer.add_child(hud)
+	hud._process(0.0)
+	var names: PackedStringArray = hud.hero_names()
+	_check(not names.is_empty(),
+		"the stretched harness drew no row, so check 6b would pass vacuously")
+	var pitch: float = float(HUD_SCRIPT.TILE_SIZE) + float(HUD_SCRIPT.TILE_GAP)
+
+	# BOTH SHIPPED ASPECTS. `expand` is the web export's (`aspect.web`), which is
+	# where the bug was reported; `keep` is the desktop default and adds a
+	# letterbox MARGIN, which `get_screen_transform()` drops along with the scale
+	# and which the caller's divisor very much includes.
+	for aspect: int in [Window.CONTENT_SCALE_ASPECT_EXPAND,
+			Window.CONTENT_SCALE_ASPECT_KEEP]:
+		root.content_scale_aspect = aspect
+		await process_frame
+		# Worked out here rather than read back off `get_final_transform()`, which
+		# would be the implementation checking itself: a canvas_items stretch
+		# scales UNIFORMLY by whichever axis binds, and `keep` centres what is left.
+		var s: float = minf(float(WINDOW.x) / DESIGN.x, float(WINDOW.y) / DESIGN.y)
+		var margin := Vector2.ZERO
+		if aspect == Window.CONTENT_SCALE_ASPECT_KEEP:
+			margin = (Vector2(WINDOW) - DESIGN * s) * 0.5
+		for i: int in names.size():
+			var local := Rect2(Vector2(float(i) * pitch, 0.0),
+				Vector2(float(HUD_SCRIPT.TILE_SIZE), float(HUD_SCRIPT.TILE_SIZE)))
+			var want := Rect2(margin + (OFFSET + local.position) * s, local.size * s)
+			var got: Rect2 = hud.tile_rect(names[i])
+			_check(got.is_equal_approx(want),
+				"tile_rect(%s) is %s under a %.2fx stretch (aspect %d), not %s — it is "
+					% [names[i], got, s, aspect, want]
+				+ "answering in design pixels while voice_chat divides by the window size")
+
+		# THE MUTATION CONTROL: the mapping this bead retired, in this same
+		# harness. It must come out UNSCALED and unmargined — that is the shipped
+		# bug — and if it does not, the harness is reproducing nothing and every
+		# assertion above passes for free.
+		var retired: Transform2D = hud.get_screen_transform()
+		var zero := Rect2(Vector2.ZERO,
+			Vector2(float(HUD_SCRIPT.TILE_SIZE), float(HUD_SCRIPT.TILE_SIZE)))
+		var bugged := Rect2(retired * zero.position, retired.basis_xform(zero.size))
+		_check(bugged.is_equal_approx(Rect2(OFFSET, zero.size)),
+			"the retired get_screen_transform() mapping answered %s at aspect %d, not "
+				% [bugged, aspect]
+			+ "the unscaled %s — the harness is not reproducing the stretch, so check "
+				% Rect2(OFFSET, zero.size)
+			+ "6b proves nothing")
+
+	hud.free()
+	stub.free()
+	layer.free()
+	# Hand the window back exactly as the rest of the run found it.
+	root.content_scale_aspect = was_aspect
+	root.size = was_size
+	Sentinel.done("tile_rect_under_a_stretch")
 
 
 func _check_voice_on_the_row() -> void:

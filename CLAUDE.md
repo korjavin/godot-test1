@@ -175,7 +175,16 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            the row really drawn, `tile_state()` reports CAPTIVE
 #                            so the overlay leaves the cell bars alone, and
 #                            `voice_chat`'s mirrored copy of that constant is
-#                            bound to the real one. Check 7 is VOICE ON THE ROW:
+#                            bound to the real one. Check 6b is the THIRD half
+#                            and the only one that can see a TRANSFORM: the REAL
+#                            root window resized to 2880x1800 over the project's
+#                            1920x1080, driven at BOTH shipped aspects (web
+#                            `expand`, desktop `keep` with its letterbox margin),
+#                            with the retired `get_screen_transform()` mapping as
+#                            the mutation control — it must answer the UNSCALED
+#                            rect, which is bead xtr.10's shipped bug. A
+#                            SubViewport cannot host it (its own screen transform
+#                            already folds the stretch in, so the bug passes). Check 7 is VOICE ON THE ROW:
 #                            the five MIC_BADGE_* numbers and the speaking green
 #                            bound to voice_chat's and remote_avatar's, the real
 #                            voice module answering NOTHING off-web, a stub
@@ -2597,9 +2606,19 @@ touches `JavaScriptBridge`.
   precedent): the browser decodes and composites, so the per-frame cost on the
   single-threaded export is zero and GDScript's whole contribution is one rect at 5 Hz,
   pushed only when it CHANGES. **The rect crosses as FRACTIONS of the canvas**, so
-  `devicePixelRatio`, CSS scaling and every resize belong to the browser (which re-places
-  the tiles on its own `resize` listener — a resize moves no fraction, so nothing is
-  pushed). It lands on the tile of the hero that peer HOLDS, resolved through the lobby's
+  `devicePixelRatio` and CSS scaling belong to the browser, which also re-places the tiles
+  against the new canvas box on its own `resize` listener. **The fraction is NOT
+  resize-invariant, and believing it was is what shipped bead `godot-test1-xtr.10`**: a
+  resize that KEEPS the window's aspect moves nothing, but one that changes it moves which
+  axis binds the `canvas_items` stretch (and, under the desktop's `keep`, the letterbox
+  margin) while the divisor changes on both — so the 5 Hz poll's change gate is what
+  pushes the new one, within 200 ms. **`tile_rect()` answers in WINDOW pixels through
+  `get_viewport().get_final_transform()`, never `get_screen_transform()`**, whose
+  `get_popup_base_transform()` factor is the IDENTITY on a window that embeds its
+  subwindows — the project default, and unconditional on the web export — so it answered
+  in 1920x1080 DESIGN pixels while `_poll_tiles` divided by the canvas BACKING size, and
+  a teammate's camera sat above and left of the tile and smaller than it on every
+  non-1:1 display. It lands on the tile of the hero that peer HOLDS, resolved through the lobby's
   `hero_holder()` — which is exactly `hero_hud`'s STATE_HELD — **except a CAPTIVE tile,
   which takes no picture at all**: its cell bars are drawn ACROSS the tile, no inset saves
   them, and a benched peer still HOLDS the hero they are locked up as. `hero_hud` gained
