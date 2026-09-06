@@ -2,9 +2,10 @@
 """
 Generate Phoboman 3D model with SEPARATE body parts for individual animation.
 
-Requires: trimesh, numpy  (no shapely/scipy needed — the dragon is built from
-swept tube segments, not extruded polygons). Install with:
-    pip install trimesh numpy
+Requires the PINNED toolchain of `scripts/requirements.txt` — of which this one
+uses only trimesh + numpy (the dragon is swept tube segments, not extruded
+polygons, so shapely + mapbox-earcut go unused here).
+    pip install -r scripts/requirements.txt
 
 Each limb is exported as its own GLB file. `scenes/characters/phoboman.tscn`
 assembles them under a `Body` node whose `LeftArm` / `RightArm` / `LeftLeg` /

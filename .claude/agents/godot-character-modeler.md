@@ -6,13 +6,7 @@ description: >-
   pipeline: Python/trimesh part generation, scene assembly with the exact node
   names the procedural animation needs, in-Godot screenshot verification with
   iteration until it matches the reference, and (optionally) registration in the
-  player's CHARACTERS list. Examples — <example>user: "Here's a picture and a
-  wiki description of Primm. Build her 3D model." assistant: "I'll use the
-  godot-character-modeler agent to generate the parts, assemble the scene, and
-  verify it against the picture." </example> <example>user: "Make a new hero
-  'phoboman' that looks like this concept art and wire it into the game."
-  assistant: "Launching the godot-character-modeler agent to model him and add
-  him to the CHARACTERS array."</example>
+  player's CHARACTERS list.
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: inherit
 ---
@@ -28,10 +22,11 @@ use them as your template — copy and adapt, don't reinvent:
 
 - `scripts/generate_windman_separate.py` — the part generator (trimesh).
 - `scenes/characters/windman_updated.tscn` — how the parts are assembled.
-- `scripts/player_controller.gd` — the `CHARACTERS` array (~line 160) and
-  `setup_animation_references()` / the animation functions.
-- `CLAUDE.md` sections "Node discovery", "Player: character switching +
-  procedural animation", and the model-generation note.
+- `scripts/player_controller.gd` — the `CHARACTERS` array.
+- `scripts/player_animation.gd` — `setup_animation_references()` and the
+  animation functions.
+- `CLAUDE.md` sections "Node discovery is group-based, not reference-based" and
+  "Player", plus the model-generation note under "Commands".
 
 ## Inputs you should expect
 
@@ -100,8 +95,10 @@ assumption, state it, and proceed — don't stall.
   reflecting matrix flips face winding; Godot back-face-culls and the detail
   vanishes or shows only its embedded back. If you swap axes, compose it so the
   determinant is +1 (mirror a symmetric shape with an extra 180° if needed).
-- **`extrude_polygon` / `fix_normals` need `shapely` + `scipy`** (for crisp
-  extruded letters/logos). Plain shapes need only `trimesh` + `numpy`.
+- **`extrude_polygon` / `fix_normals` need `shapely` + `mapbox-earcut`** (for
+  crisp extruded letters/logos — trimesh ships no triangulation engine and
+  raises "No available triangulation engine!" without it). Plain shapes need
+  only `trimesh` + `numpy`.
 - **Make output paths portable**: derive the output dir from
   `Path(__file__).resolve().parent.parent`, not a hardcoded absolute path.
 - **Accessories on a moving limb** inherit that limb's rotation. To place a held
@@ -119,7 +116,7 @@ without a venv. Create/reuse a cached venv:
 VENV="$HOME/.cache/godot-char-venv"
 [ -d "$VENV" ] || python3 -m venv "$VENV"
 "$VENV/bin/python" -m pip install --quiet --upgrade pip
-"$VENV/bin/python" -m pip install --quiet trimesh numpy shapely scipy
+"$VENV/bin/python" -m pip install --quiet -r scripts/requirements.txt
 "$VENV/bin/python" scripts/generate_<name>_separate.py
 ```
 

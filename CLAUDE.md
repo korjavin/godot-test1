@@ -13,7 +13,7 @@ A Godot 3rd-person endless-runner adventure game ("CrimeKickers"). The player wa
 infinite procedurally generated field, switches between four characters, and is chased
 by hostile NPC crocodiles. 2–4 players can share a world over WebRTC.
 
-**Engine: Godot 4.5.** README.md and QUICKSTART.md say 4.3 — they are stale.
+**Engine: Godot 4.5.**
 
 ## Commands
 
@@ -1293,8 +1293,7 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   `run_seed` — the tower is authored). It is all vertex-coloured boxes in the storey's
   existing batch, so ten furnished floors cost **zero** extra draw calls; only the four
   hero portraits hanging in the outer hall as "employee of the month" need textures, and
-  they are the whole of `DRAW_BUDGET`'s move from 35 to 39 (37 since the rotor
-  turnstile came out). Furniture has its own
+  they are the whole of why `DRAW_BUDGET` is 38 rather than 34. Furniture has its own
   per-storey budget (`PLAN_DRESS_BUDGET` 580) so `PLAN_BOX_BUDGET` keeps measuring
   exactly what it always did. **The CORRIDORS are dressed too** (benches and planters,
   `TowerDressing._hall_dressing`), on cells whose four neighbours are all stone or open floor and whose
