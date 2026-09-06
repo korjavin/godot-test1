@@ -8,7 +8,7 @@ SessionStart hook, so it is always current. Don't restate it here; this file rot
 
 ## Non-Interactive Shell Commands
 
-**ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.
+Use non-interactive flags with file operations, or the command hangs on a confirmation prompt.
 
 Shell commands like `cp`, `mv`, and `rm` may be aliased to include `-i` (interactive) mode on some systems, causing the agent to hang indefinitely waiting for y/n input.
 

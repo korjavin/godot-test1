@@ -2,9 +2,10 @@
 """
 Generate Teibi 3D model with SEPARATE body parts for individual animation.
 
-Requires: trimesh, numpy  (shapely+scipy are NOT needed here — Teibi has no
-extruded chest letter; a small collar/placket on the polo is built from plain
-boxes/cylinders). Install with:  pip install trimesh numpy shapely scipy
+Requires the PINNED toolchain of `scripts/requirements.txt` — of which this one
+uses only trimesh + numpy (Teibi has no extruded chest letter; the collar/placket
+on the polo is plain boxes/cylinders, so shapely + mapbox-earcut go unused here).
+    pip install -r scripts/requirements.txt
 
 Each limb is exported as its own GLB file. `scenes/characters/teibi.tscn`
 assembles them under a `Body` node whose `LeftArm` / `RightArm` / `LeftLeg` /
