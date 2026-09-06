@@ -789,9 +789,13 @@ jobs:
           set -uo pipefail
           base="${PORTAINER_HOOK%%/api/*}"
           uuid="${PORTAINER_HOOK##*/}"
+          # RED, where the prune's identical guard only warns: the webhook above
+          # HAS been fired, so a URL we cannot derive an API base from means the
+          # deploy is unverifiable — and an unverifiable deploy reported green is
+          # the exact bug this step exists to remove.
           if [ "${base}" = "${PORTAINER_HOOK}" ] || [ -z "${base}" ] || [ -z "${uuid}" ]; then
-            echo "::warning::PORTAINER_REDEPLOY_HOOK does not look like a Portainer webhook URL — cannot verify the redeploy"
-            exit 0
+            echo "::error::PORTAINER_REDEPLOY_HOOK does not look like a Portainer webhook URL (expected <portainer>/api/stacks/webhooks/<uuid>) — the redeploy cannot be verified, so this job will not claim it landed"
+            exit 1
           fi
           # Same three masks as the prune step: Actions masks by exact
           # substring and curl prints the bare authority in its own errors.
@@ -814,9 +818,13 @@ jobs:
             if [ "${status}" = "200" ]; then
               # `.AutoUpdate.Webhook` is null on stacks without a hook, which
               # compares unequal rather than erroring — no `?` needed.
+              # `|| hash=""` because Actions runs a `run:` under `bash -e` and
+              # `set -uo pipefail` does not clear it: a transient 200 carrying a
+              # proxy's HTML makes jq exit non-zero, which would kill the step
+              # on the spot instead of retrying and printing the diagnosis.
               hash=$(jq -r --arg u "${uuid}" \
                 '[.[] | select(.AutoUpdate.Webhook == $u) | .GitConfig.ConfigHash] | first // ""' \
-                "${body}" 2>/dev/null)
+                "${body}" 2>/dev/null) || hash=""
               [ "${hash}" = "${PIN_SHA}" ] && { echo "Portainer redeployed onto ${PIN_SHA}"; exit 0; }
             fi
             [ "$(date +%s)" -ge "${deadline}" ] && break
