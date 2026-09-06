@@ -842,6 +842,13 @@ const VOICE_JS: String = """
 	   not a finite number — which is what a hand-edited localStorage row, a typo in
 	   the console and a missing field all look like by the time they get here. */
 	function styleNum(v, lo, hi, dflt) {
+		/* A BLANK IS NOT A ZERO (codex review 2026-09-06). `Number('')` is 0 and
+		   finite, so a hand-edited `4,,1,0.45` would CLAMP rather than fall back —
+		   and a blank `mix` clamps to 0, which is the one setting that turns the
+		   cartoon off, silently, until somebody sets it again. Rejected before the
+		   conversion, where the emptiness is still visible. */
+		if (v === null || v === undefined) { return dflt; }
+		if (typeof v === 'string' && v.trim() === '') { return dflt; }
 		var n = Number(v);
 		if (!isFinite(n)) { return dflt; }
 		if (n < lo) { return lo; }

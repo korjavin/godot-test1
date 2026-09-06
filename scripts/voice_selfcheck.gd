@@ -743,6 +743,12 @@ func _check_style_mirrors() -> void:
 		if not set_style.contains("STYLE_KEY"):
 			_fail("setStyle does not persist under STYLE_KEY — an experiment that dies "
 				+ "on reload is not the console knob the bead ships")
+		var num: String = _js_function_body(module, "styleNum")
+		if not num.contains("=== ''"):
+			_fail("styleNum does not reject a BLANK field before Number() — "
+				+ "`Number('')` is 0 and finite, so a hand-edited `4,,1,0.45` clamps "
+				+ "instead of falling back, and a blank `mix` clamps to the one "
+				+ "setting that turns the cartoon off (codex review 2026-09-06)")
 		if not set_style.contains("styleNum(levels, 2, 8"):
 			_fail("setStyle does not clamp `levels` to 2..8 — one band is not a picture "
 				+ "and nine is not a cel look; a hand-edited localStorage row reaches "
