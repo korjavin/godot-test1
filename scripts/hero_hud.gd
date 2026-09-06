@@ -9,7 +9,7 @@ extends Control
 ## to read as *taken*, not merely as "not selected".
 ##
 ## Four states, and they are deliberately three different visual languages so none
-## of them can be mistaken for another at 80 px:
+## of them can be mistaken for another at 92 px:
 ##
 ##   ACTIVE   full brightness + a bright border   this is the body you are driving
 ##   FREE     full brightness, no border          yours to switch to
@@ -77,21 +77,24 @@ extends Control
 ## found through the "player" group, per the discovery convention.)
 const PLAYER_SCRIPT := preload("res://scripts/player_controller.gd")
 
-## One tile, and the gap between two of them. Four tiles = 4*80 + 3*6 = 338 px.
+## One tile, and the gap between two of them. Four tiles = 4*92 + 3*6 = 386 px.
 ##
 ## TILE_SIZE IS THE ONE NUMBER (bead godot-test1-y1o.37, owner: "make heroes'
-## portraits bigger"). It went 48 -> 80; everything that has to grow with a tile is
-## DERIVED from it below, so the next resize is one edit. What bounds it is
-## `hero_hud_selfcheck` check 5 — the row's fit against every widget `main.tscn`
-## pins to that corner — and it is the \fo PerfOverlay that binds, on the WIDTH:
-## 80 needed it moved right (240..544 -> 376..680). Raising the tile again costs
-## another move of that SAME neighbour and nothing else — a 96 px tile is a 402 px
-## row ending at x = 418, past the overlay's new 376, and there is room (the design
-## width is 1920 at its narrowest under either aspect). The MINIMAP is not what
-## binds at any size anyone has proposed: it is anchored at 0.5 with
-## `offset_top = -126` and the design height is never under 1080, so its top is
-## never under 414 against this row's bottom of 152 — it would take a 342 px tile.
-const TILE_SIZE: float = 80.0
+## portraits bigger"; bead godot-test1-y1o.39, owner after seeing 80 on prod:
+## "let's increase a bit more portraits +15%"). It went 48 -> 80 -> 92; everything
+## that has to grow with a tile is DERIVED from it below, so the next resize is one
+## edit. What bounds it is `hero_hud_selfcheck` check 5 — the row's fit against
+## every widget `main.tscn` pins to that corner — and it is the \fo PerfOverlay
+## that binds, on the WIDTH: 80 moved it right (240..544 -> 376..680) and 92 moved
+## it right again (376..680 -> 424..728). Never DOWN — its text walks into the
+## minimap. So the ceiling is always "whatever fits west of the overlay's left
+## edge", and at 424 that is 97 px (16 + 4*97 + 3*6 = 422); past it, the same
+## neighbour moves once more and there is room (the design width is 1920 at its
+## narrowest under either aspect). The MINIMAP is still not what binds at any size
+## anyone has proposed: it is anchored at 0.5 with `offset_top = -126` and the
+## design height is never under 1080, so its top is never under 414 against this
+## row's bottom of 164 — it would take a 342 px tile.
+const TILE_SIZE: float = 92.0
 const TILE_GAP: float = 6.0
 
 ## Hero identity colours — the placeholder fill, and the tint of the active border.
