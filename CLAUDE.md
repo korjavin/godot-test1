@@ -2700,13 +2700,17 @@ touches `JavaScriptBridge`.
   *"is it configurable? can we make it a bit less agressive?"*) — `levels`, `mix`,
   `edge`, `shadow`, held in `S.style`, clamped and persisted to `localStorage`
   (`ck_voice_style`) by the one writer `setStyle`, and read back by `getStyle()` and by
-  \fo's `style=` column (`l4 m1.00 e1 s0.45`). From the SENDER's browser console:
-  `window.ckVoice.setStyle(6, 0.6, 1, 0.5)` softens it on every receiver's tile within a
-  frame; `window.ckVoice.getStyle()` answers `"4,1,1,0.45"` and `setStyle(4, 1, 1, 0.45)`
-  is the way back. `mix` is the knob that did not exist — how much of the REAL pixel
-  survives — and at the shipped **1.0 the blend is `orig * 0 + ramp * 1`, so the defaults
-  paint byte for byte what they always did**; the ramp resamples its four control stops at
-  `levels` points, which lands exactly on them at 4. **THE FORCED RULE HAS TWO HALVES AND
+  \fo's `style=` column (`l8 m0.40 e0 s0.60`). From the SENDER's browser console:
+  `window.ckVoice.setStyle(4, 1, 1, 0.45)` puts back xtr.16's hard cel look on every
+  receiver's tile within a frame; `window.ckVoice.getStyle()` answers `"8,0.4,0,0.6"` and
+  `setStyle(8, 0.4, 0, 0.6)` is the way back. **THE DEFAULT IS THE OWNER'S OWN DIAL**
+  (bead `godot-test1-xtr.22`, verbatim *"i tried and i like
+  window.ckVoice.setStyle(8, 0.4, 0, 0.6) better, let's make it default for everyone"*,
+  after *"it makes faces almost unrecognizable"*): eight bands read as shading rather
+  than as a stencil, `edge` 0 inks no boundary, and `mix` — the knob that did not exist,
+  how much of the REAL pixel survives — sits at 0.4, well clear of its floor. A stored
+  `ck_voice_style` row from an earlier experiment still wins over the new default on that
+  one browser, and is deliberately not migrated. **THE FORCED RULE HAS TWO HALVES AND
   `styleStream()` IS ONLY THE TRANSPORT ONE.** What may never leave a sender is the RAW
   DEVICE TRACK, and at every setting the wire carries the canvas capture instead — the
   160x120 crop, downscaled to 128 and re-encoded at 12 fps under 150 kbps. But the owner's

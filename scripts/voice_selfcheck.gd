@@ -732,11 +732,12 @@ func _check_style_mirrors() -> void:
 	# undefined ramp slot behind it), the PERSISTENCE (an experiment that does not
 	# survive a reload is not the knob that was asked for), and the four numbers
 	# reaching \fo, which is where the owner reads back what is live.
-	if not module.contains("var STYLE_DEFAULT = [4, 1.0, 1, 0.45];"):
-		_fail("VOICE_JS declares no `var STYLE_DEFAULT = [4, 1.0, 1, 0.45]` — the "
-			+ "cartoon camera's shipped look (bead godot-test1-xtr.16) is what the "
-			+ "knobs fall back to and what a fresh profile paints; a drifted default "
-			+ "restyles every room silently")
+	if not module.contains("var STYLE_DEFAULT = [8, 0.4, 0, 0.6];"):
+		_fail("VOICE_JS declares no `var STYLE_DEFAULT = [8, 0.4, 0, 0.6]` — the "
+			+ "cartoon camera's shipped look (the owner's own dial, bead "
+			+ "godot-test1-xtr.22, superseding xtr.16's [4, 1.0, 1, 0.45]) is what "
+			+ "the knobs fall back to and what a fresh profile paints; a drifted "
+			+ "default restyles every room silently")
 	var paint_body: String = _js_function_body(module, "paint")
 	if paint_body.is_empty():
 		_fail("VOICE_JS has no `function paint(` — the strength knobs' subject is gone")
@@ -1250,7 +1251,7 @@ func _check_video_health() -> void:
 	# applied to it, on a sample of the real format.
 	var node: Node = _voice_node()
 	var sample_row: String = ("Voice: mode=ALWAYS tx=0 ns=1 ec=1 agc=1 peers=1 "
-		+ "rtt=42ms loss=0.0% style=0.42ms l4 m1.00 e1 s0.45 "
+		+ "rtt=42ms loss=0.0% style=0.42ms l8 m0.40 e0 s0.60 "
 		+ "ice=connected con=connected sig=stable "
 		+ "sdp=5312 vin=12 vout=12 paint=61 src=1")
 	var wrapped: String = str(node._wrap_stats(sample_row))
