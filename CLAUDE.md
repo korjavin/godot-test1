@@ -2720,6 +2720,27 @@ touches `JavaScriptBridge`.
   value. `voice_selfcheck` check 6b pins the defaults, the paint loop's reads, both
   clamps, the mix floor and that the clamp really reads it, the blank-field fallback, the
   persistence and the four \fo columns.
+  **AND THE HERO'S ACCESSORY IS DRAWN OVER THE FACE** (bead `godot-test1-xtr.13`,
+  the last of the three follow-ups to *"look similar to a character he is
+  playing"*): the tint says which palette you are in, the ACCESSORY says who you
+  are, because at 92 px a hue is a mood and a shape is a name. **The art is the
+  four shipped portraits and the owner ruled the pictures win** (2026-09-06) —
+  windman a blue BLINDFOLD band with a red mark, primm cyan VISOR GOGGLES, teibi
+  a dark BERET, phoboman a glass FISHBOWL HELMET ring (his soup is not drawn; what
+  is inside the helmet is the player's own face, which is the point) — **drawn
+  CLEAN after the posterize**, so the cyan stays cyan and the face's ink edges do
+  not band it. A dozen `fillRect`s and two arcs in rgb TRIPLES (never hex —
+  `hero_hud_selfcheck` check 8), **not the four data-URI PNGs the bead offered**:
+  four `<img>` ready states and ~40 KB of base64 buy nothing a parameterised shape
+  does not, and a shape follows the face box for free. It is REGISTERED on bead
+  .12's box (`faceOnCanvas` divides `FACE_ZOOM` back out), and the centre-crop rung
+  needs no second path because `S.faceBox` there IS the centre square. The hero
+  NAME rides `setStyleTint`'s **fourth argument** rather than a second bridge
+  function — `_push_style_tint` is already the one writer and already change-gated
+  on exactly that hero, so R/a capture reassignment repaints on the next 5 Hz poll
+  and renegotiates nothing. A hero with no accessory draws nothing and logs nothing
+  (`hero_hud`'s missing-portrait rule); \fo's `style=` still bills it, because the
+  call sits above the `paintMs` stamp.
   **THE CROP BOX FOLLOWS THE FACE, AND IT ZOOMS RATHER THAN ONLY PANS** (bead
   `godot-test1-xtr.12`, owner: *"on my desktop when camera is a bit far away it
   doesn't trace head well, it shows me not only face"*). A laptop lid puts a face

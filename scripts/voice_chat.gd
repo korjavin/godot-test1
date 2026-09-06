@@ -293,6 +293,13 @@ const VOICE_JS: String = """
 		styled: null, styleSrc: null, styleCanvas: null, styleCtx: null,
 		styleLv: null, styleRamp: null, styleRvfc: 0, styleTimer: null,
 		styleWatch: null, paintMs: 0, style: null, styleTint: [140, 140, 150],
+		/* THE HERO'S NAME (bead godot-test1-xtr.13), pushed beside the tint by the
+		   one GDScript writer that already knows it. The tint is a colour and
+		   cannot say which ACCESSORY to draw, and a name cannot say which colour
+		   to use (`hero_hud.HERO_COLORS` stays the one table, in a language this
+		   string cannot read) — so both travel, on one change-gated call. Empty
+		   until GDScript speaks, which draws nothing. */
+		styleHero: '',
 		/* THE SENDER'S SELF-HEAL (bead godot-test1-xtr.18). `styleW` is the Worker
 		   whose timer drives the paint loop in a HIDDEN tab, where rVFC never fires
 		   and `setInterval` is throttled to 1 Hz; `recamN`/`recamWin`/`recamBusy`
@@ -966,12 +973,20 @@ const VOICE_JS: String = """
 	   it and a BONE slash across it, in fillRects and one rotated bar. NO HEX
 	   STRINGS — the palette lives in the two triples above (hero_hud_selfcheck
 	   check 8 greps `scripts/` for the six film hexes). */
+	/* One rgb triple as a canvas fill string. The triples themselves are the rule
+	   (`hero_hud_selfcheck` check 8 greps `scripts/` for the six film hexes, which
+	   may be typed in `hud_theme.gd` alone) — this is only how they are spelled at
+	   the one place a 2D context wants a string. */
+	function rgb(t) {
+		return 'rgb(' + t[0] + ',' + t[1] + ',' + t[2] + ')';
+	}
+
 	function paintCard() {
 		var cx = S.styleCtx;
 		if (!cx) { return 0; }
 		var n = STYLE_SIZE;
-		var ink = 'rgb(' + STYLE_INK[0] + ',' + STYLE_INK[1] + ',' + STYLE_INK[2] + ')';
-		var bone = 'rgb(' + STYLE_BONE[0] + ',' + STYLE_BONE[1] + ',' + STYLE_BONE[2] + ')';
+		var ink = rgb(STYLE_INK);
+		var bone = rgb(STYLE_BONE);
 		try {
 			cx.fillStyle = ink;
 			cx.fillRect(0, 0, n, n);
@@ -1455,6 +1470,161 @@ const VOICE_JS: String = """
 		return 1;
 	}
 
+	/* ------------------------------------------------------------------------
+	   THE HERO ACCESSORY (bead godot-test1-xtr.13)
+	   ------------------------------------------------------------------------
+	   "look similar to a character he is playing" — the last of the three
+	   follow-ups, and the one that makes a tinted face read as THAT hero at 92 px.
+	   The tint (bead .11) says which palette you are in; the ACCESSORY says who
+	   you are, because at tile size a hue is a mood and a shape is a name.
+
+	   THE ART IS THE FOUR SHIPPED PORTRAITS and the owner's ruling of 2026-09-06
+	   settles what each one is: `assets/portraits/windman.png` is a blue BLINDFOLD
+	   band with a red mark across the eyes, `primm.png` cyan VISOR GOGGLES,
+	   `teibi.png` a dark BERET on the crown, `phoboman.png` a glass FISHBOWL
+	   HELMET around the whole head. (The owner's original message said "Windman's
+	   goggles, Primm's beret, Teibi's helmet"; the pictures disagree and the
+	   ruling is that the pictures win.)
+
+	   DRAWN CLEAN, AFTER THE POSTERIZE (owner ruling, same day). The stylize pass
+	   is `putImageData`; this runs after it, so Primm's cyan stays cyan and the
+	   ink edges of the face do not cut the visor into bands. Under the pass would
+	   have been one line further up and reads worse at 92 px — the accessory is
+	   the thing that has to survive the downscale.
+
+	   VECTOR fillRects AND TWO ARCS, NOT PNGs. The bead offered four data-URI
+	   PNGs; four `<img>` loads with their own ready state, ~40 KB of base64 in
+	   this string and four committed source files buy nothing a dozen rects do
+	   not, and they cannot follow the face box for free the way a parameterised
+	   shape does. The colours are rgb TRIPLES like `STYLE_INK`/`STYLE_BONE`, never
+	   hex (`hero_hud_selfcheck` check 8), and they are SEMANTIC identity art in
+	   `hero_hud.HERO_COLORS`' own sense rather than film-palette colours — the
+	   ink and the highlight are the palette's.
+
+	   REGISTERED ON THE FACE BOX the tracker already provides (bead .12), so it
+	   follows the head. With no detector — the centre-crop rung — `S.faceBox` IS
+	   the centre square, so the same arithmetic lands the accessory on the
+	   crop's implied face and there is no second code path to keep in step. */
+	var ACC_WINDMAN_BAND = [74, 111, 165];
+	var ACC_WINDMAN_MARK = [193, 57, 47];
+	var ACC_PRIMM_FRAME = [46, 74, 84];
+	var ACC_PRIMM_LENS = [128, 232, 224];
+	var ACC_TEIBI_BERET = [43, 50, 69];
+	var ACC_PHOBO_RIM = [207, 214, 218];
+
+	/* WHERE THE FACE IS ON THE 128 px CANVAS, as [cx, cy, side] — the detected
+	   face, not the crop: `S.faceBox` is the LERPED crop box and the crop is
+	   `FACE_ZOOM` times the face, so dividing it back out is the whole mapping.
+	   Off the lerped box rather than the raw target so the accessory travels with
+	   the picture instead of snapping ahead of it. */
+	function faceOnCanvas(box) {
+		var n = STYLE_SIZE;
+		var b = S.faceBox;
+		if (!b || !(box[2] > 0)) { return [n / 2, n / 2, n / FACE_ZOOM]; }
+		return [
+			(b[0] - box[0]) / box[2] * n,
+			(b[1] - box[1]) / box[2] * n,
+			(b[2] / FACE_ZOOM) / box[2] * n
+		];
+	}
+
+	/* A blue band across the eyes with the red mark in the middle of it, inked
+	   all round so it reads against a face of any brightness. */
+	function accWindman(r, g) {
+		var cx = r[0], cy = r[1], s = r[2];
+		var w = s * 1.12, h = s * 0.20;
+		var x = cx - w / 2, y = cy - s * 0.5 + s * 0.24;
+		g.fillStyle = rgb(STYLE_INK);
+		g.fillRect(x - s * 0.02, y - s * 0.02, w + s * 0.04, h + s * 0.04);
+		g.fillStyle = rgb(ACC_WINDMAN_BAND);
+		g.fillRect(x, y, w, h);
+		g.fillStyle = rgb(ACC_WINDMAN_MARK);
+		g.fillRect(cx - w * 0.17, y, w * 0.34, h);
+		return 1;
+	}
+
+	/* A dark strap with two cyan lenses in it: the strap is what makes goggles
+	   read as goggles rather than as a stripe. */
+	function accPrimm(r, g) {
+		var cx = r[0], cy = r[1], s = r[2];
+		var w = s * 1.10, h = s * 0.19;
+		var x = cx - w / 2, y = cy - s * 0.5 + s * 0.25;
+		g.fillStyle = rgb(STYLE_INK);
+		g.fillRect(x, y - s * 0.02, w, h + s * 0.04);
+		g.fillStyle = rgb(ACC_PRIMM_FRAME);
+		g.fillRect(x + w * 0.13, y, w * 0.74, h);
+		g.fillStyle = rgb(ACC_PRIMM_LENS);
+		var lw = w * 0.30, lh = h * 0.58, ly = y + h * 0.21;
+		g.fillRect(cx - w * 0.36, ly, lw, lh);
+		g.fillRect(cx + w * 0.06, ly, lw, lh);
+		return 1;
+	}
+
+	/* ABOVE the face box, which is what "on the crown" means when the box is
+	   brow-to-chin: an ellipse sitting on the top edge, tipped by nothing at all
+	   because a beret that leans is a beret that slides off a moving head. */
+	function accTeibi(r, g) {
+		var cx = r[0], cy = r[1], s = r[2];
+		var top = cy - s * 0.5;
+		var rx = s * 0.58, ry = s * 0.24;
+		var yc = top - s * 0.06;
+		g.fillStyle = rgb(ACC_TEIBI_BERET);
+		g.strokeStyle = rgb(STYLE_INK);
+		g.lineWidth = Math.max(1, s * 0.03);
+		g.beginPath();
+		g.ellipse(cx, yc, rx, ry, 0, 0, Math.PI * 2);
+		g.fill();
+		g.stroke();
+		g.fillStyle = rgb(ACC_TEIBI_BERET);
+		g.fillRect(cx - s * 0.03, yc - ry - s * 0.07, s * 0.06, s * 0.09);
+		return 1;
+	}
+
+	/* A ring around the WHOLE head — the one accessory that is not on the face —
+	   plus the BONE highlight that is the only reason it reads as glass rather
+	   than as a hoop. The soup is deliberately not drawn: what is inside the
+	   helmet is the player's own face, which is the whole point of the feature. */
+	function accPhoboman(r, g) {
+		var cx = r[0], cy = r[1], s = r[2];
+		var rad = s * 0.78;
+		var yc = cy - s * 0.06;
+		g.strokeStyle = rgb(ACC_PHOBO_RIM);
+		g.lineWidth = Math.max(2, s * 0.09);
+		g.beginPath();
+		g.arc(cx, yc, rad, 0, Math.PI * 2);
+		g.stroke();
+		g.strokeStyle = rgb(STYLE_INK);
+		g.lineWidth = Math.max(1, s * 0.02);
+		g.beginPath();
+		g.arc(cx, yc, rad + s * 0.055, 0, Math.PI * 2);
+		g.stroke();
+		g.strokeStyle = rgb(STYLE_BONE);
+		g.lineWidth = Math.max(1, s * 0.045);
+		g.beginPath();
+		g.arc(cx, yc, rad * 0.78, Math.PI * 1.10, Math.PI * 1.42);
+		g.stroke();
+		return 1;
+	}
+
+	/* A HERO WITH NO ACCESSORY DRAWS NOTHING AND LOGS NOTHING — `hero_hud`'s "a
+	   missing portrait is not an error" rule, so a fifth `CHARACTERS` entry ships
+	   a tinted face and no console noise until somebody draws it one. A plain
+	   chain of compares rather than a lookup table on purpose: an object keyed by
+	   a name off the wire answers `constructor` and `toString` with functions. */
+	function paintAccessory(box) {
+		var g = S.styleCtx;
+		if (!g) { return 0; }
+		var r = faceOnCanvas(box);
+		if (!(r[2] > 0)) { return 0; }
+		try {
+			if (S.styleHero === 'windman') { return accWindman(r, g); }
+			if (S.styleHero === 'primm') { return accPrimm(r, g); }
+			if (S.styleHero === 'teibi') { return accTeibi(r, g); }
+			if (S.styleHero === 'phoboman') { return accPhoboman(r, g); }
+		} catch (e) { return 0; }
+		return 0;
+	}
+
 	function paint() {
 		var cx = S.styleCtx;
 		var v = S.styleSrc;
@@ -1541,6 +1711,12 @@ const VOICE_JS: String = """
 			d[k + 2] = d[k + 2] * keep + c[2] * mix;
 		}
 		try { cx.putImageData(img, 0, 0); } catch (e) { return 0; }
+		/* THE HERO ACCESSORY (bead godot-test1-xtr.13), and it is AFTER the
+		   posterize by owner ruling: drawn clean over the inked face, on the same
+		   crop box, so the cyan visor stays cyan and the band edges are not cut
+		   into levels. ABOVE the `paintMs` stamp so `style=` in \fo keeps billing
+		   everything this frame really cost. */
+		paintAccessory(box);
 		S.paintMs = styleNow() - t0;
 		S.paintAt = styleNow();
 		pushFrame();
@@ -2740,11 +2916,19 @@ const VOICE_JS: String = """
 		stats: stats,
 		setCamera: function (v) { S.camWant = flag(v); return camera(S.camWant); },
 		camState: function () { return S.camState; },
-		/* THE HERO TINT (bead godot-test1-xtr.11). Three 0-255 channels rather
-		   than a hero NAME, so `hero_hud.HERO_COLORS` stays the one table: a name
-		   would need a second copy of it here, in a language that cannot read it. */
-		setStyleTint: function (r, g, b) {
+		/* THE HERO'S IDENTITY (bead godot-test1-xtr.11, plus the NAME since bead
+		   godot-test1-xtr.13). Three 0-255 channels rather than a hero name for
+		   the TINT, so `hero_hud.HERO_COLORS` stays the one table: a name would
+		   need a second copy of it here, in a language that cannot read it. The
+		   name rides along anyway because the ACCESSORY is a SHAPE, which no
+		   colour can name and no GDScript table can hold — and it is a fourth
+		   ARGUMENT rather than a second bridge function because the one writer,
+		   `_push_style_tint`, is already change-gated on exactly this hero. An
+		   older caller passing three arguments leaves it `undefined`, which draws
+		   no accessory and tints as before. */
+		setStyleTint: function (r, g, b, hero) {
 			S.styleTint = [chan(r), chan(g), chan(b)];
+			S.styleHero = (typeof hero === 'string') ? hero : '';
 			return rebuildRamp();
 		},
 		/* THE STRENGTH KNOBS (bead godot-test1-xtr.16), driven from the browser
@@ -3845,7 +4029,14 @@ func _push_style_tint(hud: Node) -> void:
 		return
 	_pushed_tint_hero = hero
 	var tint: Color = _hero_tint(hud, hero)
-	_ck.setStyleTint(int(tint.r8), int(tint.g8), int(tint.b8))
+	# AND THE NAME WITH IT (bead godot-test1-xtr.13). The ACCESSORY the browser
+	# draws over the face — Windman's blindfold, Primm's goggles, Teibi's beret,
+	# Phoboman's fishbowl — is a SHAPE, which no colour can name and no table on
+	# this side can hold. It is a fourth ARGUMENT rather than a second bridge
+	# function because this is already the one writer and it is already gated on
+	# exactly this hero: a swap (R, or a capture reassignment) repaints the
+	# accessory on the next 5 Hz poll and renegotiates nothing.
+	_ck.setStyleTint(int(tint.r8), int(tint.g8), int(tint.b8), hero)
 
 
 func _hero_tint(hud: Node, hero: String) -> Color:

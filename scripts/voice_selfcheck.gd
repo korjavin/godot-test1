@@ -123,6 +123,10 @@ const VoiceChat := preload("res://scripts/voice_chat.gd")
 const HelpOverlay := preload("res://scripts/help_overlay.gd")
 const CityMapSelfcheck: GDScript = preload("res://scripts/city_map_selfcheck.gd")
 const IntroSelfcheck: GDScript = preload("res://scripts/intro_selfcheck.gd")
+## The roster the hero accessories (bead `godot-test1-xtr.13`) are bound to. The
+## SCRIPT, never an instance: `CHARACTERS` is a const and nothing here needs a
+## body to ask it.
+const PlayerScript: GDScript = preload("res://scripts/player_controller.gd")
 
 ## The action the whole of bead `godot-test1-xtr.2` hangs off.
 const MIC_ACTION: StringName = &"voice_mic"
@@ -839,6 +843,72 @@ func _check_style_mirrors() -> void:
 			+ "so a captive tile takes no picture at all (bead xtr.14 rule 3)")
 	row.free()
 	node.free()
+
+	# --- THE HERO ACCESSORY (bead godot-test1-xtr.13) ------------------------
+	# The tint says which palette you are in; the ACCESSORY says who you are, and
+	# at 92 px it is the half that actually names the hero. None of it is visible
+	# to a headless machine — it is a dozen fillRects on a canvas in a browser — so
+	# the shipped text is the pin, exactly as it is for the cartoon above.
+	#
+	# WHY THE ORDER IS ASSERTED. The owner ruled the accessory is drawn CLEAN over
+	# the inked face; moving the call one line up, above `putImageData`, is a
+	# one-character edit that puts it UNDER the posterize instead — the cyan visor
+	# comes out in four bands and the ruling is silently reversed. An index compare
+	# is the only thing that can see it.
+	var acc: String = _js_function_body(module, "paintAccessory")
+	if acc.is_empty():
+		_fail("VOICE_JS has no `function paintAccessory(` — the hero's blindfold / "
+			+ "goggles / beret / fishbowl (bead godot-test1-xtr.13) is what makes a "
+			+ "tinted face read as THAT hero at 92 px, and it is gone")
+	else:
+		var roster: Array[String] = []
+		for entry: Dictionary in PlayerScript.CHARACTERS:
+			roster.append(str(entry.get("name", "")))
+		for hero: String in ACCESSORY_HEROES:
+			if not roster.has(hero):
+				_fail("ACCESSORY_HEROES names `%s`, which is not a CHARACTERS row "
+					% hero + "any more — a renamed hero must not silently lose the "
+					+ "accessory that names him at 92 px")
+			if acc.contains("'%s'" % hero):
+				continue
+			_fail("paintAccessory does not draw for `%s` — the four shipped "
+				% hero + "portraits are the art contract (owner ruling 2026-09-06)")
+
+	var body: String = _js_function_body(module, "paint")
+	var put: int = body.find("putImageData")
+	var call: int = body.find("paintAccessory(")
+	if body.is_empty() or put < 0 or call < 0:
+		_fail("VOICE_JS's `paint()` no longer both posterizes and draws the hero "
+			+ "accessory — bead godot-test1-xtr.13's whole output is that one call")
+	elif call < put:
+		_fail("paint() draws the accessory BEFORE putImageData, so it goes through "
+			+ "the posterize instead of over it — the owner ruled it is drawn CLEAN "
+			+ "over the inked face (2026-09-06), and Primm's cyan visor banded into "
+			+ "four levels is what this reverses")
+
+	# THE FACE BOX IS WHAT IT IS REGISTERED ON, and with no detector `S.faceBox` is
+	# the centre square — so the fallback is the same arithmetic and not a second
+	# path. A `paintAccessory` that stopped reading the box would paint a fixed
+	# centre guess that slides off the face the moment the player moves, which is
+	# exactly why this bead came third.
+	var on_canvas: String = _js_function_body(module, "faceOnCanvas")
+	if on_canvas.is_empty() or not on_canvas.contains("S.faceBox") \
+			or not on_canvas.contains("FACE_ZOOM"):
+		_fail("VOICE_JS has no `faceOnCanvas` reading `S.faceBox` and dividing "
+			+ "`FACE_ZOOM` back out — the accessory would sit on a fixed centre "
+			+ "guess rather than on the face the tracker found (bead xtr.13)")
+
+	# AND THE NAME HAS TO REACH THE BROWSER. It rides `setStyleTint`'s fourth
+	# argument rather than a second bridge function; both ends are asserted,
+	# because either half alone is a hero that never changes his hat.
+	if not module.contains("function (r, g, b, hero)"):
+		_fail("VOICE_JS's setStyleTint no longer takes the hero NAME — the tint is "
+			+ "a colour and cannot say which SHAPE to draw (bead xtr.13)")
+	var gd: String = FileAccess.get_file_as_string("res://scripts/voice_chat.gd")
+	if not gd.contains("_ck.setStyleTint(int(tint.r8), int(tint.g8), int(tint.b8), hero)"):
+		_fail("_push_style_tint no longer pushes the hero name beside the tint, so "
+			+ "the browser draws no accessory at all (bead xtr.13)")
+
 	Sentinel.done("style_mirrors")
 
 
@@ -903,6 +973,16 @@ func _js_bool_offence(source: String) -> String:
 ## explanation beside the call names `restartIce()` too — a check on the word
 ## alone survives the deletion of the call it guards, which is not a
 ## hypothetical: it is what the first draft of this check did, measured.
+## The four heroes the shipped portraits give an accessory to (bead
+## `godot-test1-xtr.13`, owner ruling 2026-09-06: windman blindfold, primm
+## goggles, teibi beret, phoboman fishbowl helmet). It is a LIST rather than
+## `CHARACTERS` itself because a fifth hero deliberately draws nothing — the
+## bead's own acceptance, `hero_hud`'s "a missing portrait is not an error" rule
+## — but every name in it is bound to the real roster below, so a hero RENAMED
+## in `CHARACTERS` fails here instead of quietly losing his hat.
+const ACCESSORY_HEROES: Array[String] = ["windman", "primm", "teibi", "phoboman"]
+
+
 const ICE_RESTART_NEEDLES: Array[String] = [
 	"pc.oniceconnectionstatechange",
 	"pc.restartIce()",
