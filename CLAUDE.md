@@ -2706,10 +2706,16 @@ touches `JavaScriptBridge`.
   is the way back. `mix` is the knob that did not exist — how much of the REAL pixel
   survives — and at the shipped **1.0 the blend is `orig * 0 + ramp * 1`, so the defaults
   paint byte for byte what they always did**; the ramp resamples its four control stops at
-  `levels` points, which lands exactly on them at 4. **mix 0 is still the posterized crop
-  through the canvas, never the raw device** — the forced rule is `styleStream()`'s and no
-  knob reaches it. `voice_selfcheck` check 6b pins the defaults, the paint loop's reads,
-  the clamp, the persistence and the four \fo columns.
+  `levels` points, which lands exactly on them at 4. **THE FORCED RULE IS
+  `styleStream()`'s AND NO KNOB REACHES IT**: what may never leave a sender is the RAW
+  DEVICE TRACK, and at every setting the wire still carries the canvas capture — the
+  160x120 crop, downscaled to 128 and re-encoded at 12 fps under 150 kbps. What `mix`
+  moves is how much of that crop the ramp REPLACES, so **mix 0 is the crop unposterized**
+  (a real, small, slow face) rather than a cartoon: it is the far end of an experiment
+  knob, not a setting to ship. Dropping that endpoint is an owner's call and would be a
+  one-character change to the clamp. `voice_selfcheck` check 6b pins the defaults, the
+  paint loop's reads, the clamp, the blank-field fallback, the persistence and the four
+  \fo columns.
   **A STUCK PICTURE IS MEASURABLE, AND THE SAMPLER IS NOT \fo'S** (bead
   `godot-test1-xtr.17`): `sampleStats()` gained the video half — per peer
   `ice=`/`con=`/`sig=`/`sdp=`/`vin=`/`vout=` (the two transport states, the negotiation

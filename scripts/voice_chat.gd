@@ -767,6 +767,14 @@ const VOICE_JS: String = """
 	   `orig * (1 - 1) + ramp * 1`, i.e. the assignment it replaced, and the ramp
 	   samples its four control stops at exactly the four points that ARE them.
 
+	   MIX 0 IS THE FAR END OF AN EXPERIMENT, NOT A SETTING TO SHIP (codex review
+	   2026-09-06). The forced rule is `styleStream()`'s and no knob reaches it —
+	   the wire carries the canvas capture at every setting, never the device track
+	   — but at mix 0 the ramp replaces nothing, so what the canvas carries is the
+	   crop UNPOSTERIZED: a real face, small and slow. The bead's range is 0..1 and
+	   the owner asked to experiment across it; narrowing that floor is their call
+	   and is one character here.
+
 	   ponytail: a console knob and no panel — the owner is choosing numbers, and
 	   whichever four they settle on become these defaults. `setStyle` from the
 	   browser console, remembered here so a reload keeps the experiment. */
