@@ -161,6 +161,7 @@ func _initialize() -> void:
 	_check_no_js_bool()
 	_check_style_mirrors()
 	_check_ice_restart()
+	_check_video_health()
 	_check_inert_offweb()
 	_check_always_process()
 	_check_debug_line_in_a_room()
@@ -860,6 +861,134 @@ func _check_ice_restart() -> void:
 			+ "life of the room — nothing else rebuilds a still-listed member's "
 			+ "connection (godot-test1-xtr.7)")
 	Sentinel.done("ice_restart")
+
+
+# ============================================================================
+# 6d. A STUCK PICTURE IS MEASURABLE (bead godot-test1-xtr.17)
+# ============================================================================
+
+## The six per-peer keys plus the two sender-side ones that together name all
+## four classes of stuck picture the bead enumerates. Spelled with their `=` so
+## the check is reading a FORMAT and not a word that also appears in prose.
+const VIDEO_STAT_KEYS: Array[String] = [
+	" ice=", " con=", " sig=", " sdp=", " vin=", " vout=", " paint=", " src=",
+]
+
+
+func _check_video_health() -> void:
+	"""
+	`VOICE_JS` read as TEXT once more (this file's `_check_no_js_bool` idiom), for
+	the half of bead `godot-test1-xtr.17` a headless machine can reach.
+
+	WHAT IT DEFENDS. Before this bead nothing in the game could tell a frozen
+	picture from a working one: `sampleStats()` read audio `inbound-rtp` and the
+	selected candidate pair, so a receiver whose `framesDecoded` had stopped, a
+	sender whose paint loop had stalled, a transport in `failed` and a peer wedged
+	in `have-local-offer` all reported an identical row. Deleting any one of the
+	assertions below is green everywhere else in the suite — the numbers only
+	exist in a browser — so the text IS the pin.
+
+	THE ORDER MATTERS. The keys must be inside `formatStats`, because that is the
+	one function whose answer reaches \\fo; `framesDecoded`/`framesEncoded` must be
+	inside `sampleStats`, because a key with nothing collecting its number prints
+	`-` forever and looks like a working feature.
+	"""
+	var module: String = _voice_js_module()
+	if module.length() < 500:
+		_fail("could not read VOICE_JS out of voice_chat.gd (%d chars) — check 6d "
+			% module.length() + "would pass vacuously")
+		Sentinel.done("video_health")
+		return
+
+	var fmt: String = _js_function_body(module, "formatStats")
+	if fmt.is_empty():
+		_fail("VOICE_JS has no `function formatStats(` — the \\fo row's whole "
+			+ "vocabulary is unreadable")
+	else:
+		for key: String in VIDEO_STAT_KEYS:
+			if not fmt.contains(key):
+				_fail("formatStats does not emit `%s` — that class of stuck picture "
+					% key.strip_edges() + "(bead godot-test1-xtr.17) is invisible in "
+					+ "\\fo, which is the whole of what this bead ships")
+
+	var sample: String = _js_function_body(module, "sampleStats")
+	if sample.is_empty():
+		_fail("VOICE_JS has no `function sampleStats(` — nothing collects the "
+			+ "numbers formatStats prints")
+	else:
+		for needle: String in ["framesDecoded", "framesEncoded", "markStall(",
+				"localDescription.sdp.length", "signalingState"]:
+			if not sample.contains(needle):
+				_fail("sampleStats does not read `%s` — the matching key in the \\fo "
+					% needle + "row would print a placeholder forever, which reads "
+					+ "exactly like a healthy peer")
+
+	# --- THE RECEIVER'S MARK, AND THAT A RE-PLACE KEEPS IT ------------------
+	# `placeTile` rewrites `cssText` wholesale, so a mark applied anywhere else is
+	# cleared by the next resize or rect push. That is the one ordering bug this
+	# feature has, and it is invisible in a diff.
+	var place: String = _js_function_body(module, "placeTile")
+	if place.is_empty():
+		_fail("VOICE_JS has no `function placeTile(` — check 6d cannot see whether "
+			+ "the stall mark survives a re-place")
+	elif not place.contains("stallFilter(id)"):
+		_fail("placeTile does not append stallFilter(id) — it rewrites cssText "
+			+ "wholesale, so the dim would be cleared by the next resize or rect "
+			+ "push and a stuck tile would look live again")
+	var filt: String = _js_function_body(module, "stallFilter")
+	if filt.is_empty():
+		_fail("VOICE_JS has no `function stallFilter(` — a receiver whose "
+			+ "framesDecoded stopped is drawn exactly like a live one")
+	else:
+		if not filt.contains("grayscale(1)") or not filt.contains("brightness("):
+			_fail("stallFilter does not dim with grayscale/brightness — it reads `%s`"
+				% filt.strip_edges())
+		# NO HUE, and that is a repo rule rather than taste: `hero_hud_selfcheck`
+		# check 8 greps `scripts/` for the six film hexes and they may be typed in
+		# `hud_theme.gd` alone, so the mark must be spelled in the two things CSS
+		# can do without naming a colour at all.
+		if filt.contains("#") or filt.contains("rgb("):
+			_fail("stallFilter names a colour — the film palette may not be typed "
+				+ "outside hud_theme.gd (hero_hud_selfcheck check 8), which is why "
+				+ "the mark is a filter")
+	if not module.contains("var STALL_SAMPLES = 3;"):
+		_fail("VOICE_JS does not declare `var STALL_SAMPLES = 3` — the bead's three "
+			+ "seconds at the 1 Hz sample rate. One sample is noise (a keyframe "
+			+ "gap, a tab that just came back) and would flicker every tile")
+
+	# --- AND THE SAMPLER HAS A CLOCK THAT IS NOT \fo ------------------------
+	# `sampleStats` used to be driven by `stats()` alone, which only runs while the
+	# perf overlay is open. A stall mark that needs a debug overlay to appear is a
+	# debug feature, not a fix.
+	var vp: String = _js_function_body(module, "videoPeers")
+	if vp.is_empty() or not vp.contains("sampleTick()"):
+		_fail("videoPeers() does not call sampleTick() — the health sample would "
+			+ "run only while \\fo is open, so no player would ever see a tile dim")
+
+	# --- THE ROW IS WRAPPED, DRIVEN ON THE SHIPPED HELPER -------------------
+	# \fo's Label neither autowraps nor clips and the audio half alone already
+	# reaches the right edge, so the video half has to start a second line or it
+	# is drawn off screen — which is the same as not shipping it. The live
+	# `stats()` string needs a browser; this drives the transformation that is
+	# applied to it, on a sample of the real format.
+	var node: Node = _voice_node()
+	var sample_row: String = ("Voice: mode=ALWAYS tx=0 ns=1 ec=1 agc=1 peers=1 "
+		+ "rtt=42ms loss=0.0% style=0.42ms ice=connected con=connected sig=stable "
+		+ "sdp=5312 vin=12 vout=12 paint=61 src=1")
+	var wrapped: String = str(node._wrap_stats(sample_row))
+	var lines: PackedStringArray = wrapped.split("\n")
+	if lines.size() != 2:
+		_fail("_wrap_stats left the \\fo row on %d line(s) — the video half is "
+			% lines.size() + "drawn past the right edge of the window")
+	elif not lines[1].contains("vin=") or not lines[0].contains("loss="):
+		_fail("_wrap_stats split the row in the wrong place: `%s`" % wrapped)
+	# ...and a row with no video half is untouched, which is what a bridge that
+	# said nothing (`_ck` null, the module not installed) still produces.
+	var audio_only: String = "Voice: mode=PTT tx=1 ns=0 ec=0 agc=0 peers=0 rtt=- loss=0.0%"
+	if str(node._wrap_stats(audio_only)) != audio_only:
+		_fail("_wrap_stats rewrote a row with no video half")
+	node.free()
+	Sentinel.done("video_health")
 
 
 func _voice_js_module() -> String:

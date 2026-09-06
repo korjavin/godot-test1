@@ -2696,6 +2696,19 @@ touches `JavaScriptBridge`.
   button — mobile is out of scope) would hide it; the browser's own F11 sets no
   `fullscreenElement` and is fine. The documented fallback is the bead's ImageTexture
   frame-copy path.
+  **A STUCK PICTURE IS MEASURABLE, AND THE SAMPLER IS NOT \fo'S** (bead
+  `godot-test1-xtr.17`): `sampleStats()` gained the video half — per peer
+  `ice=`/`con=`/`sig=`/`sdp=`/`vin=`/`vout=` (the two transport states, the negotiation
+  state, our own `localDescription.sdp.length`, and the framesDecoded / framesEncoded
+  DELTAS over the 1 Hz sample), plus `paint=`/`src=` once for this browser — which is
+  the whole of what tells a frozen tile from a live one, and `debug_line()` puts that
+  half on a SECOND line because \fo's Label neither autowraps nor clips. It is driven
+  from `videoPeers()` as well as from `stats()`, so the 1 Hz sample runs for the life of
+  a room rather than only while the overlay is open: a receiver whose `vin` delta is 0
+  for `STALL_SAMPLES` (3) samples gets its `<video>` a `grayscale(1) brightness(0.35)`
+  CSS filter, re-applied by `placeTile` because that rewrites `cssText` wholesale. **The
+  mark names no colour** — the six film hexes may be typed in `hud_theme.gd` alone, and
+  `hero_hud`'s ring, the tile geometry and every public GD surface are untouched.
 - **VOICE IS ON THE ALWAYS-VISIBLE HUD, AS TWO GLYPHS AND NO TEXT** (bead
   `godot-test1-xtr.8`, owner: *"in MP game there should be an indication on HUD of mic
   state and when someone is speaking"*). The MP panel and the name tags both have to be

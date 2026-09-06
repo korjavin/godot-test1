@@ -271,6 +271,15 @@ const VOICE_JS: String = """
 		styled: null, styleSrc: null, styleCanvas: null, styleCtx: null,
 		styleLv: null, styleRamp: null, styleRvfc: 0, styleTimer: null,
 		styleWatch: null, paintMs: 0,
+		/* THE SENDER'S OWN HEALTH (bead godot-test1-xtr.17). `paintAt` is when
+		   `paint()` last put pixels on the canvas — the only thing that can tell a
+		   stalled paint loop from a working one, and reported as `paint=` — and
+		   `srcTime`/`srcAt` are the SOURCE's clock: the last `currentTime` seen off
+		   `styleSrc` and when it last moved. A frozen device (lid shut, another app
+		   took the camera, a backgrounded tab) keeps decoding nothing while the
+		   element happily reports its last frame, so a stopped `currentTime` is the
+		   one signal that sees all three. */
+		paintAt: 0, srcTime: -1, srcAt: 0,
 		/* THE SELF-VIEW (bead godot-test1-xtr.14): one more <video>, fed the
 		   STYLED stream so what you see of yourself is exactly what the room sees,
 		   and placed through the same `S.tiles` / `placeTile` path as every
@@ -491,6 +500,49 @@ const VOICE_JS: String = """
 	   microphone's level under the same name. */
 	var SELF_TILE = 'me';
 
+	/* HOW MANY 1 Hz SAMPLES OF ZERO DECODED FRAMES MAKE A STALL (bead
+	   godot-test1-xtr.17). Three, because that is the bead's three seconds and
+	   because one is noise: a sample straddling a keyframe gap, a tab that just
+	   came back, a peer whose first frame has not landed. */
+	var STALL_SAMPLES = 3;
+
+	/* THE RECEIVER'S MARK, AND IT IS A FILTER RATHER THAN A COLOUR. `hero_hud`'s
+	   ring is untouched and nothing is drawn under a picture nobody can see: the
+	   <video> element itself goes grey and INK-dim, which is the film language
+	   spelled in the two things CSS can do without naming a hue. It may NOT name
+	   one — `hero_hud_selfcheck` check 8 greps `scripts/` for the six film hexes
+	   and they may be typed in `hud_theme.gd` alone.
+
+	   `placeTile` rewrites `cssText` wholesale, so the mark has to be re-applied
+	   there or every resize and every rect push clears it. */
+	function stallFilter(id) {
+		if (id === SELF_TILE) { return ''; }
+		var p = S.peers[id];
+		if (p && p.stalled === 1) { return 'filter:grayscale(1) brightness(0.35);'; }
+		return '';
+	}
+
+	/* ONE PEER'S VERDICT, off one sample's framesDecoded DELTA. This is the only
+	   class of stuck picture a receiver can see by itself: a sender whose paint
+	   loop stopped (a hidden tab, a throw inside paint) stops shipping frames, so
+	   the delta goes to zero while the element keeps showing its last one forever.
+	   A sender whose DEVICE froze is deliberately not detectable here — the delta
+	   keeps advancing — and is captioned in the pixels by the sender instead
+	   (bead godot-test1-xtr.18's card). */
+	function markStall(id, p, dIn) {
+		if (p.hasVideo !== 1 || dIn > 0) {
+			p.vinZero = 0;
+			if (p.stalled === 1) { p.stalled = 0; placeTile(id); }
+			return 0;
+		}
+		p.vinZero = p.vinZero + 1;
+		if (p.vinZero >= STALL_SAMPLES && p.stalled !== 1) {
+			p.stalled = 1;
+			placeTile(id);
+		}
+		return 1;
+	}
+
 	/* THE TWO QUESTIONS EVERY TILE ASKS, and the only two places the self-view is
 	   a special case: which element draws this key, and does it have a picture.
 	   Everything below — placing, blanking, the resize walk, GDScript's rect —
@@ -524,7 +576,7 @@ const VOICE_JS: String = """
 			'left:' + (r.left + t[0] * r.width) + 'px;' +
 			'top:' + (r.top + t[1] * r.height) + 'px;' +
 			'width:' + (t[2] * r.width) + 'px;' +
-			'height:' + (t[3] * r.height) + 'px;';
+			'height:' + (t[3] * r.height) + 'px;' + stallFilter(id);
 		/* Explicit rather than relying on `cssText` having cleared it: this is the
 		   one line that undoes a `blankTile`, and it should say so. */
 		el.style.display = '';
@@ -747,6 +799,7 @@ const VOICE_JS: String = """
 		}
 		try { cx.putImageData(img, 0, 0); } catch (e) { return 0; }
 		S.paintMs = styleNow() - t0;
+		S.paintAt = styleNow();
 		return 1;
 	}
 
@@ -860,6 +913,9 @@ const VOICE_JS: String = """
 			S.styleSrc = null;
 		}
 		S.paintMs = 0;
+		S.paintAt = 0;
+		S.srcTime = -1;
+		S.srcAt = 0;
 		return 1;
 	}
 
@@ -873,6 +929,30 @@ const VOICE_JS: String = """
 	   reaches.) */
 	function styleStream() {
 		return S.styled;
+	}
+
+	/* THE DEVICE'S OWN STATE, as the one number `stats()` reports under `src=`
+	   (bead godot-test1-xtr.17): 0 none, 1 live, 2 muted, 3 ended. It is the only
+	   half of a frozen picture the SENDER can see and the receiver cannot — a
+	   muted or ended device keeps the last frame on the canvas and the wire keeps
+	   carrying it, so nothing downstream ever notices. Numbers, never a boolean:
+	   `track.muted` is compared rather than returned. */
+	function srcState() {
+		if (!S.cam) { return 0; }
+		var t = S.cam.getVideoTracks()[0];
+		if (!t) { return 0; }
+		if (t.readyState === 'ended') { return 3; }
+		if (t.muted === 1 || t.muted === true) { return 2; }
+		return 1;
+	}
+
+	/* Milliseconds since the last frame `paint()` actually put on the canvas, or
+	   -1 if it has never painted one. This is the number that separates class B
+	   (the paint loop stalled) from a live sender, and it is only ever readable
+	   HERE — a receiver sees the same last frame either way. */
+	function paintAge() {
+		if (!S.paintAt) { return -1; }
+		return Math.round(styleNow() - S.paintAt);
 	}
 
 	function attachCam(p) {
@@ -976,6 +1056,10 @@ const VOICE_JS: String = """
 	/* Who has a live picture right now, as one string — `levels()`'s format rule:
 	   one bridge call, never one per peer, and never a boolean. */
 	function videoPeers() {
+		/* The stall sampler's clock — see `sampleTick`. This call is GDScript's
+		   5 Hz tile poll and is the only thing running for the whole life of a
+		   room, so the health sample rides it instead of a timer of its own. */
+		sampleTick();
 		var out = [];
 		for (var k in S.peers) { if (S.peers[k].hasVideo === 1) { out.push(k); } }
 		return out.join(',');
@@ -1032,7 +1116,13 @@ const VOICE_JS: String = """
 		var p = {
 			pc: pc, polite: (S.self > id), making: 0, sent: 0,
 			audio: null, meter: null, cand: [], timer: null, q: Promise.resolve(),
-			video: null, vsend: null, hasVideo: 0
+			video: null, vsend: null, hasVideo: 0,
+			/* THE STALL COUNTERS (bead godot-test1-xtr.17). `vinPrev`/`voutPrev` are
+			   the last ABSOLUTE framesDecoded/framesEncoded this peer reported, so
+			   the sampler can answer a DELTA — which is the number that means "is
+			   the picture moving". -1 is "never sampled", which must not read as a
+			   frame drop on the first sample. */
+			vinPrev: -1, voutPrev: -1, vinZero: 0, stalled: 0
 		};
 		S.peers[id] = p;
 
@@ -1247,7 +1337,21 @@ const VOICE_JS: String = """
 	   candidate-pair currentRoundTripTime in ms (or -), and inbound-rtp aggregate
 	   packet loss percentage. Sampled at <= 1 Hz only while asked, cached so
 	   stats() answers synchronously without stalling the frame. */
-	function formatStats(ns, ec, agc, peerKeys, rtts, totalLost, totalRecv) {
+	/* One per-peer column, in `rtt=`'s own shape: the peers in `peerKeys` order,
+	   joined by `/`, and a bare `-` when there are none. */
+	function column(a) {
+		if (a && a.length) { return a.join('/'); }
+		return '-';
+	}
+
+	/* The empty video half, so `stats()`'s synchronous fallback and a sampler that
+	   has not answered yet print the same KEYS as a live sample. A row whose keys
+	   appear and disappear is a row nobody can read at a glance. */
+	function noVideo() {
+		return { ice: [], con: [], sig: [], sdp: [], vin: [], vout: [] };
+	}
+
+	function formatStats(ns, ec, agc, peerKeys, rtts, totalLost, totalRecv, vid) {
 		var peerCount = peerKeys.length;
 		var rttStr = 'rtt=-';
 		if (peerCount > 0 && rtts.length > 0) {
@@ -1260,7 +1364,22 @@ const VOICE_JS: String = """
 		   It is the before/after evidence: the paint runs on the browser's main
 		   thread, which on this single-threaded export IS Godot's frame. */
 		var styleStr = 'style=' + S.paintMs.toFixed(2) + 'ms';
-		return 'ns=' + ns + ' ec=' + ec + ' agc=' + agc + ' peers=' + peerCount + ' ' + rttStr + ' ' + lossStr + ' ' + styleStr;
+		/* THE VIDEO HALF (bead godot-test1-xtr.17), and it is APPENDED: every key
+		   above keeps its spelling and its order, so xtr.15's parse and anybody
+		   grepping an old log are untouched.
+		   Per peer, in `peerKeys` order: the two transport states, the negotiation
+		   state, the size of our own last local description, and the decoded /
+		   encoded frame DELTAS over the last sample — which at 12 fps read ~12 and
+		   go to 0 the moment a picture stops moving. Then, once for this browser:
+		   how long ago the paint loop last put pixels on the canvas, and what the
+		   capture device itself is doing. Between them they name all four classes
+		   of stuck picture the bead enumerates. */
+		var vid2 = vid || noVideo();
+		var videoStr = ' ice=' + column(vid2.ice) + ' con=' + column(vid2.con)
+			+ ' sig=' + column(vid2.sig) + ' sdp=' + column(vid2.sdp)
+			+ ' vin=' + column(vid2.vin) + ' vout=' + column(vid2.vout)
+			+ ' paint=' + paintAge() + ' src=' + srcState();
+		return 'ns=' + ns + ' ec=' + ec + ' agc=' + agc + ' peers=' + peerCount + ' ' + rttStr + ' ' + lossStr + ' ' + styleStr + videoStr;
 	}
 
 	function readLocalConstraints() {
@@ -1306,16 +1425,25 @@ const VOICE_JS: String = """
 			var rtts = [];
 			var totalLost = 0;
 			var totalRecv = 0;
+			var vid = noVideo();
 
 			for (var i = 0; i < reports.length; i++) {
 				var report = reports[i];
 				var peerLost = 0;
 				var peerRecv = 0;
 				var peerRtt = -1;
+				/* ABSOLUTE counters this sample, turned into a delta below against
+				   the peer's own previous pair. -1 is "the report did not carry
+				   one", which is not the same as zero and must not read as a stall. */
+				var vFrames = [-1, -1];
 
 				if (report && report.forEach) {
 					report.forEach(function (stat) {
-						if (stat && stat.type === 'inbound-rtp' && (stat.kind === 'audio' || stat.mediaType === 'audio')) {
+						if (stat && stat.type === 'inbound-rtp' && (stat.kind === 'video' || stat.mediaType === 'video')) {
+							if (typeof stat.framesDecoded === 'number') { vFrames[0] = stat.framesDecoded; }
+						} else if (stat && stat.type === 'outbound-rtp' && (stat.kind === 'video' || stat.mediaType === 'video')) {
+							if (typeof stat.framesEncoded === 'number') { vFrames[1] = stat.framesEncoded; }
+						} else if (stat && stat.type === 'inbound-rtp' && (stat.kind === 'audio' || stat.mediaType === 'audio')) {
 							if (typeof stat.packetsLost === 'number') {
 								peerLost += stat.packetsLost;
 							}
@@ -1336,9 +1464,31 @@ const VOICE_JS: String = """
 				totalLost += peerLost;
 				totalRecv += peerRecv;
 				rtts.push(peerRtt >= 0 ? String(peerRtt) : '-');
+
+				/* THE PER-PEER HEALTH COLUMN, and the receiver's stall verdict with
+				   it (bead godot-test1-xtr.17). A peer that left between the request
+				   and its answer simply contributes nothing. */
+				var pv = S.peers[peerKeys[i]];
+				if (!pv) { continue; }
+				var dIn = (vFrames[0] >= 0 && pv.vinPrev >= 0) ? (vFrames[0] - pv.vinPrev) : 0;
+				var dOut = (vFrames[1] >= 0 && pv.voutPrev >= 0) ? (vFrames[1] - pv.voutPrev) : 0;
+				pv.vinPrev = vFrames[0];
+				pv.voutPrev = vFrames[1];
+				markStall(peerKeys[i], pv, dIn);
+				vid.ice.push(pv.pc ? pv.pc.iceConnectionState : '-');
+				vid.con.push(pv.pc ? pv.pc.connectionState : '-');
+				vid.sig.push(pv.pc ? pv.pc.signalingState : '-');
+				/* OUR OWN last offer/answer to this peer, in characters. It is the
+				   one number that makes bead xtr.18's root cause visible: a video
+				   sender removed and re-added grows the description by a whole
+				   m-section per toggle, and `MpCodec.MAX_VC_SDP` drops it silently
+				   somewhere past the second one. Flat here means flat on the wire. */
+				vid.sdp.push((pv.pc && pv.pc.localDescription) ? pv.pc.localDescription.sdp.length : 0);
+				vid.vin.push(dIn);
+				vid.vout.push(dOut);
 			}
 
-			S.statsCache = formatStats(lc.ns, lc.ec, lc.agc, peerKeys, rtts, totalLost, totalRecv);
+			S.statsCache = formatStats(lc.ns, lc.ec, lc.agc, peerKeys, rtts, totalLost, totalRecv, vid);
 			S.statsSampling = 0;
 			return 1;
 		}).catch(function () {
@@ -1347,20 +1497,35 @@ const VOICE_JS: String = """
 		});
 	}
 
-	function stats() {
-		var now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+	/* THE 1 Hz THROTTLE, LIFTED OUT OF `stats()` (bead godot-test1-xtr.17).
+	   The sampler is also what marks a stalled tile, and a mark that only happened
+	   while \fo was open would be a debug feature rather than a fix. `videoPeers()`
+	   is already called at 5 Hz by `_poll_tiles` for the whole life of a room, so
+	   nudging it from there costs no new clock, no new bridge call and no GD edit —
+	   the throttle below is what keeps it one `getStats()` per peer per second.
+
+	   ponytail: the ceiling is that the sampler runs only while GDScript is polling
+	   tiles, i.e. in a room with the module started. Outside a room there is no
+	   picture to mark. */
+	function sampleTick() {
+		var now = styleNow();
 		if (!S.statsSampling && (now - S.statsLastTime >= 1000 || !S.statsLastTime)) {
 			S.statsSampling = 1;
 			S.statsLastTime = now;
 			sampleStats();
 		}
+		return 1;
+	}
+
+	function stats() {
+		sampleTick();
 		if (S.statsCache) {
 			return S.statsCache;
 		}
 		var lc = readLocalConstraints();
 		var peerKeys = [];
 		for (var k in S.peers) { peerKeys.push(k); }
-		return formatStats(lc.ns, lc.ec, lc.agc, peerKeys, [], 0, 0);
+		return formatStats(lc.ns, lc.ec, lc.agc, peerKeys, [], 0, 0, noVideo());
 	}
 
 	function stop() {
@@ -1890,7 +2055,21 @@ func debug_line() -> String:
 			js_stats = str(raw)
 	if js_stats.is_empty():
 		js_stats = "ns=0 ec=0 agc=0 peers=0 rtt=- loss=0.0%"
-	return "Voice: mode=%s tx=%s %s" % [mode_str, tx_str, js_stats]
+	return _wrap_stats("Voice: mode=%s tx=%s %s" % [mode_str, tx_str, js_stats])
+
+
+## The video half onto its own line (bead godot-test1-xtr.17).
+##
+## The browser answers ONE string — that is `levels()`'s rule and the reason the
+## bridge is cheap — but \fo's Label neither autowraps nor clips, and the audio
+## half alone already reaches the right edge of a 1152 px window at font 18. So
+## the row is split HERE, where the width problem is, rather than by teaching the
+## JS about a newline it cannot even spell inside a GDScript `\"\"\"` block.
+##
+## Keyed on `ice=`, the first video key, so a build whose bridge answered nothing
+## (the placeholder above) is returned byte for byte unchanged.
+func _wrap_stats(line: String) -> String:
+	return line.replace(" ice=", "\n  ice=")
 
 
 func _is_in_room() -> bool:
