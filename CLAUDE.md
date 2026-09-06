@@ -2706,16 +2706,20 @@ touches `JavaScriptBridge`.
   is the way back. `mix` is the knob that did not exist — how much of the REAL pixel
   survives — and at the shipped **1.0 the blend is `orig * 0 + ramp * 1`, so the defaults
   paint byte for byte what they always did**; the ramp resamples its four control stops at
-  `levels` points, which lands exactly on them at 4. **THE FORCED RULE IS
-  `styleStream()`'s AND NO KNOB REACHES IT**: what may never leave a sender is the RAW
-  DEVICE TRACK, and at every setting the wire still carries the canvas capture — the
-  160x120 crop, downscaled to 128 and re-encoded at 12 fps under 150 kbps. What `mix`
-  moves is how much of that crop the ramp REPLACES, so **mix 0 is the crop unposterized**
-  (a real, small, slow face) rather than a cartoon: it is the far end of an experiment
-  knob, not a setting to ship. Dropping that endpoint is an owner's call and would be a
-  one-character change to the clamp. `voice_selfcheck` check 6b pins the defaults, the
-  paint loop's reads, the clamp, the blank-field fallback, the persistence and the four
-  \fo columns.
+  `levels` points, which lands exactly on them at 4. **THE FORCED RULE HAS TWO HALVES AND
+  `styleStream()` IS ONLY THE TRANSPORT ONE.** What may never leave a sender is the RAW
+  DEVICE TRACK, and at every setting the wire carries the canvas capture instead — the
+  160x120 crop, downscaled to 128 and re-encoded at 12 fps under 150 kbps. But the owner's
+  ruling (*"a receiver never sees the raw face"*) is about the PICTURE, and `mix` is how
+  much of that crop the ramp REPLACES: at 0 it replaces nothing, so the canvas would carry
+  the crop UNPOSTERIZED — the raw face, through a compliant transport. So **`mix` has a
+  floor, `STYLE_MIX_MIN` (0.25)**, where a quarter of every pixel is still ramp; the number
+  is the orchestrator's (2026-09-06) and the owner can lower it by ruling. It is one
+  constant read by the one clamp, and `loadStyle` goes through `setStyle`, so a stored or
+  hand-edited row below the floor is raised to it on load like any other out-of-range
+  value. `voice_selfcheck` check 6b pins the defaults, the paint loop's reads, both
+  clamps, the mix floor and that the clamp really reads it, the blank-field fallback, the
+  persistence and the four \fo columns.
   **A STUCK PICTURE IS MEASURABLE, AND THE SAMPLER IS NOT \fo'S** (bead
   `godot-test1-xtr.17`): `sampleStats()` gained the video half — per peer
   `ice=`/`con=`/`sig=`/`sdp=`/`vin=`/`vout=` (the two transport states, the negotiation

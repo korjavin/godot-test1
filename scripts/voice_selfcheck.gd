@@ -749,6 +749,31 @@ func _check_style_mirrors() -> void:
 				+ "`Number('')` is 0 and finite, so a hand-edited `4,,1,0.45` clamps "
 				+ "instead of falling back, and a blank `mix` clamps to the one "
 				+ "setting that turns the cartoon off (codex review 2026-09-06)")
+		# THE MIX FLOOR (orchestrator ruling 2026-09-06). `styleStream()` guarantees
+		# the wire carries the CANVAS and never the device track, which is the
+		# transport half of "a receiver never sees the raw face". The PICTURE half
+		# is this: at mix 0 the ramp replaces nothing and the canvas carries the
+		# crop unposterized, i.e. the raw face at 128 px. Both halves are asserted
+		# — a floor that is declared 0, or a clamp that stops reading it, is the
+		# same bug spelled two ways.
+		if not module.contains("var STYLE_MIX_MIN = "):
+			_fail("VOICE_JS declares no `var STYLE_MIX_MIN` — `mix` would clamp to 0, "
+				+ "where the ramp replaces nothing and the canvas carries the crop "
+				+ "UNPOSTERIZED (the raw face at 128 px), which is what the owner's "
+				+ "\"a receiver never sees the raw face\" is about")
+		else:
+			var floor_re := RegEx.create_from_string(
+				"var\\s+STYLE_MIX_MIN\\s*=\\s*([0-9.]+)\\s*;")
+			var floor_hit: RegExMatch = floor_re.search(module) if floor_re != null else null
+			if floor_hit == null or float(floor_hit.get_string(1)) <= 0.0:
+				_fail("VOICE_JS's STYLE_MIX_MIN is not above zero — a floor of 0 is no "
+					+ "floor, and the softest setting anyone can dial would ship the "
+					+ "unposterized crop")
+		if not set_style.contains("styleNum(mix, STYLE_MIX_MIN, 1"):
+			_fail("setStyle does not clamp `mix` UP TO STYLE_MIX_MIN — the constant "
+				+ "binds nothing unless the one clamp reads it, and a stored row from "
+				+ "before the floor is raised to it only because loadStyle comes "
+				+ "through here")
 		if not set_style.contains("styleNum(levels, 2, 8"):
 			_fail("setStyle does not clamp `levels` to 2..8 — one band is not a picture "
 				+ "and nine is not a cel look; a hand-edited localStorage row reaches "

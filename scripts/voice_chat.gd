@@ -767,18 +767,24 @@ const VOICE_JS: String = """
 	   `orig * (1 - 1) + ramp * 1`, i.e. the assignment it replaced, and the ramp
 	   samples its four control stops at exactly the four points that ARE them.
 
-	   MIX 0 IS THE FAR END OF AN EXPERIMENT, NOT A SETTING TO SHIP (codex review
-	   2026-09-06). The forced rule is `styleStream()`'s and no knob reaches it —
-	   the wire carries the canvas capture at every setting, never the device track
-	   — but at mix 0 the ramp replaces nothing, so what the canvas carries is the
-	   crop UNPOSTERIZED: a real face, small and slow. The bead's range is 0..1 and
-	   the owner asked to experiment across it; narrowing that floor is their call
-	   and is one character here.
+	   AND `mix` HAS A FLOOR, BECAUSE THE OWNER'S RULING IS ABOUT THE PICTURE AND
+	   NOT ABOUT THE TRANSPORT (codex review 2026-09-06, orchestrator ruling the
+	   same day): *"a receiver never sees the raw face"*. `styleStream()` guarantees
+	   only that the wire carries the CANVAS capture and never the device track —
+	   at mix 0 the ramp replaces nothing, so that canvas carries the crop
+	   UNPOSTERIZED, which is the raw face at 128 px and satisfies the ruling in
+	   letter and breaks it in fact. So the knob stops at `STYLE_MIX_MIN`, where a
+	   quarter of every pixel is still ramp: recognisably stylised at the softest
+	   setting anyone can dial. The NUMBER is the orchestrator's and the owner can
+	   lower it by ruling — it is this one constant, read by the one clamp, so a
+	   stored row from before the floor is raised to it on load like any other
+	   out-of-range value.
 
 	   ponytail: a console knob and no panel — the owner is choosing numbers, and
 	   whichever four they settle on become these defaults. `setStyle` from the
 	   browser console, remembered here so a reload keeps the experiment. */
 	var STYLE_DEFAULT = [4, 1.0, 1, 0.45];
+	var STYLE_MIX_MIN = 0.25;
 	var STYLE_KEY = 'ck_voice_style';
 	var STYLE_FPS = 12;
 	var STYLE_PERIOD_MS = Math.round(1000 / STYLE_FPS);
@@ -870,7 +876,7 @@ const VOICE_JS: String = """
 	function setStyle(levels, mix, edge, shadow) {
 		S.style = [
 			Math.round(styleNum(levels, 2, 8, STYLE_DEFAULT[0])),
-			styleNum(mix, 0, 1, STYLE_DEFAULT[1]),
+			styleNum(mix, STYLE_MIX_MIN, 1, STYLE_DEFAULT[1]),
 			styleNum(edge, 0, 1, STYLE_DEFAULT[2]) >= 0.5 ? 1 : 0,
 			styleNum(shadow, 0, 1, STYLE_DEFAULT[3])
 		];
@@ -880,7 +886,10 @@ const VOICE_JS: String = """
 	}
 
 	/* Read at install, so an experiment survives a reload. A row of any other
-	   length is not a row this module wrote — take the shipped four. */
+	   length is not a row this module wrote — take the shipped four. It goes
+	   through `setStyle`, which is why a STORED row is clamped by exactly the rules
+	   a console call is (`STYLE_MIX_MIN` included) and why there is no second copy
+	   of them here: a hand-edited or pre-floor `mix` is raised on load. */
 	function loadStyle() {
 		var raw = '';
 		try { raw = window.localStorage.getItem(STYLE_KEY); } catch (e) { raw = ''; }
