@@ -1562,12 +1562,20 @@ const VOICE_JS: String = """
 
 	/* ABOVE the face box, which is what "on the crown" means when the box is
 	   brow-to-chin: an ellipse sitting on the top edge, tipped by nothing at all
-	   because a beret that leans is a beret that slides off a moving head. */
+	   because a beret that leans is a beret that slides off a moving head.
+
+	   IT SITS AS LOW AS "ON THE CROWN" ALLOWS, and that is measured rather than
+	   taste. The crop is `FACE_ZOOM` (1.8) times the face, so the face box's top
+	   edge lands at 22% of the canvas and everything above it has 28 px to live
+	   in; the first draft put the beret's top at 7 px, and on a detection sitting
+	   even slightly high in frame the hat was clipped by the canvas edge. Its top
+	   is now `0.24 * side` above the box (11 px on a centred face) with the stalk
+	   inside that, so a high detection loses nothing. */
 	function accTeibi(r, g) {
 		var cx = r[0], cy = r[1], s = r[2];
 		var top = cy - s * 0.5;
-		var rx = s * 0.58, ry = s * 0.24;
-		var yc = top - s * 0.06;
+		var rx = s * 0.58, ry = s * 0.22;
+		var yc = top - s * 0.02;
 		g.fillStyle = rgb(ACC_TEIBI_BERET);
 		g.strokeStyle = rgb(STYLE_INK);
 		g.lineWidth = Math.max(1, s * 0.03);
