@@ -37,7 +37,7 @@ extends SceneTree
 ##      "a teammate has him" reading as HELD rather than as free.
 ##   4. **THE STANDALONE DEGRADE**: no player in the group -> an empty row.
 ##   5. **THE ROW FITS ITS CONTROL AND CLEARS ITS NEIGHBOURS** in `main.tscn` —
-##      four tiles need 338 px, and no other top-left-anchored HUD widget may sit
+##      four tiles need 386 px, and no other top-left-anchored HUD widget may sit
 ##      in the band. The neighbours are ENUMERATED OUT OF THE SCENE (every
 ##      `parent="HUD"` block at `anchors_preset = 0`) rather than named here, so
 ##      the row is measured against whatever the HUD actually carries — which is

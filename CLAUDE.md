@@ -2336,7 +2336,9 @@ builders (`card` / `strip` / `button`) and one lazy `theme()`. Four rules:
   why Oswald was picked over Bebas Neue.
 - **`hero_hud` is the PILOT** (bead `y1o.24`) and the per-panel beads follow it one file
   at a time. **`TILE_SIZE` IS THE ONE NUMBER** (bead `y1o.37`, owner: *"make heroes'
-  portraits bigger"*): it went 48 -> 80, the row is `4*80 + 3*6 = 338` px, and everything
+  portraits bigger"*; bead `y1o.39`, owner after seeing 80 on prod: *"let's increase a
+  bit more portraits +15%"*): it went 48 -> 80 -> 92, the row is `4*92 + 3*6 = 386` px,
+  and everything
   that has to grow with a tile is DERIVED from it — `DIGIT_FONT_SIZE` at 13/48 and
   `BADGE_SIZE` at 15/48, both written as the division so 48 still reproduces 13 and 15
   exactly. Line WEIGHTS do not follow it and that is deliberate (`ACTIVE_BORDER_WIDTH`,
@@ -2349,13 +2351,14 @@ builders (`card` / `strip` / `button`) and one lazy `theme()`. Four rules:
   to the real ring consts through the real stretched rect.
   What BOUNDS the tile is `hero_hud_selfcheck` check 5, the row's fit against every
   widget `main.tscn` pins to that corner, and the binding neighbour is the \fo
-  PerfOverlay — 80 moved it right (240..544 -> 376..680), never down, where its text
-  walks into the minimap. 96 is the ceiling the bead names, and what it costs is a
-  SECOND move of that SAME neighbour — a 402 px row ends at x = 418, past the overlay's
-  new 376, and there is room (the design width is 1920 at its narrowest under either
+  PerfOverlay — 80 moved it right (240..544 -> 376..680) and 92 moved it right again
+  (376..680 -> 424..728), never down, where its text walks into the minimap. So the
+  ceiling is always "whatever fits west of the overlay's left edge", and at 424 that is
+  97 px (16 + 4*97 + 3*6 = 422); past it the SAME neighbour moves once more and there is
+  room (the design width is 1920 at its narrowest under either
   aspect). **The minimap is not what binds at any proposed size**: it is anchored at
   0.5 with `offset_top = -126` and the design height is never under 1080, so its top is
-  never under 414 against the row's bottom of 152 — it would take a 342 px tile. `voice_chat` places the teammate camera on `tile_rect()`, so
+  never under 414 against the row's bottom of 164 — it would take a 342 px tile. `voice_chat` places the teammate camera on `tile_rect()`, so
   the picture grew with the tile. The active ring is FLAT `VISOR_AMBER` and no longer lerped toward the
   hero tint: the accent is rationed to one amber thing per screen region, and the tint
   already owns the whole placeholder tile. **A veil composites toward its OWN luminance**,
