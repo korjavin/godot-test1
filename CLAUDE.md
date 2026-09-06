@@ -2709,6 +2709,30 @@ touches `JavaScriptBridge`.
   CSS filter, re-applied by `placeTile` because that rewrites `cssText` wholesale. **The
   mark names no colour** — the six film hexes may be typed in `hud_theme.gd` alone, and
   `hero_hud`'s ring, the tile geometry and every public GD surface are untouched.
+  **AND THE SENDER HEALS ITSELF, WITH `replaceTrack` AS THE WHOLE OF ROOT CAUSE 1**
+  (bead `godot-test1-xtr.18`). `addTrack` only reuses a transceiver that has NEVER
+  SENT, so the old `removeTrack`/`addTrack` per camera toggle appended a video
+  m-section every time: measured in a two-tab room, an offer went 3,090 chars
+  (audio) -> 9,338 (camera) -> **16,586 after ONE off/on**, where `MAX_VC_SDP` (then
+  16,384) dropped it with a `push_warning`, the toggler sat in `have-local-offer`
+  for the rest of the room, and — being impolite — it ignored every later offer
+  too. **So the Camera button, the owner's one manual restart, was the thing that
+  wedged the pair.** `attachCam` now `replaceTrack`s onto the sender it already has
+  (`detachCam` `replaceTrack(null)`s and KEEPS it), which renegotiates nothing: the
+  offer stays 9,339 chars across ten toggles and every ON brings the picture back
+  in under a second, so **Camera off/on is now the manual hatch for every class of
+  stuck picture**. `MAX_VC_SDP` moved to the lobby's own 32 KB frame cap
+  (`server/conn.go` maxPayload) as a BELT for a sender on an older build.
+  Two more rungs, both sender-side and both signalling nothing: the device track's
+  `onended` plus a 2 s `currentTime` staleness clock re-acquire the camera (bounded
+  at three a minute) and swap the fresh stream into `styleSrc` alone — the canvas
+  track on the wire is untouched, so the forced-cartoon rule survives it — and when
+  that is spent, `paint()` draws an INK/BONE **signal-lost card** into the canvas,
+  which reaches every receiver on every build as PIXELS. Finally the paint loop's
+  500 ms watchdog became a **Blob-URL Worker timer** (worker timers escape Chrome's
+  1 Hz background throttle) plus a `requestFrame()` while hidden, because a canvas
+  the compositor never presents emits no frame: a backgrounded sender measured
+  ~7 decoded frames/s at the receiver over 70 s instead of a slideshow.
 - **VOICE IS ON THE ALWAYS-VISIBLE HUD, AS TWO GLYPHS AND NO TEXT** (bead
   `godot-test1-xtr.8`, owner: *"in MP game there should be an indication on HUD of mic
   state and when someone is speaking"*). The MP panel and the name tags both have to be
