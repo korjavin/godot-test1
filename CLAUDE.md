@@ -2335,6 +2335,12 @@ builders (`card` / `strip` / `button`) and one lazy `theme()`. Four rules:
   "slightly greyer" is invisible in a diff. A/B crops in `docs/style/`,
   captured with
   `godot --path . scenes/style_shots.tscn -- <outdir> only=hero_row`.
+- **LETTERING ON THE WORLD TAKES OVERRIDES IN `_ready()`, NEVER `HudTheme.theme()`** —
+  `coin_hud.gd` (bead `y1o.26`) and `world_caption.gd` (bead `y1o.38`, one script
+  dressing BOTH the respawn caption and the level-up line) are the contract's consumers:
+  the heading face, an `OUTLINE_SFX_PX` INK stroke and the hard `SHADOW_PANEL_OFFSET`
+  shadow, with the scene carrying no colour at all. Amber is the coin counter's alone;
+  every other world caption is BONE.
 
 ### Art direction
 Authored in `main.tscn` (key light, ProceduralSky, glow, BCS grade) plus
