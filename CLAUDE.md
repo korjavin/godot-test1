@@ -2803,6 +2803,35 @@ touches `JavaScriptBridge`.
   1 Hz background throttle) plus a `requestFrame()` while hidden, because a canvas
   the compositor never presents emits no frame: a backgrounded sender measured
   ~7 decoded frames/s at the receiver over 70 s instead of a slideshow.
+  **AND THE RECEIVER/TRANSPORT END HEALS TOO, AS A BOUNDED FOUR-RUNG LADDER**
+  (bead `godot-test1-xtr.19`, the other half of *"video ... sometimes gets stuck
+  for some of participants, and there is no way to restart it"*). Perfect
+  negotiation assumes reliable signalling and ours is a best-effort relay with
+  two silent drop points (`post()` swallows every failure, `decode_vc` drops a
+  bad payload with a `push_warning`), so R1 arms an 8 s timer on every offer we
+  post and rolls it back on expiry — a PC left in `have-local-offer` can never
+  fire `onnegotiationneeded` again, has nothing for `restartIce()` to ride and,
+  impolite, ignores every later offer. R2 **REVERSES the pre-xtr.19 ruling that
+  `disconnected` is deliberately not acted on**: Chrome reaches `failed` only
+  when ICE consent freshness expires (~30 s) and sometimes never leaves
+  `disconnected`, so the answer to the re-offer loop that ruling feared is the
+  BOUND — held 5 s, one `restartIce()` per 15 s, three in a row — and not the
+  blind spot. R3 is `close(id); open(id)` on **both** ends with no signalling
+  change: a one-sided rebuild is applied by the remote to its OLD PC, whose DTLS
+  fingerprint differs and whose `setRemoteDescription` rejects (swallowed), so
+  the remote detects it in `recv` off a changed `a=fingerprint:` — **that compare
+  is the whole reason no `vc` kind was added, `mp_codec` is untouched and
+  `mp_manager`'s seam stays three functions**. It carries `S.tiles[id]` across
+  the swap, because `close()` forgets the rect while GDScript's `_pushed_tiles`
+  still holds it and a track back inside one 5 Hz poll would otherwise never be
+  given one (`hideSelf`'s wedge, remote side). R4 re-plays a `<video>` that
+  paused after `showVideo`'s one swallowed `play()`, on the 1 Hz sampler. Every
+  rung is bounded by a spent constant and every firing is a running tally in
+  \fo's `heal=<rollback>:<ice>:<rebuild>` per peer — kept in `S.heal` by lobby id
+  precisely because R3 destroys the peer row. `voice_selfcheck` check 6 was
+  REWRITTEN rather than loosened: it pins all four rungs, every bound constant,
+  and the retired `iceConnectionState !== 'failed'` guard as its negative
+  control. Chrome + Firefox; Safari is a documented ceiling.
 - **VOICE IS ON THE ALWAYS-VISIBLE HUD, AS TWO GLYPHS AND NO TEXT** (bead
   `godot-test1-xtr.8`, owner: *"in MP game there should be an indication on HUD of mic
   state and when someone is speaking"*). The MP panel and the name tags both have to be

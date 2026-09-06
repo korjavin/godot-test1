@@ -897,19 +897,44 @@ func _js_bool_offence(source: String) -> String:
 # 6b. A FAILED ICE TRANSPORT REBUILDS ITSELF
 # ============================================================================
 
-## The three spellings that together ARE the recovery (bead `godot-test1-xtr.7`),
-## in the order the browser reaches them: the handler that notices, the state it
-## acts on, and the call that repairs.
-##
-## Each is spelled as CODE rather than as a bare word, because the explanation
-## beside the call names `restartIce()` too — a check on the word alone survives
-## the deletion of the call it guards, which is not a hypothetical: it is what the
-## first draft of this check did, measured.
+## The spellings that together ARE the recovery, in the order the browser reaches
+## them: the handler that notices, the states it acts on, and the calls that
+## repair. Each is spelled as CODE rather than as a bare word, because the
+## explanation beside the call names `restartIce()` too — a check on the word
+## alone survives the deletion of the call it guards, which is not a
+## hypothetical: it is what the first draft of this check did, measured.
 const ICE_RESTART_NEEDLES: Array[String] = [
 	"pc.oniceconnectionstatechange",
-	"iceConnectionState !== 'failed'",
 	"pc.restartIce()",
+	# R2's two states, and BOTH of them: `failed` alone is what shipped before
+	# bead godot-test1-xtr.19 and is exactly the half that never fired.
+	"st === 'failed'",
+	"st === 'disconnected'",
+	# R1 — the rollback that unwedges a PC whose offer was lost.
+	"type: 'rollback'",
+	"'have-local-offer'",
+	# R3 — the fingerprint compare and the one-PC rebuild it triggers.
+	"a=fingerprint:",
+	"healRemoteRebuilt",
 ]
+
+## R2's bound, R1's bound and R3's, each as the CONSTANT that carries it. A rung
+## with no bound is the re-offer loop the pre-xtr.19 ruling refused to risk, so
+## the bound is the thing this check is really pinning: `_check_js_used` demands
+## each name appear twice — declared, and SPENT.
+const HEAL_BOUND_CONSTS: Array[String] = [
+	"HEAL_OFFER_TIMEOUT_MS",
+	"HEAL_OFFER_TRIES_MAX",
+	"HEAL_ICE_HOLD_MS",
+	"HEAL_ICE_COOLDOWN_MS",
+	"HEAL_ICE_TRIES_MAX",
+	"HEAL_REBUILD_COOLDOWN_MS",
+]
+
+## The exact spelling of the retired guard. It is the NEGATIVE control: a
+## `disconnected` that is acted on only behind a timer and a cap cannot be
+## written as the bare "act on anything that is not failed" test this replaced.
+const BARE_ICE_GUARD: String = "iceConnectionState !== 'failed'"
 
 
 func _check_ice_restart() -> void:
@@ -919,18 +944,33 @@ func _check_ice_restart() -> void:
 	a later edit that retires the boolean scan must not take this with it.
 
 	WHAT IT DEFENDS. `members(json)` closes a `RTCPeerConnection` only when the id
-	LEAVES `_members`, so a live member whose transport has died is never rebuilt
-	by anything: the peer stays listed, stays un-muted, keeps its video tile, and
-	is silent for the rest of the room with no status line and nothing retrying.
-	`open()` answers that by restarting ICE, which rides the perfect-negotiation
-	queue out over the existing `"vc"` relay as an ordinary offer — so there is no
-	new signalling kind here to test, and `MpCodec.decode_vc` is untouched. The
+	LEAVES `_members`, so a live member whose own end has died is never rebuilt by
+	anything: the peer stays listed, stays un-muted, keeps its video tile, and is
+	silent for the rest of the room with no status line and nothing retrying. The
+	repairs all ride the perfect-negotiation queue out over the existing `"vc"`
+	relay as ordinary offers — there is no new signalling kind to test and
+	`MpCodec.decode_vc` is untouched (check 1 proves that half byte for byte). The
 	only thing a headless check CAN see is that the code is still there.
 
-	THE STATE GUARD IS ONE OF THE THREE ON PURPOSE. `'disconnected'` is transient
-	and self-healing; acting on it turns the handler into a re-offer loop on every
-	path blip. A check that pinned only the handler and the call passed happily
-	with `'failed'` swapped for `'disconnected'` — so the comparison is pinned too.
+	THIS CHECK WAS REWRITTEN BY BEAD `godot-test1-xtr.19` AND THE OLD RULING IS
+	REVERSED. It used to pin `iceConnectionState !== 'failed'` as a THIRD needle,
+	with this docstring explaining that `'disconnected'` is transient and
+	self-healing and that acting on it turns the handler into a re-offer loop on
+	every path blip. The fear was real; the ruling was wrong about the case the
+	owner reported. Chrome reaches `failed` only when ICE consent freshness
+	expires (~30 s) and sometimes never leaves `disconnected` at all, so a coturn
+	allocation expiring or a NAT rebind left a pair silent — audio AND video — for
+	the life of the room, under a handler watching a state it would never see. The
+	answer to a loop is a BOUND, not a blind spot: so `'disconnected'` is now acted
+	on behind a 5 s hold, one restart per 15 s and three in a row, and what this
+	check pins is that every one of those bounds is still a spent constant. The
+	retired bare guard is asserted ABSENT, which is this check's negative control.
+
+	THE OTHER THREE RUNGS ARE PINNED THE SAME WAY, because each is invisible to
+	every other check in the suite: a lost offer rolled back (R1), the one-PC
+	rebuild the REMOTE detects off a changed `a=fingerprint:` (R3 — and that
+	compare is the whole reason no `vc` kind was added), and a paused element
+	re-played (R4).
 	"""
 	var module: String = _voice_js_module()
 	if module.length() < 500:
@@ -938,14 +978,85 @@ func _check_ice_restart() -> void:
 			% module.length() + "would pass vacuously")
 		Sentinel.done("ice_restart")
 		return
+
 	for needle: String in ICE_RESTART_NEEDLES:
 		if module.contains(needle):
 			continue
-		_fail("voice_chat.gd's VOICE_JS is missing `%s`, so a PeerConnection that "
-			% needle + "drops to iceConnectionState 'failed' (a NAT rebind, an "
-			+ "expiring coturn allocation, a path break) stays dead for the whole "
-			+ "life of the room — nothing else rebuilds a still-listed member's "
-			+ "connection (godot-test1-xtr.7)")
+		_fail("voice_chat.gd's VOICE_JS is missing `%s`, so a peer whose own end "
+			% needle + "has died (a NAT rebind, an expiring coturn allocation, a "
+			+ "lost offer, a dead DTLS transport) stays stuck for the whole life "
+			+ "of the room — nothing else rebuilds a still-listed member's "
+			+ "connection (beads godot-test1-xtr.7 and godot-test1-xtr.19)")
+
+	# --- THE BOUNDS, which are what make acting on `disconnected` safe ---------
+	for name: String in HEAL_BOUND_CONSTS:
+		_check_js_used(module, name, 2)
+
+	# --- THE NEGATIVE CONTROL -------------------------------------------------
+	if module.contains(BARE_ICE_GUARD):
+		_fail("VOICE_JS still spells `%s`, the pre-xtr.19 guard: acting on every "
+			% BARE_ICE_GUARD + "state that is not `failed` is the unbounded "
+			+ "re-offer loop this ladder replaced with a held timer and a cap")
+
+	# --- R1, R3 AND R4 IN THE FUNCTIONS THAT OWN THEM -------------------------
+	# Scoped to bodies rather than the whole module, because the essays above them
+	# name every one of these calls to explain the measurement — and a check that
+	# a reworded comment satisfies is a check nobody keeps.
+	var arm: String = _js_function_body(module, "healArmOffer")
+	if arm.is_empty():
+		_fail("VOICE_JS has no `function healArmOffer(` — R1's offer timeout, the "
+			+ "only thing that unwedges a PC left in `have-local-offer` by a lost "
+			+ "offer, is gone")
+	elif not (arm.contains("type: 'rollback'") and arm.contains("HEAL_OFFER_TRIES_MAX")):
+		_fail("healArmOffer no longer rolls a timed-out offer back under "
+			+ "HEAL_OFFER_TRIES_MAX — an unbounded rollback is a re-offer loop and "
+			+ "an absent one is the wedge (bead godot-test1-xtr.19 R1)")
+
+	var recv: String = _js_function_body(module, "recv")
+	if recv.is_empty():
+		_fail("VOICE_JS has no `function recv(` — check 6b cannot see how an "
+			+ "incoming offer reaches a connection")
+	elif not (recv.contains("healRemoteRebuilt") and recv.contains("healSwap")):
+		_fail("recv no longer detects a REBUILT remote off its fingerprint and "
+			+ "swaps our PC for a fresh one, so a one-sided rebuild leaves the "
+			+ "other end applying the new offer to its old PC — where the DTLS "
+			+ "fingerprint differs and setRemoteDescription rejects, swallowed "
+			+ "(bead godot-test1-xtr.19 R3)")
+
+	var swap: String = _js_function_body(module, "healSwap")
+	if swap.is_empty():
+		_fail("VOICE_JS has no `function healSwap(` — R3's rebuild is gone")
+	else:
+		if not (swap.contains("close(id)") and swap.contains("open(id)")):
+			_fail("healSwap no longer does close(id) then open(id) — the rebuild "
+				+ "has to re-run `open`, which is what re-attaches the mic and the "
+				+ "cartoon track so the fresh offer carries everything")
+		if not swap.contains("S.tiles[id] = keep"):
+			_fail("healSwap no longer carries the tile rect across the rebuild: "
+				+ "`close` forgets it while GDScript's `_pushed_tiles` still holds "
+				+ "the identical fraction, so a track that comes back inside one "
+				+ "5 Hz poll window is never given a rect and the tile stays dark "
+				+ "for the rest of the room (hideSelf's wedge, remote side)")
+
+	var paused: String = _js_function_body(module, "healPaused")
+	if paused.is_empty() or not paused.contains(".paused"):
+		_fail("VOICE_JS has no `function healPaused(` reading `.paused` — a "
+			+ "<video> that paused after `showVideo`'s one swallowed play() shows "
+			+ "its last frame forever behind a perfectly healthy track (bead "
+			+ "godot-test1-xtr.19 R4)")
+
+	var tick: String = _js_function_body(module, "sampleTick")
+	if tick.is_empty() or not tick.contains("healPaused()"):
+		_fail("healPaused is not driven from sampleTick — R4 with no clock is a "
+			+ "function nothing calls")
+
+	# --- THE EVIDENCE \fo SHOWS ----------------------------------------------
+	var fmt: String = _js_function_body(module, "formatStats")
+	if fmt.is_empty() or not fmt.contains(" heal="):
+		_fail("formatStats does not emit ` heal=` — which rung fired is then "
+			+ "unmeasurable in \\fo, and every rung here is bounded precisely so "
+			+ "that its firing is worth reading (bead godot-test1-xtr.19)")
+
 	Sentinel.done("ice_restart")
 
 
