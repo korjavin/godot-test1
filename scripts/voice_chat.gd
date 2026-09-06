@@ -537,7 +537,11 @@ const VOICE_JS: String = """
 	   keeps advancing — and is captioned in the pixels by the sender instead
 	   (bead godot-test1-xtr.18's card). */
 	function markStall(id, p, dIn) {
-		if (p.hasVideo !== 1 || dIn > 0) {
+		/* `dIn` is NEGATIVE for "unknown" — the report carried no `framesDecoded`,
+		   or this is the peer's first sample. Only a KNOWN zero is a stall: folding
+		   unknown into zero would dim every tile on a browser that does not report
+		   the field and never let one recover (codex review 2026-09-06). */
+		if (p.hasVideo !== 1 || dIn !== 0) {
 			p.vinZero = 0;
 			if (p.stalled === 1) { p.stalled = 0; placeTile(id); }
 			return 0;
@@ -886,8 +890,16 @@ const VOICE_JS: String = """
 			S.srcTime = -1;
 			S.srcAt = styleNow();
 		}).catch(function () {
+			/* A FAILURE HERE IS NOT A DENIAL, and marking it one is a one-way door
+			   (codex review 2026-09-06). Permission was already granted; what
+			   rejects at this point is a device that is busy, asleep or briefly
+			   gone. Writing CAM_DENIED would fail the `camState !== 2` guard above
+			   for the rest of the room — so the three-attempt budget would never be
+			   spent, the panel would read "Camera blocked", and all of that while
+			   the canvas sender is still attached and would resume the moment the
+			   source came back. The rate limiter is the only bound this needs; the
+			   signal-lost card is what the room sees meanwhile. */
 			S.recamBusy = 0;
-			if (gen === S.gen) { S.camState = 3; }
 		});
 		return 1;
 	}
@@ -1731,8 +1743,13 @@ const VOICE_JS: String = """
 				   and its answer simply contributes nothing. */
 				var pv = S.peers[peerKeys[i]];
 				if (!pv) { continue; }
-				var dIn = (vFrames[0] >= 0 && pv.vinPrev >= 0) ? (vFrames[0] - pv.vinPrev) : 0;
-				var dOut = (vFrames[1] >= 0 && pv.voutPrev >= 0) ? (vFrames[1] - pv.voutPrev) : 0;
+				/* -1 is UNKNOWN and is NOT zero: the report carried no counter, or
+				   this is this peer's first sample. `markStall` refuses to count it
+				   and the row prints `-` for it — a zero here would dim every tile
+				   on a browser that does not report the field, permanently (codex
+				   review 2026-09-06). */
+				var dIn = (vFrames[0] >= 0 && pv.vinPrev >= 0) ? (vFrames[0] - pv.vinPrev) : -1;
+				var dOut = (vFrames[1] >= 0 && pv.voutPrev >= 0) ? (vFrames[1] - pv.voutPrev) : -1;
 				pv.vinPrev = vFrames[0];
 				pv.voutPrev = vFrames[1];
 				markStall(peerKeys[i], pv, dIn);
@@ -1745,8 +1762,8 @@ const VOICE_JS: String = """
 				   m-section per toggle, and `MpCodec.MAX_VC_SDP` drops it silently
 				   somewhere past the second one. Flat here means flat on the wire. */
 				vid.sdp.push((pv.pc && pv.pc.localDescription) ? pv.pc.localDescription.sdp.length : 0);
-				vid.vin.push(dIn);
-				vid.vout.push(dOut);
+				vid.vin.push(dIn >= 0 ? dIn : '-');
+				vid.vout.push(dOut >= 0 ? dOut : '-');
 			}
 
 			S.statsCache = formatStats(lc.ns, lc.ec, lc.agc, peerKeys, rtts, totalLost, totalRecv, vid);
