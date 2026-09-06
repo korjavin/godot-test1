@@ -683,10 +683,22 @@ func _check_tile_rect_under_a_stretch() -> void:
 	var after_poll := poll_body.find("\nfunc ")
 	if after_poll > 0:
 		poll_body = poll_body.substr(0, after_poll)
-	_check(poll_body.contains("_tile_fraction("),
-		"_poll_tiles no longer asks _tile_fraction where a picture goes — the pad "
-		+ "and the captive refusal have one home, and a second copy is how one of "
-		+ "them silently stops being applied")
+	# COUNTED, not merely present. `_poll_tiles` has TWO callers — the teammate's
+	# tile and, since bead `godot-test1-xtr.14`, the self-view — and "contains the
+	# substring" cannot tell one of them being replaced by inline unpadded
+	# arithmetic from both being right. That mutation was driven and this line is
+	# what fails it. The second half is stronger still: the pad's only input is
+	# `tile_rect`, so `_poll_tiles` asking the row for one directly IS the second
+	# copy, whatever it then does with it.
+	_check(poll_body.count("_tile_fraction(") >= 2,
+		"_poll_tiles asks _tile_fraction %d time(s), expected both callers (the "
+		% poll_body.count("_tile_fraction(")
+		+ "teammate tile and the self-view) — the pad and the captive refusal have "
+		+ "one home, and a second copy is how one of them silently stops applying")
+	_check(not poll_body.contains("tile_rect("),
+		"_poll_tiles reads hero_hud.tile_rect() itself — that is _tile_fraction's "
+		+ "one input, so a caller holding it is a second, unpadded copy of the "
+		+ "camera pad no matter what it does next")
 	Sentinel.done("tile_rect_under_a_stretch")
 
 

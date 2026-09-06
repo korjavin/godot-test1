@@ -270,7 +270,7 @@ const VOICE_JS: String = """
 		   last frame's cost, reported in `stats()` for \fo. */
 		styled: null, styleSrc: null, styleCanvas: null, styleCtx: null,
 		styleLv: null, styleRamp: null, styleRvfc: 0, styleTimer: null,
-		paintMs: 0,
+		styleWatch: null, paintMs: 0,
 		/* THE SELF-VIEW (bead godot-test1-xtr.14): one more <video>, fed the
 		   STYLED stream so what you see of yourself is exactly what the room sees,
 		   and placed through the same `S.tiles` / `placeTile` path as every
@@ -628,7 +628,17 @@ const VOICE_JS: String = """
 	}
 
 	function hideSelf() {
-		delete S.tiles[SELF_TILE];
+		/* BLANK, NEVER DELETE THE RECT — `blankTile`'s own rule, and this function
+		   is the browser's end of exactly the wedge documented there. GDScript's
+		   change gate (`_pushed_tiles`) keeps our rect across a camera toggle, and
+		   `_reported_cam` is only refreshed at 2 Hz: an off-press and an on-press
+		   inside one of those windows leaves the gate holding a rect the browser
+		   had forgotten, so `_poll_tiles` pushes nothing and `showSelf`'s
+		   `placeTile` has no rect to place — teammates would still see you while
+		   your own tile stayed dark, for the rest of the room. The slow path still
+		   deletes it: `_poll_tiles` calls `hideTile('me')` when the camera really
+		   is off. */
+		blankTile(SELF_TILE);
 		if (S.selfVideo) {
 			S.selfVideo.srcObject = null;
 			if (S.selfVideo.parentNode) { S.selfVideo.parentNode.removeChild(S.selfVideo); }
@@ -674,6 +684,9 @@ const VOICE_JS: String = """
 	   highlight. Three reads as a stencil, five stops reading as steps at all. */
 	var STYLE_LEVELS = 4;
 	var STYLE_FPS = 12;
+	/* The watchdog's period — slow on purpose. It is not a frame rate, it is the
+	   longest a frozen paint loop may go unnoticed. */
+	var STYLE_WATCHDOG_MS = 500;
 
 	/* The four colours a quantised level indexes: INK, the tint at shadow value,
 	   the tint, BONE. Rebuilt only when GDScript pushes a new hero. */
@@ -761,6 +774,20 @@ const VOICE_JS: String = """
 		return 1;
 	}
 
+	/* THE WATCHDOG, and it is armed even when rVFC is (measured working on Chrome
+	   with this very element). `requestVideoFrameCallback` fires when a frame is
+	   PRESENTED, and `styleSrc` is `display:none` — an engine that declines to
+	   present a non-composited video simply never calls back, and a registration
+	   that throws leaves the chain dead too. Either way the room would see a still
+	   portrait with no recovery and no telemetry saying so. `paint()` is idempotent
+	   and costs a fraction of a millisecond, so a slow second hand is the whole
+	   fix; it is not the frame rate, which stays rVFC's. */
+	function styleWatchdog() {
+		if (S.styleWatch) { return 0; }
+		S.styleWatch = setInterval(paint, STYLE_WATCHDOG_MS);
+		return 1;
+	}
+
 	function styleStart() {
 		if (S.styled || !S.cam) { return 0; }
 		if (!document || !document.body) { return 0; }
@@ -798,15 +825,14 @@ const VOICE_JS: String = """
 			return 0;
 		}
 		S.styled = st;
-		/* One frame NOW so the track is not blank for the first 83 ms, then the
-		   loop. */
-		paint();
 		styleSchedule();
+		styleWatchdog();
 		return 1;
 	}
 
 	function styleStop() {
 		if (S.styleTimer) { clearInterval(S.styleTimer); S.styleTimer = null; }
+		if (S.styleWatch) { clearInterval(S.styleWatch); S.styleWatch = null; }
 		if (S.styleSrc && S.styleRvfc && S.styleSrc.cancelVideoFrameCallback) {
 			try { S.styleSrc.cancelVideoFrameCallback(S.styleRvfc); } catch (e) { }
 		}
@@ -830,11 +856,16 @@ const VOICE_JS: String = """
 		return 1;
 	}
 
-	/* WHAT GOES ON THE WIRE. The styled canvas whenever there is one; the raw
-	   device only where the browser could not give us a canvas capture at all,
-	   which is an honest degrade rather than a silent black tile. */
+	/* WHAT GOES ON THE WIRE, AND THE RAW DEVICE IS NOT ON THE LIST. The owner's
+	   ruling is that a receiver never sees the raw face, so where the browser
+	   cannot give us a canvas capture at all the degrade is NO VIDEO — not the
+	   unstyled webcam, which is the one outcome the ruling was written to
+	   prevent. `attachCam` and `showSelf` both already answer 0 on a null stream,
+	   so that degrade costs no branch anywhere. (`canvas.captureStream` is Chrome
+	   51+ / Firefox 43+ / Safari 11+, so this is a corner nothing shipping
+	   reaches.) */
 	function styleStream() {
-		return S.styled || S.cam;
+		return S.styled;
 	}
 
 	function attachCam(p) {
@@ -2304,8 +2335,13 @@ func set_camera_enabled(on: bool) -> void:
 	if on and camera_denied():
 		return
 	_camera_on = on
-	# `_pushed_tiles` is deliberately NOT cleared: it tracks the pictures TEAMMATES
-	# are sending, and switching your own camera off does not take one of those down.
+	# `_pushed_tiles` is deliberately NOT cleared, and since the self-view (bead
+	# `godot-test1-xtr.14`) put our OWN tile in it that is load-bearing rather than
+	# merely harmless: most of the dictionary is the pictures TEAMMATES are sending,
+	# which switching your own camera off does not take down, and the `me` row is a
+	# rect the browser's `hideSelf` deliberately keeps too — so a fast off/on inside
+	# one `_report_camera` window brings the picture straight back instead of leaving
+	# both ends waiting for the other.
 	if _is_web and _running and _ck != null:
 		_ck.setCamera(1 if on else 0)
 	camera_changed.emit(on)
@@ -2458,6 +2494,11 @@ func _push_style_tint(hud: Node) -> void:
 	colour for, or no row at all, degrades to a neutral grey and still cartoons.
 	"""
 	if _ck == null or not _running:
+		return
+	# THE GATE IS KEYED ON THE HERO, SO THE ROW HAS TO BE THERE TO ANSWER FOR HIM.
+	# With no `hero_hud` the answer is the grey fallback, and latching that would
+	# leave a hero who is never asked about again wearing it for the whole room.
+	if hud == null:
 		return
 	var hero: String = ""
 	if _mp != null and is_instance_valid(_mp) and _mp.has_method("my_hero"):

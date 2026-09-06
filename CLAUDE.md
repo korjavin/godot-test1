@@ -2635,6 +2635,11 @@ touches `JavaScriptBridge`.
   edges, and `canvas.captureStream(12)` is the ONLY video track `attachCam` ever adds —
   so there is no toggle, no MP-panel button, no `ui.csv` row and nothing in the `[voice]`
   store, and a receiver on an older build gets the effect because it travels as pixels.
+  **A browser that cannot capture a canvas sends NO VIDEO, never the raw device**
+  (`styleStream()` answers `S.styled` and nothing else): "forced for the room" means
+  the unstyled face is the one outcome that may not reach a peer, so the fallback is
+  silence — and `attachCam` / `showSelf` already answer 0 on a null stream, so that
+  degrade costs no branch.
   Sender-side is where the hero is known, where the crop raises effective resolution
   before the encoder, and where a posterized frame's lower entropy makes the same
   150 kbps cap go further. **2D canvas, never WebGL** (a second GL context beside

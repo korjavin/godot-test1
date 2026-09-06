@@ -625,6 +625,17 @@ func _check_style_mirrors() -> void:
 
 	_check_js_triple(module, "STYLE_INK", HudTheme.INK)
 	_check_js_triple(module, "STYLE_BONE", HudTheme.BONE)
+	# AND THAT THEY ARE SPENT. Binding a DECLARATION says nothing about the paint
+	# loop: an edge colour changed from `STYLE_INK` to a literal drifts from the
+	# palette on every inked contour while the declaration still matches. That
+	# mutation was driven and these three counts are what fail it — each name is
+	# declared once and used at least once.
+	# The counts are the REAL SITES, not a token floor: INK is declared, is the
+	# ramp's ground band and is the ink the edge test paints; BONE is declared and
+	# is the ramp's highlight. A threshold slack enough to survive losing one of
+	# them is the vacuous check this is replacing.
+	_check_js_used(module, "STYLE_INK", 3)
+	_check_js_used(module, "STYLE_BONE", 2)
 
 	var key := RegEx.create_from_string("var\\s+SELF_TILE\\s*=\\s*'([^']*)'")
 	var hit: RegExMatch = key.search(module) if key != null else null
@@ -637,7 +648,26 @@ func _check_style_mirrors() -> void:
 			% [hit.get_string(1), VoiceChat.SELF_LEVEL_KEY]
 			+ "the self-view's rect would be pushed under a key the browser does "
 			+ "not draw")
+	# Declared once, then asked by `tileEl`, by `tileLive` and by the two ends of
+	# the self-view itself: four real sites, so losing any one of them to a
+	# hard-coded 'me' takes the count under the floor.
+	#
+	# ponytail: the count is the binding, not a scan for stray `'me'` literals —
+	# that fires on the word in a COMMENT, and a check that has to be worked
+	# around by rewording prose is a check nobody keeps.
+	_check_js_used(module, "SELF_TILE", 4)
 	Sentinel.done("style_mirrors")
+
+
+func _check_js_used(module: String, name: String, want: int) -> void:
+	## `name` must appear at least `want` times in `VOICE_JS`: once where it is
+	## declared and once per place the value is really spent.
+	var seen: int = module.count(name)
+	if seen < want:
+		_fail("VOICE_JS names `%s` %d time(s), expected at least %d — a constant "
+			% [name, seen, want]
+			+ "that is declared and not SPENT binds nothing, which is how a "
+			+ "literal in the paint loop drifts from HudTheme in silence")
 
 
 func _check_js_triple(module: String, name: String, want: Color) -> void:
