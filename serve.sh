@@ -57,6 +57,24 @@ fi
 echo -e "${GREEN}✅ Found web build in: ${WEB_DIR}${NC}"
 echo ""
 
+# The vendored face detector (bead godot-test1-xtr.12). It is fetched at build
+# time rather than committed, so a local export has the game and none of it —
+# and the camera would silently fall back to the centre crop. The SAME script
+# CI runs, so the developer rig and the build cannot drift; it is idempotent, so
+# a second `./serve.sh` downloads nothing.
+if [ -f scripts/fetch_vendor.sh ]; then
+    if sh scripts/fetch_vendor.sh "$WEB_DIR" > /dev/null 2>&1; then
+        echo -e "${GREEN}✅ Face detector installed into ${WEB_DIR}/vendor${NC}"
+    else
+        # Not fatal: everything except the camera's face tracking works without
+        # it, and a developer offline should still get their build served.
+        echo -e "${YELLOW}⚠️  Could not fetch the vendored face detector — the${NC}"
+        echo -e "${YELLOW}   cartoon camera will use the centre crop. Run${NC}"
+        echo -e "${YELLOW}   'sh scripts/fetch_vendor.sh $WEB_DIR' to see why.${NC}"
+    fi
+    echo ""
+fi
+
 # Check if index.html exists
 if [ ! -f "$WEB_DIR/index.html" ]; then
     echo -e "${RED}❌ Error: index.html not found in ${WEB_DIR}${NC}"

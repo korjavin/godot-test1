@@ -102,6 +102,14 @@ jobs:
           grep -qx "const BUILD_SHA: String = \"${COMMIT_SHA}\"" scripts/build_version.gd \
             || { echo "::error::failed to bake BUILD_SHA into scripts/build_version.gd — the export would ship the 'dev' placeholder and no player would ever be pulled onto a new build"; exit 1; }
 
+      # BEFORE the export, so a bad pin or an unreachable registry fails in seconds
+      # rather than after 90 s of exporting. The install half runs after the export
+      # (there is nothing to install into yet); this call is fetch-and-verify only,
+      # and the second one is idempotent — a tree that already matches the lock
+      # downloads nothing.
+      - name: 🙂 Fetch the vendored face detector
+        run: sh scripts/fetch_vendor.sh
+
       - name: 🔨 Build for Web
         run: |
           mkdir -v -p build/web
@@ -133,6 +141,21 @@ jobs:
           cp -v web/index.service.worker.js build/web/index.service.worker.js
           grep -q "registration.unregister()" build/web/index.service.worker.js \
             || { echo "::error::build/web/index.service.worker.js is not the tombstone — a caching worker would ship and updates would stop reaching players"; exit 1; }
+
+      # The face detector behind the cartoon camera's crop box (bead
+      # `godot-test1-xtr.12`), into the SAME directory as the tombstone above and
+      # for the same reason: this is the one tree both deploy targets are cut
+      # from, so one install serves the Pages artifact and the nginx image alike.
+      #
+      # THE ASSERTIONS ARE IN THE SCRIPT, NOT HERE, and that is the point of the
+      # script: `./serve.sh` runs the same one for a local debug export, so the
+      # developer rig and CI cannot drift. It reads the file list out of
+      # `vendor.lock`, so a file added to the vendored set needs no edit here
+      # either — and it fails the build when one is missing or empty, because a
+      # build that shipped no detector falls back to the centre crop and looks
+      # exactly like a working one.
+      - name: 🙂 Install the vendored face detector
+        run: sh scripts/fetch_vendor.sh build/web
 
       - name: 📤 Upload artifact for GitHub Pages
         uses: actions/upload-pages-artifact@v3
