@@ -629,6 +629,20 @@ func _check_no_double_capture() -> String:
 	return ""
 
 
+func _hud_controls(hud: Node) -> Array:
+	## Every descendant Control under HUD, depth-first. The corner walk must
+	## see the touch action cluster — a grandchild under the full-rect
+	## TouchControls — not just HUD's direct children.
+	var out: Array = []
+	var stack: Array = hud.get_children()
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node is Control:
+			out.append(node)
+		stack.append_array(node.get_children())
+	return out
+
+
 func _check_hint() -> String:
 	"""The "? (hotkeys)" chip (bead godot-test1-0h4): under Main/HUD anchored
 	bottom-right, overlapping no other corner widget, opening the card through
@@ -661,19 +675,27 @@ func _check_hint() -> String:
 	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
 		return "HelpHint has an empty rect — it draws nothing to click"
 	var hud: Node = root.get_node_or_null("Main/HUD")
-	# The laid-out extent of the HUD, not the window: headless `root.size` is
-	# a degenerate 64x64, which would let the half-viewport skip below
-	# swallow every real widget and make the overlap walk vacuous. HUD is a
-	# CanvasLayer (no rect of its own), so bound what its visible children
-	# actually lay out.
+	# The laid-out extent of the HUD, not the window: the window size does
+	# not reflect the design-space layout, so bound what the visible
+	# children actually lay out (HUD is a CanvasLayer with no rect of its
+	# own) — otherwise the half-viewport skip below swallows every real
+	# widget and the overlap walk is vacuous.
+	var controls: Array = _hud_controls(hud)
 	var view: Vector2 = Vector2.ZERO
-	for sib: Node in hud.get_children():
+	for sib: Node in controls:
 		var sc := sib as Control
 		if sc == null or not sc.is_visible_in_tree():
 			continue
 		view.x = maxf(view.x, sc.get_global_rect().end.x)
 		view.y = maxf(view.y, sc.get_global_rect().end.y)
-	for child: Node in hud.get_children():
+	# The corner: no other VISIBLE corner widget may intersect the chip —
+	# the whole subtree, not just direct children: the touch action cluster
+	# is a grandchild under the full-rect TouchControls. Full-screen scrims
+	# and roots (over half the laid-out extent) are skipped THEMSELVES but
+	# still descended into; a hidden sibling is not on screen at all.
+	# mp_ui's corner buttons are bottom-LEFT, so they are not rivals here —
+	# only geometry decides.
+	for child: Node in controls:
 		if child == hint:
 			continue
 		var c := child as Control
@@ -687,8 +709,11 @@ func _check_hint() -> String:
 		if rect.intersects(r):
 			return "HelpHint %s overlaps %s %s in the bottom-right corner" % [str(rect), c.name, str(r)]
 	# The click, under the pause the card itself takes: open with ?, close
-	# through the shipped signal — which also proves the chip hears clicks
-	# while the tree is paused (it is PROCESS_MODE_ALWAYS for exactly this).
+	# through the shipped signal. emit() exercises the handler path
+	# (signal → toggle()), not OS input routing — headless cannot feed a
+	# real click; what IS proven is the paused round-trip, which must leave
+	# the card closed and the tree unpaused (PROCESS_MODE_ALWAYS is what
+	# keeps the chip itself clickable under that pause).
 	await _press_help_key()
 	if not _overlay._open:
 		return "setup failed: '?' did not open the help overlay for the hint check"
@@ -709,7 +734,15 @@ func _check_hint() -> String:
 	if _overlay._open or paused:
 		return "the hint check left the card open — the suite after this would inherit a pause"
 	# Touch: hidden, then back — driven through the shipped seam because a
-	# headless DisplayServer never reports a touchscreen.
+	# headless session never reports a touchscreen. The seam only proves
+	# the setter, so the GATE itself is pinned by a text scan below, in the
+	# suite's voice_selfcheck idiom: the call site must read the canonical
+	# MobileSensors probe, never the narrower DisplayServer one.
+	var hint_source: String = FileAccess.get_file_as_string("res://scripts/help_hint.gd")
+	if hint_source.is_empty():
+		return "could not read res://scripts/help_hint.gd to pin the touch gate"
+	if not hint_source.contains("update_touch_visibility(MobileSensors.is_touch_session())"):
+		return "HelpHint hides on DisplayServer.is_touchscreen_available() instead of MobileSensors.is_touch_session() — the mobile-web fallbacks keep the chip over the touch cluster"
 	hint.update_touch_visibility(true)
 	if hint.visible:
 		return "HelpHint stays visible on a touch session — the cluster owns that corner"

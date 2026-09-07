@@ -67,14 +67,17 @@ func _ready() -> void:
 	add_theme_color_override("font_hover_color", HudTheme.BONE)
 	add_theme_color_override("font_pressed_color", HudTheme.BONE)
 	text = "? (hotkeys)"
-	update_touch_visibility(DisplayServer.is_touchscreen_available())
+	# The canonical touch probe (mobile_sensors.gd): DisplayServer alone
+	# misses the mobile-web fallbacks, and on those sessions the touch
+	# cluster owns this corner.
+	update_touch_visibility(MobileSensors.is_touch_session())
 	pressed.connect(_on_hint_pressed)
 
 
 func update_touch_visibility(touch: bool) -> void:
 	## Hide the chip on a touch session (the cluster owns the corner); the
 	## argument is a seam so the self-check can drive both states without
-	## stubbing DisplayServer.
+	## stubbing MobileSensors.
 	visible = not touch
 
 

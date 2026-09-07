@@ -900,8 +900,7 @@ func _check_card_names_multiplayer() -> void:
 			+ "idea multiplayer exists'")
 	if not says_where:
 		_fail("the start card mentions multiplayer but never names the Multiplayer (N) button — " \
-			+ "the panel has no keyboard shortcut, so an unnamed corner button is " \
-			+ "what 'no idea multiplayer exists' was about")
+			+ "an unnamed corner button is what 'no idea multiplayer exists' was about")
 
 	overlay.queue_free()
 	paused = false
