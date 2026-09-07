@@ -34,9 +34,16 @@ extends SceneTree
 ##      still the field solo play always had.
 ##   8. THE FAR-PEER SKY (owner ruling A, bead godot-test1-gyd). A master with
 ##      a member 600 m off holds a storm in the far disc after its ticks, keeps
-##      it while it stays there, publishes it, and a peer under it rains —
-##      while solo every storm stays inside the master's own disc and two solo
-##      managers tick byte-identical, so the focus path draws nothing new.
+##      it while it stays there, publishes it, and a peer under it rains — and
+##      every fair cloud is swept inside the master's disc on every tick. Solo
+##      (no `mp` node) every storm stays inside the master's own disc, and a
+##      solo manager ticks byte-identical to one whose mp stub answers null,
+##      so the focus path draws nothing on either branch.
+##   9. THE PRODUCTION PATH (review round 1): the fill runs before any room
+##      exists, so ruling A at runtime is the recycle anchor alone. Seats the
+##      mp stub after the fill, strands the whole field out of every disc, and
+##      asserts recycled storms land round-robin at their focus with fair
+##      clouds home.
 ##
 ## Driven on the SHIPPED functions by hand — no physics frames, no weather
 ## tick, nothing but the one frame `_ready()` needs. `is_raining_at()` itself
@@ -61,6 +68,7 @@ var online: bool = true
 var master_id: String = "themaster"
 var own_id: String = "us"
 var peers: Array = []
+var peers_null: bool = false
 func is_online() -> bool:
 	return online
 func get_master() -> String:
@@ -68,7 +76,7 @@ func get_master() -> String:
 func my_id() -> String:
 	return own_id
 func peer_positions() -> Variant:
-	return peers
+	return null if peers_null else peers
 """
 
 ## Seeded rolls this file was verified against: each one opens with storms, so
@@ -94,6 +102,14 @@ const FAR_TICKS: int = 300
 ## is still in the far disc after FAR_TICKS — re-verify by running this file
 ## if a storm constant ever moves.
 const FOCUS_SEED: int = 4
+## Seeded roll verified for the production path below: fill solo, seat the
+## room, strand the field — a recycle tick deals storms onto both foci, with
+## at least one storm at an odd pool index (the far focus). Same re-verify rule.
+const PROD_SEED: int = 1
+## Slack for disc membership tests. A rim re-entry sits at FIELD_RADIUS ± 1e-4
+## of float noise; a genuinely stranded cloud is hundreds of metres out. The
+## slack is three orders above the noise and two below the signal.
+const DISC_SLACK: float = 1.0
 
 
 func _initialize() -> void:
@@ -134,6 +150,9 @@ func _run_checks() -> String:
 	if not failure.is_empty():
 		return failure
 	failure = _check_far_peer()
+	if not failure.is_empty():
+		return failure
+	failure = _check_production_path()
 	if not failure.is_empty():
 		return failure
 	return ""
@@ -569,6 +588,12 @@ func _check_far_peer() -> String:
 		return _far_cleanup(mp, host, master, "FOCUS_SEED opened with no storm near the far peer — this check measured nothing")
 	for t in FAR_TICKS - 1:
 		master.call("_process", 0.1)
+		# Fair clouds stay home on EVERY tick (review round 1): a stranded
+		# fair recycles back on the very next tick, so a sweep after the loop
+		# would only catch a last-tick placement.
+		var ferr := _fair_home_sweep(master, Vector3.ZERO, t)
+		if not ferr.is_empty():
+			return _far_cleanup(mp, host, master, ferr)
 	# Kept, not recycled: a storm inside the far disc stays while it stays
 	# there — the min-distance rule, not the master's own disc.
 	var kept: Dictionary = {}
@@ -605,39 +630,63 @@ func _check_far_peer() -> String:
 		peer.queue_free()
 		return _far_cleanup(mp, host, master, "the peer rains 14 km out — the negative control failed, so the positive proves nothing")
 	peer.queue_free()
-	# --- Solo: today's rule, byte-identical ticks ----------------------------
+	# --- Solo: today's rule, and the focus path draws nothing ----------------
 	# No `mp` node at all now: every storm must stay inside the master's own
-	# disc, and two managers off one seed must tick identical fields — the
-	# focus path consumes no draw solo.
+	# disc, and every fair cloud with it. Then the draw control (review
+	# round 1): manager A ticks truly solo while manager C ticks with an mp
+	# stub present that answers null — the two take DIFFERENT branches of
+	# `_focus_points()`, so an extra draw on either branch shows up as
+	# different fields. (The old a-vs-b compared two managers on the same
+	# branch and could never see it.)
 	mp.remove_from_group("mp")
 	mp.queue_free()
 	var a: Node = _fresh_manager()
-	var b: Node = _fresh_manager()
 	(a.get("_rng") as RandomNumberGenerator).seed = FOCUS_SEED
-	(b.get("_rng") as RandomNumberGenerator).seed = FOCUS_SEED
 	for t in FAR_TICKS:
 		a.call("_process", 0.1)
-		b.call("_process", 0.1)
-	if var_to_bytes(a.get("_clouds")) != var_to_bytes(b.get("_clouds")):
-		master.queue_free()
-		a.queue_free()
-		b.queue_free()
-		host.remove_from_group("player")
-		host.queue_free()
-		Sentinel.done("wx_far_peer")
-		return "two solo managers off seed %d ticked different fields — the focus path draws solo" % FOCUS_SEED
-	for cloud: Dictionary in (a.get("_clouds") as Array):
-		if bool(cloud["is_storm"]) and _flat_dist(cloud["center"], Vector3.ZERO) > float(a.get("FIELD_RADIUS")):
+		var aferr := _fair_home_sweep(a, Vector3.ZERO, t)
+		if not aferr.is_empty():
 			master.queue_free()
 			a.queue_free()
-			b.queue_free()
+			host.remove_from_group("player")
+			host.queue_free()
+			Sentinel.done("wx_far_peer")
+			return "solo, " + aferr
+	for cloud: Dictionary in (a.get("_clouds") as Array):
+		if bool(cloud["is_storm"]) and _flat_dist(cloud["center"], Vector3.ZERO) > float(a.get("FIELD_RADIUS")) + DISC_SLACK:
+			master.queue_free()
+			a.queue_free()
 			host.remove_from_group("player")
 			host.queue_free()
 			Sentinel.done("wx_far_peer")
 			return "solo, a storm stands outside the master's disc — today's rule broke"
+	var mp2_script := GDScript.new()
+	mp2_script.source_code = MP_STUB_SOURCE
+	mp2_script.reload()
+	var mp2: Node = mp2_script.new()
+	mp2.set("own_id", "themaster")
+	mp2.set("peers_null", true)
+	mp2.add_to_group("mp")
+	root.add_child(mp2)
+	var c: Node = _fresh_manager()
+	(c.get("_rng") as RandomNumberGenerator).seed = FOCUS_SEED
+	for t in FAR_TICKS:
+		c.call("_process", 0.1)
+	if var_to_bytes(a.get("_clouds")) != var_to_bytes(c.get("_clouds")):
+		mp2.remove_from_group("mp")
+		mp2.queue_free()
+		master.queue_free()
+		a.queue_free()
+		c.queue_free()
+		host.remove_from_group("player")
+		host.queue_free()
+		Sentinel.done("wx_far_peer")
+		return "a solo manager and one whose stub answers null ticked different fields off seed %d — the focus path draws on some branch" % FOCUS_SEED
+	mp2.remove_from_group("mp")
+	mp2.queue_free()
 	master.queue_free()
 	a.queue_free()
-	b.queue_free()
+	c.queue_free()
 	host.remove_from_group("player")
 	host.queue_free()
 	Sentinel.done("wx_far_peer")
@@ -652,11 +701,89 @@ func _flat_dist(center: Vector3, anchor: Vector3) -> float:
 func _far_cleanup(mp: Node, host: Node3D, master: Node, failure: String) -> String:
 	"""Free the room half of `_check_far_peer` and stamp the check: every
 	return above passes through here, so a failure cannot leak an `mp` node
-	into `_check_solo`'s world (or any later check's)."""
+	into any later check's world."""
 	mp.remove_from_group("mp")
 	mp.queue_free()
 	host.remove_from_group("player")
 	host.queue_free()
 	master.queue_free()
 	Sentinel.done("wx_far_peer")
+	return failure
+
+
+func _fair_home_sweep(mgr: Node, home: Vector3, tick: int) -> String:
+	"""Every fair cloud inside the master's disc — the second half of the rule
+	(review round 1). Runs INSIDE the tick loop: a stranded fair recycles home
+	on the very next tick, so a sweep after the loop would only catch a
+	last-tick placement. The DISC_SLACK admits rim float noise, three orders
+	below a genuinely stranded cloud.
+	"""
+	for cloud: Dictionary in (mgr.get("_clouds") as Array):
+		if not bool(cloud["is_storm"]) \
+				and _flat_dist(cloud["center"], home) > float(mgr.get("FIELD_RADIUS")) + DISC_SLACK:
+			return "tick %d: a fair cloud stands %.0f m from the master's player — fair clouds stay cosmetic around the master" \
+				% [tick, _flat_dist(cloud["center"], home)]
+	return ""
+
+
+func _check_production_path() -> String:
+	"""THE PRODUCTION PATH (review round 1): the fill runs before any room
+	exists — `_field_initialized` is set on the first tick, rooms join seconds
+	later — so ruling A at runtime is the recycle anchor alone. Seats the mp
+	stub AFTER the fill, teleports the player 1200 m off so the whole field
+	stands out of every disc, and asserts the recycle tick deals fresh storms
+	round-robin — each storm at pool index ci within its focus disc — with
+	fair clouds home. PROD_SEED is pinned; re-verify if a storm constant moves.
+	"""
+	var host: Node3D = Node3D.new()
+	host.add_to_group("player")
+	root.add_child(host)
+	var mgr: Node = _fresh_manager()
+	(mgr.get("_rng") as RandomNumberGenerator).seed = PROD_SEED
+	mgr.call("_process", 0.1)
+	var mp_script := GDScript.new()
+	mp_script.source_code = MP_STUB_SOURCE
+	mp_script.reload()
+	var mp: Node = mp_script.new()
+	mp.set("own_id", "themaster")
+	mp.set("peers", [FAR_PEER])
+	mp.add_to_group("mp")
+	root.add_child(mp)
+	var away := Vector3(1200.0, 0.0, 0.0)
+	host.position = away
+	var failure := ""
+	for t in 3:
+		mgr.call("_process", 0.1)
+		failure = _fair_home_sweep(mgr, away, t)
+		if not failure.is_empty():
+			break
+	if failure.is_empty():
+		var foci: Array = [away, FAR_PEER]
+		var found_far: bool = false
+		var clouds: Array = mgr.get("_clouds")
+		for ci in clouds.size():
+			var cloud: Dictionary = clouds[ci]
+			if not bool(cloud["is_storm"]):
+				continue
+			var here: bool = false
+			for f: Vector3 in foci:
+				if _flat_dist(cloud["center"], f) <= float(mgr.get("FIELD_RADIUS")) + DISC_SLACK:
+					here = true
+			if not here:
+				failure = "recycled storm at pool %d stands outside every disc — the placement rule is not round-robin" % ci
+				break
+			var want: Vector3 = foci[ci % foci.size()]
+			if _flat_dist(cloud["center"], want) > float(mgr.get("FIELD_RADIUS")) + DISC_SLACK:
+				failure = "recycled storm at pool %d missed its round-robin focus — ruling A never reaches the far peer" % ci
+				break
+			if _flat_dist(cloud["center"], FAR_PEER) <= float(mgr.get("FIELD_RADIUS")) + DISC_SLACK:
+				found_far = true
+		if failure.is_empty() and not found_far:
+			failure = "PROD_SEED recycled no storm onto the far focus — this check measured nothing"
+	mp.remove_from_group("mp")
+	mp.queue_free()
+	host.remove_from_group("player")
+	host.queue_free()
+	mgr.queue_free()
+	Sentinel.done("wx_production_path")
 	return failure

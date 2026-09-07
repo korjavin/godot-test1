@@ -883,17 +883,26 @@ func _update_clouds(player_pos: Vector3, elapsed: float) -> void:
 		# of range only past all of them, and recycled back around the
 		# round-robin focus — the same 3-4 storms spread over N members.
 		# FAIR clouds keep today's rule, the master's own player. Solo the
-		# focus set is [player_pos] and both halves below ARE today's code.
-		var anchor: Vector3 = player_pos
+		# focus set is [player_pos] and everything below IS today's code.
 		var out: bool = false
 		if bool(cloud["is_storm"]):
-			anchor = focus_points[ci % focus_points.size()]
 			out = _min_focus_dist(cloud["center"], focus_points) > FIELD_RADIUS
 		else:
 			var to_cloud: Vector3 = cloud["center"] - player_pos
 			to_cloud.y = 0.0
 			out = to_cloud.length() > FIELD_RADIUS
 		if out:
+			# Roll FIRST: the anchor belongs to the cloud being placed, not the
+			# one leaving (review round 1) — a storm slot that rolls fair goes
+			# home to the master, and a fair slot that rolls a storm is dealt
+			# round-robin across the foci. Anchoring from the outgoing type
+			# starved the far discs and stranded fair clouds 600 m out for a
+			# tick. Draw order is unchanged (test, roll, place), so solo stays
+			# byte-identical: the focus set is [player_pos] and anchor always is.
+			var fresh: Dictionary = _make_cloud()
+			var anchor: Vector3 = player_pos
+			if bool(fresh["is_storm"]):
+				anchor = focus_points[ci % focus_points.size()]
 			# Re-enter on the rim OPPOSITE the side it left by, so a cloud dropped
 			# behind a sprinting player comes back in ahead of them. The WHOLE
 			# entry is replaced — copying keys one by one is how a recycled
@@ -902,7 +911,6 @@ func _update_clouds(player_pos: Vector3, elapsed: float) -> void:
 			var away: Vector3 = cloud["center"] - anchor
 			away.y = 0.0
 			var rim_dir := -away.normalized()
-			var fresh: Dictionary = _make_cloud()
 			_place_cloud_around(fresh, anchor, rim_dir)
 			_clouds[ci] = fresh
 			cloud = fresh
