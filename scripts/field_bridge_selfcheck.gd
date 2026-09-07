@@ -231,7 +231,7 @@ func _bridge_boxes(terrain: Node3D, row: Dictionary) -> Array:
 					# keep only the pieces standing on THIS walking line, so
 					# "built exactly once" and "no stone off the parapet" stay
 					# statements about one bridge.
-					if terrain._field_bridge_surface_on(row,
+					if FieldBridges._field_bridge_surface_on(terrain, row,
 							Vector3(world.x, 0.0, world.z)) <= -INF:
 						continue
 					boxes.append({
@@ -416,7 +416,7 @@ func _check_every_crossing_is_bridged() -> void:
 			# two.
 			var counted := 0.0
 			for kk in range(k_a, k_b + 1):
-				counted += terrain._field_bridge_wet_metres(kk)
+				counted += FieldBridges._field_bridge_wet_metres(terrain, kk)
 			if absf(counted - spanned) > TERRAIN_SCRIPT.FIELD_BRIDGE_PROBE_STEP + 1.0:
 				_fail("seed %d: the bridge at station %d spans %.1f m of water"
 						% [run_seed, k_a, spanned] + " measured at half a metre,"
@@ -451,12 +451,12 @@ func _check_every_crossing_is_bridged() -> void:
 				break
 			seen_polys[key] = true
 		for k in range(2, terminal):
-			if not terrain._field_bridge_wet(k):
+			if not FieldBridges._field_bridge_wet(terrain, k):
 				continue
 			var centre: Vector2 = terrain._road_station(k).center
 			var covers := 0
 			for row_v: Variant in all_rows:
-				if terrain._field_bridge_surface_on(row_v,
+				if FieldBridges._field_bridge_surface_on(terrain, row_v,
 						Vector3(centre.x, 0.0, centre.y)) > -INF:
 					covers += 1
 			if covers > 1:
@@ -470,7 +470,7 @@ func _check_every_crossing_is_bridged() -> void:
 			if terrain.field_bridge_at(k).is_empty():
 				continue
 			anchored += 1
-			if terrain._field_bridge_wet(k) and not terrain._field_bridge_wet(k - 1):
+			if FieldBridges._field_bridge_wet(terrain, k) and not FieldBridges._field_bridge_wet(terrain, k - 1):
 				continue
 			_fail("seed %d station %d anchors a bridge but is not a crossing"
 					% [run_seed, k] + " ENTRY — two decks can now cover one river")
@@ -770,11 +770,11 @@ func _check_abutments_are_dry() -> void:
 				var st: Dictionary = terrain._road_station(k)
 				var heading: float = st.heading
 				var dir := Vector2(cos(heading), sin(heading))
-				var got: Vector2 = terrain._field_bridge_foot(st.center, dir)
+				var got: Vector2 = FieldBridges._field_bridge_foot(terrain, st.center, dir)
 				if got == Vector2.INF:
 					refusals += 1
 					continue
-				if not terrain._field_bridge_dry_across(got, dir):
+				if not FieldBridges._field_bridge_dry_across(terrain, got, dir):
 					_fail("seed %d: _field_bridge_foot answered (%.1f, %.1f) for"
 							% [run_seed, got.x, got.y] + " a ramp aimed into the"
 							+ " water at station %d, and that foot is WET across"
