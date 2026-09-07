@@ -1684,6 +1684,7 @@ func _on_mic_mute_pressed() -> void:
 		return
 	voice.set_mic_muted(not bool(voice.is_mic_muted()))
 	_update_voice_ui()
+	_free_cursor_after_hud_press()
 
 
 func _on_deafen_pressed() -> void:
@@ -1692,6 +1693,7 @@ func _on_deafen_pressed() -> void:
 		return
 	voice.set_deafened(not bool(voice.is_deafened()))
 	_update_voice_ui()
+	_free_cursor_after_hud_press()
 
 
 func _on_camera_pressed() -> void:
@@ -1700,6 +1702,19 @@ func _on_camera_pressed() -> void:
 		return
 	voice.set_camera_enabled(not bool(voice.is_camera_on()))
 	_update_voice_ui()
+	_free_cursor_after_hud_press()
+
+
+## Free the mouse if it was captured during the press (bead godot-test1-xtr.20).
+## Unlike the panel whose body pauses the tree (see doc block at lines 1302-1317),
+## the HUD voice switches are clicked while the tree is unpaused, so desktop-web
+## `player_controller._input()` captures the mouse on press before GUI routing.
+## The button handler lands on release, where restoring MOUSE_MODE_VISIBLE
+## un-captures the cursor. From inside the paused MP panel the cursor is already
+## free, making this a no-op.
+func _free_cursor_after_hud_press() -> void:
+	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 
 func _on_camera_changed(_on: Variant) -> void:

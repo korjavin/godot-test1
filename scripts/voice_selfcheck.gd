@@ -2117,6 +2117,19 @@ func _check_hud_voice_switches() -> void:
 	if _verify_no_state_vars(mutated_vars).is_empty():
 		_fail("Negative control failed: injected state variable passed undetected")
 
+	# Handlers must call _free_cursor_after_hud_press to restore cursor on desktop-web
+	var err_cursor := _verify_free_cursor_calls(source)
+	if not err_cursor.is_empty():
+		_fail(err_cursor)
+
+	# Negative control for cursor free calls in handlers
+	var mutated_cursor := source.replace(
+		"_update_voice_ui()\n\t_free_cursor_after_hud_press()",
+		"_update_voice_ui()"
+	)
+	if _verify_free_cursor_calls(mutated_cursor).is_empty():
+		_fail("Negative control failed: missing _free_cursor_after_hud_press() passed undetected")
+
 	Sentinel.done("hud_voice_switches")
 
 
@@ -2152,4 +2165,20 @@ func _verify_no_state_vars(source: String) -> String:
 				if not var_name in allowed_old:
 					return "found unauthorized voice state variable '%s' declared in mp_ui.gd" % var_name
 	return ""
+
+
+func _verify_free_cursor_calls(source: String) -> String:
+	for h: String in ["_on_mic_mute_pressed", "_on_deafen_pressed", "_on_camera_pressed"]:
+		var pattern: String = "func\\s+" + h + "\\s*\\([^)]*\\)[^\\n]*\\n(?:(?!func\\s)[\\s\\S])*"
+		var re := RegEx.create_from_string(pattern)
+		if re == null:
+			return "failed to compile regex for " + h
+		var m := re.search(source)
+		if m == null:
+			return "handler %s not found in mp_ui.gd" % h
+		var body := m.get_string()
+		if not body.contains("_free_cursor_after_hud_press()"):
+			return "handler %s body does not call _free_cursor_after_hud_press()" % h
+	return ""
+
 
