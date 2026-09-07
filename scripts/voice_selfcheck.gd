@@ -695,7 +695,7 @@ func _check_no_js_bool() -> void:
 
 	var module: String = _voice_js_module()
 	if module.length() < 500:
-		_fail("could not read VOICE_JS out of voice_chat.gd (%d chars) — check 6 "
+		_fail("could not read VOICE_JS out of voice_js.gd (%d chars) — check 6 "
 			% module.length() + "would pass vacuously")
 		Sentinel.done("no_js_bool")
 		return
@@ -707,7 +707,7 @@ func _check_no_js_bool() -> void:
 		_fail("the extracted VOICE_JS block does not export stats")
 	var offence: String = _js_bool_offence(module)
 	if not offence.is_empty():
-		_fail("voice_chat.gd's VOICE_JS hands a JS boolean back over the bridge "
+		_fail("voice_js.gd's VOICE_JS hands a JS boolean back over the bridge "
 			+ "(`%s`) — answer `? 1 : 0` and compare numerically (godot-test1-8f8)"
 			% offence)
 	Sentinel.done("no_js_bool")
@@ -740,7 +740,7 @@ func _check_style_mirrors() -> void:
 	"""
 	var module: String = _voice_js_module()
 	if module.length() < 500:
-		_fail("could not read VOICE_JS out of voice_chat.gd (%d chars) — check 6b "
+		_fail("could not read VOICE_JS out of voice_js.gd (%d chars) — check 6b "
 			% module.length() + "would pass vacuously")
 		Sentinel.done("style_mirrors")
 		return
@@ -1138,7 +1138,7 @@ func _check_ice_restart() -> void:
 	"""
 	var module: String = _voice_js_module()
 	if module.length() < 500:
-		_fail("could not read VOICE_JS out of voice_chat.gd (%d chars) — check 6b "
+		_fail("could not read VOICE_JS out of voice_js.gd (%d chars) — check 6b "
 			% module.length() + "would pass vacuously")
 		Sentinel.done("ice_restart")
 		return
@@ -1146,7 +1146,7 @@ func _check_ice_restart() -> void:
 	for needle: String in ICE_RESTART_NEEDLES:
 		if module.contains(needle):
 			continue
-		_fail("voice_chat.gd's VOICE_JS is missing `%s`, so a peer whose own end "
+		_fail("voice_js.gd's VOICE_JS is missing `%s`, so a peer whose own end "
 			% needle + "has died (a NAT rebind, an expiring coturn allocation, a "
 			+ "lost offer, a dead DTLS transport) stays stuck for the whole life "
 			+ "of the room — nothing else rebuilds a still-listed member's "
@@ -1256,7 +1256,7 @@ func _check_video_health() -> void:
 	"""
 	var module: String = _voice_js_module()
 	if module.length() < 500:
-		_fail("could not read VOICE_JS out of voice_chat.gd (%d chars) — check 6d "
+		_fail("could not read VOICE_JS out of voice_js.gd (%d chars) — check 6d "
 			% module.length() + "would pass vacuously")
 		Sentinel.done("video_health")
 		return
@@ -1382,7 +1382,7 @@ func _check_sender_heal() -> void:
 	"""
 	var module: String = _voice_js_module()
 	if module.length() < 500:
-		_fail("could not read VOICE_JS out of voice_chat.gd (%d chars) — check 6e "
+		_fail("could not read VOICE_JS out of voice_js.gd (%d chars) — check 6e "
 			% module.length() + "would pass vacuously")
 		Sentinel.done("sender_heal")
 		return
@@ -1496,12 +1496,12 @@ func _check_sender_heal() -> void:
 
 
 func _voice_js_module() -> String:
-	"""The text between `const VOICE_JS`'s two triple-quotes, or "" if either end
-	moved. The delimiter is built at runtime so this file can hold it without
-	terminating its own strings."""
+	"""The text between `const SRC`'s two triple-quotes in `voice_js.gd`, or ""
+	if either end moved. The delimiter is built at runtime so this file can
+	hold it without terminating its own strings."""
 	var fence: String = '"'.repeat(3)
-	var source: String = FileAccess.get_file_as_string("res://scripts/voice_chat.gd")
-	var decl: int = source.find("const VOICE_JS")
+	var source: String = FileAccess.get_file_as_string("res://scripts/voice_js.gd")
+	var decl: int = source.find("const SRC")
 	if decl < 0:
 		return ""
 	var start: int = source.find(fence, decl)
@@ -1583,7 +1583,7 @@ func _check_face_crop() -> void:
 	"""
 	var module: String = _voice_js_module()
 	if module.length() < 500:
-		_fail("could not read VOICE_JS out of voice_chat.gd (%d chars) — the face "
+		_fail("could not read VOICE_JS out of voice_js.gd (%d chars) — the face "
 			% module.length() + "crop check would pass vacuously")
 		Sentinel.done("face_crop")
 		return

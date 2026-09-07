@@ -188,7 +188,7 @@ gameplay input goes through named actions.
   (owner ruling A, bead `gyd`). Each verb's ceilings (older builds, RTT lag) are written
   at its send site. Beads `vej`, `coq`, `d81`, `gyd`.
 - Voice/video is web-only, on browser `RTCPeerConnection`s, one const JS string in
-  `voice_chat.gd`; its `mp_manager` seam is three functions. **No JS snippet may return
+  `scripts/voice_js.gd` (aliased as `VOICE_JS` from `voice_chat.gd`); its `mp_manager` seam is three functions. **No JS snippet may return
   a bare boolean through `JavaScriptBridge`** — return 1/0 (checked by `intro_selfcheck`).
   The camera is cartooned before encoding and the raw device track never leaves the sender.
   The face detector is fetched at build time by `scripts/fetch_vendor.sh` against
