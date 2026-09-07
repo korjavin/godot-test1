@@ -225,6 +225,13 @@ const HeroHud := preload("res://scripts/hero_hud.gd")
 ## hard reference to it.
 const VOICE_SELF_KEY: String = "me"
 
+## The hotkey that toggles this panel (bead godot-test1-xtr.21). A raw keycode
+## outside the input map, the panel-key convention (K, M, P, B, L, ?, F4-F7 and
+## the voice_mic action's V are taken — N is free, asserted by the key-free
+## cross-check). Read in `_unhandled_input`, never a named action: a key that
+## only opens a panel has nothing to rebind against.
+const TOGGLE_KEY: Key = KEY_N
+
 # ============================================================================
 # STATE
 # ============================================================================
@@ -361,31 +368,13 @@ func _ready() -> void:
 
 
 
-## Yield the screen to TouchControls' full-rect overlays — the exact three lines
-## `mobile_settings_panel.gd` runs for its ⚙ gear, for the exact same reason.
-## This Control draws above TouchControls (only `StartOverlay`, the boot-time
-## modal, sits later in `HUD` than it does) and
-## wins hit-testing: an unhidden MP button in the bottom-left corner steals taps
-## from the first-run "tap to enable motion controls" overlay — and that tap is
-## the ONE user gesture iOS grants `DeviceMotionEvent.requestPermission()` and
-## the browser grants WebAudio, so motion AND all audio would stay dead for the
-## session. The panel body is force-closed too (which also releases our pause),
-## or it covers the overlay it just stole the tap from.
+## Yield the screen to a modal overlay: the button hides and an open panel is
+## force-closed too (which also releases our pause). The why lives on
+## `_modal_yield()`, which owns the whole rule.
 func _process(_delta: float) -> void:
 	if _mp_button == null:
 		return
-	var touch_ui: Node = get_tree().get_first_node_in_group("touch_controls")
-	var modal: bool = touch_ui != null and touch_ui.has_method("has_modal") and touch_ui.has_modal()
-
-	# Yield to the ⚙ Tune panel for the same reason, one sibling further along.
-	# That panel's body opens UPWARD from just above its gear — bottom offsets
-	# [-664, -84], left [16, 396] — which contains this button's [-140, -84] x
-	# [16, 126] entirely. MultiplayerUI draws after MobileSettingsPanel, so it wins
-	# the panel and wins hit-testing: without this the panel's bottom-left corner
-	# (where its Close row sits) opens the MP panel instead.
-	var tune_ui: Node = get_tree().get_first_node_in_group("mobile_settings")
-	if tune_ui != null and tune_ui.has_method("is_panel_open") and tune_ui.is_panel_open():
-		modal = true
+	var modal: bool = _modal_yield()
 
 	_mp_button.visible = not modal
 	# The panel body opens over this region and carries the same switches.
@@ -410,6 +399,57 @@ func _process(_delta: float) -> void:
 	# pause — which they must, since voice does (epic godot-test1-xtr).
 	if _panel_open:
 		_update_member_rows()
+
+
+## Whether a full-rect touch overlay (or the tune panel) owns the screen, so
+## the MP button hides and the hotkey stays inert (bead godot-test1-xtr.21).
+## Yield the screen to TouchControls' full-rect overlays — the exact lines
+## `mobile_settings_panel.gd` runs for its ⚙ gear, for the exact same reason.
+## This Control draws above TouchControls (only `StartOverlay`, the boot-time
+## modal, sits later in `HUD` than it does) and wins hit-testing: an unhidden
+## MP button in the bottom-left corner steals taps from the first-run "tap to
+## enable motion controls" overlay — and that tap is the ONE user gesture iOS
+## grants `DeviceMotionEvent.requestPermission()` and the browser grants
+## WebAudio, so motion AND all audio would stay dead for the session.
+## Yield to the ⚙ Tune panel for the same reason, one sibling further along.
+## That panel's body opens UPWARD from just above its gear — bottom offsets
+## [-664, -84], left [16, 396] — which contains this button's [-140, -84] x
+## [16, 126] entirely. MultiplayerUI draws after MobileSettingsPanel, so it wins
+## the panel and wins hit-testing: without this the panel's bottom-left corner
+## (where its Close row sits) opens the MP panel instead.
+func _modal_yield() -> bool:
+	var touch_ui: Node = get_tree().get_first_node_in_group("touch_controls")
+	if touch_ui != null and touch_ui.has_method("has_modal") and touch_ui.has_modal():
+		return true
+	var tune_ui: Node = get_tree().get_first_node_in_group("mobile_settings")
+	if tune_ui != null and tune_ui.has_method("is_panel_open") and tune_ui.is_panel_open():
+		return true
+	return false
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	## Toggle the panel on TOGGLE_KEY (bead godot-test1-xtr.21) — exactly what
+	## the MP button does, through the same handler, so the pause (PauseHub,
+	## with the game-over exemption) and every refusal are the button's own
+	## and nothing is added here.
+	##
+	## `_unhandled_input`, NOT `_input`: a focused LineEdit (this panel's own
+	## invite-code field) eats its keys before they get here, so typing a code
+	## containing N never toggles the panel out from under the typist —
+	## `help_overlay`'s guard, for `help_overlay`'s reason.
+	if event == null:
+		return
+	# Raw keycode, echo-filtered so holding N does not rapid-toggle —
+	# `city_map_panel`'s guard, for `city_map_panel`'s reason.
+	if event is InputEventKey and event.pressed and not event.echo \
+			and event.keycode == TOGGLE_KEY:
+		# Inert while the button itself is unusable: hidden by the modal
+		# yield above, where a press has no opener to match and `_process`
+		# would instantly close what it opened.
+		if _modal_yield():
+			return
+		get_viewport().set_input_as_handled()
+		_on_mp_button_pressed()
 
 
 # ============================================================================

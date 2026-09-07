@@ -162,6 +162,21 @@ class RowStub extends Node:
 		return Rect2(0.0, 0.0, 80.0, 80.0)
 
 
+## A node in group `"mobile_settings"` reduced to the ONE method
+## `mp_ui._modal_yield()` asks for, so the hotkey's modal rule is measured
+## without building the tune panel.
+class ModalStub extends Node:
+	func is_panel_open() -> bool:
+		return true
+
+
+## A node in group `"player"` reduced to the ONE property
+## `mp_ui._apply_pause()` reads, so the hotkey's game-over rule is measured
+## without building the player.
+class GameOverPlayer extends Node:
+	var is_game_over: bool = true
+
+
 ## A stub voice node for driving `mp_ui.gd` (check 10, bead `godot-test1-xtr.20`).
 ## Answers `is_available()` and the six seams: set_mic_muted / is_mic_muted /
 ## set_deafened / is_deafened / set_camera_enabled / is_camera_on / camera_denied.
@@ -237,6 +252,8 @@ func _initialize() -> void:
 	_check_debug_line_in_a_room()
 	await _check_mic_key_semantics()
 	_check_hud_voice_switches()
+	_check_mp_hotkey()
+	_check_mp_key_free()
 
 	if _failures.is_empty():
 		Sentinel.finish(self)
@@ -2213,5 +2230,133 @@ func _verify_free_cursor_calls(source: String) -> String:
 		return "_free_cursor_after_hud_press body does not call Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)"
 
 	return ""
+
+
+func _check_mp_hotkey() -> void:
+	"""
+	MP PANEL HOTKEY (bead godot-test1-xtr.21). N opens and closes the panel
+	through the shipped MP-button handler — the pause it takes is PauseHub's
+	own — while a press is inert where the button is unusable (the modal
+	yield) and takes no pause over game over (a pause there would freeze the
+	Game Over screen's own buttons, the softlock `_apply_pause` exists to
+	prevent).
+	"""
+	var room := RoomStub.new()
+	room.online = true
+	room.add_to_group("mp")
+	root.add_child(room)
+	var voice := VoiceUiStub.new()
+	voice.available = true
+	voice.add_to_group("voice")
+	root.add_child(voice)
+	var ui: Control = MultiplayerUIScript.new()
+	root.add_child(ui)
+	ui._process(0.0)
+
+	# N opens through the shipped handler — and the pause it takes is ours,
+	# released on close.
+	_press_key(ui, KEY_N, false)
+	if not ui._panel_open:
+		_fail("pressing N did not open the MP panel")
+	elif not ui._paused_by_us:
+		_fail("the N-opened panel holds no pause — the hotkey bypasses the button handler")
+	_press_key(ui, KEY_N, false)
+	if ui._panel_open:
+		_fail("pressing N again did not close the MP panel")
+	if ui._paused_by_us or paused:
+		_fail("closing the N-opened panel left a pause behind")
+
+	# Echo and other keys do nothing: the const is read, not "any key" —
+	# asserted after EACH press, so two toggles cannot cancel out.
+	_press_key(ui, KEY_N, true)
+	if ui._panel_open:
+		_fail("an echo of the hotkey toggled the MP panel — holding N rapid-toggles")
+	_press_key(ui, KEY_M, false)
+	if ui._panel_open:
+		_fail("another panel's key toggled the MP panel — the const is not read")
+
+	# Modal yield: the button hides, so the key stays inert (and an open
+	# panel would be force-closed by `_process`, not left half-open).
+	var modal := ModalStub.new()
+	modal.add_to_group("mobile_settings")
+	root.add_child(modal)
+	_press_key(ui, KEY_N, false)
+	if ui._panel_open:
+		_fail("N opened the MP panel over the modal yield — the hidden button has no opener to match")
+	modal.free()
+
+	# Game over: the panel still opens (readable and closable, the button's
+	# rule) but takes no pause.
+	var player := GameOverPlayer.new()
+	player.add_to_group("player")
+	root.add_child(player)
+	_press_key(ui, KEY_N, false)
+	if not ui._panel_open:
+		_fail("N refused to open the MP panel over game over — the hotkey adds a refusal the button never had")
+	if ui._paused_by_us or paused:
+		_fail("N took a pause over game over — the Game Over screen would freeze behind its own buttons")
+	_press_key(ui, KEY_N, false)
+	player.free()
+
+	room.free()
+	voice.free()
+	ui.free()
+	Sentinel.done("mp_hotkey")
+
+
+func _press_key(ui: Control, keycode: Key, echo: bool) -> void:
+	"""One raw key press into the panel's `_unhandled_input`, like the engine's."""
+	var event := InputEventKey.new()
+	event.pressed = true
+	event.echo = echo
+	event.keycode = keycode
+	ui._unhandled_input(event)
+
+
+func _check_mp_key_free() -> void:
+	"""N collides with nothing — `debug_teleport_selfcheck`'s idiom, `city_map_selfcheck`'s list.
+
+	The MP hotkey is not rebindable, so a collision is unfixable from inside
+	the game: both surfaces fire, forever. The registry and the scanner are
+	`city_map_selfcheck`'s statics, borrowed rather than copied (bead
+	godot-test1-xtr.21).
+	"""
+	var owners: Array = CityMapSelfcheck.panel_key_owners()
+	var key: int = int(MultiplayerUIScript.TOGGLE_KEY)
+	var label: String = "mp_ui.TOGGLE_KEY"
+	if key == 0:
+		_fail("%s is 0 — it can never be pressed" % label)
+		Sentinel.done("mp_key_free")
+		return
+	# Against the input map: a gameplay action is rebindable, this is not.
+	# BARE PRESSES ONLY, `tower_lift_selfcheck`'s rule: Godot ships built-in
+	# `ui_text_*` actions on modified keys, and a panel key is pressed with
+	# nothing held, so a modified event is a different chord and not a
+	# collision. Every action this GAME binds is modifier-free.
+	for action: StringName in InputMap.get_actions():
+		for event: InputEvent in InputMap.action_get_events(action):
+			var as_key := event as InputEventKey
+			if as_key == null:
+				continue
+			if as_key.ctrl_pressed or as_key.alt_pressed or as_key.meta_pressed \
+					or as_key.shift_pressed:
+				continue
+			if int(as_key.keycode) == key or int(as_key.physical_keycode) == key:
+				_fail("%s (%s) is also bound to the input action \"%s\""
+					% [label, OS.get_keycode_string(key), action])
+	# ...and against every other raw-keycode panel, its own row excepted.
+	var others: Array = []
+	for row: Array in owners:
+		if String(row[1]) != label:
+			others.append(row)
+	var claimed: String = CityMapSelfcheck._owner_claiming(key, others)
+	if not claimed.is_empty():
+		_fail("%s (%s) is already %s" % [label, OS.get_keycode_string(key), claimed])
+	# NEGATIVE CONTROL on the scan, `city_map_selfcheck`'s: a nested fake
+	# owner must be caught, or the two nested rows in the real list (the
+	# hero digits, the quiz answers) are not being compared at all.
+	if CityMapSelfcheck._owner_claiming(key, [[[[key]], "a fake nested owner"]]).is_empty():
+		_fail("the scan missed a fake owner holding %s — it cannot detect a real collision either" % label)
+	Sentinel.done("mp_key_free")
 
 
