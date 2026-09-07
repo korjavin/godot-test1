@@ -197,6 +197,22 @@ const WIDTH_BUDGETS: Array = [
 	["NO LOCK", 15, 80.0, "minimap jail intent, jammed in the labyrinth"],
 	["Budapest: %.1f km", 13, 190.0, "minimap Budapest countdown"],
 	["Budapest %d/%d", 13, 190.0, "minimap Budapest explored count"],
+	# event_log_hud.gd — the room log card is 360 px wide with CARD_PADDING 12
+	# each side at BODY_FONT_SIZE 14, drawn with draw_string (no wrap, no
+	# clip). Measured raw: the "%s" stands in for the name, exactly like the
+	# "%d" in the MP volume row above.
+	["%s joined", 14, 336.0, "event log line"],
+	["%s left", 14, 336.0, "event log line"],
+	["%s disconnected", 14, 336.0, "event log line"],
+	["%s: mic on", 14, 336.0, "event log line"],
+	["%s: mic off", 14, 336.0, "event log line"],
+	["%s: camera on", 14, 336.0, "event log line"],
+	["%s: camera off", 14, 336.0, "event log line"],
+	["%s now plays %s", 14, 336.0, "event log line"],
+	["%s was captured", 14, 336.0, "event log line"],
+	["%s was freed", 14, 336.0, "event log line"],
+	["Deafened", 14, 336.0, "event log line"],
+	["Undeafened", 14, 336.0, "event log line"],
 ]
 
 var _failures: Array[String] = []
