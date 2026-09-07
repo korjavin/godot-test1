@@ -184,8 +184,9 @@ gameplay input goes through named actions.
   replayed with the body's own row params, lethality local) and the HQ's opened gates (`gate`,
   anyone-to-everyone, plus `g` on the `room` packet and `go` in the join snapshot from the master;
   a non-master's own set drains once per join under half the verb budget). Clear clouds, birds,
-  crowd and traffic stay per-peer cosmetic. Each verb's ceilings (older builds, RTT lag, the
-  far-peer sky) are written at its send site. Beads `vej`, `coq`, `d81`.
+  crowd and traffic stay per-peer cosmetic. Storms are rolled around every room member
+  (owner ruling A, bead `gyd`). Each verb's ceilings (older builds, RTT lag) are written
+  at its send site. Beads `vej`, `coq`, `d81`, `gyd`.
 - Voice/video is web-only, on browser `RTCPeerConnection`s, one const JS string in
   `voice_chat.gd`; its `mp_manager` seam is three functions. **No JS snippet may return
   a bare boolean through `JavaScriptBridge`** — return 1/0 (checked by `intro_selfcheck`).
