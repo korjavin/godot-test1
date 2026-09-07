@@ -155,6 +155,36 @@ const SNOW_PACK := TerrainProps.SNOW_PACK
 const SNOW_DEADWOOD := TerrainProps.SNOW_DEADWOOD
 
 # ----------------------------------------------------------------------------
+# BIOME CONTENT TUNING — the constants, re-exported from TerrainBiomes
+# ----------------------------------------------------------------------------
+# The section itself (the banners, the salts and these constants' real
+# declarations) moved to `scripts/terrain_biomes.gd` in bead godot-test1-ftn.27.
+# Each name is aliased back because each is ALSO read from outside the biome
+# family — sibling spawners, the city plan and self-checks read them off this
+# file (including `get_script_constant_map()`). This is the PROP_* block's
+# precedent above: the declaration has one home, and every existing reader is
+# untouched.
+const DESERT_BLOCK_KEEP_EVERY := TerrainBiomes.DESERT_BLOCK_KEEP_EVERY
+const FOREST_TREES_MAX := TerrainBiomes.FOREST_TREES_MAX
+const MOUNTAIN_ROAD_CLEARANCE := TerrainBiomes.MOUNTAIN_ROAD_CLEARANCE
+const TREE_LEAF_COLOR := TerrainBiomes.TREE_LEAF_COLOR
+const TREE_LEAF_COLOR_WARM := TerrainBiomes.TREE_LEAF_COLOR_WARM
+const TREE_CANOPY_YAW_STEP := TerrainBiomes.TREE_CANOPY_YAW_STEP
+const TREE_TRUNK_TILT_MAX := TerrainBiomes.TREE_TRUNK_TILT_MAX
+const CITY_HOUSE_WIDTH_MAX := TerrainBiomes.CITY_HOUSE_WIDTH_MAX
+const CITY_HOUSE_DEPTH_FACTOR_MAX := TerrainBiomes.CITY_HOUSE_DEPTH_FACTOR_MAX
+const CITY_HOUSE_HEIGHT_MAX := TerrainBiomes.CITY_HOUSE_HEIGHT_MAX
+const CITY_ROOF_RISE_FACTOR := TerrainBiomes.CITY_ROOF_RISE_FACTOR
+const MAMMOTH_EDGE_MARGIN := TerrainBiomes.MAMMOTH_EDGE_MARGIN
+const OASIS_PALM_FROND_COUNT := TerrainBiomes.OASIS_PALM_FROND_COUNT
+const MAMMOTH_RADIUS := TerrainBiomes.MAMMOTH_RADIUS
+const MOUNTAIN_AVOID_RADIUS := TerrainBiomes.MOUNTAIN_AVOID_RADIUS
+const MOUNTAIN_HEIGHT_MAX := TerrainBiomes.MOUNTAIN_HEIGHT_MAX
+const MOUNTAIN_MIN_LAYER_HEIGHT := TerrainBiomes.MOUNTAIN_MIN_LAYER_HEIGHT
+const CITY_ROOF_EAVES := TerrainBiomes.CITY_ROOF_EAVES
+const CITY_ROOF_THICKNESS := TerrainBiomes.CITY_ROOF_THICKNESS
+
+# ----------------------------------------------------------------------------
 # THEMED FEATURE STRUCTURES — the two tables that could not leave
 # ----------------------------------------------------------------------------
 # The section's banner, its four role builders and its STRUCT_GATE_* / MOUND_*
@@ -1223,11 +1253,6 @@ enum Biome { PLAINS, DESERT, FOREST, MOUNTAIN, CITY, SNOW }
 ## this stream independent of every other deterministic spawn site.
 const BIOME_SALT: int = 0xB10_11E
 
-## Salt for desert oasis placement decisions (independent hash stream).
-const OASIS_SALT: int = 0x0A_5157  # "OASIS" ish
-
-## Salt for desert dune placement decisions (independent hash stream).
-const DUNE_SALT: int = 0xD0_1D4E  # "DUNE" ish
 
 ## Noise wavelength in metres. Chunks are 50 m, so a biome cell spans ~8 chunks:
 ## big enough that you walk through a region rather than past it, small enough
@@ -1646,323 +1671,6 @@ func _scarcity_keep(chunk_pos: Vector2i, index: int, k: float) -> bool:
 	return roll < k
 
 
-# ----------------------------------------------------------------------------
-# BIOME CONTENT TUNING (what each biome actually BUILDS)
-# ----------------------------------------------------------------------------
-##
-## Every value below feeds the three builders in the BIOME CONTENT section. They
-## all spend the same currency — create_box entries in the chunk's single
-## MultiMesh — so "more content" costs instances, not draw calls.
-
-## DESERT — sparsity is achieved by dividing the ordinary scattered-block TARGET
-## by N (see spawn_objects_in_chunk). Deliberately a target and NOT an RNG roll:
-## an extra draw there would shift the shared chunk stream and reshuffle every
-## block, crocodile and coin in the chunk.
-const DESERT_BLOCK_KEEP_EVERY: int = 3
-
-## DESERT — cactus stacks: how many candidates, how big, how far from the road.
-## They are the only thing a desert ADDS; the emptiness comes from the skip above.
-## NOTE: crocodile density is completely UNCHANGED in a desert (see
-## spawn_crocodiles_in_chunk) — a desert reads empty through DECORATION only,
-## per the project's "entity counts are never reduced" rule.
-const CACTUS_MIN: int = 4
-const CACTUS_MAX: int = 9
-## 12 m, not 10: a cactus footprint is NON-climbable, so _settle_coin_y SKIPS any
-## road coin it overlaps rather than perching one on top (unlike the ordinary
-## scattered blocks, which are climbable and may stand on the swath freely). At
-## exactly road_width_max * 0.5 = 10 a cactus sits on the outermost coin lane and
-## punches silent holes in the trail; 12 clears the swath plus a cactus radius.
-const CACTUS_ROAD_CLEARANCE: float = 12.0
-const CACTUS_WIDTH_MIN: float = 0.45
-const CACTUS_WIDTH_MAX: float = 0.75
-const CACTUS_SEGMENT_MIN: float = 0.9   # height of one stacked segment
-const CACTUS_SEGMENT_MAX: float = 1.6
-const CACTUS_ARM_CHANCE: float = 0.45   # chance of one short side "arm" box
-const CACTUS_COLOR := Color(0.24, 0.42, 0.24)
-
-## FOREST — tree budget per forest chunk. 25-40 trees × ~4 boxes each still ride
-## the chunk's ONE MultiMesh, so a forest chunk is the same single block draw
-## call as a plains chunk; only the trunks add collision shapes.
-const FOREST_TREES_MIN: int = 25
-const FOREST_TREES_MAX: int = 40
-
-## FOREST — minimum distance from the coin-road centerline. The widest coin band
-## half-width is road_width_max * 0.5 = 10, so 14 keeps the whole scattered coin
-## swath tree-free and the road followable through a wood.
-const FOREST_ROAD_CLEARANCE: float = 14.0
-
-## FOREST — trunk and canopy proportions. The canopy is 2-3 boxes of decreasing
-## size stacked on the trunk top, each built with collide = false (visual only).
-const TREE_TRUNK_WIDTH_MIN: float = 0.45
-const TREE_TRUNK_WIDTH_MAX: float = 0.75
-const TREE_TRUNK_HEIGHT_MIN: float = 2.2
-const TREE_TRUNK_HEIGHT_MAX: float = 3.8
-const TREE_CANOPY_LAYERS_MIN: int = 2
-const TREE_CANOPY_LAYERS_MAX: int = 3
-const TREE_CANOPY_WIDTH_MIN: float = 2.2  # widest (bottom) canopy layer
-const TREE_CANOPY_WIDTH_MAX: float = 3.4
-const TREE_CANOPY_LAYER_HEIGHT: float = 1.0  # legacy slab height: crown seat dip (0.3m) and seam lean bound
-const TREE_CANOPY_TAPER: float = 0.68     # each layer up is this fraction as wide
-const TREE_TRUNK_COLOR := Color(0.34, 0.24, 0.16)
-const TREE_LEAF_COLOR := Color(0.16, 0.36, 0.19)
-
-## FOREST — THE ANTI-MINECRAFT SET (bead godot-test1-u7a, owner: "trees are too
-## minecraft-ish, we need own style"). Every one of these is a TRANSFORM or a
-## COLOUR, because that is all a MultiMesh instance can carry: the chunk keeps its
-## ONE unit-cube batch and its ONE draw call, and a forest chunk emits exactly the
-## same number of instances it always did. What changed is that no two of them
-## line up any more.
-##
-##   * TREE_LEAF_COLOR_WARM is the far end of a per-tree tint ramp. The flat single
-##     green was the loudest half of the Minecraft read — a wood of identically
-##     coloured slabs reads as one material, not as foliage.
-##   * TREE_CANOPY_YAW_STEP turns each canopy layer 45 deg against the one below.
-##     A square has 90 deg symmetry, so the stack alternates 0 / 45 / 0 and the
-##     silhouette from any angle is an interference pattern of two squares — an
-##     octagon-ish crown instead of a column of aligned cubes. Costs NO rng draw.
-##   * TREE_CANOPY_DEPTH_RATIO makes each layer a rectangle rather than a square,
-##     so the alternating yaw actually crosses instead of repeating. The half
-##     diagonal of a (w, w*0.84) plan is 0.65*w, UNDER the 0.71*w a square costs,
-##     so the chunk-seam bound below stays an over-estimate.
-##   * TREE_TRUNK_TILT_MAX leans the trunk. A tree leans; a fence post does not.
-##     The canopy is offset to follow the leaning trunk's axis (see the builder).
-const TREE_LEAF_COLOR_WARM := Color(0.33, 0.46, 0.15)  # sun-struck yellow-green
-const TREE_LEAF_CROWN_LIFT: float = 0.40  # how far the TOP layer is pushed toward warm
-const TREE_CANOPY_YAW_STEP: float = PI * 0.25  # 45 deg per layer up
-const TREE_CANOPY_DEPTH_RATIO: float = 0.84    # plan is a rectangle, not a square
-const TREE_CANOPY_WIDTH_JITTER_MIN: float = 0.78
-const TREE_CANOPY_WIDTH_JITTER_MAX: float = 1.06
-const TREE_TRUNK_TILT_MAX: float = 0.08  # radians of lean, either way
-const TREE_CANOPY_TILT_MAX: float = 0.16   # radians, alternating sign per layer
-const TREE_CANOPY_SLIDE: float = 0.14      # fraction of a layer's width it slides off axis
-
-## FOREST — THE CANOPY IS A BLOB, NOT A SLAB (bead godot-test1-y1o.2, epic y1o
-## "get rid of blocks"; the honest caveat u7a's developer left behind — "still
-## built from boxes, still reads as low-poly blocks at distance"). u7a's whole
-## set above is transforms and colours, because a batch entry could not carry a
-## SHAPE; bead y1o.1 gave it one, and the forest is its first consumer. Every
-## canopy layer is now `ChunkBatch.BoxKind.SPHERE` — the shared unit sphere at
-## UNIT_SPHERE_RADIAL x UNIT_SPHERE_RINGS (8 x 4, faceted on purpose: the facets
-## ARE style direction A, and that one number lives in chunk_batch.gd so the
-## whole world's roundness is retuned in one place).
-##
-## NOT ONE RNG DRAW MOVED. The two numbers below are DERIVED from the width this
-## layer already drew, so the biome stream is byte-identical and every site after
-## the forest in the same chunk stays where it was — which is what makes this
-## bead's A/B against master read "only `kind` and the canopy box dimensions".
-##
-##   * TREE_CANOPY_BLOB_HEIGHT: a sphere squashed into u7a's flat 1.0 m slab box
-##     is a flying saucer, and three of them a pagoda. A blob is nearly as tall as
-##     it is wide, so its height comes off its own width.
-##   * TREE_CANOPY_BLOB_OVERLAP: the next blob starts HALF way up the last one, so
-##     the crown is one lumpy mass rather than beads on a string. Under 0.5 the
-##     blobs fuse into a ball; over it they separate and the tree is a lollipop
-##     stack again.
-##
-## The crown's `canopy_y` also stopped being a layer CENTRE and became the crown's
-## FOOT — see the builder. A blob is up to 2.5 m tall where a slab was 1.0, and
-## centring it on the old y hung a fat crown down to head height on a short trunk.
-const TREE_CANOPY_BLOB_HEIGHT: float = 0.70
-const TREE_CANOPY_BLOB_OVERLAP: float = 0.50
-
-## MOUNTAIN — massifs per mountain chunk. Each is a stack of shrinking boxes, so
-## a "range" is 2-4 crude peaks per chunk and the biome band is several chunks
-## across.
-const MOUNTAIN_MASSIF_MIN: int = 2
-const MOUNTAIN_MASSIF_MAX: int = 4
-const MOUNTAIN_PLACE_TRIES: int = 5      # candidate spots tried per massif
-const MOUNTAIN_HEIGHT_MIN: float = 8.0
-const MOUNTAIN_HEIGHT_MAX: float = 20.0
-const MOUNTAIN_BASE_WIDTH_MIN: float = 7.0
-const MOUNTAIN_BASE_WIDTH_MAX: float = 13.0
-const MOUNTAIN_LAYER_TAPER: float = 0.74  # each layer up is this fraction as wide
-const MOUNTAIN_LAYER_JITTER: float = 0.5  # metres of lateral wobble per layer
-
-## MOUNTAIN — minimum height of one layer, in metres. A massif is only "walk
-## around it" if you cannot simply hop up its steps: the player's jump apex is
-## 3.61 m (see the gravity note in CLAUDE.md), so every step has to clear that.
-## This is what SETS the layer count (height / this, floored at 2), which is why
-## there is no layer-count roll: with heights of 8-20 m a massif is 2-5 layers,
-## and a wide short one is a couple of sheer slabs rather than a climbable
-## ziggurat. (An earlier version drew a 4-7 layer count and clamped it with this;
-## the clamp always won, so the draw was dead and the "4-7 layers" it implied
-## never happened.)
-const MOUNTAIN_MIN_LAYER_HEIGHT: float = 4.0
-
-## MOUNTAIN — keeps the base well inside the chunk so a massif never straddles a
-## seam (same idea as ARTIFACT_EDGE_MARGIN, bigger because a massif is bigger).
-## Layers are YAWED, so the reach from the centre is the rotated half-diagonal,
-## not the half-width: MOUNTAIN_BASE_WIDTH_MAX * 0.71 + MOUNTAIN_LAYER_JITTER =
-## 9.73 m — the same expression the footprint radius uses below. 10.0 covers it
-## and still leaves a 30 x 30 m placement box, wide enough that 2-4 massifs
-## spread across the chunk instead of piling into the middle of every one and
-## reading as a per-chunk grid.
-const MOUNTAIN_EDGE_MARGIN: float = 10.0
-
-## MOUNTAIN — footprint radius above which an already-placed obstacle is treated
-## as "do not bury this" when siting a massif. Scattered props top out at
-## object_size_max * 0.71 = 1.78 m and are deliberately fair game (see
-## _spawn_mountain_content); artifacts start at 2.5 m, and an artifact sealed
-## inside 20 m of rock takes its coin ring and its guaranteed gem with it.
-const MOUNTAIN_AVOID_RADIUS: float = 2.0
-
-## MOUNTAIN — ...but a WIDE thing is not the only thing worth avoiding: a TALL
-## one is a ladder. A stacked block tower reaches ~6.4 m with a radius of only
-## 1.78 m, so the radius rule alone lets one stand right against a massif whose
-## first ledge is MOUNTAIN_MIN_LAYER_HEIGHT (4 m) up — a 1.6 m hop onto the
-## summit, well inside the player's 3.61 m jump apex, which quietly breaks the
-## "impassable, you walk around it" contract the whole mountains-as-blocks design
-## rests on. So anything taller than one jump is avoided too, whatever its width.
-## Only a minority of towers clear this, so massifs still find room to generate.
-const MOUNTAIN_AVOID_TOP: float = 3.61
-
-## MOUNTAIN — the road clearance is what cuts a CANYON through a range: the
-## massifs simply refuse to stand near the centerline, so the coin road threads
-## between them. Comfortably larger than FOREST_ROAD_CLEARANCE (a tree you can
-## sidestep; a massif you would have to walk minutes around). Any value is safe:
-## _road_lateral_distance sizes its station scan window from the clearance it is
-## given, so the answer stays honest however far this is pushed.
-const MOUNTAIN_ROAD_CLEARANCE: float = 24.0
-
-## MOUNTAIN — a massif at least this tall gets its top layers forced snow-white.
-const MOUNTAIN_SNOW_HEIGHT: float = 14.0
-const MOUNTAIN_SNOW_LAYERS: int = 2      # how many top layers turn to snow
-const MOUNTAIN_SNOW_COLOR := Color(0.92, 0.94, 0.96)
-
-# ----------------------------------------------------------------------------
-# CITY — small houses, market stalls, traffic lights and lamp posts
-# ----------------------------------------------------------------------------
-##
-## THE ROOFS ARE THE POINT. Every biome so far took the rest-from-crocodiles role
-## AWAY (a cactus, a tree trunk and a massif all record NON-climbable footprints,
-## so a road coin over one is skipped rather than perched). The city gives it back
-## at scale: every house is capped at CITY_HOUSE_HEIGHT_MAX = PROP_MAX_STEP, so
-## every roof EAVE in a city is one jump from the pavement and a city block is a
-## field of croc-free perches. (It said "every FLAT roof" until bead y1o.5 made
-## them pitched and y1o.36 made the pitch solid: what you land on is the eave,
-## flush with the hull top, and the ridge is walked up to.) That is what pays for
-## the reduced croc density
-## below reading as "a safer place" rather than as "an emptier place".
-##
-## NO EMISSIVE ANYTHING, and the budget spent is exactly ZERO of the four
-## _spawn_artifact_accent slots an artifact may use. Lamps and signals are BRIGHT
-## ALBEDO boxes in the chunk's one MultiMesh — a city of glowing traffic lights is
-## the single fastest way to turn a batched territory into dozens of real
-## MeshInstance3D nodes with an unshaded material each.
-##
-## THERE IS NO STREET NETWORK AND THERE IS NOT GOING TO BE ONE. A road network is
-## a layout system (graph, intersections, parcels, frontage) that this engine has
-## no use for anywhere else, and the coin road already IS the one road in the
-## world — it threads through a city as its main street for free, because
-## CITY_ROAD_CLEARANCE keeps the buildings off the coin swath. What produces the
-## street READ instead costs two lines: candidate positions are snapped to a
-## coarse CITY_BLOCK_PITCH grid with a little jitter, and house yaws are quantised
-## to quarter turns. Rows of parallel facades along shared lines is what a person
-## recognises as a town; a real network is not.
-
-## How many house SITES are tried per city chunk. A house footprint is ~2.5-3.5 m
-## and _biome_spot_ok rejects any overlap with the ~12 scattered props already in
-## the chunk, so this is a candidate count, not a house count — measured, it
-## yields roughly 4-7 built houses per chunk.
-const CITY_HOUSE_TRIES_MIN: int = 10
-const CITY_HOUSE_TRIES_MAX: int = 16
-
-## Market stall and street-light candidate counts, same "tries, not results" rule.
-const CITY_STALL_TRIES_MIN: int = 2
-const CITY_STALL_TRIES_MAX: int = 5
-const CITY_LIGHT_TRIES_MIN: int = 4
-const CITY_LIGHT_TRIES_MAX: int = 7
-
-## Minimum distance from the coin-road centerline. 13, like FOREST_ROAD_CLEARANCE
-## (14) and for the same arithmetic: the widest coin band half-width is
-## road_width_max * 0.5 = 10, so this keeps the whole scattered coin swath clear
-## of buildings and the road stays followable — the city's "main street".
-## Houses record CLIMBABLE footprints, so unlike a tree a house standing on the
-## swath would perch coins on its roof rather than punch holes in the trail; 13 is
-## still the right number, because a coin trail that climbs a building is a trail
-## the player has to leave the ground to follow.
-const CITY_ROAD_CLEARANCE: float = 13.0
-
-## Coarse grid the candidate positions snap to, plus the wobble left on top of it.
-## The pitch is a bit wider than the widest house so neighbours on the same line
-## do not touch; the jitter keeps the grid from reading as graph paper.
-const CITY_BLOCK_PITCH: float = 9.0
-const CITY_BLOCK_JITTER: float = 1.3
-
-## HOUSE — hull proportions. HEIGHT_MAX IS THE CLIMBABILITY CONTRACT AS A NUMBER:
-## it must stay <= PROP_MAX_STEP (2.6), or the roofs stop being reachable from
-## flat ground and the whole "the city is the rest spot" design silently dies.
-const CITY_HOUSE_WIDTH_MIN: float = 3.0
-const CITY_HOUSE_WIDTH_MAX: float = 4.4
-const CITY_HOUSE_DEPTH_FACTOR_MIN: float = 0.70   # depth as a fraction of width
-const CITY_HOUSE_DEPTH_FACTOR_MAX: float = 1.00
-const CITY_HOUSE_HEIGHT_MIN: float = 2.0
-const CITY_HOUSE_HEIGHT_MAX: float = 2.6
-
-## HOUSE — how far the roof oversails the walls. Since bead godot-test1-y1o.36 the
-## eave is SOLID: it is the lip of the pitch, at exactly the hull top, hanging
-## `CITY_ROOF_EAVES` past the wall — so it is also the surface a hero jumping from
-## the pavement lands on, which is why `CITY_HOUSE_HEIGHT_MAX` is the number held
-## against PROP_MAX_STEP and the ridge is not.
-##
-## CITY_ROOF_THICKNESS is the FLAT slab of Budapest's authored GATE DISTRICT
-## houses (`_spawn_district_houses`), which are pure CUBE and deliberately
-## untouched by this bead — the procedural band's roof is a WEDGE and has no
-## thickness, it has a pitch.
-const CITY_ROOF_EAVES: float = 0.25
-const CITY_ROOF_THICKNESS: float = 0.14
-
-## THE ROOF'S RISE, as a fraction of the roofed DEPTH (bead godot-test1-y1o.5).
-## A `BoxKind.WEDGE` roof needs a height to be a pitch at all, and this is where
-## it comes from: it is DERIVED from the house the roof is going on, so it costs
-## no RNG draw (a draw here would slide every later object in the chunk) and a
-## deep house gets a deep roof rather than every roof being the same slab.
-##
-## IT IS NOW A WALKABLE SURFACE AND THEREFORE A CEILING, not a taste knob (bead
-## godot-test1-y1o.36). The ridge is at the middle of the roofed depth, so each
-## slope's rise over run is `2 * CITY_ROOF_RISE_FACTOR` — and that has to stay
-## under `TowerInterior.PLAN_RAMP_MAX_SLOPE` (0.575), the project's one "no
-## traversal may demand more than this" number, or the hero slides back down the
-## roof he just jumped onto. 0.34 was 0.68 and was over it; 0.28 is a slope of
-## 0.56 (~29 degrees), which still reads as a terraced-town pitch and no longer
-## reads as alpine. `prop_selfcheck` check 7 asserts the arithmetic against
-## `PLAN_RAMP_MAX_SLOPE` directly, so this constant cannot drift back up quietly.
-##
-## Changing it moves NO RNG DRAW — the rise is derived from the depth already
-## drawn — so the only thing that differs from the pre-bead world is the roof
-## entries' own dimensions.
-const CITY_ROOF_RISE_FACTOR: float = 0.28
-
-## HOUSE — the widest footprint a house can claim, used as the "widest this could
-## be" radius handed to _biome_spot_ok before the real width is drawn:
-## 0.5 * hypot(W_MAX + 2*EAVES, W_MAX + 2*EAVES) = 0.5 * hypot(4.9, 4.9) = 3.47.
-##
-## THIS IS DELIBERATELY ABOVE MOUNTAIN_AVOID_RADIUS (2.0) and that is the correct
-## side to be on, not an oversight: a chunk straddling the city/forest/mountain
-## feather can hold both, and a massif is supposed to refuse to grow through a
-## house exactly as it refuses to grow through an artifact or a mound.
-const CITY_HOUSE_RADIUS_MAX: float = 3.47
-
-## STALL — a market counter under an awning. NON-climbable on purpose even though
-## the counter is only ~1 m: the awning hangs over it, so a road coin perched on
-## the counter would sit inside canvas. Non-climbable means _settle_coin_y skips
-## it instead (the cactus / tree-canopy call).
-const CITY_STALL_WIDTH_MIN: float = 1.8
-const CITY_STALL_WIDTH_MAX: float = 2.8
-const CITY_STALL_COUNTER_HEIGHT: float = 1.0
-const CITY_STALL_AWNING_HEIGHT: float = 2.3
-const CITY_STALL_RADIUS_MAX: float = 2.2
-
-## STREET FURNITURE — a traffic signal (mast + head + three lamps) or a lamp post
-## (mast + arm + one lamp), rolled per candidate. Thin, so its footprint is small
-## and NON-climbable (a mast has no top to stand on).
-const CITY_LIGHT_HEIGHT_MIN: float = 3.2
-const CITY_LIGHT_HEIGHT_MAX: float = 4.4
-const CITY_LIGHT_MAST_WIDTH: float = 0.20
-const CITY_LIGHT_LAMP: float = 0.22       # one signal lamp box, a side
-const CITY_LIGHT_RADIUS_MAX: float = 0.95
-const CITY_SIGNAL_CHANCE: float = 0.55    # else a lamp post
-
 # ============================================================================
 # WHICH PREDATOR A BIOME GETS
 # ============================================================================
@@ -2153,159 +1861,6 @@ const BIOME_BOSS: Dictionary = {
 	},
 }
 
-# ----------------------------------------------------------------------------
-# SNOW — frozen dead trees and mammoth skeletons on an open tundra
-# ----------------------------------------------------------------------------
-##
-## WHAT MAKES THIS BAND DIFFERENT FROM ITS NEIGHBOURS, in one line each: the city
-## is the SAFE territory (roofs everywhere, croc target divided), the mountain is
-## the IMPASSABLE one (massifs you route around), and the snow is the HOSTILE one —
-## croc density is the ordinary distance-scaled figure, nothing is thinned, and the
-## only shelter is the ice you can climb onto. That is why all three SNOW props
-## record climbable footprints and everything the builder below adds does not.
-##
-## THE BUILDER ADDS THE BIG, SPARSE THINGS ONLY. Ice rocks and drifts are SCATTERED
-## PROPS (the phase-1 machinery — see TerrainProps' _prop_ice_rock and friends), because they are
-## exactly the 0.7-1.8 m clutter the bare cubes used to be. What lives here is what
-## a prop cannot be: a 4 m dead tree, and a skeleton the size of a small building.
-
-## Frozen dead trees per snow chunk. Deliberately far below the forest's 25-40: a
-## tundra is not a thinned wood, it is open ground with the occasional dead thing
-## standing in it, and the emptiness between them is the whole read.
-const FROZEN_TREE_MIN: int = 6
-const FROZEN_TREE_MAX: int = 14
-
-## Same arithmetic as FOREST_ROAD_CLEARANCE (14) one notch tighter: the widest coin
-## band half-width is road_width_max * 0.5 = 10, so 12 keeps the scattered coin
-## swath clear of trunks. It can be tighter than the forest's because these trees
-## are bare — there is no canopy to close over the trail.
-const FROZEN_TREE_ROAD_CLEARANCE: float = 12.0
-
-const FROZEN_TREE_TRUNK_WIDTH_MIN: float = 0.34
-const FROZEN_TREE_TRUNK_WIDTH_MAX: float = 0.60
-const FROZEN_TREE_HEIGHT_MIN: float = 2.6
-const FROZEN_TREE_HEIGHT_MAX: float = 4.6
-const FROZEN_TREE_BRANCH_LEN: float = 1.5   # one bare branch box, long side
-## The deadwood half of bead godot-test1-u7a's restyle. Same rule as the forest's:
-## transforms and colours only, no new instances, no new draw call. A dead tree
-## leans harder than a living one (nothing is holding it up), each branch is a
-## different length rather than the same stick four times, and the timber runs from
-## bleached grey to wet-rot brown per tree instead of one flat frost colour.
-## The branch multiplier NEVER exceeds 1.0 on purpose: `branch_reach` below is the
-## chunk-seam bound, and shrink-only keeps it an over-estimate with no edit there.
-const FROZEN_TREE_TILT_MAX: float = 0.11    # radians of lean, either way
-const FROZEN_TREE_BRANCH_JITTER_MIN: float = 0.58
-const SNOW_DEADWOOD_DARK := Color(0.31, 0.27, 0.24)  # the wet-rot end of the ramp
-
-## MAMMOTH SKELETONS — the territory's marquee prop, and the one place in this file
-## where create_box's `tilt` is doing work nothing else could do: a rib is a thin
-## box that has to lean INWARD over the spine, and a tusk is a curve made of three
-## boxes each leaning further forward than the last.
-##
-## THE TUSK CURVE NEEDS A YAW OF +PI/2 AND THAT IS NOT A HACK, IT IS THE ONLY WAY.
-## create_box offers a yaw (about world Y) and a tilt (about the box's own local X
-## AFTER that yaw), so a plain tilt tips a box SIDEWAYS relative to the skeleton's
-## axis — fine for a rib, useless for a tusk, which has to sweep FORWARD. Turning
-## the box a quarter turn first swings its local X round to the skeleton's lateral
-## axis, and the tilt then tips it along the skeleton's length. This is the same
-## limitation landmark_builders.gd records on the Kinderdijk sails (there is no
-## roll about the third axis at all); a tusk is the shape that happens to fit
-## through the gap.
-##
-## NOT CLIMBABLE, NO NAME, NO TOAST, NO REWARD. It is ambient texture, not a cz3
-## destination — the epic's territories-versus-landmarks split — and non-climbable
-## for the tree-canopy reason: the footprint is a 5 m circle whose "top" is the
-## spine ridge, so a road coin perched on it would float over open ground inside a
-## ribcage. _settle_coin_y skips it instead.
-const MAMMOTH_MAX: int = 2                  # candidates per snow chunk, 0-2
-const MAMMOTH_PLACE_TRIES: int = 4
-const MAMMOTH_RADIUS: float = 5.0           # the honest bound; MEASURED at 4.21
-const MAMMOTH_ROAD_CLEARANCE: float = 16.0  # > MAMMOTH_RADIUS + road_width_max/2
-const MAMMOTH_EDGE_MARGIN: float = 8.0      # > MAMMOTH_RADIUS, so never on a seam
-const MAMMOTH_SPINE_LEN_MIN: float = 3.2
-const MAMMOTH_SPINE_LEN_MAX: float = 4.2
-const MAMMOTH_RIB_PAIRS_MIN: int = 4
-const MAMMOTH_RIB_PAIRS_MAX: int = 5
-const MAMMOTH_RIB_HEIGHT: float = 1.7
-const MAMMOTH_RIB_TILT: float = 0.70        # radians, leaning in over the spine
-const MAMMOTH_RIB_HALF_SPREAD: float = 0.90 # rib base offset either side of centre
-## Tusk segments, front to tip: [length, tilt]. The tilt SHRINKS along the curve,
-## which is what makes a tusk leave the skull almost horizontal and curl upward.
-const MAMMOTH_TUSK_SEGMENTS: Array = [[0.95, 1.35], [0.85, 0.95], [0.70, 0.55]]
-
-## MOUNTAIN — grey scree ramp for the rock itself. Cooler and flatter than both
-## the warm RAMP_* block colours and the artifacts' grey-green, so a massif reads
-## as bare rock rather than as a very large block or a ruin.
-const MOUNTAIN_ROCK_A := Color(0.42, 0.42, 0.44)
-const MOUNTAIN_ROCK_B := Color(0.58, 0.57, 0.55)
-
-## DESERT OASIS — rare flat-water pool with palm trees, reeds, and climbable boulders.
-## ~1 in 8 desert chunks. Water is visual-only (collide=false), with a non-climbable
-## footprint so coins don't perch. Palms (trunk + fronds) and boulders are solid.
-const OASIS_CHANCE: float = 0.12  # ~1 in 8
-const OASIS_PLACE_TRIES: int = 4
-## Placement/clearance radius. Bounds the WHOLE oasis — water, palms AND boulders —
-## which is what makes the _biome_spot_ok call below an honest test. NOT the water size.
-const OASIS_RADIUS: float = 8.0
-## Water slab radius, deliberately a SEPARATE constant. Shrinking one constant for both
-## jobs would pull the spot check in to ~3 m while boulders still scattered to ~6 m, so
-## boulders would land inside cacti the check had just cleared — the fused-camp-huts bug
-## one scale down. Every ring below is rebased on whichever radius actually bounds it.
-const OASIS_WATER_RADIUS: float = 3.0  # ~6 m across, inside the design's 4-7 m
-const OASIS_ROAD_CLEARANCE: float = 16.0
-const OASIS_WATER_DEPTH: float = 0.1  # visual slab thickness (y height)
-## Both slabs sit ABOVE the y = 0 ground plane, water above rim. The ground, the rim top
-## and the water top sharing y = 0 is three coplanar surfaces, and a MultiMesh has no
-## depth sort, so that is guaranteed z-fighting — the pool flickers instead of reading as
-## water. Pushing the rim BELOW the ground is not the fix either: the ground plane is
-## opaque, so a buried rim is simply invisible. Keep both offsets distinct and positive.
-const OASIS_RIM_TOP_Y: float = 0.02
-const OASIS_WATER_TOP_Y: float = 0.05
-const OASIS_WATER_COLOR := Color(0.20, 0.55, 0.75)
-const OASIS_WATER_RIM_COLOR := Color(0.15, 0.45, 0.65)
-const OASIS_PALM_MIN: int = 2
-const OASIS_PALM_MAX: int = 4
-const OASIS_PALM_TRUNK_WIDTH: float = 0.6
-const OASIS_PALM_TRUNK_HEIGHT: float = 4.5
-const OASIS_PALM_FROND_WIDTH: float = 3.0
-const OASIS_PALM_FROND_COUNT: int = 4
-## The palm half of bead godot-test1-u7a. The old crown was four full-length slabs
-## centred ON the trunk at one height with no tilt — a flat plus-sign hat, which is
-## the single most Minecraft-shaped thing in the file. Now each frond starts AT the
-## crown and hangs outward and DOWN.
-##
-## THE FROND'S LONG AXIS MOVED FROM LOCAL X TO LOCAL Z, and that is the whole trick:
-## create_box's `tilt` is a rotation about the box's local X, so a frond lying along
-## X only ROLLS about its own length (invisible on a slab) while one lying along Z
-## PITCHES — which is droop. No new create_box parameter was needed for it.
-##
-## Drooping only ever REDUCES the horizontal span (cos of the droop), and the frond
-## now reaches from the trunk instead of through it, so the crown is no wider than
-## it was; OASIS_PALM_EDGE_MARGIN grew only for the new trunk lean.
-const OASIS_PALM_TILT_MAX: float = 0.10   # radians — a palm curves, it does not stand to attention
-const OASIS_PALM_DROOP_MIN: float = 0.20  # radians below horizontal, per palm
-const OASIS_PALM_DROOP_MAX: float = 0.38
-const OASIS_PALM_DROOP_ALT: float = 1.45  # every other frond droops this much harder
-const OASIS_PALM_FROND_JITTER_MIN: float = 0.70  # shrink-only, so the span stays bounded
-const OASIS_PALM_EDGE_MARGIN: float = 2.6
-const OASIS_PALM_FROND_COLOR := Color(0.28, 0.48, 0.28)
-const OASIS_BOULDER_MIN: int = 3
-const OASIS_BOULDER_MAX: int = 6
-const OASIS_BOULDER_SIZE_MIN: float = 0.8
-const OASIS_BOULDER_SIZE_MAX: float = 1.8
-const OASIS_REED_CHANCE: float = 0.8  # 80% of oases get reeds
-
-## DESERT DUNES — low sandy mounds that are climbable. ~1 in 5 desert chunks.
-## Dunes are short and wide (≤1.5 m tall) to read as walkable hills, not obstacles.
-const DUNE_CHANCE: float = 0.20  # ~1 in 5
-const DUNE_PLACE_TRIES: int = 3
-const DUNE_HEIGHT_MIN: float = 0.8
-const DUNE_HEIGHT_MAX: float = 1.5
-const DUNE_WIDTH_MIN: float = 6.0
-const DUNE_WIDTH_MAX: float = 12.0
-const DUNE_ROAD_CLEARANCE: float = 14.0  # keep dunes off the coin path
-const DUNE_COLOR_A := Color(0.70, 0.60, 0.45)  # sandy
-const DUNE_COLOR_B := Color(0.60, 0.50, 0.35)  # darker sandy
 
 # ============================================================================
 # SECTION 2: INTERNAL STATE
