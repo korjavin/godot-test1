@@ -162,9 +162,6 @@ class RowStub extends Node:
 		return Rect2(0.0, 0.0, 80.0, 80.0)
 
 
-## A stub voice node for driving `mp_ui.gd` (check 10, bead `godot-test1-xtr.20`).
-## Answers `is_available()` and the six seams: set_mic_muted / is_mic_muted /
-## set_deafened / is_deafened / set_camera_enabled / is_camera_on / camera_denied.
 ## A node in group `"mobile_settings"` reduced to the ONE method
 ## `mp_ui._modal_yield()` asks for, so the hotkey's modal rule is measured
 ## without building the tune panel.
@@ -180,6 +177,9 @@ class GameOverPlayer extends Node:
 	var is_game_over: bool = true
 
 
+## A stub voice node for driving `mp_ui.gd` (check 10, bead `godot-test1-xtr.20`).
+## Answers `is_available()` and the six seams: set_mic_muted / is_mic_muted /
+## set_deafened / is_deafened / set_camera_enabled / is_camera_on / camera_denied.
 class VoiceUiStub extends Node:
 	var available: bool = true
 	var mic_muted: bool = false
@@ -2266,11 +2266,14 @@ func _check_mp_hotkey() -> void:
 	if ui._paused_by_us or paused:
 		_fail("closing the N-opened panel left a pause behind")
 
-	# Echo and other keys do nothing: the const is read, not "any key".
+	# Echo and other keys do nothing: the const is read, not "any key" —
+	# asserted after EACH press, so two toggles cannot cancel out.
 	_press_key(ui, KEY_N, true)
+	if ui._panel_open:
+		_fail("an echo of the hotkey toggled the MP panel — holding N rapid-toggles")
 	_press_key(ui, KEY_M, false)
 	if ui._panel_open:
-		_fail("an echo or another panel's key toggled the MP panel")
+		_fail("another panel's key toggled the MP panel — the const is not read")
 
 	# Modal yield: the button hides, so the key stays inert (and an open
 	# panel would be force-closed by `_process`, not left half-open).

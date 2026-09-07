@@ -368,16 +368,9 @@ func _ready() -> void:
 
 
 
-## Yield the screen to TouchControls' full-rect overlays — the exact three lines
-## `mobile_settings_panel.gd` runs for its ⚙ gear, for the exact same reason.
-## This Control draws above TouchControls (only `StartOverlay`, the boot-time
-## modal, sits later in `HUD` than it does) and
-## wins hit-testing: an unhidden MP button in the bottom-left corner steals taps
-## from the first-run "tap to enable motion controls" overlay — and that tap is
-## the ONE user gesture iOS grants `DeviceMotionEvent.requestPermission()` and
-## the browser grants WebAudio, so motion AND all audio would stay dead for the
-## session. The panel body is force-closed too (which also releases our pause),
-## or it covers the overlay it just stole the tap from.
+## Yield the screen to a modal overlay: the button hides and an open panel is
+## force-closed too (which also releases our pause). The why lives on
+## `_modal_yield()`, which owns the whole rule.
 func _process(_delta: float) -> void:
 	if _mp_button == null:
 		return
