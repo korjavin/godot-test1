@@ -1233,6 +1233,14 @@ static func opened_ids() -> Array[String]:
 	for sid: String in scar_ids():
 		if not out.has(sid):
 			out.append(sid)
+	# The checkpoint is the same shape of id as the rescue: authored, in the
+	# set, but not a graph row key — it rides its `unlock` value on the
+	# `lift_stop_upper` entry row while `_on_checkpoint_enter` opens it by
+	# const. Omitted once (review round 1: every receiver dropped it); appended
+	# here so the omission cannot recur, and bound by assertion (see
+	# `tower_gate_sync_selfcheck`: every id the interior can open must decode).
+	if not out.has(GATE_CHECKPOINT):
+		out.append(GATE_CHECKPOINT)
 	if not out.has(RESCUE_DONE):
 		out.append(RESCUE_DONE)
 	return out

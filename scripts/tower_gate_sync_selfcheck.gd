@@ -20,6 +20,10 @@ extends SceneTree
 ## and two live towers would make that lookup ambiguous — the same reason the
 ## checks free their tower before bailing (see `TowerProbe.clear`).
 ##
+## Probes 0 and 0b need no tower: absorbing with no shell streamed in persists
+## through the profile (and publishes from it), and every id the interior can
+## open decodes. They run first, while group "tower" is provably empty.
+##
 ## THE PROFILE IS A THROWAWAY. `mark_opened()` writes through to `BestRunStore`
 ## on the opening AND on a room absorb (the bead's default), so this check goes
 ## through `Sentinel.isolate_user_state()` first and `TowerProbe.fresh_store()`
@@ -46,6 +50,14 @@ func publish_gate_opened(id: String) -> void:
 	published.append(id)
 """
 
+## A built interior reduced to the one seam the absorb calls: it counts
+## `_apply_opened()` re-runs, so the no-re-apply guard is measured directly.
+const APPLY_STUB_SOURCE := """extends Node
+var applies: int = 0
+func _apply_opened() -> void:
+	applies += 1
+"""
+
 
 func _initialize() -> void:
 	Sentinel.isolate_user_state()
@@ -58,7 +70,11 @@ func _run() -> void:
 	# THE STORE SEAM FIRST, before any shell can exist — see BestRunStore.config_path.
 	TowerProbe.fresh_store()
 	await process_frame
-	var failure: String = await _check_publish_on_opening()
+	var failure: String = await _check_no_shell()
+	if failure.is_empty():
+		failure = await _check_openable_ids_decode()
+	if failure.is_empty():
+		failure = await _check_publish_on_opening()
 	if failure.is_empty():
 		failure = await _check_live_receive()
 	if failure.is_empty():
@@ -90,6 +106,62 @@ func _publish_stub() -> Node:
 func _mass_of(interior: Node, gate_id: String) -> MeshInstance3D:
 	"""One gate's mass by GATE ID, never by box name — see tower_interior_selfcheck."""
 	return interior.find_child("*GateMass_%s" % gate_id, true, false) as MeshInstance3D
+
+
+func _check_no_shell() -> String:
+	"""
+	0. NO SHELL STREAMED IN. Every peer starts the run with no HQ in range, so
+	absorbing then must still persist (the shell hydrates from the profile when
+	it streams in) and the publish side must read the profile (or a master who
+	has never visited the HQ repairs nothing). Runs first, while group "tower"
+	is provably empty.
+	"""
+	if get_first_node_in_group("tower") != null:
+		return "group 'tower' is not empty — this probe must run before any tower builds"
+	var mp: Node = MPManager.new()
+	root.add_child(mp)
+	mp._absorb_opened_gate(TowerInterior.GATE_IDENTITY)
+	if not BestRunStore.tower_opened_ids().has(TowerInterior.GATE_IDENTITY):
+		mp.queue_free()
+		return "an absorb with no shell dropped the id — nothing will hydrate it later"
+	if not (mp._tower_opened_ids() as Array).has(TowerInterior.GATE_IDENTITY):
+		mp.queue_free()
+		return "the publish side is empty with no shell — a master there repairs nothing"
+	mp.queue_free()
+	Sentinel.done("no_shell")
+	return ""
+
+
+func _check_openable_ids_decode() -> String:
+	"""
+	0b. EVERY ID THE INTERIOR CAN OPEN DECODES. The range list is derived
+	(checkpoint was omitted once: opened by const, published, dropped by every
+	receiver), so this binds the open sites to the parser — a future id
+	written into the set without a graph row fails here, not room-wide.
+	"""
+	var want: Array[String] = [
+		TowerInterior.GATE_DEMAND, TowerInterior.GATE_IDENTITY,
+		TowerInterior.GATE_CHECKPOINT, TowerInterior.RESCUE_DONE,
+	]
+	for door: Dictionary in TowerInterior.SPINE_DOORS:
+		want.append(String(door["gate"]))
+	for gid: String in TowerInterior.riddle_ids():
+		want.append(gid)
+	for sid: String in TowerGraph.scar_ids():
+		want.append(sid)
+	for row: Dictionary in TowerGraph.TOWER_GRAPH["entries"]:
+		want.append(String(row.get("id", "")))
+	for mut: Dictionary in TowerGraph.TOWER_GRAPH["mutations"]:
+		want.append(String(mut.get("id", "")))
+	for id: String in want:
+		if id.is_empty():
+			return "an open site produced an empty id — the enumeration above drifted"
+		if not TowerGraph.opened_ids().has(id):
+			return "id '%s' can be opened but is not in opened_ids() — receivers will drop it" % id
+		if MpCodec.decode_gate({"t": "gate", "id": id}).is_empty():
+			return "id '%s' is ranged but does not decode — the parser disagrees with the list" % id
+	Sentinel.done("openable_ids_decode")
+	return ""
 
 
 func _check_publish_on_opening() -> String:
@@ -168,6 +240,48 @@ func _check_live_receive() -> String:
 		mp.queue_free()
 		await TowerProbe.clear(self, null, shell)
 		return "the room's opening was drawn but never persisted — a relaunch re-locks it"
+	# AN ALREADY-OPEN ID RE-APPLIES NOTHING (review round 1): the master's 2 Hz
+	# repair would otherwise reset riddle progress twice a second and republish
+	# the id. Three poses, from coarse to precise: a counting stub proves the
+	# call never happens; a mid-entry combination proves the progress survives;
+	# a NEW id proves a genuine opening still re-applies without clobbering an
+	# unrelated in-progress lock (the scoped reset).
+	var meshes: Dictionary = interior.get("_riddle_meshes")
+	if meshes.is_empty():
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the tower built no riddle locks — the re-apply guard has no subject"
+	var lock: String = String((meshes.keys() as Array)[0])
+	(interior.get("_riddle_step") as Dictionary)[lock] = 2
+	var counter_script := GDScript.new()
+	counter_script.source_code = APPLY_STUB_SOURCE
+	counter_script.reload()
+	var counter: Node = counter_script.new()
+	interior.remove_from_group("tower_interior")
+	counter.add_to_group("tower_interior")
+	root.add_child(counter)
+	mp._receive_gate("peerA", {"t": "gate", "id": TowerInterior.GATE_IDENTITY})
+	if int(counter.get("applies")) != 0:
+		counter.queue_free()
+		interior.add_to_group("tower_interior")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "absorbing an already-open id re-ran _apply_opened — the guard is missing"
+	counter.queue_free()
+	interior.add_to_group("tower_interior")
+	if int((interior.get("_riddle_step") as Dictionary).get(lock, 0)) != 2:
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "absorbing an already-open id reset a mid-entry combination"
+	mp._receive_gate("peerA", {"t": "gate", "id": "maintenance_crawl"})
+	if int((interior.get("_riddle_step") as Dictionary).get(lock, 0)) != 2:
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "a genuine opening reset an unrelated in-progress combination — the reset is not scoped"
+	if not shell.is_opened("maintenance_crawl"):
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "a genuine opening stopped being absorbed — the guard over-fires"
 	mp.queue_free()
 	await TowerProbe.clear(self, null, shell)
 	Sentinel.done("live_receive")

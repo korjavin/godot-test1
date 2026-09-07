@@ -1755,7 +1755,22 @@ func _absorb_opened_gate(id: String) -> void:
 		return  # Not an id this build authored — the `cap` / `_pool` split.
 	var tower := get_tree().get_first_node_in_group("tower")
 	if tower == null or not tower.has_method("mark_opened"):
-		return  # No tower in this scene — not an error, the LOD idiom.
+		# No shell streamed in — every peer at run start, until the HQ loads.
+		# Still earned campaign state, so it goes to the profile the shell
+		# hydrates from on `_enter_tree`, never dropped (review round 1).
+		BestRunStore.merge_tower_opened_ids([id])
+		return
+	# Already open here: return before the mark, because the mark republishes
+	# the id and the interior below re-applies it. The republish turns a repair
+	# burst of K ids into K echoes back on the wire inside one second — past
+	# the shared 4/s budget, so a real opening inside that window is dropped by
+	# every receiver and never re-sent (review round 1, minor). The re-apply
+	# resets riddle progress twice a second off the master's 2 Hz `room`
+	# packet, which made every riddle lock unsolvable for non-masters (review
+	# round 1, major). The room re-sends the whole set on every packet anyway,
+	# so skipping a known id loses nothing.
+	if tower.is_opened(id):
+		return
 	tower.mark_opened(id)
 	var interior := get_tree().get_first_node_in_group("tower_interior")
 	if interior != null and interior.has_method("_apply_opened"):
@@ -2999,13 +3014,15 @@ func _tower_opened_ids() -> Array:
 
 	The joiner-side parser bounds it with the store's `MAX_TOWER_IDS`, which the
 	honest set can never reach (a couple dozen declared ids); anything past it
-	is a peer that is not speaking this protocol. Empty — never null — when
-	there is no tower in this scene, so the snapshot reads with no opened set
-	rather than failing to build one.
+	is a peer that is not speaking this protocol. With no shell streamed in —
+	every peer at run start — the PROFILE is the set: absorbs with no tower
+	land there (see `_absorb_opened_gate`), so the repair legs publish it and
+	a master who has never visited the HQ still repairs the room (review
+	round 1). Empty — never null — only when neither holds anything.
 	"""
 	var tower := get_tree().get_first_node_in_group("tower")
 	if tower == null or not tower.has_method("opened_ids"):
-		return []
+		return BestRunStore.tower_opened_ids()
 	return tower.opened_ids()
 
 

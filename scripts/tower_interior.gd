@@ -2070,9 +2070,21 @@ func _apply_opened() -> void:
 	"""
 	Snap every gate to whatever the opened set says, with no animation.
 
-	The one place state becomes geometry. Called at build time (so a tower that was
-	already opened comes back open) and never again — the live tweens in
-	`_tick_gates` take over from here.
+	The one place state becomes geometry. Called at build time (so a tower that
+	was already opened comes back open) AND re-run live when the room
+	publishes an opening (bead godot-test1-d81) — through the manager's
+	absorb, which only calls it for ids that are genuinely new here, so the
+	master's 2 Hz repair packet is a no-op (review round 1).
+
+	Re-entry clobber rules: everything DERIVED from the set (open tweens,
+	shutter, mass, spine and riddle meshes, captives, cells, scars) is
+	re-snapped unconditionally — a pure function of the set cannot drift. The
+	two per-lock animation values that are NOT derived, `_riddle_step` (a
+	half-entered combination, deliberately unpersisted) and `_riddle_nudge`,
+	reset only for locks whose open-state CHANGED under the call: a combination
+	being entered on an unchanged lock survives a room absorb, while a freshly
+	solved lock stops being asked. At build every lock changes (nothing
+	derived yet), so build behaviour is identical.
 	"""
 	if _is_open(GATE_DEMAND):
 		_shutter_open = 1.0
@@ -2088,9 +2100,15 @@ func _apply_opened() -> void:
 	# so a tower rebuilt (or a save reloaded) comes back with the mass already up
 	# and the sequence never asked for again.
 	for gid2: String in _riddle_meshes:
+		var was_open := float(_riddle_open.get(gid2, -1.0))
 		_riddle_open[gid2] = 1.0 if _is_open(gid2) else 0.0
-		_riddle_step[gid2] = 0
-		_riddle_nudge[gid2] = 0.0
+		if was_open != float(_riddle_open[gid2]):
+			# This lock CHANGED under the call — see the docstring. A fresh
+			# build changes every lock (nothing derived yet), so build
+			# behaviour is identical; a live re-entry leaves an in-progress
+			# combination on an unchanged lock alone.
+			_riddle_step[gid2] = 0
+			_riddle_nudge[gid2] = 0.0
 		_place_riddle(gid2)
 	_place_shutter()
 	_place_mass()
