@@ -18,31 +18,12 @@ extends SceneTree
 ##   1. The RemoteAvatar ISOLATION CONTRACT — no groups, no CollisionObject3D
 ##      anywhere in the subtree. This is the one that fails loudly instead of
 ##      turning into "why are the crocodiles chasing a hologram?".
-##   2. The presence packet parser against hostile bytes — the trust boundary.
-##   3. Forced seeds — the same seed must give the same biome field, or two
-##      peers in one room walk different worlds.
-##   4. The peer-id derivation — stable, ≥ 2, and collision-free over samples.
 ##   5. Coin identity — the id is a pure function of position, so two peers
 ##      sharing a seed name the same coin the same thing; AND a live coin latches
 ##      that id at spawn, so its bob (nearly a whole id cell) cannot rename it.
-##   6. The join-snapshot parser against hostile payloads — the third trust
-##      boundary, and the one that feeds the joiner's placement.
-##   7. Backward compatibility: a phase-3 presence packet (no shared totals)
-##      must still decode, or an older peer goes invisible instead of uncounted.
-##   8. THE RETIRED HEART FIELDS. `lv`/`rl`/`ls`/`gs` stopped MEANING anything
-##      (bead godot-test1-0bc) and an old peer does not know it — both decoders
-##      must accept a packet carrying them, hand none of them back, and validate
-##      neither, while the LIVE field beside them is still checked. `lv`/`rl` also
-##      stopped being SENT; `ls`/`gs` still go out as inert zeroes for one release,
-##      because the previous build's snapshot parser requires `ls` — see case (e).
-##   9. Hero name → CHARACTERS index, the lookup the hero split rides on.
-##  10. The crocodile-sync parser against hostile packets — the fourth trust
-##      boundary, and the one that drives every crocodile in the room.
 ##  11. Crocodile identity — the id is a pure function of the node name, which
 ##      the terrain derives deterministically, so two peers name the same
 ##      crocodile the same thing; AND a live croc latches it in _ready().
-##  12. The room's coin multiplier arithmetic, pinned against the player's own
-##      streak constants — the master prices every claim with it.
 ##  13. The group anchor rule — where a mid-run joiner lands AND where a death
 ##      inside a room respawns. A spread group must never anchor on the empty
 ##      midpoint, INCLUDING for a dying master, which is never in the map.
@@ -76,13 +57,14 @@ extends SceneTree
 ##      confirms), and a hero a teammate holds — or one in a cell — stays refused.
 ##      Plus `hero_holder()`, the query it reads, and the claim actually reaching
 ##      the lobby.
-##  24. THE ABILITY STATE A WATCHER SEES — Teibi's Resize and Windman's Air Rush
-##      on the presence packet: absent reads as normal (an older peer stays
-##      visible), a byte survives, a hostile value drops the packet whole, and the
-##      scale a bit asks for is the player's own constant.
 ##  18. Terrain FOCUS POINTS — the chunks that stay loaded around a far teammate,
 ##      so the master has crocodiles there to simulate at all. Measured in metres
 ##      against SIM_RADIUS, with the memory cap and the release both pinned.
+##
+##  The thirteen parser checks — entries 2, 3, 4, 6, 7, 8, 9, 10, 12, 24 above,
+##  plus the `cap` / `pad` / `gate` verb parsers — moved to
+##  `scripts/mp_codec_selfcheck.gd` (bead godot-test1-ftn.33), which carries its
+##  own index; this file keeps the twenty-one that drive a manager.
 
 const MPManager: GDScript = preload("res://scripts/mp_manager.gd")
 ## The codec is reached through the `MpCodec` global class name everywhere it is
@@ -1289,6 +1271,8 @@ func _room_manager(you: String) -> Node:
 	return mp
 
 
+## A fauna manager reduced to the one method `MpManager._receive_herd()` calls,
+## in group "fauna" so it is found through the shipped group lookup.
 const FAUNA_STUB_SOURCE := """extends Node
 var applied: Array = []
 func apply_herd_sync(state: Dictionary) -> void:
@@ -2425,7 +2409,7 @@ func _check_hero_press_decision() -> String:
 	# An offline manager holds nobody, so `hero_holder()` answers "" for every
 	# hero — which is what keeps a claim from ever being the verdict solo (the
 	# claimable set is empty there too, and either alone is enough).
-	# Never added to the tree, for the reason `_check_forced_seed` gives: this is
+	# Never added to the tree, for the reason `_check_forced_seed` (in `scripts/mp_codec_selfcheck.gd`) gives: this is
 	# a pure read of the state field, and `_ready()` would build a whole manager.
 	var offline: Node = MPManager.new()
 	var lonely: bool = offline.hero_holder("windman").is_empty()

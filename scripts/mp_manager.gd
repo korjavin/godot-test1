@@ -2286,7 +2286,7 @@ func my_character_indices() -> Variant:
 static func hero_index(hero: String) -> int:
 	"""
 	The `player_controller.CHARACTERS` index of a hero name, or -1 if this build
-	has no such character. Static and pure so scripts/mp_selfcheck.gd can pin it.
+	has no such character. Static and pure so scripts/mp_codec_selfcheck.gd can pin it.
 	"""
 	var characters: Array = PLAYER_SCRIPT.CHARACTERS
 	for i: int in range(characters.size()):
@@ -4340,7 +4340,7 @@ static func room_multiplier_from(streak: int, per_step: int, max_bonus: int) -> 
 	"""
 	The score multiplier for a streak of `streak` pickups — the same arithmetic as
 	`player_controller.get_streak_multiplier()`, pulled out as a pure static so
-	scripts/mp_selfcheck.gd can pin it against the player's own constants without
+	scripts/mp_codec_selfcheck.gd can pin it against the player's own constants without
 	a room, a player or a socket.
 	"""
 	if per_step <= 0:

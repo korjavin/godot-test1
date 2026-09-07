@@ -1,10 +1,17 @@
 extends SceneTree
-## The parser checks for the multiplayer layer: every check that drives nothing
-## but `MpCodec` statics and pure functions. Split out of `scripts/mp_selfcheck.gd`
-## (bead godot-test1-ftn.33) — the ftn.11 file boundary made into a check
-## boundary: the PARSERS are `MpCodec`, so the parser CHECKS live here. CI
-## shards the glob BY FILE, so this file is its own shard unit with its own
-## Sentinel set.
+## The parser checks for the multiplayer layer: every check that instances no
+## MANAGER (bead godot-test1-ftn.33's partition) — `MpCodec` statics and pure
+## functions, plus the one avatar the ability check stands up (check 24 reads
+## `_ready()`-built state, which is why `_initialize` waits a frame). Split out
+## of `scripts/mp_selfcheck.gd`; CI shards the glob BY FILE, so this file is its
+## own shard unit with its own Sentinel set.
+##
+## What it guards (section numbers below):
+##
+##   2. presence parser, 3. forced seed, 4. peer ids, 6. join-snapshot parser,
+##   7. presence backcompat, 8. retired heart fields, 9. hero index,
+##   10. croc-sync parser, 12. room multiplier, the `cap` / `pad` / `gate` verb
+##   parsers, 24. ability visual state.
 ##
 ## Run it headless:
 ##
@@ -15,14 +22,14 @@ extends SceneTree
 ## Everything here is an explicit `if` rather than an `assert` on purpose:
 ## asserts are stripped from release builds, and this file's whole value is that
 ## it keeps working when somebody runs it a year from now against a release
-## export. It touches no network and no WebRTC — only the pure parts.
+## export. It touches no network and no WebRTC.
 
 
 const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 const MPManager: GDScript = preload("res://scripts/mp_manager.gd")
 ## The codec is reached through the `MpCodec` global class name everywhere it is
-## CALLED; this preload exists only for `get_script_constant_map()`, which is a
-## Script method and not something a class name resolves to.
+## CALLED. The preload stays for parity with `mp_selfcheck.gd` (bead ftn.33's
+## "same preloads" rule) — the only `get_script_constant_map()` caller is there.
 const MP_CODEC: GDScript = preload("res://scripts/mp_codec.gd")
 const Terrain: GDScript = preload("res://scripts/endless_terrain.gd")
 const Coin: GDScript = preload("res://scripts/coin.gd")
@@ -842,10 +849,6 @@ func _check_captive_parser() -> String:
 	return ""
 
 
-## A fauna manager reduced to the one method `MpManager._receive_herd()` calls,
-## in group "fauna" so it is found through the shipped group lookup.
-
-
 func _check_pad_parser() -> String:
 	"""
 	The `pad` verb's two pure halves — the SIXTH trust boundary (bead
@@ -1004,7 +1007,7 @@ func _check_ability_visual_state() -> String:
 	# ...and the avatar actually WEARS it. A live RemoteAvatar, fed one presence
 	# sample the way the drain feeds it, must scale its model and NOTHING ELSE:
 	# the isolation contract says an avatar has no body, so there is nothing else
-	# to scale, and check 1 above is what keeps it that way.
+	# to scale, and the isolation contract (`_check_avatar_isolation`, check 1 in `scripts/mp_selfcheck.gd`) is what keeps it that way.
 	var avatar: RemoteAvatar = RemoteAvatar.new()
 	root.add_child(avatar)
 	avatar.setup("watcher")
