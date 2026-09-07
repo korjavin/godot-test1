@@ -550,8 +550,10 @@ var _pending_landmarks: Dictionary = {}
 ## no absorb path persists anymore, this mirror is the ONLY record that an id
 ## was opened by the room rather than earned here. Own publishes land here
 ## too (harmless — they are also in the profile, and the mirror-filter must
-## skip them on repair); the drain and the re-hydrate read the PROFILE, never
-## this, so own and absorbed never mix on the way out.
+## skip them on repair). The drain reads the PROFILE, never this; the
+## re-hydrate unions this (round 2 — the reason a deferral parked across a
+## join drops the old room and keeps the new one); `g`/`go` publish this
+## (round 3 — never the shell's raw set) with zero store reads (round 4).
 var _absorbed_opened: Dictionary = {}
 
 ## Once-per-join publish of this peer's OWN persisted set (review round 3):
@@ -3268,15 +3270,18 @@ func _tower_opened_ids() -> Array:
 	The tower's opened ids to replay: the whole sorted set, because every id is
 	a fact and none of them is near or far (bead godot-test1-d81).
 
-	PROFILE UNION THE LIVE MIRROR, never the shell's raw `opened` (review
-	round 3, major): a deferred close parked by leaving the previous room
-	from inside the walls keeps that room's absorbed ids in the shell's set
-	until it fires outside — publishing the shell's set would leak them onto
-	the wire over `g`/`go` for the rest of the session. The mirror is the
-	room's truth (seeded from the profile on join, added on every absorb
-	and every local publish), so the union carries everything earned here
-	plus everything the live room opened, and nothing a dead room left
-	behind. Empty — never null — only when neither holds anything.
+	THE LIVE MIRROR, never the shell's raw `opened` (review round 3, major)
+	and never a fresh profile read (review round 4, minor): a deferred close
+	parked by leaving the previous room from inside the walls keeps that
+	room's absorbed ids in the shell's set until it fires outside —
+	publishing the shell's set would leak them onto the wire over `g`/`go`
+	for the rest of the session — and the profile leg would put a
+	ConfigFile round-trip back on the master's 2 Hz repair tick. Profile ⊆
+	mirror already, so the mirror alone is the whole set: `_on_lobby_joined`
+	seeds it from the profile on every join, `join()` unwinds through
+	`leave()` first, and every local opening stamps it through
+	`publish_gate_opened()` even offline. Empty — never null — only when
+	neither holds anything.
 
 	The joiner-side parser bounds it with the store's `MAX_TOWER_IDS`, which the
 	honest set can never reach (a couple dozen declared ids); anything past it
@@ -3290,12 +3295,7 @@ func _tower_opened_ids() -> Array:
 	absorb paths filter on the way in; this is the same filter on the way
 	out, so a hand-edited mess poisons nothing past its own disk.
 	"""
-	var seen := {}
-	for gid: String in BestRunStore.tower_opened_ids():
-		seen[gid] = true
-	for gid: Variant in _absorbed_opened:
-		seen[String(gid)] = true
-	var raw: Array = seen.keys()
+	var raw: Array = _absorbed_opened.keys()
 	raw.sort()
 	var clean: Array = []
 	for gid: Variant in raw:

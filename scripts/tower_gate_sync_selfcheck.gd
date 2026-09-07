@@ -750,10 +750,14 @@ func _check_publish_filters_poison() -> String:
 		return "no-shell publish ids came back %s — a poisoned row rides g/go" \
 				% str(mp._tower_opened_ids())
 	mp.queue_free()
-	# Streamed shell: hydration holds the same mess, same filter.
+	# Streamed shell: hydration holds the same mess — but `g` is the mirror
+	# (review round 4, minor), so the join seeds it first, exactly the
+	# production path: a manager that never joined publishes nothing.
 	var shell := await TowerProbe.make_tower(self)
 	var mp2: Node = MPManager.new()
 	root.add_child(mp2)
+	mp2.set("lobby_only", true)
+	mp2._on_lobby_joined("us", "ROOM", "themaster", ["themaster", "us"])
 	var got: Array = mp2._tower_opened_ids()
 	mp2.queue_free()
 	await TowerProbe.clear(self, null, shell)
@@ -1215,6 +1219,48 @@ func _check_stale_deferral_across_join() -> String:
 		mp.queue_free()
 		await TowerProbe.clear(self, null, shell)
 		return "the master's g carries room 1's gate — a not-yet-fired deferral leaks the old room onto the wire"
+	# `g` IS the mirror (review round 4, minor): profile ⊆ mirror already
+	# (join seeds it), so the repair set needs no store read and carries
+	# nothing the room did not open.
+	var mirror: Array = mp.call("absorbed_opened_ids")
+	mirror.sort()
+	var wire: Array = g.duplicate()
+	wire.sort()
+	if wire != mirror:
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the master's g is not the live mirror — the repair set reaches past the room's truth"
+	# ...and it stays that way by construction: the g-source must read no
+	# profile (a ConfigFile round-trip on the 2 Hz tick) and no shell set
+	# (a parked deferral's stale ids).
+	var mp_source: String = FileAccess.get_file_as_string("res://scripts/mp_manager.gd")
+	var g_begin: int = mp_source.find("func _tower_opened_ids")
+	if g_begin < 0:
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "could not find _tower_opened_ids to pin its sources"
+	var g_tail: String = mp_source.substr(g_begin)
+	var g_head_end: int = g_tail.find("\n")
+	var g_site: String = g_tail.substr(g_head_end + 1)
+	var g_close: int = g_site.find("\nfunc ")
+	if g_close >= 0:
+		g_site = g_site.substr(0, g_close)
+	if g_site.contains("tower_opened_ids("):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "_tower_opened_ids reads the profile — the store round-trip is back on the repair tick"
+	if g_site.contains("tower.opened_ids("):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "_tower_opened_ids reads the shell's set — a parked deferral would leak the old room"
 	# OUT THROUGH THE DOOR: the parked close fires — X1 falls, X2 stands,
 	# and neither reaches the profile.
 	player.global_position = interior.global_position + Vector3(5000.0, 0.0, 0.0)
