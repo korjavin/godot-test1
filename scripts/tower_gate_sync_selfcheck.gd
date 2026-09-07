@@ -15,18 +15,27 @@ extends SceneTree
 ## B's shell through those shipped functions — never around them — with B's
 ## built interior asserting the mass really retires.
 ##
+## Bead godot-test1-crk (owner ruling 2026-09-07 10:47, reversing d81's
+## write-through default): a teammate's opening is ROOM-ONLY — open for the
+## session, never written to this peer's profile. Absorb paths mark with
+## `persist = false` and the no-shell branch writes nothing; the mirror is
+## the one home of room-opened ids, a late shell pulls it in `_enter_tree`,
+## and `leave()` re-hydrates the shell from the profile alone so room ids
+## fall closed. Only a LOCAL opening persists (earned here).
+##
 ## TWO REAL TOWERS, SEQUENTIALLY. A opens and publishes; A is freed; B receives.
 ## Sequential because group "tower" names the shell the receiver writes through,
 ## and two live towers would make that lookup ambiguous — the same reason the
 ## checks free their tower before bailing (see `TowerProbe.clear`).
 ##
-## Probes 0 and 0b need no tower: absorbing with no shell streamed in persists
-## through the profile (and publishes from it), and every id the interior can
-## open decodes. They run first, while group "tower" is provably empty.
+## Probes 0 and 0b need no tower: absorbing with no shell streamed in holds
+## the id in the mirror only (and publishes from it), and every id the
+## interior can open decodes. They run first, while group "tower" is
+## provably empty.
 ##
-## THE PROFILE IS A THROWAWAY. `mark_opened()` writes through to `BestRunStore`
-## on the opening AND on a room absorb (the bead's default), so this check goes
-## through `Sentinel.isolate_user_state()` first and `TowerProbe.fresh_store()`
+## THE PROFILE IS A THROWAWAY. A LOCAL `mark_opened()` writes through to
+## `BestRunStore` on the opening, so this check goes through
+## `Sentinel.isolate_user_state()` first and `TowerProbe.fresh_store()`
 ## before any shell can exist — `progression_selfcheck.hermetic_stores` audits
 ## this file for both.
 ##
@@ -40,6 +49,7 @@ extends SceneTree
 const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 const MPManager: GDScript = preload("res://scripts/mp_manager.gd")
+const LiftMenu: GDScript = preload("res://scripts/tower_lift_menu.gd")
 
 ## A manager reduced to the one method `tower_shell.mark_opened()` calls: it
 ## records what the shell publishes, the way the weather stub in mp_selfcheck
@@ -110,6 +120,20 @@ func _run() -> void:
 	if failure.is_empty():
 		failure = await _check_batch_persists_once()
 	if failure.is_empty():
+		failure = await _check_leave_closes_room_gates()
+	if failure.is_empty():
+		failure = await _check_leave_inside_defers_close()
+	if failure.is_empty():
+		failure = await _check_earn_while_room_open()
+	if failure.is_empty():
+		failure = await _check_rescan_refires_triggers()
+	if failure.is_empty():
+		failure = await _check_stale_deferral_across_join()
+	if failure.is_empty():
+		failure = await _check_absorbed_never_persists()
+	if failure.is_empty():
+		failure = await _check_drain_publishes_own_only()
+	if failure.is_empty():
 		Sentinel.finish(self)
 	else:
 		printerr("SELFCHECK FAILED: " + failure)
@@ -135,47 +159,41 @@ func _mass_of(interior: Node, gate_id: String) -> MeshInstance3D:
 func _check_no_shell() -> String:
 	"""
 	0. NO SHELL STREAMED IN. Every peer starts the run with no HQ in range, so
-	absorbing then must still persist (the shell hydrates from the profile when
-	it streams in) and the publish side must read the profile (or a master who
-	has never visited the HQ repairs nothing). Runs first, while group "tower"
-	is provably empty.
+	absorbing then must hold the id in the MIRROR (a shell that streams in
+	later pulls it in `_enter_tree`) and the publish side must read the
+	mirror (or a master who has never visited the HQ repairs nothing). The
+	profile is NOT touched: a teammate's opening is session state (bead
+	godot-test1-crk). Runs first, while group "tower" is provably empty.
 	"""
 	if get_first_node_in_group("tower") != null:
 		return "group 'tower' is not empty — this probe must run before any tower builds"
 	var mp: Node = MPManager.new()
 	root.add_child(mp)
 	mp._absorb_opened_gate(TowerInterior.GATE_IDENTITY)
-	if not BestRunStore.tower_opened_ids().has(TowerInterior.GATE_IDENTITY):
+	if BestRunStore.tower_opened_ids().has(TowerInterior.GATE_IDENTITY):
+		mp.queue_free()
+		return "an absorb with no shell reached the profile — a teammate's opening is room-only, not saved"
+	if not (mp._absorbed_opened as Dictionary).has(TowerInterior.GATE_IDENTITY):
 		mp.queue_free()
 		return "an absorb with no shell dropped the id — nothing will hydrate it later"
 	if not (mp._tower_opened_ids() as Array).has(TowerInterior.GATE_IDENTITY):
 		mp.queue_free()
 		return "the publish side is empty with no shell — a master there repairs nothing"
-	# THE DISK STORM (review round 2): the same `g` twice must hit the store
-	# ONCE. The file's mtime is the counter — no write, no touch — so the
-	# first absorb must move it off zero (the setup proves a write happened)
-	# and the second must leave it exactly alone.
-	var t1: int = FileAccess.get_modified_time(BestRunStore.config_path)
-	if t1 <= 0:
-		mp.queue_free()
-		return "the first absorb wrote nothing — the storm probe measured no setup"
+	# NO DISK AT ALL (bead godot-test1-crk, stronger than review round 2's
+	# once): the same `g` twice must not touch the store, ever. The file's
+	# mtime is the counter — no write, no touch. The profile starts DELETED
+	# (fresh store), so any write would create it.
 	mp._absorb_opened_gates([TowerInterior.GATE_IDENTITY])
-	var t2: int = FileAccess.get_modified_time(BestRunStore.config_path)
-	if t2 != t1:
+	if FileAccess.file_exists(BestRunStore.config_path):
 		mp.queue_free()
-		return "re-absorbing the same set touched the profile again — the 2 Hz mirror is missing"
-	if not (mp._absorbed_opened as Dictionary).has(TowerInterior.GATE_IDENTITY):
-		mp.queue_free()
-		return "the absorb never reached the mirror — the steady-state filter has nothing to consult"
-	# ZERO OPS, not just zero writes: with the profile file deleted, a
-	# steady-state absorb must not even re-read it (a read of the missing file
-	# would come back empty and re-merge the id, recreating it).
-	DirAccess.remove_absolute(BestRunStore.config_path)
+		return "absorbing the room's set created a profile — the 2 Hz path persists room state"
+	# ZERO OPS on the steady state: absorbing again touches nothing — no
+	# store read, no store write, no shell call.
 	mp._absorb_opened_gates([TowerInterior.GATE_IDENTITY])
 	if FileAccess.file_exists(BestRunStore.config_path):
 		mp.queue_free()
 		return "a steady-state absorb recreated a deleted profile — the filter re-reads at 2 Hz"
-	# Restore what the probe deleted: later probes hydrate from this profile.
+	# Restore an OWNED id for later probes: they hydrate from this profile.
 	BestRunStore.merge_tower_opened_ids([TowerInterior.GATE_IDENTITY])
 	# JOIN SEEDS THE MIRROR: a profile id from before this process publishes
 	# with no shell and no absorb — a master who never visits the HQ still
@@ -215,10 +233,10 @@ func _check_no_shell() -> String:
 	recorder.remove_from_group("tower")
 	recorder.queue_free()
 	mp.queue_free()
-	# publish=false (the echo suppression) AND persist=true (the single path
-	# performs no merge of its own — false here would persist nothing at all).
-	if calls != [["collapsed_slab", false, true]]:
-		return "the absorb marked %s — it must mark with publish=false, persist=true" % str(calls)
+	# publish=false (the echo suppression) AND persist=false (the room-only
+	# rule, bead godot-test1-crk): no absorb path may grow the profile.
+	if calls != [["collapsed_slab", false, false]]:
+		return "the absorb marked %s — it must mark with publish=false, persist=false" % str(calls)
 	Sentinel.done("no_shell")
 	return ""
 
@@ -303,7 +321,8 @@ func _check_live_receive() -> String:
 	"""
 	2. THE LIVE VERB, END TO END. Peer B's manager takes A's opening through the
 	shipped `_receive_gate()` — the shell opens, the built interior re-runs
-	`_apply_opened()` so the mass retires HERE, and the profile gains the id.
+	`_apply_opened()` so the mass retires HERE, and the profile does NOT gain
+	the id (room-only, bead godot-test1-crk).
 
 	B already holds one local opening: the union keeps it, because entering a
 	room resets nothing.
@@ -341,10 +360,10 @@ func _check_live_receive() -> String:
 		mp.queue_free()
 		await TowerProbe.clear(self, null, shell)
 		return "B's mass state is open but its mesh never rose — state did not become geometry"
-	if not BestRunStore.tower_opened_ids().has(TowerInterior.GATE_IDENTITY):
+	if BestRunStore.tower_opened_ids().has(TowerInterior.GATE_IDENTITY):
 		mp.queue_free()
 		await TowerProbe.clear(self, null, shell)
-		return "the room's opening was drawn but never persisted — a relaunch re-locks it"
+		return "the room's opening reached B's profile — a teammate's gate is room-only, never saved"
 	# AN ALREADY-OPEN ID RE-APPLIES NOTHING (review round 1): the master's 2 Hz
 	# repair would otherwise reset riddle progress twice a second and republish
 	# the id. Three poses, from coarse to precise: a counting stub proves the
@@ -731,10 +750,14 @@ func _check_publish_filters_poison() -> String:
 		return "no-shell publish ids came back %s — a poisoned row rides g/go" \
 				% str(mp._tower_opened_ids())
 	mp.queue_free()
-	# Streamed shell: hydration holds the same mess, same filter.
+	# Streamed shell: hydration holds the same mess — but `g` is the mirror
+	# (review round 4, minor), so the join seeds it first, exactly the
+	# production path: a manager that never joined publishes nothing.
 	var shell := await TowerProbe.make_tower(self)
 	var mp2: Node = MPManager.new()
 	root.add_child(mp2)
+	mp2.set("lobby_only", true)
+	mp2._on_lobby_joined("us", "ROOM", "themaster", ["themaster", "us"])
 	var got: Array = mp2._tower_opened_ids()
 	mp2.queue_free()
 	await TowerProbe.clear(self, null, shell)
@@ -746,17 +769,14 @@ func _check_publish_filters_poison() -> String:
 
 func _check_batch_persists_once() -> String:
 	"""
-	12. ONE REPAIR, ONE STORE WRITE (review round 4, minor). The batch absorb
-	merges the whole packet in one write; the shell tail marks with
-	`persist = false`, so three fresh ids cost the batch write and nothing
-	per id.
+	12. ONE REPAIR, ZERO STORE WRITES (bead godot-test1-crk, replacing review
+	round 4's one-write rule). The batch absorb folds the packet into the
+	mirror only; the shell tail marks with `persist = false`, so three fresh
+	ids cost nothing on disk however many arrive.
 
-	Write-count reasoning, stated plainly because mtime cannot count: the
-	profile starts DELETED, so any write moves mtime off zero — the batch
-	merge is pinned by content (all three ids land) plus mtime (something
-	wrote). The tails are pinned by ARGUMENTS on a recording shell
-	(`persist = false` on every mark): with the flag threaded, `mark_opened`
-	performs no store op, so the batch write is the only one. A revert of
+	Write-count reasoning, stated plainly: the profile starts DELETED, so any
+	write would create it — and none may. The tails are pinned by ARGUMENTS
+	on a recording shell (`persist = false` on every mark). A revert of
 	either half fails below.
 	"""
 	TowerProbe.fresh_store()
@@ -783,20 +803,17 @@ func _check_batch_persists_once() -> String:
 	if calls != want:
 		mp.queue_free()
 		return "the batch tail marked %s — every mark must carry publish=false, persist=false" % str(calls)
-	# The one write is the batch merge: all three ids persisted...
-	if BestRunStore.tower_opened_ids().size() < 3:
+	# Zero writes: the profile did not exist before the packet (fresh store)
+	# and must not exist after it — the room's set lives in the mirror.
+	if FileAccess.file_exists(BestRunStore.config_path):
 		mp.queue_free()
-		return "the batch merge persisted nothing — silencing the tails must not silence the packet"
+		return "absorbing three fresh ids created a profile — the batch merge persists room state"
+	# ...while the mirror holds all three: silencing the disk must not
+	# silence the packet.
 	for gid: String in ids:
-		if not BestRunStore.tower_opened_ids().has(gid):
+		if not (mp._absorbed_opened as Dictionary).has(gid):
 			mp.queue_free()
-			return "the batch merge lost %s — the one write did not cover the packet" % gid
-	# ...and it wrote exactly once: the profile did not exist before the
-	# packet (fresh store), and one merge is one save. The tails cannot have
-	# added more — every one of their marks carried persist=false above.
-	if FileAccess.get_modified_time(BestRunStore.config_path) <= 0:
-		mp.queue_free()
-		return "absorbing three fresh ids wrote nothing — the batch merge is missing"
+			return "the batch absorb lost %s — the mirror did not cover the packet" % gid
 	mp.queue_free()
 	# The real shell opens all three off the same path (no recorder this time).
 	var shell := await TowerProbe.make_tower(self)
@@ -811,4 +828,541 @@ func _check_batch_persists_once() -> String:
 	if not ok:
 		return "a batch absorb with persist=false left a real shell closed — the flag gates geometry"
 	Sentinel.done("batch_persists_once")
+	return ""
+
+
+func _check_leave_closes_room_gates() -> String:
+	"""
+	13. LEAVE OUTSIDE FALLS THE ROOM'S GATES CLOSED (bead godot-test1-crk).
+	While in the room a teammate's ids open this shell — the mass retires,
+	the lift offers the stop. The shipped `leave()` re-hydrates the shell
+	from the profile alone and re-runs `_apply_opened()`: the teammate's ids
+	close (mass BACK, stop no longer offered) while this peer's own earned
+	opening stays open, lit and persisted. No player node exists in this
+	probe, which reads as outside — the inside case is probe 13b.
+	"""
+	TowerProbe.fresh_store()
+	var shell := await TowerProbe.make_tower(self)
+	var interior := shell.get_node_or_null("TowerInterior")
+	if interior == null:
+		await TowerProbe.clear(self, null, shell)
+		return "the tower has no TowerInterior child — the leave probe has no subject"
+	var mass := _mass_of(interior, TowerInterior.GATE_IDENTITY)
+	if mass == null:
+		await TowerProbe.clear(self, null, shell)
+		return "the tower built no identity mass — the leave probe has no geometry"
+	var rest_y: float = mass.position.y
+	# Own first: earned here, persisted, must survive the leave.
+	shell.mark_opened(TowerInterior.GATE_CHECKPOINT)
+	var mp: Node = MPManager.new()
+	root.add_child(mp)
+	mp.set("lobby_only", true)
+	mp._on_lobby_joined("us", "ROOM", "themaster", ["themaster", "us"])
+	# Teammate's: mass plus a lift stop, through the shipped receive path.
+	mp._receive_gate("peerA", {"t": "gate", "id": TowerInterior.GATE_IDENTITY})
+	mp._receive_gate("peerA", {"t": "gate", "id": TowerGraph.ENTRY_LIFT_MAZE})
+	if float(interior.get("_mass_open")) != 1.0 or mass.position.y <= rest_y:
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the room's opening never retired B's mass — the leave probe measured no setup"
+	var maze_floor: int = TowerInterior.landing_floor(
+		String(TowerGraph.entry(TowerGraph.ENTRY_LIFT_MAZE).get("room", "")))
+	var panel: Control = Control.new()
+	panel.set_script(LiftMenu)
+	root.add_child(panel)
+	await process_frame
+	if not (panel.stop_floors() as Array).has(maze_floor):
+		panel.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the room's entry opened but the lift offers no stop — the leave probe measured no setup"
+	# LEAVE, through the shipped teardown — not around it.
+	mp.leave()
+	if shell.is_opened(TowerInterior.GATE_IDENTITY) \
+			or shell.is_opened(TowerGraph.ENTRY_LIFT_MAZE):
+		panel.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "leave kept a teammate's gate open — the room's set outlived the room"
+	if not shell.is_opened(TowerInterior.GATE_CHECKPOINT):
+		panel.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "leave closed B's own checkpoint — the re-hydrate is a wipe, not a union with the profile"
+	if float(interior.get("_mass_open")) != 0.0 or mass.position.y != rest_y:
+		panel.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "leave dropped the id but the mass never came back — _apply_opened only opens"
+	if (panel.stop_floors() as Array).has(maze_floor):
+		panel.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "leave closed the entry but the lift still offers its stop — the offer reads stale state"
+	var stored: Array = BestRunStore.tower_opened_ids()
+	if stored.has(TowerInterior.GATE_IDENTITY) \
+			or stored.has(TowerGraph.ENTRY_LIFT_MAZE):
+		panel.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "a teammate's id reached the profile %s — the room wrote through" % str(stored)
+	if not stored.has(TowerInterior.GATE_CHECKPOINT):
+		panel.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "B's own opening never persisted — earned state was lost with the room"
+	panel.queue_free()
+	mp.queue_free()
+	await TowerProbe.clear(self, null, shell)
+	Sentinel.done("leave_closes_room_gates")
+	return ""
+
+
+func _check_leave_inside_defers_close() -> String:
+	"""
+	13b. LEAVE INSIDE HOLDS THE GATES OPEN (review round 1, critical): snapping
+	gates shut under a player standing in the HQ seals rooms whose pads sit on
+	the far side of their own doors — a softlock, and `leave()` is also reached
+	involuntarily from `_on_lobby_closed`. So `leave()` with the local player
+	inside the walls only parks the close on the shell: the teammate's ids stay
+	OPEN (and unsaved), and the interior's per-frame tick runs the re-hydrate +
+	close-snap the moment the player is outside. Exiting the walls is driven
+	here by moving the body and calling the shipped `_tick_room_close()`
+	directly — the tick is the transition, not the frame that carries it.
+	"""
+	TowerProbe.fresh_store()
+	var shell := await TowerProbe.make_tower(self)
+	var interior := shell.get_node_or_null("TowerInterior")
+	if interior == null:
+		await TowerProbe.clear(self, null, shell)
+		return "the tower has no TowerInterior child — the deferral probe has no subject"
+	# The local player, standing in the building's middle.
+	var player := Node3D.new()
+	player.add_to_group("player")
+	root.add_child(player)
+	player.global_position = interior.global_position
+	await process_frame
+	var mp: Node = MPManager.new()
+	root.add_child(mp)
+	mp.set("lobby_only", true)
+	mp._on_lobby_joined("us", "ROOM", "themaster", ["themaster", "us"])
+	mp._receive_gate("peerA", {"t": "gate", "id": TowerInterior.GATE_IDENTITY})
+	if not shell.is_opened(TowerInterior.GATE_IDENTITY):
+		player.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the room's opening never reached the shell — the deferral probe measured no setup"
+	# LEAVE WHILE INSIDE, through the shipped teardown.
+	mp.leave()
+	if not shell.is_opened(TowerInterior.GATE_IDENTITY):
+		player.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "leave snapped a teammate's gate shut under a player inside the HQ — sealed rooms softlock"
+	if float(interior.get("_mass_open")) != 1.0:
+		player.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "leave retired the mass with the player inside — the deferral held the set but not the geometry"
+	if BestRunStore.tower_opened_ids().has(TowerInterior.GATE_IDENTITY):
+		player.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the deferred close persisted the room's id — the deferral holds geometry open, never persistence"
+	# OUT THROUGH THE DOOR: the shipped tick fires the close on the first
+	# frame outside.
+	player.global_position = interior.global_position + Vector3(5000.0, 0.0, 0.0)
+	await process_frame
+	interior._tick_room_close()
+	if shell.is_opened(TowerInterior.GATE_IDENTITY):
+		player.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "exiting the walls left the teammate's gate open — the deferred close never fired"
+	if float(interior.get("_mass_open")) != 0.0:
+		player.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "exiting the walls dropped the id but the mass never came back — the deferred snap opens only"
+	if BestRunStore.tower_opened_ids().has(TowerInterior.GATE_IDENTITY):
+		player.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the deferred close wrote the room's id to the profile — it must fall closed unsaved"
+	player.queue_free()
+	mp.queue_free()
+	await TowerProbe.clear(self, null, shell)
+	Sentinel.done("leave_inside_defers_close")
+	return ""
+
+
+func _check_earn_while_room_open() -> String:
+	"""
+	13c. A GATE THE ROOM OPENED CAN STILL BE EARNED (review round 1, minor).
+	The shell keeps `earned` beside `opened`, and the earn sites gate on it:
+	working a pad (or trigger) the room already opened persists the id all
+	the same. Driven two ways — the one-shot enter handlers directly, with a
+	player body, and the polled pad sites by text-scan in the suite's
+	voice_selfcheck idiom (their pad-overlap state is not drivable headless).
+	"""
+	TowerProbe.fresh_store()
+	var shell := await TowerProbe.make_tower(self)
+	var interior := shell.get_node_or_null("TowerInterior")
+	if interior == null:
+		await TowerProbe.clear(self, null, shell)
+		return "the tower has no TowerInterior child — the earn probe has no subject"
+	var mp: Node = MPManager.new()
+	root.add_child(mp)
+	# Teammate opens the checkpoint and the maze stop; neither is earned here.
+	mp._receive_gate("peerA", {"t": "gate", "id": TowerInterior.GATE_CHECKPOINT})
+	mp._receive_gate("peerA", {"t": "gate", "id": TowerGraph.ENTRY_LIFT_MAZE})
+	if not shell.is_opened(TowerInterior.GATE_CHECKPOINT):
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the room's opening never reached the shell — the earn probe measured no setup"
+	if bool(shell.call("is_earned", TowerInterior.GATE_CHECKPOINT)):
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "a room-opened id reads as earned — the two sets are not distinguished"
+	var body := Node3D.new()
+	body.add_to_group("player")
+	root.add_child(body)
+	# Standing on the open checkpoint earns it: the store gains exactly it.
+	interior._on_checkpoint_enter(body)
+	if not BestRunStore.tower_opened_ids().has(TowerInterior.GATE_CHECKPOINT):
+		body.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "working an open checkpoint persisted nothing — the earn site gates on room-open"
+	# ...and the maze stop the same way.
+	interior._on_lift_stop_enter(body)
+	if not BestRunStore.tower_opened_ids().has(TowerGraph.ENTRY_LIFT_MAZE):
+		body.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "working an open lift stop persisted nothing — the earn site gates on room-open"
+	# Earning twice writes once: with the profile deleted, a second visit that
+	# wrote anything would recreate it — mtime cannot count within one second.
+	DirAccess.remove_absolute(BestRunStore.config_path)
+	interior._on_checkpoint_enter(body)
+	if FileAccess.file_exists(BestRunStore.config_path):
+		body.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "re-entering an earned checkpoint recreated a deleted profile — the earn is not exactly-once"
+	# The polled sites cannot be driven headless (pad-overlap state), so they
+	# are pinned by scan: every earn site must read `is_earned`, never bare
+	# open state.
+	var interior_source: String = FileAccess.get_file_as_string("res://scripts/tower_interior.gd")
+	if interior_source.is_empty():
+		body.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "could not read res://scripts/tower_interior.gd to pin the earn gates"
+	for anchor: String in ["_is_earned(GATE_IDENTITY)", "_is_earned(GATE_DEMAND)"]:
+		if not interior_source.contains(anchor):
+			body.queue_free()
+			mp.queue_free()
+			await TowerProbe.clear(self, null, shell)
+			return "no earn site gates on %s — a pad the room opened earns nothing" % anchor
+	# `_is_earned(gid)` occurs at BOTH polled sites (riddle and spine), so a
+	# whole-file `contains` passes when either one reverts (review round 2,
+	# minor). Slice each function's body — from its `func ` line to the next
+	# — and require the anchor in EACH.
+	for tick: String in ["func _tick_riddle_pads", "func _tick_spine_pads"]:
+		var begin: int = interior_source.find(tick)
+		if begin < 0:
+			body.queue_free()
+			mp.queue_free()
+			await TowerProbe.clear(self, null, shell)
+			return "could not find %s to pin its earn gate" % tick
+		var tail: String = interior_source.substr(begin + tick.length())
+		var close: int = tail.find("\nfunc ")
+		var site: String = tail.substr(0, close) if close >= 0 else tail
+		if not site.contains("_is_earned(gid)"):
+			body.queue_free()
+			mp.queue_free()
+			await TowerProbe.clear(self, null, shell)
+			return "%s never reads is_earned — a pad the room opened earns nothing" % tick
+	body.queue_free()
+	mp.queue_free()
+	await TowerProbe.clear(self, null, shell)
+	Sentinel.done("earn_while_room_open")
+	return ""
+
+
+func _check_rescan_refires_triggers() -> String:
+	"""
+	13d. THE TRIGGER RE-SCAN (review round 1, minor). `body_entered` fires on
+	crossing only, so a close-snap that un-lights a checkpoint under a
+	standing player would leave a dark plate no re-entry can light — the
+	enter already fired. `_rescan_triggers()` re-runs the enter handlers for
+	the player standing inside, located by pure geometry (position against
+	the trigger's own AABB — overlap lists read empty headless); the
+	handlers' own earned-gates keep it safe. A body 500 m away must earn
+	nothing; a body on the shut plate earns and lights it.
+	"""
+	TowerProbe.fresh_store()
+	var shell := await TowerProbe.make_tower(self)
+	var interior := shell.get_node_or_null("TowerInterior")
+	if interior == null:
+		await TowerProbe.clear(self, null, shell)
+		return "the tower has no TowerInterior child — the rescan probe has no subject"
+	var trigger := interior.find_child("CheckpointTrigger", true, false) as Area3D
+	if trigger == null:
+		await TowerProbe.clear(self, null, shell)
+		return "the tower built no CheckpointTrigger — the rescan has no subject"
+	# A plain Node3D in group "player": the rescan is pure geometry (position
+	# against the trigger's own AABB), so no physics body, no settle, and no
+	# dependence on overlap lists — which read empty headless.
+	var body := Node3D.new()
+	body.add_to_group("player")
+	root.add_child(body)
+	# Negative control first: far outside the box, the rescan must earn
+	# nothing — otherwise it fires unconditionally and proves no routing.
+	body.global_position = (trigger as Node3D).global_position + Vector3(500.0, 0.0, 0.0)
+	interior._rescan_triggers()
+	if BestRunStore.tower_opened_ids().has(TowerInterior.GATE_CHECKPOINT):
+		body.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the rescan earned a checkpoint for a body 500 m away — it fires unconditionally"
+	# Standing on the shut plate: earns and lights it through the rescan alone.
+	body.global_position = (trigger as Node3D).global_position
+	interior._rescan_triggers()
+	if not BestRunStore.tower_opened_ids().has(TowerInterior.GATE_CHECKPOINT):
+		body.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the rescan earned nothing for a body standing on a shut checkpoint — the plate stays dark"
+	if not shell.is_opened(TowerInterior.GATE_CHECKPOINT):
+		body.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the rescan persisted without opening — state did not become geometry"
+	body.queue_free()
+	await TowerProbe.clear(self, null, shell)
+	Sentinel.done("rescan_refires_triggers")
+	return ""
+
+
+
+func _check_stale_deferral_across_join() -> String:
+	"""
+	13e. A STALE DEFERRAL NEITHER LEAKS NOR SNAPS (review round 3, major):
+	leave room 1 from inside the walls with its gate X1 absorbed, then host
+	room 2 without stepping out. The parked deferral stays armed across the
+	join — disarming it without re-hydrating would leak X1 into room 2 for
+	the session. While still inside, the master's `g` carries room 2's X2
+	and NOT X1. When the deferral fires outside, X1 falls closed, X2 stays
+	open, and the profile holds neither. X1 and X2 are DISTINCT ids:
+	reusing one id blinds the probe to the leak.
+	"""
+	TowerProbe.fresh_store()
+	var shell := await TowerProbe.make_tower(self)
+	var interior := shell.get_node_or_null("TowerInterior")
+	if interior == null:
+		await TowerProbe.clear(self, null, shell)
+		return "the tower has no TowerInterior child — the stale-close probe has no subject"
+	var player := Node3D.new()
+	player.add_to_group("player")
+	root.add_child(player)
+	player.global_position = interior.global_position
+	await process_frame
+	var mp: Node = MPManager.new()
+	root.add_child(mp)
+	mp.add_to_group("mp")
+	mp.set("lobby_only", true)
+	var X1: String = TowerInterior.GATE_CHECKPOINT
+	var X2: String = TowerInterior.GATE_IDENTITY
+	# ROOM ONE opens X1; leave from inside parks its close.
+	mp._on_lobby_joined("us", "ROOM1", "themaster", ["themaster", "us"])
+	mp._receive_gate("peerA", {"t": "gate", "id": X1})
+	if not shell.is_opened(X1):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the room's opening never reached the shell — the stale-close probe measured no setup"
+	mp.leave()
+	if not shell.is_opened(X1):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "leave snapped room 1's gate shut under a player inside — the stale-close probe measured no deferral"
+	# ROOM TWO, joined without leaving the building: the deferral must stay
+	# armed — a join that disarms it leaks X1 into room 2 for the session.
+	mp._on_lobby_joined("us", "ROOM2", "us", ["us"])
+	if not bool(shell.get("_room_close_pending")):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "joining the next room disarmed the old room's deferred close — X1 would leak into room 2 for the session"
+	# Room 2 opens X2 — a teammate's opening, session state, never profile.
+	mp._receive_gate("peerB", {"t": "gate", "id": X2})
+	if not shell.is_opened(X2):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "room 2's opening never reached the shell — the stale-close probe measured no second setup"
+	# Still inside: the master's g carries X2 and NOT X1.
+	var g: Array = mp.call("_tower_opened_ids")
+	if not g.has(X2):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the master's g does not carry room 2's gate — the repair set lost a live opening"
+	if g.has(X1):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the master's g carries room 1's gate — a not-yet-fired deferral leaks the old room onto the wire"
+	# `g` IS the mirror (review round 4, minor): profile ⊆ mirror already
+	# (join seeds it), so the repair set needs no store read and carries
+	# nothing the room did not open.
+	var mirror: Array = mp.call("absorbed_opened_ids")
+	mirror.sort()
+	var wire: Array = g.duplicate()
+	wire.sort()
+	if wire != mirror:
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the master's g is not the live mirror — the repair set reaches past the room's truth"
+	# ...and it stays that way by construction: the g-source must read no
+	# profile (a ConfigFile round-trip on the 2 Hz tick) and no shell set
+	# (a parked deferral's stale ids).
+	var mp_source: String = FileAccess.get_file_as_string("res://scripts/mp_manager.gd")
+	var g_begin: int = mp_source.find("func _tower_opened_ids")
+	if g_begin < 0:
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "could not find _tower_opened_ids to pin its sources"
+	var g_tail: String = mp_source.substr(g_begin)
+	var g_head_end: int = g_tail.find("\n")
+	var g_site: String = g_tail.substr(g_head_end + 1)
+	var g_close: int = g_site.find("\nfunc ")
+	if g_close >= 0:
+		g_site = g_site.substr(0, g_close)
+	if g_site.contains("tower_opened_ids("):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "_tower_opened_ids reads the profile — the store round-trip is back on the repair tick"
+	if g_site.contains("tower.opened_ids("):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "_tower_opened_ids reads the shell's set — a parked deferral would leak the old room"
+	# OUT THROUGH THE DOOR: the parked close fires — X1 falls, X2 stands,
+	# and neither reaches the profile.
+	player.global_position = interior.global_position + Vector3(5000.0, 0.0, 0.0)
+	await process_frame
+	interior.call("_tick_room_close")
+	if shell.is_opened(X1):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the stale deferral left room 1's gate open in room 2 — the re-hydrate must drop ids the live mirror no longer holds"
+	if not shell.is_opened(X2):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the stale deferral snapped room 2's gate shut — the re-hydrate must union the live mirror"
+	if BestRunStore.tower_opened_ids().has(X1) or BestRunStore.tower_opened_ids().has(X2):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the stale close persisted a room-only id — room openings must never reach the profile"
+	player.queue_free()
+	mp.remove_from_group("mp")
+	mp.queue_free()
+	await TowerProbe.clear(self, null, shell)
+	Sentinel.done("stale_deferral_across_join")
+	return ""
+
+
+func _check_absorbed_never_persists() -> String:
+	"""
+	14. OWN VS ABSORBED, ACROSS A LATE STREAM-IN (bead godot-test1-crk). An
+	id absorbed with no shell in range lives in the mirror only; a shell
+	that streams in AFTER the absorb still opens it (the `_enter_tree`
+	mirror pull — review round 1's hole stays shut without the profile);
+	and a local `mark_opened` afterwards lands in the profile while the
+	absorbed id stays out of it.
+	"""
+	TowerProbe.fresh_store()
+	if get_first_node_in_group("tower") != null:
+		return "group 'tower' is not empty — the late stream-in must build the only tower"
+	var mp: Node = MPManager.new()
+	root.add_child(mp)
+	mp.add_to_group("mp")
+	mp._absorb_opened_gate(TowerInterior.GATE_IDENTITY)
+	if FileAccess.file_exists(BestRunStore.config_path):
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		return "a shell-less absorb created a profile — the room persists with no shell to blame"
+	# The shell streams in after the absorb: the mirror pull opens it.
+	var shell := await TowerProbe.make_tower(self)
+	if not shell.is_opened(TowerInterior.GATE_IDENTITY):
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "a shell built after the absorb came up closed — the mirror pull is missing"
+	if FileAccess.file_exists(BestRunStore.config_path):
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "streaming in over a room id created a profile — hydration persists the room"
+	# Own opening now: the profile gains exactly it.
+	shell.mark_opened(TowerInterior.GATE_CHECKPOINT)
+	var stored: Array = BestRunStore.tower_opened_ids()
+	if stored != [TowerInterior.GATE_CHECKPOINT]:
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the profile holds %s — own and absorbed must never mix there" % str(stored)
+	mp.remove_from_group("mp")
+	mp.queue_free()
+	await TowerProbe.clear(self, null, shell)
+	Sentinel.done("absorbed_never_persists")
+	return ""
+
+
+func _check_drain_publishes_own_only() -> String:
+	"""
+	15. THE JOIN DRAIN PUBLISHES WHAT THIS PEER EARNED (bead godot-test1-crk).
+	The once-per-join queue is the profile set: an id absorbed after the
+	join never queues, so the room's set cannot launder itself into a
+	joiner's drain. Same loopback as probe 7 — shipped code either side,
+	only the air is the test's.
+	"""
+	TowerProbe.fresh_store()
+	BestRunStore.merge_tower_opened_ids(["maintenance_crawl"])
+	var joiner: Node = MPManager.new()
+	root.add_child(joiner)
+	joiner.set("lobby_only", true)
+	joiner._on_lobby_joined("us", "ROOM", "themaster", ["themaster", "us"])
+	# A teammate's id, absorbed mid-room: in the mirror, never in the queue.
+	joiner._absorb_opened_gate("collapsed_slab")
+	joiner.set("_join_wait", MPManager.JOIN_SNAPSHOT_WAIT)
+	joiner._tick_join_gate_publish(0.1)
+	if not bool(joiner.get("_join_gate_primed")):
+		joiner.queue_free()
+		return "a settled join never primed its publish — the own-only probe measured no setup"
+	var queue: Array = (joiner.get("_join_gate_queue") as Array).duplicate()
+	joiner.queue_free()
+	if queue != ["maintenance_crawl"]:
+		return "priming queued %s — an absorbed id rides the drain" % str(queue)
+	Sentinel.done("drain_publishes_own_only")
 	return ""
