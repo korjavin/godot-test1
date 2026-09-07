@@ -97,6 +97,12 @@ func _run() -> void:
 	if failure.is_empty():
 		failure = await _check_snapshot_repair()
 	if failure.is_empty():
+		failure = await _check_join_publish()
+	if failure.is_empty():
+		failure = await _check_join_publish_pacing()
+	if failure.is_empty():
+		failure = await _check_opened_ids_sorted()
+	if failure.is_empty():
 		Sentinel.finish(self)
 	else:
 		printerr("SELFCHECK FAILED: " + failure)
@@ -509,4 +515,127 @@ func _check_snapshot_repair() -> String:
 	mp.queue_free()
 	await TowerProbe.clear(self, null, shell)
 	Sentinel.done("snapshot_repair")
+	return ""
+
+
+func _check_join_publish() -> String:
+	"""
+	7. THE JOINER'S OWN SET, ONCE PER JOIN (review round 3). A veteran
+	joiner's persisted gates reach the room through the paced `gate` drain —
+	a joiner holding one id the master has never seen puts it on the master's
+	shell, and the master's next `g` carries it.
+
+	Transport is a loopback: the joiner's sends have no live mesh or relay
+	headless (both legs null-guard to silence), so each id the drain pops is
+	fed to the master's shipped `_receive_gate()` by hand — every line either
+	side of the wire is shipped code, only the air between them is the test's.
+	"""
+	TowerProbe.fresh_store()
+	# The veteran's past: one id no room has ever seen.
+	BestRunStore.merge_tower_opened_ids(["maintenance_crawl"])
+	var joiner: Node = MPManager.new()
+	root.add_child(joiner)
+	joiner.set("lobby_only", true)
+	joiner._on_lobby_joined("us", "ROOM", "themaster", ["themaster", "us"])
+	# Unsettled: no snapshots, no deadline — priming must wait for the join.
+	joiner._tick_join_gate_publish(10.0)
+	if bool(joiner.get("_join_gate_primed")):
+		joiner.queue_free()
+		return "the join publish primed before the join settled — it races the master's snapshot"
+	# The deadline-spent settle, the honest snapshots-never-arrived path.
+	joiner.set("_join_wait", MPManager.JOIN_SNAPSHOT_WAIT)
+	# A sub-pace tick primes but sends nothing: the queue is the whole own
+	# set, exactly once.
+	joiner._tick_join_gate_publish(0.1)
+	if not bool(joiner.get("_join_gate_primed")):
+		joiner.queue_free()
+		return "a settled join never primed its publish — the veteran's set stays one-sided"
+	var queue: Array = (joiner.get("_join_gate_queue") as Array).duplicate()
+	if queue != ["maintenance_crawl"]:
+		joiner.queue_free()
+		return "priming queued %s — the joiner's own set, once, is the whole contribution" % str(queue)
+	# Past the pace the id drains; the loopback hands it to the master.
+	joiner._tick_join_gate_publish(0.2)
+	if not (joiner.get("_join_gate_queue") as Array).is_empty():
+		joiner.queue_free()
+		return "a paced tick drained nothing — the queue never reaches the wire"
+	joiner.queue_free()
+	# The master's room has never seen the id: fresh profile, real tower.
+	TowerProbe.fresh_store()
+	var shell := await TowerProbe.make_tower(self)
+	var master: Node = MPManager.new()
+	root.add_child(master)
+	master._receive_gate("us", {"t": "gate", "id": "maintenance_crawl"})
+	if not shell.is_opened("maintenance_crawl"):
+		master.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the joiner's persisted id never reached the master's shell"
+	# ...and the master's next `g` carries it: the repair payload IS
+	# `_tower_opened_ids()`, so membership there is membership on the wire.
+	if not (master._tower_opened_ids() as Array).has("maintenance_crawl"):
+		master.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the master absorbed the id but its publish side lacks it — the next `g` would not carry the union"
+	master.queue_free()
+	await TowerProbe.clear(self, null, shell)
+	Sentinel.done("join_publish")
+	return ""
+
+
+func _check_join_publish_pacing() -> String:
+	"""
+	8. PACED UNDER 4/s. The drain spaces sends at one per 0.25 s and never
+	puts more than the window max inside a trailing second — a 5th `gate`
+	inside one window is dropped by every receiver and never re-sent.
+
+	No wall clock: twenty 5 s ticks run inside one millisecond, so the pace
+	clock says yes to all of them and only the trailing-second cap may say
+	no. Eight ids go in; exactly four may come out in the burst.
+	"""
+	TowerProbe.fresh_store()
+	var ids: Array = (TowerGraph.opened_ids() as Array).slice(0, 8)
+	if ids.size() != 8:
+		return "the build authors fewer than 8 gate ids — the pacing probe has no burst to shape"
+	BestRunStore.merge_tower_opened_ids(ids)
+	var joiner: Node = MPManager.new()
+	root.add_child(joiner)
+	joiner.set("lobby_only", true)
+	joiner._on_lobby_joined("us", "ROOM", "themaster", ["themaster", "us"])
+	joiner.set("_join_wait", MPManager.JOIN_SNAPSHOT_WAIT)
+	joiner._tick_join_gate_publish(0.1)
+	if (joiner.get("_join_gate_queue") as Array).size() != 8:
+		joiner.queue_free()
+		return "priming queued %d of 8 — the drain does not carry the whole set" \
+				% (joiner.get("_join_gate_queue") as Array).size()
+	for i in range(20):
+		joiner._tick_join_gate_publish(5.0)
+	var left: int = (joiner.get("_join_gate_queue") as Array).size()
+	joiner.queue_free()
+	if left != 4:
+		return "a same-second burst drained %d of 8 — the trailing-second cap is missing" % (8 - left)
+	Sentinel.done("join_publish_pacing")
+	return ""
+
+
+func _check_opened_ids_sorted() -> String:
+	"""
+	9. SORTED WITH NO SHELL (review round 3, minor). `_tower_opened_ids()`
+	promises the whole sorted set; the mirror fills in absorb order — a
+	sorted profile prefix with an arbitrary tail — so the no-shell branch
+	must sort before returning, like `tower_shell.opened_ids()` does.
+	"""
+	TowerProbe.fresh_store()
+	BestRunStore.merge_tower_opened_ids(["maintenance_crawl"])
+	var mp: Node = MPManager.new()
+	root.add_child(mp)
+	mp.set("lobby_only", true)
+	mp._on_lobby_joined("us", "ROOM", "themaster", ["themaster", "us"])
+	# Sorts BEFORE the seeded id but absorbs AFTER it: the mirror holds
+	# insertion order, the getter must not.
+	mp._absorb_opened_gate("collapsed_slab")
+	var got: Array = mp._tower_opened_ids()
+	mp.queue_free()
+	if got != ["collapsed_slab", "maintenance_crawl"]:
+		return "no-shell opened ids came back %s — the sorted-set promise is broken" % str(got)
+	Sentinel.done("opened_ids_sorted")
 	return ""

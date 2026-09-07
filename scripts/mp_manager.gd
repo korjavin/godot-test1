@@ -200,6 +200,16 @@ const VERB_BUDGET_PER_SEC: Dictionary = {
 	"shot": 10,
 }
 
+## Join gate publish pacing (review round 3): one id per JOIN_GATE_PACE_SEC,
+## and never more than JOIN_GATE_WINDOW_MAX sends inside a trailing second.
+## The `gate` verb's receive budget is 4/s per peer, so a 5th send inside one
+## window is dropped by every receiver and — the set being monotone — never
+## re-sent. The pace alone spaces steady sends at 4/s; the window cap is the
+## belt beside its braces, holding a frame-hitch burst to what receivers keep.
+## Twenty honest ids drain in ~5 s.
+const JOIN_GATE_PACE_SEC: float = 0.25
+const JOIN_GATE_WINDOW_MAX: int = 4
+
 ## How often the master publishes the room's captive set, in hertz.
 ##
 ## SLOW ON PURPOSE. It is a repair channel, not motion: the live
@@ -535,6 +545,21 @@ var _pending_landmarks: Dictionary = {}
 ## the next join.
 var _absorbed_opened: Dictionary = {}
 
+## Once-per-join publish of this peer's OWN persisted set (review round 3):
+## the absolute set travels master-to-room only, and the live `gate` verb
+## fires on openings alone — so a veteran joiner's earlier gates would stay
+## walls for everyone until it became master. After `_join_settled()` the
+## joiner feeds its own set through the existing `gate` verb one id at a
+## time (mesh + relay, like a live opening; the master absorbs write-through
+## and its next `g` carries the union). `_join_gate_primed` is the once-per-
+## join latch, `_join_gate_queue` the paced remainder, `_join_gate_accum` the
+## pace clock, `_join_gate_sent_msec` the trailing-second send stamps behind
+## the hard window cap. Room-scoped: `leave()` empties all four.
+var _join_gate_queue: Array = []
+var _join_gate_primed: bool = false
+var _join_gate_accum: float = 0.0
+var _join_gate_sent_msec: Array = []
+
 ## The last captive-set-and-verdict the master RELAYED, as a string to compare
 ## against. The relay leg fires only when this changes - see `_send_room_state()`,
 ## where the reason is the lobby's own stall rule and not tidiness.
@@ -818,6 +843,10 @@ func leave() -> void:
 	_collected_ids = {}
 	_peer_state = {}
 	_absorbed_opened = {}
+	_join_gate_queue = []
+	_join_gate_primed = false
+	_join_gate_accum = 0.0
+	_join_gate_sent_msec = []
 	# The room's captive set dies with the room: back in solo play the player's own
 	# `captive_heroes` is the whole truth again, and `player_controller.leave`'s
 	# caller (Play Again, the Leave button, a dropped socket) has already decided
@@ -1743,6 +1772,55 @@ func publish_gate_opened(id: String) -> void:
 	var packet: Dictionary = {"t": "gate", "id": id}
 	_broadcast_reliable(var_to_bytes(packet))
 	_relay_to_negotiating({"mp": "gate", "id": id})
+
+
+func _tick_join_gate_publish(delta: float) -> void:
+	"""
+	Drain this join's own persisted set through `publish_gate_opened`, one id
+	per JOIN_GATE_PACE_SEC and never more than JOIN_GATE_WINDOW_MAX inside a
+	trailing second (review round 3: the absolute set travels master-to-room
+	only, so without this a veteran joiner's earlier gates stay walls for the
+	room until it becomes master).
+
+	Primed once per join, on the first tick past `_join_settled()`. The queue
+	is `_tower_opened_ids()` — shell truth when streamed in, profile-seeded
+	mirror otherwise — filtered to authored ids, because a stale profile row
+	is nobody's opening and the receivers would drop it for one quarter of
+	the budget each. Ids the room already showed us ride along and are
+	skipped by receivers (mirror-filter), so the drain needs no room-seen
+	bookkeeping: the queue carries each id once and it lands where it is new.
+
+	One drain per call, never while master: our own `g` already carries the
+	union absolutely every half second then, so singles are pure echo. Live
+	openings overtake the queue through the same verb and receivers skip what
+	they hold, so ordering against them needs no bookkeeping.
+	"""
+	if _state != State.IN_ROOM or _master == _you:
+		return
+	if not _join_gate_primed:
+		if not _join_settled():
+			return
+		_join_gate_primed = true
+		_join_gate_accum = 0.0
+		_join_gate_queue = []
+		for gid: Variant in _tower_opened_ids():
+			var id := String(gid)
+			if not id.is_empty() and TowerGraph.opened_ids().has(id):
+				_join_gate_queue.append(id)
+	if _join_gate_queue.is_empty():
+		return
+	_join_gate_accum += delta
+	if _join_gate_accum < JOIN_GATE_PACE_SEC:
+		return
+	var now: int = Time.get_ticks_msec()
+	while not _join_gate_sent_msec.is_empty() \
+			and now - int(_join_gate_sent_msec[0]) >= 1000:
+		_join_gate_sent_msec.pop_front()
+	if _join_gate_sent_msec.size() >= JOIN_GATE_WINDOW_MAX:
+		return
+	_join_gate_accum = 0.0
+	_join_gate_sent_msec.append(now)
+	publish_gate_opened(String(_join_gate_queue.pop_front()))
 
 
 func _receive_gate(_from_id: String, packet: Dictionary) -> void:
@@ -3086,7 +3164,12 @@ func _tower_opened_ids() -> Array:
 	"""
 	var tower := get_tree().get_first_node_in_group("tower")
 	if tower == null or not tower.has_method("opened_ids"):
-		return _absorbed_opened.keys()
+		# SORTED, the docstring's promise (review round 3): the mirror fills
+		# in absorb order — a sorted profile prefix with an arbitrary tail —
+		# while `tower_shell.opened_ids()` sorts for its documented reason.
+		var keys: Array = _absorbed_opened.keys()
+		keys.sort()
+		return keys
 	return tower.opened_ids()
 
 
@@ -3178,9 +3261,11 @@ func _receive_state(from: String, snapshot: Dictionary) -> void:
 	# THE TOWER'S OPENED SET, from the master alone — the kill list's authority
 	# rule with the explored set's add-only ease: a joiner takes the room's
 	# opened ids absolutely, like `cap`, and a stale picture can only ever be a
-	# subset, like `lm`. A stranger's set is not a contribution (the kill list's
-	# reason); an older master's snapshot simply carries no `go`, which decodes
-	# as [] and absorbs to nothing.
+	# subset, like `lm`. A stranger's SNAPSHOT is not a contribution (the kill
+	# list's reason) — the member-to-room channel is the once-per-join paced
+	# `gate` drain in `_tick_join_gate_publish`, not this leg; an older
+	# master's snapshot simply carries no `go`, which decodes as [] and
+	# absorbs to nothing.
 	if from == _master:
 		_absorb_opened_gates(snapshot.get("go", []))
 	# ...and the last thing the AUTO-CLAIM was waiting on, for the reason in
@@ -3415,6 +3500,13 @@ func _process(delta: float) -> void:
 		_room_accum = fmod(_room_accum, room_interval)
 		_send_room_state()
 		_tick_landmark_claims()
+	# The joiner's own persisted set, once per join (review round 3) — every
+	# frame, not at room rate: the pace clock lives in here, and at 2 Hz it
+	# could never space sends at 4/s. ABOVE THE `_rtc` GUARD like the room
+	# state above it: the relay leg reaches peers whose mesh has not come up,
+	# which is exactly the case this publish exists for. A master or a host
+	# pays two comparisons; a settled joiner with an empty queue pays one more.
+	_tick_join_gate_publish(delta)
 
 	if _rtc == null:
 		return
