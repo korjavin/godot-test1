@@ -74,15 +74,26 @@ const FADE_STEPS: int = 4
 ## show. "Mic on" stays immediate; 1.5 s of quiet means hung up, not pausing.
 const MIC_OFF_SILENT_TICKS: int = 3
 
+## Ticks after an id is first seen in the room during which its camera baselines
+## silently instead of printing (bead godot-test1-tgx, review round 1): remote
+## tracks arrive after the voice module starts (and a peer can join mid-room),
+## so a global window off the room start still floods — every already-live
+## camera would read as a fresh "camera on" a moment later. PER PEER, not per
+## room: the first sighting of the id stamps it (see `_member_since`), and a
+## camera inside that id's grace is standing state while one past it is news.
+## The MIC_OFF_SILENT_TICKS shape — a count of 2 Hz ticks, not a clock.
+const CAMERA_GRACE_TICKS: int = 3
+
 ## Msec after the room start during which the captive set is re-baselined
 ## silently instead of diffed (review round 2): `welcome` EMPTIES the set and
 ## the room's real one lands after, over the `room` verb and the join
 ## snapshot's `cap` — diffing the empty moment prints every standing cell as a
-## fresh grab. Mirrors `MpManager.JOIN_SNAPSHOT_WAIT`; the live manager is
-## asked first through `_join_settled()` (which also settles early once the
-## snapshots are in), and this is the fallback a stub — or an old manager —
-## runs on.
-const CAPTIVE_SETTLE_MSEC: int = 1500
+## fresh grab. DERIVED from `MpManager.JOIN_SNAPSHOT_WAIT`, not a second
+## hand-written 1500 (bead godot-test1-tgx): the two windows are one fact, and
+## a copy would let them drift. The live manager is asked first through
+## `_join_settled()` (which also settles early once the snapshots are in), and
+## this is the fallback a stub — or an old manager — runs on.
+const CAPTIVE_SETTLE_MSEC: int = int(MpManager.JOIN_SNAPSHOT_WAIT * 1000.0)
 
 ## Colours, and they all come off `HudTheme` — see the file banner.
 const COLOR_GROUND: Color = Color(HudTheme.INK, HudTheme.PANEL_ALPHA)
@@ -93,6 +104,14 @@ const COLOR_TEXT: Color = HudTheme.BONE
 ## id (see `is_hero_speaking`). `event_log_selfcheck` binds the two spellings
 ## the way `hero_hud_selfcheck` binds the mic numbers.
 const SELF_KEY: String = "me"
+
+## `voice_chat.Mode.PUSH_TO_TALK`, mirrored rather than preloaded (the SELF_KEY
+## precedent — bead godot-test1-tgx): under push-to-talk every key press and
+## release would print a mic on/off pair and churn the six-line ring, while the
+## held key itself is the indicator the log would duplicate. Local tx lines are
+## drawn in activity mode only; the state is still tracked, so leaving PTT
+## diffs honestly. `event_log_selfcheck` binds the two spellings.
+const VOICE_MODE_PTT: int = 1
 
 ## Cached room + voice + player references, re-fetched when they go away.
 var _mp: Node = null
@@ -109,6 +128,15 @@ var _lines: Array = []
 ## Room clock: msec the current room started, on the log's clock. Re-armed on
 ## every join; the mm:ss stamp is born-minus-start.
 var _room_start_msec: int = 0
+## Tick clock: 2 Hz ticks since the node existed. The per-peer camera grace
+## counts ticks off first sightings (see `_member_since`).
+var _tick_count: int = 0
+## First tick each lobby id was seen in the room, stamped in `_seed_room()`
+## for the initial set and in `_diff_members()` for joiners. A camera inside
+## its id's grace baselines silently; past it, it prints. Never stamped for
+## "me" (the self-view is not a lobby id): a self camera appearing mid-room
+## is news, and the seed baselines the opening set silently anyway.
+var _member_since: Dictionary = {}
 ## Whether the baselines below describe the room we are in. False reseeds
 ## everything silently — the join that must not flood the log with four swaps.
 var _baselined: bool = false
@@ -171,6 +199,7 @@ func _process(delta: float) -> void:
 func _tick() -> void:
 	## One 2 Hz snapshot compare: append lines on DIFF, age the ring, repaint
 	## only when the painted snapshot moved.
+	_tick_count += 1
 	if _mp == null or not is_instance_valid(_mp):
 		_mp = get_tree().get_first_node_in_group("mp") if is_inside_tree() else null
 	if _voice == null or not is_instance_valid(_voice):
@@ -221,6 +250,8 @@ func _lose_room() -> void:
 	_members = {}
 	_holders = {}
 	_captives = {}
+	_tick_count = 0
+	_member_since = {}
 	_tx = false
 	_speech_on = {}
 	_speech_quiet = {}
@@ -242,6 +273,8 @@ func _seed_room() -> void:
 	if _mp != null and _mp.has_method("my_id"):
 		_my_id = str(_mp.my_id())
 	_members = _read_members()
+	for id: String in _members:
+		_member_since[id] = _tick_count
 	_holders = _read_holders()
 	_captives = _read_captives()
 	_capt_seeded = _player != null and is_instance_valid(_player)
@@ -316,6 +349,15 @@ func _read_tx() -> bool:
 	return bool(_voice.is_tx())
 
 
+func _local_tx_muted() -> bool:
+	"""Are local mic lines suppressed? True under push-to-talk (see
+	VOICE_MODE_PTT). False with no voice seam, or a module too old to name a
+	mode — the back-compat default is drawn lines, not silence."""
+	if _voice == null or not _voice.has_method("get_mode"):
+		return false
+	return int(_voice.get_mode()) == VOICE_MODE_PTT
+
+
 func _read_speaking() -> Dictionary:
 	"""Member id -> true for peers making noise right now (the module's held
 	levels). A silent peer is indistinguishable from a muted one — see the
@@ -388,6 +430,7 @@ func _diff_members() -> void:
 	var cur := _read_members()
 	for id: String in cur:
 		if not _members.has(id):
+			_member_since[id] = _tick_count
 			_append(tr("%s joined") % cur[id])
 	for id: String in _members:
 		if not cur.has(id):
@@ -443,10 +486,11 @@ func _diff_voice() -> void:
 		return
 	var tx := _read_tx()
 	if tx != _tx:
-		if tx:
-			_append(tr("%s: mic on") % _my_name())
-		else:
-			_append(tr("%s: mic off") % _my_name())
+		if not _local_tx_muted():
+			if tx:
+				_append(tr("%s: mic on") % _my_name())
+			else:
+				_append(tr("%s: mic off") % _my_name())
 		_tx = tx
 	# Speech edges, DEBOUNCED (review round 1 — see MIC_OFF_SILENT_TICKS):
 	# "on" is immediate, "off" needs three silent ticks in a row. A peer who
@@ -476,7 +520,14 @@ func _diff_voice() -> void:
 			_video.erase(id)
 	var video := _read_video()
 	for id: String in video:
-		if not _video.has(id):
+		if _video.has(id):
+			continue
+		# Still inside THIS ID's grace: a standing camera, absorbed by the
+		# `_video = video` below with no line. Past it the camera is news.
+		# Unstamped ids (notably "me", which is no lobby id) read as news —
+		# the seed baselines the opening set silently anyway.
+		var since: int = int(_member_since.get(id, -1000000))
+		if _tick_count - since > CAMERA_GRACE_TICKS:
 			_append(tr("%s: camera on") % _member_name(id))
 	for id: String in _video:
 		if not video.has(id):
