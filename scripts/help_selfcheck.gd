@@ -198,6 +198,35 @@ func _check_table() -> String:
 		if actual != legend:
 			return "%s is now %s, but the help row still says \"%s\"" % [entry[2], actual, legend]
 
+	# --- The HUD voice/camera chords --------------------------------------
+	# Ctrl+letter PAIRS, not bare keycodes (bead godot-test1-k4l): the legend is
+	# "Ctrl+<letter>", so the letter half is compared against the constant's
+	# keycode name exactly like the `raw` rows above, and the "Ctrl+" half pins
+	# the modifier the cross-check registries carry. A chord rebound to another
+	# letter, or a legend that drops its prefix, fails here rather than
+	# drifting — the same strength the letter rows above hold.
+	var chords: Array = [
+		[MultiplayerUI.MUTE_KEY, "Ctrl+M", "mp_ui.MUTE_KEY"],
+		[MultiplayerUI.DEAFEN_KEY, "Ctrl+D", "mp_ui.DEAFEN_KEY"],
+		[MultiplayerUI.CAMERA_KEY, "Ctrl+G", "mp_ui.CAMERA_KEY"],
+	]
+	for entry: Array in chords:
+		var chord_legend: String = entry[1]
+		if not legends.has(chord_legend):
+			return "no help row carries the legend \"%s\" (%s)" % [chord_legend, entry[2]]
+		if not chord_legend.begins_with("Ctrl+"):
+			return "chord legend \"%s\" (%s) lost its Ctrl+ prefix" % [chord_legend, entry[2]]
+		var chord_actual: String = OS.get_keycode_string(int(entry[0]))
+		if chord_actual != chord_legend.trim_prefix("Ctrl+"):
+			return "%s is now %s, but the help row still says \"%s\"" % [entry[2], chord_actual, chord_legend]
+
+	# The HUD button rows name the buttons' live labels (review round 1): the
+	# MP toggle reads "Multiplayer (N)" and the skill opener "Skills (K)", and
+	# a card still advertising "MP" / "Skills" names buttons that do not exist.
+	for legend: String in ["Multiplayer (N)", "Skills (K)"]:
+		if not legends.has(legend):
+			return "no help row carries the legend \"%s\" — the card names a button label that no longer exists" % legend
+
 	# --- The cheat-code sequences (\fo, \fb, \fh) ---------------------------
 	# Sequences have no single keycode, so we assert the card carries a row
 	# for each code in PlayerController.CHEAT_CODES.
