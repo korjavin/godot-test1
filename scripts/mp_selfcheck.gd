@@ -690,7 +690,7 @@ func _check_claim_base_value() -> String:
 
 	var count: int = 3
 	var value: int = Coin.GEM_VALUE
-	mp._resolve_claim(12345, MpCodec.peer_int_id(mp._you), count, value)
+	MpClaims.resolve_claim(mp, 12345, MpCodec.peer_int_id(mp._you), count, value)
 
 	var banked: int = stub.banked
 	var base_seen: int = stub.base_seen
@@ -751,7 +751,7 @@ func _check_confirm_base_is_unforgeable() -> String:
 	# FORGED: a confirm naming us the winner of a pickup we never claimed, with a
 	# `b` a hostile master would love us to believe. The coin is still banked (the
 	# run-scoped `a` was always the master's to say), but the level must not move.
-	mp._receive_confirm(mp._master, {"t": "cnf", "id": 1, "by": me, "a": 64000, "m": 1, "b": 64000})
+	MpClaims.receive_confirm(mp, mp._master, {"t": "cnf", "id": 1, "by": me, "a": 64000, "m": 1, "b": 64000})
 	var forged_calls: int = stub.calls
 	var forged_base: int = stub.base_seen
 
@@ -759,7 +759,7 @@ func _check_confirm_base_is_unforgeable() -> String:
 	# worth. Two gems, and a `b` on the wire that contradicts it — which must be
 	# ignored in favour of what we asked for.
 	mp._pending_claims[7] = {"n": 2, "v": Coin.GEM_VALUE, "age": 0.0, "tries": 1}
-	mp._receive_confirm(mp._master, {"t": "cnf", "id": 7, "by": me, "a": 40, "m": 2, "b": 99999})
+	MpClaims.receive_confirm(mp, mp._master, {"t": "cnf", "id": 7, "by": me, "a": 40, "m": 2, "b": 99999})
 	var honest_calls: int = stub.calls
 	var honest_base: int = stub.base_seen
 

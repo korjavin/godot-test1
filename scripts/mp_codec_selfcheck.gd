@@ -801,14 +801,14 @@ func _check_room_multiplier() -> String:
 		[step * (bonus + 99), 1 + bonus, "past the cap stays at the cap"],
 	]
 	for case in cases:
-		var got: int = MPManager.room_multiplier_from(case[0], step, bonus)
+		var got: int = MpClaims.room_multiplier_from(case[0], step, bonus)
 		if got != case[1]:
 			return "room_multiplier_from(%d) == %d, expected %d — %s" % [
 				case[0], got, case[1], case[2]
 			]
 
 	# A zero step size would be a division by zero on the master's hot path.
-	if MPManager.room_multiplier_from(50, 0, bonus) != 1:
+	if MpClaims.room_multiplier_from(50, 0, bonus) != 1:
 		return "room_multiplier_from did not guard a zero step size"
 	Sentinel.done("room_multiplier")
 	return ""
