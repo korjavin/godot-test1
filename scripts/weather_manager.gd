@@ -682,8 +682,11 @@ func _make_cloud() -> Dictionary:
 	## Position is left at ZERO — _place_cloud_around() sets it.
 	var is_storm: bool = _rng.randf() < STORM_CHANCE
 	# IN A ROOM THE MASTER ROLLS THE STORMS AND NOBODY ELSE DOES. The draw
-	# above is still consumed, so the ambience clock is aligned on every peer —
-	# a non-master simply never produces a storm of its own, so there is no
+	# above is still consumed, so a peer's own cloud sequence does not shift the
+	# moment it joins a room — the ambience clock is `randomize()`d, diverges on
+	# the first storm and is never comparable across peers (revmux round 2 of
+	# bead godot-test1-vej caught the earlier "aligned on every peer" claim). A
+	# non-master simply never produces a storm of its own, so there is no
 	# second sky to reconcile and no state to unwind when it stops being one.
 	if is_storm and _mp_replays_the_weather():
 		is_storm = false
