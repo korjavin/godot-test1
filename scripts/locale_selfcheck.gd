@@ -132,6 +132,11 @@ const WIDTH_BUDGETS: Array = [
 	# toggle is MP_BUTTON_WIDTH_ONLINE 190 px at MP_BUTTON_FONT_SIZE_ONLINE 19,
 	# less the button stylebox's horizontal padding: 166 px usable.
 	["Multiplayer (N)", 19, 166.0, "MP toggle button"],
+	# help_hint.gd — the "? (hotkeys)" chip bottom-right, font 18. The chip
+	# auto-sizes (text plus the strip's 2*GRID padding), so the budget guards
+	# corner-collision growth, not clipping: 85 px measured German plus a
+	# 30 px named reserve for longer translations.
+	["? (hotkeys)", 18, 85.0 + 30.0, "help hint"],
 	# The per-member mute toggle is the one NARROW control in this panel: it sits
 	# at the end of a member row beside a clipping 32-character name, so its
 	# `MUTE_BUTTON_WIDTH` (104) less the default Button stylebox's horizontal

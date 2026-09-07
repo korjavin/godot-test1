@@ -2347,18 +2347,24 @@ func _check_mp_hotkey() -> void:
 	Sentinel.done("mp_hotkey")
 
 
-func _press_key(ui: Control, keycode: Key, echo: bool, ctrl: bool = false) -> void:
+func _press_key(ui: Control, keycode: Key, echo: bool, ctrl: bool = false, physical: Key = KEY_NONE) -> void:
 	"""One raw key press into the panel's `_unhandled_input`, like the engine's.
 
 	`ctrl` carries the modifier for the HUD chords (bead godot-test1-k4l) — a
-	(keycode, ctrl) pair, not a bare keycode. Every older caller passes none,
-	so every older probe still presses the bare key.
+	(keycode, ctrl) pair, not a bare keycode. `physical` models a non-QWERTY
+	layout (bead godot-test1-0h4): keycode D arriving on another physical key.
+	Every older caller passes neither, so every older probe is unchanged.
 	"""
 	var event := InputEventKey.new()
 	event.pressed = true
 	event.echo = echo
 	event.keycode = keycode
 	event.ctrl_pressed = ctrl
+	# A real engine key event carries both: the OS fills physical from the Loy
+	# position, so a bare probe with physical unset (0) matches nothing and
+	# the release-all loop would pass vacuously. Default it to the keycode;
+	# the mismatch probe passes W explicitly.
+	event.physical_keycode = physical if physical != KEY_NONE else keycode
 	ui._unhandled_input(event)
 
 
@@ -2495,15 +2501,14 @@ func _check_chords_free() -> void:
 					continue
 				if int(bare_as_key.keycode) != bare_key and int(bare_as_key.physical_keycode) != bare_key:
 					continue
-				if bare_key == int(MultiplayerUIScript.DEAFEN_KEY):
-					if String(action) != "step_right":
-						_fail("%s is also the bare binding of \"%s\" — only step_right has its release in the chord arm"
-							% [bare_label, action])
-				else:
+				# D is exempt: the arm releases EVERYTHING the event matches
+				# (bead godot-test1-0h4 — a non-QWERTY D label can sit on any
+				# bound physical key), so whatever binds D bare is covered.
+				if bare_key != int(MultiplayerUIScript.DEAFEN_KEY):
 					_fail("%s is also the bare binding of \"%s\" — a chord letter must bind no gameplay action"
 						% [bare_label, action])
-	# The release lives IN the Ctrl+D arm (not somewhere incidental): the text
-	# between the DEAFEN arm and the next arm must name it.
+	# The release-all loop lives IN the Ctrl+D arm (not somewhere incidental):
+	# the text between the DEAFEN arm and the next arm must carry it.
 	var chord_source: String = FileAccess.get_file_as_string("res://scripts/mp_ui.gd")
 	if chord_source.is_empty():
 		_fail("could not read res://scripts/mp_ui.gd for the step_right release check")
@@ -2513,8 +2518,8 @@ func _check_chords_free() -> void:
 		var arm_end: int = chord_source.find("\t\t\tCAMERA_KEY:")
 		if arm_at < 0 or arm_end < 0 or arm_at > arm_end:
 			_fail("could not locate the Ctrl+D chord arm in mp_ui.gd for the release check")
-		elif not chord_source.substr(arm_at, arm_end - arm_at).contains('Input.action_release("step_right")'):
-			_fail("the Ctrl+D chord arm does not release step_right — deafening strafes the hero")
+		elif not chord_source.substr(arm_at, arm_end - arm_at).contains("Input.action_release(a)"):
+			_fail("the Ctrl+D chord arm does not release every matched action — deafening strafes the hero on some layout")
 	# NEGATIVE CONTROL on the scan: a fake owner holding a chord key must be
 	# caught, or a duplicated chord would pass in silence.
 	var dup_key: int = int(MultiplayerUIScript.MUTE_KEY)
@@ -2597,6 +2602,20 @@ func _probe_chord(ui: Control, voice: Node, room: Node, key: Key, which: String,
 		if Input.is_action_pressed("step_right"):
 			_fail("Ctrl+D left step_right pressed — deafening strafes the hero")
 		Input.action_release("step_right")
+	# Non-QWERTY layouts (bead godot-test1-0h4): the D label can sit on another
+	# bound physical key (Workman → move_forward). A synthetic event with
+	# keycode D but physical W must release move_forward too — a literal
+	# step_right release leaves it stuck. Mutation: back to the literal.
+	if which == "deafen":
+		voice.set_deafened(false)
+		ui._update_voice_ui()
+		Input.action_press("move_forward")
+		_press_key(ui, key, false, true, KEY_W)
+		if Input.is_action_pressed("move_forward"):
+			_fail("Ctrl+D with physical W left move_forward pressed — the arm releases a literal, not every match")
+		Input.action_release("move_forward")
+		if not voice.is_deafened():
+			_fail("the synthetic Ctrl+D did not flip deafen — the arm stopped reading keycode")
 	if not _chord_state_on(voice, which):
 		_fail("Ctrl+%s did not flip the %s state — the chord bypasses the button handler"
 			% [OS.get_keycode_string(key), which])

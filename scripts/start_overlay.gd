@@ -588,7 +588,7 @@ func _build_ui() -> void:
 	# size — the film sets its small print in the condensed REGULAR weight, which
 	# is what `HudTheme.theme()`'s `default_font` already is.
 	var hint := Label.new()
-	hint.text = "Multiplayer anytime — the MP button, bottom left (ESC frees the cursor). Up to 4 friends in one world."
+	hint.text = "Multiplayer anytime — the Multiplayer (N) button, bottom left (ESC frees the cursor). Up to 4 friends in one world."
 	hint.add_theme_font_size_override("font_size", HINT_FONT_SIZE)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

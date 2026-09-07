@@ -54,6 +54,12 @@ extends SceneTree
 ##     since bead `godot-test1-y1o.28` — Oswald Bold for a key chip, Oswald
 ##     Regular for a description — because that is what the card draws with now.
 ##
+##  6. **The "? (hotkeys)" hint chip (bead godot-test1-0h4).** The one HUD
+##     affordance for the card: it must exist under Main/HUD anchored
+##     bottom-right, overlap no other corner widget, open the card through the
+##     shipped signal, and hide on a touch session. Driven on the live scene —
+##     anchors, rects and the signal — never read back from constants.
+##
 ## Deliberately NOT covered: the mouse-capture handover (headless has no pointer
 ## lock to take — what IS checked is the half that works without one: opening
 ## with a free cursor must not arm the re-capture, which is the "no double
@@ -472,6 +478,8 @@ func _check_live() -> String:
 		failure = await _check_pause_is_shared()
 	if failure.is_empty():
 		failure = await _check_no_double_capture()
+	if failure.is_empty():
+		failure = await _check_hint()
 	Sentinel.done("live")
 	return failure
 
@@ -618,4 +626,96 @@ func _check_no_double_capture() -> String:
 		return "STUCK PAUSE — the mouse check left the tree paused"
 	print("pause: taken and released cleanly, foreign pause survives, no phantom re-capture")
 	Sentinel.done("no_double_capture")
+	return ""
+
+
+func _check_hint() -> String:
+	"""The "? (hotkeys)" chip (bead godot-test1-0h4): under Main/HUD anchored
+	bottom-right, overlapping no other corner widget, opening the card through
+	the shipped `pressed` signal, hidden on a touch session. Driven on the
+	live scene — anchors, rects and the signal — never read back from a
+	constant, so disconnecting the signal is the mutation that goes red.
+	"""
+	var hint: Button = root.get_node_or_null("Main/HUD/HelpHint") as Button
+	if hint == null:
+		return "no HelpHint under Main/HUD — was it dropped from main.tscn?"
+	if not hint.has_method("_on_hint_pressed"):
+		return "HelpHint has no script — run `godot --headless --path . --import` first"
+	if hint.text != "? (hotkeys)":
+		return "HelpHint reads '%s', expected '? (hotkeys)'" % hint.text
+	if hint.focus_mode != Control.FOCUS_NONE:
+		return "HelpHint takes keyboard focus — it would swallow gameplay Input"
+	if hint.mouse_filter != Control.MOUSE_FILTER_STOP:
+		return "HelpHint is not MOUSE_FILTER_STOP — its clicks fall through"
+	for side: String in ["anchor_left", "anchor_top", "anchor_right", "anchor_bottom"]:
+		if float(hint.get(side)) != 1.0:
+			return "HelpHint is not anchored bottom-right (%s = %s)" % [side, str(hint.get(side))]
+	if not hint.visible:
+		return "HelpHint starts hidden on a desktop session"
+	# The corner: no other VISIBLE corner widget may intersect it. Full-screen
+	# scrims and roots (over half the viewport) are not corner widgets, and a
+	# hidden sibling is not on screen at all.
+	await process_frame
+	await process_frame
+	var rect: Rect2 = hint.get_global_rect()
+	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+		return "HelpHint has an empty rect — it draws nothing to click"
+	var hud: Node = root.get_node_or_null("Main/HUD")
+	# The laid-out extent of the HUD, not the window: headless `root.size` is
+	# a degenerate 64x64, which would let the half-viewport skip below
+	# swallow every real widget and make the overlap walk vacuous. HUD is a
+	# CanvasLayer (no rect of its own), so bound what its visible children
+	# actually lay out.
+	var view: Vector2 = Vector2.ZERO
+	for sib: Node in hud.get_children():
+		var sc := sib as Control
+		if sc == null or not sc.is_visible_in_tree():
+			continue
+		view.x = maxf(view.x, sc.get_global_rect().end.x)
+		view.y = maxf(view.y, sc.get_global_rect().end.y)
+	for child: Node in hud.get_children():
+		if child == hint:
+			continue
+		var c := child as Control
+		if c == null or not c.visible or not c.is_visible_in_tree():
+			continue
+		var r: Rect2 = c.get_global_rect()
+		if r.size.x <= 0.0 or r.size.y <= 0.0:
+			continue
+		if r.get_area() > view.x * view.y * 0.5:
+			continue
+		if rect.intersects(r):
+			return "HelpHint %s overlaps %s %s in the bottom-right corner" % [str(rect), c.name, str(r)]
+	# The click, under the pause the card itself takes: open with ?, close
+	# through the shipped signal — which also proves the chip hears clicks
+	# while the tree is paused (it is PROCESS_MODE_ALWAYS for exactly this).
+	await _press_help_key()
+	if not _overlay._open:
+		return "setup failed: '?' did not open the help overlay for the hint check"
+	hint.pressed.emit()
+	await process_frame
+	if _overlay._open:
+		return "clicking HelpHint did not close the card — the signal never reaches toggle()"
+	if paused:
+		return "STUCK PAUSE — HelpHint closed the card but the tree is still paused"
+	# ...and opens it again from a running tree, then puts it away.
+	hint.pressed.emit()
+	await process_frame
+	if not _overlay._open:
+		return "clicking HelpHint did not open the card"
+	if not paused:
+		return "HelpHint opened the card but the tree is not paused"
+	await _press_help_key()
+	if _overlay._open or paused:
+		return "the hint check left the card open — the suite after this would inherit a pause"
+	# Touch: hidden, then back — driven through the shipped seam because a
+	# headless DisplayServer never reports a touchscreen.
+	hint.update_touch_visibility(true)
+	if hint.visible:
+		return "HelpHint stays visible on a touch session — the cluster owns that corner"
+	hint.update_touch_visibility(false)
+	if not hint.visible:
+		return "HelpHint did not come back after the touch session ended"
+	print("hint: bottom-right, overlaps nothing, click toggles, touch hides")
+	Sentinel.done("hint")
 	return ""

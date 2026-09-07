@@ -892,14 +892,14 @@ func _check_card_names_multiplayer() -> void:
 	for text: String in texts:
 		if text.to_lower().contains("multiplayer"):
 			says_multiplayer = true
-		if text.contains("MP"):
+		if text.contains("Multiplayer (N)"):
 			says_where = true
 	if not says_multiplayer:
 		_fail("nothing on the start card mentions multiplayer — this is the exact " \
 			+ "bug the card was built for: 'opened the URL, game just starts, no " \
 			+ "idea multiplayer exists'")
 	if not says_where:
-		_fail("the start card mentions multiplayer but never names the MP button — " \
+		_fail("the start card mentions multiplayer but never names the Multiplayer (N) button — " \
 			+ "the panel has no keyboard shortcut, so an unnamed corner button is " \
 			+ "what 'no idea multiplayer exists' was about")
 

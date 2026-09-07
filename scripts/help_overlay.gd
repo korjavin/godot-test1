@@ -296,6 +296,9 @@ func _ready() -> void:
 	# overlay could never close it. Same reason `pause_controller.gd` is a node of
 	# its own rather than a branch in the player.
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	# Group registration so the "? (hotkeys)" hint chip (bead godot-test1-0h4)
+	# can reach toggle() without a hard reference — the project convention.
+	add_to_group("help_overlay")
 	# The root spans the screen but never hit-tests; `_body` is the modal.
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	set_anchors_preset(Control.PRESET_FULL_RECT)
