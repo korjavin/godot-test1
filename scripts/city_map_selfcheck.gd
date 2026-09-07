@@ -230,6 +230,26 @@ static func panel_key_owners() -> Array:
 	]
 
 
+static func panel_chord_owners() -> Array:
+	"""
+	EVERY Ctrl-held panel chord in the game, `[keycodes, label]` a row — the
+	ctrl half of the pair registry (bead godot-test1-k4l).
+
+	A chord is a DIFFERENT key from its bare letter: Ctrl+M must not "collide"
+	with the minimap's M, but Ctrl+M twice must. So bare-key subjects ask
+	`panel_key_owners()` and chord subjects ask HERE, and each half is compared
+	only against its own half plus the input map's same-modifier bindings
+	(`voice_selfcheck._check_chords_free` is the chord subject today). A label
+	ending in " (ctrl)" is what tells the two halves apart wherever they are
+	listed together (`tower_lift_selfcheck`'s copy).
+	"""
+	return [
+		[[MultiplayerUI.MUTE_KEY], "mp_ui.MUTE_KEY (ctrl)"],
+		[[MultiplayerUI.DEAFEN_KEY], "mp_ui.DEAFEN_KEY (ctrl)"],
+		[[MultiplayerUI.CAMERA_KEY], "mp_ui.CAMERA_KEY (ctrl)"],
+	]
+
+
 static func _flatten_keycodes(value: Variant) -> Array:
 	"""
 	Every keycode inside `value`, however deeply nested, as plain ints.

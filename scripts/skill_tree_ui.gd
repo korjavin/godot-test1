@@ -38,8 +38,9 @@ extends Control
 ## dial, which is the free space beside the level indicator that `coin_hud.gd`
 ## draws (the hero row + perf own the top-left column, the steer/View toggles the
 ## top-centre, the action cluster the bottom-right, the MP button and ⚙ gear the
-## bottom-left, and the minimap the left edge). It carries a `(N)` suffix while
-## there are unspent points — the same show-it-only-when-it-matters rule the coin
+## bottom-left, and the minimap the left edge). It reads "Skills (K)" — the
+## hotkey in the label, bead godot-test1-k4l — plus a `(N)` suffix while there
+## are unspent points, the same show-it-only-when-it-matters rule the coin
 ## HUD's streak `(xN)` and skill-point ` N SP` suffixes follow.
 ##
 ## ----------------------------------------------------------------------------
@@ -118,13 +119,14 @@ extends Control
 ## The always-visible opener, parked top-right under the ability dial (which ends
 ## at y = 270 in `main.tscn`).
 ##
-## 124 -> 138 WITH THE SKIN, and the 14 px is `HudTheme`'s button padding rather
-## than taste: `HudTheme.button()` puts `CARD_PADDING` (12) on each side against
-## the engine default's ~4, and `locale_selfcheck` budgets "Skills" at 84 px with
-## a further ~30 reserved for the " (N)" suffix. 138 - 24 = 114 = 84 + 30, so the
-## shipped budget stays exactly as true as it was; leaving it at 124 would have
-## made that budget loose by 14 px without a line of the check changing.
-const BUTTON_WIDTH: float = 138.0
+## 138 -> 166 WITH THE HOTKEY SUFFIX (bead godot-test1-k4l), and the width is
+## `HudTheme`'s button padding plus measurement rather than taste:
+## `HudTheme.button()` puts `CARD_PADDING` (12) on each side, and "Können (K)
+## (12)" — the German opener with its key plus a two-digit unspent-points
+## suffix — measures 132 px (locale_selfcheck's ruler, widest of three faces)
+## against 142 usable here. The bare opener ("Können (K)", 95 px) would still
+## fit 138; the suffix is what outgrew it.
+const BUTTON_WIDTH: float = 166.0
 const BUTTON_HEIGHT: float = 34.0
 const BUTTON_TOP: float = 278.0
 const EDGE_MARGIN: float = 16.0
@@ -278,7 +280,8 @@ func _build_ui() -> void:
 	# otherwise re-open this panel on every jump for the rest of the run. Same
 	# rule, same reason, as `mp_ui._make_button()`.
 	_open_button.focus_mode = Control.FOCUS_NONE
-	_open_button.text = "Skills"
+	# The label carries its hotkey (bead godot-test1-k4l): "Skills (K)".
+	_open_button.text = "Skills (K)"
 	_open_button.add_theme_font_size_override("font_size", NODE_FONT_SIZE)
 	_open_button.custom_minimum_size = Vector2(BUTTON_WIDTH, BUTTON_HEIGHT)
 	_open_button.anchor_left = 1.0
@@ -541,9 +544,10 @@ func _apply_pause(open: bool) -> void:
 # RENDERING
 # ============================================================================
 
-## The `(N)` suffix on the opener, shown only while there are points to spend.
-## The suffix is a bare number, so it needs no translation row of its own — the
-## same rule the coin HUD's streak `(xN)` follows.
+## The `(N)` points suffix on the opener, shown only while there are points to
+## spend — beside the `(K)` hotkey the label always carries (bead
+## godot-test1-k4l). The suffix is a bare number, so it needs no translation
+## row of its own — the same rule the coin HUD's streak `(xN)` follows.
 func _refresh_open_button() -> void:
 	if _open_button == null:
 		return
@@ -557,7 +561,7 @@ func _refresh_open_button() -> void:
 	if points == _last_points:
 		return
 	_last_points = points
-	_open_button.text = tr("Skills") + (" (%d)" % points if points > 0 else "")
+	_open_button.text = tr("Skills (K)") + (" (%d)" % points if points > 0 else "")
 	# THE OPENER'S REGION GETS THE AMBER: an unspent point is the one thing on this
 	# corner of the screen the player is meant to act on. BONE when there is
 	# nothing to spend — never pure white, which is the palette's own rule.

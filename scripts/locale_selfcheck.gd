@@ -115,17 +115,23 @@ const WIDTH_BUDGETS: Array = [
 	["Mic: transmitting", 18, 320.0, "MP panel mic state"],
 	["Mic: blocked — listening only", 18, 320.0, "MP panel mic state"],
 	["Mic: muted", 18, 320.0, "MP panel mic state"],
-	["Mute mic", 18, 320.0, "MP panel mic mute"],
-	["Mic muted", 18, 320.0, "MP panel mic mute"],
-	["Deafen", 18, 320.0, "MP panel deafen"],
-	["Deafened", 18, 320.0, "MP panel deafen"],
+	# Every switch carries its chord in its label (bead godot-test1-k4l).
+	["Mute (Ctrl+M)", 18, 320.0, "MP panel mic mute"],
+	["Muted (Ctrl+M)", 18, 320.0, "MP panel mic mute"],
+	["Deafen (Ctrl+D)", 18, 320.0, "MP panel deafen"],
+	["Deafened (Ctrl+D)", 18, 320.0, "MP panel deafen"],
 	# The volume readout is a FORMAT string, measured raw like the minimap's
 	# countdowns above: "%d" stands in for at most three digits, and the label
 	# autowraps in a container that grows, so the budget is the panel's own width.
 	["Voice volume: %d%%", 18, 320.0, "MP panel voice volume"],
-	["Camera off", 18, 320.0, "MP panel camera toggle"],
-	["Camera on", 18, 320.0, "MP panel camera toggle"],
-	["Camera blocked", 18, 320.0, "MP panel camera toggle"],
+	["Camera off (Ctrl+G)", 18, 320.0, "MP panel camera toggle"],
+	["Camera on (Ctrl+G)", 18, 320.0, "MP panel camera toggle"],
+	["Camera blocked (Ctrl+G)", 18, 320.0, "MP panel camera toggle"],
+	# The toggle itself: "Multiplayer (N)" offline, the code plus count plus key
+	# online (a composed string, so unbudgeted — it measures 141 px at 19). The
+	# toggle is MP_BUTTON_WIDTH_ONLINE 190 px at MP_BUTTON_FONT_SIZE_ONLINE 19,
+	# less the button stylebox's horizontal padding: 166 px usable.
+	["Multiplayer (N)", 19, 166.0, "MP toggle button"],
 	# The per-member mute toggle is the one NARROW control in this panel: it sits
 	# at the end of a member row beside a clipping 32-character name, so its
 	# `MUTE_BUTTON_WIDTH` (104) less the default Button stylebox's horizontal
@@ -135,14 +141,15 @@ const WIDTH_BUDGETS: Array = [
 	["Muted", 18, 96.0, "MP panel per-peer mute"],
 
 	# mp_ui.gd HUD voice/camera switches above the MP button (bead godot-test1-xtr.20)
-	# MP_BUTTON_WIDTH_ONLINE 190 px less 2*CARD_PADDING (24) = 166.0 px usable width, font 18.
-	["Mute mic", 18, 166.0, "HUD mic mute"],
-	["Mic muted", 18, 166.0, "HUD mic mute"],
-	["Deafen", 18, 166.0, "HUD deafen"],
-	["Deafened", 18, 166.0, "HUD deafen"],
-	["Camera off", 18, 166.0, "HUD camera toggle"],
-	["Camera on", 18, 166.0, "HUD camera toggle"],
-	["Camera blocked", 18, 166.0, "HUD camera toggle"],
+	# HUD_VOICE_BUTTON_WIDTH 260 px less 2*CARD_PADDING (24) = 236.0 px usable
+	# width, font 18 (bead godot-test1-k4l: the chord suffixes outgrew the 190).
+	["Mute (Ctrl+M)", 18, 236.0, "HUD mic mute"],
+	["Muted (Ctrl+M)", 18, 236.0, "HUD mic mute"],
+	["Deafen (Ctrl+D)", 18, 236.0, "HUD deafen"],
+	["Deafened (Ctrl+D)", 18, 236.0, "HUD deafen"],
+	["Camera off (Ctrl+G)", 18, 236.0, "HUD camera toggle"],
+	["Camera on (Ctrl+G)", 18, 236.0, "HUD camera toggle"],
+	["Camera blocked (Ctrl+G)", 18, 236.0, "HUD camera toggle"],
 
 	# start_overlay.gd — CARD_WIDTH 420 with a 20 px content margin each side.
 	# One button since bead godot-test1-6pa dropped the SOLO / MULTIPLAYER fork.
@@ -158,9 +165,10 @@ const WIDTH_BUDGETS: Array = [
 	# same wrapping-not-clipping rule the help card uses, and it is why 11 long
 	# sentences are absent from this table.
 	#
-	# BUTTON_WIDTH 124, font 18, ~8 px of default-theme Button padding, and the
-	# opener also carries a " (N)" unspent-points suffix (~30 px at this size).
-	["Skills", 18, 84.0, "skill tree opener"],
+	# BUTTON_WIDTH 166, font 18, the theme's 2*CARD_PADDING (24) of Button
+	# padding, and the opener also carries a " (N)" unspent-points suffix past
+	# the "(K)" hotkey (bead godot-test1-k4l): "Können (K) (12)" measures 132.
+	["Skills (K)", 18, 142.0, "skill tree opener"],
 	# COLUMN_WIDTH 292, font 18, ~8 px Button padding, less the "   3/3" rank
 	# counter composed onto every node name (~48 px at this size).
 	["Quick Recovery", 18, 232.0, "skill node name"],

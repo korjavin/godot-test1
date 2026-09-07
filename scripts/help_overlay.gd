@@ -186,6 +186,14 @@ const ROWS: Array = [
 	# godot-test1-xtr.21), and named here for the same reason B is. No touch
 	# variant: a phone has the MP button, bottom left.
 	["N", "Open or close the multiplayer panel.", Mode.DESKTOP],
+	# The HUD voice/camera chords — Ctrl+letter pairs outside the input map,
+	# bead godot-test1-k4l, and named here for the same reason N is: a switch
+	# whose key the card does not name is a switch nobody can find. No touch
+	# variant, exactly like the N row: a phone has the switches themselves,
+	# stacked bottom left above the MP button.
+	["Ctrl+M", "Mute or unmute your microphone in a multiplayer room.", Mode.DESKTOP],
+	["Ctrl+D", "Block all incoming voice in a multiplayer room.", Mode.DESKTOP],
+	["Ctrl+G", "Share your camera in a multiplayer room.", Mode.DESKTOP],
 	["P", "Pause the game.", Mode.DESKTOP],
 	["Esc", "Free the mouse cursor. Press again to grab it back.", Mode.DESKTOP],
 	["?", "Open or close this list.", Mode.DESKTOP],

@@ -144,9 +144,17 @@ const MIC_ACTION: StringName = &"voice_mic"
 ## into a question that only needs "yes, there is a room".
 class RoomStub extends Node:
 	var online: bool = true
+	var code: String = ""
+	var members: Array = []
 
 	func is_online() -> bool:
 		return online
+
+	func get_room_code() -> String:
+		return code
+
+	func get_members() -> Array:
+		return members
 
 
 ## The two questions `_tile_fraction` asks a hero row, and nothing else. A real
@@ -254,6 +262,8 @@ func _initialize() -> void:
 	_check_hud_voice_switches()
 	_check_mp_hotkey()
 	_check_mp_key_free()
+	_check_chords_free()
+	_check_voice_chords()
 
 	if _failures.is_empty():
 		Sentinel.finish(self)
@@ -2019,12 +2029,12 @@ func _check_hud_voice_switches() -> void:
 	if not (hud_mic.visible and hud_deaf.visible and hud_cam.visible):
 		_fail("HUD voice switches should be visible when online and voice is available")
 
-	# Initial labels
-	if hud_mic.text != "Mute mic" or ui._mic_mute_button.text != "Mute mic":
+	# Initial labels — every switch carries its chord (bead godot-test1-k4l).
+	if hud_mic.text != "Mute (Ctrl+M)" or ui._mic_mute_button.text != "Mute (Ctrl+M)":
 		_fail("Initial mic button label mismatch: hud='%s' panel='%s'" % [hud_mic.text, ui._mic_mute_button.text])
-	if hud_deaf.text != "Deafen" or ui._deafen_button.text != "Deafen":
+	if hud_deaf.text != "Deafen (Ctrl+D)" or ui._deafen_button.text != "Deafen (Ctrl+D)":
 		_fail("Initial deafen button label mismatch: hud='%s' panel='%s'" % [hud_deaf.text, ui._deafen_button.text])
-	if hud_cam.text != "Camera off" or ui._camera_button.text != "Camera off":
+	if hud_cam.text != "Camera off (Ctrl+G)" or ui._camera_button.text != "Camera off (Ctrl+G)":
 		_fail("Initial camera button label mismatch: hud='%s' panel='%s'" % [hud_cam.text, ui._camera_button.text])
 
 	# FOCUS_NONE on every HUD switch so clicking never swallows gameplay inputs (jump / ui_accept)
@@ -2039,54 +2049,54 @@ func _check_hud_voice_switches() -> void:
 	hud_mic.pressed.emit()
 	if not voice.is_mic_muted():
 		_fail("Pressing HudMicButton did not call set_mic_muted(true)")
-	if ui._mic_mute_button.text != "Mic muted":
-		_fail("Panel mic button text did not update to 'Mic muted' in same tick (got '%s')" % ui._mic_mute_button.text)
-	if hud_mic.text != "Mic muted":
-		_fail("HudMicButton text did not update to 'Mic muted' in same tick (got '%s')" % hud_mic.text)
+	if ui._mic_mute_button.text != "Muted (Ctrl+M)":
+		_fail("Panel mic button text did not update to 'Muted (Ctrl+M)' in same tick (got '%s')" % ui._mic_mute_button.text)
+	if hud_mic.text != "Muted (Ctrl+M)":
+		_fail("HudMicButton text did not update to 'Muted (Ctrl+M)' in same tick (got '%s')" % hud_mic.text)
 
 	# Flip from panel side and assert HUD text follows
 	voice.set_mic_muted(false)
 	ui._update_voice_ui()
-	if hud_mic.text != "Mute mic" or ui._mic_mute_button.text != "Mute mic":
+	if hud_mic.text != "Mute (Ctrl+M)" or ui._mic_mute_button.text != "Mute (Ctrl+M)":
 		_fail("HUD mic text did not follow panel-side stub flip: hud='%s' panel='%s'" % [hud_mic.text, ui._mic_mute_button.text])
 
 	# --- 2. PRESS HUD DEAFEN BUTTON: flips stub and updates panel text in same tick ---
 	hud_deaf.pressed.emit()
 	if not voice.is_deafened():
 		_fail("Pressing HudDeafenButton did not call set_deafened(true)")
-	if ui._deafen_button.text != "Deafened":
-		_fail("Panel deafen button text did not update to 'Deafened' in same tick (got '%s')" % ui._deafen_button.text)
-	if hud_deaf.text != "Deafened":
-		_fail("HudDeafenButton text did not update to 'Deafened' in same tick (got '%s')" % hud_deaf.text)
+	if ui._deafen_button.text != "Deafened (Ctrl+D)":
+		_fail("Panel deafen button text did not update to 'Deafened (Ctrl+D)' in same tick (got '%s')" % ui._deafen_button.text)
+	if hud_deaf.text != "Deafened (Ctrl+D)":
+		_fail("HudDeafenButton text did not update to 'Deafened (Ctrl+D)' in same tick (got '%s')" % hud_deaf.text)
 
 	# Flip from panel side and assert HUD text follows
 	voice.set_deafened(false)
 	ui._update_voice_ui()
-	if hud_deaf.text != "Deafen" or ui._deafen_button.text != "Deafen":
+	if hud_deaf.text != "Deafen (Ctrl+D)" or ui._deafen_button.text != "Deafen (Ctrl+D)":
 		_fail("HUD deafen text did not follow panel-side stub flip: hud='%s' panel='%s'" % [hud_deaf.text, ui._deafen_button.text])
 
 	# --- 3. PRESS HUD CAMERA BUTTON: flips stub and updates panel text in same tick ---
 	hud_cam.pressed.emit()
 	if not voice.is_camera_on():
 		_fail("Pressing HudCameraButton did not call set_camera_enabled(true)")
-	if ui._camera_button.text != "Camera on":
-		_fail("Panel camera button text did not update to 'Camera on' in same tick (got '%s')" % ui._camera_button.text)
-	if hud_cam.text != "Camera on":
-		_fail("HudCameraButton text did not update to 'Camera on' in same tick (got '%s')" % hud_cam.text)
+	if ui._camera_button.text != "Camera on (Ctrl+G)":
+		_fail("Panel camera button text did not update to 'Camera on (Ctrl+G)' in same tick (got '%s')" % ui._camera_button.text)
+	if hud_cam.text != "Camera on (Ctrl+G)":
+		_fail("HudCameraButton text did not update to 'Camera on (Ctrl+G)' in same tick (got '%s')" % hud_cam.text)
 
 	# Flip from panel side and assert HUD text follows
 	voice.set_camera_enabled(false)
 	ui._update_voice_ui()
-	if hud_cam.text != "Camera off" or ui._camera_button.text != "Camera off":
+	if hud_cam.text != "Camera off (Ctrl+G)" or ui._camera_button.text != "Camera off (Ctrl+G)":
 		_fail("HUD camera text did not follow panel-side stub flip: hud='%s' panel='%s'" % [hud_cam.text, ui._camera_button.text])
 
 	# Camera refused (camera_denied = true)
 	voice.denied = true
 	ui._update_voice_ui()
-	if hud_cam.text != "Camera blocked" or not hud_cam.disabled:
-		_fail("HUD camera button did not show 'Camera blocked' / disabled on permission denial")
-	if ui._camera_button.text != "Camera blocked" or not ui._camera_button.disabled:
-		_fail("Panel camera button did not show 'Camera blocked' / disabled on permission denial")
+	if hud_cam.text != "Camera blocked (Ctrl+G)" or not hud_cam.disabled:
+		_fail("HUD camera button did not show 'Camera blocked (Ctrl+G)' / disabled on permission denial")
+	if ui._camera_button.text != "Camera blocked (Ctrl+G)" or not ui._camera_button.disabled:
+		_fail("Panel camera button did not show 'Camera blocked (Ctrl+G)' / disabled on permission denial")
 	voice.denied = false
 	ui._update_voice_ui()
 
@@ -2170,17 +2180,17 @@ func _check_hud_voice_switches() -> void:
 
 
 func _verify_hud_voice_bindings(source: String) -> String:
-	var mic_bound: bool = source.contains("_hud_mic_button = _make_button(\"Mute mic\", _on_mic_mute_pressed)") \
+	var mic_bound: bool = source.contains("_hud_mic_button = _make_button(\"Mute (Ctrl+M)\", _on_mic_mute_pressed)") \
 		or source.contains("_hud_mic_button.pressed.connect(_on_mic_mute_pressed)")
 	if not mic_bound:
 		return "HudMicButton is not bound to _on_mic_mute_pressed in mp_ui.gd"
 
-	var deafen_bound: bool = source.contains("_hud_deafen_button = _make_button(\"Deafen\", _on_deafen_pressed)") \
+	var deafen_bound: bool = source.contains("_hud_deafen_button = _make_button(\"Deafen (Ctrl+D)\", _on_deafen_pressed)") \
 		or source.contains("_hud_deafen_button.pressed.connect(_on_deafen_pressed)")
 	if not deafen_bound:
 		return "HudDeafenButton is not bound to _on_deafen_pressed in mp_ui.gd"
 
-	var camera_bound: bool = source.contains("_hud_camera_button = _make_button(\"Camera off\", _on_camera_pressed)") \
+	var camera_bound: bool = source.contains("_hud_camera_button = _make_button(\"Camera off (Ctrl+G)\", _on_camera_pressed)") \
 		or source.contains("_hud_camera_button.pressed.connect(_on_camera_pressed)")
 	if not camera_bound:
 		return "HudCameraButton is not bound to _on_camera_pressed in mp_ui.gd"
@@ -2304,12 +2314,18 @@ func _check_mp_hotkey() -> void:
 	Sentinel.done("mp_hotkey")
 
 
-func _press_key(ui: Control, keycode: Key, echo: bool) -> void:
-	"""One raw key press into the panel's `_unhandled_input`, like the engine's."""
+func _press_key(ui: Control, keycode: Key, echo: bool, ctrl: bool = false) -> void:
+	"""One raw key press into the panel's `_unhandled_input`, like the engine's.
+
+	`ctrl` carries the modifier for the HUD chords (bead godot-test1-k4l) — a
+	(keycode, ctrl) pair, not a bare keycode. Every older caller passes none,
+	so every older probe still presses the bare key.
+	"""
 	var event := InputEventKey.new()
 	event.pressed = true
 	event.echo = echo
 	event.keycode = keycode
+	event.ctrl_pressed = ctrl
 	ui._unhandled_input(event)
 
 
@@ -2358,5 +2374,205 @@ func _check_mp_key_free() -> void:
 	if CityMapSelfcheck._owner_claiming(key, [[[[key]], "a fake nested owner"]]).is_empty():
 		_fail("the scan missed a fake owner holding %s — it cannot detect a real collision either" % label)
 	Sentinel.done("mp_key_free")
+
+
+func _check_chords_free() -> void:
+	"""Ctrl+M / Ctrl+D / Ctrl+G collide with nothing — the (keycode, ctrl) PAIR
+	rule (bead godot-test1-k4l).
+
+	A chord is a different key from its bare letter: Ctrl+M must NOT "collide"
+	with the minimap's M, but Ctrl+M twice MUST. So this compares pairs — the
+	registry is `city_map_selfcheck`'s chord half, borrowed like the bare half
+	in `_check_mp_key_free`, and the input-map scan counts only ctrl-held
+	bindings (the mirror of the bare rule: every action this game binds is
+	modifier-free, so a bare binding is a different chord, not a collision).
+	"""
+	var chords: Array = [
+		[MultiplayerUIScript.MUTE_KEY, "mp_ui.MUTE_KEY"],
+		[MultiplayerUIScript.DEAFEN_KEY, "mp_ui.DEAFEN_KEY"],
+		[MultiplayerUIScript.CAMERA_KEY, "mp_ui.CAMERA_KEY"],
+	]
+	var owners: Array = CityMapSelfcheck.panel_chord_owners()
+	for entry: Array in chords:
+		var key: int = int(entry[0])
+		var label: String = String(entry[1])
+		if key == 0:
+			_fail("%s is 0 — it can never be pressed" % label)
+			continue
+		# Against the input map: ctrl-held bindings ONLY, and never the engine's
+		# own `ui_*` actions. A bare V binding is the voice_mic action, not a
+		# collision with a Ctrl+letter chord — and Godot ships built-in ui
+		# actions on ctrl-held letters (`ui_focus_mode` is Ctrl+M,
+		# `ui_text_select_word_under_caret` Ctrl+G) that only fire inside a GUI
+		# control that consumed the event first: a focused LineEdit eats its
+		# keys before `_unhandled_input` (mp_ui's N comment), so the chord
+		# never even sees the press. They are unremovable engine furniture, and
+		# flagging them would forbid every Ctrl+letter chord including the two
+		# the owner explicitly ordered — so the game's own actions (none of
+		# which is `ui_*`-namespaced, see project.godot `[input]`) are what's
+		# compared. `tower_lift_selfcheck`'s bare-press rule, mirrored.
+		for action: StringName in InputMap.get_actions():
+			if String(action).begins_with("ui_"):
+				continue
+			for event: InputEvent in InputMap.action_get_events(action):
+				var as_key := event as InputEventKey
+				if as_key == null:
+					continue
+				if not as_key.ctrl_pressed:
+					continue
+				if int(as_key.keycode) == key or int(as_key.physical_keycode) == key:
+					_fail("%s (%s) is also bound to the ctrl-held input action \"%s\""
+						% [label, OS.get_keycode_string(key), action])
+		# ...and against every other chord, its own row excepted. Bare rows are
+		# deliberately NOT compared: the minimap's bare M coexists with Ctrl+M
+		# by design, and a scan that flagged it would forbid the feature.
+		var others: Array = []
+		for row: Array in owners:
+			if String(row[1]) != label + " (ctrl)":
+				others.append(row)
+		var claimed: String = CityMapSelfcheck._owner_claiming(key, others)
+		if not claimed.is_empty():
+			_fail("%s (%s) is already %s" % [label, OS.get_keycode_string(key), claimed])
+	# NON-VACUITY on the pair rule itself: bare M IS taken (the minimap), while
+	# Ctrl+M is free — so a scan comparing bare keycodes would fail on the
+	# first chord, and only the pair comparison passes. (D is taken by the
+	# input map's movement binding rather than a panel row, and G is free
+	# everywhere, so M is the letter that proves the exemption is load-bearing.)
+	if CityMapSelfcheck._owner_claiming(
+			int(MultiplayerUIScript.MUTE_KEY), CityMapSelfcheck.panel_key_owners()).is_empty():
+		_fail("bare M is suddenly free — the Ctrl+M pair exemption is untested")
+	# NEGATIVE CONTROL on the scan: a fake owner holding a chord key must be
+	# caught, or a duplicated chord would pass in silence.
+	var dup_key: int = int(MultiplayerUIScript.MUTE_KEY)
+	if CityMapSelfcheck._owner_claiming(dup_key, [[[dup_key], "a fake chord owner"]]).is_empty():
+		_fail("the chord scan missed a fake owner holding Ctrl+M — it cannot detect a real chord collision either")
+	Sentinel.done("chords_free")
+
+
+func _check_voice_chords() -> void:
+	"""ONE PROBE PER CHORD on the real mp_ui with stubs (bead godot-test1-k4l).
+
+	Each chord opens the SAME seam as its button (the stub flips and both
+	labels repaint in the same tick), an echo is ignored, the unmodified
+	letter does nothing, and the chord is inert while the switches are down
+	(offline, voice unavailable, modal yield). The MP toggle's labels are
+	asserted as TEXT, exact — dropping the "(N)" fails the check by
+	construction.
+	"""
+	var room := RoomStub.new()
+	room.online = true
+	room.code = "ABC234"
+	room.members = [{"id": "a", "name": "Al"}, {"id": "b", "name": "Bo"}]
+	room.add_to_group("mp")
+	root.add_child(room)
+	var voice := VoiceUiStub.new()
+	voice.available = true
+	voice.add_to_group("voice")
+	root.add_child(voice)
+	var ui: Control = MultiplayerUIScript.new()
+	root.add_child(ui)
+	ui._process(0.0)
+
+	# The labels, exact: offline toggle and both switch states per chord.
+	if ui._mp_button.text != "ABC234  2/4 (N)":
+		_fail("online MP toggle is '%s', expected 'ABC234  2/4 (N)'" % ui._mp_button.text)
+	room.online = false
+	room.code = ""
+	ui._refresh()
+	if ui._mp_button.text != "Multiplayer (N)":
+		_fail("offline MP toggle is '%s', expected 'Multiplayer (N)'" % ui._mp_button.text)
+	room.online = true
+	room.code = "ABC234"
+	ui._refresh()
+	ui._process(0.0)
+
+	_probe_chord(ui, voice, room, MultiplayerUIScript.MUTE_KEY, "mic",
+		"Muted (Ctrl+M)", "Mute (Ctrl+M)")
+	_probe_chord(ui, voice, room, MultiplayerUIScript.DEAFEN_KEY, "deafen",
+		"Deafened (Ctrl+D)", "Deafen (Ctrl+D)")
+	_probe_chord(ui, voice, room, MultiplayerUIScript.CAMERA_KEY, "camera",
+		"Camera on (Ctrl+G)", "Camera off (Ctrl+G)")
+
+	room.free()
+	voice.free()
+	ui.free()
+	Sentinel.done("voice_chords")
+
+
+func _probe_chord(ui: Control, voice: Node, room: Node, key: Key, which: String,
+		on_text: String, off_text: String) -> void:
+	"""One chord through `_unhandled_input`, asserting the button's own seam."""
+	var hud: Button = ui.get_node_or_null("HudMicButton" if which == "mic"
+		else ("HudDeafenButton" if which == "deafen" else "HudCameraButton"))
+	var panel: Button = ui._mic_mute_button if which == "mic" \
+		else (ui._deafen_button if which == "deafen" else ui._camera_button)
+	if hud == null or panel == null:
+		_fail("chord probe found no %s buttons to read" % which)
+		return
+
+	# The press flips the stub through the button's own handler, and both views
+	# repaint in the same tick.
+	_press_key(ui, key, false, true)
+	if not _chord_state_on(voice, which):
+		_fail("Ctrl+%s did not flip the %s state — the chord bypasses the button handler"
+			% [OS.get_keycode_string(key), which])
+	if hud.text != on_text or panel.text != on_text:
+		_fail("Ctrl+%s repaint mismatch: hud='%s' panel='%s', expected '%s'"
+			% [OS.get_keycode_string(key), hud.text, panel.text, on_text])
+	# ...and back again: a chord is a toggle, not a latch.
+	_press_key(ui, key, false, true)
+	if _chord_state_on(voice, which):
+		_fail("a second Ctrl+%s did not flip the %s state back" % [OS.get_keycode_string(key), which])
+	if hud.text != off_text or panel.text != off_text:
+		_fail("Ctrl+%s second-press repaint mismatch: hud='%s' panel='%s', expected '%s'"
+			% [OS.get_keycode_string(key), hud.text, panel.text, off_text])
+
+	# Echo ignored: holding the chord must not rapid-toggle.
+	_press_key(ui, key, true, true)
+	if _chord_state_on(voice, which):
+		_fail("an echo of Ctrl+%s flipped the %s state — holding the chord rapid-toggles"
+			% [OS.get_keycode_string(key), which])
+
+	# The bare letter is a different key: nothing flips, nothing repaints.
+	_press_key(ui, key, false, false)
+	if _chord_state_on(voice, which):
+		_fail("unmodified %s flipped the %s state — the chord is not modifier-gated"
+			% [OS.get_keycode_string(key), which])
+	if hud.text != off_text:
+		_fail("unmodified %s repainted the %s switch" % [OS.get_keycode_string(key), which])
+
+	# Inert while the switches are down: offline, voice unavailable, modal.
+	room.online = false
+	ui._update_voice_ui()
+	_press_key(ui, key, false, true)
+	if _chord_state_on(voice, which):
+		_fail("Ctrl+%s flipped the %s state while offline — the chord ignores its own gate"
+			% [OS.get_keycode_string(key), which])
+	room.online = true
+	voice.available = false
+	ui._update_voice_ui()
+	_press_key(ui, key, false, true)
+	if _chord_state_on(voice, which):
+		_fail("Ctrl+%s flipped the %s state while voice was unavailable"
+			% [OS.get_keycode_string(key), which])
+	voice.available = true
+	ui._update_voice_ui()
+	var modal := ModalStub.new()
+	modal.add_to_group("mobile_settings")
+	root.add_child(modal)
+	_press_key(ui, key, false, true)
+	if _chord_state_on(voice, which):
+		_fail("Ctrl+%s flipped the %s state over the modal yield" % [OS.get_keycode_string(key), which])
+	modal.free()
+	ui._process(0.0)
+
+
+func _chord_state_on(voice: Node, which: String) -> bool:
+	"""The stub's side of one chord, read through the same seams the handlers use."""
+	if which == "mic":
+		return bool(voice.is_mic_muted())
+	if which == "deafen":
+		return bool(voice.is_deafened())
+	return bool(voice.is_camera_on())
 
 

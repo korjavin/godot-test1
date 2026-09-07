@@ -147,6 +147,13 @@ func _check_key_is_free() -> void:
 		[[MobileInput.FORCE_ENABLE_KEYCODE], "mobile_input.FORCE_ENABLE_KEYCODE"],
 		[[TouchControls.FORCE_SHOW_KEYCODE], "touch_controls.FORCE_SHOW_KEYCODE"],
 		[[MobileSettingsPanel.FORCE_SHOW_KEYCODE], "mobile_settings_panel.FORCE_SHOW_KEYCODE"],
+		# The HUD voice/camera chords (bead godot-test1-k4l): Ctrl-held, so no
+		# bare-key subject collides with them — listed so the registry names
+		# every raw key in the game, with " (ctrl)" marking the pair half
+		# (`city_map_selfcheck.panel_chord_owners` is the shared copy).
+		[[MultiplayerUI.MUTE_KEY], "mp_ui.MUTE_KEY (ctrl)"],
+		[[MultiplayerUI.DEAFEN_KEY], "mp_ui.DEAFEN_KEY (ctrl)"],
+		[[MultiplayerUI.CAMERA_KEY], "mp_ui.CAMERA_KEY (ctrl)"],
 	]
 	var claimed: String = _owner_claiming(key, owners)
 	if not claimed.is_empty():

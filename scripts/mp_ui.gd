@@ -39,7 +39,7 @@ extends Control
 ## The MP button IS the room indicator
 ## ----------------------------------------------------------------------------
 ## While in a room the toggle relabels itself to the code and the head count
-## ("ABC234  2/4") instead of "MP". That is the persistent "you are online"
+## ("ABC234  2/4 (N)") instead of "Multiplayer (N)". That is the persistent "you are online"
 ## indicator the plan asks for, at the cost of no extra node and no extra draw:
 ## the one control that is always on screen already, saying the one thing a
 ## player in a room needs to see without opening anything.
@@ -83,21 +83,28 @@ extends Control
 # CONSTANTS — layout
 # ============================================================================
 
-## The always-visible "MP" toggle button. Bottom-LEFT is the corner the plan
+## The always-visible multiplayer toggle button ("Multiplayer (N)" since bead
+## godot-test1-k4l). Bottom-LEFT is the corner the plan
 ## picked because the rest of the HUD is spoken for: the hero portrait row + perf
 ## overlay own the top-left column, coins + the ability dial the top-right, the view /
 ## steer toggles the top-centre, and the Jump/Special/Switch cluster the
 ## bottom-right. `mobile_settings_panel.gd`'s ⚙ Tune gear also lives
 ## bottom-left, so this button is stacked ABOVE it (see `_build_ui`) rather
 ## than on top of it — the gear is touch-only, this one is everywhere.
-const MP_BUTTON_WIDTH: float = 110.0
 const MP_BUTTON_HEIGHT: float = 56.0
 
-## The same button, widened for its in-room label ("ABC234  2/4"). Six code
-## characters plus the head count do not fit the 110 px "MP" width, and a button
-## that clips its own room code is not an indicator.
+## The toggle's width, for BOTH its forms (bead godot-test1-k4l). The offline
+## label is "Multiplayer (N)" now, and it measures 173/180 px at font 24
+## (locale_selfcheck's ruler, widest of three faces) — past even the width the
+## in-room form needed, so the 110 px "MP" width died with the "MP" label and
+## the offline form takes this width instead of a smaller face. A button that
+## clips its own room code is not an indicator, and neither is one that clips
+## its own hotkey.
 const MP_BUTTON_WIDTH_ONLINE: float = 190.0
-const MP_BUTTON_FONT_SIZE: int = 24
+## The toggle's font size, for both forms for the same measurement: "Mehrspieler
+## (N)" is 143 px at 19 against 166 usable (190 less the button stylebox's
+## horizontal padding); at 24 it is 180 and clips. The in-room form
+## ("ABC234  2/4 (N)") measures 141 at this size.
 const MP_BUTTON_FONT_SIZE_ONLINE: int = 19
 
 ## Margin (px) from the screen edge, matching the settings panel's spacing.
@@ -114,6 +121,14 @@ const BUTTON_STACK_GAP: float = 8.0
 ## Height of the HUD voice / camera switches stacked above the MP button
 ## (bead godot-test1-xtr.20).
 const HUD_VOICE_BUTTON_HEIGHT: float = 36.0
+
+## Width of those switches. 260, NOT the MP toggle's 190 (bead godot-test1-k4l):
+## "Camera blocked (Ctrl+G)" is 212 px in English and "Kamera blockiert
+## (Strg+G)" 224 in German at font 18 (locale_selfcheck's ruler, widest of
+## three faces), against 166 usable on a 190 px button — the chord suffixes do
+## not fit the width the bare verbs did. 260 less the button stylebox's
+## horizontal padding is 236, so the longest German keeps 12 px of slack.
+const HUD_VOICE_BUTTON_WIDTH: float = 260.0
 
 ## The open panel's size. Tall enough for the status line, the host/join
 ## controls, the hero row, the code + member list and Leave; scrollable so a
@@ -231,6 +246,29 @@ const VOICE_SELF_KEY: String = "me"
 ## cross-check). Read in `_unhandled_input`, never a named action: a key that
 ## only opens a panel has nothing to rebind against.
 const TOGGLE_KEY: Key = KEY_N
+
+## The HUD voice/camera chords (bead godot-test1-k4l): Ctrl+M mute, Ctrl+D
+## deafen, Ctrl+G camera. Raw keycodes with `event.ctrl_pressed` in
+## `_unhandled_input`, the TOGGLE_KEY idiom — a key that only flips a HUD
+## switch has nothing to rebind against, and no input-map action may carry
+## one (no `.paused` writes, no named actions: the project rule).
+##
+## G is free everywhere (no input-map binding, no panel key); M and D are taken
+## BARE (minimap M, the D movement key) but the cross-check compares (keycode,
+## ctrl) PAIRS, so the chords coexist with them — `minimap_hud.gd` ignores
+## ctrl-held presses for exactly this reason. NOT C for the camera: browser
+## copy / desktop terminal habit.
+##
+## On web, Ctrl+D is the browser's bookmark chord and Ctrl+M may be taken by
+## the OS on macOS — the owner asked for these two explicitly, so they ship and
+## every press below is accepted (`set_input_as_handled`) so the browser does
+## not ALSO act. Whether the export's canvas actually intercepts the chord is
+## decided by its keydown preventDefault, which no headless selfcheck can
+## observe: if playtesting shows the bookmark firing, the fix belongs in the
+## export's JS, not in a silent substitution here.
+const MUTE_KEY: Key = KEY_M
+const DEAFEN_KEY: Key = KEY_D
+const CAMERA_KEY: Key = KEY_G
 
 # ============================================================================
 # STATE
@@ -440,9 +478,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event == null:
 		return
 	# Raw keycode, echo-filtered so holding N does not rapid-toggle —
-	# `city_map_panel`'s guard, for `city_map_panel`'s reason.
+	# `city_map_panel`'s guard, for `city_map_panel`'s reason. Bare N only: a
+	# (keycode, ctrl) pair, not a bare keycode (bead godot-test1-k4l) — Ctrl+N
+	# is the browser's new-window chord, not this panel's key.
 	if event is InputEventKey and event.pressed and not event.echo \
-			and event.keycode == TOGGLE_KEY:
+			and event.keycode == TOGGLE_KEY \
+			and not event.ctrl_pressed and not event.meta_pressed:
 		# Inert while the button itself is unusable: hidden by the modal
 		# yield above, where a press has no opener to match and `_process`
 		# would instantly close what it opened.
@@ -450,6 +491,28 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		get_viewport().set_input_as_handled()
 		_on_mp_button_pressed()
+
+	# The HUD voice/camera chords (bead godot-test1-k4l): Ctrl+M/D/G through
+	# the SAME handlers as the three switches — one state, two views, no
+	# second state var. Echo-filtered like N; accepted so the browser does not
+	# also act (see the MUTE_KEY comment). Inert under the modal yield exactly
+	# like N, and only while the switches are up — offline they do nothing,
+	# because a press with no visible switch to match is a state flip with no
+	# readout.
+	if event is InputEventKey and event.pressed and not event.echo \
+			and event.ctrl_pressed and not event.meta_pressed:
+		if _modal_yield() or not _voice_switches_up():
+			return
+		match event.keycode:
+			MUTE_KEY:
+				get_viewport().set_input_as_handled()
+				_on_mic_mute_pressed()
+			DEAFEN_KEY:
+				get_viewport().set_input_as_handled()
+				_on_deafen_pressed()
+			CAMERA_KEY:
+				get_viewport().set_input_as_handled()
+				_on_camera_pressed()
 
 
 # ============================================================================
@@ -468,12 +531,13 @@ func _build_ui() -> void:
 	# covers the MP toggle too, which is the point: the button IS this panel.
 	theme = HudTheme.theme()
 
-	# --- "MP" toggle, BOTTOM-LEFT above the ⚙ Tune gear -------------------
+	# --- Multiplayer toggle, BOTTOM-LEFT above the ⚙ Tune gear -----------
+	# The label carries its hotkey (bead godot-test1-k4l): "Multiplayer (N)".
 	_mp_button = Button.new()
 	_mp_button.name = "MPButton"
-	_mp_button.text = "MP"
-	_mp_button.add_theme_font_size_override("font_size", MP_BUTTON_FONT_SIZE)
-	_mp_button.custom_minimum_size = Vector2(MP_BUTTON_WIDTH, MP_BUTTON_HEIGHT)
+	_mp_button.text = "Multiplayer (N)"
+	_mp_button.add_theme_font_size_override("font_size", MP_BUTTON_FONT_SIZE_ONLINE)
+	_mp_button.custom_minimum_size = Vector2(MP_BUTTON_WIDTH_ONLINE, MP_BUTTON_HEIGHT)
 	# NEVER let a gameplay HUD button take keyboard focus. Godot's `BaseButton`
 	# defaults to `FOCUS_ALL` and KEEPS the focus after a click, and a focused
 	# button is activated by `ui_accept` — which is SPACE, which is also `jump`.
@@ -489,7 +553,7 @@ func _build_ui() -> void:
 	_mp_button.anchor_top = 1.0
 	_mp_button.anchor_bottom = 1.0
 	_mp_button.offset_left = EDGE_MARGIN
-	_mp_button.offset_right = EDGE_MARGIN + MP_BUTTON_WIDTH
+	_mp_button.offset_right = EDGE_MARGIN + MP_BUTTON_WIDTH_ONLINE
 	# Offsets are measured from the BOTTOM edge (anchor 1), so they are negative.
 	# Sit one gear-height + gap up, leaving the corner itself to the Tune gear.
 	_mp_button.offset_bottom = -EDGE_MARGIN - TUNE_GEAR_HEIGHT - BUTTON_STACK_GAP
@@ -502,43 +566,44 @@ func _build_ui() -> void:
 	# reads and mutates it. Putting these switches inside mp_ui.gd ensures the
 	# button IS this panel — zero duplicate state variables, shared handlers, and
 	# both views paint the same facts in lockstep (bead godot-test1-xtr.20).
-	_hud_mic_button = _make_button("Mute mic", _on_mic_mute_pressed)
+	# Every switch carries its chord in its label (bead godot-test1-k4l).
+	_hud_mic_button = _make_button("Mute (Ctrl+M)", _on_mic_mute_pressed)
 	_hud_mic_button.name = "HudMicButton"
-	_hud_mic_button.custom_minimum_size = Vector2(MP_BUTTON_WIDTH_ONLINE, HUD_VOICE_BUTTON_HEIGHT)
+	_hud_mic_button.custom_minimum_size = Vector2(HUD_VOICE_BUTTON_WIDTH, HUD_VOICE_BUTTON_HEIGHT)
 	_hud_mic_button.anchor_left = 0.0
 	_hud_mic_button.anchor_right = 0.0
 	_hud_mic_button.anchor_top = 1.0
 	_hud_mic_button.anchor_bottom = 1.0
 	_hud_mic_button.offset_left = EDGE_MARGIN
-	_hud_mic_button.offset_right = EDGE_MARGIN + MP_BUTTON_WIDTH_ONLINE
+	_hud_mic_button.offset_right = EDGE_MARGIN + HUD_VOICE_BUTTON_WIDTH
 	_hud_mic_button.offset_bottom = _mp_button.offset_top - BUTTON_STACK_GAP
 	_hud_mic_button.offset_top = _hud_mic_button.offset_bottom - HUD_VOICE_BUTTON_HEIGHT
 	_hud_mic_button.visible = false
 	add_child(_hud_mic_button)
 
-	_hud_deafen_button = _make_button("Deafen", _on_deafen_pressed)
+	_hud_deafen_button = _make_button("Deafen (Ctrl+D)", _on_deafen_pressed)
 	_hud_deafen_button.name = "HudDeafenButton"
-	_hud_deafen_button.custom_minimum_size = Vector2(MP_BUTTON_WIDTH_ONLINE, HUD_VOICE_BUTTON_HEIGHT)
+	_hud_deafen_button.custom_minimum_size = Vector2(HUD_VOICE_BUTTON_WIDTH, HUD_VOICE_BUTTON_HEIGHT)
 	_hud_deafen_button.anchor_left = 0.0
 	_hud_deafen_button.anchor_right = 0.0
 	_hud_deafen_button.anchor_top = 1.0
 	_hud_deafen_button.anchor_bottom = 1.0
 	_hud_deafen_button.offset_left = EDGE_MARGIN
-	_hud_deafen_button.offset_right = EDGE_MARGIN + MP_BUTTON_WIDTH_ONLINE
+	_hud_deafen_button.offset_right = EDGE_MARGIN + HUD_VOICE_BUTTON_WIDTH
 	_hud_deafen_button.offset_bottom = _hud_mic_button.offset_top - BUTTON_STACK_GAP
 	_hud_deafen_button.offset_top = _hud_deafen_button.offset_bottom - HUD_VOICE_BUTTON_HEIGHT
 	_hud_deafen_button.visible = false
 	add_child(_hud_deafen_button)
 
-	_hud_camera_button = _make_button("Camera off", _on_camera_pressed)
+	_hud_camera_button = _make_button("Camera off (Ctrl+G)", _on_camera_pressed)
 	_hud_camera_button.name = "HudCameraButton"
-	_hud_camera_button.custom_minimum_size = Vector2(MP_BUTTON_WIDTH_ONLINE, HUD_VOICE_BUTTON_HEIGHT)
+	_hud_camera_button.custom_minimum_size = Vector2(HUD_VOICE_BUTTON_WIDTH, HUD_VOICE_BUTTON_HEIGHT)
 	_hud_camera_button.anchor_left = 0.0
 	_hud_camera_button.anchor_right = 0.0
 	_hud_camera_button.anchor_top = 1.0
 	_hud_camera_button.anchor_bottom = 1.0
 	_hud_camera_button.offset_left = EDGE_MARGIN
-	_hud_camera_button.offset_right = EDGE_MARGIN + MP_BUTTON_WIDTH_ONLINE
+	_hud_camera_button.offset_right = EDGE_MARGIN + HUD_VOICE_BUTTON_WIDTH
 	_hud_camera_button.offset_bottom = _hud_deafen_button.offset_top - BUTTON_STACK_GAP
 	_hud_camera_button.offset_top = _hud_camera_button.offset_bottom - HUD_VOICE_BUTTON_HEIGHT
 	_hud_camera_button.visible = false
@@ -783,10 +848,10 @@ func _build_ui() -> void:
 	_voice_mode_button = _make_button("Voice: always on", _on_voice_mode_pressed)
 	_voice_section.add_child(_voice_mode_button)
 
-	_mic_mute_button = _make_button("Mute mic", _on_mic_mute_pressed)
+	_mic_mute_button = _make_button("Mute (Ctrl+M)", _on_mic_mute_pressed)
 	_voice_section.add_child(_mic_mute_button)
 
-	_deafen_button = _make_button("Deafen", _on_deafen_pressed)
+	_deafen_button = _make_button("Deafen (Ctrl+D)", _on_deafen_pressed)
 	_voice_section.add_child(_deafen_button)
 
 	# INCOMING VOLUME (bead godot-test1-xtr.9) — the dial beside the switch. A
@@ -834,7 +899,7 @@ func _build_ui() -> void:
 	# OPT-IN AND OFF BY DEFAULT (owner ruling 2026-09-04, bead godot-test1-xtr.6):
 	# the camera permission prompt is asked on the FIRST PRESS of this button and
 	# nowhere else, so a player who never presses it is never asked.
-	_camera_button = _make_button("Camera off", _on_camera_pressed)
+	_camera_button = _make_button("Camera off (Ctrl+G)", _on_camera_pressed)
 	_voice_section.add_child(_camera_button)
 
 	_mic_state_label = Label.new()
@@ -1483,19 +1548,22 @@ func _refresh() -> void:
 		button.disabled = online
 
 	# THE PERSISTENT ROOM INDICATOR. The always-on toggle becomes the read-out:
-	# code plus head count while in a room, plain "MP" while solo. See the header.
+	# code plus head count plus the hotkey while in a room, "Multiplayer (N)"
+	# while solo (bead godot-test1-k4l). See the header. The online form keeps
+	# the code and the count on ONE line: it measures 141 px at font 19 against
+	# 166 usable, so no second line is needed.
 	if _mp_button != null:
 		if online and not code.is_empty():
 			var count: int = 0
 			if manager.has_method("get_members"):
 				count = manager.get_members().size()
-			_mp_button.text = "%s  %d/%d" % [code, count, MAX_MEMBERS]
+			_mp_button.text = "%s  %d/%d (N)" % [code, count, MAX_MEMBERS]
 			_mp_button.add_theme_font_size_override("font_size", MP_BUTTON_FONT_SIZE_ONLINE)
 			_mp_button.offset_right = EDGE_MARGIN + MP_BUTTON_WIDTH_ONLINE
 		else:
-			_mp_button.text = "MP"
-			_mp_button.add_theme_font_size_override("font_size", MP_BUTTON_FONT_SIZE)
-			_mp_button.offset_right = EDGE_MARGIN + MP_BUTTON_WIDTH
+			_mp_button.text = "Multiplayer (N)"
+			_mp_button.add_theme_font_size_override("font_size", MP_BUTTON_FONT_SIZE_ONLINE)
+			_mp_button.offset_right = EDGE_MARGIN + MP_BUTTON_WIDTH_ONLINE
 
 	if _hero_row != null:
 		_hero_row.visible = online and not _hero_buttons.is_empty()
@@ -1518,6 +1586,13 @@ func _refresh() -> void:
 func _is_online() -> bool:
 	var manager := _ensure_manager()
 	return manager != null and manager.has_method("is_online") and bool(manager.is_online())
+
+
+## True while the voice switches are up: online with voice available. The chord
+## gate (bead godot-test1-k4l) — `_voice_section.visible` IS that fact, painted
+## by `_update_voice_ui()`, so the chords and the buttons read the same flag.
+func _voice_switches_up() -> bool:
+	return _voice_section != null and _voice_section.visible
 
 
 ## The current room code, or "" when there is no room (or no manager).
@@ -1800,9 +1875,12 @@ func _update_voice_ui() -> void:
 		else:
 			_voice_mode_button.text = "Voice: always on"
 
+	# Both views carry the chord in the label (bead godot-test1-k4l) — the state
+	# word stays, so the button is still the readout, and the suffix names the
+	# key that flips it.
 	if _mic_mute_button != null or _hud_mic_button != null:
 		var muted: bool = voice.has_method("is_mic_muted") and bool(voice.is_mic_muted())
-		var mic_text := "Mic muted" if muted else "Mute mic"
+		var mic_text := "Muted (Ctrl+M)" if muted else "Mute (Ctrl+M)"
 		if _mic_mute_button != null:
 			_mic_mute_button.text = mic_text
 		if _hud_mic_button != null:
@@ -1810,7 +1888,7 @@ func _update_voice_ui() -> void:
 
 	if _deafen_button != null or _hud_deafen_button != null:
 		var deaf: bool = voice.has_method("is_deafened") and bool(voice.is_deafened())
-		var deaf_text := "Deafened" if deaf else "Deafen"
+		var deaf_text := "Deafened (Ctrl+D)" if deaf else "Deafen (Ctrl+D)"
 		if _deafen_button != null:
 			_deafen_button.text = deaf_text
 		if _hud_deafen_button != null:
@@ -1837,11 +1915,11 @@ func _update_voice_ui() -> void:
 			var cam_text: String
 			var cam_disabled: bool
 			if denied:
-				cam_text = "Camera blocked"
+				cam_text = "Camera blocked (Ctrl+G)"
 				cam_disabled = true
 			else:
 				var on: bool = voice.has_method("is_camera_on") and bool(voice.is_camera_on())
-				cam_text = "Camera on" if on else "Camera off"
+				cam_text = "Camera on (Ctrl+G)" if on else "Camera off (Ctrl+G)"
 				cam_disabled = false
 			if _camera_button != null:
 				_camera_button.disabled = cam_disabled
