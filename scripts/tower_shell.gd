@@ -872,22 +872,55 @@ func _enter_tree() -> void:
 		opened[id] = true
 
 
-func mark_opened(id: String) -> void:
+func mark_opened(id: String, publish: bool = true, persist: bool = true) -> void:
 	"""
 	Record a gate as open. Idempotent, and the only writer of `opened`.
 
 	@param id: One of `TowerGraph`'s `GATE_*` constants.
+	@param publish: Tell the room over the `gate` verb. True for a LOCAL
+	opening (pads, checkpoint, rescue, scars); the room absorb passes false —
+	its id arrived on the room's repair set, which already carries it to
+	everyone, so re-broadcasting is pure echo (review round 2).
+	@param persist: Write the id through to the profile. False from the room
+	absorb tail ONLY (review round 4): the batch absorb already merged the
+	whole packet in one store write, so per-id writes there turned one repair
+	into 1 + K round-trips. Every other caller persists — a local opening is
+	rare and precious, with nothing to batch and everything to lose by
+	deferring it to a flush a crash can eat.
 
-	WRITES THROUGH IMMEDIATELY, on the opening only. A gate opening is rare and
-	precious — a handful of times in a whole campaign — so there is nothing to
-	batch and everything to lose by deferring it to a flush a crash can eat. The
+	WRITES THROUGH IMMEDIATELY, on the opening only (when `persist`). The
 	early return is what keeps it off any repeated path: re-marking an open gate,
 	including every id this shell just hydrated, touches no disk at all.
 	"""
 	if opened.has(id):
 		return
 	opened[id] = true
-	BestRunStore.merge_tower_opened_ids([id])
+	if persist:
+		BestRunStore.merge_tower_opened_ids([id])
+	# MULTIPLAYER (bead godot-test1-d81): the room replays this opening. One
+	# reliable `gate` verb on the OPENING ONLY — the early return above is what
+	# keeps re-marking (and hydration, which writes `opened` directly and never
+	# comes through here) off the wire. Group-based with `has_method`
+	# guards, the flee/pad precedent for a tower-to-mesh call: solo, or with no
+	# manager in the scene, this is one failed lookup per opening and nothing
+	# else. ANY member may publish (no master authority — the set is monotone,
+	# so a union has no conflict), over the mesh AND the lobby relay (the `cap`
+	# precedent: a peer whose ICE is unfinished must still learn it).
+	#
+	# TWO DOCUMENTED CEILINGS. (1) A member on an older build publishes no gate
+	# and honours none; the rest of the room still converges through the
+	# master's `g` repair when the master is new. (2) Every member's profile
+	# gains the room's opened ids — teammates share campaign progression (the
+	# shared-bank precedent). The absorb tail passes `persist = false` because
+	# the batch already merged; the default stays write-through for every
+	# local opening.
+	# Suppressed on absorb (review round 2): the room's repair set already
+	# carries the id to everyone, so re-broadcasting it is pure echo past the
+	# shared budget. Local openings — pads, checkpoint, rescue, scars — publish.
+	if publish and not id.is_empty() and id.length() <= MpCodec.MAX_GATE_ID:
+		var mp := get_tree().get_first_node_in_group("mp")
+		if mp and mp.has_method("publish_gate_opened"):
+			mp.publish_gate_opened(id)
 
 
 func is_opened(id: String) -> bool:
