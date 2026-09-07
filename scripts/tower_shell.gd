@@ -872,11 +872,15 @@ func _enter_tree() -> void:
 		opened[id] = true
 
 
-func mark_opened(id: String) -> void:
+func mark_opened(id: String, publish: bool = true) -> void:
 	"""
 	Record a gate as open. Idempotent, and the only writer of `opened`.
 
 	@param id: One of `TowerGraph`'s `GATE_*` constants.
+	@param publish: Tell the room over the `gate` verb. True for a LOCAL
+	opening (pads, checkpoint, rescue, scars); the room absorb passes false —
+	its id arrived on the room's repair set, which already carries it to
+	everyone, so re-broadcasting is pure echo (review round 2).
 
 	WRITES THROUGH IMMEDIATELY, on the opening only. A gate opening is rare and
 	precious — a handful of times in a whole campaign — so there is nothing to
@@ -905,7 +909,10 @@ func mark_opened(id: String) -> void:
 	# shared-bank precedent). Room-only opening that does not persist would be a
 	# flag on this call skipping the store write above; the default is
 	# write-through, and the owner call is still open.
-	if not id.is_empty() and id.length() <= MpCodec.MAX_GATE_ID:
+	# Suppressed on absorb (review round 2): the room's repair set already
+	# carries the id to everyone, so re-broadcasting it is pure echo past the
+	# shared budget. Local openings — pads, checkpoint, rescue, scars — publish.
+	if publish and not id.is_empty() and id.length() <= MpCodec.MAX_GATE_ID:
 		var mp := get_tree().get_first_node_in_group("mp")
 		if mp and mp.has_method("publish_gate_opened"):
 			mp.publish_gate_opened(id)

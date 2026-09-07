@@ -525,6 +525,16 @@ var _explored_mask: int = 0
 ## in-flight table — a different verb (`clm`) about a different kind of claim.
 var _pending_landmarks: Dictionary = {}
 
+## Tower-gate ids this process already knows without asking the shell or the
+## profile (bead godot-test1-d81, review round 2): seeded from the profile on
+## join, added on every absorb and every local publish. The no-shell absorb
+## consults it first, so the steady state — the master's 2 Hz `room` packet
+## carrying ids we already hold — costs no store read, no store write and no
+## shell call; without it every id was a ConfigFile round-trip twice a second
+## for the rest of the run. Room-scoped: `leave()` empties it, seeded again on
+## the next join.
+var _absorbed_opened: Dictionary = {}
+
 ## The last captive-set-and-verdict the master RELAYED, as a string to compare
 ## against. The relay leg fires only when this changes - see `_send_room_state()`,
 ## where the reason is the lobby's own stall rule and not tidiness.
@@ -807,6 +817,7 @@ func leave() -> void:
 	_pool = []
 	_collected_ids = {}
 	_peer_state = {}
+	_absorbed_opened = {}
 	# The room's captive set dies with the room: back in solo play the player's own
 	# `captive_heroes` is the whole truth again, and `player_controller.leave`'s
 	# caller (Play Again, the Leave button, a dropped socket) has already decided
@@ -995,6 +1006,13 @@ func _on_lobby_joined(you: String, room: String, master: String, members: Array)
 	# and a joiner would carry the previous room's names past the master's snapshot.
 	# Cleared to the room's truth, which the master's snapshot then fills in.
 	_reset_player_captives()
+	# THE TOWER'S OPENED SET IS SEEDED, not cleared (review round 2): unlike
+	# the captive mirror it is persisted, earned progression, and the union is
+	# what the ruling asks for. One profile read per join seeds the absorb
+	# mirror, so the no-shell path never re-reads it at 2 Hz.
+	_absorbed_opened = {}
+	for gid: String in BestRunStore.tower_opened_ids():
+		_absorbed_opened[gid] = true
 	status.emit("In room %s (%d/4)" % [room, members.size()])
 	room_changed.emit(room, members)
 
@@ -1715,6 +1733,11 @@ func publish_gate_opened(id: String) -> void:
 	zero sends). No retry queue: the `room` packet's `g` and the snapshot's `go`
 	repair a drop, which a monotone set lets them do absolutely.
 	"""
+	# Recorded even offline: a local opening is opened-here whether or not a
+	# room exists to hear it, and the mirror is what the no-shell publish path
+	# reads — an offline opening followed by a join must publish (review
+	# round 2).
+	_absorbed_opened[id] = true
 	if _state != State.IN_ROOM:
 		return
 	var packet: Dictionary = {"t": "gate", "id": id}
@@ -1740,19 +1763,17 @@ func _receive_gate(_from_id: String, packet: Dictionary) -> void:
 
 func _absorb_opened_gate(id: String) -> void:
 	"""
-	Fold one room-opened gate id into this peer's tower. The ONE gate the live
-	verb, the `room` repair set and the join snapshot all go through, so the
-	three cannot drift.
+	Fold one room-opened gate id into this peer's tower: the live `gate` verb's
+	path, rare by construction (one opening each).
 
-	Idempotent (the shell's early return), writes through to the profile like a
-	local opening (the bead's default — room-only opening is an owner call),
-	and re-runs the interior's `_apply_opened()` when this peer has one built,
-	so the mass retires HERE rather than on the next rebuild. A shell with no
-	interior streamed in just holds the id; the build-time `_apply_opened()`
-	covers the rest. Entering a room resets nothing: the union only ever adds.
+	Skips ids the mirror already holds (see `_absorbed_opened`): the live verb
+	does not repeat, so this is purely the belt beside the batch path's braces.
 	"""
 	if not TowerGraph.opened_ids().has(id):
 		return  # Not an id this build authored — the `cap` / `_pool` split.
+	if _absorbed_opened.has(id):
+		return
+	_absorbed_opened[id] = true
 	var tower := get_tree().get_first_node_in_group("tower")
 	if tower == null or not tower.has_method("mark_opened"):
 		# No shell streamed in — every peer at run start, until the HQ loads.
@@ -1760,27 +1781,69 @@ func _absorb_opened_gate(id: String) -> void:
 		# hydrates from on `_enter_tree`, never dropped (review round 1).
 		BestRunStore.merge_tower_opened_ids([id])
 		return
-	# Already open here: return before the mark, because the mark republishes
-	# the id and the interior below re-applies it. The republish turns a repair
-	# burst of K ids into K echoes back on the wire inside one second — past
-	# the shared 4/s budget, so a real opening inside that window is dropped by
-	# every receiver and never re-sent (review round 1, minor). The re-apply
-	# resets riddle progress twice a second off the master's 2 Hz `room`
-	# packet, which made every riddle lock unsolvable for non-masters (review
-	# round 1, major). The room re-sends the whole set on every packet anyway,
-	# so skipping a known id loses nothing.
-	if tower.is_opened(id):
-		return
-	tower.mark_opened(id)
-	var interior := get_tree().get_first_node_in_group("tower_interior")
-	if interior != null and interior.has_method("_apply_opened"):
-		interior._apply_opened()
+	_absorb_opened_at_shell(id)
 
 
 func _absorb_opened_gates(ids: Array) -> void:
-	"""Fold a room-published opened set (`g`, `go`) through `_absorb_opened_gate`."""
+	"""
+	Fold a room-published opened set (`g`, `go`) — the 2 Hz path, so this is
+	where the disk storm lived (review round 2): the old loop called the
+	single-id absorb per id, and every id cost a store round-trip twice a
+	second for the rest of the run.
+
+	Now a batch: mirror-filter first, so the steady state (nothing new costs
+	nothing — no store read, no store write, no shell call. Otherwise ONE
+	store read and at most ONE store write for the whole packet, then the
+	shell tail per genuinely-new id.
+	"""
+	var fresh: Array[String] = []
 	for entry: Variant in ids:
-		_absorb_opened_gate(String(entry))
+		var gid := String(entry)
+		if gid.is_empty() or _absorbed_opened.has(gid) or fresh.has(gid):
+			continue
+		if TowerGraph.opened_ids().has(gid):
+			fresh.append(gid)
+	if fresh.is_empty():
+		return
+	var stored: Array = BestRunStore.tower_opened_ids()
+	var missing: Array[String] = []
+	for gid: String in fresh:
+		_absorbed_opened[gid] = true
+		if not stored.has(gid):
+			missing.append(gid)
+	if not missing.is_empty():
+		BestRunStore.merge_tower_opened_ids(missing)
+	for gid: String in fresh:
+		_absorb_opened_at_shell(gid)
+
+
+func _absorb_opened_at_shell(id: String) -> void:
+	"""
+	Fold one ranged id into the streamed shell and its built interior. No
+	store, no mirror — the caller owns those; this is the tail the single and
+	batch paths share so they cannot drift.
+
+	Already open here: return before the mark, because the mark republishes
+	the id and the interior below re-applies it. The republish turns a repair
+	burst of K ids into K echoes back on the wire inside one second — past
+	the shared 4/s budget, so a real opening inside that window is dropped by
+	every receiver and never re-sent (review round 2, minor). The re-apply
+	reset riddle progress twice a second off the master's 2 Hz `room` packet,
+	which made every riddle lock unsolvable for non-masters (review round 1,
+	major). The room re-sends the whole set on every packet anyway, so
+	skipping a known id loses nothing.
+	"""
+	var tower := get_tree().get_first_node_in_group("tower")
+	if tower == null or not tower.has_method("mark_opened"):
+		return
+	if tower.is_opened(id):
+		return
+	# Absorbed, not opened here: the master's `g` already carries this id to
+	# everyone, so re-broadcasting it is pure echo (review round 2, minor).
+	tower.mark_opened(id, false)
+	var interior := get_tree().get_first_node_in_group("tower_interior")
+	if interior != null and interior.has_method("_apply_opened"):
+		interior._apply_opened()
 
 
 func _receive_captive(from_id: String, packet: Dictionary) -> void:
@@ -3015,14 +3078,15 @@ func _tower_opened_ids() -> Array:
 	The joiner-side parser bounds it with the store's `MAX_TOWER_IDS`, which the
 	honest set can never reach (a couple dozen declared ids); anything past it
 	is a peer that is not speaking this protocol. With no shell streamed in —
-	every peer at run start — the PROFILE is the set: absorbs with no tower
-	land there (see `_absorb_opened_gate`), so the repair legs publish it and
-	a master who has never visited the HQ still repairs the room (review
-	round 1). Empty — never null — only when neither holds anything.
+	every peer at run start — the MIRROR is the set: seeded from the profile
+	on join, added on every absorb and every local publish, so the repair legs
+	publish it with zero store reads and a master who has never visited the HQ
+	still repairs the room (review rounds 1-2). Empty — never null — only when
+	neither holds anything.
 	"""
 	var tower := get_tree().get_first_node_in_group("tower")
 	if tower == null or not tower.has_method("opened_ids"):
-		return BestRunStore.tower_opened_ids()
+		return _absorbed_opened.keys()
 	return tower.opened_ids()
 
 

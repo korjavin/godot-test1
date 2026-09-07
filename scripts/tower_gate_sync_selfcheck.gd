@@ -58,6 +58,17 @@ func _apply_opened() -> void:
 	applies += 1
 """
 
+## A streamed shell reduced to the absorb's three calls: it records what the
+## absorb marks and whether each mark may publish, so the echo suppression is
+## measured as arguments, not packets.
+const RECORDING_SHELL_SOURCE := """extends Node
+var calls: Array = []
+func is_opened(id: String) -> bool:
+	return false
+func mark_opened(id: String, publish: bool = true) -> void:
+	calls.append([id, publish])
+"""
+
 
 func _initialize() -> void:
 	Sentinel.isolate_user_state()
@@ -127,7 +138,72 @@ func _check_no_shell() -> String:
 	if not (mp._tower_opened_ids() as Array).has(TowerInterior.GATE_IDENTITY):
 		mp.queue_free()
 		return "the publish side is empty with no shell — a master there repairs nothing"
+	# THE DISK STORM (review round 2): the same `g` twice must hit the store
+	# ONCE. The file's mtime is the counter — no write, no touch — so the
+	# first absorb must move it off zero (the setup proves a write happened)
+	# and the second must leave it exactly alone.
+	var t1: int = FileAccess.get_modified_time(BestRunStore.config_path)
+	if t1 <= 0:
+		mp.queue_free()
+		return "the first absorb wrote nothing — the storm probe measured no setup"
+	mp._absorb_opened_gates([TowerInterior.GATE_IDENTITY])
+	var t2: int = FileAccess.get_modified_time(BestRunStore.config_path)
+	if t2 != t1:
+		mp.queue_free()
+		return "re-absorbing the same set touched the profile again — the 2 Hz mirror is missing"
+	if not (mp._absorbed_opened as Dictionary).has(TowerInterior.GATE_IDENTITY):
+		mp.queue_free()
+		return "the absorb never reached the mirror — the steady-state filter has nothing to consult"
+	# ZERO OPS, not just zero writes: with the profile file deleted, a
+	# steady-state absorb must not even re-read it (a read of the missing file
+	# would come back empty and re-merge the id, recreating it).
+	DirAccess.remove_absolute(BestRunStore.config_path)
+	mp._absorb_opened_gates([TowerInterior.GATE_IDENTITY])
+	if FileAccess.file_exists(BestRunStore.config_path):
+		mp.queue_free()
+		return "a steady-state absorb recreated a deleted profile — the filter re-reads at 2 Hz"
+	# Restore what the probe deleted: later probes hydrate from this profile.
+	BestRunStore.merge_tower_opened_ids([TowerInterior.GATE_IDENTITY])
+	# JOIN SEEDS THE MIRROR: a profile id from before this process publishes
+	# with no shell and no absorb — a master who never visits the HQ still
+	# repairs the room from a returning profile.
+	BestRunStore.merge_tower_opened_ids(["phase_grate"])
+	var t2b: int = FileAccess.get_modified_time(BestRunStore.config_path)
+	var mp2: Node = MPManager.new()
+	root.add_child(mp2)
+	# Relay-only: the join stops before the mesh (no STUN, no socket), but the
+	# seed above runs identically — this poses the join, not the mesh.
+	mp2.set("lobby_only", true)
+	mp2._on_lobby_joined("us", "ROOM", "themaster", ["themaster", "us"])
+	if not (mp2._tower_opened_ids() as Array).has("phase_grate"):
+		mp2.queue_free()
+		mp.queue_free()
+		return "join did not seed the mirror — a returning profile publishes nothing shell-less"
+	# ...and absorbing it after the seed writes nothing either: the seed is
+	# the mirror fill, not just the publish read.
+	mp2._absorb_opened_gates(["phase_grate"])
+	var t3: int = FileAccess.get_modified_time(BestRunStore.config_path)
+	if t3 != t2b:
+		mp2.queue_free()
+		mp.queue_free()
+		return "absorbing a seeded id touched the profile — the seed did not fill the mirror"
+	mp2.queue_free()
+	# THE ECHO SUPPRESSION (review round 2, minor): the absorb marks with
+	# publish=false, measured as arguments on a recording shell — a burst of
+	# genuinely-new ids must put nothing back on the wire.
+	var shell_script := GDScript.new()
+	shell_script.source_code = RECORDING_SHELL_SOURCE
+	shell_script.reload()
+	var recorder: Node = shell_script.new()
+	recorder.add_to_group("tower")
+	root.add_child(recorder)
+	mp._receive_gate("peerA", {"t": "gate", "id": "collapsed_slab"})
+	var calls: Array = recorder.get("calls")
+	recorder.remove_from_group("tower")
+	recorder.queue_free()
 	mp.queue_free()
+	if calls != [["collapsed_slab", false]]:
+		return "the absorb marked %s — it must mark with publish=false" % str(calls)
 	Sentinel.done("no_shell")
 	return ""
 
@@ -188,6 +264,20 @@ func _check_publish_on_opening() -> String:
 		await TowerProbe.clear(self, null, shell)
 		stub.queue_free()
 		return "a re-mark published again — the send site is not on the opening only"
+	# The publish flag (review round 2): an absorbed opening suppresses the
+	# re-broadcast while a local one still sends.
+	shell.mark_opened("maintenance_crawl", false)
+	if (stub.get("published") as Array) \
+			!= [TowerInterior.GATE_DEMAND, TowerInterior.GATE_CHECKPOINT]:
+		await TowerProbe.clear(self, null, shell)
+		stub.queue_free()
+		return "mark_opened(id, false) published — the shell ignores the absorb flag"
+	shell.mark_opened("updraft_shaft")
+	if (stub.get("published") as Array) \
+			!= [TowerInterior.GATE_DEMAND, TowerInterior.GATE_CHECKPOINT, "updraft_shaft"]:
+		await TowerProbe.clear(self, null, shell)
+		stub.queue_free()
+		return "a local opening stopped publishing — the flag's default flipped"
 	stub.queue_free()
 	await TowerProbe.clear(self, null, shell)
 	Sentinel.done("publish_on_opening")

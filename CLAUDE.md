@@ -2599,10 +2599,12 @@ The sharpest rules, in rough order of how badly they bite:
   `godot-test1-d81`). The `gate` verb is anyone-to-everyone, reliable over mesh and relay,
   carrying one id off `TowerGraph.opened_ids()` (the range list — a gate, entry, mutation or
   scar id this build authored, checkpoint included); the receiver folds it through the shell's
-  `mark_opened()` and re-runs a built interior's `_apply_opened()` for genuinely new ids only,
-  so the mass retires on every screen while the master's 2 Hz repair neither republishes nor
-  resets riddle progress. With no shell streamed in the absorb lands in the profile the shell
-  hydrates from. The `room` packet's `g` and the snapshot's `go` repair the join gap. See the
+  `mark_opened(id, false)` and re-runs a built interior's `_apply_opened()` for genuinely new
+  ids only, so the mass retires on every screen while the master's 2 Hz repair neither
+  republishes (absorbed ids are echo-suppressed) nor resets riddle progress. With no shell
+  streamed in the absorb lands in the profile the shell hydrates from, behind an in-memory
+  mirror seeded on join — the steady state costs zero store reads, zero writes and zero shell
+  calls. The `room` packet's `g` and the snapshot's `go` repair the join gap. See the
   tower section for the ceilings (older members publish and honour nothing; profiles gain the
   room's ids).
 - The stall heartbeat rides the lobby relay, not the mesh, because a throttled tab stops
