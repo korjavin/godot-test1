@@ -36,8 +36,9 @@ extends SceneTree
 ##      a member 600 m off holds a storm in the far disc after its ticks, keeps
 ##      it while it stays there, publishes it, and a peer under it rains — and
 ##      every fair cloud is swept inside the master's disc on every tick. A
-##      second seat at 1e7 (review round 2) must steer nothing: the packet has
-##      to survive decode_wx, or one bad centre drops it for every honest peer.
+##      second seat at 1e7 (review round 2) must steer nothing: the RAW
+##      published bytes are decoded once (bead godot-test1-esx), and one bad
+##      centre drops the whole packet for every honest peer.
 ##      Solo (no `mp` node) every storm stays inside the master's own disc, and
 ##      a solo manager ticks byte-identical to one whose mp stub answers null,
 ##      so the focus path draws nothing on either branch.
@@ -99,8 +100,10 @@ const FAR_POINT: Vector3 = Vector3(10000.0, 0.0, 10000.0)
 ## twice over, so no master-centred disc can lend it weather.
 const FAR_PEER: Vector3 = Vector3(600.0, 0.0, 0.0)
 ## A relayed position no honest client can hold (review round 2): 10 000 km
-## out, past MAX_PRESENCE_COORD with no room left for a rim. The focus filter
-## must drop it before it can steer a published storm centre.
+## out, AT MAX_PRESENCE_COORD — the presence decoder rejects on strict `>`,
+## so 1e7 is the largest relayed position a peer can deliver, with no room
+## left for a rim. The focus filter must drop it before it can steer a
+## published storm centre.
 const EVIL_PEER: Vector3 = Vector3(1.0e7, 0.0, 1.0e7)
 ## Ticks driven on the shipped `_process` (10 Hz, so 300 = 30 s of sky).
 const FAR_TICKS: int = 300
@@ -204,6 +207,20 @@ func _publish(master: Node) -> Dictionary:
 		return {}
 	wire["t"] = "wx"
 	return MpCodec.decode_wx(wire)
+
+
+func _publish_wire(master: Node) -> PackedByteArray:
+	## The packet EXACTLY as the mesh carries it (bead godot-test1-esx): the
+	## tagged `weather_sync_state()` dict through `var_to_bytes`, byte for
+	## byte what `_send_wx_sync` puts with `put_packet`. The far-peer's wire
+	## leg decodes THESE bytes once, so the assert runs on the published
+	## centre itself — re-decoding `_publish()`'s already-decoded return
+	## could never fail.
+	var wire: Dictionary = master.call("weather_sync_state")
+	if wire.is_empty():
+		return PackedByteArray()
+	wire["t"] = "wx"
+	return var_to_bytes(wire)
 
 
 func _check_sync() -> String:
@@ -592,6 +609,18 @@ func _check_far_peer() -> String:
 	for cloud: Dictionary in (master.get("_clouds") as Array):
 		if bool(cloud["is_storm"]) and _flat_dist(cloud["center"], FAR_PEER) < 150.0:
 			anchored.append(int(cloud["sd"]))
+	# Steering detector (bead godot-test1-esx): with the `_focus_points`
+	# bound intact no storm can stand past MAX_PRESENCE_COORD — every focus
+	# is bound-minus-rim and every placement within a rim of one. A storm
+	# out there means a relayed peer position steered the sky, and it must
+	# fail HERE naming the bound: the seed below was verified with the evil
+	# seat filtered, so without this the mutated tree only trips the
+	# seed-vacuity bail, which names nothing.
+	for cloud: Dictionary in (master.get("_clouds") as Array):
+		if bool(cloud["is_storm"]):
+			var c: Vector3 = cloud["center"]
+			if absf(c.x) > MpCodec.MAX_PRESENCE_COORD or absf(c.z) > MpCodec.MAX_PRESENCE_COORD:
+				return _far_cleanup(mp, host, master, "a storm stands at %s, past the MAX_PRESENCE_COORD bound — a relayed peer position steered it there past the _focus_points filter" % str(c))
 	if anchored.is_empty():
 		return _far_cleanup(mp, host, master, "FOCUS_SEED opened with no storm near the far peer — this check measured nothing")
 	for t in FAR_TICKS - 1:
@@ -619,7 +648,15 @@ func _check_far_peer() -> String:
 	if not home:
 		return _far_cleanup(mp, host, master, "no storm within FIELD_RADIUS of the master's own player — the spread emptied its sky")
 	# Published, replayed, raining under it — 600 m from the master's player.
-	var travel: Dictionary = _publish(master)
+	# The decode runs ONCE, on the raw published bytes (bead godot-test1-esx:
+	# decoding `_publish()`'s already-decoded return could never fail), so
+	# everything below replays what the mesh actually carries — the same
+	# `var_to_bytes` out / `decode_wx` in as `_send_wx_sync` / `_receive_wx`.
+	# Untrusted positions (review round 2): one centre past the bound drops
+	# the WHOLE packet for every honest peer, which is why the steering
+	# detector above must fire first with the bound named.
+	var raw: PackedByteArray = _publish_wire(master)
+	var travel: Dictionary = {} if raw.is_empty() else MpCodec.decode_wx(bytes_to_var(raw))
 	if travel.is_empty():
 		return _far_cleanup(mp, host, master, "the master published nothing with storms in two discs — this check measured nothing")
 	var found: bool = false
@@ -628,13 +665,6 @@ func _check_far_peer() -> String:
 			found = true
 	if not found:
 		return _far_cleanup(mp, host, master, "the packet names no far-disc storm sd=%d — the peer can never replay it" % int(kept["sd"]))
-	# Untrusted positions (review round 2): the evil seat must have steered
-	# nothing — every published centre survives the real wire path
-	# (`var_to_bytes` out, `decode_wx` in, exactly like `_send_wx_sync` /
-	# `_receive_wx`). One centre past the bound drops the WHOLE packet for
-	# every honest peer.
-	if MpCodec.decode_wx(bytes_to_var(var_to_bytes(travel))).is_empty():
-		return _far_cleanup(mp, host, master, "the published packet fails decode_wx — a relayed position steered a storm centre out of bound")
 	var peer: Node = _fresh_manager()
 	peer.call("apply_weather_sync", travel)
 	var wet := Vector3((kept["center"] as Vector3).x, 0.0, (kept["center"] as Vector3).z)
