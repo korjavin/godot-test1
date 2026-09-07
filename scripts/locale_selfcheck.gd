@@ -134,6 +134,16 @@ const WIDTH_BUDGETS: Array = [
 	["Mute", 18, 96.0, "MP panel per-peer mute"],
 	["Muted", 18, 96.0, "MP panel per-peer mute"],
 
+	# mp_ui.gd HUD voice/camera switches above the MP button (bead godot-test1-xtr.20)
+	# MP_BUTTON_WIDTH_ONLINE 190 px less 2*CARD_PADDING (24) = 166.0 px usable width, font 18.
+	["Mute mic", 18, 166.0, "HUD mic mute"],
+	["Mic muted", 18, 166.0, "HUD mic mute"],
+	["Deafen", 18, 166.0, "HUD deafen"],
+	["Deafened", 18, 166.0, "HUD deafen"],
+	["Camera off", 18, 166.0, "HUD camera toggle"],
+	["Camera on", 18, 166.0, "HUD camera toggle"],
+	["Camera blocked", 18, 166.0, "HUD camera toggle"],
+
 	# start_overlay.gd — CARD_WIDTH 420 with a 20 px content margin each side.
 	# One button since bead godot-test1-6pa dropped the SOLO / MULTIPLAYER fork.
 	# The card's hint line is exempt for the reason stated in the header above: it

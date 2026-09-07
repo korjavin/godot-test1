@@ -111,6 +111,10 @@ const EDGE_MARGIN: float = 16.0
 const TUNE_GEAR_HEIGHT: float = 60.0
 const BUTTON_STACK_GAP: float = 8.0
 
+## Height of the HUD voice / camera switches stacked above the MP button
+## (bead godot-test1-xtr.20).
+const HUD_VOICE_BUTTON_HEIGHT: float = 36.0
+
 ## The open panel's size. Tall enough for the status line, the host/join
 ## controls, the hero row, the code + member list and Leave; scrollable so a
 ## short phone screen can still reach the bottom row. Grown from 420 by one
@@ -309,6 +313,12 @@ var _camera_button: Button = null
 var _voice: Node = null
 var _voice_signals_connected: bool = false
 
+## HUD voice and camera switches stacked above the MP button (bead godot-test1-xtr.20).
+## Node references only: the state lives in voice_chat.gd (one state, two views).
+var _hud_mic_button: Button = null
+var _hud_deafen_button: Button = null
+var _hud_camera_button: Button = null
+
 ## The member ROWS (bead godot-test1-xtr.3): one `{id, dot, mute}` per name under
 ## `_members_box`. Rebuilt wholesale — like `_rebuild_room_buttons()`, and for the
 ## same reason: four rows is smaller than a diff of four rows — but only when the
@@ -378,6 +388,13 @@ func _process(_delta: float) -> void:
 		modal = true
 
 	_mp_button.visible = not modal
+	var hud_voice_visible: bool = (not modal) and (_voice_section != null and _voice_section.visible)
+	if _hud_mic_button != null:
+		_hud_mic_button.visible = hud_voice_visible
+	if _hud_deafen_button != null:
+		_hud_deafen_button.visible = hud_voice_visible
+	if _hud_camera_button != null:
+		_hud_camera_button.visible = hud_voice_visible
 	if modal and _panel_open:
 		_set_panel_open(false)
 
@@ -438,6 +455,53 @@ func _build_ui() -> void:
 	_mp_button.offset_top = _mp_button.offset_bottom - MP_BUTTON_HEIGHT
 	_mp_button.pressed.connect(_on_mp_button_pressed)
 	add_child(_mp_button)
+
+	# --- HUD voice/camera switches stacked above the MP button ------------
+	# One state, two views: the state lives in voice_chat.gd and the panel already
+	# reads and mutates it. Putting these switches inside mp_ui.gd ensures the
+	# button IS this panel — zero duplicate state variables, shared handlers, and
+	# both views paint the same facts in lockstep (bead godot-test1-xtr.20).
+	_hud_mic_button = _make_button("Mute mic", _on_mic_mute_pressed)
+	_hud_mic_button.name = "HudMicButton"
+	_hud_mic_button.custom_minimum_size = Vector2(MP_BUTTON_WIDTH_ONLINE, HUD_VOICE_BUTTON_HEIGHT)
+	_hud_mic_button.anchor_left = 0.0
+	_hud_mic_button.anchor_right = 0.0
+	_hud_mic_button.anchor_top = 1.0
+	_hud_mic_button.anchor_bottom = 1.0
+	_hud_mic_button.offset_left = EDGE_MARGIN
+	_hud_mic_button.offset_right = EDGE_MARGIN + MP_BUTTON_WIDTH_ONLINE
+	_hud_mic_button.offset_bottom = _mp_button.offset_top - BUTTON_STACK_GAP
+	_hud_mic_button.offset_top = _hud_mic_button.offset_bottom - HUD_VOICE_BUTTON_HEIGHT
+	_hud_mic_button.visible = false
+	add_child(_hud_mic_button)
+
+	_hud_deafen_button = _make_button("Deafen", _on_deafen_pressed)
+	_hud_deafen_button.name = "HudDeafenButton"
+	_hud_deafen_button.custom_minimum_size = Vector2(MP_BUTTON_WIDTH_ONLINE, HUD_VOICE_BUTTON_HEIGHT)
+	_hud_deafen_button.anchor_left = 0.0
+	_hud_deafen_button.anchor_right = 0.0
+	_hud_deafen_button.anchor_top = 1.0
+	_hud_deafen_button.anchor_bottom = 1.0
+	_hud_deafen_button.offset_left = EDGE_MARGIN
+	_hud_deafen_button.offset_right = EDGE_MARGIN + MP_BUTTON_WIDTH_ONLINE
+	_hud_deafen_button.offset_bottom = _hud_mic_button.offset_top - BUTTON_STACK_GAP
+	_hud_deafen_button.offset_top = _hud_deafen_button.offset_bottom - HUD_VOICE_BUTTON_HEIGHT
+	_hud_deafen_button.visible = false
+	add_child(_hud_deafen_button)
+
+	_hud_camera_button = _make_button("Camera off", _on_camera_pressed)
+	_hud_camera_button.name = "HudCameraButton"
+	_hud_camera_button.custom_minimum_size = Vector2(MP_BUTTON_WIDTH_ONLINE, HUD_VOICE_BUTTON_HEIGHT)
+	_hud_camera_button.anchor_left = 0.0
+	_hud_camera_button.anchor_right = 0.0
+	_hud_camera_button.anchor_top = 1.0
+	_hud_camera_button.anchor_bottom = 1.0
+	_hud_camera_button.offset_left = EDGE_MARGIN
+	_hud_camera_button.offset_right = EDGE_MARGIN + MP_BUTTON_WIDTH_ONLINE
+	_hud_camera_button.offset_bottom = _hud_deafen_button.offset_top - BUTTON_STACK_GAP
+	_hud_camera_button.offset_top = _hud_camera_button.offset_bottom - HUD_VOICE_BUTTON_HEIGHT
+	_hud_camera_button.visible = false
+	add_child(_hud_camera_button)
 
 	# --- Panel body, opening UPWARD from just above the button ------------
 	_panel_body = PanelContainer.new()
@@ -1680,13 +1744,21 @@ func _update_voice_ui() -> void:
 		else:
 			_voice_mode_button.text = "Voice: always on"
 
-	if _mic_mute_button != null:
+	if _mic_mute_button != null or _hud_mic_button != null:
 		var muted: bool = voice.has_method("is_mic_muted") and bool(voice.is_mic_muted())
-		_mic_mute_button.text = "Mic muted" if muted else "Mute mic"
+		var mic_text := "Mic muted" if muted else "Mute mic"
+		if _mic_mute_button != null:
+			_mic_mute_button.text = mic_text
+		if _hud_mic_button != null:
+			_hud_mic_button.text = mic_text
 
-	if _deafen_button != null:
+	if _deafen_button != null or _hud_deafen_button != null:
 		var deaf: bool = voice.has_method("is_deafened") and bool(voice.is_deafened())
-		_deafen_button.text = "Deafened" if deaf else "Deafen"
+		var deaf_text := "Deafened" if deaf else "Deafen"
+		if _deafen_button != null:
+			_deafen_button.text = deaf_text
+		if _hud_deafen_button != null:
+			_hud_deafen_button.text = deaf_text
 
 	if _volume_slider != null and voice.has_method("get_volume"):
 		var pct: int = int(roundf(float(voice.get_volume()) * 100.0))
@@ -1698,19 +1770,29 @@ func _update_voice_ui() -> void:
 			# formatted result is a key in no table.
 			_volume_label.text = tr("Voice volume: %d%%") % pct
 
-	if _camera_button != null:
+	if _camera_button != null or _hud_camera_button != null:
 		var can_cam: bool = voice.has_method("set_camera_enabled")
-		_camera_button.visible = can_cam
+		if _camera_button != null:
+			_camera_button.visible = can_cam
 		if can_cam:
 			# A refusal is reported ON the button that asked, which is why the
 			# camera needs no status line of its own beside the microphone's.
-			if voice.has_method("camera_denied") and bool(voice.camera_denied()):
-				_camera_button.text = "Camera blocked"
-				_camera_button.disabled = true
+			var denied: bool = voice.has_method("camera_denied") and bool(voice.camera_denied())
+			var cam_text: String
+			var cam_disabled: bool
+			if denied:
+				cam_text = "Camera blocked"
+				cam_disabled = true
 			else:
 				var on: bool = voice.has_method("is_camera_on") and bool(voice.is_camera_on())
-				_camera_button.disabled = false
-				_camera_button.text = "Camera on" if on else "Camera off"
+				cam_text = "Camera on" if on else "Camera off"
+				cam_disabled = false
+			if _camera_button != null:
+				_camera_button.disabled = cam_disabled
+				_camera_button.text = cam_text
+			if _hud_camera_button != null:
+				_hud_camera_button.disabled = cam_disabled
+				_hud_camera_button.text = cam_text
 
 	if _mic_state_label != null:
 		# MUTE WINS over the V state, so it wins the label too: reporting
