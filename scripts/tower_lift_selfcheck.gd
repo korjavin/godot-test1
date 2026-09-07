@@ -147,14 +147,16 @@ func _check_key_is_free() -> void:
 		[[MobileInput.FORCE_ENABLE_KEYCODE], "mobile_input.FORCE_ENABLE_KEYCODE"],
 		[[TouchControls.FORCE_SHOW_KEYCODE], "touch_controls.FORCE_SHOW_KEYCODE"],
 		[[MobileSettingsPanel.FORCE_SHOW_KEYCODE], "mobile_settings_panel.FORCE_SHOW_KEYCODE"],
-		# The HUD voice/camera chords (bead godot-test1-k4l): Ctrl-held, so no
-		# bare-key subject collides with them — listed so the registry names
-		# every raw key in the game, with " (ctrl)" marking the pair half
-		# (`city_map_selfcheck.panel_chord_owners` is the shared copy).
-		[[MultiplayerUI.MUTE_KEY], "mp_ui.MUTE_KEY (ctrl)"],
-		[[MultiplayerUI.DEAFEN_KEY], "mp_ui.DEAFEN_KEY (ctrl)"],
-		[[MultiplayerUI.CAMERA_KEY], "mp_ui.CAMERA_KEY (ctrl)"],
+		# BARE KEYS ONLY (review round 1): the Ctrl-held HUD chords live in
+		# `city_map_selfcheck.panel_chord_owners()` and are compared only
+		# against their own half — listing them here would compare them as
+		# bare keys, the opposite of the pair rule.
 	]
+	# ...pinned, not just commented: a chord row smuggled back in would be
+	# compared as a bare key again, exactly the bug above.
+	for row: Array in owners:
+		if String(row[1]).ends_with(" (ctrl)"):
+			_fail("bare-key list carries chord row %s — it would be compared as a bare key" % String(row[1]))
 	var claimed: String = _owner_claiming(key, owners)
 	if not claimed.is_empty():
 		_fail("TOGGLE_KEY %s is already %s" % [OS.get_keycode_string(key), claimed])

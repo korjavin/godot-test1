@@ -240,8 +240,9 @@ static func panel_chord_owners() -> Array:
 	`panel_key_owners()` and chord subjects ask HERE, and each half is compared
 	only against its own half plus the input map's same-modifier bindings
 	(`voice_selfcheck._check_chords_free` is the chord subject today). A label
-	ending in " (ctrl)" is what tells the two halves apart wherever they are
-	listed together (`tower_lift_selfcheck`'s copy).
+	ending in " (ctrl)" marks the half: no bare-key list may carry one
+	(review round 1 dropped them from `tower_lift_selfcheck`'s copy for
+	exactly that reason).
 	"""
 	return [
 		[[MultiplayerUI.MUTE_KEY], "mp_ui.MUTE_KEY (ctrl)"],

@@ -166,9 +166,12 @@ const WIDTH_BUDGETS: Array = [
 	# sentences are absent from this table.
 	#
 	# BUTTON_WIDTH 166, font 18, the theme's 2*CARD_PADDING (24) of Button
-	# padding, and the opener also carries a " (N)" unspent-points suffix past
-	# the "(K)" hotkey (bead godot-test1-k4l): "Können (K) (12)" measures 132.
-	["Skills (K)", 18, 142.0, "skill tree opener"],
+	# padding — 142 usable — MINUS the " (12)" two-digit unspent-points suffix
+	# past the "(K)" hotkey (review round 1: without the reserve a future
+	# German string up to 142 would pass while the composed label clips).
+	# The suffix measures ~37 px at this size, so the key itself is held to
+	# 105: "Können (K) (12)" at 132 still fits the 142 the button offers.
+	["Skills (K)", 18, 142.0 - 37.0, "skill tree opener"],
 	# COLUMN_WIDTH 292, font 18, ~8 px Button padding, less the "   3/3" rank
 	# counter composed onto every node name (~48 px at this size).
 	["Quick Recovery", 18, 232.0, "skill node name"],

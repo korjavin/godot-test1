@@ -207,12 +207,17 @@ const ROWS: Array = [
 	["SPECIAL\n(F)", "Special ability: Air Rush, Phase Step, Resize or Stink Wave — Air Sight indoors.", Mode.TOUCH],
 	["SWITCH\n(R)", "Switch hero: Windman, Primm, Teibi, Phoboman.", Mode.TOUCH],
 	["View", "Cycle the view: over the shoulder, eyes, front.", Mode.TOUCH],
-	# "Skills" is the opener button's own CSV key, so this legend reads in German
-	# exactly like the button does. A phone has no K.
-	["Skills", "Open the skill tree and spend skill points.", Mode.TOUCH],
+	# "Skills (K)" is the opener button's own CSV key (review round 1: the bare
+	# "Skills" legend named a label the button no longer carries), so this
+	# legend reads in German exactly like the button does. A phone has no K.
+	["Skills (K)", "Open the skill tree and spend skill points.", Mode.TOUCH],
 	["Tune", "Tune step and steering feel, or read how to play again.", Mode.TOUCH],
 
-	["MP", "Multiplayer: host or join a room for up to 4 players.", Mode.BOTH],
+	# "Multiplayer (N)" is the toggle's own CSV key (review round 1: "MP"
+	# advertised a label that no longer exists), so both sessions read it in
+	# German exactly like the button. Measured 111/115 px against KEY_WIDTH
+	# 116 — a single line, no wrap needed.
+	["Multiplayer (N)", "Multiplayer: host or join a room for up to 4 players.", Mode.BOTH],
 
 	# Debug builds only.
 	["\\fo", "Performance overlay: FPS, draw calls, live crocodiles.", Mode.DEBUG],

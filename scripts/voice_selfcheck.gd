@@ -2160,9 +2160,10 @@ func _check_hud_voice_switches() -> void:
 	if not err_cursor.is_empty():
 		_fail(err_cursor)
 
-	# Negative control for cursor free calls in handlers
+	# Negative control for cursor free calls in handlers — matches the
+	# `if from_click:` shape (review round 1), not the old bare call.
 	var mutated_cursor := source.replace(
-		"_update_voice_ui()\n\t_free_cursor_after_hud_press()",
+		"_update_voice_ui()\n\tif from_click:\n\t\t_free_cursor_after_hud_press()",
 		"_update_voice_ui()"
 	)
 	if _verify_free_cursor_calls(mutated_cursor).is_empty():
@@ -2175,6 +2176,18 @@ func _check_hud_voice_switches() -> void:
 	)
 	if _verify_free_cursor_calls(mutated_helper).is_empty():
 		_fail("Negative control failed: empty _free_cursor_after_hud_press body passed undetected")
+
+	# The chord arms pass from_click=false (review round 1) — pinned as TEXT:
+	# headless Godot cannot flip the mouse mode, so no runtime probe can watch
+	# the cursor stay captured.
+	var err_chord_click := _verify_chord_no_cursor_free(source)
+	if not err_chord_click.is_empty():
+		_fail(err_chord_click)
+
+	# Negative control for the chord flag.
+	var mutated_click := source.replace("_on_mic_mute_pressed(false)", "_on_mic_mute_pressed(true)")
+	if _verify_chord_no_cursor_free(mutated_click).is_empty():
+		_fail("Negative control failed: a chord arm passing from_click=true passed undetected")
 
 	Sentinel.done("hud_voice_switches")
 
@@ -2195,6 +2208,26 @@ func _verify_hud_voice_bindings(source: String) -> String:
 	if not camera_bound:
 		return "HudCameraButton is not bound to _on_camera_pressed in mp_ui.gd"
 
+	return ""
+
+
+func _verify_chord_no_cursor_free(source: String) -> String:
+	"""Every chord arm passes from_click=false (review round 1): the handlers'
+	cursor release is click-path only, and a chord that releases the captured
+	mouse kills mouse-look mid-game. Asserted as TEXT because headless Godot
+	cannot flip the mouse mode — with a mutation above.
+	"""
+	for h: String in ["_on_mic_mute_pressed(false)", "_on_deafen_pressed(false)", "_on_camera_pressed(false)"]:
+		if not source.contains(h):
+			return "chord arm does not call %s — the press would release the captured mouse" % h
+	# ...and the handlers default to the click path, so the buttons (which
+	# connect with no argument) still free the cursor: a default flipped to
+	# false would silently break every click.
+	for sig: String in ["func _on_mic_mute_pressed(from_click: bool = true)",
+			"func _on_deafen_pressed(from_click: bool = true)",
+			"func _on_camera_pressed(from_click: bool = true)"]:
+		if not source.contains(sig):
+			return "handler signature is not '%s' — clicks would stop freeing the cursor" % sig
 	return ""
 
 
@@ -2441,6 +2474,47 @@ func _check_chords_free() -> void:
 	if CityMapSelfcheck._owner_claiming(
 			int(MultiplayerUIScript.MUTE_KEY), CityMapSelfcheck.panel_key_owners()).is_empty():
 		_fail("bare M is suddenly free — the Ctrl+M pair exemption is untested")
+	# BARE GAMEPLAY BINDINGS (review round 1): action matching is not
+	# modifier-exact, so a chord letter that is also a bare gameplay binding
+	# fires the action AND the chord — and set_input_as_handled undoes no
+	# polled Input state. M and G bind nothing and must stay that way; D binds
+	# step_right, which the Ctrl+D arm releases (pinned as TEXT below and
+	# probed at runtime in _probe_chord).
+	for entry: Array in chords:
+		var bare_key: int = int(entry[0])
+		var bare_label: String = String(entry[1])
+		for action: StringName in InputMap.get_actions():
+			if String(action).begins_with("ui_"):
+				continue
+			for event: InputEvent in InputMap.action_get_events(action):
+				var bare_as_key := event as InputEventKey
+				if bare_as_key == null:
+					continue
+				if bare_as_key.ctrl_pressed or bare_as_key.alt_pressed or bare_as_key.meta_pressed \
+						or bare_as_key.shift_pressed:
+					continue
+				if int(bare_as_key.keycode) != bare_key and int(bare_as_key.physical_keycode) != bare_key:
+					continue
+				if bare_key == int(MultiplayerUIScript.DEAFEN_KEY):
+					if String(action) != "step_right":
+						_fail("%s is also the bare binding of \"%s\" — only step_right has its release in the chord arm"
+							% [bare_label, action])
+				else:
+					_fail("%s is also the bare binding of \"%s\" — a chord letter must bind no gameplay action"
+						% [bare_label, action])
+	# The release lives IN the Ctrl+D arm (not somewhere incidental): the text
+	# between the DEAFEN arm and the next arm must name it.
+	var chord_source: String = FileAccess.get_file_as_string("res://scripts/mp_ui.gd")
+	if chord_source.is_empty():
+		_fail("could not read res://scripts/mp_ui.gd for the step_right release check")
+	else:
+		# Tab-anchored: the bare names also open the const declarations above.
+		var arm_at: int = chord_source.find("\t\t\tDEAFEN_KEY:")
+		var arm_end: int = chord_source.find("\t\t\tCAMERA_KEY:")
+		if arm_at < 0 or arm_end < 0 or arm_at > arm_end:
+			_fail("could not locate the Ctrl+D chord arm in mp_ui.gd for the release check")
+		elif not chord_source.substr(arm_at, arm_end - arm_at).contains('Input.action_release("step_right")'):
+			_fail("the Ctrl+D chord arm does not release step_right — deafening strafes the hero")
 	# NEGATIVE CONTROL on the scan: a fake owner holding a chord key must be
 	# caught, or a duplicated chord would pass in silence.
 	var dup_key: int = int(MultiplayerUIScript.MUTE_KEY)
@@ -2512,7 +2586,17 @@ func _probe_chord(ui: Control, voice: Node, room: Node, key: Key, which: String,
 
 	# The press flips the stub through the button's own handler, and both views
 	# repaint in the same tick.
+	# Ctrl+D must not strafe (review round 1): hold step_right the way a held
+	# D does — action matching is not modifier-exact — then assert the arm
+	# released it. Mutation: drop the arm's action_release.
+	var holds_step: bool = which == "deafen"
+	if holds_step:
+		Input.action_press("step_right")
 	_press_key(ui, key, false, true)
+	if holds_step:
+		if Input.is_action_pressed("step_right"):
+			_fail("Ctrl+D left step_right pressed — deafening strafes the hero")
+		Input.action_release("step_right")
 	if not _chord_state_on(voice, which):
 		_fail("Ctrl+%s did not flip the %s state — the chord bypasses the button handler"
 			% [OS.get_keycode_string(key), which])

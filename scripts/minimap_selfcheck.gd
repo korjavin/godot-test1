@@ -66,6 +66,9 @@ extends SceneTree
 ##      back to world XZ against the shipped `is_river_at()`), and that the
 ##      lattice spans the disc at every zoom off the shared scale — sampled on
 ##      the tick, never in `_draw()`.
+##   11. TOGGLE PAIR (bd godot-test1-k4l review round 1): bare M flips the map
+##      and Ctrl+M does not — the chord is the HUD mic-mute key. Driven on the
+##      live node as an effect (visible flips), never a read-back of the guard.
 ##
 ## It boots the real main scene, because the road station cache only exists once a
 ## chunk has generated — there is nothing pure to test in isolation here.
@@ -239,6 +242,8 @@ func _run() -> void:
 		await create_timer(2.0).timeout
 		failure = _check()
 	if failure.is_empty():
+		failure = _check_toggle()
+	if failure.is_empty():
 		failure = _check_zoom()
 	if failure.is_empty():
 		failure = _check_teammates()
@@ -342,6 +347,40 @@ func _check() -> String:
 		map._road_count, on_disc, map._facing, map._croc_count, map.MAX_CROC_DOTS,
 		map._biome, map._in_river])
 	Sentinel.done("check")
+	return ""
+
+
+func _check_toggle() -> String:
+	"""Bare M flips the map and Ctrl+M does not (bead godot-test1-k4l review
+	round 1: the chord is the HUD mic-mute key). An effect measurement on the
+	live node — `visible` flips — never a read-back of the guard, which a
+	deleted early-return would satisfy while toggling.
+	"""
+	var map: Control = root.get_node_or_null("Main/HUD/MinimapHUD")
+	if map == null:
+		return "no MinimapHUD under Main/HUD for the toggle checks"
+	var before: bool = map.visible
+	var bare := InputEventKey.new()
+	bare.pressed = true
+	bare.keycode = KEY_M
+	map._input(bare)
+	if map.visible == before:
+		Sentinel.done("toggle")
+		return "bare M did not toggle the minimap"
+	map._input(bare)
+	if map.visible != before:
+		Sentinel.done("toggle")
+		return "a second bare M did not toggle the minimap back"
+	var chord := InputEventKey.new()
+	chord.pressed = true
+	chord.keycode = KEY_M
+	chord.ctrl_pressed = true
+	map._input(chord)
+	if map.visible != before:
+		Sentinel.done("toggle")
+		return "Ctrl+M toggled the minimap — the mic-mute chord also flips the map"
+	print("toggle: bare M flips, Ctrl+M ignored")
+	Sentinel.done("toggle")
 	return ""
 
 

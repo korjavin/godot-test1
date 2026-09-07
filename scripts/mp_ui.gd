@@ -506,13 +506,22 @@ func _unhandled_input(event: InputEvent) -> void:
 		match event.keycode:
 			MUTE_KEY:
 				get_viewport().set_input_as_handled()
-				_on_mic_mute_pressed()
+				_on_mic_mute_pressed(false)
 			DEAFEN_KEY:
 				get_viewport().set_input_as_handled()
-				_on_deafen_pressed()
+				# D is also the bare `step_right` movement binding, and Godot
+				# action matching is NOT modifier-exact (the project's own
+				# Shift+W run relies on that) — so Ctrl+D matches step_right
+				# and `set_input_as_handled()` undoes no polled `Input` state.
+				# The owner named Ctrl+D verbatim (bead godot-test1-k4l review
+				# round 1), so the key stays and the arm releases the action
+				# instead: deafening must not strafe the hero. M and G bind
+				# nothing in `[input]`, so their arms need no release.
+				Input.action_release("step_right")
+				_on_deafen_pressed(false)
 			CAMERA_KEY:
 				get_viewport().set_input_as_handled()
-				_on_camera_pressed()
+				_on_camera_pressed(false)
 
 
 # ============================================================================
@@ -1793,31 +1802,39 @@ func _on_voice_mode_pressed() -> void:
 ## the voice node — no confirmation, no persistence — because the whole point of
 ## an escape hatch from somebody else's microphone is that it takes one press.
 
-func _on_mic_mute_pressed() -> void:
+## `from_click` is false on the keyboard-chord path (bead godot-test1-k4l
+## review round 1): `_free_cursor_after_hud_press()` exists for a MOUSE-CLICK
+## reason only — the desktop-web capture on press — and a chord never captures
+## anything, so releasing the captured mouse there kills mouse-look mid-game.
+## Buttons connect with no argument and keep the default.
+func _on_mic_mute_pressed(from_click: bool = true) -> void:
 	var voice := _ensure_voice()
 	if voice == null or not voice.has_method("set_mic_muted"):
 		return
 	voice.set_mic_muted(not bool(voice.is_mic_muted()))
 	_update_voice_ui()
-	_free_cursor_after_hud_press()
+	if from_click:
+		_free_cursor_after_hud_press()
 
 
-func _on_deafen_pressed() -> void:
+func _on_deafen_pressed(from_click: bool = true) -> void:
 	var voice := _ensure_voice()
 	if voice == null or not voice.has_method("set_deafened"):
 		return
 	voice.set_deafened(not bool(voice.is_deafened()))
 	_update_voice_ui()
-	_free_cursor_after_hud_press()
+	if from_click:
+		_free_cursor_after_hud_press()
 
 
-func _on_camera_pressed() -> void:
+func _on_camera_pressed(from_click: bool = true) -> void:
 	var voice := _ensure_voice()
 	if voice == null or not voice.has_method("set_camera_enabled"):
 		return
 	voice.set_camera_enabled(not bool(voice.is_camera_on()))
 	_update_voice_ui()
-	_free_cursor_after_hud_press()
+	if from_click:
+		_free_cursor_after_hud_press()
 
 
 ## Free the mouse if it was captured during the press (bead godot-test1-xtr.20).

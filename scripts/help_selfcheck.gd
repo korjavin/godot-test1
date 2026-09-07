@@ -220,6 +220,13 @@ func _check_table() -> String:
 		if chord_actual != chord_legend.trim_prefix("Ctrl+"):
 			return "%s is now %s, but the help row still says \"%s\"" % [entry[2], chord_actual, chord_legend]
 
+	# The HUD button rows name the buttons' live labels (review round 1): the
+	# MP toggle reads "Multiplayer (N)" and the skill opener "Skills (K)", and
+	# a card still advertising "MP" / "Skills" names buttons that do not exist.
+	for legend: String in ["Multiplayer (N)", "Skills (K)"]:
+		if not legends.has(legend):
+			return "no help row carries the legend \"%s\" — the card names a button label that no longer exists" % legend
+
 	# --- The cheat-code sequences (\fo, \fb, \fh) ---------------------------
 	# Sequences have no single keycode, so we assert the card carries a row
 	# for each code in PlayerController.CHEAT_CODES.
