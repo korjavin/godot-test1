@@ -31,10 +31,16 @@ extends SceneTree
 ##   7. THE SENDER ROLL-CALL. The camera getter reads the cached roll-call,
 ##      never the placement set and never the bridge — stubs cannot see the
 ##      difference, so the shipped bodies are read (the suite's source-grep
-##      idiom).
+##      idiom), and each clause is fired on a violating sample so the clauses
+##      themselves can fail.
 ##   8. THE CAPTIVE SETTLE WINDOW. A set arriving one tick after the join
 ##      prints nothing (re-baselined, not diffed); a genuine grab-and-release
-##      past the window prints both.
+##      past the window prints both; the same standing set with the window
+##      forced shut prints (the control proves the quiet is the window).
+##   9. THE CAMERA GRACE. Senders first seen inside CAMERA_GRACE_TICKS of the
+##      room start baseline silently; a sender first seen after it prints once.
+##   10. THE LOCAL EDGE UNDER PUSH-TO-TALK. A PTT press/release prints nothing;
+##      back in activity mode the same edges print.
 
 const LOG_SCRIPT := preload("res://scripts/event_log_hud.gd")
 const VOICE_SCRIPT := preload("res://scripts/voice_chat.gd")
@@ -83,6 +89,7 @@ class StubMp extends Node:
 class StubVoice extends Node:
 	var available: bool = true
 	var tx: bool = false
+	var mode: int = 0
 	var deafened: bool = false
 	var speaking: Dictionary = {}
 	var video: Array = []
@@ -92,6 +99,9 @@ class StubVoice extends Node:
 
 	func is_tx() -> bool:
 		return tx
+
+	func get_mode() -> int:
+		return mode
 
 	func is_deafened() -> bool:
 		return deafened
@@ -146,6 +156,12 @@ func _run_checks() -> String:
 	if not failure.is_empty():
 		return failure
 	failure = _check_sender_rollcall()
+	if not failure.is_empty():
+		return failure
+	failure = _check_camera_grace()
+	if not failure.is_empty():
+		return failure
+	failure = _check_local_ptt()
 	if not failure.is_empty():
 		return failure
 	return ""
@@ -290,6 +306,75 @@ func _step(log: Control, t: int) -> int:
 	return t + 1000
 
 
+func _check_camera_grace() -> String:
+	## A joiner must not read every already-live camera as a fresh "camera on":
+	## ids first seen inside CAMERA_GRACE_TICKS of the room start baseline
+	## silently; ids first seen after it print (bead godot-test1-tgx).
+	var failure := ""
+	var wired := _wired_log()
+	var log: Control = wired["log"]
+	var mp: StubMp = wired["mp"]
+	var voice: StubVoice = wired["voice"]
+	var t: int = 100000
+	# Ann joins on tick two — her join line is expected; her camera is not the
+	# subject, Bob's standing one is.
+	mp.members.append({"id": "id-ann", "name": "Ann"})
+	t = _step(log, t)
+	voice.video = ["id-bob"]
+	t = _step(log, t)
+	t = _step(log, t)
+	t = _step(log, t)
+	if log.line_count() != 1:
+		failure = "a standing camera printed inside the grace — %d lines, want the join only" \
+				% log.line_count()
+	else:
+		# Past the grace a genuinely new sender prints exactly once — and the
+		# graced id stays silent, so the grace baselines rather than mutes.
+		voice.video = ["id-bob", "id-ann"]
+		t = _step(log, t)
+		failure = _expect_lines(log, [
+			"[00:01] Ann joined",
+			"[00:05] Ann: camera on",
+		])
+	_free_wired(wired)
+	Sentinel.done("camera_grace")
+	return failure
+
+
+func _check_local_ptt() -> String:
+	## Under push-to-talk the local mic edge prints nothing: every press and
+	## release would be an on/off pair churning the ring, while the held key is
+	## the indicator (bead godot-test1-tgx). Activity mode still prints both.
+	var failure := ""
+	var wired := _wired_log()
+	var log: Control = wired["log"]
+	var voice: StubVoice = wired["voice"]
+	var t: int = 100000
+	voice.mode = VOICE_SCRIPT.Mode.PUSH_TO_TALK
+	voice.tx = true
+	t = _step(log, t)
+	voice.tx = false
+	t = _step(log, t)
+	if log.line_count() != 0:
+		failure = "a PTT press/release printed %d lines — the local edge is not muted" \
+				% log.line_count()
+	else:
+		# Back in activity mode the same edges print — the mute tracks the
+		# mode, and the state was still tracked underneath.
+		voice.mode = VOICE_SCRIPT.Mode.ALWAYS_ON
+		voice.tx = true
+		t = _step(log, t)
+		voice.tx = false
+		t = _step(log, t)
+		failure = _expect_lines(log, [
+			"[00:03] Self: mic on",
+			"[00:04] Self: mic off",
+		])
+	_free_wired(wired)
+	Sentinel.done("local_ptt")
+	return failure
+
+
 func _expect_lines(log: Control, want: Array) -> String:
 	"""The ring holds exactly these composed lines, oldest first."""
 	if log.line_count() != want.size():
@@ -335,6 +420,19 @@ func _check_fade_and_removal() -> String:
 				failure = "age %d paints %.2f, oracle says %.2f — fade shape drifted" \
 						% [age, log.line_alpha_at(age), want]
 				break
+	if failure.is_empty():
+		# THE CONTROL: the sweep above must DISAGREE with a wrong-shape tail —
+		# otherwise it guards the points, not the shape, and a three-step fade
+		# would pass it. A three-step tail differs from four steps somewhere in
+		# the tail, or the sweep cannot fail.
+		var discriminates := false
+		for age: int in range(6001, 8000):
+			var want3 := float(int(ceil(float(8000 - age) / 2000.0 * 3.0))) / 3.0
+			if log.line_alpha_at(age) != want3:
+				discriminates = true
+				break
+		if not discriminates:
+			failure = "a three-step tail agrees everywhere — the sweep cannot fail"
 	if failure.is_empty():
 		# The painted sequence a real tick takes through the tail: four
 		# distinct alphas off `_painted` itself, then the drop — a one-second
@@ -458,6 +556,22 @@ func _check_captive_settle() -> String:
 				"[00:02] Primm was freed",
 				"[00:02] Primm was captured",
 			])
+	if failure.is_empty():
+		# THE CONTROL: the same standing set with the window forced SHUT must
+		# FAIL the silence bound — otherwise the quiet above proves a dead diff,
+		# not a window. A fresh log whose room started an hour ago is settled on
+		# its first tick, so the standing cell prints as news.
+		var shut := _wired_log()
+		var slog: Control = shut["log"]
+		var splayer: StubPlayer = shut["player"]
+		splayer.captive_heroes["primm"] = true
+		slog._room_start_msec = 0
+		slog._now_msec = 100500
+		slog._tick()
+		if slog.line_count() != 1 or not slog.line_text(0).contains("Primm was captured"):
+			failure = "a settled standing set printed %d lines — the window-shut drive cannot fail" \
+					% slog.line_count()
+		_free_wired(shut)
 	_free_wired(wired)
 	Sentinel.done("captive_settle")
 	return failure
@@ -478,6 +592,13 @@ func _check_solo_draws_nothing() -> String:
 	elif log.would_paint():
 		failure = "solo would paint — the gate must be shut with no snapshot"
 	else:
+		# THE CONTROL: a forged non-empty snapshot must STILL not paint with no
+		# voice module — otherwise the quiet above proves an empty ring, not the
+		# voice gate that actually shuts solo.
+		(log._painted as Array).append(["forged", 1.0])
+		if log.would_paint():
+			failure = "a forged snapshot painted voiceless — the gate reads the ring, not the module"
+		(log._painted as Array).clear()
 		# THE CONTROL (contrast): the same machinery in a room DOES track, so
 		# the zero above is the degrade and not a dead tick.
 		var contrast := _wired_log()
@@ -632,24 +753,52 @@ func _check_sender_rollcall() -> String:
 	var source: String = FileAccess.get_file_as_string("res://scripts/voice_chat.gd")
 	if source.is_empty():
 		failure = "cannot read voice_chat.gd — this check measured nothing"
+	elif not source.contains("func video_peer_ids()"):
+		failure = "video_peer_ids() not found — the camera seam moved"
 	else:
-		var code := _code_of(source, "func video_peer_ids()")
-		if code.strip_edges().is_empty():
-			failure = "video_peer_ids() not found — the camera seam moved"
-		elif not code.contains("_video_senders"):
-			failure = "video_peer_ids() never reads the sender cache — the log's 2 Hz pays a round trip"
-		elif not code.contains("_reported_cam"):
-			failure = "video_peer_ids() never reads the reported camera — the self-view is lost"
-		elif code.contains("videoPeers("):
-			failure = "video_peer_ids() calls the bridge itself — it is not bridge-free"
-		elif code.contains("_pushed_tiles"):
-			failure = "video_peer_ids() reads the placement set — a capture would print camera off"
-		elif not source.contains("_video_senders = senders"):
-			failure = "_poll_tiles never fills the sender cache from its videoPeers() parse"
-		elif not source.contains("_video_senders.clear()"):
-			failure = "nothing clears the sender cache when the tile poll stands down — it goes stale"
+		failure = _rollcall_violation(source)
+	if failure.is_empty():
+		# THE CONTROL: each clause must fire on a violating sample — otherwise a
+		# clause that can never fail guards nothing (the skin hex-oracle idiom).
+		var bad: Array = [
+			["func video_peer_ids() -> Array:\n\treturn JavaScriptBridge.videoPeers()",
+				"a bridge round trip"],
+			["func video_peer_ids() -> Array:\n\treturn _pushed_tiles.keys()",
+				"the placement set"],
+			["func video_peer_ids() -> Array:\n\treturn _video_senders.keys()",
+				"a self-view with no reported camera"],
+			["func _poll_tiles() -> void:\n\tpass",
+				"a poll that never fills the cache"],
+		]
+		for sample: Array in bad:
+			if _rollcall_violation(str(sample[0])).is_empty():
+				failure = "the roll-call clauses passed %s — they cannot fail" % str(sample[1])
+				break
 	Sentinel.done("sender_rollcall")
 	return failure
+
+
+func _rollcall_violation(source: String) -> String:
+	"""The first roll-call clause this source violates, or "" — one predicate
+	for the shipped module and the violating samples alike, so the control
+	above measures the clauses and not the samples."""
+	var code := _code_of(source, "func video_peer_ids()")
+	if code.strip_edges().is_empty():
+		# A bare snippet has no getter to judge — it is judged as a getter.
+		code = source
+	if not code.contains("_video_senders"):
+		return "video_peer_ids() never reads the sender cache — the log's 2 Hz pays a round trip"
+	if not code.contains("_reported_cam"):
+		return "video_peer_ids() never reads the reported camera — the self-view is lost"
+	if code.contains("videoPeers("):
+		return "video_peer_ids() calls the bridge itself — it is not bridge-free"
+	if code.contains("_pushed_tiles"):
+		return "video_peer_ids() reads the placement set — a capture would print camera off"
+	if not source.contains("_video_senders = senders"):
+		return "_poll_tiles never fills the sender cache from its videoPeers() parse"
+	if not source.contains("_video_senders.clear()"):
+		return "nothing clears the sender cache when the tile poll stands down — it goes stale"
+	return ""
 
 
 func _code_of(source: String, head: String) -> String:
@@ -717,6 +866,9 @@ func _check_skin() -> String:
 		elif VOICE_SCRIPT.SELF_LEVEL_KEY != "me":
 			failure = "the voice module's self key is '%s', not 'me' — both mirrors drifted together" \
 					% VOICE_SCRIPT.SELF_LEVEL_KEY
+		elif LOG_SCRIPT.VOICE_MODE_PTT != VOICE_SCRIPT.Mode.PUSH_TO_TALK:
+			failure = "VOICE_MODE_PTT '%d' is not the voice module's PUSH_TO_TALK — PTT suppression mutes the wrong mode" \
+					% LOG_SCRIPT.VOICE_MODE_PTT
 	if failure.is_empty():
 		var log: Control = _fresh_log()
 		if log.theme != HudTheme.theme():

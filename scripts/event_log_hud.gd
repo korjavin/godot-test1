@@ -74,15 +74,25 @@ const FADE_STEPS: int = 4
 ## show. "Mic on" stays immediate; 1.5 s of quiet means hung up, not pausing.
 const MIC_OFF_SILENT_TICKS: int = 3
 
+## Ticks after the room start during which a newly seen camera baselines
+## silently instead of printing (bead godot-test1-tgx): the first online tick
+## sees no remote tracks yet (the sender cache is cleared while the module is
+## not running), so every already-live camera would read as a fresh "camera
+## on" a moment later. The MIC_OFF_SILENT_TICKS shape — a count of 2 Hz ticks,
+## not a clock — so ids first seen inside the grace are standing state and ids
+## first seen after it are news.
+const CAMERA_GRACE_TICKS: int = 3
+
 ## Msec after the room start during which the captive set is re-baselined
 ## silently instead of diffed (review round 2): `welcome` EMPTIES the set and
 ## the room's real one lands after, over the `room` verb and the join
 ## snapshot's `cap` — diffing the empty moment prints every standing cell as a
-## fresh grab. Mirrors `MpManager.JOIN_SNAPSHOT_WAIT`; the live manager is
-## asked first through `_join_settled()` (which also settles early once the
-## snapshots are in), and this is the fallback a stub — or an old manager —
-## runs on.
-const CAPTIVE_SETTLE_MSEC: int = 1500
+## fresh grab. DERIVED from `MpManager.JOIN_SNAPSHOT_WAIT`, not a second
+## hand-written 1500 (bead godot-test1-tgx): the two windows are one fact, and
+## a copy would let them drift. The live manager is asked first through
+## `_join_settled()` (which also settles early once the snapshots are in), and
+## this is the fallback a stub — or an old manager — runs on.
+const CAPTIVE_SETTLE_MSEC: int = int(MpManager.JOIN_SNAPSHOT_WAIT * 1000.0)
 
 ## Colours, and they all come off `HudTheme` — see the file banner.
 const COLOR_GROUND: Color = Color(HudTheme.INK, HudTheme.PANEL_ALPHA)
@@ -93,6 +103,14 @@ const COLOR_TEXT: Color = HudTheme.BONE
 ## id (see `is_hero_speaking`). `event_log_selfcheck` binds the two spellings
 ## the way `hero_hud_selfcheck` binds the mic numbers.
 const SELF_KEY: String = "me"
+
+## `voice_chat.Mode.PUSH_TO_TALK`, mirrored rather than preloaded (the SELF_KEY
+## precedent — bead godot-test1-tgx): under push-to-talk every key press and
+## release would print a mic on/off pair and churn the six-line ring, while the
+## held key itself is the indicator the log would duplicate. Local tx lines are
+## drawn in activity mode only; the state is still tracked, so leaving PTT
+## diffs honestly. `event_log_selfcheck` binds the two spellings.
+const VOICE_MODE_PTT: int = 1
 
 ## Cached room + voice + player references, re-fetched when they go away.
 var _mp: Node = null
@@ -109,6 +127,10 @@ var _lines: Array = []
 ## Room clock: msec the current room started, on the log's clock. Re-armed on
 ## every join; the mm:ss stamp is born-minus-start.
 var _room_start_msec: int = 0
+## Tick clock: 2 Hz ticks since the node existed, and the tick the room was
+## seeded on. The camera grace counts ticks, so both re-arm in `_seed_room()`.
+var _tick_count: int = 0
+var _seed_tick: int = 0
 ## Whether the baselines below describe the room we are in. False reseeds
 ## everything silently — the join that must not flood the log with four swaps.
 var _baselined: bool = false
@@ -171,6 +193,7 @@ func _process(delta: float) -> void:
 func _tick() -> void:
 	## One 2 Hz snapshot compare: append lines on DIFF, age the ring, repaint
 	## only when the painted snapshot moved.
+	_tick_count += 1
 	if _mp == null or not is_instance_valid(_mp):
 		_mp = get_tree().get_first_node_in_group("mp") if is_inside_tree() else null
 	if _voice == null or not is_instance_valid(_voice):
@@ -221,6 +244,8 @@ func _lose_room() -> void:
 	_members = {}
 	_holders = {}
 	_captives = {}
+	_tick_count = 0
+	_seed_tick = 0
 	_tx = false
 	_speech_on = {}
 	_speech_quiet = {}
@@ -239,6 +264,7 @@ func _seed_room() -> void:
 	## fresh grab.
 	_lines.clear()
 	_room_start_msec = _now()
+	_seed_tick = _tick_count
 	if _mp != null and _mp.has_method("my_id"):
 		_my_id = str(_mp.my_id())
 	_members = _read_members()
@@ -314,6 +340,15 @@ func _read_tx() -> bool:
 	if _voice == null or not _voice.has_method("is_tx"):
 		return false
 	return bool(_voice.is_tx())
+
+
+func _local_tx_muted() -> bool:
+	"""Are local mic lines suppressed? True under push-to-talk (see
+	VOICE_MODE_PTT). False with no voice seam, or a module too old to name a
+	mode — the back-compat default is drawn lines, not silence."""
+	if _voice == null or not _voice.has_method("get_mode"):
+		return false
+	return int(_voice.get_mode()) == VOICE_MODE_PTT
 
 
 func _read_speaking() -> Dictionary:
@@ -443,10 +478,11 @@ func _diff_voice() -> void:
 		return
 	var tx := _read_tx()
 	if tx != _tx:
-		if tx:
-			_append(tr("%s: mic on") % _my_name())
-		else:
-			_append(tr("%s: mic off") % _my_name())
+		if not _local_tx_muted():
+			if tx:
+				_append(tr("%s: mic on") % _my_name())
+			else:
+				_append(tr("%s: mic off") % _my_name())
 		_tx = tx
 	# Speech edges, DEBOUNCED (review round 1 — see MIC_OFF_SILENT_TICKS):
 	# "on" is immediate, "off" needs three silent ticks in a row. A peer who
@@ -475,8 +511,11 @@ func _diff_voice() -> void:
 		if not _members.has(id):
 			_video.erase(id)
 	var video := _read_video()
+	# Still inside the join grace: new senders are standing state, absorbed by
+	# the `_video = video` below with no line. Past it they are news.
+	var graced: bool = _tick_count - _seed_tick <= CAMERA_GRACE_TICKS
 	for id: String in video:
-		if not _video.has(id):
+		if not _video.has(id) and not graced:
 			_append(tr("%s: camera on") % _member_name(id))
 	for id: String in _video:
 		if not video.has(id):
