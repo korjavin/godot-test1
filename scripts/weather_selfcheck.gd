@@ -5,23 +5,31 @@ extends SceneTree
 ##
 ## Prints "SELFCHECK OK" and exits 0, or prints the first failure and exits 1.
 ##
-## WHAT IT GUARDS — the room's one sky, five things, each mutation-tested:
-##   1. ONE PACKET, ONE SKY. The master's `weather_sync_state()` applied to a
-##      peer draws byte-identical storm boxes and gives the same
-##      `is_raining_at()` answer at the storm's centre on both managers — with
-##      a point 14 km away dry on both as the negative, without which "always
-##      dry" would pass.
+## WHAT IT GUARDS — the room's one sky, seven things, each mutation-tested:
+##   1. ONE PACKET, ONE SKY — in both peer states. A joiner whose first event
+##      is the packet ends with the FULL field (review round 1: the old code
+##      left it a 1-4 storm sky forever, and this check used to pin that); a
+##      steady-state peer with local storms of its own converges onto exactly
+##      the published set at full density. Both draw byte-identical boxes and
+##      rain on the same ground — with a point 14 km away dry on both as the
+##      negative, without which "always dry" would pass.
 ##   2. A REPLAY TRACKS THE MASTER. The master moves its storm 200 m and the
 ##      peer snaps onto the new centre on the next packet; the old ground is
 ##      dry again.
-##   3. SILENCE FREES IT. The all-clear and REMOTE_WEATHER_TIMEOUT both drop
+##   3. A RECYCLED STORM KEEPS ITS SEED CONTRACT. The field is blown through
+##      the shipped recycle and every published storm rebuilds byte-identical
+##      boxes off its `sd` — review round 1: the recycle kept the old seed.
+##   4. THE PROMOTION WINDOW. The silence timeout drops the replay but keeps a
+##      newly rolled local storm; the all-clear drops both; every replacement
+##      is a real fair cloud (sd=-1), never a dark roll with a forced flag.
+##   5. SILENCE FREES IT. The all-clear and REMOTE_WEATHER_TIMEOUT both drop
 ##      the replay (replaced fair in place, so the rain actually stops), which
 ##      is the one test that also covers a deposed master, a leave and no MP
 ##      node at all.
-##   4. A NON-MASTER ROLLS NOTHING — with "out of the room it rolls storms" as
+##   6. A NON-MASTER ROLLS NOTHING — with "out of the room it rolls storms" as
 ##      the positive control, because "rolled nothing" is also what a harness
 ##      that cannot roll reports.
-##   5. SOLO DETERMINISM. With no MP node two managers off one seed roll
+##   7. SOLO DETERMINISM. With no MP node two managers off one seed roll
 ##      byte-identical fields — the roll this bead split from the build is
 ##      still the field solo play always had.
 ##
@@ -60,6 +68,8 @@ const SOLO_SEED: int = 9001
 const ROLL_COUNT: int = 26
 const CONTROL_ROLLS: int = 60
 const TRACK_SEED: int = 1111
+const RECYCLE_SEED: int = 7
+const STORM_FIRST_SEED: int = 13
 const TRACK_C1: Vector3 = Vector3(120.0, 80.0, -40.0)
 const TRACK_C2: Vector3 = Vector3(320.0, 80.0, -40.0)
 const FAR_POINT: Vector3 = Vector3(10000.0, 0.0, 10000.0)
@@ -85,6 +95,12 @@ func _run_checks() -> String:
 	if not failure.is_empty():
 		return failure
 	failure = _check_track()
+	if not failure.is_empty():
+		return failure
+	failure = _check_recycle()
+	if not failure.is_empty():
+		return failure
+	failure = _check_promotion()
 	if not failure.is_empty():
 		return failure
 	failure = _check_silence()
@@ -142,10 +158,13 @@ func _publish(master: Node) -> Dictionary:
 
 
 func _check_sync() -> String:
-	## ONE PACKET, ONE SKY: the master's sky applied to an empty peer draws the
-	## same boxes and rains on the same ground — and on no other.
+	## ONE PACKET, ONE SKY — in both peer states that matter. A joiner whose
+	## first event is the packet must end with the FULL field (review round 1:
+	## the old code left it a 1-4 storm sky forever, and this check used to pin
+	## that); a steady-state peer with its own full field — local storms
+	## included — must converge onto exactly the published set at full density.
+	## Both end raining on the same ground as the master, and on no other.
 	var master: Node = _fresh_manager()
-	var peer: Node = _fresh_manager()
 	_roll_field(master, MASTER_SEED, ROLL_COUNT)
 	var master_storms: Array = _storms_of(master, false)
 	if master_storms.is_empty():
@@ -155,40 +174,76 @@ func _check_sync() -> String:
 	if travel.is_empty():
 		Sentinel.done("wx_sync")
 		return "weather_sync_state published nothing for a sky with %d storms" % master_storms.size()
-	peer.call("apply_weather_sync", travel)
-	if (peer.get("_clouds") as Array).size() != master_storms.size():
+	# Phase A: the joiner. Empty sky, packet first — the field must still be
+	# CLOUD_COUNT afterwards, storms and all.
+	var joiner: Node = _fresh_manager()
+	joiner.call("apply_weather_sync", travel)
+	if (joiner.get("_clouds") as Array).size() != ROLL_COUNT:
 		Sentinel.done("wx_sync")
-		return "the peer holds %d clouds for %d published storms — the wholesale apply grew or shrank the field" \
-				% [(peer.get("_clouds") as Array).size(), master_storms.size()]
-	for storm: Dictionary in master_storms:
-		var twin: Dictionary = {}
-		for cloud: Dictionary in (peer.get("_clouds") as Array):
-			if int(cloud.get("sd", -1)) == int(storm["sd"]):
-				twin = cloud
-				break
-		if twin.is_empty():
+		return "the joiner holds %d clouds, not the full %d — a packet before the first tick shrank its sky" \
+				% [(joiner.get("_clouds") as Array).size(), ROLL_COUNT]
+	var failure: String = _assert_same_sky(master_storms, joiner, "joiner")
+	if not failure.is_empty():
+		Sentinel.done("wx_sync")
+		return failure
+	# Phase B: the steady-state peer. Full field of its own — including local
+	# storms the drop phase must take out — converged onto the published set.
+	var full: Node = _fresh_manager()
+	_roll_field(full, CONTROL_SEED, ROLL_COUNT)
+	if _storms_of(full, false).is_empty():
+		Sentinel.done("wx_sync")
+		return "CONTROL_SEED rolled no local storm — phase B would converge nothing"
+	full.call("apply_weather_sync", travel)
+	if (full.get("_clouds") as Array).size() != ROLL_COUNT:
+		Sentinel.done("wx_sync")
+		return "the steady peer holds %d clouds, not %d — the wholesale apply grew or shrank the field" \
+				% [(full.get("_clouds") as Array).size(), ROLL_COUNT]
+	failure = _assert_same_sky(master_storms, full, "steady peer")
+	if not failure.is_empty():
+		Sentinel.done("wx_sync")
+		return failure
+	for cloud: Dictionary in (full.get("_clouds") as Array):
+		if bool(cloud["is_storm"]) and not bool(cloud.get("remote", false)):
 			Sentinel.done("wx_sync")
-			return "the peer never built storm sd=%d — the replay dropped a named storm" % int(storm["sd"])
-		if var_to_bytes(twin["boxes"]) != var_to_bytes(storm["boxes"]):
-			Sentinel.done("wx_sync")
-			return "the peer drew different boxes for storm sd=%d — two builds off one seed disagree" \
-					% int(storm["sd"])
-		if not bool(twin.get("remote", false)):
-			Sentinel.done("wx_sync")
-			return "the peer's storm sd=%d is not flagged remote — it would be re-published on promotion" \
-					% int(storm["sd"])
+			return "the steady peer kept local storm sd=%d the packet never named — it rains where the master is clear" \
+					% int(cloud["sd"])
 	var first: Dictionary = master_storms[0]
 	var inside := Vector3((first["center"] as Vector3).x, 0.0, (first["center"] as Vector3).z)
 	if not bool(master.call("is_raining_at", inside)):
 		Sentinel.done("wx_sync")
 		return "the master is dry under its own storm — this check measured nothing"
-	if not bool(peer.call("is_raining_at", inside)):
+	for peer: Node in [joiner, full]:
+		if not bool(peer.call("is_raining_at", inside)):
+			Sentinel.done("wx_sync")
+			return "a peer is dry under the replayed storm at %s — one sky was the whole point" % str(inside)
+		if bool(peer.call("is_raining_at", FAR_POINT)):
+			Sentinel.done("wx_sync")
+			return "a peer rains 14 km from every storm — the negative control failed, so the positive proves nothing"
+	if bool(master.call("is_raining_at", FAR_POINT)):
 		Sentinel.done("wx_sync")
-		return "the peer is dry under the replayed storm at %s — one sky was the whole point" % str(inside)
-	if bool(master.call("is_raining_at", FAR_POINT)) or bool(peer.call("is_raining_at", FAR_POINT)):
-		Sentinel.done("wx_sync")
-		return "rain 14 km from every storm — the negative control failed, so the positive proves nothing"
+		return "the master rains 14 km from every storm — the negative control failed"
 	Sentinel.done("wx_sync")
+	return ""
+
+
+func _assert_same_sky(master_storms: Array, peer: Node, who: String) -> String:
+	## Every published storm stands on the peer with byte-identical boxes and
+	## the remote flag set — the whole of what "one sky" means below the rain.
+	for storm: Dictionary in master_storms:
+		var twin: Dictionary = {}
+		for cloud: Dictionary in (peer.get("_clouds") as Array):
+			if int(cloud.get("sd", -2)) == int(storm["sd"]):
+				twin = cloud
+				break
+		if twin.is_empty():
+			return "the %s never built storm sd=%d — the replay dropped a named storm" \
+					% [who, int(storm["sd"])]
+		if var_to_bytes(twin["boxes"]) != var_to_bytes(storm["boxes"]):
+			return "the %s drew different boxes for storm sd=%d — two builds off one seed disagree" \
+					% [who, int(storm["sd"])]
+		if not bool(twin.get("remote", false)):
+			return "the %s's storm sd=%d is not flagged remote — it would be re-published on promotion" \
+					% [who, int(storm["sd"])]
 	return ""
 
 
@@ -231,6 +286,102 @@ func _check_track() -> String:
 		Sentinel.done("wx_track")
 		return "the peer still rains at the storm's old centre — the move left a ghost behind"
 	Sentinel.done("wx_track")
+	return ""
+
+
+func _check_recycle() -> String:
+	## A RECYCLED STORM KEEPS ITS SEED CONTRACT: the whole field is blown past
+	## the disc through the shipped `_update_clouds()`, and every storm the
+	## master publishes afterwards rebuilds byte-identical boxes off its `sd`
+	## on a peer — with the same rain on the same ground. Review round 1: the
+	## recycle used to copy six keys and keep the old seed, so peers drew
+	## different storms (and several `-1`s collapsed into one).
+	var master: Node = _fresh_manager()
+	_roll_field(master, RECYCLE_SEED, ROLL_COUNT)
+	if _storms_of(master, false).is_empty():
+		Sentinel.done("wx_recycle")
+		return "RECYCLE_SEED rolled no storm — this check measured nothing"
+	# Teleport the disc: every cloud is suddenly out of range and recycles.
+	master.call("_update_clouds", Vector3(10000.0, 0.0, 0.0), 60.0)
+	var recycled: Array = _storms_of(master, false)
+	if recycled.is_empty():
+		Sentinel.done("wx_recycle")
+		return "no storm survived the recycle — this check measured nothing"
+	for storm: Dictionary in recycled:
+		if int(storm["sd"]) == -1:
+			Sentinel.done("wx_recycle")
+			return "a recycled storm carries sd=-1 — the publish names a build that never was"
+		if bool(storm.get("remote", false)):
+			Sentinel.done("wx_recycle")
+			return "a recycled storm is flagged remote — the master would never publish it"
+	var travel: Dictionary = _publish(master)
+	if travel.is_empty():
+		Sentinel.done("wx_recycle")
+		return "the master published nothing after the recycle — this check measured nothing"
+	var peer: Node = _fresh_manager()
+	peer.call("apply_weather_sync", travel)
+	var failure: String = _assert_same_sky(recycled, peer, "recycle peer")
+	if not failure.is_empty():
+		Sentinel.done("wx_recycle")
+		return failure
+	var first: Dictionary = recycled[0]
+	var inside := Vector3((first["center"] as Vector3).x, 0.0, (first["center"] as Vector3).z)
+	if not bool(master.call("is_raining_at", inside)) \
+			or not bool(peer.call("is_raining_at", inside)):
+		Sentinel.done("wx_recycle")
+		return "master and peer disagree about the rain under a recycled storm at %s" % str(inside)
+	Sentinel.done("wx_recycle")
+	return ""
+
+
+func _check_promotion() -> String:
+	## THE PROMOTION WINDOW: a peer holding a replay is elected master and
+	## rolls a LOCAL storm before the silence lease runs out. The timeout must
+	## drop the replay and KEEP the local sky; the all-clear must drop both.
+	## And every replacement is a real fair cloud (sd=-1), never a dark roll
+	## with its flag forced — that storm-sized white cloud.
+	var mgr: Node = _fresh_manager()
+	var timeout: float = float(mgr.get("REMOTE_WEATHER_TIMEOUT"))
+	var replay: Dictionary = mgr.call("_build_storm_cloud", TRACK_SEED)
+	replay["center"] = TRACK_C1
+	replay["remote"] = true
+	(mgr.get("_clouds") as Array).append(replay)
+	var local: Dictionary = mgr.call("_build_storm_cloud", TRACK_SEED + 1)
+	local["center"] = TRACK_C1 + Vector3(300.0, 0.0, 300.0)
+	(mgr.get("_clouds") as Array).append(local)
+	mgr.call("_tick_remote_weather", timeout + 1.0)
+	var remote_left: Array = _storms_of(mgr, true)
+	var all_left: Array = _storms_of(mgr, false)
+	if not remote_left.is_empty():
+		Sentinel.done("wx_promotion")
+		return "the timeout left %d replayed storms standing" % remote_left.size()
+	if all_left.size() != 1 or int(all_left[0]["sd"]) != int(local["sd"]):
+		Sentinel.done("wx_promotion")
+		return "the timeout wiped the promoted master's own storm — the new sky died with the old"
+	# ...while the all-clear takes the local one too: a non-master's pre-join
+	# storm must never survive it, or it rains where the master is clear.
+	mgr.call("apply_weather_sync", {"k": -1})
+	if not _storms_of(mgr, false).is_empty():
+		Sentinel.done("wx_promotion")
+		return "the all-clear left a local storm standing — gating the drop on `remote` alone diverges"
+	# The replacement artifact, on a manager OUTSIDE any room: the first roll
+	# off STORM_FIRST_SEED is dark, so the old `_make_cloud()` path left a
+	# storm-sized white cloud here with a real seed. It must be fair-shaped
+	# with sd=-1 instead.
+	var solo: Node = _fresh_manager()
+	var solo_rng: RandomNumberGenerator = solo.get("_rng") as RandomNumberGenerator
+	solo_rng.seed = STORM_FIRST_SEED
+	var doomed: Dictionary = solo.call("_build_storm_cloud", TRACK_SEED)
+	doomed["center"] = TRACK_C1
+	doomed["remote"] = true
+	(solo.get("_clouds") as Array).append(doomed)
+	solo.call("_tick_remote_weather", timeout + 1.0)
+	var rest: Array = solo.get("_clouds") as Array
+	if rest.size() != 1 or bool((rest[0] as Dictionary)["is_storm"]) \
+			or int((rest[0] as Dictionary)["sd"]) != -1:
+		Sentinel.done("wx_promotion")
+		return "the freed replay came back as %s — not a real fair cloud" % str(rest)
+	Sentinel.done("wx_promotion")
 	return ""
 
 

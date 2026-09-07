@@ -35,6 +35,13 @@ extends Node
 ## off a fresh RNG seeded with it (`_build_storm_cloud`), so two builds are
 ## byte-identical without a transform on the wire.
 ##
+## TWO DOCUMENTED CEILINGS. A master on an older build publishes nothing and
+## its peers draw no storms at all. And a peer more than FIELD_RADIUS from the
+## master replays a sky drawn for somebody else's disc while rolling no storms
+## of its own — far from the master its sky stays clear, converging again when
+## it walks back. Both are the price of one shared sky (owner call: documented,
+## not changed).
+##
 ## ponytail: two optional extras from the design were deliberately NOT built.
 ## (1) A full-screen darkening ColorRect while inside a rain zone — a screen-
 ## sized alpha blend is exactly the mobile fill-rate cost this project's perf
@@ -304,6 +311,12 @@ var _clouds: Array = []
 ## Reset by `apply_weather_sync()`; `REMOTE_WEATHER_TIMEOUT` frees them.
 var _wx_silence: float = 0.0
 
+## Whether the one-time fair field has been laid (bead godot-test1-vej review:
+## a `wx` packet applied before the first tick used to defeat the lazy fill,
+## leaving the peer a 1-4 storm sky forever). Set by the tick's fill and by
+## `apply_weather_sync()`'s pre-fill alike — whichever lays the field first.
+var _field_initialized: bool = false
+
 ## Cached player reference — looked up via the "player" group, re-fetched when
 ## invalid, never a hard reference (project convention). While there is no
 ## player (scene mid-load, or a scene without one), the manager does nothing.
@@ -406,12 +419,15 @@ func _process(delta: float) -> void:
 	var player_pos: Vector3 = _player.global_position
 
 	# First tick with a live player: fill the cloud field around them.
-	# (Lazy init rather than _ready() because the player may not exist yet.)
-	if _clouds.is_empty():
+	# (Lazy init rather than _ready() because the player may not exist yet.
+	# Guarded by the flag, not by emptiness: a `wx` packet applied before this
+	# tick already laid the field down in `apply_weather_sync()`.)
+	if not _field_initialized:
 		for i in CLOUD_COUNT:
 			var cloud: Dictionary = _make_cloud()
 			_place_cloud_around(cloud, player_pos, Vector3.ZERO)
 			_clouds.append(cloud)
+		_field_initialized = true
 
 	_update_clouds(player_pos, elapsed)
 	_tick_remote_weather(elapsed)
@@ -792,7 +808,8 @@ func _update_clouds(player_pos: Vector3, elapsed: float) -> void:
 		var site: Vector3 = terrain.call("tower_site")
 		tower_xz = Vector2(site.x, site.z)
 
-	for cloud in _clouds:
+	for ci in _clouds.size():
+		var cloud: Dictionary = _clouds[ci]
 		cloud["center"] += WIND_DIR * cloud["speed"] * elapsed
 		if bool(cloud.get("remote", false)):
 			# A REPLAYED STORM DRIFTS AND NOTHING ELSE. The drift is the dead
@@ -813,16 +830,15 @@ func _update_clouds(player_pos: Vector3, elapsed: float) -> void:
 		# down with it.
 		if to_cloud.length() > FIELD_RADIUS:
 			# Re-enter on the rim OPPOSITE the side it left by, so a cloud dropped
-			# behind a sprinting player comes back in ahead of them.
+			# behind a sprinting player comes back in ahead of them. The WHOLE
+			# entry is replaced — copying keys one by one is how a recycled
+			# storm once kept its old `sd` and every peer built a different
+			# storm off it (bead godot-test1-vej review round 1).
 			var rim_dir := -to_cloud.normalized()
 			var fresh: Dictionary = _make_cloud()
-			cloud["boxes"] = fresh["boxes"]
-			cloud["speed"] = fresh["speed"]
-			cloud["bob_phase"] = fresh["bob_phase"]
-			cloud["brightness"] = fresh["brightness"]
-			cloud["is_storm"] = fresh["is_storm"]
-			cloud["radius"] = fresh["radius"]
-			_place_cloud_around(cloud, player_pos, rim_dir)
+			_place_cloud_around(fresh, player_pos, rim_dir)
+			_clouds[ci] = fresh
+			cloud = fresh
 		# KEEP OUT OF THE BUILDING (see CLOUD_TOWER_KEEPOUT). One distance test on
 		# the tick that already exists, and it is the LAST thing done to the centre
 		# — after the drift AND after a recycle, which is the point: the recycle rim
@@ -1109,9 +1125,15 @@ func apply_weather_sync(state: Dictionary) -> void:
 	## MultiMesh instances, not AnimatableBody3D roots, so no rider inherits
 	## anything from the write — and at 10 Hz the step is ~16 cm, invisible on
 	## an object 70 m up.
+	if not _field_initialized:
+		# A packet that lands before our own first tick: lay the full fair
+		# field FIRST, or the pool below stays a 1-4 storm sky forever — the
+		# tick's one-time fill keys off this same flag (bead godot-test1-vej
+		# review round 1).
+		_lay_fair_field()
 	_wx_silence = 0.0
 	if int(state.get("k", 1)) < 0:
-		_drop_remote_storms()
+		_drop_remote_storms(true)
 		return
 	var wanted: Array = state.get("s", [])
 	var wanted_seeds: Dictionary = {}
@@ -1157,28 +1179,47 @@ func apply_weather_sync(state: Dictionary) -> void:
 			_clouds.append(storm)
 
 
+func _lay_fair_field() -> void:
+	## Lay the full fair-weather field: the tick's one-time fill, callable
+	## before the first tick for a peer whose first event is a `wx` packet.
+	## Rolled through `_make_fair_cloud()` explicitly — fair by construction in
+	## every room state — and anchored on the live player, or the origin when
+	## the avatar has not spawned yet.
+	var anchor := Vector3.ZERO
+	if is_instance_valid(_player):
+		anchor = _player.global_position
+	while _clouds.size() < CLOUD_COUNT:
+		var cloud: Dictionary = _make_fair_cloud()
+		_place_cloud_around(cloud, anchor, Vector3.ZERO)
+		_clouds.append(cloud)
+	_field_initialized = true
+
+
 func _replace_with_fair(cloud: Dictionary) -> void:
 	## Swap one dropped storm for a fresh fair-weather cloud at the same
-	## centre: the sky keeps its density, the position stays continuous, and —
-	## rolled through `_make_cloud()` on a non-master — it is fair by
-	## construction. The flag write below is the belt for a manager driven
-	## outside a room (a harness, or the master before its first packet),
-	## where the roll above could honestly come back dark.
-	var fresh: Dictionary = _make_cloud()
+	## centre: the sky keeps its density and the position stays continuous.
+	## Rolled through `_make_fair_cloud()` explicitly — fair by construction in
+	## every room state, with fair-sized boxes: the old `_make_cloud()` roll
+	## could come back dark outside a room and left a storm-sized white cloud
+	## behind (bead godot-test1-vej review round 1).
+	var fresh: Dictionary = _make_fair_cloud()
 	fresh["center"] = cloud["center"]
-	fresh["is_storm"] = false
-	fresh["radius"] = 0.0
 	_clouds[_clouds.find(cloud)] = fresh
 
 
-func _drop_remote_storms() -> void:
-	## Free every storm we are only replaying (plus any local storm a
-	## non-master should never have held), each replaced fair in place. Whoever
-	## clears the sky, it is our own roll next: the event that re-arms is the
-	## ordinary recycle, which on a non-master can only come back fair.
+func _drop_remote_storms(local_too: bool) -> void:
+	## Free replayed storms, each replaced fair in place. Two callers, two
+	## jobs, one loop: the `k < 0` all-clear passes true and drops a
+	## non-master's pre-join LOCAL storm too (leaving it would rain where the
+	## master is clear), while the silence timeout passes false — a just-
+	## promoted master may already have rolled local storms of its own in the
+	## ~2 s window, and those are its sky now, not the old master's.
 	for cloud: Dictionary in _clouds.duplicate():
-		if bool(cloud["is_storm"]):
-			_replace_with_fair(cloud)
+		if not bool(cloud["is_storm"]):
+			continue
+		if not local_too and not bool(cloud.get("remote", false)):
+			continue
+		_replace_with_fair(cloud)
 
 
 func _tick_remote_weather(elapsed: float) -> void:
@@ -1197,5 +1238,7 @@ func _tick_remote_weather(elapsed: float) -> void:
 	if _wx_silence > REMOTE_WEATHER_TIMEOUT:
 		# The master went quiet — it cleared its sky, was deposed, or we left
 		# the room. All three are this one test (see REMOTE_WEATHER_TIMEOUT).
-		_drop_remote_storms()
+		# Remote only: a promoted master may hold local storms of its own by
+		# now, and those stay.
+		_drop_remote_storms(false)
 		_wx_silence = 0.0

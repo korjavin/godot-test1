@@ -2119,8 +2119,11 @@ storm is gameplay and the room shares one sky on the herd's shape —
 as `wx`, `_build_storm_cloud()` off the packet seed, a non-master rolls no
 storms, `REMOTE_WEATHER_TIMEOUT` frees the replay. Clear clouds and birds stay
 per-peer cosmetic. This is replay, not seeding — the "don't wire them into the
-seed" rule above stays true. Documented ceiling: a master on an older build
-publishes nothing and its peers draw no storms at all.
+seed" rule above stays true. Documented ceilings: a master on an older build
+publishes nothing and its peers draw no storms at all; and a peer more than
+FIELD_RADIUS from the master replays a sky drawn for somebody else's disc
+while rolling nothing of its own, so far from the master its sky stays clear
+(owner call: documented, not changed).
 
 Weather exposes `is_raining_at(pos)`; the player uses it through one null-safe helper —
 Windman can't launch in rain and loses an active boost on entering one.

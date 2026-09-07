@@ -25,14 +25,24 @@ different places. Effect is contact-only (no damage found in the header), but
 it is a physics response, not a picture. Either seed the bubble or accept it
 in writing.
 
-## 2. Tower guard fights — diverge, real gameplay (candidate follow-up)
+## 2. Tower guards outside the croc-sync window — narrow residual (candidate follow-up)
 
-`tower_guards.gd` carries no `mp` / master / remote / sync seam at all (one
-tangential LOD line). Deterministic initial layout is shared, but a fight —
-which peer aggroed which guard, guard HP, who landed the hit — resolves per
-peer against group `"player"`, i.e. the LOCAL player. Two peers can fight (and
-plausibly kill) "the same" guard independently. Needs a decision: master
-authority like crocodiles, or per-peer instances by design.
+Correction of this note's own first version (review round 1): guards have no
+HP, cannot be killed, and are not outside the MP seam. No predator has health;
+the only kill verb is giant Teibi's crush, and `species_table.gd` gives
+`tower_guard` both `stink_immune: true` and `crush_immune: true` by design
+(the HQ is a stealth problem). Guards stay in group `"crocodile"` precisely so
+the MP relay still sees them: `mp_croc_sync.gd` iterates that group, guard
+node names are deterministic (`TowerGuard%s`), and a non-master's guard inside
+`CROC_SYNC_RADIUS` is `remote_driven` — it runs no chase of its own.
+`tower_guards.gd` carrying no `mp` seam is true of that file only; the seam is
+on the body.
+
+What is genuinely per-peer: a guard outside `CROC_SYNC_RADIUS` of a peer is
+not driven for it, and which quarry the master's guard resolves (nearest room
+member per peer presence) can differ per observer. Small window, real
+gameplay only if a guard's chase target decides something persistent — worth
+one look, not one sync verb.
 
 ## 3. Boss projectiles — per-peer BY DESIGN (confirm intent, no bead)
 
