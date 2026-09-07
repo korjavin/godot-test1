@@ -180,9 +180,11 @@ class WindmanSeparateMeshGenerator:
         """Stout torso (shirt) + thick neck + single big "W" + shorts waistband."""
         meshes = []
 
-        # Thick neck.
-        neck = cylinder(radius=0.062, height=0.09, sections=16)
-        neck.apply_translation([0, 0, 0.16])
+        # Thick neck, lengthened to meet the chin (bead godot-test1-z3e.7 — the
+        # cap used to stop 12 cm short of it). The cap overlaps ~1 cm into the
+        # skull so no seam can open; the base stays buried in the shirt.
+        neck = cylinder(radius=0.062, height=0.22, sections=16)
+        neck.apply_translation([0, 0, 0.225])
         neck.visual.vertex_colors = self.colors['skin']
         meshes.append(neck)
 

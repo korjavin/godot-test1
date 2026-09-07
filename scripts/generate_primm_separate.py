@@ -204,9 +204,11 @@ class PrimmSeparateMeshGenerator:
         shirt + belt at the waist + short coat tails hanging past the hips."""
         meshes = []
 
-        # Slim neck.
-        neck = cylinder(radius=0.050, height=0.09, sections=16)
-        neck.apply_translation([0, 0, 0.18])
+        # Slim neck, lengthened to meet the chin (bead godot-test1-z3e.7 — the
+        # cap used to stop 10 cm short of it). The cap overlaps ~1 cm into the
+        # skull so no seam can open; the base stays buried in the shirt.
+        neck = cylinder(radius=0.050, height=0.197, sections=16)
+        neck.apply_translation([0, 0, 0.2335])
         neck.visual.vertex_colors = self.colors['skin']
         meshes.append(neck)
 

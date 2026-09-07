@@ -167,8 +167,11 @@ class TeibiSeparateMeshGenerator:
         meshes = []
 
         # Neck (skin) poking out of the collar.
-        neck = cylinder(radius=0.052, height=0.085, sections=16)
-        neck.apply_translation([0, 0, 0.155])
+        # Lengthened to meet the chin (bead godot-test1-z3e.7 — the cap used
+        # to stop 13 cm short of it). The cap overlaps ~1 cm into the skull so
+        # no seam can open; the base stays buried in the shirt.
+        neck = cylinder(radius=0.052, height=0.2245, sections=16)
+        neck.apply_translation([0, 0, 0.22475])
         neck.visual.vertex_colors = self.colors['skin']
         meshes.append(neck)
 

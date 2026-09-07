@@ -15,6 +15,9 @@
 
 [node name="Body" type="Node3D" parent="."]
 
+; Phoboman has no neck by design (bead godot-test1-z3e.7): the helmet is a
+; diving bell whose collar ring emerges from the body sphere — head and
+; torso overlap instead of gapping, so there is nothing to close.
 [node name="Head" parent="Body" instance=ExtResource("1_head")]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 1.04, 0)
 
