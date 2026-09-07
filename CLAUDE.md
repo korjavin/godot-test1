@@ -57,13 +57,13 @@ docstring before touching it. The live Windman is `windman_parts/` assembled by
 | Batched geometry, box kinds, collision per kind | `scripts/chunk_batch.gd` | `assets/shaders/world_block.gdshader` | `batch` |
 | Field landmarks (one per kind per world) | `scripts/landmark_builders.gd` `terrain_landmarks.gd` | `landmark_toast.gd` | `landmark` `landmark_sites` |
 | Budapest (authored plan, streamed) | `scripts/budapest_plan.gd` | `budapest_streamer` `city_builders` | `budapest` `budapest_city` `landmark_progress` `city_map` |
-| The tower / HQ | `scripts/tower_shell.gd` `tower_interior.gd` | `tower_plans` (ASCII storeys) `tower_graph` (topology) `tower_plan_boxes` `tower_gates` `tower_guards` `tower_dressing` `tower_dossiers` `tower_lift_menu` | `tower_*` |
+| The tower / HQ | `scripts/tower_shell.gd` `tower_interior.gd` | `tower_plans` (ASCII storeys) `tower_graph` (topology) `tower_plan_boxes` `tower_gates` `tower_guards` `tower_dressing` `tower_dossiers` `tower_lift_menu` | `tower_*` (`tower_gate_sync` for the room-shared opened set) |
 | Player, abilities, animation | `scripts/player_controller.gd` | `player_abilities` `player_animation` | `capture` `view` `gait` `debug_teleport` |
 | Predators, bosses, species | `scripts/piglet_crocodile_ai.gd` | `species_table` `croc_steering` `boss_projectile` `hunt_director` `crocodile_lod_manager` | `enemy_spawn` `enemy_behavior` `boss_*` `projectile` `hunt_director` |
 | Progression, records, saves | `scripts/progression.gd` `best_run_store.gd` | | `progression` |
 | Pause | `scripts/pause_hub.gd` | | `pause` |
-| Ambience (weather, herds, crowd, traffic) | `weather_manager` `fauna_manager` `crowd_manager` `traffic_manager` | `city_agents` `ambience_lod` `ambience_proxies` | `fauna` `crowd` `traffic` |
-| HUD skin and widgets | `scripts/hud_theme.gd` | `hero_hud` `coin_hud` `world_caption` `minimap_hud` `ability_hud` `help_overlay` | `hero_hud` `minimap` `help` `locale` `intro` |
+| Ambience (weather, herds, crowd, traffic) | `weather_manager` `fauna_manager` `crowd_manager` `traffic_manager` | `city_agents` `ambience_lod` `ambience_proxies` | `weather` `fauna` `crowd` `traffic` |
+| HUD skin and widgets | `scripts/hud_theme.gd` | `hero_hud` `coin_hud` `world_caption` `minimap_hud` `ability_hud` `help_overlay` `event_log_hud` (room event log) | `hero_hud` `minimap` `help` `locale` `intro` `event_log` |
 | Audio (all synthesized) | `scripts/sound_manager.gd` | | `sound` |
 | Multiplayer mesh | `scripts/mp_manager.gd` | `mp_codec` (parsers) `mp_croc_sync` `lobby_client` `remote_avatar` `mp_ui` | `mp` |
 | Voice/video chat (web only) | `scripts/voice_chat.gd` | `web/vendor/mediapipe/` `scripts/fetch_vendor.sh` | `voice` |
@@ -178,6 +178,14 @@ gameplay input goes through named actions.
   A new route also needs a Traefik path rule in `server/docker-compose.yml`.
 - Seed and captive set ride the lobby relay as well as the mesh (they must reach peers
   whose ICE is unfinished). Crocodiles are master-simulated, never network-spawned.
+- **Runtime state that gates gameplay is shared on the herd's shape — the master simulates,
+  peers replay — never by seeding.** Storms (`wx`, one packet per croc-sync tick, `weather_manager.gd`
+  owns both ends and the silence timeout), ranged-boss shots (`shot`, reliable, one per shot,
+  replayed with the body's own row params, lethality local) and the HQ's opened gates (`gate`,
+  anyone-to-everyone, plus `g` on the `room` packet and `go` in the join snapshot from the master;
+  a non-master's own set drains once per join under half the verb budget). Clear clouds, birds,
+  crowd and traffic stay per-peer cosmetic. Each verb's ceilings (older builds, RTT lag, the
+  far-peer sky) are written at its send site. Beads `vej`, `coq`, `d81`.
 - Voice/video is web-only, on browser `RTCPeerConnection`s, one const JS string in
   `voice_chat.gd`; its `mp_manager` seam is three functions. **No JS snippet may return
   a bare boolean through `JavaScriptBridge`** — return 1/0 (checked by `intro_selfcheck`).

@@ -134,6 +134,16 @@ const WIDTH_BUDGETS: Array = [
 	["Mute", 18, 96.0, "MP panel per-peer mute"],
 	["Muted", 18, 96.0, "MP panel per-peer mute"],
 
+	# mp_ui.gd HUD voice/camera switches above the MP button (bead godot-test1-xtr.20)
+	# MP_BUTTON_WIDTH_ONLINE 190 px less 2*CARD_PADDING (24) = 166.0 px usable width, font 18.
+	["Mute mic", 18, 166.0, "HUD mic mute"],
+	["Mic muted", 18, 166.0, "HUD mic mute"],
+	["Deafen", 18, 166.0, "HUD deafen"],
+	["Deafened", 18, 166.0, "HUD deafen"],
+	["Camera off", 18, 166.0, "HUD camera toggle"],
+	["Camera on", 18, 166.0, "HUD camera toggle"],
+	["Camera blocked", 18, 166.0, "HUD camera toggle"],
+
 	# start_overlay.gd — CARD_WIDTH 420 with a 20 px content margin each side.
 	# One button since bead godot-test1-6pa dropped the SOLO / MULTIPLAYER fork.
 	# The card's hint line is exempt for the reason stated in the header above: it
@@ -187,6 +197,22 @@ const WIDTH_BUDGETS: Array = [
 	["NO LOCK", 15, 80.0, "minimap jail intent, jammed in the labyrinth"],
 	["Budapest: %.1f km", 13, 190.0, "minimap Budapest countdown"],
 	["Budapest %d/%d", 13, 190.0, "minimap Budapest explored count"],
+	# event_log_hud.gd — the room log card is 360 px wide with CARD_PADDING 12
+	# each side at BODY_FONT_SIZE 14, drawn with draw_string (no wrap, no
+	# clip). Measured raw: the "%s" stands in for the name, exactly like the
+	# "%d" in the MP volume row above.
+	["%s joined", 14, 336.0, "event log line"],
+	["%s left", 14, 336.0, "event log line"],
+	["%s disconnected", 14, 336.0, "event log line"],
+	["%s: mic on", 14, 336.0, "event log line"],
+	["%s: mic off", 14, 336.0, "event log line"],
+	["%s: camera on", 14, 336.0, "event log line"],
+	["%s: camera off", 14, 336.0, "event log line"],
+	["%s now plays %s", 14, 336.0, "event log line"],
+	["%s was captured", 14, 336.0, "event log line"],
+	["%s was freed", 14, 336.0, "event log line"],
+	["Deafened", 14, 336.0, "event log line"],
+	["Undeafened", 14, 336.0, "event log line"],
 ]
 
 var _failures: Array[String] = []

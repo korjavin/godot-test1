@@ -1192,3 +1192,55 @@ static func next_scar(applied: Array) -> String:
 		if not applied.has(id):
 			return id
 	return ""
+
+
+## The authored first rescue. Not a passage — the cell doors are ungated — but
+## the staging in Primm's cell is gone for good once it has happened, so it rides
+## the SAME monotone opened set for the same reason a checkpoint does. Spelled
+## here because this file is the one authority on every id that set may hold
+## (see `opened_ids()`); `TowerInterior` takes it the way it takes the `GATE_*`
+## constants, which is what stops the building and the graph drifting apart.
+const RESCUE_DONE: String = "tower_rescue_primm"
+
+
+static func opened_ids() -> Array[String]:
+	"""
+	Every id the tower's monotone opened set may ever hold, in first-seen order.
+
+	@return: a fresh Array of String — the caller may keep or mutate it.
+
+	THE RANGE-CHECK LIST (bead godot-test1-d81): the room's `gate` verb carries
+	one id and the parsers refuse anything not on this list, so a peer can never
+	be made to persist — or draw — an id no build authored. DERIVED, never
+	listed: the `gates` keys are the gate ids (phase-8 doors and riddles read
+	theirs straight out of the graph), the `entries` and `mutations` rows carry
+	theirs, and the scars enumerate through `scar_ids()`. A new gate, entry or
+	mutation row is receivable the day it lands, with no edit here.
+	"""
+	var out: Array[String] = []
+	for key: Variant in TOWER_GRAPH["gates"]:
+		var gid := String(key)
+		if not out.has(gid):
+			out.append(gid)
+	for row: Dictionary in TOWER_GRAPH["entries"]:
+		var eid := String(row.get("id", ""))
+		if eid != "" and not out.has(eid):
+			out.append(eid)
+	for mut: Dictionary in TOWER_GRAPH["mutations"]:
+		var mid := String(mut.get("id", ""))
+		if mid != "" and not out.has(mid):
+			out.append(mid)
+	for sid: String in scar_ids():
+		if not out.has(sid):
+			out.append(sid)
+	# The checkpoint is the same shape of id as the rescue: authored, in the
+	# set, but not a graph row key — it rides its `unlock` value on the
+	# `lift_stop_upper` entry row while `_on_checkpoint_enter` opens it by
+	# const. Omitted once (review round 1: every receiver dropped it); appended
+	# here so the omission cannot recur, and bound by assertion (see
+	# `tower_gate_sync_selfcheck`: every id the interior can open must decode).
+	if not out.has(GATE_CHECKPOINT):
+		out.append(GATE_CHECKPOINT)
+	if not out.has(RESCUE_DONE):
+		out.append(RESCUE_DONE)
+	return out

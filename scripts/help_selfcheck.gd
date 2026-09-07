@@ -71,6 +71,7 @@ const MobileSettingsPanel := preload("res://scripts/mobile_settings_panel.gd")
 const SkillTreeUi := preload("res://scripts/skill_tree_ui.gd")
 const CityMapPanel := preload("res://scripts/city_map_panel.gd")
 const TowerLiftMenu := preload("res://scripts/tower_lift_menu.gd")
+const MultiplayerUI := preload("res://scripts/mp_ui.gd")
 const LandmarkToast := preload("res://scripts/landmark_toast.gd")
 const PlayerController := preload("res://scripts/player_controller.gd")
 
@@ -172,6 +173,7 @@ func _check_table() -> String:
 		[SkillTreeUi.TOGGLE_KEY, "K", "skill_tree_ui.TOGGLE_KEY"],
 		[CityMapPanel.TOGGLE_KEY, "B", "city_map_panel.TOGGLE_KEY"],
 		[TowerLiftMenu.TOGGLE_KEY, "L", "tower_lift_menu.TOGGLE_KEY"],
+		[MultiplayerUI.TOGGLE_KEY, "N", "mp_ui.TOGGLE_KEY"],
 		[MotionDebug.TOGGLE_KEYCODE, "F4", "motion_debug.TOGGLE_KEYCODE"],
 		[MobileInput.FORCE_ENABLE_KEYCODE, "F5", "mobile_input.FORCE_ENABLE_KEYCODE"],
 		[TouchControls.FORCE_SHOW_KEYCODE, "F6", "touch_controls.FORCE_SHOW_KEYCODE"],

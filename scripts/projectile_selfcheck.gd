@@ -318,6 +318,16 @@ func _check_fairness() -> void:
 			_fail("%s: style '%s' has no entry in sound_manager.PROJECTILE_SOUNDS "
 					% [label, str(p["style"])] + "— it would fall back to a "
 					+ "generic cue, and the telegraph is what makes the dodge fair")
+		# ---- 1e. EVERY ROW STYLE IS A SHIPPED STYLES KEY ----
+		# The room's `shot` verb whitelists `s` against `BossProjectile.STYLES`
+		# (review round 1): a SPECIES row declaring a style nobody shipped would
+		# fire fine on the master and be dropped on every peer — the
+		# lethal-to-the-master-only bug back for that boss, with no error. Only
+		# the SPECIES rows need this; a STYLES entry IS the set.
+		if label.begins_with("SPECIES[") and not PROJECTILE.STYLES.has(str(p["style"])):
+			_fail("%s: style '%s' is not a BossProjectile.STYLES key — "
+					% [label, str(p["style"])] + "the `shot` verb would drop "
+					+ "every bolt this boss fires on every non-master screen")
 	Sentinel.done("fairness")
 
 

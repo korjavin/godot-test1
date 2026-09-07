@@ -1,4 +1,4 @@
-[gd_scene load_steps=38 format=3 uid="uid://clqb4rcmjrpgs"]
+[gd_scene load_steps=39 format=3 uid="uid://clqb4rcmjrpgs"]
 
 [ext_resource type="PackedScene" uid="uid://bqtq2xtxqnvvr" path="res://scenes/player.tscn" id="1_main"]
 [ext_resource type="Script" uid="uid://b07rwceo0eo4o" path="res://scripts/endless_terrain.gd" id="2_terrain"]
@@ -35,6 +35,7 @@
 [ext_resource type="Script" path="res://scripts/city_map_panel.gd" id="31_citymap"]
 [ext_resource type="Script" path="res://scripts/tower_lift_menu.gd" id="33_lift"]
 [ext_resource type="Script" path="res://scripts/world_caption.gd" id="34_caption"]
+[ext_resource type="Script" path="res://scripts/event_log_hud.gd" id="35_eventlog"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.25, 0.45, 0.75, 1)
@@ -178,6 +179,18 @@ offset_bottom = 270.0
 grow_horizontal = 0
 mouse_filter = 2
 script = ExtResource("7_ability")
+
+[node name="EventLogHUD" type="Control" parent="HUD"]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -376.0
+offset_top = 282.0
+offset_right = -16.0
+offset_bottom = 432.0
+grow_horizontal = 0
+mouse_filter = 2
+script = ExtResource("35_eventlog")
 
 [node name="HeroHUD" type="Control" parent="HUD"]
 anchors_preset = 0

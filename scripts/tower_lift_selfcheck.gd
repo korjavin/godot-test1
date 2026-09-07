@@ -55,6 +55,7 @@ const MobileSettingsPanel := preload("res://scripts/mobile_settings_panel.gd")
 const SkillTreeUi := preload("res://scripts/skill_tree_ui.gd")
 const CityMapPanel := preload("res://scripts/city_map_panel.gd")
 const LandmarkToast := preload("res://scripts/landmark_toast.gd")
+const MultiplayerUI := preload("res://scripts/mp_ui.gd")
 
 const SHELL_SCENE: String = "res://scenes/tower/tower_shell.tscn"
 const INTERIOR_SCENE: String = "res://scenes/tower/tower_interior.tscn"
@@ -137,6 +138,7 @@ func _check_key_is_free() -> void:
 		[[PauseController.PAUSE_KEY], "pause_controller.PAUSE_KEY"],
 		[[SkillTreeUi.TOGGLE_KEY], "skill_tree_ui.TOGGLE_KEY"],
 		[[CityMapPanel.TOGGLE_KEY], "city_map_panel.TOGGLE_KEY"],
+		[[MultiplayerUI.TOGGLE_KEY], "mp_ui.TOGGLE_KEY"],
 		[HelpOverlay.HELP_KEYCODES, "help_overlay.HELP_KEYCODES"],
 		[LandmarkToast.ANSWER_KEYCODES, "landmark_toast.ANSWER_KEYCODES"],
 		[PlayerScript.HERO_KEYCODES, "player_controller.HERO_KEYCODES"],

@@ -182,6 +182,10 @@ const ROWS: Array = [
 	# for the same reason B is: a panel that only opens where you are standing is
 	# unfindable if the card does not say where. No touch variant, like B and M.
 	["L", "At the HQ ground landing: ride the lift, a number picks the floor.", Mode.DESKTOP],
+	# The multiplayer panel — a raw keycode like the five above it (bead
+	# godot-test1-xtr.21), and named here for the same reason B is. No touch
+	# variant: a phone has the MP button, bottom left.
+	["N", "Open or close the multiplayer panel.", Mode.DESKTOP],
 	["P", "Pause the game.", Mode.DESKTOP],
 	["Esc", "Free the mouse cursor. Press again to grab it back.", Mode.DESKTOP],
 	["?", "Open or close this list.", Mode.DESKTOP],

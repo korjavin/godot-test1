@@ -111,6 +111,10 @@ const EDGE_MARGIN: float = 16.0
 const TUNE_GEAR_HEIGHT: float = 60.0
 const BUTTON_STACK_GAP: float = 8.0
 
+## Height of the HUD voice / camera switches stacked above the MP button
+## (bead godot-test1-xtr.20).
+const HUD_VOICE_BUTTON_HEIGHT: float = 36.0
+
 ## The open panel's size. Tall enough for the status line, the host/join
 ## controls, the hero row, the code + member list and Leave; scrollable so a
 ## short phone screen can still reach the bottom row. Grown from 420 by one
@@ -221,6 +225,13 @@ const HeroHud := preload("res://scripts/hero_hud.gd")
 ## hard reference to it.
 const VOICE_SELF_KEY: String = "me"
 
+## The hotkey that toggles this panel (bead godot-test1-xtr.21). A raw keycode
+## outside the input map, the panel-key convention (K, M, P, B, L, ?, F4-F7 and
+## the voice_mic action's V are taken — N is free, asserted by the key-free
+## cross-check). Read in `_unhandled_input`, never a named action: a key that
+## only opens a panel has nothing to rebind against.
+const TOGGLE_KEY: Key = KEY_N
+
 # ============================================================================
 # STATE
 # ============================================================================
@@ -309,6 +320,12 @@ var _camera_button: Button = null
 var _voice: Node = null
 var _voice_signals_connected: bool = false
 
+## HUD voice and camera switches stacked above the MP button (bead godot-test1-xtr.20).
+## Node references only: the state lives in voice_chat.gd (one state, two views).
+var _hud_mic_button: Button = null
+var _hud_deafen_button: Button = null
+var _hud_camera_button: Button = null
+
 ## The member ROWS (bead godot-test1-xtr.3): one `{id, dot, mute}` per name under
 ## `_members_box`. Rebuilt wholesale — like `_rebuild_room_buttons()`, and for the
 ## same reason: four rows is smaller than a diff of four rows — but only when the
@@ -351,33 +368,23 @@ func _ready() -> void:
 
 
 
-## Yield the screen to TouchControls' full-rect overlays — the exact three lines
-## `mobile_settings_panel.gd` runs for its ⚙ gear, for the exact same reason.
-## This Control draws above TouchControls (only `StartOverlay`, the boot-time
-## modal, sits later in `HUD` than it does) and
-## wins hit-testing: an unhidden MP button in the bottom-left corner steals taps
-## from the first-run "tap to enable motion controls" overlay — and that tap is
-## the ONE user gesture iOS grants `DeviceMotionEvent.requestPermission()` and
-## the browser grants WebAudio, so motion AND all audio would stay dead for the
-## session. The panel body is force-closed too (which also releases our pause),
-## or it covers the overlay it just stole the tap from.
+## Yield the screen to a modal overlay: the button hides and an open panel is
+## force-closed too (which also releases our pause). The why lives on
+## `_modal_yield()`, which owns the whole rule.
 func _process(_delta: float) -> void:
 	if _mp_button == null:
 		return
-	var touch_ui: Node = get_tree().get_first_node_in_group("touch_controls")
-	var modal: bool = touch_ui != null and touch_ui.has_method("has_modal") and touch_ui.has_modal()
-
-	# Yield to the ⚙ Tune panel for the same reason, one sibling further along.
-	# That panel's body opens UPWARD from just above its gear — bottom offsets
-	# [-664, -84], left [16, 396] — which contains this button's [-140, -84] x
-	# [16, 126] entirely. MultiplayerUI draws after MobileSettingsPanel, so it wins
-	# the panel and wins hit-testing: without this the panel's bottom-left corner
-	# (where its Close row sits) opens the MP panel instead.
-	var tune_ui: Node = get_tree().get_first_node_in_group("mobile_settings")
-	if tune_ui != null and tune_ui.has_method("is_panel_open") and tune_ui.is_panel_open():
-		modal = true
+	var modal: bool = _modal_yield()
 
 	_mp_button.visible = not modal
+	# The panel body opens over this region and carries the same switches.
+	var hud_voice_visible: bool = (not modal) and (not _panel_open) and (_voice_section != null and _voice_section.visible)
+	if _hud_mic_button != null:
+		_hud_mic_button.visible = hud_voice_visible
+	if _hud_deafen_button != null:
+		_hud_deafen_button.visible = hud_voice_visible
+	if _hud_camera_button != null:
+		_hud_camera_button.visible = hud_voice_visible
 	if modal and _panel_open:
 		_set_panel_open(false)
 
@@ -392,6 +399,57 @@ func _process(_delta: float) -> void:
 	# pause — which they must, since voice does (epic godot-test1-xtr).
 	if _panel_open:
 		_update_member_rows()
+
+
+## Whether a full-rect touch overlay (or the tune panel) owns the screen, so
+## the MP button hides and the hotkey stays inert (bead godot-test1-xtr.21).
+## Yield the screen to TouchControls' full-rect overlays — the exact lines
+## `mobile_settings_panel.gd` runs for its ⚙ gear, for the exact same reason.
+## This Control draws above TouchControls (only `StartOverlay`, the boot-time
+## modal, sits later in `HUD` than it does) and wins hit-testing: an unhidden
+## MP button in the bottom-left corner steals taps from the first-run "tap to
+## enable motion controls" overlay — and that tap is the ONE user gesture iOS
+## grants `DeviceMotionEvent.requestPermission()` and the browser grants
+## WebAudio, so motion AND all audio would stay dead for the session.
+## Yield to the ⚙ Tune panel for the same reason, one sibling further along.
+## That panel's body opens UPWARD from just above its gear — bottom offsets
+## [-664, -84], left [16, 396] — which contains this button's [-140, -84] x
+## [16, 126] entirely. MultiplayerUI draws after MobileSettingsPanel, so it wins
+## the panel and wins hit-testing: without this the panel's bottom-left corner
+## (where its Close row sits) opens the MP panel instead.
+func _modal_yield() -> bool:
+	var touch_ui: Node = get_tree().get_first_node_in_group("touch_controls")
+	if touch_ui != null and touch_ui.has_method("has_modal") and touch_ui.has_modal():
+		return true
+	var tune_ui: Node = get_tree().get_first_node_in_group("mobile_settings")
+	if tune_ui != null and tune_ui.has_method("is_panel_open") and tune_ui.is_panel_open():
+		return true
+	return false
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	## Toggle the panel on TOGGLE_KEY (bead godot-test1-xtr.21) — exactly what
+	## the MP button does, through the same handler, so the pause (PauseHub,
+	## with the game-over exemption) and every refusal are the button's own
+	## and nothing is added here.
+	##
+	## `_unhandled_input`, NOT `_input`: a focused LineEdit (this panel's own
+	## invite-code field) eats its keys before they get here, so typing a code
+	## containing N never toggles the panel out from under the typist —
+	## `help_overlay`'s guard, for `help_overlay`'s reason.
+	if event == null:
+		return
+	# Raw keycode, echo-filtered so holding N does not rapid-toggle —
+	# `city_map_panel`'s guard, for `city_map_panel`'s reason.
+	if event is InputEventKey and event.pressed and not event.echo \
+			and event.keycode == TOGGLE_KEY:
+		# Inert while the button itself is unusable: hidden by the modal
+		# yield above, where a press has no opener to match and `_process`
+		# would instantly close what it opened.
+		if _modal_yield():
+			return
+		get_viewport().set_input_as_handled()
+		_on_mp_button_pressed()
 
 
 # ============================================================================
@@ -438,6 +496,53 @@ func _build_ui() -> void:
 	_mp_button.offset_top = _mp_button.offset_bottom - MP_BUTTON_HEIGHT
 	_mp_button.pressed.connect(_on_mp_button_pressed)
 	add_child(_mp_button)
+
+	# --- HUD voice/camera switches stacked above the MP button ------------
+	# One state, two views: the state lives in voice_chat.gd and the panel already
+	# reads and mutates it. Putting these switches inside mp_ui.gd ensures the
+	# button IS this panel — zero duplicate state variables, shared handlers, and
+	# both views paint the same facts in lockstep (bead godot-test1-xtr.20).
+	_hud_mic_button = _make_button("Mute mic", _on_mic_mute_pressed)
+	_hud_mic_button.name = "HudMicButton"
+	_hud_mic_button.custom_minimum_size = Vector2(MP_BUTTON_WIDTH_ONLINE, HUD_VOICE_BUTTON_HEIGHT)
+	_hud_mic_button.anchor_left = 0.0
+	_hud_mic_button.anchor_right = 0.0
+	_hud_mic_button.anchor_top = 1.0
+	_hud_mic_button.anchor_bottom = 1.0
+	_hud_mic_button.offset_left = EDGE_MARGIN
+	_hud_mic_button.offset_right = EDGE_MARGIN + MP_BUTTON_WIDTH_ONLINE
+	_hud_mic_button.offset_bottom = _mp_button.offset_top - BUTTON_STACK_GAP
+	_hud_mic_button.offset_top = _hud_mic_button.offset_bottom - HUD_VOICE_BUTTON_HEIGHT
+	_hud_mic_button.visible = false
+	add_child(_hud_mic_button)
+
+	_hud_deafen_button = _make_button("Deafen", _on_deafen_pressed)
+	_hud_deafen_button.name = "HudDeafenButton"
+	_hud_deafen_button.custom_minimum_size = Vector2(MP_BUTTON_WIDTH_ONLINE, HUD_VOICE_BUTTON_HEIGHT)
+	_hud_deafen_button.anchor_left = 0.0
+	_hud_deafen_button.anchor_right = 0.0
+	_hud_deafen_button.anchor_top = 1.0
+	_hud_deafen_button.anchor_bottom = 1.0
+	_hud_deafen_button.offset_left = EDGE_MARGIN
+	_hud_deafen_button.offset_right = EDGE_MARGIN + MP_BUTTON_WIDTH_ONLINE
+	_hud_deafen_button.offset_bottom = _hud_mic_button.offset_top - BUTTON_STACK_GAP
+	_hud_deafen_button.offset_top = _hud_deafen_button.offset_bottom - HUD_VOICE_BUTTON_HEIGHT
+	_hud_deafen_button.visible = false
+	add_child(_hud_deafen_button)
+
+	_hud_camera_button = _make_button("Camera off", _on_camera_pressed)
+	_hud_camera_button.name = "HudCameraButton"
+	_hud_camera_button.custom_minimum_size = Vector2(MP_BUTTON_WIDTH_ONLINE, HUD_VOICE_BUTTON_HEIGHT)
+	_hud_camera_button.anchor_left = 0.0
+	_hud_camera_button.anchor_right = 0.0
+	_hud_camera_button.anchor_top = 1.0
+	_hud_camera_button.anchor_bottom = 1.0
+	_hud_camera_button.offset_left = EDGE_MARGIN
+	_hud_camera_button.offset_right = EDGE_MARGIN + MP_BUTTON_WIDTH_ONLINE
+	_hud_camera_button.offset_bottom = _hud_deafen_button.offset_top - BUTTON_STACK_GAP
+	_hud_camera_button.offset_top = _hud_camera_button.offset_bottom - HUD_VOICE_BUTTON_HEIGHT
+	_hud_camera_button.visible = false
+	add_child(_hud_camera_button)
 
 	# --- Panel body, opening UPWARD from just above the button ------------
 	_panel_body = PanelContainer.new()
@@ -1619,6 +1724,7 @@ func _on_mic_mute_pressed() -> void:
 		return
 	voice.set_mic_muted(not bool(voice.is_mic_muted()))
 	_update_voice_ui()
+	_free_cursor_after_hud_press()
 
 
 func _on_deafen_pressed() -> void:
@@ -1627,6 +1733,7 @@ func _on_deafen_pressed() -> void:
 		return
 	voice.set_deafened(not bool(voice.is_deafened()))
 	_update_voice_ui()
+	_free_cursor_after_hud_press()
 
 
 func _on_camera_pressed() -> void:
@@ -1635,6 +1742,19 @@ func _on_camera_pressed() -> void:
 		return
 	voice.set_camera_enabled(not bool(voice.is_camera_on()))
 	_update_voice_ui()
+	_free_cursor_after_hud_press()
+
+
+## Free the mouse if it was captured during the press (bead godot-test1-xtr.20).
+## Unlike the panel whose body pauses the tree (see doc block at lines 1302-1317),
+## the HUD voice switches are clicked while the tree is unpaused, so desktop-web
+## `player_controller._input()` captures the mouse on press before GUI routing.
+## The button handler lands on release, where restoring MOUSE_MODE_VISIBLE
+## un-captures the cursor. From inside the paused MP panel the cursor is already
+## free, making this a no-op.
+func _free_cursor_after_hud_press() -> void:
+	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 
 func _on_camera_changed(_on: Variant) -> void:
@@ -1680,13 +1800,21 @@ func _update_voice_ui() -> void:
 		else:
 			_voice_mode_button.text = "Voice: always on"
 
-	if _mic_mute_button != null:
+	if _mic_mute_button != null or _hud_mic_button != null:
 		var muted: bool = voice.has_method("is_mic_muted") and bool(voice.is_mic_muted())
-		_mic_mute_button.text = "Mic muted" if muted else "Mute mic"
+		var mic_text := "Mic muted" if muted else "Mute mic"
+		if _mic_mute_button != null:
+			_mic_mute_button.text = mic_text
+		if _hud_mic_button != null:
+			_hud_mic_button.text = mic_text
 
-	if _deafen_button != null:
+	if _deafen_button != null or _hud_deafen_button != null:
 		var deaf: bool = voice.has_method("is_deafened") and bool(voice.is_deafened())
-		_deafen_button.text = "Deafened" if deaf else "Deafen"
+		var deaf_text := "Deafened" if deaf else "Deafen"
+		if _deafen_button != null:
+			_deafen_button.text = deaf_text
+		if _hud_deafen_button != null:
+			_hud_deafen_button.text = deaf_text
 
 	if _volume_slider != null and voice.has_method("get_volume"):
 		var pct: int = int(roundf(float(voice.get_volume()) * 100.0))
@@ -1698,19 +1826,29 @@ func _update_voice_ui() -> void:
 			# formatted result is a key in no table.
 			_volume_label.text = tr("Voice volume: %d%%") % pct
 
-	if _camera_button != null:
+	if _camera_button != null or _hud_camera_button != null:
 		var can_cam: bool = voice.has_method("set_camera_enabled")
-		_camera_button.visible = can_cam
+		if _camera_button != null:
+			_camera_button.visible = can_cam
 		if can_cam:
 			# A refusal is reported ON the button that asked, which is why the
 			# camera needs no status line of its own beside the microphone's.
-			if voice.has_method("camera_denied") and bool(voice.camera_denied()):
-				_camera_button.text = "Camera blocked"
-				_camera_button.disabled = true
+			var denied: bool = voice.has_method("camera_denied") and bool(voice.camera_denied())
+			var cam_text: String
+			var cam_disabled: bool
+			if denied:
+				cam_text = "Camera blocked"
+				cam_disabled = true
 			else:
 				var on: bool = voice.has_method("is_camera_on") and bool(voice.is_camera_on())
-				_camera_button.disabled = false
-				_camera_button.text = "Camera on" if on else "Camera off"
+				cam_text = "Camera on" if on else "Camera off"
+				cam_disabled = false
+			if _camera_button != null:
+				_camera_button.disabled = cam_disabled
+				_camera_button.text = cam_text
+			if _hud_camera_button != null:
+				_hud_camera_button.disabled = cam_disabled
+				_hud_camera_button.text = cam_text
 
 	if _mic_state_label != null:
 		# MUTE WINS over the V state, so it wins the label too: reporting
