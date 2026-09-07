@@ -128,7 +128,7 @@ func _run() -> void:
 	if failure.is_empty():
 		failure = await _check_rescan_refires_triggers()
 	if failure.is_empty():
-		failure = await _check_join_cancels_deferred_close()
+		failure = await _check_stale_deferral_across_join()
 	if failure.is_empty():
 		failure = await _check_absorbed_never_persists()
 	if failure.is_empty():
@@ -1140,15 +1140,16 @@ func _check_rescan_refires_triggers() -> String:
 
 
 
-func _check_join_cancels_deferred_close() -> String:
+func _check_stale_deferral_across_join() -> String:
 	"""
-	13e. A JOIN CANCELS A STALE DEFERRED CLOSE (review round 2, major): leave
-	the room from inside the walls, then host/join the NEXT room without
-	stepping out. The old room's parked close must die at the join AND a
-	deferral that survives it must be harmless — the re-hydrate rebuilds
-	`opened` as profile UNION the live mirror, so the new room's gates stay
-	open. Driven through the shipped calls: `leave()`, `_on_lobby_joined()`,
-	`poll_pending_room_close()`, `_apply_opened()`.
+	13e. A STALE DEFERRAL NEITHER LEAKS NOR SNAPS (review round 3, major):
+	leave room 1 from inside the walls with its gate X1 absorbed, then host
+	room 2 without stepping out. The parked deferral stays armed across the
+	join — disarming it without re-hydrating would leak X1 into room 2 for
+	the session. While still inside, the master's `g` carries room 2's X2
+	and NOT X1. When the deferral fires outside, X1 falls closed, X2 stays
+	open, and the profile holds neither. X1 and X2 are DISTINCT ids:
+	reusing one id blinds the probe to the leak.
 	"""
 	TowerProbe.fresh_store()
 	var shell := await TowerProbe.make_tower(self)
@@ -1165,56 +1166,83 @@ func _check_join_cancels_deferred_close() -> String:
 	root.add_child(mp)
 	mp.add_to_group("mp")
 	mp.set("lobby_only", true)
-	# ROOM ONE opens the identity gate; leave from inside parks its close.
+	var X1: String = TowerInterior.GATE_CHECKPOINT
+	var X2: String = TowerInterior.GATE_IDENTITY
+	# ROOM ONE opens X1; leave from inside parks its close.
 	mp._on_lobby_joined("us", "ROOM1", "themaster", ["themaster", "us"])
-	mp._receive_gate("peerA", {"t": "gate", "id": TowerInterior.GATE_IDENTITY})
-	if not shell.is_opened(TowerInterior.GATE_IDENTITY):
+	mp._receive_gate("peerA", {"t": "gate", "id": X1})
+	if not shell.is_opened(X1):
 		player.queue_free()
 		mp.remove_from_group("mp")
 		mp.queue_free()
 		await TowerProbe.clear(self, null, shell)
 		return "the room's opening never reached the shell — the stale-close probe measured no setup"
 	mp.leave()
-	if not shell.is_opened(TowerInterior.GATE_IDENTITY):
+	if not shell.is_opened(X1):
 		player.queue_free()
 		mp.remove_from_group("mp")
 		mp.queue_free()
 		await TowerProbe.clear(self, null, shell)
-		return "leave snapped the gate shut under a player inside — the stale-close probe measured no deferral"
-	# ROOM TWO, joined without leaving the building: the join must cancel
-	# the previous room's parked close.
+		return "leave snapped room 1's gate shut under a player inside — the stale-close probe measured no deferral"
+	# ROOM TWO, joined without leaving the building: the deferral must stay
+	# armed — a join that disarms it leaks X1 into room 2 for the session.
 	mp._on_lobby_joined("us", "ROOM2", "us", ["us"])
-	if bool(shell.call("poll_pending_room_close", true)):
+	if not bool(shell.get("_room_close_pending")):
 		player.queue_free()
 		mp.remove_from_group("mp")
 		mp.queue_free()
 		await TowerProbe.clear(self, null, shell)
-		return "joining the next room left the old room's deferred close armed — stepping out would snap the new room's gates shut"
-	# Belt and braces: a deferral that DOES survive the join still cannot
-	# close what the live room holds open. The new room's master opens the
-	# same gate; a stale deferral then fires on the way out.
-	mp._receive_gate("peerB", {"t": "gate", "id": TowerInterior.GATE_IDENTITY})
-	shell.call("defer_room_close")
+		return "joining the next room disarmed the old room's deferred close — X1 would leak into room 2 for the session"
+	# Room 2 opens X2 — a teammate's opening, session state, never profile.
+	mp._receive_gate("peerB", {"t": "gate", "id": X2})
+	if not shell.is_opened(X2):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "room 2's opening never reached the shell — the stale-close probe measured no second setup"
+	# Still inside: the master's g carries X2 and NOT X1.
+	var g: Array = mp.call("_tower_opened_ids")
+	if not g.has(X2):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the master's g does not carry room 2's gate — the repair set lost a live opening"
+	if g.has(X1):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the master's g carries room 1's gate — a not-yet-fired deferral leaks the old room onto the wire"
+	# OUT THROUGH THE DOOR: the parked close fires — X1 falls, X2 stands,
+	# and neither reaches the profile.
 	player.global_position = interior.global_position + Vector3(5000.0, 0.0, 0.0)
 	await process_frame
 	interior.call("_tick_room_close")
-	if not shell.is_opened(TowerInterior.GATE_IDENTITY):
+	if shell.is_opened(X1):
 		player.queue_free()
 		mp.remove_from_group("mp")
 		mp.queue_free()
 		await TowerProbe.clear(self, null, shell)
-		return "a stale deferred close snapped the new room's gate shut — the re-hydrate must union the live mirror"
-	if BestRunStore.tower_opened_ids().has(TowerInterior.GATE_IDENTITY):
+		return "the stale deferral left room 1's gate open in room 2 — the re-hydrate must drop ids the live mirror no longer holds"
+	if not shell.is_opened(X2):
 		player.queue_free()
 		mp.remove_from_group("mp")
 		mp.queue_free()
 		await TowerProbe.clear(self, null, shell)
-		return "the stale close persisted the new room's id — room-only ids must never reach the profile"
+		return "the stale deferral snapped room 2's gate shut — the re-hydrate must union the live mirror"
+	if BestRunStore.tower_opened_ids().has(X1) or BestRunStore.tower_opened_ids().has(X2):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the stale close persisted a room-only id — room openings must never reach the profile"
 	player.queue_free()
 	mp.remove_from_group("mp")
 	mp.queue_free()
 	await TowerProbe.clear(self, null, shell)
-	Sentinel.done("join_cancels_deferred_close")
+	Sentinel.done("stale_deferral_across_join")
 	return ""
 
 

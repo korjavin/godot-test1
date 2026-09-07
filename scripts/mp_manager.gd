@@ -1052,14 +1052,13 @@ func _on_lobby_joined(you: String, room: String, master: String, members: Array)
 	_absorbed_opened = {}
 	for gid: String in BestRunStore.tower_opened_ids():
 		_absorbed_opened[gid] = true
-	# A JOIN CANCELS A STALE DEFERRED CLOSE (review round 2, major): leaving
-	# the previous room from inside the walls parks its close on the shell,
-	# and that deferral belongs to the old room — firing it after this join
-	# would snap the new room's gates shut for good. Guarded group lookup,
-	# the `_close_room_gates` pattern; solo (no shell) is a no-op.
-	var tower := get_tree().get_first_node_in_group("tower")
-	if tower != null and tower.has_method("cancel_room_close"):
-		tower.cancel_room_close()
+	# A JOIN DELIBERATELY LEAVES A PARKED DEFERRAL ARMED (review round 3,
+	# major — reversing round 2): clearing the flag without re-hydrating
+	# would keep the old room's ids in `opened` for the session and, on a
+	# master, publish them to the new room over `g`/`go`. The deferral stays
+	# armed across the join and is already harmless: when it fires outside,
+	# the re-hydrate rebuilds profile UNION the live mirror, dropping the
+	# old room's ids and keeping the new room's.
 	status.emit("In room %s (%d/4)" % [room, members.size()])
 	room_changed.emit(room, members)
 
@@ -3269,14 +3268,19 @@ func _tower_opened_ids() -> Array:
 	The tower's opened ids to replay: the whole sorted set, because every id is
 	a fact and none of them is near or far (bead godot-test1-d81).
 
+	PROFILE UNION THE LIVE MIRROR, never the shell's raw `opened` (review
+	round 3, major): a deferred close parked by leaving the previous room
+	from inside the walls keeps that room's absorbed ids in the shell's set
+	until it fires outside — publishing the shell's set would leak them onto
+	the wire over `g`/`go` for the rest of the session. The mirror is the
+	room's truth (seeded from the profile on join, added on every absorb
+	and every local publish), so the union carries everything earned here
+	plus everything the live room opened, and nothing a dead room left
+	behind. Empty — never null — only when neither holds anything.
+
 	The joiner-side parser bounds it with the store's `MAX_TOWER_IDS`, which the
 	honest set can never reach (a couple dozen declared ids); anything past it
-	is a peer that is not speaking this protocol. With no shell streamed in —
-	every peer at run start — the MIRROR is the set: seeded from the profile
-	on join, added on every absorb and every local publish, so the repair legs
-	publish it with zero store reads and a master who has never visited the HQ
-	still repairs the room (review rounds 1-2). Empty — never null — only when
-	neither holds anything.
+	is a peer that is not speaking this protocol.
 
 	FILTERED TO AUTHORED IDS ON THE WAY OUT (review round 4, minor): the
 	profile's own sanitize checks type, emptiness and count but never length,
@@ -3286,16 +3290,13 @@ func _tower_opened_ids() -> Array:
 	absorb paths filter on the way in; this is the same filter on the way
 	out, so a hand-edited mess poisons nothing past its own disk.
 	"""
-	var raw: Array = []
-	var tower := get_tree().get_first_node_in_group("tower")
-	if tower == null or not tower.has_method("opened_ids"):
-		# SORTED, the docstring's promise (review round 3): the mirror fills
-		# in absorb order — a sorted profile prefix with an arbitrary tail —
-		# while `tower_shell.opened_ids()` sorts for its documented reason.
-		raw = _absorbed_opened.keys()
-		raw.sort()
-	else:
-		raw = tower.opened_ids()
+	var seen := {}
+	for gid: String in BestRunStore.tower_opened_ids():
+		seen[gid] = true
+	for gid: Variant in _absorbed_opened:
+		seen[String(gid)] = true
+	var raw: Array = seen.keys()
+	raw.sort()
 	var clean: Array = []
 	for gid: Variant in raw:
 		if TowerGraph.opened_ids().has(String(gid)):

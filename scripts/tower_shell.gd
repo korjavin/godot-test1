@@ -958,20 +958,6 @@ func poll_pending_room_close(player_outside: bool) -> bool:
 	return true
 
 
-func cancel_room_close() -> bool:
-	"""
-	Drop a deferred room-close without running it. The mesh calls this on
-	every room join (review round 2, major): a deferral parked by leaving
-	the previous room from inside the walls belongs to that room, and
-	firing it after the next join would snap the new room's gates shut.
-	Returns true when one was pending — the join probe asserts on it.
-	"""
-	if not _room_close_pending:
-		return false
-	_room_close_pending = false
-	return true
-
-
 func mark_opened(id: String, publish: bool = true, persist: bool = true) -> void:
 	"""
 	Record a gate as open. Idempotent, and the only writer of `opened`.
