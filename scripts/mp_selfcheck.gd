@@ -1381,18 +1381,18 @@ func _check_herd_parser() -> String:
 	root.add_child(fauna)
 	var mp: Node = _room_manager("us")
 	mp._master = "themaster"
-	mp._receive_herd("someoneelse", honest)
+	MpWorldSync.receive_herd(mp, "someoneelse", honest)
 	if not (fauna.get("applied") as Array).is_empty():
 		fauna.queue_free()
 		mp.queue_free()
 		return "a NON-MASTER's herd packet was applied — any member could put a herd on every screen"
-	mp._receive_herd("themaster", honest)
+	MpWorldSync.receive_herd(mp, "themaster", honest)
 	if (fauna.get("applied") as Array).size() != 1:
 		fauna.queue_free()
 		mp.queue_free()
 		return "the master's herd packet was NOT applied — this check measured nothing"
 	mp._master = "us"
-	mp._receive_herd("us", honest)
+	MpWorldSync.receive_herd(mp, "us", honest)
 	if (fauna.get("applied") as Array).size() != 1:
 		fauna.queue_free()
 		mp.queue_free()
@@ -1530,18 +1530,18 @@ func _check_wx_parser() -> String:
 	root.add_child(weather)
 	var mp: Node = _room_manager("us")
 	mp._master = "themaster"
-	mp._receive_wx("someoneelse", honest)
+	MpWorldSync.receive_wx(mp, "someoneelse", honest)
 	if not (weather.get("applied") as Array).is_empty():
 		weather.queue_free()
 		mp.queue_free()
 		return "a NON-MASTER's storm packet was applied — any member could put a storm over every screen"
-	mp._receive_wx("themaster", honest)
+	MpWorldSync.receive_wx(mp, "themaster", honest)
 	if (weather.get("applied") as Array).size() != 1:
 		weather.queue_free()
 		mp.queue_free()
 		return "the master's storm packet was NOT applied — this check measured nothing"
 	mp._master = "us"
-	mp._receive_wx("us", honest)
+	MpWorldSync.receive_wx(mp, "us", honest)
 	if (weather.get("applied") as Array).size() != 1:
 		weather.queue_free()
 		mp.queue_free()
