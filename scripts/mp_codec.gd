@@ -279,7 +279,7 @@ static func packet_kind(packet: Dictionary) -> String:
 	verb — including one from a LATER build that this one has never heard of —
 	must NOT, because the fields beside the verb can be a perfectly valid presence
 	packet and would decode there. Pulled out as a pure static rather than left
-	inline so `scripts/mp_selfcheck.gd` can pin both directions: driving
+	inline so `scripts/mp_codec_selfcheck.gd` can pin both directions: driving
 	`_receive_mesh_verb()` directly cannot test this, since that function has no
 	presence branch to leak through and the assertion passes no matter what the
 	dispatch does.
@@ -296,7 +296,7 @@ static func decode_presence(bytes: PackedByteArray) -> Dictionary:
 
 	Returns the validated state, or an EMPTY DICTIONARY for anything that fails —
 	a packet is trusted whole or dropped whole, there is no partial trust. Static
-	and `_rtc`-free so scripts/mp_selfcheck.gd can hold it to that with a fistful
+	and `_rtc`-free so scripts/mp_codec_selfcheck.gd can hold it to that with a fistful
 	of malformed byte arrays.
 
 	Kept as the byte-array entry point even though `_receive_mesh_packets()` now
@@ -450,7 +450,7 @@ static func _croc_flags(croc: Node) -> int:
 static func decode_croc_sync(state: Dictionary) -> Dictionary:
 	"""
 	The crocodile-sync parser — the FOURTH trust boundary, and built exactly like
-	the other three: static and `_rtc`-free so scripts/mp_selfcheck.gd can beat on
+	the other three: static and `_rtc`-free so scripts/mp_codec_selfcheck.gd can beat on
 	it with hostile input, and whole-or-nothing, returning an EMPTY DICTIONARY for
 	anything that fails so the caller drops the packet entire.
 
@@ -782,7 +782,7 @@ static func decode_state(payload: Dictionary) -> Dictionary:
 	"ids": Array[int], "dead": Array[int]}`) or
 	an EMPTY DICTIONARY: trusted whole or dropped whole, exactly like
 	`decode_presence()`, and static and `_rtc`-free for the same reason — so
-	scripts/mp_selfcheck.gd can beat on it with a fistful of hostile payloads.
+	scripts/mp_codec_selfcheck.gd can beat on it with a fistful of hostile payloads.
 	"""
 	# RETIRED KEYS ARE NOT VALIDATED AND NOT READ. Hearts are gone (bead
 	# godot-test1-0bc), so an older peer's `ls` / `gs` are simply absent from every
@@ -1052,7 +1052,7 @@ static func decode_captive(packet: Dictionary) -> Dictionary:
 
 	@return: `{"h": String, "c": bool}`, or an EMPTY DICTIONARY - trusted whole or
 	    dropped whole, exactly like `decode_presence()` and `decode_state()`, and
-	    static and `_rtc`-free for the same reason: so scripts/mp_selfcheck.gd can
+	    static and `_rtc`-free for the same reason: so scripts/mp_codec_selfcheck.gd can
 	    beat on it with a fistful of hostile packets.
 
 	The hero name is length-gated here and WHITELISTED against the lobby's `_pool`
@@ -1082,7 +1082,7 @@ static func decode_pad(packet: Dictionary) -> Dictionary:
 	The `pad` parser, and the SIXTH trust boundary in this file.
 
 	@return: `{"f": int, "p": int}`, or an EMPTY DICTIONARY — trusted whole or
-	    dropped whole, static and instance-free so scripts/mp_selfcheck.gd can beat
+	    dropped whole, static and instance-free so scripts/mp_codec_selfcheck.gd can beat
 	    on it, exactly like `decode_captive()`.
 
 	STRICTLY INTS. `var_to_bytes` round-trips real types over the mesh, so a float
@@ -1166,7 +1166,7 @@ static func decode_gate(packet: Dictionary) -> Dictionary:
 	The `gate` parser — ANY member's opening of one HQ gate.
 
 	@return: `{"id": String}`, or an EMPTY DICTIONARY — trusted whole or dropped
-	    whole, static and instance-free so scripts/mp_selfcheck.gd can beat on
+	    whole, static and instance-free so scripts/mp_codec_selfcheck.gd can beat on
 	    it, exactly like `decode_pad()`.
 
 	`id` is a STRING, so the lobby relay's float-everything transport changes
