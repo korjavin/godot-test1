@@ -35,9 +35,11 @@ extends SceneTree
 ##   8. THE FAR-PEER SKY (owner ruling A, bead godot-test1-gyd). A master with
 ##      a member 600 m off holds a storm in the far disc after its ticks, keeps
 ##      it while it stays there, publishes it, and a peer under it rains — and
-##      every fair cloud is swept inside the master's disc on every tick. Solo
-##      (no `mp` node) every storm stays inside the master's own disc, and a
-##      solo manager ticks byte-identical to one whose mp stub answers null,
+##      every fair cloud is swept inside the master's disc on every tick. A
+##      second seat at 1e7 (review round 2) must steer nothing: the packet has
+##      to survive decode_wx, or one bad centre drops it for every honest peer.
+##      Solo (no `mp` node) every storm stays inside the master's own disc, and
+##      a solo manager ticks byte-identical to one whose mp stub answers null,
 ##      so the focus path draws nothing on either branch.
 ##   9. THE PRODUCTION PATH (review round 1): the fill runs before any room
 ##      exists, so ruling A at runtime is the recycle anchor alone. Seats the
@@ -96,6 +98,10 @@ const FAR_POINT: Vector3 = Vector3(10000.0, 0.0, 10000.0)
 ## The far member's seat, 600 m off the master's player — past FIELD_RADIUS
 ## twice over, so no master-centred disc can lend it weather.
 const FAR_PEER: Vector3 = Vector3(600.0, 0.0, 0.0)
+## A relayed position no honest client can hold (review round 2): 10 000 km
+## out, past MAX_PRESENCE_COORD with no room left for a rim. The focus filter
+## must drop it before it can steer a published storm centre.
+const EVIL_PEER: Vector3 = Vector3(1.0e7, 0.0, 1.0e7)
 ## Ticks driven on the shipped `_process` (10 Hz, so 300 = 30 s of sky).
 const FAR_TICKS: int = 300
 ## Seeded roll verified to open with a storm within 150 m of FAR_PEER that
@@ -571,7 +577,9 @@ func _check_far_peer() -> String:
 	mp_script.reload()
 	var mp: Node = mp_script.new()
 	mp.set("own_id", "themaster")
-	mp.set("peers", [FAR_PEER])
+	# One honest far member and one modified peer at 1e7 (review round 2) —
+	# the filter must drop the latter before it steers anything.
+	mp.set("peers", [FAR_PEER, EVIL_PEER])
 	mp.add_to_group("mp")
 	root.add_child(mp)
 	var host: Node3D = Node3D.new()
@@ -620,6 +628,13 @@ func _check_far_peer() -> String:
 			found = true
 	if not found:
 		return _far_cleanup(mp, host, master, "the packet names no far-disc storm sd=%d — the peer can never replay it" % int(kept["sd"]))
+	# Untrusted positions (review round 2): the evil seat must have steered
+	# nothing — every published centre survives the real wire path
+	# (`var_to_bytes` out, `decode_wx` in, exactly like `_send_wx_sync` /
+	# `_receive_wx`). One centre past the bound drops the WHOLE packet for
+	# every honest peer.
+	if MpCodec.decode_wx(bytes_to_var(var_to_bytes(travel))).is_empty():
+		return _far_cleanup(mp, host, master, "the published packet fails decode_wx — a relayed position steered a storm centre out of bound")
 	var peer: Node = _fresh_manager()
 	peer.call("apply_weather_sync", travel)
 	var wet := Vector3((kept["center"] as Vector3).x, 0.0, (kept["center"] as Vector3).z)

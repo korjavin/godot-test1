@@ -42,10 +42,16 @@ extends Node
 ## master rolls its storm discs around EVERY room member, not only its own
 ## player — `_focus_points()`, the crocodile LOD manager's focus-point
 ## precedent. A storm is out of range only past every member's disc, and
-## (re)placed storms are dealt round-robin across the members by pool index,
-## so a peer 600 m off still walks under its own published storm. Fair-weather
-## clouds stay around the master's own player (cosmetic, per-peer), and the
-## rain particles still follow the master's own player.
+## recycled storms are dealt round-robin across the members by pool index, so
+## a peer 600 m off still walks under its own published storm. (The fill runs
+## on the first tick, before any room can exist, so it always sees the local
+## disc alone — review round 2; spreading in a room is the recycle path.)
+## Relayed member positions are untrusted: `_focus_points()` drops any past
+## MAX_PRESENCE_COORD less FIELD_RADIUS, so a kept anchor plus its rim can
+## never publish a centre `decode_wx` rejects — one bad centre drops the whole
+## packet for every peer. Fair-weather clouds stay around the master's own
+## player (cosmetic, per-peer), and the rain particles still follow the
+## master's own player.
 ##
 ## With N members the same 3-4 storms are spread over N discs: STORM_CHANCE is
 ## unchanged and there is deliberately no per-member quota — that density is
@@ -431,10 +437,13 @@ func _process(delta: float) -> void:
 	# (Lazy init rather than _ready() because the player may not exist yet.
 	# Guarded by the flag, not by emptiness: a `wx` packet applied before this
 	# tick already laid the field down in `apply_weather_sync()`.)
-	# Storms are dealt round-robin across the focus points by pool index
-	# (bead godot-test1-gyd) — fair clouds stay around the local player,
-	# cosmetic and per-peer. Solo the focus set is [player_pos] and this is
-	# today's fill byte for byte: the branch draws nothing.
+	# Storms are dealt round-robin across the focus points by pool index —
+	# fair clouds stay around the local player, cosmetic and per-peer. In
+	# production this always sees the local disc alone: the fill runs on the
+	# first tick, seconds before any room exists (review round 2) — spreading
+	# in a room is the recycle path, and this branch is its symmetry (and the
+	# self-check's room-before-fill). Solo the focus set is [player_pos] and
+	# this is today's fill byte for byte: the branch draws nothing.
 	if not _field_initialized:
 		var fill_focus: Array[Vector3] = _focus_points(player_pos)
 		for i in CLOUD_COUNT:
@@ -800,13 +809,24 @@ func _focus_points(player_pos: Vector3) -> Array[Vector3]:
 	## same null/pre-mesh degrade to [player_pos] (which is today's behaviour
 	## byte for byte: no branch below can tell the difference, and no draw is
 	## consumed building the set).
+	##
+	## Relayed positions are UNTRUSTED (CLAUDE.md Multiplayer — review round 2):
+	## a member past MAX_PRESENCE_COORD is dropped, not anchored. Anchoring on
+	## it would put a storm rim FIELD_RADIUS further out, `weather_sync_state`
+	## publishes the centre raw, and `decode_wx` rejects any centre past the
+	## same bound — one bad centre drops the whole `wx` packet for every honest
+	## peer, and at 1e7 float32 ulp is 1.0 so the wind drift never moves it
+	## back. The bound is the parser's own const less one rim, so a kept anchor
+	## plus its rim can never publish out-of-bound; read off `MpCodec` like
+	## MAX_WX_STORMS below, never re-typed here.
 	var focus_points: Array[Vector3] = [player_pos]
 	var mp := get_tree().get_first_node_in_group("mp")
 	if mp != null and mp.has_method("peer_positions"):
 		var remotes: Variant = mp.call("peer_positions")
 		if remotes is Array:
 			for p: Variant in remotes:
-				if p is Vector3:
+				if p is Vector3 and absf(p.x) <= MpCodec.MAX_PRESENCE_COORD - FIELD_RADIUS \
+						and absf(p.z) <= MpCodec.MAX_PRESENCE_COORD - FIELD_RADIUS:
 					focus_points.append(p)
 	return focus_points
 
