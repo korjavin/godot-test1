@@ -2466,7 +2466,7 @@ func collect_coin(value: int = 1) -> void:
 func bank_awarded(amount: int, base_total: int = 0) -> void:
 	"""
 	Bank a pickup the MULTIPLAYER MASTER has already priced (see
-	mp_manager._apply_confirm). Called only for the peer that won the claim.
+	mp_claims.apply_confirm). Called only for the peer that won the claim.
 
 	THE MULTIPLIER IS ALREADY IN `amount` — the master owns the room's coin streak
 	and applied it when it resolved the claim, so multiplying again here would pay
