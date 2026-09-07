@@ -21,13 +21,18 @@ extends Control
 ##
 ## WHAT EACH LINE NAMES. Joins, leaves, disconnects, mic edges and hero swaps
 ## name the MEMBER ("%s joined"); camera edges name the SENDING PEER's member
-## name off the video set (the self-view reads as our own); hero swaps and
-## captures name the HERO ("%s now plays %s", "%s was captured") because the
-## roster is the thing that changed hands there. A remote "mic on/off" is a
-## speech edge off the voice module's held levels — a silent peer is
-## indistinguishable from a muted one, so "mic on" means "started making
-## noise". "Disconnected" is the room-end edge: peers we held when the room
-## went away, as opposed to peers who left while it stood.
+## name off the module's sender roll-call (placement-independent, so a capture
+## never reads as "camera off"; the self-view reads as our own); hero swaps and
+## captures name the HERO, capitalized like every other surface ("%s now plays
+## %s", "%s was captured"), because the roster is the thing that changed hands
+## there. A remote "mic on" is immediate off the voice module's held levels —
+## a silent peer is indistinguishable from a muted one, so it means "started
+## making noise" — while "mic off" needs MIC_OFF_SILENT_TICKS quiet ticks in a
+## row, or every conversational pause evicts the lines the log exists to show.
+## "Disconnected" is the room-end edge: peers we held when the room went away,
+## as opposed to peers who left while it stood — and the paint gate outlives
+## the room on purpose, so those lines fade out on screen instead of vanishing
+## with the room that wrote them.
 ##
 ## It is READ-ONLY and INPUT-FREE: `MOUSE_FILTER_IGNORE`, `FOCUS_NONE`, no
 ## pause claim ever (a frozen tree simply stops its tick), and nothing here
@@ -59,6 +64,12 @@ const LINE_TTL: float = 8.0
 ## 2 Hz is eight repaints per line lifetime, all of them on ticks.
 const FADE_TAIL: float = 1.0
 const FADE_STEPS: int = 4
+
+## Consecutive silent 2 Hz ticks before a peer reads as "mic off" (review
+## round 1): the module holds speech for 150 ms, so sampling it raw prints an
+## off/on pair per conversational pause and evicts the lines the log exists to
+## show. "Mic on" stays immediate; 1.5 s of quiet means hung up, not pausing.
+const MIC_OFF_SILENT_TICKS: int = 3
 
 ## Colours, and they all come off `HudTheme` — see the file banner.
 const COLOR_GROUND: Color = Color(HudTheme.INK, HudTheme.PANEL_ALPHA)
@@ -94,14 +105,22 @@ var _capt_seeded: bool = false
 var _vox_seeded: bool = false
 
 ## Last-tick snapshots. `_members` is id -> display name; `_holders` is hero ->
-## lobby id; `_captives` is hero -> true; `_speaking` / `_video` are id -> true.
+## lobby id; `_captives` is hero -> true; `_speech_on` / `_video` are id ->
+## true, with `_speech_quiet` counting consecutive silent ticks per id.
 var _members: Dictionary = {}
 var _holders: Dictionary = {}
 var _captives: Dictionary = {}
 var _tx: bool = false
-var _speaking: Dictionary = {}
+var _speech_on: Dictionary = {}
+var _speech_quiet: Dictionary = {}
 var _video: Dictionary = {}
 var _deafened: bool = false
+
+## Our own lobby id, captured in `_seed_room()` while `my_id()` still answers.
+## `leave()` clears it to "" in the same call that drops us offline, so asking
+## the manager at room-loss time would report every member — including us — as
+## disconnected (review round 1).
+var _my_id: String = ""
 
 ## Last painted snapshot: line texts plus per-line alpha steps, so the fade
 ## repaints on step changes and on nothing else.
@@ -151,6 +170,9 @@ func _tick() -> void:
 		and bool(_voice.is_available())
 	if not online:
 		_lose_room()
+		# The room is gone but its lines are not: they age out on screen
+		# (review round 1 — a "disconnected" nobody can see is no line).
+		_age_lines()
 		_repaint_on_change()
 		return
 	if not _baselined:
@@ -179,7 +201,7 @@ func _lose_room() -> void:
 	## reseeds silently instead of reporting standing state as events.
 	if _baselined:
 		for id: String in _members:
-			if _mp != null and _mp.has_method("my_id") and id == str(_mp.my_id()):
+			if id == _my_id:
 				continue
 			_append(tr("%s disconnected") % _members[id])
 		_baselined = false
@@ -187,9 +209,11 @@ func _lose_room() -> void:
 	_holders = {}
 	_captives = {}
 	_tx = false
-	_speaking = {}
+	_speech_on = {}
+	_speech_quiet = {}
 	_video = {}
 	_deafened = false
+	_my_id = ""
 	_capt_seeded = false
 	_vox_seeded = false
 
@@ -202,12 +226,15 @@ func _seed_room() -> void:
 	## fresh grab.
 	_lines.clear()
 	_room_start_msec = _now()
+	if _mp != null and _mp.has_method("my_id"):
+		_my_id = str(_mp.my_id())
 	_members = _read_members()
 	_holders = _read_holders()
 	_captives = _read_captives()
 	_capt_seeded = _player != null and is_instance_valid(_player)
 	_tx = _read_tx()
-	_speaking = _read_speaking()
+	_speech_on = _read_speaking()
+	_speech_quiet = {}
 	_video = _read_video()
 	_vox_seeded = true
 	_deafened = _read_deafened()
@@ -358,7 +385,7 @@ func _diff_holders() -> void:
 	var cur := _read_holders()
 	for hero: String in cur:
 		if str(_holders.get(hero, "")) != cur[hero] and cur[hero] != "":
-			_append(tr("%s now plays %s") % [_member_name(cur[hero]), hero])
+			_append(tr("%s now plays %s") % [_member_name(cur[hero]), hero.capitalize()])
 	_holders = cur
 
 
@@ -372,17 +399,18 @@ func _diff_captives() -> void:
 		return
 	for hero: String in cur:
 		if not _captives.has(hero):
-			_append(tr("%s was captured") % hero)
+			_append(tr("%s was captured") % hero.capitalize())
 	for hero: String in _captives:
 		if not cur.has(hero):
-			_append(tr("%s was freed") % hero)
+			_append(tr("%s was freed") % hero.capitalize())
 	_captives = cur
 
 
 func _diff_voice() -> void:
 	if not _vox_seeded:
 		_tx = _read_tx()
-		_speaking = _read_speaking()
+		_speech_on = _read_speaking()
+		_speech_quiet = {}
 		_video = _read_video()
 		_deafened = _read_deafened()
 		_vox_seeded = true
@@ -394,14 +422,32 @@ func _diff_voice() -> void:
 		else:
 			_append(tr("%s: mic off") % _my_name())
 		_tx = tx
+	# Speech edges, DEBOUNCED (review round 1 — see MIC_OFF_SILENT_TICKS):
+	# "on" is immediate, "off" needs three silent ticks in a row. A peer who
+	# leaves mid-sentence is scrubbed with the roster, silently — the "left"
+	# line already said it.
 	var speaking := _read_speaking()
 	for id: String in speaking:
-		if not _speaking.has(id):
+		_speech_quiet[id] = 0
+		if not _speech_on.has(id):
 			_append(tr("%s: mic on") % _member_name(id))
-	for id: String in _speaking:
-		if not speaking.has(id):
+			_speech_on[id] = true
+	for id: String in _speech_on.keys():
+		if speaking.has(id):
+			continue
+		if not _members.has(id):
+			_speech_on.erase(id)
+			_speech_quiet.erase(id)
+			continue
+		var quiet: int = int(_speech_quiet.get(id, 0)) + 1
+		_speech_quiet[id] = quiet
+		if quiet >= MIC_OFF_SILENT_TICKS:
 			_append(tr("%s: mic off") % _member_name(id))
-	_speaking = speaking
+			_speech_on.erase(id)
+			_speech_quiet.erase(id)
+	for id: String in _video.keys():
+		if not _members.has(id):
+			_video.erase(id)
 	var video := _read_video()
 	for id: String in video:
 		if not _video.has(id):
@@ -469,15 +515,22 @@ func _repaint_on_change() -> void:
 		queue_redraw()
 
 
-func _draw() -> void:
-	## Painted from the tick snapshot only. Offline, solo or voiceless draws
-	## NOTHING — not even the card — which is also how the control clears.
+func would_paint() -> bool:
+	## The paint gate, headless-readable: something to show, and a voice
+	## module to show it for. Deliberately NOT the room — the offline tick
+	## ages the ring instead of clearing it, so a "disconnected" fades out on
+	## screen after leaving (review round 1: a line nobody can see is no line).
+	## Solo stays silent through the empty snapshot; a voiceless room through
+	## the voice gate.
 	if _painted.is_empty():
-		return
-	var online: bool = _mp != null and _mp.has_method("is_online") and bool(_mp.is_online())
-	var voice_ok: bool = _voice != null and _voice.has_method("is_available") \
+		return false
+	return _voice != null and _voice.has_method("is_available") \
 		and bool(_voice.is_available())
-	if not online or not voice_ok:
+
+
+func _draw() -> void:
+	## Painted from the tick snapshot only, through `would_paint()`.
+	if not would_paint():
 		return
 	draw_rect(Rect2(Vector2.ZERO, size), COLOR_GROUND)
 	var font: Font = HudTheme.body_font()

@@ -3857,17 +3857,29 @@ func is_hero_speaking(hero: String) -> bool:
 
 func video_peer_ids() -> Array:
 	"""
-	Whose video is up right now, as lobby ids — the keys of `_poll_tiles`'
-	placed-tile set, with `SELF_LEVEL_KEY` for our own self-view (the browser
-	reports us under "me", never under our lobby id, exactly like the levels).
+	Who is SENDING video right now, as lobby ids — the sender roll-call
+	`_poll_tiles` parses out of `_ck.videoPeers()`, plus `SELF_LEVEL_KEY` when
+	our own camera is reported on. Deliberately NOT the placed-tile set: a
+	captive or hero-less peer still sends, and their tile coming down must
+	never read as "camera off" (review round 1).
 
 	A read-only view over existing state for the room event log (bead
-	godot-test1-k4j): no bridge call, no behaviour change, empty off the web
-	or outside a room like every other reader here.
+	godot-test1-k4j): the same parse as `_poll_tiles`, empty off the web,
+	bridge-less, or outside a room like every other reader here.
 	"""
 	var out: Array = []
-	for id: Variant in _pushed_tiles:
-		out.append(str(id))
+	if not _is_web or not _running or _ck == null:
+		return out
+	var seen := {}
+	var raw: Variant = _ck.videoPeers()
+	if typeof(raw) == TYPE_STRING:
+		for id: String in str(raw).split(",", false):
+			if id != "" and id != SELF_LEVEL_KEY:
+				seen[id] = true
+	if _reported_cam == CAM_ON:
+		seen[SELF_LEVEL_KEY] = true
+	for id: String in seen:
+		out.append(id)
 	return out
 
 

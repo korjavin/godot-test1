@@ -7,7 +7,10 @@ extends SceneTree
 ##
 ## WHAT IT GUARDS, check by check — every one driven on the SHIPPED node
 ## against mp/voice/player stubs (the `hero_hud_selfcheck` idiom), never on a
-## copy, each with a mutation control:
+## copy. EACH CHECK ENDS WITH A NEGATIVE CONTROL in the suite's sense: a
+## corrupted ring, snapshot or rect driven beside the live one and asserted to
+## FAIL the same bound — a check that cannot fail is the shape `crowd`
+## check 10/12 and `hero_hud` check 6b exist to stop.
 ##
 ##   1. ONE LINE PER EVENT KIND, IN ORDER. Join, hero swap, capture, liberation,
 ##      remote mic on/off, remote camera on/off, local mic on/off, deafen — each
@@ -25,6 +28,9 @@ extends SceneTree
 ##   6. THE SKIN CONTRACT. No hex literal in the widget (the palette lives in
 ##      `hud_theme.gd` alone), the root adopts `HudTheme.theme()`, and the
 ##      mirrored self key is the voice module's own spelling.
+##   7. THE SENDER ROLL-CALL. The camera getter parses `videoPeers()`, never
+##      the placement set — stubs cannot see the difference, so the shipped
+##      body is read (the suite's source-grep idiom).
 
 const LOG_SCRIPT := preload("res://scripts/event_log_hud.gd")
 const VOICE_SCRIPT := preload("res://scripts/voice_chat.gd")
@@ -43,7 +49,8 @@ const DESIGN_W: float = 1920.0
 const DESIGN_H: float = 1080.0
 
 
-## The MP manager's stand-in: the five members the log reads, nothing else.
+## The MP manager's stand-in: the seams the log reads, nothing else — including
+## the leave behaviour the disconnect guard depends on.
 class StubMp extends Node:
 	var online: bool = true
 	var me: String = "id-self"
@@ -61,6 +68,11 @@ class StubMp extends Node:
 
 	func hero_holder(hero: String) -> String:
 		return str(holders.get(hero, ""))
+
+	func go_offline() -> void:
+		## Mirrors `MpManager.leave()`: offline and anonymous in the same call.
+		online = false
+		me = ""
 
 
 ## The voice module's stand-in: the seams the log diffs, all held state.
@@ -126,6 +138,9 @@ func _run_checks() -> String:
 	failure = _check_skin()
 	if not failure.is_empty():
 		return failure
+	failure = _check_sender_rollcall()
+	if not failure.is_empty():
+		return failure
 	return ""
 
 
@@ -172,8 +187,7 @@ func _check_lines_in_order() -> String:
 		failure = "the join baselined %d lines — room entry must seed silently" % log.line_count()
 	else:
 		var t: int = 100000
-		# Window one: a third peer joins, takes primm, is captured and freed,
-		# then Bob's mic cycles — six events, six lines, asserted whole.
+		# Window one: a third peer joins, takes primm, is captured and freed.
 		mp.members.append({"id": "id-ann", "name": "Ann"})
 		t = _step(log, t)
 		mp.holders["primm"] = "id-ann"
@@ -182,25 +196,43 @@ func _check_lines_in_order() -> String:
 		t = _step(log, t)
 		player.captive_heroes.erase("primm")
 		t = _step(log, t)
-		voice.speaking["id-bob"] = true
-		t = _step(log, t)
-		voice.speaking.erase("id-bob")
-		t = _step(log, t)
 		failure = _expect_lines(log, [
 			"[00:01] Ann joined",
-			"[00:02] Ann now plays primm",
-			"[00:03] primm was captured",
-			"[00:04] primm was freed",
-			"[00:05] Bob: mic on",
-			"[00:06] Bob: mic off",
+			"[00:02] Ann now plays Primm",
+			"[00:03] Primm was captured",
+			"[00:04] Primm was freed",
 		])
-		# Window two: Bob's camera cycles, our mic cycles, we deafen and
-		# undeafen — the first window scrolls off, this one is asserted whole.
+		# Window two: Bob talks through a pause (debounced: two quiet ticks
+		# print NOTHING, the third prints off), then his camera cycles. Bob
+		# holds no hero — his camera line proves the log never consults the
+		# roster for video.
 		if failure.is_empty():
+			voice.speaking["id-bob"] = true
+			t = _step(log, t)
+			voice.speaking.erase("id-bob")
+			t = _step(log, t)
+			if log.line_count() != 5:
+				failure = "one quiet tick after speech printed — the debounce holds two"
+			else:
+				t = _step(log, t)
+				if log.line_count() != 5:
+					failure = "two quiet ticks after speech printed — the debounce holds two"
+		if failure.is_empty():
+			t = _step(log, t)
 			voice.video = ["id-bob"]
 			t = _step(log, t)
 			voice.video = []
 			t = _step(log, t)
+			failure = _expect_lines(log, [
+				"[00:03] Primm was captured",
+				"[00:04] Primm was freed",
+				"[00:05] Bob: mic on",
+				"[00:08] Bob: mic off",
+				"[00:09] Bob: camera on",
+				"[00:10] Bob: camera off",
+			])
+		# Window three: our mic cycles, we deafen and undeafen.
+		if failure.is_empty():
 			voice.tx = true
 			t = _step(log, t)
 			voice.tx = false
@@ -210,12 +242,12 @@ func _check_lines_in_order() -> String:
 			voice.deafened = false
 			t = _step(log, t)
 			failure = _expect_lines(log, [
-				"[00:07] Bob: camera on",
-				"[00:08] Bob: camera off",
-				"[00:09] Self: mic on",
-				"[00:10] Self: mic off",
-				"[00:11] Deafened",
-				"[00:12] Undeafened",
+				"[00:09] Bob: camera on",
+				"[00:10] Bob: camera off",
+				"[00:11] Self: mic on",
+				"[00:12] Self: mic off",
+				"[00:13] Deafened",
+				"[00:14] Undeafened",
 			])
 		if failure.is_empty():
 			# The full paint path, headless: card plus six fading strings,
@@ -223,6 +255,22 @@ func _check_lines_in_order() -> String:
 			# is refused draw commands outside its notification).
 			log.queue_redraw()
 			await process_frame
+		if failure.is_empty():
+			# THE CONTROL: the same oracle on a corrupted ring must FAIL —
+			# otherwise this check could pass on anything.
+			var corrupt := _wired_log()
+			var clog: Control = corrupt["log"]
+			var cmp: StubMp = corrupt["mp"]
+			cmp.members.append({"id": "id-ann", "name": "Ann"})
+			clog._now_msec = 600000
+			clog._tick()
+			cmp.members.append({"id": "id-cat", "name": "Cat"})
+			clog._now_msec = 601000
+			clog._tick()
+			(clog._lines as Array)[0] = {"text": "[00:00] BOGUS", "born": 600000}
+			if _expect_lines(clog, ["[08:20] Ann joined", "[08:21] Cat joined"]).is_empty():
+				failure = "the oracle passed a corrupted ring — this check cannot fail"
+			_free_wired(corrupt)
 	_free_wired(wired)
 	Sentinel.done("lines_in_order")
 	return failure
@@ -266,6 +314,20 @@ func _check_fade_and_removal() -> String:
 				failure = "age %d paints %.2f — past TTL must be zero" % [age, log.line_alpha_at(age)]
 				break
 	if failure.is_empty():
+		# THE CONTROL: an independent formula swept across the whole life must
+		# agree at every step — if the shipped fade changes shape, this (not
+		# just the named points above) goes red.
+		for age: int in range(0, 8101, 53):
+			var want := 0.0
+			if age < 7000:
+				want = 1.0
+			elif age < 8000:
+				want = float(int(ceil(float(8000 - age) / 1000.0 * 4.0))) / 4.0
+			if log.line_alpha_at(age) != want:
+				failure = "age %d paints %.2f, oracle says %.2f — fade shape drifted" \
+						% [age, log.line_alpha_at(age), want]
+				break
+	if failure.is_empty():
 		# ...and the line itself is dropped on the tick past TTL, live on the node.
 		var wired := _wired_log()
 		log.queue_free()
@@ -306,6 +368,18 @@ func _check_cap() -> String:
 		failure = "seven joins keep %d lines, not six" % log.line_count()
 	elif not log.line_text(0).contains("P1 joined"):
 		failure = "oldest kept line is '%s' — P0 should have scrolled off" % log.line_text(0)
+	if failure.is_empty():
+		# THE CONTROL: an overfull ring, built by hand past the cap, must FAIL
+		# the same oracle — otherwise "six" is never actually enforced.
+		var fat: Control = _fresh_log()
+		for i: int in 7:
+			(fat._lines as Array).append({"text": "L%d" % i, "born": 700000 + i})
+		if fat.line_count() != 7:
+			failure = "the hand-built ring holds %d, not 7 — the control measured nothing" \
+					% fat.line_count()
+		elif _expect_lines(fat, ["L1", "L2", "L3", "L4", "L5", "L6"]).is_empty():
+			failure = "the oracle passed a seven-line ring — the cap is unenforced"
+		fat.queue_free()
 	_free_wired(wired)
 	Sentinel.done("cap")
 	return failure
@@ -323,7 +397,23 @@ func _check_solo_draws_nothing() -> String:
 		failure = "solo tracked %d lines with no room at all" % log.line_count()
 	elif not (log._painted as Array).is_empty():
 		failure = "solo painted without a room — the node must draw nothing"
+	elif log.would_paint():
+		failure = "solo would paint — the gate must be shut with no snapshot"
 	else:
+		# THE CONTROL (contrast): the same machinery in a room DOES track, so
+		# the zero above is the degrade and not a dead tick.
+		var contrast := _wired_log()
+		var clog: Control = contrast["log"]
+		var cmp: StubMp = contrast["mp"]
+		cmp.members.append({"id": "id-ann", "name": "Ann"})
+		clog._now_msec = 800000
+		clog._tick()
+		if clog.line_count() != 1 or not clog.line_text(0).contains("Ann joined"):
+			failure = "the wired log tracked nothing either — the solo zero proves nothing"
+		elif not clog.would_paint():
+			failure = "a room with lines would not paint — the gate is shut for everyone"
+		_free_wired(contrast)
+	if failure.is_empty():
 		# The accumulator gate, not the groups, decides whether a tick runs.
 		log._accum = 0.0
 		log._process(0.1)
@@ -345,19 +435,22 @@ func _check_solo_draws_nothing() -> String:
 	log._tick()
 	if log.line_count() != 1 or not log.line_text(0).contains("Ann joined"):
 		failure = "a voiceless room stopped tracking members — an outage must delay lines, not lose them"
+	elif log.would_paint():
+		failure = "a voiceless room would paint — tracking is not painting"
 	_free_wired(wired)
 	if not failure.is_empty():
 		Sentinel.done("solo_draws_nothing")
 		return failure
-	# Room end: the peers we held get exactly one "disconnected" each. The
-	# room started at the baseline tick (t=100000), hence the 05:00 stamps.
+	# Room end through an honest leave: offline AND anonymous in the same call,
+	# like `MpManager.leave()` — our own id must not read as disconnected, and
+	# the lines must still want paint (the gate outlives the room).
 	wired = _wired_log()
 	log = wired["log"]
 	var mp: StubMp = wired["mp"]
 	mp.members.append({"id": "id-ann", "name": "Ann"})
 	log._now_msec = 400000
 	log._tick()
-	mp.online = false
+	mp.go_offline()
 	log._now_msec = 401000
 	log._tick()
 	failure = _expect_lines(log, [
@@ -365,6 +458,8 @@ func _check_solo_draws_nothing() -> String:
 		"[05:01] Bob disconnected",
 		"[05:01] Ann disconnected",
 	])
+	if failure.is_empty() and not log.would_paint():
+		failure = "offline lines would not paint — the disconnect kind is invisible again"
 	_free_wired(wired)
 	Sentinel.done("solo_draws_nothing")
 	return failure
@@ -383,27 +478,44 @@ func _check_corner_fit() -> String:
 		var rects := {}
 		for name: String in ["EventLogHUD", "CoinLabel", "AbilityHUD"]:
 			rects[name] = _scene_rect(text, name)
-		if (rects["EventLogHUD"] as Rect2) == Rect2():
-			failure = "EventLogHUD has no readable top-right rect in main.tscn"
-		else:
-			var log_rect: Rect2 = rects["EventLogHUD"]
-			if log_rect.position.y < 282.0:
-				failure = "EventLogHUD starts at y=%.0f, inside AbilityHUD's airspace" \
-						% log_rect.position.y
-			elif log_rect.size.x < 360.0:
-				failure = "EventLogHUD is %.0f px wide — the log card is 360" % log_rect.size.x
-			elif log_rect.size.y < 6.0 * (14.0 + 4.0) + 2.0 * 12.0:
-				failure = "EventLogHUD is %.0f px tall — six body lines need 132" % log_rect.size.y
-			else:
-				for neighbour: String in ["CoinLabel", "AbilityHUD"]:
-					if (rects[neighbour] as Rect2) != Rect2() \
-							and log_rect.intersects(rects[neighbour] as Rect2):
-						failure = "EventLogHUD overlaps %s at design width" % neighbour
-						break
+		failure = _assert_fit(rects)
 		if failure.is_empty() and not text.contains('script = ExtResource("35_eventlog")'):
 			failure = "EventLogHUD is not wired to the event-log script in main.tscn"
+		if failure.is_empty():
+			# THE CONTROL: the same rules on a scene with the log shoved
+			# 182 px up must FAIL — otherwise "clears its neighbours" is
+			# unprovable.
+			var tampered: String = text.replace("offset_top = 282.0", "offset_top = 100.0")
+			if tampered == text:
+				failure = "the control scene has no 282.0 to move — it measured nothing"
+			else:
+				var moved := {}
+				for name: String in ["EventLogHUD", "CoinLabel", "AbilityHUD"]:
+					moved[name] = _scene_rect(tampered, name)
+				if _assert_fit(moved).is_empty():
+					failure = "the rules cleared a log sitting on AbilityHUD — they cannot fail"
 	Sentinel.done("corner_fit")
 	return failure
+
+
+func _assert_fit(rects: Dictionary) -> String:
+	"""The corner rules on three design-space rects: readable, below
+	AbilityHUD's airspace, 360 wide, six lines tall, overlapping neither
+	neighbour."""
+	if (rects["EventLogHUD"] as Rect2) == Rect2():
+		return "EventLogHUD has no readable top-right rect in main.tscn"
+	var log_rect: Rect2 = rects["EventLogHUD"]
+	if log_rect.position.y < 282.0:
+		return "EventLogHUD starts at y=%.0f, inside AbilityHUD's airspace" % log_rect.position.y
+	if log_rect.size.x < 360.0:
+		return "EventLogHUD is %.0f px wide — the log card is 360" % log_rect.size.x
+	if log_rect.size.y < 6.0 * (14.0 + 4.0) + 2.0 * 12.0:
+		return "EventLogHUD is %.0f px tall — six body lines need 132" % log_rect.size.y
+	for neighbour: String in ["CoinLabel", "AbilityHUD"]:
+		if (rects[neighbour] as Rect2) != Rect2() \
+				and log_rect.intersects(rects[neighbour] as Rect2):
+			return "EventLogHUD overlaps %s at design width" % neighbour
+	return ""
 
 
 func _scene_rect(text: String, node_name: String) -> Rect2:
@@ -428,6 +540,46 @@ func _scene_rect(text: String, node_name: String) -> Rect2:
 		float(offsets["offset_top"]),
 		float(offsets["offset_right"]) - float(offsets["offset_left"]),
 		float(offsets["offset_bottom"]) - float(offsets["offset_top"]))
+
+
+func _check_sender_rollcall() -> String:
+	## The camera source is the SENDER roll-call, not the placement set: the
+	## getter's body must parse `videoPeers()` (plus self on the reported
+	## camera) and never touch `_pushed_tiles` — a capture or a hero-less peer
+	## keeps sending while their tile is down (review round 1). Stubs cannot
+	## see the difference, so the shipped body is read instead (the suite's
+	## source-grep idiom: `pause_selfcheck`, `hero_hud` check 8).
+	var failure := ""
+	var source: String = FileAccess.get_file_as_string("res://scripts/voice_chat.gd")
+	if source.is_empty():
+		failure = "cannot read voice_chat.gd — this check measured nothing"
+	else:
+		var start: int = source.find("func video_peer_ids()")
+		var body: String = source.substr(start, source.find("\n# ===", start) - start) \
+				if start >= 0 else ""
+		# The shape, not the prose: docstrings and comments are stripped, so a
+		# comment mentioning videoPeers() cannot satisfy the parse clauses.
+		var code_lines: Array = []
+		var in_doc := false
+		for line: String in body.split("\n"):
+			var bare: String = line.strip_edges()
+			if bare.begins_with('"""'):
+				in_doc = not in_doc
+				continue
+			if in_doc or bare.begins_with("#"):
+				continue
+			code_lines.append(line)
+		var code: String = "\n".join(code_lines)
+		if code.strip_edges().is_empty():
+			failure = "video_peer_ids() not found — the camera seam moved"
+		elif not code.contains("videoPeers()"):
+			failure = "video_peer_ids() never parses videoPeers() — it is not the sender roll-call"
+		elif not code.contains("_reported_cam"):
+			failure = "video_peer_ids() never reads the reported camera — the self-view is lost"
+		elif code.contains("_pushed_tiles"):
+			failure = "video_peer_ids() reads the placement set — a capture would print camera off"
+	Sentinel.done("sender_rollcall")
+	return failure
 
 
 func _scene_block(text: String, node_name: String) -> String:
@@ -463,10 +615,17 @@ func _check_skin() -> String:
 		hex.compile("#[0-9a-fA-F]{3,8}\\b")
 		if hex.search(source) != null:
 			failure = "a hex literal lives in event_log_hud.gd — the palette is hud_theme.gd alone"
+		# THE CONTROL: the oracle must fire on a known-bad sample, or a clean
+		# widget proves the regex blind rather than the file clean.
+		elif hex.search("draw it Color(#ff0000) red") == null:
+			failure = "the hex oracle missed #ff0000 — it cannot fail"
 	if failure.is_empty():
 		if LOG_SCRIPT.SELF_KEY != VOICE_SCRIPT.SELF_LEVEL_KEY:
 			failure = "SELF_KEY '%s' is not the voice module's '%s' — self-view maps to the wrong peer" \
 					% [LOG_SCRIPT.SELF_KEY, VOICE_SCRIPT.SELF_LEVEL_KEY]
+		elif VOICE_SCRIPT.SELF_LEVEL_KEY != "me":
+			failure = "the voice module's self key is '%s', not 'me' — both mirrors drifted together" \
+					% VOICE_SCRIPT.SELF_LEVEL_KEY
 	if failure.is_empty():
 		var log: Control = _fresh_log()
 		if log.theme != HudTheme.theme():
