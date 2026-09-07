@@ -908,12 +908,27 @@ func rehydrate_opened_from_profile() -> void:
 	`_apply_opened()`, which snaps shut what this drops; this function only
 	moves the sets. Both of them: `earned` is rebuilt from the profile too,
 	so a re-earn after the close writes through again.
+
+	PLUS THE LIVE ROOM'S MIRROR (review round 2, major): a deferred close
+	that outlives its room — leave inside, then host/join the next room
+	without stepping out — must not snap shut gates the NEW room holds
+	open. `opened` is rebuilt as profile UNION the manager's current
+	absorb mirror (which the join just re-seeded), into `opened` only:
+	never `earned`, never persisted, exactly the absorb rule. The
+	immediate close in `_close_room_gates` runs with the mirror already
+	cleared by `leave()`, so its union is empty and that path is unchanged.
 	"""
 	opened.clear()
 	earned.clear()
 	for id: String in BestRunStore.tower_opened_ids():
 		opened[id] = true
 		earned[id] = true
+	var mp := get_tree().get_first_node_in_group("mp")
+	if mp != null and mp.has_method("absorbed_opened_ids"):
+		for gid: Variant in (mp.call("absorbed_opened_ids") as Array):
+			var rid := String(gid)
+			if not rid.is_empty():
+				opened[rid] = true
 
 
 func defer_room_close() -> void:
@@ -940,6 +955,20 @@ func poll_pending_room_close(player_outside: bool) -> bool:
 		return false
 	_room_close_pending = false
 	rehydrate_opened_from_profile()
+	return true
+
+
+func cancel_room_close() -> bool:
+	"""
+	Drop a deferred room-close without running it. The mesh calls this on
+	every room join (review round 2, major): a deferral parked by leaving
+	the previous room from inside the walls belongs to that room, and
+	firing it after the next join would snap the new room's gates shut.
+	Returns true when one was pending — the join probe asserts on it.
+	"""
+	if not _room_close_pending:
+		return false
+	_room_close_pending = false
 	return true
 
 

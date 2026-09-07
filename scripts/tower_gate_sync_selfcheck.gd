@@ -128,6 +128,8 @@ func _run() -> void:
 	if failure.is_empty():
 		failure = await _check_rescan_refires_triggers()
 	if failure.is_empty():
+		failure = await _check_join_cancels_deferred_close()
+	if failure.is_empty():
 		failure = await _check_absorbed_never_persists()
 	if failure.is_empty():
 		failure = await _check_drain_publishes_own_only()
@@ -1053,12 +1055,31 @@ func _check_earn_while_room_open() -> String:
 		mp.queue_free()
 		await TowerProbe.clear(self, null, shell)
 		return "could not read res://scripts/tower_interior.gd to pin the earn gates"
-	for anchor: String in ["_is_earned(GATE_IDENTITY)", "_is_earned(GATE_DEMAND)", "_is_earned(gid)"]:
+	for anchor: String in ["_is_earned(GATE_IDENTITY)", "_is_earned(GATE_DEMAND)"]:
 		if not interior_source.contains(anchor):
 			body.queue_free()
 			mp.queue_free()
 			await TowerProbe.clear(self, null, shell)
 			return "no earn site gates on %s — a pad the room opened earns nothing" % anchor
+	# `_is_earned(gid)` occurs at BOTH polled sites (riddle and spine), so a
+	# whole-file `contains` passes when either one reverts (review round 2,
+	# minor). Slice each function's body — from its `func ` line to the next
+	# — and require the anchor in EACH.
+	for tick: String in ["func _tick_riddle_pads", "func _tick_spine_pads"]:
+		var begin: int = interior_source.find(tick)
+		if begin < 0:
+			body.queue_free()
+			mp.queue_free()
+			await TowerProbe.clear(self, null, shell)
+			return "could not find %s to pin its earn gate" % tick
+		var tail: String = interior_source.substr(begin + tick.length())
+		var close: int = tail.find("\nfunc ")
+		var site: String = tail.substr(0, close) if close >= 0 else tail
+		if not site.contains("_is_earned(gid)"):
+			body.queue_free()
+			mp.queue_free()
+			await TowerProbe.clear(self, null, shell)
+			return "%s never reads is_earned — a pad the room opened earns nothing" % tick
 	body.queue_free()
 	mp.queue_free()
 	await TowerProbe.clear(self, null, shell)
@@ -1115,6 +1136,85 @@ func _check_rescan_refires_triggers() -> String:
 	body.queue_free()
 	await TowerProbe.clear(self, null, shell)
 	Sentinel.done("rescan_refires_triggers")
+	return ""
+
+
+
+func _check_join_cancels_deferred_close() -> String:
+	"""
+	13e. A JOIN CANCELS A STALE DEFERRED CLOSE (review round 2, major): leave
+	the room from inside the walls, then host/join the NEXT room without
+	stepping out. The old room's parked close must die at the join AND a
+	deferral that survives it must be harmless — the re-hydrate rebuilds
+	`opened` as profile UNION the live mirror, so the new room's gates stay
+	open. Driven through the shipped calls: `leave()`, `_on_lobby_joined()`,
+	`poll_pending_room_close()`, `_apply_opened()`.
+	"""
+	TowerProbe.fresh_store()
+	var shell := await TowerProbe.make_tower(self)
+	var interior := shell.get_node_or_null("TowerInterior")
+	if interior == null:
+		await TowerProbe.clear(self, null, shell)
+		return "the tower has no TowerInterior child — the stale-close probe has no subject"
+	var player := Node3D.new()
+	player.add_to_group("player")
+	root.add_child(player)
+	player.global_position = interior.global_position
+	await process_frame
+	var mp: Node = MPManager.new()
+	root.add_child(mp)
+	mp.add_to_group("mp")
+	mp.set("lobby_only", true)
+	# ROOM ONE opens the identity gate; leave from inside parks its close.
+	mp._on_lobby_joined("us", "ROOM1", "themaster", ["themaster", "us"])
+	mp._receive_gate("peerA", {"t": "gate", "id": TowerInterior.GATE_IDENTITY})
+	if not shell.is_opened(TowerInterior.GATE_IDENTITY):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the room's opening never reached the shell — the stale-close probe measured no setup"
+	mp.leave()
+	if not shell.is_opened(TowerInterior.GATE_IDENTITY):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "leave snapped the gate shut under a player inside — the stale-close probe measured no deferral"
+	# ROOM TWO, joined without leaving the building: the join must cancel
+	# the previous room's parked close.
+	mp._on_lobby_joined("us", "ROOM2", "us", ["us"])
+	if bool(shell.call("poll_pending_room_close", true)):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "joining the next room left the old room's deferred close armed — stepping out would snap the new room's gates shut"
+	# Belt and braces: a deferral that DOES survive the join still cannot
+	# close what the live room holds open. The new room's master opens the
+	# same gate; a stale deferral then fires on the way out.
+	mp._receive_gate("peerB", {"t": "gate", "id": TowerInterior.GATE_IDENTITY})
+	shell.call("defer_room_close")
+	player.global_position = interior.global_position + Vector3(5000.0, 0.0, 0.0)
+	await process_frame
+	interior.call("_tick_room_close")
+	if not shell.is_opened(TowerInterior.GATE_IDENTITY):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "a stale deferred close snapped the new room's gate shut — the re-hydrate must union the live mirror"
+	if BestRunStore.tower_opened_ids().has(TowerInterior.GATE_IDENTITY):
+		player.queue_free()
+		mp.remove_from_group("mp")
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the stale close persisted the new room's id — room-only ids must never reach the profile"
+	player.queue_free()
+	mp.remove_from_group("mp")
+	mp.queue_free()
+	await TowerProbe.clear(self, null, shell)
+	Sentinel.done("join_cancels_deferred_close")
 	return ""
 
 

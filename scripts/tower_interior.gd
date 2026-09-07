@@ -3141,10 +3141,17 @@ func _tick_spine_pads() -> void:
 		if not bool(_on_spine_pad.get(gid, false)):
 			continue
 		var wants := TowerGraph.identity_of(gid)
-		if _is_earned(gid):
+		# An OPEN door never names another hero (review round 2, minor): a
+		# gate the room opened stands open whether or not this peer earned
+		# it, so a wrong-hero player on its pad reads "This way is open."
+		# The right hero still earns it below — earning what you worked even
+		# though a teammate got there first. Only a CLOSED gate answers to
+		# its hero.
+		if _is_open(gid):
 			_say_spine(tr("This way is open."))
-			continue
-		if here != wants:
+			if _is_earned(gid) or here != wants:
+				continue
+		elif here != wants:
 			_say_spine(tr("%s ANSWERS TO %s.") % [
 				gid.replace("_", " ").to_upper(), wants.to_upper()])
 			continue

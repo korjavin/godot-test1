@@ -1052,6 +1052,14 @@ func _on_lobby_joined(you: String, room: String, master: String, members: Array)
 	_absorbed_opened = {}
 	for gid: String in BestRunStore.tower_opened_ids():
 		_absorbed_opened[gid] = true
+	# A JOIN CANCELS A STALE DEFERRED CLOSE (review round 2, major): leaving
+	# the previous room from inside the walls parks its close on the shell,
+	# and that deferral belongs to the old room — firing it after this join
+	# would snap the new room's gates shut for good. Guarded group lookup,
+	# the `_close_room_gates` pattern; solo (no shell) is a no-op.
+	var tower := get_tree().get_first_node_in_group("tower")
+	if tower != null and tower.has_method("cancel_room_close"):
+		tower.cancel_room_close()
 	status.emit("In room %s (%d/4)" % [room, members.size()])
 	room_changed.emit(room, members)
 
