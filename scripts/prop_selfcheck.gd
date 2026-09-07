@@ -951,6 +951,7 @@ func _check_city_content(terrain_script: GDScript, consts: Dictionary) -> void:
 	     loose bound still passes, while the equality catches it exactly.
 	"""
 	var max_step: float = float(consts["PROP_MAX_STEP"])
+	var proud: float = float(consts["CITY_ROOF_PROUD"])
 	var biome_enum: Dictionary = consts["Biome"]
 	var city_value: int = int(biome_enum["CITY"])
 
@@ -984,6 +985,7 @@ func _check_city_content(terrain_script: GDScript, consts: Dictionary) -> void:
 	var solids := 0
 	var worst_top := 0.0
 	var worst_reach := 0.0
+	var roof_pairs := 0
 	# THE BAND'S SILHOUETTES (bead godot-test1-y1o.5). Check 11's BUILDER_KINDS
 	# covers the `_prop_*` builders; `_spawn_city_content` is not one of them, so
 	# its kinds are read HERE, on the same real chunks this check already builds,
@@ -1001,6 +1003,10 @@ func _check_city_content(terrain_script: GDScript, consts: Dictionary) -> void:
 		var body := StaticBody3D.new()
 		var obstacles: Array = []
 		terrain.call("_spawn_city_content", centre, rng, obstacles, batch, body)
+		# (x, y, z) per WEDGE base and per CUBE top, for the roof-lift pairing
+		# below. Per chunk — batch XZ is chunk-local.
+		var roof_bases: Array[Vector3] = []
+		var hull_tops: Array[Vector3] = []
 
 		boxes += batch.size()
 		solids += body.get_child_count()
@@ -1013,7 +1019,36 @@ func _check_city_content(terrain_script: GDScript, consts: Dictionary) -> void:
 			for corner: Vector3 in UNIT_CORNERS:
 				var p: Vector3 = xform * corner
 				worst_reach = maxf(worst_reach, maxf(absf(p.x), absf(p.z)))
+			# ROOF LIFT (bead godot-test1-6n1): every WEDGE roof's base must
+			# stand CITY_ROOF_PROUD clear of its hull's top face — the two
+			# were exactly coplanar and z-fought across two MultiMesh draws.
+			# Hulls are the CUBE boxes centred on the same XZ; doors, windows
+			# and street furniture all stand off-centre, so a centred CUBE is
+			# unambiguous. Paired per chunk — batch XZ is chunk-local and the
+			# same local centre recurs in every chunk.
+			if int(entry["kind"]) == ChunkBatch.BoxKind.WEDGE:
+				var wscale: Vector3 = xform.basis.get_scale()
+				roof_bases.append(Vector3(xform.origin.x, xform.origin.y - wscale.y * 0.5, xform.origin.z))
+			elif int(entry["kind"]) == ChunkBatch.BoxKind.CUBE:
+				var cscale: Vector3 = xform.basis.get_scale()
+				hull_tops.append(Vector3(xform.origin.x, xform.origin.y + cscale.y * 0.5, xform.origin.z))
 
+		# Pair each roof with the hull centred under it and measure the gap:
+		# the base must ride CITY_ROOF_PROUD clear of the hull top.
+		for rb: Vector3 in roof_bases:
+			var best := -1.0
+			for ht: Vector3 in hull_tops:
+				if absf(ht.x - rb.x) > EPSILON or absf(ht.z - rb.z) > EPSILON:
+					continue
+				if ht.y > rb.y + 0.01 or ht.y < rb.y - 1.0:
+					continue
+				best = maxf(best, ht.y)
+			if best < 0.0:
+				_fail("chunk %s: a WEDGE roof base at %s has no hull beneath it — the pairing found no centred CUBE" % [chunk, str(rb)])
+				continue
+			roof_pairs += 1
+			if rb.y - best < proud - EPSILON:
+				_fail("chunk %s: roof base %.4f m over hull top %.4f m — a %.4f m gap under the %.2f m proud lift, coplanar faces z-fight" % [chunk, rb.y, best, rb.y - best, proud])
 		footprints += obstacles.size()
 		for ob_variant: Variant in obstacles:
 			var ob: Dictionary = ob_variant
@@ -1026,9 +1061,11 @@ func _check_city_content(terrain_script: GDScript, consts: Dictionary) -> void:
 	# `top` is the RIDGE (bead godot-test1-y1o.36). Three assertions replace the
 	# one `top <= PROP_MAX_STEP` that used to stand here, and they are three
 	# because the footprint alone can no longer say all of it:
-	#   (a) the EAVE — the hull top, where a hero jumping from the pavement lands
-	#       — is one step. That is `CITY_HOUSE_HEIGHT_MAX` and it is read off the
-	#       constants, because a footprint records the ridge and not the eave.
+	#   (a) the EAVE — where a hero jumping from the pavement lands — is one
+	#       step. That is `CITY_HOUSE_HEIGHT_MAX` (the hull cap; the eave rides
+	#       CITY_ROOF_PROUD above it since bead godot-test1-6n1) and it is read
+	#       off the constants, because a footprint records the ridge and not
+	#       the eave.
 	#   (b) the PITCH is walkable. Each slope rises `roof_rise` over half the
 	#       roofed depth, so its gradient is `2 * CITY_ROOF_RISE_FACTOR` and it
 	#       must stay under TowerInterior.PLAN_RAMP_MAX_SLOPE — READ from that
@@ -1043,8 +1080,13 @@ func _check_city_content(terrain_script: GDScript, consts: Dictionary) -> void:
 	var eaves: float = float(consts["CITY_ROOF_EAVES"])
 	var roof_d_max: float = float(consts["CITY_HOUSE_WIDTH_MAX"]) \
 			* float(consts["CITY_HOUSE_DEPTH_FACTOR_MAX"]) + eaves * 2.0
-	var ridge_ceiling: float = height_max + roof_d_max * rise_factor
+	# The ceiling rides the lift with the ridge: the whole roof — eave, pitch
+	# and footprint `top` — stands CITY_ROOF_PROUD above the hull (bead
+	# godot-test1-6n1).
+	var ridge_ceiling: float = height_max + roof_d_max * rise_factor + proud
 	var slope: float = 2.0 * rise_factor
+	if roof_pairs == 0:
+		_fail("paired no WEDGE roof with its hull over %d city chunks — the roof-lift probe measured nothing" % city_chunks.size())
 	if climbable == 0:
 		_fail("%d city chunks produced NO climbable footprint at all — the roofs that are supposed to be the city's rest spots are not being recorded"
 				% city_chunks.size())

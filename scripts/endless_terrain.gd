@@ -1911,6 +1911,15 @@ const CITY_HOUSE_HEIGHT_MAX: float = 2.6
 ## thickness, it has a pitch.
 const CITY_ROOF_EAVES: float = 0.25
 const CITY_ROOF_THICKNESS: float = 0.14
+## HOUSE — how far the roof stands PROUD of the hull top (bead godot-test1-6n1,
+## owner report 2026-09-07: flickering house roofs). The roof's underside sat
+## EXACTLY coplanar with the hull's top face — across two box kinds, so two
+## MultiMesh draws the depth test cannot order — and shimmered with the camera.
+## The lift is the facade bands' proud idiom (CITY_WINDOW_PROUD, same 6 cm that
+## reads as flush at street distance): a POSITION change only, never a size
+## one, so the unit-cube contract holds and no RNG draw moves. Both roofs take
+## it — the band's WEDGE base and the gate district's film underside.
+const CITY_ROOF_PROUD: float = 0.06
 
 ## THE ROOF'S RISE, as a fraction of the roofed DEPTH (bead godot-test1-y1o.5).
 ## A `BoxKind.WEDGE` roof needs a height to be a pitch at all, and this is where

@@ -177,6 +177,7 @@ func _run() -> void:
 	var terrain := _make_terrain(RUN_SEED)
 	_check_regeneration(terrain_script)
 	_check_budgets(terrain, terrain_script)
+	_check_roof_proud(terrain, terrain_script)
 	_check_slicing(terrain)
 	_check_parity(terrain)
 	_check_approach_corridor(terrain_script)
@@ -866,6 +867,71 @@ func _check_web_residency(terrain: Node3D, boxes_at: Dictionary, shapes_at: Dict
 				shapes2 += int(shapes_at.get(at2, 0))
 		print("  web window %s 7×7 at %s holds %d boxes and %d shapes (info, densest is %d at %s)" % [id, centre2, boxes2, shapes2, worst_boxes, worst_at])
 	Sentinel.done("web_residency")
+
+
+# ============================================================================
+# CHECK 4b — the gate-district roofs stand proud of their hulls
+# ============================================================================
+
+func _check_roof_proud(terrain: Node3D, terrain_script: GDScript) -> void:
+	"""
+	NO COPLANAR ROOF FACES (bead godot-test1-6n1, owner report 2026-09-07:
+	flickering house roofs). Every gate-district roof film's underside must
+	stand CITY_ROOF_PROUD clear of its hull's top face — the two were exactly
+	coplanar and z-fought across two MultiMesh draws.
+
+	Measured on built chunks, never restated from the plan: each film (the
+	CUBE boxes `CITY_ROOF_THICKNESS` thick) is paired with the hull centred
+	on the same XZ, and the gap is read off the batch transforms
+	(`rot.scaled_local(dimensions)`, so scale.y is the height and origin.y
+	the centre). Doors, windows and street dressing all stand off-centre, so
+	a centred CUBE is unambiguous. Every authored house must pair — a film
+	with no hull beneath is a failure, not a skip.
+	"""
+	var consts: Dictionary = terrain_script.get_script_constant_map()
+	var thick: float = float(consts["CITY_ROOF_THICKNESS"])
+	var proud: float = float(consts["CITY_ROOF_PROUD"])
+	var houses: int = (BudapestPlan.DISTRICT_HOUSES as Array).size()
+	var rect: Rect2 = BudapestPlan.DISTRICT
+	var lo: Vector2i = terrain.world_to_chunk(Vector3(rect.position.x, 0.0, rect.position.y))
+	var hi: Vector2i = terrain.world_to_chunk(Vector3(rect.end.x, 0.0, rect.end.y))
+	var pairs := 0
+	for cx in range(lo.x, hi.x + 1):
+		for cz in range(lo.y, hi.y + 1):
+			var built := _build_city_chunk(terrain, Vector2i(cx, cz))
+			var batch: Array = built["batch"]
+			var films: Array[Vector3] = []  # (x, underside_y, z)
+			var hulls: Array[Vector3] = []  # (x, top_y, z)
+			for entry_variant: Variant in batch:
+				var entry: Dictionary = entry_variant
+				if int(entry["kind"]) != ChunkBatch.BoxKind.CUBE:
+					continue
+				var xform: Transform3D = entry["transform"]
+				var h: float = xform.basis.get_scale().y
+				if absf(h - thick) <= 0.001:
+					films.append(Vector3(xform.origin.x, xform.origin.y - h * 0.5, xform.origin.z))
+				else:
+					hulls.append(Vector3(xform.origin.x, xform.origin.y + h * 0.5, xform.origin.z))
+			for film: Vector3 in films:
+				var best := -1.0
+				for hull: Vector3 in hulls:
+					if absf(hull.x - film.x) > 0.001 or absf(hull.z - film.z) > 0.001:
+						continue
+					if hull.y > film.y + 0.01 or hull.y < film.y - 1.0:
+						continue
+					best = maxf(best, hull.y)
+				if best < 0.0:
+					_fail("chunk (%d, %d): a roof film at %s has no hull beneath it — the pairing found no centred CUBE" % [cx, cz, str(film)])
+					continue
+				pairs += 1
+				if film.y - best < proud - 0.001:
+					_fail("chunk (%d, %d): film underside %.4f m over hull top %.4f m — a %.4f m gap under the %.2f m proud lift, coplanar faces z-fight" % [cx, cz, film.y, best, film.y - best, proud])
+			(built["body"] as StaticBody3D).free()
+			(built["parent"] as Node).free()
+	if pairs != houses:
+		_fail("paired %d district roofs, authored %d houses — the probe did not see every roof" % [pairs, houses])
+	print("  roofs      %d gate-district films stand proud of their hulls" % pairs)
+	Sentinel.done("roof_proud")
 
 
 # ============================================================================

@@ -898,13 +898,14 @@ static func _spawn_city_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 	@param block_batch / block_body: The chunk's single MultiMesh + collision body.
 
 	EVERY HOUSE ROOF IS A REST SPOT, and since bead godot-test1-y1o.36 that is
-	literal: the WEDGE roof COLLIDES, so you land on its eave (flush with the hull
-	top — `CITY_HOUSE_HEIGHT_MAX` is `PROP_MAX_STEP` (2.6), one jump from the
-	pavement) and walk up the pitch to the ridge, which is where the footprint's
-	`top` is recorded and where `_settle_coin_y` perches a road coin. That makes a
-	house TWO collision shapes, hull and roof, and it is the only thing in the band
-	that is more than one. Every other biome's content is non-climbable — the city
-	is the one that gives the bare cubes' role back at scale.
+	literal: the WEDGE roof COLLIDES, so you land on its eave (proud of the hull
+	top by CITY_ROOF_PROUD since bead godot-test1-6n1 — `CITY_HOUSE_HEIGHT_MAX`
+	is `PROP_MAX_STEP` (2.6), one jump from the pavement) and walk up the pitch
+	to the ridge, which is where the footprint's `top` is recorded and where
+	`_settle_coin_y` perches a road coin. That makes a house TWO collision
+	shapes, hull and roof, and it is the only thing in the band that is more
+	than one. Every other biome's content is non-climbable — the city is the one
+	that gives the bare cubes' role back at scale.
 
 	CROC DENSITY IS REDUCED HERE and it is the ONE band where that is true; the
 	division lives in spawn_crocodiles_in_chunk (see CITY_CROC_DIVISOR), not here.
@@ -984,8 +985,12 @@ static func _spawn_city_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 		# the rise coming off the roofed DEPTH (see CITY_ROOF_RISE_FACTOR).
 		var roof_d = depth + terrain.CITY_ROOF_EAVES * 2.0
 		var roof_rise = roof_d * terrain.CITY_ROOF_RISE_FACTOR
+		# PROUD of the hull top by CITY_ROOF_PROUD (bead godot-test1-6n1): the
+		# wedge base sat exactly coplanar with the hull's top face and the two
+		# draws z-fought. Position only — the pitch, the rise and every draw
+		# the consts above describe are untouched.
 		terrain.create_box(
-			local + Vector3(0.0, height + roof_rise * 0.5, 0.0),
+			local + Vector3(0.0, height + roof_rise * 0.5 + terrain.CITY_ROOF_PROUD, 0.0),
 			Vector3(width + terrain.CITY_ROOF_EAVES * 2.0, roof_rise, roof_d),
 			yaw, rng, block_batch, block_body, 0.0, roof, true,
 			ChunkBatch.BoxKind.WEDGE
@@ -1043,16 +1048,20 @@ static func _spawn_city_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 		#
 		# THE JUMP IS STILL MEASURED AT THE EAVE, not here. `PROP_MAX_STEP` asks
 		# "can this be mounted from flat ground", and what you land on is the eave
-		# — flush with `height`, which `CITY_HOUSE_HEIGHT_MAX` caps at exactly
-		# PROP_MAX_STEP. The ridge is above that on purpose and is reached by
+		# — proud of `height` by CITY_ROOF_PROUD since bead godot-test1-6n1 (a
+		# 6 cm lip over a hull `CITY_HOUSE_HEIGHT_MAX` still caps at exactly
+		# PROP_MAX_STEP). The ridge is above that on purpose and is reached by
 		# WALKING, which is the whole of the ruling; check 7 asserts both halves.
 		#
 		# The radius is the honest bound on the roof slab's rotated half-diagonal, so
 		# it is above MOUNTAIN_AVOID_RADIUS (2.0) — deliberately, see the constant.
+		#
+		# `top` rides the lift with the ridge: it is the highest SOLID point over
+		# the centre column, and the ridge moved up by the proud epsilon.
 		obstacles.append({
 			"pos": local,
 			"radius": 0.5 * sqrt(pow(width + terrain.CITY_ROOF_EAVES * 2.0, 2.0) + pow(depth + terrain.CITY_ROOF_EAVES * 2.0, 2.0)),
-			"top": height + roof_rise,
+			"top": height + roof_rise + terrain.CITY_ROOF_PROUD,
 			"climbable": true,
 		})
 

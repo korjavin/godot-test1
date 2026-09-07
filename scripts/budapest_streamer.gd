@@ -875,12 +875,14 @@ static func _spawn_gate_district_in_chunk(terrain: Node3D, chunk_center: Vector3
 	which since bead godot-test1-y1o.36 is NO LONGER "exactly as the procedural
 	city's is". Out in the band the roof is a solid WEDGE and the footprint names
 	the RIDGE; here the roof is still a flat `CITY_ROOF_THICKNESS` CUBE film drawn
-	`collide = false`, so the hull top IS the surface and the hero's feet are
-	inside 0.14 m of trim. The owner's "make roofs standable" ruling was about the
+	`collide = false`, so the hull top IS the surface and the hero stands just
+	under 0.14 m of trim. The film rides CITY_ROOF_PROUD above the hull (bead
+	godot-test1-6n1 — its underside was coplanar with the hull top and the two
+	draws z-fought). The owner's "make roofs standable" ruling was about the
 	pitched roofs it is impossible to stand ON; a 0.14 m film is not that, and
 	Budapest stays pure CUBE by the city's own rule — so this builder is
-	deliberately untouched. A gate district whose roofs you could not reach would
-	quietly be the one city block that is not a city block.
+	deliberately untouched apart from that lift. A gate district whose roofs you
+	could not reach would quietly be the one city block that is not a city block.
 	"""
 	var half: float = terrain.chunk_size / 2.0
 	if not _city_chunk_slice(terrain, chunk_center, BudapestPlan.DISTRICT).has_area():
@@ -920,9 +922,12 @@ static func _spawn_gate_district_in_chunk(terrain: Node3D, chunk_center: Vector3
 			yaw, rng, block_batch, block_body, 0.0, wall
 		)
 		# Roof — a thin film over the hull top, collide = false, oversailing as
-		# eaves. The player stands on the HULL, inside this film.
+		# eaves. The player stands on the HULL, just under this film. PROUD of
+		# the hull by CITY_ROOF_PROUD (bead godot-test1-6n1): the film's
+		# underside sat exactly coplanar with the hull's top face and the two
+		# draws z-fought. Position only — same film, same oversail.
 		terrain.create_box(
-			local + Vector3(0.0, height + terrain.CITY_ROOF_THICKNESS * 0.5, 0.0),
+			local + Vector3(0.0, height + terrain.CITY_ROOF_THICKNESS * 0.5 + terrain.CITY_ROOF_PROUD, 0.0),
 			Vector3(width + terrain.CITY_ROOF_EAVES * 2.0, terrain.CITY_ROOF_THICKNESS, depth + terrain.CITY_ROOF_EAVES * 2.0),
 			yaw, rng, block_batch, block_body, 0.0, roof, false
 		)
