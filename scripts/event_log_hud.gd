@@ -37,8 +37,9 @@ extends Control
 ## It is READ-ONLY and INPUT-FREE: `MOUSE_FILTER_IGNORE`, `FOCUS_NONE`, no
 ## pause claim ever (a frozen tree simply stops its tick), and nothing here
 ## writes game state — the roster, the captives and the voice module need no
-## edit, except the one read-only `video_peer_ids()` view on the module's own
-## tile set. Solo, or with no voice module, the node draws NOTHING and its
+## edit, except the one read-only `video_peer_ids()` view on the module's
+## sender roll-call. Solo, or with no voice module, the node draws NOTHING and
+## its
 ## frame cost is one accumulator add (the group lookups happen on the 2 Hz
 ## tick, never per frame) — tracking is not painting: a voiceless room keeps
 ## its room domains current invisibly and only the voice domain reseeds.
@@ -58,11 +59,13 @@ const POLL_INTERVAL: float = 0.5
 ## The ring: six lines, newest at the bottom, each living eight seconds.
 const MAX_LINES: int = 6
 const LINE_TTL: float = 8.0
-## The fade runs over the line's last second and is QUANTIZED on purpose: this
-## widget repaints only when its snapshot changes (the HUD idiom), so a smooth
-## alpha would repaint every frame for eight seconds a line. Four steps at
-## 2 Hz is eight repaints per line lifetime, all of them on ticks.
-const FADE_TAIL: float = 1.0
+## The fade runs over the line's last TWO seconds and is QUANTIZED on purpose:
+## this widget repaints only when its snapshot changes (the HUD idiom), so a
+## smooth alpha would repaint every frame for eight seconds a line. At the
+## 2 Hz tick the tail takes four real samples — 1.0, 0.75, 0.5, 0.25 — so a
+## line costs one append repaint, up to three fade-step repaints, and its drop
+## (review round 2: a one-second tail paints two levels, not four).
+const FADE_TAIL: float = 2.0
 const FADE_STEPS: int = 4
 
 ## Consecutive silent 2 Hz ticks before a peer reads as "mic off" (review
@@ -70,6 +73,16 @@ const FADE_STEPS: int = 4
 ## off/on pair per conversational pause and evicts the lines the log exists to
 ## show. "Mic on" stays immediate; 1.5 s of quiet means hung up, not pausing.
 const MIC_OFF_SILENT_TICKS: int = 3
+
+## Msec after the room start during which the captive set is re-baselined
+## silently instead of diffed (review round 2): `welcome` EMPTIES the set and
+## the room's real one lands after, over the `room` verb and the join
+## snapshot's `cap` — diffing the empty moment prints every standing cell as a
+## fresh grab. Mirrors `MpManager.JOIN_SNAPSHOT_WAIT`; the live manager is
+## asked first through `_join_settled()` (which also settles early once the
+## snapshots are in), and this is the fallback a stub — or an old manager —
+## runs on.
+const CAPTIVE_SETTLE_MSEC: int = 1500
 
 ## Colours, and they all come off `HudTheme` — see the file banner.
 const COLOR_GROUND: Color = Color(HudTheme.INK, HudTheme.PANEL_ALPHA)
@@ -317,9 +330,10 @@ func _read_speaking() -> Dictionary:
 
 
 func _read_video() -> Dictionary:
-	"""Member id -> true for peers with a live video tile (the module's own
-	tile set, read through its one accessor). The self-view reads as our own
-	id so every camera line names a member the same way."""
+	"""Member id -> true for peers SENDING video (the module's sender
+	roll-call, read through its one accessor — never the placed tiles, so a
+	capture reads as nothing at all). The self-view reads as our own id so
+	every camera line names a member the same way."""
 	var out: Dictionary = {}
 	if _voice == null or not _voice.has_method("video_peer_ids"):
 		return out
@@ -389,6 +403,14 @@ func _diff_holders() -> void:
 	_holders = cur
 
 
+func _captives_settled() -> bool:
+	## May the captive set be diffed yet? The live manager answers through its
+	## own settle test; anything else runs the clock against the room start.
+	if _mp != null and _mp.has_method("_join_settled"):
+		return bool(_mp.call("_join_settled"))
+	return _now() - _room_start_msec >= CAPTIVE_SETTLE_MSEC
+
+
 func _diff_captives() -> void:
 	if _player == null or not is_instance_valid(_player):
 		return
@@ -396,6 +418,10 @@ func _diff_captives() -> void:
 	if not _capt_seeded:
 		_captives = cur
 		_capt_seeded = true
+		return
+	if not _captives_settled():
+		# Still inside the join settle window: keep re-baselining silently.
+		_captives = cur
 		return
 	for hero: String in cur:
 		if not _captives.has(hero):
@@ -466,12 +492,12 @@ func _age_lines() -> void:
 	"""Drop lines past LINE_TTL. The fade needs no write: `_draw` derives the
 	quantized alpha from the birth it already holds."""
 	var cutoff: int = _now() - int(LINE_TTL * 1000.0)
-	while not _lines.is_empty() and int((_lines[0] as Dictionary)["born"]) < cutoff:
+	while not _lines.is_empty() and int((_lines[0] as Dictionary)["born"]) <= cutoff:
 		_lines.pop_front()
 
 
 func line_alpha_at(age_msec: int) -> float:
-	"""That age's paint alpha, QUANTIZED: full until the last second, then
+	"""That age's paint alpha, QUANTIZED: full until the last FADE_TAIL, then
 	FADE_STEPS steps to zero — a pure function, so `_draw` and the check agree
 	by construction. Past TTL is zero (the line is already dropped above)."""
 	var ttl := int(LINE_TTL * 1000.0)

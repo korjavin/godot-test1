@@ -3078,6 +3078,12 @@ var _reported_cam: int = CAM_IDLE
 ## no DOM writes at all.
 var _pushed_tiles: Dictionary = {}
 
+## `peer id -> true` for everyone SENDING video, parsed out of the same
+## `videoPeers()` string one function down — the sender roll-call the room
+## event log diffs (bead godot-test1-k4j). Read, never re-parsed: the getter
+## stays bridge-free and the log's 2 Hz costs no extra round trip.
+var _video_senders: Dictionary = {}
+
 var _tile_accum: float = 0.0
 
 ## The hero whose colour the browser's cartoon ramp was last built from (bead
@@ -3858,28 +3864,23 @@ func is_hero_speaking(hero: String) -> bool:
 func video_peer_ids() -> Array:
 	"""
 	Who is SENDING video right now, as lobby ids — the sender roll-call
-	`_poll_tiles` parses out of `_ck.videoPeers()`, plus `SELF_LEVEL_KEY` when
-	our own camera is reported on. Deliberately NOT the placed-tile set: a
-	captive or hero-less peer still sends, and their tile coming down must
-	never read as "camera off" (review round 1).
+	`_poll_tiles` parses out of `_ck.videoPeers()` (cached in
+	`_video_senders`), plus `SELF_LEVEL_KEY` when our own camera is reported
+	on. Deliberately NOT the placed-tile set: a captive or hero-less peer
+	still sends, and their tile coming down must never read as "camera off"
+	(review round 1).
 
-	A read-only view over existing state for the room event log (bead
-	godot-test1-k4j): the same parse as `_poll_tiles`, empty off the web,
-	bridge-less, or outside a room like every other reader here.
+	A read-only view over cached state for the room event log (bead
+	godot-test1-k4j): bridge-free — the round trip happens once per tile poll,
+	not once per reader — and empty off the web or outside a room like every
+	other reader here.
 	"""
 	var out: Array = []
-	if not _is_web or not _running or _ck == null:
-		return out
-	var seen := {}
-	var raw: Variant = _ck.videoPeers()
-	if typeof(raw) == TYPE_STRING:
-		for id: String in str(raw).split(",", false):
-			if id != "" and id != SELF_LEVEL_KEY:
-				seen[id] = true
-	if _reported_cam == CAM_ON:
-		seen[SELF_LEVEL_KEY] = true
-	for id: String in seen:
-		out.append(id)
+	for id: String in _video_senders:
+		if id != SELF_LEVEL_KEY:
+			out.append(id)
+	if _reported_cam == CAM_ON and not out.has(SELF_LEVEL_KEY):
+		out.append(SELF_LEVEL_KEY)
 	return out
 
 
@@ -3968,6 +3969,7 @@ func _poll_tiles() -> void:
 	"""
 	if not _running or _ck == null:
 		_pushed_tiles.clear()
+		_video_senders.clear()
 		return
 	var raw: Variant = _ck.videoPeers()
 	if typeof(raw) != TYPE_STRING:
@@ -3975,6 +3977,7 @@ func _poll_tiles() -> void:
 	var senders: Dictionary = {}
 	for id: String in str(raw).split(",", false):
 		senders[id] = true
+	_video_senders = senders.duplicate()
 
 	var live: Dictionary = {}
 	var hud: Node = get_tree().get_first_node_in_group("hero_hud")

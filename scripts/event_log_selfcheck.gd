@@ -28,9 +28,13 @@ extends SceneTree
 ##   6. THE SKIN CONTRACT. No hex literal in the widget (the palette lives in
 ##      `hud_theme.gd` alone), the root adopts `HudTheme.theme()`, and the
 ##      mirrored self key is the voice module's own spelling.
-##   7. THE SENDER ROLL-CALL. The camera getter parses `videoPeers()`, never
-##      the placement set — stubs cannot see the difference, so the shipped
-##      body is read (the suite's source-grep idiom).
+##   7. THE SENDER ROLL-CALL. The camera getter reads the cached roll-call,
+##      never the placement set and never the bridge — stubs cannot see the
+##      difference, so the shipped bodies are read (the suite's source-grep
+##      idiom).
+##   8. THE CAPTIVE SETTLE WINDOW. A set arriving one tick after the join
+##      prints nothing (re-baselined, not diffed); a genuine grab-and-release
+##      past the window prints both.
 
 const LOG_SCRIPT := preload("res://scripts/event_log_hud.gd")
 const VOICE_SCRIPT := preload("res://scripts/voice_chat.gd")
@@ -127,6 +131,9 @@ func _run_checks() -> String:
 	if not failure.is_empty():
 		return failure
 	failure = _check_cap()
+	if not failure.is_empty():
+		return failure
+	failure = _check_captive_settle()
 	if not failure.is_empty():
 		return failure
 	failure = _check_solo_draws_nothing()
@@ -295,15 +302,16 @@ func _expect_lines(log: Control, want: Array) -> String:
 
 
 func _check_fade_and_removal() -> String:
-	## Full alpha until the last second, quantized steps after, dropped past TTL.
+	## Full alpha until the two-second tail, four quantized steps after,
+	## dropped past TTL — and the steps a real tick actually paints.
 	var failure := ""
 	var log: Control = _fresh_log()
-	for age: int in [0, 6999, 7000]:
+	for age: int in [0, 5999, 6000]:
 		if log.line_alpha_at(age) != 1.0:
 			failure = "age %d paints %.2f, not full — the fade starts early" % [age, log.line_alpha_at(age)]
 			break
 	if failure.is_empty():
-		for pair: Array in [[7500, 0.5], [7750, 0.25], [7999, 0.25]]:
+		for pair: Array in [[6500, 0.75], [7000, 0.5], [7500, 0.25], [7999, 0.25]]:
 			if log.line_alpha_at(pair[0]) != pair[1]:
 				failure = "age %d paints %.2f, not %.2f — the fade is not quantized steps" \
 						% [pair[0], log.line_alpha_at(pair[0]), pair[1]]
@@ -319,14 +327,42 @@ func _check_fade_and_removal() -> String:
 		# just the named points above) goes red.
 		for age: int in range(0, 8101, 53):
 			var want := 0.0
-			if age < 7000:
+			if age < 6000:
 				want = 1.0
 			elif age < 8000:
-				want = float(int(ceil(float(8000 - age) / 1000.0 * 4.0))) / 4.0
+				want = float(int(ceil(float(8000 - age) / 2000.0 * 4.0))) / 4.0
 			if log.line_alpha_at(age) != want:
 				failure = "age %d paints %.2f, oracle says %.2f — fade shape drifted" \
 						% [age, log.line_alpha_at(age), want]
 				break
+	if failure.is_empty():
+		# The painted sequence a real tick takes through the tail: four
+		# distinct alphas off `_painted` itself, then the drop — a one-second
+		# tail would paint two levels here, not four.
+		var wired := _wired_log()
+		var tlog: Control = wired["log"]
+		var tmp: StubMp = wired["mp"]
+		tmp.members.append({"id": "id-ann", "name": "Ann"})
+		tlog._now_msec = 200000
+		tlog._tick()
+		var painted: Array = []
+		for step: int in [6000, 6500, 7000, 7500]:
+			tlog._now_msec = 200000 + step
+			tlog._tick()
+			if tlog.line_count() != 1:
+				failure = "the tailed line vanished at +%d ms — the sequence measured nothing" % step
+				break
+			painted.append(float(((tlog._painted as Array)[0] as Array)[1]))
+		if failure.is_empty():
+			if painted != [1.0, 0.75, 0.5, 0.25]:
+				failure = "ticks painted %s, not [1.0, 0.75, 0.5, 0.25] — the tail is not four steps" \
+						% str(painted)
+			else:
+				tlog._now_msec = 208000
+				tlog._tick()
+				if tlog.line_count() != 0:
+					failure = "the tailed line survived to +8000 ms — TTL drops nothing"
+		_free_wired(wired)
 	if failure.is_empty():
 		# ...and the line itself is dropped on the tick past TTL, live on the node.
 		var wired := _wired_log()
@@ -382,6 +418,48 @@ func _check_cap() -> String:
 		fat.queue_free()
 	_free_wired(wired)
 	Sentinel.done("cap")
+	return failure
+
+
+func _check_captive_settle() -> String:
+	## A joiner's first sight of the captive set is STANDING STATE, not news:
+	## `welcome` empties it and the room's real set lands after, so the window
+	## re-baselines silently and only genuine changes after it print. The stub
+	## models the race the suite otherwise never sees — the set arriving one
+	## tick after the join.
+	var failure := ""
+	var wired := _wired_log()
+	var log: Control = wired["log"]
+	var player: StubPlayer = wired["player"]
+	# The room's set lands 500 ms after the join, mid-window: silence.
+	player.captive_heroes["primm"] = true
+	log._now_msec = 100500
+	log._tick()
+	if log.line_count() != 0:
+		failure = "a set arriving 500 ms after the join printed %d lines — standing state is not news" \
+				% log.line_count()
+	else:
+		# Past the window the same set is trusted — and still silent, because
+		# the window re-baselined it instead of diffing it.
+		log._now_msec = 101600
+		log._tick()
+		if log.line_count() != 0:
+			failure = "the settled standing set printed %d lines — the window diffed instead of baselining" \
+					% log.line_count()
+		else:
+			# ...while a genuine grab-and-release after settle prints both.
+			player.captive_heroes.erase("primm")
+			log._now_msec = 102000
+			log._tick()
+			player.captive_heroes["primm"] = true
+			log._now_msec = 102500
+			log._tick()
+			failure = _expect_lines(log, [
+				"[00:02] Primm was freed",
+				"[00:02] Primm was captured",
+			])
+	_free_wired(wired)
+	Sentinel.done("captive_settle")
 	return failure
 
 
@@ -543,43 +621,56 @@ func _scene_rect(text: String, node_name: String) -> Rect2:
 
 
 func _check_sender_rollcall() -> String:
-	## The camera source is the SENDER roll-call, not the placement set: the
-	## getter's body must parse `videoPeers()` (plus self on the reported
-	## camera) and never touch `_pushed_tiles` — a capture or a hero-less peer
-	## keeps sending while their tile is down (review round 1). Stubs cannot
-	## see the difference, so the shipped body is read instead (the suite's
-	## source-grep idiom: `pause_selfcheck`, `hero_hud` check 8).
+	## The camera source is the cached SENDER roll-call, never the placement
+	## set and never a fresh bridge round trip: the getter reads the cache
+	## `_poll_tiles` fills from its `videoPeers()` parse (plus self on the
+	## reported camera), so a capture or a hero-less peer keeps sending while
+	## their tile is down (review rounds 1-2). Stubs cannot see the difference,
+	## so the shipped bodies are read instead (the suite's source-grep idiom:
+	## `pause_selfcheck`, `hero_hud` check 8).
 	var failure := ""
 	var source: String = FileAccess.get_file_as_string("res://scripts/voice_chat.gd")
 	if source.is_empty():
 		failure = "cannot read voice_chat.gd — this check measured nothing"
 	else:
-		var start: int = source.find("func video_peer_ids()")
-		var body: String = source.substr(start, source.find("\n# ===", start) - start) \
-				if start >= 0 else ""
-		# The shape, not the prose: docstrings and comments are stripped, so a
-		# comment mentioning videoPeers() cannot satisfy the parse clauses.
-		var code_lines: Array = []
-		var in_doc := false
-		for line: String in body.split("\n"):
-			var bare: String = line.strip_edges()
-			if bare.begins_with('"""'):
-				in_doc = not in_doc
-				continue
-			if in_doc or bare.begins_with("#"):
-				continue
-			code_lines.append(line)
-		var code: String = "\n".join(code_lines)
+		var code := _code_of(source, "func video_peer_ids()")
 		if code.strip_edges().is_empty():
 			failure = "video_peer_ids() not found — the camera seam moved"
-		elif not code.contains("videoPeers()"):
-			failure = "video_peer_ids() never parses videoPeers() — it is not the sender roll-call"
+		elif not code.contains("_video_senders"):
+			failure = "video_peer_ids() never reads the sender cache — the log's 2 Hz pays a round trip"
 		elif not code.contains("_reported_cam"):
 			failure = "video_peer_ids() never reads the reported camera — the self-view is lost"
+		elif code.contains("videoPeers("):
+			failure = "video_peer_ids() calls the bridge itself — it is not bridge-free"
 		elif code.contains("_pushed_tiles"):
 			failure = "video_peer_ids() reads the placement set — a capture would print camera off"
+		elif not source.contains("_video_senders = senders"):
+			failure = "_poll_tiles never fills the sender cache from its videoPeers() parse"
+		elif not source.contains("_video_senders.clear()"):
+			failure = "nothing clears the sender cache when the tile poll stands down — it goes stale"
 	Sentinel.done("sender_rollcall")
 	return failure
+
+
+func _code_of(source: String, head: String) -> String:
+	"""That function's code with docstrings and comments stripped: the shape,
+	not the prose, so a comment mentioning a call cannot satisfy a clause."""
+	var start: int = source.find(head)
+	if start < 0:
+		return ""
+	var stop: int = source.find("\n# ===", start)
+	var body: String = source.substr(start, stop - start) if stop >= 0 else source.substr(start)
+	var code_lines: Array = []
+	var in_doc := false
+	for line: String in body.split("\n"):
+		var bare: String = line.strip_edges()
+		if bare.begins_with('"""'):
+			in_doc = not in_doc
+			continue
+		if in_doc or bare.begins_with("#"):
+			continue
+		code_lines.append(line)
+	return "\n".join(code_lines)
 
 
 func _scene_block(text: String, node_name: String) -> String:
