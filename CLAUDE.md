@@ -66,7 +66,7 @@ docstring before touching it. The live Windman is `windman_parts/` assembled by
 | HUD skin and widgets | `scripts/hud_theme.gd` | `hero_hud` `coin_hud` `world_caption` `minimap_hud` `ability_hud` `help_overlay` `event_log_hud` (room event log) | `hero_hud` `minimap` `help` `locale` `intro` `event_log` |
 | Audio (all synthesized) | `scripts/sound_manager.gd` | | `sound` |
 | Multiplayer mesh | `scripts/mp_manager.gd` | `mp_codec` (parsers) `mp_croc_sync` `lobby_client` `remote_avatar` `mp_ui` | `mp` `mp_codec` (split from mp_selfcheck; CI shards by file) |
-| Voice/video chat (web only) | `scripts/voice_chat.gd` | `web/vendor/mediapipe/` `scripts/fetch_vendor.sh` | `voice` |
+| Voice/video chat (web only) | `scripts/voice_chat.gd` `scripts/voice_js.gd` (the JS) | `web/vendor/mediapipe/` `scripts/fetch_vendor.sh` | `voice` |
 | Lobby server (Go) | `server/room.go` | `server/docker-compose.yml` | `go test` |
 | Perf tooling | `scripts/perf_overlay.gd` (`\fo`) | `\fb` / `\fh` teleport cheats (debug builds) | `perf` |
 | Mobile / touch | `scripts/mobile_input.gd` `mobile_sensors.gd` | `scenes/ui/touch_controls.tscn` | |
@@ -188,7 +188,7 @@ gameplay input goes through named actions.
   (owner ruling A, bead `gyd`). Each verb's ceilings (older builds, RTT lag) are written
   at its send site. Beads `vej`, `coq`, `d81`, `gyd`.
 - Voice/video is web-only, on browser `RTCPeerConnection`s, one const JS string in
-  `voice_chat.gd`; its `mp_manager` seam is three functions. **No JS snippet may return
+  `scripts/voice_js.gd` (aliased as `VOICE_JS` from `voice_chat.gd`); its `mp_manager` seam is three functions. **No JS snippet may return
   a bare boolean through `JavaScriptBridge`** — return 1/0 (checked by `intro_selfcheck`).
   The camera is cartooned before encoding and the raw device track never leaves the sender.
   The face detector is fetched at build time by `scripts/fetch_vendor.sh` against
