@@ -2007,6 +2007,14 @@ func _check_hud_voice_switches() -> void:
 	if hud_cam.text != "Camera off" or ui._camera_button.text != "Camera off":
 		_fail("Initial camera button label mismatch: hud='%s' panel='%s'" % [hud_cam.text, ui._camera_button.text])
 
+	# FOCUS_NONE on every HUD switch so clicking never swallows gameplay inputs (jump / ui_accept)
+	if hud_mic.focus_mode != Control.FOCUS_NONE:
+		_fail("HudMicButton focus_mode is not FOCUS_NONE (got %d)" % hud_mic.focus_mode)
+	if hud_deaf.focus_mode != Control.FOCUS_NONE:
+		_fail("HudDeafenButton focus_mode is not FOCUS_NONE (got %d)" % hud_deaf.focus_mode)
+	if hud_cam.focus_mode != Control.FOCUS_NONE:
+		_fail("HudCameraButton focus_mode is not FOCUS_NONE (got %d)" % hud_cam.focus_mode)
+
 	# --- 1. PRESS HUD MIC BUTTON: flips stub and updates panel text in same tick ---
 	hud_mic.pressed.emit()
 	if not voice.is_mic_muted():
@@ -2130,6 +2138,14 @@ func _check_hud_voice_switches() -> void:
 	if _verify_free_cursor_calls(mutated_cursor).is_empty():
 		_fail("Negative control failed: missing _free_cursor_after_hud_press() passed undetected")
 
+	# Negative control for cursor free helper body
+	var mutated_helper := source.replace(
+		"func _free_cursor_after_hud_press() -> void:\n\tif Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:\n\t\tInput.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)",
+		"func _free_cursor_after_hud_press() -> void:\n\tpass"
+	)
+	if _verify_free_cursor_calls(mutated_helper).is_empty():
+		_fail("Negative control failed: empty _free_cursor_after_hud_press body passed undetected")
+
 	Sentinel.done("hud_voice_switches")
 
 
@@ -2179,6 +2195,20 @@ func _verify_free_cursor_calls(source: String) -> String:
 		var body := m.get_string()
 		if not body.contains("_free_cursor_after_hud_press()"):
 			return "handler %s body does not call _free_cursor_after_hud_press()" % h
+
+	var helper_pattern: String = "func\\s+_free_cursor_after_hud_press\\s*\\([^)]*\\)[^\\n]*\\n(?:(?!func\\s)[\\s\\S])*"
+	var helper_re := RegEx.create_from_string(helper_pattern)
+	if helper_re == null:
+		return "failed to compile regex for _free_cursor_after_hud_press"
+	var helper_m := helper_re.search(source)
+	if helper_m == null:
+		return "helper _free_cursor_after_hud_press not found in mp_ui.gd"
+	var helper_body := helper_m.get_string()
+	if not helper_body.contains("Input.MOUSE_MODE_CAPTURED"):
+		return "_free_cursor_after_hud_press body does not reference Input.MOUSE_MODE_CAPTURED"
+	if not helper_body.contains("Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)"):
+		return "_free_cursor_after_hud_press body does not call Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)"
+
 	return ""
 
 
