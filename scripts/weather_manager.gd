@@ -35,12 +35,21 @@ extends Node
 ## off a fresh RNG seeded with it (`_build_storm_cloud`), so two builds are
 ## byte-identical without a transform on the wire.
 ##
-## TWO DOCUMENTED CEILINGS. A master on an older build publishes nothing and
-## its peers draw no storms at all. And a peer more than FIELD_RADIUS from the
-## master replays a sky drawn for somebody else's disc while rolling no storms
-## of its own — far from the master its sky stays clear, converging again when
-## it walks back. Both are the price of one shared sky (owner call: documented,
-## not changed).
+## ONE DOCUMENTED CEILING. A master on an older build publishes nothing and
+## its peers draw no storms at all — the price of one shared sky.
+##
+## THE FAR-PEER SKY (owner ruling A, bead godot-test1-gyd, 2026-09-07): the
+## master rolls its storm discs around EVERY room member, not only its own
+## player — `_focus_points()`, the crocodile LOD manager's focus-point
+## precedent. A storm is out of range only past every member's disc, and
+## (re)placed storms are dealt round-robin across the members by pool index,
+## so a peer 600 m off still walks under its own published storm. Fair-weather
+## clouds stay around the master's own player (cosmetic, per-peer), and the
+## rain particles still follow the master's own player.
+##
+## With N members the same 3-4 storms are spread over N discs: STORM_CHANCE is
+## unchanged and there is deliberately no per-member quota — that density is
+## the accepted ruling, not a tuning gap.
 ##
 ## ponytail: two optional extras from the design were deliberately NOT built.
 ## (1) A full-screen darkening ColorRect while inside a rain zone — a screen-
@@ -422,10 +431,18 @@ func _process(delta: float) -> void:
 	# (Lazy init rather than _ready() because the player may not exist yet.
 	# Guarded by the flag, not by emptiness: a `wx` packet applied before this
 	# tick already laid the field down in `apply_weather_sync()`.)
+	# Storms are dealt round-robin across the focus points by pool index
+	# (bead godot-test1-gyd) — fair clouds stay around the local player,
+	# cosmetic and per-peer. Solo the focus set is [player_pos] and this is
+	# today's fill byte for byte: the branch draws nothing.
 	if not _field_initialized:
+		var fill_focus: Array[Vector3] = _focus_points(player_pos)
 		for i in CLOUD_COUNT:
 			var cloud: Dictionary = _make_cloud()
-			_place_cloud_around(cloud, player_pos, Vector3.ZERO)
+			if bool(cloud["is_storm"]):
+				_place_cloud_around(cloud, fill_focus[i % fill_focus.size()], Vector3.ZERO)
+			else:
+				_place_cloud_around(cloud, player_pos, Vector3.ZERO)
 			_clouds.append(cloud)
 		_field_initialized = true
 
@@ -776,8 +793,37 @@ func _roll_cloud(is_storm: bool, sd: int) -> Dictionary:
 	}
 
 
+func _focus_points(player_pos: Vector3) -> Array[Vector3]:
+	## Who the storm field is drawn for (bead godot-test1-gyd, owner ruling A):
+	## the local player plus, on the master in a room, every room member — the
+	## `crocodile_lod_manager.gd` focus-point precedent, same group lookup,
+	## same null/pre-mesh degrade to [player_pos] (which is today's behaviour
+	## byte for byte: no branch below can tell the difference, and no draw is
+	## consumed building the set).
+	var focus_points: Array[Vector3] = [player_pos]
+	var mp := get_tree().get_first_node_in_group("mp")
+	if mp != null and mp.has_method("peer_positions"):
+		var remotes: Variant = mp.call("peer_positions")
+		if remotes is Array:
+			for p: Variant in remotes:
+				if p is Vector3:
+					focus_points.append(p)
+	return focus_points
+
+
+func _min_focus_dist(center: Vector3, focus_points: Array[Vector3]) -> float:
+	## Flat XZ distance from `center` to the nearest focus point — the LOD
+	## manager's awake test, for storms (bead godot-test1-gyd).
+	var best: float = INF
+	for p: Vector3 in focus_points:
+		best = minf(best, Vector2(center.x - p.x, center.z - p.z).length())
+	return best
+
+
 func _place_cloud_around(cloud: Dictionary, player_pos: Vector3, rim_dir: Vector3) -> void:
-	## Position a cloud in the field disc around the player at a fresh altitude.
+	## Position a cloud in the field disc around the given anchor — the local
+	## player, or one focus point for a spread storm (bead godot-test1-gyd) —
+	## at a fresh altitude.
 	## Initial fill (`rim_dir == ZERO`): anywhere in the disc, so the sky is
 	## populated in every direction from frame one. Recycling (`rim_dir` = the
 	## flat unit direction to re-enter FROM): the cloud reappears on that rim, far
@@ -785,7 +831,7 @@ func _place_cloud_around(cloud: Dictionary, player_pos: Vector3, rim_dir: Vector
 	var pos: Vector3
 	if rim_dir != Vector3.ZERO:
 		# A point on that semicircle rim: start FIELD_RADIUS out along rim_dir,
-		# then swing up to ±90° around the player so re-entries spread out.
+		# then swing up to ±90° around the anchor so re-entries spread out.
 		var angle: float = _rng.randf_range(-PI * 0.5, PI * 0.5)
 		pos = player_pos + (rim_dir * FIELD_RADIUS).rotated(Vector3.UP, angle)
 	else:
@@ -811,6 +857,9 @@ func _update_clouds(player_pos: Vector3, elapsed: float) -> void:
 		var site: Vector3 = terrain.call("tower_site")
 		tower_xz = Vector2(site.x, site.z)
 
+	# Who the storm field is drawn for, once per tick (bead godot-test1-gyd).
+	var focus_points: Array[Vector3] = _focus_points(player_pos)
+
 	for ci in _clouds.size():
 		var cloud: Dictionary = _clouds[ci]
 		cloud["center"] += WIND_DIR * cloud["speed"] * elapsed
@@ -818,12 +867,10 @@ func _update_clouds(player_pos: Vector3, elapsed: float) -> void:
 			# A REPLAYED STORM DRIFTS AND NOTHING ELSE. The drift is the dead
 			# reckoning between 10 Hz packets (same wind, same speed both
 			# ends); the recycle and the keep-out are the master's to run, on
-			# the disc around ITS player. Recycling here would free a storm
+			# the discs around ITS members. Recycling here would free a storm
 			# merely because it is far from THIS peer and rebuild it fair —
 			# then flap it back on the next packet, every 100 ms.
 			continue
-		var to_cloud: Vector3 = cloud["center"] - player_pos
-		to_cloud.y = 0.0
 		# Recycle on leaving the disc in ANY direction, not just downwind. WIND_SPEED
 		# is 1.6 m/s and WIND_DIR is mostly +X, while the player runs +X at 5-10 (25
 		# during Air Rush) — so in practice clouds are left BEHIND, never overtaken.
@@ -831,15 +878,32 @@ func _update_clouds(player_pos: Vector3, elapsed: float) -> void:
 		# range within ~40 s and the sky is empty for the rest of the run, taking
 		# is_raining_at() (hence rain particles, the rain bed and both Windman rules)
 		# down with it.
-		if to_cloud.length() > FIELD_RADIUS:
+		#
+		# STORMS measure against EVERY focus disc (bead godot-test1-gyd): out
+		# of range only past all of them, and recycled back around the
+		# round-robin focus — the same 3-4 storms spread over N members.
+		# FAIR clouds keep today's rule, the master's own player. Solo the
+		# focus set is [player_pos] and both halves below ARE today's code.
+		var anchor: Vector3 = player_pos
+		var out: bool = false
+		if bool(cloud["is_storm"]):
+			anchor = focus_points[ci % focus_points.size()]
+			out = _min_focus_dist(cloud["center"], focus_points) > FIELD_RADIUS
+		else:
+			var to_cloud: Vector3 = cloud["center"] - player_pos
+			to_cloud.y = 0.0
+			out = to_cloud.length() > FIELD_RADIUS
+		if out:
 			# Re-enter on the rim OPPOSITE the side it left by, so a cloud dropped
 			# behind a sprinting player comes back in ahead of them. The WHOLE
 			# entry is replaced — copying keys one by one is how a recycled
 			# storm once kept its old `sd` and every peer built a different
 			# storm off it (bead godot-test1-vej review round 1).
-			var rim_dir := -to_cloud.normalized()
+			var away: Vector3 = cloud["center"] - anchor
+			away.y = 0.0
+			var rim_dir := -away.normalized()
 			var fresh: Dictionary = _make_cloud()
-			_place_cloud_around(fresh, player_pos, rim_dir)
+			_place_cloud_around(fresh, anchor, rim_dir)
 			_clouds[ci] = fresh
 			cloud = fresh
 		# KEEP OUT OF THE BUILDING (see CLOUD_TOWER_KEEPOUT). One distance test on
