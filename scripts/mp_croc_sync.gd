@@ -407,6 +407,114 @@ static func receive_dead(mp: Node, from_id: String, packet: Dictionary) -> void:
 	apply_dead(mp, int(packet["id"]))
 
 
+# =============================================================================
+# RANGED-BOSS SHOTS (bead godot-test1-coq)
+#
+# A ranged boss (the snow titan, the city clown) is lethal to the MASTER ONLY:
+# a remote-driven body returns from `_physics_process` before the behaviour
+# dispatch, so `_behave_ranged()` never runs on a non-master, and a bolt's
+# lethality resolves against group "player" — the LOCAL player. Without this
+# verb a non-master walks the titan's territory, is chased master-driven, and
+# is never shot.
+#
+# The herd/storm precedent (master simulates, peers replay), but a shot is an
+# EVENT, not a state, so it is the flee/kill shape rather than the wx tick:
+#
+#     shot   master → everyone {"t":"shot","c","f","a","s"}   one bolt, RELIABLE
+#
+# Reliable because a dropped storm heals next tick while a dropped bolt is a
+# threat that never existed. No sequence number: shots are rare (a 2–3 s
+# cooldown behind a per-shooter `max_live` cap of 2–3) and the reliable channel
+# orders the two-bosses-one-window case.
+#
+# TWO DOCUMENTED CEILINGS. (1) A master on an older build publishes no shot:
+# non-masters see what they see today (nothing), and an older non-master drops
+# the verb in its dispatch default. (2) A bolt arrives RTT late on the
+# receiver, and the flight is replayed from f->a from t=0 — so the receiver's
+# picture is RTT behind the master's. Documented, not compensated (casual
+# co-op, client-authoritative movement).
+
+static func announce_shot(mp: Node, id: int, muzzle: Vector3, aim: Vector3,
+		style: String) -> bool:
+	"""
+	The master's half of a ranged-boss shot: tell the room ONE bolt left THIS
+	crocodile's muzzle for THIS aim point, so every peer replays it.
+
+	Returns true when the room has taken it over — FALSE OFFLINE, false when we
+	are not the master, and false for a non-finite muzzle or aim, so the caller
+	falls through on one test. There is no local fallthrough (the local bolt is
+	already in the air — this is called beside `BossProjectile.fire`); false
+	only means nobody else will draw it.
+
+	Called only by the master, because only the master reaches it: a
+	remote-driven body never enters `_behave_ranged()`. The master check here
+	is the belt beside those braces, the same defence `resolve_kill()` keeps
+	against a caller that outlives its authority.
+	"""
+	if not mp.is_online() or mp._rtc == null:
+		return false
+	if mp._master != mp._you:
+		return false
+	# Never put our own bug on the wire: a NaN muzzle replays as a NaN bolt on
+	# every screen. The bounds are read as `MpCodec.MAX_SHOT_COORD`, never
+	# re-typed — the same rule the wx encoder follows.
+	if not muzzle.is_finite() or not aim.is_finite():
+		return false
+	for point: Vector3 in [muzzle, aim]:
+		if absf(point.x) > MpCodec.MAX_SHOT_COORD \
+				or absf(point.y) > MpCodec.MAX_SHOT_COORD \
+				or absf(point.z) > MpCodec.MAX_SHOT_COORD:
+			return false
+	mp._broadcast_reliable(var_to_bytes(
+		{"t": "shot", "c": id, "f": muzzle, "a": aim, "s": style}))
+	return true
+
+
+static func receive_shot(mp: Node, from_id: String, packet: Dictionary) -> void:
+	"""
+	Every peer's half of a ranged-boss shot: replay the master's bolt LOCALLY,
+	through the ORDINARY `BossProjectile.fire`, so a shot READS as a shot on
+	every screen rather than as damage from nowhere.
+
+	ONLY the master's is accepted, the same authority rule `receive_dead()`
+	enforces: the mesh is peer-to-peer, so without it any member could shell
+	every screen. An unknown id or a body with no `"ranged"` row is dropped
+	silently (a `push_warning` at most, never a spawn) — the common case is a
+	chunk this peer never generated, not an attack.
+
+	Lethality stays local (group "player"), so the bitten peer decides its own
+	hit — the bite rule `_tick_remote` is specified against. The row's OWN
+	params are replayed, never the packet's style: `s` only names what the
+	master drew, and a body always draws its own bolt. The per-shooter live cap
+	is naturally per machine (`_live_per_shooter` is static per process), and so
+	is the sound: `fire()` telegraphs and cues on whichever machine runs it, so
+	the receiver's bolt arrives with its flash and its cue and no separate
+	broadcast — anything below `_tick_remote()`'s early return staying silent
+	for non-masters, per the `_announce_acquisition()` rule.
+	"""
+	if from_id != mp._master:
+		return
+	var shot: Dictionary = MpCodec.decode_shot(packet)
+	if shot.is_empty():
+		return  # The tenth trust boundary refused it; whole or nothing.
+	var croc: Node = croc_by_id(mp, int(shot["c"]))
+	if croc == null:
+		# At most one group scan, and only on a miss — see `rebuild_croc_cache()`.
+		rebuild_croc_cache(mp)
+		croc = croc_by_id(mp, int(shot["c"]))
+	if croc == null:
+		return  # A chunk this peer never generated — not an error.
+	# The row, not the packet, is authoritative — and a body with no "ranged"
+	# row cannot have fired, so this is the same silent drop as above.
+	var spec: Variant = croc.get("spec")
+	if typeof(spec) != TYPE_DICTIONARY:
+		return
+	var row: Variant = (spec as Dictionary).get("ranged")
+	if typeof(row) != TYPE_DICTIONARY:
+		return
+	BossProjectile.fire(shot["f"], shot["a"], croc.get_parent(), row, croc)
+
+
 static func is_croc_dead(mp: Node, id: int) -> bool:
 	"""
 	Whether the ROOM has already killed this crocodile. Asked once per crocodile

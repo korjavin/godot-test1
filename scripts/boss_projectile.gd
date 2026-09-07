@@ -111,13 +111,22 @@ class_name BossProjectile
 ## crocodile in the world; there is nothing here to make deterministic.
 ##
 ## ----------------------------------------------------------------------------
-## MULTIPLAYER: v1 IS LOCAL SIMULATION ONLY
+## MULTIPLAYER: LOCAL SIMULATION, MASTER-REPLAYED (bead godot-test1-coq)
 ## ----------------------------------------------------------------------------
-## No relay verbs, no sync. Lethality resolves against group "player", which by
-## definition is the LOCAL player and never a RemoteAvatar — so a projectile
-## threatens exactly the machine that simulated it. A remote-driven boss already
-## runs its collisions on the quarry's machine, so per-peer local firing composes
-## into the existing scheme later with no protocol change.
+## Lethality resolves against group "player", which by definition is the LOCAL
+## player and never a RemoteAvatar — so a projectile threatens exactly the
+## machine that simulated it, and the bitten peer always decides its own hit.
+## What the `shot` verb adds is the SIMULATION, not the hit: the master fires
+## (a remote-driven body never reaches its own firing arm) and every peer
+## replays the bolt through this same `fire()`, with the firing body's own row
+## params — so the bolt is drawn where it is on every screen and the
+## walking-clears-it inequality below holds per screen. An earlier revision
+## assumed per-peer local firing composes; it does not, because the arm itself
+## never runs off-master.
+##
+## The telegraph and the cue ride along for free: they happen inside `fire()`,
+## on whichever machine runs it, so the receiver's bolt arrives with its flash
+## and its sound and no second broadcast.
 ##
 ## ----------------------------------------------------------------------------
 ## WEB-BUILD COST

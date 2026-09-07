@@ -70,6 +70,15 @@ const LEAP_HOP_SLACK: int = 2
 
 var _failures: Array[String] = []
 
+## A room stub: records what the firing arm publishes, the way the weather
+## stub in mp_selfcheck records what the sky publishes.
+const SHOT_STUB_SOURCE := """extends Node
+var calls: Array = []
+func announce_boss_shot(id: int, muzzle: Vector3, aim: Vector3, style: String) -> bool:
+	calls.append({"c": id, "f": muzzle, "a": aim, "s": style})
+	return true
+"""
+
 
 ## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
 ## lands in and lets the script carry on, so a check that dies halfway simply
@@ -174,7 +183,20 @@ func _check_ranged(boss: CharacterBody3D, player: BossProbe.StubPlayer,
 	  C. NO SHOT WHILE NOT CHASING. A wandering titan that shells the horizon is
 	     the same bug as a boss that leaves its area.
 
-	B and C call `_behave_ranged()` directly, the way the crush check calls
+	  D. THE ROOM HEARS EXACTLY WHAT THE ARM FIRES (bead godot-test1-coq). A stub
+	     in group "mp" records `announce_boss_shot`: the control below must emit
+	     exactly one packet naming this body's id, muzzle, aim and row style, and
+	     every refusal above and below (territory, chasing, band, cooldown) must
+	     emit none. The send site is beside the `fire()` call and inside all four
+	     gates, so a packet without a bolt, or a bolt without a packet, fails here.
+
+	  E. A REMOTE-DRIVEN BODY FIRES NOTHING. The multiplayer early return sits
+	     above the behaviour dispatch, so a body the master drives never reaches
+	     this arm: posed as remote-driven, with every gate held open, five physics
+	     frames must produce no bolt and no packet. This asserts the return; it
+	     must never be "fixed".
+
+	B-D call `_behave_ranged()` directly, the way the crush check calls
 	`_on_player_collision`: what is under test is a guard inside one function, and
 	staging a physics situation for it would add flake without adding reach — the
 	detection code above the dispatch would refuse these quarries long before the
@@ -220,7 +242,18 @@ func _check_ranged(boss: CharacterBody3D, player: BossProbe.StubPlayer,
 				% [seen.size(), float(RANGED_FRAMES) / 60.0, cooldown, ceiling]
 				+ "should fit) — the cooldown is not being spent")
 
-	# ---- B. THE TERRITORY GATE ---------------------------------------------
+	# ---- B–D. THE GATES, AND THE PACKET BESIDE THE BOLT -----------------------
+	# A stub in group "mp" records what the arm publishes (bead godot-test1-coq).
+	# It goes up here, not in phase A: three hundred frames of real firing need
+	# no room, and the direct calls below are where a packet ties to its gate.
+	var shot_script := GDScript.new()
+	shot_script.source_code = SHOT_STUB_SOURCE
+	shot_script.reload()
+	var room: Node = shot_script.new()
+	room.add_to_group("mp")
+	root.add_child(room)
+	var muzzle_height: float = float(ranged["muzzle_height"])
+	var want_style: String = str(ranged["style"])
 	_clear_projectiles()
 	await _frames(2)
 	player.global_position = home + Vector3(300.0, 0.0, 0.0)
@@ -231,22 +264,89 @@ func _check_ranged(boss: CharacterBody3D, player: BossProbe.StubPlayer,
 	# Outward from a boss standing near its fence: in the band, out of the circle.
 	boss.chase_target = Vector3(boss.global_position.x + band_mid, 0.0, home.z)
 	var before: int = _live_projectiles()
+	var announced: int = (room.get("calls") as Array).size()
 	boss._behave_ranged()
 	if _live_projectiles() > before:
 		_fail("ranged: fired at a quarry %.1f m from home (territory is %.1f) from "
 				% [_flat_distance(boss.chase_target, home), BossProbe.TERRITORY_RADIUS]
 				+ "%.1f m away — a boss that can shell you outside its own area "
 				% band_mid + "gives back the only counterplay there is")
+	# A refused shot sends nothing: the send site is inside the territory gate,
+	# not above it.
+	if (room.get("calls") as Array).size() != announced:
+		_fail("ranged: announced a shot for a quarry outside the territory — "
+				+ "the room must hear exactly what the arm fires, no more")
 	# The control, at the SAME distance and the other side of the fence.
 	boss._ranged_lock.clear()
 	boss.chase_target = Vector3(boss.global_position.x - band_mid, 0.0, home.z)
 	before = _live_projectiles()
+	announced = (room.get("calls") as Array).size()
 	boss._behave_ranged()
 	if _live_projectiles() <= before:
 		_fail("ranged: the control shot — same %.1f m range, quarry %.1f m from "
 				% [band_mid, _flat_distance(boss.chase_target, home)] + "home and "
 				+ "so INSIDE the territory — did not fire either, so the refusal "
 				+ "above proves nothing about the territory gate")
+	else:
+		# THE PACKET BESIDE THE BOLT. The control fired, so the room must have
+		# heard exactly one shot — naming this body, its muzzle, its aim and
+		# its row's style. A bolt without a packet leaves the non-master's sky
+		# empty; a packet without a bolt draws a threat that never existed.
+		var calls: Array = room.get("calls") as Array
+		if calls.size() != announced + 1:
+			_fail("ranged: the control fired but announced %d shots, not one — "
+					% [calls.size() - announced] + "the room hears what the arm "
+					+ "fires, exactly once per bolt")
+		else:
+			var got: Dictionary = calls[calls.size() - 1]
+			var want_muzzle: Vector3 = boss.global_position \
+					+ Vector3.UP * muzzle_height * boss.scale.y
+			if int(got["c"]) != boss.croc_id():
+				_fail("ranged: announced id %d, fired body is %d"
+						% [int(got["c"]), boss.croc_id()])
+			elif (got["f"] as Vector3).distance_to(want_muzzle) > 0.01:
+				_fail("ranged: announced muzzle %s, fired muzzle %s"
+						% [str(got["f"]), str(want_muzzle)])
+			elif (got["a"] as Vector3) != boss.chase_target:
+				_fail("ranged: announced aim %s, fired aim %s"
+						% [str(got["a"]), str(boss.chase_target)])
+			elif str(got["s"]) != want_style:
+				_fail("ranged: announced style '%s', row style is '%s'"
+						% [str(got["s"]), want_style])
+
+	# ---- D2. THE COOLDOWN GATE, AND THE PACKET INSIDE IT. The control above
+	# armed the lock; calling again without clearing it must fire nothing and
+	# announce nothing — the send site is below the cooldown refusal, not above.
+	before = _live_projectiles()
+	announced = (room.get("calls") as Array).size()
+	boss._behave_ranged()
+	if _live_projectiles() > before:
+		_fail("ranged: fired twice without the cooldown ticking down — "
+				+ "the lock the control armed refused nothing")
+	if (room.get("calls") as Array).size() != announced:
+		_fail("ranged: announced a shot on cooldown — the send site is inside "
+				+ "the cooldown gate, not above it")
+
+	# ---- D3. THE BAND GATE, AND THE PACKET INSIDE IT. Past the band's ceiling
+	# but still inside the territory, chasing, lock clear: nothing may fire and
+	# nothing may be announced. The positive control for this gate is the
+	# control above, fired at the same boss at band_mid.
+	boss.global_position = Vector3(home.x, boss.global_position.y, home.z)
+	boss.is_chasing = true
+	boss._ranged_lock.clear()
+	boss.chase_target = home + Vector3(max_range + 5.0, 0.0, home.z)
+	if not boss.in_territory(boss.chase_target):
+		_fail("ranged: harness geometry broke — the band probe's quarry is "
+				+ "outside the territory, so it measures the wrong gate")
+	before = _live_projectiles()
+	announced = (room.get("calls") as Array).size()
+	boss._behave_ranged()
+	if _live_projectiles() > before:
+		_fail("ranged: fired past its own band ceiling — the band has a roof, "
+				+ "not just a floor")
+	if (room.get("calls") as Array).size() != announced:
+		_fail("ranged: announced a shot past its own band ceiling — the send "
+				+ "site is inside the band gate, not above it")
 
 	# ---- C. NO SHOT WHILE NOT CHASING --------------------------------------
 	_clear_projectiles()
@@ -263,11 +363,51 @@ func _check_ranged(boss: CharacterBody3D, player: BossProbe.StubPlayer,
 	# (Measured, 2026-08-29: without this line the mutant passes.)
 	boss.chase_target = Vector3(boss.global_position.x - band_mid, 0.0, home.z)
 	before = _live_projectiles()
+	announced = (room.get("calls") as Array).size()
 	boss._behave_ranged()
 	if _live_projectiles() > before:
 		_fail("ranged: fired while not chasing, at the same quarry the control "
 				+ "above fired at — a titan that has not smelled anybody must not "
 				+ "shell the horizon")
+	# A refused shot sends nothing: the send site is inside the chasing gate.
+	if (room.get("calls") as Array).size() != announced:
+		_fail("ranged: announced a shot while not chasing "
+				+ "the send site is inside the chasing gate, not above it")
+
+	# ---- E. A REMOTE-DRIVEN BODY FIRES NOTHING. Every gate held open
+	# (in territory, in band, chasing, lock clear) but posed as a body the
+	# master drives: five real physics frames must produce no bolt and no
+	# packet. This asserts the `_physics_process` early return above the
+	# dispatch, never the arm: delete the return and this goes red.
+	_clear_projectiles()
+	boss.global_position = Vector3(home.x, boss.global_position.y, home.z)
+	# The quarry stands INSIDE the band and the detection radius — NOT at the
+	# 300 m phase B left it at. Phase E runs real physics frames, and deleting
+	# the early return would route them through `_update_chase_state()`, which
+	# recomputes `is_chasing` from the player's position: a far quarry would
+	# close the chasing gate for the mutant too and the probe would pass
+	# vacuously. (Review round 1: this is exactly what it did.)
+	player.global_position = boss.global_position + Vector3(band_mid, 0.0, 0.0)
+	boss._ranged_lock.clear()
+	boss.chase_target = Vector3(home.x - band_mid, 0.0, home.z)
+	# AFTER `set_remote_state`: flags 0 clears CROC_FLAG_CHASING, so stating it
+	# before is undone on the next line. Stated after, the chasing gate is held
+	# open going into the frames — as the docstring promises.
+	boss.set_remote_state(boss.global_position, boss.rotation.y, 0)
+	boss.is_chasing = true
+	boss.remote_driven = true
+	before = _live_projectiles()
+	announced = (room.get("calls") as Array).size()
+	await _frames(5)
+	boss.remote_driven = false
+	if _live_projectiles() > before:
+		_fail("ranged: a remote-driven body fired locally "
+				+ "no non-master copy of a boss may reach the firing arm")
+	if (room.get("calls") as Array).size() != announced:
+		_fail("ranged: a remote-driven body announced a shot "
+				+ "the room only ever hears the master's own bolt")
+	room.remove_from_group("mp")
+	room.queue_free()
 
 	_clear_projectiles()
 	await _frames(2)
