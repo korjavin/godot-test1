@@ -1097,9 +1097,11 @@ rules of its own, all pinned by `tower_interior_selfcheck`:
   peer would see. `_apply_opened()` is the one place state becomes geometry, and the
   seam phase 5 will load a save through. In a room the set is SHARED (bead
   `godot-test1-d81`): one reliable `gate` verb per opening over mesh and relay, the absolute
-  set beside `m` on the `room` repair packet (`g`) and beside `lm` in the join snapshot (`go`).
-  Any member may open (a monotone union has no conflict), entering a room resets nothing, and
-  every member's profile gains the room's ids — teammates share campaign progression.
+  set beside `m` on the `room` repair packet (`g`) and beside `lm` in the join snapshot (`go`),
+  both honoured from the master alone. Any member may open (a monotone union has no conflict),
+  entering a room resets nothing, a non-master's own persisted set reaches the room once per
+  join through the paced `gate` drain, and every member's profile gains the room's ids —
+  teammates share campaign progression.
 - **Static interior geometry is ONE batched mesh per storey and casts no shadow.** Both
   were measured, both are invisible, and together they are the difference between the
   interior costing 4 ms a frame and costing nothing measurable.
@@ -2604,9 +2606,11 @@ The sharpest rules, in rough order of how badly they bite:
   republishes (absorbed ids are echo-suppressed) nor resets riddle progress. With no shell
   streamed in the absorb lands in the profile the shell hydrates from, behind an in-memory
   mirror seeded on join — the steady state costs zero store reads, zero writes and zero shell
-  calls. The `room` packet's `g` and the snapshot's `go` repair the join gap. See the
-  tower section for the ceilings (older members publish and honour nothing; profiles gain the
-  room's ids).
+  calls. The `room` packet's `g` and the snapshot's `go` repair the join gap, honoured
+  from the master alone; a non-master's own persisted set reaches the room once per join
+  through the same `gate` verb, paced under half the 4/s budget by `_tick_join_gate_publish`.
+  See the tower section for the ceilings (older members publish and honour nothing; profiles
+  gain the room's ids).
 - The stall heartbeat rides the lobby relay, not the mesh, because a throttled tab stops
   polling both.
 

@@ -59,14 +59,15 @@ func _apply_opened() -> void:
 """
 
 ## A streamed shell reduced to the absorb's three calls: it records what the
-## absorb marks and whether each mark may publish, so the echo suppression is
-## measured as arguments, not packets.
+## absorb marks and whether each mark may publish or persist, so the echo
+## suppression AND the batch write-silence are measured as arguments, not
+## packets.
 const RECORDING_SHELL_SOURCE := """extends Node
 var calls: Array = []
 func is_opened(id: String) -> bool:
 	return false
-func mark_opened(id: String, publish: bool = true) -> void:
-	calls.append([id, publish])
+func mark_opened(id: String, publish: bool = true, persist: bool = true) -> void:
+	calls.append([id, publish, persist])
 """
 
 
@@ -102,6 +103,12 @@ func _run() -> void:
 		failure = await _check_join_publish_pacing()
 	if failure.is_empty():
 		failure = await _check_opened_ids_sorted()
+	if failure.is_empty():
+		failure = await _check_live_opening_beats_drain()
+	if failure.is_empty():
+		failure = await _check_publish_filters_poison()
+	if failure.is_empty():
+		failure = await _check_batch_persists_once()
 	if failure.is_empty():
 		Sentinel.finish(self)
 	else:
@@ -208,8 +215,10 @@ func _check_no_shell() -> String:
 	recorder.remove_from_group("tower")
 	recorder.queue_free()
 	mp.queue_free()
-	if calls != [["collapsed_slab", false]]:
-		return "the absorb marked %s — it must mark with publish=false" % str(calls)
+	# publish=false (the echo suppression) AND persist=true (the single path
+	# performs no merge of its own — false here would persist nothing at all).
+	if calls != [["collapsed_slab", false, true]]:
+		return "the absorb marked %s — it must mark with publish=false, persist=true" % str(calls)
 	Sentinel.done("no_shell")
 	return ""
 
@@ -554,8 +563,8 @@ func _check_join_publish() -> String:
 	if queue != ["maintenance_crawl"]:
 		joiner.queue_free()
 		return "priming queued %s — the joiner's own set, once, is the whole contribution" % str(queue)
-	# Past the pace the id drains; the loopback hands it to the master.
-	joiner._tick_join_gate_publish(0.2)
+	# Past the pace (0.5 s) the id drains; the loopback hands it to the master.
+	joiner._tick_join_gate_publish(0.5)
 	if not (joiner.get("_join_gate_queue") as Array).is_empty():
 		joiner.queue_free()
 		return "a paced tick drained nothing — the queue never reaches the wire"
@@ -584,13 +593,14 @@ func _check_join_publish() -> String:
 
 func _check_join_publish_pacing() -> String:
 	"""
-	8. PACED UNDER 4/s. The drain spaces sends at one per 0.25 s and never
-	puts more than the window max inside a trailing second — a 5th `gate`
-	inside one window is dropped by every receiver and never re-sent.
+	8. PACED UNDER HALF THE BUDGET. The drain spaces sends at one per 0.5 s
+	and never puts more than the window max (2) inside a trailing second —
+	a live opening fired mid-drain is the 3rd send in the window, not the
+	5th, so every receiver keeps it (review round 4, major).
 
 	No wall clock: twenty 5 s ticks run inside one millisecond, so the pace
 	clock says yes to all of them and only the trailing-second cap may say
-	no. Eight ids go in; exactly four may come out in the burst.
+	no. Eight ids go in; exactly two may come out in the burst.
 	"""
 	TowerProbe.fresh_store()
 	var ids: Array = (TowerGraph.opened_ids() as Array).slice(0, 8)
@@ -611,8 +621,8 @@ func _check_join_publish_pacing() -> String:
 		joiner._tick_join_gate_publish(5.0)
 	var left: int = (joiner.get("_join_gate_queue") as Array).size()
 	joiner.queue_free()
-	if left != 4:
-		return "a same-second burst drained %d of 8 — the trailing-second cap is missing" % (8 - left)
+	if left != 6:
+		return "a same-second burst drained %d of 8 — the window cap is not holding at 2" % (8 - left)
 	Sentinel.done("join_publish_pacing")
 	return ""
 
@@ -638,4 +648,167 @@ func _check_opened_ids_sorted() -> String:
 	if got != ["collapsed_slab", "maintenance_crawl"]:
 		return "no-shell opened ids came back %s — the sorted-set promise is broken" % str(got)
 	Sentinel.done("opened_ids_sorted")
+	return ""
+
+
+func _check_live_opening_beats_drain() -> String:
+	"""
+	10. A LIVE OPENING FIRED MID-DRAIN ARRIVES (review round 4, major). The
+	drain spends half the receiver's `gate` budget; a live opening is the
+	3rd send in the window, and the drain yields after it instead of
+	starving it.
+
+	Seven persisted ids prime the drain; two paced ticks move two; a live
+	`publish_gate_opened` fires; three more paced ticks must move NOTHING
+	(the live send filled the window — latency for the queued five, never a
+	lost opening). A stub receiver running the REAL `_verb_rate_ok` votes on
+	the three sends in order: all three must be admitted.
+	"""
+	TowerProbe.fresh_store()
+	var ids: Array = (TowerGraph.opened_ids() as Array).slice(0, 8)
+	if ids.size() != 8:
+		return "the build authors fewer than 8 gate ids — the live-mid-drain probe has no burst to shape"
+	BestRunStore.merge_tower_opened_ids(ids.slice(0, 7))
+	var live_id := String(ids[7])
+	# The queue drains in SORTED order (the no-shell branch sorts), so the
+	# two moved ids are the sorted-first two, whatever the store did.
+	var ordered: Array = ids.slice(0, 7).duplicate()
+	ordered.sort()
+	var joiner: Node = MPManager.new()
+	root.add_child(joiner)
+	joiner.set("lobby_only", true)
+	joiner._on_lobby_joined("us", "ROOM", "themaster", ["themaster", "us"])
+	joiner.set("_join_wait", MPManager.JOIN_SNAPSHOT_WAIT)
+	# Prime and move two: the window holds exactly two.
+	joiner._tick_join_gate_publish(0.5)
+	joiner._tick_join_gate_publish(0.5)
+	if (joiner.get("_join_gate_queue") as Array).size() != 5:
+		joiner.queue_free()
+		return "two paced ticks moved %d of 7 — the pace clock is not spacing at 0.5 s" \
+				% (7 - (joiner.get("_join_gate_queue") as Array).size())
+	# The live opening: always sent, always tracked.
+	joiner.publish_gate_opened(live_id)
+	# Three paced ticks past a full window must yield, not drop: the five
+	# stay queued, every one of them, in order.
+	for i in range(3):
+		joiner._tick_join_gate_publish(0.5)
+	var queue: Array = joiner.get("_join_gate_queue")
+	joiner.queue_free()
+	if queue != ordered.slice(2, 7):
+		return "the drain moved %s past a live opening — it starves instead of yielding" % str(queue)
+	# ...and the receiver's REAL budget admits all three sends: the live one
+	# is spent 2, not spent 4.
+	var receiver: Node = MPManager.new()
+	root.add_child(receiver)
+	var votes: Array = []
+	# One vote per arrival, in arrival order: two drain sends, then live.
+	for arrival: String in [String(ordered[0]), String(ordered[1]), live_id]:
+		votes.append(receiver._verb_rate_ok("peerJ", "gate") and not arrival.is_empty())
+	receiver.queue_free()
+	if votes != [true, true, true]:
+		return "a stub receiver dropped a mid-drain send %s — the live opening dies room-wide" % str(votes)
+	Sentinel.done("live_opening_beats_drain")
+	return ""
+
+
+func _check_publish_filters_poison() -> String:
+	"""
+	11. THE PUBLISH SIDE FILTERS A POISONED PROFILE (review round 4, minor).
+	An over-long and a foreign row in the store must not reach `g`/`go` —
+	the receivers' parsers drop the WHOLE repair packet on one bad entry,
+	which would kill the room's captive and explored repairs with it.
+	"""
+	TowerProbe.fresh_store()
+	BestRunStore.merge_tower_opened_ids(["maintenance_crawl", "x".repeat(100), "tower_monthly_special"])
+	var mp: Node = MPManager.new()
+	root.add_child(mp)
+	mp.set("lobby_only", true)
+	mp._on_lobby_joined("us", "ROOM", "themaster", ["themaster", "us"])
+	# No shell: the mirror holds the mess (seed validates nothing), the
+	# getter must not.
+	if (mp._tower_opened_ids() as Array) != ["maintenance_crawl"]:
+		mp.queue_free()
+		return "no-shell publish ids came back %s — a poisoned row rides g/go" \
+				% str(mp._tower_opened_ids())
+	mp.queue_free()
+	# Streamed shell: hydration holds the same mess, same filter.
+	var shell := await TowerProbe.make_tower(self)
+	var mp2: Node = MPManager.new()
+	root.add_child(mp2)
+	var got: Array = mp2._tower_opened_ids()
+	mp2.queue_free()
+	await TowerProbe.clear(self, null, shell)
+	if got != ["maintenance_crawl"]:
+		return "shelled publish ids came back %s — hydration poison rides g/go" % str(got)
+	Sentinel.done("publish_filters_poison")
+	return ""
+
+
+func _check_batch_persists_once() -> String:
+	"""
+	12. ONE REPAIR, ONE STORE WRITE (review round 4, minor). The batch absorb
+	merges the whole packet in one write; the shell tail marks with
+	`persist = false`, so three fresh ids cost the batch write and nothing
+	per id.
+
+	Write-count reasoning, stated plainly because mtime cannot count: the
+	profile starts DELETED, so any write moves mtime off zero — the batch
+	merge is pinned by content (all three ids land) plus mtime (something
+	wrote). The tails are pinned by ARGUMENTS on a recording shell
+	(`persist = false` on every mark): with the flag threaded, `mark_opened`
+	performs no store op, so the batch write is the only one. A revert of
+	either half fails below.
+	"""
+	TowerProbe.fresh_store()
+	var ids: Array = (TowerGraph.opened_ids() as Array).slice(0, 3)
+	# Six: three for the recording shell's argument assert, three more the
+	# recorder never saw for the real shell's geometry assert.
+	if (TowerGraph.opened_ids() as Array).size() < 6:
+		return "the build authors fewer than 6 gate ids — the batch probe has no packet to fold"
+	var mp: Node = MPManager.new()
+	root.add_child(mp)
+	var shell_script := GDScript.new()
+	shell_script.source_code = RECORDING_SHELL_SOURCE
+	shell_script.reload()
+	var recorder: Node = shell_script.new()
+	recorder.add_to_group("tower")
+	root.add_child(recorder)
+	mp._absorb_opened_gates(ids)
+	var calls: Array = recorder.get("calls")
+	recorder.remove_from_group("tower")
+	recorder.queue_free()
+	var want: Array = []
+	for gid: String in ids:
+		want.append([gid, false, false])
+	if calls != want:
+		mp.queue_free()
+		return "the batch tail marked %s — every mark must carry publish=false, persist=false" % str(calls)
+	# The one write is the batch merge: all three ids persisted...
+	if BestRunStore.tower_opened_ids().size() < 3:
+		mp.queue_free()
+		return "the batch merge persisted nothing — silencing the tails must not silence the packet"
+	for gid: String in ids:
+		if not BestRunStore.tower_opened_ids().has(gid):
+			mp.queue_free()
+			return "the batch merge lost %s — the one write did not cover the packet" % gid
+	# ...and it wrote exactly once: the profile did not exist before the
+	# packet (fresh store), and one merge is one save. The tails cannot have
+	# added more — every one of their marks carried persist=false above.
+	if FileAccess.get_modified_time(BestRunStore.config_path) <= 0:
+		mp.queue_free()
+		return "absorbing three fresh ids wrote nothing — the batch merge is missing"
+	mp.queue_free()
+	# The real shell opens all three off the same path (no recorder this time).
+	var shell := await TowerProbe.make_tower(self)
+	var mp2: Node = MPManager.new()
+	root.add_child(mp2)
+	mp2._absorb_opened_gates((TowerGraph.opened_ids() as Array).slice(3, 6))
+	var ok := true
+	for gid: String in (TowerGraph.opened_ids() as Array).slice(3, 6):
+		ok = ok and shell.is_opened(gid)
+	mp2.queue_free()
+	await TowerProbe.clear(self, null, shell)
+	if not ok:
+		return "a batch absorb with persist=false left a real shell closed — the flag gates geometry"
+	Sentinel.done("batch_persists_once")
 	return ""
