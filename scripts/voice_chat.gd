@@ -3855,6 +3855,22 @@ func is_hero_speaking(hero: String) -> bool:
 	return is_speaking(holder)
 
 
+func video_peer_ids() -> Array:
+	"""
+	Whose video is up right now, as lobby ids — the keys of `_poll_tiles`'
+	placed-tile set, with `SELF_LEVEL_KEY` for our own self-view (the browser
+	reports us under "me", never under our lobby id, exactly like the levels).
+
+	A read-only view over existing state for the room event log (bead
+	godot-test1-k4j): no bridge call, no behaviour change, empty off the web
+	or outside a room like every other reader here.
+	"""
+	var out: Array = []
+	for id: Variant in _pushed_tiles:
+		out.append(str(id))
+	return out
+
+
 # ============================================================================
 # VIDEO — THE CAMERA IN THE TEAMMATE'S HERO TILE (bead godot-test1-xtr.6)
 # ============================================================================

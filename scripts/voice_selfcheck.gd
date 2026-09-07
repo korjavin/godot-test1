@@ -1522,6 +1522,9 @@ const PUBLIC_CALLS: Array = [
 	# NOTHING case off-web without ever reaching for `_ck`.
 	["mic_badge", []],
 	["is_hero_speaking", ["windman"]],
+	# The room log's one question (bead godot-test1-k4j): whose video is up,
+	# answered from the pushed-tile set, empty off-web.
+	["video_peer_ids", []],
 ]
 
 
