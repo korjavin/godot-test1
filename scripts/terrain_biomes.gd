@@ -29,23 +29,496 @@ extends RefCounted
 ## hash stream, then a candidate loop where `obstacles` exists). Splitting it per
 ## biome is how the four clauses drift apart.
 ##
-## THE TUNING CONSTANTS STAYED ON THE TERRAIN, and that is this bead's one
-## deliberate departure from the epic's "constant banners move with the code".
-## The predator extraction (ftn.6) moved its salts because they are the WORLD —
-## three numbers that change every hunter and boss in every run. This section's
-## are ~160 tuning values (`CACTUS_*`, `CITY_*`, `DUNE_*`, `FOREST_*`,
-## `FROZEN_TREE_*`, `MOUNTAIN_*`, `SNOW_*`, `OASIS_*`, the palettes) spread over
-## a dozen themed banners INTERLEAVED with non-biome siblings, and cutting them
-## out is a second mechanical pass with its own A/B rather than a line of this
-## one. They are read as `terrain.CACTUS_WIDTH_MAX` and so on — no behaviour
-## difference, and every self-check that reads them off the terrain's
-## `get_script_constant_map()` is untouched. Filed as the follow-up.
+## THE TUNING CONSTANTS MOVED HERE AFTER ALL (bead godot-test1-ftn.27) — the
+## follow-up this paragraph used to file. The three content banners plus the
+## oasis/dune salts below are byte-identical to the terrain's, comments and
+## all; the spenders here read them bare, and the nineteen names a third file
+## reads are aliased back on the terrain, so every self-check that reads them
+## off the terrain's `get_script_constant_map()` is untouched.
 ##
 ## THE ENTRY POINT KEEPS A FORWARDER on the terrain, `create_box`'s precedent
 ## (bead godot-test1-ftn.1): `spawn_biome_content_in_chunk` and `_biome_spot_ok`
 ## are called from a dozen self-checks and from sibling spawners that were not
 ## in this cut, so rewriting every call site is the opposite of a mechanical
 ## move.
+
+
+## Salt for desert oasis placement decisions (independent hash stream).
+const OASIS_SALT: int = 0x0A_5157  # "OASIS" ish
+
+## Salt for desert dune placement decisions (independent hash stream).
+const DUNE_SALT: int = 0xD0_1D4E  # "DUNE" ish
+
+# ----------------------------------------------------------------------------
+# BIOME CONTENT TUNING (what each biome actually BUILDS)
+# ----------------------------------------------------------------------------
+##
+## Every value below feeds the three builders in the BIOME CONTENT section. They
+## all spend the same currency — create_box entries in the chunk's single
+## MultiMesh — so "more content" costs instances, not draw calls.
+
+## DESERT — sparsity is achieved by dividing the ordinary scattered-block TARGET
+## by N (see spawn_objects_in_chunk). Deliberately a target and NOT an RNG roll:
+## an extra draw there would shift the shared chunk stream and reshuffle every
+## block, crocodile and coin in the chunk.
+const DESERT_BLOCK_KEEP_EVERY: int = 3
+
+## DESERT — cactus stacks: how many candidates, how big, how far from the road.
+## They are the only thing a desert ADDS; the emptiness comes from the skip above.
+## NOTE: crocodile density is completely UNCHANGED in a desert (see
+## spawn_crocodiles_in_chunk) — a desert reads empty through DECORATION only,
+## per the project's "entity counts are never reduced" rule.
+const CACTUS_MIN: int = 4
+const CACTUS_MAX: int = 9
+## 12 m, not 10: a cactus footprint is NON-climbable, so _settle_coin_y SKIPS any
+## road coin it overlaps rather than perching one on top (unlike the ordinary
+## scattered blocks, which are climbable and may stand on the swath freely). At
+## exactly road_width_max * 0.5 = 10 a cactus sits on the outermost coin lane and
+## punches silent holes in the trail; 12 clears the swath plus a cactus radius.
+const CACTUS_ROAD_CLEARANCE: float = 12.0
+const CACTUS_WIDTH_MIN: float = 0.45
+const CACTUS_WIDTH_MAX: float = 0.75
+const CACTUS_SEGMENT_MIN: float = 0.9   # height of one stacked segment
+const CACTUS_SEGMENT_MAX: float = 1.6
+const CACTUS_ARM_CHANCE: float = 0.45   # chance of one short side "arm" box
+const CACTUS_COLOR := Color(0.24, 0.42, 0.24)
+
+## FOREST — tree budget per forest chunk. 25-40 trees × ~4 boxes each still ride
+## the chunk's ONE MultiMesh, so a forest chunk is the same single block draw
+## call as a plains chunk; only the trunks add collision shapes.
+const FOREST_TREES_MIN: int = 25
+const FOREST_TREES_MAX: int = 40
+
+## FOREST — minimum distance from the coin-road centerline. The widest coin band
+## half-width is road_width_max * 0.5 = 10, so 14 keeps the whole scattered coin
+## swath tree-free and the road followable through a wood.
+const FOREST_ROAD_CLEARANCE: float = 14.0
+
+## FOREST — trunk and canopy proportions. The canopy is 2-3 boxes of decreasing
+## size stacked on the trunk top, each built with collide = false (visual only).
+const TREE_TRUNK_WIDTH_MIN: float = 0.45
+const TREE_TRUNK_WIDTH_MAX: float = 0.75
+const TREE_TRUNK_HEIGHT_MIN: float = 2.2
+const TREE_TRUNK_HEIGHT_MAX: float = 3.8
+const TREE_CANOPY_LAYERS_MIN: int = 2
+const TREE_CANOPY_LAYERS_MAX: int = 3
+const TREE_CANOPY_WIDTH_MIN: float = 2.2  # widest (bottom) canopy layer
+const TREE_CANOPY_WIDTH_MAX: float = 3.4
+const TREE_CANOPY_LAYER_HEIGHT: float = 1.0  # legacy slab height: crown seat dip (0.3m) and seam lean bound
+const TREE_CANOPY_TAPER: float = 0.68     # each layer up is this fraction as wide
+const TREE_TRUNK_COLOR := Color(0.34, 0.24, 0.16)
+const TREE_LEAF_COLOR := Color(0.16, 0.36, 0.19)
+
+## FOREST — THE ANTI-MINECRAFT SET (bead godot-test1-u7a, owner: "trees are too
+## minecraft-ish, we need own style"). Every one of these is a TRANSFORM or a
+## COLOUR, because that is all a MultiMesh instance can carry: the chunk keeps its
+## ONE unit-cube batch and its ONE draw call, and a forest chunk emits exactly the
+## same number of instances it always did. What changed is that no two of them
+## line up any more.
+##
+##   * TREE_LEAF_COLOR_WARM is the far end of a per-tree tint ramp. The flat single
+##     green was the loudest half of the Minecraft read — a wood of identically
+##     coloured slabs reads as one material, not as foliage.
+##   * TREE_CANOPY_YAW_STEP turns each canopy layer 45 deg against the one below.
+##     A square has 90 deg symmetry, so the stack alternates 0 / 45 / 0 and the
+##     silhouette from any angle is an interference pattern of two squares — an
+##     octagon-ish crown instead of a column of aligned cubes. Costs NO rng draw.
+##   * TREE_CANOPY_DEPTH_RATIO makes each layer a rectangle rather than a square,
+##     so the alternating yaw actually crosses instead of repeating. The half
+##     diagonal of a (w, w*0.84) plan is 0.65*w, UNDER the 0.71*w a square costs,
+##     so the chunk-seam bound below stays an over-estimate.
+##   * TREE_TRUNK_TILT_MAX leans the trunk. A tree leans; a fence post does not.
+##     The canopy is offset to follow the leaning trunk's axis (see the builder).
+const TREE_LEAF_COLOR_WARM := Color(0.33, 0.46, 0.15)  # sun-struck yellow-green
+const TREE_LEAF_CROWN_LIFT: float = 0.40  # how far the TOP layer is pushed toward warm
+const TREE_CANOPY_YAW_STEP: float = PI * 0.25  # 45 deg per layer up
+const TREE_CANOPY_DEPTH_RATIO: float = 0.84    # plan is a rectangle, not a square
+const TREE_CANOPY_WIDTH_JITTER_MIN: float = 0.78
+const TREE_CANOPY_WIDTH_JITTER_MAX: float = 1.06
+const TREE_TRUNK_TILT_MAX: float = 0.08  # radians of lean, either way
+const TREE_CANOPY_TILT_MAX: float = 0.16   # radians, alternating sign per layer
+const TREE_CANOPY_SLIDE: float = 0.14      # fraction of a layer's width it slides off axis
+
+## FOREST — THE CANOPY IS A BLOB, NOT A SLAB (bead godot-test1-y1o.2, epic y1o
+## "get rid of blocks"; the honest caveat u7a's developer left behind — "still
+## built from boxes, still reads as low-poly blocks at distance"). u7a's whole
+## set above is transforms and colours, because a batch entry could not carry a
+## SHAPE; bead y1o.1 gave it one, and the forest is its first consumer. Every
+## canopy layer is now `ChunkBatch.BoxKind.SPHERE` — the shared unit sphere at
+## UNIT_SPHERE_RADIAL x UNIT_SPHERE_RINGS (8 x 4, faceted on purpose: the facets
+## ARE style direction A, and that one number lives in chunk_batch.gd so the
+## whole world's roundness is retuned in one place).
+##
+## NOT ONE RNG DRAW MOVED. The two numbers below are DERIVED from the width this
+## layer already drew, so the biome stream is byte-identical and every site after
+## the forest in the same chunk stays where it was — which is what makes this
+## bead's A/B against master read "only `kind` and the canopy box dimensions".
+##
+##   * TREE_CANOPY_BLOB_HEIGHT: a sphere squashed into u7a's flat 1.0 m slab box
+##     is a flying saucer, and three of them a pagoda. A blob is nearly as tall as
+##     it is wide, so its height comes off its own width.
+##   * TREE_CANOPY_BLOB_OVERLAP: the next blob starts HALF way up the last one, so
+##     the crown is one lumpy mass rather than beads on a string. Under 0.5 the
+##     blobs fuse into a ball; over it they separate and the tree is a lollipop
+##     stack again.
+##
+## The crown's `canopy_y` also stopped being a layer CENTRE and became the crown's
+## FOOT — see the builder. A blob is up to 2.5 m tall where a slab was 1.0, and
+## centring it on the old y hung a fat crown down to head height on a short trunk.
+const TREE_CANOPY_BLOB_HEIGHT: float = 0.70
+const TREE_CANOPY_BLOB_OVERLAP: float = 0.50
+
+## MOUNTAIN — massifs per mountain chunk. Each is a stack of shrinking boxes, so
+## a "range" is 2-4 crude peaks per chunk and the biome band is several chunks
+## across.
+const MOUNTAIN_MASSIF_MIN: int = 2
+const MOUNTAIN_MASSIF_MAX: int = 4
+const MOUNTAIN_PLACE_TRIES: int = 5      # candidate spots tried per massif
+const MOUNTAIN_HEIGHT_MIN: float = 8.0
+const MOUNTAIN_HEIGHT_MAX: float = 20.0
+const MOUNTAIN_BASE_WIDTH_MIN: float = 7.0
+const MOUNTAIN_BASE_WIDTH_MAX: float = 13.0
+const MOUNTAIN_LAYER_TAPER: float = 0.74  # each layer up is this fraction as wide
+const MOUNTAIN_LAYER_JITTER: float = 0.5  # metres of lateral wobble per layer
+
+## MOUNTAIN — minimum height of one layer, in metres. A massif is only "walk
+## around it" if you cannot simply hop up its steps: the player's jump apex is
+## 3.61 m (see the gravity note in CLAUDE.md), so every step has to clear that.
+## This is what SETS the layer count (height / this, floored at 2), which is why
+## there is no layer-count roll: with heights of 8-20 m a massif is 2-5 layers,
+## and a wide short one is a couple of sheer slabs rather than a climbable
+## ziggurat. (An earlier version drew a 4-7 layer count and clamped it with this;
+## the clamp always won, so the draw was dead and the "4-7 layers" it implied
+## never happened.)
+const MOUNTAIN_MIN_LAYER_HEIGHT: float = 4.0
+
+## MOUNTAIN — keeps the base well inside the chunk so a massif never straddles a
+## seam (same idea as ARTIFACT_EDGE_MARGIN, bigger because a massif is bigger).
+## Layers are YAWED, so the reach from the centre is the rotated half-diagonal,
+## not the half-width: MOUNTAIN_BASE_WIDTH_MAX * 0.71 + MOUNTAIN_LAYER_JITTER =
+## 9.73 m — the same expression the footprint radius uses below. 10.0 covers it
+## and still leaves a 30 x 30 m placement box, wide enough that 2-4 massifs
+## spread across the chunk instead of piling into the middle of every one and
+## reading as a per-chunk grid.
+const MOUNTAIN_EDGE_MARGIN: float = 10.0
+
+## MOUNTAIN — footprint radius above which an already-placed obstacle is treated
+## as "do not bury this" when siting a massif. Scattered props top out at
+## object_size_max * 0.71 = 1.78 m and are deliberately fair game (see
+## _spawn_mountain_content); artifacts start at 2.5 m, and an artifact sealed
+## inside 20 m of rock takes its coin ring and its guaranteed gem with it.
+const MOUNTAIN_AVOID_RADIUS: float = 2.0
+
+## MOUNTAIN — ...but a WIDE thing is not the only thing worth avoiding: a TALL
+## one is a ladder. A stacked block tower reaches ~6.4 m with a radius of only
+## 1.78 m, so the radius rule alone lets one stand right against a massif whose
+## first ledge is MOUNTAIN_MIN_LAYER_HEIGHT (4 m) up — a 1.6 m hop onto the
+## summit, well inside the player's 3.61 m jump apex, which quietly breaks the
+## "impassable, you walk around it" contract the whole mountains-as-blocks design
+## rests on. So anything taller than one jump is avoided too, whatever its width.
+## Only a minority of towers clear this, so massifs still find room to generate.
+const MOUNTAIN_AVOID_TOP: float = 3.61
+
+## MOUNTAIN — the road clearance is what cuts a CANYON through a range: the
+## massifs simply refuse to stand near the centerline, so the coin road threads
+## between them. Comfortably larger than FOREST_ROAD_CLEARANCE (a tree you can
+## sidestep; a massif you would have to walk minutes around). Any value is safe:
+## _road_lateral_distance sizes its station scan window from the clearance it is
+## given, so the answer stays honest however far this is pushed.
+const MOUNTAIN_ROAD_CLEARANCE: float = 24.0
+
+## MOUNTAIN — a massif at least this tall gets its top layers forced snow-white.
+const MOUNTAIN_SNOW_HEIGHT: float = 14.0
+const MOUNTAIN_SNOW_LAYERS: int = 2      # how many top layers turn to snow
+const MOUNTAIN_SNOW_COLOR := Color(0.92, 0.94, 0.96)
+
+# ----------------------------------------------------------------------------
+# CITY — small houses, market stalls, traffic lights and lamp posts
+# ----------------------------------------------------------------------------
+##
+## THE ROOFS ARE THE POINT. Every biome so far took the rest-from-crocodiles role
+## AWAY (a cactus, a tree trunk and a massif all record NON-climbable footprints,
+## so a road coin over one is skipped rather than perched). The city gives it back
+## at scale: every house is capped at CITY_HOUSE_HEIGHT_MAX = PROP_MAX_STEP, so
+## every roof EAVE in a city is one jump from the pavement and a city block is a
+## field of croc-free perches. (It said "every FLAT roof" until bead y1o.5 made
+## them pitched and y1o.36 made the pitch solid: what you land on is the eave,
+## flush with the hull top, and the ridge is walked up to.) That is what pays for
+## the reduced croc density
+## below reading as "a safer place" rather than as "an emptier place".
+##
+## NO EMISSIVE ANYTHING, and the budget spent is exactly ZERO of the four
+## _spawn_artifact_accent slots an artifact may use. Lamps and signals are BRIGHT
+## ALBEDO boxes in the chunk's one MultiMesh — a city of glowing traffic lights is
+## the single fastest way to turn a batched territory into dozens of real
+## MeshInstance3D nodes with an unshaded material each.
+##
+## THERE IS NO STREET NETWORK AND THERE IS NOT GOING TO BE ONE. A road network is
+## a layout system (graph, intersections, parcels, frontage) that this engine has
+## no use for anywhere else, and the coin road already IS the one road in the
+## world — it threads through a city as its main street for free, because
+## CITY_ROAD_CLEARANCE keeps the buildings off the coin swath. What produces the
+## street READ instead costs two lines: candidate positions are snapped to a
+## coarse CITY_BLOCK_PITCH grid with a little jitter, and house yaws are quantised
+## to quarter turns. Rows of parallel facades along shared lines is what a person
+## recognises as a town; a real network is not.
+
+## How many house SITES are tried per city chunk. A house footprint is ~2.5-3.5 m
+## and _biome_spot_ok rejects any overlap with the ~12 scattered props already in
+## the chunk, so this is a candidate count, not a house count — measured, it
+## yields roughly 4-7 built houses per chunk.
+const CITY_HOUSE_TRIES_MIN: int = 10
+const CITY_HOUSE_TRIES_MAX: int = 16
+
+## Market stall and street-light candidate counts, same "tries, not results" rule.
+const CITY_STALL_TRIES_MIN: int = 2
+const CITY_STALL_TRIES_MAX: int = 5
+const CITY_LIGHT_TRIES_MIN: int = 4
+const CITY_LIGHT_TRIES_MAX: int = 7
+
+## Minimum distance from the coin-road centerline. 13, like FOREST_ROAD_CLEARANCE
+## (14) and for the same arithmetic: the widest coin band half-width is
+## road_width_max * 0.5 = 10, so this keeps the whole scattered coin swath clear
+## of buildings and the road stays followable — the city's "main street".
+## Houses record CLIMBABLE footprints, so unlike a tree a house standing on the
+## swath would perch coins on its roof rather than punch holes in the trail; 13 is
+## still the right number, because a coin trail that climbs a building is a trail
+## the player has to leave the ground to follow.
+const CITY_ROAD_CLEARANCE: float = 13.0
+
+## Coarse grid the candidate positions snap to, plus the wobble left on top of it.
+## The pitch is a bit wider than the widest house so neighbours on the same line
+## do not touch; the jitter keeps the grid from reading as graph paper.
+const CITY_BLOCK_PITCH: float = 9.0
+const CITY_BLOCK_JITTER: float = 1.3
+
+## HOUSE — hull proportions. HEIGHT_MAX IS THE CLIMBABILITY CONTRACT AS A NUMBER:
+## it must stay <= PROP_MAX_STEP (2.6), or the roofs stop being reachable from
+## flat ground and the whole "the city is the rest spot" design silently dies.
+const CITY_HOUSE_WIDTH_MIN: float = 3.0
+const CITY_HOUSE_WIDTH_MAX: float = 4.4
+const CITY_HOUSE_DEPTH_FACTOR_MIN: float = 0.70   # depth as a fraction of width
+const CITY_HOUSE_DEPTH_FACTOR_MAX: float = 1.00
+const CITY_HOUSE_HEIGHT_MIN: float = 2.0
+const CITY_HOUSE_HEIGHT_MAX: float = 2.6
+
+## HOUSE — how far the roof oversails the walls. Since bead godot-test1-y1o.36 the
+## eave is SOLID: it is the lip of the pitch, at exactly the hull top, hanging
+## `CITY_ROOF_EAVES` past the wall — so it is also the surface a hero jumping from
+## the pavement lands on, which is why `CITY_HOUSE_HEIGHT_MAX` is the number held
+## against PROP_MAX_STEP and the ridge is not.
+##
+## CITY_ROOF_THICKNESS is the FLAT slab of Budapest's authored GATE DISTRICT
+## houses (`_spawn_district_houses`), which are pure CUBE and deliberately
+## untouched by this bead — the procedural band's roof is a WEDGE and has no
+## thickness, it has a pitch.
+const CITY_ROOF_EAVES: float = 0.25
+const CITY_ROOF_THICKNESS: float = 0.14
+
+## THE ROOF'S RISE, as a fraction of the roofed DEPTH (bead godot-test1-y1o.5).
+## A `BoxKind.WEDGE` roof needs a height to be a pitch at all, and this is where
+## it comes from: it is DERIVED from the house the roof is going on, so it costs
+## no RNG draw (a draw here would slide every later object in the chunk) and a
+## deep house gets a deep roof rather than every roof being the same slab.
+##
+## IT IS NOW A WALKABLE SURFACE AND THEREFORE A CEILING, not a taste knob (bead
+## godot-test1-y1o.36). The ridge is at the middle of the roofed depth, so each
+## slope's rise over run is `2 * CITY_ROOF_RISE_FACTOR` — and that has to stay
+## under `TowerInterior.PLAN_RAMP_MAX_SLOPE` (0.575), the project's one "no
+## traversal may demand more than this" number, or the hero slides back down the
+## roof he just jumped onto. 0.34 was 0.68 and was over it; 0.28 is a slope of
+## 0.56 (~29 degrees), which still reads as a terraced-town pitch and no longer
+## reads as alpine. `prop_selfcheck` check 7 asserts the arithmetic against
+## `PLAN_RAMP_MAX_SLOPE` directly, so this constant cannot drift back up quietly.
+##
+## Changing it moves NO RNG DRAW — the rise is derived from the depth already
+## drawn — so the only thing that differs from the pre-bead world is the roof
+## entries' own dimensions.
+const CITY_ROOF_RISE_FACTOR: float = 0.28
+
+## HOUSE — the widest footprint a house can claim, used as the "widest this could
+## be" radius handed to _biome_spot_ok before the real width is drawn:
+## 0.5 * hypot(W_MAX + 2*EAVES, W_MAX + 2*EAVES) = 0.5 * hypot(4.9, 4.9) = 3.47.
+##
+## THIS IS DELIBERATELY ABOVE MOUNTAIN_AVOID_RADIUS (2.0) and that is the correct
+## side to be on, not an oversight: a chunk straddling the city/forest/mountain
+## feather can hold both, and a massif is supposed to refuse to grow through a
+## house exactly as it refuses to grow through an artifact or a mound.
+const CITY_HOUSE_RADIUS_MAX: float = 3.47
+
+## STALL — a market counter under an awning. NON-climbable on purpose even though
+## the counter is only ~1 m: the awning hangs over it, so a road coin perched on
+## the counter would sit inside canvas. Non-climbable means _settle_coin_y skips
+## it instead (the cactus / tree-canopy call).
+const CITY_STALL_WIDTH_MIN: float = 1.8
+const CITY_STALL_WIDTH_MAX: float = 2.8
+const CITY_STALL_COUNTER_HEIGHT: float = 1.0
+const CITY_STALL_AWNING_HEIGHT: float = 2.3
+const CITY_STALL_RADIUS_MAX: float = 2.2
+
+## STREET FURNITURE — a traffic signal (mast + head + three lamps) or a lamp post
+## (mast + arm + one lamp), rolled per candidate. Thin, so its footprint is small
+## and NON-climbable (a mast has no top to stand on).
+const CITY_LIGHT_HEIGHT_MIN: float = 3.2
+const CITY_LIGHT_HEIGHT_MAX: float = 4.4
+const CITY_LIGHT_MAST_WIDTH: float = 0.20
+const CITY_LIGHT_LAMP: float = 0.22       # one signal lamp box, a side
+const CITY_LIGHT_RADIUS_MAX: float = 0.95
+const CITY_SIGNAL_CHANCE: float = 0.55    # else a lamp post
+
+# ----------------------------------------------------------------------------
+# SNOW — frozen dead trees and mammoth skeletons on an open tundra
+# ----------------------------------------------------------------------------
+##
+## WHAT MAKES THIS BAND DIFFERENT FROM ITS NEIGHBOURS, in one line each: the city
+## is the SAFE territory (roofs everywhere, croc target divided), the mountain is
+## the IMPASSABLE one (massifs you route around), and the snow is the HOSTILE one —
+## croc density is the ordinary distance-scaled figure, nothing is thinned, and the
+## only shelter is the ice you can climb onto. That is why all three SNOW props
+## record climbable footprints and everything the builder below adds does not.
+##
+## THE BUILDER ADDS THE BIG, SPARSE THINGS ONLY. Ice rocks and drifts are SCATTERED
+## PROPS (the phase-1 machinery — see TerrainProps' _prop_ice_rock and friends), because they are
+## exactly the 0.7-1.8 m clutter the bare cubes used to be. What lives here is what
+## a prop cannot be: a 4 m dead tree, and a skeleton the size of a small building.
+
+## Frozen dead trees per snow chunk. Deliberately far below the forest's 25-40: a
+## tundra is not a thinned wood, it is open ground with the occasional dead thing
+## standing in it, and the emptiness between them is the whole read.
+const FROZEN_TREE_MIN: int = 6
+const FROZEN_TREE_MAX: int = 14
+
+## Same arithmetic as FOREST_ROAD_CLEARANCE (14) one notch tighter: the widest coin
+## band half-width is road_width_max * 0.5 = 10, so 12 keeps the scattered coin
+## swath clear of trunks. It can be tighter than the forest's because these trees
+## are bare — there is no canopy to close over the trail.
+const FROZEN_TREE_ROAD_CLEARANCE: float = 12.0
+
+const FROZEN_TREE_TRUNK_WIDTH_MIN: float = 0.34
+const FROZEN_TREE_TRUNK_WIDTH_MAX: float = 0.60
+const FROZEN_TREE_HEIGHT_MIN: float = 2.6
+const FROZEN_TREE_HEIGHT_MAX: float = 4.6
+const FROZEN_TREE_BRANCH_LEN: float = 1.5   # one bare branch box, long side
+## The deadwood half of bead godot-test1-u7a's restyle. Same rule as the forest's:
+## transforms and colours only, no new instances, no new draw call. A dead tree
+## leans harder than a living one (nothing is holding it up), each branch is a
+## different length rather than the same stick four times, and the timber runs from
+## bleached grey to wet-rot brown per tree instead of one flat frost colour.
+## The branch multiplier NEVER exceeds 1.0 on purpose: `branch_reach` below is the
+## chunk-seam bound, and shrink-only keeps it an over-estimate with no edit there.
+const FROZEN_TREE_TILT_MAX: float = 0.11    # radians of lean, either way
+const FROZEN_TREE_BRANCH_JITTER_MIN: float = 0.58
+const SNOW_DEADWOOD_DARK := Color(0.31, 0.27, 0.24)  # the wet-rot end of the ramp
+
+## MAMMOTH SKELETONS — the territory's marquee prop, and the one place in this file
+## where create_box's `tilt` is doing work nothing else could do: a rib is a thin
+## box that has to lean INWARD over the spine, and a tusk is a curve made of three
+## boxes each leaning further forward than the last.
+##
+## THE TUSK CURVE NEEDS A YAW OF +PI/2 AND THAT IS NOT A HACK, IT IS THE ONLY WAY.
+## create_box offers a yaw (about world Y) and a tilt (about the box's own local X
+## AFTER that yaw), so a plain tilt tips a box SIDEWAYS relative to the skeleton's
+## axis — fine for a rib, useless for a tusk, which has to sweep FORWARD. Turning
+## the box a quarter turn first swings its local X round to the skeleton's lateral
+## axis, and the tilt then tips it along the skeleton's length. This is the same
+## limitation landmark_builders.gd records on the Kinderdijk sails (there is no
+## roll about the third axis at all); a tusk is the shape that happens to fit
+## through the gap.
+##
+## NOT CLIMBABLE, NO NAME, NO TOAST, NO REWARD. It is ambient texture, not a cz3
+## destination — the epic's territories-versus-landmarks split — and non-climbable
+## for the tree-canopy reason: the footprint is a 5 m circle whose "top" is the
+## spine ridge, so a road coin perched on it would float over open ground inside a
+## ribcage. _settle_coin_y skips it instead.
+const MAMMOTH_MAX: int = 2                  # candidates per snow chunk, 0-2
+const MAMMOTH_PLACE_TRIES: int = 4
+const MAMMOTH_RADIUS: float = 5.0           # the honest bound; MEASURED at 4.21
+const MAMMOTH_ROAD_CLEARANCE: float = 16.0  # > MAMMOTH_RADIUS + road_width_max/2
+const MAMMOTH_EDGE_MARGIN: float = 8.0      # > MAMMOTH_RADIUS, so never on a seam
+const MAMMOTH_SPINE_LEN_MIN: float = 3.2
+const MAMMOTH_SPINE_LEN_MAX: float = 4.2
+const MAMMOTH_RIB_PAIRS_MIN: int = 4
+const MAMMOTH_RIB_PAIRS_MAX: int = 5
+const MAMMOTH_RIB_HEIGHT: float = 1.7
+const MAMMOTH_RIB_TILT: float = 0.70        # radians, leaning in over the spine
+const MAMMOTH_RIB_HALF_SPREAD: float = 0.90 # rib base offset either side of centre
+## Tusk segments, front to tip: [length, tilt]. The tilt SHRINKS along the curve,
+## which is what makes a tusk leave the skull almost horizontal and curl upward.
+const MAMMOTH_TUSK_SEGMENTS: Array = [[0.95, 1.35], [0.85, 0.95], [0.70, 0.55]]
+
+## MOUNTAIN — grey scree ramp for the rock itself. Cooler and flatter than both
+## the warm RAMP_* block colours and the artifacts' grey-green, so a massif reads
+## as bare rock rather than as a very large block or a ruin.
+const MOUNTAIN_ROCK_A := Color(0.42, 0.42, 0.44)
+const MOUNTAIN_ROCK_B := Color(0.58, 0.57, 0.55)
+
+## DESERT OASIS — rare flat-water pool with palm trees, reeds, and climbable boulders.
+## ~1 in 8 desert chunks. Water is visual-only (collide=false), with a non-climbable
+## footprint so coins don't perch. Palms (trunk + fronds) and boulders are solid.
+const OASIS_CHANCE: float = 0.12  # ~1 in 8
+const OASIS_PLACE_TRIES: int = 4
+## Placement/clearance radius. Bounds the WHOLE oasis — water, palms AND boulders —
+## which is what makes the _biome_spot_ok call below an honest test. NOT the water size.
+const OASIS_RADIUS: float = 8.0
+## Water slab radius, deliberately a SEPARATE constant. Shrinking one constant for both
+## jobs would pull the spot check in to ~3 m while boulders still scattered to ~6 m, so
+## boulders would land inside cacti the check had just cleared — the fused-camp-huts bug
+## one scale down. Every ring below is rebased on whichever radius actually bounds it.
+const OASIS_WATER_RADIUS: float = 3.0  # ~6 m across, inside the design's 4-7 m
+const OASIS_ROAD_CLEARANCE: float = 16.0
+const OASIS_WATER_DEPTH: float = 0.1  # visual slab thickness (y height)
+## Both slabs sit ABOVE the y = 0 ground plane, water above rim. The ground, the rim top
+## and the water top sharing y = 0 is three coplanar surfaces, and a MultiMesh has no
+## depth sort, so that is guaranteed z-fighting — the pool flickers instead of reading as
+## water. Pushing the rim BELOW the ground is not the fix either: the ground plane is
+## opaque, so a buried rim is simply invisible. Keep both offsets distinct and positive.
+const OASIS_RIM_TOP_Y: float = 0.02
+const OASIS_WATER_TOP_Y: float = 0.05
+const OASIS_WATER_COLOR := Color(0.20, 0.55, 0.75)
+const OASIS_WATER_RIM_COLOR := Color(0.15, 0.45, 0.65)
+const OASIS_PALM_MIN: int = 2
+const OASIS_PALM_MAX: int = 4
+const OASIS_PALM_TRUNK_WIDTH: float = 0.6
+const OASIS_PALM_TRUNK_HEIGHT: float = 4.5
+const OASIS_PALM_FROND_WIDTH: float = 3.0
+const OASIS_PALM_FROND_COUNT: int = 4
+## The palm half of bead godot-test1-u7a. The old crown was four full-length slabs
+## centred ON the trunk at one height with no tilt — a flat plus-sign hat, which is
+## the single most Minecraft-shaped thing in the file. Now each frond starts AT the
+## crown and hangs outward and DOWN.
+##
+## THE FROND'S LONG AXIS MOVED FROM LOCAL X TO LOCAL Z, and that is the whole trick:
+## create_box's `tilt` is a rotation about the box's local X, so a frond lying along
+## X only ROLLS about its own length (invisible on a slab) while one lying along Z
+## PITCHES — which is droop. No new create_box parameter was needed for it.
+##
+## Drooping only ever REDUCES the horizontal span (cos of the droop), and the frond
+## now reaches from the trunk instead of through it, so the crown is no wider than
+## it was; OASIS_PALM_EDGE_MARGIN grew only for the new trunk lean.
+const OASIS_PALM_TILT_MAX: float = 0.10   # radians — a palm curves, it does not stand to attention
+const OASIS_PALM_DROOP_MIN: float = 0.20  # radians below horizontal, per palm
+const OASIS_PALM_DROOP_MAX: float = 0.38
+const OASIS_PALM_DROOP_ALT: float = 1.45  # every other frond droops this much harder
+const OASIS_PALM_FROND_JITTER_MIN: float = 0.70  # shrink-only, so the span stays bounded
+const OASIS_PALM_EDGE_MARGIN: float = 2.6
+const OASIS_PALM_FROND_COLOR := Color(0.28, 0.48, 0.28)
+const OASIS_BOULDER_MIN: int = 3
+const OASIS_BOULDER_MAX: int = 6
+const OASIS_BOULDER_SIZE_MIN: float = 0.8
+const OASIS_BOULDER_SIZE_MAX: float = 1.8
+const OASIS_REED_CHANCE: float = 0.8  # 80% of oases get reeds
+
+## DESERT DUNES — low sandy mounds that are climbable. ~1 in 5 desert chunks.
+## Dunes are short and wide (≤1.5 m tall) to read as walkable hills, not obstacles.
+const DUNE_CHANCE: float = 0.20  # ~1 in 5
+const DUNE_PLACE_TRIES: int = 3
+const DUNE_HEIGHT_MIN: float = 0.8
+const DUNE_HEIGHT_MAX: float = 1.5
+const DUNE_WIDTH_MIN: float = 6.0
+const DUNE_WIDTH_MAX: float = 12.0
+const DUNE_ROAD_CLEARANCE: float = 14.0  # keep dunes off the coin path
+const DUNE_COLOR_A := Color(0.70, 0.60, 0.45)  # sandy
+const DUNE_COLOR_B := Color(0.60, 0.50, 0.35)  # darker sandy
 
 
 # ============================================================================
@@ -74,14 +547,14 @@ static func _oasis_at(terrain: Node3D, chunk_pos: Vector2i) -> Dictionary:
 	         used by _spawn_desert_oasis for placement and geometry.
 	"""
 	var rng := RandomNumberGenerator.new()
-	rng.seed = hash(Vector3i(chunk_pos.x * 73856093, chunk_pos.y * 19349663, terrain.run_seed ^ terrain.OASIS_SALT))
+	rng.seed = hash(Vector3i(chunk_pos.x * 73856093, chunk_pos.y * 19349663, terrain.run_seed ^ OASIS_SALT))
 
 	# Scarcity thins oases to plain terrain at 4 km — the artifact/camp/chest/
 	# landmark form: the SAME roll compared against chance * k, no new draw on this
 	# stream, so a desert near the centre keeps exactly the oases it always had.
 	# The whole oasis is one roll, which is why its palms, boulders and reeds need
 	# no k of their own.
-	if rng.randf() >= terrain.OASIS_CHANCE * terrain.scarcity_at(terrain.chunk_to_world(chunk_pos)):
+	if rng.randf() >= OASIS_CHANCE * terrain.scarcity_at(terrain.chunk_to_world(chunk_pos)):
 		return {}
 
 	return { "seed": rng.randi() }
@@ -94,10 +567,10 @@ static func _dune_at(terrain: Node3D, chunk_pos: Vector2i) -> Dictionary:
 	@return: {} when this chunk has no dunes; otherwise { "seed": int } for dune RNG.
 	"""
 	var rng := RandomNumberGenerator.new()
-	rng.seed = hash(Vector3i(chunk_pos.x * 73856093, chunk_pos.y * 19349663, terrain.run_seed ^ terrain.DUNE_SALT))
+	rng.seed = hash(Vector3i(chunk_pos.x * 73856093, chunk_pos.y * 19349663, terrain.run_seed ^ DUNE_SALT))
 
 	# Scarcity, same form and same reason as _oasis_at above.
-	if rng.randf() >= terrain.DUNE_CHANCE * terrain.scarcity_at(terrain.chunk_to_world(chunk_pos)):
+	if rng.randf() >= DUNE_CHANCE * terrain.scarcity_at(terrain.chunk_to_world(chunk_pos)):
 		return {}
 
 	return { "seed": rng.randi() }
@@ -268,7 +741,7 @@ static func _spawn_desert_content(terrain: Node3D, chunk_center: Vector3, rng: R
 	that picture is why the arm's dimensions are allowed to swap.
 	"""
 	var half = terrain.chunk_size / 2.0 - 3.0
-	var count = rng.randi_range(terrain.CACTUS_MIN, terrain.CACTUS_MAX)
+	var count = rng.randi_range(CACTUS_MIN, CACTUS_MAX)
 	var chunk_pos_cactus: Vector2i = terrain.world_to_chunk(chunk_center)
 	var k_cactus: float = terrain.scarcity_at(chunk_center)
 
@@ -277,7 +750,7 @@ static func _spawn_desert_content(terrain: Node3D, chunk_center: Vector3, rng: R
 		var local_z := rng.randf_range(-half, half)
 		# Rejections are `continue`s AFTER the position draws, so a rejected cactus
 		# costs a spot and not a shift in this (or any) RNG sequence.
-		if not _biome_spot_ok(terrain, chunk_center, local_x, local_z, terrain.CACTUS_WIDTH_MAX * 1.2, terrain.CACTUS_ROAD_CLEARANCE, obstacles):
+		if not _biome_spot_ok(terrain, chunk_center, local_x, local_z, CACTUS_WIDTH_MAX * 1.2, CACTUS_ROAD_CLEARANCE, obstacles):
 			continue
 		# Edge feathering, same rule as the forest and the mountains: the chunk
 		# CENTRE chose this builder, but each cactus re-tests the biome at its OWN
@@ -286,7 +759,7 @@ static func _spawn_desert_content(terrain: Node3D, chunk_center: Vector3, rng: R
 		if terrain.biome_at(chunk_center.x + local_x, chunk_center.z + local_z) != terrain.Biome.DESERT:
 			continue
 
-		var width = rng.randf_range(terrain.CACTUS_WIDTH_MIN, terrain.CACTUS_WIDTH_MAX)
+		var width = rng.randf_range(CACTUS_WIDTH_MIN, CACTUS_WIDTH_MAX)
 		var segments := rng.randi_range(2, 3)
 		var yaw := rng.randf_range(0.0, TAU)
 		# Per-object scarcity, post-draw and after the three unconditional draws
@@ -300,17 +773,17 @@ static func _spawn_desert_content(terrain: Node3D, chunk_center: Vector3, rng: R
 		var top_y := 0.0
 
 		for _s in segments:
-			var seg_h = rng.randf_range(terrain.CACTUS_SEGMENT_MIN, terrain.CACTUS_SEGMENT_MAX)
+			var seg_h = rng.randf_range(CACTUS_SEGMENT_MIN, CACTUS_SEGMENT_MAX)
 			terrain.create_box(
 				Vector3(local_x, top_y + seg_h * 0.5, local_z),
 				Vector3(width, seg_h, width),
-				yaw, rng, block_batch, block_body, 0.0, terrain.CACTUS_COLOR,
+				yaw, rng, block_batch, block_body, 0.0, CACTUS_COLOR,
 				true, ChunkBatch.BoxKind.CYLINDER
 			)
 			top_y += seg_h
 
 		# Optional arm: a short horizontal box budding from the middle of the stack.
-		if rng.randf() < terrain.CACTUS_ARM_CHANCE:
+		if rng.randf() < CACTUS_ARM_CHANCE:
 			var arm_len = width * rng.randf_range(2.0, 3.0)
 			var arm_y := top_y * rng.randf_range(0.45, 0.7)
 			# Push the arm out along its OWN long axis, which create_box orients with
@@ -354,7 +827,7 @@ static func _spawn_desert_content(terrain: Node3D, chunk_center: Vector3, rng: R
 			terrain.create_box(
 				Vector3(local_x, arm_y, local_z) + arm_dir,
 				Vector3(width, arm_len, width),
-				yaw + PI * 0.5, rng, block_batch, block_body, PI * 0.5, terrain.CACTUS_COLOR,
+				yaw + PI * 0.5, rng, block_batch, block_body, PI * 0.5, CACTUS_COLOR,
 				true, ChunkBatch.BoxKind.CYLINDER
 			)
 
@@ -386,51 +859,51 @@ static func _spawn_desert_oasis(terrain: Node3D, chunk_center: Vector3, chunk_po
 	and picks the first one that passes _biome_spot_ok (not in river, far from road,
 	no overlap with existing obstacles).
 	"""
-	var half = terrain.chunk_size / 2.0 - terrain.OASIS_RADIUS - 2.0
-	for _try in terrain.OASIS_PLACE_TRIES:
+	var half = terrain.chunk_size / 2.0 - OASIS_RADIUS - 2.0
+	for _try in OASIS_PLACE_TRIES:
 		var local_x := rng.randf_range(-half, half)
 		var local_z := rng.randf_range(-half, half)
 
-		if not _biome_spot_ok(terrain, chunk_center, local_x, local_z, terrain.OASIS_RADIUS, terrain.OASIS_ROAD_CLEARANCE, obstacles):
+		if not _biome_spot_ok(terrain, chunk_center, local_x, local_z, OASIS_RADIUS, OASIS_ROAD_CLEARANCE, obstacles):
 			continue
 
 		# Build water slab: a flat disk (visual only, collide=false)
 		terrain.create_box(
-			Vector3(local_x, terrain.OASIS_WATER_TOP_Y - terrain.OASIS_WATER_DEPTH * 0.5, local_z),
-			Vector3(terrain.OASIS_WATER_RADIUS * 2.0, terrain.OASIS_WATER_DEPTH, terrain.OASIS_WATER_RADIUS * 2.0),
-			0.0, rng, block_batch, block_body, 0.0, terrain.OASIS_WATER_COLOR, false
+			Vector3(local_x, OASIS_WATER_TOP_Y - OASIS_WATER_DEPTH * 0.5, local_z),
+			Vector3(OASIS_WATER_RADIUS * 2.0, OASIS_WATER_DEPTH, OASIS_WATER_RADIUS * 2.0),
+			0.0, rng, block_batch, block_body, 0.0, OASIS_WATER_COLOR, false
 		)
 
 		# Dark rim: a slightly wider ring to frame the water
-		var rim_radius = terrain.OASIS_WATER_RADIUS * 1.15
+		var rim_radius = OASIS_WATER_RADIUS * 1.15
 		terrain.create_box(
-			Vector3(local_x, terrain.OASIS_RIM_TOP_Y - terrain.OASIS_WATER_DEPTH * 0.5, local_z),
-			Vector3(rim_radius * 2.0, terrain.OASIS_WATER_DEPTH, rim_radius * 2.0),
-			0.0, rng, block_batch, block_body, 0.0, terrain.OASIS_WATER_RIM_COLOR, false
+			Vector3(local_x, OASIS_RIM_TOP_Y - OASIS_WATER_DEPTH * 0.5, local_z),
+			Vector3(rim_radius * 2.0, OASIS_WATER_DEPTH, rim_radius * 2.0),
+			0.0, rng, block_batch, block_body, 0.0, OASIS_WATER_RIM_COLOR, false
 		)
 
 		# Non-climbable footprint so coins don't perch on water
-		obstacles.append({ "pos": Vector3(local_x, 0, local_z), "radius": terrain.OASIS_RADIUS, "top": terrain.OASIS_WATER_TOP_Y, "climbable": false })
+		obstacles.append({ "pos": Vector3(local_x, 0, local_z), "radius": OASIS_RADIUS, "top": OASIS_WATER_TOP_Y, "climbable": false })
 
 		# Palm trees around the oasis
-		var palm_count = rng.randi_range(terrain.OASIS_PALM_MIN, terrain.OASIS_PALM_MAX)
+		var palm_count = rng.randi_range(OASIS_PALM_MIN, OASIS_PALM_MAX)
 		for _p in palm_count:
 			var palm_angle := rng.randf_range(0.0, TAU)
-			var palm_dist = rng.randf_range(terrain.OASIS_WATER_RADIUS * 1.15, terrain.OASIS_WATER_RADIUS * 2.0)
+			var palm_dist = rng.randf_range(OASIS_WATER_RADIUS * 1.15, OASIS_WATER_RADIUS * 2.0)
 			var palm_x = local_x + cos(palm_angle) * palm_dist
 			var palm_z = local_z + sin(palm_angle) * palm_dist
 
 			# Keep palm within chunk bounds. The margin carries the trunk's lean now
 			# (see OASIS_PALM_TILT_MAX); the drooping fronds span LESS than the old
 			# flat ones did, so they did not move it.
-			if absf(palm_x) > terrain.chunk_size * 0.5 - terrain.OASIS_PALM_EDGE_MARGIN or absf(palm_z) > terrain.chunk_size * 0.5 - terrain.OASIS_PALM_EDGE_MARGIN:
+			if absf(palm_x) > terrain.chunk_size * 0.5 - OASIS_PALM_EDGE_MARGIN or absf(palm_z) > terrain.chunk_size * 0.5 - OASIS_PALM_EDGE_MARGIN:
 				continue
 
 			var trunk_yaw := rng.randf_range(0.0, TAU)
 			# Two unconditional per-palm draws: the trunk's curve and how hard this
 			# palm's crown hangs.
-			var palm_lean = rng.randf_range(-terrain.OASIS_PALM_TILT_MAX, terrain.OASIS_PALM_TILT_MAX)
-			var droop = rng.randf_range(terrain.OASIS_PALM_DROOP_MIN, terrain.OASIS_PALM_DROOP_MAX)
+			var palm_lean = rng.randf_range(-OASIS_PALM_TILT_MAX, OASIS_PALM_TILT_MAX)
+			var droop = rng.randf_range(OASIS_PALM_DROOP_MIN, OASIS_PALM_DROOP_MAX)
 			# Trunk (colliding) — `BoxKind.CYLINDER` since bead godot-test1-y1o.4.
 			# The unit cylinder's axis is LOCAL Y, which is exactly the axis
 			# `palm_lean` already leans, so a curved palm trunk costs nothing but
@@ -438,20 +911,20 @@ static func _spawn_desert_oasis(terrain: Node3D, chunk_center: Vector3, chunk_po
 			# a real CylinderShape3D — the shape COUNT is unchanged, the collider
 			# is inscribed, and the footprint below stays non-climbable.
 			terrain.create_box(
-				Vector3(palm_x, terrain.OASIS_PALM_TRUNK_HEIGHT * 0.5, palm_z),
-				Vector3(terrain.OASIS_PALM_TRUNK_WIDTH, terrain.OASIS_PALM_TRUNK_HEIGHT, terrain.OASIS_PALM_TRUNK_WIDTH),
+				Vector3(palm_x, OASIS_PALM_TRUNK_HEIGHT * 0.5, palm_z),
+				Vector3(OASIS_PALM_TRUNK_WIDTH, OASIS_PALM_TRUNK_HEIGHT, OASIS_PALM_TRUNK_WIDTH),
 				trunk_yaw, rng, block_batch, block_body, palm_lean, Color(0.40, 0.32, 0.22),
 				true, ChunkBatch.BoxKind.CYLINDER
 			)
 
 			# Fronds (visual only, collide=false) — each starts at the crown and
 			# hangs outward and down, alternating how far (see the const block).
-			var crown = Vector3(palm_x, terrain.OASIS_PALM_TRUNK_HEIGHT - 0.15, palm_z) \
-					+ Vector3(sin(trunk_yaw), 0.0, cos(trunk_yaw)) * sin(palm_lean) * (terrain.OASIS_PALM_TRUNK_HEIGHT * 0.5)
-			for _f in terrain.OASIS_PALM_FROND_COUNT:
-				var flen = terrain.OASIS_PALM_FROND_WIDTH * rng.randf_range(terrain.OASIS_PALM_FROND_JITTER_MIN, 1.0)
-				var frond_yaw = trunk_yaw + (TAU / terrain.OASIS_PALM_FROND_COUNT) * _f
-				var f_droop = droop * (1.0 if _f % 2 == 0 else terrain.OASIS_PALM_DROOP_ALT)
+			var crown = Vector3(palm_x, OASIS_PALM_TRUNK_HEIGHT - 0.15, palm_z) \
+					+ Vector3(sin(trunk_yaw), 0.0, cos(trunk_yaw)) * sin(palm_lean) * (OASIS_PALM_TRUNK_HEIGHT * 0.5)
+			for _f in OASIS_PALM_FROND_COUNT:
+				var flen = OASIS_PALM_FROND_WIDTH * rng.randf_range(OASIS_PALM_FROND_JITTER_MIN, 1.0)
+				var frond_yaw = trunk_yaw + (TAU / OASIS_PALM_FROND_COUNT) * _f
+				var f_droop = droop * (1.0 if _f % 2 == 0 else OASIS_PALM_DROOP_ALT)
 				var frond_rot := Basis(Vector3.UP, frond_yaw) * Basis(Vector3.RIGHT, f_droop)
 				# A FROND IS A CONE, TIP OUT (bead godot-test1-y1o.4), and getting
 				# the tip pointing the right way is the whole of this edit.
@@ -475,19 +948,19 @@ static func _spawn_desert_oasis(terrain: Node3D, chunk_center: Vector3, chunk_po
 					crown + frond_rot * Vector3(0.0, 0.0, flen * 0.5),
 					Vector3(0.42, flen, 0.30),
 					frond_yaw, rng, block_batch, block_body, f_droop + PI * 0.5,
-					terrain.OASIS_PALM_FROND_COLOR, false, ChunkBatch.BoxKind.CONE
+					OASIS_PALM_FROND_COLOR, false, ChunkBatch.BoxKind.CONE
 				)
 
 			# Small trunk footprint
-			obstacles.append({ "pos": Vector3(palm_x, 0, palm_z), "radius": terrain.OASIS_PALM_TRUNK_WIDTH * 0.71, "top": terrain.OASIS_PALM_TRUNK_HEIGHT, "climbable": false })
+			obstacles.append({ "pos": Vector3(palm_x, 0, palm_z), "radius": OASIS_PALM_TRUNK_WIDTH * 0.71, "top": OASIS_PALM_TRUNK_HEIGHT, "climbable": false })
 
 		# Climbable boulders scattered around. The 0.8 upper bound is not taste: the ring
 		# max plus OASIS_BOULDER_SIZE_MAX * 0.7 has to stay inside OASIS_RADIUS, or a
 		# boulder lands outside the circle _biome_spot_ok actually cleared.
-		var boulder_count = rng.randi_range(terrain.OASIS_BOULDER_MIN, terrain.OASIS_BOULDER_MAX)
+		var boulder_count = rng.randi_range(OASIS_BOULDER_MIN, OASIS_BOULDER_MAX)
 		for _b in boulder_count:
 			var boulder_angle := rng.randf_range(0.0, TAU)
-			var boulder_dist = rng.randf_range(terrain.OASIS_WATER_RADIUS * 1.5, terrain.OASIS_RADIUS * 0.8)
+			var boulder_dist = rng.randf_range(OASIS_WATER_RADIUS * 1.5, OASIS_RADIUS * 0.8)
 			var boulder_x = local_x + cos(boulder_angle) * boulder_dist
 			var boulder_z = local_z + sin(boulder_angle) * boulder_dist
 
@@ -495,7 +968,7 @@ static func _spawn_desert_oasis(terrain: Node3D, chunk_center: Vector3, chunk_po
 			if absf(boulder_x) > terrain.chunk_size * 0.5 - 1.5 or absf(boulder_z) > terrain.chunk_size * 0.5 - 1.5:
 				continue
 
-			var boulder_size = rng.randf_range(terrain.OASIS_BOULDER_SIZE_MIN, terrain.OASIS_BOULDER_SIZE_MAX)
+			var boulder_size = rng.randf_range(OASIS_BOULDER_SIZE_MIN, OASIS_BOULDER_SIZE_MAX)
 			# Climbable rocks (collide=true) — and since bead godot-test1-y1o.3 they
 			# are `BoxKind.ROCK`, the one kind whose lid is flat AT the box top, so
 			# the footprint appended below still records a surface you land on.
@@ -508,11 +981,11 @@ static func _spawn_desert_oasis(terrain: Node3D, chunk_center: Vector3, chunk_po
 			obstacles.append({ "pos": Vector3(boulder_x, 0, boulder_z), "radius": boulder_size * 0.7, "top": boulder_size * 0.8, "climbable": true })
 
 		# Optional reed clusters around the edge
-		if rng.randf() < terrain.OASIS_REED_CHANCE:
+		if rng.randf() < OASIS_REED_CHANCE:
 			for _r in rng.randi_range(1, 3):
 				var reed_angle := rng.randf_range(0.0, TAU)
-				var reed_x = local_x + cos(reed_angle) * terrain.OASIS_WATER_RADIUS * 1.05
-				var reed_z = local_z + sin(reed_angle) * terrain.OASIS_WATER_RADIUS * 1.05
+				var reed_x = local_x + cos(reed_angle) * OASIS_WATER_RADIUS * 1.05
+				var reed_z = local_z + sin(reed_angle) * OASIS_WATER_RADIUS * 1.05
 				# Thin visual-only reeds (collide=false)
 				terrain.create_box(
 					Vector3(reed_x, 1.0, reed_z),
@@ -553,23 +1026,23 @@ static func _spawn_desert_dunes(terrain: Node3D, chunk_center: Vector3, chunk_po
 	dune is wanted, that is its own bead and it starts by choosing which of those
 	two costs is acceptable.
 	"""
-	var half = terrain.chunk_size / 2.0 - terrain.DUNE_WIDTH_MAX * 0.71
-	for _try in terrain.DUNE_PLACE_TRIES:
+	var half = terrain.chunk_size / 2.0 - DUNE_WIDTH_MAX * 0.71
+	for _try in DUNE_PLACE_TRIES:
 		var local_x := rng.randf_range(-half, half)
 		var local_z := rng.randf_range(-half, half)
 
-		if not _biome_spot_ok(terrain, chunk_center, local_x, local_z, terrain.DUNE_WIDTH_MAX * 0.71, terrain.DUNE_ROAD_CLEARANCE, obstacles):
+		if not _biome_spot_ok(terrain, chunk_center, local_x, local_z, DUNE_WIDTH_MAX * 0.71, DUNE_ROAD_CLEARANCE, obstacles):
 			continue
 
 		# Pick dune height and width
-		var height = rng.randf_range(terrain.DUNE_HEIGHT_MIN, terrain.DUNE_HEIGHT_MAX)
-		var width = rng.randf_range(terrain.DUNE_WIDTH_MIN, terrain.DUNE_WIDTH_MAX)
+		var height = rng.randf_range(DUNE_HEIGHT_MIN, DUNE_HEIGHT_MAX)
+		var width = rng.randf_range(DUNE_WIDTH_MIN, DUNE_WIDTH_MAX)
 
 		# Build dune as a slightly tapered stack (wider at base, narrower at top)
 		var layer_height = height / 2.0  # two layers
 		var base_width = width
 		var top_width = width * 0.75
-		var color = terrain.DUNE_COLOR_A.lerp(terrain.DUNE_COLOR_B, rng.randf())
+		var color = DUNE_COLOR_A.lerp(DUNE_COLOR_B, rng.randf())
 
 		# Base layer (wider). STILL A CUBE — see the docstring.
 		terrain.create_box(
@@ -638,10 +1111,10 @@ static func _spawn_forest_content(terrain: Node3D, chunk_center: Vector3, rng: R
 	# reaches LESS far sideways than the slab did. prop_selfcheck check 10 measures
 	# the real reach against the real seam either way, which is what would catch a
 	# retune that broke the estimate rather than this comment.
-	var lean_reach = sin(terrain.TREE_TRUNK_TILT_MAX) * (terrain.TREE_TRUNK_HEIGHT_MAX * 0.5 + terrain.TREE_CANOPY_LAYER_HEIGHT * 3.0)
-	var widest_layer = terrain.TREE_CANOPY_WIDTH_MAX * terrain.TREE_CANOPY_WIDTH_JITTER_MAX
-	var half = terrain.chunk_size / 2.0 - (widest_layer * (0.71 + terrain.TREE_CANOPY_SLIDE) + lean_reach)
-	var count = rng.randi_range(terrain.FOREST_TREES_MIN, terrain.FOREST_TREES_MAX)
+	var lean_reach = sin(TREE_TRUNK_TILT_MAX) * (TREE_TRUNK_HEIGHT_MAX * 0.5 + TREE_CANOPY_LAYER_HEIGHT * 3.0)
+	var widest_layer = TREE_CANOPY_WIDTH_MAX * TREE_CANOPY_WIDTH_JITTER_MAX
+	var half = terrain.chunk_size / 2.0 - (widest_layer * (0.71 + TREE_CANOPY_SLIDE) + lean_reach)
+	var count = rng.randi_range(FOREST_TREES_MIN, FOREST_TREES_MAX)
 	var chunk_pos_forest: Vector2i = terrain.world_to_chunk(chunk_center)
 	var k_forest: float = terrain.scarcity_at(chunk_center)
 
@@ -653,13 +1126,13 @@ static func _spawn_forest_content(terrain: Node3D, chunk_center: Vector3, rng: R
 		# Both rejections are post-draw `continue`s (see _spawn_desert_content).
 		# The radius is the widest a TRUNK can be — the canopy is visual-only, and
 		# leaves brushing a nearby block is exactly what a real wood looks like.
-		if not _biome_spot_ok(terrain, chunk_center, local_x, local_z, terrain.TREE_TRUNK_WIDTH_MAX * 0.71 + 0.3, terrain.FOREST_ROAD_CLEARANCE, obstacles):
+		if not _biome_spot_ok(terrain, chunk_center, local_x, local_z, TREE_TRUNK_WIDTH_MAX * 0.71 + 0.3, FOREST_ROAD_CLEARANCE, obstacles):
 			continue
 		if terrain.biome_at(world_x, world_z) != terrain.Biome.FOREST:
 			continue
 
-		var trunk_w = rng.randf_range(terrain.TREE_TRUNK_WIDTH_MIN, terrain.TREE_TRUNK_WIDTH_MAX)
-		var trunk_h = rng.randf_range(terrain.TREE_TRUNK_HEIGHT_MIN, terrain.TREE_TRUNK_HEIGHT_MAX)
+		var trunk_w = rng.randf_range(TREE_TRUNK_WIDTH_MIN, TREE_TRUNK_WIDTH_MAX)
+		var trunk_h = rng.randf_range(TREE_TRUNK_HEIGHT_MIN, TREE_TRUNK_HEIGHT_MAX)
 		var yaw := rng.randf_range(0.0, TAU)
 		# The two anti-Minecraft per-tree draws, taken UNCONDITIONALLY and in a fixed
 		# order right here — above the scarcity roll, so a thinned tree cannot make
@@ -667,7 +1140,7 @@ static func _spawn_forest_content(terrain: Node3D, chunk_center: Vector3, rng: R
 		# somewhere along TREE_LEAF_COLOR -> TREE_LEAF_COLOR_WARM (no two trees the
 		# same green); `lean` is the trunk's tilt.
 		var leaf_t := rng.randf()
-		var lean = rng.randf_range(-terrain.TREE_TRUNK_TILT_MAX, terrain.TREE_TRUNK_TILT_MAX)
+		var lean = rng.randf_range(-TREE_TRUNK_TILT_MAX, TREE_TRUNK_TILT_MAX)
 		if not terrain._scarcity_keep(chunk_pos_forest, _i, k_forest):
 			continue
 
@@ -675,7 +1148,7 @@ static func _spawn_forest_content(terrain: Node3D, chunk_center: Vector3, rng: R
 		terrain.create_box(
 			Vector3(local_x, trunk_h * 0.5, local_z),
 			Vector3(trunk_w, trunk_h, trunk_w),
-			yaw, rng, block_batch, block_body, lean, terrain.TREE_TRUNK_COLOR
+			yaw, rng, block_batch, block_body, lean, TREE_TRUNK_COLOR
 		)
 
 		# Canopy: 2-3 shrinking slabs stacked from just below the trunk top, each
@@ -688,27 +1161,27 @@ static func _spawn_forest_content(terrain: Node3D, chunk_center: Vector3, rng: R
 		# Leaving the canopy on the vertical would hang the crown off the side of a
 		# leaning trunk, which is the one way this could look worse than a cube.
 		var lean_dir := Vector3(sin(yaw), 0.0, cos(yaw)) * sin(lean)
-		var layers = rng.randi_range(terrain.TREE_CANOPY_LAYERS_MIN, terrain.TREE_CANOPY_LAYERS_MAX)
-		var canopy_w = rng.randf_range(terrain.TREE_CANOPY_WIDTH_MIN, terrain.TREE_CANOPY_WIDTH_MAX)
+		var layers = rng.randi_range(TREE_CANOPY_LAYERS_MIN, TREE_CANOPY_LAYERS_MAX)
+		var canopy_w = rng.randf_range(TREE_CANOPY_WIDTH_MIN, TREE_CANOPY_WIDTH_MAX)
 		# `canopy_y` is the crown's FOOT, not a layer centre: a blob is up to 2.5 m
 		# tall where u7a's slab was 1.0, so centring one here would hang the leaves
 		# of a fat crown down past a short trunk's head height. Still dipped
 		# TREE_CANOPY_LAYER_HEIGHT * 0.3 into the trunk top so no gap shows.
-		var canopy_y = trunk_h - terrain.TREE_CANOPY_LAYER_HEIGHT * 0.3
-		var leaf_base = terrain.TREE_LEAF_COLOR.lerp(terrain.TREE_LEAF_COLOR_WARM, leaf_t)
+		var canopy_y = trunk_h - TREE_CANOPY_LAYER_HEIGHT * 0.3
+		var leaf_base = TREE_LEAF_COLOR.lerp(TREE_LEAF_COLOR_WARM, leaf_t)
 		for _l in layers:
 			# One draw per layer, so no two layers of one tree are the same width —
 			# the taper alone made every tree the same tapering stack.
-			var w = canopy_w * rng.randf_range(terrain.TREE_CANOPY_WIDTH_JITTER_MIN, terrain.TREE_CANOPY_WIDTH_JITTER_MAX)
+			var w = canopy_w * rng.randf_range(TREE_CANOPY_WIDTH_JITTER_MIN, TREE_CANOPY_WIDTH_JITTER_MAX)
 			# Both DERIVED from the width just drawn, so neither costs an rng draw
 			# and neither can move a spawn — the whole reason this bead's diff
 			# against master is `kind` plus these dimensions and nothing else.
-			var blob_h = w * terrain.TREE_CANOPY_BLOB_HEIGHT
+			var blob_h = w * TREE_CANOPY_BLOB_HEIGHT
 			var mid_y = canopy_y + blob_h * 0.5
 			# Crown lift: the top of a real canopy catches the light. Derived from
 			# the layer INDEX, so it costs no draw.
 			var crown := 0.0 if layers <= 1 else float(_l) / float(layers - 1)
-			var layer_yaw = yaw + terrain.TREE_CANOPY_YAW_STEP * float(_l)
+			var layer_yaw = yaw + TREE_CANOPY_YAW_STEP * float(_l)
 			# THE LAST TWO ARE FREE — both derived from values already drawn, so
 			# neither costs an rng draw and neither can move a spawn. A flat-topped
 			# stack of level slabs is the shape that still read as a cube once the
@@ -716,8 +1189,8 @@ static func _spawn_forest_content(terrain: Node3D, chunk_center: Vector3, rng: R
 			# sign, magnitude off this tree's own leaf_t) and SLIDES off the trunk
 			# axis along its own yaw. Both bounded by the constants, both measured
 			# by prop_selfcheck's forest seam clause.
-			var layer_tilt = terrain.TREE_CANOPY_TILT_MAX * (0.4 + 0.6 * leaf_t) * (1.0 if _l % 2 == 0 else -1.0)
-			var slide = Vector3(sin(layer_yaw), 0.0, cos(layer_yaw)) * (w * terrain.TREE_CANOPY_SLIDE * crown)
+			var layer_tilt = TREE_CANOPY_TILT_MAX * (0.4 + 0.6 * leaf_t) * (1.0 if _l % 2 == 0 else -1.0)
+			var slide = Vector3(sin(layer_yaw), 0.0, cos(layer_yaw)) * (w * TREE_CANOPY_SLIDE * crown)
 			# BoxKind.SPHERE, and the trunk above deliberately stays a CUBE: the
 			# unit sphere is inscribed in the unit cube, so `dimensions` still means
 			# this blob's BOUNDING BOX and every reach/seam bound in this file and
@@ -730,13 +1203,13 @@ static func _spawn_forest_content(terrain: Node3D, chunk_center: Vector3, rng: R
 			# smooth ball.
 			terrain.create_box(
 				Vector3(local_x, mid_y, local_z) + lean_dir * (mid_y - trunk_h * 0.5) + slide,
-				Vector3(w, blob_h, w * terrain.TREE_CANOPY_DEPTH_RATIO),
+				Vector3(w, blob_h, w * TREE_CANOPY_DEPTH_RATIO),
 				layer_yaw, rng, block_batch, block_body, layer_tilt,
-				leaf_base.lerp(terrain.TREE_LEAF_COLOR_WARM, crown * terrain.TREE_LEAF_CROWN_LIFT), false,
+				leaf_base.lerp(TREE_LEAF_COLOR_WARM, crown * TREE_LEAF_CROWN_LIFT), false,
 				ChunkBatch.BoxKind.SPHERE
 			)
-			canopy_y += blob_h * terrain.TREE_CANOPY_BLOB_OVERLAP
-			canopy_w *= terrain.TREE_CANOPY_TAPER
+			canopy_y += blob_h * TREE_CANOPY_BLOB_OVERLAP
+			canopy_w *= TREE_CANOPY_TAPER
 
 		# Footprint stops at the TRUNK top, and is NOT climbable, on purpose: a
 		# climbable footprint would let _settle_coin_y perch a road coin on the
@@ -770,8 +1243,8 @@ static func _spawn_mountain_content(terrain: Node3D, chunk_center: Vector3, rng:
 	Per layer the box is narrower, a touch shorter, randomly yawed and laterally
 	jittered, so a massif reads as a crude rocky peak rather than a wedding cake.
 	"""
-	var half = terrain.chunk_size / 2.0 - terrain.MOUNTAIN_EDGE_MARGIN
-	var count = rng.randi_range(terrain.MOUNTAIN_MASSIF_MIN, terrain.MOUNTAIN_MASSIF_MAX)
+	var half = terrain.chunk_size / 2.0 - MOUNTAIN_EDGE_MARGIN
+	var count = rng.randi_range(MOUNTAIN_MASSIF_MIN, MOUNTAIN_MASSIF_MAX)
 
 	# MASSIFS ARE EXEMPT FROM THE SCARCITY GRADIENT — owner ruling 2026-09-04, bead
 	# `godot-test1-bn8`, and the ONE builder in this file with no k in it at all.
@@ -816,7 +1289,7 @@ static func _spawn_mountain_content(terrain: Node3D, chunk_center: Vector3, rng:
 	# so the first clause has always covered it.
 	var avoid: Array = []
 	for ob in obstacles:
-		if ob.radius >= terrain.MOUNTAIN_AVOID_RADIUS or ob.top >= terrain.MOUNTAIN_AVOID_TOP or ob.get("guarded", false):
+		if ob.radius >= MOUNTAIN_AVOID_RADIUS or ob.top >= MOUNTAIN_AVOID_TOP or ob.get("guarded", false):
 			avoid.append(ob)
 
 	for _i in count:
@@ -827,7 +1300,7 @@ static func _spawn_mountain_content(terrain: Node3D, chunk_center: Vector3, rng:
 		var local_z := 0.0
 		var placed := false
 		var tries := 0
-		while tries < terrain.MOUNTAIN_PLACE_TRIES and not placed:
+		while tries < MOUNTAIN_PLACE_TRIES and not placed:
 			tries += 1
 			local_x = rng.randf_range(-half, half)
 			local_z = rng.randf_range(-half, half)
@@ -836,14 +1309,14 @@ static func _spawn_mountain_content(terrain: Node3D, chunk_center: Vector3, rng:
 			# MOUNTAIN_BASE_WIDTH_MAX is the widest base that could be drawn below —
 			# the real width is drawn after this test, and reordering the draws to
 			# know it exactly would shift the biome stream for nothing.
-			if _biome_spot_ok(terrain, chunk_center, local_x, local_z, terrain.MOUNTAIN_BASE_WIDTH_MAX * 0.71 + terrain.MOUNTAIN_LAYER_JITTER, terrain.MOUNTAIN_ROAD_CLEARANCE, avoid) \
+			if _biome_spot_ok(terrain, chunk_center, local_x, local_z, MOUNTAIN_BASE_WIDTH_MAX * 0.71 + MOUNTAIN_LAYER_JITTER, MOUNTAIN_ROAD_CLEARANCE, avoid) \
 					and terrain.biome_at(wx, wz) == terrain.Biome.MOUNTAIN:
 				placed = true
 		if not placed:
 			continue
 
-		var height = rng.randf_range(terrain.MOUNTAIN_HEIGHT_MIN, terrain.MOUNTAIN_HEIGHT_MAX)
-		var base_w = rng.randf_range(terrain.MOUNTAIN_BASE_WIDTH_MIN, terrain.MOUNTAIN_BASE_WIDTH_MAX)
+		var height = rng.randf_range(MOUNTAIN_HEIGHT_MIN, MOUNTAIN_HEIGHT_MAX)
+		var base_w = rng.randf_range(MOUNTAIN_BASE_WIDTH_MIN, MOUNTAIN_BASE_WIDTH_MAX)
 		# (No scarcity roll here — massifs are exempt; see the note above `avoid`.)
 		# The layer count falls straight out of the height: every step must be too
 		# tall to jump onto. Without that rule an 8 m massif split into 7 layers is
@@ -851,13 +1324,13 @@ static func _spawn_mountain_content(terrain: Node3D, chunk_center: Vector3, rng:
 		# which would break the "impassable, you go around" contract that the whole
 		# mountains-as-blocks design rests on under the flat-world invariant. With
 		# heights of 8-20 m this gives 2-5 layers.
-		var layers = maxi(2, int(height / terrain.MOUNTAIN_MIN_LAYER_HEIGHT))
-		var snowy = height >= terrain.MOUNTAIN_SNOW_HEIGHT
+		var layers = maxi(2, int(height / MOUNTAIN_MIN_LAYER_HEIGHT))
+		var snowy = height >= MOUNTAIN_SNOW_HEIGHT
 		# Index of the first snow layer. Always leaves at least one rock layer
 		# showing: a 14-15.9 m massif gets exactly 3 layers, and a flat
 		# "top MOUNTAIN_SNOW_LAYERS" rule would paint 2 of those 3 white, so the
 		# peak read as a snow pillar rather than rock wearing a cap.
-		var snow_from = maxi(1, layers - terrain.MOUNTAIN_SNOW_LAYERS)
+		var snow_from = maxi(1, layers - MOUNTAIN_SNOW_LAYERS)
 		var layer_h = height / float(layers)
 
 		var width = base_w
@@ -866,22 +1339,22 @@ static func _spawn_mountain_content(terrain: Node3D, chunk_center: Vector3, rng:
 			# The top boxes of a tall massif are forced white: a snow cap is the
 			# cheapest possible "this one is high" signal.
 			var is_snow = snowy and layer_index >= snow_from
-			var color: Color = terrain.MOUNTAIN_SNOW_COLOR if is_snow else terrain.MOUNTAIN_ROCK_A.lerp(terrain.MOUNTAIN_ROCK_B, rng.randf())
-			var jitter_x = rng.randf_range(-terrain.MOUNTAIN_LAYER_JITTER, terrain.MOUNTAIN_LAYER_JITTER)
-			var jitter_z = rng.randf_range(-terrain.MOUNTAIN_LAYER_JITTER, terrain.MOUNTAIN_LAYER_JITTER)
+			var color: Color = MOUNTAIN_SNOW_COLOR if is_snow else MOUNTAIN_ROCK_A.lerp(MOUNTAIN_ROCK_B, rng.randf())
+			var jitter_x = rng.randf_range(-MOUNTAIN_LAYER_JITTER, MOUNTAIN_LAYER_JITTER)
+			var jitter_z = rng.randf_range(-MOUNTAIN_LAYER_JITTER, MOUNTAIN_LAYER_JITTER)
 			terrain.create_box(
 				Vector3(local_x + jitter_x, y + layer_h * 0.5, local_z + jitter_z),
 				Vector3(width, layer_h, width),
 				rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, color
 			)
 			y += layer_h
-			width *= terrain.MOUNTAIN_LAYER_TAPER
+			width *= MOUNTAIN_LAYER_TAPER
 
 		# One footprint for the whole massif, NOT climbable and carrying the real
 		# top height: crocodiles avoid it, and a road coin that would otherwise be
 		# perched 15 m up a peak is skipped instead (see _settle_coin_y). It goes
 		# into `avoid` too, so the next massif keeps its distance from it.
-		var footprint = { "pos": Vector3(local_x, 0, local_z), "radius": base_w * 0.71 + terrain.MOUNTAIN_LAYER_JITTER, "top": height, "climbable": false }
+		var footprint = { "pos": Vector3(local_x, 0, local_z), "radius": base_w * 0.71 + MOUNTAIN_LAYER_JITTER, "top": height, "climbable": false }
 		obstacles.append(footprint)
 		avoid.append(footprint)
 
@@ -926,19 +1399,19 @@ static func _spawn_city_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 	`ChunkBatch._build_block_multimesh`, which is what `batch_selfcheck` check 5's
 	per-biome cap is for. That is the cost the pitched roof is bought with.
 	"""
-	var half = terrain.chunk_size / 2.0 - terrain.CITY_HOUSE_RADIUS_MAX
+	var half = terrain.chunk_size / 2.0 - CITY_HOUSE_RADIUS_MAX
 	var chunk_pos_city: Vector2i = terrain.world_to_chunk(chunk_center)
 	var k_city: float = terrain.scarcity_at(chunk_center)
 
 	# ---- HOUSES ------------------------------------------------------------
-	for _i in rng.randi_range(terrain.CITY_HOUSE_TRIES_MIN, terrain.CITY_HOUSE_TRIES_MAX):
+	for _i in rng.randi_range(CITY_HOUSE_TRIES_MIN, CITY_HOUSE_TRIES_MAX):
 		var local_x := _city_snap(terrain, rng.randf_range(-half, half), rng)
 		var local_z := _city_snap(terrain, rng.randf_range(-half, half), rng)
 		# Quarter-turn yaw plus a little slop: facades line up along the grid.
 		var yaw := float(rng.randi_range(0, 3)) * (PI * 0.5) + rng.randf_range(-0.08, 0.08)
-		var width = rng.randf_range(terrain.CITY_HOUSE_WIDTH_MIN, terrain.CITY_HOUSE_WIDTH_MAX)
-		var depth = width * rng.randf_range(terrain.CITY_HOUSE_DEPTH_FACTOR_MIN, terrain.CITY_HOUSE_DEPTH_FACTOR_MAX)
-		var height = rng.randf_range(terrain.CITY_HOUSE_HEIGHT_MIN, terrain.CITY_HOUSE_HEIGHT_MAX)
+		var width = rng.randf_range(CITY_HOUSE_WIDTH_MIN, CITY_HOUSE_WIDTH_MAX)
+		var depth = width * rng.randf_range(CITY_HOUSE_DEPTH_FACTOR_MIN, CITY_HOUSE_DEPTH_FACTOR_MAX)
+		var height = rng.randf_range(CITY_HOUSE_HEIGHT_MIN, CITY_HOUSE_HEIGHT_MAX)
 		var wall = terrain.CITY_PLASTER_A.lerp(terrain.CITY_PLASTER_B, rng.randf())
 		var roof = terrain.CITY_ROOF_TILE if rng.randf() < 0.6 else terrain.CITY_ROOF_SLATE
 		var windows := rng.randi_range(1, 2)
@@ -950,7 +1423,7 @@ static func _spawn_city_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 		# is a post-draw `continue` for exactly that reason.
 		local_x = clampf(local_x, -half, half)
 		local_z = clampf(local_z, -half, half)
-		if not _biome_spot_ok(terrain, chunk_center, local_x, local_z, terrain.CITY_HOUSE_RADIUS_MAX, terrain.CITY_ROAD_CLEARANCE, obstacles):
+		if not _biome_spot_ok(terrain, chunk_center, local_x, local_z, CITY_HOUSE_RADIUS_MAX, CITY_ROAD_CLEARANCE, obstacles):
 			continue
 		if terrain.biome_at(chunk_center.x + local_x, chunk_center.z + local_z) != terrain.Biome.CITY:
 			continue
@@ -982,11 +1455,11 @@ static func _spawn_city_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 		# is gabled on its narrow ends and the slopes face the long walls, the way
 		# a terrace is. `dimensions.z` is what the pitch is measured over, hence
 		# the rise coming off the roofed DEPTH (see CITY_ROOF_RISE_FACTOR).
-		var roof_d = depth + terrain.CITY_ROOF_EAVES * 2.0
-		var roof_rise = roof_d * terrain.CITY_ROOF_RISE_FACTOR
+		var roof_d = depth + CITY_ROOF_EAVES * 2.0
+		var roof_rise = roof_d * CITY_ROOF_RISE_FACTOR
 		terrain.create_box(
 			local + Vector3(0.0, height + roof_rise * 0.5, 0.0),
-			Vector3(width + terrain.CITY_ROOF_EAVES * 2.0, roof_rise, roof_d),
+			Vector3(width + CITY_ROOF_EAVES * 2.0, roof_rise, roof_d),
 			yaw, rng, block_batch, block_body, 0.0, roof, true,
 			ChunkBatch.BoxKind.WEDGE
 		)
@@ -1051,24 +1524,24 @@ static func _spawn_city_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 		# it is above MOUNTAIN_AVOID_RADIUS (2.0) — deliberately, see the constant.
 		obstacles.append({
 			"pos": local,
-			"radius": 0.5 * sqrt(pow(width + terrain.CITY_ROOF_EAVES * 2.0, 2.0) + pow(depth + terrain.CITY_ROOF_EAVES * 2.0, 2.0)),
+			"radius": 0.5 * sqrt(pow(width + CITY_ROOF_EAVES * 2.0, 2.0) + pow(depth + CITY_ROOF_EAVES * 2.0, 2.0)),
 			"top": height + roof_rise,
 			"climbable": true,
 		})
 
 	# ---- MARKET STALLS -----------------------------------------------------
-	for _i in rng.randi_range(terrain.CITY_STALL_TRIES_MIN, terrain.CITY_STALL_TRIES_MAX):
+	for _i in rng.randi_range(CITY_STALL_TRIES_MIN, CITY_STALL_TRIES_MAX):
 		var sx := _city_snap(terrain, rng.randf_range(-half, half), rng)
 		var sz := _city_snap(terrain, rng.randf_range(-half, half), rng)
 		var syaw := float(rng.randi_range(0, 3)) * (PI * 0.5) + rng.randf_range(-0.15, 0.15)
-		var sw = rng.randf_range(terrain.CITY_STALL_WIDTH_MIN, terrain.CITY_STALL_WIDTH_MAX)
+		var sw = rng.randf_range(CITY_STALL_WIDTH_MIN, CITY_STALL_WIDTH_MAX)
 		var canvas = terrain.CITY_ROOF_TILE if rng.randf() < 0.5 else terrain.CITY_ROOF_SLATE
 		# Per-object scarcity for stalls (offset 1000 to decorrelate from houses).
 		if not terrain._scarcity_keep(chunk_pos_city, _i + 1000, k_city):
 			continue
 		sx = clampf(sx, -half, half)
 		sz = clampf(sz, -half, half)
-		if not _biome_spot_ok(terrain, chunk_center, sx, sz, terrain.CITY_STALL_RADIUS_MAX, terrain.CITY_ROAD_CLEARANCE, obstacles):
+		if not _biome_spot_ok(terrain, chunk_center, sx, sz, CITY_STALL_RADIUS_MAX, CITY_ROAD_CLEARANCE, obstacles):
 			continue
 		if terrain.biome_at(chunk_center.x + sx, chunk_center.z + sz) != terrain.Biome.CITY:
 			continue
@@ -1078,21 +1551,21 @@ static func _spawn_city_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 
 		# Counter — solid, so you bump into it and the crocodiles' raycasts see it.
 		terrain.create_box(
-			s_local + Vector3(0.0, terrain.CITY_STALL_COUNTER_HEIGHT * 0.5, 0.0),
-			Vector3(sw, terrain.CITY_STALL_COUNTER_HEIGHT, sw * 0.5), syaw,
+			s_local + Vector3(0.0, CITY_STALL_COUNTER_HEIGHT * 0.5, 0.0),
+			Vector3(sw, CITY_STALL_COUNTER_HEIGHT, sw * 0.5), syaw,
 			rng, block_batch, block_body, 0.0, terrain.PROP_CRATE
 		)
 		# Awning + its two posts — all visual, you walk under a stall.
 		terrain.create_box(
-			s_local + Vector3(0.0, terrain.CITY_STALL_AWNING_HEIGHT, 0.0),
+			s_local + Vector3(0.0, CITY_STALL_AWNING_HEIGHT, 0.0),
 			Vector3(sw * 1.25, 0.12, sw * 0.85), syaw,
 			rng, block_batch, block_body, rng.randf_range(-0.14, 0.14), canvas, false
 		)
 		for p in 2:
 			var s := 1.0 if p == 0 else -1.0
 			terrain.create_box(
-				s_local + s_right * (sw * 0.5 * s) + Vector3(0.0, terrain.CITY_STALL_AWNING_HEIGHT * 0.5, 0.0),
-				Vector3(0.10, terrain.CITY_STALL_AWNING_HEIGHT, 0.10), syaw,
+				s_local + s_right * (sw * 0.5 * s) + Vector3(0.0, CITY_STALL_AWNING_HEIGHT * 0.5, 0.0),
+				Vector3(0.10, CITY_STALL_AWNING_HEIGHT, 0.10), syaw,
 				rng, block_batch, block_body, 0.0, terrain.CITY_METAL, false
 			)
 		# NON-climbable: the awning hangs over the counter, so a road coin perched
@@ -1100,23 +1573,23 @@ static func _spawn_city_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 		obstacles.append({
 			"pos": s_local,
 			"radius": sw * 0.68,
-			"top": terrain.CITY_STALL_COUNTER_HEIGHT,
+			"top": CITY_STALL_COUNTER_HEIGHT,
 			"climbable": false,
 		})
 
 	# ---- TRAFFIC SIGNALS / LAMP POSTS --------------------------------------
-	for _i in rng.randi_range(terrain.CITY_LIGHT_TRIES_MIN, terrain.CITY_LIGHT_TRIES_MAX):
+	for _i in rng.randi_range(CITY_LIGHT_TRIES_MIN, CITY_LIGHT_TRIES_MAX):
 		var lx := _city_snap(terrain, rng.randf_range(-half, half), rng)
 		var lz := _city_snap(terrain, rng.randf_range(-half, half), rng)
 		var lyaw := float(rng.randi_range(0, 3)) * (PI * 0.5)
-		var lh = rng.randf_range(terrain.CITY_LIGHT_HEIGHT_MIN, terrain.CITY_LIGHT_HEIGHT_MAX)
-		var is_signal = rng.randf() < terrain.CITY_SIGNAL_CHANCE
+		var lh = rng.randf_range(CITY_LIGHT_HEIGHT_MIN, CITY_LIGHT_HEIGHT_MAX)
+		var is_signal = rng.randf() < CITY_SIGNAL_CHANCE
 		# Per-object scarcity for lights (offset 2000).
 		if not terrain._scarcity_keep(chunk_pos_city, _i + 2000, k_city):
 			continue
 		lx = clampf(lx, -half, half)
 		lz = clampf(lz, -half, half)
-		if not _biome_spot_ok(terrain, chunk_center, lx, lz, terrain.CITY_LIGHT_RADIUS_MAX, terrain.CITY_ROAD_CLEARANCE, obstacles):
+		if not _biome_spot_ok(terrain, chunk_center, lx, lz, CITY_LIGHT_RADIUS_MAX, CITY_ROAD_CLEARANCE, obstacles):
 			continue
 		if terrain.biome_at(chunk_center.x + lx, chunk_center.z + lz) != terrain.Biome.CITY:
 			continue
@@ -1133,7 +1606,7 @@ static func _spawn_city_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 		# bumping into anyway.
 		terrain.create_box(
 			l_local + Vector3(0.0, lh * 0.5, 0.0),
-			Vector3(terrain.CITY_LIGHT_MAST_WIDTH, lh, terrain.CITY_LIGHT_MAST_WIDTH), lyaw,
+			Vector3(CITY_LIGHT_MAST_WIDTH, lh, CITY_LIGHT_MAST_WIDTH), lyaw,
 			rng, block_batch, block_body, 0.0, terrain.CITY_METAL, true,
 			ChunkBatch.BoxKind.CYLINDER
 		)
@@ -1153,18 +1626,18 @@ static func _spawn_city_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 			# table in batch_selfcheck) bought for a 0.22 m object nobody looks
 			# at. The mast and the lamp shade take CYLINDER instead — one new
 			# bucket for the whole street-furniture family.
-			var head_h = terrain.CITY_LIGHT_LAMP * 3.4
+			var head_h = CITY_LIGHT_LAMP * 3.4
 			terrain.create_box(
 				l_local + Vector3(0.0, lh + head_h * 0.5, 0.0),
-				Vector3(terrain.CITY_LIGHT_LAMP * 1.5, head_h, terrain.CITY_LIGHT_LAMP * 1.4), lyaw,
+				Vector3(CITY_LIGHT_LAMP * 1.5, head_h, CITY_LIGHT_LAMP * 1.4), lyaw,
 				rng, block_batch, block_body, 0.0, terrain.CITY_METAL, false
 			)
 			var lamps = [terrain.CITY_LAMP_RED, terrain.CITY_LAMP_AMBER, terrain.CITY_LAMP_GREEN]
 			for j in 3:
 				terrain.create_box(
-					l_local + l_front * (terrain.CITY_LIGHT_LAMP * 0.75)
-							+ Vector3(0.0, lh + head_h - terrain.CITY_LIGHT_LAMP * (0.7 + float(j) * 1.05), 0.0),
-					Vector3(terrain.CITY_LIGHT_LAMP, terrain.CITY_LIGHT_LAMP, terrain.CITY_LIGHT_LAMP * 0.4), lyaw,
+					l_local + l_front * (CITY_LIGHT_LAMP * 0.75)
+							+ Vector3(0.0, lh + head_h - CITY_LIGHT_LAMP * (0.7 + float(j) * 1.05), 0.0),
+					Vector3(CITY_LIGHT_LAMP, CITY_LIGHT_LAMP, CITY_LIGHT_LAMP * 0.4), lyaw,
 					rng, block_batch, block_body, 0.0, lamps[j], false
 				)
 		else:
@@ -1178,8 +1651,8 @@ static func _spawn_city_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 			# already paid for — see the traffic-light note below for why this is
 			# not the SPHERE the bead sketched.
 			terrain.create_box(
-				l_local + l_front * arm + Vector3(0.0, lh - terrain.CITY_LIGHT_LAMP * 0.5, 0.0),
-				Vector3(terrain.CITY_LIGHT_LAMP * 1.6, terrain.CITY_LIGHT_LAMP, terrain.CITY_LIGHT_LAMP * 1.6), lyaw,
+				l_local + l_front * arm + Vector3(0.0, lh - CITY_LIGHT_LAMP * 0.5, 0.0),
+				Vector3(CITY_LIGHT_LAMP * 1.6, CITY_LIGHT_LAMP, CITY_LIGHT_LAMP * 1.6), lyaw,
 				rng, block_batch, block_body, 0.0, terrain.CITY_LAMP_AMBER, false,
 				ChunkBatch.BoxKind.CYLINDER
 			)
@@ -1187,7 +1660,7 @@ static func _spawn_city_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 		# NON-climbable: a mast has no top to stand on, and its "top" is 4 m up.
 		obstacles.append({
 			"pos": l_local,
-			"radius": terrain.CITY_LIGHT_RADIUS_MAX,
+			"radius": CITY_LIGHT_RADIUS_MAX,
 			"top": lh,
 			"climbable": false,
 		})
@@ -1238,12 +1711,12 @@ static func _spawn_snow_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 	# The lean added by FROZEN_TREE_TILT_MAX carries the branches sideways with the
 	# trunk, so the margin gains sin(lean) times the tallest trunk. Written as the
 	# arithmetic, so retuning the lean or the height retunes this with it.
-	var branch_reach = terrain.FROZEN_TREE_BRANCH_LEN * 0.42 + 0.5 * Vector3(terrain.FROZEN_TREE_BRANCH_LEN, 0.22, 0.22).length()
-	branch_reach += sin(terrain.FROZEN_TREE_TILT_MAX) * terrain.FROZEN_TREE_HEIGHT_MAX
-	var tree_half = terrain.chunk_size / 2.0 - (terrain.FROZEN_TREE_TRUNK_WIDTH_MAX * 0.71 + branch_reach)
+	var branch_reach = FROZEN_TREE_BRANCH_LEN * 0.42 + 0.5 * Vector3(FROZEN_TREE_BRANCH_LEN, 0.22, 0.22).length()
+	branch_reach += sin(FROZEN_TREE_TILT_MAX) * FROZEN_TREE_HEIGHT_MAX
+	var tree_half = terrain.chunk_size / 2.0 - (FROZEN_TREE_TRUNK_WIDTH_MAX * 0.71 + branch_reach)
 	var chunk_pos_snow: Vector2i = terrain.world_to_chunk(chunk_center)
 	var k_snow: float = terrain.scarcity_at(chunk_center)
-	for _i in rng.randi_range(terrain.FROZEN_TREE_MIN, terrain.FROZEN_TREE_MAX):
+	for _i in rng.randi_range(FROZEN_TREE_MIN, FROZEN_TREE_MAX):
 		var local_x := rng.randf_range(-tree_half, tree_half)
 		var local_z := rng.randf_range(-tree_half, tree_half)
 		# The FOOTPRINT, by contrast, bounds the TRUNK only — the forest's rule
@@ -1253,19 +1726,19 @@ static func _spawn_snow_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 		#
 		# Both rejections are post-draw `continue`s, the discipline every removal in
 		# this file follows: the draws still advance the stream.
-		if not _biome_spot_ok(terrain, chunk_center, local_x, local_z, terrain.FROZEN_TREE_TRUNK_WIDTH_MAX * 0.71 + 0.3, terrain.FROZEN_TREE_ROAD_CLEARANCE, obstacles):
+		if not _biome_spot_ok(terrain, chunk_center, local_x, local_z, FROZEN_TREE_TRUNK_WIDTH_MAX * 0.71 + 0.3, FROZEN_TREE_ROAD_CLEARANCE, obstacles):
 			continue
 		if terrain.biome_at(chunk_center.x + local_x, chunk_center.z + local_z) != terrain.Biome.SNOW:
 			continue
 
-		var trunk_w = rng.randf_range(terrain.FROZEN_TREE_TRUNK_WIDTH_MIN, terrain.FROZEN_TREE_TRUNK_WIDTH_MAX)
-		var trunk_h = rng.randf_range(terrain.FROZEN_TREE_HEIGHT_MIN, terrain.FROZEN_TREE_HEIGHT_MAX)
+		var trunk_w = rng.randf_range(FROZEN_TREE_TRUNK_WIDTH_MIN, FROZEN_TREE_TRUNK_WIDTH_MAX)
+		var trunk_h = rng.randf_range(FROZEN_TREE_HEIGHT_MIN, FROZEN_TREE_HEIGHT_MAX)
 		var yaw := rng.randf_range(0.0, TAU)
 		# The two per-tree restyle draws, unconditional and above the scarcity roll —
 		# the forest builder's rule, for the forest builder's reason.
 		var wood_t := rng.randf()
-		var lean_snow = rng.randf_range(-terrain.FROZEN_TREE_TILT_MAX, terrain.FROZEN_TREE_TILT_MAX)
-		var wood = terrain.SNOW_DEADWOOD.lerp(terrain.SNOW_DEADWOOD_DARK, wood_t)
+		var lean_snow = rng.randf_range(-FROZEN_TREE_TILT_MAX, FROZEN_TREE_TILT_MAX)
+		var wood = terrain.SNOW_DEADWOOD.lerp(SNOW_DEADWOOD_DARK, wood_t)
 		# Same axis arithmetic the forest canopy uses: create_box tips local +Y
 		# toward local +Z, whose world direction under this yaw is (sin, 0, cos).
 		var lean_dir_snow := Vector3(sin(yaw), 0.0, cos(yaw)) * sin(lean_snow)
@@ -1286,13 +1759,13 @@ static func _spawn_snow_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 			var by = trunk_h * rng.randf_range(0.55, 0.92)
 			# One draw per branch: four identical sticks is the read this bead is
 			# here to kill. Shrink-only (see FROZEN_TREE_BRANCH_JITTER_MIN).
-			var blen = terrain.FROZEN_TREE_BRANCH_LEN * rng.randf_range(terrain.FROZEN_TREE_BRANCH_JITTER_MIN, 1.0)
+			var blen = FROZEN_TREE_BRANCH_LEN * rng.randf_range(FROZEN_TREE_BRANCH_JITTER_MIN, 1.0)
 			var dir = Vector3(cos(a), 0.0, sin(a)) * (blen * 0.42)
 			terrain.create_box(
 				Vector3(local_x, by, local_z) + dir + lean_dir_snow * (by - trunk_h * 0.5),
 				Vector3(blen, 0.22, 0.22),
 				a + PI * 0.5, rng, block_batch, block_body, rng.randf_range(-0.5, 0.5),
-				wood.lerp(terrain.SNOW_DEADWOOD_DARK, 0.25), false
+				wood.lerp(SNOW_DEADWOOD_DARK, 0.25), false
 			)
 
 		# Footprint stops at the TRUNK top and is NOT climbable — the forest's rule,
@@ -1305,8 +1778,8 @@ static func _spawn_snow_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 		})
 
 	# ---- MAMMOTH SKELETONS -------------------------------------------------
-	var mammoth_half = terrain.chunk_size / 2.0 - terrain.MAMMOTH_EDGE_MARGIN
-	for _i in rng.randi_range(0, terrain.MAMMOTH_MAX):
+	var mammoth_half = terrain.chunk_size / 2.0 - MAMMOTH_EDGE_MARGIN
+	for _i in rng.randi_range(0, MAMMOTH_MAX):
 		# The candidate loop lives HERE rather than in a rarity roll, for the reason
 		# camps and artifacts both had theirs moved: this is where `obstacles`
 		# exists, and overlap is the test that actually rejects. Every draw happens
@@ -1315,11 +1788,11 @@ static func _spawn_snow_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 		var mz := 0.0
 		var placed := false
 		var tries := 0
-		while tries < terrain.MAMMOTH_PLACE_TRIES and not placed:
+		while tries < MAMMOTH_PLACE_TRIES and not placed:
 			tries += 1
 			mx = rng.randf_range(-mammoth_half, mammoth_half)
 			mz = rng.randf_range(-mammoth_half, mammoth_half)
-			if _biome_spot_ok(terrain, chunk_center, mx, mz, terrain.MAMMOTH_RADIUS, terrain.MAMMOTH_ROAD_CLEARANCE, obstacles) \
+			if _biome_spot_ok(terrain, chunk_center, mx, mz, MAMMOTH_RADIUS, MAMMOTH_ROAD_CLEARANCE, obstacles) \
 					and terrain.biome_at(chunk_center.x + mx, chunk_center.z + mz) == terrain.Biome.SNOW:
 				placed = true
 		if not placed:
@@ -1337,7 +1810,7 @@ static func _spawn_snow_content(terrain: Node3D, chunk_center: Vector3, rng: Ran
 
 		obstacles.append({
 			"pos": Vector3(mx, 0, mz),
-			"radius": terrain.MAMMOTH_RADIUS,
+			"radius": MAMMOTH_RADIUS,
 			"top": top,
 			"climbable": false,
 		})
@@ -1375,9 +1848,9 @@ static func _snow_mammoth(terrain: Node3D, local: Vector3, rng: RandomNumberGene
 	var yaw := rng.randf_range(0.0, TAU)
 	var fwd := Vector3(cos(yaw), 0.0, -sin(yaw))   # Basis(UP, yaw) * Vector3.RIGHT
 	var side := Vector3(sin(yaw), 0.0, cos(yaw))   # Basis(UP, yaw) * Vector3.BACK
-	var spine_len = rng.randf_range(terrain.MAMMOTH_SPINE_LEN_MIN, terrain.MAMMOTH_SPINE_LEN_MAX)
-	var pairs = rng.randi_range(terrain.MAMMOTH_RIB_PAIRS_MIN, terrain.MAMMOTH_RIB_PAIRS_MAX)
-	var rib_top = terrain.MAMMOTH_RIB_HEIGHT * cos(terrain.MAMMOTH_RIB_TILT)
+	var spine_len = rng.randf_range(MAMMOTH_SPINE_LEN_MIN, MAMMOTH_SPINE_LEN_MAX)
+	var pairs = rng.randi_range(MAMMOTH_RIB_PAIRS_MIN, MAMMOTH_RIB_PAIRS_MAX)
+	var rib_top = MAMMOTH_RIB_HEIGHT * cos(MAMMOTH_RIB_TILT)
 	var bone = terrain.PROP_BONE.lerp(terrain.SNOW_ICE_B, rng.randf() * 0.18)
 
 	# --- RIBS. Each pair is two thin boxes whose BASES sit wide on the ground and
@@ -1389,13 +1862,13 @@ static func _snow_mammoth(terrain: Node3D, local: Vector3, rng: RandomNumberGene
 	for i in pairs:
 		var t := (float(i) + 0.5) / float(pairs)
 		var x = -spine_len * (0.08 + 0.84 * t)
-		var rib_h = terrain.MAMMOTH_RIB_HEIGHT * rng.randf_range(0.88, 1.05)
+		var rib_h = MAMMOTH_RIB_HEIGHT * rng.randf_range(0.88, 1.05)
 		for s: float in [-1.0, 1.0]:
 			terrain.create_box(
-				local + fwd * x + side * (terrain.MAMMOTH_RIB_HALF_SPREAD * s)
-						+ Vector3(0.0, rib_h * 0.5 * cos(terrain.MAMMOTH_RIB_TILT), 0.0),
+				local + fwd * x + side * (MAMMOTH_RIB_HALF_SPREAD * s)
+						+ Vector3(0.0, rib_h * 0.5 * cos(MAMMOTH_RIB_TILT), 0.0),
 				Vector3(0.16, rib_h, 0.30), yaw,
-				rng, block_batch, block_body, -terrain.MAMMOTH_RIB_TILT * s,
+				rng, block_batch, block_body, -MAMMOTH_RIB_TILT * s,
 				bone, false
 			)
 
@@ -1424,7 +1897,7 @@ static func _snow_mammoth(terrain: Node3D, local: Vector3, rng: RandomNumberGene
 	var tusk_yaw := yaw + PI * 0.5
 	for s: float in [-1.0, 1.0]:
 		var pos := local + fwd * 1.35 + side * (0.40 * s) + Vector3(0.0, 0.45, 0.0)
-		for seg_variant: Variant in terrain.MAMMOTH_TUSK_SEGMENTS:
+		for seg_variant: Variant in MAMMOTH_TUSK_SEGMENTS:
 			var seg: Array = seg_variant
 			var seg_len: float = float(seg[0])
 			var tilt: float = float(seg[1])
@@ -1456,7 +1929,7 @@ static func _city_snap(terrain: Node3D, value: float, rng: RandomNumberGenerator
 	chunks therefore have their own street lines, which is exactly what a town
 	that grew looks like.
 	"""
-	return roundf(value / terrain.CITY_BLOCK_PITCH) * terrain.CITY_BLOCK_PITCH + rng.randf_range(-terrain.CITY_BLOCK_JITTER, terrain.CITY_BLOCK_JITTER)
+	return roundf(value / CITY_BLOCK_PITCH) * CITY_BLOCK_PITCH + rng.randf_range(-CITY_BLOCK_JITTER, CITY_BLOCK_JITTER)
 
 # ============================================================================
 # BIOME FIELD (one noise field; six biomes + rivers read out of it)

@@ -53,7 +53,7 @@ docstring before touching it. The live Windman is `windman_parts/` assembled by
 
 | Area | Entry point | Also | Self-check |
 |---|---|---|---|
-| World engine, chunks, biomes field, `Biome` enum, seed | `scripts/endless_terrain.gd` | `terrain_biomes` `terrain_predators` `terrain_props` `terrain_structures` `terrain_features` `terrain_landmarks` `coin_road` (static families reached through the terrain) | `chunk_stream` `scarcity` `prop` `wade` `field_bridge` `altitude` |
+| World engine, chunks, biomes field, `Biome` enum, seed | `scripts/endless_terrain.gd` | `terrain_biomes` `terrain_predators` `terrain_props` `terrain_structures` `terrain_features` `terrain_landmarks` `coin_road` `terrain_bridges` `terrain_altitude` (static families reached through the terrain) | `chunk_stream` `scarcity` `prop` `wade` `field_bridge` `altitude` |
 | Batched geometry, box kinds, collision per kind | `scripts/chunk_batch.gd` | `assets/shaders/world_block.gdshader` | `batch` |
 | Field landmarks (one per kind per world) | `scripts/landmark_builders.gd` `terrain_landmarks.gd` | `landmark_toast.gd` | `landmark` `landmark_sites` |
 | Budapest (authored plan, streamed) | `scripts/budapest_plan.gd` | `budapest_streamer` `city_builders` | `budapest` `budapest_city` `landmark_progress` `city_map` |
@@ -65,7 +65,7 @@ docstring before touching it. The live Windman is `windman_parts/` assembled by
 | Ambience (weather, herds, crowd, traffic) | `weather_manager` `fauna_manager` `crowd_manager` `traffic_manager` | `city_agents` `ambience_lod` `ambience_proxies` | `weather` `fauna` `crowd` `traffic` |
 | HUD skin and widgets | `scripts/hud_theme.gd` | `hero_hud` `coin_hud` `world_caption` `minimap_hud` `ability_hud` `help_overlay` `event_log_hud` (room event log) | `hero_hud` `minimap` `help` `locale` `intro` `event_log` |
 | Audio (all synthesized) | `scripts/sound_manager.gd` | | `sound` |
-| Multiplayer mesh | `scripts/mp_manager.gd` | `mp_codec` (parsers) `mp_croc_sync` `lobby_client` `remote_avatar` `mp_ui` | `mp` `mp_codec` (split from mp_selfcheck; CI shards by file) |
+| Multiplayer mesh | `scripts/mp_manager.gd` | `mp_codec` (parsers) `mp_croc_sync` `mp_claims` `mp_world_sync` `lobby_client` `remote_avatar` `mp_ui` | `mp` `mp_codec` (split from mp_selfcheck; CI shards by file) |
 | Voice/video chat (web only) | `scripts/voice_chat.gd` `scripts/voice_js.gd` (the JS) | `web/vendor/mediapipe/` `scripts/fetch_vendor.sh` | `voice` |
 | Lobby server (Go) | `server/room.go` | `server/docker-compose.yml` | `go test` |
 | Perf tooling | `scripts/perf_overlay.gd` (`\fo`) | `\fb` / `\fh` teleport cheats (debug builds) | `perf` |
@@ -128,7 +128,7 @@ Ground is y = 0 everywhere. Mountains are impassable box massifs, rivers are tin
 wading bands with a deep channel that pushes you out. `_biome_noise` in
 `endless_terrain.gd` and `biome_noise` in `ground.gdshader` are **one function in two
 languages — edit them together**, and keep the GDScript port's `Vector2` fp32 routing.
-`FIELD_ALTITUDE` is a spike that ships `false` (`docs/field-altitude-spike.md`).
+`FIELD_ALTITUDE` is a spike that ships `false` (`scripts/terrain_altitude.gd`, `docs/field-altitude-spike.md`).
 
 ### Speeds are a lattice
 `WALK_SPEED` < every species' `chase_speed` < `MAX_CHASE_SPEED` < the slowest run:
@@ -178,7 +178,7 @@ gameplay input goes through named actions.
   A new route also needs a Traefik path rule in `server/docker-compose.yml`.
 - Seed and captive set ride the lobby relay as well as the mesh (they must reach peers
   whose ICE is unfinished). Crocodiles are master-simulated, never network-spawned.
-- **Runtime state that gates gameplay is shared on the herd's shape — the master simulates,
+- **Runtime state that gates gameplay is shared on the herd's shape (`mp_world_sync.gd`) — the master simulates,
   peers replay — never by seeding.** Storms (`wx`, one packet per croc-sync tick, `weather_manager.gd`
   owns both ends and the silence timeout), ranged-boss shots (`shot`, reliable, one per shot,
   replayed with the body's own row params, lethality local) and the HQ's opened gates (`gate`,

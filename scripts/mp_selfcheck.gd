@@ -690,7 +690,7 @@ func _check_claim_base_value() -> String:
 
 	var count: int = 3
 	var value: int = Coin.GEM_VALUE
-	mp._resolve_claim(12345, MpCodec.peer_int_id(mp._you), count, value)
+	MpClaims.resolve_claim(mp, 12345, MpCodec.peer_int_id(mp._you), count, value)
 
 	var banked: int = stub.banked
 	var base_seen: int = stub.base_seen
@@ -751,7 +751,7 @@ func _check_confirm_base_is_unforgeable() -> String:
 	# FORGED: a confirm naming us the winner of a pickup we never claimed, with a
 	# `b` a hostile master would love us to believe. The coin is still banked (the
 	# run-scoped `a` was always the master's to say), but the level must not move.
-	mp._receive_confirm(mp._master, {"t": "cnf", "id": 1, "by": me, "a": 64000, "m": 1, "b": 64000})
+	MpClaims.receive_confirm(mp, mp._master, {"t": "cnf", "id": 1, "by": me, "a": 64000, "m": 1, "b": 64000})
 	var forged_calls: int = stub.calls
 	var forged_base: int = stub.base_seen
 
@@ -759,7 +759,7 @@ func _check_confirm_base_is_unforgeable() -> String:
 	# worth. Two gems, and a `b` on the wire that contradicts it — which must be
 	# ignored in favour of what we asked for.
 	mp._pending_claims[7] = {"n": 2, "v": Coin.GEM_VALUE, "age": 0.0, "tries": 1}
-	mp._receive_confirm(mp._master, {"t": "cnf", "id": 7, "by": me, "a": 40, "m": 2, "b": 99999})
+	MpClaims.receive_confirm(mp, mp._master, {"t": "cnf", "id": 7, "by": me, "a": 40, "m": 2, "b": 99999})
 	var honest_calls: int = stub.calls
 	var honest_base: int = stub.base_seen
 
@@ -1381,18 +1381,18 @@ func _check_herd_parser() -> String:
 	root.add_child(fauna)
 	var mp: Node = _room_manager("us")
 	mp._master = "themaster"
-	mp._receive_herd("someoneelse", honest)
+	MpWorldSync.receive_herd(mp, "someoneelse", honest)
 	if not (fauna.get("applied") as Array).is_empty():
 		fauna.queue_free()
 		mp.queue_free()
 		return "a NON-MASTER's herd packet was applied — any member could put a herd on every screen"
-	mp._receive_herd("themaster", honest)
+	MpWorldSync.receive_herd(mp, "themaster", honest)
 	if (fauna.get("applied") as Array).size() != 1:
 		fauna.queue_free()
 		mp.queue_free()
 		return "the master's herd packet was NOT applied — this check measured nothing"
 	mp._master = "us"
-	mp._receive_herd("us", honest)
+	MpWorldSync.receive_herd(mp, "us", honest)
 	if (fauna.get("applied") as Array).size() != 1:
 		fauna.queue_free()
 		mp.queue_free()
@@ -1530,18 +1530,18 @@ func _check_wx_parser() -> String:
 	root.add_child(weather)
 	var mp: Node = _room_manager("us")
 	mp._master = "themaster"
-	mp._receive_wx("someoneelse", honest)
+	MpWorldSync.receive_wx(mp, "someoneelse", honest)
 	if not (weather.get("applied") as Array).is_empty():
 		weather.queue_free()
 		mp.queue_free()
 		return "a NON-MASTER's storm packet was applied — any member could put a storm over every screen"
-	mp._receive_wx("themaster", honest)
+	MpWorldSync.receive_wx(mp, "themaster", honest)
 	if (weather.get("applied") as Array).size() != 1:
 		weather.queue_free()
 		mp.queue_free()
 		return "the master's storm packet was NOT applied — this check measured nothing"
 	mp._master = "us"
-	mp._receive_wx("us", honest)
+	MpWorldSync.receive_wx(mp, "us", honest)
 	if (weather.get("applied") as Array).size() != 1:
 		weather.queue_free()
 		mp.queue_free()
