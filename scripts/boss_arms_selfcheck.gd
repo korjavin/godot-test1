@@ -381,10 +381,20 @@ func _check_ranged(boss: CharacterBody3D, player: BossProbe.StubPlayer,
 	# dispatch, never the arm: delete the return and this goes red.
 	_clear_projectiles()
 	boss.global_position = Vector3(home.x, boss.global_position.y, home.z)
-	boss.is_chasing = true
+	# The quarry stands INSIDE the band and the detection radius — NOT at the
+	# 300 m phase B left it at. Phase E runs real physics frames, and deleting
+	# the early return would route them through `_update_chase_state()`, which
+	# recomputes `is_chasing` from the player's position: a far quarry would
+	# close the chasing gate for the mutant too and the probe would pass
+	# vacuously. (Review round 1: this is exactly what it did.)
+	player.global_position = boss.global_position + Vector3(band_mid, 0.0, 0.0)
 	boss._ranged_lock.clear()
 	boss.chase_target = Vector3(home.x - band_mid, 0.0, home.z)
+	# AFTER `set_remote_state`: flags 0 clears CROC_FLAG_CHASING, so stating it
+	# before is undone on the next line. Stated after, the chasing gate is held
+	# open going into the frames — as the docstring promises.
 	boss.set_remote_state(boss.global_position, boss.rotation.y, 0)
+	boss.is_chasing = true
 	boss.remote_driven = true
 	before = _live_projectiles()
 	announced = (room.get("calls") as Array).size()

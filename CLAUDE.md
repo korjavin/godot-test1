@@ -1857,7 +1857,9 @@ enough for a merely *walking* player to clear 3x the hit radius, and its horizon
 must stay under `RUN_SPEED`. "Make the bolt snappier" is the retune that breaks the game. In a room the master's bolt is
 replayed on every screen over one reliable `shot` verb per shot (bead `godot-test1-coq`): the
 send site sits beside the `fire()` call inside all four gates, lethality still resolves locally,
-and each peer replays with the firing body's own row params. Documented ceilings: a master on an
+and each peer replays with the firing body's own row params. A row's `style` must be a
+`BossProjectile.STYLES` key (pinned by `projectile_selfcheck` 1e): the `shot` verb drops
+anything else on every non-master screen. Documented ceilings: a master on an
 older build publishes nothing and its peers see what they see today (nothing); and a replayed bolt
 arrives RTT late, replayed from muzzle to aim from t=0, so the receiver's picture lags the master's
 (documented, not compensated).
