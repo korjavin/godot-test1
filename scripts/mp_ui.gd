@@ -388,7 +388,8 @@ func _process(_delta: float) -> void:
 		modal = true
 
 	_mp_button.visible = not modal
-	var hud_voice_visible: bool = (not modal) and (_voice_section != null and _voice_section.visible)
+	# The panel body opens over this region and carries the same switches.
+	var hud_voice_visible: bool = (not modal) and (not _panel_open) and (_voice_section != null and _voice_section.visible)
 	if _hud_mic_button != null:
 		_hud_mic_button.visible = hud_voice_visible
 	if _hud_deafen_button != null:

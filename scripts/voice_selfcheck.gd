@@ -2062,6 +2062,16 @@ func _check_hud_voice_switches() -> void:
 	voice.denied = false
 	ui._update_voice_ui()
 
+	# --- 3b. PANEL OPEN/CLOSE TOGGLE (hides HUD buttons while panel body is open) ---
+	ui._set_panel_open(true)
+	ui._process(0.0)
+	if hud_mic.visible or hud_deaf.visible or hud_cam.visible:
+		_fail("HUD voice switches remained visible when the MP panel was opened")
+	ui._set_panel_open(false)
+	ui._process(0.0)
+	if not (hud_mic.visible and hud_deaf.visible and hud_cam.visible):
+		_fail("HUD voice switches failed to restore visibility when the MP panel was closed")
+
 	# --- 4. ASSERT HIDDEN WHEN is_available() IS FALSE ---
 	voice.available = false
 	ui._update_voice_ui()
