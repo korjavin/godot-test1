@@ -251,6 +251,10 @@ func _build_ui() -> void:
 	# resolved only through SYSTEM font fallback — a different width on every OS
 	# (16 px on macOS, ~23 px on Linux, which overflowed this button in German)
 	# and, on the web export, no system fonts at all to fall back to.
+	# No hotkey, and that is deliberate (bead godot-test1-k4l): this gear is
+	# touch-only by platform discipline (see the header) — it exists to replace
+	# a keyboard, so giving it a keyboard shortcut would be a contradiction, and
+	# F7 already force-shows it on desktop for debugging.
 	_gear_button.text = "Tune"
 	_gear_button.add_theme_font_size_override("font_size", 26)
 	_gear_button.custom_minimum_size = Vector2(GEAR_WIDTH, GEAR_HEIGHT)

@@ -186,6 +186,14 @@ const ROWS: Array = [
 	# godot-test1-xtr.21), and named here for the same reason B is. No touch
 	# variant: a phone has the MP button, bottom left.
 	["N", "Open or close the multiplayer panel.", Mode.DESKTOP],
+	# The HUD voice/camera chords — Ctrl+letter pairs outside the input map,
+	# bead godot-test1-k4l, and named here for the same reason N is: a switch
+	# whose key the card does not name is a switch nobody can find. No touch
+	# variant, exactly like the N row: a phone has the switches themselves,
+	# stacked bottom left above the MP button.
+	["Ctrl+M", "Mute or unmute your microphone in a multiplayer room.", Mode.DESKTOP],
+	["Ctrl+D", "Block all incoming voice in a multiplayer room.", Mode.DESKTOP],
+	["Ctrl+G", "Share your camera in a multiplayer room.", Mode.DESKTOP],
 	["P", "Pause the game.", Mode.DESKTOP],
 	["Esc", "Free the mouse cursor. Press again to grab it back.", Mode.DESKTOP],
 	["?", "Open or close this list.", Mode.DESKTOP],
@@ -199,12 +207,17 @@ const ROWS: Array = [
 	["SPECIAL\n(F)", "Special ability: Air Rush, Phase Step, Resize or Stink Wave — Air Sight indoors.", Mode.TOUCH],
 	["SWITCH\n(R)", "Switch hero: Windman, Primm, Teibi, Phoboman.", Mode.TOUCH],
 	["View", "Cycle the view: over the shoulder, eyes, front.", Mode.TOUCH],
-	# "Skills" is the opener button's own CSV key, so this legend reads in German
-	# exactly like the button does. A phone has no K.
-	["Skills", "Open the skill tree and spend skill points.", Mode.TOUCH],
+	# "Skills (K)" is the opener button's own CSV key (review round 1: the bare
+	# "Skills" legend named a label the button no longer carries), so this
+	# legend reads in German exactly like the button does. A phone has no K.
+	["Skills (K)", "Open the skill tree and spend skill points.", Mode.TOUCH],
 	["Tune", "Tune step and steering feel, or read how to play again.", Mode.TOUCH],
 
-	["MP", "Multiplayer: host or join a room for up to 4 players.", Mode.BOTH],
+	# "Multiplayer (N)" is the toggle's own CSV key (review round 1: "MP"
+	# advertised a label that no longer exists), so both sessions read it in
+	# German exactly like the button. Measured 111/115 px against KEY_WIDTH
+	# 116 — a single line, no wrap needed.
+	["Multiplayer (N)", "Multiplayer: host or join a room for up to 4 players.", Mode.BOTH],
 
 	# Debug builds only.
 	["\\fo", "Performance overlay: FPS, draw calls, live crocodiles.", Mode.DEBUG],

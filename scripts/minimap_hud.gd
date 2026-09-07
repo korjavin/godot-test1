@@ -655,8 +655,12 @@ func _ready() -> void:
 
 
 func _input(event: InputEvent) -> void:
-	# Raw keycode read (not a named action) — see TOGGLE_KEYCODE.
+	# Raw keycode read (not a named action) — see TOGGLE_KEYCODE. Bare M only:
+	# a (keycode, ctrl) pair, not a bare keycode (bead godot-test1-k4l) —
+	# Ctrl+M is the HUD mic-mute chord and must not also flip the minimap.
 	if event is InputEventKey and event.pressed and not event.echo:
+		if event.ctrl_pressed or event.meta_pressed:
+			return
 		if event.keycode == TOGGLE_KEYCODE:
 			visible = not visible
 			if visible:
