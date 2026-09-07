@@ -201,6 +201,9 @@ func _run_checks() -> String:
 	failure = _check_herd_parser()
 	if not failure.is_empty():
 		return failure
+	failure = _check_wx_parser()
+	if not failure.is_empty():
+		return failure
 	failure = _check_room_pause()
 	if not failure.is_empty():
 		return failure
@@ -2193,6 +2196,127 @@ func _herd_with(key: String, value: Variant) -> Dictionary:
 	}
 	packet[key] = value
 	return packet
+
+
+## A weather manager reduced to the one method `MpManager._receive_wx()` calls,
+## in group "weather" so it is found through the shipped group lookup.
+const WEATHER_STUB_SOURCE := """extends Node
+var applied: Array = []
+func apply_weather_sync(state: Dictionary) -> void:
+	applied.append(state)
+"""
+
+
+func _check_wx_parser() -> String:
+	"""
+	The `wx` verb — the NINTH trust boundary (bead godot-test1-vej), plus the
+	authority rule that decides whose rain everybody draws.
+
+	THE HONEST PACKETS COME FIRST AND THEY ARE THE POINT: a parser that returned
+	`{}` for everything would pass every rejection below while leaving the
+	buddy's sky as clear as it was before this bead.
+	"""
+	var honest: Dictionary = {
+		"t": "wx", "s": [
+			{"sd": 101, "p": Vector3(30.0, 80.0, -10.0)},
+			{"sd": 202, "p": Vector3(-45.0, 75.0, 60.0)},
+		],
+	}
+	var good: Dictionary = MpCodec.decode_wx(honest)
+	if good.is_empty():
+		return "decode_wx dropped an honest storm packet"
+	if (good["s"] as Array).size() != 2:
+		return "decode_wx dropped a storm from an honest packet (%s)" % str(good)
+	for i: int in 2:
+		var want: Dictionary = (honest["s"] as Array)[i]
+		var got: Dictionary = (good["s"] as Array)[i]
+		if int(got["sd"]) != int(want["sd"]) or (got["p"] as Vector3) != (want["p"] as Vector3):
+			return "decode_wx changed storm %d: %s -> %s" % [i, str(want), str(got)]
+
+	# THE ALL-CLEAR must decode to a VALUE and not to the `{}` that means
+	# malformed — it is how a master says "my sky has cleared" without making
+	# every peer wait out its silence timeout.
+	var clear: Dictionary = MpCodec.decode_wx({"t": "wx", "k": -1})
+	if clear.is_empty() or int(clear.get("k", 0)) != -1:
+		return "decode_wx dropped the master's all-clear (%s)" % str(clear)
+
+	# An honest round-trip: what the master publishes must survive the codec
+	# byte-for-byte, or the peer replays a storm the master never drew.
+	var trip: Dictionary = MpCodec.decode_wx(
+		{"t": "wx", "s": (good["s"] as Array).duplicate()})
+	if trip.is_empty() or str(trip["s"]) != str(good["s"]):
+		return "decode_wx did not round-trip an honest storm list (%s)" % str(trip)
+
+	# ...and everything a peer that is not speaking this protocol could send.
+	var over: Array = []
+	for i: int in MpCodec.MAX_WX_STORMS + 1:
+		over.append({"sd": i, "p": Vector3.ZERO})
+	var hostile: Array[Dictionary] = [
+		{"t": "wx"},                                            # no storm list at all
+		{"t": "wx", "s": "storms"},                             # list is a string
+		{"t": "wx", "s": over},                                 # over the bound
+		{"t": "wx", "s": [{"p": Vector3.ZERO}]},                # entry without a seed
+		{"t": "wx", "s": [{"sd": 7}]},                          # entry without a centre
+		{"t": "wx", "s": [{"sd": 7.5, "p": Vector3.ZERO}]},     # seed is a float
+		{"t": "wx", "s": [{"sd": true, "p": Vector3.ZERO}]},    # ...or a bool
+		{"t": "wx", "s": [{"sd": 7, "p": Vector2(1.0, 2.0)}]},  # centre is a Vector2
+		{"t": "wx", "s": [{"sd": 7, "p": Vector3(NAN, 0.0, 0.0)}]},  # NaN centre
+		{"t": "wx", "s": [{"sd": 7, "p": Vector3(0.0, INF, 0.0)}]},  # infinite centre
+		{"t": "wx", "s": [{"sd": 7, "p": Vector3(MpCodec.MAX_PRESENCE_COORD * 2.0, 0.0, 0.0)}]},
+		{"t": "wx", "s": ["storm"]},                            # entry is a string
+		{"t": "wx", "k": 3, "s": []},                           # a k that names nothing
+		{"t": "wx", "k": "clear"},                              # ...or a k of the wrong type
+	]
+	for packet: Dictionary in hostile:
+		if not MpCodec.decode_wx(packet).is_empty():
+			return "decode_wx accepted the hostile packet %s" % str(packet)
+
+	# A missing REQUIRED field is malformed here, unlike a presence counter: a
+	# half-described storm would be drawn at the origin on every screen but the
+	# master's.
+	for key: String in ["sd", "p"]:
+		var truncated: Dictionary = {
+			"t": "wx", "s": [{"sd": 7, "p": Vector3(1.0, 80.0, 2.0)}]}
+		(truncated["s"] as Array)[0].erase(key)
+		if not MpCodec.decode_wx(truncated).is_empty():
+			return "decode_wx accepted a storm with no %s" % key
+
+	# The verb has to be budgeted like every other one `_receive_mesh_verb`
+	# dispatches — "only the master sends this" is not a rate bound.
+	if not MPManager.VERB_BUDGET_PER_SEC.has("wx"):
+		return "the wx verb has no VERB_BUDGET_PER_SEC row"
+
+	# AUTHORITY. Only the master's sky is drawn, and a packet arriving while WE
+	# are the master is dropped too — otherwise our own storms are driven by an
+	# echo.
+	var weather_script := GDScript.new()
+	weather_script.source_code = WEATHER_STUB_SOURCE
+	weather_script.reload()
+	var weather: Node = weather_script.new()
+	weather.add_to_group("weather")
+	root.add_child(weather)
+	var mp: Node = _room_manager("us")
+	mp._master = "themaster"
+	mp._receive_wx("someoneelse", honest)
+	if not (weather.get("applied") as Array).is_empty():
+		weather.queue_free()
+		mp.queue_free()
+		return "a NON-MASTER's storm packet was applied — any member could put a storm over every screen"
+	mp._receive_wx("themaster", honest)
+	if (weather.get("applied") as Array).size() != 1:
+		weather.queue_free()
+		mp.queue_free()
+		return "the master's storm packet was NOT applied — this check measured nothing"
+	mp._master = "us"
+	mp._receive_wx("us", honest)
+	if (weather.get("applied") as Array).size() != 1:
+		weather.queue_free()
+		mp.queue_free()
+		return "we applied a storm packet while we were the master — our own sky would be driven by an echo"
+	weather.queue_free()
+	mp.queue_free()
+	Sentinel.done("wx_parser")
+	return ""
 
 
 func _check_pad_parser() -> String:

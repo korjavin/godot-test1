@@ -614,6 +614,80 @@ static func decode_herd(packet: Dictionary) -> Dictionary:
 	}
 
 # =============================================================================
+# SHARED STORMS — the `wx` verb (bead godot-test1-vej)
+# =============================================================================
+
+## Sanity bound on the storm count of a `wx` packet — see `decode_wx`.
+##
+## Sized at the weather pool itself (`CLOUD_COUNT`), not at the 3–4 storms a
+## sky usually holds: the master publishes EVERY live storm, and a bound below
+## the honest maximum would silently drop the tail of a stormy sky — the very
+## divergence this verb exists to close. The pool is fixed, so honest traffic
+## always fits; anything past it is a peer that is not speaking this protocol.
+## The encoder reads this back as `MpCodec.MAX_WX_STORMS`, never re-types it.
+const MAX_WX_STORMS: int = 26
+
+
+static func decode_wx(packet: Dictionary) -> Dictionary:
+	"""
+	The shared-storm parser — the NINTH trust boundary, master-only and
+	whole-or-nothing like every one before it.
+
+	Wire format, the `var_to_bytes` of:
+
+	    {"t": "wx",
+	     "s": [{"sd": int,      # storm build seed — the replay builds off this
+	            "p": Vector3}]} # its live centre (the radius and the drift
+	                              speed are pure functions of the seed, so
+	                              they ride nothing)
+
+	`{"k": -1}` IS THE ALL-CLEAR and carries nothing else — it is how a master
+	says "my sky has cleared" without waiting out the receiver's silence
+	timeout, so it must decode to a value (`{"k": -1}`) and not to the `{}`
+	that means "malformed". Anything else is a storm list, and every entry is
+	then REQUIRED: a half-described storm would be drawn at the origin.
+
+	@param packet: the already-`bytes_to_var`-decoded packet — NEVER
+	    `bytes_to_var_with_objects`, see `_receive_mesh_packets()`.
+	@return the validated storm list (`{"s": [...]}`), `{"k": -1}` for the
+	    all-clear, or `{}`.
+	"""
+	# STRICT `int`, like `decode_herd`: this verb never crosses the lobby
+	# relay, so `var_to_bytes` round-trips the real type and a float here is a
+	# peer that is not speaking this protocol.
+	if typeof(packet.get("k", null)) == TYPE_INT:
+		if int(packet["k"]) < 0:
+			return {"k": -1}
+		return {}                      # a non-negative `k` names nothing here
+	if packet.has("k"):
+		return {}                      # present-but-not-an-int is malformed too
+	if typeof(packet.get("s", null)) != TYPE_ARRAY:
+		return {}
+	var storms: Array = packet["s"]
+	if storms.size() > MAX_WX_STORMS:
+		return {}
+	var clean: Array = []
+	for entry: Variant in storms:
+		if typeof(entry) != TYPE_DICTIONARY:
+			return {}
+		if typeof(entry.get("sd", null)) != TYPE_INT:
+			return {}
+		if typeof(entry.get("p", null)) != TYPE_VECTOR3:
+			return {}
+		var centre: Vector3 = entry["p"]
+		# FINITENESS BEFORE ANY USE, the rule `decode_presence()` spells out: a
+		# storm handed a NaN centre rains NaN forever after, and 1e30 is finite
+		# but just as permanent. The coordinate bound is the presence packet's
+		# — a storm stands in the same world a player does.
+		if not centre.is_finite():
+			return {}
+		if absf(centre.x) > MAX_PRESENCE_COORD or absf(centre.y) > MAX_PRESENCE_COORD \
+				or absf(centre.z) > MAX_PRESENCE_COORD:
+			return {}
+		clean.append({"sd": int(entry["sd"]), "p": centre})
+	return {"s": clean}
+
+# =============================================================================
 # JOIN SNAPSHOT — the third trust boundary
 # =============================================================================
 
