@@ -29,7 +29,7 @@ class_name MpManager
 ## THE CODEC IS `scripts/mp_codec.gd` — every parser this file used to carry
 ## ----------------------------------------------------------------------------
 ## `decode_presence` / `decode_state` / `decode_croc_sync` / `decode_captive` /
-## `decode_room` / `decode_pad` / `decode_lmk` / `decode_herd`, `packet_kind`, the `_croc_flags`
+## `decode_room` / `decode_pad` / `decode_lmk` / `decode_herd` / `decode_wx`, `packet_kind`, the `_croc_flags`
 ## byte packing, the two `*_in_reach` proximity tests, `peer_int_id` and the
 ## wire-format bounds all of them are written against now live in `MpCodec`
 ## (bead godot-test1-ftn.11 — a mechanical, behaviour-preserving move). They
@@ -182,9 +182,15 @@ const MAX_FLEE_DURATION: float = 60.0
 ##         is master-only and costs the receiver a dictionary of eight validated
 ##         fields plus — for a herd it has not seen before — one seeded build of at
 ##         most ten animals, which the one-herd invariant bounds absolutely.
+##   wx    is the master's live storms (bead godot-test1-vej), sent on the same
+##         tick as `herd` and budgeted at the same 40 for the same reason: one
+##         packet per tick, master-only, and the receiver pays a dictionary of
+##         validated seed/centre pairs plus — per storm it has not seen before —
+##         one seeded cloud build, which the fixed CLOUD_COUNT pool and the
+##         MAX_WX_STORMS bound cap absolutely.
 const VERB_BUDGET_PER_SEC: Dictionary = {
 	"clm": 30, "kill": 10, "flee": 4, "croc": 40, "cnf": 150, "dead": 60,
-	"cap": 8, "room": 12, "pad": 4, "lmk": 10, "herd": 40,
+	"cap": 8, "room": 12, "pad": 4, "lmk": 10, "herd": 40, "wx": 40,
 }
 
 ## How often the master publishes the room's captive set, in hertz.
@@ -3200,6 +3206,11 @@ func _process(delta: float) -> void:
 			# `fauna_manager` itself (REMOTE_HERD_TIMEOUT), which is the one test
 			# that also covers a master change, a leave and no MP node at all.
 			_send_herd_sync()
+			# The live storms ride it too, on the same terms: the silence
+			# timeout that frees a replay lives in `weather_manager`
+			# (REMOTE_WEATHER_TIMEOUT), so this needed no leave hook and no
+			# master-changed hook either (bead godot-test1-vej).
+			_send_wx_sync()
 		else:
 			MpCrocSync.tick_croc_timeout(self)
 
@@ -3709,6 +3720,8 @@ func _receive_mesh_verb(from_id: String, verb: String, packet: Dictionary) -> vo
 			MpCrocSync.receive_croc_sync(self, from_id, packet)
 		"herd":
 			_receive_herd(from_id, packet)
+		"wx":
+			_receive_wx(from_id, packet)
 		"clm":
 			_receive_claim(from_id, packet)
 		"cnf":
@@ -4221,6 +4234,87 @@ func _receive_herd(from_id: String, packet: Dictionary) -> void:
 	if fauna == null or not fauna.has_method("apply_herd_sync"):
 		return  # No fauna manager in this scene — not an error, the LOD idiom.
 	fauna.call("apply_herd_sync", state)
+
+
+# =============================================================================
+# SHARED STORMS (bead godot-test1-vej)
+# =============================================================================
+#
+# THE MASTER SIMULATES, PEERS REPLAY — the owner's report ("one player had
+# rain when another didn't"). Rain gates Windman's Air Rush through
+# `is_raining_at()`, so a storm is gameplay and the room must share one sky —
+# while clear clouds and birds stay per-peer cosmetic on the local RNG. This is
+# the herd's precedent, not the seed's: runtime state the master broadcasts,
+# outside the determinism contract, costing no seeded stream a draw.
+#
+# ONE PACKET PER TICK, storms only. Each storm's whole state is its build seed
+# plus its live centre: every box, the speed and the rain radius are pure
+# functions of the seed, so a few dozen bytes at CROC_SYNC_HZ describe the
+# whole stormy sky. The params ride EVERY tick rather than once, which is what
+# makes it self-healing for a dropped packet, for a peer whose mesh was still
+# negotiating and for a late joiner — no relay leg and no join-snapshot field.
+#
+# THE SYNC LAYER CREATES NO CLOUD AND FREES NONE, exactly like the herd sync.
+# `weather_manager.gd` owns the clouds at both ends: `weather_sync_state()`
+# describes its own storms, `apply_weather_sync()` builds or snaps them, and
+# the silence timeout that frees a replay lives beside the state it frees.
+#
+# MIXED-BUILD CEILING, documented like the herd's: a master on a build without
+# this verb publishes nothing, and a peer on this build in that room draws no
+# storms at all (it will not roll its own — see `_mp_replays_the_weather`).
+# It converges the moment the room's master is on this build.
+
+func _send_wx_sync() -> void:
+	"""
+	Master only: tell every peer about the storms crossing our field, or that
+	none is (`k: -1`, the all-clear — see `MpCodec.decode_wx`).
+
+	Sent UNRELIABLE, for the reason presence is: another one follows in 100 ms
+	and re-transmitting a stale centre would be strictly worse than skipping
+	it. Sent UNCONDITIONALLY rather than only while a storm is alive, because
+	the all-clear is what frees a peer's copy promptly when the sky clears; it
+	is ~26 bytes at 10 Hz to at most three peers.
+	"""
+	if _rtc == null:
+		return
+	var state: Dictionary = {"k": -1}
+	var weather := get_tree().get_first_node_in_group("weather")
+	if weather != null and weather.has_method("weather_sync_state"):
+		var live: Dictionary = weather.call("weather_sync_state")
+		if not live.is_empty():
+			state = live
+	state["t"] = "wx"
+	var bytes: PackedByteArray = var_to_bytes(state)
+	_rtc.set_transfer_mode(MultiplayerPeer.TRANSFER_MODE_UNRELIABLE)
+	# Targeted, not broadcast-to-peer-0, for the reason `_send_presence()` spells
+	# out: `_connections` holds peers negotiation has merely STARTED with.
+	var peers: Dictionary = _rtc.get_peers()
+	for pid: int in peers:
+		if not bool((peers[pid] as Dictionary).get("connected", false)):
+			continue
+		_rtc.set_target_peer(pid)
+		_rtc.put_packet(bytes)
+
+
+func _receive_wx(from_id: String, packet: Dictionary) -> void:
+	"""
+	Apply one storm packet from the master.
+
+	DROPPED UNLESS IT CAME FROM THE MASTER, and dropped while WE are the
+	master, for exactly `MpCrocSync.receive_croc_sync()`'s reasons: the mesh is
+	peer input, so without the first any member could put a storm over
+	everybody, and without the second our own sky would be driven by an echo of
+	itself.
+	"""
+	if from_id != _master or _master == _you:
+		return
+	var state: Dictionary = MpCodec.decode_wx(packet)
+	if state.is_empty():
+		return  # The ninth trust boundary refused it; whole or nothing.
+	var weather := get_tree().get_first_node_in_group("weather")
+	if weather == null or not weather.has_method("apply_weather_sync"):
+		return  # No weather manager in this scene — not an error, the LOD idiom.
+	weather.call("apply_weather_sync", state)
 
 
 # =============================================================================

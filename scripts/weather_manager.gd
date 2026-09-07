@@ -23,6 +23,18 @@ extends Node
 ## re-rolled and re-placed at the upwind edge, so the field never depletes and
 ## nothing ever pops into existence in view (the fog + distance hide the seam).
 ##
+## MULTIPLAYER (bead godot-test1-vej, the herd precedent godot-test1-6xc): rain
+## gates Windman's Air Rush through `is_raining_at()`, so a storm is GAMEPLAY,
+## not scenery — the room shares one sky. Only STORMS are shared; clear clouds
+## and birds stay per-peer cosmetic on the local RNG. The master simulates and
+## publishes the live storms on the croc-sync tick, peers REPLAY them wholesale
+## (`weather_sync_state()` / `apply_weather_sync()`), a non-master rolls no
+## storms, and silence frees the replay (`REMOTE_WEATHER_TIMEOUT`) — runtime
+## state, no seed, no draw from any seeded stream. A storm's whole description
+## is its build seed plus its live centre, because every draw in the build comes
+## off a fresh RNG seeded with it (`_build_storm_cloud`), so two builds are
+## byte-identical without a transform on the wire.
+##
 ## ponytail: two optional extras from the design were deliberately NOT built.
 ## (1) A full-screen darkening ColorRect while inside a rain zone — a screen-
 ## sized alpha blend is exactly the mobile fill-rate cost this project's perf
@@ -142,6 +154,13 @@ const STORM_SIZE_FACTOR: float = 1.5
 ## the ground matches what the player sees overhead. Slightly over 1 so the
 ## zone edge isn't pixel-tight to the silhouette.
 const RAIN_ZONE_FACTOR: float = 1.2
+
+## Seconds without a `wx` packet before a replayed storm is freed (bead
+## godot-test1-vej, the fauna precedent `REMOTE_HERD_TIMEOUT`). The ONE test
+## that also covers a deposed master, a leave and no MP node at all — so
+## `mp_manager` needs no leave hook, no master-changed hook and no timeout
+## branch. Same 10 Hz feed, same value.
+const REMOTE_WEATHER_TIMEOUT: float = 2.0
 
 # ============================================================================
 # RAIN PARTICLE TUNABLES
@@ -276,8 +295,14 @@ var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
 ##     "is_storm": bool,    # dark rain-carrying cloud
 ##     "radius": float,     # ground rain-zone radius (storm clouds only, else 0)
 ##     "speed": float,      # this cloud's wind speed (WIND_SPEED ± variation)
-##     "bob_phase": float } # phase offset so the field doesn't bob in unison
+##     "bob_phase": float,  # phase offset so the field doesn't bob in unison
+##     "sd": int,           # storm build seed (-1 for fair clouds; bead godot-test1-vej)
+##     "remote": bool }     # replayed from the master's `wx` packet, not rolled here
 var _clouds: Array = []
+
+## Seconds since the last applied `wx` packet while replayed storms are held.
+## Reset by `apply_weather_sync()`; `REMOTE_WEATHER_TIMEOUT` frees them.
+var _wx_silence: float = 0.0
 
 ## Cached player reference — looked up via the "player" group, re-fetched when
 ## invalid, never a hard reference (project convention). While there is no
@@ -389,6 +414,7 @@ func _process(delta: float) -> void:
 			_clouds.append(cloud)
 
 	_update_clouds(player_pos, elapsed)
+	_tick_remote_weather(elapsed)
 
 	# Rain state: recomputed once per tick (not per frame) so downstream
 	# systems (particles, audio fades) get clean ~10 Hz enter/exit transitions.
@@ -634,9 +660,60 @@ func _find_player() -> void:
 
 
 func _make_cloud() -> Dictionary:
-	## Roll one cloud cluster: a handful of flat-ish puffs scattered around a
-	## shared centre. Position is left at ZERO — _place_cloud_around() sets it.
+	## ROLL one cloud cluster (bead godot-test1-vej: the `_spawn_herd` half of
+	## the split). The storm chance is drawn exactly as before, so solo play —
+	## no MP node, predicate below false — rolls the field it always did.
+	## Position is left at ZERO — _place_cloud_around() sets it.
 	var is_storm: bool = _rng.randf() < STORM_CHANCE
+	# IN A ROOM THE MASTER ROLLS THE STORMS AND NOBODY ELSE DOES. The draw
+	# above is still consumed, so the ambience clock is aligned on every peer —
+	# a non-master simply never produces a storm of its own, so there is no
+	# second sky to reconcile and no state to unwind when it stops being one.
+	if is_storm and _mp_replays_the_weather():
+		is_storm = false
+	if is_storm:
+		# The seed is drawn HERE, off the ambience clock, and everything the
+		# storm is made of comes off it in `_build_storm_cloud()` — which is
+		# what makes the master's roll and the peer's replay byte-identical.
+		return _build_storm_cloud(_rng.randi())
+	return _make_fair_cloud()
+
+
+func _make_fair_cloud() -> Dictionary:
+	## Roll one fair-weather cloud off the ambience clock: the `_make_cloud()`
+	## body this file always had, with the storm branch lifted out above.
+	return _roll_cloud(false, -1)
+
+
+func _build_storm_cloud(sd: int) -> Dictionary:
+	## BUILD one storm cloud (bead godot-test1-vej: the `_build_herd` half).
+	## The master runs it off the seed it just rolled, a peer runs it off the
+	## `wx` packet's `sd`, and the two produce the same storm because every
+	## draw below comes off a FRESH RandomNumberGenerator seeded with it.
+	##
+	## The private `_rng` is SWAPPED rather than replaced: it is the ambience
+	## clock — every future cloud comes off it — and leaving it pinned to a
+	## storm's seed would make the rest of the session deterministic, which is
+	## exactly what weather must never be (the fauna precedent, `_build_herd`).
+	var ambience_rng := _rng
+	_rng = RandomNumberGenerator.new()
+	_rng.seed = sd
+	var storm: Dictionary = _roll_cloud(true, sd)
+	_rng = ambience_rng
+	return storm
+
+
+func _roll_cloud(is_storm: bool, sd: int) -> Dictionary:
+	## THE ONLY PLACE A CLOUD IS EVER ROLLED — the master runs it off the
+	## ambience clock, a peer's replay runs it off the packet seed, and the two
+	## agree because this is one code path either way.
+	##
+	## Draw order is the one `_make_cloud()` always used (count, then per-box
+	## offset / size / yaw, then speed, bob phase, brightness), minus the storm
+	## chance itself, which the caller already drew: a storm's boxes, speed and
+	## shimmer are pure functions of `sd`, and its ground rain zone is measured
+	## off the actual boxes exactly as before, so the peer replays the
+	## silhouette the master drew and not a one-size constant.
 	# Storms loom: more boxes AND bigger boxes than a fair-weather cloud.
 	# BOXES_PER_CLOUD_MAX already accounts for the storm count ceiling, so the
 	# fixed MultiMesh allocation never overflows.
@@ -675,6 +752,8 @@ func _make_cloud() -> Dictionary:
 		"bob_phase": _rng.randf_range(0.0, TAU),
 		# Per-cloud brightness multiplier on CLOUD_COLOR (storms ignore it).
 		"brightness": 1.0 + _rng.randf_range(-CLOUD_BRIGHTNESS_JITTER, CLOUD_BRIGHTNESS_JITTER),
+		"sd": sd,
+		"remote": false,
 	}
 
 
@@ -715,6 +794,14 @@ func _update_clouds(player_pos: Vector3, elapsed: float) -> void:
 
 	for cloud in _clouds:
 		cloud["center"] += WIND_DIR * cloud["speed"] * elapsed
+		if bool(cloud.get("remote", false)):
+			# A REPLAYED STORM DRIFTS AND NOTHING ELSE. The drift is the dead
+			# reckoning between 10 Hz packets (same wind, same speed both
+			# ends); the recycle and the keep-out are the master's to run, on
+			# the disc around ITS player. Recycling here would free a storm
+			# merely because it is far from THIS peer and rebuild it fair —
+			# then flap it back on the next packet, every 100 ms.
+			continue
 		var to_cloud: Vector3 = cloud["center"] - player_pos
 		to_cloud.y = 0.0
 		# Recycle on leaving the disc in ANY direction, not just downwind. WIND_SPEED
@@ -948,3 +1035,167 @@ func _write_bird_instances() -> void:
 					+ wing_basis * Vector3(BIRD_WING_SIZE.x * 0.5 * sign_w, 0.0, 0.0)
 			mm.set_instance_transform(base_idx + 1 + w,
 					Transform3D(wing_basis.scaled_local(BIRD_WING_SIZE), wing_pos))
+
+
+# ============================================================================
+# MULTIPLAYER SEAMS (bead godot-test1-vej, the herd precedent godot-test1-6xc)
+# ============================================================================
+# Two functions and one predicate, driven by `mp_manager.gd` at CROC_SYNC_HZ.
+# Discovery is the "mp" group and `has_method`, both ways — a preload between
+# these two files would be a hard dependency in a direction neither wants, and
+# a harness with only one of them behaves exactly as it did before this
+# existed. The bound lives with the parser that enforces it (`MpCodec`), so
+# the encoder reads it back as `MpCodec.MAX_WX_STORMS` rather than re-typing
+# the number.
+
+func _mp_replays_the_weather() -> bool:
+	## Are we a room member who is NOT the master, i.e. is somebody else's sky
+	## the only stormy one we may draw?
+	##
+	## Asked once per cloud roll, never per frame — the per-frame answer is each
+	## cloud's own `remote` flag, which the packet itself sets. Solo, or as the
+	## master, this is false and every path above it is today's code.
+	var mp := get_tree().get_first_node_in_group("mp")
+	if mp == null or not mp.has_method("is_online") or not mp.has_method("get_master") \
+			or not mp.has_method("my_id"):
+		return false
+	if not bool(mp.call("is_online")):
+		return false
+	return str(mp.call("get_master")) != str(mp.call("my_id"))
+
+
+func weather_sync_state() -> Dictionary:
+	## What the master publishes: every live storm's build seed plus its live
+	## centre, every tick.
+	##
+	## `{}` means "no storms are crossing", which `mp_manager` sends as the
+	## all-clear so a peer frees its copy the moment the master's sky clears
+	## rather than waiting out REMOTE_WEATHER_TIMEOUT.
+	##
+	## A REPLAYED STORM IS NEVER PUBLISHED. That is what makes promotion heal
+	## itself: a peer elected master is still replaying the old master's sky,
+	## so it publishes the all-clear, every other peer frees immediately, and
+	## its own copy goes on the silence timeout a moment later — with no hook
+	## in `_on_lobby_master_changed` and no state to hand over.
+	##
+	## The radius and the drift speed ride nothing: both are pure functions of
+	## the seed (see `_build_storm_cloud`), so republishing them would only be
+	## a second description that could disagree with the first.
+	var storms: Array = []
+	for cloud: Dictionary in _clouds:
+		if not bool(cloud["is_storm"]) or bool(cloud.get("remote", false)):
+			continue
+		if storms.size() >= MpCodec.MAX_WX_STORMS:
+			break
+		storms.append({"sd": int(cloud["sd"]), "p": cloud["center"]})
+	if storms.is_empty():
+		return {}
+	return {"s": storms}
+
+
+func apply_weather_sync(state: Dictionary) -> void:
+	## Apply one already-validated `wx` packet (see `MpCodec.decode_wx`).
+	##
+	## WHOLESALE, not incremental: storms the packet does not name are dropped
+	## (a local storm rolled before joining, a replay the master has recycled),
+	## storms it names and we hold are snapped onto its live centre, and storms
+	## it names and we lack are built from the seed. Every tick converges every
+	## peer onto the master's sky whatever the last one did — a dropped packet,
+	## a mid-negotiation mesh, a late joiner with no relay leg and no snapshot
+	## field.
+	##
+	## `k < 0` is the master's all-clear. Anything else is a storm list.
+	## Snapping (not easing) is safe here where the herd eases: a cloud is
+	## MultiMesh instances, not AnimatableBody3D roots, so no rider inherits
+	## anything from the write — and at 10 Hz the step is ~16 cm, invisible on
+	## an object 70 m up.
+	_wx_silence = 0.0
+	if int(state.get("k", 1)) < 0:
+		_drop_remote_storms()
+		return
+	var wanted: Array = state.get("s", [])
+	var wanted_seeds: Dictionary = {}
+	for entry: Dictionary in wanted:
+		wanted_seeds[int(entry["sd"])] = entry["p"]
+	# Drop first: our own pre-join storms and replays the master no longer
+	# names. Each is replaced with a fresh fair cloud IN PLACE, so the sky
+	# keeps its density and nothing pops.
+	for cloud: Dictionary in _clouds.duplicate():
+		if not bool(cloud["is_storm"]):
+			continue
+		if bool(cloud.get("remote", false)) and wanted_seeds.has(int(cloud["sd"])):
+			continue
+		_replace_with_fair(cloud)
+	# Build or snap what the master names.
+	for entry: Dictionary in wanted:
+		var found: Dictionary = {}
+		for cloud: Dictionary in _clouds:
+			if bool(cloud["is_storm"]) and bool(cloud.get("remote", false)) \
+					and int(cloud["sd"]) == int(entry["sd"]):
+				found = cloud
+				break
+		if not found.is_empty():
+			found["center"] = entry["p"]
+			continue
+		var storm: Dictionary = _build_storm_cloud(int(entry["sd"]))
+		storm["center"] = entry["p"]
+		storm["remote"] = true
+		if _clouds.size() >= CLOUD_COUNT:
+			# The pool is fixed at CLOUD_COUNT (the MultiMesh is allocated for
+			# exactly that many): steal a fair slot rather than growing it.
+			var victim: Dictionary = {}
+			for cloud: Dictionary in _clouds:
+				if not bool(cloud["is_storm"]):
+					victim = cloud
+					break
+			if victim.is_empty():
+				continue           # no fair slot — unreachable under the
+				                   # MAX_WX_STORMS bound, and growing the pool
+				                   # would overflow the MultiMesh either way
+			_clouds[_clouds.find(victim)] = storm
+		else:
+			_clouds.append(storm)
+
+
+func _replace_with_fair(cloud: Dictionary) -> void:
+	## Swap one dropped storm for a fresh fair-weather cloud at the same
+	## centre: the sky keeps its density, the position stays continuous, and —
+	## rolled through `_make_cloud()` on a non-master — it is fair by
+	## construction. The flag write below is the belt for a manager driven
+	## outside a room (a harness, or the master before its first packet),
+	## where the roll above could honestly come back dark.
+	var fresh: Dictionary = _make_cloud()
+	fresh["center"] = cloud["center"]
+	fresh["is_storm"] = false
+	fresh["radius"] = 0.0
+	_clouds[_clouds.find(cloud)] = fresh
+
+
+func _drop_remote_storms() -> void:
+	## Free every storm we are only replaying (plus any local storm a
+	## non-master should never have held), each replaced fair in place. Whoever
+	## clears the sky, it is our own roll next: the event that re-arms is the
+	## ordinary recycle, which on a non-master can only come back fair.
+	for cloud: Dictionary in _clouds.duplicate():
+		if bool(cloud["is_storm"]):
+			_replace_with_fair(cloud)
+
+
+func _tick_remote_weather(elapsed: float) -> void:
+	## Age the replay lease one throttled tick; on REMOTE_WEATHER_TIMEOUT free
+	## it. Runs only while replayed storms are held, so solo play and the
+	## master pay one scan of a stormless field per tick — nothing.
+	var held := false
+	for cloud: Dictionary in _clouds:
+		if bool(cloud["is_storm"]) and bool(cloud.get("remote", false)):
+			held = true
+			break
+	if not held:
+		_wx_silence = 0.0
+		return
+	_wx_silence += elapsed
+	if _wx_silence > REMOTE_WEATHER_TIMEOUT:
+		# The master went quiet — it cleared its sky, was deposed, or we left
+		# the room. All three are this one test (see REMOTE_WEATHER_TIMEOUT).
+		_drop_remote_storms()
+		_wx_silence = 0.0

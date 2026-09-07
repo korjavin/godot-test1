@@ -2113,6 +2113,15 @@ master on a build without the verb publishes nothing and its peers see no fauna 
 Animals still join no group, still carry no gameplay body, and are still manager-parented.
 Rows 1-5 of `fauna_selfcheck` are unchanged; row 6 pins the replay.
 
+**AND THE STORMS** (bead `godot-test1-vej`): rain gates Windman's Air Rush, so a
+storm is gameplay and the room shares one sky on the herd's shape —
+`weather_sync_state()` / `apply_weather_sync()` wholesale on the croc-sync tick
+as `wx`, `_build_storm_cloud()` off the packet seed, a non-master rolls no
+storms, `REMOTE_WEATHER_TIMEOUT` frees the replay. Clear clouds and birds stay
+per-peer cosmetic. This is replay, not seeding — the "don't wire them into the
+seed" rule above stays true. Documented ceiling: a master on an older build
+publishes nothing and its peers draw no storms at all.
+
 Weather exposes `is_raining_at(pos)`; the player uses it through one null-safe helper —
 Windman can't launch in rain and loses an active boost on entering one.
 
@@ -2558,6 +2567,13 @@ The sharpest rules, in rough order of how badly they bite:
   sync it CREATES AND FREES NOTHING: `fauna_manager.gd` owns the animals at both ends and
   owns the silence timeout that frees a replay, which is why this needed no leave hook and
   no master-changed hook. See the fauna section for the four rules.
+- **The shared STORMS are master-simulated and replayed, on one packet per tick** (bead
+  `godot-test1-vej`). The `wx` verb is master-only, unreliable, sent on the existing
+  croc-sync tick beside `herd`, and carries per storm the build seed plus the live centre
+  — `{"k": -1}` being the all-clear. Like the herd sync it CREATES AND FREES NOTHING:
+  `weather_manager.gd` owns the clouds at both ends and owns the silence timeout that
+  frees a replay, which is why this needed no leave hook and no master-changed hook. See
+  the weather section for the rules; clear clouds and birds stay local.
 - The stall heartbeat rides the lobby relay, not the mesh, because a throttled tab stops
   polling both.
 
