@@ -522,6 +522,17 @@ var entered: bool = false
 ## `TowerInterior`. THEY ARE PERSISTED VERBATIM, so adding one is free and
 ## renaming one is a save migration.
 var opened: Dictionary = {}
+## Ids THIS peer earned — persisted, and the set the local earn sites gate on
+## (review round 1, minor). A teammate's opening lands in `opened` only, so a
+## gate that stands open because the room opened it can still be earned here:
+## working its pad persists it, and leaving the room drops it from `opened`
+## but never from the profile it just joined. Rebuilt from the profile beside
+## `opened` on every hydration, so the two agree whenever no room is involved.
+var earned: Dictionary = {}
+## A leave that happened while the player was still inside the walls (review
+## round 1, critical): the room's ids stay open until the interior's tick sees
+## the player outside. See `defer_room_close()` / `poll_pending_room_close()`.
+var _room_close_pending: bool = false
 
 ## Albedo colour -> the one material of that colour, for the whole process.
 ##
@@ -880,6 +891,7 @@ func _enter_tree() -> void:
 	"""
 	for id: String in BestRunStore.tower_opened_ids():
 		opened[id] = true
+		earned[id] = true
 	var mp := get_tree().get_first_node_in_group("mp")
 	if mp != null and mp.has_method("absorbed_opened_ids"):
 		for gid: Variant in (mp.call("absorbed_opened_ids") as Array):
@@ -890,15 +902,45 @@ func _enter_tree() -> void:
 
 func rehydrate_opened_from_profile() -> void:
 	"""
-	Forget the room and remember the profile. Called by the manager's
-	`leave()` — the one path that clears the room mirror — so ids a teammate
-	opened fall closed again while this peer's own (earned, persisted) stay
-	open. The caller re-runs the interior's `_apply_opened()`, which snaps
-	shut what this drops; this function only moves the set.
+	Forget the room and remember the profile. Called when the room's gates
+	may fall closed — ids a teammate opened drop out while this peer's own
+	(earned, persisted) stay. The caller re-runs the interior's
+	`_apply_opened()`, which snaps shut what this drops; this function only
+	moves the sets. Both of them: `earned` is rebuilt from the profile too,
+	so a re-earn after the close writes through again.
 	"""
 	opened.clear()
+	earned.clear()
 	for id: String in BestRunStore.tower_opened_ids():
 		opened[id] = true
+		earned[id] = true
+
+
+func defer_room_close() -> void:
+	"""
+	Remember that the room ended while the player was still inside the walls.
+	The close itself waits: snapping gates shut under a player standing in
+	this building seals rooms whose pads sit on the far side of their own
+	doors (review round 1, critical — a softlock). The interior's per-frame
+	tick runs the close the moment the player is outside, through
+	`poll_pending_room_close()`; until then the room's ids stay OPEN here
+	(and unsaved — nothing about the deferral touches the profile).
+	"""
+	_room_close_pending = true
+
+
+func poll_pending_room_close(player_outside: bool) -> bool:
+	"""
+	Run a deferred leave-close once the player is out. Returns true when it
+	fired — the caller must re-run the interior's `_apply_opened()` (and its
+	trigger re-scan), because that is what turns the dropped ids into shut
+	geometry. False while still inside, or when nothing is pending.
+	"""
+	if not _room_close_pending or not player_outside:
+		return false
+	_room_close_pending = false
+	rehydrate_opened_from_profile()
+	return true
 
 
 func mark_opened(id: String, publish: bool = true, persist: bool = true) -> void:
@@ -917,15 +959,22 @@ func mark_opened(id: String, publish: bool = true, persist: bool = true) -> void
 	with nothing to batch and everything to lose by deferring it to a flush
 	a crash can eat.
 
-	WRITES THROUGH IMMEDIATELY, on the opening only (when `persist`). The
+	WRITES THROUGH IMMEDIATELY, on the earning only (when `persist`). The
 	early return is what keeps it off any repeated path: re-marking an open gate,
 	including every id this shell just hydrated, touches no disk at all.
+
+	PERSIST FIRST, THEN OPEN (review round 1, minor): a gate the room opened
+	is already in `opened` but not in `earned`, so an earn site that gates on
+	`is_earned()` still reaches this write — earning what you worked even
+	though a teammate got there first. `persist = false` (every absorb path)
+	records nothing anywhere but `opened`.
 	"""
+	if persist and not earned.has(id):
+		BestRunStore.merge_tower_opened_ids([id])
+		earned[id] = true
 	if opened.has(id):
 		return
 	opened[id] = true
-	if persist:
-		BestRunStore.merge_tower_opened_ids([id])
 	# MULTIPLAYER (bead godot-test1-d81): the room replays this opening. One
 	# reliable `gate` verb on the OPENING ONLY — the early return above is what
 	# keeps re-marking (and hydration, which writes `opened` directly and never
@@ -961,6 +1010,21 @@ func is_opened(id: String) -> bool:
 	@return: true once `mark_opened` has been called for it.
 	"""
 	return opened.has(id)
+
+
+func is_earned(id: String) -> bool:
+	"""
+	Did THIS peer earn this gate — as opposed to the room opening it?
+
+	@param id: One of `TowerInterior`'s `GATE_*` constants.
+	@return: true once a persisting `mark_opened` has recorded it.
+
+	The set the local earn sites gate on (review round 1, minor): `opened`
+	answers "is it open", which a teammate can cause; `earned` answers "did
+	we work it", which only this peer's pads can. False for a room-opened id
+	until its pad is worked — which is what persists it.
+	"""
+	return earned.has(id)
 
 
 func opened_ids() -> Array:

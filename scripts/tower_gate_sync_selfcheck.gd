@@ -122,6 +122,12 @@ func _run() -> void:
 	if failure.is_empty():
 		failure = await _check_leave_closes_room_gates()
 	if failure.is_empty():
+		failure = await _check_leave_inside_defers_close()
+	if failure.is_empty():
+		failure = await _check_earn_while_room_open()
+	if failure.is_empty():
+		failure = await _check_rescan_refires_triggers()
+	if failure.is_empty():
 		failure = await _check_absorbed_never_persists()
 	if failure.is_empty():
 		failure = await _check_drain_publishes_own_only()
@@ -821,12 +827,13 @@ func _check_batch_persists_once() -> String:
 
 func _check_leave_closes_room_gates() -> String:
 	"""
-	13. LEAVE FALLS THE ROOM'S GATES CLOSED (bead godot-test1-crk). While in
-	the room a teammate's ids open this shell — the mass retires, the lift
-	offers the stop. The shipped `leave()` re-hydrates the shell from the
-	profile alone and re-runs `_apply_opened()`: the teammate's ids close
-	(mass BACK, stop no longer offered) while this peer's own earned opening
-	stays open, lit and persisted.
+	13. LEAVE OUTSIDE FALLS THE ROOM'S GATES CLOSED (bead godot-test1-crk).
+	While in the room a teammate's ids open this shell — the mass retires,
+	the lift offers the stop. The shipped `leave()` re-hydrates the shell
+	from the profile alone and re-runs `_apply_opened()`: the teammate's ids
+	close (mass BACK, stop no longer offered) while this peer's own earned
+	opening stays open, lit and persisted. No player node exists in this
+	probe, which reads as outside — the inside case is probe 13b.
 	"""
 	TowerProbe.fresh_store()
 	var shell := await TowerProbe.make_tower(self)
@@ -902,6 +909,212 @@ func _check_leave_closes_room_gates() -> String:
 	mp.queue_free()
 	await TowerProbe.clear(self, null, shell)
 	Sentinel.done("leave_closes_room_gates")
+	return ""
+
+
+func _check_leave_inside_defers_close() -> String:
+	"""
+	13b. LEAVE INSIDE HOLDS THE GATES OPEN (review round 1, critical): snapping
+	gates shut under a player standing in the HQ seals rooms whose pads sit on
+	the far side of their own doors — a softlock, and `leave()` is also reached
+	involuntarily from `_on_lobby_closed`. So `leave()` with the local player
+	inside the walls only parks the close on the shell: the teammate's ids stay
+	OPEN (and unsaved), and the interior's per-frame tick runs the re-hydrate +
+	close-snap the moment the player is outside. Exiting the walls is driven
+	here by moving the body and calling the shipped `_tick_room_close()`
+	directly — the tick is the transition, not the frame that carries it.
+	"""
+	TowerProbe.fresh_store()
+	var shell := await TowerProbe.make_tower(self)
+	var interior := shell.get_node_or_null("TowerInterior")
+	if interior == null:
+		await TowerProbe.clear(self, null, shell)
+		return "the tower has no TowerInterior child — the deferral probe has no subject"
+	# The local player, standing in the building's middle.
+	var player := Node3D.new()
+	player.add_to_group("player")
+	root.add_child(player)
+	player.global_position = interior.global_position
+	await process_frame
+	var mp: Node = MPManager.new()
+	root.add_child(mp)
+	mp.set("lobby_only", true)
+	mp._on_lobby_joined("us", "ROOM", "themaster", ["themaster", "us"])
+	mp._receive_gate("peerA", {"t": "gate", "id": TowerInterior.GATE_IDENTITY})
+	if not shell.is_opened(TowerInterior.GATE_IDENTITY):
+		player.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the room's opening never reached the shell — the deferral probe measured no setup"
+	# LEAVE WHILE INSIDE, through the shipped teardown.
+	mp.leave()
+	if not shell.is_opened(TowerInterior.GATE_IDENTITY):
+		player.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "leave snapped a teammate's gate shut under a player inside the HQ — sealed rooms softlock"
+	if float(interior.get("_mass_open")) != 1.0:
+		player.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "leave retired the mass with the player inside — the deferral held the set but not the geometry"
+	if BestRunStore.tower_opened_ids().has(TowerInterior.GATE_IDENTITY):
+		player.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the deferred close persisted the room's id — the deferral holds geometry open, never persistence"
+	# OUT THROUGH THE DOOR: the shipped tick fires the close on the first
+	# frame outside.
+	player.global_position = interior.global_position + Vector3(5000.0, 0.0, 0.0)
+	await process_frame
+	interior._tick_room_close()
+	if shell.is_opened(TowerInterior.GATE_IDENTITY):
+		player.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "exiting the walls left the teammate's gate open — the deferred close never fired"
+	if float(interior.get("_mass_open")) != 0.0:
+		player.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "exiting the walls dropped the id but the mass never came back — the deferred snap opens only"
+	if BestRunStore.tower_opened_ids().has(TowerInterior.GATE_IDENTITY):
+		player.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the deferred close wrote the room's id to the profile — it must fall closed unsaved"
+	player.queue_free()
+	mp.queue_free()
+	await TowerProbe.clear(self, null, shell)
+	Sentinel.done("leave_inside_defers_close")
+	return ""
+
+
+func _check_earn_while_room_open() -> String:
+	"""
+	13c. A GATE THE ROOM OPENED CAN STILL BE EARNED (review round 1, minor).
+	The shell keeps `earned` beside `opened`, and the earn sites gate on it:
+	working a pad (or trigger) the room already opened persists the id all
+	the same. Driven two ways — the one-shot enter handlers directly, with a
+	player body, and the polled pad sites by text-scan in the suite's
+	voice_selfcheck idiom (their pad-overlap state is not drivable headless).
+	"""
+	TowerProbe.fresh_store()
+	var shell := await TowerProbe.make_tower(self)
+	var interior := shell.get_node_or_null("TowerInterior")
+	if interior == null:
+		await TowerProbe.clear(self, null, shell)
+		return "the tower has no TowerInterior child — the earn probe has no subject"
+	var mp: Node = MPManager.new()
+	root.add_child(mp)
+	# Teammate opens the checkpoint and the maze stop; neither is earned here.
+	mp._receive_gate("peerA", {"t": "gate", "id": TowerInterior.GATE_CHECKPOINT})
+	mp._receive_gate("peerA", {"t": "gate", "id": TowerGraph.ENTRY_LIFT_MAZE})
+	if not shell.is_opened(TowerInterior.GATE_CHECKPOINT):
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the room's opening never reached the shell — the earn probe measured no setup"
+	if bool(shell.call("is_earned", TowerInterior.GATE_CHECKPOINT)):
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "a room-opened id reads as earned — the two sets are not distinguished"
+	var body := Node3D.new()
+	body.add_to_group("player")
+	root.add_child(body)
+	# Standing on the open checkpoint earns it: the store gains exactly it.
+	interior._on_checkpoint_enter(body)
+	if not BestRunStore.tower_opened_ids().has(TowerInterior.GATE_CHECKPOINT):
+		body.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "working an open checkpoint persisted nothing — the earn site gates on room-open"
+	# ...and the maze stop the same way.
+	interior._on_lift_stop_enter(body)
+	if not BestRunStore.tower_opened_ids().has(TowerGraph.ENTRY_LIFT_MAZE):
+		body.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "working an open lift stop persisted nothing — the earn site gates on room-open"
+	# Earning twice writes once: with the profile deleted, a second visit that
+	# wrote anything would recreate it — mtime cannot count within one second.
+	DirAccess.remove_absolute(BestRunStore.config_path)
+	interior._on_checkpoint_enter(body)
+	if FileAccess.file_exists(BestRunStore.config_path):
+		body.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "re-entering an earned checkpoint recreated a deleted profile — the earn is not exactly-once"
+	# The polled sites cannot be driven headless (pad-overlap state), so they
+	# are pinned by scan: every earn site must read `is_earned`, never bare
+	# open state.
+	var interior_source: String = FileAccess.get_file_as_string("res://scripts/tower_interior.gd")
+	if interior_source.is_empty():
+		body.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "could not read res://scripts/tower_interior.gd to pin the earn gates"
+	for anchor: String in ["_is_earned(GATE_IDENTITY)", "_is_earned(GATE_DEMAND)", "_is_earned(gid)"]:
+		if not interior_source.contains(anchor):
+			body.queue_free()
+			mp.queue_free()
+			await TowerProbe.clear(self, null, shell)
+			return "no earn site gates on %s — a pad the room opened earns nothing" % anchor
+	body.queue_free()
+	mp.queue_free()
+	await TowerProbe.clear(self, null, shell)
+	Sentinel.done("earn_while_room_open")
+	return ""
+
+
+func _check_rescan_refires_triggers() -> String:
+	"""
+	13d. THE TRIGGER RE-SCAN (review round 1, minor). `body_entered` fires on
+	crossing only, so a close-snap that un-lights a checkpoint under a
+	standing player would leave a dark plate no re-entry can light — the
+	enter already fired. `_rescan_triggers()` re-runs the enter handlers for
+	the player standing inside, located by pure geometry (position against
+	the trigger's own AABB — overlap lists read empty headless); the
+	handlers' own earned-gates keep it safe. A body 500 m away must earn
+	nothing; a body on the shut plate earns and lights it.
+	"""
+	TowerProbe.fresh_store()
+	var shell := await TowerProbe.make_tower(self)
+	var interior := shell.get_node_or_null("TowerInterior")
+	if interior == null:
+		await TowerProbe.clear(self, null, shell)
+		return "the tower has no TowerInterior child — the rescan probe has no subject"
+	var trigger := interior.find_child("CheckpointTrigger", true, false) as Area3D
+	if trigger == null:
+		await TowerProbe.clear(self, null, shell)
+		return "the tower built no CheckpointTrigger — the rescan has no subject"
+	# A plain Node3D in group "player": the rescan is pure geometry (position
+	# against the trigger's own AABB), so no physics body, no settle, and no
+	# dependence on overlap lists — which read empty headless.
+	var body := Node3D.new()
+	body.add_to_group("player")
+	root.add_child(body)
+	# Negative control first: far outside the box, the rescan must earn
+	# nothing — otherwise it fires unconditionally and proves no routing.
+	body.global_position = (trigger as Node3D).global_position + Vector3(500.0, 0.0, 0.0)
+	interior._rescan_triggers()
+	if BestRunStore.tower_opened_ids().has(TowerInterior.GATE_CHECKPOINT):
+		body.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the rescan earned a checkpoint for a body 500 m away — it fires unconditionally"
+	# Standing on the shut plate: earns and lights it through the rescan alone.
+	body.global_position = (trigger as Node3D).global_position
+	interior._rescan_triggers()
+	if not BestRunStore.tower_opened_ids().has(TowerInterior.GATE_CHECKPOINT):
+		body.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the rescan earned nothing for a body standing on a shut checkpoint — the plate stays dark"
+	if not shell.is_opened(TowerInterior.GATE_CHECKPOINT):
+		body.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the rescan persisted without opening — state did not become geometry"
+	body.queue_free()
+	await TowerProbe.clear(self, null, shell)
+	Sentinel.done("rescan_refires_triggers")
 	return ""
 
 

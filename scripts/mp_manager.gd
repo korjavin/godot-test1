@@ -3209,20 +3209,38 @@ func _close_room_gates() -> void:
 	persisted) stay — then the built interior re-runs `_apply_opened()`,
 	which snaps shut what the set lost and brings the mass back.
 
+	NEVER WHILE THE PLAYER IS INSIDE (review round 1, critical): snapping
+	gates shut under a player standing in this building seals rooms whose
+	pads sit on the far side of their own doors — a softlock, and `leave()`
+	is also reached involuntarily from `_on_lobby_closed`. Inside, the close
+	is DEFERRED to the shell flag the interior's per-frame tick runs the
+	moment the player is outside (`defer_room_close`, `poll_pending_room_close`
+	— the two-phase rule, documented on the shell). Either way the ids stay
+	unsaved from this moment on: the deferral holds geometry open, never
+	persistence.
+
 	`leave()` is the one path that clears the mirror, so it is the one place
 	this runs: there is no silence or master-changed leg for gates (the 2 Hz
 	repair only ever ADDS through the same absorb). Once per leave, never on
 	a tick — no re-apply storm (d81 round 3). Either node may be absent (no
-	shell streamed in, interior never built): both lookups are guarded, and
-	an offline leave is a no-op — the set is already profile-only.
+	shell streamed in, interior never built): all lookups are guarded, and an
+	offline leave is a no-op — the set is already profile-only.
 	"""
 	var tower := get_tree().get_first_node_in_group("tower")
 	if tower == null or not tower.has_method("rehydrate_opened_from_profile"):
 		return
+	var interior := get_tree().get_first_node_in_group("tower_interior") as Node3D
+	var player := get_tree().get_first_node_in_group("player") as Node3D
+	if interior != null and player != null \
+			and TowerInterior.inside_walls(player.global_position - interior.global_position):
+		if tower.has_method("defer_room_close"):
+			tower.defer_room_close()
+		return
 	tower.rehydrate_opened_from_profile()
-	var interior := get_tree().get_first_node_in_group("tower_interior")
 	if interior != null and interior.has_method("_apply_opened"):
 		interior._apply_opened()
+		if interior.has_method("_rescan_triggers"):
+			interior._rescan_triggers()
 
 
 func absorbed_opened_ids() -> Array:

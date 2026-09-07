@@ -2029,6 +2029,7 @@ func _process(delta: float) -> void:
 	_tick_press(delta)
 	_tick_gates(delta)
 	_tick_pads()
+	_tick_room_close()
 	_tick_lure_pads(delta)
 	_tick_purge(delta)
 	TowerDossiers.tick(self, delta)
@@ -2047,6 +2048,12 @@ func _is_open(id: String) -> bool:
 	"""Has this gate id been opened this run? False when there is no tower above us."""
 	var tower := _tower()
 	return tower != null and bool(tower.call("is_opened", id))
+
+
+func _is_earned(id: String) -> bool:
+	"""Did THIS peer earn this gate, as opposed to the room opening it? False with no tower. The earn sites gate on this, never on `_is_open` (review round 1, minor): a gate that stands open because a teammate opened it must still be earnable here."""
+	var tower := _tower()
+	return tower != null and tower.has_method("is_earned") and bool(tower.call("is_earned", id))
 
 
 func _open(id: String) -> void:
@@ -2254,7 +2261,7 @@ func _tick_pads() -> void:
 	var identity_gate := TowerGraph.gate(GATE_IDENTITY)
 	var named_identity := String(identity_gate.get("class", "")) == TowerGraph.CLASS_IDENTITY
 	var hero_matches := not named_identity or _hero_name() == TowerGraph.identity_of(GATE_IDENTITY)
-	if (_on_identity_pad and hero_matches and not _is_open(GATE_IDENTITY)):
+	if (_on_identity_pad and hero_matches and not _is_earned(GATE_IDENTITY)):
 		_open(GATE_IDENTITY)
 		_say(tr("The mass lifts. The way through stays open."))
 		_sfx("play_level_up")
@@ -2263,7 +2270,7 @@ func _tick_pads() -> void:
 	if not _on_demand_pad:
 		return
 	_update_bands()
-	if not _is_open(GATE_DEMAND) and demand_met(_phase_reach()):
+	if not _is_earned(GATE_DEMAND) and demand_met(_phase_reach()):
 		_open(GATE_DEMAND)
 		_say(tr("Calibration met. The vault opens."))
 		_sfx("play_level_up")
@@ -2286,7 +2293,7 @@ func _tick_riddle_pads() -> void:
 		if now == int(_riddle_last.get(gid, 0)):
 			continue
 		_riddle_last[gid] = now
-		if now > 0 and not _is_open(gid):
+		if now > 0 and not _is_earned(gid):
 			_press_riddle(gid, now)
 
 
@@ -2307,7 +2314,7 @@ func _press_riddle(gate_id: String, digit: int) -> void:
 	if answer.is_empty():
 		return
 	# A COMPLETED SEQUENCE THAT NEVER GOT RECORDED starts again from the top rather
-	# than indexing past the end. `_tick_riddle_pads` skips an OPEN gate, and the
+	# than indexing past the end. `_tick_riddle_pads` skips an EARNED gate, and the
 	# open state lives on the shell (`_open` / `_is_open`) — so an interior built
 	# with no tower above it, which is exactly what a self-check does, finishes the
 	# answer, records nothing, and comes back here with `step` at `answer.size()`.
@@ -2424,6 +2431,75 @@ func _unlight_checkpoint() -> void:
 	"""Swap them back: a room-only checkpoint falls closed on leave (bead godot-test1-crk). Idempotent."""
 	for mesh: MeshInstance3D in _checkpoint_meshes:
 		mesh.material_override = _material(COLOR_CHECKPOINT)
+
+
+func _tick_room_close() -> void:
+	"""
+	Run a deferred leave-close once the player is out of the walls (review
+	round 1, critical): `leave()` while inside only parks the flag on the
+	shell — snapping gates shut under the player seals rooms whose pads sit
+	on the far side of their own doors. The tick is the leave-the-HQ
+	transition: first frame outside, the shell re-hydrates from the profile
+	alone, `_apply_opened()` shuts what the room opened, and the trigger
+	re-scan hands back one-shots a body already standing in.
+
+	Costs one method call while nothing is pending. A missing player reads
+	as outside — nobody to trap — and a missing tower reads as nothing to do.
+	"""
+	var tower := _tower()
+	if tower == null or not tower.has_method("poll_pending_room_close"):
+		return
+	var outside := true
+	if _player != null:
+		outside = not TowerInterior.inside_walls(_player.global_position - global_position)
+	if bool(tower.call("poll_pending_room_close", outside)):
+		_apply_opened()
+		_rescan_triggers()
+
+
+func _rescan_triggers() -> void:
+	"""
+	Re-fire one-shot enter handlers for the player already standing inside
+	their volumes (review round 1, minor). `body_entered` fires on crossing
+	only, so after a close-snap un-lights a checkpoint (or withdraws a lift
+	stop) under a standing player, nothing would ever re-fire it — the plate
+	goes dark and the reason is invisible. The handlers' own earned-gates
+	keep this safe: a body standing on an earned id re-runs a handler that
+	returns at once.
+
+	Pure geometry, deliberately NOT `get_overlapping_bodies()`: the player's
+	position tested against the trigger's own AABB (transform x BoxShape
+	size). Overlap lists need physics steps to settle and read empty
+	headless; the AABB answers the same question deterministically, in the
+	check and in production alike.
+
+	Called after the two close-snaps (leave-outside, deferred tick) — never
+	on an open, never on a build, so the steady state pays nothing.
+	"""
+	var player := get_tree().get_first_node_in_group("player") as Node3D
+	if player == null:
+		return
+	_refire_if_inside("CheckpointTrigger", "_on_checkpoint_enter", player)
+	_refire_if_inside("LiftStopTrigger", "_on_lift_stop_enter", player)
+
+
+func _refire_if_inside(trigger_name: String, handler: StringName, player: Node3D) -> void:
+	"""Run an enter handler when the player stands inside the named trigger's box."""
+	var trigger := find_child(trigger_name, true, false) as Area3D
+	if trigger == null:
+		return
+	var box: BoxShape3D = null
+	for child: Node in trigger.get_children():
+		var shape_node := child as CollisionShape3D
+		if shape_node != null and shape_node.shape is BoxShape3D:
+			box = shape_node.shape as BoxShape3D
+			break
+	if box == null:
+		return
+	var local: Vector3 = trigger.global_transform.affine_inverse() * player.global_position
+	var half: Vector3 = box.size * 0.5
+	if absf(local.x) <= half.x and absf(local.y) <= half.y and absf(local.z) <= half.z:
+		call(handler, player)
 
 
 # ============================================================================
@@ -3065,7 +3141,7 @@ func _tick_spine_pads() -> void:
 		if not bool(_on_spine_pad.get(gid, false)):
 			continue
 		var wants := TowerGraph.identity_of(gid)
-		if _is_open(gid):
+		if _is_earned(gid):
 			_say_spine(tr("This way is open."))
 			continue
 		if here != wants:
@@ -3534,7 +3610,7 @@ func _on_checkpoint_enter(body: Node3D) -> void:
 	checkpoint is: a stop the tower remembers you reached. Phase 5 persists all
 	three through one union merge precisely because they are one kind of thing.
 	"""
-	if not body.is_in_group("player") or _is_open(GATE_CHECKPOINT):
+	if not body.is_in_group("player") or _is_earned(GATE_CHECKPOINT):
 		return
 	_open(GATE_CHECKPOINT)
 	_light_checkpoint()
@@ -3553,7 +3629,7 @@ func _on_lift_stop_enter(body: Node3D) -> void:
 	lift menu states properly anyway — it lists this floor from the moment this
 	line runs.
 	"""
-	if not body.is_in_group("player") or _is_open(TowerGraph.ENTRY_LIFT_MAZE):
+	if not body.is_in_group("player") or _is_earned(TowerGraph.ENTRY_LIFT_MAZE):
 		return
 	_open(TowerGraph.ENTRY_LIFT_MAZE)
 	_sfx("play_level_up")
