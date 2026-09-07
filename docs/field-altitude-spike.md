@@ -4,17 +4,18 @@ Bead `godot-test1-ope.1`, epic `godot-test1-ope`. This file is the SPIKE's repor
 its acceptance artifact: what was built, the answers taken, the red-check list, the
 numbers, and the migration order the epic's consumer beads are filed from.
 
-**The flag ships `false`.** `FIELD_ALTITUDE` in `scripts/endless_terrain.gd` and
-`alt_enabled` in `assets/shaders/ground.gdshader` are both inert in the committed
-tree, and `altitude_selfcheck` asserts that in the merged branch. Nothing below is a
-shipped feature. **This is a measurement.**
+**The flag ships `false`.** `FIELD_ALTITUDE` in `scripts/terrain_altitude.gd` (aliased
+on `scripts/endless_terrain.gd`) and `alt_enabled` in `assets/shaders/ground.gdshader`
+are both inert in the committed tree, and `altitude_selfcheck` asserts that in the
+merged branch. Nothing below is a shipped feature. **This is a measurement.**
 
 ## What was built
 
 A vertex-displaced heightfield with a CPU twin, four forced-flat authored zones, a
 matching ground collision shape, and one self-check that pins all of it.
 
-- **`height_at(x, z)`** in `endless_terrain.gd` — a pure function of `(x, z, run_seed)`
+- **`height_at(x, z)`** in `scripts/terrain_altitude.gd` (forwarded on
+  `scripts/endless_terrain.gd`) — a pure function of `(x, z, run_seed)`
   with `if not FIELD_ALTITUDE: return 0.0` as its first line. Two octaves of the
   project's ONE lattice hash (`_biome_hash2` / `_biome_value_noise`, reused, not
   re-spelled) on altitude's own domain (`ALT_CELL_SIZE` 260 m, `ALT_OFFSET_SALT`, so
@@ -137,7 +138,7 @@ Four things hold it, and each is an assertion rather than a convention.
    `endless_terrain.gd`, and every one pushed must be declared, matched as a
    declaration regex rather than a substring. `ALT_ROAD_SEG_MAX` in the shader must be
    ≥ the GDScript's. Its value leg is **derived, not listed** — a pushed `alt_foo`
-   whose upper-cased name is an `endless_terrain.gd` constant must equal it — so a
+   whose upper-cased name is a `scripts/terrain_altitude.gd` constant must equal it — so a
    uniform added tomorrow is covered the day it lands, and the three that cannot
    follow the convention are named in the code with reasons. Mutation-tested: dropping
    one push and re-packing the road array as `(x, z, dx, dz)` both go red.
