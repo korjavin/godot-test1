@@ -67,6 +67,7 @@ extends SceneTree
 ## failure — same note as enemy_spawn_selfcheck.gd's header.
 
 const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
+const ALTITUDE_SCRIPT: String = "res://scripts/terrain_altitude.gd"
 
 ## THE END-OF-CHECK SENTINEL — see scripts/selfcheck_sentinel.gd.
 const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
@@ -330,9 +331,9 @@ func _check_fp32_parity() -> void:
 		for i in SAMPLES:
 			var x := rng.randf_range(-SAMPLE_HALF, SAMPLE_HALF)
 			var z := rng.randf_range(-SAMPLE_HALF, SAMPLE_HALF)
-			var p: Vector2 = Vector2(x, z) / t.ALT_CELL_SIZE + t.biome_offset + t.ALT_OFFSET_SALT
+			var p: Vector2 = Vector2(x, z) / TerrainAltitude.ALT_CELL_SIZE + t.biome_offset + TerrainAltitude.ALT_OFFSET_SALT
 
-			var shipped: float = t._alt_value_noise_pair(p)
+			var shipped: float = TerrainAltitude._alt_value_noise_pair(t, p)
 			var oracle: float = _oracle_pair_f32(p, t)
 			if shipped != oracle:
 				noise_mismatches += 1
@@ -344,7 +345,7 @@ func _check_fp32_parity() -> void:
 			# check 2 is about the NOISE PORT, and check 3 is the mask's own
 			# assertion (with its own negative control). Re-deriving the four zones
 			# here would buy a second copy of them and no extra coverage.
-			var flat: float = t._alt_flat_mask(x, z, t._biome_noise(x, z))
+			var flat: float = TerrainAltitude._alt_flat_mask(t, x, z, t._biome_noise(x, z))
 			var expected: float = (oracle - 0.5) * 2.0 * amp * flat
 			var got: float = t.height_at(x, z)
 			var delta := absf(got - expected)
@@ -409,7 +410,7 @@ func _check_flat_zones() -> void:
 		var city_out: Array[Vector2] = []
 		for i in FLAT_SAMPLES:
 			city_out.append(Vector2(
-					city.position.x - t.ALT_CITY_SKIRT - rng.randf_range(1.0, FLAT_CONTROL_MARGIN),
+					city.position.x - TerrainAltitude.ALT_CITY_SKIRT - rng.randf_range(1.0, FLAT_CONTROL_MARGIN),
 					rng.randf_range(city.position.y, city.end.y)))
 		_assert_alive(t, seed_value, "budapest", city_out)
 
@@ -426,7 +427,7 @@ func _check_flat_zones() -> void:
 		_assert_flat(t, seed_value, "hq disc", disc)
 		var disc_out: Array[Vector2] = []
 		for i in FLAT_SAMPLES:
-			var r2: float = t.TOWER_RADIUS + t.ALT_TOWER_SKIRT + rng.randf_range(1.0, FLAT_CONTROL_MARGIN)
+			var r2: float = t.TOWER_RADIUS + TerrainAltitude.ALT_TOWER_SKIRT + rng.randf_range(1.0, FLAT_CONTROL_MARGIN)
 			var a2: float = rng.randf_range(0.0, TAU)
 			disc_out.append(centre + Vector2(cos(a2), sin(a2)) * r2)
 		_assert_alive(t, seed_value, "hq disc", disc_out)
@@ -444,7 +445,7 @@ func _check_flat_zones() -> void:
 			var offset: float = absf(t._biome_noise(q.x, q.y) - t.RIVER_LEVEL)
 			if offset < t.RIVER_HALF_WIDTH and wet.size() < FLAT_SAMPLES:
 				wet.append(q)
-			elif offset > t.RIVER_HALF_WIDTH * t.ALT_RIVER_SKIRT_K * 2.0 and dry.size() < FLAT_SAMPLES:
+			elif offset > t.RIVER_HALF_WIDTH * TerrainAltitude.ALT_RIVER_SKIRT_K * 2.0 and dry.size() < FLAT_SAMPLES:
 				dry.append(q)
 		if wet.size() < FLAT_SAMPLES:
 			_fail("seed %d: only found %d/%d river-band points in %d tries — the sampler, not the mask" % [
@@ -471,10 +472,9 @@ func _check_flat_zones() -> void:
 		# THE SHIPPED REFRESH SEAM IS DRIVEN, not bypassed: the corridor is measured
 		# against the COARSE polyline _alt_road_refresh() caches on a chunk-boundary
 		# crossing, so a check that sampled height_at() without it would be asserting
-		# against an empty window (INF distance, no corridor at all) and would pass
 		# for the wrong reason. Centred on the origin, which the ±240 m of stations
 		# below sit well inside of _alt_road_window() from.
-		t._alt_road_refresh(0.0)
+		TerrainAltitude._alt_road_refresh(t, 0.0)
 		var terminal: int = t._road_terminal_k()
 		var on_road: Array[Vector2] = []
 		var off_road: Array[Vector2] = []
@@ -484,7 +484,7 @@ func _check_flat_zones() -> void:
 		# LESS that deviation — the honest promise the corridor makes, and shrinking
 		# the offset is how this leg keeps asking for EXACTLY 0.0 rather than for a
 		# tolerance.
-		var lateral: float = t.ALT_ROAD_FLAT_HALF - t.ALT_ROAD_SEG_DEV_MAX
+		var lateral: float = TerrainAltitude.ALT_ROAD_FLAT_HALF - TerrainAltitude.ALT_ROAD_SEG_DEV_MAX
 		# Once, not per station: the arguments never change and growing the cache is
 		# the expensive part of this leg.
 		t._road_extend_to_x(-SAMPLE_HALF, SAMPLE_HALF)
@@ -498,12 +498,12 @@ func _check_flat_zones() -> void:
 		# because the flat/alive sampling is the expensive half and only has to prove
 		# the promise where the player is; the bound has to hold at every node the
 		# shader and the baked heightmap read, including the outermost pair.
-		var dev_stations: int = t.ALT_ROAD_SEG_MAX / 2 * t.ALT_ROAD_SEG_STRIDE
+		var dev_stations: int = TerrainAltitude.ALT_ROAD_SEG_MAX / 2 * TerrainAltitude.ALT_ROAD_SEG_STRIDE
 		var worst_dev := 0.0
 		for i in dev_stations * 2 + 1:
 			var kd: int = mini(i - dev_stations, terminal)
 			var cd: Vector2 = t._road_station(kd).center
-			worst_dev = maxf(worst_dev, t._alt_road_distance(cd.x, cd.y))
+			worst_dev = maxf(worst_dev, TerrainAltitude._alt_road_distance(t, cd.x, cd.y))
 		for i in FLAT_ROAD_STATIONS * 2 + 1:
 			var k: int = mini(i - FLAT_ROAD_STATIONS, terminal)
 			var st: Dictionary = t._road_station(k)
@@ -512,15 +512,15 @@ func _check_flat_zones() -> void:
 			for j in 8:
 				on_road.append(c + n * rng.randf_range(-1.0, 1.0) * lateral)
 				var side: float = 1.0 if j % 2 == 0 else -1.0
-				off_road.append(c + n * side * (t.ALT_ROAD_FLAT_HALF + t.ALT_ROAD_SKIRT
-						+ t.ALT_ROAD_SEG_DEV_MAX + rng.randf_range(1.0, FLAT_CONTROL_MARGIN)))
-		if worst_dev > t.ALT_ROAD_SEG_DEV_MAX:
+				off_road.append(c + n * side * (TerrainAltitude.ALT_ROAD_FLAT_HALF + TerrainAltitude.ALT_ROAD_SKIRT
+						+ TerrainAltitude.ALT_ROAD_SEG_DEV_MAX + rng.randf_range(1.0, FLAT_CONTROL_MARGIN)))
+		if worst_dev > TerrainAltitude.ALT_ROAD_SEG_DEV_MAX:
 			_fail("seed %d: a road station sits %.2f m off the coarse polyline, over ALT_ROAD_SEG_DEV_MAX %.1f — lower ALT_ROAD_SEG_STRIDE or the coin road is on a hill" % [
-				seed_value, worst_dev, t.ALT_ROAD_SEG_DEV_MAX])
+				seed_value, worst_dev, TerrainAltitude.ALT_ROAD_SEG_DEV_MAX])
 		# The measured deviation is a REPORT number as well as an assertion — it is
 		# what says how coarse the polyline is allowed to get.
 		print("[altitude] seed %d: worst road-station offset from the coarse polyline %.2f m over +/-%d stations (bound %.1f m, %d segments)" % [
-			seed_value, worst_dev, dev_stations, t.ALT_ROAD_SEG_DEV_MAX, t._alt_road_segs.size()])
+			seed_value, worst_dev, dev_stations, TerrainAltitude.ALT_ROAD_SEG_DEV_MAX, t._alt_road_segs.size()])
 		_assert_flat(t, seed_value, "road corridor", on_road)
 		_assert_alive(t, seed_value, "road corridor", off_road)
 
@@ -548,13 +548,13 @@ func _check_flat_zones() -> void:
 		var residency: float = float(t.render_distance) * t.chunk_size
 		var probe_pts: Array[Vector2] = []
 		for i in WINDOW_PROBE_STATIONS:
-			var st_p: Dictionary = t._road_station(i * t.ALT_ROAD_SEG_STRIDE)
+			var st_p: Dictionary = t._road_station(i * TerrainAltitude.ALT_ROAD_SEG_STRIDE)
 			var c_p: Vector2 = st_p.center
 			var n_p := Vector2(-sin(st_p.heading), cos(st_p.heading))
 			# Off the centreline and inside the skirt: on the RAMP, where the
 			# corridor distance actually moves the height. A point on the centreline
 			# is 0.0 from every window and would pass vacuously.
-			probe_pts.append(c_p + n_p * (t.ALT_ROAD_FLAT_HALF + t.ALT_ROAD_SKIRT * 0.5))
+			probe_pts.append(c_p + n_p * (TerrainAltitude.ALT_ROAD_FLAT_HALF + TerrainAltitude.ALT_ROAD_SKIRT * 0.5))
 		var worst_slide := 0.0
 		var slide_at := Vector2.ZERO
 		var slide_compared := 0
@@ -569,13 +569,13 @@ func _check_flat_zones() -> void:
 		var window_moved := false
 		for step in WINDOW_PROBE_STEPS:
 			var cx: float = base_center + float(step) * t.chunk_size
-			t._alt_road_refresh(cx)
+			TerrainAltitude._alt_road_refresh(t, cx)
 			var reach: float = minf(residency, _alt_window_reach(t, cx))
 			var before: PackedVector4Array = t._alt_road_segs.duplicate()
 			var heights: Array[float] = []
 			for q: Vector2 in probe_pts:
 				heights.append(t.height_at(q.x, q.y))
-			t._alt_road_refresh(cx + t.chunk_size)
+			TerrainAltitude._alt_road_refresh(t, cx + t.chunk_size)
 			window_moved = window_moved or t._alt_road_segs != before
 			# REACH AROUND cx, MEASURED ON BOTH WINDOWS: the probes are filtered by
 			# their distance from cx, so the second window's coverage has to be asked
@@ -598,7 +598,7 @@ func _check_flat_zones() -> void:
 		if worst_slide > HEIGHT_EPSILON:
 			_fail("seed %d: height_at%s moved %.4f m when the road window slid one chunk — the corridor's chord nodes are not snapped to the stride lattice, so a chunk's baked floor no longer matches the surface the shader draws over it" % [
 				seed_value, str(slide_at), worst_slide])
-		t._alt_road_refresh(0.0)
+		TerrainAltitude._alt_road_refresh(t, 0.0)
 
 		t.free()
 	Sentinel.done("flat_zones")
@@ -698,7 +698,7 @@ func _check_shader_parity() -> void:
 	var shader_text := FileAccess.get_file_as_string(SHADER_PATH)
 	var gpu_seg_max := _shader_int(shader_text, "ALT_ROAD_SEG_MAX")
 	# Off the constant map, not off a terrain node stood up to read one const.
-	var consts: Dictionary = (load(TERRAIN_SCRIPT) as GDScript).get_script_constant_map()
+	var consts: Dictionary = (load(ALTITUDE_SCRIPT) as GDScript).get_script_constant_map()
 	var cpu_seg_max: int = consts["ALT_ROAD_SEG_MAX"]
 	if gpu_seg_max < cpu_seg_max:
 		_fail("ground.gdshader's ALT_ROAD_SEG_MAX is %d against the GDScript's %d — the road corridor would lose its far segments on the GPU while the CPU still flattens them" % [
@@ -717,7 +717,7 @@ func _check_shader_parity() -> void:
 	# runs on a chunk-boundary crossing, and it re-pushes the material itself, so a
 	# check that skipped it would be reading back an EMPTY array and would pass for
 	# the wrong reason.
-	t._alt_road_refresh(0.0)
+	TerrainAltitude._alt_road_refresh(t, 0.0)
 	t._apply_biome_shader_params()
 
 	# The gate, both ways round: forced on here, and off for the world.
@@ -728,7 +728,7 @@ func _check_shader_parity() -> void:
 	if float(mat.get_shader_parameter("alt_enabled")) != 0.0:
 		_fail("alt_enabled was pushed as %s with the spike OFF — the merge condition is that the flag-off world is byte for byte flat" % str(mat.get_shader_parameter("alt_enabled")))
 	t.alt_force = true
-	t._alt_road_refresh(0.0)
+	TerrainAltitude._alt_road_refresh(t, 0.0)
 	t._apply_biome_shader_params()
 
 	# ---- b. every pushed value equals the constant it is named after ---------
@@ -743,7 +743,7 @@ func _check_shader_parity() -> void:
 			continue
 		var const_name := uniform_name.to_upper()
 		if not consts.has(const_name):
-			_fail("uniform '%s' has no endless_terrain.gd constant %s — either name it after the constant it carries or add it to check 4's three named exceptions with a reason" % [
+			_fail("uniform '%s' has no terrain_altitude.gd constant %s — either name it after the constant it carries or add it to check 4's three named exceptions with a reason" % [
 				uniform_name, const_name])
 			continue
 		var got: Variant = mat.get_shader_parameter(uniform_name)
@@ -832,9 +832,9 @@ func _check_shader_parity() -> void:
 
 	# ALT_OFFSET_SALT's PUSHED value by hand, since it is the one uniform not named
 	# after the constant it carries and so leg (b) skips it.
-	if (mat.get_shader_parameter("alt_offset") as Vector2).distance_to(t.ALT_OFFSET_SALT) > 1e-6:
+	if (mat.get_shader_parameter("alt_offset") as Vector2).distance_to(TerrainAltitude.ALT_OFFSET_SALT) > 1e-6:
 		_fail("alt_offset was pushed as %s, not ALT_OFFSET_SALT %s — the GPU's altitude field would be domain-shifted away from the CPU's" % [
-			str(mat.get_shader_parameter("alt_offset")), str(t.ALT_OFFSET_SALT)])
+			str(mat.get_shader_parameter("alt_offset")), str(TerrainAltitude.ALT_OFFSET_SALT)])
 
 	# ---- c. the road array's packing ----------------------------------------
 	var segs: PackedVector4Array = mat.get_shader_parameter("alt_road_seg")
@@ -850,9 +850,9 @@ func _check_shader_parity() -> void:
 	# TRUNCATED on the GPU while _alt_road_distance() still walks all of it on the
 	# CPU — the GPU and the collision heightmap flattening two different corridors,
 	# with no error anywhere.
-	if t._alt_road_segs.size() > t.ALT_ROAD_SEG_MAX:
+	if t._alt_road_segs.size() > TerrainAltitude.ALT_ROAD_SEG_MAX:
 		_fail("the CPU corridor cache holds %d segments against ALT_ROAD_SEG_MAX %d — the push clamps to the array size, so the GPU flattens a shorter corridor than the collision heightmap does" % [
-			t._alt_road_segs.size(), t.ALT_ROAD_SEG_MAX])
+			t._alt_road_segs.size(), TerrainAltitude.ALT_ROAD_SEG_MAX])
 	if seg_count <= 0:
 		_fail("alt_road_seg_count is %d after a refresh — the shader flattens no corridor at all while the CPU's heightmap flattens %d segments" % [
 			seg_count, t._alt_road_segs.size()])
@@ -868,9 +868,9 @@ func _check_shader_parity() -> void:
 	t._apply_biome_shader_params()
 	var short_segs: PackedVector4Array = mat.get_shader_parameter("alt_road_seg")
 	var short_count: int = mat.get_shader_parameter("alt_road_seg_count")
-	if short_count != short_want or short_segs.size() != t.ALT_ROAD_SEG_MAX:
+	if short_count != short_want or short_segs.size() != TerrainAltitude.ALT_ROAD_SEG_MAX:
 		_fail("a %d-segment cache pushed alt_road_seg_count %d into an array of %d — the padder must fill to ALT_ROAD_SEG_MAX %d and count only what the cache holds" % [
-			short_want, short_count, short_segs.size(), t.ALT_ROAD_SEG_MAX])
+			short_want, short_count, short_segs.size(), TerrainAltitude.ALT_ROAD_SEG_MAX])
 	for i in range(short_count, short_segs.size()):
 		if short_segs[i] != Vector4.ZERO:
 			_fail("alt_road_seg[%d] is %s past alt_road_seg_count %d — the padded tail is not zeros, so the array is not the cache verbatim" % [
@@ -921,7 +921,7 @@ func _check_shader_parity() -> void:
 				break
 
 	print("[altitude] shader parity: %d alt_* uniforms declared and pushed (%d value-checked, %d default-checked), array %d >= %d, %d road segments packed and chained" % [
-		declared.size(), value_checked, defaults_checked, gpu_seg_max, t.ALT_ROAD_SEG_MAX, seg_count])
+		declared.size(), value_checked, defaults_checked, gpu_seg_max, TerrainAltitude.ALT_ROAD_SEG_MAX, seg_count])
 	t.free()
 	Sentinel.done("shader_parity")
 
@@ -978,7 +978,7 @@ func _check_ground_collision() -> void:
 	t.alt_force = true
 	# The shipped refresh seam, so the corridor clause is LIVE in the heights the
 	# chunks around the origin sample (check 3's note, one check along).
-	t._alt_road_refresh(0.0)
+	TerrainAltitude._alt_road_refresh(t, 0.0)
 	# THE GRID IS READ OFF THE SHIPPED MESH, never re-derived. This check used to
 	# recompute `side` and `cell` with the same formula the builder used, so when
 	# that formula was wrong (GROUND_SUBDIVISIONS + 1 for a PlaneMesh that is
@@ -1016,7 +1016,7 @@ func _check_ground_collision() -> void:
 	mesh_z.sort()
 	var mesh_cell: float = float(mesh_x[1]) - float(mesh_x[0])
 	var side: int = t.ALT_GROUND_SIDE
-	var cell: float = t.alt_ground_cell()
+	var cell: float = TerrainAltitude.alt_ground_cell(t)
 	if mesh_side != side or distinct_z.size() != side:
 		_fail("the shared ground PlaneMesh is %d x %d vertices but ALT_GROUND_SIDE is %d — the collision grid is not the visual mesh's grid and the floor is an approximation of the surface you see" % [
 			mesh_side, distinct_z.size(), side])
@@ -1028,11 +1028,13 @@ func _check_ground_collision() -> void:
 	# past ALT_AMP_MOUNTAIN would leave every cull volume in the world short while
 	# `const ALT_AMP_MAX := ALT_AMP_MOUNTAIN` still read as "the tallest rung".
 	# GDScript cannot call maxf() in a const, so the maximum is asserted here.
+	var alt_consts: Dictionary = (load(ALTITUDE_SCRIPT) as GDScript).get_script_constant_map()
 	for amp_name: String in ["ALT_AMP_DESERT", "ALT_AMP_PLAINS", "ALT_AMP_CITY",
 			"ALT_AMP_FOREST", "ALT_AMP_MOUNTAIN", "ALT_AMP_SNOW"]:
-		if float(t.get(amp_name)) > t.ALT_AMP_MAX:
+		var amp_val: float = float(alt_consts[amp_name])
+		if amp_val > TerrainAltitude.ALT_AMP_MAX:
 			_fail("%s is %.1f m, over ALT_AMP_MAX %.1f — every displaced chunk's custom_aabb is shorter than the field it bounds and hilltops are culled on screen" % [
-				amp_name, float(t.get(amp_name)), t.ALT_AMP_MAX])
+				amp_name, amp_val, TerrainAltitude.ALT_AMP_MAX])
 	var worst := 0.0
 	var sampled := 0
 	# THE FIELD HAS TO BE ALIVE, check 6's rule one check along: every comparison
@@ -1174,7 +1176,7 @@ func _check_field_is_walkable() -> void:
 	for seed_value: int in SEEDS:
 		var t := _make_terrain(seed_value)
 		t.alt_force = true
-		t._alt_road_refresh(0.0)
+		TerrainAltitude._alt_road_refresh(t, 0.0)
 		var rng := RandomNumberGenerator.new()
 		rng.seed = seed_value
 		var worst := 0.0
@@ -1218,7 +1220,7 @@ func _check_field_is_walkable() -> void:
 			# the whole smoothstep including its steepest middle.
 			for j in SKIRT_PROBE_STEPS:
 				var frac: float = float(j) / float(SKIRT_PROBE_STEPS - 1)
-				var off: float = t.ALT_ROAD_FLAT_HALF + frac * t.ALT_ROAD_SKIRT
+				var off: float = TerrainAltitude.ALT_ROAD_FLAT_HALF + frac * TerrainAltitude.ALT_ROAD_SKIRT
 				for side: float in [1.0, -1.0]:
 					var q: Vector2 = c + n * side * off
 					var hq: float = t.height_at(q.x, q.y)
@@ -1242,7 +1244,7 @@ func _check_field_is_walkable() -> void:
 		var river_hits := 0
 		var river_attempts := 0
 		var river_inner: float = t.RIVER_HALF_WIDTH
-		var river_outer: float = t.RIVER_HALF_WIDTH * t.ALT_RIVER_SKIRT_K
+		var river_outer: float = t.RIVER_HALF_WIDTH * TerrainAltitude.ALT_RIVER_SKIRT_K
 		while river_hits < RIVER_SKIRT_HITS and river_attempts < RIVER_SKIRT_MAX_ATTEMPTS:
 			river_attempts += 1
 			var rx := rng.randf_range(-SAMPLE_HALF, SAMPLE_HALF)
@@ -1408,13 +1410,13 @@ func _oracle_value_noise_f32(p: Vector2) -> float:
 	return lerpf(lerpf(a, b, u.x), lerpf(c, d, u.x), u.y)
 
 
-func _oracle_pair_f32(p: Vector2, t: Node3D) -> float:
+func _oracle_pair_f32(p: Vector2, _t: Node3D) -> float:
 	## GLSL alt_value_noise_pair(): the broad octave plus ALT_DETAIL_WEIGHT of a
 	## shifted ALT_DETAIL_SCALE octave, weights summing to 1.
-	var w := Vector2(1.0 - t.ALT_DETAIL_WEIGHT, t.ALT_DETAIL_WEIGHT)
+	var w := Vector2(1.0 - TerrainAltitude.ALT_DETAIL_WEIGHT, TerrainAltitude.ALT_DETAIL_WEIGHT)
 	var broad := Vector2(_oracle_value_noise_f32(p) * w.x, 0.0).x
 	var detail := Vector2(
-			_oracle_value_noise_f32(p * t.ALT_DETAIL_SCALE + t.ALT_DETAIL_SHIFT) * w.y, 0.0).x
+			_oracle_value_noise_f32(p * TerrainAltitude.ALT_DETAIL_SCALE + TerrainAltitude.ALT_DETAIL_SHIFT) * w.y, 0.0).x
 	return Vector2(broad + detail, 0.0).x
 
 
@@ -1449,10 +1451,10 @@ func _oracle_value_noise_f64(p: Vector2) -> float:
 	return lerpf(lerpf(a, b, ux), lerpf(c, d, ux), uy)
 
 
-func _oracle_pair_f64(p: Vector2, t: Node3D) -> float:
-	var wide: float = 1.0 - t.ALT_DETAIL_WEIGHT
+func _oracle_pair_f64(p: Vector2, _t: Node3D) -> float:
+	var wide: float = 1.0 - TerrainAltitude.ALT_DETAIL_WEIGHT
 	return _oracle_value_noise_f64(p) * wide \
-			+ _oracle_value_noise_f64(p * t.ALT_DETAIL_SCALE + t.ALT_DETAIL_SHIFT) * t.ALT_DETAIL_WEIGHT
+			+ _oracle_value_noise_f64(p * TerrainAltitude.ALT_DETAIL_SCALE + TerrainAltitude.ALT_DETAIL_SHIFT) * TerrainAltitude.ALT_DETAIL_WEIGHT
 
 
 func _oracle_amplitude(biome_value: float, t: Node3D) -> float:
@@ -1469,16 +1471,16 @@ func _oracle_amplitude(biome_value: float, t: Node3D) -> float:
 	## it is named after, defaults included. The ORDER of the GLSL's rungs is the
 	## one thing neither check sees; it is the parity contract's edited-together
 	## rule, same as biome_noise's.
-	var amp: float = t.ALT_AMP_DESERT
-	amp = lerpf(amp, t.ALT_AMP_PLAINS,
+	var amp: float = TerrainAltitude.ALT_AMP_DESERT
+	amp = lerpf(amp, TerrainAltitude.ALT_AMP_PLAINS,
 			smoothstep(t.BIOME_DESERT_MAX - t.BIOME_BLEND, t.BIOME_DESERT_MAX + t.BIOME_BLEND, biome_value))
-	amp = lerpf(amp, t.ALT_AMP_CITY,
+	amp = lerpf(amp, TerrainAltitude.ALT_AMP_CITY,
 			smoothstep(t.BIOME_PLAINS_MAX - t.BIOME_BLEND, t.BIOME_PLAINS_MAX + t.BIOME_BLEND, biome_value))
-	amp = lerpf(amp, t.ALT_AMP_FOREST,
+	amp = lerpf(amp, TerrainAltitude.ALT_AMP_FOREST,
 			smoothstep(t.BIOME_CITY_MAX - t.BIOME_BLEND, t.BIOME_CITY_MAX + t.BIOME_BLEND, biome_value))
-	amp = lerpf(amp, t.ALT_AMP_MOUNTAIN,
+	amp = lerpf(amp, TerrainAltitude.ALT_AMP_MOUNTAIN,
 			smoothstep(t.BIOME_FOREST_MAX - t.BIOME_BLEND, t.BIOME_FOREST_MAX + t.BIOME_BLEND, biome_value))
-	amp = lerpf(amp, t.ALT_AMP_SNOW,
+	amp = lerpf(amp, TerrainAltitude.ALT_AMP_SNOW,
 			smoothstep(t.BIOME_MOUNTAIN_MAX - t.BIOME_BLEND, t.BIOME_MOUNTAIN_MAX + t.BIOME_BLEND, biome_value))
 	return amp
 

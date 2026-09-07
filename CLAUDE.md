@@ -53,7 +53,7 @@ docstring before touching it. The live Windman is `windman_parts/` assembled by
 
 | Area | Entry point | Also | Self-check |
 |---|---|---|---|
-| World engine, chunks, biomes field, `Biome` enum, seed | `scripts/endless_terrain.gd` | `terrain_biomes` `terrain_predators` `terrain_props` `terrain_structures` `terrain_features` `terrain_landmarks` `coin_road` `terrain_bridges` (static families reached through the terrain) | `chunk_stream` `scarcity` `prop` `wade` `field_bridge` `altitude` |
+| World engine, chunks, biomes field, `Biome` enum, seed | `scripts/endless_terrain.gd` | `terrain_biomes` `terrain_predators` `terrain_props` `terrain_structures` `terrain_features` `terrain_landmarks` `coin_road` `terrain_bridges` `terrain_altitude` (static families reached through the terrain) | `chunk_stream` `scarcity` `prop` `wade` `field_bridge` `altitude` |
 | Batched geometry, box kinds, collision per kind | `scripts/chunk_batch.gd` | `assets/shaders/world_block.gdshader` | `batch` |
 | Field landmarks (one per kind per world) | `scripts/landmark_builders.gd` `terrain_landmarks.gd` | `landmark_toast.gd` | `landmark` `landmark_sites` |
 | Budapest (authored plan, streamed) | `scripts/budapest_plan.gd` | `budapest_streamer` `city_builders` | `budapest` `budapest_city` `landmark_progress` `city_map` |
@@ -128,7 +128,7 @@ Ground is y = 0 everywhere. Mountains are impassable box massifs, rivers are tin
 wading bands with a deep channel that pushes you out. `_biome_noise` in
 `endless_terrain.gd` and `biome_noise` in `ground.gdshader` are **one function in two
 languages — edit them together**, and keep the GDScript port's `Vector2` fp32 routing.
-`FIELD_ALTITUDE` is a spike that ships `false` (`docs/field-altitude-spike.md`).
+`FIELD_ALTITUDE` is a spike that ships `false` (`scripts/terrain_altitude.gd`, `docs/field-altitude-spike.md`).
 
 ### Speeds are a lattice
 `WALK_SPEED` < every species' `chase_speed` < `MAX_CHASE_SPEED` < the slowest run:
