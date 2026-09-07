@@ -74,13 +74,14 @@ const FADE_STEPS: int = 4
 ## show. "Mic on" stays immediate; 1.5 s of quiet means hung up, not pausing.
 const MIC_OFF_SILENT_TICKS: int = 3
 
-## Ticks after the room start during which a newly seen camera baselines
-## silently instead of printing (bead godot-test1-tgx): the first online tick
-## sees no remote tracks yet (the sender cache is cleared while the module is
-## not running), so every already-live camera would read as a fresh "camera
-## on" a moment later. The MIC_OFF_SILENT_TICKS shape — a count of 2 Hz ticks,
-## not a clock — so ids first seen inside the grace are standing state and ids
-## first seen after it are news.
+## Ticks after an id is first seen in the room during which its camera baselines
+## silently instead of printing (bead godot-test1-tgx, review round 1): remote
+## tracks arrive after the voice module starts (and a peer can join mid-room),
+## so a global window off the room start still floods — every already-live
+## camera would read as a fresh "camera on" a moment later. PER PEER, not per
+## room: the first sighting of the id stamps it (see `_member_since`), and a
+## camera inside that id's grace is standing state while one past it is news.
+## The MIC_OFF_SILENT_TICKS shape — a count of 2 Hz ticks, not a clock.
 const CAMERA_GRACE_TICKS: int = 3
 
 ## Msec after the room start during which the captive set is re-baselined
@@ -127,10 +128,15 @@ var _lines: Array = []
 ## Room clock: msec the current room started, on the log's clock. Re-armed on
 ## every join; the mm:ss stamp is born-minus-start.
 var _room_start_msec: int = 0
-## Tick clock: 2 Hz ticks since the node existed, and the tick the room was
-## seeded on. The camera grace counts ticks, so both re-arm in `_seed_room()`.
+## Tick clock: 2 Hz ticks since the node existed. The per-peer camera grace
+## counts ticks off first sightings (see `_member_since`).
 var _tick_count: int = 0
-var _seed_tick: int = 0
+## First tick each lobby id was seen in the room, stamped in `_seed_room()`
+## for the initial set and in `_diff_members()` for joiners. A camera inside
+## its id's grace baselines silently; past it, it prints. Never stamped for
+## "me" (the self-view is not a lobby id): a self camera appearing mid-room
+## is news, and the seed baselines the opening set silently anyway.
+var _member_since: Dictionary = {}
 ## Whether the baselines below describe the room we are in. False reseeds
 ## everything silently — the join that must not flood the log with four swaps.
 var _baselined: bool = false
@@ -245,7 +251,7 @@ func _lose_room() -> void:
 	_holders = {}
 	_captives = {}
 	_tick_count = 0
-	_seed_tick = 0
+	_member_since = {}
 	_tx = false
 	_speech_on = {}
 	_speech_quiet = {}
@@ -264,10 +270,11 @@ func _seed_room() -> void:
 	## fresh grab.
 	_lines.clear()
 	_room_start_msec = _now()
-	_seed_tick = _tick_count
 	if _mp != null and _mp.has_method("my_id"):
 		_my_id = str(_mp.my_id())
 	_members = _read_members()
+	for id: String in _members:
+		_member_since[id] = _tick_count
 	_holders = _read_holders()
 	_captives = _read_captives()
 	_capt_seeded = _player != null and is_instance_valid(_player)
@@ -423,6 +430,7 @@ func _diff_members() -> void:
 	var cur := _read_members()
 	for id: String in cur:
 		if not _members.has(id):
+			_member_since[id] = _tick_count
 			_append(tr("%s joined") % cur[id])
 	for id: String in _members:
 		if not cur.has(id):
@@ -511,11 +519,15 @@ func _diff_voice() -> void:
 		if not _members.has(id):
 			_video.erase(id)
 	var video := _read_video()
-	# Still inside the join grace: new senders are standing state, absorbed by
-	# the `_video = video` below with no line. Past it they are news.
-	var graced: bool = _tick_count - _seed_tick <= CAMERA_GRACE_TICKS
 	for id: String in video:
-		if not _video.has(id) and not graced:
+		if _video.has(id):
+			continue
+		# Still inside THIS ID's grace: a standing camera, absorbed by the
+		# `_video = video` below with no line. Past it the camera is news.
+		# Unstamped ids (notably "me", which is no lobby id) read as news —
+		# the seed baselines the opening set silently anyway.
+		var since: int = int(_member_since.get(id, -1000000))
+		if _tick_count - since > CAMERA_GRACE_TICKS:
 			_append(tr("%s: camera on") % _member_name(id))
 	for id: String in _video:
 		if not video.has(id):
