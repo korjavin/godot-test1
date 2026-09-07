@@ -53,7 +53,7 @@ docstring before touching it. The live Windman is `windman_parts/` assembled by
 
 | Area | Entry point | Also | Self-check |
 |---|---|---|---|
-| World engine, chunks, biomes field, `Biome` enum, seed | `scripts/endless_terrain.gd` | `terrain_biomes` `terrain_predators` `terrain_props` `terrain_structures` `terrain_features` `terrain_landmarks` `coin_road` (static families reached through the terrain) | `chunk_stream` `scarcity` `prop` `wade` `field_bridge` `altitude` |
+| World engine, chunks, biomes field, `Biome` enum, seed | `scripts/endless_terrain.gd` | `terrain_biomes` `terrain_predators` `terrain_props` `terrain_structures` `terrain_features` `terrain_landmarks` `coin_road` `terrain_bridges` (static families reached through the terrain) | `chunk_stream` `scarcity` `prop` `wade` `field_bridge` `altitude` |
 | Batched geometry, box kinds, collision per kind | `scripts/chunk_batch.gd` | `assets/shaders/world_block.gdshader` | `batch` |
 | Field landmarks (one per kind per world) | `scripts/landmark_builders.gd` `terrain_landmarks.gd` | `landmark_toast.gd` | `landmark` `landmark_sites` |
 | Budapest (authored plan, streamed) | `scripts/budapest_plan.gd` | `budapest_streamer` `city_builders` | `budapest` `budapest_city` `landmark_progress` `city_map` |
