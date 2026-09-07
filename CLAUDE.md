@@ -65,7 +65,7 @@ docstring before touching it. The live Windman is `windman_parts/` assembled by
 | Ambience (weather, herds, crowd, traffic) | `weather_manager` `fauna_manager` `crowd_manager` `traffic_manager` | `city_agents` `ambience_lod` `ambience_proxies` | `weather` `fauna` `crowd` `traffic` |
 | HUD skin and widgets | `scripts/hud_theme.gd` | `hero_hud` `coin_hud` `world_caption` `minimap_hud` `ability_hud` `help_overlay` `event_log_hud` (room event log) | `hero_hud` `minimap` `help` `locale` `intro` `event_log` |
 | Audio (all synthesized) | `scripts/sound_manager.gd` | | `sound` |
-| Multiplayer mesh | `scripts/mp_manager.gd` | `mp_codec` (parsers) `mp_croc_sync` `lobby_client` `remote_avatar` `mp_ui` | `mp` |
+| Multiplayer mesh | `scripts/mp_manager.gd` | `mp_codec` (parsers) `mp_croc_sync` `lobby_client` `remote_avatar` `mp_ui` | `mp` `mp_codec` (split from mp_selfcheck; CI shards by file) |
 | Voice/video chat (web only) | `scripts/voice_chat.gd` | `web/vendor/mediapipe/` `scripts/fetch_vendor.sh` | `voice` |
 | Lobby server (Go) | `server/room.go` | `server/docker-compose.yml` | `go test` |
 | Perf tooling | `scripts/perf_overlay.gd` (`\fo`) | `\fb` / `\fh` teleport cheats (debug builds) | `perf` |
