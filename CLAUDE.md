@@ -1858,7 +1858,15 @@ and sit **outside the world-determinism contract** (no RNG, no hash stream, no f
 like weather and fauna. The **fairness contract** is the load-bearing part and is measured
 per style by `projectile_selfcheck`: from its `min_fire_range` the flight must last long
 enough for a merely *walking* player to clear 3x the hit radius, and its horizontal speed
-must stay under `RUN_SPEED`. "Make the bolt snappier" is the retune that breaks the game.
+must stay under `RUN_SPEED`. "Make the bolt snappier" is the retune that breaks the game. In a room the master's bolt is
+replayed on every screen over one reliable `shot` verb per shot (bead `godot-test1-coq`): the
+send site sits beside the `fire()` call inside all four gates, lethality still resolves locally,
+and each peer replays with the firing body's own row params. A row's `style` must be a
+`BossProjectile.STYLES` key (pinned by `projectile_selfcheck` 1e): the `shot` verb drops
+anything else on every non-master screen. Documented ceilings: a master on an
+older build publishes nothing and its peers see what they see today (nothing); and a replayed bolt
+arrives RTT late, replayed from muzzle to aim from t=0, so the receiver's picture lags the master's
+(documented, not compensated).
 
 The spawn point is a crocodile-free bubble enforced in generation
 (`SPAWN_SAFE_RADIUS`, mirrored in `player_controller`; keep the two in step).
@@ -2581,6 +2589,12 @@ The sharpest rules, in rough order of how badly they bite:
   `weather_manager.gd` owns the clouds at both ends and owns the silence timeout that
   frees a replay, which is why this needed no leave hook and no master-changed hook. See
   the weather section for the rules; clear clouds and birds stay local.
+- **A ranged boss's bolts are master-fired and replayed, one reliable packet per shot** (bead
+  `godot-test1-coq`). The `shot` verb is master-only, reliable, and carries the firing crocodile's
+  id plus the frozen (muzzle, aim, style); the receiver resolves the body through the croc-sync id
+  cache and replays with that body's own row params, so lethality stays local. A remote-driven body
+  never reaches its own firing arm, which is what made the boss lethal to the master only. See the
+  ranged-attacks paragraph for the two ceilings.
 - **The HQ's opened gates are room-shared on the monotone shape** (bead
   `godot-test1-d81`). The `gate` verb is anyone-to-everyone, reliable over mesh and relay,
   carrying one id off `TowerGraph.opened_ids()` (the range list — a gate, entry, mutation or

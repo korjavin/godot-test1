@@ -188,10 +188,16 @@ const MAX_FLEE_DURATION: float = 60.0
 ##         validated seed/centre pairs plus — per storm it has not seen before —
 ##         one seeded cloud build, which the fixed CLOUD_COUNT pool and the
 ##         MAX_WX_STORMS bound cap absolutely.
+##   shot  is one ranged-boss bolt (bead godot-test1-coq), master-only and
+##         RELIABLE, budgeted at 10: the honest rate is one boss's 2–3 s cooldown
+##         (two bosses at once at most), and the receiver pays one ordinary
+##         `BossProjectile.fire` — the same bolt the master's own screen drew —
+##         behind the row's own `max_live` cap.
 const VERB_BUDGET_PER_SEC: Dictionary = {
 	"clm": 30, "kill": 10, "flee": 4, "croc": 40, "cnf": 150, "dead": 60,
 	"gate": 4,  # one HQ gate opening each (bead godot-test1-d81): a handful per campaign
 	"cap": 8, "room": 12, "pad": 4, "lmk": 10, "herd": 40, "wx": 40,
+	"shot": 10,
 }
 
 ## How often the master publishes the room's captive set, in hertz.
@@ -3883,6 +3889,8 @@ func _receive_mesh_verb(from_id: String, verb: String, packet: Dictionary) -> vo
 			MpCrocSync.receive_kill(self, from_id, packet)
 		"dead":
 			MpCrocSync.receive_dead(self, from_id, packet)
+		"shot":
+			MpCrocSync.receive_shot(self, from_id, packet)
 		"pad":
 			_receive_pad(from_id, packet)
 		"lmk":
@@ -4904,3 +4912,11 @@ func is_croc_dead(id: int) -> bool:
 	"""Forwarder — `MpCrocSync.is_croc_dead()`. PUBLIC and kept by NAME: every
 	crocodile's `_ready()` asks it through `has_method("is_croc_dead")`."""
 	return MpCrocSync.is_croc_dead(self, id)
+
+
+func announce_boss_shot(id: int, muzzle: Vector3, aim: Vector3,
+		style: String) -> bool:
+	"""Forwarder — `MpCrocSync.announce_shot()`. PUBLIC and kept by NAME:
+	`piglet_crocodile_ai._behave_ranged()` reaches the room through
+	`has_method("announce_boss_shot")`, beside the `BossProjectile.fire` call."""
+	return MpCrocSync.announce_shot(self, id, muzzle, aim, style)

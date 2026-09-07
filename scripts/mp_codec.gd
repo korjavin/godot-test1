@@ -688,6 +688,86 @@ static func decode_wx(packet: Dictionary) -> Dictionary:
 	return {"s": clean}
 
 # =============================================================================
+# RANGED-BOSS SHOTS — the `shot` verb (bead godot-test1-coq)
+# =============================================================================
+
+## Sanity bound on a `shot` packet's coordinates — see `decode_shot`.
+##
+## It NAMES the presence bound rather than re-typing it: a bolt flies in the
+## same world a player stands in, so any coordinate a presence packet may carry
+## a shot may carry too. The send side reads this back as
+## `MpCodec.MAX_SHOT_COORD`, never re-types it.
+const MAX_SHOT_COORD: float = MAX_PRESENCE_COORD
+
+## The launch styles a `shot` packet may name — see `decode_shot`.
+##
+## A preload const, not a string table of our own, for the reason `decode_herd`
+## reads the fauna manager rather than copying its numbers: the whitelist IS the
+## capability's style set, so a new style is sendable the day it lands and a
+## removed one stops decoding with it. One direction only — `boss_projectile.gd`
+## never names this file — so it is not a cycle.
+const SHOT_SCRIPT := preload("res://scripts/boss_projectile.gd")
+
+
+static func decode_shot(packet: Dictionary) -> Dictionary:
+	"""
+	The ranged-boss-shot parser — the TENTH trust boundary, master-only and
+	whole-or-nothing like every one before it.
+
+	Wire format, the `var_to_bytes` of:
+
+	    {"t": "shot",
+	     "c": int,      # the firing crocodile's room-wide id (`croc_id()`)
+	     "f": Vector3,  # the muzzle the bolt left, in world space
+	     "a": Vector3,  # the aim point, frozen at fire time (no homing, ever)
+	     "s": String}   # the launch style (`BossProjectile.STYLES` key)
+
+	An EVENT, not a state, on the flee/kill shape rather than the wx tick: a
+	dropped storm heals next tick, but a dropped bolt is a threat that never
+	existed, so this rides the RELIABLE channel and carries no sequence number —
+	the channel orders the (rare) two-bosses-one-window case.
+
+	@param packet: the already-`bytes_to_var`-decoded packet — NEVER
+	    `bytes_to_var_with_objects`, see `_receive_mesh_packets()`.
+	@return the validated `{"c", "f", "a", "s"}`, or `{}`. `s` is informational:
+	    the receiver replays with the NAMED BODY's own row params, so a style
+	    that disagrees with the row still draws that body's bolt.
+	"""
+	# STRICT `int`, like `decode_herd` and `decode_wx`: this verb never crosses
+	# the lobby relay, so `var_to_bytes` round-trips the real type and a float
+	# here is a peer that is not speaking this protocol. The id space is the
+	# whole of `String.hash()` (see `receive_kill`), so there is nothing to
+	# bound — an id naming no crocodile finds no body and is dropped there.
+	if typeof(packet.get("c", null)) != TYPE_INT:
+		return {}
+	# STRICT `Vector3`, for the same reason: over JSON these would arrive as
+	# something else entirely, and this verb never crosses the lobby.
+	if typeof(packet.get("f", null)) != TYPE_VECTOR3 \
+			or typeof(packet.get("a", null)) != TYPE_VECTOR3:
+		return {}
+	# STRICT `String`, whitelisted against the capability's own style set: a
+	# style nobody ships would be drawn with fallback params on every screen
+	# but the master's.
+	if typeof(packet.get("s", null)) != TYPE_STRING:
+		return {}
+	if not SHOT_SCRIPT.STYLES.has(str(packet["s"])):
+		return {}
+
+	# FINITENESS BEFORE ANY USE, the rule `decode_presence()` spells out: a bolt
+	# handed a NaN muzzle flies NaN forever after, and 1e30 is finite but just
+	# as permanent. The coordinate bound is the presence packet's — a bolt
+	# flies in the same world a player stands in.
+	var muzzle: Vector3 = packet["f"]
+	var aim: Vector3 = packet["a"]
+	for point: Vector3 in [muzzle, aim]:
+		if not point.is_finite():
+			return {}
+		if absf(point.x) > MAX_SHOT_COORD or absf(point.y) > MAX_SHOT_COORD \
+				or absf(point.z) > MAX_SHOT_COORD:
+			return {}
+	return {"c": int(packet["c"]), "f": muzzle, "a": aim, "s": str(packet["s"])}
+
+# =============================================================================
 # JOIN SNAPSHOT — the third trust boundary
 # =============================================================================
 

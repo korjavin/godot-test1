@@ -207,6 +207,9 @@ func _run_checks() -> String:
 	failure = _check_wx_parser()
 	if not failure.is_empty():
 		return failure
+	failure = await _check_shot_parser()
+	if not failure.is_empty():
+		return failure
 	failure = _check_room_pause()
 	if not failure.is_empty():
 		return failure
@@ -2234,6 +2237,24 @@ func apply_weather_sync(state: Dictionary) -> void:
 """
 
 
+func _shot_with(key: String, value: Variant) -> Dictionary:
+	"""One honest shot packet with a single field replaced — see _check_shot_parser."""
+	var packet: Dictionary = {
+		"t": "shot", "c": 424242, "f": Vector3(10.0, 2.5, -4.0),
+		"a": Vector3(24.0, 0.0, -4.5), "s": "thunder_bolt",
+	}
+	packet[key] = value
+	return packet
+
+
+## A crocodile body reduced to the two things `MpCrocSync.receive_shot()` reads:
+## a `spec` property and a chunk-like parent. The spec is set to a REAL titan row
+## by the check, so a replay that fires with anything but the row's params fails.
+const SHOT_BODY_STUB_SOURCE := """extends Node3D
+var spec: Dictionary = {}
+"""
+
+
 func _check_wx_parser() -> String:
 	"""
 	The `wx` verb — the NINTH trust boundary (bead godot-test1-vej), plus the
@@ -2344,6 +2365,189 @@ func _check_wx_parser() -> String:
 	mp.queue_free()
 	Sentinel.done("wx_parser")
 	return ""
+
+
+func _check_shot_parser() -> String:
+	"""
+	The `shot` verb — the TENTH trust boundary (bead godot-test1-coq), plus the
+	authority rule that decides whose bolt everybody draws, plus the encoder.
+
+	THE HONEST PACKET COMES FIRST AND IT IS THE POINT: a parser that returned
+	`{}` for everything would pass every rejection below while leaving the
+	non-master's sky as empty as it was before this bead.
+	"""
+	var honest: Dictionary = _shot_with("c", 424242)
+	var good: Dictionary = MpCodec.decode_shot(honest)
+	if good.is_empty():
+		return "decode_shot dropped an honest shot packet"
+	if int(good["c"]) != 424242 or (good["f"] as Vector3) != honest["f"] \
+			or (good["a"] as Vector3) != honest["a"] \
+			or str(good["s"]) != "thunder_bolt":
+		return "decode_shot changed an honest shot packet (%s)" % str(good)
+
+	# An honest round-trip THROUGH BYTES: what the master publishes must survive
+	# the codec, or the peer replays a bolt the master never drew.
+	var trip: Dictionary = MpCodec.decode_shot(bytes_to_var(var_to_bytes(honest)))
+	if trip.is_empty() or str(trip) != str(good):
+		return "decode_shot did not round-trip an honest shot packet (%s)" % str(trip)
+
+	# ...and everything a peer that is not speaking this protocol could send.
+	var hostile: Array[Dictionary] = [
+		{"t": "shot"},
+		_shot_with("c", 1.5),
+		_shot_with("c", true),
+		_shot_with("c", "424242"),
+		_shot_with("f", Vector2(1.0, 2.0)),
+		_shot_with("a", "there"),
+		_shot_with("f", Vector3(NAN, 0.0, 0.0)),
+		_shot_with("a", Vector3(0.0, INF, 0.0)),
+		_shot_with("f", Vector3(MpCodec.MAX_SHOT_COORD * 2.0, 0.0, 0.0)),
+		_shot_with("s", "railgun"),
+		_shot_with("s", ""),
+		_shot_with("s", 7),
+	]
+	for packet: Dictionary in hostile:
+		if not MpCodec.decode_shot(packet).is_empty():
+			return "decode_shot accepted the hostile packet %s" % str(packet)
+
+	# A missing REQUIRED field is malformed: a half-described bolt would be
+	# drawn at the origin on every screen but the master's.
+	for key: String in ["c", "f", "a", "s"]:
+		var truncated: Dictionary = _shot_with("c", 424242)
+		truncated.erase(key)
+		if not MpCodec.decode_shot(truncated).is_empty():
+			return "decode_shot accepted a shot with no %s" % key
+
+	# The verb has to be budgeted like every other one `_receive_mesh_verb`
+	# dispatches: "only the master sends this" is not a rate bound.
+	if not MPManager.VERB_BUDGET_PER_SEC.has("shot"):
+		return "the shot verb has no VERB_BUDGET_PER_SEC row"
+
+	# THE ENCODER, through the shipped forwarder. Offline it refuses (no mesh
+	# under it); posed as a peer it refuses (only the master publishes); posed
+	# as the master with a live (peerless) mesh it publishes — and never its own
+	# bug: a NaN muzzle or an oversize aim stays off the wire.
+	var pub: Node = _room_manager("us")
+	if pub.announce_boss_shot(1, Vector3.ZERO, Vector3.UP, "thunder_bolt"):
+		pub.queue_free()
+		return "announce_boss_shot published with no mesh under it"
+	pub._master = "themaster"
+	if pub.announce_boss_shot(1, Vector3.ZERO, Vector3.UP, "thunder_bolt"):
+		pub.queue_free()
+		return "announce_boss_shot published as a non-master"
+	pub._master = "us"
+	pub._rtc = WebRTCMultiplayerPeer.new()
+	if not pub.announce_boss_shot(1, Vector3(1, 2, 3), Vector3(4, 5, 6), "thunder_bolt"):
+		pub.queue_free()
+		return "announce_boss_shot refused an honest shot from the master"
+	if pub.announce_boss_shot(1, Vector3(NAN, 0, 0), Vector3.UP, "thunder_bolt"):
+		pub.queue_free()
+		return "announce_boss_shot published a NaN muzzle"
+	if pub.announce_boss_shot(1, Vector3.ZERO,
+			Vector3(MpCodec.MAX_SHOT_COORD * 2.0, 0, 0), "thunder_bolt"):
+		pub.queue_free()
+		return "announce_boss_shot published an oversize aim"
+	pub.queue_free()
+
+	# AUTHORITY AND REPLAY. Only the master's bolt is drawn, on the body the id
+	# cache resolves, with that body's OWN row params — never the packet's.
+	var mp: Node = _room_manager("us")
+	mp._master = "themaster"
+	var holder := Node3D.new()
+	root.add_child(holder)
+	var body_script := GDScript.new()
+	body_script.source_code = SHOT_BODY_STUB_SOURCE
+	body_script.reload()
+	var row: Dictionary = SpeciesTable.SPECIES["titan"]["ranged"]
+	var body: Node3D = body_script.new()
+	body.set("spec", {"ranged": row})
+	holder.add_child(body)
+	mp._synced_crocs[424242] = body
+	var fired: Dictionary = _shot_with("c", 424242)
+	MpCrocSync.receive_shot(mp, "someoneelse", fired)
+	if _bolts_under(holder).size() != 0:
+		holder.queue_free()
+		mp.queue_free()
+		return "a NON-MASTER's shot packet was replayed"
+	MpCrocSync.receive_shot(mp, "themaster", fired)
+	var bolts: Array = _bolts_under(holder)
+	if bolts.size() != 1:
+		holder.queue_free()
+		mp.queue_free()
+		return "the master's shot packet replayed %d bolts, not one" % bolts.size()
+	var first: BossProjectile = bolts[0]
+	var vel: Vector3 = first.get("_velocity")
+	var want_dir: Vector3 = (
+		(fired["a"] as Vector3) - (fired["f"] as Vector3)).normalized()
+	if absf(vel.length() - float(row["speed"])) > 0.001:
+		holder.queue_free()
+		mp.queue_free()
+		return "the replay flew at %.2f m/s, the row says %.1f" \
+				% [vel.length(), float(row["speed"])]
+	if vel.normalized().distance_to(want_dir) > 0.001:
+		holder.queue_free()
+		mp.queue_free()
+		return "the replay flew off the fire ray (%s)" % str(vel.normalized())
+	if absf(float(first.get("_hit_radius")) - float(row["hit_radius"])) > 0.0001:
+		holder.queue_free()
+		mp.queue_free()
+		return "the replay's hit radius is not the row's"
+
+	# A style that disagrees with the row still draws the ROW's bolt: `s` only
+	# names what the master drew, and a body always draws its own.
+	MpCrocSync.receive_shot(mp, "themaster", _shot_with("s", "ice_cream"))
+	bolts = _bolts_under(holder)
+	if bolts.size() != 2:
+		holder.queue_free()
+		mp.queue_free()
+		return "a style-mismatched shot replayed %d bolts, not one more" \
+				% (bolts.size() - 1)
+	var vel2: Vector3 = (bolts[1] as BossProjectile).get("_velocity")
+	if absf(vel2.length() - float(row["speed"])) > 0.001:
+		holder.queue_free()
+		mp.queue_free()
+		return "a style-mismatched shot flew at the packet's speed, not the row's"
+
+	# An unknown id is a chunk this peer never generated: dropped, never spawned.
+	MpCrocSync.receive_shot(mp, "themaster", _shot_with("c", 999888))
+	if _bolts_under(holder).size() != 2:
+		holder.queue_free()
+		mp.queue_free()
+		return "a shot for an unknown crocodile id spawned a bolt"
+
+	# A body with no "ranged" row cannot have fired: dropped, never spawned.
+	var plain: Node3D = body_script.new()
+	holder.add_child(plain)
+	mp._synced_crocs[434343] = plain
+	MpCrocSync.receive_shot(mp, "themaster", _shot_with("c", 434343))
+	if _bolts_under(holder).size() != 2:
+		holder.queue_free()
+		mp.queue_free()
+		return "a shot for a non-ranged body spawned a bolt"
+
+	# FLIGHT. One physics frame later the bolt is where the master drew it: the
+	# aim froze at fire time, so the replay is the same ray from the same muzzle.
+	await physics_frame
+	var dt: float = 1.0 / float(Engine.physics_ticks_per_second)
+	var want: Vector3 = (fired["f"] as Vector3) + vel * dt
+	if first.global_position.distance_to(want) > 0.05:
+		holder.queue_free()
+		mp.queue_free()
+		return "one frame later the replay is at %s, the master's flight says %s" \
+				% [str(first.global_position), str(want)]
+	holder.queue_free()
+	mp.queue_free()
+	Sentinel.done("shot_parser")
+	return ""
+
+
+func _bolts_under(parent: Node) -> Array:
+	"""Every live BossProjectile parented under this holder — see _check_shot_parser."""
+	var out: Array = []
+	for child: Node in parent.get_children():
+		if child is BossProjectile:
+			out.append(child)
+	return out
 
 
 func _check_pad_parser() -> String:

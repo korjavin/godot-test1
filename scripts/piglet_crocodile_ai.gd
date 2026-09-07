@@ -1639,9 +1639,29 @@ func _behave_ranged() -> void:
 	# The muzzle rides the body's scale, so the bolt leaves a 6x titan's shoulder
 	# rather than its ankle (see `muzzle_height`). The parent is our CHUNK, which
 	# is what makes an unloaded chunk free any bolt still in the air.
-	BossProjectile.fire(
-			global_position + Vector3.UP * float(row["muzzle_height"]) * scale.y,
-			chase_target, get_parent(), row, self)
+	var muzzle: Vector3 = \
+			global_position + Vector3.UP * float(row["muzzle_height"]) * scale.y
+	var bolt: BossProjectile = BossProjectile.fire(
+			muzzle, chase_target, get_parent(), row, self)
+	# MULTIPLAYER (bead godot-test1-coq): the bolt above threatens the LOCAL
+	# player only, and a remote-driven body never reaches this arm at all — so a
+	# ranged boss is lethal to the master only. The room replays the master's
+	# shot: one reliable `shot` verb per bolt, beside the fire call and INSIDE
+	# all four gates above (a refused shot sends nothing, and neither does a
+	# shot the per-shooter cap refused — `fire()` answers null and there is no
+	# bolt for the room to draw). Group-based with `has_method` guards, the
+	# `request_croc_flee` idiom: offline, or with no manager in the scene, this
+	# is one failed lookup per shot and nothing else.
+	#
+	# TWO DOCUMENTED CEILINGS. (1) A master on an older build publishes no shot:
+	# non-masters see what they see today (nothing). (2) The bolt arrives RTT
+	# late on the receiver and replays from muzzle to aim from t=0, so the
+	# receiver's picture is RTT behind the master's — documented, not
+	# compensated (casual co-op, client-authoritative movement).
+	if bolt != null:
+		var mp := get_tree().get_first_node_in_group("mp")
+		if mp and mp.has_method("announce_boss_shot"):
+			mp.announce_boss_shot(croc_id(), muzzle, chase_target, str(row["style"]))
 
 
 func _behave_hunt() -> void:
