@@ -190,6 +190,7 @@ const MAX_FLEE_DURATION: float = 60.0
 ##         MAX_WX_STORMS bound cap absolutely.
 const VERB_BUDGET_PER_SEC: Dictionary = {
 	"clm": 30, "kill": 10, "flee": 4, "croc": 40, "cnf": 150, "dead": 60,
+	"gate": 4,  # one HQ gate opening each (bead godot-test1-d81): a handful per campaign
 	"cap": 8, "room": 12, "pad": 4, "lmk": 10, "herd": 40, "wx": 40,
 }
 
@@ -1562,6 +1563,7 @@ func _send_room_state() -> void:
 	"""
 	if _state != State.IN_ROOM or _master != _you:
 		return
+	var opened: Array = _tower_opened_ids()
 	var payload: Dictionary = {
 		"t": "room", "cap": captive_heroes(), "cd": 0.0, "co": 0,
 		# BUDAPEST'S EXPLORED SET (bead godot-test1-8gw.5). A NEW OPTIONAL FIELD:
@@ -1570,9 +1572,14 @@ func _send_room_state() -> void:
 		# `dead` / `gc` rule, and the opposite of `cd`/`co`, which are REQUIRED by
 		# every peer that already shipped and so can never be dropped.
 		"m": _explored_mask,
+		# THE TOWER'S OPENED SET (bead godot-test1-d81). OPTIONAL like `m`, for
+		# the same mixed-build reason: an older master's packet still repairs the
+		# cells. Absolute, never a delta — the set is monotone, so the master's
+		# copy is the room's and needs no grace window to adopt.
+		"g": opened,
 	}
 	_broadcast_reliable(var_to_bytes(payload))
-	var digest: String = "%s|%d" % [payload["cap"], _explored_mask]
+	var digest: String = "%s|%d|%s" % [payload["cap"], _explored_mask, opened]
 	if digest == _room_relay_digest:
 		return
 	_room_relay_digest = digest
@@ -1605,6 +1612,13 @@ func _receive_room(from_id: String, packet: Dictionary) -> void:
 	# join gate deferred; see `_apply_explored()`.
 	var published: int = int(msg["m"])
 	_apply_explored(published)
+	# THE TOWER'S OPENED SET, from the master alone — the captive set's authority
+	# rule with none of its guards: the set is add-only, so a repair that is a
+	# moment stale can only ever be a subset of the truth and there is nothing
+	# for a grace window to protect. An old master sends no `g`, which decodes
+	# as [] and absorbs to nothing — the documented mixed-room ceiling. Unknown
+	# ids are the receiver's skip, not the packet's failure (the `m` fold).
+	_absorb_opened_gates(msg["g"])
 	# THE ACK. This packet is the master's own truth, so a pending claim it carries
 	# has landed and may stop being re-sent — see `_tick_landmark_claims()`. It is
 	# done HERE and not in `_apply_explored()` because that function is also fed by
@@ -1651,6 +1665,101 @@ func _adopt_room_captives(names: Array) -> void:
 			continue  # We took him just now; the master has not heard yet.
 		_captives.erase(hero)
 		_captive_changed(hero, false)
+
+
+# =============================================================================
+# OPENED TOWER GATES (bead godot-test1-d81)
+#
+# The HQ's opened-gate set is world state every peer must see: a gate one member
+# works stays a wall for the rest without this. The set was designed for exactly
+# it (monotone, union-mergeable, one `opened_ids()` broadcast), so this follows
+# the `cap` shape one verb along:
+#
+#     gate   anyone -> everyone   {"t":"gate","id":String}   one opening, RELIABLE
+#
+# plus the set as ABSOLUTE values beside `m` on the `room` repair packet (`g`)
+# and beside `lm` in the join snapshot (`go`) — the same live-plus-repair split
+# `cap` keeps. Reliable because a lost opening is a wall that never moves; the
+# repair legs close the join gap the live verb cannot reach.
+#
+# NO MASTER AUTHORITY, and that is deliberate rather than missing: the set is
+# monotone, so a union has no conflict and no direction to undo, and a joiner who
+# opens a gate while the master stands 2 km away must not wait on a round trip
+# for the wall under their own feet to move. Entering a room does NOT reset the
+# local set (unlike the captive mirror): it is persisted, earned progression,
+# and the union is what the ruling asks for.
+# =============================================================================
+
+
+func publish_gate_opened(id: String) -> void:
+	"""
+	Tell the room one HQ gate just opened here. Called by
+	`tower_shell.mark_opened()` on the OPENING ONLY, through `has_method` —
+	PUBLIC and kept by NAME for that call.
+
+	A no-op offline: solo the shell's own set is the whole truth. Applied
+	locally as well as sent is the caller's shape (the shell records before it
+	publishes), so this only moves the fact.
+
+	OVER THE MESH AND THE LOBBY RELAY, `_publish_captive`'s rule for
+	`_publish_captive`'s reason: ICE takes seconds, and an opening made in that
+	window would otherwise be lost to the room for the rest of the run — this
+	peer's own set is monotone, so nothing would ever re-send it. The relay leg
+	reaches exactly the peers whose mesh is not up (normally none, so normally
+	zero sends). No retry queue: the `room` packet's `g` and the snapshot's `go`
+	repair a drop, which a monotone set lets them do absolutely.
+	"""
+	if _state != State.IN_ROOM:
+		return
+	var packet: Dictionary = {"t": "gate", "id": id}
+	_broadcast_reliable(var_to_bytes(packet))
+	_relay_to_negotiating({"mp": "gate", "id": id})
+
+
+func _receive_gate(_from_id: String, packet: Dictionary) -> void:
+	"""
+	One `gate` from the mesh OR the relay — same parser, same function, the
+	`cap` / `lmk` rule for two transports carrying one fact.
+
+	The sender carries no authority and is asked nothing: any member may open,
+	so there is no holder to check and no position to verify. Rate-limited on
+	the shared budget by both dispatches, because a relayed packet is peer input
+	like any other.
+	"""
+	var msg: Dictionary = MpCodec.decode_gate(packet)
+	if msg.is_empty():
+		return
+	_absorb_opened_gate(String(msg["id"]))
+
+
+func _absorb_opened_gate(id: String) -> void:
+	"""
+	Fold one room-opened gate id into this peer's tower. The ONE gate the live
+	verb, the `room` repair set and the join snapshot all go through, so the
+	three cannot drift.
+
+	Idempotent (the shell's early return), writes through to the profile like a
+	local opening (the bead's default — room-only opening is an owner call),
+	and re-runs the interior's `_apply_opened()` when this peer has one built,
+	so the mass retires HERE rather than on the next rebuild. A shell with no
+	interior streamed in just holds the id; the build-time `_apply_opened()`
+	covers the rest. Entering a room resets nothing: the union only ever adds.
+	"""
+	if not TowerGraph.opened_ids().has(id):
+		return  # Not an id this build authored — the `cap` / `_pool` split.
+	var tower := get_tree().get_first_node_in_group("tower")
+	if tower == null or not tower.has_method("mark_opened"):
+		return  # No tower in this scene — not an error, the LOD idiom.
+	tower.mark_opened(id)
+	var interior := get_tree().get_first_node_in_group("tower_interior")
+	if interior != null and interior.has_method("_apply_opened"):
+		interior._apply_opened()
+
+
+func _absorb_opened_gates(ids: Array) -> void:
+	"""Fold a room-published opened set (`g`, `go`) through `_absorb_opened_gate`."""
+	for entry: Variant in ids:
+		_absorb_opened_gate(String(entry))
 
 
 func _receive_captive(from_id: String, packet: Dictionary) -> void:
@@ -2316,6 +2425,16 @@ func _on_lobby_relay(from: String, payload: Dictionary) -> void:
 			if not _verb_rate_ok(from, "room"):
 				return
 			_receive_room(from, payload)
+		"gate":
+			# An HQ gate opening from a peer whose mesh we have not finished
+			# building — see `publish_gate_opened()` for why the relay carries
+			# this one at all. SAME PARSER, SAME RULE, SAME FUNCTION as the mesh
+			# verb, and rate-limited on the same budget, because a relayed packet
+			# is peer input like any other. `id` is a String, so the relay's
+			# float-everything transport changes nothing — no second spelling.
+			if not _verb_rate_ok(from, "gate"):
+				return
+			_receive_gate(from, payload)
 		"state":
 			# A join snapshot from an incumbent. THE THIRD TRUST BOUNDARY in
 			# this file: `decode_state()` validates it whole, and anything that
@@ -2817,6 +2936,13 @@ func _send_state_to(id: String) -> void:
 		# `gc` on two-letter counters and a one-letter key beside them reads as a
 		# typo.
 		"lm": _explored_mask,
+		# THE TOWER'S OPENED SET, absolute and never a delta (bead
+		# godot-test1-d81) — the `cap` rule, honoured from the master alone for
+		# the same reason: the room's own authority is the only honest source,
+		# and the set is add-only so a stale picture can only ever be a subset.
+		# `go`, not `g`: the snapshot's two-letter company (`cc`, `dd`, `gc`,
+		# `lm`), where a one-letter key beside them reads as a typo.
+		"go": _tower_opened_ids(),
 	})
 
 
@@ -2858,6 +2984,23 @@ func _recent_dead_ids() -> Array:
 	ids = ids.slice(maxi(0, ids.size() - MpCodec.MAX_STATE_IDS))  # keep the newest tail
 	ids.reverse()  # ... most recent first
 	return ids
+
+
+func _tower_opened_ids() -> Array:
+	"""
+	The tower's opened ids to replay: the whole sorted set, because every id is
+	a fact and none of them is near or far (bead godot-test1-d81).
+
+	The joiner-side parser bounds it with the store's `MAX_TOWER_IDS`, which the
+	honest set can never reach (a couple dozen declared ids); anything past it
+	is a peer that is not speaking this protocol. Empty — never null — when
+	there is no tower in this scene, so the snapshot reads with no opened set
+	rather than failing to build one.
+	"""
+	var tower := get_tree().get_first_node_in_group("tower")
+	if tower == null or not tower.has_method("opened_ids"):
+		return []
+	return tower.opened_ids()
 
 
 func _receive_state(from: String, snapshot: Dictionary) -> void:
@@ -2945,6 +3088,14 @@ func _receive_state(from: String, snapshot: Dictionary) -> void:
 	# win lands once, on a body that is already standing where the room is.
 	if from == _master:
 		_apply_explored(int(snapshot.get("lm", 0)))
+	# THE TOWER'S OPENED SET, from the master alone — the kill list's authority
+	# rule with the explored set's add-only ease: a joiner takes the room's
+	# opened ids absolutely, like `cap`, and a stale picture can only ever be a
+	# subset, like `lm`. A stranger's set is not a contribution (the kill list's
+	# reason); an older master's snapshot simply carries no `go`, which decodes
+	# as [] and absorbs to nothing.
+	if from == _master:
+		_absorb_opened_gates(snapshot.get("go", []))
 	# ...and the last thing the AUTO-CLAIM was waiting on, for the reason in
 	# `_auto_claim_hero()`: this snapshot is where a joiner learns which heroes are
 	# in a cell, and claiming before it lands is claiming one of them.
@@ -3740,6 +3891,8 @@ func _receive_mesh_verb(from_id: String, verb: String, packet: Dictionary) -> vo
 			_receive_captive(from_id, packet)
 		"room":
 			_receive_room(from_id, packet)
+		"gate":
+			_receive_gate(from_id, packet)
 		_:
 			# Forward compatibility. Not a warning — see the docstring.
 			pass

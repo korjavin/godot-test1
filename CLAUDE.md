@@ -1095,7 +1095,11 @@ rules of its own, all pinned by `tower_interior_selfcheck`:
 - **Opened gates are a monotone SET on the shell node** (`mark_opened` / `is_opened` /
   `opened_ids`), not per-player state, because the transformation is world state every
   peer would see. `_apply_opened()` is the one place state becomes geometry, and the
-  seam phase 5 will load a save through.
+  seam phase 5 will load a save through. In a room the set is SHARED (bead
+  `godot-test1-d81`): one reliable `gate` verb per opening over mesh and relay, the absolute
+  set beside `m` on the `room` repair packet (`g`) and beside `lm` in the join snapshot (`go`).
+  Any member may open (a monotone union has no conflict), entering a room resets nothing, and
+  every member's profile gains the room's ids — teammates share campaign progression.
 - **Static interior geometry is ONE batched mesh per storey and casts no shadow.** Both
   were measured, both are invisible, and together they are the difference between the
   interior costing 4 ms a frame and costing nothing measurable.
@@ -2577,6 +2581,13 @@ The sharpest rules, in rough order of how badly they bite:
   `weather_manager.gd` owns the clouds at both ends and owns the silence timeout that
   frees a replay, which is why this needed no leave hook and no master-changed hook. See
   the weather section for the rules; clear clouds and birds stay local.
+- **The HQ's opened gates are room-shared on the monotone shape** (bead
+  `godot-test1-d81`). The `gate` verb is anyone-to-everyone, reliable over mesh and relay,
+  carrying one id off `TowerGraph.opened_ids()` (the range list — a gate, entry, mutation or
+  scar id this build authored); the receiver folds it through the shell's `mark_opened()` and
+  re-runs a built interior's `_apply_opened()`, so the mass retires on every screen. The
+  `room` packet's `g` and the snapshot's `go` repair the join gap. See the tower section for
+  the ceilings (older members publish and honour nothing; profiles gain the room's ids).
 - The stall heartbeat rides the lobby relay, not the mesh, because a throttled tab stops
   polling both.
 

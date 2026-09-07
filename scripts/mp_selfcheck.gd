@@ -189,6 +189,9 @@ func _run_checks() -> String:
 	failure = _check_room_publish()
 	if not failure.is_empty():
 		return failure
+	failure = _check_gate_parser()
+	if not failure.is_empty():
+		return failure
 	failure = _check_hero_press_decision()
 	if not failure.is_empty():
 		return failure
@@ -505,6 +508,30 @@ func _check_state_parser() -> String:
 		return "state parser mangled the departed-member bank: %s" % with_gone
 	if with_gone.has("gs"):
 		return "state parser carried the retired departed-hearts field through: %s" % with_gone
+	# `go` (the tower's opened set, bead godot-test1-d81) follows the same rule:
+	# MISSING IS NOT MALFORMED, so a peer on a build without the field is still
+	# worth its position and its counters. `good` above carries none, so it must
+	# read as an empty list rather than dropping.
+	if (snapshot["go"] as Array) != []:
+		return "state parser invented an opened set: %s" % str(snapshot["go"])
+	var with_opened: Dictionary = MpCodec.decode_state({
+		"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0,
+		"ids": [], "go": ["tower_vault", "tower_rescue_primm"],
+	})
+	if with_opened.is_empty() \
+			or (with_opened["go"] as Array) != ["tower_vault", "tower_rescue_primm"]:
+		return "state parser mangled the opened set: %s" % str(with_opened)
+	var bad_opened: Array[Dictionary] = [
+		{"cc": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0, "ids": [],
+			"go": "tower_vault"},
+		{"cc": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0, "ids": [],
+			"go": [7]},
+		{"cc": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0, "ids": [],
+			"go": [""]},
+	]
+	for bad_snapshot: Dictionary in bad_opened:
+		if not MpCodec.decode_state(bad_snapshot).is_empty():
+			return "state parser accepted the malformed opened set %s" % str(bad_snapshot)
 
 	# An over-long list is TRUNCATED, not rejected — the ids are sent
 	# most-recent-first, so the head is the part nearest the joiner, and the
@@ -2749,6 +2776,33 @@ func _check_room_publish() -> String:
 		if not MpCodec.decode_room(packet).is_empty():
 			return "decode_room accepted the hostile publish %s" % str(packet)
 
+	# THE TOWER'S OPENED SET (bead godot-test1-d81). MISSING IS NOT MALFORMED:
+	# an older master's packet still repairs the cells, reading with an empty
+	# set. Present it round-trips; malformed it costs the whole packet.
+	var no_gates: Dictionary = MpCodec.decode_room(
+		{"t": "room", "cap": [], "cd": 1.0, "co": 0})
+	if no_gates.is_empty() or (no_gates["g"] as Array) != []:
+		return "decode_room without g did not read as an empty opened set (%s)" % str(no_gates)
+	var with_gates: Dictionary = MpCodec.decode_room(
+		{"t": "room", "cap": [], "cd": 1.0, "co": 0,
+			"g": ["tower_vault", "tower_checkpoint"]})
+	if with_gates.is_empty() or (with_gates["g"] as Array) != ["tower_vault", "tower_checkpoint"]:
+		return "decode_room mangled the opened set (%s)" % str(with_gates)
+	var long_gates: Array = []
+	for i: int in range(BestRunStore.MAX_TOWER_IDS + 1):
+		long_gates.append("tower_vault")
+	var bad_gates: Array[Dictionary] = [
+		{"t": "room", "cap": [], "cd": 1.0, "co": 0, "g": "tower_vault"},
+		{"t": "room", "cap": [], "cd": 1.0, "co": 0, "g": long_gates},
+		{"t": "room", "cap": [], "cd": 1.0, "co": 0, "g": [7]},
+		{"t": "room", "cap": [], "cd": 1.0, "co": 0, "g": [""]},
+		{"t": "room", "cap": [], "cd": 1.0, "co": 0,
+			"g": ["x".repeat(MpCodec.MAX_GATE_ID + 1)]},
+	]
+	for bad_packet: Dictionary in bad_gates:
+		if not MpCodec.decode_room(bad_packet).is_empty():
+			return "decode_room accepted the malformed opened set %s" % str(bad_packet)
+
 	var player: Node = _captive_player()
 	var mp: Node = _room_manager("me")
 	mp._master = "themaster"
@@ -2933,6 +2987,57 @@ func _check_room_publish() -> String:
 	player.free()
 	mp.free()
 	Sentinel.done("room_publish")
+	return ""
+
+
+func _check_gate_parser() -> String:
+	"""
+	The `gate` verb — bead godot-test1-d81 — against hostile packets.
+
+	THE HONEST PACKET COMES FIRST AND IT IS THE POINT: a parser that returned
+	`{}` for everything would pass every rejection below while leaving the
+	room's doorways stone on every screen but the opener's.
+	"""
+	var honest: Dictionary = {"t": "gate", "id": TowerGraph.GATE_DEMAND}
+	var good: Dictionary = MpCodec.decode_gate(honest)
+	if good.is_empty() or str(good["id"]) != TowerGraph.GATE_DEMAND:
+		return "decode_gate dropped an honest opening (%s)" % str(good)
+
+	# An honest round-trip THROUGH BYTES: what the opener publishes must survive
+	# the codec, or the room replays an opening nobody made.
+	var trip: Dictionary = MpCodec.decode_gate(bytes_to_var(var_to_bytes(honest)))
+	if trip.is_empty() or str(trip) != str(good):
+		return "decode_gate did not round-trip an honest opening (%s)" % str(trip)
+
+	# The range list accepts what the graph declares: every id the opened set
+	# may ever hold must cross this parser, or a build that authors a gate
+	# breaks every older room instead of opening it.
+	for gid: String in TowerGraph.opened_ids():
+		if gid.length() > MpCodec.MAX_GATE_ID:
+			return "declared gate id '%s' outgrows MAX_GATE_ID — the room would drop it" % gid
+		if MpCodec.decode_gate({"t": "gate", "id": gid}).is_empty():
+			return "decode_gate dropped the declared id '%s'" % gid
+
+	# ...and everything a peer that is not speaking this protocol could send.
+	var hostile: Array[Dictionary] = [
+		{"t": "gate"},
+		{"t": "gate", "id": 7},
+		{"t": "gate", "id": 7.5},
+		{"t": "gate", "id": true},
+		{"t": "gate", "id": ""},
+		{"t": "gate", "id": "tower_monthly_special"},
+		{"t": "gate", "id": Vector2(1.0, 2.0)},
+		{"t": "gate", "id": "x".repeat(MpCodec.MAX_GATE_ID + 1)},
+	]
+	for packet: Dictionary in hostile:
+		if not MpCodec.decode_gate(packet).is_empty():
+			return "decode_gate accepted the hostile packet %s" % str(packet)
+
+	# The verb has to be budgeted like every other one `_receive_mesh_verb`
+	# dispatches — a monotone set is not a rate bound.
+	if not MPManager.VERB_BUDGET_PER_SEC.has("gate"):
+		return "the gate verb has no VERB_BUDGET_PER_SEC row"
+	Sentinel.done("gate_parser")
 	return ""
 
 

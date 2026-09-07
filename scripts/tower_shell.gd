@@ -888,6 +888,27 @@ func mark_opened(id: String) -> void:
 		return
 	opened[id] = true
 	BestRunStore.merge_tower_opened_ids([id])
+	# MULTIPLAYER (bead godot-test1-d81): the room replays this opening. One
+	# reliable `gate` verb on the OPENING ONLY — the early return above is what
+	# keeps re-marking (and hydration, which writes `opened` directly and never
+	# comes through here) off the wire. Group-based with `has_method`
+	# guards, the flee/pad precedent for a tower-to-mesh call: solo, or with no
+	# manager in the scene, this is one failed lookup per opening and nothing
+	# else. ANY member may publish (no master authority — the set is monotone,
+	# so a union has no conflict), over the mesh AND the lobby relay (the `cap`
+	# precedent: a peer whose ICE is unfinished must still learn it).
+	#
+	# TWO DOCUMENTED CEILINGS. (1) A member on an older build publishes no gate
+	# and honours none; the rest of the room still converges through the
+	# master's `g` repair when the master is new. (2) Every member's profile
+	# gains the room's opened ids — teammates share campaign progression (the
+	# shared-bank precedent). Room-only opening that does not persist would be a
+	# flag on this call skipping the store write above; the default is
+	# write-through, and the owner call is still open.
+	if not id.is_empty() and id.length() <= MpCodec.MAX_GATE_ID:
+		var mp := get_tree().get_first_node_in_group("mp")
+		if mp and mp.has_method("publish_gate_opened"):
+			mp.publish_gate_opened(id)
 
 
 func is_opened(id: String) -> bool:

@@ -870,7 +870,11 @@ const SPINE_DOORS: Array[Dictionary] = [
 ## loop's shape capture.
 const SCAR_BOX: String = "BlockDoorCollapse"
 
-const RESCUE_DONE: String = "tower_rescue_primm"
+## Taken from `TowerGraph`, the way the `GATE_*` constants are: the graph is the
+## one authority on every id the opened set may hold (it spells this one there
+## because the room's `gate` verb range-checks against it), and the value is
+## unchanged — `TowerInterior.RESCUE_DONE` still names the same persisted id.
+const RESCUE_DONE: String = TowerGraph.RESCUE_DONE
 
 ## Who the authored first rescue is about. Read from the graph's cell rooms rather
 ## than trusted: `AUTHORED_CAPTIVE` must be a hero with a cell, which check 1
