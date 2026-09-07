@@ -545,6 +545,13 @@ var _pending_landmarks: Dictionary = {}
 ## shell call; without it every id was a ConfigFile round-trip twice a second
 ## for the rest of the run. Room-scoped: `leave()` empties it, seeded again on
 ## the next join.
+##
+## ROOM-ONLY HOME (bead godot-test1-crk, owner ruling 2026-09-07 10:47): since
+## no absorb path persists anymore, this mirror is the ONLY record that an id
+## was opened by the room rather than earned here. Own publishes land here
+## too (harmless — they are also in the profile, and the mirror-filter must
+## skip them on repair); the drain and the re-hydrate read the PROFILE, never
+## this, so own and absorbed never mix on the way out.
 var _absorbed_opened: Dictionary = {}
 
 ## Once-per-join publish of this peer's OWN persisted set (review round 3):
@@ -845,6 +852,7 @@ func leave() -> void:
 	_collected_ids = {}
 	_peer_state = {}
 	_absorbed_opened = {}
+	_close_room_gates()
 	_join_gate_queue = []
 	_join_gate_primed = false
 	_join_gate_accum = 0.0
@@ -1811,12 +1819,12 @@ func _tick_join_gate_publish(delta: float) -> void:
 	room until it becomes master).
 
 	Primed once per join, on the first tick past `_join_settled()`. The queue
-	is `_tower_opened_ids()` — shell truth when streamed in, profile-seeded
-	mirror otherwise, authored-filtered on the way out (review round 4), so a
-	stale profile row never costs a quarter of the budget. Ids the room
-	already showed us ride along and are skipped by receivers
-	(mirror-filter), so the drain needs no room-seen bookkeeping: the queue
-	carries each id once and it lands where it is new.
+	is the PROFILE set, authored-filtered (review round 4) — what this peer
+	earned, never what the room showed it (bead godot-test1-crk). A stale
+	profile row never costs a quarter of the budget; ids the room already
+	showed us never even queue, so the drain needs no room-seen
+	bookkeeping: the queue carries each own id once and it lands where it
+	is new.
 
 	One drain per call, never while master: our own `g` already carries the
 	union absolutely every half second then, so singles are pure echo. Live
@@ -1830,9 +1838,16 @@ func _tick_join_gate_publish(delta: float) -> void:
 			return
 		_join_gate_primed = true
 		_join_gate_accum = 0.0
-		# Authored-filtered inside `_tower_opened_ids()` (review round 4) —
-		# no second filter here, or the two truths drift.
-		_join_gate_queue = _tower_opened_ids().duplicate()
+		# PROFILE ONLY, never the mirror (bead godot-test1-crk): the drain
+		# publishes what THIS peer earned — absorbed ids ride the master's
+		# `g` already, so draining them here would launder the room's set
+		# into every joiner's profile-shaped queue. Authored-filtered like
+		# `_tower_opened_ids()` (review round 4), so a stale profile row
+		# never costs a quarter of the budget.
+		_join_gate_queue = []
+		for gid: Variant in BestRunStore.tower_opened_ids():
+			if TowerGraph.opened_ids().has(String(gid)):
+				_join_gate_queue.append(String(gid))
 	if _join_gate_queue.is_empty():
 		return
 	_join_gate_accum += delta
@@ -1873,6 +1888,13 @@ func _absorb_opened_gate(id: String) -> void:
 
 	Skips ids the mirror already holds (see `_absorbed_opened`): the live verb
 	does not repeat, so this is purely the belt beside the batch path's braces.
+
+	ROOM-ONLY (bead godot-test1-crk, owner ruling 2026-09-07 10:47): the mark
+	carries `persist = false` — a teammate's opening never reaches this
+	peer's profile — and the no-shell branch writes nothing at all. The
+	mirror holds the id, and a shell that streams in later pulls the mirror
+	in `_enter_tree`, so nothing is lost (review round 1's hole stays shut
+	without the profile).
 	"""
 	if not TowerGraph.opened_ids().has(id):
 		return  # Not an id this build authored — the `cap` / `_pool` split.
@@ -1882,11 +1904,11 @@ func _absorb_opened_gate(id: String) -> void:
 	var tower := get_tree().get_first_node_in_group("tower")
 	if tower == null or not tower.has_method("mark_opened"):
 		# No shell streamed in — every peer at run start, until the HQ loads.
-		# Still earned campaign state, so it goes to the profile the shell
-		# hydrates from on `_enter_tree`, never dropped (review round 1).
-		BestRunStore.merge_tower_opened_ids([id])
+		# The mirror above is the whole record; the shell pulls it on
+		# `_enter_tree`. The profile is NOT touched: this opening was earned
+		# by a teammate, not here.
 		return
-	_absorb_opened_at_shell(id)
+	_absorb_opened_at_shell(id, false)
 
 
 func _absorb_opened_gates(ids: Array) -> void:
@@ -1896,11 +1918,15 @@ func _absorb_opened_gates(ids: Array) -> void:
 	single-id absorb per id, and every id cost a store round-trip twice a
 	second for the rest of the run.
 
-	Now a batch: mirror-filter first, so the steady state (nothing new costs
-	nothing — no store read, no store write, no shell call. Otherwise ONE
-	store read and ONE store write for the whole packet, then the shell tail
-	per genuinely-new id with persistence already covered by that write
-	(`persist = false`, review round 4) — the claim above holds again.
+	Now a batch: mirror-filter first, so the steady state (nothing new) costs
+	nothing — no store read, no store write, no shell call. Genuinely-new ids
+	join the mirror and the shell tail marks with `persist = false`.
+
+	ROOM-ONLY (bead godot-test1-crk, owner ruling 2026-09-07 10:47): the old
+	batch merged the packet into the profile in one write — that write is
+	gone, because a teammate's opening is session state. The shell tail is
+	unchanged (`persist = false` since review round 4); the shell that
+	streams in later pulls the mirror in `_enter_tree`.
 	"""
 	var fresh: Array[String] = []
 	for entry: Variant in ids:
@@ -1911,18 +1937,8 @@ func _absorb_opened_gates(ids: Array) -> void:
 			fresh.append(gid)
 	if fresh.is_empty():
 		return
-	var stored: Array = BestRunStore.tower_opened_ids()
-	var missing: Array[String] = []
 	for gid: String in fresh:
 		_absorbed_opened[gid] = true
-		if not stored.has(gid):
-			missing.append(gid)
-	if not missing.is_empty():
-		BestRunStore.merge_tower_opened_ids(missing)
-	for gid: String in fresh:
-		# Persisted by the merge above — the tail marks shell-side only, so
-		# one repair costs one store write however many ids are fresh
-		# (review round 4).
 		_absorb_opened_at_shell(gid, false)
 
 
@@ -1932,12 +1948,11 @@ func _absorb_opened_at_shell(id: String, persist: bool = true) -> void:
 	mirror — the caller owns that; this is the tail the single and batch
 	paths share so they cannot drift.
 
-	`persist` threads `mark_opened`'s flag through (review round 4): the
-	BATCH caller passes false because it already merged the whole packet in
-	one store write — per-id writes there turned one repair into 1 + K
-	round-trips. The SINGLE caller keeps the default true: its path performs
-	no merge of its own, so false there would persist nothing at all (its
-	probe pins the write).
+	`persist` threads `mark_opened`'s flag through (review round 4): BOTH
+	callers pass false, because a teammate's opening is session state (bead
+	godot-test1-crk, owner ruling 2026-09-07 10:47) — no absorb path may
+	grow this peer's profile. A local opening never comes through here; it
+	persists in `mark_opened` itself.
 
 	Already open here: return before the mark, because the mark republishes
 	the id and the interior below re-applies it. The republish turns a repair
@@ -3184,6 +3199,43 @@ func _recent_dead_ids() -> Array:
 	ids = ids.slice(maxi(0, ids.size() - MpCodec.MAX_STATE_IDS))  # keep the newest tail
 	ids.reverse()  # ... most recent first
 	return ids
+
+
+func _close_room_gates() -> void:
+	"""
+	Fall the room's gates closed on leave (bead godot-test1-crk, owner ruling
+	2026-09-07 10:47): the shell's opened set is re-hydrated from the PROFILE
+	alone, so ids a teammate opened drop out while this peer's own (earned,
+	persisted) stay — then the built interior re-runs `_apply_opened()`,
+	which snaps shut what the set lost and brings the mass back.
+
+	`leave()` is the one path that clears the mirror, so it is the one place
+	this runs: there is no silence or master-changed leg for gates (the 2 Hz
+	repair only ever ADDS through the same absorb). Once per leave, never on
+	a tick — no re-apply storm (d81 round 3). Either node may be absent (no
+	shell streamed in, interior never built): both lookups are guarded, and
+	an offline leave is a no-op — the set is already profile-only.
+	"""
+	var tower := get_tree().get_first_node_in_group("tower")
+	if tower == null or not tower.has_method("rehydrate_opened_from_profile"):
+		return
+	tower.rehydrate_opened_from_profile()
+	var interior := get_tree().get_first_node_in_group("tower_interior")
+	if interior != null and interior.has_method("_apply_opened"):
+		interior._apply_opened()
+
+
+func absorbed_opened_ids() -> Array:
+	"""
+	The room mirror's ids, for a shell that streams in late (bead
+	godot-test1-crk). PUBLIC and kept by NAME for `tower_shell._enter_tree`,
+	through `has_method` like every other tower-to-mesh call.
+
+	Own publishes are in here beside absorbed ids (both skip re-absorb on
+	repair); that is harmless at the one call site, which unions them into a
+	shell already hydrated from the profile.
+	"""
+	return _absorbed_opened.keys()
 
 
 func _tower_opened_ids() -> Array:

@@ -867,7 +867,36 @@ func _enter_tree() -> void:
 
 	The merge is a union into whatever is already here, so re-entering the tree
 	cannot lose an id opened while detached.
+
+	Then the ROOM's set (bead godot-test1-crk, owner ruling 2026-09-07 10:47):
+	absorbed ids are session state — they reach no profile — so an id the
+	room opened before this shell streamed in would hydrate to nothing here.
+	The manager's mirror is the one home of those ids; each folds in through
+	`mark_opened(id, false, false)`, so a late stream-in publishes no echo
+	and persists nothing. Runs before the interior builds (enter, parent
+	first), so the first `_apply_opened()` already sees the room's sky.
+	Solo, or with no manager in the scene, this is one failed lookup and
+	nothing else.
 	"""
+	for id: String in BestRunStore.tower_opened_ids():
+		opened[id] = true
+	var mp := get_tree().get_first_node_in_group("mp")
+	if mp != null and mp.has_method("absorbed_opened_ids"):
+		for gid: Variant in (mp.call("absorbed_opened_ids") as Array):
+			var rid := String(gid)
+			if not rid.is_empty() and not opened.has(rid):
+				mark_opened(rid, false, false)
+
+
+func rehydrate_opened_from_profile() -> void:
+	"""
+	Forget the room and remember the profile. Called by the manager's
+	`leave()` — the one path that clears the room mirror — so ids a teammate
+	opened fall closed again while this peer's own (earned, persisted) stay
+	open. The caller re-runs the interior's `_apply_opened()`, which snaps
+	shut what this drops; this function only moves the set.
+	"""
+	opened.clear()
 	for id: String in BestRunStore.tower_opened_ids():
 		opened[id] = true
 
@@ -881,12 +910,12 @@ func mark_opened(id: String, publish: bool = true, persist: bool = true) -> void
 	opening (pads, checkpoint, rescue, scars); the room absorb passes false —
 	its id arrived on the room's repair set, which already carries it to
 	everyone, so re-broadcasting is pure echo (review round 2).
-	@param persist: Write the id through to the profile. False from the room
-	absorb tail ONLY (review round 4): the batch absorb already merged the
-	whole packet in one store write, so per-id writes there turned one repair
-	into 1 + K round-trips. Every other caller persists — a local opening is
-	rare and precious, with nothing to batch and everything to lose by
-	deferring it to a flush a crash can eat.
+	@param persist: Write the id through to the profile. False from EVERY
+	room absorb path (bead godot-test1-crk, owner ruling 2026-09-07 10:47):
+	a teammate's opening is session state — open for the room, never saved
+	to this peer's profile. Every LOCAL opening persists: rare and precious,
+	with nothing to batch and everything to lose by deferring it to a flush
+	a crash can eat.
 
 	WRITES THROUGH IMMEDIATELY, on the opening only (when `persist`). The
 	early return is what keeps it off any repeated path: re-marking an open gate,
@@ -909,11 +938,12 @@ func mark_opened(id: String, publish: bool = true, persist: bool = true) -> void
 	#
 	# TWO DOCUMENTED CEILINGS. (1) A member on an older build publishes no gate
 	# and honours none; the rest of the room still converges through the
-	# master's `g` repair when the master is new. (2) Every member's profile
-	# gains the room's opened ids — teammates share campaign progression (the
-	# shared-bank precedent). The absorb tail passes `persist = false` because
-	# the batch already merged; the default stays write-through for every
-	# local opening.
+	# master's `g` repair when the master is new. (2) A teammate's opening is
+	# ROOM-ONLY (bead godot-test1-crk, owner ruling 2026-09-07 10:47,
+	# reversing d81's write-through default): absorbed ids open this peer's
+	# shell for the session and die with the room — on this peer's next solo
+	# run a gate a teammate worked is shut again. Only a LOCAL opening
+	# persists, because only it was earned here.
 	# Suppressed on absorb (review round 2): the room's repair set already
 	# carries the id to everyone, so re-broadcasting it is pure echo past the
 	# shared budget. Local openings — pads, checkpoint, rescue, scars — publish.

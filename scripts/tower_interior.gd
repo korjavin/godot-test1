@@ -2085,13 +2085,26 @@ func _apply_opened() -> void:
 	being entered on an unchanged lock survives a room absorb, while a freshly
 	solved lock stops being asked. At build every lock changes (nothing
 	derived yet), so build behaviour is identical.
+
+	SNAPS SHUT AS WELL AS OPEN (bead godot-test1-crk): the manager's leave
+	re-hydrates the shell from the profile alone, and this re-run brings the
+	mass BACK for ids the room opened — the fractions go to 0.0, not just to
+	1.0, and the checkpoint un-lights. The tick below only ever advances an
+	open fraction upward, so a snapped-shut gate stays shut; a re-opened one
+	tweens up again from 0 like a fresh build.
 	"""
 	if _is_open(GATE_DEMAND):
 		_shutter_open = 1.0
+	else:
+		_shutter_open = 0.0
 	if _is_open(GATE_IDENTITY):
 		_mass_open = 1.0
+	else:
+		_mass_open = 0.0
 	if _is_open(GATE_CHECKPOINT):
 		_light_checkpoint()
+	else:
+		_unlight_checkpoint()
 	for door: Dictionary in SPINE_DOORS:
 		var gid := String(door["gate"])
 		_spine_open[gid] = 1.0 if _is_open(gid) else 0.0
@@ -2405,6 +2418,12 @@ func _light_checkpoint() -> void:
 	"""Swap the checkpoint's plate and post to the lit material. Idempotent."""
 	for mesh: MeshInstance3D in _checkpoint_meshes:
 		mesh.material_override = _material(COLOR_CHECKPOINT_LIT)
+
+
+func _unlight_checkpoint() -> void:
+	"""Swap them back: a room-only checkpoint falls closed on leave (bead godot-test1-crk). Idempotent."""
+	for mesh: MeshInstance3D in _checkpoint_meshes:
+		mesh.material_override = _material(COLOR_CHECKPOINT)
 
 
 # ============================================================================
