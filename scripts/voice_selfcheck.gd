@@ -114,7 +114,13 @@ extends SceneTree
 ##     push-to-talk HOLDS, and a mode switch while the key is held drops the mic
 ##     — the last is the one that leaks an open microphone if it regresses.
 ##
-## ...and OVER ALL NINE, the completion sentinel: a GDScript runtime error aborts
+## 10. **HUD VOICE / CAMERA SWITCHES ABOVE MP BUTTON** (bead `godot-test1-xtr.20`).
+##     Guards the three switches stacked above the MP button on the gameplay HUD:
+##     one state and two views (shared handlers, lockstep labels across HUD and panel,
+##     mutual sync in both directions, camera blocked reporting, visibility gated
+##     on available and online, zero second state variables declared).
+##
+## ...and OVER ALL TEN, the completion sentinel: a GDScript runtime error aborts
 ## only the function it lands in, so a check that dies halfway simply stops
 ## asserting and the file prints OK. See `scripts/selfcheck_sentinel.gd`.
 
@@ -127,6 +133,7 @@ const IntroSelfcheck: GDScript = preload("res://scripts/intro_selfcheck.gd")
 ## SCRIPT, never an instance: `CHARACTERS` is a const and nothing here needs a
 ## body to ask it.
 const PlayerScript: GDScript = preload("res://scripts/player_controller.gd")
+const MultiplayerUIScript: GDScript = preload("res://scripts/mp_ui.gd")
 
 ## The action the whole of bead `godot-test1-xtr.2` hangs off.
 const MIC_ACTION: StringName = &"voice_mic"
@@ -155,6 +162,54 @@ class RowStub extends Node:
 		return Rect2(0.0, 0.0, 80.0, 80.0)
 
 
+## A stub voice node for driving `mp_ui.gd` (check 10, bead `godot-test1-xtr.20`).
+## Answers `is_available()` and the six seams: set_mic_muted / is_mic_muted /
+## set_deafened / is_deafened / set_camera_enabled / is_camera_on / camera_denied.
+class VoiceUiStub extends Node:
+	var available: bool = true
+	var mic_muted: bool = false
+	var deafened: bool = false
+	var camera_on: bool = false
+	var denied: bool = false
+	var mode: int = 0
+	var tx: bool = false
+
+	signal mode_changed(mode: int)
+	signal tx_changed(tx: bool)
+	signal mic_denied_changed(denied: bool)
+	signal camera_changed(on: bool)
+
+	func is_available() -> bool:
+		return available
+
+	func is_mic_muted() -> bool:
+		return mic_muted
+
+	func set_mic_muted(v: bool) -> void:
+		mic_muted = v
+
+	func is_deafened() -> bool:
+		return deafened
+
+	func set_deafened(v: bool) -> void:
+		deafened = v
+
+	func is_camera_on() -> bool:
+		return camera_on
+
+	func set_camera_enabled(v: bool) -> void:
+		camera_on = v
+
+	func camera_denied() -> bool:
+		return denied
+
+	func get_mode() -> int:
+		return mode
+
+	func is_tx() -> bool:
+		return tx
+
+
 var _failures: Array[String] = []
 
 
@@ -181,6 +236,7 @@ func _initialize() -> void:
 	_check_always_process()
 	_check_debug_line_in_a_room()
 	await _check_mic_key_semantics()
+	_check_hud_voice_switches()
 
 	if _failures.is_empty():
 		Sentinel.finish(self)
@@ -1885,3 +1941,274 @@ func _tap(node: Node) -> void:
 	Input.action_release(MIC_ACTION)
 	node._poll_input()
 	await process_frame
+
+
+# ============================================================================
+# 10. HUD VOICE / CAMERA SWITCHES ABOVE MP BUTTON (bead godot-test1-xtr.20)
+# ============================================================================
+
+func _check_hud_voice_switches() -> void:
+	"""
+	HUD voice and camera toggles stacked above the MP button (bead godot-test1-xtr.20).
+
+	Guards:
+	  1. ONE STATE, TWO VIEWS: HUD buttons and MP panel buttons share the same handlers
+	     and the same underlying voice state. Pressing a HUD toggle flips the stub
+	     and updates both panel and HUD button labels in the same tick.
+	  2. REVERSE SYNC: Mutating the voice state from the stub / panel side updates the
+	     HUD button text when `_update_voice_ui()` is called.
+	  3. CAMERA REFUSAL: When camera is denied, both HUD and panel camera buttons display
+	     'Camera blocked' and become disabled.
+	  4. VISIBILITY GATING: Hidden when `is_available()` is false or when offline.
+	  5. TEXT INVARIANTS: Each HUD button's `pressed` signal connects to the panel's
+	     handler, and `mp_ui.gd` declares no new state variables holding mic/deafen/camera
+	     state (zero second state variables).
+	  6. NEGATIVE CONTROLS: Mutated text checks fail against invalid handlers or injected
+	     state variables.
+	"""
+	var room := RoomStub.new()
+	room.online = true
+	room.add_to_group("mp")
+	root.add_child(room)
+
+	var voice := VoiceUiStub.new()
+	voice.available = true
+	voice.add_to_group("voice")
+	root.add_child(voice)
+
+	var ui: Control = MultiplayerUIScript.new()
+	root.add_child(ui)
+
+	# Initial refresh to populate the button labels and visibility
+	ui._update_voice_ui()
+	ui._process(0.0)
+
+	var hud_mic: Button = ui.get_node_or_null("HudMicButton")
+	var hud_deaf: Button = ui.get_node_or_null("HudDeafenButton")
+	var hud_cam: Button = ui.get_node_or_null("HudCameraButton")
+
+	if hud_mic == null or hud_deaf == null or hud_cam == null:
+		_fail("HUD voice buttons were not created as children of MultiplayerUI")
+		ui.free()
+		room.free()
+		voice.free()
+		Sentinel.done("hud_voice_switches")
+		return
+
+	# Initial visibility: online and available -> all three HUD buttons visible
+	if not (hud_mic.visible and hud_deaf.visible and hud_cam.visible):
+		_fail("HUD voice switches should be visible when online and voice is available")
+
+	# Initial labels
+	if hud_mic.text != "Mute mic" or ui._mic_mute_button.text != "Mute mic":
+		_fail("Initial mic button label mismatch: hud='%s' panel='%s'" % [hud_mic.text, ui._mic_mute_button.text])
+	if hud_deaf.text != "Deafen" or ui._deafen_button.text != "Deafen":
+		_fail("Initial deafen button label mismatch: hud='%s' panel='%s'" % [hud_deaf.text, ui._deafen_button.text])
+	if hud_cam.text != "Camera off" or ui._camera_button.text != "Camera off":
+		_fail("Initial camera button label mismatch: hud='%s' panel='%s'" % [hud_cam.text, ui._camera_button.text])
+
+	# FOCUS_NONE on every HUD switch so clicking never swallows gameplay inputs (jump / ui_accept)
+	if hud_mic.focus_mode != Control.FOCUS_NONE:
+		_fail("HudMicButton focus_mode is not FOCUS_NONE (got %d)" % hud_mic.focus_mode)
+	if hud_deaf.focus_mode != Control.FOCUS_NONE:
+		_fail("HudDeafenButton focus_mode is not FOCUS_NONE (got %d)" % hud_deaf.focus_mode)
+	if hud_cam.focus_mode != Control.FOCUS_NONE:
+		_fail("HudCameraButton focus_mode is not FOCUS_NONE (got %d)" % hud_cam.focus_mode)
+
+	# --- 1. PRESS HUD MIC BUTTON: flips stub and updates panel text in same tick ---
+	hud_mic.pressed.emit()
+	if not voice.is_mic_muted():
+		_fail("Pressing HudMicButton did not call set_mic_muted(true)")
+	if ui._mic_mute_button.text != "Mic muted":
+		_fail("Panel mic button text did not update to 'Mic muted' in same tick (got '%s')" % ui._mic_mute_button.text)
+	if hud_mic.text != "Mic muted":
+		_fail("HudMicButton text did not update to 'Mic muted' in same tick (got '%s')" % hud_mic.text)
+
+	# Flip from panel side and assert HUD text follows
+	voice.set_mic_muted(false)
+	ui._update_voice_ui()
+	if hud_mic.text != "Mute mic" or ui._mic_mute_button.text != "Mute mic":
+		_fail("HUD mic text did not follow panel-side stub flip: hud='%s' panel='%s'" % [hud_mic.text, ui._mic_mute_button.text])
+
+	# --- 2. PRESS HUD DEAFEN BUTTON: flips stub and updates panel text in same tick ---
+	hud_deaf.pressed.emit()
+	if not voice.is_deafened():
+		_fail("Pressing HudDeafenButton did not call set_deafened(true)")
+	if ui._deafen_button.text != "Deafened":
+		_fail("Panel deafen button text did not update to 'Deafened' in same tick (got '%s')" % ui._deafen_button.text)
+	if hud_deaf.text != "Deafened":
+		_fail("HudDeafenButton text did not update to 'Deafened' in same tick (got '%s')" % hud_deaf.text)
+
+	# Flip from panel side and assert HUD text follows
+	voice.set_deafened(false)
+	ui._update_voice_ui()
+	if hud_deaf.text != "Deafen" or ui._deafen_button.text != "Deafen":
+		_fail("HUD deafen text did not follow panel-side stub flip: hud='%s' panel='%s'" % [hud_deaf.text, ui._deafen_button.text])
+
+	# --- 3. PRESS HUD CAMERA BUTTON: flips stub and updates panel text in same tick ---
+	hud_cam.pressed.emit()
+	if not voice.is_camera_on():
+		_fail("Pressing HudCameraButton did not call set_camera_enabled(true)")
+	if ui._camera_button.text != "Camera on":
+		_fail("Panel camera button text did not update to 'Camera on' in same tick (got '%s')" % ui._camera_button.text)
+	if hud_cam.text != "Camera on":
+		_fail("HudCameraButton text did not update to 'Camera on' in same tick (got '%s')" % hud_cam.text)
+
+	# Flip from panel side and assert HUD text follows
+	voice.set_camera_enabled(false)
+	ui._update_voice_ui()
+	if hud_cam.text != "Camera off" or ui._camera_button.text != "Camera off":
+		_fail("HUD camera text did not follow panel-side stub flip: hud='%s' panel='%s'" % [hud_cam.text, ui._camera_button.text])
+
+	# Camera refused (camera_denied = true)
+	voice.denied = true
+	ui._update_voice_ui()
+	if hud_cam.text != "Camera blocked" or not hud_cam.disabled:
+		_fail("HUD camera button did not show 'Camera blocked' / disabled on permission denial")
+	if ui._camera_button.text != "Camera blocked" or not ui._camera_button.disabled:
+		_fail("Panel camera button did not show 'Camera blocked' / disabled on permission denial")
+	voice.denied = false
+	ui._update_voice_ui()
+
+	# --- 3b. PANEL OPEN/CLOSE TOGGLE (hides HUD buttons while panel body is open) ---
+	ui._set_panel_open(true)
+	ui._process(0.0)
+	if hud_mic.visible or hud_deaf.visible or hud_cam.visible:
+		_fail("HUD voice switches remained visible when the MP panel was opened")
+	ui._set_panel_open(false)
+	ui._process(0.0)
+	if not (hud_mic.visible and hud_deaf.visible and hud_cam.visible):
+		_fail("HUD voice switches failed to restore visibility when the MP panel was closed")
+
+	# --- 4. ASSERT HIDDEN WHEN is_available() IS FALSE ---
+	voice.available = false
+	ui._update_voice_ui()
+	ui._process(0.0)
+	if hud_mic.visible or hud_deaf.visible or hud_cam.visible:
+		_fail("HUD voice switches remained visible when voice.is_available() was false")
+
+	# Also assert hidden when offline
+	voice.available = true
+	room.online = false
+	ui._update_voice_ui()
+	ui._process(0.0)
+	if hud_mic.visible or hud_deaf.visible or hud_cam.visible:
+		_fail("HUD voice switches remained visible when offline")
+
+	# Clean up instantiated nodes
+	ui.free()
+	room.free()
+	voice.free()
+
+	# --- 5. TEXT ASSERTIONS & NEGATIVE CONTROLS ---
+	var source: String = FileAccess.get_file_as_string("res://scripts/mp_ui.gd")
+	if source.is_empty():
+		_fail("Could not read res://scripts/mp_ui.gd for text assertion")
+		Sentinel.done("hud_voice_switches")
+		return
+
+	var err_bindings := _verify_hud_voice_bindings(source)
+	if not err_bindings.is_empty():
+		_fail(err_bindings)
+
+	# Negative control for handler bindings
+	var mutated_bindings := source.replace("_on_mic_mute_pressed", "_on_wrong_mic_handler")
+	if _verify_hud_voice_bindings(mutated_bindings).is_empty():
+		_fail("Negative control failed: modified handler binding passed undetected")
+
+	var err_vars := _verify_no_state_vars(source)
+	if not err_vars.is_empty():
+		_fail(err_vars)
+
+	# Negative control for state variables
+	var mutated_vars := source + "\nvar _mic_state_flag: bool = false\n"
+	if _verify_no_state_vars(mutated_vars).is_empty():
+		_fail("Negative control failed: injected state variable passed undetected")
+
+	# Handlers must call _free_cursor_after_hud_press to restore cursor on desktop-web
+	var err_cursor := _verify_free_cursor_calls(source)
+	if not err_cursor.is_empty():
+		_fail(err_cursor)
+
+	# Negative control for cursor free calls in handlers
+	var mutated_cursor := source.replace(
+		"_update_voice_ui()\n\t_free_cursor_after_hud_press()",
+		"_update_voice_ui()"
+	)
+	if _verify_free_cursor_calls(mutated_cursor).is_empty():
+		_fail("Negative control failed: missing _free_cursor_after_hud_press() passed undetected")
+
+	# Negative control for cursor free helper body
+	var mutated_helper := source.replace(
+		"func _free_cursor_after_hud_press() -> void:\n\tif Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:\n\t\tInput.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)",
+		"func _free_cursor_after_hud_press() -> void:\n\tpass"
+	)
+	if _verify_free_cursor_calls(mutated_helper).is_empty():
+		_fail("Negative control failed: empty _free_cursor_after_hud_press body passed undetected")
+
+	Sentinel.done("hud_voice_switches")
+
+
+func _verify_hud_voice_bindings(source: String) -> String:
+	var mic_bound: bool = source.contains("_hud_mic_button = _make_button(\"Mute mic\", _on_mic_mute_pressed)") \
+		or source.contains("_hud_mic_button.pressed.connect(_on_mic_mute_pressed)")
+	if not mic_bound:
+		return "HudMicButton is not bound to _on_mic_mute_pressed in mp_ui.gd"
+
+	var deafen_bound: bool = source.contains("_hud_deafen_button = _make_button(\"Deafen\", _on_deafen_pressed)") \
+		or source.contains("_hud_deafen_button.pressed.connect(_on_deafen_pressed)")
+	if not deafen_bound:
+		return "HudDeafenButton is not bound to _on_deafen_pressed in mp_ui.gd"
+
+	var camera_bound: bool = source.contains("_hud_camera_button = _make_button(\"Camera off\", _on_camera_pressed)") \
+		or source.contains("_hud_camera_button.pressed.connect(_on_camera_pressed)")
+	if not camera_bound:
+		return "HudCameraButton is not bound to _on_camera_pressed in mp_ui.gd"
+
+	return ""
+
+
+func _verify_no_state_vars(source: String) -> String:
+	var regex := RegEx.create_from_string("(?m)^var\\s+([a-zA-Z0-9_]+)")
+	var allowed_new: Array[String] = ["_hud_mic_button", "_hud_deafen_button", "_hud_camera_button"]
+	var allowed_old: Array[String] = ["_mic_state_label", "_mic_mute_button", "_deafen_button", "_camera_button"]
+	for m: RegExMatch in regex.search_all(source):
+		var var_name: String = m.get_string(1)
+		if var_name in allowed_new:
+			continue
+		for kw: String in ["mic", "deafen", "camera"]:
+			if kw in var_name.to_lower():
+				if not var_name in allowed_old:
+					return "found unauthorized voice state variable '%s' declared in mp_ui.gd" % var_name
+	return ""
+
+
+func _verify_free_cursor_calls(source: String) -> String:
+	for h: String in ["_on_mic_mute_pressed", "_on_deafen_pressed", "_on_camera_pressed"]:
+		var pattern: String = "func\\s+" + h + "\\s*\\([^)]*\\)[^\\n]*\\n(?:(?!func\\s)[\\s\\S])*"
+		var re := RegEx.create_from_string(pattern)
+		if re == null:
+			return "failed to compile regex for " + h
+		var m := re.search(source)
+		if m == null:
+			return "handler %s not found in mp_ui.gd" % h
+		var body := m.get_string()
+		if not body.contains("_free_cursor_after_hud_press()"):
+			return "handler %s body does not call _free_cursor_after_hud_press()" % h
+
+	var helper_pattern: String = "func\\s+_free_cursor_after_hud_press\\s*\\([^)]*\\)[^\\n]*\\n(?:(?!func\\s)[\\s\\S])*"
+	var helper_re := RegEx.create_from_string(helper_pattern)
+	if helper_re == null:
+		return "failed to compile regex for _free_cursor_after_hud_press"
+	var helper_m := helper_re.search(source)
+	if helper_m == null:
+		return "helper _free_cursor_after_hud_press not found in mp_ui.gd"
+	var helper_body := helper_m.get_string()
+	if not helper_body.contains("Input.MOUSE_MODE_CAPTURED"):
+		return "_free_cursor_after_hud_press body does not reference Input.MOUSE_MODE_CAPTURED"
+	if not helper_body.contains("Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)"):
+		return "_free_cursor_after_hud_press body does not call Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)"
+
+	return ""
+
+
