@@ -36,6 +36,7 @@
 [ext_resource type="Script" path="res://scripts/tower_lift_menu.gd" id="33_lift"]
 [ext_resource type="Script" path="res://scripts/world_caption.gd" id="34_caption"]
 [ext_resource type="Script" path="res://scripts/event_log_hud.gd" id="35_eventlog"]
+[ext_resource type="Script" path="res://scripts/help_hint.gd" id="36_helphint"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.25, 0.45, 0.75, 1)
@@ -385,3 +386,17 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("33_lift")
+
+[node name="HelpHint" type="Button" parent="HUD"]
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -16.0
+offset_top = -16.0
+offset_right = -16.0
+offset_bottom = -16.0
+grow_horizontal = 0
+grow_vertical = 0
+mouse_filter = 0
+script = ExtResource("36_helphint")

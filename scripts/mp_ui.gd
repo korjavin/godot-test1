@@ -509,15 +509,20 @@ func _unhandled_input(event: InputEvent) -> void:
 				_on_mic_mute_pressed(false)
 			DEAFEN_KEY:
 				get_viewport().set_input_as_handled()
-				# D is also the bare `step_right` movement binding, and Godot
-				# action matching is NOT modifier-exact (the project's own
-				# Shift+W run relies on that) — so Ctrl+D matches step_right
-				# and `set_input_as_handled()` undoes no polled `Input` state.
-				# The owner named Ctrl+D verbatim (bead godot-test1-k4l review
-				# round 1), so the key stays and the arm releases the action
-				# instead: deafening must not strafe the hero. M and G bind
-				# nothing in `[input]`, so their arms need no release.
-				Input.action_release("step_right")
+				# D is also a bare movement binding (`step_right` on QWERTY),
+				# and Godot action matching is NOT modifier-exact (the
+				# project's own Shift+W run relies on that) — so Ctrl+D
+				# matches the action and `set_input_as_handled()` undoes no
+				# polled `Input` state. The owner named Ctrl+D verbatim, so
+				# the key stays and the arm releases EVERYTHING the event
+				# matches instead: on a non-QWERTY layout the D label can sit
+				# on another bound physical key (Workman → move_forward), and
+				# a literal `step_right` release would leave THAT action
+				# stuck. M and G bind nothing in `[input]` (pinned in
+				# `voice_selfcheck`), so their arms need no release.
+				for a: StringName in InputMap.get_actions():
+					if event.is_action(a):
+						Input.action_release(a)
 				_on_deafen_pressed(false)
 			CAMERA_KEY:
 				get_viewport().set_input_as_handled()
