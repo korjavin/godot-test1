@@ -46,6 +46,9 @@ extends Node
 ##     `MpCodec.decode_vc()` and already proved to come from a current member;
 ##     this file re-serialises it into `ckVoice.recv()`.
 ##
+## The module itself lives in `scripts/voice_js.gd` (`class VoiceJs`, one const
+## `SRC`), aliased here as `VOICE_JS` — this file holds the GDScript half only.
+##
 ## The manager is found through group `"mp"` with `has_method` / `has_signal`
 ## guards (CLAUDE.md: group-based discovery, never a hard reference), so a scene
 ## run standalone degrades to silence instead of erroring.
@@ -96,10 +99,10 @@ extends Node
 ## Godot 4.5.stable's web template marshals a JS boolean back through
 ## `JavaScriptBridge` as a corrupted Variant (bd memory
 ## `godot-test1-web-builds-godot-4-5-stable`, and the whole of godot-test1-8f8 —
-## see the essay at the top of `intro_video.gd`). Every function in the module
-## below answers a NUMBER, and `intro_selfcheck`'s blunt textual scan of every
-## `scripts/*.gd` for `return true;` / `return false;` / `return !` covers this
-## file the day it lands.
+## see the essay at the top of `intro_video.gd`). Every function in
+## `scripts/voice_js.gd`'s module answers a NUMBER, and `intro_selfcheck`'s
+## blunt textual scan of every `scripts/*.gd` for `return true;` /
+## `return false;` / `return !` covers it the day it lands.
 ##
 ## ----------------------------------------------------------------------------
 ## PAUSE
@@ -637,7 +640,7 @@ func is_tx() -> bool:
 
 
 func debug_line() -> String:
-	## One-line debug summary for perf_overlay (\\fo).
+	## One-line debug summary for perf_overlay (\fo).
 	## Returns "" when not in a room or off-web.
 	## Otherwise: 'Voice: mode=PTT tx=1 ns=1 ec=1 agc=1 peers=3 rtt=42/55/61ms loss=0.0%'
 	if not _is_web or not _is_in_room():

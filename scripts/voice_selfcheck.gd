@@ -63,9 +63,9 @@ extends SceneTree
 ##     marshals a JS boolean back through `JavaScriptBridge` as a corrupted
 ##     Variant (bd memory `godot-test1-web-builds-godot-4-5-stable`, and the
 ##     whole of `godot-test1-8f8`). `intro_selfcheck` scans every `scripts/*.gd`
-##     for the three shapes; this one reads the `VOICE_JS` module out of
-##     `voice_chat.gd` AS TEXT and scans that block alone, so the failure names
-##     the voice module and cannot be diluted by a rename of the file.
+##     for the three shapes; this one reads the module out of `voice_js.gd`
+##     (`const SRC`) AS TEXT and scans that block alone, so the failure names
+##     the voice module it actually ships.
 ##
 ## 6b. **THE VALUES `VOICE_JS` MIRRORS BY HAND.** A string of JavaScript cannot
 ##     `preload` a `Color` or a `const`, so the cartoon camera's film palette
@@ -676,8 +676,8 @@ func _mic_keycodes() -> Array[int]:
 
 func _check_no_js_bool() -> void:
 	"""
-	The `VOICE_JS` module read out of `voice_chat.gd` AS TEXT and scanned for the
-	three shapes that hand a boolean back through `JavaScriptBridge` — the
+	The voice module read out of `voice_js.gd` (`const SRC`) AS TEXT and scanned
+	for the three shapes that hand a boolean back through `JavaScriptBridge` — the
 	`intro_selfcheck` idiom, its constant, deliberately blunt. Godot 4.5.stable
 	marshals a JS boolean into a corrupted Variant: `== true` is false and
 	stringifying it aborts the reader silently (bd memory

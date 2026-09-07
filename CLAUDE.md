@@ -66,7 +66,7 @@ docstring before touching it. The live Windman is `windman_parts/` assembled by
 | HUD skin and widgets | `scripts/hud_theme.gd` | `hero_hud` `coin_hud` `world_caption` `minimap_hud` `ability_hud` `help_overlay` `event_log_hud` (room event log) | `hero_hud` `minimap` `help` `locale` `intro` `event_log` |
 | Audio (all synthesized) | `scripts/sound_manager.gd` | | `sound` |
 | Multiplayer mesh | `scripts/mp_manager.gd` | `mp_codec` (parsers) `mp_croc_sync` `lobby_client` `remote_avatar` `mp_ui` | `mp` |
-| Voice/video chat (web only) | `scripts/voice_chat.gd` | `web/vendor/mediapipe/` `scripts/fetch_vendor.sh` | `voice` |
+| Voice/video chat (web only) | `scripts/voice_chat.gd` `scripts/voice_js.gd` (the JS) | `web/vendor/mediapipe/` `scripts/fetch_vendor.sh` | `voice` |
 | Lobby server (Go) | `server/room.go` | `server/docker-compose.yml` | `go test` |
 | Perf tooling | `scripts/perf_overlay.gd` (`\fo`) | `\fb` / `\fh` teleport cheats (debug builds) | `perf` |
 | Mobile / touch | `scripts/mobile_input.gd` `mobile_sensors.gd` | `scenes/ui/touch_controls.tscn` | |
