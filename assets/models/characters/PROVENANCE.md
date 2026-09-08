@@ -1,0 +1,25 @@
+# Authored Character Models & Provenance
+
+## Forbidden Sources
+
+The following sources are **strictly forbidden** for any hero or character art in this repository:
+- **Hunyuan3D**: Licence Territory excludes the EU, UK, and South Korea.
+- **Mixamo**: Allowed to ship in a compiled game, but cannot be redistributed standalone as raw assets in a public repository.
+- **Rodin / generative AI model output**: Unsettled copyright and IP ownership.
+
+All shipping character assets must derive from CC0 or equivalently unencumbered sources (MPFB2 / MakeHuman core basemesh and targets, Poly Haven, AmbientCG).
+
+## Source Files (.blend)
+
+Source `.blend` files accompanying authored `.glb` models **are committed to git** directly beside the models. To keep repository size bounded, `.blend` files must be saved with compression enabled and must carry **no multiresolution modifiers or sculpt layers**.
+
+## Authored Assets
+
+| File | Tool + Version | Source | Licence | Date | .blend |
+|---|---|---|---|---|---|
+| `windman_head_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_head.py`, MakeHuman basemesh + targets | CC0 | 2026-09-06 built, 2026-09-08 shipped | `windman_head_authored.blend` |
+| `windman_head_authored_windman_head_albedo.png` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_head.py`, MakeHuman basemesh + targets | CC0 | 2026-09-06 built, 2026-09-08 shipped | `windman_head_authored.blend` |
+
+## CI Model Gate
+
+The CI model rebuild step (`.github/workflows/build.yml`) only runs the procedural generators (`generate_*_separate.py` and `predator_parts.py`). Because the generator no longer emits these authored file names, `git status --porcelain -- assets/models/characters` stays clean by construction; a generated part edited by hand is still caught immediately.
