@@ -75,6 +75,11 @@ const FACE_SHOT_FOV: float = 16.0
 ## Empty means "today's body" — the control column of the grid.
 var _hero: String = "windman"
 var _body_variant: String = ""
+## True as soon as EITHER spike argument is present, `hero=teibi` (the control
+## column) included. It is the one switch that lets the spike frame its own
+## shots differently — see `_shoot_head_closeup` — while a run with neither
+## argument reproduces every pre-existing shot byte-for-byte.
+var _spike: bool = false
 
 const SPIKE_BODY_PARTS: String = "res://scenes/characters/teibi_authored.tscn"
 const SPIKE_BODY_UNCUT: String = "res://scenes/characters/teibi_uncut.tscn"
@@ -84,6 +89,9 @@ const SPIKE_BODY_UNCUT: String = "res://scenes/characters/teibi_uncut.tscn"
 const BODY_SHOT_DISTANCE: float = 3.0
 const BODY_SHOT_FOCUS_HEIGHT: float = 0.9
 const BODY_SHOT_FOV: float = 75.0
+## Crown (beret included) to the middle of the face. Measured on today's Teibi,
+## where the `Head` node origin IS the face centre: crown 1.78 m, origin 1.62 m.
+const CROWN_TO_FACE: float = 0.16
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -98,8 +106,10 @@ func _ready() -> void:
 			_hidden_groups = a.substr(5).split(",", false)
 		elif a.begins_with("hero="):
 			_hero = a.substr(5)
+			_spike = true
 		elif a.begins_with("body="):
 			_body_variant = a.substr(5)
+			_spike = true
 		else:
 			_out_dir = a
 	DirAccess.make_dir_recursive_absolute(_out_dir)
@@ -536,10 +546,16 @@ func _shoot_body(terrain: Node, player: Node3D, at: Vector3, name: String,
 		_head_pose_settled = true
 		await get_tree().process_frame
 
-	if stride:
-		var gait := PlayerAnimation.gait_for(_hero)
-		player.anim.animation_time = PI * 0.5 / float(gait["stride_rate"])
-		player.anim.animate_walking(1.0 / 60.0, 1.0)
+	# BOTH body shots write the animation clock, not just the stride one. The
+	# settle above is a LIVE window: a predator that reaches the hero in it taxes
+	# a coin and respawns in place, and the walk cycle then freezes wherever the
+	# clock happened to be — which is how the first round of this spike shot its
+	# "standing" frame mid-gesture and made 18 and 19 nearly the same picture.
+	# `animation_time = 0` is sin(0) = 0, i.e. every limb at `original_rotations`:
+	# the rest pose, from the same seam and with nothing to restore.
+	var gait := PlayerAnimation.gait_for(_hero)
+	player.anim.animation_time = (PI * 0.5 / float(gait["stride_rate"])) if stride else 0.0
+	player.anim.animate_walking(1.0 / 60.0, 1.0)
 
 	var focus: Vector3 = player.global_position + Vector3(0.0, BODY_SHOT_FOCUS_HEIGHT, 0.0)
 	var cam := Camera3D.new()
@@ -560,6 +576,29 @@ func _shoot_body(terrain: Node, player: Node3D, at: Vector3, name: String,
 	cam.queue_free()
 	print("[SHOTS] wrote ", name, " at ", at, " hero=", _hero, " body=",
 			_body_variant if _body_variant != "" else "today")
+
+
+func _crown_focus(player: Node3D, scope: Node) -> Vector3:
+	"""SPIKE godot-test1-z3e.10. A face-height focus point that needs no node
+	origin: the top of every `MeshInstance3D` under `scope`, dropped by the
+	distance from a crown to the middle of a face. `scope` is the `Head` node
+	when there is one and the whole `Body` otherwise (the `uncut` variant)."""
+	var fallback := player.global_position + Vector3(0.0, 1.6, 0.0)
+	if scope == null:
+		return fallback
+	var top_y := -INF
+	for m in scope.find_children("*", "MeshInstance3D", true, false):
+		var mesh := m as MeshInstance3D
+		var aabb := mesh.get_aabb()
+		for corner_i in 8:
+			var corner := Vector3(
+					aabb.position.x + float(corner_i & 1) * aabb.size.x,
+					aabb.position.y + float((corner_i >> 1) & 1) * aabb.size.y,
+					aabb.position.z + float((corner_i >> 2) & 1) * aabb.size.z)
+			top_y = maxf(top_y, (mesh.global_transform * corner).y)
+	if top_y == -INF:
+		return fallback
+	return Vector3(player.global_position.x, top_y - CROWN_TO_FACE, player.global_position.z)
 
 
 func _shoot_head_closeup(terrain: Node, player: Node3D, at: Vector3, fov: float,
@@ -607,34 +646,29 @@ func _shoot_head_closeup(terrain: Node, player: Node3D, at: Vector3, fov: float,
 			(model as Node3D).visible = true
 		player.set_physics_process(false)
 		player.set_process(false)
+		if _spike:
+			# SPIKE godot-test1-z3e.10, same reason as `_shoot_body`: the settle
+			# is a live window and a predator encounter in it leaves the walk
+			# cycle frozen mid-gesture. Rest pose, from the animation's own seam.
+			player.anim.animation_time = 0.0
+			player.anim.animate_walking(1.0 / 60.0, 1.0)
 		_head_pose_settled = true
 		await get_tree().process_frame
 
 	var hero: Node = player.character_instances[_hero_index(player)]
 	var head := hero.get_node_or_null("Body/Head") as Node3D
 	var focus: Vector3
-	if head != null:
+	if head != null and not _spike:
 		focus = head.global_position
 	else:
-		# SPIKE godot-test1-z3e.10's `uncut` body has no `Head` node (one bare
-		# mesh under `Body`) -- a fixed height guess put the camera nowhere
-		# near the actual crown (measured: an empty frame, only world behind
-		# it), so find the mesh's own visual top instead.
-		focus = player.global_position + Vector3(0.0, 1.6, 0.0)
-		var body := hero.get_node_or_null("Body")
-		if body != null:
-			var top_y := -INF
-			for m in body.find_children("*", "MeshInstance3D", true, false):
-				var mesh := m as MeshInstance3D
-				var aabb := mesh.get_aabb()
-				for corner_i in 8:
-					var corner := Vector3(
-							aabb.position.x + float(corner_i & 1) * aabb.size.x,
-							aabb.position.y + float((corner_i >> 1) & 1) * aabb.size.y,
-							aabb.position.z + float((corner_i >> 2) & 1) * aabb.size.z)
-					top_y = maxf(top_y, (mesh.global_transform * corner).y)
-			if top_y > -INF:
-				focus = Vector3(player.global_position.x, top_y - 0.15, player.global_position.z)
+		# SPIKE godot-test1-z3e.10. A `Head` NODE ORIGIN is only the face's
+		# centre for the trimesh heroes, whose head mesh is modelled around it:
+		# on the authored body that origin is MakeHuman's own NECK joint, and
+		# aiming at it framed the chest with the face against the top edge
+		# (measured). `uncut` has no `Head` node at all and a fixed-height guess
+		# there framed empty air. One rule fixes both and keeps the three
+		# columns of the grid comparable: aim just under the visible CROWN.
+		focus = _crown_focus(player, head if head != null else hero.get_node_or_null("Body"))
 	var cam := Camera3D.new()
 	cam.fov = fov
 	add_child(cam)

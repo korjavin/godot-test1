@@ -83,6 +83,12 @@ addons/
 # Python bytecode from the model generator scripts
 __pycache__/
 
+# Blender's own save backup. `wm.save_as_mainfile` drops a .blend1 next to every
+# committed .blend it overwrites, and an untracked file under
+# assets/models/characters is exactly what the CI model gate
+# (git status --porcelain -- assets/models/characters) fails on.
+*.blend1
+
 # ralphex run artifacts
 .ralphex/
 

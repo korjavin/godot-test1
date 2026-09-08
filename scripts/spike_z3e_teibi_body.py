@@ -74,6 +74,16 @@ COLORS = {
 }
 
 STUMP_WEIGHT = 0.25          # bead's "~0.25" — the blend zone at every joint
+# `assign_piece_groups` writes membership as a BINARY 1.0 on the BASEMESH, but
+# `decimate()` runs between there and `split_piece()` and INTERPOLATES vertex-group
+# weights across every collapsed edge: a vertex on a piece's boundary comes back
+# out somewhere in (0, 1). MEASURED 2026-09-08: cutting at 0.5 there (the first
+# draft) trimmed roughly half the blend band off BOTH neighbours of every joint —
+# i.e. exactly the STUMP the overlap above exists to keep — and the assembled body
+# tore open at one hip and notched at both shoulders even AT REST
+# (docs/style/z3e/teibi_authored_blender.png caught it; the game shots did not, at
+# 3 m). Keep every vertex that carries ANY membership instead.
+SPLIT_KEEP = 0.0             # exclusive: a weight strictly above this stays
 # MEASURED 2026-09-08: a naive 12k (the bead's own headline number) landed the
 # PARTS total at 14,717 tris -- the ten pieces' STUMP overlap plus every cut's
 # holes_fill cap cost ~2.7k over the single merged mesh, and the beret+eyes
@@ -82,6 +92,7 @@ STUMP_WEIGHT = 0.25          # bead's "~0.25" — the blend zone at every joint
 # below (bead 1f/1g) are the shape and stay at the numbers the bead names.
 TRI_BUDGET_BODY = 10500      # whole body, before splitting (bead 1h)
 TRI_BUDGET_HEAD = 4500       # head + beret + eyes, after splitting (bead 1h)
+TRI_TODAY_TEIBI = 14300      # today's assembled Teibi — the bead's real ceiling
 TARGET_HEIGHT = 1.78         # natural MakeHuman proportions (orchestrator default)
 HAIR_LIFT = 0.006            # short hair as a shell over the scalp, in metres
 
@@ -628,7 +639,7 @@ def split_piece(obj, piece_key):
     dvert = bm.verts.layers.deform.verify()
     gi = piece_obj.vertex_groups[group_name].index
     bm.verts.ensure_lookup_table()
-    doomed = [v for v in bm.verts if gi not in v[dvert] or v[dvert][gi] < 0.5]
+    doomed = [v for v in bm.verts if v[dvert].get(gi, 0.0) <= SPLIT_KEEP]
     bmesh.ops.delete(bm, geom=doomed, context='VERTS')
     boundary = [e for e in bm.edges if e.is_boundary]
     if boundary:
@@ -784,7 +795,11 @@ def main():
         total_tris += tris
         if piece_key == "head":
             head_tris = tris
-    log("PARTS total tris: %d (budget %d)" % (total_tris, TRI_BUDGET_BODY))
+    # The ceiling here is TODAY'S assembled Teibi (14,300 tris), not
+    # TRI_BUDGET_BODY -- that one is the pre-split decimate target, and the
+    # STUMP overlap plus every cut's holes_fill cap is *supposed* to cost more
+    # than it.
+    log("PARTS total tris: %d (today's Teibi %d)" % (total_tris, TRI_TODAY_TEIBI))
     log("HEAD+beret+eyes tris: %d (budget %d)" % (head_tris, TRI_BUDGET_HEAD))
     if head_tris > TRI_BUDGET_HEAD:
         log("WARNING: head+beret+eyes over budget")
