@@ -26,6 +26,7 @@ godot --headless --path . --import                               # after editing
 mkdir -p build/web && godot --headless --export-release "Web" build/web/index.html && ./serve.sh
 bash scripts/mp_e2e.sh                                           # two-instance MP e2e (needs go + godot)
 python3 scripts/predator_parts.py                                # rebuild + verify every enemy .glb
+blender --background --python-exit-code 1 --python scripts/blender_hero.py -- import <hero> [--screenshot <png>]  # hero-part Blender lane, not in CI
 cd server && go test ./...                                       # the Go lobby
 ```
 
