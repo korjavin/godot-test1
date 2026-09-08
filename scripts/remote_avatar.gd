@@ -366,9 +366,9 @@ func _style_model_meshes(node: Node) -> void:
 	piglet_crocodile_ai._style_model_meshes). ToonShading's static cache keys on
 	the SOURCE material's instance id, so all four peers sharing a character
 	share one styled material per source — never a duplicate per avatar.
-	Deliberately NO inverted-hull outline overlay (the local player has one):
-	that is a second draw call per mesh, and the local player is the one whose
-	silhouette needs to pop.
+	Deliberately NO inverted-hull outline overlay (the local player ships without
+	one too since 2026-09-08; `\\ft` is the experiment toggle): that would be a
+	second draw call per mesh.
 	"""
 	if node is MeshInstance3D:
 		ToonShading.apply_to_mesh(node)

@@ -625,7 +625,7 @@ const HERO_KEYCODES: Array = [
 ]
 
 ## Cheat-code sequence recogniser (bead godot-test1-a7i): \fo perf overlay,
-## \fb teleport Budapest, \fh teleport HQ. Backslash arms an empty buffer;
+## \fb teleport Budapest, \fh teleport HQ, \ft hero outline on/off. Backslash arms an empty buffer;
 ## the next two letter keys within CHEAT_TIMEOUT_MS complete it.
 const CHEAT_ARM_KEY: Key = KEY_BACKSLASH
 const CHEAT_TIMEOUT_MS: int = 2000
@@ -634,6 +634,7 @@ const CHEAT_CODES: Dictionary = {
 	"fo": "perf_overlay",
 	"fb": "teleport_budapest",
 	"fh": "teleport_hq",
+	"ft": "toggle_outline",
 }
 
 var _cheat_armed: bool = false
@@ -1055,6 +1056,10 @@ func _dispatch_cheat_code(code: String) -> void:
 				var dest := debug_destination_budapest() \
 					if code == "fb" else debug_destination_hq()
 				debug_teleport_to(dest)
+		"ft":
+			# The outline ships off (see player_animation.gd's OUTLINE_SHADER banner);
+			# \ft is the experiment toggle that keeps it one keypress away.
+			print("hero outline: %s" % ("on" if anim.toggle_outline(character_instances) else "off"))
 
 # ============================================================================
 # CAMERA VIEW CYCLE (third-person / first-person / front)
@@ -2793,14 +2798,14 @@ func _tick_prison(delta: float) -> void:
 	THE ORDER OF THE THREE TESTS IS THE OWNER'S RULE, top to bottom:
 
 	  1. THE ROOM IS OUT OF HEROES -> the run is over, for EVERY peer and not only
-	     for whoever was bitten last. This is the world-level reading of game over
-	     (see the roster clause in `_on_caught_finished()`); the peer who took the
-	     last hero reaches it there, and this is how the other three learn.
+		 for whoever was bitten last. This is the world-level reading of game over
+		 (see the roster clause in `_on_caught_finished()`); the peer who took the
+		 last hero reaches it there, and this is how the other three learn.
 	  2. MY HERO IS FREE -> nothing to do, and if we were benched we are not any
-	     more: somebody walked into our cell, or a claim finally landed.
+		 more: somebody walked into our cell, or a claim finally landed.
 	  3. MY HERO IS IN A CELL -> REASSIGN FIRST. Ask the lobby for a free hero and
-	     wait for the answer; only when the room has none is the prison role the
-	     answer, which is what "imprison last" means in code.
+		 wait for the answer; only when the room has none is the prison role the
+		 answer, which is what "imprison last" means in code.
 
 	NOTHING HERE RUNS SOLO. `is_online()` is the gate, and it is the same one-test
 	shape every other multiplayer read in this file uses.
@@ -4315,26 +4320,26 @@ func get_ability_block_reason() -> String:
 	gates have always had.
 
 	  "CELL" — the prison role has no ability at all: every one of the four is a
-	           phase, a flight, a combat verb or a wave, and the role is defined as
-	           having none of them.
+			   phase, a flight, a combat verb or a wave, and the role is defined as
+			   having none of them.
 	  "INDOOR" — Teibi's next press would make him GIANT and he is inside the HQ.
 	           Owner ruling (bead godot-test1-xdf): the building is the stealth
 	           layer and a giant does not fit its pace. Not an exploit patch — the
-	           exploit is `_teibi_grow_blocked()`'s job and it still does it — but a
-	           design rule, which is why it refuses in the middle of an empty room
-	           too. SMALL stays allowed in here: it is the stealth-flavoured form.
+			   exploit is `_teibi_grow_blocked()`'s job and it still does it — but a
+			   design rule, which is why it refuses in the middle of an empty room
+			   too. SMALL stays allowed in here: it is the stealth-flavoured form.
 	  "TIGHT"— Teibi's next press would make him GIANT and the grown capsule does
 	           not fit where he is standing. Growing inside geometry is not a
 	           clipping artefact, it is a lift: the depenetration pops him out
-	           upwards, through a storey's ceiling and past its gate.
+			   upwards, through a storey's ceiling and past its gate.
 	  "SEEING" — Windman's Air Sight is already running. The look outlives a skilled
-	           hero's cooldown, so without this the press would refresh it forever
-	           and the walls would never come back.
+			   hero's cooldown, so without this the press would refresh it forever
+			   and the walls would never come back.
 	  "RAIN" — Windman can't take off inside a storm cloud's rain zone.
 	  "LAND" — AIR RUSH IS A TAKE-OFF, NOT A MID-AIR JET: Windman must have his
-	           feet on the ground (or be inside the coyote window) to launch.
-	           Without this the ability chains into infinite flight, because the
-	           cooldown ticks from ACTIVATION and a fully-skilled hero's cooldown
+			   feet on the ground (or be inside the coyote window) to launch.
+			   Without this the ability chains into infinite flight, because the
+			   cooldown ticks from ACTIVATION and a fully-skilled hero's cooldown
 	           is SHORTER than his own flight:
 
 	               cooldown 8.0 s × 0.60 (cd1×3 + cd2) = 4.80 s
@@ -4346,11 +4351,11 @@ func get_ability_block_reason() -> String:
 	           deliberate: retuning the base cooldown would punish an UNSKILLED
 	           Windman, who was never the problem, and charging the cooldown at
 	           the END of the boost would make every duration upgrade a net nerf
-	           and break the dial's cooldown-ratio division. The state invariant
-	           — one rush per landing — is what was actually missing, and it
-	           bounds his altitude to the designed single-arc ~26 m. Coyote time
-	           is included on purpose: stepping off a ledge gets the same brief
-	           grace here that it gets for a jump.
+			   and break the dial's cooldown-ratio division. The state invariant
+			   — one rush per landing — is what was actually missing, and it
+			   bounds his altitude to the designed single-arc ~26 m. Coyote time
+			   is included on purpose: stepping off a ledge gets the same brief
+			   grace here that it gets for a jump.
 	"""
 	# "CELL" — THE PRISON ROLE HAS NO ABILITY (bead godot-test1-3iy.10). The role is
 	# "no phasing, no combat loop, no solo escape", and every one of the four powers

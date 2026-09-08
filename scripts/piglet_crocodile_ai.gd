@@ -906,8 +906,8 @@ func _style_model_meshes(node: Node) -> void:
 	- Shared toon+rim styling via ToonShading.apply_to_mesh, so crocs match the
 	  hero's cel-shaded look. Its static cache hands every croc the SAME styled
 	  material per source, so ~490 bodies add only a handful of materials.
-	  Deliberately NO inverted-hull outline overlay here (the player has one):
-	  that is a second draw call per mesh × ~490 crocs — unaffordable.
+	  Deliberately NO inverted-hull outline overlay here (the hero ships without
+	  one too since 2026-09-08): a second draw call per mesh × ~490 crocs.
 	"""
 	if node is GeometryInstance3D:
 		# Bosses scale the cull range by their body scale: a 9x boss is visible
@@ -1508,10 +1508,10 @@ func _behave_ambush() -> void:
 	                             that is the "short" in "short lunge", with no
 	                             timer and no second state anywhere.
 	  * "the strike"          -> `chase_speed` 5.5 (see the row: it is the
-	                             crocodile's speed on purpose — an ambusher is
-	                             paid in surprise, not in a foot race) plus
-	                             `bite_lunge`, which is a MODEL offset and moves
-	                             no body, so nothing here outruns the row.
+								 crocodile's speed on purpose — an ambusher is
+								 paid in surprise, not in a foot race) plus
+								 `bite_lunge`, which is a MODEL offset and moves
+								 no body, so nothing here outruns the row.
 	  * "surfaces rapidly"    -> `ambush_surface_ease_speed`, four times the sink.
 
 	Which leaves exactly one thing that is NOT a number: whether the model is
@@ -1598,21 +1598,21 @@ func _behave_ranged() -> void:
 	FOUR GATES, IN THIS ORDER, and each one is a rule rather than a tweak:
 
 	  1. NOT CHASING, NO SHOT. A titan that has not smelled you does not fire into
-	     the fog. This is also what makes the arm inert for a wandering boss, and
-	     it needs no state of its own to be — `is_chasing` is settled above the
-	     dispatch, for every species, before we get here.
+		 the fog. This is also what makes the arm inert for a wandering boss, and
+		 it needs no state of its own to be — `is_chasing` is settled above the
+		 dispatch, for every species, before we get here.
 	  2. INSIDE THE TERRITORY. Asked through the `in_territory()` seam, never as a
-	     hand-rolled radius: the leash bounds where a boss may GO, and a boss that
-	     could shell you from inside a circle you have already left would give
-	     back the one counterplay the design has ("only skedaddle"). The detection
-	     gate above already refuses a quarry outside the circle, so today this can
-	     only fire if that gate is ever loosened — which is exactly the regression
-	     worth a line, and boss_selfcheck drives this branch directly rather than
-	     trusting it.
+		 hand-rolled radius: the leash bounds where a boss may GO, and a boss that
+		 could shell you from inside a circle you have already left would give
+		 back the one counterplay the design has ("only skedaddle"). The detection
+		 gate above already refuses a quarry outside the circle, so today this can
+		 only fire if that gate is ever loosened — which is exactly the regression
+		 worth a line, and boss_selfcheck drives this branch directly rather than
+		 trusting it.
 	  3. INSIDE THE FIRING BAND, and 4. OFF COOLDOWN — both of them
-	     `ranged_shot_due()`, which is static and pure so the selfcheck measures
-	     the shipped rule instead of a copy of it. See the "ranged" dict in
-	     SPECIES["titan"] for why the band has a FLOOR as well as a ceiling.
+		 `ranged_shot_due()`, which is static and pure so the selfcheck measures
+		 the shipped rule instead of a copy of it. See the "ranged" dict in
+		 SPECIES["titan"] for why the band has a FLOOR as well as a ceiling.
 
 	A refused shot is not an error anywhere: `fire()` itself answers null when the
 	shooter is at its cap, and this arm may call it as often as it likes.
@@ -1677,10 +1677,10 @@ func _behave_hunt() -> void:
 	dispatch and this function never touches `detection_radius`, `is_chasing` or
 	any speed. It bends `chase_target` and nothing else.
 
-	    on acquisition   telegraph := hunt_telegraph_time, cue the lock-on
-	    each frame       telegraph -= dt, disengage -= dt (floored at 0)
-	    may close when   both are spent AND the director grants it
-	    steer            hunt_steer_point(..., closing, hunt_standoff)
+		on acquisition   telegraph := hunt_telegraph_time, cue the lock-on
+		each frame       telegraph -= dt, disengage -= dt (floored at 0)
+		may close when   both are spent AND the director grants it
+		steer            hunt_steer_point(..., closing, hunt_standoff)
 
 	THE THREE STATES ARE ONE BOOLEAN, on purpose. "Shadowing" is not a state with
 	its own code — it is `closing == false`, which is the only thing the geometry
@@ -1776,7 +1776,7 @@ func _track_scent() -> void:
 	    dispatch and stays there — this leg runs only when that decision came back
 	    false, and it cannot flip it. So the danger vignette, the encounter
 	    director, the acquisition ping and the MP chase flag all still mean
-	    "something has actually smelled you", and mercy is still decided at
+		"something has actually smelled you", and mercy is still decided at
 	    ENGAGEMENT, by the director, exactly as it was.
 	  * `detection_radius`. The nose is a separate, wider sense that produces a
 	    POINT TO WALK AT, never a longer reach. A tracker that arrives still has
@@ -1842,8 +1842,8 @@ func investigate_point(pos: Vector3, seconds: float,
 	@param pos: world space. The HQ's cyan `P` plate that was just stepped on.
 	@param seconds: how long to stand facing it once there.
 	@param route: the corners to walk on the way, world space, ending at or near
-	    `pos` — `TowerInterior.plan_route()`'s output. EMPTY means "straight
-	    there", which is the honest answer for an open room and the only thing a
+		`pos` — `TowerInterior.plan_route()`'s output. EMPTY means "straight
+		there", which is the honest answer for an open room and the only thing a
 	    caller without a floor plan can say.
 	@return: whether the lure was TAKEN. False is the ordinary answer, not an
 	    error: a body that is busy refuses, and the caller spends its cooldown
@@ -2209,9 +2209,9 @@ func _behave_leap() -> void:
 	flatness changes; the only thing that leaves y = 0 is a boss, transiently, on
 	its own arc.
 
-	    grounded, clock spent, landing legal   ->  velocity.y := leap_launch_speed
-	    airborne                               ->  hold the arc, burst_factor := leap_speed_factor
-	    grounded, clock running                ->  burst_factor := leap_recover_factor
+		grounded, clock spent, landing legal   ->  velocity.y := leap_launch_speed
+		airborne                               ->  hold the arc, burst_factor := leap_speed_factor
+		grounded, clock running                ->  burst_factor := leap_recover_factor
 
 	IT IS THE BURST'S SHAPE WITH A VERTICAL COMPONENT, and deliberately so: a leg
 	above the sustained ceiling, paid for by a mandatory recovery leg below it. The
@@ -2245,18 +2245,18 @@ func _behave_leap() -> void:
 	  1. BEFORE THE LAUNCH, here. The landing point is PROJECTED — `leap_reach()`
 	     along the bearing to the quarry, i.e. where the hop goes if nothing bends
 	     it, which is the OUTERMOST landing the steer can produce — and asked the
-	     keystone's own `in_territory()` seam, never a hand-rolled radius. Illegal
-	     landing, no hop: the boss keeps hunting on the ground (the inherited boss
-	     behaviour it has whenever it is not mid-arc anyway) and bounds again the
-	     moment a legal landing exists. The clock is NOT spent on a refusal — a
-	     dragon pinned at its fence is not also being made to wait.
+		 keystone's own `in_territory()` seam, never a hand-rolled radius. Illegal
+		 landing, no hop: the boss keeps hunting on the ground (the inherited boss
+		 behaviour it has whenever it is not mid-arc anyway) and bounds again the
+		 moment a legal landing exists. The clock is NOT spent on a refusal — a
+		 dragon pinned at its fence is not also being made to wait.
 	  2. DURING, by `_steer_within_territory()`, which runs below the dispatch and
-	     cancels the outward part of the heading for an airborne body exactly as it
-	     does for a walking one. Nothing here had to teach it about y.
+		 cancels the outward part of the heading for an airborne body exactly as it
+		 does for a walking one. Nothing here had to teach it about y.
 	  3. AFTER, by `_clamp_to_territory()`, still the hard backstop and still
-	     needing no y-awareness to be one: it is measured on XZ, so it contains a
-	     body mid-arc exactly as it contains one on the ground, and it zeroes only
-	     the horizontal velocity — a clamped hop still falls and still lands.
+		 needing no y-awareness to be one: it is measured on XZ, so it contains a
+		 body mid-arc exactly as it contains one on the ground, and it zeroes only
+		 the horizontal velocity — a clamped hop still falls and still lands.
 
 	The pre-launch gate is what makes 2 and 3 rare rather than load-bearing: a boss
 	that never launches at its own fence is not one that keeps being caught at it.
@@ -2944,7 +2944,7 @@ func setup_as_boss(body_scale: float) -> void:
 	setting them after the node enters the tree would be too late.
 
 	@param body_scale: Uniform body scale from the terrain's deterministic
-	    size schedule (3.75x and up — always bigger than any regular croc's roll)
+		size schedule (3.75x and up — always bigger than any regular croc's roll)
 	"""
 	is_boss = true
 	boss_scale = body_scale
@@ -2962,7 +2962,7 @@ func setup_roll_seed(seed_value: int) -> void:
 	in _ready() takes no size/speed roll at all.
 
 	@param seed_value: Seed from the terrain's independent croc-roll hash stream
-	    (see endless_terrain._croc_roll_seed)
+		(see endless_terrain._croc_roll_seed)
 	"""
 	roll_seed = seed_value
 	has_roll_seed = true

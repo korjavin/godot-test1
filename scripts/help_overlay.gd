@@ -223,6 +223,7 @@ const ROWS: Array = [
 	["\\fo", "Performance overlay: FPS, draw calls, live crocodiles.", Mode.DEBUG],
 	["\\fb", "Teleport to Budapest's gate.", Mode.DEBUG],
 	["\\fh", "Teleport to the GastroDefense HQ.", Mode.DEBUG],
+	["\\ft", "Toggle the heroes' cel outline (ships off).", Mode.DEBUG],
 	["F4", "Raw motion-sensor read-out.", Mode.DEBUG],
 	["F5", "Force-enable the touch motion driver.", Mode.DEBUG],
 	["F6", "Force-show the touch controls.", Mode.DEBUG],

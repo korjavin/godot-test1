@@ -190,11 +190,26 @@ var character_head: Node3D = null
 ## This character's `GAITS` row, resolved once per swap in set_active_character().
 var _gait: Dictionary = GAITS["DEFAULT"]
 
-## Shared cel-shading outline, created once and reused for every character.
-## Applied as a material overlay so it works on any mesh — both the primitive
-## characters and the GLB-based windman — without touching their own materials.
+## Shared cel-shading outline (inverted hull, `assets/shaders/outline.gdshader`),
+## applied as a material overlay so it works on any mesh without touching its own
+## materials. OFF BY DEFAULT since 2026-09-08: once the heroes went faceted
+## (8d5800a, flat per-face normals) the hull expands each face along its own
+## normal and tears open at every edge — dark cracks across the body, not a
+## silhouette. Owner ruling after A/B-ing it live: "get rid of it". The `\\ft`
+## cheat keeps it one keypress away for future experiments.
 const OUTLINE_SHADER: Shader = preload("res://assets/shaders/outline.gdshader")
 var outline_material: ShaderMaterial = null
+var outline_enabled: bool = false
+
+func toggle_outline(roots: Array[Node3D]) -> bool:
+	"""\\ft debug cheat: put the outline overlay on every hero mesh, or strip it."""
+	outline_enabled = not outline_enabled
+	for root in roots:
+		if root == null:
+			continue
+		for mesh in root.find_children("*", "MeshInstance3D", true, false):
+			(mesh as MeshInstance3D).material_overlay = outline_material if outline_enabled else null
+	return outline_enabled
 
 ## Original rotations for resetting animations
 var original_rotations: Dictionary = {}
@@ -378,8 +393,9 @@ func setup_animation_references() -> void:
 func apply_character_style(node: Node) -> void:
 	"""
 	Recursively give every mesh in the character its cel-shaded look:
-	  - a shared inverted-hull outline as a material overlay, and
-	  - soft toon diffuse + rim light on each surface material.
+	  - soft toon diffuse + rim light on each surface material, and
+	  - the shared inverted-hull outline overlay, only while `outline_enabled`
+	    (off by default — see the banner above OUTLINE_SHADER).
 
 	Walking the tree covers both the primitive-built characters AND the nested
 	meshes inside the GLB-based windman, in one place. The primitive characters
@@ -396,7 +412,7 @@ func apply_character_style(node: Node) -> void:
 
 	if node is MeshInstance3D:
 		var mesh := node as MeshInstance3D
-		mesh.material_overlay = outline_material
+		mesh.material_overlay = outline_material if outline_enabled else null
 		apply_toon_shading(mesh)
 
 	for child in node.get_children():
