@@ -1,0 +1,70 @@
+[gd_scene load_steps=11 format=3 uid="uid://c8teibi010"]
+
+[ext_resource type="PackedScene" path="res://assets/models/characters/teibi_parts/teibi_head_authored.glb" id="1_head"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/teibi_parts/teibi_torso_authored.glb" id="2_torso"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/teibi_parts/teibi_left_upper_arm_authored.glb" id="3_left_upper_arm"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/teibi_parts/teibi_left_lower_arm_authored.glb" id="4_left_lower_arm"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/teibi_parts/teibi_right_upper_arm_authored.glb" id="5_right_upper_arm"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/teibi_parts/teibi_right_lower_arm_authored.glb" id="6_right_lower_arm"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/teibi_parts/teibi_left_upper_leg_authored.glb" id="7_left_upper_leg"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/teibi_parts/teibi_left_lower_leg_authored.glb" id="8_left_lower_leg"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/teibi_parts/teibi_right_upper_leg_authored.glb" id="9_right_upper_leg"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/teibi_parts/teibi_right_lower_leg_authored.glb" id="10_right_lower_leg"]
+
+[node name="Teibi" type="Node3D"]
+
+[node name="Body" type="Node3D" parent="."]
+
+[node name="Head" parent="Body" instance=ExtResource("1_head")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 1.5588, -0.0075)
+
+[node name="Torso" parent="Body" instance=ExtResource("2_torso")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0.9869, -0.016)
+
+[node name="LeftArm" type="Node3D" parent="Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.1858, 1.4874, -0.0162)
+
+[node name="UpperArm" parent="Body/LeftArm" instance=ExtResource("3_left_upper_arm")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
+
+[node name="LowerArm" type="Node3D" parent="Body/LeftArm"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.1609, -0.1941, 0.0016)
+
+[node name="Mesh" parent="Body/LeftArm/LowerArm" instance=ExtResource("4_left_lower_arm")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
+
+[node name="RightArm" type="Node3D" parent="Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.1858, 1.4874, -0.0162)
+
+[node name="UpperArm" parent="Body/RightArm" instance=ExtResource("5_right_upper_arm")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
+
+[node name="LowerArm" type="Node3D" parent="Body/RightArm"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.1609, -0.1941, 0.0016)
+
+[node name="Mesh" parent="Body/RightArm/LowerArm" instance=ExtResource("6_right_lower_arm")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
+
+[node name="LeftLeg" type="Node3D" parent="Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.1223, 0.9602, -0.0136)
+
+[node name="UpperLeg" parent="Body/LeftLeg" instance=ExtResource("7_left_upper_leg")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
+
+[node name="LowerLeg" type="Node3D" parent="Body/LeftLeg"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.0529, -0.4631, -0.0219)
+
+[node name="Mesh" parent="Body/LeftLeg/LowerLeg" instance=ExtResource("8_left_lower_leg")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
+
+[node name="RightLeg" type="Node3D" parent="Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.1223, 0.9602, -0.0136)
+
+[node name="UpperLeg" parent="Body/RightLeg" instance=ExtResource("9_right_upper_leg")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
+
+[node name="LowerLeg" type="Node3D" parent="Body/RightLeg"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0529, -0.4631, -0.0219)
+
+[node name="Mesh" parent="Body/RightLeg/LowerLeg" instance=ExtResource("10_right_lower_leg")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
