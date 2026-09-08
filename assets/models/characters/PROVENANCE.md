@@ -19,6 +19,19 @@ Source `.blend` files accompanying authored `.glb` models **are committed to git
 |---|---|---|---|---|---|
 | `windman_head_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_head.py`, MakeHuman basemesh + targets | CC0 | 2026-09-06 built, 2026-09-08 shipped | `windman_head_authored.blend` |
 | `windman_head_authored_windman_head_albedo.png` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_head.py`, MakeHuman basemesh + targets | CC0 | 2026-09-06 built, 2026-09-08 shipped | `windman_head_authored.blend` |
+| `teibi_parts/teibi_head_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` (bone-weight piece split) | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
+| `teibi_parts/teibi_torso_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
+| `teibi_parts/teibi_left_upper_arm_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
+| `teibi_parts/teibi_left_lower_arm_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
+| `teibi_parts/teibi_right_upper_arm_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
+| `teibi_parts/teibi_right_lower_arm_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
+| `teibi_parts/teibi_left_upper_leg_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
+| `teibi_parts/teibi_left_lower_leg_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
+| `teibi_parts/teibi_right_upper_leg_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
+| `teibi_parts/teibi_right_lower_leg_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
+| `teibi_parts/teibi_uncut_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
+
+All ten `teibi_*_authored.glb` files above and `teibi_uncut_authored.glb` share the ONE `teibi_authored.blend` next to them — the ten pieces are cuts of the same whole-body mesh, exported before being split.
 
 ## CI Model Gate
 

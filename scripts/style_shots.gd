@@ -8,7 +8,7 @@ extends Node
 ## shipped spike telemetry's summary — taken on the LIVE game before the pose is
 ## frozen, which is the F3 reading the epic asks every child PR for.
 ##
-## Usage: godot --path . scenes/style_shots.tscn -- <outdir> [only=<substring>]
+## Usage: godot --path . scenes/style_shots.tscn -- <outdir> [only=<substring>[,<substring>...]]
 ##                                                           [hide=<groups>]
 ##        godot --rendering-method gl_compatibility --path . …   (the web renderer)
 ##
@@ -20,10 +20,22 @@ const SETTLE_SECONDS: float = 9.0
 const YAW_SECONDS: float = 1.5
 
 var _out_dir: String = "user://shots"
-## Optional `only=<substring>` command-line filter, so a bead that wants two
-## shots does not sit through eleven. Empty means "every shot", which is what CI
-## and the epic's A/B pairs want.
+## Optional `only=<substring>[,<substring>...]` command-line filter, so a bead
+## that wants two shots does not sit through eleven. Empty means "every shot",
+## which is what CI and the epic's A/B pairs want. Comma-separated (bead
+## godot-test1-z3e.10): this environment's per-shot fixed cost (world/camp
+## sweep, a real settle) dwarfs one shot's own camera work, so a caller wanting
+## several shots that already share `_head_pose_settled` (17/18/19) asks for
+## them in ONE process rather than paying the settle three times over.
 var _only: String = ""
+
+func _wanted(name: String) -> bool:
+	if _only == "":
+		return true
+	for token in _only.split(",", false):
+		if name.contains(token):
+			return true
+	return false
 
 ## Which ambience groups `hide=` suppresses. The default is the y1o list — this
 ## tool exists to A/B the BLOCK material and randomized ambience is noise against
@@ -48,6 +60,39 @@ const HEAD_SHOT_DISTANCE: float = 2.0
 ## read and useless for judging a nose.
 const FACE_SHOT_FOV: float = 16.0
 
+# ============================================================================
+# SPIKE godot-test1-z3e.10 — THE HERO BODY VARIANTS
+#
+# A scratch-branch-only addition, in the shape of z3e.1's `head=<a|b|c>` (see
+# git show dd22d7a^:scripts/style_shots.gd — `_apply_head_variant`, deleted
+# once that spike's pick landed): `hero=<name>` picks which CHARACTERS entry
+# is "the hero" for every shot that used to hardcode index 0/Windman, and
+# `body=<parts|uncut>` swaps that hero's whole `Body` node for one of
+# scripts/spike_z3e_teibi_body.py's scratch scenes before any shot is taken.
+# Neither argument present reproduces every existing shot byte-for-byte.
+# ============================================================================
+
+## Empty means "today's body" — the control column of the grid.
+var _hero: String = "windman"
+var _body_variant: String = ""
+## True as soon as EITHER spike argument is present, `hero=teibi` (the control
+## column) included. It is the one switch that lets the spike frame its own
+## shots differently — see `_shoot_head_closeup` — while a run with neither
+## argument reproduces every pre-existing shot byte-for-byte.
+var _spike: bool = false
+
+const SPIKE_BODY_PARTS: String = "res://scenes/characters/teibi_authored.tscn"
+const SPIKE_BODY_UNCUT: String = "res://scenes/characters/teibi_uncut.tscn"
+
+## Metres from the body centre — `_shoot_head_closeup`'s camera, pulled back so
+## the WHOLE hero fits (2 m at 75 degrees cuts the feet; 3 m does not).
+const BODY_SHOT_DISTANCE: float = 3.0
+const BODY_SHOT_FOCUS_HEIGHT: float = 0.9
+const BODY_SHOT_FOV: float = 75.0
+## Crown (beret included) to the middle of the face. Measured on today's Teibi,
+## where the `Head` node origin IS the face centre: crown 1.78 m, origin 1.62 m.
+const CROWN_TO_FACE: float = 0.16
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	# Without this the desktop window vsyncs at 60 and every frame-time reading
@@ -59,6 +104,12 @@ func _ready() -> void:
 			_only = a.substr(5)
 		elif a.begins_with("hide="):
 			_hidden_groups = a.substr(5).split(",", false)
+		elif a.begins_with("hero="):
+			_hero = a.substr(5)
+			_spike = true
+		elif a.begins_with("body="):
+			_body_variant = a.substr(5)
+			_spike = true
 		else:
 			_out_dir = a
 	DirAccess.make_dir_recursive_absolute(_out_dir)
@@ -134,6 +185,11 @@ func _run() -> void:
 		var p: Vector3 = probe[0]
 		print("[SHOTS] ", probe[1], " at ", p, " is biome ", terrain.biome_at(p.x, p.z))
 
+	# SPIKE godot-test1-z3e.10 — swap the hero and/or its whole body BEFORE anything
+	# is shot, so the close-up and every other shot see the same one. No-op without
+	# `hero=`/`body=`.
+	_apply_body_variant(player)
+
 	await _shoot(terrain, player, field, 0.0, "1_field")
 	await _shoot(terrain, player, desert, 0.0, "1b_desert")
 	await _shoot(terrain, player, snow, 0.0, "1c_snow")
@@ -171,6 +227,12 @@ func _run() -> void:
 	# actually sees, 17 is whether the thing has a nose.
 	await _shoot_head_closeup(terrain, player, field, 75.0, "16_head_2m")
 	await _shoot_head_closeup(terrain, player, field, FACE_SHOT_FOV, "17_head_face", false)
+
+	# THE HERO BODY (spike godot-test1-z3e.10) — reuses `_head_pose_settled`
+	# exactly as 16/17 do. 19 must run LAST: it poses the ALREADY-FROZEN hero
+	# mid-stride by writing the animation clock directly, and nothing restores it.
+	await _shoot_body(terrain, player, field, "18_body_3m", false, false)
+	await _shoot_body(terrain, player, field, "19_body_stride", false, true)
 
 	# THE CAPTIONS (bead godot-test1-y1o.38) — the respawn countdown and the
 	# level-up line, the two biggest strings the game ever puts over the world.
@@ -252,7 +314,7 @@ func _shoot_landmark(terrain: Node, player: Node3D, builder: String, dist: float
 	already up, so it needs no rebuild — `_shoot` re-runs the settle anyway, which
 	is what freezes the same camera for both halves of an A/B.
 	"""
-	if _only != "" and not name.contains(_only):
+	if not _wanted(name):
 		return   # the filter is checked HERE too: the sweep below is the cost
 	var kind := _landmark_kind(builder)
 	if kind < 0:
@@ -301,7 +363,7 @@ func _shoot_hero_row(terrain: Node, player: Node3D, at: Vector3, yaw: float,
 	`_show_widget` itself rather than by an ordering rule here, because an
 	ordering rule is invisible to the next person who appends a shot.
 	"""
-	if _only != "" and not name.contains(_only):
+	if not _wanted(name):
 		return
 	_show_widget("hero_hud")
 	await _shoot(terrain, player, at, yaw, name)
@@ -326,7 +388,7 @@ func _shoot_coin_line(terrain: Node, player: Node3D, at: Vector3, yaw: float,
 	different strings and therefore not a comparison. It is a debug tool that
 	quits when it is done, so nothing restores either.
 	"""
-	if _only != "" and not name.contains(_only):
+	if not _wanted(name):
 		return
 	if "coins_collected" in player:
 		player.coins_collected = 1287
@@ -363,7 +425,7 @@ func _shoot_caption(terrain: Node, player: Node3D, at: Vector3, yaw: float,
 	`set_process(false)`s itself until a level-up — but it costs nothing to
 	re-assert both through one seam.)
 	"""
-	if _only != "" and not name.contains(_only):
+	if not _wanted(name):
 		return
 	var label := get_tree().get_first_node_in_group(group)
 	if label == null:
@@ -377,6 +439,166 @@ func _shoot_caption(terrain: Node, player: Node3D, at: Vector3, yaw: float,
 	await _shoot(terrain, player, at, yaw, name)
 	_repose = Callable()
 	_show_widget(group, false)
+
+
+func _hero_index(player: Node) -> int:
+	"""SPIKE godot-test1-z3e.10. Resolve `_hero` (a CHARACTERS name) to its index,
+	the way `hero_hud.gd` and `remote_avatar.gd` already do off the same shared
+	table. Falls back to 0 (Windman) for an unknown name, matching the default."""
+	var chars: Array = player.CHARACTERS
+	for i in chars.size():
+		if String((chars[i] as Dictionary)["name"]) == _hero:
+			return i
+	return 0
+
+
+func _apply_body_variant(player: Node3D) -> void:
+	"""
+	SPIKE godot-test1-z3e.10. Generalises `_apply_head_variant` (spike z3e.1, see
+	git show dd22d7a^:scripts/style_shots.gd): make `_hero` the active character,
+	then — if `body=` was passed — replace its whole `Body` node with the matching
+	scratch scene's (scripts/spike_z3e_teibi_body.py's `parts`/`uncut` output).
+
+	`set_active_character()` runs TWICE when a body swap happens: once here (or
+	via `hero=` alone) to make the hero visible and point the animation system at
+	its STOCK body, and once more at the end to re-point it at the SWAPPED one —
+	`PlayerAnimation.activate_character()` finds limbs by exact name under `Body`
+	(`setup_animation_references()`), so it has to re-run AFTER the swap or
+	`anim.left_arm` etc still reference the freed old rig.
+	"""
+	var index := _hero_index(player)
+	player.set_active_character(index)
+	if _body_variant == "":
+		return
+	var path := SPIKE_BODY_PARTS if _body_variant == "parts" else SPIKE_BODY_UNCUT
+	var scene := load(path) as PackedScene
+	if scene == null:
+		push_error("[SHOTS] no scratch body at " + path)
+		return
+	var hero: Node = player.character_instances[index]
+	var old_body := hero.get_node_or_null("Body")
+	if old_body == null:
+		push_error("[SHOTS] no Body under hero index " + str(index))
+		return
+	var scratch := scene.instantiate()
+	var new_body := scratch.get_node("Body") as Node3D
+	scratch.remove_child(new_body)
+	# Every node under `new_body` still carries the SCRATCH scene's `owner`
+	# (used only for PackedScene serialization, which nothing here does) — left
+	# set, Godot warns "will make owner inconsistent" on add_child() below,
+	# once per node, because that owner is no longer an ancestor.
+	for n in _all_nodes(new_body):
+		n.owner = null
+	scratch.queue_free()
+	hero.remove_child(old_body)
+	old_body.queue_free()
+	new_body.name = "Body"
+	hero.add_child(new_body)
+	# The shipped cast path — DIFFUSE_TOON + rim, outline off by default (z3e.9) —
+	# exactly as `preload_all_characters()` gives every OTHER hero's body.
+	player.anim.apply_character_style(new_body)
+	player.set_active_character(index)
+	print("[SHOTS] body variant ", _body_variant, " -> ", path, " on hero ", _hero)
+
+
+func _shoot_body(terrain: Node, player: Node3D, at: Vector3, name: String,
+		settle: bool, stride: bool) -> void:
+	"""
+	SPIKE godot-test1-z3e.10. One ~3 m three-quarter-front shot of the WHOLE hero —
+	`_shoot_head_closeup`'s camera, pulled back and re-focused at chest height
+	instead of the face. Reuses its settle / measure / freeze sequence and the
+	same `_head_pose_settled` rule (see that function's docstring).
+
+	`stride` poses the ALREADY-FROZEN hero mid-stride (shot 19) by writing
+	`animation_time` straight from this hero's own gait clock and calling
+	`animate_walking()` once — it reads the limb rotations off that clock
+	(player_animation.gd:556-590), so there is nothing to undo afterwards, which
+	is why 19 must run LAST. `body=uncut` has no LeftArm/RightArm/LeftLeg/RightLeg
+	(nothing to swing), so this is skipped for that variant rather than called.
+	"""
+	if not _wanted(name):
+		return
+	if stride and _body_variant == "uncut":
+		print("[SHOTS] ", name, " skipped: body=uncut has no LeftArm/RightArm/",
+				"LeftLeg/RightLeg to swing")
+		return
+	if settle or not _head_pose_settled:
+		var chunk := Vector2i(roundi(at.x / 50.0), roundi(at.z / 50.0))
+		player.set_physics_process(true)
+		player.set_process(true)
+		terrain.new_run(SEED, chunk)
+		player.global_position = at
+		player.rotation.y = 0.0
+		player.velocity = Vector3.ZERO
+		await get_tree().create_timer(SETTLE_SECONDS, true, false, true).timeout
+		player.set_active_character(_hero_index(player))
+		await get_tree().create_timer(YAW_SECONDS, true, false, true).timeout
+		await _measure(name)
+		player.global_position = at
+		player.rotation.y = 0.0
+		player.velocity = Vector3.ZERO
+		player.visible = true
+		var model := player.get_node_or_null("CharacterModel")
+		if model is Node3D:
+			(model as Node3D).visible = true
+		player.set_physics_process(false)
+		player.set_process(false)
+		_head_pose_settled = true
+		await get_tree().process_frame
+
+	# BOTH body shots write the animation clock, not just the stride one. The
+	# settle above is a LIVE window: a predator that reaches the hero in it taxes
+	# a coin and respawns in place, and the walk cycle then freezes wherever the
+	# clock happened to be — which is how the first round of this spike shot its
+	# "standing" frame mid-gesture and made 18 and 19 nearly the same picture.
+	# `animation_time = 0` is sin(0) = 0, i.e. every limb at `original_rotations`:
+	# the rest pose, from the same seam and with nothing to restore.
+	var gait := PlayerAnimation.gait_for(_hero)
+	player.anim.animation_time = (PI * 0.5 / float(gait["stride_rate"])) if stride else 0.0
+	player.anim.animate_walking(1.0 / 60.0, 1.0)
+
+	var focus: Vector3 = player.global_position + Vector3(0.0, BODY_SHOT_FOCUS_HEIGHT, 0.0)
+	var cam := Camera3D.new()
+	cam.fov = BODY_SHOT_FOV
+	add_child(cam)
+	var basis := player.global_transform.basis
+	var forward := -basis.z
+	var right := basis.x
+	cam.global_position = focus + forward * (BODY_SHOT_DISTANCE * 0.88) \
+			+ right * (BODY_SHOT_DISTANCE * 0.42) + Vector3(0.0, 0.10, 0.0)
+	cam.look_at(focus, Vector3.UP)
+	cam.make_current()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	var img := get_viewport().get_texture().get_image()
+	img.save_png(_out_dir + "/" + name + ".png")
+	cam.queue_free()
+	print("[SHOTS] wrote ", name, " at ", at, " hero=", _hero, " body=",
+			_body_variant if _body_variant != "" else "today")
+
+
+func _crown_focus(player: Node3D, scope: Node) -> Vector3:
+	"""SPIKE godot-test1-z3e.10. A face-height focus point that needs no node
+	origin: the top of every `MeshInstance3D` under `scope`, dropped by the
+	distance from a crown to the middle of a face. `scope` is the `Head` node
+	when there is one and the whole `Body` otherwise (the `uncut` variant)."""
+	var fallback := player.global_position + Vector3(0.0, 1.6, 0.0)
+	if scope == null:
+		return fallback
+	var top_y := -INF
+	for m in scope.find_children("*", "MeshInstance3D", true, false):
+		var mesh := m as MeshInstance3D
+		var aabb := mesh.get_aabb()
+		for corner_i in 8:
+			var corner := Vector3(
+					aabb.position.x + float(corner_i & 1) * aabb.size.x,
+					aabb.position.y + float((corner_i >> 1) & 1) * aabb.size.y,
+					aabb.position.z + float((corner_i >> 2) & 1) * aabb.size.z)
+			top_y = maxf(top_y, (mesh.global_transform * corner).y)
+	if top_y == -INF:
+		return fallback
+	return Vector3(player.global_position.x, top_y - CROWN_TO_FACE, player.global_position.z)
 
 
 func _shoot_head_closeup(terrain: Node, player: Node3D, at: Vector3, fov: float,
@@ -399,7 +621,7 @@ func _shoot_head_closeup(terrain: Node, player: Node3D, at: Vector3, fov: float,
 	not streamed in. So the caller says "reuse if there is anything to reuse" and this
 	decides.
 	"""
-	if _only != "" and not name.contains(_only):
+	if not _wanted(name):
 		return
 	if settle or not _head_pose_settled:
 		var chunk := Vector2i(roundi(at.x / 50.0), roundi(at.z / 50.0))
@@ -410,7 +632,7 @@ func _shoot_head_closeup(terrain: Node, player: Node3D, at: Vector3, fov: float,
 		player.rotation.y = 0.0
 		player.velocity = Vector3.ZERO
 		await get_tree().create_timer(SETTLE_SECONDS, true, false, true).timeout
-		player.set_active_character(0)
+		player.set_active_character(_hero_index(player))
 		await get_tree().create_timer(YAW_SECONDS, true, false, true).timeout
 		await _measure(name)
 		# Re-assert and freeze, `_shoot`'s reasoning verbatim — both ticks, because
@@ -424,13 +646,29 @@ func _shoot_head_closeup(terrain: Node, player: Node3D, at: Vector3, fov: float,
 			(model as Node3D).visible = true
 		player.set_physics_process(false)
 		player.set_process(false)
+		if _spike:
+			# SPIKE godot-test1-z3e.10, same reason as `_shoot_body`: the settle
+			# is a live window and a predator encounter in it leaves the walk
+			# cycle frozen mid-gesture. Rest pose, from the animation's own seam.
+			player.anim.animation_time = 0.0
+			player.anim.animate_walking(1.0 / 60.0, 1.0)
 		_head_pose_settled = true
 		await get_tree().process_frame
 
-	var hero: Node = player.character_instances[0]
+	var hero: Node = player.character_instances[_hero_index(player)]
 	var head := hero.get_node_or_null("Body/Head") as Node3D
-	var focus: Vector3 = head.global_position if head != null \
-			else player.global_position + Vector3(0.0, 1.62, 0.0)
+	var focus: Vector3
+	if head != null and not _spike:
+		focus = head.global_position
+	else:
+		# SPIKE godot-test1-z3e.10. A `Head` NODE ORIGIN is only the face's
+		# centre for the trimesh heroes, whose head mesh is modelled around it:
+		# on the authored body that origin is MakeHuman's own NECK joint, and
+		# aiming at it framed the chest with the face against the top edge
+		# (measured). `uncut` has no `Head` node at all and a fixed-height guess
+		# there framed empty air. One rule fixes both and keeps the three
+		# columns of the grid comparable: aim just under the visible CROWN.
+		focus = _crown_focus(player, head if head != null else hero.get_node_or_null("Body"))
 	var cam := Camera3D.new()
 	cam.fov = fov
 	add_child(cam)
@@ -466,7 +704,7 @@ func _shoot_field_bridge(terrain: Node, player: Node3D) -> void:
 	# (spike godot-test1-z3e.1): the road growth and the two settles below run
 	# BEFORE any `_shoot`, so `only=` on a shot in another family paid ~15 minutes of
 	# river search and chunk streaming for two pictures it then threw away.
-	if _only != "" and not "10_field_bridge_bank11_field_bridge_deck".contains(_only):
+	if not _wanted("10_field_bridge_bank11_field_bridge_deck"):
 		return
 
 	# EVERY BRIDGE HANGS OFF A STATION INDEX, so a tool that has not taken a shot
@@ -615,7 +853,7 @@ func _find_camp(terrain: Node) -> Vector3:
 	return Vector3.INF
 
 func _shoot(terrain: Node, player: Node3D, where: Vector3, yaw: float, name: String) -> void:
-	if _only != "" and not name.contains(_only):
+	if not _wanted(name):
 		return
 	var chunk := Vector2i(roundi(where.x / 50.0), roundi(where.z / 50.0))
 	# The previous shot froze both ticks (see below) — hand the body back.

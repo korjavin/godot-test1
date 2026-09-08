@@ -78,6 +78,10 @@ HERO_SCENES = {
     "primm": "primm.tscn",
     "teibi": "teibi.tscn",
     "phoboman": "phoboman.tscn",
+    # SPIKE godot-test1-z3e.10, scratch scenes only — NOT in
+    # player_controller.gd's CHARACTERS, so no selfcheck ever loads them.
+    "teibi_authored": "teibi_authored.tscn",
+    "teibi_uncut": "teibi_uncut.tscn",
 }
 
 # The bead's height/feet assert. Ranges are MEASURED on this branch (2026-09-08),
@@ -450,4 +454,5 @@ def main():
     log("done")
 
 
-main()
+if __name__ == "__main__":
+    main()
