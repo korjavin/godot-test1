@@ -54,6 +54,14 @@ window/stretch/aspect.web="expand"
 locale/translations=PackedStringArray("res://assets/translations/ui.en.translation", "res://assets/translations/ui.de.translation")
 locale/fallback="en"
 
+[filesystem]
+
+; Committed .blend SOURCES (assets/models/characters/PROVENANCE.md) must never be
+; imported: Godot's Blender importer shells out to a Blender binary the CI runner
+; does not have and the headless --import hangs on the scan (PR #344). The .glb is
+; the artifact of record; the .blend is edited with scripts/blender_hero.py.
+import/blender/enabled=false
+
 [input]
 
 move_forward={
