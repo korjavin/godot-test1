@@ -8,7 +8,9 @@ wants the polygon from one and the triangulation from the other, and without the
 second it raises "No available triangulation engine!").
     pip install -r scripts/requirements.txt
 
-Each limb is exported as its own GLB file. `scenes/characters/windman_updated.tscn`
+Each limb is exported as its own GLB file. The head is authored
+(`windman_head_authored.glb`, see `assets/models/characters/PROVENANCE.md`), the
+generator emits the other ten parts. `scenes/characters/windman_updated.tscn`
 assembles them under a `Body` node whose `LeftArm` / `RightArm` / `LeftLeg` /
 `RightLeg` containers are rotated at run time by the procedural walk/idle/jump
 animation in `scripts/player_controller.gd`.
@@ -118,64 +120,6 @@ class WindmanSeparateMeshGenerator:
         return emblem
 
     # -------------------------------------------------------------------- parts
-    def create_head_assembly(self):
-        """Head + messy hair + wrap-around blue/red eye bandage (knotted at back)."""
-        meshes = []
-
-        # Slightly rounded head with soft features.
-        head = icosphere(subdivisions=3, radius=0.12)
-        head.apply_scale([1.0, 1.02, 1.05])
-        head.visual.vertex_colors = self.colors['skin']
-        meshes.append(head)
-
-        # Short chestnut hair: a flattened cap on top plus a few spiky tufts so it
-        # reads as "short, slightly messy" rather than a smooth helmet.
-        hair_cap = icosphere(subdivisions=2, radius=0.125)
-        hair_cap.apply_scale([1.0, 1.0, 0.55])
-        hair_cap.apply_translation([0, -0.005, 0.075])
-        hair_cap.visual.vertex_colors = self.colors['hair']
-        meshes.append(hair_cap)
-
-        for (tx, ty, tz, s) in [
-            (-0.06, -0.02, 0.10, 0.9), (0.05, -0.03, 0.11, 1.0),
-            (0.00, -0.06, 0.12, 0.85), (-0.02, 0.02, 0.115, 0.8),
-            (0.07, 0.01, 0.085, 0.75),
-        ]:
-            tuft = icosphere(subdivisions=1, radius=0.032 * s)
-            tuft.apply_scale([1.0, 1.0, 1.4])
-            tuft.apply_translation([tx, ty, tz])
-            tuft.visual.vertex_colors = self.colors['hair']
-            meshes.append(tuft)
-
-        # Eye bandage: two stacked discs wrapping the head at eye level. The band
-        # is a touch larger than the head so it sits proud of the face and fully
-        # covers the eyes (it's a blindfold). Blue on top, red below.
-        band_blue = cylinder(radius=0.127, height=0.040, sections=24)
-        band_blue.apply_translation([0, 0, 0.012])
-        band_blue.visual.vertex_colors = self.colors['bandage_blue']
-        meshes.append(band_blue)
-
-        band_red = cylinder(radius=0.126, height=0.026, sections=24)
-        band_red.apply_translation([0, 0, -0.020])
-        band_red.visual.vertex_colors = self.colors['bandage_red']
-        meshes.append(band_red)
-
-        # Small knot at the back of the head with two short tails drooping down
-        # close to the nape (kept tight so they don't read as a paddle).
-        knot = icosphere(subdivisions=2, radius=0.020)
-        knot.apply_translation([0.0, -0.122, -0.005])
-        knot.visual.vertex_colors = self.colors['bandage_blue']
-        meshes.append(knot)
-
-        for (tx, tilt_deg, length) in [(-0.020, 10, 0.075), (0.018, -8, 0.060)]:
-            tail = box(extents=[0.016, 0.010, length])
-            tail.apply_transform(rotation_matrix(np.radians(tilt_deg), [0, 1, 0]))
-            tail.apply_translation([tx, -0.118, -0.04 - length / 2])
-            tail.visual.vertex_colors = self.colors['bandage_blue']
-            meshes.append(tail)
-
-        return trimesh.util.concatenate(meshes)
-
     def create_torso_assembly(self):
         """Stout torso (shirt) + thick neck + single big "W" + shorts waistband."""
         meshes = []
@@ -344,7 +288,6 @@ class WindmanSeparateMeshGenerator:
         print("Generating Windman separate mesh parts...")
 
         parts = {
-            'head': self.create_head_assembly(),
             'torso': self.create_torso_assembly(),
             'left_upper_arm': self.create_upper_arm(),
             'left_lower_arm': self.create_lower_arm(),

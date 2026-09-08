@@ -44,8 +44,9 @@ the last statement of every check function, `Sentinel.finish(self)` at the repor
 `scripts/requirements.txt`). CI rebuilds them and fails on a dirty tree, so a generator
 change and its regenerated `.glb` go in the same commit. `scripts/predator_parts.py` is
 the shared toolkit and the contract every enemy mesh must honour; `export_faceted()`
-there is the one export seam for every shipped `.glb` (heroes included) — read its
-docstring before touching it. The live Windman is `windman_parts/` assembled by
+there is the one export seam for every generated `.glb` (heroes included) — read its
+docstring before touching it; an authored part lives beside its `PROVENANCE.md` row and
+is never written by a generator. The live Windman is `windman_parts/` assembled by
 `scenes/characters/windman_updated.tscn`; `windman.glb` is dead art.
 
 `.gd.uid` files are Godot's; don't hand-edit them.

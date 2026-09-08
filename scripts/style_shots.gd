@@ -37,39 +37,9 @@ var _hidden_groups: PackedStringArray = PackedStringArray(["crowd", "traffic", "
 ## both and this file should not learn what a caption is.
 var _repose: Callable = Callable()
 
-# ============================================================================
-# SPIKE godot-test1-z3e.1 — THE HERO HEAD VARIANTS
-#
-# A scratch-branch-only addition. `head=<a|b|c>` swaps the Windman Head node's
-# mesh for the MPFB2/MakeHuman head that `scripts/spike_z3e_head.py` builds, and
-# nothing else in this file changes; with the argument absent every shot is
-# byte-for-byte the one it always was, which is what makes the "today" cell of
-# the grid a real control rather than a re-render.
-#
-# THE SWAP IS AT RUNTIME AND THE .tscn IS UNTOUCHED, deliberately: three variants
-# need three heads, the difference between A and B is not the mesh at all (it is
-# whether `apply_character_style` ever sees it), and `capture_selfcheck` /
-# `hero_hud_selfcheck` / `view_selfcheck` / `progression_selfcheck` all load the
-# REAL `windman_updated.tscn` and have to stay green on this branch.
-#
-#   a  the mesh with its baked albedo, through apply_character_style — so it gets
-#      DIFFUSE_TOON + rim + the inverted-hull outline, exactly as the cast ships
-#   b  the same mesh with the cast path SKIPPED: the glTF material Godot imported,
-#      whose diffuse_mode is StandardMaterial3D's default BURLEY, and no outline
-#   c  the faceted, vertex-coloured, textureless head through the cast path
-# ============================================================================
-
-## Empty means "today's head" — the control cell of the grid.
-var _head_variant: String = ""
-
 ## Whether a head close-up has already teleported, settled and FROZEN the hero, so a
 ## second framing may reuse the pose. See `_shoot_head_closeup`'s `settle`.
 var _head_pose_settled: bool = false
-
-const SPIKE_HEAD_SMOOTH: String = \
-		"res://assets/models/characters/windman_parts/windman_head_authored.glb"
-const SPIKE_HEAD_FLAT: String = \
-		"res://assets/models/characters/windman_parts/windman_head_authored_flat.glb"
 
 ## Metres from the face. The bead's framing: "a ~2 m hero close-up".
 const HEAD_SHOT_DISTANCE: float = 2.0
@@ -89,8 +59,6 @@ func _ready() -> void:
 			_only = a.substr(5)
 		elif a.begins_with("hide="):
 			_hidden_groups = a.substr(5).split(",", false)
-		elif a.begins_with("head="):
-			_head_variant = a.substr(5)
 		else:
 			_out_dir = a
 	DirAccess.make_dir_recursive_absolute(_out_dir)
@@ -165,10 +133,6 @@ func _run() -> void:
 			[desert, "1b_desert"], [snow, "1c_snow"]]:
 		var p: Vector3 = probe[0]
 		print("[SHOTS] ", probe[1], " at ", p, " is biome ", terrain.biome_at(p.x, p.z))
-
-	# SPIKE godot-test1-z3e.1 — swap the head BEFORE anything is shot, so the close-up
-	# and every other shot see the same body. No-op without `head=`.
-	_apply_head_variant(player)
 
 	await _shoot(terrain, player, field, 0.0, "1_field")
 	await _shoot(terrain, player, desert, 0.0, "1b_desert")
@@ -415,45 +379,6 @@ func _shoot_caption(terrain: Node, player: Node3D, at: Vector3, yaw: float,
 	_show_widget(group, false)
 
 
-func _apply_head_variant(player: Node3D) -> void:
-	"""
-	SPIKE godot-test1-z3e.1. Replace the Windman Head node's contents with the
-	spike head, once, before any shot is taken.
-
-	`Head` is itself the instanced `windman_head.glb` scene (see
-	scenes/characters/windman_updated.tscn), so what is replaced is its CHILDREN —
-	the node keeps its own name, its Body y = 1.62 origin and its Rx(-90) basis, and
-	therefore `PlayerAnimation.GAITS.head_deg` and `capture_rest_pose` keep meaning
-	exactly what they meant.
-	"""
-	if _head_variant == "":
-		return
-	var path := SPIKE_HEAD_FLAT if _head_variant == "c" else SPIKE_HEAD_SMOOTH
-	var scene := load(path) as PackedScene
-	if scene == null:
-		push_error("[SHOTS] no spike head at " + path)
-		return
-	# Every hero is preloaded and parked; windman is CHARACTERS[0].
-	var hero: Node = player.character_instances[0]
-	var head := hero.get_node_or_null("Body/Head") as Node3D
-	if head == null:
-		push_error("[SHOTS] no Body/Head under the windman instance")
-		return
-	for child in head.get_children():
-		head.remove_child(child)
-		child.queue_free()
-	var swapped := scene.instantiate()
-	head.add_child(swapped)
-	# VARIANT B IS THE ONE THAT SKIPS THE CAST PATH, and skipping it is the whole
-	# of B: `apply_character_style` is what hangs the inverted-hull outline overlay
-	# and rewrites the material to DIFFUSE_TOON + rim, so not calling it leaves the
-	# imported glTF material — Burley diffuse, no outline — on a toon body.
-	if _head_variant != "b":
-		player.anim.apply_character_style(swapped)
-	print("[SHOTS] head variant ", _head_variant, " -> ", path,
-			" (cast path ", "skipped" if _head_variant == "b" else "applied", ")")
-
-
 func _shoot_head_closeup(terrain: Node, player: Node3D, at: Vector3, fov: float,
 		name: String, settle: bool = true) -> void:
 	"""
@@ -524,8 +449,7 @@ func _shoot_head_closeup(terrain: Node, player: Node3D, at: Vector3, fov: float,
 	var img := get_viewport().get_texture().get_image()
 	img.save_png(_out_dir + "/" + name + ".png")
 	cam.queue_free()
-	print("[SHOTS] wrote ", name, " at ", at, " head=",
-			_head_variant if _head_variant != "" else "today")
+	print("[SHOTS] wrote ", name, " at ", at)
 
 
 func _shoot_field_bridge(terrain: Node, player: Node3D) -> void:

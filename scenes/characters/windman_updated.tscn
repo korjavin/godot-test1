@@ -1,6 +1,6 @@
 [gd_scene load_steps=13 format=3 uid="uid://windman_3d_updated_001"]
 
-[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_head.glb" id="1_head"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_head_authored.glb" id="1_head"]
 [ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_torso.glb" id="2_torso"]
 [ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_left_upper_arm.glb" id="3_left_upper_arm"]
 [ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_left_lower_arm.glb" id="4_left_lower_arm"]

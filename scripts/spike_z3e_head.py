@@ -1,15 +1,15 @@
 """
-SPIKE ONLY — bead godot-test1-z3e.1. NOT part of the build, NOT run by CI, and this
-branch is never merged.
+Source of record for the shipped Windman head — bead godot-test1-z3e.2.
+NOT part of the build, NOT run by CI: this script is run by hand to build
+the authored head assets committed in assets/models/characters/windman_parts/.
 
 Builds ONE Windman head from the MPFB2 / MakeHuman basemesh (CC0, owner ruling
 2026-09-06: MPFB2/MakeHuman is the ONLY sanctioned source — Hunyuan3D is banned and
-Mixamo/Rodin output may not be committed) and writes the two meshes the spike needs:
+Mixamo/Rodin output may not be committed) and writes:
 
   windman_head_authored.glb       smooth normals + a 512^2 baked albedo, UVs, no
-                                  vertex colours   -> variants A and B
-  windman_head_authored_flat.glb  the same head decimated further, FLAT (per-face)
-                                  normals, vertex colours, no texture -> variant C
+                                  vertex colours
+  windman_head_authored.blend     the compressed Blender source file
 
 Run:  blender --background --python-exit-code 1 --python scripts/spike_z3e_head.py
 
@@ -41,7 +41,6 @@ from mathutils import Vector
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_DIR = os.path.join(REPO, "assets", "models", "characters", "windman_parts")
 OUT_SMOOTH = os.path.join(OUT_DIR, "windman_head_authored.glb")
-OUT_FLAT = os.path.join(OUT_DIR, "windman_head_authored_flat.glb")
 
 # scripts/generate_windman_separate.py's palette, verbatim — the spike head has to
 # sit on the shipped torso without a colour seam.
@@ -426,20 +425,26 @@ def main():
     decimate(obj, TRIS_SMOOTH)
     paint(obj, eye_z, eye_y)
 
-    # C first: it is the same head with a harsher decimation, and it wants the vertex
-    # colours that the A/B bake is about to replace with a texture.
-    flat_obj = obj.copy()
-    flat_obj.data = obj.data.copy()
-    bpy.context.collection.objects.link(flat_obj)
-    decimate(flat_obj, TRIS_FLAT)
-    export(flat_obj, OUT_FLAT, flat=True)
-
     bake_albedo(obj)
     # Variant A's colour comes from the texture; leaving COLOR_0 on would multiply
     # the two and darken the whole head.
     while obj.data.color_attributes:
         obj.data.color_attributes.remove(obj.data.color_attributes[0])
     export(obj, OUT_SMOOTH, flat=False)
+
+    for o in bpy.data.objects:
+        for m in o.modifiers:
+            if m.type == 'MULTIRES':
+                raise AssertionError("Object %s carries MULTIRES modifier" % o.name)
+    for attr in obj.data.attributes:
+        if "sculpt" in attr.name.lower() or "multires" in attr.name.lower():
+            raise AssertionError("obj.data has sculpt/multires layer %s" % attr.name)
+    if hasattr(obj.data, "sculpt_vertex_colors") and obj.data.sculpt_vertex_colors:
+        raise AssertionError("obj.data has sculpt_vertex_colors")
+
+    OUT_BLEND = os.path.join(OUT_DIR, "windman_head_authored.blend")
+    bpy.ops.wm.save_as_mainfile(filepath=OUT_BLEND, compress=True)
+    log("wrote %s (%d bytes)" % (os.path.basename(OUT_BLEND), os.path.getsize(OUT_BLEND)))
     log("done")
 
 
