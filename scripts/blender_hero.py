@@ -12,12 +12,21 @@ Run OUTSIDE Blender, invoking it headless (bound with `perl -e 'alarm 900; exec
   blender --background --python-exit-code 1 --python scripts/blender_hero.py -- \
       export <hero> <part> --out <path.glb> [--faceted]
 
+SKINNED HEROES ARE NOT THIS LANE — scripts/build_hero.py IS. That file builds a
+whole human on MPFB2's game_engine rig from one HEROES row and exports one skinned
+.glb; since bead godot-test1-5u3.4 it holds windman, primm and teibi, and its
+`screenshot()` call below is the only thing it borrows from here. Nothing in this
+file's matrix math applies there: trap 2's Rx(-90) conjugation is for UNRIGGED
+parts hung on a .tscn node, and a skinned glTF is placed by its own root node and
+exports Y-up (build_hero.py's own trap 3).
+
 <hero> is one of windman, primm, phoboman — the three heroes still built from
-SEPARATE PARTS. Teibi left this lane with bead godot-test1-5u3.3: he is one skinned
-mesh on a Skeleton3D now, and reproducing a PART TREE from his .tscn has nothing to
-reproduce (his build lane is scripts/build_hero.py); the other three follow at beads
-5u3.5-.7 and this file retires with the last of them. Windman's scene is
-windman_updated.tscn, the other two are plain scenes/characters/<hero>.tscn.
+SEPARATE PARTS *in the game*. Teibi left this lane with bead godot-test1-5u3.3: he
+is one skinned mesh on a Skeleton3D now, and reproducing a PART TREE from his .tscn
+has nothing to reproduce; the other three follow at beads 5u3.5-.7 (the first two
+already have their skinned .glb built and waiting, unwired) and this file retires
+with the last of them. Windman's scene is windman_updated.tscn, the other two are
+plain scenes/characters/<hero>.tscn.
 <part> is a leaf part name (e.g. "head", "torso") or,
 where that is ambiguous (both arms/legs reuse "UpperArm"/"LowerLeg"/"Mesh"), the
 node's full .tscn path with "/" written as ".", e.g. "leftarm.upperarm".

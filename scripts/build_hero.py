@@ -1,31 +1,68 @@
 """
-scripts/build_hero.py — ONE SKINNED HERO from the MPFB2/MakeHuman basemesh.
+scripts/build_hero.py — THE SKINNED HERO LANE. A hero is a `HEROES` row.
 
-Bead godot-test1-5u3.1 (epic 5u3, SKINNED HEROES), and since bead 5u3.3 the
-SOURCE OF RECORD for the shipped Teibi. Started as a copy of the z3e.10 spike
-(`scripts/spike_z3e_teibi_body.py`, deleted by 5u3.3) with the ten-piece joint
-SPLIT removed and an ARMATURE added: the body is now one mesh on MPFB2's
-`game_engine` rig, exported as one skinned .glb. Everything that was a module
-constant there is a `HEROES` row here, so bead 5u3.4 adds windman/primm/phoboman
-as rows and not as a second script.
+Bead godot-test1-5u3.1 (epic 5u3, SKINNED HEROES), the SOURCE OF RECORD for the
+shipped Teibi since bead 5u3.3, and GENERALISED to the whole cast by bead 5u3.4:
+windman, primm and teibi are three rows of one table and there is no second
+script. Started as a copy of the z3e.10 spike (`scripts/spike_z3e_teibi_body.py`,
+deleted by 5u3.3) with the ten-piece joint SPLIT removed and an ARMATURE added:
+the body is one mesh on MPFB2's `game_engine` rig, exported as one skinned .glb.
 
-THE SPLIT IS GONE AND STAYS GONE, and the spike paid for the lesson: cutting one
-MakeHuman body into ten pieces at the joints needs a blend-zone STUMP at every
-cut, and a decimate between the membership write and the cut interpolates those
-memberships into (0, 1) — trim at 0.5 there and the assembled body tears open at
-one hip and notches at both shoulders AT REST (measured 2026-09-08, z3e.10). A
-skeleton is what removes the cuts, not a better cut threshold.
+WHAT A ROW IS (and where each half of it came from):
 
-NOT part of the build, NOT run by CI: run by hand.
+  macros + targets  the FACE, imported verbatim from `spike_z3e_head.py`'s own
+                    HEROES table — the shipped Windman and Primm faces, not a
+                    retyped copy of them. Body and head are now ONE human at ONE
+                    scale (owner ruling 2026-09-11, "heads at body scale"), so
+                    the neck is continuous by construction and the z3e.7 neck gap
+                    and the z3e.10 stump cannot come back.
+  colours           the hero's own generator palette (`self.colors`), verbatim,
+                    ungraded — `hero_skin.SKIN_GRADE` is applied here, at paint
+                    time, to the entries named in GRADED_COLOURS.
+  bone_regions      clothing as BONE REGIONS: which bone wears which colour. A
+                    sleeveless shirt is `upperarm_* -> skin`, shorts are
+                    `calf_* -> skin`, gloves are `hand_* -> gloves`. No geometry,
+                    no seam, no second material.
+  bands             the joint-height overrides a bone cannot express: belt, cuff,
+                    collar. A row lists the ones it wears.
+  band + stripes    eyewear. `band` makes it CLOTH (`spike_z3e_head.wrap_band`,
+                    bead z3e.13's Windman bandage, imported not copied);
+                    `stripes` alone paints it on the skin (Primm's goggles).
+  beret/eyes        accessory GEOMETRY joined into the mesh and weighted to one
+                    bone. An accessory that is not geometry is an ATTACHMENT and
+                    belongs in the .tscn as a BoneAttachment3D (Windman's fan on
+                    `hand_r`) — the row does not model it and neither does this.
 
-  perl -e 'alarm 900; exec @ARGV' \
-      blender --background --python-exit-code 1 --python scripts/build_hero.py -- teibi
+COLOUR IS VERTEX COLOUR AND THERE IS NO TEXTURE (owner ruling 2026-09-11,
+"vertex colours by default with a body albedo only for a motif"). No hero here
+needs a motif yet: Windman's chest W is bead 5u3.5's call ("body albedo or vertex
+glyph"), Phoboman is out of this lane entirely (his sphere body stays generated),
+and nothing else in the cast has one. So there is no bake and no UV path here;
+the row that first needs one brings it. `texture bytes: 0` is printed anyway, so
+the day that changes is the day the number moves.
+
+NOT part of the build, NOT run by CI (the runner has no Blender): run by hand.
+
+  perl -e 'alarm 1800; exec @ARGV' \
+      blender --background --python-exit-code 1 --python scripts/build_hero.py -- \
+      --all --rest-row docs/style/z3e/build_hero_rest_row.png
   godot --headless --path . --import        # Godot caches .glb imports
+
+  ... --python scripts/build_hero.py -- --hero teibi      # one hero
+  ... --python scripts/build_hero.py -- --all --check     # rebuild and diff the manifest
+
+THE MANIFEST IS THIS LANE'S OWN STALENESS GATE. `scripts/hero_manifest.json`
+holds the tool versions and the tri / bone / byte / texture counts of every file
+this script writes, `--check` rebuilds and diffs against it, and `build.yml` has
+a five-line `stat` step that asserts the committed .glb sizes still match it —
+Blender-free, because CI cannot run this script at all. That is the substitute
+for the predators' rebuild-and-diff gate, and it is why a hand-edited hero .glb
+is caught here the way a hand-edited hydra is caught there.
 
 THE TRAPS THIS LANE PAYS FOR (the four in `bd show godot-test1-z3e` NOTES —
 MPFB2 enable with default_set=True, no --factory-startup, the full
 bl_ext.blender_org.mpfb import path, `--import` after every rebuild — plus
-these, which are this bead's own):
+these, which are this lane's own):
 
  1. WEIGHTS ARE BASEMESH-INDEXED. `HumanService.add_builtin_rig(...,
     import_weights=True)` writes one vertex group per bone off
@@ -61,11 +98,27 @@ these, which are this bead's own):
     and write the rest data (`data.bones[...].head_local`, `.tail_local`,
     `.matrix_local`, and `pose.bones[...].matrix_basis`) instead —
     `apply_pose_as_rest`'s docstring has the measurement that cost a rebuild.
+ 7. A LANDMARK IS READ OFF THE EVALUATED MESH, NEVER `human.data.vertices`
+    (bead z3e.12's lesson, and this lane paid it a second time in bead 5u3.4).
+    The macro sliders and the face targets are SHAPE KEYS, and a shape key does
+    not move `vertex.co` — so `joint-l-eye` read raw answers for the UNMORPHED
+    basemesh while `reframe()`'s scale is measured on the morphed one, and the
+    two frames are not the same body. Teibi hid it (his macros sit near the
+    basemesh default); Primm did not (age 0.30 / weight 0.35 morph him from
+    1.61 m down to 1.505 m, which put his eye landmark 5 cm above his own crown
+    and rendered him bald, his hairline being measured off it). `morphed_coords`
+    and `joint_centroid` are imported from `spike_z3e_head.py` for exactly this.
+ 8. `bmesh.ops.create_cube` WRITES NO DEFORM WEIGHTS. `wrap_band`'s knots are new
+    geometry with no vertex groups at all, and an unweighted vertex is a vertex
+    that stays behind when the hero walks. `weight_strays_to()` sweeps them onto
+    one bone after the wrap; `report_weights()` is what would catch it.
 """
 
+import json
 import math
 import os
 import sys
+import tempfile
 
 import addon_utils
 import bpy
@@ -80,8 +133,19 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # its directory is not on `sys.path`.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hero_skin import graded  # noqa: E402
+# THE FACES, AND THE BANDAGE, ARE IMPORTED — NOT RETYPED. `spike_z3e_head.py` is
+# the lane that authored and shipped the Windman and Primm heads; its HEROES rows
+# are the face recipe of record (macros, targets, palette, eyewear stripes, the
+# cloth `band`) and `wrap_band` is bead z3e.13's cloth bandage itself. Both files
+# are `__main__`-guarded so either can import the other without building a head.
+import spike_z3e_head as face  # noqa: E402
+# Blender's own screenshot helper, reused for the rest row (`--rest-row`).
+import blender_hero  # noqa: E402
 
 OUT_ROOT = os.path.join(REPO, "assets", "models", "characters")
+MANIFEST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hero_manifest.json")
+TEXTURE_BYTES_MAX = 512 * 512 * 4     # owner ruling: <= 512^2 albedo, no normal map
+ARMS_DOWN_MAX_DEG = 12.0              # how far off vertical a shipped rest may stand
 
 RIG = "game_engine"
 RIG_BONES = 53               # what MPFB2 ships; asserted the moment the rig lands
@@ -104,7 +168,10 @@ def _fingers(side):
 
 # Which bones wear which colour. A vertex takes the region whose bones hold the
 # most of its skin weight (argmax) — `paint_body`'s base coat, before the
-# geometric band overrides. Shared by every hero; the COLOURS are per row.
+# geometric band overrides. This is the DEFAULT dressing (long sleeves, long
+# trousers, bare hands); a row's `bone_regions` moves individual bones out of it,
+# which is how a sleeveless shirt, a pair of shorts and a pair of gloves are
+# expressed without one line of geometry. The COLOURS are per row.
 COLOUR_BONES = {
     "skin": ["head", "neck_01", "hand_l", "hand_r"] + _fingers("l") + _fingers("r"),
     "shirt": ["spine_01", "spine_02", "spine_03", "clavicle_l", "clavicle_r",
@@ -121,6 +188,26 @@ REGION_BONES = {
     "lowerarm_l": ["lowerarm_l", "hand_l"] + _fingers("l"),
     "lowerarm_r": ["lowerarm_r", "hand_r"] + _fingers("r"),
 }
+
+def _face_row(hero):
+    """`spike_z3e_head.py`'s macros and face targets for `hero`, in this file's
+    shapes. The SPIKE IS THE SOURCE: that lane authored and shipped both faces and
+    bead z3e.12 spent itself differentiating them, so a copy here would be a second
+    number to keep in step with the first. The macros come across whole because in
+    MakeHuman they shape the WHOLE human — Windman's `weight` 0.6 is the same
+    slider that makes the generated torso stout, and Primm's 0.35 the same one that
+    makes his slim."""
+    row = face.HEROES[hero]
+    return dict(row["macro"]), [(rel, w) for rel, w in row["targets"]]
+
+
+def _face_palette(hero):
+    """The spike's own skin/lips/hair for `hero`, UNGRADED — `paint_body` applies
+    `hero_skin.SKIN_GRADE` to the entries in GRADED_COLOURS, so a pre-graded value
+    here would be graded twice. Primm's skin deliberately leaves his generator's
+    (see the spike's table); Windman's is his generator's verbatim."""
+    return dict(face.HEROES[hero]["palette"])
+
 
 HEROES = {
     "teibi": {
@@ -151,19 +238,120 @@ HEROES = {
             "eye_iris":      (0.22, 0.16, 0.11, 1.0),
         },
         "colour_key": {"skin": "skin", "shirt": "shirt_mustard",
-                       "trousers": "trousers", "shoes": "shoes"},
+                       "trousers": "trousers", "shoes": "shoes",
+                       "belt": "belt", "belt_buckle": "belt_buckle",
+                       "cuff": "shirt_collar", "collar": "shirt_collar"},
+        "bands": ("belt", "cuff", "collar"),
+        "hair": {"lift": 0.006, "front": 0.036, "nape": 0.05, "brows": True},
         "beret": True,
+        "eyes": True,
         "height": 1.78,      # crown-to-heel, natural MakeHuman proportions
-        # The body's decimate target. The beret + eyes are joined AFTER it and
-        # cost ~1.4k more; the whole-body ceiling the bead names is 12k.
-        "tri_target": 10500,
-        "tri_budget": 12000,
         "out_dir": "teibi_parts",
         "stem": "teibi_skinned",
     },
+    "windman": {
+        # docs/characters/windman.md: stout, bare-armed, blue shirt over brown
+        # shorts, black boots, and the blue-over-red bandage where his eyes would
+        # be. The face is the spike's — see `_face_row`.
+        "macros": _face_row("windman")[0],
+        "targets": _face_row("windman")[1],
+        # generate_windman_separate.py's `self.colors`, verbatim and UNGRADED, plus
+        # the spike's `lips`. `fan_*` is not here: the fan is an ATTACHMENT, hung on
+        # `hand_r` by bead 5u3.5's .tscn, and windman_fan.glb keeps its own colours.
+        "colours": dict(_face_palette("windman"), **{
+            "shirt_blue":   (0.16, 0.33, 0.60, 1.0),
+            "shorts_brown": (0.42, 0.30, 0.18, 1.0),
+            "boots_black":  (0.08, 0.08, 0.09, 1.0),
+        }),
+        # BARE ARMS AND SHORTS, AS BONE REGIONS. The generator paints the whole
+        # upper and lower arm skin and leaves only a shirt-blue cap at the
+        # shoulder, and paints the calves skin below brown shorts — which is
+        # exactly `upperarm`/`lowerarm` and `calf` moving out of their default
+        # regions, with `clavicle_*` left behind in "shirt" as the cap.
+        "bone_regions": {"upperarm_l": "skin", "upperarm_r": "skin",
+                         "lowerarm_l": "skin", "lowerarm_r": "skin",
+                         "calf_l": "skin", "calf_r": "skin"},
+        "colour_key": {"skin": "skin", "shirt": "shirt_blue",
+                       "trousers": "shorts_brown", "shoes": "boots_black"},
+        # No belt, no cuff, no collar: the generator's torso is one flat blue and
+        # the arms it would band are bare skin now.
+        "bands": (),
+        # THE BANDAGE IS CLOTH, and it is bead z3e.13's cloth — `wrap_band` and the
+        # row it reads, imported. It also deletes the eye sockets under it, which
+        # is why this row builds no eyeballs: "windman has no eyes, he use air
+        # abilities to see" (owner, 2026-09-11).
+        "band": face.HEROES["windman"]["band"],
+        "stripes": face.HEROES["windman"]["stripes"],
+        "hair": dict(zip(("lift", "front", "nape"),
+                         (face.HEROES["windman"]["hair_lift"],
+                          face.HEROES["windman"]["hair_front"],
+                          face.HEROES["windman"]["hair_nape"])), brows=False),
+        "beret": False,
+        "eyes": False,
+        # blender_hero.py measured the generated Windman at 1.7536 m; the skinned
+        # body replaces it and keeps its silhouette.
+        "height": 1.75,
+        "out_dir": "windman_parts",
+        "stem": "windman_skinned",
+    },
+    "primm": {
+        # docs/characters/primm.md: slim, purple coat over a black shirt, navy
+        # trousers, black boots and gloves, thin high-tech goggles. The face is the
+        # spike's z3e.12 recipe — younger, leaner, longer than Windman's.
+        "macros": _face_row("primm")[0],
+        "targets": _face_row("primm")[1],
+        # generate_primm_separate.py's `self.colors`, verbatim and UNGRADED, plus
+        # the spike's `lips`. The coat's silver trims and the black V-panel with its
+        # cyan lines are NOT here: they are bead 5u3.6's call, and neither is a bone
+        # region or a joint-height band.
+        "colours": dict(_face_palette("primm"), **{
+            "coat_purple": (0.30, 0.15, 0.44, 1.0),
+            "coat_collar": (0.25, 0.12, 0.37, 1.0),
+            "cuff_grey":   (0.62, 0.68, 0.74, 1.0),
+            "glove_black": (0.06, 0.06, 0.07, 1.0),
+            "belt_black":  (0.05, 0.05, 0.06, 1.0),
+            "belt_buckle": (0.70, 0.72, 0.76, 1.0),
+            "jeans_navy":  (0.10, 0.11, 0.17, 1.0),
+            "boots_black": (0.07, 0.07, 0.08, 1.0),
+        }),
+        "bone_regions": {"hand_l": "gloves", "hand_r": "gloves"},
+        "colour_key": {"skin": "skin", "shirt": "coat_purple",
+                       "trousers": "jeans_navy", "shoes": "boots_black",
+                       "gloves": "glove_black",
+                       "belt": "belt_black", "belt_buckle": "belt_buckle",
+                       "cuff": "cuff_grey", "collar": "coat_collar"},
+        "bands": ("belt", "cuff", "collar"),
+        # THE GOGGLES ARE PAINT, not cloth — no `band` key. The spike's own ruling:
+        # a lens is not a wrap, and stripes on the skin are what shipped.
+        "stripes": face.HEROES["primm"]["stripes"],
+        "hair": dict(zip(("lift", "front", "nape"),
+                         (face.HEROES["primm"]["hair_lift"],
+                          face.HEROES["primm"]["hair_front"],
+                          face.HEROES["primm"]["hair_nape"])), brows=False),
+        "beret": False,
+        # The goggles cover the sockets; two white spheres behind a painted lens
+        # would only poke through it.
+        "eyes": False,
+        # blender_hero.py measured the generated Primm at 1.7733 m with the
+        # authored head.
+        "height": 1.78,
+        "out_dir": "primm_parts",
+        "stem": "primm_skinned",
+    },
 }
 
-HAIR_LIFT = 0.006            # short hair as a shell over the scalp, in metres
+# A FACE AND A FOREARM DO NOT WANT THE SAME DENSITY, so the collapse is aimed at
+# each separately (`decimate`). Measured 2026-09-11 on Teibi's build: the MakeHuman
+# head is 8,542 of the baked body's 26,756 triangles and a UNIFORM collapse hands
+# it back only 26% of whatever it is given — 3,859 head triangles at a 12,600
+# target, under the 4k floor, and no budget under ~15.5k fixes that for a hero who
+# has no beret and no eyeballs to make the number up with. The head is 8% of the
+# silhouette and all of the acting, so it gets its own target instead.
+BODY_TRIS = 8200             # marginally denser than the 7,790 Teibi shipped at
+HEAD_TRIS = 4400             # the spike's own 4,500-triangle head, at body scale
+TRI_BUDGET = 14000           # incl. every accessory joined after the collapse
+HEAD_TRIS_MIN = 4000         # the face must survive the body's budget
+
 # THE SHOE SHELL (bead 5u3.3's polish slot). MakeHuman ships bare feet with toes,
 # and painting them brown reads as BARE FEET at 3 m — the toe split is still
 # there in silhouette. So the shoe is geometry, by the same idiom as the hair:
@@ -202,21 +390,17 @@ def clear_scene():
         bpy.data.objects.remove(obj, do_unlink=True)
 
 
-def joint_centroid(obj, group_name):
-    """Centre of one of the basemesh's helper JOINT CUBES, in object space —
-    spike_z3e_head.py's helper, verbatim."""
-    idx = obj.vertex_groups[group_name].index
-    acc = Vector((0.0, 0.0, 0.0))
-    n = 0
-    for v in obj.data.vertices:
-        for g in v.groups:
-            if g.group == idx:
-                acc += v.co
-                n += 1
-                break
-    if n == 0:
-        raise ValueError("empty vertex group " + group_name)
-    return acc / n
+# THE LANDMARKS ARE THE SPIKE'S, INCLUDING ITS BUG FIX. `morphed_coords` reads the
+# joint cubes off the EVALUATED mesh (bead z3e.12, TRAP 7 in the header) and
+# `joint_centroid` averages them; this file used to average `v.co` instead, which is
+# the UNMORPHED basemesh. It got away with it for Teibi, whose macros sit near the
+# basemesh default — and did not for Primm, whose age 0.30 / weight 0.35 shorten the
+# morphed body to 1.505 m while the raw one stays 1.61, putting his eye landmark
+# 5 cm ABOVE his own crown once `reframe()`'s matrix was applied to it (measured
+# 2026-09-11, bead 5u3.4: his hairline landed off the top of his head and he came
+# out bald). One import, and the bug cannot come back to this lane either.
+morphed_coords = face.morphed_coords
+joint_centroid = face.joint_centroid
 
 
 # ---------------------------------------------------------------------------
@@ -243,12 +427,13 @@ def build_human(row):
             continue
         TargetService.load_target(human, path, weight=weight)
 
+    coords = morphed_coords(human)
     joints = {}
     for name in ("neck", "l-shoulder", "r-shoulder", "l-elbow", "r-elbow",
                  "l-upper-leg", "r-upper-leg", "l-knee", "r-knee", "pelvis",
                  "l-eye", "r-eye"):
-        joints[name] = joint_centroid(human, "joint-" + name)
-    log("joints (raw basemesh space):",
+        joints[name] = joint_centroid(human, "joint-" + name, coords)
+    log("joints (morphed basemesh space):",
         {k: tuple(round(c, 4) for c in v) for k, v in joints.items()})
     return human, joints
 
@@ -373,19 +558,48 @@ def bake_to_plain_mesh(obj, armature):
     return obj
 
 
-def decimate(obj, tri_target):
+def decimate(obj, body_tris, head_tris):
+    """TWO collapses: thin the body with the head held, then thin the head with the
+    body held. Each pass's `ratio` is stated as the triangle count it aims at, so
+    the two budgets are read off the constants rather than tuned.
+
+    A ONE-PASS DIAL WAS TRIED FIRST AND DOES NOT EXIST. Blender's Decimate reads a
+    vertex group as a VETO, not a weight: measured 2026-09-11 on this mesh, a
+    `vertex_group_factor` of 0.3, 0.5, 0.7, 0.85 and 1.0 all preserved exactly the
+    same 8,540 head triangles, because the modifier blends the factor in as
+    `(1 - f) + f * w` and every weight in a BONE group is 1. So the head is either
+    fully protected or not protected at all, and "not at all" is the second pass.
+
+    The second pass protects the body and therefore cannot hit its ratio exactly —
+    it runs out of head to collapse — so it undershoots the body by a percent or
+    two. The asserts in `build()` read the result, not the request."""
     bpy.context.view_layer.objects.active = obj
-    obj.data.calc_loop_triangles()
-    current = len(obj.data.loop_triangles)
-    if current <= tri_target:
-        log("no decimation needed (%d tris)" % current)
-        return
-    mod = obj.modifiers.new("Decimate", 'DECIMATE')
-    mod.decimate_type = 'COLLAPSE'
-    mod.ratio = float(tri_target) / float(current)
-    bpy.ops.object.modifier_apply(modifier=mod.name)
-    obj.data.calc_loop_triangles()
-    log("decimated %d -> %d tris" % (current, len(obj.data.loop_triangles)))
+
+    def counts():
+        obj.data.calc_loop_triangles()
+        total = len(obj.data.loop_triangles)
+        return total, head_tri_count(obj)
+
+    def collapse(want, protect_head):
+        total = len(obj.data.loop_triangles)
+        if want >= total:
+            return
+        mod = obj.modifiers.new("Decimate", 'DECIMATE')
+        mod.decimate_type = 'COLLAPSE'
+        mod.ratio = float(want) / float(total)
+        mod.vertex_group = "head"
+        mod.vertex_group_factor = 1.0
+        mod.invert_vertex_group = protect_head
+        bpy.ops.object.modifier_apply(modifier=mod.name)
+
+    total, head = counts()
+    log("pre-decimate: %d tris (%d head, %d body)" % (total, head, total - head))
+    collapse(head + body_tris, protect_head=True)
+    total, head = counts()
+    log("body pass: %d tris (%d head, %d body)" % (total, head, total - head))
+    collapse(head_tris + (total - head), protect_head=False)
+    total, head = counts()
+    log("head pass: %d tris (%d head, %d body)" % (total, head, total - head))
 
 
 def reframe(obj, armature, target_height):
@@ -507,20 +721,55 @@ def _group_weight(v, ids):
     return sum(g.weight for g in v.groups if g.group in ids)
 
 
-def paint_body(obj, tj, row):
+def colour_regions(row):
+    """The row's own region -> bones map: COLOUR_BONES with `bone_regions` applied.
+
+    A row moves BONES, not regions, because that is how clothing actually reads —
+    "the forearm is bare", "the hand is gloved" — and because a bone can only be in
+    one region, which an override dict makes true by construction."""
+    of_bone = {}
+    for region, bones in COLOUR_BONES.items():
+        for bone in bones:
+            of_bone[bone] = region
+    for bone, region in row.get("bone_regions", {}).items():
+        if bone not in of_bone:
+            raise AssertionError("bone_regions names %r, which is in no region" % bone)
+        of_bone[bone] = region
+    out = {}
+    for bone, region in of_bone.items():
+        out.setdefault(region, []).append(bone)
+    missing = sorted(set(out) - set(row["colour_key"]))
+    if missing:
+        raise AssertionError("no colour_key entry for region(s) %s" % missing)
+    return out
+
+
+def paint_body(obj, tj, row, band_verts=frozenset()):
     """Base region colour by bone-weight argmax, then geometric BAND overrides
-    (belt, cuffs, collar) scoped by bone region, then the face detail."""
+    (belt, cuff, collar) scoped by bone region, then the face detail.
+
+    `band_verts` is `wrap_band`'s cloth, if the row wears any: those vertices skip
+    the skin entirely and take the row's `stripes` top-down, exactly as the spike's
+    own `paint()` does — this is the same face recipe, run on a whole human."""
     colours = dict(row["colours"])
     for key in GRADED_COLOURS:
         colours[key] = graded(colours[key])
     colour_key = row["colour_key"]
+    bands = set(row.get("bands", ()))
+    stripes = row.get("stripes", ())
+    hair = row["hair"]
+    for j, (_low, _high, colour) in enumerate(stripes):
+        colours[j] = colour
+    if stripes:
+        colours["seam"] = tuple(c * face.SEAM_DARKEN
+                                for c in stripes[-1][2][:3]) + (1.0,)
     me = obj.data
     name_to_id = {vg.name: vg.index for vg in obj.vertex_groups}
 
     def ids(bones):
         return {name_to_id[b] for b in bones if b in name_to_id}
 
-    region_ids = {r: ids(bones) for r, bones in COLOUR_BONES.items()}
+    region_ids = {r: ids(bones) for r, bones in colour_regions(row).items()}
     scope_ids = {r: ids(bones) for r, bones in REGION_BONES.items()}
 
     pelvis_z = tj["pelvis"].z
@@ -538,34 +787,52 @@ def paint_body(obj, tj, row):
         key = colour_key[region]
 
         in_torso = _group_weight(v, scope_ids["torso"]) > 0.4
-        if in_torso and abs(v.co.z - pelvis_z) <= 0.025:
-            key = "belt"
+        if "belt" in bands and in_torso and abs(v.co.z - pelvis_z) <= 0.025:
+            key = colour_key["belt"]
             if v.co.y > 0.06 and abs(v.co.x) < 0.05:
-                key = "belt_buckle"
-        elif any(_group_weight(v, scope_ids["lowerarm_" + s]) > 0.4
-                 and abs(v.co.z - wrist_z[s]) <= 0.02 for s in ("l", "r")):
-            key = "shirt_collar"   # cuff — the generator's darker-mustard ring
-        elif in_torso and neck_z - 0.03 <= v.co.z <= neck_z + 0.015:
-            key = "shirt_collar"
+                key = colour_key["belt_buckle"]
+        elif "cuff" in bands and any(
+                _group_weight(v, scope_ids["lowerarm_" + s]) > 0.4
+                and abs(v.co.z - wrist_z[s]) <= 0.02 for s in ("l", "r")):
+            key = colour_key["cuff"]
+        elif ("collar" in bands and in_torso
+              and neck_z - 0.03 <= v.co.z <= neck_z + 0.015):
+            key = colour_key["collar"]
         per_vert[i] = key
 
-    # THE HEAD REGION: lips, eyebrows, hair — spike_z3e_head.py's paint(),
+    # THE HEAD REGION: eyewear, lips, eyebrows, hair — spike_z3e_head.py's paint(),
     # position-relative-to-the-eye-line rather than by skinning weight.
     head_ids = scope_ids["head"]
     lip_z = eye_z - 0.088
-    hair_front = eye_z + 0.036
+    hair_front = eye_z + hair["front"]
+    seam_z = eye_z + stripes[0][0] if stripes else 0.0
     half_depth = max((abs(v.co.y) for v in me.vertices
                       if _group_weight(v, head_ids) > 0.4), default=1e-6)
     for i, v in enumerate(me.vertices):
+        if i in band_verts:
+            # The cloth, top-down and clamped at both ends: the lift and the knots
+            # put wrap outside the stripe range it was cut from.
+            if abs(v.co.z - seam_z) <= face.SEAM_HALF:
+                per_vert[i] = "seam"
+            else:
+                per_vert[i] = next((j for j, (low, _h, _c) in enumerate(stripes)
+                                    if v.co.z >= eye_z + low), len(stripes) - 1)
+            continue
         if _group_weight(v, head_ids) <= 0.4:
             continue
         depth = v.co.y / half_depth
-        hair_z = hair_front - 0.05 * max(0.0, -depth)
+        hair_z = hair_front - hair["nape"] * max(0.0, -depth)
         if v.co.z >= hair_z:
             per_vert[i] = "hair"
+        elif not band_verts and any(eye_z + low <= v.co.z <= eye_z + high
+                                    for low, high, _c in stripes):
+            # Eyewear painted on the skin (Primm's goggles); first match wins.
+            per_vert[i] = next(j for j, (low, high, _c) in enumerate(stripes)
+                               if eye_z + low <= v.co.z <= eye_z + high)
         elif lip_z - 0.014 <= v.co.z <= lip_z + 0.010 and depth > 0.55:
             per_vert[i] = "lips"
-        elif eye_z + 0.028 <= v.co.z <= eye_z + 0.040 and depth > 0.45:
+        elif (hair["brows"] and eye_z + 0.028 <= v.co.z <= eye_z + 0.040
+              and depth > 0.45):
             per_vert[i] = "hair"   # eyebrows, above the eye line
 
     counts = {}
@@ -586,12 +853,13 @@ def paint_body(obj, tj, row):
         if per_vert[i] != "hair" or _group_weight(v, head_ids) <= 0.4:
             continue
         taper = min(1.0, (v.co.z - (hair_front - 0.05)) / 0.04)
-        v.co += normals[i] * (HAIR_LIFT * max(0.0, taper))
+        v.co += normals[i] * (hair["lift"] * max(0.0, taper))
 
     # The shoe shell — same lift, no taper (a shoe has a rim, hair does not),
     # and the sole clamped back onto the ground.
+    shoe_key = colour_key["shoes"]
     for i, v in enumerate(me.vertices):
-        if per_vert[i] != "shoes":
+        if per_vert[i] != shoe_key:
             continue
         v.co += normals[i] * SHOE_LIFT
         v.co.z = max(v.co.z, 0.0)
@@ -720,7 +988,36 @@ def join_rigid(target, extra, bone):
 # Export
 # ---------------------------------------------------------------------------
 
-def export_glb(obj, armature, path):
+def weight_strays_to(obj, armature, bone):
+    """TRAP 8. Any vertex with no bone weight at all goes to `bone`, weight 1.0.
+
+    `wrap_band`'s knots are `bmesh.ops.create_cube` geometry and carry no deform
+    layer; everything else it makes is extruded from skin that does. The wrap lives
+    entirely on the head, so `head` is not a guess — it is the only bone any of it
+    could belong to. Returns how many were swept, so a number that is not the knots'
+    two boxes is visible rather than silent."""
+    bone_names = {b.name for b in armature.data.bones}
+    ids = {vg.index for vg in obj.vertex_groups if vg.name in bone_names}
+    vg = obj.vertex_groups.get(bone) or obj.vertex_groups.new(name=bone)
+    stray = [v.index for v in obj.data.vertices if _group_weight(v, ids) <= 0.0]
+    if stray:
+        vg.add(stray, 1.0, 'REPLACE')
+    log("swept %d unweighted vert(s) onto %s" % (len(stray), bone))
+    return len(stray)
+
+
+def head_tri_count(obj):
+    """Triangles whose every vertex is driven by the head — the bead's face-survived
+    assert. Counted on the mesh as exported, so the beret and the eyes (weighted to
+    `head` by `join_rigid`) count with it, and so does the wrap."""
+    ids = {vg.index for vg in obj.vertex_groups if vg.name in ("head", "neck_01")}
+    head = {v.index for v in obj.data.vertices if _group_weight(v, ids) > 0.5}
+    obj.data.calc_loop_triangles()
+    return sum(1 for t in obj.data.loop_triangles
+               if all(i in head for i in t.vertices))
+
+
+def export_glb(obj, armature, path, sharp=frozenset()):
     """
     SMOOTH, and deliberately not through `predator_parts.export_faceted()`.
     CLAUDE.md calls that "the one export seam for every generated `.glb`
@@ -732,12 +1029,18 @@ def export_glb(obj, armature, path):
     copy of (`spike_z3e_teibi_body.py:669`) smooth-shades the same MPFB2 body
     the same way. Flat normals on an organic basemesh are also what tore the
     hero outline into cracks (bead z3e.9).
+
+    `sharp` is `wrap_band`'s rims and knots — the ONE place a smooth-shaded hero
+    keeps flat faces, because a cloth edge that shades smoothly into the cheek is
+    the painted bandage again with extra steps (the spike's own ruling). It is a
+    set of POLYGON INDICES, so nothing may be joined into the mesh between the wrap
+    and here; `build()` keeps that order and refuses a row that breaks it.
     """
     for o in bpy.data.objects:
         o.select_set(o is obj or o is armature)
     bpy.context.view_layer.objects.active = armature
     for poly in obj.data.polygons:
-        poly.use_smooth = True
+        poly.use_smooth = poly.index not in sharp
     obj.data.update()
     bpy.ops.export_scene.gltf(
         filepath=path,
@@ -776,8 +1079,15 @@ def assert_no_multires(objs):
                 raise AssertionError("%s carries a MULTIRES modifier" % obj.name)
 
 
-def build(hero):
+def build(hero, shot=None):
     row = HEROES[hero]
+    if "band" in row and (row["beret"] or row["eyes"]):
+        raise AssertionError(
+            "%s wears a cloth band AND an accessory: `sharp` is polygon indices "
+            "and a join after the wrap renumbers them (see export_glb)" % hero)
+    if ARMS_DOWN_DEG >= ARMS_DOWN_MAX_DEG:
+        raise AssertionError("the shipped rest stands %.1f deg off vertical, over "
+                             "the %.1f cap" % (ARMS_DOWN_DEG, ARMS_DOWN_MAX_DEG))
     enable_mpfb()
     clear_scene()
 
@@ -787,60 +1097,240 @@ def build(hero):
     report_weights(human, armature, "basemesh (pre-convert)")
 
     obj = bake_to_plain_mesh(human, armature)
-    decimate(obj, row["tri_target"])
+    decimate(obj, BODY_TRIS, HEAD_TRIS)
     m = reframe(obj, armature, row["height"])
     tj = {name: m @ p for name, p in joints.items()}
     log("joints (game frame):", {k: tuple(round(c, 4) for c in v) for k, v in tj.items()})
 
-    # The two asserts the lane keeps: the face looks at +Y and the character's
-    # LEFT shoulder is at -X, which glTF's (x, z, -y) turns into Godot's -Z and
-    # -X — today's heroes' convention (teibi.tscn LeftArm x=-0.18).
-    if tj["l-eye"].y <= 0.0 or tj["r-eye"].y <= 0.0:
-        raise AssertionError("body facing backwards: eye y=%.4f/%.4f"
-                             % (tj["l-eye"].y, tj["r-eye"].y))
+    # THE ORIENTATION ASSERT, IN THE EXPORT FRAME. glTF's Y-up conversion maps
+    # Blender (x, y, z) to (x, z, -y) — x is carried across UNCHANGED and only the
+    # depth axis flips — so the face this script builds on +Y lands on Godot's -Z
+    # and the character's left, built on -x, stays on Godot's -X: today's heroes'
+    # convention (teibi.tscn LeftArm x=-0.18). The z half is asserted as the number
+    # Godot will read, because that is the half the conversion touches.
+    godot_eye_z = [-tj["l-eye"].y, -tj["r-eye"].y]
+    if max(godot_eye_z) >= 0.0:
+        raise AssertionError("body faces +Z in Godot: eye z=%.4f/%.4f (want < 0)"
+                             % tuple(godot_eye_z))
     if tj["l-shoulder"].x >= 0.0:
-        raise AssertionError("left shoulder not at negative x: %.4f" % tj["l-shoulder"].x)
-    log("ASSERT OK: face +Y, joint-l-shoulder x=%.4f (< 0)" % tj["l-shoulder"].x)
+        raise AssertionError("left shoulder not at Godot -X: %.4f" % tj["l-shoulder"].x)
+    log("ASSERT OK (export frame): eye z=%.4f/%.4f, left shoulder x=%.4f — all < 0"
+        % (godot_eye_z[0], godot_eye_z[1], tj["l-shoulder"].x))
 
-    paint_body(obj, tj, row)
+    height = max(v.co.z for v in obj.data.vertices) - min(v.co.z for v in obj.data.vertices)
+    if abs(height - row["height"]) > 0.03:
+        raise AssertionError("reframed to %.4f m, outside %.2f +- 0.03"
+                             % (height, row["height"]))
+    log("ASSERT OK: height %.4f m, within 3 cm of the row's %.2f" % (height, row["height"]))
+
+    band_verts, flat_faces = face.wrap_band(obj, (tj["l-eye"].z + tj["r-eye"].z) / 2.0,
+                                            row)
+    if band_verts:
+        weight_strays_to(obj, armature, "head")
+    paint_body(obj, tj, row, band_verts)
 
     if row["beret"]:
         crown_z = max(v.co.z for v in obj.data.vertices)
         obj = join_rigid(obj, build_beret(row["colours"], crown_z), "head")
-    obj = join_rigid(obj, build_eyes(row["colours"], tj["l-eye"], tj["r-eye"]), "head")
+    if row["eyes"]:
+        obj = join_rigid(obj, build_eyes(row["colours"], tj["l-eye"], tj["r-eye"]),
+                         "head")
 
     apply_pose_as_rest(armature, obj, ARMS_DOWN_DEG)
-    report_weights(obj, armature, "skinned body (beret + eyes joined)")
+    report_weights(obj, armature, "skinned body (accessories joined)")
     assert_no_multires([obj, armature])
 
     zs = [v.co.z for v in obj.data.vertices]
     log("final body: height %.4f m (z %.4f..%.4f), %d verts"
         % (max(zs) - min(zs), min(zs), max(zs), len(obj.data.vertices)))
+    if abs(min(zs)) > 0.04:
+        raise AssertionError("feet %.4f m off the ground (cap 0.04)" % min(zs))
+
+    head_tris = head_tri_count(obj)
+    log("head: %d tris (floor %d)" % (head_tris, HEAD_TRIS_MIN))
+    if head_tris < HEAD_TRIS_MIN:
+        raise AssertionError("the face melted: %d head tris under the %d floor"
+                             % (head_tris, HEAD_TRIS_MIN))
 
     out_dir = os.path.join(OUT_ROOT, row["out_dir"])
     os.makedirs(out_dir, exist_ok=True)
     obj.name = hero.capitalize()
     armature.name = armature.data.name = "Armature"
-    tris, _size = export_glb(obj, armature,
-                             os.path.join(out_dir, row["stem"] + ".glb"))
-    if tris > row["tri_budget"]:
-        raise AssertionError("%d tris over the %d budget" % (tris, row["tri_budget"]))
-    log("texture bytes: 0 (vertex colours only)")
+    glb = os.path.join(out_dir, row["stem"] + ".glb")
+    tris, size = export_glb(obj, armature, glb, sharp=flat_faces)
+    if tris > TRI_BUDGET:
+        raise AssertionError("%d tris over the %d budget" % (tris, TRI_BUDGET))
+    # NO TEXTURE, BY RULING — see the header. Printed anyway so the cap is a
+    # measurement and not a promise. Counted off THIS HERO'S MATERIALS, not off
+    # `bpy.data.images`: `--rest-row` leaves a 640x640 "Render Result" in the file
+    # between heroes, and a render is not something the .glb ships.
+    texture_bytes = sum(
+        node.image.size[0] * node.image.size[1] * 4
+        for mat in obj.data.materials if mat and mat.use_nodes
+        for node in mat.node_tree.nodes
+        if node.type == 'TEX_IMAGE' and node.image)
+    log("texture bytes: %d (cap %d) — vertex colours only"
+        % (texture_bytes, TEXTURE_BYTES_MAX))
+    if texture_bytes > TEXTURE_BYTES_MAX:
+        raise AssertionError("%d texture bytes over the %d cap"
+                             % (texture_bytes, TEXTURE_BYTES_MAX))
 
     blend = os.path.join(out_dir, row["stem"] + ".blend")
     bpy.ops.wm.save_as_mainfile(filepath=blend, compress=True)
     log("wrote %s (%d bytes)" % (os.path.basename(blend), os.path.getsize(blend)))
+
+    if shot:
+        # blender_hero.py's helper shoots from -Y, because the part trees it was
+        # written for are built facing that way (its Rx(+90) root). These bodies
+        # face +Y, so without this the rest row is three backs of heads. Turned at
+        # the OBJECT level and only after both files are written — the .glb and the
+        # .blend already have the rest pose they are supposed to have, and the mesh
+        # and the armature turn together so the modifier still binds — which is
+        # what turning only the ROOTS does, the mesh being MPFB2's child of the
+        # armature. Turning both instead composes pi with pi and the hero faces
+        # front again (measured 2026-09-11: three backs of heads).
+        for o in (obj, armature):
+            if o.parent is None:
+                o.rotation_euler.z = math.pi
+        # Workbench's default MATERIAL colour mode renders a hero with no material
+        # as grey clay; these bodies ARE their vertex colours.
+        bpy.context.scene.display.shading.color_type = 'VERTEX'
+        blender_hero.screenshot(shot, max(zs))
     log("done")
+    return {
+        "glb": os.path.relpath(glb, OUT_ROOT),
+        "glb_bytes": size,
+        "tris": tris,
+        "head_tris": head_tris,
+        "bones": len(armature.data.bones),
+        "texture_bytes": texture_bytes,
+        "texture_size": 0,
+        "height_m": round(max(zs) - min(zs), 4),
+    }
+
+
+# ---------------------------------------------------------------------------
+# The manifest, the rest row, the CLI
+# ---------------------------------------------------------------------------
+
+def tool_versions():
+    mpfb = importlib.import_module("bl_ext.blender_org.mpfb")
+    version = getattr(mpfb, "VERSION", None) or \
+        getattr(mpfb, "bl_info", {}).get("version")
+    return {"blender": bpy.app.version_string,
+            "mpfb": ".".join(str(p) for p in version) if version else "unknown"}
+
+
+def read_manifest():
+    if not os.path.exists(MANIFEST):
+        return {"tools": {}, "heroes": {}}
+    with open(MANIFEST) as fh:
+        return json.load(fh)
+
+
+def write_manifest(built):
+    """Merge this run's rows into the committed manifest. A single-hero rebuild
+    updates its own row and leaves the others alone, so the file never has to be
+    rewritten from a full `--all` to stay true."""
+    data = read_manifest()
+    data["tools"] = tool_versions()
+    data.setdefault("heroes", {}).update(built)
+    with open(MANIFEST, "w") as fh:
+        json.dump(data, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    log("wrote %s" % os.path.relpath(MANIFEST, REPO))
+
+
+def check_manifest(built):
+    """`--check`: the rebuild against the committed numbers. The .glb's BYTE SIZE is
+    in here and its bytes are not, because the glTF exporter is free to emit one
+    primitive's triangles in a different rotation between runs (measured 2026-09-11
+    on two identical Teibi builds: same vertex data, 1,001 index bytes apart, same
+    366,452-byte file). Size, tris, bones and texture bytes are stable; the .blend's
+    size is not (Blender stamps it), so it is not gated anywhere."""
+    want = read_manifest().get("heroes", {})
+    bad = []
+    for hero, got in sorted(built.items()):
+        if hero not in want:
+            bad.append("%s: not in the manifest" % hero)
+            continue
+        for key, value in sorted(got.items()):
+            if want[hero].get(key) != value:
+                bad.append("%s.%s: manifest %r, rebuild %r"
+                           % (hero, key, want[hero].get(key), value))
+    tools = read_manifest().get("tools", {})
+    if tools != tool_versions():
+        bad.append("tools: manifest %r, this Blender %r" % (tools, tool_versions()))
+    for line in bad:
+        log("CHECK FAIL", line)
+    if bad:
+        raise SystemExit(1)
+    log("CHECK OK: %d hero(es) match %s"
+        % (len(built), os.path.relpath(MANIFEST, REPO)))
+
+
+def rest_row(shots, path):
+    """The cast at rest, side by side in one strip. Blender renders each hero on its
+    own (`blender_hero.screenshot`, reused) and numpy pastes them — Pillow is not
+    installed in Blender's Python and is not worth adding for one concatenate."""
+    import numpy
+
+    frames = []
+    for shot in shots:
+        img = bpy.data.images.load(shot)
+        buf = numpy.empty(len(img.pixels), dtype=numpy.float32)
+        img.pixels.foreach_get(buf)
+        frame = buf.reshape(img.size[1], img.size[0], 4)
+        # The helper frames a whole 4 m field of view for a 1.8 m man, so most of
+        # each square is floor. Keep the middle third: three heroes at a readable
+        # size beat three squares of background.
+        cut = frame.shape[1] // 3
+        frames.append(frame[:, cut:-cut])
+        bpy.data.images.remove(img)
+    strip = numpy.concatenate(frames, axis=1)
+    out = bpy.data.images.new("rest_row", strip.shape[1], strip.shape[0])
+    out.pixels.foreach_set(strip.ravel())
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    out.filepath_raw = path
+    out.file_format = 'PNG'
+    out.save()
+    log("wrote %s (%d x %d, %d bytes)"
+        % (os.path.relpath(path, REPO), strip.shape[1], strip.shape[0],
+           os.path.getsize(path)))
 
 
 def main():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-    heroes = argv or ["teibi"]
+    check = "--check" in argv
+    row_png = argv[argv.index("--rest-row") + 1] if "--rest-row" in argv else None
+    heroes = [argv[i + 1] for i, a in enumerate(argv) if a == "--hero"]
+    if "--all" in argv:
+        heroes = list(HEROES)
+    if not heroes:
+        # The bare positional form PROVENANCE.md and every older note still use.
+        heroes = [a for a in argv if not a.startswith("-")
+                  and a != row_png] or ["teibi"]
     for hero in heroes:
         if hero not in HEROES:
             raise SystemExit("unknown hero %r (have: %s)"
                              % (hero, ", ".join(sorted(HEROES))))
-        build(hero)
+
+    shots = {}
+    built = {}
+    for hero in heroes:
+        shot = os.path.join(tempfile.gettempdir(), "build_hero_%s.png" % hero) \
+            if row_png else None
+        built[hero] = build(hero, shot)
+        if shot:
+            shots[hero] = shot
+    if row_png:
+        rest_row([shots[h] for h in heroes],
+                 row_png if os.path.isabs(row_png) else os.path.join(REPO, row_png))
+    if check:
+        check_manifest(built)
+    else:
+        write_manifest(built)
 
 
-main()
+if __name__ == "__main__":
+    main()
