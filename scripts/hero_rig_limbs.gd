@@ -48,6 +48,12 @@ func bind(body: Node3D, rest: Dictionary) -> bool:
 	"""
 	Find the limbs under `body` and adopt `rest` as the pose they swing around.
 
+	SILENT, deliberately: `remote_avatar.gd` binds through this same seam on
+	every peer's model swap, and that path printed nothing before the seam
+	existed. The local swap log keeps its one line, in
+	`PlayerAnimation.setup_animation_references()`, where only the local player
+	reaches it.
+
 	@return false when the four limbs are not all there — the caller then holds
 	        no rig at all and every pose function returns early, which is the
 	        "frozen model" behaviour the exact-name contract has always had.
@@ -59,11 +65,6 @@ func bind(body: Node3D, rest: Dictionary) -> bool:
 	_left_leg = body.get_node_or_null("LeftLeg")
 	_right_leg = body.get_node_or_null("RightLeg")
 	_head = body.get_node_or_null("Head")
-	print("  Limb nodes found:")
-	print("    LeftArm: ", _left_arm != null)
-	print("    RightArm: ", _right_arm != null)
-	print("    LeftLeg: ", _left_leg != null)
-	print("    RightLeg: ", _right_leg != null)
 	return _left_arm != null and _right_arm != null \
 			and _left_leg != null and _right_leg != null
 

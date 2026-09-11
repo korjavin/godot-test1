@@ -20,10 +20,10 @@ extends RefCounted
 ## game playable after every one of them.
 ##
 ## THE TWO CALLERS — `player_animation.gd` (local) and `remote_avatar.gd`
-## (mirror) — preload THIS file and nothing below it, so the pose contract has
-## exactly one import site (CLAUDE.md: a family reaches a sibling through the
-## node that owns the state). Neither driver knows about either caller, so
-## there is no cycle to make.
+## (mirror) — reach THIS file through its `class_name` and nothing below it, so
+## the pose contract has exactly one import site (CLAUDE.md: a family reaches a
+## sibling through the node that owns the state). Neither driver knows about
+## either caller, so there is no cycle to make.
 ##
 ## WHAT THE DRIVERS DO NOT OWN: the clock. The caller keeps `animation_time` (or
 ## the remote's distance-driven `stride_phase`), computes the two sines, fires

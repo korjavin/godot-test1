@@ -117,7 +117,6 @@ func bind(body: Node3D, rest: Dictionary) -> bool:
 			p = Basis(_skel.get_bone_global_rest(parent).basis.get_rotation_quaternion())
 		var r: Basis = Basis(_skel.get_bone_rest(idx).basis.get_rotation_quaternion())
 		_bones[bone] = {"idx": idx, "p": p, "p_inv": p.inverse(), "r": r, "r_inv": r.inverse()}
-	print("  Skeleton3D found: ", _skel.get_bone_count(), " bones")
 	if not missing.is_empty():
 		push_warning("HeroRigSkeleton: rig is missing %s — the model will not animate"
 				% ", ".join(missing))
@@ -168,10 +167,20 @@ func relax_head(weight: float) -> void:
 
 
 func idle(weight: float) -> void:
-	"""Ease the swing out of every joint the walk cycle drives."""
+	"""Ease the swing out of every joint the walk cycle drives.
+
+	THE ELBOW'S NEUTRAL IS `ELBOW_BEND_DEG`, NOT ZERO, and it is the same on
+	every path: `locomotion()` writes the bend plus the shoulder's track, `air()`
+	writes the bend alone, and standing still has to ease to the same number or
+	the arms straighten over half a second and then snap back 15 degrees on the
+	first walking frame. It is also what keeps a standing LOCAL hero and a
+	standing REMOTE one identical — the mirror has no idle branch at all, it
+	calls `locomotion()` with both swings at zero."""
 	for side: String in ["left", "right"]:
-		for bone: String in [THIGH[side], CALF[side], UPPERARM[side], LOWERARM[side]]:
+		for bone: String in [THIGH[side], CALF[side], UPPERARM[side]]:
 			_set_axis(bone, AXIS_X, lerp(_axis(bone, AXIS_X), 0.0, weight))
+		_set_axis(LOWERARM[side], AXIS_X,
+				lerp(_axis(LOWERARM[side], AXIS_X), deg_to_rad(ELBOW_BEND_DEG), weight))
 
 
 func air(spread: float, tuck: float, weight: float) -> void:

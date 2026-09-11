@@ -387,6 +387,9 @@ func setup_animation_references() -> void:
 
 	print("Body node found!")
 
+	# THE ONE SWAP-LOG LINE, and it lives here rather than inside either driver's
+	# `bind()`: `remote_avatar.gd` binds through the same seam on every peer's
+	# model swap, and that path printed nothing before the seam existed.
 	rig = HeroRig.for_body(character_body, original_rotations)
 	print("  Rig kind: ", "none (frozen model)" if rig == null else rig.kind())
 	if not original_rotations.has("body"):

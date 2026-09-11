@@ -531,8 +531,9 @@ func _apply_body_variant(player: Node3D) -> void:
 	via `hero=` alone) to make the hero visible and point the animation system at
 	its STOCK body, and once more at the end to re-point it at the SWAPPED one —
 	`PlayerAnimation.activate_character()` finds limbs by exact name under `Body`
-	(`setup_animation_references()`), so it has to re-run AFTER the swap or
-	`anim.left_arm` etc still reference the freed old rig.
+	(`setup_animation_references()`, which since bd godot-test1-5u3.2 binds a
+	`hero_rig.gd` driver instead), so it has to re-run AFTER the swap or
+	`anim.rig` still holds node references into the freed old body.
 	"""
 	var index := _hero_index(player)
 	player.set_active_character(index)

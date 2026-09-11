@@ -1,8 +1,12 @@
 [gd_scene load_steps=2 format=3 uid="uid://c8teibiskin01"]
 
-; SPIKE godot-test1-5u3.1 — SCRATCH, deliberately NOT in player_controller's
-; CHARACTERS list: only scripts/style_shots.gd's `body=skinned` reaches it, and
-; the game is byte-for-byte unchanged by its presence.
+; SPIKE godot-test1-5u3.1, and since bd godot-test1-5u3.2 a CI DEPENDENCY —
+; do not delete this scene with the spike tooling. It is deliberately NOT in
+; player_controller's CHARACTERS list, so the game is byte-for-byte unchanged by
+; its presence, but two things reach it: scripts/style_shots.gd's `body=skinned`
+; column, and `gait_selfcheck.gd` check 8, which is the ONLY thing in the suite
+; that exercises the skinned pose driver and fails outright if this file is gone.
+; When style_shots' spike column retires (bd 5u3.3), check 8 is the last reader.
 ;
 ; `Body` stays even though the mesh needs no wrapper: the landing squash writes
 ; Body.position.y and capture_rest_pose reads Body.rotation, so every hero scene

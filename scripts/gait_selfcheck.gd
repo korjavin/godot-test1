@@ -127,6 +127,33 @@ const SKINNED_SWEEP_SECONDS: float = 20.0
 ## An arbitrary clock the determinism probe asks twice about — arbitrary on
 ## purpose: a round number could land on a sine zero and compare two rest poses.
 const SKINNED_PROBE_TIME: float = 12.34
+## The swing check (i) drives the thigh to, either way, and how far the knee must
+## then have travelled for the pose to count as having reached the skeleton at
+## all. 30 degrees is inside every row's `leg_deg`; Teibi's thigh is ~0.45 m, so
+## the two extremes sit ~0.45 m apart and 5 cm is far below that and far above
+## the float noise in a bone chain.
+const SKINNED_JOINT_SWING_DEG: float = 30.0
+const SKINNED_JOINT_TRAVEL_M: float = 0.05
+## ...and how much SHORTER the hip-to-foot reach must get on the back-swing,
+## where the knee flexes. `KNEE_FLEX_RATIO` 0.8 turns a 30-degree swing into a
+## 24-degree bend, which on Teibi's ~0.45 m thigh and calf pulls the foot in by a
+## measured 0.031 m. 0.015 is half of that and three times any float noise; a
+## deleted or straightened knee write measures exactly 0.
+const SKINNED_KNEE_FLEX_M: float = 0.015
+## ...and how much of that travel may be SIDEWAYS. A forward/back swing about
+## the skeleton's own X carries the knee along ±Z and nowhere else: measured on
+## the shipped conjugation the ratio is 7e-8. Conjugating through the bone's own
+## rest basis instead of its parent's — the realistic wrong edit, and one
+## `measure()` provably cannot see because the basis cancels in it — measures
+## 0.195 m sideways against 0.378 m forward, a ratio of 0.52. Anywhere between
+## is a rig being turned about a roll it should be agnostic to.
+const SKINNED_ROLL_TOLERANCE: float = 0.05
+## ...and how much the shoulder-to-hand reach must differ between the two arm
+## extremes, where `ELBOW_TRACK_RATIO` 0.3 opens the elbow from 24 to 6 degrees.
+## Measured 0.008 m on Teibi's ~0.28 m upper arm and forearm; a deleted or
+## constant elbow write measures exactly 0, and the float noise in a three-bone
+## chain is five orders below either.
+const SKINNED_ELBOW_M: float = 0.003
 
 var _failures: Array[String] = []
 
@@ -924,6 +951,35 @@ func _check_skinned(player: Node3D) -> void:
 	      Teibi's row has `head_deg` 0, so the fixture runs his row with the
 	      bobble forced on — an unmeasured write is a write that can be deleted
 	      in silence (the PR's second mutation control).
+
+	...and then three things the walk sweep STRUCTURALLY CANNOT see:
+
+	  (g) THE TWO DRIVERS ARE THE SAME POSE — an identical script of driver calls
+	      run against the limb rig and the bone rig, compared key by key. The
+	      walk sweep above pins all four `*_z` keys to zero (`animate_walking()`
+	      opens with `reset_sidestep_pose()`), so without this `sidestep()`,
+	      `air()`, `drop_wings()` and `reset_roll()` would have no coverage
+	      anywhere in the suite — no shipped hero binds this driver. And equality
+	      against the rig this game already ships is a far sharper instrument
+	      than a bound: it fails on one flipped sign in any of the eleven writes.
+	  (h) THE JOINTS — the knee that bends on the back-swing and the elbow that
+	      tracks the shoulder. They are the whole reason a skeleton beats five
+	      nodes, and `measure()` deliberately does not expose them: its keys are
+	      the limb rig's, or the shared bounds would stop meaning the same thing.
+	      So they are measured in the skeleton's own space, as the distance from
+	      hip to foot and from shoulder to hand — which is what a bent joint is.
+	  (i) THE ROLL TRAP ITSELF, and this one is the subtle one. `_set_axis()`
+	      writes `P⁻¹·E·P·R` and `_axis()` reads back `P·(pose·R⁻¹)·P⁻¹ = E`: the
+	      conjugation basis CANCELS. So `measure()` — and therefore everything
+	      above — answers exactly what was written for ANY invertible `P`,
+	      including a wrong one. Cache the BONE's own global rest basis instead
+	      of its PARENT's in `bind()` and every assertion above still passes
+	      while the legs swing sideways about MakeHuman's rolls, which is the
+	      one failure the driver's banner spends fifteen lines warning about.
+	      The quantity `P` does not cancel out of is where the bone physically
+	      ENDS UP, so that is what (i) measures: swing the thigh forward and
+	      back, and the knee must travel along the skeleton's ±Z (the way the
+	      hero faces), not sideways.
 	"""
 	var packed: PackedScene = load(SKINNED_FIXTURE)
 	if packed == null:
@@ -1071,5 +1127,189 @@ func _check_skinned(player: Node3D) -> void:
 					+ "over the whole sweep — the driver claims that axis and is "
 					+ "not writing it")
 
+	# (g) THE TWO DRIVERS ARE THE SAME POSE. Hand an identical script of driver
+	#     calls to the limb rig and to the bone rig and compare `measure()` key by
+	#     key. This is the seam's ACTUAL claim, and it is stronger than any bound:
+	#     it catches a flipped sign, a swapped side or a dropped term in ANY of the
+	#     eleven writes — including every Z write, which the walk sweep above
+	#     structurally cannot reach (`animate_walking()` opens with
+	#     `reset_sidestep_pose()`, pinning all four `*_z` keys to zero). The Z
+	#     writes need it most: the sidestep's two legs are `splay + reach` and
+	#     `splay - reach`, not a mirrored pair, so (c)'s diagonal is no proxy.
+	#
+	#     The limb rig is the player's own, on Teibi's row so both sides answer the
+	#     same gait. Only the rig-owned keys are compared: `body_*` is written by
+	#     the CALLER on the `Body` node, and these two rigs hang off two different
+	#     bodies.
+	player.set_active_character(_hero_index("teibi"))
+	var limb_poses: Array[Dictionary] = _drive_rig(player.anim.rig)
+	var bone_poses: Array[Dictionary] = _drive_rig(anim.rig)
+	for step_index: int in limb_poses.size():
+		var want: Dictionary = limb_poses[step_index]
+		var got: Dictionary = bone_poses[step_index]
+		for key: String in RIG_KEYS:
+			if not want.has(key) or not got.has(key):
+				_fail("skinned fixture: step %d of the driver script answered '%s' on "
+						% [step_index, "the limb rig" if want.has(key) else "the bone rig"]
+						+ "only — both rigs must claim the same keys")
+				continue
+			if absf(float(want[key]) - float(got[key])) > 1e-6:
+				_fail("skinned fixture: at step %d of the driver script the limb rig "
+						% step_index + "drew '%s' = %.6f and the bone rig %.6f — the two "
+						% [key, float(want[key]), float(got[key])]
+						+ "rigs must be the SAME pose written two ways, or a hero changes "
+						+ "the way it walks the day it is migrated")
+
+	_check_skinned_joints(anim, fixture, move_eps)
+
 	fixture.queue_free()
 	Sentinel.done("skinned")
+
+
+func _check_skinned_joints(anim, fixture: Node3D, move_eps: float) -> void:
+	"""
+	(h) and (i) — the two things `measure()` cannot answer, measured on the
+	SKELETON in its own space.
+
+	(i) is the load-bearing one. `_set_axis()` writes `P⁻¹·E·P·R`, `_axis()`
+	reads `P·(pose·R⁻¹)·P⁻¹`, and the `P` terms cancel — so every assertion
+	built on `measure()` passes for ANY invertible conjugation basis, the wrong
+	one included. `get_bone_global_pose()` is outside that algebra: it is where
+	the bone actually ends up. A thigh swung about the SKELETON's X carries the
+	knee forward and back along ±Z, the way this hero faces; a thigh swung about
+	its own MakeHuman-rolled X (`thigh_l`'s local X reads (0.89, 0.21, -0.41))
+	carries it sideways. Caching the bone's own global rest basis instead of its
+	parent's in `bind()` is a one-line edit that nothing else in this repo can
+	see, and it is exactly the mistake the driver's banner exists to prevent.
+
+	(h) rides the same two poses: the knee bends on the BACK-swing only, which
+	pulls the foot closer to the hip than the straight forward-swing leg, and the
+	elbow opens from 24 to 6 degrees across the arm's own swing, which moves the
+	hand toward and away from the shoulder. Those are the two joints the limb rig
+	HAS — every hero scene hangs a `LowerArm` under its `LeftArm` — and has never
+	once moved.
+	"""
+	var found: Array[Node] = fixture.find_children("*", "Skeleton3D", true, false)
+	if found.is_empty():
+		_fail("skinned fixture: no Skeleton3D under the fixture to measure in "
+				+ "skeleton space — (h) and (i) did not run")
+		return
+	var skel: Skeleton3D = found[0] as Skeleton3D
+	var hip: int = skel.find_bone("thigh_l")
+	var knee: int = skel.find_bone("calf_l")
+	var foot: int = skel.find_bone("foot_l")
+	var shoulder: int = skel.find_bone("upperarm_l")
+	var hand: int = skel.find_bone("hand_l")
+	if hip < 0 or knee < 0 or foot < 0 or shoulder < 0 or hand < 0:
+		_fail("skinned fixture: the rig has no thigh_l/calf_l/foot_l or "
+				+ "upperarm_l/hand_l chain to measure")
+		return
+
+	# Straight down the driver, not through `animate_walking()`: this needs the
+	# two extremes of ONE swing with nothing else written on top.
+	var swing: float = deg_to_rad(SKINNED_JOINT_SWING_DEG)
+	# LEFT leg forward / LEFT arm forward is one swing each way: the leg takes
+	# `-leg_swing` and the arm `+arm_swing`, which is the diagonal (c) asserts.
+	anim.rig.rest_pose()
+	anim.rig.locomotion(swing, -swing, 1.0)   # leg FORWARD (knee straight), elbow 24 deg
+	var knee_front: Vector3 = skel.get_bone_global_pose(knee).origin
+	var reach_front: float = skel.get_bone_global_pose(foot).origin.distance_to(
+			skel.get_bone_global_pose(hip).origin)
+	var arm_bent: float = skel.get_bone_global_pose(hand).origin.distance_to(
+			skel.get_bone_global_pose(shoulder).origin)
+	anim.rig.rest_pose()
+	anim.rig.locomotion(-swing, swing, 1.0)   # leg BACK (knee flexed), elbow 6 deg
+	var knee_back: Vector3 = skel.get_bone_global_pose(knee).origin
+	var reach_back: float = skel.get_bone_global_pose(foot).origin.distance_to(
+			skel.get_bone_global_pose(hip).origin)
+	var arm_straight: float = skel.get_bone_global_pose(hand).origin.distance_to(
+			skel.get_bone_global_pose(shoulder).origin)
+
+	var travel: Vector3 = knee_front - knee_back
+	if travel.length() <= SKINNED_JOINT_TRAVEL_M:
+		_fail("skinned fixture: swinging the thigh %.0f deg either way moved the knee "
+				% SKINNED_JOINT_SWING_DEG + "only %.4f m in skeleton space — the bone "
+				% travel.length() + "pose is not reaching the skeleton at all")
+	elif absf(travel.x) > absf(travel.z) * SKINNED_ROLL_TOLERANCE:
+		_fail("skinned fixture: the knee travelled (%.4f, %.4f, %.4f) m between the "
+				% [travel.x, travel.y, travel.z] + "two extremes of the leg swing — a "
+				+ "forward/back swing must move it along the skeleton's Z and "
+				+ "essentially NOT sideways (measured ratio %.3f, ceiling %.2f). The "
+				% [absf(travel.x) / maxf(absf(travel.z), 1e-9), SKINNED_ROLL_TOLERANCE]
+				+ "rotation is being applied about a rolled axis instead of the "
+				+ "skeleton's: `_set_axis` must conjugate through the PARENT's global "
+				+ "rest basis (see the driver's roll-trap banner). `measure()` cannot "
+				+ "see this — the conjugation basis cancels in it.")
+
+	if reach_back >= reach_front - SKINNED_KNEE_FLEX_M:
+		_fail("skinned fixture: hip-to-foot measured %.4f m on the back-swing and "
+				% reach_back + "%.4f m on the forward one — the knee must FLEX behind "
+				% reach_front + "the body and stay straight in front of it, which is "
+				+ "the joint the limb rig has never had")
+
+	if arm_bent >= arm_straight - SKINNED_ELBOW_M:
+		_fail("skinned fixture: shoulder-to-hand measured %.4f m at the arm's forward "
+				% arm_bent + "extreme and %.4f m at its back one — the elbow must "
+				% arm_straight + "TRACK the shoulder (`ELBOW_TRACK_RATIO` off a "
+				+ "`ELBOW_BEND_DEG` neutral), so the hand comes in as the arm swings "
+				+ "forward. A constant or missing elbow write measures no difference "
+				+ "at all, and `measure()` does not expose the forearm.")
+
+
+## The keys BOTH rigs own, and the ones check 8's equivalence script compares.
+## `body_y` / `body_x` / `body_z` are deliberately absent: the caller writes them
+## on the `Body` NODE for either rig kind, and the two rigs in that comparison
+## hang off two different bodies.
+const RIG_KEYS: Array[String] = ["left_arm_x", "right_arm_x", "left_leg_x",
+		"right_leg_x", "left_arm_z", "right_arm_z", "left_leg_z", "right_leg_z",
+		"head_z"]
+
+
+func _drive_rig(rig) -> Array[Dictionary]:
+	"""
+	Run one fixed script of driver calls and return what `measure()` said after
+	each. Every number is arbitrary and asymmetric ON PURPOSE — a swapped side or
+	a dropped `arm_asym` has to show up, which round numbers and mirrored
+	arguments would hide — and every one of the eleven pose methods is exercised,
+	the two lerping ones (`idle`, `air`) twice so their accumulation is compared
+	too.
+	"""
+	var out: Array[Dictionary] = []
+	rig.rest_pose()
+	out.append(rig.measure())
+	rig.locomotion(0.31, -0.52, 1.05)
+	out.append(rig.measure())
+	rig.head_bobble(0.07)
+	out.append(rig.measure())
+	rig.relax_head(0.4)
+	out.append(rig.measure())
+	rig.idle(0.25)
+	out.append(rig.measure())
+	rig.idle(0.25)
+	out.append(rig.measure())
+	rig.sidestep(0.2, -0.13, true, 0.08, 0.22, -0.05)
+	out.append(rig.measure())
+	rig.sidestep(0.2, 0.13, false, -0.08, -0.22, 0.05)
+	out.append(rig.measure())
+	rig.reset_roll()
+	out.append(rig.measure())
+	rig.air(1.2, 0.17, 0.2)
+	out.append(rig.measure())
+	rig.air(1.3, 0.17, 0.2)
+	out.append(rig.measure())
+	rig.drop_wings()
+	out.append(rig.measure())
+	rig.locomotion(-0.31, 0.52, 0.86)
+	out.append(rig.measure())
+	rig.rest_pose()
+	out.append(rig.measure())
+	return out
+
+
+func _hero_index(hero: String) -> int:
+	"""`CHARACTERS` index by name, or 0 — the roster is a const and every name in
+	it is unique, so this is a lookup and not a search that can fail meaningfully."""
+	for index: int in PlayerController.CHARACTERS.size():
+		if String(PlayerController.CHARACTERS[index]["name"]) == hero:
+			return index
+	return 0

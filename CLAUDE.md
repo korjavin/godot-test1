@@ -60,7 +60,7 @@ is never written by a generator. The live Windman is `windman_parts/` assembled 
 | Field landmarks (one per kind per world) | `scripts/landmark_builders.gd` `terrain_landmarks.gd` | `landmark_toast.gd` | `landmark` `landmark_sites` |
 | Budapest (authored plan, streamed) | `scripts/budapest_plan.gd` | `budapest_streamer` `city_builders` | `budapest` `budapest_city` `landmark_progress` `city_map` |
 | The tower / HQ | `scripts/tower_shell.gd` `tower_interior.gd` | `tower_plans` (ASCII storeys) `tower_graph` (topology) `tower_plan_boxes` `tower_gates` `tower_guards` `tower_dressing` `tower_dossiers` `tower_lift_menu` | `tower_*` (`tower_gate_sync` for the room-shared opened set) |
-| Player, abilities, animation | `scripts/player_controller.gd` | `player_abilities` `player_animation` | `capture` `view` `gait` `debug_teleport` |
+| Player, abilities, animation | `scripts/player_controller.gd` | `player_abilities` `player_animation` `hero_rig` + `hero_rig_limbs` / `hero_rig_skeleton` (the two pose drivers) | `capture` `view` `gait` `debug_teleport` |
 | Predators, bosses, species | `scripts/piglet_crocodile_ai.gd` | `species_table` `croc_steering` `boss_projectile` `hunt_director` `crocodile_lod_manager` | `enemy_spawn` `enemy_behavior` `boss_*` `projectile` `hunt_director` |
 | Progression, records, saves | `scripts/progression.gd` `best_run_store.gd` | | `progression` |
 | Pause | `scripts/pause_hub.gd` | | `pause` |
