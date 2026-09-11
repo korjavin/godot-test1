@@ -3897,11 +3897,17 @@ func _storey_of(mesh: MeshInstance3D) -> int:
 const SLUMP_EPS: float = 1e-3
 
 ## Which driver each hero in the probe below must bind, and therefore what this
-## check is actually comparing. It is asserted rather than assumed: the day
-## `teibi.tscn` loses its `Skeleton3D` (or `windman_updated.tscn` grows one) this
-## stops covering two rig kinds, and it must say so instead of going quiet while
-## measuring the same driver twice.
-const SLUMP_RIGS: Dictionary = {"teibi": "skinned", "windman": "limbs"}
+## check is actually comparing. It is asserted rather than assumed: the day a
+## named scene changes rig kind this stops covering two of them, and it must say
+## so instead of going quiet while measuring the same driver twice. That is
+## exactly what happened at bead godot-test1-5u3.5, when `windman_updated.tscn`
+## grew a `Skeleton3D` and this row moved from "limbs" to "skinned" — the epic is
+## migrating the cast one hero at a time, so the LIMB half of the pair walks down
+## it: Windman held it after Teibi, Primm holds it now, and Phoboman keeps it for
+## good (his sphere body stays on limbs by owner ruling). Windman is the skinned
+## half because he is the DEFAULT hero and therefore the captive most players
+## will ever look at; Teibi rides the same driver and needs no second probe.
+const SLUMP_RIGS: Dictionary = {"windman": "skinned", "primm": "limbs"}
 
 
 func _check_the_slump_reaches_every_rig() -> void:

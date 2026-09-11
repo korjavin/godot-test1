@@ -33,12 +33,10 @@ Source `.blend` files accompanying authored `.glb` models **are committed to git
 
 | File | Tool + Version | Source | Licence | Date | .blend |
 |---|---|---|---|---|---|
-| `windman_head_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_head.py`, MakeHuman basemesh + targets | CC0 | 2026-09-06 built, 2026-09-08 shipped, 2026-09-11 bead godot-test1-z3e.13 (rebuilt: the bandage is cloth geometry, the eye sockets under it are gone, and the head is cut at the evaluated neck like Primm's), 2026-09-11 bead godot-test1-z3e.14 (rebuilt: skin and lips through `SKIN_GRADE`, geometry byte-identical) | `windman_head_authored.blend` |
-| `windman_head_authored_windman_head_albedo.png` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_head.py`, MakeHuman basemesh + targets | CC0 | 2026-09-06 built, 2026-09-08 shipped, 2026-09-11 bead godot-test1-z3e.13, 2026-09-11 bead godot-test1-z3e.14 (re-baked darker) | `windman_head_authored.blend` |
 | `primm_parts/primm_head_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_head.py --hero primm`, MakeHuman basemesh + targets | CC0 | 2026-09-11, beads godot-test1-z3e.5 then z3e.12 (rebuilt: morphed landmarks + Primm's own macro recipe) then z3e.14 (rebuilt: skin and lips through `SKIN_GRADE`, geometry byte-identical) | `primm_parts/primm_head_authored.blend` |
 | `primm_parts/primm_head_authored_primm_head_albedo.png` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_head.py --hero primm`, MakeHuman basemesh + targets | CC0 | 2026-09-11, beads godot-test1-z3e.5 then z3e.12 (rebuilt: morphed landmarks + Primm's own macro recipe) then z3e.14 (re-baked darker) | `primm_parts/primm_head_authored.blend` |
 | `teibi_parts/teibi_skinned.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/build_hero.py teibi`, MakeHuman basemesh + targets + `rig.game_engine.json` + `weights.game_engine.json` | CC0 | 2026-09-11, SPIKE godot-test1-5u3.1; rebuilt 2026-09-11 for bead godot-test1-z3e.14 (skin and lips through `SKIN_GRADE`, geometry byte-identical); **shipped** 2026-09-11 by bead godot-test1-5u3.3, rebuilt again with the 30 finger bones collapsed into `hand_l`/`hand_r` (owner ruling — 23 bones) and a low shoe shell over the bare MakeHuman feet; rebuilt 2026-09-12 by bead godot-test1-5u3.4 when the lane was generalised (the face is now its own decimate target at 4,400 triangles, and his landmarks are read off the MORPHED mesh — 13,266 tris, 5,064 of them head) | `teibi_parts/teibi_skinned.blend` |
-| `windman_parts/windman_skinned.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/build_hero.py --hero windman`, MakeHuman basemesh + targets + `rig.game_engine.json` + `weights.game_engine.json` | CC0 | 2026-09-12, bead godot-test1-5u3.4 — **built, not shipped**: no `.tscn` references it, `windman_updated.tscn` still assembles `windman_parts/`. Bead godot-test1-5u3.5 wires it. 12,649 tris (4,447 head), 23 bones, no texture | `windman_parts/windman_skinned.blend` |
+| `windman_parts/windman_skinned.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/build_hero.py --hero windman`, MakeHuman basemesh + targets + `rig.game_engine.json` + `weights.game_engine.json` | CC0 | 2026-09-12, bead godot-test1-5u3.4 built it unwired; **shipped** 2026-09-12 by bead godot-test1-5u3.5 — `windman_updated.tscn` instances this and nothing else, the ten generated parts and the authored head are retired, and the chest "W" is painted into its vertex colours (`paint_chest_glyph`). 12,649 tris (4,447 head), 23 bones, no texture | `windman_parts/windman_skinned.blend` |
 | `primm_parts/primm_skinned.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/build_hero.py --hero primm`, MakeHuman basemesh + targets + `rig.game_engine.json` + `weights.game_engine.json` | CC0 | 2026-09-12, bead godot-test1-5u3.4 — **built, not shipped**: no `.tscn` references it, `primm.tscn` still assembles `primm_parts/`. Bead godot-test1-5u3.6 wires it. 12,602 tris (4,400 head), 23 bones, no texture | `primm_parts/primm_skinned.blend` |
 
 THE SKINNED HEROES ARE ONE TABLE NOW. `scripts/build_hero.py`'s `HEROES` rows are
@@ -62,11 +60,12 @@ bodies they sit on — are darkened by one factor, `SKIN_GRADE` in
 `scripts/hero_skin.py`, before they are painted or baked (bead godot-test1-z3e.14).
 The palettes in the four scripts that import it are still each hero's own, verbatim:
 they record the paint, that constant records the exposure. A head graded without its
-body is a white seam under the chin, which is why `generate_windman_separate.py` and
-`generate_primm_separate.py` import it too.
+body is a white seam under the chin, which is why `generate_primm_separate.py` imports
+it too. `generate_windman_separate.py` no longer does: since bead godot-test1-5u3.5 it
+builds Windman's FAN and nothing else, and a fan has no skin.
 
-TEIBI IS THE ONE SHIPPED AUTHORED BODY. `teibi_parts/teibi_skinned.glb` IS the hero
-`scenes/characters/teibi.tscn` instances — one skinned mesh, no parts. The z3e.10 spike's
+TEIBI AND WINDMAN ARE THE SHIPPED AUTHORED BODIES. `teibi_parts/teibi_skinned.glb` IS
+the hero `scenes/characters/teibi.tscn` instances — one skinned mesh, no parts. The z3e.10 spike's
 ten `teibi_*_authored.glb` joint cuts, the `teibi_uncut_authored.glb` whole body, the
 `teibi_authored.blend` they shared and the ten generated `teibi_*.glb` that shipped before
 them were all retired by bead godot-test1-5u3.3 together with
@@ -74,6 +73,18 @@ them were all retired by bead godot-test1-5u3.3 together with
 parts pick is superseded by a skeleton, and `teibi_skinned.blend` carries the same
 MakeHuman human by construction (`build_hero.py` builds it from the `HEROES` row).
 
+Bead godot-test1-5u3.5 did the same for Windman: `windman_parts/windman_skinned.glb` is
+what `scenes/characters/windman_updated.tscn` instances, and the ten generated
+`windman_*.glb` parts went with `generate_windman_separate.py`'s body builders. HIS
+AUTHORED HEAD WENT TOO — `windman_head_authored.glb`, its `.blend` and its loose albedo
+are deleted, not orphaned: the head is now part of the skinned mesh, built from the same
+MakeHuman human at the same scale from the same `spike_z3e_head.py` macros and targets
+(`build_hero._face_row`), which is what closed the neck seam by construction. The face
+recipe of record is still that file's `HEROES["windman"]` row. WHAT SURVIVES THE
+GENERATOR is `windman_fan.glb`: a prop, not a body, hung on the `hand_r` bone by a
+`BoneAttachment3D`, still rebuilt and diffed by CI — which is why `windman` is still a
+name in that workflow's hero loop.
+
 ## CI Model Gate
 
-The CI model rebuild step (`.github/workflows/build.yml`) only runs the procedural generators (`generate_*_separate.py` for windman/primm/phoboman, and `predator_parts.py`). Because the generators no longer emit these authored file names — and, since bead godot-test1-5u3.3, there is no Teibi generator at all — `git status --porcelain -- assets/models/characters` stays clean by construction; a generated part edited by hand is still caught immediately. `build_hero.py` needs Blender and MPFB2, which the runner does not have, so the skinned bodies are outside that gate — and, since bead godot-test1-5u3.4, they have their own: a `stat`-only step asserts every skinned `.glb`'s byte size still matches its row in `scripts/hero_manifest.json`, which `build_hero.py` rewrites on every rebuild. A hand-edited skinned hero is caught there the way a hand-edited hydra is caught by the dirty check. The full rebuild-and-diff is `build_hero.py -- --all --check`, run by hand where Blender exists; size and not a checksum, because the glTF exporter may permute one primitive's triangle order between two otherwise identical runs.
+The CI model rebuild step (`.github/workflows/build.yml`) only runs the procedural generators (`generate_*_separate.py` for windman/primm/phoboman — Windman's builds only his fan since bead godot-test1-5u3.5 — and `predator_parts.py`). Because the generators no longer emit these authored file names — and, since bead godot-test1-5u3.3, there is no Teibi generator at all — `git status --porcelain -- assets/models/characters` stays clean by construction; a generated part edited by hand is still caught immediately. `build_hero.py` needs Blender and MPFB2, which the runner does not have, so the skinned bodies are outside that gate — and, since bead godot-test1-5u3.4, they have their own: a `stat`-only step asserts every skinned `.glb`'s byte size still matches its row in `scripts/hero_manifest.json`, which `build_hero.py` rewrites on every rebuild. A hand-edited skinned hero is caught there the way a hand-edited hydra is caught by the dirty check. The full rebuild-and-diff is `build_hero.py -- --all --check`, run by hand where Blender exists; size and not a checksum, because the glTF exporter may permute one primitive's triangle order between two otherwise identical runs.

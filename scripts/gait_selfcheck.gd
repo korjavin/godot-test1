@@ -29,10 +29,11 @@ extends SceneTree
 ## because a hero is no longer always five nodes. That bought check 8, which
 ## runs the same bounds, the same non-periodicity test and a determinism probe
 ## against the SKINNED Teibi — since bead godot-test1-5u3.3 the SHIPPED one
-## (`scenes/characters/teibi.tscn`), a model with no `LeftArm` at all. The other
-## three heroes in `CHARACTERS` are still on the limb rig, and checks 1-7 —
-## which run every hero in `CHARACTERS`, Teibi included — still measure exactly
-## what they measured, through `rig.measure()`, on whichever driver each took.
+## (`scenes/characters/teibi.tscn`), a model with no `LeftArm` at all. Windman
+## joined him on the bone rig at bead 5u3.5; Primm and Phoboman are still on the
+## limb rig, and checks 1-7 — which run every hero in `CHARACTERS`, the skinned
+## ones included — still measure exactly what they measured, through
+## `rig.measure()`, on whichever driver each took.
 ##
 ## Deliberately NOT localized (a debug surface, per CLAUDE.md).
 
@@ -1158,13 +1159,16 @@ func _check_skinned(player: Node3D) -> void:
 	#     rig-owned keys are compared: `body_*` is written by the CALLER on the
 	#     `Body` node, and these two rigs hang off two different bodies.
 	#
-	#     THE ORACLE IS A HERO STILL ON LIMBS, and since bead godot-test1-5u3.3
-	#     that is no longer Teibi — he is the fixture above. Windman takes his
-	#     place until bead 5u3.5 migrates him, and the guard right below is what
-	#     makes that hand-off safe rather than silent: it fails the moment this
-	#     name picks up a Skeleton3D, so the check can never compare the bone
-	#     driver against itself and call it agreement.
-	player.set_active_character(_hero_index("windman"))
+	#     THE ORACLE IS A HERO STILL ON LIMBS, and the epic keeps taking them: it
+	#     was Teibi until bead godot-test1-5u3.3 made him the fixture above, then
+	#     Windman until bead 5u3.5 migrated him too. Primm holds it until bead
+	#     5u3.6, and Phoboman keeps it for good — his sphere body stays on the limb
+	#     rig by owner ruling (epic 5u3 NOTES, "yes, sphere"), which is what
+	#     guarantees this oracle always has somebody left to be. The guard right
+	#     below is what makes each hand-off loud rather than silent: it fails the
+	#     moment this name picks up a Skeleton3D, so the check can never compare the
+	#     bone driver against itself and call it agreement.
+	player.set_active_character(_hero_index("primm"))
 	var limb_poses: Array[Dictionary] = _drive_rig(player.anim.rig)
 	var bone_poses: Array[Dictionary] = _drive_rig(anim.rig)
 	# THE ORACLE HAS TO BE THE OTHER RIG, and there has to BE a comparison: an
