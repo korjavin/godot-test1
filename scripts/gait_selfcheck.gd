@@ -28,9 +28,11 @@ extends SceneTree
 ## ONE accessor, `player.anim.rig.measure()`, instead of off four limb nodes —
 ## because a hero is no longer always five nodes. That bought check 8, which
 ## runs the same bounds, the same non-periodicity test and a determinism probe
-## against the spike's SKINNED Teibi (`scenes/characters/teibi_skinned.tscn`),
-## a model with no `LeftArm` at all. The four heroes in `CHARACTERS` are still
-## on the limb rig and checks 1-7 still measure exactly what they measured.
+## against the SKINNED Teibi — since bead godot-test1-5u3.3 the SHIPPED one
+## (`scenes/characters/teibi.tscn`), a model with no `LeftArm` at all. The other
+## three heroes in `CHARACTERS` are still on the limb rig, and checks 1-7 —
+## which run every hero in `CHARACTERS`, Teibi included — still measure exactly
+## what they measured, through `rig.measure()`, on whichever driver each took.
 ##
 ## Deliberately NOT localized (a debug surface, per CLAUDE.md).
 
@@ -106,11 +108,15 @@ const STRAFE_EPS_DEG: float = 1.0
 ## every real spread.
 const PERSONALITY_SPREAD: float = 1.1
 
-## CHECK 8's FIXTURE (bd godot-test1-5u3.2) — the spike's skinned Teibi, which
-## is deliberately NOT in `CHARACTERS`: no hero ships skinned yet, and the four
-## that do must stay on the limb driver. This scene is the only skinned model in
-## the repo, so it is the only thing that can prove the bone driver at all.
-const SKINNED_FIXTURE: String = "res://scenes/characters/teibi_skinned.tscn"
+## CHECK 8's FIXTURE (bd godot-test1-5u3.2) — the skinned Teibi. It was the
+## spike's own scratch scene while no hero shipped skinned; since bead
+## godot-test1-5u3.3 it is the SHIPPED hero, so this check now measures the thing
+## the game draws rather than a model beside it. Hard-coded rather than "whichever
+## CHARACTERS row brings a Skeleton3D", because a fixture that goes looking for
+## its own subject reports SELFCHECK OK on the day the last skinned hero is
+## mis-wired back onto the limb rig — which is the one thing checks 1-7 cannot
+## see either (they measure through `rig.measure()`, whichever driver answers).
+const SKINNED_FIXTURE: String = "res://scenes/characters/teibi.tscn"
 ## Teibi's row asks for no head bobble, and an axis nothing measures is an axis
 ## that can be deleted in silence — so the fixture runs his row with this forced
 ## in. Well under `HEAD_LIMIT_DEG`, well over `SKINNED_MOVE_DEG`.
@@ -927,11 +933,12 @@ func _check_skinned(player: Node3D) -> void:
 	"""
 	The seam's own subject: a hero with NO limb nodes at all, posed on BONES.
 
-	NO SHIPPED HERO IS SKINNED YET — that is the next bead (`5u3.3`), and half
-	the point of this one is that the four in `CHARACTERS` stay byte-for-byte on
-	the limb driver. So the fixture is the spike's `teibi_skinned.tscn`, driven
-	through a SECOND `PlayerAnimation` pointed at it for the length of this
-	function: `CHARACTERS` is a const and must stay one.
+	The fixture is `teibi.tscn` — since bead `5u3.3` the SHIPPED Teibi, and the
+	only skinned hero in `CHARACTERS`. It is driven through a SECOND
+	`PlayerAnimation` pointed at a fresh instance of that scene for the length of
+	this function, rather than through the player's own Teibi, so this check
+	writes nothing the four-hero sweep above can see and needs no ordering
+	against it: `CHARACTERS` is a const and must stay one.
 
 	Six assertions, every one of them through `rig.measure()` and therefore
 	against the very same bounds checks 2 and 4 hold the limb heroes to:
@@ -1150,7 +1157,14 @@ func _check_skinned(player: Node3D) -> void:
 	#     not from a `GAITS` row, so neither side reads a gait at all. Only the
 	#     rig-owned keys are compared: `body_*` is written by the CALLER on the
 	#     `Body` node, and these two rigs hang off two different bodies.
-	player.set_active_character(_hero_index("teibi"))
+	#
+	#     THE ORACLE IS A HERO STILL ON LIMBS, and since bead godot-test1-5u3.3
+	#     that is no longer Teibi — he is the fixture above. Windman takes his
+	#     place until bead 5u3.5 migrates him, and the guard right below is what
+	#     makes that hand-off safe rather than silent: it fails the moment this
+	#     name picks up a Skeleton3D, so the check can never compare the bone
+	#     driver against itself and call it agreement.
+	player.set_active_character(_hero_index("windman"))
 	var limb_poses: Array[Dictionary] = _drive_rig(player.anim.rig)
 	var bone_poses: Array[Dictionary] = _drive_rig(anim.rig)
 	# THE ORACLE HAS TO BE THE OTHER RIG, and there has to BE a comparison: an

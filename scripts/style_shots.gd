@@ -77,56 +77,23 @@ const FACE_SHOT_FOV: float = 16.0
 # A scratch-branch-only addition, in the shape of z3e.1's `head=<a|b|c>` (see
 # git show dd22d7a^:scripts/style_shots.gd — `_apply_head_variant`, deleted
 # once that spike's pick landed): `hero=<name>` picks which CHARACTERS entry
-# is "the hero" for every shot that used to hardcode index 0/Windman, and
-# `body=<parts|uncut>` swaps that hero's whole `Body` node for one of
-# scripts/spike_z3e_teibi_body.py's scratch scenes before any shot is taken.
-# Neither argument present reproduces every existing shot byte-for-byte.
+# is "the hero" for every shot that used to hardcode index 0/Windman. Absent,
+# it reproduces every existing shot byte-for-byte.
+#
+# `body=<parts|uncut|skinned>` and `anim=<proc|clip>` lived here too, and RETIRED
+# with bead godot-test1-5u3.3 exactly as bead 5u3.1 said they would: all three
+# `body=` columns pointed at scratch scenes cut from a MakeHuman body that the
+# SHIPPED Teibi now is, and `anim=proc` was a hand-rolled probe of the bone driver
+# bead 5u3.2 then shipped for real. `hero=teibi` now shoots the skinned hero
+# through the game's own `hero_rig_skeleton.gd`, which is the sharper instrument:
+# a picture of this tool's own arithmetic could never catch a mis-wired seam.
 # ============================================================================
 
-## Empty means "today's body" — the control column of the grid.
 var _hero: String = "windman"
-var _body_variant: String = ""
-## True as soon as EITHER spike argument is present, `hero=teibi` (the control
-## column) included. It is the one switch that lets the spike frame its own
-## shots differently — see `_shoot_head_closeup` — while a run with neither
-## argument reproduces every pre-existing shot byte-for-byte.
+## True as soon as `hero=` is present. It is the one switch that lets the spike
+## frame its own shots differently — see `_shoot_head_closeup` — while a run
+## without it reproduces every pre-existing shot byte-for-byte.
 var _spike: bool = false
-
-const SPIKE_BODY_PARTS: String = "res://scenes/characters/teibi_authored.tscn"
-const SPIKE_BODY_UNCUT: String = "res://scenes/characters/teibi_uncut.tscn"
-## SPIKE godot-test1-5u3.1 — the SKINNED body (`scripts/build_hero.py`), one mesh
-## on MPFB2's 53-bone `game_engine` rig.
-const SPIKE_BODY_SKINNED: String = "res://scenes/characters/teibi_skinned.tscn"
-
-# ============================================================================
-# SPIKE godot-test1-5u3.1 — THE TWO ANIMATION COLUMNS
-#
-# `body=skinned` puts Teibi on a Skeleton3D. When this spike was shot that meant
-# `player_animation.gd` found no LeftArm/RightArm/LeftLeg/RightLeg and
-# `animate_walking()` returned at its first line; since bd godot-test1-5u3.2 it
-# instead binds `hero_rig_skeleton.gd` and poses the bones itself, so on the
-# `anim=proc` column `_pose_skinned()` below is a SECOND writer landing on top of
-# the shipped one. That is harmless here — both write absolute bone poses from
-# the same two sines and this tool only ever reads the frame it froze — but it is
-# why the two columns are no longer "posed vs not posed". The whole spike column
-# retires with bd 5u3.3. `anim=<proc|clip>` says who poses him:
-#
-#   (empty)  today's sine rig, i.e. the CONTROL column (`body=` unset).
-#   proc     `_pose_skinned()` below — the same GAITS row re-expressed as BONE
-#            rotations, so knees and elbows finally bend. A probe of what bead
-#            5u3.2 would ship, not the driver it would ship.
-#   clip     a retargeted CC0 locomotion clip, seeked by phase. DROPPED on the
-#            licence gate — see the bead's DECISION block and PROVENANCE.md:
-#            Quaternius ships the Universal Animation Library under QAL v1.0
-#            (2026-08-28), whose section 3(a) forbids redistributing the assets
-#            "in original or modified form" as files, which is exactly what
-#            committing a retargeted clip .glb to this public repo would be.
-#            The argument is still parsed so the refusal is LOUD rather than a
-#            silently-identical picture.
-# ============================================================================
-
-## Empty means "today's sine rig on today's body".
-var _anim: String = ""
 
 ## Metres from the body centre — `_shoot_head_closeup`'s camera, pulled back so
 ## the WHOLE hero fits (2 m at 75 degrees cuts the feet; 3 m does not).
@@ -151,33 +118,10 @@ func _ready() -> void:
 		elif a.begins_with("hero="):
 			_hero = a.substr(5)
 			_spike = true
-		elif a.begins_with("body="):
-			_body_variant = a.substr(5)
-			_spike = true
-		elif a.begins_with("anim="):
-			_anim = a.substr(5)
-			_spike = true
-			# LOUD *AND* DROPPED, like the pairing guard below. Logging alone
-			# leaves `_anim` on the `_:` arm of `_pose_walk`, which is the SINE
-			# rig — on a Skeleton3D that poses nothing, so shot 18 comes out as
-			# the unposed control picture still labelled with the typo.
-			if not _anim in ["proc", "clip"]:
-				push_error("[SHOTS] unknown anim= column " + _anim
-						+ " (proc|clip) — shooting the control column")
-				_anim = ""
 		elif a == "web":
 			_emulate_web = true
 		else:
 			_out_dir = a
-	# THE PAIRING, once both arguments are known. `anim=proc` writes BONE poses,
-	# and only `body=skinned` brings a Skeleton3D: asked for on today's ten-part
-	# hero it poses nothing and every shot comes back as the frozen settle
-	# picture, labelled `anim=proc`. Dropped rather than refused outright, so the
-	# run still produces the control column instead of nothing.
-	if _anim == "proc" and _body_variant != "skinned":
-		push_error("[SHOTS] anim=proc needs body=skinned (a Skeleton3D to pose) — "
-				+ "ignoring anim= and shooting the control column")
-		_anim = ""
 	DirAccess.make_dir_recursive_absolute(_out_dir)
 	call_deferred("_run")
 
@@ -254,10 +198,10 @@ func _run() -> void:
 		var p: Vector3 = probe[0]
 		print("[SHOTS] ", probe[1], " at ", p, " is biome ", terrain.biome_at(p.x, p.z))
 
-	# SPIKE godot-test1-z3e.10 — swap the hero and/or its whole body BEFORE anything
-	# is shot, so the close-up and every other shot see the same one. No-op without
-	# `hero=`/`body=`.
-	_apply_body_variant(player)
+	# SPIKE godot-test1-z3e.10 — make `hero=` the active character BEFORE anything
+	# is shot, so the close-up and every other shot see the same one. A no-op
+	# without `hero=` (index 0, Windman, is already active).
+	player.set_active_character(_hero_index(player))
 
 	await _shoot(terrain, player, field, 0.0, "1_field")
 	await _shoot(terrain, player, desert, 0.0, "1b_desert")
@@ -526,202 +470,23 @@ func _hero_index(player: Node) -> int:
 	return 0
 
 
-func _apply_body_variant(player: Node3D) -> void:
-	"""
-	SPIKE godot-test1-z3e.10. Generalises `_apply_head_variant` (spike z3e.1, see
-	git show dd22d7a^:scripts/style_shots.gd): make `_hero` the active character,
-	then — if `body=` was passed — replace its whole `Body` node with the matching
-	scratch scene's (scripts/spike_z3e_teibi_body.py's `parts`/`uncut` output).
-
-	`set_active_character()` runs TWICE when a body swap happens: once here (or
-	via `hero=` alone) to make the hero visible and point the animation system at
-	its STOCK body, and once more at the end to re-point it at the SWAPPED one —
-	`PlayerAnimation.activate_character()` finds limbs by exact name under `Body`
-	(`setup_animation_references()`, which since bd godot-test1-5u3.2 binds a
-	`hero_rig.gd` driver instead), so it has to re-run AFTER the swap or
-	`anim.rig` still holds node references into the freed old body.
-	"""
-	var index := _hero_index(player)
-	player.set_active_character(index)
-	if _body_variant == "":
-		return
-	var path := {"parts": SPIKE_BODY_PARTS, "uncut": SPIKE_BODY_UNCUT,
-			"skinned": SPIKE_BODY_SKINNED}.get(_body_variant, "") as String
-	if path == "":
-		push_error("[SHOTS] unknown body= variant " + _body_variant)
-		return
-	var scene := load(path) as PackedScene
-	if scene == null:
-		push_error("[SHOTS] no scratch body at " + path)
-		return
-	var hero: Node = player.character_instances[index]
-	var old_body := hero.get_node_or_null("Body")
-	if old_body == null:
-		push_error("[SHOTS] no Body under hero index " + str(index))
-		return
-	var scratch := scene.instantiate()
-	var new_body := scratch.get_node("Body") as Node3D
-	scratch.remove_child(new_body)
-	# Every node under `new_body` still carries the SCRATCH scene's `owner`
-	# (used only for PackedScene serialization, which nothing here does) — left
-	# set, Godot warns "will make owner inconsistent" on add_child() below,
-	# once per node, because that owner is no longer an ancestor.
-	for n in _all_nodes(new_body):
-		n.owner = null
-	scratch.queue_free()
-	hero.remove_child(old_body)
-	old_body.queue_free()
-	new_body.name = "Body"
-	hero.add_child(new_body)
-	# The shipped cast path — DIFFUSE_TOON + rim, outline off by default (z3e.9) —
-	# exactly as `preload_all_characters()` gives every OTHER hero's body.
-	player.anim.apply_character_style(new_body)
-	player.set_active_character(index)
-	print("[SHOTS] body variant ", _body_variant, " -> ", path, " on hero ", _hero)
-
-
 ## SPIKE godot-test1-5u3.1 — frames in one stride period for shot 20's strip.
 const STRIP_FRAMES: int = 6
-## The constant elbow bend `_pose_skinned` holds through the whole cycle, and how
-## much of the shoulder's swing the forearm tracks on top of it. New numbers, not
-## ported ones: every hero scene DOES have a `LowerArm` node under its `LeftArm`
-## (teibi.tscn:30, and the same in all four), but `animate_walking()` writes only
-## the four top-level limbs' `rotation.x` (player_animation.gd:582-586), so the
-## joint exists and nothing has ever articulated it.
-const ELBOW_BEND_DEG: float = 15.0
-const ELBOW_TRACK_RATIO: float = 0.3
-## How much of the leg swing the knee gives back on the BACK-swing only.
-const KNEE_FLEX_RATIO: float = 0.8
-
-var _skeleton: Skeleton3D = null
-
-
-func _can_pose() -> bool:
-	"""Whether the active column has anything that can be posed mid-stride.
-	`uncut` is one welded mesh; `clip` is the dropped column and poses nothing at
-	all, whatever body is under it; `skinned` needs `anim=proc` to drive its
-	bones. The other half of that pairing — `anim=proc` without a skeleton — is
-	refused in `_ready()` rather than here, because it would mislabel the shots
-	that do NOT consult this (18 has no stride to skip) as well as the ones that
-	do."""
-	if _body_variant == "uncut" or _anim == "clip":
-		return false
-	if _body_variant == "skinned":
-		return _anim == "proc"
-	return true
 
 
 func _pose_walk(player: Node3D, t: float) -> void:
-	"""Put the hero at walk-cycle time `t`, whichever column is running. Both
-	branches are PURE functions of (hero, t) — that is the property bead 5u3.2
-	has to keep, and shooting the columns through one seam is how the grid
-	compares like with like."""
-	match _anim:
-		"proc":
-			_pose_skinned(player, t)
-		"clip":
-			push_error("[SHOTS] anim=clip is DROPPED on the licence gate — "
-					+ "Quaternius QAL v1.0 (2026-08-28) section 3(a). See "
-					+ "assets/models/characters/PROVENANCE.md.")
-		_:
-			player.anim.animation_time = t
-			player.anim.animate_walking(1.0 / 60.0, 1.0)
+	"""Put the hero at walk-cycle time `t`, through the SHIPPED animation seam.
 
-
-func _find_skeleton(player: Node3D) -> Skeleton3D:
-	if _skeleton != null and is_instance_valid(_skeleton):
-		return _skeleton
-	var hero: Node = player.character_instances[_hero_index(player)]
-	var found := hero.find_children("*", "Skeleton3D", true, false)
-	if found.is_empty():
-		push_error("[SHOTS] anim=proc found no Skeleton3D — pass body=skinned too")
-		return null
-	_skeleton = found[0] as Skeleton3D
-	print("[SHOTS] posing ", _skeleton.get_bone_count(), " bones procedurally")
-	return _skeleton
-
-
-func _pose_skinned(player: Node3D, t: float) -> void:
+	One line of arithmetic and no branch, and that is the point: until bead
+	godot-test1-5u3.3 this matched on an `anim=` column and a hand-rolled
+	`_pose_skinned()` wrote bone rotations beside the game's own driver, because
+	no shipped hero was skinned. Now one is, and `animate_walking()` poses him
+	through `hero_rig.gd` — bones for Teibi, limb nodes for the other three —
+	which is what makes a shot of him evidence about the game rather than about
+	this file. It stays a named seam because shots 19 and 20 both call it.
 	"""
-	SPIKE godot-test1-5u3.1, the PROCEDURAL column: `player_animation.gd`'s
-	`animate_walking()` — the same GAITS row, the same two sines, the same signs
-	— written onto BONES instead of onto five whole-limb nodes. The new shape it
-	buys is the joints today's rig HAS AND NEVER MOVES: every hero scene hangs a
-	`LowerArm` under its `LeftArm` and a `LowerLeg` under its `LeftLeg`
-	(teibi.tscn:30 and :54, and the same in the other three), and
-	`animate_walking()` writes only the four top-level limbs' `rotation.x`. So a
-	knee that bends on the back-swing and an elbow that stays bent are new here,
-	but they are not something only a skeleton could express.
-
-	THE BONE-ROLL TRAP, and the finding this column exists to record. MakeHuman
-	bones carry rolls: on the imported rig `thigh_l`'s local X reads
-	(0.89, 0.21, -0.41) and `upperarm_l`'s reads (0.11, -0.99, 0.02), so
-	`set_bone_pose_rotation(idx, Quaternion(Vector3.RIGHT, a))` — a rotation
-	about the BONE's own X — swings a leg sideways and an arm about its own
-	length. `_bone_pose()` conjugates the wanted GLOBAL-axis rotation through the
-	bone's PARENT global rest basis instead, which is roll-agnostic and needs no
-	per-bone axis table.
-	"""
-	var skel := _find_skeleton(player)
-	if skel == null:
-		return
-	var gait := PlayerAnimation.gait_for(_hero)
-	var tf: float = t * float(gait["stride_rate"])
-	var stride: float = sin(tf)
-	var wobble: float = sin(tf * PlayerAnimation.GAIT_HITCH_RATIO + float(gait["phase"]))
-	var hitch: float = 1.0 + float(gait["hitch"]) * wobble
-	var leg_amp: float = deg_to_rad(float(gait["leg_deg"])) * hitch
-	var arm_amp: float = deg_to_rad(float(gait["arm_deg"])) * hitch
-
-	# A positive rotation about the global +X takes a limb hanging down toward
-	# -Z, which is the way this hero faces: positive = forward. The per-side
-	# signs are `animate_walking()`'s, verbatim (left leg back while left arm
-	# swings forward), so the two columns start from the same cycle.
-	for side in ["l", "r"]:
-		var mirror: float = -1.0 if side == "l" else 1.0
-		var leg_swing: float = mirror * stride * leg_amp
-		_bone_pose(skel, "thigh_" + side, Basis(Vector3.RIGHT, leg_swing))
-		# The knee bends only while that leg is BEHIND the body — a knee that
-		# bends on the forward swing is the single most puppet-like thing a
-		# naive skeletal walk does.
-		_bone_pose(skel, "calf_" + side,
-				Basis(Vector3.RIGHT, -maxf(0.0, -leg_swing) * KNEE_FLEX_RATIO))
-		var asym: float = float(gait["arm_asym"]) if side == "l" else 1.0
-		var arm_swing: float = -mirror * stride * arm_amp * asym
-		_bone_pose(skel, "upperarm_" + side, Basis(Vector3.RIGHT, arm_swing))
-		_bone_pose(skel, "lowerarm_" + side, Basis(Vector3.RIGHT,
-				deg_to_rad(ELBOW_BEND_DEG) + ELBOW_TRACK_RATIO * arm_swing))
-
-	# The torso's lean (pitch) and waddle (roll) — `animate_walking()` writes both
-	# on the Body node; on a skeleton they belong on the spine, where the legs do
-	# not inherit them.
-	_bone_pose(skel, "spine_02",
-			Basis(Vector3.BACK, stride * deg_to_rad(float(gait["sway_deg"])))
-			* Basis(Vector3.RIGHT, deg_to_rad(float(gait["lean_deg"]))))
-	_bone_pose(skel, "head",
-			Basis(Vector3.BACK, wobble * deg_to_rad(float(gait["head_deg"]))))
-
-	# The bob stays on the `Body` node, exactly where the sine rig puts it —
-	# that is the node the landing squash and `capture_rest_pose` already own.
-	var body: Node = player.character_instances[_hero_index(player)].get_node_or_null("Body")
-	if body is Node3D:
-		(body as Node3D).position.y = sin(tf * 2.0) * float(gait["bob"])
-
-
-func _bone_pose(skel: Skeleton3D, bone: String, rot: Basis) -> void:
-	"""Rotate one bone by `rot`, expressed about the SKELETON's axes rather than
-	the bone's own — see `_pose_skinned`'s roll trap. `P` is the parent's global
-	rest basis, so `P^-1 * rot * P` is the same turn written in the space
-	`set_bone_pose_rotation` expects."""
-	var idx := skel.find_bone(bone)
-	if idx < 0:
-		push_error("[SHOTS] no bone " + bone)
-		return
-	var parent := skel.get_bone_parent(idx)
-	var p := skel.get_bone_global_rest(parent).basis if parent >= 0 else Basis.IDENTITY
-	var local := p.inverse() * rot * p
-	skel.set_bone_pose_rotation(idx,
-			(local * skel.get_bone_rest(idx).basis).get_rotation_quaternion())
+	player.anim.animation_time = t
+	player.anim.animate_walking(1.0 / 60.0, 1.0)
 
 
 func _shoot_body(terrain: Node, player: Node3D, at: Vector3, name: String,
@@ -733,20 +498,13 @@ func _shoot_body(terrain: Node, player: Node3D, at: Vector3, name: String,
 	same `_head_pose_settled` rule (see that function's docstring).
 
 	`stride` poses the ALREADY-FROZEN hero mid-stride (shot 19) through
-	`_pose_walk()` at a clock a quarter of a stride in — which for the control
-	column writes `animation_time` and calls `animate_walking()` once, and for
-	`anim=proc` writes bone rotations instead. NOTHING RESTORES EITHER, which is
-	why 19 runs LAST of the body shots and why 20 follows it: a later shot that
+	`_pose_walk()` at a clock a quarter of a stride in. NOTHING RESTORES IT, which
+	is why 19 runs LAST of the body shots and why 20 follows it: a later shot that
 	wants a standing hero gets whatever pose 19 left, unless it poses itself the
 	way this function's own non-stride path does (`_pose_walk(player, 0.0)`, the
-	rest pose). A variant with nothing that swings (see `_can_pose`) is skipped
-	rather than shot.
+	rest pose).
 	"""
 	if not _wanted(name):
-		return
-	if stride and not _can_pose():
-		print("[SHOTS] ", name, " skipped: body=", _body_variant, " anim=", _anim,
-				" has nothing that swings a limb")
 		return
 	if settle or not _head_pose_settled:
 		await _settle_body_pose(terrain, player, at, name)
@@ -777,9 +535,7 @@ func _shoot_body(terrain: Node, player: Node3D, at: Vector3, name: String,
 	var img := get_viewport().get_texture().get_image()
 	img.save_png(_out_dir + "/" + name + ".png")
 	cam.queue_free()
-	print("[SHOTS] wrote ", name, " at ", at, " hero=", _hero, " body=",
-			_body_variant if _body_variant != "" else "today", " anim=",
-			_anim if _anim != "" else "sine")
+	print("[SHOTS] wrote ", name, " at ", at, " hero=", _hero)
 
 
 func _settle_body_pose(terrain: Node, player: Node3D, at: Vector3, name: String) -> void:
@@ -838,10 +594,6 @@ func _shoot_body_strip(terrain: Node, player: Node3D, at: Vector3, name: String)
 	"""
 	if not _wanted(name):
 		return
-	if not _can_pose():
-		print("[SHOTS] ", name, " skipped: body=", _body_variant, " anim=", _anim,
-				" has nothing that swings a limb")
-		return
 	if not _head_pose_settled:
 		await _settle_body_pose(terrain, player, at, name)
 		player.set_active_character(_hero_index(player))
@@ -868,15 +620,16 @@ func _shoot_body_strip(terrain: Node, player: Node3D, at: Vector3, name: String)
 	PauseHub.release(self)
 	cam.queue_free()
 	print("[SHOTS] wrote ", STRIP_FRAMES, " frames of ", name, " over ",
-			"%.3f s" % period, " hero=", _hero, " body=", _body_variant,
-			" anim=", _anim if _anim != "" else "sine")
+			"%.3f s" % period, " hero=", _hero)
 
 
 func _crown_focus(player: Node3D, scope: Node) -> Vector3:
 	"""SPIKE godot-test1-z3e.10. A face-height focus point that needs no node
 	origin: the top of every `MeshInstance3D` under `scope`, dropped by the
 	distance from a crown to the middle of a face. `scope` is the `Head` node
-	when there is one and the whole `Body` otherwise (the `uncut` variant)."""
+	when there is one and the whole `Body` otherwise — which since bead
+	godot-test1-5u3.3 is every shot of Teibi, whose head is a region of one
+	skinned mesh and not a node."""
 	var fallback := player.global_position + Vector3(0.0, 1.6, 0.0)
 	if scope == null:
 		return fallback
