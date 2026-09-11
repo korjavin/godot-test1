@@ -56,7 +56,17 @@ extends SceneTree
 ##     both it and the close hint must resolve in German (`tr()` returns its own
 ##     key on a miss, so an unimported row renders in English, silently).
 ##
-## ...and OVER ALL SEVEN, a completion sentinel — the pattern this file shipped in
+##  8. **THE TOUCH OPENER** (bead `godot-test1-8gw.26`). `B` is unreachable on a
+##     phone, so the panel carries a button — and the button is only worth having
+##     if it TOGGLES (a one-way opener with a "press B to close" hint under it is
+##     a trap) and if it does not sit on top of `skill_tree_ui`'s opener. The
+##     overlap is measured on a real layout at both 1280x720 and a 400 px phone
+##     width rather than read off the constants, because the two buttons are
+##     anchored to the right edge and their rects only exist once a parent has a
+##     size. FOCUS_NONE is asserted for `skill_tree_ui`'s reason: `ui_accept` is
+##     SPACE is `jump`, so a focused opener re-opens itself on every jump.
+##
+## ...and OVER ALL EIGHT, a completion sentinel — the pattern this file shipped in
 ## PR #186 and bead `godot-test1-llo` then moved into
 ## `scripts/selfcheck_sentinel.gd` so every self-check in the repo carries it.
 
@@ -124,6 +134,7 @@ func _initialize() -> void:
 	await _check_pause_policy()
 	await _check_teammates()
 	await _check_lines()
+	await _check_touch_opener()
 
 	if _failures.is_empty():
 		Sentinel.finish(self)
@@ -633,6 +644,104 @@ func _check_lines() -> void:
 	player.queue_free()
 	await process_frame
 	Sentinel.done("lines")
+
+
+# ============================================================================
+# 8. THE TOUCH OPENER
+# ============================================================================
+
+func _check_touch_opener() -> void:
+	var panel: Control = await _make_panel()
+	var button: Button = panel._open_button
+	if button == null:
+		_fail("the map has no opener button — on a phone the panel cannot be "
+			+ "opened at all, B being the only other way in")
+		panel.queue_free()
+		Sentinel.done("touch_opener")
+		return
+	if not button.visible:
+		_fail("the opener is hidden — the map is most useful BEFORE you reach the "
+			+ "city, which is where the minimap's arrow points")
+	if button.text != "Map (B)":
+		_fail("the opener reads \"%s\"; the help card's touch row and the CSV key "
+			% button.text + "are \"Map (B)\", and all three must be one string")
+	if button.focus_mode != Control.FOCUS_NONE:
+		_fail("the opener keeps focus after a tap — `ui_accept` is SPACE is `jump`, "
+			+ "so the map would re-open itself on every jump for the rest of the run")
+
+	# --- It TOGGLES, through the same path the key uses ----------------------
+	button.emit_signal("pressed")
+	await process_frame
+	if not panel.is_panel_open():
+		_fail("pressing the opener did not open the map")
+	button.emit_signal("pressed")
+	await process_frame
+	if panel.is_panel_open():
+		_fail("pressing the opener a second time did not close the map — a one-way "
+			+ "opener over a \"press B to close\" hint is a trap on a phone")
+
+	# --- ...and so does a tap on the backdrop --------------------------------
+	# The card is MOUSE_FILTER_STOP, so this only ever fires outside it.
+	panel.set_panel_open(true)
+	await process_frame
+	if not panel._centre.visible:
+		_fail("the backdrop is hidden under an open map — nothing would catch a tap")
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	panel._on_backdrop_input(click)
+	await process_frame
+	if panel.is_panel_open():
+		_fail("a tap outside the card left the map open")
+	if panel._centre.visible:
+		_fail("the backdrop stayed live under a closed map — it would swallow every "
+			+ "click meant for the world")
+
+	panel.queue_free()
+	await process_frame
+
+	# --- The two openers may not overlap, at either width --------------------
+	# Both are anchored to the RIGHT edge, so their rects only exist once a parent
+	# has a size: measured on a real layout, at the desktop default and at a phone.
+	for stage_size: Vector2 in [Vector2(1280.0, 720.0), Vector2(400.0, 800.0)]:
+		var rects: Array = await _opener_rects(stage_size)
+		var map_rect: Rect2 = rects[0]
+		var skills_rect: Rect2 = rects[1]
+		if map_rect.size.x <= 0.0 or skills_rect.size.x <= 0.0:
+			_fail("an opener measured an empty rect at %s — the overlap test below "
+				% stage_size + "would pass against anything")
+		if map_rect.intersects(skills_rect):
+			_fail("at %s the map opener %s sits on the Skills opener %s"
+				% [stage_size, map_rect, skills_rect])
+		if map_rect.end.x > stage_size.x or map_rect.position.x < 0.0 \
+				or map_rect.end.y > stage_size.y:
+			_fail("at %s the map opener %s hangs off the screen" % [stage_size, map_rect])
+	Sentinel.done("touch_opener")
+
+
+func _opener_rects(stage_size: Vector2) -> Array:
+	"""Both openers' rects in one parent of `stage_size`, `[map, skills]`."""
+	var stage := Control.new()
+	stage.size = stage_size
+	root.add_child(stage)
+	var map_panel := Control.new()
+	map_panel.set_script(CityMapPanel)
+	var skills_panel := Control.new()
+	skills_panel.set_script(SkillTreeUi)
+	for child: Control in [map_panel, skills_panel]:
+		child.set_anchors_preset(Control.PRESET_FULL_RECT)
+		stage.add_child(child)
+	# Two frames: one for `_ready` to build the buttons, one for the containers to
+	# settle the layout their anchors describe.
+	await process_frame
+	await process_frame
+	var out: Array = [
+		(map_panel._open_button as Control).get_rect(),
+		(skills_panel._open_button as Control).get_rect(),
+	]
+	stage.queue_free()
+	await process_frame
+	return out
 
 
 # ============================================================================

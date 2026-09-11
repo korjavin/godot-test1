@@ -71,10 +71,15 @@ extends Control
 ## square is unreadable, and `landmark_toast` already names a place the moment you
 ## reach it. The map answers "where have I not been", which is the question the
 ## minimap cannot.
-## ponytail: no name legend and no touch opener — `M` has neither either. Add a
-## legend column beside the map, and a button beside `Skills`, if playtests ask.
+## ponytail: no name legend — `M` has none either. Add a legend column beside the
+## map if playtests ask. (The touch opener this comment also deferred landed in
+## bead `godot-test1-8gw.26`: see THE OPENER below.)
 
 const BudapestPlan := preload("res://scripts/budapest_plan.gd")
+## Read for its opener's layout constants ONLY, so the two buttons cannot drift
+## into each other — see `BUTTON_TOP`. One direction: `skill_tree_ui.gd` preloads
+## nothing, so this is a reference and not a cycle.
+const SkillTreeUi := preload("res://scripts/skill_tree_ui.gd")
 ## The win threshold is a DESIGN number and it lives on the player, next to the
 ## mask it counts. Read, never restated — a wave that changes 18 must change this
 ## line's meaning without anybody editing this file.
@@ -90,6 +95,41 @@ const PLAYER_SCRIPT: GDScript = preload("res://scripts/player_controller.gd")
 ## other panel claims it, which `city_map_selfcheck` check 1 asserts against both
 ## sources rather than against a list written down here.
 const TOGGLE_KEY: Key = KEY_B
+
+# ============================================================================
+# THE OPENER — because a phone has no B (bead `godot-test1-8gw.26`)
+# ============================================================================
+
+## The map is the ONLY surface that answers "which of the 22 places have I not
+## found yet" on the way to the 18/22 win, and a raw keycode is unreachable on a
+## touch screen. So the panel carries an always-visible button, in
+## `skill_tree_ui.gd`'s idiom down to the hotkey suffix in the label.
+##
+## ALWAYS VISIBLE, never gated on being near the city: the map is at its most
+## useful BEFORE you arrive — it is where the minimap's arrow is pointing.
+##
+## THE SLOT IS DERIVED, NOT CHOSEN. Every number below is `skill_tree_ui`'s own,
+## so the two buttons share one edge margin and one width, and moving the Skills
+## button moves this one with it instead of parking a second opener on top of it.
+## The only fresh number is the gap between them.
+##
+## ponytail: this opener column and the TOUCH ACTION COLUMN collide on a LANDSCAPE
+## touch session, and that is one bug for the column and not one for this button.
+## `touch_controls.gd` magnifies the UI by `TOUCH_CONTENT_SCALE` (1.8), which makes
+## the layout 600 units tall, and its SPECIAL circle then spans y 232-352 anchored
+## to the bottom-right — under the Skills opener (278-314) already, on master, and
+## under this one (320-354) now. Both panels sit AFTER `TouchControls` in
+## `main.tscn`, so the opener wins the tap. Moving one button cannot fix a column,
+## so the fix is the column's: a HUD bead that reflows the openers when the touch
+## controls are up. Raised by review on this bead and deliberately not widened here.
+const BUTTON_GAP: float = 8.0
+const BUTTON_WIDTH: float = SkillTreeUi.BUTTON_WIDTH
+const BUTTON_HEIGHT: float = SkillTreeUi.BUTTON_HEIGHT
+const EDGE_MARGIN: float = SkillTreeUi.EDGE_MARGIN
+const BUTTON_TOP: float = SkillTreeUi.BUTTON_TOP + SkillTreeUi.BUTTON_HEIGHT + BUTTON_GAP
+## The label's font size, and the size `locale_selfcheck` measures "Karte (B)"
+## against the width above. `skill_tree_ui`'s opener is set in the same 18.
+const BUTTON_FONT_SIZE: int = 18
 
 # ============================================================================
 # THE BAKED PLAN
@@ -194,6 +234,8 @@ var _refresh_timer: float = 0.0
 var _base_texture: ImageTexture = null
 
 # --- Child nodes (built in `_ready`, not from a .tscn) ----------------------
+var _open_button: Button = null
+var _centre: CenterContainer = null
 var _card: PanelContainer = null
 var _map_rect: TextureRect = null
 var _marks: Control = null
@@ -250,7 +292,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.keycode == TOGGLE_KEY:
 		get_viewport().set_input_as_handled()
-		set_panel_open(not _panel_open)
+		_toggle_panel()
 
 
 func _exit_tree() -> void:
@@ -264,6 +306,20 @@ func _exit_tree() -> void:
 
 func is_panel_open() -> bool:
 	return _panel_open
+
+
+func _toggle_panel() -> void:
+	"""What the key does and what the opener button does — ONE path, so the pause
+	claim can never be taken on one and left behind by the other."""
+	set_panel_open(not _panel_open)
+
+
+func _on_backdrop_input(event: InputEvent) -> void:
+	"""A tap anywhere outside the card closes the map. The card itself is
+	MOUSE_FILTER_STOP, so a tap ON it never reaches here."""
+	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+		_centre.accept_event()
+		set_panel_open(false)
 
 
 func set_panel_open(open: bool) -> void:
@@ -280,6 +336,10 @@ func set_panel_open(open: bool) -> void:
 		_refresh()
 	if _card != null:
 		_card.visible = open
+	# The backdrop goes with the card: hidden it takes no clicks, shown it is what
+	# a tap-to-close lands on.
+	if _centre != null:
+		_centre.visible = open
 	_apply_pause(open)
 
 
@@ -523,13 +583,44 @@ func _build_ui() -> void:
 	# it, which is why this panel has no `StyleBoxFlat` of its own.
 	theme = HudTheme.theme()
 
+	# --- The opener, under the Skills button (bead `godot-test1-8gw.26`) ------
+	_open_button = Button.new()
+	_open_button.name = "MapButton"
+	# FOCUS_NONE, and `skill_tree_ui._build_ui` carries the whole reason: a
+	# `BaseButton` KEEPS focus after a click, and `ui_accept` — which fires a
+	# focused button — is SPACE, which is also `jump`. One tap here would
+	# otherwise re-open this panel on every jump for the rest of the run.
+	_open_button.focus_mode = Control.FOCUS_NONE
+	# The label carries its hotkey (bead godot-test1-k4l): "Map (B)". It is also
+	# the help card's TOUCH legend and the CSV key, so all three read alike.
+	_open_button.text = "Map (B)"
+	_open_button.add_theme_font_size_override("font_size", BUTTON_FONT_SIZE)
+	_open_button.custom_minimum_size = Vector2(BUTTON_WIDTH, BUTTON_HEIGHT)
+	_open_button.anchor_left = 1.0
+	_open_button.anchor_right = 1.0
+	_open_button.offset_left = -EDGE_MARGIN - BUTTON_WIDTH
+	_open_button.offset_right = -EDGE_MARGIN
+	_open_button.offset_top = BUTTON_TOP
+	_open_button.offset_bottom = BUTTON_TOP + BUTTON_HEIGHT
+	# THE SAME toggle the key calls, so the pause claim is taken and given back on
+	# one path — `pause_selfcheck` allows exactly one writer and this panel's is
+	# `_apply_pause`, reached only through `set_panel_open`.
+	_open_button.pressed.connect(_toggle_panel)
+	add_child(_open_button)
+
 	# A CenterContainer so the card sizes to its own content and stays centred at
 	# any resolution — `start_overlay.gd`'s and `skill_tree_ui.gd`'s shape.
-	var centre := CenterContainer.new()
-	centre.name = "Centre"
-	centre.set_anchors_preset(Control.PRESET_FULL_RECT)
-	centre.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(centre)
+	# HIDDEN while the map is, and STOP while it is up: that is the backdrop, and
+	# a tap on it closes the map. Without it "Press B or Esc to close" is a lie on
+	# a phone. A hidden Control receives no input, so the closed panel still lets
+	# every click through to the world beneath it.
+	_centre = CenterContainer.new()
+	_centre.name = "Centre"
+	_centre.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_centre.mouse_filter = Control.MOUSE_FILTER_STOP
+	_centre.visible = false
+	_centre.gui_input.connect(_on_backdrop_input)
+	add_child(_centre)
 
 	_card = PanelContainer.new()
 	_card.name = "Card"
@@ -537,7 +628,7 @@ func _build_ui() -> void:
 	# does not fire the desktop-web click-to-capture through it.
 	_card.mouse_filter = Control.MOUSE_FILTER_STOP
 	_card.visible = false
-	centre.add_child(_card)
+	_centre.add_child(_card)
 
 	var margin := MarginContainer.new()
 	for side: String in ["left", "right", "top", "bottom"]:

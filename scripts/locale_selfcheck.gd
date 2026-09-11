@@ -177,6 +177,10 @@ const WIDTH_BUDGETS: Array = [
 	# The suffix measures ~37 px at this size, so the key itself is held to
 	# 105: "Können (K) (12)" at 132 still fits the 142 the button offers.
 	["Skills (K)", 18, 142.0 - 37.0, "skill tree opener"],
+	# city_map_panel.gd — the Budapest map's opener, parked under the one above
+	# and sharing its BUTTON_WIDTH (166) and font, so the same 142 usable px.
+	# No composed suffix on this face, so it gets the whole budget.
+	["Map (B)", 18, 142.0, "Budapest map opener"],
 	# COLUMN_WIDTH 292, font 18, ~8 px Button padding, less the "   3/3" rank
 	# counter composed onto every node name (~48 px at this size).
 	["Quick Recovery", 18, 232.0, "skill node name"],

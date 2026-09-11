@@ -175,8 +175,9 @@ const ROWS: Array = [
 	["M", "Show or hide the minimap.", Mode.DESKTOP],
 	["+ / -", "Zoom the minimap in and out.", Mode.DESKTOP],
 	# The city map panel — a raw keycode like K, M and P above it, and named here
-	# because a panel nobody can find is a panel that does not exist. No touch
-	# variant, exactly like the M row: `city_map_panel.gd` says why.
+	# because a panel nobody can find is a panel that does not exist. Its TOUCH
+	# variant is the "Map (B)" row below, the K row's shape: the panel carries an
+	# opener button of its own, and a phone has no B.
 	["B", "Open the map of Budapest and the places to find.", Mode.DESKTOP],
 	# The HQ's service lift — a raw keycode like the four above it, and named here
 	# for the same reason B is: a panel that only opens where you are standing is
@@ -211,6 +212,11 @@ const ROWS: Array = [
 	# "Skills" legend named a label the button no longer carries), so this
 	# legend reads in German exactly like the button does. A phone has no K.
 	["Skills (K)", "Open the skill tree and spend skill points.", Mode.TOUCH],
+	# "Map (B)" is the city map opener's own CSV key (bead godot-test1-8gw.26),
+	# beside Skills on screen and beside it here, so this legend reads in German
+	# exactly like the button does. The legend reuses the B row's description
+	# above, so the CSV row it needs already exists.
+	["Map (B)", "Open the map of Budapest and the places to find.", Mode.TOUCH],
 	["Tune", "Tune step and steering feel, or read how to play again.", Mode.TOUCH],
 
 	# "Multiplayer (N)" is the toggle's own CSV key (review round 1: "MP"
