@@ -52,6 +52,13 @@ from mathutils import Matrix, Vector
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# THE SKIN GRADE, and the one copy of it — read that file before touching a
+# palette below. The `sys.path` insert is the generators' own idiom for reaching
+# a sibling script (generate_windman_separate.py does it for `export_faceted`);
+# Blender runs this file by path, so the directory is not on `sys.path` already.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hero_skin import SKIN_GRADE, graded  # noqa: E402
+
 TRIS_SMOOTH = 4500             # the bead's "retopo/decimate to ~3-5k"
 TEXTURE_SIZE = 512             # owner ruling: <= 512^2 albedo, no normal map
 
@@ -61,51 +68,6 @@ TEXTURE_SIZE = 512             # owner ruling: <= 512^2 albedo, no normal map
 SEAM_HALF = 0.0030
 SEAM_DARKEN = 0.55
 
-# THE SKIN GRADE (bead godot-test1-z3e.14, owner 2026-09-11: "very white, nothing
-# can be made out"). Every hero's `palette` below is still its GENERATOR's palette
-# verbatim — the invariant the table's note depends on — and this factor is applied
-# to the SKIN and LIPS entries as `paint()` consumes them, so the row stays readable
-# as "what the torso is painted with" and this constant carries the whole of the
-# render-grade correction.
-#
-# WHY A FACE NEEDS ONE AND A TORSO DOES NOT. The lit toon band is albedo x sun
-# (1.25, warm) x tonemap_exposure 1.05 against tonemap_white 1.2 (scenes/main.tscn),
-# and glow then blooms everything over hdr_threshold 0.85. At the generator's 0.93
-# skin that lands ABOVE the white point, so the whole face — one large, nearly
-# co-planar surface — clips to paper white together and the nose, lips, eye sockets
-# and cheek volume go with it. A torso survives it because its colours are dark
-# (mustard, navy, denim) and its shape is read from its silhouette.
-#
-# MEASURED with `scripts/clipped_fraction.py` on 17_head_face (fraction of face
-# pixels at or over Rec.709 luma 0.97), Forward+ / gl_compatibility+web:
-#
-#            before                 after
-#   windman  21.1% / 68.5%          0.0% / 28.0%
-#   primm    20.9% / 63.4%          0.7% / 34.2%
-#   teibi    100.0% / 99.8%         0.2% /  0.0%     (build_hero.py, same constant)
-#
-# 0.47 IS READ OFF A CURVE, NOT GUESSED. Scaling `albedo_color` at runtime prices a
-# candidate albedo without a rebuild, and on the web row — the harsher of the two —
-# effective skin 0.67 gave 51.7% clipped, 0.58 gave 23.1%, 0.47 gave 0.06%. Forward+
-# clears the bead's 5% for all three heroes at this value, and so does the web row
-# for the hero whose colour is VERTEX COLOURS.
-#
-# THE TWO HEADS THAT STILL MEASURE 28% AND 34% ON WEB ARE NOT A PALETTE PROBLEM, and
-# no value of this constant fixes them. They are the only meshes in the cast carrying
-# a baked albedo TEXTURE (the owner's variant-A ruling), and gl_compatibility renders
-# a texture about a gamma too BRIGHT while it renders vertex colours about a gamma
-# too DARK — measured in one frame, on one model: this head's texture reads 0.602 on
-# Forward+ and 0.786 on web, while the vertex-coloured torso under it reads 0.978 and
-# 0.827. A bake dark enough for that row is ~2x too dark on Forward+. The way out is
-# either dropping the bake for vertex colours (contradicts the ruling, and softens the
-# 3 mm seam in Windman's cloth band) or Godot's Compatibility sRGB handling of
-# VRAM-compressed embedded glTF textures — a bead of its own either way.
-SKIN_GRADE = 0.47
-
-
-def graded(colour):
-    """`colour` darkened by `SKIN_GRADE`, alpha untouched."""
-    return tuple(c * SKIN_GRADE for c in colour[:3]) + tuple(colour[3:])
 
 # ============================================================================
 # THE HEROES. One row per authored head; the pipeline below reads nothing else.

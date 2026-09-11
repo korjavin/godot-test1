@@ -47,7 +47,8 @@ static func style(mat: BaseMaterial3D) -> void:
 	and the building were one missed edit away from reading differently. That is
 	the whole of bead `godot-test1-ftn.23`; the values are unchanged.
 
-	IT SETS THESE FOUR PROPERTIES AND NOTHING ELSE. Every caller has its own
+	IT SETS THESE FOUR PROPERTIES AND NOTHING ELSE — plus, on ONE renderer, the
+	fifth below. Every caller has its own
 	business around the call — an albedo colour or texture, `UNSHADED`,
 	`vertex_color_use_as_albedo`, emission, the boss tint — and that stays at the
 	call site, because it is what makes each material different. `DIFFUSE_TOON` is
@@ -59,6 +60,23 @@ static func style(mat: BaseMaterial3D) -> void:
 	mat.rim_enabled = true
 	mat.rim = 0.4
 	mat.rim_tint = 0.25
+	# THE COMPATIBILITY sRGB GAP (bead godot-test1-z3e.14). An albedo TEXTURE comes
+	# back about a gamma too bright under `gl_compatibility` — the renderer the web
+	# build ships — while Forward+ decodes it correctly; measured on Windman's face
+	# at one sitting: 28.0% of it over the clipping line on web against 0.0% on
+	# Forward+, and 0.0% on web the moment this flag is set. Setting it on BOTH
+	# renderers is wrong and was measured too: Forward+ then decodes twice and the
+	# same face falls to 0.339 mean luma from 0.622, i.e. dirt.
+	#
+	# So it is gated, and this is the only renderer-conditional line in the cast's
+	# look. `get_rendering_device()` is null under Compatibility and an object under
+	# Forward+/Mobile — the engine's own way to ask. The flag does nothing at all to
+	# a material with no albedo texture, which today is EVERY predator, every tower
+	# surface and every generated hero part (all vertex colours, checked): the only
+	# meshes it reaches are Windman's and Primm's authored heads, the two assets in
+	# the game carrying a baked 512^2 albedo.
+	if RenderingServer.get_rendering_device() == null:
+		mat.albedo_texture_force_srgb = true
 
 
 static func apply_to_mesh(mesh: MeshInstance3D) -> void:

@@ -56,6 +56,7 @@ from pathlib import Path
 import sys  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from predator_parts import export_faceted  # noqa: E402
+from hero_skin import graded  # noqa: E402
 
 
 class PrimmSeparateMeshGenerator:
@@ -63,7 +64,9 @@ class PrimmSeparateMeshGenerator:
         # Palette tuned to the reference art: violet trench coat, black shirt with
         # cyan circuit lines, light blue-grey cuffs/visor frame, dark-navy jeans.
         self.colors = {
-            'skin':        [0.91, 0.73, 0.62, 1.0],
+            # Graded like Windman's, and for the same reason — this hero's authored
+            # head sits on this neck. See `scripts/hero_skin.py`.
+            'skin':        graded([0.91, 0.73, 0.62, 1.0]),
             'hair':        [0.26, 0.16, 0.10, 1.0],   # dark brown
             'coat_purple': [0.30, 0.15, 0.44, 1.0],   # deep violet trench coat
             'coat_collar': [0.25, 0.12, 0.37, 1.0],   # slightly darker collar

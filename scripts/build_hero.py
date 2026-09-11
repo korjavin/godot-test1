@@ -62,6 +62,14 @@ import importlib
 from mathutils import Matrix, Vector
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# THE SKIN GRADE, one copy for the whole cast — read `scripts/hero_skin.py`
+# before touching a `colours` row. Reached the way the generators reach
+# `predator_parts.export_faceted`, because Blender runs this file by path and
+# its directory is not on `sys.path`.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hero_skin import SKIN_GRADE, graded  # noqa: E402
+
 OUT_ROOT = os.path.join(REPO, "assets", "models", "characters")
 
 RIG = "game_engine"
@@ -138,25 +146,7 @@ HEROES = {
 
 HAIR_LIFT = 0.006            # short hair as a shell over the scalp, in metres
 
-# THE SKIN GRADE — scripts/spike_z3e_head.py's `SKIN_GRADE`, same bead
-# (godot-test1-z3e.14), same number, and the two must move together or the authored
-# faces stop matching. It is NOT imported from there: both files are standalone
-# Blender scripts run by hand, neither is on the other's `sys.path`, and a hero
-# built from a stale copy is caught by the grid the bead asks for.
-#
-# WHY: the lit toon band is albedo x sun (1.25) x tonemap_exposure 1.05 against
-# tonemap_white 1.2, and glow blooms everything over hdr_threshold 0.85
-# (scenes/main.tscn). At the generator's 0.86 skin Teibi's whole face landed above
-# the white point — 100% of the face pixels clipped on Forward+, 99.8% on
-# gl_compatibility, i.e. a paper-white oval with no nose, lips or eye sockets.
-# `SKIN_GRADE` is applied to the SKIN and LIPS entries as `paint_body` consumes
-# them, so the `colours` row stays the generator's palette verbatim. The clothes
-# are not graded: they are dark enough (navy, mustard, denim) to survive the grade,
-# and they are read by their silhouette anyway. After: 0.2% on Forward+, 0.0% on
-# gl_compatibility (`scripts/clipped_fraction.py teibi <17_head_face.png>`), and
-# this hero clears the web row where the two TEXTURED heads do not — see the long
-# note in spike_z3e_head.py for why that is the albedo path and not the palette.
-SKIN_GRADE = 0.47
+# Which palette entries are skin, and therefore go through `SKIN_GRADE`.
 GRADED_COLOURS = ("skin", "lips")
 
 
@@ -428,8 +418,7 @@ def paint_body(obj, tj, row):
     (belt, cuffs, collar) scoped by bone region, then the face detail."""
     colours = dict(row["colours"])
     for key in GRADED_COLOURS:
-        colours[key] = tuple(c * SKIN_GRADE for c in colours[key][:3]) \
-            + tuple(colours[key][3:])
+        colours[key] = graded(colours[key])
     colour_key = row["colour_key"]
     me = obj.data
     name_to_id = {vg.name: vg.index for vg in obj.vertex_groups}

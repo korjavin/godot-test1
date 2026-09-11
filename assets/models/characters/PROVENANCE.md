@@ -57,12 +57,13 @@ game loads it. It is written AFTER the export, because giving the image a filepa
 before it puts that name inside the `.glb` (bead godot-test1-z3e.12, which found Primm's
 copy still showing the z3e.5 palette — the glTF exporter never wrote one at all).
 
-THE SKIN GRADE. Every authored face's skin and lips are darkened by one factor —
-`SKIN_GRADE` in `scripts/spike_z3e_head.py` and the same number in
-`scripts/build_hero.py` — before they are painted or baked (bead
-godot-test1-z3e.14). The palettes in those scripts are still the generators'
-verbatim, so the two files record the paint and the constant records the exposure;
-the two copies must move together.
+THE SKIN GRADE. Every hero's skin and lips — the authored faces AND the generated
+bodies they sit on — are darkened by one factor, `SKIN_GRADE` in
+`scripts/hero_skin.py`, before they are painted or baked (bead godot-test1-z3e.14).
+The palettes in the four scripts that import it are still each hero's own, verbatim:
+they record the paint, that constant records the exposure. A head graded without its
+body is a white seam under the chin, which is why `generate_windman_separate.py` and
+`generate_primm_separate.py` import it too.
 
 All ten `teibi_*_authored.glb` files above and `teibi_uncut_authored.glb` share the ONE `teibi_authored.blend` next to them — the ten pieces are cuts of the same whole-body mesh, exported before being split.
 
