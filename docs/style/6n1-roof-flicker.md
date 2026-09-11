@@ -50,8 +50,13 @@ taken that way and had to be retaken.
 
 ```
 godot --rendering-method gl_compatibility --path . scenes/style_shots.tscn \
-      -- <outdir> only=2b_city_band web
+      -- <outdir> only=2b_city_band,1_field web
 ```
+
+(`only=` is a substring test against the shot NAME, so both shots have to be named:
+`only=2b_city_band` alone emits one PNG and none of the field evidence below. The
+same substring rule also throws in `11_field_bridge_deck`, which contains `1_field`;
+ignore it.)
 
 `web` forces the three `.web` keys (shadow atlas 1024, MSAA off, internal scale 0.8)
 **and** asks the game for its own web-gated tuning through
@@ -60,8 +65,11 @@ godot --rendering-method gl_compatibility --path . scenes/style_shots.tscn \
 to the camera sub-frustum, so the widest FOV the player ever holds is the worst case
 for its texel size, and the tool's frozen pose is a standing one.
 
-Every `6n1_*_web_*.png` here is that command. The `before` half is the same command
-with the two constants set back to the scene's desktop values (0.8 and 0.1).
+`6n1_band_web_*.png` and `6n1_field_web_*.png` are that command's two shots. The
+`before` half of each pair is the same command with `WEB_SHADOW_NORMAL_BIAS` /
+`WEB_SHADOW_SPLIT_1` set back to the scene's desktop values (0.8 and 0.1).
+`6n1_field_web_contact_*.png` are not separate shots: they are the same field frames
+cropped 840x540 around the tall slab's foot and scaled 6x, by hand.
 
 ## Why the shadow map could not resolve it
 
@@ -91,11 +99,19 @@ directional_shadow_split_1  0.1  ->  0.35    (WEB ONLY)
 desktop map in each axis, and `shadow_normal_bias` is texel-denominated, so the same
 number means four times the world-space offset there. Desktop had no acne to remove
 at 4096 — so applying the retune globally would have been a pure cost, and a
-measured one: a revmux round on the earlier, global version found a near-camera
-**thin** caster (a lamp pole) whose shadow broke into a stipple on Forward+, the
-fraction of shadowed pixels in that crop dropping 39%. A thin caster's shadow is one
-or two texels wide, and a tripled normal offset walks the lookup off it. That is the
-whole of CLAUDE.md's "visual changes are web-gated".
+measured one. `6n1_forwardplus_global_retune_before.png` / `…_after.png` are that
+measurement and the reason this is gated: desktop Forward+ with the retune applied
+**globally**, which is what an earlier commit on this branch shipped and what revmux
+round 02 rejected. A near-camera **thin** caster (a lamp pole) has its shadow break
+into a stipple — the fraction of pixels below 45% luma in that foreground crop falls
+0.1136 → 0.0694, a 39% loss, while a mid-field house-shadow control is unchanged
+(0.2345 → 0.2311). A thin caster's shadow is one or two texels wide, and a tripled
+normal offset walks the lookup off it.
+
+Those two frames are kept precisely because they are the evidence for the gate: the
+next author who asks "why not just set 3.0 globally?" needs them, and they document
+a state this branch no longer ships. That is the whole of CLAUDE.md's "visual
+changes are web-gated".
 
 Both numbers are needed, and each was measured alone:
 
@@ -142,7 +158,9 @@ pixels at this framing — and the contact reads tighter, not looser.
 
 ## Desktop is untouched, by construction rather than by a frame
 
-There is no desktop A/B here because there is nothing to compare. `apply_sun_shadow`
+There is no desktop A/B of the SHIPPED state here because there is nothing to
+compare — `6n1_forwardplus_global_retune_*` above documents the rejected global
+version, not this one. `apply_sun_shadow`
 returns on its first line when `is_web` is false, and the only other change to
 `scenes/main.tscn` is the deletion of `directional_shadow_blur = 1.2`, which
 `DirectionalLight3D` has no property for in Godot 4.5 — probed live on the loaded

@@ -16,8 +16,8 @@ extends Node
 ## claims to be one without `web` is not evidence (bead godot-test1-6n1, where a
 ## whole A/B had to be retaken). The flag switches the RENDERER; every `.web`
 ## project-setting override resolves on the `web` FEATURE TAG, which a desktop
-## binary never carries. Pass `web` as well and `_emulate_web()` forces the four
-## things that actually differ — see its banner.
+## binary never carries. Pass `web` as well and `_emulate_web_settings()` forces
+## what actually differs — see its docstring.
 ##
 ## It is a DEBUG TOOL and nothing in the game loads it: `scenes/style_shots.tscn`
 ## is its own scene, reached only from the command line.
@@ -36,8 +36,8 @@ var _out_dir: String = "user://shots"
 ## them in ONE process rather than paying the settle three times over.
 var _only: String = ""
 
-## Set by the `web` argument — see `_emulate_web`. Off means "whatever this
-## binary is", which is what every pre-existing shot was taken with.
+## Set by the `web` argument — see `_emulate_web_settings`. Off means "whatever
+## this binary is", which is what every pre-existing shot was taken with.
 var _emulate_web: bool = false
 
 func _wanted(name: String) -> bool:
@@ -890,11 +890,15 @@ func _emulate_web_settings(terrain: Node) -> void:
 	resolution. Four times the shadow resolution the web build ships is not a
 	detail on a bead about shadows; it is the whole axis.
 
-	The four things forced here are the three `.web` keys in `project.godot` plus
-	the running FOV (see WEB_SHOT_FOV). Everything else about a browser — the
-	GPU, the driver, the frame budget — a desktop capture cannot have, so this is
-	an honest STAND-IN and a `web` shot is not a substitute for a real export when
-	the question is performance.
+	WHAT `web` FORCES, ACROSS TWO SITES. Here: the three `.web` keys in
+	`project.godot`, and the game's own web-gated tuning (`apply_sun_shadow`).
+	In `_shoot`, per shot rather than once: the running FOV (see WEB_SHOT_FOV),
+	because `player_controller._process` eases `camera.fov` back toward FOV_BASE
+	on every tick of the settle and would undo a write made here.
+
+	Everything else about a browser — the GPU, the driver, the frame budget — a
+	desktop capture cannot have, so this is an honest STAND-IN and a `web` shot is
+	not a substitute for a real export when the question is performance.
 	"""
 	RenderingServer.directional_shadow_atlas_set_size(1024, true)   # size.web
 	get_viewport().msaa_3d = Viewport.MSAA_DISABLED                 # msaa_3d.web
