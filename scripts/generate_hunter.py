@@ -8,22 +8,48 @@ not call it, because the read that matters is MACHINE AT A GLANCE — the fear
 class is carried by recognition before behaviour, and a robot assembled from the
 animal builder would just be a square dog.
 
-So the silhouette is built out of the four things an animal never has:
+THE GOAL IS UNCHANGED SINCE THE FIRST VERSION OF THIS FILE; THE ANSWER IS NOT.
+Until bead godot-test1-hb0 the machine-at-a-glance read was bought with a
+FOUR-LEGGED piston chassis and a sensor mast: not an animal, certainly, but the
+owner's verdict on it was "not scary" — an inspection drone reads as equipment,
+and equipment is not a fear class. The owner's reference (docs/characters/hunter.png,
+canon in docs/characters/hunter.md) is a heavy armoured BIPED, and a biped is
+scary for the reason a drone is not: it is shaped like a person and it is a head
+taller than you. So the four things the silhouette is built from are now:
 
-* A HEAD HELD FORWARD AND HIGH on a mast, level, never swinging below the
-  shoulder line. Every quadruped here carries its skull at or under `back_y`
-  (`neck_drop`); this one carries it a mast-height above it. That alone is most
-  of the non-animal read from the side.
-* A GLOWING VISOR instead of a pair of eyes. One horizontal bar, not two dots.
-* PISTON LEGS: a fat barrel over a thin rod over a flat pad, all four identical
-  and all four vertical. Animal legs here taper and end in a paw; a piston reads
-  as a machine even in silhouette because the thin part is in the MIDDLE.
-* CORPORATE LIVERY: a hazard band and an ID plate down each flank. Nothing in
-  the field is painted, so paint is the tell.
+* A HUMAN SHAPE AT INHUMAN SIZE. 2.56 m tall against a 1.7 m hero and 1.24 m
+  across the shoulders — the proportions of a person wearing four hundred kilos
+  of plate. Nothing else in the cast stands upright, so the stance alone is the
+  non-animal read from any angle, the way the mast used to be from the side.
+* A GLOWING VISOR instead of a pair of eyes. One horizontal AMBER bar under a
+  dark brow, in a dome helmet with a chin grille. Amber rather than the old cyan
+  because the reference is amber and because a warm slit on a cold steel dome is
+  the one warm thing on the model.
+* BLOCK LIMBS THAT DO NOT TAPER: oversized forearms ending in fingerless slab
+  fists that hang to mid-thigh, and thighs/calves the same width top to bottom
+  with a knee plate bolted across the joint. An animal limb tapers to a paw; this
+  one gets BIGGER toward the hand.
+* CORPORATE LIVERY: brushed steel/grey-beige panels with dark seams, the crossed
+  FORK-AND-SPOON emblem in blue and gold on the chest plate, and a pale
+  GD-SURVEY ID plate under it. Nothing in the field is painted, so paint is the
+  tell — and the emblem is the fiction (food-safety inspection units reflashed
+  with asset-recovery firmware) worn where a soldier wears a unit patch.
 
-And no tail — the rear is a retrieval pack with two clamp prongs, which is the
-fiction (food-safety inspection units reflashed with asset-recovery firmware)
-made geometry.
+FACE BUDGET IS THE REASON THERE ARE FOUR RIVETS AND NOT FORTY. The bead's
+acceptance pins the triangle count at no more than 1.3x the old chassis's 412,
+i.e. 536, and a box is 12 triangles whatever its size — so a forty-stud rivet
+line would cost more than the entire torso. Four studs sit on the chest plate's
+corners, where a three-quarter view catches them, and every other edge the
+reference rivets is spent instead on a DARK SEAM BOX, which is one part for the
+whole edge and is what actually reads at the five metres the owner rules from.
+Same arithmetic killed the roof beacon, which the bead made optional.
+
+ANIMATION: still ONE WELDED MESH. `piglet_crocodile_ai.gd::_animate_body` bobs,
+rolls, sways and leans the whole `Model` node and there is no leg-phase hook to
+split the legs onto (the bead offered one if the AI already had it; it does not,
+and inventing one here would be a rig in everything but name). A biped leaning
+into its travel axis at a 12 Hz stride reads as a stomping march, which is the
+whole reason the gait numbers in the `hunter_robot` row did not have to change.
 
     python3 scripts/generate_hunter.py
 """
@@ -35,36 +61,38 @@ import trimesh
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from predator_parts import OUT_DIR, MAX_FACES, box, build, export_faceted, rgba, spike  # noqa: E402
+from predator_parts import OUT_DIR, MAX_FACES, box, build, export_faceted, rgba  # noqa: E402
 
 # --- Palette. THESE HEXES ARE LINEAR, NOT sRGB — see the long gamma note at the
 # top of generate_snake.py's palette; the same trap applies here. Each constant
 # is written with the value it actually DISPLAYS, because a colour picked by eye
 # off the linear hex comes out roughly two stops too light in game.
-HULL = "#1a1e23"      # cold slate chassis                     -> shows #5a6068
-LIVERY = "#de4103"    # safety-orange hazard band              -> shows #f08a1c
-TRIM = "#030404"      # piston rods, joints, shadow lines      -> shows #1e2024
-LENS = "#09beff"      # sensor visor, the only emissive-looking part -> #35e0ff
-PLATE = "#939aa4"     # pale ID plate / decal patch            -> shows #c8ccd2
-BEACON = "#ff0b08"    # roof warning light                     -> shows #ff3b30
+# THE THREE GREYS ARE THREE VALUES, NOT THREE TINTS, and that is the whole
+# lesson of the first round of this model: a light plate, a mid plate and a
+# near-black joint, alternating DOWN EVERY LIMB. Built once with the two greys a
+# stop apart, the machine came back as a pale blob — chest, pauldrons and arms
+# welded into one silhouette under the game's white sky, and the head read as a
+# hat on top of it. Faceted shading gives a box about a stop of self-shadow, so
+# two colours that close are the same colour once they are lit.
+STEEL = "#2d2c28"      # brushed grey-beige plate: chest, thighs, forearms -> #747370
+STEEL_DK = "#100f0d"   # the mid value: calves, upper arms, pelvis, boots  -> #474540
+SEAM = "#020303"       # joints, seams, grille, brow, fists                -> #191b1d
+LENS = "#ff6803"       # the visor slit, the only emissive-looking part      -> #ffab1c
+PLATE = "#9c9582"      # the pale GD-SURVEY ID plate                         -> #cdc9bd
+EMBLEM_BLUE = "#0725ab"  # the fork of the corporate emblem                  -> #2f6ad6
+EMBLEM_GOLD = "#be6507"  # the spoon of the corporate emblem                 -> #e0a92e
 
-# --- Proportions, ground up. As with the quadrupeds, LEG_* alone decides how
-# tall the thing stands and nothing below recomputes a y offset by hand.
-HULL_LEN, HULL_H, HULL_W = 0.78, 0.26, 0.34
-
-# The piston stack, bottom to top: pad, rod, barrel. They sum to the ride
-# height, so the hull's underside lands exactly on top of the barrels.
-FOOT_H, ROD_H, BARREL_H = 0.05, 0.11, 0.20
-LEG_LEN = FOOT_H + ROD_H + BARREL_H
-BARREL_W, ROD_W = 0.10, 0.055
-LEG_X, LEG_Z = HULL_LEN * 0.33, 0.13
-
-MAST_H = 0.14
-HEAD_LEN, HEAD_H, HEAD_W = 0.26, 0.18, 0.30
-HEAD_X = 0.44
-
-PACK_LEN, PACK_H, PACK_W = 0.24, 0.28, 0.30
-PRONG_LEN = 0.14
+# --- Proportions, ground up, IN FINAL METRES. The old chassis authored a ~1 m
+# machine and multiplied it by a CHASSIS_SCALE on export, which had accumulated
+# two owner-ruled 1.5x re-scales and a paragraph explaining which was which.
+# There is no scale factor any more: every number below is the metre it ships as,
+# `build()` is called at 1.0, and a retune is a number in this block rather than
+# an archaeology problem. The heights are a stack — each part's span is written
+# beside it, and each overlaps its neighbour (see BITE). The two numbers a
+# reader wants first — 2.56 m to the crown of the dome, 1.24 m across the
+# pauldrons — are NOT constants here: they are sums of the stack, and a constant
+# that merely restates a sum is a second place for the truth to live. They are
+# asserted (as a window) in `verify_hunter` and printed on every build.
 
 # Every joint below overlaps its neighbour by BITE rather than meeting it face to
 # face. Two coincident coplanar faces z-fight, and a part that merely *touches*
@@ -72,141 +100,156 @@ PRONG_LEN = 0.14
 # dark-saddle comment describes, and this model is nothing but right angles.
 BITE = 0.02
 
-# --- The whole chassis is then scaled UP on export: the SECOND 1.5x (owner
-# ruling 2026-09-04, bead godot-test1-5ow, on top of godot-test1-6bj's 1.5x) —
-# 1.5x the CURRENT size, TOTAL 2.25x the original 1.35 x 1.00 x 0.375 m chassis
-# (~3.04 m long, 2.25 m tall). Do NOT apply 1.5x a third time: "current" is now
-# this. It rides `build`'s existing scale argument rather than being multiplied
-# into the proportions above, for two reasons: every number in this file stays
-# the number a reader can compare against the other generators', and the scale
-# is applied to the WELDED mesh before the feet-at-y=0 translation, so the
-# orientation/feet contracts survive it for free. Past LENGTH_RANGE (0.6, 2.2)
-# now, so the hunter carries its own `verify_hunter` beside the humanoid
-# bosses' (the range is an absolute-size envelope; the proportion guard,
-# longer-than-wide, lives on in the hunter's own). Still walks under every
-# tower storey's ~4.6 m clear height. The .tscn capsules are the same 1.5x by
-# hand (a scene cannot read a Python constant); see the hunter row's measured
-# block in piglet_crocodile_ai.gd, which records both.
-CHASSIS_SCALE = 2.25
-
-BACK_Y = LEG_LEN + HULL_H          # top of the chassis, the machine's shoulder line
-MAST_TOP = BACK_Y + MAST_H
-HEAD_Y = MAST_TOP - BITE + HEAD_H / 2
+LEG_Z = 0.235          # half the stance; deliberately narrower than the shoulders
+ARM_Z = 0.46           # centre-line of the arm stack, OUTSIDE the chest's 0.37
+DECAL_X = 0.375        # the chest plate's front face plus 1.5 cm of paint
 
 
 def build_hunter():
-    c_hull, c_livery, c_trim = rgba(HULL), rgba(LIVERY), rgba(TRIM)
-    c_lens, c_plate, c_beacon = rgba(LENS), rgba(PLATE), rgba(BEACON)
+    c_steel, c_dark, c_seam = rgba(STEEL), rgba(STEEL_DK), rgba(SEAM)
+    c_lens, c_plate = rgba(LENS), rgba(PLATE)
+    c_blue, c_gold = rgba(EMBLEM_BLUE), rgba(EMBLEM_GOLD)
     parts = []
 
-    # --- Chassis: one slab, a dark skid plate under it and a dark roof panel
-    # sunk a centimetre in, so the top and bottom faces never end up coplanar
-    # with anything bolted to them (the z-fight the wolf's saddle comment warns
-    # about).
-    parts.append(box((HULL_LEN, HULL_H, HULL_W), (0.0, LEG_LEN + HULL_H / 2, 0.0), c_hull))
-    parts.append(box((HULL_LEN * 0.9, HULL_H * 0.22, HULL_W * 0.9),
-                     (0.0, LEG_LEN + HULL_H * 0.08, 0.0), c_trim))
-    parts.append(box((HULL_LEN * 0.62, 0.03, HULL_W * 0.7),
-                     (-HULL_LEN * 0.04, BACK_Y - 0.01, 0.0), c_trim))
-
-    # --- Livery, one band and one ID plate per flank, standing 5 mm proud of the
-    # side so they read as paint-on-panel rather than as part of the slab.
+    # --- Legs, mirrored. Boot -> calf -> knee plate -> thigh -> hip joint, and
+    # NOTHING IN THE STACK TAPERS: the calf is as thick as the thigh and the
+    # boot is wider than both. A leg that narrows toward the ground is the one
+    # thing that would pull this back toward the animals it stands beside. The
+    # COLOURS alternate down the stack — dark boot, mid calf, black knee, light
+    # thigh — which is what makes a welded column of boxes read as a jointed leg.
     for side in (1.0, -1.0):
-        sz = side * (HULL_W / 2 + 0.005)
-        parts.append(box((HULL_LEN * 0.72, 0.07, BITE),
-                         (0.0, LEG_LEN + HULL_H * 0.62, sz), c_livery))
-        parts.append(box((0.14, 0.08, BITE),
-                         (-HULL_LEN * 0.24, LEG_LEN + HULL_H * 0.28, sz), c_plate))
+        z = side * LEG_Z
+        # Boot: a black sole under a squat upper, the sole LONGER than the boot so
+        # the machine has a visible FOOT rather than a shin ending on the floor.
+        parts.append(box((0.58, 0.09, 0.36), (0.06, 0.045, z), c_seam))    # 0.00-0.09
+        parts.append(box((0.50, 0.21, 0.33), (0.03, 0.175, z), c_dark))    # 0.07-0.28
+        parts.append(box((0.40, 0.52, 0.31), (0.00, 0.52, z), c_dark))     # 0.26-0.78
+        # Knee plate: proud of the calf and the thigh on every side, so the joint
+        # is a bolted-on slab and not a crease.
+        parts.append(box((0.48, 0.16, 0.35), (0.03, 0.82, z), c_seam))     # 0.74-0.90
+        parts.append(box((0.46, 0.48, 0.36), (0.00, 1.12, z), c_steel))    # 0.88-1.36
+        # Hip: inset fore-aft and proud sideways, which is what makes it read as
+        # a joint the thigh swings on instead of another panel.
+        parts.append(box((0.38, 0.16, 0.42), (0.00, 1.36, z), c_seam))     # 1.28-1.44
 
-    # --- Sensor mast and head. Carried FORWARD of the chest and ABOVE the
-    # shoulder line — the inversion of every `neck_drop` in the quadruped table,
-    # and the cheapest non-animal cue there is.
-    parts.append(box((0.12, MAST_H + BITE, 0.14),
-                     (HULL_LEN / 2 - 0.08, (BACK_Y - BITE + MAST_TOP) / 2, 0.0), c_hull))
-    parts.append(box((HEAD_LEN, HEAD_H, HEAD_W), (HEAD_X, HEAD_Y, 0.0), c_hull))
+    # --- Pelvis and abdomen, and BOTH ARE BLACK. Not decoration: the forearms
+    # hang exactly here, and a lit hip beside a lit forearm welds the arms into
+    # the body — measured, in the second round of this model, as a single slab
+    # from shoulder to knee. A black waist between two steel forearms is the
+    # whole separation, and it is also what the reference does.
+    parts.append(box((0.62, 0.28, 0.64), (0.0, 1.48, 0.0), c_seam))        # 1.34-1.62
+    parts.append(box((0.52, 0.16, 0.50), (0.0, 1.68, 0.0), c_seam))        # 1.60-1.76
 
-    # One visor bar across the whole face instead of two eyes. Wider than the
-    # skull so it survives being seen from an angle.
-    parts.append(box((0.05, 0.08, HEAD_W * 0.94),
-                     (HEAD_X + HEAD_LEN / 2 + 0.015, HEAD_Y + 0.01, 0.0), c_lens))
-    # Chin scanner: a dark block under the visor, so the head has a front and a
-    # back at a glance.
-    parts.append(box((0.08, 0.05, HEAD_W * 0.5),
-                     (HEAD_X + HEAD_LEN * 0.34, HEAD_Y - HEAD_H / 2 + 0.02, 0.0), c_trim))
+    # --- The barrel chest, the model's subject, and it is NARROWER THAN THE
+    # SHOULDERS ON PURPOSE (0.74 against the pauldrons' 1.24). Built as wide as
+    # them, the torso and both shoulders weld into one slab whose top edge reads
+    # as the top of a head — which is exactly what the first round of this model
+    # photographed. The rim under it and the collar yoke over it are black and
+    # PROUD of the plate on every axis (a band sunk inside the chest box would
+    # simply not be drawn), and the yoke is narrow, so the head rises out of a
+    # notch between two shoulder humps rather than off a flat shelf.
+    parts.append(box((0.68, 0.42, 0.74), (0.02, 1.95, 0.0), c_steel))      # 1.74-2.16
+    parts.append(box((0.70, 0.07, 0.76), (0.02, 1.775, 0.0), c_seam))      # 1.74-1.81
+    parts.append(box((0.56, 0.12, 0.50), (0.0, 2.16, 0.0), c_seam))        # 2.10-2.22
+    # Backpack plate: the rear is a hard square end rather than a spine, and it
+    # is what the old model's retrieval pack has become now that there is no tail
+    # position to hang one off.
+    parts.append(box((0.14, 0.40, 0.62), (-0.36, 1.95, 0.0), c_dark))
 
-    # Roof beacon plus two whip antennae — the top-down read, which is the angle
-    # the side profile tells you nothing about.
-    parts.append(box((0.07, 0.05, 0.07),
-                     (HEAD_X - 0.06, HEAD_Y + HEAD_H / 2 + 0.01, 0.0), c_beacon))
+    # --- The livery. Two crossed bars for the corporation's fork-and-spoon, a
+    # pale ID plate under them with one dark bar across it for the lettering.
+    # NO TEXT GEOMETRY: at the five metres this is ruled from, a dark bar on a
+    # pale rectangle is exactly what a word looks like, and it costs one box.
+    # `roll` rotates about X, which is the only axis that tilts a bar within the
+    # chest's FRONT face (the YZ plane).
+    parts.append(box((BITE, 0.30, 0.065), (DECAL_X, 2.00, 0.0), c_blue, roll=0.62))
+    parts.append(box((BITE, 0.30, 0.065), (DECAL_X, 2.00, 0.0), c_gold, roll=-0.62))
+    parts.append(box((BITE, 0.10, 0.38), (DECAL_X, 1.83, 0.0), c_plate))
+    parts.append(box((BITE, 0.04, 0.29), (DECAL_X + 0.004, 1.83, 0.0), c_seam))
+
+    # Four rivet studs, one per corner of the chest plate. See the face-budget
+    # paragraph in the module docstring for why there are four of them.
+    for sy in (2.10, 1.86):
+        for sz in (0.31, -0.31):
+            parts.append(box((0.03, 0.05, 0.05), (0.365, sy, sz), c_seam))
+
+    # --- Arms, mirrored. Pauldron -> upper arm -> elbow -> OVERSIZED forearm ->
+    # slab fist, and the stack gets WIDER on the way down. The fists hang at
+    # mid-thigh, which is the reference's single loudest proportion and the thing
+    # that makes the machine read as heavy rather than tall. The pauldrons top out
+    # ABOVE the chest, so the shoulder line is the silhouette's highest point
+    # short of the head.
     for side in (1.0, -1.0):
-        parts.append(spike(0.02, 0.09,
-                           (HEAD_X - 0.10, HEAD_Y + HEAD_H / 2 - 0.01,
-                            side * HEAD_W * 0.36), c_trim))
+        z = side * ARM_Z
+        parts.append(box((0.52, 0.32, 0.30), (0.0, 2.08, side * 0.46), c_steel))  # 1.92-2.24
+        parts.append(box((0.50, 0.06, 0.32), (0.0, 1.93, side * 0.46), c_seam))
+        parts.append(box((0.32, 0.32, 0.26), (0.0, 1.78, z), c_dark))             # 1.62-1.94
+        parts.append(box((0.30, 0.10, 0.30), (0.0, 1.60, z), c_seam))             # 1.55-1.65
+        parts.append(box((0.44, 0.46, 0.30), (0.02, 1.36, z), c_steel))           # 1.13-1.59
+        parts.append(box((0.42, 0.22, 0.28), (0.02, 1.03, z), c_seam))            # 0.92-1.14
 
-    # --- Four identical piston legs. Barrel over rod over pad, plus a dark hub
-    # where the barrel meets the chassis. No taper, no paw: the thin part is in
-    # the middle, which is what stops it reading as a leg.
-    for x in (LEG_X, -LEG_X):
-        for z in (LEG_Z, -LEG_Z):
-            parts.append(box((BARREL_W, BARREL_H, BARREL_W),
-                             (x, FOOT_H + ROD_H + BARREL_H / 2, z), c_hull))
-            parts.append(box((ROD_W, ROD_H + 2 * BITE, ROD_W),
-                             (x, FOOT_H + ROD_H / 2, z), c_trim))
-            parts.append(box((BARREL_W * 1.3, FOOT_H, BARREL_W * 1.1),
-                             (x, FOOT_H / 2, z), c_trim))
-            parts.append(box((BARREL_W * 1.15, 0.05, BARREL_W * 1.15),
-                             (x, LEG_LEN - BITE, z), c_trim))
-
-    # --- Retrieval pack where a tail would be: a slung module with two clamp
-    # prongs. This is the "asset recovery" firmware made geometry, and it also
-    # gives the rear a hard square end instead of an animal's taper.
-    pack_x = -(HULL_LEN / 2 + PACK_LEN / 2 - BITE)
-    pack_y = BACK_Y - PACK_H / 2 - BITE
-    parts.append(box((PACK_LEN, PACK_H, PACK_W), (pack_x, pack_y, 0.0), c_hull))
-    # Dark seam where the module bolts on. Without it the pack and the chassis are
-    # the same slate at the same height and the side profile welds into one long
-    # slab — i.e. back into an animal's body.
-    parts.append(box((0.03, PACK_H, PACK_W * 1.04),
-                     (pack_x + PACK_LEN / 2, pack_y, 0.0), c_trim))
-    parts.append(box((0.03, PACK_H * 0.5, PACK_W * 0.8),
-                     (pack_x - PACK_LEN / 2, pack_y, 0.0), c_livery))
-    for side in (1.0, -1.0):
-        parts.append(box((PRONG_LEN, 0.055, 0.05),
-                         (pack_x - PACK_LEN / 2 - PRONG_LEN / 2 + BITE / 2,
-                          pack_y - PACK_H / 2 + 0.08, side * 0.10), c_trim))
+    # --- Neck and dome. A visible dark NECK (the first round had none worth the
+    # name, and a head bolted straight onto a torso is a torso), a two-step dome
+    # over it, one AMBER slit across the face with a dark brow above and a dark
+    # chin grille below. The brow is what makes the lens a SLIT rather than a
+    # panel: without it the amber bar sits on a pale dome and loses its edge at
+    # any distance.
+    parts.append(box((0.28, 0.16, 0.28), (0.02, 2.26, 0.0), c_seam))       # 2.18-2.34
+    parts.append(box((0.42, 0.20, 0.40), (0.03, 2.40, 0.0), c_steel))      # 2.30-2.50
+    parts.append(box((0.34, 0.12, 0.32), (0.02, 2.50, 0.0), c_steel))      # 2.44-2.56
+    parts.append(box((0.06, 0.05, 0.36), (0.22, 2.455, 0.0), c_seam))
+    parts.append(box((0.05, 0.06, 0.34), (0.235, 2.40, 0.0), c_lens))
+    parts.append(box((0.07, 0.08, 0.26), (0.21, 2.335, 0.0), c_seam))
     return parts
 
 
 def verify_hunter(mesh: trimesh.Trimesh) -> None:
     """Assert enemy-model contracts and the hunter's own size envelope.
 
-    The shared `verify()` in predator_parts cannot judge this model any more:
-    at 2.25x the chassis is ~3.04 m long, past LENGTH_RANGE (0.6, 2.2). That
-    range is an ABSOLUTE-size envelope for the animals, so widening it would
-    loosen every quadruped's guard — instead the hunter carries its own window
-    beside the humanoid bosses' `verify_titan` / `verify_clown`, the way they do.
-    The window admits the 2.25x chassis and rejects the 1.5x one (2.03 m), so a
-    stale scale in either direction fails here rather than shipping a wrong-sized
-    machine over a wrong-sized capsule.
+    The shared `verify()` in predator_parts cannot judge this model, for two
+    reasons and neither of them is new. Its LENGTH_RANGE (0.6, 2.2) is an
+    ABSOLUTE-size envelope for the animals, so a 2.54 m machine would have to
+    widen it and loosen every quadruped's guard; and its "longer than it is
+    wide" proportion guard is a statement about ANIMALS — a biped is broader
+    across the shoulders than it is deep front to back, which is exactly what
+    that assert exists to reject. So the hunter carries its own window, beside
+    the humanoid bosses' `verify_titan` / `verify_clown`, the way they do.
+
+    The window is written around the BIPED and rejects the four-legged chassis
+    it replaced (3.04 m long, 0.84 m wide) on three separate clauses, so a stale
+    generator or a stale .glb fails here rather than shipping a wrong-shaped
+    machine over a capsule measured off the other one.
     """
     assert len(mesh.faces) > 0, "hunter: empty mesh"
     assert len(mesh.faces) <= MAX_FACES, f"hunter: {len(mesh.faces)} faces exceeds {MAX_FACES}"
+    # The bead's own perf clause: no more than 1.3x the 412 faces of the chassis
+    # this replaced. Pinned here rather than left to a reviewer's arithmetic,
+    # because the cheapest way to "improve" a blocky model is to add boxes.
+    assert len(mesh.faces) <= 536, \
+        f"hunter: {len(mesh.faces)} faces is over 1.3x the 412 the old chassis cost"
 
     lo, hi = mesh.bounds
     assert abs(lo[1]) < 1e-6, f"hunter: feet at y={lo[1]:.4f}, must be 0"
 
     height = hi[1] - lo[1]
-    assert 2.1 <= height <= 2.4, f"hunter: height {height:.2f}m outside [2.1, 2.4]"
+    assert 2.4 <= height <= 2.6, f"hunter: height {height:.2f}m outside [2.4, 2.6]"
 
-    length = hi[0] - lo[0]
-    assert 2.9 <= length <= 3.2, f"hunter: length {length:.2f}m outside [2.9, 3.2]"
-    # The proportion guard LENGTH_RANGE never carried: the body stays longer
-    # than it is wide, or the facing yaw reads as a sideways machine.
+    width = hi[2] - lo[2]
+    depth = hi[0] - lo[0]
+    assert 1.1 <= width <= 1.4, f"hunter: shoulders {width:.2f}m outside [1.1, 1.4]"
+    # A BIPED IS BROADER THAN IT IS DEEP — the inverse of the animals' guard, and
+    # the clause that rejects the old four-legged chassis outright.
+    assert width > depth, f"hunter: {depth:.2f}m deep against {width:.2f}m wide — not a biped"
+    assert height > width, f"hunter: {height:.2f}m tall is not over {width:.2f}m wide"
+    # The dome's face, the visor and the fists are all forward of the origin: the
+    # model is authored nose-along-+X like every other, and the facing yaw in
+    # `model_facing_offset` is the only thing that turns it.
     assert hi[0] > 0.0, "hunter: nothing forward of origin (+X facing required)"
-    assert length > hi[2] - lo[2], "hunter: wider than it is long"
 
     bias = hi[2] + lo[2]
     assert abs(bias) <= 1e-6, f"hunter: off-centre on z (bias {bias:.4f})"
+    # ...and it stands on its feet rather than on one of them.
+    assert abs(mesh.bounds[0][2] + mesh.bounds[1][2]) <= 1e-6
 
     colors = mesh.visual.vertex_colors
     assert colors is not None and len(colors) == len(mesh.vertices), \
@@ -214,8 +257,8 @@ def verify_hunter(mesh: trimesh.Trimesh) -> None:
 
 
 def save_hunter() -> trimesh.Trimesh:
-    """Weld at CHASSIS_SCALE, check against verify_hunter, export, report."""
-    mesh = build(build_hunter(), CHASSIS_SCALE)
+    """Weld at final metres, check against verify_hunter, export, report."""
+    mesh = build(build_hunter())
     verify_hunter(mesh)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     path = OUT_DIR / "hunter.glb"
@@ -223,7 +266,11 @@ def save_hunter() -> trimesh.Trimesh:
     lo, hi = mesh.bounds
     print(f"✓ hunter: {path}")
     print(f"  {len(mesh.vertices)} verts / {len(mesh.faces)} faces")
-    print(f"  {hi[0] - lo[0]:.2f} m long, {hi[1]:.2f} m tall, {hi[2] - lo[2]:.2f} m wide")
+    print(f"  {hi[0] - lo[0]:.2f} m deep, {hi[1]:.2f} m tall, {hi[2] - lo[2]:.2f} m wide")
+    # The three numbers hunter_robot.tscn and tower_guard.tscn carry by hand — a
+    # scene cannot read a Python constant, so the generator prints what they owe.
+    print(f"  capsule: radius {(hi[2] - lo[2]) / 2.0:.4f}, height {hi[1]:.4f}, "
+          f"upright at (0, {hi[1] / 2.0:.4f}, 0)")
     return mesh
 
 

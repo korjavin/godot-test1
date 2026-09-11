@@ -106,7 +106,7 @@ func _run() -> void:
 ## a failure rather than a lucky pass. Derived from the LIVE capsule (see
 ## `guard_body_clearance`), never hand-copied — the next chassis growth scales
 ## the threshold instead of silently shrinking its headroom.
-const GUARD_CLEARANCE_FACTOR: float = 1.0667  # == 0.45 at the 2.25x radius
+const GUARD_CLEARANCE_FACTOR: float = 1.0667  # 0.45 at the old 0.421875 radius
 
 static var _guard_capsule_radius: float = -1.0
 
@@ -115,9 +115,11 @@ static func guard_body_clearance() -> float:
 	"""Room a guard's body needs around its post, from the live capsule.
 
 	The `tower_guard.tscn` capsule radius times GUARD_CLEARANCE_FACTOR (which
-	reproduces the old hand-copied 0.45 at the 2.25x radius, so the threshold
-	is unchanged today). Falls back to 0.45 when the scene is unreadable —
-	everything downstream fails loudly in that case anyway.
+	reproduced the old hand-copied 0.45 at the four-legged chassis's 0.421875
+	radius; the biped of bead godot-test1-hb0 is broader, so the threshold grew
+	with it to 0.66 — which is the whole reason this is derived and not typed).
+	Falls back to 0.45 when the scene is unreadable — everything downstream
+	fails loudly in that case anyway.
 	"""
 	if _guard_capsule_radius < 0.0:
 		_guard_capsule_radius = 0.45 / GUARD_CLEARANCE_FACTOR
@@ -131,12 +133,13 @@ static func guard_body_clearance() -> float:
 			probe.free()
 	return _guard_capsule_radius * GUARD_CLEARANCE_FACTOR
 
-## How tall a standing guard is, for the same test. The chassis stands 2.25 m
-## (the capsule lies on the travel axis, so it is the MODEL's height that this
-## has to cover, not the capsule's 3.0375 m length); a little over it, so a post
-## under the crawl lintel (top at 2.8 m, underside 2.0) or under a raised mass
-## would be caught.
-const GUARD_BODY_HEIGHT: float = 2.4
+## How tall a standing guard is, for the same test. The biped chassis of bead
+## godot-test1-hb0 stands 2.56 m (check 12b measures the drawn mesh and prints
+## it); this is a little over that, so a post under the crawl lintel (top at
+## 2.8 m, underside 2.0) or under a raised mass would be caught. Hand-written
+## rather than read off the probe because it is a THRESHOLD, not a measurement:
+## the point is that a body needs more room than it occupies.
+const GUARD_BODY_HEIGHT: float = 2.7
 
 func _check_guards_stand_their_posts() -> void:
 	"""
@@ -394,14 +397,18 @@ func _check_guard_capsule_fits_the_doors() -> void:
 	after a retune broke the scene. Three assertions:
 
 	  * DOORWAY: the capsule's diameter clears one PLAN_CELL (a spine door is
-	    one cell wide). The capsule lies on the travel axis, so length along
-	    travel never gates a doorway — width does.
+	    one cell wide). Width is what gates a doorway; the capsule's long axis
+	    never does, whether it lies along travel (the old chassis) or stands up
+	    (the biped of bead godot-test1-hb0).
 	  * STOREYS: the model's height clears every planned storey's air.
-	  * CRAWL: the capsule's vertical extent passes under DOSSIER_CRAWL_CLEAR
-	    (pinned, so outgrowing it fails) — and the alcove stays guard-free by
-	    ROUTING, not by height: it is a dead end (check 20) and no post,
-	    patrol lane or lure plate is inside it. The old mesh-height clause
-	    stated something false of the physics body, which is the capsule.
+	  * HITBOX: the capsule's vertical extent — computed off the shape node's
+	    basis, so it is right for a capsule lying down and for one standing up —
+	    does not exceed the DRAWN body's height. The crawl lintel
+	    (DOSSIER_CRAWL_CLEAR) is reported rather than asserted: since the biped
+	    of bead godot-test1-hb0 the guard is twice the lintel's clearance and
+	    simply cannot enter, and the alcove was always kept guard-free by
+	    ROUTING anyway — it is a dead end (check 20) with no post, patrol lane
+	    or lure plate inside it.
 	"""
 	var scene := TowerInterior.guard_scene()
 	if scene == null:
@@ -430,18 +437,38 @@ func _check_guard_capsule_fits_the_doors() -> void:
 		probe.free()
 		Sentinel.done("guard_capsule_fits_the_doors")
 		return
-	var capsule_hi := capsule.radius * 2.0
-	if capsule_hi >= TowerDossiers.DOSSIER_CRAWL_CLEAR:
-		_fail("check 12b: the guard's %.2f m capsule no longer fits under the crawl lintel (%.2f m)" % [
-			capsule_hi, TowerDossiers.DOSSIER_CRAWL_CLEAR])
+	# THE CAPSULE'S VERTICAL EXTENT, OFF THE SHAPE NODE'S OWN BASIS. Until bead
+	# godot-test1-hb0 the guard's capsule LAY on the travel axis — a long low
+	# four-legged chassis — so `radius * 2` WAS its height and this line read it
+	# that way. The biped's capsule stands upright, and the same expression now
+	# measures its WIDTH, so it is asked of the transform instead: a capsule whose
+	# axis is `up` contributes the half-cylinder along y plus a cap at each end,
+	# and the formula is right in both orientations and every one between.
+	var axis := (shape_node.transform.basis * Vector3.UP).normalized()
+	var half_cylinder := maxf(capsule.height * 0.5 - capsule.radius, 0.0)
+	var capsule_hi := 2.0 * (absf(axis.y) * half_cylinder + capsule.radius)
+	# ...and the assertion the crawl clause used to carry moved onto the number
+	# that is actually load-bearing for a STANDING body: the hitbox may not be
+	# TALLER than the machine it wraps. A capsule that outgrows its mesh is how a
+	# guard ends up unable to walk under a lintel its model clears, and it is the
+	# mistake a height/radius typo makes in either orientation. The crawl itself
+	# is no longer an assertion because the answer stopped being close: a 2.5 m
+	# biped cannot pass a 1.2 m lintel and never will, so the alcove is now
+	# guard-proof by GEOMETRY as well as by the routing that was always the real
+	# guarantee (check 20 — no post, patrol lane or lure plate is inside it). The
+	# relation is printed below either way.
+	if capsule_hi > tall + EPS:
+		_fail("check 12b: the guard's capsule stands %.2f m over a %.2f m body — a hitbox taller than the machine" % [
+			capsule_hi, tall])
 	var low := INF
 	for floor_index: int in TowerPlans.floors():
 		low = minf(low, TowerInterior.plan_clear_height(floor_index))
 	if tall >= low:
 		_fail("check 12b: the %.2f m guard does not clear a %.2f m storey" % [tall, low])
-	print("guard capsule: %.2f m wide through %.2f m doors, %.2f m tall under %.2f m ceilings, %.2f m capsule passes under the %.2f m crawl (alcove guard-free by routing, check 20), clearance %.4f" % [
-		diameter, door, tall, low, capsule_hi, TowerDossiers.DOSSIER_CRAWL_CLEAR,
-		guard_body_clearance()])
+	print("guard capsule: %.2f m wide through %.2f m doors, %.2f m tall under %.2f m ceilings, %.2f m capsule %s the %.2f m crawl (alcove guard-free by routing, check 20), clearance %.4f" % [
+		diameter, door, tall, low, capsule_hi,
+		("passes under" if capsule_hi < TowerDossiers.DOSSIER_CRAWL_CLEAR else "is too tall for"),
+		TowerDossiers.DOSSIER_CRAWL_CLEAR, guard_body_clearance()])
 	probe.free()
 	Sentinel.done("guard_capsule_fits_the_doors")
 

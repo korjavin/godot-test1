@@ -129,7 +129,7 @@ const HUNTER_HASH_PRIME_Y: int = 104395301
 ## empty chunk, and the chance above already absorbs the loss.
 const HUNTER_PLACE_TRIES: int = 6
 
-## Keep candidate spots this far inside the chunk, so a 1.35 m chassis never
+## Keep candidate spots this far inside the chunk, so a body 1.24 m across never
 ## straddles a seam. A metre more than the crocodile spawner's 3.0, and the reason
 ## is the retry budget rather than the body: a crocodile chunk makes up to five
 ## attempts PER crocodile and simply finds another spot, while a hunter gets
@@ -138,8 +138,8 @@ const HUNTER_PLACE_TRIES: int = 6
 const HUNTER_EDGE_MARGIN: float = 4.0
 
 ## Spawn height above the flat y = 0 ground, like the crocodile's. The capsule's
-## bottom sits on the body origin (radius == centre y in hunter_robot.tscn), so
-## gravity settles the chassis onto the plane from here.
+## bottom sits on the body origin (it stands upright, so centre y == height / 2
+## in hunter_robot.tscn), so gravity settles the machine onto the plane from here.
 const HUNTER_SPAWN_HEIGHT: float = 0.5
 
 ## Which slice of _croc_roll_seed's index space a hunter takes. Ground crocodiles
