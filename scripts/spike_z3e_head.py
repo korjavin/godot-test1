@@ -57,7 +57,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # a sibling script (generate_windman_separate.py does it for `export_faceted`);
 # Blender runs this file by path, so the directory is not on `sys.path` already.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hero_skin import SKIN_GRADE, graded  # noqa: E402
+from hero_skin import graded  # noqa: E402
 
 TRIS_SMOOTH = 4500             # the bead's "retopo/decimate to ~3-5k"
 TEXTURE_SIZE = 512             # owner ruling: <= 512^2 albedo, no normal map
@@ -75,8 +75,8 @@ SEAM_DARKEN = 0.55
 # `palette` is the hero's OWN generator palette, verbatim (generate_<hero>_
 # separate.py's `self.colors`), because the authored head sits on a torso that
 # generator still builds and a colour seam at the neck would be the first thing
-# anyone sees. Its skin and lips reach the mesh through `SKIN_GRADE` above — the
-# row is the paint, that constant is the exposure.
+# anyone sees. Its skin and lips reach the mesh through `hero_skin.SKIN_GRADE` —
+# the row is the paint, that constant is the exposure.
 #
 # `stripes` is the eyewear's COLOURS, listed TOP-DOWN in metres relative to the eye
 # landmark; the first stripe containing a vertex wins.
@@ -685,7 +685,7 @@ def paint(obj, eye_z, cfg, band_verts=frozenset()):
             return "lips"
         return "skin"
 
-    # SKIN and LIPS go through the render grade (`SKIN_GRADE`); the hair does not —
+    # SKIN and LIPS go through the render grade (`hero_skin.SKIN_GRADE`); hair does not —
     # at 0.32 and below it is nowhere near the white point and darkening it further
     # would only close the gap the haircut is read by.
     colours = {"hair": palette["hair"], "lips": graded(palette["lips"]),

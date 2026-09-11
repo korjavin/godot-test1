@@ -36,11 +36,16 @@ const BOSS_TINT := Color(0.85, 0.4, 0.4)
 static var _boss_styled_cache: Dictionary = {}
 
 
-static func style(mat: BaseMaterial3D) -> void:
+static func style(mat: BaseMaterial3D, force_srgb: bool = false) -> void:
 	"""
 	THE CAST'S TOON RECIPE, and the one place it is written down.
 
 	@param mat: the material to style, in place.
+	@param force_srgb: opt in to the Compatibility sRGB correction below. The CAST
+		(`apply_to_mesh` / `apply_boss_to_mesh`) passes true; every caller that
+		styles a material of its own — the tower's batch material, and above all
+		the HQ's dossier PORTRAITS, which are a loose lossless `.png` and already
+		decode correctly — leaves it false and is unaffected.
 
 	It was typed out six times — twice here, once in `tower_shell.gd` and three
 	times in `tower_interior.gd` — so retuning the rim was six edits and the cast
@@ -60,22 +65,40 @@ static func style(mat: BaseMaterial3D) -> void:
 	mat.rim_enabled = true
 	mat.rim = 0.4
 	mat.rim_tint = 0.25
-	# THE COMPATIBILITY sRGB GAP (bead godot-test1-z3e.14). An albedo TEXTURE comes
-	# back about a gamma too bright under `gl_compatibility` — the renderer the web
-	# build ships — while Forward+ decodes it correctly; measured on Windman's face
-	# at one sitting: 28.0% of it over the clipping line on web against 0.0% on
-	# Forward+, and 0.0% on web the moment this flag is set. Setting it on BOTH
-	# renderers is wrong and was measured too: Forward+ then decodes twice and the
-	# same face falls to 0.339 mean luma from 0.622, i.e. dirt.
+	# THE COMPATIBILITY sRGB GAP (bead godot-test1-z3e.14, measured on Godot 4.5).
+	# An albedo TEXTURE that arrives EMBEDDED IN A `.glb` comes back about a gamma too
+	# bright under `gl_compatibility` — the renderer the web build ships — while
+	# Forward+ decodes the same bytes correctly. Measured on Windman's face: 28.0% of
+	# it over the clipping line on web against 0.0% on Forward+, and 0.00% on web the
+	# moment this flag is set.
 	#
-	# So it is gated, and this is the only renderer-conditional line in the cast's
-	# look. `get_rendering_device()` is null under Compatibility and an object under
-	# Forward+/Mobile — the engine's own way to ask. The flag does nothing at all to
-	# a material with no albedo texture, which today is EVERY predator, every tower
-	# surface and every generated hero part (all vertex colours, checked): the only
-	# meshes it reaches are Windman's and Primm's authored heads, the two assets in
-	# the game carrying a baked 512^2 albedo.
-	if RenderingServer.get_rendering_device() == null:
+	# IT IS NOT THE VRAM COMPRESSION, which was the first suspect and was tested:
+	# `import_etc2_astc=false` in project.godot plus a full re-import leaves the face
+	# at 28.04%, the same figure to two decimals. So the cause is upstream of anything
+	# this project configures, and this flag is the correction at the material.
+	#
+	# IT IS GATED THREE WAYS, and each gate has a measurement or a reason behind it:
+	#  * on the RENDERER, because setting it on Forward+ too means the texture is
+	#    decoded twice — the same face falls to 0.339 mean luma from 0.622, i.e.
+	#    dirt. `get_current_rendering_method()` asks the actual question;
+	#    `get_rendering_device() == null` would also be true under `--headless`,
+	#    which is how every self-check and all of CI run, on Forward+.
+	#  * on the CALLER, via `force_srgb` — the CAST opts in; the HQ's dossier
+	#    PORTRAITS do not. Those reach `style()` directly with a loose `.png` on a
+	#    different import path (`compress/mode=0`, no VRAM compression) and they are
+	#    UNSHADED art the owner has already accepted; nothing in this bead measured
+	#    them, and an unmeasured gamma on somebody else's picture is not a fix.
+	#  * on the MATERIAL, by the engine: the flag does nothing without an albedo
+	#    texture, which is every predator, every tower surface and every generated
+	#    hero part (all vertex colours, checked by walking the `.glb`s). So the only
+	#    meshes it reaches are Windman's and Primm's authored heads.
+	#
+	# IT IS A WORKAROUND, SO IT HAS AN EXPIRY: if a later Godot decodes that texture
+	# correctly under Compatibility, this line starts double-decoding and the two
+	# faces go dark on the web build with nothing to catch it. Re-take the number
+	# (`scripts/clipped_fraction.py`) on an engine upgrade, and delete this line if
+	# the engine is ever fixed instead.
+	if force_srgb and RenderingServer.get_current_rendering_method() == "gl_compatibility":
 		mat.albedo_texture_force_srgb = true
 
 
@@ -100,7 +123,8 @@ static func apply_to_mesh(mesh: MeshInstance3D) -> void:
 			var styled: BaseMaterial3D = _styled_cache.get(key)
 			if styled == null:
 				styled = mat.duplicate() as BaseMaterial3D
-				style(styled)
+				# The cast is where the textured hero heads are — see `style`.
+				style(styled, true)
 				_styled_cache[key] = styled
 			mesh.set_surface_override_material(surface, styled)
 
@@ -126,7 +150,7 @@ static func apply_boss_to_mesh(mesh: MeshInstance3D) -> void:
 			var styled: BaseMaterial3D = _boss_styled_cache.get(key)
 			if styled == null:
 				styled = mat.duplicate() as BaseMaterial3D
-				style(styled)
+				style(styled, true)
 				styled.albedo_color = styled.albedo_color * BOSS_TINT
 				_boss_styled_cache[key] = styled
 			mesh.set_surface_override_material(surface, styled)

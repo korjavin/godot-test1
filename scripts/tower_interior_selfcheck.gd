@@ -2936,6 +2936,20 @@ func _check_the_offices_are_furnished_and_still_walkable() -> void:
 					hero, int(size.x), int(size.y)])
 		if TowerInterior.portrait_material(hero) != TowerInterior.portrait_material(hero):
 			_fail("%s's portrait material is rebuilt per call — the texture is being copied" % hero)
+	# THE PORTRAITS DO NOT TAKE THE CAST'S sRGB CORRECTION (bead godot-test1-z3e.14).
+	# `ToonShading.style()` will force an albedo texture through an sRGB decode on the
+	# Compatibility renderer, because a hero head's EMBEDDED 512^2 albedo comes back a
+	# gamma too bright there — but a portrait is a loose, losslessly-imported `.png` on
+	# a different path, it is UNSHADED, and nobody has measured it. So the correction is
+	# opt-in and the portraits must never opt in. Asserted on a material of this
+	# check's own, because the flag is renderer-gated and a headless run would answer
+	# "false" for the shipped portraits whatever `style()` did to them.
+	var probe := StandardMaterial3D.new()
+	probe.albedo_texture = PlaceholderTexture2D.new()
+	ToonShading.style(probe)
+	if probe.albedo_texture_force_srgb:
+		_fail("ToonShading.style() forces sRGB by default — the HQ's portraits would be"
+				+ " decoded twice on the web build; the cast opts in, nobody else does")
 	print("tower interior: %d rooms dressed, %d corridor pieces, %d dressing boxes (%d solid), %d portraits hung" % [
 		dressed_rooms, hall_pieces, pieces, solids, frames.size()])
 	Sentinel.done("the_offices_are_furnished_and_still_walkable")
