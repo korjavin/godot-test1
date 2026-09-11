@@ -86,7 +86,9 @@ HERO_SCENES = {
 
 # The bead's height/feet assert. Ranges are MEASURED on this branch (2026-09-08),
 # not the bead's own rough guess, per CLAUDE.md ("the measured numbers ... live
-# next to the code"): windman 1.7536 m, primm 1.7931 m, teibi 1.7847 m, all inside
+# next to the code"): windman 1.7536 m, primm 1.7733 m (1.7931 before bead
+# godot-test1-z3e.5 gave him the authored head, whose crown sits 2 cm lower than
+# the generated sphere's hair cap), teibi 1.7847 m, all inside
 # the default band; phoboman measures 1.6344 m -- taller than the bead text's
 # offhand "~1.4-1.5", because bead godot-test1-z3e.7 (closing the neck gap,
 # merged after this bead was filed) raised its torso/head relative to its legs.
