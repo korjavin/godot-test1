@@ -1154,7 +1154,13 @@ def build(hero, shot=None):
 
     out_dir = os.path.join(OUT_ROOT, row["out_dir"])
     os.makedirs(out_dir, exist_ok=True)
-    obj.name = hero.capitalize()
+    # THE MESH DATABLOCK IS NAMED TOO, and that is not tidiness: glTF writes the
+    # datablock name into the file, `clear_scene()` unlinks OBJECTS and leaves the
+    # meshes behind, and MPFB2 calls every one of them `base` — so in an `--all`
+    # run the second and third heroes export as `base.001` and `base.002` while a
+    # single-hero rebuild of either exports as `base`, four JSON bytes shorter, and
+    # the manifest's byte size would then depend on which order someone built in.
+    obj.name = obj.data.name = hero.capitalize()
     armature.name = armature.data.name = "Armature"
     glb = os.path.join(out_dir, row["stem"] + ".glb")
     tris, size = export_glb(obj, armature, glb, sharp=flat_faces)
