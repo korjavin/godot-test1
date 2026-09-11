@@ -46,8 +46,8 @@ change and its regenerated `.glb` go in the same commit. `scripts/predator_parts
 the shared toolkit and the contract every enemy mesh must honour; `export_faceted()`
 there is the one export seam for every generated `.glb` (heroes included) — read its
 docstring before touching it; an authored part lives beside its `PROVENANCE.md` row and
-is never written by a generator. **Teibi and Windman are the exceptions: authored and
-skinned** — one mesh apiece on a 23-bone MakeHuman rig, source of record
+is never written by a generator. **Teibi, Windman and Primm are authored and
+skinned** — one mesh each on a 23-bone MakeHuman rig, source of record
 `scripts/build_hero.py` (Blender + MPFB2, run by hand, outside the CI rebuild gate).
 `generate_windman_separate.py` is down to his FAN, which `windman_updated.tscn` hangs
 on the `hand_r` bone with a `BoneAttachment3D`.

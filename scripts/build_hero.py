@@ -25,6 +25,10 @@ WHAT A ROW IS (and where each half of it came from):
                     no seam, no second material.
   bands             the joint-height overrides a bone cannot express: belt, cuff,
                     collar. A row lists the ones it wears.
+  dressing          one hero's OWN garment, as a callable `paint_body` runs after
+                    those bands: Primm's open lab coat (`_primm_coat` — the V of
+                    inner shirt, the silver seams, the rolled sleeve, the boot
+                    shaft). A band worn by one hero is not a band, it is his coat.
   band + stripes    eyewear. `band` makes it CLOTH (`spike_z3e_head.wrap_band`,
                     bead z3e.13's Windman bandage, imported not copied);
                     `stripes` alone paints it on the skin (Primm's goggles).
@@ -216,6 +220,112 @@ def _face_palette(hero):
     return dict(face.HEROES[hero]["palette"])
 
 
+# ---------------------------------------------------------------------------
+# PRIMM'S LAB COAT — bead godot-test1-5u3.6, and the first row whose dressing is
+# not three bands. `docs/characters/primm.md`: "Sleek lab-coat-style jacket, dark
+# purple with silver trims along seams. Jacket is slightly open at the front,
+# showing a black inner shirt with faint glowing blue lines forming a subtle
+# geometric pattern. Sleeves slightly rolled up, ending just above wrists ...
+# Dark blue fitted trousers ... tucked into boots ... Black, medium height, with
+# subtle silver accents ... Gloves: black with silver fingertips."
+#
+# THE GLOWING LINES ARE VERTEX COLOUR AND NOT EMISSION. The owner's ruling for
+# this epic is "yes, vertex colours"; the cast path's `DIFFUSE_TOON` has no
+# emission channel to spare and a 512^2 albedo for two hairlines is the texture
+# cap spent on nothing. A bright cyan against near-black reads as a glow at 3 m,
+# which is the distance the acceptance is judged at.
+#
+# EVERY NUMBER IS A HEIGHT, because a height is the only frame `paint_body` has:
+# the mesh arrives reframed (heels on z = 0, scaled to the row's `height`) and the
+# arms still stand in MakeHuman's A-pose, so a sleeve hem is a z band exactly as
+# the belt and the cuff are. A z band also survives the decimate, which a vertex
+# index would not.
+#
+# AND EVERY NUMBER IS AT LEAST 3 CM, WHICH IS WHAT THIS MESH CAN DRAW. The body
+# collapses to 8,200 triangles — about 3,000 vertices over a whole human, one per
+# ~3 cm — and a vertex colour is Gouraud-interpolated across the triangle, so a
+# band narrower than that vertex spacing does not become a thin line: it becomes a
+# scatter of lit vertices smeared over their whole one-ring. Measured 2026-09-12
+# on the first build of this row: a 1.6 cm silver seam took 5 of 3,000 vertices
+# and rendered as pale blotches on the chest and hips, and a 13 cm-wide V-panel
+# took 33 and rendered as a smudge. The rewrite below is the same coat drawn with
+# the only instruments this density has — RINGS that close all the way round, and
+# AREAS big enough to have an interior. `docs/style/z3e/primm_skinned_shipped.png`
+# is the before/after.
+PRIMM_V_DROP = 0.34       # how far the open front falls below the collar
+PRIMM_V_HALF = 0.10       # half-width of the V at the top; it tapers to 0
+PRIMM_V_EDGE = 0.022      # the glowing line: the outer part of the V's width
+PRIMM_TRIM = 0.026        # how wide a silver seam is — one vertex ring, closed
+PRIMM_SLEEVE = 0.04       # the rolled sleeve ends this far ABOVE the wrist
+PRIMM_BOOT_TOP = 0.28     # medium boots: the shaft rim, above the floor
+PRIMM_FINGERS = 0.035     # the silver fingertips, off the lowest glove vertex
+
+
+def _primm_coat(v, key, in_torso, ctx):
+    """The `dressing` callable for the `primm` row: one vertex in, one palette key
+    out, run by `paint_body` after its own three bands have had their say.
+
+    Ordered from the hem up, because the tests are disjoint and the reader should
+    be able to stop at the first one that matches.
+    """
+    ck = ctx["key"]
+    z = v.co.z
+
+    # THE BOOT. The `shoes` region is only foot + ball — a bare MakeHuman ankle —
+    # so the shaft is the bottom of the CALF repainted, with a silver band at the
+    # rim. The rim is also where `paint_body`'s 6 mm shoe shell stops, so the band
+    # sits on a real step in the silhouette rather than on flat paint.
+    if key == ck["trousers"] and z <= PRIMM_BOOT_TOP:
+        return ck["trim"] if z >= PRIMM_BOOT_TOP - PRIMM_TRIM else ck["shoes"]
+
+    # THE ROLLED SLEEVE: the jacket stops 4 cm above the wrist over a silver seam,
+    # and bare forearm shows below it. Scoped to the forearm so the same z band on
+    # the thigh is untouched; the gloves are their own region and never come here.
+    if key == ck["shirt"]:
+        for side in ("l", "r"):
+            if _group_weight(v, ctx["scope"]["lowerarm_" + side]) <= 0.4:
+                continue
+            hem = ctx["wrist_z"][side] + PRIMM_SLEEVE
+            if z < hem:
+                return ck["skin"]
+            if z < hem + PRIMM_TRIM:
+                return ck["trim"]
+
+    # THE SILVER FINGERTIPS, measured off the lowest glove vertex. The bead asked
+    # for them on the `*_03` finger BONES; those were folded into `hand_*` by the
+    # owner's "cut them" ruling (`cut_fingers`), so the tips are a geometric band
+    # like every other band here. The hand hangs down in the A-pose, so the lowest
+    # glove vertex IS a fingertip.
+    if key == ck["gloves"]:
+        if "tip_z" not in ctx:
+            ids = ctx["region"]["gloves"]
+            ctx["tip_z"] = min((w.co.z for w in ctx["me"].vertices
+                                if _group_weight(w, ids) > 0.5), default=0.0)
+        return ck["trim"] if z <= ctx["tip_z"] + PRIMM_FINGERS else key
+
+    if not in_torso:
+        return key
+
+    # THE JACKET HEM — a silver seam at the pelvis, which is where a lab coat cut
+    # for a runner ends. This row wears no belt: the generator's was its own
+    # invention and the canon has none.
+    if abs(z - ctx["pelvis_z"]) <= PRIMM_TRIM * 0.5:
+        return ck["trim"]
+
+    # THE OPEN FRONT: a V of black inner shirt down the chest, OUTLINED in the
+    # glowing cyan. `half` tapering to zero is what makes it a V and not a stripe,
+    # and outlining it is what makes the "faint glowing blue lines forming a subtle
+    # geometric pattern" a shape this mesh can hold — a line ACROSS the panel is
+    # three vertices long, the V's own edge is forty and runs the whole chest.
+    top = ctx["neck_z"] - 0.04
+    if v.co.y <= 0.0 or not (top - PRIMM_V_DROP <= z <= top):
+        return key
+    half = PRIMM_V_HALF * (z - (top - PRIMM_V_DROP)) / PRIMM_V_DROP
+    if abs(v.co.x) > half:
+        return key
+    return ck["line"] if abs(v.co.x) > half - PRIMM_V_EDGE else ck["panel"]
+
+
 HEROES = {
     "teibi": {
         # docs/characters/tiebi.md: ordinary man, medium build, calm friendly
@@ -335,26 +445,50 @@ HEROES = {
         "macros": _face_row("primm")[0],
         "targets": _face_row("primm")[1],
         # generate_primm_separate.py's `self.colors`, verbatim and UNGRADED, plus
-        # the spike's `lips`. The coat's silver trims and the black V-panel with its
-        # cyan lines are NOT here: they are bead 5u3.6's call, and neither is a bone
-        # region or a joint-height band.
+        # the spike's `lips` — and, from bead 5u3.6, the three the coat itself
+        # needs. The generator's `belt_black`/`belt_buckle`/`cuff_grey` left with
+        # the belt and the cuff (see `bands` below): the canon dresses him in an
+        # open lab coat with rolled sleeves, not a shirt tucked into a belt.
         "colours": dict(_face_palette("primm"), **{
             "coat_purple": (0.30, 0.15, 0.44, 1.0),
             "coat_collar": (0.25, 0.12, 0.37, 1.0),
-            "cuff_grey":   (0.62, 0.68, 0.74, 1.0),
             "glove_black": (0.06, 0.06, 0.07, 1.0),
-            "belt_black":  (0.05, 0.05, 0.06, 1.0),
-            "belt_buckle": (0.70, 0.72, 0.76, 1.0),
-            "jeans_navy":  (0.10, 0.11, 0.17, 1.0),
-            "boots_black": (0.07, 0.07, 0.08, 1.0),
+            # THE ONE GENERATOR COLOUR THIS ROW MOVES, and it is moved to be seen:
+            # the generator's (0.10, 0.11, 0.17) trouser is within a hair of its own
+            # (0.07, 0.07, 0.08) boot, which was fine when the boot was a separate
+            # part with its own silhouette and is not fine now that the boot is the
+            # bottom of the same leg. Still "dark blue fitted trousers", two stops
+            # up, so the black shaft has something to be black against.
+            "jeans_navy":  (0.15, 0.17, 0.29, 1.0),
+            "boots_black": (0.05, 0.05, 0.06, 1.0),
+            # "silver trims along seams", "subtle silver accents", "silver
+            # fingertips" — ONE silver, because they are one material, and a DARK
+            # one, and a DARK one — this field is not read as a colour on screen,
+            # it is read through the cast's own exposure. Measured 2026-09-12 in
+            # shot 18 on the web renderer across three builds: (0.76, 0.79, 0.84)
+            # and (0.40, 0.43, 0.49) BOTH clip to flat white, because the scene
+            # lifts an albedo by roughly two stops before DIFFUSE_TOON quantises it
+            # — the same clip that ate 3.4 cm of Primm's goggle band in bead z3e.5.
+            # A fifth of the way up is what lands as metal in that frame.
+            "trim_silver": (0.20, 0.22, 0.27, 1.0),
+            "panel_black": (0.04, 0.04, 0.05, 1.0),
+            # The "faint glowing blue lines": vertex colour, not emission. Bright
+            # enough against `panel_black` to read as a glow at 3 m.
+            "line_cyan":   (0.20, 0.66, 0.82, 1.0),
         }),
         "bone_regions": {"hand_l": "gloves", "hand_r": "gloves"},
         "colour_key": {"skin": "skin", "shirt": "coat_purple",
                        "trousers": "jeans_navy", "shoes": "boots_black",
-                       "gloves": "glove_black",
-                       "belt": "belt_black", "belt_buckle": "belt_buckle",
-                       "cuff": "cuff_grey", "collar": "coat_collar"},
-        "bands": ("belt", "cuff", "collar"),
+                       "gloves": "glove_black", "collar": "coat_collar",
+                       # `_primm_coat`'s own three, on the same dictionary because
+                       # a key is a key and `paint_body` resolves them all alike.
+                       "trim": "trim_silver", "panel": "panel_black",
+                       "line": "line_cyan"},
+        # ONLY THE COLLAR of the three shared bands. The belt is gone (a lab coat
+        # has none) and the cuff with it (the sleeve now ends 4 cm above the wrist,
+        # which is `_primm_coat`'s job and a different band entirely).
+        "bands": ("collar",),
+        "dressing": _primm_coat,
         # THE GOGGLES ARE PAINT, not cloth — no `band` key. The spike's own ruling:
         # a lens is not a wrap, and stripes on the skin are what shipped.
         "stripes": face.HEROES["primm"]["stripes"],
@@ -815,6 +949,14 @@ def paint_body(obj, tj, row, band_verts=frozenset()):
                - (tj["%s-shoulder" % s].z - tj["%s-elbow" % s].z) * 0.85
                for s in ("l", "r")}
 
+    # A ROW MAY DRESS ITSELF FURTHER (bead godot-test1-5u3.6). The three bands
+    # above are the ones every generator in this game wore; a garment that is ONE
+    # hero's — Primm's open lab coat — belongs to that hero's own callable rather
+    # than to this chain, which would otherwise grow a clause per hero.
+    dressing = row.get("dressing")
+    ctx = {"me": me, "key": colour_key, "region": region_ids, "scope": scope_ids,
+           "pelvis_z": pelvis_z, "neck_z": neck_z, "wrist_z": wrist_z}
+
     per_vert = [None] * len(me.vertices)
     for i, v in enumerate(me.vertices):
         region = max(region_ids, key=lambda r: _group_weight(v, region_ids[r]))
@@ -832,7 +974,7 @@ def paint_body(obj, tj, row, band_verts=frozenset()):
         elif ("collar" in bands and in_torso
               and neck_z - 0.03 <= v.co.z <= neck_z + 0.015):
             key = colour_key["collar"]
-        per_vert[i] = key
+        per_vert[i] = dressing(v, key, in_torso, ctx) if dressing else key
 
     # THE HEAD REGION: eyewear, lips, eyebrows, hair — spike_z3e_head.py's paint(),
     # position-relative-to-the-eye-line rather than by skinning weight.
