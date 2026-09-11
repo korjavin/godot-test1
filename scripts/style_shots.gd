@@ -650,7 +650,7 @@ func _pose_skinned(player: Node3D, t: float) -> void:
 
 	# The bob stays on the `Body` node, exactly where the sine rig puts it —
 	# that is the node the landing squash and `capture_rest_pose` already own.
-	var body := player.character_instances[_hero_index(player)].get_node_or_null("Body")
+	var body: Node = player.character_instances[_hero_index(player)].get_node_or_null("Body")
 	if body is Node3D:
 		(body as Node3D).position.y = sin(tf * 2.0) * float(gait["bob"])
 
@@ -716,6 +716,15 @@ func _shoot_body(terrain: Node, player: Node3D, at: Vector3, name: String,
 		_head_pose_settled = true
 		await get_tree().process_frame
 
+	# RE-ASSERT THE HERO WITH THE TICKS ALREADY OFF. The settle above is a LIVE
+	# window and a `captures_hero` grab jails whoever is active and auto-switches
+	# — the `set_active_character` inside the block is followed by YAW_SECONDS and
+	# a `_measure()` of live frames, which is plenty. MEASURED on bead 5u3.1: one
+	# 10.5 s settle logged three switches and framed WINDMAN in a `hero=teibi`
+	# column. Here nothing can move it, and it is a no-op when the settle was
+	# uneventful or was paid by shot 17.
+	player.set_active_character(_hero_index(player))
+
 	# BOTH body shots write the animation clock, not just the stride one. The
 	# settle above is a LIVE window: a predator that reaches the hero in it taxes
 	# a coin and respawns in place, and the walk cycle then freezes wherever the
@@ -771,17 +780,28 @@ func _shoot_body_strip(player: Node3D, name: String) -> void:
 	if not _head_pose_settled:
 		push_error("[SHOTS] " + name + " needs a settled pose — run it after 18/19")
 		return
-	# One full stride is 2*PI of `time_factor = animation_time * stride_rate`.
+	# ONE CAMERA FOR ALL SIX FRAMES, and the world PAUSED around them. The single
+	# shots get away with building a camera per shot because each is judged alone;
+	# a strip is judged as a sequence, and anything that moves between its frames
+	# reads as part of the motion. MEASURED on this bead, with a camera rebuilt per
+	# frame off `player.global_transform` and the tree still running: the six
+	# frames came back from six different angles (one dead side-on) with chunks
+	# popping in behind — `set_physics_process(false)` stops the controller, not the
+	# tweens that can still turn the body, and not the chunk queue. `PauseHub` is
+	# the only sanctioned writer of `tree.paused` (CLAUDE.md); `process_frame` and
+	# `frame_post_draw` both still fire while it holds, which is all this needs.
 	var period: float = TAU / float(PlayerAnimation.gait_for(_hero)["stride_rate"])
+	var cam := _body_camera(player)
+	PauseHub.take(self)
 	for frame in STRIP_FRAMES:
 		_pose_walk(player, period * float(frame) / float(STRIP_FRAMES))
-		var cam := _body_camera(player)
 		await get_tree().process_frame
 		await get_tree().process_frame
 		await RenderingServer.frame_post_draw
 		var img := get_viewport().get_texture().get_image()
 		img.save_png("%s/%s_%d.png" % [_out_dir, name, frame])
-		cam.queue_free()
+	PauseHub.release(self)
+	cam.queue_free()
 	print("[SHOTS] wrote ", STRIP_FRAMES, " frames of ", name, " over ",
 			"%.3f s" % period, " hero=", _hero, " body=", _body_variant,
 			" anim=", _anim if _anim != "" else "sine")
