@@ -16,7 +16,10 @@ extends RefCounted
 ## It is a `class_name`d library of STATIC functions that RECEIVES the terrain as
 ## its first argument and calls `terrain.create_box` / `terrain._road_station`
 ## back through the reference — the `terrain_landmarks.gd` / `coin_road.gd`
-## idiom, and the eighth family to be written in it. Read that file's banner
+## idiom, and the tenth family to be written in it (after `terrain_altitude`,
+## `terrain_biomes`, `terrain_bridges`, `terrain_features`, `terrain_landmarks`,
+## `terrain_predators`, `terrain_props`, `terrain_structures` and `coin_road`).
+## Read that file's banner
 ## first; everything below is a departure from it or a copy of it.
 ##
 ## ----------------------------------------------------------------------------
@@ -156,6 +159,13 @@ const WAYPOINT_DOOR_STANDOFF: float = 8.0
 ## this many stations east and asks again, at most this many times. Both numbers
 ## are deterministic and neither is a draw: the re-walk is the same table read
 ## with a different index.
+##
+## THE TRY BUDGET IS AN UPPER BOUND AND THE TERMINAL IS THE REAL ONE. A step is
+## `WAYPOINT_RIVER_STEP` stations at `road_coin_spacing` (6 m), so ~60 m of X, and
+## the walk stops at `_road_terminal_k()` — so a slot near T has fewer distinct
+## stations to try than this number says (`road_3` targets 1350 against a terminal
+## at ~1450: three, not twelve). `_road_site` breaks out rather than re-testing a
+## pinned station. Retuning `WAYPOINT_SPACING` or the step changes that shape.
 const WAYPOINT_RIVER_STEP: int = 10
 const WAYPOINT_RIVER_TRIES: int = 12
 
@@ -313,8 +323,19 @@ static func _road_site(terrain: Node3D, id: String, target_x: float) -> Dictiona
 	var terminal: int = terrain._road_terminal_k()
 	var k: int = terrain._road_first_k_at_or_after_x(target_x)
 	var tries: int = 0
+	# The last station actually tested. Once the clamp has pinned the walk at the
+	# terminal, every further try would re-test that same station and answer the
+	# same way — `road_3` targets x = 1350 and the terminal is at ~1450, so only
+	# about three of the twelve tries are distinct stations and the other nine are
+	# dead work that reads as if it could still find something. Stopping on a
+	# repeat is semantically identical (the degrade below returns that same
+	# station) and it is what makes the budget's real shape visible.
+	var tested: int = -0x7FFFFFFF
 	while tries < WAYPOINT_RIVER_TRIES:
 		k = mini(k, terminal)
+		if k == tested:
+			break
+		tested = k
 		var station: Dictionary = terrain._road_station(k)
 		var centre: Vector2 = station.center
 		if not terrain.is_river_at(Vector3(centre.x, 0.0, centre.y)):

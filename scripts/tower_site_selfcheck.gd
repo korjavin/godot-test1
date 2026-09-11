@@ -41,10 +41,12 @@ extends SceneTree
 ##
 ## And ONE AUTHORED THING IS ALLOWED INSIDE THE DISC (epic godot-test1-sc6): the
 ## HQ door's waypoint circle, which is `tower_site()` plus a constant and is the
-## first entry in the owner's own list of teleport places. Check 4 steps over the
-## "waypoint" group in its node walk AND asserts, separately, that the only circle
-## standing in the disc is index 0 — so the exemption is one named site rather
-## than a gap a future spawner could drift into.
+## first entry in the owner's own list of teleport places. The exemption is
+## INDEX 0 alone, never the group: check 4 steps over that one marker in its node
+## walk AND asserts, separately, that the only circle standing in the disc is
+## index 0 — so it is one named site rather than a gap a future spawner could
+## drift into, and the other ten circles stay in checks 5 and 6's digest where
+## one of them is the witness that a road waypoint does not move with the tower.
 ##
 ## The "RID allocations … were leaked at exit" lines after the verdict are the
 ## engine reporting this project's deliberate static shared caches. They are not a
@@ -455,7 +457,8 @@ func _collect(node: Node, out: Array) -> void:
 			continue
 		if child is StaticBody3D and child.name != "BlockCollision":
 			continue
-		# THE HQ'S WAYPOINT CIRCLE, and its whole subtree (epic godot-test1-sc6).
+		# THE HQ'S WAYPOINT CIRCLE — index 0 ONLY, and its whole subtree (epic
+		# godot-test1-sc6).
 		# The disc keeps PROCEDURAL content off the site; waypoint 0 is AUTHORED to
 		# stand at this door — it is `terrain.tower_site()` plus a constant, and the
 		# owner's own list of places begins "the HQ door". A ring that obeyed the
@@ -472,7 +475,17 @@ func _collect(node: Node, out: Array) -> void:
 		# It also matters to checks 5 and 6: waypoint 0 MOVES with the tower, so
 		# leaving it in the digest would make a near chunk differ for a reason that
 		# has nothing to do with the exclusion those checks measure.
-		if child.is_in_group("waypoint"):
+		#
+		# INDEX 0 AND NOT THE GROUP, which is the whole of the condition below.
+		# The other ten circles do NOT move with the tower, and one of them is a
+		# witness those checks want: the "spawn" circle's marker lands in chunk
+		# (0, 0), inside check 5's `far` set, and because the ring's boxes are
+		# `collide = false` and the MultiMesh is deliberately not walked, that bare
+		# marker is the ONLY thing in the digest saying a non-HQ waypoint is
+		# independent of `tower_site()`. `WAYPOINT_APPROACH_X`'s own comment names
+		# this check as its guard, so skipping the group wholesale would quietly
+		# retire it. (Found by revmux round 2 of PR #364.)
+		if child.is_in_group("waypoint") and int(child.get_meta("index", -1)) == 0:
 			continue
 		if child is Node3D and not _is_container(child):
 			out.append([(child as Node3D).global_position, label])

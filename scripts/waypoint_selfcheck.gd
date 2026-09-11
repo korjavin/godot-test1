@@ -33,7 +33,7 @@ extends SceneTree
 ##      circle is in a river band or inside the Budapest rect; every city circle
 ##      is inside the rect, dry, off both `PLATEAUS`, outside every `SLOTS` disc, outside every
 ##      `block_wing()` it could reach and on a street line; the HQ circle is
-##      outside the shell's outer wall and within 12 m of the door trigger. Three
+##      outside the shell's outer wall and within 12 m of the door trigger. FOUR
 ##      MUTATION CONTROLS drive the same predicates with a deliberately illegal
 ##      point each, because "no site was wet" is also what a predicate that
 ##      always answers false looks like.
@@ -62,6 +62,13 @@ const CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
 ## road moves with `run_seed`, so one world proves nothing about the rule and
 ## only about that world.
 const SEEDS: Array[int] = [20260904, 777, 4242]
+
+## Seeds check 1's cache-warmth control sweeps for a road station that is WET —
+## the one shape that tells the two clamps apart. The three above deliberately are
+## not it: every waypoint target on them is dry, which is why check 3 passes on
+## them and why the control needs its own list. It stops at the first seed that
+## yields one, so this is a search space and not a sample.
+const CONTROL_SEEDS: Array[int] = [20260904, 777, 4242, 1, 424242, 999983, 750, 99, 106]
 
 ## What `waypoint_sites()` must return in every world, in order: the HQ door, its
 ## approach, the spawn, the road slots and the city's five. ELEVEN is the owner's
@@ -122,6 +129,58 @@ func _fail(message: String) -> void:
 	_failures.append(message)
 
 
+func _code_only(body: String) -> String:
+	"""
+	`body` with its docstring and its comment lines removed, so a text assertion
+	measures what the function DOES rather than what it says about itself.
+
+	A GDScript docstring is a `\"\"\"` block; this toggles on the line that opens one
+	and off on the line that closes it (a one-line `\"\"\"x\"\"\"` toggles twice and is
+	dropped), then drops anything whose first non-space character is `#`. Trailing
+	`#` comments on a statement line are left alone — they belong to the statement,
+	and a forbidden name hiding in one is worth failing on.
+	"""
+	var out := ""
+	var in_doc := false
+	for line: String in body.split("\n"):
+		var stripped := line.strip_edges()
+		var fences := stripped.count("\"\"\"")
+		if in_doc:
+			if fences > 0:
+				in_doc = false
+			continue
+		if fences > 0:
+			in_doc = fences % 2 == 1
+			continue
+		if stripped.begins_with("#"):
+			continue
+		out += line + "\n"
+	return out
+
+
+func _function_body(source: String, name: String) -> String:
+	"""
+	The lines of `func <name>(...)` up to the next top-level `func` — the crude
+	reader `landmark_sites_selfcheck` and `scarcity_selfcheck` both use, and for the
+	same reason: GDScript's one-function-per-column-0-`func` layout is the whole
+	grammar this needs. It matches `static func` too, which is not optional here —
+	every function in `terrain_waypoints.gd` is static, and a reader that only knew
+	`func ` would return "" and pass for the wrong reason.
+	"""
+	var out := ""
+	var inside := false
+	for line: String in source.split("\n"):
+		if line.begins_with("func " + name + "(") \
+				or line.begins_with("static func " + name + "("):
+			inside = true
+			continue
+		if inside:
+			if line.begins_with("func ") or line.begins_with("static func "):
+				break
+			out += line + "\n"
+	return out
+
+
 func _terrain(terrain_script: GDScript, seed_value: int) -> Node3D:
 	"""
 	A REAL terrain in the tree on `seed_value`, with the crocodile scene check 2
@@ -162,8 +221,8 @@ func _check_determinism(terrain_script: GDScript) -> void:
 		var sites: Array[Dictionary] = TerrainWaypoints.waypoint_sites(terrain)
 		var again: Array[Dictionary] = TerrainWaypoints.waypoint_sites(terrain)
 		if var_to_bytes(sites) != var_to_bytes(again):
-			_fail("seed %d: waypoint_sites() asked twice gave two different tables — "
-					% seed_value + "something in it is not a pure function of the run")
+			_fail("seed %d: waypoint_sites() asked twice in a row gave two different tables"
+					% seed_value)
 		if sites.size() != EXPECTED_IDS.size():
 			_fail("seed %d: %d waypoints, wanted %d — the mask width is not allowed to "
 					% [seed_value, sites.size(), EXPECTED_IDS.size()]
@@ -196,9 +255,122 @@ func _check_determinism(terrain_script: GDScript) -> void:
 						% [SEEDS[0], seed_value]
 						+ "sites are not reading the seeded station cache at all")
 		terrain.free()
+	_check_cache_warmth_cannot_move_a_site(terrain_script)
 	print("  %d sites, stable ids and indices on %d seeds; the road moves with the seed, "
-			% [EXPECTED_IDS.size(), SEEDS.size()] + "the HQ does not")
+			% [EXPECTED_IDS.size(), SEEDS.size()]
+			+ "the HQ does not, and a warm station cache moves nothing")
 	Sentinel.done("determinism")
+
+
+func _check_cache_warmth_cannot_move_a_site(terrain_script: GDScript) -> void:
+	"""
+	THE REGRESSION CONTROL FOR THE WET RE-WALK, and the only assertion in this file
+	that can see the defect revmux found in round 1 of PR #364.
+
+	`_road_site` used to clamp its walking index against `terrain.road_k_max` — the
+	high-water mark of whatever chunks had streamed — instead of against
+	`_road_terminal_k()`. That made a road circle a function of WHEN it was asked:
+	cold, the walk stopped at the cache frontier just past T; warm, it kept going
+	east. Everything else in this file is blind to it. The two calls above run at
+	IDENTICAL cache warmth (the first one's own `_road_extend_to_x` is what warms
+	it, and the second grows it no further), so they agree under either clamp;
+	check 2 compares chunk signatures, check 3 reads one table per seed, and check
+	4 takes the table before it builds anything.
+
+	TWO HALVES, AND ONLY THE FIRST ONE IS DECISIVE. That is stated plainly because
+	the behavioural half was written first and MEASURED not to catch it:
+
+	  a. THE TEXT. `_road_site`'s body may not mention `road_k_max` at all. It is
+	     the `landmark_sites_selfcheck` check-4 idiom — read the function, refuse
+	     the thing it must not touch — and it is the half that reds the moment the
+	     old clamp comes back. It cannot pass vacuously: a body that cannot be
+	     found fails by name.
+	  b. THE BEHAVIOUR. Ask `_road_site` about a station that is WET at the nominal
+	     target, once against a COLD cache and once against one warmed far east of
+	     the terminal; the answers must be the same metre, and neither may lie east
+	     of the terminal station. MUTATION-TESTED, and it did NOT fail on the old
+	     code: reproducing the divergence needs a river still wet 60 m short of T,
+	     and none of the seeds swept has one — a wet band anywhere else is cleared
+	     in one step, long before either clamp binds. So this half is a general
+	     guard against any future read of mutable cache state in this family, not
+	     the regression control for the fix that prompted it. Half (a) is.
+
+	A WET STATION HAS TO BE FOUND, not assumed — the three CI seeds run their road
+	through dry ground at every waypoint target, which is exactly why check 3
+	passes. `CONTROL_SEEDS` is swept for one, closest to the terminal first, and a
+	sweep that finds none FAILS rather than passing quietly: a control nobody can
+	run is not a control.
+	"""
+	var source: String = FileAccess.get_file_as_string(SOURCE_SCRIPTS[0])
+	# CODE ONLY. `_road_site`'s docstring NAMES `road_k_max` — it is the whole
+	# argument for why the clamp is the terminal — so a raw text scan would fail on
+	# the explanation of the fix. `_code_only` drops the docstring and the comments
+	# and leaves the statements, which is what the assertion is about.
+	var body: String = _code_only(_function_body(source, "_road_site"))
+	if body.strip_edges().is_empty():
+		_fail("no `_road_site` in %s — check 1's text control now measures nothing"
+				% SOURCE_SCRIPTS[0])
+	elif body.contains("road_k_max"):
+		_fail("`_road_site` reads `road_k_max` — that is the station cache's high-water "
+				+ "mark, a fact about which chunks have streamed, so a site clamped "
+				+ "against it is a function of when it was asked. `_road_terminal_k()` "
+				+ "is the bound that is a fact about the world")
+	for seed_value: int in CONTROL_SEEDS:
+		var cold := _terrain(terrain_script, seed_value)
+		# Warm exactly as `waypoint_sites()` does, then look for a wet station on
+		# the stretch a road waypoint can actually be asked about.
+		cold._road_extend_to_x(TerrainWaypoints.WAYPOINT_APPROACH_X, cold.ROAD_TERMINAL_X)
+		var terminal: int = cold._road_terminal_k()
+		# SCANNED BACKWARD FROM THE TERMINAL, which is the whole point: the two
+		# clamps only tell each other apart when the re-walk would cross T, so the
+		# control wants the wet station CLOSEST to the terminal, not the first one
+		# east of the spawn. A wet station 1,300 m short of T resolves long before
+		# either clamp binds and would make this pass under both.
+		var wet_x: float = INF
+		var west: int = cold._road_first_k_at_or_after_x(0.0)
+		for k in range(terminal - 1, west, -1):
+			var c: Vector2 = cold._road_station(k).center
+			if cold.is_river_at(Vector3(c.x, 0.0, c.y)):
+				wet_x = c.x
+				break
+		if is_inf(wet_x):
+			cold.free()
+			continue
+		var cold_terminal_x: float = cold._road_station(terminal).center.x
+		var cold_pos: Vector3 = TerrainWaypoints._road_site(cold, "probe", wet_x)["pos"]
+		cold.free()
+
+		var warm := _terrain(terrain_script, seed_value)
+		warm._road_extend_to_x(TerrainWaypoints.WAYPOINT_APPROACH_X, warm.ROAD_TERMINAL_X)
+		# A frontier far east of the terminal — what an hour of walking toward
+		# Budapest leaves behind, and what the old clamp read as permission.
+		warm._road_extend_to_x(TerrainWaypoints.WAYPOINT_APPROACH_X, warm.ROAD_TERMINAL_X * 3.0)
+		var warm_pos: Vector3 = TerrainWaypoints._road_site(warm, "probe", wet_x)["pos"]
+		warm.free()
+
+		if cold_pos != warm_pos:
+			_fail("seed %d: a road circle whose target station is wet lands at %s on a cold "
+					% [seed_value, str(cold_pos)]
+					+ "station cache and at %s on a warm one — the re-walk is reading "
+					% str(warm_pos) + "road_k_max, which is a fact about this moment")
+		# AND NEITHER ANSWER MAY LEAVE THE ROAD. The terminal station is the last
+		# one at or west of ROAD_TERMINAL_X, and past it no spawner keeps a road
+		# clearance and the Budapest rect begins — so a walk that ran off the end
+		# is the second half of the same defect, and this is the half that does not
+		# depend on the two legs disagreeing.
+		for leg: Array in [[cold_pos, "cold"], [warm_pos, "warm"]]:
+			var at: Vector3 = leg[0]
+			if at.x > cold_terminal_x:
+				_fail("seed %d: the wet re-walk walked a circle to x %.1f on a %s cache, past "
+						% [seed_value, at.x, String(leg[1])]
+						+ "the road's terminal station at %.1f — east of T nothing keeps a "
+						% cold_terminal_x + "road clearance and the city authors its own")
+		print("    the wet re-walk answers %s cold and warm, west of the terminal at %.0f "
+				% [str(cold_pos), cold_terminal_x] + "(seed %d, target x %.0f)"
+				% [seed_value, wet_x])
+		return
+	_fail("no seed in CONTROL_SEEDS runs its road through water west of the terminal, so the "
+			+ "wet re-walk's cache-warmth control cannot run — widen CONTROL_SEEDS")
 
 
 # ============================================================================
@@ -356,7 +528,7 @@ func _check_legality(terrain_script: GDScript) -> void:
 	door trigger, so it is the thing you stand on when you come out of the
 	building rather than a circle round the back of it.
 
-	THREE MUTATION CONTROLS, each driving one of those predicates with a
+	FOUR MUTATION CONTROLS, each driving one of those predicates with a
 	deliberately illegal point, because a predicate that always answers false
 	would make every assertion above pass in silence.
 	"""
@@ -410,9 +582,25 @@ func _check_legality(terrain_script: GDScript) -> void:
 	if _wing_gap(wing.get_center()) > 0.0:
 		_fail("check 3's wing control — the centre of a real block_wing rect — measures a "
 				+ "positive gap to that wing, so the city sites' facade test is vacuous")
+	# THE HILL CONTROL, and it is the one this check most needs. `_plateau_gap` is
+	# the only predicate in check 3 that does not go through a shipped function —
+	# it reads the `PLATEAUS` const and re-derives rect distance — so an emptied or
+	# restructured table would make its loop iterate nothing and pass every circle
+	# in silence. A point inside Castle Hill is also a point every OTHER assertion
+	# here waves through: it is dry, outside every SLOTS disc, on a street line,
+	# and `_wing_gap` answers INF because `block_buildable()` refuses plateau cells
+	# and the sweep skips them. (Found by revmux round 2 of PR #364.)
+	var hill: Rect2 = (BudapestPlan.PLATEAUS[0] as Dictionary)["rect"]
+	if _plateau_gap(hill.get_center()) > 0.0:
+		_fail("check 3's hill control — the centre of a real PLATEAUS rect — measures a "
+				+ "positive gap to that plateau, so the city sites' hill test is vacuous")
+	elif _wing_gap(hill.get_center()) <= TerrainWaypoints.RING_RADIUS:
+		_fail("check 3's hill control stands inside a block_wing, so the facade test would "
+				+ "catch it anyway and the hill test is still unproven — move the control "
+				+ "to a plateau cell the block grid really does leave empty")
 
 	print("  every site of %d seeds clears the river, the rect, the discs, the hills, the "
-			% SEEDS.size() + "facades and the wall; 3 mutation controls refused")
+			% SEEDS.size() + "facades and the wall; 4 mutation controls refused")
 	Sentinel.done("legality")
 
 
@@ -436,16 +624,12 @@ func _check_city_site(seed_value: int, id: String, pos: Vector3, clearance: floa
 	# PLATEAUS", so this is where that promise is measured.
 	# (Found by revmux review of PR #364; nothing ships on a hill, this is the
 	# assertion the promise was missing.)
-	for row_v: Variant in BudapestPlan.PLATEAUS:
-		var row: Dictionary = row_v
-		var here := Vector2(pos.x, pos.z)
-		for rect: Rect2 in [row["rect"] as Rect2, row["ramp"] as Rect2]:
-			var near := Vector2(clampf(here.x, rect.position.x, rect.end.x),
-					clampf(here.y, rect.position.y, rect.end.y))
-			if here.distance_to(near) <= clearance:
-				_fail("seed %d: city circle '%s' at %s is %.1f m from plateau '%s' — a ring "
-						% [seed_value, id, str(pos), here.distance_to(near), String(row["id"])]
-						+ "on a hill stands at y = %.0f, not on the flat world" % float(row["top"]))
+	var hill: float = _plateau_gap(Vector2(pos.x, pos.z))
+	if hill <= clearance:
+		_fail("seed %d: city circle '%s' at %s is %.1f m from a plateau or its ramp, wanted "
+				% [seed_value, id, str(pos), hill]
+				+ "> %.1f — a ring on a hill stands on its lid, not on the flat world"
+				% clearance)
 	var gap: float = _wing_gap(Vector2(pos.x, pos.z))
 	if gap <= clearance:
 		_fail("seed %d: city circle '%s' at %s is %.1f m from a block_wing, wanted > %.1f — "
@@ -472,6 +656,22 @@ func _inside_a_slot(pos: Vector3) -> bool:
 		if Vector2(pos.x - at.x, pos.z - at.z).length() < float(row["radius"]):
 			return true
 	return false
+
+
+func _plateau_gap(p: Vector2) -> float:
+	"""
+	Distance from `p` to the nearest `PLATEAUS` rect or ramp, or 0 when it is inside
+	one. Check 3's hill test, and its mutation control below drives this same
+	function — which is why it is a function and not six lines inlined in the loop.
+	"""
+	var best: float = INF
+	for row_v: Variant in BudapestPlan.PLATEAUS:
+		var row: Dictionary = row_v
+		for rect: Rect2 in [row["rect"] as Rect2, row["ramp"] as Rect2]:
+			var near := Vector2(clampf(p.x, rect.position.x, rect.end.x),
+					clampf(p.y, rect.position.y, rect.end.y))
+			best = minf(best, p.distance_to(near))
+	return best
 
 
 func _wing_gap(p: Vector2) -> float:
