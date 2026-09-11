@@ -1468,9 +1468,9 @@ static func spawn_city_coins_in_chunk(terrain: Node3D, chunk_pos: Vector2i, pare
 
 	WHY IT EXISTS. Coins are the headline score since bead .1 retired distance,
 	and bead .3's approach line deliberately stops at the Danube's west bank — its
-	own docstring says so and calls the 1.4 km of Pest east of it "no coin source
-	at all". This is that source. `in_budapest()` turns every PROCEDURAL coin off
-	inside the rect, so an authored city needs an authored reward line.
+	own docstring (_approach_coin_east_end) says so and points east to here. This
+	is that source. `in_budapest()` turns every PROCEDURAL coin off inside the
+	rect, so an authored city needs an authored reward line.
 
 	ZERO RNG, exactly like its sibling above: a fixed pitch along authored lines,
 	so there is no stream here to keep independent of the chunk's, nothing for a
@@ -1631,11 +1631,12 @@ static func _approach_coin_east_end(terrain: Node3D) -> float:
 	the gate's coin trail. A BANK is where the water's edge is; a dry rect is a
 	thing built ON the water and has nothing to say about where the river runs.
 
-	ponytail: the line stops at the west bank, so the 1.4 km of Pest east of the
-	Danube ships with no coin source at all (in_budapest() turns every procedural
-	one off inside the rect). That is this bead's authored scope — the city's own
-	reward line is bead .5's — not an oversight, and it is written down here
-	because a corridor that simply ends reads like one.
+	ponytail: the line stops at the west bank BY DESIGN, not for want of one that
+	ran further. East of it the reward is spawn_city_coins_in_chunk's authored city
+	routes (bead .9: the avenues of the grid, and every bridge deck) — which is
+	what lets in_budapest() turn every PROCEDURAL coin off inside the rect without
+	leaving the 1.4 km of Pest unrewarded. Written down here because a corridor
+	that simply ends reads like an oversight.
 
 	Memoized for the process, and it may be: east of the gate the corridor IS the
 	avenue at z = 0, so this is a pure function of BudapestPlan's authored polyline

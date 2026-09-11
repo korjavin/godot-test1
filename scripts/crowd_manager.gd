@@ -8,7 +8,11 @@ extends Node3D
 ## This manager (scripts/crowd_manager.gd, added once under Main in main.tscn,
 ## in group "crowd") is the ENTIRE feature — following the FAUNA precedent:
 ##   * Pure ambience, deliberately outside the run_seed determinism contract:
-##     its own randomize()d RNG drives waypoint choices and walk speeds.
+##     its own randomize()d RNG drives waypoint choices and walk speeds. That
+##     makes the crowd PER-PEER in a room, like the fauna it copies, and that is
+##     accepted in writing: neither seeded nor replayed (architect verdict on
+##     bead godot-test1-lix, 2026-09-11 — read traffic_manager.gd's header for
+##     the ruling and lix's notes for the numbers).
 ##   * Citizens join NO group and carry NO collision bodies or Area3Ds (a node in
 ##     "player" or "crocodile" would be grabbed by the Stink Wave, LOD, or chase).
 ##   * Solid anyway (bead 8gw.21): the MANAGER owns CITIZEN_PROXY_POOL colliders

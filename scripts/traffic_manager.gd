@@ -9,6 +9,22 @@ extends Node3D
 ## precedent:
 ##   * Pure ambience, outside the run_seed determinism contract: its own
 ##     randomize()d RNG drives colours, cruise speeds and spawn jitter.
+##   * PER-PEER IN A ROOM, BY DESIGN — the ruling, in writing (architect verdict
+##     on bead godot-test1-lix, 2026-09-11; its notes carry the numbers). Cars
+##     yield to the LOCAL hero only, because a remote avatar has no body and
+##     joins no group (CLAUDE.md), so two peers standing in the same street see
+##     different cars in different places and a car drives through a friend's
+##     hologram. Accepted as cosmetic and NOT fixed, either way: not SEEDED —
+##     the draws are consumed in an order that depends on each peer's position,
+##     frame timing and camera LOD tick, so a shared seed diverges inside the
+##     first second; and not REPLAYED — 120 citizens + 32 cars at ~7 B each on
+##     the croc-sync tick is ~11 KB/s per peer, twice the whole crocodile sync,
+##     for scenery, and the master's bubble is around the MASTER, so real
+##     consistency needs one bubble per peer simulated there. Gameplay is
+##     already consistent: cars never damage, their proxies touch the local hero
+##     only, and the one gameplay reader of the crowd (the hunter's false
+##     arrest) is master-simulated. Reopen trigger: the herd's master-simulates/
+##     peers-replay path at that cost — never a seed.
 ##   * Cars join NO group and carry NO collision bodies or Area3Ds. A car with a
 ##     body would be grabbed by the Stink Wave, LOD manager, hunt director, and
 ##     would collide against 2,100 city boxes. The work is making it visibly YIELD.
