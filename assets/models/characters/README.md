@@ -1,134 +1,45 @@
-# Windman 3D Character Model
+# Hero character models
 
-## Overview
-High-resolution 3D model of the Windman character, created based on the character description and reference image from `docs/characters/windman.md`.
+Heroes are **not** single rigged meshes. Each hero is a folder of separate GLB
+parts (`<hero>_parts/`) assembled by a `.tscn` under `scenes/characters/`, whose
+`Body/LeftArm` / `RightArm` / `LeftLeg` / `RightLeg` containers are rotated at run
+time by the sine-wave procedural animation in `scripts/player_animation.gd`.
+There is no `AnimationPlayer` and no `Skeleton3D` anywhere in the project — limbs
+are found **by exact node name** (see CLAUDE.md, "Player and camera").
 
-## Model Specifications
+The predators in this directory are single `.glb` files instead; their contract is
+`scripts/predator_parts.py`.
 
-### File Information
-- **Format**: GLTF/GLB (Binary GLTF)
-- **File**: `windman.glb`
-- **Vertices**: 4,838
-- **Faces**: 9,488
-- **Height**: ~1.69 meters (scaled to match 180cm character height)
+## Windman
 
-### Character Features
-The model includes all key features from the character description:
+- Parts: `windman_parts/` — 11 GLB files.
+  - `windman_head_authored.glb` is **authored**, not generated: Blender + MPFB2,
+    shipped 2026-09-08 (bead z3e.2). It has a `PROVENANCE.md` row and a
+    `.blend` + albedo PNG beside it. **No generator writes it — never regenerate it.**
+  - The other ten (`windman_torso.glb`, the four upper/lower arm parts, the four
+    upper/lower leg parts, `windman_fan.glb`) come from
+    `scripts/generate_windman_separate.py`.
+- Scene: `scenes/characters/windman_updated.tscn` — this is the scene
+  `player_controller.gd`'s `CHARACTERS` array loads.
+- Pipeline notes, coordinate conventions and troubleshooting:
+  `docs/WINDMAN_SEPARATE_MESHES.md`.
 
-1. **Head & Face**
-   - Short brown hair
-   - Bandage covering eyes (blue top, red bottom)
-   - Rounded face with soft features
-   - Skin tone matching reference
+### Regenerating
 
-2. **Body & Clothing**
-   - Blue sleeveless T-shirt with white "W" and "M" letters
-   - Brown shorts to knee length
-   - Black boots with flat soles
-   - Moderately stout, natural proportions
-
-3. **Accessories**
-   - Handheld fan in right hand
-   - Brown wooden handle (~25cm)
-   - Three colored blades (green, blue, red)
-   - Semi-transparent blade appearance
-
-## Skeleton Structure
-
-The model is designed with a 20-bone skeleton for animation:
-
-### Bone Hierarchy
-```
-Root
-└── Hips
-    ├── Spine
-    │   └── Chest
-    │       ├── Neck
-    │       │   └── Head
-    │       ├── LeftShoulder
-    │       │   └── LeftUpperArm
-    │       │       └── LeftLowerArm
-    │       │           └── LeftHand
-    │       └── RightShoulder
-    │           └── RightUpperArm
-    │               └── RightLowerArm
-    │                   └── RightHand (Fan attached)
-    ├── LeftUpperLeg
-    │   └── LeftLowerLeg
-    │       └── LeftFoot
-    └── RightUpperLeg
-        └── RightLowerLeg
-            └── RightFoot
-```
-
-### Bone Positions
-Detailed bone positions are documented in `windman.skeleton.json`.
-
-## Animation Support
-
-The model is fully rigged for animation with separate body parts:
-- **Head**: Can rotate independently for looking around
-- **Arms**: Full shoulder, elbow, and wrist movement
-- **Legs**: Hip, knee, and ankle joints for walking/running
-- **Torso**: Spine and chest bones for bending and twisting
-
-### Recommended Animations
-- Idle (standing with fan)
-- Walk/Run cycle
-- Fan waving motion
-- Wind attack animations
-- Jump/fall animations
-
-## Usage in Godot
-
-### Importing
-1. The GLB file is automatically imported by Godot
-2. Use `windman_3d.tscn` scene for a pre-configured setup with skeleton
-
-### Scene Structure
-The `windman_3d.tscn` includes:
-- CharacterBody3D (for physics and movement)
-- Skeleton3D (with all 20 bones configured)
-- AnimationPlayer (ready for animation setup)
-- CollisionShape3D (for collision detection)
-
-### Creating Animations
-1. Open `windman_3d.tscn` in Godot
-2. Select the AnimationPlayer node
-3. Create new animations by keyframing bone rotations/positions
-4. The skeleton is fully compatible with Godot's animation system
-
-## Generation Scripts
-
-The model was generated using Python scripts:
-- `scripts/generate_windman_model.py` - Basic model generation
-- `scripts/generate_windman_rigged.py` - Enhanced version with skeleton info
-
-To regenerate the model:
 ```bash
-python3 scripts/generate_windman_rigged.py
+python3 scripts/generate_windman_separate.py   # rewrites the ten generated parts
 ```
 
-## Technical Notes
+The pinned toolchain is `scripts/requirements.txt`. CI rebuilds every generated
+model and **fails on a dirty tree**, so a generator change and its regenerated
+`.glb` go in the same commit.
 
-### Mesh Details
-- All body parts use smooth shading for better appearance
-- Vertex colors are baked into the mesh
-- Materials follow the character color scheme
-- Fan blades have transparency for visual effect
+To inspect or screenshot an assembled hero in Blender:
 
-### Performance
-- Optimized polygon count for real-time rendering
-- Suitable for multiple instances in a scene
-- LOD (Level of Detail) generation enabled in import settings
+```bash
+blender --background --python-exit-code 1 --python scripts/blender_hero.py -- import windman [--screenshot out.png]
+```
 
-### Future Enhancements
-- Add texture maps for more detail
-- Create blend shapes for facial expressions
-- Add cloth simulation for shirt and shorts
-- Particle effects for wind abilities
+## Character design reference
 
-## Credits
-- Character design: Based on `docs/characters/windman.md` specification
-- 3D model generation: Automated using Trimesh library
-- Reference image: `docs/characters/windman.png`
+`docs/characters/windman.md` (description + reference art).

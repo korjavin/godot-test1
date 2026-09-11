@@ -47,7 +47,7 @@ the shared toolkit and the contract every enemy mesh must honour; `export_facete
 there is the one export seam for every generated `.glb` (heroes included) — read its
 docstring before touching it; an authored part lives beside its `PROVENANCE.md` row and
 is never written by a generator. The live Windman is `windman_parts/` assembled by
-`scenes/characters/windman_updated.tscn`; `windman.glb` is dead art.
+`scenes/characters/windman_updated.tscn`.
 
 `.gd.uid` files are Godot's; don't hand-edit them.
 

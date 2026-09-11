@@ -72,7 +72,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CHAR_DIR = os.path.join(REPO, "scenes", "characters")
 
 # scripts/player_controller.gd's CHARACTERS array. Windman's scene is the
-# "_updated" rebuild (windman_3d.tscn / generate_windman_model.py are dead art).
+# "_updated" rebuild that assembles windman_parts/.
 HERO_SCENES = {
     "windman": "windman_updated.tscn",
     "primm": "primm.tscn",
