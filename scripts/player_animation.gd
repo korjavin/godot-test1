@@ -5,14 +5,14 @@ extends RefCounted
 ##
 ## THE SPLIT. The `CharacterBody3D` keeps movement, capture, respawn, the input
 ## map and every contract method the `"player"` group answers; this file keeps
-## the POSE — the limb references, the rest-pose table, the `GAITS` personality
+## the POSE — the bound rig, the rest-pose table, the `GAITS` personality
 ## rows, the walk / idle / air / sidestep cycles, and the cel-shading applied to
 ## a character model on the swap path. It is a MOVE and nothing else: not one
 ## number, not one branch and not one comment changed.
 ##
 ## WHY A `RefCounted` HOLDING THE PLAYER rather than `landmark_builders.gd`'s
-## static-library-with-an-out-param contract. The pose IS state — five node
-## references, `original_rotations`, `animation_time` and the footstep tracker —
+## static-library-with-an-out-param contract. The pose IS state — the bound rig,
+## `original_rotations`, `animation_time` and the footstep tracker —
 ## and a static library would have to be handed all of it on every frame. So the
 ## `ToonShading` / `PauseHub` helper idiom one step on: one object, created with
 ## the body and freed with it, reaching back through `player` for the things the
@@ -21,11 +21,24 @@ extends RefCounted
 ## carries no `class_name` (its readers `preload` it), so there is no type to
 ## write and nothing here can create a cyclic dependency.
 ##
-## THE NODE-NAME CONTRACT IS UNCHANGED, and it is still the whole animation
-## rig: there is no `AnimationPlayer` anywhere in this game. `Body`, and under
-## it `LeftArm` / `RightArm` / `LeftLeg` / `RightLeg` (plus an OPTIONAL `Head`),
-## looked up by EXACT NAME in `setup_animation_references()`. A new playable
-## character scene that spells one of them differently loads and stays frozen.
+## TWO RIG KINDS, ONE POSE (bd godot-test1-5u3.2). There is still no
+## `AnimationPlayer` anywhere in this game — every pose below is written by
+## hand — but the thing written is no longer always a limb node. Each character
+## scene brings a `Body`, and `setup_animation_references()` asks
+## `hero_rig.gd` which driver it holds: a scene carrying a `Skeleton3D` (found
+## by TYPE) is posed on BONES by `hero_rig_skeleton.gd`, and anything else keeps
+## the `LeftArm` / `RightArm` / `LeftLeg` / `RightLeg` (plus OPTIONAL `Head`)
+## exact-name contract byte-for-byte in `hero_rig_limbs.gd`. **The scene is the
+## flag** — no export, no per-hero table entry — which is what lets the four
+## heroes migrate one at a time with the game playable after every one. A scene
+## that brings neither binds no rig and stays frozen, exactly as a misspelled
+## limb always did.
+##
+## WHAT STAYS HERE, for both kinds: the clock (`animation_time`), the two sines,
+## the footstep trigger, and every write to the `Body` NODE — the bob, the lean,
+## the sway and the landing squash. The driver writes limb pose only, so the
+## local hero and `remote_avatar.gd`'s mirror stay the same pure function of
+## (hero, phase, gait state) with nothing added to the presence packet.
 
 ## THE BODY THIS POSES. Assigned once by `PlayerController._init()`; every read
 ## of the player's own state goes through it, and nothing here ever writes to
@@ -175,17 +188,17 @@ var animation_time: float = 0.0
 ## Animation speed multiplier for walking/running
 var animation_speed: float = 1.0
 
-## References to character limbs for animation
-var left_arm: Node3D = null
-var right_arm: Node3D = null
-var left_leg: Node3D = null
-var right_leg: Node3D = null
-var character_body: Node3D = null
+## THIS CHARACTER'S POSE DRIVER — a `hero_rig_limbs.gd` or a
+## `hero_rig_skeleton.gd`, picked by `HeroRig.for_body()` on every swap. NULL
+## means "nothing here can be posed": the model draws, stands frozen and errors
+## nowhere, which is what the exact-name contract has always done with a scene
+## that spells a limb differently. Every pose function below returns early on it.
+var rig: RefCounted = null
 
-## OPTIONAL. The head bobble's node, looked up by exact name like every other
-## limb — but unlike them a model without one is not even a warning: `head_deg`
-## simply draws nothing. Nothing else in the game requires a `Head`.
-var character_head: Node3D = null
+## The `Body` node — the one node BOTH rig kinds have, and the one this file
+## writes itself: the bob, the lean, the sway and the landing squash. It is
+## model-local, so Teibi's resize scales all four for free.
+var character_body: Node3D = null
 
 ## This character's `GAITS` row, resolved once per swap in set_active_character().
 var _gait: Dictionary = GAITS["DEFAULT"]
@@ -238,13 +251,21 @@ var _sidestep_phase: float = 0.0
 var _last_sidestep_sine_sign: int = 0
 
 # ============================================================================
-# THE CHARACTER SWAP PATH — style, rest poses, limb references
+# THE CHARACTER SWAP PATH — style, rest poses, the bound rig
 # ============================================================================
 
-func capture_rest_pose(instance: Node3D) -> Dictionary:
+static func capture_rest_pose(instance: Node3D) -> Dictionary:
 	"""
 	Record a character's limb rotations while it sits in its untouched rest pose.
 	Keys match those used by the animation functions (left_arm, right_leg, ...).
+
+	STATIC since bd godot-test1-5u3.2, for the reason `gait_for()` is: this reads
+	nothing but the instance, and `remote_avatar.gd` needs exactly this table for
+	the rig it binds. One rest-capture, not two copies that can drift.
+
+	A SKINNED hero returns just `body` — it has no limb nodes, and its rest pose
+	is the one baked into its skeleton. `HeroRig.for_body()` hands this table to
+	the driver either way; the skinned one reads only that `body` key.
 
 	@param instance: A freshly-instanced character model
 	@return Dictionary of limb name -> rest rotation
@@ -276,16 +297,8 @@ func restore_rest_pose(index: int) -> void:
 	@param index: Index in the CHARACTERS array
 	"""
 	var pose: Dictionary = player.character_rest_poses[index]
-	if left_arm and pose.has("left_arm"):
-		left_arm.rotation = pose["left_arm"]
-	if right_arm and pose.has("right_arm"):
-		right_arm.rotation = pose["right_arm"]
-	if left_leg and pose.has("left_leg"):
-		left_leg.rotation = pose["left_leg"]
-	if right_leg and pose.has("right_leg"):
-		right_leg.rotation = pose["right_leg"]
-	if character_head and pose.has("head"):
-		character_head.rotation = pose["head"]
+	if rig:
+		rig.rest_pose()
 	if character_body and pose.has("body"):
 		character_body.rotation = pose["body"]
 		character_body.position.y = 0.0
@@ -301,8 +314,15 @@ func activate_character(index: int) -> void:
 	"""
 	# Point the animation system at this character, then snap it back to its
 	# cached rest pose so it never resumes from a frozen mid-animation pose.
-	setup_animation_references()
+	#
+	# THE REST TABLE IS ADOPTED FIRST, and that ordering is load-bearing since
+	# bd godot-test1-5u3.2: `setup_animation_references()` hands it straight to
+	# the rig it binds, and the CACHED pose is the only correct one — the live
+	# limb rotations at swap time are whatever the outgoing frame left there.
+	# (It always was the cached one; before the seam this assignment simply
+	# overwrote the live values `setup_animation_references()` had just read.)
 	original_rotations = player.character_rest_poses[index].duplicate()
+	setup_animation_references()
 	restore_rest_pose(index)
 
 	# Resolve this hero's walk personality ONCE. The per-frame animation reads
@@ -342,13 +362,23 @@ static func gait_for(hero: String) -> Dictionary:
 
 func setup_animation_references() -> void:
 	"""
-	Finds and stores references to character limbs for animation.
-	Called when a new character is loaded.
+	Bind the pose driver for the character `set_active_character()` has just made
+	visible. Called when a new character is loaded.
+
+	THE SCENE IS THE RIG-KIND FLAG: `HeroRig.for_body()` looks for a
+	`Skeleton3D` under `Body` by TYPE and hands back the skinned driver, or the
+	limb driver that finds `LeftArm` / `RightArm` / ... by exact name. Null back
+	means neither bound, and the model simply stands there.
+
+	`original_rotations` is the rest table the driver animates around, and it is
+	already this character's cached one by the time we get here — see
+	`activate_character()`.
 	"""
+	rig = null
 	if not player.current_character_node:
 		return
 
-	# Find the Body node that contains all limbs
+	# Find the Body node every hero scene has, whatever is under it
 	character_body = player.current_character_node.get_node_or_null("Body")
 
 	if not character_body:
@@ -357,36 +387,13 @@ func setup_animation_references() -> void:
 
 	print("Body node found!")
 
-	# Find limb nodes
-	left_arm = character_body.get_node_or_null("LeftArm")
-	right_arm = character_body.get_node_or_null("RightArm")
-	left_leg = character_body.get_node_or_null("LeftLeg")
-	right_leg = character_body.get_node_or_null("RightLeg")
-	# OPTIONAL, and deliberately not printed below: a model with no Head is not
-	# a broken model, it is a model whose gait row's `head_deg` draws nothing.
-	character_head = character_body.get_node_or_null("Head")
-
-	# Debug output
-	print("  Limb nodes found:")
-	print("    LeftArm: ", left_arm != null)
-	print("    RightArm: ", right_arm != null)
-	print("    LeftLeg: ", left_leg != null)
-	print("    RightLeg: ", right_leg != null)
-
-	# Store original rotations
-	original_rotations.clear()
-	if left_arm:
-		original_rotations["left_arm"] = left_arm.rotation
-	if right_arm:
-		original_rotations["right_arm"] = right_arm.rotation
-	if left_leg:
-		original_rotations["left_leg"] = left_leg.rotation
-	if right_leg:
-		original_rotations["right_leg"] = right_leg.rotation
-	if character_body:
+	# THE ONE SWAP-LOG LINE, and it lives here rather than inside either driver's
+	# `bind()`: `remote_avatar.gd` binds through the same seam on every peer's
+	# model swap, and that path printed nothing before the seam existed.
+	rig = HeroRig.for_body(character_body, original_rotations)
+	print("  Rig kind: ", "none (frozen model)" if rig == null else rig.kind())
+	if not original_rotations.has("body"):
 		original_rotations["body"] = character_body.rotation
-	if character_head:
-		original_rotations["head"] = character_head.rotation
 
 	print("Animation system initialized for character")
 
@@ -543,7 +550,7 @@ func animate_walking(delta: float, speed_multiplier: float) -> void:
 	@param delta: Time since last frame
 	@param speed_multiplier: How fast to play the animation (1.0 = normal, 1.5 = running)
 	"""
-	if not left_arm or not right_arm or not left_leg or not right_leg:
+	if rig == null:
 		return
 
 	# Clear any residual sideways roll so diagonal and straight walks are identical.
@@ -578,12 +585,10 @@ func animate_walking(delta: float, speed_multiplier: float) -> void:
 
 	# Apply rotations (arms and legs swing opposite to each other). The LEFT arm
 	# carries the asymmetry, because two arms swinging identically is the single
-	# most robotic thing about the old cycle.
-	left_arm.rotation.x = original_rotations["left_arm"].x + arm_swing * float(_gait["arm_asym"])
-	right_arm.rotation.x = original_rotations["right_arm"].x - arm_swing
-
-	left_leg.rotation.x = original_rotations["left_leg"].x - leg_swing
-	right_leg.rotation.x = original_rotations["right_leg"].x + leg_swing
+	# most robotic thing about the old cycle. The two swings are handed to the
+	# rig ALREADY SCALED, which is what makes `remote_avatar.gd`'s mirror — same
+	# call, its own distance-driven phase — the same pose by construction.
+	rig.locomotion(arm_swing, leg_swing, float(_gait["arm_asym"]))
 
 	# Add slight body bob for realism, plus this hero's roll (the waddle) and
 	# pitch (the lean). The bob is MODEL-LOCAL metres — it lives under Body, so
@@ -598,10 +603,9 @@ func animate_walking(delta: float, speed_multiplier: float) -> void:
 				+ deg_to_rad(float(_gait["lean_deg"]))
 
 	# The head bobble — off the hitch sine, so it wanders rather than nodding in
-	# lockstep with the feet. Optional node, per the row's docs.
-	if character_head and original_rotations.has("head"):
-		character_head.rotation.z = original_rotations["head"].z \
-				+ wobble * deg_to_rad(float(_gait["head_deg"]))
+	# lockstep with the feet. Optional node (or bone), per the row's docs: a
+	# model without one draws none.
+	rig.head_bobble(wobble * deg_to_rad(float(_gait["head_deg"])))
 
 func relax_gait_extras(weight: float) -> void:
 	"""
@@ -621,16 +625,15 @@ func relax_gait_extras(weight: float) -> void:
 		var rest: Vector3 = original_rotations["body"]
 		character_body.rotation.x = lerp(character_body.rotation.x, rest.x, weight)
 		character_body.rotation.z = lerp(character_body.rotation.z, rest.z, weight)
-	if character_head and original_rotations.has("head"):
-		character_head.rotation.z = lerp(
-				character_head.rotation.z, original_rotations["head"].z, weight)
+	if rig:
+		rig.relax_head(weight)
 
 func sidestep_pose(phase: float, direction: float) -> void:
 	"""
 	Write ONE frame of the sideways shuffle: for a GIVEN HERO, the whole pose as
 	a deterministic pure function of (phase, direction). It reads no clock and
 	nothing on the player; what it does read is this object's own hero state —
-	`_gait`, `original_rotations` and the five limb refs — all of which a
+	`_gait`, `original_rotations` and the bound `rig` — all of which a
 	character swap replaces. `animate_sidestep()` is the half that decides what
 	`phase` is.
 
@@ -651,7 +654,7 @@ func sidestep_pose(phase: float, direction: float) -> void:
 	@param phase: cycle phase in radians (metres travelled x the per-metre rate)
 	@param direction: `step_direction`, -1 (left) .. +1 (right)
 	"""
-	if not left_arm or not right_arm or not left_leg or not right_leg:
+	if rig == null:
 		return
 
 	# Drop the walk gait's lean and head bobble first — this pose sets the roll
@@ -671,8 +674,6 @@ func sidestep_pose(phase: float, direction: float) -> void:
 	var splay: float = direction * deg_to_rad(SIDESTEP_SPLAY_DEG) * leg_scale
 	# The CYCLE: opposite signs, so the pair opens and closes.
 	var reach: float = cycle * deg_to_rad(SIDESTEP_STEP_DEG) * leg_scale
-	left_leg.rotation.z = original_rotations["left_leg"].z + splay + reach
-	right_leg.rotation.z = original_rotations["right_leg"].z + splay - reach
 
 	# The leg currently reaching gets extra roll in the step direction, so the
 	# beat reads as one foot going out and the other following rather than as
@@ -687,17 +688,12 @@ func sidestep_pose(phase: float, direction: float) -> void:
 	# the leg amplitude of a right one. `gait_selfcheck` check 6 now drives both
 	# directions and asserts they mirror.
 	var lift: float = direction * deg_to_rad(SIDESTEP_LIFT_DEG) * leg_scale * absf(cycle)
-	if cycle * direction >= 0.0:
-		left_leg.rotation.z += lift
-	else:
-		right_leg.rotation.z += lift
 
 	# Arms: the old counter-roll as the bias, plus a counter-swing on the same
 	# phase (opposite the legs, which is what makes it balance rather than sway).
 	var arm_bias: float = direction * deg_to_rad(SIDESTEP_ARM_DEG) * arm_scale
 	var arm_swing: float = cycle * deg_to_rad(SIDESTEP_ARM_SWING_DEG) * arm_scale
-	left_arm.rotation.z = original_rotations["left_arm"].z - arm_bias - arm_swing
-	right_arm.rotation.z = original_rotations["right_arm"].z - arm_bias + arm_swing
+	rig.sidestep(splay, reach, cycle * direction >= 0.0, lift, arm_bias, arm_swing)
 
 	# Lean the body into the step direction for a bit of weight shift, and rise
 	# while the feet are apart — so the body settles ON the close beat, which is
@@ -721,7 +717,7 @@ func animate_sidestep(delta: float) -> void:
 
 	@param delta: Time since last frame
 	"""
-	if not left_arm or not right_arm or not left_leg or not right_leg:
+	if rig == null:
 		return
 
 	var speed: float = Vector2(player.velocity.x, player.velocity.z).length()
@@ -753,7 +749,7 @@ func animate_jumping() -> void:
 	mirror the two arms with opposite signs so they spread and beat together.
 	animate_landing() drops the wings back down on touchdown.
 	"""
-	if not left_arm or not right_arm or not left_leg or not right_leg:
+	if rig == null:
 		return
 
 	# animate_jumping owns the air: no hitch fires up here, and the walk gait's
@@ -770,17 +766,12 @@ func animate_jumping() -> void:
 	var flap_range = deg_to_rad(22)
 	var wing_angle = wing_spread + flap * flap_range
 
-	right_arm.rotation.z = original_rotations["right_arm"].z + wing_angle
-	left_arm.rotation.z = original_rotations["left_arm"].z - wing_angle
-	# Clear any leftover forward/back swing from walking so the wings sit level.
-	right_arm.rotation.x = original_rotations["right_arm"].x
-	left_arm.rotation.x = original_rotations["left_arm"].x
-
-	# Tuck the legs slightly together underneath.
+	# Tuck the legs slightly together underneath. They EASE there (0.2 a frame)
+	# where the arms snap, which is the one thing the remote mirror does
+	# differently — it passes 1.0, having no clock of its own to ease against.
 	var leg_together_angle = deg_to_rad(10)
 	var lerp_speed = 0.2
-	left_leg.rotation.x = lerp(left_leg.rotation.x, original_rotations["left_leg"].x + leg_together_angle, lerp_speed)
-	right_leg.rotation.x = lerp(right_leg.rotation.x, original_rotations["right_leg"].x + leg_together_angle, lerp_speed)
+	rig.air(wing_angle, leg_together_angle, lerp_speed)
 
 	# Reset body position
 	if character_body:
@@ -799,17 +790,15 @@ func animate_landing() -> void:
 	# Drop the wings (arm roll) back to the sides now that we're grounded. The
 	# walk/idle animations only drive the X axis, so without this the arms would
 	# stay spread out after touchdown.
-	if left_arm and original_rotations.has("left_arm"):
-		left_arm.rotation.z = original_rotations["left_arm"].z
-	if right_arm and original_rotations.has("right_arm"):
-		right_arm.rotation.z = original_rotations["right_arm"].z
+	if rig:
+		rig.drop_wings()
 
 func animate_idle(delta: float) -> void:
 	"""
 	Animates the character when standing still.
 	Creates a subtle breathing/idle motion.
 	"""
-	if not left_arm or not right_arm or not left_leg or not right_leg:
+	if rig == null:
 		return
 
 	# Smoothly return limbs to original positions
@@ -819,11 +808,7 @@ func animate_idle(delta: float) -> void:
 	# stands there leaning.
 	relax_gait_extras(0.15)
 
-	left_arm.rotation.x = lerp(left_arm.rotation.x, original_rotations["left_arm"].x, lerp_speed)
-	right_arm.rotation.x = lerp(right_arm.rotation.x, original_rotations["right_arm"].x, lerp_speed)
-
-	left_leg.rotation.x = lerp(left_leg.rotation.x, original_rotations["left_leg"].x, lerp_speed)
-	right_leg.rotation.x = lerp(right_leg.rotation.x, original_rotations["right_leg"].x, lerp_speed)
+	rig.idle(lerp_speed)
 
 	# Subtle breathing animation, at this hero's own rate and depth — a heavy
 	# Teibi breathes slow and deep, a twitchy Primm shallow and quick.
@@ -855,13 +840,7 @@ func reset_sidestep_pose() -> void:
 	"""
 	_sidestep_phase = 0.0
 	_last_sidestep_sine_sign = 0
-	if left_arm and original_rotations.has("left_arm"):
-		left_arm.rotation.z = original_rotations["left_arm"].z
-	if right_arm and original_rotations.has("right_arm"):
-		right_arm.rotation.z = original_rotations["right_arm"].z
-	if left_leg and original_rotations.has("left_leg"):
-		left_leg.rotation.z = original_rotations["left_leg"].z
-	if right_leg and original_rotations.has("right_leg"):
-		right_leg.rotation.z = original_rotations["right_leg"].z
+	if rig:
+		rig.reset_roll()
 	if character_body and original_rotations.has("body"):
 		character_body.rotation.z = original_rotations["body"].z

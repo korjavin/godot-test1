@@ -36,8 +36,18 @@ class_name RemoteAvatar
 ## instead of turning into "why are the crocodiles ignoring me?".
 ##
 ## What this node does: hold the last presence packet received for one peer,
-## smooth toward it, and drive the same procedural limb animation the local
-## player uses so a remote runner reads as a runner and not as a sliding statue.
+## smooth toward it, and drive the same procedural animation the local player
+## uses so a remote runner reads as a runner and not as a sliding statue.
+##
+## THE MIRROR RUNS THE SAME DRIVER (bd godot-test1-5u3.2). `HeroRig.for_body()`
+## picks the pose driver off the SCENE — bones for a hero carrying a
+## `Skeleton3D`, the exact-name limb rig for anything else — on this side
+## exactly as on the player's, and `_animate()` hands it the same two
+## already-scaled swings. The one thing that differs is where the phase comes
+## from: the player advances a clock, this advances on DISTANCE walked off the
+## speed already in the presence packet. Nothing was added to the wire for any
+## of it, and a hero that migrates to a skinned model migrates on both sides at
+## once because neither side decides the rig kind.
 
 # ============================================================================
 # CONSTANTS
@@ -152,25 +162,23 @@ var name_tag: Label3D = null
 ## is a comparison and not two material writes.
 var _speaking: bool = false
 
-## The instanced character scene itself, and the limb nodes found inside it by
-## the project's exact-name contract (Body / LeftArm / RightArm / LeftLeg /
-## RightLeg — see CLAUDE.md "Procedural limb animation").
+## The instanced character scene itself, its `Body` node, and the pose driver
+## `HeroRig.for_body()` picked for it — the SAME seam the local player binds
+## (bd godot-test1-5u3.2): a scene carrying a `Skeleton3D` is posed on bones, a
+## scene with `LeftArm` / `RightArm` / `LeftLeg` / `RightLeg` under `Body` keeps
+## the exact-name limb rig. Null rig = a model this build cannot pose; it draws
+## and stands still, which is what a mirror should do rather than error.
 var character_node: Node3D = null
 var character_body: Node3D = null
-var left_arm: Node3D = null
-var right_arm: Node3D = null
-var left_leg: Node3D = null
-var right_leg: Node3D = null
-## OPTIONAL, exactly as it is for the local player: a model with no `Head` node
-## simply gets no bobble.
-var character_head: Node3D = null
+var _rig: RefCounted = null
 
 ## The shown hero's `PlayerAnimation.GAITS` row, resolved once per model swap.
 var _gait: Dictionary = PlayerAnimation.gait_for("")
 
-## Rest rotations captured the moment the model is instanced, exactly as
-## player_controller.setup_animation_references() does — every animated pose is
-## an offset from these, so the limbs can always return to neutral.
+## Rest rotations captured the moment the model is instanced, by the local
+## player's own `PlayerAnimation.capture_rest_pose()` — every animated pose is
+## an offset from these, so the limbs can always return to neutral. Read here
+## for the `Body` node's own roll and pitch; the rig owns the rest of it.
 var rest_rotations: Dictionary = {}
 
 ## Accumulated walk phase (radians). Advanced by distance walked, not by raw
@@ -290,11 +298,7 @@ func set_character(index: int) -> void:
 		character_node.queue_free()
 	character_node = null
 	character_body = null
-	left_arm = null
-	right_arm = null
-	left_leg = null
-	right_leg = null
-	character_head = null
+	_rig = null
 	rest_rotations.clear()
 
 	var scene_path: String = PLAYER_SCRIPT.CHARACTERS[index]["scene_path"]
@@ -317,44 +321,30 @@ func set_character(index: int) -> void:
 	character_node = scene.instantiate()
 	model_root.add_child(character_node)
 
-	_cache_limbs()
+	_bind_rig()
 	_style_model_meshes(character_node)
 
 
-func _cache_limbs() -> void:
+func _bind_rig() -> void:
 	"""
-	Find the limb nodes BY EXACT NAME and record their rest rotations.
+	Record the model's rest pose and bind its driver — the SAME two calls the
+	local player makes in `PlayerAnimation.setup_animation_references()`, which
+	is the point: one rest-capture and one rig-kind decision, shared, so the
+	mirror can never disagree with the body it is a picture of about what a
+	hero's scene is.
 
-	This mirrors player_controller.setup_animation_references(): the project has
-	no AnimationPlayer, so every character scene must expose a `Body` node with
-	`LeftArm` / `RightArm` / `LeftLeg` / `RightLeg` beneath it. A model missing
-	them still renders — it just stands frozen, exactly as it would for the
-	local player.
+	A model whose `Body` holds neither a `Skeleton3D` nor the four exact-named
+	limbs binds nothing and simply stands there, exactly as it would locally.
 	"""
 	character_body = character_node.get_node_or_null("Body")
 	if not character_body:
 		return
 
-	left_arm = character_body.get_node_or_null("LeftArm")
-	right_arm = character_body.get_node_or_null("RightArm")
-	left_leg = character_body.get_node_or_null("LeftLeg")
-	right_leg = character_body.get_node_or_null("RightLeg")
-	character_head = character_body.get_node_or_null("Head")
-
 	# `body` and `head` ride the same table as the four limbs because the gait
 	# rolls, pitches and bobbles them — every axis an animation writes needs a
 	# rest value, or a model swap leaves the lean baked into the next hero.
-	rest_rotations["body"] = character_body.rotation
-	if character_head:
-		rest_rotations["head"] = character_head.rotation
-	if left_arm:
-		rest_rotations["left_arm"] = left_arm.rotation
-	if right_arm:
-		rest_rotations["right_arm"] = right_arm.rotation
-	if left_leg:
-		rest_rotations["left_leg"] = left_leg.rotation
-	if right_leg:
-		rest_rotations["right_leg"] = right_leg.rotation
+	rest_rotations = PlayerAnimation.capture_rest_pose(character_node)
+	_rig = HeroRig.for_body(character_body, rest_rotations)
 
 
 func _style_model_meshes(node: Node) -> void:
@@ -501,7 +491,7 @@ func _animate(delta: float) -> void:
 	the stride matches the ground the peer is covering at any speed and cannot
 	drift — the same trick fauna_manager.gd uses for its herds.
 	"""
-	if not left_arm or not right_arm or not left_leg or not right_leg:
+	if _rig == null:
 		return
 
 	if not on_floor:
@@ -520,18 +510,14 @@ func _animate(delta: float) -> void:
 		if ability_bits & PLAYER_SCRIPT.ABILITY_BIT_FLYING:
 			_flap_phase += delta * FLAP_SPEED
 			spread += sin(_flap_phase) * deg_to_rad(FLAP_RANGE)
-		left_leg.rotation.x = rest_rotations["left_leg"].x + tuck
-		right_leg.rotation.x = rest_rotations["right_leg"].x + tuck
-		left_arm.rotation.x = rest_rotations["left_arm"].x
-		right_arm.rotation.x = rest_rotations["right_arm"].x
-		left_arm.rotation.z = rest_rotations["left_arm"].z - spread
-		right_arm.rotation.z = rest_rotations["right_arm"].z + spread
+		# Weight 1.0: the legs SNAP to the tuck where the local player eases
+		# them over its own frames. A mirror has no clock to ease against.
+		_rig.air(spread, tuck, 1.0)
 		_relax_gait_extras()
 		return
 
 	# Grounded: clear the airborne arm roll, then swing on the X axis only.
-	left_arm.rotation.z = rest_rotations["left_arm"].z
-	right_arm.rotation.z = rest_rotations["right_arm"].z
+	_rig.drop_wings()
 
 	stride_phase += move_speed * delta * STRIDE_FREQUENCY \
 			* (float(_gait["stride_rate"]) / DEFAULT_STRIDE_RATE)
@@ -548,10 +534,9 @@ func _animate(delta: float) -> void:
 	var arm: float = deg_to_rad(float(_gait["arm_deg"])) * hitch
 	var leg: float = deg_to_rad(float(_gait["leg_deg"])) * hitch
 
-	left_arm.rotation.x = rest_rotations["left_arm"].x + swing * arm * float(_gait["arm_asym"])
-	right_arm.rotation.x = rest_rotations["right_arm"].x - swing * arm
-	left_leg.rotation.x = rest_rotations["left_leg"].x - swing * leg
-	right_leg.rotation.x = rest_rotations["right_leg"].x + swing * leg
+	# The same call the local player makes, with the same two already-scaled
+	# swings — which is exactly why the mirror cannot drift from the body.
+	_rig.locomotion(swing * arm, swing * leg, float(_gait["arm_asym"]))
 
 	# Body bob at twice the stride rate (one bob per footfall), offset to stay
 	# at or above rest so the legs never punch through the ground plane, plus
@@ -564,9 +549,7 @@ func _animate(delta: float) -> void:
 				+ swing * deg_to_rad(float(_gait["sway_deg"]))
 		character_body.rotation.x = rest_rotations["body"].x \
 				+ amount * deg_to_rad(float(_gait["lean_deg"]))
-	if character_head and rest_rotations.has("head"):
-		character_head.rotation.z = rest_rotations["head"].z \
-				+ amount * wobble * deg_to_rad(float(_gait["head_deg"]))
+	_rig.head_bobble(amount * wobble * deg_to_rad(float(_gait["head_deg"])))
 
 
 func _relax_gait_extras() -> void:
@@ -578,8 +561,8 @@ func _relax_gait_extras() -> void:
 	if character_body and rest_rotations.has("body"):
 		character_body.rotation.x = rest_rotations["body"].x
 		character_body.rotation.z = rest_rotations["body"].z
-	if character_head and rest_rotations.has("head"):
-		character_head.rotation.z = rest_rotations["head"].z
+	if _rig:
+		_rig.relax_head(1.0)
 
 
 func crushes_crocodiles() -> bool:

@@ -783,13 +783,13 @@ var character_rest_poses: Array[Dictionary] = []
 # ============================================================================
 
 ## THE ANIMATION SYSTEM, and it lives in `scripts/player_animation.gd`
-## (bd godot-test1-ftn.9). The limb references, `original_rotations`, the
+## (bd godot-test1-ftn.9). The pose rig, `original_rotations`, the
 ## `GAITS` table, the walk/idle/air/sidestep poses and the cel-shading of a
 ## character model all moved there whole; this node keeps movement, capture,
 ## respawn and every contract method the `"player"` group answers.
 ##
 ## A `RefCounted` HOLDING THE PLAYER, not a static library, because the pose
-## IS state — five node references, `original_rotations` and two phase clocks —
+## IS state — the bound pose rig, `original_rotations` and two phase clocks —
 ## and `landmark_builders.gd`'s static-with-an-out-param contract would mean
 ## passing all of it on every frame. It reaches back through `player` for the
 ## things the BODY owns (`is_on_floor()`, the landing squash, the Teibi scale,
@@ -2372,7 +2372,7 @@ func preload_all_characters() -> void:
 		# pose while limbs are still untouched (so re-activation never drifts it).
 		anim.apply_character_style(instance)
 		character_instances.append(instance)
-		character_rest_poses.append(anim.capture_rest_pose(instance))
+		character_rest_poses.append(PlayerAnimation.capture_rest_pose(instance))
 
 		print("Preloaded character: %s" % CHARACTERS[index]["name"])
 
@@ -2398,7 +2398,7 @@ func set_active_character(index: int) -> void:
 	if not current_character_node:
 		return
 
-	# Point the animation system at this character: limb references, the cached
+	# Point the animation system at this character: the pose rig, the cached
 	# rest pose, this hero's gait row and the footstep tracker's reset, all in
 	# `PlayerAnimation.activate_character()` (bd godot-test1-ftn.9).
 	anim.activate_character(index)

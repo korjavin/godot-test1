@@ -60,7 +60,7 @@ is never written by a generator. The live Windman is `windman_parts/` assembled 
 | Field landmarks (one per kind per world) | `scripts/landmark_builders.gd` `terrain_landmarks.gd` | `landmark_toast.gd` | `landmark` `landmark_sites` |
 | Budapest (authored plan, streamed) | `scripts/budapest_plan.gd` | `budapest_streamer` `city_builders` | `budapest` `budapest_city` `landmark_progress` `city_map` |
 | The tower / HQ | `scripts/tower_shell.gd` `tower_interior.gd` | `tower_plans` (ASCII storeys) `tower_graph` (topology) `tower_plan_boxes` `tower_gates` `tower_guards` `tower_dressing` `tower_dossiers` `tower_lift_menu` | `tower_*` (`tower_gate_sync` for the room-shared opened set) |
-| Player, abilities, animation | `scripts/player_controller.gd` | `player_abilities` `player_animation` | `capture` `view` `gait` `debug_teleport` |
+| Player, abilities, animation | `scripts/player_controller.gd` | `player_abilities` `player_animation` `hero_rig` + `hero_rig_limbs` / `hero_rig_skeleton` (the two pose drivers) | `capture` `view` `gait` `debug_teleport` |
 | Predators, bosses, species | `scripts/piglet_crocodile_ai.gd` | `species_table` `croc_steering` `boss_projectile` `hunt_director` `crocodile_lod_manager` | `enemy_spawn` `enemy_behavior` `boss_*` `projectile` `hunt_director` |
 | Progression, records, saves | `scripts/progression.gd` `best_run_store.gd` | | `progression` |
 | Pause | `scripts/pause_hub.gd` | | `pause` |
@@ -199,6 +199,10 @@ gameplay input goes through named actions.
 ### Player and camera
 No `AnimationPlayer`: limbs are found **by exact name** (`Body`, `LeftArm`, `RightArm`,
 `LeftLeg`, `RightLeg`, optional `Head`) and driven by sine waves in `player_animation.gd`.
+The rig kind is the SCENE: `hero_rig.gd` hands a hero carrying a `Skeleton3D` (found by
+type) to `hero_rig_skeleton.gd`, which writes the same sines as bone rotations with the
+bobble on the head bone, and anything else to `hero_rig_limbs.gd` unchanged — local and
+remote bind the same driver and `rig.measure()` is how the self-checks read either.
 `CameraArm` is a `SpringArm3D` and overwrites its children's position — use
 `h_offset`/`v_offset` or move the arm. Transient ability state is cleared on respawn,
 character switch and leaving the HQ. Abilities live in `player_abilities.gd`, dispatched
