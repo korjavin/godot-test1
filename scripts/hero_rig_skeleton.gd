@@ -191,6 +191,19 @@ func idle(weight: float) -> void:
 				lerp(_axis(LOWERARM[side], AXIS_X), deg_to_rad(ELBOW_BEND_DEG), weight))
 
 
+func slump(arm_x: float, leg_x: float) -> void:
+	"""The authored slump on bones — the limb driver's two numbers written onto
+	the shoulders and the hips, through the same conjugation every write in this
+	file uses. NO PER-BONE AXIS TABLE: see the roll trap in the banner.
+
+	The knee and the elbow keep whatever `rest_pose()` left them, which is the
+	straight knee and the neutral `ELBOW_BEND_DEG` every other path holds them
+	at. A captive is scenery, not a frame of a cycle."""
+	for side: String in ["left", "right"]:
+		_set_axis(UPPERARM[side], AXIS_X, arm_x)
+		_set_axis(THIGH[side], AXIS_X, leg_x)
+
+
 func air(spread: float, tuck: float, weight: float) -> void:
 	"""Arms rolled out to the sides (the beat is already inside `spread`), the
 	forward/back swing cleared so the wings sit level, legs tucked forward and

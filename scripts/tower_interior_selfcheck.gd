@@ -91,6 +91,12 @@ extends SceneTree
 ##      the frame goes dark, the authored staging disappears — and stays gone
 ##      across a rebuilt tower, because that one fact is the only liberation state
 ##      that persists.
+##  12. **THE JAILED POSE REACHES EVERY RIG KIND.** Check 22. The cell body is an
+##      instance of the hero's own character scene, and a SKINNED hero has no
+##      `LeftArm`/`LeftLeg` nodes to look up — so the tower's authored slump
+##      silently drew nothing on him and he stood to attention. The failure is
+##      invisible from every structural assertion in this file, so the pose is
+##      MEASURED, through `HeroRig.measure()`, on one hero of each rig kind.
 ##
 ## THE GUARDS LEFT THIS FILE, AND THE CHECK NUMBERS DID NOT (bead
 ## `godot-test1-ftn.25`, the ftn.13 shape). Checks 12, 13, 14 and 21/21b — the
@@ -242,6 +248,7 @@ func _run() -> void:
 	_check_the_plaques_point_at_the_stairs()
 	await _check_air_sight_shows_through_walls_only()
 	await _check_the_dossiers_are_findable()
+	await _check_the_slump_reaches_every_rig()
 	_report()
 
 
@@ -3877,6 +3884,111 @@ func _storey_of(mesh: MeshInstance3D) -> int:
 	if parent == null or not String(parent.name).begins_with("Floor"):
 		return -1
 	return String(parent.name).trim_prefix("Floor").to_int()
+
+
+# ============================================================================
+# CHECK 22 — the jailed slump reaches every rig kind (bd godot-test1-6su)
+# ============================================================================
+
+## Radians of slop on a captive's measured pose. Wide enough for the float noise
+## a basis conjugation leaves behind (the skinned driver writes `P⁻¹·E·P·R` and
+## reads it back out again), far narrower than the 12 degrees between the arm's
+## slump and the leg's — so a swapped pair still fails.
+const SLUMP_EPS: float = 1e-3
+
+## Which driver each hero in the probe below must bind, and therefore what this
+## check is actually comparing. It is asserted rather than assumed: the day
+## `teibi.tscn` loses its `Skeleton3D` (or `windman_updated.tscn` grows one) this
+## stops covering two rig kinds, and it must say so instead of going quiet while
+## measuring the same driver twice.
+const SLUMP_RIGS: Dictionary = {"teibi": "skinned", "windman": "limbs"}
+
+
+func _check_the_slump_reaches_every_rig() -> void:
+	"""
+	Check 22. A JAILED HERO SLUMPS — on bones as well as on limb nodes.
+
+	`_pose_captive_model()` used to look the four limbs up by exact name under the
+	cell body's `Body`. A SKINNED hero has none of them — Teibi is one mesh on a
+	MakeHuman skeleton since bead 5u3.3 — so all four `get_node_or_null`s answered
+	null, the loop skipped in silence, and he stood in his cell to attention
+	wearing the body tilt alone. It DEGRADED rather than errored, which is the
+	limb contract working exactly as designed and is why nothing in the suite
+	noticed; beads 5u3.5/.6 migrate Windman and Primm behind him, so the authored
+	pose was on its way out for every captive but Phoboman.
+
+	BOTH RIG KINDS, ONE ASSERTION EACH. Jail the hero, then read his pose back
+	through `HeroRig.measure()` — the one reading that means the same thing on
+	five nodes and on a rolled MakeHuman skeleton — bound against a rest table
+	captured off a FRESH instance of the same scene. Reading off an independently
+	captured rest is what stops "the model was never posed at all" from measuring
+	as zero and passing: `measure()` is off-rest, so a rig bound to the posed body
+	with the posed body's own rotations as its rest answers zero for everything.
+
+	The three numbers come from `TowerInterior`'s own consts and are never
+	restated here, so a retuned slump moves this check with it rather than
+	breaking it.
+	"""
+	TowerProbe.fresh_store()
+	var shell := await TowerProbe.make_tower(self)
+	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
+	if interior == null:
+		_fail("the tower has no TowerInterior child")
+		await TowerProbe.clear(self, null, shell)
+		Sentinel.done("slump_reaches_every_rig")
+		return
+
+	var roster: Array = load(PLAYER_SCRIPT).get_script_constant_map().get("CHARACTERS", [])
+	var floor_index: int = TowerInterior.block_floor()
+	var want: Dictionary = {
+		"left_arm_x": deg_to_rad(TowerInterior.CAPTIVE_SLUMP_ARM_DEG),
+		"right_arm_x": deg_to_rad(TowerInterior.CAPTIVE_SLUMP_ARM_DEG),
+		"left_leg_x": deg_to_rad(TowerInterior.CAPTIVE_SLUMP_LEG_DEG),
+		"right_leg_x": deg_to_rad(TowerInterior.CAPTIVE_SLUMP_LEG_DEG),
+		"body_x": deg_to_rad(TowerInterior.CAPTIVE_SLUMP_BODY_DEG),
+	}
+	for hero: String in SLUMP_RIGS:
+		interior.set_captive(hero, true)
+		await process_frame
+		var cell_body := interior.get_node_or_null("Floor%d/%s%s" % [
+			floor_index, TowerInterior.CAPTIVE_BODY_PREFIX, hero.capitalize()]) as Node3D
+		if cell_body == null:
+			_fail("%s is captive and his cell has no model at all — nothing to pose" % hero)
+			continue
+		var model_body := cell_body.get_node_or_null("Body") as Node3D
+		if model_body == null:
+			_fail("%s's cell body has no `Body` node — no rig can bind to it" % hero)
+			continue
+
+		var scene_path: String = ""
+		for row: Dictionary in roster:
+			if String(row["name"]) == hero:
+				scene_path = String(row["scene_path"])
+		# Never added to the tree: `capture_rest_pose()` reads rotations off the
+		# instance, and an untouched one is exactly the rest the drivers offset from.
+		var fresh := (load(scene_path) as PackedScene).instantiate() as Node3D
+		var rig: RefCounted = HeroRig.for_body(model_body, PlayerAnimation.capture_rest_pose(fresh))
+		fresh.free()
+		if rig == null:
+			_fail("no rig binds %s's cell body — a jailed hero cannot be posed at all" % hero)
+			continue
+		if String(rig.kind()) != String(SLUMP_RIGS[hero]):
+			_fail(("%s's cell body bound the '%s' rig, expected '%s' — this check no "
+				+ "longer covers both drivers") % [hero, rig.kind(), SLUMP_RIGS[hero]])
+		var pose: Dictionary = rig.measure()
+		for key: String in want:
+			if not pose.has(key):
+				_fail("%s's rig ('%s') does not measure '%s'" % [hero, rig.kind(), key])
+				continue
+			if absf(float(pose[key]) - float(want[key])) > SLUMP_EPS:
+				_fail(("a jailed %s (the '%s' rig) has '%s' at %.2f deg off rest, and "
+					+ "the authored slump is %.2f — the tower's one captive pose is not "
+					+ "reaching this rig kind") % [hero, rig.kind(), key,
+					rad_to_deg(float(pose[key])), rad_to_deg(float(want[key]))])
+
+	shell.queue_free()
+	await process_frame
+	Sentinel.done("slump_reaches_every_rig")
 
 
 func _fail(message: String) -> void:
