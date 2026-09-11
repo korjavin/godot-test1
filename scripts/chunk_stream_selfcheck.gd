@@ -65,6 +65,16 @@ const UNSEEDED_MEMOS: Dictionary = {
 	"_approach_coin_east_end_cache": "authored BudapestPlan line, no run_seed",
 }
 
+## SEEDED STATE WHOSE NAME DOES NOT SAY "MEMO" — the road centreline itself (the
+## thing every memo below it is derived from) and the altitude spike's window onto
+## it. The name scan cannot find these, so check 6 pins them by hand: they are
+## reset today, and pinning them is what stops a future edit from quietly deleting
+## the line. Nothing may be added here to excuse a name — this list makes the
+## check STRICTER; UNSEEDED_MEMOS above is the only exemption seam.
+const SEEDED_ROAD_STATE: PackedStringArray = [
+	"road_stations", "road_k_min", "road_k_max", "_alt_road_segs",
+]
+
 ## The static "family" libraries that reach terrain state — check 6's second half.
 ## A memo on one of these is a bug by construction, whatever it is derived from:
 ## `_drop_seeded_memos()` can only reach state that lives on the terrain NODE
@@ -344,8 +354,10 @@ func _check_every_seeded_memo_is_dropped() -> void:
 	"""
 	Check 6 (bead godot-test1-0y5). A STRUCTURAL AUDIT of `_drop_seeded_memos()`:
 
-	  a. every memo declared on the terrain node is reset in that body, or named
-	     in UNSEEDED_MEMOS with the reason it carries no `run_seed`;
+	  a. every memo declared on the terrain node — plus the road state pinned in
+	     SEEDED_ROAD_STATE, whose names the scan cannot recognise — is reset in
+	     that body, or named in UNSEEDED_MEMOS with the reason it carries no
+	     `run_seed`;
 	  b. every name that body resets is still declared, so a rename cannot leave
 	     a dead line behind that looks like the reset it no longer is;
 	  c. no static "family" library holds a memo at all — `_drop_seeded_memos()`
@@ -387,6 +399,13 @@ func _check_every_seeded_memo_is_dropped() -> void:
 		var name: String = m.get_string(1)
 		declared[name] = true
 		if _is_memo_name(name):
+			memos.append(name)
+	# ...and the seeded road state the name scan cannot see, held to exactly the
+	# same standard once it is known to still exist.
+	for name: String in SEEDED_ROAD_STATE:
+		if not declared.has(name):
+			_fail("SEEDED_ROAD_STATE pins `%s`, which endless_terrain.gd no longer declares — the pin is protecting nothing and the road state it stood for is unaudited" % name)
+		elif not memos.has(name):
 			memos.append(name)
 
 	# b. THE DROP BODY, from its signature to the next top-level `func`. Comments
