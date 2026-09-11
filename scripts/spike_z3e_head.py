@@ -1,17 +1,26 @@
 """
-Source of record for the shipped Windman head — bead godot-test1-z3e.2.
-NOT part of the build, NOT run by CI: this script is run by hand to build
-the authored head assets committed in assets/models/characters/windman_parts/.
+Source of record for the shipped AUTHORED HERO HEADS — beads godot-test1-z3e.2
+(Windman, the pilot) and godot-test1-z3e.5 (Primm). NOT part of the build, NOT run
+by CI: this script is run by hand to build the authored head assets committed in
+assets/models/characters/<hero>_parts/.
 
-Builds ONE Windman head from the MPFB2 / MakeHuman basemesh (CC0, owner ruling
+Builds ONE hero head from the MPFB2 / MakeHuman basemesh (CC0, owner ruling
 2026-09-06: MPFB2/MakeHuman is the ONLY sanctioned source — Hunyuan3D is banned and
-Mixamo/Rodin output may not be committed) and writes:
+Mixamo/Rodin output may not be committed) and writes, for hero <h>:
 
-  windman_head_authored.glb       smooth normals + a 512^2 baked albedo, UVs, no
-                                  vertex colours
-  windman_head_authored.blend     the compressed Blender source file
+  <h>_head_authored.glb       smooth normals + a 512^2 baked albedo, UVs, no
+                              vertex colours
+  <h>_head_authored.blend     the compressed Blender source file
 
-Run:  blender --background --python-exit-code 1 --python scripts/spike_z3e_head.py
+Run:  blender --background --python-exit-code 1 --python scripts/spike_z3e_head.py \\
+          -- --hero primm            (default: windman)
+
+EVERY PER-HERO DIFFERENCE IS A `HEROES` ROW and nothing else — the macro sliders,
+the face targets, the palette, the painted eyewear stripes and the one height the
+head is scaled to. The pipeline below (cut at MakeHuman's neck joint, reframe into
+the Head node's local space, decimate, paint, bake, export) is the recipe the owner
+picked as VARIANT A on 2026-09-06 and is deliberately identical for every hero.
+Adding a hero is a row; it is not a branch.
 
 WHY NOT trimesh like scripts/generate_windman_separate.py: the source is a
 MakeHuman basemesh plus MakeHuman morph targets, and MPFB2 is a Blender extension —
@@ -19,13 +28,15 @@ the whole point is that this head is authored, not a stack of primitives. Nothin
 here touches the shipped generators or their `.glb` paths, so the model-selfcheck
 staleness gate cannot see it.
 
-The head's LOCAL FRAME is today's head's, because scenes/characters/windman_updated.tscn
+The head's LOCAL FRAME is today's head's, because scenes/characters/<hero>.tscn
 hangs it on the same Head node (Body y = 1.62, basis Rx(-90)) and
 `PlayerAnimation.GAITS.head_deg` / `capture_rest_pose` rotate that node:
   +Z up, +Y face-forward, origin at the centre of the skull's bounding box.
-Today's skull is 0.24 x 0.245 x 0.252 m (a scaled icosphere); a real head is taller
-than it is wide, so this one is scaled UNIFORMLY to the same 0.252 m height and comes
-out narrower. That mismatch is evidence, not a bug — do not fudge it.
+The generated skull each hero replaces is a scaled icosphere — windman 0.24 x 0.245
+x 0.252 m, primm 0.221 x 0.230 x 0.258 m — and a real head is taller than it is
+wide, so each one is scaled UNIFORMLY to the same skull height its sphere had and
+comes out ~4-5 cm narrower. That mismatch is evidence, not a bug — do not fudge it;
+it is the same proportion call the owner deferred on the pilot.
 """
 
 import math
@@ -39,24 +50,100 @@ import importlib
 from mathutils import Vector
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT_DIR = os.path.join(REPO, "assets", "models", "characters", "windman_parts")
-OUT_SMOOTH = os.path.join(OUT_DIR, "windman_head_authored.glb")
 
-# scripts/generate_windman_separate.py's palette, verbatim — the spike head has to
-# sit on the shipped torso without a colour seam.
-SKIN = (0.93, 0.74, 0.62, 1.0)
-LIPS = (0.80, 0.55, 0.48, 1.0)
-HAIR = (0.32, 0.20, 0.11, 1.0)
-BAND_BLUE = (0.20, 0.38, 0.75, 1.0)
-BAND_RED = (0.72, 0.18, 0.15, 1.0)
-
-TARGET_HEIGHT = 0.252          # today's skull, chin to crown
 TRIS_SMOOTH = 4500             # the bead's "retopo/decimate to ~3-5k"
-TRIS_FLAT = 2400               # the bead's "~2-3k" for the faceted variant
 TEXTURE_SIZE = 512             # owner ruling: <= 512^2 albedo, no normal map
-HAIR_LIFT = 0.008              # short hair as a shell over the scalp, in metres
-# The torso already draws a 0.062 m-radius neck cylinder; the stump hides inside it.
-NECK_STUMP_RADIUS = 0.060
+
+# ============================================================================
+# THE HEROES. One row per authored head; the pipeline below reads nothing else.
+#
+# `palette` is the hero's OWN generator palette, verbatim (generate_<hero>_
+# separate.py's `self.colors`), because the authored head sits on a torso that
+# generator still builds and a colour seam at the neck would be the first thing
+# anyone sees.
+#
+# `stripes` is the eyewear, painted rather than modelled, listed TOP-DOWN in
+# metres relative to the eye landmark; the first stripe containing a vertex wins.
+# Both heroes wear something across the eyes and neither wears it as geometry:
+# a real face has sockets, and a band pushed proud of them swallows the EARS,
+# which are the whole reason this epic exists.
+# ============================================================================
+HEROES = {
+    "windman": {
+        # docs/characters/windman.md: male, calm, no beard, slightly rounded face
+        # with soft features; the blue-over-red bandage knotted at the back.
+        "parts_dir": "windman_parts",
+        "target_height": 0.252,     # today's skull, chin to crown
+        "macro": (("gender", 0.85), ("age", 0.45), ("muscle", 0.5),
+                  ("weight", 0.6), ("caucasian", 1.0), ("african", 0.0),
+                  ("asian", 0.0)),
+        "targets": ((("head", "head-round.target.gz"), 0.65),
+                    (("head", "head-fat-incr.target.gz"), 0.30),
+                    (("head", "head-age-decr.target.gz"), 0.25),
+                    (("cheek", "l-cheek-volume-incr.target.gz"), 0.35),
+                    (("cheek", "r-cheek-volume-incr.target.gz"), 0.35),
+                    (("nose", "nose-scale-vert-decr.target.gz"), 0.20),
+                    (("chin", "chin-jaw-drop-decr.target.gz"), 0.20)),
+        "palette": {"skin": (0.93, 0.74, 0.62, 1.0),
+                    "lips": (0.80, 0.55, 0.48, 1.0),
+                    "hair": (0.32, 0.20, 0.11, 1.0)},
+        "stripes": ((0.004, 0.022, (0.20, 0.38, 0.75, 1.0)),    # blue over red,
+                    (-0.024, 0.004, (0.72, 0.18, 0.15, 1.0))),  # as the art has it
+        "hair_lift": 0.008,         # short hair as a shell over the scalp, metres
+        "hair_front": 0.036,        # hairline above the eye line
+        "hair_nape": 0.055,         # how much lower the hairline sits at the back
+        # The torso draws a 0.062 m-radius neck cylinder; the stump hides inside it.
+        "neck_stump_radius": 0.060,
+    },
+    "primm": {
+        # docs/characters/primm.md: "slightly elongated face. Eyes sharp and
+        # focused; hair short to medium length, dark brown. Wears thin, high-tech
+        # goggles across the eyes (transparent lenses with slight blue tint)."
+        # LEANNESS AND YOUTH ARE FACE TARGETS HERE, NOT MACRO SLIDERS — see the
+        # `age` trap in `build_human`. `head-fat-decr` and the cheekbones do the
+        # work `weight`/`age` would have done, and they morph the head without
+        # moving the whole skeleton out from under MakeHuman's joint cubes.
+        "parts_dir": "primm_parts",
+        # primm's generated skull is icosphere(0.115) scaled [0.96, 1.0, 1.12],
+        # so chin to crown is 2 * 0.115 * 1.12.
+        "target_height": 0.2576,
+        "macro": (("gender", 0.90), ("age", 0.45), ("muscle", 0.55),
+                  ("weight", 0.5), ("caucasian", 1.0), ("african", 0.0),
+                  ("asian", 0.0)),
+        "targets": ((("head", "head-oval.target.gz"), 0.55),
+                    (("head", "head-scale-vert-incr.target.gz"), 0.25),
+                    (("head", "head-fat-decr.target.gz"), 0.30),
+                    (("head", "head-age-decr.target.gz"), 0.35),
+                    (("cheek", "l-cheek-bones-incr.target.gz"), 0.30),
+                    (("cheek", "r-cheek-bones-incr.target.gz"), 0.30),
+                    (("chin", "chin-prominent-incr.target.gz"), 0.20)),
+        "palette": {"skin": (0.91, 0.73, 0.62, 1.0),
+                    "lips": (0.78, 0.52, 0.47, 1.0),
+                    "hair": (0.26, 0.16, 0.10, 1.0)},
+        # A blue lens between two silver frame lines, 5.4 cm of band all told —
+        # the height of the generator's own visor slab (a box 0.052 m tall).
+        #
+        # TWO DEPARTURES FROM THE GENERATOR'S NUMBERS, both measured on the cast
+        # row rather than argued: 3.4 cm of band vanished into the blown-out
+        # cheek, and so did the generator's pale `visor_lens` (0.66, 0.80, 0.90)
+        # even at full height. The generated visor got away with pale because it
+        # was a SLAB standing 4 cm proud of a featureless sphere and read by its
+        # silhouette; paint on a face with real sockets has no silhouette and
+        # must read by contrast alone. This lens is that pale blue pulled toward
+        # Windman's bandage blue (0.20, 0.38, 0.75), which is the one piece of
+        # painted eyewear in the cast already proven to read at 3 m — still the
+        # canon's "slight blue tint", dark enough to survive the grade.
+        "stripes": ((0.021, 0.027, (0.70, 0.72, 0.76, 1.0)),    # silver frame, top
+                    (-0.021, 0.021, (0.45, 0.62, 0.85, 1.0)),   # blue lens
+                    (-0.027, -0.021, (0.70, 0.72, 0.76, 1.0))),  # frame, bottom
+        "hair_lift": 0.009,
+        "hair_front": 0.036,
+        "hair_nape": 0.070,         # "short to MEDIUM length": longer at the nape
+        # Primm's torso neck is the SLIM one, radius 0.050 — a 0.060 stump would
+        # poke out of his collar where it hides inside Windman's.
+        "neck_stump_radius": 0.048,
+    },
+}
 
 
 def log(*a):
@@ -104,7 +191,7 @@ def joint_centroid(obj, group_name):
     return acc / n
 
 
-def build_human():
+def build_human(cfg):
     HumanService = dyn("mpfb.services.humanservice", "HumanService")
     TargetService = dyn("mpfb.services.targetservice", "TargetService")
     LocationService = dyn("mpfb.services.locationservice", "LocationService")
@@ -112,30 +199,35 @@ def build_human():
 
     human = HumanService.create_human(mask_helpers=True, detailed_helpers=True,
                                       extra_vertex_groups=True)
-    # docs/characters/windman.md: male, calm, no beard, slightly rounded face with
-    # soft features. Macro first, then the face-shape targets on top.
-    for key, value in (("gender", 0.85), ("age", 0.45), ("muscle", 0.5),
-                       ("weight", 0.6), ("caucasian", 1.0), ("african", 0.0),
-                       ("asian", 0.0)):
+    # The hero's own `macro` row, then its `targets` row on top: macro first
+    # because `reapply_macro_details` re-derives the basemesh from the sliders and
+    # would wipe a face target loaded before it.
+    for key, value in cfg["macro"]:
         HumanObjectProperties.set_value(key, value, entity_reference=human)
     TargetService.reapply_macro_details(human)
 
     targets_root = LocationService.get_mpfb_data("targets")
-    for rel, weight in (
-            (("head", "head-round.target.gz"), 0.65),
-            (("head", "head-fat-incr.target.gz"), 0.30),
-            (("head", "head-age-decr.target.gz"), 0.25),
-            (("cheek", "l-cheek-volume-incr.target.gz"), 0.35),
-            (("cheek", "r-cheek-volume-incr.target.gz"), 0.35),
-            (("nose", "nose-scale-vert-decr.target.gz"), 0.20),
-            (("chin", "chin-jaw-drop-decr.target.gz"), 0.20),
-    ):
+    for rel, weight in cfg["targets"]:
         path = os.path.join(targets_root, *rel)
         if not os.path.exists(path):
             log("target missing, skipped:", path)
             continue
         TargetService.load_target(human, path, weight=weight)
 
+    # THE MACRO TRAP, paid for on 2026-09-11 building Primm (bead z3e.5). These
+    # landmarks are read off `human.data.vertices`, which are the UNMORPHED
+    # basemesh coordinates: MPFB2 applies macros and targets as shape keys, and a
+    # shape key does not move `vertex.co`. Reading them off the evaluated mesh
+    # instead is not available either — `bake_to_plain_mesh` applies the helper
+    # MASK modifier, and after that the `joint-*` vertex groups are EMPTY.
+    #
+    # So every macro slider that moves the whole skeleton (`age` above all, then
+    # `weight`) slides the real head away from these landmarks while the numbers
+    # below stay frozen. At age 0.35 the cut ran 10 cm high: it sliced the skull
+    # in half, `reframe` then scaled the remainder up 1.86x, and the run still
+    # exited 0 with a plausible-looking log. KEEP EVERY HERO'S MACRO NEAR THE
+    # BASEMESH DEFAULT and shape the face with `targets`, which move the head
+    # only. `reframe`'s scale assert is the tripwire if anyone forgets.
     neck = joint_centroid(human, "joint-neck")
     eye = joint_centroid(human, "joint-l-eye")
     log("landmarks: neck z=%.4f  eye z=%.4f y=%.4f" % (neck.z, eye.z, eye.y))
@@ -151,7 +243,7 @@ def bake_to_plain_mesh(obj):
     return bpy.context.view_layer.objects.active
 
 
-def cut_head(obj, neck, chin_z):
+def cut_head(obj, neck, chin_z, stump_radius):
     """Delete everything below the neck joint and cap the hole.
 
     THE CUT IS WELL BELOW the joint cube's centre and that is deliberate. The shipped
@@ -171,7 +263,7 @@ def cut_head(obj, neck, chin_z):
     # chin further than a neck's radius from the neck joint's axis goes.
     for v in bm.verts:
         if v.co.z >= cut_z and v.co.z < chin_z \
-                and Vector((v.co.x - neck.x, v.co.y - neck.y)).length > NECK_STUMP_RADIUS:
+                and Vector((v.co.x - neck.x, v.co.y - neck.y)).length > stump_radius:
             doomed.append(v)
     bmesh.ops.delete(bm, geom=doomed, context='VERTS')
     # One flat cap over the neck stump. It is never seen (the torso's neck is inside
@@ -186,7 +278,7 @@ def cut_head(obj, neck, chin_z):
     return cut_z
 
 
-def reframe(obj, chin_z):
+def reframe(obj, chin_z, target_height):
     """Move the head into today's head's local frame and scale it to the same height.
 
     THE TURN IS REAL AND MEASURED, not folklore: MPFB2 puts the `joint-l-eye` cube at
@@ -201,14 +293,26 @@ def reframe(obj, chin_z):
         v.co.y = -v.co.y
         v.co.x = -v.co.x
     # CROWN TO CHIN, not crown to stump: the neck stump the cut kept must not eat into
-    # the 0.252 m the skull is allowed. `chin_z` is where the head ENDS — MPFB2's own
+    # the height the skull is allowed. `chin_z` is where the head ENDS — MPFB2's own
     # `joint-neck` landmark, the height the first draft cut at — so the stump below it
     # hangs past the origin and into the torso's collar and costs the skull nothing.
     # Measuring the chin off the geometry instead (lowest vertex on the face side)
     # found the base of the throat and scaled the whole head down by a quarter.
     crown = max(v.co.z for v in me.vertices)
     chin = chin_z
-    scale = TARGET_HEIGHT / (crown - chin)
+    scale = target_height / (crown - chin)
+    # THE TRIPWIRE for `build_human`'s macro trap: a head cut at a landmark the
+    # morph has walked away from is still a closed, exportable, entirely wrong
+    # mesh, and the only number that shows it is this one. A sane build lands
+    # near 1.0 (windman 1.044, primm 1.02) because both skulls are scaled to the
+    # height of the icosphere they replace; the half-a-skull that this bead
+    # caught came out at 1.86.
+    if not 0.8 <= scale <= 1.3:
+        raise AssertionError(
+            "reframe scale %.3f is out of band: the crown is %.3f m above the "
+            "chin landmark, which is not a head. Almost certainly a macro slider "
+            "(age, weight) moved the mesh away from the unmorphed joint cubes — "
+            "see build_human's comment." % (scale, crown - chin))
     for v in me.vertices:
         v.co *= scale
     xs = [v.co.x for v in me.vertices]
@@ -241,43 +345,47 @@ def decimate(obj, tri_target):
     log("decimated %d -> %d tris" % (current, len(obj.data.loop_triangles)))
 
 
-def paint(obj, eye_z, eye_y):
-    """Windman's face, as regions of the shipped palette.
+def paint(obj, eye_z, cfg):
+    """The hero's face, as regions of ITS OWN generator palette.
 
-    THE BANDAGE IS COLOUR AND NOT GEOMETRY, deliberately: today's head is a sphere
-    with no eye sockets, so its blindfold had to stand proud of the skull to cover
-    anything. A real face has sockets, and a band pushed out over them would swallow
-    the EARS — which are the whole reason this bead exists ("a face with ears").
+    THE EYEWEAR IS COLOUR AND NOT GEOMETRY, deliberately: today's head is a sphere
+    with no eye sockets, so Windman's blindfold had to stand proud of the skull to
+    cover anything and Primm's visor was a box slab in front of one. A real face has
+    sockets, and a band pushed out over them would swallow the EARS — which are the
+    whole reason this bead exists ("a face with ears"). `cfg["stripes"]` is that band,
+    top-down in metres about the eye landmark; first match wins.
 
     THE HAIR IS BOTH: colour plus a small outward lift of the scalp, because a short
     haircut has a silhouette and a painted skull does not. The lift stops well above
     the ears.
     """
     me = obj.data
-    zs = [v.co.z for v in me.vertices]
-    top = max(zs)
+    palette = cfg["palette"]
+    stripes = cfg["stripes"]
+    hair_lift = cfg["hair_lift"]
 
-    band_top = eye_z + 0.022      # just above the eyebrows
-    band_mid = eye_z + 0.004      # blue over red, as the reference art has it
-    band_bottom = eye_z - 0.024   # just below the eye
-    hair_front = band_top + 0.014
+    hair_front = eye_z + cfg["hair_front"]
+    hair_nape = cfg["hair_nape"]
     lip_z = eye_z - 0.088
     half_depth = max(abs(v.co.y) for v in me.vertices)
 
     def region(co):
         # The hairline sits lower at the BACK than at the brow — a haircut, not a cap.
         depth = co.y / max(half_depth, 1e-6)          # +1 nose, -1 nape
-        hair_z = hair_front - 0.055 * max(0.0, -depth)
+        hair_z = hair_front - hair_nape * max(0.0, -depth)
         if co.z >= hair_z:
             return "hair"
-        if band_bottom <= co.z <= band_top:
-            return "blue" if co.z >= band_mid else "red"
+        for i, (low, high, _colour) in enumerate(stripes):
+            if eye_z + low <= co.z <= eye_z + high:
+                return i
         if lip_z - 0.016 <= co.z <= lip_z + 0.012 and depth > 0.55:
             return "lips"
         return "skin"
 
-    colours = {"hair": HAIR, "blue": BAND_BLUE, "red": BAND_RED,
-               "lips": LIPS, "skin": SKIN}
+    colours = {"hair": palette["hair"], "lips": palette["lips"],
+               "skin": palette["skin"]}
+    for i, (_low, _high, colour) in enumerate(stripes):
+        colours[i] = colour
     per_vert = [region(v.co) for v in me.vertices]
 
     # The hair shell. Lift along the vertex normal so the volume follows the skull;
@@ -288,7 +396,7 @@ def paint(obj, eye_z, eye_y):
         if per_vert[i] != "hair":
             continue
         taper = min(1.0, (v.co.z - (hair_front - 0.06)) / 0.05)
-        v.co += normals[i] * (HAIR_LIFT * max(0.0, taper))
+        v.co += normals[i] * (hair_lift * max(0.0, taper))
     me.update()
 
     attr = me.color_attributes.new(name="Color", type='FLOAT_COLOR', domain='POINT')
@@ -301,7 +409,7 @@ def paint(obj, eye_z, eye_y):
     log("painted:", counts)
 
 
-def bake_albedo(obj):
+def bake_albedo(obj, hero):
     """Bake the vertex colours into one 512^2 albedo on the MakeHuman UV layout.
 
     Variant A is "the realistic head as the code ships it", and what makes a realistic
@@ -310,9 +418,9 @@ def bake_albedo(obj):
     attribute is the cheapest honest bake: it is the vertex colours, resampled, with
     no lighting baked in.
     """
-    img = bpy.data.images.new("windman_head_albedo", TEXTURE_SIZE, TEXTURE_SIZE,
+    img = bpy.data.images.new("%s_head_albedo" % hero, TEXTURE_SIZE, TEXTURE_SIZE,
                               alpha=False)
-    mat = bpy.data.materials.new("windman_head_authored")
+    mat = bpy.data.materials.new("%s_head_authored" % hero)
     mat.use_nodes = True
     nt = mat.node_tree
     nt.nodes.clear()
@@ -404,14 +512,33 @@ def export(obj, path, flat):
            os.path.getsize(path)))
 
 
+def parse_hero():
+    """`blender ... --python this.py -- --hero primm`. Blender swallows everything
+    before the bare `--`, so only what follows it is ours."""
+    argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    hero = "windman"
+    if "--hero" in argv:
+        hero = argv[argv.index("--hero") + 1]
+    if hero not in HEROES:
+        raise SystemExit("unknown hero %r; known: %s"
+                         % (hero, ", ".join(sorted(HEROES))))
+    return hero
+
+
 def main():
+    hero = parse_hero()
+    cfg = HEROES[hero]
+    out_dir = os.path.join(REPO, "assets", "models", "characters", cfg["parts_dir"])
+    out_glb = os.path.join(out_dir, "%s_head_authored.glb" % hero)
+    log("building the %s head -> %s" % (hero, out_glb))
+
     enable_mpfb()
     clear_scene()
 
-    human, neck, eye = build_human()
+    human, neck, eye = build_human(cfg)
     obj = bake_to_plain_mesh(human)
-    cut_head(obj, neck, neck.z + 0.012)
-    scale, centre = reframe(obj, neck.z + 0.012)
+    cut_head(obj, neck, neck.z + 0.012, cfg["neck_stump_radius"])
+    scale, centre = reframe(obj, neck.z + 0.012, cfg["target_height"])
 
     # The landmarks travel with the mesh through reframe() — the 180-degree turn
     # included, which is why the y is negated here too.
@@ -423,14 +550,14 @@ def main():
         raise AssertionError("head is facing backwards: eye y=%.4f" % eye_y)
 
     decimate(obj, TRIS_SMOOTH)
-    paint(obj, eye_z, eye_y)
+    paint(obj, eye_z, cfg)
 
-    bake_albedo(obj)
+    bake_albedo(obj, hero)
     # Variant A's colour comes from the texture; leaving COLOR_0 on would multiply
     # the two and darken the whole head.
     while obj.data.color_attributes:
         obj.data.color_attributes.remove(obj.data.color_attributes[0])
-    export(obj, OUT_SMOOTH, flat=False)
+    export(obj, out_glb, flat=False)
 
     for o in bpy.data.objects:
         for m in o.modifiers:
@@ -442,10 +569,11 @@ def main():
     if hasattr(obj.data, "sculpt_vertex_colors") and obj.data.sculpt_vertex_colors:
         raise AssertionError("obj.data has sculpt_vertex_colors")
 
-    OUT_BLEND = os.path.join(OUT_DIR, "windman_head_authored.blend")
-    bpy.ops.wm.save_as_mainfile(filepath=OUT_BLEND, compress=True)
-    log("wrote %s (%d bytes)" % (os.path.basename(OUT_BLEND), os.path.getsize(OUT_BLEND)))
+    out_blend = os.path.join(out_dir, "%s_head_authored.blend" % hero)
+    bpy.ops.wm.save_as_mainfile(filepath=out_blend, compress=True)
+    log("wrote %s (%d bytes)" % (os.path.basename(out_blend), os.path.getsize(out_blend)))
     log("done")
 
 
-main()
+if __name__ == "__main__":
+    main()
