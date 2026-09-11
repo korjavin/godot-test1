@@ -129,8 +129,14 @@ func has_head() -> bool:
 
 
 func rest_pose() -> void:
-	"""Back to the exported rest — every bone, fingers included."""
+	"""Back to the exported rest — every bone, fingers included — and then the
+	elbow back to its neutral bend, because `ELBOW_BEND_DEG` is the rest this
+	driver poses around on every other path (`locomotion`, `air`, `idle`). Left
+	at the exported straight arm, a character swap would show one frame of
+	straightened elbows before the first pose call bends them again."""
 	_skel.reset_bone_poses()
+	for side: String in ["left", "right"]:
+		_set_axis(LOWERARM[side], AXIS_X, deg_to_rad(ELBOW_BEND_DEG))
 
 
 func locomotion(arm_swing: float, leg_swing: float, arm_asym: float) -> void:

@@ -127,11 +127,13 @@ const SKINNED_SWEEP_SECONDS: float = 20.0
 ## An arbitrary clock the determinism probe asks twice about — arbitrary on
 ## purpose: a round number could land on a sine zero and compare two rest poses.
 const SKINNED_PROBE_TIME: float = 12.34
-## The swing check (i) drives the thigh to, either way, and how far the knee must
-## then have travelled for the pose to count as having reached the skeleton at
-## all. 30 degrees is inside every row's `leg_deg`; Teibi's thigh is ~0.45 m, so
-## the two extremes sit ~0.45 m apart and 5 cm is far below that and far above
-## the float noise in a bone chain.
+## The swing checks (h) and (i) drive the thigh and the shoulder to, either way,
+## and how far the knee must then have travelled for the pose to count as having
+## reached the skeleton at all. 30 degrees is a probe amplitude, not a hero's: it
+## sits inside the fixture's own row (Teibi walks at `leg_deg` 44) and well
+## inside `LIMB_LIMIT_DEG`, which is all it has to be — nothing here is measuring
+## a `GAITS` value. Teibi's thigh is ~0.45 m, so the two extremes sit ~0.45 m
+## apart and 5 cm is far below that and far above the float noise in a bone chain.
 const SKINNED_JOINT_SWING_DEG: float = 30.0
 const SKINNED_JOINT_TRAVEL_M: float = 0.05
 ## ...and how much SHORTER the hip-to-foot reach must get on the back-swing,
@@ -192,6 +194,7 @@ func _run() -> void:
 		Sentinel.done("footsteps")
 		Sentinel.done("sidestep")
 		Sentinel.done("skinned")
+		Sentinel.done("skinned_joints")
 		_report()
 		return
 
@@ -213,6 +216,7 @@ func _run() -> void:
 		Sentinel.done("footsteps")
 		Sentinel.done("sidestep")
 		Sentinel.done("skinned")
+		Sentinel.done("skinned_joints")
 		player.queue_free()
 		_report()
 		return
@@ -986,6 +990,7 @@ func _check_skinned(player: Node3D) -> void:
 		_fail("could not load %s — the skinned driver has no fixture to prove "
 				% SKINNED_FIXTURE + "itself on, so nothing below ran")
 		Sentinel.done("skinned")
+		Sentinel.done("skinned_joints")
 		return
 	var fixture: Node3D = packed.instantiate()
 	root.add_child(fixture)
@@ -1008,6 +1013,7 @@ func _check_skinned(player: Node3D) -> void:
 				+ "the skinned driver, and nothing else in this check could run")
 		fixture.queue_free()
 		Sentinel.done("skinned")
+		Sentinel.done("skinned_joints")
 		return
 
 	anim._gait = PlayerAnimation.gait_for("teibi")
@@ -1144,6 +1150,15 @@ func _check_skinned(player: Node3D) -> void:
 	player.set_active_character(_hero_index("teibi"))
 	var limb_poses: Array[Dictionary] = _drive_rig(player.anim.rig)
 	var bone_poses: Array[Dictionary] = _drive_rig(anim.rig)
+	# THE ORACLE HAS TO BE THE OTHER RIG, and there has to BE a comparison: an
+	# empty script or a `player.anim` that somehow bound a skeleton too would
+	# make every assertion below vacuous while printing OK.
+	if String(player.anim.rig.kind()) != "limbs":
+		_fail("the equivalence oracle bound the '%s' rig — it must be the LIMB rig, "
+				% player.anim.rig.kind() + "or this compares the bone driver with itself")
+	if limb_poses.is_empty() or limb_poses.size() != bone_poses.size():
+		_fail("the driver script answered %d poses on the limb rig and %d on the bone "
+				% [limb_poses.size(), bone_poses.size()] + "rig — nothing was compared")
 	for step_index: int in limb_poses.size():
 		var want: Dictionary = limb_poses[step_index]
 		var got: Dictionary = bone_poses[step_index]
@@ -1160,13 +1175,13 @@ func _check_skinned(player: Node3D) -> void:
 						+ "rigs must be the SAME pose written two ways, or a hero changes "
 						+ "the way it walks the day it is migrated")
 
-	_check_skinned_joints(anim, fixture, move_eps)
+	_measure_skinned_joints(anim, fixture)
 
 	fixture.queue_free()
 	Sentinel.done("skinned")
 
 
-func _check_skinned_joints(anim, fixture: Node3D, move_eps: float) -> void:
+func _measure_skinned_joints(anim, fixture: Node3D) -> void:
 	"""
 	(h) and (i) — the two things `measure()` cannot answer, measured on the
 	SKELETON in its own space.
@@ -1193,6 +1208,7 @@ func _check_skinned_joints(anim, fixture: Node3D, move_eps: float) -> void:
 	if found.is_empty():
 		_fail("skinned fixture: no Skeleton3D under the fixture to measure in "
 				+ "skeleton space — (h) and (i) did not run")
+		Sentinel.done("skinned_joints")
 		return
 	var skel: Skeleton3D = found[0] as Skeleton3D
 	var hip: int = skel.find_bone("thigh_l")
@@ -1203,6 +1219,7 @@ func _check_skinned_joints(anim, fixture: Node3D, move_eps: float) -> void:
 	if hip < 0 or knee < 0 or foot < 0 or shoulder < 0 or hand < 0:
 		_fail("skinned fixture: the rig has no thigh_l/calf_l/foot_l or "
 				+ "upperarm_l/hand_l chain to measure")
+		Sentinel.done("skinned_joints")
 		return
 
 	# Straight down the driver, not through `animate_walking()`: this needs the
@@ -1247,6 +1264,27 @@ func _check_skinned_joints(anim, fixture: Node3D, move_eps: float) -> void:
 				% reach_front + "the body and stay straight in front of it, which is "
 				+ "the joint the limb rig has never had")
 
+	# THE ELBOW'S NEUTRAL IS THE SAME ON EVERY PATH — round 1's fix, and the one
+	# joint write that lives OUTSIDE `locomotion()`. Standing still must ease the
+	# forearm to `ELBOW_BEND_DEG`, not straighten it: easing it to zero is what
+	# made a skinned hero's arms straighten over half a second and then snap back
+	# 15 degrees on the first walking frame, and it is also what made a standing
+	# LOCAL hero differ from a standing REMOTE one (the mirror has no idle branch
+	# — it calls `locomotion()` with both swings at zero).
+	anim.rig.rest_pose()
+	anim.rig.locomotion(0.0, 0.0, 1.0)
+	var arm_neutral: float = skel.get_bone_global_pose(hand).origin.distance_to(
+			skel.get_bone_global_pose(shoulder).origin)
+	for i: int in RELAX_FRAMES:
+		anim.rig.idle(0.1)
+	var arm_idle: float = skel.get_bone_global_pose(hand).origin.distance_to(
+			skel.get_bone_global_pose(shoulder).origin)
+	if absf(arm_idle - arm_neutral) > SKINNED_ELBOW_M:
+		_fail("skinned fixture: standing still settled the arm at %.4f m shoulder-to-"
+				% arm_idle + "hand where the neutral walk pose holds it at %.4f m — "
+				% arm_neutral + "the elbow's rest must be the same on every path, or "
+				+ "it straightens while you stand and snaps back the frame you walk")
+
 	if arm_bent >= arm_straight - SKINNED_ELBOW_M:
 		_fail("skinned fixture: shoulder-to-hand measured %.4f m at the arm's forward "
 				% arm_bent + "extreme and %.4f m at its back one — the elbow must "
@@ -1254,6 +1292,8 @@ func _check_skinned_joints(anim, fixture: Node3D, move_eps: float) -> void:
 				+ "`ELBOW_BEND_DEG` neutral), so the hand comes in as the arm swings "
 				+ "forward. A constant or missing elbow write measures no difference "
 				+ "at all, and `measure()` does not expose the forearm.")
+
+	Sentinel.done("skinned_joints")
 
 
 ## The keys BOTH rigs own, and the ones check 8's equivalence script compares.

@@ -5,7 +5,7 @@ extends RefCounted
 ##
 ## THE SPLIT. The `CharacterBody3D` keeps movement, capture, respawn, the input
 ## map and every contract method the `"player"` group answers; this file keeps
-## the POSE — the limb references, the rest-pose table, the `GAITS` personality
+## the POSE — the bound rig, the rest-pose table, the `GAITS` personality
 ## rows, the walk / idle / air / sidestep cycles, and the cel-shading applied to
 ## a character model on the swap path. It is a MOVE and nothing else: not one
 ## number, not one branch and not one comment changed.

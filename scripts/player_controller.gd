@@ -2372,7 +2372,7 @@ func preload_all_characters() -> void:
 		# pose while limbs are still untouched (so re-activation never drifts it).
 		anim.apply_character_style(instance)
 		character_instances.append(instance)
-		character_rest_poses.append(anim.capture_rest_pose(instance))
+		character_rest_poses.append(PlayerAnimation.capture_rest_pose(instance))
 
 		print("Preloaded character: %s" % CHARACTERS[index]["name"])
 
