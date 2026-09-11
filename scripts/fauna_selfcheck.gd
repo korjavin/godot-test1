@@ -66,6 +66,16 @@ extends SceneTree
 ##      one" as that last one's positive control, because "spawned nothing" is
 ##      also what a harness that cannot spawn reports.
 ##
+##   7. NO HERD IS ROLLED ACROSS AUTHORED BUDAPEST (bead godot-test1-8gw.25) —
+##      the owner watched giraffes migrate down Váci utca. The field knew exactly
+##      one keep-out, the HQ disc, so a player at the gate or inside the city got
+##      migration lines laid straight across the Parliament forecourt. It fails
+##      SILENTLY in the loudest possible way: nothing errors, nothing logs, the
+##      herd is correct in every respect except where it is. Measured on the
+##      SHIPPED spawn path with the player standing at the two spots that produce
+##      it, and with an open-field spawn as the positive control — "spawned
+##      nothing" is also what a harness that cannot spawn reports.
+##
 ## Don't grow this into a suite. Two non-obvious things in here. (a) Rows 1-3
 ## drive the manager's own _physics_process by hand, SUB-STEPPED inside a real
 ## physics frame, so the queries are legal and a 45 s crossing costs a second of
@@ -156,6 +166,13 @@ class TerrainStub extends Node:
 		return Vector2(world_x - TOWER_SITE.x, world_z - TOWER_SITE.z).length() \
 				< TOWER_RADIUS + radius
 
+	## Row 7's half of the stub — the SHIPPED rect, off the plan, so the city the
+	## manager is tested against is the city the game builds. That the real
+	## terrain still spells this method the same way is asserted separately in
+	## _check_budapest: a stub is not evidence about the node it stands in for.
+	func budapest_rect() -> Rect2:
+		return BudapestPlan.rect()
+
 # ---------------------------------------------------------------------------
 # Row 4 — the rider carry (see the header). One species at a time, one animal
 # each, one manager tick per REAL physics frame.
@@ -219,6 +236,27 @@ const RIDE_CARRY_MIN: float = 0.9
 ## The scripted berth swings the facing ~0.5 rad each way, i.e. ~1.0 rad
 ## peak-to-peak across the swerve out and the unwind, which is what is measured.
 const RIDE_YAW_SWING_MIN: float = 0.4
+
+# ---------------------------------------------------------------------------
+# Row 7 — no herd is rolled across authored Budapest (godot-test1-8gw.25)
+# ---------------------------------------------------------------------------
+
+## Forced migration events per city spot. The rejection is geometric, not
+## probabilistic — from either spot EVERY line the field can roll crosses the
+## rect, so one event would prove it — but the manager re-rolls the line
+## TOWER_SPAWN_TRIES times per event off a randomize()d RNG, and this many events
+## walks that budget repeatedly rather than sampling it once.
+const CITY_SPAWN_EVENTS: int = 12
+## How far WEST of the gate the second spot stands: outside the rect, so it is
+## not the trivially-inside case, but inside the setback the spawn circle puts
+## the origin at — i.e. the player who has arrived at the city and has not
+## entered it, which is where the owner saw the herd.
+const CITY_GATE_SETBACK: float = 50.0
+## The positive control: open field, 1.6 km short of the rect and well clear of
+## the HQ disc, where a herd must still spawn.
+const CITY_FIELD_SPOT: Vector3 = Vector3(0.0, 0.0, 0.0)
+
+var _city_line: String = ""
 
 var _root: Node3D = null
 var _manager: Node = null
@@ -384,9 +422,10 @@ func _physics_process(_delta: float) -> bool:
 		6:
 			_run_ride()
 		7:
-			# Row 6 needs no physics at all, so it runs whole in one frame and
-			# then reports — see _check_replay.
+			# Rows 6 and 7 need no physics at all, so they run whole in one
+			# frame and then report — see _check_replay / _check_budapest.
 			_check_replay()
+			_check_budapest()
 			_report()
 	return false
 
@@ -930,6 +969,66 @@ func _check_replay() -> void:
 	Sentinel.done("check_replay")
 
 
+func _spawn_one_event() -> bool:
+	## One forced migration event on the SHIPPED path: arm the timer and tick the
+	## manager until _spawn_herd has been reached. Returns whether a herd exists,
+	## and leaves the field empty either way.
+	_manager.set("_event_timer", DT)
+	for _tick: int in REPLAY_SPAWN_TICKS:
+		_manager.call("_physics_process", DT)
+	var spawned := not (_manager.get("_animals") as Array).is_empty()
+	_manager.call("_despawn_herd")
+	return spawned
+
+
+func _check_budapest() -> void:
+	## Row 7. Stand the player where the owner stood and count the herds.
+	_manager.call("_despawn_herd")
+	_manager.set("_event_timer", 1e9)
+	_obstacle.position = Vector3(0.0, 0.0, 9000.0)
+
+	# The stub answers `budapest_rect`, so the row would pass unchanged if the
+	# REAL terrain stopped spelling it that way — the manager's has_method guard
+	# would quietly go back to "nothing in the way". Assert the shipped name off
+	# the shipped SOURCE, the way selfcheck_sentinel reads its own stamps:
+	# `load()`ing the terrain here would drag its whole scene graph in for one
+	# method name.
+	if not FileAccess.get_file_as_string("res://scripts/endless_terrain.gd") \
+			.contains("func budapest_rect("):
+		_failures.append("endless_terrain.gd has no budapest_rect() — fauna's has_method guard answers 'no city' and this whole row is a stub talking to itself")
+
+	var centre := BudapestPlan.rect().get_center()
+	var spots: Array = [
+		["city centre", Vector3(centre.x, PLAYER_Y, centre.y)],
+		["the gate", Vector3(BudapestPlan.GATE.x - CITY_GATE_SETBACK, PLAYER_Y, BudapestPlan.GATE.z)],
+	]
+	var city_herds := 0
+	for spot: Array in spots:
+		_player.global_position = spot[1] as Vector3
+		var herds := 0
+		for _event: int in CITY_SPAWN_EVENTS:
+			if _spawn_one_event():
+				herds += 1
+		city_herds += herds
+		if herds > 0:
+			_failures.append("%d of %d migration events spawned a herd with the player at %s — giraffes down Váci utca"
+					% [herds, CITY_SPAWN_EVENTS, spot[0]])
+
+	# POSITIVE CONTROL. Without it "no herd" is also what a harness that cannot
+	# spawn at all reports, and this row would pass with the manager gutted.
+	_player.global_position = CITY_FIELD_SPOT + Vector3(0.0, PLAYER_Y, 0.0)
+	var field_herds := 0
+	for _event: int in CITY_SPAWN_EVENTS:
+		if _spawn_one_event():
+			field_herds += 1
+	if field_herds < CITY_SPAWN_EVENTS:
+		_failures.append("only %d of %d open-field events spawned a herd — the city rejection is eating the whole world"
+				% [field_herds, CITY_SPAWN_EVENTS])
+	_city_line = "city: %d/%d herds at the centre and at the gate, %d/%d in open field" \
+			% [city_herds, CITY_SPAWN_EVENTS * spots.size(), field_herds, CITY_SPAWN_EVENTS]
+	Sentinel.done("check_budapest")
+
+
 func _report() -> void:
 	var total := ROWS.size() * TRIALS_PER_ROW
 	if _spawned < total:
@@ -970,6 +1069,7 @@ func _report() -> void:
 		for ride_line: String in _ride_lines:
 			print("ride  ", ride_line)
 		print(_replay_line)
+		print(_city_line)
 		Sentinel.finish(self)
 		return
 	for ride_line: String in _ride_lines:
