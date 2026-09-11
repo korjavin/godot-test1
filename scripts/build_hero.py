@@ -40,10 +40,16 @@ these, which are this bead's own):
     floats off its skeleton. `reframe()` here transforms the mesh DATA and the
     armature DATA with the same matrix (`ID.transform()` on both), so both
     objects keep identity transforms and the rest pose stays consistent.
- 5. MAKEHUMAN RESTS IN AN A-POSE (measured: upper arms ~46 deg off vertical).
+ 5. MAKEHUMAN RESTS IN AN A-POSE (measured: upper arms 41.3 deg off vertical).
     Fixed as REST POSE in Blender (`apply_pose_as_rest`), never in the .tscn —
     an exported rest that is not the game's rest means both animation columns
     start from the wrong arms.
+ 6. `pose.bones[...].head` / `.tail` / `.matrix` DO NOT FOLLOW `data.transform()`.
+    They are evaluated through the depsgraph, `view_layer.update()` does not
+    refresh them, and after `reframe()` they answer in the PRE-turn frame. Read
+    and write the rest data (`data.bones[...].head_local`, `.tail_local`,
+    `.matrix_local`, and `pose.bones[...].matrix_basis`) instead —
+    `apply_pose_as_rest`'s docstring has the measurement that cost a rebuild.
 """
 
 import math
@@ -322,26 +328,41 @@ def apply_pose_as_rest(armature, obj, arms_down_deg):
     `upperarm_l` happens to be built on, `rotation_difference` finds the turn
     that takes the arm from where it points to straight down. Children (forearm,
     hand, fingers) are parented and follow.
+
+    TRAP 6, and it cost a whole rebuild and a whole re-shoot. EVERYTHING HERE IS
+    READ AND WRITTEN THROUGH `armature.data`, never through `pose.bones[...].head
+    / .tail / .matrix`, because `reframe()` moved the rig by transforming its
+    DATA and the evaluated pose does not follow that until the depsgraph catches
+    up — `view_layer.update()` does not make it. Measured: after the 180-degree
+    reframe, `pose.bones["upperarm_l"].tail - .head` still read
+    (+0.660, +0.005, -0.751), the PRE-turn direction, so the left arm was swung
+    onto the right arm's side and the exported rest came out with both arms
+    5 degrees off vertical THE SAME WAY. `data.bones[...].head_local` /
+    `.tail_local` / `.matrix_local` are plain rest data and are current the
+    instant `data.transform()` returns.
+
+    So the pose is written as `matrix_basis` — the bone-local delta — by
+    conjugating the wanted ARMATURE-space rotation through the bone's own rest
+    basis, exactly the trick `style_shots.gd`'s `_bone_pose()` uses on the Godot
+    side for the same reason (MakeHuman bones carry rolls).
     """
     RigService = dyn("mpfb.services.rigservice", "RigService")
     bpy.ops.object.mode_set(mode='OBJECT')
     bpy.context.view_layer.objects.active = armature
     bpy.ops.object.mode_set(mode='POSE')
     ang = math.radians(arms_down_deg)
+    wanted = {}
     for side, sign in (("l", -1.0), ("r", 1.0)):
-        pb = armature.pose.bones["upperarm_" + side]
-        d = (pb.tail - pb.head).normalized()
-        before = math.degrees(d.angle(Vector((0.0, 0.0, -1.0))))
+        bone = armature.data.bones["upperarm_" + side]
+        d = (bone.tail_local - bone.head_local).normalized()
         want = Vector((sign * math.sin(ang), 0.0, -math.cos(ang)))
-        q = d.rotation_difference(want)
-        head = pb.head.copy()
-        pb.matrix = (Matrix.Translation(head) @ q.to_matrix().to_4x4()
-                     @ Matrix.Translation(-head)) @ pb.matrix
-        bpy.context.view_layer.update()
-        after = math.degrees((pb.tail - pb.head).normalized()
-                             .angle(Vector((0.0, 0.0, -1.0))))
-        log("upperarm_%s: %.1f deg off vertical (A-pose) -> %.1f deg"
-            % (side, before, after))
+        wanted["upperarm_" + side] = want
+        rest = bone.matrix_local.to_3x3()
+        local = rest.inverted() @ d.rotation_difference(want).to_matrix() @ rest
+        armature.pose.bones["upperarm_" + side].matrix_basis = local.to_4x4()
+        log("upperarm_%s: A-pose %s -> want %s"
+            % (side, tuple(round(v, 4) for v in d),
+               tuple(round(v, 4) for v in want)))
     bpy.ops.object.mode_set(mode='OBJECT')
 
     bpy.context.view_layer.objects.active = obj
@@ -357,6 +378,19 @@ def apply_pose_as_rest(armature, obj, arms_down_deg):
     bpy.ops.pose.armature_apply(selected=False)
     bpy.ops.object.mode_set(mode='OBJECT')
     RigService.ensure_armature_modifier(obj, armature)
+
+    # SIGNED, and asserted on the REST data the bake just wrote — the one reading
+    # that cannot be stale and the one the .glb is exported from. The first draft
+    # logged `Vector.angle()`, which is unsigned, so it printed a contented
+    # "5.0 deg" for both arms while one of them pointed into the hip.
+    for name, want in wanted.items():
+        bone = armature.data.bones[name]
+        got = (bone.tail_local - bone.head_local).normalized()
+        log("%s rest is now %s" % (name, tuple(round(v, 4) for v in got)))
+        if (got - want).length > 1e-3:
+            raise AssertionError(
+                "%s rest %s is not the direction asked for %s"
+                % (name, tuple(got), tuple(want)))
 
 
 # ---------------------------------------------------------------------------
@@ -571,6 +605,18 @@ def join_rigid(target, extra, bone):
 # ---------------------------------------------------------------------------
 
 def export_glb(obj, armature, path):
+    """
+    SMOOTH, and deliberately not through `predator_parts.export_faceted()`.
+    CLAUDE.md calls that "the one export seam for every generated `.glb`
+    (heroes included)", and three things put this lane outside it: the y1o
+    faceted ruling is WAIVED FOR THE FOUR HEROES by the owner (bd show
+    godot-test1-z3e NOTES, 2026-09-06); `export_faceted` is trimesh code and
+    cannot be called from Blender at all, its Blender port being
+    `blender_hero.py`'s opt-in `--faceted`; and the predecessor this script is a
+    copy of (`spike_z3e_teibi_body.py:669`) smooth-shades the same MPFB2 body
+    the same way. Flat normals on an organic basemesh are also what tore the
+    hero outline into cracks (bead z3e.9).
+    """
     for o in bpy.data.objects:
         o.select_set(o is obj or o is armature)
     bpy.context.view_layer.objects.active = armature

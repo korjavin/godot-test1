@@ -17,12 +17,20 @@ extends SceneTree
 
 const GLB := "res://assets/models/characters/teibi_parts/teibi_skinned.glb"
 const WANT_BONES := 53
-## The BODY is built to 1.78 m crown-to-heel; Teibi's beret nub adds ~5.5 cm on
-## top, the same 1.835 m the z3e.10 Blender checkpoint recorded. The band is the
-## bead's 1.75-1.82 widened by exactly that hat.
+## `build_hero.py`'s `reframe()` scales the BODY to exactly `row["height"]`
+## crown-to-heel — 1.78 m for Teibi — so the measured box can only ever be
+## 1.78 plus whatever an accessory sticks out above it. Teibi's beret nub adds
+## 5.5 cm (measured 1.8349, and the z3e.10 Blender checkpoint recorded the same
+## 1.835 on the same body). The floor stays at the bead's 1.75 — a hat cannot
+## lower it, and a body that came out short is exactly what it is there to catch
+## — and only the ceiling is raised, to 1.86, which clears the 1.835 with a
+## centimetre of slack and would still fail a second hat.
 const MIN_HEIGHT := 1.75
 const MAX_HEIGHT := 1.86
 const FEET_TOLERANCE := 0.04
+## `build_hero.py`'s ARMS_DOWN_DEG, and how far the exported rest may sit from it.
+const ARMS_DOWN_DEG := 5.0
+const ARM_ANGLE_TOLERANCE := 1.0
 
 func _initialize() -> void:
 	var scene := load(GLB) as PackedScene
@@ -63,6 +71,30 @@ func _initialize() -> void:
 		var foot := _bone_pos(skel, skel_at, "foot_" + side)
 		print("[PROBE] %s toe z %.4f vs ankle z %.4f" % [side, ball.z, foot.z])
 		toes_ahead = toes_ahead and ball.z < foot.z
+	# THE REST POSE, SIGNED. `build_hero.py`'s trap 5 swings both upper arms out of
+	# MakeHuman's A-pose and bakes the result as rest; that is a chain of `bpy.ops`
+	# mode switches, `modifier_apply` and `pose.armature_apply`, i.e. the classic
+	# silent-no-op shape, and NOTHING ELSE HERE WOULD CATCH IT: an A-posed rig has
+	# the same bone count, the same crown-to-heel height (arms at 46 degrees reach
+	# neither above the crown nor below the heel), the same feet and the same toes,
+	# and `upperarm_l.x` is the shoulder JOINT, which sits at -X at any arm angle.
+	# The magnitude alone is not enough either — an arm swung the WRONG WAY is off
+	# vertical by exactly the angle asked for. So: each arm must hang within
+	# ARM_ANGLE_TOLERANCE of ARMS_DOWN_DEG off straight down AND lean OUTWARD, away
+	# from the body's mid-line, which is the sign the unsigned `Vector.angle()` in
+	# the builder's own log cannot see.
+	var arms_ok := true
+	for side in ["l", "r"]:
+		var shoulder := _bone_pos(skel, skel_at, "upperarm_" + side)
+		var elbow := _bone_pos(skel, skel_at, "lowerarm_" + side)
+		var arm := (elbow - shoulder).normalized()
+		var off := rad_to_deg(arm.angle_to(Vector3.DOWN))
+		var outward: bool = signf(arm.x) == signf(shoulder.x)
+		print("[PROBE] upperarm_%s hangs %.2f deg off vertical, dir %s, outward: %s"
+				% [side, off, arm.snappedf(0.0001), outward])
+		arms_ok = arms_ok and outward \
+				and absf(off - ARMS_DOWN_DEG) <= ARM_ANGLE_TOLERANCE
+
 	var head := _bone_pos(skel, skel_at, "head")
 	var upperarm_l := _bone_pos(skel, skel_at, "upperarm_l")
 	print("[PROBE] head bone at ", head.snappedf(0.0001),
@@ -81,7 +113,7 @@ func _initialize() -> void:
 	var ok := skel.get_bone_count() == WANT_BONES \
 			and height >= MIN_HEIGHT and height <= MAX_HEIGHT \
 			and absf(feet) <= FEET_TOLERANCE \
-			and toes_ahead and upperarm_l.x < 0.0
+			and toes_ahead and upperarm_l.x < 0.0 and arms_ok
 	print("[PROBE] ", "PROBE OK" if ok else "PROBE FAILED")
 	# Nothing owns this scene — it was never added to the tree — so free it here
 	# or Godot reports leaked RIDs at exit, which reads exactly like a defect.

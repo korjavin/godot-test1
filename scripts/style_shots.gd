@@ -32,8 +32,8 @@ var _out_dir: String = "user://shots"
 ## which is what CI and the epic's A/B pairs want. Comma-separated (bead
 ## godot-test1-z3e.10): this environment's per-shot fixed cost (world/camp
 ## sweep, a real settle) dwarfs one shot's own camera work, so a caller wanting
-## several shots that already share `_head_pose_settled` (17/18/19) asks for
-## them in ONE process rather than paying the settle three times over.
+## several shots that already share `_head_pose_settled` (16/17/18/19/20) asks
+## for them in ONE process rather than paying the settle five times over.
 var _only: String = ""
 
 ## Set by the `web` argument — see `_emulate_web_settings`. Off means "whatever
@@ -151,10 +151,26 @@ func _ready() -> void:
 		elif a.begins_with("anim="):
 			_anim = a.substr(5)
 			_spike = true
+			# LOUD, like `body=`'s own guard below. A typo here used to leave
+			# `_anim` on the `_:` arm of `_pose_walk`, which is the SINE rig —
+			# on a Skeleton3D that poses nothing, so shot 18 came out as the
+			# unposed control picture still labelled with the typo.
+			if not _anim in ["proc", "clip"]:
+				push_error("[SHOTS] unknown anim= column " + _anim
+						+ " (proc|clip)")
 		elif a == "web":
 			_emulate_web = true
 		else:
 			_out_dir = a
+	# THE PAIRING, once both arguments are known. `anim=proc` writes BONE poses,
+	# and only `body=skinned` brings a Skeleton3D: asked for on today's ten-part
+	# hero it poses nothing and every shot comes back as the frozen settle
+	# picture, labelled `anim=proc`. Dropped rather than refused outright, so the
+	# run still produces the control column instead of nothing.
+	if _anim == "proc" and _body_variant != "skinned":
+		push_error("[SHOTS] anim=proc needs body=skinned (a Skeleton3D to pose) — "
+				+ "ignoring anim= and shooting the control column")
+		_anim = ""
 	DirAccess.make_dir_recursive_absolute(_out_dir)
 	call_deferred("_run")
 
@@ -283,7 +299,7 @@ func _run() -> void:
 	# THE STRIDE STRIP (spike godot-test1-5u3.1) — six frames over one stride
 	# period, after 19 for the same reason 19 comes after 18: it writes the
 	# animation clock and nothing restores it.
-	await _shoot_body_strip(player, "20_body_strip")
+	await _shoot_body_strip(terrain, player, field, "20_body_strip")
 
 	# THE CAPTIONS (bead godot-test1-y1o.38) — the respawn countdown and the
 	# level-up line, the two biggest strings the game ever puts over the world.
@@ -558,10 +574,14 @@ func _apply_body_variant(player: Node3D) -> void:
 
 ## SPIKE godot-test1-5u3.1 — frames in one stride period for shot 20's strip.
 const STRIP_FRAMES: int = 6
-## The constant elbow bend `_pose_skinned` holds through the whole cycle. Today's
-## rig has no elbow at all (the forearm is welded to the upper arm), so this is
-## new shape rather than a ported number.
+## The constant elbow bend `_pose_skinned` holds through the whole cycle, and how
+## much of the shoulder's swing the forearm tracks on top of it. New numbers, not
+## ported ones: every hero scene DOES have a `LowerArm` node under its `LeftArm`
+## (teibi.tscn:30, and the same in all four), but `animate_walking()` writes only
+## the four top-level limbs' `rotation.x` (player_animation.gd:582-586), so the
+## joint exists and nothing has ever articulated it.
 const ELBOW_BEND_DEG: float = 15.0
+const ELBOW_TRACK_RATIO: float = 0.3
 ## How much of the leg swing the knee gives back on the BACK-swing only.
 const KNEE_FLEX_RATIO: float = 0.8
 
@@ -570,7 +590,10 @@ var _skeleton: Skeleton3D = null
 
 func _can_pose() -> bool:
 	"""Whether the active column has anything that can be posed mid-stride.
-	`uncut` is one welded mesh; `skinned` needs `anim=proc` to drive its bones."""
+	`uncut` is one welded mesh; `skinned` needs `anim=proc` to drive its bones.
+	The other half of that pairing — `anim=proc` without a skeleton — is refused
+	in `_ready()` rather than here, because it would mislabel the shots that do
+	NOT consult this (18 has no stride to skip) as well as the ones that do."""
 	if _body_variant == "uncut":
 		return false
 	if _body_variant == "skinned":
@@ -613,8 +636,12 @@ func _pose_skinned(player: Node3D, t: float) -> void:
 	SPIKE godot-test1-5u3.1, the PROCEDURAL column: `player_animation.gd`'s
 	`animate_walking()` — the same GAITS row, the same two sines, the same signs
 	— written onto BONES instead of onto five whole-limb nodes. The new shape it
-	buys is the joints today's rig does not have: a knee that bends on the
-	back-swing and an elbow that stays bent.
+	buys is the joints today's rig HAS AND NEVER MOVES: every hero scene hangs a
+	`LowerArm` under its `LeftArm` and a `LowerLeg` under its `LeftLeg`
+	(teibi.tscn:30 and :54, and the same in the other three), and
+	`animate_walking()` writes only the four top-level limbs' `rotation.x`. So a
+	knee that bends on the back-swing and an elbow that stays bent are new here,
+	but they are not something only a skeleton could express.
 
 	THE BONE-ROLL TRAP, and the finding this column exists to record. MakeHuman
 	bones carry rolls: on the imported rig `thigh_l`'s local X reads
@@ -652,8 +679,8 @@ func _pose_skinned(player: Node3D, t: float) -> void:
 		var asym: float = float(gait["arm_asym"]) if side == "l" else 1.0
 		var arm_swing: float = -mirror * stride * arm_amp * asym
 		_bone_pose(skel, "upperarm_" + side, Basis(Vector3.RIGHT, arm_swing))
-		_bone_pose(skel, "lowerarm_" + side,
-				Basis(Vector3.RIGHT, deg_to_rad(ELBOW_BEND_DEG) + 0.3 * arm_swing))
+		_bone_pose(skel, "lowerarm_" + side, Basis(Vector3.RIGHT,
+				deg_to_rad(ELBOW_BEND_DEG) + ELBOW_TRACK_RATIO * arm_swing))
 
 	# The torso's lean (pitch) and waddle (roll) — `animate_walking()` writes both
 	# on the Body node; on a skeleton they belong on the spine, where the legs do
@@ -697,10 +724,12 @@ func _shoot_body(terrain: Node, player: Node3D, at: Vector3, name: String,
 
 	`stride` poses the ALREADY-FROZEN hero mid-stride (shot 19) by writing
 	`animation_time` straight from this hero's own gait clock and calling
-	`animate_walking()` once — it reads the limb rotations off that clock
-	(player_animation.gd:556-590), so there is nothing to undo afterwards, which
-	is why 19 must run LAST. `body=uncut` has no LeftArm/RightArm/LeftLeg/RightLeg
-	(nothing to swing), so this is skipped for that variant rather than called.
+	`_pose_walk()` at a clock a quarter of a stride in — which for the control
+	column writes `animation_time` and calls `animate_walking()` once, and for
+	`anim=proc` writes bone rotations instead. Both are pure functions of their
+	clock, so there is nothing to undo afterwards, which is why 19 must run before
+	the shots that want a standing hero. A variant with nothing that swings (see
+	`_can_pose`) is skipped rather than shot.
 	"""
 	if not _wanted(name):
 		return
@@ -709,28 +738,7 @@ func _shoot_body(terrain: Node, player: Node3D, at: Vector3, name: String,
 				" has nothing that swings a limb")
 		return
 	if settle or not _head_pose_settled:
-		var chunk := Vector2i(roundi(at.x / 50.0), roundi(at.z / 50.0))
-		player.set_physics_process(true)
-		player.set_process(true)
-		terrain.new_run(SEED, chunk)
-		player.global_position = at
-		player.rotation.y = 0.0
-		player.velocity = Vector3.ZERO
-		await get_tree().create_timer(SETTLE_SECONDS, true, false, true).timeout
-		player.set_active_character(_hero_index(player))
-		await get_tree().create_timer(YAW_SECONDS, true, false, true).timeout
-		await _measure(name)
-		player.global_position = at
-		player.rotation.y = 0.0
-		player.velocity = Vector3.ZERO
-		player.visible = true
-		var model := player.get_node_or_null("CharacterModel")
-		if model is Node3D:
-			(model as Node3D).visible = true
-		player.set_physics_process(false)
-		player.set_process(false)
-		_head_pose_settled = true
-		await get_tree().process_frame
+		await _settle_body_pose(terrain, player, at, name)
 
 	# RE-ASSERT THE HERO WITH THE TICKS ALREADY OFF. The settle above is a LIVE
 	# window and a `captures_hero` grab jails whoever is active and auto-switches
@@ -763,6 +771,36 @@ func _shoot_body(terrain: Node, player: Node3D, at: Vector3, name: String,
 			_anim if _anim != "" else "sine")
 
 
+func _settle_body_pose(terrain: Node, player: Node3D, at: Vector3, name: String) -> void:
+	"""`_shoot_body`'s settle, lifted out so shot 20 can pay it too. IT IS A
+	REQUEST, NOT AN ASSERTION — the same rule `_shoot_head_closeup` documents:
+	`only=` can filter out the shot that was supposed to have done the settling,
+	so every shot that needs a settled pose asks for one and gets a no-op when
+	`_head_pose_settled` already holds."""
+	var chunk := Vector2i(roundi(at.x / 50.0), roundi(at.z / 50.0))
+	player.set_physics_process(true)
+	player.set_process(true)
+	terrain.new_run(SEED, chunk)
+	player.global_position = at
+	player.rotation.y = 0.0
+	player.velocity = Vector3.ZERO
+	await get_tree().create_timer(SETTLE_SECONDS, true, false, true).timeout
+	player.set_active_character(_hero_index(player))
+	await get_tree().create_timer(YAW_SECONDS, true, false, true).timeout
+	await _measure(name)
+	player.global_position = at
+	player.rotation.y = 0.0
+	player.velocity = Vector3.ZERO
+	player.visible = true
+	var model := player.get_node_or_null("CharacterModel")
+	if model is Node3D:
+		(model as Node3D).visible = true
+	player.set_physics_process(false)
+	player.set_process(false)
+	_head_pose_settled = true
+	await get_tree().process_frame
+
+
 func _body_camera(player: Node3D) -> Camera3D:
 	"""`_shoot_body`'s three-quarter-front camera, lifted out so the six-frame
 	stride strip (shot 20) frames every frame identically to shots 18/19."""
@@ -778,7 +816,7 @@ func _body_camera(player: Node3D) -> Camera3D:
 	return cam
 
 
-func _shoot_body_strip(player: Node3D, name: String) -> void:
+func _shoot_body_strip(terrain: Node, player: Node3D, at: Vector3, name: String) -> void:
 	"""
 	SPIKE godot-test1-5u3.1, shot 20. SIX frames evenly spaced across ONE stride
 	period, same camera as shot 18. A single frozen frame says whether a pose is
@@ -794,8 +832,8 @@ func _shoot_body_strip(player: Node3D, name: String) -> void:
 				" has nothing that swings a limb")
 		return
 	if not _head_pose_settled:
-		push_error("[SHOTS] " + name + " needs a settled pose — run it after 18/19")
-		return
+		await _settle_body_pose(terrain, player, at, name)
+		player.set_active_character(_hero_index(player))
 	# ONE CAMERA FOR ALL SIX FRAMES, and the world PAUSED around them. The single
 	# shots get away with building a camera per shot because each is judged alone;
 	# a strip is judged as a sequence, and anything that moves between its frames
