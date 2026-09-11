@@ -51,6 +51,7 @@ from pathlib import Path
 import sys  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from predator_parts import export_faceted  # noqa: E402
+from hero_skin import graded  # noqa: E402
 
 
 class WindmanSeparateMeshGenerator:
@@ -58,7 +59,12 @@ class WindmanSeparateMeshGenerator:
         # Palette tuned to the reference art (royal-blue tee, chestnut hair,
         # brick-red lower bandage, medium-brown shorts/handle).
         self.colors = {
-            'skin':         [0.93, 0.74, 0.62, 1.0],
+            # SKIN GOES THROUGH THE RENDER GRADE (bead godot-test1-z3e.14). The
+            # authored head on this body is graded by the same constant, and the
+            # neck, the bare arms, the hands and the calves below are the surfaces
+            # it has to match: an ungraded 0.93 next to a graded face is a hard
+            # white seam under the chin. `scripts/hero_skin.py` has the mechanism.
+            'skin':         graded([0.93, 0.74, 0.62, 1.0]),
             'hair':         [0.32, 0.20, 0.11, 1.0],
             'bandage_blue': [0.20, 0.38, 0.75, 1.0],
             'bandage_red':  [0.72, 0.18, 0.15, 1.0],

@@ -52,6 +52,13 @@ from mathutils import Matrix, Vector
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# THE SKIN GRADE, and the one copy of it — read that file before touching a
+# palette below. The `sys.path` insert is the generators' own idiom for reaching
+# a sibling script (generate_windman_separate.py does it for `export_faceted`);
+# Blender runs this file by path, so the directory is not on `sys.path` already.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hero_skin import graded  # noqa: E402
+
 TRIS_SMOOTH = 4500             # the bead's "retopo/decimate to ~3-5k"
 TEXTURE_SIZE = 512             # owner ruling: <= 512^2 albedo, no normal map
 
@@ -61,13 +68,15 @@ TEXTURE_SIZE = 512             # owner ruling: <= 512^2 albedo, no normal map
 SEAM_HALF = 0.0030
 SEAM_DARKEN = 0.55
 
+
 # ============================================================================
 # THE HEROES. One row per authored head; the pipeline below reads nothing else.
 #
 # `palette` is the hero's OWN generator palette, verbatim (generate_<hero>_
 # separate.py's `self.colors`), because the authored head sits on a torso that
 # generator still builds and a colour seam at the neck would be the first thing
-# anyone sees.
+# anyone sees. Its skin and lips reach the mesh through `hero_skin.SKIN_GRADE` —
+# the row is the paint, that constant is the exposure.
 #
 # `stripes` is the eyewear's COLOURS, listed TOP-DOWN in metres relative to the eye
 # landmark; the first stripe containing a vertex wins.
@@ -676,8 +685,11 @@ def paint(obj, eye_z, cfg, band_verts=frozenset()):
             return "lips"
         return "skin"
 
-    colours = {"hair": palette["hair"], "lips": palette["lips"],
-               "skin": palette["skin"]}
+    # SKIN and LIPS go through the render grade (`hero_skin.SKIN_GRADE`); hair does not —
+    # at 0.32 and below it is nowhere near the white point and darkening it further
+    # would only close the gap the haircut is read by.
+    colours = {"hair": palette["hair"], "lips": graded(palette["lips"]),
+               "skin": graded(palette["skin"])}
     for i, (_low, _high, colour) in enumerate(stripes):
         colours[i] = colour
     colours["seam"] = tuple(c * SEAM_DARKEN for c in stripes[-1][2][:3]) + (1.0,)

@@ -62,6 +62,14 @@ import importlib
 from mathutils import Matrix, Vector
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# THE SKIN GRADE, one copy for the whole cast — read `scripts/hero_skin.py`
+# before touching a `colours` row. Reached the way the generators reach
+# `predator_parts.export_faceted`, because Blender runs this file by path and
+# its directory is not on `sys.path`.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hero_skin import graded  # noqa: E402
+
 OUT_ROOT = os.path.join(REPO, "assets", "models", "characters")
 
 RIG = "game_engine"
@@ -107,7 +115,8 @@ HEROES = {
                     (("nose", "nose-scale-vert-decr.target.gz"), 0.15),
                     (("chin", "chin-jaw-drop-decr.target.gz"), 0.12)],
         # generate_teibi_separate.py's palette, verbatim (owner ruling: vertex
-        # colours, zero texture bytes).
+        # colours, zero texture bytes). Skin and lips reach the mesh through
+        # `hero_skin.SKIN_GRADE` — the row is the paint, that constant is the exposure.
         "colours": {
             "skin":          (0.86, 0.66, 0.54, 1.0),
             "hair":          (0.17, 0.12, 0.09, 1.0),
@@ -136,6 +145,9 @@ HEROES = {
 }
 
 HAIR_LIFT = 0.006            # short hair as a shell over the scalp, in metres
+
+# Which palette entries are skin, and therefore go through `hero_skin.SKIN_GRADE`.
+GRADED_COLOURS = ("skin", "lips")
 
 
 def log(*a):
@@ -404,7 +416,9 @@ def _group_weight(v, ids):
 def paint_body(obj, tj, row):
     """Base region colour by bone-weight argmax, then geometric BAND overrides
     (belt, cuffs, collar) scoped by bone region, then the face detail."""
-    colours = row["colours"]
+    colours = dict(row["colours"])
+    for key in GRADED_COLOURS:
+        colours[key] = graded(colours[key])
     colour_key = row["colour_key"]
     me = obj.data
     name_to_id = {vg.name: vg.index for vg in obj.vertex_groups}

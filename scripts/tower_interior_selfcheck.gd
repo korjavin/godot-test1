@@ -2936,6 +2936,34 @@ func _check_the_offices_are_furnished_and_still_walkable() -> void:
 					hero, int(size.x), int(size.y)])
 		if TowerInterior.portrait_material(hero) != TowerInterior.portrait_material(hero):
 			_fail("%s's portrait material is rebuilt per call — the texture is being copied" % hero)
+	# THE PORTRAITS DO NOT TAKE THE CAST'S sRGB CORRECTION (bead godot-test1-z3e.14).
+	# `ToonShading.style()` will force an albedo texture through an sRGB decode on the
+	# Compatibility renderer, because a hero head's EMBEDDED 512^2 albedo comes back a
+	# gamma too bright there — but a portrait is a loose, losslessly-imported `.png` on
+	# a different path, it is UNSHADED, and nobody has measured it. So the correction is
+	# opt-in and the portraits must never opt in. Asserted on a material of this
+	# check's own, because the flag is renderer-gated and a headless run would answer
+	# "false" for the shipped portraits whatever `style()` did to them.
+	# (The texture is there to document the real case, not to make the assertion
+	# work: the flag is a plain `BaseMaterial3D` flag the engine only consults at
+	# draw time, so it reads back on a bare material too.)
+	var probe := StandardMaterial3D.new()
+	probe.albedo_texture = PlaceholderTexture2D.new()
+	ToonShading.style(probe)
+	if probe.albedo_texture_force_srgb:
+		_fail("ToonShading.style() forces sRGB by default — the HQ's portraits would be"
+				+ " decoded twice on the web build; the cast opts in, nobody else does")
+	# AND THE OTHER HALF OF THE SAME CONTRACT: the cast still opts IN. That branch is
+	# renderer-gated (`--headless` reports `forward_plus`, measured), so it cannot be
+	# exercised here — so the source is grepped instead, the way `pause_selfcheck`
+	# greps for writers of `tree.paused`. Deleting either unnamed positional `true`
+	# would put Windman's and Primm's faces back over the clipping line on the web
+	# build, silently, with every check in this suite still green.
+	var toon_src := FileAccess.get_file_as_string("res://scripts/toon_shading.gd")
+	var opt_ins := toon_src.count("style(styled, true)")
+	if opt_ins != 2:
+		_fail(("ToonShading's two cast entry points must pass force_srgb: expected two"
+				+ " `style(styled, true)` calls in toon_shading.gd, found %d") % opt_ins)
 	print("tower interior: %d rooms dressed, %d corridor pieces, %d dressing boxes (%d solid), %d portraits hung" % [
 		dressed_rooms, hall_pieces, pieces, solids, frames.size()])
 	Sentinel.done("the_offices_are_furnished_and_still_walkable")
