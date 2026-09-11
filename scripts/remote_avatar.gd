@@ -185,6 +185,15 @@ var rest_rotations: Dictionary = {}
 ## time, so the stride keeps pace with the peer's actual speed.
 var stride_phase: float = 0.0
 
+## OUR OWN wall clock for the skinned driver's two SLOW terms — the breath and
+## the standing weight shift (bd godot-test1-5u3.9). It is local like
+## `_flap_phase` and for the same reason: neither is a loop with a meaningful
+## phase, a peer's chest rising half a second out of step with the sender's is
+## unobservable, and putting it on the wire would grow the presence packet this
+## whole seam exists to leave alone. It cannot ride `stride_phase`, which stops
+## dead when a peer stands still — which is exactly when the breath matters.
+var _skin_clock: float = 0.0
+
 ## How far the model is currently sunk into a river, mirroring the local player's
 ## own `_wade_sink` (same constants, read straight off PLAYER_SCRIPT so the two
 ## can never drift). It is computed LOCALLY rather than carried on the wire:
@@ -494,6 +503,8 @@ func _animate(delta: float) -> void:
 	if _rig == null:
 		return
 
+	_skin_clock += delta
+
 	if not on_floor:
 		# Airborne: legs tucked forward, arms rolled out sideways. Static, like
 		# the player's jump pose minus the wing flap (which is driven by the
@@ -512,6 +523,7 @@ func _animate(delta: float) -> void:
 			spread += sin(_flap_phase) * deg_to_rad(FLAP_RANGE)
 		# Weight 1.0: the legs SNAP to the tuck where the local player eases
 		# them over its own frames. A mirror has no clock to ease against.
+		_hand_over_clock()
 		_rig.air(spread, tuck, 1.0)
 		_relax_gait_extras()
 		return
@@ -535,7 +547,15 @@ func _animate(delta: float) -> void:
 	var leg: float = deg_to_rad(float(_gait["leg_deg"])) * hitch
 
 	# The same call the local player makes, with the same two already-scaled
-	# swings — which is exactly why the mirror cannot drift from the body.
+	# swings — which is exactly why the mirror cannot drift from the body. The
+	# skinned driver's joints additionally want the stride's QUADRATURE, and it
+	# is derived HERE rather than in the driver for the same reason the swings
+	# are: `amount` and the hitch are the caller's arithmetic, and a driver that
+	# repeated them could drift from the body it mirrors (see
+	# `hero_rig_skeleton.set_clock`). A standing peer's `amount` is 0, so its
+	# rates are 0 and its legs are straight, exactly as the local idle draws them.
+	var rate: float = cos(stride_phase) * amount
+	_hand_over_clock(rate * arm, rate * leg)
 	_rig.locomotion(swing * arm, swing * leg, float(_gait["arm_asym"]))
 
 	# Body bob at twice the stride rate (one bob per footfall), offset to stay
@@ -550,6 +570,18 @@ func _animate(delta: float) -> void:
 		character_body.rotation.x = rest_rotations["body"].x \
 				+ amount * deg_to_rad(float(_gait["lean_deg"]))
 	_rig.head_bobble(amount * wobble * deg_to_rad(float(_gait["head_deg"])))
+
+
+func _hand_over_clock(arm_rate: float = 0.0, leg_rate: float = 0.0) -> void:
+	"""`PlayerAnimation._hand_over_clock()`'s mirror, with the one difference a
+	mirror has: there is no landing squash out here. The local player's squash is
+	driven off `land_squash_timer`, which is its own `CharacterBody3D`'s state and
+	is not on the wire — a remote peer lands without the knee absorb, exactly as
+	it lands without the container squash today.
+
+	Guarded by `has_method` like the local one, so the limb rig never sees it."""
+	if _rig != null and _rig.has_method("set_clock"):
+		_rig.set_clock(_skin_clock, 0.0, arm_rate, leg_rate)
 
 
 func _relax_gait_extras() -> void:

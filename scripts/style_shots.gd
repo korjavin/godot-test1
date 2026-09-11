@@ -252,6 +252,15 @@ func _run() -> void:
 	# animation clock and nothing restores it.
 	await _shoot_body_strip(terrain, player, field, "20_body_strip")
 
+	# THE IDLE AND AIR/LAND STRIPS (bead godot-test1-5u3.9) — the other two things
+	# "natural movements" is ruled on and a stride strip cannot show: whether a
+	# hero standing still is alive, and whether a jump and its landing read as a
+	# body absorbing an impact. Same camera, same pause, same numbered-PNG output
+	# as shot 20, and after it for the same reason it comes after 19: all three
+	# write the animation clock and none of them restores it.
+	await _shoot_idle_strip(terrain, player, field, "23_idle_strip")
+	await _shoot_air_strip(terrain, player, field, "24_air_strip")
+
 	# THE CAPTIONS (bead godot-test1-y1o.38) — the respawn countdown and the
 	# level-up line, the two biggest strings the game ever puts over the world.
 	# One ground each rather than both: they are drawn dead centre at 48/40 px, so
@@ -612,15 +621,112 @@ func _shoot_body_strip(terrain: Node, player: Node3D, at: Vector3, name: String)
 	PauseHub.take(self)
 	for frame in STRIP_FRAMES:
 		_pose_walk(player, period * float(frame) / float(STRIP_FRAMES))
-		await get_tree().process_frame
-		await get_tree().process_frame
-		await RenderingServer.frame_post_draw
-		var img := get_viewport().get_texture().get_image()
-		img.save_png("%s/%s_%d.png" % [_out_dir, name, frame])
+		await _save_frame(name, frame)
 	PauseHub.release(self)
 	cam.queue_free()
 	print("[SHOTS] wrote ", STRIP_FRAMES, " frames of ", name, " over ",
 			"%.3f s" % period, " hero=", _hero)
+
+
+func _save_frame(name: String, frame: int) -> void:
+	"""One numbered frame of a strip — shot 20's four lines, lifted out so the
+	idle and air strips below spend them too rather than copying them."""
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	var img := get_viewport().get_texture().get_image()
+	img.save_png("%s/%s_%d.png" % [_out_dir, name, frame])
+
+
+## BEAD godot-test1-5u3.9 — the idle strip's window and its frame count. Three
+## seconds is the owner's ask and it is also the shortest window in which the
+## driver's two idle terms can both be seen: the breath runs at ~0.25 Hz (one
+## cycle in four seconds) and the standing weight shift slower still.
+const IDLE_STRIP_SECONDS: float = 3.0
+const IDLE_STRIP_FRAMES: int = 6
+## ...and the air strip's: rise, apex, fall, land.
+const AIR_STRIP_FRAMES: int = 4
+## Where in the landing squash the fourth frame is taken — the peak of the
+## `sin(progress * PI)` arc `player_controller` drives, i.e. the deepest absorb.
+const AIR_STRIP_LAND_PROGRESS: float = 0.5
+
+
+func _shoot_idle_strip(terrain: Node, player: Node3D, at: Vector3, name: String) -> void:
+	"""
+	BEAD godot-test1-5u3.9, shot 23. Six frames across three seconds of STANDING
+	STILL, through `animate_idle()` — the game's own idle path, stepped at 60 Hz
+	the way a real frame would step it, because idle is the one cycle that LERPS:
+	sampling it at six clocks without walking it there would show six poses the
+	game never draws.
+
+	A hero who is alive while standing still is half of "natural movements" and a
+	single frozen frame cannot show it at all.
+	"""
+	if not _wanted(name):
+		return
+	if not _head_pose_settled:
+		await _settle_body_pose(terrain, player, at, name)
+		player.set_active_character(_hero_index(player))
+	var cam := _body_camera(player)
+	PauseHub.take(self)
+	# Walk the idle in from the rest pose, so frame 0 is a settled stand rather
+	# than whatever shot 20 left mid-stride.
+	var step: float = 1.0 / 60.0
+	player.anim.animation_time = 0.0
+	for i in int(1.0 / step):
+		player.anim.animation_time += step
+		player.anim.animate_idle(step)
+	var per_frame: int = int(IDLE_STRIP_SECONDS / step) / IDLE_STRIP_FRAMES
+	for frame in IDLE_STRIP_FRAMES:
+		for i in per_frame:
+			player.anim.animation_time += step
+			player.anim.animate_idle(step)
+		await _save_frame(name, frame)
+	PauseHub.release(self)
+	cam.queue_free()
+	print("[SHOTS] wrote ", IDLE_STRIP_FRAMES, " frames of ", name, " over ",
+			"%.1f s" % IDLE_STRIP_SECONDS, " hero=", _hero)
+
+
+func _shoot_air_strip(terrain: Node, player: Node3D, at: Vector3, name: String) -> void:
+	"""
+	BEAD godot-test1-5u3.9, shot 24. Four frames of a jump: three off
+	`animate_jumping()` at a quarter, a half and three quarters of one wing-beat,
+	then the LANDING — `animate_landing()` with the player's own landing-squash
+	state set to the peak of its arc, which is what the skinned driver reads to
+	absorb the impact through the knees.
+
+	The landing frame deliberately does NOT run `update_character_animation()`:
+	the `Body` dip and the container squash it writes are the CALLER's half of a
+	landing and are unchanged by this bead. What the strip has to answer is
+	whether the KNEES take the impact, and this is the pose that shows it alone.
+	"""
+	if not _wanted(name):
+		return
+	if not _head_pose_settled:
+		await _settle_body_pose(terrain, player, at, name)
+		player.set_active_character(_hero_index(player))
+	var cam := _body_camera(player)
+	PauseHub.take(self)
+	var beat: float = TAU / 14.0   # `animate_jumping`'s own flap speed
+	for frame in AIR_STRIP_FRAMES - 1:
+		player.anim.animation_time = beat * (float(frame) + 1.0) / float(AIR_STRIP_FRAMES)
+		player.anim.animate_jumping()
+		await _save_frame(name, frame)
+	# THE LANDING. `land_squash_timer` is the player's own field and the driver
+	# reads it through `PlayerAnimation.land_squash_amount()`, so setting it here
+	# poses exactly the frame the game draws on touchdown.
+	player.land_squash_timer = player.LAND_SQUASH_DURATION * (1.0 - AIR_STRIP_LAND_PROGRESS)
+	player.land_squash_strength = 1.0
+	player.anim.animate_landing()
+	var land_step: float = 1.0 / 60.0
+	for i in 6:
+		player.anim.animate_idle(land_step)
+	await _save_frame(name, AIR_STRIP_FRAMES - 1)
+	player.land_squash_timer = 0.0
+	PauseHub.release(self)
+	cam.queue_free()
+	print("[SHOTS] wrote ", AIR_STRIP_FRAMES, " frames of ", name, " hero=", _hero)
 
 
 func _crown_focus(player: Node3D, scope: Node) -> Vector3:

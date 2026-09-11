@@ -163,6 +163,88 @@ const SKINNED_ROLL_TOLERANCE: float = 0.05
 ## chain is five orders below either.
 const SKINNED_ELBOW_M: float = 0.003
 
+# ---------------------------------------------------------------------------
+# BEAD godot-test1-5u3.9 — the GAIT-QUALITY probes' own numbers
+# ---------------------------------------------------------------------------
+## How level the SOLE has to be at a contact frame, as |dy| over the length of
+## the foot-to-ball vector — i.e. the tangent of its tilt. The ankle gives the
+## whole (thigh + knee) chain back, so what is left is the pelvis's own 3-degree
+## roll. Deleting the ankle write leaves the sole riding a 30-degree thigh.
+const SKINNED_SOLE_LEVEL: float = 0.15
+## ...and how far below its own rest height the ball of the foot may go at a
+## contact frame. The world is flat at y = 0 (CLAUDE.md) and this rig has no IK,
+## so a stance foot RISES on an arc as the hip swings — what must never happen is
+## the sole going the other way and sinking through the ground.
+const SKINNED_SOLE_SINK_M: float = 0.002
+## How much shorter hip-to-foot must get at the peak of a landing squash than
+## with no landing at all. `knee_land_deg` 24 on Teibi's ~0.45 m thigh and calf
+## pulls the foot in; a deleted `_land` term measures exactly 0.
+const SKINNED_LAND_KNEE_M: float = 0.008
+## THE COUNTER-ROTATION, as two numbers that have to disagree: the PELVIS must
+## roll at full stride and the CHEST above it must not. Measured as the Y
+## component of each bone's own left-right axis — the sine of its roll, unit-free
+## and independent of how far apart any two bones happen to sit. Delete
+## `spine_02`'s counter and the chest rolls with the pelvis, which is the
+## marionette this bead exists to stop.
+const SKINNED_PELVIS_ROLL: float = 0.015
+const SKINNED_CHEST_LEVEL: float = 0.008
+## The BREATH: how far the chest bone must travel over one breath cycle, and the
+## ceiling it must stay under. 1.1 degrees of pitch at `spine_03` is a few mm —
+## big enough to see a body that is alive, small enough not to read as a nod.
+const SKINNED_BREATH_M: float = 0.0008
+const SKINNED_BREATH_CEILING_M: float = 0.030
+## ...and the standing WEIGHT SHIFT, measured the same way and on the same bone:
+## `shift_deg` 2.2 of pelvis roll moves a head a metre up the chain by ~0.04 m.
+const SKINNED_SHIFT_M: float = 0.004
+const SKINNED_SHIFT_CEILING_M: float = 0.120
+## THE SHOULDER FOLLOWING ITS ARM: how far the shoulder must travel forward/back
+## between the arm's two extremes. `shoulder_swing_deg` 5 on a ~0.17 m clavicle
+## moves it ~0.030 m over the pair; a deleted clavicle write moves it 0, because
+## `spine_02` cancels the pelvis's twist before it can reach a shoulder.
+const SKINNED_SHOULDER_SWING_M: float = 0.004
+## ...and the PELVIS TWIST, as the X component of the pelvis's own forward axis —
+## the sine of its yaw, read the same unit-free way its roll is.
+const SKINNED_PELVIS_TWIST: float = 0.030
+## THE SKINNED BAND (bead godot-test1-5u3.9). `measure()` answers the shoulder
+## and the hip and deliberately nothing else, so the seven bones this bead added
+## need an envelope of their own — and it is measured as the ANGLE FROM REST of
+## the bone's own pose quaternion, which needs no conjugation and is therefore a
+## reading the driver's own arithmetic cannot flatter. Ceilings in degrees, one
+## per bone family (the right side rides the same row).
+const SKINNED_BAND_DEG: Dictionary = {
+	"calf": 75.0, "foot": 45.0, "lowerarm": 85.0,
+	"clavicle": 12.0, "pelvis": 12.0, "spine_02": 12.0, "spine_03": 6.0,
+}
+## How far apart two drivers at the same clock may draw one bone, as the largest
+## difference between any two COMPONENTS of the pose quaternions. It is a
+## FLOAT-NOISE tolerance, not a band: the two instances run the same arithmetic
+## on the same numbers, so anything above this is a driver reading something it
+## was not handed (a clock of its own, the previous frame, an RNG).
+##
+## COMPONENTS AND NOT `Quaternion.angle_to()`, which cannot resolve this at all:
+## it computes `acos(2·dot² - 1)`, and `acos` near 1 turns a one-ULP error in the
+## dot product into `sqrt(8·eps)` — 9.8e-4 rad on float32. Two BIT-IDENTICAL
+## poses measure zero either way, but two poses one ULP apart measure 0.00098 rad
+## through `angle_to` and 6e-8 here (both measured on this bead).
+const SKINNED_DETERMINISM_EPS: float = 1e-6
+## ...and the same comparison made WITHOUT resetting the two skeletons first, so
+## one of them arrives carrying 430 frames of history. `_set_axis` is a
+## read-modify-write by design (it is `node.rotation.x = v`), so the components a
+## pose path does not write are round-tripped through `get_euler` / `from_euler`
+## and a basis conjugation every frame, and in float32 that walks: MEASURED
+## 2.2e-5 after 430 frames, against 0 when both are reset. This ceiling is four
+## times that and four orders under anything a stray `randf()`, clock read or
+## frame-to-frame accumulator would produce.
+## `ponytail:` the real fix is for every pose path to STATE its bones' whole
+## triples the way `_torso()` now does, which removes the round trip entirely —
+## out of this bead's scope because `sidestep()` deliberately inherits the walk's
+## thigh pitch, so it cannot state a triple without changing what a strafe draws.
+const SKINNED_DRIFT_EPS: float = 1e-4
+## The clocks the determinism probe compares at — several, and none of them
+## round, so a driver whose hidden state happens to agree at one phase cannot
+## pass.
+const SKINNED_DETERMINISM_TIMES: Array[float] = [0.37, 3.19, 7.71, 12.34]
+
 var _failures: Array[String] = []
 
 
@@ -201,6 +283,7 @@ func _run() -> void:
 		Sentinel.done("sidestep")
 		Sentinel.done("skinned")
 		Sentinel.done("skinned_joints")
+		Sentinel.done("skinned_determinism")
 		_report()
 		return
 
@@ -223,6 +306,7 @@ func _run() -> void:
 		Sentinel.done("sidestep")
 		Sentinel.done("skinned")
 		Sentinel.done("skinned_joints")
+		Sentinel.done("skinned_determinism")
 		player.queue_free()
 		_report()
 		return
@@ -991,6 +1075,20 @@ func _check_skinned(player: Node3D) -> void:
 	      ENDS UP, so that is what (i) measures: swing the thigh forward and
 	      back, and the knee must travel along the skeleton's ±Z (the way the
 	      hero faces), not sideways.
+
+	(g) SURVIVED BEAD godot-test1-5u3.9 UNCHANGED, and that is a design rule
+	      rather than luck: every bone that bead added — the calf, the foot, the
+	      forearm, the clavicle, the pelvis and the two spine bones — is a bone
+	      `measure()` does not expose, so a skinned hero still walks the exact
+	      stride the gait row asked for and the two drivers are still the same
+	      eleven numbers. What `5u3.9` added instead lives in
+	      `_measure_skinned_joints()` beside (h) — the phased knee, the level
+	      sole, the lagging elbow, the countered pelvis, the absorbed landing,
+	      the breath and a band around all of them, every one measured in the
+	      SKELETON's own space — and in `_check_skinned_determinism()`, which
+	      asks TWO INSTANCES the same clock and compares every bone of both,
+	      because (e) above compares one driver with itself and cannot see a
+	      divergence that is per-model.
 	"""
 	var packed: PackedScene = load(SKINNED_FIXTURE)
 	if packed == null:
@@ -998,6 +1096,7 @@ func _check_skinned(player: Node3D) -> void:
 				% SKINNED_FIXTURE + "itself on, so nothing below ran")
 		Sentinel.done("skinned")
 		Sentinel.done("skinned_joints")
+		Sentinel.done("skinned_determinism")
 		return
 	var fixture: Node3D = packed.instantiate()
 	root.add_child(fixture)
@@ -1024,6 +1123,7 @@ func _check_skinned(player: Node3D) -> void:
 		fixture.queue_free()
 		Sentinel.done("skinned")
 		Sentinel.done("skinned_joints")
+		Sentinel.done("skinned_determinism")
 		return
 
 	anim._gait = PlayerAnimation.gait_for("teibi")
@@ -1193,33 +1293,72 @@ func _check_skinned(player: Node3D) -> void:
 						+ "the way it walks the day it is migrated")
 
 	_measure_skinned_joints(anim, fixture)
+	_check_skinned_determinism(player)
 
 	fixture.queue_free()
 	Sentinel.done("skinned")
 
 
+func _at(skel: Skeleton3D, idx: int) -> Vector3:
+	"""Where a bone actually ENDS UP, in skeleton space. This is the one quantity
+	the driver's conjugation does NOT cancel out of (see the `(i)` note below), so
+	every probe in this section is expressed in it rather than in an angle the
+	driver could have written any way it liked."""
+	return skel.get_bone_global_pose(idx).origin
+
+
+func _span(skel: Skeleton3D, a: int, b: int) -> float:
+	return _at(skel, a).distance_to(_at(skel, b))
+
+
+func _pose_cycle(anim, phase: float, amp: float, land: float) -> void:
+	"""
+	ONE DRIVER-LEVEL FRAME of the walk cycle at stride phase `phase`, composed
+	exactly the way `PlayerAnimation.animate_walking()` composes it: the two
+	swings are `A·sin(φ)` and the quadratures the driver is clocked with are
+	`A·cos(φ)`. Straight down the driver rather than through `animate_walking()`
+	because these probes need ONE swing at a chosen phase with no gait row, no
+	hitch and no `Body` write on top.
+
+	READ THE LEFT LEG OFF IT LIKE THIS: `locomotion()` mirrors, so
+	`thigh_l = -A·sin(φ)`. φ = -π/2 is the left leg at its FORWARD extreme (heel
+	strike), φ = +π/2 its BACK one (push-off), and φ = π is mid-SWING — the thigh
+	passing under the body on its way forward, which is where a human knee is at
+	its most bent and where this driver's is too.
+	"""
+	anim.rig.rest_pose()
+	anim.rig.set_clock(0.0, land, amp * cos(phase), amp * cos(phase))
+	anim.rig.locomotion(amp * sin(phase), amp * sin(phase), 1.0)
+
+
 func _measure_skinned_joints(anim, fixture: Node3D) -> void:
 	"""
-	(h) and (i) — the two things `measure()` cannot answer, measured on the
-	SKELETON in its own space.
+	EVERYTHING `measure()` CANNOT ANSWER, measured on the SKELETON in its own
+	space — the roll trap, and every joint bead godot-test1-5u3.9 spent.
 
-	(i) is the load-bearing one. `_set_axis()` writes `P⁻¹·E·P·R`, `_axis()`
-	reads `P·(pose·R⁻¹)·P⁻¹`, and the `P` terms cancel — so every assertion
-	built on `measure()` passes for ANY invertible conjugation basis, the wrong
-	one included. `get_bone_global_pose()` is outside that algebra: it is where
-	the bone actually ends up. A thigh swung about the SKELETON's X carries the
-	knee forward and back along ±Z, the way this hero faces; a thigh swung about
-	its own MakeHuman-rolled X (`thigh_l`'s local X reads (0.89, 0.21, -0.41))
-	carries it sideways. Caching the bone's own global rest basis instead of its
-	parent's in `bind()` is a one-line edit that nothing else in this repo can
-	see, and it is exactly the mistake the driver's banner exists to prevent.
+	(i) IS STILL THE LOAD-BEARING ONE. `_set_axis()` writes `P⁻¹·E·P·R`, `_axis()`
+	reads `P·(pose·R⁻¹)·P⁻¹`, and the `P` terms cancel — so every assertion built
+	on `measure()` passes for ANY invertible conjugation basis, the wrong one
+	included. `get_bone_global_pose()` is outside that algebra: it is where the
+	bone actually ends up. A thigh swung about the SKELETON's X carries the knee
+	forward and back along ±Z, the way this hero faces; a thigh swung about its
+	own MakeHuman-rolled X (`thigh_l`'s local X reads (0.89, 0.21, -0.41)) carries
+	it sideways. Caching the bone's own global rest basis instead of its parent's
+	in `bind()` is a one-line edit that nothing else in this repo can see, and it
+	is exactly the mistake the driver's banner exists to prevent. IT IS MEASURED
+	IN THE PELVIS'S OWN FRAME since bead 5u3.9, because the pelvis now twists with
+	the stride and would otherwise carry the knee sideways all by itself — which
+	is a feature, and not the thing this assertion is about.
 
-	(h) rides the same two poses: the knee bends on the BACK-swing only, which
-	pulls the foot closer to the hip than the straight forward-swing leg, and the
-	elbow opens from 24 to 6 degrees across the arm's own swing, which moves the
-	hand toward and away from the shoulder. Those are the two joints the limb rig
-	HAS — every hero scene hangs a `LowerArm` under its `LeftArm` — and has never
-	once moved.
+	AND THEN THE GAIT, which is the bead: a knee PHASED against the thigh rather
+	than rectified off it (straight at BOTH extremes, deepest mid-swing — the old
+	`max(0, -thigh)` knee was deepest at one extreme and straight mid-swing, so
+	this pair of clauses is its own mutation control), an ankle that keeps the
+	sole level, an elbow that lags its shoulder, a pelvis the spine counters, a
+	landing taken through the knees, a chest that breathes, and a band around
+	every one of them. None of these bones is in `measure()` — deliberately, so
+	that check 8g can still compare the two drivers pose for pose — so without
+	this function every one of them could be deleted green.
 	"""
 	var found: Array[Node] = fixture.find_children("*", "Skeleton3D", true, false)
 	if found.is_empty():
@@ -1228,42 +1367,74 @@ func _measure_skinned_joints(anim, fixture: Node3D) -> void:
 		Sentinel.done("skinned_joints")
 		return
 	var skel: Skeleton3D = found[0] as Skeleton3D
-	var hip: int = skel.find_bone("thigh_l")
-	var knee: int = skel.find_bone("calf_l")
-	var foot: int = skel.find_bone("foot_l")
-	var shoulder: int = skel.find_bone("upperarm_l")
-	var hand: int = skel.find_bone("hand_l")
-	if hip < 0 or knee < 0 or foot < 0 or shoulder < 0 or hand < 0:
-		_fail("skinned fixture: the rig has no thigh_l/calf_l/foot_l or "
-				+ "upperarm_l/hand_l chain to measure")
-		Sentinel.done("skinned_joints")
-		return
+	var b: Dictionary = {}
+	for name: String in ["pelvis", "spine_02", "spine_03", "head", "thigh_l",
+			"calf_l", "foot_l", "ball_l", "thigh_r", "clavicle_l", "upperarm_l",
+			"upperarm_r", "lowerarm_l", "hand_l"]:
+		var idx: int = skel.find_bone(name)
+		if idx < 0:
+			_fail("skinned fixture: the rig has no `%s` bone — the joint probes " % name
+					+ "did not run")
+			Sentinel.done("skinned_joints")
+			return
+		b[name] = idx
+	var hip: int = b["thigh_l"]
+	var knee: int = b["calf_l"]
+	var foot: int = b["foot_l"]
+	var ball: int = b["ball_l"]
+	var shoulder: int = b["upperarm_l"]
+	var hand: int = b["hand_l"]
 
-	# Straight down the driver, not through `animate_walking()`: this needs the
-	# two extremes of ONE swing with nothing else written on top.
 	var swing: float = deg_to_rad(SKINNED_JOINT_SWING_DEG)
-	# LEFT leg forward / LEFT arm forward is one swing each way: the leg takes
-	# `-leg_swing` and the arm `+arm_swing`, which is the diagonal (c) asserts.
-	anim.rig.rest_pose()
-	anim.rig.locomotion(swing, -swing, 1.0)   # leg FORWARD (knee straight), elbow 24 deg
-	var knee_front: Vector3 = skel.get_bone_global_pose(knee).origin
-	var reach_front: float = skel.get_bone_global_pose(foot).origin.distance_to(
-			skel.get_bone_global_pose(hip).origin)
-	var arm_bent: float = skel.get_bone_global_pose(hand).origin.distance_to(
-			skel.get_bone_global_pose(shoulder).origin)
-	anim.rig.rest_pose()
-	anim.rig.locomotion(-swing, swing, 1.0)   # leg BACK (knee flexed), elbow 6 deg
-	var knee_back: Vector3 = skel.get_bone_global_pose(knee).origin
-	var reach_back: float = skel.get_bone_global_pose(foot).origin.distance_to(
-			skel.get_bone_global_pose(hip).origin)
-	var arm_straight: float = skel.get_bone_global_pose(hand).origin.distance_to(
-			skel.get_bone_global_pose(shoulder).origin)
 
+	# ---- THE THREE FRAMES THE LEG PROBES LIVE ON -------------------------
+	# Heel strike, push-off and mid-swing (see `_pose_cycle`'s docstring).
+	_pose_cycle(anim, -PI * 0.5, swing, 0.0)
+	var reach_front: float = _span(skel, foot, hip)
+	var knee_front: Vector3 = skel.get_bone_global_pose(b["pelvis"]).affine_inverse() \
+			* _at(skel, knee)
+	var sole_front: Vector3 = _at(skel, ball) - _at(skel, foot)
+	var ball_front_y: float = _at(skel, ball).y
+	var arm_back: float = _span(skel, hand, shoulder)
+	var shoulder_back: Vector3 = skel.get_bone_global_pose(b["spine_03"]).affine_inverse() * _at(skel, shoulder)
+
+	_pose_cycle(anim, PI * 0.5, swing, 0.0)
+	var reach_back: float = _span(skel, foot, hip)
+	var knee_back: Vector3 = skel.get_bone_global_pose(b["pelvis"]).affine_inverse() \
+			* _at(skel, knee)
+	var sole_back: Vector3 = _at(skel, ball) - _at(skel, foot)
+	var ball_back_y: float = _at(skel, ball).y
+	var arm_front: float = _span(skel, hand, shoulder)
+	var shoulder_front: Vector3 = skel.get_bone_global_pose(b["spine_03"]).affine_inverse() * _at(skel, shoulder)
+	# THE ROLL OF A BONE is the Y component of its own left-right axis — a number
+	# that needs no second bone to compare against and no unit to be read in.
+	var pelvis_roll: float = absf(skel.get_bone_global_pose(b["pelvis"]).basis.x.y)
+	var chest_roll: float = absf(skel.get_bone_global_pose(b["spine_03"]).basis.x.y)
+	var pelvis_twist: float = absf(skel.get_bone_global_pose(b["pelvis"]).basis.z.x)
+
+	_pose_cycle(anim, PI, swing, 0.0)
+	var reach_swing: float = _span(skel, foot, hip)
+	var arm_lagged: float = _span(skel, hand, shoulder)
+
+	# The REST the two contact frames are judged against, and the neutral arm
+	# every other path has to come back to. The sole is NOT flat at rest — the
+	# foot bone runs from the ankle down to the ball — so what the probe below
+	# measures is how far each contact frame tilts it AWAY from where a standing
+	# hero plants it, never its absolute angle.
+	anim.rig.rest_pose()
+	var ball_rest_y: float = _at(skel, ball).y
+	var sole_rest: Vector3 = (_at(skel, ball) - _at(skel, foot)).normalized()
+	var arm_at_rest: float = _span(skel, hand, shoulder)
+	_pose_cycle(anim, 0.0, 0.0, 0.0)
+	var arm_neutral: float = _span(skel, hand, shoulder)
+	var reach_neutral: float = _span(skel, foot, hip)
+
+	# ---- (i) THE ROLL TRAP -----------------------------------------------
 	var travel: Vector3 = knee_front - knee_back
 	if travel.length() <= SKINNED_JOINT_TRAVEL_M:
 		_fail("skinned fixture: swinging the thigh %.0f deg either way moved the knee "
-				% SKINNED_JOINT_SWING_DEG + "only %.4f m in skeleton space — the bone "
-				% travel.length() + "pose is not reaching the skeleton at all")
+				% SKINNED_JOINT_SWING_DEG + "only %.4f m in the pelvis's frame — the "
+				% travel.length() + "bone pose is not reaching the skeleton at all")
 	elif absf(travel.x) > absf(travel.z) * SKINNED_ROLL_TOLERANCE:
 		_fail("skinned fixture: the knee travelled (%.4f, %.4f, %.4f) m between the "
 				% [travel.x, travel.y, travel.z] + "two extremes of the leg swing — a "
@@ -1275,76 +1446,318 @@ func _measure_skinned_joints(anim, fixture: Node3D) -> void:
 				+ "rest basis (see the driver's roll-trap banner). `measure()` cannot "
 				+ "see this — the conjugation basis cancels in it.")
 
-	if reach_back >= reach_front - SKINNED_KNEE_FLEX_M:
-		_fail("skinned fixture: hip-to-foot measured %.4f m on the back-swing and "
-				% reach_back + "%.4f m on the forward one — the knee must FLEX behind "
-				% reach_front + "the body and stay straight in front of it, which is "
-				+ "the joint the limb rig has never had")
+	# ---- (h1) THE KNEE IS PHASED, NOT RECTIFIED --------------------------
+	# Two clauses, and the OLD driver fails both: it flexed on the back-swing, so
+	# it measured short at push-off and straight mid-swing — the exact inverse.
+	if reach_swing >= minf(reach_front, reach_back) - SKINNED_KNEE_FLEX_M:
+		_fail("skinned fixture: hip-to-foot measured %.4f m MID-SWING against %.4f m "
+				% [reach_swing, reach_front] + "at heel strike and %.4f m at push-off "
+				% reach_back + "— the knee must be at its most bent while the leg "
+				+ "swings THROUGH, which is the whole difference between a phased "
+				+ "knee and one rectified off the thigh angle")
+	if absf(reach_front - reach_back) > SKINNED_KNEE_FLEX_M:
+		_fail("skinned fixture: hip-to-foot measured %.4f m at heel strike and %.4f m "
+				% [reach_front, reach_back] + "at push-off — a leg must be STRAIGHT at "
+				+ "both extremes of the stride. One short extreme is a knee that bends "
+				+ "on one half of the cycle, which is what `5u3.9` replaced.")
 
-	# THE ELBOW'S NEUTRAL IS THE SAME ON EVERY PATH — round 1's fix, and the one
-	# joint write that lives OUTSIDE `locomotion()`. Standing still must ease the
-	# forearm to `ELBOW_BEND_DEG`, not straighten it: easing it to zero is what
-	# made a skinned hero's arms straighten over half a second and then snap back
-	# 15 degrees on the first walking frame, and it is also what made a standing
-	# LOCAL hero differ from a standing REMOTE one (the mirror has no idle branch
-	# — it calls `locomotion()` with both swings at zero).
-	anim.rig.rest_pose()
-	anim.rig.locomotion(0.0, 0.0, 1.0)
-	var arm_neutral: float = skel.get_bone_global_pose(hand).origin.distance_to(
-			skel.get_bone_global_pose(shoulder).origin)
+	# ---- (h2) THE SOLE IS LEVEL AT CONTACT, AND ABOVE THE GROUND ---------
+	for probe: Array in [[sole_front, ball_front_y, "heel strike"],
+			[sole_back, ball_back_y, "push-off"]]:
+		var sole: Vector3 = probe[0]
+		var tilt: float = absf(sole.normalized().y - sole_rest.y)
+		if tilt > SKINNED_SOLE_LEVEL:
+			_fail("skinned fixture: at %s the sole (foot to ball) tilted %.3f of its "
+					% [probe[2], tilt] + "own length out of level — the ankle must "
+					+ "counter-rotate the thigh AND the knee, or a planted foot points "
+					+ "at the sky (ceiling %.2f)" % SKINNED_SOLE_LEVEL)
+		if float(probe[1]) < ball_rest_y - SKINNED_SOLE_SINK_M:
+			_fail("skinned fixture: at %s the ball of the foot sat %.4f m BELOW its own "
+					% [probe[2], ball_rest_y - float(probe[1])] + "rest height — the "
+					+ "world is flat at y = 0, so a contact frame may lift a foot (this "
+					+ "rig has no IK) but must never push one through the ground")
+
+	# ---- (h3) THE ELBOW TRACKS ITS SHOULDER, AND LAGS IT -----------------
+	if arm_front >= arm_back - SKINNED_ELBOW_M:
+		_fail("skinned fixture: shoulder-to-hand measured %.4f m at the arm's forward "
+				% arm_front + "extreme and %.4f m at its back one — the elbow must "
+				% arm_back + "TRACK the shoulder (`elbow_track_ratio` off an "
+				+ "`elbow_bend_deg` neutral), so the hand comes in as the arm swings "
+				+ "forward. A constant or missing elbow write measures no difference "
+				+ "at all, and `measure()` does not expose the forearm.")
+	if arm_lagged >= arm_front - SKINNED_ELBOW_M:
+		_fail("skinned fixture: shoulder-to-hand measured %.4f m a QUARTER CYCLE after "
+				% arm_lagged + "the forward extreme and %.4f m at it — the elbow's peak "
+				% arm_front + "must LAG the shoulder's (`elbow_lag_deg`, off the arm's "
+				+ "quadrature), or the forearm is a stick welded to the upper arm")
+
+	# ---- (h4) A LANDING IS ABSORBED THROUGH THE KNEES --------------------
+	_pose_cycle(anim, 0.0, swing, 1.0)
+	var reach_land: float = _span(skel, foot, hip)
+	if reach_land >= reach_neutral - SKINNED_LAND_KNEE_M:
+		_fail("skinned fixture: at the peak of a landing squash hip-to-foot measured "
+				+ "%.4f m against the standing %.4f m — the knees must take their share "
+				% [reach_land, reach_neutral] + "of the impact (`knee_land_deg`), which "
+				+ "is the half of a landing the container squash cannot draw")
+
+	# ---- (h5) THE PELVIS TURNS AND THE SPINE TAKES IT BACK ---------------
+	if pelvis_roll <= SKINNED_PELVIS_ROLL:
+		_fail("skinned fixture: at full stride the pelvis rolled %.4f (sine of its own "
+				% pelvis_roll + "tilt) — it must DROP toward the swinging leg, or the "
+				+ "walk is hung off two hip joints and nothing above them moves")
+	if pelvis_twist <= SKINNED_PELVIS_TWIST:
+		_fail("skinned fixture: at full stride the pelvis yawed %.4f (sine of its own "
+				% pelvis_twist + "twist) — the transverse rotation is half of what makes "
+				+ "a stride a stride, and `spine_02` takes it back so nothing above the "
+				+ "waist pays for it")
+	if shoulder_front.distance_to(shoulder_back) <= SKINNED_SHOULDER_SWING_M:
+		_fail("skinned fixture: the shoulder moved %.4f m between the arm's two "
+				% shoulder_front.distance_to(shoulder_back) + "extremes — the clavicle "
+				+ "must FOLLOW its own arm (`shoulder_swing_deg`), or the arm is bolted "
+				+ "to a rigid chest. MEASURED IN THE CHEST'S OWN FRAME, so the spine "
+				+ "chain below it — whose counter-rotation leaves a residual millimetre "
+				+ "or two — cannot pass this on the clavicle's behalf.")
+	if chest_roll > SKINNED_CHEST_LEVEL:
+		_fail("skinned fixture: at full stride the chest rolled %.4f where the pelvis "
+				% chest_roll + "rolled %.4f — `spine_02` must take the pelvis's turn "
+				% pelvis_roll + "BACK, or the whole upper body rolls with the hips "
+				+ "(ceiling %.4f)" % SKINNED_CHEST_LEVEL)
+
+	# ---- (h6) THE ELBOW'S NEUTRAL IS THE SAME ON EVERY PATH --------------
+	# Round 1's fix, and the one joint write that lives OUTSIDE `locomotion()`.
+	# Standing still must ease the forearm to `elbow_bend_deg`, not straighten it:
+	# easing it to zero is what made a skinned hero's arms straighten over half a
+	# second and then snap back 15 degrees on the first walking frame, and it is
+	# also what made a standing LOCAL hero differ from a standing REMOTE one (the
+	# mirror has no idle branch — it calls `locomotion()` with both swings at zero).
 	for i: int in RELAX_FRAMES:
 		anim.rig.idle(0.1)
-	var arm_idle: float = skel.get_bone_global_pose(hand).origin.distance_to(
-			skel.get_bone_global_pose(shoulder).origin)
+	var arm_idle: float = _span(skel, hand, shoulder)
 	if absf(arm_idle - arm_neutral) > SKINNED_ELBOW_M:
 		_fail("skinned fixture: standing still settled the arm at %.4f m shoulder-to-"
 				% arm_idle + "hand where the neutral walk pose holds it at %.4f m — "
 				% arm_neutral + "the elbow's rest must be the same on every path, or "
 				+ "it straightens while you stand and snaps back the frame you walk")
-
-	# ...and so do the OTHER two paths that write the joints. `measure()` exposes
-	# neither the forearm nor the calf (its keys are the limb rig's, or the shared
-	# bounds would stop meaning the same thing), so without these three distances
-	# `rest_pose()`'s and `air()`'s joint writes could be deleted green.
-	anim.rig.rest_pose()
-	var arm_at_rest: float = skel.get_bone_global_pose(hand).origin.distance_to(
-			skel.get_bone_global_pose(shoulder).origin)
 	if absf(arm_at_rest - arm_neutral) > SKINNED_ELBOW_M:
 		_fail("skinned fixture: `rest_pose()` left the arm at %.4f m shoulder-to-hand "
 				% arm_at_rest + "where the neutral pose holds it at %.4f m — restoring "
 				% arm_neutral + "the rest pose must restore the elbow's neutral bend "
 				+ "too, or a character swap draws one frame of straightened arms")
 
-	# The AIR pose straightens the knee and holds the elbow at its neutral: a leg
-	# tucked with a knee still flexed from the last stride is the airborne version
-	# of the leftover roll `drop_wings()` clears. GOING AIRBORNE OUT OF A STRIDE,
-	# because that is the only way the assertion can see the straightening at all —
-	# from a rest pose the knee is already straight and the check would be vacuous.
-	anim.rig.locomotion(-swing, swing, 1.0)
+	# ---- (h7) THE AIR POSE PULLS IN, AND FORGETS THE STRIDE IT LEFT ------
+	# A body that has left the ground tucks: the forearms come UP and the knee
+	# FOLDS. Both are measured against the neutral pose, and both are entered OUT
+	# OF A STRIDE, because from a rest pose the leg is already straight and the
+	# assertions would be vacuous. The second entry, from the opposite stride,
+	# is the one that catches a pose that merely eases toward wherever it started.
+	_pose_cycle(anim, PI * 0.5, swing, 0.0)
 	for i: int in RELAX_FRAMES:
 		anim.rig.air(deg_to_rad(72.0), deg_to_rad(10.0), 0.2)
-	var arm_air: float = skel.get_bone_global_pose(hand).origin.distance_to(
-			skel.get_bone_global_pose(shoulder).origin)
-	var leg_air: float = skel.get_bone_global_pose(foot).origin.distance_to(
-			skel.get_bone_global_pose(hip).origin)
-	if absf(arm_air - arm_neutral) > SKINNED_ELBOW_M:
+	var arm_air: float = _span(skel, hand, shoulder)
+	var leg_air: float = _span(skel, foot, hip)
+	_pose_cycle(anim, -PI * 0.5, swing, 0.0)
+	for i: int in RELAX_FRAMES:
+		anim.rig.air(deg_to_rad(72.0), deg_to_rad(10.0), 0.2)
+	if arm_air >= arm_neutral - SKINNED_ELBOW_M:
 		_fail("skinned fixture: airborne, the arm sat at %.4f m shoulder-to-hand where "
-				% arm_air + "the neutral pose holds it at %.4f m — the wings must beat "
-				% arm_neutral + "with the elbow at its neutral bend")
-	if absf(leg_air - reach_front) > SKINNED_KNEE_FLEX_M:
+				% arm_air + "the neutral pose holds it at %.4f m — the forearms must "
+				% arm_neutral + "come UP at the apex (`air_elbow_deg`)")
+	if leg_air >= reach_neutral - SKINNED_KNEE_FLEX_M:
 		_fail("skinned fixture: airborne, hip-to-foot measured %.4f m against the "
-				% leg_air + "straight leg's %.4f m — the tuck must STRAIGHTEN the knee, "
-				% reach_front + "or a leg goes up still bent from the last stride")
+				% leg_air + "straight leg's %.4f m — the tuck must FOLD the knee "
+				% reach_neutral + "(`air_knee_deg`), not leave it hanging")
+	if absf(_span(skel, foot, hip) - leg_air) > SKINNED_KNEE_FLEX_M \
+			or absf(_span(skel, hand, shoulder) - arm_air) > SKINNED_ELBOW_M:
+		_fail("skinned fixture: the air pose settled differently out of the two halves "
+				+ "of the stride (%.4f vs %.4f m hip-to-foot) — an airborne hero must "
+				% [_span(skel, foot, hip), leg_air] + "forget the stride it left, or a "
+				+ "jump looks different depending on which foot was down")
 
-	if arm_bent >= arm_straight - SKINNED_ELBOW_M:
-		_fail("skinned fixture: shoulder-to-hand measured %.4f m at the arm's forward "
-				% arm_bent + "extreme and %.4f m at its back one — the elbow must "
-				% arm_straight + "TRACK the shoulder (`ELBOW_TRACK_RATIO` off a "
-				+ "`ELBOW_BEND_DEG` neutral), so the hand comes in as the arm swings "
-				+ "forward. A constant or missing elbow write measures no difference "
-				+ "at all, and `measure()` does not expose the forearm.")
+	# ---- (h8) STANDING STILL BREATHES ------------------------------------
+	# Four clocks across one breath cycle, each posed from rest so nothing but the
+	# clock can differ. An idle that does not move the chest is a statue, and an
+	# idle that moves it a lot is a nod.
+	#
+	# MEASURED AT THE HEAD, not on `spine_03` itself: a bone's own origin is set
+	# by its PARENTS, so a chest that pitches does not move its own head one
+	# micron and the probe would read zero however hard it breathed. The head is
+	# the far end of the chain the breath turns. Its Z is the breath (a pitch) and
+	# its X the weight shift (the pelvis's roll), which is what lets one loop
+	# assert both and neither hide the other.
+	var chest_lo: float = INF
+	var chest_hi: float = -INF
+	var shift_lo: float = INF
+	var shift_hi: float = -INF
+	for i: int in 16:
+		anim.rig.rest_pose()
+		anim.rig.set_clock(float(i) * 0.5, 0.0, 0.0, 0.0)
+		anim.rig.idle(1.0)
+		var head_at: Vector3 = _at(skel, b["head"])
+		chest_lo = minf(chest_lo, head_at.z)
+		chest_hi = maxf(chest_hi, head_at.z)
+		shift_lo = minf(shift_lo, head_at.x)
+		shift_hi = maxf(shift_hi, head_at.x)
+	var breath: float = chest_hi - chest_lo
+	var shift: float = shift_hi - shift_lo
+	if shift < SKINNED_SHIFT_M:
+		_fail("skinned fixture: over one weight-shift cycle a standing hero swayed "
+				+ "%.5f m — standing still has to SHIFT ITS WEIGHT (`shift_deg` at "
+				% shift + "`shift_hz`), or it is a hero balanced on both feet forever")
+	elif shift > SKINNED_SHIFT_CEILING_M:
+		_fail("skinned fixture: a standing hero swayed %.4f m — the ceiling is %.3f m; "
+				% [shift, SKINNED_SHIFT_CEILING_M] + "more than that is a stagger")
+	if breath < SKINNED_BREATH_M:
+		_fail("skinned fixture: over one breath cycle the chest travelled %.5f m — "
+				% breath + "standing still has to BREATHE (`breath_deg` at `breath_hz`, "
+				+ "off the caller's clock), or the hero is a statue between strides")
+	elif breath > SKINNED_BREATH_CEILING_M:
+		_fail("skinned fixture: the chest travelled %.4f m over one breath cycle — the "
+				% breath + "ceiling is %.3f m; more than that reads as a nod, not a "
+				% SKINNED_BREATH_CEILING_M + "breath")
+
+	# ---- (h9) THE SKINNED BAND -------------------------------------------
+	# Every bone bead `5u3.9` added, over a real clocked walk sweep, measured as
+	# the ANGLE OF ITS POSE FROM ITS OWN REST — a reading with no conjugation in
+	# it, so unlike everything built on `measure()` it cannot be flattered by the
+	# driver's own algebra.
+	var step: float = 1.0 / SWEEP_HZ
+	var worst: Dictionary = {}
+	for family: String in SKINNED_BAND_DEG:
+		worst[family] = 0.0
+	for multiplier: float in [1.0, 1.5]:
+		for i: int in int(SKINNED_SWEEP_SECONDS * SWEEP_HZ):
+			anim.animation_time = float(i) * step
+			anim.animate_walking(step, multiplier)
+			for family: String in SKINNED_BAND_DEG:
+				for name: String in ([family] if skel.find_bone(family) >= 0
+						else [family + "_l", family + "_r"]):
+					var idx: int = skel.find_bone(name)
+					if idx < 0:
+						continue
+					var off: float = skel.get_bone_pose_rotation(idx).angle_to(
+							skel.get_bone_rest(idx).basis.get_rotation_quaternion())
+					if not is_finite(off):
+						_fail("skinned fixture: `%s` reached a non-finite pose" % name)
+						Sentinel.done("skinned_joints")
+						return
+					worst[family] = maxf(float(worst[family]), off)
+	for family: String in SKINNED_BAND_DEG:
+		var ceiling: float = deg_to_rad(float(SKINNED_BAND_DEG[family]))
+		if float(worst[family]) > ceiling:
+			_fail("skinned fixture: `%s` reached %.1f deg off rest over the walk sweep "
+					% [family, rad_to_deg(float(worst[family]))] + "— the band is %.1f. "
+					% float(SKINNED_BAND_DEG[family]) + "`measure()` answers the shoulder "
+					+ "and the hip and nothing else, so this is the only envelope the "
+					+ "joints bead `5u3.9` added have.")
 
 	Sentinel.done("skinned_joints")
+
+
+func _check_skinned_determinism(player: Node3D) -> void:
+	"""
+	TWO DRIVERS, TWO MODELS, ONE CLOCK — the multiplayer contract as a
+	measurement, and the sharpest one in this file (bd godot-test1-5u3.9).
+
+	Check 8(e) already asks one driver the same clock twice. This asks TWO, on two
+	separate instances of the hero, walked to that clock along DIFFERENT paths —
+	one straight there, one after a long sweep and an idle — and compares EVERY
+	BONE of the skeleton, not the eleven keys `measure()` exposes. That is what
+	makes it the guard bead `5u3.9` needs: the seven bones it added are invisible
+	to `measure()`, so a `randf()` in the pelvis, an accumulator in the breath or
+	a knee derived from the previous frame would all pass check 8(e) and diverge
+	on every peer.
+
+	THE MUTATION CONTROL is one line: put `randf()` anywhere in
+	`hero_rig_skeleton.gd` and this goes red, where every other assertion in this
+	file stays green.
+	"""
+	var packed: PackedScene = load(SKINNED_FIXTURE)
+	if packed == null:
+		_fail("could not load %s for the determinism probe" % SKINNED_FIXTURE)
+		Sentinel.done("skinned_determinism")
+		return
+	var anims: Array = []
+	var skels: Array[Skeleton3D] = []
+	var fixtures: Array[Node3D] = []
+	for i: int in 2:
+		var fixture: Node3D = packed.instantiate()
+		root.add_child(fixture)
+		var anim: PlayerAnimation = PlayerAnimation.new()
+		anim.player = player
+		var saved: Node = player.current_character_node
+		player.current_character_node = fixture
+		anim.original_rotations = PlayerAnimation.capture_rest_pose(fixture)
+		anim.setup_animation_references()
+		player.current_character_node = saved
+		anim._gait = PlayerAnimation.gait_for("teibi")
+		anim._gait["head_deg"] = FIXTURE_HEAD_DEG
+		var found: Array[Node] = fixture.find_children("*", "Skeleton3D", true, false)
+		if anim.rig == null or found.is_empty():
+			_fail("the determinism probe could not bind a skinned driver to %s"
+					% SKINNED_FIXTURE)
+			fixture.queue_free()
+			Sentinel.done("skinned_determinism")
+			return
+		anims.append(anim)
+		skels.append(found[0] as Skeleton3D)
+		fixtures.append(fixture)
+
+	# INSTANCE B TAKES THE LONG WAY ROUND: a sweep it does not keep, an idle, and
+	# an air pose, so that when it is finally asked for the shared clock it is
+	# arriving from somewhere else entirely. A driver carrying anything between
+	# frames answers differently from the two histories.
+	var step: float = 1.0 / SWEEP_HZ
+	for i: int in 400:
+		anims[1].animation_time = float(i) * step * 3.0
+		anims[1].animate_walking(step, 1.5)
+	for i: int in 30:
+		anims[1].animate_idle(step)
+		anims[1].animate_jumping()
+
+	# TWO COMPARISONS, and the first is the one with teeth. `reset` puts both
+	# skeletons back to the exported rest before the shared clock, so the two
+	# drivers are posed from IDENTICAL state and any difference at all is the
+	# driver reading something it was not handed — an RNG, a wall clock, a member
+	# it accumulated into. The second asks the same question with one instance
+	# arriving out of 430 frames of walking, which is the honest multiplayer case
+	# and is therefore allowed the float drift `SKINNED_DRIFT_EPS` documents.
+	var worst: float = 0.0
+	var worst_bone: String = ""
+	var worst_live: float = 0.0
+	var worst_live_bone: String = ""
+	for t: float in SKINNED_DETERMINISM_TIMES:
+		for reset: bool in [true, false]:
+			for j: int in 2:
+				if reset:
+					anims[j].rig.rest_pose()
+				anims[j].animation_time = t
+				anims[j].animate_walking(step, 1.0)
+			for bone: int in skels[0].get_bone_count():
+				var qa: Quaternion = skels[0].get_bone_pose_rotation(bone)
+				var qb: Quaternion = skels[1].get_bone_pose_rotation(bone)
+				var gap: float = maxf(maxf(absf(qa.x - qb.x), absf(qa.y - qb.y)),
+						maxf(absf(qa.z - qb.z), absf(qa.w - qb.w)))
+				if reset and gap > worst:
+					worst = gap
+					worst_bone = skels[0].get_bone_name(bone)
+				elif not reset and gap > worst_live:
+					worst_live = gap
+					worst_live_bone = skels[0].get_bone_name(bone)
+	if worst_live > SKINNED_DRIFT_EPS:
+		_fail("two skinned drivers walked to the same animation_time down different "
+				+ "histories drew `%s` %.8f apart — the ceiling is %.6f, which is the "
+				% [worst_live_bone, worst_live, SKINNED_DRIFT_EPS] + "euler round "
+				+ "trip's own float drift and nothing else. Anything above it is state.")
+	if worst > SKINNED_DETERMINISM_EPS:
+		_fail("two skinned drivers posed from rest at the same animation_time drew "
+				+ "`%s` %.8f apart — the pose must be a pure function of (hero, "
+				% [worst_bone, worst] + "animation_time, gait state) or two peers draw "
+				+ "two different heroes. Something in `hero_rig_skeleton.gd` is reading "
+				+ "a clock, a previous frame or an RNG it was not handed.")
+
+	for fixture: Node3D in fixtures:
+		fixture.queue_free()
+	Sentinel.done("skinned_determinism")
 
 
 ## The keys BOTH rigs own, and the ones check 8's equivalence script compares.
