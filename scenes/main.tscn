@@ -113,9 +113,8 @@ light_color = Color(1, 0.94, 0.82, 1)
 light_energy = 1.25
 light_angular_distance = 0.5
 shadow_enabled = true
-shadow_normal_bias = 3.0
+shadow_normal_bias = 0.8
 directional_shadow_mode = 1
-directional_shadow_split_1 = 0.35
 directional_shadow_max_distance = 55.0
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]

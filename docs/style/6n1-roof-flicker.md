@@ -1,35 +1,14 @@
 # Roof flicker in the procedural city band — bead godot-test1-6n1
 
-`scenes/main.tscn`'s `DirectionalLight3D` cannot carry a comment (Godot rewrites
-`.tscn` files and drops them), so the reasoning behind its two changed numbers
-lives here, next to the frames it was measured on.
+The two numbers this bead changes live on `EndlessTerrain`'s
+`WEB_SHADOW_NORMAL_BIAS` / `WEB_SHADOW_SPLIT_1`, with their argument in the banner
+above them and in `apply_sun_shadow`'s docstring. **This file is the evidence**: the
+frames, how they were taken, and the alternatives that were measured and rejected.
 
 ## What the owner saw
 
 "There is flickering on house's roofs" — the pitched `BoxKind.WEDGE` roofs of the
 procedural CITY band (`terrain_biomes.gd::_spawn_city_content`), on the web build.
-
-## How the frames were taken, and why that is not a detail
-
-Every `6n1_*_web_*.png` here is the desktop binary running
-`--rendering-method gl_compatibility` **plus** the three `.web` project-setting
-overrides forced on at runtime, because a rendering method is not a feature tag:
-`.web` overrides resolve on the `web` tag, which is true only in a browser. Without
-forcing them a "web" capture silently runs at the engine's desktop
-`directional_shadow/size` of **4096**, 4x MSAA and full internal resolution — 4x the
-shadow resolution the web build ships, which is exactly the axis this bead is about.
-So the captures force:
-
-```
-RenderingServer.directional_shadow_atlas_set_size(1024, true)   # size.web
-viewport.msaa_3d        = MSAA_DISABLED                         # msaa_3d.web
-viewport.scaling_3d_scale = 0.8                                 # scale.web
-camera.fov              = 97.0                                  # FOV_MAX: the game is played RUNNING
-```
-
-The FOV matters for the same reason: a cascade's texel size is fitted to the camera
-sub-frustum, so the widest FOV the player ever holds is the worst case, not the
-standing 75 the tool's frozen pose uses.
 
 ## What it is
 
@@ -37,42 +16,88 @@ standing 75 the tool's frozen pose uses.
 
 | frame | roofs |
 |---|---|
-| shipped light | dense diagonal bands across every roof slope, cross-hatch on every plaster wall |
-| same frame, `shadow_enabled = false` | completely clean |
+| `6n1_band_bisect_shadows_on.png` | dense diagonal bands across every roof slope, cross-hatch on every plaster wall |
+| `6n1_band_bisect_shadows_off.png` — the same spot with the `DirectionalLight3D`'s `shadow_enabled = false` | completely clean |
+
+That pair is the bead's bisect step and it is deliberately taken in the tool's
+DEFAULT configuration (desktop `gl_compatibility`, so the engine's 4096 px shadow
+map), not the web one — acne is *worse* at web's 1024, so a 4096 frame that already
+shows it is the conservative demonstration. Two processes, same seed, same spot;
+the geometry, the camera and every prop are identical between them.
 
 `6n1_band_web_before.png` and `…_before_next_frame.png` are two consecutive frames
 with the camera crept 0.3 m: the bands **re-space and shift** between them. That
 crawl is the flicker.
 
-The pair of coplanar faces PR #334 lifted (hull top vs roof underside) is not the
-cause and never could be — they face opposite ways under `cull_back` and are never
-both rasterized. That branch was abandoned.
+**Cause 3 (toon banding) is excluded by code, not just by a frame.**
+`toon_shading.gd` is applied to the cast and the tower only; the chunk batch's
+material is `assets/shaders/world_block.gdshader`, `diffuse_burley`, with no toon
+band to alias. **Cause 1 (z-fighting)** — the coplanar pair PR #334 lifted, hull top
+vs roof underside — face opposite ways under `cull_back` and are never both
+rasterized. That branch was abandoned and nothing from it is reused.
+
+## How the frames were taken, and why that is not a detail
+
+`--rendering-method gl_compatibility` **is not the web build**. It switches the
+renderer; every `.web` project-setting override resolves on the `web` FEATURE TAG,
+which a desktop binary never carries. A plain `gl_compatibility` capture therefore
+still renders at the engine's desktop `directional_shadow/size` of **4096**, with 4x
+MSAA and full internal resolution — four times the shadow resolution the web build
+ships, on the one axis this bead is about. The bead's first set of A/B frames was
+taken that way and had to be retaken.
+
+`scenes/style_shots.tscn` now carries the recipe so nobody repeats it:
+
+```
+godot --rendering-method gl_compatibility --path . scenes/style_shots.tscn \
+      -- <outdir> only=2b_city_band web
+```
+
+`web` forces the three `.web` keys (shadow atlas 1024, MSAA off, internal scale 0.8)
+**and** asks the game for its own web-gated tuning through
+`EndlessTerrain.apply_sun_shadow(true)` — plus `fov = 97`, `player_controller`'s
+`FOV_MAX`. The FOV matters for the same reason the atlas does: a cascade is fitted
+to the camera sub-frustum, so the widest FOV the player ever holds is the worst case
+for its texel size, and the tool's frozen pose is a standing one.
+
+Every `6n1_*_web_*.png` here is that command. The `before` half is the same command
+with the two constants set back to the scene's desktop values (0.8 and 0.1).
 
 ## Why the shadow map could not resolve it
 
-`DirectionalLight3D`'s own defaults, read off a fresh instance in Godot 4.5, are
+`DirectionalLight3D`'s own defaults in Godot 4.5, read off a fresh instance:
 `directional_shadow_mode = 2` (**4** splits), `directional_shadow_split_1 = 0.1`,
 `shadow_normal_bias = 2.0`. `main.tscn` deliberately drops to
 `directional_shadow_mode = 1` (**2** splits, half the shadow passes) — but it kept
 `split_1` at the 4-split default and *lowered* the normal bias to 0.8.
 
 With two splits and `max_distance = 55`, `split_1 = 0.1` puts the near cascade over
-0–5.5 m and makes the far cascade carry **5.5–55 m**. On web's 1024 px map, at the
+0–5.5 m and makes the far cascade carry **5.5–55 m**. On web's 1024 px map at the
 running FOV, that far cascade's texel is over a tenth of a metre.
 
-A wedge slope sits ~29° off horizontal (`CITY_ROOF_RISE_FACTOR` 0.28, so a rise over
-run of 0.56) against a sun 35° above the horizon, i.e. close to grazing to the light,
-where the depth error across one texel is several texels deep. `shadow_normal_bias`
-is measured in **texels**, not metres, so 0.8 of a 0.1 m texel never reached it.
+A wedge slope sits ~29° off horizontal (`CITY_ROOF_RISE_FACTOR` 0.28, a rise over run
+of 0.56) against a sun 35° above the horizon — close to grazing to the light, where
+the depth error across one texel is several texels deep. `shadow_normal_bias` is
+measured in **texels**, not metres, so 0.8 of a 0.1 m texel never reached it.
 
-## The change
+## The change, and why it is web-only
 
 ```
-shadow_normal_bias            0.8  ->  3.0
-directional_shadow_split_1    (absent, engine default 0.1)  ->  0.35
+shadow_normal_bias          0.8  ->  3.0     (WEB ONLY)
+directional_shadow_split_1  0.1  ->  0.35    (WEB ONLY)
 ```
 
-Both are needed and each was measured alone:
+`scenes/main.tscn` is left carrying the desktop values. Web is a quarter of the
+desktop map in each axis, and `shadow_normal_bias` is texel-denominated, so the same
+number means four times the world-space offset there. Desktop had no acne to remove
+at 4096 — so applying the retune globally would have been a pure cost, and a
+measured one: a revmux round on the earlier, global version found a near-camera
+**thin** caster (a lamp pole) whose shadow broke into a stipple on Forward+, the
+fraction of shadowed pixels in that crop dropping 39%. A thin caster's shadow is one
+or two texels wide, and a tripled normal offset walks the lookup off it. That is the
+whole of CLAUDE.md's "visual changes are web-gated".
+
+Both numbers are needed, and each was measured alone:
 
 - **split alone** (0.35, bias untouched) — bands get finer, do not go away.
 - **normal bias alone** — 2.0 barely moves it; 5.0 cleans the slope by pushing the
@@ -81,9 +106,13 @@ Both are needed and each was measured alone:
 - **together** — clean and correct: the slope keeps the shadow it should have, the
   eave line stays crisp, every cast shadow stays attached to its caster.
 
+Also measured and rejected: `shadow_bias` 0.3 / 0.5 / 1.0 / 1.5 (no visible effect
+on this artefact under `gl_compatibility`), and `directional_shadow_max_distance`
+55 → 35 (bands remain, and it shortens every shadow in the game).
+
 ### The cascade trade, both halves
 
-`split_1 = 0.35` is not free, and the cost lands where the player is looking:
+`split_1 = 0.35` is not free, and the cost lands near the camera:
 
 - **near cascade** 0–5.5 m → **0–19.25 m**: its bounding sphere grows ~3.5x and its
   texel with it. Since `shadow_normal_bias` is a texel multiple, the world-space
@@ -92,11 +121,10 @@ Both are needed and each was measured alone:
 - **far cascade** 5.5–55 m → **19.25–55 m**: smaller sphere, finer texel, so the
   distance band that was worst gets better.
 
-That is the whole point of moving the split: it takes resolution away from a 5.5 m
-bubble nobody can see acne in (nothing is within 5.5 m of a third-person camera but
-the hero's own feet) and spends it on the 5–30 m band where the houses actually are.
-The price is the larger normal offset near the camera, and `6n1_field_web_contact_*`
-is the measurement of what that costs — see below.
+That is the point of moving the split: it takes resolution away from a 5.5 m bubble
+a third-person camera has nothing in and spends it on the 5–30 m band the houses are
+in. The price is the larger normal offset near the camera, and
+`6n1_field_web_contact_*` is the measurement of what that costs.
 
 ## No peter-panning — measured, not argued
 
@@ -107,31 +135,26 @@ the boulder all carry the same striping. After: clean.
 `6n1_field_web_contact_before.png` / `…_after.png` are the contact line of the tall
 slab prop, blown up 6x — the one place a bigger normal offset would show as a light
 gap between a caster's foot and its shadow. It goes the other way: **before** there
-is a pale gap between the slab's base and its cast shadow (the coarse cascade was
-leaking light into the contact, the same leak that lit the roof slopes), and
-**after** the shadow reaches the base. The nominal pull-in from the larger offset is
-a few centimetres at a 35° sun — a couple of pixels at this framing — and the
-contact reads tighter, not looser.
+is a pale gap where the coarse cascade leaked light into the contact (the same leak
+that lit the roof slopes), and **after** the shadow reaches the base. The nominal
+pull-in from the larger offset is a few centimetres at a 35° sun — a couple of
+pixels at this framing — and the contact reads tighter, not looser.
 
-## Both renderers
+## Desktop is untouched, by construction rather than by a frame
 
-`6n1_band_forwardplus_*.png` — desktop Forward+ at the engine's default **4096 px**
-map (`project.godot` sets only `size.web`; the base setting is unset). There the
-roofs were already clean and the change only softens the serrated comb along the
-wall/eave junction. Not a regression on desktop.
+There is no desktop A/B here because there is nothing to compare. `apply_sun_shadow`
+returns on its first line when `is_web` is false, and the only other change to
+`scenes/main.tscn` is the deletion of `directional_shadow_blur = 1.2`, which
+`DirectionalLight3D` has no property for in Godot 4.5 — probed live on the loaded
+scene, `"directional_shadow_blur" in light` is `false` and `shadow_blur` reads its
+untouched 1.0 default. The line never did anything; it only claimed the shadows were
+blurred. So a desktop or editor frame is bit-for-bit what it was before this bead.
 
 ## Perf
 
 Same cascade count, same shadow passes, same draw calls — 256 in the band on
 `gl_compatibility` before and after (`[PERF]` line of `scenes/style_shots.tscn`).
-Two light properties; no shader, no geometry, no RNG draw.
-
-## One line removed
-
-`directional_shadow_blur = 1.2` went with it. `DirectionalLight3D` has no such
-property in Godot 4.5 — probed live on the loaded scene:
-`"directional_shadow_blur" in light` is `false` and `shadow_blur` reads its 1.0
-default. The line has never done anything; it only claimed the shadows were blurred.
+Two light properties written once at startup; no shader, no geometry, no RNG draw.
 
 ## Not fixed here
 
