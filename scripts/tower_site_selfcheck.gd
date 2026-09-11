@@ -299,9 +299,11 @@ func _check_nothing_stands_on_the_site() -> void:
 	print("tower site %s: nearest world content is %s (disc is %.0f m)" % [site, offender, radius])
 
 	# THE ONE THING ALLOWED INSIDE THE DISC, named rather than merely skipped.
-	# `_collect` steps over the "waypoint" group so the HQ's authored circle does
-	# not read as a spawner nobody gated (see the comment there). That skip would
-	# be a hole if it were the end of it, so this is the other half: walk the
+	# `_collect` steps over waypoint INDEX 0 ONLY — not the group; the other ten
+	# circles stay in `_world_points` and in checks 5 and 6's digest — so the HQ's
+	# authored circle does not read as a spawner nobody gated (see the comment
+	# there). That skip would be a hole if it were the end of it, so this is the
+	# other half: walk the
 	# markers the chunks above really built and demand that the only one standing
 	# in the disc is waypoint 0 — the HQ door's. A second circle wandering in, or
 	# index 0 drifting out to where the epic's "just outside the HQ door" stops

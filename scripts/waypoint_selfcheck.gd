@@ -63,11 +63,15 @@ const CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
 ## only about that world.
 const SEEDS: Array[int] = [20260904, 777, 4242]
 
-## Seeds check 1's cache-warmth control sweeps for a road station that is WET —
-## the one shape that tells the two clamps apart. The three above deliberately are
-## not it: every waypoint target on them is dry, which is why check 3 passes on
-## them and why the control needs its own list. It stops at the first seed that
-## yields one, so this is a search space and not a sample.
+## Seeds check 1's cache-warmth control sweeps, in order, for the ONE shape that
+## tells the two clamps apart: a WET road station within `WAYPOINT_RIVER_STEP` of
+## the road's terminal. Not "a seed whose road crosses water" — road crossings are
+## common (`field_bridge_selfcheck` exists for them) and every one further west is
+## cleared long before either clamp binds. The sweep stops at the first seed that
+## has it, so this is a SEARCH SPACE and not a sample, and the three CI `SEEDS`
+## lead it only because they are cheap to try first; today it settles on seed 1.
+## Widening it is the right move if the window ever goes empty — but widen it with
+## that criterion, not with "a seed that has a river somewhere".
 const CONTROL_SEEDS: Array[int] = [20260904, 777, 4242, 1, 424242, 999983, 750, 99, 106]
 
 ## What `waypoint_sites()` must return in every world, in order: the HQ door, its
@@ -277,29 +281,33 @@ func _check_cache_warmth_cannot_move_a_site(terrain_script: GDScript) -> void:
 	check 2 compares chunk signatures, check 3 reads one table per seed, and check
 	4 takes the table before it builds anything.
 
-	TWO HALVES, AND ONLY THE FIRST ONE IS DECISIVE. That is stated plainly because
-	the behavioural half was written first and MEASURED not to catch it:
+	TWO HALVES, AND BOTH ARE MUTATION-TESTED AGAINST THE PRE-FIX CLAMP:
 
 	  a. THE TEXT. `_road_site`'s body may not mention `road_k_max` at all. It is
 	     the `landmark_sites_selfcheck` check-4 idiom — read the function, refuse
-	     the thing it must not touch — and it is the half that reds the moment the
-	     old clamp comes back. It cannot pass vacuously: a body that cannot be
-	     found fails by name.
+	     the thing it must not touch. It cannot pass vacuously: a body that cannot
+	     be found fails by name. It reads CODE ONLY, because the docstring names
+	     `road_k_max` on purpose (it is the argument for the terminal).
 	  b. THE BEHAVIOUR. Ask `_road_site` about a station that is WET at the nominal
 	     target, once against a COLD cache and once against one warmed far east of
 	     the terminal; the answers must be the same metre, and neither may lie east
-	     of the terminal station. MUTATION-TESTED, and it did NOT fail on the old
-	     code: reproducing the divergence needs a river still wet 60 m short of T,
-	     and none of the seeds swept has one — a wet band anywhere else is cleared
-	     in one step, long before either clamp binds. So this half is a general
-	     guard against any future read of mutable cache state in this family, not
-	     the regression control for the fix that prompted it. Half (a) is.
+	     of the terminal station.
 
-	A WET STATION HAS TO BE FOUND, not assumed — the three CI seeds run their road
-	through dry ground at every waypoint target, which is exactly why check 3
-	passes. `CONTROL_SEEDS` is swept for one, closest to the terminal first, and a
-	sweep that finds none FAILS rather than passing quietly: a control nobody can
-	run is not a control.
+	HALF (b) ONLY WORKS ON THE RIGHT TARGET, and that is a selection rule, not
+	luck. Cold, `road_k_max` is `terminal + 1`, so the two clamps can only answer
+	differently once the walk steps PAST the terminal — which needs a wet station
+	within one `WAYPOINT_RIVER_STEP` of it. The first cut of this control took the
+	first wet station anywhere on the road, settled on one ~250 m short of T, and
+	measured two identical answers; round 3 of the PR #364 review caught it. The
+	sweep below now takes only a wet station inside that window and skips a seed
+	that has none. With the window enforced, aliasing the clamp back to the cache
+	frontier reds BOTH assertions on seed 1: the cold leg answers x 1451.2 and the
+	warm leg x 1474.9, either side of a terminal at 1446.5.
+
+	A WET STATION HAS TO BE FOUND, not assumed — the three CI seeds' roads run
+	through dry ground for the last 60 m before T. `CONTROL_SEEDS` is swept until
+	one has it, and a sweep that finds none FAILS rather than passing quietly: a
+	control nobody can run is not a control.
 	"""
 	var source: String = FileAccess.get_file_as_string(SOURCE_SCRIPTS[0])
 	# CODE ONLY. `_road_site`'s docstring NAMES `road_k_max` — it is the whole
@@ -321,14 +329,22 @@ func _check_cache_warmth_cannot_move_a_site(terrain_script: GDScript) -> void:
 		# the stretch a road waypoint can actually be asked about.
 		cold._road_extend_to_x(TerrainWaypoints.WAYPOINT_APPROACH_X, cold.ROAD_TERMINAL_X)
 		var terminal: int = cold._road_terminal_k()
-		# SCANNED BACKWARD FROM THE TERMINAL, which is the whole point: the two
-		# clamps only tell each other apart when the re-walk would cross T, so the
-		# control wants the wet station CLOSEST to the terminal, not the first one
-		# east of the spawn. A wet station 1,300 m short of T resolves long before
-		# either clamp binds and would make this pass under both.
+		# THE DISCRIMINATING WINDOW, and it is a SELECTION RULE rather than a
+		# preference. Cold, `road_k_max` is `terminal + 1` (the extend stops at the
+		# first station east of T), so the old clamp and the new one can only answer
+		# differently once the walk steps past `terminal` — which needs the target
+		# station to be wet within ONE step of it. A wet station anywhere further
+		# west is cleared long before either clamp binds, and a control built on one
+		# compares two identical answers and proves nothing. So the scan runs
+		# backward from `terminal` ITSELF (the single best target: the old cold leg
+		# alone lands at `terminal + 1` from there) and stops at
+		# `terminal - WAYPOINT_RIVER_STEP`; a seed with no wet station in that window
+		# is SKIPPED, not accepted. Round 3 of the PR #364 review is why this is a
+		# window and not "the first wet station on the road".
 		var wet_x: float = INF
-		var west: int = cold._road_first_k_at_or_after_x(0.0)
-		for k in range(terminal - 1, west, -1):
+		var floor_k: int = maxi(cold._road_first_k_at_or_after_x(0.0),
+				terminal - TerrainWaypoints.WAYPOINT_RIVER_STEP)
+		for k in range(terminal, floor_k - 1, -1):
 			var c: Vector2 = cold._road_station(k).center
 			if cold.is_river_at(Vector3(c.x, 0.0, c.y)):
 				wet_x = c.x
@@ -368,9 +384,14 @@ func _check_cache_warmth_cannot_move_a_site(terrain_script: GDScript) -> void:
 		print("    the wet re-walk answers %s cold and warm, west of the terminal at %.0f "
 				% [str(cold_pos), cold_terminal_x] + "(seed %d, target x %.0f)"
 				% [seed_value, wet_x])
+		Sentinel.done("cache_warmth")
 		return
-	_fail("no seed in CONTROL_SEEDS runs its road through water west of the terminal, so the "
-			+ "wet re-walk's cache-warmth control cannot run — widen CONTROL_SEEDS")
+	_fail("no seed in CONTROL_SEEDS has a WET road station within WAYPOINT_RIVER_STEP of its "
+			+ "terminal, which is the only window where the two clamps can answer "
+			+ "differently — so the wet re-walk's behavioural control cannot run. Add seeds "
+			+ "until one does (a seed whose road merely crosses water somewhere is NOT "
+			+ "enough, and is what round 3 of the PR #364 review caught this settling for).")
+	Sentinel.done("cache_warmth")
 
 
 # ============================================================================
