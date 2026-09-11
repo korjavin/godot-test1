@@ -1,0 +1,19 @@
+[gd_scene load_steps=2 format=3 uid="uid://c8teibiskin01"]
+
+; SPIKE godot-test1-5u3.1 — SCRATCH, deliberately NOT in player_controller's
+; CHARACTERS list: only scripts/style_shots.gd's `body=skinned` reaches it, and
+; the game is byte-for-byte unchanged by its presence.
+;
+; `Body` stays even though the mesh needs no wrapper: the landing squash writes
+; Body.position.y and capture_rest_pose reads Body.rotation, so every hero scene
+; in this game has one (epic 5u3's notes). The .glb instance carries NO basis —
+; a SKINNED glTF is exported Y-up and placed by its own root node, so the
+; Rx(-90) every UNRIGGED part scene applies here would lay the hero on his face.
+
+[ext_resource type="PackedScene" path="res://assets/models/characters/teibi_parts/teibi_skinned.glb" id="1_body"]
+
+[node name="Teibi" type="Node3D"]
+
+[node name="Body" type="Node3D" parent="."]
+
+[node name="Mesh" parent="Body" instance=ExtResource("1_body")]

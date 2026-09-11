@@ -83,6 +83,33 @@ var _spike: bool = false
 
 const SPIKE_BODY_PARTS: String = "res://scenes/characters/teibi_authored.tscn"
 const SPIKE_BODY_UNCUT: String = "res://scenes/characters/teibi_uncut.tscn"
+## SPIKE godot-test1-5u3.1 — the SKINNED body (`scripts/build_hero.py`), one mesh
+## on MPFB2's 53-bone `game_engine` rig.
+const SPIKE_BODY_SKINNED: String = "res://scenes/characters/teibi_skinned.tscn"
+
+# ============================================================================
+# SPIKE godot-test1-5u3.1 — THE TWO ANIMATION COLUMNS
+#
+# `body=skinned` puts Teibi on a Skeleton3D, which has no LeftArm/RightArm/
+# LeftLeg/RightLeg for `player_animation.gd` to find — `animate_walking()`
+# returns at its first line. `anim=<proc|clip>` says who poses him instead:
+#
+#   (empty)  today's sine rig, i.e. the CONTROL column (`body=` unset).
+#   proc     `_pose_skinned()` below — the same GAITS row re-expressed as BONE
+#            rotations, so knees and elbows finally bend. A probe of what bead
+#            5u3.2 would ship, not the driver it would ship.
+#   clip     a retargeted CC0 locomotion clip, seeked by phase. DROPPED on the
+#            licence gate — see the bead's DECISION block and PROVENANCE.md:
+#            Quaternius ships the Universal Animation Library under QAL v1.0
+#            (2026-08-28), whose section 3(a) forbids redistributing the assets
+#            "in original or modified form" as files, which is exactly what
+#            committing a retargeted clip .glb to this public repo would be.
+#            The argument is still parsed so the refusal is LOUD rather than a
+#            silently-identical picture.
+# ============================================================================
+
+## Empty means "today's sine rig on today's body".
+var _anim: String = ""
 
 ## Metres from the body centre — `_shoot_head_closeup`'s camera, pulled back so
 ## the WHOLE hero fits (2 m at 75 degrees cuts the feet; 3 m does not).
@@ -109,6 +136,9 @@ func _ready() -> void:
 			_spike = true
 		elif a.begins_with("body="):
 			_body_variant = a.substr(5)
+			_spike = true
+		elif a.begins_with("anim="):
+			_anim = a.substr(5)
 			_spike = true
 		else:
 			_out_dir = a
@@ -233,6 +263,11 @@ func _run() -> void:
 	# mid-stride by writing the animation clock directly, and nothing restores it.
 	await _shoot_body(terrain, player, field, "18_body_3m", false, false)
 	await _shoot_body(terrain, player, field, "19_body_stride", false, true)
+
+	# THE STRIDE STRIP (spike godot-test1-5u3.1) — six frames over one stride
+	# period, after 19 for the same reason 19 comes after 18: it writes the
+	# animation clock and nothing restores it.
+	await _shoot_body_strip(player, "20_body_strip")
 
 	# THE CAPTIONS (bead godot-test1-y1o.38) — the respawn countdown and the
 	# level-up line, the two biggest strings the game ever puts over the world.
@@ -470,7 +505,11 @@ func _apply_body_variant(player: Node3D) -> void:
 	player.set_active_character(index)
 	if _body_variant == "":
 		return
-	var path := SPIKE_BODY_PARTS if _body_variant == "parts" else SPIKE_BODY_UNCUT
+	var path := {"parts": SPIKE_BODY_PARTS, "uncut": SPIKE_BODY_UNCUT,
+			"skinned": SPIKE_BODY_SKINNED}.get(_body_variant, "") as String
+	if path == "":
+		push_error("[SHOTS] unknown body= variant " + _body_variant)
+		return
 	var scene := load(path) as PackedScene
 	if scene == null:
 		push_error("[SHOTS] no scratch body at " + path)
@@ -501,6 +540,137 @@ func _apply_body_variant(player: Node3D) -> void:
 	print("[SHOTS] body variant ", _body_variant, " -> ", path, " on hero ", _hero)
 
 
+## SPIKE godot-test1-5u3.1 — frames in one stride period for shot 20's strip.
+const STRIP_FRAMES: int = 6
+## The constant elbow bend `_pose_skinned` holds through the whole cycle. Today's
+## rig has no elbow at all (the forearm is welded to the upper arm), so this is
+## new shape rather than a ported number.
+const ELBOW_BEND_DEG: float = 15.0
+## How much of the leg swing the knee gives back on the BACK-swing only.
+const KNEE_FLEX_RATIO: float = 0.8
+
+var _skeleton: Skeleton3D = null
+
+
+func _can_pose() -> bool:
+	"""Whether the active column has anything that can be posed mid-stride.
+	`uncut` is one welded mesh; `skinned` needs `anim=proc` to drive its bones."""
+	if _body_variant == "uncut":
+		return false
+	if _body_variant == "skinned":
+		return _anim == "proc"
+	return true
+
+
+func _pose_walk(player: Node3D, t: float) -> void:
+	"""Put the hero at walk-cycle time `t`, whichever column is running. Both
+	branches are PURE functions of (hero, t) — that is the property bead 5u3.2
+	has to keep, and shooting the columns through one seam is how the grid
+	compares like with like."""
+	match _anim:
+		"proc":
+			_pose_skinned(player, t)
+		"clip":
+			push_error("[SHOTS] anim=clip is DROPPED on the licence gate — "
+					+ "Quaternius QAL v1.0 (2026-08-28) section 3(a). See "
+					+ "assets/models/characters/PROVENANCE.md.")
+		_:
+			player.anim.animation_time = t
+			player.anim.animate_walking(1.0 / 60.0, 1.0)
+
+
+func _find_skeleton(player: Node3D) -> Skeleton3D:
+	if _skeleton != null and is_instance_valid(_skeleton):
+		return _skeleton
+	var hero: Node = player.character_instances[_hero_index(player)]
+	var found := hero.find_children("*", "Skeleton3D", true, false)
+	if found.is_empty():
+		push_error("[SHOTS] anim=proc found no Skeleton3D — pass body=skinned too")
+		return null
+	_skeleton = found[0] as Skeleton3D
+	print("[SHOTS] posing ", _skeleton.get_bone_count(), " bones procedurally")
+	return _skeleton
+
+
+func _pose_skinned(player: Node3D, t: float) -> void:
+	"""
+	SPIKE godot-test1-5u3.1, the PROCEDURAL column: `player_animation.gd`'s
+	`animate_walking()` — the same GAITS row, the same two sines, the same signs
+	— written onto BONES instead of onto five whole-limb nodes. The new shape it
+	buys is the joints today's rig does not have: a knee that bends on the
+	back-swing and an elbow that stays bent.
+
+	THE BONE-ROLL TRAP, and the finding this column exists to record. MakeHuman
+	bones carry rolls: on the imported rig `thigh_l`'s local X reads
+	(0.89, 0.21, -0.41) and `upperarm_l`'s reads (0.11, -0.99, 0.02), so
+	`set_bone_pose_rotation(idx, Quaternion(Vector3.RIGHT, a))` — a rotation
+	about the BONE's own X — swings a leg sideways and an arm about its own
+	length. `_bone_pose()` conjugates the wanted GLOBAL-axis rotation through the
+	bone's PARENT global rest basis instead, which is roll-agnostic and needs no
+	per-bone axis table.
+	"""
+	var skel := _find_skeleton(player)
+	if skel == null:
+		return
+	var gait := PlayerAnimation.gait_for(_hero)
+	var tf: float = t * float(gait["stride_rate"])
+	var stride: float = sin(tf)
+	var wobble: float = sin(tf * PlayerAnimation.GAIT_HITCH_RATIO + float(gait["phase"]))
+	var hitch: float = 1.0 + float(gait["hitch"]) * wobble
+	var leg_amp: float = deg_to_rad(float(gait["leg_deg"])) * hitch
+	var arm_amp: float = deg_to_rad(float(gait["arm_deg"])) * hitch
+
+	# A positive rotation about the global +X takes a limb hanging down toward
+	# -Z, which is the way this hero faces: positive = forward. The per-side
+	# signs are `animate_walking()`'s, verbatim (left leg back while left arm
+	# swings forward), so the two columns start from the same cycle.
+	for side in ["l", "r"]:
+		var mirror: float = -1.0 if side == "l" else 1.0
+		var leg_swing: float = mirror * stride * leg_amp
+		_bone_pose(skel, "thigh_" + side, Basis(Vector3.RIGHT, leg_swing))
+		# The knee bends only while that leg is BEHIND the body — a knee that
+		# bends on the forward swing is the single most puppet-like thing a
+		# naive skeletal walk does.
+		_bone_pose(skel, "calf_" + side,
+				Basis(Vector3.RIGHT, -maxf(0.0, -leg_swing) * KNEE_FLEX_RATIO))
+		var asym: float = float(gait["arm_asym"]) if side == "l" else 1.0
+		var arm_swing: float = -mirror * stride * arm_amp * asym
+		_bone_pose(skel, "upperarm_" + side, Basis(Vector3.RIGHT, arm_swing))
+		_bone_pose(skel, "lowerarm_" + side,
+				Basis(Vector3.RIGHT, deg_to_rad(ELBOW_BEND_DEG) + 0.3 * arm_swing))
+
+	# The torso's lean (pitch) and waddle (roll) — `animate_walking()` writes both
+	# on the Body node; on a skeleton they belong on the spine, where the legs do
+	# not inherit them.
+	_bone_pose(skel, "spine_02",
+			Basis(Vector3.BACK, stride * deg_to_rad(float(gait["sway_deg"])))
+			* Basis(Vector3.RIGHT, deg_to_rad(float(gait["lean_deg"]))))
+	_bone_pose(skel, "head",
+			Basis(Vector3.BACK, wobble * deg_to_rad(float(gait["head_deg"]))))
+
+	# The bob stays on the `Body` node, exactly where the sine rig puts it —
+	# that is the node the landing squash and `capture_rest_pose` already own.
+	var body := player.character_instances[_hero_index(player)].get_node_or_null("Body")
+	if body is Node3D:
+		(body as Node3D).position.y = sin(tf * 2.0) * float(gait["bob"])
+
+
+func _bone_pose(skel: Skeleton3D, bone: String, rot: Basis) -> void:
+	"""Rotate one bone by `rot`, expressed about the SKELETON's axes rather than
+	the bone's own — see `_pose_skinned`'s roll trap. `P` is the parent's global
+	rest basis, so `P^-1 * rot * P` is the same turn written in the space
+	`set_bone_pose_rotation` expects."""
+	var idx := skel.find_bone(bone)
+	if idx < 0:
+		push_error("[SHOTS] no bone " + bone)
+		return
+	var parent := skel.get_bone_parent(idx)
+	var p := skel.get_bone_global_rest(parent).basis if parent >= 0 else Basis.IDENTITY
+	var local := p.inverse() * rot * p
+	skel.set_bone_pose_rotation(idx,
+			(local * skel.get_bone_rest(idx).basis).get_rotation_quaternion())
+
+
 func _shoot_body(terrain: Node, player: Node3D, at: Vector3, name: String,
 		settle: bool, stride: bool) -> void:
 	"""
@@ -518,9 +688,9 @@ func _shoot_body(terrain: Node, player: Node3D, at: Vector3, name: String,
 	"""
 	if not _wanted(name):
 		return
-	if stride and _body_variant == "uncut":
-		print("[SHOTS] ", name, " skipped: body=uncut has no LeftArm/RightArm/",
-				"LeftLeg/RightLeg to swing")
+	if stride and not _can_pose():
+		print("[SHOTS] ", name, " skipped: body=", _body_variant, " anim=", _anim,
+				" has nothing that swings a limb")
 		return
 	if settle or not _head_pose_settled:
 		var chunk := Vector2i(roundi(at.x / 50.0), roundi(at.z / 50.0))
@@ -554,20 +724,9 @@ func _shoot_body(terrain: Node, player: Node3D, at: Vector3, name: String,
 	# `animation_time = 0` is sin(0) = 0, i.e. every limb at `original_rotations`:
 	# the rest pose, from the same seam and with nothing to restore.
 	var gait := PlayerAnimation.gait_for(_hero)
-	player.anim.animation_time = (PI * 0.5 / float(gait["stride_rate"])) if stride else 0.0
-	player.anim.animate_walking(1.0 / 60.0, 1.0)
+	_pose_walk(player, (PI * 0.5 / float(gait["stride_rate"])) if stride else 0.0)
 
-	var focus: Vector3 = player.global_position + Vector3(0.0, BODY_SHOT_FOCUS_HEIGHT, 0.0)
-	var cam := Camera3D.new()
-	cam.fov = BODY_SHOT_FOV
-	add_child(cam)
-	var basis := player.global_transform.basis
-	var forward := -basis.z
-	var right := basis.x
-	cam.global_position = focus + forward * (BODY_SHOT_DISTANCE * 0.88) \
-			+ right * (BODY_SHOT_DISTANCE * 0.42) + Vector3(0.0, 0.10, 0.0)
-	cam.look_at(focus, Vector3.UP)
-	cam.make_current()
+	var cam := _body_camera(player)
 	await get_tree().process_frame
 	await get_tree().process_frame
 	await RenderingServer.frame_post_draw
@@ -575,7 +734,57 @@ func _shoot_body(terrain: Node, player: Node3D, at: Vector3, name: String,
 	img.save_png(_out_dir + "/" + name + ".png")
 	cam.queue_free()
 	print("[SHOTS] wrote ", name, " at ", at, " hero=", _hero, " body=",
-			_body_variant if _body_variant != "" else "today")
+			_body_variant if _body_variant != "" else "today", " anim=",
+			_anim if _anim != "" else "sine")
+
+
+func _body_camera(player: Node3D) -> Camera3D:
+	"""`_shoot_body`'s three-quarter-front camera, lifted out so the six-frame
+	stride strip (shot 20) frames every frame identically to shots 18/19."""
+	var focus: Vector3 = player.global_position + Vector3(0.0, BODY_SHOT_FOCUS_HEIGHT, 0.0)
+	var cam := Camera3D.new()
+	cam.fov = BODY_SHOT_FOV
+	add_child(cam)
+	var basis := player.global_transform.basis
+	cam.global_position = focus + (-basis.z) * (BODY_SHOT_DISTANCE * 0.88) \
+			+ basis.x * (BODY_SHOT_DISTANCE * 0.42) + Vector3(0.0, 0.10, 0.0)
+	cam.look_at(focus, Vector3.UP)
+	cam.make_current()
+	return cam
+
+
+func _shoot_body_strip(player: Node3D, name: String) -> void:
+	"""
+	SPIKE godot-test1-5u3.1, shot 20. SIX frames evenly spaced across ONE stride
+	period, same camera as shot 18. A single frozen frame says whether a pose is
+	pretty; only a strip says whether the TIMING is — which is the whole question
+	the owner rules "natural movements" from. Written as six numbered PNGs and
+	montaged outside (ImageMagick composes the grids anyway), so no image code
+	lives in here.
+	"""
+	if not _wanted(name):
+		return
+	if not _can_pose():
+		print("[SHOTS] ", name, " skipped: body=", _body_variant, " anim=", _anim,
+				" has nothing that swings a limb")
+		return
+	if not _head_pose_settled:
+		push_error("[SHOTS] " + name + " needs a settled pose — run it after 18/19")
+		return
+	# One full stride is 2*PI of `time_factor = animation_time * stride_rate`.
+	var period: float = TAU / float(PlayerAnimation.gait_for(_hero)["stride_rate"])
+	for frame in STRIP_FRAMES:
+		_pose_walk(player, period * float(frame) / float(STRIP_FRAMES))
+		var cam := _body_camera(player)
+		await get_tree().process_frame
+		await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		var img := get_viewport().get_texture().get_image()
+		img.save_png("%s/%s_%d.png" % [_out_dir, name, frame])
+		cam.queue_free()
+	print("[SHOTS] wrote ", STRIP_FRAMES, " frames of ", name, " over ",
+			"%.3f s" % period, " hero=", _hero, " body=", _body_variant,
+			" anim=", _anim if _anim != "" else "sine")
 
 
 func _crown_focus(player: Node3D, scope: Node) -> Vector3:
