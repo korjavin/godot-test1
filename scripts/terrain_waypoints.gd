@@ -67,9 +67,12 @@ extends RefCounted
 ##
 ## A WET STATION IS RESOLVED BY A DETERMINISTIC RE-WALK, never by a draw: step
 ## `WAYPOINT_RIVER_STEP` stations further east and ask again, up to
-## `WAYPOINT_RIVER_TRIES` times. That is `_build_landmark_sites`'s re-hash with
-## the hash taken out, because here there is nothing to re-hash — the road is the
-## only axis a road waypoint can move along.
+## `WAYPOINT_RIVER_TRIES` times, bounded at `_road_terminal_k()` — never at
+## `road_k_max`, which is a fact about which chunks have streamed rather than
+## about the world (see `_road_site`, which carries the whole argument). That is
+## `_build_landmark_sites`'s re-hash with the hash taken out, because here there
+## is nothing to re-hash — the road is the only axis a road waypoint can move
+## along.
 ##
 ## AND THERE IS NO MEMO. The table is rebuilt on every ask, which is one warm
 ## `_road_extend_to_x` (O(1) once any other road consumer has run), five binary
@@ -183,8 +186,10 @@ const STUD_COLOR := Color(0.38, 0.44, 0.86)
 ##
 ## FIVE TIMES A HERO, AND THAT IS AN OWNER RULING (2026-09-12) against the 14 m
 ## the first draft carried: *"the found-state beam is 5x hero height, not a sky
-## beam"*. A hero's eye is at `PlayerController.FIRST_PERSON_EYE_HEIGHT` (1.65),
-## so five of them is ~9 m — a marker you read from across a field or over a
+## beam"*. A hero stands a shade under 1.8 m — `PlayerController`'s
+## `FIRST_PERSON_EYE_HEIGHT` is 1.65 and the eye is not the top of the head — so
+## five of them is 9 m, rounded to the metre because the ruling is a proportion
+## and not a measurement. It is a marker you read from across a field or over a
 ## street wall, and NOT a pillar into the clouds that would make eleven circles
 ## the loudest thing in an otherwise low, flat world.
 const BEAM_SIZE := Vector3(0.3, 9.0, 0.3)
@@ -219,7 +224,7 @@ static func waypoint_sites(terrain: Node3D) -> Array[Dictionary]:
 	WHERE THE ELEVEN CIRCLES STAND THIS RUN, AT STABLE INDICES.
 
 	@param terrain: The `EndlessTerrain`, for `tower_site()` and the road cache.
-	@return: Exactly `road_slots() + 2 + BudapestPlan.WAYPOINTS.size()` rows of
+	@return: Exactly `3 + road_slots() + BudapestPlan.WAYPOINTS.size()` rows of
 	         `{ id: String, pos: Vector3 }`, in the order the banner's table fixes.
 	         `pos.y` is always 0 — the world is flat and every one of these sites
 	         is off the plateaus.
@@ -282,18 +287,34 @@ static func _road_site(terrain: Node3D, id: String, target_x: float) -> Dictiona
 	THE RE-WALK IS NOT A DRAW. A station in a river band would put the circle
 	under a field bridge's deck, so we step `WAYPOINT_RIVER_STEP` stations east and
 	ask `is_river_at` again — the same deterministic table, a different index, and
-	the only axis a road waypoint is allowed to move along. `k` is clamped to the
-	cached range so a re-walk can never index a station `_road_extend_to_x` has
-	not built (`_road_station` is a bare Dictionary lookup and would error).
+	the only axis a road waypoint is allowed to move along.
+
+	THE WALK IS BOUNDED AT `_road_terminal_k()`, AND IT MUST NOT BE BOUNDED AT
+	`road_k_max`. Both would keep the index inside the built cache (`_road_station`
+	is a bare Dictionary lookup and errors past it), and only one of them is a fact
+	about the WORLD. `road_k_max` is the high-water mark of whatever chunks have
+	streamed so far, so a site clamped against it is a function of when it was
+	asked — a cold cache and a warm one would answer differently for the same seed,
+	which is the exact distinction `terrain_bridges.gd` is written around and which
+	CLAUDE.md's "every spawn site is a pure function of (station index, run_seed)"
+	forbids. `_road_terminal_k()` is the LAST station of the coin road, memoized
+	under the seed write, and it is the clamp every other consumer uses
+	(`coin_road.gd`'s CAP 2, `terrain_altitude.gd`). Found by revmux review of
+	PR #364, which also named its second consequence: past T the road keeps no
+	clearance, so a circle walked east of the terminal would stand on ground no
+	spawner cleared — and 300 m of water would walk it into the Budapest rect,
+	where the city authors its own.
 
 	Callers must have extended the cache over `[WAYPOINT_APPROACH_X,
 	ROAD_TERMINAL_X]` first — the one extend is shared by all five road sites,
-	which is why it is not in here.
+	which is why it is not in here, and it is also what makes `_road_terminal_k()`
+	answerable.
 	"""
+	var terminal: int = terrain._road_terminal_k()
 	var k: int = terrain._road_first_k_at_or_after_x(target_x)
 	var tries: int = 0
 	while tries < WAYPOINT_RIVER_TRIES:
-		k = mini(k, terrain.road_k_max)
+		k = mini(k, terminal)
 		var station: Dictionary = terrain._road_station(k)
 		var centre: Vector2 = station.center
 		if not terrain.is_river_at(Vector3(centre.x, 0.0, centre.y)):
@@ -303,7 +324,7 @@ static func _road_site(terrain: Node3D, id: String, target_x: float) -> Dictiona
 	# Every try was wet — the honest degrade. The site stays where the last one
 	# looked, which `waypoint_selfcheck` check 3 would fail loudly rather than
 	# shipping a circle in a river.
-	k = mini(k, terrain.road_k_max)
+	k = mini(k, terminal)
 	var last: Vector2 = terrain._road_station(k).center
 	return { "id": id, "pos": Vector3(last.x, 0.0, last.y) }
 

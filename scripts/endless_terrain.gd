@@ -3080,9 +3080,9 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# pitched on top of a chest that was already there.
 	spawn_chest_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
 
-	# A WAYPOINT CIRCLE, if one of the eight stands in this chunk (epic
-	# godot-test1-sc6). Neither a roll nor a hash stream: the eight sites are pure
-	# arithmetic over the road's station cache, tower_site() and three authored
+	# A WAYPOINT CIRCLE, if one of the eleven stands in this chunk (epic
+	# godot-test1-sc6). Neither a roll nor a hash stream: the eleven sites are pure
+	# arithmetic over the road's station cache, tower_site() and five authored
 	# rows in budapest_plan.gd, so this consumes NOTHING from anybody — it is the
 	# landmark reverse lookup's shape, one family along.
 	#

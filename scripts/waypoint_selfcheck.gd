@@ -31,7 +31,7 @@ extends SceneTree
 ##           asserted in a comment).
 ##   3. LEGALITY, over three seeds and against the SHIPPED predicates. No road
 ##      circle is in a river band or inside the Budapest rect; every city circle
-##      is inside the rect, dry, outside every `SLOTS` disc, outside every
+##      is inside the rect, dry, off both `PLATEAUS`, outside every `SLOTS` disc, outside every
 ##      `block_wing()` it could reach and on a street line; the HQ circle is
 ##      outside the shell's outer wall and within 12 m of the door trigger. Three
 ##      MUTATION CONTROLS drive the same predicates with a deliberately illegal
@@ -212,7 +212,7 @@ func _check_no_draw(terrain_script: GDScript) -> void:
 	THE TEXT HALF: the waypoint family carries no `randf` / `randi`, no `hash(`
 	and no `scarcity_at`. The first three are the epic's "sites are pure
 	arithmetic over already-seeded state"; the last is the scarcity rule — a
-	fixed set of eight places is neither thinned nor unthinned.
+	fixed set of eleven places is neither thinned nor unthinned.
 
 	THE BEHAVIOURAL HALF, which is what would catch a draw hidden behind a
 	helper: a chunk with NO site is generated twice, once with `spawn_waypoints`
@@ -342,15 +342,15 @@ func _check_legality(terrain_script: GDScript) -> void:
 
 	THE ROAD'S CIRCLES may not be wet (a station in a band would put the ring
 	under a field bridge's deck, or in the water beside it) and may not be inside
-	the Budapest rect (the city authors its own three). The centreline is clear of
+	the Budapest rect (the city authors its own five). The centreline is clear of
 	blocks by construction — every field spawner keeps a road clearance — which is
 	what lets a road ring get away with appending no footprint.
 
-	THE CITY'S THREE must be inside the rect, dry, clear of every `SLOTS` disc,
-	clear of every `block_wing()` a 2.6 m ring could reach, and ON a street line
-	within `AVENUE_HALF_WIDTH`. The wing test is measured with the ring's RADIUS,
-	not its centre: the promise is that no part of the circle is inside somebody's
-	facade.
+	THE CITY'S FIVE must be inside the rect, dry, off both `PLATEAUS` and their
+	ramps, clear of every `SLOTS` disc, clear of every `block_wing()` a 2.6 m ring
+	could reach, and ON a street line within `AVENUE_HALF_WIDTH`. The wing and
+	plateau tests are measured with the ring's RADIUS, not its centre: the promise
+	is that no part of the circle is inside somebody's facade or inside a hill.
 
 	THE HQ'S is outside the shell's outer wall and within `HQ_DOOR_MAX` of the
 	door trigger, so it is the thing you stand on when you come out of the
@@ -384,7 +384,7 @@ func _check_legality(terrain_script: GDScript) -> void:
 							% [seed_value, id, str(pos)] + "re-walk ran out of tries")
 				if terrain.in_budapest(pos.x, pos.z):
 					_fail("seed %d: road circle '%s' at %s is inside the Budapest rect, where "
-							% [seed_value, id, str(pos)] + "the plan authors its own three")
+							% [seed_value, id, str(pos)] + "the plan authors its own five")
 			else:
 				_check_city_site(seed_value, id, pos, wing_clearance)
 		terrain.free()
@@ -411,8 +411,8 @@ func _check_legality(terrain_script: GDScript) -> void:
 		_fail("check 3's wing control — the centre of a real block_wing rect — measures a "
 				+ "positive gap to that wing, so the city sites' facade test is vacuous")
 
-	print("  every site of %d seeds clears the river, the rect, the discs, the facades and "
-			% SEEDS.size() + "the wall; 3 mutation controls refused")
+	print("  every site of %d seeds clears the river, the rect, the discs, the hills, the "
+			% SEEDS.size() + "facades and the wall; 3 mutation controls refused")
 	Sentinel.done("legality")
 
 
@@ -427,6 +427,25 @@ func _check_city_site(seed_value: int, id: String, pos: Vector3, clearance: floa
 	if _inside_a_slot(pos):
 		_fail("seed %d: city circle '%s' at %s is inside a SLOTS disc — a landmark's stone "
 				% [seed_value, id, str(pos)] + "would stand in the ring")
+	# THE PLATEAUS, AND THE FACADE TEST BELOW CANNOT STAND IN FOR THEM. `_wing_gap`
+	# skips every cell `block_buildable()` refuses, and that predicate refuses every
+	# plateau and ramp cell — so a circle buried in Castle Hill's 30 m of solid
+	# stone measures an INF gap to the nearest facade and sails through. It would
+	# also be a street crossing, dry and clear of every disc: every other assertion
+	# here would pass it. SECTION 7b's banner promises all five are "off both
+	# PLATEAUS", so this is where that promise is measured.
+	# (Found by revmux review of PR #364; nothing ships on a hill, this is the
+	# assertion the promise was missing.)
+	for row_v: Variant in BudapestPlan.PLATEAUS:
+		var row: Dictionary = row_v
+		var here := Vector2(pos.x, pos.z)
+		for rect: Rect2 in [row["rect"] as Rect2, row["ramp"] as Rect2]:
+			var near := Vector2(clampf(here.x, rect.position.x, rect.end.x),
+					clampf(here.y, rect.position.y, rect.end.y))
+			if here.distance_to(near) <= clearance:
+				_fail("seed %d: city circle '%s' at %s is %.1f m from plateau '%s' — a ring "
+						% [seed_value, id, str(pos), here.distance_to(near), String(row["id"])]
+						+ "on a hill stands at y = %.0f, not on the flat world" % float(row["top"]))
 	var gap: float = _wing_gap(Vector2(pos.x, pos.z))
 	if gap <= clearance:
 		_fail("seed %d: city circle '%s' at %s is %.1f m from a block_wing, wanted > %.1f — "
@@ -497,13 +516,13 @@ func _find_wet_point(terrain: Node3D) -> Vector3:
 
 func _check_built(terrain_script: GDScript) -> void:
 	"""
-	THE SITES ARE WALKED. Every one of the eight chunks is built through the
+	THE SITES ARE WALKED. Every one of the eleven chunks is built through the
 	SHIPPED `create_chunk` — not a hand-rolled spawner order, which is the mistake
 	`landmark_sites_selfcheck._build_every_site` documents at length — and must
 	come out holding exactly one marker in group "waypoint" with the right
 	`index`, carrying a beam that is a real mesh and is HIDDEN. Nothing in this
 	bead shows a beam; child .2 is what lights one, and a beam that shipped
-	visible would be eight pillars of light standing over an inert feature.
+	visible would be eleven pillars of light standing over an inert feature.
 
 	THE BILL is measured separately, through a direct call on an empty batch,
 	because `create_chunk`'s batch is full of everything else: one ring costs

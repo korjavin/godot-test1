@@ -124,6 +124,21 @@ const BIOME_SAMPLES: int = 4
 ## de-block change a house gets, and the masts are the one other thing in the band
 ## that was obviously a stack of boxes. Nothing else moved: the drift's swell took
 ## ROCK precisely so no OTHER biome's cap had to rise.
+##
+## ONE CONSUMER IS OUTSIDE THIS TABLE ON PURPOSE, AND IT IS RECORDED RATHER THAN
+## BILLED: the WAYPOINT disc (epic godot-test1-sc6, `terrain_waypoints.gd`) is a
+## CYLINDER, so the chunk it stands in builds one bucket more than its band's cap
+## allows. Check 5's sweep cannot see it — it builds `spawn_objects_in_chunk` +
+## `spawn_biome_content_in_chunk`, and a waypoint is neither — and WIRING IT IN
+## WOULD MEASURE NOTHING: there are ELEVEN waypoints in an infinite world, so a
+## biome-sampled sweep would essentially never land on one, and raising a band's
+## cap to cover eleven chunks would loosen the ceiling everywhere for a cost that
+## is paid almost nowhere. The honest shape is the note you are reading: +1 draw
+## call on at most 11 chunks in the world, at most one or two of them resident,
+## judged by eye by the owner on PR #364's screenshots. Five of the eleven are
+## Budapest chunks, which is the one recorded exception to `budapest_selfcheck`
+## check 4's "Budapest stays pure cube". A consumer that could appear in ANY chunk
+## belongs in the table above, not in this paragraph.
 const KIND_CAP_BY_NAME: Dictionary = {
 	"FOREST": 3,
 	"PLAINS": 2,
