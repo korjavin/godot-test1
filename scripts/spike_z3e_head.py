@@ -94,32 +94,62 @@ HEROES = {
         "hair_nape": 0.055,         # how much lower the hairline sits at the back
         # The torso draws a 0.062 m-radius neck cylinder; the stump hides inside it.
         "neck_stump_radius": 0.060,
+        # THE ONE OPT-OUT FROM z3e.12's LANDMARK FIX, and it is here to FREEZE
+        # SHIPPED ART, not because the basemesh reading is right. Windman's head
+        # merged on 2026-09-08 built on the unmorphed joint cubes; his macros move
+        # `joint-neck` up by 1.7 cm, so the fixed reading cuts his head in a
+        # different place and rebuilds a head ~7% wider for the same skull height.
+        # That is a change to a hero the owner has already ruled on, and z3e.12 is
+        # a bug about PRIMM — so Windman stays on the old landmarks and his `.glb`
+        # stays byte-identical, which is also this bead's regression proof. Flip
+        # this to "morphed" (or delete the key) the day the owner wants the
+        # corrected Windman, and expect a new grid with it.
+        "landmarks": "basemesh",
     },
     "primm": {
-        # docs/characters/primm.md: "slightly elongated face. Eyes sharp and
-        # focused; hair short to medium length, dark brown. Wears thin, high-tech
-        # goggles across the eyes (transparent lenses with slight blue tint)."
-        # LEANNESS AND YOUTH ARE FACE TARGETS HERE, NOT MACRO SLIDERS — see the
-        # `age` trap in `build_human`. `head-fat-decr` and the cheekbones do the
-        # work `weight`/`age` would have done, and they morph the head without
-        # moving the whole skeleton out from under MakeHuman's joint cubes.
+        # docs/characters/primm.md: "slim but slightly lean", "slightly elongated
+        # face. Eyes sharp and focused; hair short to medium length, dark brown.
+        # Wears thin, high-tech goggles across the eyes (transparent lenses with
+        # slight blue tint)."
+        #
+        # BEAD z3e.12, and the whole point of it: the owner looked at the first
+        # Primm beside Windman and said "primm looks exactly like windman, same
+        # face just without mask". He was right, and the reason was the landmark
+        # bug above — the macro sliders had to sit near the basemesh default or
+        # the neck cut wandered, so both heroes were built from ONE recipe with
+        # different paint. With `morphed` landmarks the sliders are free again,
+        # so Primm is now a YOUNGER, LEANER, LONGER-FACED man at the macro level
+        # (age 0.30 / weight 0.35 / muscle 0.45 against Windman's 0.45/0.6/0.5)
+        # and the targets stack the canon's elongation on top of that rather than
+        # doing all the work alone.
         "parts_dir": "primm_parts",
         # primm's generated skull is icosphere(0.115) scaled [0.96, 1.0, 1.12],
         # so chin to crown is 2 * 0.115 * 1.12.
         "target_height": 0.2576,
-        "macro": (("gender", 0.90), ("age", 0.45), ("muscle", 0.55),
-                  ("weight", 0.5), ("caucasian", 1.0), ("african", 0.0),
+        "macro": (("gender", 0.90), ("age", 0.30), ("muscle", 0.45),
+                  ("weight", 0.35), ("caucasian", 1.0), ("african", 0.0),
                   ("asian", 0.0)),
-        "targets": ((("head", "head-oval.target.gz"), 0.55),
-                    (("head", "head-scale-vert-incr.target.gz"), 0.25),
-                    (("head", "head-fat-decr.target.gz"), 0.30),
-                    (("head", "head-age-decr.target.gz"), 0.35),
-                    (("cheek", "l-cheek-bones-incr.target.gz"), 0.30),
-                    (("cheek", "r-cheek-bones-incr.target.gz"), 0.30),
-                    (("chin", "chin-prominent-incr.target.gz"), 0.20)),
-        "palette": {"skin": (0.91, 0.73, 0.62, 1.0),
-                    "lips": (0.78, 0.52, 0.47, 1.0),
-                    "hair": (0.26, 0.16, 0.10, 1.0)},
+        "targets": ((("head", "head-oval.target.gz"), 0.80),
+                    (("head", "head-scale-vert-incr.target.gz"), 0.50),
+                    (("head", "head-fat-decr.target.gz"), 0.60),
+                    (("cheek", "l-cheek-bones-incr.target.gz"), 0.50),
+                    (("cheek", "r-cheek-bones-incr.target.gz"), 0.50),
+                    (("chin", "chin-jaw-drop-incr.target.gz"), 0.40),
+                    (("chin", "chin-prominent-incr.target.gz"), 0.40),
+                    (("nose", "nose-scale-vert-incr.target.gz"), 0.30),
+                    # "Eyes sharp and focused" — narrowed lids, both sides.
+                    (("eyes", "l-eye-height2-decr.target.gz"), 0.30),
+                    (("eyes", "r-eye-height2-decr.target.gz"), 0.30)),
+        # THE ONE PLACE A HERO'S PALETTE LEAVES ITS GENERATOR'S (see the note at
+        # the top of the table). Primm's generator skin is Windman's skin to
+        # within a rounding error — (0.91, 0.73, 0.62) against (0.93, 0.74, 0.62)
+        # — which is half of why the two heads read as one man. This is that tone
+        # pulled cooler and paler, and the hair pulled near-black; the seam this
+        # risks is against the torso's own neck cylinder, which the 0.048 m stump
+        # sits INSIDE and the collar covers.
+        "palette": {"skin": (0.90, 0.76, 0.68, 1.0),
+                    "lips": (0.76, 0.50, 0.46, 1.0),
+                    "hair": (0.18, 0.11, 0.07, 1.0)},
         # A blue lens between two silver frame lines, 5.4 cm of band all told —
         # the height of the generator's own visor slab (a box 0.052 m tall).
         #
@@ -136,9 +166,17 @@ HEROES = {
         "stripes": ((0.021, 0.027, (0.70, 0.72, 0.76, 1.0)),    # silver frame, top
                     (-0.021, 0.021, (0.45, 0.62, 0.85, 1.0)),   # blue lens
                     (-0.027, -0.021, (0.70, 0.72, 0.76, 1.0))),  # frame, bottom
-        "hair_lift": 0.009,
-        "hair_front": 0.036,
-        "hair_nape": 0.070,         # "short to MEDIUM length": longer at the nape
+        # A DIFFERENT SILHOUETTE FROM WINDMAN'S CROP (0.008 / 0.036 / 0.055), and
+        # the difference is the HAIRLINE, not the length: docs/characters/primm.png
+        # is short hair swept back off a high forehead with the sides above the
+        # ears, where Windman's fringe comes down to the brow. So Primm's hairline
+        # sits 1.4 cm higher (0.050 against 0.036) with more volume on the crown to
+        # carry the sweep. A first pass at "short to MEDIUM length" put the nape at
+        # 0.090 and rendered a bowl cut that covered the temples — the canon's
+        # picture wins over its prose here, and the nape stays short.
+        "hair_lift": 0.012,
+        "hair_front": 0.050,
+        "hair_nape": 0.060,
         # Primm's torso neck is the SLIM one, radius 0.050 — a 0.060 stump would
         # poke out of his collar where it hides inside Windman's.
         "neck_stump_radius": 0.048,
@@ -173,17 +211,53 @@ def clear_scene():
         bpy.data.objects.remove(obj, do_unlink=True)
 
 
-def joint_centroid(obj, group_name):
+def morphed_coords(obj):
+    """Object-space vertex coordinates WITH every macro and target applied.
+
+    `obj.data.vertices[i].co` is the UNMORPHED basemesh: MPFB2 applies macros and
+    targets as shape keys, and a shape key does not move `vertex.co`. Evaluating
+    the object as it stands does not help either — the helper MASK modifier deletes
+    the `joint-*` cubes, which are exactly the landmarks we are here for. So the
+    modifiers are switched off for the length of one depsgraph update: the evaluated
+    mesh is then the basemesh plus its shape keys, in the same order, so index `i`
+    still names the same vertex as `obj.data.vertices[i]` — which is where the
+    vertex GROUPS stay readable. The equal-length assert is that guarantee's fence.
+    """
+    disabled = [m for m in obj.modifiers if m.show_viewport]
+    for mod in disabled:
+        mod.show_viewport = False
+    try:
+        bpy.context.view_layer.update()
+        evaluated = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
+        mesh = evaluated.to_mesh()
+        if len(mesh.vertices) != len(obj.data.vertices):
+            raise AssertionError(
+                "evaluated mesh has %d verts, basemesh %d: a modifier is still "
+                "changing the topology and the vertex groups no longer line up"
+                % (len(mesh.vertices), len(obj.data.vertices)))
+        coords = [v.co.copy() for v in mesh.vertices]
+        evaluated.to_mesh_clear()
+    finally:
+        for mod in disabled:
+            mod.show_viewport = True
+    return coords
+
+
+def joint_centroid(obj, group_name, coords):
     """Centre of one of the basemesh's helper JOINT CUBES, in object space. This is
     how the neck cut and the eye line are found: they are MakeHuman's own landmarks,
-    not numbers guessed off a bounding box."""
+    not numbers guessed off a bounding box.
+
+    Group MEMBERSHIP comes from `obj.data` (the only place it lives) and the
+    POSITION from `coords` — `morphed_coords`'s evaluated copy, so the landmark
+    tracks the macro sliders instead of the basemesh they morphed away from."""
     idx = obj.vertex_groups[group_name].index
     acc = Vector((0.0, 0.0, 0.0))
     n = 0
     for v in obj.data.vertices:
         for g in v.groups:
             if g.group == idx:
-                acc += v.co
+                acc += coords[v.index]
                 n += 1
                 break
     if n == 0:
@@ -214,22 +288,29 @@ def build_human(cfg):
             continue
         TargetService.load_target(human, path, weight=weight)
 
-    # THE MACRO TRAP, paid for on 2026-09-11 building Primm (bead z3e.5). These
-    # landmarks are read off `human.data.vertices`, which are the UNMORPHED
-    # basemesh coordinates: MPFB2 applies macros and targets as shape keys, and a
-    # shape key does not move `vertex.co`. Reading them off the evaluated mesh
-    # instead is not available either — `bake_to_plain_mesh` applies the helper
-    # MASK modifier, and after that the `joint-*` vertex groups are EMPTY.
+    # THE MACRO TRAP, paid for on 2026-09-11 building Primm (bead z3e.5) and FIXED
+    # on 2026-09-11 by bead z3e.12. The landmarks used to be read straight off
+    # `human.data.vertices` — the UNMORPHED basemesh — so every macro slider that
+    # moves the skeleton (`age` above all, then `weight`) slid the real head away
+    # from them while the numbers stayed frozen. At age 0.35 the cut ran 10 cm
+    # high: it sliced the skull in half, `reframe` scaled the remainder up 1.86x,
+    # and the run still exited 0 with a plausible-looking log. That constraint —
+    # "keep every hero's macro near the basemesh default" — is what made Primm's
+    # head Windman's head with a different hat, which is the bug z3e.12 opened on.
     #
-    # So every macro slider that moves the whole skeleton (`age` above all, then
-    # `weight`) slides the real head away from these landmarks while the numbers
-    # below stay frozen. At age 0.35 the cut ran 10 cm high: it sliced the skull
-    # in half, `reframe` then scaled the remainder up 1.86x, and the run still
-    # exited 0 with a plausible-looking log. KEEP EVERY HERO'S MACRO NEAR THE
-    # BASEMESH DEFAULT and shape the face with `targets`, which move the head
-    # only. `reframe`'s scale assert is the tripwire if anyone forgets.
-    neck = joint_centroid(human, "joint-neck")
-    eye = joint_centroid(human, "joint-l-eye")
+    # `morphed_coords` reads the SAME joint cubes off the evaluated (shape-keyed)
+    # mesh, so a hero's macros may now move the skull and the cut still lands at
+    # the neck. `reframe`'s scale assert stays as the regression fence: it is the
+    # one number that shows a cut landing somewhere the landmark is not.
+    #
+    # `landmarks` is the row key that freezes shipped art built before the fix —
+    # today only Windman's, and his row says why. A new hero omits it.
+    if cfg.get("landmarks", "morphed") == "basemesh":
+        coords = [v.co.copy() for v in human.data.vertices]
+    else:
+        coords = morphed_coords(human)
+    neck = joint_centroid(human, "joint-neck", coords)
+    eye = joint_centroid(human, "joint-l-eye", coords)
     log("landmarks: neck z=%.4f  eye z=%.4f y=%.4f" % (neck.z, eye.z, eye.y))
     return human, neck, eye
 
@@ -552,12 +633,26 @@ def main():
     decimate(obj, TRIS_SMOOTH)
     paint(obj, eye_z, cfg)
 
-    bake_albedo(obj, hero)
+    img = bake_albedo(obj, hero)
     # Variant A's colour comes from the texture; leaving COLOR_0 on would multiply
     # the two and darken the whole head.
     while obj.data.color_attributes:
         obj.data.color_attributes.remove(obj.data.color_attributes[0])
     export(obj, out_glb, flat=False)
+
+    # THE SIDECAR, written HERE and not by the exporter, and AFTER the export on
+    # purpose: `export_format='GLB'` EMBEDS the albedo, and giving the image a
+    # `filepath` before the export puts that name in the .glb and moves 24 bytes.
+    # So nothing drops a readable copy beside the model, and the copy
+    # PROVENANCE.md promises "as the readable source of the bake" was a fossil
+    # from an earlier export that quietly rotted — bead z3e.12 found Primm's still
+    # showing the z3e.5 palette next to a .glb built from a new one. Nothing in
+    # the game loads it; it is written so the row stays true.
+    sidecar = os.path.join(out_dir, "%s_head_authored_%s.png" % (hero, img.name))
+    img.filepath_raw = sidecar
+    img.file_format = 'PNG'
+    img.save()
+    log("wrote %s (%d bytes)" % (os.path.basename(sidecar), os.path.getsize(sidecar)))
 
     for o in bpy.data.objects:
         for m in o.modifiers:

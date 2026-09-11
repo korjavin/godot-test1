@@ -9,8 +9,15 @@ extends Node
 ## frozen, which is the F3 reading the epic asks every child PR for.
 ##
 ## Usage: godot --path . scenes/style_shots.tscn -- <outdir> [only=<substring>[,<substring>...]]
-##                                                           [hide=<groups>]
-##        godot --rendering-method gl_compatibility --path . …   (the web renderer)
+##                                                           [hide=<groups>] [web]
+##        godot --rendering-method gl_compatibility --path . … -- <outdir> web
+##
+## `--rendering-method gl_compatibility` IS NOT THE WEB BUILD, and a shot that
+## claims to be one without `web` is not evidence (bead godot-test1-6n1, where a
+## whole A/B had to be retaken). The flag switches the RENDERER; every `.web`
+## project-setting override resolves on the `web` FEATURE TAG, which a desktop
+## binary never carries. Pass `web` as well and `_emulate_web_settings()` forces
+## what actually differs — see its docstring.
 ##
 ## It is a DEBUG TOOL and nothing in the game loads it: `scenes/style_shots.tscn`
 ## is its own scene, reached only from the command line.
@@ -28,6 +35,10 @@ var _out_dir: String = "user://shots"
 ## several shots that already share `_head_pose_settled` (17/18/19) asks for
 ## them in ONE process rather than paying the settle three times over.
 var _only: String = ""
+
+## Set by the `web` argument — see `_emulate_web_settings`. Off means "whatever
+## this binary is", which is what every pre-existing shot was taken with.
+var _emulate_web: bool = false
 
 func _wanted(name: String) -> bool:
 	if _only == "":
@@ -140,6 +151,8 @@ func _ready() -> void:
 		elif a.begins_with("anim="):
 			_anim = a.substr(5)
 			_spike = true
+		elif a == "web":
+			_emulate_web = true
 		else:
 			_out_dir = a
 	DirAccess.make_dir_recursive_absolute(_out_dir)
@@ -181,6 +194,9 @@ func _run() -> void:
 		return
 
 	terrain.set_run_seed(SEED)
+
+	if _emulate_web:
+		_emulate_web_settings(terrain)
 
 	# Find the two field spots deterministically off THIS seed, so the before/after
 	# pair lands on byte-identical world content.
@@ -1081,6 +1097,51 @@ func _find_camp(terrain: Node) -> Vector3:
 			return at
 	return Vector3.INF
 
+## The RUNNING field of view (`player_controller.FOV_MAX`). A shadow cascade is
+## fitted to the camera sub-frustum, so the widest FOV the player ever holds is
+## the worst case for its texel size — and this tool's frozen pose is a STANDING
+## one. `web` forces it, so a shadow A/B is judged on the frame the game is
+## actually played at rather than the calmest one.
+const WEB_SHOT_FOV: float = 97.0
+
+func _emulate_web_settings(terrain: Node) -> void:
+	"""
+	Make this desktop process render what the WEB EXPORT renders, as far as a
+	desktop binary can (bead godot-test1-6n1).
+
+	@param terrain: the EndlessTerrain, for its own web-gated tuning.
+
+	WHY THE `.web` SETTINGS DO NOT ARRIVE ON THEIR OWN: they are FEATURE-TAG
+	overrides. `OS.has_feature("web")` is true in a browser and nowhere else, so
+	`--rendering-method gl_compatibility` on a desktop binary picks up the web
+	RENDERER and none of the web SETTINGS — it still renders at the engine's
+	desktop `directional_shadow/size` of 4096, with 4x MSAA and full internal
+	resolution. Four times the shadow resolution the web build ships is not a
+	detail on a bead about shadows; it is the whole axis.
+
+	WHAT `web` FORCES, ACROSS TWO SITES. Here: the three `.web` keys in
+	`project.godot`, and the game's own web-gated tuning (`apply_sun_shadow`).
+	In `_shoot`, per shot rather than once: the running FOV (see WEB_SHOT_FOV),
+	because `player_controller._process` eases `camera.fov` back toward FOV_BASE
+	on every tick of the settle and would undo a write made here.
+
+	Everything else about a browser — the GPU, the driver, the frame budget — a
+	desktop capture cannot have, so this is an honest STAND-IN and a `web` shot is
+	not a substitute for a real export when the question is performance.
+	"""
+	RenderingServer.directional_shadow_atlas_set_size(1024, true)   # size.web
+	get_viewport().msaa_3d = Viewport.MSAA_DISABLED                 # msaa_3d.web
+	get_viewport().scaling_3d_scale = 0.8                           # scale.web
+	# (the FOV is re-asserted per shot, in _shoot — `player_controller._process`
+	# eases `camera.fov` back to FOV_BASE every frame of the settle, so writing it
+	# here would be undone before the first grab.)
+	# ...and the runtime half: anything the game itself gates on the web feature
+	# tag has to be asked for explicitly here, for exactly the reason above.
+	if terrain.has_method("apply_sun_shadow"):
+		terrain.apply_sun_shadow(true)
+	print("[SHOTS] web emulation: shadow atlas 1024, msaa off, 3d scale 0.8, fov ",
+			WEB_SHOT_FOV)
+
 func _shoot(terrain: Node, player: Node3D, where: Vector3, yaw: float, name: String) -> void:
 	if not _wanted(name):
 		return
@@ -1132,6 +1193,12 @@ func _shoot(terrain: Node, player: Node3D, where: Vector3, yaw: float, name: Str
 	# above them leaves the writer one more tick to undo it.
 	player.set_physics_process(false)
 	player.set_process(false)
+	# The running FOV, asserted AFTER the freeze because player_controller eases
+	# `camera.fov` back toward FOV_BASE on every tick — see _emulate_web_settings.
+	if _emulate_web:
+		var shot_cam := get_viewport().get_camera_3d()
+		if shot_cam != null:
+			shot_cam.fov = WEB_SHOT_FOV
 	if _repose.is_valid():
 		_repose.call()
 	await get_tree().process_frame
