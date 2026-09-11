@@ -107,7 +107,8 @@ HEROES = {
                     (("nose", "nose-scale-vert-decr.target.gz"), 0.15),
                     (("chin", "chin-jaw-drop-decr.target.gz"), 0.12)],
         # generate_teibi_separate.py's palette, verbatim (owner ruling: vertex
-        # colours, zero texture bytes).
+        # colours, zero texture bytes). Skin and lips reach the mesh through
+        # `SKIN_GRADE` above — the row is the paint, that constant is the exposure.
         "colours": {
             "skin":          (0.86, 0.66, 0.54, 1.0),
             "hair":          (0.17, 0.12, 0.09, 1.0),
@@ -136,6 +137,24 @@ HEROES = {
 }
 
 HAIR_LIFT = 0.006            # short hair as a shell over the scalp, in metres
+
+# THE SKIN GRADE — scripts/spike_z3e_head.py's `SKIN_GRADE`, same bead
+# (godot-test1-z3e.14), same number, and the two must move together or the authored
+# faces stop matching. It is NOT imported from there: both files are standalone
+# Blender scripts run by hand, neither is on the other's `sys.path`, and a hero
+# built from a stale copy is caught by the grid the bead asks for.
+#
+# WHY: the lit toon band is albedo x sun (1.25) x tonemap_exposure 1.05 against
+# tonemap_white 1.2, and glow blooms everything over hdr_threshold 0.85
+# (scenes/main.tscn). At the generator's 0.86 skin Teibi's whole face landed above
+# the white point — 100% of the face pixels clipped on Forward+, 99.8% on
+# gl_compatibility, i.e. a paper-white oval with no nose, lips or eye sockets.
+# `SKIN_GRADE` is applied to the SKIN and LIPS entries as `paint_body` consumes
+# them, so the `colours` row stays the generator's palette verbatim. The clothes
+# are not graded: they are dark enough (navy, mustard, denim) to survive the grade,
+# and they are read by their silhouette anyway.
+SKIN_GRADE = 0.47
+GRADED_COLOURS = ("skin", "lips")
 
 
 def log(*a):
@@ -404,7 +423,10 @@ def _group_weight(v, ids):
 def paint_body(obj, tj, row):
     """Base region colour by bone-weight argmax, then geometric BAND overrides
     (belt, cuffs, collar) scoped by bone region, then the face detail."""
-    colours = row["colours"]
+    colours = dict(row["colours"])
+    for key in GRADED_COLOURS:
+        colours[key] = tuple(c * SKIN_GRADE for c in colours[key][:3]) \
+            + tuple(colours[key][3:])
     colour_key = row["colour_key"]
     me = obj.data
     name_to_id = {vg.name: vg.index for vg in obj.vertex_groups}

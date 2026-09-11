@@ -61,13 +61,47 @@ TEXTURE_SIZE = 512             # owner ruling: <= 512^2 albedo, no normal map
 SEAM_HALF = 0.0030
 SEAM_DARKEN = 0.55
 
+# THE SKIN GRADE (bead godot-test1-z3e.14, owner 2026-09-11: "very white, nothing
+# can be made out"). Every hero's `palette` below is still its GENERATOR's palette
+# verbatim — the invariant the table's note depends on — and this factor is applied
+# to the SKIN and LIPS entries as `paint()` consumes them, so the row stays readable
+# as "what the torso is painted with" and this constant carries the whole of the
+# render-grade correction.
+#
+# WHY A FACE NEEDS ONE AND A TORSO DOES NOT. The lit toon band is albedo x sun
+# (1.25, warm) x tonemap_exposure 1.05 against tonemap_white 1.2 (scenes/main.tscn),
+# and glow then blooms everything over hdr_threshold 0.85. At the generator's 0.93
+# skin that lands ABOVE the white point, so the whole face — one large, nearly
+# co-planar surface — clips to paper white together and the nose, lips, eye sockets
+# and cheek volume go with it. A torso survives it because its colours are dark
+# (mustard, navy, denim) and its shape is read from its silhouette.
+#
+# MEASURED on 17_head_face (fraction of face pixels with Rec.709 luma >= 0.97,
+# Forward+ / gl_compatibility+web): windman 21.1% / 68.5%, primm 20.9% / 63.4%,
+# teibi (build_hero.py, same constant there) 100% / 99.8% before.
+#
+# AND THE WEB ROW IS THE ONE THAT SETS THIS NUMBER. gl_compatibility runs ~3x more
+# of the face over the line than Forward+ at the same albedo — measured on one head
+# by scaling `albedo_color` at runtime, which costs no rebuild: effective skin 0.67
+# -> 51.7% clipped on web against 1.5% on Forward+, 0.58 -> 23.1%, 0.47 -> 0.06%.
+# So 0.47 is where BOTH rows clear the bead's 5%, and it is chosen on that curve
+# rather than on a guess. It reads as light skin, not as a tan: the grade is hot
+# enough that an albedo this low still comes out near 0.72 mean display on web.
+SKIN_GRADE = 0.47
+
+
+def graded(colour):
+    """`colour` darkened by `SKIN_GRADE`, alpha untouched."""
+    return tuple(c * SKIN_GRADE for c in colour[:3]) + tuple(colour[3:])
+
 # ============================================================================
 # THE HEROES. One row per authored head; the pipeline below reads nothing else.
 #
 # `palette` is the hero's OWN generator palette, verbatim (generate_<hero>_
 # separate.py's `self.colors`), because the authored head sits on a torso that
 # generator still builds and a colour seam at the neck would be the first thing
-# anyone sees.
+# anyone sees. Its skin and lips reach the mesh through `SKIN_GRADE` above — the
+# row is the paint, that constant is the exposure.
 #
 # `stripes` is the eyewear's COLOURS, listed TOP-DOWN in metres relative to the eye
 # landmark; the first stripe containing a vertex wins.
@@ -676,8 +710,11 @@ def paint(obj, eye_z, cfg, band_verts=frozenset()):
             return "lips"
         return "skin"
 
-    colours = {"hair": palette["hair"], "lips": palette["lips"],
-               "skin": palette["skin"]}
+    # SKIN and LIPS go through the render grade (`SKIN_GRADE`); the hair does not —
+    # at 0.32 and below it is nowhere near the white point and darkening it further
+    # would only close the gap the haircut is read by.
+    colours = {"hair": palette["hair"], "lips": graded(palette["lips"]),
+               "skin": graded(palette["skin"])}
     for i, (_low, _high, colour) in enumerate(stripes):
         colours[i] = colour
     colours["seam"] = tuple(c * SEAM_DARKEN for c in stripes[-1][2][:3]) + (1.0,)
