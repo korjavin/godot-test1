@@ -768,7 +768,7 @@ const SLOTS: Array = [
 ## THEY LIVE HERE AND NOT IN THE WAYPOINT FAMILY for the same reason `SLOTS`
 ## does: the city is AUTHORED, so where its circles stand is the plan's number,
 ## and a position chosen on the other side of the seam is a second opinion about
-## where these streets are. Nothing here is seeded, drawn or mixed — three
+## where these streets are. Nothing here is seeded, drawn or mixed — five
 ## `Vector3`s in the shape SECTION 7 already speaks (`{id, pos}`, minus the
 ## builder and the radius a waypoint does not have).
 ##
@@ -782,8 +782,8 @@ const SLOTS: Array = [
 ##     `block_wing()` by more. A waypoint appends NO footprint (see the waypoint
 ##     family's banner), so "the street is clear" is the only thing keeping the
 ##     ring out of somebody's stone, and here it is arithmetic.
-##   * All three are clear of every `SLOTS` disc — the nearest approach is 124 m
-##     at Heroes' Square against a 62 m radius — and all three are dry land, well
+##   * All five are clear of every `SLOTS` disc — the nearest approach is 124 m
+##     at Heroes' Square against a 62 m radius — and all five are dry land, well
 ##     outside `DANUBE_HALF_WIDTH` of the polyline and off both `PLATEAUS`, so
 ##     each stands on ground at y = 0 like the rest of the flat world.
 ##
