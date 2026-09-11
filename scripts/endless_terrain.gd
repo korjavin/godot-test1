@@ -76,6 +76,36 @@ const FOG_DENSITY_WEB: float = 0.005
 ## without eating the playable area.
 const FOG_DENSITY_DESKTOP: float = 0.0022
 
+## THE SUN'S SHADOW, WEB ONLY — the two numbers that kill the band's roof flicker
+## (bead godot-test1-6n1). `scenes/main.tscn`'s DirectionalLight3D carries the
+## DESKTOP values and is left exactly as it was; `apply_sun_shadow` overwrites
+## these two on web and nothing else. The whole argument, the A/B frames and the
+## rejected alternatives are `docs/style/6n1-roof-flicker.md`.
+##
+## WHY IT IS GATED AND NOT GLOBAL. Web ships a 1024 px directional shadow map
+## (`project.godot`: `lights_and_shadows/directional_shadow/size.web`) against
+## desktop's engine-default 4096. `shadow_normal_bias` is measured in TEXELS, so
+## the same number is four times as much world-space offset on web — which is why
+## web needed the fix at all, and why applying it to desktop is a pure cost: at
+## 4096 there was no acne to remove, and a tripled offset there breaks a
+## near-camera THIN caster's shadow (a lamp pole) into a stipple. Measured, and
+## that is the whole of CLAUDE.md's "visual changes are web-gated".
+##
+## WEB_SHADOW_SPLIT_1 is the cascade split, and it is half the fix on its own.
+## `directional_shadow_mode` is 1 (two PSSM splits — half the shadow passes, a web
+## perf choice), but `directional_shadow_split_1` was left at Godot's default 0.1,
+## which is the FOUR-split default: with two splits it gives the near cascade a
+## 5.5 m bubble a third-person camera has nothing in and makes the far cascade
+## carry 5.5..55 m on that 1024 px map. 0.35 moves the boundary to 19.25 m, so
+## both cascades land where the houses are. It costs no extra pass.
+##
+## WEB_SHADOW_NORMAL_BIAS is the other half and neither works alone: the split
+## alone only makes the acne bands finer, and a bias big enough alone (5.0) buys a
+## clean roof by pushing the lookup off the occluder altogether — a clean frame
+## that is the wrong frame.
+const WEB_SHADOW_NORMAL_BIAS: float = 3.0
+const WEB_SHADOW_SPLIT_1: float = 0.35
+
 ## Terrain height variation (for future procedural generation)
 ## Currently we use a flat plane, but this allows for hills/valleys
 @export var terrain_height: float = 0.0
@@ -2446,6 +2476,13 @@ func _ready() -> void:
 	# WorldEnvironment, not the player.
 	_setup_fog()
 
+	# ...and retune the sun's SHADOW on web only, for the same reason the fog's
+	# density is gated: the web build's shadow map is a quarter of desktop's in
+	# each axis. Desktop keeps the scene file's values untouched. The `is_web`
+	# argument rather than a read inside is what lets a capture tool ask for the
+	# web look on a desktop binary (see the function's banner).
+	apply_sun_shadow(OS.has_feature("web"))
+
 	print("Endless Terrain System initialized!")
 	# Log the platform and the EFFECTIVE render distance so it's obvious in the web
 	# console which value the build is actually running with (3 on web, 5 on desktop).
@@ -2453,6 +2490,47 @@ func _ready() -> void:
 	print("Chunk size: ", chunk_size, "m")
 	print("Render distance: ", render_distance, " chunks")
 	print("Crocodiles per chunk: ", crocodiles_per_chunk if spawn_crocodiles else 0)
+
+func apply_sun_shadow(is_web: bool) -> void:
+	"""
+	Retune the sun's shadow for the WEB build, and only for it (bead
+	godot-test1-6n1). A no-op anywhere else, which is what leaves desktop and the
+	editor rendering exactly what `scenes/main.tscn` says.
+
+	@param is_web: whether to apply the web values. `_ready` passes
+	               `OS.has_feature("web")`.
+
+	IT TAKES THE PLATFORM AS AN ARGUMENT instead of asking `OS` itself, because
+	`OS.has_feature("web")` cannot be forced: a desktop binary can run the web
+	RENDERER (`--rendering-method gl_compatibility`) but never carries the web
+	FEATURE TAG, so nothing on a desktop machine — `scenes/style_shots.tscn`
+	included — could otherwise reproduce what the web build looks like. That trap
+	is what produced this bead's first, invalid set of A/B frames; see
+	`project.godot`'s `[rendering]` shadow comment.
+
+	The two values and the whole argument for them live on
+	`WEB_SHADOW_NORMAL_BIAS` / `WEB_SHADOW_SPLIT_1` up top. Everything else on the
+	light — the transform, the colour, the energy, the 2-split mode, the 55 m max
+	distance — is the scene's and is not touched on any platform.
+	"""
+	if not is_web:
+		return
+	# Sibling lookup through our parent, exactly as _setup_fog reaches the
+	# WorldEnvironment: in main.tscn the light and the terrain manager are both
+	# children of "Main", and EndlessTerrain holds no hard reference to either.
+	# Every step is null-guarded so a scene without the light degrades to "no
+	# retune" instead of crashing.
+	var parent_node := get_parent()
+	if parent_node == null:
+		return
+	var sun := parent_node.get_node_or_null("DirectionalLight3D") as DirectionalLight3D
+	if sun == null:
+		push_warning("Sun shadow: no sibling DirectionalLight3D; skipping web retune.")
+		return
+	sun.shadow_normal_bias = WEB_SHADOW_NORMAL_BIAS
+	sun.directional_shadow_split_1 = WEB_SHADOW_SPLIT_1
+	print("Sun shadow retuned for web (normal_bias ", WEB_SHADOW_NORMAL_BIAS,
+			", split_1 ", WEB_SHADOW_SPLIT_1, ")")
 
 func _setup_fog() -> void:
 	"""
