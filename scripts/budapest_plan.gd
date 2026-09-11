@@ -752,6 +752,71 @@ const SLOTS: Array = [
 ]
 
 # ============================================================================
+# SECTION 7b — THE CITY'S FIVE WAYPOINTS (epic godot-test1-sc6)
+# ============================================================================
+
+## The five teleport circles that stand inside the rect. Indices 6 to 10 of
+## `TerrainWaypoints.waypoint_sites()`, in THIS order — the index is the bit the
+## room sends over the wire, so a row inserted in the middle renumbers every
+## peer's found set. Append, never insert.
+##
+## FIVE IS AN OWNER RULING (2026-09-12): the first draft had three, and three
+## stops over 2.2 km of city is a list, not a map. The two that joined are the
+## Parliament's forecourt and the Market Hall crossing, which is what gives the
+## rect a north, a centre, a south and both ends.
+##
+## THEY LIVE HERE AND NOT IN THE WAYPOINT FAMILY for the same reason `SLOTS`
+## does: the city is AUTHORED, so where its circles stand is the plan's number,
+## and a position chosen on the other side of the seam is a second opinion about
+## where these streets are. Nothing here is seeded, drawn or mixed — five
+## `Vector3`s in the shape SECTION 7 already speaks (`{id, pos}`, minus the
+## builder and the radius a waypoint does not have).
+##
+## EVERY ONE IS A STREET CROSSING, and that is what makes them legal by
+## construction rather than by measurement:
+##
+##   * `street_x(k)` by `street_z(m)` is the centre of a 16 m carriageway both
+##     ways, and `block_rect()` insets every buildable block by
+##     `AVENUE_HALF_WIDTH + BLOCK_PAVEMENT` (9.2 m) off those lines — so a 5.2 m
+##     circle on a crossing clears the nearest facade by 6.6 m and every
+##     `block_wing()` by more. A waypoint appends NO footprint (see the waypoint
+##     family's banner), so "the street is clear" is the only thing keeping the
+##     ring out of somebody's stone, and here it is arithmetic.
+##   * All five are clear of every `SLOTS` disc — the nearest approach is 124 m
+##     at Heroes' Square against a 62 m radius — and all five are dry land, well
+##     outside `DANUBE_HALF_WIDTH` of the polyline and off both `PLATEAUS`, so
+##     each stands on ground at y = 0 like the rest of the flat world.
+##
+## `waypoint_selfcheck` check 3 measures all of that against the shipped
+## predicates rather than trusting this paragraph.
+const WAYPOINTS: Array = [
+	# THE GATE, two blocks inside the rect on the avenue out of GATE — the first
+	# thing a hero walking the approach corridor sees of the city, and the circle
+	# they come back to. street_x(2) by street_z(0); the district's authored houses
+	# stand at z = +-26, so the avenue itself is empty.
+	{"id": "gate", "pos": Vector3(1724.0, 0.0, 0.0)},
+	# THE PEST BANK at the Chain Bridge's east end, on the avenue that carries you
+	# off the deck into Váci utca's quarter. street_x(17) by street_z(0): 179 m east
+	# of the bridge's own slot centre, so it is past the ornament and on the street
+	# rather than on the roadway 12 m up.
+	{"id": "pest", "pos": Vector3(2654.0, 0.0, 0.0)},
+	# THE PARLIAMENT'S FORECOURT — the north end of the city. street_x(22) by
+	# street_z(-8), which is an AVENUE row, 205 m from the slot's centre and so 54 m
+	# clear of its 151 m disc: the nearest crossing you can stand on and still have
+	# the whole building in frame.
+	{"id": "parliament", "pos": Vector3(2964.0, 0.0, -496.0)},
+	# THE MARKET HALL CROSSING — the south end. street_x(22) by street_z(10), 144 m
+	# east of the hall against its 82 m disc, and clear of the National Museum's
+	# (185 m against 62) on the way north.
+	{"id": "market", "pos": Vector3(2964.0, 0.0, 620.0)},
+	# THE ANDRÁSSY END, at the far side of the city where the walk runs out.
+	# Deliberately OFF Heroes' Square rather than in it: street_x(29) by
+	# street_z(-8) stands 124 m short of the colonnade, outside its 62 m disc,
+	# looking at it down the avenue.
+	{"id": "heroes", "pos": Vector3(3398.0, 0.0, -496.0)},
+]
+
+# ============================================================================
 # SECTION 8 — PURE HELPERS
 # ============================================================================
 #

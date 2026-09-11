@@ -808,6 +808,13 @@ const CHEST_BURST_DURATION := TerrainFeatures.CHEST_BURST_DURATION
 ## landmarks and diff the two.
 @export var spawn_landmarks: bool = true
 
+## Kill switch for the WAYPOINT circles (epic godot-test1-sc6), the same shape as
+## the one above and for the same reason: `waypoint_selfcheck` check 2 builds a
+## site-free chunk with it on and off and demands the two be byte-identical down
+## to the crocodile positions, which is the half of the no-draw proof a text scan
+## cannot give. Read by `TerrainWaypoints.spawn_waypoint_in_chunk`.
+@export var spawn_waypoints: bool = true
+
 ## THE RARITY ROLL IS RETIRED, and `LANDMARK_CHANCE` with it (bead
 ## godot-test1-bcf). Until 2026-09-04 a chunk rolled 0.21 * scarcity against its
 ## own LANDMARK_SALT stream and then drew a kind uniformly from the registry;
@@ -3072,6 +3079,27 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# a camp, an artifact or a landmark — the reverse order would let a camp be
 	# pitched on top of a chest that was already there.
 	spawn_chest_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
+
+	# A WAYPOINT CIRCLE, if one of the eleven stands in this chunk (epic
+	# godot-test1-sc6). Neither a roll nor a hash stream: the eleven sites are pure
+	# arithmetic over the road's station cache, tower_site() and five authored
+	# rows in budapest_plan.gd, so this consumes NOTHING from anybody — it is the
+	# landmark reverse lookup's shape, one family along.
+	#
+	# It shares the five spawners' ordering requirement only in its second half: it
+	# must run before _build_block_multimesh / the block_body attach so the ring's
+	# thirteen boxes join the chunk's ONE MultiMesh draw call. The FIRST half does
+	# not apply and that is the interesting part — a waypoint neither reads
+	# `obstacles` nor appends to it (the ring is flat, walkable and collision-free
+	# on purpose; TerrainWaypoints' banner carries the "no footprint, and why"),
+	# so nothing before it can move it and nothing after it can see it. Placing the
+	# call here rather than anywhere else in the block is therefore a readability
+	# choice, not a constraint — it sits with the family it looks most like.
+	#
+	# CITY CHUNKS TOO, unlike the chest above: five of the eleven sites are inside
+	# the rect, they are ordinary chunk content, and a 5.2 m circle never straddles
+	# a chunk seam so nothing here is sliced.
+	TerrainWaypoints.spawn_waypoint_in_chunk(self, chunk_pos, mesh_instance, obstacles, block_batch, block_body)
 
 	# BUDAPEST — this chunk's slice of the authored city (bead godot-test1-8gw.3).
 	# NOT a hash stream and NOT a roll: the city is a table of constants in

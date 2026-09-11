@@ -282,8 +282,44 @@ func _run() -> void:
 		await _shoot_landmark(terrain, player, String(shot["builder"]),
 				float(shot["dist"]), String(shot["name"]))
 
+	# THE WAYPOINT CIRCLES (bead godot-test1-sc6.1) — three of the eleven, one per
+	# ground they have to read on: the open field beside the coin road, a Budapest
+	# street, and the HQ's doorstep. The beams ship HIDDEN, so what these show is
+	# the inert ring, which is the thing the owner judges.
+	await _shoot_waypoint(terrain, player, "road_1", 9.0, "21_waypoint_field")
+	await _shoot_waypoint(terrain, player, "gate", 9.0, "22_waypoint_budapest")
+	await _shoot_waypoint(terrain, player, "hq", 14.0, "23_waypoint_hq_door")
+
 	print("[SHOTS] done -> ", _out_dir)
 	get_tree().quit(0)
+
+
+func _shoot_waypoint(terrain: Node, player: Node3D, id: String, dist: float, name: String) -> void:
+	"""
+	Stand `dist` metres off one named waypoint circle and turn to face it.
+
+	The site comes from the SHIPPED `TerrainWaypoints.waypoint_sites()` rather than
+	from a hand-typed spot: the road's circles move with `run_seed`, and `_run()`
+	has already written SEED (line ~163), so asking the table is what puts the
+	camera on the same metre in the before shot and the after shot.
+
+	No two-settle dance like `_shoot_landmark`'s — a waypoint's position is known
+	before any chunk is built, because that is the whole point of the family.
+	"""
+	if not _wanted(name):
+		return
+	var at := Vector3.INF
+	for row_v: Variant in TerrainWaypoints.waypoint_sites(terrain):
+		var row: Dictionary = row_v
+		if String(row["id"]) == id:
+			at = row["pos"]
+	if at == Vector3.INF:
+		print("[SHOTS] no waypoint named ", id, " — skipped")
+		return
+	# Same framing arithmetic as `_shoot_landmark`: a Node3D's forward is -Z, so
+	# yaw = atan2(back.x, back.z) turns the body back toward the subject.
+	var back := Vector3(0.7, 0.0, 0.7).normalized() * dist
+	await _shoot(terrain, player, at + back, atan2(back.x, back.z), name)
 
 ## The landmark shots, by BUILDER NAME — the registry's own identity, and the one
 ## thing that cannot drift when a row is appended (the `kind` index can).

@@ -696,6 +696,17 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 			# everything else). This is the after-the-fact half, and it is the only
 			# thing that can see it. Budapest is authored, its look is stone, and
 			# the box budgets beside it are written against ONE batch per chunk.
+			#
+			# THE RULE HAS ONE RECORDED EXCEPTION, AND IT IS NOT A CITY BUILDER:
+			# five of the eleven WAYPOINT circles (epic godot-test1-sc6) stand on
+			# city streets, and a waypoint's disc is a CYLINDER, so those five
+			# chunks really do build two MultiMeshInstance3Ds in the game. This
+			# check does not see them and is not meant to — it builds
+			# `spawn_city_in_chunk` alone, because the invariant it guards is what
+			# the CITY BUILDERS emit, and folding an unrelated spawner in would
+			# change what a failure here means. The exception is written down in
+			# `batch_selfcheck`'s KIND_CAP banner, which is where the box-kind bill
+			# lives; five chunks out of 1,631 is the whole of it.
 			var mmis: int = 0
 			for child in parent.get_children():
 				if child is MultiMeshInstance3D:
