@@ -539,6 +539,34 @@ jobs:
       # tolerance for a drift that should not exist. If a toolchain bump ever
       # makes this genuinely unpinnable across platforms, the fallback is a
       # tolerance-based geometry compare, not deleting the gate.
+      # THE SKINNED HEROES CANNOT BE REBUILT HERE — `scripts/build_hero.py` needs
+      # Blender and MPFB2, neither of which is on the runner — so the step above
+      # passes them by in silence and the dirty check below cannot see them either:
+      # nothing writes those files, so nothing dirties them. That is a hole exactly
+      # the shape of the hydra bug the dirty check exists for, and this five-line
+      # `stat` is what fills it. `scripts/hero_manifest.json` is written by
+      # build_hero.py on every real rebuild and carries each hero's .glb size; if
+      # the committed .glb no longer matches its row, the .glb was edited by hand or
+      # the manifest was not committed with it. Byte SIZE and not a checksum on
+      # purpose: the glTF exporter is free to emit one primitive's triangles in a
+      # different rotation between two identical runs (measured 2026-09-11 on two
+      # Teibi builds — same vertex data, 1,001 index bytes apart, same 366,452-byte
+      # file), so a hash would be red on a coin flip. The full rebuild-and-diff is
+      # `build_hero.py -- --all --check`, run by hand where Blender exists.
+      - name: 🦴 The skinned heroes must match scripts/hero_manifest.json
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          m = json.load(open("scripts/hero_manifest.json"))
+          print("built with", m["tools"])
+          bad = [f"{h}: manifest {r['glb_bytes']}, on disk {os.path.getsize(p)}"
+                 for h, r in sorted(m["heroes"].items())
+                 for p in [os.path.join("assets/models/characters", r["glb"])]
+                 if os.path.getsize(p) != r["glb_bytes"]]
+          print(*bad or ["every skinned hero matches the manifest"], sep="\n")
+          sys.exit(1 if bad else 0)
+          PY
+
       - name: 🔍 The committed models must match what the generators build
         run: |
           dirty=$(git status --porcelain -- assets/models/characters)
