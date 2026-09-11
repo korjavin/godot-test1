@@ -112,6 +112,16 @@ const TOGGLE_KEY: Key = KEY_B
 ## so the two buttons share one edge margin and one width, and moving the Skills
 ## button moves this one with it instead of parking a second opener on top of it.
 ## The only fresh number is the gap between them.
+##
+## ponytail: this opener column and the TOUCH ACTION COLUMN collide on a LANDSCAPE
+## touch session, and that is one bug for the column and not one for this button.
+## `touch_controls.gd` magnifies the UI by `TOUCH_CONTENT_SCALE` (1.8), which makes
+## the layout 600 units tall, and its SPECIAL circle then spans y 232-352 anchored
+## to the bottom-right — under the Skills opener (278-314) already, on master, and
+## under this one (320-354) now. Both panels sit AFTER `TouchControls` in
+## `main.tscn`, so the opener wins the tap. Moving one button cannot fix a column,
+## so the fix is the column's: a HUD bead that reflows the openers when the touch
+## controls are up. Raised by review on this bead and deliberately not widened here.
 const BUTTON_GAP: float = 8.0
 const BUTTON_WIDTH: float = SkillTreeUi.BUTTON_WIDTH
 const BUTTON_HEIGHT: float = SkillTreeUi.BUTTON_HEIGHT
