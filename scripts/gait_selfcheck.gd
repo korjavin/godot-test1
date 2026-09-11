@@ -1161,14 +1161,15 @@ func _check_skinned(player: Node3D) -> void:
 	#
 	#     THE ORACLE IS A HERO STILL ON LIMBS, and the epic keeps taking them: it
 	#     was Teibi until bead godot-test1-5u3.3 made him the fixture above, then
-	#     Windman until bead 5u3.5 migrated him too. Primm holds it until bead
-	#     5u3.6, and Phoboman keeps it for good — his sphere body stays on the limb
-	#     rig by owner ruling (epic 5u3 NOTES, "yes, sphere"), which is what
-	#     guarantees this oracle always has somebody left to be. The guard right
-	#     below is what makes each hand-off loud rather than silent: it fails the
-	#     moment this name picks up a Skeleton3D, so the check can never compare the
-	#     bone driver against itself and call it agreement.
-	player.set_active_character(_hero_index("primm"))
+	#     Windman until bead 5u3.5 migrated him too, and Primm goes at 5u3.6. So it
+	#     is PHOBOMAN, who is the END of that line rather than the next name on it:
+	#     his sphere body stays on the limb rig for good by owner ruling (epic 5u3
+	#     NOTES, "yes, sphere"), which is what guarantees this oracle always has
+	#     somebody left to be. The guard right below is what makes each hand-off
+	#     loud rather than silent: it fails the moment this name picks up a
+	#     Skeleton3D, so the check can never compare the bone driver against itself
+	#     and call it agreement.
+	player.set_active_character(_hero_index("phoboman"))
 	var limb_poses: Array[Dictionary] = _drive_rig(player.anim.rig)
 	var bone_poses: Array[Dictionary] = _drive_rig(anim.rig)
 	# THE ORACLE HAS TO BE THE OTHER RIG, and there has to BE a comparison: an

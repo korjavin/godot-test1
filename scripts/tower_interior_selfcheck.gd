@@ -3901,13 +3901,13 @@ const SLUMP_EPS: float = 1e-3
 ## named scene changes rig kind this stops covering two of them, and it must say
 ## so instead of going quiet while measuring the same driver twice. That is
 ## exactly what happened at bead godot-test1-5u3.5, when `windman_updated.tscn`
-## grew a `Skeleton3D` and this row moved from "limbs" to "skinned" — the epic is
-## migrating the cast one hero at a time, so the LIMB half of the pair walks down
-## it: Windman held it after Teibi, Primm holds it now, and Phoboman keeps it for
-## good (his sphere body stays on limbs by owner ruling). Windman is the skinned
-## half because he is the DEFAULT hero and therefore the captive most players
-## will ever look at; Teibi rides the same driver and needs no second probe.
-const SLUMP_RIGS: Dictionary = {"windman": "skinned", "primm": "limbs"}
+## grew a `Skeleton3D` and this row moved from "limbs" to "skinned". The LIMB half
+## is PHOBOMAN and not simply the next hero down the epic's list, because his
+## sphere body stays on the limb rig FOR GOOD by owner ruling (epic 5u3 NOTES,
+## "yes, sphere") while Teibi, Windman and Primm all leave it — so this pair stops
+## needing an edit per migration. Windman is the skinned half because he is the
+## DEFAULT hero and therefore the captive most players will ever look at.
+const SLUMP_RIGS: Dictionary = {"windman": "skinned", "phoboman": "limbs"}
 
 
 func _check_the_slump_reaches_every_rig() -> void:
