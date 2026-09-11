@@ -47,7 +47,9 @@ the shared toolkit and the contract every enemy mesh must honour; `export_facete
 there is the one export seam for every generated `.glb` (heroes included) — read its
 docstring before touching it; an authored part lives beside its `PROVENANCE.md` row and
 is never written by a generator. The live Windman is `windman_parts/` assembled by
-`scenes/characters/windman_updated.tscn`.
+`scenes/characters/windman_updated.tscn`. **Teibi is the exception: authored and
+skinned** — one mesh on a 23-bone MakeHuman rig, source of record
+`scripts/build_hero.py` (Blender + MPFB2, run by hand, outside the CI rebuild gate).
 
 `.gd.uid` files are Godot's; don't hand-edit them.
 

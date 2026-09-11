@@ -507,9 +507,12 @@ jobs:
       # rebuild the PREDATORS — hard-fail for anyone without shapely.
       # The Windman and Primm heads are authored and their generators no longer
       # write them, so the dirty check passes them by construction.
+      # Teibi left this loop with bead godot-test1-5u3.3: he is one SKINNED mesh
+      # built by hand in Blender (scripts/build_hero.py, MPFB2 — not installable
+      # on the runner), so there is no generator of his left to rebuild.
       - name: 🦸 Rebuild every hero model
         run: |
-          for hero in windman primm teibi phoboman; do
+          for hero in windman primm phoboman; do
             python3 "scripts/generate_${hero}_separate.py" || {
               echo "::error::scripts/generate_${hero}_separate.py failed"
               exit 1

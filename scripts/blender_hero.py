@@ -12,9 +12,13 @@ Run OUTSIDE Blender, invoking it headless (bound with `perl -e 'alarm 900; exec
   blender --background --python-exit-code 1 --python scripts/blender_hero.py -- \
       export <hero> <part> --out <path.glb> [--faceted]
 
-<hero> is one of windman, primm, teibi, phoboman (scripts/player_controller.gd's
-CHARACTERS); windman's scene is windman_updated.tscn, the other three are plain
-scenes/characters/<hero>.tscn. <part> is a leaf part name (e.g. "head", "torso") or,
+<hero> is one of windman, primm, phoboman — the three heroes still built from
+SEPARATE PARTS. Teibi left this lane with bead godot-test1-5u3.3: he is one skinned
+mesh on a Skeleton3D now, and reproducing a PART TREE from his .tscn has nothing to
+reproduce (his build lane is scripts/build_hero.py); the other three follow at beads
+5u3.5-.7 and this file retires with the last of them. Windman's scene is
+windman_updated.tscn, the other two are plain scenes/characters/<hero>.tscn.
+<part> is a leaf part name (e.g. "head", "torso") or,
 where that is ambiguous (both arms/legs reuse "UpperArm"/"LowerLeg"/"Mesh"), the
 node's full .tscn path with "/" written as ".", e.g. "leftarm.upperarm".
 
@@ -76,26 +80,23 @@ CHAR_DIR = os.path.join(REPO, "scenes", "characters")
 HERO_SCENES = {
     "windman": "windman_updated.tscn",
     "primm": "primm.tscn",
-    "teibi": "teibi.tscn",
     "phoboman": "phoboman.tscn",
-    # SPIKE godot-test1-z3e.10, scratch scenes only — NOT in
-    # player_controller.gd's CHARACTERS, so no selfcheck ever loads them.
-    "teibi_authored": "teibi_authored.tscn",
-    "teibi_uncut": "teibi_uncut.tscn",
 }
 
 # The bead's height/feet assert. Ranges are MEASURED on this branch (2026-09-08),
 # not the bead's own rough guess, per CLAUDE.md ("the measured numbers ... live
 # next to the code"): windman 1.7536 m, primm 1.7733 m (1.7931 before bead
 # godot-test1-z3e.5 gave him the authored head, whose crown sits 2 cm lower than
-# the generated sphere's hair cap), teibi 1.7847 m, all inside
-# the default band; phoboman measures 1.6344 m -- taller than the bead text's
+# the generated sphere's hair cap), both inside the default band — teibi measured
+# 1.7847 m here before bead godot-test1-5u3.3 took him out of this lane, and the
+# skinned body that replaced him is 1.78 m by construction plus 5.5 cm of beret;
+# phoboman measures 1.6344 m -- taller than the bead text's
 # offhand "~1.4-1.5", because bead godot-test1-z3e.7 (closing the neck gap,
 # merged after this bead was filed) raised its torso/head relative to its legs.
 HEIGHT_RANGE = {"phoboman": (1.55, 1.72)}
 DEFAULT_HEIGHT_RANGE = (1.65, 1.85)
 # Real per-hero boot geometry puts the sole between -2.5 cm and +3.2 cm of z=0
-# across the four heroes (measured 2026-09-08); trap 1 regressing throws this off
+# across the four heroes (measured 2026-09-08, teibi included); trap 1 regressing throws this off
 # by ~20 cm, two orders of magnitude past this tolerance, so this stays a tight
 # catch of the real bug without flagging ordinary per-model variance.
 FEET_TOLERANCE = 0.04  # metres

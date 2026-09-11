@@ -1,12 +1,20 @@
 """
 scripts/build_hero.py — ONE SKINNED HERO from the MPFB2/MakeHuman basemesh.
 
-Bead godot-test1-5u3.1 (epic 5u3, SKINNED HEROES). Started as a copy of
-scripts/spike_z3e_teibi_body.py with the ten-piece joint SPLIT removed and an
-ARMATURE added: the body is now one mesh on MPFB2's `game_engine` rig (53 bones),
-exported as one skinned .glb. Everything that was a module constant there is a
-`HEROES` row here, so bead 5u3.4 adds windman/primm/phoboman as rows and not as
-a second script.
+Bead godot-test1-5u3.1 (epic 5u3, SKINNED HEROES), and since bead 5u3.3 the
+SOURCE OF RECORD for the shipped Teibi. Started as a copy of the z3e.10 spike
+(`scripts/spike_z3e_teibi_body.py`, deleted by 5u3.3) with the ten-piece joint
+SPLIT removed and an ARMATURE added: the body is now one mesh on MPFB2's
+`game_engine` rig, exported as one skinned .glb. Everything that was a module
+constant there is a `HEROES` row here, so bead 5u3.4 adds windman/primm/phoboman
+as rows and not as a second script.
+
+THE SPLIT IS GONE AND STAYS GONE, and the spike paid for the lesson: cutting one
+MakeHuman body into ten pieces at the joints needs a blend-zone STUMP at every
+cut, and a decimate between the membership write and the cut interpolates those
+memberships into (0, 1) — trim at 0.5 there and the assembled body tears open at
+one hip and notches at both shoulders AT REST (measured 2026-09-08, z3e.10). A
+skeleton is what removes the cuts, not a better cut threshold.
 
 NOT part of the build, NOT run by CI: run by hand.
 
@@ -21,9 +29,12 @@ these, which are this bead's own):
 
  1. WEIGHTS ARE BASEMESH-INDEXED. `HumanService.add_builtin_rig(...,
     import_weights=True)` writes one vertex group per bone off
-    weights.game_engine.json, whose indices are RAW BASEMESH indices. The
-    helper MASK modifier renumbers vertices, so the rig must be added BEFORE
-    `bpy.ops.object.convert()`. (spike_z3e_teibi_body.py's header trap, same
+    weights.game_engine.json, whose indices are RAW BASEMESH indices, and
+    `bake_to_plain_mesh()`'s `convert()` applies the helper MASK modifier, which
+    RENUMBERS vertices. So every vertex group written off that JSON — the rig
+    here, and `cut_fingers()` right after it — must be written on the RAW human
+    BEFORE `convert()`: vertex GROUPS survive the mask and the decimate that
+    follows, vertex INDICES do not. (The z3e.10 spike's own header trap, same
     cause, different victim.)
  2. `convert(target='MESH')` APPLIES AND REMOVES EVERY MODIFIER, the armature
     modifier included — the bone weights survive (they are vertex groups), the
@@ -73,7 +84,15 @@ from hero_skin import graded  # noqa: E402
 OUT_ROOT = os.path.join(REPO, "assets", "models", "characters")
 
 RIG = "game_engine"
-RIG_BONES = 53               # what the epic promises; asserted after the rig lands
+RIG_BONES = 53               # what MPFB2 ships; asserted the moment the rig lands
+# OWNER RULING 2026-09-11 (epic `5u3` NOTES, "cut them"): the 30 finger bones are
+# COLLAPSED at build time — their weights folded into `hand_l`/`hand_r`, the bones
+# deleted — so the shipped rig is 23 bones. Nothing this game has ever drawn moves
+# a finger: `hero_rig_skeleton.gd` writes ten bones, the hand is one of nobody's,
+# and every finger bone is a joint matrix, a palette entry and four more influences
+# per hand vertex that the web renderer skins every frame for a shape no camera can
+# resolve at 3 m. `scripts/spike_5u3_skinned_probe.gd` asserts the 23.
+RIG_BONES_SHIPPED = 23
 ARMS_DOWN_DEG = 5.0          # how far the arms stand off vertical in the shipped rest
 
 
@@ -145,6 +164,14 @@ HEROES = {
 }
 
 HAIR_LIFT = 0.006            # short hair as a shell over the scalp, in metres
+# THE SHOE SHELL (bead 5u3.3's polish slot). MakeHuman ships bare feet with toes,
+# and painting them brown reads as BARE FEET at 3 m — the toe split is still
+# there in silhouette. So the shoe is geometry, by the same idiom as the hair:
+# push the foot region's verts out along their own normals, which thickens the
+# whole foot into a low dark slipper and swallows the toe gaps, then hold the
+# sole ON the ground rather than 6 mm under it (`reframe()` put the bare heel at
+# z = 0, and the hero's feet may not sink into the floor to buy a shoe).
+SHOE_LIFT = 0.006
 
 # Which palette entries are skin, and therefore go through `hero_skin.SKIN_GRADE`.
 GRADED_COLOURS = ("skin", "lips")
@@ -242,6 +269,73 @@ def add_rig(human):
     armature.location = (0.0, 0.0, 0.0)
     human.location = (0.0, 0.0, 0.0)
     return armature
+
+
+def cut_fingers(human, armature):
+    """
+    OWNER RULING 2026-09-11, "cut them": fold the 30 finger bones' skin weights
+    into `hand_l` / `hand_r` and delete the bones, leaving the 23-bone rig the
+    game ships.
+
+    TRAP 1 applies: this runs on the RAW human, BEFORE `convert()`, because it
+    reads and writes the vertex groups `add_builtin_rig` just wrote off the
+    basemesh-indexed weights JSON.
+
+    THE FOLD IS A PLAIN SUM AND THAT IS EXACTLY RIGHT. MPFB2's weights are
+    normalised per vertex (every vertex's bone weights sum to 1), so moving a
+    fingertip's five-or-so finger weights onto the one bone that all of them
+    hang off leaves the vertex's total untouched — `report_weights()` after the
+    bake is what proves it, and the region argmax in `paint_body()` is a sum
+    over a bone GROUP that already contains both the fingers and the hand, so
+    the paint comes out byte-identical.
+
+    Deleting the bones is what actually saves anything: every finger bone is a
+    joint matrix uploaded per frame and a palette slot the web renderer's
+    transform-feedback skinning pass pays for, for a shape no camera in this
+    game can resolve.
+    """
+    for side in ("l", "r"):
+        hand = "hand_" + side
+        if hand not in human.vertex_groups:
+            raise AssertionError("no %s vertex group to fold the fingers into" % hand)
+        hand_vg = human.vertex_groups[hand]
+        finger_ids = {human.vertex_groups[n].index: n
+                      for n in _fingers(side) if n in human.vertex_groups}
+        moved = 0
+        for v in human.data.vertices:
+            extra = sum(g.weight for g in v.groups if g.group in finger_ids)
+            if extra <= 0.0:
+                continue
+            held = next((g.weight for g in v.groups if g.group == hand_vg.index), 0.0)
+            hand_vg.add([v.index], held + extra, 'REPLACE')
+            moved += 1
+        log("fold %s: %d finger groups -> %s on %d verts"
+            % (side, len(finger_ids), hand, moved))
+        for name in _fingers(side):
+            if name in human.vertex_groups:
+                human.vertex_groups.remove(human.vertex_groups[name])
+
+    bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.context.view_layer.objects.active = armature
+    for o in bpy.data.objects:
+        o.select_set(o is armature)
+    bpy.ops.object.mode_set(mode='EDIT')
+    edit_bones = armature.data.edit_bones
+    # Tip-first, so a chain is never removed through its own parent: Blender
+    # reparents a removed bone's children to ITS parent, which would leave
+    # `thumb_02_l` hanging off `hand_l` for one iteration — harmless, but the
+    # order makes the intent unambiguous rather than relying on that behaviour.
+    for name in reversed(_fingers("l") + _fingers("r")):
+        if name in edit_bones:
+            edit_bones.remove(edit_bones[name])
+    bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.context.view_layer.objects.active = human
+
+    bones = len(armature.data.bones)
+    log("fingers cut: rig is now %d bones" % bones)
+    if bones != RIG_BONES_SHIPPED:
+        raise AssertionError("expected %d bones after the cut, got %d"
+                             % (RIG_BONES_SHIPPED, bones))
 
 
 def report_weights(obj, armature, label):
@@ -493,6 +587,14 @@ def paint_body(obj, tj, row):
             continue
         taper = min(1.0, (v.co.z - (hair_front - 0.05)) / 0.04)
         v.co += normals[i] * (HAIR_LIFT * max(0.0, taper))
+
+    # The shoe shell — same lift, no taper (a shoe has a rim, hair does not),
+    # and the sole clamped back onto the ground.
+    for i, v in enumerate(me.vertices):
+        if per_vert[i] != "shoes":
+            continue
+        v.co += normals[i] * SHOE_LIFT
+        v.co.z = max(v.co.z, 0.0)
     me.update()
 
 
@@ -648,9 +750,9 @@ def export_glb(obj, armature, path):
         export_skins=True,
         export_normals=True,
         export_tangents=False,
-        # Every one of the 53 bones is exported: `export_def_bones=True` would
-        # drop the non-deform ones, and the Godot-side assert (and the humanoid
-        # bone map) want the whole game_engine rig.
+        # Every one of the 23 bones left after `cut_fingers()` is exported:
+        # `export_def_bones=True` would drop the non-deform ones, and the
+        # Godot-side assert (and the humanoid bone map) want the whole rig.
         export_def_bones=False,
         export_vertex_color='ACTIVE',
         export_all_vertex_colors=False,
@@ -681,6 +783,7 @@ def build(hero):
 
     human, joints = build_human(row)
     armature = add_rig(human)
+    cut_fingers(human, armature)
     report_weights(human, armature, "basemesh (pre-convert)")
 
     obj = bake_to_plain_mesh(human, armature)

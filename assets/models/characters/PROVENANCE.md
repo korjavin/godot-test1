@@ -37,18 +37,7 @@ Source `.blend` files accompanying authored `.glb` models **are committed to git
 | `windman_head_authored_windman_head_albedo.png` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_head.py`, MakeHuman basemesh + targets | CC0 | 2026-09-06 built, 2026-09-08 shipped, 2026-09-11 bead godot-test1-z3e.13, 2026-09-11 bead godot-test1-z3e.14 (re-baked darker) | `windman_head_authored.blend` |
 | `primm_parts/primm_head_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_head.py --hero primm`, MakeHuman basemesh + targets | CC0 | 2026-09-11, beads godot-test1-z3e.5 then z3e.12 (rebuilt: morphed landmarks + Primm's own macro recipe) then z3e.14 (rebuilt: skin and lips through `SKIN_GRADE`, geometry byte-identical) | `primm_parts/primm_head_authored.blend` |
 | `primm_parts/primm_head_authored_primm_head_albedo.png` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_head.py --hero primm`, MakeHuman basemesh + targets | CC0 | 2026-09-11, beads godot-test1-z3e.5 then z3e.12 (rebuilt: morphed landmarks + Primm's own macro recipe) then z3e.14 (re-baked darker) | `primm_parts/primm_head_authored.blend` |
-| `teibi_parts/teibi_head_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` (bone-weight piece split) | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
-| `teibi_parts/teibi_torso_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
-| `teibi_parts/teibi_left_upper_arm_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
-| `teibi_parts/teibi_left_lower_arm_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
-| `teibi_parts/teibi_right_upper_arm_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
-| `teibi_parts/teibi_right_lower_arm_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
-| `teibi_parts/teibi_left_upper_leg_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
-| `teibi_parts/teibi_left_lower_leg_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
-| `teibi_parts/teibi_right_upper_leg_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
-| `teibi_parts/teibi_right_lower_leg_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
-| `teibi_parts/teibi_uncut_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
-| `teibi_parts/teibi_skinned.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/build_hero.py teibi`, MakeHuman basemesh + targets + `rig.game_engine.json` + `weights.game_engine.json` | CC0 | 2026-09-11, SPIKE godot-test1-5u3.1, rebuilt 2026-09-11 for bead godot-test1-z3e.14 (skin and lips through `SKIN_GRADE`, geometry byte-identical), not shipped | `teibi_parts/teibi_skinned.blend` |
+| `teibi_parts/teibi_skinned.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/build_hero.py teibi`, MakeHuman basemesh + targets + `rig.game_engine.json` + `weights.game_engine.json` | CC0 | 2026-09-11, SPIKE godot-test1-5u3.1; rebuilt 2026-09-11 for bead godot-test1-z3e.14 (skin and lips through `SKIN_GRADE`, geometry byte-identical); **shipped** 2026-09-11 by bead godot-test1-5u3.3, rebuilt again with the 30 finger bones collapsed into `hand_l`/`hand_r` (owner ruling — 23 bones) and a low shoe shell over the bare MakeHuman feet | `teibi_parts/teibi_skinned.blend` |
 
 Each authored head's 512x512 albedo is EMBEDDED in its `.glb` — that is the copy Godot
 renders. The loose `*_head_authored_*_head_albedo.png` beside each one is the same bake
@@ -65,8 +54,15 @@ they record the paint, that constant records the exposure. A head graded without
 body is a white seam under the chin, which is why `generate_windman_separate.py` and
 `generate_primm_separate.py` import it too.
 
-All ten `teibi_*_authored.glb` files above and `teibi_uncut_authored.glb` share the ONE `teibi_authored.blend` next to them — the ten pieces are cuts of the same whole-body mesh, exported before being split.
+TEIBI IS THE ONE SHIPPED AUTHORED BODY. `teibi_parts/teibi_skinned.glb` IS the hero
+`scenes/characters/teibi.tscn` instances — one skinned mesh, no parts. The z3e.10 spike's
+ten `teibi_*_authored.glb` joint cuts, the `teibi_uncut_authored.glb` whole body, the
+`teibi_authored.blend` they shared and the ten generated `teibi_*.glb` that shipped before
+them were all retired by bead godot-test1-5u3.3 together with
+`scripts/generate_teibi_separate.py` and `scripts/spike_z3e_teibi_body.py`: the spike's
+parts pick is superseded by a skeleton, and `teibi_skinned.blend` carries the same
+MakeHuman human by construction (`build_hero.py` builds it from the `HEROES` row).
 
 ## CI Model Gate
 
-The CI model rebuild step (`.github/workflows/build.yml`) only runs the procedural generators (`generate_*_separate.py` and `predator_parts.py`). Because the generator no longer emits these authored file names, `git status --porcelain -- assets/models/characters` stays clean by construction; a generated part edited by hand is still caught immediately.
+The CI model rebuild step (`.github/workflows/build.yml`) only runs the procedural generators (`generate_*_separate.py` for windman/primm/phoboman, and `predator_parts.py`). Because the generators no longer emit these authored file names — and, since bead godot-test1-5u3.3, there is no Teibi generator at all — `git status --porcelain -- assets/models/characters` stays clean by construction; a generated part edited by hand is still caught immediately. `build_hero.py` needs Blender and MPFB2, which the runner does not have, so the skinned bodies are outside that gate and their rows here are the record instead.

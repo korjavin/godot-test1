@@ -16,7 +16,11 @@ extends SceneTree
 ## and cannot be isolated once imported.
 
 const GLB := "res://assets/models/characters/teibi_parts/teibi_skinned.glb"
-const WANT_BONES := 53
+## 23, not MPFB2's 53: `build_hero.cut_fingers()` folds the 30 finger bones'
+## weights into `hand_l`/`hand_r` and deletes the bones (owner ruling 2026-09-11,
+## epic `5u3` NOTES). This assert is the only thing outside Blender that can see
+## the cut silently stop happening.
+const WANT_BONES := 23
 ## `build_hero.py`'s `reframe()` scales the BODY to exactly `row["height"]`
 ## crown-to-heel — 1.78 m for Teibi — so the measured box can only ever be
 ## 1.78 plus whatever an accessory sticks out above it. Teibi's beret nub adds
