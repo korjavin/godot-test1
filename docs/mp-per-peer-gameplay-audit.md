@@ -16,7 +16,7 @@ herds (`herd` verb, bead 6xc), storms (`wx` verb, this bead), captives (`cap`
 master, stated in `tower_gates.gd` / `tower_guards.gd` headers), pause (P as a
 presence bit), shared bank/distance (absolute broadcasts).
 
-## 1. Budapest traffic cars — diverge, minor gameplay (candidate follow-up)
+## 1. Budapest traffic cars — per-peer BY DESIGN (accepted in writing, closed)
 
 `traffic_manager.gd` spawns its bubble around the LOCAL player and recycles
 out of sight; cars yield to the local player and a hero "bumps a bumper and
@@ -24,6 +24,19 @@ slides along it". Two peers in the same street meet different cars in
 different places. Effect is contact-only (no damage found in the header), but
 it is a physics response, not a picture. Either seed the bubble or accept it
 in writing.
+
+ACCEPTED IN WRITING, 2026-09-11 (architect verdict on bead `godot-test1-lix`;
+its notes carry the numbers, and the ruling now also stands in
+`traffic_manager.gd`'s header). Neither fix is worth it: a shared seed does not
+converge, because the draws are consumed in an order that depends on each
+peer's position, frame timing and camera LOD tick; and herd-style replay costs
+~11 KB/s per peer (120 citizens + 32 cars at ~7 B on the croc-sync tick),
+twice the whole crocodile sync, for scenery — with one bubble per peer to
+simulate on the master on top of it, since the master's bubble is around the
+master. The contact that made this item gameplay at all is proxy-only and never
+damages, and the crowd's one gameplay reader (the hunter's false arrest) is
+master-simulated, so what a peer watches was decided by the master's crowd.
+Reopen trigger: master-simulates/peers-replay at that cost, never a seed.
 
 ## 2. Tower guards outside the croc-sync window — narrow residual (candidate follow-up)
 
