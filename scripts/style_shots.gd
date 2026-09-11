@@ -101,9 +101,15 @@ const SPIKE_BODY_SKINNED: String = "res://scenes/characters/teibi_skinned.tscn"
 # ============================================================================
 # SPIKE godot-test1-5u3.1 — THE TWO ANIMATION COLUMNS
 #
-# `body=skinned` puts Teibi on a Skeleton3D, which has no LeftArm/RightArm/
-# LeftLeg/RightLeg for `player_animation.gd` to find — `animate_walking()`
-# returns at its first line. `anim=<proc|clip>` says who poses him instead:
+# `body=skinned` puts Teibi on a Skeleton3D. When this spike was shot that meant
+# `player_animation.gd` found no LeftArm/RightArm/LeftLeg/RightLeg and
+# `animate_walking()` returned at its first line; since bd godot-test1-5u3.2 it
+# instead binds `hero_rig_skeleton.gd` and poses the bones itself, so on the
+# `anim=proc` column `_pose_skinned()` below is a SECOND writer landing on top of
+# the shipped one. That is harmless here — both write absolute bone poses from
+# the same two sines and this tool only ever reads the frame it froze — but it is
+# why the two columns are no longer "posed vs not posed". The whole spike column
+# retires with bd 5u3.3. `anim=<proc|clip>` says who poses him:
 #
 #   (empty)  today's sine rig, i.e. the CONTROL column (`body=` unset).
 #   proc     `_pose_skinned()` below — the same GAITS row re-expressed as BONE

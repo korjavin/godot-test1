@@ -2398,7 +2398,7 @@ func set_active_character(index: int) -> void:
 	if not current_character_node:
 		return
 
-	# Point the animation system at this character: limb references, the cached
+	# Point the animation system at this character: the pose rig, the cached
 	# rest pose, this hero's gait row and the footstep tracker's reset, all in
 	# `PlayerAnimation.activate_character()` (bd godot-test1-ftn.9).
 	anim.activate_character(index)

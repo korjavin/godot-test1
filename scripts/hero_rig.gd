@@ -51,8 +51,9 @@ static func for_body(body: Node3D, rest: Dictionary) -> RefCounted:
 	@param body: the character's `Body` node — every hero scene has one
 	@param rest: the rest-pose table `PlayerAnimation.capture_rest_pose()` read
 	             off the model while it was still untouched. The limb driver
-	             animates as offsets from it; the skinned driver ignores it and
-	             uses the skeleton's own bone rests.
+	             animates as offsets from it; the skinned driver uses the
+	             skeleton's own bone rests for the limbs and reads only the `body`
+	             key, which is the caller's, not either rig's.
 	"""
 	if body == null:
 		return null

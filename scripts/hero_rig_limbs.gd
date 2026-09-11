@@ -198,6 +198,7 @@ func measure() -> Dictionary:
 	`head_z` is ABSENT when the model has no head, mirroring the
 	`original_rotations.has("head")` guard every pose function already carries.
 	"""
+	var body_rest: Vector3 = _rest.get("body", Vector3.ZERO)
 	var out: Dictionary = {
 		"left_arm_x": _left_arm.rotation.x - float(_rest["left_arm"].x),
 		"right_arm_x": _right_arm.rotation.x - float(_rest["right_arm"].x),
@@ -208,8 +209,8 @@ func measure() -> Dictionary:
 		"left_leg_z": _left_leg.rotation.z - float(_rest["left_leg"].z),
 		"right_leg_z": _right_leg.rotation.z - float(_rest["right_leg"].z),
 		"body_y": _body.position.y,
-		"body_x": _body.rotation.x - float(_rest["body"].x),
-		"body_z": _body.rotation.z - float(_rest["body"].z),
+		"body_x": _body.rotation.x - body_rest.x,
+		"body_z": _body.rotation.z - body_rest.z,
 	}
 	if has_head():
 		out["head_z"] = _head.rotation.z - float(_rest["head"].z)

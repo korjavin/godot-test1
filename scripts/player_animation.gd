@@ -251,7 +251,7 @@ var _sidestep_phase: float = 0.0
 var _last_sidestep_sine_sign: int = 0
 
 # ============================================================================
-# THE CHARACTER SWAP PATH — style, rest poses, limb references
+# THE CHARACTER SWAP PATH — style, rest poses, the bound rig
 # ============================================================================
 
 static func capture_rest_pose(instance: Node3D) -> Dictionary:
@@ -265,7 +265,7 @@ static func capture_rest_pose(instance: Node3D) -> Dictionary:
 
 	A SKINNED hero returns just `body` — it has no limb nodes, and its rest pose
 	is the one baked into its skeleton. `HeroRig.for_body()` hands this table to
-	the driver, and the skinned driver ignores it.
+	the driver either way; the skinned one reads only that `body` key.
 
 	@param instance: A freshly-instanced character model
 	@return Dictionary of limb name -> rest rotation

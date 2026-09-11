@@ -965,7 +965,7 @@ func _check_skinned(player: Node3D) -> void:
 	      `air()`, `drop_wings()` and `reset_roll()` would have no coverage
 	      anywhere in the suite — no shipped hero binds this driver. And equality
 	      against the rig this game already ships is a far sharper instrument
-	      than a bound: it fails on one flipped sign in any of the eleven writes.
+	      than a bound: it fails on one flipped sign in any of the nine writes.
 	  (h) THE JOINTS — the knee that bends on the back-swing and the elbow that
 	      tracks the shoulder. They are the whole reason a skeleton beats five
 	      nodes, and `measure()` deliberately does not expose them: its keys are
@@ -1002,7 +1002,10 @@ func _check_skinned(player: Node3D) -> void:
 	# are left exactly as check 6 left them.
 	var saved: Node = player.current_character_node
 	player.current_character_node = fixture
-	anim.original_rotations = {"body": (fixture.get_node("Body") as Node3D).rotation}
+	# THROUGH THE SEAM, not a hand-rolled copy of it: `capture_rest_pose()` is the
+	# one rest-capture, and a skinned model is exactly the case its docstring
+	# describes (no limb nodes, so it answers `body` alone).
+	anim.original_rotations = PlayerAnimation.capture_rest_pose(fixture)
 	anim.setup_animation_references()
 	player.current_character_node = saved
 
@@ -1137,16 +1140,16 @@ func _check_skinned(player: Node3D) -> void:
 	#     calls to the limb rig and to the bone rig and compare `measure()` key by
 	#     key. This is the seam's ACTUAL claim, and it is stronger than any bound:
 	#     it catches a flipped sign, a swapped side or a dropped term in ANY of the
-	#     eleven writes — including every Z write, which the walk sweep above
+	#     nine pose writes — including every Z write, which the walk sweep above
 	#     structurally cannot reach (`animate_walking()` opens with
 	#     `reset_sidestep_pose()`, pinning all four `*_z` keys to zero). The Z
 	#     writes need it most: the sidestep's two legs are `splay + reach` and
 	#     `splay - reach`, not a mirrored pair, so (c)'s diagonal is no proxy.
 	#
-	#     The limb rig is the player's own, on Teibi's row so both sides answer the
-	#     same gait. Only the rig-owned keys are compared: `body_*` is written by
-	#     the CALLER on the `Body` node, and these two rigs hang off two different
-	#     bodies.
+	#     The limb rig is the player's own — the arguments come from this script,
+	#     not from a `GAITS` row, so neither side reads a gait at all. Only the
+	#     rig-owned keys are compared: `body_*` is written by the CALLER on the
+	#     `Body` node, and these two rigs hang off two different bodies.
 	player.set_active_character(_hero_index("teibi"))
 	var limb_poses: Array[Dictionary] = _drive_rig(player.anim.rig)
 	var bone_poses: Array[Dictionary] = _drive_rig(anim.rig)
@@ -1285,6 +1288,40 @@ func _measure_skinned_joints(anim, fixture: Node3D) -> void:
 				% arm_neutral + "the elbow's rest must be the same on every path, or "
 				+ "it straightens while you stand and snaps back the frame you walk")
 
+	# ...and so do the OTHER two paths that write the joints. `measure()` exposes
+	# neither the forearm nor the calf (its keys are the limb rig's, or the shared
+	# bounds would stop meaning the same thing), so without these three distances
+	# `rest_pose()`'s and `air()`'s joint writes could be deleted green.
+	anim.rig.rest_pose()
+	var arm_at_rest: float = skel.get_bone_global_pose(hand).origin.distance_to(
+			skel.get_bone_global_pose(shoulder).origin)
+	if absf(arm_at_rest - arm_neutral) > SKINNED_ELBOW_M:
+		_fail("skinned fixture: `rest_pose()` left the arm at %.4f m shoulder-to-hand "
+				% arm_at_rest + "where the neutral pose holds it at %.4f m — restoring "
+				% arm_neutral + "the rest pose must restore the elbow's neutral bend "
+				+ "too, or a character swap draws one frame of straightened arms")
+
+	# The AIR pose straightens the knee and holds the elbow at its neutral: a leg
+	# tucked with a knee still flexed from the last stride is the airborne version
+	# of the leftover roll `drop_wings()` clears. GOING AIRBORNE OUT OF A STRIDE,
+	# because that is the only way the assertion can see the straightening at all —
+	# from a rest pose the knee is already straight and the check would be vacuous.
+	anim.rig.locomotion(-swing, swing, 1.0)
+	for i: int in RELAX_FRAMES:
+		anim.rig.air(deg_to_rad(72.0), deg_to_rad(10.0), 0.2)
+	var arm_air: float = skel.get_bone_global_pose(hand).origin.distance_to(
+			skel.get_bone_global_pose(shoulder).origin)
+	var leg_air: float = skel.get_bone_global_pose(foot).origin.distance_to(
+			skel.get_bone_global_pose(hip).origin)
+	if absf(arm_air - arm_neutral) > SKINNED_ELBOW_M:
+		_fail("skinned fixture: airborne, the arm sat at %.4f m shoulder-to-hand where "
+				% arm_air + "the neutral pose holds it at %.4f m — the wings must beat "
+				% arm_neutral + "with the elbow at its neutral bend")
+	if absf(leg_air - reach_front) > SKINNED_KNEE_FLEX_M:
+		_fail("skinned fixture: airborne, hip-to-foot measured %.4f m against the "
+				% leg_air + "straight leg's %.4f m — the tuck must STRAIGHTEN the knee, "
+				% reach_front + "or a leg goes up still bent from the last stride")
+
 	if arm_bent >= arm_straight - SKINNED_ELBOW_M:
 		_fail("skinned fixture: shoulder-to-hand measured %.4f m at the arm's forward "
 				% arm_bent + "extreme and %.4f m at its back one — the elbow must "
@@ -1310,9 +1347,10 @@ func _drive_rig(rig) -> Array[Dictionary]:
 	Run one fixed script of driver calls and return what `measure()` said after
 	each. Every number is arbitrary and asymmetric ON PURPOSE — a swapped side or
 	a dropped `arm_asym` has to show up, which round numbers and mirrored
-	arguments would hide — and every one of the eleven pose methods is exercised,
-	the two lerping ones (`idle`, `air`) twice so their accumulation is compared
-	too.
+	arguments would hide — and every pose method the contract has is exercised:
+	`rest_pose`, `locomotion`, `head_bobble`, `relax_head`, `idle`, `air`, `drop_wings`,
+	`sidestep` and `reset_roll`, the two lerping ones (`idle`, `air`) twice so
+	their accumulation is compared too.
 	"""
 	var out: Array[Dictionary] = []
 	rig.rest_pose()

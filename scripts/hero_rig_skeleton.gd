@@ -87,9 +87,11 @@ func bind(body: Node3D, rest: Dictionary) -> bool:
 	Find the `Skeleton3D` under `body` — BY TYPE, never by path — and cache the
 	bases every write needs.
 
-	@param rest: the limb rig's rest table. Unused here and deliberately so: a
-	             skeleton carries its own rest pose (`get_bone_rest()`), which is
-	             what the exporter baked and what `reset_bone_poses()` returns to.
+	@param rest: the limb rig's rest table. Its LIMB keys are ignored — a skeleton
+	             carries its own rest pose (`get_bone_rest()`), which is what the
+	             exporter baked and what `reset_bone_poses()` returns to. The
+	             `body` key is read, by `measure()`, for the two columns the
+	             caller writes on the `Body` NODE for either rig kind.
 	@return false when the skeleton is missing the locomotion bones, so an
 	        unexpected rig stands frozen instead of half-posed.
 	"""
