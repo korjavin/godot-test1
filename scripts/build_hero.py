@@ -152,7 +152,10 @@ HAIR_LIFT = 0.006            # short hair as a shell over the scalp, in metres
 # `SKIN_GRADE` is applied to the SKIN and LIPS entries as `paint_body` consumes
 # them, so the `colours` row stays the generator's palette verbatim. The clothes
 # are not graded: they are dark enough (navy, mustard, denim) to survive the grade,
-# and they are read by their silhouette anyway.
+# and they are read by their silhouette anyway. After: 0.2% on Forward+, 0.0% on
+# gl_compatibility (`scripts/clipped_fraction.py teibi <17_head_face.png>`), and
+# this hero clears the web row where the two TEXTURED heads do not — see the long
+# note in spike_z3e_head.py for why that is the albedo path and not the palette.
 SKIN_GRADE = 0.47
 GRADED_COLOURS = ("skin", "lips")
 

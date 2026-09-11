@@ -76,17 +76,30 @@ SEAM_DARKEN = 0.55
 # and cheek volume go with it. A torso survives it because its colours are dark
 # (mustard, navy, denim) and its shape is read from its silhouette.
 #
-# MEASURED on 17_head_face (fraction of face pixels with Rec.709 luma >= 0.97,
-# Forward+ / gl_compatibility+web): windman 21.1% / 68.5%, primm 20.9% / 63.4%,
-# teibi (build_hero.py, same constant there) 100% / 99.8% before.
+# MEASURED with `scripts/clipped_fraction.py` on 17_head_face (fraction of face
+# pixels at or over Rec.709 luma 0.97), Forward+ / gl_compatibility+web:
 #
-# AND THE WEB ROW IS THE ONE THAT SETS THIS NUMBER. gl_compatibility runs ~3x more
-# of the face over the line than Forward+ at the same albedo — measured on one head
-# by scaling `albedo_color` at runtime, which costs no rebuild: effective skin 0.67
-# -> 51.7% clipped on web against 1.5% on Forward+, 0.58 -> 23.1%, 0.47 -> 0.06%.
-# So 0.47 is where BOTH rows clear the bead's 5%, and it is chosen on that curve
-# rather than on a guess. It reads as light skin, not as a tan: the grade is hot
-# enough that an albedo this low still comes out near 0.72 mean display on web.
+#            before                 after
+#   windman  21.1% / 68.5%          0.0% / 28.0%
+#   primm    20.9% / 63.4%          0.7% / 34.2%
+#   teibi    100.0% / 99.8%         0.2% /  0.0%     (build_hero.py, same constant)
+#
+# 0.47 IS READ OFF A CURVE, NOT GUESSED. Scaling `albedo_color` at runtime prices a
+# candidate albedo without a rebuild, and on the web row — the harsher of the two —
+# effective skin 0.67 gave 51.7% clipped, 0.58 gave 23.1%, 0.47 gave 0.06%. Forward+
+# clears the bead's 5% for all three heroes at this value, and so does the web row
+# for the hero whose colour is VERTEX COLOURS.
+#
+# THE TWO HEADS THAT STILL MEASURE 28% AND 34% ON WEB ARE NOT A PALETTE PROBLEM, and
+# no value of this constant fixes them. They are the only meshes in the cast carrying
+# a baked albedo TEXTURE (the owner's variant-A ruling), and gl_compatibility renders
+# a texture about a gamma too BRIGHT while it renders vertex colours about a gamma
+# too DARK — measured in one frame, on one model: this head's texture reads 0.602 on
+# Forward+ and 0.786 on web, while the vertex-coloured torso under it reads 0.978 and
+# 0.827. A bake dark enough for that row is ~2x too dark on Forward+. The way out is
+# either dropping the bake for vertex colours (contradicts the ruling, and softens the
+# 3 mm seam in Windman's cloth band) or Godot's Compatibility sRGB handling of
+# VRAM-compressed embedded glTF textures — a bead of its own either way.
 SKIN_GRADE = 0.47
 
 
