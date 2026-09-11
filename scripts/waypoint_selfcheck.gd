@@ -299,10 +299,12 @@ func _check_cache_warmth_cannot_move_a_site(terrain_script: GDScript) -> void:
 	within one `WAYPOINT_RIVER_STEP` of it. The first cut of this control took the
 	first wet station anywhere on the road, settled on one ~250 m short of T, and
 	measured two identical answers; round 3 of the PR #364 review caught it. The
-	sweep below now takes only a wet station inside that window and skips a seed
-	that has none. With the window enforced, aliasing the clamp back to the cache
-	frontier reds BOTH assertions on seed 1: the cold leg answers x 1451.2 and the
-	warm leg x 1474.9, either side of a terminal at 1446.5.
+	sweep below now takes only a wet station STRICTLY inside that window and skips
+	a seed that has none. With the window enforced, aliasing the clamp back to the
+	cache frontier reds BOTH assertions on seed 1: the cold leg answers x 1451.2
+	and the warm leg x 1474.9, BOTH east of a terminal at 1446.5 — which is why
+	the east-of-terminal assertion catches each of them, and the two differing
+	from each other is what the first assertion catches.
 
 	A WET STATION HAS TO BE FOUND, not assumed — the three CI seeds' roads run
 	through dry ground for the last 60 m before T. `CONTROL_SEEDS` is swept until
@@ -342,8 +344,15 @@ func _check_cache_warmth_cannot_move_a_site(terrain_script: GDScript) -> void:
 		# is SKIPPED, not accepted. Round 3 of the PR #364 review is why this is a
 		# window and not "the first wet station on the road".
 		var wet_x: float = INF
-		var floor_k: int = maxi(cold._road_first_k_at_or_after_x(0.0),
-				terminal - TerrainWaypoints.WAYPOINT_RIVER_STEP)
+		# STRICTLY INSIDE, and the `+ 1` is the whole assertion. The condition is
+		# `k + WAYPOINT_RIVER_STEP > terminal`, so `terminal - WAYPOINT_RIVER_STEP`
+		# itself does NOT qualify: from there the walk's second probe is exactly
+		# `terminal`, which both clamps allow, so all three legs (new, old-cold,
+		# old-warm) land on the same station and the control would pass on the very
+		# code it exists to catch. No `maxi` against the road's west end either —
+		# station 0 is at x = 0 and the terminal is never below ~240, so that arm
+		# could never win. Both found by revmux round 4 of PR #364.
+		var floor_k: int = terminal - TerrainWaypoints.WAYPOINT_RIVER_STEP + 1
 		for k in range(terminal, floor_k - 1, -1):
 			var c: Vector2 = cold._road_station(k).center
 			if cold.is_river_at(Vector3(c.x, 0.0, c.y)):
@@ -381,7 +390,12 @@ func _check_cache_warmth_cannot_move_a_site(terrain_script: GDScript) -> void:
 						% [seed_value, at.x, String(leg[1])]
 						+ "the road's terminal station at %.1f — east of T nothing keeps a "
 						% cold_terminal_x + "road clearance and the city authors its own")
-		print("    the wet re-walk answers %s cold and warm, west of the terminal at %.0f "
+		# "NOT PAST", never "west of": the backward scan breaks on the first wet
+		# index, so every station between it and the terminal is dry and the walk
+		# always resolves ON the terminal station. Equality is what the assertion
+		# above allows; claiming margin the control never measured is how a log line
+		# tells a maintainer something it did not prove.
+		print("    the wet re-walk answers %s cold and warm, not past the terminal at %.0f "
 				% [str(cold_pos), cold_terminal_x] + "(seed %d, target x %.0f)"
 				% [seed_value, wet_x])
 		Sentinel.done("cache_warmth")
