@@ -248,7 +248,7 @@ def _face_palette(hero):
 PRIMM_V_DROP = 0.34       # how far the open front falls below the collar
 PRIMM_V_HALF = 0.10       # half-width of the V at the top; it tapers to 0
 PRIMM_V_EDGE = 0.022      # the glowing line: the outer part of the V's width
-PRIMM_TRIM = 0.030        # how wide a silver seam is — one vertex ring, closed
+PRIMM_TRIM = 0.026        # how wide a silver seam is — one vertex ring, closed
 PRIMM_SLEEVE = 0.04       # the rolled sleeve ends this far ABOVE the wrist
 PRIMM_BOOT_TOP = 0.28     # medium boots: the shaft rim, above the floor
 PRIMM_FINGERS = 0.035     # the silver fingertips, off the lowest glove vertex
@@ -428,8 +428,15 @@ HEROES = {
             "jeans_navy":  (0.15, 0.17, 0.29, 1.0),
             "boots_black": (0.05, 0.05, 0.06, 1.0),
             # "silver trims along seams", "subtle silver accents", "silver
-            # fingertips" — ONE silver, because they are one material.
-            "trim_silver": (0.76, 0.79, 0.84, 1.0),
+            # fingertips" — ONE silver, because they are one material, and a DARK
+            # one, and a DARK one — this field is not read as a colour on screen,
+            # it is read through the cast's own exposure. Measured 2026-09-12 in
+            # shot 18 on the web renderer across three builds: (0.76, 0.79, 0.84)
+            # and (0.40, 0.43, 0.49) BOTH clip to flat white, because the scene
+            # lifts an albedo by roughly two stops before DIFFUSE_TOON quantises it
+            # — the same clip that ate 3.4 cm of Primm's goggle band in bead z3e.5.
+            # A fifth of the way up is what lands as metal in that frame.
+            "trim_silver": (0.20, 0.22, 0.27, 1.0),
             "panel_black": (0.04, 0.04, 0.05, 1.0),
             # The "faint glowing blue lines": vertex colour, not emission. Bright
             # enough against `panel_black` to read as a glow at 3 m.
