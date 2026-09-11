@@ -40,9 +40,11 @@ WHAT A ROW IS (and where each half of it came from):
 COLOUR IS VERTEX COLOUR AND THERE IS NO TEXTURE (owner ruling 2026-09-11,
 "vertex colours by default with a body albedo only for a motif"). The cast has
 exactly one motif — Windman's chest "W" — and bead 5u3.5 measured it back onto
-the vertices rather than spending the lane's first texture on it: 13.6 mm between
-chest vertices against a 54 mm stroke is four vertices across every arm of the
-letter (`paint_chest_glyph`). So there is still no bake and no UV path here; the
+the vertices rather than spending the lane's first texture on it: split the chest
+once under the glyph (`densify_chest`) and the letter has four to five vertices
+across every arm and three across every notch (`paint_chest_glyph`), which is
+what a 512^2 bake would have bought at 3 m and no more. So there is still no bake
+and no UV path here; the
 row that first needs one brings it. `texture bytes: 0` is printed anyway, so the
 day that changes is the day the number moves.
 
