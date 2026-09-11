@@ -286,8 +286,9 @@ static func _road_site(terrain: Node3D, id: String, target_x: float) -> Dictiona
 	cached range so a re-walk can never index a station `_road_extend_to_x` has
 	not built (`_road_station` is a bare Dictionary lookup and would error).
 
-	Callers must have extended the cache to `ROAD_TERMINAL_X` first — the one
-	extend is shared by all four road sites, which is why it is not in here.
+	Callers must have extended the cache over `[WAYPOINT_APPROACH_X,
+	ROAD_TERMINAL_X]` first — the one extend is shared by all five road sites,
+	which is why it is not in here.
 	"""
 	var k: int = terrain._road_first_k_at_or_after_x(target_x)
 	var tries: int = 0
@@ -320,7 +321,7 @@ static func spawn_waypoint_in_chunk(terrain: Node3D, chunk_pos: Vector2i,
 	Called from `create_chunk` after the chest and before the city slice, so the
 	ring's boxes join the chunk's ONE MultiMesh batch and its ONE collision body
 	(where they take no shape at all — see `collide = false` below). CITY CHUNKS
-	INCLUDED: the three Budapest sites are ordinary chunk content, and a 5.2 m
+	INCLUDED: the five Budapest sites are ordinary chunk content, and a 5.2 m
 	circle fits inside one 50 m chunk, so nothing here is sliced.
 
 	@param obstacles: ACCEPTED AND NEVER APPENDED TO. The family signature is the
@@ -395,7 +396,7 @@ static func _build_ring(terrain: Node3D, local_pos: Vector3, index: int,
 
 	# --- The beam: the feature's ONE per-object mesh (see the banner). The shared
 	# unit cube carrying the size in its transform, the SHARED glow material (a
-	# per-instance one here would be eight materials and eight pipeline states),
+	# per-instance one here would be eleven materials and eleven pipeline states),
 	# no shadow — a column of light does not shade — and HIDDEN: nothing in this
 	# bead ever shows it, `.2` does when the room finds the circle.
 	var beam := MeshInstance3D.new()

@@ -3096,7 +3096,7 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# call here rather than anywhere else in the block is therefore a readability
 	# choice, not a constraint — it sits with the family it looks most like.
 	#
-	# CITY CHUNKS TOO, unlike the chest above: three of the eight sites are inside
+	# CITY CHUNKS TOO, unlike the chest above: five of the eleven sites are inside
 	# the rect, they are ordinary chunk content, and a 5.2 m circle never straddles
 	# a chunk seam so nothing here is sliced.
 	TerrainWaypoints.spawn_waypoint_in_chunk(self, chunk_pos, mesh_instance, obstacles, block_batch, block_body)
