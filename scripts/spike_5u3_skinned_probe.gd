@@ -23,8 +23,8 @@ const WANT_BONES := 53
 ## 5.5 cm (measured 1.8349, and the z3e.10 Blender checkpoint recorded the same
 ## 1.835 on the same body). The floor stays at the bead's 1.75 — a hat cannot
 ## lower it, and a body that came out short is exactly what it is there to catch
-## — and only the ceiling is raised, to 1.86, which clears the 1.835 with a
-## centimetre of slack and would still fail a second hat.
+## — and only the ceiling is raised, to 1.86, which clears the measured 1.8349
+## by 2.5 cm and would still fail a second hat.
 const MIN_HEIGHT := 1.75
 const MAX_HEIGHT := 1.86
 const FEET_TOLERANCE := 0.04
@@ -75,7 +75,7 @@ func _initialize() -> void:
 	# MakeHuman's A-pose and bakes the result as rest; that is a chain of `bpy.ops`
 	# mode switches, `modifier_apply` and `pose.armature_apply`, i.e. the classic
 	# silent-no-op shape, and NOTHING ELSE HERE WOULD CATCH IT: an A-posed rig has
-	# the same bone count, the same crown-to-heel height (arms at 46 degrees reach
+	# the same bone count, the same crown-to-heel height (arms at 41.3 degrees reach
 	# neither above the crown nor below the heel), the same feet and the same toes,
 	# and `upperarm_l.x` is the shoulder JOINT, which sits at -X at any arm angle.
 	# The magnitude alone is not enough either — an arm swung the WRONG WAY is off

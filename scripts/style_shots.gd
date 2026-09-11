@@ -151,13 +151,14 @@ func _ready() -> void:
 		elif a.begins_with("anim="):
 			_anim = a.substr(5)
 			_spike = true
-			# LOUD, like `body=`'s own guard below. A typo here used to leave
-			# `_anim` on the `_:` arm of `_pose_walk`, which is the SINE rig —
-			# on a Skeleton3D that poses nothing, so shot 18 came out as the
-			# unposed control picture still labelled with the typo.
+			# LOUD *AND* DROPPED, like the pairing guard below. Logging alone
+			# leaves `_anim` on the `_:` arm of `_pose_walk`, which is the SINE
+			# rig — on a Skeleton3D that poses nothing, so shot 18 comes out as
+			# the unposed control picture still labelled with the typo.
 			if not _anim in ["proc", "clip"]:
 				push_error("[SHOTS] unknown anim= column " + _anim
-						+ " (proc|clip)")
+						+ " (proc|clip) — shooting the control column")
+				_anim = ""
 		elif a == "web":
 			_emulate_web = true
 		else:
@@ -590,11 +591,13 @@ var _skeleton: Skeleton3D = null
 
 func _can_pose() -> bool:
 	"""Whether the active column has anything that can be posed mid-stride.
-	`uncut` is one welded mesh; `skinned` needs `anim=proc` to drive its bones.
-	The other half of that pairing — `anim=proc` without a skeleton — is refused
-	in `_ready()` rather than here, because it would mislabel the shots that do
-	NOT consult this (18 has no stride to skip) as well as the ones that do."""
-	if _body_variant == "uncut":
+	`uncut` is one welded mesh; `clip` is the dropped column and poses nothing at
+	all, whatever body is under it; `skinned` needs `anim=proc` to drive its
+	bones. The other half of that pairing — `anim=proc` without a skeleton — is
+	refused in `_ready()` rather than here, because it would mislabel the shots
+	that do NOT consult this (18 has no stride to skip) as well as the ones that
+	do."""
+	if _body_variant == "uncut" or _anim == "clip":
 		return false
 	if _body_variant == "skinned":
 		return _anim == "proc"
@@ -722,14 +725,15 @@ func _shoot_body(terrain: Node, player: Node3D, at: Vector3, name: String,
 	instead of the face. Reuses its settle / measure / freeze sequence and the
 	same `_head_pose_settled` rule (see that function's docstring).
 
-	`stride` poses the ALREADY-FROZEN hero mid-stride (shot 19) by writing
-	`animation_time` straight from this hero's own gait clock and calling
+	`stride` poses the ALREADY-FROZEN hero mid-stride (shot 19) through
 	`_pose_walk()` at a clock a quarter of a stride in — which for the control
 	column writes `animation_time` and calls `animate_walking()` once, and for
-	`anim=proc` writes bone rotations instead. Both are pure functions of their
-	clock, so there is nothing to undo afterwards, which is why 19 must run before
-	the shots that want a standing hero. A variant with nothing that swings (see
-	`_can_pose`) is skipped rather than shot.
+	`anim=proc` writes bone rotations instead. NOTHING RESTORES EITHER, which is
+	why 19 runs LAST of the body shots and why 20 follows it: a later shot that
+	wants a standing hero gets whatever pose 19 left, unless it poses itself the
+	way this function's own non-stride path does (`_pose_walk(player, 0.0)`, the
+	rest pose). A variant with nothing that swings (see `_can_pose`) is skipped
+	rather than shot.
 	"""
 	if not _wanted(name):
 		return
