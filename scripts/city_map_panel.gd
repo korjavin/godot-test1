@@ -76,9 +76,10 @@ extends Control
 ## bead `godot-test1-8gw.26`: see THE OPENER below.)
 
 const BudapestPlan := preload("res://scripts/budapest_plan.gd")
-## Read for its opener's layout constants ONLY, so the two buttons cannot drift
-## into each other — see `BUTTON_TOP`. One direction: `skill_tree_ui.gd` preloads
-## nothing, so this is a reference and not a cycle.
+## The opener column's owner: this file asks it where slot 1 goes and never places
+## the button itself, so the two openers cannot drift into each other — see
+## `COLUMN_SLOT`. One direction: `skill_tree_ui.gd` preloads nothing and knows only
+## how MANY slots the column has, so this is a reference and not a cycle.
 const SkillTreeUi := preload("res://scripts/skill_tree_ui.gd")
 ## The win threshold is a DESIGN number and it lives on the player, next to the
 ## mask it counts. Read, never restated — a wave that changes 18 must change this
@@ -108,25 +109,20 @@ const TOGGLE_KEY: Key = KEY_B
 ## ALWAYS VISIBLE, never gated on being near the city: the map is at its most
 ## useful BEFORE you arrive — it is where the minimap's arrow is pointing.
 ##
-## THE SLOT IS DERIVED, NOT CHOSEN. Every number below is `skill_tree_ui`'s own,
-## so the two buttons share one edge margin and one width, and moving the Skills
-## button moves this one with it instead of parking a second opener on top of it.
-## The only fresh number is the gap between them.
-##
-## ponytail: this opener column and the TOUCH ACTION COLUMN collide on a LANDSCAPE
-## touch session, and that is one bug for the column and not one for this button.
-## `touch_controls.gd` magnifies the UI by `TOUCH_CONTENT_SCALE` (1.8), which makes
-## the layout 600 units tall, and its SPECIAL circle then spans y 232-352 anchored
-## to the bottom-right — under the Skills opener (278-314) already, on master, and
-## under this one (320-354) now. Both panels sit AFTER `TouchControls` in
-## `main.tscn`, so the opener wins the tap. Moving one button cannot fix a column,
-## so the fix is the column's: a HUD bead that reflows the openers when the touch
-## controls are up. Raised by review on this bead and deliberately not widened here.
-const BUTTON_GAP: float = 8.0
+## THE SLOT IS NOT THIS FILE'S TO CHOOSE. `skill_tree_ui.gd` owns the column — its
+## origin, its stacking and, since bead `godot-test1-8gw.27`, the step it takes to
+## the left when the touch action cluster is under it. This button is slot 1 and
+## says nothing else about where it sits: `place_in_column()` writes every anchor
+## and offset, so the two openers cannot drift apart and cannot be reflowed apart
+## either. (That bead is why the column moves at all: on a landscape touch session
+## `touch_controls.gd` magnifies the UI by `TOUCH_CONTENT_SCALE` (1.8), the layout
+## becomes 600 units tall, and its SPECIAL circle lands at y 232-352 — right under
+## both openers, which draw after it and so stole the tap.)
+const COLUMN_SLOT: int = 1
+## Width and height are read, not restated, because `locale_selfcheck` measures
+## "Karte (B)" against `BUTTON_WIDTH` and must measure the width this draws at.
 const BUTTON_WIDTH: float = SkillTreeUi.BUTTON_WIDTH
 const BUTTON_HEIGHT: float = SkillTreeUi.BUTTON_HEIGHT
-const EDGE_MARGIN: float = SkillTreeUi.EDGE_MARGIN
-const BUTTON_TOP: float = SkillTreeUi.BUTTON_TOP + SkillTreeUi.BUTTON_HEIGHT + BUTTON_GAP
 ## The label's font size, and the size `locale_selfcheck` measures "Karte (B)"
 ## against the width above. `skill_tree_ui`'s opener is set in the same 18.
 const BUTTON_FONT_SIZE: int = 18
@@ -230,6 +226,10 @@ var _panel_open: bool = false
 var _paused_by_us: bool = false
 var _refresh_timer: float = 0.0
 
+## The column inset currently written into the opener's offsets, so the reflow only
+## touches the layout when it changes. -1 is the "never placed" sentinel.
+var _column_inset: float = -1.0
+
 ## The baked plan, built on first open and kept. Never rebuilt: the plan is const.
 var _base_texture: ImageTexture = null
 
@@ -270,6 +270,13 @@ func _process(delta: float) -> void:
 	# is declined over Game Over and in a room, so a state change under an open
 	# panel must not strand the world in the wrong one.
 	_apply_pause(_panel_open)
+	# Keep the opener in its column slot: `skill_tree_ui.gd` recomputes the column's
+	# inset from the live touch HUD, and this button follows it (bead
+	# `godot-test1-8gw.27`). Gated on a change — writing offsets dirties the layout.
+	var inset: float = SkillTreeUi.column_inset(self)
+	if not is_equal_approx(inset, _column_inset) and _open_button != null:
+		_column_inset = inset
+		SkillTreeUi.place_in_column(_open_button, COLUMN_SLOT, inset)
 	if not _panel_open:
 		return
 	_refresh_timer -= delta
@@ -596,12 +603,9 @@ func _build_ui() -> void:
 	_open_button.text = "Map (B)"
 	_open_button.add_theme_font_size_override("font_size", BUTTON_FONT_SIZE)
 	_open_button.custom_minimum_size = Vector2(BUTTON_WIDTH, BUTTON_HEIGHT)
-	_open_button.anchor_left = 1.0
-	_open_button.anchor_right = 1.0
-	_open_button.offset_left = -EDGE_MARGIN - BUTTON_WIDTH
-	_open_button.offset_right = -EDGE_MARGIN
-	_open_button.offset_top = BUTTON_TOP
-	_open_button.offset_bottom = BUTTON_TOP + BUTTON_HEIGHT
+	# Slot 1 of the column `skill_tree_ui.gd` owns. Placed at the desktop inset and
+	# re-parked by `_reflow_column()` on the first frame — see THE OPENER below.
+	SkillTreeUi.place_in_column(_open_button, COLUMN_SLOT, SkillTreeUi.EDGE_MARGIN)
 	# THE SAME toggle the key calls, so the pause claim is taken and given back on
 	# one path — `pause_selfcheck` allows exactly one writer and this panel's is
 	# `_apply_pause`, reached only through `set_panel_open`.
