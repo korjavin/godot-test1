@@ -566,6 +566,57 @@ func _apply_platform_visibility() -> void:
 
 
 # ============================================================================
+# WHAT THIS HUD OCCUPIES — so other HUDs can lay out around it
+# ============================================================================
+# Bead `godot-test1-8gw.27`. The right-hand opener column (`skill_tree_ui.gd`'s
+# "Skills (K)" plus `city_map_panel.gd`'s "Map (B)") is anchored to the same right
+# edge as the action cluster, and on a landscape touch session
+# `TOUCH_CONTENT_SCALE` shrinks the layout to 600 units tall — which walks the
+# SPECIAL circle straight under both openers. Both panels sit AFTER this one in
+# `main.tscn`, so the opener took the tap meant for the ability.
+#
+# The fix is that the column asks US where we are instead of guessing, and these
+# two functions are the whole seam: reached through the `"touch_controls"` group
+# with a `has_method` guard, so a scene without this HUD just keeps the openers on
+# the screen edge. We do NOT reach back — this file knows nothing about openers.
+
+## Every rect this HUD's real buttons occupy, in this Control's own coordinates.
+## The full-rect overlays (enable / resume / portrait guard) are deliberately NOT
+## in here: they cover the whole screen on purpose and nothing can lay out around
+## them — `has_modal()` is the question to ask about those. The fullscreen button
+## is in the list but is invisible off Android web, which is why visibility is
+## filtered per button rather than assumed.
+func occupied_rects() -> Array[Rect2]:
+	var rects: Array[Rect2] = []
+	for button: Button in [
+		_jump_button, _special_button, _switch_button,
+		_steer_toggle, _view_button, _fullscreen_button,
+	]:
+		if button != null and is_instance_valid(button) and button.visible:
+			rects.append(button.get_rect())
+	return rects
+
+
+## How far in from the RIGHT screen edge something has to sit to clear this HUD's
+## buttons over the vertical band `top`..`bottom`. 0.0 when nothing of ours is in
+## that band, and 0.0 whenever this HUD is hidden — a desktop session must not be
+## reflowed around controls nobody can see, and `visible` is the one flag that
+## answers that for both the platform gate and the F6 force-show.
+##
+## Measured off the live rects rather than off `BUTTON_MARGIN` + `ACTION_BUTTON_SIZE`,
+## so moving a button here moves whatever lays out around it — which is the entire
+## point of handing the numbers out instead of letting the caller restate them.
+func right_edge_clearance(top: float, bottom: float) -> float:
+	if not visible:
+		return 0.0
+	var clearance: float = 0.0
+	for rect: Rect2 in occupied_rects():
+		if rect.end.y > top and rect.position.y < bottom:
+			clearance = maxf(clearance, size.x - rect.position.x)
+	return clearance
+
+
+# ============================================================================
 # DRIVER LOOKUP (single mechanism — like _fire_action for input)
 # ============================================================================
 

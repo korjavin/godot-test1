@@ -131,6 +131,18 @@ const BUTTON_HEIGHT: float = 34.0
 const BUTTON_TOP: float = 278.0
 const EDGE_MARGIN: float = 16.0
 
+## The vertical gap between two openers in the column, and — reused deliberately,
+## one number for one kind of breathing room — the gap the whole column keeps from
+## the touch action cluster it steps around.
+const BUTTON_GAP: float = 8.0
+
+## How many openers the column holds: Skills here (slot 0) and the Budapest map in
+## `city_map_panel.gd` (slot 1). It is a COUNT and not a list because this file must
+## not know what is in the slots below it — `city_map_panel` preloads this script,
+## so a reference back the other way would be a parse-time cycle. A third opener
+## bumps this and passes slot 2; nothing else moves.
+const COLUMN_SLOTS: int = 2
+
 ## The open card. Wide enough for two branch columns side by side, and it scrolls
 ## (a `ScrollContainer`) so a short phone screen in landscape still reaches the
 ## Close button.
@@ -186,6 +198,10 @@ var _recapture_mouse: bool = false
 ## the label is always drawn once — see `_refresh_open_button()`.
 var _last_points: int = -1
 
+## The column inset currently written into the opener's offsets, so `_reflow_column()`
+## only touches the layout when it actually changes. -1 is the "never placed" sentinel.
+var _column_inset: float = -1.0
+
 # --- Child node references (built in _ready, not from a .tscn) --------------
 
 var _open_button: Button = null
@@ -226,6 +242,8 @@ func _process(_delta: float) -> void:
 	var modal: bool = touch_ui != null and touch_ui.has_method("has_modal") and touch_ui.has_modal()
 	if _open_button != null:
 		_open_button.visible = not modal
+	# ...and step the whole column clear of that same HUD's buttons.
+	_reflow_column()
 	if modal and _panel_open:
 		_set_panel_open(false)
 		return
@@ -267,6 +285,81 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 # ============================================================================
+# THE OPENER COLUMN — one owner, and it is this file (bead `godot-test1-8gw.27`)
+# ============================================================================
+# Two always-visible openers are stacked down the right edge — "Skills (K)" here,
+# "Map (B)" in `city_map_panel.gd`. `8gw.26` gave the map opener this file's
+# constants so the two could not drift apart; what it could not fix from one
+# button is that the COLUMN'S SLOT was a fixed offset from the top-right that
+# never consulted the touch layout.
+#
+# On a landscape touch session `touch_controls.gd` magnifies the UI by
+# `TOUCH_CONTENT_SCALE` (1.8), which makes the layout 600 units tall and drops its
+# SPECIAL circle to y 232-352 in the same x band as the openers (278-312, 320-354).
+# Both panels sit AFTER `TouchControls` in `main.tscn`, so the opener won the tap
+# meant for the ability. Gating the openers off while the touch controls are up is
+# NOT the fix: on a phone they are the only way to reach Skills and the map at all.
+#
+# So the column steps LEFT of whatever the touch HUD occupies over the column's own
+# vertical band, and it is computed for the WHOLE band rather than per opener — a
+# per-slot answer would leave Skills on the edge and Map indented at exactly the
+# screen heights where only one of them clips the circle. The touch HUD is found
+# through its group with a `has_method` guard and reports its own rects; nothing
+# here restates a number that lives over there.
+
+## The top of the opener in `slot` (0 = topmost), in layout units.
+static func column_top(slot: int) -> float:
+	return BUTTON_TOP + float(slot) * (BUTTON_HEIGHT + BUTTON_GAP)
+
+
+## How far in from the right screen edge the column sits. `EDGE_MARGIN` on a
+## desktop session; clear of the touch action cluster plus one `BUTTON_GAP` when a
+## visible `touch_controls` HUD has buttons across the column's band.
+##
+## `node` is any node in the tree (each opener passes itself), used only to reach
+## the group.
+static func column_inset(node: Node) -> float:
+	if not node.is_inside_tree():
+		return EDGE_MARGIN
+	var touch: Node = node.get_tree().get_first_node_in_group("touch_controls")
+	if touch == null or not touch.has_method("right_edge_clearance"):
+		return EDGE_MARGIN
+	var clearance: float = touch.right_edge_clearance(
+		BUTTON_TOP, column_top(COLUMN_SLOTS - 1) + BUTTON_HEIGHT
+	)
+	return EDGE_MARGIN if clearance <= 0.0 else clearance + BUTTON_GAP
+
+
+## Park `button` in column slot `slot` at `inset`. The ONE place the column's
+## anchors and offsets are written — both openers call it, so the column moves as
+## a column or not at all.
+static func place_in_column(button: Control, slot: int, inset: float) -> void:
+	var top: float = column_top(slot)
+	button.anchor_left = 1.0
+	button.anchor_right = 1.0
+	button.offset_left = -inset - BUTTON_WIDTH
+	button.offset_right = -inset
+	button.offset_top = top
+	button.offset_bottom = top + BUTTON_HEIGHT
+
+
+## Re-park this panel's opener when the column's inset changes — the touch HUD
+## comes up in its own `_ready` (or on the F6 force-show) and the column has to
+## step aside for it. Gated on a change for `_refresh_open_button`'s reason:
+## writing offsets dirties the layout, and doing that sixty times a second to say
+## the same thing is exactly the idle cost the web build's perf work exists to
+## avoid. `_column_inset` starts at -1, so the first frame always places.
+func _reflow_column() -> void:
+	if _open_button == null:
+		return
+	var inset: float = column_inset(self)
+	if is_equal_approx(inset, _column_inset):
+		return
+	_column_inset = inset
+	place_in_column(_open_button, 0, inset)
+
+
+# ============================================================================
 # UI CONSTRUCTION
 # ============================================================================
 
@@ -284,12 +377,10 @@ func _build_ui() -> void:
 	_open_button.text = "Skills (K)"
 	_open_button.add_theme_font_size_override("font_size", NODE_FONT_SIZE)
 	_open_button.custom_minimum_size = Vector2(BUTTON_WIDTH, BUTTON_HEIGHT)
-	_open_button.anchor_left = 1.0
-	_open_button.anchor_right = 1.0
-	_open_button.offset_left = -EDGE_MARGIN - BUTTON_WIDTH
-	_open_button.offset_right = -EDGE_MARGIN
-	_open_button.offset_top = BUTTON_TOP
-	_open_button.offset_bottom = BUTTON_TOP + BUTTON_HEIGHT
+	# Slot 0 of the column this file owns — see THE OPENER COLUMN above. Placed at
+	# the desktop inset here and re-parked by `_reflow_column()` on the first frame,
+	# because the touch HUD's own buttons have no size yet during `_ready`.
+	place_in_column(_open_button, 0, EDGE_MARGIN)
 	_open_button.pressed.connect(_toggle_panel)
 	add_child(_open_button)
 
