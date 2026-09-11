@@ -30,8 +30,10 @@ func _initialize() -> void:
 		push_error("[PROBE] cannot load " + GLB)
 		quit(1)
 		return
-	var root := scene.instantiate()
-	get_root().add_child(root)
+	# NOT added to the tree: `_initialize()` runs before the root window is in
+	# one, so every `global_transform` here would answer identity AND log an
+	# error. `_relative()` composes the same transform from the local ones.
+	var root := scene.instantiate() as Node3D
 
 	var skels := root.find_children("*", "Skeleton3D", true, false)
 	if skels.is_empty():
@@ -46,7 +48,7 @@ func _initialize() -> void:
 	var first := true
 	for m in root.find_children("*", "MeshInstance3D", true, false):
 		var mi := m as MeshInstance3D
-		var box := mi.global_transform * mi.get_aabb()
+		var box := _relative(mi, root) * mi.get_aabb()
 		aabb = box if first else aabb.merge(box)
 		first = false
 	var height := aabb.size.y
@@ -55,13 +57,14 @@ func _initialize() -> void:
 	print("[PROBE] feet off y=0: %.4f m" % feet)
 
 	var toes_ahead := true
+	var skel_at := _relative(skel, root)
 	for side in ["l", "r"]:
-		var ball := _bone_pos(skel, "ball_" + side)
-		var foot := _bone_pos(skel, "foot_" + side)
+		var ball := _bone_pos(skel, skel_at, "ball_" + side)
+		var foot := _bone_pos(skel, skel_at, "foot_" + side)
 		print("[PROBE] %s toe z %.4f vs ankle z %.4f" % [side, ball.z, foot.z])
 		toes_ahead = toes_ahead and ball.z < foot.z
-	var head := _bone_pos(skel, "head")
-	var upperarm_l := _bone_pos(skel, "upperarm_l")
+	var head := _bone_pos(skel, skel_at, "head")
+	var upperarm_l := _bone_pos(skel, skel_at, "upperarm_l")
 	print("[PROBE] head bone at ", head.snappedf(0.0001),
 			"  upperarm_l at ", upperarm_l.snappedf(0.0001))
 	print("[PROBE] faces -Z: ", toes_ahead, " | left arm at -X: ", upperarm_l.x < 0.0)
@@ -80,14 +83,28 @@ func _initialize() -> void:
 			and absf(feet) <= FEET_TOLERANCE \
 			and toes_ahead and upperarm_l.x < 0.0
 	print("[PROBE] ", "PROBE OK" if ok else "PROBE FAILED")
+	# Nothing owns this scene — it was never added to the tree — so free it here
+	# or Godot reports leaked RIDs at exit, which reads exactly like a defect.
+	root.free()
 	quit(0 if ok else 1)
 
-func _bone_pos(skel: Skeleton3D, name: String) -> Vector3:
+func _bone_pos(skel: Skeleton3D, skel_at: Transform3D, name: String) -> Vector3:
 	var idx := skel.find_bone(name)
 	if idx < 0:
 		push_error("[PROBE] no bone " + name)
 		return Vector3.ZERO
-	return (skel.global_transform * skel.get_bone_global_rest(idx)).origin
+	return (skel_at * skel.get_bone_global_rest(idx)).origin
+
+func _relative(node: Node3D, root: Node3D) -> Transform3D:
+	"""`node`'s transform in `root`'s space, composed from the local ones —
+	`global_transform` needs the node to be inside a SceneTree and this scene
+	deliberately is not."""
+	var t := Transform3D.IDENTITY
+	var n: Node3D = node
+	while n != null and n != root:
+		t = n.transform * t
+		n = n.get_parent() as Node3D
+	return t
 
 func _tree_line(node: Node, depth: int = 0) -> String:
 	var s := " ".repeat(depth) + node.name + ":" + node.get_class()
