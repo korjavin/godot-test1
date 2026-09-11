@@ -469,6 +469,7 @@ func sidestep(splay: float, reach: float, lift_left: bool, lift: float,
 	for side: String in ["left", "right"]:
 		_set_axis(CALF[side], AXIS_X, 0.0)
 		_set_axis(FOOT[side], AXIS_X, 0.0)
+		_set_axis(CLAVICLE[side], AXIS_Y, 0.0)
 	_settle_torso(1.0)
 
 

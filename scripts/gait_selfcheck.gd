@@ -1540,6 +1540,40 @@ func _measure_skinned_joints(anim, fixture: Node3D) -> void:
 				% pelvis_roll + "BACK, or the whole upper body rolls with the hips "
 				+ "(ceiling %.4f)" % SKINNED_CHEST_LEVEL)
 
+	# ---- (h5b) A STRAFE PUTS BACK EVERY JOINT IT DOES NOT DRIVE ----------
+	# `sidestep()` writes the Z axes and nothing else, so every joint bead
+	# `5u3.9` added — knee, ankle, clavicle, pelvis, spine — is inherited from
+	# whatever stride the strafe interrupted and frozen there for as long as the
+	# step is held. Entered OUT OF A STRIDE, because from rest they are already
+	# at rest and the assertion would be vacuous. Measured against the rest pose
+	# through the same chest frame the shoulder probe uses.
+	anim.rig.rest_pose()
+	var rest_frame: Transform3D = skel.get_bone_global_pose(b["spine_03"]).affine_inverse()
+	var rest_shoulder: Vector3 = rest_frame * _at(skel, shoulder)
+	var rest_pelvis_roll: float = absf(skel.get_bone_global_pose(b["pelvis"]).basis.x.y)
+	var rest_reach: float = _span(skel, foot, hip)
+	# THREE QUARTERS ROUND, not mid-swing: at phase PI the leg is bent but the ARM
+	# is at centre, so the clavicle is already at rest and its clause would pass
+	# vacuously (measured — the first version of this probe did exactly that).
+	# 3*PI/4 opens the arm, the knee AND the pelvis at once.
+	_pose_cycle(anim, PI * 0.75, swing, 0.0)
+	anim.rig.sidestep(0.2, -0.13, true, 0.08, 0.22, -0.05)
+	var strafe_frame: Transform3D = skel.get_bone_global_pose(b["spine_03"]).affine_inverse()
+	var strafe_shoulder: Vector3 = strafe_frame * _at(skel, shoulder)
+	if strafe_shoulder.distance_to(rest_shoulder) > SKINNED_SHOULDER_SWING_M:
+		_fail("skinned fixture: a strafe entered out of a stride left the shoulder "
+				+ "%.4f m from where a standing hero holds it — a sidestep drives the Z "
+				% strafe_shoulder.distance_to(rest_shoulder) + "axes only, so every "
+				+ "joint it does not write has to be PUT BACK or it freezes there for "
+				+ "as long as the step is held")
+	if absf(skel.get_bone_global_pose(b["pelvis"]).basis.x.y - rest_pelvis_roll) > SKINNED_CHEST_LEVEL:
+		_fail("skinned fixture: a strafe entered out of a stride kept the stride's "
+				+ "pelvis drop — `_settle_torso(1.0)` is what puts it back")
+	if absf(_span(skel, foot, hip) - rest_reach) > SKINNED_KNEE_FLEX_M:
+		_fail("skinned fixture: a strafe entered out of a stride kept the stride's "
+				+ "bent knee (hip-to-foot %.4f m against a standing %.4f m)"
+				% [_span(skel, foot, hip), rest_reach])
+
 	# ---- (h6) THE ELBOW'S NEUTRAL IS THE SAME ON EVERY PATH --------------
 	# Round 1's fix, and the one joint write that lives OUTSIDE `locomotion()`.
 	# Standing still must ease the forearm to `elbow_bend_deg`, not straighten it:
