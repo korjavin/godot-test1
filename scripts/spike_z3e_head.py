@@ -16,11 +16,12 @@ Run:  blender --background --python-exit-code 1 --python scripts/spike_z3e_head.
           -- --hero primm            (default: windman)
 
 EVERY PER-HERO DIFFERENCE IS A `HEROES` ROW and nothing else — the macro sliders,
-the face targets, the palette, the painted eyewear stripes and the one height the
-head is scaled to. The pipeline below (cut at MakeHuman's neck joint, reframe into
-the Head node's local space, decimate, paint, bake, export) is the recipe the owner
-picked as VARIANT A on 2026-09-06 and is deliberately identical for every hero.
-Adding a hero is a row; it is not a branch.
+the face targets, the palette, the eyewear (its colours, and whether they are paint
+or cloth) and the one height the head is scaled to. The pipeline below (cut at
+MakeHuman's neck joint, reframe into the Head node's local space, decimate, wrap the
+cloth, paint, bake, export) is the recipe the owner picked as VARIANT A on 2026-09-06
+and is deliberately identical for every hero. Adding a hero is a row; it is not a
+branch.
 
 WHY NOT trimesh like scripts/generate_windman_separate.py: the source is a
 MakeHuman basemesh plus MakeHuman morph targets, and MPFB2 is a Blender extension —
@@ -47,12 +48,18 @@ import addon_utils
 import bmesh
 import bpy
 import importlib
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 TRIS_SMOOTH = 4500             # the bead's "retopo/decimate to ~3-5k"
 TEXTURE_SIZE = 512             # owner ruling: <= 512^2 albedo, no normal map
+
+# The seam where a `band` row's two cloth colours meet, drawn as one darker line so
+# the wrap reads as TWO turns of cloth rather than a two-tone stripe. Half-height in
+# metres, and how far the lower colour is pulled down to make the line.
+SEAM_HALF = 0.0030
+SEAM_DARKEN = 0.55
 
 # ============================================================================
 # THE HEROES. One row per authored head; the pipeline below reads nothing else.
@@ -62,11 +69,13 @@ TEXTURE_SIZE = 512             # owner ruling: <= 512^2 albedo, no normal map
 # generator still builds and a colour seam at the neck would be the first thing
 # anyone sees.
 #
-# `stripes` is the eyewear, painted rather than modelled, listed TOP-DOWN in
-# metres relative to the eye landmark; the first stripe containing a vertex wins.
-# Both heroes wear something across the eyes and neither wears it as geometry:
-# a real face has sockets, and a band pushed proud of them swallows the EARS,
-# which are the whole reason this epic exists.
+# `stripes` is the eyewear's COLOURS, listed TOP-DOWN in metres relative to the eye
+# landmark; the first stripe containing a vertex wins.
+#
+# `band` (optional) says those colours are worn as CLOTH: `wrap_band` lifts that slab
+# of the face off the skull into a thick wrap before `paint` colours it, and the face
+# underneath — eye sockets included — is consumed by the lift. A row WITHOUT `band`
+# (Primm's goggles) keeps the stripes as paint on the skin. See `wrap_band`.
 # ============================================================================
 HEROES = {
     "windman": {
@@ -89,22 +98,22 @@ HEROES = {
                     "hair": (0.32, 0.20, 0.11, 1.0)},
         "stripes": ((0.004, 0.022, (0.20, 0.38, 0.75, 1.0)),    # blue over red,
                     (-0.024, 0.004, (0.72, 0.18, 0.15, 1.0))),  # as the art has it
+        # THE BANDAGE IS CLOTH (bead z3e.13, owner 2026-09-11: "it should be real
+        # mask from cloth. thick one"). `top`/`bottom` are the stripes' own z-range,
+        # so the wrap covers exactly what the paint covered; `thickness` is how far
+        # proud of the skull it stands. `half_angle` is the whole reason this can be
+        # geometry at all: the wrap is an ARC, not a ring — it runs from one temple
+        # across the face to the other and STOPS in front of the ear, where `knot`
+        # ties it off. A closed ring at eye height goes through the ears.
+        "band": {"top": 0.022, "bottom": -0.024, "thickness": 0.012,
+                 "half_angle": 74.0, "smooth": 3,
+                 # tangent x outward x up, metres — a small fold of cloth.
+                 "knot": (0.026, 0.018, 0.034)},
         "hair_lift": 0.008,         # short hair as a shell over the scalp, metres
         "hair_front": 0.036,        # hairline above the eye line
         "hair_nape": 0.055,         # how much lower the hairline sits at the back
         # The torso draws a 0.062 m-radius neck cylinder; the stump hides inside it.
         "neck_stump_radius": 0.060,
-        # THE ONE OPT-OUT FROM z3e.12's LANDMARK FIX, and it is here to FREEZE
-        # SHIPPED ART, not because the basemesh reading is right. Windman's head
-        # merged on 2026-09-08 built on the unmorphed joint cubes; his macros move
-        # `joint-neck` up by 1.7 cm, so the fixed reading cuts his head in a
-        # different place and rebuilds a head ~7% wider for the same skull height.
-        # That is a change to a hero the owner has already ruled on, and z3e.12 is
-        # a bug about PRIMM — so Windman stays on the old landmarks and his `.glb`
-        # stays byte-identical, which is also this bead's regression proof. Flip
-        # this to "morphed" (or delete the key) the day the owner wants the
-        # corrected Windman, and expect a new grid with it.
-        "landmarks": "basemesh",
     },
     "primm": {
         # docs/characters/primm.md: "slim but slightly lean", "slightly elongated
@@ -303,12 +312,11 @@ def build_human(cfg):
     # the neck. `reframe`'s scale assert stays as the regression fence: it is the
     # one number that shows a cut landing somewhere the landmark is not.
     #
-    # `landmarks` is the row key that freezes shipped art built before the fix —
-    # today only Windman's, and his row says why. A new hero omits it.
-    if cfg.get("landmarks", "morphed") == "basemesh":
-        coords = [v.co.copy() for v in human.data.vertices]
-    else:
-        coords = morphed_coords(human)
+    # z3e.12 shipped with a `landmarks: "basemesh"` row key that kept WINDMAN on the
+    # buggy reading so his already-ruled-on `.glb` stayed byte-identical. Bead z3e.13
+    # rebuilds that head for the cloth mask anyway, so the freeze is gone and every
+    # hero is cut at the evaluated neck.
+    coords = morphed_coords(human)
     neck = joint_centroid(human, "joint-neck", coords)
     eye = joint_centroid(human, "joint-l-eye", coords)
     log("landmarks: neck z=%.4f  eye z=%.4f y=%.4f" % (neck.z, eye.z, eye.y))
@@ -426,15 +434,208 @@ def decimate(obj, tri_target):
     log("decimated %d -> %d tris" % (current, len(obj.data.loop_triangles)))
 
 
-def paint(obj, eye_z, cfg):
+def wrap_band(obj, eye_z, cfg):
+    """The blindfold as CLOTH: a thick wrap lifted off the face, not paint on it.
+
+    OWNER, 2026-09-11 (bead z3e.13): "windman mask seems like it's color sprayed /
+    drawed on his face, it should be real mask from cloth. thick one. windman has no
+    eyes". So the eye sockets are deleted and capped flat, and the slab of face inside
+    the stripes' own z-range, from one temple across to the other, is EXTRUDED off the
+    blank skull and pushed out horizontally: the lifted faces become the cloth's outer
+    surface, the extrusion's side walls become its top and bottom rims (flat-shaded,
+    so the edge is crisp and casts a shadow), and the face left underneath is deleted
+    with the sockets. It stays flush ("fits tightly to the face") because it IS the
+    face's own surface, offset.
+
+    THE EARS ARE WHY THIS IS AN ARC AND NOT A RING. `half_angle` stops the wrap in
+    front of each ear, where a small `knot` box ties it off — docs/characters/
+    windman.md's "fastened near the ears". A ring at eye height goes through them.
+
+    The push is RADIAL about the skull's vertical axis rather than along each vertex
+    normal, and the lifted faces are smoothed first: cloth lies over a brow and a
+    cheekbone, and a normal-offset would re-inflate every one of their creases as a
+    bump in it.
+
+    Returns (band vertex indices, flat-shaded polygon indices) for `paint` and
+    `export`; both are empty for a hero whose row has no `band`.
+    """
+    band = cfg.get("band")
+    if band is None:
+        return frozenset(), frozenset()
+
+    me = obj.data
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    uv_layer = bm.loops.layers.uv.active
+    top = eye_z + band["top"]
+    bottom = eye_z + band["bottom"]
+    half = math.radians(band["half_angle"])
+    thickness = band["thickness"]
+
+    # The skull's vertical axis, taken from the band's own slab so the arc is centred
+    # on the face and not on a bounding box that includes the neck stump.
+    slab = [v.co for v in bm.verts if bottom <= v.co.z <= top]
+    axis = Vector(((min(c.x for c in slab) + max(c.x for c in slab)) / 2.0,
+                   (min(c.y for c in slab) + max(c.y for c in slab)) / 2.0))
+
+    def bearing(co):
+        """Angle off dead-ahead (+Y), about the skull's axis. 0 = nose, +-90 = ear."""
+        return math.atan2(co.x - axis.x, co.y - axis.y)
+
+    def outward(co):
+        out = Vector((co.x - axis.x, co.y - axis.y, 0.0))
+        return out.normalized() if out.length > 1e-6 else Vector((0.0, 1.0, 0.0))
+
+    def wrapped(co):
+        return bottom <= co.z <= top and abs(bearing(co)) <= half
+
+    lifted = [f for f in bm.faces if wrapped(f.calc_center_median())]
+    if not lifted:
+        raise AssertionError("no faces in the band slab z %.3f..%.3f" % (bottom, top))
+
+    # THE EYES GO FIRST, and this is where "windman has no eyes, he use air abilities
+    # to see" is actually carried out. MakeHuman's basemesh does not stop at the lids:
+    # it folds inward and lines the SOCKET, around helper eyeballs that MPFB2's mask
+    # already deleted. Lifted with the rest, that lining came out as two dark holes in
+    # the middle of the bandage (first render of this bead). A face that points back
+    # INTO the skull is socket and nothing else at this height — the skin, the temples
+    # and even the bridge of the nose all face outward — so they are deleted and the
+    # two openings capped flat, and the cloth is lifted off a blank face.
+    sockets = [f for f in lifted
+               if f.normal.dot(outward(f.calc_center_median())) < -0.2]
+    if sockets:
+        bmesh.ops.delete(bm, geom=sockets, context='FACES')
+        # The neck's own hole was capped in `cut_head`, so these are the only open
+        # edges in the mesh.
+        caps = [f for f in bmesh.ops.holes_fill(
+            bm, edges=[e for e in bm.edges if e.is_boundary], sides=0)["faces"]
+            if isinstance(f, bmesh.types.BMFace)]
+        # ONE texel per cap, not the lid's own UVs. `holes_fill` writes no UVs at
+        # all, and inheriting them from the ring lands the cap on MakeHuman's tiny
+        # EYE island, where the wrap's seam line and its blue half occupy a third of
+        # the island each and bake back onto the face as two eye-shaped blotches (the
+        # third render of this bead: the bandage looked see-through). A cap is two
+        # centimetres of cloth over a closed socket — one flat colour, taken from its
+        # own lowest corner, is all of it.
+        cap_set = set(caps)
+        for f in caps:
+            low = min(f.verts, key=lambda v: v.co.z)
+            flat_uv = next(other[uv_layer].uv.copy() for other in low.link_loops
+                           if other.face not in cap_set)
+            for loop in f.loops:
+                loop[uv_layer].uv = flat_uv
+        lifted = [f for f in lifted if f.is_valid] + caps
+        log("band: removed %d socket faces, capped with %d" % (len(sockets), len(caps)))
+
+    ret = bmesh.ops.extrude_face_region(bm, geom=lifted)
+    # The op returns the LIFTED CAP — its faces and every vertex of them, the
+    # duplicated boundary included. The side walls it builds are NOT in that result:
+    # they are the other faces that touch a cap vertex, and the skin around the hole
+    # cannot be one of them because it kept the originals of those duplicates.
+    moved = set(e for e in ret["geom"] if isinstance(e, bmesh.types.BMVert))
+    cloth = set(e for e in ret["geom"] if isinstance(e, bmesh.types.BMFace))
+    walls = [f for f in bm.faces
+             if f not in cloth and any(v in moved for v in f.verts)]
+    if not walls or len(cloth) != len(lifted):
+        raise AssertionError(
+            "extrude_face_region gave %d cap faces (%d lifted), %d verts and %d "
+            "walls: the wrap would not be a closed shell"
+            % (len(cloth), len(lifted), len(moved), len(walls)))
+    # AND THE FACE UNDER THE CLOTH GOES WITH IT: the extrusion leaves the original
+    # faces behind as an inner shell, and an inner shell is 1,200 triangles nobody
+    # will ever see. The walls already close the hole it leaves.
+    bmesh.ops.delete(bm, geom=lifted, context='FACES')
+
+    # Flatten the sockets before the lift (the rim is pinned: it is shared with the
+    # walls, and moving it would tear the cloth away from its own edge).
+    rim = set(v for f in walls for v in f.verts) & moved
+    interior = [v for v in moved if v not in rim]
+    for _ in range(band["smooth"]):
+        bmesh.ops.smooth_vert(bm, verts=interior, factor=0.5,
+                              use_axis_x=True, use_axis_y=True, use_axis_z=True)
+    # A HEM, because a face-by-face selection leaves a sawtooth edge and sawtooth
+    # cloth reads as TORN. The rim is pulled onto the band's own top and bottom
+    # lines, which is where the wrap says its edge is; the walls just slant a few
+    # millimetres to meet the skin where it actually is. The arc's two ENDS are rim
+    # too and are left alone — snapping them would collapse the end into a point.
+    middle = (top + bottom) / 2.0
+    for v in rim:
+        if abs(abs(bearing(v.co)) - half) < 0.10:
+            continue
+        v.co.z = top if v.co.z > middle else bottom
+    for v in moved:
+        out = Vector((v.co.x - axis.x, v.co.y - axis.y, 0.0))
+        if out.length > 1e-6:
+            v.co += out.normalized() * thickness
+
+    # The rims and the knots have no UVs of their own — the extrusion copies the
+    # boundary loop's and `create_cube` writes none at all — and `bake_albedo` bakes
+    # THROUGH the UVs, so an unset one samples whatever is at (0, 0). Each is given a
+    # coordinate from the cloth beside it: the rim from its own lifted corners, the
+    # knot from the wrap's end at the same height. Overlapping the cloth's island is
+    # exactly what is wanted here — they are the same cloth.
+    uv_of = {}
+    for f in cloth:
+        for loop in f.loops:
+            uv_of.setdefault(loop.vert, loop[uv_layer].uv.copy())
+    for f in walls:
+        inside = [uv_of[v] for v in f.verts if v in uv_of]
+        fallback = sum(inside, Vector((0.0, 0.0))) / len(inside)
+        for loop in f.loops:
+            loop[uv_layer].uv = uv_of.get(loop.vert, fallback)
+
+    knots = []
+    for side in (-1.0, 1.0):
+        ends = [v for v in moved if abs(bearing(v.co) - side * half) < 0.12]
+        if not ends:
+            continue
+        centre = sum((v.co for v in ends), Vector()) / len(ends)
+        out = Vector((math.sin(side * half), math.cos(side * half), 0.0))
+        tangent = Vector((out.y, -out.x, 0.0))
+        w, d, h = band["knot"]
+        placed = centre + out * (thickness * 0.25)
+        matrix = Matrix(((tangent.x * w, out.x * d, 0.0, placed.x),
+                         (tangent.y * w, out.y * d, 0.0, placed.y),
+                         (0.0, 0.0, h, placed.z),
+                         (0.0, 0.0, 0.0, 1.0)))
+        made = bmesh.ops.create_cube(bm, size=1.0, matrix=matrix)
+        box = set(e for e in made["verts"] if isinstance(e, bmesh.types.BMVert))
+        moved |= box
+        for f in bm.faces:
+            if f in knots or not all(v in box for v in f.verts):
+                continue
+            knots.append(f)
+            for loop in f.loops:
+                near = min(ends, key=lambda e: abs(e.co.z - loop.vert.co.z))
+                loop[uv_layer].uv = uv_of[near]
+    log("band: %d cloth faces, %d rim faces, %d knot faces, %d verts"
+        % (len(cloth), len(walls), len(knots), len(moved)))
+
+    for f in bm.faces:
+        f.smooth = True
+    for f in walls + knots:
+        f.smooth = False
+    bm.verts.index_update()
+    bm.faces.index_update()
+    band_verts = frozenset(v.index for v in moved)
+    flat_faces = frozenset(f.index for f in walls + knots)
+    bm.to_mesh(me)
+    bm.free()
+    me.update()
+    return band_verts, flat_faces
+
+
+def paint(obj, eye_z, cfg, band_verts=frozenset()):
     """The hero's face, as regions of ITS OWN generator palette.
 
-    THE EYEWEAR IS COLOUR AND NOT GEOMETRY, deliberately: today's head is a sphere
-    with no eye sockets, so Windman's blindfold had to stand proud of the skull to
-    cover anything and Primm's visor was a box slab in front of one. A real face has
-    sockets, and a band pushed out over them would swallow the EARS — which are the
-    whole reason this bead exists ("a face with ears"). `cfg["stripes"]` is that band,
-    top-down in metres about the eye landmark; first match wins.
+    THE EYEWEAR'S COLOURS ARE ALWAYS `cfg["stripes"]`, top-down in metres about the
+    eye landmark; WHAT WEARS THEM depends on the row. Primm's goggles are paint on the
+    skin, first match wins. Windman's bandage is the cloth `wrap_band` already lifted
+    off the face — `band_verts` — and the skin it was lifted from is painted skin, so
+    nothing is striped twice. (Until 2026-09-11 this file argued that eyewear had to
+    be colour and never geometry, because a band pushed proud of a real face's sockets
+    would swallow the ears; the owner overruled it that day and `wrap_band`'s arc is
+    how the ears survive.)
 
     THE HAIR IS BOTH: colour plus a small outward lift of the scalp, because a short
     haircut has a silhouette and a painted skull does not. The lift stops well above
@@ -449,16 +650,28 @@ def paint(obj, eye_z, cfg):
     hair_nape = cfg["hair_nape"]
     lip_z = eye_z - 0.088
     half_depth = max(abs(v.co.y) for v in me.vertices)
+    # Where the two turns of cloth meet: the top stripe's lower edge.
+    seam_z = eye_z + stripes[0][0]
 
-    def region(co):
+    def region(i, co):
+        if i in band_verts:
+            if abs(co.z - seam_z) <= SEAM_HALF:
+                return "seam"
+            # Top-down, and clamped at both ends: the lift and the knots put cloth
+            # slightly outside the stripe range it was cut from.
+            for j, (low, _high, _colour) in enumerate(stripes):
+                if co.z >= eye_z + low:
+                    return j
+            return len(stripes) - 1
         # The hairline sits lower at the BACK than at the brow — a haircut, not a cap.
         depth = co.y / max(half_depth, 1e-6)          # +1 nose, -1 nape
         hair_z = hair_front - hair_nape * max(0.0, -depth)
         if co.z >= hair_z:
             return "hair"
-        for i, (low, high, _colour) in enumerate(stripes):
-            if eye_z + low <= co.z <= eye_z + high:
-                return i
+        if not band_verts:
+            for j, (low, high, _colour) in enumerate(stripes):
+                if eye_z + low <= co.z <= eye_z + high:
+                    return j
         if lip_z - 0.016 <= co.z <= lip_z + 0.012 and depth > 0.55:
             return "lips"
         return "skin"
@@ -467,7 +680,8 @@ def paint(obj, eye_z, cfg):
                "skin": palette["skin"]}
     for i, (_low, _high, colour) in enumerate(stripes):
         colours[i] = colour
-    per_vert = [region(v.co) for v in me.vertices]
+    colours["seam"] = tuple(c * SEAM_DARKEN for c in stripes[-1][2][:3]) + (1.0,)
+    per_vert = [region(i, v.co) for i, v in enumerate(me.vertices)]
 
     # The hair shell. Lift along the vertex normal so the volume follows the skull;
     # taper it at the hairline so there is no step where hair meets forehead.
@@ -553,12 +767,15 @@ def bake_albedo(obj, hero):
     return img
 
 
-def export(obj, path, flat):
+def export(obj, path, flat, sharp=frozenset()):
+    """`sharp` is `wrap_band`'s rims and knots: the ONE place a smooth-shaded head
+    keeps flat faces, because a cloth edge that shades smoothly into the cheek is the
+    painted band again with extra steps."""
     for o in bpy.data.objects:
         o.select_set(o is obj)
     bpy.context.view_layer.objects.active = obj
     for poly in obj.data.polygons:
-        poly.use_smooth = not flat
+        poly.use_smooth = not flat and poly.index not in sharp
     obj.data.update()
     bpy.ops.export_scene.gltf(
         filepath=path,
@@ -631,14 +848,16 @@ def main():
         raise AssertionError("head is facing backwards: eye y=%.4f" % eye_y)
 
     decimate(obj, TRIS_SMOOTH)
-    paint(obj, eye_z, cfg)
+    # After the decimate, or the collapse would eat the wrap's rims.
+    band_verts, flat_faces = wrap_band(obj, eye_z, cfg)
+    paint(obj, eye_z, cfg, band_verts)
 
     img = bake_albedo(obj, hero)
     # Variant A's colour comes from the texture; leaving COLOR_0 on would multiply
     # the two and darken the whole head.
     while obj.data.color_attributes:
         obj.data.color_attributes.remove(obj.data.color_attributes[0])
-    export(obj, out_glb, flat=False)
+    export(obj, out_glb, flat=False, sharp=flat_faces)
 
     # THE SIDECAR, written HERE and not by the exporter, and AFTER the export on
     # purpose: `export_format='GLB'` EMBEDS the albedo, and giving the image a
