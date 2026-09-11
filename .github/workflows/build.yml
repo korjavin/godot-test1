@@ -505,8 +505,8 @@ jobs:
       # the dirty check. Folding them into predator_parts.py's loop instead would
       # have made `python3 scripts/predator_parts.py` — the documented way to
       # rebuild the PREDATORS — hard-fail for anyone without shapely.
-      # The Windman head is authored and the generator no longer writes it, so
-      # the dirty check passes it by construction.
+      # The Windman and Primm heads are authored and their generators no longer
+      # write them, so the dirty check passes them by construction.
       - name: 🦸 Rebuild every hero model
         run: |
           for hero in windman primm teibi phoboman; do

@@ -1,6 +1,6 @@
 [gd_scene load_steps=12 format=3 uid="uid://c8primm001"]
 
-[ext_resource type="PackedScene" path="res://assets/models/characters/primm_parts/primm_head.glb" id="1_head"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/primm_parts/primm_head_authored.glb" id="1_head"]
 [ext_resource type="PackedScene" path="res://assets/models/characters/primm_parts/primm_torso.glb" id="2_torso"]
 [ext_resource type="PackedScene" path="res://assets/models/characters/primm_parts/primm_left_upper_arm.glb" id="3_left_upper_arm"]
 [ext_resource type="PackedScene" path="res://assets/models/characters/primm_parts/primm_left_lower_arm.glb" id="4_left_lower_arm"]

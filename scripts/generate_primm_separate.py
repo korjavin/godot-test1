@@ -8,7 +8,9 @@ chest (`extrude_polygon` wants the polygon from one and the triangulation from t
 other, and without the second it raises "No available triangulation engine!").
     pip install -r scripts/requirements.txt
 
-Each limb is exported as its own GLB file. `scenes/characters/primm.tscn`
+Each limb is exported as its own GLB file. The head is authored
+(`primm_head_authored.glb`, see `assets/models/characters/PROVENANCE.md`), the
+generator emits the other nine parts. `scenes/characters/primm.tscn`
 assembles them under a `Body` node whose `LeftArm` / `RightArm` / `LeftLeg` /
 `RightLeg` containers are rotated at run time by the procedural walk/idle/jump
 animation in `scripts/player_controller.gd`.
@@ -21,14 +23,14 @@ COORDINATE CONVENTIONS (do not break these — the rig depends on them):
     the limb extending toward **-Z** (downward / away from the joint), because the
     scene parents the next segment at a fixed downward offset (elbow at -0.27,
     knee at -0.37) and the animation rotates the container around that origin.
-  Keep those pivots and spans intact; everything else (girth, colour, the visor,
-  hair, coat, cyan pattern, coat tails) is cosmetic and free to change.
+  Keep those pivots and spans intact; everything else (girth, colour, coat,
+  cyan pattern, coat tails) is cosmetic and free to change.
 
 Design target (Crime Kickers canon + reference art, 2026-06):
   * slim, lean, athletic young man (~1.8 m);
-  * short swept DARK BROWN hair;
-  * sleek SILVER/GREY TECH VISOR band across the eyes (pale blue lens) — NOT
-    ordinary round glasses;
+  * short swept DARK BROWN hair;                      (head: authored, not here)
+  * sleek SILVER/GREY TECH VISOR band across the eyes (head: authored, not here)
+    (pale blue lens) — NOT ordinary round glasses;
   * long open PURPLE/VIOLET trench coat with a high collar, worn open so the
     chest shows; coat tails hang past the hips toward knee level;
   * black inner shirt with a glowing CYAN/TEAL branching circuit / leaf-vein
@@ -133,72 +135,6 @@ class PrimmSeparateMeshGenerator:
         return trimesh.util.concatenate(emblems)
 
     # -------------------------------------------------------------------- parts
-    def create_head_assembly(self):
-        """Head + short swept dark-brown hair + sleek silver tech visor band."""
-        meshes = []
-
-        # Slightly elongated face (taller in Z, a touch narrower in X).
-        head = icosphere(subdivisions=3, radius=0.115)
-        head.apply_scale([0.96, 1.0, 1.12])
-        head.visual.vertex_colors = self.colors['skin']
-        meshes.append(head)
-
-        # Short swept hair: a flattened cap that sweeps back, plus a small front
-        # fringe tuft so it reads as "short swept brown hair", not a helmet.
-        hair_cap = icosphere(subdivisions=2, radius=0.122)
-        hair_cap.apply_scale([1.0, 1.02, 0.62])
-        hair_cap.apply_translation([0, -0.012, 0.082])
-        hair_cap.visual.vertex_colors = self.colors['hair']
-        meshes.append(hair_cap)
-
-        # Side / back hair sweep (covers above the ears and the nape lightly).
-        for (tx, ty, tz, sx, sy, sz) in [
-            (0.0,  -0.060, 0.060, 1.06, 0.85, 0.70),   # back sweep
-            (-0.085, 0.02, 0.060, 0.55, 0.85, 0.70),   # left side
-            (0.085,  0.02, 0.060, 0.55, 0.85, 0.70),   # right side
-        ]:
-            sweep = icosphere(subdivisions=2, radius=0.072)
-            sweep.apply_scale([sx, sy, sz])
-            sweep.apply_translation([tx, ty, tz])
-            sweep.visual.vertex_colors = self.colors['hair']
-            meshes.append(sweep)
-
-        # Front fringe tufts swept across the forehead (small, slightly forward).
-        for (tx, ty, tz, s) in [
-            (-0.04, 0.075, 0.085, 1.0), (0.02, 0.085, 0.080, 0.9),
-            (0.06, 0.075, 0.070, 0.8),
-        ]:
-            tuft = icosphere(subdivisions=1, radius=0.030 * s)
-            tuft.apply_scale([1.2, 1.0, 0.9])
-            tuft.apply_translation([tx, ty, tz])
-            tuft.visual.vertex_colors = self.colors['hair']
-            meshes.append(tuft)
-
-        # ---- Tech visor band across the eyes (the defining feature) ----
-        # A sleek silver frame band wrapping the upper face at eye level, with a
-        # slightly proud pale-blue lens on the front. Sits ON the face (front +Y),
-        # not a full wrap, so it reads as a sci-fi visor rather than a blindfold.
-        frame = box(extents=[0.215, 0.090, 0.052])
-        frame.apply_translation([0, 0.062, 0.022])
-        frame.visual.vertex_colors = self.colors['visor_frame']
-        meshes.append(frame)
-
-        # Pale blue lens slab, proud of the frame on +Y (made prominent so the
-        # sci-fi visor is unmistakable at a glance).
-        lens = box(extents=[0.198, 0.044, 0.048])
-        lens.apply_translation([0, 0.106, 0.022])
-        lens.visual.vertex_colors = self.colors['visor_lens']
-        meshes.append(lens)
-
-        # Small temple arms running back along the sides toward the ears.
-        for sx in (-1.0, 1.0):
-            temple = box(extents=[0.022, 0.110, 0.018])
-            temple.apply_translation([sx * 0.100, 0.015, 0.030])
-            temple.visual.vertex_colors = self.colors['visor_frame']
-            meshes.append(temple)
-
-        return trimesh.util.concatenate(meshes)
-
     def create_torso_assembly(self):
         """Slim torso: open purple coat with high collar over a black cyan-circuit
         shirt + belt at the waist + short coat tails hanging past the hips."""
@@ -415,7 +351,6 @@ class PrimmSeparateMeshGenerator:
         print("Generating Primm separate mesh parts...")
 
         parts = {
-            'head': self.create_head_assembly(),
             'torso': self.create_torso_assembly(),
             'left_upper_arm': self.create_upper_arm(),
             'left_lower_arm': self.create_lower_arm(),
