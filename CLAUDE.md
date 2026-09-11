@@ -199,6 +199,10 @@ gameplay input goes through named actions.
 ### Player and camera
 No `AnimationPlayer`: limbs are found **by exact name** (`Body`, `LeftArm`, `RightArm`,
 `LeftLeg`, `RightLeg`, optional `Head`) and driven by sine waves in `player_animation.gd`.
+The rig kind is the SCENE: `hero_rig.gd` hands a hero carrying a `Skeleton3D` (found by
+type) to `hero_rig_skeleton.gd`, which writes the same sines as bone rotations with the
+bobble on the head bone, and anything else to `hero_rig_limbs.gd` unchanged — local and
+remote bind the same driver and `rig.measure()` is how the self-checks read either.
 `CameraArm` is a `SpringArm3D` and overwrites its children's position — use
 `h_offset`/`v_offset` or move the arm. Transient ability state is cleared on respawn,
 character switch and leaving the HQ. Abilities live in `player_abilities.gd`, dispatched

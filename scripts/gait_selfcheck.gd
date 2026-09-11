@@ -24,6 +24,14 @@ extends SceneTree
 ## So the pose is MEASURED: driven on a real `scenes/player.tscn`, through the
 ## shipped `animate_walking()`, over a 60 s sweep per hero.
 ##
+## SINCE bd godot-test1-5u3.2 every one of those measurements is read through
+## ONE accessor, `player.anim.rig.measure()`, instead of off four limb nodes —
+## because a hero is no longer always five nodes. That bought check 8, which
+## runs the same bounds, the same non-periodicity test and a determinism probe
+## against the spike's SKINNED Teibi (`scenes/characters/teibi_skinned.tscn`),
+## a model with no `LeftArm` at all. The four heroes in `CHARACTERS` are still
+## on the limb rig and checks 1-7 still measure exactly what they measured.
+##
 ## Deliberately NOT localized (a debug surface, per CLAUDE.md).
 
 const PLAYER_SCENE: String = "res://scenes/player.tscn"
@@ -98,6 +106,28 @@ const STRAFE_EPS_DEG: float = 1.0
 ## every real spread.
 const PERSONALITY_SPREAD: float = 1.1
 
+## CHECK 8's FIXTURE (bd godot-test1-5u3.2) — the spike's skinned Teibi, which
+## is deliberately NOT in `CHARACTERS`: no hero ships skinned yet, and the four
+## that do must stay on the limb driver. This scene is the only skinned model in
+## the repo, so it is the only thing that can prove the bone driver at all.
+const SKINNED_FIXTURE: String = "res://scenes/characters/teibi_skinned.tscn"
+## Teibi's row asks for no head bobble, and an axis nothing measures is an axis
+## that can be deleted in silence — so the fixture runs his row with this forced
+## in. Well under `HEAD_LIMIT_DEG`, well over `SKINNED_MOVE_DEG`.
+const FIXTURE_HEAD_DEG: float = 5.0
+## How far an axis the driver claims must move before we believe it is written,
+## and how wide the stride must be open before "which way is this limb going"
+## means anything. Same reasoning and the same number as `HITCH_EPS_DEG`.
+const SKINNED_MOVE_DEG: float = 1.0
+## The fixture's sweep. Shorter than `SWEEP_SECONDS` because a bone pose costs
+## a basis conjugation per axis where a node pose costs a float store, and 20 s
+## at 240 Hz is still ~16 stride periods of Teibi's slow row at both speeds —
+## far more than enough for the envelope and the diagonal.
+const SKINNED_SWEEP_SECONDS: float = 20.0
+## An arbitrary clock the determinism probe asks twice about — arbitrary on
+## purpose: a round number could land on a sine zero and compare two rest poses.
+const SKINNED_PROBE_TIME: float = 12.34
+
 var _failures: Array[String] = []
 
 
@@ -134,6 +164,7 @@ func _run() -> void:
 		Sentinel.done("personality")
 		Sentinel.done("footsteps")
 		Sentinel.done("sidestep")
+		Sentinel.done("skinned")
 		_report()
 		return
 
@@ -144,15 +175,17 @@ func _run() -> void:
 	await process_frame
 	await physics_frame
 
-	if player.anim.left_arm == null or player.anim.character_body == null:
-		_fail("player.tscn produced no limb references — the Body/LeftArm/... "
-				+ "node-name contract is broken, and no pose below could be measured")
+	if player.anim.rig == null or player.anim.character_body == null:
+		_fail("player.tscn bound no pose rig — the Body/LeftArm/... node-name "
+				+ "contract is broken (or no Skeleton3D took its place), and no "
+				+ "pose below could be measured")
 		Sentinel.done("bounds")
 		Sentinel.done("expression")
 		Sentinel.done("relax")
 		Sentinel.done("personality")
 		Sentinel.done("footsteps")
 		Sentinel.done("sidestep")
+		Sentinel.done("skinned")
 		player.queue_free()
 		_report()
 		return
@@ -162,6 +195,7 @@ func _run() -> void:
 	_check_personality(player)
 	_check_footsteps(player)
 	_check_sidestep(player)
+	_check_skinned(player)
 
 	player.queue_free()
 	await process_frame
@@ -248,9 +282,6 @@ func _check_bounds(player: Node3D) -> void:
 	for index: int in PlayerController.CHARACTERS.size():
 		var hero: String = String(PlayerController.CHARACTERS[index]["name"])
 		player.set_active_character(index)
-		var head_rest: float = 0.0
-		if player.anim.character_head and player.anim.original_rotations.has("head"):
-			head_rest = float(player.anim.original_rotations["head"].z)
 
 		# The widest excursion each of the row's own axes actually reached, for
 		# the "a declared field reaches the pose" assertion below.
@@ -266,33 +297,35 @@ func _check_bounds(player: Node3D) -> void:
 			for i: int in samples:
 				player.anim.animation_time = float(i) * step
 				player.anim.animate_walking(step, multiplier)
+				# THE ONE ACCESSOR (bd godot-test1-5u3.2). `rig.measure()` answers
+				# every animated angle OFF REST in radians, `body_y` in metres,
+				# and omits `head_z` on a model with no head — for EITHER rig
+				# kind, which is what lets check 8 below re-use these same bounds
+				# on a skinned hero that has no limb nodes at all. Off rest
+				# rather than absolute costs this check nothing: every shipped
+				# hero's four limbs rest at rotation.x = 0.
+				var m: Dictionary = player.anim.rig.measure()
 				for key: String in ["left_arm", "right_arm", "left_leg", "right_leg"]:
-					var limb: Node3D = player.anim.get(key)
-					if limb == null:
-						continue
-					if not is_finite(limb.rotation.x):
+					var swing: float = float(m[key + "_x"])
+					if not is_finite(swing):
 						bad_finite = true
 						continue
-					worst_limb = maxf(worst_limb, absf(limb.rotation.x))
+					worst_limb = maxf(worst_limb, absf(swing))
 					if key == "left_arm" or key == "right_arm":
-						reach[key] = maxf(float(reach[key]), absf(
-								limb.rotation.x - float(player.anim.original_rotations[key].x)))
-				var body: Node3D = player.anim.character_body
-				if not is_finite(body.position.y) or not is_finite(body.rotation.z) \
-						or not is_finite(body.rotation.x):
+						reach[key] = maxf(float(reach[key]), absf(swing))
+				if not is_finite(float(m["body_y"])) or not is_finite(float(m["body_z"])) \
+						or not is_finite(float(m["body_x"])):
 					bad_finite = true
 				else:
-					worst_y_lo = minf(worst_y_lo, body.position.y)
-					worst_y_hi = maxf(worst_y_hi, body.position.y)
-					var body_rest: Vector3 = player.anim.original_rotations["body"]
-					reach["sway"] = maxf(float(reach["sway"]), absf(body.rotation.z - body_rest.z))
-					reach["lean"] = maxf(float(reach["lean"]), absf(body.rotation.x - body_rest.x))
-				if player.anim.character_head:
-					if not is_finite(player.anim.character_head.rotation.z):
+					worst_y_lo = minf(worst_y_lo, float(m["body_y"]))
+					worst_y_hi = maxf(worst_y_hi, float(m["body_y"]))
+					reach["sway"] = maxf(float(reach["sway"]), absf(float(m["body_z"])))
+					reach["lean"] = maxf(float(reach["lean"]), absf(float(m["body_x"])))
+				if m.has("head_z"):
+					if not is_finite(float(m["head_z"])):
 						bad_finite = true
 					else:
-						worst_head = maxf(worst_head,
-								absf(player.anim.character_head.rotation.z - head_rest))
+						worst_head = maxf(worst_head, absf(float(m["head_z"])))
 						reach["head"] = maxf(float(reach["head"]), worst_head)
 
 			var tag: String = "%s @ x%.1f" % [hero, multiplier]
@@ -321,8 +354,8 @@ func _check_bounds(player: Node3D) -> void:
 			var want: float = float(wants[axis])
 			if want <= 0.0:
 				continue
-			if axis == "head" and player.anim.character_head == null:
-				continue  # optional node, per the row's own docs
+			if axis == "head" and not player.anim.rig.measure().has("head_z"):
+				continue  # optional node (or bone), per the row's own docs
 			if float(reach[axis]) < deg_to_rad(want) * 0.5:
 				_fail("%s: the row asks for %.1f deg of '%s' but the pose never moved "
 						% [hero, want, axis] + "that axis more than %.2f deg off rest"
@@ -342,8 +375,9 @@ func _check_bounds(player: Node3D) -> void:
 		for far: float in [1.0e5, 1.0e6]:
 			player.anim.animation_time = far
 			player.anim.animate_walking(step, 1.0)
-			if not is_finite(player.anim.left_leg.rotation.x) \
-					or not is_finite(player.anim.character_body.position.y):
+			var far_pose: Dictionary = player.anim.rig.measure()
+			if not is_finite(float(far_pose["left_leg_x"])) \
+					or not is_finite(float(far_pose["body_y"])):
 				_fail("%s: the pose went non-finite at animation_time = %.0f s" % [hero, far])
 
 	Sentinel.done("bounds")
@@ -404,30 +438,27 @@ func _check_relax(player: Node3D) -> void:
 		player.anim.animate_walking(step, 1.0)
 		player.step_direction = 1.0
 		player.anim.animate_sidestep(step)
-		var body_rest: Vector3 = player.anim.original_rotations["body"]
-		if absf(player.anim.character_body.rotation.x - body_rest.x) > 1e-6:
+		var after: Dictionary = player.anim.rig.measure()
+		if absf(float(after["body_x"])) > 1e-6:
 			_fail("%s: a sidestep straight out of a walk left the body pitched %.4f rad "
-					% [hero, absf(player.anim.character_body.rotation.x - body_rest.x)]
+					% [hero, absf(float(after["body_x"]))]
 					+ "off rest — the gait's lean is stuck on")
-		if player.anim.character_head and player.anim.original_rotations.has("head"):
-			var head_rest: float = float(player.anim.original_rotations["head"].z)
-			if absf(player.anim.character_head.rotation.z - head_rest) > 1e-6:
-				_fail("%s: a sidestep straight out of a walk left the head %.4f rad off "
-						% [hero, absf(player.anim.character_head.rotation.z - head_rest)]
-						+ "rest — the gait's bobble is stuck on")
+		if after.has("head_z") and absf(float(after["head_z"])) > 1e-6:
+			_fail("%s: a sidestep straight out of a walk left the head %.4f rad off "
+					% [hero, absf(float(after["head_z"]))]
+					+ "rest — the gait's bobble is stuck on")
 		player.step_direction = 0.0
 
 	Sentinel.done("relax")
 
 
 func _off_rest(player: Node3D) -> float:
-	"""How far the three gait-only axes are from rest, in radians (the worst one)."""
-	var body_rest: Vector3 = player.anim.original_rotations["body"]
-	var worst: float = maxf(absf(player.anim.character_body.rotation.x - body_rest.x),
-			absf(player.anim.character_body.rotation.z - body_rest.z))
-	if player.anim.character_head and player.anim.original_rotations.has("head"):
-		worst = maxf(worst, absf(
-				player.anim.character_head.rotation.z - float(player.anim.original_rotations["head"].z)))
+	"""How far the three gait-only axes are from rest, in radians (the worst one).
+	`measure()` already answers off rest, so this is just the worst of three."""
+	var m: Dictionary = player.anim.rig.measure()
+	var worst: float = maxf(absf(float(m["body_x"])), absf(float(m["body_z"])))
+	if m.has("head_z"):
+		worst = maxf(worst, absf(float(m["head_z"])))
 	return worst
 
 
@@ -488,19 +519,24 @@ func _check_personality(player: Node3D) -> void:
 
 func _pose(player: Node3D) -> Array[float]:
 	"""Every animated angle of the current pose, for comparing two moments."""
+	return _pose_of(player.anim)
+
+
+func _pose_of(anim) -> Array[float]:
+	"""The same array off ANY bound rig — the local player's or check 8's
+	fixture — which is the whole point of routing the read through `measure()`.
+
+	The bob is metres and everything else radians; it rides the same array
+	because the assertion is "these two moments are not the same pose", and a
+	0.03 m bob is well above the epsilon either way.
+	"""
+	var m: Dictionary = anim.rig.measure()
 	var out: Array[float] = []
-	for key: String in ["left_arm", "right_arm", "left_leg", "right_leg"]:
-		var limb: Node3D = player.anim.get(key)
-		out.append(0.0 if limb == null else limb.rotation.x)
-	var body: Node3D = player.anim.character_body
-	# The bob is metres and everything else radians; it rides the same array
-	# because the assertion is "these two moments are not the same pose", and a
-	# 0.03 m bob is well above the epsilon either way.
-	out.append(body.position.y)
-	out.append(body.rotation.z)
-	out.append(body.rotation.x)
-	if player.anim.character_head:
-		out.append(player.anim.character_head.rotation.z)
+	for key: String in ["left_arm_x", "right_arm_x", "left_leg_x", "right_leg_x",
+			"body_y", "body_z", "body_x"]:
+		out.append(float(m[key]))
+	if m.has("head_z"):
+		out.append(float(m["head_z"]))
 	return out
 
 
@@ -723,7 +759,8 @@ func _check_sidestep(player: Node3D) -> void:
 			var s_max: float = -INF
 			for i: int in frames:
 				anim.sidestep_pose(0.0, direction)
-				var s_gap: float = anim.left_leg.rotation.z - anim.right_leg.rotation.z
+				var frozen: Dictionary = anim.rig.measure()
+				var s_gap: float = float(frozen["left_leg_z"]) - float(frozen["right_leg_z"])
 				s_min = minf(s_min, s_gap)
 				s_max = maxf(s_max, s_gap)
 			if s_min < -eps and s_max > eps:
@@ -754,11 +791,9 @@ func _check_sidestep(player: Node3D) -> void:
 		player.velocity = Vector3(0.0, 0.0, STRAFE_SPEED)
 		anim.animate_sidestep(step)
 		anim.reset_sidestep_pose()
+		var released: Dictionary = anim.rig.measure()
 		for key: String in ["left_arm", "right_arm", "left_leg", "right_leg"]:
-			var limb: Node3D = anim.get(key)
-			if limb == null:
-				continue
-			var off: float = absf(limb.rotation.z - float(anim.original_rotations[key].z))
+			var off: float = absf(float(released[key + "_z"]))
 			if off > 1e-6:
 				_fail("%s: releasing the strafe left %s rolled %.5f rad off rest"
 						% [hero, key, off])
@@ -820,13 +855,14 @@ func _strafe_sweep(anim, direction: float, speed: float, step: float,
 	for i: int in frames:
 		anim.player.velocity = Vector3(0.0, 0.0, speed)
 		anim.animate_sidestep(step)
-		var leg: float = anim.left_leg.rotation.z - anim.right_leg.rotation.z
+		var m: Dictionary = anim.rig.measure()
+		var leg: float = float(m["left_leg_z"]) - float(m["right_leg_z"])
 		out["leg_min"] = minf(float(out["leg_min"]), leg)
 		out["leg_max"] = maxf(float(out["leg_max"]), leg)
-		var arm: float = anim.left_arm.rotation.z - anim.right_arm.rotation.z
+		var arm: float = float(m["left_arm_z"]) - float(m["right_arm_z"])
 		out["arm_min"] = minf(float(out["arm_min"]), arm)
 		out["arm_max"] = maxf(float(out["arm_max"]), arm)
-		out["bob"] = maxf(float(out["bob"]), absf(anim.character_body.position.y))
+		out["bob"] = maxf(float(out["bob"]), absf(float(m["body_y"])))
 		var now: int = int(anim._last_sidestep_sine_sign)
 		if last_sign != 0 and now != last_sign:
 			out["flips"] = float(out["flips"]) + 1.0
@@ -846,6 +882,194 @@ func _strafe_pose(anim, direction: float, speed: float, step: float,
 		anim.animate_sidestep(step)
 	anim.player.step_direction = 0.0
 	anim.player.velocity = Vector3.ZERO
-	return [anim.left_leg.rotation.z, anim.right_leg.rotation.z,
-			anim.left_arm.rotation.z, anim.right_arm.rotation.z,
-			anim.character_body.position.y]
+	var m: Dictionary = anim.rig.measure()
+	return [float(m["left_leg_z"]), float(m["right_leg_z"]),
+			float(m["left_arm_z"]), float(m["right_arm_z"]),
+			float(m["body_y"])]
+
+
+# ============================================================================
+# CHECK 8 — THE SKINNED RIG DRAWS THE SAME WALK (bd godot-test1-5u3.2)
+# ============================================================================
+
+func _check_skinned(player: Node3D) -> void:
+	"""
+	The seam's own subject: a hero with NO limb nodes at all, posed on BONES.
+
+	NO SHIPPED HERO IS SKINNED YET — that is the next bead (`5u3.3`), and half
+	the point of this one is that the four in `CHARACTERS` stay byte-for-byte on
+	the limb driver. So the fixture is the spike's `teibi_skinned.tscn`, driven
+	through a SECOND `PlayerAnimation` pointed at it for the length of this
+	function: `CHARACTERS` is a const and must stay one.
+
+	Six assertions, every one of them through `rig.measure()` and therefore
+	against the very same bounds checks 2 and 4 hold the limb heroes to:
+
+	  (a) the scene really took the skinned driver — the capability flag works,
+	      and it is the SCENE that flipped it;
+	  (b) the pose stays inside the bead's envelope over the same sweep, walking
+	      and running, and never goes non-finite;
+	  (c) THE DIAGONAL HOLDS: the left leg goes back while the left arm swings
+	      forward, and the two legs are opposed. This is the one thing a flipped
+	      bone write breaks while every bound above still passes — a sign error
+	      is the failure mode a conjugated rotation invites, so it is measured
+	      rather than eyeballed (the PR's first mutation control);
+	  (d) the pose does not repeat at the stride period — the hitch reaches the
+	      bones, exactly as check 4 asserts it reaches the nodes;
+	  (e) THE SAME PHASE GIVES THE SAME POSE, with a `rest_pose()` in between.
+	      That is the multiplayer contract as a measurement: a remote mirror
+	      re-derives the pose from its own phase and nothing else, so a driver
+	      carrying hidden state between frames would diverge on every peer;
+	  (f) every axis the driver claims actually MOVES, the head bone included.
+	      Teibi's row has `head_deg` 0, so the fixture runs his row with the
+	      bobble forced on — an unmeasured write is a write that can be deleted
+	      in silence (the PR's second mutation control).
+	"""
+	var packed: PackedScene = load(SKINNED_FIXTURE)
+	if packed == null:
+		_fail("could not load %s — the skinned driver has no fixture to prove "
+				% SKINNED_FIXTURE + "itself on, so nothing below ran")
+		Sentinel.done("skinned")
+		return
+	var fixture: Node3D = packed.instantiate()
+	root.add_child(fixture)
+
+	var anim: PlayerAnimation = PlayerAnimation.new()
+	anim.player = player
+	# `setup_animation_references()` reads the player's CURRENT character node;
+	# borrow it for one call and hand it straight back, so the four heroes above
+	# are left exactly as check 6 left them.
+	var saved: Node = player.current_character_node
+	player.current_character_node = fixture
+	anim.original_rotations = {"body": (fixture.get_node("Body") as Node3D).rotation}
+	anim.setup_animation_references()
+	player.current_character_node = saved
+
+	# (a) THE CAPABILITY FLAG.
+	if anim.rig == null or String(anim.rig.kind()) != "skinned":
+		_fail("%s bound the '%s' rig — a scene carrying a Skeleton3D must take "
+				% [SKINNED_FIXTURE, "none" if anim.rig == null else anim.rig.kind()]
+				+ "the skinned driver, and nothing else in this check could run")
+		fixture.queue_free()
+		Sentinel.done("skinned")
+		return
+
+	anim._gait = PlayerAnimation.gait_for("teibi")
+	anim._gait["head_deg"] = FIXTURE_HEAD_DEG
+
+	var limit: float = deg_to_rad(LIMB_LIMIT_DEG)
+	var head_limit: float = deg_to_rad(HEAD_LIMIT_DEG)
+	var move_eps: float = deg_to_rad(SKINNED_MOVE_DEG)
+	var step: float = 1.0 / SWEEP_HZ
+	var samples: int = int(SKINNED_SWEEP_SECONDS * SWEEP_HZ)
+	var claims: Array[String] = ["left_arm_x", "right_arm_x", "left_leg_x",
+			"right_leg_x", "head_z"]
+	var reach: Dictionary = {}
+	for key: String in claims:
+		reach[key] = 0.0
+
+	var bad_finite: bool = false
+	var worst_limb: float = 0.0
+	var worst_head: float = 0.0
+	var y_lo: float = 0.0
+	var y_hi: float = 0.0
+	var opposed_samples: int = 0
+	var broken_samples: int = 0
+
+	for multiplier: float in [1.0, 1.5]:
+		for i: int in samples:
+			anim.animation_time = float(i) * step
+			anim.animate_walking(step, multiplier)
+			var m: Dictionary = anim.rig.measure()
+			for key: String in claims:
+				if not m.has(key):
+					continue
+				var v: float = float(m[key])
+				if not is_finite(v):
+					bad_finite = true
+					continue
+				reach[key] = maxf(float(reach[key]), absf(v))
+			for key: String in ["left_arm_x", "right_arm_x", "left_leg_x", "right_leg_x"]:
+				worst_limb = maxf(worst_limb, absf(float(m[key])))
+			if m.has("head_z"):
+				worst_head = maxf(worst_head, absf(float(m["head_z"])))
+			if not is_finite(float(m["body_y"])):
+				bad_finite = true
+			else:
+				y_lo = minf(y_lo, float(m["body_y"]))
+				y_hi = maxf(y_hi, float(m["body_y"]))
+
+			# (c) THE DIAGONAL, sampled only where the stride is wide enough for
+			#     "which way" to mean anything — near the crossing both signs
+			#     are noise.
+			var ll: float = float(m["left_leg_x"])
+			var rl: float = float(m["right_leg_x"])
+			var la: float = float(m["left_arm_x"])
+			if absf(ll) > move_eps and absf(rl) > move_eps and absf(la) > move_eps:
+				opposed_samples += 1
+				if signf(ll) == signf(rl) or signf(ll) == signf(la):
+					broken_samples += 1
+
+	if bad_finite:
+		_fail("skinned fixture: a non-finite value appeared in the pose")
+	if worst_limb > limit:
+		_fail("skinned fixture: a limb bone reached %.1f deg off rest — the bound "
+				% rad_to_deg(worst_limb) + "is %.1f" % LIMB_LIMIT_DEG)
+	if y_lo < BODY_Y_MIN or y_hi > BODY_Y_MAX:
+		_fail("skinned fixture: Body.position.y ranged [%.4f, %.4f] — the band is "
+				% [y_lo, y_hi] + "[%.2f, %.2f]" % [BODY_Y_MIN, BODY_Y_MAX])
+	if worst_head > head_limit:
+		_fail("skinned fixture: the head bone bobbled %.1f deg off rest — the "
+				% rad_to_deg(worst_head) + "ceiling is %.1f" % HEAD_LIMIT_DEG)
+	if opposed_samples == 0:
+		_fail("skinned fixture: the stride never opened far enough to test the "
+				+ "diagonal — assertion (c) would have passed vacuously")
+	elif broken_samples > 0:
+		_fail("skinned fixture: %d of %d swung samples had the two legs (or the "
+				% [broken_samples, opposed_samples]
+				+ "left leg and left arm) moving the SAME way — the bone rig's "
+				+ "diagonal opposition is inverted somewhere")
+
+	# (d) NOT A METRONOME, measured exactly as check 4 measures it.
+	var period: float = TAU / float(anim._gait["stride_rate"])
+	var worst_gap: float = 0.0
+	for i: int in int(HITCH_SECONDS / step):
+		var t: float = float(i) * step
+		anim.animation_time = t
+		anim.animate_walking(step, 1.0)
+		var a: Array[float] = _pose_of(anim)
+		anim.animation_time = t + period
+		anim.animate_walking(step, 1.0)
+		var b: Array[float] = _pose_of(anim)
+		for k: int in a.size():
+			worst_gap = maxf(worst_gap, absf(a[k] - b[k]))
+	if worst_gap <= deg_to_rad(HITCH_EPS_DEG):
+		_fail("skinned fixture: the pose one stride period (%.3f s) later differs "
+				% period + "by at most %.3f deg — the hitch is not reaching the bones"
+				% rad_to_deg(worst_gap))
+
+	# (e) DETERMINISM: the same clock, twice, from two different starting poses.
+	anim.animation_time = SKINNED_PROBE_TIME
+	anim.animate_walking(step, 1.0)
+	var first: Dictionary = anim.rig.measure()
+	anim.rig.rest_pose()
+	anim.animation_time = SKINNED_PROBE_TIME
+	anim.animate_walking(step, 1.0)
+	var second: Dictionary = anim.rig.measure()
+	for key: String in first:
+		if absf(float(first[key]) - float(second[key])) > 1e-6:
+			_fail("skinned fixture: '%s' came out %.6f then %.6f at the same clock "
+					% [key, float(first[key]), float(second[key])]
+					+ "— the driver is carrying state between frames, so two peers "
+					+ "drawing the same phase would draw different poses")
+
+	# (f) EVERY CLAIMED AXIS MOVES.
+	for key: String in claims:
+		if float(reach[key]) <= move_eps:
+			_fail("skinned fixture: '%s' never moved more than %.3f deg off rest "
+					% [key, rad_to_deg(float(reach[key]))]
+					+ "over the whole sweep — the driver claims that axis and is "
+					+ "not writing it")
+
+	fixture.queue_free()
+	Sentinel.done("skinned")

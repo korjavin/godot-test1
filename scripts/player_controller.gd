@@ -783,13 +783,13 @@ var character_rest_poses: Array[Dictionary] = []
 # ============================================================================
 
 ## THE ANIMATION SYSTEM, and it lives in `scripts/player_animation.gd`
-## (bd godot-test1-ftn.9). The limb references, `original_rotations`, the
+## (bd godot-test1-ftn.9). The pose rig, `original_rotations`, the
 ## `GAITS` table, the walk/idle/air/sidestep poses and the cel-shading of a
 ## character model all moved there whole; this node keeps movement, capture,
 ## respawn and every contract method the `"player"` group answers.
 ##
 ## A `RefCounted` HOLDING THE PLAYER, not a static library, because the pose
-## IS state — five node references, `original_rotations` and two phase clocks —
+## IS state — the bound pose rig, `original_rotations` and two phase clocks —
 ## and `landmark_builders.gd`'s static-with-an-out-param contract would mean
 ## passing all of it on every frame. It reaches back through `player` for the
 ## things the BODY owns (`is_on_floor()`, the landing squash, the Teibi scale,

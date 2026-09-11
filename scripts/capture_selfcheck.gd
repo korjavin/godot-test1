@@ -1589,15 +1589,20 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	Input.action_press("step_left", 1.0)
 	player_c.update_sidestep(0.016)
 	player_c.anim.update_character_animation(0.016, player_c.get_input_direction())
-	if absf(player_c.anim.left_leg.rotation.z - player_c.anim.original_rotations["left_leg"].z) < 0.01:
+	# THE POSE IS READ THROUGH `rig.measure()` (bd godot-test1-5u3.2), never off a
+	# limb node: `measure()` answers the same angles OFF REST for either rig kind,
+	# so this assertion keeps meaning what it means on a hero whose scene is one
+	# skinned mesh with no `LeftLeg` node to reach for.
+	if absf(float(player_c.anim.rig.measure()["left_leg_z"])) < 0.01:
 		_fail("pure sidestep did not apply lateral leg splay")
 
 	# Add W while holding A — walk animation must take over and reset Z roll
 	Input.action_press("move_forward", 1.0)
 	player_c.update_sidestep(0.016)
 	player_c.anim.update_character_animation(0.016, player_c.get_input_direction())
-	if absf(player_c.anim.left_leg.rotation.z - player_c.anim.original_rotations["left_leg"].z) > 0.001 \
-			or absf(player_c.anim.character_body.rotation.z - player_c.anim.original_rotations["body"].z) > 0.001:
+	var walk_pose: Dictionary = player_c.anim.rig.measure()
+	if absf(float(walk_pose["left_leg_z"])) > 0.001 \
+			or absf(float(walk_pose["body_z"])) > 0.001:
 		_fail("adding W while holding A left sidestep Z roll stuck in walk animation")
 
 	Input.action_release("move_forward")
