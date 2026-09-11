@@ -19,8 +19,8 @@ Source `.blend` files accompanying authored `.glb` models **are committed to git
 |---|---|---|---|---|---|
 | `windman_head_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_head.py`, MakeHuman basemesh + targets | CC0 | 2026-09-06 built, 2026-09-08 shipped | `windman_head_authored.blend` |
 | `windman_head_authored_windman_head_albedo.png` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_head.py`, MakeHuman basemesh + targets | CC0 | 2026-09-06 built, 2026-09-08 shipped | `windman_head_authored.blend` |
-| `primm_parts/primm_head_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_head.py --hero primm`, MakeHuman basemesh + targets | CC0 | 2026-09-11, bead godot-test1-z3e.5 | `primm_parts/primm_head_authored.blend` |
-| `primm_parts/primm_head_authored_primm_head_albedo.png` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_head.py --hero primm`, MakeHuman basemesh + targets | CC0 | 2026-09-11, bead godot-test1-z3e.5 | `primm_parts/primm_head_authored.blend` |
+| `primm_parts/primm_head_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_head.py --hero primm`, MakeHuman basemesh + targets | CC0 | 2026-09-11, beads godot-test1-z3e.5 then z3e.12 (rebuilt: morphed landmarks + Primm's own macro recipe) | `primm_parts/primm_head_authored.blend` |
+| `primm_parts/primm_head_authored_primm_head_albedo.png` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_head.py --hero primm`, MakeHuman basemesh + targets | CC0 | 2026-09-11, beads godot-test1-z3e.5 then z3e.12 (rebuilt: morphed landmarks + Primm's own macro recipe) | `primm_parts/primm_head_authored.blend` |
 | `teibi_parts/teibi_head_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` (bone-weight piece split) | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
 | `teibi_parts/teibi_torso_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
 | `teibi_parts/teibi_left_upper_arm_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
@@ -34,9 +34,11 @@ Source `.blend` files accompanying authored `.glb` models **are committed to git
 | `teibi_parts/teibi_uncut_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
 
 Each authored head's 512x512 albedo is EMBEDDED in its `.glb` — that is the copy Godot
-renders. The loose `*_head_authored_*_head_albedo.png` beside each one is the sidecar
-Blender's glTF exporter drops next to the file; it is kept as the readable source of the
-bake, and nothing in the game loads it.
+renders. The loose `*_head_authored_*_head_albedo.png` beside each one is the same bake
+written out again by `spike_z3e_head.py` as the readable source of it; nothing in the
+game loads it. It is written AFTER the export, because giving the image a filepath
+before it puts that name inside the `.glb` (bead godot-test1-z3e.12, which found Primm's
+copy still showing the z3e.5 palette — the glTF exporter never wrote one at all).
 
 All ten `teibi_*_authored.glb` files above and `teibi_uncut_authored.glb` share the ONE `teibi_authored.blend` next to them — the ten pieces are cuts of the same whole-body mesh, exported before being split.
 
