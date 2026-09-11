@@ -358,8 +358,17 @@ func locomotion(arm_swing: float, leg_swing: float, arm_asym: float) -> void:
 		_set_axis(LOWERARM[side], AXIS_X, _deg("elbow_bend_deg")
 				+ float(GAIT_SKIN["elbow_track_ratio"]) * arm
 				+ _deg("elbow_lag_deg") * maxf(0.0, -_unit(arm_rate, "arm_reference_deg")))
+		# THE SAME TURN ON BOTH CLAVICLES, and that is not a typo. A rotation about
+		# the skeleton's +Y carries a point at +X toward -Z and a point at -X
+		# toward +Z, and the two clavicles extend in opposite X directions — so
+		# ONE shared angle is what sends one shoulder forward while the other goes
+		# back, which is the girdle counter-rotating against the pelvis. Feeding
+		# it the per-side `arm` (which already alternates sign) would cancel that
+		# and swing the whole chest as one slab. It rides the raw `arm_swing`
+		# rather than either arm, `arm_asym` and all: a girdle is one bone pair,
+		# not two independent shoulders.
 		_set_axis(CLAVICLE[side], AXIS_Y,
-				_deg("shoulder_swing_deg") * _unit(arm, "arm_reference_deg"))
+				_deg("shoulder_swing_deg") * _unit(arm_swing, "arm_reference_deg"))
 
 	_torso(leg_swing)
 

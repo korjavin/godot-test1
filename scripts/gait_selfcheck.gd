@@ -1396,7 +1396,9 @@ func _measure_skinned_joints(anim, fixture: Node3D) -> void:
 	var sole_front: Vector3 = _at(skel, ball) - _at(skel, foot)
 	var ball_front_y: float = _at(skel, ball).y
 	var arm_back: float = _span(skel, hand, shoulder)
-	var shoulder_back: Vector3 = skel.get_bone_global_pose(b["spine_03"]).affine_inverse() * _at(skel, shoulder)
+	var chest_frame: Transform3D = skel.get_bone_global_pose(b["spine_03"]).affine_inverse()
+	var shoulder_back: Vector3 = chest_frame * _at(skel, shoulder)
+	var shoulder_r_back: Vector3 = chest_frame * _at(skel, b["upperarm_r"])
 
 	_pose_cycle(anim, PI * 0.5, swing, 0.0)
 	var reach_back: float = _span(skel, foot, hip)
@@ -1405,7 +1407,9 @@ func _measure_skinned_joints(anim, fixture: Node3D) -> void:
 	var sole_back: Vector3 = _at(skel, ball) - _at(skel, foot)
 	var ball_back_y: float = _at(skel, ball).y
 	var arm_front: float = _span(skel, hand, shoulder)
-	var shoulder_front: Vector3 = skel.get_bone_global_pose(b["spine_03"]).affine_inverse() * _at(skel, shoulder)
+	chest_frame = skel.get_bone_global_pose(b["spine_03"]).affine_inverse()
+	var shoulder_front: Vector3 = chest_frame * _at(skel, shoulder)
+	var shoulder_r_front: Vector3 = chest_frame * _at(skel, b["upperarm_r"])
 	# THE ROLL OF A BONE is the Y component of its own left-right axis — a number
 	# that needs no second bone to compare against and no unit to be read in.
 	var pelvis_roll: float = absf(skel.get_bone_global_pose(b["pelvis"]).basis.x.y)
@@ -1510,13 +1514,26 @@ func _measure_skinned_joints(anim, fixture: Node3D) -> void:
 				% pelvis_twist + "twist) — the transverse rotation is half of what makes "
 				+ "a stride a stride, and `spine_02` takes it back so nothing above the "
 				+ "waist pays for it")
-	if shoulder_front.distance_to(shoulder_back) <= SKINNED_SHOULDER_SWING_M:
-		_fail("skinned fixture: the shoulder moved %.4f m between the arm's two "
-				% shoulder_front.distance_to(shoulder_back) + "extremes — the clavicle "
-				+ "must FOLLOW its own arm (`shoulder_swing_deg`), or the arm is bolted "
-				+ "to a rigid chest. MEASURED IN THE CHEST'S OWN FRAME, so the spine "
-				+ "chain below it — whose counter-rotation leaves a residual millimetre "
-				+ "or two — cannot pass this on the clavicle's behalf.")
+	# BOTH SHOULDERS, AND SIGNED. A magnitude on one shoulder is passed just as
+	# happily by a girdle that swings forward as one slab, which is the thing a
+	# shared skeleton-Y turn exists to avoid: the two clavicles extend in opposite
+	# X directions, so one angle must send one shoulder forward and the other
+	# back. Measured in the CHEST's own frame, so the spine chain below — whose
+	# counter-rotation leaves a residual millimetre or two — cannot pass this on
+	# the clavicle's behalf.
+	var travel_l: float = shoulder_front.z - shoulder_back.z
+	var travel_r: float = shoulder_r_front.z - shoulder_r_back.z
+	if minf(absf(travel_l), absf(travel_r)) <= SKINNED_SHOULDER_SWING_M:
+		_fail("skinned fixture: the shoulders moved %.4f m and %.4f m between the "
+				% [travel_l, travel_r] + "arm's two extremes — the clavicle must FOLLOW "
+				+ "its own arm (`shoulder_swing_deg`), or the arm is bolted to a rigid "
+				+ "chest")
+	elif signf(travel_l) == signf(travel_r):
+		_fail("skinned fixture: both shoulders travelled the SAME way (%.4f m and "
+				% travel_l + "%.4f m) while the two arms swung in opposition — the "
+				% travel_r + "shoulder girdle counter-rotates, it does not slide "
+				+ "forward as one slab. One skeleton-Y angle on BOTH clavicles is what "
+				+ "draws that; per-side angles cancel it.")
 	if chest_roll > SKINNED_CHEST_LEVEL:
 		_fail("skinned fixture: at full stride the chest rolled %.4f where the pelvis "
 				% chest_roll + "rolled %.4f — `spine_02` must take the pelvis's turn "
@@ -1725,8 +1742,12 @@ func _check_skinned_determinism(player: Node3D) -> void:
 	var worst_bone: String = ""
 	var worst_live: float = 0.0
 	var worst_live_bone: String = ""
-	for t: float in SKINNED_DETERMINISM_TIMES:
-		for reset: bool in [true, false]:
+	# THE LIVE SWEEP RUNS FIRST, ALL OF IT. `rest_pose()` restores the exported
+	# pose exactly, so a single `reset` pass erases the 430 frames prepared above
+	# and every "live" comparison after it would be comparing two instances that
+	# had just been made identical — vacuous, and green for the wrong reason.
+	for reset: bool in [false, true]:
+		for t: float in SKINNED_DETERMINISM_TIMES:
 			for j: int in 2:
 				if reset:
 					anims[j].rig.rest_pose()
