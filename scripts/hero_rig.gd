@@ -19,11 +19,12 @@ extends RefCounted
 ## heroes migrate ONE AT A TIME (children `5u3.3`, `.5`, `.6`, `.7`) with the
 ## game playable after every one of them.
 ##
-## THE TWO CALLERS — `player_animation.gd` (local) and `remote_avatar.gd`
-## (mirror) — reach THIS file through its `class_name` and nothing below it, so
-## the pose contract has exactly one import site (CLAUDE.md: a family reaches a
-## sibling through the node that owns the state). Neither driver knows about
-## either caller, so there is no cycle to make.
+## THE CALLERS — `player_animation.gd` (local), `remote_avatar.gd` (mirror) and,
+## for the one authored still pose, `tower_interior.gd` (a jailed hero's slump,
+## bd godot-test1-6su) — reach THIS file through its `class_name` and nothing
+## below it, so the pose contract has exactly one import site (CLAUDE.md: a
+## family reaches a sibling through the node that owns the state). No driver
+## knows about any caller, so there is no cycle to make.
 ##
 ## WHAT THE DRIVERS DO NOT OWN: the clock. The caller keeps `animation_time` (or
 ## the remote's distance-driven `stride_phase`), computes the two sines, fires

@@ -1051,6 +1051,15 @@ var _cell_bodies: Dictionary = {}
 const PLAYER_SCRIPT: GDScript = preload("res://scripts/player_controller.gd")
 const CAPTIVE_BODY_PREFIX: String = "CaptiveBody_"
 
+## THE JAILED IDLE, in degrees off rest: the body tips forward, both arms hang
+## the same way and both legs trail the same way. Consts rather than literals
+## because `tower_interior_selfcheck` MEASURES this pose on both rig kinds and
+## reads these numbers instead of restating them — a check carrying its own copy
+## would pass against a driver drawing something else entirely.
+const CAPTIVE_SLUMP_BODY_DEG: float = -8.0
+const CAPTIVE_SLUMP_ARM_DEG: float = 20.0
+const CAPTIVE_SLUMP_LEG_DEG: float = -8.0
+
 ## THE BODY STANDING ON THE VENT-PURGE PAD, and how long until it can fire again.
 ##
 ## The BODY and not a boolean, because eligibility has to be re-asked every frame:
@@ -3293,19 +3302,42 @@ func _style_captive_model(node: Node) -> void:
 
 
 func _pose_captive_model(node: Node3D) -> void:
-	"""Apply one authored, slumped idle pose; nothing here is animated later."""
+	"""
+	Apply one authored, slumped idle pose; nothing here is animated later.
+
+	THROUGH THE RIG SEAM, not by limb name (bd godot-test1-6su). The cell body is
+	an instance of the hero's own `CHARACTERS` scene, and since bead 5u3.3 one of
+	those scenes is a single SKINNED mesh with no `LeftArm`/`RightArm`/`LeftLeg`/
+	`RightLeg` under its `Body` at all — so the four `get_node_or_null`s this used
+	to do answered null, the loop skipped in silence and a jailed Teibi stood to
+	attention wearing the body tilt alone. `HeroRig.for_body()` picks whichever
+	driver this model takes and `slump()` draws the same pose on either, which is
+	what keeps the pose as windman and primm migrate behind him.
+
+	THE `Body` NODE'S OWN TILT STAYS HERE. The drivers deliberately write limb
+	pose only, for both rig kinds — see `hero_rig.gd`'s note on the clock.
+
+	The rig is bound, used once and dropped: this body has `process_mode`
+	DISABLED and nothing poses it again.
+	"""
 	var model_body := node.get_node_or_null("Body") as Node3D
 	if model_body == null:
 		return
-	model_body.rotation.x += deg_to_rad(-8.0)
-	var limb_offsets := {
-		"LeftArm": deg_to_rad(20.0), "RightArm": deg_to_rad(20.0),
-		"LeftLeg": deg_to_rad(-8.0), "RightLeg": deg_to_rad(-8.0),
-	}
-	for limb_name: String in limb_offsets:
-		var limb := model_body.get_node_or_null(limb_name) as Node3D
-		if limb != null:
-			limb.rotation.x += float(limb_offsets[limb_name])
+	# BEFORE the tilt below: the model is still untouched here, so its own
+	# rotations ARE the rest the drivers offset from. Read through the one
+	# rest-capture rather than a second copy that could drift from it.
+	var rest: Dictionary = PlayerAnimation.capture_rest_pose(node)
+	model_body.rotation.x += deg_to_rad(CAPTIVE_SLUMP_BODY_DEG)
+	var rig: RefCounted = HeroRig.for_body(model_body, rest)
+	if rig == null:
+		# The frozen-model case the limb contract has always allowed: a scene that
+		# spells a limb differently stands still instead of erroring.
+		return
+	# `rest_pose()` first states what the `+=` this replaced silently assumed —
+	# that the model is at rest — and on the skinned driver it is also what puts
+	# the elbow at the neutral bend every other pose path holds it at.
+	rig.rest_pose()
+	rig.slump(deg_to_rad(CAPTIVE_SLUMP_ARM_DEG), deg_to_rad(CAPTIVE_SLUMP_LEG_DEG))
 
 
 func _hero_has_live_holder(hero: String) -> bool:

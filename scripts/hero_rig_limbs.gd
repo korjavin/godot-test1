@@ -124,6 +124,35 @@ func idle(weight: float) -> void:
 	_right_leg.rotation.x = lerp(_right_leg.rotation.x, float(_rest["right_leg"].x), weight)
 
 
+func slump(arm_x: float, leg_x: float) -> void:
+	"""
+	THE AUTHORED SLUMP — the one pose on this contract that no clock drives:
+	both arms hanging the same way, both legs the same way. The tower's jailed
+	heroes stand in it (`TowerInterior._pose_captive_model()`).
+
+	IT IS ON THE CONTRACT, not in the tower, because the tower cannot reach a
+	SKINNED hero's limbs at all: there are no `LeftArm`/`RightArm`/`LeftLeg`/
+	`RightLeg` nodes under a `Skeleton3D` model, so the four
+	`get_node_or_null`s the tower used to do answered null, the loop skipped in
+	silence, and a jailed Teibi stood to attention wearing the body tilt alone
+	(bd godot-test1-6su).
+
+	SYMMETRIC, which is why no existing pose expresses it: `locomotion()`
+	mirrors the two sides, and `air()`'s tuck is symmetric on the legs but also
+	zeroes the shoulders and bends the elbows.
+
+	OFF REST like every other write here, because that is the only thing the
+	skinned driver can write — a skeleton's "absolute" is wherever MakeHuman
+	left the bone. The caller snaps to `rest_pose()` first, so on a freshly
+	instanced model this is exactly the number the tower used to `+=`.
+	"""
+	_left_arm.rotation.x = _rest["left_arm"].x + arm_x
+	_right_arm.rotation.x = _rest["right_arm"].x + arm_x
+
+	_left_leg.rotation.x = _rest["left_leg"].x + leg_x
+	_right_leg.rotation.x = _rest["right_leg"].x + leg_x
+
+
 func air(spread: float, tuck: float, weight: float) -> void:
 	"""
 	The airborne pose: arms rolled out to the sides (the wing beat is already

@@ -972,7 +972,7 @@ func _check_skinned(player: Node3D) -> void:
 	      `air()`, `drop_wings()` and `reset_roll()` would have no coverage
 	      anywhere in the suite — no shipped hero binds this driver. And equality
 	      against the rig this game already ships is a far sharper instrument
-	      than a bound: it fails on one flipped sign in any of the nine writes.
+	      than a bound: it fails on one flipped sign in any of the ten writes.
 	  (h) THE JOINTS — the knee that bends on the back-swing and the elbow that
 	      tracks the shoulder. They are the whole reason a skeleton beats five
 	      nodes, and `measure()` deliberately does not expose them: its keys are
@@ -1147,7 +1147,7 @@ func _check_skinned(player: Node3D) -> void:
 	#     calls to the limb rig and to the bone rig and compare `measure()` key by
 	#     key. This is the seam's ACTUAL claim, and it is stronger than any bound:
 	#     it catches a flipped sign, a swapped side or a dropped term in ANY of the
-	#     nine pose writes — including every Z write, which the walk sweep above
+	#     ten pose writes — including every Z write, which the walk sweep above
 	#     structurally cannot reach (`animate_walking()` opens with
 	#     `reset_sidestep_pose()`, pinning all four `*_z` keys to zero). The Z
 	#     writes need it most: the sidestep's two legs are `splay + reach` and
@@ -1363,8 +1363,14 @@ func _drive_rig(rig) -> Array[Dictionary]:
 	a dropped `arm_asym` has to show up, which round numbers and mirrored
 	arguments would hide — and every pose method the contract has is exercised:
 	`rest_pose`, `locomotion`, `head_bobble`, `relax_head`, `idle`, `air`, `drop_wings`,
-	`sidestep` and `reset_roll`, the two lerping ones (`idle`, `air`) twice so
-	their accumulation is compared too.
+	`sidestep`, `reset_roll` and `slump`, the two lerping ones (`idle`, `air`)
+	twice so their accumulation is compared too.
+
+	`slump` closes the script because that is the tower's own call order — a
+	jailed hero is snapped to rest and then slumped, once (bd godot-test1-6su).
+	It is the one pose on the contract no clock drives, so nothing else in this
+	suite sweeps it: without this pair of lines a skinned captive could go back
+	to standing to attention with every check in the file still green.
 	"""
 	var out: Array[Dictionary] = []
 	rig.rest_pose()
@@ -1394,6 +1400,10 @@ func _drive_rig(rig) -> Array[Dictionary]:
 	rig.locomotion(-0.31, 0.52, 0.86)
 	out.append(rig.measure())
 	rig.rest_pose()
+	out.append(rig.measure())
+	# Two different numbers, neither round: a driver that swapped the arm and leg
+	# arguments, or wrote one of them onto both pairs, has to show up here.
+	rig.slump(0.37, -0.14)
 	out.append(rig.measure())
 	return out
 
