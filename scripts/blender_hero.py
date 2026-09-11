@@ -20,13 +20,14 @@ file's matrix math applies there: trap 2's Rx(-90) conjugation is for UNRIGGED
 parts hung on a .tscn node, and a skinned glTF is placed by its own root node and
 exports Y-up (build_hero.py's own trap 3).
 
-<hero> is one of windman, phoboman — the two heroes still built from SEPARATE
-PARTS *in the game*. Teibi left this lane with bead godot-test1-5u3.3 and Primm
-with bead godot-test1-5u3.6: each is one skinned mesh on a Skeleton3D now, and
-reproducing a PART TREE from such a .tscn has nothing to reproduce; the other two
-follow at beads 5u3.5 and .7 (Windman's skinned .glb is already built and waiting,
-unwired) and this file retires with the last of them. Windman's scene is
-windman_updated.tscn, phoboman's is plain scenes/characters/phoboman.tscn.
+<hero> is PHOBOMAN, and he is the last one. Teibi left this lane with bead
+godot-test1-5u3.3, Primm with bead 5u3.6 and Windman with bead 5u3.5: each is one
+skinned mesh on a Skeleton3D now, and reproducing a PART TREE from such a .tscn
+has nothing to reproduce (Windman's scene still holds one instanced .glb, his FAN,
+but a BoneAttachment3D is not a part tree and this lane cannot walk it). Phoboman
+keeps his sphere body and his parts by owner ruling, so this file stays runnable
+for exactly one hero until bead 5u3.8 retires it. His scene is the plain
+scenes/characters/phoboman.tscn.
 <part> is a leaf part name (e.g. "head", "torso") or,
 where that is ambiguous (both arms/legs reuse "UpperArm"/"LowerLeg"/"Mesh"), the
 node's full .tscn path with "/" written as ".", e.g. "leftarm.upperarm".
@@ -84,10 +85,10 @@ from mathutils import Matrix, Vector
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CHAR_DIR = os.path.join(REPO, "scenes", "characters")
 
-# scripts/player_controller.gd's CHARACTERS array. Windman's scene is the
-# "_updated" rebuild that assembles windman_parts/.
+# scripts/player_controller.gd's CHARACTERS array, minus the heroes this lane can
+# no longer walk: Teibi (bead godot-test1-5u3.3), Windman (bead 5u3.5) and Primm
+# (bead 5u3.6) are one skinned mesh apiece, with no part tree to import or export.
 HERO_SCENES = {
-    "windman": "windman_updated.tscn",
     "phoboman": "phoboman.tscn",
 }
 

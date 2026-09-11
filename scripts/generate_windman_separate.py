@@ -1,47 +1,45 @@
 #!/usr/bin/env python3
 """
-Generate Windman 3D model with SEPARATE body parts for individual animation.
+Generate Windman's FAN — and, since bead godot-test1-5u3.5, nothing else.
 
-Requires the PINNED toolchain of `scripts/requirements.txt` — trimesh + numpy, and
-shapely + mapbox-earcut for the extruded "W" emblem on the chest (`extrude_polygon`
-wants the polygon from one and the triangulation from the other, and without the
-second it raises "No available triangulation engine!").
+WHAT LEFT, AND WHY. This script used to emit ten body parts: a torso with an
+extruded "W" on its chest, four arm segments, four leg segments, and this fan.
+Bead 5u3.5 replaced the body with one skinned mesh on a 23-bone MakeHuman rig
+(`scripts/build_hero.py`, the source of record; `assets/models/characters/
+PROVENANCE.md` carries the row), and the authored head was folded into that same
+mesh, so there is no part tree left to build. The chest "W" went with the torso:
+it is VERTEX COLOUR now, painted by `build_hero.paint_chest_glyph` off the same
+five-point centre-line and 27 mm buffer this file used to hand to shapely — which
+is why this file no longer imports `shapely` or `extrude_polygon` at all, and why
+`scripts/requirements.txt` can drop those two pins as soon as Primm's generator
+(bead 5u3.6) stops being their last user.
+
+THE FAN STAYS GENERATED BECAUSE IT IS A PROP, NOT A BODY. It hangs off `hand_r`
+as a `BoneAttachment3D` in `scenes/characters/windman_updated.tscn` — rigid
+geometry the skeleton carries, never skinned — so it owes nothing to MakeHuman
+and everything to the toolkit every other generated model in this repo uses. It
+therefore stays inside `build.yml`'s rebuild-and-diff gate, which is the reason
+`windman` is still a name in that workflow's hero loop.
+
+Requires the PINNED toolchain of `scripts/requirements.txt` — trimesh + numpy.
     pip install -r scripts/requirements.txt
 
-Each limb is exported as its own GLB file. The head is authored
-(`windman_head_authored.glb`, see `assets/models/characters/PROVENANCE.md`), the
-generator emits the other ten parts. `scenes/characters/windman_updated.tscn`
-assembles them under a `Body` node whose `LeftArm` / `RightArm` / `LeftLeg` /
-`RightLeg` containers are rotated at run time by the procedural walk/idle/jump
-animation in `scripts/player_controller.gd`.
+COORDINATE CONVENTION (do not break it — the .tscn's offset depends on it):
+  * trimesh local space is **Z-up**, **+Y = front of the character**, and
+    `export_faceted` writes those axes through unchanged. The fan's handle runs
+    along Z with the GRIP at Z ~ 0 (where the hand closes on it) and the pinwheel
+    at -Z; the blades fan out in the X-Z plane, flat face along Y.
+  * The `BoneAttachment3D` is what turns that into Godot's Y-up hand frame. Its
+    basis is measured on `hand_r`'s rest pose, not guessed — see the .tscn.
 
-COORDINATE CONVENTIONS (do not break these — the rig depends on them):
-  * trimesh local space is **Z-up**, **+Y = front of the character**. The scene
-    rotates each part by Transform3D(1,0,0, 0,0,1, 0,-1,0) so trimesh +Z -> Godot
-    +Y (up) and trimesh +Y -> Godot -Z (forward).
-  * Every limb part is authored with its **joint pivot at the local origin** and
-    the limb extending toward **-Z** (downward / away from the joint), because the
-    scene parents the next segment at a fixed downward offset (elbow at -0.27,
-    knee at -0.37) and the animation rotates the container around that origin.
-  Keep those pivots and spans intact; everything else (girth, colour, the chest
-  emblem, hair, headband, fan) is cosmetic and free to change.
-
-Design target (2026-06 canon + reference art):
-  * moderately stout, slightly loose build — broad torso, thick neck;
-  * a SINGLE large white "W" monogram on the chest (the old two-letter "WM" was
-    retired 2026-06-14);
-  * blue-over-red eye bandage that wraps the whole head, knotted at the back;
-  * short chestnut hair, slightly messy;
-  * short blue sleeves over beefy bare (skin) arms;
-  * brown knee-length baggy shorts, fully black flat-soled boots;
-  * a flat three-blade pinwheel fan (green / blue / red) on a short brown handle.
+Design target (2026-06 canon + reference art): a flat three-blade pinwheel fan
+(green / blue / red) on a short brown handle, in the RIGHT hand.
 """
 
 import numpy as np
 import trimesh
-from trimesh.creation import cylinder, box, icosphere, extrude_polygon
+from trimesh.creation import cylinder, icosphere
 from trimesh.transformations import rotation_matrix
-from shapely.geometry import LineString
 from pathlib import Path
 
 # THE ONE EXPORT SEAM for every model in this game (bead godot-test1-y1o.21,
@@ -51,27 +49,14 @@ from pathlib import Path
 import sys  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from predator_parts import export_faceted  # noqa: E402
-from hero_skin import graded  # noqa: E402
 
 
 class WindmanSeparateMeshGenerator:
     def __init__(self):
-        # Palette tuned to the reference art (royal-blue tee, chestnut hair,
-        # brick-red lower bandage, medium-brown shorts/handle).
+        # The fan's own palette. The body's colours left with the body — they live
+        # in `build_hero.HEROES["windman"]["colours"]` now, ungraded, and the skin
+        # grade `scripts/hero_skin.py` owns is applied there at paint time.
         self.colors = {
-            # SKIN GOES THROUGH THE RENDER GRADE (bead godot-test1-z3e.14). The
-            # authored head on this body is graded by the same constant, and the
-            # neck, the bare arms, the hands and the calves below are the surfaces
-            # it has to match: an ungraded 0.93 next to a graded face is a hard
-            # white seam under the chin. `scripts/hero_skin.py` has the mechanism.
-            'skin':         graded([0.93, 0.74, 0.62, 1.0]),
-            'hair':         [0.32, 0.20, 0.11, 1.0],
-            'bandage_blue': [0.20, 0.38, 0.75, 1.0],
-            'bandage_red':  [0.72, 0.18, 0.15, 1.0],
-            'shirt_blue':   [0.16, 0.33, 0.60, 1.0],
-            'letter_white': [0.93, 0.93, 0.93, 1.0],
-            'shorts_brown': [0.42, 0.30, 0.18, 1.0],
-            'boots_black':  [0.08, 0.08, 0.09, 1.0],
             'fan_handle':   [0.45, 0.30, 0.16, 1.0],
             'fan_hub':      [0.20, 0.20, 0.22, 1.0],
             'fan_green':    [0.20, 0.66, 0.28, 1.0],
@@ -79,180 +64,15 @@ class WindmanSeparateMeshGenerator:
             'fan_red':      [0.85, 0.20, 0.18, 1.0],
         }
 
-    # ------------------------------------------------------------------ helpers
-    def create_capsule(self, height, radius, segments=16):
-        """A capsule (cylinder + hemisphere caps) centred on the origin, axis = Z."""
-        cyl_height = max(0.01, height - 2 * radius)
-        cylinder_mesh = cylinder(radius=radius, height=cyl_height, sections=segments)
-
-        top_sphere = icosphere(subdivisions=2, radius=radius)
-        top_sphere.apply_translation([0, 0, cyl_height / 2])
-
-        bottom_sphere = icosphere(subdivisions=2, radius=radius)
-        bottom_sphere.apply_translation([0, 0, -cyl_height / 2])
-
-        return trimesh.util.concatenate([cylinder_mesh, top_sphere, bottom_sphere])
-
-    def _make_w_emblem(self, y_front, color):
-        """A single bold white "W" sitting proud of the chest.
-
-        Built as a buffered poly-line (so the strokes join cleanly into one solid
-        letter) extruded to a shallow slab, then re-oriented from the extrusion's
-        XY plane into the body's X (horizontal) / Z (vertical) chest plane with the
-        slab depth pointing forward (+Y).
-        """
-        # W centre-line in the chest plane: (x, vertical). Outer strokes tall, the
-        # middle vertex a clear peak so it reads unmistakably as a "W".
-        pts = [(-0.092, 0.135), (-0.044, -0.048), (0.0, 0.072),
-               (0.044, -0.048), (0.092, 0.135)]
-        poly = LineString(pts).buffer(0.027, cap_style=2, join_style=1)
-        emblem = extrude_polygon(poly, height=0.022)
-
-        # extrude lives in (X=horizontal, Y=vertical, Z=depth). Bring vertical to Z
-        # and depth to +Y (forward) with a PROPER ROTATION (det +1) so the face
-        # winding is preserved — a reflection (det -1) would flip the winding and
-        # Godot's back-face culling would hide the front of the letter. Horizontal
-        # is mirrored, which is harmless for the symmetric "W".
-        rot = np.array([[-1, 0, 0, 0],
-                        [0, 0, 1, 0],
-                        [0, 1, 0, 0],
-                        [0, 0, 0, 1]], dtype=float)
-        emblem.apply_transform(rot)
-        # Raise onto the chest. Keep the whole slab PROUD of the shirt: the back
-        # face must clear the torso surface (y_front) or the convex, faceted torso
-        # pokes through the thin emblem and shreds the letter into stripes.
-        emblem.apply_translation([0, y_front + 0.012, 0.045])
-        emblem.visual.vertex_colors = color
-        return emblem
-
-    # -------------------------------------------------------------------- parts
-    def create_torso_assembly(self):
-        """Stout torso (shirt) + thick neck + single big "W" + shorts waistband."""
-        meshes = []
-
-        # Thick neck, lengthened to meet the chin (bead godot-test1-z3e.7 — the
-        # cap used to stop 12 cm short of it). The cap overlaps ~1 cm into the
-        # skull so no seam can open; the base stays buried in the shirt.
-        neck = cylinder(radius=0.062, height=0.22, sections=16)
-        neck.apply_translation([0, 0, 0.225])
-        neck.visual.vertex_colors = self.colors['skin']
-        meshes.append(neck)
-
-        # Broad torso — wider in X, taller in Z, only moderately deep in Y so the
-        # build reads "stout" without becoming a sphere. The shoulders are filled
-        # out with a wider block up top so the tee looks broad, not egg-shaped.
-        torso = icosphere(subdivisions=3, radius=0.15)
-        torso.apply_scale([1.12, 0.78, 1.6])
-        torso.visual.vertex_colors = self.colors['shirt_blue']
-        meshes.append(torso)
-
-        shoulders = icosphere(subdivisions=2, radius=0.15)
-        shoulders.apply_scale([1.45, 0.7, 0.55])
-        shoulders.apply_translation([0, 0, 0.135])
-        shoulders.visual.vertex_colors = self.colors['shirt_blue']
-        meshes.append(shoulders)
-
-        # Single large white "W" monogram on the chest.
-        meshes.append(self._make_w_emblem(y_front=0.117, color=self.colors['letter_white']))
-
-        # Shorts waistband / pelvis block at the bottom of the torso part.
-        pelvis = box(extents=[0.30, 0.19, 0.16])
-        pelvis.apply_translation([0, 0, -0.30])
-        pelvis.visual.vertex_colors = self.colors['shorts_brown']
-        meshes.append(pelvis)
-
-        return trimesh.util.concatenate(meshes)
-
-    def create_upper_arm(self):
-        """Beefy bare (skin) upper arm with a short blue t-shirt sleeve at the top.
-
-        The pivot (shoulder) is at the local origin so the rig rotates correctly,
-        but the geometry HANGS DOWN toward -Z (shoulder at 0, elbow near -0.27) so
-        the arm reads as hanging from the shoulder instead of straddling it.
-        """
-        meshes = []
-
-        arm = self.create_capsule(height=0.30, radius=0.058, segments=16)
-        arm.apply_translation([0, 0, -0.15])
-        arm.visual.vertex_colors = self.colors['skin']
-        meshes.append(arm)
-
-        # Rounded shoulder cap right at the joint.
-        shoulder = icosphere(subdivisions=2, radius=0.072)
-        shoulder.apply_scale([1.0, 1.0, 0.85])
-        shoulder.apply_translation([0, 0, -0.01])
-        shoulder.visual.vertex_colors = self.colors['shirt_blue']
-        meshes.append(shoulder)
-
-        # Short flared sleeve covering just the top of the upper arm.
-        sleeve = cylinder(radius=0.071, height=0.10, sections=16)
-        sleeve.apply_translation([0, 0, -0.06])
-        sleeve.visual.vertex_colors = self.colors['shirt_blue']
-        meshes.append(sleeve)
-
-        return trimesh.util.concatenate(meshes)
-
-    def create_lower_arm(self):
-        """Forearm (skin) tapering into a hand. Pivot (elbow) at origin, runs -Z."""
-        meshes = []
-
-        forearm = self.create_capsule(height=0.27, radius=0.050, segments=16)
-        forearm.visual.vertex_colors = self.colors['skin']
-        meshes.append(forearm)
-
-        hand = icosphere(subdivisions=2, radius=0.055)
-        hand.apply_scale([0.85, 1.0, 1.2])
-        hand.apply_translation([0, 0, -0.16])
-        hand.visual.vertex_colors = self.colors['skin']
-        meshes.append(hand)
-
-        return trimesh.util.concatenate(meshes)
-
-    def create_upper_leg(self):
-        """Baggy brown shorts thigh. Pivot (hip) at origin; geometry hangs to -Z
-        (hip at 0, knee near -0.37) so the thigh fills the hip-to-knee gap."""
-        leg = self.create_capsule(height=0.42, radius=0.084, segments=16)
-        leg.apply_translation([0, 0, -0.19])
-        leg.visual.vertex_colors = self.colors['shorts_brown']
-        return leg
-
-    def create_lower_leg(self):
-        """Bare calf (skin) ending in a black flat-soled boot. Pivot (knee) at origin."""
-        meshes = []
-
-        calf = self.create_capsule(height=0.40, radius=0.058, segments=16)
-        calf.visual.vertex_colors = self.colors['skin']
-        meshes.append(calf)
-
-        # Boot upper (ankle-height), forward-biased over the foot.
-        boot = box(extents=[0.095, 0.17, 0.12])
-        boot.apply_translation([0, 0.035, -0.30])
-        boot.visual.vertex_colors = self.colors['boots_black']
-        meshes.append(boot)
-
-        # Rounded toe cap.
-        toe = icosphere(subdivisions=2, radius=0.06)
-        toe.apply_scale([0.8, 1.1, 0.55])
-        toe.apply_translation([0, 0.12, -0.335])
-        toe.visual.vertex_colors = self.colors['boots_black']
-        meshes.append(toe)
-
-        # Wider, flat sole slab at the very bottom.
-        sole = box(extents=[0.105, 0.26, 0.035])
-        sole.apply_translation([0, 0.045, -0.358])
-        sole.visual.vertex_colors = self.colors['boots_black']
-        meshes.append(sole)
-
-        return trimesh.util.concatenate(meshes)
-
     def create_fan(self):
         """Flat three-blade pinwheel fan on a short brown handle.
 
-        Authored Z-up / +Y-front like the limbs: the handle runs along Z with the
-        grip at the top (Z ~ 0, where the hand holds it) and the pinwheel at the
-        bottom (-Z). The blades fan out in the X-Z plane (flat face along Y), so
-        once the scene applies the limb rotation the handle hangs down and the
-        pinwheel faces forward. Green up, blue lower-left, red lower-right.
+        Authored Z-up / +Y-front like the body parts that used to sit beside it:
+        the handle runs along Z with the grip at the top (Z ~ 0, where the hand
+        holds it) and the pinwheel at the bottom (-Z). The blades fan out in the
+        X-Z plane (flat face along Y), so once the hand's rest basis is applied
+        the handle hangs down and the pinwheel faces forward. Green up, blue
+        lower-left, red lower-right.
         """
         meshes = []
 
@@ -291,28 +111,12 @@ class WindmanSeparateMeshGenerator:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        print("Generating Windman separate mesh parts...")
-
-        parts = {
-            'torso': self.create_torso_assembly(),
-            'left_upper_arm': self.create_upper_arm(),
-            'left_lower_arm': self.create_lower_arm(),
-            'right_upper_arm': self.create_upper_arm(),
-            'right_lower_arm': self.create_lower_arm(),
-            'left_upper_leg': self.create_upper_leg(),
-            'left_lower_leg': self.create_lower_leg(),
-            'right_upper_leg': self.create_upper_leg(),
-            'right_lower_leg': self.create_lower_leg(),
-            'fan': self.create_fan(),
-        }
-
-        for name, mesh in parts.items():
-            filename = output_dir / f"windman_{name}.glb"
-            print(f"  Saving {name}... ({len(mesh.vertices)} vertices)")
-            export_faceted(mesh, str(filename))
-
-        print(f"\n  All parts saved to {output_dir}")
-        print(f"  Total parts: {len(parts)}")
+        print("Generating Windman's fan...")
+        mesh = self.create_fan()
+        filename = output_dir / "windman_fan.glb"
+        print(f"  Saving fan... ({len(mesh.vertices)} vertices)")
+        export_faceted(mesh, str(filename))
+        print(f"\n  Saved to {filename}")
 
 
 def main():
@@ -323,8 +127,8 @@ def main():
     generator = WindmanSeparateMeshGenerator()
     generator.generate_and_save(output_dir)
 
-    print("\n  Windman separate mesh parts generated successfully!")
-    print("  Assembled + animated by scenes/characters/windman_updated.tscn")
+    print("\n  Windman's fan generated successfully!")
+    print("  Hung on hand_r by scenes/characters/windman_updated.tscn")
 
 
 if __name__ == "__main__":

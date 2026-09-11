@@ -1,74 +1,75 @@
-[gd_scene load_steps=13 format=3 uid="uid://windman_3d_updated_001"]
+[gd_scene load_steps=3 format=3 uid="uid://windman_3d_updated_001"]
 
-[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_head_authored.glb" id="1_head"]
-[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_torso.glb" id="2_torso"]
-[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_left_upper_arm.glb" id="3_left_upper_arm"]
-[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_left_lower_arm.glb" id="4_left_lower_arm"]
-[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_right_upper_arm.glb" id="5_right_upper_arm"]
-[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_right_lower_arm.glb" id="6_right_lower_arm"]
-[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_left_upper_leg.glb" id="7_left_upper_leg"]
-[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_left_lower_leg.glb" id="8_left_lower_leg"]
-[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_right_upper_leg.glb" id="9_right_upper_leg"]
-[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_right_lower_leg.glb" id="10_right_lower_leg"]
-[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_fan.glb" id="11_fan"]
+; WINDMAN, SKINNED — bead godot-test1-5u3.5, the default hero on a Skeleton3D.
+; One mesh on MPFB2's `game_engine` rig, 23 bones after `build_hero.cut_fingers()`,
+; built by `scripts/build_hero.py --hero windman` (the source of record;
+; `assets/models/characters/PROVENANCE.md` carries the row). The ten generated
+; parts this scene used to instance are retired with this bead, and so is the
+; authored head — it is part of the same mesh now, built from the same MakeHuman
+; human at the same scale, which is what closes the neck seam by construction.
+;
+; THE SCENE IS THE FLAG (`scenes/characters/teibi.tscn` said it first): the
+; Skeleton3D under `Body` is what makes `hero_rig.gd` hand him to
+; `hero_rig_skeleton.gd` instead of `hero_rig_limbs.gd` (bd 5u3.2), which is why
+; this migration is a data change and `player_animation.gd`, `player_controller.gd`,
+; `remote_avatar.gd` and `player_abilities.gd` change by zero lines.
+;
+; THE UID IS LOAD-BEARING and stays `uid://windman_3d_updated_001`:
+; `player_controller.gd`'s CHARACTERS points at the PATH, but a changed uid makes
+; Godot rewrite every reference that resolved this scene by uid, and warn while it
+; does it.
+;
+; `Body` stays even though the mesh needs no wrapper: the landing squash writes
+; Body.position.y, `capture_rest_pose()` reads Body.rotation and the caller writes
+; the lean and sway there for BOTH rig kinds. The .glb instance carries NO basis —
+; a SKINNED glTF is exported Y-up and placed by its own root node, so the Rx(-90)
+; every UNRIGGED part scene applies would lay the hero on his face.
+;
+; THE FAN IS A BoneAttachment3D, AND IT IS DATA. `player_abilities.gd` has never
+; looked this node up — Air Rush is a velocity impulse and a particle burst, not a
+; prop animation — so the fan moving from `Body/RightArm/LowerArm/Mesh` to the
+; right hand's BONE is a scene edit and nothing else.
+;
+;   * `use_external_skeleton`, NOT editable children, and that is the "survives a
+;     re-import" half of the bead's question. Editable children would pin this
+;     scene to the imported .glb's node layout — Godot rewrites an editable
+;     instance's stored state on re-import and drops overrides whose nodes moved —
+;     whereas an external skeleton is ONE NodePath resolved at run time, which a
+;     rebuilt .glb either still answers or fails loudly on. `build_hero.py` names
+;     the armature and the mesh datablock, so `Armature/Skeleton3D` is stable
+;     across rebuilds.
+;   * The OFFSET lives on the child, never on the attachment: BoneAttachment3D
+;     overwrites its own transform with the bone's pose every frame (the
+;     `CameraArm` rule in CLAUDE.md, same failure mode).
+;   * The basis is MEASURED, not guessed, and it is the hand's rest basis
+;     INVERTED. `hand_r` rests with x (0.5006, 0.7235, -0.4753),
+;     y (0.0234, -0.5602, -0.8280), z (-0.8654, 0.4034, -0.2974) — Blender's bone
+;     convention, so +Y runs from the wrist toward the fingertips, which on this
+;     rest pose is 56 degrees off vertical (MakeHuman rests with a bent elbow).
+;     The fan is authored trimesh Z-up with the grip at Z ~ 0 and the pinwheel at
+;     -Z, and the picture we are reproducing is the one the ten-part Windman
+;     shipped: blades hanging BELOW the fist with their disc facing the camera.
+;     So the columns below are Godot's own axes written in the hand's frame —
+;     the fan's +Z on world UP (the pinwheel therefore hangs down) and its +Y,
+;     the disc's normal, on world FORWARD. Expressed in the BONE's frame, so it
+;     is not a world lock: the fan turns with the hand every time the arm swings,
+;     which is what shot 19 is for. Aligning the handle with the fingers instead
+;     was tried first and put the disc 56 degrees edge-on to every camera.
+;   * The 5.5 cm along the bone's +Y is the palm: `hand_r`'s origin is the WRIST.
+
+[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_skinned.glb" id="1_body"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_fan.glb" id="2_fan"]
 
 [node name="Windman" type="Node3D"]
 
 [node name="Body" type="Node3D" parent="."]
 
-[node name="Head" parent="Body" instance=ExtResource("1_head")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 1.62, 0)
+[node name="Mesh" parent="Body" instance=ExtResource("1_body")]
 
-[node name="Torso" parent="Body" instance=ExtResource("2_torso")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 1.17, 0)
+[node name="Fan" type="BoneAttachment3D" parent="Body"]
+bone_name = "hand_r"
+use_external_skeleton = true
+external_skeleton = NodePath("../Mesh/Armature/Skeleton3D")
 
-[node name="LeftArm" type="Node3D" parent="Body"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.18, 1.28, 0)
-
-[node name="UpperArm" parent="Body/LeftArm" instance=ExtResource("3_left_upper_arm")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
-
-[node name="LowerArm" type="Node3D" parent="Body/LeftArm"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.27, 0)
-
-[node name="Mesh" parent="Body/LeftArm/LowerArm" instance=ExtResource("4_left_lower_arm")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
-
-[node name="RightArm" type="Node3D" parent="Body"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.18, 1.28, 0)
-
-[node name="UpperArm" parent="Body/RightArm" instance=ExtResource("5_right_upper_arm")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
-
-[node name="LowerArm" type="Node3D" parent="Body/RightArm"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.27, 0)
-
-[node name="Mesh" parent="Body/RightArm/LowerArm" instance=ExtResource("6_right_lower_arm")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
-
-[node name="Fan" parent="Body/RightArm/LowerArm/Mesh" instance=ExtResource("11_fan")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.04, -0.16)
-
-[node name="LeftLeg" type="Node3D" parent="Body"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.09, 0.77, 0)
-
-[node name="UpperLeg" parent="Body/LeftLeg" instance=ExtResource("7_left_upper_leg")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
-
-[node name="LowerLeg" type="Node3D" parent="Body/LeftLeg"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.37, 0)
-
-[node name="Mesh" parent="Body/LeftLeg/LowerLeg" instance=ExtResource("8_left_lower_leg")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
-
-[node name="RightLeg" type="Node3D" parent="Body"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.09, 0.77, 0)
-
-[node name="UpperLeg" parent="Body/RightLeg" instance=ExtResource("9_right_upper_leg")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
-
-[node name="LowerLeg" type="Node3D" parent="Body/RightLeg"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.37, 0)
-
-[node name="Mesh" parent="Body/RightLeg/LowerLeg" instance=ExtResource("10_right_lower_leg")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
+[node name="Mesh" parent="Body/Fan" instance=ExtResource("2_fan")]
+transform = Transform3D(0.5006, 0.4753, 0.7235, 0.0234, 0.828, -0.5602, -0.8653, 0.2974, 0.4034, 0, 0.055, 0)

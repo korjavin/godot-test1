@@ -35,15 +35,22 @@ WHAT A ROW IS (and where each half of it came from):
   beret/eyes        accessory GEOMETRY joined into the mesh and weighted to one
                     bone. An accessory that is not geometry is an ATTACHMENT and
                     belongs in the .tscn as a BoneAttachment3D (Windman's fan on
-                    `hand_r`) — the row does not model it and neither does this.
+                    `hand_r`, bead 5u3.5) — the row does not model it and neither
+                    does this.
+  emblem            a MOTIF painted onto the body's own vertices: a centre-line,
+                    a stroke width and a landmark to hang it off. Windman's chest
+                    "W" is the only one (`paint_chest_glyph`).
 
 COLOUR IS VERTEX COLOUR AND THERE IS NO TEXTURE (owner ruling 2026-09-11,
-"vertex colours by default with a body albedo only for a motif"). No hero here
-needs a motif yet: Windman's chest W is bead 5u3.5's call ("body albedo or vertex
-glyph"), Phoboman is out of this lane entirely (his sphere body stays generated),
-and nothing else in the cast has one. So there is no bake and no UV path here;
-the row that first needs one brings it. `texture bytes: 0` is printed anyway, so
-the day that changes is the day the number moves.
+"vertex colours by default with a body albedo only for a motif"). The cast has
+exactly one motif — Windman's chest "W" — and bead 5u3.5 measured it back onto
+the vertices rather than spending the lane's first texture on it: split the chest
+once under the glyph (`densify_chest`) and the letter has four to five vertices
+across every arm and three across every notch (`paint_chest_glyph`), which is
+what a 512^2 bake would have bought at 3 m and no more. So there is still no bake
+and no UV path here; the
+row that first needs one brings it. `texture bytes: 0` is printed anyway, so the
+day that changes is the day the number moves.
 
 NOT part of the build, NOT run by CI (the runner has no Blender): run by hand.
 
@@ -370,9 +377,36 @@ HEROES = {
         # `hand_r` by bead 5u3.5's .tscn, and windman_fan.glb keeps its own colours.
         "colours": dict(_face_palette("windman"), **{
             "shirt_blue":   (0.16, 0.33, 0.60, 1.0),
+            "letter_white": (0.93, 0.93, 0.93, 1.0),
             "shorts_brown": (0.42, 0.30, 0.18, 1.0),
             "boots_black":  (0.08, 0.08, 0.09, 1.0),
         }),
+        # THE CHEST "W" — the defining icon, and the first motif in this lane
+        # (bead godot-test1-5u3.5). VERTEX COLOUR, not a body albedo: the owner's
+        # 2026-09-11 ruling asks for a texture only "where a motif needs it", and
+        # this one does not — `paint_chest_glyph` measured 13.6 mm between chest
+        # vertices against a 54 mm stroke, four vertices across every arm of the
+        # letter, so the glyph resolves with zero texture bytes and no UV path.
+        # The SHAPE is `generate_windman_separate.py::_make_w_emblem`'s, verbatim:
+        # the same five-point centre-line and the same 27 mm buffer the retired
+        # generator extruded — which is why the letter did not change the day it
+        # stopped being geometry.
+        "emblem": {
+            "points": ((-0.092, 0.135), (-0.044, -0.048), (0.0, 0.072),
+                       (0.044, -0.048), (0.092, 0.135)),
+            "stroke": 0.027,
+            # The generator hung the letter off its own torso part; this row hangs
+            # it off a LANDMARK, so it rides the macros. 0.28 m below the neck
+            # joint puts the glyph's origin at the sternum and its 18 cm of letter
+            # between the collarbones and the waistband.
+            "drop": 0.28,
+            "colour": "letter_white",
+            # The two asserts. `min_faces` is the densify's: it fails if the glyph
+            # is not over a chest any more. `min_verts` is the paint's: below it
+            # the letter is a rash of white dots rather than a "W".
+            "min_faces": 80,
+            "min_verts": 120,
+        },
         # BARE ARMS AND SHORTS, AS BONE REGIONS. The generator paints the whole
         # upper and lower arm skin and leaves only a shirt-blue cap at the
         # shoulder, and paints the calves skin below brown shorts — which is
@@ -1008,6 +1042,128 @@ def paint_body(obj, tj, row, band_verts=frozenset()):
     me.update()
 
 
+def _glyph_distance(spec, co, origin_z):
+    """Distance from a point on the body to the emblem's centre-line, measured in
+    the chest plane (x across, z up — the glyph has no depth and wraps onto
+    whatever curve the chest has)."""
+    p = Vector((co.x, 0.0, co.z - origin_z))
+    best = 1e9
+    pts = [Vector((x, 0.0, z)) for x, z in spec["points"]]
+    for a, b in zip(pts, pts[1:]):
+        ab = b - a
+        t = min(1.0, max(0.0, (p - a).dot(ab) / ab.length_squared))
+        best = min(best, (p - (a + ab * t)).length)
+    return best
+
+
+def densify_chest(obj, tj, row):
+    """ONE SUBDIVISION UNDER THE EMBLEM (bead godot-test1-5u3.5, Windman only).
+
+    The first build of the vertex "W" came out a white BLOB: painted at the
+    body's own 24 mm triangle pitch, the letter's two notches are barely one
+    triangle wide, and Gouraud fills them in from the corners either side. The
+    stroke cannot get thinner (a 32 mm stroke at that pitch breaks into dots) and
+    the letter cannot get wider (it already spans the shirt), so the pitch is what
+    has to move — for this chest, and for nothing else.
+
+    So this splits ONLY the front-facing triangles under the glyph, once: ~12 mm
+    there, four to five vertices across every arm of the W and three across every
+    notch, for a few hundred triangles inside `TRI_BUDGET`. The alternative the
+    bead offered — `body_albedo` — buys a crisper edge for the lane's first UV
+    unwrap, its first 512^2 bake and its first texture bytes, on a letter no
+    camera in this game reads closer than 3 m; the owner's ruling puts vertex
+    colours first and a texture only where a motif NEEDS one, and this one does
+    not.
+
+    RUNS BEFORE `wrap_band`, and that ordering is load-bearing: the wrap hands
+    `export_glb` a set of POLYGON INDICES for its flat rims, and subdividing
+    renumbers every polygon in the mesh. Before the wrap there is nothing yet to
+    invalidate. (`build()` keeps the order; `export_glb`'s docstring is the other
+    half of this rule.)
+    """
+    spec = row["emblem"]
+    origin_z = tj["neck"].z - spec["drop"]
+    # A margin past the stroke, so the finer pitch reaches the notches and the
+    # outer edge rather than stopping exactly on the letter.
+    reach = spec["stroke"] + 0.025
+    me = obj.data
+    bpy.context.view_layer.objects.active = obj
+    for o in bpy.data.objects:
+        o.select_set(o is obj)
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_mode(type='FACE')
+    bpy.ops.mesh.select_all(action='DESELECT')
+    bpy.ops.object.mode_set(mode='OBJECT')
+    picked = 0
+    for poly in me.polygons:
+        want = (poly.normal.y > 0.3
+                and _glyph_distance(spec, poly.center, origin_z) <= reach)
+        poly.select = want
+        picked += int(want)
+    before = len(me.polygons)
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.subdivide(number_cuts=1)
+    bpy.ops.object.mode_set(mode='OBJECT')
+    log("chest densify: %d of %d faces split, %d -> %d tris"
+        % (picked, before, before, len(me.polygons)))
+    if picked < spec["min_faces"]:
+        raise AssertionError(
+            "the chest densify found %d faces under the glyph, under the %d floor "
+            "— the emblem is not where the row says it is" % (picked, spec["min_faces"]))
+
+
+def paint_chest_glyph(obj, tj, row):
+    """WINDMAN'S "W", AS VERTEX COLOUR (bead godot-test1-5u3.5, his row only).
+
+    The retired generator built this letter as GEOMETRY — a shapely poly-line
+    buffered into a polygon and extruded 22 mm proud of a flat torso — and that
+    slab is the last thing in this repo holding the `shapely` / `mapbox-earcut`
+    pins (bead 5u3.8 drops them). On a MakeHuman chest it could not have stayed
+    geometry anyway: a rigid slab over a curved, skinned surface either floats or
+    is swallowed the moment the spine bends.
+
+    So the letter is PAINT, on the vertices that are already there — after
+    `densify_chest` has doubled how many of them there are under the glyph, which
+    the first build proved is not optional: at the body's own 24 mm pitch the
+    letter's two notches close up and the whole thing reads as one white blob.
+    Split once, the chest runs ~12 mm and carries four to five vertices across
+    each arm of the W and three across each notch. `min_verts` is the guard: a
+    decimation change that thins this chest fails the build instead of shipping
+    that blob again.
+
+    Runs AFTER `paint_body`, which owns the colour attribute and the base coat:
+    this only overwrites, and only on the FRONT of the torso — `v.normal.y > 0.3`
+    (the build frame's +Y is the face) keeps the letter off the back and off the
+    curve of the ribs, and the torso weight keeps it off the arms that hang
+    inside the glyph's x span at rest.
+    """
+    spec = row["emblem"]
+    colour = row["colours"][spec["colour"]]
+    origin_z = tj["neck"].z - spec["drop"]
+    me = obj.data
+    attr = me.color_attributes.active_color
+    torso_ids = {vg.index for vg in obj.vertex_groups
+                 if vg.name in REGION_BONES["torso"]}
+
+    hit = []
+    for i, v in enumerate(me.vertices):
+        if v.normal.y <= 0.3 or _group_weight(v, torso_ids) <= 0.4:
+            continue
+        if _glyph_distance(spec, v.co, origin_z) > spec["stroke"]:
+            continue
+        attr.data[i].color = colour
+        hit.append(v.co.copy())
+    zs = [c.z for c in hit]
+    xs = [c.x for c in hit]
+    log("chest glyph: %d vert(s), x %.3f..%.3f, z %.3f..%.3f"
+        % (len(hit), min(xs, default=0.0), max(xs, default=0.0),
+           min(zs, default=0.0), max(zs, default=0.0)))
+    if len(hit) < spec["min_verts"]:
+        raise AssertionError(
+            "the chest glyph painted %d vertices, under the %d floor — at this "
+            "density the letter is dots, not a W" % (len(hit), spec["min_verts"]))
+
+
 # ---------------------------------------------------------------------------
 # Beret + eyes (spike_z3e_teibi_body.py's, unchanged but for the head weights)
 # ---------------------------------------------------------------------------
@@ -1265,11 +1421,18 @@ def build(hero, shot=None):
                              % (height, row["height"]))
     log("ASSERT OK: height %.4f m, within 3 cm of the row's %.2f" % (height, row["height"]))
 
+    # BEFORE the wrap, because the wrap's `flat_faces` are polygon indices and
+    # this renumbers every polygon — see `densify_chest`.
+    if "emblem" in row:
+        densify_chest(obj, tj, row)
+
     band_verts, flat_faces = face.wrap_band(obj, (tj["l-eye"].z + tj["r-eye"].z) / 2.0,
                                             row)
     if band_verts:
         weight_strays_to(obj, armature, "head")
     paint_body(obj, tj, row, band_verts)
+    if "emblem" in row:
+        paint_chest_glyph(obj, tj, row)
 
     if row["beret"]:
         crown_z = max(v.co.z for v in obj.data.vertices)
