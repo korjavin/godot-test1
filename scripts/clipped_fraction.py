@@ -4,8 +4,10 @@ Bead godot-test1-z3e.14 (the authored faces clipped to paper white; the owner
 could not make out a nose or a pair of lips). The fix was judged on this, not on
 opinion: the fraction of face pixels whose Rec.709 luma is >= `THRESHOLD` in a
 `17_head_face` frame. Run it again the day anyone touches a hero palette,
-`scripts/toon_shading.gd` or the environment block in `scenes/main.tscn` — those
-three are the only things that can move it.
+`scripts/toon_shading.gd` or the environment block in `scenes/main.tscn` — and on
+an ENGINE UPGRADE, which is the fourth thing that moves it: the numbers behind
+this bead were taken on Godot 4.5, and `ToonShading.style()` carries a
+Compatibility workaround that a later engine could turn into a double decode.
 
     # take the frames first (WINDOWED, one at a time, bounded — --headless hangs)
     perl -e 'alarm 600; exec @ARGV' godot --path . scenes/style_shots.tscn \

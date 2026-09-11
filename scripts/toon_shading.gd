@@ -72,17 +72,22 @@ static func style(mat: BaseMaterial3D, force_srgb: bool = false) -> void:
 	# it over the clipping line on web against 0.0% on Forward+, and 0.00% on web the
 	# moment this flag is set.
 	#
-	# IT IS NOT THE VRAM COMPRESSION, which was the first suspect and was tested:
-	# `import_etc2_astc=false` in project.godot plus a full re-import leaves the face
-	# at 28.04%, the same figure to two decimals. So the cause is upstream of anything
-	# this project configures, and this flag is the correction at the material.
+	# THE VRAM COMPRESSION WAS THE FIRST SUSPECT AND IS NOT RULED OUT. Turning
+	# `import_etc2_astc` off in project.godot and re-importing left the face at
+	# 28.04%, the same figure to two decimals — but that reading was taken the way
+	# every web number in this bead was, on a DESKTOP binary with
+	# `--rendering-method gl_compatibility`, which never selects the ETC2 variant in
+	# the first place. So it says "not reproduced on the stand-in", not "not the
+	# cause"; settling it needs a real web export. Either way the correction belongs
+	# here until someone does that.
 	#
 	# IT IS GATED THREE WAYS, and each gate has a measurement or a reason behind it:
 	#  * on the RENDERER, because setting it on Forward+ too means the texture is
 	#    decoded twice — the same face falls to 0.339 mean luma from 0.622, i.e.
-	#    dirt. `get_current_rendering_method()` asks the actual question;
-	#    `get_rendering_device() == null` would also be true under `--headless`,
-	#    which is how every self-check and all of CI run, on Forward+.
+	#    dirt. `get_current_rendering_method()` asks the actual question, and the
+	#    difference is not academic: measured, a `--headless` run answers
+	#    `forward_plus` here but `get_rendering_device() == null` — so the obvious
+	#    predicate would fire in every self-check and all of CI, on Forward+.
 	#  * on the CALLER, via `force_srgb` — the CAST opts in; the HQ's dossier
 	#    PORTRAITS do not. Those reach `style()` directly with a loose `.png` on a
 	#    different import path (`compress/mode=0`, no VRAM compression) and they are
