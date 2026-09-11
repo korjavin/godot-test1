@@ -9,18 +9,40 @@ lives here, next to the frames it was measured on.
 "There is flickering on house's roofs" — the pitched `BoxKind.WEDGE` roofs of the
 procedural CITY band (`terrain_biomes.gd::_spawn_city_content`), on the web build.
 
+## How the frames were taken, and why that is not a detail
+
+Every `6n1_*_web_*.png` here is the desktop binary running
+`--rendering-method gl_compatibility` **plus** the three `.web` project-setting
+overrides forced on at runtime, because a rendering method is not a feature tag:
+`.web` overrides resolve on the `web` tag, which is true only in a browser. Without
+forcing them a "web" capture silently runs at the engine's desktop
+`directional_shadow/size` of **4096**, 4x MSAA and full internal resolution — 4x the
+shadow resolution the web build ships, which is exactly the axis this bead is about.
+So the captures force:
+
+```
+RenderingServer.directional_shadow_atlas_set_size(1024, true)   # size.web
+viewport.msaa_3d        = MSAA_DISABLED                         # msaa_3d.web
+viewport.scaling_3d_scale = 0.8                                 # scale.web
+camera.fov              = 97.0                                  # FOV_MAX: the game is played RUNNING
+```
+
+The FOV matters for the same reason: a cascade's texel size is fitted to the camera
+sub-frustum, so the widest FOV the player ever holds is the worst case, not the
+standing 75 the tool's frozen pose uses.
+
 ## What it is
 
 **Directional shadow acne**, not geometry. Proved by A/B, not by arithmetic:
 
 | frame | roofs |
 |---|---|
-| shipped light, `gl_compatibility` | dense diagonal bands across every roof slope, cross-hatch on every plaster wall |
+| shipped light | dense diagonal bands across every roof slope, cross-hatch on every plaster wall |
 | same frame, `shadow_enabled = false` | completely clean |
 
-`docs/style/6n1_band_web_before.png` and `…_before_next_frame.png` are two
-consecutive frames with the camera crept 0.3 m: the bands **re-space and shift**
-between them. That crawl is the flicker.
+`6n1_band_web_before.png` and `…_before_next_frame.png` are two consecutive frames
+with the camera crept 0.3 m: the bands **re-space and shift** between them. That
+crawl is the flicker.
 
 The pair of coplanar faces PR #334 lifted (hull top vs roof underside) is not the
 cause and never could be — they face opposite ways under `cull_back` and are never
@@ -28,24 +50,26 @@ both rasterized. That branch was abandoned.
 
 ## Why the shadow map could not resolve it
 
-The light ran `directional_shadow_mode = 1` (PSSM, **2 splits**) at
-`directional_shadow_max_distance = 55` while `directional_shadow_split_1` sat at
-Godot's default **0.1**. That default is tuned for the 4-split mode; with two
-splits it puts the near cascade over 0–5.5 m and makes the far cascade carry
-**5.5–55 m** — on web a 1024 px map (`project.godot`:
-`lights_and_shadows/directional_shadow/size.web`), i.e. a texel of roughly 0.1 m.
+`DirectionalLight3D`'s own defaults, read off a fresh instance in Godot 4.5, are
+`directional_shadow_mode = 2` (**4** splits), `directional_shadow_split_1 = 0.1`,
+`shadow_normal_bias = 2.0`. `main.tscn` deliberately drops to
+`directional_shadow_mode = 1` (**2** splits, half the shadow passes) — but it kept
+`split_1` at the 4-split default and *lowered* the normal bias to 0.8.
 
-A wedge slope sits ~29° off horizontal against a sun 35° above the horizon, so its
-surface runs close to grazing to the light: the depth error across one texel is
-`texel × tan(angle)`, several times the texel itself. `shadow_normal_bias = 0.8` —
-already below the engine's own 2.0 default for a directional light — offsets by
-less than one texel and never reached it.
+With two splits and `max_distance = 55`, `split_1 = 0.1` puts the near cascade over
+0–5.5 m and makes the far cascade carry **5.5–55 m**. On web's 1024 px map, at the
+running FOV, that far cascade's texel is over a tenth of a metre.
+
+A wedge slope sits ~29° off horizontal (`CITY_ROOF_RISE_FACTOR` 0.28, so a rise over
+run of 0.56) against a sun 35° above the horizon, i.e. close to grazing to the light,
+where the depth error across one texel is several texels deep. `shadow_normal_bias`
+is measured in **texels**, not metres, so 0.8 of a 0.1 m texel never reached it.
 
 ## The change
 
 ```
-shadow_normal_bias      0.8  ->  3.0
-directional_shadow_split_1   (absent, default 0.1)  ->  0.35
+shadow_normal_bias            0.8  ->  3.0
+directional_shadow_split_1    (absent, engine default 0.1)  ->  0.35
 ```
 
 Both are needed and each was measured alone:
@@ -57,20 +81,44 @@ Both are needed and each was measured alone:
 - **together** — clean and correct: the slope keeps the shadow it should have, the
   eave line stays crisp, every cast shadow stays attached to its caster.
 
-0.35 also makes the *far* cascade finer, not coarser: it now covers 19–55 m instead
-of 5.5–55 m. Nothing about the number of shadow passes changes.
+### The cascade trade, both halves
 
-## No peter-panning
+`split_1 = 0.35` is not free, and the cost lands where the player is looking:
 
-`docs/style/6n1_field_web_before.png` / `…_after.png` — the open-field props at the
-same frozen pose. Before: the tall slab and the crates carry the same striping.
-After: clean, and every contact shadow is still anchored at its caster's foot.
+- **near cascade** 0–5.5 m → **0–19.25 m**: its bounding sphere grows ~3.5x and its
+  texel with it. Since `shadow_normal_bias` is a texel multiple, the world-space
+  offset applied to everything within 19 m grows by that factor *on top of* the
+  0.8 → 3.0 change.
+- **far cascade** 5.5–55 m → **19.25–55 m**: smaller sphere, finer texel, so the
+  distance band that was worst gets better.
+
+That is the whole point of moving the split: it takes resolution away from a 5.5 m
+bubble nobody can see acne in (nothing is within 5.5 m of a third-person camera but
+the hero's own feet) and spends it on the 5–30 m band where the houses actually are.
+The price is the larger normal offset near the camera, and `6n1_field_web_contact_*`
+is the measurement of what that costs — see below.
+
+## No peter-panning — measured, not argued
+
+`6n1_field_web_before.png` / `…_after.png` are the open-field props at the same
+frozen pose and the true web settings. Before: the terraced slabs, the crates and
+the boulder all carry the same striping. After: clean.
+
+`6n1_field_web_contact_before.png` / `…_after.png` are the contact line of the tall
+slab prop, blown up 6x — the one place a bigger normal offset would show as a light
+gap between a caster's foot and its shadow. It goes the other way: **before** there
+is a pale gap between the slab's base and its cast shadow (the coarse cascade was
+leaking light into the contact, the same leak that lit the roof slopes), and
+**after** the shadow reaches the base. The nominal pull-in from the larger offset is
+a few centimetres at a 35° sun — a couple of pixels at this framing — and the
+contact reads tighter, not looser.
 
 ## Both renderers
 
-`docs/style/6n1_band_forwardplus_*.png` — on desktop Forward+ (2048 px map) the
-roofs were already clean; the change only softens the serrated comb along the
-wall/eave junction. It is not a regression on desktop.
+`6n1_band_forwardplus_*.png` — desktop Forward+ at the engine's default **4096 px**
+map (`project.godot` sets only `size.web`; the base setting is unset). There the
+roofs were already clean and the change only softens the serrated comb along the
+wall/eave junction. Not a regression on desktop.
 
 ## Perf
 
@@ -89,5 +137,5 @@ default. The line has never done anything; it only claimed the shadows were blur
 
 A handful of band houses stand close enough that one roof prism intersects its
 neighbour's, and the two near-parallel slopes interleave in a small dithered patch
-(visible near the ridge in `6n1_band_web_after.png`). That is a placement question
-for `_biome_spot_ok`, not a lighting one, and it is a separate bead.
+(visible near the ridge in the band's after frame). That is a placement question for
+`_biome_spot_ok`, not a lighting one, and it is a separate bead.
