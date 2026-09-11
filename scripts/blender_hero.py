@@ -20,13 +20,13 @@ file's matrix math applies there: trap 2's Rx(-90) conjugation is for UNRIGGED
 parts hung on a .tscn node, and a skinned glTF is placed by its own root node and
 exports Y-up (build_hero.py's own trap 3).
 
-<hero> is one of windman, primm, phoboman — the three heroes still built from
-SEPARATE PARTS *in the game*. Teibi left this lane with bead godot-test1-5u3.3: he
-is one skinned mesh on a Skeleton3D now, and reproducing a PART TREE from his .tscn
-has nothing to reproduce; the other three follow at beads 5u3.5-.7 (the first two
-already have their skinned .glb built and waiting, unwired) and this file retires
-with the last of them. Windman's scene is windman_updated.tscn, the other two are
-plain scenes/characters/<hero>.tscn.
+<hero> is one of windman, phoboman — the two heroes still built from SEPARATE
+PARTS *in the game*. Teibi left this lane with bead godot-test1-5u3.3 and Primm
+with bead godot-test1-5u3.6: each is one skinned mesh on a Skeleton3D now, and
+reproducing a PART TREE from such a .tscn has nothing to reproduce; the other two
+follow at beads 5u3.5 and .7 (Windman's skinned .glb is already built and waiting,
+unwired) and this file retires with the last of them. Windman's scene is
+windman_updated.tscn, phoboman's is plain scenes/characters/phoboman.tscn.
 <part> is a leaf part name (e.g. "head", "torso") or,
 where that is ambiguous (both arms/legs reuse "UpperArm"/"LowerLeg"/"Mesh"), the
 node's full .tscn path with "/" written as ".", e.g. "leftarm.upperarm".
@@ -88,17 +88,15 @@ CHAR_DIR = os.path.join(REPO, "scenes", "characters")
 # "_updated" rebuild that assembles windman_parts/.
 HERO_SCENES = {
     "windman": "windman_updated.tscn",
-    "primm": "primm.tscn",
     "phoboman": "phoboman.tscn",
 }
 
 # The bead's height/feet assert. Ranges are MEASURED on this branch (2026-09-08),
 # not the bead's own rough guess, per CLAUDE.md ("the measured numbers ... live
-# next to the code"): windman 1.7536 m, primm 1.7733 m (1.7931 before bead
-# godot-test1-z3e.5 gave him the authored head, whose crown sits 2 cm lower than
-# the generated sphere's hair cap), both inside the default band — teibi measured
-# 1.7847 m here before bead godot-test1-5u3.3 took him out of this lane, and the
-# skinned body that replaced him is 1.78 m by construction plus 5.5 cm of beret;
+# next to the code"): windman 1.7536 m, inside the default band — teibi measured
+# 1.7847 m and primm 1.7733 m here before beads godot-test1-5u3.3 and .6 took them
+# out of this lane, and the skinned bodies that replaced them are 1.78 m by
+# construction (plus 5.5 cm of beret for Teibi);
 # phoboman measures 1.6344 m -- taller than the bead text's
 # offhand "~1.4-1.5", because bead godot-test1-z3e.7 (closing the neck gap,
 # merged after this bead was filed) raised its torso/head relative to its legs.

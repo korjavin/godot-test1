@@ -3,7 +3,8 @@
 Bead godot-test1-z3e.14, owner 2026-09-11 on the face grids: "very white, nothing
 can be made out". Imported by everything that paints hero skin — the two Blender
 lanes (`spike_z3e_head.py`, `build_hero.py`) and the generators whose bodies those
-authored heads sit on (`generate_windman_separate.py`, `generate_primm_separate.py`)
+authored heads sit on (`generate_windman_separate.py`; Primm's left with bead
+godot-test1-5u3.6, and `build_hero.py` grades his skinned body instead)
 — the same way they all already reach `predator_parts.export_faceted`:
 
     import sys

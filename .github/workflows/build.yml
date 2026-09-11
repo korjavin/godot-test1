@@ -512,7 +512,7 @@ jobs:
       # on the runner), so there is no generator of his left to rebuild.
       - name: 🦸 Rebuild every hero model
         run: |
-          for hero in windman primm phoboman; do
+          for hero in windman phoboman; do   # primm left with bead godot-test1-5u3.6
             python3 "scripts/generate_${hero}_separate.py" || {
               echo "::error::scripts/generate_${hero}_separate.py failed"
               exit 1
