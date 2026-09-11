@@ -1,0 +1,38 @@
+{
+  "heroes": {
+    "primm": {
+      "bones": 23,
+      "glb": "primm_parts/primm_skinned.glb",
+      "glb_bytes": 412028,
+      "head_tris": 4400,
+      "height_m": 1.792,
+      "texture_bytes": 0,
+      "texture_size": 0,
+      "tris": 12602
+    },
+    "teibi": {
+      "bones": 23,
+      "glb": "teibi_parts/teibi_skinned.glb",
+      "glb_bytes": 433720,
+      "head_tris": 5064,
+      "height_m": 1.8349,
+      "texture_bytes": 0,
+      "texture_size": 0,
+      "tris": 13266
+    },
+    "windman": {
+      "bones": 23,
+      "glb": "windman_parts/windman_skinned.glb",
+      "glb_bytes": 434092,
+      "head_tris": 4447,
+      "height_m": 1.7579,
+      "texture_bytes": 0,
+      "texture_size": 0,
+      "tris": 12649
+    }
+  },
+  "tools": {
+    "blender": "5.2.1 LTS",
+    "mpfb": "2.0.17"
+  }
+}
