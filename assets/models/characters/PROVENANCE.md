@@ -6,6 +6,22 @@ The following sources are **strictly forbidden** for any hero or character art i
 - **Hunyuan3D**: Licence Territory excludes the EU, UK, and South Korea.
 - **Mixamo**: Allowed to ship in a compiled game, but cannot be redistributed standalone as raw assets in a public repository.
 - **Rodin / generative AI model output**: Unsettled copyright and IP ownership.
+- **Quaternius asset packs** (read 2026-09-11 for the Universal Animation Library, bead
+  godot-test1-5u3.1): allowed to ship inside a compiled game, but **not committable to
+  this public repo**. The pack page still shows a "(CC0 License)" badge linking to CC0
+  1.0, but the site's own governing licence — *Quaternius Asset License (QAL) v1.0, last
+  updated 8/28/2026*, linked from the "License" button on that same page — is not CC0.
+  Its §3(a) reads, verbatim: *"Resell or redistribute the Assets themselves. You may not
+  extract, repackage, sublicense, sell, or otherwise redistribute the Assets (in original
+  or modified form) as a standalone asset, asset pack, stock file, template, or similar
+  product, whether for free or for payment, and whether alone or bundled with other
+  assets. This restriction applies regardless of how much the Assets have been modified.
+  It does not restrict distributing a completed Product that merely incorporates the
+  Assets."* §7 adds that *"the version in effect at the time you obtained the Assets
+  governs"*, so a download made today is governed by QAL v1.0 whatever an older bundled
+  licence file says, and §9 makes it the entire agreement. A retargeted clip `.glb`
+  sitting in this repository is the asset in modified form as a standalone file, not a
+  completed Product — the same reason Mixamo is already on this list.
 
 All shipping character assets must derive from CC0 or equivalently unencumbered sources (MPFB2 / MakeHuman core basemesh and targets, Poly Haven, AmbientCG).
 
@@ -32,6 +48,7 @@ Source `.blend` files accompanying authored `.glb` models **are committed to git
 | `teibi_parts/teibi_right_upper_leg_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
 | `teibi_parts/teibi_right_lower_leg_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets + `weights.game_engine.json` | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
 | `teibi_parts/teibi_uncut_authored.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/spike_z3e_teibi_body.py`, MakeHuman basemesh + targets | CC0 | 2026-09-08, SPIKE godot-test1-z3e.10, not shipped | `teibi_parts/teibi_authored.blend` |
+| `teibi_parts/teibi_skinned.glb` | Blender 5.2.1 LTS, MPFB 2.0.17 | `scripts/build_hero.py teibi`, MakeHuman basemesh + targets + `rig.game_engine.json` + `weights.game_engine.json` | CC0 | 2026-09-11, SPIKE godot-test1-5u3.1, not shipped | `teibi_parts/teibi_skinned.blend` |
 
 Each authored head's 512x512 albedo is EMBEDDED in its `.glb` — that is the copy Godot
 renders. The loose `*_head_authored_*_head_albedo.png` beside each one is the same bake
