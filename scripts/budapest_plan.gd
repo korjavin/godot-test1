@@ -1007,8 +1007,11 @@ static func approach_coin_line(terminal: Vector2, start_x: float, east_x: float)
 	return pts
 
 
-# ponytail: TWO DELIBERATE DEFERRALS, recorded here so the next reader knows they
-# are decisions and not oversights.
+# ponytail: ONE DELIBERATE DEFERRAL, recorded here so the next reader knows it is
+# a decision and not an oversight. (The second one that used to stand here —
+# fauna not being excluded from the rect, so a giraffe herd could walk down Váci
+# utca — was picked up by bead godot-test1-8gw.25: fauna_manager.gd now rejects a
+# migration line that crosses budapest_rect().)
 #
 #   1. NO HORIZON IMPOSTORS. The bead says the city "may" have them. The tower's
 #      fog-exempt impostor is manager-parented, and CLAUDE.md says the tower is
@@ -1016,13 +1019,3 @@ static func approach_coin_line(terminal: Vector2, start_x: float, east_x: float)
 #      would be a second lifetime model for the sake of a silhouette; the city is
 #      chunk-streamed like everything else, and fog does the rest. Add one only
 #      if somebody measures that the approach reads as empty.
-#
-#   2. FAUNA IS NOT EXCLUDED FROM THE RECT. `fauna_manager.gd` plans a detour
-#      around the HQ by reading `tower_site()` / `TOWER_RADIUS`, and knows
-#      nothing about this rect, so a giraffe herd can walk down Váci utca. It is
-#      not a bug: fauna joins no group, has no collision and is parented to the
-#      manager, so it cannot be grabbed, cannot block anything and cannot leak —
-#      it is ambience in the wrong place. Bead `godot-test1-8gw.10` (the CROWDS
-#      bead) is where the city's population is decided, and excluding the herds
-#      belongs in the same pass that adds the citizens; doing it here would mean
-#      editing a file this bead's branch has no other reason to touch.

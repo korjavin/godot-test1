@@ -4030,6 +4030,21 @@ func in_budapest(world_x: float, world_z: float) -> bool:
 	return BudapestPlan.contains(world_x, world_z)
 
 
+func budapest_rect() -> Rect2:
+	"""
+	The city footprint as a `Rect2`, for a caller that has to intersect a SHAPE
+	against it rather than ask about one point — fauna_manager tests its whole
+	migration LINE (bead godot-test1-8gw.25).
+
+	@return: The authored rect in world XZ (`position`/`size` are x/z, not x/y).
+
+	Delegates to `BudapestPlan.rect()` and adds nothing, exactly the way
+	in_budapest() delegates to contains(): the rect is the PLAN's number and a
+	second copy of it on this side of the seam is how the two drift apart.
+	"""
+	return BudapestPlan.rect()
+
+
 func tower_site() -> Vector3:
 	"""
 	Where the tower stands this run — the ONE position the whole tower epic

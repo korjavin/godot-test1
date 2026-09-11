@@ -425,6 +425,51 @@ const TOWER_CLEARANCE_MARGIN: float = 2.0
 ## the alternative — spawning anyway — puts elephants inside the lobby.
 const TOWER_SPAWN_TRIES: int = 6
 
+# ----------------------------------------------------------------------------
+# THE CITY KEEP-OUT — the second address the field knows about (godot-test1-8gw.25)
+# ----------------------------------------------------------------------------
+# The owner watched a giraffe herd migrate down Váci utca: authored Budapest was
+# never a keep-out here, only the HQ disc was, so a player near the gate or
+# inside the city got herds rolled straight across the Parliament forecourt and
+# the Danube decks. It was recorded as a deliberate deferral in budapest_plan.gd
+# and never picked up.
+#
+# It is the TOWER rule with one difference. The tower is a 65 m disc, so
+# rejecting its ORIGIN is enough and a bend walks the rest clear; the city is
+# 2.2 km x 2.2 km, so no lateral berth clears it and the thing that has to miss
+# is the WHOLE LINE. `_city_excludes_line` therefore tests the migration segment,
+# and a hit costs the attempt exactly as the disc does — same loop, same
+# TOWER_SPAWN_TRIES budget, same honest give-up when every try fails.
+#
+# THIS IS PLACEMENT POLICY, NOT A CAP. No entity count is reduced anywhere: the
+# event timer re-arms untouched, and a player who walks back out of the city gets
+# the same herds at the same rate. The extra rejections cost nothing
+# deterministic either — fauna rolls its own randomize()d RNG and touches no
+# `run_seed` (see the header) — and the PASSING case draws exactly what it always
+# did, because both rejections are asked after every draw of the attempt.
+#
+# NOT DESPAWNED ON ENTRY: a herd that started outside and legitimately walks in
+# is left alone. A herd vanishing mid-crossing is a more visible bug than the one
+# being fixed, and once the whole line is tested it is a rare case anyway.
+#
+# Multiplayer needs no verb: the master rolls the herds and peers replay them
+# (see the header), so a master-side rejection is room-wide by construction.
+
+## Slack (metres) grown onto the city rect before the migration line is tested
+## against it. Covers everything that rides LATERALLY on the centre's line — this
+## herd's widest member (bounded by FORMATION_MAX_EXTENT) and the meander's full
+## swing. The tower detour is deliberately NOT in here: the HQ stands at x ~ -400
+## and the rect starts at x = +1600, so a herd close enough to bend around the
+## building (TOWER_PLAN_RANGE, 200 m) is still ~1.4 km short of the city and the
+## two berths can never be spent on the same crossing.
+const CITY_KEEP_OUT_MARGIN: float = FORMATION_MAX_EXTENT + MEANDER_AMPLITUDE
+
+## How far the migration line is tested for. The longest crossing a herd can walk
+## before the despawn ring frees it is FIELD_RADIUS + DESPAWN_RADIUS (the herd
+## enters on the field circle and leaves on the far side of the despawn one), so
+## this is the whole of the line and not a sample of it.
+const CITY_LINE_LENGTH: float = FIELD_RADIUS + DESPAWN_RADIUS
+
 # ============================================================================
 # CONSTANTS — elephant geometry
 # ============================================================================
@@ -1533,10 +1578,12 @@ func _spawn_herd() -> void:
 	# open sky past the web build's ~150 m of terrain — the exact failure
 	# FIELD_RADIUS exists to prevent. |miss| < spawn_radius always, so the root is real.
 	var spawn_radius := FIELD_RADIUS - FORMATION_MAX_EXTENT
-	# Roll the whole migration line, and re-roll it while its ORIGIN would stand
-	# inside the tower's keep-out disc — a herd built there is a herd built in the
-	# HQ's lobby, and no amount of steering afterwards gets it out (see the TOWER
-	# block in the constants, and TOWER_SPAWN_TRIES for why giving up is right).
+	# Roll the whole migration line, and re-roll it while it would land somewhere
+	# authored: its ORIGIN inside the tower's keep-out disc — a herd built there is
+	# a herd built in the HQ's lobby, and no amount of steering afterwards gets it
+	# out — or its whole LINE across Budapest, which is too wide to steer around at
+	# all (see the TOWER and CITY KEEP-OUT blocks in the constants, and
+	# TOWER_SPAWN_TRIES for why giving up is right).
 	# In open country the first attempt always passes, so the draw sequence — and
 	# with it every migration line the field has ever laid out — is unchanged.
 	var placed := false
@@ -1558,7 +1605,8 @@ func _spawn_herd() -> void:
 			miss = -miss
 		var setback := sqrt(spawn_radius * spawn_radius - miss * miss)
 		origin = player_ground - heading * setback + lateral * miss
-		if not _tower_excludes_spawn(origin):
+		if not _tower_excludes_spawn(origin) \
+				and not _city_excludes_line(origin, heading):
 			placed = true
 			break
 	if not placed:
@@ -2016,6 +2064,38 @@ func _tower_excludes_spawn(spot: Vector3) -> bool:
 	if terrain == null or not terrain.has_method("tower_excludes"):
 		return false
 	return bool(terrain.call("tower_excludes", spot.x, spot.z, FORMATION_MAX_EXTENT))
+
+
+func _city_excludes_line(origin: Vector3, heading: Vector3) -> bool:
+	## Would this whole migration line cross authored Budapest? See THE CITY
+	## KEEP-OUT in the constants for why the LINE and not just the origin.
+	##
+	## The rect grown by CITY_KEEP_OUT_MARGIN becomes a flat `AABB` and the engine
+	## answers the segment question — the same slab test a hand-rolled one would
+	## be, already written.
+	##
+	## `AABB.intersects_segment` returns the CROSSING POINT in Godot 4, and `null`
+	## when there is none — so on its own it reads a line lying WHOLLY INSIDE the
+	## city (the player standing on Váci utca, the worst case of the lot) as a
+	## clean miss, because such a segment crosses no face. `has_point` on the
+	## origin is that case, and the two together are exact.
+	##
+	## Group lookup with a has_method guard, like every other cross-system read in
+	## this file: a scene with no terrain answers "nothing in the way" and the
+	## field behaves exactly as it did before this existed.
+	var terrain := get_tree().get_first_node_in_group("terrain")
+	if terrain == null or not terrain.has_method("budapest_rect"):
+		return false
+	var rect: Variant = terrain.call("budapest_rect")
+	if typeof(rect) != TYPE_RECT2:
+		return false
+	var grown: Rect2 = (rect as Rect2).grow(CITY_KEEP_OUT_MARGIN)
+	# Rect2 is x/z here, and 2 m of height is enough for a segment drawn at y = 0.
+	var box := AABB(Vector3(grown.position.x, -1.0, grown.position.y),
+			Vector3(grown.size.x, 2.0, grown.size.y))
+	var start := Vector3(origin.x, 0.0, origin.z)
+	return box.has_point(start) \
+			or box.intersects_segment(start, start + heading * CITY_LINE_LENGTH) != null
 
 
 func _plan_tower_detour() -> void:
