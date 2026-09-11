@@ -31,6 +31,15 @@ extends SceneTree
 ##      deferring it must be a no-op on the world. Check 4 builds the same ring
 ##      both ways and compares every node in it.
 ##
+## AND ONE STRUCTURAL AUDIT OF THE SAME CONTRACT FROM THE OTHER END (check 6,
+## bead godot-test1-0y5). Everything above is about a chunk built ONCE; the audit
+## is about the chunk built after a RE-SEED — `_drop_seeded_memos()` must name
+## every memo derived from `run_seed`, or a multiplayer joiner streams the new
+## world through the old world's road. That list is maintained by hand and the
+## terrain grows a memo every few beads, so check 6 reads the source and asserts
+## the list and the declarations still agree. See the check for why it is a grep
+## and not a re-seed.
+##
 ## Deliberately NOT covered: frame timing. What this file protects is the
 ## correctness the timing win was bought with; the timing itself is measured by
 ## perf_overlay's `[SPIKE]` log on a real build, not asserted here.
@@ -41,6 +50,39 @@ extends SceneTree
 ## failure — same note as enemy_spawn_selfcheck.gd's header.
 
 const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
+
+## THE MEMOS THAT LOOK SEEDED AND ARE NOT — check 6's allowlist, one line of why
+## per entry. A name may only sit here because its value carries no `run_seed`,
+## never because resetting it was inconvenient: the whole point of the check is
+## that the next author has to write the reason down.
+const UNSEEDED_MEMOS: Dictionary = {
+	# The site is a pure function of `tower_site_distance` alone — a designer knob,
+	# not the seed (the dry-site nudge left the key; owner ruling 2026-08-29).
+	"_tower_site_cache": "constant site, derived from tower_site_distance only",
+	# East of the gate the corridor IS the authored avenue at z = 0, so this scans
+	# BudapestPlan's polyline and nothing else. `_drop_seeded_memos()` says at
+	# length why a reset here would imply a dependency that does not exist.
+	"_approach_coin_east_end_cache": "authored BudapestPlan line, no run_seed",
+}
+
+## SEEDED STATE WHOSE NAME DOES NOT SAY "MEMO" — the road centreline itself (the
+## thing every memo below it is derived from) and the altitude spike's window onto
+## it. The name scan cannot find these, so check 6 pins them by hand: they are
+## reset today, and pinning them is what stops a future edit from quietly deleting
+## the line. Nothing may be added here to excuse a name — this list makes the
+## check STRICTER; UNSEEDED_MEMOS above is the only exemption seam.
+const SEEDED_ROAD_STATE: PackedStringArray = [
+	"road_stations", "road_k_min", "road_k_max", "_alt_road_segs",
+]
+
+## The static "family" libraries that reach terrain state — check 6's second half.
+## A memo on one of these is a bug by construction, whatever it is derived from:
+## `_drop_seeded_memos()` can only reach state that lives on the terrain NODE
+## (ftn.4's ruling, which is why `_landmark_at` stayed there), so a static memo
+## is unreachable from the one seam that is allowed to forget nothing.
+const FAMILY_PREFIX: String = "terrain_"
+const FAMILY_EXTRA: PackedStringArray = ["budapest_streamer.gd"]
+const SCRIPT_DIR: String = "res://scripts"
 
 ## One seed is enough: this check is about the STATE MACHINE around a chunk, not
 ## about what any particular chunk contains, and check 4 compares two builds of
@@ -87,6 +129,9 @@ func _run() -> void:
 	_drain(terrain)
 	_check_drain_paid_the_debt(terrain)
 	_check_two_frame_build_matches_one(terrain)
+	# Reads source, touches no node — it is here because this is the terrain
+	# streaming check and the contract it audits is the streamer's.
+	_check_every_seeded_memo_is_dropped()
 
 	terrain.free()
 	_report()
@@ -305,9 +350,138 @@ func _check_two_frame_build_matches_one(built_over_two_frames: Node3D) -> void:
 	Sentinel.done("two_frame_build_matches_one")
 
 
+func _check_every_seeded_memo_is_dropped() -> void:
+	"""
+	Check 6 (bead godot-test1-0y5). A STRUCTURAL AUDIT of `_drop_seeded_memos()`:
+
+	  a. every memo declared on the terrain node — plus the road state pinned in
+	     SEEDED_ROAD_STATE, whose names the scan cannot recognise — is reset in
+	     that body, or named in UNSEEDED_MEMOS with the reason it carries no
+	     `run_seed`;
+	  b. every name that body resets is still declared, so a rename cannot leave
+	     a dead line behind that looks like the reset it no longer is;
+	  c. no static "family" library holds a memo at all — `_drop_seeded_memos()`
+	     cannot reach one.
+
+	WHY A GREP AND NOT A RE-SEED. The behavioural form of this — seed, stream,
+	re-seed, stream again, compare — already exists where it can name the feature
+	it is about: `budapest_selfcheck`'s determinism A/B and
+	`landmark_sites_selfcheck` check 1b. Repeating it here would cost seconds to
+	say "some chunk differs"; reading the source costs milliseconds and names the
+	VARIABLE whose reset is missing, which is the whole edit the next author owes.
+	The failure it guards is the one CLAUDE.md states outright: "a memo that
+	outlives a re-seed hands a multiplayer joiner the wrong world."
+
+	IT PASSES ON THE DAY IT LANDS. Every memo in the terrain today is either in
+	the drop list or in the allowlist — audited by hand for the bead. It exists
+	for the memo that arrives next: the terrain families have grown one every few
+	beads (ftn.28 bridges, ftn.29 altitude, 8gw.3 the approach line), and
+	nothing else would tell that author about the second line they owe.
+	"""
+	var source: String = FileAccess.get_file_as_string(TERRAIN_SCRIPT)
+	var decl_re := RegEx.create_from_string("^var\\s+([A-Za-z_][A-Za-z0-9_]*)")
+	# An assignment at the top of a statement: `name = value`, never `name == x`.
+	var assign_re := RegEx.create_from_string("^([a-z_][A-Za-z0-9_]*)\\s*=[^=]")
+	if source.is_empty() or decl_re == null or assign_re == null:
+		_fail("check 6 could not read %s or compile its patterns, so the drop list is unaudited" % TERRAIN_SCRIPT)
+		Sentinel.done("every_seeded_memo_is_dropped")
+		return
+	var lines: PackedStringArray = source.split("\n")
+
+	# a. THE DECLARATIONS. Top-level `var` only — a local inside a function is
+	# not state and cannot outlive anything.
+	var declared: Dictionary = {}
+	var memos: Array[String] = []
+	for line: String in lines:
+		var m := decl_re.search(line)
+		if m == null:
+			continue
+		var name: String = m.get_string(1)
+		declared[name] = true
+		if _is_memo_name(name):
+			memos.append(name)
+	# ...and the seeded road state the name scan cannot see, held to exactly the
+	# same standard once it is known to still exist.
+	for name: String in SEEDED_ROAD_STATE:
+		if not declared.has(name):
+			_fail("SEEDED_ROAD_STATE pins `%s`, which endless_terrain.gd no longer declares — the pin is protecting nothing and the road state it stood for is unaudited" % name)
+		elif not memos.has(name):
+			memos.append(name)
+
+	# b. THE DROP BODY, from its signature to the next top-level `func`. Comments
+	# and the docstring are skipped so that prose about an assignment is never
+	# read as one. (`ponytail:` the docstring toggle assumes the usual open and
+	# close on their own lines; a one-line `"""x"""` would confuse it.)
+	var start: int = lines.find("func _drop_seeded_memos() -> void:")
+	var reset: Dictionary = {}
+	if start < 0:
+		_fail("endless_terrain.gd has no `_drop_seeded_memos()` — CLAUDE.md's seed contract names it as the one place a seeded memo is cleared")
+	else:
+		var in_doc := false
+		for i: int in range(start + 1, lines.size()):
+			if lines[i].begins_with("func "):
+				break
+			var text: String = lines[i].strip_edges()
+			if text.begins_with('"""'):
+				in_doc = not in_doc
+				continue
+			if in_doc or text.begins_with("#"):
+				continue
+			var m := assign_re.search(text)
+			if m != null:
+				reset[m.get_string(1)] = true
+
+	# NON-VACUITY. A scan that found nothing would pass whatever the source said,
+	# which is the one way an audit like this rots without anybody noticing.
+	if memos.size() <= UNSEEDED_MEMOS.size() or reset.is_empty():
+		_fail("check 6 scanned %d memo declarations and %d resets — it is not reading endless_terrain.gd and would pass on an empty drop list" % [memos.size(), reset.size()])
+
+	for name: String in memos:
+		if reset.has(name) or UNSEEDED_MEMOS.has(name):
+			continue
+		_fail("endless_terrain.gd declares `%s` but `_drop_seeded_memos()` never resets it — a memo that outlives a re-seed hands a multiplayer joiner the wrong world. Add the reset there, or add `%s` to UNSEEDED_MEMOS in this file with the reason it carries no run_seed." % [name, name])
+
+	for name: String in reset:
+		if not declared.has(name):
+			_fail("`_drop_seeded_memos()` resets `%s`, which endless_terrain.gd declares nowhere — a rename left a dead reset that reads like the one it no longer is" % name)
+
+	for name: String in UNSEEDED_MEMOS:
+		if not declared.has(name):
+			_fail("UNSEEDED_MEMOS exempts `%s`, which endless_terrain.gd no longer declares — a stale exemption would silently excuse the next var to take that name" % name)
+
+	# c. THE STATIC FAMILIES. Nothing here holds a memo today; the assertion is
+	# that nothing starts to, because a static cache is state no seed write can
+	# reach (see FAMILY_PREFIX).
+	var audited := 0
+	for file_name: String in DirAccess.get_files_at(SCRIPT_DIR):
+		var in_family: bool = file_name.begins_with(FAMILY_PREFIX) and file_name.ends_with(".gd")
+		if not in_family and not (file_name in FAMILY_EXTRA):
+			continue
+		audited += 1
+		for line: String in FileAccess.get_file_as_string("%s/%s" % [SCRIPT_DIR, file_name]).split("\n"):
+			if not line.begins_with("static var"):
+				continue
+			var m := decl_re.search(line.trim_prefix("static "))
+			if m != null and _is_memo_name(m.get_string(1)):
+				_fail("%s holds `static var %s` — a memo on a static family is state `_drop_seeded_memos()` cannot reach, so it survives every re-seed. Memo state lives on the terrain node." % [file_name, m.get_string(1)])
+	if audited <= FAMILY_EXTRA.size():
+		_fail("check 6 found %d static family scripts to audit — the glob is broken and the static half passes vacuously" % audited)
+
+	Sentinel.done("every_seeded_memo_is_dropped")
+
+
 # ============================================================================
 # HELPERS
 # ============================================================================
+
+func _is_memo_name(name: String) -> bool:
+	## What "a memo" looks like in this codebase: the value itself
+	## (`_field_bridge_cache`, `_road_terminal_k_cache`) and the latch declared
+	## beside it that says whether it was ever filled (`_approach_bridge_scanned`,
+	## `_landmark_sites_built`) — the latch matters as much as the cache, since a
+	## stale `true` stops the new world from rebuilding at all.
+	return name.contains("cache") or name.contains("memo") \
+			or name.ends_with("_scanned") or name.ends_with("_built")
 
 func _has_ground_collision(chunk: Node, chunk_size: float) -> bool:
 	## A floor is a CollisionShape3D holding a BoxShape3D that spans the chunk.
