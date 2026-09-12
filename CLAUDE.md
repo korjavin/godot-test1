@@ -26,7 +26,7 @@ godot --headless --path . --import                               # after editing
 mkdir -p build/web && godot --headless --export-release "Web" build/web/index.html && ./serve.sh
 bash scripts/mp_e2e.sh                                           # two-instance MP e2e (needs go + godot)
 python3 scripts/predator_parts.py                                # rebuild + verify every enemy .glb
-blender --background --python-exit-code 1 --python scripts/blender_hero.py -- import <hero> [--screenshot <png>]  # hero-part Blender lane, not in CI
+blender --background --python-exit-code 1 --python scripts/blender_hero.py -- import phoboman [--screenshot <png>]  # the part-tree lane, one hero left, not in CI
 cd server && go test ./...                                       # the Go lobby
 ```
 
@@ -48,9 +48,11 @@ there is the one export seam for every generated `.glb` (heroes included) — re
 docstring before touching it; an authored part lives beside its `PROVENANCE.md` row and
 is never written by a generator. **Teibi, Windman and Primm are authored and
 skinned** — one mesh each on a 23-bone MakeHuman rig, source of record
-`scripts/build_hero.py` (Blender + MPFB2, run by hand, outside the CI rebuild gate).
-`generate_windman_separate.py` is down to his FAN, which `windman_updated.tscn` hangs
-on the `hand_r` bone with a `BoneAttachment3D`.
+`scripts/build_hero.py` (Blender + MPFB2, run by hand, outside the CI rebuild gate;
+`scripts/hero_manifest.json` is their staleness gate instead). Of the cast only
+Phoboman's parts and Windman's fan are still generated
+(`generate_phoboman_separate.py`, `generate_windman_fan.py` — the two names in
+`build.yml`'s rebuild loop).
 
 `.gd.uid` files are Godot's; don't hand-edit them.
 
@@ -64,7 +66,7 @@ on the `hand_r` bone with a `BoneAttachment3D`.
 | Waypoints (the teleport circles) | `scripts/terrain_waypoints.gd` | `BudapestPlan.WAYPOINTS` (the city's five); the index of a site IS its wire bit; `waypoint_hub.gd` owns the enter edge and is the ONE writer of every beam; found room-wide over the `wp` verb; travel is `PlayerController.travel_to_waypoint()` on `EndlessTerrain.relocate()` (the `new_run` wipe WITHOUT the seed write, so the HQ's per-run interior survives a hop) and costs `TELEPORT_COIN_COST` | `waypoint` `waypoint_travel` |
 | Budapest (authored plan, streamed) | `scripts/budapest_plan.gd` | `budapest_streamer` `city_builders` | `budapest` `budapest_city` `landmark_progress` `city_map` |
 | The tower / HQ | `scripts/tower_shell.gd` `tower_interior.gd` | `tower_plans` (ASCII storeys) `tower_graph` (topology) `tower_plan_boxes` `tower_gates` `tower_guards` `tower_dressing` `tower_dossiers` `tower_lift_menu` | `tower_*` (`tower_gate_sync` for the room-shared opened set) |
-| Player, abilities, animation | `scripts/player_controller.gd` | `player_abilities` `player_animation` `hero_rig` + `hero_rig_limbs` / `hero_rig_skeleton` (the two pose drivers) | `capture` `view` `gait` `debug_teleport` |
+| Player, abilities, animation | `scripts/player_controller.gd` | `player_abilities` `player_animation` `hero_rig` + `hero_rig_limbs` / `hero_rig_skeleton` (the two pose drivers) `build_hero.py` (the skinned heroes' Blender lane) | `capture` `view` `gait` `debug_teleport` |
 | Predators, bosses, species | `scripts/piglet_crocodile_ai.gd` | `species_table` `croc_steering` `boss_projectile` `hunt_director` `crocodile_lod_manager` | `enemy_spawn` `enemy_behavior` `boss_*` `projectile` `hunt_director` |
 | Progression, records, saves | `scripts/progression.gd` `best_run_store.gd` | | `progression` |
 | Pause | `scripts/pause_hub.gd` | | `pause` |
@@ -201,12 +203,14 @@ gameplay input goes through named actions.
   `web/vendor/mediapipe/vendor.lock`, never committed, never a CDN.
 
 ### Player and camera
-No `AnimationPlayer`: limbs are found **by exact name** (`Body`, `LeftArm`, `RightArm`,
-`LeftLeg`, `RightLeg`, optional `Head`) and driven by sine waves in `player_animation.gd`.
-The rig kind is the SCENE: `hero_rig.gd` hands a hero carrying a `Skeleton3D` (found by
-type) to `hero_rig_skeleton.gd`, which writes the same sines as bone rotations with the
-bobble on the head bone, and anything else to `hero_rig_limbs.gd` unchanged — local and
-remote bind the same driver and `rig.measure()` is how the self-checks read either.
+No `AnimationPlayer`: the pose is a pure function of (hero, phase, gait state), sine
+waves in `player_animation.gd`. The rig kind is the SCENE: `hero_rig.gd` hands a hero
+carrying a `Skeleton3D` (found by type) to `hero_rig_skeleton.gd`, which writes those
+sines as bone rotations with the bobble on the head bone, and anything else to
+`hero_rig_limbs.gd`, which finds limbs **by exact name** (`Body`, `LeftArm`, `RightArm`,
+`LeftLeg`, `RightLeg`, optional `Head`). Three heroes are skinned; **Phoboman keeps the
+limb rig for good** (owner ruling — sphere body), so neither driver is dead code. Local
+and remote bind the same driver and `rig.measure()` is how the self-checks read either.
 `CameraArm` is a `SpringArm3D` and overwrites its children's position — use
 `h_offset`/`v_offset` or move the arm. Transient ability state is cleared on respawn,
 character switch and leaving the HQ. Abilities live in `player_abilities.gd`, dispatched

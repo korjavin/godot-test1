@@ -10,12 +10,13 @@ the body is one mesh on MPFB2's `game_engine` rig, exported as one skinned .glb.
 
 WHAT A ROW IS (and where each half of it came from):
 
-  macros + targets  the FACE, imported verbatim from `spike_z3e_head.py`'s own
-                    HEROES table — the shipped Windman and Primm faces, not a
-                    retyped copy of them. Body and head are now ONE human at ONE
-                    scale (owner ruling 2026-09-11, "heads at body scale"), so
-                    the neck is continuous by construction and the z3e.7 neck gap
-                    and the z3e.10 stump cannot come back.
+  macros + targets  the FACE — a `FACES` row below, the Windman and Primm
+                    recipes `spike_z3e_head.py` authored and bead z3e.12 pulled
+                    apart, folded in here when bead 5u3.8 deleted that spike.
+                    Body and head are now ONE human at ONE scale (owner ruling
+                    2026-09-11, "heads at body scale"), so the neck is
+                    continuous by construction and the z3e.7 neck gap and the
+                    z3e.10 stump cannot come back.
   colours           the hero's own generator palette (`self.colors`), verbatim,
                     ungraded — `hero_skin.SKIN_GRADE` is applied here, at paint
                     time, to the entries named in GRADED_COLOURS.
@@ -39,8 +40,8 @@ WHAT A ROW IS (and where each half of it came from):
                     those bands: Primm's open lab coat (`_primm_coat` — the V of
                     inner shirt, the silver seams, the rolled sleeve, the boot
                     shaft). A band worn by one hero is not a band, it is his coat.
-  band + stripes    eyewear. `band` makes it CLOTH (`spike_z3e_head.wrap_band`,
-                    bead z3e.13's Windman bandage, imported not copied);
+  band + stripes    eyewear. `band` makes it CLOTH (`wrap_band`, bead z3e.13's
+                    Windman bandage, folded in with the faces by bead 5u3.8);
                     `stripes` alone paints it on the skin (Primm's goggles).
   beret/eyes        accessory GEOMETRY joined into the mesh and weighted to one
                     bone. An accessory that is not geometry is an ATTACHMENT and
@@ -128,7 +129,8 @@ these, which are this lane's own):
     basemesh default); Primm did not (age 0.30 / weight 0.35 morph him from
     1.61 m down to 1.505 m, which put his eye landmark 5 cm above his own crown
     and rendered him bald, his hairline being measured off it). `morphed_coords`
-    and `joint_centroid` are imported from `spike_z3e_head.py` for exactly this.
+    and `joint_centroid` below exist for exactly this; they came from the head
+    spike, which had paid for the same lesson first.
  8. `bmesh.ops.create_cube` WRITES NO DEFORM WEIGHTS. `wrap_band`'s knots are new
     geometry with no vertex groups at all, and an unweighted vertex is a vertex
     that stays behind when the hero walks. `weight_strays_to()` sweeps them onto
@@ -161,12 +163,6 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # its directory is not on `sys.path`.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hero_skin import graded  # noqa: E402
-# THE FACES, AND THE BANDAGE, ARE IMPORTED — NOT RETYPED. `spike_z3e_head.py` is
-# the lane that authored and shipped the Windman and Primm heads; its HEROES rows
-# are the face recipe of record (macros, targets, palette, eyewear stripes, the
-# cloth `band`) and `wrap_band` is bead z3e.13's cloth bandage itself. Both files
-# are `__main__`-guarded so either can import the other without building a head.
-import spike_z3e_head as face  # noqa: E402
 # Blender's own screenshot helper, reused for the rest row (`--rest-row`).
 import blender_hero  # noqa: E402
 
@@ -217,24 +213,162 @@ REGION_BONES = {
     "lowerarm_r": ["lowerarm_r", "hand_r"] + _fingers("r"),
 }
 
+# ===========================================================================
+# THE FACES. One row per hero FACE — macro sliders, MakeHuman face targets, the
+# skin/lips/hair palette and the eyewear. Authored by `scripts/spike_z3e_head.py`
+# for the standalone heads of beads z3e.2 (Windman) and z3e.5 (Primm), sharpened
+# apart by bead z3e.12, and FOLDED IN HERE by bead godot-test1-5u3.8, which
+# deleted that spike: the heads it shipped are gone, built into the whole human
+# below, so a second file holding their recipe was a second number to keep in
+# step with the first. The head-only keys went with it (`parts_dir`,
+# `target_height`, `neck_stump_radius` — a cut-at-the-neck lane's, and there is
+# no neck cut any more; git history has them).
+#
+# `palette` is the hero's own colour, kept apart from the `HEROES` row below
+# because it is the FACE's: skin and lips reach the mesh through
+# `hero_skin.SKIN_GRADE` (see GRADED_COLOURS), so the row is the paint and that
+# constant is the exposure. Windman's is his old generator's verbatim; Primm's
+# deliberately leaves his (the note in his row says why).
+#
+# `stripes` is the eyewear's COLOURS, listed TOP-DOWN in metres relative to the eye
+# landmark; the first stripe containing a vertex wins.
+#
+# `band` (optional) says those colours are worn as CLOTH: `wrap_band` lifts that slab
+# of the face off the skull into a thick wrap before `paint_body` colours it, and the
+# face underneath — eye sockets included — is consumed by the lift. A row WITHOUT
+# `band` (Primm's goggles) keeps the stripes as paint on the skin. See `wrap_band`.
+# ===========================================================================
+
+# The seam where a `band` row's two cloth colours meet, drawn as one darker line so
+# the wrap reads as TWO turns of cloth rather than a two-tone stripe. Half-height in
+# metres, and how far the lower colour is pulled down to make the line.
+SEAM_HALF = 0.0030
+SEAM_DARKEN = 0.55
+
+FACES = {
+    "windman": {
+        # docs/characters/windman.md: male, calm, no beard, slightly rounded face
+        # with soft features; the blue-over-red bandage knotted at the back.
+        "macro": (("gender", 0.85), ("age", 0.45), ("muscle", 0.5),
+                  ("weight", 0.6), ("caucasian", 1.0), ("african", 0.0),
+                  ("asian", 0.0)),
+        "targets": ((("head", "head-round.target.gz"), 0.65),
+                    (("head", "head-fat-incr.target.gz"), 0.30),
+                    (("head", "head-age-decr.target.gz"), 0.25),
+                    (("cheek", "l-cheek-volume-incr.target.gz"), 0.35),
+                    (("cheek", "r-cheek-volume-incr.target.gz"), 0.35),
+                    (("nose", "nose-scale-vert-decr.target.gz"), 0.20),
+                    (("chin", "chin-jaw-drop-decr.target.gz"), 0.20)),
+        "palette": {"skin": (0.93, 0.74, 0.62, 1.0),
+                    "lips": (0.80, 0.55, 0.48, 1.0),
+                    "hair": (0.32, 0.20, 0.11, 1.0)},
+        "stripes": ((0.004, 0.022, (0.20, 0.38, 0.75, 1.0)),    # blue over red,
+                    (-0.024, 0.004, (0.72, 0.18, 0.15, 1.0))),  # as the art has it
+        # THE BANDAGE IS CLOTH (bead z3e.13, owner 2026-09-11: "it should be real
+        # mask from cloth. thick one"). `top`/`bottom` are the stripes' own z-range,
+        # so the wrap covers exactly what the paint covered; `thickness` is how far
+        # proud of the skull it stands. `half_angle` is the whole reason this can be
+        # geometry at all: the wrap is an ARC, not a ring — it runs from one temple
+        # across the face to the other and STOPS in front of the ear, where `knot`
+        # ties it off. A closed ring at eye height goes through the ears.
+        "band": {"top": 0.022, "bottom": -0.024, "thickness": 0.012,
+                 "half_angle": 74.0, "smooth": 3,
+                 # tangent x outward x up, metres — a small fold of cloth.
+                 "knot": (0.026, 0.018, 0.034)},
+        "hair_lift": 0.008,         # short hair as a shell over the scalp, metres
+        "hair_front": 0.036,        # hairline above the eye line
+        "hair_nape": 0.055,         # how much lower the hairline sits at the back
+    },
+    "primm": {
+        # docs/characters/primm.md: "slim but slightly lean", "slightly elongated
+        # face. Eyes sharp and focused; hair short to medium length, dark brown.
+        # Wears thin, high-tech goggles across the eyes (transparent lenses with
+        # slight blue tint)."
+        #
+        # BEAD z3e.12, and the whole point of it: the owner looked at the first
+        # Primm beside Windman and said "primm looks exactly like windman, same
+        # face just without mask". He was right, and the reason was the landmark
+        # bug above — the macro sliders had to sit near the basemesh default or
+        # the neck cut wandered, so both heroes were built from ONE recipe with
+        # different paint. With `morphed` landmarks the sliders are free again,
+        # so Primm is now a YOUNGER, LEANER, LONGER-FACED man at the macro level
+        # (age 0.30 / weight 0.35 / muscle 0.45 against Windman's 0.45/0.6/0.5)
+        # and the targets stack the canon's elongation on top of that rather than
+        # doing all the work alone.
+        "macro": (("gender", 0.90), ("age", 0.30), ("muscle", 0.45),
+                  ("weight", 0.35), ("caucasian", 1.0), ("african", 0.0),
+                  ("asian", 0.0)),
+        "targets": ((("head", "head-oval.target.gz"), 0.80),
+                    (("head", "head-scale-vert-incr.target.gz"), 0.50),
+                    (("head", "head-fat-decr.target.gz"), 0.60),
+                    (("cheek", "l-cheek-bones-incr.target.gz"), 0.50),
+                    (("cheek", "r-cheek-bones-incr.target.gz"), 0.50),
+                    (("chin", "chin-jaw-drop-incr.target.gz"), 0.40),
+                    (("chin", "chin-prominent-incr.target.gz"), 0.40),
+                    (("nose", "nose-scale-vert-incr.target.gz"), 0.30),
+                    # "Eyes sharp and focused" — narrowed lids, both sides.
+                    (("eyes", "l-eye-height2-decr.target.gz"), 0.30),
+                    (("eyes", "r-eye-height2-decr.target.gz"), 0.30)),
+        # THE ONE PLACE A HERO'S PALETTE LEAVES ITS GENERATOR'S (see the note at
+        # the top of the table). Primm's generator skin is Windman's skin to
+        # within a rounding error — (0.91, 0.73, 0.62) against (0.93, 0.74, 0.62)
+        # — which is half of why the two heads read as one man. This is that tone
+        # pulled cooler and paler, and the hair pulled near-black. The seam it used
+        # to risk was against a generated torso's neck cylinder; there is no torso
+        # and no neck cut now, the body is one mesh, so the tone answers to nothing
+        # but the collar above it.
+        "palette": {"skin": (0.90, 0.76, 0.68, 1.0),
+                    "lips": (0.76, 0.50, 0.46, 1.0),
+                    "hair": (0.18, 0.11, 0.07, 1.0)},
+        # A blue lens between two silver frame lines, 5.4 cm of band all told —
+        # the height of the generator's own visor slab (a box 0.052 m tall).
+        #
+        # TWO DEPARTURES FROM THE GENERATOR'S NUMBERS, both measured on the cast
+        # row rather than argued: 3.4 cm of band vanished into the blown-out
+        # cheek, and so did the generator's pale `visor_lens` (0.66, 0.80, 0.90)
+        # even at full height. The generated visor got away with pale because it
+        # was a SLAB standing 4 cm proud of a featureless sphere and read by its
+        # silhouette; paint on a face with real sockets has no silhouette and
+        # must read by contrast alone. This lens is that pale blue pulled toward
+        # Windman's bandage blue (0.20, 0.38, 0.75), which is the one piece of
+        # painted eyewear in the cast already proven to read at 3 m — still the
+        # canon's "slight blue tint", dark enough to survive the grade.
+        "stripes": ((0.021, 0.027, (0.70, 0.72, 0.76, 1.0)),    # silver frame, top
+                    (-0.021, 0.021, (0.45, 0.62, 0.85, 1.0)),   # blue lens
+                    (-0.027, -0.021, (0.70, 0.72, 0.76, 1.0))),  # frame, bottom
+        # A DIFFERENT SILHOUETTE FROM WINDMAN'S CROP (0.008 / 0.036 / 0.055), and
+        # the difference is the HAIRLINE, not the length: docs/characters/primm.png
+        # is short hair swept back off a high forehead with the sides above the
+        # ears, where Windman's fringe comes down to the brow. So Primm's hairline
+        # sits 1.4 cm higher (0.050 against 0.036) with more volume on the crown to
+        # carry the sweep. A first pass at "short to MEDIUM length" put the nape at
+        # 0.090 and rendered a bowl cut that covered the temples — the canon's
+        # picture wins over its prose here, and the nape stays short.
+        "hair_lift": 0.012,
+        "hair_front": 0.050,
+        "hair_nape": 0.060,
+    },
+}
+
+
 def _face_row(hero):
-    """`spike_z3e_head.py`'s macros and face targets for `hero`, in this file's
-    shapes. The SPIKE IS THE SOURCE: that lane authored and shipped both faces and
-    bead z3e.12 spent itself differentiating them, so a copy here would be a second
-    number to keep in step with the first. The macros come across whole because in
-    MakeHuman they shape the WHOLE human — Windman's `weight` 0.6 is the same
-    slider that makes the generated torso stout, and Primm's 0.35 the same one that
-    makes his slim."""
-    row = face.HEROES[hero]
+    """A `FACES` row's macros and face targets for `hero`, in this file's shapes.
+    Two tables and not one because they answer different questions — `FACES` is
+    the face MakeHuman morphs, `HEROES` is the body, the clothes and the props —
+    and because the face rows arrived whole from the head spike bead z3e.12 spent
+    itself on. The macros come across whole because in MakeHuman they shape the
+    WHOLE human — Windman's `weight` 0.6 is the same slider that makes the
+    generated torso stout, and Primm's 0.35 the same one that makes his slim."""
+    row = FACES[hero]
     return dict(row["macro"]), [(rel, w) for rel, w in row["targets"]]
 
 
 def _face_palette(hero):
-    """The spike's own skin/lips/hair for `hero`, UNGRADED — `paint_body` applies
+    """A `FACES` row's skin/lips/hair for `hero`, UNGRADED — `paint_body` applies
     `hero_skin.SKIN_GRADE` to the entries in GRADED_COLOURS, so a pre-graded value
-    here would be graded twice. Primm's skin deliberately leaves his generator's
-    (see the spike's table); Windman's is his generator's verbatim."""
-    return dict(face.HEROES[hero]["palette"])
+    here would be graded twice. Primm's skin deliberately leaves his old generator's
+    (the note in his row says why); Windman's is his generator's verbatim."""
+    return dict(FACES[hero]["palette"])
 
 
 # ---------------------------------------------------------------------------
@@ -480,11 +614,11 @@ HEROES = {
     "windman": {
         # docs/characters/windman.md: stout, bare-armed, blue shirt over brown
         # shorts, black boots, and the blue-over-red bandage where his eyes would
-        # be. The face is the spike's — see `_face_row`.
+        # be. The face is his `FACES` row — see `_face_row`.
         "macros": _face_row("windman")[0],
         "targets": _face_row("windman")[1],
-        # generate_windman_separate.py's `self.colors`, verbatim and UNGRADED, plus
-        # the spike's `lips`. `fan_*` is not here: the fan is an ATTACHMENT, hung on
+        # Windman's old part generator's `self.colors`, verbatim and UNGRADED, plus
+        # his `FACES` row's `lips`. `fan_*` is not here: the fan is an ATTACHMENT, hung on
         # `hand_r` by bead 5u3.5's .tscn, and windman_fan.glb keeps its own colours.
         "colours": dict(_face_palette("windman"), **{
             "shirt_blue":   (0.16, 0.33, 0.60, 1.0),
@@ -498,7 +632,7 @@ HEROES = {
         # this one does not — `paint_chest_glyph` measured 13.6 mm between chest
         # vertices against a 54 mm stroke, four vertices across every arm of the
         # letter, so the glyph resolves with zero texture bytes and no UV path.
-        # The SHAPE is `generate_windman_separate.py::_make_w_emblem`'s, verbatim:
+        # The SHAPE is that generator's own `_make_w_emblem`, verbatim:
         # the same five-point centre-line and the same 27 mm buffer the retired
         # generator extruded — which is why the letter did not change the day it
         # stopped being geometry.
@@ -553,12 +687,12 @@ HEROES = {
         # row it reads, imported. It also deletes the eye sockets under it, which
         # is why this row builds no eyeballs: "windman has no eyes, he use air
         # abilities to see" (owner, 2026-09-11).
-        "band": face.HEROES["windman"]["band"],
-        "stripes": face.HEROES["windman"]["stripes"],
+        "band": FACES["windman"]["band"],
+        "stripes": FACES["windman"]["stripes"],
         "hair": dict(zip(("lift", "front", "nape"),
-                         (face.HEROES["windman"]["hair_lift"],
-                          face.HEROES["windman"]["hair_front"],
-                          face.HEROES["windman"]["hair_nape"])), brows=False),
+                         (FACES["windman"]["hair_lift"],
+                          FACES["windman"]["hair_front"],
+                          FACES["windman"]["hair_nape"])), brows=False),
         "beret": False,
         "eyes": False,
         # blender_hero.py measured the generated Windman at 1.7536 m; the skinned
@@ -644,11 +778,11 @@ HEROES = {
         "dressing": _primm_coat,
         # THE GOGGLES ARE PAINT, not cloth — no `band` key. The spike's own ruling:
         # a lens is not a wrap, and stripes on the skin are what shipped.
-        "stripes": face.HEROES["primm"]["stripes"],
+        "stripes": FACES["primm"]["stripes"],
         "hair": dict(zip(("lift", "front", "nape"),
-                         (face.HEROES["primm"]["hair_lift"],
-                          face.HEROES["primm"]["hair_front"],
-                          face.HEROES["primm"]["hair_nape"])), brows=False),
+                         (FACES["primm"]["hair_lift"],
+                          FACES["primm"]["hair_front"],
+                          FACES["primm"]["hair_nape"])), brows=False),
         "beret": False,
         # The goggles cover the sockets; two white spheres behind a painted lens
         # would only poke through it.
@@ -727,8 +861,289 @@ def clear_scene():
 # 5 cm ABOVE his own crown once `reframe()`'s matrix was applied to it (measured
 # 2026-09-11, bead 5u3.4: his hairline landed off the top of his head and he came
 # out bald). One import, and the bug cannot come back to this lane either.
-morphed_coords = face.morphed_coords
-joint_centroid = face.joint_centroid
+def morphed_coords(obj):
+    """Object-space vertex coordinates WITH every macro and target applied.
+
+    `obj.data.vertices[i].co` is the UNMORPHED basemesh: MPFB2 applies macros and
+    targets as shape keys, and a shape key does not move `vertex.co`. Evaluating
+    the object as it stands does not help either — the helper MASK modifier deletes
+    the `joint-*` cubes, which are exactly the landmarks we are here for. So the
+    modifiers are switched off for the length of one depsgraph update: the evaluated
+    mesh is then the basemesh plus its shape keys, in the same order, so index `i`
+    still names the same vertex as `obj.data.vertices[i]` — which is where the
+    vertex GROUPS stay readable. The equal-length assert is that guarantee's fence.
+    """
+    disabled = [m for m in obj.modifiers if m.show_viewport]
+    for mod in disabled:
+        mod.show_viewport = False
+    try:
+        bpy.context.view_layer.update()
+        evaluated = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
+        mesh = evaluated.to_mesh()
+        if len(mesh.vertices) != len(obj.data.vertices):
+            raise AssertionError(
+                "evaluated mesh has %d verts, basemesh %d: a modifier is still "
+                "changing the topology and the vertex groups no longer line up"
+                % (len(mesh.vertices), len(obj.data.vertices)))
+        coords = [v.co.copy() for v in mesh.vertices]
+        evaluated.to_mesh_clear()
+    finally:
+        for mod in disabled:
+            mod.show_viewport = True
+    return coords
+
+
+def joint_centroid(obj, group_name, coords):
+    """Centre of one of the basemesh's helper JOINT CUBES, in object space. This is
+    how the neck cut and the eye line are found: they are MakeHuman's own landmarks,
+    not numbers guessed off a bounding box.
+
+    Group MEMBERSHIP comes from `obj.data` (the only place it lives) and the
+    POSITION from `coords` — `morphed_coords`'s evaluated copy, so the landmark
+    tracks the macro sliders instead of the basemesh they morphed away from."""
+    idx = obj.vertex_groups[group_name].index
+    acc = Vector((0.0, 0.0, 0.0))
+    n = 0
+    for v in obj.data.vertices:
+        for g in v.groups:
+            if g.group == idx:
+                acc += coords[v.index]
+                n += 1
+                break
+    if n == 0:
+        raise ValueError("empty vertex group " + group_name)
+    return acc / n
+
+
+def wrap_band(obj, eye_z, cfg):
+    """The blindfold as CLOTH: a thick wrap lifted off the face, not paint on it.
+
+    OWNER, 2026-09-11 (bead z3e.13): "windman mask seems like it's color sprayed /
+    drawed on his face, it should be real mask from cloth. thick one. windman has no
+    eyes". So the eye sockets are deleted and capped flat, and the slab of face inside
+    the stripes' own z-range, from one temple across to the other, is EXTRUDED off the
+    blank skull and pushed out horizontally: the lifted faces become the cloth's outer
+    surface, the extrusion's side walls become its top and bottom rims (flat-shaded,
+    so the edge is crisp and casts a shadow), and the face left underneath is deleted
+    with the sockets. It stays flush ("fits tightly to the face") because it IS the
+    face's own surface, offset.
+
+    THE EARS ARE WHY THIS IS AN ARC AND NOT A RING. `half_angle` stops the wrap in
+    front of each ear, where a small `knot` box ties it off — docs/characters/
+    windman.md's "fastened near the ears". A ring at eye height goes through them.
+
+    The push is RADIAL about the skull's vertical axis rather than along each vertex
+    normal, and the lifted faces are smoothed first: cloth lies over a brow and a
+    cheekbone, and a normal-offset would re-inflate every one of their creases as a
+    bump in it.
+
+    Returns (band vertex indices, flat-shaded polygon indices) for `paint` and
+    `export`; both are empty for a hero whose row has no `band`.
+    """
+    band = cfg.get("band")
+    if band is None:
+        return frozenset(), frozenset()
+
+    me = obj.data
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    uv_layer = bm.loops.layers.uv.active
+    top = eye_z + band["top"]
+    bottom = eye_z + band["bottom"]
+    half = math.radians(band["half_angle"])
+    thickness = band["thickness"]
+
+    # THE TWO LINES ARE CUT INTO THE SKULL FIRST, because `lifted` below is a
+    # face-by-face selection and a selection can only follow edges that exist. Without
+    # the cuts the wrap's boundary is the head's own triangulation, and straightening
+    # it afterwards can only ever reach one side: the snap this file used to do pulled
+    # the CLOTH's rim onto the two lines and left the skin it was lifted off with the
+    # sawtooth, so the edge that met the cheek was a triangle ragged while the outer
+    # one was straight (bead z3e.16, grid 25). Bisecting puts a real edge ring at
+    # `top` and at `bottom` and both edges lie on it — the same measurement
+    # `build_hero.dress_shells` cuts every garment hem for.
+    for height in (top, bottom):
+        bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:],
+                               dist=1e-5, plane_co=(0.0, 0.0, height),
+                               plane_no=(0.0, 0.0, 1.0))
+
+    # The skull's vertical axis, taken from the band's own slab so the arc is centred
+    # on the face and not on a bounding box that includes the neck stump.
+    slab = [v.co for v in bm.verts if bottom <= v.co.z <= top]
+    axis = Vector(((min(c.x for c in slab) + max(c.x for c in slab)) / 2.0,
+                   (min(c.y for c in slab) + max(c.y for c in slab)) / 2.0))
+
+    def bearing(co):
+        """Angle off dead-ahead (+Y), about the skull's axis. 0 = nose, +-90 = ear."""
+        return math.atan2(co.x - axis.x, co.y - axis.y)
+
+    def outward(co):
+        out = Vector((co.x - axis.x, co.y - axis.y, 0.0))
+        return out.normalized() if out.length > 1e-6 else Vector((0.0, 1.0, 0.0))
+
+    def wrapped(co):
+        return bottom <= co.z <= top and abs(bearing(co)) <= half
+
+    lifted = [f for f in bm.faces if wrapped(f.calc_center_median())]
+    if not lifted:
+        raise AssertionError("no faces in the band slab z %.3f..%.3f" % (bottom, top))
+
+    # THE EYES GO FIRST, and this is where "windman has no eyes, he use air abilities
+    # to see" is actually carried out. MakeHuman's basemesh does not stop at the lids:
+    # it folds inward and lines the SOCKET, around helper eyeballs that MPFB2's mask
+    # already deleted. Lifted with the rest, that lining came out as two dark holes in
+    # the middle of the bandage (first render of this bead). A face that points back
+    # INTO the skull is socket and nothing else at this height — the skin, the temples
+    # and even the bridge of the nose all face outward — so they are deleted and the
+    # two openings capped flat, and the cloth is lifted off a blank face.
+    sockets = [f for f in lifted
+               if f.normal.dot(outward(f.calc_center_median())) < -0.2]
+    # The hole they leave has a RIM, and that rim is a boundary of the lifted patch
+    # too — an inner one, which ends up UNDER the cloth instead of beside it, so the
+    # `skin_edge` assert below excuses it. Read here, while those faces still exist.
+    socket_set = set(sockets)
+    hole_rim = set(v for f in sockets for v in f.verts
+                   if any(g not in socket_set for g in v.link_faces))
+    if sockets:
+        bmesh.ops.delete(bm, geom=sockets, context='FACES')
+        # THE SOCKETS ARE THE ONLY OPEN EDGES, so filling every boundary edge
+        # fills exactly them. This lane builds a WHOLE human and never cuts a neck
+        # (the head spike did, and capped its own hole; bead 5u3.8 deleted it), so
+        # the body arrives closed and these two holes are the ones just made.
+        caps = [f for f in bmesh.ops.holes_fill(
+            bm, edges=[e for e in bm.edges if e.is_boundary], sides=0)["faces"]
+            if isinstance(f, bmesh.types.BMFace)]
+        # ONE texel per cap, not the lid's own UVs. `holes_fill` writes no UVs at
+        # all, and inheriting them from the ring lands the cap on MakeHuman's tiny
+        # EYE island, where the wrap's seam line and its blue half occupy a third of
+        # the island each and bake back onto the face as two eye-shaped blotches (the
+        # third render of this bead: the bandage looked see-through). A cap is two
+        # centimetres of cloth over a closed socket — one flat colour, taken from its
+        # own lowest corner, is all of it.
+        cap_set = set(caps)
+        for f in caps:
+            low = min(f.verts, key=lambda v: v.co.z)
+            flat_uv = next(other[uv_layer].uv.copy() for other in low.link_loops
+                           if other.face not in cap_set)
+            for loop in f.loops:
+                loop[uv_layer].uv = flat_uv
+        lifted = [f for f in lifted if f.is_valid] + caps
+        log("band: removed %d socket faces, capped with %d" % (len(sockets), len(caps)))
+
+    ret = bmesh.ops.extrude_face_region(bm, geom=lifted)
+    # The op returns the LIFTED CAP — its faces and every vertex of them, the
+    # duplicated boundary included. The side walls it builds are NOT in that result:
+    # they are the other faces that touch a cap vertex, and the skin around the hole
+    # cannot be one of them because it kept the originals of those duplicates.
+    moved = set(e for e in ret["geom"] if isinstance(e, bmesh.types.BMVert))
+    cloth = set(e for e in ret["geom"] if isinstance(e, bmesh.types.BMFace))
+    walls = [f for f in bm.faces
+             if f not in cloth and any(v in moved for v in f.verts)]
+    if not walls or len(cloth) != len(lifted):
+        raise AssertionError(
+            "extrude_face_region gave %d cap faces (%d lifted), %d verts and %d "
+            "walls: the wrap would not be a closed shell"
+            % (len(cloth), len(lifted), len(moved), len(walls)))
+    # AND THIS IS WHAT SAYS THE CUT LANDED. A wall's vertices that are NOT the
+    # extrusion's own are the originals of the duplicated boundary — the line where
+    # the cloth meets the skin, and the one nothing here ever moves. After the bisect
+    # every one of them sits on a band line. Two parts of that boundary are excused:
+    # the arc's two ENDS, where it runs up the face and is meant to follow the
+    # triangulation, and the capped sockets, whose rims are a hole inside the patch
+    # and end up under the cloth rather than beside it. Measured on THIS check with
+    # the two cuts disabled: 55 of 67 skin-side vertices off the lines, by up to
+    # 1.0 cm. With them, none. (The ceiling is half the slab, 2.3 cm — a boundary
+    # vertex cannot be further than that from BOTH lines.)
+    skin_edge = set(v for f in walls for v in f.verts) - moved - hole_rim
+    ragged = [v for v in skin_edge
+              if abs(abs(bearing(v.co)) - half) >= 0.10
+              and min(abs(v.co.z - top), abs(v.co.z - bottom)) > 1e-4]
+    if ragged:
+        raise AssertionError(
+            "%d of %d skin-side band vertices are off both band lines, by up to "
+            "%.4f m: the bisect did not cut the boundary"
+            % (len(ragged), len(skin_edge),
+               max(min(abs(v.co.z - top), abs(v.co.z - bottom)) for v in ragged)))
+    # AND THE FACE UNDER THE CLOTH GOES WITH IT: the extrusion leaves the original
+    # faces behind as an inner shell, and an inner shell is 1,200 triangles nobody
+    # will ever see. The walls already close the hole it leaves.
+    bmesh.ops.delete(bm, geom=lifted, context='FACES')
+
+    # Flatten the sockets before the lift (the rim is pinned: it is shared with the
+    # walls, and moving it would tear the cloth away from its own edge).
+    rim = set(v for f in walls for v in f.verts) & moved
+    interior = [v for v in moved if v not in rim]
+    for _ in range(band["smooth"]):
+        bmesh.ops.smooth_vert(bm, verts=interior, factor=0.5,
+                              use_axis_x=True, use_axis_y=True, use_axis_z=True)
+    # THE HEM IS THE CUT NOW. Until bead z3e.16 the rim was SNAPPED here — pulled
+    # onto the band's two lines, because a face-by-face selection leaves a sawtooth
+    # and sawtooth cloth reads as TORN. It straightened the cloth's own edge and
+    # could not straighten the skin's, which is half a fix; the bisect above
+    # straightens both, and the assert on `skin_edge` is what holds it there.
+    for v in moved:
+        out = Vector((v.co.x - axis.x, v.co.y - axis.y, 0.0))
+        if out.length > 1e-6:
+            v.co += out.normalized() * thickness
+
+    # The rims and the knots have no UVs of their own — the extrusion copies the
+    # boundary loop's and `create_cube` writes none at all. The head spike BAKED
+    # through these UVs and an unset one sampled whatever sat at (0, 0); this lane
+    # bakes nothing (`texture bytes: 0`), so the fixup is now insurance for the day
+    # a row brings a bake — cheap, and the wrap is the one place UVs go missing.
+    # Each is given a coordinate from the cloth beside it: the rim from its own
+    # lifted corners, the
+    # knot from the wrap's end at the same height. Overlapping the cloth's island is
+    # exactly what is wanted here — they are the same cloth.
+    uv_of = {}
+    for f in cloth:
+        for loop in f.loops:
+            uv_of.setdefault(loop.vert, loop[uv_layer].uv.copy())
+    for f in walls:
+        inside = [uv_of[v] for v in f.verts if v in uv_of]
+        fallback = sum(inside, Vector((0.0, 0.0))) / len(inside)
+        for loop in f.loops:
+            loop[uv_layer].uv = uv_of.get(loop.vert, fallback)
+
+    knots = []
+    for side in (-1.0, 1.0):
+        ends = [v for v in moved if abs(bearing(v.co) - side * half) < 0.12]
+        if not ends:
+            continue
+        centre = sum((v.co for v in ends), Vector()) / len(ends)
+        out = Vector((math.sin(side * half), math.cos(side * half), 0.0))
+        tangent = Vector((out.y, -out.x, 0.0))
+        w, d, h = band["knot"]
+        placed = centre + out * (thickness * 0.25)
+        matrix = Matrix(((tangent.x * w, out.x * d, 0.0, placed.x),
+                         (tangent.y * w, out.y * d, 0.0, placed.y),
+                         (0.0, 0.0, h, placed.z),
+                         (0.0, 0.0, 0.0, 1.0)))
+        made = bmesh.ops.create_cube(bm, size=1.0, matrix=matrix)
+        box = set(e for e in made["verts"] if isinstance(e, bmesh.types.BMVert))
+        moved |= box
+        for f in bm.faces:
+            if f in knots or not all(v in box for v in f.verts):
+                continue
+            knots.append(f)
+            for loop in f.loops:
+                near = min(ends, key=lambda e: abs(e.co.z - loop.vert.co.z))
+                loop[uv_layer].uv = uv_of[near]
+    log("band: %d cloth faces, %d rim faces, %d knot faces, %d verts"
+        % (len(cloth), len(walls), len(knots), len(moved)))
+
+    for f in bm.faces:
+        f.smooth = True
+    for f in walls + knots:
+        f.smooth = False
+    bm.verts.index_update()
+    bm.faces.index_update()
+    band_verts = frozenset(v.index for v in moved)
+    flat_faces = frozenset(f.index for f in walls + knots)
+    bm.to_mesh(me)
+    bm.free()
+    me.update()
+    return band_verts, flat_faces
 
 
 # ---------------------------------------------------------------------------
@@ -1342,7 +1757,7 @@ def paint_body(obj, tj, row, band_verts=frozenset()):
     for j, (_low, _high, colour) in enumerate(stripes):
         colours[j] = colour
     if stripes:
-        colours["seam"] = tuple(c * face.SEAM_DARKEN
+        colours["seam"] = tuple(c * SEAM_DARKEN
                                 for c in stripes[-1][2][:3]) + (1.0,)
     me = obj.data
     name_to_id = {vg.name: vg.index for vg in obj.vertex_groups}
@@ -1401,8 +1816,8 @@ def paint_body(obj, tj, row, band_verts=frozenset()):
             key = colour_key["collar"]
         per_vert[i] = dressing(v, key, in_torso, ctx) if dressing else key
 
-    # THE HEAD REGION: eyewear, lips, eyebrows, hair — spike_z3e_head.py's paint(),
-    # position-relative-to-the-eye-line rather than by skinning weight.
+    # THE HEAD REGION: eyewear, lips, eyebrows, hair — the head spike's own
+    # `paint()`, position-relative-to-the-eye-line rather than by skinning weight.
     head_ids = scope_ids["head"]
     lip_z = eye_z - 0.088
     hair_front = eye_z + hair["front"]
@@ -1413,7 +1828,7 @@ def paint_body(obj, tj, row, band_verts=frozenset()):
         if i in band_verts:
             # The cloth, top-down and clamped at both ends: the lift and the knots
             # put wrap outside the stripe range it was cut from.
-            if abs(v.co.z - seam_z) <= face.SEAM_HALF:
+            if abs(v.co.z - seam_z) <= SEAM_HALF:
                 per_vert[i] = "seam"
             else:
                 per_vert[i] = next((j for j, (low, _h, _c) in enumerate(stripes)
@@ -1870,8 +2285,8 @@ def export_glb(obj, armature, path, sharp=frozenset()):
     (heroes included)", and three things put this lane outside it: the y1o
     faceted ruling is WAIVED FOR THE FOUR HEROES by the owner (bd show
     godot-test1-z3e NOTES, 2026-09-06); `export_faceted` is trimesh code and
-    cannot be called from Blender at all, its Blender port being
-    `blender_hero.py`'s opt-in `--faceted`; and the predecessor this script is a
+    cannot be called from Blender at all (its Blender port went with
+    `blender_hero.py`'s export lane, bead 5u3.8); and the predecessor this script is a
     copy of (`spike_z3e_teibi_body.py:669`) smooth-shades the same MPFB2 body
     the same way. Flat normals on an organic basemesh are also what tore the
     hero outline into cracks (bead z3e.9).
@@ -1980,8 +2395,8 @@ def build(hero, shot=None):
     # triangles out with the rest of the torso and the letter rides them.
     dress_shells(obj, tj, row)
 
-    band_verts, flat_faces = face.wrap_band(obj, (tj["l-eye"].z + tj["r-eye"].z) / 2.0,
-                                            row)
+    band_verts, flat_faces = wrap_band(obj, (tj["l-eye"].z + tj["r-eye"].z) / 2.0,
+                                       row)
     if band_verts:
         weight_strays_to(obj, armature, "head", tj["neck"].z)
     paint_body(obj, tj, row, band_verts)

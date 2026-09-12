@@ -7,8 +7,8 @@
 ; `assets/models/characters/PROVENANCE.md` carries the row). The ten parts this
 ; scene used to instance — nine generated and one authored head — and the
 ; generator that wrote them are retired with this bead: the face is the SAME
-; z3e.12 recipe, built into this .glb from `spike_z3e_head.py`'s own row rather
-; than exported separately and hung on a neck.
+; z3e.12 recipe, built into this .glb from a `build_hero.FACES` row rather than
+; exported separately and hung on a neck.
 ;
 ; THE SCENE IS THE FLAG, exactly as `teibi.tscn` says: the Skeleton3D under `Body`
 ; is what makes `hero_rig.gd` hand him to `hero_rig_skeleton.gd` (bd 5u3.2), so
