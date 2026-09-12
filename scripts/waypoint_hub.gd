@@ -146,6 +146,37 @@ func standing_on() -> int:
 	return _standing_on
 
 
+func arrived_at(index: int) -> void:
+	"""
+	Latch the hero onto circle `index` WITHOUT an enter edge.
+
+	@param index: the circle they were just put down on, or -1 to re-arm.
+
+	THE ONE CALLER IS `PlayerController.travel_to_waypoint()` (bead
+	godot-test1-sc6.3), at the very end of the hop, and what it buys is the
+	absence of a second event. Travel puts the body down inside the target ring,
+	so the next `_scan()` would see a fresh arrival and fire the enter edge —
+	which would pop the find card for a circle that was found long ago (it cannot
+	be travelled to otherwise) and, from `.4`, re-open the travel panel the hero
+	just used. Latching it here makes the landing a CONTINUATION of standing on
+	that circle rather than a new arrival, which is what it is.
+
+	NO BIT IS SET AND NO CARD IS RAISED: this is the position, not the discovery
+	(see `standing_on()`), and travel can only reach a circle already found.
+
+	IT CAN BE UNDONE 200 ms LATER, and that is honest rather than a bug: the
+	landing spot is `PlayerController._place_near()`'s, which probes outward
+	through `JOIN_RING_RADII` (3, 5, 8, 12 m) for a body-sized gap and takes the
+	first ring that has one. The first ring almost always does — a circle's ground
+	is clear by construction — but a blocked one can push the landing past
+	`RING_RADIUS + LEAVE_PAD` (9.6 m), and the next tick's re-arm then measures
+	the real distance and drops the latch. The hero is simply standing a few steps
+	off the circle at that point, which is what the re-arm is for; they walk back
+	on and the ordinary enter edge latches it again.
+	"""
+	_standing_on = index
+
+
 func _process(delta: float) -> void:
 	_tick_timer += delta
 	if _tick_timer < TICK_INTERVAL:
@@ -259,13 +290,13 @@ func _arrive(index: int, player: Node3D) -> void:
 	if toast != null and toast.has_method("announce"):
 		toast.call("announce", FOUND_TITLE, FOUND_BODY)
 
-	# The cue. `play_level_up` is a BORROWED sound and it is marked as such: bead
-	# .5 brings `play_waypoint_found` (three rising taps off the coin) and this
-	# line becomes that one. The project's standard null-safe group + has_method
-	# shape, so a scene with no SoundManager resolves silently.
+	# The cue — bead .5's own, no longer the borrowed `play_level_up`: three rising
+	# taps of the coin buffer, a major triad against the level-up's bare fifth (see
+	# `SoundManager.WAYPOINT_FOUND_PITCHES`). The project's standard null-safe
+	# group + has_method shape, so a scene with no SoundManager resolves silently.
 	var sound := get_tree().get_first_node_in_group("sound_manager")
-	if sound != null and sound.has_method("play_level_up"):
-		sound.call("play_level_up")
+	if sound != null and sound.has_method("play_waypoint_found"):
+		sound.call("play_waypoint_found")
 
 	# And the room. A no-op offline and off an unfinished mesh alike — see
 	# `MpManager.publish_waypoint_found()`, which owns both.

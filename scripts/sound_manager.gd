@@ -161,6 +161,39 @@ const LEVEL_UP_PITCH_LOW: float = 1.0
 const LEVEL_UP_PITCH_HIGH: float = 1.5  # a perfect fifth above the coin blip
 const LEVEL_UP_VOLUME_DB: float = -6.0  # a couple of dB above a pickup: rarer, louder
 
+# --- Waypoint found: the level-up trick one note further (epic godot-test1-sc6,
+# bead .5). Bead .2 borrowed play_level_up outright and MARKED it as borrowed;
+# this is the cue that replaces it, and it is the SAME buffer for the same reason
+# — a third synth recipe for a bell would earn nothing over the coin's own
+# exponential decay, which is already a struck bell (_synth_coin).
+#
+# WHAT MAKES IT NOT THE LEVEL-UP: three taps against two, and a MAJOR TRIAD (root,
+# major third, fifth) against the level-up's bare fifth. The coin buffer is itself
+# a low note into a high one, so three copies a third apart read as a rising chime
+# that keeps climbing after the level-up's would have stopped — which is exactly
+# the distinction the two cues need, since both can fire in the same minute.
+#
+# THEY OVERLAP, and that is the trick and not a compromise: one-shots go through
+# the round-robin pool (six voices), so three calls are three voices with no
+# scheduling, no timer and no state. ponytail: if the owner's ear wants them
+# SEQUENCED rather than stacked, the upgrade is a `get_tree().create_timer()`
+# await between the calls — not a new buffer.
+const WAYPOINT_FOUND_PITCHES: Array[float] = [1.0, 1.26, 1.5]
+const WAYPOINT_FOUND_VOLUME_DB: float = -6.0  # the level-up's: both are "a thing was won"
+
+# --- Waypoint travel: the ability whoosh PLAYED BACKWARDS (same bead). ---
+## _synth_whoosh swells then falls — air rushing PAST you. Reversed it is a fast
+## rise into a cut-off, which is air rushing INTO somewhere: a swallow rather than
+## a rush, and the right shape for a hero disappearing off a circle. Baked once in
+## _ready() out of the very same sample array (see the "whoosh_rev" line there), so
+## this costs one buffer and no new synthesis recipe.
+##
+## A little BELOW pitch because the reversal is short and bright, and a teleport
+## wants weight; a little louder than the ability whoosh because it happens once
+## per journey rather than on every F press.
+const WAYPOINT_TRAVEL_PITCH: float = 0.85
+const WAYPOINT_TRAVEL_VOLUME_DB: float = -5.0
+
 # --- Blocked-ability buzz: a curt low square "nope" (F pressed on cooldown). ---
 const BUZZ_FREQ: float = 90.0
 const BUZZ_DURATION: float = 0.15
@@ -303,7 +336,15 @@ func _ready() -> void:
 	_streams["coin"] = _build_wav(_synth_coin())
 	_streams["jump"] = _build_wav(_synth_jump())
 	_streams["land"] = _build_wav(_synth_land())
-	_streams["whoosh"] = _build_wav(_synth_whoosh())
+	# The whoosh is baked TWICE out of ONE synthesis pass: forwards for the ability
+	# cue, and reversed for the waypoint travel cue (see WAYPOINT_TRAVEL_PITCH).
+	# `PackedFloat32Array.reverse()` is in-place, so the second _build_wav reads the
+	# same samples backwards — no second recipe and no second `randf` walk, which
+	# also means the two buffers are each other's mirror to the sample.
+	var whoosh: PackedFloat32Array = _synth_whoosh()
+	_streams["whoosh"] = _build_wav(whoosh)
+	whoosh.reverse()
+	_streams["whoosh_rev"] = _build_wav(whoosh)
 	_streams["bite"] = _build_wav(_synth_bite())
 	_streams["growl"] = _build_wav(_synth_growl())
 	_streams["hiss"] = _build_wav(_synth_hiss())
@@ -460,6 +501,29 @@ func play_level_up() -> void:
 	## files" invariant holds.
 	_play_oneshot("coin", LEVEL_UP_VOLUME_DB, LEVEL_UP_PITCH_LOW)
 	_play_oneshot("coin", LEVEL_UP_VOLUME_DB, LEVEL_UP_PITCH_HIGH)
+
+
+func play_waypoint_found() -> void:
+	## A hero stepped onto a waypoint circle nobody had found yet (epic
+	## godot-test1-sc6, bead .5) — fired from `waypoint_hub._arrive()`, on the
+	## enter EDGE and only when the bit was new, so it is once per circle per run
+	## and never for a bit that arrived over the wire.
+	##
+	## play_level_up's trick with a third note: see WAYPOINT_FOUND_PITCHES for why
+	## the same coin buffer, why three, and why a triad rather than a bare fifth.
+	for pitch: float in WAYPOINT_FOUND_PITCHES:
+		_play_oneshot("coin", WAYPOINT_FOUND_VOLUME_DB, pitch)
+
+
+func play_waypoint_travel() -> void:
+	## The hop itself — the hero leaving one circle for another. The ability
+	## whoosh's buffer REVERSED (baked in _ready, see WAYPOINT_TRAVEL_PITCH), so a
+	## teleport swallows rather than rushes.
+	##
+	## Its call site is `PlayerController.travel_to_waypoint()`, after `_place_near`
+	## — the arrival, not the button — so a refused travel makes no noise. Like
+	## every other play path it is gated behind `_unlocked` by `_play_oneshot`.
+	_play_oneshot("whoosh_rev", WAYPOINT_TRAVEL_VOLUME_DB, WAYPOINT_TRAVEL_PITCH)
 
 
 func play_buzz() -> void:

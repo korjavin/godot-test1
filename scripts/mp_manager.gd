@@ -3613,6 +3613,30 @@ func _contributing() -> bool:
 	return _first_member or _join_applied
 
 
+func join_placed() -> bool:
+	"""
+	Whether this peer's body is standing where the ROOM put it.
+
+	True for a host (`_first_member` — it owes no placement, its own world IS the
+	room's) and for a joiner whose `_apply_join_placement()` has run. False for
+	the whole window in between, which is the one anything about to MOVE THE
+	PLAYER has to stay out of: that placement rebuilds the world around the group
+	and has `join_at()` probe it, so a hop that relocated the world inside the
+	window is overwritten by it at best, and has it probing a world centred
+	somewhere else at worst.
+
+	`_contributing()`'s question, with the name the other side of it asks it by.
+	`shared_bank() != null` is NOT this question and must not be used for it:
+	`_join_settled()` goes true on the snapshot deadline alone (1.5 s), whether or
+	not a world has arrived to place into — a joiner can sit there readable and
+	unplaced for the whole 20 s seed budget.
+
+	The one caller is `PlayerController._travel_room_ready()` (waypoint travel,
+	bead godot-test1-sc6.3).
+	"""
+	return _contributing()
+
+
 func _join_settled() -> bool:
 	"""
 	Whether the room's totals can be trusted yet.

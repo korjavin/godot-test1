@@ -4677,7 +4677,8 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	ground in step 4 lands under ITS feet in the same frame — exactly the guarantee
 	the spawn-chunk build gives a restart, just centred somewhere else.
 
-	EDUCATIONAL NOTE — the order matters:
+	EDUCATIONAL NOTE — the order matters, and steps 2-4 are `relocate()`'s (bead
+	godot-test1-sc6.3), called from here so there is one wipe and not two:
 	1. Set run_seed — re-rolled at random, or taken from forced_seed. Every hash
 	   site mixes it in, so all downstream content (blocks, crocodiles, road,
 	   coins) comes out of that one number.
@@ -4707,6 +4708,52 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 		set_run_seed(int(forced_seed))
 	_apply_biome_shader_params()
 
+	# 2-4. The wipe and the re-centre, which are NOT a new run's alone any more —
+	# see `relocate()` right below for all three steps and their reasoning.
+	relocate(around)
+
+	print("New run started (run_seed = %d)" % run_seed)
+
+func relocate(around: Vector2i) -> void:
+	"""
+	Throw the streamed world away and rebuild it centred on chunk `around`,
+	WITHOUT touching the seed.
+
+	@param around: the chunk the rebuild centres on — where the body is about to be.
+
+	Steps 2-4 of `new_run()`, lifted out whole so there is ONE wipe in this file
+	rather than two copies drifting apart (bead godot-test1-sc6.3). `new_run()`
+	is step 1 (the seed write) plus this; the waypoint teleport
+	(`PlayerController.travel_to_waypoint`) and the debug teleport are this alone.
+
+	WHY A TELEPORT MUST NOT GO THROUGH `new_run()` EVEN WITH THE SAME SEED. The
+	seed write is `set_run_seed()`, and that seam also calls `_tower_reset()`,
+	which frees the HQ shell — so the building's PER-RUN interior (the guards
+	where they stood, the dossiers already taken, the LOD scent trails) is thrown
+	away and rebuilt from scratch. That is correct for a new run and wrong for a
+	hop: a hero who steps out of the HQ onto its waypoint, travels to the road and
+	travels back must find the building as they left it. The monotone opened-gate
+	set is a store and would have survived either way; everything else in there
+	would not. The print line stays in `new_run()` for the same reason — a hop is
+	not a new run and must not say it is.
+
+	COSTS NO DRAW, AND KEEPS EVERY MEMO ON PURPOSE. Nothing here hashes anything
+	or reads the RNG; the seeded memos are deliberately left ALONE, because they
+	are still true — the seed did not change, so the road stations, the terminal
+	and everything strung along them describe exactly the world being rebuilt
+	(`_drop_seeded_memos()` is `set_run_seed()`'s, and only its).
+
+	AND `_migrated_units` IS LEFT ALONE TOO, which looks like an omission beside
+	`set_run_seed()`'s clear of it and is not (review, 2026-09-12). Clearing it
+	here would be actively worse: `update_chunks()` below runs SYNCHRONOUSLY in
+	this call while the bodies the loop above `queue_free`d are still alive until
+	the end of the frame, so an emptied registry would let a rebuilt chunk spawn a
+	second body for a slot whose first one has not died yet — and the slot name is
+	the room-wide crocodile id. Leaving it is safe because it reaps itself where
+	it is read (`terrain_predators.spawn_hunters_in_chunk` erases any entry whose
+	node is gone), so the only cost is a handful of dead references living until
+	their slot is next asked about.
+	"""
 	# 2. BOTH old-world pending queues emptied (update_chunks below rebuilds them
 	# for the new world anyway; clearing here just makes the invariant explicit).
 	# The removal queue in particular holds bare coordinates, and step 3 is about
@@ -4714,11 +4761,12 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	# re-uses the same coordinates is how a brand-new chunk would get freed a
 	# frame later.
 	#
-	# THE ROAD MEMOS ARE NOT HERE ANY MORE (bead godot-test1-bvq). The station
-	# cache and everything derived from it are SEED-derived, so they are dropped
-	# by `_drop_seeded_memos()` inside `set_run_seed()`, which step 1 above has
-	# already called down both branches. These two queues stay because they are
-	# CHUNK state, not seed state: a bare re-seed does not free a chunk.
+	# THE ROAD MEMOS ARE NOT HERE (bead godot-test1-bvq). The station cache and
+	# everything derived from it are SEED-derived, so they are dropped by
+	# `_drop_seeded_memos()` inside `set_run_seed()` — which `new_run()` has
+	# already called above, and which a bare relocation deliberately does not.
+	# These two queues stay because they are CHUNK state, not seed state: a bare
+	# re-seed does not free a chunk, and a bare relocation frees every one.
 	pending_chunks.clear()
 	pending_removals.clear()
 
@@ -4736,22 +4784,22 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	# player teleported into that chunk has ground under them this frame.
 	update_chunks(around)
 	last_player_chunk = around
-	# The seed write above already reset the tower (set_run_seed -> _tower_reset),
-	# but `last_player_chunk` was just pinned, so _process will not cross a boundary
-	# and re-stream on its own — the player would arrive at the site to find no
+	# `last_player_chunk` was just pinned, so _process will not cross a boundary and
+	# re-stream on its own — the player would arrive at the site to find no
 	# building, no collision and no doorway until they walked a whole chunk away and
-	# back.
+	# back. After a `new_run()` the seed write has just freed the shell and this
+	# rebuilds it; after a bare relocation `_tower_stream` early-outs on the shell it
+	# already has, which is the whole point of the split.
 	#
 	# TESTED AGAINST `around`, NOT AGAINST THE PLAYER, and that distinction is the
 	# whole point (codex review, 2026-08-28). `around` is where the player is ABOUT
 	# to be: on a restart it is the spawn chunk they are teleported to a moment
-	# later, and on a mid-run multiplayer join it is the anchor chunk they are
-	# placed in — in both cases the teleport happens AFTER this call, so reading
-	# `player.global_position` here measures where they used to be. Same reasoning as
-	# the synchronous ring in step 4, which floors `around` for exactly that reason.
+	# later, and on a mid-run multiplayer join (or a waypoint hop) it is the anchor
+	# chunk they are placed in — in every case the teleport happens AFTER this call,
+	# so reading `player.global_position` here measures where they used to be. Same
+	# reasoning as the synchronous ring in step 4, which floors `around` for exactly
+	# that reason.
 	_tower_stream(chunk_to_world(around))
-
-	print("New run started (run_seed = %d)" % run_seed)
 
 func build_ring_now(around: Vector2i) -> void:
 	"""
