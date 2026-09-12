@@ -32,7 +32,7 @@ var _out_dir: String = "user://shots"
 ## which is what CI and the epic's A/B pairs want. Comma-separated (bead
 ## godot-test1-z3e.10): this environment's per-shot fixed cost (world/camp
 ## sweep, a real settle) dwarfs one shot's own camera work, so a caller wanting
-## several shots that already share `_head_pose_settled` (16/17/18/19/20) asks
+## several shots that already share `_head_pose_settled` (16/17/18/19/20/21_jaw_1m) asks
 ## for them in ONE process rather than paying the settle five times over.
 var _only: String = ""
 
@@ -70,6 +70,15 @@ const HEAD_SHOT_DISTANCE: float = 2.0
 ## default FOV puts a 0.26 m head across 8% of the frame, which is the honest in-game
 ## read and useless for judging a nose.
 const FACE_SHOT_FOV: float = 16.0
+## THE JAW (bead godot-test1-394; owner: "why do the heroes look like they have a
+## beard?"). 16 and 17 are shot from slightly ABOVE the eye line, which is the one
+## angle that hides the underside of the chin — exactly where a beard would be and
+## exactly where both suspects (the lip paint band, and DIFFUSE_TOON's shadow band)
+## land. This is the same camera dropped below the eye line so it looks UP at the
+## chin, at a metre instead of two. `JAW_SHOT_DROP` is metres below the focus
+## point; the camera still aims AT the focus, so the drop is the whole tilt.
+const JAW_SHOT_DISTANCE: float = 1.0
+const JAW_SHOT_DROP: float = 0.22
 
 # ============================================================================
 # SPIKE godot-test1-z3e.10 — THE HERO BODY VARIANTS
@@ -262,6 +271,13 @@ func _run() -> void:
 	# actually sees, 17 is whether the thing has a nose.
 	await _shoot_head_closeup(terrain, player, field, 75.0, "16_head_2m")
 	await _shoot_head_closeup(terrain, player, field, FACE_SHOT_FOV, "17_head_face", false)
+
+	# THE JAW AT ONE METRE (bead godot-test1-394). Same settled, frozen pose, one
+	# metre out and below the eye line looking UP at the chin — the framing 16 and
+	# 17 cannot give, and the only one that says whether the smear under the jaw is
+	# the lip paint or the toon shadow. See `JAW_SHOT_DROP`.
+	await _shoot_head_closeup(terrain, player, field, FACE_SHOT_FOV, "21_jaw_1m",
+			false, JAW_SHOT_DISTANCE, JAW_SHOT_DROP)
 
 	# THE HERO BODY (spike godot-test1-z3e.10) — reuses `_head_pose_settled`
 	# exactly as 16/17 do. 19 must run LAST: it poses the ALREADY-FROZEN hero
@@ -1047,7 +1063,8 @@ func _crown_focus(player: Node3D, scope: Node) -> Vector3:
 
 
 func _shoot_head_closeup(terrain: Node, player: Node3D, at: Vector3, fov: float,
-		name: String, settle: bool = true) -> void:
+		name: String, settle: bool = true,
+		distance: float = HEAD_SHOT_DISTANCE, drop: float = 0.0) -> void:
 	"""
 	SPIKE godot-test1-z3e.1. One shot of the hero's face from `HEAD_SHOT_DISTANCE`.
 
@@ -1059,6 +1076,11 @@ func _shoot_head_closeup(terrain: Node, player: Node3D, at: Vector3, fov: float,
 	`settle` is false for a SECOND framing of a body that is already posed and already
 	frozen: the world is built, nothing is ticking, and only the lens changes. Sixteen
 	runs of this spike each paid a 9 s settle and a 300-frame measure for that.
+
+	`distance` and `drop` are the THIRD framing (bead godot-test1-394, `21_jaw_1m`) and
+	they default to the first two exactly: `distance` is how far out the camera sits,
+	`drop` how far BELOW the focus point — the camera aims at the focus either way, so
+	a drop is the whole tilt. `drop = 0.0` reproduces 16 and 17 term for term.
 
 	IT IS A REQUEST, NOT AN ASSERTION, and `_head_pose_settled` is why: `only=` can
 	filter out the shot that was supposed to have done the settling, and a false here
@@ -1122,8 +1144,10 @@ func _shoot_head_closeup(terrain: Node, player: Node3D, at: Vector3, fov: float,
 	var basis := player.global_transform.basis
 	var forward := -basis.z
 	var right := basis.x
-	cam.global_position = focus + forward * (HEAD_SHOT_DISTANCE * 0.88) \
-			+ right * (HEAD_SHOT_DISTANCE * 0.42) + Vector3(0.0, 0.10, 0.0)
+	# `drop` (bead godot-test1-394) is the only thing that moves the camera BELOW
+	# the eye line; at 0.0 this is byte-for-byte the 16/17 framing it always was.
+	cam.global_position = focus + forward * (distance * 0.88) \
+			+ right * (distance * 0.42) + Vector3(0.0, 0.10 - drop, 0.0)
 	cam.look_at(focus, Vector3.UP)
 	cam.make_current()
 	await get_tree().process_frame

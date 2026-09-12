@@ -245,33 +245,52 @@ REGION_BONES = {
 SEAM_HALF = 0.0030
 SEAM_DARKEN = 0.55
 
-# THE MOUTH, AND WHY IT HAS A WIDTH AT ALL (bead godot-test1-z3e.15; owner,
-# 2026-09-12: "we need faces more similar to our comics"). `paint_body` used to
-# take every head vertex in a 2.4 cm z band whose `depth` was past 0.55 of the
-# head's own half-depth, which is not a mouth — it is the whole front of the
-# face at mouth height, cheeks included. Measured on the three `17_head_face`
-# frames of 2026-09-12: a dark rosy swath from cheekbone to cheekbone on all
-# three heroes, with a separate blotch where the band crept round the jaw, and
-# no mouth SHAPE anywhere in it. Every portrait in `assets/portraits/` draws a
-# small closed mouth about a third of the face's width.
+# THE MOUTH IS MAKEHUMAN'S OWN `lips` VERTEX GROUP (bead godot-test1-394; owner,
+# 2026-09-12: "why do the heroes look like they have a beard? I don't like it").
 #
-# So the band is bounded across as well as up and down. `LIP_HALF` is a
-# FRACTION of the head's own half-width, not a length, because Windman's broad
-# head and Primm's narrow one are the same macro slider moving; a third of a
-# half-width is the ~5 cm mouth on a ~14.5 cm head every one of these portraits
-# has. `LIP_DEPTH` then keeps the band off the jaw corners the width bound
-# still lets through on a round head.
+# Every earlier pass at this was a GEOMETRIC BAND — z3e.15's first one took the
+# whole front of the face at mouth height, cheeks included; its second bounded the
+# band across (`LIP_HALF`) and forward (`LIP_DEPTH`) to something mouth-shaped. Both
+# hung off `eye_z - 0.088`, a drop measured once on one head, and every face target
+# a `FACES` row carries moves the mouth against the eye line (Windman's
+# `chin-jaw-drop-decr`, Primm's `chin-prominent-incr`, Teibi's `mouth-angles-up`).
+# So on the morphed heads the band slid DOWN onto the chin and round the jaw, and a
+# colour picked to be darker than the skin became a beard shadow at 3 m.
 #
-# THE NUMBERS ARE THE SECOND PASS, from the first tuned frames: 0.36 and a 2 cm
-# band still left a pale PATCH where the portraits have a drawn LINE. The band is
-# the height of the visible lip and no more, and the one hero whose skin is bright
-# enough for a lip to vanish into it takes a darker `lips` in his own row — a
-# mouth no darker than the face around it is not a mouth at this distance.
-LIP_BELOW = 0.009
-LIP_ABOVE = 0.006
-LIP_DEPTH = 0.72
-LIP_HALF = 0.32
+# There is no band to tune here any more. MPFB2's `extra_vertex_groups=True` (see
+# `build_human`, which prints the search) ships MakeHuman's own `lips` group — 418
+# basemesh vertices, the region MPFB's layered skin material paints the lips with —
+# and a vertex GROUP survives the mask and the decimate (trap 1 in this file's
+# header). It is the mouth as MakeHuman models it, so it follows every morph for
+# free and it cannot reach the chin: `CHIN_CLEAR` is the assert that says so out
+# loud, because a selection that lands on the chin is exactly as invisible
+# downstream as a selection that lands nowhere (same verts, same tris, same bytes,
+# `--check` green) — which is how the beard shipped three times.
+LIPS_VG = "lips"      # MakeHuman's own group name, shipped by `extra_vertex_groups`
+LIP_WEIGHT = 0.5      # a decimated vertex is a lip if the group still mostly owns it
 LIP_VERTS_MIN = 8     # below this there is no mouth — `paint_body` refuses to build
+CHIN_CLEAR = 0.012    # metres of skin between the lowest lip vertex and the chin
+FACE_FRONT = 0.72     # fraction of the head's half-depth that counts as "the face"
+
+# THE LIP COLOUR IS THE SKIN'S. It used to be a per-row literal, and three
+# hand-picked browns are three chances to pick a beard: the rows had the lips 25 to
+# 40% darker than the face, which is a shadow, not a mouth. It is now derived from
+# the hero's own GRADED skin — darker, and warmer rather than browner, so the mouth
+# reads as lips on every skin tone in the cast without a number per hero. The red
+# shift is a multiplier on the red channel alone (clamped), which is what keeps it
+# from going grey as it darkens.
+#
+# THE STRENGTH IS THE SECOND PASS. 0.88 was the bead's "~12 percent" taken
+# literally and it was too little: on the first `grid_28` Windman's mouth vanished
+# into his bright skin entirely and Primm's was a tone shift you had to look for,
+# which is the failure the z3e.15 banner above already names — "a mouth no darker
+# than the face around it is not a mouth at this distance". 0.78 is ~21% of luma,
+# which is between that and the 25-40% the old literals had, and `LIP_CONTRAST` is
+# the assert that keeps a future hand from walking it back to either end: a band,
+# because too little is no mouth and too much is the beard.
+LIP_DARKEN = 0.78
+LIP_RED = 1.06
+LIP_CONTRAST = (0.15, 0.30)   # how much darker than the skin the lips must be
 
 # How far past the arc's own end a skin-side band vertex may sit before it counts
 # as a bisect that did not land — see the assert in `wrap_band`, which is the one
@@ -318,13 +337,11 @@ FACES = {
                     (("chin", "chin-width-incr.target.gz"), 0.40),
                     # A small closed mouth, as every frame of him is drawn.
                     (("mouth", "mouth-scale-horiz-decr.target.gz"), 0.25)),
-        # z3e.15 darkens the lips and nothing else here: his is the brightest skin
-        # in the cast, and (0.80, 0.55, 0.48) against it rendered as a pale patch
-        # where the portrait draws a small closed mouth with a line through it.
-        # (0.62, 0.38, 0.34) then overshot the other way — a dark gash, read on
-        # the second tuned frame; this is the stop between them.
+        # z3e.15 hand-picked a `lips` here; bead 394 took it away — see
+        # `lip_colour`. His is the brightest skin in the cast and that is exactly
+        # why a literal was the wrong tool: every tuning pass on it was a pass on
+        # the RATIO to this skin, which is what the derivation writes down once.
         "palette": {"skin": (0.93, 0.74, 0.62, 1.0),
-                    "lips": (0.70, 0.44, 0.39, 1.0),
                     "hair": (0.32, 0.20, 0.11, 1.0)},
         "stripes": ((0.004, 0.022, (0.20, 0.38, 0.75, 1.0)),    # blue over red,
                     (-0.024, 0.004, (0.72, 0.18, 0.15, 1.0))),  # as the art has it
@@ -407,7 +424,6 @@ FACES = {
         # below is about, and the portrait's Primm is the PALE-COOL one of the
         # three, not the brightest.
         "palette": {"skin": (0.86, 0.72, 0.65, 1.0),
-                    "lips": (0.76, 0.50, 0.46, 1.0),
                     "hair": (0.18, 0.11, 0.07, 1.0)},
         # A blue lens between two silver frame lines, 5.4 cm of band all told —
         # the height of the generator's own visor slab (a box 0.052 m tall).
@@ -480,7 +496,7 @@ def _face_row(hero):
 
 
 def _face_palette(hero):
-    """A `FACES` row's skin/lips/hair for `hero`, UNGRADED — `paint_body` applies
+    """A `FACES` row's skin/hair for `hero`, UNGRADED — `paint_body` applies
     `hero_skin.SKIN_GRADE` to the entries in GRADED_COLOURS, so a pre-graded value
     here would be graded twice. Primm's skin deliberately leaves his old generator's
     (the note in his row says why); Windman's is his generator's verbatim."""
@@ -723,13 +739,6 @@ HEROES = {
             "belt":          (0.11, 0.10, 0.11, 1.0),
             "belt_buckle":   (0.55, 0.50, 0.30, 1.0),
             "shoes":         (0.16, 0.11, 0.08, 1.0),
-            # z3e.15 takes the lips down WITH the skin above. `SKIN_GRADE` grades
-            # both, so the ratio is what matters, and leaving the generator's
-            # (0.80, 0.55, 0.48) under the darker skin left ~5% luma between his
-            # mouth and his face against Windman's 36% — which fails the rule this
-            # same bead wrote at LIP_BELOW, on the one hero whose mouth is the
-            # portrait's whole expression.
-            "lips":          (0.72, 0.46, 0.40, 1.0),
             "eye_white":     (0.92, 0.92, 0.90, 1.0),
             "eye_iris":      (0.22, 0.16, 0.11, 1.0),
         },
@@ -773,8 +782,8 @@ HEROES = {
         # be. The face is his `FACES` row — see `_face_row`.
         "macros": _face_row("windman")[0],
         "targets": _face_row("windman")[1],
-        # Windman's old part generator's `self.colors`, verbatim and UNGRADED, plus
-        # his `FACES` row's `lips`. `fan_*` is not here: the fan is an ATTACHMENT, hung on
+        # Windman's old part generator's `self.colors`, verbatim and UNGRADED.
+        # `fan_*` is not here: the fan is an ATTACHMENT, hung on
         # `hand_r` by bead 5u3.5's .tscn, and windman_fan.glb keeps its own colours.
         "colours": dict(_face_palette("windman"), **{
             "shirt_blue":   (0.16, 0.33, 0.60, 1.0),
@@ -863,9 +872,8 @@ HEROES = {
         # spike's z3e.12 recipe — younger, leaner, longer than Windman's.
         "macros": _face_row("primm")[0],
         "targets": _face_row("primm")[1],
-        # generate_primm_separate.py's `self.colors`, verbatim and UNGRADED, plus
-        # the spike's `lips` — and, from bead 5u3.6, the three the coat itself
-        # needs. The generator's `belt_black`/`belt_buckle`/`cuff_grey` left with
+        # generate_primm_separate.py's `self.colors`, verbatim and UNGRADED, plus,
+        # from bead 5u3.6, the three the coat itself needs. The generator's `belt_black`/`belt_buckle`/`cuff_grey` left with
         # the belt and the cuff (see `bands` below): the canon dresses him in an
         # open lab coat with rolled sleeves, not a shirt tucked into a belt.
         "colours": dict(_face_palette("primm"), **{
@@ -980,7 +988,36 @@ HEAD_TRIS_MIN = 4000         # the face must survive the body's budget
 SHOE_LIFT = 0.006
 
 # Which palette entries are skin, and therefore go through `hero_skin.SKIN_GRADE`.
-GRADED_COLOURS = ("skin", "lips")
+# `lips` is NOT a palette entry any more (bead godot-test1-394) — it is derived from
+# the graded skin by `lip_colour`, so it is graded by construction.
+GRADED_COLOURS = ("skin",)
+
+
+def _luma(c):
+    """Rec.709 luma, the same one `scripts/clipped_fraction.py` judges a face by."""
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+
+def lip_colour(skin):
+    """The mouth, from the hero's own GRADED skin: `LIP_DARKEN` down and `LIP_RED`
+    warmer. See those constants for why it is not three literals any more.
+
+    AND IT IS ASSERTED, because the vertex floor and `CHIN_CLEAR` are both about
+    WHERE the lips are and neither can see a mouth that is the wrong COLOUR — the
+    hero ships with the same verts, the same tris and the same bytes whether the
+    band reads as a mouth, as nothing at all, or as a beard. `LIP_RED` lifts the red
+    channel, so the luma drop is not `1 - LIP_DARKEN` and has to be measured."""
+    r, g, b = skin[:3]
+    out = (min(1.0, r * LIP_DARKEN * LIP_RED), g * LIP_DARKEN, b * LIP_DARKEN,
+           ) + tuple(skin[3:])
+    drop = 1.0 - _luma(out) / max(_luma(skin), 1e-6)
+    low, high = LIP_CONTRAST
+    if not low <= drop <= high:
+        raise AssertionError(
+            "the lips are %.1f%% darker than the skin, outside %.0f-%.0f%%: too "
+            "little is no mouth at 3 m, too much is the beard bead 394 removed"
+            % (drop * 100.0, low * 100.0, high * 100.0))
+    return out
 
 
 def log(*a):
@@ -1342,6 +1379,17 @@ def build_human(row):
         TargetService.load_target(human, path, weight=weight)
 
     coords = morphed_coords(human)
+    # THE GROUP LIST, PRINTED ONCE (bead godot-test1-394), because the bead asked
+    # for the lips to come off "MakeHuman's own mouth/lips vertex groups" and the
+    # answer had to be looked up rather than assumed. It is left in as the log line
+    # that proves the group is there on the machine the build ran on: MPFB2's
+    # `extra_vertex_groups=True` (this call, already) ships eight body-region groups
+    # beside the `joint-*` helper cubes, and `lips` is one of them — 418 basemesh
+    # vertices, the region MPFB's own layered skin material paints the lips with.
+    # `paint_body` reads exactly that group; nothing here is a z band any more.
+    log("basemesh groups matching mouth/lip/jaw/chin:",
+        sorted(g.name for g in human.vertex_groups
+               if any(w in g.name for w in ("mouth", "lip", "jaw", "chin"))))
     joints = {}
     for name in ("neck", "l-shoulder", "r-shoulder", "l-elbow", "r-elbow",
                  "l-upper-leg", "r-upper-leg", "l-knee", "r-knee", "pelvis",
@@ -2287,6 +2335,7 @@ def paint_body(obj, tj, row, band_verts=frozenset()):
     colours = dict(row["colours"])
     for key in GRADED_COLOURS:
         colours[key] = graded(colours[key])
+    colours["lips"] = lip_colour(colours["skin"])
     colour_key = row["colour_key"]
     bands = set(row.get("bands", ()))
     stripes = row.get("stripes", ())
@@ -2356,24 +2405,33 @@ def paint_body(obj, tj, row, band_verts=frozenset()):
     # THE HEAD REGION: eyewear, lips, eyebrows, hair — the head spike's own
     # `paint()`, position-relative-to-the-eye-line rather than by skinning weight.
     head_ids = scope_ids["head"]
-    lip_z = eye_z - 0.088
+    # THE MOUTH IS MAKEHUMAN'S OWN GROUP (bead godot-test1-394) — see the `LIP_*`
+    # banner for what it replaced and why. `ids` has it already: `name_to_id` is
+    # every vertex group on the object, bone or not.
+    lip_ids = ids([LIPS_VG])
+    if not lip_ids:
+        raise AssertionError("no %r vertex group on the baked mesh — MPFB2's "
+                             "`extra_vertex_groups` is how it gets here (see "
+                             "`build_human`), and without it there is no mouth"
+                             % LIPS_VG)
     hair_front = eye_z + hair["front"]
     seam_z = eye_z + stripes[0][0] if stripes else 0.0
-    # THE SKULL, NOT THE ASSEMBLY. Both of these are the frame every face feature
-    # below is measured in, and `band_verts` has to come out of them: the cloth
-    # stands `thickness` proud of the head and `wrap_band`'s two KNOT boxes sit at
-    # the arc ends, ~9.4 cm off centre against a ~7.5 cm skull — and the knots carry
-    # head weight 1.0, because `weight_strays_to` put it there. Left in, Windman's
-    # `half_width` is a quarter too big and `LIP_HALF` stops being the fraction of
-    # the head it is documented to be: he gets a 6 cm mouth where Primm and Teibi
-    # get 4.8 cm, which is exactly the blotch on his chin in the first tuned frame.
-    def _skull(axis):
-        return max((abs(getattr(v.co, axis)) for i, v in enumerate(me.vertices)
-                    if i not in band_verts and _group_weight(v, head_ids) > 0.4),
-                   default=1e-6)
-
-    half_depth = _skull("y")
-    half_width = _skull("x")
+    # THE SKULL, NOT THE ASSEMBLY. `depth` is measured against this and `band_verts`
+    # has to come out of it: the cloth stands `thickness` proud of the head and
+    # `wrap_band`'s two KNOT boxes sit at the arc ends, ~9.4 cm off centre against a
+    # ~7.5 cm skull — and the knots carry head weight 1.0, because `weight_strays_to`
+    # put it there. (Bead 394 removed the `x` half of this with the lip band's width
+    # bound; the group needs no frame.)
+    half_depth = max((abs(v.co.y) for i, v in enumerate(me.vertices)
+                      if i not in band_verts and _group_weight(v, head_ids) > 0.4),
+                     default=1e-6)
+    # THE CHIN, MEASURED (bead godot-test1-394): the lowest vertex on the FRONT of
+    # the face. `CHIN_CLEAR` below is the assert that no lip vertex comes near it.
+    # (Both `default`s here and at `lip_low` below are unreachable: an empty head or
+    # an empty face front empties the lip count too, and `LIP_VERTS_MIN` fires first.)
+    chin_z = min((v.co.z for i, v in enumerate(me.vertices)
+                  if i not in band_verts and _group_weight(v, head_ids) > 0.4
+                  and v.co.y / half_depth > FACE_FRONT), default=0.0)
     for i, v in enumerate(me.vertices):
         if i in band_verts:
             # The cloth, top-down and clamped at both ends: the lift and the knots
@@ -2395,8 +2453,7 @@ def paint_body(obj, tj, row, band_verts=frozenset()):
             # Eyewear painted on the skin (Primm's goggles); first match wins.
             per_vert[i] = next(j for j, (low, high, _c) in enumerate(stripes)
                                if eye_z + low <= v.co.z <= eye_z + high)
-        elif (lip_z - LIP_BELOW <= v.co.z <= lip_z + LIP_ABOVE
-              and depth > LIP_DEPTH and abs(v.co.x) <= half_width * LIP_HALF):
+        elif _group_weight(v, lip_ids) > LIP_WEIGHT:
             per_vert[i] = "lips"
         elif (hair["brows"] and eye_z + 0.028 <= v.co.z <= eye_z + 0.040
               and depth > 0.45):
@@ -2406,17 +2463,31 @@ def paint_body(obj, tj, row, band_verts=frozenset()):
     for k in per_vert:
         counts[k] = counts.get(k, 0) + 1
     log("paint counts:", counts)
-    # AND THE MOUTH HAS TO STILL BE THERE. The lip band is a three-way conjunction
-    # now (a 1.5 cm z band, `LIP_DEPTH` forward, `LIP_HALF` across) and every one of
-    # those terms is a number somebody may tighten again. If it selects nothing, the
-    # hero ships with no mouth and NOTHING DOWNSTREAM CAN SEE IT: no vertex is added
-    # or removed, so the tri count, the bone count and the .glb byte size are all
-    # unchanged, `--check` matches and `build.yml`'s `stat` gate stays green. Same
-    # shape as the "the face melted" floor in `build()`, and for the same reason.
+    # AND THE MOUTH HAS TO STILL BE THERE. `lips` is a basemesh group and the head
+    # is decimated to a tenth of the basemesh's face, so `LIP_WEIGHT` is a threshold
+    # somebody may raise. If it selects nothing the hero ships with no mouth and
+    # NOTHING DOWNSTREAM CAN SEE IT: no vertex is added or removed, so the tri
+    # count, the bone count and the .glb byte size are all unchanged, `--check`
+    # matches and `build.yml`'s `stat` gate stays green. Same shape as the "the face
+    # melted" floor in `build()`, and for the same reason.
     if counts.get("lips", 0) < LIP_VERTS_MIN:
         raise AssertionError("the mouth vanished: %d lip vertices, floor %d — the "
-                             "LIP_* band selected (almost) nothing"
-                             % (counts.get("lips", 0), LIP_VERTS_MIN))
+                             "%r group selected (almost) nothing"
+                             % (counts.get("lips", 0), LIP_VERTS_MIN, LIPS_VG))
+    # AND IT HAS TO STILL BE A MOUTH AND NOT A BEARD (bead godot-test1-394): the
+    # same guard from the other side, because a selection that lands on the chin is
+    # exactly as invisible downstream as one that lands nowhere, and that is how the
+    # beard shipped three times. A group cannot drift the way the old z band did,
+    # but the decimate and `LIP_WEIGHT` between them decide which vertices carry it.
+    lip_low = min((v.co.z for i, v in enumerate(me.vertices)
+                   if per_vert[i] == "lips"), default=chin_z + CHIN_CLEAR)
+    log("mouth: %d verts, lowest %.4f, chin %.4f, clearance %.1f mm"
+        % (counts.get("lips", 0), lip_low, chin_z, (lip_low - chin_z) * 1000.0))
+    if lip_low - chin_z < CHIN_CLEAR:
+        raise AssertionError("the lips reach the chin: lowest lip vertex %.4f is "
+                             "%.1f mm above the chin at %.4f, floor %.1f mm"
+                             % (lip_low, (lip_low - chin_z) * 1000.0, chin_z,
+                                CHIN_CLEAR * 1000.0))
 
     attr = me.color_attributes.new(name="Color", type='FLOAT_COLOR', domain='POINT')
     for i, key in enumerate(per_vert):
