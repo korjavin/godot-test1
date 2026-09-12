@@ -229,6 +229,30 @@ func _check_edges() -> void:
 	if hub.is_panel_open():
 		_fail("Esc re-opened the travel list")
 
+	# ...and a close the PLAYER asked for is never undone by the tick above. The
+	# sequence is the one that can actually go wrong: a state-close arms the memory,
+	# the hero then WALKS OFF (which must disarm it), walks back on, and dismisses
+	# the list with Esc. If either clear is missing, the debt outlives the
+	# dismissal and the next tick puts the card back over a player who just closed
+	# it.
+	_walk_away(real_player, hub)
+	_stand_on(real_player, hub, sites, 1)
+	real_player.is_respawning = true
+	hub._tick()
+	real_player.is_respawning = false
+	if hub.is_panel_open():
+		_fail("the respawn under an open list did not close it (Esc sequence)")
+	_walk_away(real_player, hub)
+	_stand_on(real_player, hub, sites, 1)
+	if not hub.is_panel_open():
+		_fail("the list did not re-open for the Esc sequence")
+	hub._unhandled_input(_cancel_event())
+	hub._tick()
+	hub._tick()
+	if hub.is_panel_open():
+		_fail("the list re-opened itself after Esc — a close the player asked for "
+			+ "must cancel the state-close memory, not be undone by it")
+
 	# --- A TAP ON THE BACKDROP closes ---------------------------------------
 	# The card is MOUSE_FILTER_STOP, so `_on_backdrop_input` only ever fires
 	# outside it. Without this the close hint is a lie on a phone, where Esc does
@@ -249,15 +273,24 @@ func _check_edges() -> void:
 
 	# --- ARRIVAL does not re-open -------------------------------------------
 	# `arrived_at()` latches the target WITHOUT an enter edge, and that is the
-	# whole reason it exists: travel puts the body down inside the target ring, and
-	# a landing that read as an arrival would re-open the list the hero just used.
+	# whole reason it exists: travel puts the body down INSIDE the target ring, so
+	# the risk is not the call — it is the NEXT SCAN, which would otherwise see a
+	# fresh arrival and re-open the list the hero just spent the fare on. So the
+	# body is put on the circle, latched by hand the way the hop does it, and a
+	# real tick is run at it (review round 2: without the tick this probe passed
+	# against an `arrived_at()` that latched nothing at all).
 	_walk_away(real_player, hub)
+	var landing: Vector3 = sites[1]["pos"] as Vector3
+	(real_player as Node3D).global_position = Vector3(landing.x, 1.0, landing.z)
 	hub.arrived_at(1)
 	if hub.standing_on() != 1:
 		_fail("arrived_at() did not latch the target")
+	hub._tick()
+	if hub.standing_on() != 1:
+		_fail("the tick after a landing dropped the latch arrived_at() took")
 	if hub.is_panel_open():
-		_fail("a completed travel re-opened the travel list on the circle it landed "
-			+ "on — the bead closes the panel on arrival")
+		_fail("the scan after a completed travel read the landing as an arrival and "
+			+ "re-opened the list the hero just used")
 	hub.arrived_at(-1)
 
 	# --- THE THREE STATE REFUSALS, each with the enter edge driven at it ------
@@ -289,12 +322,25 @@ func _check_edges() -> void:
 			_fail("the hero became %s under an open travel list and it stayed up" % flag)
 		if paused or PauseHub.holder_count() != 0:
 			_fail("the %s flip left the world frozen behind a closed list" % flag)
+		# ...AND THE STATE CLEARING PUTS IT BACK. A soft respawn is over in a
+		# second and leaves the hero on the same circle; a one-way close would be a
+		# list that cannot be re-opened without stepping off and on again. Ticked
+		# twice under the flag, because the grace lasts longer than one tick and
+		# the memory has to survive every one of them.
+		hub._tick()
 		real_player.set(flag, false)
+		hub._tick()
+		if not hub.is_panel_open():
+			_fail("the hero stopped being %s on the same circle and the list never "
+				% flag + "came back — it could not be re-opened without stepping "
+				+ "off the circle and on again")
+		hub.set_panel_open(false)
 
 	# --- A PENDING QUIZ refuses too -----------------------------------------
-	# `landmark_toast`'s quiz owns the digit keys and its own pause. The stub is
-	# added to the group ahead of the real toast, which `get_first_node_in_group`
-	# answers first, and is taken out again.
+	# `landmark_toast`'s quiz owns the digit keys and its own pause. The real
+	# toasts are taken OUT of the group for the duration rather than shadowed by
+	# ordering, so this cannot start passing the day `get_first_node_in_group`
+	# answers a different one, and they are put back before the check returns.
 	_walk_away(real_player, hub)
 	var quiz := StubToast.new()
 	quiz.pending = true
@@ -656,8 +702,11 @@ func _check_press_travels() -> void:
 	hub.set_panel_open(false)
 
 	# --- AND A NODE THAT GOES AWAY RELEASES WHAT IT HELD ----------------------
-	# `_exit_tree()`'s whole job. Driven on a throwaway hub so the scene's own one
-	# survives; `PauseHub` also hooks `tree_exiting`, and this asserts the pair.
+	# Driven on a throwaway hub so the scene's own one survives. BOTH HALVES are
+	# asserted separately (review round 2: freeing alone cannot tell them apart,
+	# because `PauseHub.take()` hooks `tree_exiting` for every holder and releases
+	# the claim with `_exit_tree` deleted): first the node's OWN release, called
+	# while it is still in the tree, then the free the hub's hook covers.
 	var spare := Control.new()
 	spare.set_script(WaypointHub)
 	root.add_child(spare)
@@ -667,6 +716,12 @@ func _check_press_travels() -> void:
 	if PauseHub.holder_count() != 1 or not paused:
 		_fail("the spare list did not take the pause (holders=%d, paused=%s)"
 			% [PauseHub.holder_count(), paused])
+	spare._exit_tree()
+	if paused or PauseHub.holder_count() != 0:
+		_fail("a list on its way out of the tree did not hand its own pause claim "
+			+ "back (paused=%s, holders=%d)" % [paused, PauseHub.holder_count()])
+	spare.set_panel_open(false)
+	spare.set_panel_open(true)
 	spare.queue_free()
 	await process_frame
 	await process_frame
@@ -685,9 +740,12 @@ func _check_layout() -> void:
 	The card, laid out for real at a desktop size and a phone one, with every row
 	shown and carrying the WIDEST German name the table can produce.
 
-	MEASURED RATHER THAN READ OFF `CARD_WIDTH`: the card is a PanelContainer round
-	a MarginContainer round a VBox, and any of the three can grow past the minimum
-	this file thinks it set. The phone width is the one that matters — the circle
+	MEASURED RATHER THAN READ OFF `CARD_WIDTH`: that constant is the CONTENT width,
+	the card adds `HudTheme.card()`'s content margin round it, and either the
+	PanelContainer or the VBox can grow past the minimum this file thinks it set.
+	The first version added a `MarginContainer` of its own on top of the theme's
+	and drew 384 units wide inside a 400-unit screen; nothing but a measurement
+	could see that. The phone width is the one that matters — the circle
 	is the only way into this list, so a card that does not fit is a feature with
 	no way to use it.
 	"""
@@ -767,12 +825,19 @@ class RecordingHero extends Node3D:
 	var travelled_to: int = -1
 	var answer: bool = true
 	var waypoint_mask: int = 0
-	## Enough for the fare, so the rows this check presses are genuinely live
-	## rather than greyed-out buttons whose signal is being emitted by hand.
+	## Enough for the fare, so a refresh under this stub draws live rows rather
+	## than greyed-out ones.
 	var own_coins: int = 100
 
+	## IT AWAITS, AND THAT IS THE POINT (review round 2). The shipped
+	## `travel_to_waypoint()` is a coroutine, so a caller that forgot its `await`
+	## gets a truthy `GDScriptFunctionState` instead of the `bool` — and every
+	## refused hop would silently eat the panel. A synchronous stub answers a plain
+	## `bool` either way and cannot see that at all, which is a check that passes
+	## against the bug it exists for.
 	func travel_to_waypoint(index: int) -> bool:
 		travelled_to = index
+		await Engine.get_main_loop().process_frame
 		return answer
 
 

@@ -266,6 +266,11 @@ var _panel_open: bool = false
 ## Whether the CURRENT tree pause is ours to release. "We hold A claim", not "we
 ## hold THE pause" — see `pause_hub.gd`'s header.
 var _paused_by_us: bool = false
+## Whether the list was closed by the HERO'S STATE rather than by the hero, and so
+## is owed back when that state clears. Set only in `_tick`, cleared by every
+## deliberate open or close (`set_panel_open`) — which is what keeps Esc, a
+## backdrop tap and a press from being undone one tick later.
+var _closed_by_state: bool = false
 
 ## Child nodes, built in `_ready` rather than from a `.tscn`, `city_map_panel`'s
 ## shape: this node is one script line in `main.tscn` and has to stay that way.
@@ -409,12 +414,34 @@ func _tick() -> void:
 	# panel takes no pause, so the world keeps running under it — a hero grabbed
 	# while reading the list goes to Game Over with the card still drawn, and this
 	# node now sits above `GameOver` in `main.tscn`, so it would cover Play Again.
-	if _standing_on < 0 or _hero_unavailable(player):
+	if _standing_on < 0:
+		# Walked off. The list is simply gone, and nothing is owed.
 		set_panel_open(false)
+	elif _hero_unavailable(player):
+		# ...BUT REMEMBER IT, because two of those three states CLEAR again and a
+		# one-way close is its own dead end (review round 2). A soft respawn lasts
+		# `RESPAWN_GRACE_DURATION` and leaves the hero standing on the same circle:
+		# without this the list is gone until they step off and back on, which is
+		# exactly the trap `_on_row_pressed()` refuses to leave behind for a refused
+		# hop.
+		#
+		# READ BEFORE `set_panel_open()` AND WRITTEN AFTER IT: that function wipes
+		# the memory (a deliberate close must never be undone), and the grace lasts
+		# many ticks — only the first of them finds the panel open, so a memory
+		# recomputed from `_panel_open` alone would be wiped by the second tick.
+		var owed: bool = _closed_by_state or _panel_open
+		set_panel_open(false)
+		_closed_by_state = owed
 	elif _panel_open:
 		# Distances, affordability and a teammate's fresh find, on the tick the
 		# rest of this feature already runs at.
 		_refresh_rows()
+	elif _closed_by_state:
+		# The state cleared and the hero never left the circle: give it back. Cleared
+		# FIRST so a refusal inside `_open_panel_for` is one attempt and not a retry
+		# every 200 ms.
+		_closed_by_state = false
+		_open_panel_for(_standing_on, player)
 
 
 func _hero_unavailable(player: Node) -> bool:
@@ -428,8 +455,9 @@ func _hero_unavailable(player: Node) -> bool:
 	and solo this panel's pause would stop its own timer running out, and over Game
 	Over the only thing that may be on screen is Play Again.
 
-	`"x" in node` and not `node.get("x")` — `get()` answers null for a missing
-	property and `bool(null)` is a hard error, so a stand-in player degrades.
+	Every read is gated by `flag in player` before `player.get(flag)`: `get()`
+	answers null for a property that is not there and `bool(null)` is a hard error,
+	so a scene whose "player" is a stand-in degrades instead of throwing.
 	"""
 	if player == null:
 		return true
@@ -617,6 +645,11 @@ func _open_panel_for(index: int, player: Node3D) -> void:
 func set_panel_open(open: bool) -> void:
 	"""Show or hide the list. The ONE path in and out, so the pause claim cannot
 	be taken on one route and left behind on another."""
+	# ANY DELIBERATE OPEN OR CLOSE CANCELS THE DEBT. Esc, a backdrop tap and a row
+	# press all come through here, and none of them may be undone by `_tick`
+	# re-opening what the player just dismissed. `_tick` re-arms it after its own
+	# call, which is the one close that IS owed back.
+	_closed_by_state = false
 	if open == _panel_open:
 		return
 	_panel_open = open
