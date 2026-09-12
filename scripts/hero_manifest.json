@@ -5,7 +5,7 @@
       "glb": "primm_parts/primm_skinned.glb",
       "glb_bytes": 432332,
       "head_tris": 4400,
-      "height_m": 1.792,
+      "height_m": 1.8,
       "texture_bytes": 0,
       "texture_size": 0,
       "tris": 13178
@@ -13,22 +13,22 @@
     "teibi": {
       "bones": 23,
       "glb": "teibi_parts/teibi_skinned.glb",
-      "glb_bytes": 453048,
+      "glb_bytes": 453116,
       "head_tris": 5064,
-      "height_m": 1.8349,
+      "height_m": 1.8269,
       "texture_bytes": 0,
       "texture_size": 0,
-      "tris": 13870
+      "tris": 13872
     },
     "windman": {
       "bones": 23,
       "glb": "windman_parts/windman_skinned.glb",
-      "glb_bytes": 502640,
-      "head_tris": 5001,
-      "height_m": 1.7579,
+      "glb_bytes": 503076,
+      "head_tris": 5027,
+      "height_m": 1.7639,
       "texture_bytes": 0,
       "texture_size": 0,
-      "tris": 14739
+      "tris": 14743
     }
   },
   "tools": {
