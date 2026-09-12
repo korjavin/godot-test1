@@ -36,8 +36,9 @@ No armature, no rigging, no animation — this lane only moves geometry. Not run
 CI (Blender is not on the runner); it is a tool like scripts/style_shots.gd.
 
 THE TWO COORDINATE TRAPS (bead godot-test1-z3e.3's NOTES: paid for once on
-2026-09-06 building the head spike, scripts/spike_z3e_head.py — READ THESE BEFORE
-TOUCHING THE MATRIX MATH BELOW, do not re-derive them by trial and error):
+2026-09-06 building the head spike, scripts/spike_z3e_head.py — deleted by bead
+godot-test1-5u3.8, so the traps live HERE now; READ THEM BEFORE TOUCHING THE MATRIX
+MATH BELOW, do not re-derive them by trial and error):
 
 1. "Transform3D(...) in a .tscn is ROW-major: the repeated part basis (1,0,0,
    0,0,1, 0,-1,0) is Rx(-90). Reading it as three column axis-vectors gives the

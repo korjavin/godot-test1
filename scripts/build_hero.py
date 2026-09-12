@@ -313,9 +313,10 @@ FACES = {
         # the top of the table). Primm's generator skin is Windman's skin to
         # within a rounding error — (0.91, 0.73, 0.62) against (0.93, 0.74, 0.62)
         # — which is half of why the two heads read as one man. This is that tone
-        # pulled cooler and paler, and the hair pulled near-black; the seam this
-        # risks is against the torso's own neck cylinder, which the 0.048 m stump
-        # sits INSIDE and the collar covers.
+        # pulled cooler and paler, and the hair pulled near-black. The seam it used
+        # to risk was against a generated torso's neck cylinder; there is no torso
+        # and no neck cut now, the body is one mesh, so the tone answers to nothing
+        # but the collar above it.
         "palette": {"skin": (0.90, 0.76, 0.68, 1.0),
                     "lips": (0.76, 0.50, 0.46, 1.0),
                     "hair": (0.18, 0.11, 0.07, 1.0)},
@@ -350,7 +351,6 @@ FACES = {
 }
 
 
-
 def _face_row(hero):
     """A `FACES` row's macros and face targets for `hero`, in this file's shapes.
     Two tables and not one because they answer different questions — `FACES` is
@@ -364,10 +364,10 @@ def _face_row(hero):
 
 
 def _face_palette(hero):
-    """The spike's own skin/lips/hair for `hero`, UNGRADED — `paint_body` applies
+    """A `FACES` row's skin/lips/hair for `hero`, UNGRADED — `paint_body` applies
     `hero_skin.SKIN_GRADE` to the entries in GRADED_COLOURS, so a pre-graded value
-    here would be graded twice. Primm's skin deliberately leaves his generator's
-    (see the spike's table); Windman's is his generator's verbatim."""
+    here would be graded twice. Primm's skin deliberately leaves his old generator's
+    (the note in his row says why); Windman's is his generator's verbatim."""
     return dict(FACES[hero]["palette"])
 
 
@@ -1006,8 +1006,10 @@ def wrap_band(obj, eye_z, cfg):
                    if any(g not in socket_set for g in v.link_faces))
     if sockets:
         bmesh.ops.delete(bm, geom=sockets, context='FACES')
-        # The neck's own hole was capped in `cut_head`, so these are the only open
-        # edges in the mesh.
+        # THE SOCKETS ARE THE ONLY OPEN EDGES, so filling every boundary edge
+        # fills exactly them. This lane builds a WHOLE human and never cuts a neck
+        # (the head spike did, and capped its own hole; bead 5u3.8 deleted it), so
+        # the body arrives closed and these two holes are the ones just made.
         caps = [f for f in bmesh.ops.holes_fill(
             bm, edges=[e for e in bm.edges if e.is_boundary], sides=0)["faces"]
             if isinstance(f, bmesh.types.BMFace)]
@@ -1085,9 +1087,12 @@ def wrap_band(obj, eye_z, cfg):
             v.co += out.normalized() * thickness
 
     # The rims and the knots have no UVs of their own — the extrusion copies the
-    # boundary loop's and `create_cube` writes none at all — and `bake_albedo` bakes
-    # THROUGH the UVs, so an unset one samples whatever is at (0, 0). Each is given a
-    # coordinate from the cloth beside it: the rim from its own lifted corners, the
+    # boundary loop's and `create_cube` writes none at all. The head spike BAKED
+    # through these UVs and an unset one sampled whatever sat at (0, 0); this lane
+    # bakes nothing (`texture bytes: 0`), so the fixup is now insurance for the day
+    # a row brings a bake — cheap, and the wrap is the one place UVs go missing.
+    # Each is given a coordinate from the cloth beside it: the rim from its own
+    # lifted corners, the
     # knot from the wrap's end at the same height. Overlapping the cloth's island is
     # exactly what is wanted here — they are the same cloth.
     uv_of = {}
@@ -2391,7 +2396,7 @@ def build(hero, shot=None):
     dress_shells(obj, tj, row)
 
     band_verts, flat_faces = wrap_band(obj, (tj["l-eye"].z + tj["r-eye"].z) / 2.0,
-                                            row)
+                                       row)
     if band_verts:
         weight_strays_to(obj, armature, "head", tj["neck"].z)
     paint_body(obj, tj, row, band_verts)
