@@ -104,8 +104,8 @@ passes turned on by `--variant`:
 | `teibi_skinned.glb` | today (the control, and the SHIPPED hero) | — | 13,872 | 453,116 |
 | `teibi_cloth_a.glb` | A | procedural folds displaced along the garment normal | 21,742 | 704,968 |
 | `teibi_cloth_b.glb` | B | occlusion + cavity multiplied into the vertex colours | 13,872 | 453,116 |
-| `teibi_cloth_d.glb` | D | the garments on their own `HeroCloth` material | 13,872 | 467,000 |
-| `teibi_cloth_all.glb` | all | A + B + D | 21,742 | 726,128 |
+| `teibi_cloth_d.glb` | D | the garments on their own `HeroCloth` material | 13,872 | 466,768 |
+| `teibi_cloth_all.glb` | all | A + B + D | 21,742 | 725,888 |
 
 Column **C** (a 512² fabric albedo on UV-unwrapped shells) is **NOT BUILT** — the spike's
 clock ran out before it. There is no `teibi_cloth_c.glb` and `--variant c` refuses with
@@ -113,10 +113,18 @@ that reason rather than building something else and calling it C.
 
 They carry NO `.blend`: a shipped hero's source of record is its committed `.blend`, a
 scratch column's is this script plus its `--variant` name (`build()` skips the save for
-exactly that reason). They are outside the manifest by construction — `--variant` refuses
-to run with `--check` or `--all` — so the `stat` gate below and `--all --check` both keep
-saying what they said before this bead: something about the three SHIPPED heroes, and
-nothing about these five files.
+exactly that reason). The four `teibi_cloth_*.glb` are outside the manifest by
+construction — `--variant` refuses to run with `--check` or `--all` — so the `stat` gate
+below and `--all --check` both keep saying exactly what they said before this bead, about
+the three SHIPPED heroes and nothing else. (`teibi_skinned.glb`, the first row of the
+table, is the control column AND the shipped hero: the gate does cover it, and it is
+byte-identical on this branch, which is the point of listing it there.)
+
+**They do not ship.** Godot packs by resource and not by reference, so committing them
+would otherwise put 1.53 MB of geometry nothing instantiates into the web download; the
+Web preset's `exclude_filter` in `export_presets.cfg` names them. A `.gdignore` would have
+worked for the export and broken the spike, since `style_shots.gd` has to be able to load
+them.
 
 Rebuild:
 

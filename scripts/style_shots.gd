@@ -559,6 +559,13 @@ func _apply_cloth_variant(player: Node3D) -> void:
 	"""
 	if _cloth == "":
 		return
+	# THE COLUMNS ARE TEIBI'S BODY. Without this, `cloth=b` on its own dresses
+	# WINDMAN — index 0 is the default hero — in Teibi's mesh, and the run still
+	# writes a full set of PNGs that look like a column and are not one.
+	if _hero != "teibi":
+		push_error("[SHOTS] cloth= is Teibi's spike (bd godot-test1-td8) and hero is "
+				+ _hero + " — pass hero=teibi too")
+		return
 	var path: String = CLOTH_VARIANT_DIR + "teibi_cloth_" + _cloth + ".glb"
 	if not ResourceLoader.exists(path):
 		push_error("[SHOTS] no cloth column at " + path
@@ -672,8 +679,14 @@ func _shoot_torso(terrain: Node, player: Node3D, at: Vector3, name: String) -> v
 	"""
 	SPIKE godot-test1-td8. `_shoot_body`'s three-quarter-front camera at ONE metre
 	instead of three, framed on the chest. Same settle, same freeze, same rest
-	pose — it differs from shot 18 in two constants, which is the point: the pair
-	is a controlled comparison of what survives the gameplay distance.
+	pose, the same FOV and the same +0.10 m eye lift — it differs from shot 18 in
+	the distance and the focus height and in nothing else, which is the point: the
+	pair is a controlled comparison of what survives the gameplay distance.
+
+	The NAME shares shot 20's ordinal with `20_body_strip`, which is what the bead
+	asked for; the files do not collide (the strip writes `20_body_strip_<n>.png`)
+	and the ordering rule is the one that matters — this runs after 18 and BEFORE
+	19, because 19 writes the animation clock and nothing restores it.
 	"""
 	if not _wanted(name):
 		return
@@ -691,7 +704,7 @@ func _shoot_torso(terrain: Node, player: Node3D, at: Vector3, name: String) -> v
 	add_child(cam)
 	var basis := player.global_transform.basis
 	cam.global_position = focus + (-basis.z) * (TORSO_SHOT_DISTANCE * 0.88) \
-			+ basis.x * (TORSO_SHOT_DISTANCE * 0.42)
+			+ basis.x * (TORSO_SHOT_DISTANCE * 0.42) + Vector3(0.0, 0.10, 0.0)
 	cam.look_at(focus, Vector3.UP)
 	cam.make_current()
 	await get_tree().process_frame

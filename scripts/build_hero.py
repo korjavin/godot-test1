@@ -2146,8 +2146,15 @@ def bake_cloth_shading(obj):
         a = w * math.tau
         disc.append((r * math.cos(a), r * math.sin(a), math.sqrt(max(0.0, 1.0 - u))))
 
-    # Cavity: the mean of (neighbour - v) . normal over the one-ring. Negative is
-    # a valley (the neighbours sit outside the tangent plane), positive a ridge.
+    # Cavity: the mean of (neighbour - v) . normal over the one-ring, and MIND THE
+    # SIGN — the first build of this bead had it backwards and darkened every
+    # ridge while leaving the creases alone. With outward normals a neighbour of a
+    # CONVEX vertex sits BELOW the tangent plane and the dot is NEGATIVE (check it
+    # on a unit sphere: n = v = (0,0,1), a neighbour at polar angle t is
+    # (sin t, 0, cos t) and the dot is cos t - 1 < 0). A CONCAVE vertex — a crease
+    # valley, an armpit, the groove under a waistband, which is everything this
+    # pass exists for — has its neighbours on the normal side, so the dot is
+    # POSITIVE. Darken the positive half.
     ring = [[] for _ in me.vertices]
     for e in me.edges:
         a, b = e.vertices
@@ -2175,7 +2182,7 @@ def bake_cloth_shading(obj):
                        for j in ring[i]) / len(ring[i])
         else:
             curv = 0.0
-        cav = 1.0 + min(0.0, curv) * CAVITY_GAIN
+        cav = 1.0 - max(0.0, curv) * CAVITY_GAIN
         dark[i] = max(CAVITY_FLOOR * AO_FLOOR, ao * max(CAVITY_FLOOR, cav))
         lit.append(dark[i])
 
@@ -2222,8 +2229,38 @@ def split_cloth_material(obj):
     ids = _garment_group_ids(obj)
     me.materials.clear()
     for name in (SKIN_MATERIAL, CLOTH_MATERIAL):
+        # THE DATABLOCK MUST BE REMOVED FIRST, and this is `build()`'s own
+        # `base.001` trap one level down: `clear_scene()` unlinks OBJECTS and
+        # leaves material datablocks in `bpy.data`, so in a multi-variant session
+        # (`--variant d --variant all`, which is the documented rebuild command)
+        # the second `new()` would be handed `HeroCloth.001` — a name
+        # `toon_shading.gd` compares with exact equality and therefore MISSES,
+        # silently shading the garment as cast. Measured: it is what the first
+        # build of this bead shipped, and it made the `all` column an A+B column
+        # wearing a D label.
+        old = bpy.data.materials.get(name)
+        if old is not None:
+            bpy.data.materials.remove(old)
         mat = bpy.data.materials.new(name=name)
+        if mat.name != name:
+            raise AssertionError("material came out as %r, not %r — a datablock of "
+                                 "that name survived" % (mat.name, name))
+        # PLAIN WHITE, AND THAT IS THE CONTROL, not a detail. Blender's default
+        # Principled BSDF is 0.8 GREY at roughness 0.5 and the exporter writes both
+        # into the glTF, while the control column exports NO material and gets
+        # Godot's importer default (white, roughness 1.0, back faces culled). Left
+        # at the defaults this column would differ from the control in four ways at
+        # once — the name, a 0.8 albedo multiply over the whole body, the roughness
+        # and double-sidedness — and only the first of those is its thesis. The
+        # first build of this bead did exactly that and the 0.8 is what darkened
+        # Teibi's skin.
         mat.use_nodes = True
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf is None:
+            raise AssertionError("no Principled BSDF on %r to neutralise" % name)
+        bsdf.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+        bsdf.inputs["Roughness"].default_value = 1.0
+        mat.use_backface_culling = True
         me.materials.append(mat)
     cloth_v = {i for i, v in enumerate(me.vertices) if _is_garment(v, ids)}
     n = 0
@@ -2232,8 +2269,12 @@ def split_cloth_material(obj):
             p.material_index = 1
             n += 1
     me.update()
+    # THE NAMES ARE READ BACK OFF THE DATABLOCKS, never printed from the
+    # constants: a log that echoes what was ASKED FOR is exactly what hid the
+    # `HeroCloth.001` suffix above — the build said `HeroCloth` while the file got
+    # something else.
     log("material: %d of %d polys on %r, the rest on %r"
-        % (n, len(me.polygons), CLOTH_MATERIAL, SKIN_MATERIAL))
+        % (n, len(me.polygons), me.materials[1].name, me.materials[0].name))
 
 
 def paint_body(obj, tj, row, band_verts=frozenset()):
