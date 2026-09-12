@@ -107,6 +107,49 @@ static func style(mat: BaseMaterial3D, force_srgb: bool = false) -> void:
 		mat.albedo_texture_force_srgb = true
 
 
+## SPIKE godot-test1-td8, COLUMN D — the name a garment material carries, and the
+## ONE thing that separates cloth from cast here.
+##
+## IT IS A GUARDED NO-OP ON THE SHIPPED PATH, by construction and not by luck:
+## `scripts/build_hero.py` exports every SHIPPED hero with `export_materials='NONE'`
+## (that line says so), so a shipped hero's mesh reaches Godot with the importer's
+## own unnamed default material and this string cannot match it. Only the spike's
+## scratch `teibi_cloth_{d,all}.glb`, built with `--variant`, carry a material
+## called `HeroCloth`, and nothing but `scripts/style_shots.gd`'s `cloth=` swap
+## ever loads one. Every other caller of `apply_to_mesh` — the whole cast, all
+## ~490 crocodiles, the bosses — takes exactly the branch it took before.
+const CLOTH_MATERIAL := "HeroCloth"
+
+## Cloth-styled duplicates, keyed like `_styled_cache` and separate from it for
+## the same reason `_boss_styled_cache` is: the same source material must be able
+## to answer twice, once as cast and once as cloth.
+static var _cloth_styled_cache: Dictionary = {}
+
+
+static func style_cloth(mat: BaseMaterial3D) -> void:
+	"""
+	SPIKE godot-test1-td8, COLUMN D — what a GARMENT is shaded as when it is not
+	shaded as the cast.
+
+	`style()`'s two-band DIFFUSE_TOON is a lighting threshold, not a depth cue: a
+	6 mm crease either falls entirely inside one band or straddles the step, so a
+	fold reads as a hard edge or as nothing, and never as cloth. DIFFUSE_BURLEY is
+	a smooth diffuse falloff, which is the whole point here — it is the term that
+	can show a shallow curvature at all. Fully rough (cloth has no highlight),
+	specular floored, and NO RIM, because the rim light is a cast convention that
+	traces a silhouette and a garment inside the silhouette does not want one.
+
+	Godot's toon diffuse has NO BAND COUNT to raise — the bead asked; there is no
+	such property on `BaseMaterial3D`, the step is fixed in the shader. The middle
+	ground between the two, if the owner wants the cast's flatness kept, is
+	`DIFFUSE_LAMBERT_WRAP`; it is one enum away from this line.
+	"""
+	mat.diffuse_mode = BaseMaterial3D.DIFFUSE_BURLEY
+	mat.roughness = 1.0
+	mat.metallic_specular = 0.05
+	mat.rim_enabled = false
+
+
 static func apply_to_mesh(mesh: MeshInstance3D) -> void:
 	"""
 	Add soft toon diffuse + rim light to a mesh's materials, matching the look
@@ -121,7 +164,19 @@ static func apply_to_mesh(mesh: MeshInstance3D) -> void:
 	"""
 	for surface in mesh.get_surface_override_material_count():
 		var mat := mesh.get_active_material(surface)
-		if mat is BaseMaterial3D and mat.diffuse_mode != BaseMaterial3D.DIFFUSE_TOON:
+		# SPIKE godot-test1-td8, COLUMN D. A material NAMED `HeroCloth` is a
+		# garment and takes the cloth recipe instead of the cast's; nothing on the
+		# shipped path is named at all (see CLOTH_MATERIAL), so this is a no-op
+		# there and the branch below is reached exactly as often as before.
+		if mat is BaseMaterial3D and mat.resource_name == CLOTH_MATERIAL:
+			var cloth_key: int = mat.get_instance_id()
+			var cloth: BaseMaterial3D = _cloth_styled_cache.get(cloth_key)
+			if cloth == null:
+				cloth = mat.duplicate() as BaseMaterial3D
+				style_cloth(cloth)
+				_cloth_styled_cache[cloth_key] = cloth
+			mesh.set_surface_override_material(surface, cloth)
+		elif mat is BaseMaterial3D and mat.diffuse_mode != BaseMaterial3D.DIFFUSE_TOON:
 			# Reuse the styled duplicate if this exact source material was
 			# styled before (same source -> same result, so sharing is safe).
 			var key: int = mat.get_instance_id()
