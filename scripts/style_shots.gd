@@ -89,6 +89,21 @@ const FACE_SHOT_FOV: float = 16.0
 # a picture of this tool's own arithmetic could never catch a mis-wired seam.
 # ============================================================================
 
+# ----------------------------------------------------------------------------
+# SPIKE godot-test1-td8 — `cloth=<a|b|d|all>`, the CLOTH columns, in the shape
+# `body=` had before bead 5u3.3 retired it (git show cf60ca6^:scripts/
+# style_shots.gd — `_apply_body_variant`). The variant is a SCRATCH .glb built by
+# `scripts/build_hero.py --hero teibi --variant <name>`; nothing else in the game
+# ever loads one and an absent `cloth=` reproduces every existing shot.
+#
+# It swaps the .glb UNDER the hero's `Body` rather than the whole `Body` node,
+# which is the one simplification the skinned era allows: a skinned hero is one
+# glTF scene instanced at `Body/Mesh` (scenes/characters/teibi.tscn), so the
+# column is a different instance in the same slot and the `Body` node the landing
+# squash and `capture_rest_pose()` write stays exactly where it was.
+var _cloth: String = ""
+const CLOTH_VARIANT_DIR: String = "res://assets/models/characters/teibi_parts/"
+
 var _hero: String = "windman"
 ## True as soon as `hero=` is present. It is the one switch that lets the spike
 ## frame its own shots differently — see `_shoot_head_closeup` — while a run
@@ -118,6 +133,8 @@ func _ready() -> void:
 		elif a.begins_with("hero="):
 			_hero = a.substr(5)
 			_spike = true
+		elif a.begins_with("cloth="):
+			_cloth = a.substr(6)
 		elif a == "web":
 			_emulate_web = true
 		else:
@@ -203,6 +220,11 @@ func _run() -> void:
 	# without `hero=` (index 0, Windman, is already active).
 	player.set_active_character(_hero_index(player))
 
+	# SPIKE godot-test1-td8 — and AFTER the line above, not before it: the swap
+	# re-points `player.anim` at the new mesh, and `set_active_character` would
+	# then re-point it at a body this function had already freed.
+	_apply_cloth_variant(player)
+
 	await _shoot(terrain, player, field, 0.0, "1_field")
 	await _shoot(terrain, player, desert, 0.0, "1b_desert")
 	await _shoot(terrain, player, snow, 0.0, "1c_snow")
@@ -245,6 +267,14 @@ func _run() -> void:
 	# exactly as 16/17 do. 19 must run LAST: it poses the ALREADY-FROZEN hero
 	# mid-stride by writing the animation clock directly, and nothing restores it.
 	await _shoot_body(terrain, player, field, "18_body_3m", false, false)
+
+	# THE TORSO AT ONE METRE (spike godot-test1-td8) — between 18 and 19, and
+	# before 19 for 19's own reason: it writes the animation clock and nothing
+	# restores it. 18 is the GAMEPLAY distance and it is what the cloth columns
+	# are actually ruled on; this one is the control that says whether a column's
+	# detail exists at all, or only exists at 3 m as a smudge.
+	await _shoot_torso(terrain, player, field, "20_torso_1m")
+
 	await _shoot_body(terrain, player, field, "19_body_stride", false, true)
 
 	# THE STRIDE STRIP (spike godot-test1-5u3.1) — six frames over one stride
@@ -517,6 +547,48 @@ func _shoot_caption(terrain: Node, player: Node3D, at: Vector3, yaw: float,
 	_show_widget(group, false)
 
 
+func _apply_cloth_variant(player: Node3D) -> void:
+	"""
+	SPIKE godot-test1-td8. Replace the hero's skinned `.glb` instance with one of
+	the cloth columns' scratch builds. A no-op without `cloth=`.
+
+	`set_active_character()` RUNS AGAIN at the end, and that is the same rule the
+	retired `_apply_body_variant` wrote down: `player.anim` caches node references
+	INTO the body (the Skeleton3D and its bone indices, for a skinned hero), so a
+	swap that does not re-activate leaves the driver posing a freed mesh.
+	"""
+	if _cloth == "":
+		return
+	# THE COLUMNS ARE TEIBI'S BODY. Without this, `cloth=b` on its own dresses
+	# WINDMAN — index 0 is the default hero — in Teibi's mesh, and the run still
+	# writes a full set of PNGs that look like a column and are not one.
+	if _hero != "teibi":
+		push_error("[SHOTS] cloth= is Teibi's spike (bd godot-test1-td8) and hero is "
+				+ _hero + " — pass hero=teibi too")
+		return
+	var path: String = CLOTH_VARIANT_DIR + "teibi_cloth_" + _cloth + ".glb"
+	if not ResourceLoader.exists(path):
+		push_error("[SHOTS] no cloth column at " + path
+				+ " — build it with build_hero.py --hero teibi --variant " + _cloth)
+		return
+	var hero: Node3D = player.character_instances[_hero_index(player)]
+	var body := hero.get_node_or_null("Body") as Node3D
+	if body == null:
+		push_error("[SHOTS] hero " + _hero + " has no Body node to dress")
+		return
+	for child in body.get_children():
+		body.remove_child(child)
+		child.queue_free()
+	var mesh := (load(path) as PackedScene).instantiate() as Node3D
+	mesh.name = "Mesh"
+	body.add_child(mesh)
+	# The same styling every OTHER hero's body gets from `preload_all_characters()`
+	# — which is where column D's material split is actually read (`toon_shading.gd`).
+	player.anim.apply_character_style(mesh)
+	player.set_active_character(_hero_index(player))
+	print("[SHOTS] cloth column ", _cloth, " -> ", path, " on hero ", _hero)
+
+
 func _hero_index(player: Node) -> int:
 	"""SPIKE godot-test1-z3e.10. Resolve `_hero` (a CHARACTERS name) to its index,
 	the way `hero_hud.gd` and `remote_avatar.gd` already do off the same shared
@@ -592,6 +664,53 @@ func _shoot_body(terrain: Node, player: Node3D, at: Vector3, name: String,
 	await RenderingServer.frame_post_draw
 	var img := get_viewport().get_texture().get_image()
 	img.save_png(_out_dir + "/" + name + ".png")
+	cam.queue_free()
+	print("[SHOTS] wrote ", name, " at ", at, " hero=", _hero)
+
+
+## SPIKE godot-test1-td8 — the torso close-up. One metre out at the body camera's
+## own FOV, focused at chest height, so the frame is the polo and the waistband
+## and nothing else. The two numbers are the whole shot.
+const TORSO_SHOT_DISTANCE: float = 1.0
+const TORSO_SHOT_FOCUS_HEIGHT: float = 1.15
+
+
+func _shoot_torso(terrain: Node, player: Node3D, at: Vector3, name: String) -> void:
+	"""
+	SPIKE godot-test1-td8. `_shoot_body`'s three-quarter-front camera at ONE metre
+	instead of three, framed on the chest. Same settle, same freeze, same rest
+	pose, the same FOV and the same +0.10 m eye lift — it differs from shot 18 in
+	the distance and the focus height and in nothing else, which is the point: the
+	pair is a controlled comparison of what survives the gameplay distance.
+
+	The NAME shares shot 20's ordinal with `20_body_strip`, which is what the bead
+	asked for; the files do not collide (the strip writes `20_body_strip_<n>.png`)
+	and the ordering rule is the one that matters — this runs after 18 and BEFORE
+	19, because 19 writes the animation clock and nothing restores it.
+	"""
+	if not _wanted(name):
+		return
+	if not _head_pose_settled:
+		await _settle_body_pose(terrain, player, at, name)
+	# Shot 18's reason, verbatim: the settle is a LIVE window and a grab
+	# auto-switches whoever is active.
+	player.set_active_character(_hero_index(player))
+	_pose_walk(player, 0.0)
+
+	var focus: Vector3 = player.global_position \
+			+ Vector3(0.0, TORSO_SHOT_FOCUS_HEIGHT, 0.0)
+	var cam := Camera3D.new()
+	cam.fov = BODY_SHOT_FOV
+	add_child(cam)
+	var basis := player.global_transform.basis
+	cam.global_position = focus + (-basis.z) * (TORSO_SHOT_DISTANCE * 0.88) \
+			+ basis.x * (TORSO_SHOT_DISTANCE * 0.42) + Vector3(0.0, 0.10, 0.0)
+	cam.look_at(focus, Vector3.UP)
+	cam.make_current()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(_out_dir + "/" + name + ".png")
 	cam.queue_free()
 	print("[SHOTS] wrote ", name, " at ", at, " hero=", _hero)
 

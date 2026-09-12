@@ -1911,6 +1911,372 @@ def dress_shells(obj, tj, row):
                       {k: len(v) for k, v in sorted(by_key.items())}))
 
 
+# ===========================================================================
+# THE CLOTH SPIKE — bead godot-test1-td8, and NOTHING BELOW THIS COMMENT RUNS
+# ON THE SHIPPED PATH. Owner, 2026-09-12: "shirts and clothing look painted, not
+# natural — just colour on the heroes." After bead 5u3.10 the garments have
+# VOLUME (`dress_shells` stands them proud of the skin, with a cut hem) but the
+# surface between the hems is one flat vertex colour under a two-band
+# DIFFUSE_TOON, which is exactly what "painted on" describes.
+#
+# A COLUMN IS A SET OF PASSES, reached with `--variant <name>`, and it writes a
+# SCRATCH .glb beside the shipped one (`teibi_cloth_<name>.glb`) that no scene
+# loads and no manifest row covers. `--all --check` is therefore untouched: the
+# shipped bytes are written by exactly the code that wrote them before, because
+# every pass here is gated on a variant nobody passes by default.
+#
+#   folds     COLUMN A — the crease bands, the hem gathers and the drape line,
+#             as displacement along the garment's own normals (`fold_garments`).
+#   bake      COLUMN B — occlusion and cavity multiplied into the garment's
+#             vertex colours (`bake_cloth_shading`).
+#   material  COLUMN D — the garments get their own material, which
+#             `toon_shading.gd` then shades as CLOTH and not as cast
+#             (`split_cloth_material`).
+#   (C)       the 512^2 fabric albedo on unwrapped shells: NOT BUILT — see the
+#             FINDINGS block on the bead. It is the one column that needs a UV
+#             layout, a bake target and the lane's first texture byte, and this
+#             spike's clock ran out before it; nothing here fakes it.
+CLOTH_VARIANTS = {
+    "a": ("folds",),
+    "b": ("bake",),
+    "d": ("material",),
+    "all": ("folds", "bake", "material"),
+}
+
+# Amplitudes, in metres, on a 1.78 m body. The bead asks for 4-8 mm creases and
+# a 3 mm hem gather; these are the middle of that, because a fold deeper than the
+# shell stands proud (12-24 mm, the `GARMENT_*` cuts) would push the cloth back
+# through the skin it is standing off.
+FOLD_CREASE = 0.006      # crease depth at a joint
+FOLD_GATHER = 0.003      # the radial ripple at a hem or a cuff
+FOLD_DRAPE = 0.002       # the shoulder-to-hem drape line
+FOLD_BAND = 0.075        # how far up and down a joint's crease band reaches
+FOLD_WAVE = 0.042        # metres per crease — 3-4 of them inside a band
+FOLD_GATHERS = 9         # ripples around a hem
+FOLD_DRAPES = 3          # drape lines around the body
+
+
+def _fold_bands(obj, tj, row):
+    """The heights a crease sits at, and the heights a gather does.
+
+    The bead asks for the crease to be "driven by a bone weight blend between the
+    two bones so they sit at the joint". A BAND IN Z IS THAT BLEND, evaluated in
+    the rest pose where the two are the same answer: the joint helper's own height
+    is where the weight hands over, and a gaussian around it is the hand-over
+    profile. It costs no per-vertex weight lookup and — this is the part that
+    matters for a mesh that has to keep deforming — it is baked into the REST
+    geometry, so the folds ride the skin cluster they sit on and a bent elbow
+    carries its creases with it (what the stride strip is for).
+    """
+    z = landmarks(obj, tj, row)
+    elbow = (tj["l-elbow"].z + tj["r-elbow"].z) / 2.0
+    creases = [z["knee"], elbow, z["shoulder"] - 0.055]      # knee, elbow, armpit
+    gathers = [z["pelvis"] + 0.055, z["wrist"] - 0.02, z["shoe_top"] + 0.01]
+    return creases, gathers, z
+
+
+def _fold_offset(co, creases, gathers, z):
+    """How far proud of the shell one garment vertex stands. A pure function of
+    the rest position, so it is the same answer on every rebuild."""
+    out = 0.0
+    for zc in creases:
+        t = (co.z - zc) / FOLD_BAND
+        if abs(t) < 2.0:
+            out += FOLD_CREASE * math.exp(-t * t) * math.sin(
+                (co.z - zc) / FOLD_WAVE * math.tau)
+    bearing = math.atan2(co.y, co.x)
+    for zh in gathers:
+        t = (co.z - zh) / 0.030
+        if abs(t) < 2.0:
+            out += FOLD_GATHER * math.exp(-t * t) * math.sin(bearing * FOLD_GATHERS)
+    # The drape: one soft vertical ripple hanging from the shoulder to the hem,
+    # the thing that makes a shirt read as hanging rather than as shrink-wrap.
+    span = z["shoulder"] - z["pelvis"]
+    if span > 0.0:
+        ramp = min(1.0, max(0.0, (z["shoulder"] - co.z) / span))
+        out += FOLD_DRAPE * ramp * math.sin(bearing * FOLD_DRAPES)
+    return out
+
+
+# THE SPIKE'S OWN COPY OF `dress_shells`'s ANSWER, and the reason it exists:
+# `paint_body` DELETES every `GARMENT_VG` group when it is done with it (its own
+# rule — "nothing but a bone ever reaches the exporter"), and two of the three
+# columns here run AFTER the paint. So the cloth is marked ONCE, under a prefix
+# `paint_body` does not sweep, and dropped again just before the export — the
+# same trap-1 lesson every other pass in this file pays: a vertex GROUP survives
+# what a vertex INDEX does not, joins and renumbering included.
+CLOTH_VG = "cloth:spike"
+
+
+def mark_cloth(obj):
+    """Copy the garment classification into a group that outlives `paint_body`."""
+    ids = {vg.index for vg in obj.vertex_groups if vg.name.startswith(GARMENT_VG)}
+    if not ids:
+        raise AssertionError("mark_cloth: no %s groups — dress_shells must run first"
+                             % GARMENT_VG)
+    worn = [i for i, v in enumerate(obj.data.vertices) if ids & {g.group for g in v.groups}]
+    obj.vertex_groups.new(name=CLOTH_VG).add(worn, 1.0, 'REPLACE')
+    log("cloth: marked %d of %d verts as garment" % (len(worn), len(obj.data.vertices)))
+
+
+def drop_cloth_mark(obj):
+    vg = obj.vertex_groups.get(CLOTH_VG)
+    if vg is not None:
+        obj.vertex_groups.remove(vg)
+
+
+def _garment_group_ids(obj):
+    return {vg.index for vg in obj.vertex_groups
+            if vg.name.startswith(GARMENT_VG) or vg.name == CLOTH_VG}
+
+
+def _is_garment(v, ids):
+    return bool(ids & {g.group for g in v.groups})
+
+
+def fold_garments(obj, tj, row):
+    """COLUMN A — FOLDS AS GEOMETRY.
+
+    Two steps, in the order `dress_shells` already taught this lane: SUBDIVIDE
+    first (a 42 mm crease needs a vertex every ~20 mm and the decimated body has
+    one every ~30 mm), then displace along the vertex normal.
+
+    THE SUBDIVIDE IS BAND-LIMITED and that is a budget decision, not a taste one:
+    the shipped Teibi is 13,872 tris against a 15,500 `TRI_BUDGET`, so
+    subdividing the whole garment (which is most of the body) would be a 3x
+    overrun. Only edges whose both ends are garment AND whose midpoint falls
+    inside a crease or gather band are cut, which is where the folds are and
+    nowhere else.
+
+    Runs BEFORE `wrap_band` (trap 9 — it adds geometry and renumbers polygons)
+    and before `paint_body`, whose classification reads the vertex GROUPS the
+    subdivide interpolates onto the new vertices.
+    """
+    ids = _garment_group_ids(obj)
+    if not ids:
+        raise AssertionError("fold_garments: no %s groups — dress_shells must run first"
+                             % GARMENT_VG)
+    creases, gathers, z = _fold_bands(obj, tj, row)
+    band_zs = [(zc, FOLD_BAND * 1.4) for zc in creases] + \
+              [(zh, 0.045) for zh in gathers]
+
+    def in_band(zv):
+        return any(abs(zv - zc) < w for zc, w in band_zs)
+
+    me = obj.data
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    deform = bm.verts.layers.deform.verify()
+    edges = [e for e in bm.edges
+             if all(ids & set(v[deform].keys()) for v in e.verts)
+             and in_band((e.verts[0].co.z + e.verts[1].co.z) / 2.0)]
+    before_v, before_f = len(bm.verts), len(bm.faces)
+    if edges:
+        bmesh.ops.subdivide_edges(bm, edges=edges, cuts=1, use_grid_fill=True)
+    bm.to_mesh(me)
+    bm.free()
+    me.update()
+    log("folds: subdivided %d banded garment edges, +%d verts, +%d faces"
+        % (len(edges), len(me.vertices) - before_v, len(me.polygons) - before_f))
+
+    # The normals are read ONCE, off the un-displaced mesh — displacing along a
+    # normal that is itself being displaced turns a fold into a spiral.
+    normals = [v.normal.copy() for v in me.vertices]
+    moved = 0
+    deepest = 0.0
+    for i, v in enumerate(me.vertices):
+        if not _is_garment(v, ids):
+            continue
+        d = _fold_offset(v.co, creases, gathers, z)
+        if d != 0.0:
+            v.co += normals[i] * d
+            moved += 1
+            deepest = max(deepest, abs(d))
+    me.update()
+    log("folds: displaced %d garment verts, deepest %.1f mm" % (moved, deepest * 1000.0))
+
+
+# How many rays a vertex casts into its own hemisphere for the occlusion term,
+# and how far one reaches. 24 rays at 12 cm is the cheapest pair that separated a
+# fold valley from its flat panel by more than the vertex-colour quantisation.
+AO_RAYS = 24
+AO_DIST = 0.12
+AO_FLOOR = 0.45          # how dark the deepest occlusion may take a vertex
+CAVITY_GAIN = 0.9        # how hard concave curvature darkens on top of the occlusion
+CAVITY_FLOOR = 0.70
+AO_SEED = 20260912
+
+
+def bake_cloth_shading(obj):
+    """COLUMN B — OCCLUSION AND CAVITY, MULTIPLIED INTO THE GARMENT'S VERTEX COLOURS.
+
+    Zero extra geometry, zero extra bytes: the colour attribute already ships, and
+    this only changes what is in it. Under a two-band DIFFUSE_TOON — which cannot
+    itself show a 6 mm crease, its second band being a lighting threshold and not
+    a depth cue — a darkened valley is the ONLY thing that reads as depth.
+
+    IT IS NOT `bpy.ops.object.bake`, and that is deliberate. Cycles' AO bake
+    answers the same question, but it needs a render engine, a bake target and
+    (for the pointiness half) a material graph, while the answer here is worth
+    exactly two loops: occlusion is the fraction of a cosine-weighted hemisphere
+    that hits the body's own BVH, and cavity is the mean signed distance of a
+    vertex's one-ring along its normal, which is Blender's "pointiness" by its
+    definition. Both are pure functions of the mesh and the ray set is drawn off a
+    FIXED seed, so the bake is deterministic and a rebuild reproduces the bytes —
+    which a sampled Cycles bake would not.
+    """
+    from mathutils.bvhtree import BVHTree
+    import random
+    me = obj.data
+    ids = _garment_group_ids(obj)
+    layer = me.color_attributes.active_color
+    if layer is None:
+        raise AssertionError("bake_cloth_shading: the body carries no colour attribute")
+    tree = BVHTree.FromPolygons([tuple(v.co) for v in me.vertices],
+                                [tuple(p.vertices) for p in me.polygons])
+
+    # The cosine-weighted hemisphere, generated ONCE off a fixed seed and
+    # re-oriented per vertex: a shared ray set makes the bake reproducible and
+    # costs one basis per vertex instead of one sampler.
+    rng = random.Random(AO_SEED)
+    disc = []
+    for _ in range(AO_RAYS):
+        u, w = rng.random(), rng.random()
+        r = math.sqrt(u)
+        a = w * math.tau
+        disc.append((r * math.cos(a), r * math.sin(a), math.sqrt(max(0.0, 1.0 - u))))
+
+    # Cavity: the mean of (neighbour - v) . normal over the one-ring, and MIND THE
+    # SIGN — the first build of this bead had it backwards and darkened every
+    # ridge while leaving the creases alone. With outward normals a neighbour of a
+    # CONVEX vertex sits BELOW the tangent plane and the dot is NEGATIVE (check it
+    # on a unit sphere: n = v = (0,0,1), a neighbour at polar angle t is
+    # (sin t, 0, cos t) and the dot is cos t - 1 < 0). A CONCAVE vertex — a crease
+    # valley, an armpit, the groove under a waistband, which is everything this
+    # pass exists for — has its neighbours on the normal side, so the dot is
+    # POSITIVE. Darken the positive half.
+    ring = [[] for _ in me.vertices]
+    for e in me.edges:
+        a, b = e.vertices
+        ring[a].append(b)
+        ring[b].append(a)
+
+    dark = [1.0] * len(me.vertices)
+    lit = []
+    for i, v in enumerate(me.vertices):
+        if not _is_garment(v, ids):
+            continue
+        n = v.normal
+        # A basis with `n` as +Z, so the disc above lands on this vertex's own
+        # hemisphere. `orthogonal()` is degenerate for nothing a mesh normal is.
+        t = n.orthogonal().normalized()
+        b = n.cross(t)
+        origin = v.co + n * 1e-4
+        hits = 0
+        for dx, dy, dz in disc:
+            if tree.ray_cast(origin, t * dx + b * dy + n * dz, AO_DIST)[0] is not None:
+                hits += 1
+        ao = 1.0 - (1.0 - AO_FLOOR) * (hits / float(AO_RAYS))
+        if ring[i]:
+            curv = sum((me.vertices[j].co - v.co).normalized().dot(n)
+                       for j in ring[i]) / len(ring[i])
+        else:
+            curv = 0.0
+        cav = 1.0 - max(0.0, curv) * CAVITY_GAIN
+        dark[i] = max(CAVITY_FLOOR * AO_FLOOR, ao * max(CAVITY_FLOOR, cav))
+        lit.append(dark[i])
+
+    if not lit:
+        raise AssertionError("bake_cloth_shading: no garment vertex was shaded")
+    # The colour attribute may be per-CORNER (MPFB2's is): write through the loops,
+    # each of which knows the vertex it belongs to.
+    if layer.domain == 'CORNER':
+        for loop in me.loops:
+            c = layer.data[loop.index].color
+            d = dark[loop.vertex_index]
+            layer.data[loop.index].color = (c[0] * d, c[1] * d, c[2] * d, c[3])
+    else:
+        for i in range(len(me.vertices)):
+            c = layer.data[i].color
+            d = dark[i]
+            layer.data[i].color = (c[0] * d, c[1] * d, c[2] * d, c[3])
+    lit.sort()
+    log("bake: %d garment verts shaded, darkening min %.3f, median %.3f, max %.3f"
+        % (len(lit), lit[0], lit[len(lit) // 2], lit[-1]))
+
+
+# The marker `scripts/toon_shading.gd` matches on. A shipped hero .glb carries NO
+# material at all (`export_materials='NONE'`), so this name never appears on the
+# shipped path and the Godot-side branch is a no-op there BY CONSTRUCTION.
+CLOTH_MATERIAL = "HeroCloth"
+SKIN_MATERIAL = "HeroSkin"
+
+
+def split_cloth_material(obj):
+    """COLUMN D — THE GARMENTS GET THEIR OWN MATERIAL.
+
+    Two slots, split on the same `GARMENT_VG` groups every other pass uses: a
+    polygon is cloth when every one of its vertices is. The materials are plain
+    white with the vertex colours doing the albedo, exactly as the shipped hero's
+    single default material does — the whole difference is the NAME, which is what
+    `ToonShading.apply_to_mesh` reads to give the cloth DIFFUSE_BURLEY and no rim
+    while the skin and the face keep the cast's DIFFUSE_TOON.
+
+    This is the column that may violate the y1o.22 ruling (the cast stays
+    DIFFUSE_TOON). The bead does not ship it; the owner rules from the picture.
+    """
+    me = obj.data
+    ids = _garment_group_ids(obj)
+    me.materials.clear()
+    for name in (SKIN_MATERIAL, CLOTH_MATERIAL):
+        # THE DATABLOCK MUST BE REMOVED FIRST, and this is `build()`'s own
+        # `base.001` trap one level down: `clear_scene()` unlinks OBJECTS and
+        # leaves material datablocks in `bpy.data`, so in a multi-variant session
+        # (`--variant d --variant all`, which is the documented rebuild command)
+        # the second `new()` would be handed `HeroCloth.001` — a name
+        # `toon_shading.gd` compares with exact equality and therefore MISSES,
+        # silently shading the garment as cast. Measured: it is what the first
+        # build of this bead shipped, and it made the `all` column an A+B column
+        # wearing a D label.
+        old = bpy.data.materials.get(name)
+        if old is not None:
+            bpy.data.materials.remove(old)
+        mat = bpy.data.materials.new(name=name)
+        if mat.name != name:
+            raise AssertionError("material came out as %r, not %r — a datablock of "
+                                 "that name survived" % (mat.name, name))
+        # PLAIN WHITE, AND THAT IS THE CONTROL, not a detail. Blender's default
+        # Principled BSDF is 0.8 GREY at roughness 0.5 and the exporter writes both
+        # into the glTF, while the control column exports NO material and gets
+        # Godot's importer default (white, roughness 1.0, back faces culled). Left
+        # at the defaults this column would differ from the control in four ways at
+        # once — the name, a 0.8 albedo multiply over the whole body, the roughness
+        # and double-sidedness — and only the first of those is its thesis. The
+        # first build of this bead did exactly that and the 0.8 is what darkened
+        # Teibi's skin.
+        mat.use_nodes = True
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf is None:
+            raise AssertionError("no Principled BSDF on %r to neutralise" % name)
+        bsdf.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+        bsdf.inputs["Roughness"].default_value = 1.0
+        mat.use_backface_culling = True
+        me.materials.append(mat)
+    cloth_v = {i for i, v in enumerate(me.vertices) if _is_garment(v, ids)}
+    n = 0
+    for p in me.polygons:
+        if all(i in cloth_v for i in p.vertices):
+            p.material_index = 1
+            n += 1
+    me.update()
+    # THE NAMES ARE READ BACK OFF THE DATABLOCKS, never printed from the
+    # constants: a log that echoes what was ASKED FOR is exactly what hid the
+    # `HeroCloth.001` suffix above — the build said `HeroCloth` while the file got
+    # something else.
+    log("material: %d of %d polys on %r, the rest on %r"
+        % (n, len(me.polygons), me.materials[1].name, me.materials[0].name))
+
+
 def paint_body(obj, tj, row, band_verts=frozenset()):
     """Base region colour by bone-weight argmax, then geometric BAND overrides
     (belt, cuff, collar) scoped by bone region, then the face detail.
@@ -2498,7 +2864,7 @@ def head_tri_count(obj):
                if all(i in head for i in t.vertices))
 
 
-def export_glb(obj, armature, path, sharp=frozenset()):
+def export_glb(obj, armature, path, sharp=frozenset(), materials=False):
     """
     SMOOTH, and deliberately not through `predator_parts.export_faceted()`.
     CLAUDE.md calls that "the one export seam for every generated `.glb`
@@ -2541,7 +2907,12 @@ def export_glb(obj, armature, path, sharp=frozenset()):
         export_vertex_color='ACTIVE',
         export_all_vertex_colors=False,
         export_texcoords=False,
-        export_materials='NONE',
+        # 'NONE' ON EVERY SHIPPED HERO, and the default here stays that: a hero
+        # that exports no material is a hero Godot hands one shared default, which
+        # `ToonShading.apply_to_mesh` styles as the cast. `materials=True` is bead
+        # td8's COLUMN D and its scratch .glb alone — it is what carries the
+        # `HeroCloth` name the Godot side splits on.
+        export_materials='EXPORT' if materials else 'NONE',
         export_image_format='NONE',
         export_animations=False,
     )
@@ -2560,8 +2931,13 @@ def assert_no_multires(objs):
                 raise AssertionError("%s carries a MULTIRES modifier" % obj.name)
 
 
-def build(hero, shot=None):
+def build(hero, shot=None, variant=None):
+    """Build one hero. `variant` (bead td8, the CLOTH SPIKE) turns on the
+    extra passes of one column and redirects the output to a SCRATCH .glb that
+    no scene loads and no manifest row covers; `None` is the shipped path and
+    is byte-for-byte what it was before that bead."""
     row = HEROES[hero]
+    passes = CLOTH_VARIANTS[variant] if variant else ()
     if "band" in row and (row["beret"] or row["eyes"] or "tails" in row):
         raise AssertionError(
             "%s wears a cloth band AND an accessory: `sharp` is polygon indices "
@@ -2615,6 +2991,14 @@ def build(hero, shot=None):
     # triangles out with the rest of the torso and the letter rides them.
     dress_shells(obj, tj, row)
 
+    # BEAD td8, COLUMN A. Here and not later for trap 9's reason: the subdivide
+    # adds geometry and renumbers every polygon, and `wrap_band` below hands
+    # `export_glb` a set of polygon indices.
+    if "folds" in passes:
+        fold_garments(obj, tj, row)
+    if passes:
+        mark_cloth(obj)
+
     band_verts, flat_faces = wrap_band(obj, (tj["l-eye"].z + tj["r-eye"].z) / 2.0,
                                        row)
     if band_verts:
@@ -2622,6 +3006,11 @@ def build(hero, shot=None):
     paint_body(obj, tj, row, band_verts)
     if "emblem" in row:
         paint_chest_glyph(obj, tj, row)
+
+    # BEAD td8, COLUMN B. AFTER the paint, because it MULTIPLIES into the colour
+    # the paint just wrote; before the accessories, which are not garments.
+    if "bake" in passes:
+        bake_cloth_shading(obj)
 
     if row["beret"]:
         crown_z = max(v.co.z for v in obj.data.vertices)
@@ -2659,10 +3048,24 @@ def build(hero, shot=None):
     # the manifest's byte size would then depend on which order someone built in.
     obj.name = obj.data.name = hero.capitalize()
     armature.name = armature.data.name = "Armature"
-    glb = os.path.join(out_dir, row["stem"] + ".glb")
-    tris, size = export_glb(obj, armature, glb, sharp=flat_faces)
+    # BEAD td8, COLUMN D — the LAST pass before the export, because it is the only
+    # one that touches material slots and `export_glb` reads them.
+    if "material" in passes:
+        split_cloth_material(obj)
+    if passes:
+        drop_cloth_mark(obj)
+    stem = row["stem"] if variant is None else "%s_cloth_%s" % (hero, variant)
+    glb = os.path.join(out_dir, stem + ".glb")
+    tris, size = export_glb(obj, armature, glb, sharp=flat_faces,
+                            materials="material" in passes)
     if tris > TRI_BUDGET:
-        raise AssertionError("%d tris over the %d budget" % (tris, TRI_BUDGET))
+        # A SPIKE COLUMN IS ALLOWED OVER THE BUDGET AND SAYS SO. The budget guards
+        # what ships; a column nothing loads that costs too many triangles is a
+        # FINDING, not a build failure — the number is what the owner rules on.
+        if variant is None:
+            raise AssertionError("%d tris over the %d budget" % (tris, TRI_BUDGET))
+        log("NOTE: variant %r is %d tris, %d over the %d shipped budget"
+            % (variant, tris, tris - TRI_BUDGET, TRI_BUDGET))
     # NO TEXTURE, BY RULING — see the header. Printed anyway so the cap is a
     # measurement and not a promise. Counted off THIS HERO'S MATERIALS, not off
     # `bpy.data.images`: `--rest-row` leaves a 640x640 "Render Result" in the file
@@ -2678,9 +3081,13 @@ def build(hero, shot=None):
         raise AssertionError("%d texture bytes over the %d cap"
                              % (texture_bytes, TEXTURE_BYTES_MAX))
 
-    blend = os.path.join(out_dir, row["stem"] + ".blend")
-    bpy.ops.wm.save_as_mainfile(filepath=blend, compress=True)
-    log("wrote %s (%d bytes)" % (os.path.basename(blend), os.path.getsize(blend)))
+    # NO .blend FOR A SPIKE COLUMN. The committed .blend is the shipped hero's
+    # source of record (the epic's "commit the compressed .blend" ruling); a
+    # scratch variant's source of record is this script plus its `--variant` name.
+    if variant is None:
+        blend = os.path.join(out_dir, row["stem"] + ".blend")
+        bpy.ops.wm.save_as_mainfile(filepath=blend, compress=True)
+        log("wrote %s (%d bytes)" % (os.path.basename(blend), os.path.getsize(blend)))
 
     if shot:
         # blender_hero.py's helper shoots from -Y, because the part trees it was
@@ -2806,6 +3213,19 @@ def main():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     check = "--check" in argv
     row_png = argv[argv.index("--rest-row") + 1] if "--rest-row" in argv else None
+    # BEAD td8, THE CLOTH SPIKE. `--variant <name>` may repeat; each one is a
+    # SEPARATE build writing its OWN scratch .glb, and none of them writes the
+    # manifest — which is what keeps `--all --check` a statement about the
+    # shipped files and nothing else.
+    variants = [argv[i + 1] for i, a in enumerate(argv) if a == "--variant"]
+    for v in variants:
+        if v not in CLOTH_VARIANTS:
+            raise SystemExit("unknown --variant %r (built: %s; column c, the "
+                             "512^2 fabric albedo, is NOT built — see the bead)"
+                             % (v, ", ".join(sorted(CLOTH_VARIANTS))))
+    if variants and (check or "--all" in argv):
+        raise SystemExit("--variant is a SCRATCH build: it writes no manifest row, "
+                         "so --check and --all have nothing to say about it")
     heroes = [argv[i + 1] for i, a in enumerate(argv) if a == "--hero"]
     if "--all" in argv:
         heroes = list(HEROES)
@@ -2823,12 +3243,19 @@ def main():
     for hero in heroes:
         shot = os.path.join(tempfile.gettempdir(), "build_hero_%s.png" % hero) \
             if row_png else None
-        built[hero] = build(hero, shot)
+        for variant in (variants or [None]):
+            built[hero if variant is None else "%s:%s" % (hero, variant)] = \
+                build(hero, shot, variant)
         if shot:
             shots[hero] = shot
     if row_png:
         rest_row([shots[h] for h in heroes],
                  row_png if os.path.isabs(row_png) else os.path.join(REPO, row_png))
+    if variants:
+        for name, row in sorted(built.items()):
+            log("VARIANT %-16s %6d tris  %8d glb bytes  %6d texture bytes"
+                % (name, row["tris"], row["glb_bytes"], row["texture_bytes"]))
+        return
     if check:
         check_manifest(built)
     else:

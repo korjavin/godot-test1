@@ -85,6 +85,56 @@ become a texture either: `build_hero.paint_chest_glyph` paints it into the body'
 colours over a chest `densify_chest` splits once, which is what let the `shapely` /
 `mapbox-earcut` pins leave `scripts/requirements.txt` with bead 5u3.5.
 
+## Spike Artifacts — the CLOTH columns (bead godot-test1-td8)
+
+`teibi_parts/teibi_cloth_{a,b,d,all}.glb` are SCRATCH builds and **nothing loads them**.
+No `.tscn` references one, `player_controller.CHARACTERS` does not name one, and the
+only code in this repo that opens one is `scripts/style_shots.gd`'s `cloth=<a|b|d|all>`
+argument — a debug tool reached from the command line. They are committed for the same
+reason bead z3e.10's cut-joint bodies were: the grid the owner rules from
+(`docs/style/z3e/grid_27_cloth_spike.png`) is evidence only while the meshes behind it
+can still be re-rendered.
+
+Same source as the shipped Teibi and the same licence: MakeHuman / MPFB2 (CC0), built by
+`scripts/build_hero.py` from the SAME `HEROES["teibi"]` row, with one column's extra
+passes turned on by `--variant`:
+
+| file | column | pass | tris | bytes |
+|---|---|---|---|---|
+| `teibi_skinned.glb` | today (the control, and the SHIPPED hero) | — | 13,872 | 453,116 |
+| `teibi_cloth_a.glb` | A | procedural folds displaced along the garment normal | 21,742 | 704,968 |
+| `teibi_cloth_b.glb` | B | occlusion + cavity multiplied into the vertex colours | 13,872 | 453,116 |
+| `teibi_cloth_d.glb` | D | the garments on their own `HeroCloth` material | 13,872 | 466,768 |
+| `teibi_cloth_all.glb` | all | A + B + D | 21,742 | 725,888 |
+
+Column **C** (a 512² fabric albedo on UV-unwrapped shells) is **NOT BUILT** — the spike's
+clock ran out before it. There is no `teibi_cloth_c.glb` and `--variant c` refuses with
+that reason rather than building something else and calling it C.
+
+They carry NO `.blend`: a shipped hero's source of record is its committed `.blend`, a
+scratch column's is this script plus its `--variant` name (`build()` skips the save for
+exactly that reason). The four `teibi_cloth_*.glb` are outside the manifest by
+construction — `--variant` refuses to run with `--check` or `--all` — so the `stat` gate
+below and `--all --check` both keep saying exactly what they said before this bead, about
+the three SHIPPED heroes and nothing else. (`teibi_skinned.glb`, the first row of the
+table, is the control column AND the shipped hero: the gate does cover it, and it is
+byte-identical on this branch, which is the point of listing it there.)
+
+**They do not ship.** Godot packs by resource and not by reference, so committing them
+would otherwise put 1.53 MB of geometry nothing instantiates into the web download; the
+Web preset's `exclude_filter` in `export_presets.cfg` names them. A `.gdignore` would have
+worked for the export and broken the spike, since `style_shots.gd` has to be able to load
+them.
+
+Rebuild:
+
+```bash
+perl -e 'alarm 1800; exec @ARGV' blender --background --python-exit-code 1 \
+    --python scripts/build_hero.py -- --hero teibi --variant b --variant a \
+    --variant d --variant all
+godot --headless --path . --import
+```
+
 ## CI Model Gate
 
 The CI model rebuild step (`.github/workflows/build.yml`) only runs the procedural generators (`generate_windman_fan.py` — his FAN alone since bead godot-test1-5u3.5 — `generate_phoboman_separate.py`, which still builds his whole part tree, and `predator_parts.py`). Because the generators no longer emit these authored file names — and, since beads godot-test1-5u3.3 and .6, there is no Teibi or Primm generator at all — `git status --porcelain -- assets/models/characters` stays clean by construction; a generated part edited by hand is still caught immediately. `build_hero.py` needs Blender and MPFB2, which the runner does not have, so the skinned bodies are outside that gate — and, since bead godot-test1-5u3.4, they have their own: a `stat`-only step asserts every skinned `.glb`'s byte size still matches its row in `scripts/hero_manifest.json`, which `build_hero.py` rewrites on every rebuild. A hand-edited skinned hero is caught there the way a hand-edited hydra is caught by the dirty check. The full rebuild-and-diff is `build_hero.py -- --all --check`, run by hand where Blender exists; size and not a checksum, because the glTF exporter may permute one primitive's triangle order between two otherwise identical runs.
