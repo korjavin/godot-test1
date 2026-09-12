@@ -17,11 +17,13 @@ into a working `.tscn` character that drops into the existing player + animation
 systems, and you **prove it matches the reference by rendering it in Godot and
 looking at the screenshots** before declaring done.
 
-The gold-standard, already-working example is **Windman**. Read these first and
-use them as your template — copy and adapt, don't reinvent:
+The gold-standard, already-working example of a PART-TREE hero is **Phoboman** —
+the only one left (Teibi, Windman and Primm are skinned meshes on a Skeleton3D now,
+built by `scripts/build_hero.py` in Blender, which is a different lane entirely).
+Read these first and use them as your template — copy and adapt, don't reinvent:
 
-- `scripts/generate_windman_separate.py` — the part generator (trimesh).
-- `scenes/characters/windman_updated.tscn` — how the parts are assembled.
+- `scripts/generate_phoboman_separate.py` — the part generator (trimesh).
+- `scenes/characters/phoboman.tscn` — how the parts are assembled.
 - `scripts/player_controller.gd` — the `CHARACTERS` array.
 - `scripts/player_animation.gd` — `setup_animation_references()` and the
   animation functions.
@@ -126,11 +128,11 @@ Godot is at `godot` on PATH (`/opt/homebrew/bin/godot`).
 
 1. **Gather**: read the image + all description sources. Write a short spec
    (build, palette as RGB, clothing, signature props, key features, height).
-2. **Generate parts**: copy `generate_windman_separate.py` to
+2. **Generate parts**: copy `generate_phoboman_separate.py` to
    `generate_<name>_separate.py`, adapt geometry/colors/props to the spec, keeping
    all conventions above. Run it (in the venv) to emit
    `assets/models/characters/<name>_parts/*.glb`.
-3. **Assemble scene**: copy `windman_updated.tscn` to `scenes/characters/<name>.tscn`,
+3. **Assemble scene**: copy `phoboman.tscn` to `scenes/characters/<name>.tscn`,
    repoint the ExtResource part paths, retune accessory transforms.
 4. **Verify in Godot (mandatory loop)**: write a temporary preview harness (below),
    import once, render, **Read the PNGs**, compare to the reference, and iterate on

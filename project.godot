@@ -59,7 +59,8 @@ locale/fallback="en"
 ; Committed .blend SOURCES (assets/models/characters/PROVENANCE.md) must never be
 ; imported: Godot's Blender importer shells out to a Blender binary the CI runner
 ; does not have and the headless --import hangs on the scan (PR #344). The .glb is
-; the artifact of record; the .blend is edited with scripts/blender_hero.py.
+; the artifact of record; a .blend is opened in Blender by hand (scripts/build_hero.py
+; writes the skinned ones, scripts/blender_hero.py reassembles Phoboman's part tree).
 import/blender/enabled=false
 
 [input]

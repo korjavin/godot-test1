@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-Generate Windman's FAN — and, since bead godot-test1-5u3.5, nothing else.
+Generate Windman's FAN — and, since bead godot-test1-5u3.5, nothing else. The
+file was `generate_windman_separate.py` until bead godot-test1-5u3.8 renamed it
+after its one remaining output, so `build.yml`'s loop reads honestly.
 
 WHAT LEFT, AND WHY. This script used to emit ten body parts: a torso with an
 extruded "W" on its chest, four arm segments, four leg segments, and this fan.
@@ -11,15 +13,15 @@ mesh, so there is no part tree left to build. The chest "W" went with the torso:
 it is VERTEX COLOUR now, painted by `build_hero.paint_chest_glyph` off the same
 five-point centre-line and 27 mm buffer this file used to hand to shapely — which
 is why this file no longer imports `shapely` or `extrude_polygon` at all, and why
-`scripts/requirements.txt` can drop those two pins as soon as Primm's generator
-(bead 5u3.6) stops being their last user.
+`scripts/requirements.txt` has dropped those two pins (bead 5u3.6 took the last
+user with Primm's generator; that file's epitaph says so).
 
 THE FAN STAYS GENERATED BECAUSE IT IS A PROP, NOT A BODY. It hangs off `hand_r`
 as a `BoneAttachment3D` in `scenes/characters/windman_updated.tscn` — rigid
 geometry the skeleton carries, never skinned — so it owes nothing to MakeHuman
 and everything to the toolkit every other generated model in this repo uses. It
 therefore stays inside `build.yml`'s rebuild-and-diff gate, which is the reason
-`windman` is still a name in that workflow's hero loop.
+this file is still a name in that workflow's prop loop.
 
 Requires the PINNED toolchain of `scripts/requirements.txt` — trimesh + numpy.
     pip install -r scripts/requirements.txt
@@ -51,7 +53,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from predator_parts import export_faceted  # noqa: E402
 
 
-class WindmanSeparateMeshGenerator:
+class WindmanFanGenerator:
     def __init__(self):
         # The fan's own palette. The body's colours left with the body — they live
         # in `build_hero.HEROES["windman"]["colours"]` now, ungraded, and the skin
@@ -124,7 +126,7 @@ def main():
     repo_root = Path(__file__).resolve().parent.parent
     output_dir = repo_root / "assets" / "models" / "characters" / "windman_parts"
 
-    generator = WindmanSeparateMeshGenerator()
+    generator = WindmanFanGenerator()
     generator.generate_and_save(output_dir)
 
     print("\n  Windman's fan generated successfully!")

@@ -1,36 +1,36 @@
 """
-scripts/blender_hero.py — bpy + stdlib only. The Blender import/export lane for hero
-parts (bead godot-test1-z3e.3): reproduce a hero's whole node tree from its .tscn
-inside Blender so a part can be edited in context, and write ONE edited part back
-into the repo's glTF convention.
+scripts/blender_hero.py — bpy + stdlib only. The Blender IMPORT lane for hero parts
+(bead godot-test1-z3e.3): reproduce a hero's whole node tree from its .tscn inside
+Blender, so a part can be looked at and edited in context.
 
 Run OUTSIDE Blender, invoking it headless (bound with `perl -e 'alarm 900; exec
 @ARGV' ...` — there is no `timeout` binary here):
 
   blender --background --python-exit-code 1 --python scripts/blender_hero.py -- \
       import <hero> [--screenshot <path.png>]
-  blender --background --python-exit-code 1 --python scripts/blender_hero.py -- \
-      export <hero> <part> --out <path.glb> [--faceted]
+
+<hero> IS PHOBOMAN AND ONLY PHOBOMAN, by owner ruling 2026-09-11: he keeps his
+sphere body, his ten-part tree and the limb rig, where Teibi (bead
+godot-test1-5u3.3), Windman (5u3.5) and Primm (5u3.6) each became one skinned mesh
+on a Skeleton3D. Reproducing a PART TREE from such a .tscn has nothing to
+reproduce (Windman's scene still holds one instanced .glb, his FAN, but a
+BoneAttachment3D is not a part tree and this lane cannot walk it).
+
+THE EXPORT LANE IS GONE (bead godot-test1-5u3.8). It wrote ONE hand-edited part
+back into the repo's Z-up glTF convention, and it existed for the authored heads
+of heroes who are now skinned; Phoboman's ten parts are written by
+`scripts/generate_phoboman_separate.py` under CI's rebuild-and-diff gate, so a
+hand-edited part of his could not survive a build anyway. What it knew is trap 2's
+other half, kept here as history: the export undid the same fixed Rx(-90) the
+import applies, landing the mesh back in the file's own Z-up part-local frame —
+the one the .tscn's untouched Transform3D already expects.
 
 SKINNED HEROES ARE NOT THIS LANE — scripts/build_hero.py IS. That file builds a
 whole human on MPFB2's game_engine rig from one HEROES row and exports one skinned
-.glb; since bead godot-test1-5u3.4 it holds windman, primm and teibi, and its
-`screenshot()` call below is the only thing it borrows from here. Nothing in this
-file's matrix math applies there: trap 2's Rx(-90) conjugation is for UNRIGGED
-parts hung on a .tscn node, and a skinned glTF is placed by its own root node and
-exports Y-up (build_hero.py's own trap 3).
-
-<hero> is PHOBOMAN, and he is the last one. Teibi left this lane with bead
-godot-test1-5u3.3, Primm with bead 5u3.6 and Windman with bead 5u3.5: each is one
-skinned mesh on a Skeleton3D now, and reproducing a PART TREE from such a .tscn
-has nothing to reproduce (Windman's scene still holds one instanced .glb, his FAN,
-but a BoneAttachment3D is not a part tree and this lane cannot walk it). Phoboman
-keeps his sphere body and his parts by owner ruling, so this file stays runnable
-for exactly one hero until bead 5u3.8 retires it. His scene is the plain
-scenes/characters/phoboman.tscn.
-<part> is a leaf part name (e.g. "head", "torso") or,
-where that is ambiguous (both arms/legs reuse "UpperArm"/"LowerLeg"/"Mesh"), the
-node's full .tscn path with "/" written as ".", e.g. "leftarm.upperarm".
+.glb for windman, primm and teibi, and its `screenshot()` call below is the only
+thing it borrows from here. Nothing in this file's matrix math applies there: trap
+2's Rx(-90) conjugation is for UNRIGGED parts hung on a .tscn node, and a skinned
+glTF is placed by its own root node and exports Y-up (build_hero.py's own trap 3).
 
 No armature, no rigging, no animation — this lane only moves geometry. Not run in
 CI (Blender is not on the runner); it is a tool like scripts/style_shots.gd.
@@ -62,10 +62,7 @@ only the scene ROOT additionally carries a LEADING Rx(+90) so the assembly stand
 up the right way in Blender's Z-up viewport instead of lying on its back (a pure
 rotation of the whole assembled shape — the per-mesh Rx(-90) already cancels the
 bake before that outer Rx(+90) is even applied, so nothing downstream needs its own
-correction). On export (`export_part()`) the same Rx(-90) undoes the OTHER half:
-read the current, possibly hand-edited mesh data as it now sits in the rig and
-rotate it by the fixed Rx(-90) to land back in the file's own Z-up, part-local
-frame — the one the .tscn's untouched Transform3D already expects.
+correction).
 
 The height/feet assert below (`assert_height_and_feet`) is what catches trap 1 the
 moment it regresses: get the row/column read backwards and a limb mirrors about its
@@ -319,125 +316,14 @@ def screenshot(path, height_hint):
 
 
 # ---------------------------------------------------------------------------
-# Export: write ONE part back in the repo's convention.
-# ---------------------------------------------------------------------------
-
-def find_part(nodes, query):
-    """A part is any node that instances a .glb. Look it up by its own (leaf) name
-    if that is unique among parts, else by its full path with "/" written as "."."""
-    q = query.strip().lower()
-    parts = [n for n in nodes if n.ext_id]
-    by_leaf = {}
-    for n in parts:
-        by_leaf.setdefault(n.name.lower(), []).append(n)
-    if q in by_leaf and len(by_leaf[q]) == 1:
-        return by_leaf[q][0]
-    by_path = {n.path.lower().replace("/", "."): n for n in parts}
-    if q in by_path:
-        return by_path[q]
-    if q in by_leaf:
-        raise SystemExit("part %r is ambiguous: %s" % (query, [n.path for n in by_leaf[q]]))
-    raise SystemExit("no part %r; choices: %s" % (query, sorted(by_path)))
-
-
-def make_faceted(mesh):
-    """THE export_faceted RULE IN BLENDER TERMS (predator_parts.py's export_faceted,
-    ported): Edge Split every edge so each vertex belongs to exactly one face, then
-    flat-shade, so each corner's normal is exactly that face's."""
-    for e in mesh.edges:
-        e.use_edge_sharp = True
-    obj = [o for o in bpy.data.objects if o.data is mesh][0]
-    mod = obj.modifiers.new("EdgeSplit", 'EDGE_SPLIT')
-    mod.use_edge_angle = False
-    mod.use_edge_sharp = True
-    bpy.context.view_layer.objects.active = obj
-    bpy.ops.object.modifier_apply(modifier=mod.name)
-    for poly in obj.data.polygons:
-        poly.use_smooth = False
-    obj.data.update()
-
-
-def assert_no_multires():
-    """The NOTES ruling: Blender source files are committed to git, not R2, on the
-    measured assumption that a retopo'd part's .blend is ~1-5 MB. A MULTIRES
-    modifier's subdivision levels (or dyntopo sculpt data) is the one thing that
-    blows that budget up, so a .blend this lane writes may carry neither."""
-    for obj in bpy.data.objects:
-        for mod in getattr(obj, "modifiers", []):
-            if mod.type == 'MULTIRES':
-                raise AssertionError(
-                    "%s carries a MULTIRES modifier (%s) -- the repo commits .blend "
-                    "files raw on the assumption a retopo'd part is ~1-5 MB; a "
-                    "multires-sculpted mesh blows past that." % (obj.name, mod.name))
-        if obj.type == 'MESH' and getattr(obj, "use_dynamic_topology_sculpting", False):
-            raise AssertionError("%s has dyntopo sculpt data enabled" % obj.name)
-
-
-def export_part(built, nodes, query, out_path, faceted):
-    node = find_part(nodes, query)
-    obj = built[node.path]
-
-    # Work on a throwaway copy so the assembled rig (and its history, if this were
-    # run interactively) is untouched by the bake below.
-    tmp = obj.copy()
-    tmp.data = obj.data.copy()
-    bpy.context.collection.objects.link(tmp)
-    tmp.parent = None
-    # TRAP 2, in reverse: the mesh's current data sits ready for the Godot-frame
-    # rig (already Rx(-90)'d relative to the import bake); undo exactly that one
-    # fixed rotation to land back in the file's own Z-up, part-local frame -- the
-    # SAME frame the .tscn's untouched Transform3D already expects on re-import.
-    tmp.matrix_basis = RX_NEG90
-    for o in bpy.data.objects:
-        o.select_set(o is tmp)
-    bpy.context.view_layer.objects.active = tmp
-    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
-
-    if faceted:
-        make_faceted(tmp.data)
-
-    has_color = bool(tmp.data.color_attributes)
-    has_material = bool(tmp.data.materials)
-    has_uv = bool(tmp.data.uv_layers)
-
-    for o in bpy.data.objects:
-        o.select_set(o is tmp)
-    bpy.context.view_layer.objects.active = tmp
-    bpy.ops.export_scene.gltf(
-        filepath=out_path,
-        export_format='GLB',
-        use_selection=True,
-        export_apply=True,
-        # THE .tscn's Rx(-90) IS AUTHORED AGAINST THE GENERATORS' TRIMESH OUTPUT,
-        # WHICH DOES NOT CONVERT UP AXES (see spike_z3e_head.py's export()): every
-        # shipped part .glb is Z-up, and the node's own Rx(-90) is exactly what
-        # turns that into Godot's Y-up world. export_yup=True would write glTF's
-        # own Y-up convention and lay the part on its back.
-        export_yup=False,
-        export_normals=True,
-        export_tangents=False,
-        export_vertex_color='ACTIVE' if has_color else 'NONE',
-        export_all_vertex_colors=False,
-        export_texcoords=has_uv,
-        export_materials='EXPORT' if has_material else 'NONE',
-        export_image_format='AUTO' if has_material else 'NONE',
-    )
-    tmp.data.calc_loop_triangles()
-    tri_count = len(tmp.data.loop_triangles)
-    log("wrote %s (%d tris, %d bytes)" % (out_path, tri_count, os.path.getsize(out_path)))
-
-    assert_no_multires()
-    blend_path = os.path.splitext(out_path)[0] + ".blend"
-    bpy.ops.wm.save_as_mainfile(filepath=blend_path, compress=True)
-    log("wrote", blend_path)
-
-
-# ---------------------------------------------------------------------------
 
 def main():
     argv = sys.argv
     argv = argv[argv.index("--") + 1:] if "--" in argv else []
 
+    # `import` stays a SUBCOMMAND with one choice rather than collapsing into a
+    # bare positional: it is the word every caller already types (CLAUDE.md, the
+    # bead history) and a one-word diff is not worth breaking them for.
     parser = argparse.ArgumentParser(prog="blender_hero.py")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -445,22 +331,12 @@ def main():
     p_import.add_argument("hero", choices=sorted(HERO_SCENES))
     p_import.add_argument("--screenshot")
 
-    p_export = sub.add_parser("export")
-    p_export.add_argument("hero", choices=sorted(HERO_SCENES))
-    p_export.add_argument("part")
-    p_export.add_argument("--out", required=True)
-    p_export.add_argument("--faceted", action="store_true")
-
     args = parser.parse_args(argv)
 
-    if args.cmd == "import":
-        built, meshes, nodes = build_hero(args.hero)
-        height, _feet = assert_height_and_feet(args.hero, meshes)
-        if args.screenshot:
-            screenshot(args.screenshot, height)
-    else:
-        built, meshes, nodes = build_hero(args.hero)
-        export_part(built, nodes, args.part, args.out, args.faceted)
+    _built, meshes, _nodes = build_hero(args.hero)
+    height, _feet = assert_height_and_feet(args.hero, meshes)
+    if args.screenshot:
+        screenshot(args.screenshot, height)
 
     log("done")
 

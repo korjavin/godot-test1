@@ -1,11 +1,13 @@
 """ONE skin grade for the whole hero cast, because the render grade is one thing.
 
 Bead godot-test1-z3e.14, owner 2026-09-11 on the face grids: "very white, nothing
-can be made out". Imported by everything that paints hero skin — the two Blender
-lanes (`spike_z3e_head.py`, `build_hero.py`) and the generators whose bodies those
-authored heads sit on (`generate_windman_separate.py`; Primm's left with bead
-godot-test1-5u3.6, and `build_hero.py` grades his skinned body instead)
-— the same way they all already reach `predator_parts.export_faceted`:
+can be made out". Imported by everything that paints hero skin, which since bead
+godot-test1-5u3.8 is exactly ONE caller: `build_hero.py`, the skinned lane, which
+grades face and body in one pass. The generators that used to import it painted
+bodies under authored heads and have no skin left to paint (Primm's retired with
+bead 5u3.6; `generate_windman_fan.py` builds a fan). It stays its own file because
+the grade is a RENDER decision and the next lane that paints a hero owes the same
+one. Reached the way they all reach `predator_parts.export_faceted`:
 
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent))

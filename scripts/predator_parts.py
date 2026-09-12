@@ -11,18 +11,20 @@ code lives here once and each generate_*.py is a short table of proportions and
 colours. The hunter robot is the one customer that skips `quadruped()` and stacks
 its own boxes — it still owes the three contracts below, it just isn't an animal.
 The older per-character generators (generate_crocodile_model.py,
-generate_*_separate.py) predate this and are left alone — with ONE exception,
-which is `export_faceted()`. THAT FUNCTION IS THE WHOLE CAST'S, not the
-predators': the crocodile and the four HEROES import it too (bead
-`godot-test1-y1o.21`, owner ruling 2026-09-05 "facet ALL"), because flat normals
-are a property of the EXPORT and every model in this game wants the same one.
-They owe none of the three contracts below and gain none of them by importing it.
-It lives here rather than in a `model_export.py` of its own because a module for
-one function is a file to keep in step for no gain — if a third kind of model
-ever needs a second shared thing, that is when to split. The crocodile is
-rebuilt by the loop at the bottom of this file; the heroes are NOT, and CI runs
-them as their own step (see build.yml) so that this file stays runnable without
-shapely.
+generate_phoboman_separate.py, generate_windman_fan.py) predate this and are left
+alone — with ONE exception, which is `export_faceted()`. THAT FUNCTION IS THE
+WHOLE CAST'S, not the predators': the crocodile imports it, and so does what is
+left of the heroes' generated geometry — Phoboman's whole part tree and Windman's
+FAN, which is all three skinned heroes left behind (bead `godot-test1-y1o.21`,
+owner ruling 2026-09-05 "facet ALL"; the skinned bodies are smooth-shaded and
+built in Blender, see build_hero.py). Flat normals are a property of the EXPORT
+and every model that wants them wants the same one. Those callers owe none of the
+three contracts below and gain none of them by importing it. It lives here rather
+than in a `model_export.py` of its own because a module for one function is a file
+to keep in step for no gain — if a third kind of model ever needs a second shared
+thing, that is when to split. The crocodile is rebuilt by the loop at the bottom
+of this file; the hero geometry is NOT, and CI runs it as its own step (see
+build.yml) so that this file stays runnable without shapely.
 
 THE THREE CONTRACTS A PREDATOR MODEL MUST HONOUR
 ------------------------------------------------

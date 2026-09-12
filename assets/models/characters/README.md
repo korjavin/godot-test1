@@ -28,13 +28,14 @@ The predators in this directory are single `.glb` files instead; their contract 
   has neither); `PROVENANCE.md` carries the row and `scripts/hero_manifest.json`
   is the staleness gate CI can run. His head is part of this mesh: the separate
   `windman_head_authored.glb` retired with bead 5u3.5, the face recipe of record
-  being `scripts/spike_z3e_head.py`'s `HEROES["windman"]` row, which
-  `build_hero.py` imports.
+  being `build_hero.py`'s own `FACES["windman"]` row (folded in from the deleted
+  head spike by bead 5u3.8).
 - The chest **"W"** is vertex colour, painted by `build_hero.paint_chest_glyph`
   over a chest split once by `densify_chest`. It is not geometry and not a texture.
 - Prop: `windman_parts/windman_fan.glb` — the ONLY thing
-  `scripts/generate_windman_separate.py` still writes, and the reason `windman` is
-  still a name in `build.yml`'s hero loop. `windman_updated.tscn` hangs it on the
+  `scripts/generate_windman_fan.py` still writes (it was
+  `generate_windman_separate.py` until bead 5u3.8 named it after that one output),
+  and the reason it is still a line in `build.yml`'s rebuild loop. `windman_updated.tscn` hangs it on the
   `hand_r` bone with a `BoneAttachment3D`.
 - Scene: `scenes/characters/windman_updated.tscn` — this is the scene
   `player_controller.gd`'s `CHARACTERS` array loads.
@@ -42,7 +43,7 @@ The predators in this directory are single `.glb` files instead; their contract 
 ### Rebuilding
 
 ```bash
-python3 scripts/generate_windman_separate.py          # the fan; CI runs this and diffs it
+python3 scripts/generate_windman_fan.py               # the fan; CI runs this and diffs it
 perl -e 'alarm 1500; exec @ARGV' blender --background --python-exit-code 1 \
     --python scripts/build_hero.py -- --hero windman  # the body; by hand, not in CI
 godot --headless --path . --import                    # after either
