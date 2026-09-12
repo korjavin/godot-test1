@@ -195,6 +195,13 @@ const ROWS: Array = [
 	["Ctrl+M", "Mute or unmute your microphone in a multiplayer room.", Mode.DESKTOP],
 	["Ctrl+D", "Block all incoming voice in a multiplayer room.", Mode.DESKTOP],
 	["Ctrl+G", "Share your camera in a multiplayer room.", Mode.DESKTOP],
+	# The waypoint travel list (epic godot-test1-sc6). The one row in this table
+	# whose legend names NO KEY, because the feature has none: you stand on a lit
+	# circle and the list is there. That is the "+ / -" / "Step" precedent — a
+	# legend `help_selfcheck` asserts EXISTS rather than compares to a binding —
+	# and it is why the touch variant below carries the same legend unchanged
+	# instead of pointing at an opener button there is none of.
+	["Circle", "Stand on a lit waypoint circle to open the travel list — pick another to jump there.", Mode.DESKTOP],
 	["P", "Pause the game.", Mode.DESKTOP],
 	["Esc", "Free the mouse cursor. Press again to grab it back.", Mode.DESKTOP],
 	["?", "Open or close this list.", Mode.DESKTOP],
@@ -218,6 +225,12 @@ const ROWS: Array = [
 	# above, so the CSV row it needs already exists.
 	["Map (B)", "Open the map of Budapest and the places to find.", Mode.TOUCH],
 	["Tune", "Tune step and steering feel, or read how to play again.", Mode.TOUCH],
+	# The waypoint list, identically on a phone: the circle IS the opener, so
+	# there is nothing about the gesture that differs between the two sessions.
+	# It is listed twice rather than as Mode.BOTH so the desktop and touch cards
+	# keep the ordering each of them reads in — and the CSV rows it needs are the
+	# desktop row's, already there.
+	["Circle", "Stand on a lit waypoint circle to open the travel list — pick another to jump there.", Mode.TOUCH],
 
 	# "Multiplayer (N)" is the toggle's own CSV key (review round 1: "MP"
 	# advertised a label that no longer exists), so both sessions read it in

@@ -1,9 +1,9 @@
 extends Control
 ## ============================================================================
-## THE WAYPOINT HUB — the enter edge that finds a circle, and the only hand that
-## lights a beam
+## THE WAYPOINT HUB — the enter edge that finds a circle, the only hand that
+## lights a beam, and the travel panel that edge opens
 ## ============================================================================
-## Epic `godot-test1-sc6`, bead .2. `.1` put eleven indigo rings in the world with
+## Epic `godot-test1-sc6`, beads .2 and .4. `.1` put eleven indigo rings in the world with
 ## their beams built and hidden and gave no hero any way to notice them. This is
 ## the noticing: a 5 Hz scan that latches when you step onto one, sets its bit,
 ## pops a card, plays a cue, tells the room — and, every tick, drives every loaded
@@ -76,10 +76,43 @@ extends Control
 ## project's proximity tests do; a hero at altitude over a waypoint is a hero who
 ## walked to that waypoint.
 ##
-## Built as ONE NODE with ONE SCRIPT LINE in `scenes/main.tscn` and no layout at
-## all — this Control draws nothing, it is a tick with a group lookup. The
-## `landmark_toast.gd` idiom minus the card, because the card it would have built
-## already exists and is `announce()`'s.
+## ----------------------------------------------------------------------------
+## AND THE TRAVEL PANEL, GROWN ONTO THE SAME NODE (bead .4)
+## ----------------------------------------------------------------------------
+## The panel opens on the ENTER EDGE above and closes when the latch lets go, so
+## it is a reader of exactly the event `_scan()` already computes. A second node
+## would have to re-derive that edge from `standing_on()` polled at its own rate,
+## and the two would disagree for a tick every time — which on this feature means
+## a panel that opens a beat after the card or hangs on past the circle.
+##
+## DIABLO'S RULE, AND THE OWNER'S (2026-09-12): there is NO KEY and NO OPENER
+## BUTTON. You stand on a found circle and the list is there; you walk off it and
+## it is gone. That is worth stating as the absence it is — nothing to reserve
+## against `city_map_selfcheck` check 1, nothing to place in
+## `skill_tree_ui.gd`'s touch column, and one fewer gesture to explain.
+##
+## Everything about the CARD is `city_map_panel.gd`'s, term for term, and is not
+## re-argued here: `HudTheme.theme()` on this node's own root, the
+## `CenterContainer` backdrop that closes on a tap, the `MOUSE_FILTER_STOP` card,
+## `FOCUS_NONE` on every button (`ui_accept` is Space is `jump`), `ui_cancel`
+## handled only while open, and `_apply_pause()` re-asserted from `_process`.
+## The PAUSE POLICY is that file's too — solo yes, in a room no, over Game Over
+## no — and its reasons are written out at `_apply_pause()` below.
+##
+## WHAT IS ON IT: one row per FOUND circle, in index order, with the distance
+## from the hero right-aligned; the row you are standing on is listed and
+## DISABLED (it is where you are, not somewhere to go); a row you cannot afford
+## is disabled too, over a line that says what the fare is. A press calls
+## `PlayerController.travel_to_waypoint()` and the panel is gone.
+## `ponytail:` a LIST and not a drawn road strip — a strip is eleven dots on a
+## line for eleven places, and it would need its own projection, its own scale
+## and its own self-check to say less than the names do. Draw one if the count
+## ever outgrows a column (epic open question 5).
+##
+## Built as ONE NODE with ONE SCRIPT LINE in `scenes/main.tscn`. Until bead .4 it
+## had no layout at all; the tick and the group lookup are still the whole of the
+## file's world-facing half, and the card below only ever exists while a hero is
+## standing on a circle.
 
 ## The end of every proximity tick, in seconds. 5 Hz — the bead's number and
 ## `minimap_hud`'s cadence. See the trigger-size note above for what it costs the
@@ -104,6 +137,101 @@ const LEAVE_PAD: float = 7.0
 const FOUND_TITLE: String = "Waypoint found"
 const FOUND_BODY: String = "Your crew can travel here now."
 
+# ============================================================================
+# THE TRAVEL PANEL — strings, layout and palette (bead .4)
+# ============================================================================
+
+## The fare, READ off the one file that bills it rather than restated here, so a
+## retuned price changes the line the panel prints and the coins it checks in one
+## edit. A parse-time reference in one direction only: `player_controller.gd`
+## reaches this node through the `"waypoint_hub"` group and preloads nothing.
+const PLAYER_SCRIPT: GDScript = preload("res://scripts/player_controller.gd")
+
+## THE NAME OF EACH CIRCLE, by the `id` `TerrainWaypoints.waypoint_sites()` gives
+## it. English IS the translation key (CLAUDE.md, Localization RULE 1), so these
+## go onto a `Button.text` RAW and `Control`'s auto-translation does the rest —
+## and re-does it live when the language changes under an open panel.
+##
+## THE TABLE LIVES HERE AND NOT IN `terrain_waypoints.gd` because a name is the
+## only thing about a waypoint that is HUD: that family says where the circles
+## are and what they are called on the wire (`id`), this file is the one surface
+## that ever spells one out for a player. Two of the five city rows borrow a name
+## the landmark table already ships ("Hungarian Parliament", "Great Market Hall")
+## rather than inventing a synonym for the same building.
+##
+## THE ROAD ROWS ARE NOT IN IT: there are `road_slots()` of them, their number is
+## arithmetic over two constants, and naming them one by one would be a second
+## place to edit the day `WAYPOINT_SPACING` moves. They compose out of
+## `ROAD_NAME` instead — see `site_name()`.
+const SITE_NAMES: Dictionary = {
+	"hq": "HQ gate",
+	"approach": "HQ approach",
+	"spawn": "The spawn",
+	"gate": "Budapest gate",
+	"pest": "Pest embankment",
+	"parliament": "Hungarian Parliament",
+	"market": "Great Market Hall",
+	"heroes": "Heroes' Square",
+}
+
+## The composed lines, every one of them run through `tr()` at the format string
+## (Localization RULE 2) and measured in German by `locale_selfcheck`.
+##
+## `ROAD_NAME` takes the slot's AUTHORED target X — `slot * WAYPOINT_SPACING` —
+## and not the station the circle actually snapped to: the label is a name ("the
+## one at 450 m"), the distance column beside it is the measurement, and a name
+## that shifted by a few metres between runs would be a worse name for it.
+const ROAD_NAME: String = "Road, %d m"
+## The right-hand column. It still goes through `tr()` at the format string like
+## every other composed line, and it deliberately has NO `ui.csv` ROW: German
+## spells it the same, and `locale_selfcheck._check_translations` fails a row
+## whose two columns match — its comment says such a key belongs out of the table,
+## where a miss already falls back to the English text. `waypoint_panel_selfcheck`
+## check (d) names it as the one exemption from its German sweep.
+const DISTANCE_LINE: String = "%d m"
+## The right-hand column of the row you are standing on, in place of a distance
+## of zero — which would read as a place to travel to that happens to be close.
+const HERE_LINE: String = "You are here"
+## The fare line, and it is `player_controller`'s OWN refusal string: the card a
+## too-poor traveller gets says exactly this, so the panel and the refusal cannot
+## drift into quoting two different prices.
+const PRICE_LINE: String = "Travel costs %d coins."
+## Shown when the crew has found this circle and no other — the state every run
+## starts in, and the one that has to teach the mechanic rather than look broken.
+const EMPTY_LINE: String = "No other waypoint found yet."
+const CLOSE_HINT: String = "Press Esc or tap outside to close"
+
+## The card's width, in pixels. Fixed rather than content-sized so a long German
+## name cannot widen the panel off a 400 px phone screen — 360 leaves 20 px of
+## gutter each side there, and `waypoint_panel_selfcheck` check (f) measures the
+## real layout at 1280x720 and 400x800 rather than trusting this comment.
+const CARD_WIDTH: float = 360.0
+const TITLE_FONT_SIZE: int = 26
+const ROW_FONT_SIZE: int = 16
+const LINE_FONT_SIZE: int = 15
+const HINT_FONT_SIZE: int = 13
+const CARD_PADDING: int = 18
+## Pixels of the row reserved for the right-hand column, and therefore NOT
+## available to the name. `locale_selfcheck` budgets both halves against it.
+const DISTANCE_WIDTH: float = 110.0
+## Usable width a row's NAME has: the card, less its margins, less the theme
+## Button's own content padding, less the column above.
+const NAME_WIDTH: float = CARD_WIDTH - 2.0 * CARD_PADDING \
+	- 2.0 * HudTheme.CARD_PADDING - DISTANCE_WIDTH
+
+## The card's chrome, off `HudTheme` and with no hex of its own —
+## `hero_hud_selfcheck` greps for a second copy of the six palette values.
+const COLOR_TITLE: Color = HudTheme.BONE
+const COLOR_TEXT: Color = HudTheme.BONE
+const COLOR_HINT: Color = HudTheme.UNIT_KHAKI
+## The distance column: BONE on a row you can take, the disabled Button's own
+## khaki on one you cannot, so the two halves of a greyed row grey together.
+const COLOR_DISTANCE: Color = HudTheme.BONE
+const COLOR_DISTANCE_OFF: Color = HudTheme.UNIT_KHAKI
+## The 1 px rule under the heading — `city_map_panel`'s and `tower_lift_menu`'s
+## one `ColorRect`, still not worth a `HudTheme` builder at three callers.
+const RULE_PX: float = 1.0
+
 ## The circle this approach belongs to, as an index into
 ## `TerrainWaypoints.waypoint_sites()`, or -1 when re-armed. `landmark_toast`'s
 ## `_city_active` exactly — including why the FIRST arrival is latched rather than
@@ -113,15 +241,42 @@ var _standing_on: int = -1
 ## Seconds accumulated toward the next tick.
 var _tick_timer: float = 0.0
 
+# --- The panel (bead .4) ----------------------------------------------------
+var _panel_open: bool = false
+## Whether the CURRENT tree pause is ours to release. "We hold A claim", not "we
+## hold THE pause" — see `pause_hub.gd`'s header.
+var _paused_by_us: bool = false
+
+## Child nodes, built in `_ready` rather than from a `.tscn`, `city_map_panel`'s
+## shape: this node is one script line in `main.tscn` and has to stay that way.
+var _centre: CenterContainer = null
+var _card: PanelContainer = null
+var _rows_box: VBoxContainer = null
+var _empty_label: Label = null
+var _price_label: Label = null
+var _hint_label: Label = null
+## One row per MASK BIT, built once and never rebuilt — `visible` is what says
+## whether the crew has found that circle. A rebuild per refresh would throw away
+## the button under the finger that is pressing it, and at 5 Hz.
+var _rows: Array[Button] = []
+var _row_names: Array[Label] = []
+var _row_distances: Array[Label] = []
+
 
 func _ready() -> void:
-	# This Control draws nothing and must never eat a click: the MP panel, the
-	# touch buttons and the start overlay share this CanvasLayer, and a Control
-	# over them that swallowed input would be invisible and maddening.
+	# Must keep running under its own pause, like every other always-available HUD
+	# piece — `_apply_pause()` is re-asserted from `_process` and could not be.
+	process_mode = Node.PROCESS_MODE_ALWAYS
+	# This Control draws nothing itself and must never eat a click: the MP panel,
+	# the touch buttons and the start overlay share this CanvasLayer, and a Control
+	# over them that swallowed input would be invisible and maddening. The panel's
+	# own backdrop is STOP, but only while it is visible.
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# So bead .4's travel panel can ask where the hero is standing without a hard
-	# reference — group discovery, like every other cross-system hookup here.
+	# So the travel panel — and `PlayerController.travel_to_waypoint()` — can ask
+	# where the hero is standing without a hard reference; group discovery, like
+	# every other cross-system hookup here.
 	add_to_group("waypoint_hub")
+	_build_ui()
 
 
 func standing_on() -> int:
@@ -178,6 +333,10 @@ func arrived_at(index: int) -> void:
 
 
 func _process(delta: float) -> void:
+	# Re-assert the pause every frame while the panel is up, for `mp_ui`'s reason:
+	# the claim is DECLINED in a room and over Game Over, so a state change under
+	# an open panel must not strand the world in the wrong one.
+	_apply_pause(_panel_open)
 	_tick_timer += delta
 	if _tick_timer < TICK_INTERVAL:
 		return
@@ -193,6 +352,12 @@ func _tick() -> void:
 	and no terrain — that is what makes a scene with neither (a self-check, a
 	standalone terrain scene) show eleven dark circles rather than whatever the
 	last frame left, and it is the degrade CLAUDE.md's group discovery asks for.
+
+	THE PANEL FOLLOWS THE LATCH AND NOT THE OTHER WAY ROUND (bead .4). Opening is
+	the ENTER EDGE's business, down inside `_scan()`; closing is one line here,
+	because every way the latch can let go — walking off, the player going away,
+	the terrain going away, the table shrinking under a re-seed — has to close it,
+	and listing them at each site is how one gets missed.
 	"""
 	# Cast, don't assume: a bare Node somebody added to "player" must be ignored,
 	# not error on `global_position` (`landmark_toast._scan`'s first line).
@@ -209,6 +374,12 @@ func _tick() -> void:
 		if "waypoint_mask" in player:
 			mask = int(player.waypoint_mask)
 	_paint_beams(mask)
+	if _standing_on < 0:
+		set_panel_open(false)
+	elif _panel_open:
+		# Distances, affordability and a teammate's fresh find, on the tick the
+		# rest of this feature already runs at.
+		_refresh_rows()
 
 
 func _scan(player: Node3D) -> void:
@@ -264,6 +435,11 @@ func _scan(player: Node3D) -> void:
 		return
 	_standing_on = nearest
 	_arrive(nearest, player)
+	# AND THE PANEL, AFTER THE FIND AND NOT BEFORE IT: `_arrive()` is what sets a
+	# brand-new circle's bit, and the rule below is "open onto a circle whose bit
+	# is set" — so a first visit activates and then opens in the one tick, which is
+	# the card and the list arriving together.
+	_open_panel_for(nearest, player)
 
 
 func _arrive(index: int, player: Node3D) -> void:
@@ -335,3 +511,406 @@ func _paint_beams(mask: int) -> void:
 func _xz_distance(a: Vector3, b: Vector3) -> float:
 	"""Flat XZ distance — `landmark_toast._xz_distance`, and see THE FLAT RULE."""
 	return Vector2(a.x - b.x, a.z - b.z).length()
+
+
+# ============================================================================
+# THE TRAVEL PANEL — OPEN AND CLOSE (bead .4)
+# ============================================================================
+
+func is_panel_open() -> bool:
+	return _panel_open
+
+
+func _open_panel_for(index: int, player: Node3D) -> void:
+	"""
+	The enter edge's other half: show the list, unless one of four states says no.
+
+	@param index: the circle just latched, as a `waypoint_sites()` index.
+	@param player: the local hero — already cast by `_scan()`.
+
+	THE BIT IS THE PERMISSION. `standing_on()` is a POSITION and not a permission
+	(its docstring), so the panel asks the player's OWN `waypoint_mask` whether
+	this circle has been found. In the shipped game a first visit has just set it
+	one call up; a mask that is still clear here means the "player" in the group
+	cannot find circles at all, and a list of places to travel between would be a
+	lie drawn over it.
+
+	THE OTHER THREE REFUSALS are ones every panel in this project carries, and
+	each is a state where a modal would do real damage rather than merely be
+	untimely: a pending landmark quiz owns the digits and its own pause
+	(`landmark_toast`), a respawn is moving the body this list would travel, and
+	over Game Over the only thing that may be on screen is Play Again.
+	"""
+	if _panel_open:
+		return
+	if not ("waypoint_mask" in player) or int(player.waypoint_mask) & (1 << index) == 0:
+		return
+	if "is_respawning" in player and bool(player.is_respawning):
+		return
+	if "is_game_over" in player and bool(player.is_game_over):
+		return
+	var toast := get_tree().get_first_node_in_group("landmark_toast")
+	if toast != null and toast.has_method("is_quiz_pending") \
+			and bool(toast.call("is_quiz_pending")):
+		return
+	set_panel_open(true)
+
+
+func set_panel_open(open: bool) -> void:
+	"""Show or hide the list. The ONE path in and out, so the pause claim cannot
+	be taken on one route and left behind on another."""
+	if open == _panel_open:
+		return
+	_panel_open = open
+	if open:
+		_refresh_rows()
+	if _card != null:
+		_card.visible = open
+	# The backdrop goes with the card: hidden it takes no clicks, shown it is what
+	# a tap-to-close lands on.
+	if _centre != null:
+		_centre.visible = open
+	_apply_pause(open)
+
+
+func _on_backdrop_input(event: InputEvent) -> void:
+	"""A tap anywhere outside the card closes the list. The card itself is
+	MOUSE_FILTER_STOP, so a tap ON it never reaches here."""
+	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+		_centre.accept_event()
+		set_panel_open(false)
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	# Esc closes, and ONLY while we are open — otherwise this eats the `ui_cancel`
+	# `player_controller._input()` uses to release the mouse. `skill_tree_ui`'s
+	# guard, for `skill_tree_ui`'s reason. There is no other key here: the circle
+	# is the opener (see the banner).
+	if event != null and _panel_open and event.is_action_pressed("ui_cancel"):
+		get_viewport().set_input_as_handled()
+		set_panel_open(false)
+
+
+func _exit_tree() -> void:
+	# Never leave the world frozen behind a node that is going away.
+	_apply_pause(false)
+
+
+func _apply_pause(open: bool) -> void:
+	"""
+	Take or give back the pause for the panel's current state, or decline it.
+
+	`PauseHub.take()` / `PauseHub.release()`, never `get_tree().paused` — the one
+	rule `pause_selfcheck` check 3 scans every script in this directory for. The
+	POLICY stays here with the feature, exactly as the hub's header says it must,
+	and it is `city_map_panel`'s and `landmark_toast`'s:
+
+	  * IN A ROOM this freezes NOTHING. `get_tree().paused` is local and the
+	    simulation is not, so a peer reading the travel list while three teammates
+	    run from a hunter would either desync itself or ask them to stand still.
+	  * OVER GAME OVER it freezes nothing either: `GameOverUI` is PAUSABLE, so a
+	    pause there kills its Play Again button.
+	"""
+	if not open and not _paused_by_us:
+		return  # The overwhelmingly common case: closed panel, nothing to undo.
+	var tree := get_tree()
+	if tree == null:
+		return
+	var want: bool = open and not _in_room() and not _game_over()
+	if want and not _paused_by_us:
+		PauseHub.take(self)
+		_paused_by_us = true
+	elif not want and _paused_by_us:
+		_paused_by_us = false
+		PauseHub.release(self)
+
+
+func _in_room() -> bool:
+	"""Is this peer engaged with the lobby at all? `is_busy()`, not `is_online()`:
+	a join in flight is already a session somebody else's frames belong to."""
+	var tree := get_tree()
+	if tree == null:
+		return false
+	var mp: Node = tree.get_first_node_in_group("mp")
+	return mp != null and mp.has_method("is_busy") and bool(mp.is_busy())
+
+
+func _game_over() -> bool:
+	# `"x" in node`, not `node.get("x")`: `get()` answers null for a missing
+	# property and `bool(null)` is a hard error, so this is what lets a scene whose
+	# player is a stand-in degrade instead of throwing.
+	var tree := get_tree()
+	if tree == null:
+		return false
+	var player: Node = tree.get_first_node_in_group("player")
+	return player != null and "is_game_over" in player and bool(player.is_game_over)
+
+
+# ============================================================================
+# THE TRAVEL PANEL — CONTENT
+# ============================================================================
+
+static func site_name(id: String) -> String:
+	"""
+	What a circle is called on the list, ready to draw.
+
+	@param id: the row's `id` from `TerrainWaypoints.waypoint_sites()`.
+	@return: a plain name straight out of `SITE_NAMES` (a CSV key, which `Control`
+	         translates for free) or a composed road label already through `tr()`.
+
+	STATIC AND PUBLIC so `waypoint_panel_selfcheck` and `locale_selfcheck` can ask
+	the shipped function what a row says instead of rebuilding the mapping — a
+	second copy of it is exactly what would pass while the panel named the wrong
+	places.
+	"""
+	if SITE_NAMES.has(id):
+		return String(SITE_NAMES[id])
+	if id.begins_with("road_"):
+		var slot: int = int(id.substr(5))
+		# `TranslationServer.translate()` and not `tr()`: this is static, and `tr()`
+		# is a `Node` method. Same table, same answer — `Control.tr()` is a thin
+		# wrapper over it — and it keeps the one mapping askable from a self-check.
+		return TranslationServer.translate(ROAD_NAME) \
+			% int(float(slot) * TerrainWaypoints.WAYPOINT_SPACING)
+	# An id nobody named: show it rather than an empty button. Unreachable while
+	# `SITE_NAMES` covers the table, which `waypoint_panel_selfcheck` check (b)
+	# asserts against the real sites.
+	return id
+
+
+func _refresh_rows() -> void:
+	"""
+	Rewrite every row from the live world: which circles are found, how far each
+	one is, and whether this hero can afford the fare.
+
+	ONE ROW PER MASK BIT, BUILT ONCE (see `_rows`): this only ever writes `text`,
+	`visible` and `disabled`, so a teammate's find arriving mid-tick does not
+	rebuild the button under the player's finger. A row past `sites.size()` — a
+	table that shrank under a re-seed — is hidden rather than left showing the
+	last run's place.
+	"""
+	if _rows.is_empty():
+		return
+	var tree := get_tree()
+	var player: Node = null if tree == null else tree.get_first_node_in_group("player")
+	var terrain: Node3D = null
+	if tree != null:
+		terrain = tree.get_first_node_in_group("terrain") as Node3D
+	var sites: Array[Dictionary] = []
+	if terrain != null and terrain.has_method("tower_site"):
+		sites = TerrainWaypoints.waypoint_sites(terrain)
+	var mask: int = 0
+	if player != null and "waypoint_mask" in player:
+		mask = int(player.waypoint_mask)
+	var coins: int = 0
+	if player != null and "own_coins" in player:
+		coins = int(player.own_coins)
+	var origin := Vector3.ZERO
+	if player is Node3D:
+		origin = (player as Node3D).global_position
+	# The fare is checked ONCE and not per row: it is the same for every hop.
+	var affordable: bool = coins >= PLAYER_SCRIPT.TELEPORT_COIN_COST
+
+	var elsewhere: int = 0
+	for i in range(_rows.size()):
+		var found: bool = i < sites.size() and mask & (1 << i) != 0
+		_rows[i].visible = found
+		if not found:
+			continue
+		var here: bool = i == _standing_on
+		if not here:
+			elsewhere += 1
+		_row_names[i].text = site_name(String(sites[i]["id"]))
+		if here:
+			_row_distances[i].text = HERE_LINE
+		else:
+			_row_distances[i].text = tr(DISTANCE_LINE) \
+				% int(roundf(_xz_distance(origin, sites[i]["pos"] as Vector3)))
+		# THE TWO REASONS A ROW IS DEAD, and they are deliberately one state: the
+		# circle under your feet is not somewhere to go, and a hop you cannot pay
+		# for is not one to offer. The theme greys a disabled Button's own label;
+		# the distance column is a separate Label, so it is greyed here to match.
+		_rows[i].disabled = here or not affordable
+		_row_distances[i].add_theme_color_override("font_color",
+			COLOR_DISTANCE_OFF if _rows[i].disabled else COLOR_DISTANCE)
+
+	if _empty_label != null:
+		_empty_label.visible = elsewhere == 0
+	if _price_label != null:
+		_price_label.text = tr(PRICE_LINE) % PLAYER_SCRIPT.TELEPORT_COIN_COST
+
+
+func _on_row_pressed(index: int) -> void:
+	"""
+	One press, one hop.
+
+	THE PANEL CLOSES FIRST, and that ordering is load-bearing rather than tidy:
+	solo this node holds the pause, and `travel_to_waypoint()` awaits a physics
+	frame in the middle of relocating the world. Handing the claim back before the
+	hop starts means the world it lands in is running, with no window in which a
+	frozen tree is halfway through a rebuild.
+
+	Group + `has_method`, so a scene whose "player" cannot travel simply closes.
+	The return value is not read: the call is a coroutine (it awaits), and every
+	refusal inside it either speaks for itself or is one this list already greyed
+	out.
+	"""
+	set_panel_open(false)
+	var player := get_tree().get_first_node_in_group("player")
+	if player != null and player.has_method("travel_to_waypoint"):
+		player.call("travel_to_waypoint", index)
+
+
+# ============================================================================
+# THE TRAVEL PANEL — CONSTRUCTION
+# ============================================================================
+
+func _build_ui() -> void:
+	# THE HUD SKIN, on THIS ROOT and nowhere else: the card's INK ground, its
+	# STEEL frame and its hard shadow all arrive with it, which is why this panel
+	# owns no `StyleBoxFlat` and no palette hex of its own.
+	theme = HudTheme.theme()
+
+	# A CenterContainer so the card sizes to its own content and stays centred at
+	# any resolution — `city_map_panel`'s and `start_overlay`'s shape. HIDDEN while
+	# the list is, and STOP while it is up: that is the backdrop, and a tap on it
+	# closes. A hidden Control receives no input, so with the list down every click
+	# still reaches the world beneath it.
+	_centre = CenterContainer.new()
+	_centre.name = "Centre"
+	_centre.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_centre.mouse_filter = Control.MOUSE_FILTER_STOP
+	_centre.visible = false
+	_centre.gui_input.connect(_on_backdrop_input)
+	add_child(_centre)
+
+	_card = PanelContainer.new()
+	_card.name = "Card"
+	# STOP: while the list is up it swallows clicks, so a click meant to dismiss it
+	# does not fire the desktop-web click-to-capture through it.
+	_card.mouse_filter = Control.MOUSE_FILTER_STOP
+	_card.custom_minimum_size = Vector2(CARD_WIDTH, 0.0)
+	_card.visible = false
+	_centre.add_child(_card)
+
+	var margin := MarginContainer.new()
+	for side: String in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, CARD_PADDING)
+	_card.add_child(margin)
+
+	var column := VBoxContainer.new()
+	column.name = "Column"
+	margin.add_child(column)
+
+	# RULE 1: a plain literal on a Label, translated by the engine for free.
+	var title := Label.new()
+	title.name = "Title"
+	title.text = "Waypoints"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_override("font", HudTheme.heading_font())
+	title.add_theme_font_size_override("font_size", TITLE_FONT_SIZE)
+	title.add_theme_color_override("font_color", COLOR_TITLE)
+	column.add_child(title)
+	column.add_child(_rule())
+
+	_rows_box = VBoxContainer.new()
+	_rows_box.name = "Rows"
+	column.add_child(_rows_box)
+	for i in range(TerrainWaypoints.WAYPOINT_COUNT):
+		_add_row(i)
+
+	# The teaching line, shown when this circle is the only one the crew has found.
+	# Its own Label rather than a row, so it cannot be mistaken for a place to press.
+	_empty_label = Label.new()
+	_empty_label.name = "Empty"
+	_empty_label.text = EMPTY_LINE
+	_empty_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_empty_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_empty_label.custom_minimum_size = Vector2(CARD_WIDTH - 2.0 * CARD_PADDING, 0.0)
+	_empty_label.add_theme_font_size_override("font_size", LINE_FONT_SIZE)
+	_empty_label.add_theme_color_override("font_color", COLOR_TEXT)
+	_empty_label.visible = false
+	column.add_child(_empty_label)
+
+	_price_label = Label.new()
+	_price_label.name = "Price"
+	_price_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_price_label.add_theme_font_size_override("font_size", LINE_FONT_SIZE)
+	_price_label.add_theme_color_override("font_color", COLOR_TEXT)
+	column.add_child(_price_label)
+
+	# RULE 1 again: a literal, set once. Nothing composes into it — there is no key
+	# to name, which is the whole point of this panel's opener being the circle.
+	_hint_label = Label.new()
+	_hint_label.name = "Hint"
+	_hint_label.text = CLOSE_HINT
+	_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_hint_label.custom_minimum_size = Vector2(CARD_WIDTH - 2.0 * CARD_PADDING, 0.0)
+	_hint_label.add_theme_font_size_override("font_size", HINT_FONT_SIZE)
+	_hint_label.add_theme_color_override("font_color", COLOR_HINT)
+	column.add_child(_hint_label)
+
+
+func _add_row(index: int) -> void:
+	"""
+	One row: a full-width Button carrying the name, with the distance drawn
+	right-aligned inside it.
+
+	THE DISTANCE IS A CHILD OF THE BUTTON and not a sibling in an HBox, which is
+	what keeps the whole row ONE tap target — the thing that matters most on a
+	phone, where the circle is the only way into this list and a row is the only
+	way to use it. Both labels are MOUSE_FILTER_IGNORE, so a press that lands on
+	one still reaches the button under it.
+
+	FOCUS_NONE, and `skill_tree_ui._build_ui` carries the whole reason: a
+	`BaseButton` KEEPS focus after a click, and `ui_accept` — which fires a focused
+	button — is SPACE, which is also `jump`. One tap here would otherwise travel
+	again on the next jump, at `TELEPORT_COIN_COST` a time.
+	"""
+	var row := Button.new()
+	row.name = "Row%d" % index
+	row.focus_mode = Control.FOCUS_NONE
+	row.visible = false
+	row.custom_minimum_size = Vector2(CARD_WIDTH - 2.0 * CARD_PADDING, 0.0)
+	row.pressed.connect(_on_row_pressed.bind(index))
+	_rows_box.add_child(row)
+
+	# The name, LEFT and clipped: a German name that outgrew `NAME_WIDTH` must eat
+	# its own tail rather than run under the distance column. `locale_selfcheck` is
+	# what stops it getting that far.
+	var name_label := Label.new()
+	name_label.name = "Name"
+	name_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	name_label.clip_text = true
+	name_label.add_theme_font_override("font", HudTheme.heading_font())
+	name_label.add_theme_font_size_override("font_size", ROW_FONT_SIZE)
+	row.add_child(name_label)
+
+	# ...and the distance, RIGHT, in the same rect. Its own Label because a Button
+	# has one text and this column is aligned to the other edge of it.
+	var distance_label := Label.new()
+	distance_label.name = "Distance"
+	distance_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	distance_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	distance_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	distance_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	distance_label.add_theme_font_size_override("font_size", ROW_FONT_SIZE)
+	distance_label.add_theme_color_override("font_color", COLOR_DISTANCE)
+	row.add_child(distance_label)
+
+	_rows.append(row)
+	_row_names.append(name_label)
+	_row_distances.append(distance_label)
+
+
+func _rule() -> ColorRect:
+	"""The 1 px STEEL rule the spec puts under a section heading."""
+	var rule := ColorRect.new()
+	rule.name = "Rule"
+	rule.color = HudTheme.STEEL
+	rule.custom_minimum_size = Vector2(0.0, RULE_PX)
+	rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return rule
