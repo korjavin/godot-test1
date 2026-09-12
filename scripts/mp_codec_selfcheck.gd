@@ -10,8 +10,8 @@ extends SceneTree
 ##
 ##   2. presence parser, 3. forced seed, 4. peer ids, 6. join-snapshot parser,
 ##   7. presence backcompat, 8. retired heart fields, 9. hero index,
-##   10. croc-sync parser, 12. room multiplier, the `cap` / `pad` / `gate` verb
-##   parsers, 24. ability visual state.
+##   10. croc-sync parser, 12. room multiplier, the `cap` / `pad` / `gate` / `wp`
+##   verb parsers, 24. ability visual state.
 ##
 ## Run it headless:
 ##
@@ -86,6 +86,9 @@ func _run_checks() -> String:
 	if not failure.is_empty():
 		return failure
 	failure = _check_gate_parser()
+	if not failure.is_empty():
+		return failure
+	failure = _check_wp_parser()
 	if not failure.is_empty():
 		return failure
 	return _check_ability_visual_state()
@@ -948,6 +951,78 @@ func _check_gate_parser() -> String:
 	if not MPManager.VERB_BUDGET_PER_SEC.has("gate"):
 		return "the gate verb has no VERB_BUDGET_PER_SEC row"
 	Sentinel.done("gate_parser")
+	return ""
+
+
+func _check_wp_parser() -> String:
+	"""
+	The `wp` verb — epic godot-test1-sc6, bead .2 — against hostile packets.
+
+	`_check_gate_parser`'s shape over an INDEX instead of a name, so the two
+	failure modes are the ones an index has: the LOBBY RELAY makes every number a
+	float (`JSON.parse_string`), so an honest find must survive arriving as one —
+	and every consumer turns this value into `1 << i`, so a large, negative,
+	fractional or non-finite one must be refused BEFORE the cast rather than
+	shifted.
+
+	THE HONEST PACKET COMES FIRST AND IT IS THE POINT: a parser that returned `{}`
+	for everything would pass every rejection below while leaving the crew's
+	circles dark on every screen but the finder's.
+	"""
+	var honest: Dictionary = {"t": "wp", "i": 2}
+	var good: Dictionary = MpCodec.decode_wp(honest)
+	if good.is_empty() or int(good["i"]) != 2:
+		return "decode_wp dropped an honest find (%s)" % str(good)
+
+	# An honest round-trip THROUGH BYTES: what the finder broadcasts must survive
+	# the codec, or the room replays a find nobody made.
+	var trip: Dictionary = MpCodec.decode_wp(bytes_to_var(var_to_bytes(honest)))
+	if trip.is_empty() or int(trip["i"]) != 2:
+		return "decode_wp did not round-trip an honest find (%s)" % str(trip)
+
+	# EVERY index the table can hold must cross this parser, or a build that adds
+	# a circle breaks the room instead of lighting it.
+	for i in TerrainWaypoints.WAYPOINT_COUNT:
+		var row: Dictionary = MpCodec.decode_wp({"t": "wp", "i": i})
+		if row.is_empty() or int(row["i"]) != i:
+			return "decode_wp dropped the legal index %d" % i
+
+	# THE RELAY'S FLOAT. `1.0` is what a whole number looks like coming back out
+	# of `JSON.parse_string`, and refusing it would silently kill every find made
+	# while a peer's ICE was still negotiating — the one window the relay leg
+	# exists for.
+	var relayed: Dictionary = MpCodec.decode_wp({"mp": "wp", "i": 1.0})
+	if relayed.is_empty() or int(relayed["i"]) != 1:
+		return "decode_wp refused the relay's float-typed index (%s)" % str(relayed)
+
+	# ...and everything a peer that is not speaking this protocol could send.
+	# `WAYPOINT_COUNT` itself is the first index off the end, and 64 is the shape
+	# that would shift a bit out of a circle that exists.
+	var hostile: Array[Dictionary] = [
+		{"t": "wp"},
+		{"t": "wp", "i": 3.5},
+		{"t": "wp", "i": -1},
+		{"t": "wp", "i": -0.5},
+		{"t": "wp", "i": TerrainWaypoints.WAYPOINT_COUNT},
+		{"t": "wp", "i": 64},
+		{"t": "wp", "i": NAN},
+		{"t": "wp", "i": INF},
+		{"t": "wp", "i": "2"},
+		{"t": "wp", "i": true},
+		{"t": "wp", "i": Vector2(1.0, 2.0)},
+		{"t": "wp", "i": null},
+	]
+	for packet: Dictionary in hostile:
+		if not MpCodec.decode_wp(packet).is_empty():
+			return "decode_wp accepted the hostile packet %s" % str(packet)
+
+	# The verb has to be budgeted like every other one `_receive_mesh_verb`
+	# dispatches — a monotone set is not a rate bound, it is the whole reason the
+	# budget is the only defence this verb has (no master authority, no position
+	# check; see the `wp` banner in mp_manager.gd).
+	if not MPManager.VERB_BUDGET_PER_SEC.has("wp"):
+		return "the wp verb has no VERB_BUDGET_PER_SEC row"
+	Sentinel.done("wp_parser")
 	return ""
 
 

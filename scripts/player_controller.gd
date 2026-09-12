@@ -693,6 +693,35 @@ var captive_heroes: Dictionary = {}
 #     mask is the whole truth.
 var explored_mask: int = 0
 
+# ---------------------------------------------------------------------------
+# THE FOUND WAYPOINTS — 11 bits, and the whole of "which circles will take you"
+# ---------------------------------------------------------------------------
+#
+# Epic `godot-test1-sc6`, bead .2. `TerrainWaypoints.waypoint_sites()` is a
+# fixed-length, fixed-order table, so "which of the eleven has this run stepped
+# on" is a bitmask over its INDICES and not a set of ids — one int, which is what
+# lets the room share it the way it already shares `explored_mask`.
+#
+# IT IS `explored_mask`'S TWIN, deliberately and down to the function names, so
+# there are three properties and not three new arguments:
+#
+#   * PER-RUN, like the captive set and the explored set. Both wipe sites below
+#     clear it, and it is NOT in `best_run_store.gd` — finding a circle is world
+#     state inside one run, not progression, and the epic's owner ruling
+#     (2026-09-12, "per-run — yes, default") says so in as many words.
+#   * ADD-ONLY WITHIN A RUN, which is what makes the multiplayer half trivial:
+#     `adopt_waypoint_mask()` ORs and never assigns, so a stale `room` packet can
+#     un-find nothing and the two directions converge with no grace window.
+#   * ROOM-WIDE IN A ROOM. A circle found by ANY member is found for the crew
+#     (the epic's ruling, verbatim: "when found - get's active for the whole
+#     crew"), so `MpManager` unions the room's `wp` verbs and hands the union
+#     back here.
+#
+# WHAT READS IT: `waypoint_hub.gd` alone today — it is the one writer of every
+# beam, so a bit set here is a pillar of light on the next 5 Hz tick wherever
+# that circle's chunk happens to be loaded. Bead .3 adds the travel gate.
+var waypoint_mask: int = 0
+
 ## How many of the 22 slots end the run in victory — the owner's 80%, rounded to
 ## the 18 the epic states in words. Written here rather than derived from
 ## `SLOTS.size()` because 18-of-22 is a DESIGN number: a wave that adds a
@@ -3050,6 +3079,52 @@ func adopt_explored_mask(mask: int) -> void:
 	_check_budapest_win()
 
 
+func activate_waypoint(index: int) -> bool:
+	"""
+	The hero stepped onto waypoint circle `index`. Mark it found for this run.
+
+	@return: whether the bit was NEW — the caller's cue to pop the discovery card,
+	    play the cue and tell the room. A second walk over the same circle returns
+	    false and is silent, which is what makes `waypoint_hub`'s enter edge free
+	    to fire as often as the player wanders on and off.
+
+	NO ROOM CALL HERE, unlike `explore_landmark()` one screen up, and the
+	difference is deliberate: the hub is the one place that knows a find happened
+	(it owns the enter edge), so it publishes in the same breath it announces.
+	Putting the send here would give the mask two jobs and the room two senders —
+	`MpManager._apply_waypoints()` already pushes the union back in through
+	`adopt_waypoint_mask()`, and a publish on that path would echo forever.
+	"""
+	if index < 0 or index >= TerrainWaypoints.WAYPOINT_COUNT:
+		return false
+	var bit: int = 1 << index
+	if waypoint_mask & bit != 0:
+		return false
+	waypoint_mask |= bit
+	return true
+
+
+func adopt_waypoint_mask(mask: int) -> void:
+	"""
+	THE ROOM'S MIRROR: fold the crew's found set into ours.
+
+	@param mask: an 11-bit mask from `MpManager` — the room's union, the master's
+	    `room` repair packet, or a join snapshot's absolute picture.
+
+	OR, NEVER ASSIGN, AND MASKED TO THE CIRCLES THAT EXIST — `adopt_explored_mask`
+	above, word for word and for both of its reasons. The OR is what lets every
+	room channel be a plain repair channel: this set only grows inside a run, so a
+	master's older copy can undo nothing. The AND is the trust boundary's second
+	half — `MpCodec` range-checks every INDEX it accepts, but a MASK crosses the
+	wire as one integer, and a peer on a build with a twelfth circle sends a
+	twelfth bit whose first eleven are still true.
+
+	NO SIDE EFFECT, unlike its twin: there is no win to re-check here. A newly lit
+	bit becomes a beam on `waypoint_hub`'s next tick, wherever that chunk is.
+	"""
+	waypoint_mask |= mask & ((1 << TerrainWaypoints.WAYPOINT_COUNT) - 1)
+
+
 func explored_count() -> int:
 	"""How many of Budapest's 22 landmarks this run has walked into."""
 	return _popcount(explored_mask)
@@ -3414,6 +3489,14 @@ func reset_position() -> void:
 	# and not that: a peer carrying a solo run's eighteen landmarks into somebody
 	# else's world would win it on arrival (codex review 2026-09-02).
 	explored_mask = 0
+	# ...AND SO ARE THE WAYPOINTS, for the identical reason one line up (epic
+	# godot-test1-sc6, owner ruling 2026-09-12: per-run). Stepping onto a circle
+	# is not EARNED, so it rides no monotone store — and this is the site the
+	# seed-arrival path into a room goes through (`MpManager._receive_seed`), so a
+	# joiner carrying a solo run's eleven circles into somebody else's world would
+	# hand that room a map of a road that is not theirs: the road's five sites are
+	# a pure function of `run_seed` and move with it.
+	waypoint_mask = 0
 
 	# Clear any crocodiles near the spawn point
 	clear_nearby_crocodiles(spawn_point)
@@ -3573,6 +3656,13 @@ func join_at(anchor: Vector3) -> void:
 	# nobody else has (codex review 2026-09-02). The room's set arrives whole in the
 	# master's join snapshot (`lm`) moments later.
 	explored_mask = 0
+	# ...AND SO DO THE WAYPOINTS (epic godot-test1-sc6). Sharper here than for
+	# Budapest, whose slots are authored constants: three of the eleven circles
+	# stand on the ROAD, whose stations are a pure function of `run_seed`, so a
+	# solo run's bits describe places that do not exist in the room's world — a lit
+	# beam over an empty field, and (from .3) a travel offer to a circle nobody
+	# else has. The room's real set arrives whole in the master's `wo` snapshot.
+	waypoint_mask = 0
 
 	# JOINING FROM THE GAME OVER SCREEN IS A SUPPORTED FLOW — mp_ui deliberately
 	# does not pause over it, so the panel's Join button works there. Without this

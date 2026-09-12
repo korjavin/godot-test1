@@ -1,4 +1,4 @@
-[gd_scene load_steps=39 format=3 uid="uid://clqb4rcmjrpgs"]
+[gd_scene load_steps=40 format=3 uid="uid://clqb4rcmjrpgs"]
 
 [ext_resource type="PackedScene" uid="uid://bqtq2xtxqnvvr" path="res://scenes/player.tscn" id="1_main"]
 [ext_resource type="Script" uid="uid://b07rwceo0eo4o" path="res://scripts/endless_terrain.gd" id="2_terrain"]
@@ -37,6 +37,7 @@
 [ext_resource type="Script" path="res://scripts/world_caption.gd" id="34_caption"]
 [ext_resource type="Script" path="res://scripts/event_log_hud.gd" id="35_eventlog"]
 [ext_resource type="Script" path="res://scripts/help_hint.gd" id="36_helphint"]
+[ext_resource type="Script" path="res://scripts/waypoint_hub.gd" id="37_waypoint"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.25, 0.45, 0.75, 1)
@@ -308,6 +309,10 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 1
 script = ExtResource("13_tune")
+
+[node name="WaypointHub" type="Control" parent="HUD"]
+mouse_filter = 2
+script = ExtResource("37_waypoint")
 
 [node name="LandmarkToast" type="Control" parent="HUD"]
 anchors_preset = 7
