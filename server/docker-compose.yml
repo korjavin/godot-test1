@@ -41,7 +41,7 @@ x-logging: &default-logging
 
 services:
   lobby:
-    image: ${LOBBY_IMAGE:-ghcr.io/korjavin/godot-test1-lobby:latest}
+    image: ${LOBBY_IMAGE:-ghcr.io/korjavin/godot-test1-lobby:e300289b2d2280671d9030537cca263cd6e3c059}
     container_name: ${LOBBY_CONTAINER_NAME:-godot-lobby}
     restart: unless-stopped
     logging: *default-logging
@@ -86,7 +86,7 @@ services:
   # both in the same commit, from the same job, so the two containers of a deploy
   # always come from one master commit. Never :latest in production.
   web:
-    image: ${WEB_IMAGE:-ghcr.io/korjavin/godot-test1-web:latest}
+    image: ${WEB_IMAGE:-ghcr.io/korjavin/godot-test1-web:e300289b2d2280671d9030537cca263cd6e3c059}
     container_name: ${WEB_CONTAINER_NAME:-godot-web}
     restart: unless-stopped
     logging: *default-logging
