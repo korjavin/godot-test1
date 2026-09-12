@@ -4050,6 +4050,9 @@ func travel_to_waypoint(index: int) -> bool:
 	# AND WE ARE STANDING ON THE TARGET, without an enter edge — see
 	# `WaypointHub.arrived_at()` for why the landing must not read as an arrival.
 	hub.call("arrived_at", index)
+	# THE ARRIVAL, NOT THE BUTTON (bead .5's cue, wired here by .4): every refusal
+	# above returns before this line, so a hop that did not happen makes no noise.
+	_sfx("play_waypoint_travel")
 	return true
 
 

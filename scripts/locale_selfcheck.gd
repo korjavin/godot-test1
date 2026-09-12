@@ -46,6 +46,9 @@ const CSV_PATH: String = "res://assets/translations/ui.csv"
 ## The overlay script owns the locale save/load, so the round-trip test drives
 ## the real functions rather than a copy of them. Static, so no scene is needed.
 const StartOverlay := preload("res://scripts/start_overlay.gd")
+## The waypoint travel panel, for the budgets below — read off its own constants
+## so a retuned card width retunes the gate rather than drifting from it.
+const WaypointHub := preload("res://scripts/waypoint_hub.gd")
 
 ## The round trip is driven against `StartOverlay.locale_config_path`, which
 ## `Sentinel.isolate_user_state()` has already moved into a directory private to
@@ -181,6 +184,42 @@ const WIDTH_BUDGETS: Array = [
 	# and sharing its BUTTON_WIDTH (166) and font, so the same 142 usable px.
 	# No composed suffix on this face, so it gets the whole budget.
 	["Map (B)", 18, 142.0, "Budapest map opener"],
+
+	# waypoint_hub.gd — the travel panel (epic godot-test1-sc6, bead .4). It has
+	# NO opener button: the circle you stand on is the opener, so the only faces
+	# here are the card's own. Every budget is read off the panel's constants
+	# rather than retyped, so retuning `CARD_WIDTH` retunes the gate with it.
+	#
+	# The title is a Label across the card's inner width; the two wrapping lines
+	# (the empty-list line and the close hint) are exempt for the reason the
+	# header gives — they autowrap inside a container that grows.
+	["Waypoints", WaypointHub.TITLE_FONT_SIZE, WaypointHub.CARD_WIDTH,
+		"waypoint panel title"],
+	# The price line does NOT wrap: it is one composed line under the rows.
+	["Travel costs %d coins.", WaypointHub.LINE_FONT_SIZE, WaypointHub.CARD_WIDTH,
+		"waypoint panel price"],
+	# THE ROW NAMES, against what a row leaves the name after the distance column.
+	# `clip_text` means an overflow here eats its own tail rather than running
+	# under the distance — which is a silent failure, and so is exactly what wants
+	# a budget. Two of the city rows borrow the landmark table's own names and are
+	# budgeted with the rest.
+	["HQ gate", WaypointHub.ROW_FONT_SIZE, WaypointHub.NAME_WIDTH, "waypoint row name"],
+	["HQ approach", WaypointHub.ROW_FONT_SIZE, WaypointHub.NAME_WIDTH, "waypoint row name"],
+	["The spawn", WaypointHub.ROW_FONT_SIZE, WaypointHub.NAME_WIDTH, "waypoint row name"],
+	["Road, %d m", WaypointHub.ROW_FONT_SIZE, WaypointHub.NAME_WIDTH, "waypoint row name"],
+	["Budapest gate", WaypointHub.ROW_FONT_SIZE, WaypointHub.NAME_WIDTH, "waypoint row name"],
+	["Pest embankment", WaypointHub.ROW_FONT_SIZE, WaypointHub.NAME_WIDTH, "waypoint row name"],
+	["Hungarian Parliament", WaypointHub.ROW_FONT_SIZE, WaypointHub.NAME_WIDTH, "waypoint row name"],
+	["Great Market Hall", WaypointHub.ROW_FONT_SIZE, WaypointHub.NAME_WIDTH, "waypoint row name"],
+	["Heroes' Square", WaypointHub.ROW_FONT_SIZE, WaypointHub.NAME_WIDTH, "waypoint row name"],
+	# ...and the right-hand column, which is drawn in the same rect from the other
+	# edge. Only "You are here" is budgeted: the other thing that column can hold
+	# is `WaypointHub.DISTANCE_LINE` ("%d m"), which has NO CSV row on purpose —
+	# German spells it the same, and `_check_translations` below fails a row whose
+	# two columns match. It is four digits and a unit against twelve characters of
+	# German here, so the wider of the two is the one that gates the column.
+	["You are here", WaypointHub.ROW_FONT_SIZE, WaypointHub.DISTANCE_WIDTH,
+		"waypoint row distance"],
 	# COLUMN_WIDTH 292, font 18, ~8 px Button padding, less the "   3/3" rank
 	# counter composed onto every node name (~48 px at this size).
 	["Quick Recovery", 18, 232.0, "skill node name"],
