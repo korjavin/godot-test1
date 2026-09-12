@@ -12,8 +12,12 @@ extends SceneTree
 ##      bare, `run_seed` UNCHANGED, transient ability state cleared, the hub
 ##      latched onto the target, and exactly `TELEPORT_COIN_COST` off the run's
 ##      coins (never off anything monotone).
-##   2. THE REFUSALS. Target not found, standing on nothing, target == current,
-##      and too few coins — each moves nothing and charges nothing.
+##   2. THE REFUSALS. Target not found, the circle UNDER OUR FEET not found,
+##      standing on nothing, target == current, and too few coins — each moves
+##      nothing and charges nothing, and the last one says so on screen.
+##   2b. THE ROOM GATE. A joiner whose body the room has not put down yet is
+##      refused even though its bank already reads — the window a hop would be
+##      wiped by `_apply_join_placement()`.
 ##   3. THE HQ SURVIVES A HOP. Road -> HQ -> road, and the tower shell is the
 ##      SAME OBJECT at the end. This is the whole reason `relocate()` was split
 ##      out of `new_run()`: a seed write (even to the same value) goes through
@@ -69,6 +73,9 @@ func _initialize() -> void:
 	await _check_hop()
 	await _check_refusals()
 	await _check_hq_survives()
+	# LAST, because it replaces `main.tscn`'s own solo manager with a fake room
+	# and frees it again — nothing after it would have an `mp` node to read.
+	await _check_room_gate()
 
 	if _failures.is_empty():
 		Sentinel.finish(self)
@@ -136,6 +143,14 @@ func _xz(a: Vector3, b: Vector3) -> float:
 	return Vector2(a.x - b.x, a.z - b.z).length()
 
 
+func _lifetime_coins() -> int:
+	"""Meta-progression's persisted coin total, or -1 when there is no progression."""
+	var progression: Node = get_first_node_in_group("progression")
+	if progression == null or not ("lifetime_coins" in progression):
+		return -1
+	return int(progression.lifetime_coins)
+
+
 func _check_hop() -> void:
 	"""Check 1 — the hop lands, costs 15 coins, and changes nothing it must not."""
 	var world: Array = _world()
@@ -170,6 +185,7 @@ func _check_hop() -> void:
 	player.windman_boost_timer = 5.0
 	player.is_giant = true
 	var seed_before: int = terrain.run_seed
+	var lifetime_before: int = _lifetime_coins()
 
 	var moved: bool = await player.travel_to_waypoint(2)
 	if not moved:
@@ -204,8 +220,14 @@ func _check_hop() -> void:
 	if int(hub.standing_on()) != 2:
 		_fail("the hub says the hero is on circle %d after landing on 2 — arrived_at() did not latch"
 			% int(hub.standing_on()))
-	# THE FARE — owner ruling 2026-09-12: 15 coins off the RUN's coins.
+	# THE FARE — owner ruling 2026-09-12: 15 coins off the RUN's coins, and off
+	# NOTHING MONOTONE. Lifetime coins are the one persisted total a fare could
+	# plausibly reach (`collect_coin` credits them on the way up), so it is read
+	# across the hop: CLAUDE.md's "coins are never deducted from lifetime totals".
 	var cost: int = int(PlayerScript.TELEPORT_COIN_COST)
+	if lifetime_before >= 0 and _lifetime_coins() < lifetime_before:
+		_fail("the fare took %d off LIFETIME coins (%d -> %d) — persistence is monotone"
+			% [lifetime_before - _lifetime_coins(), lifetime_before, _lifetime_coins()])
 	if player.own_coins != 100 - cost:
 		_fail("the hop billed %d coins, not TELEPORT_COIN_COST (%d)"
 			% [100 - player.own_coins, cost])
@@ -240,6 +262,16 @@ func _check_refusals() -> void:
 	player.own_coins = 100
 	player.coins_collected = 100
 	await _refuses(player, hub, sites, 0, "the target circle is not found")
+	# a2. THE CIRCLE UNDER OUR FEET IS NOT FOUND. `standing_on()` is a POSITION
+	# AND NOT A PERMISSION (its docstring), so the hub latches a circle nobody has
+	# found and the mask is what refuses. Reachable in the shipped game:
+	# `restart_game()` and `join_at()` both zero `waypoint_mask` while the latch
+	# survives for up to one 200 ms tick. Dropping the source half of the AND and
+	# leaving the target half must fail HERE, or only half the rule is tested.
+	var kept_mask: int = player.waypoint_mask
+	player.waypoint_mask = 1 << 1  # ...the TARGET found, the circle we stand on not.
+	await _refuses(player, hub, sites, 1, "the circle under the hero's feet is not found")
+	player.waypoint_mask = kept_mask
 	# b. STANDING ON NOTHING. Park the body well clear of every circle and let the
 	# shipped scan re-arm — `standing_on()` must be -1 before this proves anything.
 	player.global_position = Vector3(sites[1]["pos"].x, 1.0, float(sites[1]["pos"].z) + 400.0)
@@ -251,10 +283,22 @@ func _check_refusals() -> void:
 	# c. THE TARGET IS THE CIRCLE UNDER OUR FEET.
 	_stand_on(player, hub, sites, 1)
 	await _refuses(player, hub, sites, 1, "the target is the circle already stood on")
-	# d. TOO FEW COINS — the owner's refusal, and the only one that speaks.
+	# d. TOO FEW COINS — the owner's refusal, and the only one that SPEAKS. The
+	# card is asserted as well as the no-op: without this, deleting the announce
+	# call is a silent pass and the ruling's "refuse with a caption" is unmeasured.
+	var toast: Node = get_first_node_in_group("landmark_toast")
+	if toast != null and "name_label" in toast and toast.name_label != null:
+		toast.name_label.text = ""
 	player.own_coins = cost - 1
 	player.coins_collected = cost - 1
 	await _refuses(player, hub, sites, 2, "the hero cannot afford the fare")
+	if toast == null or not ("name_label" in toast) or toast.name_label == null:
+		_fail("no landmark toast in main.tscn — the spoken refusal cannot be checked")
+	elif String(toast.name_label.text) != "Not enough coins":
+		_fail("the unaffordable hop raised no card (the toast reads \"%s\")"
+			% String(toast.name_label.text))
+	elif not toast.visible:
+		_fail("the too-poor card was written but the toast is not visible")
 	Sentinel.done("refusals")
 
 
@@ -326,3 +370,56 @@ func _check_hq_survives() -> void:
 		_fail("the hop rebuilt the tower shell (instance %d -> %d) — the HQ's per-run interior was thrown away"
 			% [shell_id, after.get_instance_id()])
 	Sentinel.done("hq_survives")
+
+
+func _check_room_gate() -> void:
+	"""Check 4 — a joiner the room has not placed yet may not travel.
+
+	THE TRAP THIS EXISTS FOR (review, 2026-09-12). `shared_bank()` is readable as
+	soon as the incumbents' snapshots are in OR their 1.5 s deadline is spent,
+	whether or not a world has arrived to place into — so a gate written on
+	"is the bank readable" lets a hop fire in the window before
+	`_apply_join_placement()` runs, and that placement then rebuilds the world
+	around the group and puts the body somewhere else. The fare was real; the hop
+	was not. The gate is `MpManager.join_placed()` and this drives BOTH of its
+	answers on a real manager, flipped the way `mp_selfcheck` and
+	`debug_teleport_selfcheck` flip one.
+	"""
+	var world: Array = _world()
+	if world.is_empty():
+		_fail("no world for the room gate check")
+		Sentinel.done("room_gate")
+		return
+	var player: Node = world[0]
+	var hub: Node = world[2]
+	var sites: Array = world[3]
+
+	# main.tscn carries its own solo manager first in the "mp" group and `_mp()`
+	# answers the FIRST, so displace it — `debug_teleport_selfcheck`'s line.
+	for old: Node in get_nodes_in_group("mp"):
+		old.free()
+	var mp: Node = MpManager.new()
+	mp.add_to_group("mp")
+	root.add_child(mp)
+	mp._state = MpManager.State.IN_ROOM
+	# A JOINER, not a host, whose placement is still owed — and whose bank already
+	# reads, which is the whole point: `_join_settled()` is satisfied by the
+	# snapshot deadline alone.
+	mp._first_member = false
+	mp._join_applied = false
+	mp._join_wait = MpManager.JOIN_SNAPSHOT_WAIT
+	if mp.shared_bank(player.own_coins) == null:
+		_fail("the fake unplaced joiner's bank does not read — the gate's trap is not being driven")
+	if player._travel_room_ready():
+		_fail("travel allowed while the room still owes this body a placement")
+	player.own_coins = 100
+	player.coins_collected = 100
+	_stand_on(player, hub, sites, 1)
+	await _refuses(player, hub, sites, 2, "the room has not placed this body yet")
+
+	# ...and once the placement has run, travel is an ordinary room-legal move.
+	mp._join_applied = true
+	if not player._travel_room_ready():
+		_fail("travel still refused after the room placed this body — the gate is the room, not the join")
+	mp.free()
+	Sentinel.done("room_gate")

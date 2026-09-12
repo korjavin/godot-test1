@@ -3844,7 +3844,12 @@ func debug_teleport_to(dest: Vector3) -> bool:
 	"""
 	if not debug_teleport_allowed(OS.is_debug_build(), _debug_in_room()):
 		return false
-	if _debug_teleport_busy:
+	# BOTH LATCHES, because they guard one shared awaiting primitive (`_jump_to`)
+	# and a jump started inside the other's physics frame would wipe the world it
+	# is halfway through landing in. Not reachable today — this path is dead in a
+	# room and dead in release — but the invariant is about the resource, not the
+	# caller.
+	if _debug_teleport_busy or _travel_busy:
 		return false
 	_debug_teleport_busy = true
 	var moved: bool = await _jump_to(dest)
@@ -3922,21 +3927,29 @@ var _travel_busy: bool = false
 
 func _travel_room_ready() -> bool:
 	"""
-	Whether a hop is safe to start here: solo, or a room whose join has SETTLED.
+	Whether a hop is safe to start here: solo, or a room that has already put this
+	body down.
 
-	`_debug_in_room()`'s idiom one step out. The debug teleport refuses in a room
-	outright, and its docstring says why — a teleport mid-arrival fights
-	`MpManager._apply_join_placement()`'s own placement. That is a race with the
-	JOIN, not with the room, and a settled room has no join in flight: a peer that
-	is `is_busy()` (from the moment `join()` is called) but has no `shared_bank()`
-	yet is exactly the window to stay out of. Outside it, travel is an ordinary
-	room-legal move — peers see the snap through `remote_avatar`'s
-	`TELEPORT_DISTANCE` and need no verb at all.
+	The debug teleport refuses in a room outright, and its docstring says why — a
+	teleport mid-arrival fights `MpManager._apply_join_placement()`'s own
+	placement. That is a race with the JOIN, not with the room, so travel narrows
+	the refusal to the window the race actually lives in: `is_busy()` is true from
+	the moment `join()` is called, and `join_placed()` is false until the room has
+	rebuilt the world around the group and set this body down in it. Outside that
+	window travel is an ordinary room-legal move — peers see the snap through
+	`remote_avatar`'s `TELEPORT_DISTANCE` and need no verb at all.
+
+	IT IS `join_placed()` AND NOT `shared_bank() != null` (review, 2026-09-12).
+	The bank is readable as soon as the incumbents' snapshots are in or their
+	1.5 s deadline is spent — whether or not a world has arrived to place into —
+	so a joiner can sit there with a perfectly readable bank and an unplaced body
+	for the whole 20 s seed budget. A hop taken in THAT window is wiped by the
+	placement when the seed finally lands, and the fare was real.
 	"""
 	var mp := _mp()
 	if mp == null or not mp.has_method("is_busy") or not mp.is_busy():
 		return true  # Solo, or a manager that is not engaged with the lobby.
-	return mp.has_method("shared_bank") and mp.shared_bank(own_coins) != null
+	return mp.has_method("join_placed") and mp.join_placed()
 
 
 func travel_to_waypoint(index: int) -> bool:
@@ -3958,7 +3971,7 @@ func travel_to_waypoint(index: int) -> bool:
 	  * the target's bit is clear — you cannot travel to a circle the crew has not
 	    found;
 	  * the target is the circle we are standing on;
-	  * a room whose join has not settled (`_travel_room_ready`);
+	  * a room that has not put this body down yet (`_travel_room_ready`);
 	  * fewer than `TELEPORT_COIN_COST` coins. THIS ONE SPEAKS — owner ruling:
 	    *"short of coins → refuse with a caption"*. It is last on purpose: a hero
 	    who is not eligible to travel at all must not be told about a price.
@@ -3985,7 +3998,8 @@ func travel_to_waypoint(index: int) -> bool:
 	    `WAYPOINT_DOOR_STANDOFF` clear of the +X wall), so `inside_walls()` is
 	    false at every one of them and no checkpoint rule applies.
 	"""
-	if _travel_busy:
+	# Both latches — see the pair in `debug_teleport_to()` for why one is not enough.
+	if _travel_busy or _debug_teleport_busy:
 		return false
 	if is_respawning or is_caught or is_game_over:
 		return false
@@ -4015,6 +4029,12 @@ func travel_to_waypoint(index: int) -> bool:
 	# reason: `record_coins` is what `_bank_records()` submits, and it only needs
 	# recording where the live balance is about to drop below it.
 	record_coins = maxi(record_coins, own_coins)
+	# SNAPSHOTTED, NOT RE-ADDED, so the refund below is exactly the bill. The
+	# displayed figure is clamped at zero (in a room it is the crew's bank and a
+	# joiner's has not been folded in yet, so it can legitimately sit under the
+	# fare), and `+= COST` would hand back more than the clamp took.
+	var own_before: int = own_coins
+	var shown_before: int = coins_collected
 	own_coins -= TELEPORT_COIN_COST
 	coins_collected = maxi(0, coins_collected - TELEPORT_COIN_COST)
 
@@ -4024,8 +4044,8 @@ func travel_to_waypoint(index: int) -> bool:
 	if not moved:
 		# The world went away under us (no terrain). Give the fare back rather
 		# than charging for a hop that never happened.
-		own_coins += TELEPORT_COIN_COST
-		coins_collected += TELEPORT_COIN_COST
+		own_coins = own_before
+		coins_collected = shown_before
 		return false
 	# AND WE ARE STANDING ON THE TARGET, without an enter edge — see
 	# `WaypointHub.arrived_at()` for why the landing must not read as an arrival.

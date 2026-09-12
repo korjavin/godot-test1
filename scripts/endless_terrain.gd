@@ -4737,11 +4737,22 @@ func relocate(around: Vector2i) -> void:
 	would not. The print line stays in `new_run()` for the same reason — a hop is
 	not a new run and must not say it is.
 
-	COSTS NO DRAW AND KEEPS NO MEMO. Nothing here hashes anything or reads the
-	RNG; the seeded memos are deliberately left ALONE, because they are still
-	true — the seed did not change, so the road stations, the terminal and
-	everything strung along them describe exactly the world being rebuilt
+	COSTS NO DRAW, AND KEEPS EVERY MEMO ON PURPOSE. Nothing here hashes anything
+	or reads the RNG; the seeded memos are deliberately left ALONE, because they
+	are still true — the seed did not change, so the road stations, the terminal
+	and everything strung along them describe exactly the world being rebuilt
 	(`_drop_seeded_memos()` is `set_run_seed()`'s, and only its).
+
+	AND `_migrated_units` IS LEFT ALONE TOO, which looks like an omission beside
+	`set_run_seed()`'s clear of it and is not (review, 2026-09-12). Clearing it
+	here would be actively worse: `update_chunks()` below runs SYNCHRONOUSLY in
+	this call while the bodies the loop above `queue_free`d are still alive until
+	the end of the frame, so an emptied registry would let a rebuilt chunk spawn a
+	second body for a slot whose first one has not died yet — and the slot name is
+	the room-wide crocodile id. Leaving it is safe because it reaps itself where
+	it is read (`terrain_predators.spawn_hunters_in_chunk` erases any entry whose
+	node is gone), so the only cost is a handful of dead references living until
+	their slot is next asked about.
 	"""
 	# 2. BOTH old-world pending queues emptied (update_chunks below rebuilds them
 	# for the new world anyway; clearing here just makes the invariant explicit).

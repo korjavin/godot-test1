@@ -164,9 +164,15 @@ func arrived_at(index: int) -> void:
 	NO BIT IS SET AND NO CARD IS RAISED: this is the position, not the discovery
 	(see `standing_on()`), and travel can only reach a circle already found.
 
-	It does not need to be in range for this to be correct — the next tick's
-	re-arm test measures the real distance and drops the latch if the hop somehow
-	put the body outside the leave pad, exactly as walking away does.
+	IT CAN BE UNDONE 200 ms LATER, and that is honest rather than a bug: the
+	landing spot is `PlayerController._place_near()`'s, which probes outward
+	through `JOIN_RING_RADII` (3, 5, 8, 12 m) for a body-sized gap and takes the
+	first ring that has one. The first ring almost always does — a circle's ground
+	is clear by construction — but a blocked one can push the landing past
+	`RING_RADIUS + LEAVE_PAD` (9.6 m), and the next tick's re-arm then measures
+	the real distance and drops the latch. The hero is simply standing a few steps
+	off the circle at that point, which is what the re-arm is for; they walk back
+	on and the ordinary enter edge latches it again.
 	"""
 	_standing_on = index
 
