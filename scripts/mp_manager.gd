@@ -189,6 +189,11 @@ const VERB_BUDGET_PER_SEC: Dictionary = {
 	"gate": 4,  # one HQ gate opening each (bead godot-test1-d81): a handful per campaign
 	"cap": 8, "room": 12, "pad": 4, "lmk": 10, "herd": 40, "wx": 40,
 	"shot": 10,
+	# one teleport circle found each (epic godot-test1-sc6): eleven in a world and
+	# each one found ONCE per run by construction, so the honest rate is a handful
+	# per run and 4 is `gate`'s number for `gate`'s reason — a monotone union has
+	# nothing to arbitrate, so the budget is the whole of the defence.
+	"wp": 4,
 }
 
 ## Join gate publish pacing (review rounds 3-4): one id per JOIN_GATE_PACE_SEC,
@@ -515,6 +520,21 @@ var _room_accum: float = 0.0
 ## Room-scoped: `leave()` empties it and a solo session never touches it. The
 ## PLAYER's copy deliberately survives a room join — see `report_landmark_explored`.
 var _explored_mask: int = 0
+
+## THE ROOM'S FOUND WAYPOINTS — 11 bits, one per `TerrainWaypoints.waypoint_sites()`
+## row (epic godot-test1-sc6, bead .2). `_explored_mask`'s twin one feature along,
+## and everything written above it applies here word for word: add-only, so
+## `_apply_waypoints()` ORs and no ordering between the live `wp` verb, the
+## master's `room` packet and a join snapshot can matter; room-scoped, so
+## `leave()` empties it and nothing is pushed into the player on the way out.
+##
+## THE ONE DIFFERENCE FROM `_explored_mask` IS THAT THERE IS NO CLAIM QUEUE, and
+## it is a difference in the STAKE rather than in the shape. A dropped `lmk` is a
+## landmark permanently missing from the room's WIN set, which is why that verb
+## alone carries `_pending_landmarks`. A dropped `wp` is a circle the crew has to
+## walk to again — and the master's `w` repairs it inside half a second anyway,
+## absolutely, because the set is monotone.
+var _waypoint_mask: int = 0
 
 ## Landmark claims this peer has made and not yet seen the master publish back:
 ## `{ slot index : true }`. THE ONLY RETRY QUEUE IN THIS FILE, and the reason is
@@ -860,6 +880,10 @@ func leave() -> void:
 	# Nothing is pushed into the player from here: a leave is not an un-exploring,
 	# and the player's own bits are its own truth again the moment it is solo.
 	_explored_mask = 0
+	# The ROOM's found waypoints die with the room too, and for the same reason:
+	# back in solo play the player's own `waypoint_mask` is the whole truth, and
+	# nothing is pushed into the player from here — a leave un-finds nothing.
+	_waypoint_mask = 0
 	_pending_landmarks = {}
 	_last_holder = {}
 	_released_msec = {}
@@ -1013,6 +1037,16 @@ func _on_lobby_joined(you: String, room: String, master: String, members: Array)
 		if host_player != null and "explored_mask" in host_player:
 			_explored_mask |= int(host_player.explored_mask) \
 					& ((1 << BudapestPlan.SLOTS.size()) - 1)
+		# ...AND THE HOST'S FOUND CIRCLES, for the identical reason (epic
+		# godot-test1-sc6). The host's world is the room's world — it adopts no
+		# foreign seed, so `reset_position()` never runs and its `waypoint_mask`
+		# survives into the room describing the very road every joiner will
+		# generate. Left out, those circles would be invisible to every peer for
+		# the room's life: `activate_waypoint()` refuses a bit it already holds, so
+		# the hub can never report them again.
+		if host_player != null and "waypoint_mask" in host_player:
+			_waypoint_mask |= int(host_player.waypoint_mask) \
+					& ((1 << TerrainWaypoints.WAYPOINT_COUNT) - 1)
 	# Every member already here sends us exactly one join snapshot, so this is how
 	# many the placement waits for (see JOIN_SNAPSHOT_WAIT). Peers arriving AFTER
 	# us are deliberately not counted: the protocol sends snapshots to the joiner,
@@ -1646,9 +1680,19 @@ func _send_room_state() -> void:
 		# cells. Absolute, never a delta — the set is monotone, so the master's
 		# copy is the room's and needs no grace window to adopt.
 		"g": opened,
+		# THE ROOM'S FOUND WAYPOINTS (epic godot-test1-sc6). OPTIONAL like `m` and
+		# `g`, for the same mixed-build reason: an older master's packet still
+		# repairs the cells it always did. Absolute, never a delta — monotone, so
+		# the master's copy is the room's and needs no grace window to adopt.
+		"w": _waypoint_mask,
 	}
 	_broadcast_reliable(var_to_bytes(payload))
-	var digest: String = "%s|%d|%s" % [payload["cap"], _explored_mask, opened]
+	# The waypoint mask joins the digest because the digest is what gates the
+	# RELAY leg, and that leg is the only channel to a peer whose ICE is still
+	# negotiating: a find left out of it would reach such a peer only once some
+	# OTHER field happened to change.
+	var digest: String = "%s|%d|%s|%d" % [payload["cap"], _explored_mask, opened,
+			_waypoint_mask]
 	if digest == _room_relay_digest:
 		return
 	_room_relay_digest = digest
@@ -1688,6 +1732,12 @@ func _receive_room(from_id: String, packet: Dictionary) -> void:
 	# as [] and absorbs to nothing — the documented mixed-room ceiling. Unknown
 	# ids are the receiver's skip, not the packet's failure (the `m` fold).
 	_absorb_opened_gates(msg["g"])
+	# THE ROOM'S FOUND WAYPOINTS, from the master alone and with none of the
+	# captive set's guards — the explored set's reasoning exactly (epic
+	# godot-test1-sc6). Add-only, so a repair that is a moment stale can only ever
+	# be a subset of the truth. An old master sends no `w`, which decodes as 0 and
+	# ORs to nothing: the documented mixed-room ceiling, not a special case.
+	_apply_waypoints(int(msg["w"]))
 	# THE ACK. This packet is the master's own truth, so a pending claim it carries
 	# has landed and may stop being re-sent — see `_tick_landmark_claims()`. It is
 	# done HERE and not in `_apply_explored()` because that function is also fed by
@@ -2650,6 +2700,20 @@ func _on_lobby_relay(from: String, payload: Dictionary) -> void:
 			if not _verb_rate_ok(from, "gate"):
 				return
 			_receive_gate(from, payload)
+		"wp":
+			# A found teleport circle from a peer whose mesh we have not finished
+			# building — see `publish_waypoint_found()` for why the relay carries
+			# this one at all. SAME PARSER, SAME RULE, SAME FUNCTION as the mesh
+			# verb, and rate-limited on the same budget, because a relayed packet
+			# is peer input like any other.
+			#
+			# `i` arrives as a JSON number here rather than a `var_to_bytes` int,
+			# and `decode_wp()` takes either — it checks `_is_number` and refuses a
+			# fractional value, the `lmk` spelling, so one gate holds for both
+			# transports.
+			if not _verb_rate_ok(from, "wp"):
+				return
+			_receive_wp(from, payload)
 		"state":
 			# A join snapshot from an incumbent. THE THIRD TRUST BOUNDARY in
 			# this file: `decode_state()` validates it whole, and anything that
@@ -3158,6 +3222,12 @@ func _send_state_to(id: String) -> void:
 		# `go`, not `g`: the snapshot's two-letter company (`cc`, `dd`, `gc`,
 		# `lm`), where a one-letter key beside them reads as a typo.
 		"go": _tower_opened_ids(),
+		# THE ROOM'S FOUND WAYPOINTS, absolute and never a delta (epic
+		# godot-test1-sc6) — `lm` and `go`'s rule, honoured from the master alone
+		# for the same reason: a live `wp` carries no authority to check and a
+		# replay has nothing to check either, so the room's own authority is the
+		# only honest source. `wo`, not `w`: the snapshot's two-letter company.
+		"wo": _waypoint_mask,
 	})
 
 
@@ -3390,6 +3460,13 @@ func _receive_state(from: String, snapshot: Dictionary) -> void:
 	# absorbs to nothing.
 	if from == _master:
 		_absorb_opened_gates(snapshot.get("go", []))
+	# THE ROOM'S FOUND WAYPOINTS, from the master alone — `go`'s authority rule
+	# with `lm`'s add-only ease, and the leg that hands a joiner the whole crew's
+	# map on arrival. A stranger's snapshot is not a contribution (the member-to-
+	# room channel is the `wp` verb); an older master's simply carries no `wo`,
+	# which decodes as 0 and ORs to nothing.
+	if from == _master:
+		_apply_waypoints(int(snapshot.get("wo", 0)))
 	# ...and the last thing the AUTO-CLAIM was waiting on, for the reason in
 	# `_auto_claim_hero()`: this snapshot is where a joiner learns which heroes are
 	# in a cell, and claiming before it lands is claiming one of them.
@@ -4196,6 +4273,8 @@ func _receive_mesh_verb(from_id: String, verb: String, packet: Dictionary) -> vo
 			_receive_room(from_id, packet)
 		"gate":
 			_receive_gate(from_id, packet)
+		"wp":
+			_receive_wp(from_id, packet)
 		_:
 			# Forward compatibility. Not a warning — see the docstring.
 			pass
@@ -4506,6 +4585,110 @@ func _apply_explored(mask: int) -> void:
 	var player: Node = get_tree().get_first_node_in_group("player")
 	if player != null and player.has_method("adopt_explored_mask"):
 		player.call("adopt_explored_mask", _explored_mask)
+
+
+# =============================================================================
+# FOUND WAYPOINTS — the `wp` verb (epic godot-test1-sc6, bead .2)
+# =============================================================================
+#
+# Eleven teleport circles stand in the world and stepping onto one opens it FOR
+# THE WHOLE CREW — the owner's framing, verbatim: *"when found - get's active for
+# the whole crew"*. The found set was designed for exactly that (a fixed-index
+# bitmask, monotone inside a run), so this follows the `gate` shape one verb
+# along, which is itself the `cap` shape one verb along:
+#
+#     wp   anyone -> everyone   {"t":"wp","i":int}   one find, RELIABLE
+#
+# plus the mask as an ABSOLUTE value beside `m` on the master's `room` repair
+# packet (`w`) and beside `go` in the join snapshot (`wo`) — the same live-plus-
+# repair split. Reliable because a lost find is a circle the crew has to walk to
+# twice; the repair legs close the join gap the live verb cannot reach.
+#
+# NO MASTER AUTHORITY AND NO POSITION CHECK, and both are deliberate rather than
+# missing. The set is monotone, so a union has no conflict and no direction to
+# undo, and a joiner who steps onto a circle while the master stands 2 km away
+# must not wait on a round trip to see it light. Unlike `lmk` — which the master
+# DOES position-check, because a landmark bit is a step toward the room's WIN —
+# there is nothing here worth arbitrating.
+#
+# THE CEILING, stated at the send site as every verb in this file states its own:
+# a modified client can light circles it never walked, for everybody. What that
+# buys is a lit beam and (from .3) a travel destination the crew could have
+# reached on foot anyway — no coins, no progression, nothing persisted. The
+# budget below is the whole of the defence and it is sized for it.
+
+func publish_waypoint_found(index: int) -> void:
+	"""
+	Tell the room this peer just found waypoint circle `index`. Called by
+	`waypoint_hub.gd` on the ENTER EDGE ONLY, through `has_method` — PUBLIC and
+	kept by NAME for that call.
+
+	A no-op offline: solo, the player's own `waypoint_mask` is the whole truth,
+	which is why this returns nothing for the caller to branch on — both sides
+	always act, and the hub has already set the local bit before it calls.
+
+	APPLIED LOCALLY AS WELL AS SENT (`report_landmark_explored`'s shape): our own
+	bit belongs in the room mask this peer publishes and reads, whether or not we
+	are the master and whether or not the master ever answers.
+
+	OVER THE MESH AND THE LOBBY RELAY, `_publish_captive`'s rule for
+	`_publish_captive`'s reason: ICE takes seconds, and a find made in that window
+	would otherwise be lost to the room for the rest of the run — this peer's own
+	bit is set for good, so the hub would never re-report it. The relay leg reaches
+	exactly the peers whose mesh is not up (normally none, so normally zero sends).
+	No retry queue: the master's `w` and the snapshot's `wo` repair a drop, which a
+	monotone set lets them do absolutely — the distinction `_pending_landmarks`
+	documents, on the one verb where a drop is not repairable.
+
+	SENT BY THE MASTER TOO, unlike `lmk`: `gate`'s rule. The master's own `room`
+	beat is only 2 Hz and this costs one small reliable packet a run.
+	"""
+	if _state != State.IN_ROOM:
+		return
+	if index < 0 or index >= TerrainWaypoints.WAYPOINT_COUNT:
+		return
+	_apply_waypoints(1 << index)
+	var packet: Dictionary = {"t": "wp", "i": index}
+	_broadcast_reliable(var_to_bytes(packet))
+	_relay_to_negotiating({"mp": "wp", "i": index})
+
+
+func _receive_wp(_from_id: String, packet: Dictionary) -> void:
+	"""
+	One `wp` from the mesh OR the relay — same parser, same function, the `cap` /
+	`gate` rule for two transports carrying one fact.
+
+	The sender carries no authority and is asked nothing: any member may find a
+	circle, so there is no holder to check and no position to verify (see the
+	banner). Rate-limited on the shared budget by both dispatches, because a
+	relayed packet is peer input like any other.
+	"""
+	var msg: Dictionary = MpCodec.decode_wp(packet)
+	if msg.is_empty():
+		return
+	_apply_waypoints(1 << int(msg["i"]))
+
+
+func _apply_waypoints(mask: int) -> void:
+	"""
+	Fold `mask` into the room's found set and mirror it into the local player.
+
+	OR AND NEVER ASSIGN — the one gate every source goes through (our own step, a
+	peer's `wp`, the master's `room` packet, a join snapshot), so no two of them
+	can drift and none of them can undo another. `_apply_explored()`, minus the
+	unconditional push's reason: there is no deferred win to re-drive here, and the
+	push is unconditional anyway because a mask that did not move costs
+	`adopt_waypoint_mask()` one OR.
+
+	THE PLAYER IS THE ONLY MIRROR. Nothing calls a beam from here: `waypoint_hub`
+	reads the player's mask on its own 5 Hz tick and is the one writer of every
+	beam, so a find that lands while its chunk is unloaded lights correctly the
+	moment that ground streams back in.
+	"""
+	_waypoint_mask |= mask & ((1 << TerrainWaypoints.WAYPOINT_COUNT) - 1)
+	var player: Node = get_tree().get_first_node_in_group("player")
+	if player != null and player.has_method("adopt_waypoint_mask"):
+		player.call("adopt_waypoint_mask", _waypoint_mask)
 
 
 func request_croc_kill(id: int) -> bool:

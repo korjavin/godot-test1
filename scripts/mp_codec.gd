@@ -901,6 +901,21 @@ static func decode_state(payload: Dictionary) -> Dictionary:
 				return {}
 			opened.append(gid)
 
+	# The room's found waypoints, absolute and never a delta — `lm`'s rule one
+	# field along (epic godot-test1-sc6, bead .2). MISSING IS NOT MALFORMED, the
+	# `gc`/`dead`/`cap` rule; present-but-malformed costs the whole snapshot; the
+	# mask is folded down to the circles this build knows, like `lm`. `wo`, not
+	# `w`: the two-letter company this snapshot already keeps (`cc`, `dd`, `gc`,
+	# `lm`, `go`), where a one-letter key beside them reads as a typo.
+	var waypoints: int = 0
+	if payload.has("wo"):
+		if not _is_number(payload["wo"]):
+			return {}
+		var raw_w: float = float(payload["wo"])
+		if not is_finite(raw_w) or raw_w < 0.0 or raw_w > float(MAX_STATE_COUNTER):
+			return {}
+		waypoints = int(raw_w) & ((1 << TerrainWaypoints.WAYPOINT_COUNT) - 1)
+
 	return {
 		"cc": counters[0],
 		"dd": counters[1],
@@ -911,6 +926,7 @@ static func decode_state(payload: Dictionary) -> Dictionary:
 		"cap": captives,
 		"lm": explored,
 		"go": opened,
+		"wo": waypoints,
 	}
 
 
@@ -1044,7 +1060,28 @@ static func decode_room(packet: Dictionary) -> Dictionary:
 				return {}
 			gates.append(gid)
 
-	return {"cap": names, "cd": seconds, "co": known, "m": explored, "g": gates}
+	# THE ROOM'S FOUND WAYPOINTS (epic godot-test1-sc6, bead .2). MISSING IS NOT
+	# MALFORMED, `m`'s rule two paragraphs up and for `m`'s reason: this field is
+	# younger than every peer that already shipped, `build_version` refuses to
+	# reload a peer that is in a room, so a master without it is a state that
+	# really happens — and dropping its packet over a field it has never heard of
+	# would stop the room repairing its CELLS, which is what this verb has always
+	# been for. Present-but-malformed still costs the whole packet.
+	#
+	# Folded down rather than dropped, exactly like `m`: a peer on a build with a
+	# twelfth circle sends a twelfth bit, and its first eleven are still true.
+	# `player_controller.adopt_waypoint_mask` masks again on its own side.
+	var waypoints: int = 0
+	if packet.has("w"):
+		if not _is_number(packet.get("w", null)):
+			return {}
+		var raw_w: float = float(packet["w"])
+		if not is_finite(raw_w) or raw_w < 0.0 or raw_w > float(MAX_STATE_COUNTER):
+			return {}
+		waypoints = int(raw_w) & ((1 << TerrainWaypoints.WAYPOINT_COUNT) - 1)
+
+	return {"cap": names, "cd": seconds, "co": known, "m": explored, "g": gates,
+			"w": waypoints}
 
 static func decode_captive(packet: Dictionary) -> Dictionary:
 	"""
@@ -1186,6 +1223,42 @@ static func decode_gate(packet: Dictionary) -> Dictionary:
 	if not TowerGraph.opened_ids().has(id):
 		return {}
 	return {"id": id}
+
+# =============================================================================
+# FOUND WAYPOINTS — the `wp` verb (epic godot-test1-sc6, bead .2)
+# =============================================================================
+
+static func decode_wp(packet: Dictionary) -> Dictionary:
+	"""
+	The `wp` parser — ANY member's find of one teleport circle.
+
+	@return: `{"i": int}`, or an EMPTY DICTIONARY — trusted whole or dropped
+	    whole, static and instance-free so scripts/mp_codec_selfcheck.gd can beat
+	    on it, exactly like `decode_lmk()`, whose body this is.
+
+	`_is_number` AND NOT `TYPE_INT`, for `decode_lmk`'s reason and not a new one:
+	this verb rides the LOBBY RELAY as well as the mesh (see
+	`MpManager.publish_waypoint_found` — ICE takes seconds and a find inside that
+	window would be lost to the room for the run), and `JSON.parse_string` hands
+	every number back as a FLOAT. So the value is checked FINITE AND IN RANGE
+	BEFORE ANY CAST (`int(NAN)` is undefined and on wasm the trunc can trap the
+	module), and a fractional one is refused afterwards: 3.5 is not a circle, it
+	is a peer that is not speaking this protocol.
+
+	THE RANGE IS CHECKED HERE and not left to the caller, `decode_lmk`'s rule for
+	`decode_lmk`'s reason: it bounds a SHIFT. Every consumer turns this index into
+	`1 << i`, and a large `i` is how a find becomes an overflow instead of a
+	refusal.
+	"""
+	if not _is_number(packet.get("i", null)):
+		return {}
+	var raw: float = float(packet["i"])
+	if not is_finite(raw) or raw < 0.0 or raw >= float(TerrainWaypoints.WAYPOINT_COUNT):
+		return {}
+	var index: int = int(raw)
+	if float(index) != raw:
+		return {}
+	return {"i": index}
 
 
 static func landmark_claim_in_reach(sender: Vector3, slot: Vector3, radius: float) -> bool:

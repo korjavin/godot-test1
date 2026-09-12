@@ -43,12 +43,34 @@ extends SceneTree
 ##      HIDDEN (this bead lights nothing — child .2 does). And through a direct
 ##      call: the chunk's batch grows by exactly `RING_BOX_COUNT` boxes, none of
 ##      them colliding, and `obstacles` does not grow at all.
+##   5. FOUND, AND FOUND ROOM-WIDE (bead .2). The mask on a real `player.tscn` is
+##      add-only and range-masked; a `room` packet with no `w` still repairs; a
+##      relayed `wp` through the SHIPPED `_receive_wp` lights a real marker's
+##      beam; and the enter edge finds a circle, publishes it to the room and
+##      re-arms past the dead band.
+##   6. AND THE SET IS PER-RUN. A text audit: `waypoint_mask = 0` stands beside
+##      every `explored_mask = 0` in the player, and `best_run_store.gd` has
+##      never heard of a waypoint.
 
 ## The end-of-check sentinel — see `scripts/selfcheck_sentinel.gd` for why every
 ## check stamps itself and the report site never prints SELFCHECK OK itself.
 const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
+## Check 5's cast: a REAL hero, the shipped room and the shipped hub. Nothing here
+## is a stub — the whole value of that check is that it drives the functions the
+## game calls, in the order the game calls them (the `tower_gate_sync_selfcheck`
+## discipline: through the shipped functions, never around them).
+const PLAYER_SCENE: String = "res://scenes/player.tscn"
+## Check 6's two subjects, read AS TEXT — see that check for why.
+const PLAYER_SCRIPT: String = "res://scripts/player_controller.gd"
+const STORE_SCRIPT: String = "res://scripts/best_run_store.gd"
+## How many lines below an `explored_mask = 0` check 6 will look for its twin.
+## Both shipped sites separate the two with a comment block explaining the
+## consequence, so this is sized for a paragraph and not for a line.
+const PER_RUN_WINDOW: int = 12
+const MPManager: GDScript = preload("res://scripts/mp_manager.gd")
+const WaypointHub: GDScript = preload("res://scripts/waypoint_hub.gd")
 ## The file check 2's text half reads. ONE entry today, and a list because the
 ## spawners in this project keep moving house (`landmark_sites_selfcheck`'s
 ## `SOURCE_SCRIPTS` learned that the hard way): a name found in none of these
@@ -117,11 +139,14 @@ func _run() -> void:
 	_check_no_draw(terrain_script)
 	_check_legality(terrain_script)
 	_check_built(terrain_script)
+	await _check_discovery(terrain_script)
+	_check_per_run()
 
 	if _failures.is_empty():
 		print("waypoints: %d sites over %d seeds — stable indices, draw-free, legal, "
 				% [EXPECTED_IDS.size(), SEEDS.size()]
-				+ "and built through create_chunk with no footprint")
+				+ "built through create_chunk with no footprint, and found "
+				+ "room-wide with the beam following the mask")
 		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
@@ -219,6 +244,17 @@ func _check_determinism(terrain_script: GDScript) -> void:
 	`int(ROAD_TERMINAL_X / WAYPOINT_SPACING)` — two constants and no seed — and
 	this is where that argument is turned into a measurement.
 	"""
+	# THE WIRE WIDTH, PINNED TO THE TABLE. `TerrainWaypoints.WAYPOINT_COUNT` is
+	# written out as a literal because GDScript cannot fold
+	# `BudapestPlan.WAYPOINTS.size()` into a `const` — so it is a second place to
+	# edit, and this is what makes that safe. It bounds `decode_wp`'s index test
+	# and both `adopt_waypoint_mask` AND masks, so a count below the real table
+	# would silently truncate the crew's found set at the eleventh circle.
+	if TerrainWaypoints.WAYPOINT_COUNT != EXPECTED_IDS.size():
+		_fail("TerrainWaypoints.WAYPOINT_COUNT is %d but the table has %d rows — the mask "
+				% [TerrainWaypoints.WAYPOINT_COUNT, EXPECTED_IDS.size()]
+				+ "width and the site table are one fact and they have drifted")
+
 	var first: Array[Dictionary] = []
 	for seed_value: int in SEEDS:
 		var terrain := _terrain(terrain_script, seed_value)
@@ -825,3 +861,259 @@ func _check_built(terrain_script: GDScript) -> void:
 			% [sites.size(), TerrainWaypoints.RING_BOX_COUNT]
 			+ "boxes through create_chunk, and no footprint")
 	Sentinel.done("built")
+
+
+# ============================================================================
+# CHECK 5 — the circle is FOUND, and the whole crew's beam follows the mask
+# ============================================================================
+#
+# Bead `godot-test1-sc6.2`. Four things, in the order a find actually travels:
+#
+#   a. THE MASK on a real `player.tscn` — a bit is set once, a repeat answers
+#      false (which is what makes the hub's enter edge free to fire as often as
+#      the player wanders on and off), an out-of-range index sets nothing, and
+#      `adopt_waypoint_mask` ORs rather than assigns and masks the wire's integer
+#      down to the circles that exist.
+#   b. THE REPAIR PACKET's optional field: `decode_room` with no `w` reads it as
+#      0 and KEEPS THE PACKET — `landmark_progress_selfcheck` check 4's argument,
+#      and mixed builds are real (`build_version` refuses to reload a peer that is
+#      in a room), so a master without the field must still repair the cells.
+#   c. END TO END THROUGH THE SHIPPED `_receive_wp`: one relay-shaped packet in at
+#      the room's front door, and out the other end a bit on the player AND a LIT
+#      BEAM on a marker `create_chunk` really built. Never around the functions —
+#      a check that set the bit by hand would pass with the verb unwired.
+#   d. THE ENTER EDGE: standing the hero on a circle finds it, and walking away
+#      re-arms the latch past the dead band.
+
+func _check_discovery(terrain_script: GDScript) -> void:
+	"""The mask, the optional repair field, the verb and the enter edge."""
+	# The failure count on the way in, so the summary line below is claimed only if
+	# this check actually earned it. Without it a mutation is reported TWICE — once
+	# as a FAIL and once, immediately above it, as a cheerful "the mask is add-only
+	# and range-masked" (independent review, 2026-09-12).
+	var before: int = _failures.size()
+
+	# --- a. THE MASK, on the shipped hero.
+	var player: Node = load(PLAYER_SCENE).instantiate()
+	root.add_child(player)
+	await process_frame
+	player.waypoint_mask = 0
+	if not player.activate_waypoint(3):
+		_fail("activate_waypoint(3) refused a circle nobody had found")
+	if player.waypoint_mask != 1 << 3:
+		_fail("activate_waypoint(3) left the mask at %d, wanted bit 3 alone"
+				% player.waypoint_mask)
+	if player.activate_waypoint(3):
+		_fail("activate_waypoint(3) reported a SECOND find of the same circle — the hub "
+				+ "would pop a card and publish a verb on every lap of the ring")
+	for illegal: int in [-1, TerrainWaypoints.WAYPOINT_COUNT, 64]:
+		if player.activate_waypoint(illegal):
+			_fail("activate_waypoint(%d) accepted an index off the table" % illegal)
+	if player.waypoint_mask != 1 << 3:
+		_fail("an out-of-range activate_waypoint moved the mask to %d" % player.waypoint_mask)
+
+	# ORs, never assigns — a stale repair packet may not un-find anything...
+	player.adopt_waypoint_mask(1 << 1)
+	if player.waypoint_mask != (1 << 3) | (1 << 1):
+		_fail("adopt_waypoint_mask ASSIGNED instead of OR-ing: %d" % player.waypoint_mask)
+	player.adopt_waypoint_mask(0)
+	if player.waypoint_mask != (1 << 3) | (1 << 1):
+		_fail("adopt_waypoint_mask(0) un-found a circle — the set is add-only")
+	# ...and the AND is the trust boundary's second half: a peer on a build with a
+	# twelfth circle sends a twelfth bit, and it must not land in a mask whose
+	# consumers only know eleven.
+	player.adopt_waypoint_mask(-1)
+	var full: int = (1 << TerrainWaypoints.WAYPOINT_COUNT) - 1
+	if player.waypoint_mask != full:
+		_fail("adopt_waypoint_mask(-1) left %d, wanted the %d legal bits — the mask is "
+				% [player.waypoint_mask, TerrainWaypoints.WAYPOINT_COUNT]
+				+ "not range-masked on the way in")
+	player.waypoint_mask = 0
+
+	# --- b. A MASTER THAT HAS NEVER HEARD OF WAYPOINTS still repairs the cells.
+	var legacy: Dictionary = MpCodec.decode_room(
+			{"t": "room", "cap": ["teibi"], "cd": 0.0, "co": 0})
+	if legacy.is_empty():
+		_fail("decode_room DROPPED a room packet with no `w` — an older master's repair "
+				+ "channel dies over a field it has never heard of")
+	elif int(legacy.get("w", -1)) != 0:
+		_fail("decode_room read a missing `w` as %s, wanted 0" % str(legacy.get("w", null)))
+	elif (legacy["cap"] as Array).size() != 1:
+		_fail("decode_room lost the captive set while reading a packet with no `w`")
+
+	# --- c. END TO END. One chunk built by the shipped pipeline, one room, one
+	# packet through the shipped receiver, and the beam must flip.
+	#
+	# ONE TERRAIN IN THE GROUP FIRST. Checks 1 and 3 stand terrains up on several
+	# seeds and leave them in the tree, and this is the first check whose SUBJECT
+	# resolves the terrain by group the way the game does (`waypoint_hub._scan`) —
+	# so a stray on another seed would hand the hub a different site table than the
+	# one asserted against here, and the enter edge would read as broken.
+	for stray in get_nodes_in_group("terrain"):
+		(stray as Node).queue_free()
+		(stray as Node).remove_from_group("terrain")
+	var terrain := _terrain(terrain_script, SEEDS[0])
+	# THE TERRAIN MUST NOT STREAM. `_terrain()`'s docstring notes it stays inert
+	# because nothing is in group "player" — and this check puts a real hero there,
+	# which would have it build a hundred chunks round the origin on the next
+	# frame. Nothing here needs streaming: the one chunk under test is built by
+	# hand through `create_chunk`, exactly as check 4 builds all eleven.
+	terrain.set_process(false)
+	var sites: Array[Dictionary] = TerrainWaypoints.waypoint_sites(terrain)
+	terrain.create_chunk(terrain.world_to_chunk(sites[0]["pos"] as Vector3))
+	var beam: MeshInstance3D = _beam_for(0)
+	var hub: Node = WaypointHub.new()
+	root.add_child(hub)
+	var mp: Node = MPManager.new()
+	# IN THE GROUP AND IN A ROOM, and both matter (independent review, 2026-09-12).
+	# `scenes/main.tscn` puts the manager in group "mp" from the SCENE, so a bare
+	# `MPManager.new()` joins nothing and `waypoint_hub._arrive()`'s group lookup
+	# would find no room at all — the whole SEND half of the verb would then ship
+	# green behind a mistyped group name or a `has_method` that never matches. And
+	# `publish_waypoint_found()` is a no-op outside a room, so the state is what
+	# makes step d reach it. The two send legs are null-safe with no `_rtc` and no
+	# `_lobby`, which is what lets this stop at the local apply.
+	mp.add_to_group("mp")
+	mp._state = MPManager.State.IN_ROOM
+	root.add_child(mp)
+
+	if beam == null:
+		_fail("check 5 found no beam for waypoint 0 — create_chunk built no marker")
+	else:
+		hub._tick()
+		if beam.visible:
+			_fail("the beam of an UNFOUND circle is lit — the hub paints from the mask, "
+					+ "and an unfound one is dark")
+		# THE RELAY'S SPELLING, deliberately: `i` as a float is what
+		# `JSON.parse_string` hands back, so this packet is the shape a real find
+		# arrives in when the sender's ICE is still negotiating.
+		mp._receive_wp("someoneelse", {"t": "wp", "i": 0.0})
+		if player.waypoint_mask & 1 == 0:
+			_fail("a `wp` through the shipped _receive_wp never reached the player's mask "
+					+ "(mask %d) — the room cannot share a find" % player.waypoint_mask)
+		hub._tick()
+		if not beam.visible:
+			_fail("a teammate's find did not light the beam — the hub is the ONE writer "
+					+ "of every beam and a relayed bit must reach it")
+
+	# --- d. THE ENTER EDGE. The hero walks onto circle 1 and finds it; walking
+	# clear past the dead band re-arms the latch for the next approach.
+	player.global_position = sites[1]["pos"] as Vector3
+	hub._tick()
+	if player.waypoint_mask & (1 << 1) == 0:
+		_fail("standing the hero on circle 1 did not find it — the enter edge is the "
+				+ "whole of the discovery")
+	if hub.standing_on() != 1:
+		_fail("standing_on() is %d with the hero on circle 1 — bead .4's panel opens on "
+				% hub.standing_on() + "this")
+	# AND THE SEND LEG. The hub found this one locally, so it must have gone out
+	# through `publish_waypoint_found()` — which applies our own bit to the ROOM's
+	# mask before it broadcasts. Reading `_waypoint_mask` is how a check with no
+	# mesh can still tell "the hub reached the room" from "the hub found the
+	# circle": only the publish path writes this one.
+	if mp._waypoint_mask & (1 << 1) == 0:
+		_fail("the hub's own find never reached the room's mask (%d) — "
+				% mp._waypoint_mask + "publish_waypoint_found was not called, or it "
+				+ "does not apply our own bit before sending")
+	player.global_position = (sites[1]["pos"] as Vector3) + Vector3(
+			TerrainWaypoints.RING_RADIUS + WaypointHub.LEAVE_PAD + 5.0, 0.0, 0.0)
+	hub._tick()
+	if hub.standing_on() != -1:
+		_fail("standing_on() is still %d with the hero well past LEAVE_PAD — the latch "
+				% hub.standing_on() + "never re-arms and the next approach is dead")
+
+	mp.queue_free()
+	hub.queue_free()
+	player.queue_free()
+	terrain.free()
+	if _failures.size() == before:
+		print("  the mask is add-only and range-masked, a room packet with no `w` still "
+				+ "repairs, a relayed find lights the beam through the shipped verb, and "
+				+ "the enter edge finds, publishes and re-arms")
+	Sentinel.done("discovery")
+
+
+func _beam_for(index: int) -> MeshInstance3D:
+	"""
+	The beam of the built marker carrying `index`, or null.
+
+	Found the way `waypoint_hub` finds it — by group and by the family's own
+	`WAYPOINT_BEAM_NAME` — so a rename that broke the hub breaks this too rather
+	than leaving the check quietly looking at a different node.
+	"""
+	for node in get_nodes_in_group(TerrainWaypoints.WAYPOINT_GROUP):
+		var marker := node as Node3D
+		if marker == null or int(marker.get_meta("index", -1)) != index:
+			continue
+		return marker.get_node_or_null(
+				NodePath(TerrainWaypoints.WAYPOINT_BEAM_NAME)) as MeshInstance3D
+	return null
+
+
+# ============================================================================
+# CHECK 6 — THE SET IS PER-RUN, and it is wiped wherever the explored set is
+# ============================================================================
+
+func _check_per_run() -> void:
+	"""
+	`waypoint_mask = 0` stands beside EVERY `explored_mask = 0` in the player, and
+	the found set is nowhere in the monotone store.
+
+	A TEXT AUDIT, `pause_selfcheck`'s shape for `tree.paused` — and it is a text
+	audit for the reason that check is one: what has to hold is an INVARIANT ABOUT
+	A LIST ("wiped at both sites the explored set is"), not a behaviour at two line
+	numbers. Driving `reset_position()` and `join_at()` for real would assert the
+	same two lines while dragging in a crocodile sweep and a full hero reset, and
+	it would say nothing at all about the THIRD wipe site somebody adds next year.
+
+	WHY IT IS WORTH A CHECK AT ALL: the independent review of this bead deleted
+	each of the two lines in turn and every self-check in the repo still printed
+	`SELFCHECK OK` — while the consequence is the sharpest one in the feature.
+	Three of the eleven circles are a pure function of `run_seed` (the road's), so
+	a mask that survived a re-seed is a lit beam over empty field and, from `.3`, a
+	travel offer to a circle that does not exist in this world. The owner's ruling
+	(epic `godot-test1-sc6` NOTES, 2026-09-12: per-run, "yes, default") is the
+	whole of the argument for it not being persisted, so the day it silently became
+	persistent nothing would say so.
+	"""
+	var source: String = FileAccess.get_file_as_string(PLAYER_SCRIPT)
+	if source.is_empty():
+		_fail("check 6 could not read %s" % PLAYER_SCRIPT)
+		Sentinel.done("per_run")
+		return
+	var lines: PackedStringArray = source.split("\n")
+	var wipes: int = 0
+	for i in lines.size():
+		if lines[i].strip_edges() != "explored_mask = 0":
+			continue
+		wipes += 1
+		# The twin may sit a comment block below its sibling — both shipped sites
+		# carry one — so the window is generous and the assertion is "beside",
+		# never "on the next line".
+		var found: bool = false
+		for j in range(i + 1, mini(i + PER_RUN_WINDOW, lines.size())):
+			if lines[j].strip_edges() == "waypoint_mask = 0":
+				found = true
+				break
+		if not found:
+			_fail("%s:%d wipes `explored_mask` with no `waypoint_mask = 0` inside %d "
+					% [PLAYER_SCRIPT, i + 1, PER_RUN_WINDOW]
+					+ "lines — the found set is PER-RUN (owner ruling 2026-09-12) and "
+					+ "a road circle that outlived its seed points at empty field")
+	if wipes < 2:
+		_fail("check 6 found %d `explored_mask = 0` wipe sites in %s, expected at least "
+				% [wipes, PLAYER_SCRIPT] + "2 — the audit has lost its anchor and would "
+				+ "now pass vacuously")
+
+	# ...AND IT IS NOT BANKED. `best_run_store.gd` merges every field with max or
+	# union precisely so a late reply can never lower a record, which is the exact
+	# wrong shape for a set that must be empty again next run.
+	var store: String = FileAccess.get_file_as_string(STORE_SCRIPT)
+	if store.is_empty():
+		_fail("check 6 could not read %s" % STORE_SCRIPT)
+	elif store.contains("waypoint"):
+		_fail("%s mentions `waypoint` — the found set is per-run and must never ride "
+				% STORE_SCRIPT + "the monotone store")
+	print("  the found set is wiped at all %d sites the explored set is, and the "
+			% wipes + "monotone store has never heard of it")
+	Sentinel.done("per_run")

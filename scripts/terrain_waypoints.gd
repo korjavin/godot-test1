@@ -204,10 +204,29 @@ const STUD_COLOR := Color(0.38, 0.44, 0.86)
 ## the loudest thing in an otherwise low, flat world.
 const BEAM_SIZE := Vector3(0.3, 9.0, 0.3)
 
+## HOW MANY BITS `waypoint_mask` IS, and therefore the bound every parser of the
+## `wp` verb checks an index against (`MpCodec.decode_wp`, bead .2). Eleven, the
+## banner's table — three around the HQ and the spawn, `road_slots()` on the road
+## and `BudapestPlan.WAYPOINTS` in the city.
+##
+## WRITTEN OUT RATHER THAN COMPUTED, for one reason and one only: GDScript folds
+## a `const` at parse time and `BudapestPlan.WAYPOINTS.size()` is a method call,
+## so the count cannot be expressed as one. Written down it is a SECOND PLACE TO
+## EDIT, which is exactly the failure mode a wire-format width must not have — so
+## `waypoint_selfcheck` check 1 pins it against `waypoint_sites().size()` on every
+## seed it sweeps, and a row added to any of the three sources without touching
+## this line fails there by name rather than truncating a peer's found set.
+const WAYPOINT_COUNT: int = 11
+
 ## The group and the meta the later beads find a built circle by — group-based
 ## discovery, never a reference (CLAUDE.md). `index` is the wire bit.
 const WAYPOINT_GROUP: String = "waypoint"
 const WAYPOINT_MARKER_NAME: String = "WaypointMarker"
+## The beam's node name, READ BY `waypoint_hub.gd` (bead .2) to find the one mesh
+## it shows and hides. Named here rather than typed twice, the `WAYPOINT_GROUP`
+## rule: the hub is the ONE writer of every beam's `visible`, so the name it looks
+## up and the name `_build_ring` assigns must be one string.
+const WAYPOINT_BEAM_NAME: String = "WaypointBeam"
 
 
 # ============================================================================
@@ -442,7 +461,7 @@ static func _build_ring(terrain: Node3D, local_pos: Vector3, index: int,
 	# no shadow — a column of light does not shade — and HIDDEN: nothing in this
 	# bead ever shows it, `.2` does when the room finds the circle.
 	var beam := MeshInstance3D.new()
-	beam.name = "WaypointBeam"
+	beam.name = WAYPOINT_BEAM_NAME
 	beam.mesh = ChunkBatch._get_shared_unit_box_mesh()
 	beam.transform = Transform3D(Basis().scaled(BEAM_SIZE), Vector3(0.0, BEAM_SIZE.y * 0.5, 0.0))
 	beam.material_override = terrain._get_artifact_glow_material()
