@@ -269,10 +269,10 @@ func _run() -> void:
 	# whatever they left behind.
 	await _shoot_predator(terrain, player, field,
 			"res://scenes/characters/hunter_robot.tscn", "hunter_robot",
-			"21_hunter", false)
+			"25_hunter", false)
 	await _shoot_predator(terrain, player, player.debug_destination_hq(),
 			"res://scenes/characters/tower_guard.tscn", "tower_guard",
-			"22_tower_guard", true)
+			"26_tower_guard", true)
 
 	# THE CAPTIONS (bead godot-test1-y1o.38) — the respawn countdown and the
 	# level-up line, the two biggest strings the game ever puts over the world.
