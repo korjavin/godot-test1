@@ -378,10 +378,12 @@ var run_beat_record: bool = false
 ## in the same call chain (`_on_caught_finished`), so a record read off the live
 ## balance is always one bill below the number the HUD showed.
 ##
-## Maintained at the ONE place `own_coins` decreases (`_pay_coin_setback`, which
-## snapshots the pre-bill balance) plus a `maxi` in `_bank_records` — never at the
-## two `+=` sites, because a peak only needs recording where it is about to be
-## lost. Both wipes of `own_coins` (`restart_game`, the room join) clear it.
+## Maintained at EVERY place `own_coins` decreases, each of which snapshots the
+## pre-bill balance — `_pay_coin_setback` (a bite) and `travel_to_waypoint` (the
+## waypoint fare, bead godot-test1-sc6.3) — plus a `maxi` in `_bank_records`;
+## never at the two `+=` sites, because a peak only needs recording where it is
+## about to be lost. Both wipes of `own_coins` (`restart_game`, the room join)
+## clear it.
 var record_coins: int = 0
 
 ## How often the run's records are checkpointed while the player is simply
@@ -2283,8 +2285,8 @@ func _pay_coin_setback(fraction: float) -> bool:
 	var arrested: bool = caught_captured
 	caught_captured = false
 	var lost: int = int(floor(float(own_coins) * fraction))
-	# THE PEAK, SNAPSHOTTED BEFORE THE BILL. This is the only place `own_coins`
-	# ever goes down, so remembering it here is the whole of peak tracking — and it
+	# THE PEAK, SNAPSHOTTED BEFORE THE BILL (the waypoint fare is the only other
+	# place `own_coins` goes down and does the same) — and it
 	# has to happen HERE rather than in `_bank_records()`, which `_on_caught_finished`
 	# calls immediately AFTER this bill and which would otherwise bank the balance
 	# the player was left with instead of the one the HUD showed (bead godot-test1-h6x).
@@ -3813,10 +3815,14 @@ func debug_teleport_to(dest: Vector3) -> bool:
 	never be reachable in a release build, or it trivially defeats the win
 	condition, the difficulty ramp and the road.
 
-	NOT TOTAL, and the exception is the HQ: `new_run()` re-seeds even with the
-	same value, and `set_run_seed()` resets the tower — so the shell re-streams
-	and its PER-RUN interior state (taken dossiers, guards, the LOD scent
-	trails) comes back. The monotone opened set is a store and survives.
+	THE HQ USED TO BE THE ONE EXCEPTION AND IS NOT ANY MORE (bead
+	godot-test1-sc6.3). This path called `new_run()` with the current seed, and a
+	seed write — even to the same value — goes through `set_run_seed()`, which
+	resets the tower: the shell re-streamed and its PER-RUN interior state (taken
+	dossiers, guards, the LOD scent trails) came back. It now goes through
+	`EndlessTerrain.relocate()`, which is that same wipe with the seed write
+	removed, so the building survives a measurement jump the way it survives a
+	walk. Nothing else about this function changed.
 
 	DISTANCE IS THE ONE THING A JUMP CANNOT LEAVE ALONE, and the file already
 	knows what to do about it: `own_distance` is measured from
@@ -3833,26 +3839,50 @@ func debug_teleport_to(dest: Vector3) -> bool:
 	`MpManager._apply_join_placement()`'s own placement; the arrival path wins
 	by construction because it runs last.
 
-	The re-seat is `MpManager._apply_join_placement()`'s sequence, minus the
-	seed change it needs and we must not do: `new_run` with the CURRENT seed
-	re-centres an identical world, `build_ring_now()` buys the ring's blocks
-	and crocodiles up front so `_place_near()`'s probes see real geometry, and
-	the physics-frame wait lets the physics space learn the new chunks before
-	any probe runs (placing before it probes the OLD world and drops you inside
-	a wall — the comment over there).
+	The re-seat is `_jump_to()`, which this function and the waypoint travel
+	below now share; its docstring is where the sequence is explained.
 	"""
 	if not debug_teleport_allowed(OS.is_debug_build(), _debug_in_room()):
 		return false
 	if _debug_teleport_busy:
 		return false
+	_debug_teleport_busy = true
+	var moved: bool = await _jump_to(dest)
+	_debug_teleport_busy = false
+	return moved
+
+
+func _jump_to(dest: Vector3) -> bool:
+	"""
+	THE RE-SEAT: rebuild the world around `dest`, then put the body down in it.
+
+	@return: false — having moved NOTHING — when there is no usable terrain.
+
+	The whole of what a teleport in this game physically IS, in one place,
+	shared by the debug cheat above and `travel_to_waypoint()` below (bead
+	godot-test1-sc6.3). Every GATE is the caller's: this function asks no
+	permission and charges no price, it only moves a body, which is what lets
+	one cheat and one paid-for ability run the identical sequence.
+
+	It is `MpManager._apply_join_placement()`'s sequence minus the seed change
+	that path needs and neither of these may do: `relocate()` re-centres the
+	SAME world (see its docstring for why not `new_run`), `build_ring_now()`
+	buys the ring's blocks and crocodiles up front so `_place_near()`'s probes
+	see real geometry, and the physics-frame wait lets the physics space learn
+	the new chunks before any probe runs — placing before it probes the OLD
+	world and drops you inside a wall (the comment over there).
+
+	IT AWAITS, so every caller must hold a reentrancy latch across the call: a
+	second jump starting inside that physics frame would wipe the world the
+	first one is halfway through landing in.
+	"""
 	var terrain := get_tree().get_first_node_in_group("terrain")
-	if terrain == null or not terrain.has_method("new_run") \
+	if terrain == null or not terrain.has_method("relocate") \
 			or not terrain.has_method("world_to_chunk") \
 			or not terrain.has_method("build_ring_now"):
 		return false
-	_debug_teleport_busy = true
 	var chunk: Vector2i = terrain.world_to_chunk(dest)
-	terrain.new_run(terrain.run_seed, chunk)
+	terrain.relocate(chunk)
 	terrain.build_ring_now(chunk)
 	await get_tree().physics_frame
 	var from_xz := Vector2(global_position.x, global_position.z)
@@ -3862,9 +3892,165 @@ func debug_teleport_to(dest: Vector3) -> bool:
 	clear_nearby_crocodiles(global_position)
 	respawn_blink_timer = 0.0
 	_apply_view_mode()
+	# TRANSIENT ABILITY STATE IS CLEARED ON EVERY TELEPORT (CLAUDE.md, Player and
+	# camera): a Windman mid-air-rush or a giant Teibi arriving 2 km away would
+	# carry a boost the new neighborhood never granted.
 	_reset_ability_states()
-	_debug_teleport_busy = false
 	return true
+
+
+# ============================================================================
+# WAYPOINT TRAVEL — THE PRIMITIVE (EPIC godot-test1-sc6, BEAD .3)
+# ============================================================================
+## Diablo's rule, and the owner's: you may travel only WHILE STANDING ON a found
+## circle, and only TO another found circle. There is no key here and no panel —
+## bead `.4` builds the panel that opens when you stand on one and calls
+## `travel_to_waypoint()` when you tap a row. This file is the half a reviewer can
+## measure without any UI at all (`waypoint_travel_selfcheck`).
+
+## Coins a single hop costs its traveller — OWNER RULING, 2026-09-12: *"pay 15
+## coins for one teleport"*. Billed like a contact tax: off the RUN's coins, never
+## off anything persisted (see `travel_to_waypoint`), and short of it the hop is
+## refused rather than discounted. Read by `.4`'s panel to print the price.
+const TELEPORT_COIN_COST: int = 15
+
+## Reentrancy latch for `travel_to_waypoint()` — `_debug_teleport_busy`'s shape
+## and its reason: the hop awaits a physics frame, and a second one starting
+## inside that frame would wipe the world the first is halfway through landing in.
+var _travel_busy: bool = false
+
+
+func _travel_room_ready() -> bool:
+	"""
+	Whether a hop is safe to start here: solo, or a room whose join has SETTLED.
+
+	`_debug_in_room()`'s idiom one step out. The debug teleport refuses in a room
+	outright, and its docstring says why — a teleport mid-arrival fights
+	`MpManager._apply_join_placement()`'s own placement. That is a race with the
+	JOIN, not with the room, and a settled room has no join in flight: a peer that
+	is `is_busy()` (from the moment `join()` is called) but has no `shared_bank()`
+	yet is exactly the window to stay out of. Outside it, travel is an ordinary
+	room-legal move — peers see the snap through `remote_avatar`'s
+	`TELEPORT_DISTANCE` and need no verb at all.
+	"""
+	var mp := _mp()
+	if mp == null or not mp.has_method("is_busy") or not mp.is_busy():
+		return true  # Solo, or a manager that is not engaged with the lobby.
+	return mp.has_method("shared_bank") and mp.shared_bank(own_coins) != null
+
+
+func travel_to_waypoint(index: int) -> bool:
+	"""
+	Hop to waypoint circle `index`, paying `TELEPORT_COIN_COST` for it.
+
+	@param index: a row of `TerrainWaypoints.waypoint_sites()` — the same index
+	    that is the circle's bit in `waypoint_mask` and on the wire.
+	@return: whether the hop actually happened. Every refusal moves NOTHING and
+	    charges NOTHING.
+
+	THE REFUSALS, and all of them are silent but the last:
+	  * a hop already in flight (`_travel_busy`);
+	  * mid-respawn, caught, or the run is over — the body is not the player's to
+	    move in any of the three;
+	  * not standing on a circle, per `waypoint_hub.standing_on()`, which is a
+	    POSITION AND NOT A PERMISSION (its docstring) — so the bit for the circle
+	    under our feet is ANDed against `waypoint_mask` here;
+	  * the target's bit is clear — you cannot travel to a circle the crew has not
+	    found;
+	  * the target is the circle we are standing on;
+	  * a room whose join has not settled (`_travel_room_ready`);
+	  * fewer than `TELEPORT_COIN_COST` coins. THIS ONE SPEAKS — owner ruling:
+	    *"short of coins → refuse with a caption"*. It is last on purpose: a hero
+	    who is not eligible to travel at all must not be told about a price.
+
+	THE PRICE IS A COIN TAX AND NOTHING MORE. `own_coins` is this peer's own stake
+	(in a room `coins_collected` is the whole crew's bank — see
+	`_refresh_shared_totals`), so the bill comes off that and the same number comes
+	off the displayed figure so the HUD moves on this frame. LIFETIME TOTALS ARE
+	NEVER TOUCHED: `progression.gd`'s count and `best_run_store.gd`'s records are
+	monotone by design (CLAUDE.md, Persistence is monotone), and this is the second
+	place in the file that bills a run — `_pay_coin_setback()` is the first — so it
+	also snapshots `record_coins` the way that one does, or the run's coin PEAK
+	would be lost every time somebody travelled while ahead.
+
+	WHAT THIS DELIBERATELY DOES NOT DO:
+	  * NO VERB. Peers need no packet: a remote avatar that finds its target more
+	    than `RemoteAvatar.TELEPORT_DISTANCE` away snaps instead of interpolating,
+	    which is the arrival, drawn correctly, for free.
+	  * NO COOLDOWN (owner ruling — the price is the brake).
+	  * NOTHING ABOUT THE CHASE. The pack left behind is simply 2 km away on the
+	    next frame: `crocodile_lod_manager` sleeps everything past `SIM_RADIUS` and
+	    `hunt_director` reaps its bucket. Abandoning a chase is what travel IS.
+	  * NOTHING ABOUT CAPTIVES. No circle stands inside the HQ (site 0 is
+	    `WAYPOINT_DOOR_STANDOFF` clear of the +X wall), so `inside_walls()` is
+	    false at every one of them and no checkpoint rule applies.
+	"""
+	if _travel_busy:
+		return false
+	if is_respawning or is_caught or is_game_over:
+		return false
+	var hub := get_tree().get_first_node_in_group("waypoint_hub")
+	if hub == null or not hub.has_method("standing_on") or not hub.has_method("arrived_at"):
+		return false
+	var terrain := get_tree().get_first_node_in_group("terrain")
+	if terrain == null or not terrain.has_method("tower_site"):
+		return false
+	var sites: Array[Dictionary] = TerrainWaypoints.waypoint_sites(terrain)
+	var here: int = int(hub.call("standing_on"))
+	if here < 0 or here >= sites.size() or index < 0 or index >= sites.size():
+		return false
+	if index == here:
+		return false
+	# STANDING ON A *FOUND* CIRCLE — the hub answers the first half, the mask the
+	# second, and the epic's rule is the AND of the two.
+	if waypoint_mask & (1 << here) == 0 or waypoint_mask & (1 << index) == 0:
+		return false
+	if not _travel_room_ready():
+		return false
+	if own_coins < TELEPORT_COIN_COST:
+		_say_travel_too_poor()
+		return false
+
+	# THE PEAK, SNAPSHOTTED BEFORE THE BILL — `_pay_coin_setback()`'s line and its
+	# reason: `record_coins` is what `_bank_records()` submits, and it only needs
+	# recording where the live balance is about to drop below it.
+	record_coins = maxi(record_coins, own_coins)
+	own_coins -= TELEPORT_COIN_COST
+	coins_collected = maxi(0, coins_collected - TELEPORT_COIN_COST)
+
+	_travel_busy = true
+	var moved: bool = await _jump_to(sites[index]["pos"] as Vector3)
+	_travel_busy = false
+	if not moved:
+		# The world went away under us (no terrain). Give the fare back rather
+		# than charging for a hop that never happened.
+		own_coins += TELEPORT_COIN_COST
+		coins_collected += TELEPORT_COIN_COST
+		return false
+	# AND WE ARE STANDING ON THE TARGET, without an enter edge — see
+	# `WaypointHub.arrived_at()` for why the landing must not read as an arrival.
+	hub.call("arrived_at", index)
+	return true
+
+
+func _say_travel_too_poor() -> void:
+	"""
+	The one refusal the player is told about: too few coins for the fare.
+
+	It is `landmark_toast`'s two-line card, which is the same widget
+	`waypoint_hub` raises when a circle is found — so the epic says everything it
+	has to say in one place on the screen, and there is no second overlay to
+	build, pause or localize. Null-safe group + `has_method`, so a scene with no
+	toast refuses just as silently as it always did.
+
+	The title is a raw `ui.csv` key (`Control`'s auto-translation does the rest —
+	`announce`'s contract); the body is a FORMAT string and therefore takes an
+	explicit `tr()` before the `%`, which is CLAUDE.md's localization rule.
+	"""
+	var toast := get_tree().get_first_node_in_group("landmark_toast")
+	if toast != null and toast.has_method("announce"):
+		toast.call("announce", "Not enough coins",
+			tr("Travel costs %d coins.") % TELEPORT_COIN_COST)
 
 
 func _room_group_anchor() -> Variant:
