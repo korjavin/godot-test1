@@ -64,6 +64,50 @@ extends RefCounted
 ## changed. `spine_02` IS written now, but only as the pelvis's counter-rotation:
 ## it takes a turn BACK, never one forward.
 ##
+## ### WHAT THE SKELETONS COST — MEASURED IN A BROWSER (bd godot-test1-5u3.11)
+##
+## Epic `5u3` closed on a four-in-a-room reading (bead `5u3.8`, PR #374) that
+## charged three skinned heroes **+3.3 ms** of frame time. That reading was a
+## WINDOWED DESKTOP `gl_compatibility` stand-in; bead `5u3.11` went and took it in
+## the browser the stand-in stands in for, and **IT DOES NOT REPRODUCE.**
+##
+## The probe is 5u3.8's own scene: the local player plus three `RemoteAvatar`s
+## through the shipped `receive_state()` (rig kinds ASSERTED — three skinned, one
+## limb), Budapest through the shipped `\fb`, 60 s windows, `\fo`'s counters. The
+## control column is the SAME RUN with every `set_bone_pose_rotation()` below
+## suppressed: identical meshes, identical GDScript, the skeletons simply never
+## go dirty, so the difference is the engine re-skinning them and nothing else.
+##
+##                    shipped           bones never written
+##   DEBUG WEB EXPORT, Chrome/WebGL2, Apple M4 — the target, and the gate
+##     frame ms        16.67 / 16.79    16.67 / 16.67
+##     fps             60.0  / 59.6     60.0  / 60.0
+##     process ms       6.61            5.82  / 5.85
+##   DESKTOP STAND-IN, `--rendering-driver opengl3`, windowed 1280x720, same M4
+##     frame ms        18.15 / 17.89    15.55 / 15.41
+##     fps             55.1  / 55.9     64.3  / 64.9
+##
+## Three skeletons cost about **0.8 ms of CPU against a 16.7 ms budget** in the
+## browser and the build never leaves the vsync ceiling; the frame-ms delta the
+## bead was filed on comes out at 0.06 ms. The stand-in charges 2.5 ms for the
+## same three bodies — and a separate-run pair on the same machine read 20.13 /
+## 20.38 against 16.17 / 16.70, which is 5u3.8's published regression exactly,
+## with the control column landing on its pre-epic baseline. So the stand-in was
+## measuring macOS's deprecated desktop GL (Godot reports `OpenGL API 4.1 Metal -
+## 90.5 - Compatibility`), which is not what the web target runs: Chrome drives
+## WebGL2 through ANGLE/Metal and pays a fifth of it. No fix shipped, by
+## measurement — the bead's own instruction for a browser reading inside noise.
+##
+## AND IT WAS NEVER THIS FILE. A third desktop window with the drivers not bound
+## at all reads 16.02 ms against the 16.17 above, so every write below —
+## seventeen bones a frame, each through `_set_axis`'s read-modify-write — is
+## ~0.15 ms of that 3.8. Caching bone lookups harder or writing fewer bones
+## cannot buy back a cost that is the ENGINE re-skinning a dirty skeleton; the
+## only two levers that reach it are update FREQUENCY (the crocodile LOD's sleep,
+## for avatars far enough away that a coarse pose is invisible) and VERTEX COUNT
+## (a web-gated decimation in `build_hero.py`). At 0.8 ms neither is worth the
+## divergence risk it would add to a pose two peers have to agree on.
+##
 ## EVERY BONE `5u3.9` ADDED IS A BONE `measure()` DOES NOT EXPOSE — the calf, the
 ## foot, the forearm, the clavicle, the pelvis and the two spine bones. That is
 ## not an accident, it is the design rule that let this bead land: `measure()`'s
