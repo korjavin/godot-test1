@@ -481,6 +481,20 @@ def wrap_band(obj, eye_z, cfg):
     half = math.radians(band["half_angle"])
     thickness = band["thickness"]
 
+    # THE TWO LINES ARE CUT INTO THE SKULL FIRST, because `lifted` below is a
+    # face-by-face selection and a selection can only follow edges that exist. Without
+    # the cuts the wrap's boundary is the head's own triangulation, and straightening
+    # it afterwards can only ever reach one side: the snap this file used to do pulled
+    # the CLOTH's rim onto the two lines and left the skin it was lifted off with the
+    # sawtooth, so the edge that met the cheek was a triangle ragged while the outer
+    # one was straight (bead z3e.16, grid 25). Bisecting puts a real edge ring at
+    # `top` and at `bottom` and both edges lie on it — the same measurement
+    # `build_hero.dress_shells` cuts every garment hem for.
+    for height in (top, bottom):
+        bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:],
+                               dist=1e-5, plane_co=(0.0, 0.0, height),
+                               plane_no=(0.0, 0.0, 1.0))
+
     # The skull's vertical axis, taken from the band's own slab so the arc is centred
     # on the face and not on a bounding box that includes the neck stump.
     slab = [v.co for v in bm.verts if bottom <= v.co.z <= top]
@@ -512,6 +526,12 @@ def wrap_band(obj, eye_z, cfg):
     # two openings capped flat, and the cloth is lifted off a blank face.
     sockets = [f for f in lifted
                if f.normal.dot(outward(f.calc_center_median())) < -0.2]
+    # The hole they leave has a RIM, and that rim is a boundary of the lifted patch
+    # too — an inner one, which ends up UNDER the cloth instead of beside it, so the
+    # `skin_edge` assert below excuses it. Read here, while those faces still exist.
+    socket_set = set(sockets)
+    hole_rim = set(v for f in sockets for v in f.verts
+                   if any(g not in socket_set for g in v.link_faces))
     if sockets:
         bmesh.ops.delete(bm, geom=sockets, context='FACES')
         # The neck's own hole was capped in `cut_head`, so these are the only open
@@ -550,6 +570,24 @@ def wrap_band(obj, eye_z, cfg):
             "extrude_face_region gave %d cap faces (%d lifted), %d verts and %d "
             "walls: the wrap would not be a closed shell"
             % (len(cloth), len(lifted), len(moved), len(walls)))
+    # AND THIS IS WHAT SAYS THE CUT LANDED. A wall's vertices that are NOT the
+    # extrusion's own are the originals of the duplicated boundary — the line where
+    # the cloth meets the skin, and the one nothing here ever moves. After the bisect
+    # every one of them sits on a band line. Two parts of that boundary are excused:
+    # the arc's two ENDS, where it runs up the face and is meant to follow the
+    # triangulation, and the capped sockets, whose rims are a hole inside the patch
+    # and end up under the cloth rather than beside it. Without the bisect this finds
+    # 80 strays up to 5 cm off; with it, none.
+    skin_edge = set(v for f in walls for v in f.verts) - moved - hole_rim
+    ragged = [v for v in skin_edge
+              if abs(abs(bearing(v.co)) - half) >= 0.10
+              and min(abs(v.co.z - top), abs(v.co.z - bottom)) > 1e-4]
+    if ragged:
+        raise AssertionError(
+            "%d of %d skin-side band vertices are off both band lines, by up to "
+            "%.4f m: the bisect did not cut the boundary"
+            % (len(ragged), len(skin_edge),
+               max(min(abs(v.co.z - top), abs(v.co.z - bottom)) for v in ragged)))
     # AND THE FACE UNDER THE CLOTH GOES WITH IT: the extrusion leaves the original
     # faces behind as an inner shell, and an inner shell is 1,200 triangles nobody
     # will ever see. The walls already close the hole it leaves.
@@ -562,16 +600,11 @@ def wrap_band(obj, eye_z, cfg):
     for _ in range(band["smooth"]):
         bmesh.ops.smooth_vert(bm, verts=interior, factor=0.5,
                               use_axis_x=True, use_axis_y=True, use_axis_z=True)
-    # A HEM, because a face-by-face selection leaves a sawtooth edge and sawtooth
-    # cloth reads as TORN. The rim is pulled onto the band's own top and bottom
-    # lines, which is where the wrap says its edge is; the walls just slant a few
-    # millimetres to meet the skin where it actually is. The arc's two ENDS are rim
-    # too and are left alone — snapping them would collapse the end into a point.
-    middle = (top + bottom) / 2.0
-    for v in rim:
-        if abs(abs(bearing(v.co)) - half) < 0.10:
-            continue
-        v.co.z = top if v.co.z > middle else bottom
+    # THE HEM IS THE CUT NOW. Until bead z3e.16 the rim was SNAPPED here — pulled
+    # onto the band's two lines, because a face-by-face selection leaves a sawtooth
+    # and sawtooth cloth reads as TORN. It straightened the cloth's own edge and
+    # could not straighten the skin's, which is half a fix; the bisect above
+    # straightens both, and the assert on `skin_edge` is what holds it there.
     for v in moved:
         out = Vector((v.co.x - axis.x, v.co.y - axis.y, 0.0))
         if out.length > 1e-6:

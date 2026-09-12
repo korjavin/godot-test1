@@ -43,7 +43,8 @@ extends RefCounted
 ## conjugated through the bone's PARENT global rest basis — `P⁻¹ · R · P` is the
 ## same turn written in the space `set_bone_pose_rotation()` expects. That is
 ## roll-agnostic, so it needs no table and no per-hero tuning (spike `5u3.1`'s
-## finding, recorded in `style_shots._pose_skinned()`).
+## finding; the probe that recorded it retired with bead `5u3.3`, and `_off_rest()`
+## below is the conjugation itself).
 ##
 ## ### WHY THE POSE IS AN EULER TRIPLE, like a node's
 ##
@@ -296,7 +297,8 @@ func set_clock(seconds: float, land: float,
 
 
 func rest_pose() -> void:
-	"""Back to the exported rest — every bone, fingers included — and then the
+	"""Back to the exported rest — every bone, and since bead `5u3.3` collapsed
+	the fingers into `hand_l`/`hand_r` that is 23 of them — and then the
 	elbow back to its neutral bend, because `elbow_bend_deg` is the rest this
 	driver poses around on every other path (`locomotion`, `air`, `idle`). Left
 	at the exported straight arm, a character swap would show one frame of
