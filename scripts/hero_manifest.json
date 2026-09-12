@@ -13,12 +13,12 @@
     "teibi": {
       "bones": 23,
       "glb": "teibi_parts/teibi_skinned.glb",
-      "glb_bytes": 457080,
+      "glb_bytes": 453048,
       "head_tris": 5064,
       "height_m": 1.8349,
       "texture_bytes": 0,
       "texture_size": 0,
-      "tris": 13996
+      "tris": 13870
     },
     "windman": {
       "bones": 23,
