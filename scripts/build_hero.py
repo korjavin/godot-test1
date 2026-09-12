@@ -25,6 +25,16 @@ WHAT A ROW IS (and where each half of it came from):
                     no seam, no second material.
   bands             the joint-height overrides a bone cannot express: belt, cuff,
                     collar. A row lists the ones it wears.
+  garments          clothing as GEOMETRY, not as paint (bead godot-test1-5u3.10;
+                    owner, on the rest row: "why are the pants so slick"). A
+                    garment is a bone scope, a z range and how far proud of the
+                    skin it stands: `dress_shells` cuts a hem ring and pushes that
+                    patch of body out, `paint_body` colours the same patch. Every
+                    garment in the cast — trousers, shorts, shirt, sleeves, boot
+                    shaft, waistband — is one row of that shape.
+  tails             Primm's, and Primm's alone: the two coat flaps off the back
+                    hem. The one garment that must be NEW geometry, because there
+                    is no body under it to push out (`attach_tails`).
   dressing          one hero's OWN garment, as a callable `paint_body` runs after
                     those bands: Primm's open lab coat (`_primm_coat` — the V of
                     inner shirt, the silver seams, the rolled sleeve, the boot
@@ -123,6 +133,12 @@ these, which are this lane's own):
     geometry with no vertex groups at all, and an unweighted vertex is a vertex
     that stays behind when the hero walks. `weight_strays_to()` sweeps them onto
     one bone after the wrap; `report_weights()` is what would catch it.
+ 9. A GARMENT MOVES THE BODY'S OWN VERTICES; IT IS NOT A SECOND SURFACE. See
+    `dress_shells()` — the shell idiom this lane can afford, and the tri budget
+    that is why. Anything that ADDS geometry to the body (`dress_shells`'s hem
+    cuts, `densify_chest`) must run BEFORE `wrap_band`, whose `flat_faces` are
+    polygon indices; anything joined AFTER it (the beret, the eyes, Primm's coat
+    tails) is refused on a row that wears a band. `build()` holds both rules.
 """
 
 import json
@@ -132,6 +148,7 @@ import sys
 import tempfile
 
 import addon_utils
+import bmesh
 import bpy
 import importlib
 from mathutils import Matrix, Vector
@@ -257,8 +274,31 @@ PRIMM_V_HALF = 0.10       # half-width of the V at the top; it tapers to 0
 PRIMM_V_EDGE = 0.022      # the glowing line: the outer part of the V's width
 PRIMM_TRIM = 0.026        # how wide a silver seam is — one vertex ring, closed
 PRIMM_SLEEVE = 0.04       # the rolled sleeve ends this far ABOVE the wrist
+PRIMM_COAT_HEM = 0.02     # ... and the coat ends this far above the pelvis joint;
+                          # ONE number, read by the `garments` row that cuts the
+                          # step and by the seam below that has to sit on it
 PRIMM_BOOT_TOP = 0.28     # medium boots: the shaft rim, above the floor
 PRIMM_FINGERS = 0.035     # the silver fingertips, off the lowest glove vertex
+
+
+def _primm_open_front(co, neck_z, margin=0.0):
+    """The open front of the coat, as a pure test on one point — and the ONE copy
+    of it, because bead 5u3.10 made the V a hole in the coat's geometry as well as
+    a patch of its paint. `dress_shells` carves the V out of the shell (so the
+    black inner shirt is RECESSED, and the coat's own edge is the "silver trim" the
+    canon asks for: a real ledge with silver on it, not a 2 mm painted line this
+    mesh cannot hold — see `dress_shells`); `_primm_coat` paints it. If the two
+    ever disagreed the silver would land off the step.
+
+    Returns (inside the V widened by `margin`, on the V's own glowing edge).
+    """
+    top = neck_z - 0.04
+    if co.y <= 0.0 or not (top - PRIMM_V_DROP <= co.z <= top):
+        return False, False
+    half = PRIMM_V_HALF * (co.z - (top - PRIMM_V_DROP)) / PRIMM_V_DROP
+    if abs(co.x) > half + margin:
+        return False, False
+    return True, abs(co.x) > half - PRIMM_V_EDGE
 
 
 def _primm_coat(v, key, in_torso, ctx):
@@ -275,7 +315,10 @@ def _primm_coat(v, key, in_torso, ctx):
     # so the shaft is the bottom of the CALF repainted, with a silver band at the
     # rim. The rim is also where `paint_body`'s 6 mm shoe shell stops, so the band
     # sits on a real step in the silhouette rather than on flat paint.
-    if key == ck["trousers"] and z <= PRIMM_BOOT_TOP:
+    # (Since bead 5u3.10 the shaft is also its own geometry shell, so the key
+    # arriving here is already `shoes` over the calf — the rim band still has to
+    # be painted, and it now sits on the shell's own step rather than on flat skin.)
+    if key in (ck["trousers"], ck["shoes"]) and z <= PRIMM_BOOT_TOP:
         return ck["trim"] if z >= PRIMM_BOOT_TOP - PRIMM_TRIM else ck["shoes"]
 
     # THE ROLLED SLEEVE: the jacket stops 4 cm above the wrist over a silver seam,
@@ -306,10 +349,15 @@ def _primm_coat(v, key, in_torso, ctx):
     if not in_torso:
         return key
 
-    # THE JACKET HEM — a silver seam at the pelvis, which is where a lab coat cut
-    # for a runner ends. This row wears no belt: the generator's was its own
-    # invention and the canon has none.
-    if abs(z - ctx["pelvis_z"]) <= PRIMM_TRIM * 0.5:
+    # THE JACKET HEM — a silver seam at the bottom of the coat, which for a lab
+    # coat cut for a runner is the pelvis. This row wears no belt: the generator's
+    # was its own invention and the canon has none. The band sits ABOVE the hem
+    # height rather than centred on it (bead 5u3.10) because that height is now
+    # the coat shell's own step, and a seam straddling it paints half its silver
+    # onto the torso underneath — measured on this bead's first build, 7 to 20 mm
+    # of it below the edge it was supposed to mark.
+    coat_hem = ctx["pelvis_z"] + PRIMM_COAT_HEM
+    if coat_hem <= z <= coat_hem + PRIMM_TRIM:
         return ck["trim"]
 
     # THE OPEN FRONT: a V of black inner shirt down the chest, OUTLINED in the
@@ -317,13 +365,56 @@ def _primm_coat(v, key, in_torso, ctx):
     # and outlining it is what makes the "faint glowing blue lines forming a subtle
     # geometric pattern" a shape this mesh can hold — a line ACROSS the panel is
     # three vertices long, the V's own edge is forty and runs the whole chest.
-    top = ctx["neck_z"] - 0.04
-    if v.co.y <= 0.0 or not (top - PRIMM_V_DROP <= z <= top):
+    # SINCE BEAD 5u3.10 THE V IS A HOLE IN THE COAT, so there are three bands and
+    # not two: the panel and its glowing edge lie on the recessed inner shirt, and
+    # the ring of coat immediately OUTSIDE the V — the lapel, `PRIMM_TRIM` wide —
+    # is the silver trim, riding the step `dress_shells` left there.
+    lapel, _ = _primm_open_front(v.co, ctx["neck_z"], PRIMM_TRIM)
+    if not lapel:
         return key
-    half = PRIMM_V_HALF * (z - (top - PRIMM_V_DROP)) / PRIMM_V_DROP
-    if abs(v.co.x) > half:
-        return key
-    return ck["line"] if abs(v.co.x) > half - PRIMM_V_EDGE else ck["panel"]
+    inside, edge = _primm_open_front(v.co, ctx["neck_z"])
+    if not inside:
+        return ck["trim"]
+    return ck["line"] if edge else ck["panel"]
+
+
+# ---------------------------------------------------------------------------
+# HOW A GARMENT IS CUT — bead godot-test1-5u3.10, and the only numbers in a
+# `garments` row that are not landmarks. A cut is (how far the shell stands proud
+# of the skin at its TOP, how far at its HEM), in metres; `dress_shells` ramps
+# between the two, and that ramp is what separates a trouser leg from a pair of
+# tights (its docstring has the measurement). The hem number is also the height of
+# the ledge the hem cut leaves, so two garments that meet must differ by enough to
+# see, and the one ABOVE must be the prouder or its hem is a step the wrong way
+# round. Read a hero's `garments` from the skin outwards and check that.
+#
+# Measured against the mesh's own pitch: the body decimates to ~3 cm between
+# vertices, so a 2 cm hem is a ledge two thirds of a triangle deep and the
+# silhouette at 3 m breaks on it. Under ~8 mm it does not — bead 5u3.6's 1.6 cm
+# painted seam vanished at a third of that.
+GARMENT_SLEEVE = (0.010, 0.016)   # an arm with nothing else on it, and its cuff
+GARMENT_FITTED = (0.012, 0.020)   # "dark blue fitted trousers", "uniform pants"
+GARMENT_SHIRT = (0.016, 0.024)    # a shirt or polo, and the hem it hangs over
+GARMENT_COAT = (0.018, 0.028)     # a lab coat, which hangs off the shoulders
+GARMENT_BAGGY = (0.020, 0.028)    # "slightly baggy, with natural folds"
+GARMENT_BOOT = (0.024, 0.030)     # a shaft that swallows the trouser tucked in it
+GARMENT_WAIST = (0.020, 0.020)    # a waistband is a ridge; a ridge does not flare
+
+# Where every hem in the cast sits, so two heroes' trousers end at the same height
+# off the same landmark rather than off two typed numbers.
+HEM_WAIST = ("pelvis", 0.06)      # the top of the trousers = the bottom of the shirt
+HEM_ANKLE = ("shoe_top", 0.02)    # trousers stop 2 cm above the shoe
+HEM_SHOULDER = ("shoulder", 0.07)  # the top of a sleeve, over the deltoid
+
+# The bones a garment can be hung on, named once. `dress_shells` reads these
+# through the row, so a garment's scope is a list of bones exactly as
+# `bone_regions` is — the same currency, for the same reason.
+LEG_BONES = ["pelvis", "spine_01", "thigh_l", "thigh_r", "calf_l", "calf_r"]
+THIGH_BONES = ["pelvis", "spine_01", "thigh_l", "thigh_r"]
+TORSO_BONES = ["spine_01", "spine_02", "spine_03", "clavicle_l", "clavicle_r"]
+SLEEVE_BONES = ["upperarm_l", "upperarm_r", "lowerarm_l", "lowerarm_r"]
+SHOULDER_BONES = ["upperarm_l", "upperarm_r"]
+SHAFT_BONES = ["calf_l", "calf_r", "foot_l", "foot_r", "ball_l", "ball_r"]
 
 
 HEROES = {
@@ -359,6 +450,26 @@ HEROES = {
                        "belt": "belt", "belt_buckle": "belt_buckle",
                        "cuff": "shirt_collar", "collar": "shirt_collar"},
         "bands": ("belt", "cuff", "collar"),
+        # THE UNIFORM (owner, 2026-09-12: "teibi has uniform pants"). Straight-cut
+        # trousers from a waistband ridge down to 2 cm above the shoe, and the
+        # mustard polo over torso and both arms. The sleeve hem is 2 cm BELOW the
+        # estimated wrist on purpose: the `cuff` band above spans wrist +- 2 cm, so
+        # a sleeve stopping at the wrist would paint half that collar-coloured ring
+        # onto bare forearm — this way the whole band lands on the sleeve and the
+        # step is under it. (The hand is its own bone region and the scope's weight
+        # test keeps the shell off it.) Order matters for the COLOUR only, later
+        # rows overwriting earlier ones; the lift is `max`, so it is order-free.
+        "garments": (
+            {"bones": LEG_BONES, "top": HEM_WAIST, "bottom": HEM_ANKLE,
+             "cut": GARMENT_FITTED, "key": "trousers"},
+            {"bones": THIGH_BONES, "top": ("pelvis", 0.055),
+             "bottom": ("pelvis", -0.03), "cut": GARMENT_WAIST,
+             "key": "trousers"},
+            {"bones": TORSO_BONES, "top": ("neck", -0.02), "bottom": HEM_WAIST,
+             "cut": GARMENT_SHIRT, "key": "shirt"},
+            {"bones": SLEEVE_BONES, "top": HEM_SHOULDER, "bottom": ("wrist", -0.02),
+             "cut": GARMENT_SLEEVE, "key": "shirt"},
+        ),
         "hair": {"lift": 0.006, "front": 0.036, "nape": 0.05, "brows": True},
         "beret": True,
         "eyes": True,
@@ -420,6 +531,24 @@ HEROES = {
         # No belt, no cuff, no collar: the generator's torso is one flat blue and
         # the arms it would band are bare skin now.
         "bands": (),
+        # THE SHORTS AND THE T-SHIRT (owner, 2026-09-12: "Windman has shorts").
+        # docs/characters/windman.md: "Brown shorts to the knee, straight cut ...
+        # slightly baggy, with natural folds when moving", and a T-shirt whose
+        # sleeves are "sleeveless or ... short sleeves that go to mid-shoulder".
+        # So the shorts are the baggiest thing in the cast and they stop 3 cm
+        # ABOVE the knee, with bare calf below (`below` puts the skin back on the
+        # thigh the `trousers` bone region would otherwise paint brown all the way
+        # down), and the sleeve is a cap ending a third of the way down the upper
+        # arm — the first time his arms have worn anything at all.
+        "garments": (
+            {"bones": THIGH_BONES, "top": HEM_WAIST, "bottom": ("knee", 0.03),
+             "cut": GARMENT_BAGGY, "key": "trousers", "below": "skin"},
+            {"bones": TORSO_BONES, "top": ("neck", -0.02), "bottom": HEM_WAIST,
+             "cut": GARMENT_SHIRT, "key": "shirt"},
+            {"bones": SHOULDER_BONES, "top": HEM_SHOULDER,
+             "bottom": ("shoulder", -0.10), "cut": GARMENT_SLEEVE,
+             "key": "shirt"},
+        ),
         # THE BANDAGE IS CLOTH, and it is bead z3e.13's cloth — `wrap_band` and the
         # row it reads, imported. It also deletes the eye sockets under it, which
         # is why this row builds no eyeballs: "windman has no eyes, he use air
@@ -488,6 +617,30 @@ HEROES = {
         # has none) and the cuff with it (the sleeve now ends 4 cm above the wrist,
         # which is `_primm_coat`'s job and a different band entirely).
         "bands": ("collar",),
+        # THE COAT, AS A COAT (owner, 2026-09-12: "prim has long jacket, like a
+        # tuxedo with tails"). The jacket shell stands 1.5 cm proud of the torso
+        # and is CARVED at the open front, so the black inner shirt is recessed
+        # and `_primm_coat`'s silver lapel has a real step to sit on; its sleeves
+        # stop over the rolled-sleeve seam 4 cm above the wrist; the trousers are
+        # fitted and TUCKED IN (they stop at the boot rim, and the shaft shell is
+        # deeper, so the boot swallows them); the tails hang off the back hem —
+        # see `attach_tails`, which is the only garment here that is new geometry.
+        "garments": (
+            {"bones": LEG_BONES, "top": ("pelvis", 0.04),
+             "bottom": ("ground", PRIMM_BOOT_TOP), "cut": GARMENT_FITTED,
+             "key": "trousers"},
+            {"bones": SHAFT_BONES, "top": ("ground", PRIMM_BOOT_TOP),
+             "bottom": ("ground", 0.0), "cut": GARMENT_BOOT, "key": "shoes"},
+            {"bones": TORSO_BONES, "top": ("neck", -0.02),
+             "bottom": ("pelvis", PRIMM_COAT_HEM), "cut": GARMENT_COAT, "key": "shirt",
+             "carve": lambda v, z: _primm_open_front(v.co, z["neck"])[0]},
+            {"bones": SLEEVE_BONES, "top": HEM_SHOULDER,
+             "bottom": ("wrist", PRIMM_SLEEVE), "cut": GARMENT_SLEEVE,
+             "key": "shirt"},
+        ),
+        # pelvis 0.6 / thigh 0.4, and the thigh half is not decoration: a flap
+        # welded to the hips alone is a flap the back leg walks straight through.
+        "tails": {"pelvis": 0.6},
         "dressing": _primm_coat,
         # THE GOGGLES ARE PAINT, not cloth — no `band` key. The spike's own ruling:
         # a lens is not a wrap, and stripes on the skin are what shipped.
@@ -517,7 +670,14 @@ HEROES = {
 # silhouette and all of the acting, so it gets its own target instead.
 BODY_TRIS = 8200             # marginally denser than the 7,790 Teibi shipped at
 HEAD_TRIS = 4400             # the spike's own 4,500-triangle head, at body scale
-TRI_BUDGET = 14000           # incl. every accessory joined after the collapse
+# INCL. EVERY ACCESSORY JOINED AFTER THE COLLAPSE, and since bead 5u3.10 every
+# hem. Was 14,000, which the shipped Windman sat 589 triangles under: the garment
+# shells cut two edge rings per hem (`dress_shells`) and Primm's coat tails join
+# two boxes, and the bead's own ceiling is "+40 percent per hero", which for the
+# fattest of the three is 18,775. 15,500 is the measured build plus room for one
+# more garment, not the ceiling — a row that needs the rest of the 40% should
+# come with the frame time that says it can have it.
+TRI_BUDGET = 15500
 HEAD_TRIS_MIN = 4000         # the face must survive the body's budget
 
 # THE SHOE SHELL (bead 5u3.3's polish slot). MakeHuman ships bare feet with toes,
@@ -912,6 +1072,259 @@ def colour_regions(row):
     return out
 
 
+def _vg_ids(obj, names):
+    return {vg.index for vg in obj.vertex_groups if vg.name in names}
+
+
+def landmarks(obj, tj, row):
+    """Every height a garment or a band is allowed to be measured from, in the
+    reframed game frame, as ONE dictionary — because `dress_shells` cuts a hem at
+    a height and `paint_body` colours the same hem at the same height, and two
+    copies of "2 cm above the shoe" is how a seam ends up 4 mm off its own step.
+
+    `wrist` has no joint helper behind it (MakeHuman ships none): the forearm is
+    about as long as the upper arm, so it is estimated a forearm past the elbow,
+    which is what `paint_body`'s cuff band has always done. `shoe_top` is measured
+    off the mesh rather than off a joint — it is where the shoe REGION ends, which
+    is the only thing a trouser hem can be hung on.
+    """
+    z = {"ground": 0.0,
+         "pelvis": tj["pelvis"].z,
+         "neck": tj["neck"].z,
+         "knee": (tj["l-knee"].z + tj["r-knee"].z) / 2.0,
+         "shoulder": (tj["l-shoulder"].z + tj["r-shoulder"].z) / 2.0,
+         "eye": (tj["l-eye"].z + tj["r-eye"].z) / 2.0,
+         }
+    for side in ("l", "r"):
+        z["wrist_" + side] = (tj["%s-elbow" % side].z
+                              - (tj["%s-shoulder" % side].z
+                                 - tj["%s-elbow" % side].z) * 0.85)
+    z["wrist"] = (z["wrist_l"] + z["wrist_r"]) / 2.0
+    shoe_ids = _vg_ids(obj, colour_regions(row)["shoes"])
+    z["shoe_top"] = max((v.co.z for v in obj.data.vertices
+                         if _group_weight(v, shoe_ids) > 0.5), default=0.0)
+    return z
+
+
+def _hem(spec, end, z):
+    name, offset = spec[end]
+    return z[name] + offset
+
+
+# ---------------------------------------------------------------------------
+# CLOTHING AS GEOMETRY — bead godot-test1-5u3.10
+# ---------------------------------------------------------------------------
+#
+# OWNER, 2026-09-12, on `docs/style/z3e/build_hero_rest_row.png`: "not too bad,
+# but what with pants, why are they so slick. Windman has shorts, teibi has
+# uniform pants, prim has long jacket, как смокинг с фалдами."
+#
+# Everything the cast wore until this bead was PAINT: `paint_body` picks a colour
+# per vertex off the bone weights and the band heights, and the vertex it paints
+# is the naked MakeHuman body's own. A trouser leg is therefore exactly the shape
+# of the leg inside it — no hem, no cuff, no waistband, no thickness anywhere —
+# which at 3 m reads as body paint, because that is what it is.
+#
+# A GARMENT IS THE BODY'S OWN SURFACE, PUSHED OUT. Not a duplicated shell, and
+# this is the one real decision in the bead. The obvious build — duplicate the
+# region's faces, offset them, solidify, cap the boundary — doubles those faces
+# and the cast has 590 triangles of headroom between the shipped Windman (13,411)
+# and the budget the lane asserts. It also needs a seam policy nobody wants:
+# cloth that is a separate surface z-fights the skin under it wherever the two
+# curvatures disagree, and every copied vertex is a second set of four bone
+# influences for the web renderer to skin. Pushing the body out instead is the
+# idiom this file ALREADY ships twice — the hair lift and the shoe shell in
+# `paint_body`, both "move the region's verts along their own normals" — and it
+# costs nothing: the vertices are weighted already (trap 8 cannot bite), the
+# surface stays one closed manifold, and the cloth cannot separate from the body
+# in any pose because it IS the body.
+#
+# WHAT MAKES IT A HEM AND NOT A BULGE is the pair of cuts. A garment's bottom
+# edge is bisected TWICE, `HEM_CUT` apart, and only the upper of the two rings is
+# pushed out: the 3 mm of surface between them becomes a near-vertical wall a
+# centimetre and a half tall, which is a hem with an edge on it and a shadow
+# under it. Without the cuts the step lands on whatever ring the decimate left
+# nearby and the hem zigzags by up to a triangle — measured on this body at ~3 cm,
+# which is a ragged hem, not a straight one.
+#
+# WHAT IT CANNOT DO, and is not asked to: cloth that leaves the body. Folds that
+# hang, a coat that swings away from the hip, a sleeve with slack in it — all of
+# those need a second surface and a simulation this game does not have. The one
+# garment that genuinely is not on a body — Primm's coat tails — is therefore the
+# one that is new geometry (`attach_tails`). And the canon's 2-3 mm silver trim
+# RIDGES stay vertex colour: at a ~3 cm vertex pitch a 3 mm ridge is a tenth of a
+# triangle, which is the same measurement that made bead 5u3.6 rewrite this coat
+# once already. What this bead gives them instead is a real STEP to sit on —
+# the coat's carved front edge, the boot rim, the sleeve hem — so the silver is
+# now paint on an edge rather than paint on a flat chest.
+HEM_CUT = 0.003          # how far below a hem the second ring is cut
+GARMENT_WEIGHT = 0.5     # how much of a vertex a garment's bones must hold to dress it
+GARMENT_CUT = 0.25       # ... and how little is still worth cutting through
+# THE PREFIX OF THE VERTEX GROUP `dress_shells` HANDS `paint_body`. A garment is
+# classified ONCE, before the push, and the answer is carried in a vertex group
+# because that is the only thing in this lane that survives both the push and the
+# wrap — trap 1's own lesson ("vertex GROUPS survive ..., vertex INDICES do not"),
+# and `dress_shells`'s docstring has the measurement that made it necessary.
+# Removed again at the end of `paint_body`, so nothing but a bone ever reaches the
+# exporter. Never a bone name, so `_vg_ids` / `report_weights` / `weight_strays_to`
+# (all of which filter by the armature's own names) cannot see it.
+GARMENT_VG = "garment:"
+
+
+def _bisect_at(obj, height, ids):
+    """One horizontal edge ring through the limb `ids` drives, at `height`.
+
+    Scoped by bone weight and not by z alone, because in MakeHuman's A-pose the
+    hands hang level with the hips: a plane through a trouser waistband is also a
+    plane through both forearms, and the cut that gives the trousers a straight
+    hem would give the coat sleeves a ring in the middle of nothing.
+
+    The new vertices are interpolated along the edges they split, so they inherit
+    the deform weights of both ends — a cut cannot make an unweighted vertex, and
+    `report_weights()` after the bake is what says so.
+    """
+    me = obj.data
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    deform = bm.verts.layers.deform.verify()
+
+    def held(v):
+        return sum(w for g, w in v[deform].items() if g in ids)
+
+    geom = set()
+    for f in bm.faces:
+        if any(held(v) > GARMENT_CUT for v in f.verts):
+            geom.add(f)
+            geom.update(f.verts)
+            geom.update(f.edges)
+    before = len(bm.verts)
+    if geom:
+        bmesh.ops.bisect_plane(bm, geom=list(geom), dist=1e-5,
+                               plane_co=(0.0, 0.0, height),
+                               plane_no=(0.0, 0.0, 1.0))
+    added = len(bm.verts) - before
+    bm.to_mesh(me)
+    bm.free()
+    me.update()
+    return added
+
+
+def _garment_verts(me, spec, ids, z):
+    """The vertices of one garment: in its bone scope, between its two hems, and
+    not carved out of it. Returns (dressed, bare) — `bare` is everything in the
+    scope BELOW the hem, which is what a row's `below` key repaints (Windman's
+    thigh under the shorts, which the `trousers` bone region would otherwise paint
+    brown all the way to the boot)."""
+    low = _hem(spec, "bottom", z)
+    high = _hem(spec, "top", z)
+    carve = spec.get("carve")
+    dressed, bare = [], []
+    for i, v in enumerate(me.vertices):
+        if v.co.z > high or _group_weight(v, ids) <= GARMENT_WEIGHT:
+            continue
+        if v.co.z < low - 1e-6:
+            bare.append(i)
+        elif not (carve and carve(v, z)):
+            dressed.append(i)
+    return dressed, bare
+
+
+def dress_shells(obj, tj, row):
+    """THE GARMENTS, AS GEOMETRY. Cut every hem, then push every garment out.
+
+    Two passes and not one, because a bisect renumbers and re-indexes the mesh:
+    all the cutting happens first, the vertex set each garment claims is read off
+    the mesh that comes out of it, and the push is applied ONCE per vertex at the
+    deepest garment claiming it (`max`, not a sum — Teibi's waistband lies inside
+    his trousers, and adding the two would stand it 3 cm off his hip).
+
+    AND THE CLASSIFICATION IS DONE HERE, ONCE, FOR BOTH HALVES OF A GARMENT. The
+    first build of this bead let `paint_body` re-run `_garment_verts` for the
+    colour, which is the same question asked of a mesh that has since MOVED: every
+    vertex within one lift of a hem answers the z test differently after the push,
+    so the cloth colour stopped one ring short of the cloth geometry. Measured on
+    that build — Windman's cap sleeve lost 50 of its 256 vertices to `skin` and
+    his shorts hem 33 more, i.e. a pale fringe of bare leg on exactly the two
+    edges this bead exists to create; Teibi and Primm were saved only by their
+    fallback argmax landing on the same palette key. So the answer is written into
+    `GARMENT_VG` vertex groups and `paint_body` reads those.
+
+    Runs after `densify_chest` and BEFORE `wrap_band` — see trap 9. Both of those
+    change polygon indices and the wrap hands `export_glb` a set of them. The
+    groups are how the answer crosses the wrap, which renumbers vertices too.
+
+    ONLY BOTTOM EDGES ARE CUT. A garment's top is either under a prouder garment
+    (the constants' own ordering rule) or over a bone the scope excludes, so it
+    never shows a hem; the day a row needs a visible top edge it needs its own
+    pair of cuts here.
+    """
+    garments = row.get("garments", ())
+    if not garments:
+        return
+    z = landmarks(obj, tj, row)
+    added = cuts = 0
+    for spec in garments:
+        ids = _vg_ids(obj, spec["bones"])
+        hem = _hem(spec, "bottom", z)
+        # A hem ON the floor is the sole of a boot, which has no edge to cut and
+        # no body below it (Primm's shaft bottoms out at z = 0): the pair of rings
+        # would be two rows of vertices spent on nothing.
+        if hem <= HEM_CUT:
+            continue
+        added += _bisect_at(obj, hem, ids)
+        added += _bisect_at(obj, hem - HEM_CUT, ids)
+        cuts += 2
+    me = obj.data
+    lift = [0.0] * len(me.vertices)
+    worn = {}
+    for spec in garments:
+        ids = _vg_ids(obj, spec["bones"])
+        dressed, bare = _garment_verts(me, spec, ids, z)
+        for i in dressed:
+            worn[i] = spec["key"]
+        if "below" in spec:
+            for i in bare:
+                worn[i] = spec["below"]
+        if not dressed:
+            raise AssertionError(
+                "the %r garment dressed no vertex — its hems (%.3f..%.3f) are not "
+                "over the bones it names" % (spec["key"], _hem(spec, "bottom", z),
+                                             _hem(spec, "top", z)))
+        # THE HEM IS PROUDER THAN THE WAIST, and that is the whole difference
+        # between a trouser leg and a pair of tights. The body inside narrows from
+        # the thigh to the ankle and a constant offset narrows with it — the first
+        # build of this bead came out in leggings 1.2 cm thick (`docs/style/z3e/
+        # grid_26_clothing.png`, the middle column). A "straight cut" is the cloth
+        # NOT following the leg in, so `flare` is what the shell stands proud at
+        # the hem and `proud` what it stands at the top, ramped linearly between.
+        # Linear, and not a fit to the leg's own radius: a real straight cut would
+        # push every vertex out to a cylinder around the limb's axis, which needs
+        # a per-leg axis and a per-hero radius — this reads right at 3 m for six
+        # lines, and the knee is the place it does not (it stays a knee).
+        low, high = _hem(spec, "bottom", z), _hem(spec, "top", z)
+        proud, flare = spec["cut"]
+        for i in dressed:
+            t = 0.0 if high <= low else min(1.0, max(
+                0.0, (high - me.vertices[i].co.z) / (high - low)))
+            lift[i] = max(lift[i], proud + (flare - proud) * t)
+        log("garment %-9s %-9s %.3f..%.3f m, %d verts, %.0f mm proud, %.0f at the hem"
+            % (spec["key"], spec["bones"][0], low, high, len(dressed),
+               proud * 1000.0, flare * 1000.0))
+    by_key = {}
+    for i, key in worn.items():
+        by_key.setdefault(key, []).append(i)
+    for key, ids in sorted(by_key.items()):
+        obj.vertex_groups.new(name=GARMENT_VG + key).add(ids, 1.0, 'REPLACE')
+    normals = [v.normal.copy() for v in me.vertices]
+    for i, proud in enumerate(lift):
+        if proud > 0.0:
+            me.vertices[i].co += normals[i] * proud
+    me.update()
+    log("dressed: %d hem cut(s) added %d verts, %d of %d verts pushed out, "
+        "worn: %s" % (cuts, added, sum(1 for p in lift if p > 0.0), len(lift),
+                      {k: len(v) for k, v in sorted(by_key.items())}))
+
+
 def paint_body(obj, tj, row, band_verts=frozenset()):
     """Base region colour by bone-weight argmax, then geometric BAND overrides
     (belt, cuff, collar) scoped by bone region, then the face detail.
@@ -940,14 +1353,24 @@ def paint_body(obj, tj, row, band_verts=frozenset()):
     region_ids = {r: ids(bones) for r, bones in colour_regions(row).items()}
     scope_ids = {r: ids(bones) for r, bones in REGION_BONES.items()}
 
-    pelvis_z = tj["pelvis"].z
-    neck_z = tj["neck"].z
-    eye_z = (tj["l-eye"].z + tj["r-eye"].z) / 2.0
-    # No joint-l-wrist helper exists; the forearm is roughly as long as the upper
-    # arm, so estimate the wrist a forearm-length past the elbow.
-    wrist_z = {s: tj["%s-elbow" % s].z
-               - (tj["%s-shoulder" % s].z - tj["%s-elbow" % s].z) * 0.85
-               for s in ("l", "r")}
+    z = landmarks(obj, tj, row)
+    pelvis_z = z["pelvis"]
+    neck_z = z["neck"]
+    eye_z = z["eye"]
+    wrist_z = {s: z["wrist_" + s] for s in ("l", "r")}
+
+    # THE GARMENTS' OWN COLOUR (bead godot-test1-5u3.10), read off the vertex
+    # groups `dress_shells` wrote when it classified them — NOT re-derived here,
+    # because by now the mesh has moved and the same z test answers differently
+    # (that docstring has the measurement). It replaces the bone-region argmax
+    # where it speaks — which is how a sleeve can cover the top third of a bone
+    # the row put in another region (Windman's cap sleeve over his bare
+    # `upperarm`), and how `below` puts skin back under a hem (his thigh below the
+    # shorts). Everything after this — the belt/cuff/collar bands and the row's
+    # own `dressing` — still has the last word.
+    garment_of_group = {vg.index: vg.name[len(GARMENT_VG):]
+                        for vg in obj.vertex_groups
+                        if vg.name.startswith(GARMENT_VG)}
 
     # A ROW MAY DRESS ITSELF FURTHER (bead godot-test1-5u3.6). The three bands
     # above are the ones every generator in this game wore; a garment that is ONE
@@ -960,7 +1383,9 @@ def paint_body(obj, tj, row, band_verts=frozenset()):
     per_vert = [None] * len(me.vertices)
     for i, v in enumerate(me.vertices):
         region = max(region_ids, key=lambda r: _group_weight(v, region_ids[r]))
-        key = colour_key[region]
+        worn = next((garment_of_group[g.group] for g in v.groups
+                     if g.group in garment_of_group), None)
+        key = colour_key[region if worn is None else worn]
 
         in_torso = _group_weight(v, scope_ids["torso"]) > 0.4
         if "belt" in bands and in_torso and abs(v.co.z - pelvis_z) <= 0.025:
@@ -1040,6 +1465,11 @@ def paint_body(obj, tj, row, band_verts=frozenset()):
         v.co += normals[i] * SHOE_LIFT
         v.co.z = max(v.co.z, 0.0)
     me.update()
+
+    # `dress_shells`'s hand-off, spent. The exporter must see bone groups and
+    # nothing else, and this is the last reader.
+    for vg in [g for g in obj.vertex_groups if g.name.startswith(GARMENT_VG)]:
+        obj.vertex_groups.remove(vg)
 
 
 def _glyph_distance(spec, co, origin_z):
@@ -1269,12 +1699,14 @@ def build_eyes(colours, l_pos, r_pos, radius=0.012):
     return eyes
 
 
-def join_rigid(target, extra, bone):
-    """Join `extra` into `target` with every one of its vertices weighted 1.0 to
-    `bone`. The join happens AFTER the rig so MPFB2's automatic weights are
-    never asked to guess for a beret; the group is written by hand instead."""
-    vg = extra.vertex_groups.new(name=bone)
-    vg.add(list(range(len(extra.data.vertices))), 1.0, 'REPLACE')
+def join_weighted(target, extra, weights):
+    """Join `extra` into `target` with every one of its vertices carrying
+    `weights` — a bone name to weight map that should sum to 1. The join happens
+    AFTER the rig so MPFB2's automatic weights are never asked to guess for a
+    beret; the groups are written by hand instead."""
+    for bone, weight in weights.items():
+        vg = extra.vertex_groups.new(name=bone)
+        vg.add(list(range(len(extra.data.vertices))), weight, 'REPLACE')
     bpy.context.view_layer.objects.active = target
     for o in bpy.data.objects:
         o.select_set(o is target or o is extra)
@@ -1282,25 +1714,141 @@ def join_rigid(target, extra, bone):
     return bpy.context.active_object
 
 
+def join_rigid(target, extra, bone):
+    """`join_weighted` for the accessories that ride ONE bone: the beret and the
+    eyes, both of which are the head and nothing else."""
+    return join_weighted(target, extra, {bone: 1.0})
+
+
+# PRIMM'S COAT TAILS — bead godot-test1-5u3.10, and the owner's own words for
+# this coat: "prim has long jacket, like a tuxedo with tails". Every other garment
+# in the cast is the body pushed out (`dress_shells`); these two are not, because
+# there is no body behind a tail to push. So they are the second piece of
+# accessory geometry in this file after the beret — boxes, flat-shaded, joined
+# into the mesh and weighted by hand.
+#
+# THE WEIGHTS ARE THE WHOLE DESIGN. The bead asked for the tails to "hang with the
+# hips, not the thighs" and to be shown NOT piercing the leg in a stride frame,
+# and those two pull opposite ways: a flap welded to `pelvis` alone is a flap the
+# back leg walks straight through, because at mid-thigh the swinging leg travels
+# ~9 cm further back than the hip does. Splitting each tail's weight between the
+# pelvis and ITS OWN side's thigh (0.6 / 0.4) makes the flaps part around the
+# stride instead of standing still in front of it — which is also what a coat
+# does. The flare and the 3 cm of standoff do the rest.
+PRIMM_TAIL_HEM = 0.07       # the tails' top edge, ABOVE the pelvis joint: 5 cm
+                            # inside the coat, because a flap that starts exactly
+                            # at the hem shows daylight under it from behind
+                            # (measured on this build's first render)
+PRIMM_TAIL_BOTTOM = 0.16    # ... and their bottom, this far above the knee: mid-thigh
+PRIMM_TAIL_WIDE = 0.100
+PRIMM_TAIL_GAP = 0.040      # the slit between them, over the spine
+PRIMM_TAIL_THICK = 0.016
+PRIMM_TAIL_BITE = 0.020     # how far the flap is sunk INTO the coat's own back
+PRIMM_TAIL_FLARE = 0.030    # how much further back the bottom hangs than the top
+PRIMM_TAIL_TAPER = 0.85     # and how much narrower
+PRIMM_TAIL_SWALLOW = 0.055  # how much higher the OUTER bottom corner sits than the
+                            # inner one — what makes it a tail and not a flag
+
+
+def build_tail(row, side, sign, hem_z, bottom_z, back_y):
+    """One flap: a box from inside the coat down to mid-thigh, flared, tapered and
+    cut away at the outer corner, sunk into the coat's own back so the two never
+    show daylight between them."""
+    # A NEGATIVE Z SCALE MIRRORS THE CUBE AND INVERTS EVERY NORMAL, and Godot
+    # back-face-culls: the tails would simply not be there, in a shot nobody takes
+    # from behind. The landmarks this is measured from are macro-driven, so a
+    # hero short enough to put his knee above his own coat hem is a build failure
+    # and not a silent one.
+    if hem_z <= bottom_z:
+        raise AssertionError("the coat hem (%.3f) is not above the tail's bottom "
+                             "(%.3f): the flap would export inside out"
+                             % (hem_z, bottom_z))
+    cx = sign * (PRIMM_TAIL_GAP + PRIMM_TAIL_WIDE) / 2.0
+    cy = back_y + PRIMM_TAIL_BITE - PRIMM_TAIL_THICK / 2.0
+    cz = (hem_z + bottom_z) / 2.0
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(cx, cy, cz))
+    flap = bpy.context.active_object
+    flap.name = "CoatTail" + side.upper()
+    flap.scale = (PRIMM_TAIL_WIDE, PRIMM_TAIL_THICK, hem_z - bottom_z)
+    _apply_all_transforms(flap)
+    # The cube's own winding survives this because it is a per-vertex nudge, not a
+    # mirror — every normal still points out of the box.
+    for v in flap.data.vertices:
+        if v.co.z < cz:
+            v.co.y -= PRIMM_TAIL_FLARE
+            outer = (v.co.x - cx) * sign > 0.0
+            v.co.x = cx + (v.co.x - cx) * PRIMM_TAIL_TAPER
+            if outer:
+                v.co.z += PRIMM_TAIL_SWALLOW
+    flap.data.update()
+    attr = flap.data.color_attributes.new(name="Color", type='FLOAT_COLOR',
+                                          domain='POINT')
+    for i in range(len(flap.data.vertices)):
+        attr.data[i].color = row["colours"]["coat_purple"]
+    flap.data.color_attributes.active_color = attr
+    flap.data.attributes.active_color = attr
+    return flap
+
+
+def attach_tails(obj, row, tj):
+    """Both flaps, hung off the back of the coat hem. Returns the joined object
+    and ITS OWN polygon indices, which `export_glb` flat-shades: a tuxedo tail is
+    a piece of tailoring with a crease, and smoothing a box rounds it into a
+    sausage (the same ruling `wrap_band`'s rims ship under)."""
+    z = landmarks(obj, tj, row)
+    hem_z = z["pelvis"] + PRIMM_TAIL_HEM
+    bottom_z = z["knee"] + PRIMM_TAIL_BOTTOM
+    torso_ids = _vg_ids(obj, REGION_BONES["torso"])
+    back_y = min((v.co.y for v in obj.data.vertices
+                  if _group_weight(v, torso_ids) > 0.5
+                  and abs(v.co.z - hem_z) <= 0.06), default=0.0)
+    share = row["tails"]["pelvis"]
+    before = len(obj.data.polygons)
+    for side, sign in (("l", -1.0), ("r", 1.0)):
+        obj = join_weighted(obj, build_tail(row, side, sign, hem_z, bottom_z, back_y),
+                            {"pelvis": share, "thigh_" + side: 1.0 - share})
+    faces = frozenset(range(before, len(obj.data.polygons)))
+    log("coat tails: z %.3f..%.3f, back y %.3f, %d faces, pelvis %.2f / thigh %.2f"
+        % (bottom_z, hem_z, back_y, len(faces), share, 1.0 - share))
+    return obj, faces
+
+
 # ---------------------------------------------------------------------------
 # Export
 # ---------------------------------------------------------------------------
 
-def weight_strays_to(obj, armature, bone):
+def weight_strays_to(obj, armature, bone, floor):
     """TRAP 8. Any vertex with no bone weight at all goes to `bone`, weight 1.0.
 
     `wrap_band`'s knots are `bmesh.ops.create_cube` geometry and carry no deform
     layer; everything else it makes is extruded from skin that does. The wrap lives
     entirely on the head, so `head` is not a guess — it is the only bone any of it
     could belong to. Returns how many were swept, so a number that is not the knots'
-    two boxes is visible rather than silent."""
+    two boxes is visible rather than silent.
+
+    AND `floor` IS WHAT KEEPS IT HONEST. This runs over the WHOLE mesh, and since
+    bead 5u3.10 the whole mesh includes a few hundred vertices `dress_shells` cut
+    into the legs and the torso. A hem ring that lost its weights would be welded
+    to the skull here and `report_weights` — the guard that is supposed to catch
+    exactly that — would then see a fully weighted mesh and pass. So a stray below
+    the neck is not a knot and is not swept: it is the bug, and it stops the build.
+    """
     bone_names = {b.name for b in armature.data.bones}
     ids = {vg.index for vg in obj.vertex_groups if vg.name in bone_names}
     vg = obj.vertex_groups.get(bone) or obj.vertex_groups.new(name=bone)
     stray = [v.index for v in obj.data.vertices if _group_weight(v, ids) <= 0.0]
+    below = [i for i in stray if obj.data.vertices[i].co.z < floor]
+    if below:
+        raise AssertionError(
+            "%d unweighted vert(s) below z=%.3f — the wrap is on the head, so "
+            "these are a garment's or the body's own, and sweeping them onto %r "
+            "would hide them from report_weights (lowest %.3f)"
+            % (len(below), floor, bone,
+               min(obj.data.vertices[i].co.z for i in below)))
     if stray:
         vg.add(stray, 1.0, 'REPLACE')
-    log("swept %d unweighted vert(s) onto %s" % (len(stray), bone))
+    log("swept %d unweighted vert(s) onto %s (none below z=%.3f)"
+        % (len(stray), bone, floor))
     return len(stray)
 
 
@@ -1379,7 +1927,7 @@ def assert_no_multires(objs):
 
 def build(hero, shot=None):
     row = HEROES[hero]
-    if "band" in row and (row["beret"] or row["eyes"]):
+    if "band" in row and (row["beret"] or row["eyes"] or "tails" in row):
         raise AssertionError(
             "%s wears a cloth band AND an accessory: `sharp` is polygon indices "
             "and a join after the wrap renumbers them (see export_glb)" % hero)
@@ -1426,10 +1974,16 @@ def build(hero, shot=None):
     if "emblem" in row:
         densify_chest(obj, tj, row)
 
+    # AND BEFORE THE WRAP FOR THE SAME REASON (trap 9): the hem cuts add vertices
+    # and renumber every polygon. After the densify, so the chest the "W" is
+    # painted on is already split — the shirt shell then pushes those finer
+    # triangles out with the rest of the torso and the letter rides them.
+    dress_shells(obj, tj, row)
+
     band_verts, flat_faces = face.wrap_band(obj, (tj["l-eye"].z + tj["r-eye"].z) / 2.0,
                                             row)
     if band_verts:
-        weight_strays_to(obj, armature, "head")
+        weight_strays_to(obj, armature, "head", tj["neck"].z)
     paint_body(obj, tj, row, band_verts)
     if "emblem" in row:
         paint_chest_glyph(obj, tj, row)
@@ -1440,6 +1994,9 @@ def build(hero, shot=None):
     if row["eyes"]:
         obj = join_rigid(obj, build_eyes(row["colours"], tj["l-eye"], tj["r-eye"]),
                          "head")
+    if "tails" in row:
+        obj, tail_faces = attach_tails(obj, row, tj)
+        flat_faces = frozenset(flat_faces) | tail_faces
 
     apply_pose_as_rest(armature, obj, ARMS_DOWN_DEG)
     report_weights(obj, armature, "skinned body (accessories joined)")
