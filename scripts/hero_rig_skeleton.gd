@@ -94,7 +94,14 @@ extends RefCounted
 ## between the columns against a 0.50 ms spread between the pre-epic build's own
 ## two windows. That is inside the measurement's own noise. What does move is the
 ## trade the epic was made for — ten `MeshInstance3D`s per hero became one skinned
-## mesh, and the draw calls and primitives fell 17% and 16% with them.
+## mesh, and the draw calls and the primitives each fell about 16% with them.
+##
+## THE ONE THING THIS PAIR CANNOT SEPARATE, and 5u3.8's own pre/post pair could
+## not either: `a099e7c` is 25 merges behind master, so the columns differ by
+## everything that landed since, not only by the epic. It is the comparison the
+## bead prescribes and the one the epic was judged on, so it is the one to
+## re-take — but a null here is "the cast did not cost the web build a frame",
+## not "the skinned rig is free and nothing else moved".
 ##
 ## WHAT THIS DOES NOT SAY. `TIME_PROCESS` is the process step; it does not cover
 ## the RenderingServer's draw-list build or the GL/ANGLE submission where a
