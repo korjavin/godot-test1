@@ -257,10 +257,22 @@ SEAM_DARKEN = 0.55
 #
 # So the band is bounded across as well as up and down. `LIP_HALF` is a
 # FRACTION of the head's own half-width, not a length, because Windman's broad
-# head and Primm's narrow one are the same macro slider moving; 0.36 of a
+# head and Primm's narrow one are the same macro slider moving; a third of a
 # half-width is the ~5 cm mouth on a ~14.5 cm head every one of these portraits
 # has. `LIP_DEPTH` then keeps the band off the jaw corners the width bound
 # still lets through on a round head.
+#
+# THE NUMBERS ARE THE SECOND PASS, from the first tuned frames: 0.36 and a 2 cm
+# band still left a pale PATCH where the portraits have a drawn LINE. The band is
+# the height of the visible lip and no more, and the one hero whose skin is bright
+# enough for a lip to vanish into it takes a darker `lips` in his own row — a
+# mouth no darker than the face around it is not a mouth at this distance.
+LIP_BELOW = 0.009
+LIP_ABOVE = 0.006
+LIP_DEPTH = 0.72
+LIP_HALF = 0.32
+LIP_VERTS_MIN = 8     # below this there is no mouth — `paint_body` refuses to build
+
 # How far past the arc's own end a skin-side band vertex may sit before it counts
 # as a bisect that did not land — see the assert in `wrap_band`, which is the one
 # reader. It is the ONE place the cloth's boundary is allowed to follow the head's
@@ -271,17 +283,6 @@ SEAM_DARKEN = 0.55
 # degrees past it — one 9 mm triangle on a 7.5 cm radius. 0.14 rad is 8.0 degrees:
 # that triangle, with a little room, and still an order under the 74-degree arc.
 ARC_END_SLACK = 0.14
-
-#
-# SECOND PASS, same bead, from the first tuned frames: 0.36 and a 2 cm band left
-# a pale PATCH where the portraits have a drawn LINE. The band is the height of
-# the visible lip and no more, and the two heroes whose skin is bright enough for
-# a lip to disappear into it take a darker `lips` in their own row — a mouth that
-# is not darker than the face around it is not a mouth at this distance.
-LIP_BELOW = 0.009
-LIP_ABOVE = 0.006
-LIP_DEPTH = 0.72
-LIP_HALF = 0.32
 
 FACES = {
     "windman": {
@@ -722,7 +723,13 @@ HEROES = {
             "belt":          (0.11, 0.10, 0.11, 1.0),
             "belt_buckle":   (0.55, 0.50, 0.30, 1.0),
             "shoes":         (0.16, 0.11, 0.08, 1.0),
-            "lips":          (0.80, 0.55, 0.48, 1.0),
+            # z3e.15 takes the lips down WITH the skin above. `SKIN_GRADE` grades
+            # both, so the ratio is what matters, and leaving the generator's
+            # (0.80, 0.55, 0.48) under the darker skin left ~5% luma between his
+            # mouth and his face against Windman's 36% — which fails the rule this
+            # same bead wrote at LIP_BELOW, on the one hero whose mouth is the
+            # portrait's whole expression.
+            "lips":          (0.72, 0.46, 0.40, 1.0),
             "eye_white":     (0.92, 0.92, 0.90, 1.0),
             "eye_iris":      (0.22, 0.16, 0.11, 1.0),
         },
@@ -1201,8 +1208,12 @@ def wrap_band(obj, eye_z, cfg):
     # triangulation, and the capped sockets, whose rims are a hole inside the patch
     # and end up under the cloth rather than beside it. Measured on THIS check with
     # the two cuts disabled: 55 of 67 skin-side vertices off the lines, by up to
-    # 1.0 cm. With them, none. (The ceiling is half the slab, 2.3 cm — a boundary
-    # vertex cannot be further than that from BOTH lines.)
+    # 1.0 cm. With them, none — on bead z3e.16's Windman. On z3e.15's wider skull
+    # two vertices per arc end sit 6.6-6.8 degrees past the arc, which is one 9 mm
+    # triangle and which is why `ARC_END_SLACK` is 0.14 rather than 0.10; off the
+    # arc ends it is still none, and that is the half this assert is about. (The
+    # ceiling is half the slab, 2.3 cm — a boundary vertex cannot be further than
+    # that from BOTH lines.)
     skin_edge = set(v for f in walls for v in f.verts) - moved - hole_rim
     ragged = [v for v in skin_edge
               if abs(abs(bearing(v.co)) - half) >= ARC_END_SLACK
@@ -1982,10 +1993,21 @@ def paint_body(obj, tj, row, band_verts=frozenset()):
     lip_z = eye_z - 0.088
     hair_front = eye_z + hair["front"]
     seam_z = eye_z + stripes[0][0] if stripes else 0.0
-    half_depth = max((abs(v.co.y) for v in me.vertices
-                      if _group_weight(v, head_ids) > 0.4), default=1e-6)
-    half_width = max((abs(v.co.x) for v in me.vertices
-                      if _group_weight(v, head_ids) > 0.4), default=1e-6)
+    # THE SKULL, NOT THE ASSEMBLY. Both of these are the frame every face feature
+    # below is measured in, and `band_verts` has to come out of them: the cloth
+    # stands `thickness` proud of the head and `wrap_band`'s two KNOT boxes sit at
+    # the arc ends, ~9.4 cm off centre against a ~7.5 cm skull — and the knots carry
+    # head weight 1.0, because `weight_strays_to` put it there. Left in, Windman's
+    # `half_width` is a quarter too big and `LIP_HALF` stops being the fraction of
+    # the head it is documented to be: he gets a 6 cm mouth where Primm and Teibi
+    # get 4.8 cm, which is exactly the blotch on his chin in the first tuned frame.
+    def _skull(axis):
+        return max((abs(getattr(v.co, axis)) for i, v in enumerate(me.vertices)
+                    if i not in band_verts and _group_weight(v, head_ids) > 0.4),
+                   default=1e-6)
+
+    half_depth = _skull("y")
+    half_width = _skull("x")
     for i, v in enumerate(me.vertices):
         if i in band_verts:
             # The cloth, top-down and clamped at both ends: the lift and the knots
@@ -2018,6 +2040,17 @@ def paint_body(obj, tj, row, band_verts=frozenset()):
     for k in per_vert:
         counts[k] = counts.get(k, 0) + 1
     log("paint counts:", counts)
+    # AND THE MOUTH HAS TO STILL BE THERE. The lip band is a three-way conjunction
+    # now (a 1.5 cm z band, `LIP_DEPTH` forward, `LIP_HALF` across) and every one of
+    # those terms is a number somebody may tighten again. If it selects nothing, the
+    # hero ships with no mouth and NOTHING DOWNSTREAM CAN SEE IT: no vertex is added
+    # or removed, so the tri count, the bone count and the .glb byte size are all
+    # unchanged, `--check` matches and `build.yml`'s `stat` gate stays green. Same
+    # shape as the "the face melted" floor in `build()`, and for the same reason.
+    if counts.get("lips", 0) < LIP_VERTS_MIN:
+        raise AssertionError("the mouth vanished: %d lip vertices, floor %d — the "
+                             "LIP_* band selected (almost) nothing"
+                             % (counts.get("lips", 0), LIP_VERTS_MIN))
 
     attr = me.color_attributes.new(name="Color", type='FLOAT_COLOR', domain='POINT')
     for i, key in enumerate(per_vert):
@@ -2205,10 +2238,10 @@ BERET_EMBED = 0.040  # ... and seated deeper in it
 def build_beret(colours, crown_z, embed=BERET_EMBED):
     """generate_teibi_separate.py's beret — dome, brim, headband, nub, tilted
     7/-11 degrees — seated on the crown. `embed` sinks the dome's own centre
-    4 cm below the crown, which is roughly where the generator wore it: a beret
-    sits IN the scalp with its top third showing, and anchoring its lowest vertex
-    on the crown floats the whole assembly 17 cm off the head (measured on the
-    z3e.10 spike).
+    4 cm below the crown (the generator's own number was 3.2 cm; bead z3e.15
+    moved it): a beret sits IN the scalp with its top third showing, and anchoring
+    its lowest vertex on the crown floats the whole assembly 17 cm off the head
+    (measured on the z3e.10 spike).
 
     BEAD z3e.15 SHRINKS IT SIDEWAYS AND SINKS IT. Its numbers are the generator's,
     and the generator hung them off a SPHERE head 0.25 m across; on a MakeHuman
@@ -2216,10 +2249,15 @@ def build_beret(colours, crown_z, embed=BERET_EMBED):
     and 3.7 cm proud all the way round, so what the 2026-09-12 frame shows is a
     navy flying saucer hovering over Teibi with daylight under the brim. Both
     portraits wear it snug: it grips the skull, tilts, and overhangs on one side
-    only. `BERET_WIDE` is one scale on x and y — the shape, the tilt and the
-    proportions are the generator's still, it is only the radius that was a
-    different head's — and `embed` closes the gap under the brim. Height is NOT
-    scaled: a flatter beret would be a different hat."""
+    only. `BERET_WIDE` is one scale on x and y — the shape, the tilt, the seat and
+    the proportions are the generator's still, it is only the radius that was a
+    different head's — and `embed` NARROWS the gap under the brim; it does not
+    close it. The headband is 8.7 cm to the skull's 7.5, so 1.2 cm of it still
+    stands proud all the way round, which is a beret and not a defect. Height is
+    NOT scaled: a flatter beret would be a different hat. WHAT THE OWNER SHOULD
+    LOOK AT on the grid: narrowing it exposes a lobe of hair on the right that the
+    old saucer covered. That is the portrait's tilt showing through, but it is a
+    judgement, not a measurement — `BERET_WIDE` is the one knob if it reads wrong."""
     bpy.ops.mesh.primitive_uv_sphere_add(radius=0.162, segments=14, ring_count=8)
     dome = bpy.context.active_object
     dome.name = "BeretDome"
@@ -2252,7 +2290,10 @@ def build_beret(colours, crown_z, embed=BERET_EMBED):
     tilt = (Matrix.Rotation(math.radians(7), 4, 'X')
             @ Matrix.Rotation(math.radians(-11), 4, 'Y'))
     narrow = Matrix.Diagonal(Vector((BERET_WIDE, BERET_WIDE, 1.0, 1.0)))
-    seat = Matrix.Translation(Vector((0.015 * BERET_WIDE, 0.004, crown_z - embed)))
+    # `seat` is applied LAST and therefore in the HEAD's frame: it is where the hat
+    # sits on the skull, not a dimension of the hat, so `BERET_WIDE` has no business
+    # in it. The generator's 1.5 cm, unscaled.
+    seat = Matrix.Translation(Vector((0.015, 0.004, crown_z - embed)))
     beret.data.transform(seat @ tilt @ narrow)
     beret.data.update()
 
