@@ -40,6 +40,15 @@ extends SceneTree
 ##     control, and with the LIT SET compared slot by slot — a count alone passes
 ##     for a map that lights the wrong 18 places.
 ##
+##  4b. **AND THE WAYPOINT MASK LIGHTS THE CITY'S CIRCLES** (epic
+##     `godot-test1-sc6`, bead .5), check 4's shape one glyph along: the five
+##     `BudapestPlan.WAYPOINTS` rows are drawn as rings on the plan, filled off
+##     `waypoint_mask` and hollow otherwise, with the empty mask as the negative
+##     control and the LIT SET compared row by row. The BIT OFFSET is what this
+##     really pins: the panel derives the first city bit from the mask's width
+##     rather than asking a terrain, so an off-by-one there would light the wrong
+##     circles — and a landmark bit would light one too.
+##
 ##  5. **THE PAUSE POLICY.** Solo it freezes the world through `PauseHub`; IN A
 ##     ROOM it must not (the pause is local, the simulation is not — the
 ##     `landmark_toast` precedent), and over Game Over it must not (`GameOverUI`
@@ -142,6 +151,7 @@ func _initialize() -> void:
 	_check_projection()
 	await _check_bake_once()
 	await _check_mask_lights_icons()
+	await _check_waypoints_light()
 	await _check_pause_policy()
 	await _check_teammates()
 	await _check_lines()
@@ -487,6 +497,64 @@ func _lit_slots(panel: Control) -> Array:
 	var lit: Array = []
 	for i in range(panel._icon_colors.size()):
 		if (panel._icon_colors[i] as Color).is_equal_approx(CityMapPanel.COLOR_FOUND):
+			lit.append(i)
+	return lit
+
+
+# ============================================================================
+# 4b. THE WAYPOINT MASK LIGHTS THE CITY'S CIRCLES
+# ============================================================================
+
+func _check_waypoints_light() -> void:
+	var player: Node = await _make_player()
+	var panel: Control = await _make_panel()
+	panel.set_panel_open(true)
+	await process_frame
+
+	var rows: Array = BudapestPlan.WAYPOINTS
+	# NEGATIVE CONTROL FIRST, check 4's rule: a fresh run has found nothing, so
+	# every ring must be drawn and every one of them hollow.
+	player.waypoint_mask = 0
+	panel._refresh()
+	if panel._waypoint_points.size() != rows.size():
+		_fail("the panel drew %d waypoint rings for %d authored city circles"
+			% [panel._waypoint_points.size(), rows.size()])
+	if _lit_waypoints(panel).size() != 0:
+		_fail("a fresh run lights %d city waypoints — nothing has been found yet"
+			% _lit_waypoints(panel).size())
+
+	# The FIRST and LAST city bits, so an off-by-one in the derived offset cannot
+	# hide at either end. `activate_waypoint` is the real writer, bounds-checked
+	# against the mask's own width — a row that fell outside it would refuse here.
+	var first_bit: int = TerrainWaypoints.WAYPOINT_COUNT - rows.size()
+	for bit: int in [first_bit, first_bit + rows.size() - 1]:
+		if not player.activate_waypoint(bit):
+			_fail("activate_waypoint(%d) refused — bit %d is not a city circle" % [bit, bit])
+	panel._refresh()
+	var lit: Array = _lit_waypoints(panel)
+	if lit != [0, rows.size() - 1]:
+		_fail("the city map lights rings %s, expected the first and the last" % str(lit))
+
+	# ...AND A LANDMARK BIT MUST LIGHT NOTHING HERE. The two masks are different
+	# widths over different tables, and the panel now reads both: a waypoint ring
+	# lit by `explored_mask` would be the exact bug this check exists for.
+	player.waypoint_mask = 0
+	player.explore_landmark(0)
+	panel._refresh()
+	if _lit_waypoints(panel).size() != 0:
+		_fail("exploring a landmark lit a waypoint ring — the panel is reading the wrong mask")
+
+	panel.queue_free()
+	player.queue_free()
+	await process_frame
+	Sentinel.done("waypoints_light")
+
+
+func _lit_waypoints(panel: Control) -> Array:
+	"""Which city waypoint rows the panel painted filled, in order."""
+	var lit: Array = []
+	for i in range(panel._waypoint_colors.size()):
+		if (panel._waypoint_colors[i] as Color).is_equal_approx(CityMapPanel.COLOR_FOUND):
 			lit.append(i)
 	return lit
 

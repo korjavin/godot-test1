@@ -249,6 +249,39 @@ const TOWER_MARK_WIDTH: float = 1.8
 ## needed and can only ever keep the mark further inside the ring.
 const TOWER_MARK_REACH: float = TOWER_MARK_RADIUS + TOWER_MARK_WIDTH * 0.5
 
+## THE WAYPOINT MARKS — the teleport circles (epic godot-test1-sc6, bead .5):
+## radius of the ring, the stroke an UNFOUND (hollow) one is drawn at, and the rim
+## inset that follows from the pair.
+##
+## A RING, because the two marks already on this map are strokes — an X for a
+## landmark and a + for the tower — and a circle is the third shape that survives
+## at four pixels. It is also the thing itself: what stands in the world is a disc
+## with studs round its rim.
+##
+## FOUND IS FILLED AND UNFOUND IS HOLLOW, which is `city_map_panel`'s rule for the
+## same distinction ("they differ in VALUE and in SHAPE, never in alpha — a dimmed
+## mark reads as 'far away' on a map, which is a different claim"), and alpha stays
+## free to mean exactly that, the rim clamp below.
+const WAYPOINT_MARK_RADIUS: float = 3.2
+const WAYPOINT_MARK_WIDTH: float = 1.4
+const WAYPOINT_MARK_REACH: float = WAYPOINT_MARK_RADIUS + WAYPOINT_MARK_WIDTH * 0.5
+
+## Hard cap on waypoint marks, and the size of their buffers. IT IS THE WHOLE
+## WORLD'S SUPPLY: `TerrainWaypoints.WAYPOINT_COUNT` is the fixed width of the
+## found mask, pinned to the site table by `waypoint_selfcheck` check 1, and a run
+## cannot have one circle more. So this budget can never bite, and there is
+## deliberately NO "on the disc first, rim-clamped after" ordering to go with it —
+## that sort exists to spend a budget that runs out, and this one cannot.
+const MAX_WAYPOINT_DOTS: int = TerrainWaypoints.WAYPOINT_COUNT
+
+## A found circle and an unfound one. AMBER is the palette's accent and this is the
+## one map layer that says "you can leave from here"; STEEL is its inactive value,
+## the same pairing `city_map_panel` uses for explored against unexplored. Both are
+## `HudTheme`'s own consts — no second copy of a film hex (`hero_hud_selfcheck`
+## greps for exactly that).
+const COLOR_WAYPOINT_FOUND := HudTheme.VISOR_AMBER
+const COLOR_WAYPOINT_UNFOUND := HudTheme.STEEL
+
 ## Length in pixels of the radial tick an OFF-MAP teammate is drawn as. A dot
 ## clamped to the rim would read as a teammate standing exactly at the map's edge;
 ## a tick pointing outward along their bearing reads as "further, that way".
@@ -589,6 +622,23 @@ var _tower_points: PackedVector2Array = PackedVector2Array()
 var _tower_colors: PackedColorArray = PackedColorArray()
 var _tower_count: int = 0
 
+## The waypoint rings: ONE CENTRE per mark, its colour, and whether it is found.
+##
+## NOT IN THE MULTILINE FORM the three layers above share, because a ring is not
+## segments: each one is a `draw_circle()`, filled or stroked (see
+## WAYPOINT_MARK_RADIUS). That also means there is NOTHING TO PARK — `_draw()`
+## walks `_waypoint_count` entries rather than handing a whole array to one draw
+## call, so a shorter tick simply paints fewer rings and the tail is never read.
+##
+## `_waypoint_found` is a byte per mark rather than a second read of the colour:
+## "filled" is a fact about the site, and deriving it from a colour that the rim
+## clamp has already multiplied the alpha of is how a mark ends up hollow because
+## it is far away.
+var _waypoint_points: PackedVector2Array = PackedVector2Array()
+var _waypoint_colors: PackedColorArray = PackedColorArray()
+var _waypoint_found: PackedByteArray = PackedByteArray()
+var _waypoint_count: int = 0
+
 ## The tower SHELL, from the "tower" group — cached with the stale re-fetch every
 ## other node reference here uses. It owns `sheltered()`, and the interior is
 ## parented at its origin, so its local frame is the interior's own.
@@ -640,6 +690,10 @@ func _ready() -> void:
 	# And for the ONE tower — same shape, one marker's worth (see _tower_points).
 	_tower_points.resize(4)
 	_tower_colors.resize(2)
+	# And the waypoint rings — one entry per mark, sized once to the world's supply.
+	_waypoint_points.resize(MAX_WAYPOINT_DOTS)
+	_waypoint_colors.resize(MAX_WAYPOINT_DOTS)
+	_waypoint_found.resize(MAX_WAYPOINT_DOTS)
 	# The terrain field: worst case is every cell its own run, i.e. one bar per
 	# cell — two points and one colour each. Sized once here for that worst case so
 	# the tick never allocates and no run is ever dropped (see _gather_terrain).
@@ -805,6 +859,7 @@ func _tick(elapsed: float = TICK_INTERVAL) -> void:
 	_gather_crocodiles()
 	_gather_landmarks()
 	_gather_tower()
+	_gather_waypoints()
 	_gather_peers()
 	_gather_shelter(elapsed)
 	_gather_budapest()
@@ -1437,6 +1492,70 @@ func _gather_tower() -> void:
 	_tower_count = 1
 
 
+func _gather_waypoints() -> void:
+	"""The teleport circles — a filled amber ring where the crew has been, a hollow
+	steel one where it has not (epic godot-test1-sc6, bead .5).
+
+	READ OFF THE SITE TABLE, NOT OFF THE "waypoint" GROUP, and that is
+	`_gather_tower`'s rule for `_gather_tower`'s reason. A marker node exists only
+	while its chunk is loaded, so a group scan would show a circle exactly when you
+	are already standing next to it; `TerrainWaypoints.waypoint_sites()` says where
+	the eleven ARE, so the ring 400 m away is on the disc from the first frame of
+	the run. Same case, same answer.
+
+	COSTS ONE TABLE BUILD PER TICK — one warm `_road_extend_to_x`, five binary
+	searches and eleven small dictionaries (the family's banner bills it), at 5 Hz
+	and only while the map is visible. ponytail: if `\\fo` ever charges for it, the
+	fix is the memo that banner already designs on the TERRAIN, not a cache here.
+
+	THE MASK IS THE PLAYER'S, read with `in` and never assumed: `waypoint_mask` is
+	per-run state on the local hero, already OR-ed room-wide by
+	`MpManager._apply_waypoints`, so a teammate's find turns this ring amber on the
+	next tick with nothing else to wire. A player scene without the field (or a
+	tick with no player at all) simply draws every circle unfound.
+
+	RIM-CLAMPED AND DIMMED off the disc, by the landmark X's rule — the far ones are
+	the point, the same way the tower's clamped cross is the compass bearing to the
+	HQ."""
+	_waypoint_count = 0
+	# The site table reads `tower_site()`, the road station cache and `is_river_at`
+	# back off the node, so a "terrain" that answers none of that must read as "no
+	# waypoints", never as an error — the `_gather_tower` guard, one method wider
+	# because this asks for more. The cast is part of the guard: the table wants an
+	# `EndlessTerrain`, and a bare `Node` in the group answers null here.
+	var terrain := _terrain as Node3D
+	if terrain == null or not terrain.has_method("tower_site") \
+			or not terrain.has_method("_road_station"):
+		return
+	var mask: int = 0
+	if _player != null and "waypoint_mask" in _player:
+		mask = int(_player.waypoint_mask)
+	var sites: Array[Dictionary] = TerrainWaypoints.waypoint_sites(terrain)
+	var scale: float = _map_scale()
+	for i in sites.size():
+		if _waypoint_count >= MAX_WAYPOINT_DOTS:
+			break  # unreachable by construction — see MAX_WAYPOINT_DOTS
+		var site: Vector3 = sites[i]["pos"]
+		# Same north-up mapping and the SAME shared scale as every other layer.
+		var offset := Vector2(site.x - _player_pos.x, site.z - _player_pos.z) * scale
+		var found: bool = mask & (1 << i) != 0
+		var color: Color = COLOR_WAYPOINT_FOUND if found else COLOR_WAYPOINT_UNFOUND
+		var center: Vector2
+		var dist: float = offset.length()
+		if dist > MAP_RADIUS:
+			# OFF THE MAP — classified against the DISC EDGE, never the inset the
+			# mark is drawn at (`_gather_landmarks` carries what that costs). The
+			# division is safe: this branch needs dist > MAP_RADIUS > 0.
+			center = MAP_CENTER + (offset / dist) * (MAP_RADIUS - WAYPOINT_MARK_REACH)
+			color.a *= LANDMARK_EDGE_ALPHA
+		else:
+			center = MAP_CENTER + offset.limit_length(MAP_RADIUS - WAYPOINT_MARK_REACH)
+		_waypoint_points[_waypoint_count] = center
+		_waypoint_colors[_waypoint_count] = color
+		_waypoint_found[_waypoint_count] = 1 if found else 0
+		_waypoint_count += 1
+
+
 func _gather_shelter(elapsed: float) -> void:
 	"""The indoor half of the caption, and the anti-stall arrow behind it.
 
@@ -1709,6 +1828,26 @@ func _draw() -> void:
 	#     for the landmark layer's reason: a destination must never hide a threat.
 	if _tower_count > 0:
 		draw_multiline_colors(_tower_points, _tower_colors, TOWER_MARK_WIDTH)
+
+	# 2d. The waypoint circles — UNDER the tower (the HQ is where the run is going;
+	#     a ring is how you get about) and under the crocodiles, the same rule every
+	#     destination layer here keeps: a destination must never hide a threat.
+	#
+	#     ONE DRAW CALL PER RING, which is this layer's whole cost and the one place
+	#     the map spends per object. A ring is not segments, so it cannot join a
+	#     `draw_multiline_colors()` batch, and the alternative — an N-gon approximated
+	#     in the shared buffer — trades 11 calls for ~130 points of arithmetic on
+	#     every tick and a glyph that is not a circle. ponytail: the ceiling is
+	#     MAX_WAYPOINT_DOTS (11) calls, and it is the whole world's supply; if `\fo`
+	#     ever charges for it, the upgrade is that N-gon, not a smaller budget.
+	#
+	#     `-1.0` and not the stroke width on the filled branch: Godot WARNS with a
+	#     backtrace that `width` has no effect when `filled` is true, and this
+	#     repaints at 5 Hz (`city_map_panel._paint_marks` records the same lesson).
+	for i in _waypoint_count:
+		var filled: bool = _waypoint_found[i] != 0
+		draw_circle(_waypoint_points[i], WAYPOINT_MARK_RADIUS, _waypoint_colors[i],
+				filled, -1.0 if filled else WAYPOINT_MARK_WIDTH, true)
 
 	# 3. Crocodiles — one draw call for the whole pack (see _gather_crocodiles).
 	if _croc_count > 0:
