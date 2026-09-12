@@ -273,14 +273,24 @@ CHIN_CLEAR = 0.012    # metres of skin between the lowest lip vertex and the chi
 FACE_FRONT = 0.72     # fraction of the head's half-depth that counts as "the face"
 
 # THE LIP COLOUR IS THE SKIN'S. It used to be a per-row literal, and three
-# hand-picked browns are three chances to pick a beard: the rows had the lips a
-# fifth to a third darker than the face, which is a shadow, not a mouth. It is now
-# derived from the hero's own GRADED skin — a little darker, and warmer rather than
-# browner, so the mouth reads as lips on every skin tone in the cast without a
-# number per hero. The red shift is a multiplier on the red channel alone
-# (clamped), which is what keeps it from going grey as it darkens.
-LIP_DARKEN = 0.88
+# hand-picked browns are three chances to pick a beard: the rows had the lips 25 to
+# 40% darker than the face, which is a shadow, not a mouth. It is now derived from
+# the hero's own GRADED skin — darker, and warmer rather than browner, so the mouth
+# reads as lips on every skin tone in the cast without a number per hero. The red
+# shift is a multiplier on the red channel alone (clamped), which is what keeps it
+# from going grey as it darkens.
+#
+# THE STRENGTH IS THE SECOND PASS. 0.88 was the bead's "~12 percent" taken
+# literally and it was too little: on the first `grid_28` Windman's mouth vanished
+# into his bright skin entirely and Primm's was a tone shift you had to look for,
+# which is the failure the z3e.15 banner above already names — "a mouth no darker
+# than the face around it is not a mouth at this distance". 0.78 is ~21% of luma,
+# which is between that and the 25-40% the old literals had, and `LIP_CONTRAST` is
+# the assert that keeps a future hand from walking it back to either end: a band,
+# because too little is no mouth and too much is the beard.
+LIP_DARKEN = 0.78
 LIP_RED = 1.06
+LIP_CONTRAST = (0.15, 0.30)   # how much darker than the skin the lips must be
 
 # How far past the arc's own end a skin-side band vertex may sit before it counts
 # as a bisect that did not land — see the assert in `wrap_band`, which is the one
@@ -486,7 +496,7 @@ def _face_row(hero):
 
 
 def _face_palette(hero):
-    """A `FACES` row's skin/lips/hair for `hero`, UNGRADED — `paint_body` applies
+    """A `FACES` row's skin/hair for `hero`, UNGRADED — `paint_body` applies
     `hero_skin.SKIN_GRADE` to the entries in GRADED_COLOURS, so a pre-graded value
     here would be graded twice. Primm's skin deliberately leaves his old generator's
     (the note in his row says why); Windman's is his generator's verbatim."""
@@ -983,12 +993,31 @@ SHOE_LIFT = 0.006
 GRADED_COLOURS = ("skin",)
 
 
+def _luma(c):
+    """Rec.709 luma, the same one `scripts/clipped_fraction.py` judges a face by."""
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+
 def lip_colour(skin):
     """The mouth, from the hero's own GRADED skin: `LIP_DARKEN` down and `LIP_RED`
-    warmer. See those constants for why it is not three literals any more."""
+    warmer. See those constants for why it is not three literals any more.
+
+    AND IT IS ASSERTED, because the vertex floor and `CHIN_CLEAR` are both about
+    WHERE the lips are and neither can see a mouth that is the wrong COLOUR — the
+    hero ships with the same verts, the same tris and the same bytes whether the
+    band reads as a mouth, as nothing at all, or as a beard. `LIP_RED` lifts the red
+    channel, so the luma drop is not `1 - LIP_DARKEN` and has to be measured."""
     r, g, b = skin[:3]
-    return (min(1.0, r * LIP_DARKEN * LIP_RED), g * LIP_DARKEN, b * LIP_DARKEN,
-            ) + tuple(skin[3:])
+    out = (min(1.0, r * LIP_DARKEN * LIP_RED), g * LIP_DARKEN, b * LIP_DARKEN,
+           ) + tuple(skin[3:])
+    drop = 1.0 - _luma(out) / max(_luma(skin), 1e-6)
+    low, high = LIP_CONTRAST
+    if not low <= drop <= high:
+        raise AssertionError(
+            "the lips are %.1f%% darker than the skin, outside %.0f-%.0f%%: too "
+            "little is no mouth at 3 m, too much is the beard bead 394 removed"
+            % (drop * 100.0, low * 100.0, high * 100.0))
+    return out
 
 
 def log(*a):
@@ -2398,6 +2427,8 @@ def paint_body(obj, tj, row, band_verts=frozenset()):
                      default=1e-6)
     # THE CHIN, MEASURED (bead godot-test1-394): the lowest vertex on the FRONT of
     # the face. `CHIN_CLEAR` below is the assert that no lip vertex comes near it.
+    # (Both `default`s here and at `lip_low` below are unreachable: an empty head or
+    # an empty face front empties the lip count too, and `LIP_VERTS_MIN` fires first.)
     chin_z = min((v.co.z for i, v in enumerate(me.vertices)
                   if i not in band_verts and _group_weight(v, head_ids) > 0.4
                   and v.co.y / half_depth > FACE_FRONT), default=0.0)

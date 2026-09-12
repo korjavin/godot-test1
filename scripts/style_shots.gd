@@ -32,7 +32,7 @@ var _out_dir: String = "user://shots"
 ## which is what CI and the epic's A/B pairs want. Comma-separated (bead
 ## godot-test1-z3e.10): this environment's per-shot fixed cost (world/camp
 ## sweep, a real settle) dwarfs one shot's own camera work, so a caller wanting
-## several shots that already share `_head_pose_settled` (16/17/18/19/20) asks
+## several shots that already share `_head_pose_settled` (16/17/18/19/20/21_jaw_1m) asks
 ## for them in ONE process rather than paying the settle five times over.
 var _only: String = ""
 
@@ -1076,6 +1076,11 @@ func _shoot_head_closeup(terrain: Node, player: Node3D, at: Vector3, fov: float,
 	`settle` is false for a SECOND framing of a body that is already posed and already
 	frozen: the world is built, nothing is ticking, and only the lens changes. Sixteen
 	runs of this spike each paid a 9 s settle and a 300-frame measure for that.
+
+	`distance` and `drop` are the THIRD framing (bead godot-test1-394, `21_jaw_1m`) and
+	they default to the first two exactly: `distance` is how far out the camera sits,
+	`drop` how far BELOW the focus point — the camera aims at the focus either way, so
+	a drop is the whole tilt. `drop = 0.0` reproduces 16 and 17 term for term.
 
 	IT IS A REQUEST, NOT AN ASSERTION, and `_head_pose_settled` is why: `only=` can
 	filter out the shot that was supposed to have done the settling, and a false here

@@ -34,7 +34,7 @@ AND THOSE "AFTER" NUMBERS ARE THE SKIN'S, NOT THE FACE'S. Bead godot-test1-z3e.1
 re-measured the same rects on the shipped heads of 2026-09-12 and found Primm back at
 14.6% on the web row — not a regression in this grade but in something it deliberately
 does not touch: EYEWEAR IS NOT GRADED (see `GRADED_COLOURS` in `build_hero.py` — skin
-and lips only), and his goggles' silver frame was a value that clips on its own, 5.4 cm
+only, and the lips derived from it), and his goggles' silver frame was a value that clips on its own, 5.4 cm
 of it across his face. That bead's table (2.1% after, on the same rect) is the current
 one for a whole FACE; this one is the current one for the skin under it. Neither
 supersedes the other and `SKIN_GRADE` did not move.
