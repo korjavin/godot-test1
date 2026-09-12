@@ -39,6 +39,15 @@ extends SceneTree
 ## distance from the site as information for the phase-2 shell rather than as an
 ## assertion.
 ##
+## And ONE AUTHORED THING IS ALLOWED INSIDE THE DISC (epic godot-test1-sc6): the
+## HQ door's waypoint circle, which is `tower_site()` plus a constant and is the
+## first entry in the owner's own list of teleport places. The exemption is
+## INDEX 0 alone, never the group: check 4 steps over that one marker in its node
+## walk AND asserts, separately, that the only circle standing in the disc is
+## index 0 — so it is one named site rather than a gap a future spawner could
+## drift into, and the other ten circles stay in checks 5 and 6's digest where
+## one of them is the witness that a road waypoint does not move with the tower.
+##
 ## The "RID allocations … were leaked at exit" lines after the verdict are the
 ## engine reporting this project's deliberate static shared caches. They are not a
 ## failure — same note as enemy_spawn_selfcheck.gd's header.
@@ -289,6 +298,31 @@ func _check_nothing_stands_on_the_site() -> void:
 
 	print("tower site %s: nearest world content is %s (disc is %.0f m)" % [site, offender, radius])
 
+	# THE ONE THING ALLOWED INSIDE THE DISC, named rather than merely skipped.
+	# `_collect` steps over waypoint INDEX 0 ONLY — not the group; the other ten
+	# circles stay in `_world_points` and in checks 5 and 6's digest — so the HQ's
+	# authored circle does not read as a spawner nobody gated (see the comment
+	# there). That skip would be a hole if it were the end of it, so this is the
+	# other half: walk the
+	# markers the chunks above really built and demand that the only one standing
+	# in the disc is waypoint 0 — the HQ door's. A second circle wandering in, or
+	# index 0 drifting out to where the epic's "just outside the HQ door" stops
+	# being true, fails here by name.
+	var inside: Array[String] = []
+	for marker_v: Variant in get_nodes_in_group("waypoint"):
+		var marker: Node3D = marker_v
+		var d := Vector2(marker.global_position.x - site.x, marker.global_position.z - site.z).length()
+		if d < radius:
+			inside.append("index %d at %.1f m" % [int(marker.get_meta("index", -1)), d])
+	if inside.size() != 1:
+		_fail("%d waypoint circles stand inside the tower disc (%s) — exactly one, the HQ "
+				% [inside.size(), ", ".join(inside)] + "door's, is authored to")
+	elif not inside[0].begins_with("index 0 "):
+		_fail("the waypoint inside the tower disc is %s, not index 0 — the door's circle is "
+				% inside[0] + "the only one the disc makes room for")
+	else:
+		print("the HQ's own waypoint stands %s, which is the one authored exemption" % inside[0])
+
 	# INFORMATION, NOT AN ASSERTION: the coin road is deliberately not excluded.
 	# Phase 2 needs to know whether the trail runs through the front door.
 	terrain._road_extend_to_x(site.x - 100.0, site.x + 100.0)
@@ -424,6 +458,36 @@ func _collect(node: Node, out: Array) -> void:
 		if label.begins_with("Coin"):
 			continue
 		if child is StaticBody3D and child.name != "BlockCollision":
+			continue
+		# THE HQ'S WAYPOINT CIRCLE — index 0 ONLY, and its whole subtree (epic
+		# godot-test1-sc6).
+		# The disc keeps PROCEDURAL content off the site; waypoint 0 is AUTHORED to
+		# stand at this door — it is `terrain.tower_site()` plus a constant, and the
+		# owner's own list of places begins "the HQ door". A ring that obeyed the
+		# disc would be 25 m out in the field, which is not the door.
+		#
+		# It costs the check nothing it was measuring. The ring's thirteen boxes are
+		# `collide = false`, so they add no shape to `BlockCollision` and were never
+		# in this walk; what is skipped here is the bare marker `Node3D` and the
+		# hidden beam under it, neither of which a hero can touch. And check 4 does
+		# NOT simply lose sight of them — it asserts below that the only waypoint
+		# inside the disc is index 0, so this stays an exemption for one authored
+		# site rather than a hole any future spawner can park in.
+		#
+		# It also matters to checks 5 and 6: waypoint 0 MOVES with the tower, so
+		# leaving it in the digest would make a near chunk differ for a reason that
+		# has nothing to do with the exclusion those checks measure.
+		#
+		# INDEX 0 AND NOT THE GROUP, which is the whole of the condition below.
+		# The other ten circles do NOT move with the tower, and one of them is a
+		# witness those checks want: the "spawn" circle's marker lands in chunk
+		# (0, 0), inside check 5's `far` set, and because the ring's boxes are
+		# `collide = false` and the MultiMesh is deliberately not walked, that bare
+		# marker is the ONLY thing in the digest saying a non-HQ waypoint is
+		# independent of `tower_site()`. `WAYPOINT_APPROACH_X`'s own comment names
+		# this check as its guard, so skipping the group wholesale would quietly
+		# retire it. (Found by revmux round 2 of PR #364.)
+		if child.is_in_group("waypoint") and int(child.get_meta("index", -1)) == 0:
 			continue
 		if child is Node3D and not _is_container(child):
 			out.append([(child as Node3D).global_position, label])

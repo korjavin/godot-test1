@@ -23,12 +23,12 @@
     "windman": {
       "bones": 23,
       "glb": "windman_parts/windman_skinned.glb",
-      "glb_bytes": 434092,
+      "glb_bytes": 458476,
       "head_tris": 4447,
       "height_m": 1.7579,
       "texture_bytes": 0,
       "texture_size": 0,
-      "tris": 12649
+      "tris": 13411
     }
   },
   "tools": {

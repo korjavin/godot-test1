@@ -46,10 +46,11 @@ change and its regenerated `.glb` go in the same commit. `scripts/predator_parts
 the shared toolkit and the contract every enemy mesh must honour; `export_faceted()`
 there is the one export seam for every generated `.glb` (heroes included) — read its
 docstring before touching it; an authored part lives beside its `PROVENANCE.md` row and
-is never written by a generator. The live Windman is `windman_parts/` assembled by
-`scenes/characters/windman_updated.tscn`. **Teibi is the exception: authored and
-skinned** — one mesh on a 23-bone MakeHuman rig, source of record
+is never written by a generator. **Teibi, Windman and Primm are authored and
+skinned** — one mesh each on a 23-bone MakeHuman rig, source of record
 `scripts/build_hero.py` (Blender + MPFB2, run by hand, outside the CI rebuild gate).
+`generate_windman_separate.py` is down to his FAN, which `windman_updated.tscn` hangs
+on the `hand_r` bone with a `BoneAttachment3D`.
 
 `.gd.uid` files are Godot's; don't hand-edit them.
 
@@ -60,6 +61,7 @@ skinned** — one mesh on a 23-bone MakeHuman rig, source of record
 | World engine, chunks, biomes field, `Biome` enum, seed | `scripts/endless_terrain.gd` | `terrain_biomes` `terrain_predators` `terrain_props` `terrain_structures` `terrain_features` `terrain_landmarks` `coin_road` `terrain_bridges` `terrain_altitude` (static families reached through the terrain) | `chunk_stream` `scarcity` `prop` `wade` `field_bridge` `altitude` |
 | Batched geometry, box kinds, collision per kind | `scripts/chunk_batch.gd` | `assets/shaders/world_block.gdshader` | `batch` |
 | Field landmarks (one per kind per world) | `scripts/landmark_builders.gd` `terrain_landmarks.gd` | `landmark_toast.gd` | `landmark` `landmark_sites` |
+| Waypoints (the teleport circles) | `scripts/terrain_waypoints.gd` | `BudapestPlan.WAYPOINTS` (the city's five); the index of a site IS its wire bit | `waypoint` |
 | Budapest (authored plan, streamed) | `scripts/budapest_plan.gd` | `budapest_streamer` `city_builders` | `budapest` `budapest_city` `landmark_progress` `city_map` |
 | The tower / HQ | `scripts/tower_shell.gd` `tower_interior.gd` | `tower_plans` (ASCII storeys) `tower_graph` (topology) `tower_plan_boxes` `tower_gates` `tower_guards` `tower_dressing` `tower_dossiers` `tower_lift_menu` | `tower_*` (`tower_gate_sync` for the room-shared opened set) |
 | Player, abilities, animation | `scripts/player_controller.gd` | `player_abilities` `player_animation` `hero_rig` + `hero_rig_limbs` / `hero_rig_skeleton` (the two pose drivers) | `capture` `view` `gait` `debug_teleport` |

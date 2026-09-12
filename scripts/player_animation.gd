@@ -511,8 +511,7 @@ func update_character_animation(delta: float, input_dir: Vector2) -> void:
 	# property, so the two never fight.
 	if player.land_squash_timer > 0.0:
 		player.land_squash_timer = maxf(0.0, player.land_squash_timer - delta)
-		var squash_progress: float = 1.0 - player.land_squash_timer / player.LAND_SQUASH_DURATION
-		var k: float = sin(squash_progress * PI) * player.land_squash_strength
+		var k: float = land_squash_amount()
 		if character_body:
 			character_body.position.y -= 0.14 * k
 		if player.character_container and (player._teibi_tween == null or not player._teibi_tween.is_running()):
@@ -529,6 +528,47 @@ func update_character_animation(delta: float, input_dir: Vector2) -> void:
 
 	# Update floor tracking
 	was_on_floor = current_on_floor
+
+func land_squash_amount() -> float:
+	"""
+	THE LANDING SQUASH'S OWN ARC, 0 at touchdown, 1 at the deepest compression
+	and 0 again as it lets go — the `sin(progress * PI)` curve
+	`update_character_animation()` has always driven the `Body` dip and the
+	container squash from, lifted out so the SKINNED driver can take its share of
+	the impact through the knees (bd godot-test1-5u3.9).
+
+	It reads `player.land_squash_timer`, which `update_character_animation()`
+	decrements AFTER the pose branch — so a pose call sees the arc one frame
+	before the body does, which is 16 ms of a 180 ms squash and exactly the
+	direction you would want to be wrong in (the knees bend into the landing, not
+	out of it). It is a pure function of the player's own state, so the
+	determinism the rig contract rests on is untouched.
+	"""
+	if player == null or player.land_squash_timer <= 0.0:
+		return 0.0
+	var progress: float = 1.0 - player.land_squash_timer / player.LAND_SQUASH_DURATION
+	return sin(progress * PI) * player.land_squash_strength
+
+
+func _hand_over_clock(arm_rate: float = 0.0, leg_rate: float = 0.0) -> void:
+	"""
+	Hand the pose driver the three things only the CALLER knows and a swing ANGLE
+	cannot carry: the animation clock (the breath and the standing weight shift),
+	the landing squash's arc (the knees' share of an impact), and the QUADRATURE
+	of the two swings — `cos(φ)` where the swing is `A·sin(φ)`, scaled by the very
+	same amplitude, so the driver never repeats this function's arithmetic.
+
+	GUARDED BY `has_method`, which is CLAUDE.md's discovery rule and, here, the
+	thing that keeps `hero_rig_limbs.gd` byte-identical: only the skinned driver
+	answers `set_clock`, so the limb rig's `locomotion()` signature never grows an
+	argument and every hero still on nodes animates exactly as it did. Every pose
+	path calls this, not just the walk, because each of them is reachable on its
+	own (`style_shots.gd` poses through `animate_idle()` and `animate_jumping()`
+	directly, and `gait_selfcheck` through `animate_walking()`).
+	"""
+	if rig != null and rig.has_method("set_clock"):
+		rig.set_clock(animation_time, land_squash_amount(), arm_rate, leg_rate)
+
 
 func animate_walking(delta: float, speed_multiplier: float) -> void:
 	"""
@@ -588,6 +628,16 @@ func animate_walking(delta: float, speed_multiplier: float) -> void:
 	# most robotic thing about the old cycle. The two swings are handed to the
 	# rig ALREADY SCALED, which is what makes `remote_avatar.gd`'s mirror — same
 	# call, its own distance-driven phase — the same pose by construction.
+	# THE STRIDE'S QUADRATURE, for the skinned driver's joints (bd 5u3.9). The
+	# swings above are `A·sin(φ)`; these are `A·cos(φ)`, which is the only thing
+	# that says which WAY a limb is travelling — `sin` takes every value twice,
+	# so a knee that must peak mid-swing and be straight at BOTH extremes cannot
+	# be derived from the swing angle alone. Scaled by the same amplitudes (hitch
+	# included), so a hero with a big stride bends a knee to match it and a
+	# standing peer's zero rate straightens the leg for free.
+	var rate: float = cos(time_factor)
+	_hand_over_clock(rate * arm_swing_amount, rate * leg_swing_amount)
+
 	rig.locomotion(arm_swing, leg_swing, float(_gait["arm_asym"]))
 
 	# Add slight body bob for realism, plus this hero's roll (the waddle) and
@@ -660,6 +710,7 @@ func sidestep_pose(phase: float, direction: float) -> void:
 	# Drop the walk gait's lean and head bobble first — this pose sets the roll
 	# itself at the bottom, so only the pitch and the head would linger.
 	relax_gait_extras(1.0)
+	_hand_over_clock()
 
 	# This hero's amplitudes, as a ratio of the DEFAULT row the degrees above
 	# were authored against — never a second table of sidestep numbers.
@@ -755,6 +806,7 @@ func animate_jumping() -> void:
 	# animate_jumping owns the air: no hitch fires up here, and the walk gait's
 	# lean and head bobble ease out on the way up.
 	relax_gait_extras(0.2)
+	_hand_over_clock()
 
 	# Continuous wing beat while airborne.
 	var flap_speed = 14.0
@@ -808,6 +860,9 @@ func animate_idle(delta: float) -> void:
 	# stands there leaning.
 	relax_gait_extras(0.15)
 
+	# The clock, with no stride behind it: standing still is where the skinned
+	# driver's breath and weight shift live, and where a landing is absorbed.
+	_hand_over_clock()
 	rig.idle(lerp_speed)
 
 	# Subtle breathing animation, at this hero's own rate and depth — a heavy
