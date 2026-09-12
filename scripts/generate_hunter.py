@@ -98,11 +98,25 @@ EMBLEM_GOLD = "#be6507"  # the spoon of the corporate emblem                 -> 
 # face. Two coincident coplanar faces z-fight, and a part that merely *touches*
 # opens a hairline gap the moment anything is scaled — the same trap the wolf's
 # dark-saddle comment describes, and this model is nothing but right angles.
+#
+# STATING THE RULE WAS NOT ENOUGH: the first build of this biped broke it seven
+# times — both emblem bars on one plane, the chest and its rim sharing a bottom
+# face, both fists coplanar with a thigh, the brow meeting the visor face to
+# face — none of which a screenshot shows and all of which z-fight on somebody
+# else's GPU. `assert_no_shared_planes()` below audits every pair on every
+# build, which is why some numbers here look untidy: a coordinate is nudged a
+# millimetre off its neighbour's ON PURPOSE.
 BITE = 0.02
 
 LEG_Z = 0.235          # half the stance; deliberately narrower than the shoulders
 ARM_Z = 0.46           # centre-line of the arm stack, OUTSIDE the chest's 0.37
-DECAL_X = 0.375        # the chest plate's front face plus 1.5 cm of paint
+# The chest plate's front face is x = 0.36. Each decal spans its own slab across
+# it — every one biting INTO the plate rather than floating 5 mm off it, and no
+# two sharing an edge. That is what the four hand-picked thicknesses buy.
+DECAL_BLUE = (0.0290, 0.37300)    # (x thickness, x centre) -> 0.3585 .. 0.3875
+DECAL_GOLD = (0.0310, 0.37350)    #                         -> 0.3580 .. 0.3890
+DECAL_PLATE = (0.0285, 0.37175)   #                         -> 0.3575 .. 0.3860
+DECAL_TEXT = (0.0210, 0.37950)    #                         -> 0.3690 .. 0.3900
 
 
 def build_hunter():
@@ -124,8 +138,8 @@ def build_hunter():
         parts.append(box((0.58, 0.09, 0.36), (0.06, 0.045, z), c_seam))    # 0.00-0.09
         parts.append(box((0.50, 0.21, 0.33), (0.03, 0.175, z), c_dark))    # 0.07-0.28
         parts.append(box((0.40, 0.52, 0.31), (0.00, 0.52, z), c_dark))     # 0.26-0.78
-        # Knee plate: proud of the calf and the thigh on every side, so the joint
-        # is a bolted-on slab and not a crease.
+        # Knee plate: wider and deeper than the calf it caps and wider than the
+        # thigh above it, so the joint is a bolted-on slab and not a crease.
         parts.append(box((0.48, 0.16, 0.35), (0.03, 0.82, z), c_seam))     # 0.74-0.90
         parts.append(box((0.46, 0.48, 0.36), (0.00, 1.12, z), c_steel))    # 0.88-1.36
         # Hip: inset fore-aft and proud sideways, which is what makes it read as
@@ -149,7 +163,7 @@ def build_hunter():
     # simply not be drawn), and the yoke is narrow, so the head rises out of a
     # notch between two shoulder humps rather than off a flat shelf.
     parts.append(box((0.68, 0.42, 0.74), (0.02, 1.95, 0.0), c_steel))      # 1.74-2.16
-    parts.append(box((0.70, 0.07, 0.76), (0.02, 1.775, 0.0), c_seam))      # 1.74-1.81
+    parts.append(box((0.70, 0.075, 0.76), (0.02, 1.762, 0.0), c_seam))     # 1.7245-1.7995
     parts.append(box((0.56, 0.12, 0.50), (0.0, 2.16, 0.0), c_seam))        # 2.10-2.22
     # Backpack plate: the rear is a hard square end rather than a spine, and it
     # is what the old model's retrieval pack has become now that there is no tail
@@ -162,10 +176,16 @@ def build_hunter():
     # pale rectangle is exactly what a word looks like, and it costs one box.
     # `roll` rotates about X, which is the only axis that tilts a bar within the
     # chest's FRONT face (the YZ plane).
-    parts.append(box((BITE, 0.30, 0.065), (DECAL_X, 2.00, 0.0), c_blue, roll=0.62))
-    parts.append(box((BITE, 0.30, 0.065), (DECAL_X, 2.00, 0.0), c_gold, roll=-0.62))
-    parts.append(box((BITE, 0.10, 0.38), (DECAL_X, 1.83, 0.0), c_plate))
-    parts.append(box((BITE, 0.04, 0.29), (DECAL_X + 0.004, 1.83, 0.0), c_seam))
+    parts.append(box((DECAL_BLUE[0], 0.30, 0.065), (DECAL_BLUE[1], 2.00, 0.0),
+                     c_blue, roll=0.62))
+    # The spoon is a HAIR longer and thicker than the fork. Half of that is the
+    # picture (a spoon is the fatter of the two) and half is the plane audit: two
+    # bars that differ only by the sign of their roll have an identical bounding
+    # box, and the audit cannot see that their tilted faces never meet.
+    parts.append(box((DECAL_GOLD[0], 0.305, 0.067), (DECAL_GOLD[1], 2.00, 0.0),
+                     c_gold, roll=-0.62))
+    parts.append(box((DECAL_PLATE[0], 0.10, 0.38), (DECAL_PLATE[1], 1.83, 0.0), c_plate))
+    parts.append(box((DECAL_TEXT[0], 0.04, 0.29), (DECAL_TEXT[1], 1.83, 0.0), c_seam))
 
     # Four rivet studs, one per corner of the chest plate. See the face-budget
     # paragraph in the module docstring for why there are four of them.
@@ -184,9 +204,9 @@ def build_hunter():
         parts.append(box((0.52, 0.32, 0.30), (0.0, 2.08, side * 0.46), c_steel))  # 1.92-2.24
         parts.append(box((0.50, 0.06, 0.32), (0.0, 1.93, side * 0.46), c_seam))
         parts.append(box((0.32, 0.32, 0.26), (0.0, 1.78, z), c_dark))             # 1.62-1.94
-        parts.append(box((0.30, 0.10, 0.30), (0.0, 1.60, z), c_seam))             # 1.55-1.65
+        parts.append(box((0.30, 0.10, 0.32), (0.0, 1.60, z), c_seam))             # 1.55-1.65
         parts.append(box((0.44, 0.46, 0.30), (0.02, 1.36, z), c_steel))           # 1.13-1.59
-        parts.append(box((0.42, 0.22, 0.28), (0.02, 1.03, z), c_seam))            # 0.92-1.14
+        parts.append(box((0.42, 0.22, 0.28), (0.035, 1.03, z), c_seam))           # 0.92-1.14
 
     # --- Neck and dome. A visible dark NECK (the first round had none worth the
     # name, and a head bolted straight onto a torso is a torso), a two-step dome
@@ -197,10 +217,43 @@ def build_hunter():
     parts.append(box((0.28, 0.16, 0.28), (0.02, 2.26, 0.0), c_seam))       # 2.18-2.34
     parts.append(box((0.42, 0.20, 0.40), (0.03, 2.40, 0.0), c_steel))      # 2.30-2.50
     parts.append(box((0.34, 0.12, 0.32), (0.02, 2.50, 0.0), c_steel))      # 2.44-2.56
-    parts.append(box((0.06, 0.05, 0.36), (0.22, 2.455, 0.0), c_seam))
-    parts.append(box((0.05, 0.06, 0.34), (0.235, 2.40, 0.0), c_lens))
+    parts.append(box((0.055, 0.05, 0.36), (0.2145, 2.455, 0.0), c_seam))
+    parts.append(box((0.055, 0.066, 0.34), (0.21625, 2.400, 0.0), c_lens))
     parts.append(box((0.07, 0.08, 0.26), (0.21, 2.335, 0.0), c_seam))
     return parts
+
+
+def assert_no_shared_planes(parts) -> None:
+    """No two parts may put a face on the same plane where those faces overlap.
+
+    THE BITE RULE, ENFORCED. Every part here is an axis-aligned box — the two
+    emblem bars are rolled, but a roll about X leaves their X faces exactly where
+    the size puts them, and their AABB is conservative on the other two axes,
+    which for a guard is the safe direction to be wrong in. So two parts share a
+    face plane exactly when one axis has a coincident bound AND they overlap with
+    positive area on the other two: that is either a z-fight or the face-to-face
+    touch the BITE comment forbids, and a picture shows neither reliably (the
+    winner of a z-fight is the driver's business, so the model can look right
+    here and wrong on a player's machine).
+
+    The tolerance is 0.1 mm — under it two coordinates were meant to be the same
+    number, over it the offset is deliberate. It runs on the UNWELDED parts
+    because after `trimesh.util.concatenate` there are no parts left to name.
+    """
+    bounds = [p.bounds for p in parts]
+    for i, a in enumerate(bounds):
+        for j in range(i + 1, len(bounds)):
+            b = bounds[j]
+            for axis in range(3):
+                others = [k for k in range(3) if k != axis]
+                if any(min(a[1][k], b[1][k]) - max(a[0][k], b[0][k]) <= 1e-9 for k in others):
+                    continue
+                for va in (a[0][axis], a[1][axis]):
+                    for vb in (b[0][axis], b[1][axis]):
+                        assert abs(va - vb) > 1e-4, (
+                            f"hunter: parts {i} and {j} share the plane "
+                            f"{'xyz'[axis]} = {va:.5f} and overlap on it — z-fight. "
+                            "Nudge one of them by a millimetre.")
 
 
 def verify_hunter(mesh: trimesh.Trimesh) -> None:
@@ -208,7 +261,7 @@ def verify_hunter(mesh: trimesh.Trimesh) -> None:
 
     The shared `verify()` in predator_parts cannot judge this model, for two
     reasons and neither of them is new. Its LENGTH_RANGE (0.6, 2.2) is an
-    ABSOLUTE-size envelope for the animals, so a 2.54 m machine would have to
+    ABSOLUTE-size envelope for the animals, so a 2.56 m machine would have to
     widen it and loosen every quadruped's guard; and its "longer than it is
     wide" proportion guard is a statement about ANIMALS — a biped is broader
     across the shoulders than it is deep front to back, which is exactly what
@@ -225,7 +278,7 @@ def verify_hunter(mesh: trimesh.Trimesh) -> None:
     # The bead's own perf clause: no more than 1.3x the 412 faces of the chassis
     # this replaced. Pinned here rather than left to a reviewer's arithmetic,
     # because the cheapest way to "improve" a blocky model is to add boxes.
-    assert len(mesh.faces) <= 536, \
+    assert len(mesh.faces) <= 535, \
         f"hunter: {len(mesh.faces)} faces is over 1.3x the 412 the old chassis cost"
 
     lo, hi = mesh.bounds
@@ -241,10 +294,15 @@ def verify_hunter(mesh: trimesh.Trimesh) -> None:
     # the clause that rejects the old four-legged chassis outright.
     assert width > depth, f"hunter: {depth:.2f}m deep against {width:.2f}m wide — not a biped"
     assert height > width, f"hunter: {height:.2f}m tall is not over {width:.2f}m wide"
-    # The dome's face, the visor and the fists are all forward of the origin: the
-    # model is authored nose-along-+X like every other, and the facing yaw in
-    # `model_facing_offset` is the only thing that turns it.
-    assert hi[0] > 0.0, "hunter: nothing forward of origin (+X facing required)"
+    # NOSE ALONG +X, and asked of the HEAD rather than of the bounding box. A
+    # bare `hi[0] > 0` is satisfied by one stray millimetre and would bless a
+    # machine built facing backwards — which matters more here than on a
+    # quadruped, because a biped's bounding box is nearly symmetric fore-aft
+    # (this one is -0.43 to +0.39) and gives the test nothing to lean on. The
+    # dome is the only part above 2.2 m, so this says "the face is on the front".
+    head = mesh.vertices[mesh.vertices[:, 1] > 2.2]
+    assert len(head) > 0 and head[:, 0].max() > 0.2, \
+        "hunter: the head's front is not on +X — is the model facing backwards?"
 
     bias = hi[2] + lo[2]
     assert abs(bias) <= 1e-6, f"hunter: off-centre on z (bias {bias:.4f})"
@@ -258,7 +316,9 @@ def verify_hunter(mesh: trimesh.Trimesh) -> None:
 
 def save_hunter() -> trimesh.Trimesh:
     """Weld at final metres, check against verify_hunter, export, report."""
-    mesh = build(build_hunter())
+    parts = build_hunter()
+    assert_no_shared_planes(parts)
+    mesh = build(parts)
     verify_hunter(mesh)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     path = OUT_DIR / "hunter.glb"

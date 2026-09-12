@@ -713,6 +713,14 @@ func _shoot_predator(terrain: Node, player: Node3D, at: Vector3, scene_path: Str
 	body.position = spot
 	PauseHub.take(self)
 	terrain.add_child(body)
+	# NOMINAL SIZE, NOT ONE OF THE ROW'S ROLLS. `_ready()` has just multiplied the
+	# body by `size_random_factor` off an unseeded RNG — ±5% on the hunter row, so
+	# the machine in this frame would be 2.43-2.69 m tall and a DIFFERENT height
+	# every run. The wide frame below is the shot that answers "how big is it" and
+	# a before/after pair is compared at exactly that scale, so the portrait shows
+	# the size the species row and the capsule actually describe. After
+	# `add_child`, because that is when `_ready()` writes it.
+	body.scale = Vector3.ONE
 	await get_tree().process_frame
 	await get_tree().process_frame
 

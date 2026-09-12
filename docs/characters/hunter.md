@@ -18,9 +18,9 @@ One horizontal AMBER visor slit across the face, lit, with a dark hood/brow over
 it — one bar, never two eyes. Under the visor a dark chin grille (a corrugated
 vent in the reference). No mouth, no features.
 
-Shoulders: large rounded pauldrons, the widest part of the machine (~1.3 m
-across), topping out level with or just above the chest so the head sits in a
-notch between them.
+Shoulders: large rounded pauldrons, the widest part of the machine (~1.25 m
+across the shoulder line, pauldron seam included), topping out level with or
+just above the chest so the head sits in a notch between them.
 
 Chest: a riveted barrel plate, lighter than the panels around it, carrying two
 marks:

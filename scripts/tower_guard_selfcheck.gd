@@ -320,14 +320,17 @@ func _solid_near(world_pos: Vector3, yaw: float) -> String:
 	## them — since bd godot-test1-dn8 there is no second table, so the walls a post
 	## could be buried in are all in there.
 	##
-	## A DISC WAS NOT ENOUGH ONCE THE CHASSIS GREW (bead `godot-test1-6bj`). The
-	## capsule is 2.025 m long and a plan cell is 1.94 m, so the body reaches into
-	## the NEIGHBOURING cells along its facing, and a symmetric
+	## A DISC WAS NOT ENOUGH ONCE THE CHASSIS GREW (bead `godot-test1-6bj`): the
+	## capsule was then 2.025 m long against a 1.94 m plan cell, so the body
+	## reached into the NEIGHBOURING cells along its facing and a symmetric
 	## `GUARD_BODY_CLEARANCE` box measured only the 0.28125 m radius — it passed a
-	## post standing broadside inside a corridor wall. The footprint is therefore
-	## measured off `tower_guard.tscn`'s own shape, turned to the spawn yaw, and
-	## then widened to at least the old clearance on both axes so the margin that
-	## test bought is still bought.
+	## post standing broadside inside a corridor wall. Since bead
+	## `godot-test1-hb0` the chassis is an upright biped with no long horizontal
+	## axis, so `_guard_footprint` below COMES BACK a disc, 0.62 m of radius
+	## widened to the derived 0.66 m clearance. THE MACHINERY STAYS: it is read
+	## off `tower_guard.tscn`'s own shape rather than from a copy of today's
+	## answer, so it is a disc only for as long as the scene says so, and the next
+	## chassis to lie down gets the neighbouring-cell test back with no edit here.
 	var span := _guard_footprint(yaw)
 	var half := Vector3(span.size.x * 0.5, GUARD_BODY_HEIGHT * 0.5, span.size.y * 0.5)
 	var body_centre := Vector3(world_pos.x + span.position.x + half.x,
@@ -348,8 +351,11 @@ func _solid_near(world_pos: Vector3, yaw: float) -> String:
 
 func _guard_footprint(yaw: float) -> Rect2:
 	## The ground footprint a guard standing at the origin facing `yaw` occupies, as
-	## a Rect2 in (x, z) RELATIVE TO THE POST — asymmetric, because the capsule is
-	## offset back along the body (the chassis is built forward of its origin).
+	## a Rect2 in (x, z) RELATIVE TO THE POST. It is asymmetric whenever the capsule
+	## lies down or is offset off the origin (as the four-legged chassis's was, being
+	## built forward of it) and symmetric when it stands upright over the origin,
+	## which is what today's biped gives: `axis.x == axis.z == 0`, so the reach
+	## vanishes and what comes back is the clearance disc.
 	##
 	## READ OFF `tower_guard.tscn`, never restated here: the capsule's own transform
 	## and dimensions are the thing under test, so a scene whose shape stopped
@@ -389,12 +395,13 @@ func _guard_footprint(yaw: float) -> Rect2:
 func _check_guard_capsule_fits_the_doors() -> void:
 	"""
 	Check 12b. The real guard capsule fits a spine door, clears every storey,
-	and does NOT fit the crawl alcove.
+	wraps the body it is drawn around, and is the SAME capsule the field hunter
+	carries.
 
 	The capsule AND the model height are read off a live `tower_guard.tscn`
 	instance — the `_guard_footprint` discipline — because the whole claim is
 	about the body this bead grew, and a copy of 0.84 here would keep passing
-	after a retune broke the scene. Three assertions:
+	after a retune broke the scene. Four assertions:
 
 	  * DOORWAY: the capsule's diameter clears one PLAN_CELL (a spine door is
 	    one cell wide). Width is what gates a doorway; the capsule's long axis
@@ -409,6 +416,15 @@ func _check_guard_capsule_fits_the_doors() -> void:
 	    simply cannot enter, and the alcove was always kept guard-free by
 	    ROUTING anyway — it is a dead end (check 20) with no post, patrol lane
 	    or lure plate inside it.
+	  * ONE CHASSIS, ONE CAPSULE: `hunter_robot.tscn` carries the identical
+	    radius, height and shape transform. `scripts/species_table.gd` states
+	    that in prose ("a grown model over an unscaled capsule would be the
+	    bug") and until bead godot-test1-hb0 nothing measured it — the field
+	    hunter's scene is read by no self-check in the repository, so a retune
+	    that updated one file and not the other shipped a guard and a hunter of
+	    different sizes over the same mesh. Asserted here rather than in a check
+	    of its own because this is already the function that holds the live
+	    guard scene open.
 	"""
 	var scene := TowerInterior.guard_scene()
 	if scene == null:
@@ -465,12 +481,44 @@ func _check_guard_capsule_fits_the_doors() -> void:
 		low = minf(low, TowerInterior.plan_clear_height(floor_index))
 	if tall >= low:
 		_fail("check 12b: the %.2f m guard does not clear a %.2f m storey" % [tall, low])
+	_check_hunter_carries_the_same_capsule(shape_node, capsule)
 	print("guard capsule: %.2f m wide through %.2f m doors, %.2f m tall under %.2f m ceilings, %.2f m capsule %s the %.2f m crawl (alcove guard-free by routing, check 20), clearance %.4f" % [
 		diameter, door, tall, low, capsule_hi,
 		("passes under" if capsule_hi < TowerDossiers.DOSSIER_CRAWL_CLEAR else "is too tall for"),
 		TowerDossiers.DOSSIER_CRAWL_CLEAR, guard_body_clearance()])
 	probe.free()
 	Sentinel.done("guard_capsule_fits_the_doors")
+
+
+## The field hunter's scene. Read here ONLY to compare its capsule against the
+## guard's — the tower has no other business with it, and `capture_selfcheck`
+## holds the same path for its own reasons.
+const HUNTER_SCENE: String = "res://scenes/characters/hunter_robot.tscn"
+
+
+func _check_hunter_carries_the_same_capsule(guard_shape: CollisionShape3D,
+		guard_capsule: CapsuleShape3D) -> void:
+	## ONE CHASSIS, ONE CAPSULE — check 12b's fourth clause, see its docstring.
+	## The guard and the field hunter are the same machine on two duties and share
+	## one `.glb`; a capsule retuned in one scene and not the other is a body that
+	## collides at a size its mesh is not.
+	var scene := load(HUNTER_SCENE) as PackedScene
+	if scene == null:
+		_fail("check 12b: %s is missing — the shared-capsule claim cannot be measured" % HUNTER_SCENE)
+		return
+	var probe := scene.instantiate() as Node3D
+	var shape_node := probe.find_child("CollisionShape3D", true, false) as CollisionShape3D
+	var capsule := (shape_node.shape if shape_node != null else null) as CapsuleShape3D
+	if capsule == null:
+		_fail("check 12b: %s has no readable capsule" % HUNTER_SCENE)
+	elif not is_equal_approx(capsule.radius, guard_capsule.radius) \
+			or not is_equal_approx(capsule.height, guard_capsule.height) \
+			or not shape_node.transform.is_equal_approx(guard_shape.transform):
+		_fail(("check 12b: hunter_robot.tscn and tower_guard.tscn disagree about the SAME chassis"
+				+ " — hunter r=%.4f h=%.4f %s against guard r=%.4f h=%.4f %s")
+				% [capsule.radius, capsule.height, str(shape_node.transform),
+					guard_capsule.radius, guard_capsule.height, str(guard_shape.transform)])
+	probe.free()
 
 
 func _visual_height(body: Node3D) -> float:

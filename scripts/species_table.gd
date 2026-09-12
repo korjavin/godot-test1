@@ -2593,18 +2593,22 @@ const SPECIES: Dictionary = {
 		"sniff_pause_chance": 0.15,
 
 		# ----- Obstacle avoidance -----
-		## 2.4 m of feeler for a body 1.24 m across — roomier than the crocodile's
-		## 3.0-for-1.40, because the failure it prevents is the same one (the model
-		## reaching into a block the narrower capsule stopped clear of) and the
-		## biped is the widest thing in the table.
+		## 2.4 m of feeler against a 1.24 m capsule — 1.9 lengths, a shade TIGHTER
+		## in proportion than the crocodile's 3.0-against-1.40 (2.1), and that is
+		## the right direction for a biped: the crocodile's ratio is set by a body
+		## that is long and thin and has to clear a block it is still mostly beside,
+		## while this one turns about a disc. The failure both prevent is the same
+		## — the model reaching into a block the capsule stopped clear of.
 		"avoid_look_ahead": 2.4,
 		"avoid_feeler_angle": PI / 5.0,  # 36°
 
-		## Cast at 0.5, not the crocodile's 0.3: this machine's mass is its TORSO,
-		## which since the biped rebuild (bead godot-test1-hb0) starts 1.34 m up.
-		## A feeler at croc height would sample the air between two armoured legs
-		## and miss whatever the chest is about to walk into. 0.5 is boot-and-calf
-		## height, which is the lowest solid thing on the model.
+		## Cast at 0.5, not the crocodile's 0.3. NOT because the mass is higher
+		## (the boots are on the floor like everything else's) but because of what
+		## a 0.3 m ray would hit on THIS body: the block kinds in the world have
+		## kerbs, plinths and slab edges around knee height, and a machine that
+		## strides over a 0.3 m reading walks its 0.9 m knee plates into them. 0.5
+		## is mid-calf, the height at which the leg is still solid and the next
+		## obstacle is still avoidable.
 		"avoid_feeler_height": 0.5,
 
 		## 0.7 — it eases off less than a crocodile (0.5) rounding a block. A
@@ -2650,12 +2654,13 @@ const SPECIES: Dictionary = {
 		"breathe_amount": 0.002,
 
 		# ----- River wading (VISUAL ONLY — same hard rule as every row) -----
-		## 0.22 m off a model that stands 2.56 m tall on legs 1.36 m long: the
-		## boots and the calves go under, the torso does not. That is the read
-		## being bought — the corporation's unit FORDS the river, waist-dry and
-		## unbothered, where a crocodile hides in it. Deeper would start eating the
-		## knee plates, and the leg's light/dark rhythm is most of what says
-		## "machine" at distance.
+		## 0.22 m off a model that stands 2.56 m tall: the boots (0.00-0.28) go
+		## under and the calf's bottom 2 cm with them, and nothing else moves.
+		## That is the read being bought — the corporation's unit FORDS the river,
+		## dry to the shin and unbothered, where a crocodile hides in it. It is
+		## ankle-deep rather than knee-deep on purpose: the leg's light/dark
+		## rhythm (dark boot, mid calf, black knee, light thigh) is most of what
+		## says "machine" at distance, and a deeper sink starts eating it.
 		##
 		## VISUAL ONLY: never touches the CharacterBody3D, its CollisionShape3D or
 		## global_position. A wading hunter is exactly as dangerous as a dry one.

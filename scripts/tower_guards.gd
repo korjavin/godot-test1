@@ -221,21 +221,23 @@ static func _plan_guard_post(floor_index: int) -> Dictionary:
 	`tower_guard_selfcheck`'s check 12 —
 	rather than by this function silently picking one and hiding the second.
 
-	AND THE PATROL AXIS IS ALSO THE SPAWN FACING (`yaw`), which is not decoration.
-	The chassis is 2.025 m long (bead `godot-test1-6bj` scaled it 1.5x) and a plan
-	cell is 1.94 m, so a guard is LONGER THAN THE CELL IT STANDS ON: stood across a
-	one-cell corridor it is inside the wall before it has taken a step, and
-	`move_and_slide` depenetrates it off the post nobody moved it from. Facing it
-	along the beat it was just measured for is the fix and costs nothing — the run
-	of `.` cells it paces is exactly the run its body needs to lie in.
+	AND THE PATROL AXIS IS ALSO THE SPAWN FACING (`yaw`), which is not decoration
+	— though what it buys changed with the chassis. It was written when the guard
+	was the four-legged hunter, 2.025 m long against a 1.94 m plan cell: LONGER
+	THAN THE CELL IT STOOD ON, so a body stood across a one-cell corridor was
+	inside the wall before it took a step and `move_and_slide` depenetrated it off
+	the post nobody moved it from. Since bead `godot-test1-hb0` the chassis is a
+	BIPED whose capsule stands upright — a 1.24 m disc, comfortably inside the
+	cell at any heading — so the burial that yaw prevented can no longer happen
+	and the facing is now what it looks like: a sentry that starts out looking
+	down the lane it is about to walk, rather than at a wall.
 
-	CEILING, AND IT IS THE SPAWN THAT MATTERS: a guard turns freely once it is
-	walking, so in a one-cell corridor a heading broadside to the lane still puts
-	the ends of the capsule in the walls. That is an ordinary moving contact
-	`move_and_slide` slides out of, and the heading is transient because a patrol's
-	facing follows its motion; a body that STARTS buried is the one that gets
-	resolved somewhere nobody authored. If the chassis is ever scaled again, the
-	fix is a wider lane (two cells) under the `G`, not a longer list of yaws.
+	CEILING, AND IT IS STILL THE SPAWN THAT MATTERS. Keep the rule even though its
+	original failure is gone: a guard turns freely once it is walking, so a
+	spawn heading is the only one this function can choose, and the next chassis
+	to outgrow a cell (the last one did) gets the protection back for free. If one
+	does, the fix is a wider lane — two cells under the `G` — not a longer list of
+	yaws.
 	"""
 	var plan := TowerPlans.storey(floor_index)
 	if plan.is_empty():
@@ -266,8 +268,12 @@ static func _plan_guard_post(floor_index: int) -> Dictionary:
 		"post": at,
 		"patrol_center": at,
 		"patrol_half": half,
-		# The body's long axis is its local +Z (that is where the capsule lies in
-		# `tower_guard.tscn`), so a yaw of 0 faces +Z and PI/2 faces +X.
+		# A yaw of 0 faces +Z and PI/2 faces +X — the body's own travel axis, which
+		# is +Z for every enemy (`model_facing_offset` is what turns the mesh onto
+		# it). It used to be phrased as "the long axis of the capsule"; since bead
+		# `godot-test1-hb0` the capsule stands upright and has no long horizontal
+		# axis, but the heading this picks is unchanged and is read off the PLAN,
+		# never off the shape.
 		"yaw": (PI * 0.5 if along_the_x else 0.0),
 	}
 
