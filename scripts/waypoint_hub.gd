@@ -135,6 +135,13 @@ func standing_on() -> int:
 	circle" (owner ruling 2026-09-12) with no key to reserve and no opener to add.
 	It is the LATCH, so it carries the dead band with it — the panel inherits the
 	hysteresis for free instead of flickering on the trigger boundary.
+
+	IT IS A POSITION AND NOT A PERMISSION. This answers "which circle is under the
+	hero", NOT "may they travel from it": a circle found by nobody still latches
+	here, because the latch is what raises the card in the first place. `.3`'s
+	`travel_to_waypoint()` and `.4`'s panel must AND this against the player's own
+	`waypoint_mask` — the epic's rule is "standing on a FOUND circle", and the
+	found half lives on the player where the room writes it.
 	"""
 	return _standing_on
 
@@ -164,9 +171,12 @@ func _tick() -> void:
 		# No local player: re-arm, so the next one to appear gets a fresh approach.
 		_standing_on = -1
 	else:
+		# THE SCAN RUNS FIRST AND THE MASK IS READ AFTER IT, which is one line of
+		# ordering and 200 ms of polish: a find made by THIS tick's enter edge must
+		# light its own beam on the tick that popped its card, not on the next one.
+		_scan(player)
 		if "waypoint_mask" in player:
 			mask = int(player.waypoint_mask)
-		_scan(player)
 	_paint_beams(mask)
 
 
