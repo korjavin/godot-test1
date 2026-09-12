@@ -245,22 +245,86 @@ REGION_BONES = {
 SEAM_HALF = 0.0030
 SEAM_DARKEN = 0.55
 
+# THE MOUTH, AND WHY IT HAS A WIDTH AT ALL (bead godot-test1-z3e.15; owner,
+# 2026-09-12: "we need faces more similar to our comics"). `paint_body` used to
+# take every head vertex in a 2.4 cm z band whose `depth` was past 0.55 of the
+# head's own half-depth, which is not a mouth — it is the whole front of the
+# face at mouth height, cheeks included. Measured on the three `17_head_face`
+# frames of 2026-09-12: a dark rosy swath from cheekbone to cheekbone on all
+# three heroes, with a separate blotch where the band crept round the jaw, and
+# no mouth SHAPE anywhere in it. Every portrait in `assets/portraits/` draws a
+# small closed mouth about a third of the face's width.
+#
+# So the band is bounded across as well as up and down. `LIP_HALF` is a
+# FRACTION of the head's own half-width, not a length, because Windman's broad
+# head and Primm's narrow one are the same macro slider moving; a third of a
+# half-width is the ~5 cm mouth on a ~14.5 cm head every one of these portraits
+# has. `LIP_DEPTH` then keeps the band off the jaw corners the width bound
+# still lets through on a round head.
+#
+# THE NUMBERS ARE THE SECOND PASS, from the first tuned frames: 0.36 and a 2 cm
+# band still left a pale PATCH where the portraits have a drawn LINE. The band is
+# the height of the visible lip and no more, and the one hero whose skin is bright
+# enough for a lip to vanish into it takes a darker `lips` in his own row — a
+# mouth no darker than the face around it is not a mouth at this distance.
+LIP_BELOW = 0.009
+LIP_ABOVE = 0.006
+LIP_DEPTH = 0.72
+LIP_HALF = 0.32
+LIP_VERTS_MIN = 8     # below this there is no mouth — `paint_body` refuses to build
+
+# How far past the arc's own end a skin-side band vertex may sit before it counts
+# as a bisect that did not land — see the assert in `wrap_band`, which is the one
+# reader. It is the ONE place the cloth's boundary is allowed to follow the head's
+# triangulation instead of a cut line, so it has to be about one triangle wide and
+# nothing more. It was 0.10 rad, measured on the Windman head of bead z3e.16;
+# z3e.15 widened his skull (`head-scale-horiz-incr`, and the portrait is a broad
+# man) and the two staircase vertices at each arc end moved out to 6.6 and 6.8
+# degrees past it — one 9 mm triangle on a 7.5 cm radius. 0.14 rad is 8.0 degrees:
+# that triangle, with a little room, and still an order under the 74-degree arc.
+ARC_END_SLACK = 0.14
+
 FACES = {
     "windman": {
         # docs/characters/windman.md: male, calm, no beard, slightly rounded face
         # with soft features; the blue-over-red bandage knotted at the back.
-        "macro": (("gender", 0.85), ("age", 0.45), ("muscle", 0.5),
-                  ("weight", 0.6), ("caucasian", 1.0), ("african", 0.0),
+        #
+        # BEAD z3e.15 — `assets/portraits/windman.png` and
+        # `docs/characters/windman.png` read beside the 2026-09-12 `17_head_face`
+        # frame. The portrait is a BROAD, ROUND, heavy-set man: full cheeks, a
+        # wide square jaw, a short chin, a small mouth and a thick neck. The head
+        # that shipped was none of that — an oval with hollow cheeks running down
+        # to a long tapered chin, because `head-round` at 0.65 was carrying the
+        # whole shape on its own against `head-fat-incr` 0.30. The move is width
+        # and mass, not a new target family: `weight` and `muscle` up (they shape
+        # the neck and jowl the portrait has and the render did not), `head-round`
+        # and `head-fat-incr` up, `head-scale-horiz-incr` for the breadth across
+        # the cheekbones, `chin-width-incr` for the square jaw and
+        # `chin-jaw-drop-decr` more than doubled for the short chin under it.
+        "macro": (("gender", 0.85), ("age", 0.45), ("muscle", 0.55),
+                  ("weight", 0.70), ("caucasian", 1.0), ("african", 0.0),
                   ("asian", 0.0)),
-        "targets": ((("head", "head-round.target.gz"), 0.65),
-                    (("head", "head-fat-incr.target.gz"), 0.30),
+        "targets": ((("head", "head-round.target.gz"), 0.85),
+                    (("head", "head-fat-incr.target.gz"), 0.38),
                     (("head", "head-age-decr.target.gz"), 0.25),
-                    (("cheek", "l-cheek-volume-incr.target.gz"), 0.35),
-                    (("cheek", "r-cheek-volume-incr.target.gz"), 0.35),
-                    (("nose", "nose-scale-vert-decr.target.gz"), 0.20),
-                    (("chin", "chin-jaw-drop-decr.target.gz"), 0.20)),
+                    (("head", "head-scale-horiz-incr.target.gz"), 0.30),
+                    (("cheek", "l-cheek-volume-incr.target.gz"), 0.50),
+                    (("cheek", "r-cheek-volume-incr.target.gz"), 0.50),
+                    (("nose", "nose-scale-vert-decr.target.gz"), 0.30),
+                    # 0.45 on the first tuned frame pushed the whole lower face
+                    # forward into a muzzle — the jaw drop shortens the chin by
+                    # rotating it UP and OUT. 0.28 is the short chin without it.
+                    (("chin", "chin-jaw-drop-decr.target.gz"), 0.28),
+                    (("chin", "chin-width-incr.target.gz"), 0.40),
+                    # A small closed mouth, as every frame of him is drawn.
+                    (("mouth", "mouth-scale-horiz-decr.target.gz"), 0.25)),
+        # z3e.15 darkens the lips and nothing else here: his is the brightest skin
+        # in the cast, and (0.80, 0.55, 0.48) against it rendered as a pale patch
+        # where the portrait draws a small closed mouth with a line through it.
+        # (0.62, 0.38, 0.34) then overshot the other way — a dark gash, read on
+        # the second tuned frame; this is the stop between them.
         "palette": {"skin": (0.93, 0.74, 0.62, 1.0),
-                    "lips": (0.80, 0.55, 0.48, 1.0),
+                    "lips": (0.70, 0.44, 0.39, 1.0),
                     "hair": (0.32, 0.20, 0.11, 1.0)},
         "stripes": ((0.004, 0.022, (0.20, 0.38, 0.75, 1.0)),    # blue over red,
                     (-0.024, 0.004, (0.72, 0.18, 0.15, 1.0))),  # as the art has it
@@ -275,9 +339,16 @@ FACES = {
                  "half_angle": 74.0, "smooth": 3,
                  # tangent x outward x up, metres — a small fold of cloth.
                  "knot": (0.026, 0.018, 0.034)},
-        "hair_lift": 0.008,         # short hair as a shell over the scalp, metres
-        "hair_front": 0.036,        # hairline above the eye line
-        "hair_nape": 0.055,         # how much lower the hairline sits at the back
+        # BEAD z3e.15 — the shipped crop is a smooth BOWL: a helmet of hair with
+        # a flat fringe sitting straight on the band. Both portraits draw short
+        # tousled hair standing UP off the crown with a strip of forehead showing
+        # above the bandage. `hair_lift` is the whole of that difference (the
+        # shell is lifted along the vertex normal, so more lift IS more crown),
+        # and `hair_front` 8 mm higher is the forehead; `hair_nape` comes in
+        # because a 5.5 cm drop at the back was reading as length he does not have.
+        "hair_lift": 0.014,         # short hair as a shell over the scalp, metres
+        "hair_front": 0.044,        # hairline above the eye line
+        "hair_nape": 0.042,         # how much lower the hairline sits at the back
     },
     "primm": {
         # docs/characters/primm.md: "slim but slightly lean", "slightly elongated
@@ -298,14 +369,27 @@ FACES = {
         "macro": (("gender", 0.90), ("age", 0.30), ("muscle", 0.45),
                   ("weight", 0.35), ("caucasian", 1.0), ("african", 0.0),
                   ("asian", 0.0)),
+        #
+        # BEAD z3e.15 — the portraits beside the 2026-09-12 frame. z3e.12 made
+        # him a DIFFERENT man from Windman, which was its job; what it did not do
+        # is make him the ANGULAR one. `assets/portraits/primm.png` is all planes:
+        # cheekbones that cast their own shadow, hollows under them, a thin
+        # straight nose and a narrow mouth. The render is a smooth, soft, slightly
+        # long oval. So the cheekbones go up and `cheek-inner-decr` digs the
+        # hollow under them (the target that actually makes a face read as lean —
+        # `head-fat-decr` thins the whole skull and leaves the cheek flat).
         "targets": ((("head", "head-oval.target.gz"), 0.80),
                     (("head", "head-scale-vert-incr.target.gz"), 0.50),
-                    (("head", "head-fat-decr.target.gz"), 0.60),
-                    (("cheek", "l-cheek-bones-incr.target.gz"), 0.50),
-                    (("cheek", "r-cheek-bones-incr.target.gz"), 0.50),
+                    (("head", "head-fat-decr.target.gz"), 0.70),
+                    (("cheek", "l-cheek-bones-incr.target.gz"), 0.70),
+                    (("cheek", "r-cheek-bones-incr.target.gz"), 0.70),
+                    (("cheek", "l-cheek-inner-decr.target.gz"), 0.35),
+                    (("cheek", "r-cheek-inner-decr.target.gz"), 0.35),
                     (("chin", "chin-jaw-drop-incr.target.gz"), 0.40),
-                    (("chin", "chin-prominent-incr.target.gz"), 0.40),
+                    (("chin", "chin-prominent-incr.target.gz"), 0.50),
                     (("nose", "nose-scale-vert-incr.target.gz"), 0.30),
+                    (("nose", "nose-width2-decr.target.gz"), 0.30),
+                    (("mouth", "mouth-scale-horiz-decr.target.gz"), 0.20),
                     # "Eyes sharp and focused" — narrowed lids, both sides.
                     (("eyes", "l-eye-height2-decr.target.gz"), 0.30),
                     (("eyes", "r-eye-height2-decr.target.gz"), 0.30)),
@@ -317,7 +401,12 @@ FACES = {
         # to risk was against a generated torso's neck cylinder; there is no torso
         # and no neck cut now, the body is one mesh, so the tone answers to nothing
         # but the collar above it.
-        "palette": {"skin": (0.90, 0.76, 0.68, 1.0),
+        # z3e.15 pulls the skin two more stops down and a shade cooler still: in
+        # the 2026-09-12 frame his whole face above the mouth is at the top of the
+        # range before the goggles even start, which is the same clip the note
+        # below is about, and the portrait's Primm is the PALE-COOL one of the
+        # three, not the brightest.
+        "palette": {"skin": (0.86, 0.72, 0.65, 1.0),
                     "lips": (0.76, 0.50, 0.46, 1.0),
                     "hair": (0.18, 0.11, 0.07, 1.0)},
         # A blue lens between two silver frame lines, 5.4 cm of band all told —
@@ -333,9 +422,28 @@ FACES = {
         # Windman's bandage blue (0.20, 0.38, 0.75), which is the one piece of
         # painted eyewear in the cast already proven to read at 3 m — still the
         # canon's "slight blue tint", dark enough to survive the grade.
-        "stripes": ((0.021, 0.027, (0.70, 0.72, 0.76, 1.0)),    # silver frame, top
-                    (-0.021, 0.021, (0.45, 0.62, 0.85, 1.0)),   # blue lens
-                    (-0.027, -0.021, (0.70, 0.72, 0.76, 1.0))),  # frame, bottom
+        #
+        # BEAD z3e.15 REVERSES THE CONTRAST, and this is the single biggest thing
+        # between his head and his portrait. The note above got the diagnosis
+        # right and the prescription backwards: it pulled the LENS darker and left
+        # the frames at (0.70, 0.72, 0.76), which is exactly the value it had just
+        # measured clipping to flat white — so the shipped goggles are a 5.4 cm
+        # band of paper white across the brow, the cheekbone and both temples,
+        # with the lens a faint blue line lost inside it (the 2026-09-12
+        # `17_head_face` frame, and `clipped_fraction.py` agrees). Nobody draws
+        # him that way. `assets/portraits/primm.png` and
+        # `docs/characters/primm.png` both draw a SLIM band with a BRIGHT CYAN
+        # lens held in a DARK frame.
+        #
+        # So the frames take `trim_silver`'s own measured value (a fifth of the
+        # way up is what lands as metal in this scene, see the colours below) and
+        # the lens goes bright — the frames now have something to be dark
+        # against, and the lens is the thing that glows, as drawn. And the band
+        # narrows from 5.4 cm to 4.0 cm: with the frames no longer blowing out
+        # there is nothing left to compensate for, and 5.4 cm covered his brow.
+        "stripes": ((0.017, 0.022, (0.22, 0.24, 0.29, 1.0)),    # dark frame, top
+                    (-0.012, 0.017, (0.38, 0.76, 0.90, 1.0)),   # the cyan lens
+                    (-0.018, -0.012, (0.22, 0.24, 0.29, 1.0))),  # frame, bottom
         # A DIFFERENT SILHOUETTE FROM WINDMAN'S CROP (0.008 / 0.036 / 0.055), and
         # the difference is the HAIRLINE, not the length: docs/characters/primm.png
         # is short hair swept back off a high forehead with the sides above the
@@ -344,9 +452,17 @@ FACES = {
         # carry the sweep. A first pass at "short to MEDIUM length" put the nape at
         # 0.090 and rendered a bowl cut that covered the temples — the canon's
         # picture wins over its prose here, and the nape stays short.
-        "hair_lift": 0.012,
-        "hair_front": 0.050,
-        "hair_nape": 0.060,
+        # z3e.15: the hairline was already right and the VOLUME was not. Both
+        # portraits sweep his hair up and back off the forehead — it stands
+        # proud of the skull, which on a shell is `hair_lift` and nothing else;
+        # at 0.012 it lay flat and read as the same bowl Windman wore. Up to
+        # 0.020, the hairline 8 mm higher again for the sweep, and the nape
+        # tightened because the back of a swept-back cut is short.
+        # (and 0.058 still put the fringe on the goggles on the first tuned frame:
+        # the portrait's forehead is HIGH, so the hairline goes up again)
+        "hair_lift": 0.020,
+        "hair_front": 0.066,
+        "hair_nape": 0.046,
     },
 }
 
@@ -554,19 +670,51 @@ SHAFT_BONES = ["calf_l", "calf_r", "foot_l", "foot_r", "ball_l", "ball_r"]
 HEROES = {
     "teibi": {
         # docs/characters/tiebi.md: ordinary man, medium build, calm friendly
-        # face, no facial hair. spike_z3e_teibi_body.py's numbers, verbatim.
-        "macros": {"gender": 0.9, "age": 0.4, "muscle": 0.5, "weight": 0.45,
+        # face, no facial hair. spike_z3e_teibi_body.py's numbers, verbatim —
+        # which is to say the SPIKE's numbers, sitting near the basemesh default
+        # on purpose (the landmark bug in trap 7 punished anyone who moved them),
+        # and never revisited once `morphed_coords` freed the sliders.
+        #
+        # BEAD z3e.15, from `assets/portraits/teibi.png` and
+        # `docs/characters/teibi.png` beside the 2026-09-12 frame. Three things a
+        # viewer names straight away:
+        #
+        #  • HE IS SMILING IN EVERY PICTURE and the head that ships is flat and a
+        #    little glum. The bead licenses MakeHuman's expression targets for
+        #    exactly this. `mouth-angles-up` is the plain morph (the corners lift)
+        #    and `mouth-corner-puller` is the expression unit behind a real smile
+        #    (it takes the cheek with it); a little of both is a closed-mouth
+        #    smile and not a grin, which is what he is drawn with.
+        #  • HE IS YOUNGER AND LEANER than 0.4/0.45 build him — mid-twenties,
+        #    light-athletic, with a defined jawline and cheekbones you can see.
+        #    So age and weight down, muscle up, the round-head target halved and
+        #    `head-oval` under it, the cheek VOLUME cut back and cheek BONES
+        #    brought in instead, and `chin-bones-incr` for the jaw (the old
+        #    `chin-jaw-drop-decr` was shortening the very chin the portrait has).
+        "macros": {"gender": 0.9, "age": 0.33, "muscle": 0.55, "weight": 0.38,
                    "caucasian": 1.0, "african": 0.0, "asian": 0.0},
-        "targets": [(("head", "head-round.target.gz"), 0.30),
-                    (("cheek", "l-cheek-volume-incr.target.gz"), 0.18),
-                    (("cheek", "r-cheek-volume-incr.target.gz"), 0.18),
+        "targets": [(("head", "head-round.target.gz"), 0.15),
+                    (("head", "head-oval.target.gz"), 0.35),
+                    (("cheek", "l-cheek-volume-incr.target.gz"), 0.10),
+                    (("cheek", "r-cheek-volume-incr.target.gz"), 0.10),
+                    (("cheek", "l-cheek-bones-incr.target.gz"), 0.40),
+                    (("cheek", "r-cheek-bones-incr.target.gz"), 0.40),
                     (("nose", "nose-scale-vert-decr.target.gz"), 0.15),
-                    (("chin", "chin-jaw-drop-decr.target.gz"), 0.12)],
+                    (("chin", "chin-bones-incr.target.gz"), 0.35),
+                    (("mouth", "mouth-angles-up.target.gz"), 0.60),
+                    (("expression", "units", "caucasian",
+                      "mouth-corner-puller.target.gz"), 0.35)],
         # generate_teibi_separate.py's palette, verbatim (owner ruling: vertex
         # colours, zero texture bytes). Skin and lips reach the mesh through
         # `hero_skin.SKIN_GRADE` — the row is the paint, that constant is the exposure.
         "colours": {
-            "skin":          (0.86, 0.66, 0.54, 1.0),
+            # z3e.15: the portrait's Teibi is the TANNED one of the three — a warm
+            # olive against Windman's pink and Primm's cool pale. The generator's
+            # (0.86, 0.66, 0.54) renders as the same peach as the other two once
+            # the scene's two stops are on it; this is that tone taken down and
+            # further toward olive, and it is also the row's share of keeping the
+            # clipped fraction under the z3e.14 line.
+            "skin":          (0.80, 0.60, 0.46, 1.0),
             "hair":          (0.17, 0.12, 0.09, 1.0),
             "beret_navy":    (0.07, 0.09, 0.19, 1.0),
             "shirt_mustard": (0.87, 0.66, 0.17, 1.0),
@@ -575,7 +723,13 @@ HEROES = {
             "belt":          (0.11, 0.10, 0.11, 1.0),
             "belt_buckle":   (0.55, 0.50, 0.30, 1.0),
             "shoes":         (0.16, 0.11, 0.08, 1.0),
-            "lips":          (0.80, 0.55, 0.48, 1.0),
+            # z3e.15 takes the lips down WITH the skin above. `SKIN_GRADE` grades
+            # both, so the ratio is what matters, and leaving the generator's
+            # (0.80, 0.55, 0.48) under the darker skin left ~5% luma between his
+            # mouth and his face against Windman's 36% — which fails the rule this
+            # same bead wrote at LIP_BELOW, on the one hero whose mouth is the
+            # portrait's whole expression.
+            "lips":          (0.72, 0.46, 0.40, 1.0),
             "eye_white":     (0.92, 0.92, 0.90, 1.0),
             "eye_iris":      (0.22, 0.16, 0.11, 1.0),
         },
@@ -604,7 +758,9 @@ HEROES = {
             {"bones": SLEEVE_BONES, "top": HEM_SHOULDER, "bottom": ("wrist", -0.02),
              "cut": GARMENT_SLEEVE, "key": "shirt"},
         ),
-        "hair": {"lift": 0.006, "front": 0.036, "nape": 0.05, "brows": True},
+        # z3e.15: the portrait shows a clear strip of forehead between the brows
+        # and the beret's brim; the shipped fringe ran down to the eyebrows.
+        "hair": {"lift": 0.006, "front": 0.046, "nape": 0.045, "brows": True},
         "beret": True,
         "eyes": True,
         "height": 1.78,      # crown-to-heel, natural MakeHuman proportions
@@ -1052,18 +1208,27 @@ def wrap_band(obj, eye_z, cfg):
     # triangulation, and the capped sockets, whose rims are a hole inside the patch
     # and end up under the cloth rather than beside it. Measured on THIS check with
     # the two cuts disabled: 55 of 67 skin-side vertices off the lines, by up to
-    # 1.0 cm. With them, none. (The ceiling is half the slab, 2.3 cm — a boundary
-    # vertex cannot be further than that from BOTH lines.)
+    # 1.0 cm. With them, none — on bead z3e.16's Windman. On z3e.15's wider skull
+    # two vertices per arc end sit 6.6-6.8 degrees past the arc, which is one 9 mm
+    # triangle and which is why `ARC_END_SLACK` is 0.14 rather than 0.10; off the
+    # arc ends it is still none, and that is the half this assert is about. (The
+    # ceiling is half the slab, 2.3 cm — a boundary vertex cannot be further than
+    # that from BOTH lines.)
     skin_edge = set(v for f in walls for v in f.verts) - moved - hole_rim
     ragged = [v for v in skin_edge
-              if abs(abs(bearing(v.co)) - half) >= 0.10
+              if abs(abs(bearing(v.co)) - half) >= ARC_END_SLACK
               and min(abs(v.co.z - top), abs(v.co.z - bottom)) > 1e-4]
     if ragged:
         raise AssertionError(
             "%d of %d skin-side band vertices are off both band lines, by up to "
-            "%.4f m: the bisect did not cut the boundary"
+            "%.4f m: the bisect did not cut the boundary. Offenders (metres off "
+            "the nearer line, degrees inside the arc end): %s"
             % (len(ragged), len(skin_edge),
-               max(min(abs(v.co.z - top), abs(v.co.z - bottom)) for v in ragged)))
+               max(min(abs(v.co.z - top), abs(v.co.z - bottom)) for v in ragged),
+               ", ".join("%.4f/%.1f"
+                         % (min(abs(v.co.z - top), abs(v.co.z - bottom)),
+                            math.degrees(half - abs(bearing(v.co))))
+                         for v in ragged)))
     # AND THE FACE UNDER THE CLOTH GOES WITH IT: the extrusion leaves the original
     # faces behind as an inner shell, and an inner shell is 1,200 triangles nobody
     # will ever see. The walls already close the hole it leaves.
@@ -1165,9 +1330,15 @@ def build_human(row):
     targets_root = LocationService.get_mpfb_data("targets")
     for rel, weight in row["targets"]:
         path = os.path.join(targets_root, *rel)
+        # RAISE, DO NOT SKIP (bead z3e.15). This used to log and carry on, which
+        # means a mistyped target name is a face that quietly builds WITHOUT the
+        # shape the row asked for — and the row is prose plus a filename, so the
+        # typo is invisible in review and the .glb looks plausible. The manifest
+        # would not catch it either; nothing downstream knows what the face was
+        # supposed to be. MPFB2 2.0.17 is pinned in `hero_manifest.json`, so a
+        # name that resolves here resolves on every machine this lane runs on.
         if not os.path.exists(path):
-            log("target missing, skipped:", path)
-            continue
+            raise AssertionError("no such MPFB2 target: %s" % path)
         TargetService.load_target(human, path, weight=weight)
 
     coords = morphed_coords(human)
@@ -1822,8 +1993,21 @@ def paint_body(obj, tj, row, band_verts=frozenset()):
     lip_z = eye_z - 0.088
     hair_front = eye_z + hair["front"]
     seam_z = eye_z + stripes[0][0] if stripes else 0.0
-    half_depth = max((abs(v.co.y) for v in me.vertices
-                      if _group_weight(v, head_ids) > 0.4), default=1e-6)
+    # THE SKULL, NOT THE ASSEMBLY. Both of these are the frame every face feature
+    # below is measured in, and `band_verts` has to come out of them: the cloth
+    # stands `thickness` proud of the head and `wrap_band`'s two KNOT boxes sit at
+    # the arc ends, ~9.4 cm off centre against a ~7.5 cm skull — and the knots carry
+    # head weight 1.0, because `weight_strays_to` put it there. Left in, Windman's
+    # `half_width` is a quarter too big and `LIP_HALF` stops being the fraction of
+    # the head it is documented to be: he gets a 6 cm mouth where Primm and Teibi
+    # get 4.8 cm, which is exactly the blotch on his chin in the first tuned frame.
+    def _skull(axis):
+        return max((abs(getattr(v.co, axis)) for i, v in enumerate(me.vertices)
+                    if i not in band_verts and _group_weight(v, head_ids) > 0.4),
+                   default=1e-6)
+
+    half_depth = _skull("y")
+    half_width = _skull("x")
     for i, v in enumerate(me.vertices):
         if i in band_verts:
             # The cloth, top-down and clamped at both ends: the lift and the knots
@@ -1845,7 +2029,8 @@ def paint_body(obj, tj, row, band_verts=frozenset()):
             # Eyewear painted on the skin (Primm's goggles); first match wins.
             per_vert[i] = next(j for j, (low, high, _c) in enumerate(stripes)
                                if eye_z + low <= v.co.z <= eye_z + high)
-        elif lip_z - 0.014 <= v.co.z <= lip_z + 0.010 and depth > 0.55:
+        elif (lip_z - LIP_BELOW <= v.co.z <= lip_z + LIP_ABOVE
+              and depth > LIP_DEPTH and abs(v.co.x) <= half_width * LIP_HALF):
             per_vert[i] = "lips"
         elif (hair["brows"] and eye_z + 0.028 <= v.co.z <= eye_z + 0.040
               and depth > 0.45):
@@ -1855,6 +2040,17 @@ def paint_body(obj, tj, row, band_verts=frozenset()):
     for k in per_vert:
         counts[k] = counts.get(k, 0) + 1
     log("paint counts:", counts)
+    # AND THE MOUTH HAS TO STILL BE THERE. The lip band is a three-way conjunction
+    # now (a 1.5 cm z band, `LIP_DEPTH` forward, `LIP_HALF` across) and every one of
+    # those terms is a number somebody may tighten again. If it selects nothing, the
+    # hero ships with no mouth and NOTHING DOWNSTREAM CAN SEE IT: no vertex is added
+    # or removed, so the tri count, the bone count and the .glb byte size are all
+    # unchanged, `--check` matches and `build.yml`'s `stat` gate stays green. Same
+    # shape as the "the face melted" floor in `build()`, and for the same reason.
+    if counts.get("lips", 0) < LIP_VERTS_MIN:
+        raise AssertionError("the mouth vanished: %d lip vertices, floor %d — the "
+                             "LIP_* band selected (almost) nothing"
+                             % (counts.get("lips", 0), LIP_VERTS_MIN))
 
     attr = me.color_attributes.new(name="Color", type='FLOAT_COLOR', domain='POINT')
     for i, key in enumerate(per_vert):
@@ -2035,13 +2231,33 @@ def _make_ring(r_in, r_out, height, name, vertices=18):
     return outer
 
 
-def build_beret(colours, crown_z, embed=0.032):
+BERET_WIDE = 0.78    # z3e.15 — the saucer pulled in onto the skull
+BERET_EMBED = 0.040  # ... and seated deeper in it
+
+
+def build_beret(colours, crown_z, embed=BERET_EMBED):
     """generate_teibi_separate.py's beret — dome, brim, headband, nub, tilted
     7/-11 degrees — seated on the crown. `embed` sinks the dome's own centre
-    3.2 cm below the crown, which is where the generator wears it: a beret sits
-    IN the scalp with its top third showing, and anchoring its lowest vertex on
-    the crown floats the whole assembly 17 cm off the head (measured on the
-    z3e.10 spike)."""
+    4 cm below the crown (the generator's own number was 3.2 cm; bead z3e.15
+    moved it): a beret sits IN the scalp with its top third showing, and anchoring
+    its lowest vertex on the crown floats the whole assembly 17 cm off the head
+    (measured on the z3e.10 spike).
+
+    BEAD z3e.15 SHRINKS IT SIDEWAYS AND SINKS IT. Its numbers are the generator's,
+    and the generator hung them off a SPHERE head 0.25 m across; on a MakeHuman
+    skull (half-width ~7.5 cm) the 0.162 m dome and the 0.112 m headband stand 8
+    and 3.7 cm proud all the way round, so what the 2026-09-12 frame shows is a
+    navy flying saucer hovering over Teibi with daylight under the brim. Both
+    portraits wear it snug: it grips the skull, tilts, and overhangs on one side
+    only. `BERET_WIDE` is one scale on x and y — the shape, the tilt, the seat and
+    the proportions are the generator's still, it is only the radius that was a
+    different head's — and `embed` NARROWS the gap under the brim; it does not
+    close it. The headband is 8.7 cm to the skull's 7.5, so 1.2 cm of it still
+    stands proud all the way round, which is a beret and not a defect. Height is
+    NOT scaled: a flatter beret would be a different hat. WHAT THE OWNER SHOULD
+    LOOK AT on the grid: narrowing it exposes a lobe of hair on the right that the
+    old saucer covered. That is the portrait's tilt showing through, but it is a
+    judgement, not a measurement — `BERET_WIDE` is the one knob if it reads wrong."""
     bpy.ops.mesh.primitive_uv_sphere_add(radius=0.162, segments=14, ring_count=8)
     dome = bpy.context.active_object
     dome.name = "BeretDome"
@@ -2073,8 +2289,12 @@ def build_beret(colours, crown_z, embed=0.032):
 
     tilt = (Matrix.Rotation(math.radians(7), 4, 'X')
             @ Matrix.Rotation(math.radians(-11), 4, 'Y'))
+    narrow = Matrix.Diagonal(Vector((BERET_WIDE, BERET_WIDE, 1.0, 1.0)))
+    # `seat` is applied LAST and therefore in the HEAD's frame: it is where the hat
+    # sits on the skull, not a dimension of the hat, so `BERET_WIDE` has no business
+    # in it. The generator's 1.5 cm, unscaled.
     seat = Matrix.Translation(Vector((0.015, 0.004, crown_z - embed)))
-    beret.data.transform(seat @ tilt)
+    beret.data.transform(seat @ tilt @ narrow)
     beret.data.update()
 
     attr = beret.data.color_attributes.new(name="Color", type='FLOAT_COLOR',

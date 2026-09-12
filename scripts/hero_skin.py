@@ -30,6 +30,15 @@ pixels at or over Rec.709 luma 0.97 (Forward+ / gl_compatibility+web):
     primm    20.9% / 63.4%     0.18% / 1.39%
     teibi    100.0% / 99.8%    0.18% / 0.00%    (the skinned body, build_hero.py)
 
+AND THOSE "AFTER" NUMBERS ARE THE SKIN'S, NOT THE FACE'S. Bead godot-test1-z3e.15
+re-measured the same rects on the shipped heads of 2026-09-12 and found Primm back at
+14.6% on the web row — not a regression in this grade but in something it deliberately
+does not touch: EYEWEAR IS NOT GRADED (see `GRADED_COLOURS` in `build_hero.py` — skin
+and lips only), and his goggles' silver frame was a value that clips on its own, 5.4 cm
+of it across his face. That bead's table (2.1% after, on the same rect) is the current
+one for a whole FACE; this one is the current one for the skin under it. Neither
+supersedes the other and `SKIN_GRADE` did not move.
+
 0.47 IS READ OFF A CURVE, NOT GUESSED. Scaling a head's `albedo_color` at runtime
 prices a candidate albedo without a rebuild, and on the web row — the harsher of the
 two — effective skin 0.67 gave 51.7% clipped, 0.58 gave 23.1%, 0.47 gave 0.06%. The
