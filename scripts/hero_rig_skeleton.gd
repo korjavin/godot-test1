@@ -73,9 +73,10 @@ extends RefCounted
 ##
 ## The probe is 5u3.8's own scene: the local player plus three `RemoteAvatar`s
 ## through the shipped `receive_state()` (rig kinds ASSERTED — three skinned, one
-## limb), Budapest through the shipped `\fb`, 60 s windows, `\fo`'s counters. The
-## control column is the SAME RUN with every `set_bone_pose_rotation()` below
-## suppressed: identical meshes, identical GDScript, the skeletons simply never
+## limb), Budapest through the shipped `\fb`, 60 s windows, `\fo`'s counters. Each
+## control column below is the SAME RUN, continued with every
+## `set_bone_pose_rotation()` suppressed: identical meshes, identical GDScript,
+## the skeletons simply never
 ## go dirty, so the difference is the engine re-skinning them and nothing else.
 ##
 ##                    shipped           bones never written
@@ -99,9 +100,10 @@ extends RefCounted
 ## measurement — the bead's own instruction for a browser reading inside noise.
 ##
 ## AND IT WAS NEVER THIS FILE. A third desktop window with the drivers not bound
-## at all reads 16.02 ms against the 16.17 above, so every write below —
-## seventeen bones a frame, each through `_set_axis`'s read-modify-write — is
-## ~0.15 ms of that 3.8. Caching bone lookups harder or writing fewer bones
+## at all reads 16.02 ms against that separate run's control of 16.17, so every
+## write below — seventeen bones a frame, each through `_set_axis`'s
+## read-modify-write — is ~0.15 ms of it. Caching bone lookups harder or writing
+## fewer bones
 ## cannot buy back a cost that is the ENGINE re-skinning a dirty skeleton; the
 ## only two levers that reach it are update FREQUENCY (the crocodile LOD's sleep,
 ## for avatars far enough away that a coarse pose is invisible) and VERTEX COUNT
