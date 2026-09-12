@@ -193,11 +193,11 @@ const WIDTH_BUDGETS: Array = [
 	# The title is a Label across the card's inner width; the two wrapping lines
 	# (the empty-list line and the close hint) are exempt for the reason the
 	# header gives — they autowrap inside a container that grows.
-	["Waypoints", WaypointHub.TITLE_FONT_SIZE,
-		WaypointHub.CARD_WIDTH - 2.0 * WaypointHub.CARD_PADDING, "waypoint panel title"],
+	["Waypoints", WaypointHub.TITLE_FONT_SIZE, WaypointHub.CARD_WIDTH,
+		"waypoint panel title"],
 	# The price line does NOT wrap: it is one composed line under the rows.
-	["Travel costs %d coins.", WaypointHub.LINE_FONT_SIZE,
-		WaypointHub.CARD_WIDTH - 2.0 * WaypointHub.CARD_PADDING, "waypoint panel price"],
+	["Travel costs %d coins.", WaypointHub.LINE_FONT_SIZE, WaypointHub.CARD_WIDTH,
+		"waypoint panel price"],
 	# THE ROW NAMES, against what a row leaves the name after the distance column.
 	# `clip_text` means an overflow here eats its own tail rather than running
 	# under the distance — which is a silent failure, and so is exactly what wants

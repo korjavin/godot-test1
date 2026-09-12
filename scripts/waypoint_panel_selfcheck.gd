@@ -64,6 +64,12 @@ const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 const WaypointHub := preload("res://scripts/waypoint_hub.gd")
 const PlayerScript: GDScript = preload("res://scripts/player_controller.gd")
 
+## Pixels of screen that must stay clear either side of the card at every size.
+## The card's own `CARD_WIDTH` comment promises 20 on a 400 px phone; this is the
+## floor that promise is held to, so a card grown to exactly the screen width —
+## frame on the bezel, nothing outside it to tap — fails rather than passes.
+const PHONE_GUTTER: float = 16.0
+
 ## Metres of slack allowed between the distance a row prints and the one measured
 ## off the site table. The row rounds to the metre, so one is the whole budget.
 const DISTANCE_SLACK: float = 1.0
@@ -203,6 +209,117 @@ func _check_edges() -> void:
 		_fail("the travel list did not open on the enter edge onto a found circle "
 			+ "— it is the only way in, so this is the whole feature")
 
+	# --- ESC closes, and only while open ------------------------------------
+	# Through the SHIPPED `_unhandled_input`, with a real `ui_cancel` event: the
+	# handler is guarded on `_panel_open` for `skill_tree_ui`'s reason (an
+	# unguarded one eats the `ui_cancel` the player uses to free the mouse), so
+	# both halves are driven — the press that closes, and a press with the list
+	# already down, which must be left alone for `player_controller._input()`.
+	_stand_on(real_player, hub, sites, 1)
+	if not hub.is_panel_open():
+		_fail("the list did not open for the Esc check")
+	hub._unhandled_input(_cancel_event())
+	if hub.is_panel_open():
+		_fail("Esc did not close the travel list")
+	if paused or PauseHub.holder_count() != 0:
+		_fail("Esc closed the list and left the world frozen")
+	# ...and with it closed the same event must not be swallowed.
+	var event: InputEvent = _cancel_event()
+	hub._unhandled_input(event)
+	if hub.is_panel_open():
+		_fail("Esc re-opened the travel list")
+
+	# --- A TAP ON THE BACKDROP closes ---------------------------------------
+	# The card is MOUSE_FILTER_STOP, so `_on_backdrop_input` only ever fires
+	# outside it. Without this the close hint is a lie on a phone, where Esc does
+	# not exist and the circle is the only way in.
+	_walk_away(real_player, hub)
+	_stand_on(real_player, hub, sites, 1)
+	if not hub._centre.visible:
+		_fail("the backdrop is hidden under an open list — nothing would catch a tap")
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	hub._on_backdrop_input(click)
+	if hub.is_panel_open():
+		_fail("a tap outside the card left the travel list open")
+	if hub._centre.visible:
+		_fail("the backdrop stayed live under a closed list — it would swallow every "
+			+ "tap meant for the world, the touch joystick included")
+
+	# --- ARRIVAL does not re-open -------------------------------------------
+	# `arrived_at()` latches the target WITHOUT an enter edge, and that is the
+	# whole reason it exists: travel puts the body down inside the target ring, and
+	# a landing that read as an arrival would re-open the list the hero just used.
+	_walk_away(real_player, hub)
+	hub.arrived_at(1)
+	if hub.standing_on() != 1:
+		_fail("arrived_at() did not latch the target")
+	if hub.is_panel_open():
+		_fail("a completed travel re-opened the travel list on the circle it landed "
+			+ "on — the bead closes the panel on arrival")
+	hub.arrived_at(-1)
+
+	# --- THE THREE STATE REFUSALS, each with the enter edge driven at it ------
+	# Every one of them is a state where a modal would do real damage, and each is
+	# also driven the OTHER way one line down — a refusal that refused everything
+	# would pass a one-sided test.
+	for flag: String in ["is_respawning", "is_caught", "is_game_over"]:
+		_walk_away(real_player, hub)
+		real_player.set(flag, true)
+		_stand_on(real_player, hub, sites, 1)
+		if hub.is_panel_open():
+			_fail("the travel list opened while the hero is %s" % flag)
+		if paused or PauseHub.holder_count() != 0:
+			_fail("the travel list froze the world while the hero is %s" % flag)
+		real_player.set(flag, false)
+
+	# ...AND A STATE THAT FLIPS UNDER AN OPEN LIST CLOSES IT. Reachable in a room,
+	# where this panel takes no pause and the world keeps running under it: a hero
+	# grabbed while reading the list would otherwise reach Game Over with the card
+	# still drawn over Play Again.
+	for flag: String in ["is_respawning", "is_caught", "is_game_over"]:
+		_walk_away(real_player, hub)
+		_stand_on(real_player, hub, sites, 1)
+		if not hub.is_panel_open():
+			_fail("the list did not open before the %s flip" % flag)
+		real_player.set(flag, true)
+		hub._tick()
+		if hub.is_panel_open():
+			_fail("the hero became %s under an open travel list and it stayed up" % flag)
+		if paused or PauseHub.holder_count() != 0:
+			_fail("the %s flip left the world frozen behind a closed list" % flag)
+		real_player.set(flag, false)
+
+	# --- A PENDING QUIZ refuses too -----------------------------------------
+	# `landmark_toast`'s quiz owns the digit keys and its own pause. The stub is
+	# added to the group ahead of the real toast, which `get_first_node_in_group`
+	# answers first, and is taken out again.
+	_walk_away(real_player, hub)
+	var quiz := StubToast.new()
+	quiz.pending = true
+	var real_toasts: Array = []
+	for old_toast: Node in get_nodes_in_group("landmark_toast"):
+		old_toast.remove_from_group("landmark_toast")
+		real_toasts.append(old_toast)
+	quiz.add_to_group("landmark_toast")
+	root.add_child(quiz)
+	await process_frame
+	_stand_on(real_player, hub, sites, 1)
+	if hub.is_panel_open():
+		_fail("the travel list opened over a pending landmark quiz")
+	# The positive control, so the refusal above is the QUIZ and not the stub.
+	quiz.pending = false
+	_walk_away(real_player, hub)
+	_stand_on(real_player, hub, sites, 1)
+	if not hub.is_panel_open():
+		_fail("the list refused to open with the quiz answered — the guard is "
+			+ "refusing something other than a pending question")
+	quiz.free()
+	for old_toast: Node in real_toasts:
+		old_toast.add_to_group("landmark_toast")
+	await process_frame
+
 	# --- The leave edge: closed again ---------------------------------------
 	_walk_away(real_player, hub)
 	if hub.is_panel_open():
@@ -211,6 +328,15 @@ func _check_edges() -> void:
 		_fail("walking off the circle left the world frozen (paused=%s, holders=%d)"
 			% [paused, PauseHub.holder_count()])
 	Sentinel.done("edges")
+
+
+func _cancel_event() -> InputEvent:
+	"""A real `ui_cancel` press, built off the input map rather than a keycode
+	written down here — the action is what `_unhandled_input` tests."""
+	var event := InputEventAction.new()
+	event.action = "ui_cancel"
+	event.pressed = true
+	return event
 
 
 # ============================================================================
@@ -238,10 +364,18 @@ func _check_rows() -> void:
 				% id + "its own wire id, in both languages")
 
 	# --- ONE circle found: the list says so rather than looking broken -------
+	# THE MASK IS SET HERE AND NOT INHERITED from whatever check (a) walked over:
+	# a row assertion that only holds because an earlier check happened to find
+	# exactly one circle breaks confusingly when the checks are reordered, which
+	# is a worse failure than the regression it is supposed to name.
 	player.own_coins = 100
 	player.coins_collected = 100
+	player.waypoint_mask = 0
 	_walk_away(player, hub)
 	_stand_on(player, hub, sites, 1)
+	if player.waypoint_mask != 1 << 1:
+		_fail("standing on circle 1 left the mask at %d, not just its own bit"
+			% player.waypoint_mask)
 	if not hub.is_panel_open():
 		_fail("the list did not open for the row check")
 		Sentinel.done("rows")
@@ -264,6 +398,10 @@ func _check_rows() -> void:
 		_fail("two other circles are found and the list still says there are none")
 
 	# --- Names, distances, and the row underfoot ----------------------------
+	# Refreshed right here so the rows and `origin` are read off ONE position;
+	# anything between the two would be measured against a body that moved, and
+	# would need a slack wide enough to hide a real error.
+	hub._refresh_rows()
 	var origin: Vector3 = (player as Node3D).global_position
 	for i: int in shown:
 		var want: String = WaypointHub.site_name(String(sites[i]["id"]))
@@ -280,12 +418,17 @@ func _check_rows() -> void:
 			continue
 		if hub._rows[i].disabled:
 			_fail("row %d is dead for a hero with 100 coins and a found target" % i)
+		# The name greys with the theme's own disabled Button colour; the distance
+		# is a separate Label and has to be greyed by hand, so it is the half that
+		# can silently stop matching.
+		if not _distance_colour(hub, i).is_equal_approx(WaypointHub.COLOR_DISTANCE):
+			_fail("row %d is live but its distance is drawn in the disabled colour" % i)
 		var want_metres: float = Vector2(
 			origin.x - (sites[i]["pos"] as Vector3).x,
 			origin.z - (sites[i]["pos"] as Vector3).z).length()
 		var printed: String = hub._row_distances[i].text
 		var got: float = float(printed.split(" ")[0])
-		if absf(got - want_metres) > DISTANCE_SLACK + 1.0:
+		if absf(got - want_metres) > DISTANCE_SLACK:
 			_fail("row %d prints \"%s\" for a circle %.1f m away"
 				% [i, printed, want_metres])
 
@@ -298,9 +441,14 @@ func _check_rows() -> void:
 		if not hub._rows[i].disabled:
 			_fail("row %d is pressable for a hero who cannot pay the %d-coin fare"
 				% [i, PlayerScript.TELEPORT_COIN_COST])
-	if not hub._price_label.text.contains(str(PlayerScript.TELEPORT_COIN_COST)):
-		_fail("the price line \"%s\" does not carry the %d-coin fare"
-			% [hub._price_label.text, PlayerScript.TELEPORT_COIN_COST])
+		if not _distance_colour(hub, i).is_equal_approx(WaypointHub.COLOR_DISTANCE_OFF):
+			_fail("row %d is greyed out but its distance is still drawn live" % i)
+	# EQUALITY AND NOT `contains`: the fare is 15 and "150" contains "15", so a
+	# price line off by a factor of ten would pass a substring test.
+	var want_price: String = tr(WaypointHub.PRICE_LINE) % PlayerScript.TELEPORT_COIN_COST
+	if hub._price_label.text != want_price:
+		_fail("the price line reads \"%s\"; the fare is \"%s\""
+			% [hub._price_label.text, want_price])
 	player.own_coins = PlayerScript.TELEPORT_COIN_COST
 	hub._refresh_rows()
 	if hub._rows[0].disabled or hub._rows[2].disabled:
@@ -309,6 +457,11 @@ func _check_rows() -> void:
 
 	_walk_away(player, hub)
 	Sentinel.done("rows")
+
+
+func _distance_colour(hub: Node, index: int) -> Color:
+	"""The colour a row's distance column is actually drawn in."""
+	return (hub._row_distances[index] as Label).get_theme_color("font_color")
 
 
 func _shown_rows(hub: Node) -> Array:
@@ -450,13 +603,24 @@ func _check_press_travels() -> void:
 	# ...then swap in a stub that RECORDS the call instead of taking it. What the
 	# shipped travel does with the index is `waypoint_travel_selfcheck`'s subject;
 	# what this file owns is that the index reaching it is the row's own.
+	var real_mask: int = int(player.waypoint_mask)
 	player.remove_from_group("player")
 	var stub := RecordingHero.new()
 	stub.add_to_group("player")
 	root.add_child(stub)
 	await process_frame
 
-	hub._on_row_pressed(2)
+	# THE BUTTON'S OWN `pressed` SIGNAL, never `_on_row_pressed()` directly
+	# (review, 2026-09-12): calling the handler skips the `connect` and the bound
+	# index entirely, so a row wired to nothing at all — the feature completely
+	# dead — passed the check this line replaces.
+	for i: int in [0, 1, 2]:
+		if (hub._rows[i] as Button).focus_mode != Control.FOCUS_NONE:
+			_fail("row %d keeps focus after a tap — `ui_accept` is SPACE is `jump`, "
+				% i + "so the next jump would travel again at %d coins a time"
+				% PlayerScript.TELEPORT_COIN_COST)
+	(hub._rows[2] as Button).pressed.emit()
+	await process_frame
 	if stub.travelled_to != 2:
 		_fail("pressing row 2 asked to travel to %d" % stub.travelled_to)
 	if hub.is_panel_open():
@@ -465,6 +629,50 @@ func _check_press_travels() -> void:
 		_fail("a row press left the world frozen — the claim must be handed back "
 			+ "BEFORE the hop awaits its physics frame (paused=%s, holders=%d)"
 			% [paused, PauseHub.holder_count()])
+
+	# --- A REFUSED HOP PUTS THE LIST BACK ------------------------------------
+	# `travel_to_waypoint()` has refusals this panel cannot see (a room that has
+	# not placed this body yet is the real one) and all of them are silent. A
+	# press that ate the list and did nothing would leave the hero with no way
+	# back to it but walking off the circle and on again, the open being an edge.
+	stub.travelled_to = -1
+	stub.answer = false
+	stub.waypoint_mask = real_mask
+	# Walk the stub on from OFF a circle, so the hub re-arms and this is a real
+	# enter edge rather than a latch it is already holding.
+	stub.global_position = Vector3(0.0, 1.0, -9000.0)
+	hub._tick()
+	stub.global_position = (sites[1]["pos"] as Vector3)
+	hub._tick()
+	if not hub.is_panel_open():
+		_fail("the list did not re-open onto the stub for the refusal case")
+	(hub._rows[0] as Button).pressed.emit()
+	await process_frame
+	if stub.travelled_to != 0:
+		_fail("the refusal case never reached travel_to_waypoint")
+	if not hub.is_panel_open():
+		_fail("a REFUSED hop ate the travel list — nothing moved, nothing was said, "
+			+ "and the list cannot be re-opened without walking off the circle")
+	hub.set_panel_open(false)
+
+	# --- AND A NODE THAT GOES AWAY RELEASES WHAT IT HELD ----------------------
+	# `_exit_tree()`'s whole job. Driven on a throwaway hub so the scene's own one
+	# survives; `PauseHub` also hooks `tree_exiting`, and this asserts the pair.
+	var spare := Control.new()
+	spare.set_script(WaypointHub)
+	root.add_child(spare)
+	await process_frame
+	spare.set_process(false)
+	spare.set_panel_open(true)
+	if PauseHub.holder_count() != 1 or not paused:
+		_fail("the spare list did not take the pause (holders=%d, paused=%s)"
+			% [PauseHub.holder_count(), paused])
+	spare.queue_free()
+	await process_frame
+	await process_frame
+	if paused or PauseHub.holder_count() != 0:
+		_fail("a list freed while open left the tree paused forever (paused=%s, "
+			% paused + "holders=%d)" % PauseHub.holder_count())
 	Sentinel.done("press_travels")
 
 
@@ -508,9 +716,13 @@ func _check_layout() -> void:
 		if rect.size.x <= 0.0 or rect.size.y <= 0.0:
 			_fail("at %s the travel card measured an empty rect — every test below "
 				% stage_size + "would pass against anything")
-		if rect.size.x > stage_size.x or rect.size.y > stage_size.y:
-			_fail("at %s the travel card is %s — it does not fit the screen, and "
-				% [stage_size, rect.size] + "the circle is the only way into it")
+		# THE GUTTER, not merely "fits": a card exactly as wide as the screen has
+		# its frame on the bezel and nothing to tap outside it to close.
+		if rect.size.x > stage_size.x - 2.0 * PHONE_GUTTER \
+				or rect.size.y > stage_size.y - 2.0 * PHONE_GUTTER:
+			_fail("at %s the travel card is %s — it does not fit the screen with "
+				% [stage_size, rect.size] + "%.0f px of gutter, and the circle is "
+				% PHONE_GUTTER + "the only way into it")
 		hub.set_panel_open(false)
 		stage.queue_free()
 		await process_frame
@@ -548,13 +760,28 @@ class BlankHero extends Node3D:
 	var waypoint_mask: int = 0
 
 
-## A body that records the travel it was asked for instead of taking it.
+## A body that records the travel it was asked for instead of taking it, and
+## answers whatever `answer` says — so the refused-hop path can be driven without
+## a 2 km relocation. It carries a mask because the hub's open rule reads one.
 class RecordingHero extends Node3D:
 	var travelled_to: int = -1
+	var answer: bool = true
+	var waypoint_mask: int = 0
+	## Enough for the fare, so the rows this check presses are genuinely live
+	## rather than greyed-out buttons whose signal is being emitted by hand.
+	var own_coins: int = 100
 
 	func travel_to_waypoint(index: int) -> bool:
 		travelled_to = index
-		return true
+		return answer
+
+
+## A landmark quiz, as far as the open refusal can see it: one `is_quiz_pending()`.
+class StubToast extends Node:
+	var pending: bool = false
+
+	func is_quiz_pending() -> bool:
+		return pending
 
 
 ## The room, as far as the panel's pause policy can see it: one `is_busy()`.

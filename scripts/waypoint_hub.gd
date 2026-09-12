@@ -201,27 +201,43 @@ const PRICE_LINE: String = "Travel costs %d coins."
 const EMPTY_LINE: String = "No other waypoint found yet."
 const CLOSE_HINT: String = "Press Esc or tap outside to close"
 
-## The card's width, in pixels. Fixed rather than content-sized so a long German
-## name cannot widen the panel off a 400 px phone screen — 360 leaves 20 px of
-## gutter each side there, and `waypoint_panel_selfcheck` check (f) measures the
-## real layout at 1280x720 and 400x800 rather than trusting this comment.
-const CARD_WIDTH: float = 360.0
+## The card's CONTENT width, in layout units. Fixed rather than content-sized so
+## a long German name cannot widen the panel off a 400-unit phone screen.
+##
+## IT IS THE CONTENT AND NOT THE CARD, and the difference is the whole reason
+## this number is 336 (review, 2026-09-12): `HudTheme.card()` puts
+## `HudTheme.CARD_PADDING` (12) of content margin on all four sides, so the card
+## DRAWS at 336 + 24 = 360 and leaves 20 units of gutter either side of a 400.
+## `waypoint_panel_selfcheck` check (f) measures the drawn rect at 1280x720 and
+## 400x800 rather than trusting this comment — it is what caught the first
+## version, which added a `MarginContainer` of its own on top of the theme's and
+## drew 384 wide inside a 400-unit screen.
+const CARD_WIDTH: float = 336.0
 const TITLE_FONT_SIZE: int = 26
 const ROW_FONT_SIZE: int = 16
-## A row's minimum height. Named rather than left to the Button's own text
-## metrics: on a phone this list is the only way to use the feature, and a 44 px
-## row is the smallest target a thumb hits reliably.
-const ROW_HEIGHT: float = 44.0
+## A row's minimum height, in layout units. Named rather than left to the
+## Button's own text metrics, because on a phone this list is the only way to use
+## the feature and a row has to be a thumb target.
+##
+## 36 AND NOT 44, AND THE CEILING IS THE ONE THAT MOVED IT (review, 2026-09-12).
+## Eleven rows is the whole world's supply and they are all on this card at once:
+## at 44 the card measured 711 units tall, which does not fit a 720-tall screen
+## with a gutter — `waypoint_panel_selfcheck` check (f) caught it at both sizes.
+## 36 brings the worst case to ~620. It is not a small target either: the touch
+## build magnifies the layout by `TouchControls.TOUCH_CONTENT_SCALE` (1.8), so
+## this is 65 device pixels on the screen that needs it.
+## `ponytail:` the ceiling is the row COUNT — a twelfth circle puts the card back
+## over a 720-tall screen, and check (f) is what will say so. The upgrade then is
+## a `ScrollContainer` round `_rows_box`, not a smaller row.
+const ROW_HEIGHT: float = 36.0
 const LINE_FONT_SIZE: int = 15
 const HINT_FONT_SIZE: int = 13
-const CARD_PADDING: int = 18
 ## Pixels of the row reserved for the right-hand column, and therefore NOT
 ## available to the name. `locale_selfcheck` budgets both halves against it.
 const DISTANCE_WIDTH: float = 110.0
-## Usable width a row's NAME has: the card, less its margins, less the theme
-## Button's own content padding, less the column above.
-const NAME_WIDTH: float = CARD_WIDTH - 2.0 * CARD_PADDING \
-	- 2.0 * HudTheme.CARD_PADDING - DISTANCE_WIDTH
+## Usable width a row's NAME has: the card's content, less the theme Button's own
+## content padding, less the column above.
+const NAME_WIDTH: float = CARD_WIDTH - 2.0 * HudTheme.CARD_PADDING - DISTANCE_WIDTH
 
 ## The card's chrome, off `HudTheme` and with no hex of its own —
 ## `hero_hud_selfcheck` greps for a second copy of the six palette values.
@@ -386,12 +402,41 @@ func _tick() -> void:
 		if "waypoint_mask" in player:
 			mask = int(player.waypoint_mask)
 	_paint_beams(mask)
-	if _standing_on < 0:
+	# THE CLOSE EDGE, AND IT IS EVERY WAY THE LIST CAN STOP BEING ALLOWED — not
+	# only walking off. `_open_panel_for()` refuses to OPEN over a respawn, a bite
+	# or Game Over; without the same question asked here, a state that flips UNDER
+	# an open list leaves it up. That is reachable and it is ugly: in a room this
+	# panel takes no pause, so the world keeps running under it — a hero grabbed
+	# while reading the list goes to Game Over with the card still drawn, and this
+	# node now sits above `GameOver` in `main.tscn`, so it would cover Play Again.
+	if _standing_on < 0 or _hero_unavailable(player):
 		set_panel_open(false)
 	elif _panel_open:
 		# Distances, affordability and a teammate's fresh find, on the tick the
 		# rest of this feature already runs at.
 		_refresh_rows()
+
+
+func _hero_unavailable(player: Node) -> bool:
+	"""
+	Whether the body is in a state where a travel list may not be on screen.
+
+	THE THREE ARE `PlayerController.travel_to_waypoint()`'s OWN first refusal
+	(`is_respawning or is_caught or is_game_over`), read here so the panel and the
+	primitive cannot disagree about who may travel. Each is a different damage:
+	a respawn is moving the body this list would move, a bite freeze is PAUSABLE
+	and solo this panel's pause would stop its own timer running out, and over Game
+	Over the only thing that may be on screen is Play Again.
+
+	`"x" in node` and not `node.get("x")` — `get()` answers null for a missing
+	property and `bool(null)` is a hard error, so a stand-in player degrades.
+	"""
+	if player == null:
+		return true
+	for flag: String in ["is_respawning", "is_caught", "is_game_over"]:
+		if flag in player and bool(player.get(flag)):
+			return true
+	return false
 
 
 func _scan(player: Node3D) -> void:
@@ -547,19 +592,20 @@ func _open_panel_for(index: int, player: Node3D) -> void:
 	cannot find circles at all, and a list of places to travel between would be a
 	lie drawn over it.
 
-	THE OTHER THREE REFUSALS are ones every panel in this project carries, and
-	each is a state where a modal would do real damage rather than merely be
-	untimely: a pending landmark quiz owns the digits and its own pause
-	(`landmark_toast`), a respawn is moving the body this list would travel, and
-	over Game Over the only thing that may be on screen is Play Again.
+	THE OTHER REFUSALS are ones every panel in this project carries. Three of them
+	are `_hero_unavailable()` — the primitive's own first refusal, shared so the
+	panel and `travel_to_waypoint()` cannot disagree about who may travel, and
+	re-asked every tick because a state that flips under an open list must close
+	it. The fourth is a pending landmark quiz, which owns the digits and its own
+	pause (`landmark_toast`); it is asked only here because a quiz cannot start
+	under this panel — it is raised by walking into a landmark, and this one is
+	modal over the whole screen while it is up.
 	"""
 	if _panel_open:
 		return
 	if not ("waypoint_mask" in player) or int(player.waypoint_mask) & (1 << index) == 0:
 		return
-	if "is_respawning" in player and bool(player.is_respawning):
-		return
-	if "is_game_over" in player and bool(player.is_game_over):
+	if _hero_unavailable(player):
 		return
 	var toast := get_tree().get_first_node_in_group("landmark_toast")
 	if toast != null and toast.has_method("is_quiz_pending") \
@@ -762,15 +808,32 @@ func _on_row_pressed(index: int) -> void:
 	hop starts means the world it lands in is running, with no window in which a
 	frozen tree is halfway through a rebuild.
 
+	...AND IT COMES BACK IF NOTHING HAPPENED. `travel_to_waypoint()` has refusals
+	this list cannot see — a room that has not placed this body yet is the real
+	one — and every one of them is SILENT but the coin case. Closing on a press
+	that did nothing would leave a hero standing on a circle with no list and no
+	explanation, and no way to get it back but walking off and back on, because
+	the open is an edge. So the answer is awaited and a refused hop re-opens.
+
+	`await player.call(...)` and not a bare call: `travel_to_waypoint()` is a
+	coroutine, so a bare call answers a `GDScriptFunctionState` — an object, which
+	is truthy, which would read as "it worked" for every refusal after the first
+	physics wait. Awaiting the call yields the function's own `bool`.
+
 	Group + `has_method`, so a scene whose "player" cannot travel simply closes.
-	The return value is not read: the call is a coroutine (it awaits), and every
-	refusal inside it either speaks for itself or is one this list already greyed
-	out.
 	"""
 	set_panel_open(false)
 	var player := get_tree().get_first_node_in_group("player")
-	if player != null and player.has_method("travel_to_waypoint"):
-		player.call("travel_to_waypoint", index)
+	if player == null or not player.has_method("travel_to_waypoint"):
+		return
+	var moved: Variant = await player.call("travel_to_waypoint", index)
+	# Only re-open onto the circle we are still standing on: the hop may have been
+	# refused a whole second ago as far as the 5 Hz tick is concerned, and the hero
+	# may have walked off in the meantime. Through `_open_panel_for()` rather than
+	# `set_panel_open(true)`, so the mask and the four state refusals are re-asked.
+	var body := player as Node3D
+	if moved is bool and not bool(moved) and _standing_on >= 0 and body != null:
+		_open_panel_for(_standing_on, body)
 
 
 # ============================================================================
@@ -791,6 +854,13 @@ func _build_ui() -> void:
 	_centre = CenterContainer.new()
 	_centre.name = "Centre"
 	_centre.set_anchors_preset(Control.PRESET_FULL_RECT)
+	# ...AND THE COST OF A FULL-RECT BACKDROP, NAMED because it is a choice: while
+	# the list is up nothing under it takes a tap, the touch joystick included. In
+	# a room — where this panel deliberately takes no pause — that is a hero who
+	# cannot move for exactly one tap, and the hint under the card says which tap.
+	# It is `city_map_panel`'s and `skill_tree_ui`'s backdrop unchanged, and every
+	# panel in `main.tscn`'s HUD after `TouchControls` already covers it the same
+	# way; "tap outside to close" has no cheaper shape.
 	_centre.mouse_filter = Control.MOUSE_FILTER_STOP
 	_centre.visible = false
 	_centre.gui_input.connect(_on_backdrop_input)
@@ -801,18 +871,18 @@ func _build_ui() -> void:
 	# STOP: while the list is up it swallows clicks, so a click meant to dismiss it
 	# does not fire the desktop-web click-to-capture through it.
 	_card.mouse_filter = Control.MOUSE_FILTER_STOP
-	_card.custom_minimum_size = Vector2(CARD_WIDTH, 0.0)
 	_card.visible = false
 	_centre.add_child(_card)
 
-	var margin := MarginContainer.new()
-	for side: String in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, CARD_PADDING)
-	_card.add_child(margin)
-
+	# NO `MarginContainer` OF ITS OWN: `HudTheme.card()` already carries
+	# `HudTheme.CARD_PADDING` of content margin on all four sides, and a second one
+	# inside it was 36 units of width and 36 of height this card cannot spare —
+	# see `CARD_WIDTH`. The width is set HERE, on the content, so the drawn card is
+	# `CARD_WIDTH` plus the theme's margin and nothing else.
 	var column := VBoxContainer.new()
 	column.name = "Column"
-	margin.add_child(column)
+	column.custom_minimum_size = Vector2(CARD_WIDTH, 0.0)
+	_card.add_child(column)
 
 	# RULE 1: a plain literal on a Label, translated by the engine for free.
 	var title := Label.new()
@@ -838,7 +908,7 @@ func _build_ui() -> void:
 	_empty_label.text = EMPTY_LINE
 	_empty_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_empty_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_empty_label.custom_minimum_size = Vector2(CARD_WIDTH - 2.0 * CARD_PADDING, 0.0)
+	_empty_label.custom_minimum_size = Vector2(CARD_WIDTH, 0.0)
 	_empty_label.add_theme_font_size_override("font_size", LINE_FONT_SIZE)
 	_empty_label.add_theme_color_override("font_color", COLOR_TEXT)
 	_empty_label.visible = false
@@ -858,7 +928,7 @@ func _build_ui() -> void:
 	_hint_label.text = CLOSE_HINT
 	_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_hint_label.custom_minimum_size = Vector2(CARD_WIDTH - 2.0 * CARD_PADDING, 0.0)
+	_hint_label.custom_minimum_size = Vector2(CARD_WIDTH, 0.0)
 	_hint_label.add_theme_font_size_override("font_size", HINT_FONT_SIZE)
 	_hint_label.add_theme_color_override("font_color", COLOR_HINT)
 	column.add_child(_hint_label)
@@ -893,7 +963,7 @@ func _add_row(index: int) -> void:
 	row.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	row.clip_text = true
 	row.add_theme_font_size_override("font_size", ROW_FONT_SIZE)
-	row.custom_minimum_size = Vector2(CARD_WIDTH - 2.0 * CARD_PADDING, ROW_HEIGHT)
+	row.custom_minimum_size = Vector2(CARD_WIDTH, ROW_HEIGHT)
 	row.pressed.connect(_on_row_pressed.bind(index))
 	_rows_box.add_child(row)
 
