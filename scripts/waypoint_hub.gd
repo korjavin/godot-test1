@@ -208,6 +208,10 @@ const CLOSE_HINT: String = "Press Esc or tap outside to close"
 const CARD_WIDTH: float = 360.0
 const TITLE_FONT_SIZE: int = 26
 const ROW_FONT_SIZE: int = 16
+## A row's minimum height. Named rather than left to the Button's own text
+## metrics: on a phone this list is the only way to use the feature, and a 44 px
+## row is the smallest target a thumb hits reliably.
+const ROW_HEIGHT: float = 44.0
 const LINE_FONT_SIZE: int = 15
 const HINT_FONT_SIZE: int = 13
 const CARD_PADDING: int = 18
@@ -259,7 +263,6 @@ var _hint_label: Label = null
 ## whether the crew has found that circle. A rebuild per refresh would throw away
 ## the button under the finger that is pressing it, and at 5 Hz.
 var _rows: Array[Button] = []
-var _row_names: Array[Label] = []
 var _row_distances: Array[Label] = []
 
 
@@ -272,6 +275,15 @@ func _ready() -> void:
 	# over them that swallowed input would be invisible and maddening. The panel's
 	# own backdrop is STOP, but only while it is visible.
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# FULL RECT, and it is the panel that needs it: until bead .4 this node drew
+	# nothing and its own zero-sized rect cost nothing, but the backdrop below
+	# anchors to it and a `CenterContainer` inside a 0x0 parent centres the card in
+	# the top-left corner. Harmless with MOUSE_FILTER_IGNORE above — a full-screen
+	# Control that takes no input is exactly what every other HUD root here is.
+	# ...AND THE OFFSETS WITH THE ANCHORS: `main.tscn` gives this node no layout at
+	# all, so anchors alone would leave a 0x0 rect stretched over nothing and the
+	# card would still be drawn in the corner.
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	# So the travel panel — and `PlayerController.travel_to_waypoint()` — can ask
 	# where the hero is standing without a hard reference; group discovery, like
 	# every other cross-system hookup here.
@@ -720,7 +732,7 @@ func _refresh_rows() -> void:
 		var here: bool = i == _standing_on
 		if not here:
 			elsewhere += 1
-		_row_names[i].text = site_name(String(sites[i]["id"]))
+		_rows[i].text = site_name(String(sites[i]["id"]))
 		if here:
 			_row_distances[i].text = HERE_LINE
 		else:
@@ -857,11 +869,14 @@ func _add_row(index: int) -> void:
 	One row: a full-width Button carrying the name, with the distance drawn
 	right-aligned inside it.
 
-	THE DISTANCE IS A CHILD OF THE BUTTON and not a sibling in an HBox, which is
-	what keeps the whole row ONE tap target — the thing that matters most on a
-	phone, where the circle is the only way into this list and a row is the only
-	way to use it. Both labels are MOUSE_FILTER_IGNORE, so a press that lands on
-	one still reaches the button under it.
+	THE NAME IS THE BUTTON'S OWN `text` and the distance is a CHILD LABEL of it,
+	rather than two labels in an HBox, and that keeps the whole row ONE tap target
+	— the thing that matters most on a phone, where the circle is the only way
+	into this list and a row is the only way to use it. The name being `text` is
+	also what makes the row size itself and what puts it through `Control`'s
+	auto-translation (Localization RULE 1: the English name IS the CSV key). The
+	distance Label is MOUSE_FILTER_IGNORE, so a press that lands on it still
+	reaches the button under it.
 
 	FOCUS_NONE, and `skill_tree_ui._build_ui` carries the whole reason: a
 	`BaseButton` KEEPS focus after a click, and `ui_accept` — which fires a focused
@@ -872,28 +887,23 @@ func _add_row(index: int) -> void:
 	row.name = "Row%d" % index
 	row.focus_mode = Control.FOCUS_NONE
 	row.visible = false
-	row.custom_minimum_size = Vector2(CARD_WIDTH - 2.0 * CARD_PADDING, 0.0)
+	# LEFT, and clipped: a German name that outgrew `NAME_WIDTH` must eat its own
+	# tail rather than run under the distance column. `locale_selfcheck` is what
+	# stops it getting that far.
+	row.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	row.clip_text = true
+	row.add_theme_font_size_override("font_size", ROW_FONT_SIZE)
+	row.custom_minimum_size = Vector2(CARD_WIDTH - 2.0 * CARD_PADDING, ROW_HEIGHT)
 	row.pressed.connect(_on_row_pressed.bind(index))
 	_rows_box.add_child(row)
 
-	# The name, LEFT and clipped: a German name that outgrew `NAME_WIDTH` must eat
-	# its own tail rather than run under the distance column. `locale_selfcheck` is
-	# what stops it getting that far.
-	var name_label := Label.new()
-	name_label.name = "Name"
-	name_label.set_anchors_preset(Control.PRESET_FULL_RECT)
-	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	name_label.clip_text = true
-	name_label.add_theme_font_override("font", HudTheme.heading_font())
-	name_label.add_theme_font_size_override("font_size", ROW_FONT_SIZE)
-	row.add_child(name_label)
-
-	# ...and the distance, RIGHT, in the same rect. Its own Label because a Button
-	# has one text and this column is aligned to the other edge of it.
+	# The distance, RIGHT, in the button's own rect, inset by the theme Button's
+	# content padding so it lines up with the name's left edge rather than sitting
+	# on the frame.
 	var distance_label := Label.new()
 	distance_label.name = "Distance"
 	distance_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	distance_label.offset_right = -float(HudTheme.CARD_PADDING)
 	distance_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	distance_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	distance_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -902,7 +912,6 @@ func _add_row(index: int) -> void:
 	row.add_child(distance_label)
 
 	_rows.append(row)
-	_row_names.append(name_label)
 	_row_distances.append(distance_label)
 
 

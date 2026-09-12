@@ -267,9 +267,9 @@ func _check_rows() -> void:
 	var origin: Vector3 = (player as Node3D).global_position
 	for i: int in shown:
 		var want: String = WaypointHub.site_name(String(sites[i]["id"]))
-		if hub._row_names[i].text != want:
+		if hub._rows[i].text != want:
 			_fail("row %d reads \"%s\"; the site table calls it \"%s\""
-				% [i, hub._row_names[i].text, want])
+				% [i, hub._rows[i].text, want])
 		if i == 1:
 			if not hub._rows[i].disabled:
 				_fail("the row for the circle underfoot is pressable — it is where "
@@ -531,7 +531,7 @@ func _fill_worst_case(hub: Control) -> void:
 			widest = name
 	for i in range(hub._rows.size()):
 		(hub._rows[i] as Button).visible = true
-		(hub._row_names[i] as Label).text = widest
+		(hub._rows[i] as Button).text = widest
 		(hub._row_distances[i] as Label).text = TranslationServer.translate(
 			WaypointHub.HERE_LINE)
 	(hub._empty_label as Label).visible = true
