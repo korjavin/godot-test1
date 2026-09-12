@@ -290,13 +290,13 @@ func _arrive(index: int, player: Node3D) -> void:
 	if toast != null and toast.has_method("announce"):
 		toast.call("announce", FOUND_TITLE, FOUND_BODY)
 
-	# The cue. `play_level_up` is a BORROWED sound and it is marked as such: bead
-	# .5 brings `play_waypoint_found` (three rising taps off the coin) and this
-	# line becomes that one. The project's standard null-safe group + has_method
-	# shape, so a scene with no SoundManager resolves silently.
+	# The cue — bead .5's own, no longer the borrowed `play_level_up`: three rising
+	# taps of the coin buffer, a major triad against the level-up's bare fifth (see
+	# `SoundManager.WAYPOINT_FOUND_PITCHES`). The project's standard null-safe
+	# group + has_method shape, so a scene with no SoundManager resolves silently.
 	var sound := get_tree().get_first_node_in_group("sound_manager")
-	if sound != null and sound.has_method("play_level_up"):
-		sound.call("play_level_up")
+	if sound != null and sound.has_method("play_waypoint_found"):
+		sound.call("play_waypoint_found")
 
 	# And the room. A no-op offline and off an unfinished mesh alike — see
 	# `MpManager.publish_waypoint_found()`, which owns both.

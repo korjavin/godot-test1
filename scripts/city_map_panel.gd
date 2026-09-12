@@ -181,6 +181,23 @@ const COLOR_PLAYER: Color = HudTheme.VISOR_AMBER
 
 ## Side of a landmark icon and of the ring drawn round an explored one, in pixels.
 const ICON_SIZE: float = 9.0
+## Radius of a WAYPOINT ring — the city's five teleport circles (epic
+## godot-test1-sc6, bead .5).
+##
+## A CIRCLE AGAINST THE LANDMARKS' SQUARES, and in the SAME two states: filled
+## where the crew has found it, hollow where it has not. The panel already tells
+## two states apart by fill and value, so a waypoint borrows that language whole
+## and spends SHAPE — the only channel left — on saying which KIND of place it is.
+## It is also the thing itself: what stands on that street is a disc.
+##
+## AND IT IS BONE/STEEL, NOT THE MINIMAP'S AMBER. On this panel amber means YOU
+## (see COLOR_PLAYER); five amber rings would hide the one dot the player opened
+## the panel to find. The minimap has no such claim on the accent, so the two maps
+## agree about FILL and disagree about hue on purpose.
+const WAYPOINT_RADIUS: float = 4.0
+## Stroke an unfound ring is drawn at — the landmark outline's width, so the two
+## hollow glyphs read as the same weight of ink.
+const WAYPOINT_WIDTH: float = 1.5
 ## Radius of the player's dot, and of a teammate's.
 const DOT_RADIUS: float = 4.5
 ## Alpha a dot CLAMPED to the map's edge is drawn at — the same distinction, and
@@ -247,6 +264,10 @@ var _hint_label: Label = null
 ## the map's own pixel space, and whether it is lit.
 var _icon_points: PackedVector2Array = PackedVector2Array()
 var _icon_colors: PackedColorArray = PackedColorArray()
+## One entry per `BudapestPlan.WAYPOINTS` row, in row order — the same pair of
+## buffers one glyph along, and read back by `city_map_selfcheck` the same way.
+var _waypoint_points: PackedVector2Array = PackedVector2Array()
+var _waypoint_colors: PackedColorArray = PackedColorArray()
 ## The local player's dot, or a negative point when there is no player at all.
 var _player_point: Vector2 = Vector2(-1.0, -1.0)
 var _player_color: Color = COLOR_PLAYER
@@ -414,6 +435,32 @@ func _refresh() -> void:
 		var pos: Vector3 = slots[i]["pos"]
 		_icon_points[i] = map_point(pos.x, pos.z)
 		_icon_colors[i] = COLOR_FOUND if (mask & (1 << i)) != 0 else COLOR_UNFOUND
+
+	# --- The five city waypoints -------------------------------------------
+	# Lit off the player's OWN `waypoint_mask` on this same tick, exactly as the 22
+	# icons are lit off `explored_mask`: it is per-run state that the room has
+	# already OR-ed into the local hero (`MpManager._apply_waypoints`), so a circle
+	# a teammate stepped on is filled here with nothing else to wire.
+	#
+	# THE BIT IS FOUND BY ARITHMETIC, NOT BY ASKING THE TERRAIN. The site table
+	# appends the city's rows LAST (`TerrainWaypoints.waypoint_sites`, whose banner
+	# fixes the order as a wire format), so the first city bit is simply the mask's
+	# width minus the number of authored rows — which is a fact about two constants
+	# and needs no `EndlessTerrain` in the scene, and this panel has none. It is
+	# pinned end-to-end against the real table by `minimap_selfcheck`'s waypoint
+	# check, which does have one.
+	var waypoint_mask: int = 0
+	if player != null and "waypoint_mask" in player:
+		waypoint_mask = int(player.waypoint_mask)
+	var city_rows: Array = BudapestPlan.WAYPOINTS
+	var first_bit: int = TerrainWaypoints.WAYPOINT_COUNT - city_rows.size()
+	_waypoint_points.resize(city_rows.size())
+	_waypoint_colors.resize(city_rows.size())
+	for i in range(city_rows.size()):
+		var site: Vector3 = city_rows[i]["pos"]
+		_waypoint_points[i] = map_point(site.x, site.z)
+		_waypoint_colors[i] = COLOR_FOUND \
+			if (waypoint_mask & (1 << (first_bit + i))) != 0 else COLOR_UNFOUND
 
 	# --- The player's dot --------------------------------------------------
 	_player_shown = player != null and "global_position" in player
@@ -728,6 +775,21 @@ func _paint_marks() -> void:
 		if found:
 			_marks.draw_rect(Rect2(point - Vector2(half + 2.0, half + 2.0),
 				Vector2(ICON_SIZE + 4.0, ICON_SIZE + 4.0)), colour, false, 1.5)
+	# The waypoint rings, between the landmarks and the living dots: a place you can
+	# travel to outranks a place you have seen, and neither outranks a person.
+	# `-1.0` on the filled branch for the icons' reason one block up.
+	for i in range(_waypoint_points.size()):
+		var ring: Color = _waypoint_colors[i]
+		var lit: bool = ring.is_equal_approx(COLOR_FOUND)
+		_marks.draw_circle(_waypoint_points[i], WAYPOINT_RADIUS, ring,
+			lit, -1.0 if lit else WAYPOINT_WIDTH, true)
+		# THE HALO ON A FOUND ONE, and it is not decoration: a bare filled disc is
+		# what a PERSON is drawn as on this panel (the player and every teammate),
+		# so without the ring round it a found waypoint reads as a hero standing
+		# still. The landmark icons solve the same clash the same way one shape up.
+		if lit:
+			_marks.draw_circle(_waypoint_points[i], WAYPOINT_RADIUS + 2.5, ring,
+				false, WAYPOINT_WIDTH, true)
 	for i in range(_peer_points.size()):
 		_marks.draw_circle(_peer_points[i], DOT_RADIUS, _peer_colors[i])
 	if _player_shown:

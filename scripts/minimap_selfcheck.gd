@@ -242,6 +242,8 @@ func _run() -> void:
 		await create_timer(2.0).timeout
 		failure = _check()
 	if failure.is_empty():
+		failure = _check_waypoints()
+	if failure.is_empty():
 		failure = _check_toggle()
 	if failure.is_empty():
 		failure = _check_zoom()
@@ -347,6 +349,140 @@ func _check() -> String:
 		map._road_count, on_disc, map._facing, map._croc_count, map.MAX_CROC_DOTS,
 		map._biome, map._in_river])
 	Sentinel.done("check")
+	return ""
+
+
+func _check_waypoints() -> String:
+	"""The waypoint layer (epic godot-test1-sc6, bead .5): one ring per site, AMBER
+	and filled where the crew has been, STEEL and hollow where it has not.
+
+	DRIVEN OFF THE REAL TERRAIN AND THE REAL PLAYER, not a probe in a group — which
+	is the layer's whole design: `TerrainWaypoints.waypoint_sites()` says where the
+	circles are whether or not their chunks are loaded, so there is no group to
+	fake. It runs FIRST, before the zoom and terrain checks swap stubs in, so the
+	world under it is the one the game builds.
+
+	THE EMPTY MASK IS THE NEGATIVE CONTROL, `city_map_selfcheck` check 4's rule:
+	without it "site 2 is amber" is equally true of a layer that paints every ring
+	amber."""
+	var map: Control = root.get_node_or_null("Main/HUD/MinimapHUD")
+	var player: Node3D = get_first_node_in_group("player")
+	var terrain: Node = get_first_node_in_group("terrain")
+	if map == null or player == null or terrain == null:
+		return "no MinimapHUD, player or terrain for the waypoint checks"
+	if not ("waypoint_mask" in player):
+		return "the player has no waypoint_mask — the waypoint layer has nothing to read"
+
+	var sites: Array[Dictionary] = TerrainWaypoints.waypoint_sites(terrain as Node3D)
+
+	# THE CITY'S ROWS ARE THE TABLE'S TAIL, pinned here because this is the check
+	# with a real terrain in it. `city_map_panel` derives the first city bit as
+	# "the mask's width minus the number of authored rows" so that it needs no
+	# terrain of its own; that arithmetic is only true while the authored rows are
+	# appended last, and a row inserted before them would light the wrong rings on
+	# the B map with nothing else complaining.
+	var first_city: int = TerrainWaypoints.WAYPOINT_COUNT - BudapestPlan.WAYPOINTS.size()
+	for i in range(BudapestPlan.WAYPOINTS.size()):
+		if sites[first_city + i]["pos"] != (BudapestPlan.WAYPOINTS[i]["pos"] as Vector3):
+			return ("waypoint site %d is not BudapestPlan.WAYPOINTS[%d] — the city's rows " \
+				+ "are no longer the table's tail, and city_map_panel's bit offset is wrong") \
+				% [first_city + i, i]
+
+	map._zoom_index = map.ZOOM_DEFAULT_INDEX
+	var was: int = int(player.waypoint_mask)
+	var failure := ""
+	while true:  # one pass; every `break` still restores the mask below
+		# 1. NOTHING FOUND: every site is still drawn (the map shows you where the
+		#    circles are), and every one of them is STEEL and hollow.
+		player.waypoint_mask = 0
+		map._tick()
+		if map._waypoint_count != sites.size():
+			failure = "the map drew %d waypoint rings for %d sites" \
+				% [map._waypoint_count, sites.size()]
+			break
+		if map._waypoint_count > map.MAX_WAYPOINT_DOTS:
+			failure = "the waypoint budget (%d) is biting at %d rings" \
+				% [map.MAX_WAYPOINT_DOTS, map._waypoint_count]
+			break
+		failure = _waypoint_states(map, [])
+		if not failure.is_empty():
+			break
+
+		# 2. TWO FOUND, one near and one 1.7 km away, so neither end of the bit
+		#    shift can hide: the spawn circle (index 2) and the last authored city
+		#    one. They must turn amber and filled, and NOTHING ELSE may.
+		var found: Array = [2, sites.size() - 1]
+		for index: int in found:
+			player.waypoint_mask |= 1 << index
+		map._tick()
+		failure = _waypoint_states(map, found)
+		if not failure.is_empty():
+			break
+
+		# 3. THE GEOMETRY: a ring is clamped to the rim exactly when its site is off
+		#    the disc, and no ring — clamped or not — pokes past the ring the map is
+		#    drawn inside. The expectation comes from the WORLD distance through the
+		#    shared zoom scale, so this measures the north-up mapping end to end
+		#    rather than reading the layer's own arithmetic back.
+		var clamped := 0
+		var on_disc := 0
+		var origin: Vector3 = player.global_position
+		for i in range(map._waypoint_count):
+			var site: Vector3 = sites[i]["pos"]
+			var reach: float = Vector2(site.x - origin.x, site.z - origin.z).length() \
+				* map._map_scale()
+			var from_centre: float = (map._waypoint_points[i] - map.MAP_CENTER).length()
+			if from_centre + map.WAYPOINT_MARK_REACH > map.MAP_RADIUS + 0.01:
+				failure = "waypoint %d is drawn %.1f px from centre — its ring pokes past the map's" \
+					% [i, from_centre]
+				break
+			var is_clamped: bool = from_centre >= map.MAP_RADIUS - map.WAYPOINT_MARK_REACH - 0.01
+			if reach > map.MAP_RADIUS and not is_clamped:
+				failure = "waypoint %d is %.1f px out but was not clamped to the rim" % [i, reach]
+				break
+			if reach <= map.MAP_RADIUS:
+				on_disc += 1
+				if is_clamped:
+					failure = "waypoint %d is %.1f px out — on the disc — but was clamped" % [i, reach]
+					break
+			else:
+				clamped += 1
+		if not failure.is_empty():
+			break
+		# Both branches must have been exercised: the spawn circle is metres away and
+		# Budapest is 1.7 km east, so a run where either count is zero means the
+		# layer (or the site table) is not saying what it is supposed to say.
+		if on_disc == 0 or clamped == 0:
+			failure = "the waypoint layer drew %d rings on the disc and %d clamped — " \
+				% [on_disc, clamped] + "one of the two branches never ran"
+		break
+
+	player.waypoint_mask = was
+	map._tick()
+	if not failure.is_empty():
+		return failure
+	print("waypoints %d rings | %d found" % [map._waypoint_count, 2])
+	Sentinel.done("waypoints")
+	return ""
+
+
+func _waypoint_states(map: Control, found: Array) -> String:
+	"""Every ring's colour and fill against the expected found set.
+
+	Alpha is deliberately dropped before the comparison: the rim clamp multiplies it
+	(`LANDMARK_EDGE_ALPHA`), and the two states are a VALUE difference, never an
+	alpha one — which is the rule `city_map_panel` states for the same pair."""
+	for i in range(map._waypoint_count):
+		var want_found: bool = found.has(i)
+		var want: Color = map.COLOR_WAYPOINT_FOUND if want_found else map.COLOR_WAYPOINT_UNFOUND
+		var got := Color(map._waypoint_colors[i] as Color, 1.0)
+		if not got.is_equal_approx(want):
+			return "waypoint %d is drawn %s, expected %s (%s)" \
+				% [i, got, want, "found" if want_found else "unfound"]
+		if (map._waypoint_found[i] != 0) != want_found:
+			return "waypoint %d is %s but drawn %s" % [
+				i, "found" if want_found else "unfound",
+				"filled" if map._waypoint_found[i] != 0 else "hollow"]
 	return ""
 
 
