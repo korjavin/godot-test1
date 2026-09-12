@@ -1523,8 +1523,15 @@ func _gather_waypoints() -> void:
 	# waypoints", never as an error — the `_gather_tower` guard, one method wider
 	# because this asks for more. The cast is part of the guard: the table wants an
 	# `EndlessTerrain`, and a bare `Node` in the group answers null here.
+	# The three the table enters through, in the order it calls them: the tower's
+	# site, the one cache extend and the station read the five road sites share. A
+	# node answering all three answers the rest of `waypoint_sites`'s reach as well
+	# (`_road_terminal_k`, `is_river_at`, `ROAD_TERMINAL_X` — the road half of the
+	# same script), which is as close to "is it an `EndlessTerrain`" as group
+	# discovery gets without naming the type.
 	var terrain := _terrain as Node3D
 	if terrain == null or not terrain.has_method("tower_site") \
+			or not terrain.has_method("_road_extend_to_x") \
 			or not terrain.has_method("_road_station"):
 		return
 	var mask: int = 0
@@ -1822,16 +1829,15 @@ func _draw() -> void:
 	if _landmark_count > 0:
 		draw_multiline_colors(_landmark_points, _landmark_colors, LANDMARK_MARK_WIDTH)
 
-	# 2c. The tower — ONE draw call, and OVER the landmarks: there is one of it in
-	#     the world and it is where the player is going, so it is the one
-	#     destination allowed to sit on top of another. Still under the crocodiles,
-	#     for the landmark layer's reason: a destination must never hide a threat.
-	if _tower_count > 0:
-		draw_multiline_colors(_tower_points, _tower_colors, TOWER_MARK_WIDTH)
-
-	# 2d. The waypoint circles — UNDER the tower (the HQ is where the run is going;
-	#     a ring is how you get about) and under the crocodiles, the same rule every
-	#     destination layer here keeps: a destination must never hide a threat.
+	# 2c. The waypoint circles — ABOVE the landmarks and UNDER the tower, and that
+	#     ordering is load-bearing rather than tidy: waypoint site 0 stands
+	#     `OUTER_HALF + WAYPOINT_DOOR_STANDOFF` east of `tower_site()` at the
+	#     tower's own Z, so for the whole 400 m approach the two marks rim-clamp on
+	#     nearly the same bearing — and a 3.2 px filled ring painted after the cross
+	#     would sit on the map's compass to the HQ. The HQ is where the run is
+	#     going; a ring is how you get about. Under the crocodiles too, the rule
+	#     every destination layer here keeps: a destination must never hide a
+	#     threat. (Found in review of this bead's own PR.)
 	#
 	#     ONE DRAW CALL PER RING, which is this layer's whole cost and the one place
 	#     the map spends per object. A ring is not segments, so it cannot join a
@@ -1848,6 +1854,14 @@ func _draw() -> void:
 		var filled: bool = _waypoint_found[i] != 0
 		draw_circle(_waypoint_points[i], WAYPOINT_MARK_RADIUS, _waypoint_colors[i],
 				filled, -1.0 if filled else WAYPOINT_MARK_WIDTH, true)
+
+	# 2d. The tower — ONE draw call, and OVER the landmarks AND the waypoints: there
+	#     is one of it in the world and it is where the player is going, so it is the
+	#     one destination allowed to sit on top of another. Still under the
+	#     crocodiles, for the landmark layer's reason: a destination must never hide
+	#     a threat.
+	if _tower_count > 0:
+		draw_multiline_colors(_tower_points, _tower_colors, TOWER_MARK_WIDTH)
 
 	# 3. Crocodiles — one draw call for the whole pack (see _gather_crocodiles).
 	if _croc_count > 0:

@@ -538,8 +538,16 @@ func _check_waypoints_light() -> void:
 	# ...AND A LANDMARK BIT MUST LIGHT NOTHING HERE. The two masks are different
 	# widths over different tables, and the panel now reads both: a waypoint ring
 	# lit by `explored_mask` would be the exact bug this check exists for.
+	#
+	# THE LANDMARK BIT IS `first_bit`, NOT 0, and that is the whole of the control.
+	# The panel only ever reads bits `first_bit … first_bit + rows - 1`, so a
+	# landmark explored at slot 0 falls outside the window it looks at and could
+	# not light a ring however wrong the panel was — the assertion below would be
+	# vacuous. Exploring the slot the waypoint window DOES cover is what makes a
+	# panel that OR-ed the wrong mask in fail here. (Review of PR #373: mutation C3
+	# passed a green check with `explored_mask` OR-ed into `waypoint_mask`.)
 	player.waypoint_mask = 0
-	player.explore_landmark(0)
+	player.explore_landmark(first_bit)
 	panel._refresh()
 	if _lit_waypoints(panel).size() != 0:
 		_fail("exploring a landmark lit a waypoint ring — the panel is reading the wrong mask")
