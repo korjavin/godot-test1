@@ -2504,20 +2504,23 @@ const SPECIES: Dictionary = {
 	## MEASURED OFF assets/models/characters/hunter.glb (built by
 	## scripts/generate_hunter.py), recorded here for the same reason the viper's
 	## are: a .tscn cannot hold a comment an editor resave will not eat.
-	##   * 3.0375 m long, 2.250 m TALL, 0.84375 m wide — the only predator in the
-	##     table that is TALLER than it is wide by a factor of nearly three, and
-	##     the only one a full head taller than a player. A crocodile is
-	##     1.40 x 0.28 x 0.276; this thing stands up, and since bead
-	##     godot-test1-5ow it towers (the generator's `CHASSIS_SCALE` 2.25 — the
-	##     second 1.5x on top of godot-test1-6bj's — every number in this block is
-	##     the old one times that, because the scale is applied uniformly to the welded mesh).
-	##   * The capsule in hunter_robot.tscn is `radius = 0.421875, height = 3.0375`,
-	##     laid on the travel axis with the crocodile's basis, at
-	##     `(0, 0.421875, -0.14625)`. radius == centre y, the crocodile/viper
-	##     identity, so the capsule's bottom sits exactly on y = 0 and the chassis
-	##     rests on the ground plane. z = -0.14625 is the mesh's own midpoint: like
-	##     the viper, the hunter is built forward of its origin, so a capsule
-	##     centred on the origin would leave solid body hanging off the back.
+	##   * 2.56 m TALL, 1.24 m wide across the shoulders, 0.82 m deep — an
+	##     armoured BIPED since bead godot-test1-hb0 (owner reference:
+	##     docs/characters/hunter.png, canon in docs/characters/hunter.md), where
+	##     it was a 3.04 m four-legged piston chassis before. A crocodile is
+	##     1.40 x 0.28 x 0.276 and lies down; this thing stands up and is a full
+	##     head over a 1.7 m hero, which is the whole fear read. The generator
+	##     authors those metres directly — there is no CHASSIS_SCALE any more, so
+	##     a retune is a number in generate_hunter.py's proportion block.
+	##   * The capsule in hunter_robot.tscn is `radius = 0.62, height = 2.56`,
+	##     UPRIGHT (identity basis) at `(0, 1.28, 0)` — the titan's shape, not the
+	##     crocodile's. The crocodile/viper identity this row used to quote
+	##     (radius == centre y, a capsule LAID ON THE TRAVEL AXIS) was a statement
+	##     about long low animals and is simply false of a biped: what puts the
+	##     capsule's bottom on y = 0 now is `centre y == height / 2`, and the
+	##     radius is half the mesh's widest span rather than half its height. The
+	##     z offset is gone with it — the old chassis was built forward of its
+	##     origin and needed one; the biped is centred, so the capsule is too.
 	##     tower_guard.tscn carries the identical three numbers — one chassis, one
 	##     capsule, and a grown model over an unscaled capsule would be the bug.
 	"hunter_robot": {
@@ -2590,15 +2593,22 @@ const SPECIES: Dictionary = {
 		"sniff_pause_chance": 0.15,
 
 		# ----- Obstacle avoidance -----
-		## 2.4 m of feeler for a 1.35 m chassis — proportionally the crocodile's
-		## 3.0-for-1.40, because the failure it prevents is the same one (the model
-		## reaching into a block the shorter capsule stopped clear of).
+		## 2.4 m of feeler against a 1.24 m capsule — 1.9 lengths, a shade TIGHTER
+		## in proportion than the crocodile's 3.0-against-1.40 (2.1), and that is
+		## the right direction for a biped: the crocodile's ratio is set by a body
+		## that is long and thin and has to clear a block it is still mostly beside,
+		## while this one turns about a disc. The failure both prevent is the same
+		## — the model reaching into a block the capsule stopped clear of.
 		"avoid_look_ahead": 2.4,
 		"avoid_feeler_angle": PI / 5.0,  # 36°
 
-		## Cast at 0.5, not the crocodile's 0.3: this animal's mass is its HULL,
-		## which sits at 0.36-0.62 m off the ground on the piston legs. A feeler at
-		## croc height would sample the air between the legs and under the chassis.
+		## Cast at 0.5, not the crocodile's 0.3. NOT because the mass is higher
+		## (the boots are on the floor like everything else's) but because of what
+		## a 0.3 m ray would hit on THIS body: the block kinds in the world have
+		## kerbs, plinths and slab edges around knee height, and a machine that
+		## strides over a 0.3 m reading walks its 0.9 m knee plates into them. 0.5
+		## is mid-calf, the height at which the leg is still solid and the next
+		## obstacle is still avoidable.
 		"avoid_feeler_height": 0.5,
 
 		## 0.7 — it eases off less than a crocodile (0.5) rounding a block. A
@@ -2618,13 +2628,14 @@ const SPECIES: Dictionary = {
 		## a servo gait looks like.
 		"stride_frequency": 12.0,
 
-		## 0.5° of roll — effectively zero (the crocodile waddles 9°). A chassis on
-		## four vertical pistons has nothing to roll about, and any visible roll at
-		## all instantly reads as an animal.
+		## 0.5° of roll — effectively zero (the crocodile waddles 9°). A machine
+		## marching on two armoured legs rolls from the hip and not from the spine,
+		## and any visible body roll at all instantly reads as an animal.
 		"waddle_roll": 0.5 * PI / 180.0,
 
-		## Half the crocodile's bob. A piston stack absorbs the step; it does not
-		## heave the body.
+		## Half the crocodile's bob. Armoured legs absorb the step; they do not
+		## heave the body. With no limb rig on this mesh (see the model note above)
+		## the bob IS the stride, so it stays small and fast rather than deep.
 		"bob_amount": 0.012,
 
 		## 1° of sway against the crocodile's 5°: the slow body "snaking" yaw is a
@@ -2643,11 +2654,13 @@ const SPECIES: Dictionary = {
 		"breathe_amount": 0.002,
 
 		# ----- River wading (VISUAL ONLY — same hard rule as every row) -----
-		## 0.22 m off a model that stands 1.000 m tall and rides 0.36 m clear on
-		## its pistons: the legs go under, the hull does not. That is the read
-		## being bought — the corporation's unit FORDS the river, chest-high and
-		## unbothered, where a crocodile hides in it. Deeper would swallow the
-		## hazard livery, which is the whole recognition cue at distance.
+		## 0.22 m off a model that stands 2.56 m tall: the boots (0.00-0.28) go
+		## under and the calf's bottom 2 cm with them, and nothing else moves.
+		## That is the read being bought — the corporation's unit FORDS the river,
+		## dry to the shin and unbothered, where a crocodile hides in it. It is
+		## ankle-deep rather than knee-deep on purpose: the leg's light/dark
+		## rhythm (dark boot, mid calf, black knee, light thigh) is most of what
+		## says "machine" at distance, and a deeper sink starts eating it.
 		##
 		## VISUAL ONLY: never touches the CharacterBody3D, its CollisionShape3D or
 		## global_position. A wading hunter is exactly as dangerous as a dry one.
@@ -2658,10 +2671,11 @@ const SPECIES: Dictionary = {
 		"river_sink_ease_speed": 0.22 / 0.2,
 
 		# ----- The clamp (this row's "bite") -----
-		## The rear pack's two retrieval prongs, not a jaw. Faster than a
-		## crocodile's chomp (0.35 vs 0.5) and much shallower in pitch (12° vs 26°)
-		## because a clamp closes, it does not gape; the lunge is nearly the
-		## crocodile's, since the unit does step into the grab.
+		## The two slab fists, not a jaw — the rear clamp pack went with the
+		## four-legged chassis (bead godot-test1-hb0). Faster than a crocodile's
+		## chomp (0.35 vs 0.5) and much shallower in pitch (12° vs 26°) because a
+		## grab closes, it does not gape; the lunge is nearly the crocodile's,
+		## since the unit does step into it.
 		"bite_duration": 0.35,
 		"bite_pitch": 12.0 * PI / 180.0,
 		"bite_lunge": 0.30,
@@ -2873,10 +2887,13 @@ const SPECIES: Dictionary = {
 		## together (the hunter belongs to no band and works the field, the guard
 		## stands inside one building). So the facing offset and the gait numbers
 		## are the hunter's, slowed to the walked beat above — and so is the SIZE:
-		## the 2.25x chassis of bead godot-test1-5ow is the shared .glb, so
-		## tower_guard.tscn's capsule is the hunter's capsule (radius 0.421875,
-		## height 3.0375, at `(0, 0.421875, -0.14625)`) and grew with it. 2.25 m of
-		## machine still clears a storey's ~4.6 m ceiling with room to spare.
+		## the armoured biped of bead godot-test1-hb0 is the shared .glb, so
+		## tower_guard.tscn's capsule is the hunter's capsule (radius 0.62,
+		## height 2.56, upright at `(0, 1.28, 0)`) and changed shape with it.
+		## 2.56 m of machine still clears a storey's ceiling and a 1.94 m spine
+		## door — measured on the live scene by tower_guard_selfcheck check 12b,
+		## which is where the numbers in this paragraph are checked rather than
+		## merely written down.
 		"model_facing_offset": -PI / 2.0,
 		"stride_frequency": 9.0,
 		"waddle_roll": 0.5 * PI / 180.0,

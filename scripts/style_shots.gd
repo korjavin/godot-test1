@@ -261,6 +261,19 @@ func _run() -> void:
 	await _shoot_idle_strip(terrain, player, field, "23_idle_strip")
 	await _shoot_air_strip(terrain, player, field, "24_air_strip")
 
+	# THE PREDATOR PORTRAITS (bead godot-test1-hb0) — the GD-SURVEY hunter in the
+	# field and the SAME chassis on guard duty at the HQ, which is the pair the
+	# owner rules the machine's redesign from. They come after the hero shots for
+	# the reason 19 and 20 do: each one spawns a live body into the world and
+	# takes the pause around it, so anything downstream would be shooting through
+	# whatever they left behind.
+	await _shoot_predator(terrain, player, field,
+			"res://scenes/characters/hunter_robot.tscn", "hunter_robot",
+			"25_hunter", false)
+	await _shoot_predator(terrain, player, player.debug_destination_hq(),
+			"res://scenes/characters/tower_guard.tscn", "tower_guard",
+			"26_tower_guard", true)
+
 	# THE CAPTIONS (bead godot-test1-y1o.38) — the respawn countdown and the
 	# level-up line, the two biggest strings the game ever puts over the world.
 	# One ground each rather than both: they are drawn dead centre at 48/40 px, so
@@ -664,14 +677,138 @@ func _shoot_body_strip(terrain: Node, player: Node3D, at: Vector3, name: String)
 			"%.3f s" % period, " hero=", _hero)
 
 
-func _save_frame(name: String, frame: int) -> void:
-	"""One numbered frame of a strip — shot 20's four lines, lifted out so the
-	idle and air strips below spend them too rather than copying them."""
+# ============================================================================
+# THE PREDATOR PORTRAIT (bead godot-test1-hb0)
+#
+# The hero shots above all frame the PLAYER; nothing here framed an enemy, and
+# the hunter robot's redesign is ruled from a silhouette. Three frames per call
+# and one settle: a flat SIDE (the silhouette the owner rules from), a
+# THREE-QUARTER front (where a chest decal and a visor actually read), and a
+# WIDE frame with the hero standing beside the machine, which is the only one of
+# the three that answers "how big is it".
+# ============================================================================
+
+## Metres from the machine. The bead's framing: the acquisition read "at 5 m".
+const PREDATOR_SHOT_DISTANCE: float = 5.0
+## Where the portrait camera looks — chest height on a ~2.5 m biped, which keeps
+## the lens level rather than tilted up at a dome.
+const PREDATOR_FOCUS_HEIGHT: float = 1.30
+## A LONG LENS ON THE TWO PORTRAITS, and the distance stays 5 m. The game's own
+## 75-degree field at five metres puts a 2.5 m machine across a tenth of the
+## frame, which is the honest acquisition read and useless for ruling on a visor
+## slit — the same split shots 16 and 17 make for the hero's face. The WIDE frame
+## below keeps the game FOV, so the pair still answers both questions.
+const PREDATOR_PORTRAIT_FOV: float = 40.0
+## How far to the machine's own +X (its authored front) the hero stands. Off the
+## camera axis rather than on it: at 2 m in front the hero simply eclipsed the
+## subject, which is what the first round of this shot photographed.
+const PREDATOR_HERO_GAP: float = 6.0
+## The wide frame pulls back and looks at the gap between the two bodies, from
+## roughly a standing hero's eye height — at nine metres and three up it was a
+## drone shot of two dots, which answers nothing about how the machine reads
+## across a field.
+const PREDATOR_WIDE_DISTANCE: float = 7.5
+
+
+func _shoot_predator(terrain: Node, player: Node3D, at: Vector3, scene_path: String,
+		species: String, name: String, settle: bool) -> void:
+	"""
+	Three frames of a SHIPPED predator scene standing beside the settled hero.
+
+	The scene is the real `.tscn`, not the `.glb`, and `species` is written
+	BEFORE `add_child` — the call-order contract every spawner in the game
+	honours, and the reason a portrait taken here is evidence about the thing
+	that spawns rather than about a mesh file: a `Model` transform, a wrong row
+	or a scene that no longer loads all show up in the picture.
+
+	THE WORLD IS PAUSED AROUND ALL THREE FRAMES, for the reason the stride strip
+	documents one function up and one more of its own: this body is a live
+	`CharacterBody3D` whose `_physics_process` would walk it out of frame, and
+	whose row makes it `captures_hero` — an unpaused hunter five metres from a
+	frozen hero jails him and the shot becomes a picture of a respawn. `PauseHub`
+	is the only sanctioned writer of `tree.paused` (CLAUDE.md); `process_frame`
+	and `frame_post_draw` both still fire while it holds.
+
+	The body is left at `rotation.y = 0`, i.e. the MESH's own +X (its authored
+	forward) pointing at world +X, and the cameras are placed off that axis
+	instead of off the body's travel facing. `_animate_body` is what applies
+	`model_facing_offset`, and it never runs here — so framing off the authored
+	axis is the only way the side view is the same side in every run.
+	"""
+	if not _wanted(name):
+		return
+	if settle or not _head_pose_settled:
+		await _settle_body_pose(terrain, player, at, name)
+	player.set_active_character(_hero_index(player))
+	_pose_walk(player, 0.0)
+
+	var scene := load(scene_path) as PackedScene
+	if scene == null:
+		print("[SHOTS] no scene at ", scene_path, " — ", name, " skipped")
+		return
+	var body := scene.instantiate() as Node3D
+	body.species = species
+	# Stand it on the hero's +X, i.e. off to the side of both portrait cameras
+	# (which live out on ±Z) rather than behind the hero on their axis.
+	var spot := player.global_position + Vector3(PREDATOR_HERO_GAP, 0.0, 0.0)
+	body.position = spot
+	PauseHub.take(self)
+	terrain.add_child(body)
+	# NOMINAL SIZE, NOT ONE OF THE ROW'S ROLLS. `_ready()` has just multiplied the
+	# body by `size_random_factor` off an unseeded RNG — ±5% on the hunter row, so
+	# the machine in this frame would be 2.43-2.69 m tall and a DIFFERENT height
+	# every run. The wide frame below is the shot that answers "how big is it" and
+	# a before/after pair is compared at exactly that scale, so the portrait shows
+	# the size the species row and the capsule actually describe. After
+	# `add_child`, because that is when `_ready()` writes it.
+	body.scale = Vector3.ONE
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	var focus := spot + Vector3(0.0, PREDATOR_FOCUS_HEIGHT, 0.0)
+	# +Z is the model's own LEFT (predator_parts' orientation contract), so a
+	# camera out on +Z is a flat side view and one swung 55 degrees toward the
+	# nose is the three-quarter front.
+	await _capture_from(focus + Vector3(0.0, 0.0, PREDATOR_SHOT_DISTANCE), focus,
+			PREDATOR_PORTRAIT_FOV, name + "_side")
+	await _capture_from(focus + Vector3(0.82, 0.10, 0.57) * PREDATOR_SHOT_DISTANCE,
+			focus, PREDATOR_PORTRAIT_FOV, name + "_quarter")
+	var pair := (spot + player.global_position) * 0.5 + Vector3(0.0, 1.0, 0.0)
+	await _capture_from(pair + Vector3(0.50, 0.16, 0.85) * PREDATOR_WIDE_DISTANCE,
+			pair, BODY_SHOT_FOV, name + "_wide")
+
+	body.queue_free()
+	PauseHub.release(self)
+	print("[SHOTS] wrote ", name, " side/quarter/wide at ", spot)
+
+
+func _capture_from(eye: Vector3, focus: Vector3, fov: float, name: String) -> void:
+	"""One frame from a throwaway camera. `_body_camera`'s tail, with the framing
+	handed in rather than derived from the hero — the predator shots aim at
+	something that is not the player."""
+	var cam := Camera3D.new()
+	cam.fov = fov
+	add_child(cam)
+	cam.global_position = eye
+	cam.look_at(focus, Vector3.UP)
+	cam.make_current()
+	await _grab(name)
+	cam.queue_free()
+
+
+func _grab(png_name: String) -> void:
+	"""Two process frames, a post-draw and a PNG — the four lines every shot in
+	this file ends with, and the one place they live."""
 	await get_tree().process_frame
 	await get_tree().process_frame
 	await RenderingServer.frame_post_draw
-	var img := get_viewport().get_texture().get_image()
-	img.save_png("%s/%s_%d.png" % [_out_dir, name, frame])
+	get_viewport().get_texture().get_image().save_png("%s/%s.png" % [_out_dir, png_name])
+
+
+func _save_frame(name: String, frame: int) -> void:
+	"""One numbered frame of a strip — shot 20's four lines, lifted out so the
+	idle and air strips below spend them too rather than copying them."""
+	await _grab("%s_%d" % [name, frame])
 
 
 ## BEAD godot-test1-5u3.9 — the idle strip's window and its frame count. Three
