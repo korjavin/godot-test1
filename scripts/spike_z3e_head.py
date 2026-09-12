@@ -576,8 +576,10 @@ def wrap_band(obj, eye_z, cfg):
     # every one of them sits on a band line. Two parts of that boundary are excused:
     # the arc's two ENDS, where it runs up the face and is meant to follow the
     # triangulation, and the capped sockets, whose rims are a hole inside the patch
-    # and end up under the cloth rather than beside it. Without the bisect this finds
-    # 80 strays up to 5 cm off; with it, none.
+    # and end up under the cloth rather than beside it. Measured on THIS check with
+    # the two cuts disabled: 55 of 67 skin-side vertices off the lines, by up to
+    # 1.0 cm. With them, none. (The ceiling is half the slab, 2.3 cm — a boundary
+    # vertex cannot be further than that from BOTH lines.)
     skin_edge = set(v for f in walls for v in f.verts) - moved - hole_rim
     ragged = [v for v in skin_edge
               if abs(abs(bearing(v.co)) - half) >= 0.10
