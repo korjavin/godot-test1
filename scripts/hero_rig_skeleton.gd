@@ -64,6 +64,74 @@ extends RefCounted
 ## changed. `spine_02` IS written now, but only as the pelvis's counter-rotation:
 ## it takes a turn BACK, never one forward.
 ##
+## ### WHAT THE SKINNED HEROES COST ON THE WEB (bd godot-test1-5u3.11)
+##
+## Epic `5u3` closed on a four-in-a-room reading (bead `5u3.8`, PR #374) that
+## charged three skinned heroes **+3.3 ms** of frame time. That reading was a
+## WINDOWED DESKTOP `gl_compatibility` stand-in. Bead `5u3.11` built the control
+## the stand-in never had — a DEBUG WEB EXPORT of the PRE-EPIC commit `a099e7c`,
+## where all four heroes are still on the limb rig — and ran one probe against
+## both builds in the same browser. **THE REGRESSION IS NOT THERE.**
+##
+## Same probe both sides: the local player plus three `RemoteAvatar`s through the
+## shipped `receive_state()` (rig kinds asserted, not assumed — `local=limbs
+## Probe_1..3=limbs` on one, `local=skinned Probe_1=skinned Probe_2=skinned
+## Probe_3=limbs` on the other), Budapest through the shipped `\fb`, two 60 s
+## windows, `\fo`'s counters accumulated EVERY frame and divided by the frames.
+##
+##   Chrome/WebGL2, Apple M4, debug web export
+##                   pre-epic a099e7c    this build
+##                   (4 limb heroes)     (3 skinned + 1 limb)
+##     frame ms      16.67 / 16.68       16.67 / 16.68
+##     process ms     6.56 /  7.06        6.46 /  7.48
+##     draw calls    294   / 296         246   / 247
+##     primitives    245,485 / 248,569   206,054 / 207,062
+##
+## (`fps` is omitted because the probe computes it as the frame time's exact
+## reciprocal — it read 60.0 in all four windows and would say nothing twice.)
+##
+## READ THE FRAME-MS ROW HONESTLY: 16.67 ms is 1/60 s, so BOTH columns are sitting
+## on the browser's vsync ceiling and that row can only say "neither build misses
+## a frame here". The row that CAN move is `process ms`, and it does not: 0.16 ms
+## between the columns against a 0.50 ms spread between the pre-epic build's own
+## two windows. That is inside the measurement's own noise. Draw calls and
+## primitives are each down about 16%; the hero swap — ten `MeshInstance3D`s per
+## hero becoming one skinned mesh — is part of that and not all of it.
+##
+## THE ONE THING THIS PAIR CANNOT SEPARATE, and 5u3.8's own pre/post pair could
+## not either: `a099e7c` is 25 merges behind master, so the columns differ by
+## everything that landed since — waypoints, a predator revision, the city work —
+## and not only by the epic. 5u3.8 measured the same hero swap on ONE tree and
+## got -82 draws / -18k primitives; this pair gives -48 / -40k, so the two
+## effects are visibly mixed here. It is the comparison the bead prescribes and
+## the one the epic was judged on, so it is the one to re-take — but a null here
+## is "between `a099e7c` and today there is no net process-time regression on
+## this scene", not "the skinned rig is free".
+##
+## WHAT THIS DOES NOT SAY, and there are three of them. `TIME_PROCESS` is the
+## process step; it does not cover the RenderingServer's draw-list build or the
+## GL/ANGLE submission where a skinning pass lands. Vsync hides whatever headroom
+## is left above it. And the scene is a QUIET one: the player is parked, no chunk
+## is streaming, and the perf overlay reads `Crocs (active/total) 0 / 55` and
+## `0 / 62` — every predator LOD-asleep — so this is the cheapest frame the game
+## draws, which is where a small cost is hardest to see. So the reading is "no
+## cost observable at 60 Hz on an M4 in a quiet frame", NOT "no cost": a weaker
+## machine has less of everything to spend and nobody has measured one. If the
+## web build ever stops holding 60 here, this is the first thing to re-measure.
+##
+## WHERE THE STAND-IN'S 3.3 ms LIVED, since the number was real on that renderer.
+## An earlier build of the probe on the desktop `opengl3` stand-in (Godot reports
+## `OpenGL API 4.1 Metal - 90.5 - Compatibility` — macOS's deprecated desktop GL):
+## 18.15 / 17.89 ms shipped against 15.55 / 15.41 with every
+## `set_bone_pose_rotation()` below suppressed, meshes and GDScript untouched and
+## only the skeletons never going dirty. On THAT driver the cost follows the
+## skeleton being dirtied each frame, not the mesh — and a third window with the
+## driver unbound entirely read 16.02 against that arm's own 16.17 / 16.70, i.e.
+## the GDScript below is not distinguishable from zero either way. Caching bone
+## lookups harder or writing fewer bones cannot reach a per-frame re-skin; only
+## update FREQUENCY (the crocodile LOD's sleep) or VERTEX COUNT (a web-gated
+## decimation) could. On the target there is nothing for them to buy.
+##
 ## EVERY BONE `5u3.9` ADDED IS A BONE `measure()` DOES NOT EXPOSE — the calf, the
 ## foot, the forearm, the clavicle, the pelvis and the two spine bones. That is
 ## not an accident, it is the design rule that let this bead land: `measure()`'s
@@ -185,7 +253,7 @@ var _rest: Dictionary = {}
 ## Per-bone, resolved ONCE at bind because none of it can change afterwards:
 ## the bone index, the parent's global rest basis (and its inverse) that every
 ## write conjugates through, and the bone's own rest basis (and its inverse).
-## A walk frame touches seventeen bones, so this is the difference between four
+## A walk frame touches sixteen bones, so this is the difference between four
 ## `find_bone()` string lookups per bone per frame and none.
 var _bones: Dictionary = {}
 
