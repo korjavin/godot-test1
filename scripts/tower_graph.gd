@@ -81,8 +81,9 @@ extends RefCounted
 ## here as contracts by phase 4 and BUILT BY PHASE 8 against them: the geometry was
 ## written to satisfy this file rather than the other way round, which is the whole
 ## reason the audit had to land first. NOTHING IS `false` ANY MORE: bead
-## `godot-test1-3iy.7` shipped the ground-floor lift menu, so both `lift_shaft`
-## edges and both lift-stop entries are ways a player really has. The audit already
+## `godot-test1-3iy.7` shipped the ground-floor lift menu, so every `lift_shaft`
+## edge and every lift-stop entry is a way a player really has — nine of each since
+## bead `godot-test1-b9m8` put a stop on every storey. The audit already
 ## walked from those entries (see `_all_entries`), so the flip changed no verdict —
 ## a lift only ADDS routes, which is why a mutation may grant one at all.
 ##
@@ -121,16 +122,28 @@ const GEOMETRY_MASS: String = "mass"
 ## Phase 16's unlockable lift stop, and it is an ENTRY id rather than a gate id —
 ## but it rides the SAME monotone opened set for the same reason a checkpoint does:
 ## "you have stood here" is a thing the building remembers about you, it is earned,
-## and no verb takes it back. So it is persisted verbatim too, and it is spelled
-## once: the `entries` row below, the mutation that grants it, and
-## `TowerInterior`'s `LiftStopTrigger` all read this constant.
+## and no verb takes it back. So it is persisted verbatim too, and the `entries`
+## row below and the mutation that grants it both read this constant.
+##
+## THE OTHER SEVEN STOPS ARE PLAIN LITERALS in their rows, deliberately: since bead
+## `godot-test1-b9m8` `TowerInterior` builds every trigger from the row it is
+## looping over rather than from a name, so a const would be a second spelling of a
+## string one table already holds. This one and `ENTRY_LIFT_UPPER` keep theirs
+## because the self-checks name these two specifically — the maze stop is where the
+## fifteen-subset property starts holding, and storey 2's is the one the checkpoint
+## used to power.
 const ENTRY_LIFT_MAZE: String = "lift_stop_maze"
 
-## Phase 7's OTHER stop, at the head of the ground floor's ramp. Its `unlock` is
-## `GATE_CHECKPOINT` rather than its own id — lighting the checkpoint is what
-## powers the lift, which is what `lift_activated` has always said — so this
-## constant names a row and is NOT itself a persisted id. Spelled here because the
-## menu, the entries row and the mutation must all mean the same stop.
+## The stop at the head of the ground floor's ramp — storey 2's landing.
+##
+## Since bead `godot-test1-b9m8` its `unlock` is its OWN id rather than
+## `GATE_CHECKPOINT`: the lift stops at EVERY storey (owner ruling 2026-09-16) and
+## every storey is earned the same way, by standing on its landing once. So this
+## constant IS a persisted id now, exactly like `ENTRY_LIFT_MAZE` — added, never
+## renamed. `GATE_CHECKPOINT` keeps its own meaning (the respawn anchor) and no
+## longer powers anything. A profile saved before this bead with the checkpoint lit
+## and this id absent simply re-earns storey 2 the first time it crosses that
+## landing, which every ascent does: no migration, because the set only grows.
 const ENTRY_LIFT_UPPER: String = "lift_stop_upper"
 
 # ============================================================================
@@ -222,7 +235,7 @@ const TOWER_GRAPH: Dictionary = {
 			"note": "Open to the sky, west of the hall doorway. The ramp starts here.",
 		},
 		"upper_landing": {
-			"built": true, "quest": "", "cell": "", "parts": [],
+			"built": true, "quest": "landing_s2", "cell": "", "parts": [],
 			"note": "The head of the ground floor's ramp, in storey 2's south-west "
 				+ "corner. Since bead godot-test1-dn8 it is drawn on the plan grid "
 				+ "like every other landing, and it is also where the GRAND RAMP to "
@@ -294,7 +307,7 @@ const TOWER_GRAPH: Dictionary = {
 		# room a plan letters needs a row here, and `tower_selfcheck` binds the two
 		# in both directions: a letter with no row, or a row no floor draws, fails.
 		"s3_landing": {
-			"built": true, "quest": "", "cell": "", "parts": [],
+			"built": true, "quest": "landing_s3", "cell": "", "parts": [],
 			"note": "Head of the grand ramp on storey 3, where the ring corridor "
 				+ "and both cross corridors meet. Every room on the floor hangs "
 				+ "off it.",
@@ -332,7 +345,7 @@ const TOWER_GRAPH: Dictionary = {
 			"note": "Evidence store, east stack. Carries the floor's second pad.",
 		},
 		"s4_landing": {
-			"built": true, "quest": "", "cell": "", "parts": [],
+			"built": true, "quest": "landing_s4", "cell": "", "parts": [],
 			"note": "Head of the storey-4 ramp, in the north ring corridor directly "
 				+ "over storey 3's own stairwell.",
 		},
@@ -395,7 +408,7 @@ const TOWER_GRAPH: Dictionary = {
 		# included, was being silently passed over. Merged back into the corridor it
 		# always was.
 		"s5_landing": {
-			"built": true, "quest": "", "cell": "", "parts": [],
+			"built": true, "quest": "landing_s5", "cell": "", "parts": [],
 			"note": "Storey 5's ring and cross corridors, and the head of its ramp. "
 				+ "The boardroom behind the sequence lock is the one room it does "
 				+ "not simply lead into.",
@@ -435,7 +448,7 @@ const TOWER_GRAPH: Dictionary = {
 			"note": "The press room, the south-east corner suite.",
 		},
 		"s6_landing": {
-			"built": true, "quest": "", "cell": "", "parts": [],
+			"built": true, "quest": "landing_s6", "cell": "", "parts": [],
 			"note": "Storey 6's ring and spine corridors, off the head of the ramp "
 				+ "out of storey 5's south side. Every room on the floor hangs off it.",
 		},
@@ -466,7 +479,7 @@ const TOWER_GRAPH: Dictionary = {
 				+ "second pad.",
 		},
 		"s7_landing": {
-			"built": true, "quest": "", "cell": "", "parts": [],
+			"built": true, "quest": "landing_s7", "cell": "", "parts": [],
 			"note": "Storey 7's ring corridor and its north-south spine, off the head "
 				+ "of the ramp out of storey 6's north side.",
 		},
@@ -520,7 +533,7 @@ const TOWER_GRAPH: Dictionary = {
 				+ "ramp comes down. Both routes across this floor end here.",
 		},
 		"s9_landing": {
-			"built": true, "quest": "", "cell": "", "parts": [],
+			"built": true, "quest": "landing_s9", "cell": "", "parts": [],
 			"note": "Storey 9's landing at the north, and this floor's own outer "
 				+ "circuit — route A again, walked corner to corner.",
 		},
@@ -540,7 +553,7 @@ const TOWER_GRAPH: Dictionary = {
 				+ "one decoy chamber, and it holds nothing at all.",
 		},
 		"s10_landing": {
-			"built": true, "quest": "", "cell": "", "parts": [],
+			"built": true, "quest": "landing_s10", "cell": "", "parts": [],
 			"note": "The MUSTER FLOOR: storey 10's open approach, with the ramp out of "
 				+ "the labyrinth at its south-east corner and the cell block standing "
 				+ "in the middle of it. Both ways into the block open off it.",
@@ -762,6 +775,30 @@ const TOWER_GRAPH: Dictionary = {
 		# the floor the two riddles start from, and both routes up are still walked.
 		{"id": "lift_shaft_maze", "a": "entry_hall", "b": "s8_landing",
 			"gate": "", "built": true},
+
+		# --- bead godot-test1-b9m8: the REST of the shaft. The lift stops at every
+		# storey (owner ruling 2026-09-16), so every landing the plans draw gets the
+		# same row the two above have. A STAR THROUGH `entry_hall` and not a chain:
+		# every edge in this graph is undirected, so the star is what lets any two
+		# landings connect through the shaft — and it is also the truth, since the
+		# ground landing is the one place the shaft actually goes past.
+		#
+		# Each is granted by its own `lift_stop_sN_unlocked` mutation and never
+		# earlier, which is what keeps the lift from skipping a floor nobody walked.
+		{"id": "lift_shaft_s3", "a": "entry_hall", "b": "s3_landing",
+			"gate": "", "built": true},
+		{"id": "lift_shaft_s4", "a": "entry_hall", "b": "s4_landing",
+			"gate": "", "built": true},
+		{"id": "lift_shaft_s5", "a": "entry_hall", "b": "s5_landing",
+			"gate": "", "built": true},
+		{"id": "lift_shaft_s6", "a": "entry_hall", "b": "s6_landing",
+			"gate": "", "built": true},
+		{"id": "lift_shaft_s7", "a": "entry_hall", "b": "s7_landing",
+			"gate": "", "built": true},
+		{"id": "lift_shaft_s9", "a": "entry_hall", "b": "s9_landing",
+			"gate": "", "built": true},
+		{"id": "lift_shaft_s10", "a": "entry_hall", "b": "s10_landing",
+			"gate": "", "built": true},
 	],
 
 	# ------------------------------------------------------------------------
@@ -918,18 +955,52 @@ const TOWER_GRAPH: Dictionary = {
 		{"id": "front_door", "room": "entry_hall", "built": true,
 			"note": "The shell doorway. Always open, always legal."},
 		{"id": ENTRY_LIFT_UPPER, "room": "upper_landing", "built": true,
-			"unlock": GATE_CHECKPOINT,
-			"note": "Phase 7's unlockable lift stop, granted by `lift_activated` — "
-				+ "which is triggered by the checkpoint, hence the `unlock`."},
+			"unlock": ENTRY_LIFT_UPPER,
+			"note": "Phase 7's lift stop at the head of the ground floor's ramp, "
+				+ "granted by `lift_activated`. Since bead godot-test1-b9m8 it is "
+				+ "earned like every other storey — by standing on its landing, "
+				+ "which is what `LiftStopTrigger1` writes — so `unlock` is the id "
+				+ "itself and the checkpoint powers nothing."},
 		{"id": ENTRY_LIFT_MAZE, "room": "s8_landing", "built": true,
 			"unlock": ENTRY_LIFT_MAZE,
 			"note": "Phase 16's lift stop at the labyrinth's foot, granted by "
-				+ "`lift_stop_maze_unlocked` and earned by `LiftStopTrigger`, which "
+				+ "`lift_stop_maze_unlocked` and earned by `LiftStopTrigger7`, which "
 				+ "writes this very id into the opened set — hence `unlock` is the "
 				+ "id itself. The audit walks from it either way, which is what "
 				+ "makes the fifteen-subset property hold starting at storey 8 — and "
 				+ "is where D3 and D4 come from and why the maze has an ungated "
 				+ "route at all."},
+
+		# --- bead godot-test1-b9m8: one stop per remaining storey. Same row, same
+		# `unlock`-is-the-id rule, same trigger writing it: `TowerInterior` builds
+		# one `LiftStopTrigger<floor>` per row here, so this list IS the feature and
+		# there is no per-storey code anywhere. `tower_selfcheck` walks its fifteen
+		# subsets from each of them the day the row lands — which is the whole
+		# reason a stop has to be an entry and not a table of floor numbers.
+		{"id": "lift_stop_s3", "room": "s3_landing", "built": true,
+			"unlock": "lift_stop_s3",
+			"note": "Storey 3's landing, the head of the grand ramp."},
+		{"id": "lift_stop_s4", "room": "s4_landing", "built": true,
+			"unlock": "lift_stop_s4",
+			"note": "Storey 4's landing, in the north ring corridor."},
+		{"id": "lift_stop_s5", "room": "s5_landing", "built": true,
+			"unlock": "lift_stop_s5",
+			"note": "Storey 5's landing, at the head of its ramp."},
+		{"id": "lift_stop_s6", "room": "s6_landing", "built": true,
+			"unlock": "lift_stop_s6",
+			"note": "Storey 6's landing, off the ramp out of storey 5's south side."},
+		{"id": "lift_stop_s7", "room": "s7_landing", "built": true,
+			"unlock": "lift_stop_s7",
+			"note": "Storey 7's landing, off the ramp out of storey 6's north side."},
+		{"id": "lift_stop_s9", "room": "s9_landing", "built": true,
+			"unlock": "lift_stop_s9",
+			"note": "Storey 9's landing, above the labyrinth's lower half. A stop "
+				+ "ABOVE the maze, and deliberately: a maze already walked may be "
+				+ "skipped on a later visit (owner ruling 2026-09-16)."},
+		{"id": "lift_stop_s10", "room": "s10_landing", "built": true,
+			"unlock": "lift_stop_s10",
+			"note": "The muster floor, where the cell block stands. The top stop, "
+				+ "and the one a rescue party rides back to."},
 	],
 
 	# ------------------------------------------------------------------------
@@ -945,10 +1016,13 @@ const TOWER_GRAPH: Dictionary = {
 	"mutations": [
 		{
 			"id": "lift_activated",
-			"trigger": "checkpoint",
+			"trigger": "landing_s2",
 			"adds": ["lift_shaft"],
 			"adds_entries": [ENTRY_LIFT_UPPER],
-			"note": "Lighting the checkpoint powers the lift. Opens a shaft, closes nothing.",
+			"note": "Standing on storey 2's landing calls the lift there. The id is "
+				+ "kept (it is persisted); since bead godot-test1-b9m8 the "
+				+ "checkpoint no longer powers anything and this row reads like "
+				+ "every other stop's. Opens a shaft, closes nothing.",
 		},
 		{
 			"id": "lift_stop_maze_unlocked",
@@ -958,6 +1032,45 @@ const TOWER_GRAPH: Dictionary = {
 			"note": "Reaching the labyrinth's foot on foot calls the lift to it. "
 				+ "Additive like every other row here — the seven ramps below it "
 				+ "stay exactly as walkable as they were.",
+		},
+		# --- bead godot-test1-b9m8: the same row for every other storey. Additive,
+		# like all of them; MUTATION_KEYS is a whitelist, so none of these can ever
+		# grow a `removes`.
+		{
+			"id": "lift_stop_s3_unlocked", "trigger": "landing_s3",
+			"adds": ["lift_shaft_s3"], "adds_entries": ["lift_stop_s3"],
+			"note": "Standing on storey 3's landing calls the lift there.",
+		},
+		{
+			"id": "lift_stop_s4_unlocked", "trigger": "landing_s4",
+			"adds": ["lift_shaft_s4"], "adds_entries": ["lift_stop_s4"],
+			"note": "Standing on storey 4's landing calls the lift there.",
+		},
+		{
+			"id": "lift_stop_s5_unlocked", "trigger": "landing_s5",
+			"adds": ["lift_shaft_s5"], "adds_entries": ["lift_stop_s5"],
+			"note": "Standing on storey 5's landing calls the lift there.",
+		},
+		{
+			"id": "lift_stop_s6_unlocked", "trigger": "landing_s6",
+			"adds": ["lift_shaft_s6"], "adds_entries": ["lift_stop_s6"],
+			"note": "Standing on storey 6's landing calls the lift there.",
+		},
+		{
+			"id": "lift_stop_s7_unlocked", "trigger": "landing_s7",
+			"adds": ["lift_shaft_s7"], "adds_entries": ["lift_stop_s7"],
+			"note": "Standing on storey 7's landing calls the lift there.",
+		},
+		{
+			"id": "lift_stop_s9_unlocked", "trigger": "landing_s9",
+			"adds": ["lift_shaft_s9"], "adds_entries": ["lift_stop_s9"],
+			"note": "Standing on storey 9's landing calls the lift there — above "
+				+ "the labyrinth, which is the point of it.",
+		},
+		{
+			"id": "lift_stop_s10_unlocked", "trigger": "landing_s10",
+			"adds": ["lift_shaft_s10"], "adds_entries": ["lift_stop_s10"],
+			"note": "Standing on the muster floor calls the lift there.",
 		},
 	],
 
@@ -1084,6 +1197,42 @@ const TOWER_GRAPH: Dictionary = {
 			"note": "Standing on the labyrinth's landing. Solo for anybody on base "
 				+ "capability — every edge from the front door to it is ungated, "
 				+ "which check 3 already walks for all four spines."},
+		# --- bead godot-test1-b9m8: `maze_landing` for every other storey. Each is
+		# "stand on this landing once", and each is solo on base capability for the
+		# same reason that one is: a landing is reached by ramps and nothing else,
+		# and check 3 walks every ramp from the front door for all four spines.
+		#
+		# CHECK 7 DOES NOT RE-DERIVE IT, and `maze_landing`'s note above is right to
+		# cite check 3 instead (revmux round 1 caught this comment claiming it did).
+		# Each of these landings is now ALSO a lift-stop entry whose `room` is that
+		# same landing, and `_walk` seeds its result with the entry's own room — so
+		# check 7's solo test is satisfied before it crosses a single edge. It is
+		# vacuous for exactly these eight rows, by construction, and check 3 is what
+		# has teeth here.
+		#
+		# The ids shadow the RAMP EDGE ids (`landing_s3` is also the edge from
+		# storey 2's landing to storey 3's) — deliberately, and the two tables are
+		# separate namespaces: both names say "the way onto storey 3", one as a
+		# passage and one as the fact you took it.
+		{"id": "landing_s2", "room": "upper_landing", "requires_quest": "",
+			"note": "Standing on storey 2's landing. Solo for anybody on base "
+				+ "capability: the courtyard ramp is ungated."},
+		{"id": "landing_s3", "room": "s3_landing", "requires_quest": "",
+			"note": "Standing on storey 3's landing. Solo on base capability."},
+		{"id": "landing_s4", "room": "s4_landing", "requires_quest": "",
+			"note": "Standing on storey 4's landing. Solo on base capability."},
+		{"id": "landing_s5", "room": "s5_landing", "requires_quest": "",
+			"note": "Standing on storey 5's landing. Solo on base capability."},
+		{"id": "landing_s6", "room": "s6_landing", "requires_quest": "",
+			"note": "Standing on storey 6's landing. Solo on base capability."},
+		{"id": "landing_s7", "room": "s7_landing", "requires_quest": "",
+			"note": "Standing on storey 7's landing. Solo on base capability."},
+		{"id": "landing_s9", "room": "s9_landing", "requires_quest": "",
+			"note": "Standing on storey 9's landing — reached by route A, the "
+				+ "labyrinth's ungated outer circuit, so solo on base capability."},
+		{"id": "landing_s10", "room": "s10_landing", "requires_quest": "",
+			"note": "Standing on the muster floor. Solo on base capability, by the "
+				+ "same ungated circuit one storey down."},
 	],
 }
 
@@ -1234,11 +1383,17 @@ static func opened_ids() -> Array[String]:
 		if not out.has(sid):
 			out.append(sid)
 	# The checkpoint is the same shape of id as the rescue: authored, in the
-	# set, but not a graph row key — it rides its `unlock` value on the
-	# `lift_stop_upper` entry row while `_on_checkpoint_enter` opens it by
-	# const. Omitted once (review round 1: every receiver dropped it); appended
-	# here so the omission cannot recur, and bound by assertion (see
-	# `tower_gate_sync_selfcheck`: every id the interior can open must decode).
+	# set, but not a graph row key at all — `_on_checkpoint_enter` opens it by
+	# const and nothing in `TOWER_GRAPH` names it.
+	#
+	# SINCE BEAD godot-test1-b9m8 THIS APPEND IS THE ONLY REASON IT DECODES.
+	# It used to be belt beside braces: `lift_stop_upper` carried the checkpoint
+	# as its `unlock`, so the entries loop above picked it up too. That row now
+	# unlocks itself, so `tower_checkpoint` appears NOWHERE else in this table —
+	# delete these two lines and every peer silently drops it, which is exactly
+	# the review-round-1 bug (every receiver dropped it) coming back. Bound by
+	# assertion (`tower_gate_sync_selfcheck`: every id the interior can open
+	# must decode).
 	if not out.has(GATE_CHECKPOINT):
 		out.append(GATE_CHECKPOINT)
 	if not out.has(RESCUE_DONE):

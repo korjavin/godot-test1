@@ -169,7 +169,7 @@ const ROWS: Array = [
 	# The HQ's service lift — a raw keycode like the four above it, and named here
 	# for the same reason B is: a panel that only opens where you are standing is
 	# unfindable if the card does not say where.
-	["L", "At the HQ ground landing: ride the lift, a number picks the floor.", Mode.DESKTOP],
+	["L", "On an HQ lift landing: ride the lift, a number picks the floor.", Mode.DESKTOP],
 	# The multiplayer panel — a raw keycode like the five above it (bead
 	# godot-test1-xtr.21), and named here for the same reason B is.
 	["N", "Open or close the multiplayer panel.", Mode.DESKTOP],

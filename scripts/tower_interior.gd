@@ -1955,7 +1955,7 @@ func _ready() -> void:
 	_build_pads()
 	_build_lure_pads()
 	TowerDossiers.build(self)
-	_build_lift_stop()
+	_build_lift_stops()
 	_build_block()
 	_build_riddles()
 	_build_label()
@@ -2488,12 +2488,24 @@ func _rescan_triggers() -> void:
 	var player := get_tree().get_first_node_in_group("player") as Node3D
 	if player == null:
 		return
-	_refire_if_inside("CheckpointTrigger", "_on_checkpoint_enter", player)
-	_refire_if_inside("LiftStopTrigger", "_on_lift_stop_enter", player)
+	_refire_if_inside("CheckpointTrigger", _on_checkpoint_enter, player)
+	# One per stop, by the same names `_build_lift_stops` gave them — a loop for the
+	# same reason the builder is one (bead godot-test1-b9m8).
+	for row: Dictionary in TowerGraph.lift_stops():
+		var floor_index := landing_floor(String(row.get("room", "")))
+		if floor_index < 0:
+			continue
+		_refire_if_inside("LiftStopTrigger%d" % floor_index,
+			_on_lift_stop_enter.bind(String(row.get("id", ""))), player)
 
 
-func _refire_if_inside(trigger_name: String, handler: StringName, player: Node3D) -> void:
-	"""Run an enter handler when the player stands inside the named trigger's box."""
+func _refire_if_inside(trigger_name: String, handler: Callable, player: Node3D) -> void:
+	"""
+	Run an enter handler when the player stands inside the named trigger's box.
+
+	A `Callable` and not a method name since bead godot-test1-b9m8: a lift stop's
+	handler is bound to the id that stop earns, and a name could not carry it.
+	"""
 	var trigger := find_child(trigger_name, true, false) as Area3D
 	if trigger == null:
 		return
@@ -2508,7 +2520,7 @@ func _refire_if_inside(trigger_name: String, handler: StringName, player: Node3D
 	var local: Vector3 = trigger.global_transform.affine_inverse() * player.global_position
 	var half: Vector3 = box.size * 0.5
 	if absf(local.x) <= half.x and absf(local.y) <= half.y and absf(local.z) <= half.z:
-		call(handler, player)
+		handler.call(player)
 
 
 # ============================================================================
@@ -2547,45 +2559,90 @@ func _build_pads() -> void:
 			Vector3(3.0, 2.0, 3.0), _on_checkpoint_enter, Callable(), identity_floor)
 
 
-func _build_lift_stop() -> void:
+func _build_lift_stops() -> void:
 	"""
-	The labyrinth's lift stop: one `Area3D` over the storey-8 ramp head.
+	One `Area3D` over every storey's ramp head — the lift's stops.
 
 	NO GEOMETRY AND NO SECOND PATTERN. This is `CheckpointTrigger` one storey
 	vocabulary along — walk in, an id joins the monotone opened set, nothing moves —
 	because "a stop the tower remembers you reached" is exactly what both are. The
-	only difference is which set member the id names: the checkpoint is a gate id,
-	this is `TowerGraph.ENTRY_LIFT_MAZE`, the graph entry the lift will offer.
+	id is the entry row's own (`unlock` equals `id` for every stop, which
+	`tower_lift_selfcheck` check 2 pins), so this loop names no floor and no stop.
 
-	THE MENU THAT SPENDS IT is `scripts/tower_lift_menu.gd` (bead godot-test1-3iy.7),
-	which lists the stops whose `unlock` id this trigger — or the checkpoint — put in
-	that set and rides you to `lift_stand()`. Nothing here knows about it: the stop
-	is earned by standing on it, and what the earning is worth is the menu's problem.
+	A LOOP OVER `TowerGraph.lift_stops()` AND NOTHING ELSE (bead godot-test1-b9m8,
+	owner ruling: the lift stops at every storey). A new stop is a `TOWER_GRAPH`
+	entry plus its mutation and no builder code — the extension rule the whole
+	building is written to, which is why this function got shorter when the feature
+	got nine times bigger.
+
+	THE MENU THAT SPENDS THEM is `scripts/tower_lift_menu.gd`, which lists the stops
+	whose `unlock` id one of these triggers put in that set and rides you to
+	`lift_stand()`. Nothing here knows about it: the stop is earned by standing on
+	it, and what the earning is worth is the menu's problem.
 	"""
-	var floor_index := lift_stop_floor()
-	if floor_index < 0:
-		return  # no storey carries the stop's landing — nothing to trigger on.
-	var rect := landing_rect(floor_index)
-	if rect.size == Vector2i.ZERO:
-		return
-	var span := _cell_span(rect)
-	_add_area("LiftStopTrigger",
-		Vector3((span["x0"] + span["x1"]) * 0.5, FLOOR_Y[floor_index] + 1.0,
-				(span["z0"] + span["z1"]) * 0.5),
-		Vector3(span["x1"] - span["x0"], 2.0, span["z1"] - span["z0"]),
-		_on_lift_stop_enter, Callable(), floor_index)
+	for row: Dictionary in TowerGraph.lift_stops():
+		var floor_index := landing_floor(String(row.get("room", "")))
+		if floor_index < 0:
+			continue  # no storey carries this stop's landing — nothing to trigger on.
+		var rect := landing_rect(floor_index)
+		if rect.size == Vector2i.ZERO:
+			continue
+		var span := _cell_span(rect)
+		_add_area("LiftStopTrigger%d" % floor_index,
+			Vector3((span["x0"] + span["x1"]) * 0.5, FLOOR_Y[floor_index] + 1.0,
+					(span["z0"] + span["z1"]) * 0.5),
+			Vector3(span["x1"] - span["x0"], 2.0, span["z1"] - span["z0"]),
+			_on_lift_stop_enter.bind(String(row.get("id", ""))), Callable(), floor_index)
 
 
-static func lift_stop_floor() -> int:
+static func lift_stop_floors() -> Array[int]:
 	"""
-	Which `FLOOR_Y` index carries the maze lift stop, -1 when no storey does.
+	Every `FLOOR_Y` index that carries a lift stop, in `lift_stops()` order.
 
-	DERIVED FROM THE GRAPH AND THE PLANS, never written down: the entry row names
+	@return: a fresh Array of int — a storey whose landing no plan draws is simply
+	        absent, which is `minimap_hud._gather_tower`'s degrade.
+
+	DERIVED FROM THE GRAPH AND THE PLANS, never written down: each entry row names
 	its room, and the storey whose `landing` key is that room is the storey whose
-	`s` cells you arrive on. Re-plan the labyrinth onto a different floor and the
+	`s` cells you arrive on. Re-plan a landing onto a different floor and its
 	trigger follows it, the way `block_floor()` follows the cell block.
+
+	A FRESH ARRAY OFF A MEMO, never the memo itself: the answer is cached (see
+	`is_lift_stop_floor`) but this promises a list the caller may keep and sort.
 	"""
-	return landing_floor(String(TowerGraph.entry(TowerGraph.ENTRY_LIFT_MAZE).get("room", "")))
+	var out: Array[int] = []
+	for floor_index: Variant in _stop_floor_memo():
+		out.append(int(floor_index))
+	return out
+
+
+static func is_lift_stop_floor(floor_index: int) -> bool:
+	"""
+	Does storey `floor_index` carry a lift stop?
+
+	THE PER-FRAME FORM, and the reason the memo exists. `tower_lift_menu` asks this
+	every frame the player is inside the HQ; deriving it walks the mutation table,
+	the entry table and `TowerPlans.STOREYS` nine times over — ~900 dictionary reads
+	and eleven allocations — for a pure function of two authored tables. Same memo
+	and same reasoning as `lift_stand()`: authored text, NOT `run_seed`, so nothing
+	clears it and `_drop_seeded_memos` must never learn about it.
+	"""
+	return _stop_floor_memo().has(floor_index)
+
+
+## `lift_stop_floors()`'s cache: `{floor_index: true}` in `lift_stops()` order.
+## Authored, never seeded — see `is_lift_stop_floor()`.
+static var _lift_stop_floor_memo: Dictionary = {}
+
+
+static func _stop_floor_memo() -> Dictionary:
+	if not _lift_stop_floor_memo.is_empty():
+		return _lift_stop_floor_memo
+	for row: Dictionary in TowerGraph.lift_stops():
+		var floor_index := landing_floor(String(row.get("room", "")))
+		if floor_index >= 0:
+			_lift_stop_floor_memo[floor_index] = true
+	return _lift_stop_floor_memo
 
 
 static func landing_floor(room_id: String) -> int:
@@ -2593,7 +2650,7 @@ static func landing_floor(room_id: String) -> int:
 	Which `FLOOR_Y` index has `room_id` for its `landing`, -1 when none does.
 
 	The seam between a graph ENTRY (which names a room) and a storey (which is a
-	number), and the only place that translation is written. `lift_stop_floor()`
+	number), and the only place that translation is written. `lift_stop_floors()`
 	above and the lift menu both ask it, so re-planning a landing onto another
 	floor moves the trigger and the ride together.
 	"""
@@ -2627,7 +2684,26 @@ static func lift_stand(floor_index: int) -> Vector3:
 	RULE holds — a storey whose landing wraps a corner gets a working stop from its
 	plan alone, instead of a `tower_lift_selfcheck` failure a designer has to
 	hand-place around.
+
+	MEMOISED, because since bead `godot-test1-b9m8` the lift menu's pad hint asks
+	this every frame the game runs, and the answer is a 40 x 40 character scan. It
+	is a pure function of `TowerPlans.STOREYS`, which is authored text — NOT of
+	`run_seed` — so it is deliberately not one of `_drop_seeded_memos`' caches and
+	a re-seed must never clear it.
 	"""
+	if _lift_stand_memo.has(floor_index):
+		return _lift_stand_memo[floor_index]
+	var stand := _lift_stand_uncached(floor_index)
+	_lift_stand_memo[floor_index] = stand
+	return stand
+
+
+## `lift_stand()`'s cache, keyed by floor index. See its docstring: authored, never
+## seeded, so nothing clears it.
+static var _lift_stand_memo: Dictionary = {}
+
+
+static func _lift_stand_uncached(floor_index: int) -> Vector3:
 	var plan := TowerPlans.storey(floor_index)
 	if plan.is_empty():
 		return entry_stand()
@@ -3657,20 +3733,23 @@ func _on_checkpoint_enter(body: Node3D) -> void:
 	_sfx("play_level_up")
 
 
-func _on_lift_stop_enter(body: Node3D) -> void:
+func _on_lift_stop_enter(body: Node3D, stop_id: String) -> void:
 	"""
-	The labyrinth's lift stop is earned by standing on it. Idempotent, local player.
+	A storey's lift stop is earned by standing on it. Idempotent, local player.
+
+	@param stop_id: the entry id this landing earns, bound at build time from the
+	                graph row — so this handler names no storey and no stop.
 
 	A CUE AND NO TEXT. Every label in this building belongs to a room that has one
-	(the receptacle's, the corridor's, the gallery's) and the maze has none — a line
-	written to the ground floor's label 32 m below is a line nobody reads, and a
-	Label3D on a landing is a draw call plus a translation row for a message the
-	lift menu states properly anyway — it lists this floor from the moment this
-	line runs.
+	(the receptacle's, the corridor's, the gallery's) and a landing has none — a
+	line written to the ground floor's label 32 m below is a line nobody reads, and
+	a Label3D on every landing is nine draw calls plus nine translation rows for a
+	message the lift menu states properly anyway — it lists this floor from the
+	moment this line runs.
 	"""
-	if not body.is_in_group("player") or _is_earned(TowerGraph.ENTRY_LIFT_MAZE):
+	if stop_id == "" or not body.is_in_group("player") or _is_earned(stop_id):
 		return
-	_open(TowerGraph.ENTRY_LIFT_MAZE)
+	_open(stop_id)
 	_sfx("play_level_up")
 
 

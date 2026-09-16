@@ -1077,15 +1077,17 @@ func _check_node_shape() -> void:
 	# from the plans themselves rather than written down, so a riddle authored later
 	# is measured the day its cells land and a pad that lost its trigger fails here.
 	#
-	# Phase 16 adds exactly ONE more: the labyrinth's `LiftStopTrigger`. It is
-	# counted off `lift_stop_floor()` rather than written down, so a graph with no
-	# such entry — or a plan that stopped carrying its landing — is a build with no
-	# trigger and this count follows it down instead of failing on a stale number.
+	# Phase 16 added the labyrinth's `LiftStopTrigger`, and bead godot-test1-b9m8
+	# made it ONE PER STOREY — the lift stops everywhere (owner ruling). Counted off
+	# `lift_stop_floors()` rather than written down, so a graph with no such entry —
+	# or a plan that stopped carrying its landing — is a build with no trigger and
+	# this count follows it down instead of failing on a stale number.
 	#
 	# ...and one per EVIDENCE DOSSIER (bead godot-test1-3iy.23), counted off the
 	# authored table for the same reason: a dossier added to `TowerDossiers.DOSSIERS` that never
 	# grew a trigger is a folder you can walk through, and this is where that shows.
-	var lift_stops := 1 if TowerInterior.lift_stop_floor() >= 0 else 0
+	var stop_floors: Array[int] = TowerInterior.lift_stop_floors()
+	var lift_stops := stop_floors.size()
 	var want_areas := 3 + TowerInterior.SPINE_DOORS.size() + TowerGraph.HEROES.size() \
 			+ 2 + lift_stops + TowerDossiers.DOSSIERS.size()
 	var lock_pads := 0
@@ -1098,21 +1100,22 @@ func _check_node_shape() -> void:
 		_fail("the interior has %d Area3D, expected %d (3 pads + %d spine pads + %d cells + 1 press + 1 purge + %d riddle lock pads + %d lure pads + %d lift stop + %d dossiers)" % [
 			areas, want_areas, TowerInterior.SPINE_DOORS.size(), TowerGraph.HEROES.size(),
 			lock_pads, lure_pads, lift_stops, TowerDossiers.DOSSIERS.size()])
-	# ...and the stop stands where the graph says it does. A trigger built on the
-	# wrong storey would still be one `Area3D` and pass the count above.
-	if lift_stops == 1:
-		var stop := interior.find_child("LiftStopTrigger", true, false) as Area3D
+	# ...and EVERY stop stands where the graph says it does. A trigger built on the
+	# wrong storey would still be an `Area3D` and pass the count above, and one built
+	# twice on the same storey would pass a count that only summed.
+	for want_floor: int in stop_floors:
+		var stop := interior.find_child("LiftStopTrigger%d" % want_floor, true, false) as Area3D
 		if stop == null:
-			_fail("the interior builds no LiftStopTrigger, but a storey carries the stop's landing")
-		else:
-			var want_floor := TowerInterior.lift_stop_floor()
-			if String(stop.get_parent().name) != "Floor%d" % want_floor:
-				_fail("LiftStopTrigger hangs off %s, not the Floor%d container it must hide with" % [
-					stop.get_parent().name, want_floor])
-			var surface: float = TowerInterior.FLOOR_Y[want_floor]
-			if absf(stop.position.y - (surface + 1.0)) > EPS:
-				_fail("LiftStopTrigger is at y = %.2f, not one metre over storey %d's %.2f m surface" % [
-					stop.position.y, want_floor, surface])
+			_fail("the interior builds no LiftStopTrigger%d, but storey %d carries a stop's landing" % [
+				want_floor, want_floor])
+			continue
+		if String(stop.get_parent().name) != "Floor%d" % want_floor:
+			_fail("LiftStopTrigger%d hangs off %s, not the Floor%d container it must hide with" % [
+				want_floor, stop.get_parent().name, want_floor])
+		var surface: float = TowerInterior.FLOOR_Y[want_floor]
+		if absf(stop.position.y - (surface + 1.0)) > EPS:
+			_fail("LiftStopTrigger%d is at y = %.2f, not one metre over storey %d's %.2f m surface" % [
+				want_floor, stop.position.y, want_floor, surface])
 
 	var body := interior.get_node_or_null("InteriorCollision") as StaticBody3D
 	if body == null:
@@ -1654,21 +1657,57 @@ func _check_gate_lifecycle() -> void:
 	# entry the graph names has to end up in the opened set, and a body that is not
 	# the local player must not put it there (the shell filters the doorway; this
 	# volume filters itself, and the two are different code).
-	var stop_area := interior.find_child("LiftStopTrigger", true, false) as Area3D
-	if TowerInterior.lift_stop_floor() >= 0:
+	var maze_floor: int = TowerInterior.landing_floor(
+			String(TowerGraph.entry(TowerGraph.ENTRY_LIFT_MAZE).get("room", "")))
+	var stop_area := interior.find_child("LiftStopTrigger%d" % maze_floor, true, false) as Area3D
+	if maze_floor >= 0:
 		if stop_area == null:
 			_fail("a storey carries the lift stop's landing but no LiftStopTrigger to stand on")
 		else:
 			var passer := Node3D.new()
-			interior._on_lift_stop_enter(passer)
+			interior._on_lift_stop_enter(passer, TowerGraph.ENTRY_LIFT_MAZE)
 			passer.free()
 			if shell.is_opened(TowerGraph.ENTRY_LIFT_MAZE):
 				_fail("the lift stop armed for a body that is not in group \"player\"")
+			# WHICH OTHER STOPS WERE ALREADY LIT, measured rather than assumed: this
+			# hero has been teleported all over the building by the checks above.
+			var lit_before: Dictionary = {}
+			for other: Dictionary in TowerGraph.lift_stops():
+				lit_before[String(other.get("id", ""))] = shell.is_opened(String(other.get("id", "")))
 			hero.global_position = stop_area.global_position
 			await TowerProbe.settle_physics(self)
 			if not shell.is_opened(TowerGraph.ENTRY_LIFT_MAZE):
 				_fail(("standing on the lift stop did not record '%s' — the trigger is wired "
 					+ "to nothing the graph names") % TowerGraph.ENTRY_LIFT_MAZE)
+			# ...and it is wired to THIS storey's id and not to some other stop's.
+			# Every trigger comes off the same loop, so a bind that took the wrong row
+			# would light a neighbour's id and still pass the line above.
+			for other_id: String in lit_before:
+				if other_id == TowerGraph.ENTRY_LIFT_MAZE or bool(lit_before[other_id]):
+					continue
+				if shell.is_opened(other_id):
+					_fail(("standing on storey %d's lift stop also recorded '%s' — the "
+						+ "triggers are bound to the wrong rows") % [maze_floor, other_id])
+			# A SECOND STOREY, and it is what makes the loop's bind load-bearing:
+			# every trigger sharing ONE id would satisfy everything above, because
+			# everything above only ever stood on that one id's landing.
+			for other: Dictionary in TowerGraph.lift_stops():
+				var second_id := String(other.get("id", ""))
+				var second_floor: int = TowerInterior.landing_floor(String(other.get("room", "")))
+				if second_id == TowerGraph.ENTRY_LIFT_MAZE or second_floor < 0 \
+						or bool(lit_before.get(second_id, false)):
+					continue
+				var second := interior.find_child(
+						"LiftStopTrigger%d" % second_floor, true, false) as Area3D
+				if second == null:
+					break  # already reported by the placement pins above.
+				hero.global_position = second.global_position
+				await TowerProbe.settle_physics(self)
+				if not shell.is_opened(second_id):
+					_fail(("standing on storey %d's lift stop did not record '%s' — every "
+						+ "trigger comes off one loop, and this one took the wrong row")
+						% [second_floor, second_id])
+				break
 
 	# ...and a swept hazard still bills the player. Bead `godot-test1-e7q` removed
 	# the rotor bars, which is what used to drive this; the crawl press is the other

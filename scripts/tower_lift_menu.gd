@@ -1,26 +1,25 @@
 extends Control
 ## ============================================================================
-## THE HQ'S SERVICE LIFT — L at the ground landing, a stop you have earned
+## THE HQ'S SERVICE LIFT — L on any landing, to any landing you have walked
 ## ============================================================================
 ##
 ## Bead `godot-test1-3iy.7`, the last item of tower phase 7 (the wing builder and
-## the staged growth it was filed with were superseded by phase 14's ASCII plans).
-## The tower is ten storeys and the labyrinth starts eight of them up; walking back
-## up is the tax a SECOND visit pays, and this is the receipt for the first one.
+## the staged growth it was filed with were superseded by phase 14's ASCII plans),
+## opened out by bead `godot-test1-b9m8` on an owner ruling: the lift stops at
+## EVERY storey, called from any of them, up and down.
 ##
 ## ============================================================================
 ## A STOP IS AN ENTRY, AND UNLOCKED MEANS "IN THE OPENED SET"
 ## ============================================================================
 ##
 ## Nothing here is authored. `TowerGraph.lift_stops()` is every entry a MUTATION
-## grants — today `lift_stop_upper` (the checkpoint powers the lift) and
-## `lift_stop_maze` (walking to the labyrinth's foot calls it there) — and each
-## row's `unlock` names the id that earns it in the tower's monotone opened set.
-## So this panel holds no table, no floor number and no stop name: it asks the
-## graph which stops exist, asks the SHELL which ids are open, and asks
-## `TowerInterior.landing_floor()` which storey each one lands on. A third lift
-## stop is a `TOWER_GRAPH` row and nothing else — the extension rule the whole
-## building is written to.
+## grants — one per storey above the ground since `b9m8` — and each row's `unlock`
+## names the id that earns it in the tower's monotone opened set. So this panel
+## holds no table, no floor number and no stop name: it asks the graph which stops
+## exist, asks the SHELL which ids are open, and asks
+## `TowerInterior.landing_floor()` which storey each one lands on. A new lift stop
+## is a `TOWER_GRAPH` row and nothing else — the extension rule the whole building
+## is written to.
 ##
 ## THE RIDE IS ALWAYS LEGAL, and that is the audit's doing rather than this file's:
 ## `tower_selfcheck` walks all fifteen hero subsets FROM every entry a mutation can
@@ -28,25 +27,31 @@ extends Control
 ## campaign is completable from. Landing you there needs no check of its own.
 ##
 ## ============================================================================
-## WHERE IT OPENS
+## WHERE IT OPENS, AND WHERE IT WILL TAKE YOU
 ## ============================================================================
 ##
-## At the GROUND landing (`TowerInterior.lift_stand(0)`), within `CALL_RADIUS` —
-## the foot of the ramp you climb anyway, so the call point is a place you already
-## walk through rather than a thing to find. The refusals are `city_map_panel`'s and
-## `landmark_toast`'s, for their reasons: IN A ROOM (the world is not yours to
-## freeze, and a body that vanishes eight storeys up is a teleport three teammates
-## did not agree to) and OVER GAME OVER (`GameOverUI` is pausable — a pause there
-## kills Play Again). A caught hero is refused too: the freeze after a bite is a
-## bill being paid, not a moment to leave the room in.
+## OPENS on any landing the building draws — the ground's (`lift_stand(0)`) or any
+## storey's — within `CALL_RADIUS` of `TowerInterior.lift_stand()` for that floor.
+## The gate on opening is REACHABILITY, not earning: if you are standing there you
+## walked there, and a call button you may not press is a bug report. The "L — lift"
+## hint below says so on the spot, which is how a player finds the pad at all.
 ##
-## ponytail: ONE WAY, up from the ground floor. The graph's shaft edges are
-## undirected and the lift could call from any unlocked landing, but going DOWN is
-## a ramp with no gates on it and this is the trip that costs eight storeys. Make
-## `_call_floor()` answer more than 0 if playtests ask for the round trip.
+## OFFERS the ground plus every landing ALREADY STOOD ON, minus the one you are on
+## (owner ruling 3): the lift never skips you past content you have not walked
+## once, and it always takes you home. Standing on a landing is what earns it —
+## `TowerInterior`'s `LiftStopTrigger<floor>` writes that storey's entry id into the
+## monotone opened set, which persists and rides the `gate` verb to the room.
+##
+## The refusals are `city_map_panel`'s and `landmark_toast`'s, for their reasons:
+## IN A ROOM (the world is not yours to freeze, and a body that vanishes eight
+## storeys up is a teleport three teammates did not agree to) and OVER GAME OVER
+## (`GameOverUI` is pausable — a pause there kills Play Again). A caught hero is
+## refused too: the freeze after a bite is a bill being paid, not a moment to leave
+## the room in.
+##
 ## ponytail: no car, no doors and no shaft geometry — the landing IS the lobby,
-## exactly as `_build_lift_stop` draws nothing at the other end. Art, when the
-## building gets an art pass; the box budgets do not move for this bead.
+## exactly as `_build_lift_stops` draws nothing at the other end. The call cell's
+## painted plate is bead `godot-test1-i1xj`, deliberately after this one.
 ##
 ## ============================================================================
 ## LOCALIZATION
@@ -56,7 +61,10 @@ extends Control
 ## lines, `tr()` on the FORMAT string: a stop row's words are "Floor %d", the
 ## minimap's own key, so the storey number a player reads is written in ONE
 ## language-table row for both surfaces. The close hint is `city_map_panel`'s
-## string, deliberately the same words for the same gesture.
+## string, deliberately the same words for the same gesture. The pad hint is
+## RULE 2 as well ("%s — lift", the key composed in) and it carries no width
+## budget: it is transparent lettering with no frame, so German has nothing to
+## overflow.
 
 ## The player's group and the two tower groups, discovered rather than referenced
 ## (CLAUDE.md: no `$`-paths, no exported references).
@@ -77,16 +85,34 @@ const TOGGLE_KEY: Key = KEY_L
 ## The stop keys, in order: the first row is `1`. Raw keycodes again, and they are
 ## live ONLY while the panel is open, which is what lets them share the digits the
 ## hero picker and the landmark quiz already use.
-const CHOICE_KEYCODES: Array[Key] = [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6]
+## Nine of them since bead `godot-test1-b9m8`, and nine is the whole offer by
+## construction: ten storeys minus the one you are standing on. Check 1 asserts
+## there are at least as many keys as `TowerGraph.lift_stops()` has rows.
+const CHOICE_KEYCODES: Array[Key] = [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6,
+		KEY_7, KEY_8, KEY_9]
 
 # ============================================================================
 # WHERE YOU HAVE TO BE STANDING
 # ============================================================================
 
-## How far from `TowerInterior.lift_stand(0)` the call button reaches, in metres.
+## How far from this storey's `TowerInterior.lift_stand()` the call button reaches,
+## in metres.
+##
 ## Under one storey height (`TowerShell.STOREY_HEIGHT`) BY ASSERTION in the
-## self-check, not by luck: a sphere that reached the floor above would call the
-## lift from the landing it is meant to be a shortcut to.
+## self-check. That assertion no longer prevents the thing it was written for
+## (revmux round 1): `_call_floor()` resolves the storey from `current_floor()`
+## FIRST and then measures against THAT storey's stand point, so a sphere reaching
+## the floor above cannot call the lift from the landing above any more. It is kept
+## as the sanity bound on the number — a call radius taller than a storey is a
+## radius somebody has stopped thinking about.
+##
+## ponytail: THE SPHERE IS WIDER THAN THE PAD. An upper landing is two `s` cells
+## (~1.9 x 3.9 m) and this reaches ~2.5 m past it on the long sides, so you can call
+## the lift from beside the pad without `LiftStopTrigger<n>` firing — and ride away
+## without that storey joining the offer. Self-correcting (one step onto the pad
+## earns it) and revmux judged it immaterial; the pad is about to become visible
+## (bead `godot-test1-i1xj`), which is the moment to narrow this to the landing rect
+## if it still reads wrong.
 const CALL_RADIUS: float = 3.5
 
 # ============================================================================
@@ -95,6 +121,14 @@ const CALL_RADIUS: float = 3.5
 
 const CARD_PADDING: int = 18
 const TITLE_FONT_SIZE: int = 22
+## THE PAD HINT's geometry — `HUD/CaptureHint`'s box (main.tscn: 400 wide, 32 high,
+## 48 px off the bottom) lifted ONE ROW so the two can be on screen together. Its
+## 22 is `capture_hint.gd`'s own size, and the row is transparent lettering with no
+## frame, so German has nothing to overflow and `locale_selfcheck` needs no budget.
+const HINT_PAD_FONT_SIZE: int = 22
+const HINT_PAD_HALF_WIDTH: float = 200.0
+const HINT_PAD_HEIGHT: float = 32.0
+const HINT_PAD_BOTTOM: float = 80.0
 const LINE_FONT_SIZE: int = 18
 const HINT_FONT_SIZE: int = 14
 ## The card's chrome, off `HudTheme` (bead `godot-test1-y1o.33`): a BONE heading
@@ -123,6 +157,10 @@ const STOP_LINE: String = "[%d]  %s"
 const FLOOR_LINE: String = "Floor %d"
 const CLOSE_HINT: String = "Press %s or Esc to close"
 const EMPTY_LINE: String = "No floors unlocked yet."
+## THE PAD HINT (owner ruling 2, bead `godot-test1-b9m8`): what tells a player
+## standing on a landing that the pad under them does anything at all. RULE 2 —
+## `tr()` on the format, the key is written here.
+const HINT_LINE: String = "%s — lift"
 
 var _open: bool = false
 var _paused_by_us: bool = false
@@ -133,6 +171,8 @@ var _offered: Array[int] = []
 var _card: PanelContainer = null
 var _rows: VBoxContainer = null
 var _hint_label: Label = null
+## The pad hint, drawn on the world rather than on the card — see `_build_hint()`.
+var _hint: Label = null
 
 
 func _ready() -> void:
@@ -142,6 +182,32 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_to_group("tower_lift_menu")
 	_build_ui()
+	_apply_hint_text()
+
+
+func _notification(what: int) -> void:
+	"""
+	RULE 2's one cost, paid the way every other composed-string panel here pays it.
+
+	`_hint.text` is COMPOSED ("L — lift"), so it is not its own translation key and
+	Godot's auto-translate cannot re-resolve it when the locale changes — it would
+	stay in whatever language was live at `_ready()`. `skill_tree_ui`, `mp_ui` and
+	`landmark_toast` all carry this hook for the same reason, and here it is the
+	whole point of the label: the DE pill on the start card is pressed long after
+	this node is ready, and a German player would otherwise be told "L — lift" in
+	English until they pressed the key the label exists to tell them about.
+
+	The CARD needs no hook: every string on it is re-composed by `_refresh()`, which
+	runs on every open, and the card is only ever read while open.
+	"""
+	if what == NOTIFICATION_TRANSLATION_CHANGED:
+		_apply_hint_text()
+
+
+func _apply_hint_text() -> void:
+	"""Compose the pad hint. RULE 2: `tr()` on the FORMAT string, never the result."""
+	if _hint != null:
+		_hint.text = tr(HINT_LINE) % OS.get_keycode_string(TOGGLE_KEY)
 
 
 func _process(_delta: float) -> void:
@@ -149,8 +215,15 @@ func _process(_delta: float) -> void:
 	# closed. That covers joining a room with the menu up, dying with it up, and
 	# walking away from the call point — and it is why `_apply_pause` never has to
 	# reason about a state that changed underneath it (`mp_ui`'s concern).
-	if _open and not can_open():
+	#
+	# ...and the pad hint is the SAME predicate, which is the whole of its policy:
+	# every refusal `can_open()` already answers — in a room, over game over,
+	# mid-bite, off the pad — hides the hint for free, and it cannot ever promise a
+	# key that would do nothing.
+	var may := can_open()
+	if _open and not may:
 		set_open(false)
+	_hint.visible = may and not _open
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -196,28 +269,26 @@ func is_open() -> bool:
 
 func can_open() -> bool:
 	"""
-	Is the local player standing at the ground-floor lift, in a session that may
-	stop the world?
+	Is the local player standing on a lift landing, in a session that may stop the
+	world?
 
-	Every refusal the header lists, in one predicate, so `_process`'s re-assert and
-	the keypress ask the same question. Null-safe throughout: a scene with no tower
-	and no player answers false rather than erroring (the standalone degrade every
-	group lookup in this project owes).
+	Every refusal the header lists, in one predicate, so `_process`'s re-assert, the
+	pad hint and the keypress all ask the same question. Null-safe throughout: a
+	scene with no tower and no player answers false rather than erroring (the
+	standalone degrade every group lookup in this project owes).
 	"""
-	var tree := get_tree()
-	if tree == null:
-		return false
 	if _in_room() or _game_over() or _caught():
 		return false
-	var interior: Node = tree.get_first_node_in_group(INTERIOR_GROUP)
-	var player: Node = tree.get_first_node_in_group(PLAYER_GROUP)
-	if interior == null or player == null:
+	# A FOREIGN PAUSE — `skill_tree_ui`'s guard, and the pad hint is why it moved
+	# into the shared predicate (revmux round 1). Every full-screen overlay in this
+	# HUD draws UNDER this node (`TowerLiftMenu` is the later sibling), so without
+	# it an always-on "L — lift" floats over the help card's 0.82 dim, over the city
+	# map and over the skill tree — and L would open this card on top of one of them
+	# with two `PauseHub` holders.
+	var tree := get_tree()
+	if tree != null and tree.paused and not _paused_by_us:
 		return false
-	if not (interior is Node3D) or not (player is Node3D):
-		return false
-	var local: Vector3 = (player as Node3D).global_position \
-			- (interior as Node3D).global_position
-	return local.distance_to(TowerInterior.lift_stand(_call_floor())) <= CALL_RADIUS
+	return _call_floor() >= 0
 
 
 func set_open(open: bool) -> void:
@@ -238,11 +309,37 @@ func stop_floors() -> Array[int]:
 	@return: a fresh Array of `FLOOR_Y` indices — the offer, and the only thing
 	        this panel decides.
 
+	`_visited_floors()` MINUS THE ONE YOU ARE ON, and that subtraction is the whole
+	rule: the ground is always offered (you can always go home) and a landing you
+	have never stood on never is (owner ruling 3 — the lift may not skip you past
+	content you have not walked once).
+	"""
+	var here := _call_floor()
+	var out: Array[int] = []
+	for floor_index: int in _visited_floors():
+		if floor_index != here:
+			out.append(floor_index)
+	out.sort()
+	return out
+
+
+func _visited_floors() -> Array[int]:
+	"""
+	Every storey this world may ride to at all: the ground, plus each landing
+	somebody has stood on.
+
+	@return: a fresh Array of `FLOOR_Y` indices, unsorted and not yet filtered by
+	        where you are standing.
+
 	Three rows of arithmetic and no table: a stop is an entry a mutation grants
-	(`TowerGraph.lift_stops()`), it is unlocked when its `unlock` id is in the
-	shell's opened set, and it lands on the storey whose plan claims its room as
-	the landing. A stop whose room no storey draws — a wave-C reservation — simply
-	resolves to -1 and is skipped, `minimap_hud._gather_tower`'s degrade.
+	(`TowerGraph.lift_stops()`), it is VISITED when its `unlock` id is in the
+	shell's monotone opened set, and it lands on the storey whose plan claims its
+	room as the landing. A stop whose room no storey draws — a wave-C reservation —
+	simply resolves to -1 and is skipped, `minimap_hud._gather_tower`'s degrade.
+
+	The GROUND is not a stop row and never was: nothing has to grant the front
+	door, so nothing can have failed to. It is in the list unconditionally, which
+	is what makes the ride down always available.
 	"""
 	var out: Array[int] = []
 	var tree := get_tree()
@@ -254,16 +351,15 @@ func stop_floors() -> Array[int]:
 	var shell: Node = interior.get_parent()
 	if shell == null or not shell.has_method("is_opened"):
 		return out
-	var here := _call_floor()
+	out.append(0)
 	for row: Dictionary in TowerGraph.lift_stops():
 		var unlock := String(row.get("unlock", ""))
 		if unlock == "" or not bool(shell.call("is_opened", unlock)):
 			continue
 		var floor_index := TowerInterior.landing_floor(String(row.get("room", "")))
-		if floor_index < 0 or floor_index == here or out.has(floor_index):
+		if floor_index < 0 or out.has(floor_index):
 			continue
 		out.append(floor_index)
-	out.sort()
 	return out
 
 
@@ -300,8 +396,41 @@ func ride_to(floor_index: int) -> bool:
 
 
 func _call_floor() -> int:
-	"""The storey the lift is called FROM. Ground, and see the header's ponytail."""
-	return 0
+	"""
+	The storey the lift is being called FROM, or -1 when the player is not on a
+	landing this lift serves.
+
+	@return: a `FLOOR_Y` index, or -1 — which is also the whole of `can_open()`'s
+	        placement test and the pad hint's.
+
+	GATED ON REACHABILITY, NOT ON EARNING. Every landing you can stand on is a
+	landing you walked to, so a call button that refused there would be refusing
+	the player a trip they have already paid for. Earning decides where the lift
+	will GO (`_visited_floors`), never whether it answers.
+
+	ONE `lift_stand()` CALL, deliberately: `current_floor()` already says which
+	storey the body is on, so the 40 x 40 plan scan runs once instead of ten times.
+	`TowerInterior` memoises that scan AND the stop-floor set besides, because this
+	whole function runs every frame the player is inside the HQ — the pad hint asks
+	it (revmux round 1: both derivations walked the plans on every frame).
+	"""
+	var tree := get_tree()
+	if tree == null:
+		return -1
+	var interior: Node = tree.get_first_node_in_group(INTERIOR_GROUP)
+	var player: Node = tree.get_first_node_in_group(PLAYER_GROUP)
+	if interior == null or player == null:
+		return -1
+	if not (interior is Node3D) or not (player is Node3D):
+		return -1
+	var local: Vector3 = (player as Node3D).global_position \
+			- (interior as Node3D).global_position
+	var here := TowerInterior.current_floor(local.y)
+	if here != 0 and not TowerInterior.is_lift_stop_floor(here):
+		return -1
+	if local.distance_to(TowerInterior.lift_stand(here)) > CALL_RADIUS:
+		return -1
+	return here
 
 
 func _apply_pause(open: bool) -> void:
@@ -374,6 +503,7 @@ func _refresh() -> void:
 		_rows.add_child(_stop_strip(STOP_LINE % [i + 1, floor_name]))
 	if _hint_label != null:
 		_hint_label.text = tr(CLOSE_HINT) % OS.get_keycode_string(TOGGLE_KEY)
+	_apply_hint_text()
 
 
 func _line(text: String, size: int, colour: Color) -> Label:
@@ -501,3 +631,48 @@ func _build_ui() -> void:
 	column.add_child(_hint_label)
 
 	column.add_child(_stamp())
+
+	_hint = _build_hint()
+	add_child(_hint)
+
+
+func _build_hint() -> Label:
+	"""
+	THE PAD HINT: "L — lift", bottom-centre, while you stand on a landing.
+
+	A CHILD OF THIS PANEL and not a `main.tscn` node, because its whole visibility
+	rule is `can_open()` — the predicate that lives here. A scene node would need a
+	script of its own whose only job was to ask this one a question.
+
+	LETTERING ON THE WORLD, so it takes `capture_hint.gd`'s skin exactly (which is
+	`world_caption`'s): the heading face, BONE on an INK outline at double the world
+	stroke, and the hard panel-offset shadow — every value off `HudTheme`, none of
+	them typed here (`hero_hud_selfcheck` greps for exactly that).
+
+	ONE ROW ABOVE `HUD/CaptureHint`'s slot (main.tscn, offsets -80..-48), which is
+	the other thing that can be on screen at the same time: a browser that has not
+	captured the mouse yet still says "Click to look around" underneath this.
+	"""
+	var hint := Label.new()
+	hint.name = "PadHint"
+	hint.visible = false
+	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hint.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	hint.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	hint.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	hint.offset_left = -HINT_PAD_HALF_WIDTH
+	hint.offset_right = HINT_PAD_HALF_WIDTH
+	hint.offset_top = -HINT_PAD_BOTTOM - HINT_PAD_HEIGHT
+	hint.offset_bottom = -HINT_PAD_BOTTOM
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	hint.add_theme_font_override("font", HudTheme.heading_font())
+	hint.add_theme_font_size_override("font_size", HINT_PAD_FONT_SIZE)
+	hint.add_theme_color_override("font_color", HudTheme.BONE)
+	hint.add_theme_color_override("font_outline_color", HudTheme.INK)
+	hint.add_theme_constant_override("outline_size", HudTheme.OUTLINE_PX * 2)
+	hint.add_theme_color_override("font_shadow_color",
+		Color(HudTheme.INK, HudTheme.SHADOW_ALPHA))
+	hint.add_theme_constant_override("shadow_offset_x", HudTheme.SHADOW_PANEL_OFFSET.x)
+	hint.add_theme_constant_override("shadow_offset_y", HudTheme.SHADOW_PANEL_OFFSET.y)
+	return hint

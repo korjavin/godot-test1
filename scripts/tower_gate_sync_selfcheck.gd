@@ -1035,7 +1035,7 @@ func _check_earn_while_room_open() -> String:
 		await TowerProbe.clear(self, null, shell)
 		return "working an open checkpoint persisted nothing — the earn site gates on room-open"
 	# ...and the maze stop the same way.
-	interior._on_lift_stop_enter(body)
+	interior._on_lift_stop_enter(body, TowerGraph.ENTRY_LIFT_MAZE)
 	if not BestRunStore.tower_opened_ids().has(TowerGraph.ENTRY_LIFT_MAZE):
 		body.queue_free()
 		mp.queue_free()

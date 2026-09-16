@@ -15,25 +15,36 @@ extends SceneTree
 ##     game. The stop digits are deliberately NOT in that scan: they are shared
 ##     with the hero picker and the landmark quiz on purpose, and check 3 proves
 ##     the sharing is safe by driving the shipped handler under the menu's pause.
-##  2. EVERY STOP IS AN AUDITED ENTRY. `TowerGraph.lift_stops()` is derived from
-##     the mutation table, so this asserts the derivation lands on rows that are
-##     really entries, really `built`, really carry an `unlock` id, and really
-##     resolve to a storey whose landing the arrival point stands on. That is the
-##     bead's acceptance ("every stop is an audited entry in tower_graph entries")
-##     and it is what binds the menu to `tower_selfcheck`'s fifteen-subset walk,
-##     which already starts from each of these entries.
-##  3. THE MENU ON A REAL SHELL. A tower with an empty opened set offers NOTHING;
-##     the stop the trigger writes appears the moment it is opened and not before;
-##     the checkpoint's id lights the OTHER stop, which is the whole of `unlock`
-##     being a row field rather than the entry's own name; choosing one puts a real
-##     `player.tscn` on that storey's `s` landing; and a floor that was never
-##     offered is refused. Each with its mutation control.
-##  4. THE REFUSALS. In a room, over game over, mid-bite and away from the call
-##     point — every one of them asserted with the refusal REMOVED as the control,
-##     because a `can_open()` that answered false for the wrong reason would pass
-##     all four otherwise. Plus the pause: taken solo through `PauseHub`, handed
-##     back on close, and handed back by `_process` when a refusal becomes true
-##     under an open panel.
+##  2. EVERY STOP IS AN AUDITED ENTRY, AND THERE IS EXACTLY ONE PER STOREY.
+##     `TowerGraph.lift_stops()` is derived from the mutation table, so this asserts
+##     the derivation lands on rows that are really entries, really `built`, really
+##     carry an `unlock` id equal to their own id (which is what makes the trigger's
+##     bind and the menu's read the same fact), and really resolve to a storey whose
+##     landing the arrival point stands on — one row per storey above the ground,
+##     none twice, none on the ground. That is the bead's acceptance and it is what
+##     binds the menu to `tower_selfcheck`'s fifteen-subset walk, which already
+##     starts from each of these entries.
+##  3. THE MENU ON A REAL SHELL, from the ground. A tower with an empty opened set
+##     offers nothing; the stop the trigger writes appears the moment it is opened
+##     and not before; choosing one puts a real `player.tscn` on that storey's `s`
+##     landing; and a floor that was never offered is refused.
+##  3b. AND FROM EVERY OTHER STOREY (its own world, its own empty profile). L
+##     answers on an upper landing with NOTHING earned — reachability, not earning —
+##     and offers only the ground; two visited landings are offered and the storey
+##     you stand on is not; a landing never stood on is not, with the mutation that
+##     opens it as the control; and the ride DOWN lands on the ground landing, which
+##     is the trip the old menu could not make at all.
+##  4. THE REFUSALS. In a room, over game over, mid-bite, away from the call point
+##     and out on a storey's plain floor — every one of them asserted with the
+##     refusal REMOVED as the control, because a `can_open()` that answered false
+##     for the wrong reason would pass them all otherwise. Plus the pause: taken
+##     solo through `PauseHub`, handed back on close, and handed back by `_process`
+##     when a refusal becomes true under an open panel.
+##  5. THE PAD HINT (bead `godot-test1-b9m8`, owner ruling 2), read off the node
+##     rather than off the panel's bookkeeping: up on a pad, down off it, down
+##     under the open menu, down in a room, down under a FOREIGN pause (every
+##     full-screen overlay in this HUD draws beneath this node), following a live
+##     locale switch, and spelling the key it really is.
 ##
 ## The "RID allocations … were leaked at exit" lines after the verdict are the
 ## engine reporting this project's deliberate static shared caches — same note as
@@ -82,7 +93,9 @@ func _initialize() -> void:
 	_check_key_is_free()
 	_check_stops_are_audited_entries()
 	await _check_the_menu_on_a_real_shell()
+	await _check_every_storey_is_a_call_point()
 	await _check_the_refusals()
+	await _check_the_pad_hint()
 
 	if _failures.is_empty():
 		Sentinel.finish(self)
@@ -228,6 +241,14 @@ func _check_stops_are_audited_entries() -> void:
 		if String(row.get("unlock", "")) == "":
 			_fail("lift stop '%s' carries no `unlock` id, so nothing can ever earn it"
 				% id)
+		# `unlock` IS the id, for every stop (bead godot-test1-b9m8). That is not
+		# tidiness: `TowerInterior._build_lift_stops` binds each trigger to the row's
+		# `id` and the menu reads its `unlock`, so a row where they differ is a
+		# landing you can stand on forever without the lift ever offering it.
+		elif String(row.get("unlock", "")) != id:
+			_fail(("lift stop '%s' is earned by '%s' rather than by itself — the trigger "
+				+ "writes the id and the menu reads the unlock, so they must be one string")
+				% [id, String(row.get("unlock", ""))])
 		var floor_index: int = TowerInterior.landing_floor(String(row.get("room", "")))
 		if floor_index < 0:
 			_fail("lift stop '%s' names room '%s', which no storey claims as its landing"
@@ -242,6 +263,38 @@ func _check_stops_are_audited_entries() -> void:
 		if not _is_landing_cell(floor_index, TowerInterior.lift_stand(floor_index)):
 			_fail("lift stop '%s' would set the player down off storey %d's landing"
 				% [id, floor_index])
+
+	# --- ONE STOP PER STOREY, NONE TWICE (bead godot-test1-b9m8) -------------
+	# The owner's ruling is "every storey", and the only mechanical form of that is
+	# counting: every floor the plans draw above the ground carries exactly one stop
+	# row. A storey added to `tower_plans.gd` without its `TOWER_GRAPH` rows is a
+	# floor the lift cannot reach and a landing whose hint never appears, and this
+	# is where that lands — on the day the plan row does.
+	var stops_by_floor: Dictionary = {}
+	for row: Dictionary in stops:
+		var f: int = TowerInterior.landing_floor(String(row.get("room", "")))
+		if f < 0:
+			continue
+		if stops_by_floor.has(f):
+			_fail("storey %d has two lift stops ('%s' and '%s') — the menu would offer "
+				% [f, String(stops_by_floor[f]), String(row["id"])] + "it twice")
+			continue
+		stops_by_floor[f] = String(row["id"])
+	for f2: int in TowerPlans.floors():
+		if f2 == 0:
+			continue
+		if not stops_by_floor.has(f2):
+			_fail("storey %d is drawn but carries no lift stop — the lift stops at EVERY "
+				% f2 + "storey (owner ruling 2026-09-16), and this one it cannot reach")
+
+	# RIDING DOWN LANDS ON AN AUDITED ENTRY. The ground is in the offer
+	# unconditionally and is NOT a stop row, so nothing above says its landing is a
+	# place the audit walks from. This does: it is the front door's own room.
+	var ground_room: String = String(TowerPlans.storey(0).get("landing", ""))
+	if ground_room != String(TowerGraph.entry("front_door").get("room", "")):
+		_fail(("the ground landing is room '%s' but the front door enters '%s' — the ride "
+			+ "DOWN would set the player in a room `tower_selfcheck` never walks from")
+			% [ground_room, String(TowerGraph.entry("front_door").get("room", ""))])
 
 	# --- negative controls --------------------------------------------------
 	if TowerInterior.landing_floor("a_room_no_storey_has") >= 0:
@@ -283,7 +336,7 @@ func _check_the_menu_on_a_real_shell() -> void:
 		return
 	var player: Node3D = await _make_player()
 	var panel: Control = await _make_panel()
-	_stand_at_the_lift(player, interior)
+	_stand_at_the_lift(player, interior, 0)
 	await process_frame
 
 	if not panel.can_open():
@@ -342,41 +395,143 @@ func _check_the_menu_on_a_real_shell() -> void:
 	if not panel.ride_to(maze_floor):
 		_fail("the lift refused the one stop it was offering")
 	await process_frame
+	_assert_landed(player, interior, maze_floor, "the ride up")
+	if panel.is_open() or paused or PauseHub.holder_count() != 0:
+		_fail("the lift arrived with the menu still up (open=%s, paused=%s, holders=%d)"
+			% [panel.is_open(), paused, PauseHub.holder_count()])
+
+	await _clear(player, shell, panel)
+	Sentinel.done("menu_on_a_shell")
+
+
+# ============================================================================
+# 3b. EVERY STOREY IS A CALL POINT, AND THE OFFER IS WHERE YOU HAVE BEEN
+#     (bead godot-test1-b9m8, owner rulings 1 and 3)
+# ============================================================================
+
+func _check_every_storey_is_a_call_point() -> void:
+	"""
+	The owner's report, as a check: stand on an upper storey's pad, press L, and
+	the lift answers — with the ground plus the landings already walked and nothing
+	else.
+
+	ITS OWN WORLD, on a fresh profile: the check above earns stops, and the shell
+	hydrates its opened set from `BestRunStore` (which has no cache of its own), so
+	this starts from a genuinely empty set rather than from the last check's.
+	"""
+	_fresh_store()
+	var shell := await _make_tower()
+	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
+	var player: Node3D = await _make_player()
+	var panel: Control = await _make_panel()
+	if interior == null:
+		_fail("the tower has no TowerInterior child — nothing to call the lift from")
+		await _clear(player, shell, panel)
+		Sentinel.done("every_storey_calls")
+		return
+	var maze_floor: int = TowerInterior.landing_floor(
+			String(TowerGraph.entry(TowerGraph.ENTRY_LIFT_MAZE).get("room", "")))
+	var offered: Array = []
+
+	# CALLABLE BY REACHABILITY, NOT BY EARNING. Standing on storey 3's landing with
+	# an EMPTY opened set — nothing earned anywhere — the lift still answers, and it
+	# offers exactly one thing: the way home. That is the whole shape of ruling 3 in
+	# two assertions, and it is the owner's bug report ("stood on the pad, pressed L,
+	# nothing happened") turned into a test.
+	var call_floor: int = 3
+	_stand_at_the_lift(player, interior, call_floor)
+	# NO FRAME BETWEEN THE MOVE AND THE QUESTION, deliberately (revmux round 1):
+	# standing on the pad puts this body inside `LiftStopTrigger3`, and a physics
+	# tick inside an `await` would EARN that storey before the question is asked —
+	# leaving the one assertion in this suite that says "reachability, not earning"
+	# unable to tell the two apart. `can_open()` is synchronous and needs no frame,
+	# so the assertion is made on a set this line proves is still empty.
+	if shell.call("is_opened", _stop_id_for_floor(call_floor)):
+		_fail("storey %d was already earned before the reachability assertion — the "
+			% call_floor + "control it depends on is gone")
+	if not panel.can_open():
+		_fail("the menu refused on storey %d's landing with nothing opened — a landing "
+			% call_floor + "you can stand on is a landing you walked to, so L must answer")
+	panel.set_open(true)
+	await process_frame
+	var from_nothing: Array = panel.stop_floors()
+	if from_nothing != [0]:
+		_fail("from storey %d with nothing earned the lift offered %s, not [0] — the "
+			% [call_floor, str(from_nothing)] + "ground is always the way home")
+
+	# TWO VISITED LANDINGS, and the offer is exactly those plus the ground, minus
+	# here. THE PAIR IS CHOSEN SO THE SORT IS LOAD-BEARING (revmux round 1 caught
+	# the first pair agreeing with the insertion order, which made this assertion
+	# blind to `out.sort()` being deleted): `_visited_floors()` appends in
+	# `lift_stops()` order, which is `entries` order — storey 1, then the maze at 7,
+	# then s3 at 2 and up. So the maze against s3's landing arrives as [0, 7, 2] and
+	# only the sort turns it into [0, 2, 7].
+	var lower: int = TowerInterior.landing_floor("s3_landing")
+	var upper: int = maze_floor
+	panel.set_open(false)
+	shell.call("mark_opened", _stop_id_for_floor(lower))
+	shell.call("mark_opened", _stop_id_for_floor(upper))
+	shell.call("mark_opened", _stop_id_for_floor(call_floor))
+	panel.set_open(true)
+	await process_frame
+	offered = panel.stop_floors()
+	if offered != [0, lower, upper]:
+		_fail("from storey %d with storeys %d, %d and %d visited the lift offered %s, "
+			% [call_floor, lower, upper, call_floor, str(offered)]
+			+ "not [0, %d, %d] — the storey you stand on is never in the offer" % [lower, upper])
+	if _row_count(panel) != offered.size():
+		_fail("the menu drew %d rows for %d stops" % [_row_count(panel), offered.size()])
+
+	# A FLOOR NEVER VISITED IS NOT OFFERED, with the mutation as its own control:
+	# the floor is absent, then its id is opened and it is there.
+	var never: int = 5
+	if offered.has(never):
+		_fail("storey %d was offered without ever being stood on" % never)
+	panel.set_open(false)
+	shell.call("mark_opened", _stop_id_for_floor(never))
+	panel.set_open(true)
+	await process_frame
+	if not (panel.stop_floors() as Array).has(never):
+		_fail("opening storey %d's own id did not put it in the offer — the control for "
+			% never + "the assertion above never fired, so that assertion proves nothing")
+
+	# --- AND THE RIDE DOWN ---------------------------------------------------
+	# The trip the old menu could not make at all (it only ever called from 0).
+	if not panel.ride_to(0):
+		_fail("the lift refused to take a player on storey %d back to the ground" % call_floor)
+	await process_frame
+	_assert_landed(player, interior, 0, "the ride down")
+
+	await _clear(player, shell, panel)
+	Sentinel.done("every_storey_calls")
+
+
+func _assert_landed(player: Node3D, interior: Node3D, want: int, what: String) -> void:
+	"""The player stands on storey `want`'s landing cell, within a hand's width."""
 	var local: Vector3 = player.global_position - interior.global_position
 	# A hand's width of slack, not exact equality: the ride is a hard write and the
 	# menu's pause stops physics, but a check that fails on one settling frame would
 	# be measuring the pause rather than the lift. Mutation-tested: a ride that lands
 	# at the front door misses by 36 m.
-	if local.distance_to(TowerInterior.lift_stand(maze_floor)) > 0.05:
-		_fail("the ride put the player at %s, not on storey %d's landing (%s)"
-			% [str(local), maze_floor, str(TowerInterior.lift_stand(maze_floor))])
-	if TowerInterior.current_floor(local.y) != maze_floor:
-		_fail("the ride left the player on storey %d rather than %d"
-			% [TowerInterior.current_floor(local.y), maze_floor])
-	if not _is_landing_cell(maze_floor, local):
-		_fail("the ride set the player down off the landing — not on built floor")
-	if panel.is_open() or paused or PauseHub.holder_count() != 0:
-		_fail("the lift arrived with the menu still up (open=%s, paused=%s, holders=%d)"
-			% [panel.is_open(), paused, PauseHub.holder_count()])
+	if local.distance_to(TowerInterior.lift_stand(want)) > 0.05:
+		_fail("%s put the player at %s, not on storey %d's landing (%s)"
+			% [what, str(local), want, str(TowerInterior.lift_stand(want))])
+	if TowerInterior.current_floor(local.y) != want:
+		_fail("%s left the player on storey %d rather than %d"
+			% [what, TowerInterior.current_floor(local.y), want])
+	if not _is_landing_cell(want, local):
+		_fail("%s set the player down off the landing — not on built floor" % what)
 
-	# --- THE OTHER STOP IS THE CHECKPOINT'S, WHICH IS WHAT `unlock` BUYS ------
-	_stand_at_the_lift(player, interior)
-	shell.call("mark_opened", TowerGraph.GATE_CHECKPOINT)
-	var upper_floor: int = TowerInterior.landing_floor(
-			String(TowerGraph.entry(TowerGraph.ENTRY_LIFT_UPPER).get("room", "")))
-	panel.set_open(true)
-	await process_frame
-	offered = panel.stop_floors()
-	if not offered.has(upper_floor):
-		_fail("lighting the checkpoint did not offer storey %d — `unlock` names the "
-			% upper_floor + "id that earns a stop, and this one is not the entry's own")
-	if _row_count(panel) != offered.size():
-		_fail("the menu drew %d rows for %d stops" % [_row_count(panel), offered.size()])
-	panel.set_open(false)
-	await process_frame
 
-	await _clear(player, shell, panel)
-	Sentinel.done("menu_on_a_shell")
+func _stop_id_for_floor(floor_index: int) -> String:
+	"""The opened-set id that earns storey `floor_index`'s stop, "" when it has none.
+	Read off the graph, so the check names no id and cannot go stale on a rename."""
+	for row: Dictionary in TowerGraph.lift_stops():
+		if TowerInterior.landing_floor(String(row.get("room", ""))) == floor_index:
+			return String(row.get("unlock", ""))
+	_fail("storey %d carries no lift stop to open — check 2 should have caught that"
+		% floor_index)
+	return ""
 
 
 # ============================================================================
@@ -395,22 +550,39 @@ func _check_the_refusals() -> void:
 		Sentinel.done("refusals")
 		return
 	shell.call("mark_opened", TowerGraph.ENTRY_LIFT_MAZE)
-	_stand_at_the_lift(player, interior)
+	_stand_at_the_lift(player, interior, 0)
 	await process_frame
 
-	# The CALL POINT. A radius that reached a whole storey up would call the lift
-	# from the landing it is a shortcut to, so it is asserted against the building's
-	# own storey height rather than eyeballed.
+	# The CALL POINT, bounded against the building's own storey height rather than
+	# eyeballed. Since bead godot-test1-b9m8 this no longer prevents calling from the
+	# floor above — `_call_floor()` resolves the storey first and measures only
+	# against that storey's stand point — so it is a sanity bound on the number and
+	# the const says so.
 	if LiftMenu.CALL_RADIUS >= TowerShell.STOREY_HEIGHT:
-		_fail("CALL_RADIUS (%.1f) reaches past one storey (%.1f) — the lift would be "
-			% [LiftMenu.CALL_RADIUS, TowerShell.STOREY_HEIGHT] + "callable from the floor above")
+		_fail("CALL_RADIUS (%.1f) is taller than a storey (%.1f) — a call radius that "
+			% [LiftMenu.CALL_RADIUS, TowerShell.STOREY_HEIGHT]
+			+ "reaches the floor above is a number nobody is thinking about any more")
 	if not panel.can_open():
 		_fail("the control case failed: standing at the lift, the menu still refuses")
 	player.global_position += Vector3(LiftMenu.CALL_RADIUS + 5.0, 0.0, 0.0)
 	if panel.can_open():
 		_fail("the menu opened %.1f m from the call point — the lift is a place, not "
 			% (LiftMenu.CALL_RADIUS + 5.0) + "a keypress")
-	_stand_at_the_lift(player, interior)
+
+	# ...and the same refusal UP A STOREY, where every landing is now a call point
+	# (bead godot-test1-b9m8): being on the right floor is not being on the pad.
+	# Its own control is the line after it, which stands back on that same landing.
+	var storey: int = 3
+	_stand_at_the_lift(player, interior, storey)
+	player.global_position += Vector3(LiftMenu.CALL_RADIUS + 5.0, 0.0, 0.0)
+	if panel.can_open():
+		_fail("the menu opened %.1f m off storey %d's landing — a storey's plain floor "
+			% [LiftMenu.CALL_RADIUS + 5.0, storey] + "is not a call point")
+	_stand_at_the_lift(player, interior, storey)
+	if not panel.can_open():
+		_fail("the control failed: back on storey %d's landing the menu still refuses, "
+			% storey + "so the refusal above proves nothing")
+	_stand_at_the_lift(player, interior, 0)
 
 	# --- IN A ROOM -----------------------------------------------------------
 	var mp := StubMp.new()
@@ -471,6 +643,140 @@ func _check_the_refusals() -> void:
 
 
 # ============================================================================
+# 5. THE PAD HINT — bead godot-test1-b9m8, owner ruling 2
+# ============================================================================
+
+func _check_the_pad_hint() -> void:
+	"""
+	"L — lift" is up exactly while pressing L would do something.
+
+	READ OFF THE NODE BY NAME, never off `can_open()`: the hint exists because the
+	owner stood on a pad and had no way to know the key existed, so a check that
+	asked the same predicate the label asks would prove nothing about the label.
+	"""
+	_fresh_store()
+	var shell := await _make_tower()
+	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
+	var player: Node3D = await _make_player()
+	var panel: Control = await _make_panel()
+	if interior == null:
+		_fail("no interior to drive the pad hint against")
+		await _clear(player, shell, panel)
+		Sentinel.done("pad_hint")
+		return
+	var hint := panel.get_node_or_null("PadHint") as Label
+	if hint == null:
+		_fail("the lift panel builds no PadHint label — a pad with no hint is the bug "
+			+ "this bead was filed for")
+		await _clear(player, shell, panel)
+		Sentinel.done("pad_hint")
+		return
+
+	# THE WORDS. The format string is SPELLED HERE and not read off `HINT_LINE`,
+	# deliberately: a translation key IS the English string, so comparing the label
+	# to the constant it was built from would assert nothing and would go on passing
+	# after a reword that left `assets/translations/ui.csv` (and German) behind.
+	# The KEY is still derived, because that half must follow `TOGGLE_KEY`.
+	var want: String = tr("%s — lift") % OS.get_keycode_string(LiftMenu.TOGGLE_KEY)
+	if hint.text != want:
+		_fail(("the pad hint reads '%s', not '%s' — the words are a CSV key and the key "
+			+ "it names must be the key it is") % [hint.text, want])
+	if LiftMenu.HINT_LINE != "%s — lift":
+		_fail("the pad hint's format string is '%s' — reword it in ui.csv too, or German "
+			% LiftMenu.HINT_LINE + "silently falls back to English")
+
+	# --- UP ON A PAD, on an UPPER storey: the owner's exact case ------------
+	var storey: int = 3
+	_stand_at_the_lift(player, interior, storey)
+	await process_frame
+	if not hint.visible:
+		_fail("the pad hint stayed hidden while the player stood on storey %d's landing"
+			% storey)
+
+	# --- DOWN OFF IT --------------------------------------------------------
+	player.global_position += Vector3(LiftMenu.CALL_RADIUS + 5.0, 0.0, 0.0)
+	await process_frame
+	if hint.visible:
+		_fail("the pad hint stayed up %.1f m off the pad — it would promise a key that "
+			% (LiftMenu.CALL_RADIUS + 5.0) + "does nothing")
+
+	# --- DOWN UNDER THE OPEN MENU, and back up when it closes ---------------
+	_stand_at_the_lift(player, interior, storey)
+	await process_frame
+	panel.set_open(true)
+	await process_frame
+	if hint.visible:
+		_fail("the pad hint stayed up behind the open card — it is the thing that says "
+			+ "the card exists, and the card is already saying so")
+	panel.set_open(false)
+	await process_frame
+	if not hint.visible:
+		_fail("closing the card did not bring the pad hint back — the control for the "
+			+ "assertion above never fired")
+
+	# --- DOWN IN A ROOM -----------------------------------------------------
+	# One refusal is enough to prove the hint inherits ALL of them: it reads
+	# `can_open()`, which check 4 drives through every one.
+	var mp := StubMp.new()
+	mp.busy = true
+	mp.add_to_group("mp")
+	root.add_child(mp)
+	await process_frame
+	if hint.visible:
+		_fail("the pad hint stayed up inside a room, where the lift refuses to open")
+	mp.busy = false
+	await process_frame
+	if not hint.visible:
+		_fail("leaving the room did not bring the pad hint back")
+	mp.queue_free()
+
+	# --- DOWN UNDER SOMEBODY ELSE'S PAUSE (revmux round 1) ------------------
+	# Every full-screen overlay in this HUD — the help card's 0.82 dim, the city
+	# map, the skill tree — draws UNDER this node and holds the pause while it is
+	# up. An always-on label would float on top of all of them. Driven through
+	# `PauseHub` with a foreign holder, which is exactly what those panels are.
+	var other := Node.new()
+	root.add_child(other)
+	PauseHub.take(other)
+	await process_frame
+	if hint.visible:
+		_fail("the pad hint stayed up under a foreign pause — it would draw over the "
+			+ "help card, the city map and the skill tree, all of which are beneath it")
+	if panel.can_open():
+		_fail("the lift would open over a full-screen overlay that already holds the "
+			+ "pause — two PauseHub holders and a card on top of a card")
+	PauseHub.release(other)
+	other.queue_free()
+	await process_frame
+	if not hint.visible:
+		_fail("releasing the foreign pause did not bring the pad hint back — the "
+			+ "control for the assertion above never fired")
+
+	# --- AND IT FOLLOWS A LIVE LOCALE SWITCH --------------------------------
+	# `_hint.text` is COMPOSED, so it is not its own key and Godot's auto-translate
+	# cannot re-resolve it: the panel carries `NOTIFICATION_TRANSLATION_CHANGED`
+	# for that, and this is what says so. `locale_selfcheck`'s idiom.
+	var was_locale: String = TranslationServer.get_locale()
+	TranslationServer.set_locale("de")
+	await process_frame
+	var want_de: String = tr("%s — lift") % OS.get_keycode_string(LiftMenu.TOGGLE_KEY)
+	if want_de == want:
+		_fail("the German row for the pad hint equals the English one — this assertion "
+			+ "would pass on a label frozen in English")
+	elif hint.text != want_de:
+		_fail("after switching to German the pad hint still reads '%s', not '%s' — a "
+			% [hint.text, want_de] + "composed string needs the translation hook")
+	TranslationServer.set_locale(was_locale)
+	await process_frame
+	if hint.text != want:
+		_fail("switching back to '%s' left the pad hint reading '%s', not '%s'"
+			% [was_locale, hint.text, want])
+
+	await _clear(player, shell, panel)
+	Sentinel.done("pad_hint")
+
+
+# ============================================================================
 # HARNESS
 # ============================================================================
 
@@ -504,8 +810,9 @@ func _make_panel() -> Control:
 	return panel
 
 
-func _stand_at_the_lift(player: Node3D, interior: Node3D) -> void:
-	player.global_position = interior.global_position + TowerInterior.lift_stand(0)
+func _stand_at_the_lift(player: Node3D, interior: Node3D, floor_index: int) -> void:
+	"""Put the player on storey `floor_index`'s landing cell — its call point."""
+	player.global_position = interior.global_position + TowerInterior.lift_stand(floor_index)
 
 
 func _row_count(panel: Control) -> int:

@@ -204,7 +204,13 @@ const VERB_BUDGET_PER_SEC: Dictionary = {
 ## major — at 4 the drain spent the whole allowance and a live opening died
 ## room-wide, never re-sent). The pace alone spaces steady sends at 2/s; the
 ## window cap is the belt beside its braces, holding a frame-hitch burst to
-## what receivers keep. Twenty honest ids drain in ~10 s.
+## what receivers keep. THE WHOLE AUTHORED SET IS 33 IDS today — eleven gates, ten
+## entries (nine of them lift stops since bead godot-test1-b9m8: the lift stops at
+## every storey), nine mutations, a scar, the checkpoint and the rescue — so the
+## worst honest queue a veteran joiner can hold drains in ~16.5 s, still at 2/s and
+## still under half the verb's 4/s receive budget. The queue has no count cap of its
+## own and needs none: `BestRunStore.MAX_TOWER_IDS` (256) bounds the profile and
+## `TowerGraph.opened_ids()` filters it to what this build authored.
 const JOIN_GATE_PACE_SEC: float = 0.5
 const JOIN_GATE_WINDOW_MAX: int = 2
 
