@@ -74,18 +74,6 @@ extends Control
 ## are excluded from localization by design (`locale_selfcheck.gd` says so), and
 ## an untranslated key falls back to readable English for free.
 ##
-## ----------------------------------------------------------------------------
-## On touch
-## ----------------------------------------------------------------------------
-## Rows carry a `mode`, so a touch session sees the touch row (step in place,
-## tilt to steer, the three thumb buttons) wherever it differs from the keyboard
-## one and the keyboard-only rows are dropped. What this file does NOT do is add
-## a "?" button to the phone HUD: touch already has its own how-to — the ⚙ panel's
-## "How to play" re-shows `touch_controls`' onboarding card — and a second help
-## affordance in the one corner of the screen that is already crowded is not an
-## improvement. The touch rows are what a tablet with a keyboard sees.
-## ponytail: if the ⚙ card is ever retired, the lazy replacement is one
-## `_make_button` in `touch_controls._build_ui()` calling `toggle()` here.
 ##
 ## ----------------------------------------------------------------------------
 ## The skin is `HudTheme`'s, and this file owns none of it (bead godot-test1-y1o.28)
@@ -129,9 +117,8 @@ const QUESTION_UNICODE: int = 63
 
 ## Which sessions a row is for.
 enum Mode {
-	BOTH,     ## Keyboard and touch alike (the MP button).
-	DESKTOP,  ## Keyboard rows — dropped on a touch session.
-	TOUCH,    ## Touch rows — dropped on a keyboard session.
+	BOTH,     ## Shown in every session (the MP button).
+	DESKTOP,  ## Keyboard rows.
 	DEBUG,    ## Only in OS.is_debug_build(); never localized.
 }
 
@@ -175,66 +162,35 @@ const ROWS: Array = [
 	["M", "Show or hide the minimap.", Mode.DESKTOP],
 	["+ / -", "Zoom the minimap in and out.", Mode.DESKTOP],
 	# The city map panel — a raw keycode like K, M and P above it, and named here
-	# because a panel nobody can find is a panel that does not exist. Its TOUCH
-	# variant is the "Map (B)" row below, the K row's shape: the panel carries an
-	# opener button of its own, and a phone has no B.
+	# because a panel nobody can find is a panel that does not exist. The panel
+	# carries an opener button of its own.
 	["B", "Open the map of Budapest and the places to find.", Mode.DESKTOP],
 	# The HQ's service lift — a raw keycode like the four above it, and named here
 	# for the same reason B is: a panel that only opens where you are standing is
-	# unfindable if the card does not say where. No touch variant, like B and M.
+	# unfindable if the card does not say where.
 	["L", "At the HQ ground landing: ride the lift, a number picks the floor.", Mode.DESKTOP],
 	# The multiplayer panel — a raw keycode like the five above it (bead
-	# godot-test1-xtr.21), and named here for the same reason B is. No touch
-	# variant: a phone has the MP button, bottom left.
+	# godot-test1-xtr.21), and named here for the same reason B is.
 	["N", "Open or close the multiplayer panel.", Mode.DESKTOP],
 	# The HUD voice/camera chords — Ctrl+letter pairs outside the input map,
 	# bead godot-test1-k4l, and named here for the same reason N is: a switch
-	# whose key the card does not name is a switch nobody can find. No touch
-	# variant, exactly like the N row: a phone has the switches themselves,
-	# stacked bottom left above the MP button.
+	# whose key the card does not name is a switch nobody can find.
 	["Ctrl+M", "Mute or unmute your microphone in a multiplayer room.", Mode.DESKTOP],
 	["Ctrl+D", "Block all incoming voice in a multiplayer room.", Mode.DESKTOP],
 	["Ctrl+G", "Share your camera in a multiplayer room.", Mode.DESKTOP],
 	# The waypoint travel list (epic godot-test1-sc6). The one row in this table
 	# whose legend names NO KEY, because the feature has none: you stand on a lit
-	# circle and the list is there. That is the "+ / -" / "Step" precedent — a
-	# legend `help_selfcheck` asserts EXISTS rather than compares to a binding —
-	# and it is why the touch variant below carries the same legend unchanged
-	# instead of pointing at an opener button there is none of.
+	# circle and the list is there. That is the "+ / -" precedent — a legend
+	# `help_selfcheck` asserts EXISTS rather than compares to a binding.
 	["Circle", "Stand on a lit waypoint circle to open the travel list — pick another to jump there.", Mode.DESKTOP],
 	["P", "Pause the game.", Mode.DESKTOP],
 	["Esc", "Free the mouse cursor. Press again to grab it back.", Mode.DESKTOP],
 	["?", "Open or close this list.", Mode.DESKTOP],
 
-	# Touch variants of the rows above, in the same order. "JUMP", "SPECIAL\n(F)",
-	# "SWITCH\n(R)" and "View" are the touch BUTTONS' own labels, CSV keys and all,
-	# so these legends read in German exactly like the buttons do.
-	["Step", "Walk by stepping in place — the phone counts your steps.", Mode.TOUCH],
-	["Tilt", "Tilt the phone to steer. The toggle up top switches to twist.", Mode.TOUCH],
-	["JUMP", "Jump. A jump also breaks a crocodile's scent.", Mode.TOUCH],
-	["SPECIAL\n(F)", "Special ability: Air Rush, Phase Step, Resize or Stink Wave — Air Sight indoors.", Mode.TOUCH],
-	["SWITCH\n(R)", "Switch hero: Windman, Primm, Teibi, Phoboman.", Mode.TOUCH],
-	["View", "Cycle the view: over the shoulder, eyes, front.", Mode.TOUCH],
-	# "Skills (K)" is the opener button's own CSV key (review round 1: the bare
-	# "Skills" legend named a label the button no longer carries), so this
-	# legend reads in German exactly like the button does. A phone has no K.
-	["Skills (K)", "Open the skill tree and spend skill points.", Mode.TOUCH],
-	# "Map (B)" is the city map opener's own CSV key (bead godot-test1-8gw.26),
-	# beside Skills on screen and beside it here, so this legend reads in German
-	# exactly like the button does. The legend reuses the B row's description
-	# above, so the CSV row it needs already exists.
-	["Map (B)", "Open the map of Budapest and the places to find.", Mode.TOUCH],
-	["Tune", "Tune step and steering feel, or read how to play again.", Mode.TOUCH],
-	# The waypoint list, identically on a phone: the circle IS the opener, so
-	# there is nothing about the gesture that differs between the two sessions.
-	# It is listed twice rather than as Mode.BOTH so the desktop and touch cards
-	# keep the ordering each of them reads in — and the CSV rows it needs are the
-	# desktop row's, already there.
-	["Circle", "Stand on a lit waypoint circle to open the travel list — pick another to jump there.", Mode.TOUCH],
 
 	# "Multiplayer (N)" is the toggle's own CSV key (review round 1: "MP"
-	# advertised a label that no longer exists), so both sessions read it in
-	# German exactly like the button. Measured 111/115 px against KEY_WIDTH
+	# advertised a label that no longer exists), so it reads in German exactly
+	# like the button. Measured 111/115 px against KEY_WIDTH
 	# 116 — a single line, no wrap needed.
 	["Multiplayer (N)", "Multiplayer: host or join a room for up to 4 players.", Mode.BOTH],
 
@@ -303,10 +259,6 @@ var _paused_by_us: bool = false
 ## True when opening released a CAPTURED cursor, and closing should give it back.
 var _recapture_mouse: bool = false
 
-## Cached — the touch probe can reach into JavaScriptBridge, and the answer
-## cannot change mid-session (same caching `start_overlay.gd` does).
-var _is_touch: bool = false
-
 ## Everything visible, so opening and closing is one `visible` flip.
 var _body: Control = null
 
@@ -325,7 +277,6 @@ func _ready() -> void:
 	# THE SKIN, adopted on our own root and inherited by everything under it.
 	# Never on the scene root and never in ProjectSettings — see `hud_theme.gd`.
 	theme = HudTheme.theme()
-	_is_touch = MobileSensors.is_touch_session()
 	_build_ui()
 
 
@@ -384,13 +335,6 @@ func _may_open() -> bool:
 	# can read.
 	var player: Node = tree.get_first_node_in_group("player")
 	if player != null and bool(player.get("is_game_over")):
-		return false
-	# One of `touch_controls`' full-rect overlays: its first-run tap is the ONE
-	# user gesture iOS grants motion permission and the browser grants audio, and
-	# our dim is MOUSE_FILTER_STOP — it would eat that tap. The same yield
-	# `start_overlay.gd` and `mp_ui.gd` make.
-	var touch_ui: Node = tree.get_first_node_in_group("touch_controls")
-	if touch_ui != null and touch_ui.has_method("has_modal") and bool(touch_ui.has_modal()):
 		return false
 	return true
 
@@ -510,7 +454,7 @@ func _build_ui() -> void:
 	grid.add_theme_constant_override("h_separation", HudTheme.GRID * 2)
 	grid.add_theme_constant_override("v_separation", HudTheme.GRID)
 	scroll.add_child(grid)
-	for row: Array in visible_rows(_is_touch):
+	for row: Array in visible_rows():
 		grid.add_child(_make_key_label(String(row[0])))
 		grid.add_child(_make_desc_label(String(row[1])))
 
@@ -541,15 +485,14 @@ func _build_ui() -> void:
 	vbox.add_child(close)
 
 
-## The rows this session shows. Static and pure so `help_selfcheck.gd` can ask for
-## both sessions' lists without a scene.
-static func visible_rows(is_touch: bool) -> Array:
+## The rows shown. Static and pure so `help_selfcheck.gd` can read the table
+## without a scene.
+static func visible_rows() -> Array:
 	var out: Array = []
 	for row: Array in ROWS:
 		var mode: int = int(row[2])
 		var keep: bool = mode == Mode.BOTH \
-			or (mode == Mode.DESKTOP and not is_touch) \
-			or (mode == Mode.TOUCH and is_touch) \
+			or mode == Mode.DESKTOP \
 			or (mode == Mode.DEBUG and OS.is_debug_build())
 		if keep:
 			out.append(row)

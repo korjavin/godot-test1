@@ -21,7 +21,7 @@ extends SceneTree
 ##     would have caught it.
 ##
 ##  2. **Cancelling somebody else's pause.** `start_overlay`, `pause_controller`,
-##     `mp_ui` and `mobile_input` all pause the same tree and all carry the
+##     `mp_ui` all pause the same tree and all carry the
 ##     `_paused_by_us` guard. A help overlay that unpauses unconditionally would
 ##     drop the P-pause (or the start menu's) out from under a still-visible
 ##     overlay — a running game behind a "PAUSED" card. Checked by opening and
@@ -33,7 +33,7 @@ extends SceneTree
 ##     drifted to the point of naming the wrong key for switching character. So
 ##     the key legends are read back against the REAL sources: `project.godot`'s
 ##     input map for the gameplay keys, and the raw-keycode constants in
-##     `minimap_hud` / `pause_controller` / `perf_overlay` / `motion_debug` /
+##     `minimap_hud` / `pause_controller` / `perf_overlay` /
 ##     `landmark_toast` / `player_controller` for the HUD, hero and debug keys.
 ##     Rebind anything without
 ##     touching `ROWS` and this fails.
@@ -57,7 +57,7 @@ extends SceneTree
 ##  6. **The "? (hotkeys)" hint chip (bead godot-test1-0h4).** The one HUD
 ##     affordance for the card: it must exist under Main/HUD anchored
 ##     bottom-right, overlap no other corner widget, open the card through the
-##     shipped signal, and hide on a touch session. Driven on the live scene —
+##     shipped signal. Driven on the live scene —
 ##     anchors, rects and the signal — never read back from constants.
 ##
 ## Deliberately NOT covered: the mouse-capture handover (headless has no pointer
@@ -70,10 +70,6 @@ const HelpOverlay := preload("res://scripts/help_overlay.gd")
 const MinimapHud := preload("res://scripts/minimap_hud.gd")
 const PauseController := preload("res://scripts/pause_controller.gd")
 const PerfOverlay := preload("res://scripts/perf_overlay.gd")
-const MotionDebug := preload("res://scripts/motion_debug.gd")
-const MobileInput := preload("res://scripts/mobile_input.gd")
-const TouchControls := preload("res://scripts/touch_controls.gd")
-const MobileSettingsPanel := preload("res://scripts/mobile_settings_panel.gd")
 const SkillTreeUi := preload("res://scripts/skill_tree_ui.gd")
 const CityMapPanel := preload("res://scripts/city_map_panel.gd")
 const TowerLiftMenu := preload("res://scripts/tower_lift_menu.gd")
@@ -138,20 +134,15 @@ func _run() -> void:
 # ============================================================================
 
 func _check_table() -> String:
-	var desktop: Array = HelpOverlay.visible_rows(false)
-	var touch: Array = HelpOverlay.visible_rows(true)
-	if desktop.is_empty() or touch.is_empty():
-		return "one of the session row lists is empty (desktop %d, touch %d)" \
-			% [desktop.size(), touch.size()]
-	# The two lists must actually differ, or the touch variants are dead weight.
-	if desktop.size() == touch.size() and _legends(desktop) == _legends(touch):
-		return "the desktop and touch lists are identical — the per-row variants do nothing"
-	for row: Array in desktop:
-		if int(row[2]) == HelpOverlay.Mode.TOUCH:
-			return "a touch row (%s) is shown on a keyboard session" % row[0]
-	for row: Array in touch:
-		if int(row[2]) == HelpOverlay.Mode.DESKTOP:
-			return "a keyboard row (%s) is shown on a touch session" % row[0]
+	# The mode set is asserted on ROWS itself, not on visible_rows(): a bogus
+	# mode never survives the filter, so reading the filtered list would let a
+	# bad row vanish silently instead of failing here.
+	for row: Array in HelpOverlay.ROWS:
+		if not [HelpOverlay.Mode.BOTH, HelpOverlay.Mode.DESKTOP, HelpOverlay.Mode.DEBUG].has(int(row[2])):
+			return "a row (%s) carries a mode outside {BOTH, DESKTOP, DEBUG}" % row[0]
+	var rows: Array = HelpOverlay.visible_rows()
+	if rows.is_empty():
+		return "the row list is empty"
 
 	# --- The input map ------------------------------------------------------
 	var legends: Array = _legends(HelpOverlay.ROWS)
@@ -180,10 +171,6 @@ func _check_table() -> String:
 		[CityMapPanel.TOGGLE_KEY, "B", "city_map_panel.TOGGLE_KEY"],
 		[TowerLiftMenu.TOGGLE_KEY, "L", "tower_lift_menu.TOGGLE_KEY"],
 		[MultiplayerUI.TOGGLE_KEY, "N", "mp_ui.TOGGLE_KEY"],
-		[MotionDebug.TOGGLE_KEYCODE, "F4", "motion_debug.TOGGLE_KEYCODE"],
-		[MobileInput.FORCE_ENABLE_KEYCODE, "F5", "mobile_input.FORCE_ENABLE_KEYCODE"],
-		[TouchControls.FORCE_SHOW_KEYCODE, "F6", "touch_controls.FORCE_SHOW_KEYCODE"],
-		[MobileSettingsPanel.FORCE_SHOW_KEYCODE, "F7", "mobile_settings_panel.FORCE_SHOW_KEYCODE"],
 		# The zoom pair only asserts that a row for them EXISTS. Their keycodes are
 		# punctuation whose `OS.get_keycode_string` name ("Equal", "Minus") is not the
 		# legend a player reads, and re-listing the accepted keycodes here would only
@@ -226,12 +213,11 @@ func _check_table() -> String:
 		if chord_actual != chord_legend.trim_prefix("Ctrl+"):
 			return "%s is now %s, but the help row still says \"%s\"" % [entry[2], chord_actual, chord_legend]
 
-	# The HUD button rows name the buttons' live labels (review round 1): the
-	# MP toggle reads "Multiplayer (N)" and the skill opener "Skills (K)", and
-	# a card still advertising "MP" / "Skills" names buttons that do not exist.
-	for legend: String in ["Multiplayer (N)", "Skills (K)"]:
-		if not legends.has(legend):
-			return "no help row carries the legend \"%s\" — the card names a button label that no longer exists" % legend
+	# The HUD button row names the button's live label (review round 1): the
+	# MP toggle reads "Multiplayer (N)", and a card still advertising "MP"
+	# names a button that does not exist.
+	if not legends.has("Multiplayer (N)"):
+		return "no help row carries the legend \"Multiplayer (N)\" — the card names a button label that no longer exists"
 
 	# --- The cheat-code sequences (\fo, \fb, \fh) ---------------------------
 	# Sequences have no single keycode, so we assert the card carries a row
@@ -318,8 +304,8 @@ func _check_table() -> String:
 		if not switch_row.to_lower().contains(hero.to_lower()):
 			return "the switch-hero row does not name \"%s\"" % hero
 
-	print("table: %d desktop rows, %d touch rows, %d actions checked against the input map" \
-		% [desktop.size(), touch.size(), ACTION_ROWS.size()])
+	print("table: %d rows, %d actions checked against the input map" \
+		% [rows.size(), ACTION_ROWS.size()])
 	Sentinel.done("table")
 	return ""
 
@@ -631,8 +617,8 @@ func _check_no_double_capture() -> String:
 
 func _hud_controls(hud: Node) -> Array:
 	## Every descendant Control under HUD, depth-first. The corner walk must
-	## see the touch action cluster — a grandchild under the full-rect
-	## TouchControls — not just HUD's direct children.
+	## see grandchildren nested under full-rect containers — not just HUD's
+	## direct children.
 	var out: Array = []
 	var stack: Array = hud.get_children()
 	while not stack.is_empty():
@@ -646,9 +632,9 @@ func _hud_controls(hud: Node) -> Array:
 func _check_hint() -> String:
 	"""The "? (hotkeys)" chip (bead godot-test1-0h4): under Main/HUD anchored
 	bottom-right, overlapping no other corner widget, opening the card through
-	the shipped `pressed` signal, hidden on a touch session. Driven on the
-	live scene — anchors, rects and the signal — never read back from a
-	constant, so disconnecting the signal is the mutation that goes red.
+	the shipped `pressed` signal. Driven on the live scene — anchors, rects
+	and the signal — never read back from a constant, so disconnecting the
+	signal is the mutation that goes red.
 	"""
 	var hint: Button = root.get_node_or_null("Main/HUD/HelpHint") as Button
 	if hint == null:
@@ -689,8 +675,7 @@ func _check_hint() -> String:
 		view.x = maxf(view.x, sc.get_global_rect().end.x)
 		view.y = maxf(view.y, sc.get_global_rect().end.y)
 	# The corner: no other VISIBLE corner widget may intersect the chip —
-	# the whole subtree, not just direct children: the touch action cluster
-	# is a grandchild under the full-rect TouchControls. Full-screen scrims
+	# the whole subtree, not just direct children. Full-screen scrims
 	# and roots (over half the laid-out extent) are skipped THEMSELVES but
 	# still descended into; a hidden sibling is not on screen at all.
 	# mp_ui's corner buttons are bottom-LEFT, so they are not rivals here —
@@ -733,22 +718,6 @@ func _check_hint() -> String:
 	await _press_help_key()
 	if _overlay._open or paused:
 		return "the hint check left the card open — the suite after this would inherit a pause"
-	# Touch: hidden, then back — driven through the shipped seam because a
-	# headless session never reports a touchscreen. The seam only proves
-	# the setter, so the GATE itself is pinned by a text scan below, in the
-	# suite's voice_selfcheck idiom: the call site must read the canonical
-	# MobileSensors probe, never the narrower DisplayServer one.
-	var hint_source: String = FileAccess.get_file_as_string("res://scripts/help_hint.gd")
-	if hint_source.is_empty():
-		return "could not read res://scripts/help_hint.gd to pin the touch gate"
-	if not hint_source.contains("update_touch_visibility(MobileSensors.is_touch_session())"):
-		return "HelpHint hides on DisplayServer.is_touchscreen_available() instead of MobileSensors.is_touch_session() — the mobile-web fallbacks keep the chip over the touch cluster"
-	hint.update_touch_visibility(true)
-	if hint.visible:
-		return "HelpHint stays visible on a touch session — the cluster owns that corner"
-	hint.update_touch_visibility(false)
-	if not hint.visible:
-		return "HelpHint did not come back after the touch session ended"
-	print("hint: bottom-right, overlaps nothing, click toggles, touch hides")
+	print("hint: bottom-right, overlaps nothing, click toggles")
 	Sentinel.done("hint")
 	return ""
