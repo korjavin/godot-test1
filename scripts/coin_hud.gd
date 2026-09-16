@@ -49,9 +49,21 @@ const POP_RECOVER_SPEED: float = 10.0
 const STRIP_TOP: float = 60.0
 
 ## The badge is deliberately TALLER than the band and overhangs it by 6 px at each
-## end: up into the count's empty descent space (no glyph in this line descends),
-## and down into `AbilityHUD`'s rect, whose own ring starts 13 px in. A badge that
-## fitted the 12 px band would be a bar with a point on it.
+## end. A badge that fitted the 12 px band would be a bar with a point on it, and
+## both overhangs are clear — but NOT for the reason you would guess, so the
+## measurements are here rather than the hand-wave they replaced (revmux round 1):
+##
+##   * ABOVE (badge top at local y 54, baseline at 48). The caps this line is made
+##     of barely descend — Oswald-Bold's `C` reaches 0.5 px below the baseline, 3.5
+##     with the SFX outline's dilation — so they clear the badge by ~2.5 px. The
+##     one glyph that does NOT is the streak suffix's `(` / `)`, which reach 7.2 px
+##     (10.2 with the outline) and so are INSIDE the badge's band vertically. They
+##     never meet it because the line is right-aligned and the badge is `STRIP_WIDTH`
+##     from that right edge: the suffix would have to be 178 px wide before its
+##     parens could reach the badge's x range, and it is 78.
+##   * BELOW. The badge overhangs 6 px past our rect at x −280…−252 from the right
+##     anchor; `AbilityHUD` starts at −176. They are 76 px apart HORIZONTALLY and
+##     never overlap, so the overhang lands on empty screen.
 const BADGE_HEIGHT: float = 24.0
 
 ## Floor on the badge's width, so a single digit still gets a plate rather than a
@@ -64,6 +76,20 @@ const BADGE_MIN_WIDTH: float = 28.0
 const BADGE_POINT: float = 6.0
 
 const BAR_HEIGHT: float = 6.0
+
+## THE STRIP HANGS OFF OUR RIGHT EDGE, NOT OUR LEFT ONE, and this is the width it
+## reserves — `CoinLabel`'s own 256 px in `main.tscn` (`hero_hud_selfcheck` check
+## 9b pins the two together).
+##
+## `size.x` IS NOT 256. A `Label`'s rect is `max(its offsets, its minimum size)`
+## and its minimum width is its TEXT's width, which at Oswald-Bold 40 passes 256
+## as soon as there is a skill point to show (`COINS: 250  3 SP` is 280 px, the
+## German line 281 from level 1 on) and jumps another 78 px whenever the ` (XN)`
+## streak suffix appears. `grow_horizontal = 0` pins the RIGHT edge and lets the
+## LEFT one move, so anything drawn at local x 0 slides sideways on every streak
+## break — measured, revmux round 1. Everything below is therefore positioned
+## backwards from `size.x`, which is the edge that does not move.
+const STRIP_WIDTH: float = 256.0
 
 ## Heading size for the bare level digits — nothing to translate, so no CSV row
 ## and no width budget.
@@ -214,17 +240,21 @@ func _draw() -> void:
 	var digits_w := font.get_string_size(
 		digits, HORIZONTAL_ALIGNMENT_LEFT, -1, BADGE_FONT_SIZE).x
 	var badge_w := maxf(BADGE_MIN_WIDTH, digits_w + HudTheme.GRID)
+	# The strip's left edge, measured back from the right one. `maxf` only for the
+	# degenerate case of a rect narrower than the strip, which `main.tscn` is not.
+	var strip_x := maxf(0.0, size.x - STRIP_WIDTH)
 
 	# The hexagon: flat top and bottom, a point at each side — six points rather
 	# than a rect, because the badge is the one Diablo-ish thing in this corner.
 	var half := BADGE_HEIGHT * 0.5
+	var badge_right := strip_x + badge_w
 	var hexagon := PackedVector2Array([
-		Vector2(0.0, cy),
-		Vector2(BADGE_POINT, cy - half),
-		Vector2(badge_w - BADGE_POINT, cy - half),
-		Vector2(badge_w, cy),
-		Vector2(badge_w - BADGE_POINT, cy + half),
-		Vector2(BADGE_POINT, cy + half),
+		Vector2(strip_x, cy),
+		Vector2(strip_x + BADGE_POINT, cy - half),
+		Vector2(badge_right - BADGE_POINT, cy - half),
+		Vector2(badge_right, cy),
+		Vector2(badge_right - BADGE_POINT, cy + half),
+		Vector2(strip_x + BADGE_POINT, cy + half),
 	])
 	draw_colored_polygon(hexagon, Color(HudTheme.INK, HudTheme.PANEL_ALPHA))
 	# `draw_polyline` does not close a loop, so the first point is repeated.
@@ -233,14 +263,15 @@ func _draw() -> void:
 	# The digits, centred on the plate. No outline: they are ON a plate rather than
 	# on the world, so the world-lettering stroke would only thicken them.
 	font.draw_string(get_canvas_item(),
-		Vector2((badge_w - digits_w) * 0.5,
+		Vector2(strip_x + (badge_w - digits_w) * 0.5,
 			cy - font.get_height(BADGE_FONT_SIZE) * 0.5
 				+ font.get_ascent(BADGE_FONT_SIZE)),
 		digits, HORIZONTAL_ALIGNMENT_LEFT, -1, BADGE_FONT_SIZE, HudTheme.BONE)
 
-	# The bar runs from the badge to our right edge — a FIXED width, right-flush
-	# with the count above it, so the strip does not jitter as the count grows.
-	var bar_x := badge_w + HudTheme.GRID
+	# The bar runs from the badge to our right edge. Both ends are measured from
+	# that edge, so the strip is genuinely fixed and genuinely right-flush however
+	# far the text above has pushed our left edge out — see `STRIP_WIDTH`.
+	var bar_x := badge_right + HudTheme.GRID
 	var bar := Rect2(Vector2(bar_x, cy - BAR_HEIGHT * 0.5),
 		Vector2(size.x - bar_x, BAR_HEIGHT))
 	if bar.size.x <= 0.0:

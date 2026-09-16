@@ -1337,6 +1337,14 @@ func _level_strip_band_failures(text: String) -> Array[String]:
 		out.append("CoinLabel leaves a %.0f px band under the count and the strip's "
 				% band
 				+ "bar needs %.0f — the band is where the strip lives" % needed)
+	# THE STRIP HANGS OFF THE RIGHT EDGE and reserves `STRIP_WIDTH` back from it, so
+	# the designed rect has to be at least that wide or the badge starts outside it.
+	# (The LIVE rect is only ever wider — a Label's minimum size is its text's — which
+	# is the whole reason `coin_hud` measures backwards from `size.x`; see STRIP_WIDTH.)
+	if coin_rect.size.x < COIN_SCRIPT.STRIP_WIDTH:
+		out.append("CoinLabel is %.0f px wide and the strip reserves %.0f back from "
+				% [coin_rect.size.x, COIN_SCRIPT.STRIP_WIDTH]
+				+ "its right edge — the badge would hang outside the designed rect")
 	if coin_rect.end.y > dial_rect.position.y:
 		out.append("CoinLabel ends at y %.0f and AbilityHUD starts at y %.0f — the "
 				% [coin_rect.end.y, dial_rect.position.y]
