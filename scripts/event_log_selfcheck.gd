@@ -149,6 +149,9 @@ func _run_checks() -> String:
 	failure = _check_solo_draws_nothing()
 	if not failure.is_empty():
 		return failure
+	failure = _check_local_leave()
+	if not failure.is_empty():
+		return failure
 	failure = _check_corner_fit()
 	if not failure.is_empty():
 		return failure
@@ -685,6 +688,42 @@ func _check_solo_draws_nothing() -> String:
 		failure = "offline lines would not paint — the disconnect kind is invisible again"
 	_free_wired(wired)
 	Sentinel.done("solo_draws_nothing")
+	return failure
+
+
+func _check_local_leave() -> String:
+	## A leave through the panel's Leave button reads as ours: the button
+	## notes it BEFORE manager.leave(), so the next offline tick appends one
+	## "You left the room" line and never a "disconnected" per teammate. The
+	## room-end edge in `_check_solo_draws_nothing` (go_offline WITHOUT the
+	## note, still expecting "Bob disconnected") is this check's negative
+	## control.
+	var failure := ""
+	var wired := _wired_log()
+	var log: Control = wired["log"]
+	var mp: StubMp = wired["mp"]
+	(mp as StubMp).members.append({"id": "id-ann", "name": "Ann"})
+	log._now_msec = 200000
+	log._tick()
+	var before: int = log.line_count()
+	if before != 1 or not log.line_text(0).contains("Ann joined"):
+		failure = "the three-member room did not join Ann first — the leave asserts on nothing"
+	else:
+		log.note_local_leave()
+		(mp as StubMp).go_offline()
+		log._now_msec = 201000
+		log._tick()
+		if log.line_count() != before + 1:
+			failure = "a local leave tracked %d lines, expected exactly one new one" % (log.line_count() - before)
+		elif not log.line_text(log.line_count() - 1).ends_with("You left the room"):
+			failure = "the local-leave line is '%s', expected it to end 'You left the room'" % log.line_text(log.line_count() - 1)
+		else:
+			for i: int in log.line_count():
+				if log.line_text(i).contains("disconnected"):
+					failure = "a local leave printed a disconnect line: '%s'" % log.line_text(i)
+					break
+	_free_wired(wired)
+	Sentinel.done("local_leave")
 	return failure
 
 
