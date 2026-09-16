@@ -3081,6 +3081,33 @@ def attach_tails(obj, row, tj):
 # renders 225), on the web `17_head_face` frame. The `*_edge`/`*_glint` entries are
 # one step up from each: the frame's top bar, and the lens's "lighter rim strip".
 # The palette rows in `HEROES["primm"]` carry the numbers and what each lands at.
+#
+# ROUND 2 — THE SIZE, bead godot-test1-khly. OWNER, 2026-09-16, twice, on
+# `docs/style/z3e/grid_30_primm_goggles.png`: "goggles too small". Not the shape,
+# not the colour: the FOOTPRINT. So this round is a measurement of the canon and
+# not a taste, and the measurement is on `assets/portraits/primm.png` at the eye
+# line (all of it in that image's own pixels, then carried over by the one ratio
+# a portrait and a head share — how much of the head the thing covers):
+#
+#   head, hair included, at the eye line   x  84..182   99 px
+#   the visor's dark frame, temple to temple  94..173   80 px   0.81 of the head
+#   the LENS GLASS, the cyan pair              100..169   70 px   0.71 of the head
+#   the lens glass, top of the lit bar to the bottom rim  y 64..95   31 px
+#   the pupils                                            y ~84, 32 px apart
+#
+# and this head answers `_skull_reach` 0.0927 m at the ear, so 0.71 of it is
+# 0.0655 m from the centre line — TWICE what round 1 shipped (0.0487), which is
+# the whole of the owner's complaint in one number. The pair is 131 mm across on a
+# 185 mm head, and the frame ring already goes wider than the 0.81 because a ring
+# goes all the way round. Vertically the canon's 31 px is ~49 mm at this head's
+# scale, which is more lens than a slab standing proud of a nose can be without
+# swallowing the nose; 34 mm is what covers the socket (16 mm each way off the
+# pupil) plus the brow above it, and it is what is typed below. Everything that
+# moves here moves because the lens grew: the bar goes up and gets thicker so it
+# still reads as a bar ABOVE a lens and not a stripe across one, the splay goes up
+# because an outer end 65 mm off the centre line is out where the temple has
+# already turned away, and the standoff goes up because a 34 mm slab raked 15 deg
+# has its top edge 4.4 mm behind its own centre and the old 4 mm was all of that.
 
 GOGGLE_STATIONS = 48          # cross-sections round the skull; 7.5 degrees apart
 GOGGLE_FRAME_ARC = 72.0       # degrees off the nose where the frame hands over to
@@ -3089,28 +3116,44 @@ GOGGLE_ARM_ARC = 132.0        # the arm, and the arm to the strap (in front of t
                               # a ring at eye height that ignores the ears is one
                               # that goes THROUGH them. Here it does not have to
                               # stop, it only has to get thin and stand off.)
-GOGGLE_RING_Z = 0.014         # the ring's centre above the eye line: the straight
-                              # top bar of the portrait, with the lens under it
+GOGGLE_RING_Z = 0.020         # the ring's centre above the eye line: the straight
+                              # top bar of the portrait, with the lens under it —
+                              # 6 mm higher than round 1 because the lens below it
+                              # now reaches eye+19 and a bar centred at eye+14
+                              # would be a bar with a lens through it
 GOGGLE_STANDOFF = 0.004       # how far proud of the skull's own outline it all
                               # stands — the bead's "4 mm proud of the eye sockets"
-GOGGLE_FRAME = (0.005, 0.009)   # radial thickness, height — across the face
+GOGGLE_FRAME = (0.005, 0.012)   # radial thickness, height — across the face. The
+                                # 9 mm of round 1 was a bar over an 18 mm lens;
+                                # over a 34 mm one it is piping. (Bead khly asked
+                                # for "~8 mm", which is THINNER than what shipped
+                                # — the owner asked for thicker, so it is 12.)
 GOGGLE_ARM = (0.003, 0.003)     # square, over the ear
 GOGGLE_STRAP = (0.003, 0.006)   # flat, round the back, sitting on the hair shell
-GOGGLE_LENS = (0.002, 0.018)  # thickness and height of one slab
+GOGGLE_LENS = (0.002, 0.034)  # thickness and height of one slab: the socket is
+                              # ~16 mm each way off the pupil and the canon covers
+                              # all of it and the brow — see ROUND 2 above
 # AND ITS WIDTH IS MEASURED, NOT TYPED, because the bead's two numbers — "each ~32
 # x 18 mm" and "a 6 mm bridge" — are only consistent on a head whose pupils are
 # 38 mm apart, and this one's are 66. Taken literally they leave a 33 mm gap of
 # frame between the lenses: a bridge wider than a lens, where the portrait draws
-# the pair nearly meeting. So the lens keeps the OUTER end the bead put it at (16
-# mm past the pupil, half of its 32) and grows inward until it is `_GAP` from its
-# twin — 44 mm on Primm, and whatever the next hero's own pupils ask for.
-GOGGLE_LENS_REACH = 0.016     # how far past the pupil the outer end sits
+# the pair nearly meeting. So the lens is hung off its OUTER end, `_REACH` past
+# the pupil, and grows inward until it is `_GAP` from its twin — 61 mm on Primm
+# since round 2, and whatever the next hero's own pupils ask for.
+GOGGLE_LENS_REACH = 0.037     # how far past the pupil the outer end sits — round
+                              # 1's 16 mm put the pair at 0.53 of the head where
+                              # the canon has it at 0.71. 0.71 of this head is
+                              # 65.5 mm off the centre line and the SPLAY eats the
+                              # difference: the slab's outer end comes back in by
+                              # half its width times (1 - cos SPLAY), so the reach
+                              # that lands the corner on 65.5 mm is 37 and not 33
+                              # (the first build of this round stopped mid-cheek)
 GOGGLE_BRIDGE_GAP = 0.009     # and how much daylight is left between the two
-GOGGLE_LENS_Z = 0.002         # the lens centre above the eye line
+GOGGLE_LENS_Z = 0.003         # the lens centre above the eye line
 # A LENS IS NOT SEATED ON A RADIUS, AND THE FIRST BUILD OF THIS BEAD PROVED IT.
 # The ring can be, because a ring goes round: equal angles off the skull's axis put
 # its stations on the brow, the temple and the back of the head in turn, which is
-# what a band does. A LENS IS FLAT AND THE WIDTH OF HALF A FACE (44 mm on Primm,
+# what a band does. A LENS IS FLAT AND THE WIDTH OF HALF A FACE (61 mm on Primm,
 # see the two consts above), and the face is flat-ish across
 # the eyes, so the radial ray at the eye's own bearing lands 2 cm further back than
 # the eye itself does — measured: the face front is y=0.167 at the pupil and the
@@ -3122,7 +3165,10 @@ GOGGLE_LENS_Z = 0.002         # the lens centre above the eye line
 # its footprint and not at its centre, because the inner end of it is beside the
 # bridge of the nose, which is 4 mm further forward than the pupil is — a lens
 # hung off the pupil alone has its nose end buried.
-GOGGLE_LENS_PROUD = 0.004     # how far the lens stands off the face under it
+GOGGLE_LENS_PROUD = 0.006     # how far the lens stands off the face under it — 4
+                              # mm was the whole of the rake's 4.4 mm top-edge
+                              # setback once the slab grew to 34 mm, which is a
+                              # top edge inside the brow it is hung off
 # AND IT IS RAKED, because a slab standing vertical takes this scene's high key
 # light at a grazing angle and DIFFUSE_TOON then gives it the unlit band: a dark
 # rectangle where the portrait has a bright cyan one. Top leaning back, like a
@@ -3135,7 +3181,10 @@ GOGGLE_LENS_TILT = 15.0       # degrees of top-back rake
 # `17_head_face` frame, where his far eye sat white and round on the cheek beside
 # the lens. Turning each slab back by its own eye's bearing wraps it round to where
 # the eye stops, which is also what the portrait's visor does.
-GOGGLE_LENS_SPLAY = 22.0      # degrees of outward wrap
+GOGGLE_LENS_SPLAY = 30.0      # degrees of outward wrap — 22 was measured for an
+                              # outer end 49 mm off the centre line; at 65 mm the
+                              # temple has turned away another 25 mm and a slab
+                              # that does not turn with it is a wing
 GOGGLE_BRIDGE = (0.002, 0.006)  # thickness and height of the bar over the nose
 GOGGLE_SLAB = 0.030           # half the band of head the axis is centred on
 GOGGLE_REACH = 0.4            # how far outside the head a seating ray starts
