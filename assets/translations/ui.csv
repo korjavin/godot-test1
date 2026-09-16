@@ -382,3 +382,18 @@ Tasten unten rechts: Sprung / Spezial / Tausch"
 "Heroes' Square","Heroes' Square","Heldenplatz"
 "Circle","Circle","Kreis"
 "Stand on a lit waypoint circle to open the travel list — pick another to jump there.","Stand on a lit waypoint circle to open the travel list — pick another to jump there.","Stelle dich auf einen leuchtenden Wegpunktkreis, um die Reiseliste zu öffnen — wähle einen anderen, um dorthin zu springen."
+Connecting to %s…,Connecting to %s…,Verbinde mit %s…
+No room %s — check the code,No room %s — check the code,Kein Raum %s — bitte Code prüfen
+In room %s (%d/4),In room %s (%d/4),In Raum %s (%d/4)
+Could not start the WebRTC mesh (error %d),Could not start the WebRTC mesh (error %d),WebRTC-Netz konnte nicht gestartet werden (Fehler %d)
+Hero: %s,Hero: %s,Held: %s
+Lobby: %s,Lobby: %s,Lobby-Server: %s
+Disconnected from the lobby (%d %s),Disconnected from the lobby (%d %s),Verbindung zur Lobby getrennt (%d %s)
+Could not add %s to the mesh,Could not add %s to the mesh,Konnte %s nicht zum Netz hinzufügen
+Shared world seed received,Shared world seed received,Gemeinsamer Welt-Seed empfangen
+Joined the run at %dm,Joined the run at %dm,Beigetreten bei %dm
+No world from the host — is their tab still open?,No world from the host — is their tab still open?,Keine Welt vom Host — ist sein Tab noch offen?
+Waiting for the shared world…,Waiting for the shared world…,Warte auf die gemeinsame Welt…
+Host not responding — voting to migrate…,Host not responding — voting to migrate…,Host antwortet nicht — Abstimmung zur Migration läuft…
+Cannot reach the lobby at %s (error %d),Cannot reach the lobby at %s (error %d),Lobby unter %s nicht erreichbar (Fehler %d)
+Offline,Offline,Nicht verbunden
