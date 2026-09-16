@@ -50,10 +50,11 @@ const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
 const EPS: float = 1e-5
 
 ## Twice the area under which a triangle is treated as collapsed and has no facing
-## to measure (check 1's winding sweep). The pole and tip rings Godot's own
-## `SphereMesh` / zero-top-radius `CylinderMesh` emit are exactly zero-area; the
-## smallest REAL triangle in the table is a sphere band at ~1e-3, three orders
-## above this.
+## to measure (check 1's winding sweep). Measured over every kind: the pole ring
+## Godot's own `SphereMesh` emits and the tip ring a zero-top-radius
+## `CylinderMesh` emits are EXACTLY 0.0, and the smallest real triangle in the
+## table is the CONE's tip fan at 2.18e-2 (then SPHERE 6.47e-2, CYLINDER 7.65e-2,
+## ROCK 8.40e-2) — seven orders above this line, so it cannot swallow a face.
 const DEGENERATE_AREA: float = 1e-9
 
 ## Half-width of the field square check 2 sweeps for "every box the world ships
@@ -270,7 +271,19 @@ func _check_unit_meshes_fit_the_cube() -> void:
 
 		# ORIENTATION (bead godot-test1-p0g1): every face front-facing from outside.
 		var counted := _outward_triangle_count(arrays)
-		if counted.x != counted.y:
+		if counted.y == 0:
+			# `0 of 0 outward` satisfies the equality below, so without this floor a
+			# kind whose triangles were ALL skipped as collapsed — a future builder
+			# that emits nothing but degenerate triples, or a hand that raises
+			# DEGENERATE_AREA past the table's smallest real face — would pass the
+			# orientation leg having asserted nothing, and `measured` below would
+			# still count it. A check that silently stops checking is the failure
+			# `Sentinel` exists for, one leg in.
+			_fail(("BoxKind.%s has no measurable triangle — every triple was under "
+					% name)
+					+ "DEGENERATE_AREA, so the orientation sweep asserted nothing "
+					+ "about this kind")
+		elif counted.x != counted.y:
 			_fail(("BoxKind.%s has %d of %d triangles front-facing outward — the "
 					% [name, counted.x, counted.y])
 					+ "rest are wound inside-out and world_block.gdshader's "
@@ -282,6 +295,26 @@ func _check_unit_meshes_fit_the_cube() -> void:
 
 	if measured != ChunkBatch.BoxKind.size():
 		_fail("measured %d of %d BoxKind rows" % [measured, ChunkBatch.BoxKind.size()])
+
+	# NEGATIVE CONTROL for the orientation sweep, check 6's discipline one leg
+	# over: a probe that answers "all outward" for every input it is ever handed
+	# is indistinguishable from no probe at all, and the winding it guards has no
+	# other symptom than a hole in the world. So hand it the WEDGE with ONE
+	# triangle's last two vertices swapped — the exact shape of the bug — and
+	# require it to come back short.
+	var control: Array = ChunkBatch.unit_mesh(ChunkBatch.BoxKind.WEDGE).surface_get_arrays(0)
+	var flipped: PackedVector3Array = control[Mesh.ARRAY_VERTEX].duplicate()
+	var swap: Vector3 = flipped[1]
+	flipped[1] = flipped[2]
+	flipped[2] = swap
+	control[Mesh.ARRAY_VERTEX] = flipped
+	var control_count := _outward_triangle_count(control)
+	if control_count.x != control_count.y - 1:
+		_fail(("check 1's orientation negative control reported %d of %d outward on "
+				% [control_count.x, control_count.y])
+				+ "a WEDGE with one triangle deliberately inverted — it should be "
+				+ "exactly one short. The probe cannot tell a wound-out mesh from a "
+				+ "wound-in one, so every OK it prints above means nothing")
 	Sentinel.done("unit_meshes")
 
 
@@ -290,11 +323,20 @@ func _outward_triangle_count(arrays: Array) -> Vector2i:
 	(front-facing outward, triangles measured) for one surface's arrays.
 
 	Godot's front face is the CLOCKWISE one seen from outside, and `Plane(v0, v1,
-	v2).normal` of a clockwise triple points along that outward side — so for a
-	solid centred on its own origin, `normal.dot(face centroid) > 0` IS "this face
-	is the one the camera outside the box may see". Every unit mesh is origin-
-	centred and convex or near enough (the ROCK's jitter only ever subtracts), so
-	the mesh centroid is the origin and no per-face reference point is needed.
+	v2).normal` of a clockwise triple points along that outward side — so
+	`normal.dot(face centroid) > 0` IS "this face is the one the camera outside the
+	box may see".
+
+	WHAT THAT RESTS ON IS THAT THE ORIGIN IS AN INTERIOR POINT every unit mesh is
+	star-shaped about — NOT that the origin is the mesh's centroid, which is false
+	for most of the table and would be the wrong thing to need anyway: the WEDGE's
+	six points average to y = -1/6 (four base corners against two ridge ends), the
+	CONE's mass sits near its base, and the ROCK draws an independent jitter per
+	(band, side) over a profile that is itself vertically asymmetric. Every kind
+	does reach ±0.5 through the origin on all three axes — check 1's own reach
+	assertion above — so each face's own centroid lies on that face's outward side,
+	and no per-face reference point is needed. A future kind that is not
+	star-shaped about the origin (a torus, a hollow shell) would need one.
 
 	INDEXED SURFACES ARE READ THROUGH THEIR INDICES — the CUBE is a `BoxMesh` and
 	its 24 corner vertices are 12 triangles only via `ARRAY_INDEX`; walking the

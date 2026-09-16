@@ -214,9 +214,13 @@ Three consequences for this document:
    `p0g1_band_web_after.png` are the same `style_shots` recipe as `6n1_band_web_*`,
    retaken either side of the winding flip, and **the now-real slopes carry no acne
    and no peter-panning**, so there is nothing to retune and no follow-up filed.
-   `1_field` was retaken in the same two runs and is unchanged (a wedge-only mesh
-   edit cannot reach it); draw calls are identical either side — band 241/241, field
-   218/219, bridge 305/305.
+   `1_field` was retaken in the same two runs and is visually unchanged — it holds
+   no wedge, so a wedge-only mesh edit cannot reach it. Draw calls in the band, the
+   shot this bead is about, are identical either side: **241/241**. The two shots
+   that carry none of the flip's geometry read 218/219 (field) and 305/305 (bridge
+   deck) — the one-draw field difference is the LOD ring's own churn between two
+   processes, not a cost of the winding, and the `[PERF]` line moves by more than
+   that between two runs of the same build.
 3. **"Not fixed here" above is resolved, not deferred.** The dithered patch was not
    two roof prisms interleaving: across 138 wedge colliders within 400 m of a band
    spot, **no two wedge AABBs intersect at all**. The patch was this same base quad
