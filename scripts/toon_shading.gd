@@ -168,8 +168,8 @@ static func style_cloth(mat: BaseMaterial3D) -> void:
 	turn if he wants the brightness back, is in
 	`docs/style/z3e/grid_29_cloth_rollout.md`.
 
-	`style()`'s two-band DIFFUSE_TOON is a lighting threshold, not a depth cue: a
-	6 mm crease either falls entirely inside one band or straddles the step, so a
+	`style()`'s DIFFUSE_TOON is a lighting threshold, not a depth cue: a 6 mm
+	crease either falls entirely inside one band or straddles the step, so a
 	fold reads as a hard edge or as nothing, and never as cloth. DIFFUSE_BURLEY is
 	a smooth diffuse falloff, which is the whole point here — it is the term that
 	can show a shallow curvature at all. Fully rough (cloth has no highlight),
@@ -178,8 +178,10 @@ static func style_cloth(mat: BaseMaterial3D) -> void:
 
 	Godot's toon diffuse has NO BAND COUNT to raise — the bead asked; there is no
 	such property on `BaseMaterial3D`, the step is fixed in the shader. The middle
-	ground between the two, if the owner wants the cast's flatness kept, is
-	`DIFFUSE_LAMBERT_WRAP`; it is one enum away from this line.
+	ground spike td8 nominated, `DIFFUSE_LAMBERT_WRAP`, is still one enum away from
+	this line, but bead 21m measured it and it is NOT free: at roughness 1.0 its
+	wrap term peaks at 0.5, so it recovers almost none of the luma above while
+	giving up half the variation the pick was made for.
 	"""
 	mat.diffuse_mode = BaseMaterial3D.DIFFUSE_BURLEY
 	mat.roughness = 1.0
