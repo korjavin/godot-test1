@@ -70,7 +70,7 @@ extends Control
 ## font against `DESC_WIDTH`. That is the actual failure mode, and it is the one
 ## thing measured.
 ##
-## Debug rows are deliberately NOT in the CSV — the \fo/F4 surfaces they describe
+## Debug rows are deliberately NOT in the CSV — the \fo/\fb surfaces they describe
 ## are excluded from localization by design (`locale_selfcheck.gd` says so), and
 ## an untranslated key falls back to readable English for free.
 ##
@@ -199,10 +199,6 @@ const ROWS: Array = [
 	["\\fb", "Teleport to Budapest's gate.", Mode.DEBUG],
 	["\\fh", "Teleport to the GastroDefense HQ.", Mode.DEBUG],
 	["\\ft", "Toggle the heroes' cel outline (ships off).", Mode.DEBUG],
-	["F4", "Raw motion-sensor read-out.", Mode.DEBUG],
-	["F5", "Force-enable the touch motion driver.", Mode.DEBUG],
-	["F6", "Force-show the touch controls.", Mode.DEBUG],
-	["F7", "Force-show the ⚙ tuning panel.", Mode.DEBUG],
 ]
 
 # ============================================================================

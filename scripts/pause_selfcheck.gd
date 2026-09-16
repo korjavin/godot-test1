@@ -34,8 +34,8 @@ extends SceneTree
 ##  3. **Nothing writes `get_tree().paused` behind the hub's back.** A structural
 ##     scan of every `scripts/*.gd`. The bug was emergent — seven individually
 ##     correct files — so the durable guard is not "these seven are right today"
-##     but "the eighth cannot be written the old way". The hub itself is now the
-##     only file the scan skips.
+##     but "the eighth cannot be written the old way". Nothing carries an
+##     exemption any more except the hub itself (and the harnesses).
 ##
 ##  4. **The ROOM-WIDE pause is one more holder and nothing else** (bead
 ##     godot-test1-3a2). `mp_manager` claims on behalf of a peer who pressed P, so
