@@ -1,10 +1,24 @@
 extends Label
-## Score HUD (top-right of the screen): level and coin count.
+## Score HUD (top-right of the screen): the coin count, and the level strip it
+## paints under itself.
 ##
-## Each frame this mirrors the player's coin count (the headline score) and
-## progression level into the label text. It finds the player through the "player"
-## group rather than a hard reference, matching the rest of the project, so it
-## keeps working across player respawns.
+## Each frame this mirrors the player's coin count (the headline score) into the
+## label text. It finds the player through the "player" group rather than a hard
+## reference, matching the rest of the project, so it keeps working across player
+## respawns.
+##
+## THIS LABEL ALSO PAINTS (bead godot-test1-l8rs). Under the text, inside its own
+## rect, `_draw()` puts a Diablo-ish hexagon badge carrying the level digits and a
+## slim bar filling toward the next level. It is a `_draw` on the Label rather
+## than a sibling node because the whole strip is ONE readout with the count: it
+## wants the same corner, the same pickup pop, and the same "no Progression node
+## -> paint nothing" degrade the old "Lv N" text prefix had. The prefix is gone —
+## the badge IS the level, and two level readouts on one line is the regression
+## `hero_hud_selfcheck` check 9 exists to catch.
+##
+## The fill reads LIFETIME coins, never `player.coins_collected`: levels are
+## lifetime-cumulative and personal (see `progression.gd`'s header), while the
+## run's purse is taxed on a bite and reset per run.
 
 ## THE SKIN COMES OFF `HudTheme` AND THE SCENE CARRIES NO COLOUR (bead
 ## godot-test1-y1o.26). `main.tscn` used to hold this label's yellow, its black
@@ -26,16 +40,82 @@ const POP_SCALE: float = 1.25
 ## How fast the pop eases back to normal size (lerp weight per second).
 const POP_RECOVER_SPEED: float = 10.0
 
+## THE LEVEL STRIP'S BAND, in this Label's local coordinates.
+##
+## `STRIP_TOP` is `heading_font().get_height(FONT_SIZE)` — measured 60 — so the
+## band starts exactly where the text's descent space ends and the strip can never
+## touch a glyph. The rect in `main.tscn` is 72 px tall, so the band is the bottom
+## 12 px of it.
+const STRIP_TOP: float = 60.0
+
+## The badge is deliberately TALLER than the band and overhangs it by 6 px at each
+## end. A badge that fitted the 12 px band would be a bar with a point on it, and
+## both overhangs are clear — but NOT for the reason you would guess, so the
+## measurements are here rather than the hand-wave they replaced (revmux round 1):
+##
+##   * ABOVE (badge top at local y 54, baseline at 48). The caps this line is made
+##     of barely descend — Oswald-Bold's `C` reaches 0.5 px below the baseline, 3.5
+##     with the SFX outline's dilation — so they clear the badge by ~2.5 px. The
+##     one glyph that does NOT is the streak suffix's `(` / `)`, which reach 7.2 px
+##     (10.2 with the outline) and so are INSIDE the badge's band vertically. They
+##     never meet it because the line is right-aligned and the badge is `STRIP_WIDTH`
+##     from that right edge: the suffix would have to be 178 px wide before its
+##     parens could reach the badge's x range, and it is 78.
+##   * BELOW. The badge overhangs 6 px past our rect at x −280…−252 from the right
+##     anchor; `AbilityHUD` starts at −176. They are 76 px apart HORIZONTALLY and
+##     never overlap, so the overhang lands on empty screen.
+const BADGE_HEIGHT: float = 24.0
+
+## Floor on the badge's width, so a single digit still gets a plate rather than a
+## sliver. Three digits (level 100+) widen it instead of clipping — the curve is
+## unbounded and there is no maximum level.
+const BADGE_MIN_WIDTH: float = 28.0
+
+## How far the hexagon's left and right points stick out past its flat top and
+## bottom edges.
+const BADGE_POINT: float = 6.0
+
+const BAR_HEIGHT: float = 6.0
+
+## THE STRIP HANGS OFF OUR RIGHT EDGE, NOT OUR LEFT ONE, and this is the width it
+## reserves — `CoinLabel`'s own 256 px in `main.tscn` (`hero_hud_selfcheck` check
+## 9b pins the two together).
+##
+## `size.x` IS NOT 256. A `Label`'s rect is `max(its offsets, its minimum size)`
+## and its minimum width is its TEXT's width, which at Oswald-Bold 40 passes 256
+## as soon as there is a skill point to show (`COINS: 250  3 SP` is 280 px, the
+## German line 281 from level 1 on) and jumps another 78 px whenever the ` (XN)`
+## streak suffix appears. `grow_horizontal = 0` pins the RIGHT edge and lets the
+## LEFT one move, so anything drawn at local x 0 slides sideways on every streak
+## break — measured, revmux round 1. Everything below is therefore positioned
+## backwards from `size.x`, which is the edge that does not move.
+const STRIP_WIDTH: float = 256.0
+
+## Heading size for the bare level digits — nothing to translate, so no CSV row
+## and no width budget.
+const BADGE_FONT_SIZE: int = HudTheme.HEADING_FONT_SIZE
+
 ## Cached player reference (re-fetched if it ever goes away).
 var player: Node = null
 
-## Cached meta-progression node (scripts/progression.gd), for the "Lv N" prefix.
+## Cached meta-progression node (scripts/progression.gd) — the strip's level and
+## fill, plus the unspent-points suffix.
 ## Cached exactly like `player` — a group lookup per frame for a label that may
 ## legitimately never have one is the wrong shape.
 var progression: Node = null
 
 ## Last coin count we displayed — an increase means a pickup just happened.
 var _last_coins: int = 0
+
+## THE STRIP'S ONLY REDRAW TRIGGER. `_process` recomputes both every frame and
+## calls `queue_redraw()` ONLY when one of them moved — which is per coin, never
+## per frame. (Assigning an unchanged `text` does not redraw a Label either, so
+## without this the strip would simply never repaint.)
+##
+## A fraction below zero means "no Progression node": `_draw` paints nothing, the
+## same standalone degrade the old level prefix had. -1 rather than a second bool.
+var _last_fraction: float = -1.0
+var _last_level: int = -1
 
 
 func _ready() -> void:
@@ -97,24 +177,18 @@ func _process(delta: float) -> void:
 		# translation. The rule across the project: a plain literal assigned to
 		# `.text` needs no `tr()`; a format string does, and the `tr()` goes on
 		# the format string, before the `%`.
-		# The level prefix is only rendered when a Progression node exists (found by
-		# group, like everything else here), so this label keeps working unchanged
-		# in a scene without one — and both format strings are CSV rows.
-		var line: String = ""
-		if progression and "level" in progression and progression.has_method("unspent_points"):
-			line = tr("Lv %d   Coins: %d") % [
-				progression.level, player.coins_collected
-			]
+		# ONE level readout, and it is the badge `_draw` paints below (bead
+		# godot-test1-l8rs) — which is why this branch collapsed to the count. The
+		# now-unused "Lv %d   Coins: %d" row stays in `ui.csv`: nothing there forbids
+		# an unused key, and the file is owned by beads in flight.
+		var line: String = tr("Coins: %d") % [player.coins_collected]
+		if progression and progression.has_method("unspent_points"):
 			# Unspent skill points, shown only when there are any — the same
 			# suffix-when-it-matters rule the streak "(xN)" below follows. Nothing
 			# spends them yet (bead godot-test1-20z.3).
 			var points: int = progression.unspent_points()
 			if points > 0:
 				line += tr("  %d SP") % points
-		else:
-			line = tr("Coins: %d") % [
-				player.coins_collected
-			]
 		# Show the coin-streak multiplier only while it's actually boosting (>1),
 		# e.g. "Coins: 87 (x3)" — see get_streak_multiplier().
 		var mult: int = player.get_streak_multiplier()
@@ -125,3 +199,87 @@ func _process(delta: float) -> void:
 		# composition above happens into a local rather than into `.text`.
 		# `to_upper()` is locale-aware in Godot, so the German row's ü/ö/ä survive.
 		text = line.to_upper()
+
+	# THE STRIP'S REDRAW, AND THE ONLY ONE. Both reads are cheap (`level_for` is a
+	# handful of integer compares), and the fraction only moves when a coin lands —
+	# so this is a per-COIN repaint wearing a per-frame poll, which is what the bead
+	# asked for over a signal: `levelled_up` fires on a LEVEL change, and a coin gain
+	# has no signal at all. (Assigning an unchanged `text` does not redraw a Label
+	# either, so without this the strip would simply never repaint.)
+	var frac: float = -1.0
+	var level: int = -1
+	if progression and progression.has_method("level_progress") \
+			and "lifetime_coins" in progression and "level" in progression:
+		frac = progression.level_progress(progression.lifetime_coins)
+		level = progression.level
+	if frac != _last_fraction or level != _last_level:
+		_last_fraction = frac
+		_last_level = level
+		queue_redraw()
+
+
+func _draw() -> void:
+	"""
+	THE LEVEL STRIP: a hexagon badge carrying the level digits, and a bar filling
+	toward the next level, in the band under the count. Spatially disjoint from the
+	text the `Label` paints on top of us, so the order between the two is moot.
+
+	NO EASING on the fill (owner ruling): one coin moves it a fraction of a pixel
+	on a ~200 px bar, and a chest burst should jump honestly. At a level-up the
+	fraction goes ~1 -> 0 on the same poll, which IS the snap to empty — the
+	`LEVEL N` caption and `play_level_up()` stay the only fanfare.
+
+	NOT ONE HEX LITERAL: every colour is a `HudTheme` const, which
+	`hero_hud_selfcheck` check 8a scans every script for.
+	"""
+	if _last_fraction < 0.0:
+		return   # no Progression node — paint nothing, exactly as the old prefix did
+	var cy := STRIP_TOP + (size.y - STRIP_TOP) * 0.5
+	var font := HudTheme.heading_font()
+	var digits := str(_last_level)
+	var digits_w := font.get_string_size(
+		digits, HORIZONTAL_ALIGNMENT_LEFT, -1, BADGE_FONT_SIZE).x
+	var badge_w := maxf(BADGE_MIN_WIDTH, digits_w + HudTheme.GRID)
+	# The strip's left edge, measured back from the right one. `maxf` only for the
+	# degenerate case of a rect narrower than the strip, which `main.tscn` is not.
+	var strip_x := maxf(0.0, size.x - STRIP_WIDTH)
+
+	# The hexagon: flat top and bottom, a point at each side — six points rather
+	# than a rect, because the badge is the one Diablo-ish thing in this corner.
+	var half := BADGE_HEIGHT * 0.5
+	var badge_right := strip_x + badge_w
+	var hexagon := PackedVector2Array([
+		Vector2(strip_x, cy),
+		Vector2(strip_x + BADGE_POINT, cy - half),
+		Vector2(badge_right - BADGE_POINT, cy - half),
+		Vector2(badge_right, cy),
+		Vector2(badge_right - BADGE_POINT, cy + half),
+		Vector2(strip_x + BADGE_POINT, cy + half),
+	])
+	draw_colored_polygon(hexagon, Color(HudTheme.INK, HudTheme.PANEL_ALPHA))
+	# `draw_polyline` does not close a loop, so the first point is repeated.
+	draw_polyline(hexagon + PackedVector2Array([hexagon[0]]),
+		HudTheme.BONE, HudTheme.BORDER_PX)
+	# The digits, centred on the plate. No outline: they are ON a plate rather than
+	# on the world, so the world-lettering stroke would only thicken them.
+	font.draw_string(get_canvas_item(),
+		Vector2(strip_x + (badge_w - digits_w) * 0.5,
+			cy - font.get_height(BADGE_FONT_SIZE) * 0.5
+				+ font.get_ascent(BADGE_FONT_SIZE)),
+		digits, HORIZONTAL_ALIGNMENT_LEFT, -1, BADGE_FONT_SIZE, HudTheme.BONE)
+
+	# The bar runs from the badge to our right edge. Both ends are measured from
+	# that edge, so the strip is genuinely fixed and genuinely right-flush however
+	# far the text above has pushed our left edge out — see `STRIP_WIDTH`.
+	var bar_x := badge_right + HudTheme.GRID
+	var bar := Rect2(Vector2(bar_x, cy - BAR_HEIGHT * 0.5),
+		Vector2(size.x - bar_x, BAR_HEIGHT))
+	if bar.size.x <= 0.0:
+		return
+	draw_rect(bar, Color(HudTheme.INK, HudTheme.PANEL_ALPHA))
+	# Inset half a pixel so the 1 px frame lands ON pixels rather than across two.
+	draw_rect(bar.grow(-0.5), HudTheme.STEEL, false, HudTheme.BORDER_PX)
+	var inner := bar.grow(-float(HudTheme.BORDER_PX))
+	draw_rect(Rect2(inner.position,
+		Vector2(roundi(inner.size.x * _last_fraction), inner.size.y)),
+		HudTheme.BONE)

@@ -59,6 +59,15 @@ extends SceneTree
 ##      weights loaded and distinct, one shared `Theme` with no project-wide
 ##      flip, and the pilot's own colours bound to the palette.
 ##
+##   9. **THE LEVEL STRIP UNDER THE COIN COUNT** (bead godot-test1-l8rs): the
+##      badge and the bar `coin_hud.gd` now paints in its own bottom band. Two
+##      halves, both text-based like check 8 — (a) the file really names the
+##      progression read, the palette consts it paints in and the redraw it is
+##      allowed exactly one of, and NO LONGER carries the `Lv %d` prefix, because
+##      two level readouts on one line is the regression; (b) the BAND: the
+##      `CoinLabel` rect in `main.tscn` is tall enough to hold the strip below the
+##      text, and still ends above `AbilityHUD`. Both rules carry a tamper.
+##
 ##      IT MOVED SIDEWAYS AND NOT DOWN, which is worth knowing before you "fix" it:
 ##      `PerfOverlay` is a Label whose real height is its TEXT's minimum size (316
 ##      px, not the 276 its offsets declare), so pushing its top down 48 px pushes
@@ -75,6 +84,10 @@ const VOICE_SCRIPT := preload("res://scripts/voice_chat.gd")
 const AVATAR_SCRIPT := preload("res://scripts/remote_avatar.gd")
 ## The HUD skin this row pilots (bead godot-test1-y1o.24) — check 8.
 const THEME_SCRIPT := preload("res://scripts/hud_theme.gd")
+## The coin line, which since bead godot-test1-l8rs also PAINTS the level strip —
+## check 9 reads its body as text and its band consts as numbers.
+const COIN_SCRIPT := preload("res://scripts/coin_hud.gd")
+const COIN_PATH := "res://scripts/coin_hud.gd"
 const MAIN_SCENE_PATH := "res://scenes/main.tscn"
 
 ## THE WORLD-LETTERING CONSUMERS, and their one distinguishing colour (bead
@@ -100,6 +113,20 @@ const WORLD_LETTERING_SHARED: Array[String] = [
 	"HudTheme.heading_font()", "HudTheme.INK", "HudTheme.OUTLINE_SFX_PX",
 	"HudTheme.SHADOW_PANEL_OFFSET",
 ]
+
+## THE LEVEL STRIP'S OWN NAMES (check 9a) — one row per thing that would leave no
+## other trace if it were deleted. The progression read, the four palette consts
+## the badge and the bar are painted in (a hex typed here instead would fail 8a,
+## so what 9a guards is the strip going UNPAINTED), the heading size the digits
+## take, and `queue_redraw` — without which `_draw` runs once and the bar freezes
+## at whatever the first frame had.
+const LEVEL_STRIP_NAMES: Array[String] = [
+	"level_progress", "HudTheme.BONE", "HudTheme.STEEL", "HudTheme.PANEL_ALPHA",
+	"HudTheme.BORDER_PX", "HudTheme.HEADING_FONT_SIZE", "queue_redraw",
+]
+## And the one thing it must NOT spell: the retired text prefix. The badge IS the
+## level now, and a line that says it twice is the regression this names.
+const LEVEL_STRIP_RETIRED := "Lv %d"
 
 var _failures: Array[String] = []
 
@@ -207,6 +234,7 @@ func _run() -> void:
 	_check_voice_on_the_row()
 	_check_the_voice_seams_in_a_room()
 	_check_the_hud_theme()
+	_check_the_level_strip()
 	_report()
 
 
@@ -1212,6 +1240,116 @@ func _check_the_hud_theme() -> void:
 		"locale_selfcheck._check_widths is no longer taking the WIDEST face — one "
 		+ "ruler for three faces is the vacuous budget this bead exists to stop")
 	Sentinel.done("the_hud_theme")
+
+
+func _check_the_level_strip() -> void:
+	"""
+	9. THE LEVEL STRIP UNDER THE COIN COUNT (bead godot-test1-l8rs).
+
+	TEXT rather than behaviour, for check 8's reason: driving `coin_hud`'s `_draw`
+	means standing up `main.tscn` with a player and a `Progression` in it, and what
+	would actually go wrong here is a LINE DELETED — the strip silently unpainted,
+	or frozen on frame one, with every other check in the suite still green.
+
+	  a. The file names what it must name, and no longer names the prefix it
+	     replaced.
+	  b. THE BAND. The strip lives in the bottom of `CoinLabel`'s own rect, so that
+	     rect has to be taller than the text it also holds — and it still has to end
+	     above `AbilityHUD`, the widget directly under it. Both numbers live in
+	     `main.tscn` and in `coin_hud.gd`'s consts, which is to say in two files that
+	     no single edit keeps in step; each rule carries the tamper that proves it
+	     bites.
+	"""
+	# --- a. the strip really reads and really repaints ---------------------------
+	# COMMENTS STRIPPED FIRST, and check 8d's `ponytail:` note is why: a scan that
+	# reads the whole file is answered by the PROSE explaining the line, so deleting
+	# `queue_redraw()` and leaving the comment above it passes — measured. Dropping
+	# `#` lines is not a parser and is not trying to be one; it is the one shape of
+	# false pass this check can actually hit, because every name below is documented
+	# in the comment that sits directly above its call.
+	var body := FileAccess.get_file_as_string(COIN_PATH)
+	_check(not body.is_empty(), "%s is missing — the level strip has no painter"
+		% COIN_PATH.get_file())
+	var code := ""
+	for line: String in body.split("\n"):
+		if not line.strip_edges().begins_with("#"):
+			code += line + "\n"
+	for name: String in LEVEL_STRIP_NAMES:
+		_check(code.contains(name),
+			"%s never names %s — the level strip is the badge, the bar and the one "
+				% [COIN_PATH.get_file(), name]
+				+ "redraw that moves it, and every piece leaves exactly one trace")
+	_check(not code.contains(LEVEL_STRIP_RETIRED),
+		"%s still carries the `%s` text prefix — the badge IS the level, and the "
+			% [COIN_PATH.get_file(), LEVEL_STRIP_RETIRED]
+			+ "line must not say it a second time")
+
+	# --- b. the band, and the two tampers ----------------------------------------
+	var text := FileAccess.get_file_as_string(MAIN_SCENE_PATH)
+	for msg: String in _level_strip_band_failures(text):
+		_fail(msg)
+	# A rect pushed PAST the dial below it must fail the clearance rule...
+	var over := _level_strip_band_failures(
+		text.replace("offset_bottom = 92.0", "offset_bottom = 110.0"))
+	_check(_any_contains(over, "AbilityHUD"),
+		"a CoinLabel ending at 110 still clears AbilityHUD as far as this check is "
+		+ "concerned — the clearance rule has stopped biting")
+	# ...and one shrunk back to where it was before the strip must fail the other,
+	# because a strip with no band is a strip drawn over the count's own glyphs.
+	var under := _level_strip_band_failures(
+		text.replace("offset_bottom = 92.0", "offset_bottom = 80.0"))
+	_check(_any_contains(under, "band"),
+		"a CoinLabel back at its pre-strip height still leaves room for the band — "
+		+ "the band rule has stopped biting")
+	Sentinel.done("the_level_strip")
+
+
+func _any_contains(messages: Array[String], needle: String) -> bool:
+	for m: String in messages:
+		if m.contains(needle):
+			return true
+	return false
+
+
+func _level_strip_band_failures(text: String) -> Array[String]:
+	"""
+	The band rules over one `main.tscn` body, as messages rather than `_fail`s —
+	which is what lets check 9b run them against a TAMPERED scene and assert they
+	fire. Y ONLY: both rects hang off the same top-right anchor, so their tops and
+	bottoms are directly comparable without resolving the anchor against a design
+	width, and Y is the whole question here.
+	"""
+	var out: Array[String] = []
+	var coin: Variant = _node_rect(text, "CoinLabel")
+	var dial: Variant = _node_rect(text, "AbilityHUD")
+	if coin == null or dial == null:
+		out.append("main.tscn has lost CoinLabel or AbilityHUD")
+		return out
+	var coin_rect: Rect2 = coin
+	var dial_rect: Rect2 = dial
+	# The band is everything below the text block, and it has to hold the bar with
+	# its 1 px frame on both edges. (The BADGE is deliberately taller and overhangs
+	# the band at both ends — see `coin_hud.BADGE_HEIGHT` — so it is the BAR that
+	# sets the floor here.)
+	var band := coin_rect.size.y - COIN_SCRIPT.STRIP_TOP
+	var needed: float = COIN_SCRIPT.BAR_HEIGHT + 2.0 * THEME_SCRIPT.BORDER_PX
+	if band < needed:
+		out.append("CoinLabel leaves a %.0f px band under the count and the strip's "
+				% band
+				+ "bar needs %.0f — the band is where the strip lives" % needed)
+	# THE STRIP HANGS OFF THE RIGHT EDGE and reserves `STRIP_WIDTH` back from it, so
+	# the designed rect has to be at least that wide or the badge starts outside it.
+	# (The LIVE rect is only ever wider — a Label's minimum size is its text's — which
+	# is the whole reason `coin_hud` measures backwards from `size.x`; see STRIP_WIDTH.)
+	if coin_rect.size.x < COIN_SCRIPT.STRIP_WIDTH:
+		out.append("CoinLabel is %.0f px wide and the strip reserves %.0f back from "
+				% [coin_rect.size.x, COIN_SCRIPT.STRIP_WIDTH]
+				+ "its right edge — the badge would hang outside the designed rect")
+	if coin_rect.end.y > dial_rect.position.y:
+		out.append("CoinLabel ends at y %.0f and AbilityHUD starts at y %.0f — the "
+				% [coin_rect.end.y, dial_rect.position.y]
+				+ "strip would be painted over the dial")
+	return out
 
 
 func _script_paths() -> PackedStringArray:
