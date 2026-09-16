@@ -108,10 +108,13 @@ extends Control
 ## PLAY button removed and one sentence saying to come back on a computer.
 ##
 ## Nothing else in the game has to know it is a phone, which is the whole reason
-## the predicate lives here and only here: with this card up the tree is paused,
-## `_dismiss()` is unreachable from any input, and no run ever starts. See
-## `_is_phone()` for why the test is the user-agent feature tags and which way it
-## is deliberately biased.
+## the predicate lives here and only here: with this card up the tree is paused
+## and no run ever starts. `_dismiss()` is the one thing that could undo all of
+## that, so BOTH of its doors are barred — `_unhandled_input()` refuses
+## `ui_accept`, and `play_film()` refuses the ending film, which is the door
+## nobody has to press (see it for the archived-world path that walks through it
+## on the first idle frame). See `_is_phone()` for why the test is the user-agent
+## feature tags and which way it is deliberately biased.
 
 # ============================================================================
 # CONSTANTS — layout
@@ -406,6 +409,24 @@ func _start_film(video_url: String) -> bool:
 func play_film(video_url: String, finished: Callable = Callable()) -> bool:
 	if _intro_playing:
 		return false
+	# THE PHONE CARD OUTRANKS EVERY FILM, and this is the one way in that no
+	# player has to press. `player_controller._ready()` defers
+	# `_reopen_archived_ending()` whenever `BestRunStore.world_archived()` is
+	# latched — a latch a phone that finished a world on the old touch build is
+	# still carrying in its IndexedDB-backed `user://best_run.cfg` — and it runs
+	# under our pause, reaching `game_over_ui.show_game_over()`, whose web branch
+	# calls straight in here. Without this line the first idle frame of a phone's
+	# session hid the card behind an ending film and then released the only
+	# `PauseHub` claim in the game, leaving a live world under an interactive
+	# Play Again panel: the exact surface the card exists to withhold.
+	#
+	# `true`, not `false`, and that is the load-bearing half: the caller reads the
+	# answer as "the screen is taken" and takes its early return with its own
+	# panel still hidden, where `false` is its "show your fallback UI" signal.
+	# Nothing is stranded behind it — `game_over_ui.hide_game_over()`'s
+	# `cancel_film()` is already a no-op while `_intro_playing` is false.
+	if _phone:
+		return true
 	_film_finished_callback = finished
 	_dismissed = false
 	visible = true
@@ -587,9 +608,13 @@ func _build_ui() -> void:
 	# language pills. No PLAY button — there is nothing to press, which is the
 	# point — and no multiplayer hint, because a player who cannot start a run has
 	# no use for where the MP panel lives. Everything else on this node is
-	# unchanged: `_body` is still the opaque full-rect scrim that covers the HUD
-	# drawn under it, the pause `_ready()` took is never released, and
-	# `_unhandled_input` refuses `ui_accept`.
+	# unchanged: `_body` is still the full-rect modal scrim — a 78% INK veil over
+	# the dimmed world, swallowing every click — the pause `_ready()` took is
+	# never released, `_unhandled_input` refuses `ui_accept` and `play_film()`
+	# refuses the ending film. The veil is NOT raised to full alpha for the phone:
+	# "dim the running world rather than hide it" is this card's deliberate rule
+	# (see the `Dim` ColorRect below), and it is no less true when the card is
+	# never going away.
 	#
 	# The label takes the theme's own BONE face at the hint's size and no colour
 	# override — the palette hexes live in `hud_theme.gd` and nowhere else — and
@@ -880,9 +905,9 @@ func _apply_pause(active: bool) -> void:
 	if active:
 		# Taken once and HELD — through the menu, through the whole intro film,
 		# and handed to `_dismiss()`. `_apply_pause(true)` is re-asserted every
-		# frame from `_process` (see the callers), so the claim guard is what keeps
-		# that to one dictionary write; `PauseHub.take()` would be idempotent
-		# anyway.
+		# frame from `_process` WHILE A FILM IS UP (the card itself takes it once
+		# in `_ready()` and never again), so the claim guard is what keeps that to
+		# one dictionary write; `PauseHub.take()` would be idempotent anyway.
 		if not _paused_by_us:
 			PauseHub.take(self)
 			_paused_by_us = true

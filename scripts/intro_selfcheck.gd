@@ -114,8 +114,12 @@ extends SceneTree
 ##     below can force it true on a headless desktop build; what is then asserted
 ##     is the whole contract: nothing pressable but the two language pills, the
 ##     sentence really on the card, that sentence really in the CSV (German comes
-##     back different, or a German player reads English), and `ui_accept` NOT
-##     dismissing it with the pause still held by exactly one holder.
+##     back different, or a German player reads English), and BOTH doors to
+##     `_dismiss()` barred with the pause still held by exactly one holder —
+##     `ui_accept`, and `play_film()`, which is the one nobody has to press
+##     (`player_controller._ready()` defers `_reopen_archived_ending()` on a
+##     latched archived world, and that walks in through `game_over_ui` on the
+##     first idle frame of the session).
 ##
 ##     ITS NEGATIVE CONTROL IS CHECK 2: `_check_start_press_desktop_path()` builds
 ##     the plain `StartOverlay` — same tree, same headless build, `_is_phone()`
@@ -1012,6 +1016,33 @@ func _check_phone_card() -> void:
 	if not paused:
 		_fail("the tree is running behind the phone card — it must hold the pause " \
 			+ "it took in _ready() forever, because nothing ever releases it")
+	# (e) AND NO FILM CAN TEAR IT DOWN EITHER — the door nobody has to press.
+	# `player_controller._ready()` defers `_reopen_archived_ending()` whenever
+	# `BestRunStore.world_archived()` is latched, which a phone that finished a
+	# world on the old touch build still carries; it runs under this node's own
+	# pause and reaches `game_over_ui.show_game_over()`, whose web branch calls
+	# `play_film()` with no input from anybody. Before the guard that was a
+	# dismissed card, a released PauseHub claim and a live world under an
+	# interactive Play Again panel, on the first idle frame of the session.
+	#
+	# `true` is the answer under test, not a formality: `game_over_ui` reads
+	# `false` as "show your own fallback panel", which is that same interactive
+	# surface by another route.
+	if not overlay.play_film(IntroVideo.GAME_OVER_VIDEO_URL):
+		_fail("play_film() answered false on the phone card — game_over_ui reads " \
+			+ "that as 'show your own panel', which hands the phone the " \
+			+ "interactive surface the card exists to withhold")
+	if overlay._intro_playing:
+		_fail("play_film() started a film over the phone card — the card is now " \
+			+ "hidden behind a 21.7 MB video on a phone that cannot play the game")
+	if overlay._dismissed:
+		_fail("play_film() dismissed the phone card — the archived-ending path " \
+			+ "walks straight past the lockout with no input at all")
+	if overlay._body == null or not overlay._body.visible:
+		_fail("play_film() hid the phone card's body — the sentence turning the " \
+			+ "player away is no longer on screen")
+	if not paused:
+		_fail("the tree is running after play_film() on the phone card")
 	if PauseHub.holder_count() != 1:
 		_fail("the phone card holds %d PauseHub claims, expected exactly 1 — " \
 			% PauseHub.holder_count() + "it takes the pause once in _ready() and " \
