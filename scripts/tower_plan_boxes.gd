@@ -317,6 +317,7 @@ static func plan_boxes(floor_index: int) -> Array[Dictionary]:
 	if not ramp.is_empty():
 		out.append(ramp)
 	out.append_array(_plan_pads(plan))
+	out.append_array(_plan_lift_pad(plan))
 	out.append_array(TowerInterior._plan_gates(plan))
 	# ...and the hand-built parts, each guarded by a ROOM OR GATE LOOKUP and never by
 	# a floor number. That is the rule the cell block has followed since phase 16 and
@@ -670,6 +671,38 @@ static func _plan_pads(plan: Dictionary) -> Array[Dictionary]:
 					TowerPlans.PLAN_CELL),
 			"color": TowerInterior.COLOR_SYSTEM, "collide": false, "floor": floor_index,
 		})
+	return out
+
+
+static func _plan_lift_pad(plan: Dictionary) -> Array[Dictionary]:
+	"""
+	One plate on the lift's call cell, in the lift rose.
+	
+	@return: A `COLOR_LIFT` plate on `TowerInterior.lift_cell()`, non-solid (you
+	        stand ON the slab - a 10 cm lip is a wall to a CharacterBody3D with
+	        no step-up), or `[]` for a storey with no `s` cells.
+	
+	THE PLATE IS THE PAINT AND THE TRIGGER IS THE CALL, exactly as the lure
+	plates are drawn here and locked there: what makes the cell a lift stop is
+	the `LiftStopTrigger` standing over the landing, and only what MOVES ever
+	leaves the storey's batch. Both read the same `lift_cell()` scan, so the
+	square you see painted and the point the lift sets you down on cannot drift
+	apart. Structural (no dress flag), like the lure plates.
+	"""
+	var out: Array[Dictionary] = []
+	var floor_index := int(plan["floor"])
+	var cell := TowerInterior.lift_cell(floor_index)
+	if cell.x < 0:
+		return out
+	var top: float = FLOOR_Y[floor_index]
+	out.append({
+		"name": "%sLiftPad" % TowerInterior._plan_prefix(floor_index),
+		"pos": Vector3(_grid_x(float(cell.x) + 0.5), top + PLAN_PAD_THICK * 0.5,
+				_grid_z(float(cell.y) + 0.5)),
+		"size": Vector3(TowerPlans.PLAN_CELL, PLAN_PAD_THICK,
+				TowerPlans.PLAN_CELL),
+		"color": TowerInterior.COLOR_LIFT, "collide": false, "floor": floor_index,
+	})
 	return out
 
 
