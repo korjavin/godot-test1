@@ -19,8 +19,8 @@ extends Control
 ##   * **Leave**, returning to solo play.
 ##
 ## Everything is built in code in `_ready()` — the same convention as
-## `touch_controls.gd`, `mobile_settings_panel.gd` and `pause_controller.gd`,
-## so `main.tscn` needs nothing but a bare `Control` node carrying this script.
+## `pause_controller.gd` and `skill_tree_ui.gd`, so `main.tscn` needs nothing but
+## a bare `Control` node carrying this script.
 ##
 ## ----------------------------------------------------------------------------
 ## No hard references — found by group, like the rest of the HUD
@@ -47,10 +47,8 @@ extends Control
 ## ----------------------------------------------------------------------------
 ## Visible on EVERY platform — deliberately not touch-gated
 ## ----------------------------------------------------------------------------
-## `touch_controls.gd` and `mobile_settings_panel.gd` hide themselves on desktop
-## (they exist only to replace a keyboard). This one does the opposite: hosting
-## and joining is a desktop feature too, and there is no keyboard shortcut for
-## it, so the button is the ONLY way in. It is still sized for a thumb
+## The button is up on every platform: hosting and joining is a desktop feature
+## as much as a phone one. It is still sized for a thumb
 ## (`TOUCH_MIN_HEIGHT`), and the code `LineEdit` raises the on-screen keyboard
 ## on a phone for free.
 ##
@@ -88,9 +86,8 @@ extends Control
 ## picked because the rest of the HUD is spoken for: the hero portrait row + perf
 ## overlay own the top-left column, coins + the ability dial the top-right, the view /
 ## steer toggles the top-centre, and the Jump/Special/Switch cluster the
-## bottom-right. `mobile_settings_panel.gd`'s ⚙ Tune gear also lives
-## bottom-left, so this button is stacked ABOVE it (see `_build_ui`) rather
-## than on top of it — the gear is touch-only, this one is everywhere.
+## bottom-right. It is stacked one ⚙ Tune gear up from the bottom edge rather
+## than on it — see `TUNE_GEAR_HEIGHT` and `_build_ui`.
 const MP_BUTTON_HEIGHT: float = 56.0
 
 ## The toggle's width, for BOTH its forms (bead godot-test1-k4l). The offline
@@ -111,10 +108,9 @@ const MP_BUTTON_FONT_SIZE_ONLINE: int = 19
 const EDGE_MARGIN: float = 16.0
 
 ## Height of the ⚙ Tune gear this button stacks above, plus the gap between
-## them. Mirrors `mobile_settings_panel.GEAR_HEIGHT` — duplicated rather than
-## reached for across scripts, because a hard reference to that panel is exactly
-## what the group-discovery convention exists to avoid, and a stale value here
-## costs a few pixels of gap, not a bug.
+## them. A number rather than a reference reached for across scripts, because a
+## hard reference to another panel is exactly what the group-discovery convention
+## exists to avoid, and a stale value here costs a few pixels of gap, not a bug.
 const TUNE_GEAR_HEIGHT: float = 60.0
 const BUTTON_STACK_GAP: float = 8.0
 
@@ -275,8 +271,8 @@ const CAMERA_KEY: Key = KEY_G
 # ============================================================================
 
 ## Cached manager, re-fetched through the `"mp"` group if it was never found or
-## has since been freed (mirrors `touch_controls._ensure_driver()`). Null on a
-## build with no Multiplayer node — every caller guards.
+## has since been freed. Null on a build with no Multiplayer node — every caller
+## guards.
 var _manager: Node = null
 
 ## True once we have connected to the manager's signals, so `_ensure_manager()`
@@ -381,12 +377,11 @@ var _headings: Array = []
 
 
 func _ready() -> void:
-	# Keep working while the tree is paused, for the same reason
-	# `mobile_settings_panel.gd` does: this Control sits above the touch UI in
-	# the HUD, and its Button / PanelContainer children carry the default
-	# MOUSE_FILTER_STOP. A PAUSABLE control receives no GUI input yet still
-	# blocks the PROCESS_MODE_ALWAYS one beneath it, so a pause would leave taps
-	# landing here dead instead of falling through.
+	# Keep working while the tree is paused: this Control's Button /
+	# PanelContainer children carry the default MOUSE_FILTER_STOP. A PAUSABLE
+	# control receives no GUI input yet still blocks the PROCESS_MODE_ALWAYS one
+	# beneath it, so a pause would leave taps landing here dead instead of
+	# falling through.
 	process_mode = Node.PROCESS_MODE_ALWAYS
 
 	# The root spans the screen but must NOT be a hit-test target itself, or it
@@ -406,25 +401,20 @@ func _ready() -> void:
 
 
 
-## Yield the screen to a modal overlay: the button hides and an open panel is
-## force-closed too (which also releases our pause). The why lives on
-## `_modal_yield()`, which owns the whole rule.
+## Three per-frame jobs: the HUD voice switches follow the panel that carries the
+## same controls, the pause claim is re-asserted, and the speaking dots follow
+## speech. Each is commented at its own line below.
 func _process(_delta: float) -> void:
 	if _mp_button == null:
 		return
-	var modal: bool = _modal_yield()
-
-	_mp_button.visible = not modal
 	# The panel body opens over this region and carries the same switches.
-	var hud_voice_visible: bool = (not modal) and (not _panel_open) and (_voice_section != null and _voice_section.visible)
+	var hud_voice_visible: bool = (not _panel_open) and (_voice_section != null and _voice_section.visible)
 	if _hud_mic_button != null:
 		_hud_mic_button.visible = hud_voice_visible
 	if _hud_deafen_button != null:
 		_hud_deafen_button.visible = hud_voice_visible
 	if _hud_camera_button != null:
 		_hud_camera_button.visible = hud_voice_visible
-	if modal and _panel_open:
-		_set_panel_open(false)
 
 	# The pause decision is re-evaluated every frame, not just at open time —
 	# see `_apply_pause()` for why (this node is PROCESS_MODE_ALWAYS, so it keeps
@@ -437,32 +427,6 @@ func _process(_delta: float) -> void:
 	# pause — which they must, since voice does (epic godot-test1-xtr).
 	if _panel_open:
 		_update_member_rows()
-
-
-## Whether a full-rect touch overlay (or the tune panel) owns the screen, so
-## the MP button hides and the hotkey stays inert (bead godot-test1-xtr.21).
-## Yield the screen to TouchControls' full-rect overlays — the exact lines
-## `mobile_settings_panel.gd` runs for its ⚙ gear, for the exact same reason.
-## This Control draws above TouchControls (only `StartOverlay`, the boot-time
-## modal, sits later in `HUD` than it does) and wins hit-testing: an unhidden
-## MP button in the bottom-left corner steals taps from the first-run "tap to
-## enable motion controls" overlay — and that tap is the ONE user gesture iOS
-## grants `DeviceMotionEvent.requestPermission()` and the browser grants
-## WebAudio, so motion AND all audio would stay dead for the session.
-## Yield to the ⚙ Tune panel for the same reason, one sibling further along.
-## That panel's body opens UPWARD from just above its gear — bottom offsets
-## [-664, -84], left [16, 396] — which contains this button's [-140, -84] x
-## [16, 126] entirely. MultiplayerUI draws after MobileSettingsPanel, so it wins
-## the panel and wins hit-testing: without this the panel's bottom-left corner
-## (where its Close row sits) opens the MP panel instead.
-func _modal_yield() -> bool:
-	var touch_ui: Node = get_tree().get_first_node_in_group("touch_controls")
-	if touch_ui != null and touch_ui.has_method("has_modal") and touch_ui.has_modal():
-		return true
-	var tune_ui: Node = get_tree().get_first_node_in_group("mobile_settings")
-	if tune_ui != null and tune_ui.has_method("is_panel_open") and tune_ui.is_panel_open():
-		return true
-	return false
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -484,24 +448,18 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.keycode == TOGGLE_KEY \
 			and not event.ctrl_pressed and not event.meta_pressed:
-		# Inert while the button itself is unusable: hidden by the modal
-		# yield above, where a press has no opener to match and `_process`
-		# would instantly close what it opened.
-		if _modal_yield():
-			return
 		get_viewport().set_input_as_handled()
 		_on_mp_button_pressed()
 
 	# The HUD voice/camera chords (bead godot-test1-k4l): Ctrl+M/D/G through
 	# the SAME handlers as the three switches — one state, two views, no
 	# second state var. Echo-filtered like N; accepted so the browser does not
-	# also act (see the MUTE_KEY comment). Inert under the modal yield exactly
-	# like N, and only while the switches are up — offline they do nothing,
-	# because a press with no visible switch to match is a state flip with no
-	# readout.
+	# also act (see the MUTE_KEY comment). Live only while the switches are up —
+	# offline they do nothing, because a press with no visible switch to match is
+	# a state flip with no readout.
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.ctrl_pressed and not event.meta_pressed:
-		if _modal_yield() or not _voice_switches_up():
+		if not _voice_switches_up():
 			return
 		match event.keycode:
 			MUTE_KEY:

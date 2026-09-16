@@ -51,7 +51,7 @@ extends Control
 ##     Same decision, same reason, as `landmark_toast._take_pause`.
 ##   * OVER GAME OVER the panel opens and freezes nothing either: `GameOverUI` is
 ##     PAUSABLE, so a pause there kills its Play Again button — `pause_controller`,
-##     `mp_ui`, `mobile_input` and the toast all carry this refusal.
+##     `mp_ui` and the toast all carry this refusal.
 ##
 ## `_apply_pause()` is re-asserted from `_process` for `mp_ui`'s reason: the claim
 ## is taken lazily, so a Play Again pressed with the map up must not leave the
@@ -110,14 +110,9 @@ const TOGGLE_KEY: Key = KEY_B
 ## useful BEFORE you arrive — it is where the minimap's arrow is pointing.
 ##
 ## THE SLOT IS NOT THIS FILE'S TO CHOOSE. `skill_tree_ui.gd` owns the column — its
-## origin, its stacking and, since bead `godot-test1-8gw.27`, the step it takes to
-## the left when the touch action cluster is under it. This button is slot 1 and
-## says nothing else about where it sits: `place_in_column()` writes every anchor
-## and offset, so the two openers cannot drift apart and cannot be reflowed apart
-## either. (That bead is why the column moves at all: on a landscape touch session
-## `touch_controls.gd` magnifies the UI by `TOUCH_CONTENT_SCALE` (1.8), the layout
-## becomes 600 units tall, and its SPECIAL circle lands at y 232-352 — right under
-## both openers, which draw after it and so stole the tap.)
+## origin and its stacking. This button is slot 1 and says nothing else about where
+## it sits: `place_in_column()` writes every anchor and offset, so the two openers
+## cannot drift apart.
 const COLUMN_SLOT: int = 1
 ## Width and height are read, not restated, because `locale_selfcheck` measures
 ## "Karte (B)" against `BUTTON_WIDTH` and must measure the width this draws at.
@@ -243,10 +238,6 @@ var _panel_open: bool = false
 var _paused_by_us: bool = false
 var _refresh_timer: float = 0.0
 
-## The column inset currently written into the opener's offsets, so the reflow only
-## touches the layout when it changes. -1 is the "never placed" sentinel.
-var _column_inset: float = -1.0
-
 ## The baked plan, built on first open and kept. Never rebuilt: the plan is const.
 var _base_texture: ImageTexture = null
 
@@ -291,13 +282,6 @@ func _process(delta: float) -> void:
 	# is declined over Game Over and in a room, so a state change under an open
 	# panel must not strand the world in the wrong one.
 	_apply_pause(_panel_open)
-	# Keep the opener in its column slot: `skill_tree_ui.gd` recomputes the column's
-	# inset from the live touch HUD, and this button follows it (bead
-	# `godot-test1-8gw.27`). Gated on a change — writing offsets dirties the layout.
-	var inset: float = SkillTreeUi.column_inset(self)
-	if not is_equal_approx(inset, _column_inset) and _open_button != null:
-		_column_inset = inset
-		SkillTreeUi.place_in_column(_open_button, COLUMN_SLOT, inset)
 	if not _panel_open:
 		return
 	_refresh_timer -= delta
@@ -646,12 +630,13 @@ func _build_ui() -> void:
 	# otherwise re-open this panel on every jump for the rest of the run.
 	_open_button.focus_mode = Control.FOCUS_NONE
 	# The label carries its hotkey (bead godot-test1-k4l): "Map (B)". It is also
-	# the help card's TOUCH legend and the CSV key, so all three read alike.
+	# the CSV key, so the string the German opener is measured against is the
+	# string it draws.
 	_open_button.text = "Map (B)"
 	_open_button.add_theme_font_size_override("font_size", BUTTON_FONT_SIZE)
 	_open_button.custom_minimum_size = Vector2(BUTTON_WIDTH, BUTTON_HEIGHT)
-	# Slot 1 of the column `skill_tree_ui.gd` owns. Placed at the desktop inset and
-	# re-parked by `_reflow_column()` on the first frame — see THE OPENER below.
+	# Slot 1 of the column `skill_tree_ui.gd` owns, placed once — see THE OPENER
+	# below.
 	SkillTreeUi.place_in_column(_open_button, COLUMN_SLOT, SkillTreeUi.EDGE_MARGIN)
 	# THE SAME toggle the key calls, so the pause claim is taken and given back on
 	# one path — `pause_selfcheck` allows exactly one writer and this panel's is

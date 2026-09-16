@@ -170,14 +170,6 @@ class RowStub extends Node:
 		return Rect2(0.0, 0.0, 80.0, 80.0)
 
 
-## A node in group `"mobile_settings"` reduced to the ONE method
-## `mp_ui._modal_yield()` asks for, so the hotkey's modal rule is measured
-## without building the tune panel.
-class ModalStub extends Node:
-	func is_panel_open() -> bool:
-		return true
-
-
 ## A node in group `"player"` reduced to the ONE property
 ## `mp_ui._apply_pause()` reads, so the hotkey's game-over rule is measured
 ## without building the player.
@@ -2279,9 +2271,8 @@ func _check_mp_hotkey() -> void:
 	"""
 	MP PANEL HOTKEY (bead godot-test1-xtr.21). N opens and closes the panel
 	through the shipped MP-button handler — the pause it takes is PauseHub's
-	own — while a press is inert where the button is unusable (the modal
-	yield) and takes no pause over game over (a pause there would freeze the
-	Game Over screen's own buttons, the softlock `_apply_pause` exists to
+	own — while it takes no pause over game over (a pause there would freeze
+	the Game Over screen's own buttons, the softlock `_apply_pause` exists to
 	prevent).
 	"""
 	var room := RoomStub.new()
@@ -2317,16 +2308,6 @@ func _check_mp_hotkey() -> void:
 	_press_key(ui, KEY_M, false)
 	if ui._panel_open:
 		_fail("another panel's key toggled the MP panel — the const is not read")
-
-	# Modal yield: the button hides, so the key stays inert (and an open
-	# panel would be force-closed by `_process`, not left half-open).
-	var modal := ModalStub.new()
-	modal.add_to_group("mobile_settings")
-	root.add_child(modal)
-	_press_key(ui, KEY_N, false)
-	if ui._panel_open:
-		_fail("N opened the MP panel over the modal yield — the hidden button has no opener to match")
-	modal.free()
 
 	# Game over: the panel still opens (readable and closable, the button's
 	# rule) but takes no pause.
@@ -2534,7 +2515,7 @@ func _check_voice_chords() -> void:
 	Each chord opens the SAME seam as its button (the stub flips and both
 	labels repaint in the same tick), an echo is ignored, the unmodified
 	letter does nothing, and the chord is inert while the switches are down
-	(offline, voice unavailable, modal yield). The MP toggle's labels are
+	(offline, or voice unavailable). The MP toggle's labels are
 	asserted as TEXT, exact — dropping the "(N)" fails the check by
 	construction.
 	"""
@@ -2644,7 +2625,7 @@ func _probe_chord(ui: Control, voice: Node, room: Node, key: Key, which: String,
 	if hud.text != off_text:
 		_fail("unmodified %s repainted the %s switch" % [OS.get_keycode_string(key), which])
 
-	# Inert while the switches are down: offline, voice unavailable, modal.
+	# Inert while the switches are down: offline, or voice unavailable.
 	room.online = false
 	ui._update_voice_ui()
 	_press_key(ui, key, false, true)
@@ -2660,13 +2641,6 @@ func _probe_chord(ui: Control, voice: Node, room: Node, key: Key, which: String,
 			% [OS.get_keycode_string(key), which])
 	voice.available = true
 	ui._update_voice_ui()
-	var modal := ModalStub.new()
-	modal.add_to_group("mobile_settings")
-	root.add_child(modal)
-	_press_key(ui, key, false, true)
-	if _chord_state_on(voice, which):
-		_fail("Ctrl+%s flipped the %s state over the modal yield" % [OS.get_keycode_string(key), which])
-	modal.free()
 	ui._process(0.0)
 
 
