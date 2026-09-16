@@ -334,11 +334,21 @@ func _pin_the_world() -> String:
 	deleted the guard; a retry would have hidden it. Every sibling harness that needs
 	a world already forces one through `set_run_seed()` (`batch`, `budapest`,
 	`chunk_stream`, `enemy_spawn`, `waypoint`) and this file was the odd one out.
-	`new_run()` is the door rather than a bare seed write because the world is
-	already streamed by now: it routes through `set_run_seed()` (dropping every
-	seeded memo), throws the old chunks away and re-floors the ring around chunk
-	(0,0) synchronously, with the player put back on it. The 2 s wait below then
-	fills that ring exactly as before.
+	`new_run()` is the door rather than a bare `set_run_seed()` because the seed is
+	not the only thing already built on the old roll: `endless_terrain._ready()`
+	has rolled it and pushed the biome offset into the ground shader, and whatever
+	chunks the first frames streamed belong to that world. `new_run()` writes the
+	seed through the one seam (dropping every seeded memo), re-feeds the shader,
+	frees the old chunks and floors the ring around chunk (0,0) SYNCHRONOUSLY; the
+	2 s wait below then fills it exactly as before.
+
+	IT DOES NOT MOVE THE PLAYER, and this call site only gets away with that
+	because it runs HERE: `relocate()` builds ground around `around` and leaves the
+	teleport to its caller (`PlayerController.restart_game()` does it), and at this
+	point in `_run()` the player is still on the spawn at the origin, so chunk (0,0)
+	is the ring under their feet. A pin moved later — after `_check_river` has
+	walked the player out to the Budapest wall, say — would have to pass that chunk
+	in and put the player back itself, or drop them through the floor.
 
 	The other consequence is the one worth having: any future red here reproduces
 	with one command, on this seed, on any machine."""
