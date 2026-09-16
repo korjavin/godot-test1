@@ -11,9 +11,8 @@ Every run generates a brand-new world.
 
 **▶ Play it in your browser: https://korjavin.github.io/godot-test1/**
 
-Works on desktop and on phones — on mobile you literally **step in place to
-walk** and **tilt your phone to steer** (device motion sensors), with on-screen
-buttons for everything else.
+Desktop browser only — CrimeKickers needs a keyboard and a mouse, and a phone
+that opens the link is shown a card saying so.
 
 ## The CrimeKickers
 
@@ -66,14 +65,9 @@ watch the radial dial in the top-right.
 | **Esc** | Release / recapture the mouse |
 | **\fo** | Performance overlay |
 
-### Mobile (web build)
-Open the game on your phone and tap the start overlay (this also grants iOS
-motion permission). Then:
-- **Step in place** to walk — your phone's motion sensors detect your steps
-- **Tilt** the phone to steer (or toggle to **twist** steering on screen)
-- On-screen buttons: **Jump**, **Special**, **Switch hero**
-- The **⚙ Tune** panel lets you calibrate step detection and steering live;
-  your settings persist between visits
+### Phones
+There is no touch version. A phone that opens the link gets a card asking it to
+come back on a computer — the game is played with a keyboard and a mouse.
 
 ## Running from source
 
@@ -183,7 +177,7 @@ The codebase is written to be read — scripts are heavily commented, explaining
   `AudioStreamWAV` baked in code. There are zero audio asset files.
 - **Tuned hard for the browser**: MultiMesh batching, per-chunk consolidated
   collision, simulation LOD that sleeps far-away crocodiles, and web-specific
-  render settings keep it smooth on a phone.
+  render settings keep it smooth in a browser tab.
 
 Architecture notes for contributors (and AI assistants) live in
 [CLAUDE.md](CLAUDE.md).

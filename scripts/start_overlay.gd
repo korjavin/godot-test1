@@ -34,12 +34,11 @@ extends Control
 ## ----------------------------------------------------------------------------
 ## Built in code, no assets — the project convention
 ## ----------------------------------------------------------------------------
-## `touch_controls.gd`, `mobile_settings_panel.gd`, `game_over_ui.gd` and
-## `mp_ui.gd` all build their entire UI in `_ready()` from bare `Control`s and a
-## `StyleBoxFlat`, so `main.tscn` carries nothing but a `Control` with this
-## script on it. This one does the same, and it borrows `mp_ui`'s `_make_button`
-## rule wholesale — see `_make_button()` below for why FOCUS_NONE is load-bearing
-## and not a style preference.
+## `game_over_ui.gd` and `mp_ui.gd` both build their entire UI in `_ready()`
+## from bare `Control`s and a `StyleBoxFlat`, so `main.tscn` carries nothing but
+## a `Control` with this script on it. This one does the same, and it borrows
+## `mp_ui`'s `_make_button` rule wholesale — see `_make_button()` below for why
+## FOCUS_NONE is load-bearing and not a style preference.
 ##
 ## ----------------------------------------------------------------------------
 ## It pauses the tree, and it is the reason the mouse is not captured yet
@@ -57,7 +56,7 @@ extends Control
 ## `process_mode` gates `_input` and `_physics_process` together, so pausing is
 ## the one-line fix for both — exactly the argument `mp_ui._set_panel_open()`
 ## makes for the MP panel, and the `_paused_by_us` claim bit here is the same one
-## `pause_controller.gd`, `mobile_input.gd` and `mp_ui.gd` carry on each other:
+## `pause_controller.gd` and `mp_ui.gd` carry on each other:
 ## only ever release a pause WE took. The pause itself is refcounted by
 ## `PauseHub` (scripts/pause_hub.gd), so this node's claim survives — and keeps
 ## the world frozen — for as long as the menu and the film are up, whatever else
@@ -100,16 +99,19 @@ extends Control
 ## load-bearing half).
 ##
 ## ----------------------------------------------------------------------------
-## On a phone it waits its turn
+## On a phone this screen IS the game
 ## ----------------------------------------------------------------------------
-## `touch_controls.gd` opens with a full-rect "tap to enable motion controls"
-## overlay, and that tap is the ONE user gesture iOS grants
-## `DeviceMotionEvent.requestPermission()` and the browser grants WebAudio. This
-## Control is the last `HUD` child, so it draws above that overlay and would
-## steal the tap — killing motion and all audio for the session. It therefore
-## hides itself (and drops its pause) while `touch_controls.has_modal()`, the
-## same three lines `mp_ui.gd` and `mobile_settings_panel.gd` run for the same
-## reason. On a phone the order is: enable motion → press PLAY.
+## CrimeKickers is a keyboard-and-mouse game, and as of the owner's 2026-09-16
+## ruling (epic `godot-test1-si57`) it no longer pretends otherwise: the touch
+## session — step detection, tilt steering, the on-screen buttons and their
+## tuning panel — is gone, and a phone that opens the URL gets THIS card with the
+## PLAY button removed and one sentence saying to come back on a computer.
+##
+## Nothing else in the game has to know it is a phone, which is the whole reason
+## the predicate lives here and only here: with this card up the tree is paused,
+## `_dismiss()` is unreachable from any input, and no run ever starts. See
+## `_is_phone()` for why the test is the user-agent feature tags and which way it
+## is deliberately biased.
 
 # ============================================================================
 # CONSTANTS — layout
@@ -162,6 +164,15 @@ const DIM_ALPHA: float = 0.78
 ## are its first consumers — so it is a `ColorRect` here rather than a seventh
 ## StyleBox; the day a second card wants one, that is the builder to add.
 const HAIRLINE_PX: float = 1.0
+
+## THE PHONE CARD'S ONE SENTENCE, and — the project's localization rule — the
+## English key of its own `assets/translations/ui.csv` row, so the German player
+## who opens the page on a phone is told in German.
+##
+## A const rather than a literal in `_build_ui()` because `intro_selfcheck` reads
+## it: the check asserts the card really carries THIS text, which it cannot do
+## against a string only the builder knows.
+const PHONE_CARD_TEXT: String = "Play from a desktop browser.\nCrimeKickers needs a keyboard and a mouse — open this page on a computer."
 
 # ============================================================================
 # CONSTANTS — language switcher
@@ -221,7 +232,7 @@ var _paused_by_us: bool = false
 ## `_dismiss()` when the film ends or is skipped, so mouse capture and the audio
 ## unlock still happen exactly once and exactly where they always did. Never true
 ## off-web: `IntroVideo.start()` answers false there without touching
-## `JavaScriptBridge`, the same desktop-safety shape `MobileSensors` uses.
+## `JavaScriptBridge`, the same desktop-safety shape `_is_phone()` below uses.
 var _intro_playing: bool = false
 
 ## Optional completion hook for a film that is not the opening film. The ending
@@ -235,15 +246,15 @@ var _film_finished_callback: Callable = Callable()
 var _film_mark: float = -2.0
 var _film_stall: float = 0.0
 
-## Cached once — the touch-session probe can reach into JavaScriptBridge, so it
-## is not re-evaluated per frame (the same caching `touch_controls.gd` does).
-var _is_touch: bool = false
+## Whether this session is a phone, decided once in `_ready()` BEFORE the UI is
+## built — `_build_ui()` draws a different card for it. See `_is_phone()`.
+var _phone: bool = false
 
 # --- Child node references (built in _ready, not from a .tscn) --------------
 
-## Everything visible, in one child so the touch-modal yield is a single
-## `visible` flip. The ROOT stays MOUSE_FILTER_IGNORE, so while this is hidden
-## the overlay is completely transparent to input.
+## Everything visible, in one child, so hiding the card behind the film is a
+## single `visible` flip. The ROOT stays MOUSE_FILTER_IGNORE, so while this is
+## hidden the overlay is completely transparent to input.
 var _body: Control = null
 
 ## The EN/DE pills, keyed by locale code, so `_refresh_locale_buttons()` can
@@ -253,7 +264,7 @@ var _locale_buttons: Dictionary = {}
 
 func _ready() -> void:
 	# Must keep running under its own pause, like every other always-available
-	# HUD piece (`mp_ui.gd`, `mobile_settings_panel.gd`, `MpManager`).
+	# HUD piece (`mp_ui.gd`, `MpManager`).
 	process_mode = Node.PROCESS_MODE_ALWAYS
 
 	# Discoverable, so `build_version.gd` can ask whether this card is still up —
@@ -270,17 +281,21 @@ func _ready() -> void:
 	# notification, so only this one needs the ordering.)
 	apply_saved_locale()
 
-	_is_touch = MobileSensors.is_touch_session()
+	# Before `_build_ui()`, which draws a different card for a phone.
+	_phone = _is_phone()
 	_build_ui()
 
-	# Take the pause and the cursor now, before the first gameplay frame runs.
+	# Take the pause and the cursor now, before the first gameplay frame runs. On
+	# a phone that is the last word on both: nothing can reach `_dismiss()`.
 	_apply_pause(true)
 
 	# Build the (hidden) intro <video> now so the browser buffers it while the
 	# player reads this card and playback starts instantly on the press. A no-op
 	# off-web, and nothing downstream depends on it having worked — `start()`
-	# rebuilds if it is missing.
-	IntroVideo.preload_element()
+	# rebuilds if it is missing. Skipped on a phone: no press is coming, so a
+	# 21.7 MB fetch over a mobile connection would buy the player nothing.
+	if not _phone:
+		IntroVideo.preload_element()
 
 
 func _process(delta: float) -> void:
@@ -320,28 +335,10 @@ func _process(delta: float) -> void:
 				# have to trust the ANSWER: right or wrong, the element is gone in the
 				# same step the world starts running.
 				_dismiss()
-		return
 
-	# Yield the screen to TouchControls' full-rect overlays — see the header for
-	# why stealing that one tap would cost the session its motion permission and
-	# all of its audio. Re-evaluated every frame rather than latched at _ready:
-	# the enable overlay is dismissed by a tap, and this must come back when it
-	# does.
-	var blocked: bool = _touch_modal_up()
-	if _body != null:
-		_body.visible = not blocked
-	# HIDE, BUT KEEP THE PAUSE. The overlay that is actually up at this moment on
-	# every phone is the first-run "tap to enable motion controls" one
-	# (`touch_controls` shows it whenever motion is not yet enabled), so releasing
-	# here meant `_ready()`'s pause lasted exactly one frame and the world ran live
-	# — crocodiles closing on a spawn bubble only 25 m wide — while the player had
-	# not yet pressed PLAY. That is the one thing this node exists to prevent.
-	#
-	# Nothing is stranded behind the held pause: all three of `has_modal()`'s
-	# overlays are PROCESS_MODE_ALWAYS and dismiss themselves, and the resume
-	# overlay in particular can never be the blocker here — it is gated on
-	# `mobile_input.paused_by_driver`, which is false while WE own the pause.
-	_apply_pause(true)
+	# AND NOTHING ELSE. The card itself needs no per-frame work: the pause is
+	# taken once in `_ready()` and held until `_dismiss()` hands it back, so the
+	# film above is the only reason this node processes at all.
 
 
 ## The film's two browser calls, each behind a one-line wrapper.
@@ -474,8 +471,7 @@ func reenter_for_new_run() -> void:
 ## for which that is a safe moment to reload the tab: there is nothing in memory
 ## yet for a reload to destroy.
 ##
-## `_dismissed` rather than `visible`, because the node stays visible-but-
-## transparent while a touch modal is up, and it is one-way — this screen never
+## `_dismissed` rather than `visible`, because it is one-way — this screen never
 ## comes back. And NOT `_intro_playing`: the film is 47 s during which this node is
 ## technically still undismissed, but a reload there throws the player back to the
 ## card and makes them press PLAY again, which is not "nothing to lose".
@@ -483,12 +479,32 @@ func is_showing() -> bool:
 	return not _dismissed and not _intro_playing
 
 
-## True while `touch_controls.gd` has one of its own full-rect overlays up.
-## Null-safe group lookup with a `has_method` guard, like every other cross-node
-## reach in this project.
-func _touch_modal_up() -> bool:
-	var touch_ui: Node = get_tree().get_first_node_in_group("touch_controls")
-	return touch_ui != null and touch_ui.has_method("has_modal") and bool(touch_ui.has_modal())
+## Is this a device that cannot play this game — a phone, or a phone-shaped
+## tablet? Godot's web export derives the `web_android` / `web_ios` feature tags
+## from the browser's user agent, so this is a plain engine feature test: no
+## `JavaScriptBridge`, therefore no exposure to the JS-boolean marshalling bug
+## that cost this feature three fixes (see
+## `intro_selfcheck._check_no_js_boolean_returns`), and false by construction
+## off-web and headless.
+##
+## Deliberately NOT `DisplayServer.is_touchscreen_available()` and NOT the old
+## `matchMedia('(pointer: coarse)')` probe the deleted touch session used. That
+## rule biased toward "mobile", because its false negative stranded a phone with
+## no controls at all; this one must bias the other way, because its false
+## positive takes the game away from somebody who could have played it — a
+## touchscreen LAPTOP, with a mouse and a keyboard, must keep playing.
+##
+## An instance method rather than a static one so a self-check can override it in
+## a subclass, exactly as `intro_selfcheck.FilmOverlay` overrides the film seams.
+##
+## ponytail: iPadOS Safari reports a macOS user agent, so an iPad matches
+## `web_macos` and gets the game. Accepted (owner, 2026-09-16) — a keyboard-and-
+## trackpad iPad plays fine, and the failure mode is a playable game rather than
+## a locked-out player. If a bare iPad ever has to be caught, the upgrade path is
+## a `matchMedia('(pointer: coarse) and (hover: none)').matches ? 1 : 0` probe
+## through `JavaScriptBridge.eval`, read NUMERICALLY — never as a bare boolean.
+func _is_phone() -> bool:
+	return OS.has_feature("web_android") or OS.has_feature("web_ios")
 
 
 # ============================================================================
@@ -566,6 +582,29 @@ func _build_ui() -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vbox.add_child(title)
+
+	# THE PHONE CARD, and the whole of it: the title above, one sentence, and the
+	# language pills. No PLAY button — there is nothing to press, which is the
+	# point — and no multiplayer hint, because a player who cannot start a run has
+	# no use for where the MP panel lives. Everything else on this node is
+	# unchanged: `_body` is still the opaque full-rect scrim that covers the HUD
+	# drawn under it, the pause `_ready()` took is never released, and
+	# `_unhandled_input` refuses `ui_accept`.
+	#
+	# The label takes the theme's own BONE face at the hint's size and no colour
+	# override — the palette hexes live in `hud_theme.gd` and nowhere else — and
+	# it autowraps inside a VBox that grows to fit, which is why it needs no
+	# `locale_selfcheck` width budget (that file's header states the exemption).
+	if _phone:
+		var phone_card := Label.new()
+		phone_card.name = "PhoneCard"
+		phone_card.text = PHONE_CARD_TEXT
+		phone_card.add_theme_font_size_override("font_size", HINT_FONT_SIZE)
+		phone_card.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		phone_card.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		vbox.add_child(phone_card)
+		vbox.add_child(_build_locale_row())
+		return
 
 	var subtitle := Label.new()
 	# NOT `.to_upper()`, and that is a correctness rule rather than a style one: a
@@ -732,15 +771,15 @@ func _make_button(label: String, handler: Callable) -> Button:
 ## `_make_button`) — this Control is PROCESS_MODE_ALWAYS, so it receives input
 ## under its own pause with nothing focused at all.
 func _unhandled_input(event: InputEvent) -> void:
-	# The touch-modal test is the same one `_process` uses to hide the body: while
-	# one of `touch_controls`' full-rect overlays is up this card is INVISIBLE, and
-	# without the test one Enter dismissed it anyway — permanently and unseen,
-	# since `_dismissed` is one-way and there is no route back to this screen.
+	# `_phone` is in the guard because the phone card has no PLAY button: without
+	# it one Enter would start a run the player has no way to control — and do it
+	# permanently, since `_dismissed` is one-way and there is no route back to
+	# this screen.
 	# `_intro_playing` is in the same guard for a sharper reason than the others:
 	# SPACE is `ui_accept` AND it is the film's skip key, so without it every skip
 	# attempt would ALSO re-enter `_on_start_pressed()` from Godot's side while the
 	# film is still up.
-	if _dismissed or _intro_playing or event == null or _touch_modal_up():
+	if _dismissed or _intro_playing or event == null or _phone:
 		return
 	if event.is_action_pressed("ui_accept"):
 		get_viewport().set_input_as_handled()
@@ -827,11 +866,9 @@ func _dismiss() -> void:
 	#    click-to-capture fallback in `player_controller._input()` — the one
 	#    `capture_hint.gd` exists to advertise — picks it up on the first click,
 	#    exactly as it did before this screen existed.
-	#    Skipped on a touch session for the same reason
-	#    `player_controller._ready()` skips it: there is no mouse to capture and
-	#    the request would pop a useless prompt over the touch controls.
-	if not _is_touch:
-		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	#    Unconditional: every session that reaches `_dismiss()` has a mouse, because
+	#    the one that does not never gets past the phone card (see `_is_phone()`).
+	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 
 ## Take or release the pause for the overlay's current state, and hand the mouse
@@ -851,7 +888,7 @@ func _apply_pause(active: bool) -> void:
 			_paused_by_us = true
 		# Free the cursor so the buttons are clickable. Unconditional — unlike
 		# `mp_ui`, this node has no handover to remember: `_dismiss()` always
-		# captures (on a non-touch session), whichever button was pressed.
+		# captures, whichever button was pressed.
 		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	else:
