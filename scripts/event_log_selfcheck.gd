@@ -164,6 +164,9 @@ func _run_checks() -> String:
 	failure = _check_local_ptt()
 	if not failure.is_empty():
 		return failure
+	failure = _check_name_fits()
+	if not failure.is_empty():
+		return failure
 	return ""
 
 
@@ -924,4 +927,41 @@ func _check_skin() -> String:
 			failure = "the log takes focus — an overlay must never steal it"
 		log.queue_free()
 	Sentinel.done("skin")
+	return failure
+
+
+func _check_name_fits() -> String:
+	## A 32-char member name is capped to 15 chars plus the ellipsis: every
+	## composed line fits the 360 px card inside its padding, while the
+	## uncapped composition would hang off the card (the negative control).
+	var failure := ""
+	var wired := _wired_log()
+	var log: Control = wired["log"]
+	var mp: StubMp = wired["mp"]
+	mp.members.append({"id": "id-wide", "name": "W".repeat(32)})
+	log._now_msec = 200000
+	log._tick()
+	mp.holders["phoboman"] = "id-wide"
+	log._now_msec = 201000
+	log._tick()
+	var budget := 360.0 - 2.0 * float(HudTheme.CARD_PADDING)
+	var font: Font = HudTheme.body_font()
+	for i: int in log.line_count():
+		var w: float = font.get_string_size(
+				log.line_text(i), HORIZONTAL_ALIGNMENT_LEFT, -1, HudTheme.BODY_FONT_SIZE).x
+		if w > budget:
+			failure = "line %d is %.0f px wide, over the %.0f px budget — the 32-char name overflowed the card" \
+					% [i, w, budget]
+			break
+	if failure.is_empty():
+		# THE CONTROL: the UNCAPPED composition must FAIL the same budget —
+		# otherwise the measure above proves the font blind, not the cap.
+		var uncapped := "[00:00] %s now plays Phoboman" % "W".repeat(32)
+		var uw: float = font.get_string_size(
+				uncapped, HORIZONTAL_ALIGNMENT_LEFT, -1, HudTheme.BODY_FONT_SIZE).x
+		if uw <= budget:
+			failure = "the uncapped 32-W line measures %.0f px, inside the %.0f px budget — the negative control cannot fail" \
+					% [uw, budget]
+	_free_wired(wired)
+	Sentinel.done("name_fits")
 	return failure

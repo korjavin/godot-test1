@@ -113,6 +113,11 @@ const SELF_KEY: String = "me"
 ## diffs honestly. `event_log_selfcheck` binds the two spellings.
 const VOICE_MODE_PTT: int = 1
 
+## Member display names are capped: 16 x the widest glyph "W" plus "[mm:ss] "
+## plus the longest German line " spielt jetzt Phoboman" measures 317 px <=
+## 336 usable inside the 360 px card; an uncapped 32 x "W" measured 476 px.
+const NAME_MAX_CHARS: int = 16
+
 ## Cached room + voice + player references, re-fetched when they go away.
 var _mp: Node = null
 var _voice: Node = null
@@ -305,7 +310,10 @@ func _clean_name(name: String) -> String:
 	## as-is (it is the substitution ARGUMENT, never the format).
 	if name.is_empty():
 		return "?"
-	return name.replace("\n", " ").replace("\r", " ")
+	name = name.replace("\n", " ").replace("\r", " ")
+	if name.length() > NAME_MAX_CHARS:
+		name = name.substr(0, NAME_MAX_CHARS - 1) + "…"
+	return name
 
 
 func _hero_names() -> PackedStringArray:
