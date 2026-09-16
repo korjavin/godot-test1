@@ -136,6 +136,7 @@ const ROWS: Array = [
 	["Q / E", "Turn left and right.", Mode.DESKTOP],
 	["A / D", "Strafe left or right while held.", Mode.DESKTOP],
 	["Mouse", "Look around. Click to grab the cursor again.", Mode.DESKTOP],
+	["Wheel", "Zoom the camera in and out.", Mode.DESKTOP],
 	["Space", "Jump. A jump also breaks a crocodile's scent.", Mode.DESKTOP],
 	["Shift", "Hold to slow to a walk. Let go and you run again.", Mode.DESKTOP],
 	["Ctrl", "Duck and move slowly.", Mode.DESKTOP],
