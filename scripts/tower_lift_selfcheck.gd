@@ -64,6 +64,7 @@ const CityMapPanel := preload("res://scripts/city_map_panel.gd")
 const LandmarkToast := preload("res://scripts/landmark_toast.gd")
 const MultiplayerUI := preload("res://scripts/mp_ui.gd")
 
+const MPManager: GDScript = preload("res://scripts/mp_manager.gd")
 const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
 const SHELL_SCENE: String = "res://scenes/tower/tower_shell.tscn"
 const INTERIOR_SCENE: String = "res://scenes/tower/tower_interior.tscn"
@@ -841,6 +842,18 @@ func _check_the_memory_is_per_run() -> void:
 		await _clear(null, shell, null)
 		Sentinel.done("memory_is_per_run")
 		return
+	# A REAL MANAGER IN THE TREE, AS `main.tscn` HAS ONE (review round 1, major).
+	# `mark_opened` publishes through group "mp", and `publish_gate_opened()`
+	# stamps the absorb mirror EVEN OFFLINE — a second live copy of every landing
+	# that no seed write clears. A probe with an empty root cannot see that, and a
+	# solo Play Again is exactly the path that has one.
+	var mp: Node = MPManager.new()
+	# THE GROUP IS THE SCENE'S, not the script's (`main.tscn`: the `Multiplayer`
+	# node is declared `groups=["mp"]`), so a bare `new()` joins nothing and the
+	# publish this leg is about would never fire.
+	mp.add_to_group("mp")
+	root.add_child(mp)
+	await process_frame
 	var player: Node3D = await _make_player()
 	var panel: Control = await _make_panel()
 	_stand_at_the_lift(player, interior, 0)
@@ -885,7 +898,8 @@ func _check_the_memory_is_per_run() -> void:
 			+ "took the whole set with it")
 	if second.is_opened(stop_id):
 		_fail("the new run's tower came up with landing '%s' already walked — the "
-			% stop_id + "owner's bug, exactly")
+			% stop_id + "owner's bug, exactly (the manager's offline absorb mirror "
+			+ "is the second live copy no seed write clears)")
 	_stand_at_the_lift(player, second_interior, 0)
 	await process_frame
 	panel.set_open(true)
@@ -920,6 +934,7 @@ func _check_the_memory_is_per_run() -> void:
 			_fail("a seed write left the shell standing — `_tower_reset()` is what "
 				+ "ends the lift's memory, and nothing else does")
 	terrain.queue_free()
+	mp.queue_free()
 	await process_frame
 	_fresh_store()
 	Sentinel.done("memory_is_per_run")

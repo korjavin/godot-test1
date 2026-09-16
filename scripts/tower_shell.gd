@@ -929,9 +929,10 @@ func rehydrate_opened_from_profile() -> void:
 	PLUS THE LIVE ROOM'S MIRROR (review round 2, major): a deferred close
 	that outlives its room — leave inside, then host/join the next room
 	without stepping out — must not snap shut gates the NEW room holds
-	open. `opened` is rebuilt as profile UNION the manager's current
-	absorb mirror (which the join just re-seeded), into `opened` only:
-	never `earned`, never persisted, exactly the absorb rule. The
+	open. `opened` is rebuilt as `earned` (which the profile has just been
+	folded into) UNION the manager's current absorb mirror (which the join
+	just re-seeded), and the mirror's half lands in `opened` only: never
+	`earned`, never persisted, exactly the absorb rule. The
 	immediate close in `_close_room_gates` runs with the mirror already
 	cleared by `leave()`, so its union is empty and that path is unchanged.
 	"""

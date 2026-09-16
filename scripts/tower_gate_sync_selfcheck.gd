@@ -1361,6 +1361,15 @@ func _check_absorbed_never_persists() -> String:
 	var mp: Node = MPManager.new()
 	root.add_child(mp)
 	mp.add_to_group("mp")
+	# IN A ROOM, because that is the only state an absorb happens in — every
+	# caller of `_absorb_opened_gate` is a packet handler. Named here since bead
+	# godot-test1-4ban, which made `absorbed_opened_ids()` empty outside a room
+	# (the mirror is session state and a solo new run must not re-read it): the
+	# probe used to absorb from OFFLINE, which no shipped path does. The room is
+	# empty of everything else — fresh profile, no shell yet (asserted above) —
+	# so the seed adds nothing and every assertion below is as sharp as it was.
+	mp.set("lobby_only", true)
+	mp._on_lobby_joined("us", "ROOM", "themaster", ["themaster", "us"])
 	mp._absorb_opened_gate(TowerInterior.GATE_IDENTITY)
 	if FileAccess.file_exists(BestRunStore.config_path):
 		mp.remove_from_group("mp")
@@ -1468,7 +1477,21 @@ func _check_host_landings_ride_the_room() -> String:
 			await TowerProbe.clear(self, null, shell)
 			return "the host's payload carries '%s', which no parser will decode" % String(gid)
 	host.queue_free()
+
+	# --- A JOINER IS THE OPPOSITE CASE AND MUST FOLD NOTHING IN -------------
+	# Review round 1, major: a joiner adopts the master's seed, `new_run()` frees
+	# its shell, and the run those landings belonged to is gone (owner ruling).
+	# Folding them in would smuggle a dead run's storey into the room and publish
+	# it the moment this peer were elected master.
+	var joiner_first: Node = MPManager.new()
+	root.add_child(joiner_first)
+	joiner_first.set("lobby_only", true)
+	joiner_first._on_lobby_joined("us", "ROOM", "themaster", ["themaster", "us"])
+	var absorbed: Array = joiner_first.call("absorbed_opened_ids")
+	joiner_first.queue_free()
 	await TowerProbe.clear(self, null, shell)
+	if absorbed.has(own_stop):
+		return "a JOINER folded its previous run's landing '%s' into the room mirror — that run is about to be freed by the master's seed" % own_stop
 
 	# --- AND THE DRAIN STAYS LANDING-FREE ON A LEGACY PROFILE ---------------
 	TowerProbe.fresh_store()

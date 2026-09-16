@@ -1083,11 +1083,16 @@ func _on_lobby_joined(you: String, room: String, master: String, members: Array)
 	# ruling asks for. One profile read per join seeds the absorb mirror, so
 	# the no-shell path never re-reads it at 2 Hz.
 	#
-	# PROFILE *UNION THE LIVE SHELL'S EARNED SET* (bead godot-test1-4ban): the
-	# lift's visited landings are earned and never persisted, and a HOST keeps
-	# its run across `host()` — so a profile-only seed would throw away the
-	# landings this peer walked solo, and the master's `g`/`go` (which are the
-	# mirror, by design) would stop carrying floors its own menu still offers.
+	# PROFILE, PLUS THE LIVE SHELL'S EARNED SET *ON A HOST ONLY* (bead
+	# godot-test1-4ban): the lift's visited landings are earned and never
+	# persisted, so a profile-only seed loses them — and a HOST keeps its run
+	# (`host()` is `join("")`, nothing frees the shell), so its `g`/`go` (which
+	# ARE this mirror, by design) would stop carrying floors its own menu still
+	# offers. A JOINER is the opposite case and must NOT fold its shell in: it
+	# is about to adopt the master's seed, `new_run()` frees its shell, and the
+	# run those landings belonged to is gone (owner ruling — a joiner adopts the
+	# master's visited set). Folding them would smuggle a dead run's storey into
+	# the room and publish it the moment this peer were elected master.
 	# `earned_ids()`, never the shell's raw `opened`: a parked deferred close
 	# holds the PREVIOUS room's absorbed ids in `opened` (review round 3 of
 	# d81), and nothing absorbed is ever earned. Group + `has_method`, the
@@ -1096,12 +1101,13 @@ func _on_lobby_joined(you: String, room: String, master: String, members: Array)
 	_absorbed_opened = {}
 	for gid: String in BestRunStore.tower_opened_ids():
 		_absorbed_opened[gid] = true
-	var tower: Node = get_tree().get_first_node_in_group("tower")
-	if tower != null and tower.has_method("earned_ids"):
-		for gid: Variant in (tower.call("earned_ids") as Array):
-			var eid := String(gid)
-			if not eid.is_empty():
-				_absorbed_opened[eid] = true
+	if master == you:
+		var tower: Node = get_tree().get_first_node_in_group("tower")
+		if tower != null and tower.has_method("earned_ids"):
+			for gid: Variant in (tower.call("earned_ids") as Array):
+				var eid := String(gid)
+				if not eid.is_empty():
+					_absorbed_opened[eid] = true
 	# A JOIN DELIBERATELY LEAVES A PARKED DEFERRAL ARMED (review round 3,
 	# major — reversing round 2): clearing the flag without re-hydrating
 	# would keep the old room's ids in `opened` for the session and, on a
@@ -3343,9 +3349,25 @@ func absorbed_opened_ids() -> Array:
 	through `has_method` like every other tower-to-mesh call.
 
 	Own publishes are in here beside absorbed ids (both skip re-absorb on
-	repair); that is harmless at the one call site, which unions them into a
-	shell already hydrated from the profile.
+	repair) — `publish_gate_opened()` stamps every local opening, offline
+	ones included.
+
+	EMPTY WHEN THERE IS NO ROOM, and that guard is load-bearing since bead
+	godot-test1-4ban. The mirror is SESSION state: nothing clears it on a new
+	run, only `leave()` and a join re-seed do. While every earned id persisted
+	that was harmless here — the own publishes it carried were in the profile
+	the caller had already hydrated from, so the union added nothing. A lift
+	landing is not: it is earned, unsaved, and per-run. Without this line a
+	solo Play Again (which never reaches `leave()`) would hand the rebuilt
+	shell the previous run's landings straight back out of this dictionary, and
+	the lift would offer a storey the new run never walked — the owner's
+	original bug, through the one door the seed write does not close.
+
+	The publish side is unaffected: `_tower_opened_ids()` reads
+	`_absorbed_opened` directly, and only ever runs in a room anyway.
 	"""
+	if _state != State.IN_ROOM:
+		return []
 	return _absorbed_opened.keys()
 
 
@@ -3362,8 +3384,10 @@ func _tower_opened_ids() -> Array:
 	for the rest of the session — and the profile leg would put a
 	ConfigFile round-trip back on the master's 2 Hz repair tick. Profile ⊆
 	mirror already, so the mirror alone is the whole set: `_on_lobby_joined`
-	seeds it from the profile on every join, `join()` unwinds through
-	`leave()` first, and every local opening stamps it through
+	seeds it from the profile — plus, on a host, the live shell's own
+	`earned_ids()` (bead godot-test1-4ban: the lift's landings are earned
+	and never saved) — on every join, `join()` unwinds through `leave()`
+	first, and every local opening stamps it through
 	`publish_gate_opened()` even offline. Empty — never null — only when
 	neither holds anything.
 
