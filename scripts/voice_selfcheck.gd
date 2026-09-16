@@ -109,7 +109,7 @@ extends SceneTree
 ##     real pause — that is where the shipped bug actually was.
 ##
 ##  9. **WHAT V ACTUALLY DOES**, driven on the shipped `_poll_input()` with
-##     `Input.action_press` / `action_release` (`mobile_input`'s synthesis idiom,
+##     `Input.action_press` / `action_release` (the synthesis idiom for scripted input,
 ##     and no bridge needed because `_tx` is GDScript state). Always-on TOGGLES,
 ##     push-to-talk HOLDS, and a mode switch while the key is held drops the mic
 ##     — the last is the one that leaks an open microphone if it regresses.
@@ -1885,7 +1885,7 @@ func _check_debug_line_in_a_room() -> void:
 func _check_mic_key_semantics() -> void:
 	"""
 	The shipped `_poll_input()`, driven with `Input.action_press` /
-	`action_release` — `mobile_input`'s synthesis idiom, and no bridge is needed
+	`action_release` — the synthesis idiom for scripted input, and no bridge is needed
 	because `_tx` is GDScript state and `_set_tx()`'s only browser line is behind
 	`_is_web and _running`.
 
