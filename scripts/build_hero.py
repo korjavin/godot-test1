@@ -3096,10 +3096,11 @@ def attach_tails(obj, row, tj):
 #   the pupils                                            y ~84, 32 px apart
 #
 # and this head answers `_skull_reach` 0.0927 m at the ear, so 0.71 of it is
-# 0.0655 m from the centre line — TWICE what round 1 shipped (0.0487), which is
-# the whole of the owner's complaint in one number. The pair is 131 mm across on a
-# 185 mm head, and the frame ring already goes wider than the 0.81 because a ring
-# goes all the way round. Vertically the canon's 31 px is ~49 mm at this head's
+# 0.0655 m from the centre line, where round 1's outer corner landed at 0.047 —
+# 0.53 of the head, which is the owner's complaint as a number. The pair is 131 mm
+# across on a 185 mm head now, one lens is 68 x 34 against round 1's 44 x 18 (2.9x
+# the glass), and the frame ring already goes wider than the canon's 0.81 because
+# a ring goes all the way round. Vertically the canon's 31 px is ~49 mm at this
 # scale, which is more lens than a slab standing proud of a nose can be without
 # swallowing the nose; 34 mm is what covers the socket (16 mm each way off the
 # pupil) plus the brow above it, and it is what is typed below. Everything that
@@ -3138,7 +3139,7 @@ GOGGLE_LENS = (0.002, 0.034)  # thickness and height of one slab: the socket is
 # 38 mm apart, and this one's are 66. Taken literally they leave a 33 mm gap of
 # frame between the lenses: a bridge wider than a lens, where the portrait draws
 # the pair nearly meeting. So the lens is hung off its OUTER end, `_REACH` past
-# the pupil, and grows inward until it is `_GAP` from its twin — 61 mm on Primm
+# the pupil, and grows inward until it is `_GAP` from its twin — 68 mm on Primm
 # since round 2, and whatever the next hero's own pupils ask for.
 GOGGLE_LENS_REACH = 0.037     # how far past the pupil the outer end sits — round
                               # 1's 16 mm put the pair at 0.53 of the head where
@@ -3146,14 +3147,34 @@ GOGGLE_LENS_REACH = 0.037     # how far past the pupil the outer end sits — ro
                               # 65.5 mm off the centre line and the SPLAY eats the
                               # difference: the slab's outer end comes back in by
                               # half its width times (1 - cos SPLAY), so the reach
-                              # that lands the corner on 65.5 mm is 37 and not 33
+                              # that lands the outer MID-EDGE on 65.5 mm is 37,
+                              # not 33 (the rake tips the bottom corner 3 mm
+                              # further out again)
                               # (the first build of this round stopped mid-cheek)
-GOGGLE_BRIDGE_GAP = 0.009     # and how much daylight is left between the two
-GOGGLE_LENS_Z = 0.003         # the lens centre above the eye line
+GOGGLE_BRIDGE_GAP = 0.004     # and how much daylight is left between the two
+                              # BEFORE the splay, which opens it: the yaw is about
+                              # each slab's own centre, so it pulls the inner end
+                              # out by half the width times (1 - cos) exactly as
+                              # it pulls the outer end in. 4 mm here is 13 mm of
+                              # real daylight at SPLAY 30, and the 9 mm round 1
+                              # typed was already 12 at SPLAY 22
+GOGGLE_LENS_Z = -0.001        # the lens centre above the eye line, and it is the
+                              # BAR that fixes it: a lens top above the bar's own
+                              # lower face is a lens that fights the frame for the
+                              # same pixels — in front of it at the temple, behind
+                              # it at the nose — which renders as a cyan spike
+                              # through the bar and a notch bitten out of it (the
+                              # first build of this round, caught in the evidence
+                              # grid). The top edge of a slab raked `_TILT` sits
+                              # `_LENS[1]`/2 * cos TILT above the centre, so the
+                              # centre is placed to leave the same 1.5 mm of tuck
+                              # under `RING_Z - FRAME[1]/2` that round 1 shipped
+                              # clean — which also drops the glass toward the
+                              # cheekbone, where the canon has it
 # A LENS IS NOT SEATED ON A RADIUS, AND THE FIRST BUILD OF THIS BEAD PROVED IT.
 # The ring can be, because a ring goes round: equal angles off the skull's axis put
 # its stations on the brow, the temple and the back of the head in turn, which is
-# what a band does. A LENS IS FLAT AND THE WIDTH OF HALF A FACE (61 mm on Primm,
+# what a band does. A LENS IS FLAT AND THE WIDTH OF HALF A FACE (68 mm on Primm,
 # see the two consts above), and the face is flat-ish across
 # the eyes, so the radial ray at the eye's own bearing lands 2 cm further back than
 # the eye itself does — measured: the face front is y=0.167 at the pupil and the
