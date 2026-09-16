@@ -106,6 +106,27 @@ extends SceneTree
 ##     no button on the card offers a mode choice, and some text on it names the
 ##     MP entry point. It reads the REAL card `_build_ui()` draws.
 ##
+## 10. **A PHONE IS SHOWN THE CARD AND CANNOT GET PAST IT.** With the touch
+##     session deleted (epic `godot-test1-si57`), the phone card is the only thing
+##     standing between a phone and an unplayable run — so the failure mode is not
+##     "the card looks wrong", it is "the player is dropped into a game with no
+##     controls". `_is_phone()` is an instance method precisely so `PhoneOverlay`
+##     below can force it true on a headless desktop build; what is then asserted
+##     is the whole contract: nothing pressable but the two language pills, the
+##     sentence really on the card, that sentence really in the CSV (German comes
+##     back different, or a German player reads English), and BOTH doors to
+##     `_dismiss()` barred with the pause still held by exactly one holder —
+##     `ui_accept`, and `play_film()`, which is the one nobody has to press
+##     (`player_controller._ready()` defers `_reopen_archived_ending()` on a
+##     latched archived world, and that walks in through `game_over_ui` on the
+##     first idle frame of the session).
+##
+##     ITS NEGATIVE CONTROL IS CHECK 2: `_check_start_press_desktop_path()` builds
+##     the plain `StartOverlay` — same tree, same headless build, `_is_phone()`
+##     false — and asserts it DOES dismiss. Without that pair, "the phone card
+##     does not dismiss" would also be satisfied by an overlay nothing can
+##     dismiss at all, which is the worse bug of the two.
+##
 ## Deliberately NOT localized (a debug surface, per CLAUDE.md).
 
 const StartOverlay := preload("res://scripts/start_overlay.gd")
@@ -157,6 +178,17 @@ class FilmOverlay extends StartOverlay:
 		teardowns += 1
 		teardown_saw_paused = get_tree().paused
 
+
+## The real start overlay forced onto its phone branch. `_is_phone()` reads
+## `OS.has_feature("web_android"/"web_ios")`, which is false on every build this
+## check can run on, so the branch that locks a phone out of the game is
+## unreachable without this override — and an unreachable branch is one nothing
+## asserts. Nothing else is overridden: the card, the pause and the input guard
+## under test are all the shipping code's.
+class PhoneOverlay extends StartOverlay:
+	func _is_phone() -> bool:
+		return true
+
 var _failures: Array[String] = []
 
 
@@ -190,6 +222,7 @@ func _run() -> void:
 	_check_film_end_never_mints_a_world()
 	_check_no_js_boolean_returns()
 	_check_card_names_multiplayer()
+	await _check_phone_card()
 	_finish()
 
 
@@ -905,6 +938,119 @@ func _check_card_names_multiplayer() -> void:
 	overlay.queue_free()
 	paused = false
 	Sentinel.done("card_names_multiplayer")
+
+
+# ============================================================================
+# 10. THE PHONE CARD
+# ============================================================================
+
+## Build the real overlay with `_is_phone()` forced true and check the whole
+## contract: what is on the card, what it says in German, and — the part that
+## matters — that nothing gets past it. See check 10 in the header, including
+## why `_check_start_press_desktop_path()` IS this check's negative control.
+func _check_phone_card() -> void:
+	# The overlays the checks above `queue_free()`d are alive until the end of
+	# this frame, and a queued node still holds its `PauseHub` claim, so the
+	# holder count below would count them too. One frame settles the lot.
+	await process_frame
+
+	var overlay := PhoneOverlay.new()
+	root.add_child(overlay)
+
+	var buttons: Array[String] = []
+	var texts: Array[String] = []
+	_collect_card_text(overlay, buttons, texts)
+
+	# (a) NOTHING PRESSABLE BUT THE LANGUAGE. A PLAY button here is not a cosmetic
+	# slip: it is a phone in a run it cannot steer, which is the entire reason
+	# this card exists. The two pills stay — a German player has to be able to
+	# read the sentence that is turning them away.
+	var pills: Array[String] = []
+	for entry: Array in StartOverlay.LOCALES:
+		pills.append(String(entry[1]))
+	for label: String in buttons:
+		if not pills.has(label):
+			_fail("the phone card carries a button other than the language pills " \
+				+ "(%s) — a phone that can press anything can start a run it has " \
+				% label.c_escape() + "no way to control")
+	if buttons.size() != pills.size():
+		_fail("the phone card has %d buttons, expected the %d language pills — " \
+			% [buttons.size(), pills.size()] + "a missing pill strands a player " \
+			+ "in a language they cannot read")
+
+	# (b) AND IT ACTUALLY SAYS SO. Read off the real card rather than the const,
+	# so a `_build_ui()` that forgets the label cannot pass.
+	var says_it: bool = false
+	for text: String in texts:
+		if text == StartOverlay.PHONE_CARD_TEXT:
+			says_it = true
+	if not says_it:
+		_fail("no label on the phone card carries StartOverlay.PHONE_CARD_TEXT — " \
+			+ "the card turns the player away without telling them why")
+
+	# (c) IN THEIR OWN LANGUAGE. The key is the English string, so an unimported
+	# or misspelt CSV row shows up as `tr()` handing the key straight back — and
+	# the German phone player reads English. `--import` after editing the CSV is
+	# what this catches when it was forgotten.
+	var locale_was: String = TranslationServer.get_locale()
+	TranslationServer.set_locale("de")
+	if tr(StartOverlay.PHONE_CARD_TEXT) == StartOverlay.PHONE_CARD_TEXT:
+		_fail("PHONE_CARD_TEXT has no German translation — add the row to " \
+			+ "assets/translations/ui.csv and re-run `godot --headless --path . " \
+			+ "--import`, or every German phone reads the card in English")
+	TranslationServer.set_locale(locale_was)
+
+	# (d) AND THERE IS NO WAY PAST IT. Enter/Space is the desktop card's shortcut
+	# and reaches `_unhandled_input` under this node's own pause, so without the
+	# `_phone` guard it starts the run the card exists to prevent — permanently,
+	# since `_dismissed` is one-way. The pause is asserted alongside it because a
+	# card that stays up over a LIVE world is the same bug wearing a hat.
+	var accept := InputEventAction.new()
+	accept.action = "ui_accept"
+	accept.pressed = true
+	overlay._unhandled_input(accept)
+
+	if overlay._dismissed:
+		_fail("ui_accept dismissed the phone card — the player is now in a run " \
+			+ "with no controls, which is exactly what this card prevents")
+	if not paused:
+		_fail("the tree is running behind the phone card — it must hold the pause " \
+			+ "it took in _ready() forever, because nothing ever releases it")
+	# (e) AND NO FILM CAN TEAR IT DOWN EITHER — the door nobody has to press.
+	# `player_controller._ready()` defers `_reopen_archived_ending()` whenever
+	# `BestRunStore.world_archived()` is latched, which a phone that finished a
+	# world on the old touch build still carries; it runs under this node's own
+	# pause and reaches `game_over_ui.show_game_over()`, whose web branch calls
+	# `play_film()` with no input from anybody. Before the guard that was a
+	# dismissed card, a released PauseHub claim and a live world under an
+	# interactive Play Again panel, on the first idle frame of the session.
+	#
+	# `true` is the answer under test, not a formality: `game_over_ui` reads
+	# `false` as "show your own fallback panel", which is that same interactive
+	# surface by another route.
+	if not overlay.play_film(IntroVideo.GAME_OVER_VIDEO_URL):
+		_fail("play_film() answered false on the phone card — game_over_ui reads " \
+			+ "that as 'show your own panel', which hands the phone the " \
+			+ "interactive surface the card exists to withhold")
+	if overlay._intro_playing:
+		_fail("play_film() started a film over the phone card — the card is now " \
+			+ "hidden behind a 21.7 MB video on a phone that cannot play the game")
+	if overlay._dismissed:
+		_fail("play_film() dismissed the phone card — the archived-ending path " \
+			+ "walks straight past the lockout with no input at all")
+	if overlay._body == null or not overlay._body.visible:
+		_fail("play_film() hid the phone card's body — the sentence turning the " \
+			+ "player away is no longer on screen")
+	if not paused:
+		_fail("the tree is running after play_film() on the phone card")
+	if PauseHub.holder_count() != 1:
+		_fail("the phone card holds %d PauseHub claims, expected exactly 1 — " \
+			% PauseHub.holder_count() + "it takes the pause once in _ready() and " \
+			+ "never again")
+
+	overlay.queue_free()
+	paused = false
+	Sentinel.done("phone_card")
 
 
 ## Every Button label and every piece of text under `node`, gathered separately
