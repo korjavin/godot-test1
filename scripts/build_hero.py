@@ -918,25 +918,30 @@ HEROES = {
             # enough against `panel_black` to read as a glow at 3 m.
             "line_cyan":   (0.20, 0.66, 0.82, 1.0),
             # THE GOGGLES, which are geometry since bead godot-test1-nvy — see the
-            # `build_goggles` banner for the whole of why. The FRAME keeps bead
-            # z3e.15's measured graphite verbatim, with `goggle_edge` one step up
-            # for the top bar and short of the (0.40, 0.43, 0.49) the `trim_silver`
-            # note above measured clipping to flat white.
+            # `build_goggles` banner for the whole of why, and for the transfer
+            # these four are measured against: this scene lifts a linear albedo by
+            # ~1.85 before the sRGB encode (skin 0.404 renders 225), measured on the
+            # web `17_head_face` frame.
             #
-            # THE LENS COULD NOT KEEP z3e.15's (0.38, 0.76, 0.90), and the reason is
-            # the geometry: that value was measured on PAINT, lying on a cheek that
-            # takes this scene's high key light at a grazing angle. A lens is a slab
+            # NEITHER KEEPS z3e.15's PAINTED VALUE, and the first two renders of
+            # this bead are why. Paint lies on a cheek and takes this scene's high
+            # key light at a grazing angle; geometry does not. The LENS is a slab
             # RAKED INTO the sun, so it sits in the lit band of DIFFUSE_TOON at full
-            # strength — at the painted value it rendered (244, 248, 249), which is
-            # white, and the bead asked for cyan. Measured on the `17_head_face`
-            # web frame: this scene lifts a linear albedo by ~1.85 before the sRGB
-            # encode (skin 0.404 renders 225), so these are the values that land
-            # around (120, 200, 225) — bright cyan with the blue channel still short
-            # of the top — and `goggle_glint` is the lens's own top edge, one step up
-            # again, which is the "lighter rim strip" the bead asked for in place of
+            # strength — at the painted (0.38, 0.76, 0.90) it rendered (244, 248,
+            # 249), which is white, where the bead asked for cyan. The FRAME is a
+            # tube with a horizontal top face AND it is on `HeroSkin`, which
+            # `toon_shading.style()` gives a rim light: at the painted graphite
+            # (0.22, 0.24, 0.29) it rendered at luma 171 against a lens at 188 — a
+            # pale bar at the same brightness as its own lenses, where the portrait
+            # draws a dark one. So the frame comes down by about the factor the lens
+            # did. Re-measured along the bar on the same frame, it now runs from
+            # (24, 31, 38) at the nose to (55, 59, 58) at the temple where the rim
+            # catches it — luma 29 to 58, graphite at both ends — against a lens at
+            # (63, 214, 242), luma 180. `goggle_glint` is the lens's own top edge,
+            # which is the "lighter rim strip" the bead asked for in place of
             # transparency.
-            "goggle_frame": (0.22, 0.24, 0.29, 1.0),
-            "goggle_edge":  (0.30, 0.33, 0.39, 1.0),
+            "goggle_frame": (0.05, 0.06, 0.075, 1.0),
+            "goggle_edge":  (0.09, 0.10, 0.125, 1.0),
             "goggle_lens":  (0.10, 0.32, 0.40, 1.0),
             "goggle_glint": (0.14, 0.40, 0.49, 1.0),
         }),
@@ -3062,12 +3067,18 @@ def attach_tails(obj, row, tj):
 # lighter rim is the lens's own top row of vertices, one step up: on a flat slab
 # under DIFFUSE_TOON that gradient is what reads as glass.
 #
-# COLOURS: `goggle_frame` and `goggle_lens` are bead z3e.15's measured stripe
-# values, verbatim — the dark graphite and the bright cyan that survive the
-# scene's two stops (see the note on `trim_silver`, which is where "a fifth of the
-# way up is what lands as metal" was measured). The two `*_edge`/`*_glint` entries
-# are one step up from each and deliberately short of the (0.40, 0.43, 0.49) that
-# the same note measured clipping to flat white.
+# COLOURS: NOT bead z3e.15's stripe values, and the first render of this bead is
+# why. Those were measured on PAINT lying on a cheek, which takes this scene's high
+# key light at a grazing angle; every surface here is either raked into that light
+# (the lens) or a tube that carries a horizontal top face and picks up
+# `ToonShading`'s rim on `HeroSkin` (the frame), so both landed a stop or more
+# brighter than the same number does on skin — the frame shipped at luma 171
+# against a lens at 188, which is a pale bar beside its own lenses and not the
+# portrait's dark one. Both are re-measured against the transfer this scene
+# actually has (a linear albedo lifted by ~1.85 before the sRGB encode: skin 0.404
+# renders 225), on the web `17_head_face` frame. The `*_edge`/`*_glint` entries are
+# one step up from each: the frame's top bar, and the lens's "lighter rim strip".
+# The palette rows in `HEROES["primm"]` carry the numbers and what each lands at.
 
 GOGGLE_STATIONS = 48          # cross-sections round the skull; 7.5 degrees apart
 GOGGLE_FRAME_ARC = 72.0       # degrees off the nose where the frame hands over to
@@ -3083,7 +3094,16 @@ GOGGLE_STANDOFF = 0.004       # how far proud of the skull's own outline it all
 GOGGLE_FRAME = (0.005, 0.009)   # radial thickness, height — across the face
 GOGGLE_ARM = (0.003, 0.003)     # square, over the ear
 GOGGLE_STRAP = (0.003, 0.006)   # flat, round the back, sitting on the hair shell
-GOGGLE_LENS = (0.032, 0.002, 0.018)   # width, thickness, height of one slab
+GOGGLE_LENS = (0.002, 0.018)  # thickness and height of one slab
+# AND ITS WIDTH IS MEASURED, NOT TYPED, because the bead's two numbers — "each ~32
+# x 18 mm" and "a 6 mm bridge" — are only consistent on a head whose pupils are
+# 38 mm apart, and this one's are 66. Taken literally they leave a 33 mm gap of
+# frame between the lenses: a bridge wider than a lens, where the portrait draws
+# the pair nearly meeting. So the lens keeps the OUTER end the bead put it at (16
+# mm past the pupil, half of its 32) and grows inward until it is `_GAP` from its
+# twin — 44 mm on Primm, and whatever the next hero's own pupils ask for.
+GOGGLE_LENS_REACH = 0.016     # how far past the pupil the outer end sits
+GOGGLE_BRIDGE_GAP = 0.009     # and how much daylight is left between the two
 GOGGLE_LENS_Z = 0.002         # the lens centre above the eye line
 # A LENS IS NOT SEATED ON A RADIUS, AND THE FIRST BUILD OF THIS BEAD PROVED IT.
 # The ring can be, because a ring goes round: equal angles off the skull's axis put
@@ -3234,7 +3254,7 @@ def build_goggles(obj, row, tj):
             # graphite does not.
             paint[ring[2]] = paint[ring[3]] = colours["goggle_edge"]
 
-    width, thick, tall = GOGGLE_LENS
+    thick, tall = GOGGLE_LENS
 
     def front_of(x, z, half_w, half_h):
         """The most forward the head reaches anywhere under a patch of it — the
@@ -3249,19 +3269,26 @@ def build_goggles(obj, row, tj):
 
     rake = math.radians(GOGGLE_LENS_TILT)
     splay = math.radians(GOGGLE_LENS_SPLAY)
-    lens_x = {side: tj[side + "-eye"].x for side in ("l", "r")}
+    # From `GOGGLE_BRIDGE_GAP`/2 off the centre line out to `GOGGLE_LENS_REACH`
+    # past the pupil — see that const for why the width is measured and not typed.
+    reach = max(abs(tj[side + "-eye"].x) for side in ("l", "r")) + GOGGLE_LENS_REACH
+    width = reach - GOGGLE_BRIDGE_GAP / 2.0
+    lens_x = {side: math.copysign(GOGGLE_BRIDGE_GAP / 2.0 + width / 2.0,
+                                  tj[side + "-eye"].x) for side in ("l", "r")}
     # ONE DEPTH FOR BOTH LENSES, taken off whichever of them has the more forward
     # face under it: the head is symmetric, the two numbers agree to well under a
     # millimetre, and a visor whose halves sit at two depths is a visor with a kink
     # in it.
     lens_y = max(front_of(x, lens_z, width / 2.0, tall / 2.0)
                  for x in lens_x.values()) + GOGGLE_LENS_PROUD + thick / 2.0
-    for side, sign in (("l", 1.0), ("r", -1.0)):
+    for side in ("l", "r"):
         centre = Vector((lens_x[side], lens_y, lens_z))
+        # Which way this one wraps: its OUTER end is the one further from the
+        # centre line, so the yaw turns away from the side the lens is on.
+        sign = -math.copysign(1.0, lens_x[side])
         # Width across the face, raked back about its own width axis and splayed
-        # about the vertical, in that order: the rake points the slab at the sun and
-        # the splay wraps its outer end round toward the temple. `sign` is which way
-        # round that is — the outer end is -x on his left and +x on his right.
+        # about the vertical, in that order: the rake points the slab at the sun
+        # and the splay wraps its outer end round toward the temple.
         matrix = (Matrix.Translation(centre)
                   @ Matrix.Rotation(sign * splay, 4, 'Z')
                   @ Matrix.Rotation(rake, 4, 'X')
