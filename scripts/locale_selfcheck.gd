@@ -15,8 +15,8 @@ extends SceneTree
 ##  1. **The CSV never got imported, or a row got mangled.** `tr()` returns its
 ##     own key when a lookup misses, so a translation table that failed to import
 ##     produces a perfectly working game — in English, in every locale. Nothing
-##     warns. The CSV also carries genuine multi-line values (the pause overlay,
-##     the phone onboarding copy, the two-line touch buttons), which are legal
+##     warns. The CSV also carries genuine multi-line values (the pause overlay
+##     text), which are legal
 ##     CSV — `FileAccess.get_csv_line()` keeps reading while the quote count is
 ##     odd — but are exactly what a naive spreadsheet round-trip breaks. So every
 ##     row is re-read from source and required to resolve in BOTH locales, and
@@ -24,22 +24,21 @@ extends SceneTree
 ##     copy-pasted `de` column otherwise reads as a pass).
 ##
 ##  2. **A German string overflows a fixed-width control.** German runs ~30%
-##     longer, and this game's touch buttons are hard-sized squares and pills
-##     (`ACTION_BUTTON_SIZE` 120, the 72 px View square, the 110 px ⚙ pill) whose
-##     labels do not wrap and do not clip — they just spill. Measuring the real
+##     longer, and fixed-width controls remain all over the HUD — panel buttons,
+##     opener buttons, waypoint rows, draw_string captions — whose labels do not
+##     wrap and do not clip: they just spill. Measuring the real
 ##     font at the real size against the real budget is the only honest way to
 ##     know, and it is why this check exists at all rather than a note saying the
 ##     strings "look short enough".
 ##
 ##  3. **The saved-language round trip.** `user://locale.cfg` is the same
-##     ConfigFile pattern as `best_run.cfg` / `mobile_tuning.cfg`, and the same
+##     ConfigFile pattern as `best_run.cfg`, and the same
 ##     "silently do nothing on a bad read" rule — which means a broken write is
 ##     invisible until a player notices their choice is forgotten.
 ##
 ## Deliberately NOT covered: that each translated string is *good* German (not a
 ## machine-checkable property), and the debug surfaces (F3 perf overlay, F4
-## motion read-out, the ⚙ panel's raw sensor telemetry), which are excluded from
-## localization by design.
+## motion read-out), which are excluded from localization by design.
 
 const CSV_PATH: String = "res://assets/translations/ui.csv"
 
@@ -69,36 +68,6 @@ const WaypointHub := preload("res://scripts/waypoint_hub.gd")
 ## VBoxContainer that grows to fit — so the geo-landmark names and facts need NO
 ## budget entry here and none may be added.
 const WIDTH_BUDGETS: Array = [
-	# touch_controls.gd — ACTION_BUTTON_SIZE 120 square, font 26, no wrap.
-	["JUMP", 26, 112.0, "touch Jump button"],
-	["SPECIAL\n(F)", 26, 112.0, "touch Special button"],
-	["SWITCH\n(R)", 26, 112.0, "touch Switch button"],
-	# touch_controls.gd — View square is TOGGLE_HEIGHT (72) on a side, font 24.
-	# The tightest budget in the game.
-	["View", 24, 64.0, "touch View button"],
-	# touch_controls.gd — steer pill, TOGGLE_WIDTH 200 x 72, font 30.
-	["Tilt/Twist", 30, 184.0, "touch steer toggle (both modes)"],
-	["Steer: Tilt", 30, 184.0, "touch steer toggle (tilt)"],
-	["Steer: Twist", 30, 184.0, "touch steer toggle (twist)"],
-	# mobile_settings_panel.gd — GEAR_WIDTH 110 x 60, font 26, default theme
-	# Button stylebox (measured: 8 px of horizontal padding), leaving 102 px; the
-	# budget keeps 4 px of that as slack.
-	["Tune", 26, 98.0, "tune gear button"],
-	# mobile_settings_panel.gd — panel vbox is PANEL_WIDTH - 24 = 356, font 22
-	# for the action buttons and 20 for the stepper name labels.
-	["How to play", 22, 340.0, "⚙ panel action button"],
-	["Recalibrate (re-zero)", 22, 340.0, "⚙ panel action button"],
-	["Reset to defaults", 22, 340.0, "⚙ panel action button"],
-	["Close", 22, 340.0, "⚙ panel action button"],
-	# The CheckButton reserves room for its own toggle glyph, so it gets less.
-	["Invert steering", 22, 290.0, "⚙ panel invert checkbox"],
-	["TUNING  (tap −/+)", 18, 356.0, "⚙ panel section title"],
-	["Step threshold", 20, 356.0, "⚙ panel stepper label"],
-	["Step power", 20, 356.0, "⚙ panel stepper label"],
-	["Walk decay", 20, 356.0, "⚙ panel stepper label"],
-	["Step min interval", 20, 356.0, "⚙ panel stepper label"],
-	["Steer deadzone", 20, 356.0, "⚙ panel stepper label"],
-	["Steer full angle", 20, 356.0, "⚙ panel stepper label"],
 	# mp_ui.gd — panel is PANEL_WIDTH 360 with a 10 px content margin each side;
 	# every button is BODY_FONT_SIZE 18 and full-width.
 	["Open rooms", 18, 320.0, "MP panel label"],
@@ -426,8 +395,8 @@ func _check_fallback() -> void:
 
 
 ## THE ACCEPTANCE CRITERION, asserted mechanically: an already-built Control
-## re-renders in the new language when the locale changes, with nothing touching
-## it.
+## re-renders in the new language when the locale changes, with nothing acting
+## on it.
 ##
 ## This is the load-bearing claim of the whole design — it is why nearly every
 ## call site needed no `tr()` and why no screen needs a rebuild or a re-apply
@@ -515,19 +484,18 @@ func _check_widths(rows: Array) -> void:
 	#
 	#   * Oswald REGULAR — `HudTheme.theme()`'s default, so every `Label` on a
 	#     panel that has adopted it;
-	#   * Oswald BOLD — the theme's `Button` font, and 45 of the 73 rows below are
+	#   * Oswald BOLD — the theme's `Button` font, and 51 of the 94 rows below are
 	#     on Button-class controls. Bold is ~9 points of budget wider than
 	#     Regular, so a Regular-only ruler repeats the same mistake one weight on;
-	#   * THE ENGINE DEFAULT — because ~24 rows are drawn by things `theme()` can
+	#   * THE ENGINE DEFAULT — because 5 rows are drawn by something `theme()` can
 	#     never reach: `minimap_hud` paints its labels with `draw_string`, where a
 	#     `Theme` has nothing to say (bead y1o.27 restyles its chrome, not its
-	#     face), and the touch controls and the mobile tuning panel have no bead
-	#     in the epic at all. The tightest budget in the whole table is one of
+	#     face). The tightest budget in the whole table is one of
 	#     those minimap rows, and it sits at 96.2% of its limit in the face it is
 	#     really drawn in against 83.8% in Oswald — measuring it on Oswald alone
 	#     would hand it 10 px of headroom that does not exist.
 	#
-	# Rather than classify 73 rows by their `where` string — which goes wrong in
+	# Rather than classify 94 rows by their `where` string — which goes wrong in
 	# silence the day a control changes class or a panel bead lands — every row is
 	# held to whichever face is WIDEST. That is conservative by construction (a
 	# string that fits the widest face fits the one it is actually drawn in), it
