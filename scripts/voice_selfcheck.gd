@@ -644,7 +644,7 @@ func _check_help_row() -> void:
 		return
 	var legend: String = OS.get_keycode_string(keys[0])
 	var found := false
-	for row: Array in HelpOverlay.visible_rows(false):
+	for row: Array in HelpOverlay.visible_rows():
 		if String(row[0]).contains(legend) and String(row[1]).to_lower().contains("voice"):
 			found = true
 			break

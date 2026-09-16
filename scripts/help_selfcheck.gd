@@ -57,7 +57,7 @@ extends SceneTree
 ##  6. **The "? (hotkeys)" hint chip (bead godot-test1-0h4).** The one HUD
 ##     affordance for the card: it must exist under Main/HUD anchored
 ##     bottom-right, overlap no other corner widget, open the card through the
-##     shipped signal, and hide on a touch session. Driven on the live scene —
+##     shipped signal. Driven on the live scene —
 ##     anchors, rects and the signal — never read back from constants.
 ##
 ## Deliberately NOT covered: the mouse-capture handover (headless has no pointer
