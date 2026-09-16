@@ -1079,12 +1079,29 @@ func _on_lobby_joined(you: String, room: String, master: String, members: Array)
 	# Cleared to the room's truth, which the master's snapshot then fills in.
 	_reset_player_captives()
 	# THE TOWER'S OPENED SET IS SEEDED, not cleared (review round 2): unlike
-	# the captive mirror it is persisted, earned progression, and the union is
-	# what the ruling asks for. One profile read per join seeds the absorb
-	# mirror, so the no-shell path never re-reads it at 2 Hz.
+	# the captive mirror it is earned progression, and the union is what the
+	# ruling asks for. One profile read per join seeds the absorb mirror, so
+	# the no-shell path never re-reads it at 2 Hz.
+	#
+	# PROFILE *UNION THE LIVE SHELL'S EARNED SET* (bead godot-test1-4ban): the
+	# lift's visited landings are earned and never persisted, and a HOST keeps
+	# its run across `host()` — so a profile-only seed would throw away the
+	# landings this peer walked solo, and the master's `g`/`go` (which are the
+	# mirror, by design) would stop carrying floors its own menu still offers.
+	# `earned_ids()`, never the shell's raw `opened`: a parked deferred close
+	# holds the PREVIOUS room's absorbed ids in `opened` (review round 3 of
+	# d81), and nothing absorbed is ever earned. Group + `has_method`, the
+	# `absorbed_opened_ids()` handshake in reverse, so no shell in the tree —
+	# which is every headless probe — is one failed lookup and nothing else.
 	_absorbed_opened = {}
 	for gid: String in BestRunStore.tower_opened_ids():
 		_absorbed_opened[gid] = true
+	var tower: Node = get_tree().get_first_node_in_group("tower")
+	if tower != null and tower.has_method("earned_ids"):
+		for gid: Variant in (tower.call("earned_ids") as Array):
+			var eid := String(gid)
+			if not eid.is_empty():
+				_absorbed_opened[eid] = true
 	# A JOIN DELIBERATELY LEAVES A PARKED DEFERRAL ARMED (review round 3,
 	# major — reversing round 2): clearing the flag without re-hydrating
 	# would keep the old room's ids in `opened` for the session and, on a

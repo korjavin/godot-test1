@@ -150,6 +150,13 @@ const LS_VOICE_VOLUME: String = "ck_voice_volume"
 ## set — deliberately, and on the same footing as the meta-progression counters
 ## above, which are run-independent for the same reason.
 ##
+## WITH ONE CARVE-OUT: the lift's visited landings (bead godot-test1-4ban, owner
+## ruling 2026-09-16). Those ids ride the shell's opened set like a gate does, but
+## they are PER-RUN — a new run offers only the ground floor — so they are the one
+## thing this section declines to store. `_sanitize_tower_ids` drops them at both
+## ends and `TowerGraph.is_lift_stop_id()` is the whole of the rule. Gates, scars,
+## the checkpoint and the rescue are untouched and still persist.
+##
 ## The epic slots in AROUND this record without touching the set semantics: a
 ## save id becomes a second key in this section, or a section suffix, and each
 ## save gets its own union-merged set. Nothing below needs to know that happened
@@ -524,6 +531,12 @@ static func _parse_ranks(raw: String) -> Dictionary:
 # backwards it does not belong in a monotone set, and the tower rebuilds it from
 # scratch every time it is streamed in.
 #
+# AND THE LIFT'S VISITED LANDINGS, which are the same rule seen from the other
+# side (bead godot-test1-4ban): they only ever grow WITHIN a run, so they merge
+# by union like everything else here, but a new run starts them empty again — so
+# they reset, so they do not belong. They live in the shell, which the seed write
+# frees, and `_sanitize_tower_ids` is what keeps them off this disk.
+#
 # V1 IS THE LOCAL LAYER ONLY. No `/best` POST: the lobby record is a scalar
 # schema whose monotone merge lives in Go (`server/best.go`), and putting a set
 # on that wire needs a merge rule on the server side, which is its own bead.
@@ -577,13 +590,26 @@ static func merge_tower_opened_ids(ids: Array) -> void:
 	immediately rather than batching to some later flush that a crash eats.
 	Failures are ignored, for the reason `_write_local` gives.
 	"""
-	var merged := tower_opened_ids()
+	var stored := tower_opened_ids()
+	var merged := stored.duplicate()
 	for id: Variant in ids:
 		if merged.size() >= MAX_TOWER_IDS:
 			break
 		if typeof(id) == TYPE_STRING and not String(id).is_empty() and not merged.has(id):
 			merged.append(String(id))
-	merged.sort()
+	# THE SAME FILTER ON THE WAY OUT (bead godot-test1-4ban). `_sanitize_tower_ids`
+	# already dropped the lift's landings on the way IN, so routing the merged set
+	# back through it does two things: a landing offered to `mark_opened` never
+	# reaches the file, and any landing an OLDER build left on disk is physically
+	# gone the next time a gate is earned — old profiles self-heal with no
+	# migration step. It also sorts, which the write used to do itself.
+	merged = _sanitize_tower_ids(merged)
+	# NOTHING NEW, NOTHING WRITTEN. A lift-only merge sanitizes back to the set we
+	# just loaded, and re-earning an id must not recreate a profile the player
+	# deleted (the `tower_gate_sync_selfcheck` 13c idiom) — nor cost a ConfigFile
+	# round trip on every landing walked.
+	if merged == stored:
+		return
 	var cfg := ConfigFile.new()
 	cfg.load(config_path)  # keep the records, the counters and the player id intact
 	cfg.set_value(CONFIG_TOWER_SECTION, CONFIG_TOWER_KEY, JSON.stringify(merged))
@@ -598,6 +624,16 @@ static func _sanitize_tower_ids(parsed: Variant) -> Array[String]:
 	skipped rather than rejecting the whole set, for the same reason a malformed
 	rank is skipped in `merge_ranks` — the rest of what a player earned is worth
 	keeping. Duplicates collapse, because this is a SET.
+
+	AND THE LIFT'S LANDINGS ARE DROPPED — the one id this file deliberately
+	refuses to keep (bead godot-test1-4ban, owner ruling 2026-09-16). Every other
+	merge in this store is max/union and nothing is ever taken away; this is the
+	one carve-out, on the `captive_heroes` precedent: a set that is NOT monotone
+	across runs has no business in a monotone store. The lift's memory of visited
+	landings dies with the run, so it lives in the shell (which `_tower_reset()`
+	frees on every seed write) and is room-shared while the run lasts. Run through
+	both `tower_opened_ids()` and `merge_tower_opened_ids()`, so the filter holds
+	at both ends and a profile written by an older build self-heals.
 	"""
 	var out: Array[String] = []
 	if typeof(parsed) != TYPE_ARRAY:
@@ -605,7 +641,8 @@ static func _sanitize_tower_ids(parsed: Variant) -> Array[String]:
 	for id: Variant in parsed as Array:
 		if out.size() >= MAX_TOWER_IDS:
 			break
-		if typeof(id) == TYPE_STRING and not String(id).is_empty() and not out.has(id):
+		if typeof(id) == TYPE_STRING and not String(id).is_empty() and not out.has(id) \
+				and not TowerGraph.is_lift_stop_id(String(id)):
 			out.append(String(id))
 	out.sort()
 	return out

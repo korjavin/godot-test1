@@ -168,7 +168,9 @@ gated on `TowerInterior.inside_walls()`, never on the group merely existing.
 `best_run_store.gd`: cfg file, `localStorage`, lobby `GET/POST /best`. Every field merges
 with max/union, so a late reply can never lower a record. Progression is
 run-independent; coins are never deducted from lifetime totals. The captive set stays
-out of it precisely because it is not monotone.
+out of it precisely because it is not monotone, and so are the lift's visited landings
+— per-run by owner ruling, they live in the shell and are filtered out of the store by
+`TowerGraph.is_lift_stop_id()`; tower gates still persist.
 
 ### The pause is refcounted
 `PauseHub.take(who)` / `release(who)` is the only writer of `tree.paused`;

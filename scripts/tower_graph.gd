@@ -122,8 +122,16 @@ const GEOMETRY_MASS: String = "mass"
 ## Phase 16's unlockable lift stop, and it is an ENTRY id rather than a gate id —
 ## but it rides the SAME monotone opened set for the same reason a checkpoint does:
 ## "you have stood here" is a thing the building remembers about you, it is earned,
-## and no verb takes it back. So it is persisted verbatim too, and the `entries`
-## row below and the mutation that grants it both read this constant.
+## and no verb takes it back within the run. The `entries` row below and the
+## mutation that grants it both read this constant.
+##
+## IT IS NOT PERSISTED (bead godot-test1-4ban, owner ruling 2026-09-16). Unlike a
+## gate, the lift's memory of visited landings is PER-RUN: the id is room-shared
+## for the run through the shell's opened set (`gate`/`g`/`go`, no codec change)
+## and `BestRunStore._sanitize_tower_ids` drops it at both ends of the profile, so
+## a new run offers only the ground floor again. The predicate that says so is
+## `is_lift_stop_id()`, and the reset is `EndlessTerrain._tower_reset()` freeing
+## the shell on a seed write — nothing new clears anything.
 ##
 ## THE OTHER SEVEN STOPS ARE PLAIN LITERALS in their rows, deliberately: since bead
 ## `godot-test1-b9m8` `TowerInterior` builds every trigger from the row it is
@@ -139,11 +147,10 @@ const ENTRY_LIFT_MAZE: String = "lift_stop_maze"
 ## Since bead `godot-test1-b9m8` its `unlock` is its OWN id rather than
 ## `GATE_CHECKPOINT`: the lift stops at EVERY storey (owner ruling 2026-09-16) and
 ## every storey is earned the same way, by standing on its landing once. So this
-## constant IS a persisted id now, exactly like `ENTRY_LIFT_MAZE` — added, never
-## renamed. `GATE_CHECKPOINT` keeps its own meaning (the respawn anchor) and no
-## longer powers anything. A profile saved before this bead with the checkpoint lit
-## and this id absent simply re-earns storey 2 the first time it crosses that
-## landing, which every ascent does: no migration, because the set only grows.
+## constant is a run id exactly like `ENTRY_LIFT_MAZE` — and, like it, NEVER
+## PERSISTED since bead `godot-test1-4ban`: see that constant's note.
+## `GATE_CHECKPOINT` keeps its own meaning (the respawn anchor), is still a gate
+## and is still saved, and no longer powers anything here.
 const ENTRY_LIFT_UPPER: String = "lift_stop_upper"
 
 # ============================================================================
@@ -508,7 +515,8 @@ const TOWER_GRAPH: Dictionary = {
 				+ "one-cell ring corridor just inside the shell, which is route A "
 				+ "and the only way through this floor that asks nothing of anybody. "
 				+ "Also the SECOND LIFT STOP: standing on its ramp head completes "
-				+ "`maze_landing`, which unlocks `lift_stop_maze` for good.",
+				+ "`maze_landing`, which unlocks `lift_stop_maze` for the rest of "
+				+ "the run (never persisted — see `ENTRY_LIFT_MAZE`).",
 		},
 		"s8_clue_chamber_west": {
 			"built": true, "quest": "", "cell": "", "parts": [],
@@ -1277,6 +1285,41 @@ static func lift_stops() -> Array[Dictionary]:
 		if granted.has(String(row["id"])):
 			out.append(row)
 	return out
+
+
+## Every `unlock` id a `lift_stops()` row carries -> true. Built once per process.
+static var _lift_stop_unlock_memo: Dictionary = {}
+
+
+static func is_lift_stop_id(id: String) -> bool:
+	"""
+	Is `id` the id a lift stop is earned by — the thing the store refuses to keep?
+
+	@param id: any id the tower's opened set may hold.
+	@return: true only for a `lift_stops()` row's `unlock`.
+
+	THE PER-RUN CARVE-OUT'S ONE PREDICATE (bead godot-test1-4ban, owner ruling
+	2026-09-16). The lift's memory of visited landings dies with the run, so
+	`BestRunStore` drops exactly these ids at both ends of the profile — and this
+	is where "exactly these" is decided, for the same reason `lift_stops()` is
+	derived rather than listed: the rows are the authority on which ids they are.
+
+	DERIVED, NOT A PREFIX RULE. `id.begins_with("lift_stop")` reads the same on
+	today's table and is wrong: the mutations that GRANT these entries are spelled
+	`lift_stop_*_unlocked`, they are ordinary persisted ids, and a prefix would
+	quietly stop persisting them too. Pinned by `tower_lift_selfcheck`'s check 2,
+	which walks every mutation, gate and scar id past this.
+
+	Memoised on the `TowerInterior._stop_floor_memo()` idiom — the table is a
+	const, so the first build is the only one, and the store asks this per id on
+	every load.
+	"""
+	if _lift_stop_unlock_memo.is_empty():
+		for row: Dictionary in lift_stops():
+			var unlock := String(row.get("unlock", ""))
+			if unlock != "":
+				_lift_stop_unlock_memo[unlock] = true
+	return _lift_stop_unlock_memo.has(id)
 
 
 static func identity_of(id: String) -> String:

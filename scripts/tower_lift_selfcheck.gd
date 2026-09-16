@@ -64,6 +64,7 @@ const CityMapPanel := preload("res://scripts/city_map_panel.gd")
 const LandmarkToast := preload("res://scripts/landmark_toast.gd")
 const MultiplayerUI := preload("res://scripts/mp_ui.gd")
 
+const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
 const SHELL_SCENE: String = "res://scenes/tower/tower_shell.tscn"
 const INTERIOR_SCENE: String = "res://scenes/tower/tower_interior.tscn"
 const PLAYER_SCENE: String = "res://scenes/player.tscn"
@@ -96,6 +97,7 @@ func _initialize() -> void:
 	await _check_every_storey_is_a_call_point()
 	await _check_the_refusals()
 	await _check_the_pad_hint()
+	await _check_the_memory_is_per_run()
 
 	if _failures.is_empty():
 		Sentinel.finish(self)
@@ -295,6 +297,33 @@ func _check_stops_are_audited_entries() -> void:
 		_fail(("the ground landing is room '%s' but the front door enters '%s' — the ride "
 			+ "DOWN would set the player in a room `tower_selfcheck` never walks from")
 			% [ground_room, String(TowerGraph.entry("front_door").get("room", ""))])
+
+	# --- THE PREDICATE THE STORE FILTERS ON (bead godot-test1-4ban) ----------
+	# `TowerGraph.is_lift_stop_id()` decides which ids the profile refuses to keep,
+	# so it has to answer YES for exactly these rows and NO for every other id the
+	# opened set may hold. THE MUTATION IDS ARE THE POINT: each of these stops is
+	# granted by a mutation spelled `lift_stop_*_unlocked`, which a
+	# `begins_with("lift_stop")` rule would swallow whole — and those ARE persisted
+	# progression. This loop is what makes the table-derived version the only one
+	# that passes.
+	for row: Dictionary in stops:
+		if not TowerGraph.is_lift_stop_id(String(row.get("unlock", ""))):
+			_fail("is_lift_stop_id() says '%s' is not a lift stop — the store would "
+				% String(row.get("unlock", "")) + "persist a landing and the lift "
+				+ "would remember it across runs")
+	var must_persist: Array[String] = [
+		TowerGraph.GATE_CHECKPOINT, TowerGraph.RESCUE_DONE,
+	]
+	for key: Variant in TowerGraph.TOWER_GRAPH["gates"]:
+		must_persist.append(String(key))
+	for mut: Dictionary in TowerGraph.TOWER_GRAPH["mutations"]:
+		must_persist.append(String(mut.get("id", "")))
+	for sid: String in TowerGraph.scar_ids():
+		must_persist.append(sid)
+	for id: String in must_persist:
+		if id != "" and TowerGraph.is_lift_stop_id(id):
+			_fail("is_lift_stop_id() claims '%s' is a lift stop — the store would " % id
+				+ "silently stop persisting earned progression")
 
 	# --- negative controls --------------------------------------------------
 	if TowerInterior.landing_floor("a_room_no_storey_has") >= 0:
@@ -779,6 +808,122 @@ func _check_the_pad_hint() -> void:
 # ============================================================================
 # HARNESS
 # ============================================================================
+
+# ============================================================================
+# 6. THE MEMORY IS PER-RUN (bead godot-test1-4ban, owner ruling 2026-09-16)
+# ============================================================================
+
+func _check_the_memory_is_per_run() -> void:
+	"""
+	The owner's report, as a check: a landing walked in an EARLIER session must
+	not be on the menu of a fresh run.
+
+	THE LIFETIME IS THE SHELL'S, and that is the whole design. A visited landing
+	rides the shell's monotone opened set exactly as a gate does — so it is
+	room-shared over `gate`/`g`/`go` for free, with no verb and no codec change —
+	and the only thing that differs is that `BestRunStore` refuses to store it
+	(`TowerGraph.is_lift_stop_id`). The shell is freed by `_tower_reset()` on
+	every seed write and by nothing else, which IS "per run, and a waypoint hop
+	keeps it". So nothing new clears anything, and what this check has to pin is
+	the two halves of that sentence: the profile never sees a landing, and a gate
+	earned in the same breath still does.
+
+	Leg (d) drives the real terrain seam rather than arguing it. The other half of
+	it — a `relocate()` hop keeping the landing — is pinned in
+	`waypoint_travel_selfcheck`'s check 3, which already has a booted world and
+	the shell-identity assertion this would otherwise duplicate.
+	"""
+	_fresh_store()
+	var shell := await _make_tower()
+	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
+	if interior == null:
+		_fail("the tower has no TowerInterior child — the per-run probe has no subject")
+		await _clear(null, shell, null)
+		Sentinel.done("memory_is_per_run")
+		return
+	var player: Node3D = await _make_player()
+	var panel: Control = await _make_panel()
+	_stand_at_the_lift(player, interior, 0)
+	await process_frame
+
+	# --- (a) EARNED THROUGH THE SHIPPED TRIGGER, OFFERED, NEVER SAVED --------
+	# `_on_lift_stop_enter` and not `mark_opened`: the claim is about the path the
+	# building really walks, persist flag and all.
+	var storey: int = 3
+	var stop_id: String = _stop_id_for_floor(storey)
+	interior._on_lift_stop_enter(player, stop_id)
+	panel.set_open(true)
+	await process_frame
+	var offered: Array = panel.stop_floors()
+	if offered != [storey]:
+		_fail("standing on storey %d's landing left the menu offering %s"
+			% [storey, str(offered)])
+	panel.set_open(false)
+	if BestRunStore.tower_opened_ids().has(stop_id):
+		_fail("the landing '%s' reached the profile — the lift would remember it "
+			% stop_id + "on every future run")
+
+	# --- (b) NEGATIVE CONTROL: a gate earned in the same run DOES persist ----
+	shell.call("mark_opened", TowerInterior.GATE_CHECKPOINT)
+	if not BestRunStore.tower_opened_ids().has(TowerInterior.GATE_CHECKPOINT):
+		_fail("the checkpoint stopped persisting — the filter is eating earned "
+			+ "progression, not just the lift's landings")
+
+	# --- (c) A NEW RUN: the shell is freed and streamed again ----------------
+	# `_tower_reset()` + `_tower_stream()`, in the only form that matters to this
+	# claim — the second shell hydrates from the profile and from nothing else.
+	await _clear(null, shell, null)
+	var second := await _make_tower()
+	var second_interior := second.get_node_or_null("TowerInterior") as TowerInterior
+	if second_interior == null:
+		_fail("the rebuilt tower has no TowerInterior child")
+		await _clear(player, second, panel)
+		Sentinel.done("memory_is_per_run")
+		return
+	if not second.is_opened(TowerInterior.GATE_CHECKPOINT):
+		_fail("the new run's tower forgot a gate earned in the old one — the filter "
+			+ "took the whole set with it")
+	if second.is_opened(stop_id):
+		_fail("the new run's tower came up with landing '%s' already walked — the "
+			% stop_id + "owner's bug, exactly")
+	_stand_at_the_lift(player, second_interior, 0)
+	await process_frame
+	panel.set_open(true)
+	await process_frame
+	if not (panel.stop_floors() as Array).is_empty():
+		_fail("the new run's lift offered %s from the ground — a fresh run rides "
+			% str(panel.stop_floors()) + "nowhere until a landing is walked")
+	if _row_count(panel) != 1:
+		_fail("the new run's menu drew %d rows, not the one line that says there "
+			% _row_count(panel) + "is nothing to ride to")
+	panel.set_open(false)
+	await _clear(player, second, panel)
+
+	# --- (d) THE REAL SEAM: a seed write frees the shell ---------------------
+	# `tower_shell_selfcheck`'s terrain idiom — the streaming is driven directly,
+	# because the trigger is that file's subject and the RESET is this one's.
+	var terrain := Node3D.new()
+	terrain.set_script(load(TERRAIN_SCRIPT))
+	root.add_child(terrain)
+	terrain.set_run_seed(1234)
+	terrain._tower_stream(terrain.tower_site())
+	var streamed: Node3D = terrain.tower_shell()
+	if streamed == null:
+		_fail("streaming at the site built no shell — the reset probe has no subject")
+	else:
+		streamed.call("mark_opened", stop_id)
+		if not bool(streamed.call("is_opened", stop_id)):
+			_fail("the streamed shell did not take the landing — the reset probe "
+				+ "measured no setup")
+		terrain.set_run_seed(5678)
+		if terrain.tower_shell() != null:
+			_fail("a seed write left the shell standing — `_tower_reset()` is what "
+				+ "ends the lift's memory, and nothing else does")
+	terrain.queue_free()
+	await process_frame
+	_fresh_store()
+	Sentinel.done("memory_is_per_run")
+
 
 func _make_tower() -> Node3D:
 	## Shell plus interior, assembled the way `endless_terrain` assembles them — the
