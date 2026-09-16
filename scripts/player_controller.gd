@@ -956,7 +956,8 @@ func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel"):
 		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
-		else:
+		# Never during Game Over — the Play Again panel needs a free cursor, same reason as click-to-capture below.
+		elif not is_game_over:
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 	# DESKTOP-WEB CLICK-TO-CAPTURE: browsers refuse pointer lock outside a user
