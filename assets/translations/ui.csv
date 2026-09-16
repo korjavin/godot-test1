@@ -9,7 +9,6 @@ keys,en,de
 CrimeKickers needs a keyboard and a mouse — open this page on a computer.","Play from a desktop browser.
 CrimeKickers needs a keyboard and a mouse — open this page on a computer.","Bitte im Desktop-Browser spielen.
 CrimeKickers braucht Tastatur und Maus — öffne diese Seite auf einem Computer."
-"Multiplayer: play the same world with up to 4 friends","Multiplayer: play the same world with up to 4 friends","Mehrspieler: dieselbe Welt mit bis zu 4 Freunden"
 "Hold SPACE to skip","Hold SPACE to skip","LEERTASTE halten zum Überspringen"
 "Unmute","Unmute","Ton einschalten"
 "GAME OVER","GAME OVER","SPIEL VORBEI"
@@ -20,7 +19,6 @@ CrimeKickers braucht Tastatur und Maus — öffne diese Seite auf einem Computer
 "Coins: %d","Coins: %d","Münzen: %d"
 "Coins collected: %d","Coins collected: %d","Münzen: %d"
 "Best: %d coins","Best: %d coins","Rekord: %d Münzen"
-"+%d coins","+%d coins","+%d Münzen"
 "Lv %d   Coins: %d","Lv %d   Coins: %d","St. %d   Münzen: %d"
 "  %d SP","  %d SP","  %d FP"
 "LEVEL %d
@@ -52,47 +50,7 @@ Sie setzen fort"
 "Floor %d","Floor %d","Etage %d"
 "JAIL F%d","JAIL F%d","ZELLE E%d"
 "NO LOCK","NO LOCK","GESTÖRT"
-"JUMP","JUMP","SPRUNG"
-"SPECIAL
-(F)","SPECIAL
-(F)","SPEZIAL
-(F)"
-"SWITCH
-(R)","SWITCH
-(R)","TAUSCH
-(R)"
-"View","View","Sicht"
-"Tilt/Twist","Tilt/Twist","Neig/Dreh"
-"Steer: Tilt","Steer: Tilt","Neigen"
-"Steer: Twist","Steer: Twist","Drehen"
-"TAP TO START","TAP TO START","TIPPEN ZUM START"
-"Motion unavailable — tap to retry","Motion unavailable — tap to retry","Kein Sensor — nochmal tippen"
-"Step in place to walk
-Tilt your phone to steer
-Buttons bottom-right: Jump / Special / Switch","Step in place to walk
-Tilt your phone to steer
-Buttons bottom-right: Jump / Special / Switch","Auf der Stelle gehen zum Laufen
-Handy neigen zum Lenken
-Tasten unten rechts: Sprung / Spezial / Tausch"
-"Paused — tap to resume","Paused — tap to resume","Pause — tippen zum Fortsetzen"
-"Rotate your device
-(landscape only)","Rotate your device
-(landscape only)","Gerät drehen
-(nur Querformat)"
-"Tune","Tune","Setup"
-"DIAGNOSTICS","DIAGNOSTICS","DIAGNOSE"
-"TUNING  (tap −/+)","TUNING  (tap −/+)","REGLER  (−/+ tippen)"
-"Invert steering","Invert steering","Lenkung umkehren"
-"How to play","How to play","Spielanleitung"
-"Recalibrate (re-zero)","Recalibrate (re-zero)","Neu kalibrieren"
-"Reset to defaults","Reset to defaults","Zurücksetzen"
 "Close","Close","Schließen"
-"Step threshold","Step threshold","Schrittschwelle"
-"Step power","Step power","Schrittkraft"
-"Walk decay","Walk decay","Abklingen"
-"Step min interval","Step min interval","Min. Schrittabstand"
-"Steer deadzone","Steer deadzone","Lenk-Totzone"
-"Steer full angle","Steer full angle","Voller Lenkwinkel"
 "Open rooms","Open rooms","Offene Räume"
 "Refresh","Refresh","Neu laden"
 "Host a new room","Host a new room","Neuen Raum öffnen"
@@ -146,8 +104,6 @@ Tasten unten rechts: Sprung / Spezial / Tausch"
 "CONTROLS","CONTROLS","STEUERUNG"
 "Press ? or Esc to close","Press ? or Esc to close","? oder Esc zum Schließen"
 "Mouse","Mouse","Maus"
-"Step","Step","Schritt"
-"Tilt","Tilt","Neigen"
 "Move forward and back — you run by default.","Move forward and back — you run by default.","Vorwärts und rückwärts — du rennst standardmäßig."
 "Turn left and right.","Turn left and right.","Nach links und rechts drehen."
 "Strafe left or right while held.","Strafe left or right while held.","Beim Halten seitwärts nach links oder rechts."
@@ -164,9 +120,6 @@ Tasten unten rechts: Sprung / Spezial / Tausch"
 "Pause the game.","Pause the game.","Spiel anhalten."
 "Free the mouse cursor. Press again to grab it back.","Free the mouse cursor. Press again to grab it back.","Zeiger freigeben. Nochmal drücken, um ihn zurückzuholen."
 "Open or close this list.","Open or close this list.","Diese Liste öffnen oder schließen."
-"Walk by stepping in place — the phone counts your steps.","Walk by stepping in place — the phone counts your steps.","Gehen durch Treten auf der Stelle — das Handy zählt die Schritte."
-"Tilt the phone to steer. The toggle up top switches to twist.","Tilt the phone to steer. The toggle up top switches to twist.","Zum Lenken das Handy neigen. Der Schalter oben stellt auf Drehen um."
-"Tune step and steering feel, or read how to play again.","Tune step and steering feel, or read how to play again.","Schritt und Lenkung einstellen oder die Anleitung erneut lesen."
 "Multiplayer: host or join a room for up to 4 players.","Multiplayer: host or join a room for up to 4 players.","Mehrspieler: Raum für bis zu 4 Spieler öffnen oder betreten."
 "Skills","Skills","Können"
 "%s — Level %d,  %d points","%s — Level %d,  %d points","%s — Stufe %d,  %d Punkte"
@@ -214,7 +167,6 @@ Tasten unten rechts: Sprung / Spezial / Tausch"
 "Crush Quake","Crush Quake","Stampfbeben"
 "Turning giant sends out a shockwave: crocodiles within 6 m flee. Bosses shrug it off.","Turning giant sends out a shockwave: crocodiles within 6 m flee. Bosses shrug it off.","Der Wechsel zur Riesenform sendet eine Schockwelle aus: Krokodile im Umkreis von 6 m fliehen. Bosse ignorieren sie."
 "Open the skill tree — also the Skills button, top right.","Open the skill tree — also the Skills button, top right.","Fertigkeitsbaum öffnen — auch über die Schaltfläche Können oben rechts."
-"Open the skill tree and spend skill points.","Open the skill tree and spend skill points.","Fertigkeitsbaum öffnen und Fertigkeitspunkte ausgeben."
 "St Basil's Cathedral","St Basil's Cathedral","Basilius-Kathedrale"
 "Sydney Opera House","Sydney Opera House","Opernhaus von Sydney"
 "Kinderdijk Windmills","Kinderdijk Windmills","Windmühlen von Kinderdijk"
