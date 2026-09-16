@@ -354,3 +354,5 @@ Waiting for the shared world…,Waiting for the shared world…,Warte auf die ge
 Host not responding — voting to migrate…,Host not responding — voting to migrate…,Host antwortet nicht — Abstimmung zur Migration läuft…
 Cannot reach the lobby at %s (error %d),Cannot reach the lobby at %s (error %d),Lobby unter %s nicht erreichbar (Fehler %d)
 Offline,Offline,Nicht verbunden
+"Wheel","Wheel","Mausrad"
+"Zoom the camera in and out.","Zoom the camera in and out.","Kamera näher oder weiter stellen."

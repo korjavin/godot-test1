@@ -219,6 +219,14 @@ const FOV_PUNCH_DECAY: float = 30.0
 const CAMERA_PITCH_MIN: float = -60.0  # Looking down limit (degrees)
 const CAMERA_PITCH_MAX: float = 60.0   # Looking up limit (degrees)
 
+## Mouse-wheel zoom limits, as a FACTOR on whatever boom the world is asking for
+## (`_third_person_arm_target()`) — not an absolute length, so the same wheel
+## works outdoors and on the shorter indoor boom, and the SpringArm3D still
+## clamps against walls exactly as it does today.
+const CAMERA_ZOOM_MIN: float = 0.5    # half the scene boom: 4.1 m outdoors
+const CAMERA_ZOOM_MAX: float = 2.0    # twice it: 16.5 m outdoors
+const CAMERA_ZOOM_STEP: float = 0.15  # one wheel notch; 10 notches span the range
+
 ## First-person view (one stop on the C / "toggle_camera" cycle).
 ## Eye height above the FEET at normal scale — just under the ~1.8 m head top,
 ## so the camera sits where the character's eyes would be.
@@ -517,6 +525,13 @@ var fov_punch: float = 0.0
 ## arithmetic, and GDScript will not implicitly narrow an int expression back into
 ## an enum type.
 var view_mode: int = ViewMode.THIRD_PERSON
+
+## The player's mouse-wheel zoom, as a multiplier on the boom the world asks for
+## (1.0 = the shipped framing, so a player who never scrolls sees today's game).
+## A camera PREFERENCE like `view_mode` above: nothing resets it — not respawn,
+## not a character switch, not `new_run()`, not leaving the HQ. Not persisted
+## either: it lasts the session, like the minimap's own zoom index.
+var camera_zoom: float = 1.0
 ## The spring arm's original scene-file transform (−14° pitch at the pivot) and
 ## length (8.25 — the old camera's (0,2,8) offset expressed as an arm), plus the
 ## camera's residual −1° pitch, cached in _ready() so leaving first-person
@@ -952,6 +967,21 @@ func _input(event: InputEvent) -> void:
 					deg_to_rad(CAMERA_PITCH_MIN), deg_to_rad(CAMERA_PITCH_MAX))
 			camera_pivot.rotation = Vector3(camera_pitch, camera_yaw_lag, 0.0)
 
+	# The wheel is mouse-look's sibling: a raw event under the same captured-mouse
+	# guard, because project.godot binds no wheel to any action and a notch is
+	# pressed AND released inside one frame, so the polled `is_action_just_pressed`
+	# path would miss it. `pressed` only, for that same reason. `event.factor` is
+	# deliberately ignored — one notch, one step; a trackpad flick fires several
+	# events and simply zooms faster. The captured guard covers every free-cursor
+	# state at once: game over, any overlay (all of them pause AND free the
+	# cursor), and the ESC-released cursor below.
+	var wheel := event as InputEventMouseButton
+	if wheel != null and wheel.pressed and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		if wheel.button_index == MOUSE_BUTTON_WHEEL_UP:
+			zoom_camera(-CAMERA_ZOOM_STEP)   # wheel forward = closer
+		elif wheel.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			zoom_camera(CAMERA_ZOOM_STEP)
+
 	# Allow player to release mouse with ESC, and re-capture it on a second press.
 	if event.is_action_pressed("ui_cancel"):
 		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
@@ -1176,10 +1206,31 @@ func _refresh_indoor_camera() -> void:
 func _third_person_arm_target() -> float:
 	"""
 	The boom the world is currently asking for: the indoor one while a room holds
-	us, the cached scene length otherwise. ONE definition, read by both the snap
-	path (`_apply_view_mode`) and the ease path (`_tick_arm_length`).
+	us, the cached scene length otherwise, times the player's own wheel zoom. ONE
+	definition, read by both the snap path (`_apply_view_mode`) and the ease path
+	(`_tick_arm_length`) — so folding the zoom in here is all the zoom needs.
 	"""
-	return INDOOR_ARM_LENGTH if _indoor_camera else third_person_arm_length
+	return (INDOOR_ARM_LENGTH if _indoor_camera else third_person_arm_length) * camera_zoom
+
+
+func zoom_camera(delta_factor: float) -> void:
+	"""
+	Nudge the wheel zoom by one notch and clamp it. THE seam: the raw wheel event
+	in `_input()` is only an input source, and everything that makes the zoom
+	behave lives here, so a self-check can drive it without an event.
+
+	Nothing else to do — `_tick_arm_length()` dollies the arm to the new target on
+	the next physics tick (one 0.15 step at 8.25 m is 1.24 m, about 70 ms at
+	ARM_EASE_SPEED: smooth, effectively immediate, and no second easing path).
+
+	First-person is REFUSED rather than remembered: a player scrolling with no
+	boom would otherwise come back to third-person at a surprise distance. The
+	game-over and paused guards are belt and braces — a paused tree already
+	withholds `_input` — and they are what makes the refusal testable headless.
+	"""
+	if is_game_over or get_tree().paused or view_mode == ViewMode.FIRST_PERSON:
+		return
+	camera_zoom = clampf(camera_zoom + delta_factor, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
 
 
 func _tick_arm_length(delta: float) -> void:

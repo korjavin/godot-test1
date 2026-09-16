@@ -97,8 +97,8 @@ extends Control
 # THE KEYS THAT OPEN IT
 # ============================================================================
 
-## Raw keycodes, outside the project input map — the same rule `perf_overlay`'s
-## O, `motion_debug`'s F4 and `minimap_hud`'s M follow: a meta/HUD key has no
+## Raw keycodes, outside the project input map — the same rule
+## `pause_controller`'s P and `minimap_hud`'s M follow: a meta/HUD key has no
 ## business in the gameplay map where it could collide with a rebindable action.
 ##
 ## Three aliases because "?" is not one key anywhere. On a US layout it is
@@ -136,6 +136,7 @@ const ROWS: Array = [
 	["Q / E", "Turn left and right.", Mode.DESKTOP],
 	["A / D", "Strafe left or right while held.", Mode.DESKTOP],
 	["Mouse", "Look around. Click to grab the cursor again.", Mode.DESKTOP],
+	["Wheel", "Zoom the camera in and out.", Mode.DESKTOP],
 	["Space", "Jump. A jump also breaks a crocodile's scent.", Mode.DESKTOP],
 	["Shift", "Hold to slow to a walk. Let go and you run again.", Mode.DESKTOP],
 	["Ctrl", "Duck and move slowly.", Mode.DESKTOP],
