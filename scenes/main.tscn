@@ -8,10 +8,6 @@
 [ext_resource type="Script" path="res://scripts/crocodile_lod_manager.gd" id="6_lod"]
 [ext_resource type="Script" path="res://scripts/ability_hud.gd" id="7_ability"]
 [ext_resource type="Script" path="res://scripts/game_over_ui.gd" id="9_gameover"]
-[ext_resource type="Script" uid="uid://b84u622g7v4en" path="res://scripts/motion_debug.gd" id="10_motion"]
-[ext_resource type="Script" uid="uid://bdapps0prr7es" path="res://scripts/mobile_input.gd" id="11_mobileinput"]
-[ext_resource type="PackedScene" uid="uid://b8touchctrls01" path="res://scenes/ui/touch_controls.tscn" id="12_touch"]
-[ext_resource type="Script" path="res://scripts/mobile_settings_panel.gd" id="13_tune"]
 [ext_resource type="Script" path="res://scripts/sound_manager.gd" id="14_sound"]
 [ext_resource type="Script" path="res://scripts/danger_vignette.gd" id="15_danger"]
 [ext_resource type="Script" path="res://scripts/capture_hint.gd" id="16_capture"]
@@ -77,9 +73,6 @@ script = ExtResource("6_lod")
 
 [node name="HuntDirector" type="Node" parent="."]
 script = ExtResource("28_huntdir")
-
-[node name="MobileInput" type="Node" parent="." groups=["mobile_input"]]
-script = ExtResource("11_mobileinput")
 
 [node name="SoundManager" type="Node" parent="."]
 script = ExtResource("14_sound")
@@ -276,35 +269,6 @@ text = "Click to look around"
 horizontal_alignment = 1
 vertical_alignment = 1
 script = ExtResource("16_capture")
-
-[node name="MotionDebug" type="Label" parent="HUD" groups=["motion_debug"]]
-anchors_preset = 2
-anchor_top = 1.0
-anchor_bottom = 1.0
-offset_left = 16.0
-offset_top = -200.0
-offset_right = 360.0
-offset_bottom = -16.0
-grow_vertical = 0
-mouse_filter = 2
-theme_override_colors/font_color = Color(0.85, 0.95, 1, 1)
-theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
-theme_override_constants/outline_size = 6
-theme_override_font_sizes/font_size = 16
-text = "MOTION (F4)"
-vertical_alignment = 2
-script = ExtResource("10_motion")
-
-[node name="TouchControls" parent="HUD" instance=ExtResource("12_touch")]
-
-[node name="MobileSettingsPanel" type="Control" parent="HUD"]
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 1
-script = ExtResource("13_tune")
 
 [node name="LandmarkToast" type="Control" parent="HUD"]
 anchors_preset = 7

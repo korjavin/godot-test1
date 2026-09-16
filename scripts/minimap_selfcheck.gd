@@ -300,7 +300,7 @@ func _start_the_game() -> String:
 		return "no StartOverlay under Main/HUD — was it dropped from main.tscn?"
 	# A missing _dismiss means the script failed to PARSE, and there is exactly one
 	# way that happens here: run against a never-opened clone, whose empty global
-	# class cache leaves `class_name` types (MobileSensors, ToonShading, …)
+	# class cache leaves `class_name` types (ToonShading, BestRunStore, …)
 	# unresolved. Scripts then silently fail to attach — including this overlay's,
 	# which is why a cold clone used to print SELFCHECK OK for the worst possible
 	# reason: nothing paused because nothing loaded. Fail loudly instead.
@@ -1471,7 +1471,7 @@ func _check_widget_rect() -> String:
 			% [map.size.y, caption_bottom]
 	var rect := map.get_global_rect()
 	var viewport_width := map.get_viewport_rect().size.x
-	for neighbour_name in ["HeroHUD", "PerfOverlay", "MotionDebug", "TouchControls"]:
+	for neighbour_name in ["HeroHUD", "PerfOverlay"]:
 		var other: Control = root.get_node_or_null("Main/HUD/%s" % neighbour_name) as Control
 		# Skip the full-screen overlays: they legitimately cover everything.
 		if other == null or other.size.x >= viewport_width - 1.0:

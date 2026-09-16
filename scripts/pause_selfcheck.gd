@@ -34,17 +34,10 @@ extends SceneTree
 ##  3. **Nothing writes `get_tree().paused` behind the hub's back.** A structural
 ##     scan of every `scripts/*.gd`. The bug was emergent — seven individually
 ##     correct files — so the durable guard is not "these seven are right today"
-##     but "the eighth cannot be written the old way". `touch_controls.gd` carries
-##     the one documented exception and says so at the line.
+##     but "the eighth cannot be written the old way". The hub itself is now the
+##     only file the scan skips.
 ##
-##  4. **`mobile_input`'s claim, which is the landmine of the port.** Its
-##     `pause_game()` early-returns when already paused, deliberately, so a double
-##     app-switch cannot clobber `_was_active_before_pause`. Guarding that on the
-##     TREE rather than on our own claim turned it into a missing claim under any
-##     foreign pause. Both halves are checked: the claim is now taken over a
-##     foreign pause, and the double-call protection still holds.
-##
-##  5. **The ROOM-WIDE pause is one more holder and nothing else** (bead
+##  4. **The ROOM-WIDE pause is one more holder and nothing else** (bead
 ##     godot-test1-3a2). `mp_manager` claims on behalf of a peer who pressed P, so
 ##     the interesting cases are the interactions with the LOCAL pausers, which
 ##     `mp_selfcheck` check 25 (the claim arithmetic) cannot see: P stays inert
@@ -55,22 +48,21 @@ extends SceneTree
 ##     travels" rule the other nine holders rest on.
 ##
 ## Deliberately NOT covered: the mouse-capture handovers (headless has no pointer
-## lock — `help_selfcheck` covers the half that works without one), and the touch
-## resume overlay's own gating, which `touch_controls` decides from
-## `paused_by_driver` and which check 4 pins the value of.
+## lock — `help_selfcheck` covers the half that works without one).
 
 const PauseController := preload("res://scripts/pause_controller.gd")
-const MobileInput := preload("res://scripts/mobile_input.gd")
 
 ## Every `scripts/*.gd` that check 3 lets write `.paused` directly.
 ##
 ##   * `pause_hub.gd` IS the authority — it is the one place that may.
-##   * `touch_controls.gd` keeps a two-line anti-softlock belt in the unreachable
-##     `else` of its resume tap: there is no driver, so there is no holder
-##     identity to release with. The line says all this where it lives.
 ##   * `*_selfcheck.gd` files are `SceneTree` scripts driving fixtures; `paused`
 ##     there is the harness, not a pauser.
-const RAW_PAUSE_ALLOWED: Array = ["pause_hub.gd", "touch_controls.gd"]
+##
+## `touch_controls.gd` used to sit here too — the last raw `.paused` write outside
+## the hub, an anti-softlock belt in the unreachable `else` of its resume tap. The
+## touch session is gone (bd godot-test1-si57), and with it that exemption: the
+## hub is now the ONLY script in `res://scripts` allowed to touch `.paused`.
+const RAW_PAUSE_ALLOWED: Array = ["pause_hub.gd"]
 
 var _overlay: Control = null
 var _pause_controller: Node = null
@@ -96,8 +88,6 @@ func _initialize() -> void:
 		failure = _check_no_raw_pause_writes()
 	if failure.is_empty():
 		failure = await _check_master_repro()
-	if failure.is_empty():
-		failure = await _check_mobile_driver_claim()
 	if failure.is_empty():
 		failure = await _check_room_pause_holder()
 	if failure.is_empty():
@@ -400,70 +390,7 @@ func _check_no_raw_pause_writes() -> String:
 
 
 # ============================================================================
-# 4. THE MOBILE DRIVER'S CLAIM
-# ============================================================================
-
-func _check_mobile_driver_claim() -> String:
-	"""
-	`mobile_input.pause_game()` is the landmine of the port. It early-returns when
-	already paused — deliberately, so a double app-switch cannot overwrite
-	`_was_active_before_pause` and leave motion permanently dead after the resume
-	tap. Testing the TREE rather than our own claim made that early return a
-	MISSING CLAIM under any foreign pause, which is the same stranding bug one
-	scope down: the phone's resume overlay never appears, and whoever else was
-	holding starts the world in a backgrounded tab.
-	"""
-	var foreign := Node.new()
-	root.add_child(foreign)
-	var driver := MobileInput.new()
-	root.add_child(driver)
-	await process_frame
-
-	if paused or PauseHub.holder_count() != 0:
-		return "check 4 started with %d holders — an earlier check leaked a claim" \
-			% PauseHub.holder_count()
-
-	# Somebody else — the MP panel, the help card — freezes the world first.
-	PauseHub.take(foreign)
-	driver.active = true
-	driver.pause_game()
-	if not bool(driver.get("paused_by_driver")):
-		return ("a focus-loss pause arriving over somebody else's pause claimed NOTHING " \
-			+ "— the phone shows no resume overlay and the other holder's release " \
-			+ "starts the world in a backgrounded tab")
-	if PauseHub.holder_count() != 2:
-		return "the driver claimed over a foreign pause but the hub counts %d holders" \
-			% PauseHub.holder_count()
-
-	# THE DOUBLE APP-SWITCH. `active` is false now (pause_game disabled the driver);
-	# a second call that re-ran the body would remember THAT as the pre-pause state
-	# and motion would stay dead forever after the resume tap.
-	if not bool(driver.get("_was_active_before_pause")):
-		return "pause_game() did not remember that motion was running — the resume tap cannot restore it"
-	driver.pause_game()
-	if not bool(driver.get("_was_active_before_pause")):
-		return ("a second pause_game() overwrote _was_active_before_pause — a double " \
-			+ "app-switch leaves motion permanently dead, with no other re-enable path")
-
-	# The foreign holder lets go; the driver's claim must keep the world frozen.
-	PauseHub.release(foreign)
-	if not paused:
-		return "the foreign holder released and the world started running under the driver's own pause"
-
-	driver.resume_from_pause()
-	if paused or bool(driver.get("paused_by_driver")) or PauseHub.holder_count() != 0:
-		return "the resume tap left the tree paused (holders=%d) — the phone is stuck on a frozen screen" \
-			% PauseHub.holder_count()
-
-	foreign.free()
-	driver.queue_free()
-	print("mobile: the driver claims over a foreign pause and keeps its double-switch guard")
-	Sentinel.done("mobile_driver_claim")
-	return ""
-
-
-# ============================================================================
-# 5. THE ROOM-WIDE PAUSE IS JUST ANOTHER HOLDER
+# 4. THE ROOM-WIDE PAUSE IS JUST ANOTHER HOLDER
 # ============================================================================
 
 func _check_room_pause_holder() -> String:
@@ -479,7 +406,7 @@ func _check_room_pause_holder() -> String:
 	and asserting anything else here would be asserting `mp_manager`'s job twice.
 	"""
 	if paused or PauseHub.holder_count() != 0:
-		return "check 5 started with %d holders — an earlier check leaked a claim" \
+		return "check 4 started with %d holders — an earlier check leaked a claim" \
 			% PauseHub.holder_count()
 
 	# THE REAL NODE CHECK 2 ALREADY FOUND, under the real `main.tscn`. Instancing a
@@ -488,7 +415,7 @@ func _check_room_pause_holder() -> String:
 	# fixture would decide which player answers.
 	var controller: Node = _pause_controller
 	if controller == null:
-		return "check 2 never found the pause_controller — check 5 has nothing to drive"
+		return "check 2 never found the pause_controller — check 4 has nothing to drive"
 	if not controller.has_method("is_pausing"):
 		return "pause_controller has no is_pausing() — mp_manager has nothing to publish"
 	if not controller.is_in_group("pause_controller"):
@@ -601,7 +528,7 @@ func _check_room_pause_holder() -> String:
 		return "a local overlay's claim did not survive our P release"
 	PauseHub.release(local)
 	if paused or PauseHub.holder_count() != 0:
-		return "check 5 left the world frozen (holders=%d)" % PauseHub.holder_count()
+		return "check 4 left the world frozen (holders=%d)" % PauseHub.holder_count()
 
 	local.free()
 	remote.free()
