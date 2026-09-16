@@ -97,8 +97,8 @@ extends Control
 # THE KEYS THAT OPEN IT
 # ============================================================================
 
-## Raw keycodes, outside the project input map — the same rule `perf_overlay`'s
-## O, `motion_debug`'s F4 and `minimap_hud`'s M follow: a meta/HUD key has no
+## Raw keycodes, outside the project input map — the same rule
+## `pause_controller`'s P and `minimap_hud`'s M follow: a meta/HUD key has no
 ## business in the gameplay map where it could collide with a rebindable action.
 ##
 ## Three aliases because "?" is not one key anywhere. On a US layout it is
