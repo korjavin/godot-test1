@@ -97,9 +97,22 @@ const CHOICE_KEYCODES: Array[Key] = [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6,
 
 ## How far from this storey's `TowerInterior.lift_stand()` the call button reaches,
 ## in metres.
+##
 ## Under one storey height (`TowerShell.STOREY_HEIGHT`) BY ASSERTION in the
-## self-check, not by luck: a sphere that reached the floor above would call the
-## lift from the landing it is meant to be a shortcut to.
+## self-check. That assertion no longer prevents the thing it was written for
+## (revmux round 1): `_call_floor()` resolves the storey from `current_floor()`
+## FIRST and then measures against THAT storey's stand point, so a sphere reaching
+## the floor above cannot call the lift from the landing above any more. It is kept
+## as the sanity bound on the number — a call radius taller than a storey is a
+## radius somebody has stopped thinking about.
+##
+## ponytail: THE SPHERE IS WIDER THAN THE PAD. An upper landing is two `s` cells
+## (~1.9 x 3.9 m) and this reaches ~2.5 m past it on the long sides, so you can call
+## the lift from beside the pad without `LiftStopTrigger<n>` firing — and ride away
+## without that storey joining the offer. Self-correcting (one step onto the pad
+## earns it) and revmux judged it immaterial; the pad is about to become visible
+## (bead `godot-test1-i1xj`), which is the moment to narrow this to the landing rect
+## if it still reads wrong.
 const CALL_RADIUS: float = 3.5
 
 # ============================================================================
@@ -169,7 +182,32 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_to_group("tower_lift_menu")
 	_build_ui()
-	_hint.text = tr(HINT_LINE) % OS.get_keycode_string(TOGGLE_KEY)
+	_apply_hint_text()
+
+
+func _notification(what: int) -> void:
+	"""
+	RULE 2's one cost, paid the way every other composed-string panel here pays it.
+
+	`_hint.text` is COMPOSED ("L — lift"), so it is not its own translation key and
+	Godot's auto-translate cannot re-resolve it when the locale changes — it would
+	stay in whatever language was live at `_ready()`. `skill_tree_ui`, `mp_ui` and
+	`landmark_toast` all carry this hook for the same reason, and here it is the
+	whole point of the label: the DE pill on the start card is pressed long after
+	this node is ready, and a German player would otherwise be told "L — lift" in
+	English until they pressed the key the label exists to tell them about.
+
+	The CARD needs no hook: every string on it is re-composed by `_refresh()`, which
+	runs on every open, and the card is only ever read while open.
+	"""
+	if what == NOTIFICATION_TRANSLATION_CHANGED:
+		_apply_hint_text()
+
+
+func _apply_hint_text() -> void:
+	"""Compose the pad hint. RULE 2: `tr()` on the FORMAT string, never the result."""
+	if _hint != null:
+		_hint.text = tr(HINT_LINE) % OS.get_keycode_string(TOGGLE_KEY)
 
 
 func _process(_delta: float) -> void:
@@ -240,6 +278,15 @@ func can_open() -> bool:
 	standalone degrade every group lookup in this project owes).
 	"""
 	if _in_room() or _game_over() or _caught():
+		return false
+	# A FOREIGN PAUSE — `skill_tree_ui`'s guard, and the pad hint is why it moved
+	# into the shared predicate (revmux round 1). Every full-screen overlay in this
+	# HUD draws UNDER this node (`TowerLiftMenu` is the later sibling), so without
+	# it an always-on "L — lift" floats over the help card's 0.82 dim, over the city
+	# map and over the skill tree — and L would open this card on top of one of them
+	# with two `PauseHub` holders.
+	var tree := get_tree()
+	if tree != null and tree.paused and not _paused_by_us:
 		return false
 	return _call_floor() >= 0
 
@@ -362,9 +409,10 @@ func _call_floor() -> int:
 	will GO (`_visited_floors`), never whether it answers.
 
 	ONE `lift_stand()` CALL, deliberately: `current_floor()` already says which
-	storey the body is on, so the 40 x 40 plan scan runs once instead of ten times —
-	and `TowerInterior` memoises it besides, because this runs every frame for the
-	hint (see there).
+	storey the body is on, so the 40 x 40 plan scan runs once instead of ten times.
+	`TowerInterior` memoises that scan AND the stop-floor set besides, because this
+	whole function runs every frame the player is inside the HQ — the pad hint asks
+	it (revmux round 1: both derivations walked the plans on every frame).
 	"""
 	var tree := get_tree()
 	if tree == null:
@@ -378,7 +426,7 @@ func _call_floor() -> int:
 	var local: Vector3 = (player as Node3D).global_position \
 			- (interior as Node3D).global_position
 	var here := TowerInterior.current_floor(local.y)
-	if here != 0 and not TowerInterior.lift_stop_floors().has(here):
+	if here != 0 and not TowerInterior.is_lift_stop_floor(here):
 		return -1
 	if local.distance_to(TowerInterior.lift_stand(here)) > CALL_RADIUS:
 		return -1
@@ -455,9 +503,7 @@ func _refresh() -> void:
 		_rows.add_child(_stop_strip(STOP_LINE % [i + 1, floor_name]))
 	if _hint_label != null:
 		_hint_label.text = tr(CLOSE_HINT) % OS.get_keycode_string(TOGGLE_KEY)
-	# The pad hint is re-composed here too, so a locale changed mid-run reaches it
-	# on the next open rather than on the next process restart.
-	_hint.text = tr(HINT_LINE) % OS.get_keycode_string(TOGGLE_KEY)
+	_apply_hint_text()
 
 
 func _line(text: String, size: int, colour: Color) -> Label:

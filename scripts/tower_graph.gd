@@ -1198,9 +1198,17 @@ const TOWER_GRAPH: Dictionary = {
 				+ "capability — every edge from the front door to it is ungated, "
 				+ "which check 3 already walks for all four spines."},
 		# --- bead godot-test1-b9m8: `maze_landing` for every other storey. Each is
-		# "stand on this landing once", each is solo on base capability for the same
-		# reason that one is (a landing is reached by ramps and nothing else), and
-		# check 7 re-derives that rather than taking this comment's word for it.
+		# "stand on this landing once", and each is solo on base capability for the
+		# same reason that one is: a landing is reached by ramps and nothing else,
+		# and check 3 walks every ramp from the front door for all four spines.
+		#
+		# CHECK 7 DOES NOT RE-DERIVE IT, and `maze_landing`'s note above is right to
+		# cite check 3 instead (revmux round 1 caught this comment claiming it did).
+		# Each of these landings is now ALSO a lift-stop entry whose `room` is that
+		# same landing, and `_walk` seeds its result with the entry's own room — so
+		# check 7's solo test is satisfied before it crosses a single edge. It is
+		# vacuous for exactly these eight rows, by construction, and check 3 is what
+		# has teeth here.
 		#
 		# The ids shadow the RAMP EDGE ids (`landing_s3` is also the edge from
 		# storey 2's landing to storey 3's) — deliberately, and the two tables are
@@ -1375,11 +1383,17 @@ static func opened_ids() -> Array[String]:
 		if not out.has(sid):
 			out.append(sid)
 	# The checkpoint is the same shape of id as the rescue: authored, in the
-	# set, but not a graph row key — it rides its `unlock` value on the
-	# `lift_stop_upper` entry row while `_on_checkpoint_enter` opens it by
-	# const. Omitted once (review round 1: every receiver dropped it); appended
-	# here so the omission cannot recur, and bound by assertion (see
-	# `tower_gate_sync_selfcheck`: every id the interior can open must decode).
+	# set, but not a graph row key at all — `_on_checkpoint_enter` opens it by
+	# const and nothing in `TOWER_GRAPH` names it.
+	#
+	# SINCE BEAD godot-test1-b9m8 THIS APPEND IS THE ONLY REASON IT DECODES.
+	# It used to be belt beside braces: `lift_stop_upper` carried the checkpoint
+	# as its `unlock`, so the entries loop above picked it up too. That row now
+	# unlocks itself, so `tower_checkpoint` appears NOWHERE else in this table —
+	# delete these two lines and every peer silently drops it, which is exactly
+	# the review-round-1 bug (every receiver dropped it) coming back. Bound by
+	# assertion (`tower_gate_sync_selfcheck`: every id the interior can open
+	# must decode).
 	if not out.has(GATE_CHECKPOINT):
 		out.append(GATE_CHECKPOINT)
 	if not out.has(RESCUE_DONE):

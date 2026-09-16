@@ -2606,13 +2606,43 @@ static func lift_stop_floors() -> Array[int]:
 	its room, and the storey whose `landing` key is that room is the storey whose
 	`s` cells you arrive on. Re-plan a landing onto a different floor and its
 	trigger follows it, the way `block_floor()` follows the cell block.
+
+	A FRESH ARRAY OFF A MEMO, never the memo itself: the answer is cached (see
+	`is_lift_stop_floor`) but this promises a list the caller may keep and sort.
 	"""
 	var out: Array[int] = []
+	for floor_index: Variant in _stop_floor_memo():
+		out.append(int(floor_index))
+	return out
+
+
+static func is_lift_stop_floor(floor_index: int) -> bool:
+	"""
+	Does storey `floor_index` carry a lift stop?
+
+	THE PER-FRAME FORM, and the reason the memo exists. `tower_lift_menu` asks this
+	every frame the player is inside the HQ; deriving it walks the mutation table,
+	the entry table and `TowerPlans.STOREYS` nine times over — ~900 dictionary reads
+	and eleven allocations — for a pure function of two authored tables. Same memo
+	and same reasoning as `lift_stand()`: authored text, NOT `run_seed`, so nothing
+	clears it and `_drop_seeded_memos` must never learn about it.
+	"""
+	return _stop_floor_memo().has(floor_index)
+
+
+## `lift_stop_floors()`'s cache: `{floor_index: true}` in `lift_stops()` order.
+## Authored, never seeded — see `is_lift_stop_floor()`.
+static var _lift_stop_floor_memo: Dictionary = {}
+
+
+static func _stop_floor_memo() -> Dictionary:
+	if not _lift_stop_floor_memo.is_empty():
+		return _lift_stop_floor_memo
 	for row: Dictionary in TowerGraph.lift_stops():
 		var floor_index := landing_floor(String(row.get("room", "")))
-		if floor_index >= 0 and not out.has(floor_index):
-			out.append(floor_index)
-	return out
+		if floor_index >= 0:
+			_lift_stop_floor_memo[floor_index] = true
+	return _lift_stop_floor_memo
 
 
 static func landing_floor(room_id: String) -> int:
@@ -2620,7 +2650,7 @@ static func landing_floor(room_id: String) -> int:
 	Which `FLOOR_Y` index has `room_id` for its `landing`, -1 when none does.
 
 	The seam between a graph ENTRY (which names a room) and a storey (which is a
-	number), and the only place that translation is written. `lift_stop_floor()`
+	number), and the only place that translation is written. `lift_stop_floors()`
 	above and the lift menu both ask it, so re-planning a landing onto another
 	floor moves the trigger and the ride together.
 	"""

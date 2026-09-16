@@ -42,7 +42,9 @@ extends SceneTree
 ##     when a refusal becomes true under an open panel.
 ##  5. THE PAD HINT (bead `godot-test1-b9m8`, owner ruling 2), read off the node
 ##     rather than off the panel's bookkeeping: up on a pad, down off it, down
-##     under the open menu, down in a room, and spelling the key it really is.
+##     under the open menu, down in a room, down under a FOREIGN pause (every
+##     full-screen overlay in this HUD draws beneath this node), following a live
+##     locale switch, and spelling the key it really is.
 ##
 ## The "RID allocations … were leaked at exit" lines after the verdict are the
 ## engine reporting this project's deliberate static shared caches — same note as
@@ -438,7 +440,15 @@ func _check_every_storey_is_a_call_point() -> void:
 	# nothing happened") turned into a test.
 	var call_floor: int = 3
 	_stand_at_the_lift(player, interior, call_floor)
-	await process_frame
+	# NO FRAME BETWEEN THE MOVE AND THE QUESTION, deliberately (revmux round 1):
+	# standing on the pad puts this body inside `LiftStopTrigger3`, and a physics
+	# tick inside an `await` would EARN that storey before the question is asked —
+	# leaving the one assertion in this suite that says "reachability, not earning"
+	# unable to tell the two apart. `can_open()` is synchronous and needs no frame,
+	# so the assertion is made on a set this line proves is still empty.
+	if shell.call("is_opened", _stop_id_for_floor(call_floor)):
+		_fail("storey %d was already earned before the reachability assertion — the "
+			% call_floor + "control it depends on is gone")
 	if not panel.can_open():
 		_fail("the menu refused on storey %d's landing with nothing opened — a landing "
 			% call_floor + "you can stand on is a landing you walked to, so L must answer")
@@ -450,9 +460,13 @@ func _check_every_storey_is_a_call_point() -> void:
 			% [call_floor, str(from_nothing)] + "ground is always the way home")
 
 	# TWO VISITED LANDINGS, and the offer is exactly those plus the ground, minus
-	# here. The two are picked on either side of the call floor so the sort is doing
-	# real work rather than agreeing with the insertion order.
-	var lower: int = 1
+	# here. THE PAIR IS CHOSEN SO THE SORT IS LOAD-BEARING (revmux round 1 caught
+	# the first pair agreeing with the insertion order, which made this assertion
+	# blind to `out.sort()` being deleted): `_visited_floors()` appends in
+	# `lift_stops()` order, which is `entries` order — storey 1, then the maze at 7,
+	# then s3 at 2 and up. So the maze against s3's landing arrives as [0, 7, 2] and
+	# only the sort turns it into [0, 2, 7].
+	var lower: int = TowerInterior.landing_floor("s3_landing")
 	var upper: int = maze_floor
 	panel.set_open(false)
 	shell.call("mark_opened", _stop_id_for_floor(lower))
@@ -539,12 +553,15 @@ func _check_the_refusals() -> void:
 	_stand_at_the_lift(player, interior, 0)
 	await process_frame
 
-	# The CALL POINT. A radius that reached a whole storey up would call the lift
-	# from the landing it is a shortcut to, so it is asserted against the building's
-	# own storey height rather than eyeballed.
+	# The CALL POINT, bounded against the building's own storey height rather than
+	# eyeballed. Since bead godot-test1-b9m8 this no longer prevents calling from the
+	# floor above — `_call_floor()` resolves the storey first and measures only
+	# against that storey's stand point — so it is a sanity bound on the number and
+	# the const says so.
 	if LiftMenu.CALL_RADIUS >= TowerShell.STOREY_HEIGHT:
-		_fail("CALL_RADIUS (%.1f) reaches past one storey (%.1f) — the lift would be "
-			% [LiftMenu.CALL_RADIUS, TowerShell.STOREY_HEIGHT] + "callable from the floor above")
+		_fail("CALL_RADIUS (%.1f) is taller than a storey (%.1f) — a call radius that "
+			% [LiftMenu.CALL_RADIUS, TowerShell.STOREY_HEIGHT]
+			+ "reaches the floor above is a number nobody is thinking about any more")
 	if not panel.can_open():
 		_fail("the control case failed: standing at the lift, the menu still refuses")
 	player.global_position += Vector3(LiftMenu.CALL_RADIUS + 5.0, 0.0, 0.0)
@@ -712,6 +729,48 @@ func _check_the_pad_hint() -> void:
 	if not hint.visible:
 		_fail("leaving the room did not bring the pad hint back")
 	mp.queue_free()
+
+	# --- DOWN UNDER SOMEBODY ELSE'S PAUSE (revmux round 1) ------------------
+	# Every full-screen overlay in this HUD — the help card's 0.82 dim, the city
+	# map, the skill tree — draws UNDER this node and holds the pause while it is
+	# up. An always-on label would float on top of all of them. Driven through
+	# `PauseHub` with a foreign holder, which is exactly what those panels are.
+	var other := Node.new()
+	root.add_child(other)
+	PauseHub.take(other)
+	await process_frame
+	if hint.visible:
+		_fail("the pad hint stayed up under a foreign pause — it would draw over the "
+			+ "help card, the city map and the skill tree, all of which are beneath it")
+	if panel.can_open():
+		_fail("the lift would open over a full-screen overlay that already holds the "
+			+ "pause — two PauseHub holders and a card on top of a card")
+	PauseHub.release(other)
+	other.queue_free()
+	await process_frame
+	if not hint.visible:
+		_fail("releasing the foreign pause did not bring the pad hint back — the "
+			+ "control for the assertion above never fired")
+
+	# --- AND IT FOLLOWS A LIVE LOCALE SWITCH --------------------------------
+	# `_hint.text` is COMPOSED, so it is not its own key and Godot's auto-translate
+	# cannot re-resolve it: the panel carries `NOTIFICATION_TRANSLATION_CHANGED`
+	# for that, and this is what says so. `locale_selfcheck`'s idiom.
+	var was_locale: String = TranslationServer.get_locale()
+	TranslationServer.set_locale("de")
+	await process_frame
+	var want_de: String = tr("%s — lift") % OS.get_keycode_string(LiftMenu.TOGGLE_KEY)
+	if want_de == want:
+		_fail("the German row for the pad hint equals the English one — this assertion "
+			+ "would pass on a label frozen in English")
+	elif hint.text != want_de:
+		_fail("after switching to German the pad hint still reads '%s', not '%s' — a "
+			% [hint.text, want_de] + "composed string needs the translation hook")
+	TranslationServer.set_locale(was_locale)
+	await process_frame
+	if hint.text != want:
+		_fail("switching back to '%s' left the pad hint reading '%s', not '%s'"
+			% [was_locale, hint.text, want])
 
 	await _clear(player, shell, panel)
 	Sentinel.done("pad_hint")
