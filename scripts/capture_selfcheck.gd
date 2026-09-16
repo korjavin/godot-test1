@@ -311,6 +311,7 @@ func _run() -> void:
 	await _check_air_sight_is_the_indoor_air_rush()
 	await _check_no_second_way_to_lose()
 	await _check_a_hunter_walks_in_and_takes_a_hero()
+	await _check_escape_leaves_the_ending_cursor_free()
 	_report()
 
 
@@ -3238,6 +3239,51 @@ func _check_a_hunter_walks_in_and_takes_a_hero() -> void:
 		probe_floor.queue_free()
 		await process_frame
 	Sentinel.done("a_hunter_walks_in_and_takes_a_hero")
+
+
+# ============================================================================
+# 21. ESC LEAVES THE ENDING CURSOR FREE (bead godot-test1-7hwo)
+# ============================================================================
+
+func _check_escape_leaves_the_ending_cursor_free() -> void:
+	"""
+	Check 21. ESC on the Game Over screen must not capture the cursor — the
+	Play Again panel needs it free, the same reason click-to-capture below the
+	toggle already carries `and not is_game_over`.
+
+	HEADLESS CAVEAT, MEASURED NOT ASSUMED: the headless DisplayServer ignores
+	`Input.set_mouse_mode(CAPTURED)` — a throwaway probe printed mouse_mode 0
+	(VISIBLE) after the set, so feeding ESC through `_input()` and asserting
+	VISIBLE would pass VACUOUSLY here, and its negative control (run going,
+	ESC asserts CAPTURED) can never pass no matter what the code reads. A
+	probe that can only ever pass proves nothing, so this check pins the guard
+	BY SOURCE instead: the ESC toggle's capture arm must read
+	`elif not is_game_over:`, and the click-to-capture guard must still stand
+	beside it. Reverting the arm to a bare `else:` fails below.
+	"""
+	var src: String = FileAccess.get_file_as_string("res://scripts/player_controller.gd")
+	if src.is_empty():
+		_fail("could not read player_controller.gd to pin the ESC Game Over guard")
+		Sentinel.done("escape_leaves_the_ending_cursor_free")
+		return
+	var anchor := 'if event.is_action_pressed("ui_cancel"):'
+	var at: int = src.find(anchor)
+	if at == -1:
+		_fail("the ESC toggle (`%s`) is gone from player_controller._input()" % anchor)
+		Sentinel.done("escape_leaves_the_ending_cursor_free")
+		return
+	var block: String = src.substr(at, 400)
+	if not block.contains("elif not is_game_over:"):
+		_fail("the ESC toggle's capture arm lost `not is_game_over` — pressing ESC on "
+				+ "the Game Over screen captures the cursor and the Play Again panel "
+				+ "cannot be clicked until a second ESC")
+	if block.contains("\n\t\telse:"):
+		_fail("the ESC toggle captures on a bare `else:` again — the Game Over guard "
+				+ "was reverted")
+	if not src.contains("if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED and not is_game_over:"):
+		_fail("the click-to-capture `and not is_game_over` guard is gone — the ESC arm "
+				+ "above pins nothing if its sibling reason was removed")
+	Sentinel.done("escape_leaves_the_ending_cursor_free")
 
 
 func _become(player: Node, hero: String) -> bool:
