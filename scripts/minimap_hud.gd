@@ -292,11 +292,6 @@ const PEER_EDGE_TICK: float = 7.0
 ## can actually walk to.
 const PEER_EDGE_ALPHA: float = 0.75
 
-## On-widget touch zoom buttons: size in pixels, and the gap between them. Built
-## only in a touch session (see `_build_zoom_buttons`).
-const ZOOM_BUTTON_SIZE: float = 30.0
-const ZOOM_BUTTON_GAP: float = 4.0
-
 # --- INDOORS: the storey line, the jail's floor, and the anti-stall arrow -----
 #
 # All of it is gated on `TowerShell.sheltered()` and NOTHING is added outside it —
@@ -705,7 +700,6 @@ func _ready() -> void:
 	_river_points.resize(MAX_RIVER_SEGMENTS * 2)
 	_river_field.resize(TERRAIN_GRID * TERRAIN_GRID)
 	_river_city.resize(TERRAIN_GRID * TERRAIN_GRID)
-	_build_zoom_buttons()
 
 
 func _input(event: InputEvent) -> void:
@@ -766,35 +760,6 @@ func _croc_view_radius() -> float:
 	"""World metres within which a crocodile gets a dot — a fraction of the map's
 	reach, so it follows the zoom (see CROC_VIEW_FRACTION)."""
 	return _view_radius() * CROC_VIEW_FRACTION
-
-
-func _build_zoom_buttons() -> void:
-	"""A small +/- pair on the widget, for a phone with no keyboard.
-
-	Gated on `MobileSensors.is_touch_session()` exactly like the rest of the touch
-	UI, so on desktop these are never created and the map is byte-for-byte the
-	control it was. FOCUS_NONE is not cosmetic: `ui_accept` is Space, Space is
-	jump, and a focused button would fire on every jump for the rest of the run —
-	the same rule `mp_ui._make_button()` documents. The labels are "+" and "-",
-	which are symbols in every locale, so there is no CSV row to add."""
-	if not MobileSensors.is_touch_session():
-		return
-	# Bottom-right of the disc, stacked so a thumb can reach both without covering
-	# the player arrow at the centre.
-	var right := MAP_CENTER.x + MAP_RADIUS - ZOOM_BUTTON_SIZE * 0.5
-	var top := MAP_CENTER.y + MAP_RADIUS - ZOOM_BUTTON_SIZE * 2.0 - ZOOM_BUTTON_GAP
-	_add_zoom_button("+", Vector2(right, top), -1)
-	_add_zoom_button("-", Vector2(right, top + ZOOM_BUTTON_SIZE + ZOOM_BUTTON_GAP), 1)
-
-
-func _add_zoom_button(label: String, at: Vector2, step: int) -> void:
-	var button := Button.new()
-	button.text = label
-	button.focus_mode = Control.FOCUS_NONE  # see _build_zoom_buttons
-	button.position = at
-	button.size = Vector2(ZOOM_BUTTON_SIZE, ZOOM_BUTTON_SIZE)
-	button.pressed.connect(_zoom_by.bind(step))
-	add_child(button)
 
 
 func _process(delta: float) -> void:

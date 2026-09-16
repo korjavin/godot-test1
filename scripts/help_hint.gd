@@ -9,10 +9,8 @@ extends Button
 ## the card's key chips. Clicking it opens the card through the SAME toggle()
 ## the ? / F1 keys use.
 ##
-## Touch sessions never see it: the touch cluster owns that corner, and touch
-## already has its own how-to (the gear panel's "How to play" re-shows the
-## onboarding card). It stays visible while other panels are open — the help
-## card itself is one of them, and P/? already stack through PauseHub.
+## It is always visible, and stays visible while other panels are open — the
+## help card itself is one of them, and P/? already stack through PauseHub.
 ##
 ## Not one colour lives here: BONE, INK_RAISED and the chip face all come off
 ## `HudTheme` constants and builders, so `hero_hud_selfcheck`'s palette grep
@@ -67,18 +65,7 @@ func _ready() -> void:
 	add_theme_color_override("font_hover_color", HudTheme.BONE)
 	add_theme_color_override("font_pressed_color", HudTheme.BONE)
 	text = "? (hotkeys)"
-	# The canonical touch probe (mobile_sensors.gd): DisplayServer alone
-	# misses the mobile-web fallbacks, and on those sessions the touch
-	# cluster owns this corner.
-	update_touch_visibility(MobileSensors.is_touch_session())
 	pressed.connect(_on_hint_pressed)
-
-
-func update_touch_visibility(touch: bool) -> void:
-	## Hide the chip on a touch session (the cluster owns the corner); the
-	## argument is a seam so the self-check can drive both states without
-	## stubbing MobileSensors.
-	visible = not touch
 
 
 func _on_hint_pressed() -> void:
