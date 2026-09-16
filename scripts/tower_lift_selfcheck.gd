@@ -48,10 +48,6 @@ const HelpOverlay := preload("res://scripts/help_overlay.gd")
 const MinimapHud := preload("res://scripts/minimap_hud.gd")
 const PauseController := preload("res://scripts/pause_controller.gd")
 const PerfOverlay := preload("res://scripts/perf_overlay.gd")
-const MotionDebug := preload("res://scripts/motion_debug.gd")
-const MobileInput := preload("res://scripts/mobile_input.gd")
-const TouchControls := preload("res://scripts/touch_controls.gd")
-const MobileSettingsPanel := preload("res://scripts/mobile_settings_panel.gd")
 const SkillTreeUi := preload("res://scripts/skill_tree_ui.gd")
 const CityMapPanel := preload("res://scripts/city_map_panel.gd")
 const LandmarkToast := preload("res://scripts/landmark_toast.gd")
@@ -143,10 +139,6 @@ func _check_key_is_free() -> void:
 		[LandmarkToast.ANSWER_KEYCODES, "landmark_toast.ANSWER_KEYCODES"],
 		[PlayerScript.HERO_KEYCODES, "player_controller.HERO_KEYCODES"],
 		[[PlayerScript.CHEAT_ARM_KEY], "player_controller.CHEAT_ARM_KEY"],
-		[[MotionDebug.TOGGLE_KEYCODE], "motion_debug.TOGGLE_KEYCODE"],
-		[[MobileInput.FORCE_ENABLE_KEYCODE], "mobile_input.FORCE_ENABLE_KEYCODE"],
-		[[TouchControls.FORCE_SHOW_KEYCODE], "touch_controls.FORCE_SHOW_KEYCODE"],
-		[[MobileSettingsPanel.FORCE_SHOW_KEYCODE], "mobile_settings_panel.FORCE_SHOW_KEYCODE"],
 		# BARE KEYS ONLY (review round 1): the Ctrl-held HUD chords live in
 		# `city_map_selfcheck.panel_chord_owners()` and are compared only
 		# against their own half — listing them here would compare them as

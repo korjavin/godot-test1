@@ -77,7 +77,6 @@ Phoboman's parts and Windman's fan are still generated
 | Voice/video chat (web only) | `scripts/voice_chat.gd` `scripts/voice_js.gd` (the JS) | `web/vendor/mediapipe/` `scripts/fetch_vendor.sh` | `voice` |
 | Lobby server (Go) | `server/room.go` | `server/docker-compose.yml` | `go test` |
 | Perf tooling | `scripts/perf_overlay.gd` (`\fo`) | `\fb` / `\fh` teleport cheats (debug builds) | `perf` |
-| Mobile / touch | `scripts/mobile_input.gd` `mobile_sensors.gd` | `scenes/ui/touch_controls.tscn` | |
 | CI | `.github/workflows/build.yml` | `scripts/selfcheck_shards.sh` `selfcheck_durations.json` | |
 | Art direction | `scenes/main.tscn` env, `scripts/toon_shading.gd` | `scenes/style_shots.tscn` (A/B tool) | |
 
