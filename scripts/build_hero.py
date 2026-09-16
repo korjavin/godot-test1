@@ -40,9 +40,16 @@ WHAT A ROW IS (and where each half of it came from):
                     those bands: Primm's open lab coat (`_primm_coat` — the V of
                     inner shirt, the silver seams, the rolled sleeve, the boot
                     shaft). A band worn by one hero is not a band, it is his coat.
-  band + stripes    eyewear. `band` makes it CLOTH (`wrap_band`, bead z3e.13's
-                    Windman bandage, folded in with the faces by bead 5u3.8);
-                    `stripes` alone paints it on the skin (Primm's goggles).
+  band + stripes    eyewear as CLOTH: `wrap_band` lifts the face's own surface
+                    into a thick wrap and `stripes` are the colours it is painted
+                    in (bead z3e.13's Windman bandage, folded in with the faces by
+                    bead 5u3.8). Primm's goggles were `stripes` WITHOUT a band —
+                    paint on the skin — until the owner called them a headband;
+                    they are `goggles` now, below.
+  goggles           Primm's, and Primm's alone (bead godot-test1-nvy): a frame,
+                    two rectangular lenses, arms and a strap, seated on the head's
+                    own measured outline and weighted to the head bone
+                    (`build_goggles`). An ACCESSORY, not a garment and not cloth.
   beret/eyes        accessory GEOMETRY joined into the mesh and weighted to one
                     bone. An accessory that is not geometry is an ATTACHMENT and
                     belongs in the .tscn as a BoneAttachment3D (Windman's fan on
@@ -149,8 +156,9 @@ these, which are this lane's own):
     `dress_shells()` — the shell idiom this lane can afford, and the tri budget
     that is why. Anything that ADDS geometry to the body (`dress_shells`'s hem
     cuts, `densify_chest`) must run BEFORE `wrap_band`, whose `flat_faces` are
-    polygon indices; anything joined AFTER it (the beret, the eyes, Primm's coat
-    tails) is refused on a row that wears a band. `build()` holds both rules.
+    polygon indices; anything joined AFTER it (the goggles, the beret, the eyes,
+    Primm's coat tails) is refused on a row that wears a band. `build()` holds
+    both rules.
 """
 
 import json
@@ -241,12 +249,14 @@ REGION_BONES = {
 # deliberately leaves his (the note in his row says why).
 #
 # `stripes` is the eyewear's COLOURS, listed TOP-DOWN in metres relative to the eye
-# landmark; the first stripe containing a vertex wins.
+# landmark; the first stripe containing a vertex wins. It comes with `band` and only
+# with it: since bead godot-test1-nvy took Primm's goggles off the skin and built
+# them (`build_goggles`), there is no eyewear in the cast that is PAINT, and
+# `paint_body` reads these on the wrap's own vertices and nowhere else.
 #
-# `band` (optional) says those colours are worn as CLOTH: `wrap_band` lifts that slab
-# of the face off the skull into a thick wrap before `paint_body` colours it, and the
-# face underneath — eye sockets included — is consumed by the lift. A row WITHOUT
-# `band` (Primm's goggles) keeps the stripes as paint on the skin. See `wrap_band`.
+# `band` says those colours are worn as CLOTH: `wrap_band` lifts that slab of the
+# face off the skull into a thick wrap before `paint_body` colours it, and the face
+# underneath — eye sockets included — is consumed by the lift. See `wrap_band`.
 # ===========================================================================
 
 # The seam where a `band` row's two cloth colours meet, drawn as one darker line so
@@ -449,27 +459,22 @@ FACES = {
         # painted eyewear in the cast already proven to read at 3 m — still the
         # canon's "slight blue tint", dark enough to survive the grade.
         #
-        # BEAD z3e.15 REVERSES THE CONTRAST, and this is the single biggest thing
-        # between his head and his portrait. The note above got the diagnosis
-        # right and the prescription backwards: it pulled the LENS darker and left
-        # the frames at (0.70, 0.72, 0.76), which is exactly the value it had just
-        # measured clipping to flat white — so the shipped goggles are a 5.4 cm
-        # band of paper white across the brow, the cheekbone and both temples,
-        # with the lens a faint blue line lost inside it (the 2026-09-12
-        # `17_head_face` frame, and `clipped_fraction.py` agrees). Nobody draws
-        # him that way. `assets/portraits/primm.png` and
-        # `docs/characters/primm.png` both draw a SLIM band with a BRIGHT CYAN
-        # lens held in a DARK frame.
+        # BEAD z3e.15 REVERSED THE CONTRAST, which was the right diagnosis of the
+        # wrong thing. The note above had pulled the LENS darker and left the
+        # frames at (0.70, 0.72, 0.76) — exactly the value it had just measured
+        # clipping to flat white — so the shipped goggles were a 5.4 cm band of
+        # paper white across the brow, the cheekbone and both temples with the lens
+        # a faint blue line lost inside it; z3e.15 gave the frames `trim_silver`'s
+        # measured dark, made the lens the thing that glows, and narrowed the band
+        # to 4.0 cm. The owner looked at that and said it was a HEADBAND, which it
+        # was: paint on a cheek has no silhouette, and no amount of contrast gives
+        # it one.
         #
-        # So the frames take `trim_silver`'s own measured value (a fifth of the
-        # way up is what lands as metal in this scene, see the colours below) and
-        # the lens goes bright — the frames now have something to be dark
-        # against, and the lens is the thing that glows, as drawn. And the band
-        # narrows from 5.4 cm to 4.0 cm: with the frames no longer blowing out
-        # there is nothing left to compensate for, and 5.4 cm covered his brow.
-        "stripes": ((0.017, 0.022, (0.22, 0.24, 0.29, 1.0)),    # dark frame, top
-                    (-0.012, 0.017, (0.38, 0.76, 0.90, 1.0)),   # the cyan lens
-                    (-0.018, -0.012, (0.22, 0.24, 0.29, 1.0))),  # frame, bottom
+        # SO THERE ARE NO STRIPES IN THIS ROW ANY MORE (bead godot-test1-nvy). The
+        # goggles are geometry — `build_goggles` — and the two colours z3e.15
+        # measured went with them, verbatim, into the `HEROES` row's own palette as
+        # `goggle_frame` and `goggle_lens`. `stripes` now means CLOTH and belongs
+        # to Windman's bandage alone (see the table's banner).
         # A DIFFERENT SILHOUETTE FROM WINDMAN'S CROP (0.008 / 0.036 / 0.055), and
         # the difference is the HAIRLINE, not the length: docs/characters/primm.png
         # is short hair swept back off a high forehead with the sides above the
@@ -912,6 +917,28 @@ HEROES = {
             # The "faint glowing blue lines": vertex colour, not emission. Bright
             # enough against `panel_black` to read as a glow at 3 m.
             "line_cyan":   (0.20, 0.66, 0.82, 1.0),
+            # THE GOGGLES, which are geometry since bead godot-test1-nvy — see the
+            # `build_goggles` banner for the whole of why. The FRAME keeps bead
+            # z3e.15's measured graphite verbatim, with `goggle_edge` one step up
+            # for the top bar and short of the (0.40, 0.43, 0.49) the `trim_silver`
+            # note above measured clipping to flat white.
+            #
+            # THE LENS COULD NOT KEEP z3e.15's (0.38, 0.76, 0.90), and the reason is
+            # the geometry: that value was measured on PAINT, lying on a cheek that
+            # takes this scene's high key light at a grazing angle. A lens is a slab
+            # RAKED INTO the sun, so it sits in the lit band of DIFFUSE_TOON at full
+            # strength — at the painted value it rendered (244, 248, 249), which is
+            # white, and the bead asked for cyan. Measured on the `17_head_face`
+            # web frame: this scene lifts a linear albedo by ~1.85 before the sRGB
+            # encode (skin 0.404 renders 225), so these are the values that land
+            # around (120, 200, 225) — bright cyan with the blue channel still short
+            # of the top — and `goggle_glint` is the lens's own top edge, one step up
+            # again, which is the "lighter rim strip" the bead asked for in place of
+            # transparency.
+            "goggle_frame": (0.22, 0.24, 0.29, 1.0),
+            "goggle_edge":  (0.30, 0.33, 0.39, 1.0),
+            "goggle_lens":  (0.10, 0.32, 0.40, 1.0),
+            "goggle_glint": (0.14, 0.40, 0.49, 1.0),
         }),
         "bone_regions": {"hand_l": "gloves", "hand_r": "gloves"},
         "colour_key": {"skin": "skin", "shirt": "coat_purple",
@@ -950,16 +977,27 @@ HEROES = {
         # welded to the hips alone is a flap the back leg walks straight through.
         "tails": {"pelvis": 0.6},
         "dressing": _primm_coat,
-        # THE GOGGLES ARE PAINT, not cloth — no `band` key. The spike's own ruling:
-        # a lens is not a wrap, and stripes on the skin are what shipped.
-        "stripes": FACES["primm"]["stripes"],
+        # THE GOGGLES ARE GEOMETRY (bead godot-test1-nvy; owner, 2026-09-12: "they
+        # look like a headband"). They were `stripes` — a band of colour across the
+        # face — and a band of colour is a headband however its contrast is tuned.
+        # NOT cloth either: no `band` key, because the wrap consumes the face it
+        # lifts and these have eyes behind them. `build_goggles` is the whole row.
+        "goggles": True,
         "hair": dict(zip(("lift", "front", "nape"),
                          (FACES["primm"]["hair_lift"],
                           FACES["primm"]["hair_front"],
                           FACES["primm"]["hair_nape"])), brows=False),
         "beret": False,
-        # The goggles cover the sockets; two white spheres behind a painted lens
-        # would only poke through it.
+        # STILL NO EYEBALLS, and bead godot-test1-nvy built them before deleting
+        # them again. The reason has changed: it is not that a painted lens would
+        # be poked through any more, it is that an OPAQUE one hides them — the two
+        # spheres are invisible from every angle where the lens covers the socket,
+        # and visible only where it does not. On the 3/4 `17_head_face` frame that
+        # was one white sliver of the FAR eyeball past the outer edge of its lens,
+        # which is a defect and the only thing they contributed. The sockets stay
+        # (this row wears no `band`, so nothing consumes them, which is the half of
+        # the bead's "the eyes underneath stay" that geometry can carry); behind
+        # the lens they read as the shadow under it.
         "eyes": False,
         # blender_hero.py measured the generated Primm at 1.7733 m with the
         # authored head.
@@ -2553,11 +2591,6 @@ def paint_body(obj, tj, row, band_verts=frozenset()):
         hair_z = hair_front - hair["nape"] * max(0.0, -depth)
         if v.co.z >= hair_z:
             per_vert[i] = "hair"
-        elif not band_verts and any(eye_z + low <= v.co.z <= eye_z + high
-                                    for low, high, _c in stripes):
-            # Eyewear painted on the skin (Primm's goggles); first match wins.
-            per_vert[i] = next(j for j, (low, high, _c) in enumerate(stripes)
-                               if eye_z + low <= v.co.z <= eye_z + high)
         elif _group_weight(v, lip_ids) > LIP_WEIGHT:
             per_vert[i] = "lips"
         elif (hair["brows"] and eye_z + 0.028 <= v.co.z <= eye_z + 0.040
@@ -2991,6 +3024,297 @@ def attach_tails(obj, row, tj):
 
 
 # ---------------------------------------------------------------------------
+# PRIMM'S GOGGLES — bead godot-test1-nvy, and the end of the third attempt to
+# paint them. OWNER, 2026-09-12: "primm's goggles don't look like goggles, they
+# look like a headband. But they ARE goggles — with rectangular lenses."
+#
+# He is describing a z-band of colour across the face, which is all `stripes`
+# could ever be: bead z3e.5 measured the band, z3e.15 reversed its contrast (a
+# dark frame around a bright cyan lens) and narrowed it, and a narrower band of
+# colour is still a band of colour. `assets/portraits/primm.png` draws a WIDE
+# VISOR — a dark frame with a straight top bar, two large rectangular cyan lenses
+# joined over the nose, arms going back to the temples — and none of that is a
+# height range on a cheek.
+#
+# SO THEY ARE GEOMETRY, BY THE SAME IDIOM AS THE WRAP (`wrap_band`, bead z3e.13):
+# the head's own outline is measured at eye height and everything is seated on it,
+# so the frame follows the skull instead of a circle somebody typed. What is NOT
+# the wrap's idiom is how it gets there — the wrap LIFTS the face's own surface,
+# which consumes the eye sockets under it, and the canon's lenses have eyes behind
+# them. So this is new geometry, joined and weighted like the beret (`join_rigid`
+# to `head`, which is what makes the pair ride the head bobble), and it is an
+# ACCESSORY and not a GARMENT: no `dress_shells` shell, no cloth mark, no
+# `HeroCloth` slot. A lens is not made of cloth.
+#
+# THE RING IS ONE RING. Frame, arms and strap are the same closed box-section tube
+# round the skull at one height, changing cross-section by BEARING: the frame
+# across the face, thin square arms over the ears, a flat strap round the back.
+# Two pieces of tailoring for the price of one loop, and an arm cannot come away
+# from the frame because it is the same tube.
+#
+# THE LENSES ARE OPAQUE, AND THE BEAD LICENSED THE CHOICE ("if it sorts badly,
+# ship opaque cyan with a lighter rim strip, and say so"). It is not a sorting
+# measurement, it is a material one: since bead 21m a hero exports exactly TWO
+# materials, `HeroSkin` and `HeroCloth`, and the FACE is on `HeroSkin` — the same
+# slot a lens would be on. Alpha there is alpha on the whole head, and a third
+# material for two boxes is a third `ToonShading` branch, a third draw call and a
+# transparent surface the renderer must sort against the hero it belongs to. The
+# lighter rim is the lens's own top row of vertices, one step up: on a flat slab
+# under DIFFUSE_TOON that gradient is what reads as glass.
+#
+# COLOURS: `goggle_frame` and `goggle_lens` are bead z3e.15's measured stripe
+# values, verbatim — the dark graphite and the bright cyan that survive the
+# scene's two stops (see the note on `trim_silver`, which is where "a fifth of the
+# way up is what lands as metal" was measured). The two `*_edge`/`*_glint` entries
+# are one step up from each and deliberately short of the (0.40, 0.43, 0.49) that
+# the same note measured clipping to flat white.
+
+GOGGLE_STATIONS = 48          # cross-sections round the skull; 7.5 degrees apart
+GOGGLE_FRAME_ARC = 72.0       # degrees off the nose where the frame hands over to
+GOGGLE_ARM_ARC = 132.0        # the arm, and the arm to the strap (in front of the
+                              # ear and behind it — the wrap's `half_angle` lesson:
+                              # a ring at eye height that ignores the ears is one
+                              # that goes THROUGH them. Here it does not have to
+                              # stop, it only has to get thin and stand off.)
+GOGGLE_RING_Z = 0.014         # the ring's centre above the eye line: the straight
+                              # top bar of the portrait, with the lens under it
+GOGGLE_STANDOFF = 0.004       # how far proud of the skull's own outline it all
+                              # stands — the bead's "4 mm proud of the eye sockets"
+GOGGLE_FRAME = (0.005, 0.009)   # radial thickness, height — across the face
+GOGGLE_ARM = (0.003, 0.003)     # square, over the ear
+GOGGLE_STRAP = (0.003, 0.006)   # flat, round the back, sitting on the hair shell
+GOGGLE_LENS = (0.032, 0.002, 0.018)   # width, thickness, height of one slab
+GOGGLE_LENS_Z = 0.002         # the lens centre above the eye line
+# A LENS IS NOT SEATED ON A RADIUS, AND THE FIRST BUILD OF THIS BEAD PROVED IT.
+# The ring can be, because a ring goes round: equal angles off the skull's axis put
+# its stations on the brow, the temple and the back of the head in turn, which is
+# what a band does. A LENS IS FLAT AND 32 mm WIDE, and the face is flat-ish across
+# the eyes, so the radial ray at the eye's own bearing lands 2 cm further back than
+# the eye itself does — measured: the face front is y=0.167 at the pupil and the
+# 21-degree ray hits at y=0.152. The first render had both lenses inside his head
+# with two corners poking out over the tear ducts.
+#
+# So a lens is measured in the direction a face FACES: the most forward the head
+# reaches anywhere under the slab's own footprint, plus `GOGGLE_LENS_PROUD`. Over
+# its footprint and not at its centre, because the inner end of it is beside the
+# bridge of the nose, which is 4 mm further forward than the pupil is — a lens
+# hung off the pupil alone has its nose end buried.
+GOGGLE_LENS_PROUD = 0.004     # how far the lens stands off the face under it
+# AND IT IS RAKED, because a slab standing vertical takes this scene's high key
+# light at a grazing angle and DIFFUSE_TOON then gives it the unlit band: a dark
+# rectangle where the portrait has a bright cyan one. Top leaning back, like a
+# windshield, which turns its normal up into the sun — and which is what a real
+# pair does anyway.
+GOGGLE_LENS_TILT = 15.0       # degrees of top-back rake
+# AND IT IS SPLAYED, its outer end turned back toward the temple. A pair of flat
+# slabs square to the face is a pair that reads fine head-on and lets the FAR
+# EYEBALL past its outer edge the moment the head turns — measured on the 3/4
+# `17_head_face` frame, where his far eye sat white and round on the cheek beside
+# the lens. Turning each slab back by its own eye's bearing wraps it round to where
+# the eye stops, which is also what the portrait's visor does.
+GOGGLE_LENS_SPLAY = 22.0      # degrees of outward wrap
+GOGGLE_BRIDGE = (0.002, 0.006)  # thickness and height of the bar over the nose
+GOGGLE_SLAB = 0.030           # half the band of head the axis is centred on
+GOGGLE_REACH = 0.4            # how far outside the head a seating ray starts
+GOGGLE_TRIS = (400, 800)      # the bead's budget, asserted where it is spent
+
+
+def _skull_axis(obj, z_lo, z_hi):
+    """The vertical axis the goggles are hung off: the centre of the head's own
+    slab and not the body's, for `wrap_band`'s reason — a bounding box that reaches
+    the neck is not centred on the face."""
+    co = [v.co for v in obj.data.vertices if z_lo <= v.co.z <= z_hi]
+    if len(co) < 32:
+        raise AssertionError("only %d vertices between z %.3f and %.3f: the goggles "
+                             "have no head to sit on" % (len(co), z_lo, z_hi))
+    return Vector(((min(c.x for c in co) + max(c.x for c in co)) / 2.0,
+                   (min(c.y for c in co) + max(c.y for c in co)) / 2.0))
+
+
+def _skull_reach(bvh, axis, bearing, z):
+    """(radius, outward) — how far the head reaches at `bearing`, AT THIS HEIGHT.
+
+    MEASURED BY A RAY, and by a ray cast INWARD from outside the head. Two things
+    that a nearest-vertices average cannot do, and both of them showed up in the
+    first build of this bead: the skull decimates to ~3 cm between vertices, so a
+    slab thin enough to be "at eye height" is empty at most bearings and a slab
+    thick enough to be populated reaches the TIP OF THE NOSE — which then pushes
+    the frame 1 cm off the brow it is supposed to rest on. The first surface an
+    inward ray meets is the OUTERMOST one at exactly this height: the brow at the
+    front, the ear where the arm crosses it, the hair shell at the back.
+
+    Inward and not outward, because MakeHuman's basemesh folds into the eye socket
+    and lines it (the same fold `wrap_band` deletes), so a ray leaving the axis can
+    meet the inside of the face before its outside.
+    """
+    out = Vector((math.sin(bearing), math.cos(bearing), 0.0))
+    origin = Vector((axis.x, axis.y, z)) + out * GOGGLE_REACH
+    hit = bvh.ray_cast(origin, -out, GOGGLE_REACH)[0]
+    if hit is None:
+        raise AssertionError("no head surface at z %.4f, bearing %.1f deg: the "
+                             "goggles have nothing to sit on there"
+                             % (z, math.degrees(bearing)))
+    return math.hypot(hit.x - axis.x, hit.y - axis.y), out
+
+
+def _goggle_ring(bm, path):
+    """Bridge (centre, out, half_thick, half_height) cross-sections into a closed
+    box-section ring.
+
+    Returns the rings, each (in-low, out-low, out-high, in-high), so the caller can
+    colour one edge of the section differently — which is the whole highlight bar.
+    The winding is left to `recalc_face_normals` at the end of the build: a
+    station's own frame turns through 360 degrees round the skull, and hand-picking
+    an order that is outward at every bearing is a trap for no gain.
+    """
+    rings = []
+    for centre, out, half_d, half_h in path:
+        rings.append([bm.verts.new(centre + out * (s * half_d)
+                                   + Vector((0.0, 0.0, t * half_h)))
+                      for s, t in ((-1, -1), (1, -1), (1, 1), (-1, 1))])
+    for a, b in zip(rings, rings[1:] + [rings[0]]):
+        for k in range(4):
+            bm.faces.new((a[k], a[(k + 1) % 4], b[(k + 1) % 4], b[k]))
+    return rings
+
+
+def build_goggles(obj, row, tj):
+    """The pair, as one mesh: the ring (frame + arms + strap), two lens slabs and
+    the bridge between them. The section banner above says what each is.
+
+    Reads the body's OWN surface, so it is built before anything is joined onto
+    that body (`build()` keeps that order) — a beret or a pair of eyeballs inside
+    the slab would answer the outline question for a piece of the head that is not
+    the head.
+    """
+    from mathutils.bvhtree import BVHTree
+    colours = row["colours"]
+    eye_z = (tj["l-eye"].z + tj["r-eye"].z) / 2.0
+    ring_z = eye_z + GOGGLE_RING_Z
+    lens_z = eye_z + GOGGLE_LENS_Z
+    axis = _skull_axis(obj, eye_z - GOGGLE_SLAB, eye_z + GOGGLE_SLAB)
+    # `bake_cloth_shading`'s tree, built on the whole body: nothing but the head is
+    # within 3 cm of the eye line on a standing human, so every ray below meets the
+    # head whatever else is in it.
+    me = obj.data
+    bvh = BVHTree.FromPolygons([tuple(v.co) for v in me.vertices],
+                               [tuple(p.vertices) for p in me.polygons])
+    frame_arc = math.radians(GOGGLE_FRAME_ARC)
+    arm_arc = math.radians(GOGGLE_ARM_ARC)
+    bm = bmesh.new()
+    paint = {}
+
+    def seat(bearing, z, half_d):
+        """Where a cross-section of half-thickness `half_d` sits at `bearing`: on
+        the head's own surface at that height, `GOGGLE_STANDOFF` proud of it, and
+        its INNER face on that line rather than its centre."""
+        r, out = _skull_reach(bvh, axis, bearing, z)
+        return Vector((axis.x, axis.y, z)) + out * (r + GOGGLE_STANDOFF + half_d), out
+
+    path, zones = [], []
+    for i in range(GOGGLE_STATIONS):
+        bearing = ((2.0 * math.pi * i / GOGGLE_STATIONS + math.pi)
+                   % (2.0 * math.pi) - math.pi)
+        if abs(bearing) <= frame_arc:
+            zone, section = "frame", GOGGLE_FRAME
+        elif abs(bearing) <= arm_arc:
+            zone, section = "arm", GOGGLE_ARM
+        else:
+            zone, section = "strap", GOGGLE_STRAP
+        half_d, half_h = section[0] / 2.0, section[1] / 2.0
+        centre, out = seat(bearing, ring_z, half_d)
+        path.append((centre, out, half_d, half_h))
+        zones.append(zone)
+    for zone, ring in zip(zones, _goggle_ring(bm, path)):
+        for v in ring:
+            paint[v] = colours["goggle_frame"]
+        if zone == "frame":
+            # THE HIGHLIGHT BAR is the top edge of the frame and nothing else: the
+            # portrait's straight top bar catches the light where the rest of the
+            # graphite does not.
+            paint[ring[2]] = paint[ring[3]] = colours["goggle_edge"]
+
+    width, thick, tall = GOGGLE_LENS
+
+    def front_of(x, z, half_w, half_h):
+        """The most forward the head reaches anywhere under a patch of it — the
+        face's own +Y, which is the direction a lens stands off in."""
+        ys = [v.co.y for v in me.vertices
+              if abs(v.co.x - x) <= half_w and abs(v.co.z - z) <= half_h]
+        if not ys:
+            raise AssertionError("no head between x %.3f +- %.3f and z %.3f +- "
+                                 "%.3f: the lens has no face to stand off"
+                                 % (x, half_w, z, half_h))
+        return max(ys)
+
+    rake = math.radians(GOGGLE_LENS_TILT)
+    splay = math.radians(GOGGLE_LENS_SPLAY)
+    lens_x = {side: tj[side + "-eye"].x for side in ("l", "r")}
+    # ONE DEPTH FOR BOTH LENSES, taken off whichever of them has the more forward
+    # face under it: the head is symmetric, the two numbers agree to well under a
+    # millimetre, and a visor whose halves sit at two depths is a visor with a kink
+    # in it.
+    lens_y = max(front_of(x, lens_z, width / 2.0, tall / 2.0)
+                 for x in lens_x.values()) + GOGGLE_LENS_PROUD + thick / 2.0
+    for side, sign in (("l", 1.0), ("r", -1.0)):
+        centre = Vector((lens_x[side], lens_y, lens_z))
+        # Width across the face, raked back about its own width axis and splayed
+        # about the vertical, in that order: the rake points the slab at the sun and
+        # the splay wraps its outer end round toward the temple. `sign` is which way
+        # round that is — the outer end is -x on his left and +x on his right.
+        matrix = (Matrix.Translation(centre)
+                  @ Matrix.Rotation(sign * splay, 4, 'Z')
+                  @ Matrix.Rotation(rake, 4, 'X')
+                  @ Matrix.Diagonal(Vector((width, thick, tall, 1.0))))
+        made = bmesh.ops.create_cube(bm, size=1.0, matrix=matrix)
+        for v in made["verts"]:
+            paint[v] = (colours["goggle_glint"] if v.co.z > centre.z
+                        else colours["goggle_lens"])
+
+    # THE BRIDGE IS A STRAIGHT BAR between the two lenses' inner ends, at the depth
+    # the splay leaves those ends at — which is the one place it can be, now that
+    # the lenses stand proud of the nose it crosses. (It was a tube following the
+    # skull's radius, from the build that seated the lenses the same way; the nose
+    # is 4 mm forward of the pupils and the tube had to weave round it.)
+    bridge_d, bridge_h = GOGGLE_BRIDGE
+    inner = math.cos(splay) * width / 2.0
+    made = bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix((
+        (abs(lens_x["l"] - lens_x["r"]) - 2.0 * inner + 0.004, 0.0, 0.0,
+         (lens_x["l"] + lens_x["r"]) / 2.0),
+        (0.0, bridge_d, 0.0, lens_y + math.sin(splay) * width / 2.0),
+        (0.0, 0.0, bridge_h, lens_z),
+        (0.0, 0.0, 0.0, 1.0))))
+    for v in made["verts"]:
+        paint[v] = colours["goggle_frame"]
+
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    bm.verts.index_update()
+    order = [paint[v] for v in bm.verts]
+    pair = bpy.data.meshes.new("Goggles")
+    bm.to_mesh(pair)
+    bm.free()
+    goggles = bpy.data.objects.new("Goggles", pair)
+    bpy.context.collection.objects.link(goggles)
+    attr = pair.color_attributes.new(name="Color", type='FLOAT_COLOR', domain='POINT')
+    for i, colour in enumerate(order):
+        attr.data[i].color = colour
+    pair.color_attributes.active_color = attr
+    pair.attributes.active_color = attr
+    tris = _tri_count(pair)
+    if not GOGGLE_TRIS[0] <= tris <= GOGGLE_TRIS[1]:
+        raise AssertionError("the goggles are %d tris, outside the bead's %d-%d "
+                             "budget" % (tris, GOGGLE_TRIS[0], GOGGLE_TRIS[1]))
+    # The two numbers to read when this looks wrong: how far the head reaches at
+    # the nose and at the ear, which is what everything here is seated on.
+    log("goggles: %d tris, ring z %.4f / lens z %.4f (eye %.4f), lens plane y "
+        "%.4f at x %+.4f/%+.4f, head reach %.4f m at the nose / %.4f m at the ear"
+        % (tris, ring_z, lens_z, eye_z, lens_y, lens_x["l"], lens_x["r"],
+           _skull_reach(bvh, axis, 0.0, ring_z)[0],
+           _skull_reach(bvh, axis, math.pi / 2.0, ring_z)[0]))
+    return goggles
+
+
+# ---------------------------------------------------------------------------
 # Export
 # ---------------------------------------------------------------------------
 
@@ -3112,7 +3436,8 @@ def assert_no_multires(objs):
 def build(hero, shot=None):
     """Build one hero: one skinned `.glb` and its `.blend`, plus the manifest row."""
     row = HEROES[hero]
-    if "band" in row and (row["beret"] or row["eyes"] or "tails" in row):
+    if "band" in row and (row["beret"] or row["eyes"] or "tails" in row
+                          or "goggles" in row):
         raise AssertionError(
             "%s wears a cloth band AND an accessory: `sharp` is polygon indices "
             "and a join after the wrap renumbers them (see export_glb)" % hero)
@@ -3179,6 +3504,16 @@ def build(hero, shot=None):
     if "emblem" in row:
         paint_chest_glyph(obj, tj, row)
 
+    # FIRST OF THE ACCESSORIES, because it is the only one that MEASURES the body
+    # it is joined to: `build_goggles` reads the head's own outline at eye height,
+    # and a beret brim or an eyeball inside that slab would be measured as skull.
+    # (Its polygons are flat-shaded for the coat tails' reason — a frame and a lens
+    # are hard-edged, and smoothing a box ring rounds it into a sausage.)
+    if "goggles" in row:
+        goggle_p0 = len(obj.data.polygons)
+        obj = join_rigid(obj, build_goggles(obj, row, tj), "head")
+        flat_faces = frozenset(flat_faces) | frozenset(
+            range(goggle_p0, len(obj.data.polygons)))
     if row["beret"]:
         crown_z = max(v.co.z for v in obj.data.vertices)
         obj = join_rigid(obj, build_beret(row["colours"], crown_z), "head")
