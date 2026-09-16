@@ -246,10 +246,12 @@ func _check_zoom(player: Node3D, arm: SpringArm3D) -> void:
 				% [arm.spring_length, base_length * zoom_min, base_length, zoom_min])
 
 	# NEGATIVE CONTROL (a): no captured mouse. Fed as a real event through the
-	# shipped `_input()` handler, so this tests the wheel wiring and not just the
-	# seam. Headless `Input.mouse_mode` reads VISIBLE whatever `_ready()` asked for
-	# (capture_selfcheck documents this), which is exactly the free-cursor case —
-	# but assert it, so the control cannot pass for the wrong reason.
+	# shipped `_input()` handler. Headless `Input.mouse_mode` reads VISIBLE whatever
+	# `_ready()` asked for (capture_selfcheck documents this), which is exactly the
+	# free-cursor case — but assert it, so the control cannot pass for the wrong
+	# reason. It can only tell "the MOUSE_MODE_CAPTURED guard is there" from "it was
+	# removed", and is blind to the block itself; `_pin_wheel_block()` below covers
+	# what it cannot.
 	player.camera_zoom = 1.0
 	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		_fail("headless mouse_mode is CAPTURED — the free-cursor control below would be vacuous")
@@ -295,4 +297,47 @@ func _check_zoom(player: Node3D, arm: SpringArm3D) -> void:
 	player.camera_zoom = 1.0
 	player.view_mode = player.ViewMode.THIRD_PERSON
 	player._apply_view_mode()
+	_pin_wheel_block()
 	Sentinel.done("zoom")
+
+
+func _pin_wheel_block() -> void:
+	"""
+	Pin the wheel half of `_input()` BY SOURCE, the way
+	`capture_selfcheck._check_escape_leaves_the_ending_cursor_free()` pins the ESC
+	arm and for the same measured reason: headless ignores
+	`Input.set_mouse_mode(CAPTURED)`, so an event-fed probe can only ever observe
+	the free-cursor branch.
+
+	WITHOUT THIS, EVERY ASSERTION ABOVE PASSES ON A DELETED FEATURE. They all drive
+	`zoom_camera()` by hand, and the one event-fed control asserts the zoom did NOT
+	move — which is also what a missing wheel block produces. So is a swapped
+	UP/DOWN pair (zoom inverted), a dropped `pressed` filter (every notch counted
+	twice, once for the press and once for the release), and the same sign on both
+	arms. Nothing else in the suite names MOUSE_BUTTON_WHEEL, and help_selfcheck's
+	action audit skips the "Wheel" row because it is not an input-map action.
+
+	Not a folded-in part of `_check_zoom`: this reads source and asserts nothing
+	about the running player, and mixing the two would hide which one went red.
+	"""
+	var src: String = FileAccess.get_file_as_string("res://scripts/player_controller.gd")
+	if src.is_empty():
+		_fail("could not read player_controller.gd to pin the wheel block")
+		return
+	var anchor := "if wheel != null and wheel.pressed and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:"
+	var at: int = src.find(anchor)
+	if at == -1:
+		_fail("the wheel block is gone from player_controller._input() (looked for `%s`)"
+				% anchor + " — the wheel does nothing for players and every assertion "
+				+ "in _check_zoom still passes, because they all call zoom_camera() by hand")
+		return
+	# The block is six lines; 400 characters is the same window capture_selfcheck
+	# uses on the ESC arm and reaches well past the last `elif` without running
+	# into the ESC handler below.
+	var block: String = src.substr(at, 400)
+	if not block.contains("MOUSE_BUTTON_WHEEL_UP:\n\t\t\tzoom_camera(-CAMERA_ZOOM_STEP)"):
+		_fail("wheel UP no longer calls zoom_camera(-CAMERA_ZOOM_STEP) — forward must "
+				+ "bring the camera IN, and a swapped pair inverts the zoom silently")
+	if not block.contains("MOUSE_BUTTON_WHEEL_DOWN:\n\t\t\tzoom_camera(CAMERA_ZOOM_STEP)"):
+		_fail("wheel DOWN no longer calls zoom_camera(CAMERA_ZOOM_STEP) — back must take "
+				+ "the camera OUT")
