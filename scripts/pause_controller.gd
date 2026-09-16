@@ -16,11 +16,10 @@ extends Node
 ## standalone gets pausing for free.
 ##
 ## The P key is handled by keycode, outside the project input map — same
-## pattern as the F3 perf overlay and the other debug keys. Touch sessions
-## have no P key, so this is inert on phones; the mobile focus-loss pause in
-## mobile_input.gd is a SEPARATE system with its own tap-to-resume overlay,
-## and the `_paused_by_us` guard below keeps the two from unpausing each
-## other's state.
+## pattern as the F3 perf overlay and the other debug keys. Phones get the
+## start card instead of a run, so there is no P there to handle — and the
+## `_paused_by_us` guard below keeps this pauser from unpausing anybody
+## else's state.
 ##
 ## THE PAUSE ITSELF GOES THROUGH `PauseHub` — see scripts/pause_hub.gd. The
 ## refcount is what makes "P again" safe while the help card is still up over
@@ -76,9 +75,9 @@ var _dim: ColorRect = null
 ## `_process` writes the label only on a change rather than 60 times a second.
 var _remote_pauser: String = ""
 
-## True while THIS node holds a `PauseHub` claim. The mobile focus-loss pause
-## (mobile_input.gd) also freezes the tree — P must never silently cancel THAT
-## pause, or the "tap to resume" overlay would be left up over a running game.
+## True while THIS node holds a `PauseHub` claim. Another holder's pause —
+## the start card's menu pause, say — also freezes the tree, and P must never
+## silently cancel THAT pause, or an overlay would be left up over a running game.
 var _paused_by_us: bool = false
 
 ## Whether we released a captured mouse when pausing, and so should recapture
@@ -155,7 +154,7 @@ func _toggle_pause() -> void:
 
 func _build_overlay() -> void:
 	"""
-	Build the pause overlay in code (same convention as touch_controls.gd —
+	Build the pause overlay in code (same convention as start_overlay.gd —
 	no scene file to keep in sync). A CanvasLayer well above the HUD, holding
 	a full-screen dim and a centred label.
 	"""

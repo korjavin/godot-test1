@@ -32,7 +32,7 @@ window/stretch/mode="canvas_items"
 ; 16:9 framing, letterboxing only if the window isn't 16:9). The web build (phones)
 ; overrides to "expand" via Godot's `.web` per-feature suffix, so the view fills any
 ; screen shape with square pixels (no black bars, no distortion — it just reveals a
-; little more/less of the scene). Anchored HUD/touch controls reflow to the new edges.
+; little more/less of the scene). Anchored HUD controls reflow to the new edges.
 window/stretch/aspect="keep"
 window/stretch/aspect.web="expand"
 

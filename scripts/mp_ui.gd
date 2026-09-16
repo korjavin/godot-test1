@@ -156,8 +156,8 @@ const PANEL_HEIGHT: float = 620.0
 ## out right by accident).
 const SCROLLBAR_WIDTH: float = 8.0
 
-## Minimum height for every interactive row (button, LineEdit). Past the ~44-48
-## pt minimum touch target so the panel is thumb-usable on a phone.
+## The panel's minimum control height, 48 px, for every interactive row
+## (button, LineEdit).
 const TOUCH_MIN_HEIGHT: float = 48.0
 
 ## Invite codes are exactly 6 characters (`server/room.go`'s `CodeLength`), from
@@ -288,7 +288,7 @@ var _recapture_mouse: bool = false
 
 ## True only while the CURRENT tree pause was started by us, so closing the panel
 ## can never cancel somebody else's pause (`pause_controller.gd`'s P key, or
-## `mobile_input.gd`'s focus-loss pause). Same guard those two use on each other.
+## `start_overlay.gd`'s menu pause). Same guard those two use on each other.
 var _paused_by_us: bool = false
 
 # --- Child node references (built in _ready, not from a .tscn) --------------
@@ -1456,7 +1456,7 @@ func _set_panel_open(open: bool) -> void:
 ## typed invite codes walking the player, since the code alphabet holds W/A/S/D).
 ##
 ## Never pause over the Game Over screen itself — the same rule (and the same
-## reason) as `pause_controller._toggle_pause()` and `mobile_input.pause_game()`:
+## reason) as `pause_controller._toggle_pause()` and `landmark_toast._take_pause()`:
 ## `GameOverUI` is PAUSABLE, so a pause there kills both its "Play Again" button
 ## and its `ui_accept` handler, and the phone's resume overlay is gated on
 ## `paused_by_driver` so it would not appear either. The panel still OPENS — it
@@ -1490,7 +1490,7 @@ func _apply_pause(open: bool) -> void:
 				Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 				_recapture_mouse = true
 	elif _paused_by_us:
-		# Only ever release OUR claim — `pause_controller` and `mobile_input`
+		# Only ever release OUR claim — `pause_controller` and `start_overlay`
 		# carry the mirror-image guard, and `PauseHub` starts the world again only
 		# once the last of them has let go.
 		_paused_by_us = false
