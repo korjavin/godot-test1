@@ -18,6 +18,11 @@ extends SceneTree
 ##   1. The RemoteAvatar ISOLATION CONTRACT — no groups, no CollisionObject3D
 ##      anywhere in the subtree. This is the one that fails loudly instead of
 ##      turning into "why are the crocodiles chasing a hologram?".
+##   2. The remote GARMENT MATERIAL (bead godot-test1-21m) — a mirrored teammate's
+##      clothes take the cloth recipe (DIFFUSE_BURLEY, no rim) and his skin keeps
+##      the cast's (DIFFUSE_TOON + rim), on all three skinned heroes and on none
+##      of Phoboman. Local and remote style through two different walks, so this
+##      is the only thing that says they agree.
 ##   5. Coin identity — the id is a pure function of position, so two peers
 ##      sharing a seed name the same coin the same thing; AND a live coin latches
 ##      that id at spawn, so its bob (nearly a whole id cell) cannot rename it.
@@ -103,6 +108,9 @@ func _initialize() -> void:
 func _run_checks() -> String:
 	"""Run every check in order. Returns "" on success, else the first failure."""
 	var failure: String = _check_avatar_isolation()
+	if not failure.is_empty():
+		return failure
+	failure = _check_avatar_cloth()
 	if not failure.is_empty():
 		return failure
 	failure = _check_coin_ids()
@@ -192,6 +200,75 @@ func _check_avatar_isolation() -> String:
 			return "%s (character %d)" % [failure, index]
 	Sentinel.done("avatar_isolation")
 	return ""
+
+
+## How many of the four playable characters are SKINNED, i.e. built by
+## `scripts/build_hero.py` and therefore carrying a garment material. Teibi,
+## Windman and Primm; Phoboman keeps his generated part tree (owner ruling) and
+## is the negative control in the check below — he must carry no cloth at all.
+const SKINNED_HEROES := 3
+
+
+func _check_avatar_cloth() -> String:
+	"""A REMOTE PEER'S GARMENTS ARE CLOTH TOO — bead godot-test1-21m.
+
+	The cloth look is not the mesh, it is a material NAME plus what
+	`ToonShading.apply_to_mesh` does with it, and the remote path styles its model
+	through its own walk (`RemoteAvatar._style_model_meshes`). Those are two call
+	sites of one recipe, so a mirror that shaded garments as cast — a teammate
+	whose shirt is flat while yours has folds — is a regression no isolation walk
+	and no local shot can see. This is that walk, on a real avatar, for every
+	playable character.
+
+	It also pins the SPLIT, which is the half a "does it load" check would miss:
+	the garment surface must be `DIFFUSE_BURLEY` with no rim AND the skin surface
+	must still be `DIFFUSE_TOON` with one, or the y1o.22 ruling has quietly been
+	narrowed further than the owner's 2026-09-12 pick.
+	"""
+	var with_cloth: int = 0
+	for index: int in Player.CHARACTERS.size():
+		var avatar := RemoteAvatar.new()
+		avatar.setup("selfcheck-peer")
+		avatar.set_character(index)
+		if avatar.character_node == null:
+			avatar.free()
+			return "set_character(%d) instanced no model — the cloth walk would be vacuous" % index
+		var seen: Dictionary = {}
+		_collect_styled(avatar.character_node, seen)
+		avatar.free()
+		if seen.is_empty():
+			return "character %d styled no material at all" % index
+		var cast_ok: bool = false
+		for name: String in seen:
+			var mat: BaseMaterial3D = seen[name]
+			if name == ToonShading.CLOTH_MATERIAL:
+				if mat.diffuse_mode != BaseMaterial3D.DIFFUSE_BURLEY or mat.rim_enabled:
+					return ("remote character %d's %s is diffuse %d rim %s — a garment " +
+						"wants DIFFUSE_BURLEY and no rim") % [
+							index, name, mat.diffuse_mode, mat.rim_enabled]
+				with_cloth += 1
+			elif mat.diffuse_mode == BaseMaterial3D.DIFFUSE_TOON and mat.rim_enabled:
+				cast_ok = true
+		if not cast_ok:
+			return ("remote character %d has no DIFFUSE_TOON + rim surface left — the " +
+				"cloth split must take the GARMENTS and leave the cast alone") % index
+	if with_cloth != SKINNED_HEROES:
+		return "%d of the cast carry a %s garment surface, want %d" % [
+			with_cloth, ToonShading.CLOTH_MATERIAL, SKINNED_HEROES]
+	Sentinel.done("avatar_cloth")
+	return ""
+
+
+func _collect_styled(node: Node, out: Dictionary) -> void:
+	"""material resource_name -> the material the avatar's own styling left on it."""
+	if node is MeshInstance3D:
+		var mesh := node as MeshInstance3D
+		for surface: int in mesh.get_surface_override_material_count():
+			var mat := mesh.get_active_material(surface)
+			if mat is BaseMaterial3D:
+				out[(mat as BaseMaterial3D).resource_name] = mat
+	for child in node.get_children():
+		_collect_styled(child, out)
 
 
 func _walk_isolation(node: Node, root: Node) -> String:

@@ -107,17 +107,29 @@ static func style(mat: BaseMaterial3D, force_srgb: bool = false) -> void:
 		mat.albedo_texture_force_srgb = true
 
 
-## SPIKE godot-test1-td8, COLUMN D — the name a garment material carries, and the
-## ONE thing that separates cloth from cast here.
+## GARMENTS ARE NOT CAST — the name a garment material carries, and the ONE thing
+## that separates cloth from cast here. Beads godot-test1-td8 (the spike) and
+## godot-test1-21m (the rollout).
 ##
-## IT IS A GUARDED NO-OP ON THE SHIPPED PATH, by construction and not by luck:
-## `scripts/build_hero.py` exports every SHIPPED hero with `export_materials='NONE'`
-## (that line says so), so a shipped hero's mesh reaches Godot with the importer's
-## own unnamed default material and this string cannot match it. Only the spike's
-## scratch `teibi_cloth_{d,all}.glb`, built with `--variant`, carry a material
-## called `HeroCloth`, and nothing but `scripts/style_shots.gd`'s `cloth=` swap
-## ever loads one. Every other caller of `apply_to_mesh` — the whole cast, all
-## ~490 crocodiles, the bosses — takes exactly the branch it took before.
+## THIS NARROWS THE y1o.22 RULING — "the cast stays DIFFUSE_TOON" — TO GARMENTS,
+## AND ONLY BY THE OWNER'S OWN PICK. Owner, 2026-09-12, on
+## `docs/style/z3e/grid_27_cloth_spike.png`: "i choose A+B+D", D being exactly
+## this. The spike measured why: under the cast's two-band toon diffuse a garment
+## is a flat panel with a hard step across it — the owner's "clothing looks
+## painted, not natural" as a number — and swapping the garment alone onto
+## DIFFUSE_BURLEY was the only column in that grid that moved the 3 m frame
+## (+11% luma sd, the gameplay distance). Skin, face, hair, beret, eyes and
+## Windman's wrap all stay on the cast's recipe; so does every predator, every
+## boss and every surface of the HQ, none of which can carry this name.
+##
+## IT IS NOW A LIVE BRANCH AND NOT A GUARDED NO-OP. Before bead 21m a hero
+## exported no material at all and this string could not match anything;
+## `scripts/build_hero.py`'s `split_cloth_material` now puts every garment polygon
+## of all three skinned heroes on a material called exactly this, and everything
+## else on `HeroSkin`. The comparison is EXACT EQUALITY, so the two names are one
+## contract across the two languages — rename either side and a hero silently
+## shades as cast again. Phoboman, whose parts are generated and carry no such
+## material, is unaffected and reads as cast, which is the ruling for him.
 const CLOTH_MATERIAL := "HeroCloth"
 
 ## Cloth-styled duplicates, keyed like `_styled_cache` and separate from it for
@@ -128,8 +140,23 @@ static var _cloth_styled_cache: Dictionary = {}
 
 static func style_cloth(mat: BaseMaterial3D) -> void:
 	"""
-	SPIKE godot-test1-td8, COLUMN D — what a GARMENT is shaded as when it is not
-	shaded as the cast.
+	WHAT A GARMENT IS SHADED AS when it is not shaded as the cast.
+
+	AND WHY IT READS A LITTLE DARKER THAN THE CAST DID, which bead td8 left open
+	as a suspected COLOR_0 colour-space bug and bead 21m closed by measurement.
+	It is NOT the vertex colours and NOT the importer: dumped side by side, the
+	`HeroCloth`/`HeroSkin` materials Godot builds for a hero that exports two and
+	the single default it builds for a hero that exports none are identical in
+	every property — white albedo, `FLAG_ALBEDO_FROM_VERTEX_COLOR` on,
+	`FLAG_SRGB_VERTEX_COLOR` off, metallic 0, roughness 1, back faces culled, no
+	texture — and the `COLOR_0` arrays are the same bytes, seam duplicates aside.
+	What changes the picture is the line below and nothing else: a two-band toon
+	diffuse CLAMPS most of the lit hemisphere to full brightness, Burley falls off
+	with N.L across all of it, and the rim light the cast carries is extra light at
+	the silhouette that a garment no longer gets. So the garment is darker exactly
+	where a real garment curves away from the key light, which is the whole point
+	of the pick — measured at 3 m it is within a few percent of the old mean luma
+	(the numbers are in `docs/style/z3e/grid_29_cloth_rollout.md`).
 
 	`style()`'s two-band DIFFUSE_TOON is a lighting threshold, not a depth cue: a
 	6 mm crease either falls entirely inside one band or straddles the step, so a
@@ -164,10 +191,12 @@ static func apply_to_mesh(mesh: MeshInstance3D) -> void:
 	"""
 	for surface in mesh.get_surface_override_material_count():
 		var mat := mesh.get_active_material(surface)
-		# SPIKE godot-test1-td8, COLUMN D. A material NAMED `HeroCloth` is a
-		# garment and takes the cloth recipe instead of the cast's; nothing on the
-		# shipped path is named at all (see CLOTH_MATERIAL), so this is a no-op
-		# there and the branch below is reached exactly as often as before.
+		# A material NAMED `HeroCloth` is a GARMENT and takes the cloth recipe
+		# instead of the cast's (see CLOTH_MATERIAL for whose ruling that is).
+		# Every skinned hero reaches here with two surfaces since bead 21m — this
+		# branch for one of them, the cast branch below for the other — and
+		# everything else in the game still has exactly one and still takes the
+		# branch it always took.
 		if mat is BaseMaterial3D and mat.resource_name == CLOTH_MATERIAL:
 			var cloth_key: int = mat.get_instance_id()
 			var cloth: BaseMaterial3D = _cloth_styled_cache.get(cloth_key)

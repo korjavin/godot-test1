@@ -3,36 +3,36 @@
     "primm": {
       "bones": 23,
       "glb": "primm_parts/primm_skinned.glb",
-      "glb_bytes": 432332,
+      "glb_bytes": 520696,
       "head_tris": 4400,
       "height_m": 1.8,
       "texture_bytes": 0,
       "texture_size": 0,
-      "tris": 13178
+      "tris": 15474
     },
     "teibi": {
       "bones": 23,
       "glb": "teibi_parts/teibi_skinned.glb",
-      "glb_bytes": 453116,
+      "glb_bytes": 557364,
       "head_tris": 5064,
       "height_m": 1.8269,
       "texture_bytes": 0,
       "texture_size": 0,
-      "tris": 13872
+      "tris": 16536
     },
     "windman": {
       "bones": 23,
       "glb": "windman_parts/windman_skinned.glb",
-      "glb_bytes": 503076,
+      "glb_bytes": 608864,
       "head_tris": 5027,
       "height_m": 1.7639,
       "texture_bytes": 0,
       "texture_size": 0,
-      "tris": 14743
+      "tris": 17421
     }
   },
   "tools": {
-    "blender": "5.2.1 LTS",
+    "blender": "5.2.2 LTS",
     "mpfb": "2.0.17"
   }
 }

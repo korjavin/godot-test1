@@ -85,53 +85,47 @@ become a texture either: `build_hero.paint_chest_glyph` paints it into the body'
 colours over a chest `densify_chest` splits once, which is what let the `shapely` /
 `mapbox-earcut` pins leave `scripts/requirements.txt` with bead 5u3.5.
 
-## Spike Artifacts — the CLOTH columns (bead godot-test1-td8)
+## The GARMENTS ARE CLOTH (beads godot-test1-td8, the spike; godot-test1-21m, the rollout)
 
-`teibi_parts/teibi_cloth_{a,b,d,all}.glb` are SCRATCH builds and **nothing loads them**.
-No `.tscn` references one, `player_controller.CHARACTERS` does not name one, and the
-only code in this repo that opens one is `scripts/style_shots.gd`'s `cloth=<a|b|d|all>`
-argument — a debug tool reached from the command line. They are committed for the same
-reason bead z3e.10's cut-joint bodies were: the grid the owner rules from
-(`docs/style/z3e/grid_27_cloth_spike.png`) is evidence only while the meshes behind it
-can still be re-rendered.
+Owner, 2026-09-12, on `docs/style/z3e/grid_27_cloth_spike.png`: **"i choose A+B+D"**. Spike
+`td8` built four scratch columns beside the shipped Teibi and measured them; the owner
+picked three of them, and bead `21m` made those three the ONLY path `build_hero.py` has.
+The four scratch `teibi_cloth_{a,b,d,all}.glb` were deleted with the `--variant` flag that
+wrote them and the `export_presets.cfg` exclusion that kept them out of the web download —
+their job was to be compared, the comparison happened, and the grids that recorded it
+(`grid_27_cloth_spike.png`, `grid_27_cloth_spike.md`) are still committed.
 
-Same source as the shipped Teibi and the same licence: MakeHuman / MPFB2 (CC0), built by
-`scripts/build_hero.py` from the SAME `HEROES["teibi"]` row, with one column's extra
-passes turned on by `--variant`:
+What the three passes are, on every garment of all three skinned heroes:
 
-| file | column | pass | tris | bytes |
-|---|---|---|---|---|
-| `teibi_skinned.glb` | today (the control, and the SHIPPED hero) | — | 13,872 | 453,116 |
-| `teibi_cloth_a.glb` | A | procedural folds displaced along the garment normal | 21,742 | 704,968 |
-| `teibi_cloth_b.glb` | B | occlusion + cavity multiplied into the vertex colours | 13,872 | 453,116 |
-| `teibi_cloth_d.glb` | D | the garments on their own `HeroCloth` material | 13,872 | 466,768 |
-| `teibi_cloth_all.glb` | all | A + B + D | 21,742 | 725,888 |
+| pass | what it does | what it costs |
+|---|---|---|
+| A `fold_garments` | crease bands at elbow/knee/armpit and hem/cuff gathers, subdivided and displaced along the garment normal | **+17.4 to +20.2% triangles** (the budget, asserted in the pass) |
+| B `bake_cloth_shading` | occlusion + cavity multiplied into the garment's own vertex colours | 0 triangles, 0 bytes |
+| D `split_cloth_material` | the garment polygons on a second material named `HeroCloth`, which `scripts/toon_shading.gd` shades DIFFUSE_BURLEY with no rim | 0 triangles, **+1 draw call per hero on screen** |
 
-Column **C** (a 512² fabric albedo on UV-unwrapped shells) is **NOT BUILT** — the spike's
-clock ran out before it. There is no `teibi_cloth_c.glb` and `--variant c` refuses with
-that reason rather than building something else and calling it C.
+Column **C** (a 512² fabric albedo on UV-unwrapped shells) was never built and was not
+picked; it stays the one column that would spend this lane's first texture byte.
 
-They carry NO `.blend`: a shipped hero's source of record is its committed `.blend`, a
-scratch column's is this script plus its `--variant` name (`build()` skips the save for
-exactly that reason). The four `teibi_cloth_*.glb` are outside the manifest by
-construction — `--variant` refuses to run with `--check` or `--all` — so the `stat` gate
-below and `--all --check` both keep saying exactly what they said before this bead, about
-the three SHIPPED heroes and nothing else. (`teibi_skinned.glb`, the first row of the
-table, is the control column AND the shipped hero: the gate does cover it, and it is
-byte-identical on this branch, which is the point of listing it there.)
+| file | tris before cloth | tris shipped | Δ | glb bytes |
+|---|---:|---:|---:|---:|
+| `teibi_skinned.glb` | 13,872 | 16,536 | +19.2% | 557,364 |
+| `windman_skinned.glb` | 14,743 | 17,421 | +18.2% | 608,864 |
+| `primm_skinned.glb` | 13,178 | 15,474 | +17.4% | 520,696 |
 
-**They do not ship.** Godot packs by resource and not by reference, so committing them
-would otherwise put 1.53 MB of geometry nothing instantiates into the web download; the
-Web preset's `exclude_filter` in `export_presets.cfg` names them. A `.gdignore` would have
-worked for the export and broken the spike, since `style_shots.gd` has to be able to load
-them.
+Texture bytes: **0** on all three, unchanged — the bake writes into the colour attribute
+that already shipped. Same source and same licence as before: MakeHuman / MPFB2 (CC0),
+built from the `HEROES` rows of `scripts/build_hero.py`, each with its committed `.blend`
+beside it. The pictures are `docs/style/z3e/grid_29_cloth_rollout.png` (today | shipped,
+per hero, 3 m and 1 m on web plus a Forward+ column), `grid_29_cloth_stride_*.png` (one
+stride period each — the folds deform and do not tear), `grid_29_cloth_remote_avatar.png`
+and `grid_29_cloth_predators.png`; the numbers are in
+`docs/style/z3e/grid_29_cloth_rollout.md`.
 
 Rebuild:
 
 ```bash
 perl -e 'alarm 1800; exec @ARGV' blender --background --python-exit-code 1 \
-    --python scripts/build_hero.py -- --hero teibi --variant b --variant a \
-    --variant d --variant all
+    --python scripts/build_hero.py -- --all
 godot --headless --path . --import
 ```
 
