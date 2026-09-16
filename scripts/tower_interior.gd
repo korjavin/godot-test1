@@ -706,6 +706,16 @@ const COLOR_RIDDLE_PADS: Array[Color] = [
 	Color(0.56, 0.82, 0.20),   # 4 — lime
 ]
 
+## The lift's call cell - a PLACE, not a gate and not a system. A pale rose mat
+## on the one `s` cell the lift sets you down on, so the thing the "L - lift"
+## hint points at is a thing you can see. Warm like nothing else in this building
+## except the hazard orange - and a hazard is a moving bar, so the mat cannot read
+## as one - and deliberately in no gate, marker, system or riddle-pad family:
+## `tower_selfcheck` claims every box wearing one of those colours for a graph row,
+## and this plate is unclaimed by design, exactly as the lure plates are. The owner
+## rules the exact rose from a screenshot; one const to change.
+const COLOR_LIFT := Color(0.95, 0.72, 0.78)
+
 ## Which colours are EMISSIVE AND UNSHADED. There are no `Light3D`s anywhere in
 ## this building: a real light under the slab would cost a shadow pass on a
 ## renderer (`gl_compatibility`) that is the whole reason for the visibility gating
@@ -2703,10 +2713,23 @@ static func lift_stand(floor_index: int) -> Vector3:
 static var _lift_stand_memo: Dictionary = {}
 
 
-static func _lift_stand_uncached(floor_index: int) -> Vector3:
+static func lift_cell(floor_index: int) -> Vector2i:
+	"""
+	The `s` cell `lift_stand()` sets you down on: the landing cell nearest the
+	landing's centroid.
+	
+	@return: the cell, or `Vector2i(-1, -1)` when the storey draws no landing -
+	        a storey with no `s` cells builds no lift plate and `lift_stand()`
+	        degrades to `entry_stand()`, as today.
+	
+	SPLIT OUT OF `lift_stand()` (bead godot-test1-i1xj) so the paint and the call
+	point cannot drift: `_plan_lift_pad()` plates this cell and `lift_stand()`
+	stands on it, and there is one function naming it. Authored text, never
+	seeded, like everything else it reads.
+	"""
 	var plan := TowerPlans.storey(floor_index)
 	if plan.is_empty():
-		return entry_stand()
+		return Vector2i(-1, -1)
 	var cells: Array[Vector2i] = []
 	var sum := Vector2.ZERO
 	for r: int in plan["rows"].size():
@@ -2716,7 +2739,7 @@ static func _lift_stand_uncached(floor_index: int) -> Vector3:
 				cells.append(Vector2i(c, r))
 				sum += Vector2(float(c), float(r))
 	if cells.is_empty():
-		return entry_stand()
+		return Vector2i(-1, -1)
 	var centroid := sum / float(cells.size())
 	var best := cells[0]
 	var best_d := INF
@@ -2725,10 +2748,15 @@ static func _lift_stand_uncached(floor_index: int) -> Vector3:
 		if d < best_d:
 			best_d = d
 			best = cell
+	return best
+
+
+static func _lift_stand_uncached(floor_index: int) -> Vector3:
+	var best := lift_cell(floor_index)
+	if best.x < 0:
+		return entry_stand()
 	return Vector3(_grid_x(float(best.x) + 0.5), FLOOR_Y[floor_index] + 0.2,
 			_grid_z(float(best.y) + 0.5))
-
-
 static func landing_rect(floor_index: int) -> Rect2i:
 	"""The `s` landing cells of one storey as a cell rect, `Rect2i()` if it has none."""
 	var plan := TowerPlans.storey(floor_index)

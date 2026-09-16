@@ -229,6 +229,7 @@ func _boot() -> void:
 
 func _run() -> void:
 	_check_plan_fits_the_shell()
+	_check_lift_call_cell_wears_a_plate()
 	_check_no_jump_gated_climb()
 	_check_the_demand_is_actually_reachable()
 	_check_ramp_is_the_stair()
@@ -392,6 +393,116 @@ func _fit_boxes(boxes: Array[Dictionary], bound: float, floors: Array[int],
 		# thoroughly as a wall does.
 		if TowerProbe.overlaps(pos, box["size"], door["pos"], door["size"]):
 			_fail("%s stands in the shell's doorway volume" % box_name)
+
+
+# ============================================================================
+# CHECK 1b — the lift's call cell wears a plate
+# ============================================================================
+
+func _check_lift_call_cell_wears_a_plate() -> void:
+	"""
+	Check 1b (bead godot-test1-i1xj). Every storey with a landing paints its lift
+	call cell: exactly one non-solid `COLOR_LIFT` `*LiftPad` plate, on the cell
+	`lift_stand()` sets you down on, and on no pad of any other kind.
+	
+	THE COLOUR IS IN NO AUDITED FAMILY. `tower_selfcheck` check 1 claims every box
+	wearing a gate or marker colour for a `TOWER_GRAPH` row, so a palette nudge that
+	landed COLOR_LIFT on one would silently enter the softlock audit as a passage -
+	this is what says so, while that file stays read-only. The structural budget
+	and the luminance floor are check 1's and check 6b's business; they run in this
+	same file and must stay green with the extra plate on every storey.
+	"""
+	# The five `_gate_colors` entries and two `_room_colors` entries check 1 walks,
+	# plus the system cyan the plate must never be confused with - read here through
+	# their owner TowerInterior, never restated as numbers.
+	var audited: Array[Color] = [
+		TowerInterior.COLOR_HAZARD,
+		TowerInterior.COLOR_MECHANISM,
+		TowerInterior.COLOR_IDENTITY,
+		TowerInterior.COLOR_IDENTITY_PAD,
+		TowerInterior.COLOR_RIDDLE,
+		TowerInterior.COLOR_CHECKPOINT,
+		TowerInterior.COLOR_CELL,
+		TowerInterior.COLOR_SYSTEM,
+	]
+	for color: Color in audited:
+		if TowerInterior.COLOR_LIFT == color:
+			_fail("COLOR_LIFT sits in an audited family - a plate wearing it enters "
+				+ "tower_selfcheck check 1 as a passage; change the colour, never the audit")
+	for pad: Color in TowerInterior.COLOR_RIDDLE_PADS:
+		if TowerInterior.COLOR_LIFT == pad:
+			_fail("COLOR_LIFT is one of the riddle lock colours - the call cell reads "
+				+ "as a combination-lock digit; change the colour, never the audit")
+	if TowerInterior.COLOR_LIFT.get_luminance() < INTERIOR_MIN_LUMINANCE:
+		_fail("COLOR_LIFT is %.2f luminance, under the %.2f no surface in this "
+			+ "building may clear" % [TowerInterior.COLOR_LIFT.get_luminance(),
+				INTERIOR_MIN_LUMINANCE])
+	for floor_index: int in TowerPlans.floors():
+		var plan := TowerPlans.storey(floor_index)
+		if plan.is_empty():
+			continue
+		var cell := TowerInterior.lift_cell(floor_index)
+		var plates: Array[Dictionary] = []
+		for box: Dictionary in TowerInterior.plan_boxes(floor_index):
+			if String(box.get("name", "")).ends_with("LiftPad"):
+				plates.append(box)
+		if cell.x < 0:
+			# No landing, no plate - and `lift_stand()` degrades to `entry_stand()`.
+			if not plates.is_empty():
+				_fail("storey %d draws no landing yet builds %d *LiftPad boxes" % [
+					floor_index, plates.size()])
+			continue
+		if plates.size() != 1:
+			_fail("storey %d draws %d *LiftPad boxes, expected exactly one on its " % [
+				floor_index, plates.size()] + "lift call cell")
+			continue
+		var plate: Dictionary = plates[0]
+		var want_name := "%sLiftPad" % TowerInterior._plan_prefix(floor_index)
+		if String(plate.get("name", "")) != want_name:
+			_fail("storey %d's lift plate is called '%s', expected '%s'" % [
+				floor_index, String(plate.get("name", "")), want_name])
+		if (plate.get("color", Color.BLACK) as Color) != TowerInterior.COLOR_LIFT:
+			_fail("storey %d's lift plate is not painted COLOR_LIFT" % floor_index)
+		if bool(plate.get("collide", true)):
+			_fail("storey %d's lift plate is solid - a 10 cm lip is a wall to a " % [
+				floor_index] + "CharacterBody3D with no step-up")
+		# The paint and the call point: the plate's XZ is the stand's XZ.
+		var stand := TowerInterior.lift_stand(floor_index)
+		var pos: Vector3 = plate["pos"]
+		if absf(pos.x - stand.x) > EPS or absf(pos.z - stand.z) > EPS:
+			_fail("storey %d's lift plate stands at (%.2f, %.2f) but lift_stand() is " % [
+				floor_index, pos.x, pos.z] + "at (%.2f, %.2f) - the paint drifted off " % [
+				stand.x, stand.z] + "the call point")
+		# ...and the cell under it is the landing cell `lift_cell()` named.
+		var at := TowerInterior._plan_cell_of(pos)
+		if at != cell:
+			_fail("storey %d's lift plate is on cell %s, but lift_cell() names %s" % [
+				floor_index, str(at), str(cell)])
+		var rows: Array = plan["rows"]
+		if at.y < 0 or at.y >= rows.size() or at.x < 0 or at.x >= String(rows[at.y]).length() \
+				or String(rows[at.y])[at.x] != TowerPlans.LANDING_CHAR:
+			_fail("storey %d's lift plate is on cell %s, which is not an `s` landing " % [
+				floor_index, str(at)] + "cell")
+		# Never on a lure pad: the confusion this plate exists to end.
+		if TowerInterior.pad_cells(plan).has(at):
+			_fail("storey %d's lift plate is on cell %s, which is a `P` lure pad" % [
+				floor_index, str(at)])
+		# ...nor on a riddle lock pad or a clue-strip cell.
+		var riddle_cells: Array[Vector2i] = []
+		for pad_slot: Dictionary in TowerInterior.gate_slots(plan).get("pads", []):
+			riddle_cells.append(Vector2i(int(pad_slot["c"]), int(pad_slot["r"])))
+		for gid: String in TowerInterior.riddle_ids():
+			var strip := TowerInterior.clue_strip(gid)
+			if strip.is_empty() or int(strip.get("floor", -1)) != floor_index:
+				continue
+			var answer: Array = TowerGraph.gate(gid).get("answer", [])
+			for i: int in answer.size():
+				riddle_cells.append(Vector2i(int(strip["c"]) + i, int(strip["r"])))
+		if riddle_cells.has(at):
+			_fail("storey %d's lift plate is on cell %s, which is a riddle pad slot" % [
+				floor_index, str(at)])
+	print("tower interior: every landing's call cell wears its COLOR_LIFT plate")
+	Sentinel.done("lift_call_cell_wears_a_plate")
 
 
 # ============================================================================
