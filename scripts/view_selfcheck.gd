@@ -261,7 +261,9 @@ func _check_zoom(player: Node3D, arm: SpringArm3D) -> void:
 		_fail("a wheel event with the cursor FREE moved camera_zoom to %.3f — the "
 				% player.camera_zoom + "MOUSE_MODE_CAPTURED guard is gone from _input()")
 
-	# NEGATIVE CONTROL (b): a paused tree.
+	# NEGATIVE CONTROL (b): a paused tree. Each control re-arms the factor, so a
+	# broken guard fails its OWN control instead of cascading into the next one's.
+	player.camera_zoom = 1.0
 	paused = true
 	player.zoom_camera(zoom_step)
 	paused = false
@@ -270,6 +272,7 @@ func _check_zoom(player: Node3D, arm: SpringArm3D) -> void:
 				% player.camera_zoom)
 
 	# NEGATIVE CONTROL (c): first person, where there is no boom to zoom.
+	player.camera_zoom = 1.0
 	player.view_mode = player.ViewMode.FIRST_PERSON
 	player._apply_view_mode()
 	player.zoom_camera(zoom_step)
