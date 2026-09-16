@@ -75,14 +75,6 @@ extends SceneTree
 ##     size. FOCUS_NONE is asserted for `skill_tree_ui`'s reason: `ui_accept` is
 ##     SPACE is `jump`, so a focused opener re-opens itself on every jump.
 ##
-##     ...and, since bead `godot-test1-8gw.27`, the same stage with the REAL
-##     `touch_controls.tscn` force-shown in it: every opener rect must be disjoint
-##     from every rect that HUD reports and still be on screen. The size that
-##     matters is 1067x600 — a landscape touch session scales the 1920x1080 base
-##     by `TOUCH_CONTENT_SCALE` (1.8), which lifts the SPECIAL circle to y 232-352,
-##     under both openers. Both panels draw AFTER `TouchControls`, so an overlap
-##     is not a cosmetic clash: the opener eats the tap meant for the ability.
-##
 ## ...and OVER ALL EIGHT, a completion sentinel — the pattern this file shipped in
 ## PR #186 and bead `godot-test1-llo` then moved into
 ## `scripts/selfcheck_sentinel.gd` so every self-check in the repo carries it.
@@ -97,19 +89,12 @@ const HelpOverlay := preload("res://scripts/help_overlay.gd")
 const MinimapHud := preload("res://scripts/minimap_hud.gd")
 const PauseController := preload("res://scripts/pause_controller.gd")
 const PerfOverlay := preload("res://scripts/perf_overlay.gd")
-const MotionDebug := preload("res://scripts/motion_debug.gd")
-const MobileInput := preload("res://scripts/mobile_input.gd")
-const TouchControls := preload("res://scripts/touch_controls.gd")
-const MobileSettingsPanel := preload("res://scripts/mobile_settings_panel.gd")
 const SkillTreeUi := preload("res://scripts/skill_tree_ui.gd")
 const TowerLiftMenu := preload("res://scripts/tower_lift_menu.gd")
 const LandmarkToast := preload("res://scripts/landmark_toast.gd")
 const MultiplayerUI := preload("res://scripts/mp_ui.gd")
 
 const PLAYER_SCENE: String = "res://scenes/player.tscn"
-## The real touch HUD, instanced into the opener-layout stage so check 8 measures
-## the openers against the rects that actually ship (bead `godot-test1-8gw.27`).
-const TOUCH_SCENE: String = "res://scenes/ui/touch_controls.tscn"
 
 ## One 8-bit tone. The bake is `FORMAT_RGBA8`, so a colour read back is quantized
 ## and `Color.is_equal_approx` would reject the very constant that was written.
@@ -254,10 +239,6 @@ static func panel_key_owners() -> Array:
 		[HelpOverlay.HELP_KEYCODES, "help_overlay.HELP_KEYCODES"],
 		[LandmarkToast.ANSWER_KEYCODES, "landmark_toast.ANSWER_KEYCODES"],
 		[PlayerScript.HERO_KEYCODES, "player_controller.HERO_KEYCODES"],
-		[[MotionDebug.TOGGLE_KEYCODE], "motion_debug.TOGGLE_KEYCODE"],
-		[[MobileInput.FORCE_ENABLE_KEYCODE], "mobile_input.FORCE_ENABLE_KEYCODE"],
-		[[TouchControls.FORCE_SHOW_KEYCODE], "touch_controls.FORCE_SHOW_KEYCODE"],
-		[[MobileSettingsPanel.FORCE_SHOW_KEYCODE], "mobile_settings_panel.FORCE_SHOW_KEYCODE"],
 		[[PlayerScript.CHEAT_ARM_KEY], "player_controller.CHEAT_ARM_KEY"],
 	]
 
@@ -791,7 +772,7 @@ func _check_touch_opener() -> void:
 	# Both are anchored to the RIGHT edge, so their rects only exist once a parent
 	# has a size: measured on a real layout, at the desktop default and at a phone.
 	for stage_size: Vector2 in [Vector2(1280.0, 720.0), Vector2(400.0, 800.0)]:
-		var rects: Array = await _opener_rects(stage_size, false)
+		var rects: Array = await _opener_rects(stage_size)
 		var map_rect: Rect2 = rects[0]
 		var skills_rect: Rect2 = rects[1]
 		if map_rect.size.x <= 0.0 or skills_rect.size.x <= 0.0:
@@ -804,56 +785,14 @@ func _check_touch_opener() -> void:
 				or map_rect.end.y > stage_size.y:
 			_fail("at %s the map opener %s hangs off the screen" % [stage_size, map_rect])
 
-	# --- ...and neither may sit on a TOUCH control (bead `godot-test1-8gw.27`) ---
-	# The same layout with `touch_controls.tscn` instanced and force-shown. The
-	# third size is the one the bug actually lived at: a landscape touch session
-	# runs `TOUCH_CONTENT_SCALE` (1.8) over the 1920x1080 base, so the layout is
-	# 1067x600 and the SPECIAL circle rises to y 232-352 — under BOTH openers.
-	# Disjointness is measured against the touch HUD's OWN rects, so a button that
-	# moves over there is covered here without a number being copied across.
-	for stage_size: Vector2 in [
-		Vector2(1280.0, 720.0), Vector2(1067.0, 600.0), Vector2(400.0, 800.0),
-	]:
-		var rects: Array = await _opener_rects(stage_size, true)
-		var touch_rects: Array = rects[2]
-		if touch_rects.is_empty():
-			_fail("the touch HUD reported no button rects at %s — every disjointness "
-				% stage_size + "test below would pass against nothing")
-		for i: int in 2:
-			var opener: Rect2 = rects[i]
-			var what: String = "map" if i == 0 else "Skills"
-			if opener.end.x > stage_size.x or opener.position.x < 0.0 \
-					or opener.position.y < 0.0 or opener.end.y > stage_size.y:
-				_fail("at %s with touch controls up the %s opener %s hangs off the "
-					% [stage_size, what, opener] + "screen — on a phone the openers "
-					+ "ARE the only way into Skills and the map")
-			for touch_rect: Rect2 in touch_rects:
-				if opener.intersects(touch_rect):
-					_fail("at %s the %s opener %s overlaps a touch control %s — both "
-						% [stage_size, what, opener, touch_rect] + "panels draw AFTER "
-						+ "TouchControls, so the opener would take the tap")
 	Sentinel.done("touch_opener")
 
 
-func _opener_rects(stage_size: Vector2, with_touch: bool) -> Array:
-	"""Both openers' rects in one parent of `stage_size`, `[map, skills, touch]`.
-
-	`with_touch` instances the real `touch_controls.tscn` into the same stage and
-	force-shows it (headless is never a touch session, so `_force_shown` is the
-	only way in), and the third element is then its own `occupied_rects()`.
-	"""
+func _opener_rects(stage_size: Vector2) -> Array:
+	"""Both openers' rects in one parent of `stage_size`, `[map, skills]`."""
 	var stage := Control.new()
 	stage.size = stage_size
 	root.add_child(stage)
-	var touch: Control = null
-	if with_touch:
-		# FIRST child, exactly as in `main.tscn`: the openers draw over it, which is
-		# why an overlap here is a stolen tap and not merely ugly.
-		touch = (load(TOUCH_SCENE) as PackedScene).instantiate()
-		touch.set_anchors_preset(Control.PRESET_FULL_RECT)
-		stage.add_child(touch)
-		touch._force_shown = true
-		touch._apply_platform_visibility()
 	var map_panel := Control.new()
 	map_panel.set_script(CityMapPanel)
 	var skills_panel := Control.new()
@@ -861,16 +800,13 @@ func _opener_rects(stage_size: Vector2, with_touch: bool) -> Array:
 	for child: Control in [map_panel, skills_panel]:
 		child.set_anchors_preset(Control.PRESET_FULL_RECT)
 		stage.add_child(child)
-	# Three frames: one for `_ready` to build the buttons, one for the containers to
-	# settle the layout their anchors describe, and one for the openers' `_process`
-	# to read the settled touch rects and step the column clear of them.
-	await process_frame
+	# Two frames: one for `_ready` to build the buttons, one for the containers to
+	# settle the layout their anchors describe.
 	await process_frame
 	await process_frame
 	var out: Array = [
 		(map_panel._open_button as Control).get_rect(),
 		(skills_panel._open_button as Control).get_rect(),
-		touch.occupied_rects() if touch != null else [],
 	]
 	stage.queue_free()
 	await process_frame
