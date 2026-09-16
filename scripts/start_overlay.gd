@@ -182,7 +182,7 @@ const PHONE_CARD_TEXT: String = "Play from a desktop browser.\nCrimeKickers need
 # ============================================================================
 
 ## Where an explicit language choice is remembered, in the same shape as
-## `best_run.cfg` and `mobile_tuning.cfg`.
+## `best_run.cfg`.
 ##
 ## STATIC AND WRITABLE PURELY AS A TEST SEAM, exactly as `BestRunStore.config_path`
 ## is and for the same reason; nothing in the game ever assigns it.

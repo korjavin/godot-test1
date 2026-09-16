@@ -59,7 +59,7 @@ extends Node
 ##
 ## Off-web — desktop, the editor, every headless self-check — `_ready()` returns
 ## before it builds anything: no HTTPRequest, no timer, no `JavaScriptBridge`,
-## no `_process`. The same shape `MobileSensors` and `IntroVideo` carry.
+## no `_process`. The same shape `VoiceChat` and `IntroVideo` carry.
 
 # ============================================================================
 # TUNABLES

@@ -180,3 +180,69 @@ A handful of band houses stand close enough that one roof prism intersects its
 neighbour's, and the two near-parallel slopes interleave in a small dithered patch
 (visible near the ridge in the band's after frame). That is a placement question for
 `_biome_spot_ok`, not a lighting one, and it is a separate bead.
+
+---
+
+# Correction — bead godot-test1-p0g1 (2026-09-16): the wedge was inside-out
+
+**Everything above is still true about the shadow acne, and the two web numbers
+stay. What it was taken on was wrong.** The `BoxKind.WEDGE` unit mesh was wound
+counter-clockwise from outside — the right-hand rule — and Godot's front face is the
+CLOCKWISE one, so under `world_block.gdshader`'s `cull_back` all eight of its
+triangles faced in. Measured in-engine over `ChunkBatch.unit_mesh(kind)`, one
+`Plane(v0, v1, v2).normal.dot(face centroid)` per triangle: CUBE 12/12 outward,
+SPHERE 64/64, CONE 60/60, CYLINDER 96/96, ROCK 64/64 — **WEDGE 0/8**.
+
+So the band's roofs never drew as pitched. Both slopes and both gables were culled;
+what read as a roof was the wedge's BASE quad seen from above, and the base spans the
+full roof footprint at exactly the hull's top face (`terrain_biomes.gd` puts the roof
+centre at `height + rise/2`, so base y == hull top y to the millimetre). Two
+MultiMesh draws, two coplanar front faces: a z-fight whose winner moves with the
+camera, which is the owner's "the roof goes transparent for a moment, I see a white
+ceiling" — the hull's lit `CITY_PLASTER_A` showing through.
+
+Three consequences for this document:
+
+1. **"Cause 1 (z-fighting) — the coplanar pair PR #334 lifted, hull top vs roof
+   underside — face opposite ways under `cull_back` and are never both rasterized"
+   was wrong as written**, and wrong only because of the winding. With the flip it
+   becomes true, which is why #334's lift is not re-added: there is nothing left to
+   lift apart.
+2. **The acne frames above were taken on that base quad**, a horizontal face, not on
+   the ~29° slopes the arithmetic reasons about. `WEB_SHADOW_NORMAL_BIAS` 3.0 and
+   `WEB_SHADOW_SPLIT_1` 0.35 are kept — `p0g1_band_web_before.png` /
+   `p0g1_band_web_after.png` are the same `style_shots` recipe as `6n1_band_web_*`,
+   retaken either side of the winding flip, and **the now-real slopes carry no acne
+   and no peter-panning**, so there is nothing to retune and no follow-up filed.
+   `1_field` was retaken in the same two runs and is visually unchanged — it holds
+   no wedge, so a wedge-only mesh edit cannot reach it. Draw calls in the band, the
+   shot this bead is about, are identical either side: **241/241**. The two shots
+   that carry none of the flip's geometry read 218/219 (field) and 305/305 (bridge
+   deck) — the one-draw field difference is the LOD ring's own churn between two
+   processes, not a cost of the winding, and the `[PERF]` line moves by more than
+   that between two runs of the same build.
+3. **"Not fixed here" above is resolved, not deferred.** The dithered patch was not
+   two roof prisms interleaving: across 138 wedge colliders within 400 m of a band
+   spot, **no two wedge AABBs intersect at all**. The patch was this same base quad
+   against the hull top under it, and it is gone in `p0g1_band_web_after.png` at the
+   same houses. Closed bead `godot-test1-c2i` stays closed.
+
+The fix is `chunk_batch.gd::_build_unit_wedge_mesh()` emitting each triangle
+clockwise, and nothing else: no vertex moved, so `UNIT_WEDGE_POINTS`, the collider,
+the footprints and the RNG stream are untouched. `batch_selfcheck` check 1 now
+measures that rule per triangle for every kind, which is the thing that was missing —
+it asserted flat normals and unit-cube reach, and neither says which side of a face
+the camera may see.
+
+Acceptance frames, hero standing on a band-house ridge at seed 12345, same stance
+either side, default camera:
+
+| pair | before | after |
+|---|---|---|
+| `gl_compatibility`, web sun shadow | `p0g1_ridge_gl_before.png` | `p0g1_ridge_gl_after.png` |
+| Forward+ | `p0g1_ridge_forwardplus_before.png` | `p0g1_ridge_forwardplus_after.png` |
+
+`p0g1_ridge_walk_after_a.png` / `…_b.png` are two consecutive frames while walking
+the ridge: the roof does not change. The same walk before the flip put a
+plaster-white sample on a visible slope centre in 8 of 9 `gl_compatibility` frames
+and 10 of 12 Forward+ frames, and in 0 of 10 and 0 of 13 after it.

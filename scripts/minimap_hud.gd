@@ -93,7 +93,7 @@ extends Control
 ##     under 2x the terrain layer's evaluations; `_draw()` never calls that one
 ##     either, and the check measures both.
 ##
-## Toggle with M (a raw keycode like perf_overlay's F3 and motion_debug's F4, so it
+## Toggle with M (a raw keycode like perf_overlay's F3 and pause_controller's P, so it
 ## stays outside the project input map and can't collide with a gameplay action).
 
 ## THE SKIN IS `HudTheme`'S, THE MAP'S HUES ARE NOT (bead godot-test1-y1o.27).

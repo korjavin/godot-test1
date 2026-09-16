@@ -41,9 +41,9 @@ extends Node
 ## but if WE start playing before that gesture the console fills with
 ## "AudioContext was not allowed to start" errors. So every play_* call is
 ## gated behind `_unlocked`: nothing plays until unlock_audio() fires. We
-## unlock ourselves on the first key/click/touch (harmless on native desktop —
-## that first input is when gameplay starts anyway), and the mobile touch UI's
-## "enable motion controls" overlay tap also calls unlock_audio() explicitly.
+## unlock ourselves on the first key/click (harmless on native desktop —
+## that first input is when gameplay starts anyway), and the start card's
+## dismiss tap also calls unlock_audio() explicitly.
 
 # ============================================================================
 # CONSTANTS — synthesis tunables

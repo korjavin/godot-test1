@@ -58,7 +58,7 @@ const PauseController := preload("res://scripts/pause_controller.gd")
 ##   * `*_selfcheck.gd` files are `SceneTree` scripts driving fixtures; `paused`
 ##     there is the harness, not a pauser.
 ##
-## `touch_controls.gd` used to sit here too — the last raw `.paused` write outside
+## A removed overlay used to sit here too — the last raw `.paused` write outside
 ## the hub, an anti-softlock belt in the unreachable `else` of its resume tap. The
 ## touch session is gone (bd godot-test1-si57), and with it that exemption: the
 ## hub is now the ONLY script in `res://scripts` allowed to touch `.paused`.

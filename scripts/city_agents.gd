@@ -48,8 +48,15 @@ static func box_mesh(size: Vector3) -> BoxMesh:
 
 
 static func add_box(st: SurfaceTool, center: Vector3, size: Vector3, col: Color) -> void:
-	## Adds an engine-accurate 6-sided box with correct outward CCW winding
-	## and vertex color to a SurfaceTool.
+	## Adds an engine-accurate 6-sided box with correct outward winding and vertex
+	## color to a SurfaceTool.
+	##
+	## The winding is correct because it is copied from `BoxMesh`'s own indices
+	## below, NOT because it is counter-clockwise — this line said "CCW" until bead
+	## `godot-test1-p0g1`, and Godot's front face is the CLOCKWISE one seen from
+	## outside. That same sentence in `chunk_batch.gd` is what shipped the unit
+	## WEDGE inside out for a whole bead; `batch_selfcheck` check 1 now measures
+	## the rule per triangle for every box kind.
 	##
 	## Every box is welded at its BODY offset, which is what makes model-space
 	## `VERTEX.y` run boots-to-hat over a whole citizen and wheels-to-roof over a
