@@ -192,7 +192,7 @@ func _draw() -> void:
 	# Ability name below the dial, in caps at the DRAW SITE — never in ui.csv,
 	# where the translation key is the English source string (CLAUDE.md rule 1).
 	var name_size := 18
-	_draw_centered(font, ability_name.to_upper(),
+	_draw_centered(font, tr(ability_name).to_upper(),
 		Vector2(center.x, center.y + DIAL_RADIUS + 24.0), name_size, HudTheme.BONE)
 
 	# Inside the dial: the seconds left while cooling, otherwise the gate that is

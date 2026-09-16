@@ -243,6 +243,14 @@ const WIDTH_BUDGETS: Array = [
 	["Phase Step", 16, 292.0, "skill branch heading"],
 	["Resize", 16, 292.0, "skill branch heading"],
 	["Stink Wave", 16, 292.0, "skill branch heading"],
+	# ability_hud.gd — the dial name under the dial, name_size 18, centred
+	# across the AbilityHUD control's own 160 px width (main.tscn
+	# offsets -176 / -16), no clip — so the control width IS the budget.
+	["Air Rush", 18, 160.0, "ability dial name"],
+	["Air Sight", 18, 160.0, "ability dial name"],
+	["Phase Step", 18, 160.0, "ability dial name"],
+	["Resize", 18, 160.0, "ability dial name"],
+	["Stink Wave", 18, 160.0, "ability dial name"],
 	# The card title is one non-wrapping line across CARD_WIDTH 640 less the
 	# 18 px content margin each side and the ScrollContainer's own 36 px.
 	["%s — Level %d,  %d points", 22, 604.0, "skill tree card title"],
