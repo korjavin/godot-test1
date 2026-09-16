@@ -89,6 +89,13 @@ const LEGACY_CROC_VIEW_RADIUS: float = 30.0
 ## what the two files agree on.
 const GROUND_SHADER_PATH: String = "res://assets/shaders/ground.gdshader"
 
+## THE WORLD THIS FILE RUNS IN. `endless_terrain._ready()` rolls `run_seed` from
+## entropy, so this harness used to boot a DIFFERENT world every time — see
+## `_pin_the_world()` for the flake that cost (bead godot-test1-8pfg). The value is
+## the one `batch_selfcheck` and `waypoint_selfcheck` already run their worlds on,
+## so a world that misbehaves here misbehaves there too.
+const RUN_SEED: int = 20260904
+
 ## Which shader uniform each row of `minimap_hud.BIOME_TINTS` must equal, indexed by
 ## endless_terrain's Biome enum. PLAINS has no uniform of its own — the shader
 ## mottles between `green_a` and `green_b` per vertex — so it is checked against
@@ -237,6 +244,8 @@ func _run() -> void:
 	await process_frame
 	var failure := _start_the_game()
 	if failure.is_empty():
+		failure = _pin_the_world()
+	if failure.is_empty():
 		# Two seconds: long enough for the spawn ring of chunks to build (which is
 		# what fills the road station cache) and for several 5 Hz minimap ticks.
 		await create_timer(2.0).timeout
@@ -303,6 +312,50 @@ func _start_the_game() -> String:
 	if paused:
 		return "the tree is still paused after dismissing StartOverlay — something " \
 			+ "else took a pause, and the minimap (PAUSABLE) will never tick"
+	return ""
+
+
+func _pin_the_world() -> String:
+	"""Put this run on ONE seed, before the spawn ring builds (bead godot-test1-8pfg).
+
+	THE FLAKE THIS FIXES. `endless_terrain._ready()` rolls `run_seed` from entropy,
+	so every check below used to run against a world nobody chose — and one of them
+	depended on which world it got. `_check_waypoints` step 3 needs the "spawn"
+	circle INSIDE the map's 60 m disc, and that circle is not at a constant X: it is
+	the first coin-road station at or after `WAYPOINT_SPAWN_X` (15 m) WALKED EAST OUT
+	OF THE WATER, `WAYPOINT_RIVER_STEP` stations (~60 m of X) per try. A seed whose
+	river crosses the road right there therefore pushes it clean off the disc, every
+	one of the eleven rings clamps to the rim, and the check fails with "the waypoint
+	layer drew 0 rings on the disc and 11 clamped". Measured over a 400-seed sweep:
+	9 of 400, or one run in 44 — which is exactly the shape CI reported (red once on
+	run 35096462987, green on the re-run and green twice locally).
+
+	THE FIX IS A PINNED INPUT, NOT A TOLERANCE. Widening the assertion would have
+	deleted the guard; a retry would have hidden it. Every sibling harness that needs
+	a world already forces one through `set_run_seed()` (`batch`, `budapest`,
+	`chunk_stream`, `enemy_spawn`, `waypoint`) and this file was the odd one out.
+	`new_run()` is the door rather than a bare `set_run_seed()` because the seed is
+	not the only thing already built on the old roll: `endless_terrain._ready()`
+	has rolled it and pushed the biome offset into the ground shader, and whatever
+	chunks the first frames streamed belong to that world. `new_run()` writes the
+	seed through the one seam (dropping every seeded memo), re-feeds the shader,
+	frees the old chunks and floors the ring around chunk (0,0) SYNCHRONOUSLY; the
+	2 s wait below then fills it exactly as before.
+
+	IT DOES NOT MOVE THE PLAYER, and this call site only gets away with that
+	because it runs HERE: `relocate()` builds ground around `around` and leaves the
+	teleport to its caller (`PlayerController.restart_game()` does it), and at this
+	point in `_run()` the player is still on the spawn at the origin, so chunk (0,0)
+	is the ring under their feet. A pin moved later — after `_check_river` has
+	walked the player out to the Budapest wall, say — would have to pass that chunk
+	in and put the player back itself, or drop them through the floor.
+
+	The other consequence is the one worth having: any future red here reproduces
+	with one command, on this seed, on any machine."""
+	var terrain: Node = get_first_node_in_group("terrain")
+	if terrain == null:
+		return "no node in the \"terrain\" group to pin the run seed on"
+	terrain.new_run(RUN_SEED)
 	return ""
 
 
@@ -452,6 +505,12 @@ func _check_waypoints() -> String:
 		# Both branches must have been exercised: the spawn circle is metres away and
 		# Budapest is 1.7 km east, so a run where either count is zero means the
 		# layer (or the site table) is not saying what it is supposed to say.
+		#
+		# "METRES AWAY" IS A FACT ABOUT THE SEED, NOT ABOUT THE FEATURE, and that is
+		# what `_pin_the_world()` is for: on a seed whose river crosses the road at
+		# x = 15 the spawn circle walks ~60 m east per try and this line fires
+		# honestly, on a world nobody meant to test. Read that docstring before
+		# relaxing anything here.
 		if on_disc == 0 or clamped == 0:
 			failure = "the waypoint layer drew %d rings on the disc and %d clamped — " \
 				% [on_disc, clamped] + "one of the two branches never ran"
