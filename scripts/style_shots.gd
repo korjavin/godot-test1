@@ -32,7 +32,8 @@ var _out_dir: String = "user://shots"
 ## which is what CI and the epic's A/B pairs want. Comma-separated (bead
 ## godot-test1-z3e.10): this environment's per-shot fixed cost (world/camp
 ## sweep, a real settle) dwarfs one shot's own camera work, so a caller wanting
-## several shots that already share `_head_pose_settled` (16/17/18/19/20/21_jaw_1m) asks
+## several shots that already share `_head_pose_settled`
+## (16/17/18/19/20/21_jaw_1m/27_remote_avatar) asks
 ## for them in ONE process rather than paying the settle five times over.
 var _only: String = ""
 
@@ -728,9 +729,17 @@ func _shoot_remote_avatar(terrain: Node, player: Node3D, at: Vector3, name: Stri
 
 	A `RemoteAvatar` is a bare node with no groups and no body (its whole
 	contract), so posing it is two lines: put it where it belongs and hand it one
-	state sample. The world is PAUSED around this shot like every other, so its
-	`_process` smoothing never runs — which is why the position is written
-	directly as well as sent.
+	state sample.
+
+	BOTH LINES, and the belt-and-braces is not laziness. This is a SINGLE-frame
+	shot, so unlike the strips it takes no `PauseHub` pause — `_settle_body_pose`
+	has only stopped the PLAYER (`player.set_process(false)`), and this avatar's
+	own `_process` does run in the two frames below. `receive_state` alone would
+	therefore leave it mid-lerp toward the target from wherever `add_child` put it
+	(the tree's origin, hundreds of metres away, which its own teleport snap would
+	fix a frame later — after the capture). Writing `global_position` puts it
+	there now; sending the same value keeps the smoothing's target from dragging
+	it back off the mark.
 	"""
 	if not _wanted(name):
 		return

@@ -155,8 +155,18 @@ static func style_cloth(mat: BaseMaterial3D) -> void:
 	with N.L across all of it, and the rim light the cast carries is extra light at
 	the silhouette that a garment no longer gets. So the garment is darker exactly
 	where a real garment curves away from the key light, which is the whole point
-	of the pick — measured at 3 m it is within a few percent of the old mean luma
-	(the numbers are in `docs/style/z3e/grid_29_cloth_rollout.md`).
+	of the pick.
+
+	IT IS A REAL DROP AND NOT A ROUNDING ONE, and the bead's "within a few percent
+	of today" is knowingly NOT met: on a garment-only crop at 3 m the mean luma
+	falls 13% on Teibi's polo, 48% on Windman's shorts and 54% on Primm's trousers,
+	because the deficit depends on how each garment faces the sun. Whole-hero at
+	3 m it is 7-8%. What rises is the variation the owner was actually buying —
+	Teibi's 1 m torso goes from luma sd 1.36 to 45.65. `DIFFUSE_LAMBERT_WRAP`, the
+	middle ground one enum away, was measured and recovers almost none of the luma
+	while giving up half of that variation. Every number, and what the owner would
+	turn if he wants the brightness back, is in
+	`docs/style/z3e/grid_29_cloth_rollout.md`.
 
 	`style()`'s two-band DIFFUSE_TOON is a lighting threshold, not a depth cue: a
 	6 mm crease either falls entirely inside one band or straddles the step, so a

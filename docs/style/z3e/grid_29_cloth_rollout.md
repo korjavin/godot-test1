@@ -46,8 +46,17 @@ Per-pass log, from the `--all` build:
 | windman | 1,176 edges, +1,339 verts, 14,116 → 16,794 tris (+19.0%) | 3,394, 0.315 / 0.977 | 4,271 / 11,633 |
 | primm | 1,020 edges, +1,148 verts, 13,154 → 15,450 tris (+17.5%) | 4,226, 0.315 / 0.988 | 5,532 / 10,536 |
 
-(The per-hero final Δ differs from the folds' own Δ because accessories — the beret, the
-eyes, Primm's coat tails — join after the fold pass and were always in the total.)
+(The per-hero final Δ differs from the folds' own Δ because accessories — the wrap, the
+beret, the eyes, Primm's coat tails — join after the fold pass, so they are in the
+finished hero's count and not in the fold pass's denominator. The assert's fraction is
+therefore the CONSERVATIVE one of the two, and both are inside the range.)
+
+**Primm's coat tails take passes B and D but NOT the folds**, and that is deliberate
+rather than an oversight: they are joined after the fold pass because `export_glb`
+flat-shades them by POLYGON INDEX — a tuxedo tail has a crease and smoothing it rounds it
+into a sausage — and a subdivide renumbers every polygon (trap 9). Sixteen vertices of
+faceted box also have no panel for a crease band to resolve. The `fold_garments`
+docstring says so at the pass.
 
 **Primm's coat tails are cloth now too**, and they are the one garment `dress_shells`
 cannot mark: they are NEW geometry (`attach_tails`), so they carried no garment vertex
@@ -190,3 +199,7 @@ two skinned heroes in it, ran at 9.10 ms / 220 draws.
   `gl_compatibility` with the `.web` overrides, which is the stand-in this repo has always
   used; nothing in this bead needed the real export and nothing here claims one.
 * **The garment luma gap** (section 2) is the owner's call and is not a defect.
+* **`hero_manifest.json`'s `tools.blender` moves 5.2.1 → 5.2.2 LTS.** That is the Blender
+  on the machine that rebuilt these bytes, not a choice this bead made; the manifest
+  records the toolchain, so it followed. The three PROVENANCE ledger rows were updated to
+  match.

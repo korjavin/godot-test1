@@ -1,5 +1,12 @@
 # Cloth that reads as cloth — the FINDINGS
 
+> **RULED ON, AND SHIPPED.** Owner, 2026-09-12: *"i choose A+B+D"*. Bead
+> `godot-test1-21m` rolled those three out to all three skinned heroes and deleted the
+> four scratch `teibi_cloth_*.glb` and the `--variant` flag that built them — so the
+> columns below can no longer be re-rendered, and the numbers in this file are the record
+> of why the pick was made, not a live measurement. What shipped, and the open variable
+> at the end of this file closed by measurement, is `grid_29_cloth_rollout.md`.
+
 Bead `godot-test1-td8`, a SPIKE THAT MERGES. Owner, 2026-09-12: *"Shirts and clothing
 look painted, not natural — just colour on the heroes. Can we make the clothing look
 more natural?"*

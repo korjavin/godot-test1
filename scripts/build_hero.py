@@ -2137,7 +2137,7 @@ def _tri_count(me):
 
 
 def fold_garments(obj, tj, row):
-    """PASS A — FOLDS AS GEOMETRY. Returns the fraction of triangles it added.
+    """PASS A — FOLDS AS GEOMETRY, and the pass that spends this bead's triangles.
 
     Two steps, in the order `dress_shells` already taught this lane: SUBDIVIDE
     first (a 42 mm crease needs a vertex every ~20 mm and the decimated body has
@@ -2154,8 +2154,15 @@ def fold_garments(obj, tj, row):
     THE DISPLACEMENT IS NOT BAND-LIMITED, and that asymmetry is deliberate: it
     moves vertices that already exist, so it costs nothing, and the drape term in
     particular is a shoulder-to-hem ripple that would be nonsense clipped to a
-    9 cm ring. What the narrow bands buy is that the HIGH-frequency terms — the
+    2.8 cm band. What the narrow bands buy is that the HIGH-frequency terms — the
     42 mm creases — only get extra vertices where there is a crease to resolve.
+
+    WHAT IT DOES NOT REACH: Primm's coat TAILS. They are joined by `attach_tails`
+    after this pass and they must be — the tails' own polygon indices are what
+    `export_glb` flat-shades ("a tuxedo tail is a piece of tailoring with a
+    crease") and a subdivide here renumbers every polygon (trap 9). They take
+    passes B and D and not this one, which costs almost nothing: 16 vertices of
+    faceted box have no panel for a crease band to resolve.
 
     Runs BEFORE `wrap_band` (trap 9 — it adds geometry and renumbers polygons)
     and before `paint_body`, whose classification reads the vertex GROUPS the
@@ -2192,11 +2199,20 @@ def fold_garments(obj, tj, row):
         "%d -> %d tris (+%.1f%%)"
         % (len(edges), len(me.vertices) - before_v, len(me.polygons) - before_f,
            before_t, after_t, grew * 100.0))
-    # THE BUDGET, ASSERTED WHERE IT IS SPENT (bead 21m). Every other pass adds
-    # zero triangles, so this fraction IS the hero's growth against the pre-cloth
-    # build, and the owner's "+15-25%" is a range and not a ceiling: too FEW
-    # subdivided edges means the creases have nothing to bend and the fold is a
-    # dent, which is just as much a regression as too many.
+    # THE BUDGET, ASSERTED WHERE IT IS SPENT (bead 21m), and the owner's "+15-25%"
+    # is a range and not a ceiling: too FEW subdivided edges means the creases have
+    # nothing to bend and the fold is a dent, which is just as much a regression as
+    # too many.
+    #
+    # THE DENOMINATOR IS THE MESH AS IT STANDS HERE, not the finished hero: the
+    # wrap, the beret, the eyes and the coat tails all join after this pass, so
+    # they are in the hero's final count and not in this one. That makes this
+    # fraction the CONSERVATIVE reading — it is the larger of the two, because the
+    # triangles this pass adds are the same either way and the accessories only
+    # grow the denominator. Measured on the shipped builds: this assert sees
+    # +20.2 / +19.0 / +17.5% where the finished heroes grew +19.2 / +18.2 / +17.4%
+    # against master. Both are inside the range; if they ever straddle it, the
+    # number to believe is the hero's, which is in `hero_manifest.json`.
     if not FOLD_TRIS_MIN <= grew <= FOLD_TRIS_MAX:
         raise AssertionError(
             "folds grew %s by %.1f%%, outside the %.0f-%.0f%% budget — retune "
@@ -2367,13 +2383,14 @@ def split_cloth_material(obj):
     for name in (SKIN_MATERIAL, CLOTH_MATERIAL):
         # THE DATABLOCK MUST BE REMOVED FIRST, and this is `build()`'s own
         # `base.001` trap one level down: `clear_scene()` unlinks OBJECTS and
-        # leaves material datablocks in `bpy.data`, so in a multi-variant session
-        # (`--variant d --variant all`, which is the documented rebuild command)
-        # the second `new()` would be handed `HeroCloth.001` — a name
+        # leaves material datablocks in `bpy.data`, so in a session that builds
+        # more than one hero — `--all`, which is the documented rebuild command —
+        # the second `new()` would be handed `HeroCloth.001`, a name
         # `toon_shading.gd` compares with exact equality and therefore MISSES,
-        # silently shading the garment as cast. Measured: it is what the first
-        # build of this bead shipped, and it made the `all` column an A+B column
-        # wearing a D label.
+        # silently shading Windman's and Primm's garments as cast. Measured on the
+        # td8 spike, where it made the `all` column an A+B column wearing a D
+        # label; `--all` is now the only way this runs, so the trap is not
+        # hypothetical, it is every rebuild after the first hero.
         old = bpy.data.materials.get(name)
         if old is not None:
             bpy.data.materials.remove(old)

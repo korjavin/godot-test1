@@ -18,7 +18,7 @@ extends SceneTree
 ##   1. The RemoteAvatar ISOLATION CONTRACT — no groups, no CollisionObject3D
 ##      anywhere in the subtree. This is the one that fails loudly instead of
 ##      turning into "why are the crocodiles chasing a hologram?".
-##   2. The remote GARMENT MATERIAL (bead godot-test1-21m) — a mirrored teammate's
+##  25. The remote GARMENT MATERIAL (bead godot-test1-21m) — a mirrored teammate's
 ##      clothes take the cloth recipe (DIFFUSE_BURLEY, no rim) and his skin keeps
 ##      the cast's (DIFFUSE_TOON + rim), on all three skinned heroes and on none
 ##      of Phoboman. Local and remote style through two different walks, so this
@@ -69,7 +69,11 @@ extends SceneTree
 ##  The thirteen parser checks — entries 2, 3, 4, 6, 7, 8, 9, 10, 12, 24 above,
 ##  plus the `cap` / `pad` / `gate` verb parsers — moved to
 ##  `scripts/mp_codec_selfcheck.gd` (bead godot-test1-ftn.33), which carries its
-##  own index; this file keeps the twenty-one that drive a manager.
+##  own index; this file keeps the ones that drive a manager, a real node or a
+##  real scene. THE NUMBERS ABOVE ARE IDS AND NOT POSITIONS — they are sparse
+##  because of that move, they are cited from beads and commit messages, and a new
+##  check takes the next unused one (bead 21m took 25) rather than filling a gap
+##  that already means a check in the other file.
 
 const MPManager: GDScript = preload("res://scripts/mp_manager.gd")
 ## The codec is reached through the `MpCodec` global class name everywhere it is
