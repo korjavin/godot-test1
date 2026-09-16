@@ -770,7 +770,7 @@ func join(code: String) -> void:
 	# emits `lobby_error` before it returns), and that handler's own status line
 	# has to be the one left standing — otherwise the panel reports "Connecting…"
 	# forever for a join that never started.
-	status.emit("Connecting to %s…" % LobbyClient.resolve_lobby_url(lobby_url))
+	status.emit(tr("Connecting to %s…") % LobbyClient.resolve_lobby_url(lobby_url))
 	_lobby.connect_to_room(code, label, lobby_url)
 
 
@@ -1011,7 +1011,7 @@ func _on_lobby_joined(you: String, room: String, master: String, members: Array)
 	# out alone AND master, which only happens when the lobby minted the room for
 	# us: that is the typo, so say so instead of reporting a room.
 	if not _requested_code.is_empty() and master == you and members.size() <= 1:
-		status.emit("No room %s — check the code" % room)
+		status.emit(tr("No room %s — check the code") % room)
 		leave()
 		return
 
@@ -1086,7 +1086,7 @@ func _on_lobby_joined(you: String, room: String, master: String, members: Array)
 	# armed across the join and is already harmless: when it fires outside,
 	# the re-hydrate rebuilds profile UNION the live mirror, dropping the
 	# old room's ids and keeping the new room's.
-	status.emit("In room %s (%d/4)" % [room, members.size()])
+	status.emit(tr("In room %s (%d/4)") % [room, members.size()])
 	room_changed.emit(room, members)
 
 	# SEED DISTRIBUTION IS MESH-INDEPENDENT, and this line is what makes it so.
@@ -1151,7 +1151,7 @@ func _setup_mesh() -> void:
 	var err: int = _rtc.create_mesh(MpCodec.peer_int_id(_you))
 	if err != OK:
 		_rtc = null
-		status.emit("Could not start the WebRTC mesh (error %d)" % err)
+		status.emit(tr("Could not start the WebRTC mesh (error %d)") % err)
 		leave()
 		return
 
@@ -1207,7 +1207,7 @@ func _on_lobby_peer_joined(id: String, peer_name: String) -> void:
 	# hand the joiner a world still full of coins the others took and a bank
 	# missing their share.
 	_send_state_to(id)
-	status.emit("%s joined" % peer_name)
+	status.emit(tr("%s joined") % peer_name)
 	room_changed.emit(_room, _members)
 
 
@@ -1330,10 +1330,10 @@ func _on_lobby_error(message: String) -> void:
 	optimistically pressed) and stay in the room. See HERO_ERRORS.
 	"""
 	if HERO_ERRORS.has(message):
-		status.emit("Hero: %s" % message)
+		status.emit(tr("Hero: %s") % message)
 		heroes_changed.emit(_heroes, _pool)
 		return
-	status.emit("Lobby: %s" % message)
+	status.emit(tr("Lobby: %s") % message)
 	leave()
 
 
@@ -1344,7 +1344,7 @@ func _on_lobby_closed(code: int, reason: String) -> void:
 	"""
 	if _state == State.OFFLINE:
 		return
-	status.emit("Disconnected from the lobby (%d %s)" % [code, reason])
+	status.emit(tr("Disconnected from the lobby (%d %s)") % [code, reason])
 	leave()
 
 
@@ -2464,7 +2464,7 @@ func _add_peer(id: String, peer_name: String) -> void:
 		# Close the half-built connection rather than leaving it alive with its
 		# signals still bound to us, relaying candidates for a peer we dropped.
 		conn.close()
-		status.emit("Could not add %s to the mesh" % id)
+		status.emit(tr("Could not add %s to the mesh") % id)
 		_pending_signals.erase(id)
 		return
 
@@ -2856,7 +2856,7 @@ func _receive_seed(payload: Dictionary) -> void:
 		return
 	_room_seed = int(raw_seed)
 	_has_seed = true
-	status.emit("Shared world seed received")
+	status.emit(tr("Shared world seed received"))
 
 	# BUDAPEST IS UNEXPLORED IN A WORLD WE HAVE NOT WALKED. Adopting a foreign seed
 	# is the one event that REPLACES this peer's world, and it is the single site
@@ -3034,7 +3034,7 @@ func _apply_join_placement() -> void:
 	if player != null and player.has_method("join_at"):
 		player.join_at(anchor)
 
-	status.emit("Joined the run at %dm" % int(anchor.x))
+	status.emit(tr("Joined the run at %dm") % int(anchor.x))
 
 
 func _join_anchor() -> Vector3:
@@ -3817,12 +3817,12 @@ func _tick_seed_request(delta: float) -> void:
 	if _seed_req_tries > SEED_REQUEST_MAX_TRIES:
 		# One past the budget: the give-up message, emitted exactly once because
 		# the early return above catches every later tick.
-		status.emit("No world from the host — is their tab still open?")
+		status.emit(tr("No world from the host — is their tab still open?"))
 		return
 	if _seed_req_tries == 1:
 		# Make a silent failure visible. `mp_ui.gd` renders `status` straight
 		# into the panel's label, so this needs no UI change.
-		status.emit("Waiting for the shared world…")
+		status.emit(tr("Waiting for the shared world…"))
 	_lobby.send_signal_to(_master, {"mp": "seed_req"})
 
 
@@ -3895,7 +3895,7 @@ func _tick_stall_watch(delta: float) -> void:
 	_stall_accum = 0.0
 	if not _stall_reported:
 		_stall_reported = true
-		status.emit("Host not responding — voting to migrate…")
+		status.emit(tr("Host not responding — voting to migrate…"))
 	_lobby.send_stalled(_master)
 
 

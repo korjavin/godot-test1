@@ -194,7 +194,7 @@ func connect_to_room(code: String, display_name: String, lobby_url_override: Str
 	var err: int = _socket.connect_to_url(url)
 	if err != OK:
 		_socket = null
-		lobby_error.emit("Cannot reach the lobby at %s (error %d)" % [_lobby_url, err])
+		lobby_error.emit(tr("Cannot reach the lobby at %s (error %d)") % [_lobby_url, err])
 		return
 	set_process(true)
 
