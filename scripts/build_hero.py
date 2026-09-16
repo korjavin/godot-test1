@@ -3110,6 +3110,55 @@ def attach_tails(obj, row, tj):
 # already turned away, and the standoff goes up because a 34 mm slab raked 15 deg
 # has its top edge 4.4 mm behind its own centre and the old 4 mm was all of that.
 
+# ROUND 3 — THE FRAME, bead godot-test1-w905. OWNER, 2026-09-16, on
+# `docs/style/z3e/grid_31_primm_visor.png`: the pair still reads as a dark bar
+# ABOVE two loose cyan plates, and what the canon has and this did not is "a frame
+# AROUND the lenses". Three things were wrong and the round changes exactly those:
+#
+#   1. THE LENSES WERE OPEN ON THREE SIDES. Round 2's frame was the ring and the
+#      ring alone — a bar over the top of the glass, nothing beside it and nothing
+#      under it, so each lens ended in mid-cheek at a cyan edge. `_lens_rim` is
+#      the missing three sides: a 3 mm box-section tube down the temple side, under
+#      the glass and back up the nose side, its two ends run INTO the ring at that
+#      bearing's own seat so the rim and the bar are one frame and not two parts.
+#   2. THE SPLAY PIVOTED ON THE LENS'S CENTRE, which is why the glass stood off the
+#      nose. Yawing a 68 mm slab 30 degrees about its middle pulls the outer end
+#      17 mm back AND pushes the inner end 17 mm FORWARD — over the nose, which is
+#      the one place on a face that has no room. The yaw is about the INNER END now:
+#      that end stays where the bridge of the nose puts it and only the outer end
+#      travels, which is what a wrap-around visor actually does. The BEAK goes with
+#      the pivot, and that is the measurement: round 2's inner edge sat at y 0.196
+#      (its own logged plane, 0.1790, plus half the width times sin 30) where the
+#      nose bridge beside it reaches 0.174, and this one's sits at 0.1862 — 10 mm
+#      back, with the glass leaning AWAY from the face across the whole span
+#      instead of into it. The ANGLE came down with the pivot for the same reason:
+#      the splay is how far the outer end sits behind the inner one, the outer end
+#      still has to clear the temple, so a steeper one is paid for by the fit
+#      pushing the WHOLE chord forward — and the inner edge back out over the nose.
+#   3. A FLAT SLAB CANNOT GO TALLER, which is round 2's own deferral and the reason
+#      the glass was 34 mm under a bar it did not touch. So the lens is not a slab:
+#      it is two facets meeting on the PUPIL LINE, the upper one raked back to the
+#      brow (`_TILT`, unchanged) and the lower one raked back harder toward the
+#      cheek (`_LOWER_TILT`), with the inner end of the bottom edge cut away where
+#      the nose comes forward (`_NOTCH`). That buys 46 mm of glass — the canon's
+#      ~49 — with the top edge tucked under the bar and the bottom edge clear of
+#      the nose instead of 5 mm inside it.
+#
+# AND THE UNIT WENT UP WITH IT. The ring is at eye+32 mm instead of eye+20 and the
+# lens hangs off it: `_TUCK` under the bar's own lower face, 46 mm tall, which puts
+# the glass centre 1.5 mm ABOVE the pupil line where round 2 hung it below both the
+# bar and the eyes. The canon's visor runs from eye+37 mm to eye-21 mm at this
+# scale; this one runs from the bar's top at eye+38 to the glass's bottom at
+# eye-21.
+#
+# NOTHING POKES THROUGH ANYTHING, and that is fitted rather than argued: the seat
+# itself is the deepest answer a grid of rays over the glass and its rim's own
+# surface gives (`_face_front`), so the clearance holds by construction and the
+# assert against `GOGGLE_LENS_CLEAR` is the floor under the knobs rather than a
+# second opinion. The worst gap is logged either way. The lens's top edge clears
+# the bar's lower face by `_TUCK` — the round-1 major of bead khly was a slab that
+# shared the bar's height and rendered as a spike through it.
+
 GOGGLE_STATIONS = 48          # cross-sections round the skull; 7.5 degrees apart
 GOGGLE_FRAME_ARC = 72.0       # degrees off the nose where the frame hands over to
 GOGGLE_ARM_ARC = 132.0        # the arm, and the arm to the strap (in front of the
@@ -3117,99 +3166,155 @@ GOGGLE_ARM_ARC = 132.0        # the arm, and the arm to the strap (in front of t
                               # a ring at eye height that ignores the ears is one
                               # that goes THROUGH them. Here it does not have to
                               # stop, it only has to get thin and stand off.)
-GOGGLE_RING_Z = 0.020         # the ring's centre above the eye line: the straight
+GOGGLE_RING_Z = 0.032         # the ring's centre above the eye line: the straight
                               # top bar of the portrait, with the lens under it —
-                              # 6 mm higher than round 1 because the lens below it
-                              # now reaches eye+19 and a bar centred at eye+14
-                              # would be a bar with a lens through it
+                              # 12 mm higher than round 2 because the glass under
+                              # it is 46 mm and centred on the pupils, and a bar
+                              # that does not cap that glass is the loose bar the
+                              # owner saw. The canon's own bar is at eye+37 mm.
 GOGGLE_STANDOFF = 0.004       # how far proud of the skull's own outline it all
                               # stands — the bead's "4 mm proud of the eye sockets"
 GOGGLE_FRAME = (0.005, 0.012)   # radial thickness, height — across the face. The
                                 # 9 mm of round 1 was a bar over an 18 mm lens;
-                                # over a 34 mm one it is piping. (Bead khly asked
+                                # over a 46 mm one it is piping. (Bead khly asked
                                 # for "~8 mm", which is THINNER than what shipped
                                 # — the owner asked for thicker, so it is 12.)
 GOGGLE_ARM = (0.003, 0.003)     # square, over the ear
 GOGGLE_STRAP = (0.003, 0.006)   # flat, round the back, sitting on the hair shell
-GOGGLE_LENS = (0.002, 0.034)  # thickness and height of one slab: the socket is
-                              # ~16 mm each way off the pupil and the canon covers
-                              # all of it and the brow — see ROUND 2 above
+GOGGLE_RIM = (0.003, 0.003)   # ROUND 3: the lower/side rim's section, square, the
+                              # bead's "thin (3 mm) dark tube". It runs in the
+                              # lens's own surface — not on a skull radius — so it
+                              # frames the glass rather than crossing it.
+GOGGLE_RIM_GROOVE = 0.001     # and it takes the glass into a GROOVE: the rim's
+                              # centre line sits this far INSIDE the lens edge, so
+                              # a 2 mm lens ends 1 mm deep in a 3 mm tube that is
+                              # wider than it in every direction. Nothing pierces —
+                              # the edge is swallowed, which is what a real rim
+                              # does and what an offset-with-a-gap rim would not:
+                              # two coplanar faces a hair apart is z-fighting, and
+                              # a hairline of cheek between the frame and the glass
+GOGGLE_LENS = (0.002, 0.046)  # thickness and height of one lens: the canon's glass
+                              # is ~49 mm at this head's scale (bead khly measured
+                              # it) and round 2 could only reach 34 because a flat
+                              # slab that tall stands off the nose. Two facets can
+                              # — see `_LOWER_TILT` and `_NOTCH`.
 # AND ITS WIDTH IS MEASURED, NOT TYPED, because the bead's two numbers — "each ~32
 # x 18 mm" and "a 6 mm bridge" — are only consistent on a head whose pupils are
 # 38 mm apart, and this one's are 66. Taken literally they leave a 33 mm gap of
 # frame between the lenses: a bridge wider than a lens, where the portrait draws
-# the pair nearly meeting. So the lens is hung off its OUTER end, `_REACH` past
-# the pupil, and grows inward until it is `_GAP` from its twin — 68 mm on Primm
-# since round 2, and whatever the next hero's own pupils ask for.
-GOGGLE_LENS_REACH = 0.037     # how far past the pupil the outer end sits — round
-                              # 1's 16 mm put the pair at 0.53 of the head where
-                              # the canon has it at 0.71. 0.71 of this head is
-                              # 65.5 mm off the centre line and the SPLAY eats the
-                              # difference: the slab's outer end comes back in by
-                              # half its width times (1 - cos SPLAY), so the reach
-                              # that lands the outer MID-EDGE on 65.5 mm is 37,
-                              # not 33 (the rake tips the bottom corner 3 mm
-                              # further out again)
-                              # (the first build of this round stopped mid-cheek)
-GOGGLE_BRIDGE_GAP = 0.004     # and how much daylight is left between the two
-                              # BEFORE the splay, which opens it: the yaw is about
-                              # each slab's own centre, so it pulls the inner end
-                              # out by half the width times (1 - cos) exactly as
-                              # it pulls the outer end in. 4 mm here is 13 mm of
-                              # real daylight at SPLAY 30, and the 9 mm round 1
-                              # typed was already 12 at SPLAY 22
-GOGGLE_LENS_Z = -0.001        # the lens centre above the eye line, and it is the
-                              # BAR that fixes it: a lens top above the bar's own
-                              # lower face is a lens that fights the frame for the
-                              # same pixels — in front of it at the temple, behind
-                              # it at the nose — which renders as a cyan spike
-                              # through the bar and a notch bitten out of it (the
-                              # first build of this round, caught in the evidence
-                              # grid). The top edge of a slab raked `_TILT` sits
-                              # `_LENS[1]`/2 * cos TILT above the centre, so the
-                              # centre is placed to leave the same 1.5 mm of tuck
-                              # under `RING_Z - FRAME[1]/2` that round 1 shipped
-                              # clean — which also drops the glass toward the
-                              # cheekbone, where the canon has it
-# A LENS IS NOT SEATED ON A RADIUS, AND THE FIRST BUILD OF THIS BEAD PROVED IT.
-# The ring can be, because a ring goes round: equal angles off the skull's axis put
-# its stations on the brow, the temple and the back of the head in turn, which is
-# what a band does. A LENS IS FLAT AND THE WIDTH OF HALF A FACE (68 mm on Primm,
-# see the two consts above), and the face is flat-ish across
-# the eyes, so the radial ray at the eye's own bearing lands 2 cm further back than
-# the eye itself does — measured: the face front is y=0.167 at the pupil and the
-# 21-degree ray hits at y=0.152. The first render had both lenses inside his head
-# with two corners poking out over the tear ducts.
-#
-# So a lens is measured in the direction a face FACES: the most forward the head
-# reaches anywhere under the slab's own footprint, plus `GOGGLE_LENS_PROUD`. Over
-# its footprint and not at its centre, because the inner end of it is beside the
-# bridge of the nose, which is 4 mm further forward than the pupil is — a lens
-# hung off the pupil alone has its nose end buried.
-GOGGLE_LENS_PROUD = 0.006     # how far the lens stands off the face under it — 4
-                              # mm was the whole of the rake's 4.4 mm top-edge
-                              # setback once the slab grew to 34 mm, which is a
-                              # top edge inside the brow it is hung off
+# the pair nearly meeting. So the lens is hung off its INNER end, `_GAP`/2 off the
+# centre line, and reaches out to `_REACH` past the pupil.
+GOGGLE_LENS_REACH = 0.033     # how far past the pupil the outer end sits — 0.71 of
+                              # this head (bead khly's measurement of the canon's
+                              # lens glass) is 65.5 mm off the centre line and the
+                              # pupils are at 32.9, so 33. It is the CORNER that
+                              # lands there now, not a mid-edge: since the yaw is
+                              # about the inner end, the splay no longer eats into
+                              # the reach and round 2's 37 would overshoot by 4.
+GOGGLE_BRIDGE_GAP = 0.006     # how much daylight is left between the two lenses,
+                              # and it is no longer opened by the splay (that
+                              # pivots on this edge now). 6 and not 4 because each
+                              # lens's rim runs up this edge: two 3 mm tubes in a
+                              # 4 mm gap would grow through each other.
+GOGGLE_LENS_TUCK = 0.001      # how far the glass's top edge sits under the bar's
+                              # own lower face. A slab that shares the bar's height
+                              # is in front of the ring at the temple and behind it
+                              # at the nose, which renders as a cyan spike through
+                              # the bar with a notch bitten out of it (bead khly's
+                              # round-1 major). 1 mm is a pixel at 1 m and it is the
+                              # whole of the daylight between bar and glass.
+# AND IT IS SEATED BY THE WHOLE OF ITSELF, not by a point on it. Round 2 hung the
+# slab off ONE measurement (the most forward the head reaches under its footprint)
+# and round 3's first build hung it off another (the strip of face beside the nose,
+# the end the yaw pivots on) — and that one put the glass 2.6 mm INSIDE the brow
+# ridge at x 28 mm, because the brow is a wall from the nose out to x 30 and only
+# then falls away, while the chord falls away from the first millimetre. A lens is
+# a rigid surface over a face that is not flat: the only honest question is "how
+# far forward must this whole surface be for the tightest point on it to clear",
+# and `_face_front` asks it by ray at every point of a grid over the glass and its
+# rim. So `_PROUD` is now the standoff AT THE TIGHTEST POINT — the brow, on this
+# head — and everywhere else the face falls away under it.
+GOGGLE_LENS_PROUD = 0.004     # how far the glass stands off the face at the one
+                              # point it comes closest — the bead's original "4 mm
+                              # proud of the eye sockets". That point is the BROW,
+                              # every build so far, and it is why the glass cannot
+                              # sit closer over the socket than it does: the ridge
+                              # it has to clear stands ~9 mm in front of the eye
+                              # behind it, and a lens is flat.
 # AND IT IS RAKED, because a slab standing vertical takes this scene's high key
 # light at a grazing angle and DIFFUSE_TOON then gives it the unlit band: a dark
 # rectangle where the portrait has a bright cyan one. Top leaning back, like a
 # windshield, which turns its normal up into the sun — and which is what a real
-# pair does anyway.
-GOGGLE_LENS_TILT = 15.0       # degrees of top-back rake
+# pair does anyway. ROUND 3 SPLITS THE RAKE IN TWO, on the pupil line: the upper
+# facet is the glass you see and it keeps the windshield angle, and the LOWER facet
+# rakes back harder because below the pupil the face falls away — the cheek at the
+# pupil's own x is 5 mm behind the eye, and a lens that does not follow it is a
+# shelf standing off the face.
+GOGGLE_LENS_TILT = 8.0        # degrees of top-back rake, above the pupil line —
+                              # and it is CHEAPER THAN IT LOOKS TO OVERDO: the top
+                              # edge is up on the brow, so every degree of it
+                              # pushes the whole surface ~0.9 mm further off the
+                              # face (round 2's 15 cost 6.6 mm over the eye). 8 is
+                              # what keeps the normal out of the grazing band
+                              # without buying it in standoff; the measured margin
+                              # is thin either way, this light being 35 degrees up
+                              # and DIFFUSE_TOON smoothstepping at roughness 1.0
+GOGGLE_LENS_LOWER_TILT = 26.0 # and below it, bottom-back — measured, not chosen:
+                              # at 26 the bottom edge lands 4 mm clear of the nose
+                              # flank at the notch and 6 mm clear of the cheekbone
+                              # in the middle, which is as far back as it can tuck
+                              # before the glass stops covering the socket
+GOGGLE_LENS_NOTCH = 0.30      # and the nose gets a NOTCH: this fraction of the
+                              # width is cut off the INNER end of the bottom edge,
+                              # so the lens's inner edge slants from the bridge of
+                              # the nose at the top out to the cheek at the bottom.
+                              # Without it the inner-bottom corner is 5 mm inside
+                              # the nose (measured: the head reaches y 0.1748 at
+                              # x 5-10 mm, eye-20 mm, where the glass would be at
+                              # 0.1693) — the one place on this face that a lens
+                              # tall enough to be the canon's cannot go.
 # AND IT IS SPLAYED, its outer end turned back toward the temple. A pair of flat
 # slabs square to the face is a pair that reads fine head-on and lets the FAR
 # EYEBALL past its outer edge the moment the head turns — measured on the 3/4
 # `17_head_face` frame, where his far eye sat white and round on the cheek beside
 # the lens. Turning each slab back by its own eye's bearing wraps it round to where
-# the eye stops, which is also what the portrait's visor does.
-GOGGLE_LENS_SPLAY = 30.0      # degrees of outward wrap — 22 was measured for an
-                              # outer end 49 mm off the centre line; at 65 mm the
-                              # temple has turned away another 25 mm and a slab
-                              # that does not turn with it is a wing
-GOGGLE_BRIDGE = (0.002, 0.006)  # thickness and height of the bar over the nose
+# the eye stops, which is also what the portrait's visor does. ROUND 3 MOVED THE
+# PIVOT to the inner end — see the section banner: a yaw about the middle buys the
+# temple with the nose.
+GOGGLE_LENS_SPLAY = 18.0      # degrees of outward wrap. 18 and not round 2's 30
+                              # because a pivot at the inner end spends the whole
+                              # angle on the outer end — 21 mm of setback over a
+                              # 66 mm lens, against the 17 that a 30-degree yaw
+                              # about the middle bought — and because the seat pays
+                              # for every extra degree in standoff: see the banner.
+                              # It stops being free the moment the chord's far end
+                              # would need the near end pushed out over the nose
+GOGGLE_LENS_CLEAR = 0.003     # the FLOOR under `_PROUD`, and it is honestly a
+                              # near-tautology: the seat is FITTED on the same grid
+                              # the assert then walks, so every sampled point clears
+                              # by `_PROUD` or more by construction. What it catches
+                              # is a knob — a `_PROUD` typed below this, a rake or a
+                              # notch edited without re-reading the fit — not the
+                              # head, which the fit has already answered. The head
+                              # is only ever measured as finely as the grid: a brow
+                              # spike between two of its points is missed by the fit
+                              # and by the check alike, both sampling the same 286
+                              # rays.
+# AND THERE IS NO BRIDGE BAR ANY MORE. Rounds nvy and khly carried a straight
+# `GOGGLE_BRIDGE` box between the lenses' inner ends, and round 3's first build
+# kept it and broke it: those ends used to be parallel, and the notch turns them
+# into a SLANT, so a bar sized for the gap at the top (9 mm) and placed at the
+# lens's middle height — where the slant has opened that gap to 25 mm — touched
+# neither lens. It rendered as a free-floating graphite chip in front of the nose,
+# which is visible in this round's own evidence grid. Sizing it off `inner_at()`
+# would have fixed the arithmetic and built the wrong thing anyway: the two rims
+# now run UP their slanted inner edges and into the ring over the nose, so the pair
+# is already joined there and a bar under that join is a bar across the notch —
+# the one piece of daylight this design is deliberately opening.
 GOGGLE_SLAB = 0.030           # half the band of head the axis is centred on
 GOGGLE_REACH = 0.4            # how far outside the head a seating ray starts
-GOGGLE_TRIS = (400, 800)      # the bead's budget, asserted where it is spent
+GOGGLE_TRIS = (400, 1000)     # the bead's budget, asserted where it is spent
+                              # (raised by 200 in round 3, for the rim)
 
 
 def _skull_axis(obj, z_lo, z_hi):
@@ -3271,9 +3376,63 @@ def _goggle_ring(bm, path):
     return rings
 
 
+def _lens_rim(bm, pts, normal, half_w, half_d):
+    """A thin box-section tube along an OPEN polyline — one lens's rim.
+
+    `_goggle_ring` above bridges a closed loop whose cross-section is squared to
+    the skull's own outward; this one is open, and its cross-section is squared to
+    the LENS: `half_d` along `normal` (the glass's own forward) and `half_w` across
+    it, perpendicular to the path. That is the whole difference between a band
+    round a head and a frame round a piece of glass, and it is why the rim follows
+    the lens's two facets instead of a radius.
+
+    Corners take the miter (the average of the two directions) and not a scale with
+    it, so a right angle pinches by a fraction of 3 mm. The ends are CAPPED: both
+    are buried in the frame ring, but a tube with a hole in it is a tube that shows
+    one the day the ring moves.
+    """
+    rings = []
+    for i, point in enumerate(pts):
+        along = Vector((0.0, 0.0, 0.0))
+        if i:
+            along += (point - pts[i - 1]).normalized()
+        if i + 1 < len(pts):
+            along += (pts[i + 1] - point).normalized()
+        across = normal.cross(along.normalized()).normalized()
+        rings.append([bm.verts.new(point + across * (a * half_w)
+                                   + normal * (b * half_d))
+                      for a, b in ((-1, -1), (1, -1), (1, 1), (-1, 1))])
+    for a, b in zip(rings, rings[1:]):
+        for k in range(4):
+            bm.faces.new((a[k], a[(k + 1) % 4], b[(k + 1) % 4], b[k]))
+    bm.faces.new(rings[0])
+    bm.faces.new(rings[-1])
+    return [v for ring in rings for v in ring]
+
+
+def _face_front(bvh, x, z):
+    """Where the face's own front is at (x, z), or None off its silhouette.
+
+    BY RAY, for `_skull_reach`'s reason and one of its own: the skull decimates to
+    ~3 cm between vertices, so "the most forward vertex in a band round this point"
+    is an answer about a band and not about this point — it cannot say whether the
+    brow pokes through a lens BETWEEN two of them. A ray meets the surface itself.
+    Straight back along -Y and from well outside the head, so the first hit is the
+    outermost surface there: the brow, the nose, the cheekbone.
+    """
+    hit = bvh.ray_cast(Vector((x, 2.0 * GOGGLE_REACH, z)),
+                       Vector((0.0, -1.0, 0.0)), 4.0 * GOGGLE_REACH)[0]
+    return None if hit is None else hit.y
+
+
 def build_goggles(obj, row, tj):
-    """The pair, as one mesh: the ring (frame + arms + strap), two lens slabs and
-    the bridge between them. The section banner above says what each is.
+    """The pair, as one mesh: the ring (frame + arms + strap) and two lenses, each
+    with the rim that frames it. The section banner above says what each is, and
+    says why there is no separate bridge piece.
+
+    ONE LOOP OF LENS GEOMETRY, and the two sides are built together on purpose: the
+    seat is fitted across both of them, so neither can be placed before the other
+    has been measured.
 
     Reads the body's OWN surface, so it is built before anything is joined onto
     that body (`build()` keeps that order) — a beret or a pair of eyeballs inside
@@ -3284,7 +3443,6 @@ def build_goggles(obj, row, tj):
     colours = row["colours"]
     eye_z = (tj["l-eye"].z + tj["r-eye"].z) / 2.0
     ring_z = eye_z + GOGGLE_RING_Z
-    lens_z = eye_z + GOGGLE_LENS_Z
     axis = _skull_axis(obj, eye_z - GOGGLE_SLAB, eye_z + GOGGLE_SLAB)
     # `bake_cloth_shading`'s tree, built on the whole body: nothing but the head is
     # within 3 cm of the eye line on a standing human, so every ray below meets the
@@ -3329,63 +3487,170 @@ def build_goggles(obj, row, tj):
 
     thick, tall = GOGGLE_LENS
 
-    def front_of(x, z, half_w, half_h):
-        """The most forward the head reaches anywhere under a patch of it — the
-        face's own +Y, which is the direction a lens stands off in."""
-        ys = [v.co.y for v in me.vertices
-              if abs(v.co.x - x) <= half_w and abs(v.co.z - z) <= half_h]
-        if not ys:
-            raise AssertionError("no head between x %.3f +- %.3f and z %.3f +- "
-                                 "%.3f: the lens has no face to stand off"
-                                 % (x, half_w, z, half_h))
-        return max(ys)
-
-    rake = math.radians(GOGGLE_LENS_TILT)
+    tilt = math.radians(GOGGLE_LENS_TILT)
+    lower = math.radians(GOGGLE_LENS_LOWER_TILT)
     splay = math.radians(GOGGLE_LENS_SPLAY)
+    half_gap = GOGGLE_BRIDGE_GAP / 2.0
     # From `GOGGLE_BRIDGE_GAP`/2 off the centre line out to `GOGGLE_LENS_REACH`
-    # past the pupil — see that const for why the width is measured and not typed.
+    # past the pupil — see those consts for why the width is measured and not
+    # typed. `width` is the CHORD, so the outer corner still lands on the reach
+    # once the yaw has turned the chord back toward the temple.
     reach = max(abs(tj[side + "-eye"].x) for side in ("l", "r")) + GOGGLE_LENS_REACH
-    width = reach - GOGGLE_BRIDGE_GAP / 2.0
-    lens_x = {side: math.copysign(GOGGLE_BRIDGE_GAP / 2.0 + width / 2.0,
-                                  tj[side + "-eye"].x) for side in ("l", "r")}
-    # ONE DEPTH FOR BOTH LENSES, taken off whichever of them has the more forward
-    # face under it: the head is symmetric, the two numbers agree to well under a
-    # millimetre, and a visor whose halves sit at two depths is a visor with a kink
-    # in it.
-    lens_y = max(front_of(x, lens_z, width / 2.0, tall / 2.0)
-                 for x in lens_x.values()) + GOGGLE_LENS_PROUD + thick / 2.0
-    for side in ("l", "r"):
-        centre = Vector((lens_x[side], lens_y, lens_z))
-        # Which way this one wraps: its OUTER end is the one further from the
-        # centre line, so the yaw turns away from the side the lens is on.
-        sign = -math.copysign(1.0, lens_x[side])
-        # Width across the face, raked back about its own width axis and splayed
-        # about the vertical, in that order: the rake points the slab at the sun
-        # and the splay wraps its outer end round toward the temple.
-        matrix = (Matrix.Translation(centre)
-                  @ Matrix.Rotation(sign * splay, 4, 'Z')
-                  @ Matrix.Rotation(rake, 4, 'X')
-                  @ Matrix.Diagonal(Vector((width, thick, tall, 1.0))))
-        made = bmesh.ops.create_cube(bm, size=1.0, matrix=matrix)
-        for v in made["verts"]:
-            paint[v] = (colours["goggle_glint"] if v.co.z > centre.z
-                        else colours["goggle_lens"])
+    width = (reach - half_gap) / math.cos(splay)
+    # THE GLASS HANGS OFF THE BAR, and that is one subtraction rather than two
+    # consts that have to agree: its top edge is `_TUCK` under the ring's own lower
+    # face, and the height then says where the bottom and the centre land. (Round 2
+    # typed the centre and checked the tuck by hand; the first build of that round
+    # is the cyan spike through the bar that came of it.)
+    z_top = ring_z - GOGGLE_FRAME[1] / 2.0 - GOGGLE_LENS_TUCK
+    z_bot = z_top - tall
+    lens_z = (z_top + z_bot) / 2.0
+    if GOGGLE_LENS_TUCK <= 0.0:
+        raise AssertionError("GOGGLE_LENS_TUCK is %.4f: glass that reaches the "
+                             "bar's own lower face at z %.4f is in front of the "
+                             "ring at the temple and behind it at the nose, which "
+                             "renders as a cyan spike through the bar (bead khly, "
+                             "round 1)"
+                             % (GOGGLE_LENS_TUCK, ring_z - GOGGLE_FRAME[1] / 2.0))
+    rim_w, rim_d = GOGGLE_RIM
+    # The rim's centre line, in the lens's own surface, relative to the glass edge:
+    # positive is OUTWARD, and it is less than half the tube because of the groove.
+    margin = rim_w / 2.0 - GOGGLE_RIM_GROOVE
+    # ...and how far the frame's own SURFACE reaches past that edge, which is what
+    # the grid below has to cover: a grid that stopped on the centre line would
+    # leave the outer half of the tube unmeasured on every side at once — 1.5 mm
+    # below the bottom run and 1.5 mm inward of the nose-side one, which is the
+    # direction the face comes forward in.
+    rim_out = margin + rim_w / 2.0
 
-    # THE BRIDGE IS A STRAIGHT BAR between the two lenses' inner ends, at the depth
-    # the splay leaves those ends at — which is the one place it can be, now that
-    # the lenses stand proud of the nose it crosses. (It was a tube following the
-    # skull's radius, from the build that seated the lenses the same way; the nose
-    # is 4 mm forward of the pupils and the tube had to weave round it.)
-    bridge_d, bridge_h = GOGGLE_BRIDGE
-    inner = math.cos(splay) * width / 2.0
-    made = bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix((
-        (abs(lens_x["l"] - lens_x["r"]) - 2.0 * inner + 0.004, 0.0, 0.0,
-         (lens_x["l"] + lens_x["r"]) / 2.0),
-        (0.0, bridge_d, 0.0, lens_y + math.sin(splay) * width / 2.0),
-        (0.0, 0.0, bridge_h, lens_z),
-        (0.0, 0.0, 0.0, 1.0))))
-    for v in made["verts"]:
-        paint[v] = colours["goggle_frame"]
+    def drop_at(z):
+        """How far back the surface is at height `z` from the chord it hangs on —
+        TWO FACETS meeting on the pupil line, the upper leaning back by `_TILT` and
+        the lower back harder by `_LOWER_TILT`."""
+        return ((z - eye_z) * math.tan(tilt) if z >= eye_z
+                else (eye_z - z) * math.tan(lower))
+
+    def inner_at(z):
+        """Where a lens's inner edge is at height `z`: on the centre line's own gap
+        at the top and `_NOTCH` of the width out at the bottom, which is the cut
+        that lets the glass past the nose."""
+        return GOGGLE_LENS_NOTCH * width * (z_top - z) / tall
+
+    def surface_grid():
+        """(sgn, s, z) over both lenses AND the rim's own footprint — the grid the
+        seat is fitted on and then asserted on. Out to the rim's outer SURFACE on
+        the three sides it runs down; the fourth is the top, where the glass ends
+        under the bar and the rim's two ends leave the lens for the ring's own
+        seat."""
+        for sgn in (1.0, -1.0):
+            for j in range(13):
+                z = (z_bot - rim_out) + (z_top - z_bot + rim_out) * j / 12.0
+                s0 = inner_at(max(z, z_bot)) - rim_out
+                for i in range(11):
+                    yield sgn, s0 + (width + rim_out - s0) * i / 10.0, z
+
+    def chord_x(sgn, s):
+        return sgn * (half_gap + s * math.cos(splay))
+
+    # ONE DEPTH FOR BOTH LENSES, and it is FITTED and not sampled — see the const
+    # banner. Every point of the grid asks how far forward the chord would have to
+    # be for THAT point to stand `_PROUD` off the face under it; the deepest answer
+    # is the one the pair is built at. (The head is symmetric and the two sides
+    # agree to well under a millimetre, but a visor whose halves sit at two depths
+    # is a visor with a kink in it, so they are fitted together.)
+    seats = []
+    for sgn, s, z in surface_grid():
+        front = _face_front(bvh, chord_x(sgn, s), z)
+        if front is not None:
+            seats.append(front + GOGGLE_LENS_PROUD
+                         + s * math.sin(splay) + drop_at(z))
+    if not seats:
+        raise AssertionError("no face under either lens between z %.4f and %.4f: "
+                             "the glass has nothing to stand off" % (z_bot, z_top))
+    lens_y = max(seats)
+
+    def lens_at(sgn, s, z):
+        """A point on one lens's own surface: `s` out along the chord from the
+        inner edge, at height `z`. TWO FACETS meeting on the pupil line — above it
+        the top leans back by `_TILT`, below it the bottom leans back harder by
+        `_LOWER_TILT` — and the chord itself leans back by `_SPLAY` as it goes out,
+        about the inner edge.
+        """
+        return Vector((chord_x(sgn, s), lens_y - s * math.sin(splay) - drop_at(z), z))
+
+    def bearing_of(point):
+        """The skull bearing a point is on — what a rim end hands `seat()` so that
+        it comes up inside the ring instead of near it."""
+        return math.atan2(point.x - axis.x, point.y - axis.y)
+
+    rows = (z_bot, eye_z, z_top)
+    for side in ("l", "r"):
+        sgn = math.copysign(1.0, tj[side + "-eye"].x)
+        # THE GLASS: three rows (bottom, pupil, top) by two columns (the slanted
+        # inner edge, the outer edge), front and back. A box would not do it — the
+        # bend on the pupil line and the notch on the inner edge are the whole of
+        # what makes 46 mm of lens fit on this face.
+        front, back = [], []
+        for z in rows:
+            # NOT `row` — that is this function's own parameter, the hero's config
+            # dict, and `colours` is only read off it before the loop by luck.
+            edge = [lens_at(sgn, inner_at(z), z), lens_at(sgn, width, z)]
+            front.append([bm.verts.new(point) for point in edge])
+            back.append([bm.verts.new(point - Vector((0.0, thick, 0.0)))
+                         for point in edge])
+        for r in range(len(rows) - 1):
+            for grid in (front, back):
+                bm.faces.new((grid[r][0], grid[r][1],
+                              grid[r + 1][1], grid[r + 1][0]))
+            for c in (0, 1):
+                bm.faces.new((front[r][c], front[r + 1][c],
+                              back[r + 1][c], back[r][c]))
+        for r in (0, len(rows) - 1):
+            bm.faces.new((front[r][0], front[r][1], back[r][1], back[r][0]))
+        for r in range(len(rows)):
+            # The "lighter rim strip" the bead licensed the opaque lens for: the
+            # glass's own top row, one step up, which under DIFFUSE_TOON gradients
+            # down the upper facet and is what reads as glass.
+            for v in front[r] + back[r]:
+                paint[v] = colours["goggle_glint" if r == len(rows) - 1
+                                   else "goggle_lens"]
+        # THE RIM: down the temple side, under the glass, back up the nose side,
+        # and at both ends up INTO the ring at that bearing's own seat — so the bar
+        # and the rim are one frame, which is the whole of this round.
+        along = Vector((sgn * math.cos(splay), -math.sin(splay), 0.0))
+        normal = Vector((sgn * math.sin(splay), math.cos(splay), 0.0))
+        drop = Vector((0.0, 0.0, -margin))
+        # BACK BY HALF THE GLASS, because `lens_at` is the glass's FRONT face and a
+        # section centred on that leaves its BACK face 0.4 mm proud of the tube
+        # (the lens is `thick` * cos SPLAY = 1.9 mm deep along the rim's own axis,
+        # against the tube's 1.5 mm half-depth) — the groove honoured across the
+        # lens and not through it, and a cyan hair behind the rim from below.
+        # `GOGGLE_RIM_GROOVE` is what the tube has left over at each face.
+        sunk = normal * (thick / 2.0)
+        pts = [lens_at(sgn, width, z_top) + along * margin - sunk,
+               lens_at(sgn, width, z_bot) + along * margin + drop - sunk,
+               lens_at(sgn, inner_at(z_bot), z_bot) - along * margin + drop - sunk,
+               lens_at(sgn, 0.0, z_top) - along * margin - sunk]
+        pts = ([seat(bearing_of(pts[0]), ring_z, rim_d / 2.0)[0]] + pts
+               + [seat(bearing_of(pts[-1]), ring_z, rim_d / 2.0)[0]])
+        for v in _lens_rim(bm, pts, normal, rim_w / 2.0, rim_d / 2.0):
+            paint[v] = colours["goggle_frame"]
+
+    # THE FLOOR UNDER THE KNOBS, and not an independent measurement — the seat was
+    # fitted on this same grid, so every point of it clears by `_PROUD` already.
+    # What the walk buys is the LOG: the worst gap in the pair, the number to read
+    # the day a const moves. See `GOGGLE_LENS_CLEAR`.
+    worst, worst_at = GOGGLE_REACH, None
+    for sgn, s, z in surface_grid():
+        point = lens_at(sgn, s, z)
+        front = _face_front(bvh, point.x, point.z)
+        if front is not None and point.y - front < worst:
+            worst, worst_at = point.y - front, point
+    if worst < GOGGLE_LENS_CLEAR:
+        raise AssertionError(
+            "the face is only %.4f m behind the glass at (%.4f, %.4f, %.4f), under "
+            "the %.4f m GOGGLE_LENS_CLEAR asks for: the lens is inside the head "
+            "there" % (worst, worst_at.x, worst_at.y, worst_at.z, GOGGLE_LENS_CLEAR))
 
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
     bm.verts.index_update()
@@ -3404,13 +3669,24 @@ def build_goggles(obj, row, tj):
     if not GOGGLE_TRIS[0] <= tris <= GOGGLE_TRIS[1]:
         raise AssertionError("the goggles are %d tris, outside the bead's %d-%d "
                              "budget" % (tris, GOGGLE_TRIS[0], GOGGLE_TRIS[1]))
-    # The two numbers to read when this looks wrong: how far the head reaches at
-    # the nose and at the ear, which is what everything here is seated on.
-    log("goggles: %d tris, ring z %.4f / lens z %.4f (eye %.4f), lens plane y "
-        "%.4f at x %+.4f/%+.4f, head reach %.4f m at the nose / %.4f m at the ear"
-        % (tris, ring_z, lens_z, eye_z, lens_y, lens_x["l"], lens_x["r"],
+    # The numbers to read when this looks wrong: where the glass sits against the
+    # eye line and the bar, how far the head reaches at the nose and at the ear
+    # (what everything here is seated on), and the tightest the glass ever comes to
+    # the face.
+    # NOT "how far it stands off the eye", which is the number the complaint sounds
+    # like it is about and the one thing here that cannot be measured: this
+    # basemesh's eye socket is OPEN and lined on the inside (`_skull_reach` names
+    # the same fold), so a ray at the pupil falls into it and answers 0.0527 m —
+    # the socket's own depth, not a standoff. `worst` is the honest global number
+    # and it lands on the brow.
+    log("goggles: %d tris, ring z %.4f (bar %.4f..%.4f) / glass z %.4f..%.4f "
+        "(eye %.4f), inner edge y %.4f, outer corner x %+.4f, head reach %.4f m at "
+        "the nose / %.4f m at the ear, worst face gap %.4f m"
+        % (tris, ring_z, ring_z - GOGGLE_FRAME[1] / 2.0,
+           ring_z + GOGGLE_FRAME[1] / 2.0, z_bot, z_top, eye_z, lens_y,
+           half_gap + width * math.cos(splay),
            _skull_reach(bvh, axis, 0.0, ring_z)[0],
-           _skull_reach(bvh, axis, math.pi / 2.0, ring_z)[0]))
+           _skull_reach(bvh, axis, math.pi / 2.0, ring_z)[0], worst))
     return goggles
 
 
