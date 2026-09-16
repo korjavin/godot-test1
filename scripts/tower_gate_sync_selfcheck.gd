@@ -134,6 +134,8 @@ func _run() -> void:
 	if failure.is_empty():
 		failure = await _check_drain_publishes_own_only()
 	if failure.is_empty():
+		failure = await _check_host_landings_ride_the_room()
+	if failure.is_empty():
 		Sentinel.finish(self)
 	else:
 		printerr("SELFCHECK FAILED: " + failure)
@@ -154,6 +156,18 @@ func _publish_stub() -> Node:
 func _mass_of(interior: Node, gate_id: String) -> MeshInstance3D:
 	"""One gate's mass by GATE ID, never by box name — see tower_interior_selfcheck."""
 	return interior.find_child("*GateMass_%s" % gate_id, true, false) as MeshInstance3D
+
+
+func _other_lift_stop(not_this_one: String) -> String:
+	"""
+	Some lift landing's id that is not `not_this_one`. Read off the graph rather
+	than spelled, so the landing checks name no storey and cannot go stale.
+	"""
+	for row: Dictionary in TowerGraph.lift_stops():
+		var unlock := String(row.get("unlock", ""))
+		if unlock != "" and unlock != not_this_one:
+			return unlock
+	return ""
 
 
 func _check_no_shell() -> String:
@@ -854,6 +868,15 @@ func _check_leave_closes_room_gates() -> String:
 	var rest_y: float = mass.position.y
 	# Own first: earned here, persisted, must survive the leave.
 	shell.mark_opened(TowerInterior.GATE_CHECKPOINT)
+	# AND AN OWN LANDING BESIDE IT (bead godot-test1-4ban): earned here, NOT
+	# persisted, and it must survive the leave all the same. That is the whole
+	# reason `rehydrate_opened_from_profile()` stopped rebuilding `earned` from the
+	# profile — a re-read is exact only while everything earned is saved, and a
+	# landing never is.
+	var own_stop: String = _other_lift_stop(TowerGraph.ENTRY_LIFT_MAZE)
+	var own_floor: int = TowerInterior.landing_floor(
+		String(TowerGraph.entry(own_stop).get("room", "")))
+	shell.mark_opened(own_stop)
 	var mp: Node = MPManager.new()
 	root.add_child(mp)
 	mp.set("lobby_only", true)
@@ -889,6 +912,12 @@ func _check_leave_closes_room_gates() -> String:
 		mp.queue_free()
 		await TowerProbe.clear(self, null, shell)
 		return "leave closed B's own checkpoint — the re-hydrate is a wipe, not a union with the profile"
+	if not shell.is_opened(own_stop) \
+			or not (panel.stop_floors() as Array).has(own_floor):
+		panel.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "leave lost B's OWN lift landing — it is earned but unsaved, so a re-hydrate that re-reads the profile throws it away"
 	if float(interior.get("_mass_open")) != 0.0 or mass.position.y != rest_y:
 		panel.queue_free()
 		mp.queue_free()
@@ -900,6 +929,11 @@ func _check_leave_closes_room_gates() -> String:
 		await TowerProbe.clear(self, null, shell)
 		return "leave closed the entry but the lift still offers its stop — the offer reads stale state"
 	var stored: Array = BestRunStore.tower_opened_ids()
+	if stored.has(own_stop) or stored.has(TowerGraph.ENTRY_LIFT_MAZE):
+		panel.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "a lift landing reached the profile %s — neither B's own nor the room's may be saved" % str(stored)
 	if stored.has(TowerInterior.GATE_IDENTITY) \
 			or stored.has(TowerGraph.ENTRY_LIFT_MAZE):
 		panel.queue_free()
@@ -1034,15 +1068,28 @@ func _check_earn_while_room_open() -> String:
 		mp.queue_free()
 		await TowerProbe.clear(self, null, shell)
 		return "working an open checkpoint persisted nothing — the earn site gates on room-open"
-	# ...and the maze stop the same way.
+	# ...and the maze stop EARNS THE SAME WAY AND SAVES NOTHING (bead
+	# godot-test1-4ban, owner ruling 2026-09-16). The two halves part company
+	# exactly here: a gate the room opened persists when you work it, a LANDING the
+	# room opened is yours for the run and reaches no profile ever. `earned` is
+	# still what records it — that is what makes the earn exactly-once and what
+	# `MPManager._on_lobby_joined` seeds the room mirror from.
 	interior._on_lift_stop_enter(body, TowerGraph.ENTRY_LIFT_MAZE)
-	if not BestRunStore.tower_opened_ids().has(TowerGraph.ENTRY_LIFT_MAZE):
+	if not bool(shell.call("is_earned", TowerGraph.ENTRY_LIFT_MAZE)) \
+			or not shell.is_opened(TowerGraph.ENTRY_LIFT_MAZE):
 		body.queue_free()
 		mp.queue_free()
 		await TowerProbe.clear(self, null, shell)
-		return "working an open lift stop persisted nothing — the earn site gates on room-open"
+		return "working an open lift stop earned nothing — the landing is not this peer's for the run"
+	if BestRunStore.tower_opened_ids().has(TowerGraph.ENTRY_LIFT_MAZE):
+		body.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "a lift landing reached the profile — the lift's memory is per-run and this one would outlive its run"
 	# Earning twice writes once: with the profile deleted, a second visit that
 	# wrote anything would recreate it — mtime cannot count within one second.
+	# BOTH KINDS, for the same reason from two directions: the checkpoint because
+	# `earned` short-circuits the write, the landing because the store filters it.
 	DirAccess.remove_absolute(BestRunStore.config_path)
 	interior._on_checkpoint_enter(body)
 	if FileAccess.file_exists(BestRunStore.config_path):
@@ -1050,6 +1097,13 @@ func _check_earn_while_room_open() -> String:
 		mp.queue_free()
 		await TowerProbe.clear(self, null, shell)
 		return "re-entering an earned checkpoint recreated a deleted profile — the earn is not exactly-once"
+	shell.earned.erase(TowerGraph.ENTRY_LIFT_MAZE)
+	interior._on_lift_stop_enter(body, TowerGraph.ENTRY_LIFT_MAZE)
+	if FileAccess.file_exists(BestRunStore.config_path):
+		body.queue_free()
+		mp.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "walking a lift landing recreated a deleted profile — a landing-only merge must touch no disk"
 	# The polled sites cannot be driven headless (pad-overlap state), so they
 	# are pinned by scan: every earn site must read `is_earned`, never bare
 	# open state.
@@ -1307,6 +1361,15 @@ func _check_absorbed_never_persists() -> String:
 	var mp: Node = MPManager.new()
 	root.add_child(mp)
 	mp.add_to_group("mp")
+	# IN A ROOM, because that is the only state an absorb happens in — every
+	# caller of `_absorb_opened_gate` is a packet handler. Named here since bead
+	# godot-test1-4ban, which made `absorbed_opened_ids()` empty outside a room
+	# (the mirror is session state and a solo new run must not re-read it): the
+	# probe used to absorb from OFFLINE, which no shipped path does. The room is
+	# empty of everything else — fresh profile, no shell yet (asserted above) —
+	# so the seed adds nothing and every assertion below is as sharp as it was.
+	mp.set("lobby_only", true)
+	mp._on_lobby_joined("us", "ROOM", "themaster", ["themaster", "us"])
 	mp._absorb_opened_gate(TowerInterior.GATE_IDENTITY)
 	if FileAccess.file_exists(BestRunStore.config_path):
 		mp.remove_from_group("mp")
@@ -1365,4 +1428,87 @@ func _check_drain_publishes_own_only() -> String:
 	if queue != ["maintenance_crawl"]:
 		return "priming queued %s — an absorbed id rides the drain" % str(queue)
 	Sentinel.done("drain_publishes_own_only")
+	return ""
+
+
+func _check_host_landings_ride_the_room() -> String:
+	"""
+	16. A HOST'S OWN LANDINGS RIDE THE ROOM (bead godot-test1-4ban, owner ruling
+	2026-09-16).
+
+	Hosting does not start a new run — `host()` is `join("")` and nothing frees
+	the shell — so a player who walked three landings solo and then opens a room
+	is still standing in that run, with those floors on their own lift menu. The
+	room's absorb mirror is what `g` and `go` are built from, and since this bead
+	the profile no longer carries a landing, so a profile-only seed would leave
+	the master publishing a set its OWN menu disagrees with: the joiner arrives
+	and cannot ride to a floor the host can. `_on_lobby_joined` therefore seeds
+	the mirror from the profile UNION the live shell's `earned_ids()`.
+
+	The second half is the other side of the same fence: the join drain is
+	PROFILE-shaped, and a profile hand-written with a landing (every profile
+	saved by a build before this bead is exactly that) must still put no landing
+	on the wire as this peer's own earned set.
+	"""
+	TowerProbe.fresh_store()
+	var shell := await TowerProbe.make_tower(self)
+	var own_stop: String = _other_lift_stop("")
+	if own_stop.is_empty():
+		await TowerProbe.clear(self, null, shell)
+		return "TowerGraph.lift_stops() is empty — the host-mirror probe has no landing"
+	# Walked solo, before any room existed: earned, opened, and on no disk.
+	shell.mark_opened(own_stop)
+	if BestRunStore.tower_opened_ids().has(own_stop):
+		await TowerProbe.clear(self, null, shell)
+		return "the solo landing persisted — the host-mirror probe is measuring the wrong thing"
+	var host: Node = MPManager.new()
+	root.add_child(host)
+	host.set("lobby_only", true)
+	# MASTER == YOU: the host leg, where the run carries over.
+	host._on_lobby_joined("us", "ROOM", "us", ["us"])
+	var wire: Array = host._tower_opened_ids()
+	if not wire.has(own_stop):
+		host.queue_free()
+		await TowerProbe.clear(self, null, shell)
+		return "the host's `g`/`go` payload %s lacks the landing its own menu offers — the mirror was seeded from the profile alone" % str(wire)
+	for gid: Variant in wire:
+		if not TowerGraph.opened_ids().has(String(gid)):
+			host.queue_free()
+			await TowerProbe.clear(self, null, shell)
+			return "the host's payload carries '%s', which no parser will decode" % String(gid)
+	host.queue_free()
+
+	# --- A JOINER IS THE OPPOSITE CASE AND MUST FOLD NOTHING IN -------------
+	# Review round 1, major: a joiner adopts the master's seed, `new_run()` frees
+	# its shell, and the run those landings belonged to is gone (owner ruling).
+	# Folding them in would smuggle a dead run's storey into the room and publish
+	# it the moment this peer were elected master.
+	var joiner_first: Node = MPManager.new()
+	root.add_child(joiner_first)
+	joiner_first.set("lobby_only", true)
+	joiner_first._on_lobby_joined("us", "ROOM", "themaster", ["themaster", "us"])
+	var absorbed: Array = joiner_first.call("absorbed_opened_ids")
+	joiner_first.queue_free()
+	await TowerProbe.clear(self, null, shell)
+	if absorbed.has(own_stop):
+		return "a JOINER folded its previous run's landing '%s' into the room mirror — that run is about to be freed by the master's seed" % own_stop
+
+	# --- AND THE DRAIN STAYS LANDING-FREE ON A LEGACY PROFILE ---------------
+	TowerProbe.fresh_store()
+	var legacy := ConfigFile.new()
+	legacy.set_value(BestRunStore.CONFIG_TOWER_SECTION, BestRunStore.CONFIG_TOWER_KEY,
+		JSON.stringify([TowerGraph.ENTRY_LIFT_MAZE, TowerInterior.GATE_CHECKPOINT]))
+	legacy.save(BestRunStore.config_path)
+	var joiner: Node = MPManager.new()
+	root.add_child(joiner)
+	joiner.set("lobby_only", true)
+	joiner._on_lobby_joined("us", "ROOM", "themaster", ["themaster", "us"])
+	joiner.set("_join_wait", MPManager.JOIN_SNAPSHOT_WAIT)
+	joiner._tick_join_gate_publish(0.1)
+	var queue: Array = (joiner.get("_join_gate_queue") as Array).duplicate()
+	joiner.queue_free()
+	if queue != [TowerInterior.GATE_CHECKPOINT]:
+		return "the drain queued %s off a legacy profile — an old build's landing is being re-published as earned progression" % str(queue)
+	TowerProbe.fresh_store()
+	Sentinel.done("host_landings_ride_the_room")
 	return ""

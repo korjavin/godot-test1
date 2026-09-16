@@ -2345,8 +2345,61 @@ func _check_earned_state_survives_a_relaunch() -> void:
 	if salvaged.size() != 1 or salvaged[0] != "tower_ok":
 		_fail("a half-junk tower record did not salvage to exactly its one real id: %s" % [
 			salvaged])
+
+	# --- (f) THE LIFT'S LANDINGS ARE THE ONE THING THIS STORE REFUSES -------
+	# Bead godot-test1-4ban, owner ruling 2026-09-16: visited landings are per-run,
+	# so they live in the shell and never in this file. The filter is at BOTH ends
+	# and this is where that is pinned, because one end alone looks like it works:
+	# load-only leaves the stale rows on disk forever, save-only keeps handing the
+	# owner's existing profile back its `lift_stop_maze`.
+	TowerProbe.fresh_store()
+	var a_landing: String = TowerGraph.ENTRY_LIFT_MAZE
+	var another_landing: String = ""
+	for row: Dictionary in TowerGraph.lift_stops():
+		if String(row.get("unlock", "")) != a_landing:
+			another_landing = String(row.get("unlock", ""))
+			break
+	# A PROFILE WRITTEN BY AN OLDER BUILD, in the exact shape the store writes.
+	var legacy := ConfigFile.new()
+	legacy.set_value(BestRunStore.CONFIG_TOWER_SECTION, BestRunStore.CONFIG_TOWER_KEY,
+		JSON.stringify([a_landing, TowerInterior.GATE_CHECKPOINT]))
+	legacy.save(BestRunStore.config_path)
+	var hydrated := BestRunStore.tower_opened_ids()
+	if hydrated.size() != 1 or hydrated[0] != TowerInterior.GATE_CHECKPOINT:
+		_fail("a profile carrying '%s' hydrated as %s — the lift would offer a landing this run never walked" % [
+			a_landing, hydrated])
+	# EARNING A GATE SELF-HEALS THE FILE: the stale rows go out with the write.
+	BestRunStore.merge_tower_opened_ids([another_landing, TowerInterior.GATE_DEMAND])
+	var on_disk: Array = _tower_ids_on_disk()
+	if on_disk != [TowerInterior.GATE_CHECKPOINT, TowerInterior.GATE_DEMAND]:
+		_fail("after a gate earn the file holds %s, not the two gates — the old landing was never swept out (or a new one was written)" % [
+			on_disk])
+	# AND A LANDING-ONLY MERGE WRITES NOTHING AT ALL. The deleted profile is the
+	# sharp form: mtime cannot tell two writes apart inside one second.
+	DirAccess.remove_absolute(BestRunStore.config_path)
+	BestRunStore.merge_tower_opened_ids([a_landing])
+	if FileAccess.file_exists(BestRunStore.config_path):
+		_fail("walking a landing recreated a deleted profile — the store is writing a set it is about to filter away again")
+
 	TowerProbe.fresh_store()
 	Sentinel.done("earned_state_survives_a_relaunch")
+
+
+func _tower_ids_on_disk() -> Array:
+	"""
+	The tower ids REALLY IN THE FILE, read past `tower_opened_ids()`'s own filter.
+
+	The self-heal claim above is about what is written, not about what is handed
+	back — and the sanitizing reader would answer the same either way.
+	"""
+	var cfg := ConfigFile.new()
+	if cfg.load(BestRunStore.config_path) != OK:
+		return []
+	var json := JSON.new()
+	if json.parse(String(cfg.get_value(
+			BestRunStore.CONFIG_TOWER_SECTION, BestRunStore.CONFIG_TOWER_KEY, ""))) != OK:
+		return []
+	return json.data if typeof(json.data) == TYPE_ARRAY else []
 
 
 # ============================================================================

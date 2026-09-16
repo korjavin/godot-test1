@@ -40,7 +40,14 @@ extends Control
 ## (owner ruling 3): the lift never skips you past content you have not walked
 ## once, and it always takes you home. Standing on a landing is what earns it —
 ## `TowerInterior`'s `LiftStopTrigger<floor>` writes that storey's entry id into the
-## monotone opened set, which persists and rides the `gate` verb to the room.
+## shell's opened set, which rides the `gate` verb to the room.
+##
+## THE OFFER IS PER-RUN (bead godot-test1-4ban, owner ruling 2026-09-16). That id
+## is the one thing in that otherwise-persisted set the profile refuses to keep
+## (`TowerGraph.is_lift_stop_id`, `BestRunStore._sanitize_tower_ids`): it lives in
+## the shell, it is room-shared while the run lasts, and it dies with the shell on
+## the next seed write. So a new run offers only the ground floor, and a waypoint
+## hop — which writes no seed — keeps everything walked.
 ##
 ## The refusals are `city_map_panel`'s and `landmark_toast`'s, for their reasons:
 ## IN A ROOM (the world is not yours to freeze, and a body that vanishes eight

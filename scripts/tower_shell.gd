@@ -508,26 +508,37 @@ var entered: bool = false
 ##     `new_run()`, so "walk out of the tower and back in, gates still open" is a
 ##     property of where this variable lives rather than of anything remembering to
 ##     save it.
-##   * IT SURVIVES THE PROCESS. `_enter_tree()` hydrates it from
-##     `BestRunStore.tower_opened_ids()` and `mark_opened()` writes straight
-##     through, so "quit, relaunch, the gate is still open" needs nobody to
-##     remember to save either. That is phase 5, and it is four lines because the
-##     set was already the right shape.
-##   * IT IS MONOTONE. Ids are only ever added — never removed, never re-closed —
-##     which is what lets two copies merge with a union and no conflict rule (see
-##     `BestRunStore.merge_tower_opened_ids`), and what stops a met demand gate
-##     from ever re-locking: earned progression must never become upkeep.
+##   * IT SURVIVES THE PROCESS — EXCEPT FOR THE LIFT'S LANDINGS. `_enter_tree()`
+##     hydrates it from `BestRunStore.tower_opened_ids()` and `mark_opened()`
+##     writes straight through, so "quit, relaunch, the gate is still open" needs
+##     nobody to remember to save either. That is phase 5, and it is four lines
+##     because the set was already the right shape. Since bead godot-test1-4ban
+##     (owner ruling 2026-09-16) the lift's visited landings are the one kind of
+##     id that does NOT survive: the store refuses them at both ends
+##     (`TowerGraph.is_lift_stop_id`, `BestRunStore._sanitize_tower_ids`), so a
+##     new run's lift offers only the ground floor. `mark_opened` is unchanged —
+##     it still asks; the store is what declines.
+##   * IT IS MONOTONE — WITHIN THE RUN, always; across runs, for everything the
+##     profile keeps. Ids are only ever added here — never removed, never
+##     re-closed — which is what lets two copies merge with a union and no
+##     conflict rule (see `BestRunStore.merge_tower_opened_ids`), and what stops a
+##     met demand gate from ever re-locking: earned progression must never become
+##     upkeep. The lift's landings are monotone in exactly the same way and simply
+##     have a shorter life: their reset is `EndlessTerrain._tower_reset()` freeing
+##     THIS NODE on a seed write, and nothing takes an id back out of a live set.
+##     (A waypoint hop does not write the seed, so a hop keeps them.)
 ##
 ## Ids are declared as consts on `TowerGraph` (`GATE_*`) and re-exported by
-## `TowerInterior`. THEY ARE PERSISTED VERBATIM, so adding one is free and
-## renaming one is a save migration.
+## `TowerInterior`. THEY ARE PERSISTED VERBATIM (bar the lift's, above), so adding
+## one is free and renaming one is a save migration.
 var opened: Dictionary = {}
-## Ids THIS peer earned — persisted, and the set the local earn sites gate on
-## (review round 1, minor). A teammate's opening lands in `opened` only, so a
-## gate that stands open because the room opened it can still be earned here:
-## working its pad persists it, and leaving the room drops it from `opened`
-## but never from the profile it just joined. Rebuilt from the profile beside
-## `opened` on every hydration, so the two agree whenever no room is involved.
+## Ids THIS peer earned this run — the profile's set folded in, plus everything
+## worked since — and the set the local earn sites gate on (review round 1,
+## minor). A teammate's opening lands in `opened` only, so a gate that stands
+## open because the room opened it can still be earned here: working its pad
+## persists it (unless it is a lift landing, which nothing persists), and leaving
+## the room drops it from `opened` but never from here. Folded together with the
+## profile on every hydration, so the two agree whenever no room is involved.
 var earned: Dictionary = {}
 ## A leave that happened while the player was still inside the walls (review
 ## round 1, critical): the room's ids stay open until the interior's tick sees
@@ -904,25 +915,30 @@ func rehydrate_opened_from_profile() -> void:
 	"""
 	Forget the room and remember the profile. Called when the room's gates
 	may fall closed — ids a teammate opened drop out while this peer's own
-	(earned, persisted) stay. The caller re-runs the interior's
-	`_apply_opened()`, which snaps shut what this drops; this function only
-	moves the sets. Both of them: `earned` is rebuilt from the profile too,
-	so a re-earn after the close writes through again.
+	(earned) stay. The caller re-runs the interior's `_apply_opened()`, which
+	snaps shut what this drops; this function only moves the sets.
+
+	`earned` IS KEPT, NEVER CLEARED (bead godot-test1-4ban). It used to be
+	rebuilt from the profile, which was exact while every earned id persisted.
+	It no longer is: the lift's visited landings are earned here and reach no
+	profile, so clearing would throw away the player's OWN landings on every
+	room leave and every deferred close. The profile is FOLDED IN instead
+	(a re-earn after the close still writes through), and `opened` is rebuilt
+	from the result — so this stays the union it always was, minus the room.
 
 	PLUS THE LIVE ROOM'S MIRROR (review round 2, major): a deferred close
 	that outlives its room — leave inside, then host/join the next room
 	without stepping out — must not snap shut gates the NEW room holds
-	open. `opened` is rebuilt as profile UNION the manager's current
-	absorb mirror (which the join just re-seeded), into `opened` only:
-	never `earned`, never persisted, exactly the absorb rule. The
+	open. `opened` is rebuilt as `earned` (which the profile has just been
+	folded into) UNION the manager's current absorb mirror (which the join
+	just re-seeded), and the mirror's half lands in `opened` only: never
+	`earned`, never persisted, exactly the absorb rule. The
 	immediate close in `_close_room_gates` runs with the mirror already
 	cleared by `leave()`, so its union is empty and that path is unchanged.
 	"""
-	opened.clear()
-	earned.clear()
 	for id: String in BestRunStore.tower_opened_ids():
-		opened[id] = true
 		earned[id] = true
+	opened = earned.duplicate()
 	var mp := get_tree().get_first_node_in_group("mp")
 	if mp != null and mp.has_method("absorbed_opened_ids"):
 		for gid: Variant in (mp.call("absorbed_opened_ids") as Array):
@@ -1054,6 +1070,24 @@ func opened_ids() -> Array:
 	them, and both want the set rather than the history.
 	"""
 	var out: Array = opened.keys()
+	out.sort()
+	return out
+
+
+func earned_ids() -> Array:
+	"""
+	Every id THIS peer earned, sorted. `opened_ids()`'s shape, `earned`'s content.
+
+	@return: A fresh sorted Array of String — the caller may keep or mutate it.
+
+	FOR THE ROOM MIRROR'S SEED (bead godot-test1-4ban): a host keeps its run
+	across `host()`, so `MPManager._on_lobby_joined` must seed the absorb mirror
+	with the landings this peer walked before the room existed — and since bead
+	`godot-test1-4ban` the profile no longer carries them. `earned`, never the raw
+	`opened`: a parked deferred close keeps the PREVIOUS room's absorbed ids in
+	`opened` (d81 review round 3), and no absorb path has ever written `earned`.
+	"""
+	var out: Array = earned.keys()
 	out.sort()
 	return out
 

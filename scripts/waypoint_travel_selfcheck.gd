@@ -358,6 +358,18 @@ func _check_hq_survives() -> void:
 		Sentinel.done("hq_survives")
 		return
 	var shell_id: int = shell.get_instance_id()
+	# AND WITH IT THE LIFT'S MEMORY (bead godot-test1-4ban, owner ruling
+	# 2026-09-16). The landings this run has walked are per-run and live ONLY in
+	# this shell — nothing writes them to the profile — so "the hop keeps them" is
+	# a stronger claim than "the shell is the same object" and is the half the
+	# ruling actually promises the player. Marked directly: how a landing gets
+	# earned is `tower_lift_selfcheck`'s subject, and what survives a hop is this
+	# one's.
+	var landing: String = ""
+	var stops: Array[Dictionary] = TowerGraph.lift_stops()
+	if not stops.is_empty():
+		landing = String(stops[0].get("unlock", ""))
+		shell.call("mark_opened", landing)
 
 	if not await player.travel_to_waypoint(1):
 		_fail("the hop back to the road was refused")
@@ -369,6 +381,9 @@ func _check_hq_survives() -> void:
 	elif after.get_instance_id() != shell_id:
 		_fail("the hop rebuilt the tower shell (instance %d -> %d) — the HQ's per-run interior was thrown away"
 			% [shell_id, after.get_instance_id()])
+	elif landing != "" and not bool(after.call("is_opened", landing)):
+		_fail("the hop lost the lift landing '%s' — the visited set is per-run, and a hop is not a new run"
+			% landing)
 	Sentinel.done("hq_survives")
 
 
