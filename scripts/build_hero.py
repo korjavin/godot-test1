@@ -471,10 +471,12 @@ FACES = {
         # it one.
         #
         # SO THERE ARE NO STRIPES IN THIS ROW ANY MORE (bead godot-test1-nvy). The
-        # goggles are geometry — `build_goggles` — and the two colours z3e.15
-        # measured went with them, verbatim, into the `HEROES` row's own palette as
-        # `goggle_frame` and `goggle_lens`. `stripes` now means CLOTH and belongs
-        # to Windman's bandage alone (see the table's banner).
+        # goggles are geometry — `build_goggles` — and the two colours moved with
+        # them to `goggle_frame` and `goggle_lens` in the `HEROES` row's own
+        # palette, where BOTH were re-measured for geometry: paint takes this
+        # scene's key light at a grazing angle and a raked slab and a rimmed tube do
+        # not (that palette's own note has the numbers). `stripes` now means CLOTH
+        # and belongs to Windman's bandage alone (see the table's banner).
         # A DIFFERENT SILHOUETTE FROM WINDMAN'S CROP (0.008 / 0.036 / 0.055), and
         # the difference is the HAIRLINE, not the length: docs/characters/primm.png
         # is short hair swept back off a high forehead with the sides above the
@@ -3108,7 +3110,8 @@ GOGGLE_LENS_Z = 0.002         # the lens centre above the eye line
 # A LENS IS NOT SEATED ON A RADIUS, AND THE FIRST BUILD OF THIS BEAD PROVED IT.
 # The ring can be, because a ring goes round: equal angles off the skull's axis put
 # its stations on the brow, the temple and the back of the head in turn, which is
-# what a band does. A LENS IS FLAT AND 32 mm WIDE, and the face is flat-ish across
+# what a band does. A LENS IS FLAT AND THE WIDTH OF HALF A FACE (44 mm on Primm,
+# see the two consts above), and the face is flat-ish across
 # the eyes, so the radial ray at the eye's own bearing lands 2 cm further back than
 # the eye itself does — measured: the face front is y=0.167 at the pupil and the
 # 21-degree ray hits at y=0.152. The first render had both lenses inside his head
