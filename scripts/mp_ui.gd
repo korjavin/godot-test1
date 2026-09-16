@@ -1085,6 +1085,9 @@ func _on_join_pressed() -> void:
 
 
 func _on_leave_pressed() -> void:
+	var log := get_tree().get_first_node_in_group("event_log")
+	if log != null and log.has_method("note_local_leave"):
+		log.note_local_leave()
 	var manager := _ensure_manager()
 	if manager != null and manager.has_method("leave"):
 		manager.leave()

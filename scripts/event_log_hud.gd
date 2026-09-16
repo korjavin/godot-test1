@@ -168,6 +168,11 @@ var _deafened: bool = false
 ## disconnected (review round 1).
 var _my_id: String = ""
 
+## Set by the MP panel's Leave button before it tears the room down, so the
+## next offline tick logs "You left the room" instead of a disconnect per
+## teammate. Cleared at the end of every `_lose_room()`.
+var _local_leave: bool = false
+
 ## Last painted snapshot: line texts plus per-line alpha steps, so the fade
 ## repaints on step changes and on nothing else.
 var _painted: Array = []
@@ -242,15 +247,26 @@ func _tick() -> void:
 	_repaint_on_change()
 
 
+func note_local_leave() -> void:
+	## Called by the MP panel's Leave button BEFORE manager.leave(), so the
+	## next offline tick reads as ours.
+	_local_leave = true
+
+
 func _lose_room() -> void:
 	## The room went away (or never existed): everyone we held gets a
 	## "disconnected" line, and every baseline is forgotten so the next join
-	## reseeds silently instead of reporting standing state as events.
+	## reseeds silently instead of reporting standing state as events. A leave
+	## through the panel's Leave button reads as ours instead (see
+	## `note_local_leave()`) — the room did not die, we walked out of it.
 	if _baselined:
-		for id: String in _members:
-			if id == _my_id:
-				continue
-			_append(tr("%s disconnected") % _members[id])
+		if _local_leave:
+			_append(tr("You left the room"))
+		else:
+			for id: String in _members:
+				if id == _my_id:
+					continue
+				_append(tr("%s disconnected") % _members[id])
 		_baselined = false
 	_members = {}
 	_holders = {}
@@ -265,6 +281,7 @@ func _lose_room() -> void:
 	_my_id = ""
 	_capt_seeded = false
 	_vox_seeded = false
+	_local_leave = false
 
 
 func _seed_room() -> void:

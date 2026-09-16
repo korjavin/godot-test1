@@ -271,6 +271,7 @@ const WIDTH_BUDGETS: Array = [
 	["%s joined", 14, 336.0, "event log line"],
 	["%s left", 14, 336.0, "event log line"],
 	["%s disconnected", 14, 336.0, "event log line"],
+	["You left the room", 14, 336.0, "event log line"],
 	["%s: mic on", 14, 336.0, "event log line"],
 	["%s: mic off", 14, 336.0, "event log line"],
 	["%s: camera on", 14, 336.0, "event log line"],
