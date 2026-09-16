@@ -433,9 +433,16 @@ static func _build_unit_wedge_mesh() -> ArrayMesh:
 
 	Written out as explicit triangles rather than built from a primitive: there is
 	no `PrismMesh` with this cross-section, and the winding is the thing to get
-	right (the rock's first draft had both cap fans backwards). Every face below
-	was derived by taking (v1-v0) x (v2-v0) and checking it points OUT of the
-	solid; check 1's own normal sweep is what keeps that true.
+	right. GODOT'S FRONT FACE IS THE CLOCKWISE ONE seen from outside, so the rule
+	every face below is derived by is `Plane(v0, v1, v2).normal` pointing OUT of
+	the solid — equivalently (v2-v0) x (v1-v0) points out, NOT the right-hand rule
+	(bead godot-test1-p0g1: the first spelling of this table used the right-hand
+	rule, so all eight triangles faced in. Under `cull_back` that culled both
+	slopes and both gables and left the BASE front-facing from above, coplanar
+	with the hull top it sits on — the band roofs never drew as pitched and
+	z-fought the ceiling white while the camera moved). Check 1 of
+	`batch_selfcheck` measures that rule per triangle for every kind now, which is
+	what keeps it true.
 	"""
 	# a-d: the base square, west to east and back to front. e/f: the ridge ends.
 	# READ OFF `UNIT_WEDGE_POINTS` rather than restated, because the COLLIDER is
@@ -449,11 +456,11 @@ static func _build_unit_wedge_mesh() -> ArrayMesh:
 	var e: Vector3 = UNIT_WEDGE_POINTS[4]
 	var f: Vector3 = UNIT_WEDGE_POINTS[5]
 	var tris: Array[Vector3] = [
-		a, b, c, a, c, d,      # base, normal (0, -1, 0)
-		d, c, f, d, f, e,      # the +Z slope
-		b, a, e, b, e, f,      # the -Z slope
-		a, d, e,               # the -X gable
-		c, b, f,               # the +X gable
+		a, c, b, a, d, c,      # base, outward normal (0, -1, 0)
+		d, f, c, d, e, f,      # the +Z slope
+		b, e, a, b, f, e,      # the -Z slope
+		a, e, d,               # the -X gable
+		c, f, b,               # the +X gable
 	]
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
