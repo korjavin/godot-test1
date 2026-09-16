@@ -3,12 +3,12 @@
     "primm": {
       "bones": 23,
       "glb": "primm_parts/primm_skinned.glb",
-      "glb_bytes": 520696,
-      "head_tris": 4400,
+      "glb_bytes": 558580,
+      "head_tris": 4820,
       "height_m": 1.8,
       "texture_bytes": 0,
       "texture_size": 0,
-      "tris": 15474
+      "tris": 15894
     },
     "teibi": {
       "bones": 23,
