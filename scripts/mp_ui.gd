@@ -1088,6 +1088,9 @@ func _on_leave_pressed() -> void:
 	var manager := _ensure_manager()
 	if manager != null and manager.has_method("leave"):
 		manager.leave()
+	# Reset here, not in _on_room_changed: error paths emit their status and
+	# then call leave(), so a reset there would clobber the message to read.
+	_on_status("Offline")
 	# `leave()` emits `room_changed("", [])`, which refreshes the panel; refresh
 	# anyway so a manager-less scene still resets its own display.
 	_refresh()
