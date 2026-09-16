@@ -260,6 +260,56 @@ func _check_curve() -> void:
 
 	if Progression.level_for(0) != 0 or Progression.level_for(-5) != 0:
 		_fail("a fresh (or corrupt) profile is not level 0")
+
+	# THE FILL THE HUD DRAWS (bead godot-test1-l8rs). `level_progress` is the only
+	# reader of the curve that has to be right BETWEEN thresholds, which is exactly
+	# where nothing else looks — and where the plausible wrong answer lives.
+	if not is_equal_approx(Progression.level_progress(0), 0.0):
+		_fail("level_progress(0) = %f, wanted an empty bar on a fresh profile"
+				% Progression.level_progress(0))
+	# Does the negative control below actually bite ANYWHERE? It cannot bite at
+	# level 1, where the two denominators coincide (T(0) is 0, so T(1) - T(0) IS
+	# T(1)) — the fake reads 0.98 there and slips through. From level 2 on the gap
+	# opens: 0.66, then ~0.5, then worse. So the claim is "somewhere on this walk",
+	# and it is asserted rather than assumed, because a rule nothing can fail is
+	# the failure mode this whole block exists to avoid.
+	var control_bites := false
+	for n: int in range(1, 9):
+		var at := Progression.level_coin_threshold(n)
+		# Standing ON a threshold is an EMPTY bar for the level you just reached —
+		# this is the "snap to empty" the level-up shows, with no easing behind it.
+		if not is_equal_approx(Progression.level_progress(at), 0.0):
+			_fail("level_progress(%d) = %f at the level-%d threshold, wanted 0.0"
+					% [at, Progression.level_progress(at), n])
+		# One coin short is very nearly FULL. NEGATIVE CONTROL, and the whole point
+		# of this block: the off-by-one denominator `(coins - T(L)) / T(L + 1)`
+		# divides by where the next level ENDS rather than by the WIDTH of this one,
+		# which reads ~0.5 here at level 1 and gets worse as the curve steepens. It
+		# passes every other rule in this function, so only this one bites it.
+		var nearly := Progression.level_progress(at - 1)
+		if nearly <= 0.9 or nearly >= 1.0:
+			_fail("level_progress(%d) = %f one coin BEFORE level %d, wanted (0.9, 1.0)"
+					% [at - 1, nearly, n])
+		var wrong := float(at - 1 - Progression.level_coin_threshold(n - 1)) \
+				/ float(Progression.level_coin_threshold(n))
+		if wrong <= 0.9:
+			control_bites = true
+		# Just past a threshold is off zero, and the fill only ever climbs within a
+		# level (a bar that went backwards on a pickup is the visible bug).
+		if Progression.level_progress(at + 1) <= 0.0:
+			_fail("level_progress(%d) is not above 0.0 one coin INTO level %d"
+					% [at + 1, n])
+		var previous := -1.0
+		for coins: int in range(at, Progression.level_coin_threshold(n + 1)):
+			var got := Progression.level_progress(coins)
+			if got < previous:
+				_fail("level_progress fell from %f to %f at %d coins, inside level %d"
+						% [previous, got, coins, n])
+				break
+			previous = got
+	if not control_bites:
+		_fail("the off-by-one denominator passes the nearly-full rule at every level "
+			+ "on this walk — the rule has stopped biting and proves nothing")
 	Sentinel.done("curve")
 
 

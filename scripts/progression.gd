@@ -706,6 +706,30 @@ static func level_for(coins: int) -> int:
 	return result
 
 
+static func level_progress(coins: int) -> float:
+	"""
+	How far into the CURRENT level `coins` lifetime coins are, as 0.0-1.0 — the
+	fill of `coin_hud`'s bar. Exactly 0.0 standing on a threshold, and strictly
+	below 1.0 one coin short of the next one.
+
+	The same rule as its two neighbours above and derived from them rather than
+	from a second copy of the curve: `level_for` says which level you are in,
+	`level_coin_threshold` says where that level starts and ends. The denominator
+	is the WIDTH of the current level (T(L+1) - T(L)), which is what makes the
+	last coin before a level-up read as nearly-full rather than as half — the
+	off-by-one that `progression_selfcheck` keeps a negative control for.
+
+	`static` so the maths is pinned headless without standing up a node; the HUD
+	calls it on the instance it already found by group.
+	"""
+	var level := level_for(coins)
+	var floor_coins := level_coin_threshold(level)
+	var span := level_coin_threshold(level + 1) - floor_coins
+	if span <= 0:
+		return 0.0
+	return clampf(float(coins - floor_coins) / float(span), 0.0, 1.0)
+
+
 # =============================================================================
 # INTERNALS
 # =============================================================================
