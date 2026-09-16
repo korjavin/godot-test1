@@ -32,7 +32,8 @@ var _out_dir: String = "user://shots"
 ## which is what CI and the epic's A/B pairs want. Comma-separated (bead
 ## godot-test1-z3e.10): this environment's per-shot fixed cost (world/camp
 ## sweep, a real settle) dwarfs one shot's own camera work, so a caller wanting
-## several shots that already share `_head_pose_settled` (16/17/18/19/20/21_jaw_1m) asks
+## several shots that already share `_head_pose_settled`
+## (16/17/18/19/20/21_jaw_1m/27_remote_avatar) asks
 ## for them in ONE process rather than paying the settle five times over.
 var _only: String = ""
 
@@ -99,19 +100,12 @@ const JAW_SHOT_DROP: float = 0.22
 # ============================================================================
 
 # ----------------------------------------------------------------------------
-# SPIKE godot-test1-td8 — `cloth=<a|b|d|all>`, the CLOTH columns, in the shape
-# `body=` had before bead 5u3.3 retired it (git show cf60ca6^:scripts/
-# style_shots.gd — `_apply_body_variant`). The variant is a SCRATCH .glb built by
-# `scripts/build_hero.py --hero teibi --variant <name>`; nothing else in the game
-# ever loads one and an absent `cloth=` reproduces every existing shot.
-#
-# It swaps the .glb UNDER the hero's `Body` rather than the whole `Body` node,
-# which is the one simplification the skinned era allows: a skinned hero is one
-# glTF scene instanced at `Body/Mesh` (scenes/characters/teibi.tscn), so the
-# column is a different instance in the same slot and the `Body` node the landing
-# squash and `capture_rest_pose()` write stays exactly where it was.
-var _cloth: String = ""
-const CLOTH_VARIANT_DIR: String = "res://assets/models/characters/teibi_parts/"
+# THE `cloth=` SWAP IS GONE (bead godot-test1-21m). Spike td8 built four scratch
+# `teibi_cloth_*.glb` columns and this tool loaded one of them on demand; the
+# owner picked A+B+D, `build_hero.py` now bakes all three into every shipped
+# hero, and the scratch files were deleted with the flag that read them. The
+# before/after picture a rollout needs is taken the way this tool always took
+# one: shoot the shipped hero on master, shoot it again on the branch.
 
 var _hero: String = "windman"
 ## True as soon as `hero=` is present. It is the one switch that lets the spike
@@ -142,8 +136,6 @@ func _ready() -> void:
 		elif a.begins_with("hero="):
 			_hero = a.substr(5)
 			_spike = true
-		elif a.begins_with("cloth="):
-			_cloth = a.substr(6)
 		elif a == "web":
 			_emulate_web = true
 		else:
@@ -229,11 +221,6 @@ func _run() -> void:
 	# without `hero=` (index 0, Windman, is already active).
 	player.set_active_character(_hero_index(player))
 
-	# SPIKE godot-test1-td8 — and AFTER the line above, not before it: the swap
-	# re-points `player.anim` at the new mesh, and `set_active_character` would
-	# then re-point it at a body this function had already freed.
-	_apply_cloth_variant(player)
-
 	await _shoot(terrain, player, field, 0.0, "1_field")
 	await _shoot(terrain, player, desert, 0.0, "1b_desert")
 	await _shoot(terrain, player, snow, 0.0, "1c_snow")
@@ -290,6 +277,11 @@ func _run() -> void:
 	# are actually ruled on; this one is the control that says whether a column's
 	# detail exists at all, or only exists at 3 m as a smudge.
 	await _shoot_torso(terrain, player, field, "20_torso_1m")
+
+	# THE MIRROR (bead godot-test1-21m) — the same hero, once as the body you
+	# drive and once as a teammate's hologram, in one frame. Here for the same
+	# reason the torso is: it wants the standing pose 19 is about to overwrite.
+	await _shoot_remote_avatar(terrain, player, field, "27_remote_avatar")
 
 	await _shoot_body(terrain, player, field, "19_body_stride", false, true)
 
@@ -563,48 +555,6 @@ func _shoot_caption(terrain: Node, player: Node3D, at: Vector3, yaw: float,
 	_show_widget(group, false)
 
 
-func _apply_cloth_variant(player: Node3D) -> void:
-	"""
-	SPIKE godot-test1-td8. Replace the hero's skinned `.glb` instance with one of
-	the cloth columns' scratch builds. A no-op without `cloth=`.
-
-	`set_active_character()` RUNS AGAIN at the end, and that is the same rule the
-	retired `_apply_body_variant` wrote down: `player.anim` caches node references
-	INTO the body (the Skeleton3D and its bone indices, for a skinned hero), so a
-	swap that does not re-activate leaves the driver posing a freed mesh.
-	"""
-	if _cloth == "":
-		return
-	# THE COLUMNS ARE TEIBI'S BODY. Without this, `cloth=b` on its own dresses
-	# WINDMAN — index 0 is the default hero — in Teibi's mesh, and the run still
-	# writes a full set of PNGs that look like a column and are not one.
-	if _hero != "teibi":
-		push_error("[SHOTS] cloth= is Teibi's spike (bd godot-test1-td8) and hero is "
-				+ _hero + " — pass hero=teibi too")
-		return
-	var path: String = CLOTH_VARIANT_DIR + "teibi_cloth_" + _cloth + ".glb"
-	if not ResourceLoader.exists(path):
-		push_error("[SHOTS] no cloth column at " + path
-				+ " — build it with build_hero.py --hero teibi --variant " + _cloth)
-		return
-	var hero: Node3D = player.character_instances[_hero_index(player)]
-	var body := hero.get_node_or_null("Body") as Node3D
-	if body == null:
-		push_error("[SHOTS] hero " + _hero + " has no Body node to dress")
-		return
-	for child in body.get_children():
-		body.remove_child(child)
-		child.queue_free()
-	var mesh := (load(path) as PackedScene).instantiate() as Node3D
-	mesh.name = "Mesh"
-	body.add_child(mesh)
-	# The same styling every OTHER hero's body gets from `preload_all_characters()`
-	# — which is where column D's material split is actually read (`toon_shading.gd`).
-	player.anim.apply_character_style(mesh)
-	player.set_active_character(_hero_index(player))
-	print("[SHOTS] cloth column ", _cloth, " -> ", path, " on hero ", _hero)
-
-
 func _hero_index(player: Node) -> int:
 	"""SPIKE godot-test1-z3e.10. Resolve `_hero` (a CHARACTERS name) to its index,
 	the way `hero_hud.gd` and `remote_avatar.gd` already do off the same shared
@@ -759,6 +709,64 @@ func _settle_body_pose(terrain: Node, player: Node3D, at: Vector3, name: String)
 	player.set_process(false)
 	_head_pose_settled = true
 	await get_tree().process_frame
+
+
+## BEAD godot-test1-21m — how far to the hero's LEFT the mirrored teammate stands
+## in shot 27. Left and not right because `_body_camera` stands off to the right:
+## a peer on that side would be between the lens and the hero.
+const REMOTE_SHOT_SIDE: float = 0.95
+
+
+func _shoot_remote_avatar(terrain: Node, player: Node3D, at: Vector3, name: String) -> void:
+	"""
+	BEAD godot-test1-21m — THE MIRROR, BESIDE THE BODY IT MIRRORS, in one frame.
+
+	The garments' cloth material is read in TWO places: `player_animation.gd` for
+	the hero you drive and `remote_avatar.gd`'s own walk for a teammate's
+	hologram. `mp_selfcheck`'s cloth check asserts they agree; this is the picture
+	of it, and the reason it is a picture is that "agree" here means an eye cannot
+	tell which of the two is the local one.
+
+	A `RemoteAvatar` is a bare node with no groups and no body (its whole
+	contract), so posing it is two lines: put it where it belongs and hand it one
+	state sample.
+
+	BOTH LINES, and the belt-and-braces is not laziness. This is a SINGLE-frame
+	shot, so unlike the strips it takes no `PauseHub` pause — `_settle_body_pose`
+	has only stopped the PLAYER (`player.set_process(false)`), and this avatar's
+	own `_process` does run in the two frames below. `receive_state` alone would
+	therefore leave it mid-lerp toward the target from wherever `add_child` put it
+	(the tree's origin, hundreds of metres away, which its own teleport snap would
+	fix a frame later — after the capture). Writing `global_position` puts it
+	there now; sending the same value keeps the smoothing's target from dragging
+	it back off the mark.
+	"""
+	if not _wanted(name):
+		return
+	if not _head_pose_settled:
+		await _settle_body_pose(terrain, player, at, name)
+	player.set_active_character(_hero_index(player))
+	_pose_walk(player, 0.0)
+
+	var index: int = _hero_index(player)
+	var avatar := RemoteAvatar.new()
+	avatar.setup("MIRROR")
+	add_child(avatar)
+	avatar.set_character(index)
+	var spot: Vector3 = player.global_position \
+			- player.global_transform.basis.x * REMOTE_SHOT_SIDE
+	avatar.global_position = spot
+	avatar.receive_state(spot, player.rotation.y, index, 0.0, true)
+
+	var cam := _body_camera(player)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	var img := get_viewport().get_texture().get_image()
+	img.save_png(_out_dir + "/" + name + ".png")
+	cam.queue_free()
+	avatar.queue_free()
+	print("[SHOTS] wrote ", name, " — remote avatar beside the local hero=", _hero)
 
 
 func _body_camera(player: Node3D) -> Camera3D:
