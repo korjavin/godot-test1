@@ -18,8 +18,8 @@ class_name MpManager
 ## ----------------------------------------------------------------------------
 ## Nothing here runs until `host()` or `join()` is called: `_process` early-returns
 ## while `_state == State.OFFLINE`, no socket is opened, no avatar exists, and no
-## other system is touched. This mirrors `scripts/mobile_input.gd`'s
-## "idle unless active" rule, for the same reason — a feature that costs a frame
+## other system is touched. This mirrors `scripts/voice_chat.gd`'s
+## "idle unless in a room" rule, for the same reason — a feature that costs a frame
 ## of work when unused is a feature that regresses single player.
 ##
 ## `leave()` unwinds all of it and is idempotent, so a dropped socket, a lobby

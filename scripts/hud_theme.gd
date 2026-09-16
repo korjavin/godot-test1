@@ -256,11 +256,10 @@ static func theme() -> Theme:
 	t.set_color("font_color", "Label", BONE)
 	t.set_font("font", "Label", FONT_REGULAR)
 
-	# ponytail: the bead names CheckBox and this project instantiates none — its one
-	# checkbox-shaped control is `mobile_settings_panel`'s CheckButton, which
-	# inherits Button's slots through the class chain and so is already styled.
-	# Left as the bead specified rather than silently retargeted; `.29`/`.30` own
-	# the call, and either way the locale ruler covers both weights.
+	# ponytail: no CheckBox is instantiated today — the lines below style it
+	# anyway through Button's slots, so the first checkbox-shaped control
+	# needs no theme edit. `.29`/`.30` own the call, and either way the
+	# locale ruler covers both weights.
 	t.set_color("font_color", "CheckBox", BONE)
 	t.set_color("font_disabled_color", "CheckBox", UNIT_KHAKI)
 	t.set_font("font", "CheckBox", FONT_REGULAR)

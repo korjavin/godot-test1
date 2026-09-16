@@ -1377,7 +1377,7 @@ func _hud_absolute_rects(text: String) -> Dictionary:
 	"""
 	var out := {}
 	# MATCH THE NODE HEADER, NOT ONE SHAPE OF IT. `type=` is optional (an instanced
-	# child - TouchControls - has none) and `parent="HUD"` is not always the last
+	# child has none) and `parent="HUD"` is not always the last
 	# attribute (a node in a group carries `groups=[...]` after it). Pinning either
 	# would silently skip those blocks, and this check exists precisely so the NEXT
 	# widget dropped into that corner is covered without anybody editing it - a

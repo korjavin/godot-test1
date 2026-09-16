@@ -64,8 +64,8 @@ extends Control
 ## the same kind of reason: 38 more en+de CSV rows for marginal value, so the
 ## existing fact is the reveal for both outcomes.
 ##
-## Built entirely in code in _ready(), like touch_controls.gd and
-## mobile_settings_panel.gd, so scenes/main.tscn needs exactly ONE node and one
+## Built entirely in code in _ready(), like `mp_ui.gd` and `start_overlay.gd`,
+## so scenes/main.tscn needs exactly ONE node and one
 ## script line — this project ships a web build and every extra .tscn is another
 ## resource to import, parse and keep in step with a script that already knows the
 ## whole layout.
@@ -399,7 +399,7 @@ var _quiz_timer: float = 0.0
 
 ## Whether the tree's pause is OURS — the shared guard every pauser in this
 ## project carries (pause_controller.gd, mp_ui.gd, skill_tree_ui.gd,
-## start_overlay.gd, mobile_input.gd), for the shared reason: only ever release a
+## start_overlay.gd), for the shared reason: only ever release a
 ## pause you took. It is read in two places, and the second is the one that is
 ## easy to miss — `_unhandled_input`, where it is what tells OUR pause (digits
 ## must work: being frozen to answer is the whole point) from anybody else's
@@ -1094,8 +1094,8 @@ func _answer(slot: int) -> void:
 # decisions.
 #
 # 1. `_paused_by_us` IS THE SHARED CLAIM BIT, not a local convenience.
-#    pause_controller.gd, mp_ui.gd, skill_tree_ui.gd, start_overlay.gd,
-#    help_overlay.gd and mobile_input.gd all take the pause through
+#    pause_controller.gd, mp_ui.gd, skill_tree_ui.gd, start_overlay.gd and
+#    help_overlay.gd all take the pause through
 #    `PauseHub` (scripts/pause_hub.gd) and all carry this same flag for the same
 #    reason: a pauser may only ever release a claim IT made. A card that resolved
 #    while the skill tree was open and unpaused unconditionally would hand the
@@ -1148,10 +1148,10 @@ func _answer(slot: int) -> void:
 
 
 func _notification(what: int) -> void:
-	# WHY THE QUIZ CLOCK STOPS WITH THE WINDOW. `mobile_input.pause_game()` is
-	# idempotent by early-returning on an already-paused tree, so a focus loss
-	# during a question sees OUR pause, takes no ownership, and never raises the
-	# "tap to resume" overlay. Left alone, QUIZ_TIMEOUT would then fire in a
+	# WHY THE QUIZ CLOCK STOPS WITH THE WINDOW. `_take_pause()` declines an
+	# already-paused tree, so a focus loss during a question sees OUR pause,
+	# takes no ownership, and raises no resume overlay. Left alone, QUIZ_TIMEOUT
+	# would then fire in a
 	# backgrounded tab, unpause, and hand the player back a running world with a
 	# crocodile in it — the one variant of the ceiling above where nobody is
 	# watching it happen. Freezing the clock instead means a backgrounded question
@@ -1189,7 +1189,7 @@ func _take_pause() -> void:
 	if mp != null and mp.has_method("is_busy") and bool(mp.is_busy()):
 		return
 	# Never over the game-over screen: the same rule, and the same reason, that
-	# pause_controller._toggle_pause, mp_ui._apply_pause and mobile_input all
+	# pause_controller._toggle_pause and mp_ui._apply_pause both
 	# carry — GameOverUI is PAUSABLE, so a pause there kills its Play Again button
 	# and its ui_accept handler. The card still asks; it just freezes nothing.
 	# `"x" in node`, not `node.get("x")`: get() answers null for a property that

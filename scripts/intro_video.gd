@@ -24,8 +24,8 @@ class_name IntroVideo
 ## is ever regenerated, `ffmpeg -i episode.mp4 -c copy -movflags +faststart` has to
 ## be re-applied before upload, or streaming silently regresses to
 ## download-then-play.) `JavaScriptBridge` DOM work is an established pattern in
-## this project — `mobile_sensors.gd` attaches real event listeners and
-## `best_run_store.gd` drives `localStorage` — so this is the cheap road, not the
+## this project — `best_run_store.gd` drives `localStorage` and `voice_chat.gd`
+## keeps its browser callbacks the same way — so this is the cheap road, not the
 ## clever one.
 ##
 ## ----------------------------------------------------------------------------
@@ -145,7 +145,7 @@ const STALL_TIMEOUT_SEC: float = 8.0
 ## film may never hang the game.
 const START_TIMEOUT_SEC: float = 30.0
 
-## The JS scratchpad key, in the same `window`-property style `mobile_sensors.gd`
+## The JS scratchpad key, in the same `window`-property style `voice_chat.gd`
 ## uses for its retained callbacks.
 const JS_STATE: String = "window.__ck_intro"
 

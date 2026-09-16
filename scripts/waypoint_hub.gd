@@ -223,9 +223,8 @@ const ROW_FONT_SIZE: int = 16
 ## Eleven rows is the whole world's supply and they are all on this card at once:
 ## at 44 the card measured 711 units tall, which does not fit a 720-tall screen
 ## with a gutter — `waypoint_panel_selfcheck` check (f) caught it at both sizes.
-## 36 brings the worst case to ~620. It is not a small target either: the touch
-## build magnifies the layout by `TouchControls.TOUCH_CONTENT_SCALE` (1.8), so
-## this is 65 device pixels on the screen that needs it.
+## 36 brings the worst case to ~620. It is not a small target either: at 36 the
+## row stays a comfortable thumb target on the densest phone screen.
 ## `ponytail:` the ceiling is the row COUNT — a twelfth circle puts the card back
 ## over a 720-tall screen, and check (f) is what will say so. The upgrade then is
 ## a `ScrollContainer` round `_rows_box`, not a smaller row.
@@ -888,11 +887,11 @@ func _build_ui() -> void:
 	_centre.name = "Centre"
 	_centre.set_anchors_preset(Control.PRESET_FULL_RECT)
 	# ...AND THE COST OF A FULL-RECT BACKDROP, NAMED because it is a choice: while
-	# the list is up nothing under it takes a tap, the touch joystick included. In
+	# the list is up nothing under it takes a tap. In
 	# a room — where this panel deliberately takes no pause — that is a hero who
 	# cannot move for exactly one tap, and the hint under the card says which tap.
 	# It is `city_map_panel`'s and `skill_tree_ui`'s backdrop unchanged, and every
-	# panel in `main.tscn`'s HUD after `TouchControls` already covers it the same
+	# panel in `main.tscn`'s HUD already covers it the same
 	# way; "tap outside to close" has no cheaper shape.
 	_centre.mouse_filter = Control.MOUSE_FILTER_STOP
 	_centre.visible = false

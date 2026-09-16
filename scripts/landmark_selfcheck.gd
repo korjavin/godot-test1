@@ -1718,9 +1718,8 @@ func _check_quiz_toast(registry: Array) -> void:
 		_fail("quiz: step (m) left the tree paused")
 
 	# --- (n) A BACKGROUNDED TAB DOES NOT RESOLVE THE QUESTION BEHIND THE PLAYER.
-	# `mobile_input.pause_game()` early-returns on an already-paused tree, so a
-	# focus loss during a question takes no ownership of our pause and never raises
-	# the "tap to resume" overlay — leaving QUIZ_TIMEOUT free to fire in a
+	# A focus loss during a question takes no ownership of our pause and raises no
+	# resume overlay — leaving QUIZ_TIMEOUT free to fire in a
 	# backgrounded tab, unpause, and hand back a running world with a crocodile in
 	# it. The FOCUS_IN half is the control: it proves the clock was held rather
 	# than broken.

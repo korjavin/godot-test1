@@ -26,7 +26,7 @@ extends SceneTree
 ## and that is what is here:
 ##
 ##  1. **The web gate.** Every entry point must be inert off-web WITHOUT touching
-##     `JavaScriptBridge` — the same desktop-safety shape `MobileSensors` carries.
+##     `JavaScriptBridge` — the same desktop-safety shape `VoiceChat` carries.
 ##     `start()` false and `is_finished()` true are what make the desktop path
 ##     below reduce to the original code.
 ##
@@ -863,8 +863,8 @@ func _check_no_js_boolean_returns() -> void:
 
 
 ## The first banned shape in `source`, as the offending line, or "" for clean.
-## Comment tails are stripped first — the headers of `intro_video.gd` and
-## `mobile_sensors.gd` explain the bug in prose, and prose is not an offence.
+## Comment tails are stripped first — the header of `intro_video.gd`
+## explains the bug in prose, and prose is not an offence.
 func _js_bool_offence(source: String) -> String:
 	for line: String in source.split("\n"):
 		var code: String = line

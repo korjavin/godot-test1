@@ -4,16 +4,15 @@ extends Object
 ## PAUSE HUB — the one place in this project that writes `get_tree().paused`
 ## ============================================================================
 ##
-## Ten scripts freeze the world: `pause_controller.gd` (P), `help_overlay.gd`
+## Nine scripts freeze the world: `pause_controller.gd` (P), `help_overlay.gd`
 ## (?), `skill_tree_ui.gd` (K), `mp_ui.gd` (the MP panel), `start_overlay.gd`
-## (the start menu and the intro film), `mobile_input.gd` (focus loss / portrait),
-## `landmark_toast.gd` (a pending quiz), `city_map_panel.gd` (B),
-## `tower_lift_menu.gd` (L) and — since bead godot-test1-3a2 —
-## `mp_manager.gd`, on behalf of a ROOM MEMBER who pressed P.
+## (the start menu and the intro film), `landmark_toast.gd` (a pending quiz),
+## `city_map_panel.gd` (B), `tower_lift_menu.gd` (L) and — since bead
+## godot-test1-3a2 — `mp_manager.gd`, on behalf of a ROOM MEMBER who pressed P.
 ##
 ## **ONLY P TRAVELS.** `mp_manager`'s claim is driven by a `pz` bit on the
 ## presence packet that `pause_controller.is_pausing()` alone sets, so the other
-## nine holders are local and stay that way: reading a map, a help card, a skill
+## eight holders are local and stay that way: reading a map, a help card, a skill
 ## tree or a lift menu must not stop three other people, which is exactly why
 ## `landmark_toast`, `city_map_panel` and `tower_lift_menu` REFUSE to pause in a
 ## room at all. Making a tenth gesture room-wide is an owner decision, not a
@@ -47,7 +46,7 @@ extends Object
 ##
 ## WHAT THIS FILE DELIBERATELY DOES NOT OWN:
 ##
-##  * **Policy.** `pause_controller` and `mobile_input` refuse to pause over Game
+##  * **Policy.** `pause_controller` and `mp_ui` refuse to pause over Game
 ##    Over; `landmark_toast` refuses in a multiplayer room; `skill_tree_ui`
 ##    refuses to OPEN under somebody else's pause. Those are decisions about the
 ##    feature, not about the mechanism, and they stay with the feature. This file
@@ -58,14 +57,14 @@ extends Object
 ##    "we hold A claim", which is the only thing a caller can honestly know — and
 ##    it is still what decides whether a release is ours to make and whether an
 ##    input under a pause is ours to answer.
-##  * **Reading the pause as a CONDITION.** `touch_controls`' portrait guard and
-##    motion watch, `skill_tree_ui`'s refusal to open, `landmark_toast`'s digit
-##    guard and `_take_pause` all ask "is the world stopped?", which is
+##  * **Reading the pause as a CONDITION.** `skill_tree_ui`'s refusal to open,
+##    `landmark_toast`'s digit guard and `_take_pause` all ask "is the world
+##    stopped?", which is
 ##    `get_tree().paused` and nothing to do with who stopped it. They are NOT
 ##    routed through here, on purpose.
 ##
 ## STATIC, NOT AN AUTOLOAD. This project has no autoloads at all — `Progression`,
-## `BestRunStore`, `ToonShading` and `MobileSensors` are all static-helper classes
+## `BestRunStore`, `ToonShading` and `PauseHub` are all static-helper classes
 ## for the same reason: a scene run standalone (or a headless self-check driving a
 ## hand-built fixture) gets the mechanism for free, with no `project.godot` edit
 ## and nothing to forget to register.

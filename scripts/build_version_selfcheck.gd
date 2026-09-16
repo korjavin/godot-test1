@@ -30,7 +30,7 @@ extends SceneTree
 ##
 ##  2. **The web gate.** Off-web the node must build nothing and process nothing,
 ##     without ever touching `JavaScriptBridge` — the desktop-safety shape
-##     `MobileSensors` and `IntroVideo` carry.
+##     `IntroVideo` and `VoiceChat` carry.
 ##
 ##  3. **The latch.** Only a well-formed marker naming a DIFFERENT build latches
 ##     it. Garbage, a 404, a transport failure, an object with no `sha`, and the

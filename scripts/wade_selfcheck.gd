@@ -675,7 +675,7 @@ func _press_jump(player: CharacterBody3D) -> float:
 	Synthesize one `jump` press and report the upward velocity it produced.
 
 	Input.action_press sets the POLLED state, which is what _physics_process
-	reads (the same mechanism mobile_input.gd drives the game with). The jump
+	reads (the same POLLED state the game itself drives with). The jump
 	frame applies no gravity — the body is still grounded when velocity.y is
 	written — so the value read straight after is the launch speed itself.
 	"""

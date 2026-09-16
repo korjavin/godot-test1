@@ -26,7 +26,7 @@ extends Node
 ## self-hosted SFU would not change that (it still needs a media client), which
 ## is one of the reasons the epic rejected one.
 ##
-## The gate is `OS.has_feature("web")`, exactly like `mobile_sensors.gd`: off the
+## The gate is `OS.has_feature("web")`, exactly like `intro_video.gd`: off the
 ## web export this node sets `process` off, connects to nothing and never touches
 ## `JavaScriptBridge`, so a headless self-check or a desktop run instances it and
 ## sees nothing happen at all.
@@ -238,8 +238,8 @@ var _is_web: bool = false
 ## `window.ckVoice`, and the callback the module calls to send a frame. BOTH are
 ## held in member vars for this node's lifetime: a `JavaScriptBridge` callback is
 ## garbage-collected the moment nothing references it, which silently detaches it
-## from the JS that is still calling it (`mobile_sensors.gd` documents the same
-## trap for its DOM listeners).
+## from the JS that is still calling it (the same trap every retained
+## browser callback sets: drop the last reference and it detaches silently).
 var _ck: JavaScriptObject = null
 var _send_cb: JavaScriptObject = null
 
