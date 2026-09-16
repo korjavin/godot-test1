@@ -864,23 +864,10 @@ func _ready() -> void:
 	# pause_controller.gd for why it must be a separate PROCESS_MODE_ALWAYS node.
 	add_child(preload("res://scripts/pause_controller.gd").new())
 
-	# Capture the mouse so it doesn't leave the game window — but ONLY when this is NOT
-	# a touch session. On a phone/tablet the mobile controls are active and there is no
-	# mouse to capture; requesting pointer-lock there would pop a useless permission
-	# prompt and can leave the page in a weird captured state. So we skip the capture
-	# on a touch session, leaving the cursor visible for the on-screen touch buttons.
-	#
-	# CANONICAL DETECTION (the fix): we ask `MobileSensors.is_touch_session()` — the
-	# SAME static rule the touch UI uses (cached there as `_is_touch`) — instead
-	# of the narrower `DisplayServer.is_touchscreen_available()`. Previously the UI could
-	# decide "mobile" (via the web coarse-pointer check) while this guard still captured
-	# the mouse, an inconsistency on web phones that report no Godot touchscreen.
-	#
-	# DESKTOP SAFETY: on a native desktop build (no touchscreen, not web) the static func
-	# returns false WITHOUT touching JavaScriptBridge, so mouse capture happens exactly as
-	# before — desktop keyboard+mouse play is byte-for-byte unchanged. (Mobile-motion plan.)
-	if not MobileSensors.is_touch_session():
-		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	# Capture the mouse so it doesn't leave the game window. Browsers refuse pointer
+	# lock outside a user gesture, so this silently fails on a cold web load and the
+	# click-to-capture block in `_input()` picks it up.
+	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 	# Load the persisted best-run records: the local store answers synchronously
 	# inside fetch(), the lobby may raise them a moment later. See best_run_store.gd.
@@ -965,30 +952,21 @@ func _input(event: InputEvent) -> void:
 					deg_to_rad(CAMERA_PITCH_MIN), deg_to_rad(CAMERA_PITCH_MAX))
 			camera_pivot.rotation = Vector3(camera_pitch, camera_yaw_lag, 0.0)
 
-	# Allow player to release mouse with ESC.
-	# TOUCH-SESSION GUARD: on a phone/tablet we deliberately keep the mouse VISIBLE so
-	# the on-screen touch buttons are usable and no pointer-lock prompt appears (matching
-	# the same `MobileSensors.is_touch_session()` gate used by the mouse-capture sites in
-	# `_ready()`/`restart_game()`). Without this guard, ESC's unconditional toggle could
-	# re-capture the mouse in a touch session, bypassing that single source of truth. So
-	# on a touch session ESC only ever moves TOWARD visible (never into captured); on
-	# desktop (non-touch) the original capture<->visible toggle is byte-for-byte unchanged.
+	# Allow player to release mouse with ESC, and re-capture it on a second press.
 	if event.is_action_pressed("ui_cancel"):
 		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
-		elif not MobileSensors.is_touch_session():
-			# Desktop only: re-capture on a second ESC. A touch session never re-captures.
+		else:
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 	# DESKTOP-WEB CLICK-TO-CAPTURE: browsers refuse pointer lock outside a user
 	# gesture, so the `_ready()` capture silently fails on a fresh web page load
 	# and the camera is dead until the (undiscoverable) double-ESC re-capture.
 	# Any click while the mouse is free re-captures it — a click IS the required
-	# gesture. Same touch-session guard as the sites above, and never during Game
-	# Over (the Play Again button needs a visible, clickable cursor).
+	# gesture. Never during Game Over (the Play Again button needs a visible,
+	# clickable cursor).
 	if event is InputEventMouseButton and event.pressed:
-		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED \
-				and not MobileSensors.is_touch_session() and not is_game_over:
+		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED and not is_game_over:
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 	# Handle character switching with E key. Not while the Game Over screen is up:
@@ -3394,13 +3372,9 @@ func restart_game() -> void:
 		else:
 			terrain.new_run(shared_seed)
 	reset_position()
-	# Recapture the mouse — but ONLY when this is NOT a touch session, mirroring the
-	# `_ready()` guard via the SAME canonical `MobileSensors.is_touch_session()` rule.
-	# "Play Again" on a phone must not re-grab the mouse (pointer-lock), which would
-	# undo the touch mouse-capture guard. On native desktop the static func returns
-	# false (no JavaScriptBridge touched), so the mouse is recaptured exactly as before.
-	if not MobileSensors.is_touch_session():
-		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	# Recapture the mouse. On web this lands only if the restart came through a click;
+	# otherwise click-to-capture in `_input()` picks it up, as on a cold load.
+	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 	# A web Play Again returns to the existing start card so the next run crosses
 	# the same user-input boundary and PLAY SOLO starts IntroVideo again. Desktop
@@ -3681,8 +3655,7 @@ func join_at(anchor: Vector3) -> void:
 		var over_ui := get_tree().get_first_node_in_group("game_over_ui")
 		if over_ui and over_ui.has_method("hide_game_over"):
 			over_ui.hide_game_over()
-		if not MobileSensors.is_touch_session():
-			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 	# A joiner must not be bitten on its first frame in somebody else's run.
 	clear_nearby_crocodiles(global_position)

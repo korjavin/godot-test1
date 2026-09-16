@@ -5,13 +5,9 @@ extends Label
 ## load the mouse starts FREE and the camera is dead until the player clicks
 ## (see the click-to-capture block in player_controller._input). This label
 ## tells them so. It self-manages visibility every frame — no signals, no
-## coupling: visible only when this is NOT a touch session, the mouse is NOT
-## captured, and the Game Over screen is not up (that screen has its own
-## clickable button and this hint would just be noise under it).
-
-## Cached once — the touch-session probe can hit JavaScriptBridge, so don't
-## re-evaluate it every frame (same caching as touch_controls.gd).
-var _is_touch: bool = false
+## coupling: visible only when the mouse is NOT captured and the Game Over
+## screen is not up (that screen has its own clickable button and this hint
+## would just be noise under it).
 
 ## The scene's own size, kept: 22. An `@export` and not a const because the size
 ## is geometry, not a palette, and the thing this bead moves out of the scene is
@@ -48,12 +44,7 @@ func _ready() -> void:
 		Color(HudTheme.INK, HudTheme.SHADOW_ALPHA))
 	add_theme_constant_override("shadow_offset_x", HudTheme.SHADOW_PANEL_OFFSET.x)
 	add_theme_constant_override("shadow_offset_y", HudTheme.SHADOW_PANEL_OFFSET.y)
-	_is_touch = MobileSensors.is_touch_session()
 	visible = false
-	# On a touch session there is no mouse to capture — the hint is never
-	# relevant, so skip the per-frame polling entirely.
-	if _is_touch:
-		set_process(false)
 
 
 func _process(_delta: float) -> void:
