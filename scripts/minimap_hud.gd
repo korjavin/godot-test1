@@ -1462,6 +1462,33 @@ func reset_landmark_compass() -> void:
 	_target_caption_fired.clear()
 
 
+func compass_target_distance() -> float:
+	"""Read-only seam for the road-music driver (bead godot-test1-bv0f): flat XZ
+	metres from the player to the held landmark target, or INF when the compass
+	holds none. A pure read over the compass state uj0u already keeps — no scan,
+	no RNG, no draw.
+
+	Measured off the LIVE body, not the tick snapshot: `_process()` returns early
+	while the map is hidden (M), so `_player_pos` freezes wherever it was and a
+	snapshot read would sing forever inside 80 m — or never start outside it —
+	until the map reopens. The group lookup is the same one the tick uses; a
+	scene with no player body falls back to the snapshot."""
+	if not _has_target_landmark:
+		return INF
+	var origin: Vector3 = _player_pos
+	var player := get_tree().get_first_node_in_group("player")
+	if player is Node3D:
+		origin = (player as Node3D).global_position
+	return Vector2(origin.x - _target_landmark_pos.x, origin.z - _target_landmark_pos.z).length()
+
+
+func compass_target_pos() -> Vector3:
+	"""The held compass target's world position (Vector3.ZERO when none) — the
+	other half of the seam above; the driver hands it to the toast's is_visited
+	for the arrival read."""
+	return _target_landmark_pos if _has_target_landmark else Vector3.ZERO
+
+
 func _gather_landmark_compass() -> void:
 	"""The landmark compass (bead godot-test1-uj0u): points at ONE nearest unvisited
 	landmark among loaded group "landmark" nodes.

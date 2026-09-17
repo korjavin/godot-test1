@@ -291,6 +291,40 @@ const CAR_HORN_NOTE_DURATION: float = 0.13
 const CAR_HORN_GAP: float = 0.07
 const CAR_HORN_VOLUME_DB: float = -9.0
 
+# --- Road music: an approach motif that resolves at a landmark or a waypoint circle (bead godot-test1-bv0f). ---
+## A feel layer, not a cue: while the landmark compass target (bead uj0u) or a
+## waypoint circle is within ~80 m, the driver below sings a slow rising line —
+## one coin-buffer tap every MOTIF_NOTE_EVERY ticks — and on arrival (the target
+## visited, or the standing_on edge) it lands a two-tap cadence. Every 25th coin
+## pickup queues a one-bar descending phrase, one tap per tick.
+##
+## WHY A REPLAY, NOT A NEW SYNTH: the waypoint_found precedent in this file —
+## the coin buffer IS a struck bell (see _synth_coin), and at low pitch, low
+## volume and half-second spacing it reads as a music box rather than a pickup.
+## A new recipe would buy nothing over that but web bytes. The contours are what
+## keep the three apart by ear: motif RISES pentatonic, phrase FALLS a fourth,
+## resolve steps fifth-to-octave, and none of them is waypoint_found's stacked
+## rising triad.
+##
+## DUCKING IS SKIPPING: one-shots cannot duck mid-flight, and starting even a
+## quiet note under a chase still steals a pool voice from the acquisition cue
+## it must yield to — so while any crocodile's is_chasing is set the driver
+## holds its state and takes no voice. Per-peer cosmetic: the driver reads only
+## local groups, sends no verb, touches no seed.
+const ROAD_MOTIF_RANGE: float = 80.0      # approach starts inside this many metres
+const ROAD_MOTIF_TICK: float = 0.25       # driver step; music needs nothing faster
+const ROAD_MOTIF_NOTE_EVERY: int = 2      # a motif note every 2nd tick = 0.5 s apart
+const ROAD_PHRASE_EVERY: int = 25         # one-bar phrase every N coin pickups
+const ROAD_MOTIF_PITCHES: Array[float] = [1.0, 1.1225, 1.2599, 1.4983, 1.6818]
+## A B C# E F# off the coin's A5 — a pentatonic climb, then it holds the top.
+const ROAD_RESOLVE_PITCHES: Array[float] = [1.5, 2.0]  # fifth into the octave: a cadence
+const ROAD_PHRASE_PITCHES: Array[float] = [2.0, 1.5, 1.2599, 1.0]
+## Down a fourth across one bar — the falling contour is what tells it apart
+## from waypoint_found's three RISING taps on this same buffer.
+const ROAD_MOTIF_VOLUME_DB: float = -18.0  # under every one-shot (quietest is footstep -14)
+const ROAD_PHRASE_VOLUME_DB: float = -15.0  # a phrase, not a cue: under the coin blip (-8)
+const ROAD_RESOLVE_VOLUME_DB: float = -12.0  # an arrival earns presence, still under the threat cues (growl -8, bite -6)
+
 # --- Danger heartbeat: ONE looping "lub-dub" cycle, driven externally. ---
 ## The danger vignette fetches this via get_loop_player("heartbeat") and owns
 ## play/stop/pitch/volume itself — we only bake the stream and park the player.
@@ -320,6 +354,19 @@ var _next_player: int = 0
 ## a named player via get_loop_player() instead of adding their own audio
 ## nodes, so all voices stay owned by this one manager.
 var _loop_players: Dictionary = {}
+
+## Road-music driver state (bead godot-test1-bv0f — see ROAD_MOTIF_* consts).
+## All of it is holdable: a chase or a missing scene freezes the music without
+## losing its place, and every read below degrades when a group is absent.
+var _road_acc: float = 0.0            # _process time banked toward the next tick
+var _road_approaching: bool = false   # inside 80 m of a target, singing the rise
+var _road_has_target: bool = false    # the approach is following a live compass target ...
+var _road_target_pos: Vector3 = Vector3.ZERO  # ...at this position, remembered across the compass's drop
+var _road_note_idx: int = 0           # climb position in ROAD_MOTIF_PITCHES (holds the top)
+var _road_note_cd: int = 0            # ticks until the next motif note
+var _road_phrase: Array = []          # queued phrase taps, one per tick
+var _road_pickups: int = 0            # lifetime pickups seen (every-N counter)
+var _road_stood: bool = false         # standing_on edge latch for the circle resolve
 
 
 # ============================================================================
@@ -383,6 +430,17 @@ func _input(event: InputEvent) -> void:
 		if event.is_pressed():
 			unlock_audio()
 			set_process_input(false)
+
+
+func _process(delta: float) -> void:
+	## Bank frame time toward the road-music driver (bead bv0f). At most one
+	## tick per frame — after a stall the music resumes a beat late rather than
+	## dumping a catch-up burst through the one-shot pool. The tick itself is
+	## still gated on _unlocked, so frames before the first gesture only bank.
+	_road_acc += delta
+	if _road_acc >= ROAD_MOTIF_TICK:
+		_road_acc = 0.0
+		tick_road_music()
 
 
 # ============================================================================
@@ -575,6 +633,135 @@ func play_projectile(style: String) -> void:
 	## honoured: there is no path here that bypasses _unlocked.
 	var cue: Dictionary = PROJECTILE_SOUNDS.get(style, PROJECTILE_SOUND_FALLBACK)
 	_play_oneshot(cue["stream"], cue["db"], cue["pitch"])
+
+
+func notify_coin_pickup(count: int = 1) -> void:
+	## `count` pickups changed hands on THIS peer — fired from
+	## PlayerController.collect_coin() (solo and the local fallback, one at a
+	## time) and bank_awarded() (a claim confirm won here, carrying the claim's
+	## whole count), so every pickup the local player banks is counted exactly
+	## once whichever path paid it.
+	##
+	## The count is walked ONE BY ONE rather than added, so a multi-pickup award
+	## that steps OVER a multiple still queues its bar — a chest's burst must
+	## land the phrase exactly as often solo as in a room.
+	##
+	## Counting is not playback: this takes no pool voice and ignores the
+	## gesture gate, so pickups before the first input still count toward the
+	## phrase — the queued taps only SOUND once tick_road_music() is unlocked.
+	for _i in maxi(1, int(count)):
+		_road_pickups += 1
+		if _road_pickups % ROAD_PHRASE_EVERY == 0:
+			_road_phrase = ROAD_PHRASE_PITCHES.duplicate()
+
+
+func tick_road_music() -> void:
+	## One ROAD_MOTIF_TICK step of the road-music driver (bead godot-test1-bv0f).
+	## _process() accumulates into this; probes call it directly, which is also
+	## what makes the motif's timing checkable voice by voice.
+	##
+	## Every signal is group discovery with a has_method guard, so a scene with
+	## no minimap / hub / toast / crocodiles plays only what it can: the phrase
+	## queue needs no scene at all, and distance reads degrade to INF.
+	if not _unlocked:
+		return  # the gesture gate — the negative control for every note below
+	if _road_chase_on():
+		return  # DUCKING IS SKIPPING (see ROAD_MOTIF_*): hold state, steal no voice
+	if not _road_phrase.is_empty():
+		_play_oneshot("coin", ROAD_PHRASE_VOLUME_DB, float(_road_phrase.pop_front()))
+	var player := get_tree().get_first_node_in_group("player")
+	if player == null or not (player is Node3D):
+		return
+	var ppos: Vector3 = (player as Node3D).global_position
+
+	# --- The waypoint half: approach inside 80 m, resolve on the stood edge. ---
+	var hub := get_tree().get_first_node_in_group("waypoint_hub")
+	var stood: bool = false
+	var circle_dist: float = INF
+	if hub != null:
+		if hub.has_method("standing_on"):
+			stood = int(hub.call("standing_on")) >= 0
+		if hub.has_method("nearest_circle_distance"):
+			circle_dist = float(hub.call("nearest_circle_distance", ppos))
+	if stood and not _road_stood:
+		_play_resolve()
+		_road_approaching = false
+	_road_stood = stood
+
+	# --- The landmark half: approach the compass target, resolve when visited. ---
+	var compass := get_tree().get_first_node_in_group("minimap")
+	var target_dist: float = INF
+	var has_target: bool = false
+	var target_pos := Vector3.ZERO
+	if compass != null and compass.has_method("compass_target_distance"):
+		target_dist = float(compass.call("compass_target_distance"))
+		has_target = target_dist < INF
+		if has_target and compass.has_method("compass_target_pos"):
+			target_pos = compass.call("compass_target_pos") as Vector3
+	var approach_dist: float = minf(circle_dist, target_dist)
+	# THE ARRIVAL READ, AND THE RACE IT CLOSES. The toast marks a landmark visited
+	# on arrival, but the compass drops a visited target on its own 0.2 s refresh
+	# while this driver polls every 0.25 s — so the visit can land between the two
+	# and the target is simply GONE on the next tick, which a live-target-only
+	# read answers with silence instead of the owed cadence. Hence the remembered
+	# position: while a target is live it is re-remembered every tick, and on the
+	# tick it is gone the toast is asked about the remembered one — visited there
+	# resolves, anything else is a loss. Only a position ever read live is
+	# remembered, so a compass without the pos seam degrades to loss, never to a
+	# cadence against the origin. This runs BEFORE the range check below, because
+	# a dropped target reads as out of range and must still earn its cadence.
+	var toast := get_tree().get_first_node_in_group("landmark_toast")
+	var toast_ok: bool = toast != null and toast.has_method("is_visited")
+	if has_target and compass.has_method("compass_target_pos"):
+		_road_target_pos = target_pos
+		_road_has_target = true
+	if _road_has_target and toast_ok \
+			and bool(toast.call("is_visited", _road_target_pos if not has_target else target_pos)):
+		_play_resolve()
+		_road_approaching = false
+		_road_has_target = false
+		return
+	if not has_target and _road_has_target:
+		# The target unloaded unvisited: no cadence — but the approach itself may
+		# carry on if a circle is in range, so this falls through to the range
+		# check instead of returning. A resolve is owed to an ARRIVAL, not a loss.
+		_road_has_target = false
+	if stood or approach_dist > ROAD_MOTIF_RANGE:
+		if _road_approaching and not stood:
+			# Walked away with nothing in range: stop, no cadence.
+			_road_approaching = false
+			_road_has_target = false
+		return
+	if not _road_approaching:
+		_road_approaching = true
+		_road_note_idx = 0
+		_road_note_cd = 0
+	# ...still on the road: climb the rise, then hold the top while closing in.
+	if _road_note_cd <= 0:
+		_play_oneshot("coin", ROAD_MOTIF_VOLUME_DB,
+				ROAD_MOTIF_PITCHES[mini(_road_note_idx, ROAD_MOTIF_PITCHES.size() - 1)])
+		_road_note_idx += 1
+		_road_note_cd = ROAD_MOTIF_NOTE_EVERY - 1
+	else:
+		_road_note_cd -= 1
+
+
+func _road_chase_on() -> bool:
+	## Whether any predator is chasing the local player right now — the ducking
+	## read. `in` before `get` (the waypoint hub's _hero_unavailable discipline),
+	## so a "crocodile" without the flag degrades instead of erroring.
+	for c in get_tree().get_nodes_in_group("crocodile"):
+		if "is_chasing" in c and bool(c.get("is_chasing")):
+			return true
+	return false
+
+
+func _play_resolve() -> void:
+	## The arrival cadence: two stacked taps of the coin buffer, fifth into the
+	## octave (see ROAD_RESOLVE_PITCHES) — play_waypoint_found's trick, but a
+	## cadence rather than a chime, and it only ever fires on an arrival edge.
+	for pitch: float in ROAD_RESOLVE_PITCHES:
+		_play_oneshot("coin", ROAD_RESOLVE_VOLUME_DB, pitch)
 
 
 # ============================================================================
