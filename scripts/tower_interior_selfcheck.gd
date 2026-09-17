@@ -479,10 +479,22 @@ func _check_lift_call_cell_wears_a_plate() -> void:
 			_fail("storey %d's lift plate is on cell %s, but lift_cell() names %s" % [
 				floor_index, str(at), str(cell)])
 		var rows: Array = plan["rows"]
-		if at.y < 0 or at.y >= rows.size() or at.x < 0 or at.x >= String(rows[at.y]).length() \
-				or String(rows[at.y])[at.x] != TowerPlans.LANDING_CHAR:
-			_fail("storey %d's lift plate is on cell %s, which is not an `s` landing " % [
-				floor_index, str(at)] + "cell")
+		# ...and the character under it is the lift's call cell: the `L` (bead
+		# godot-test1-sch8), or the `s` the centroid fallback names on a storey
+		# that draws none. Read off the GRID rather than off `lift_cell()` — the
+		# lines above already pin the plate to that function's answer, so this
+		# is the independent leg saying the answer is a call cell and not a
+		# stale centroid.
+		var ch := ""
+		if at.y >= 0 and at.y < rows.size() and at.x >= 0 \
+				and at.x < String(rows[at.y]).length():
+			ch = String(rows[at.y])[at.x]
+		if ch != TowerPlans.LIFT_CHAR and ch != TowerPlans.LANDING_CHAR:
+			_fail("storey %d's lift plate is on cell %s, which is neither an `L` " % [
+				floor_index, str(at)] + "lift call cell nor an `s` landing cell")
+		elif ch == TowerPlans.LANDING_CHAR and _storey_draws_lift(rows):
+			_fail("storey %d's lift plate is on an `s` cell although the storey " % [
+				floor_index] + "draws an `L` — the paint did not follow the call point")
 		# Never on a lure pad: the confusion this plate exists to end.
 		if TowerInterior.pad_cells(plan).has(at):
 			_fail("storey %d's lift plate is on cell %s, which is a `P` lure pad" % [
@@ -3350,6 +3362,16 @@ func _plan_cell(rows: Array, cell: Vector2i) -> String:
 	if cell.x < 0 or cell.x >= line.length():
 		return TowerPlans.WALL_CHAR
 	return line[cell.x]
+
+
+static func _storey_draws_lift(rows: Array) -> bool:
+	## Does this storey's grid draw an `L` lift call cell? Presence only — the
+	## cell itself, and what stands on it, stay `TowerInterior.lift_cell()`'s
+	## business, so this cannot agree with the builder about the answer.
+	for r: int in rows.size():
+		if String(rows[r]).contains(TowerPlans.LIFT_CHAR):
+			return true
+	return false
 
 
 func _letter_cells(rows: Array, letter: String) -> Array[Vector2i]:
