@@ -93,6 +93,7 @@ const SkillTreeUi := preload("res://scripts/skill_tree_ui.gd")
 const TowerLiftMenu := preload("res://scripts/tower_lift_menu.gd")
 const LandmarkToast := preload("res://scripts/landmark_toast.gd")
 const MultiplayerUI := preload("res://scripts/mp_ui.gd")
+const PassportPanel := preload("res://scripts/passport_panel.gd")
 
 const PLAYER_SCENE: String = "res://scenes/player.tscn"
 
@@ -236,6 +237,7 @@ static func panel_key_owners() -> Array:
 		[[SkillTreeUi.TOGGLE_KEY], "skill_tree_ui.TOGGLE_KEY"],
 		[[TowerLiftMenu.TOGGLE_KEY], "tower_lift_menu.TOGGLE_KEY"],
 		[[MultiplayerUI.TOGGLE_KEY], "mp_ui.TOGGLE_KEY"],
+		[[PassportPanel.TOGGLE_KEY], "passport_panel.TOGGLE_KEY"],
 		[HelpOverlay.HELP_KEYCODES, "help_overlay.HELP_KEYCODES"],
 		[LandmarkToast.ANSWER_KEYCODES, "landmark_toast.ANSWER_KEYCODES"],
 		[PlayerScript.HERO_KEYCODES, "player_controller.HERO_KEYCODES"],

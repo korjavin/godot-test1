@@ -165,6 +165,28 @@ const LS_VOICE_VOLUME: String = "ck_voice_volume"
 const CONFIG_TOWER_SECTION: String = "tower"
 const CONFIG_TOWER_KEY: String = "opened_ids"
 
+## Desktop section and localStorage key for THE DISCOVERY PASSPORT's found set
+## (bead godot-test1-0bnw.1) — one monotone union of field-landmark ids, on the
+## tower set's footing: run-independent, never cleared by new_game(), and read
+## with the same silent-failure rule. BOTH local layers, unlike the tower set:
+## cfg `[passport] found` on desktop, and on web `ck_found_landmarks` in
+## localStorage — the banner's measured reason for localStorage (setItem has
+## committed when it returns) applies to a stamp earned a second before the tab
+## closes. On web BOTH are read (the one-way migration idiom) and LS is written.
+const CONFIG_PASSPORT_SECTION: String = "passport"
+const CONFIG_PASSPORT_KEY: String = "found"
+const LS_FOUND: String = "ck_found_landmarks"
+
+## Hard bound on the stored passport set, at BOTH ends. Same discipline as
+## MAX_TOWER_IDS: the 48 field kinds need less than half of this, so 128 is
+## headroom against a hand-edited dump, not a limit on discovery.
+const MAX_FOUND_IDS: int = 128
+
+## A passport id is the registry builder minus `_landmark_` — lowercase ASCII,
+## digits and underscores — and the store holds the line at 32 characters.
+const FOUND_ID_PATTERN: String = "^[a-z0-9_]{1,32}$"
+static var _found_id_rx: RegEx = null
+
 ## THE WORLD ARCHIVE — the full-custody protocol's failure record (phase 11).
 ##
 ## `[world] archived = true` and nothing else. Its own section, and the choice of
@@ -643,6 +665,142 @@ static func _sanitize_tower_ids(parsed: Variant) -> Array[String]:
 			break
 		if typeof(id) == TYPE_STRING and not String(id).is_empty() and not out.has(id) \
 				and not TowerGraph.is_lift_stop_id(String(id)):
+			out.append(String(id))
+	out.sort()
+	return out
+
+
+# =============================================================================
+# THE DISCOVERY PASSPORT — a monotone union of found field-landmark ids
+# =============================================================================
+#
+# WHY IT IS HERE AND NOT IN A STORE OF ITS OWN: the tower set's reason, one
+# dimension over — the same local file, the same read-modify-write merge, the
+# same silent-failure rule, and (unlike the tower set) the same localStorage
+# half the scalars use, because a stamp earned a second before the tab closes
+# must already have committed.
+#
+# WHY IT IS STATIC AND INSTANCE-FREE: the tower set's reason again —
+# `landmark_toast.gd` is a widget, not a node that owns records. It needs two
+# calls, "what did I find before" and "remember I was just here", and neither
+# wants an HTTPRequest pair, a player id or a fetch(). Both are complete round
+# trips to the local layers.
+#
+# UNION ONLY, on every layer (child 2 adds the lobby `/best` one). A landmark
+# only ever gets FOUND — there is no un-finding — so the newer of two copies is
+# the superset and `stored | ours` is always the right answer. `new_game()`
+# clears the world latch and nothing else, so the passport outlives the run the
+# way the meta-progression counters do. No payout, no percentage: the panel
+# counts, it never pays.
+
+static func found_landmark_ids() -> Array[String]:
+	"""
+	The field-landmark ids this profile has ever found.
+
+	@return: A fresh sorted Array of String — the caller may keep or mutate it.
+
+	A missing file, a missing key, a truncated value or a hand-edited mess all
+	read as "nothing found yet", for the tower set's reason: the passport
+	simply opens empty and can be filled again. On web the localStorage layer
+	is read FIRST and the cfg layer second, so a pre-switch record is kept
+	(the one-way migration idiom) and the union of the two answers.
+	"""
+	var merged: Array[String] = []
+	if OS.has_feature("web"):
+		merged = _sanitize_found_ids(_parse_found_json(_ls_get(LS_FOUND)))
+	var cfg := ConfigFile.new()
+	if cfg.load(config_path) == OK:
+		var raw := String(cfg.get_value(CONFIG_PASSPORT_SECTION, CONFIG_PASSPORT_KEY, ""))
+		for id: String in _sanitize_found_ids(_parse_found_json(raw)):
+			if not merged.has(id):
+				merged.append(id)
+	merged.sort()
+	return merged
+
+
+static func merge_found_landmark_ids(ids: Array) -> void:
+	"""
+	Fold `ids` into the stored found set and save it. The only writer.
+
+	@param ids: The ids to add. Already-stored ones cost nothing.
+
+	READ-MODIFY-WRITE, for the tower set's reason: without the re-read a toast
+	hydrated from a stale copy would write its own smaller set over the larger
+	one on disk, and a found landmark would un-find itself. Merged back through
+	the sanitizer, so a profile written by an older build self-heals the same
+	way the tower set does.
+
+	Called on a run's FIRST arrival at a field landmark and nowhere else — rare
+	and precious, so it writes immediately rather than batching to a later
+	flush that a crash eats. Failures are ignored, for `_write_local`'s reason.
+	"""
+	var stored := found_landmark_ids()
+	var merged := stored.duplicate()
+	for id: Variant in ids:
+		if merged.size() >= MAX_FOUND_IDS:
+			break
+		# The `not merged.has(id)` guard is redundant defense: `_sanitize_found_ids`
+		# below dedupes anyway, so dropping it changes nothing observable (a review
+		# mutation proved it stays green). It stays because the tower set's merge
+		# carries the same guard, and the raw stored layer should hold the union,
+		# not the union plus the evidence of how many times it was merged.
+		if typeof(id) == TYPE_STRING and _found_id_ok(String(id)) and not merged.has(id):
+			merged.append(String(id))
+	merged = _sanitize_found_ids(merged)
+	# NOTHING NEW, NOTHING WRITTEN. Re-finding an id must not recreate a profile
+	# the player deleted (the tower set's 13c idiom), nor cost a ConfigFile round
+	# trip on every revisit.
+	if merged == stored:
+		return
+	if OS.has_feature("web"):
+		_ls_set(LS_FOUND, JSON.stringify(merged))
+	var cfg := ConfigFile.new()
+	cfg.load(config_path)  # keep the records, the counters and the player id intact
+	cfg.set_value(CONFIG_PASSPORT_SECTION, CONFIG_PASSPORT_KEY, JSON.stringify(merged))
+	cfg.save(config_path)
+
+
+static func _parse_found_json(raw: String) -> Variant:
+	"""
+	Decode one stored found layer. Anything that is not a JSON array reads as
+	"nothing stored" — a missing key, an empty string and a corrupt value alike.
+	"""
+	if raw.is_empty():
+		return []
+	# `JSON.new().parse()` rather than `JSON.parse_string()`, for the tower
+	# set's reason: a truncated or hand-edited record is an expected state on
+	# this path, not an incident, and must not print an engine error.
+	var json := JSON.new()
+	if json.parse(raw) != OK:
+		return []
+	return json.data
+
+
+static func _found_id_ok(id: String) -> bool:
+	"""Whether `id` is shaped like a passport id (see FOUND_ID_PATTERN)."""
+	if _found_id_rx == null:
+		_found_id_rx = RegEx.new()
+		_found_id_rx.compile(FOUND_ID_PATTERN)
+	return _found_id_rx.search(id) != null
+
+
+static func _sanitize_found_ids(parsed: Variant) -> Array[String]:
+	"""
+	Turn whatever came out of the store into a sorted, bounded Array of String.
+
+	Anything that is not a JSON array is nothing; a non-string or misshapen
+	entry is skipped rather than rejecting the whole set, for the tower set's
+	reason — the rest of what a player found is worth keeping. Duplicates
+	collapse, because this is a SET, and the 129th id is dropped, because a
+	hand-edited dump is walked with a bound or not at all.
+	"""
+	var out: Array[String] = []
+	if typeof(parsed) != TYPE_ARRAY:
+		return out
+	for id: Variant in parsed as Array:
+		if out.size() >= MAX_FOUND_IDS:
+			break
+		if typeof(id) == TYPE_STRING and _found_id_ok(String(id)) and not out.has(String(id)):
 			out.append(String(id))
 	out.sort()
 	return out

@@ -1379,6 +1379,16 @@ func _first_visit(marker: Node3D) -> bool:
 	if _visited.has(id):
 		return false
 	_visited[id] = true
+	# DISCOVERY PASSPORT (bead godot-test1-0bnw.1): stamp the run's first arrival
+	# into the monotone union store — on ARRIVAL, before any question is asked,
+	# so a wrong answer still stamps (the passport records that you WERE there;
+	# the quiz gates coins only). kind meta → registry builder minus the prefix;
+	# city arrivals never reach here (`_arrive_city` is their path), and the
+	# has_meta guard keeps it that way if one ever does.
+	if marker.has_meta("kind"):
+		var kind: int = clampi(int(marker.get_meta("kind")), 0, LandmarkBuilders.LANDMARKS.size() - 1)
+		var builder: String = String(LandmarkBuilders.LANDMARKS[kind]["builder"])
+		BestRunStore.merge_found_landmark_ids([builder.trim_prefix("_landmark_")])
 	return true
 
 

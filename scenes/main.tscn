@@ -34,6 +34,7 @@
 [ext_resource type="Script" path="res://scripts/event_log_hud.gd" id="35_eventlog"]
 [ext_resource type="Script" path="res://scripts/help_hint.gd" id="36_helphint"]
 [ext_resource type="Script" path="res://scripts/waypoint_hub.gd" id="37_waypoint"]
+[ext_resource type="Script" path="res://scripts/passport_panel.gd" id="38_passport"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.25, 0.45, 0.75, 1)
@@ -346,6 +347,15 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("37_waypoint")
+
+[node name="PassportPanel" type="Control" parent="HUD"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("38_passport")
 
 [node name="TowerLiftMenu" type="Control" parent="HUD"]
 anchors_preset = 15
