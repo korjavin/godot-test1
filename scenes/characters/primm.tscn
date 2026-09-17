@@ -1,4 +1,4 @@
-[gd_scene load_steps=2 format=3 uid="uid://c8primm001"]
+[gd_scene load_steps=3 format=3 uid="uid://c8primm001"]
 
 ; PRIMM, SKINNED — bead godot-test1-5u3.6, the second hero in this game on a
 ; Skeleton3D and the first one whose HEAD BONE does any work. One mesh on MPFB2's
@@ -33,9 +33,55 @@
 ; every UNRIGGED part scene applies would lay the hero on his face.
 
 [ext_resource type="PackedScene" path="res://assets/models/characters/primm_parts/primm_skinned.glb" id="1_body"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/primm_parts/primm_swords.glb" id="2_swords"]
 
 [node name="Primm" type="Node3D"]
 
 [node name="Body" type="Node3D" parent="."]
 
 [node name="Mesh" parent="Body" instance=ExtResource("1_body")]
+
+; THE SWORDS ARE A BoneAttachment3D, AND THEY ARE DATA. Two sheathed katanas
+; crossed in an X on his back, built by `scripts/generate_primm_swords.py` —
+; rigid geometry the skeleton carries, never skinned. `player_abilities.gd`
+; has never looked this node up — there is no iaido here, they are set
+; dressing the chest bone carries — so hanging them is a scene edit and
+; nothing else.
+;
+;   * `use_external_skeleton`, NOT editable children, and that is the "survives
+;     a re-import" half of the bead's question: the fan's reasoning in
+;     `windman_updated.tscn` holds here word for word — an external skeleton
+;     is ONE NodePath resolved at run time, which a rebuilt .glb either still
+;     answers or fails loudly on. `build_hero.py` names the armature, so
+;     `Armature/Skeleton3D` is stable across rebuilds.
+;   * The OFFSET lives on the child, never on the attachment: BoneAttachment3D
+;     overwrites its own transform with the bone's pose every frame (the
+;     `CameraArm` rule in CLAUDE.md, same failure mode).
+;   * The basis is MEASURED, not guessed, and it maps the prop frame into the
+;     chest frame: `spine_03` rests with x (-1.0000, 0.0000, 0.0000),
+;     y (0.0000, 0.9750, 0.2222), z (0.0000, 0.2222, -0.9750) — read off
+;     `Skeleton3D.get_bone_global_rest()` on the shipped scene by a headless
+;     probe, which is also where the numbers below come from. The prop is
+;     authored trimesh Z-up with +Y front (the fan's convention); at rest its
+;     +Z must stand on world UP and its +Y on world FRONT, i.e. Godot's -Z.
+;     So the columns below are the prop's axes in the bone's frame — +Z on
+;     world up, +Y on world -Z — and the X sits flat on the shoulder blades
+;     with the hilts up past the shoulders and the tips splayed past the coat
+;     tails. Expressed in the BONE's frame, so it is not a world lock: the
+;     pair rides the chest every time he leans, which is what the stride
+;     frames are for.
+;   * The 20 cm up / 9 cm back off the bone's origin is the X crossing:
+;     world (0, 1.32, 0.150) at rest. The 30° tilt and the 0.72 m saya put the
+;     hilts up past the shoulders (~1.54) and the tips down at hip height
+;     (±0.36, 0.70, 0.15) — splayed 15 cm past the coat's x-range, just behind
+;     its back plane. Nearest approach 146 mm to the coat volume, 200 mm to any
+;     body vertex, measured headless on the shipped scene (`primm_swords_selfcheck`
+;     asserts > 5 mm; the bead's report carries the full numbers).
+;
+[node name="Swords" type="BoneAttachment3D" parent="Body"]
+bone_name = "spine_03"
+use_external_skeleton = true
+external_skeleton = NodePath("../Mesh/Armature/Skeleton3D")
+
+[node name="Mesh" parent="Body/Swords" instance=ExtResource("2_swords")]
+transform = Transform3D(-1, 0, 0, 0, -0.2222, 0.975, 0, 0.975, 0.2222, 0.0001, 0.1993, -0.0903)

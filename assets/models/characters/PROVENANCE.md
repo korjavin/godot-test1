@@ -85,6 +85,15 @@ become a texture either: `build_hero.paint_chest_glyph` paints it into the body'
 colours over a chest `densify_chest` splits once, which is what let the `shapely` /
 `mapbox-earcut` pins leave `scripts/requirements.txt` with bead 5u3.5.
 
+WHAT SURVIVED PRIMM'S GENERATOR is `primm_swords.glb` (65,716 bytes): a prop, not a
+body, hung on the `spine_03` bone by a `BoneAttachment3D` in `primm.tscn` — bead
+godot-test1-z629 gives him the fan's idiom back (owner: "two samurai swords on his
+back"). Two sheathed katanas crossed ±30° on the shoulder blades, hilts up past the
+shoulders, tips splayed past the coat tails; the saya tubes interpenetrate where they
+cross, the lashed look, the way the fan's petals sink into its hub. Rebuilt and diffed
+by CI beside the fan, and `scripts/primm_swords_selfcheck.gd` pins the binding on the
+local hero and the remote mirror and the tip clearance at rest.
+
 ## The GARMENTS ARE CLOTH (beads godot-test1-td8, the spike; godot-test1-21m, the rollout)
 
 Owner, 2026-09-12, on `docs/style/z3e/grid_27_cloth_spike.png`: **"i choose A+B+D"**. Spike
@@ -136,4 +145,4 @@ godot --headless --path . --import
 
 ## CI Model Gate
 
-The CI model rebuild step (`.github/workflows/build.yml`) only runs the procedural generators (`generate_windman_fan.py` — his FAN alone since bead godot-test1-5u3.5 — `generate_phoboman_separate.py`, which still builds his whole part tree, and `predator_parts.py`). Because the generators no longer emit these authored file names — and, since beads godot-test1-5u3.3 and .6, there is no Teibi or Primm generator at all — `git status --porcelain -- assets/models/characters` stays clean by construction; a generated part edited by hand is still caught immediately. `build_hero.py` needs Blender and MPFB2, which the runner does not have, so the skinned bodies are outside that gate — and, since bead godot-test1-5u3.4, they have their own: a `stat`-only step asserts every skinned `.glb`'s byte size still matches its row in `scripts/hero_manifest.json`, which `build_hero.py` rewrites on every rebuild. A hand-edited skinned hero is caught there the way a hand-edited hydra is caught by the dirty check. The full rebuild-and-diff is `build_hero.py -- --all --check`, run by hand where Blender exists; size and not a checksum, because the glTF exporter may permute one primitive's triangle order between two otherwise identical runs.
+The CI model rebuild step (`.github/workflows/build.yml`) only runs the procedural generators (`generate_windman_fan.py` — his FAN alone since bead godot-test1-5u3.5 — `generate_primm_swords.py`, his SWORDS alone since bead godot-test1-z629, `generate_phoboman_separate.py`, which still builds his whole part tree, and `predator_parts.py`). Because the generators no longer emit these authored file names — and, since beads godot-test1-5u3.3 and .6, there is no Teibi or Primm generator at all — `git status --porcelain -- assets/models/characters` stays clean by construction; a generated part edited by hand is still caught immediately. `build_hero.py` needs Blender and MPFB2, which the runner does not have, so the skinned bodies are outside that gate — and, since bead godot-test1-5u3.4, they have their own: a `stat`-only step asserts every skinned `.glb`'s byte size still matches its row in `scripts/hero_manifest.json`, which `build_hero.py` rewrites on every rebuild. A hand-edited skinned hero is caught there the way a hand-edited hydra is caught by the dirty check. The full rebuild-and-diff is `build_hero.py -- --all --check`, run by hand where Blender exists; size and not a checksum, because the glTF exporter may permute one primitive's triangle order between two otherwise identical runs.
