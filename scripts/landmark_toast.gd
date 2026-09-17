@@ -1316,6 +1316,19 @@ func is_quiz_pending() -> bool:
 	return _quiz_pending
 
 
+func is_visited(pos: Vector3) -> bool:
+	"""
+	Is the landmark at world position `pos` already visited in this run?
+
+	Public read over the run-bound `_visited` set for reverse lookups (e.g. the
+	minimap landmark compass, bead godot-test1-uj0u). Pure, carries no RNG draw,
+	and allocates nothing.
+	"""
+	_sync_run()
+	var id: int = COIN_SCRIPT.id_at(pos)
+	return _visited.has(id)
+
+
 func _hide_options() -> void:
 	"""
 	Put the option rows away. Hidden AND back to MOUSE_FILTER_IGNORE: the card

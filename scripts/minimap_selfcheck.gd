@@ -261,6 +261,8 @@ func _run() -> void:
 	if failure.is_empty():
 		failure = _check_landmarks()
 	if failure.is_empty():
+		failure = _check_landmark_compass()
+	if failure.is_empty():
 		failure = await _check_terrain()
 	if failure.is_empty():
 		failure = await _check_river()
@@ -970,6 +972,209 @@ func _check_landmarks() -> String:
 	print("landmarks: %d loaded + probe -> X at disc, rim clamp follows zoom, none when unregistered" \
 		% baseline)
 	Sentinel.done("landmarks")
+	return ""
+
+
+func _check_landmark_compass() -> String:
+	"""The landmark compass (bead godot-test1-uj0u): nearest unvisited target tracking,
+	hysteresis against rivals, off-disc rim arrow vs on-disc bold X mark, anonymous approach
+	caption, quiz and indoor suppression, and memo reset.
+	"""
+	var map: Control = root.get_node_or_null("Main/HUD/MinimapHUD")
+	var player: Node3D = get_first_node_in_group("player")
+	var toast: Control = get_first_node_in_group("landmark_toast")
+	var caption_label: Label = get_first_node_in_group("world_caption")
+	var terrain: Node = get_first_node_in_group("terrain")
+	if map == null or player == null or toast == null or caption_label == null:
+		return "missing MinimapHUD, player, landmark_toast, or world_caption for compass check"
+
+	var origin: Vector3 = player.global_position
+
+	# Unregister world-generated landmarks temporarily so test controls all candidates:
+	var world_landmarks := get_nodes_in_group("landmark")
+	for m in world_landmarks:
+		m.remove_from_group("landmark")
+
+	var probes: Array[Node3D] = []
+	var failure := ""
+
+	while true:
+		map.reset_landmark_compass()
+		map._zoom_index = map.ZOOM_DEFAULT_INDEX
+		map._floor_text = ""
+		toast._quiz_pending = false
+		map._tick()
+
+		# 1. Empty group -> no target, no compass arrow, no bold mark.
+		if map._has_target_landmark:
+			failure = "empty landmark group still selected a target"
+			break
+		if map._show_landmark_compass_arrow:
+			failure = "compass arrow shown with empty landmark group"
+			break
+		if map._target_landmark_on_disc:
+			failure = "target landmark marked on disc with empty landmark group"
+			break
+
+		# 2. Single off-disc landmark at 150 m (+X):
+		var probe_a := Node3D.new()
+		root.add_child(probe_a)
+		probes.append(probe_a)
+		probe_a.global_position = origin + Vector3(150.0, 0.0, 0.0)
+		probe_a.add_to_group("landmark")
+		caption_label.text = ""
+		map._tick()
+
+		if not map._has_target_landmark or map._target_landmark_node != probe_a:
+			failure = "single unvisited landmark 150 m away was not selected as target"
+			break
+		if not map._show_landmark_compass_arrow:
+			failure = "off-disc target landmark (150 m) did not show rim compass arrow"
+			break
+		if map._target_landmark_on_disc:
+			failure = "off-disc target landmark (150 m) was marked on-disc"
+			break
+		# Arrow tip pointing right along +X
+		var tip: Vector2 = map._landmark_compass_arrow_points[0]
+		if tip.x <= map.MAP_CENTER.x + 1.0 or absf(tip.y - map.MAP_CENTER.y) > 1.0:
+			failure = "compass arrow tip (%s) did not point toward +X" % tip
+			break
+		# At 150 m (> 120 m), caption must NOT fire
+		if not caption_label.text.is_empty():
+			failure = "caption fired at 150 m (> 120 m trigger): %s" % caption_label.text
+			break
+
+		# 3. Approach landmark to 100 m (< 120 m) -> caption fires once:
+		probe_a.global_position = origin + Vector3(100.0, 0.0, 0.0)
+		caption_label.text = ""
+		map._tick()
+		var expected_caption: String = tr("Something odd ahead, %d m") % 100
+		if caption_label.text != expected_caption:
+			failure = "approach caption at 100 m expected '%s', got '%s'" % [expected_caption, caption_label.text]
+			break
+		# Tick again -> caption should not fire again
+		caption_label.text = ""
+		map._tick()
+		if not caption_label.text.is_empty():
+			failure = "approach caption fired a second time for the same landmark"
+			break
+
+		# 4. Hysteresis:
+		# Current target is probe_a at 100 m.
+		# Add probe_b at 90 m (10% nearer, ratio 0.90 >= 0.75): hysteresis must HOLD probe_a.
+		var probe_b := Node3D.new()
+		root.add_child(probe_b)
+		probes.append(probe_b)
+		probe_b.global_position = origin + Vector3(90.0, 0.0, 0.0)
+		probe_b.add_to_group("landmark")
+		map._tick()
+		if map._target_landmark_node != probe_a:
+			failure = "hysteresis failed: target switched to rival only 10% nearer"
+			break
+
+		# Add probe_c at 50 m (50% nearer than 100 m, ratio 0.50 < 0.75): must SWITCH to probe_c.
+		var probe_c := Node3D.new()
+		root.add_child(probe_c)
+		probes.append(probe_c)
+		probe_c.global_position = origin + Vector3(0.0, 0.0, 50.0)
+		probe_c.add_to_group("landmark")
+		map._tick()
+		if map._target_landmark_node != probe_c:
+			failure = "hysteresis failed: target did not switch to rival 50% nearer"
+			break
+
+		# 5. On-disc target drawing: probe_c is at 50 m (< 60 m default view radius)
+		if not map._target_landmark_on_disc:
+			failure = "target at 50 m was not marked on-disc at 60 m zoom"
+			break
+		if map._show_landmark_compass_arrow:
+			failure = "compass arrow shown for on-disc target"
+			break
+
+		# 6. Visited landmark -> target moves away:
+		var id_c: int = map.COIN_SCRIPT.id_at(probe_c.global_position)
+		toast._visited[id_c] = true
+		map._tick()
+		if map._target_landmark_node == probe_c:
+			failure = "target remained on visited landmark"
+			break
+		# Between probe_b (90 m) and probe_a (100 m), nearest unvisited is probe_b:
+		if map._target_landmark_node != probe_b:
+			failure = "after visited target dropped, target did not move to nearest unvisited (probe_b)"
+			break
+
+		# 7. Unload/load:
+		# Remove probe_b from "landmark" group (simulating chunk stream out):
+		probe_b.remove_from_group("landmark")
+		map._tick()
+		if map._target_landmark_node != probe_a:
+			failure = "unloading target probe_b did not switch target to remaining probe_a"
+			break
+		# Re-add probe_b to "landmark" group: probe_b is at 90m, probe_a at 100m.
+		# Probe_b is 10% nearer, so hysteresis holds probe_a:
+		probe_b.add_to_group("landmark")
+		map._tick()
+		if map._target_landmark_node != probe_a:
+			failure = "reloading probe_b broke hysteresis hold on probe_a"
+			break
+
+		# 8. Quiz suppression:
+		var probe_d := Node3D.new()
+		root.add_child(probe_d)
+		probes.append(probe_d)
+		probe_d.global_position = origin + Vector3(0.0, 0.0, -80.0)
+		probe_d.add_to_group("landmark")
+		probe_a.remove_from_group("landmark")
+		probe_b.remove_from_group("landmark")
+		toast._quiz_pending = true
+		caption_label.text = ""
+		map._tick()
+		if map._target_landmark_node != probe_d:
+			failure = "probe_d not selected as target"
+			break
+		if not caption_label.text.is_empty():
+			failure = "caption fired while quiz is pending: %s" % caption_label.text
+			break
+		# Resolving quiz allows caption to fire:
+		toast._quiz_pending = false
+		map._tick()
+		var expected_d_caption: String = tr("Something odd ahead, %d m") % 80
+		if caption_label.text != expected_d_caption:
+			failure = "caption did not fire after quiz resolved (expected '%s', got '%s')" \
+				% [expected_d_caption, caption_label.text]
+			break
+
+		# 9. Indoors suppression:
+		map._floor_text = "Floor 2"
+		map._tick()
+		if map._show_landmark_compass_arrow or map._target_landmark_on_disc:
+			failure = "compass arrow or target mark visible indoors"
+			break
+		map._floor_text = ""
+
+		# 10. Re-seed clears target & caption memory:
+		var id_d: int = map.COIN_SCRIPT.id_at(probe_d.global_position)
+		if not map._target_caption_fired.has(id_d):
+			failure = "probe_d was not recorded in _target_caption_fired"
+			break
+		map.reset_landmark_compass()
+		if map._has_target_landmark or not map._target_caption_fired.is_empty():
+			failure = "reset_landmark_compass() did not clear target or caption memory"
+			break
+
+		break
+
+	# Cleanup:
+	for p in probes:
+		p.queue_free()
+	for m in world_landmarks:
+		m.add_to_group("landmark")
+
+	if not failure.is_empty():
+		return failure
+
+	print("landmark compass: target tracking, hysteresis, off/on disc, caption trigger & quiz/indoor suppression OK")
+	Sentinel.done("landmark_compass")
 	return ""
 
 
