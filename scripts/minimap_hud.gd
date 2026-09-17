@@ -1796,11 +1796,12 @@ func _draw() -> void:
 
 	# 2c. The waypoint circles — ABOVE the landmarks and UNDER the tower, and that
 	#     ordering is load-bearing rather than tidy: waypoint site 0 stands
-	#     `OUTER_HALF + WAYPOINT_DOOR_STANDOFF` east of `tower_site()` at the
-	#     tower's own Z, so for the whole 400 m approach the two marks rim-clamp on
-	#     nearly the same bearing — and a 3.2 px filled ring painted after the cross
-	#     would sit on the map's compass to the HQ. The HQ is where the run is
-	#     going; a ring is how you get about. Under the crocodiles too, the rule
+	#     `OUTER_HALF + WAYPOINT_SIDE_STANDOFF` south of `tower_site()` on the
+	#     tower's own X (bead godot-test1-e5i4), so walking the 400 m approach
+	#     from the east the two marks swing apart — and wherever they do meet, a
+	#     3.2 px filled ring painted after the cross would sit on the map's
+	#     compass to the HQ. The HQ is where the run is going; a ring is how you
+	#     get about. Under the crocodiles too, the rule
 	#     every destination layer here keeps: a destination must never hide a
 	#     threat. (Found in review of this bead's own PR.)
 	#

@@ -40,7 +40,7 @@ extends SceneTree
 ## assertion.
 ##
 ## And ONE AUTHORED THING IS ALLOWED INSIDE THE DISC (epic godot-test1-sc6): the
-## HQ door's waypoint circle, which is `tower_site()` plus a constant and is the
+## HQ's waypoint circle, which is `tower_site()` plus a constant and is the
 ## first entry in the owner's own list of teleport places. The exemption is
 ## INDEX 0 alone, never the group: check 4 steps over that one marker in its node
 ## walk AND asserts, separately, that the only circle standing in the disc is
@@ -305,9 +305,10 @@ func _check_nothing_stands_on_the_site() -> void:
 	# there). That skip would be a hole if it were the end of it, so this is the
 	# other half: walk the
 	# markers the chunks above really built and demand that the only one standing
-	# in the disc is waypoint 0 — the HQ door's. A second circle wandering in, or
-	# index 0 drifting out to where the epic's "just outside the HQ door" stops
-	# being true, fails here by name.
+	# in the disc is waypoint 0 — the HQ's, round the corner from the door since
+	# bead godot-test1-e5i4. A second circle wandering in, or index 0 drifting
+	# out to where the epic's "just outside the HQ" stops being true, fails here
+	# by name.
 	var inside: Array[String] = []
 	for marker_v: Variant in get_nodes_in_group("waypoint"):
 		var marker: Node3D = marker_v
@@ -315,10 +316,10 @@ func _check_nothing_stands_on_the_site() -> void:
 		if d < radius:
 			inside.append("index %d at %.1f m" % [int(marker.get_meta("index", -1)), d])
 	if inside.size() != 1:
-		_fail("%d waypoint circles stand inside the tower disc (%s) — exactly one, the HQ "
-				% [inside.size(), ", ".join(inside)] + "door's, is authored to")
+		_fail("%d waypoint circles stand inside the tower disc (%s) — exactly one, the HQ's, "
+				% [inside.size(), ", ".join(inside)] + "is authored to")
 	elif not inside[0].begins_with("index 0 "):
-		_fail("the waypoint inside the tower disc is %s, not index 0 — the door's circle is "
+		_fail("the waypoint inside the tower disc is %s, not index 0 — the HQ's circle is "
 				% inside[0] + "the only one the disc makes room for")
 	else:
 		print("the HQ's own waypoint stands %s, which is the one authored exemption" % inside[0])

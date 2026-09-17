@@ -30,7 +30,8 @@ extends RefCounted
 ## `waypoint_mask` and send over the wire as one int, the way `explored_mask`
 ## already travels. So the order is a wire format:
 ##
-##      0  "hq"          just outside the HQ door
+##      0  "hq"          just outside the HQ's +Z side wall, round the
+##                         corner from the door (bead godot-test1-e5i4)
 ##      1  "approach"    half way down the road between the HQ and the spawn
 ##      2  "spawn"       the first station of the road east of the origin
 ##      3  "road_1"  \
@@ -42,7 +43,7 @@ extends RefCounted
 ##      9  "market"     |
 ##     10  "heroes"    /
 ##
-## ELEVEN, AND THAT IS AN OWNER RULING (2026-09-12): the HQ door plus two more
+## ELEVEN, AND THAT IS AN OWNER RULING (2026-09-12): the HQ plus two more
 ## along its approach, the road every ~450 m, and five authored places in
 ## Budapest. The first draft had eight and the owner asked for 10-12 — the extra
 ## three are the approach circle, the Parliament's forecourt and the Market Hall
@@ -109,7 +110,9 @@ extends RefCounted
 ##
 ## The consequence is that a waypoint can share ground with a block, a tree or a
 ## chest. That is FINE and it is deliberate: the circle is paint. It cannot be
-## fine at the HQ door or on a street, and it is not — see the site notes below.
+## fine ON a street, and it is not — see the site notes below. (The HQ's own
+## circle shares ground with nothing at all: it stands alone on open field
+## inside the tower's keep-out disc.)
 ##
 ## ----------------------------------------------------------------------------
 ## THE ONE PER-OBJECT MESH THIS FEATURE SPENDS
@@ -147,12 +150,14 @@ const WAYPOINT_SPAWN_X: float = 15.0
 ## in. Half way down the shipped approach is -200, so -200 is what is written.
 const WAYPOINT_APPROACH_X: float = -200.0
 
-## How far OUTSIDE the shell's outer wall the HQ circle stands, on the door axis.
-## `TowerShell.OUTER_HALF` is where the wall face is and the doorway is cut
-## through it (see `door_trigger_box`), so the circle's centre is
-## `OUTER_HALF + this` east of the tower's site — 8 m of yard, which clears the
-## 2.6 m disc and the doorway's own trigger depth with room to walk round.
-const WAYPOINT_DOOR_STANDOFF: float = 8.0
+## How far OUTSIDE the shell's +Z side wall the HQ circle stands (bead
+## godot-test1-e5i4, owner ruling 2026-09-17: round the corner from the door).
+## `TowerShell.OUTER_HALF` is where the wall face is, so the circle's centre is
+## `OUTER_HALF + this` south of the tower's site — 8 m of field, which clears
+## the 2.6 m disc with room to walk round. The doorway stays cut through the +X
+## wall (see `door_trigger_box`); the corner of the building stands between the
+## door and this circle by construction.
+const WAYPOINT_SIDE_STANDOFF: float = 8.0
 
 ## THE WET RE-WALK. A road waypoint whose station sits in a river band would be a
 ## circle under a field bridge's deck (or in the water beside it), so it steps
@@ -267,15 +272,23 @@ static func waypoint_sites(terrain: Node3D) -> Array[Dictionary]:
 	"""
 	var sites: Array[Dictionary] = []
 
-	# --- 0: the HQ door. The tower is one building at one constant site and its
-	# doorway is cut through the +X wall (`TowerShell.door_trigger_box`), so the
-	# circle stands on that axis, `WAYPOINT_DOOR_STANDOFF` clear of the wall face.
-	# The shell's constants are READ, never retyped — a retuned OUTER_HALF moves
-	# the wall and this circle together.
+	# --- 0: "hq", round the corner from the door (bead godot-test1-e5i4). The
+	# tower is one building at one constant site; its doorway is cut through the
+	# +X wall (`TowerShell.door_trigger_box`), and the owner wants the circle
+	# out of the doorway's sightline — so it stands mid-wall on the +Z side
+	# instead, `WAYPOINT_SIDE_STANDOFF` clear of that wall's face, with the
+	# corner of the building between it and the door. The shell's constants are
+	# READ, never retyped — a retuned OUTER_HALF moves the wall and this circle
+	# together.
+	#
+	# OFF THE YARD BY CONSTRUCTION, and that is arithmetic rather than taste:
+	# the yard is `YARD_HALF` 45 m square and face-plus-standoff is 48 m, so the
+	# 2.6 m disc lies just past the yard's south edge, on open field inside the
+	# `TOWER_RADIUS` keep-out — paint sharing ground with nothing.
 	var tower: Vector3 = terrain.tower_site()
 	sites.append({
 		"id": "hq",
-		"pos": Vector3(tower.x + TowerShell.OUTER_HALF + WAYPOINT_DOOR_STANDOFF, 0.0, tower.z),
+		"pos": Vector3(tower.x, 0.0, tower.z + TowerShell.OUTER_HALF + WAYPOINT_SIDE_STANDOFF),
 	})
 
 	# --- 1..5: the road. ONE `_road_extend_to_x` for all five and then a binary

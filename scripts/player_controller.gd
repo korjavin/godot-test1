@@ -4020,7 +4020,7 @@ func travel_to_waypoint(index: int) -> bool:
 	    next frame: `crocodile_lod_manager` sleeps everything past `SIM_RADIUS` and
 	    `hunt_director` reaps its bucket. Abandoning a chase is what travel IS.
 	  * NOTHING ABOUT CAPTIVES. No circle stands inside the HQ (site 0 is
-	    `WAYPOINT_DOOR_STANDOFF` clear of the +X wall), so `inside_walls()` is
+	    `WAYPOINT_SIDE_STANDOFF` clear of the +Z wall), so `inside_walls()` is
 	    false at every one of them and no checkpoint rule applies.
 	"""
 	# Both latches — see the pair in `debug_teleport_to()` for why one is not enough.

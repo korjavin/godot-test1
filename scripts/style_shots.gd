@@ -335,11 +335,12 @@ func _run() -> void:
 
 	# THE WAYPOINT CIRCLES (bead godot-test1-sc6.1) — three of the eleven, one per
 	# ground they have to read on: the open field beside the coin road, a Budapest
-	# street, and the HQ's doorstep. The beams ship HIDDEN, so what these show is
+	# street, and the HQ's side wall (bead godot-test1-e5i4: round the corner
+	# from the door). The beams ship HIDDEN, so what these show is
 	# the inert ring, which is the thing the owner judges.
 	await _shoot_waypoint(terrain, player, "road_1", 9.0, "21_waypoint_field")
 	await _shoot_waypoint(terrain, player, "gate", 9.0, "22_waypoint_budapest")
-	await _shoot_waypoint(terrain, player, "hq", 14.0, "23_waypoint_hq_door")
+	await _shoot_waypoint(terrain, player, "hq", 14.0, "23_waypoint_hq_side")
 
 	print("[SHOTS] done -> ", _out_dir)
 	get_tree().quit(0)
