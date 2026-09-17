@@ -11,6 +11,7 @@
   "build_version_selfcheck": 1,
   "capture_selfcheck": 29,
   "chunk_stream_selfcheck": 1,
+  "coin_road_selfcheck": 2,
   "city_map_selfcheck": 2,
   "crowd_selfcheck": 24,
   "debug_teleport_selfcheck": 3,

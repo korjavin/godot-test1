@@ -1,5 +1,9 @@
 class_name CoinRoad
 extends RefCounted
+
+## Coin identity, for the in-station collision avoidance below. One direction
+## only (`coin.gd` references nothing back here), so this is not a cycle.
+const Coin := preload("res://scripts/coin.gd")
 ## ============================================================================
 ## THE COIN ROAD — the one trail every coin in the world rides
 ## ============================================================================
@@ -70,6 +74,41 @@ extends RefCounted
 ## the station cache, and a cache that stops growing hangs every forward loop that
 ## walks it until it passes an X.
 
+## ----------------------------------------------------------------------------
+## FIGURES — every few blocks the scatter takes a shape (bead godot-test1-lfpz)
+## ----------------------------------------------------------------------------
+## A BLOCK is FIGURE_BLOCK_STATIONS (32) consecutive stations, ~190 m of road.
+## Block index is a floor, not a truncation — stations west of 0 are negative,
+## and integer division would fold -1..-31 into block 0 with 0..31.
+##
+## Each block's figure is a REVERSE LOOKUP, not a roll: `_road_figure()` hashes
+## the block index with its own salt and prime, and posmod 6 deals NONE three
+## times out of six — half the blocks stay plain, so a figure reads as an
+## event, not the texture. Why a hash and not a fifth draw: the station scatter
+## RNG is a shared stream (chance, lat, lon, gem, in that order — the contract),
+## and one extra draw anywhere in it moves every spawn in the world. The figure
+## stream touches nothing downstream of it; the four draws are REINTERPRETED
+## through the block's figure after the gem draw (`terrain_structures.gd`'s
+## colonnade does the same with its loop: the same draws, another reading).
+##
+## What each figure does to the drawn (lat, lon), all inside the band, so the
+## seam pad and the chunk bucketing never hear about it:
+##   * NONE — nothing. A plain block comes out byte-identical.
+##   * SLALOM — the band's centre weaves: target = half_band * FIGURE_AMPLITUDE
+##     * sin(TAU * m / FIGURE_PERIOD) over the block-relative station m, and the
+##     coins ride it with FIGURE_JITTER of their drawn offset kept.
+##   * LIGHTNING — the side flips every FIGURE_LIGHTNING_RUN stations
+##     (±0.8 of the half band), a cut the streak survives because RUN_SPEED *
+##     STREAK_WINDOW outruns hypot(16, 6). Runs are counted block-relative and
+##     the two-station tail joins the sixth run, so no run is shorter than
+##     three — a global alignment would clip edge runs short wherever a plain
+##     block cuts them.
+##   * NEEDLE — the drawn lateral offset shrinks to FIGURE_JITTER of itself: a
+##     tight lane down the centre, the along-road scatter untouched.
+## The amplitude rides the LOCAL half band, so beyond ROAD_NARROW_STATIONS the
+## figures shrink with the road automatically. `@export road_figures` on the
+## terrain is the kill switch and the self-check's A/B seam.
+
 
 ## Heading restoring pull toward +X applied every station BEFORE the turn noise:
 ## heading *= (1 - ROAD_RESTORE). Without it the random turns would random-walk the
@@ -87,6 +126,31 @@ const ROAD_WORLD_SEED: int = 0x5_0AD  # "ROAD"-ish; arbitrary fixed constant
 ## and the per-coin spawn chance). Kept distinct from ROAD_WORLD_SEED so reshaping the
 ## scatter doesn't move the centerline, and vice-versa.
 const ROAD_COIN_SEED: int = 0xC0_1A  # "coin"-ish; arbitrary fixed constant
+
+## Fixed seed for the per-BLOCK FIGURE lookup (which 32-station block, if any,
+## takes a slalom / lightning / needle). Its own salt and its own coordinate
+## prime, like ARTIFACT_SALT / CAMP_SALT — an independent stream that costs the
+## station scatter not one draw.
+const ROAD_FIGURE_SALT: int = 0xF1_6  # "FIG"; arbitrary fixed constant
+## Stations per choreography block (~190 m, ~19 s at RUN_SPEED).
+const FIGURE_BLOCK_STATIONS: int = 32
+## Stations per slalom sine period (two full weaves per block).
+const FIGURE_PERIOD: int = 16
+## Slalom centre amplitude, as a fraction of the local half band.
+const FIGURE_AMPLITUDE: float = 0.85
+## Residual jitter kept after reinterpretation, as a fraction of the drawn
+## offset — the coins ride the figure, they are not glued to it.
+const FIGURE_JITTER: float = 0.15
+## Along-road tightening inside a figure, as a fraction of the drawn offset.
+const FIGURE_LON_JITTER: float = 0.35
+## Lightning side-run length, in stations (the block tail merges, see below).
+const FIGURE_LIGHTNING_RUN: int = 5
+## Figure ids. NONE keeps the scatter byte-identical; the lookup deals
+## posmod(h, 6) with 0..2 all meaning NONE, so half the blocks stay plain.
+const FIGURE_NONE: int = 0
+const FIGURE_SLALOM: int = 1
+const FIGURE_LIGHTNING: int = 2
+const FIGURE_NEEDLE: int = 3
 
 ## Chance that a scattered road coin spawns as a rare purple GEM worth 10 (see
 ## coin.gd make_gem). Rolled as one extra draw from the same per-station scatter
@@ -398,6 +462,43 @@ static func _road_width(terrain: Node3D, k: int) -> float:
 	var narrow_t := clampf(float(absi(k)) / float(ROAD_NARROW_STATIONS), 0.0, 1.0)
 	return lerpf(width, terrain.road_width_min * ROAD_NARROW_FLOOR_FACTOR, narrow_t)
 
+static func _road_block(k: int) -> int:
+	"""
+	Which choreography block station `k` belongs to.
+
+	@param k: Station index (may be negative).
+	@return: The block index, floored — truncation would fold stations -31..-1
+	         into block 0 with 0..31, and a block must be 32 consecutive
+	         stations wherever it stands.
+	"""
+	return floori(float(k) / float(FIGURE_BLOCK_STATIONS))
+
+
+static func _road_figure(terrain: Node3D, k: int) -> int:
+	"""
+	The choreography figure for the block holding station `k`, if any.
+
+	@param terrain: The terrain (for run_seed).
+	@param k: Station index (may be negative).
+	@return: FIGURE_NONE / FIGURE_SLALOM / FIGURE_LIGHTNING / FIGURE_NEEDLE.
+
+	PURE IN (block, run_seed): a hash with its own salt and its own coordinate
+	prime, costing the station scatter not one draw — so every peer lays the
+	same figure and nothing travels the wire. posmod 6 deals NONE on 0..2, so
+	half the blocks stay plain.
+	"""
+	var b := _road_block(k)
+	var h := hash(Vector3i(b * 92821, ROAD_FIGURE_SALT, terrain.run_seed))
+	var roll := posmod(h, 6)
+	if roll < 3:
+		return FIGURE_NONE
+	if roll == 3:
+		return FIGURE_SLALOM
+	if roll == 4:
+		return FIGURE_LIGHTNING
+	return FIGURE_NEEDLE
+
+
 static func _road_coins_at(terrain: Node3D, k: int) -> Array:
 	"""
 	Deterministic list of world-space coin positions SCATTERED across the road band at
@@ -424,6 +525,17 @@ static func _road_coins_at(terrain: Node3D, k: int) -> Array:
 	- A coin's offset from the centerline is bounded by band/2 (lateral) plus
 	  ROAD_COIN_LONG_JITTER*spacing (along-road); spawn_coins_in_chunk's `pad` is derived
 	  from exactly that bound so the scan window can never miss a scattered coin at a seam.
+	- THE FIGURES DRAW NOTHING. Every few blocks `_road_figure()` names a shape
+	  for the block (its own hash stream — own salt, own prime — so the four
+	  draws below neither move nor multiply), and the drawn lat/lon are
+	  REINTERPRETED through it after the gem draw: slalom rides a sine off the
+	  local half band, lightning picks a side that flips every five stations,
+	  needle shrinks the lateral to a lane. A NONE block skips the match and its
+	  coins land byte-for-byte where they always did. Every arm stays inside
+	  |lat| <= half_band and |lon| <= LONG_JITTER * spacing (0.85 + 0.15 and
+	  0.8 + 0.15 both sum under one, the slalom centre's station-to-station
+	  change stays under 0.6 * spacing), so the pad invariant above holds
+	  untouched and `Coin.id_at` keeps its uniqueness.
 	"""
 	# CAP 1 OF 5 — the road's coins stop at the terminal station (bead
 	# godot-test1-8gw.3). Past T the coin line is the city's authored approach
@@ -463,10 +575,60 @@ static func _road_coins_at(terrain: Node3D, k: int) -> Array:
 			continue
 		var lat := rng.randf_range(-1.0, 1.0) * half_band                               # across the band
 		var lon := rng.randf_range(-1.0, 1.0) * ROAD_COIN_LONG_JITTER * _road_spacing(terrain)  # along the road
-		var p := center + perp * lat + tangent * lon
 		# One extra draw AFTER the position: is this coin a rare gem? The draw order
 		# (chance, lat, lon, gem) is fixed, so the whole station stays deterministic.
 		var gem := rng.randf() < ROAD_GEM_CHANCE
+		# THE FIGURE, AFTER ALL FOUR DRAWS and before the thinning below: the
+		# drawn lat/lon are reinterpreted through this block's shape, never
+		# redrawn — so the draw COUNT per slot is unchanged and a NONE block is
+		# untouched. Gated on `terrain.road_figures`, the kill switch that is
+		# also the self-check's A/B seam.
+		var fig := FIGURE_NONE
+		if terrain.road_figures:
+			fig = _road_figure(terrain, k)
+		if fig != FIGURE_NONE:
+			var b := _road_block(k)
+			var m := k - b * FIGURE_BLOCK_STATIONS
+			match fig:
+				FIGURE_SLALOM:
+					var target := half_band * FIGURE_AMPLITUDE \
+						* sin(TAU * float(m) / float(FIGURE_PERIOD))
+					lat = target + lat * FIGURE_JITTER
+					lon = lon * FIGURE_LON_JITTER
+				FIGURE_LIGHTNING:
+					# Block-relative runs of five; the two-station tail joins
+					# the sixth run, so no run is shorter than three (a global
+					# alignment would clip edge runs short at plain blocks).
+					var run := mini(m / FIGURE_LIGHTNING_RUN, 5)
+					var side := 1.0 if posmod(run, 2) == 0 else -1.0
+					lat = side * half_band * 0.8 + lat * FIGURE_JITTER
+					lon = lon * FIGURE_LON_JITTER
+				FIGURE_NEEDLE:
+					lat = lat * FIGURE_JITTER
+		var p := center + perp * lat + tangent * lon
+		# COLLISION AVOIDANCE, and it draws nothing (codex round 1, bead lfpz):
+		# two coins of one station can share a 12.5 cm `Coin.id_at` cell — the
+		# figure compresses lat AND lon into collisions, but the plain scatter
+		# collides on its own too (seed 5003 station 46, a NONE block) — and a
+		# shared id reads as "already collected" to a room and drops the coin
+		# from the join replay either way. So this runs on EVERY coin, figure
+		# or plain: while this coin's id equals an earlier coin's of THIS
+		# station, step it along the tangent one cell at a time, a pure
+		# function of the drawn values bounded by the slot count. Lateral
+		# never moves (the band bound holds exactly); along-road moves at most
+		# slots/8 m, inside the pad's +2 m slack. No draw is added or spent, so
+		# counts, gems and the on/off legs below all agree with each other.
+		var stepped := Vector3(p.x, terrain.COIN_GROUND_HEIGHT, p.y)
+		for _nudge in range(terrain.road_coin_slots):
+			var clash := false
+			for done: Dictionary in coins:
+				if Coin.id_at(done["pos"]) == Coin.id_at(stepped):
+					clash = true
+					break
+			if not clash:
+				break
+			p += tangent * (1.0 / Coin.COIN_ID_QUANT)
+			stepped = Vector3(p.x, terrain.COIN_GROUND_HEIGHT, p.y)
 		# THE 30% THINNING (owner, 2026-09-02, bead godot-test1-7ed: "scale down
 		# amount of coins, 30% less"), and it is here rather than on
 		# road_coin_spacing DELIBERATELY. That export is the road's STATION STEP,
