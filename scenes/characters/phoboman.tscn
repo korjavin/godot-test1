@@ -13,7 +13,11 @@
 
 [node name="Phoboman" type="Node3D"]
 
+; Phoboman scaled 1.1013 on Body to match the skinned cast standing height (1.80 m):
+;   Before: standing height 1.6344 m (heel-to-crown), width 1.5665 m (torso 1.0400 m), feet y=-0.0250 m (sink 25.0 mm).
+;   After:  standing height 1.8000 m (heel-to-crown), width 1.7252 m (torso 1.1454 m), feet y=-0.0275 m (sink 27.5 mm).
 [node name="Body" type="Node3D" parent="."]
+transform = Transform3D(1.1013, 0, 0, 0, 1.1013, 0, 0, 0, 1.1013, 0, 0, 0)
 
 ; Phoboman has no neck by design (bead godot-test1-z3e.7): the helmet is a
 ; diving bell whose collar ring emerges from the body sphere — head and
