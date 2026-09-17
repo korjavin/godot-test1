@@ -1,5 +1,9 @@
 class_name CoinRoad
 extends RefCounted
+
+## Coin identity, for the in-station collision avoidance below. One direction
+## only (`coin.gd` references nothing back here), so this is not a cycle.
+const Coin := preload("res://scripts/coin.gd")
 ## ============================================================================
 ## THE COIN ROAD — the one trail every coin in the world rides
 ## ============================================================================
@@ -579,28 +583,52 @@ static func _road_coins_at(terrain: Node3D, k: int) -> Array:
 		# redrawn — so the draw COUNT per slot is unchanged and a NONE block is
 		# untouched. Gated on `terrain.road_figures`, the kill switch that is
 		# also the self-check's A/B seam.
+		var fig := FIGURE_NONE
 		if terrain.road_figures:
-			var fig := _road_figure(terrain, k)
-			if fig != FIGURE_NONE:
-				var b := _road_block(k)
-				var m := k - b * FIGURE_BLOCK_STATIONS
-				match fig:
-					FIGURE_SLALOM:
-						var target := half_band * FIGURE_AMPLITUDE \
-							* sin(TAU * float(m) / float(FIGURE_PERIOD))
-						lat = target + lat * FIGURE_JITTER
-						lon = lon * FIGURE_LON_JITTER
-					FIGURE_LIGHTNING:
-						# Block-relative runs of five; the two-station tail joins
-						# the sixth run, so no run is shorter than three (a global
-						# alignment would clip edge runs short at plain blocks).
-						var run := mini(m / FIGURE_LIGHTNING_RUN, 5)
-						var side := 1.0 if posmod(run, 2) == 0 else -1.0
-						lat = side * half_band * 0.8 + lat * FIGURE_JITTER
-						lon = lon * FIGURE_LON_JITTER
-					FIGURE_NEEDLE:
-						lat = lat * FIGURE_JITTER
+			fig = _road_figure(terrain, k)
+		if fig != FIGURE_NONE:
+			var b := _road_block(k)
+			var m := k - b * FIGURE_BLOCK_STATIONS
+			match fig:
+				FIGURE_SLALOM:
+					var target := half_band * FIGURE_AMPLITUDE \
+						* sin(TAU * float(m) / float(FIGURE_PERIOD))
+					lat = target + lat * FIGURE_JITTER
+					lon = lon * FIGURE_LON_JITTER
+				FIGURE_LIGHTNING:
+					# Block-relative runs of five; the two-station tail joins
+					# the sixth run, so no run is shorter than three (a global
+					# alignment would clip edge runs short at plain blocks).
+					var run := mini(m / FIGURE_LIGHTNING_RUN, 5)
+					var side := 1.0 if posmod(run, 2) == 0 else -1.0
+					lat = side * half_band * 0.8 + lat * FIGURE_JITTER
+					lon = lon * FIGURE_LON_JITTER
+				FIGURE_NEEDLE:
+					lat = lat * FIGURE_JITTER
 		var p := center + perp * lat + tangent * lon
+		# COLLISION AVOIDANCE, and it draws nothing (codex round 1, bead lfpz):
+		# two coins of one station can share a 12.5 cm `Coin.id_at` cell — the
+		# figure compresses lat AND lon into collisions, but the plain scatter
+		# collides on its own too (seed 5003 station 46, a NONE block) — and a
+		# shared id reads as "already collected" to a room and drops the coin
+		# from the join replay either way. So this runs on EVERY coin, figure
+		# or plain: while this coin's id equals an earlier coin's of THIS
+		# station, step it along the tangent one cell at a time, a pure
+		# function of the drawn values bounded by the slot count. Lateral
+		# never moves (the band bound holds exactly); along-road moves at most
+		# slots/8 m, inside the pad's +2 m slack. No draw is added or spent, so
+		# counts, gems and the on/off legs below all agree with each other.
+		var stepped := Vector3(p.x, terrain.COIN_GROUND_HEIGHT, p.y)
+		for _nudge in range(terrain.road_coin_slots):
+			var clash := false
+			for done: Dictionary in coins:
+				if Coin.id_at(done["pos"]) == Coin.id_at(stepped):
+					clash = true
+					break
+			if not clash:
+				break
+			p += tangent * (1.0 / Coin.COIN_ID_QUANT)
+			stepped = Vector3(p.x, terrain.COIN_GROUND_HEIGHT, p.y)
 		# THE 30% THINNING (owner, 2026-09-02, bead godot-test1-7ed: "scale down
 		# amount of coins, 30% less"), and it is here rather than on
 		# road_coin_spacing DELIBERATELY. That export is the road's STATION STEP,

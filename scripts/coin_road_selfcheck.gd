@@ -19,20 +19,25 @@ through it. What each check guards, in check order:
                    stations (measured 0.54 worst case); lightning side runs are
                    all >= 3 stations, read off surviving coins' lateral signs
                    against the bead's run rule.
-  streak         — per figure block, the largest ALONG-ROAD gap between
-                   consecutive surviving coins stays within 1.1x the same
-                   block's plain gap. Along-road and not XZ, deliberately:
-                   lateral movement IS the figure (slaloms weave, lightning
-                   cuts), so an XZ max is dominated by empty-run endpoint phase
-                   — seed 900913 fails it 30.9 vs 27.7 on unmutated code —
-                   while the lon scatter is what figures promise to tighten
-                   (0.35x) and the mutation promises to explode (3.0x). (Also
+  streak         — per figure block, every consecutive-survivor pair's
+                   ALONG-ROAD gap stays within its SAME pair's plain gap plus
+                   one station step. Same-pair (survival is draw-identical both
+                   legs), not maxima: maxima compare different pairs per leg
+                   and the figure normalizes lucky plain endpoints apart — seed
+                   7331 block -2 fails maxima 10.9 vs 8.8 on unmutated code.
+                   Along-road and not XZ: lateral movement IS the figure, so an
+                   XZ max is dominated by empty-run endpoint phase — seed
+                   900913 fails it 30.9 vs 27.7 on unmutated code. (Also
                    deliberately no absolute 25 m bound: empty stations are a
                    deterministic property of the shipped scatter — seed 11
                    leaves stations 150-153 bare in BOTH legs for a 36 m plain
                    gap no figure-preserving implementation can close, since
                    figures move coins but add none.)
-  ids            — `Coin.id_at` is unique over every coin on -50..600, per seed.
+  ids            — `Coin.id_at` is unique over every coin on -50..600: seeds 7,
+                   11 and 900913 plus a 40-seed sweep. 7 is the round-1 figure
+                   collision, and the sweep caught a PLAIN one (seed 5003
+                   station 46, a NONE block) — so the avoidance runs on every
+                   coin, not just figured ones, and this check covers both.
   mix            — over 400 blocks every figure occurs and NONE holds 35-65%.
   text           — `_road_coins_at` holds exactly four `rng.randf` call sites
                    (landmark_sites' text-scan idiom): a fifth draw fails here.
@@ -50,11 +55,13 @@ const Coin = preload("res://scripts/coin.gd")
 const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
 const COIN_ROAD_SOURCE: String = "res://scripts/coin_road.gd"
 const SEEDS: Array[int] = [11, 7331, 900913]
+const ID_SEEDS: Array[int] = [7, 11, 900913]
+const SWEEP_FIRST_SEED: int = 5000
+const SWEEP_SEEDS: int = 40
 const K_MIN: int = -50
 const K_MAX: int = 600
 const PAD_TOL: float = 0.0001
 const FIGURE_MAX_SLOPE: float = 0.6
-const STREAK_RATIO: float = 1.1
 const MIX_BLOCKS: int = 400
 const MIX_NONE_LO: float = 0.35
 const MIX_NONE_HI: float = 0.65
@@ -109,6 +116,7 @@ func _lateral(terrain: Node3D, k: int, pos: Vector3) -> float:
 
 
 func _check_draw_parity() -> void:
+	var had: int = _failures.size()
 	for seed: int in SEEDS:
 		var terrain := _make_terrain(seed)
 		for k in range(K_MIN, K_MAX + 1):
@@ -126,15 +134,16 @@ func _check_draw_parity() -> void:
 					_failures.append("draw_parity: seed %d station %d gem %d "
 						% [seed, k, i] + "flipped under figures")
 					break
-			if not _failures.is_empty():
+			if _failures.size() != had:
 				break
 		terrain.free()
-		if not _failures.is_empty():
+		if _failures.size() != had:
 			break
 	Sentinel.done("draw_parity")
 
 
 func _check_plain_identical() -> void:
+	var had: int = _failures.size()
 	for seed: int in SEEDS:
 		var terrain := _make_terrain(seed)
 		for k in range(K_MIN, K_MAX + 1):
@@ -149,15 +158,16 @@ func _check_plain_identical() -> void:
 					_failures.append("plain_identical: seed %d station %d coin "
 						% [seed, k] + "%d moved in a NONE block" % i)
 					break
-			if not _failures.is_empty():
+			if _failures.size() != had:
 				break
 		terrain.free()
-		if not _failures.is_empty():
+		if _failures.size() != had:
 			break
 	Sentinel.done("plain_identical")
 
 
 func _check_bounds() -> void:
+	var had: int = _failures.size()
 	for seed: int in SEEDS:
 		var terrain := _make_terrain(seed)
 		terrain.road_figures = true
@@ -175,10 +185,10 @@ func _check_bounds() -> void:
 					_failures.append("bounds: seed %d station %d escapes the "
 						% [seed, k] + "along-road pad")
 					break
-			if not _failures.is_empty():
+			if _failures.size() != had:
 				break
 		terrain.free()
-		if not _failures.is_empty():
+		if _failures.size() != had:
 			break
 	Sentinel.done("bounds")
 
@@ -191,6 +201,7 @@ func _slalom_centre(terrain: Node3D, k: int, m: int) -> float:
 
 
 func _check_holdable() -> void:
+	var had: int = _failures.size()
 	var spacing: float = 0.0
 	for seed: int in SEEDS:
 		var terrain := _make_terrain(seed)
@@ -214,10 +225,10 @@ func _check_holdable() -> void:
 						break
 			elif fig == CoinRoad.FIGURE_LIGHTNING:
 				_check_lightning_runs(terrain, seed, b)
-			if not _failures.is_empty():
+			if _failures.size() != had:
 				break
 		terrain.free()
-		if not _failures.is_empty():
+		if _failures.size() != had:
 			break
 	Sentinel.done("holdable")
 
@@ -245,13 +256,19 @@ func _check_lightning_runs(terrain: Node3D, seed: int, b: int) -> void:
 				return
 
 
-func _block_gaps(terrain: Node3D, b: int, figures: bool) -> Array:
-	"""Largest ALONG-ROAD gap between consecutive surviving coins in block `b`
-	(k order), each coin projected on its own station tangent — or -1 when the
-	block holds fewer than two coins. Along-road because lateral movement is
-	the figure's purpose (asserted bounded in `bounds`/`holdable` instead);
-	what the figure owes the streak is concentration along the run."""
+func _block_pairs(terrain: Node3D, b: int, figures: bool) -> Array:
+	"""Consecutive-survivor pairs in block `b` as [k_lo, k_hi, gap], k-ordered
+	(lon tiebreak) — or an empty Array when the block holds fewer than two
+	coins. Each coin's coordinate is its station's cumulative distance
+	(k * spacing) plus its local tangent offset: differencing local offsets
+	alone reports the jitter and claims ten empty stations hold no gap (codex
+	round 1). Survival is draw-identical on/off, so both legs pair the same
+	stations; within a station both legs sort by lon, the natural
+	correspondence. Along-road and not XZ because lateral movement is the
+	figure's purpose (asserted bounded in `bounds`/`holdable` instead); what
+	the figure owes the streak is concentration along the run."""
 	terrain.road_figures = figures
+	var spacing: float = terrain._road_spacing()
 	var pts: Array = []
 	for m in range(0, CoinRoad.FIGURE_BLOCK_STATIONS):
 		var k: int = b * CoinRoad.FIGURE_BLOCK_STATIONS + m
@@ -260,18 +277,18 @@ func _block_gaps(terrain: Node3D, b: int, figures: bool) -> Array:
 		var frame: Array = _station_frame(terrain, k)
 		for coin: Dictionary in terrain._road_coins_at(k):
 			var d: Vector2 = Vector2(coin["pos"].x, coin["pos"].z) - frame[0]
-			pts.append([k, d.dot(frame[2])])
+			pts.append([k, float(k) * spacing + d.dot(frame[2])])
 	pts.sort_custom(func(a: Array, c: Array) -> bool:
 		return a[0] < c[0] or (a[0] == c[0] and a[1] < c[1]))
-	if pts.size() < 2:
-		return [-1.0]
-	var worst := 0.0
+	var pairs: Array = []
 	for i in range(1, pts.size()):
-		worst = maxf(worst, absf(float(pts[i][1]) - float(pts[i - 1][1])))
-	return [worst]
+		pairs.append([pts[i - 1][0], pts[i][0],
+			float(pts[i][1]) - float(pts[i - 1][1])])
+	return pairs
 
 
 func _check_streak() -> void:
+	var had: int = _failures.size()
 	for seed: int in SEEDS:
 		var terrain := _make_terrain(seed)
 		var first_block: int = CoinRoad._road_block(K_MIN)
@@ -281,23 +298,47 @@ func _check_streak() -> void:
 					terrain, b * CoinRoad.FIGURE_BLOCK_STATIONS) \
 					== CoinRoad.FIGURE_NONE:
 				continue
-			var fig_gap: float = _block_gaps(terrain, b, true)[0]
-			if fig_gap < 0.0:
-				continue
-			var plain_gap: float = _block_gaps(terrain, b, false)[0]
-			if plain_gap >= 0.0 and fig_gap > STREAK_RATIO * plain_gap:
-				_failures.append("streak: seed %d figure block %d along-road "
-					% [seed, b] + "gap %.1f m exceeds 1.1x its plain %.1f m"
-					% [fig_gap, plain_gap])
+			var fig_pairs: Array = _block_pairs(terrain, b, true)
+			var plain_pairs: Array = _block_pairs(terrain, b, false)
+			if fig_pairs.size() != plain_pairs.size():
+				_failures.append("streak: seed %d figure block %d pairs %d "
+					% [seed, b, fig_pairs.size()] + "against %d plain — "
+					% plain_pairs.size() + "survival moved under figures")
+				break
+			var spacing: float = terrain._road_spacing()
+			for i in range(fig_pairs.size()):
+				var fig_gap: float = fig_pairs[i][2]
+				var plain_gap: float = plain_pairs[i][2]
+				# Same station pair both legs (survival is draw-identical), so
+				# this is the figure's doing to THIS gap — and it is bounded:
+				# dampening moves a pair by 0.65 * |lon spread| <= 0.65 *
+				# spacing, avoidance nudges by <= 0.75 m, both under one
+				# station step. A dispersed figure (the 3.0 mutation) exceeds
+				# it wherever a pair had spread to amplify.
+				if fig_gap > plain_gap + spacing:
+					_failures.append("streak: seed %d figure block %d pair "
+						% [seed, b] + "%d-%d gap %.1f m exceeds its plain "
+						% [fig_pairs[i][0], fig_pairs[i][1], fig_gap]
+						+ "%.1f m by over one station step" % plain_gap)
+					break
+			if _failures.size() != had:
 				break
 		terrain.free()
-		if not _failures.is_empty():
+		if _failures.size() != had:
 			break
 	Sentinel.done("streak")
 
 
 func _check_ids() -> void:
-	for seed: int in SEEDS:
+	var had: int = _failures.size()
+	# The named seeds (7 is the codex round-1 collision: two slalom coins of
+	# station 15 shared one id) plus a 40-seed sweep — the check runs in ~1 s,
+	# it can afford the width. Uniqueness is per coin, across stations: a shared
+	# id reads as "already collected" to a room and drops the join replay.
+	var seeds: Array[int] = ID_SEEDS.duplicate()
+	for s in range(SWEEP_FIRST_SEED, SWEEP_FIRST_SEED + SWEEP_SEEDS):
+		seeds.append(s)
+	for seed: int in seeds:
 		var terrain := _make_terrain(seed)
 		terrain.road_figures = true
 		var seen := {}
@@ -309,10 +350,10 @@ func _check_ids() -> void:
 						% seed + "station %d" % k)
 					break
 				seen[id] = true
-			if not _failures.is_empty():
+			if _failures.size() != had:
 				break
 		terrain.free()
-		if not _failures.is_empty():
+		if _failures.size() != had:
 			break
 	Sentinel.done("ids")
 
