@@ -630,6 +630,10 @@ const COIN_TOWER_CLEARANCE: float = 0.7
 @export var road_coin_slots: int = 3
 @export var road_coin_chance: float = 0.4
 
+## Choreographed figures on the coin road (bead godot-test1-lfpz): every few
+## 32-station blocks the scatter takes a slalom / lightning / needle, else plain.
+@export var road_figures: bool = true
+
 ## Maximum per-station heading jitter magnitude (degrees). Larger = curvier / tighter
 ## zig-zags. This is the amplitude of the deterministic turn noise added each station.
 @export var road_turn_rate_deg: float = 18.0
