@@ -19,12 +19,48 @@ extends SceneTree
 ##  5. And the hub actually calls the new cue: bead .2 borrowed `play_level_up`
 ##     and marked the line, so this greps `waypoint_hub.gd` to prove the borrow
 ##     was returned. A cue nothing fires is a cue nobody hears.
+##  6. THE ROAD MUSIC (bead godot-test1-bv0f): the motif starts inside 80 m of
+##     a compass target or a circle and climbs, holds under a chase without
+##     taking a voice, stops voiceless on a loss, resolves a fifth-to-octave
+##     cadence on a visited target or the stood edge, sings nothing while
+##     standing, and plays a falling one-bar phrase on every 25th pickup.
 ##
 
 const SoundManager := preload("res://scripts/sound_manager.gd")
 const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 var _failures: Array[String] = []
+
+
+## Group-peer stubs for the road-music check. They expose the SAME method names
+## the real minimap / hub / toast carry (the brief's allowed stub shape); every
+## voice assertion reads the REAL sound_manager node's pool.
+class StubCompass extends Node:
+	var dist: float = INF
+	var pos: Vector3 = Vector3.ZERO
+	func compass_target_distance() -> float:
+		return dist
+	func compass_target_pos() -> Vector3:
+		return pos
+
+
+class StubHub extends Node:
+	var stood: int = -1
+	var circle_dist: float = INF
+	func standing_on() -> int:
+		return stood
+	func nearest_circle_distance(_from: Vector3) -> float:
+		return circle_dist
+
+
+class StubToast extends Node:
+	var visited: bool = false
+	func is_visited(_pos: Vector3) -> bool:
+		return visited
+
+
+class StubCroc extends Node:
+	var is_chasing: bool = false
 
 
 func _initialize() -> void:
@@ -36,6 +72,7 @@ func _run() -> void:
 	await process_frame
 	_check_sound_unlock_and_loops()
 	_check_waypoint_cues()
+	_check_road_music()
 	_finish()
 
 
@@ -179,3 +216,188 @@ func _check_waypoint_cues() -> void:
 		if hub.contains("sound.call(\"play_level_up\")"):
 			_fail("waypoint_hub.gd still fires play_level_up() — bead .5 returns that borrow")
 	Sentinel.done("waypoint_cues")
+
+
+func _check_road_music() -> void:
+	## Check 6 — the road music (bead godot-test1-bv0f).
+	##
+	## Drives the REAL sound_manager node (`tick_road_music()`, the same step
+	## `_process()` accumulates into) and reads the REAL pool state
+	## (`_players` / `_streams` / `_next_player`); only the group PEERS are
+	## stubs, exposing the same method names the real minimap / hub / toast
+	## carry. The pool wraps at ONESHOT_PLAYER_COUNT, so `expected` counts
+	## every voice while `_voice()` reads the wrapped slot.
+	var sm := SoundManager.new()
+	root.add_child(sm)
+	var players: Array = sm.get("_players")
+	var streams: Dictionary = sm.get("_streams")
+	var coin_stream: AudioStreamWAV = streams.get("coin")
+	var pool_size: int = SoundManager.ONESHOT_PLAYER_COUNT
+	var expected: int = 0
+
+	var player_stub := Node3D.new()
+	player_stub.add_to_group("player")
+	root.add_child(player_stub)
+	var compass := StubCompass.new()
+	compass.add_to_group("minimap")
+	root.add_child(compass)
+	var hub := StubHub.new()
+	hub.add_to_group("waypoint_hub")
+	root.add_child(hub)
+	var toast := StubToast.new()
+	toast.add_to_group("landmark_toast")
+	root.add_child(toast)
+	var croc := StubCroc.new()
+	croc.add_to_group("crocodile")
+	root.add_child(croc)
+
+	# --- THE GATE: everything hot, still locked → no voice at all. ---
+	compass.dist = 50.0
+	sm.tick_road_music()
+	_expect_voices(sm, expected, "road music took a pool voice before unlock_audio()")
+	sm.unlock_audio()
+
+	# --- APPROACH: inside 80 m the motif starts and climbs, every 2nd tick. ---
+	sm.tick_road_music()
+	expected += 1
+	_expect_voices(sm, expected, "approach inside 80 m played no motif note")
+	_expect_tap(players, 0, coin_stream, SoundManager.ROAD_MOTIF_PITCHES[0],
+			SoundManager.ROAD_MOTIF_VOLUME_DB, "motif note 0")
+	sm.tick_road_music()  # cooldown tick: no note
+	_expect_voices(sm, expected, "motif played on consecutive ticks — notes are every ROAD_MOTIF_NOTE_EVERY ticks")
+	sm.tick_road_music()
+	expected += 1
+	_expect_voices(sm, expected, "motif missed its 2nd-tick note")
+	var climb0: float = (players[0] as AudioStreamPlayer).pitch_scale
+	var climb1: float = (players[1 % pool_size] as AudioStreamPlayer).pitch_scale
+	if climb1 <= climb0:
+		_fail("motif does not climb: note 1 pitched %.4f vs note 0 %.4f" % [climb1, climb0])
+
+	# --- CHASE: a chasing croc holds the music — no voice, no lost place. ---
+	croc.is_chasing = true
+	sm.tick_road_music()
+	sm.tick_road_music()
+	_expect_voices(sm, expected, "road music took a voice while is_chasing — the motif must yield to acquisition cues")
+	croc.is_chasing = false
+	sm.tick_road_music()  # the held cooldown tick
+	_expect_voices(sm, expected, "music did not HOLD under a chase — it restarted or skipped ahead")
+	sm.tick_road_music()  # the held climb position: step 2, still rising
+	expected += 1
+	_expect_voices(sm, expected, "motif did not resume after the chase")
+	_expect_tap(players, 2, coin_stream, SoundManager.ROAD_MOTIF_PITCHES[2],
+			SoundManager.ROAD_MOTIF_VOLUME_DB, "resumed motif note")
+
+	# --- LOSS WITHOUT ARRIVAL: the target unloads unvisited → stop, no cadence. ---
+	compass.dist = INF
+	sm.tick_road_music()
+	_expect_voices(sm, expected, "an unvisited target loss earned a cadence — a resolve is owed to an arrival, not a loss")
+	# ...and the next approach restarts the climb from the bottom.
+	compass.dist = 50.0
+	sm.tick_road_music()
+	expected += 1
+	_expect_voices(sm, expected, "re-approach played no motif note")
+	_expect_tap(players, 3, coin_stream, SoundManager.ROAD_MOTIF_PITCHES[0],
+			SoundManager.ROAD_MOTIF_VOLUME_DB, "re-approach motif note")
+
+	# --- ARRIVAL (landmark): a visited target resolves fifth-into-octave. ---
+	toast.visited = true
+	sm.tick_road_music()
+	expected += 2
+	_expect_voices(sm, expected, "a visited approach target did not resolve a 2-tap cadence")
+	for i in range(2):
+		_expect_tap(players, 4 + i, coin_stream, SoundManager.ROAD_RESOLVE_PITCHES[i],
+				SoundManager.ROAD_RESOLVE_VOLUME_DB, "resolve tap %d" % i)
+	# ...and the approach is over: the compass drops a visited target, silence.
+	compass.dist = INF
+	sm.tick_road_music()
+	sm.tick_road_music()
+	_expect_voices(sm, expected, "motif kept singing after the resolve — arrival ends the approach")
+
+	# --- ARRIVAL (circle): the stood edge resolves with no compass at all. ---
+	hub.circle_dist = 30.0
+	sm.tick_road_music()  # circle approach starts, one motif note
+	expected += 1
+	_expect_voices(sm, expected, "no motif note on a circle approach")
+	hub.stood = 2
+	sm.tick_road_music()  # the stood EDGE → cadence
+	expected += 2
+	_expect_voices(sm, expected, "the stood edge did not resolve a cadence")
+	for i in range(2):
+		_expect_tap(players, 7 + i, coin_stream, SoundManager.ROAD_RESOLVE_PITCHES[i],
+				SoundManager.ROAD_RESOLVE_VOLUME_DB, "circle resolve tap %d" % i)
+	sm.tick_road_music()  # standing on the circle: nothing more
+	_expect_voices(sm, expected, "motif sings while standing on the circle")
+	hub.stood = -1
+	hub.circle_dist = INF
+	sm.tick_road_music()  # walked off to open road: nothing more either
+	_expect_voices(sm, expected, "motif sings on the open road with no target in range")
+
+	# --- PHRASE: silent for 24 pickups, a FALLING one-bar line on the 25th. ---
+	for i in range(SoundManager.ROAD_PHRASE_EVERY - 1):
+		sm.notify_coin_pickup()
+	sm.tick_road_music()
+	_expect_voices(sm, expected, "a coin phrase fired before the %dth pickup" % SoundManager.ROAD_PHRASE_EVERY)
+	sm.notify_coin_pickup()  # the 25th queues the bar
+	for i in range(SoundManager.ROAD_PHRASE_PITCHES.size()):
+		sm.tick_road_music()
+		expected += 1
+		_expect_voices(sm, expected, "phrase tap %d missing — the bar is one tap per tick" % i)
+		_expect_tap(players, 9 + i, coin_stream, SoundManager.ROAD_PHRASE_PITCHES[i],
+				SoundManager.ROAD_PHRASE_VOLUME_DB, "phrase tap %d" % i)
+		if i > 0:
+			var prev: AudioStreamPlayer = players[(9 + i - 1) % pool_size]
+			var tap: AudioStreamPlayer = players[(9 + i) % pool_size]
+			if tap.pitch_scale >= prev.pitch_scale:
+				_fail("phrase does not FALL — its contour must differ from waypoint_found's rising triad")
+
+	# --- LEVELS, stated next to the existing cues they sit under. ---
+	if not (SoundManager.ROAD_MOTIF_VOLUME_DB < SoundManager.FOOTSTEP_VOLUME_DB):
+		_fail("motif at %.1f dB is not under the quietest one-shot (footstep %.1f)" \
+				% [SoundManager.ROAD_MOTIF_VOLUME_DB, SoundManager.FOOTSTEP_VOLUME_DB])
+	if not (SoundManager.ROAD_PHRASE_VOLUME_DB < SoundManager.COIN_VOLUME_DB):
+		_fail("phrase at %.1f dB is not under the coin blip (%.1f)" \
+				% [SoundManager.ROAD_PHRASE_VOLUME_DB, SoundManager.COIN_VOLUME_DB])
+	if not (SoundManager.ROAD_RESOLVE_VOLUME_DB < SoundManager.GROWL_VOLUME_DB):
+		_fail("resolve at %.1f dB is not under the threat cues (growl %.1f)" \
+				% [SoundManager.ROAD_RESOLVE_VOLUME_DB, SoundManager.GROWL_VOLUME_DB])
+	if not is_equal_approx(SoundManager.ROAD_MOTIF_RANGE, 80.0):
+		_fail("approach range is %.1f m, not the ~80 m the bead wants" % SoundManager.ROAD_MOTIF_RANGE)
+	if SoundManager.ROAD_PHRASE_EVERY != 25:
+		_fail("phrase fires every %d pickups, not the ~25 the bead wants" % SoundManager.ROAD_PHRASE_EVERY)
+
+	# --- THE COUNTER IS FED: both pickup paths notify, or no phrase ever fires.
+	var controller: String = FileAccess.get_file_as_string("res://scripts/player_controller.gd")
+	if controller.is_empty():
+		_fail("could not read player_controller.gd to check the phrase counter's feeds")
+	elif controller.count("notify_coin_pickup") < 2:
+		_fail("fewer than two notify_coin_pickup() call sites — collect_coin() AND bank_awarded() must feed the phrase counter")
+
+	for stub: Node in [player_stub, compass, hub, toast, croc]:
+		root.remove_child(stub)
+		stub.free()
+	root.remove_child(sm)
+	sm.free()
+	Sentinel.done("road_music")
+
+
+func _expect_voices(sm: Node, expected_total: int, message: String) -> void:
+	## The pool wraps, so the wrapped `_next_player` must equal the total mod
+	## the pool size — Godot exits 0 on runtime errors, count the voices instead.
+	var pool_size: int = SoundManager.ONESHOT_PLAYER_COUNT
+	if int(sm.get("_next_player")) != expected_total % pool_size:
+		_fail("%s (pool holds %d, expected voice %d)" \
+				% [message, int(sm.get("_next_player")), expected_total])
+
+
+func _expect_tap(players: Array, voice_total: int, stream: AudioStreamWAV,
+		pitch: float, volume_db: float, what: String) -> void:
+	## One tapped voice: the coin buffer (bv0f replays, it does not bake), at
+	## the composed pitch and level. `voice_total` is the unwrapped count; the
+	## slot wraps with the pool.
+	var voice: AudioStreamPlayer = players[voice_total % SoundManager.ONESHOT_PLAYER_COUNT]
+	if voice.stream != stream:
+		_fail("%s is not the coin buffer" % what)
+	if not is_equal_approx(voice.pitch_scale, pitch):
+		_fail("%s pitched %.4f, expected %.4f" % [what, voice.pitch_scale, pitch])
+	if not is_equal_approx(voice.volume_db, volume_db):
+		_fail("%s at %.1f dB, expected %.1f" % [what, voice.volume_db, volume_db])
