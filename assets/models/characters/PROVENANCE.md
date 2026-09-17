@@ -85,7 +85,7 @@ become a texture either: `build_hero.paint_chest_glyph` paints it into the body'
 colours over a chest `densify_chest` splits once, which is what let the `shapely` /
 `mapbox-earcut` pins leave `scripts/requirements.txt` with bead 5u3.5.
 
-WHAT SURVIVED PRIMM'S GENERATOR is `primm_swords.glb` (65,712 bytes): a prop, not a
+WHAT SURVIVED PRIMM'S GENERATOR is `primm_swords.glb` (65,716 bytes): a prop, not a
 body, hung on the `spine_03` bone by a `BoneAttachment3D` in `primm.tscn` — bead
 godot-test1-z629 gives him the fan's idiom back (owner: "two samurai swords on his
 back"). Two sheathed katanas crossed ±30° on the shoulder blades, hilts up past the

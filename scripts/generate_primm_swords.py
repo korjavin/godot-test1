@@ -70,6 +70,16 @@ S_MOUTH = 0.004        # saya mouth / tsuba face — the X crosses at the guards
 S_POMMEL = S_MOUTH + HILT_LEN  # 0.254 — hilt end, up past the shoulders
 
 
+def rgba8(c):
+    """Palette (normalized float RGBA) -> 0-255 uint8 row, the ONE conversion.
+
+    trimesh `vertex_colors` are uint8; handing them floats truncated the hilt's
+    silver wrap to [0,0,0,1] (codex round 1, bead z629). Every assignment below
+    goes through here.
+    """
+    return np.round(np.array(c, dtype=np.float64) * 255).astype(np.uint8)
+
+
 class PrimmSwordsGenerator:
     def __init__(self):
         # Primm's own palette: the coat's silver for the wrap diamonds, dark
@@ -101,16 +111,21 @@ class PrimmSwordsGenerator:
                 verts.append([x_off + radius * np.cos(a),
                               radius * np.sin(a), z])
                 colors.append(ring_color)
+        # WINDING IS OUTWARD (codex round 1, bead z629): rings advance in +z and
+        # wind CCW seen from +z, so [a, b, c] faces away from the axis — Godot
+        # front faces are clockwise seen from outside and `export_faceted`
+        # preserves winding, so inward triangles render as the tube's inside.
+        # trimesh signs it: the shipped pair must have POSITIVE volume (asserted
+        # in `generate_and_save`), and it shipped NEGATIVE once.
         verts = np.array(verts, dtype=np.float64)
-        colors = np.array(colors, dtype=np.float64)
         for r in range(len(stations) - 1):
             s0, s1 = ring_start[r], ring_start[r + 1]
             n0 = stations[r][3]
             for i in range(n0):
                 a, b = s0 + i, s0 + (i + 1) % n0
                 c, d = s1 + i, s1 + (i + 1) % n0
-                faces.append([a, c, b])
-                faces.append([b, c, d])
+                faces.append([a, b, c])
+                faces.append([b, d, c])
         if cap_ends:
             for end, flip in ((0, False), (len(stations) - 1, True)):
                 s = ring_start[end]
@@ -118,10 +133,16 @@ class PrimmSwordsGenerator:
                 z, x_off = stations[end][0], stations[end][1]
                 ci = len(verts)
                 verts = np.vstack([verts, [[x_off, 0.0, z]]])
-                colors = np.vstack([colors, [stations[end][4]]])
+                colors.append(stations[end][4])
                 for i in range(n):
                     a, b = s + i, s + (i + 1) % n
-                    faces.append([ci, b, a] if flip else [ci, a, b])
+                    faces.append([ci, a, b] if flip else [ci, b, a])
+        # Vertex colours ride 0-255 uint8 (codex round 1, bead z629): the
+        # palette above is normalized floats, and assigning those into a uint8
+        # array truncated the hilt's silver to [0,0,0,1] — black with an alpha
+        # of 1/255. Convert ONCE here, after the cap colour is appended.
+        colors = (np.round(np.array(colors, dtype=np.float64) * 255)
+                  .astype(np.uint8))
         mesh = trimesh.Trimesh(vertices=verts, faces=np.array(faces),
                                process=False)
         mesh.visual = trimesh.visual.ColorVisuals(mesh, vertex_colors=colors)
@@ -141,12 +162,15 @@ class PrimmSwordsGenerator:
             bow = SAYA_BOW * np.sin(np.pi * t) * side
             saya_stations.append((z, bow, SAYA_R, SAYA_SECTIONS,
                                   self.colors['saya']))
-        parts.append(self._tube(saya_stations, self.colors['saya']))
+        saya = self._tube(saya_stations, self.colors['saya'])
+        assert saya.volume > 0, f"saya wound inward: volume {saya.volume}"
+        parts.append(saya)
         # Tsuba: a disc across the mouth, axis along the blade.
         tsuba = trimesh.creation.cylinder(radius=TSUBA_R, height=TSUBA_T,
                                           sections=TSUBA_SECTIONS)
         tsuba.apply_translation([0.0, 0.0, S_MOUTH])
-        tsuba.visual.vertex_colors = self.colors['tsuba']
+        assert tsuba.volume > 0, f"tsuba wound inward: volume {tsuba.volume}"
+        tsuba.visual.vertex_colors = rgba8(self.colors['tsuba'])
         parts.append(tsuba)
         # Hilt: octagonal, diamond two-tone by (ring + section) parity — the
         # wrap read, without a wrap to simulate.
@@ -162,14 +186,17 @@ class PrimmSwordsGenerator:
         for k in range(HILT_RINGS):
             for i in range(HILT_SECTIONS):
                 if (k + i) % 2:
-                    hv[k * HILT_SECTIONS + i] = self.colors['hilt_b']
+                    hv[k * HILT_SECTIONS + i] = rgba8(self.colors['hilt_b'])
         hilt.visual = trimesh.visual.ColorVisuals(hilt, vertex_colors=hv)
         parts.append(hilt)
-        # Pommel cap.
+        # Pommel cap. (The hilt gets no volume assertion: it is an OPEN tube by
+        # design, and an open surface has no signed volume to check. Its sides
+        # share `_tube()`'s winding with the saya, which IS asserted.)
         pommel = trimesh.creation.cylinder(radius=POMMEL_R, height=POMMEL_LEN,
                                            sections=10)
         pommel.apply_translation([0.0, 0.0, S_POMMEL + POMMEL_LEN / 2.0])
-        pommel.visual.vertex_colors = self.colors['pommel']
+        assert pommel.volume > 0, f"pommel wound inward: volume {pommel.volume}"
+        pommel.visual.vertex_colors = rgba8(self.colors['pommel'])
         parts.append(pommel)
         sword = trimesh.util.concatenate(parts)
         # Tilt into the X: +side toward +X at the hilt. rotation_matrix(a, +Y)
@@ -194,6 +221,16 @@ class PrimmSwordsGenerator:
         print(f"  {len(mesh.vertices)} vertices / {len(mesh.faces)} faces")
         print(f"  span x {hi[0] - lo[0]:.3f} m, y {hi[1] - lo[1]:.3f} m, "
               f"z {hi[2] - lo[2]:.3f} m")
+        # CODEX ROUND 1 (bead z629) — this script runs in CI's rebuild loop, so
+        # it grades its own homework: positive signed volume (outward winding —
+        # it shipped inside-out once), opaque alphas everywhere, and the hilt's
+        # silver wrap highlight present (it shipped truncated to black once).
+        assert mesh.volume > 0, f"swords wound inward: volume {mesh.volume}"
+        vc = np.asarray(mesh.visual.vertex_colors)
+        assert (vc[:, 3] == 255).all(), "non-opaque vertex alpha in swords"
+        highlight = rgba8(self.colors['hilt_b'])
+        assert (vc == highlight).all(axis=1).any(), "hilt wrap highlight gone"
+        print(f"  volume +{mesh.volume:.6f} m3, alphas opaque, silver present")
         filename = output_dir / "primm_swords.glb"
         export_faceted(mesh, str(filename))
         print(f"\n  Saved to {filename}")

@@ -15,6 +15,16 @@ keeps its swords).
 3. Clearance: at rest pose the blade tips stay outside the coat-tails volume
    (> 5 mm — a rub is a fail), with silhouette pins (|tip x| and hilt height)
    catching a gross misplacement a pure clearance test would miss.
+4. Outward: the shipped prop's saya tubes are Godot-FRONT-facing (codex
+   round 1 — the tubes shipped wound inside-out and rendered inverted). Only
+   the saya faces are measured, and deliberately: the tsuba sits ON the
+   centroid plane, so a centroid dot cannot judge its caps (batch_selfcheck's
+   star-shaped requirement), while every saya face stands well off it. Godot's
+   front face is the CLOCKWISE one seen from outside, and the importer flips
+   winding (measured: trimesh 83% right-hand-outward reads 17% here), so a
+   correctly shipped saya reads right-hand-INWARD on every one of its 240
+   faces — the generator asserts the source side (positive volume), this
+   asserts the shipped side.
 
 Sentinel contract: isolate first, done() last in _run(), finish() at report.
 """
@@ -29,6 +39,13 @@ const EXTERNAL_PATH: String = "../Mesh/Armature/Skeleton3D"
 const MIN_PROP_VERTS: int = 100
 const TIP_LOCAL_Z: float = -0.55
 const HILT_LOCAL_Z: float = 0.2
+## The saya's vertex colour — the dark indigo-black bytes the generator paints
+## ([8, 9, 18, 255]), divided here rather than typed as decimals: the import
+## quantizes to float32 and a rounded literal lands outside `is_equal_approx`.
+const SAYA_COLOR := Color(8.0 / 255.0, 9.0 / 255.0, 18.0 / 255.0, 1.0)
+## Minimum saya faces found (240 ship) and minimum Godot-front fraction.
+const SAYA_MIN_FACES: int = 200
+const OUTWARD_MIN_FRACTION: float = 0.95
 const CLEARANCE_MIN_M: float = 0.005
 const TIP_SPREAD_MIN: float = 0.30
 const TIP_SPREAD_MAX: float = 0.45
@@ -59,6 +76,7 @@ func _run() -> void:
 	_check_local_attachment(fixture)
 	_check_remote_mirror(avatar)
 	_check_clearance(fixture)
+	_check_outward(fixture)
 	fixture.queue_free()
 	avatar.queue_free()
 	_report()
@@ -224,6 +242,84 @@ func _check_clearance(fixture: Node) -> void:
 	if hilt_top < HILT_TOP_MIN or hilt_top > HILT_TOP_MAX:
 		_failures.append("clearance: hilt top is %.3f m high, want 1.50..1.65" % hilt_top)
 	Sentinel.done("clearance")
+
+
+func _check_outward(fixture: Node) -> void:
+	var body: Node = fixture.get_node_or_null("Body")
+	if body == null:
+		_failures.append("outward: no Body under primm.tscn root")
+		Sentinel.done("outward")
+		return
+	var swords := body.get_node_or_null(SWORDS_NODE) as BoneAttachment3D
+	if swords == null:
+		_failures.append("outward: no Swords node to measure")
+		Sentinel.done("outward")
+		return
+	# Winding is a prop-local property: a rigid instance transform preserves
+	# it, so measure in the prop's own frame straight off the surfaces. Only
+	# the SAYA faces (all three verts in its colour): the tsuba straddles the
+	# centroid plane, where a centroid dot misfires on genuinely outward caps.
+	var centroid := Vector3.ZERO
+	var centroid_n := 0
+	for mi in swords.find_children("*", "MeshInstance3D", true, false):
+		var mesh: Mesh = (mi as MeshInstance3D).mesh
+		if mesh == null:
+			continue
+		for s in range(mesh.get_surface_count()):
+			var arrays: Array = mesh.surface_get_arrays(s)
+			if arrays.size() <= Mesh.ARRAY_VERTEX:
+				continue
+			for v in arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array:
+				centroid += v
+				centroid_n += 1
+	centroid /= float(maxi(centroid_n, 1))
+	var front := 0
+	var saya := 0
+	for mi in swords.find_children("*", "MeshInstance3D", true, false):
+		var mesh2: Mesh = (mi as MeshInstance3D).mesh
+		if mesh2 == null:
+			continue
+		for s in range(mesh2.get_surface_count()):
+			var a2: Array = mesh2.surface_get_arrays(s)
+			if a2.size() <= Mesh.ARRAY_COLOR:
+				continue
+			var verts: PackedVector3Array = a2[Mesh.ARRAY_VERTEX]
+			var cols: PackedColorArray = a2[Mesh.ARRAY_COLOR]
+			var idx: PackedInt32Array = a2[Mesh.ARRAY_INDEX]
+			var order := PackedInt32Array()
+			if idx.is_empty():
+				for i in verts.size():
+					order.append(i)
+			else:
+				order = idx
+			for t in range(0, order.size() - 2, 3):
+				if not cols[order[t]].is_equal_approx(SAYA_COLOR) \
+						or not cols[order[t + 1]].is_equal_approx(SAYA_COLOR) \
+						or not cols[order[t + 2]].is_equal_approx(SAYA_COLOR):
+					continue
+				saya += 1
+				var v0: Vector3 = verts[order[t]]
+				var v1: Vector3 = verts[order[t + 1]]
+				var v2: Vector3 = verts[order[t + 2]]
+				var normal: Vector3 = (v1 - v0).cross(v2 - v0)
+				if normal.length() < 0.000000001:
+					continue
+				var middle: Vector3 = (v0 + v1 + v2) / 3.0
+				# Godot's front face is CLOCKWISE seen from outside, so its
+				# right-hand normal points INWARD: dot < 0 IS front-facing.
+				if normal.normalized().dot(
+						(middle - centroid).normalized()) < 0.0:
+					front += 1
+	if saya < SAYA_MIN_FACES:
+		_failures.append("outward: only %d saya faces found (min %d)"
+			% [saya, SAYA_MIN_FACES])
+		Sentinel.done("outward")
+		return
+	var fraction: float = float(front) / float(saya)
+	if fraction < OUTWARD_MIN_FRACTION:
+		_failures.append("outward: %.0f%% of %d saya faces are Godot-front "
+			% [fraction * 100.0, saya] + "(min 95%%)")
+	Sentinel.done("outward")
 
 
 func _point_box_distance(p: Vector3, box: AABB) -> float:
