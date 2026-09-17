@@ -223,9 +223,17 @@ const CAMERA_PITCH_MAX: float = 60.0   # Looking up limit (degrees)
 ## (`_third_person_arm_target()`) — not an absolute length, so the same wheel
 ## works outdoors and on the shorter indoor boom, and the SpringArm3D still
 ## clamps against walls exactly as it does today.
-const CAMERA_ZOOM_MIN: float = 0.5    # half the scene boom: 4.1 m outdoors
-const CAMERA_ZOOM_MAX: float = 2.0    # twice it: 16.5 m outdoors
-const CAMERA_ZOOM_STEP: float = 0.15  # one wheel notch; 10 notches span the range
+const CAMERA_ZOOM_MIN: float = 0.25   # quarter boom: 2.06 m outdoors, 0.96 m
+                                     # indoors — over-the-shoulder, measured clear
+                                     # of the head (see the closest-indoor-zoom
+                                     # assertion in view_selfcheck)
+const CAMERA_ZOOM_MAX: float = 4.0    # quadruple boom: 33.0 m outdoors, 15.4 m
+                                     # indoors — well inside the fog, which sits
+                                     # 150 m out on web, further on desktop
+const CAMERA_ZOOM_STEP: float = 0.15  # one wheel notch multiplies/divides by
+                                     # 1.15; 1.15^10 ≈ 4.05 crosses from 1.0 to
+                                     # either stop, 1.15^20 ≈ 16.4 the whole 16x
+                                     # range end to end
 
 ## First-person view (one stop on the C / "toggle_camera" cycle).
 ## Eye height above the FEET at normal scale — just under the ~1.8 m head top,
@@ -1220,8 +1228,13 @@ func zoom_camera(delta_factor: float) -> void:
 	behave lives here, so a self-check can drive it without an event.
 
 	Nothing else to do — `_tick_arm_length()` dollies the arm to the new target on
-	the next physics tick (one 0.15 step at 8.25 m is 1.24 m, about 70 ms at
+	the next physics tick (one ×1.15 notch at 8.25 m is 1.24 m, about 70 ms at
 	ARM_EASE_SPEED: smooth, effectively immediate, and no second easing path).
+	The notch is MULTIPLICATIVE (bead godot-test1-hwwv, owner ruling
+	2026-09-17): `camera_zoom * (1.0 + CAMERA_ZOOM_STEP) ** sign`, so the feel
+	is uniform across the 16x range — an additive 0.15 would crawl near MIN
+	and leap near MAX. The call sites pass `-CAMERA_ZOOM_STEP` / `+STEP` and
+	only the SIGN is read, so they stay textually as they are.
 
 	First-person is REFUSED rather than remembered: a player scrolling with no
 	boom would otherwise come back to third-person at a surprise distance. The
@@ -1230,7 +1243,8 @@ func zoom_camera(delta_factor: float) -> void:
 	"""
 	if is_game_over or get_tree().paused or view_mode == ViewMode.FIRST_PERSON:
 		return
-	camera_zoom = clampf(camera_zoom + delta_factor, CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
+	camera_zoom = clampf(camera_zoom * pow(1.0 + CAMERA_ZOOM_STEP, sign(delta_factor)),
+			CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX)
 
 
 func _tick_arm_length(delta: float) -> void:
