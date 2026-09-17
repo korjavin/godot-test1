@@ -24,6 +24,12 @@ extends SceneTree
 ##     none twice, none on the ground. That is the bead's acceptance and it is what
 ##     binds the menu to `tower_selfcheck`'s fifteen-subset walk, which already
 ##     starts from each of these entries.
+##  2b. THE CALL CELL IS HIDDEN ON EVERY STOREY (bead `godot-test1-sch8`, owner
+##     ruling 2026-09-17). Every storey's `lift_cell()` is the `L` its plan
+##     draws — one per storey, a different cell on each, none of them the old
+##     centroid answer — and the centroid fallback still answers for a storey
+##     that draws none. Drives the shipped `lift_cell()` / `_lift_fallback_cell()`
+##     throughout, with the old rule recomputed here as the second opinion.
 ##  3. THE MENU ON A REAL SHELL, from the ground. A tower with an empty opened set
 ##     offers nothing; the stop the trigger writes appears the moment it is opened
 ##     and not before; choosing one puts a real `player.tscn` on that storey's `s`
@@ -94,6 +100,7 @@ func _initialize() -> void:
 
 	_check_key_is_free()
 	_check_stops_are_audited_entries()
+	_check_lift_cells_are_hidden()
 	await _check_the_menu_on_a_real_shell()
 	await _check_every_storey_is_a_call_point()
 	await _check_the_refusals()
@@ -260,12 +267,14 @@ func _check_stops_are_audited_entries() -> void:
 		if floor_index == 0:
 			_fail("lift stop '%s' lands on the ground floor, which is where the lift "
 				% id + "is called from")
-		# THE ARRIVAL POINT IS A LANDING CELL. `landing_rect()`'s centre is only
-		# accidentally standable (the ground floor's landing has a doorway bitten out
-		# of it), so `lift_stand` snaps to a real `s` and this is what says so.
-		if not _is_landing_cell(floor_index, TowerInterior.lift_stand(floor_index)):
-			_fail("lift stop '%s' would set the player down off storey %d's landing"
-				% [id, floor_index])
+		# THE ARRIVAL POINT IS THE LIFT'S CALL CELL. `landing_rect()`'s centre is
+		# only accidentally standable (the ground floor's landing has a doorway
+		# bitten out of it), so `lift_stand` snaps to the storey's `L` — the old
+		# nearest-to-centroid `s` before bead godot-test1-sch8 hid it — and this
+		# is what says so.
+		if not _is_lift_cell(floor_index, TowerInterior.lift_stand(floor_index)):
+			_fail("lift stop '%s' would set the player down off storey %d's lift "
+				% [id, floor_index] + "call cell")
 
 	# --- ONE STOP PER STOREY, NONE TWICE (bead godot-test1-b9m8) -------------
 	# The owner's ruling is "every storey", and the only mechanical form of that is
@@ -330,14 +339,16 @@ func _check_stops_are_audited_entries() -> void:
 	if TowerInterior.landing_floor("a_room_no_storey_has") >= 0:
 		_fail("landing_floor() resolved a room that does not exist — a wave-C "
 			+ "reservation would be offered as a floor")
-	if _is_landing_cell(0, TowerInterior.lift_stand(0) + Vector3(0.0, 0.0, 60.0)):
-		_fail("the landing-cell probe called a point 60 m off the landing a landing "
+	if _is_lift_cell(0, TowerInterior.lift_stand(0) + Vector3(0.0, 0.0, 60.0)):
+		_fail("the lift-cell probe called a point 60 m off the call cell a lift "
 			+ "cell — it cannot see a bad arrival point either")
 	Sentinel.done("stops_are_entries")
 
 
-func _is_landing_cell(floor_index: int, local: Vector3) -> bool:
-	"""Does this interior-local point stand on an `s` cell of that storey's plan?"""
+func _is_lift_cell(floor_index: int, local: Vector3) -> bool:
+	"""Does this interior-local point stand on that storey's lift call cell —
+	the `L` (bead godot-test1-sch8), or an `s` on a storey that draws none and
+	answers the old centroid rule?"""
 	var plan: Dictionary = TowerPlans.storey(floor_index)
 	if plan.is_empty():
 		return false
@@ -348,7 +359,132 @@ func _is_landing_cell(floor_index: int, local: Vector3) -> bool:
 	var line := String(plan["rows"][row_index])
 	if col < 0 or col >= line.length():
 		return false
-	return line[col] == TowerPlans.LANDING_CHAR
+	if line[col] == TowerPlans.LIFT_CHAR:
+		return true
+	return line[col] == TowerPlans.LANDING_CHAR \
+		and TowerInterior.lift_cell(floor_index) == Vector2i(col, row_index)
+
+
+# ============================================================================
+# 2b. THE CALL CELL IS HIDDEN ON EVERY STOREY (bead godot-test1-sch8)
+# ============================================================================
+
+func _check_lift_cells_are_hidden() -> void:
+	"""
+	The owner's report, as a check: the lift hides somewhere different on every
+	storey. Each storey's `lift_cell()` is the `L` its plan draws — one per
+	storey, a different cell on each, none of them the old centroid answer —
+	and the centroid fallback still answers for a storey that draws none.
+
+	Drives the SHIPPED functions throughout — `lift_cell()` for the answer,
+	`_lift_fallback_cell()` for the old rule — on the shipped plans and on a
+	copy of one with its `L` rubbed out. The old rule itself is recomputed here
+	as the second opinion, so a fallback that answered the wrong `s` cell
+	would still fail.
+	"""
+	var hidden: Dictionary = {}
+	for floor_index: int in TowerPlans.floors():
+		var plan := TowerPlans.storey(floor_index)
+		if plan.is_empty():
+			continue
+		# The plan draws exactly one `L`. `tower_selfcheck` refuses two; zero
+		# here means the fallback below is what `lift_cell()` answers, and the
+		# legs below are skipped rather than passed vacuously.
+		var found := Vector2i(-1, -1)
+		var count := 0
+		for r: int in plan["rows"].size():
+			var line := String(plan["rows"][r])
+			for c: int in line.length():
+				if line[c] == TowerPlans.LIFT_CHAR:
+					found = Vector2i(c, r)
+					count += 1
+		if count != 1:
+			_fail("storey %d draws %d `L` lift call cells, not one — the paint, "
+				% [floor_index, count] + "the hint and the ride cannot name one cell")
+			continue
+		# THE SHIPPED ANSWER IS THE DRAWN CELL.
+		if TowerInterior.lift_cell(floor_index) != found:
+			_fail("storey %d draws its `L` at %s but lift_cell() answers %s — "
+				% [floor_index, str(found), str(TowerInterior.lift_cell(floor_index))]
+				+ "the pad, the hint and the ride are not where the plan hides them")
+		# A DIFFERENT HIDING PLACE ON EVERY STOREY.
+		if hidden.has(found):
+			_fail("storeys %d and %d hide the lift on the same cell %s — its own "
+				% [int(hidden[found]), floor_index, str(found)] + "spot on every storey")
+		hidden[found] = floor_index
+		# ...AND NOT WHERE IT ALWAYS WAS. The centroid of the landing WITH the
+		# `L` cell counted as landed floor — i.e. where the pad stood before
+		# this bead hid it — is nearest the `L` itself only when the lift did
+		# not move. (Comparing against the plain fallback cannot say that: the
+		# `L` sits on a `.` the fallback never names, so the two answers are
+		# different cells by construction and the comparison proves nothing.)
+		var old := TowerInterior._lift_fallback_cell(plan)
+		if _centroid_cell(plan, found) == found:
+			_fail("storey %d hides its `L` on %s, the old centroid answer — "
+				% [floor_index, str(found)] + "the lift did not move")
+		if old != _centroid_cell(plan):
+			_fail("storey %d's fallback answers %s but the centroid rule says %s — "
+				% [floor_index, str(old), str(_centroid_cell(plan))]
+				+ "the second opinion disagrees with the shipped fallback")
+		# THE FALLBACK, on this storey with its `L` rubbed out: the same centroid
+		# answer, on a landing cell — the fallback reads `s` cells and no `L`.
+		var rubbed := plan.duplicate(true)
+		var rubbed_line := String(rubbed["rows"][found.y])
+		rubbed["rows"][found.y] = rubbed_line.substr(0, found.x) \
+			+ TowerPlans.FLOOR_CHAR + rubbed_line.substr(found.x + 1)
+		var again := TowerInterior._lift_fallback_cell(rubbed)
+		if again != old:
+			_fail("storey %d's fallback moved from %s to %s when its `L` was "
+				% [floor_index, str(old), str(again)] + "rubbed out — it reads the `L`")
+		if again.x < 0 or String(plan["rows"][again.y])[again.x] != TowerPlans.LANDING_CHAR:
+			_fail("storey %d's fallback answers %s, which is not an `s` landing cell"
+				% [floor_index, str(again)])
+	# The fallback's floor: no plan at all, and a plan with no landing, both
+	# answer "nowhere".
+	if TowerInterior._lift_fallback_cell({}) != Vector2i(-1, -1):
+		_fail("the fallback answers a cell for no plan at all — it should answer nowhere")
+	var stone_rows: Array = []
+	for i: int in TowerPlans.PLAN_GRID:
+		stone_rows.append(TowerPlans.WALL_CHAR.repeat(TowerPlans.PLAN_GRID))
+	if TowerInterior._lift_fallback_cell({"rows": stone_rows}) != Vector2i(-1, -1):
+		_fail("the fallback answers a cell for a storey with no landing — "
+			+ "a storey with no `s` cells builds no lift plate")
+	Sentinel.done("lift_cells_are_hidden")
+
+
+func _centroid_cell(plan: Dictionary, extra: Vector2i = Vector2i(-1, -1)) -> Vector2i:
+	"""The old rule, seconded: this storey's landing cell nearest its centroid,
+	or `Vector2i(-1, -1)`. Independent of `_lift_fallback_cell()` on purpose —
+	that function is what this compares against.
+
+	`extra`, when given, is counted as landed floor alongside the `s` cells and
+	may itself win: that is how the "not where it always was" leg asks whether
+	the `L` sits on the old centroid answer.
+	"""
+	var cells: Array[Vector2i] = []
+	var sum := Vector2.ZERO
+	# First, so a genuine coincidence wins its own tie: the shipped order of the
+	# `s` cells — and their tie-break — is untouched after it.
+	if extra.x >= 0:
+		cells.append(extra)
+		sum += Vector2(float(extra.x), float(extra.y))
+	for r: int in plan["rows"].size():
+		var line := String(plan["rows"][r])
+		for c: int in line.length():
+			if line[c] == TowerPlans.LANDING_CHAR:
+				cells.append(Vector2i(c, r))
+				sum += Vector2(float(c), float(r))
+	if cells.is_empty():
+		return Vector2i(-1, -1)
+	var centroid := sum / float(cells.size())
+	var best := cells[0]
+	var best_d := INF
+	for cell: Vector2i in cells:
+		var d := (Vector2(float(cell.x), float(cell.y)) - centroid).length_squared()
+		if d < best_d:
+			best_d = d
+			best = cell
+	return best
 
 
 # ============================================================================
@@ -537,7 +673,7 @@ func _check_every_storey_is_a_call_point() -> void:
 
 
 func _assert_landed(player: Node3D, interior: Node3D, want: int, what: String) -> void:
-	"""The player stands on storey `want`'s landing cell, within a hand's width."""
+	"""The player stands on storey `want`'s lift call cell, within a hand's width."""
 	var local: Vector3 = player.global_position - interior.global_position
 	# A hand's width of slack, not exact equality: the ride is a hard write and the
 	# menu's pause stops physics, but a check that fails on one settling frame would
@@ -549,8 +685,8 @@ func _assert_landed(player: Node3D, interior: Node3D, want: int, what: String) -
 	if TowerInterior.current_floor(local.y) != want:
 		_fail("%s left the player on storey %d rather than %d"
 			% [what, TowerInterior.current_floor(local.y), want])
-	if not _is_landing_cell(want, local):
-		_fail("%s set the player down off the landing — not on built floor" % what)
+	if not _is_lift_cell(want, local):
+		_fail("%s set the player down off the lift call cell — not on the pad" % what)
 
 
 func _stop_id_for_floor(floor_index: int) -> String:
@@ -971,7 +1107,7 @@ func _make_panel() -> Control:
 
 
 func _stand_at_the_lift(player: Node3D, interior: Node3D, floor_index: int) -> void:
-	"""Put the player on storey `floor_index`'s landing cell — its call point."""
+	"""Put the player on storey `floor_index`'s lift call cell — its call point."""
 	player.global_position = interior.global_position + TowerInterior.lift_stand(floor_index)
 
 

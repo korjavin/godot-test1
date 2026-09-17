@@ -680,7 +680,8 @@ static func _plan_lift_pad(plan: Dictionary) -> Array[Dictionary]:
 	
 	@return: A `COLOR_LIFT` plate on `TowerInterior.lift_cell()`, non-solid (you
 	        stand ON the slab - a 10 cm lip is a wall to a CharacterBody3D with
-	        no step-up), or `[]` for a storey with no `s` cells.
+	        no step-up), or `[]` for a storey that draws neither an `L` nor an
+	        `s` cell.
 	
 	THE PLATE IS THE PAINT AND THE TRIGGER IS THE CALL, exactly as the lure
 	plates are drawn here and locked there: what makes the cell a lift stop is

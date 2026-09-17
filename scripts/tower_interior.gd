@@ -707,7 +707,7 @@ const COLOR_RIDDLE_PADS: Array[Color] = [
 ]
 
 ## The lift's call cell - a PLACE, not a gate and not a system. A pale rose mat
-## on the one `s` cell the lift sets you down on, so the thing the "L - lift"
+## on the one `L` cell the lift sets you down on, so the thing the "L - lift"
 ## hint points at is a thing you can see. Warm like nothing else in this building
 ## except the hazard orange - and a hazard is a moving bar, so the mat cannot read
 ## as one - and deliberately in no gate, marker, system or riddle-pad family:
@@ -2674,19 +2674,20 @@ static func landing_floor(room_id: String) -> int:
 
 static func lift_stand(floor_index: int) -> Vector3:
 	"""
-	Where the lift sets you down on a storey: an `s` LANDING CELL near the middle
-	of that storey's landing.
+	Where the lift sets you down on a storey: the `L` lift call cell
+	`lift_cell()` names — hidden somewhere off the landing since bead
+	godot-test1-sch8, the old nearest-to-centroid `s` cell before it.
 
 	@return: an interior-LOCAL point, 0.2 m off the walking surface —
 	        `entry_stand()`'s and `checkpoint_stand()`'s convention.
 
-	THE NEAREST `s` CELL TO THE CENTROID, not the centre of `landing_rect()`. The
-	rect is a bounding box over cells that need not fill it (the ground floor's
-	landing is an 18 x 16 hall with a doorway bitten out of one row), so its centre
-	is only accidentally standable; a cell that IS an `s` is standable by
-	construction, because the flood fill in `tower_selfcheck` walks it. Deterministic
-	for the same reason everything else in this building is: it reads authored text
-	and draws nothing.
+	THE `L` CELL, not the centre of `landing_rect()` and no longer the nearest
+	`s` to the centroid either. The rect is a bounding box over cells that need
+	not fill it (the ground floor's landing is an 18 x 16 hall with a doorway
+	bitten out of one row), so its centre is only accidentally standable; a cell
+	the plan marks `L` is standable by construction, because the flood fill in
+	`tower_selfcheck` walks it. Deterministic for the same reason everything else
+	in this building is: it reads authored text and draws nothing.
 
 	INSURANCE RATHER THAN A FIX TODAY, and measured: all three landings this
 	building has a lift stop at or calls from have a bbox centre that already IS an
@@ -2715,12 +2716,14 @@ static var _lift_stand_memo: Dictionary = {}
 
 static func lift_cell(floor_index: int) -> Vector2i:
 	"""
-	The `s` cell `lift_stand()` sets you down on: the landing cell nearest the
-	landing's centroid.
+	The cell `lift_stand()` sets you down on: the storey's `L` lift call cell,
+	hidden somewhere off the landing (bead godot-test1-sch8, owner ruling
+	2026-09-17: "hide it somewhere on every storey, in its own spot").
 	
-	@return: the cell, or `Vector2i(-1, -1)` when the storey draws no landing -
-	        a storey with no `s` cells builds no lift plate and `lift_stand()`
-	        degrades to `entry_stand()`, as today.
+	@return: the `L` cell, or — on a storey that draws none — the landing cell
+	        nearest the landing's centroid, the rule this answered before the `L`
+	        existed. `Vector2i(-1, -1)` when the storey draws neither: no lift
+	        plate is built and `lift_stand()` degrades to `entry_stand()`, as today.
 	
 	SPLIT OUT OF `lift_stand()` (bead godot-test1-i1xj) so the paint and the call
 	point cannot drift: `_plan_lift_pad()` plates this cell and `lift_stand()`
@@ -2728,6 +2731,28 @@ static func lift_cell(floor_index: int) -> Vector2i:
 	seeded, like everything else it reads.
 	"""
 	var plan := TowerPlans.storey(floor_index)
+	if plan.is_empty():
+		return Vector2i(-1, -1)
+	for r: int in plan["rows"].size():
+		var line := String(plan["rows"][r])
+		for c: int in line.length():
+			if line[c] == TowerPlans.LIFT_CHAR:
+				return Vector2i(c, r)
+	# No `L` drawn: the old centroid-of-`s` rule, kept so an unmarked storey
+	# behaves as it always did.
+	return _lift_fallback_cell(plan)
+
+
+static func _lift_fallback_cell(plan: Dictionary) -> Vector2i:
+	"""
+	The pre-`L` answer for one storey: its landing cell nearest the landing's
+	centroid, or `Vector2i(-1, -1)` when it draws no landing.
+
+	SPLIT OUT OF `lift_cell()` (bead godot-test1-sch8) so the self-check can
+	drive it on a storey with its `L` rubbed out: the fallback is only reachable
+	through shipped plans that all draw one, so without this seam it would be
+	an unmeasured branch.
+	"""
 	if plan.is_empty():
 		return Vector2i(-1, -1)
 	var cells: Array[Vector2i] = []

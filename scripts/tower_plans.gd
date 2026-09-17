@@ -104,7 +104,14 @@ extends RefCounted
 ##            Emits nothing; the storey's slab is already under it.
 ##   letter   a room's cells. The letter maps to a `TOWER_GRAPH` room id through
 ##            the storey's `rooms` dict, and the binding is checked BOTH ways.
-##            `A`-`Z` EXCEPT `S`, `P`, `G` and `D`, which are taken below.
+##            `A`-`Z` EXCEPT `S`, `P`, `G`, `D` and `L`, which are taken below.
+##   L        the lift's call cell (bead `godot-test1-sch8`, owner ruling
+##            2026-09-17: "hide it somewhere on every storey, in its own spot").
+##            Walkable like `.` — the builder plates it, the flood fill walks it,
+##            and every other scan that treats `./s` as floor treats this as
+##            floor too. At most ONE per storey; `TowerInterior.lift_cell()`
+##            returns it, falling back to the old centroid-of-`s` rule on a
+##            storey that draws none.
 ##   1-4      one pad of a riddle's COMBINATION LOCK, and the digit IS which pad it
 ##            is: the gate row's `answer` is a sequence of these digits, and the
 ##            clue painted in its clue room is the same four colours in the same
@@ -172,6 +179,9 @@ const WALL_CHAR: String = "#"
 const FLOOR_CHAR: String = "."
 const STAIR_UP_CHAR: String = "S"
 const LANDING_CHAR: String = "s"
+## The lift's call cell. Every storey draws exactly one (see the `L` row in the
+## character table); `TowerInterior.lift_cell()` is what reads it.
+const LIFT_CHAR: String = "L"
 const PAD_CHAR: String = "P"
 # ponytail: `G` is still PARSED AND VALIDATED and builds nothing — a post spawns no
 # guard, because population is phase 17's, and it is bound to a real row by check 1
@@ -275,7 +285,7 @@ const STOREYS: Array[Dictionary] = [
 			"#CCCCCCCCC..CCCCCCCC##..#####DD#########",
 			"#CCCCCCCCC..CCCCCCCC#OOOOO#VVVVVV#OOOOO#",
 			"#CCCCCCCCC..CCCCCCCC#OOOOO#VVVVVV#OOOOO#",
-			"#C..........CCCCCCCC#OOOOO#VVVVVV#OOOOO#",
+			"#CL.........CCCCCCCC#OOOOO#VVVVVV#OOOOO#",
 			"#C..........CCCCCCCC#OOOOO#VVVVVV#OOOOO#",
 			"#CCCCCCCCCCCCCCCCCCC#OOOOO#VVVVVV#OOOOO#",
 			"#CCCCCCCCCCCCCCCCCCC#OOOOO#VVVVVV#OOOOO#",
@@ -331,7 +341,7 @@ const STOREYS: Array[Dictionary] = [
 		},
 		"rows": [
 			"########################################",
-			"#......................................#",
+			"#....................................L.#",
 			"#......................................#",
 			"#......................................#",
 			"#..#########BB#########................#",
@@ -470,7 +480,7 @@ const STOREYS: Array[Dictionary] = [
 			"#..#FFFFFF##HHHHHH#..#IIIIII##JJJJJJ#..#",
 			"#..################..################..#",
 			"#......................................#",
-			"#......................................#",
+			"#L.....................................#",
 			"########################################",
 		],
 		"note": "Storey 3, the records floor: the grand ramp off the annulus, a "
@@ -504,7 +514,7 @@ const STOREYS: Array[Dictionary] = [
 			"I": "s4_supply_a",
 			"J": "s4_supply_b",
 			"K": "s4_supply_c",
-			"L": "s4_dispatch_a",
+			"Q": "s4_dispatch_a",
 			"M": "s4_dispatch_b",
 			"N": "s4_dispatch_c",
 		},
@@ -531,24 +541,24 @@ const STOREYS: Array[Dictionary] = [
 			"#..#AA###BB###CC###..#EE###FF###HH###..#",
 			"#......................................#",
 			"#......................................#",
-			"#..#II###JJ###KK###..#LL###MM###NN###..#",
-			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
-			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
-			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
-			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
-			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
-			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
-			"#..#III##JJJ##KKKK#..#LLL##MMM##NPNN#..#",
-			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
-			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
-			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
-			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
-			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
-			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
-			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
+			"#..#II###JJ###KK###..#QQ###MM###NN###..#",
+			"#..#III##JJJ##KKKK#..#QQQ##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#QQQ##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#QQQ##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#QQQ##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#QQQ##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#QQQ##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#QQQ##MMM##NPNN#..#",
+			"#..#III##JJJ##KKKK#..#QQQ##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#QQQ##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#QQQ##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#QQQ##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#QQQ##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#QQQ##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#QQQ##MMM##NNNN#..#",
 			"#..################..################..#",
 			"#......................................#",
-			"#......................................#",
+			"#.....................................L#",
 			"########################################",
 		],
 		"note": "Storey 4, the accounts floor: twelve small offices, three to a "
@@ -611,7 +621,7 @@ const STOREYS: Array[Dictionary] = [
 		},
 		"rows": [
 			"########################################",
-			"#......................................#",
+			"#L.....................................#",
 			"#......................................#",
 			"#..################..################..#",
 			"#..#AAAAAAAAAAAAAA#..#CCCCCCCCCCCCCC#..#",
@@ -686,7 +696,7 @@ const STOREYS: Array[Dictionary] = [
 		"gates": {},
 		"rows": [
 			"########################################",
-			"#......................................#",
+			"#.....................................L#",
 			"#......................................#",
 			"#..##################################..#",
 			"#..#AAAAAAAAAAA#BBBBBBBBBB#CCCCCCCCC#..#",
@@ -749,7 +759,7 @@ const STOREYS: Array[Dictionary] = [
 			"I": "s7_control_room",
 			"J": "s7_records_vault",
 			"K": "s7_briefing_room",
-			"L": "s7_muster_hall",
+			"R": "s7_muster_hall",
 		},
 		"gates": {},
 		"rows": [
@@ -770,27 +780,27 @@ const STOREYS: Array[Dictionary] = [
 			"#..#IIIIIIIIIIIIII#..#JJJJJJJJJJJJJJ#..#",
 			"#..#IIIIIIIIIIIIII#..#JJJJJJJJJJJJJJ#..#",
 			"#..#IIIIIIIIIIIIII#..################..#",
-			"#..#IIIIIIIIIIIIII#..#LLLLLLLLLLLLLL#..#",
-			"#..#IIIIIIIIIIIIII#..#LLLLLLLLLLLLLL#..#",
-			"#..#IIIIIIIIIIIIII#..#LLLLLLLLLLLLLL#..#",
-			"#..################..#LLLLLLLLLLLLLL#..#",
-			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLLLLLLL#..#",
-			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLLLLLLL#..#",
-			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLLLLLLL#..#",
-			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLLLLLLL#..#",
-			"#..#KKKKKKKKKKKKKK#..LLLLLLLLLLLLLLL#..#",
-			"#..#KKKKKKKKKKKKKK#..LLLLLLLLLLLLLLL#..#",
-			"#..#KKKKKKKKKKKKKKK..#LLLLLLLLLLLLLL#..#",
-			"#..#KKKKKKKKKKKKKKK..#LLLLLLLLLLLLLL#..#",
-			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLLLLLLL#..#",
-			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLPLLLLL#..#",
-			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLLLLLLL#..#",
-			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLLLLLLL#..#",
-			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLLLLLLL#..#",
-			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLLLLLLL#..#",
-			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLLLLLLL#..#",
+			"#..#IIIIIIIIIIIIII#..#RRRRRRRRRRRRRR#..#",
+			"#..#IIIIIIIIIIIIII#..#RRRRRRRRRRRRRR#..#",
+			"#..#IIIIIIIIIIIIII#..#RRRRRRRRRRRRRR#..#",
+			"#..################..#RRRRRRRRRRRRRR#..#",
+			"#..#KKKKKKKKKKKKKK#..#RRRRRRRRRRRRRR#..#",
+			"#..#KKKKKKKKKKKKKK#..#RRRRRRRRRRRRRR#..#",
+			"#..#KKKKKKKKKKKKKK#..#RRRRRRRRRRRRRR#..#",
+			"#..#KKKKKKKKKKKKKK#..#RRRRRRRRRRRRRR#..#",
+			"#..#KKKKKKKKKKKKKK#..RRRRRRRRRRRRRRR#..#",
+			"#..#KKKKKKKKKKKKKK#..RRRRRRRRRRRRRRR#..#",
+			"#..#KKKKKKKKKKKKKKK..#RRRRRRRRRRRRRR#..#",
+			"#..#KKKKKKKKKKKKKKK..#RRRRRRRRRRRRRR#..#",
+			"#..#KKKKKKKKKKKKKK#..#RRRRRRRRRRRRRR#..#",
+			"#..#KKKKKKKKKKKKKK#..#RRRRRRRRPRRRRR#..#",
+			"#..#KKKKKKKKKKKKKK#..#RRRRRRRRRRRRRR#..#",
+			"#..#KKKKKKKKKKKKKK#..#RRRRRRRRRRRRRR#..#",
+			"#..#KKKKKKKKKKKKKK#..#RRRRRRRRRRRRRR#..#",
+			"#..#KKKKKKKKKKKKKK#..#RRRRRRRRRRRRRR#..#",
+			"#..#KKKKKKKKKKKKKK#..#RRRRRRRRRRRRRR#..#",
 			"#..################..################..#",
-			"#......................................#",
+			"#.....................................L#",
 			"#......................................#",
 			"########################################",
 		],
@@ -896,7 +906,7 @@ const STOREYS: Array[Dictionary] = [
 			"#.###########........###.#######.#####.#",
 			"#.##################.###.#######.#####.#",
 			"#.##################.###.#############.#",
-			"#.##################........###BBBBBB#.#",
+			"#.##################.......L###BBBBBB#.#",
 			"#.#########################.###BBBBBB#.#",
 			"#.#########################...#BBBBBB..#",
 			"#.####.####################.###BBBBBB#.#",
@@ -993,7 +1003,7 @@ const STOREYS: Array[Dictionary] = [
 			"#.##########...........###.#######.....#",
 			"#.##########.###.#####.###.#######.###.#",
 			"#.##########.###.#####.###.#######.###.#",
-			"#.##########.#########...........#.###.#",
+			"#.##########.#########..........L#.###.#",
 			"#.##########.###################.#.###.#",
 			"#.##########.###################.#.###.#",
 			"#.######.###.........###########.#.###.#",
@@ -1121,7 +1131,7 @@ const STOREYS: Array[Dictionary] = [
 			"#MMMMMMMMM#BBBBBBBBBBBBBBBBBBB#MMMMMMMM#",
 			"#MMMMMMMMM#BBBBBBBBBBBBBBBBBBB#MMMMMMMM#",
 			"#MMMMMMMMM##D####D####D####D###MMMMMMMM#",
-			"#MMMMMMMMM#...................#MMMMMMMM#",
+			"#MMMMMMMMM#L..................#MMMMMMMM#",
 			"#MMMMMMMMM#AAAAAAAAAAAAAAAAAAA#MMMMMMMM#",
 			"#MMMMMMMMM#AAAAAAAAAAAAAAAAAAA#MMMMMMMM#",
 			"#MMMMMMMMM###..############D###MMMMMMMM#",

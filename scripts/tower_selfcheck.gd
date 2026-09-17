@@ -430,7 +430,8 @@ func _check_plans_bind_to_the_graph() -> void:
 				if ch == TowerPlans.GATE_CHAR or TowerPlans.pad_digit(ch) > 0:
 					drawn_slots["%d,%d" % [c, r]] = true
 				elif ch >= "A" and ch <= "Z" and ch != TowerPlans.STAIR_UP_CHAR \
-						and ch != TowerPlans.PAD_CHAR and ch != TowerPlans.POST_CHAR:
+						and ch != TowerPlans.PAD_CHAR and ch != TowerPlans.POST_CHAR \
+						and ch != TowerPlans.LIFT_CHAR:
 					drawn_letters[ch] = true
 
 		# --- ...against the two dicts, both ways -----------------------------
@@ -1623,6 +1624,15 @@ func _check_the_flood_fill_can_fail() -> void:
 	var stray := _cell_at(base, 6, 10, "A")
 	stray = _cell_at(stray, 20, 20, TowerPlans.PAD_CHAR)
 	_control("a pad beside no room", stray, "not beside a room")
+	# The lift's call cell, twice over (bead godot-test1-sch8). Floor 2's stands
+	# at (1, 38): a second `L` on open floor breaks the at-most-one rule, and
+	# walling the open cells east and north of it seals it — both are `.`, which
+	# the fill never names, so the only new complaints name the call cell.
+	var two_lifts := _cell_at(base, 37, 37, TowerPlans.LIFT_CHAR)
+	_control("a second lift call cell", two_lifts, "at most one")
+	var sealed := _cell_at(_cell_at(base, 1, 37, TowerPlans.WALL_CHAR),
+			2, 38, TowerPlans.WALL_CHAR)
+	_control("a walled-in lift call cell", sealed, "lift call cell")
 
 	# --- and the two rules the first fill cannot state -------------------------
 	# A ROOM LEFT REACHABLE ONLY THROUGH A RIDDLE. Storey 8's maze core has one
@@ -1812,6 +1822,23 @@ func _plan_problems(plan: Dictionary) -> Array[String]:
 				+ "from the landing. The floor is drawn in two pieces")
 				% [c2, r2, ch, _cell_x(c2), _cell_x(r2)])
 			break   # one report per row: a sealed wing is hundreds of cells
+
+	# --- the lift's call cell --------------------------------------------------
+	# At most ONE `L` per storey (bead godot-test1-sch8), and when there is one
+	# it must be reachable on foot from the landing: the menu opens on it, the
+	# pad is painted on it and the ride sets you down on it, so a sealed call
+	# cell is a lift into a wall. No complaint when there is none — the
+	# centroid-of-`s` fallback stays legal for an unmarked storey.
+	var lifts := _plan_cells(plan, TowerPlans.LIFT_CHAR)
+	if lifts.size() > 1:
+		out.append(("%d '%s' lift call cells — at most one per storey, so the "
+			+ "paint, the hint and the ride name one cell") % [lifts.size(),
+			TowerPlans.LIFT_CHAR])
+	elif lifts.size() == 1 and not landing_cells.is_empty() \
+			and not seen.has(lifts[0]):
+		out.append(("the lift call cell (%d, %d) cannot be reached on foot from "
+			+ "the landing — the pad the menu opens on must be walkable")
+			% [lifts[0].x, lifts[0].y])
 
 	# --- the same fill again, with every gate SHUT -----------------------------
 	# WHAT THE FIRST FILL CANNOT SEE. It walks a gate cell like any other floor, so
@@ -2121,16 +2148,17 @@ func _plan_cells(plan: Dictionary, want: String) -> Array[Vector2i]:
 
 
 func _is_room_letter(ch: String) -> bool:
-	"""A-Z, less the four characters the format has already spent."""
+	"""A-Z, less the five characters the format has already spent."""
 	return ch >= "A" and ch <= "Z" and ch != TowerPlans.STAIR_UP_CHAR \
 		and ch != TowerPlans.PAD_CHAR and ch != TowerPlans.POST_CHAR \
-		and ch != TowerPlans.GATE_CHAR
+		and ch != TowerPlans.GATE_CHAR and ch != TowerPlans.LIFT_CHAR
 
 
 func _is_legal_plan_char(ch: String) -> bool:
 	return ch == TowerPlans.WALL_CHAR or ch == TowerPlans.FLOOR_CHAR \
 		or ch == TowerPlans.LANDING_CHAR or ch == TowerPlans.STAIR_UP_CHAR \
-		or ch == TowerPlans.PAD_CHAR or ch == TowerPlans.POST_CHAR \
+		or ch == TowerPlans.LIFT_CHAR or ch == TowerPlans.PAD_CHAR \
+		or ch == TowerPlans.POST_CHAR \
 		or ch == TowerPlans.GATE_CHAR or TowerPlans.pad_digit(ch) > 0 \
 		or _is_room_letter(ch)
 
