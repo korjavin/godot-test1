@@ -195,10 +195,22 @@ func _check_view(player: Node3D, camera: Camera3D, model: Node3D, mode: int,
 	Sentinel.done("view")
 
 
+## The closest INDOOR boom the wheel may ask for, in metres (bead
+## godot-test1-hwwv). INDOOR_ARM_LENGTH × CAMERA_ZOOM_MIN = 3.85 × 0.25 = 0.96 m
+## must stay above this, or the camera sits inside the hero's head: measured
+## with a headless probe at 0.25 (arm arrives at 0.9625 m; camera to
+## Phoboman's Head-node centre 1.16 m; Teibi/Windman geometry ≈ 0.94 m to head
+## centre, worst-case giant-Teibi clearance ≈ 0.65 m) against Camera3D.near 0.2
+## — so 0.5 keeps more than twice the near plane of room even in the worst
+## case, and a future MIN below ~0.13 fails loudly here instead of clipping.
+const INDOOR_CLOSE_MIN_M: float = 0.5
+
+
 func _check_zoom(player: Node3D, arm: SpringArm3D) -> void:
 	"""
-	The mouse-wheel zoom: the clamp, the arm actually arriving at the zoomed
-	length, and the three states where a wheel notch must do nothing.
+	The mouse-wheel zoom: the clamp, the multiplicative notch, the arm actually
+	arriving at the zoomed length, the closest indoor zoom staying out of the
+	hero's head, and the three states where a wheel notch must do nothing.
 
 	The arm is read rather than the target, on purpose — `_third_person_arm_target()`
 	returning the right number proves nothing if the ease path never runs.
@@ -217,33 +229,76 @@ func _check_zoom(player: Node3D, arm: SpringArm3D) -> void:
 	await physics_frame
 	var base_length: float = arm.spring_length
 
-	# OUT to the stop. 20 notches is well past the 0.15 * n it takes to cross the
-	# range, so anything but CAMERA_ZOOM_MAX here means the clamp is gone.
+	# THE NOTCH IS MULTIPLICATIVE (bead godot-test1-hwwv): two notches out from
+	# 1.0 land on (1 + step)^2. An additive notch would give 1 + 2 * step
+	# instead — same first notch, different second — so this is the assertion
+	# that tells the two models apart.
+	player.camera_zoom = 1.0
+	player.zoom_camera(zoom_step)
+	player.zoom_camera(zoom_step)
+	var two_notches: float = (1.0 + zoom_step) * (1.0 + zoom_step)
+	if not is_equal_approx(player.camera_zoom, two_notches):
+		_fail("two wheel notches out left camera_zoom at %.4f, expected (1 + step)^2 = %.4f — "
+				% [player.camera_zoom, two_notches] + "the notch is not multiplicative")
+	# OUT to the stop. 1.15^10 ≈ 4.05 crosses from 1.0 to MAX, so 20 notches is
+	# twice what the trip needs — anything but CAMERA_ZOOM_MAX here means the
+	# clamp is gone.
+	player.camera_zoom = 1.0
 	for i in 20:
 		player.zoom_camera(zoom_step)
 	if not is_equal_approx(player.camera_zoom, zoom_max):
 		_fail("20 wheel notches out left camera_zoom at %.3f, expected the CAMERA_ZOOM_MAX clamp %.3f"
 				% [player.camera_zoom, zoom_max])
-	# `_tick_arm_length()` walks there at ARM_EASE_SPEED; 60 physics frames is a
-	# full second, far more than the trip needs.
-	for i in 60:
+	# `_tick_arm_length()` walks there at ARM_EASE_SPEED; the widened range
+	# lengthened the trip (8.25 to 33 m is 25 m at 18 m/s ≈ 83 frames), so 120
+	# physics frames is two seconds — far more than the trip needs.
+	for i in 120:
 		await physics_frame
 	if not is_equal_approx(arm.spring_length, base_length * zoom_max):
 		_fail("boom settled at %.3f m after zooming out, expected %.3f m (%.2f m * %.2f) — "
 				% [arm.spring_length, base_length * zoom_max, base_length, zoom_max]
 				+ "the zoom factor is not reaching _third_person_arm_target()")
 
-	# IN to the other stop, from the far end: 40 notches covers the whole range twice.
+	# IN to the other stop, from the far end: 1.15^20 ≈ 16.4 covers the whole 16x
+	# range, so 40 notches is twice that — anything but CAMERA_ZOOM_MIN here
+	# means the clamp is gone.
 	for i in 40:
 		player.zoom_camera(-zoom_step)
 	if not is_equal_approx(player.camera_zoom, zoom_min):
 		_fail("40 wheel notches in left camera_zoom at %.3f, expected the CAMERA_ZOOM_MIN clamp %.3f"
 				% [player.camera_zoom, zoom_min])
-	for i in 60:
+	# Same arithmetic down: 33 to 2 m is 31 m at 18 m/s ≈ 104 frames, so 150.
+	for i in 150:
 		await physics_frame
 	if not is_equal_approx(arm.spring_length, base_length * zoom_min):
 		_fail("boom settled at %.3f m after zooming in, expected %.3f m (%.2f m * %.2f)"
 				% [arm.spring_length, base_length * zoom_min, base_length, zoom_min])
+
+	# THE CLOSEST INDOOR ZOOM stays out of the hero's head (bead
+	# godot-test1-hwwv). Driven through the shipped path — indoor boom, real
+	# notches to the MIN stop, the real ease — and the arm is read, not the
+	# target. Then the arrived length must clear INDOOR_CLOSE_MIN_M, which is
+	# what stops a future MIN from putting the camera inside the head. Runs
+	# here, right after the outdoor MIN arrival while the view is still
+	# third-person (control (c) below commandeers the arm for first-person),
+	# so the ease trip is 1.1 m and 60 frames is plenty.
+	player.set_indoor_camera(true)
+	for i in 40:
+		player.zoom_camera(-zoom_step)
+	for i in 60:
+		await physics_frame
+	var indoor_arm: float = float(consts.get("INDOOR_ARM_LENGTH", 3.85))
+	if not is_equal_approx(player.camera_zoom, zoom_min):
+		_fail("40 wheel notches in left indoor camera_zoom at %.3f, expected the MIN clamp %.3f"
+				% [player.camera_zoom, zoom_min])
+	if not is_equal_approx(arm.spring_length, indoor_arm * zoom_min):
+		_fail("indoor boom settled at %.3f m after zooming in, expected %.3f m (%.2f m * %.2f)"
+				% [arm.spring_length, indoor_arm * zoom_min, indoor_arm, zoom_min])
+	if indoor_arm * zoom_min < INDOOR_CLOSE_MIN_M:
+		_fail("closest indoor boom %.3f m (%.2f m indoor * %.2f MIN) is under the %.2f m "
+				% [indoor_arm * zoom_min, indoor_arm, zoom_min, INDOOR_CLOSE_MIN_M]
+				+ "head clearance — the camera would sit inside the hero's head")
+	player.set_indoor_camera(false)
 
 	# NEGATIVE CONTROL (a): no captured mouse. Fed as a real event through the
 	# shipped `_input()` handler. Headless `Input.mouse_mode` reads VISIBLE whatever
@@ -292,8 +347,9 @@ func _check_zoom(player: Node3D, arm: SpringArm3D) -> void:
 	if not is_equal_approx(arm.spring_length, base_length * zoom_max):
 		_fail("front view snapped the boom to %.3f m, expected the zoomed %.3f m"
 				% [arm.spring_length, base_length * zoom_max])
-	# Restore by assignment: 0.5 + n * 0.15 never lands on 1.0, so stepping back
-	# from the clamp cannot return the shipped framing.
+	# Restore by assignment: 4.0 × 1.15^-k never lands on 1.0 (ln 4 / ln 1.15 is
+	# not an integer), so stepping back from the clamp cannot return the
+	# shipped framing.
 	player.camera_zoom = 1.0
 	player.view_mode = player.ViewMode.THIRD_PERSON
 	player._apply_view_mode()
