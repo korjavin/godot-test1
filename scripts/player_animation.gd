@@ -117,11 +117,25 @@ const GAITS: Dictionary = {
 		"bob": 0.022, "head_deg": 3.0, "hitch": 0.28, "phase": 1.7,
 		"idle_rate": 2.6, "idle_bob": 0.008,
 	},
-	# A heavy stomp: slow, big legs, a deep bob and a periodic stumble.
+	# A PLAIN HEAVY WALK (bead godot-test1-xkz4, owner ruling 2026-09-17): Teibi
+	# stomps, he does not stumble — even arms, a small roll, a whisper of hitch.
+	# The stride rate is DERIVED, not tuned: for a sinusoidal swing the foot is
+	# on the ground only around mid-stance, where its backward speed peaks at
+	# L·A·ω (leg length × swing amplitude × phase rate) — so matching THAT to
+	# ground speed is the no-slide criterion, while a cycle average would count
+	# the airborne swing half, which never touches the ground, and still skate
+	# at contact. L = 0.865 m hip-to-foot measured on the shipped skeleton
+	# (`thigh_l` → `calf_l` → `foot_l` rest pose: 0.428 + 0.440, model scale
+	# 1.0), A = 38° = 0.663 rad, v = WALK_SPEED 5.0 m/s:
+	# ω = 5.0 / (0.865 × 0.663) = 8.7 rad/s. At run the same row plays 1.5×
+	# (`speed_multiplier`) while the body moves 2× (RUN_SPEED 10.0), so the feet
+	# run at 75% of ground speed — the honest 25% run slide every hero shares,
+	# stated not hidden. `gait_selfcheck` pins this row to ±15% of the derived
+	# rate, so a WALK_SPEED retune fails the check until the row is re-derived.
 	"teibi": {
-		"stride_rate": 5.2, "arm_deg": 26.0, "leg_deg": 44.0, "arm_asym": 1.05,
-		"bob": 0.045, "sway_deg": 5.0, "lean_deg": 3.0, "hitch": 0.30,
-		"phase": 3.4, "idle_rate": 1.4, "idle_bob": 0.016,
+		"stride_rate": 8.7, "arm_deg": 22.0, "leg_deg": 38.0, "arm_asym": 1.0,
+		"bob": 0.032, "sway_deg": 2.0, "lean_deg": 2.0,
+		"hitch": 0.05, "phase": 2.6, "idle_rate": 1.4, "idle_bob": 0.016,
 	},
 	# A waddle: small legs, a wide roll, and a head that will not sit still.
 	"phoboman": {

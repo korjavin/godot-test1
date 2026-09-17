@@ -109,6 +109,19 @@ const STRAFE_EPS_DEG: float = 1.0
 ## every real spread.
 const PERSONALITY_SPREAD: float = 1.1
 
+## TEIBI'S PLAIN WALK (bead godot-test1-xkz4). His hip-to-foot rest length in
+## metres, measured on the shipped skeleton (`thigh_l` → `calf_l` → `foot_l`:
+## 0.428 + 0.440, model scale 1.0) — the L in the row comment's v/(L·A). A
+## measured anatomical fact, so it is written out, not read off a node: the
+## whole point of the rate check below is that the row still matches it.
+const TEIBI_LEG_M: float = 0.865
+## How far the row's `stride_rate` may sit from the derived v/(L·A) before the
+## row counts as untuned. 15% is far above the one-decimal rounding the table
+## is written in (8.7 vs 8.72) and far below any re-taste of the walk — and a
+## WALK_SPEED retune moves the derived rate but not the row, so the retune
+## fails here until the row is re-derived with it.
+const TEIBI_RATE_TOL: float = 0.15
+
 ## CHECK 8's FIXTURE (bd godot-test1-5u3.2) — the skinned Teibi. It was the
 ## spike's own scratch scene while no hero shipped skinned; since bead
 ## godot-test1-5u3.3 it is the SHIPPED hero, so this check now measures the thing
@@ -280,6 +293,7 @@ func _run() -> void:
 		Sentinel.done("expression")
 		Sentinel.done("relax")
 		Sentinel.done("personality")
+		Sentinel.done("teibi_plain")
 		Sentinel.done("footsteps")
 		Sentinel.done("sidestep")
 		Sentinel.done("skinned")
@@ -303,6 +317,7 @@ func _run() -> void:
 		Sentinel.done("expression")
 		Sentinel.done("relax")
 		Sentinel.done("personality")
+		Sentinel.done("teibi_plain")
 		Sentinel.done("footsteps")
 		Sentinel.done("sidestep")
 		Sentinel.done("skinned")
@@ -315,6 +330,7 @@ func _run() -> void:
 	_check_bounds(player)
 	_check_relax(player)
 	_check_personality(player)
+	_check_teibi_plain_walk()
 	_check_footsteps(player)
 	_check_sidestep(player)
 	_check_skinned(player)
@@ -521,7 +537,7 @@ func _check_relax(player: Node3D) -> void:
 	`animate_jumping` — and dropping one is a silent, permanently-visible bug
 	that no other check in this repo can see.
 
-	Driven on the two heroes that actually roll: teibi (sway 5, lean 3) and
+	Driven on the two heroes that actually roll: teibi (sway 2, lean 2) and
 	phoboman (sway 11, head 7). A hero whose row asks for none of it would pass
 	this vacuously, which is why it is the loud rows that are measured.
 	"""
@@ -637,6 +653,57 @@ func _check_personality(player: Node3D) -> void:
 					% rad_to_deg(worst) + "sine is not doing anything")
 
 	Sentinel.done("personality")
+
+
+# ============================================================================
+# CHECK 4b — TEIBI WALKS PLAIN (bead godot-test1-xkz4)
+# ============================================================================
+
+func _check_teibi_plain_walk() -> void:
+	"""
+	Teibi's row is a PLAIN HEAVY WALK: a derived stride rate, even arms, a
+	small roll, a whisper of hitch, and his own hitch phase — every one of
+	them pinned, because a personality row drifts one "small tweak" at a time
+	and the sweep checks above would pass a stumble that stayed inside the
+	bounds.
+
+	Read off the SHIPPED row (`gait_for("teibi")`), with the rate derived from
+	the SHIPPED `WALK_SPEED` — so the assertion is "the row still matches the
+	derivation", not a second copy of the number 8.7.
+	"""
+	var row: Dictionary = PlayerAnimation.gait_for("teibi")
+	# THE RATE: v/(L·A), within ±15%. A WALK_SPEED retune moves the derived
+	# rate and not the row, so the retune fails here until the row is
+	# re-derived with it; a leg_deg change without a rate change fails too.
+	var expected: float = PlayerController.WALK_SPEED \
+			/ (TEIBI_LEG_M * deg_to_rad(float(row["leg_deg"])))
+	var rate: float = float(row["stride_rate"])
+	if absf(rate - expected) / expected > TEIBI_RATE_TOL:
+		_fail("teibi's stride_rate is %.3f but v/(L·A) derives %.3f (WALK_SPEED %.1f "
+				% [rate, expected, PlayerController.WALK_SPEED]
+				+ "over %.3f m hip-to-foot times %.3f rad of leg) — the row is no "
+				% [TEIBI_LEG_M, deg_to_rad(float(row["leg_deg"]))]
+				+ "longer derived, re-derive it")
+	# NO STUMBLE: a small roll, a whisper of hitch, even arms.
+	if float(row["sway_deg"]) > 2.0:
+		_fail("teibi's sway_deg is %.1f — the plain walk rolls at most 2 degrees, "
+				% float(row["sway_deg"]) + "the waddle went home to phoboman")
+	if float(row["hitch"]) < 0.0 or float(row["hitch"]) > 0.06:
+		_fail("teibi's hitch is %.2f — the plain walk carries 0.0–0.06, a whisper "
+				% float(row["hitch"]) + "the personality check can still see, not a stumble")
+	if float(row["arm_asym"]) != 1.0:
+		_fail("teibi's arm_asym is %.2f — the plain walk swings even arms"
+				% float(row["arm_asym"]))
+	# ITS OWN PHASE: two heroes must not stumble on the same beat.
+	for entry: Dictionary in PlayerController.CHARACTERS:
+		var other: String = String(entry["name"])
+		if other == "teibi":
+			continue
+		var other_phase: float = float(PlayerAnimation.gait_for(other)["phase"])
+		if is_equal_approx(float(row["phase"]), other_phase):
+			_fail("teibi's phase %.1f is %s's too — two heroes stumbling on the "
+					% [float(row["phase"]), other] + "same beat is what the phase field is for")
+	Sentinel.done("teibi_plain")
 
 
 func _pose(player: Node3D) -> Array[float]:
