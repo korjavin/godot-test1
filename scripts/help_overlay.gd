@@ -173,6 +173,10 @@ const ROWS: Array = [
 	# The multiplayer panel — a raw keycode like the five above it (bead
 	# godot-test1-xtr.21), and named here for the same reason B is.
 	["N", "Open or close the multiplayer panel.", Mode.DESKTOP],
+	# The discovery passport — a raw keycode like B above it, and named here
+	# for the same reason B is: a panel nobody can find is a panel that does
+	# not exist. The panel opens on J alone and carries no opener button.
+	["J", "Open your discovery passport.", Mode.DESKTOP],
 	# The HUD voice/camera chords — Ctrl+letter pairs outside the input map,
 	# bead godot-test1-k4l, and named here for the same reason N is: a switch
 	# whose key the card does not name is a switch nobody can find.
