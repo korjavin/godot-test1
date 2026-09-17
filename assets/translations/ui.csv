@@ -329,7 +329,7 @@ Sie setzen fort"
 "Open or close the multiplayer panel.","Open or close the multiplayer panel.","Multiplayer-Panel öffnen oder schließen."
 "Waypoints","Waypoints","Wegpunkte"
 "No other waypoint found yet.","No other waypoint found yet.","Noch kein weiterer Wegpunkt gefunden."
-"Press Esc or tap outside to close","Press Esc or tap outside to close","Esc drücken oder daneben tippen zum Schließen"
+"Press 1-0 to travel, Esc or tap outside to close","Press 1-0 to travel, Esc or tap outside to close","1-0 drücken zum Reisen, Esc oder daneben tippen zum Schließen"
 "You are here","You are here","Du bist hier"
 "HQ gate","HQ gate","Tor der Zentrale"
 "HQ approach","HQ approach","Zufahrt zur Zentrale"
@@ -339,7 +339,7 @@ Sie setzen fort"
 "Pest embankment","Pest embankment","Pester Ufer"
 "Heroes' Square","Heroes' Square","Heldenplatz"
 "Circle","Circle","Kreis"
-"Stand on a lit waypoint circle to open the travel list — pick another to jump there.","Stand on a lit waypoint circle to open the travel list — pick another to jump there.","Stelle dich auf einen leuchtenden Wegpunktkreis, um die Reiseliste zu öffnen — wähle einen anderen, um dorthin zu springen."
+"Stand on a lit waypoint circle to open the travel list — press 1-0 to jump there.","Stand on a lit waypoint circle to open the travel list — press 1-0 to jump there.","Stelle dich auf einen leuchtenden Wegpunktkreis, um die Reiseliste zu öffnen — drücke 1-0, um dorthin zu springen."
 Connecting to %s…,Connecting to %s…,Verbinde mit %s…
 No room %s — check the code,No room %s — check the code,Kein Raum %s — bitte Code prüfen
 In room %s (%d/4),In room %s (%d/4),In Raum %s (%d/4)

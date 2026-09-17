@@ -94,10 +94,17 @@ extends Control
 ## Everything about the CARD is `city_map_panel.gd`'s, term for term, and is not
 ## re-argued here: `HudTheme.theme()` on this node's own root, the
 ## `CenterContainer` backdrop that closes on a tap, the `MOUSE_FILTER_STOP` card,
-## `FOCUS_NONE` on every button (`ui_accept` is Space is `jump`), `ui_cancel`
-## handled only while open, and `_apply_pause()` re-asserted from `_process`.
-## The PAUSE POLICY is that file's too — solo yes, in a room no, over Game Over
-## no — and its reasons are written out at `_apply_pause()` below.
+## `FOCUS_NONE` on every button (`ui_accept` is Space is `jump`), and
+## `ui_cancel` handled only while open.
+##
+## THE PAUSE POLICY IS THAT THIS PANEL HAS NONE (owner ruling 2026-09-17, bead
+## godot-test1-77uj: "you can just keep running and the waypoint menu
+## disappears"). The solo pause is gone outright — not declined in a room the
+## way `city_map_panel`'s is, but never taken anywhere, so solo and room behave
+## the same: the world keeps running under the list, the mouse stays captured,
+## and walking off the circle is the dismissal. There is no `_apply_pause()`
+## and no `_paused_by_us` left to read about; `pause_selfcheck`'s writer grep
+## is what keeps it that way.
 ##
 ## WHAT IS ON IT: one row per FOUND circle, in index order, with the distance
 ## from the hero right-aligned; the row you are standing on is listed and
@@ -199,7 +206,22 @@ const PRICE_LINE: String = "Travel costs %d coins."
 ## Shown when the crew has found this circle and no other — the state every run
 ## starts in, and the one that has to teach the mechanic rather than look broken.
 const EMPTY_LINE: String = "No other waypoint found yet."
-const CLOSE_HINT: String = "Press Esc or tap outside to close"
+const CLOSE_HINT: String = "Press 1-0 to travel, Esc or tap outside to close"
+## The digit before a row's name: `tower_lift_menu`'s `STOP_LINE` with one space
+## instead of two, so the prefix costs the German name budget four characters
+## instead of five (`locale_selfcheck` holds `NAME_WIDTH` against the names).
+## A punctuation frame, so like the lift's it goes through `tr()` but carries
+## no `ui.csv` row (a translated bracket is its own English string, which that
+## check fails). Rows past the tenth circle have no digit and no prefix.
+const ROW_LINE: String = "[%d] %s"
+## The row-pick keys, in row order: `1` takes the first row, `0` the tenth, and
+## the eleventh circle — when the crew has found all of them — is click-only.
+## Number row AND numpad, raw keycodes outside the input map for the lift's
+## reason; live ONLY while the panel is open, which is what lets them share the
+## digits the hero picker and the landmark quiz already use.
+const CHOICE_KEYCODES: Array[Key] = [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6,
+		KEY_7, KEY_8, KEY_9, KEY_0, KEY_KP_1, KEY_KP_2, KEY_KP_3, KEY_KP_4,
+		KEY_KP_5, KEY_KP_6, KEY_KP_7, KEY_KP_8, KEY_KP_9, KEY_KP_0]
 
 ## The card's CONTENT width, in layout units. Fixed rather than content-sized so
 ## a long German name cannot widen the panel off a 400-unit phone screen.
@@ -262,9 +284,6 @@ var _tick_timer: float = 0.0
 
 # --- The panel (bead .4) ----------------------------------------------------
 var _panel_open: bool = false
-## Whether the CURRENT tree pause is ours to release. "We hold A claim", not "we
-## hold THE pause" — see `pause_hub.gd`'s header.
-var _paused_by_us: bool = false
 ## Whether the list was closed by the HERO'S STATE rather than by the hero, and so
 ## is owed back when that state clears. Set only in `_tick`, cleared by every
 ## deliberate open or close (`set_panel_open`) — which is what keeps Esc, a
@@ -287,8 +306,9 @@ var _row_distances: Array[Label] = []
 
 
 func _ready() -> void:
-	# Must keep running under its own pause, like every other always-available HUD
-	# piece — `_apply_pause()` is re-asserted from `_process` and could not be.
+	# Must keep running under a FOREIGN pause, like every other always-available
+	# HUD piece: a quiz pauses the world while it is up, and this tick is what
+	# closes the list under it.
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	# This Control draws nothing itself and must never eat a click: the MP panel,
 	# the touch buttons and the start overlay share this CanvasLayer, and a Control
@@ -365,10 +385,6 @@ func arrived_at(index: int) -> void:
 
 
 func _process(delta: float) -> void:
-	# Re-assert the pause every frame while the panel is up, for `mp_ui`'s reason:
-	# the claim is DECLINED in a room and over Game Over, so a state change under
-	# an open panel must not strand the world in the wrong one.
-	_apply_pause(_panel_open)
 	_tick_timer += delta
 	if _tick_timer < TICK_INTERVAL:
 		return
@@ -431,6 +447,11 @@ func _tick() -> void:
 		var owed: bool = _closed_by_state or _panel_open
 		set_panel_open(false)
 		_closed_by_state = owed
+	elif _panel_open and _quiz_pending():
+		# A quiz started under the list: it owns the digits and its own pause,
+		# and it is modal over the whole screen. A plain close, no memory — the
+		# quiz ending does not give the list back, exactly like an Esc dismissal.
+		set_panel_open(false)
 	elif _panel_open:
 		# Distances, affordability and a teammate's fresh find, on the tick the
 		# rest of this feature already runs at.
@@ -451,8 +472,8 @@ func _hero_unavailable(player: Node) -> bool:
 	(`is_respawning or is_caught or is_game_over`), read here so the panel and the
 	primitive cannot disagree about who may travel. Each is a different damage:
 	a respawn is moving the body this list would move, a bite freeze is PAUSABLE
-	and solo this panel's pause would stop its own timer running out, and over Game
-	Over the only thing that may be on screen is Play Again.
+	and the world keeps running under this list, and over Game Over the only
+	thing that may be on screen is Play Again.
 
 	Every read is gated by `flag in player` before `player.get(flag)`: `get()`
 	answers null for a property that is not there and `bool(null)` is a hard error,
@@ -623,10 +644,14 @@ func _open_panel_for(index: int, player: Node3D) -> void:
 	are `_hero_unavailable()` — the primitive's own first refusal, shared so the
 	panel and `travel_to_waypoint()` cannot disagree about who may travel, and
 	re-asked every tick because a state that flips under an open list must close
-	it. The fourth is a pending landmark quiz, which owns the digits and its own
-	pause (`landmark_toast`); it is asked only here because a quiz cannot start
-	under this panel — it is raised by walking into a landmark, and this one is
-	modal over the whole screen while it is up.
+	it. Each is a different damage: a respawn is moving the body this list would
+	move, a bite freeze holds a body that must stay where the bite left it, and
+	over Game Over the only thing that may be on screen is Play Again.
+	The fourth is a pending landmark quiz, which owns the digits and its own
+	pause (`landmark_toast`): refused here at the open, AND closed by `_tick()`
+	below if one starts under the list — a city circle can stand near enough a
+	landmark for both to be live at once, and the quiz is modal over the whole
+	screen while it is up.
 	"""
 	if _panel_open:
 		return
@@ -634,20 +659,26 @@ func _open_panel_for(index: int, player: Node3D) -> void:
 		return
 	if _hero_unavailable(player):
 		return
-	var toast := get_tree().get_first_node_in_group("landmark_toast")
-	if toast != null and toast.has_method("is_quiz_pending") \
-			and bool(toast.call("is_quiz_pending")):
+	if _quiz_pending():
 		return
 	set_panel_open(true)
 
 
+func _quiz_pending() -> bool:
+	"""Is a landmark quiz holding the digits right now? One predicate for the
+	open refusal, the tick close and the digit guard, so the three cannot
+	disagree about who owns the keys."""
+	var toast := get_tree().get_first_node_in_group("landmark_toast")
+	return toast != null and toast.has_method("is_quiz_pending") \
+		and bool(toast.call("is_quiz_pending"))
+
+
 func set_panel_open(open: bool) -> void:
-	"""Show or hide the list. The ONE path in and out, so the pause claim cannot
-	be taken on one route and left behind on another."""
-	# ANY DELIBERATE OPEN OR CLOSE CANCELS THE DEBT. Esc, a backdrop tap and a row
-	# press all come through here, and none of them may be undone by `_tick`
-	# re-opening what the player just dismissed. `_tick` re-arms it after its own
-	# call, which is the one close that IS owed back.
+	"""Show or hide the list. The ONE path in and out, so a deliberate close —
+	Esc, a backdrop tap, a row press or a digit — can never be undone by
+	`_tick` re-opening what the player just dismissed."""
+	# ANY DELIBERATE OPEN OR CLOSE CANCELS THE DEBT. `_tick` re-arms it after
+	# its own call, which is the one close that IS owed back.
 	_closed_by_state = false
 	if open == _panel_open:
 		return
@@ -660,7 +691,6 @@ func set_panel_open(open: bool) -> void:
 	# a tap-to-close lands on.
 	if _centre != null:
 		_centre.visible = open
-	_apply_pause(open)
 
 
 func _on_backdrop_input(event: InputEvent) -> void:
@@ -671,69 +701,48 @@ func _on_backdrop_input(event: InputEvent) -> void:
 		set_panel_open(false)
 
 
-func _unhandled_input(event: InputEvent) -> void:
+func _input(event: InputEvent) -> void:
+	# IN `_input`, NOT `_unhandled_input`, and the phase is the fix (bead
+	# godot-test1-77uj round 2): `_input` runs before ANY `_unhandled_input`,
+	# so consuming here is what keeps the player's own handlers — the Esc mouse
+	# toggle in its `_input`, the 1-4 hero hotkeys in its `_unhandled_input` —
+	# from ever seeing a key this list owns. Depending on tree order instead
+	# would make the rule an accident, the thing the player's own hotkey guard
+	# calls out by name.
+	#
 	# Esc closes, and ONLY while we are open — otherwise this eats the `ui_cancel`
 	# `player_controller._input()` uses to release the mouse. `skill_tree_ui`'s
-	# guard, for `skill_tree_ui`'s reason. There is no other key here: the circle
-	# is the opener (see the banner).
+	# guard, for `skill_tree_ui`'s reason.
 	if event != null and _panel_open and event.is_action_pressed("ui_cancel"):
 		get_viewport().set_input_as_handled()
 		set_panel_open(false)
-
-
-func _exit_tree() -> void:
-	# Never leave the world frozen behind a node that is going away.
-	_apply_pause(false)
-
-
-func _apply_pause(open: bool) -> void:
-	"""
-	Take or give back the pause for the panel's current state, or decline it.
-
-	`PauseHub.take()` / `PauseHub.release()`, never `get_tree().paused` — the one
-	rule `pause_selfcheck` check 3 scans every script in this directory for. The
-	POLICY stays here with the feature, exactly as the hub's header says it must,
-	and it is `city_map_panel`'s and `landmark_toast`'s:
-
-	  * IN A ROOM this freezes NOTHING. `get_tree().paused` is local and the
-	    simulation is not, so a peer reading the travel list while three teammates
-	    run from a hunter would either desync itself or ask them to stand still.
-	  * OVER GAME OVER it freezes nothing either: `GameOverUI` is PAUSABLE, so a
-	    pause there kills its Play Again button.
-	"""
-	if not open and not _paused_by_us:
-		return  # The overwhelmingly common case: closed panel, nothing to undo.
-	var tree := get_tree()
-	if tree == null:
 		return
-	var want: bool = open and not _in_room() and not _game_over()
-	if want and not _paused_by_us:
-		PauseHub.take(self)
-		_paused_by_us = true
-	elif not want and _paused_by_us:
-		_paused_by_us = false
-		PauseHub.release(self)
-
-
-func _in_room() -> bool:
-	"""Is this peer engaged with the lobby at all? `is_busy()`, not `is_online()`:
-	a join in flight is already a session somebody else's frames belong to."""
-	var tree := get_tree()
-	if tree == null:
-		return false
-	var mp: Node = tree.get_first_node_in_group("mp")
-	return mp != null and mp.has_method("is_busy") and bool(mp.is_busy())
-
-
-func _game_over() -> bool:
-	# `"x" in node`, not `node.get("x")`: `get()` answers null for a missing
-	# property and `bool(null)` is a hard error, so this is what lets a scene whose
-	# player is a stand-in degrade instead of throwing.
-	var tree := get_tree()
-	if tree == null:
-		return false
-	var player: Node = tree.get_first_node_in_group("player")
-	return player != null and "is_game_over" in player and bool(player.is_game_over)
+	# THE DIGITS, `tower_lift_menu`'s idiom and its guards: pressed, not echo,
+	# live only while open, and never under a pending quiz. A digit names a row
+	# by position — `1` the first, `0` the tenth. EVERY choice key is consumed
+	# while the list is up, including one whose row is hidden or disabled: the
+	# player's 1-4 hotkeys live below us, so letting a dead row's key through
+	# would switch the hero instead of doing nothing, and an enabled row would
+	# race by tree order. The mouse stays CAPTURED throughout: nothing here
+	# calls `Input.set_mouse_mode`, and Esc above does not either, so the camera
+	# keeps turning under the list.
+	if event == null or not (event is InputEventKey):
+		return
+	var key := event as InputEventKey
+	if not key.pressed or key.echo or not _panel_open:
+		return
+	if _quiz_pending():
+		return
+	var slot: int = CHOICE_KEYCODES.find(key.keycode)
+	if slot < 0:
+		return
+	get_viewport().set_input_as_handled()
+	var row: int = slot % 10
+	if row >= _rows.size():
+		return
+	if not _rows[row].visible or _rows[row].disabled:
+		return
+	_on_row_pressed(row)
 
 
 # ============================================================================
@@ -810,7 +819,14 @@ func _refresh_rows() -> void:
 		var here: bool = i == _standing_on
 		if not here:
 			elsewhere += 1
-		_rows[i].text = site_name(String(sites[i]["id"]))
+		# The digit is part of the label, not a second control: the row stays
+		# ONE tap target (see `_add_row`), and the key a row answers is the one
+		# it prints. Ten digits for eleven circles: rows 0-8 print 1-9, row 9
+		# prints 0, and the eleventh circle has no key and prints no digit.
+		var label: String = site_name(String(sites[i]["id"]))
+		if i < 10:
+			label = tr(ROW_LINE) % [(i + 1) % 10, label]
+		_rows[i].text = label
 		if here:
 			_row_distances[i].text = HERE_LINE
 		else:
@@ -832,13 +848,13 @@ func _refresh_rows() -> void:
 
 func _on_row_pressed(index: int) -> void:
 	"""
-	One press, one hop.
+	One press — or one digit — one hop. Both input paths land here, so a row
+	and its key cannot disagree about what they do.
 
 	THE PANEL CLOSES FIRST, and that ordering is load-bearing rather than tidy:
-	solo this node holds the pause, and `travel_to_waypoint()` awaits a physics
-	frame in the middle of relocating the world. Handing the claim back before the
-	hop starts means the world it lands in is running, with no window in which a
-	frozen tree is halfway through a rebuild.
+	`travel_to_waypoint()` awaits a physics frame in the middle of relocating
+	the world, and the hop must start from a dismissed list rather than one the
+	world rebuilds under.
 
 	...AND IT COMES BACK IF NOTHING HAPPENED. `travel_to_waypoint()` has refusals
 	this list cannot see — a room that has not placed this body yet is the real

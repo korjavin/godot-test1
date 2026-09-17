@@ -144,6 +144,12 @@ const SKINNED_MOVE_DEG: float = 1.0
 ## at 240 Hz is still ~16 stride periods of Teibi's slow row at both speeds —
 ## far more than enough for the envelope and the diagonal.
 const SKINNED_SWEEP_SECONDS: float = 20.0
+
+## CHECK 9's FIXTURE (bd godot-test1-9ynx) — Phoboman's standing height (1.80 m)
+## and limb rig binding.
+const PHOBOMAN_FIXTURE: String = "res://scenes/characters/phoboman.tscn"
+const PHOBOMAN_TARGET_HEIGHT: float = 1.80
+const PHOBOMAN_HEIGHT_TOL: float = 0.02
 ## An arbitrary clock the determinism probe asks twice about — arbitrary on
 ## purpose: a round number could land on a sine zero and compare two rest poses.
 const SKINNED_PROBE_TIME: float = 12.34
@@ -299,6 +305,7 @@ func _run() -> void:
 		Sentinel.done("skinned")
 		Sentinel.done("skinned_joints")
 		Sentinel.done("skinned_determinism")
+		Sentinel.done("phoboman")
 		_report()
 		return
 
@@ -323,6 +330,7 @@ func _run() -> void:
 		Sentinel.done("skinned")
 		Sentinel.done("skinned_joints")
 		Sentinel.done("skinned_determinism")
+		Sentinel.done("phoboman")
 		player.queue_free()
 		_report()
 		return
@@ -334,6 +342,7 @@ func _run() -> void:
 	_check_footsteps(player)
 	_check_sidestep(player)
 	_check_skinned(player)
+	_check_phoboman(player)
 
 	player.queue_free()
 	await process_frame
@@ -1955,3 +1964,65 @@ func _hero_index(hero: String) -> int:
 		if String(PlayerController.CHARACTERS[index]["name"]) == hero:
 			return index
 	return 0
+
+
+# ============================================================================
+# CHECK 9 — PHOBOMAN STANDING HEIGHT AND LIMB RIG (bead godot-test1-9ynx)
+# ============================================================================
+
+func _check_phoboman(player: Node3D) -> void:
+	"""
+	Phoboman's size matches the skinned cast (1.80 m ± 0.02 m standing height),
+	and he still binds the limb rig (owner ruling: Phoboman keeps the limb rig).
+
+	Measured on the real shipped scene (`scenes/characters/phoboman.tscn`):
+	an AABB walk over its MeshInstance3D nodes in scene space at rest.
+	"""
+	var packed: PackedScene = load(PHOBOMAN_FIXTURE)
+	if packed == null:
+		_fail("could not load %s — Phoboman fixture missing" % PHOBOMAN_FIXTURE)
+		Sentinel.done("phoboman")
+		return
+	var fixture: Node3D = packed.instantiate()
+	root.add_child(fixture)
+
+	# (a) THE CAPABILITY FLAG: Phoboman keeps the limb rig by exact node names.
+	var anim: PlayerAnimation = PlayerAnimation.new()
+	anim.player = player
+	var saved: Node = player.current_character_node
+	player.current_character_node = fixture
+	anim.original_rotations = PlayerAnimation.capture_rest_pose(fixture)
+	anim.setup_animation_references()
+	player.current_character_node = saved
+
+	if anim.rig == null or String(anim.rig.kind()) != "limbs":
+		_fail("%s bound the '%s' rig — Phoboman must bind the limb rig by exact node names"
+				% [PHOBOMAN_FIXTURE, "none" if anim.rig == null else anim.rig.kind()])
+
+	# (b) STANDING HEIGHT: 1.80 m ± 0.02 m at rest (feet to crown).
+	var aabb := AABB()
+	var first := true
+	for m in fixture.find_children("*", "MeshInstance3D", true, false):
+		var mi := m as MeshInstance3D
+		var box := _relative(mi, fixture) * mi.get_aabb()
+		aabb = box if first else aabb.merge(box)
+		first = false
+
+	var height: float = aabb.size.y
+	if absf(height - PHOBOMAN_TARGET_HEIGHT) > PHOBOMAN_HEIGHT_TOL:
+		_fail("%s standing height is %.4f m — want %.2f ± %.2f m (diff %.4f m)"
+				% [PHOBOMAN_FIXTURE, height, PHOBOMAN_TARGET_HEIGHT, PHOBOMAN_HEIGHT_TOL,
+					height - PHOBOMAN_TARGET_HEIGHT])
+
+	fixture.queue_free()
+	Sentinel.done("phoboman")
+
+
+static func _relative(node: Node3D, root_node: Node3D) -> Transform3D:
+	"""`node`'s transform in `root_node`'s space, composed from local transforms."""
+	var t := Transform3D.IDENTITY
+	var n: Node3D = node
+	while n != null and n != root_node:
+		t = n.transform * t
+		n = n.get_parent() as Node3D
+	return t
