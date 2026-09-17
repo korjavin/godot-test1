@@ -27,12 +27,15 @@ extends SceneTree
 ##     row is the real XZ distance, and the two coin states are driven both ways:
 ##     a hero short of the fare has every row dead, a hero who can pay does not.
 ##
-##  c. THE PAUSE POLICY. Solo it freezes the world through `PauseHub`; in a room
-##     it must not (the pause is local, the simulation is not — the
-##     `landmark_toast` / `city_map_panel` precedent), and over Game Over it must
-##     not (`GameOverUI` is PAUSABLE and a pause there kills Play Again). Both
-##     refusals are the kind that are written once and quietly stop working, so
-##     both get a positive control beside them.
+##  c. NO PAUSE, AND DIGITS. The list opens with the holder count unchanged,
+##     the tree running and the mouse mode untouched — solo AND in a room, which
+##     now behave the same — and over Game Over it opens nothing. The room and
+##     game-over refusals are the kind that are written once and quietly stop
+##     working, so both get a positive control beside them. Then the digit path,
+##     through the shipped `_unhandled_input` with real key events: KEY_2 travels
+##     to row 1, a disabled row's key and an echo do nothing, numpad works, and
+##     digits are refused while a quiz is pending (with the tick closing a list
+##     the quiz started under).
 ##
 ##  d. GERMAN. `tr()` answers its own key on a miss, so an unimported or mistyped
 ##     row renders in English inside a German game with nothing in the log. Asked
@@ -40,7 +43,9 @@ extends SceneTree
 ##
 ##  e. ONE PRESS REACHES TRAVEL WITH THAT ROW'S INDEX. A stub player records the
 ##     call; what the shipped travel then does is `waypoint_travel_selfcheck`'s
-##     business and is deliberately not re-asserted here.
+##     business and is deliberately not re-asserted here. The press closes first
+##     and a refused hop re-opens; with no pause left to hold, there is no claim
+##     to hand back and no exit-tree release to probe.
 ##
 ##  f. THE CARD FITS. Measured on a real layout at 1280x720 and at 400x800 with
 ##     every row shown carrying the WIDEST German name in the table — the phone
@@ -450,7 +455,11 @@ func _check_rows() -> void:
 	hub._refresh_rows()
 	var origin: Vector3 = (player as Node3D).global_position
 	for i: int in shown:
+		# The digit rides before the name — the key the row answers is the one
+		# it prints (`waypoint_hub.ROW_LINE`; rows past the tenth print none).
 		var want: String = WaypointHub.site_name(String(sites[i]["id"]))
+		if i < 10:
+			want = WaypointHub.ROW_LINE % [(i + 1) % 10, want]
 		if hub._rows[i].text != want:
 			_fail("row %d reads \"%s\"; the site table calls it \"%s\""
 				% [i, hub._rows[i].text, want])
@@ -535,25 +544,63 @@ func _check_pause_policy() -> void:
 
 	_walk_away(player, hub)
 	var base: int = PauseHub.holder_count()
+	var base_mouse: Input.MouseMode = Input.mouse_mode
 	if paused:
 		_fail("the pause check started with the world already frozen")
 
-	# --- Solo: the positive control -----------------------------------------
+	# --- The hub never frees the mouse, by source ----------------------------
+	# `Input.mouse_mode` WRITES are unobservable headless — a probe that set
+	# CAPTURED never even reached its read-back line — so the runtime comparison
+	# below cannot go red here and is only the secondary. The operative guard is
+	# this grep, `pause_selfcheck` check 3's idiom: comment tails stripped, the
+	# call shape matched.
+	var source: String = FileAccess.get_file_as_string(
+		"res://scripts/waypoint_hub.gd")
+	if source.is_empty():
+		_fail("could not read waypoint_hub.gd — the mouse-mode grep would pass "
+			+ "vacuously")
+	elif not source.contains("set_panel_open"):
+		_fail("the mouse-mode grep is not reading the hub — it would pass vacuously")
+	else:
+		var pattern := RegEx.new()
+		if pattern.compile("set_mouse_mode\\s*\\(") != OK:
+			_fail("the mouse-mode regex would not compile — the grep would pass "
+				+ "vacuously")
+		else:
+			for line: String in source.split("\n"):
+				var code: String = line
+				var hash_at: int = code.find("#")
+				if hash_at >= 0:
+					code = code.substr(0, hash_at)
+				if pattern.search(code) != null:
+					_fail("waypoint_hub.gd frees the mouse (`%s`) — the list must "
+						% code.strip_edges() + "never touch `Input.mouse_mode`, "
+						+ "or Esc-then-click is back")
+					break
+
+	# --- Solo: opens, freezes nothing, mouse untouched -----------------------
 	_stand_on(player, hub, sites, 1)
 	if not hub.is_panel_open():
 		_fail("the list did not open for the pause check")
-	if not paused or PauseHub.holder_count() != base + 1:
-		_fail("the list opened solo and the world kept running (paused=%s, holders=%d)"
+	if paused or PauseHub.holder_count() != base:
+		_fail("the list opened solo and froze the world (paused=%s, holders=%d)"
 			% [paused, PauseHub.holder_count()])
+	if Input.mouse_mode != base_mouse:
+		_fail("opening the list moved the mouse mode — nothing in the hub may "
+			+ "call `Input.set_mouse_mode`")
 	_walk_away(player, hub)
 	if paused or PauseHub.holder_count() != base:
-		_fail("the list closed and the world is still frozen (paused=%s, holders=%d)"
+		_fail("the list closed and the world is frozen (paused=%s, holders=%d)"
 			% [paused, PauseHub.holder_count()])
+	if Input.mouse_mode != base_mouse:
+		_fail("walking off the circle moved the mouse mode")
 
-	# --- In a room: opens, freezes nothing -----------------------------------
+	# --- In a room: the same, and no handover on the way out -----------------
 	# `main.tscn` carries its own solo manager FIRST in the "mp" group and
 	# `get_first_node_in_group` answers the first, so displace it —
-	# `waypoint_travel_selfcheck._check_room_gate()`'s line.
+	# `waypoint_travel_selfcheck._check_room_gate()`'s line. There is no claim
+	# to hand over any more: leaving the room with the list up changes nothing,
+	# which is what the next three lines assert.
 	var real_mp: Array = []
 	for old: Node in get_nodes_in_group("mp"):
 		old.remove_from_group("mp")
@@ -569,12 +616,13 @@ func _check_pause_policy() -> void:
 	if paused or PauseHub.holder_count() != base:
 		_fail("the list froze the world inside a room — the pause is local and the "
 			+ "simulation is not")
-	# ...and leaving the room with it up must hand the pause OVER, which is what
-	# the per-frame re-assert in `_process` is for.
 	mp.busy = false
 	await process_frame
-	if not paused or PauseHub.holder_count() != base + 1:
-		_fail("the room ended under an open travel list and the world never stopped")
+	if paused or PauseHub.holder_count() != base:
+		_fail("the room ended under an open travel list and the counts moved — "
+			+ "no claim was ever taken, so there is nothing to hand over")
+	if Input.mouse_mode != base_mouse:
+		_fail("the room leg moved the mouse mode")
 	_walk_away(player, hub)
 	mp.free()
 	for old: Node in real_mp:
@@ -592,7 +640,124 @@ func _check_pause_policy() -> void:
 			+ "PAUSABLE and would stop answering")
 	player.is_game_over = false
 	_walk_away(player, hub)
+
+	# --- Digits drive the shipped handler ------------------------------------
+	# Three circles found with the real hero, then the recording stub takes its
+	# place — check (e)'s arrangement, because what is asserted is which index
+	# reaches `travel_to_waypoint()`. Every key below is a REAL `InputEventKey`
+	# through `hub._unhandled_input`, never a direct `_on_row_pressed()` call.
+	player.own_coins = 100
+	_stand_on(player, hub, sites, 0)
+	_stand_on(player, hub, sites, 2)
+	_stand_on(player, hub, sites, 1)
+	var real_mask: int = int(player.waypoint_mask)
+	var real_player: Node = player
+	real_player.remove_from_group("player")
+	var stub := RecordingHero.new()
+	stub.waypoint_mask = real_mask
+	stub.add_to_group("player")
+	root.add_child(stub)
+	await process_frame
+	_reopen_on(stub, hub, sites, 0)
+	if not hub.is_panel_open():
+		_fail("the list did not open onto the stub for the digit check")
+		stub.free()
+		real_player.add_to_group("player")
+		Sentinel.done("pause_policy")
+		return
+	# Numpad first: KEY_KP_3 travels to row 2 and closes, like a press.
+	hub._unhandled_input(_key_event(KEY_KP_3))
+	await process_frame
+	if stub.travelled_to != 2:
+		_fail("numpad 3 asked to travel to %d, not row 2" % stub.travelled_to)
+	if hub.is_panel_open():
+		_fail("a numpad digit travelled and left the travel list open")
+	if paused or PauseHub.holder_count() != base:
+		_fail("a digit press froze the world (paused=%s, holders=%d)"
+			% [paused, PauseHub.holder_count()])
+	# Number row: KEY_2 travels to row 1.
+	stub.travelled_to = -1
+	_reopen_on(stub, hub, sites, 0)
+	hub._unhandled_input(_key_event(KEY_2))
+	await process_frame
+	if stub.travelled_to != 1:
+		_fail("digit 2 asked to travel to %d, not row 1" % stub.travelled_to)
+	if hub.is_panel_open():
+		_fail("a digit travelled and left the travel list open")
+	# An echo is not a press (`tower_lift_menu`'s guard): ignored, list stays.
+	stub.travelled_to = -1
+	_reopen_on(stub, hub, sites, 0)
+	var echo := _key_event(KEY_3)
+	echo.echo = true
+	hub._unhandled_input(echo)
+	if stub.travelled_to != -1:
+		_fail("an echo of digit 3 travelled to row %d" % stub.travelled_to)
+	if not hub.is_panel_open():
+		_fail("an echo closed the travel list")
+	# A DISABLED row's key does nothing: standing on circle 0, row 0 is dead.
+	hub._unhandled_input(_key_event(KEY_1))
+	if stub.travelled_to != -1:
+		_fail("the disabled row's digit travelled to row %d" % stub.travelled_to)
+	if not hub.is_panel_open():
+		_fail("a disabled row's digit closed the travel list — ignored means ignored")
+	# ...and so does a row the hero cannot pay for.
+	stub.own_coins = 0
+	hub._refresh_rows()
+	hub._unhandled_input(_key_event(KEY_3))
+	if stub.travelled_to != -1:
+		_fail("an unaffordable row's digit travelled to row %d" % stub.travelled_to)
+	if not hub.is_panel_open():
+		_fail("an unaffordable row's digit closed the travel list")
+	stub.own_coins = 100
+	hub._refresh_rows()
+	# Digits are refused while a quiz is pending — and the tick closes a list
+	# the quiz started under. No tick between the two: the keypress proves the
+	# input guard, the tick proves the close.
+	var quiz := StubToast.new()
+	quiz.pending = true
+	var real_toasts: Array = []
+	for old_toast: Node in get_nodes_in_group("landmark_toast"):
+		old_toast.remove_from_group("landmark_toast")
+		real_toasts.append(old_toast)
+	quiz.add_to_group("landmark_toast")
+	root.add_child(quiz)
+	await process_frame
+	hub._unhandled_input(_key_event(KEY_2))
+	if stub.travelled_to != -1:
+		_fail("a digit travelled under a pending landmark quiz")
+	if not hub.is_panel_open():
+		_fail("a digit under a pending quiz closed the list instead of being refused")
+	hub._tick()
+	if hub.is_panel_open():
+		_fail("a quiz started under the travel list and the tick left it open")
+	quiz.free()
+	for old_toast: Node in real_toasts:
+		old_toast.add_to_group("landmark_toast")
+	await process_frame
+	stub.free()
+	real_player.add_to_group("player")
+	await process_frame
+	_walk_away(real_player, hub)
 	Sentinel.done("pause_policy")
+
+
+func _reopen_on(body: Node3D, hub: Node, sites: Array, index: int) -> void:
+	"""Walk a body off every circle and back onto `index`, so the open below is
+	a real enter edge rather than a latch already held."""
+	body.global_position = Vector3(0.0, 1.0, -9000.0)
+	hub._tick()
+	var pos: Vector3 = sites[index]["pos"]
+	body.global_position = Vector3(pos.x, 1.0, pos.z)
+	hub._tick()
+
+
+func _key_event(keycode: Key) -> InputEventKey:
+	"""A real digit press: down, not echo — the shape `_unhandled_input` tests."""
+	var event := InputEventKey.new()
+	event.keycode = keycode
+	event.pressed = true
+	event.echo = false
+	return event
 
 
 # ============================================================================
@@ -672,8 +837,8 @@ func _check_press_travels() -> void:
 	if hub.is_panel_open():
 		_fail("the travel list stayed open after a row was pressed")
 	if paused or PauseHub.holder_count() != 0:
-		_fail("a row press left the world frozen — the claim must be handed back "
-			+ "BEFORE the hop awaits its physics frame (paused=%s, holders=%d)"
+		_fail("a row press left the world frozen — the list holds no claim, so "
+			+ "a press must move no counters (paused=%s, holders=%d)"
 			% [paused, PauseHub.holder_count()])
 
 	# --- A REFUSED HOP PUTS THE LIST BACK ------------------------------------
@@ -700,34 +865,6 @@ func _check_press_travels() -> void:
 		_fail("a REFUSED hop ate the travel list — nothing moved, nothing was said, "
 			+ "and the list cannot be re-opened without walking off the circle")
 	hub.set_panel_open(false)
-
-	# --- AND A NODE THAT GOES AWAY RELEASES WHAT IT HELD ----------------------
-	# Driven on a throwaway hub so the scene's own one survives. BOTH HALVES are
-	# asserted separately (review round 2: freeing alone cannot tell them apart,
-	# because `PauseHub.take()` hooks `tree_exiting` for every holder and releases
-	# the claim with `_exit_tree` deleted): first the node's OWN release, called
-	# while it is still in the tree, then the free the hub's hook covers.
-	var spare := Control.new()
-	spare.set_script(WaypointHub)
-	root.add_child(spare)
-	await process_frame
-	spare.set_process(false)
-	spare.set_panel_open(true)
-	if PauseHub.holder_count() != 1 or not paused:
-		_fail("the spare list did not take the pause (holders=%d, paused=%s)"
-			% [PauseHub.holder_count(), paused])
-	spare._exit_tree()
-	if paused or PauseHub.holder_count() != 0:
-		_fail("a list on its way out of the tree did not hand its own pause claim "
-			+ "back (paused=%s, holders=%d)" % [paused, PauseHub.holder_count()])
-	spare.set_panel_open(false)
-	spare.set_panel_open(true)
-	spare.queue_free()
-	await process_frame
-	await process_frame
-	if paused or PauseHub.holder_count() != 0:
-		_fail("a list freed while open left the tree paused forever (paused=%s, "
-			% paused + "holders=%d)" % PauseHub.holder_count())
 	Sentinel.done("press_travels")
 
 
