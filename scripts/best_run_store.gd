@@ -1016,6 +1016,19 @@ func _on_get_completed(
 		or server_lifetime < lifetime_coins
 		or server_spent < spent_points
 	)
+	# THE PASSPORT (bead godot-test1-0bnw.2): the lobby carries the union of
+	# every device's found set, so fold it the way the toast's arrival does —
+	# through the SHIPPED sanitizer and merge, never assignment. A lobby too
+	# old to know the field omits it (reads as []); a malformed one sanitizes
+	# to [] and merges nothing — and a smaller reply can never shrink the local
+	# set, because the merge is a union. If the server lacks an id we hold, it
+	# is behind and earns the catch-up POST below.
+	var server_found: Array[String] = _sanitize_found_ids(data.get("found", []))
+	merge_found_landmark_ids(server_found)
+	for id in found_landmark_ids():
+		if not server_found.has(id):
+			server_is_behind = true
+			break
 	# Kept BEFORE the merge below, and `maxi` because a monotone field never
 	# unlearns. This is the only writer — and it only writes when this reply is a
 	# causally pre-submit baseline, which `_get_baseline_ok` is the whole record of.
@@ -1056,6 +1069,10 @@ func _request_post() -> void:
 		"coins": coins,
 		"lifetime": lifetime_coins,
 		"spent": spent_points,
+		# The passport rides the same POST: the lobby unions it across devices.
+		# An old lobby ignores the unknown field; the merge is idempotent, so a
+		# dropped POST costs nothing but a round of cross-device sync.
+		"found": found_landmark_ids(),
 	})
 	var err: int = _post_http.request(
 		_endpoint(), ["Content-Type: application/json"], HTTPClient.METHOD_POST, body

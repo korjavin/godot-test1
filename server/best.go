@@ -38,6 +38,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -58,8 +60,18 @@ const (
 	// broken client from parking absurd numbers in the JSON file.
 	maxBestValue = 1 << 30
 
-	// maxBestBody is the accepted request body. A record is two small integers.
-	maxBestBody = 256
+	// maxBestBody is the accepted request body. A bare record is two small
+	// integers, but a POST also carries the finder's passport set — up to
+	// maxFoundIDs short ids — so the cap fits that with room: 4 KB against a
+	// worst case that never arrives (real ids average a dozen characters, and
+	// anything over the cap is a 400, not a truncation).
+	maxBestBody = 4096
+
+	// maxFoundIDs bounds one player's found set, here and on the client (which
+	// holds MAX_FOUND_IDS = 128 too). At the cap the STORED set wins over the
+	// excess: a merge keeps what it has and takes newcomers only while there
+	// is room, so a hostile or broken client cannot rotate anyone's stamps out.
+	maxFoundIDs = 128
 
 	// bestDumpInterval is how often a dirty store is written to disk. The lobby
 	// has no graceful shutdown (see main), so a SIGTERM can lose up to this much
@@ -72,6 +84,10 @@ const (
 // client generates 32 hex characters; the range is wider so an older or newer
 // client's format still works.
 var playerIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`)
+
+// foundIDRe is the whole passport-id validation, mirroring the client's
+// FOUND_ID_PATTERN: the registry builder minus `_landmark_`.
+var foundIDRe = regexp.MustCompile(`^[a-z0-9_]{1,32}$`)
 
 // bestRecord is one player's records. Every field is an INDEPENDENT maximum,
 // matching the client: a long-but-poor run can set one without the other.
@@ -95,8 +111,15 @@ type bestRecord struct {
 	Lifetime int `json:"lifetime"`
 	// Spent is skill points spent. 0 until the skill-tree phase exists; stored
 	// now so that phase touches no server code.
-	Spent int   `json:"spent"`
-	Seen  int64 `json:"seen"` // unix seconds; refreshed by read AND write
+	Spent int `json:"spent"`
+	// Found is the discovery-passport set: every field-landmark id this player
+	// has ever found, unioned across their devices. A set, not a maximum — the
+	// merge below unions it, the bound and the id shape beside it applying on
+	// the request path AND in load(), so neither a hostile POST nor a
+	// hand-edited dump can park anything else here. An older client posts no
+	// `found` at all; that decodes as nil and unions nothing.
+	Found []string `json:"found"`
+	Seen  int64    `json:"seen"` // unix seconds; refreshed by read AND write
 }
 
 type bestStore struct {
@@ -143,7 +166,7 @@ func (s *bestStore) get(id string) bestRecord {
 // An older client that does not know about progression posts no `lifetime` /
 // `spent` at all; JSON decodes those as 0, and 0 raises nothing. That is the
 // whole backward-compatibility story.
-func (s *bestStore) merge(id string, distance, coins, lifetime, spent int) bestRecord {
+func (s *bestStore) merge(id string, distance, coins, lifetime, spent int, found []string) bestRecord {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, existed := s.recs[id]
@@ -162,10 +185,41 @@ func (s *bestStore) merge(id string, distance, coins, lifetime, spent int) bestR
 	if spent > rec.Spent {
 		rec.Spent = spent
 	}
+	// The found set unions: shaped, unseen ids join while there is room, and
+	// the STORED set wins over the excess — at the cap nothing already held is
+	// dropped for a newcomer. Sorted, like the client keeps it.
+	for _, f := range found {
+		if len(rec.Found) >= maxFoundIDs {
+			break
+		}
+		if !foundIDRe.MatchString(f) || slices.Contains(rec.Found, f) {
+			continue
+		}
+		rec.Found = append(rec.Found, f)
+	}
+	sort.Strings(rec.Found)
 	rec.Seen = time.Now().Unix()
 	s.recs[id] = rec
 	s.dirty = true
 	return rec
+}
+
+// sanitizeFound is the whole passport-set validation in one place: shaped ids
+// only, deduplicated, sorted, bounded. load() routes through it so a
+// hand-edited dump cannot smuggle past the request path's bounds.
+func sanitizeFound(ids []string) []string {
+	out := make([]string, 0, maxFoundIDs)
+	for _, id := range ids {
+		if len(out) >= maxFoundIDs {
+			break
+		}
+		if !foundIDRe.MatchString(id) || slices.Contains(out, id) {
+			continue
+		}
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // evictOldestLocked drops the least-recently-seen record. Caller holds the mutex.
@@ -205,6 +259,7 @@ func (s *bestStore) load() error {
 		rec.Coins = clampBestValue(rec.Coins)
 		rec.Lifetime = clampBestValue(rec.Lifetime)
 		rec.Spent = clampBestValue(rec.Spent)
+		rec.Found = sanitizeFound(rec.Found)
 		s.recs[id] = rec
 		if len(s.recs) >= maxBestRecords {
 			break
@@ -274,8 +329,8 @@ func clampBestValue(v int) int {
 
 // bestHandler serves GET/POST /best?id=<player id>.
 //
-//	GET  → {"distance":N,"coins":N,"lifetime":N,"spent":N}   stored (zeroes if unknown)
-//	POST → {"distance":N,"coins":N,"lifetime":N,"spent":N}   AFTER merging the body
+//	GET  → {"distance":N,"coins":N,"lifetime":N,"spent":N,"found":[...]}   stored (zeroes if unknown)
+//	POST → {"distance":N,"coins":N,"lifetime":N,"spent":N,"found":[...]}   AFTER merging the body
 //
 // Same CORS rule as /ice and /rooms — the game is served from a different origin
 // than the lobby, so without the header the browser discards the response. Unlike
@@ -308,10 +363,11 @@ func (s *bestStore) handler(w http.ResponseWriter, r *http.Request) {
 		rec = s.get(id)
 	case http.MethodPost:
 		var body struct {
-			Distance int `json:"distance"`
-			Coins    int `json:"coins"`
-			Lifetime int `json:"lifetime"`
-			Spent    int `json:"spent"`
+			Distance int      `json:"distance"`
+			Coins    int      `json:"coins"`
+			Lifetime int      `json:"lifetime"`
+			Spent    int      `json:"spent"`
+			Found    []string `json:"found"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBestBody)).Decode(&body); err != nil {
 			http.Error(w, "bad body", http.StatusBadRequest)
@@ -319,7 +375,8 @@ func (s *bestStore) handler(w http.ResponseWriter, r *http.Request) {
 		}
 		rec = s.merge(id,
 			clampBestValue(body.Distance), clampBestValue(body.Coins),
-			clampBestValue(body.Lifetime), clampBestValue(body.Spent))
+			clampBestValue(body.Lifetime), clampBestValue(body.Spent),
+			body.Found)
 	default:
 		w.Header().Set("Allow", "GET, POST, OPTIONS")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -335,5 +392,6 @@ func (s *bestStore) handler(w http.ResponseWriter, r *http.Request) {
 		"coins":    rec.Coins,
 		"lifetime": rec.Lifetime,
 		"spent":    rec.Spent,
+		"found":    rec.Found,
 	}))
 }

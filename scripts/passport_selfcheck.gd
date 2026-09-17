@@ -29,6 +29,9 @@ extends SceneTree
 ##     re-captures unless the game is over — pinned by source (headless ignores
 ##     a CAPTURED set, measured by capture check 21) plus the already-free
 ##     runtime round trip.
+##  i. LOBBY FOLD (bead 0bnw.2): the GET reply's `found` unions through the
+##     shipped sanitizer and merge (malformed shapes merge nothing, a smaller
+##     set never shrinks), and the POST body carries the set.
 ##
 ## The store probes drive the REAL `BestRunStore` statics with
 ## `Sentinel.isolate_user_state()` first, so no real profile is touched.
@@ -57,6 +60,7 @@ func _run() -> void:
 	_check_no_payout()
 	_check_registry()
 	_check_cursor()
+	_check_lobby_fold()
 	_finish()
 
 
@@ -494,3 +498,60 @@ func _check_cursor() -> void:
 	root.remove_child(panel)
 	panel.free()
 	Sentinel.done("cursor")
+
+
+func _check_lobby_fold() -> void:
+	## Assertion (i, bead 0bnw.2) — the GET reply's `found` folds through the
+	## SHIPPED sanitizer and merge: union in, malformed out, never a shrink.
+	## Drives the REAL `_on_get_completed` on a real store node with crafted
+	## reply bodies — not a copy of the fold. (A fold that leaves the server
+	## behind fires one fire-and-forget catch-up POST; the node is freed right
+	## after, cancelling it — the probes assert the synchronous store state.)
+	_write_found_raw(JSON.stringify(["bravo", "charlie"]))
+	var store := BestRunStore.new()
+	root.add_child(store)
+	var reply := func(found: Variant) -> void:
+		var body := JSON.stringify(
+				{"distance": 0, "coins": 0, "lifetime": 0, "spent": 0, "found": found})
+		store._on_get_completed(
+				HTTPRequest.RESULT_SUCCESS, 200, PackedStringArray(), body.to_utf8_buffer())
+
+	# Union: the server's alpha joins the local bravo/charlie. (`call` is
+	# variadic — one argument that happens to be an Array arrives as that
+	# Array, so no extra wrapping; `callv` would want the args list.)
+	reply.call(["alpha", "bravo"])
+	if BestRunStore.found_landmark_ids() != ["alpha", "bravo", "charlie"]:
+		_fail("a found reply did not union: %s" % str(BestRunStore.found_landmark_ids()))
+
+	# A non-array found merges nothing.
+	reply.call("oops")
+	if BestRunStore.found_landmark_ids() != ["alpha", "bravo", "charlie"]:
+		_fail("a non-array found reply moved the set: %s" % str(BestRunStore.found_landmark_ids()))
+
+	# Non-string entries are skipped while the shaped one beside them joins.
+	reply.call(["delta", 42, null])
+	if BestRunStore.found_landmark_ids() != ["alpha", "bravo", "charlie", "delta"]:
+		_fail("a mixed found reply folded as %s" % str(BestRunStore.found_landmark_ids()))
+
+	# A SMALLER reply never shrinks the local set.
+	reply.call(["alpha"])
+	if BestRunStore.found_landmark_ids() != ["alpha", "bravo", "charlie", "delta"]:
+		_fail("a smaller found reply shrank the set: %s" % str(BestRunStore.found_landmark_ids()))
+
+	# An unparseable body merges nothing at all.
+	store._on_get_completed(
+			HTTPRequest.RESULT_SUCCESS, 200, PackedStringArray(), "not json".to_utf8_buffer())
+	if BestRunStore.found_landmark_ids() != ["alpha", "bravo", "charlie", "delta"]:
+		_fail("an unparseable reply moved the set: %s" % str(BestRunStore.found_landmark_ids()))
+
+	root.remove_child(store)
+	store.free()
+
+	# ...and the POST carries the set: without it no device ever learns what
+	# the others found.
+	var source: String = FileAccess.get_file_as_string("res://scripts/best_run_store.gd")
+	if source.is_empty():
+		_fail("could not read best_run_store.gd to check the POST body")
+	elif not source.contains('"found": found_landmark_ids()'):
+		_fail("the /best POST body carries no found set — cross-device sync sends nothing")
+	Sentinel.done("lobby_fold")
