@@ -4769,6 +4769,9 @@ func relocate(around: Vector2i) -> void:
 	# re-seed does not free a chunk, and a bare relocation frees every one.
 	pending_chunks.clear()
 	pending_removals.clear()
+	var tree := get_tree()
+	if tree != null:
+		tree.call_group("minimap", "reset_landmark_compass")
 
 	# 3. Drop every old-world chunk (queue_free is the safe removal, as in remove_chunk).
 	# The bulk free bypasses remove_chunk, so count it here or the telemetry

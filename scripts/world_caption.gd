@@ -13,10 +13,11 @@ extends Label
 ## they are lettering ON the world, so they want the heading face and the hard
 ## ink outline the world-side contract asks for — not a card's body text.
 ##
-## THE WRITERS ARE UNTOUCHED. `player_controller._show_respawn_countdown()` and
+## THE WRITERS. `player_controller._show_respawn_countdown()` and
 ## `progression._set_message()` still find their label by GROUP and write
-## `.text` / `.visible`; this script only dresses the node, so nothing here can
-## be a second place a caption is decided.
+## `.text` / `.visible`; `post_caption()` (bead `godot-test1-uj0u`) allows
+## anonymous temporary world notices (such as the landmark compass approach line)
+## to post with an automatic timeout.
 ##
 ## BOTH CAPTIONS ARE BONE, and that is a decision rather than an omission. The
 ## bead allows the arrest ("Caught!") to be drawn in `hero_hud.COLOR_BARS`, the
@@ -36,8 +37,19 @@ extends Label
 ## width budget in `locale_selfcheck` moves.
 @export var font_size: int = 48
 
+## Hold duration for posted world captions (seconds).
+const CAPTION_HOLD: float = 3.5
+
+## Seconds left to display a posted caption.
+var _caption_timer: float = 0.0
+
+## Tracks the text last written by post_caption so timers do not clobber other writers.
+var _posted_text: String = ""
+
 
 func _ready() -> void:
+	if not is_in_group("respawn_label"):
+		add_to_group("world_caption")
 	add_theme_font_override("font", HudTheme.heading_font())
 	add_theme_font_size_override("font_size", font_size)
 	# BONE, not amber: the coin counter is the one amber TEXT in the HUD and the
@@ -61,3 +73,27 @@ func _ready() -> void:
 		Color(HudTheme.INK, HudTheme.SHADOW_ALPHA))
 	add_theme_constant_override("shadow_offset_x", HudTheme.SHADOW_PANEL_OFFSET.x)
 	add_theme_constant_override("shadow_offset_y", HudTheme.SHADOW_PANEL_OFFSET.y)
+
+
+func _process(delta: float) -> void:
+	if _caption_timer > 0.0:
+		_caption_timer -= delta
+		if _caption_timer <= 0.0:
+			if text == _posted_text:
+				text = ""
+				visible = false
+			_posted_text = ""
+			set_process(false)
+
+
+func post_caption(msg: String, duration: float = CAPTION_HOLD) -> bool:
+	"""Show an anonymous world caption for `duration` seconds, then hide.
+	Returns false if refused because the label is currently visible with another writer's text."""
+	if visible and not text.is_empty() and text != _posted_text:
+		return false
+	text = msg
+	_posted_text = msg
+	visible = not msg.is_empty()
+	_caption_timer = duration
+	set_process(_caption_timer > 0.0)
+	return true

@@ -51,6 +51,14 @@ extends Control
 ##   * OUTDOORS: the Budapest countdown ("Budapest: 1.4 km") or explored count
 ##     ("Budapest 3/22") beside the coordinates, plus a small BONE arrow at the
 ##     rim pointing toward Budapest's gate until inside the city rectangle.
+##   * LANDMARK COMPASS (bead `godot-test1-uj0u`): points at the ONE nearest
+##     unvisited landmark among loaded nodes of group "landmark". Held with
+##     hysteresis (> 25% nearer to switch). Drawn the Budapest-arrow way: a small
+##     BONE arrow at the rim when off-disc, or the target's X drawn bold when
+##     on-disc. A single anonymous caption ("Something odd ahead, %d m") fires
+##     when first within ~120 m, suppressed under a pending quiz or indoors.
+##     HINT, NOT ROUTE: it is a bearing only; a river between road and landmark
+##     is not guaranteed passable. Outdoors only (hidden inside HQ).
 ##   * INSIDE THE HQ ONLY: the storey beside the coordinates and the cell block's
 ##     storey beside the biome ("Floor 6" / "JAIL F10  ^4"), taking priority over
 ##     the Budapest line/arrow, plus — after 90 s without progress and never before
@@ -113,6 +121,10 @@ extends Control
 ## `godot --path . scenes/style_shots.tscn -- <outdir> only=field_bridge_deck`
 ## — the one shot in that tool that keeps this widget on screen.
 const HeroHudScript := preload("res://scripts/hero_hud.gd")
+## coin.gd is preloaded for its static `id_at()` — the project's one
+## "identify a deterministic world thing by where it stands" helper, used by the
+## landmark compass to track visited status and caption triggers.
+const COIN_SCRIPT := preload("res://scripts/coin.gd")
 
 # ============================================================================
 # CONFIGURATION
@@ -204,6 +216,9 @@ const MAX_PEER_DOTS: int = 8
 ## while a cross reads as "a marked site" at a glance and costs two segments.
 const LANDMARK_MARK_RADIUS: float = 3.4
 const LANDMARK_MARK_WIDTH: float = 1.6
+## Stroke width of the nearest unvisited landmark target mark when on-disc.
+## Drawn bold to distinguish it from the background landmark marks.
+const LANDMARK_TARGET_MARK_WIDTH: float = LANDMARK_MARK_WIDTH * 1.75
 
 ## How far an X reaches from its own centre: the arm's half-DIAGONAL (its corners
 ## sit at (±arm, ±arm), so the reach is arm * sqrt(2), not arm) plus half the
@@ -448,6 +463,14 @@ const COLOR_BUDAPEST := HudTheme.BONE
 const BUDAPEST_ARROW_LENGTH: float = 7.0
 const BUDAPEST_ARROW_HALF_WIDTH: float = 4.5
 
+## The landmark compass tunables (bead godot-test1-uj0u).
+## Distance ratio required to switch away from an already held landmark target (> 25% nearer).
+const LANDMARK_HYSTERESIS_RATIO: float = 0.75
+## Maximum distance (metres) at which the anonymous approach caption fires.
+const LANDMARK_COMPASS_CAPTION_DISTANCE: float = 120.0
+## Format string for the anonymous approach caption.
+const LANDMARK_CAPTION_FORMAT: String = "Something odd ahead, %d m"
+
 ## The Budapest line format strings (reusing the same CSV keys).
 const BUDAPEST_FAR: String = "Budapest: %.1f km"
 const BUDAPEST_HERE: String = "Budapest %d/%d"
@@ -650,6 +673,23 @@ var _budapest_text: String = ""
 var _show_budapest_arrow: bool = false
 var _budapest_arrow_points: PackedVector2Array = PackedVector2Array()
 
+## Landmark compass state (bead godot-test1-uj0u).
+## The held target node, its world position, and cached presence.
+var _target_landmark_node: Node3D = null
+var _target_landmark_pos: Vector3 = Vector3.ZERO
+var _has_target_landmark: bool = false
+## Off-disc arrow at the rim pointing toward the target bearing.
+var _show_landmark_compass_arrow: bool = false
+var _landmark_compass_arrow_points: PackedVector2Array = PackedVector2Array()
+## On-disc bold target X mark points (2 segments, 4 points).
+var _target_landmark_on_disc: bool = false
+var _target_landmark_disc_points: PackedVector2Array = PackedVector2Array()
+## Set of landmark ids (via COIN_SCRIPT.id_at) whose ~120m anonymous approach
+## caption has already fired this run. Cleared on re-seed and relocate.
+var _target_caption_fired: Dictionary = {}
+## Tracked run_seed to detect re-seed and reset compass state.
+var _compass_run_seed: int = 0
+
 ## Anti-stall bookkeeping, all of it reset on leaving the building. `_visited` is the
 ## set of `zone_at()` keys seen THIS VISIT (a few hundred short strings at worst),
 ## `_seen_floor` the highest storey reached, `_stall` the seconds since either last
@@ -673,6 +713,10 @@ func _ready() -> void:
 	_jail_points.resize(3)
 	# ...and the small Budapest direction arrow.
 	_budapest_arrow_points.resize(3)
+	# ...and the landmark compass direction arrow at the rim.
+	_landmark_compass_arrow_points.resize(3)
+	# ...and the on-disc bold target X mark points.
+	_target_landmark_disc_points.resize(4)
 	# The crocodile buffer is sized ONCE to its hard cap and never resized: see
 	# PARKED_SEGMENT for how the unused tail is kept out of the picture.
 	_croc_points.resize(MAX_CROC_DOTS * 2)
@@ -823,10 +867,11 @@ func _tick(elapsed: float = TICK_INTERVAL) -> void:
 	_gather_road()
 	_gather_crocodiles()
 	_gather_landmarks()
+	_gather_shelter(elapsed)
+	_gather_landmark_compass()
 	_gather_tower()
 	_gather_waypoints()
 	_gather_peers()
-	_gather_shelter(elapsed)
 	_gather_budapest()
 
 	_have_data = true
@@ -1404,6 +1449,160 @@ func _gather_city_landmarks(scale: float, arm: float) -> void:
 					scale, arm)
 
 
+func reset_landmark_compass() -> void:
+	"""Clear the landmark compass target and approach caption memory (bead godot-test1-uj0u).
+
+	Called on re-seed and relocate().
+	"""
+	_target_landmark_node = null
+	_target_landmark_pos = Vector3.ZERO
+	_has_target_landmark = false
+	_show_landmark_compass_arrow = false
+	_target_landmark_on_disc = false
+	_target_caption_fired.clear()
+
+
+func _gather_landmark_compass() -> void:
+	"""The landmark compass (bead godot-test1-uj0u): points at ONE nearest unvisited
+	landmark among loaded group "landmark" nodes.
+
+	Held with hysteresis: only switches if current target unloads, becomes visited,
+	or another candidate is nearer by > 25% (LANDMARK_HYSTERESIS_RATIO).
+
+	Draws a small BONE arrow at the rim when off-disc (reusing BUDAPEST_ARROW_*
+	constants), or draws the target's X bold when on-disc (LANDMARK_TARGET_MARK_WIDTH).
+	Fires ONE anonymous caption ("Something odd ahead, %d m") when within ~120m,
+	suppressed under pending quiz or inside HQ.
+
+	HINT, NOT ROUTE: it is a bearing; a river between road and landmark is not
+	guaranteed passable. Outdoors only (hidden inside HQ).
+	"""
+	if not _floor_text.is_empty():
+		_show_landmark_compass_arrow = false
+		_target_landmark_on_disc = false
+		return
+
+	# Re-seed check:
+	if _terrain != null and "run_seed" in _terrain:
+		var r_seed: int = int(_terrain.run_seed)
+		if _compass_run_seed != r_seed:
+			_compass_run_seed = r_seed
+			reset_landmark_compass()
+
+	var toast := get_tree().get_first_node_in_group("landmark_toast")
+
+	# Check if existing target is still valid:
+	var current_valid: bool = false
+	var current_dist: float = INF
+	if _has_target_landmark and is_instance_valid(_target_landmark_node) \
+			and _target_landmark_node.is_inside_tree() \
+			and _target_landmark_node.is_in_group("landmark"):
+		var pos: Vector3 = _target_landmark_node.global_position
+		var visited: bool = false
+		if toast != null and toast.has_method("is_visited"):
+			visited = toast.is_visited(pos)
+		if not visited:
+			current_valid = true
+			_target_landmark_pos = pos
+			current_dist = Vector2(_player_pos.x - pos.x, _player_pos.z - pos.z).length()
+
+	if not current_valid:
+		_has_target_landmark = false
+		_target_landmark_node = null
+		current_dist = INF
+
+	# Find nearest unvisited candidate in "landmark" group:
+	var best_node: Node3D = null
+	var best_dist: float = INF
+	var best_pos: Vector3 = Vector3.ZERO
+	for node in get_tree().get_nodes_in_group("landmark"):
+		var marker := node as Node3D
+		if marker == null or not is_instance_valid(marker) or not marker.is_inside_tree():
+			continue
+		var pos: Vector3 = marker.global_position
+		if toast != null and toast.has_method("is_visited") and toast.is_visited(pos):
+			continue
+		var d: float = Vector2(_player_pos.x - pos.x, _player_pos.z - pos.z).length()
+		if d < best_dist:
+			best_dist = d
+			best_node = marker
+			best_pos = pos
+
+	# Hysteresis:
+	if current_valid:
+		if best_node != null and best_node != _target_landmark_node and best_dist < current_dist * LANDMARK_HYSTERESIS_RATIO:
+			_target_landmark_node = best_node
+			_target_landmark_pos = best_pos
+			_has_target_landmark = true
+	else:
+		if best_node != null:
+			_target_landmark_node = best_node
+			_target_landmark_pos = best_pos
+			_has_target_landmark = true
+		else:
+			_has_target_landmark = false
+			_target_landmark_node = null
+
+	if not _has_target_landmark:
+		_show_landmark_compass_arrow = false
+		_target_landmark_on_disc = false
+		return
+
+	var scale := _map_scale()
+	var offset := Vector2(_target_landmark_pos.x - _player_pos.x, _target_landmark_pos.z - _player_pos.z)
+	var dist_px: float = offset.length() * scale
+	if dist_px > MAP_RADIUS:
+		# Off-disc: draw arrow at rim
+		_target_landmark_on_disc = false
+		if offset.length_squared() > 1.0:
+			var dir := offset.normalized()
+			var perp := Vector2(-dir.y, dir.x)
+			var tip := MAP_CENTER + dir * (MAP_RADIUS - 1.0)
+			var tail := tip - dir * BUDAPEST_ARROW_LENGTH * 2.0
+			_landmark_compass_arrow_points[0] = tip
+			_landmark_compass_arrow_points[1] = tail + perp * BUDAPEST_ARROW_HALF_WIDTH
+			_landmark_compass_arrow_points[2] = tail - perp * BUDAPEST_ARROW_HALF_WIDTH
+			_show_landmark_compass_arrow = true
+		else:
+			_show_landmark_compass_arrow = false
+	else:
+		# On-disc: bold X mark
+		_show_landmark_compass_arrow = false
+		_target_landmark_on_disc = true
+		var center := MAP_CENTER + (offset * scale).limit_length(MAP_RADIUS - LANDMARK_MARK_REACH)
+		var arm := LANDMARK_MARK_RADIUS
+		_target_landmark_disc_points[0] = center + Vector2(-arm, -arm)
+		_target_landmark_disc_points[1] = center + Vector2(arm, arm)
+		_target_landmark_disc_points[2] = center + Vector2(-arm, arm)
+		_target_landmark_disc_points[3] = center + Vector2(arm, -arm)
+
+	# Check anonymous approach caption trigger:
+	var id: int = COIN_SCRIPT.id_at(_target_landmark_pos)
+	if not _target_caption_fired.has(id):
+		var d_m: float = Vector2(_player_pos.x - _target_landmark_pos.x, _player_pos.z - _target_landmark_pos.z).length()
+		if d_m <= LANDMARK_COMPASS_CAPTION_DISTANCE:
+			var quiz_active: bool = (toast != null and toast.has_method("is_quiz_pending") and toast.is_quiz_pending())
+			if not quiz_active and _floor_text.is_empty():
+				if _fire_landmark_caption(roundi(d_m)):
+					_target_caption_fired[id] = true
+
+
+func _fire_landmark_caption(d_m: int) -> bool:
+	var label := get_tree().get_first_node_in_group("world_caption")
+	if label == null:
+		label = get_tree().get_first_node_in_group("level_up_label")
+	if label == null:
+		return false
+	var msg: String = tr(LANDMARK_CAPTION_FORMAT) % d_m
+	if label.has_method("post_caption"):
+		return bool(label.post_caption(msg))
+	elif "text" in label:
+		label.text = msg
+		label.visible = true
+		return true
+	return false
+
+
 func _gather_tower() -> void:
 	"""The tower — GastroDefense HQ — as a BONE cross, on the same ~5 Hz tick.
 
@@ -1793,6 +1992,8 @@ func _draw() -> void:
 	# pass at width + 2 px and those two REACH constants.
 	if _landmark_count > 0:
 		draw_multiline_colors(_landmark_points, _landmark_colors, LANDMARK_MARK_WIDTH)
+	if _floor_text.is_empty() and _target_landmark_on_disc:
+		draw_multiline(_target_landmark_disc_points, COLOR_LANDMARK, LANDMARK_TARGET_MARK_WIDTH)
 
 	# 2c. The waypoint circles — ABOVE the landmarks and UNDER the tower, and that
 	#     ordering is load-bearing rather than tidy: waypoint site 0 stands
@@ -1855,6 +2056,10 @@ func _draw() -> void:
 		draw_colored_polygon(_jail_points, Color(COLOR_JAIL, _jail_alpha))
 	elif _show_budapest_arrow:
 		draw_colored_polygon(_budapest_arrow_points, COLOR_BUDAPEST)
+
+	# 4c. The landmark compass arrow outdoors (points to nearest unvisited landmark, bead godot-test1-uj0u).
+	if _floor_text.is_empty() and _show_landmark_compass_arrow:
+		draw_colored_polygon(_landmark_compass_arrow_points, COLOR_BUDAPEST)
 
 	# 5. Coordinates + biome under the disc, as ONE two-line string. X is also the
 	#    run's distance score (the coin road's X is strictly increasing by
