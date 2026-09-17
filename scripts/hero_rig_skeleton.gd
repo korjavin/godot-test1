@@ -172,8 +172,8 @@ const OPTIONAL: Array[String] = [HEAD, PELVIS, SPINE, CHEST,
 const GAIT_SKIN: Dictionary = {
 	# --- LEGS ---------------------------------------------------------------
 	# Knee flex at the peak of the swing, in radians of knee per radian per
-	# radian-of-phase of thigh RATE. At Teibi's 44-degree leg swing that is
-	# 1.15 * 0.768 = 0.88 rad = 51 degrees, against a real walk's ~60.
+	# radian-of-phase of thigh RATE. At Teibi's 38-degree leg swing that is
+	# 1.15 * 0.663 = 0.76 rad = 44 degrees, against a real walk's ~60.
 	"knee_swing_ratio": 1.15,
 	# How deep the knees take a landing, degrees of flex at the peak of the
 	# squash arc (`PlayerAnimation.land_squash_amount()`).
