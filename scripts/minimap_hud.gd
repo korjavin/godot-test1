@@ -867,11 +867,11 @@ func _tick(elapsed: float = TICK_INTERVAL) -> void:
 	_gather_road()
 	_gather_crocodiles()
 	_gather_landmarks()
+	_gather_shelter(elapsed)
 	_gather_landmark_compass()
 	_gather_tower()
 	_gather_waypoints()
 	_gather_peers()
-	_gather_shelter(elapsed)
 	_gather_budapest()
 
 	_have_data = true
@@ -1583,22 +1583,24 @@ func _gather_landmark_compass() -> void:
 		if d_m <= LANDMARK_COMPASS_CAPTION_DISTANCE:
 			var quiz_active: bool = (toast != null and toast.has_method("is_quiz_pending") and toast.is_quiz_pending())
 			if not quiz_active and _floor_text.is_empty():
-				_target_caption_fired[id] = true
-				_fire_landmark_caption(roundi(d_m))
+				if _fire_landmark_caption(roundi(d_m)):
+					_target_caption_fired[id] = true
 
 
-func _fire_landmark_caption(d_m: int) -> void:
+func _fire_landmark_caption(d_m: int) -> bool:
 	var label := get_tree().get_first_node_in_group("world_caption")
 	if label == null:
 		label = get_tree().get_first_node_in_group("level_up_label")
 	if label == null:
-		return
+		return false
 	var msg: String = tr(LANDMARK_CAPTION_FORMAT) % d_m
 	if label.has_method("post_caption"):
-		label.post_caption(msg)
+		return bool(label.post_caption(msg))
 	elif "text" in label:
 		label.text = msg
 		label.visible = true
+		return true
+	return false
 
 
 func _gather_tower() -> void:

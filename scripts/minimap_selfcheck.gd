@@ -1044,16 +1044,47 @@ func _check_landmark_compass() -> String:
 			failure = "caption fired at 150 m (> 120 m trigger): %s" % caption_label.text
 			break
 
-		# 3. Approach landmark to 100 m (< 120 m) -> caption fires once:
+		# 3. Approach landmark to 100 m (< 120 m) with level-up conflict check:
 		probe_a.global_position = origin + Vector3(100.0, 0.0, 0.0)
+		var id_a: int = map.COIN_SCRIPT.id_at(probe_a.global_position)
+		# 3a. Level-up message active: post_caption must REFUSE, fired set stays empty
+		caption_label.text = "Level 2!"
+		caption_label.visible = true
+		caption_label._posted_text = ""
+		map._tick()
+		if caption_label.text != "Level 2!":
+			failure = "compass caption overwrote active level-up text ('%s')" % caption_label.text
+			break
+		if map._target_caption_fired.has(id_a):
+			failure = "target marked as fired even though caption was refused due to level-up conflict"
+			break
+
+		# 3b. Level-up message cleared: compass retries and posts successfully
 		caption_label.text = ""
+		caption_label.visible = false
 		map._tick()
 		var expected_caption: String = tr("Something odd ahead, %d m") % 100
 		if caption_label.text != expected_caption:
 			failure = "approach caption at 100 m expected '%s', got '%s'" % [expected_caption, caption_label.text]
 			break
-		# Tick again -> caption should not fire again
+		if not map._target_caption_fired.has(id_a):
+			failure = "target was not recorded in _target_caption_fired after successful post"
+			break
+
+		# 3c. Overwrite by another writer: timer expiry leaves new writer's text alone
+		caption_label.text = "Level 3!"
+		caption_label.visible = true
+		caption_label._process(5.0)
+		if caption_label.text != "Level 3!":
+			failure = "caption timer expiry cleared another writer's text ('%s')" % caption_label.text
+			break
+		if not caption_label.visible:
+			failure = "caption timer expiry hid another writer's visible label"
+			break
 		caption_label.text = ""
+		caption_label.visible = false
+
+		# Tick again -> caption should not fire again
 		map._tick()
 		if not caption_label.text.is_empty():
 			failure = "approach caption fired a second time for the same landmark"
@@ -1144,13 +1175,53 @@ func _check_landmark_compass() -> String:
 				% [expected_d_caption, caption_label.text]
 			break
 
-		# 9. Indoors suppression:
-		map._floor_text = "Floor 2"
-		map._tick()
-		if map._show_landmark_compass_arrow or map._target_landmark_on_disc:
-			failure = "compass arrow or target mark visible indoors"
-			break
+		# 9. Indoors suppression (shelter before compass: no stale tick, no caption inside HQ):
+		var probe_e := Node3D.new()
+		root.add_child(probe_e)
+		probes.append(probe_e)
+		probe_e.global_position = origin + Vector3(0.0, 0.0, 70.0)
+		probe_e.add_to_group("landmark")
+		var id_e: int = map.COIN_SCRIPT.id_at(probe_e.global_position)
+		caption_label.text = ""
+		caption_label.visible = false
 		map._floor_text = ""
+
+		# Enter tower shelter on THIS tick:
+		var stub_tower := StubTower.new()
+		root.add_child(stub_tower)
+		stub_tower.add_to_group("tower")
+		stub_tower.inside = true
+		map._tower_node = stub_tower
+
+		# Exactly ONE tick after entering shelter:
+		map._tick()
+
+		var hq_caption: String = caption_label.text
+		var hq_fired: bool = map._target_caption_fired.has(id_e)
+		var hq_arrow: bool = map._show_landmark_compass_arrow
+		var hq_disc: bool = map._target_landmark_on_disc
+		var hq_floor: String = map._floor_text
+
+		stub_tower.remove_from_group("tower")
+		stub_tower.queue_free()
+		map._tower_node = null
+		map._tick()
+
+		if not hq_caption.is_empty():
+			failure = "caption fired on first tick inside HQ shelter ('%s')" % hq_caption
+			break
+		if hq_fired:
+			failure = "target marked as fired in _target_caption_fired on first tick inside HQ shelter"
+			break
+		if hq_arrow:
+			failure = "compass arrow shown on first tick inside HQ shelter"
+			break
+		if hq_disc:
+			failure = "target landmark marked on disc on first tick inside HQ shelter"
+			break
+		if hq_floor.is_empty():
+			failure = "storey line was not updated on first tick inside HQ shelter"
+			break
 
 		# 10. Re-seed clears target & caption memory:
 		var id_d: int = map.COIN_SCRIPT.id_at(probe_d.global_position)
