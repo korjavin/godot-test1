@@ -722,10 +722,12 @@ func _check_remote_scent() -> String:
 const BANK_STUB_SOURCE := """extends Node
 var banked: int = -1
 var base_seen: int = -1
+var count_seen: int = -1
 var calls: int = 0
-func bank_awarded(amount: int, base_total: int = 0) -> void:
+func bank_awarded(amount: int, base_total: int = 0, pickup_count: int = 1) -> void:
 	banked = amount
 	base_seen = base_total
+	count_seen = pickup_count
 	calls += 1
 """
 
@@ -775,12 +777,19 @@ func _check_claim_base_value() -> String:
 
 	var banked: int = stub.banked
 	var base_seen: int = stub.base_seen
+	var count_seen: int = stub.count_seen
 	var calls: int = stub.calls
 	stub.free()
 	mp.free()
 
 	if calls != 1:
 		return "_resolve_claim called bank_awarded %d times, expected exactly 1" % calls
+	# THE PICKUP COUNT (bead godot-test1-bv0f round 2): a chest's burst must reach
+	# the winner's phrase counter whole, not as one award — the scenario claims 3.
+	if count_seen != count:
+		return "the pickup count reaching bank_awarded was %d, expected the claim's %d" % [
+			count_seen, count
+		]
 	if base_seen == 0:
 		return ("no base value reached bank_awarded — a pickup won through the claim protocol still "
 			+ "credits no lifetime coins")

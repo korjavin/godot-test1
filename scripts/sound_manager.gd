@@ -360,6 +360,8 @@ var _loop_players: Dictionary = {}
 ## losing its place, and every read below degrades when a group is absent.
 var _road_acc: float = 0.0            # _process time banked toward the next tick
 var _road_approaching: bool = false   # inside 80 m of a target, singing the rise
+var _road_has_target: bool = false    # the approach is following a live compass target ...
+var _road_target_pos: Vector3 = Vector3.ZERO  # ...at this position, remembered across the compass's drop
 var _road_note_idx: int = 0           # climb position in ROAD_MOTIF_PITCHES (holds the top)
 var _road_note_cd: int = 0            # ticks until the next motif note
 var _road_phrase: Array = []          # queued phrase taps, one per tick
@@ -633,18 +635,24 @@ func play_projectile(style: String) -> void:
 	_play_oneshot(cue["stream"], cue["db"], cue["pitch"])
 
 
-func notify_coin_pickup() -> void:
-	## A coin or gem changed hands on THIS peer — fired from
-	## PlayerController.collect_coin() (solo and the local fallback) and
-	## bank_awarded() (a claim confirm won here), so every pickup the local
-	## player banks is counted exactly once whichever path paid it.
+func notify_coin_pickup(count: int = 1) -> void:
+	## `count` pickups changed hands on THIS peer — fired from
+	## PlayerController.collect_coin() (solo and the local fallback, one at a
+	## time) and bank_awarded() (a claim confirm won here, carrying the claim's
+	## whole count), so every pickup the local player banks is counted exactly
+	## once whichever path paid it.
+	##
+	## The count is walked ONE BY ONE rather than added, so a multi-pickup award
+	## that steps OVER a multiple still queues its bar — a chest's burst must
+	## land the phrase exactly as often solo as in a room.
 	##
 	## Counting is not playback: this takes no pool voice and ignores the
 	## gesture gate, so pickups before the first input still count toward the
 	## phrase — the queued taps only SOUND once tick_road_music() is unlocked.
-	_road_pickups += 1
-	if _road_pickups % ROAD_PHRASE_EVERY == 0:
-		_road_phrase = ROAD_PHRASE_PITCHES.duplicate()
+	for _i in maxi(1, int(count)):
+		_road_pickups += 1
+		if _road_pickups % ROAD_PHRASE_EVERY == 0:
+			_road_phrase = ROAD_PHRASE_PITCHES.duplicate()
 
 
 func tick_road_music() -> void:
@@ -691,26 +699,43 @@ func tick_road_music() -> void:
 		if has_target and compass.has_method("compass_target_pos"):
 			target_pos = compass.call("compass_target_pos") as Vector3
 	var approach_dist: float = minf(circle_dist, target_dist)
+	# THE ARRIVAL READ, AND THE RACE IT CLOSES. The toast marks a landmark visited
+	# on arrival, but the compass drops a visited target on its own 0.2 s refresh
+	# while this driver polls every 0.25 s — so the visit can land between the two
+	# and the target is simply GONE on the next tick, which a live-target-only
+	# read answers with silence instead of the owed cadence. Hence the remembered
+	# position: while a target is live it is re-remembered every tick, and on the
+	# tick it is gone the toast is asked about the remembered one — visited there
+	# resolves, anything else is a loss. Only a position ever read live is
+	# remembered, so a compass without the pos seam degrades to loss, never to a
+	# cadence against the origin. This runs BEFORE the range check below, because
+	# a dropped target reads as out of range and must still earn its cadence.
+	var toast := get_tree().get_first_node_in_group("landmark_toast")
+	var toast_ok: bool = toast != null and toast.has_method("is_visited")
+	if has_target and compass.has_method("compass_target_pos"):
+		_road_target_pos = target_pos
+		_road_has_target = true
+	if _road_has_target and toast_ok \
+			and bool(toast.call("is_visited", _road_target_pos if not has_target else target_pos)):
+		_play_resolve()
+		_road_approaching = false
+		_road_has_target = false
+		return
+	if not has_target and _road_has_target:
+		# The target unloaded unvisited: no cadence — but the approach itself may
+		# carry on if a circle is in range, so this falls through to the range
+		# check instead of returning. A resolve is owed to an ARRIVAL, not a loss.
+		_road_has_target = false
 	if stood or approach_dist > ROAD_MOTIF_RANGE:
 		if _road_approaching and not stood:
-			# Walked away, or the target unloaded unvisited: stop, no cadence.
-			# A resolve is owed to an ARRIVAL, not to a loss.
+			# Walked away with nothing in range: stop, no cadence.
 			_road_approaching = false
+			_road_has_target = false
 		return
 	if not _road_approaching:
 		_road_approaching = true
 		_road_note_idx = 0
 		_road_note_cd = 0
-	# The arrival read follows the LIVE target, whichever half led the approach:
-	# a landmark that unloads mid-approach simply stops being visited-checkable,
-	# so no stale position can ever earn a cadence.
-	if has_target:
-		var toast := get_tree().get_first_node_in_group("landmark_toast")
-		if toast != null and toast.has_method("is_visited") \
-				and bool(toast.call("is_visited", target_pos)):
-			_play_resolve()
-			_road_approaching = false
-			return
 	# ...still on the road: climb the rise, then hold the top while closing in.
 	if _road_note_cd <= 0:
 		_play_oneshot("coin", ROAD_MOTIF_VOLUME_DB,

@@ -22,12 +22,17 @@ extends SceneTree
 ##  6. THE ROAD MUSIC (bead godot-test1-bv0f): the motif starts inside 80 m of
 ##     a compass target or a circle and climbs, holds under a chase without
 ##     taking a voice, stops voiceless on a loss, resolves a fifth-to-octave
-##     cadence on a visited target or the stood edge, sings nothing while
-##     standing, and plays a falling one-bar phrase on every 25th pickup.
+##     cadence on a visited target or the stood edge — including a target the
+##     compass dropped between the visit and the poll, via the remembered
+##     position (round 2) — sings nothing while standing, plays a falling
+##     one-bar phrase on every 25th pickup with multi-pickup room awards
+##     counting whole (round 2), and reads the distance off the live body even
+##     with the map hidden (round 2, real minimap node).
 ##
 
 const SoundManager := preload("res://scripts/sound_manager.gd")
 const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
+const MinimapHud := preload("res://scripts/minimap_hud.gd")
 
 var _failures: Array[String] = []
 
@@ -299,7 +304,7 @@ func _check_road_music() -> void:
 	_expect_tap(players, 3, coin_stream, SoundManager.ROAD_MOTIF_PITCHES[0],
 			SoundManager.ROAD_MOTIF_VOLUME_DB, "re-approach motif note")
 
-	# --- ARRIVAL (landmark): a visited target resolves fifth-into-octave. ---
+	# --- ARRIVAL (landmark), race won: visited while the compass still holds it.
 	toast.visited = true
 	sm.tick_road_music()
 	expected += 2
@@ -313,6 +318,28 @@ func _check_road_music() -> void:
 	sm.tick_road_music()
 	_expect_voices(sm, expected, "motif kept singing after the resolve — arrival ends the approach")
 
+	# --- ARRIVAL (landmark), race lost (round 2): the visit lands, the compass
+	# drops the visited target on its own refresh, and only THEN does the driver
+	# poll — the REMEMBERED position still earns the cadence. This is the real
+	# drop order; a stub that keeps a visited target available is why round 1
+	# passed with a live-target-only read.
+	toast.visited = false
+	compass.dist = 50.0
+	compass.pos = Vector3(10.0, 0.0, 20.0)
+	sm.tick_road_music()  # re-approach, one motif note, target re-remembered
+	expected += 1
+	_expect_voices(sm, expected, "no motif note on the drop-order approach")
+	_expect_tap(players, 6, coin_stream, SoundManager.ROAD_MOTIF_PITCHES[0],
+			SoundManager.ROAD_MOTIF_VOLUME_DB, "drop-order motif note")
+	toast.visited = true  # the arrival...
+	compass.dist = INF  # ...then the compass refresh drops the visited target...
+	sm.tick_road_music()  # ...then the driver polls: cadence anyway
+	expected += 2
+	_expect_voices(sm, expected, "a dropped-but-visited target earned no cadence — the arrival was missed")
+	for i in range(2):
+		_expect_tap(players, 7 + i, coin_stream, SoundManager.ROAD_RESOLVE_PITCHES[i],
+				SoundManager.ROAD_RESOLVE_VOLUME_DB, "drop-order resolve tap %d" % i)
+
 	# --- ARRIVAL (circle): the stood edge resolves with no compass at all. ---
 	hub.circle_dist = 30.0
 	sm.tick_road_music()  # circle approach starts, one motif note
@@ -323,7 +350,7 @@ func _check_road_music() -> void:
 	expected += 2
 	_expect_voices(sm, expected, "the stood edge did not resolve a cadence")
 	for i in range(2):
-		_expect_tap(players, 7 + i, coin_stream, SoundManager.ROAD_RESOLVE_PITCHES[i],
+		_expect_tap(players, 10 + i, coin_stream, SoundManager.ROAD_RESOLVE_PITCHES[i],
 				SoundManager.ROAD_RESOLVE_VOLUME_DB, "circle resolve tap %d" % i)
 	sm.tick_road_music()  # standing on the circle: nothing more
 	_expect_voices(sm, expected, "motif sings while standing on the circle")
@@ -342,13 +369,28 @@ func _check_road_music() -> void:
 		sm.tick_road_music()
 		expected += 1
 		_expect_voices(sm, expected, "phrase tap %d missing — the bar is one tap per tick" % i)
-		_expect_tap(players, 9 + i, coin_stream, SoundManager.ROAD_PHRASE_PITCHES[i],
+		_expect_tap(players, 12 + i, coin_stream, SoundManager.ROAD_PHRASE_PITCHES[i],
 				SoundManager.ROAD_PHRASE_VOLUME_DB, "phrase tap %d" % i)
 		if i > 0:
-			var prev: AudioStreamPlayer = players[(9 + i - 1) % pool_size]
-			var tap: AudioStreamPlayer = players[(9 + i) % pool_size]
+			var prev: AudioStreamPlayer = players[(12 + i - 1) % pool_size]
+			var tap: AudioStreamPlayer = players[(12 + i) % pool_size]
 			if tap.pitch_scale >= prev.pitch_scale:
 				_fail("phrase does not FALL — its contour must differ from waypoint_found's rising triad")
+
+	# --- PHRASE IN A ROOM (round 2): a 3-pickup award counts THREE pickups.
+	# Eight of them bank 24 more (25 → 49, no multiple crossed): silence.
+	for i in range(8):
+		sm.notify_coin_pickup(3)
+	sm.tick_road_music()
+	_expect_voices(sm, expected, "a room award queued a phrase without crossing a multiple of %d" % SoundManager.ROAD_PHRASE_EVERY)
+	# The ninth crosses 50 mid-award: one bar owed, one tap per tick.
+	sm.notify_coin_pickup(3)
+	for i in range(SoundManager.ROAD_PHRASE_PITCHES.size()):
+		sm.tick_road_music()
+		expected += 1
+		_expect_voices(sm, expected, "room-award phrase tap %d missing" % i)
+		_expect_tap(players, 16 + i, coin_stream, SoundManager.ROAD_PHRASE_PITCHES[i],
+				SoundManager.ROAD_PHRASE_VOLUME_DB, "room-award phrase tap %d" % i)
 
 	# --- LEVELS, stated next to the existing cues they sit under. ---
 	if not (SoundManager.ROAD_MOTIF_VOLUME_DB < SoundManager.FOOTSTEP_VOLUME_DB):
@@ -369,8 +411,27 @@ func _check_road_music() -> void:
 	var controller: String = FileAccess.get_file_as_string("res://scripts/player_controller.gd")
 	if controller.is_empty():
 		_fail("could not read player_controller.gd to check the phrase counter's feeds")
-	elif controller.count("notify_coin_pickup") < 2:
-		_fail("fewer than two notify_coin_pickup() call sites — collect_coin() AND bank_awarded() must feed the phrase counter")
+	else:
+		if controller.count("notify_coin_pickup") < 2:
+			_fail("fewer than two notify_coin_pickup() call sites — collect_coin() AND bank_awarded() must feed the phrase counter")
+		if controller.count("pickup_count") < 2:
+			_fail("bank_awarded() does not thread the claim's pickup count — a room award counts as one pickup")
+
+	# --- THE SEAM READS THE LIVE BODY (round 2, fix 2): driven on the REAL
+	# minimap node with a hidden map and a stale tick snapshot — the distance
+	# must still answer from wherever the player body actually is.
+	var real_map := MinimapHud.new()
+	root.add_child(real_map)
+	real_map.set("_has_target_landmark", true)
+	real_map.set("_target_landmark_pos", Vector3.ZERO)
+	real_map.set("_player_pos", Vector3(50.0, 0.0, 0.0))  # the frozen snapshot: inside 80 m
+	real_map.visible = false
+	player_stub.position = Vector3(500.0, 0.0, 0.0)  # ...but the body walked far away
+	var live_dist: float = real_map.call("compass_target_distance")
+	if live_dist < 400.0:
+		_fail("compass_target_distance() answered %.1f m off the frozen snapshot with the body at 500 m — a hidden map freezes the music's distance" % live_dist)
+	root.remove_child(real_map)
+	real_map.free()
 
 	for stub: Node in [player_stub, compass, hub, toast, croc]:
 		root.remove_child(stub)

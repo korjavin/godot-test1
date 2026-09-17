@@ -2543,7 +2543,7 @@ func collect_coin(value: int = 1) -> void:
 	# overwrites coins_collected but never this.
 	own_coins += value * get_streak_multiplier()
 	# ROAD MUSIC (bead godot-test1-bv0f): every Nth pickup queues a phrase.
-	_sfx("notify_coin_pickup")
+	_sfx("notify_coin_pickup", 1)
 	# META-PROGRESSION: the PRE-STREAK value, because lifetime coins count what
 	# was physically picked up (a coin is 1, a gem is 10) while the streak is a
 	# SCORE multiplier on what the run is worth. This is also the only place
@@ -2557,7 +2557,7 @@ func collect_coin(value: int = 1) -> void:
 	print("Collected a coin worth %d (x%d streak)! Total: %d" % [value, get_streak_multiplier(), coins_collected])
 
 
-func bank_awarded(amount: int, base_total: int = 0) -> void:
+func bank_awarded(amount: int, base_total: int = 0, pickup_count: int = 1) -> void:
 	"""
 	Bank a pickup the MULTIPLAYER MASTER has already priced (see
 	mp_claims.apply_confirm). Called only for the peer that won the claim.
@@ -2581,10 +2581,10 @@ func bank_awarded(amount: int, base_total: int = 0) -> void:
 	"""
 	coins_collected += amount
 	own_coins += amount
-	# ROAD MUSIC (bead godot-test1-bv0f): a claim won here is a pickup the local
-	# player banked — the same phrase counter collect_coin() feeds, so the Nth
-	# coin still lands its bar in a room.
-	_sfx("notify_coin_pickup")
+	# ROAD MUSIC (bead godot-test1-bv0f): a claim won here is `pickup_count`
+	# pickups the local player banked — the same phrase counter collect_coin()
+	# feeds one at a time, so the Nth coin still lands its bar in a room.
+	_sfx("notify_coin_pickup", pickup_count)
 	# META-PROGRESSION, at the PRE-MULTIPLIER value — the SAME null-safe group
 	# call collect_coin() makes, and deliberately the same rule: a coin won
 	# through the claim protocol has to credit the player exactly what it would

@@ -221,10 +221,10 @@ static func resolve_claim(mp: Node, id: int, by_int: int, count: int, value: int
 	mp._broadcast_reliable(var_to_bytes(confirm))
 	# And apply it to ourselves: the master is a player too, and this is the only
 	# path that banks a pickup it claimed.
-	apply_confirm(mp, id, by_int, awarded, mp._room_multiplier, base_total)
+	apply_confirm(mp, id, by_int, awarded, mp._room_multiplier, base_total, count)
 
 
-static func apply_confirm(mp: Node, id: int, by_int: int, awarded: int, multiplier: int, base_total: int = 0) -> void:
+static func apply_confirm(mp: Node, id: int, by_int: int, awarded: int, multiplier: int, base_total: int = 0, pickup_count: int = 1) -> void:
 	"""
 	Every peer's half of a confirm: the pickup is gone room-wide, and whoever won
 	it banks the amount the MASTER already multiplied.
@@ -252,7 +252,7 @@ static func apply_confirm(mp: Node, id: int, by_int: int, awarded: int, multipli
 		return
 	var player: Node = mp.get_tree().get_first_node_in_group("player")
 	if player != null and player.has_method("bank_awarded"):
-		player.bank_awarded(awarded, base_total)
+		player.bank_awarded(awarded, base_total, pickup_count)
 
 
 static func send_claim(mp: Node, id: int, count: int, value: int) -> void:
@@ -375,7 +375,12 @@ static func receive_confirm(mp: Node, from_id: String, packet: Dictionary) -> vo
 	# `collect_coin`.
 	var pickup_id: int = int(packet["id"])
 	var base_total: int = 0
+	# The pickup COUNT rides the same local derivation as the base total above —
+	# the claim's own `n`, never the wire — so the road-music phrase counter
+	# sees the whole burst, not one award.
+	var pickup_count: int = 1
 	if mp._pending_claims.has(pickup_id):
 		var claim: Dictionary = mp._pending_claims[pickup_id]
 		base_total = int(claim["n"]) * int(claim["v"])
-	apply_confirm(mp, pickup_id, int(packet["by"]), awarded, multiplier, base_total)
+		pickup_count = maxi(1, int(claim["n"]))
+	apply_confirm(mp, pickup_id, int(packet["by"]), awarded, multiplier, base_total, pickup_count)
