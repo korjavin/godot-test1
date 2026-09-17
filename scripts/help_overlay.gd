@@ -182,8 +182,10 @@ const ROWS: Array = [
 	# The waypoint travel list (epic godot-test1-sc6). The one row in this table
 	# whose legend names NO KEY, because the feature has none: you stand on a lit
 	# circle and the list is there. That is the "+ / -" precedent — a legend
-	# `help_selfcheck` asserts EXISTS rather than compares to a binding.
-	["Circle", "Stand on a lit waypoint circle to open the travel list — pick another to jump there.", Mode.DESKTOP],
+	# `help_selfcheck` asserts EXISTS rather than compares to a binding. The
+	# digits are IN the description, since that is where a player looks for how
+	# to work the list once it is up.
+	["Circle", "Stand on a lit waypoint circle to open the travel list — press 1-0 to jump there.", Mode.DESKTOP],
 	["P", "Pause the game.", Mode.DESKTOP],
 	["Esc", "Free the mouse cursor. Press again to grab it back.", Mode.DESKTOP],
 	["?", "Open or close this list.", Mode.DESKTOP],

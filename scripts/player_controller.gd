@@ -991,8 +991,20 @@ func _input(event: InputEvent) -> void:
 			zoom_camera(CAMERA_ZOOM_STEP)
 
 	# Allow player to release mouse with ESC, and re-capture it on a second press.
+	# WAYPOINT-LIST ESC (bead godot-test1-77uj round 2): while the travel list
+	# is open it owns dismissal — it closes in its own `_input()` WITHOUT freeing
+	# the mouse, and this branch firing first is exactly the Esc-then-click
+	# complaint. Asked through the "waypoint_hub" group with `has_method`, like
+	# every other cross-system hookup; a scene with no hub answers false and
+	# behaves as before.
+	var waypoint_hub := get_tree().get_first_node_in_group("waypoint_hub")
+	var waypoint_open: bool = waypoint_hub != null \
+		and waypoint_hub.has_method("is_panel_open") \
+		and bool(waypoint_hub.is_panel_open())
 	if event.is_action_pressed("ui_cancel"):
-		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		if waypoint_open:
+			pass  # the hub closes the list itself, WITHOUT freeing the mouse
+		elif Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 		# Never during Game Over — the Play Again panel needs a free cursor, same reason as click-to-capture below.
 		elif not is_game_over:
