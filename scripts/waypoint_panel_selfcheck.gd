@@ -32,10 +32,14 @@ extends SceneTree
 ##     now behave the same — and over Game Over it opens nothing. The room and
 ##     game-over refusals are the kind that are written once and quietly stop
 ##     working, so both get a positive control beside them. Then the digit path,
-##     through the shipped `_unhandled_input` with real key events: KEY_2 travels
+##     through the shipped `_input` with real key events: KEY_2 travels
 ##     to row 1, a disabled row's key and an echo do nothing, numpad works, and
 ##     digits are refused while a quiz is pending (with the tick closing a list
-##     the quiz started under).
+##     the quiz started under). Then REAL DISPATCH through `parse_input_event`
+##     for the engine order: a standing-row digit switches no hero, a live digit
+##     travels without switching, Esc closes — and a source grep proves the
+##     player's Esc branch is guarded on the open list (mouse writes are
+##     unobservable headless, so the runtime half cannot show it).
 ##
 ##  d. GERMAN. `tr()` answers its own key on a miss, so an unimported or mistyped
 ##     row renders in English inside a German game with nothing in the log. Asked
@@ -215,7 +219,7 @@ func _check_edges() -> void:
 			+ "— it is the only way in, so this is the whole feature")
 
 	# --- ESC closes, and only while open ------------------------------------
-	# Through the SHIPPED `_unhandled_input`, with a real `ui_cancel` event: the
+	# Through the SHIPPED `_input`, with a real `ui_cancel` event: the
 	# handler is guarded on `_panel_open` for `skill_tree_ui`'s reason (an
 	# unguarded one eats the `ui_cancel` the player uses to free the mouse), so
 	# both halves are driven — the press that closes, and a press with the list
@@ -223,14 +227,14 @@ func _check_edges() -> void:
 	_stand_on(real_player, hub, sites, 1)
 	if not hub.is_panel_open():
 		_fail("the list did not open for the Esc check")
-	hub._unhandled_input(_cancel_event())
+	hub._input(_cancel_event())
 	if hub.is_panel_open():
 		_fail("Esc did not close the travel list")
 	if paused or PauseHub.holder_count() != 0:
 		_fail("Esc closed the list and left the world frozen")
 	# ...and with it closed the same event must not be swallowed.
 	var event: InputEvent = _cancel_event()
-	hub._unhandled_input(event)
+	hub._input(event)
 	if hub.is_panel_open():
 		_fail("Esc re-opened the travel list")
 
@@ -251,7 +255,7 @@ func _check_edges() -> void:
 	_stand_on(real_player, hub, sites, 1)
 	if not hub.is_panel_open():
 		_fail("the list did not re-open for the Esc sequence")
-	hub._unhandled_input(_cancel_event())
+	hub._input(_cancel_event())
 	hub._tick()
 	hub._tick()
 	if hub.is_panel_open():
@@ -383,7 +387,7 @@ func _check_edges() -> void:
 
 func _cancel_event() -> InputEvent:
 	"""A real `ui_cancel` press, built off the input map rather than a keycode
-	written down here — the action is what `_unhandled_input` tests."""
+	written down here — the action is what `_input` tests."""
 	var event := InputEventAction.new()
 	event.action = "ui_cancel"
 	event.pressed = true
@@ -568,13 +572,13 @@ func _check_pause_policy() -> void:
 				+ "vacuously")
 		else:
 			for line: String in source.split("\n"):
-				var code: String = line
-				var hash_at: int = code.find("#")
+				var stripped: String = line
+				var hash_at: int = stripped.find("#")
 				if hash_at >= 0:
-					code = code.substr(0, hash_at)
-				if pattern.search(code) != null:
+					stripped = stripped.substr(0, hash_at)
+				if pattern.search(stripped) != null:
 					_fail("waypoint_hub.gd frees the mouse (`%s`) — the list must "
-						% code.strip_edges() + "never touch `Input.mouse_mode`, "
+						% stripped.strip_edges() + "never touch `Input.mouse_mode`, "
 						+ "or Esc-then-click is back")
 					break
 
@@ -645,7 +649,7 @@ func _check_pause_policy() -> void:
 	# Three circles found with the real hero, then the recording stub takes its
 	# place — check (e)'s arrangement, because what is asserted is which index
 	# reaches `travel_to_waypoint()`. Every key below is a REAL `InputEventKey`
-	# through `hub._unhandled_input`, never a direct `_on_row_pressed()` call.
+	# through `hub._input`, never a direct `_on_row_pressed()` call.
 	player.own_coins = 100
 	_stand_on(player, hub, sites, 0)
 	_stand_on(player, hub, sites, 2)
@@ -666,7 +670,7 @@ func _check_pause_policy() -> void:
 		Sentinel.done("pause_policy")
 		return
 	# Numpad first: KEY_KP_3 travels to row 2 and closes, like a press.
-	hub._unhandled_input(_key_event(KEY_KP_3))
+	hub._input(_key_event(KEY_KP_3))
 	await process_frame
 	if stub.travelled_to != 2:
 		_fail("numpad 3 asked to travel to %d, not row 2" % stub.travelled_to)
@@ -678,7 +682,7 @@ func _check_pause_policy() -> void:
 	# Number row: KEY_2 travels to row 1.
 	stub.travelled_to = -1
 	_reopen_on(stub, hub, sites, 0)
-	hub._unhandled_input(_key_event(KEY_2))
+	hub._input(_key_event(KEY_2))
 	await process_frame
 	if stub.travelled_to != 1:
 		_fail("digit 2 asked to travel to %d, not row 1" % stub.travelled_to)
@@ -689,13 +693,13 @@ func _check_pause_policy() -> void:
 	_reopen_on(stub, hub, sites, 0)
 	var echo := _key_event(KEY_3)
 	echo.echo = true
-	hub._unhandled_input(echo)
+	hub._input(echo)
 	if stub.travelled_to != -1:
 		_fail("an echo of digit 3 travelled to row %d" % stub.travelled_to)
 	if not hub.is_panel_open():
 		_fail("an echo closed the travel list")
 	# A DISABLED row's key does nothing: standing on circle 0, row 0 is dead.
-	hub._unhandled_input(_key_event(KEY_1))
+	hub._input(_key_event(KEY_1))
 	if stub.travelled_to != -1:
 		_fail("the disabled row's digit travelled to row %d" % stub.travelled_to)
 	if not hub.is_panel_open():
@@ -703,7 +707,7 @@ func _check_pause_policy() -> void:
 	# ...and so does a row the hero cannot pay for.
 	stub.own_coins = 0
 	hub._refresh_rows()
-	hub._unhandled_input(_key_event(KEY_3))
+	hub._input(_key_event(KEY_3))
 	if stub.travelled_to != -1:
 		_fail("an unaffordable row's digit travelled to row %d" % stub.travelled_to)
 	if not hub.is_panel_open():
@@ -722,7 +726,7 @@ func _check_pause_policy() -> void:
 	quiz.add_to_group("landmark_toast")
 	root.add_child(quiz)
 	await process_frame
-	hub._unhandled_input(_key_event(KEY_2))
+	hub._input(_key_event(KEY_2))
 	if stub.travelled_to != -1:
 		_fail("a digit travelled under a pending landmark quiz")
 	if not hub.is_panel_open():
@@ -734,6 +738,81 @@ func _check_pause_policy() -> void:
 	for old_toast: Node in real_toasts:
 		old_toast.add_to_group("landmark_toast")
 	await process_frame
+	# --- REAL DISPATCH: the engine order, not a direct call ------------------
+	# `Input.parse_input_event` runs the full pipeline — hub `_input`, player
+	# `_input`, then `_unhandled_input` — so these prove the race, not just the
+	# handler. Measured: `_input` runs in REVERSE tree order and a consume stops
+	# every later `_input`, but NOTHING below depends on which of hub/player is
+	# first: the hub consumes every choice key up front, and the player's Esc
+	# branch is guarded on the open list either way.
+	_reopen_on(stub, hub, sites, 0)
+	if not hub.is_panel_open():
+		_fail("the list did not re-open for the dispatch probes")
+	# (a) KEY_1 on the standing row: consumed and ignored — the hero hotkeys in
+	# the player's `_unhandled_input` must never see it.
+	real_player.set_active_character(1)
+	if int(real_player.current_character_index) != 1:
+		_fail("could not stage the hero switch probe onto hero 1")
+	else:
+		Input.parse_input_event(_key_event(KEY_1))
+		await process_frame
+		await process_frame
+		if int(real_player.current_character_index) != 1:
+			_fail("digit 1 on the standing row switched the hero to %d — the "
+				% int(real_player.current_character_index) + "hub must consume "
+				+ "every choice key while the list is open")
+		if not hub.is_panel_open():
+			_fail("a consumed digit closed the travel list")
+	# (b) KEY_2 on a live row: travels AND does not switch. Staged onto hero 2
+	# first, or a switch to row 1's hero would land where we already are and
+	# prove nothing.
+	real_player.set_active_character(2)
+	stub.travelled_to = -1
+	Input.parse_input_event(_key_event(KEY_2))
+	await process_frame
+	await process_frame
+	await process_frame
+	if stub.travelled_to != 1:
+		_fail("dispatched digit 2 asked to travel to %d, not row 1"
+			% stub.travelled_to)
+	if int(real_player.current_character_index) != 2:
+		_fail("dispatched digit 2 travelled AND switched the hero to %d"
+			% int(real_player.current_character_index))
+	if hub.is_panel_open():
+		_fail("a dispatched digit travelled and left the travel list open")
+	# (c) Esc through dispatch: the hub closes, and the player's branch is
+	# proven skipped BY SOURCE below — mouse writes are unobservable headless.
+	_reopen_on(stub, hub, sites, 0)
+	Input.parse_input_event(_cancel_event())
+	await process_frame
+	await process_frame
+	if hub.is_panel_open():
+		_fail("a dispatched Esc left the travel list open")
+	var player_source: String = FileAccess.get_file_as_string(
+		"res://scripts/player_controller.gd")
+	if player_source.is_empty() or not player_source.contains("HERO_KEYCODES"):
+		_fail("could not read player_controller.gd — the Esc-guard grep would "
+			+ "pass vacuously")
+	else:
+		# The guard must be USED, not merely computed: a predicate the branch
+		# never reads is the vacuous version of this check, so the zone must
+		# hold the skip branch itself (`if waypoint_open:` + `pass`), not just
+		# the lookup. Comment tails stripped, house idiom.
+		var cancel_at: int = player_source.find("is_action_pressed(\"ui_cancel\")")
+		var guard_zone: String = player_source.substr(maxi(cancel_at - 800, 0), 900)
+		var code_zone := ""
+		for line: String in guard_zone.split("\n"):
+			var hash_at: int = line.find("#")
+			code_zone += (line.substr(0, hash_at) if hash_at >= 0 else line) + "\n"
+		var skip := RegEx.new()
+		if skip.compile("if waypoint_open:\\s*\\n\\s*pass") != OK:
+			_fail("the Esc-guard regex would not compile — the grep would pass "
+				+ "vacuously")
+		elif not code_zone.contains("waypoint_hub") \
+				or not code_zone.contains("is_panel_open") \
+				or skip.search(code_zone) == null:
+			_fail("the player's Esc branch is not guarded on the open travel "
+				+ "list — closing with Esc would free the mouse first")
 	stub.free()
 	real_player.add_to_group("player")
 	await process_frame
@@ -752,7 +831,7 @@ func _reopen_on(body: Node3D, hub: Node, sites: Array, index: int) -> void:
 
 
 func _key_event(keycode: Key) -> InputEventKey:
-	"""A real digit press: down, not echo — the shape `_unhandled_input` tests."""
+	"""A real digit press: down, not echo — the shape `_input` tests."""
 	var event := InputEventKey.new()
 	event.keycode = keycode
 	event.pressed = true

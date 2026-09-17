@@ -701,7 +701,15 @@ func _on_backdrop_input(event: InputEvent) -> void:
 		set_panel_open(false)
 
 
-func _unhandled_input(event: InputEvent) -> void:
+func _input(event: InputEvent) -> void:
+	# IN `_input`, NOT `_unhandled_input`, and the phase is the fix (bead
+	# godot-test1-77uj round 2): `_input` runs before ANY `_unhandled_input`,
+	# so consuming here is what keeps the player's own handlers — the Esc mouse
+	# toggle in its `_input`, the 1-4 hero hotkeys in its `_unhandled_input` —
+	# from ever seeing a key this list owns. Depending on tree order instead
+	# would make the rule an accident, the thing the player's own hotkey guard
+	# calls out by name.
+	#
 	# Esc closes, and ONLY while we are open — otherwise this eats the `ui_cancel`
 	# `player_controller._input()` uses to release the mouse. `skill_tree_ui`'s
 	# guard, for `skill_tree_ui`'s reason.
@@ -711,10 +719,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	# THE DIGITS, `tower_lift_menu`'s idiom and its guards: pressed, not echo,
 	# live only while open, and never under a pending quiz. A digit names a row
-	# by position — `1` the first, `0` the tenth — and a row that is hidden or
-	# disabled ignores its key rather than refusing out loud. The mouse stays
-	# CAPTURED throughout: nothing here calls `Input.set_mouse_mode`, and Esc
-	# above does not either, so the camera keeps turning under the list.
+	# by position — `1` the first, `0` the tenth. EVERY choice key is consumed
+	# while the list is up, including one whose row is hidden or disabled: the
+	# player's 1-4 hotkeys live below us, so letting a dead row's key through
+	# would switch the hero instead of doing nothing, and an enabled row would
+	# race by tree order. The mouse stays CAPTURED throughout: nothing here
+	# calls `Input.set_mouse_mode`, and Esc above does not either, so the camera
+	# keeps turning under the list.
 	if event == null or not (event is InputEventKey):
 		return
 	var key := event as InputEventKey
@@ -725,12 +736,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	var slot: int = CHOICE_KEYCODES.find(key.keycode)
 	if slot < 0:
 		return
+	get_viewport().set_input_as_handled()
 	var row: int = slot % 10
 	if row >= _rows.size():
 		return
 	if not _rows[row].visible or _rows[row].disabled:
 		return
-	get_viewport().set_input_as_handled()
 	_on_row_pressed(row)
 
 
