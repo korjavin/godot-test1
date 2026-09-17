@@ -739,6 +739,11 @@ static func merge_found_landmark_ids(ids: Array) -> void:
 	for id: Variant in ids:
 		if merged.size() >= MAX_FOUND_IDS:
 			break
+		# The `not merged.has(id)` guard is redundant defense: `_sanitize_found_ids`
+		# below dedupes anyway, so dropping it changes nothing observable (a review
+		# mutation proved it stays green). It stays because the tower set's merge
+		# carries the same guard, and the raw stored layer should hold the union,
+		# not the union plus the evidence of how many times it was merged.
 		if typeof(id) == TYPE_STRING and _found_id_ok(String(id)) and not merged.has(id):
 			merged.append(String(id))
 	merged = _sanitize_found_ids(merged)

@@ -25,6 +25,10 @@ extends SceneTree
 ##     call — opening and stamping move no currency.
 ##  g. REGISTRY: 48 rows, every builder maps to a distinct store-shaped id,
 ##     every stamp ≤ 60 chars with a de row that differs.
+##  h. CURSOR (round 2): open frees a CAPTURED mouse and remembers it, close
+##     re-captures unless the game is over — pinned by source (headless ignores
+##     a CAPTURED set, measured by capture check 21) plus the already-free
+##     runtime round trip.
 ##
 ## The store probes drive the REAL `BestRunStore` statics with
 ## `Sentinel.isolate_user_state()` first, so no real profile is touched.
@@ -52,6 +56,7 @@ func _run() -> void:
 	await _check_panel()
 	_check_no_payout()
 	_check_registry()
+	_check_cursor()
 	_finish()
 
 
@@ -446,3 +451,46 @@ func _check_registry() -> void:
 			_fail("the %s stamp has no de row — it would read English in a German game" % stamp.c_escape())
 	TranslationServer.set_locale(restore)
 	Sentinel.done("registry")
+
+
+func _check_cursor() -> void:
+	## Assertion (h, round 2) — the cursor is freed on open and given back on
+	## close, `skill_tree_ui`'s rule mirrored.
+	##
+	## HEADLESS CAVEAT, MEASURED BY capture_selfcheck CHECK 21 (not re-assumed
+	## here): the headless DisplayServer IGNORES `set_mouse_mode(CAPTURED)`, so
+	## no probe can observe the release half — feeding CAPTURED through open
+	## would pass vacuously. The release and the re-capture are therefore pinned
+	## BY SOURCE (both mutation-tested), and the runtime probe covers what
+	## headless CAN observe: the already-free round trip.
+	var source: String = FileAccess.get_file_as_string("res://scripts/passport_panel.gd")
+	if source.is_empty():
+		_fail("could not read passport_panel.gd to check the cursor rule")
+		Sentinel.done("cursor")
+		return
+	# The open arm frees a CAPTURED mouse and remembers that WE did it.
+	if not source.contains("Input.mouse_mode == Input.MOUSE_MODE_CAPTURED"):
+		_fail("the open path reads no CAPTURED guard — it would free a cursor it does not own")
+	if not source.contains("Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)"):
+		_fail("the open path never frees the mouse — the grid cannot be scrolled or clicked")
+	if not source.contains("_recapture_mouse = true"):
+		_fail("the open path remembers no release — close cannot know the cursor is ours")
+	# The close arm gives the capture back, but never over game over.
+	if not source.contains("Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)"):
+		_fail("the close path never re-captures — the run resumes with a free cursor")
+	if not source.contains("if not _game_over()"):
+		_fail("the close path re-captures unconditionally — over game over the cursor is GameOverUI's")
+	# Runtime, already-free round trip: VISIBLE in, VISIBLE out, flag untouched.
+	var panel := PassportPanel.new()
+	root.add_child(panel)
+	var started: int = int(Input.mouse_mode)
+	panel.set_panel_open(true)
+	panel.set_panel_open(false)
+	if int(Input.mouse_mode) != started:
+		_fail("an already-free open/close moved the mouse mode from %d to %d"
+				% [started, int(Input.mouse_mode)])
+	if bool(panel._recapture_mouse):
+		_fail("an already-free open set the re-capture flag — close would capture a free cursor")
+	root.remove_child(panel)
+	panel.free()
+	Sentinel.done("cursor")

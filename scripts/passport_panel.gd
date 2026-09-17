@@ -52,6 +52,18 @@ class_name PassportPanel
 ## open panel must not strand the world in the wrong one.
 ##
 ## ============================================================================
+## THE CURSOR — freed on open, given back on close (`skill_tree_ui`'s rule)
+## ============================================================================
+##
+## On desktop the mouse is CAPTURED while running, and a captured wheel zooms
+## the camera instead of scrolling the 24-row grid — so open frees it, but only
+## when it was CAPTURED, remembering that WE did it (`_recapture_mouse`).
+## Close re-captures, unless we never freed it or the game is over (GameOverUI
+## owns the cursor there). The release lives in `set_panel_open`, not in the
+## re-asserted `_apply_pause`: the pause is declined in rooms and over game
+## over, but the panel still needs its clicks there.
+##
+## ============================================================================
 ## LOCALIZATION
 ## ============================================================================
 ##
@@ -143,6 +155,11 @@ var _panel_open: bool = false
 ## Whether the CURRENT tree pause is ours to release. "We hold A claim", not
 ## "we hold THE pause" — see `pause_hub.gd`'s header.
 var _paused_by_us: bool = false
+## Whether the VISIBLE cursor is ours to re-capture: set only when WE freed a
+## CAPTURED mouse on open. Re-capturing on somebody else's behalf is how a
+## player ends up with a cursor pinned to screen centre (`skill_tree_ui`'s
+## rule, mirrored exactly).
+var _recapture_mouse: bool = false
 
 ## The baked silhouettes, `passport id → ImageTexture`, kept for the life of
 ## this node. A second open reuses them; a kind found mid-session bakes on the
@@ -227,6 +244,24 @@ func set_panel_open(open: bool) -> void:
 	_panel_open = open
 	if open:
 		_refresh()
+		# Free a CAPTURED mouse so the 24-row grid can be scrolled and clicked —
+		# with the cursor captured the wheel goes to the camera zoom instead.
+		# `skill_tree_ui`'s rule, mirrored exactly: only when CAPTURED, and
+		# remember that WE did it. (Web caveat, same as there: a re-capture
+		# outside a click gesture may not take — the next canvas click then
+		# re-captures through the desktop-web click-to-capture.)
+		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+			_recapture_mouse = true
+	else:
+		# Give the capture back — unless we never freed it, or the game is over
+		# (GameOverUI owns the cursor there; cf. capture check 21's `elif not
+		# is_game_over`). The flag always clears: a stale claim would re-capture
+		# over a cursor somebody else has since freed.
+		if _recapture_mouse:
+			_recapture_mouse = false
+			if not _game_over():
+				Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 	if _card != null:
 		_card.visible = open
 	# The backdrop goes with the card: hidden it takes no clicks, shown it is
