@@ -125,11 +125,13 @@ static func style(mat: BaseMaterial3D, force_srgb: bool = false) -> void:
 ## IT IS NOW A LIVE BRANCH AND NOT A GUARDED NO-OP. Before bead 21m a hero
 ## exported no material at all and this string could not match anything;
 ## `scripts/build_hero.py`'s `split_cloth_material` now puts every garment polygon
-## of all three skinned heroes on a material called exactly this, and everything
+## of all four skinned heroes on a material called exactly this, and everything
 ## else on `HeroSkin`. The comparison is EXACT EQUALITY, so the two names are one
 ## contract across the two languages — rename either side and a hero silently
-## shades as cast again. Phoboman, whose parts are generated and carry no such
-## material, is unaffected and reads as cast, which is the ruling for him.
+## shades as cast again. Phoboman joined the recipe at bead godot-test1-9k9n.2:
+## his skinned mesh exports HeroSkin + HeroCloth like the trio (belly shell,
+## pants and boot shafts on cloth, the dragon on skin), and his generated parts —
+## which carried no such material and read as cast — are child 9k9n.3's to retire.
 const CLOTH_MATERIAL := "HeroCloth"
 
 ## Cloth-styled duplicates, keyed like `_styled_cache` and separate from it for

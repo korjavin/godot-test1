@@ -50,10 +50,10 @@ is never written by a generator. **All four heroes are authored and skinned** �
 mesh each on a 23-bone MakeHuman rig, source of record `scripts/build_hero.py`
 (Blender + MPFB2, run by hand, outside the CI rebuild gate;
 `scripts/hero_manifest.json` is their staleness gate instead). Phoboman is the
-newest and the only one not yet WIRED to his mesh (bead godot-test1-9k9n.1 built it,
-9k9n.2 wires it, 9k9n.3 retires the parts), so his ten generated parts are still
-one of the three names in `build.yml`'s rebuild loop, beside Windman's fan and
-Primm's katanas (`generate_phoboman_separate.py`, `generate_windman_fan.py`,
+newest, wired to his mesh at bead godot-test1-9k9n.2 (9k9n.1 built it, 9k9n.3
+retires the parts), so his ten generated parts are still one of the three names
+in `build.yml`'s rebuild loop, beside Windman's fan and Primm's katanas
+(`generate_phoboman_separate.py`, `generate_windman_fan.py`,
 `generate_primm_swords.py`).
 
 `.gd.uid` files are Godot's; don't hand-edit them.
@@ -211,8 +211,9 @@ waves in `player_animation.gd`. The rig kind is the SCENE: `hero_rig.gd` hands a
 carrying a `Skeleton3D` (found by type) to `hero_rig_skeleton.gd`, which writes those
 sines as bone rotations with the bobble on the head bone, and anything else to
 `hero_rig_limbs.gd`, which finds limbs **by exact name** (`Body`, `LeftArm`, `RightArm`,
-`LeftLeg`, `RightLeg`, optional `Head`). Three heroes are skinned; **Phoboman keeps the
-limb rig for good** (owner ruling — sphere body), so neither driver is dead code. Local
+`LeftLeg`, `RightLeg`, optional `Head`). All four heroes are skinned (owner ruling
+2026-09-18, bead `godot-test1-9k9n` — this supersedes the "Phoboman keeps the limb rig
+for good / sphere body" ruling); the limb driver retires in child `9k9n.3`. Local
 and remote bind the same driver and `rig.measure()` is how the self-checks read either.
 `CameraArm` is a `SpringArm3D` and overwrites its children's position — use
 `h_offset`/`v_offset` or move the arm. Transient ability state is cleared on respawn,
