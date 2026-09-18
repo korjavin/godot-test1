@@ -91,6 +91,9 @@ class PrimmSwordsGenerator:
             'hilt_a':  [0.020, 0.020, 0.025, 1.0],
             'hilt_b':  [0.550, 0.580, 0.620, 1.0],
             'pommel':  [0.160, 0.170, 0.190, 1.0],
+            # Drawn steel for the hand katana below — bright against the dark
+            # saya it left, so the 0.5 s flash reads even before the white disc.
+            'blade':    [0.720, 0.750, 0.800, 1.0],
         }
 
     def _tube(self, stations, color, cap_ends=True):
@@ -148,23 +151,10 @@ class PrimmSwordsGenerator:
         mesh.visual = trimesh.visual.ColorVisuals(mesh, vertex_colors=colors)
         return mesh
 
-    def _katana(self, side):
-        """One sheathed katana along +Z: curved saya, tsuba, diamond hilt,
-        pommel. `side` +1 bows and tilts toward +X, -1 mirrors it."""
+    def _furniture(self):
+        """Tsuba, diamond hilt and pommel at the S_MOUTH anchor — identical
+        sheathed and drawn, so one home for both."""
         parts = []
-        # Saya: a shallow outward bow over SAYA_STATIONS — the curve reads on
-        # the silhouette, 8 mm at mid-tube.
-        span = S_MOUTH - S_TIP
-        saya_stations = []
-        for k in range(SAYA_STATIONS):
-            t = k / (SAYA_STATIONS - 1)
-            z = S_TIP + t * span
-            bow = SAYA_BOW * np.sin(np.pi * t) * side
-            saya_stations.append((z, bow, SAYA_R, SAYA_SECTIONS,
-                                  self.colors['saya']))
-        saya = self._tube(saya_stations, self.colors['saya'])
-        assert saya.volume > 0, f"saya wound inward: volume {saya.volume}"
-        parts.append(saya)
         # Tsuba: a disc across the mouth, axis along the blade.
         tsuba = trimesh.creation.cylinder(radius=TSUBA_R, height=TSUBA_T,
                                           sections=TSUBA_SECTIONS)
@@ -198,6 +188,26 @@ class PrimmSwordsGenerator:
         assert pommel.volume > 0, f"pommel wound inward: volume {pommel.volume}"
         pommel.visual.vertex_colors = rgba8(self.colors['pommel'])
         parts.append(pommel)
+        return parts
+
+    def _katana(self, side):
+        """One sheathed katana along +Z: curved saya plus furniture. `side` +1
+        bows and tilts toward +X, -1 mirrors it."""
+        parts = []
+        # Saya: a shallow outward bow over SAYA_STATIONS — the curve reads on
+        # the silhouette, 8 mm at mid-tube.
+        span = S_MOUTH - S_TIP
+        saya_stations = []
+        for k in range(SAYA_STATIONS):
+            t = k / (SAYA_STATIONS - 1)
+            z = S_TIP + t * span
+            bow = SAYA_BOW * np.sin(np.pi * t) * side
+            saya_stations.append((z, bow, SAYA_R, SAYA_SECTIONS,
+                                  self.colors['saya']))
+        saya = self._tube(saya_stations, self.colors['saya'])
+        assert saya.volume > 0, f"saya wound inward: volume {saya.volume}"
+        parts.append(saya)
+        parts.extend(self._furniture())
         sword = trimesh.util.concatenate(parts)
         # Tilt into the X: +side toward +X at the hilt. rotation_matrix(a, +Y)
         # sends +Z -> (sin a, 0, cos a), so +30° tips this hilt top-right.
@@ -209,6 +219,28 @@ class PrimmSwordsGenerator:
     def create_swords(self):
         """The crossed pair, origin at the X crossing, hilts up."""
         return trimesh.util.concatenate([self._katana(+1), self._katana(-1)])
+
+    def create_drawn_katana(self):
+        """One DRAWN katana for the hands (bead godot-test1-0mr0.3): the same
+        furniture, but a bare steel blade where the saya was — the back-carry
+        canon is sheathed, the slash is not. Same prop frame as the pair (tip
+        at -Z, hilt at +Z), no tilt: the `BoneAttachment3D` basis in the .tscn
+        aims it, so the mesh stays neutral."""
+        parts = []
+        # Blade: a flattened diamond that tapers to the kissaki — four-sided
+        # tube, same winding contract as every `_tube()` caller.
+        # Stations ASCEND in +z (tip first) — `_tube()`'s outward winding
+        # assumes rings advance toward +z, the saya's direction.
+        blade_stations = [
+            (S_MOUTH - 0.70, 0.0, 0.0015, 4, self.colors['blade']),
+            (S_MOUTH - 0.35, 0.0, 0.011, 4, self.colors['blade']),
+            (S_MOUTH, 0.0, 0.014, 4, self.colors['blade']),
+        ]
+        blade = self._tube(blade_stations, self.colors['blade'])
+        assert blade.volume > 0, f"blade wound inward: volume {blade.volume}"
+        parts.append(blade)
+        parts.extend(self._furniture())
+        return trimesh.util.concatenate(parts)
 
     # ------------------------------------------------------------------- driver
     def generate_and_save(self, output_dir):
@@ -234,6 +266,21 @@ class PrimmSwordsGenerator:
         filename = output_dir / "primm_swords.glb"
         export_faceted(mesh, str(filename))
         print(f"\n  Saved to {filename}")
+
+        print("\nGenerating Primm's drawn katana...")
+        drawn = self.create_drawn_katana()
+        dlo, dhi = drawn.bounds
+        print(f"  {len(drawn.vertices)} vertices / {len(drawn.faces)} faces")
+        print(f"  span x {dhi[0] - dlo[0]:.3f} m, y {dhi[1] - dlo[1]:.3f} m, "
+              f"z {dhi[2] - dlo[2]:.3f} m")
+        assert drawn.volume > 0, f"drawn katana wound inward: volume {drawn.volume}"
+        dvc = np.asarray(drawn.visual.vertex_colors)
+        assert (dvc[:, 3] == 255).all(), "non-opaque vertex alpha in drawn katana"
+        assert (dvc == highlight).all(axis=1).any(), "hilt wrap highlight gone (drawn)"
+        print(f"  volume +{drawn.volume:.6f} m3, alphas opaque, silver present")
+        drawn_name = output_dir / "primm_katana.glb"
+        export_faceted(drawn, str(drawn_name))
+        print(f"\n  Saved to {drawn_name}")
 
 
 def main():

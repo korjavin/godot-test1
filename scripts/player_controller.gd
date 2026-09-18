@@ -4208,6 +4208,10 @@ const WINDMAN_SIGHT_DURATION := PlayerAbilities.WINDMAN_SIGHT_DURATION
 const PRIMM_BLINK_DISTANCE := PlayerAbilities.PRIMM_BLINK_DISTANCE
 const PRIMM_BLINK_STEP := PlayerAbilities.PRIMM_BLINK_STEP
 const PRIMM_BLINK_MAX_DISTANCE := PlayerAbilities.PRIMM_BLINK_MAX_DISTANCE
+const PRIMM_SLASH_DURATION := PlayerAbilities.PRIMM_SLASH_DURATION
+const PRIMM_SLASH_RISE_S := PlayerAbilities.PRIMM_SLASH_RISE_S
+const PRIMM_FLASH_FLEE_DURATION := PlayerAbilities.PRIMM_FLASH_FLEE_DURATION
+const PRIMM_FLASH_RADIUS := PlayerAbilities.PRIMM_FLASH_RADIUS
 const TEIBI_SCALE_SMALL := PlayerAbilities.TEIBI_SCALE_SMALL
 const TEIBI_SCALE_BIG := PlayerAbilities.TEIBI_SCALE_BIG
 const TEIBI_FIT_GROUND_CLEAR := PlayerAbilities.TEIBI_FIT_GROUND_CLEAR
@@ -4289,6 +4293,12 @@ var teibi_form_timer: float = 0.0
 ## Set when the wave fires, counted down in `_update_ability_timers()`; the pose
 ## fades with it, so expiry IS the return. See PHOBOMAN_STINK_DURATION.
 var phoboman_stink_timer: float = 0.0
+
+## Seconds left in Primm's Twin Flash cross-slash (0 while the katanas are
+## sheathed). Set when the flash fires, counted down in `_update_ability_timers()`;
+## the pose triangle IS the return, and the swords swap back on expiry. See
+## PRIMM_SLASH_DURATION.
+var primm_slash_timer: float = 0.0
 
 ## True only while Teibi is giant — makes him crush crocodiles on contact.
 var is_giant: bool = false
@@ -4870,11 +4880,11 @@ func crushes_crocodiles() -> bool:
 const ABILITY_BIT_FLYING: int = 1 << 0
 const ABILITY_BIT_SMALL: int = 1 << 1
 const ABILITY_BIT_GIANT: int = 1 << 2
-## Slot-2 visuals are reserved at 1 << 3 and up, spent per hero bead (the katana
-## pose, the kimchi jar — never this scaffolding: Air Sight is local
-## presentation, as it already was). mp_codec's own rule says a bit nothing
-## reads is not sent, so these stay a comment until a hero bead spends one —
-## no wire change here.
+## Slot-2 visuals live at 1 << 3 and up, spent per hero bead — never this
+## scaffolding: Air Sight is local presentation, as it already was. mp_codec
+## passes the byte through and ignores unknown bits, so spending one is no
+## wire change either.
+const ABILITY_BIT_SLASH: int = 1 << 3
 
 
 func ability_visual_state() -> int:
@@ -4890,6 +4900,8 @@ func ability_visual_state() -> int:
 		bits |= ABILITY_BIT_SMALL
 	elif teibi_size_state == 2:
 		bits |= ABILITY_BIT_GIANT
+	if primm_slash_timer > 0.0:
+		bits |= ABILITY_BIT_SLASH
 	return bits
 
 

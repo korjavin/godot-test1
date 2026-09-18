@@ -686,6 +686,7 @@ func animate_walking(delta: float, speed_multiplier: float) -> void:
 	rig.head_bobble(wobble * deg_to_rad(float(_gait["head_deg"])))
 
 	_apply_stink_pose()
+	_apply_slash_pose()
 
 func _apply_stink_pose() -> void:
 	"""Phoboman's Stink Wave telegraph (bead godot-test1-9k9n.4): while his wave
@@ -706,6 +707,29 @@ func _apply_stink_pose() -> void:
 	if timer <= 0.0:
 		return
 	rig.stink(clampf(timer / PlayerAbilities.PHOBOMAN_STINK_DURATION, 0.0, 1.0))
+
+func _apply_slash_pose() -> void:
+	"""Primm's Twin Flash cross-slash (bead godot-test1-0mr0.3): while his slash
+	timer runs, the arms rise AND cross over the gait. Called at the end of every
+	clocked pose path beside `_apply_stink_pose()` — walk, air, idle, sidestep —
+	after the gait drew, because `rig.slash()` lerps from the CURRENT angles.
+
+	The amount is a triangle over the 0.5 s window — up over the first 0.15 s,
+	down over the rest — so it reads as a cut, not a hold. The timer is set only
+	by his ability and cleared on switch/respawn/capture, so a nonzero timer
+	MEANS Primm mid-slash. A remote mirror never sets it AND STILL SHOWS THE
+	POSE: the `ab` bit carries the slash across the room and `remote_avatar.gd`
+	calls `rig.slash(1.0)` off that, the legs-snap convention rather than this
+	envelope (a mirror has no clock to shape against)."""
+	if rig == null or player == null:
+		return
+	var timer: float = float(player.primm_slash_timer)
+	if timer <= 0.0:
+		return
+	var elapsed: float = PlayerAbilities.PRIMM_SLASH_DURATION - timer
+	var amount: float = minf(clampf(elapsed / PlayerAbilities.PRIMM_SLASH_RISE_S, 0.0, 1.0),
+			clampf(timer / (PlayerAbilities.PRIMM_SLASH_DURATION - PlayerAbilities.PRIMM_SLASH_RISE_S), 0.0, 1.0))
+	rig.slash(amount)
 
 func relax_gait_extras(weight: float) -> void:
 	"""
@@ -842,6 +866,7 @@ func animate_sidestep(delta: float) -> void:
 	# Round 2: the strafe is a clocked pose path like the rest, so the wave
 	# rides it too — without this, F while strafing showed no telegraph.
 	_apply_stink_pose()
+	_apply_slash_pose()
 
 func animate_jumping() -> void:
 	"""
@@ -884,6 +909,7 @@ func animate_jumping() -> void:
 		character_body.position.y = lerp(character_body.position.y, 0.0, lerp_speed)
 
 	_apply_stink_pose()
+	_apply_slash_pose()
 
 func animate_landing() -> void:
 	"""
@@ -929,6 +955,7 @@ func animate_idle(delta: float) -> void:
 		character_body.position.y = lerp(character_body.position.y, breathe, 0.1)
 
 	_apply_stink_pose()
+	_apply_slash_pose()
 
 func reset_sidestep_pose() -> void:
 	"""
