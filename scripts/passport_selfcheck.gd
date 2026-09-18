@@ -40,6 +40,9 @@ extends SceneTree
 ##     file afterwards changes nothing the compass reads (memory, not Config);
 ##     and minimap_hud.gd never names found_landmark_ids (the 5 Hz tick reads
 ##     the toast cache).
+##     ROUND 2: a pre-filled store fills a fresh toast's cache at init (before
+##     any arrival), and a lobby merge reaches is_stamped with no arrival and
+##     no caption — off the store's monotone generation, not a re-read.
 ##
 ## The store probes drive the REAL `BestRunStore` statics with
 ## `Sentinel.isolate_user_state()` first, so no real profile is touched.
@@ -338,6 +341,33 @@ func _check_passport_echo() -> void:
 	toast._first_visit(marker_d)
 	if not label.text.is_empty():
 		_fail("a cached kind posted '%s' after its file entry was wiped" % label.text)
+
+	# --- ROUND 2: the cache is full at init and follows the store. ---
+	# A returning player with a full passport reads true tiers BEFORE reaching
+	# anything: pre-fill the file, build a FRESH toast, and its cache must
+	# already hold the kind — asserted off `_stamped` itself (before any arrival
+	# AND before any read, so the lazy guard cannot mask a missing init).
+	var kind_f: int = 6
+	var id_f: String = toast._passport_id(kind_f)
+	_write_found_raw('["' + id_f + '"]')
+	var toast2 := ToastScript.new()
+	root.add_child(toast2)
+	if not toast2._stamped.has(id_f):
+		_fail("a fresh toast built over a full passport has an empty cache — the init hydrate is missing")
+	if not toast2.is_stamped(kind_f):
+		_fail("is_stamped(%d) is false before any arrival over a pre-filled store" % kind_f)
+	# ...and a late lobby merge reaches the cache with no arrival: the merge
+	# bumps the generation, the next read re-merges — and posts no caption,
+	# because a kind the lobby already knew is not a "new stamp".
+	var kind_g: int = 7
+	var id_g: String = toast._passport_id(kind_g)
+	BestRunStore.merge_found_landmark_ids([id_g])
+	if not toast.is_stamped(kind_g):
+		_fail("a lobby merge of kind %d never reached the cache — the version check is missing" % kind_g)
+	if not label.text.is_empty():
+		_fail("a lobby merge posted '%s' — only arrivals post the line" % label.text)
+	root.remove_child(toast2)
+	toast2.free()
 
 	# ...and the 5 Hz tick can never read the file: the minimap must not name
 	# the store read at all.

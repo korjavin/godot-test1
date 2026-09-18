@@ -391,18 +391,19 @@ var _visited: Dictionary = {}
 ## matters: a monotonically increasing run counter on the terrain.
 var _visited_run_seed: int = 0
 
-## THE PASSPORT CACHE — one reader, why (bead godot-test1-nufd). The lifetime
-## mirror of BestRunStore's found set: passport id String -> true. Hydrated
-## lazily on the first stamp and re-merged on a run change, and NEVER on the
-## compass tick: found_landmark_ids() loads the ConfigFile on every call, and
-## the 5 Hz minimap gather asks is_stamped() instead — pure memory, no file,
-## no seed, no draw. Monotone like the store: entries are added on stamp and
-## merged on refresh, cleared on nothing. Before the first arrival the cache
-## is empty and every kind reads unstamped, which is exactly today's rule.
+## THE PASSPORT CACHE — one reader, why (bead godot-test1-nufd, round 2). The
+## lifetime mirror of BestRunStore's found set: passport id String -> true.
+## Hydrated ONCE at ready — a returning player with a full passport reads true
+## tiers before reaching anything — re-merged on a run change, and refreshed
+## off `BestRunStore.found_version` on every read: one integer compare, and the
+## file is re-read ONLY when the stored set actually grew (an arrival, a late
+## lobby merge). The steady-state compass tick therefore performs ZERO store
+## reads — memory, no file, no seed, no draw. Monotone like the store: entries
+## are added on stamp and merged on refresh, cleared on nothing.
 var _stamped: Dictionary = {}
-## Whether _stamped has been hydrated from the store yet. False again on a run
-## change, so stamps earned elsewhere (another scene, another tab) merge in.
-var _stamped_ready: bool = false
+## The store generation `_stamped` was last merged from. -1 (older than any
+## real generation) until the first hydrate, so the first read always fills.
+var _stamped_version: int = -1
 
 ## Latched GD-SURVEY camp stories (bead godot-test1-w0z2): story_id -> stage (1 = memo, 2 = report).
 var _stories: Dictionary = {}
@@ -462,6 +463,11 @@ func _ready() -> void:
 	# reads 1/2/3 for a hero switch. Group lookup, no hard reference, like every
 	# other cross-system hookup in this project.
 	add_to_group("landmark_toast")
+
+	# The passport cache fills ONCE here (bead godot-test1-nufd round 2): a
+	# returning player with a full passport must read true tiers BEFORE reaching
+	# anything, and one ConfigFile read at scene build is not a per-tick cost.
+	_hydrate_stamped()
 
 	# THE SKIN, AND IT IS ONE LINE ON THIS ROOT (bead godot-test1-y1o.34). Every
 	# face and colour below comes off `HudTheme` from here on. **On this node and
@@ -1469,8 +1475,7 @@ func _first_visit(marker: Node3D) -> bool:
 	# has_meta guard keeps it that way if one ever does.
 	if marker.has_meta("kind"):
 		var stamp_id: String = _passport_id(int(marker.get_meta("kind")))
-		if not _stamped_ready:
-			_hydrate_stamped()
+		_ensure_stamped_fresh()
 		var new_stamp: bool = not _stamped.has(stamp_id)
 		_stamped[stamp_id] = true
 		BestRunStore.merge_found_landmark_ids([stamp_id])
@@ -1487,21 +1492,32 @@ func _passport_id(kind: int) -> String:
 	return String(LandmarkBuilders.LANDMARKS[clamped]["builder"]).trim_prefix("_landmark_")
 
 
+func _ensure_stamped_fresh() -> void:
+	## Re-merge the stored found set into the lifetime cache — but ONLY when
+	## the store's generation moved since the last merge. Steady-state reads
+	## (the 5 Hz compass tick through `is_stamped()`) cost one integer compare
+	## and no file; a stamp arrival or a late lobby merge costs one re-read.
+	if BestRunStore.found_version != _stamped_version:
+		_hydrate_stamped()
+
+
 func _hydrate_stamped() -> void:
-	## Merge the stored found set into the lifetime cache. Arrival- and
-	## run-change-driven only — never the compass tick, which reads memory.
+	## Merge the stored found set into the lifetime cache and remember the
+	## generation. Called at ready, on a run change, and lazily by
+	## `_ensure_stamped_fresh()` — never bare on the tick.
 	for found_id: String in BestRunStore.found_landmark_ids():
 		_stamped[found_id] = true
-	_stamped_ready = true
+	_stamped_version = BestRunStore.found_version
 
 
 func is_stamped(kind: int) -> bool:
 	"""
 	Has this landmark kind EVER been stamped into the passport — any run, this
-	profile? The compass's tier read (bead godot-test1-nufd): pure memory over
-	_stamped, so the 5 Hz gather pays no file read. A kind the cache never saw
-	(a fresh scene before the first arrival) reads unstamped.
+	profile? The compass's tier read (bead godot-test1-nufd): memory over
+	_stamped once the generation check passes, so the steady-state 5 Hz gather
+	pays no file read — the re-read happens only when the store actually grew.
 	"""
+	_ensure_stamped_fresh()
 	return _stamped.has(_passport_id(kind))
 
 
@@ -1583,8 +1599,9 @@ func _sync_run() -> int:
 		_visited_run_seed = run_seed
 		_visited.clear()
 		# The lifetime cache is NOT cleared — the passport outlives the run —
-		# only re-merged on next stamp, so stamps earned elsewhere arrive.
-		_stamped_ready = false
+		# only actively re-merged, so stamps earned elsewhere (another scene,
+		# another tab) arrive at the run start, not mid-run.
+		_hydrate_stamped()
 		_stories.clear()
 		_burst_remaining = 0
 		# The city approach latch re-arms with the field one (`_cancel_quiz` below
