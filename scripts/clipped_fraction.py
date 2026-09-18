@@ -24,7 +24,7 @@ the framing at any resolution, and each hero's is chosen to lie ENTIRELY INSIDE
 the face — no sky, no ground, no collar. The printed fraction is then exactly
 "how much of the face is clipped" with nothing to argue about, and the same rect
 must be used before and after or the comparison means nothing. `17_head_face`
-frames crown-relative, so these three hold for any build of these heroes.
+frames crown-relative, so they hold for any build of these heroes.
 
 No PIL on the machine this was written for, hence the ~40 lines of zlib below;
 `Image.get_pixel` in GDScript would have been the other way round.
@@ -39,10 +39,18 @@ import zlib
 THRESHOLD = 0.97
 
 # hero -> (x0, y0, x1, y1) as fractions of the frame; see the module docstring.
+#
+# `phoboman`'s is the VISOR INTERIOR and not a face, because his face is a bowl of
+# soup behind a porthole and the MakeHuman head under the helmet is never seen
+# (bead godot-test1-9k9n.5). Same rule as the other three all the same: the rect
+# lies entirely inside the thing being judged — inscribed in the porthole, clear of
+# the glass bevel and the brass rim — so the fraction is "how much of the visor is
+# blown out" with nothing to argue about.
 FACE_RECTS = {
     "windman": (0.377, 0.489, 0.498, 0.636),
     "primm": (0.445, 0.533, 0.570, 0.689),
     "teibi": (0.460, 0.498, 0.600, 0.711),
+    "phoboman": (0.5525, 0.510, 0.6825, 0.770),
 }
 
 

@@ -25,7 +25,10 @@ WHAT A ROW IS (and where each half of it came from):
                     z3e.10 stump cannot come back.
   colours           the hero's own generator palette (`self.colors`), verbatim,
                     ungraded — `hero_skin.SKIN_GRADE` is applied here, at paint
-                    time, to the entries named in GRADED_COLOURS.
+                    time, to the entries named in GRADED_COLOURS. Except where a
+                    row's own note says otherwise: the eight of Phoboman's helmet
+                    were re-graded FOR THIS SCENE (bead godot-test1-9k9n.5), which
+                    is the third lever and the only hand-fitted one.
   bone_regions      clothing as BONE REGIONS: which bone wears which colour. A
                     sleeveless shirt is `upperarm_* -> skin`, shorts are
                     `calf_* -> skin`, gloves are `hand_* -> gloves`. No geometry,
@@ -1048,8 +1051,10 @@ HEROES = {
         # with the helmet, the pho face and the chest dragon as joined accessories.
         # This SUPERSEDES the 2026-09-11 "Phoboman keeps the limb rig for good /
         # sphere body" ruling. The design target that survives is the retired
-        # part-tree generator's — its palette verbatim, its helmet assembly,
-        # its dragon — ported onto a body that walks.
+        # part-tree generator's — its palette, its helmet assembly, its dragon —
+        # ported onto a body that walks. Verbatim, except that the HELMET'S EIGHT
+        # colours were re-graded for this renderer by bead godot-test1-9k9n.5: see
+        # the note over `colours` below, which is where the numbers are.
         #
         # NO `FACES` ROW. Every other hero's face is his own recipe because it is
         # what the camera reads at 3 m; Phoboman's is behind 3 mm of helmet glass
@@ -1108,26 +1113,66 @@ HEROES = {
         # in `boots_black` and this row has a boot shaft to be black AGAINST (the
         # lesson Primm's `jeans_navy` note records). Two stops up, still black.
         #
-        # EXPECT THE EXPOSURE PROBLEM Primm's goggle row documents: this scene
-        # lifts a linear albedo by ~1.85 before the sRGB encode, so `glass` (0.55,
-        # 0.75, 0.82), `broth_hi` (0.99, 0.78, 0.30) and `noodle` (0.97, 0.85,
-        # 0.55) are all candidates to clip flat white on `HeroSkin`. They are
-        # NOT moved here: nothing in this bead renders in Godot (the .glb is
-        # unwired until child 9k9n.2), and a value moved against a guess is a value
-        # nobody can re-derive. Child .2 measures the `17_head_face` frame and
-        # moves them HERE, with the measurement in the comment, as Primm's did.
+        # AND THE HELMET'S EIGHT ARE GRADED FOR THIS SCENE (bead godot-test1-9k9n.5,
+        # the exposure debt child .1 booked and child .2 measured). The generator
+        # authored them for a renderer it never had: `scenes/main.tscn` lights a
+        # `HeroSkin` surface, runs filmic tonemapping over it (exposure 1.05, white
+        # 1.2), then contrast 1.08 and saturation 1.12, and only then the sRGB
+        # encode — the "~1.85x lift" Primm's goggle row names, measured at one
+        # luminance. At those numbers EVERY warm value in the generator's helmet
+        # clipped. Measured on the web `17_head_face` frame, before: the brass dome
+        # rendered (255, 255, 146) and its DARKER brass ring (255, 240, 81) — the
+        # shade reading brighter than the metal it shades — the broth (255, 255,
+        # 133), and the glass bevel and the noodles flat (255, 255, 255) with the
+        # bloom (`glow_hdr_threshold` 0.85) eating the porthole's edge. A
+        # lemon-yellow ball with a white ring, where the canon draws a brass helmet
+        # over a bowl of orange soup. 51.37% of the visor was blown out.
+        #
+        # SO THE EIGHT ARE SOLVED AGAINST THE FRAME, not nudged. The first guess
+        # comes off a one-line fit of the frame's own unclipped samples — a WHITE
+        # POINT and a gamma, pooled across the three channels:
+        #
+        #     displayed ~ 255 * (albedo / 0.47) ** 0.85       (albedo < 0.47)
+        #
+        # and its headline is the number that matters: anything at or ABOVE 0.47
+        # linear is white, which is where SEVEN of the generator's eight sat. It is
+        # a starting point and not the transfer. Take it as one and it lands 12-25
+        # counts out on a saturated hue, because saturation 1.12 pushes a colour's
+        # dominant channel up and its weakest down and a per-channel scalar cannot
+        # say that; below ~0.10 the contrast curve crushes harder than the fit as
+        # well. So each value here is the fit INVERTED at a chosen sRGB and then
+        # corrected against a rebuild — two rounds of (build, `--import`, shoot the
+        # web `17_head_face` frame, read the pixels) — and the triple in each
+        # comment is what that frame MEASURES, not what was asked for. Anyone
+        # re-grading one of these should expect the same second round.
+        #
+        # Nothing clips now: 0.00% over the visor (`scripts/clipped_fraction.py`'s
+        # `phoboman` rect, mean luma 0.889 -> 0.666) and 0.00% over the dome
+        # (5.48% before, mean 0.966 -> 0.730).
+        #
+        # THE SIX BODY COLOURS ARE OUT OF THIS BEAD'S SCOPE, and they are not all in
+        # the same place: `body_blue`, `pants_black` and `boots_black` are garments
+        # and land on `HeroCloth` under the cloth bake's own darkening, `skin` is on
+        # `HeroSkin` through `GRADED_COLOURS`, and the DRAGON's two are ungraded on
+        # `HeroSkin` like the helmet — so `dragon_red` (0.80 red against that 0.47
+        # white point) still flat-clips its red channel on 92% of its pixels at
+        # `18_body_3m`. It reads as a shaded red serpent anyway, because green and
+        # blue carry the shading there and nothing else in this cast is red, which
+        # is why it is a follow-up and not this bead: the owner ruled on the visor
+        # and the dome. Do not read this paragraph as saying the dragon is fine.
         "colours": {
             'body_blue':    (0.13, 0.18, 0.46, 1.0),   # deep royal/navy belly
             'dragon_red':   (0.80, 0.13, 0.13, 1.0),   # bold Chinese-dragon red
             'dragon_gold':  (0.92, 0.74, 0.30, 1.0),   # horns, eyes, whiskers
-            'helmet_gold':  (0.80, 0.62, 0.24, 1.0),   # brass/gold diving helmet
-            'helmet_dark':  (0.55, 0.41, 0.15, 1.0),   # darker brass: ring, rivets
-            'glass':        (0.55, 0.75, 0.82, 1.0),   # porthole glass
-            'broth':        (0.95, 0.52, 0.18, 1.0),   # orange pho broth
-            'broth_hi':     (0.99, 0.78, 0.30, 1.0),   # bright-yellow highlight
-            'noodle':       (0.97, 0.85, 0.55, 1.0),   # pale noodle strands
-            'eye_dark':     (0.20, 0.10, 0.05, 1.0),   # dark noodle-eye pupils
-            'nose_green':   (0.30, 0.70, 0.22, 1.0),   # bright-green herb nose
+            # -- the helmet, graded for this scene; the comment is what it RENDERS
+            'helmet_gold':  (0.43, 0.32, 0.17, 1.0),   # brass dome -> (234,190,87)
+            'helmet_dark':  (0.25, 0.18, 0.085, 1.0),  # ring, rivets -> (174,125,46)
+            'glass':        (0.18, 0.33, 0.44, 1.0),   # porthole glaze -> (113,206,240)
+            'broth':        (0.42, 0.22, 0.09, 1.0),   # pho broth -> (247,148,39)
+            'broth_hi':     (0.45, 0.31, 0.19, 1.0),   # its highlight -> (249,192,100)
+            'noodle':       (0.44, 0.41, 0.30, 1.0),   # noodles -> (245,235,174)
+            'eye_dark':     (0.06, 0.035, 0.025, 1.0),  # the pupils -> (49,34,21)
+            'nose_green':   (0.08, 0.25, 0.06, 1.0),   # herb nose -> (51,171,27)
             'skin':         (0.91, 0.71, 0.58, 1.0),   # bare muscular arm skin
             'boots_black':  (0.07, 0.07, 0.08, 1.0),   # flat black boots
             'pants_black':  (0.11, 0.11, 0.13, 1.0),   # ... and the shorts over them
@@ -3307,7 +3352,7 @@ HELMET_CLEAR = 0.055     # air between the skull's own surface and the dome. A
                          # godot-test1-9ynx put the rest of the cast. Measured,
                          # not chosen: 22 mm (the smallest dome that encloses the
                          # skull) stopped the figure at 1.7605.
-HELMET_FLAT = 0.94       # THIS PORT'S OWN, and the fourth departure in
+HELMET_FLAT = 0.94       # THIS PORT'S OWN, and the fifth departure in
                          # `build_helmet`'s list: `create_head_assembly` scales its
                          # dome (1.0, 1.02, 1.0), so it is deepened and not
                          # flattened at all — "a sphere flattened a touch" is that
@@ -3448,7 +3493,7 @@ def build_helmet(colours, obj, tj):
     enclosure is asserted, which a single crown height cannot express.
 
     Every piece is `create_head_assembly`'s, in its order, at its size times one
-    scale `k`. FOUR DEPARTURES, each written up where it is made. The first three
+    scale `k`. FIVE DEPARTURES, each written up where it is made. The first three
     are one cause — that assembly was authored for a renderer it never had:
 
       the bowl        `create_head_assembly` hangs the broth and its noodles
@@ -3464,7 +3509,13 @@ def build_helmet(colours, obj, tj):
                       four stubs pointing at the camera. They lie in the glass
                       plane here, tilted by the generator's own angles.
 
-    And the fourth is a judgement and not a fix: `HELMET_FLAT` flattens the dome,
+    The fourth is the same cause one bead later: the generator's PUPILS are balls,
+    and a ball takes a ball's own lit-to-shadow gradient whatever colour it is
+    painted, so each eye rendered as a domed blob instead of a drawn dot. They are
+    discs in the visor plane here (bead godot-test1-9k9n.5's owner ruling; the
+    arithmetic is at the `PhoPupil` call site).
+
+    And the fifth is a judgement and not a fix: `HELMET_FLAT` flattens the dome,
     which that function's docstring says it does and its code does not.
     """
     head_ids = _vg_ids(obj, ["head"])
@@ -3618,11 +3669,44 @@ def build_helmet(colours, obj, tj):
                                          major_segments=14, minor_segments=6)
         pieces.append(_piece("PhoEyeRing" + side, colours["noodle"],
                              Matrix.Translation(g(ex, fy(0.05), eye_gz)) @ FACING_FRONT))
+        # THE PUPIL IS A DISC IN THE VISOR PLANE and not the generator's ball
+        # (owner ruling 2026-09-18 on bead godot-test1-9k9n.5, "EYES ON THE VISOR
+        # ... so the character has a gaze"). The ball was already here and already
+        # rendered — what it did not do was read as a PUPIL: a sphere 0.7 deep
+        # carries the lit-to-shadow gradient of a sphere across itself, so each eye
+        # came out a domed milk-chocolate blob with a highlight on it rather than
+        # the flat dark dot a drawn face has (measured on the web `17_head_face`
+        # frame at (140, 67, 26) sliding to black round its own rim). Squashed to
+        # 0.16 every front facet's normal points out of the visor, so the whole disc
+        # takes ONE shade — (49, 34, 21) across the pair, which is the same reason
+        # the broth behind it reads flat.
+        #
+        # AND THE SEAT GOES BACK WITH IT, to `fy(0.052)` from the generator's own
+        # `fy(0.062)`, because flattening a ball takes its REAR away: the ball
+        # reached into the broth behind it and a 6.2 mm disc at the same seat
+        # reaches nothing, and a piece of this helmet that touches no other piece is
+        # a chip hovering in the visor. (Both of this bead's earlier builds were
+        # that chip. The first moved the disc FORWARD, to `fy(0.075)`, on the
+        # premise that the ring's front stood proud of it — which is true only of
+        # the ring's globally forwardmost vertex at r >= 23 mm, out where a disc of
+        # radius 19.5 can never be occluded by it. Review rounds 1 and 2.)
+        #
+        # SEATING IS PER RADIUS, and both solids are read off the EXPORTED mesh,
+        # because `minor_segments=6` makes the ring a HEXAGON in section: its front
+        # face is the straight run from (r 18.1 mm, z -271.50) out to (r 23.0,
+        # z -279.96), and the disc is an ellipsoid, so its own rear rises from
+        # z_centre + 3.12 mm on the axis to z_centre at the rim. Over the 18.1 ..
+        # 19.5 mm band where the two overlap, this seat puts the disc's rear
+        # 0.33 - 1.76 mm INSIDE that face while its front still stands up to 2.01 mm
+        # proud of it: the pupil bites the eye ring, the ring crosses the broth, and
+        # the dot is the thing you see. The ring hides the outer 3% of the disc's
+        # radius, which is the bite. Same primitive, same vertex count, same
+        # `HELMET_TRIS` bill.
         bpy.ops.mesh.primitive_uv_sphere_add(radius=0.028 * k, segments=10,
                                              ring_count=6)
         pieces.append(_piece("PhoPupil" + side, colours["eye_dark"],
-                             Matrix.Translation(g(ex, fy(0.062), eye_gz))
-                             @ Matrix.Diagonal(Vector((1.0, 0.7, 1.0, 1.0)))))
+                             Matrix.Translation(g(ex, fy(0.052), eye_gz))
+                             @ Matrix.Diagonal(Vector((1.0, 0.16, 1.0, 1.0)))))
 
     bpy.ops.mesh.primitive_uv_sphere_add(radius=0.028 * k, segments=10, ring_count=6)
     pieces.append(_piece("PhoNose", colours["nose_green"],
