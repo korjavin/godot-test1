@@ -58,7 +58,7 @@ func unwritableStore(t *testing.T) *bestStore {
 func TestHealthzSurvivesFailedDump(t *testing.T) {
 	hub := NewHub()
 	store := unwritableStore(t)
-	store.merge("player-aaaa", 1234, 56, 78, 0)
+	store.merge("player-aaaa", 1234, 56, 78, 0, nil)
 
 	// Prove the premise before asserting anything about it: a dump that quietly
 	// SUCCEEDED would make every assertion below pass while measuring nothing.
