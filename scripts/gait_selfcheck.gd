@@ -650,8 +650,9 @@ func _off_rest(player: Node3D) -> float:
 
 func _check_personality(player: Node3D) -> void:
 	"""
-	(a) No two heroes share a stride period, and (b) no hero's pose repeats at
-	their own stride period — which is exactly what "the hitch exists" means.
+	(a) No two heroes share a stride period, (b) no hero's pose repeats at
+	their own stride period — which is exactly what "the hitch exists" means —
+	and (c) Phoboman still waddles.
 
 	(b) is the load-bearing half: a single-sine walk is periodic at its stride
 	by construction, so comparing the pose at t and t + T is the one measurement
@@ -695,6 +696,16 @@ func _check_personality(player: Node3D) -> void:
 			_fail("'%s': the pose one stride period (%.3f s) later differs by at most "
 					% [hero, period] + "%.3f deg — the walk repeats exactly, so the hitch "
 					% rad_to_deg(worst) + "sine is not doing anything")
+
+	# (c) THE WADDLE (bead godot-test1-9k9n.2). Phoboman's row is a wide roll,
+	#     and nothing above pins it: the sweeps pass a quiet walk without
+	#     blinking, the way check 4b pins Teibi's ceiling from the other side.
+	#     Read off the SHIPPED row, floor 8 degrees — far above 0, far below
+	#     the row's 11, and nowhere near any other hero's roll.
+	var waddle: float = float(PlayerAnimation.gait_for("phoboman").get("sway_deg", 0.0))
+	if waddle < 8.0:
+		_fail("phoboman's sway_deg is %.1f — the waddle rolls 8 degrees at least "
+				% waddle + "(the row walks 11); the waddle went home to phoboman")
 
 	Sentinel.done("personality")
 
