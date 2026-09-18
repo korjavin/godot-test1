@@ -241,7 +241,7 @@ const SKILL_TREES: Dictionary = {
 			# gale first, then sight, so the earliest purchase is level 2.
 			# Nothing new persists: a rank merges by max like every other.
 			"id": "sight", "name": "Air Sight", "branch": "Air Sight",
-			"desc": "Learn Air Sight: press G under the HQ roof to see through its walls.",
+			"desc": "Learn Air Sight: press G and every awake predator shows through whatever hides it, anywhere.",
 			"cost": 1, "max_ranks": 1, "prereq": "gale",
 			"effect": "second_ability", "per_rank": 1.0,
 		},
