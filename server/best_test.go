@@ -14,7 +14,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -489,8 +491,8 @@ func TestBestFoundRejectsOversizeBody(t *testing.T) {
 	const id = "0123456789abcdef0123456789abcdef"
 
 	long := strings.Repeat("a", 32)
-	ids := make([]string, 0, 150)
-	for i := 0; i < 150; i++ {
+	ids := make([]string, 0, 300)
+	for i := 0; i < 300; i++ {
 		ids = append(ids, long)
 	}
 	body, err := json.Marshal(map[string]any{"distance": 1, "found": ids})
@@ -507,5 +509,133 @@ func TestBestFoundRejectsOversizeBody(t *testing.T) {
 	s.handler(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("oversize body status %d, wanted 400", w.Code)
+	}
+}
+
+// TestBestBodyCapFitsFullPassport — the boundary the 4096 cap got wrong. A
+// valid maximal passport (maxFoundIDs ids at the 32-char shape limit) is
+// accepted and stored whole; a valid body of exactly maxBestBody bytes is
+// accepted; one byte past it is a 400.
+func TestBestBodyCapFitsFullPassport(t *testing.T) {
+	s := newBestStore("")
+	const id = "0123456789abcdef0123456789abcdef"
+
+	// 128 distinct ids at exactly the 32-char shape limit: "stamp_" + 26
+	// digits (the shape allows [a-z0-9_], no hyphen).
+	full := make([]string, 0, maxFoundIDs)
+	for i := 0; i < maxFoundIDs; i++ {
+		full = append(full, fmt.Sprintf("stamp_%026d", i))
+	}
+	body, err := json.Marshal(map[string]any{"distance": 1, "found": full})
+	if err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	// The fixture guards itself: if the cap ever shrinks below a real full
+	// passport, this fails instead of passing vacuously.
+	if len(body) >= maxBestBody {
+		t.Fatalf("fixture body is %d bytes, wanted under the %d cap", len(body), maxBestBody)
+	}
+	post := func(b []byte) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		s.handler(w, httptest.NewRequest(http.MethodPost, "/best?id="+id, bytes.NewReader(b)))
+		return w
+	}
+	if w := post(body); w.Code != http.StatusOK {
+		t.Fatalf("maximal passport status %d, wanted 200", w.Code)
+	}
+	if got := len(s.get(id).Found); got != maxFoundIDs {
+		t.Fatalf("maximal passport stored %d ids, wanted %d", got, maxFoundIDs)
+	}
+
+	// Exactly at the cap: one valid-JSON string padded to fill it.
+	const prefix = `{"distance":1,"found":["`
+	const suffix = `"]}`
+	atCap, err := json.Marshal(map[string]any{"distance": 1, "found": []string{strings.Repeat("z", maxBestBody-len(prefix)-len(suffix))}})
+	if err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	if len(atCap) != maxBestBody {
+		t.Fatalf("fixture body is %d bytes, wanted exactly %d", len(atCap), maxBestBody)
+	}
+	if w := post(atCap); w.Code != http.StatusOK {
+		t.Fatalf("at-cap body status %d, wanted 200", w.Code)
+	}
+
+	// One byte past: the same shape with one more byte of padding.
+	overCap := append(slices.Clone(atCap[:len(atCap)-len(suffix)]), 'z')
+	overCap = append(overCap, suffix...)
+	if len(overCap) != maxBestBody+1 {
+		t.Fatalf("fixture body is %d bytes, wanted %d", len(overCap), maxBestBody+1)
+	}
+	if w := post(overCap); w.Code != http.StatusBadRequest {
+		t.Fatalf("over-cap body status %d, wanted 400", w.Code)
+	}
+}
+
+// TestBestFoundConcurrent — hammers one player with overlapping POSTs and
+// GETs through the HTTP handlers. The handler marshals the returned record
+// AFTER the store lock is released, so without the merge/get clones the
+// union's append and in-place sort race the GET encoding: this is green
+// without -race only by luck, and red WITH it when the clones are dropped.
+// Run the gate with -race.
+func TestBestFoundConcurrent(t *testing.T) {
+	s := newBestStore("")
+	const id = "concurrent-player-01"
+
+	const writers = 8
+	const perWriter = 12
+	const rounds = 50
+	var wg sync.WaitGroup
+	for g := 0; g < writers; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			ids := make([]string, 0, perWriter)
+			for i := 0; i < perWriter; i++ {
+				ids = append(ids, fmt.Sprintf("writer%02d_stamp%02d", g, i))
+			}
+			for r := 0; r < rounds; r++ {
+				body, err := json.Marshal(map[string]any{"distance": r, "found": ids})
+				if err != nil {
+					t.Errorf("fixture: %v", err)
+					return
+				}
+				w := httptest.NewRecorder()
+				s.handler(w, httptest.NewRequest(http.MethodPost, "/best?id="+id, bytes.NewReader(body)))
+				if w.Code != http.StatusOK {
+					t.Errorf("concurrent POST status %d, wanted 200", w.Code)
+					return
+				}
+			}
+		}(g)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for r := 0; r < rounds; r++ {
+				w := httptest.NewRecorder()
+				s.handler(w, httptest.NewRequest(http.MethodGet, "/best?id="+id, nil))
+				if w.Code != http.StatusOK {
+					t.Errorf("concurrent GET status %d, wanted 200", w.Code)
+					return
+				}
+				var rec bestRecord
+				if err := json.Unmarshal(w.Body.Bytes(), &rec); err != nil {
+					t.Errorf("concurrent GET decode: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	want := make([]string, 0, writers*perWriter)
+	for g := 0; g < writers; g++ {
+		for i := 0; i < perWriter; i++ {
+			want = append(want, fmt.Sprintf("writer%02d_stamp%02d", g, i))
+		}
+	}
+	sort.Strings(want)
+	if got := s.get(id).Found; !slices.Equal(got, want) {
+		t.Fatalf("concurrent union holds %d ids, wanted %d", len(got), len(want))
 	}
 }

@@ -60,12 +60,18 @@ const (
 	// broken client from parking absurd numbers in the JSON file.
 	maxBestValue = 1 << 30
 
-	// maxBestBody is the accepted request body. A bare record is two small
-	// integers, but a POST also carries the finder's passport set — up to
-	// maxFoundIDs short ids — so the cap fits that with room: 4 KB against a
-	// worst case that never arrives (real ids average a dozen characters, and
-	// anything over the cap is a 400, not a truncation).
-	maxBestBody = 4096
+	// maxBestBody is the accepted request body, SIZED FROM THE CONSTANTS, not
+	// guessed. A POST carries the finder's whole passport set on every write,
+	// and at its absolute worst that array is maxFoundIDs ids of 32 chars,
+	// quoted and comma-separated: 1 + 128*34 + 127 + 1 = 4481 bytes. The four
+	// numeric fields at their clamped widest (1<<30, ten digits each) add
+	// about a hundred more — roughly 4.6 KB all told. 8192 is that worst case
+	// with room to spare (~1.8x), still far too small for a hostile client to
+	// park anything large behind. A smaller cap would REJECT A VALID FULL
+	// PASSPORT: 4096 locked out every later update for a player who
+	// legitimately filled all 128 stamps, since the client re-sends the whole
+	// set on every POST. Over the cap is a 400, never a truncation.
+	maxBestBody = 8192
 
 	// maxFoundIDs bounds one player's found set, here and on the client (which
 	// holds MAX_FOUND_IDS = 128 too). At the cap the STORED set wins over the
@@ -153,6 +159,12 @@ func (s *bestStore) get(id string) bestRecord {
 		return bestRecord{}
 	}
 	rec.Seen = time.Now().Unix()
+	// A snapshot, not the stored slice: the handler marshals the returned
+	// record after the lock is released, and the stored backing array is one
+	// merge() alone touches — through its own clone. (Merge never mutates a
+	// handed-out array, so the store and this response may share this
+	// generation's array; neither will write to it again.)
+	rec.Found = slices.Clone(rec.Found)
 	s.recs[id] = rec
 	s.dirty = true
 	return rec
@@ -188,16 +200,25 @@ func (s *bestStore) merge(id string, distance, coins, lifetime, spent int, found
 	// The found set unions: shaped, unseen ids join while there is room, and
 	// the STORED set wins over the excess — at the cap nothing already held is
 	// dropped for a newcomer. Sorted, like the client keeps it.
+	//
+	// The union runs on a CLONE of the stored slice, not in place: the handler
+	// marshals the RETURNED record after this lock is released, so appending
+	// into (or sorting) the stored backing array would race an overlapping GET
+	// for the same player. Clone always copies into a fresh array, so the
+	// appends and the sort below never touch an array a response may still be
+	// encoding — no generation ever mutates a handed-out slice.
+	foundSet := slices.Clone(rec.Found)
 	for _, f := range found {
-		if len(rec.Found) >= maxFoundIDs {
+		if len(foundSet) >= maxFoundIDs {
 			break
 		}
-		if !foundIDRe.MatchString(f) || slices.Contains(rec.Found, f) {
+		if !foundIDRe.MatchString(f) || slices.Contains(foundSet, f) {
 			continue
 		}
-		rec.Found = append(rec.Found, f)
+		foundSet = append(foundSet, f)
 	}
-	sort.Strings(rec.Found)
+	sort.Strings(foundSet)
+	rec.Found = foundSet
 	rec.Seen = time.Now().Unix()
 	s.recs[id] = rec
 	s.dirty = true
