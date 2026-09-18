@@ -661,6 +661,28 @@ func animate_walking(delta: float, speed_multiplier: float) -> void:
 	# model without one draws none.
 	rig.head_bobble(wobble * deg_to_rad(float(_gait["head_deg"])))
 
+	_apply_stink_pose()
+
+func _apply_stink_pose() -> void:
+	"""Phoboman's Stink Wave telegraph (bead godot-test1-9k9n.4): while his wave
+	timer runs, the upper arms rise OVER the gait. Called at the end of every
+	clocked pose path — walk, air, idle — AFTER the gait drew, because
+	`rig.stink()` lerps from the CURRENT angles toward raised.
+
+	The amount is the timer over its duration, so the caller's fade IS the
+	return: at zero this is a no-op and the gait owns the arms outright. The
+	timer is set only by his ability and cleared on switch/respawn/capture, so a
+	nonzero timer MEANS Phoboman mid-wave — no hero check needed. A remote
+	mirror never sets it (no ability state crosses the presence packet) and
+	draws the unraised arms, which is the documented split: mp replays the flee,
+	not the pose."""
+	if rig == null or player == null:
+		return
+	var timer: float = float(player.phoboman_stink_timer)
+	if timer <= 0.0:
+		return
+	rig.stink(clampf(timer / PlayerAbilities.PHOBOMAN_STINK_DURATION, 0.0, 1.0))
+
 func relax_gait_extras(weight: float) -> void:
 	"""
 	Ease the three axes only the WALK gait writes — body roll, body pitch and
@@ -833,6 +855,8 @@ func animate_jumping() -> void:
 	if character_body:
 		character_body.position.y = lerp(character_body.position.y, 0.0, lerp_speed)
 
+	_apply_stink_pose()
+
 func animate_landing() -> void:
 	"""
 	Brief animation when the character lands on the ground. The impact crouch
@@ -875,6 +899,8 @@ func animate_idle(delta: float) -> void:
 		var breathe: float = sin(animation_time * float(_gait["idle_rate"])) \
 				* float(_gait["idle_bob"])
 		character_body.position.y = lerp(character_body.position.y, breathe, 0.1)
+
+	_apply_stink_pose()
 
 func reset_sidestep_pose() -> void:
 	"""

@@ -229,6 +229,13 @@ const GAIT_SKIN: Dictionary = {
 	"shoulder_swing_deg": 5.0,
 	# The forearms raised at the top of the wing beat, degrees of flex.
 	"air_elbow_deg": 58.0,
+	# --- STINK --------------------------------------------------------------
+	# Phoboman's Stink Wave telegraph (bead godot-test1-9k9n.4): both upper arms
+	# raised forward, degrees about the skeleton's +X (forward, per `locomotion()`).
+	"stink_raise_deg": 40.0,
+	# The elbows bent with it, degrees of flex — "slightly bent" per the canon,
+	# so the hands ride up and out rather than spearing forward.
+	"stink_elbow_deg": 25.0,
 	# --- IDLE ---------------------------------------------------------------
 	# The breath, on the chest: rate in Hz and amplitude in degrees of pitch.
 	# 1.1 degrees at spine_03 is about 8 mm at the shoulders — the "few mm" the
@@ -519,6 +526,28 @@ func air(spread: float, tuck: float, weight: float) -> void:
 func drop_wings() -> void:
 	for side: String in ["left", "right"]:
 		_set_axis(UPPERARM[side], AXIS_Z, 0.0)
+
+
+func stink(amount: float) -> void:
+	"""Phoboman's Stink Wave telegraph (bead godot-test1-9k9n.4): both upper arms
+	raised ~40 degrees forward with bent elbows while the soup waves — the pose
+	the canon asks for and the sphere could never draw.
+
+	EASED at `amount` in `air()`'s idiom: each axis lerps from its CURRENT angle
+	toward the raised one, so the caller fading 1 to 0 hands the arms back to
+	whatever the gait is drawing with no pop and no second state. A pure
+	function of (phase, amount) like everything else in the driver — and a
+	REMOTE mirror, which carries no ability state on the presence packet, simply
+	never calls this: an ability is a local telegraph, mp replays the flee.
+
+	Only the two arm chains. Everything else — legs, spine, head — stays whatever
+	the gait drew, which is what makes the return a non-event: the next
+	locomotion frame rewrites these same axes anyway."""
+	for side: String in ["left", "right"]:
+		_set_axis(UPPERARM[side], AXIS_X,
+				lerp(_axis(UPPERARM[side], AXIS_X), _deg("stink_raise_deg"), amount))
+		_set_axis(LOWERARM[side], AXIS_X,
+				lerp(_axis(LOWERARM[side], AXIS_X), _deg("stink_elbow_deg"), amount))
 
 
 func sidestep(splay: float, reach: float, lift_left: bool, lift: float,

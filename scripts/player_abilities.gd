@@ -23,6 +23,7 @@ extends RefCounted
 ## THE STATE STAYS ON THE NODE, and that is the difference from
 ## `player_animation.gd`. `ability_cooldowns`, `windman_boost_timer`,
 ## `windman_sight_timer`, `teibi_size_state`, `teibi_form_timer`, `is_giant`,
+## `phoboman_stink_timer`,
 ## `_teibi_tween`, `speed_burst_timer` and `_pending_cooldown_refund` are read
 ## by `mp_manager` (the `ab` presence bits), by the HUD contract getters, by
 ## `player_animation` and by four self-checks THROUGH THE PLAYER NODE — so they
@@ -174,6 +175,11 @@ const TEIBI_QUAKE_FLEE_DURATION: float = 3.0
 const PHOBOMAN_FLEE_DURATION: float = 10.0
 ## Visual reach of the stink waves, in metres.
 const PHOBOMAN_STINK_RADIUS: float = 9.0
+## How long the Stink Wave ARM POSE holds, in seconds — the telegraph for the
+## waves above (bead godot-test1-9k9n.4). 0.9 matches the wave visuals' own
+## duration, so the arms are up exactly while the soup is visibly moving; the
+## pose amount is the timer over this, counted down in `_update_ability_timers()`.
+const PHOBOMAN_STINK_DURATION: float = 0.9
 ## GAMEPLAY reach of the stink — how far a crocodile may be and still flee.
 ##
 ## THIS IS NEW IN BEAD godot-test1-20z.4 AND IT IS A DELIBERATE NERF; the number
@@ -201,8 +207,13 @@ const PHOBOMAN_FLEE_RADIUS: float = 22.0
 # ============================================================================
 
 func _update_ability_timers(delta: float) -> void:
-	"""Count down cooldowns, the Windman air boost, Teibi's form timer and the
-	Adrenaline speed burst."""
+	"""Count down cooldowns, the Windman air boost, Teibi's form timer, Phoboman's
+	Stink Wave pose timer and the Adrenaline speed burst."""
+	if player.phoboman_stink_timer > 0.0:
+		# No revert logic, unlike Teibi's form: the pose amount IS this timer
+		# over its duration, so hitting zero hands the arms back to the gait and
+		# the return needs no second state.
+		player.phoboman_stink_timer = maxf(0.0, player.phoboman_stink_timer - delta)
 	for i in player.ability_cooldowns.size():
 		if player.ability_cooldowns[i] > 0.0:
 			player.ability_cooldowns[i] = maxf(0.0, player.ability_cooldowns[i] - delta)
@@ -674,6 +685,12 @@ func _ability_phoboman() -> bool:
 	# derivation of 22 and for what the bound costs.
 	var reach_mult: float = player._skill_mult("phoboman_radius")
 	var stink_radius: float = PHOBOMAN_STINK_RADIUS * reach_mult
+	# THE TELEGRAPH (bead godot-test1-9k9n.4): arms up while the soup waves.
+	# The pose amount is this timer over PHOBOMAN_STINK_DURATION, counted down
+	# in `_update_ability_timers()`; `_reset_ability_states()` clears it on
+	# switch/respawn/capture, and the remote mirror never sees it — an ability
+	# is a local telegraph, so no presence bit is spent on 0.9 s of arms.
+	player.phoboman_stink_timer = PHOBOMAN_STINK_DURATION
 	_spawn_ability_effect(player.global_position, Color(0.55, 0.85, 0.2, 0.55), stink_radius, 0.9, 0.0)
 	_spawn_ability_effect(player.global_position, Color(0.5, 0.8, 0.25, 0.45), stink_radius, 0.9, 0.18)
 	_spawn_ability_effect(player.global_position, Color(0.45, 0.75, 0.3, 0.4), stink_radius, 0.9, 0.36)
@@ -782,10 +799,11 @@ func _spawn_ability_effect(pos: Vector3, color: Color, max_radius: float, lifeti
 
 
 func _reset_ability_states() -> void:
-	"""Clear transient ability state on respawn (air boost, air sight, giant/small form)."""
+	"""Clear transient ability state on respawn (air boost, air sight, giant/small form, stink pose)."""
 	player.windman_boost_timer = 0.0
 	player.speed_burst_timer = 0.0
 	player._pending_cooldown_refund = 0.0
+	player.phoboman_stink_timer = 0.0
 	_revert_teibi_to_normal()
 	# Air Sight lives in the BUILDING's materials rather than in a field here, so it
 	# is the one transient state that leaks something visible if it is not cleared:

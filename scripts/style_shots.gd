@@ -299,6 +299,13 @@ func _run() -> void:
 	await _shoot_idle_strip(terrain, player, field, "23_idle_strip")
 	await _shoot_air_strip(terrain, player, field, "24_air_strip")
 
+	# THE STINK STRIP (bead godot-test1-9k9n.4) — Phoboman's F telegraph on
+	# bones: raise, hold, release. Same camera, same pause, same numbered-PNG
+	# output, and after 24 for the same clock reason. Phoboman only: the pose
+	# is driver-level and would raise any hero's arms, but the timer that drives
+	# it is set by his ability alone.
+	await _shoot_stink_strip(terrain, player, field, "25_stink_strip")
+
 	# THE PREDATOR PORTRAITS (bead godot-test1-hb0) — the GD-SURVEY hunter in the
 	# field and the SAME chassis on guard duty at the HQ, which is the pair the
 	# owner rules the machine's redesign from. They come after the hero shots for
@@ -1054,6 +1061,47 @@ func _shoot_air_strip(terrain: Node, player: Node3D, at: Vector3, name: String) 
 	PauseHub.release(self)
 	cam.queue_free()
 	print("[SHOTS] wrote ", AIR_STRIP_FRAMES, " frames of ", name, " hero=", _hero)
+
+
+## BEAD godot-test1-9k9n.4 — the stink strip's frame count. Three frames are the
+## whole telegraph: the raise (timer full), the hold (timer half) and the
+## release (timer nearly out).
+const STINK_STRIP_FRAMES: int = 3
+
+
+func _shoot_stink_strip(terrain: Node, player: Node3D, at: Vector3, name: String) -> void:
+	"""
+	BEAD godot-test1-9k9n.4, shot 25. Three frames of Phoboman's Stink Wave arm
+	pose, in 24's idiom: the wave timer is the player's own field and the driver
+	reads the amount off it through `PlayerAnimation._apply_stink_pose()`, so
+	setting it here poses exactly the frames the game draws mid-wave.
+
+	All three frames share one stride clock, so the ONLY thing that differs
+	between them is the arms — that is what the strip has to answer. The timer
+	is restored to zero afterwards, so a later shot never inherits a raised arm.
+	"""
+	if not _wanted(name):
+		return
+	if _hero != "phoboman":
+		return
+	if not _head_pose_settled:
+		await _settle_body_pose(terrain, player, at, name)
+		player.set_active_character(_hero_index(player))
+	var cam := _body_camera(player)
+	PauseHub.take(self)
+	var step: float = 1.0 / 60.0
+	player.anim.animation_time = 1.0
+	# Raise, hold, release: the factors are the pose amounts, so the strip shows
+	# the full telegraph and not three indistinguishable mid-fades.
+	for frame in STINK_STRIP_FRAMES:
+		var factor: float = [1.0, 0.5, 0.1][frame]
+		player.phoboman_stink_timer = PlayerAbilities.PHOBOMAN_STINK_DURATION * factor
+		player.anim.animate_walking(step, 1.0)
+		await _save_frame(name, frame)
+	player.phoboman_stink_timer = 0.0
+	PauseHub.release(self)
+	cam.queue_free()
+	print("[SHOTS] wrote ", STINK_STRIP_FRAMES, " frames of ", name, " hero=", _hero)
 
 
 func _crown_focus(player: Node3D, scope: Node) -> Vector3:

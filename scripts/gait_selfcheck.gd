@@ -181,6 +181,21 @@ const SKINNED_KNEE_FLEX_M: float = 0.015
 ## 0.195 m sideways against 0.378 m forward, a ratio of 0.52. Anywhere between
 ## is a rig being turned about a roll it should be agnostic to.
 const SKINNED_ROLL_TOLERANCE: float = 0.05
+## ...and how far the Stink Wave (bead godot-test1-9k9n.4, probe (j) below) must
+## carry each hand FORWARD. A 40-degree raise on Teibi's ~0.55 m arm chain moves
+## the hand ~0.35 m toward -Z; measured 0.156 m on the left hand and 0.194 m on
+## the right (the raise lands exactly — `lerp` at 1.0 — so the asymmetry is the
+## shipped clavicle rests, not convergence), and 0.10 clears both with margin
+## while a dropped raise measures exactly 0.
+const STINK_TRAVEL_M: float = 0.10
+## ...and how much of that travel may be SIDEWAYS. The arm chain's parent rests
+## are rolled where the thigh's parent is not, so a pure-X raise still arcs:
+## measured 0.039 m against 0.156 m forward on the left, 0.040 against 0.194 on
+## the right — ratios 0.25 and 0.21. The ceiling is 1.0, which is the principled
+## line: a FORWARD raise must move the hand more forward than sideways. A raise
+## written about the wrong axis (a Z roll, say) measures a ratio well above one,
+## and (i)'s 0.05 would fail the shipped conjugation itself.
+const STINK_ROLL_TOLERANCE: float = 1.0
 ## ...and how much the shoulder-to-hand reach must differ between the two arm
 ## extremes, where `ELBOW_TRACK_RATIO` 0.3 opens the elbow from 24 to 6 degrees.
 ## Measured 0.008 m on Teibi's ~0.28 m upper arm and forearm; a deleted or
@@ -1806,6 +1821,56 @@ func _measure_skinned_joints(anim, fixture: Node3D) -> void:
 					% float(SKINNED_BAND_DEG[family]) + "`measure()` answers the shoulder "
 					+ "and the hip and nothing else, so this is the only envelope the "
 					+ "joints bead `5u3.9` added have.")
+
+	# ---- (j) THE STINK WAVE RAISES THE ARMS, AND LEAVES NO RESIDUE ------
+	# Bead godot-test1-9k9n.4: Phoboman's F telegraph on bones. Driven on the
+	# TEIBI fixture — the pose is the driver's, not the hero's, so the probe
+	# belongs to the driver. Entered OUT OF A STRIDE like (h7): the raise has to
+	# win over a live swing, not over rest. Converged with repeated full-amount
+	# calls (the lerp idiom, exactly like air): RELAX_FRAMES is overkill for two
+	# chained lerps at 1.0 and that is the point — convergence must not be what
+	# is being measured.
+	var hand_r: int = skel.find_bone("hand_r")
+	if hand_r < 0:
+		_fail("skinned fixture: the rig has no `hand_r` bone — the stink probe "
+				+ "did not run")
+		Sentinel.done("skinned_joints")
+		return
+	anim.rig.rest_pose()
+	var rest_l: Vector3 = _at(skel, b["hand_l"])
+	var rest_r: Vector3 = _at(skel, hand_r)
+	_pose_cycle(anim, PI * 0.5, swing, 0.0)
+	for i: int in RELAX_FRAMES:
+		anim.rig.stink(1.0)
+	for stink_probe: Array in [[rest_l, b["hand_l"], "left"], [rest_r, hand_r, "right"]]:
+		var stink_base: Vector3 = stink_probe[0]
+		var stink_tip: Vector3 = _at(skel, stink_probe[1])
+		var stink_travel: Vector3 = stink_tip - stink_base
+		# Forward is -Z (the way the hero faces, per `locomotion()`): the hand
+		# must come OUT toward it, not up or sideways.
+		if -stink_travel.z <= STINK_TRAVEL_M:
+			_fail("skinned fixture: stink(1.0) moved the %s hand (%.4f, %.4f, %.4f) m — "
+					% [stink_probe[2], stink_travel.x, stink_travel.y, stink_travel.z]
+					+ "both upper arms must rise ~40 deg forward (`stink_raise_deg`), "
+					+ "which carries a hand at least %.2f m toward -Z" % STINK_TRAVEL_M)
+		elif absf(stink_travel.x) > absf(stink_travel.z) * STINK_ROLL_TOLERANCE:
+			_fail("skinned fixture: stink(1.0) carried the %s hand %.4f m sideways "
+					% [stink_probe[2], stink_travel.x] + "against %.4f m forward — a "
+					% absf(stink_travel.z) + "forward raise must move the hand more "
+					+ "forward than sideways (ceiling ratio %.1f)" % STINK_ROLL_TOLERANCE)
+	# THE RETURN: the normal path reclaims the arms — locomotion with NO
+	# rest_pose first, so any residue stink left on a bone the gait does not
+	# rewrite is what this measures, against the rest tips above.
+	anim.rig.set_clock(0.0, 0.0, 0.0, 0.0)
+	anim.rig.locomotion(0.0, 0.0, 1.0)
+	for stink_probe: Array in [[rest_l, b["hand_l"], "left"], [rest_r, hand_r, "right"]]:
+		var stink_base: Vector3 = stink_probe[0]
+		var stink_gap: float = _at(skel, stink_probe[1]).distance_to(stink_base)
+		if stink_gap > REST_EPS:
+			_fail("skinned fixture: the neutral gait left the %s hand %.4f m from rest "
+					% [stink_probe[2], stink_gap] + "after the stink pose — the wave's "
+					+ "arms must be reclaimed by the path every frame already walks "
+					+ "(ceiling %.3f m)" % REST_EPS)
 
 	Sentinel.done("skinned_joints")
 
