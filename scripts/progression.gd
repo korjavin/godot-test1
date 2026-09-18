@@ -285,6 +285,16 @@ const SKILL_TREES: Dictionary = {
 			"cost": 1, "max_ranks": 1, "prereq": "reach",
 			"effect": "primm_refund", "per_rank": 1.0,
 		},
+		{
+			# The SECOND SKILL's root (bead godot-test1-0mr0.3): its own branch,
+			# so the third column appears with no UI code, and its own prereq —
+			# reach first, then flash, so the earliest purchase is level 2.
+			# Nothing new persists: a rank merges by max like every other.
+			"id": "flash", "name": "Twin Flash", "branch": "Twin Flash",
+			"desc": "Learn Twin Flash: press G and Primm cross-slashes, scaring off what stands before him.",
+			"cost": 1, "max_ranks": 1, "prereq": "reach",
+			"effect": "second_ability", "per_rank": 1.0,
+		},
 	],
 	"teibi": [
 		{

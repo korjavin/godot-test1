@@ -225,6 +225,17 @@ const STINK_TRAVEL_M: float = 0.10
 ## written about the wrong axis (a Z roll, say) measures a ratio well above one,
 ## and (i)'s 0.05 would fail the shipped conjugation itself.
 const STINK_ROLL_TOLERANCE: float = 1.0
+## ...and how far Primm's Twin Flash (bead godot-test1-0mr0.3, probe (k)
+## below) must carry each hand FORWARD. A 70-degree raise on Teibi's ~0.55 m
+## arm chain moves the hand ~0.5 m toward -Z; 0.10 clears it with the same
+## margin the stink probe takes while a dropped raise measures exactly 0.
+const SLASH_TRAVEL_M: float = 0.10
+## ...and how much closer together the two hands must come — the cross that
+## makes it a slash and not a semaphore. 0.05 m against a ~0.4 m rest span;
+## a cross written with the wrong sign (or about the wrong axis) moves them
+## APART and measures negative, so this is the assertion that keeps the
+## skeleton's rest honest.
+const SLASH_CROSS_M: float = 0.05
 ## ...and how much the shoulder-to-hand reach must differ between the two arm
 ## extremes, where `ELBOW_TRACK_RATIO` 0.3 opens the elbow from 24 to 6 degrees.
 ## Measured 0.008 m on Teibi's ~0.28 m upper arm and forearm; a deleted or
@@ -2031,6 +2042,133 @@ func _measure_skinned_joints(anim, fixture: Node3D) -> void:
 	anim.player.step_direction = 0.0
 	anim.player.velocity = Vector3.ZERO
 	anim.player.phoboman_stink_timer = 0.0
+
+	# ---- (k) THE TWIN FLASH RIDES EVERY PATH, CROSSES, AND LEAVES NO RESIDUE
+	# Bead godot-test1-0mr0.3: Primm's G telegraph on bones, in (j)'s idiom.
+	# Driven through the SHIPPED animation paths with `primm_slash_timer` on
+	# the player. The timer is pinned at duration-minus-rise, where the pose
+	# triangle peaks at exactly 1.0 and stays there (the paths read the timer,
+	# only `_update_ability_timers()` spends it) — so this measures the pose,
+	# not the envelope. Both hands must travel forward AND toward each other,
+	# and expiring the timer must hand both back to the gait on every path.
+	var slash_full: float = PlayerAbilities.PRIMM_SLASH_DURATION - PlayerAbilities.PRIMM_SLASH_RISE_S
+	# (k1) WALK PATH: drive `animate_walking()`.
+	anim.rig.rest_pose()
+	anim.player.primm_slash_timer = 0.0
+	anim.animation_time = 0.0
+	anim.animate_walking(step, 1.0)
+	var kwalk_l: Vector3 = _at(skel, b["hand_l"])
+	var kwalk_r: Vector3 = _at(skel, hand_r)
+	var kwalk_span: float = kwalk_l.distance_to(kwalk_r)
+	anim.player.primm_slash_timer = slash_full
+	anim.animate_walking(step, 1.0)
+	for kwalk_probe: Array in [[kwalk_l, b["hand_l"], "left"], [kwalk_r, hand_r, "right"]]:
+		var kwalk_base: Vector3 = kwalk_probe[0]
+		var kwalk_travel: Vector3 = _at(skel, kwalk_probe[1]) - kwalk_base
+		if -kwalk_travel.z <= SLASH_TRAVEL_M:
+			_fail("skinned fixture: walking at full slash timer moved the %s hand (%.4f, %.4f, %.4f) m — "
+					% [kwalk_probe[2], kwalk_travel.x, kwalk_travel.y, kwalk_travel.z]
+					+ "both upper arms must sweep ~70 deg forward (`slash_raise_deg`), "
+					+ "which carries a hand at least %.2f m toward -Z" % SLASH_TRAVEL_M)
+	var kwalk_crossed: float = _at(skel, b["hand_l"]).distance_to(_at(skel, hand_r))
+	if kwalk_span - kwalk_crossed <= SLASH_CROSS_M:
+		_fail("skinned fixture: walking at full slash timer closed the hands by %.4f m — "
+				% (kwalk_span - kwalk_crossed) + "the cross (`slash_cross_deg`) must bring "
+				+ "them at least %.2f m closer than at rest" % SLASH_CROSS_M)
+	var kwalk_meas: Dictionary = anim.rig.measure()
+	if kwalk_meas["left_arm_x"] < deg_to_rad(50.0) or kwalk_meas["right_arm_x"] < deg_to_rad(50.0):
+		_fail("skinned fixture: walking at full slash timer left upper arms at (%.1f, %.1f) deg — "
+				% [rad_to_deg(kwalk_meas["left_arm_x"]), rad_to_deg(kwalk_meas["right_arm_x"])]
+				+ "the slash overlay must pitch shoulders forward toward ~70 deg")
+	# THE RETURN (walk): expire timer, drive normal walking frame.
+	anim.player.primm_slash_timer = 0.0
+	anim.animate_walking(step, 1.0)
+	for kwalk_probe: Array in [[kwalk_l, b["hand_l"], "left"], [kwalk_r, hand_r, "right"]]:
+		var kwalk_gap: float = _at(skel, kwalk_probe[1]).distance_to(kwalk_probe[0])
+		if kwalk_gap > REST_EPS:
+			_fail("skinned fixture: a walking frame with the slash timer expired left the %s hand "
+					% kwalk_probe[2] + "%.4f m off the walk rest — the slash froze "
+					% kwalk_gap + "past the timer (ceiling %.3f m)" % REST_EPS)
+	# (k2) AIR PATH: drive `animate_jumping()`.
+	anim.rig.rest_pose()
+	anim.player.primm_slash_timer = 0.0
+	anim.animation_time = 0.0
+	for i: int in 20:
+		anim.animation_time = 0.0
+		anim.animate_jumping()
+	var kair_l: Vector3 = _at(skel, b["hand_l"])
+	var kair_r: Vector3 = _at(skel, hand_r)
+	anim.player.primm_slash_timer = slash_full
+	anim.animate_jumping()
+	for kair_probe: Array in [[kair_l, b["hand_l"], "left"], [kair_r, hand_r, "right"]]:
+		if _at(skel, kair_probe[1]).distance_to(kair_probe[0]) <= SLASH_TRAVEL_M:
+			_fail("skinned fixture: jumping at full slash timer moved the %s hand %.4f m — "
+					% [kair_probe[2], _at(skel, kair_probe[1]).distance_to(kair_probe[0])]
+					+ "the slash must cross the arms over the air flap too")
+	# THE RETURN (air): expire timer, relax air frames back.
+	anim.player.primm_slash_timer = 0.0
+	for i: int in RELAX_FRAMES:
+		anim.animation_time = 0.0
+		anim.animate_jumping()
+	for kair_probe: Array in [[kair_l, b["hand_l"], "left"], [kair_r, hand_r, "right"]]:
+		var kair_gap: float = _at(skel, kair_probe[1]).distance_to(kair_probe[0])
+		if kair_gap > REST_EPS:
+			_fail("skinned fixture: jumping frames with the slash timer expired left the %s hand "
+					% kair_probe[2] + "%.4f m off the air pose — the slash froze "
+					% kair_gap + "past the timer (ceiling %.3f m)" % REST_EPS)
+	# (k3) IDLE PATH: drive `animate_idle()`.
+	anim.rig.rest_pose()
+	anim.player.primm_slash_timer = 0.0
+	anim.animation_time = 0.0
+	for i: int in RELAX_FRAMES:
+		anim.animate_idle(step)
+	var kidle_l: Vector3 = _at(skel, b["hand_l"])
+	var kidle_r: Vector3 = _at(skel, hand_r)
+	anim.player.primm_slash_timer = slash_full
+	anim.animate_idle(step)
+	for kidle_probe: Array in [[kidle_l, b["hand_l"], "left"], [kidle_r, hand_r, "right"]]:
+		if _at(skel, kidle_probe[1]).distance_to(kidle_probe[0]) <= SLASH_TRAVEL_M:
+			_fail("skinned fixture: idle at full slash timer moved the %s hand %.4f m — "
+					% [kidle_probe[2], _at(skel, kidle_probe[1]).distance_to(kidle_probe[0])]
+					+ "the slash must cross the arms over the idle too")
+	# THE RETURN (idle): expire timer, relax idle frames back.
+	anim.player.primm_slash_timer = 0.0
+	for i: int in RELAX_FRAMES:
+		anim.animate_idle(step)
+	for kidle_probe: Array in [[kidle_l, b["hand_l"], "left"], [kidle_r, hand_r, "right"]]:
+		var kidle_gap: float = _at(skel, kidle_probe[1]).distance_to(kidle_probe[0])
+		if kidle_gap > REST_EPS:
+			_fail("skinned fixture: idle frames with the slash timer expired left the %s hand "
+					% kidle_probe[2] + "%.4f m off the idle rest — the slash froze "
+					% kidle_gap + "past the timer (ceiling %.3f m)" % REST_EPS)
+	# (k4) STRAFE PATH: drive `animate_sidestep()`.
+	anim.rig.rest_pose()
+	anim.reset_sidestep_pose()
+	anim.player.velocity = Vector3.ZERO
+	anim.player.step_direction = 1.0
+	anim.player.primm_slash_timer = 0.0
+	anim.animate_sidestep(step)
+	var kstrafe_l: Vector3 = _at(skel, b["hand_l"])
+	var kstrafe_r: Vector3 = _at(skel, hand_r)
+	anim.player.primm_slash_timer = slash_full
+	anim.animate_sidestep(step)
+	for kstrafe_probe: Array in [[kstrafe_l, b["hand_l"], "left"], [kstrafe_r, hand_r, "right"]]:
+		if _at(skel, kstrafe_probe[1]).distance_to(kstrafe_probe[0]) <= SLASH_TRAVEL_M:
+			_fail("skinned fixture: a strafe frame at full slash timer moved the %s hand %.4f m — "
+					% [kstrafe_probe[2], _at(skel, kstrafe_probe[1]).distance_to(kstrafe_probe[0])]
+					+ "the slash must cross the arms over the strafe too")
+	# THE RETURN (strafe): expire the timer, drive a strafe frame.
+	anim.player.primm_slash_timer = 0.0
+	anim.animate_sidestep(step)
+	for kstrafe_probe: Array in [[kstrafe_l, b["hand_l"], "left"], [kstrafe_r, hand_r, "right"]]:
+		var kstrafe_gap: float = _at(skel, kstrafe_probe[1]).distance_to(kstrafe_probe[0])
+		if kstrafe_gap > REST_EPS:
+			_fail("skinned fixture: a strafe frame with the slash timer expired left the %s hand "
+					% kstrafe_probe[2] + "%.4f m off the strafe rest — the slash froze "
+					% kstrafe_gap + "past the timer (ceiling %.3f m)" % REST_EPS)
+	anim.player.step_direction = 0.0
+	anim.player.velocity = Vector3.ZERO
+	anim.player.primm_slash_timer = 0.0
 
 	Sentinel.done("skinned_joints")
 

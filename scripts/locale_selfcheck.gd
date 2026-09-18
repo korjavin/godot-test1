@@ -356,6 +356,15 @@ const WIDTH_BUDGETS: Array = [
 	["%s was freed", 14, 336.0, "event log line"],
 	["Deafened", 14, 336.0, "event log line"],
 	["Undeafened", 14, 336.0, "event log line"],
+	# world_caption.gd — the lifetime-first stamp caption (bead godot-test1-wus8)
+	# posts to LevelUpLabel, full-frame centred at size 40. No fixed control to
+	# measure against, so the budget is the base viewport (project.godot's 1920)
+	# less side margins — the line must never outgrow the frame it is centred
+	# on. Measured raw like the minimap countdowns: each %d stands in for two
+	# digits, %s for the one-key name. A spill on a narrow portrait phone is
+	# shared with every other world caption (respawn, level-up — unbudgeted by
+	# the same rule), so none of those buys an entry here either.
+	["New passport stamp — %d of %d (press %s)", 40, 1820.0, "world stamp caption"],
 ]
 
 var _failures: Array[String] = []

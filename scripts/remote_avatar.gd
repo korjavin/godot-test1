@@ -523,6 +523,7 @@ func _animate(delta: float) -> void:
 		# them over its own frames. A mirror has no clock to ease against.
 		_hand_over_clock()
 		_rig.air(spread, tuck, 1.0)
+		_apply_slash_pose()
 		_relax_gait_extras()
 		return
 
@@ -568,6 +569,46 @@ func _animate(delta: float) -> void:
 		character_body.rotation.x = rest_rotations["body"].x \
 				+ amount * deg_to_rad(float(_gait["lean_deg"]))
 	_rig.head_bobble(amount * wobble * deg_to_rad(float(_gait["head_deg"])))
+	# Twin Flash rides the grounded gait too (bead godot-test1-0mr0.3, review
+	# round 1): the slash never moves the feet, so a grounded peer is the common
+	# case, and without this the `ab` bit posed nothing on the ground and a
+	# slash that ended mid-air kept the hand swords drawn after landing. The
+	# return is a non-event either way — `drop_wings()` zeroes the arm roll and
+	# `locomotion()` rewrites both arm axes above, so the next grounded frame
+	# reclaims the arms and re-sheathes the swords when the bit drops.
+	_apply_slash_pose()
+
+func _apply_slash_pose() -> void:
+	"""Primm's Twin Flash, room-wide (bead godot-test1-0mr0.3, owner ruling):
+	while the presence `ab` bit is set, the arms cross at full amount and the
+	hand katanas show. A mirror has no clock to shape an envelope against, so
+	this is the legs-snap convention — `slash(1.0)` outright, reclaimed by the
+	next gait frame when the bit drops. `has_method` because a rig this build
+	cannot pose (or a hero without the idiom) draws and stands still rather
+	than erroring, the file's own contract for unknown models and bits."""
+	var slashing: bool = bool(ability_bits & PLAYER_SCRIPT.ABILITY_BIT_SLASH)
+	if _rig != null and slashing and _rig.has_method("slash"):
+		_rig.slash(1.0)
+	_set_avatar_swords_drawn(slashing)
+
+
+func _set_avatar_swords_drawn(drawn: bool) -> void:
+	"""The avatar's own sword swap: the same three nodes the local swap moves.
+
+	Null-safe throughout — the character may still be streaming, or another
+	hero's entirely (only Primm's scene carries the pair, and only a slashing
+	Primm sets the bit, so this is a no-op for everyone else)."""
+	if character_node == null:
+		return
+	var back: Node = character_node.get_node_or_null("Body/Swords")
+	var left: Node = character_node.get_node_or_null("Body/SwordL")
+	var right: Node = character_node.get_node_or_null("Body/SwordR")
+	if back != null and "visible" in back:
+		back.visible = not drawn
+	if left != null and "visible" in left:
+		left.visible = drawn
+	if right != null and "visible" in right:
+		right.visible = drawn
 
 
 func _hand_over_clock(arm_rate: float = 0.0, leg_rate: float = 0.0) -> void:

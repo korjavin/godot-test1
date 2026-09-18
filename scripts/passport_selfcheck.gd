@@ -33,8 +33,10 @@ extends SceneTree
 ##     shipped sanitizer and merge (malformed shapes merge nothing, a smaller
 ##     set never shrinks), and the POST body carries the set.
 ##  j. PASSPORT ECHO (bead godot-test1-nufd): the real toast's first arrival at
-##     a kind flips is_stamped and posts "New passport stamp — 1 of 48" once
-##     through the REAL caption node; a second arrival at the same kind posts
+##     a kind flips is_stamped and posts "New passport stamp — 1 of 48
+##     (press J)" once through the REAL caption node — the key named off
+##     PassportPanel.TOGGLE_KEY, never a literal (bead godot-test1-wus8); a
+##     second arrival at the same kind posts
 ##     nothing (timer not re-armed); under a visible level-up the line is
 ##     refused, not overwritten, while the stamp still lands; wiping the store
 ##     file afterwards changes nothing the compass reads (memory, not Config);
@@ -282,9 +284,18 @@ func _check_passport_echo() -> void:
 		_fail("kind %d reads stamped on an empty store — the cache must start empty" % kind_a)
 	if not toast._first_visit(marker_a):
 		_fail("the first arrival at kind %d was not run-first" % kind_a)
-	var want: String = tr(ToastScript.STAMP_CAPTION) % [1, 48]
+	var want: String = tr(ToastScript.STAMP_CAPTION) % [1, 48,
+			OS.get_keycode_string(PassportPanel.TOGGLE_KEY)]
 	if label.text != want:
 		_fail("lifetime-first arrival posted '%s', wanted '%s'" % [label.text, want])
+	# Bead godot-test1-wus8: the line must NAME the passport key, read off the
+	# const rather than spelled out — so rebinding TOGGLE_KEY moves the caption
+	# with it instead of failing on a hardcoded "J". That is the whole point of
+	# reading the const, and the mutation control: change TOGGLE_KEY and this
+	# follows.
+	if not label.text.contains(OS.get_keycode_string(PassportPanel.TOGGLE_KEY)):
+		_fail("the stamp line '%s' names no key — the caption is the passport's"
+			% label.text + " only in-game introduction, and without the key it points nowhere")
 	if not toast.is_stamped(kind_a):
 		_fail("is_stamped(%d) is false after its first arrival" % kind_a)
 	if BestRunStore.found_landmark_ids().size() != 1:

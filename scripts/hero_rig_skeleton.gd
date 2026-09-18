@@ -236,6 +236,19 @@ const GAIT_SKIN: Dictionary = {
 	# The elbows bent with it, degrees of flex — "slightly bent" per the canon,
 	# so the hands ride up and out rather than spearing forward.
 	"stink_elbow_deg": 25.0,
+	# --- SLASH --------------------------------------------------------------
+	# Primm's Twin Flash (bead godot-test1-0mr0.3): both upper arms swept up
+	# forward like the stink raise but higher, degrees about the skeleton's +X,
+	# and crossed toward the midline, degrees about the skeleton's +Z — left
+	# arm positive, right arm negative, which carries the hanging hands toward
+	# each other (measured, not reasoned: the cross assertion in
+	# `gait_selfcheck` probe (k) is what keeps this honest against the
+	# MakeHuman rest).
+	"slash_raise_deg": 70.0,
+	"slash_cross_deg": 30.0,
+	# The elbows flexed with it, degrees — bent enough to read as a cut rather
+	# than a semaphore.
+	"slash_elbow_deg": 35.0,
 	# --- IDLE ---------------------------------------------------------------
 	# The breath, on the chest: rate in Hz and amplitude in degrees of pitch.
 	# 1.1 degrees at spine_03 is about 8 mm at the shoulders — the "few mm" the
@@ -476,6 +489,14 @@ func idle(weight: float) -> void:
 		for bone: String in [THIGH[side], UPPERARM[side], CLAVICLE[side]]:
 			var axis: int = AXIS_Y if bone == CLAVICLE[side] else AXIS_X
 			_set_axis(bone, axis, lerp(_axis(bone, axis), 0.0, weight))
+		# The arm ROLL eases out here too (bead godot-test1-0mr0.3): every
+		# other path owns the shoulder Z — the walk clears it in `drop_wings()`,
+		# the air writes its spread over it, the strafe its bias — so an idle
+		# that never touched Z would freeze Primm's crossed slash past its
+		# timer. Zero is the rest every one of those writers assumes, so with
+		# no slash running this is a no-op over an already-zero axis.
+		_set_axis(UPPERARM[side], AXIS_Z,
+				lerp(_axis(UPPERARM[side], AXIS_Z), 0.0, weight))
 		# The stride's own flex eases out; a landing is written straight in, or a
 		# 0.18 s squash would be over before a per-frame lerp had reached it.
 		var knee: float = minf(lerp(_axis(CALF[side], AXIS_X), 0.0, weight), knee_land)
@@ -548,6 +569,31 @@ func stink(amount: float) -> void:
 				lerp(_axis(UPPERARM[side], AXIS_X), _deg("stink_raise_deg"), amount))
 		_set_axis(LOWERARM[side], AXIS_X,
 				lerp(_axis(LOWERARM[side], AXIS_X), _deg("stink_elbow_deg"), amount))
+
+
+func slash(amount: float) -> void:
+	"""Primm's Twin Flash cross-slash (bead godot-test1-0mr0.3): both upper
+	arms swept ~70 degrees forward with bent elbows while the blades cross —
+	the pose the white flash disc sells.
+
+	EASED at `amount` in `stink()`'s idiom: each axis lerps from its CURRENT
+	angle toward the slashed one, so the caller fading 1 to 0 hands the arms
+	back to whatever the gait is drawing with no pop and no second state. A
+	pure function of (phase, amount) like everything else in the driver — and
+	a REMOTE mirror with no clock of its own simply calls this at 1.0 while the
+	presence `ab` bit is set, the way the legs snap rather than ease.
+
+	Only the two arm chains. Everything else — legs, spine, head — stays
+	whatever the gait drew, which is what makes the return a non-event: the
+	next locomotion or strafe frame rewrites these same axes anyway."""
+	for side: String in ["left", "right"]:
+		var cross: float = _deg("slash_cross_deg") if side == "left" else -_deg("slash_cross_deg")
+		_set_axis(UPPERARM[side], AXIS_X,
+				lerp(_axis(UPPERARM[side], AXIS_X), _deg("slash_raise_deg"), amount))
+		_set_axis(UPPERARM[side], AXIS_Z,
+				lerp(_axis(UPPERARM[side], AXIS_Z), cross, amount))
+		_set_axis(LOWERARM[side], AXIS_X,
+				lerp(_axis(LOWERARM[side], AXIS_X), _deg("slash_elbow_deg"), amount))
 
 
 func sidestep(splay: float, reach: float, lift_left: bool, lift: float,
