@@ -253,6 +253,10 @@ best-scores store. Both are written up in the workflow and `server/health_test.g
   type annotation is a parse-time reference — one direction only, or it is a cycle.
 - Arcade gravity, coyote time, buffered jumps, `move_toward` for horizontal velocity.
 - Match the surrounding comment density. This codebase is written to be read.
+- Non-interactive flags on shell file ops: `cp -f`, `mv -f`, `rm -f`, `rm -rf`, `cp -rf`
+  (agents hang on interactive `-i` confirmation prompts).
+- Non-interactive flags for tools that prompt: `ssh`/`scp -o BatchMode=yes`, `apt-get -y`,
+  `HOMEBREW_NO_AUTO_UPDATE=1`.
 
 ## Issue tracking
 **bd** (beads). `bd prime` is injected at session start and carries the workflow; don't
