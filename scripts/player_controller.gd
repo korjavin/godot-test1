@@ -4262,6 +4262,11 @@ var teibi_size_state: int = 0
 ## (0 while he is normal). See TEIBI_FORM_DURATION.
 var teibi_form_timer: float = 0.0
 
+## Seconds left in Phoboman's Stink Wave arm pose (0 while the soup is still).
+## Set when the wave fires, counted down in `_update_ability_timers()`; the pose
+## fades with it, so expiry IS the return. See PHOBOMAN_STINK_DURATION.
+var phoboman_stink_timer: float = 0.0
+
 ## True only while Teibi is giant — makes him crush crocodiles on contact.
 var is_giant: bool = false
 

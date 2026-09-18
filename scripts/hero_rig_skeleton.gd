@@ -229,6 +229,13 @@ const GAIT_SKIN: Dictionary = {
 	"shoulder_swing_deg": 5.0,
 	# The forearms raised at the top of the wing beat, degrees of flex.
 	"air_elbow_deg": 58.0,
+	# --- STINK --------------------------------------------------------------
+	# Phoboman's Stink Wave telegraph (bead godot-test1-9k9n.4): both upper arms
+	# raised forward, degrees about the skeleton's +X (forward, per `locomotion()`).
+	"stink_raise_deg": 40.0,
+	# The elbows bent with it, degrees of flex — "slightly bent" per the canon,
+	# so the hands ride up and out rather than spearing forward.
+	"stink_elbow_deg": 25.0,
 	# --- IDLE ---------------------------------------------------------------
 	# The breath, on the chest: rate in Hz and amplitude in degrees of pitch.
 	# 1.1 degrees at spine_03 is about 8 mm at the shoulders — the "few mm" the
@@ -521,15 +528,39 @@ func drop_wings() -> void:
 		_set_axis(UPPERARM[side], AXIS_Z, 0.0)
 
 
+func stink(amount: float) -> void:
+	"""Phoboman's Stink Wave telegraph (bead godot-test1-9k9n.4): both upper arms
+	raised ~40 degrees forward with bent elbows while the soup waves — the pose
+	the canon asks for and the sphere could never draw.
+
+	EASED at `amount` in `air()`'s idiom: each axis lerps from its CURRENT angle
+	toward the raised one, so the caller fading 1 to 0 hands the arms back to
+	whatever the gait is drawing with no pop and no second state. A pure
+	function of (phase, amount) like everything else in the driver — and a
+	REMOTE mirror, which carries no ability state on the presence packet, simply
+	never calls this: an ability is a local telegraph, mp replays the flee.
+
+	Only the two arm chains. Everything else — legs, spine, head — stays whatever
+	the gait drew, which is what makes the return a non-event: the next
+	locomotion or strafe frame rewrites these same axes anyway."""
+	for side: String in ["left", "right"]:
+		_set_axis(UPPERARM[side], AXIS_X,
+				lerp(_axis(UPPERARM[side], AXIS_X), _deg("stink_raise_deg"), amount))
+		_set_axis(LOWERARM[side], AXIS_X,
+				lerp(_axis(LOWERARM[side], AXIS_X), _deg("stink_elbow_deg"), amount))
+
+
 func sidestep(splay: float, reach: float, lift_left: bool, lift: float,
 		arm_bias: float, arm_swing: float) -> void:
 	"""The sideways shuffle, rolled on the skeleton's Z — the limb driver's
 	expression, bone for bone.
 
-	A strafe owns the Z axes and writes no joint at all, so the knees, ankles and
-	pelvis it inherits from the stride it interrupted have to be put back here or
-	they freeze there for as long as the step is held (`reset_sidestep_pose()` is
-	the same argument one level up, for the limb roll)."""
+	A strafe owns the Z axes; everything else it inherits from the stride it
+	interrupted has to be put back here or it freezes there for as long as the
+	step is held — the knees, ankles and pelvis (`reset_sidestep_pose()` is the
+	same argument one level up, for the limb roll), and since round 2 the ARM
+	chains too: the Stink Wave raises them on X, and a strafe that never
+	rewrote those axes wore the raise past the timer."""
 	_set_axis(THIGH["left"], AXIS_Z, splay + reach + (lift if lift_left else 0.0))
 	_set_axis(THIGH["right"], AXIS_Z, splay - reach + (0.0 if lift_left else lift))
 	_set_axis(UPPERARM["left"], AXIS_Z, -arm_bias - arm_swing)
@@ -538,6 +569,11 @@ func sidestep(splay: float, reach: float, lift_left: bool, lift: float,
 		_set_axis(CALF[side], AXIS_X, 0.0)
 		_set_axis(FOOT[side], AXIS_X, 0.0)
 		_set_axis(CLAVICLE[side], AXIS_Y, 0.0)
+		# The overlay draws OVER this rest, so a zero amount hands the arms
+		# straight back — and a full one raises from a known rest, not from
+		# wherever the interrupted stride left them.
+		_set_axis(UPPERARM[side], AXIS_X, 0.0)
+		_set_axis(LOWERARM[side], AXIS_X, _deg("elbow_bend_deg"))
 	_settle_torso(1.0)
 
 
