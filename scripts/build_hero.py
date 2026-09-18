@@ -1364,10 +1364,12 @@ HEROES = {
         # `got` is the widest vertex in a band and `want` the circle at the band's
         # centre) and the best CYLINDER, a barrel with dead-vertical sides at
         # D = 0.954 h, scores 0.9262. A 0.90 floor passes that barrel by 0.026, and
-        # a barrel is one edit away — uniform `belly` amplitudes across the four
-        # trunk bones is exactly a constant-width trunk. 0.93 rejects it and still
-        # leaves this build's 0.942 twelve thousandths of room under a real ball.
-        # (The body #431 shipped scores 0.838.)
+        # a barrel is reachable: not by flattening these amplitudes — the inflate
+        # is a radial SCALE, so uniform values keep MakeHuman's own profile in
+        # proportion and would hand back the pear — but by a per-bone dict tuned
+        # to cancel that profile, which is the same kind of solve the numbers above
+        # already are. 0.93 rejects it and still leaves this build's 0.942 twelve
+        # thousandths of room under a real ball. (The body #431 scores 0.838.)
         "silhouette": {"leg": 0.195, "arm": 0.19, "belly": 0.55,
                        "roundness": 0.93},
         # A FAT MAN'S ARMS DO NOT HANG AT 5 DEGREES. The cast's rest puts them
@@ -2207,18 +2209,17 @@ def squash_proportions(obj, armature, joints, row):
 # fifth is not a gate. 0.015 is 2.7 cm on this hero, still under the width of his
 # own hand and still nothing a viewer names, and all three RATIO targets below
 # land inside a fifth of it. (`roundness` is the fourth number and does not use
-# this tolerance at all — it is a floor.) The REJECTED body is outside on all three of
-# the ratios it shares, by 0.06 / 0.10 / 0.00 against this row (measured on its
-# own committed `.blend`, which is the only honest place to read it): the body
-# #431 shipped and the owner sent back is outside on TWO of the three ratios it
-# shares — leg 0.259 and arm 0.252, i.e. 0.064 and 0.062 over — and INSIDE on the
-# third, belly 0.552 against a 0.55 target. That a rejected silhouette passed one
+# this tolerance at all — it is a floor.) And measured on its own committed
+# `.blend`, which is the only honest place to read it, the REJECTED body — the one
+# #431 shipped and the owner sent back — is outside on TWO of the three ratios it
+# shares (leg 0.259 and arm 0.252, i.e. 0.064 and 0.062 over) and INSIDE on the
+# third (belly 0.552 against a 0.55 target). That a rejected silhouette passed one
 # of these three gates on the nose is exactly why `roundness` had to join them: a
 # pear and a ball of one width and one height are one number.
 SILHOUETTE_TOL = 0.015
 
-# ... AND THE ONE-SIDED HALF OF IT, because two of this hero's numbers are not
-# targets at all. Bead godot-test1-9k9n.9's acceptance is "leg <= 0.20 h, arm <=
+# ... AND THE ONE-SIDED HALF OF IT, because two of this hero's numbers are a
+# target AND a ceiling at once. Bead godot-test1-9k9n.9's acceptance is "leg <= 0.20 h, arm <=
 # 0.20 h ... asserted in build_hero.py", and a +-0.015 band around a 0.195 target
 # accepts 0.210 — 1.8 cm of leg on this hero that clears the gate and breaks the
 # ruling. The band stays (a limb 3 cm SHORTER than asked for is a miss too, which
@@ -2246,11 +2247,18 @@ TRUNK_BONES = ("pelvis", "spine_01", "spine_02", "spine_03")
 # ZERO and the slice scores 0.000 for ANY body — a ball, a plank, anything.
 # Measured on the two committed `.blend`s, full height against this band: the
 # body #431 shipped scores 0.509 -> 0.838, and this one 0.568 -> 0.942. So the
-# window is worth a third of the scale and is the most load-bearing number here;
-# it is NOT chosen to pass. Swept on the same two bodies, this build clears 0.90
-# at every window from (0.125, 0.875) inward and at 3, 5, 7 and 9 slices
-# (0.902 / 0.913 / 0.942 / 0.939 / 0.933 and 0.923 / 0.942 / 0.946 / 0.944)
-# while #431 never reaches 0.844 at any of them.
+# window is worth a third of the scale and is the most load-bearing number here —
+# WHICH MEANS THE WINDOW AND THE ROW'S FLOOR ARE ONE GATE AND NOT TWO, and the
+# honest way to say it is with the sweep rather than with a claim of robustness
+# the numbers do not support. Swept on the same two bodies at this slice count,
+# this build reads 0.902 / 0.913 / 0.942 / 0.939 / 0.933 at windows (0.125,
+# 0.875) / (0.15, 0.85) / (0.20, 0.80) / (0.25, 0.75) / (0.30, 0.70) and
+# 0.923 / 0.942 / 0.946 / 0.944 at 3 / 5 / 7 / 9 slices here — so it clears the
+# row's 0.93 at the three narrowest windows and at 5, 7 and 9 slices, and falls
+# under it at the two widest and at 3, where the metric starts sampling the
+# degenerate ends. #431 never reaches 0.844 at ANY of them, which is the thing
+# this gate is for: no window, floor or slice count in that whole sweep would
+# have accepted it. Move one of the three and re-derive the other two.
 ROUNDNESS_SLICES = 5
 ROUNDNESS_SPAN = (0.20, 0.80)
 
