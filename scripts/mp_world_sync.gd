@@ -487,29 +487,43 @@ static func publish_alarm(mp: Node, floor_index: int, local_xz: Vector2) -> bool
 	return true
 
 
-static func receive_alrm(mp: Node, _from_id: String, packet: Dictionary) -> void:
+static func receive_alrm(mp: Node, from_id: String, packet: Dictionary) -> void:
 	"""
 	ANY member's sighting: raise the same storey's alarm here.
 
-	No authority test and NO SENDER-POSITION TEST — see `publish_alarm()` for why
-	this verb is anyone-to-everyone. What makes it safe is `decode_alrm()`, which
-	answers the two questions this machine can answer alone: is that a storey this
-	building has, and is that point inside its envelope. Whole or nothing, like
-	every sibling.
+	No authority test — see `publish_alarm()` for why this verb is anyone-to-
+	everyone. Safety is two questions, not one:
 
-	THE MISSING PROXIMITY CHECK IS `gate`'S RULING, NOT AN OVERSIGHT, and the
-	other anyone-to-everyone verb states it in as many words
-	(`MpManager._receive_gate`): "The sender carries no authority and is asked
-	nothing: any member may open, so there is no holder to check and no position
-	to verify." `receive_pad` asks WAS THE SENDER THERE because `pad` is
-	master-arbitrated and carries an INDEX the master resolves against the plan —
-	one machine decides for the room. Here every receiver decides for itself, so
-	a presence table that has not caught up with the sender would drop a real
-	alarm on that screen alone. The accepted ceiling, stated so nobody
-	re-litigates it silently: a modified client in the room can raise any
-	storey's alarm from anywhere in the world, bounded at the verb's 2/s, and
-	what it buys is a guard walking to a point — the same thing the `pad` verb
-	already offers it at the same budget.
+	  1. IS THIS A POINT IN THIS BUILDING? `decode_alrm()`, whole or nothing: a
+	     storey the plans draw and an x/z inside the envelope, both bounds read
+	     from constants this machine owns.
+	  2. WAS THE SENDER AT THIS BUILDING? Its last published presence position,
+	     against `MpCodec.alarm_sender_at_hq()`. This is `receive_pad()`'s second
+	     question and it is here for the reason that one gives in as many words:
+	     "without this a modified client would divert any guard in the building
+	     from the far side of the world."
+
+	QUESTION 2 FAILS OPEN, AND THAT IS THE WHOLE DIFFERENCE FROM `pad`. `pad` is
+	MASTER-ARBITRATED — one machine holds one presence table and decides for the
+	room — so it can drop a press whose sender it cannot place. This verb is
+	anyone-to-everyone for the coverage reason `publish_alarm()` sets out, so
+	every receiver evaluates question 2 against ITS OWN table; failing closed
+	there would mean a peer whose presence for the sender is stale, or who has
+	none yet, silently loses a REAL alarm while everybody else hears it. So only
+	a sender this machine can place AND places far away is refused. Unknown,
+	missing or non-finite reads as yes.
+
+	WHAT THAT LEAVES, stated so nobody re-litigates it silently: a modified client
+	that is genuinely at the HQ can name a storey it is not on. It gets a guard
+	walking to a point on that storey, at the verb's 2/s, in a 2-4 player co-op
+	room — and it is already standing in the building, where that guard is a
+	threat to it too. The far-side-of-the-world spoof, which is the one that
+	matters, is refused by every peer with a current position for the sender.
+
+	The `gate` verb needs none of this because it carries an ID and not a place
+	(`MpManager._receive_gate`: "no holder to check and no position to verify").
+	Anyone-to-everyone settles WHO MAY SEND; it does not settle whether the
+	payload is checkable, and this payload is.
 
 	Applied through group discovery and `has_method`-guarded like every other
 	cross-system call in this file: no tower streamed in on this machine and there
@@ -528,4 +542,14 @@ static func receive_alrm(mp: Node, _from_id: String, packet: Dictionary) -> void
 	var interior := mp.get_tree().get_first_node_in_group("tower_interior")
 	if interior == null or not interior.has_method("raise_alarm"):
 		return
+	# QUESTION 2, FAIL-OPEN (see above). Every `return` skipped here is a position
+	# this machine could not evaluate, and each one deliberately lets the alarm
+	# through rather than refusing it: no entry for the sender, no `pos` on that
+	# entry, or an interior with no transform to measure against.
+	if interior is Node3D and mp._peer_state.has(from_id):
+		var sender: Variant = (mp._peer_state[from_id] as Dictionary).get("pos", null)
+		if typeof(sender) == TYPE_VECTOR3 \
+				and not MpCodec.alarm_sender_at_hq(
+					sender as Vector3, (interior as Node3D).global_position):
+			return
 	interior.call("raise_alarm", int(msg["f"]), msg["xz"] as Vector2, false)

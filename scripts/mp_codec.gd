@@ -1285,6 +1285,28 @@ static func landmark_claim_in_reach(sender: Vector3, slot: Vector3, radius: floa
 # HQ ALARM — the `alrm` verb (epic godot-test1-buyt, bead .2)
 # =============================================================================
 
+## How far outside the HQ's own footprint a peer's last published position may be
+## and still have raised an alarm inside it, in metres.
+##
+## THE SECOND TRUST BOUNDARY THE `alrm` VERB NEEDS. `decode_alrm()` answers "is
+## this a point in this building"; this answers "was the sender AT this building",
+## which is the question `receive_pad()` asks one verb along and for the same
+## reason it gives — without it a modified client diverts any guard in the
+## building from the far side of the world.
+##
+## COARSE ON PURPOSE, and it is not a second `inside_walls()`. The honest sender
+## is standing in the building, so the bound only has to separate "at the HQ" from
+## "somewhere else in a several-kilometre field"; anything finer would start
+## refusing a sender in a doorway over presence lag. The radius is the plan's own
+## far CORNER (`PLAN_HALF * √2`, ~54.9 m) plus this pad, so a peer past ~85 m from
+## the tower's centre — the building is 80 m across — is unambiguously not in it.
+##
+## The pad is `MAX_LANDMARK_CLAIM_PAD`'s number for its reason: presence is only
+## published at `PRESENCE_HZ`, so this machine's picture of the sender can be a
+## fraction of a second — several metres of running — behind the moment the
+## sighting fired.
+const MAX_ALARM_SENDER_PAD: float = 30.0
+
 static func decode_alrm(packet: Dictionary) -> Dictionary:
 	"""
 	The `alrm` parser — ANY member's sighting raising one storey's alarm.
@@ -1339,6 +1361,35 @@ static func decode_alrm(packet: Dictionary) -> Dictionary:
 	if absf(x) > TowerPlans.PLAN_HALF or absf(z) > TowerPlans.PLAN_HALF:
 		return {}
 	return {"f": floor_index, "xz": Vector2(x, z)}
+
+
+static func alarm_sender_at_hq(sender: Vector3, tower_centre: Vector3) -> bool:
+	"""
+	Could a peer whose last published position is `sender` have raised an alarm in
+	the HQ standing at `tower_centre`?
+
+	Static and pure so scripts/mp_codec_selfcheck.gd can drive it, and
+	finiteness-checked before anything is derived from either point — the
+	`pad_press_in_reach` rule, for the same reason: a non-finite input has to read
+	as an ANSWER, never as "infinitely far, compare it anyway".
+
+	FLAT XZ, like `landmark_claim_in_reach`: the sender may be on any storey and
+	the tower node's origin is at its feet, so a Y-aware distance would refuse the
+	alarm of somebody standing on the ninth floor.
+
+	IT ANSWERS TRUE FOR A NON-FINITE INPUT, which is the opposite of
+	`pad_press_in_reach` and deliberate. This is the FAIL-OPEN half of the gate
+	(see `MpWorldSync.receive_alrm`): a position this machine cannot evaluate must
+	not cost a real alarm its screen, so "I don't know" reads as "let it through",
+	and only a position that is KNOWN AND FAR is a refusal. `pad` can fail closed
+	because ONE machine — the master — decides for the whole room; here every
+	receiver decides for itself, so failing closed on a stale table would drop a
+	genuine alarm on that screen alone.
+	"""
+	if not sender.is_finite() or not tower_centre.is_finite():
+		return true
+	var flat := Vector2(sender.x - tower_centre.x, sender.z - tower_centre.z)
+	return flat.length() <= TowerPlans.PLAN_HALF * sqrt(2.0) + MAX_ALARM_SENDER_PAD
 
 # =============================================================================
 # VOICE SIGNALLING — the `vc` family

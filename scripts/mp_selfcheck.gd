@@ -1822,7 +1822,11 @@ func _check_shot_parser() -> String:
 
 ## The interior reduced to the one method `MpWorldSync.receive_alrm()` calls, in
 ## group "tower_interior" so it is found through the shipped group lookup.
-const INTERIOR_STUB_SOURCE := """extends Node
+##
+## A `Node3D` because the real one is: the sender gate measures the sender's
+## published position against the building's own `global_position`, so a stub with
+## no transform would skip the half of `receive_alrm` this check exists to drive.
+const INTERIOR_STUB_SOURCE := """extends Node3D
 var raised: Array = []
 func raise_alarm(floor_index: int, local_xz: Vector2, publish: bool) -> void:
 	raised.append([floor_index, local_xz, publish])
@@ -1948,6 +1952,42 @@ func _check_alarm_verb() -> String:
 		interior.queue_free()
 		mp.queue_free()
 		return "a sighting on a storey the plans do not draw was raised anyway"
+
+	# --- 3b. THE SENDER GATE, BOTH HALVES. Known-and-far drops; unknown accepts.
+	#
+	# The second half is the one that needs a check, because it is the direction
+	# that fails SILENTLY: a gate that fails closed still looks correct from the
+	# attacker's side and only costs a lagging teammate the alarm he should have
+	# heard. `_room_manager` leaves `_peer_state` empty, so every dispatch above
+	# already exercised the unknown-sender path — this pins it deliberately and
+	# then pins the refusal beside it.
+	var seen: int = (interior.get("raised") as Array).size()
+	var hq: Vector3 = (interior as Node3D).global_position
+	mp._peer_state["greta"] = {"pos": hq + Vector3(2000.0, 0.0, 0.0)}
+	mp._receive_mesh_verb("greta", "alrm", honest)
+	if (interior.get("raised") as Array).size() != seen:
+		interior.queue_free()
+		mp.queue_free()
+		return "an alarm from a peer 2 km from the HQ was raised — a modified client "\
+			+ "could divert every guard in the building from the far side of the world"
+	mp._peer_state["greta"] = {"pos": hq + Vector3(3.0, 0.0, -2.0)}
+	mp._receive_mesh_verb("greta", "alrm", honest)
+	if (interior.get("raised") as Array).size() != seen + 1:
+		interior.queue_free()
+		mp.queue_free()
+		return "an alarm from a peer standing in the HQ was refused"
+	# ...and the FAIL-OPEN half: a sender this machine cannot place is let through.
+	mp._peer_state["helen"] = {"pos": "nowhere"}
+	mp._receive_mesh_verb("helen", "alrm", honest)
+	if (interior.get("raised") as Array).size() != seen + 2:
+		interior.queue_free()
+		mp.queue_free()
+		return "an alarm from a peer whose presence carries no usable position was "\
+			+ "dropped — the gate fails CLOSED, so a peer whose table is stale loses "\
+			+ "real alarms that everybody else hears"
+	mp._peer_state.erase("greta")
+	mp._peer_state.erase("helen")
+	seen = (interior.get("raised") as Array).size()
 
 	# --- 4. THE RATE LIMIT. One spend past the budget is refused (it is 2 today).
 	if not MPManager.VERB_BUDGET_PER_SEC.has("alrm"):

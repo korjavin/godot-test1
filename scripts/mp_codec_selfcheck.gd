@@ -1103,6 +1103,39 @@ func _check_alrm_parser() -> String:
 	# anyone-to-everyone, so there is no master authority behind it at all.
 	if not MPManager.VERB_BUDGET_PER_SEC.has("alrm"):
 		return "the alrm verb has no VERB_BUDGET_PER_SEC row"
+
+	# ...and the SECOND half of the boundary: was the sender at the building at
+	# all. `receive_pad`'s question, with `receive_pad`'s reason — "without this a
+	# modified client would divert any guard in the building from the far side of
+	# the world" — and the opposite failure direction, which is the part worth
+	# pinning (see `alarm_sender_at_hq`).
+	var hq := Vector3(1200.0, 0.0, -340.0)
+	if not MpCodec.alarm_sender_at_hq(hq, hq):
+		return "alarm_sender_at_hq refused a peer standing in the middle of the HQ"
+	# The far CORNER of the plan is an honest place to stand: the gate is coarse on
+	# purpose and must not start refusing a sender in a doorway over presence lag.
+	var corner := hq + Vector3(half, 12.0, half)
+	if not MpCodec.alarm_sender_at_hq(corner, hq):
+		return "alarm_sender_at_hq refused a peer at the plan's own far corner (%s)" % str(corner)
+	# ...and the attack it exists to stop.
+	if MpCodec.alarm_sender_at_hq(hq + Vector3(2000.0, 0.0, 0.0), hq):
+		return "alarm_sender_at_hq accepted a peer 2 km away — a modified client could "\
+			+ "raise every storey's alarm from the far side of the field"
+	if MpCodec.alarm_sender_at_hq(hq + Vector3(0.0, 0.0, -300.0), hq):
+		return "alarm_sender_at_hq accepted a peer 300 m from the tower"
+	# FLAT XZ: the sender is on a storey, and the tower node's origin is at its
+	# feet, so height must not enter the distance.
+	if not MpCodec.alarm_sender_at_hq(hq + Vector3(0.0, 400.0, 0.0), hq):
+		return "alarm_sender_at_hq refused a peer directly above the tower's centre — "\
+			+ "the test is flat XZ, or nobody on an upper storey may raise anything"
+	# NON-FINITE READS AS YES, the opposite of `pad_press_in_reach` and the whole
+	# fail-open rule: a position this machine cannot evaluate must never cost a
+	# real alarm its screen.
+	if not MpCodec.alarm_sender_at_hq(Vector3(NAN, 0.0, 0.0), hq):
+		return "alarm_sender_at_hq refused a NaN sender position — the gate fails CLOSED, "\
+			+ "so a peer with a stale presence table loses real alarms"
+	if not MpCodec.alarm_sender_at_hq(hq, Vector3.INF):
+		return "alarm_sender_at_hq refused an unplaceable tower — same fail-open rule"
 	Sentinel.done("alrm_parser")
 	return ""
 
