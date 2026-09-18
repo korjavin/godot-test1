@@ -46,13 +46,15 @@ change and its regenerated `.glb` go in the same commit. `scripts/predator_parts
 the shared toolkit and the contract every enemy mesh must honour; `export_faceted()`
 there is the one export seam for every generated `.glb` (heroes included) — read its
 docstring before touching it; an authored part lives beside its `PROVENANCE.md` row and
-is never written by a generator. **Teibi, Windman and Primm are authored and
-skinned** — one mesh each on a 23-bone MakeHuman rig, source of record
-`scripts/build_hero.py` (Blender + MPFB2, run by hand, outside the CI rebuild gate;
-`scripts/hero_manifest.json` is their staleness gate instead). Of the cast only
-Phoboman's parts and Windman's fan are still generated
-(`generate_phoboman_separate.py`, `generate_windman_fan.py` — the two names in
-`build.yml`'s rebuild loop).
+is never written by a generator. **All four heroes are authored and skinned** — one
+mesh each on a 23-bone MakeHuman rig, source of record `scripts/build_hero.py`
+(Blender + MPFB2, run by hand, outside the CI rebuild gate;
+`scripts/hero_manifest.json` is their staleness gate instead). Phoboman is the
+newest and the only one not yet WIRED to his mesh (bead godot-test1-9k9n.1 built it,
+9k9n.2 wires it, 9k9n.3 retires the parts), so his ten generated parts are still
+one of the three names in `build.yml`'s rebuild loop, beside Windman's fan and
+Primm's katanas (`generate_phoboman_separate.py`, `generate_windman_fan.py`,
+`generate_primm_swords.py`).
 
 `.gd.uid` files are Godot's; don't hand-edit them.
 

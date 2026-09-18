@@ -513,9 +513,12 @@ jobs:
       # SO THIS LOOP IS THREE SCRIPTS AND NOT FOUR HEROES, and bead 5u3.8 renamed
       # the first of them to say so: generate_windman_fan.py builds one PROP (a
       # fan on a BoneAttachment3D, rigid geometry a skeleton carries) and nothing
-      # else. Phoboman is not a prop — owner ruling 2026-09-11 keeps him on the
-      # sphere body and the limb rig — so his generator still builds his whole
-      # part tree and keeps its name. Bead z629 gives Primm the fan's idiom back:
+      # else. Phoboman is not a prop either: his generator still builds his whole
+      # part tree and keeps its name, because his `.tscn` still loads those ten
+      # parts. NOT for good any more, though — owner ruling 2026-09-18 (epic
+      # godot-test1-9k9n, option B) SUPERSEDED the 2026-09-11 one that kept him on
+      # the sphere body and the limb rig, bead 9k9n.1 built him a skinned mesh and
+      # bead 9k9n.3 retires this generator and takes his name out of the loop. Bead z629 gives Primm the fan's idiom back:
       # generate_primm_swords.py builds one PROP (two sheathed katanas crossed
       # on a BoneAttachment3D) and nothing else. All three are owed the
       # rebuild-and-diff gate below; Teibi has no generated geometry left at all.
