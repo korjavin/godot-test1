@@ -666,7 +666,7 @@ func animate_walking(delta: float, speed_multiplier: float) -> void:
 func _apply_stink_pose() -> void:
 	"""Phoboman's Stink Wave telegraph (bead godot-test1-9k9n.4): while his wave
 	timer runs, the upper arms rise OVER the gait. Called at the end of every
-	clocked pose path — walk, air, idle — AFTER the gait drew, because
+	clocked pose path — walk, air, idle, sidestep — AFTER the gait drew, because
 	`rig.stink()` lerps from the CURRENT angles toward raised.
 
 	The amount is the timer over its duration, so the caller's fade IS the
@@ -814,6 +814,10 @@ func animate_sidestep(delta: float) -> void:
 	_last_sidestep_sine_sign = sine_sign
 
 	sidestep_pose(_sidestep_phase, player.step_direction)
+
+	# Round 2: the strafe is a clocked pose path like the rest, so the wave
+	# rides it too — without this, F while strafing showed no telegraph.
+	_apply_stink_pose()
 
 func animate_jumping() -> void:
 	"""

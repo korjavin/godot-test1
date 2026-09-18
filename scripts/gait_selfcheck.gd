@@ -1872,6 +1872,48 @@ func _measure_skinned_joints(anim, fixture: Node3D) -> void:
 					+ "arms must be reclaimed by the path every frame already walks "
 					+ "(ceiling %.3f m)" % REST_EPS)
 
+	# ---- (j2) THE WAVE RIDES THE STRAFE, AND LEAVES NO RESIDUE ------
+	# Round 2 (codex review): `animate_sidestep()` never called the overlay, so
+	# F while strafing showed no telegraph — and strafing mid-wave froze the
+	# raised arms past the timer, because the strafe rewrote no arm X axis.
+	# Driven through the SHIPPED strafe path with the timer as the amount and
+	# measured in skeleton space like (j): the raise against the STRAFE rest
+	# (not the stand rest above), the return against it too. Zero velocity, so
+	# the phase never advances and no footstep can fire.
+	anim.rig.rest_pose()
+	anim.reset_sidestep_pose()
+	anim.player.velocity = Vector3.ZERO
+	anim.player.step_direction = 1.0
+	anim.player.phoboman_stink_timer = 0.0
+	anim.animate_sidestep(step)
+	var strafe_l: Vector3 = _at(skel, b["hand_l"])
+	var strafe_r: Vector3 = _at(skel, hand_r)
+	anim.player.phoboman_stink_timer = PlayerAbilities.PHOBOMAN_STINK_DURATION
+	anim.animate_sidestep(step)
+	for strafe_probe: Array in [[strafe_l, b["hand_l"], "left"], [strafe_r, hand_r, "right"]]:
+		var strafe_base: Vector3 = strafe_probe[0]
+		var strafe_travel: Vector3 = _at(skel, strafe_probe[1]) - strafe_base
+		if -strafe_travel.z <= STINK_TRAVEL_M:
+			_fail("skinned fixture: a strafe frame at full stink timer moved the %s hand "
+					% strafe_probe[2] + "(%.4f, %.4f, %.4f) m — the wave must raise the arms "
+					% [strafe_travel.x, strafe_travel.y, strafe_travel.z] + "over the strafe "
+					+ "too, carrying a hand at least %.2f m toward -Z" % STINK_TRAVEL_M)
+	# THE RETURN: expire the timer, drive a strafe frame — the hands must be
+	# back at the strafe rest, because the strafe rewrites the arm X axes and
+	# the zero-amount overlay is a no-op over them.
+	anim.player.phoboman_stink_timer = 0.0
+	anim.animate_sidestep(step)
+	for strafe_probe: Array in [[strafe_l, b["hand_l"], "left"], [strafe_r, hand_r, "right"]]:
+		var strafe_base: Vector3 = strafe_probe[0]
+		var strafe_gap: float = _at(skel, strafe_probe[1]).distance_to(strafe_base)
+		if strafe_gap > REST_EPS:
+			_fail("skinned fixture: a strafe frame with the timer expired left the %s hand "
+					% strafe_probe[2] + "%.4f m off the strafe rest — the wave's arms froze "
+					% strafe_gap + "past the timer (ceiling %.3f m)" % REST_EPS)
+	anim.player.step_direction = 0.0
+	anim.player.velocity = Vector3.ZERO
+	anim.player.phoboman_stink_timer = 0.0
+
 	Sentinel.done("skinned_joints")
 
 
