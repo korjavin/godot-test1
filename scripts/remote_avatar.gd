@@ -569,6 +569,14 @@ func _animate(delta: float) -> void:
 		character_body.rotation.x = rest_rotations["body"].x \
 				+ amount * deg_to_rad(float(_gait["lean_deg"]))
 	_rig.head_bobble(amount * wobble * deg_to_rad(float(_gait["head_deg"])))
+	# Twin Flash rides the grounded gait too (bead godot-test1-0mr0.3, review
+	# round 1): the slash never moves the feet, so a grounded peer is the common
+	# case, and without this the `ab` bit posed nothing on the ground and a
+	# slash that ended mid-air kept the hand swords drawn after landing. The
+	# return is a non-event either way — `drop_wings()` zeroes the arm roll and
+	# `locomotion()` rewrites both arm axes above, so the next grounded frame
+	# reclaims the arms and re-sheathes the swords when the bit drops.
+	_apply_slash_pose()
 
 func _apply_slash_pose() -> void:
 	"""Primm's Twin Flash, room-wide (bead godot-test1-0mr0.3, owner ruling):

@@ -25,12 +25,18 @@ keeps its swords).
 	correctly shipped saya reads right-hand-INWARD on every one of its 240
 	faces — the generator asserts the source side (positive volume), this
 	asserts the shipped side.
+5. Grounded slash (bead godot-test1-0mr0.3, review round 1): the room-wide
+Twin Flash poses on the GROUND, where the feet never move — a grounded
+remote Primm with ABILITY_BIT_SLASH set crosses the arms and shows the hand
+pair, and clearing the bit reclaims both on the next gait frames (a slash
+that ends mid-air lands sheathed).
 
 Sentinel contract: isolate first, done() last in _run(), finish() at report.
 """
 
 const Sentinel = preload("res://scripts/selfcheck_sentinel.gd")
 const RemoteAvatar = preload("res://scripts/remote_avatar.gd")
+const PlayerController = preload("res://scripts/player_controller.gd")
 
 const PRIMM_SCENE: String = "res://scenes/characters/primm.tscn"
 const SWORDS_NODE: String = "Swords"
@@ -75,6 +81,7 @@ func _run() -> void:
 	await process_frame
 	_check_local_attachment(fixture)
 	_check_remote_mirror(avatar)
+	await _check_grounded_slash(avatar)
 	_check_clearance(fixture)
 	_check_outward(fixture)
 	fixture.queue_free()
@@ -164,6 +171,73 @@ func _check_remote_mirror(avatar: Node3D) -> void:
 	if _prop_verts(swords).size() < MIN_PROP_VERTS:
 		_failures.append("mirror: remote Swords prop carries no real geometry")
 	Sentinel.done("mirror")
+
+
+func _check_grounded_slash(avatar: Node3D) -> void:
+	"""
+	Review round 1 on PR #437: `_apply_slash_pose()` ran ONLY in the airborne
+	branch, so a grounded peer — the common case, Twin Flash never moves the
+	feet — kept the katanas on his back, and a slash ending mid-air landed with
+	the hand swords stuck drawn. Drive a GROUNDED remote Primm with the
+	presence `ab` bit set: the hand pair must show and the arms must cross;
+	clear the bit and the next gait frames must sheathe and reclaim.
+	"""
+	if avatar.character_node == null:
+		_failures.append("slash: no character_node — the grounded pose has nothing to cross")
+		Sentinel.done("grounded_slash")
+		return
+	var body: Node = avatar.character_node.get_node_or_null("Body")
+	var back: Node = body.get_node_or_null("Swords") if body != null else null
+	var left: Node = body.get_node_or_null("SwordL") if body != null else null
+	if back == null or left == null:
+		_failures.append("slash: remote primm carries no Swords/SwordL pair to swap")
+		Sentinel.done("grounded_slash")
+		return
+	if avatar._rig == null or not avatar._rig.has_method("measure"):
+		_failures.append("slash: remote primm bound no measurable rig — the pose has no arms to cross")
+		Sentinel.done("grounded_slash")
+		return
+	# Grounded and standing: the slash never moves the feet, so this is the
+	# case the pose exists for.
+	avatar.on_floor = true
+	avatar.move_speed = 0.0
+	avatar.ability_bits = PlayerController.ABILITY_BIT_SLASH
+	await process_frame
+	await process_frame
+	if not bool(left.get("visible")):
+		_failures.append("slash: a GROUNDED peer with the slash bit set keeps the hand"
+			+ " katanas hidden — the pose ran in the airborne branch only")
+	if bool(back.get("visible")):
+		_failures.append("slash: a GROUNDED peer with the slash bit set keeps the back"
+			+ " pair drawn — the swap never ran on the ground")
+	var crossed: Dictionary = avatar._rig.measure()
+	if float(crossed.get("left_arm_x", 0.0)) < deg_to_rad(50.0) \
+			or float(crossed.get("right_arm_x", 0.0)) < deg_to_rad(50.0):
+		_failures.append("slash: a GROUNDED peer with the slash bit set holds his arms at"
+			+ " (%.1f, %.1f) deg — the cross never reached the ground" % [
+				rad_to_deg(float(crossed.get("left_arm_x", 0.0))),
+				rad_to_deg(float(crossed.get("right_arm_x", 0.0)))])
+	# The bit drops: the next gait frames sheathe the swords and hand the arms
+	# back — `drop_wings()` zeroes the roll and `locomotion()` rewrites both
+	# arm axes, so this is the same non-event as the local expiry.
+	avatar.ability_bits = 0
+	await process_frame
+	await process_frame
+	if bool(left.get("visible")):
+		_failures.append("slash: clearing the bit left the hand katanas drawn on the"
+			+ " ground — a slash ending mid-air lands with stuck swords")
+	if not bool(back.get("visible")):
+		_failures.append("slash: clearing the bit left the back pair hidden — the swap"
+			+ " never ran the sheathe half on the ground")
+	var rest: Dictionary = avatar._rig.measure()
+	if float(rest.get("left_arm_x", 0.0)) > deg_to_rad(30.0) \
+			or float(rest.get("right_arm_x", 0.0)) > deg_to_rad(30.0):
+		_failures.append("slash: clearing the bit left the arms raised at (%.1f, %.1f)"
+			% [rad_to_deg(float(rest.get("left_arm_x", 0.0))),
+				rad_to_deg(float(rest.get("right_arm_x", 0.0)))]
+			+ " deg — the grounded gait never reclaimed the cross")
+	print("grounded slash: the bit crosses a grounded peer's arms and draws the hand pair, clearing it sheathes and reclaims")
+	Sentinel.done("grounded_slash")
 
 
 func _tail_box_world(fixture: Node) -> AABB:
