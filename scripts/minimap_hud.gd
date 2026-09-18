@@ -1489,12 +1489,31 @@ func compass_target_pos() -> Vector3:
 	return _target_landmark_pos if _has_target_landmark else Vector3.ZERO
 
 
+func _compass_tier(toast: Node, marker: Node3D) -> int:
+	## Which passport tier a candidate belongs to: 0 = a kind the passport
+	## lacks, 1 = stamped or unknown. Unknown (no toast, no is_stamped, no kind
+	## meta) is tier 1, so a standalone scene behaves exactly as before.
+	if marker == null:
+		return 1
+	if toast != null and toast.has_method("is_stamped") and marker.has_meta("kind"):
+		if not bool(toast.call("is_stamped", int(marker.get_meta("kind")))):
+			return 0
+	return 1
+
+
 func _gather_landmark_compass() -> void:
 	"""The landmark compass (bead godot-test1-uj0u): points at ONE nearest unvisited
 	landmark among loaded group "landmark" nodes.
 
 	Held with hysteresis: only switches if current target unloads, becomes visited,
 	or another candidate is nearer by > 25% (LANDMARK_HYSTERESIS_RATIO).
+
+	PREFERS KINDS NOT IN THE PASSPORT (bead godot-test1-nufd): per-run visited
+	is the SECOND tier, not the filter — tier 0 is loaded, unvisited this run
+	AND unstamped for a lifetime, tier 1 is loaded and unvisited this run, and
+	the pick is the nearest within the best non-empty tier. Hysteresis holds
+	within a tier; a tier-0 candidate always displaces a tier-1 target. Drawing,
+	caption, compass_target_distance/pos are unchanged.
 
 	Draws a small BONE arrow at the rim when off-disc (reusing BUDAPEST_ARROW_*
 	constants), or draws the target's X bold when on-disc (LANDMARK_TARGET_MARK_WIDTH).
@@ -1538,10 +1557,14 @@ func _gather_landmark_compass() -> void:
 		_target_landmark_node = null
 		current_dist = INF
 
-	# Find nearest unvisited candidate in "landmark" group:
-	var best_node: Node3D = null
-	var best_dist: float = INF
-	var best_pos: Vector3 = Vector3.ZERO
+	# Find nearest unvisited candidate in "landmark" group, preferring kinds the
+	# passport lacks (tier 0) over stamped ones (tier 1):
+	var best0_node: Node3D = null
+	var best0_dist: float = INF
+	var best0_pos: Vector3 = Vector3.ZERO
+	var best1_node: Node3D = null
+	var best1_dist: float = INF
+	var best1_pos: Vector3 = Vector3.ZERO
 	for node in get_tree().get_nodes_in_group("landmark"):
 		var marker := node as Node3D
 		if marker == null or not is_instance_valid(marker) or not marker.is_inside_tree():
@@ -1550,14 +1573,28 @@ func _gather_landmark_compass() -> void:
 		if toast != null and toast.has_method("is_visited") and toast.is_visited(pos):
 			continue
 		var d: float = Vector2(_player_pos.x - pos.x, _player_pos.z - pos.z).length()
-		if d < best_dist:
-			best_dist = d
-			best_node = marker
-			best_pos = pos
+		if _compass_tier(toast, marker) == 0:
+			if d < best0_dist:
+				best0_dist = d
+				best0_node = marker
+				best0_pos = pos
+		elif d < best1_dist:
+			best1_dist = d
+			best1_node = marker
+			best1_pos = pos
+	# Nearest within the best non-empty tier.
+	var best_node: Node3D = best0_node if best0_node != null else best1_node
+	var best_dist: float = best0_dist if best0_node != null else best1_dist
+	var best_pos: Vector3 = best0_pos if best0_node != null else best1_pos
+	var best_tier: int = 0 if best0_node != null else 1
+	var current_tier: int = _compass_tier(toast, _target_landmark_node) if current_valid else 1
 
-	# Hysteresis:
+	# Hysteresis applies WITHIN a tier; a tier-0 candidate always displaces a
+	# tier-1 target, however near the held one is.
 	if current_valid:
-		if best_node != null and best_node != _target_landmark_node and best_dist < current_dist * LANDMARK_HYSTERESIS_RATIO:
+		if best_node != null and best_node != _target_landmark_node \
+				and (best_tier < current_tier \
+					or (best_tier == current_tier and best_dist < current_dist * LANDMARK_HYSTERESIS_RATIO)):
 			_target_landmark_node = best_node
 			_target_landmark_pos = best_pos
 			_has_target_landmark = true

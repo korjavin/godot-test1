@@ -32,12 +32,21 @@ extends SceneTree
 ##  i. LOBBY FOLD (bead 0bnw.2): the GET reply's `found` unions through the
 ##     shipped sanitizer and merge (malformed shapes merge nothing, a smaller
 ##     set never shrinks), and the POST body carries the set.
+##  j. PASSPORT ECHO (bead godot-test1-nufd): the real toast's first arrival at
+##     a kind flips is_stamped and posts "New passport stamp — 1 of 48" once
+##     through the REAL caption node; a second arrival at the same kind posts
+##     nothing (timer not re-armed); under a visible level-up the line is
+##     refused, not overwritten, while the stamp still lands; wiping the store
+##     file afterwards changes nothing the compass reads (memory, not Config);
+##     and minimap_hud.gd never names found_landmark_ids (the 5 Hz tick reads
+##     the toast cache).
 ##
 ## The store probes drive the REAL `BestRunStore` statics with
 ## `Sentinel.isolate_user_state()` first, so no real profile is touched.
 
 const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 const ToastScript := preload("res://scripts/landmark_toast.gd")
+const CaptionScript := preload("res://scripts/world_caption.gd")
 const TerrainScript := preload("res://scripts/endless_terrain.gd")
 const CityMapCheck := preload("res://scripts/city_map_selfcheck.gd")
 const HelpOverlay := preload("res://scripts/help_overlay.gd")
@@ -55,6 +64,7 @@ func _run() -> void:
 	_check_union()
 	_check_monotone()
 	_check_stamp()
+	_check_passport_echo()
 	_check_key()
 	await _check_panel()
 	_check_no_payout()
@@ -234,6 +244,118 @@ func _check_stamp() -> void:
 	root.remove_child(toast)
 	toast.free()
 	Sentinel.done("stamp")
+
+
+func _check_passport_echo() -> void:
+	## Assertion (j) — the passport talks back (bead godot-test1-nufd). The
+	## REAL toast and the REAL caption node, the scratch store underneath:
+	## lifetime-first arrival flips is_stamped and posts the line once; a
+	## second arrival at the same kind posts nothing; a visible level-up
+	## refuses the line while the stamp still lands; the file can be wiped
+	## afterwards without moving the cache; the minimap never reads the file.
+	_write_found_raw("[]")
+	var toast := ToastScript.new()
+	root.add_child(toast)
+	var seed_script := GDScript.new()
+	seed_script.source_code = "extends Node3D\nvar run_seed: int = 7\n"
+	if seed_script.reload() != OK:
+		_fail("the run-seed stub script did not compile")
+		return
+	var seed_node := Node3D.new()
+	seed_node.set_script(seed_script)
+	seed_node.add_to_group("terrain")
+	root.add_child(seed_node)
+	var label := CaptionScript.new()
+	root.add_child(label)
+
+	# Lifetime-first arrival: kind 3 flips the cache and posts "1 of 48"
+	# (48 is the registry size check (g) pins).
+	var kind_a: int = 3
+	var marker_a := Node3D.new()
+	marker_a.set_meta("kind", kind_a)
+	marker_a.position = Vector3.ZERO
+	root.add_child(marker_a)
+	if toast.is_stamped(kind_a):
+		_fail("kind %d reads stamped on an empty store — the cache must start empty" % kind_a)
+	if not toast._first_visit(marker_a):
+		_fail("the first arrival at kind %d was not run-first" % kind_a)
+	var want: String = tr(ToastScript.STAMP_CAPTION) % [1, 48]
+	if label.text != want:
+		_fail("lifetime-first arrival posted '%s', wanted '%s'" % [label.text, want])
+	if not toast.is_stamped(kind_a):
+		_fail("is_stamped(%d) is false after its first arrival" % kind_a)
+	if BestRunStore.found_landmark_ids().size() != 1:
+		_fail("the stamp stored %s, wanted one id" % str(BestRunStore.found_landmark_ids()))
+
+	# Second arrival, same kind, new place: run-first again, but the passport
+	# already holds it — the line must NOT post twice. Shrink the hold timer
+	# first, so a re-post would show as a re-armed (full) timer.
+	label._process(1.0)
+	var shrunk: float = float(label.get("_caption_timer"))
+	var marker_b := Node3D.new()
+	marker_b.set_meta("kind", kind_a)
+	marker_b.position = Vector3(400.0, 0.0, 400.0)
+	root.add_child(marker_b)
+	if not toast._first_visit(marker_b):
+		_fail("the second kind-%d arrival was not run-first at its new place" % kind_a)
+	if label.text != want:
+		_fail("a repeat kind posted '%s' over the stamp line" % label.text)
+	if absf(float(label.get("_caption_timer")) - shrunk) > 0.001:
+		_fail("a repeat kind re-armed the caption timer — the line posts once per kind, ever")
+	if BestRunStore.found_landmark_ids().size() != 1:
+		_fail("a repeat kind grew the store to %s" % str(BestRunStore.found_landmark_ids()))
+
+	# Under a visible level-up the line is REFUSED, not overwritten — while
+	# the stamp itself still lands.
+	var kind_c: int = 4
+	var marker_c := Node3D.new()
+	marker_c.set_meta("kind", kind_c)
+	marker_c.position = Vector3(800.0, 0.0, 0.0)
+	root.add_child(marker_c)
+	label.text = "Level 2!"
+	label.visible = true
+	label.set("_posted_text", "")
+	if not toast._first_visit(marker_c):
+		_fail("the kind-%d arrival was not run-first" % kind_c)
+	if label.text != "Level 2!":
+		_fail("the stamp line overwrote a visible level-up ('%s')" % label.text)
+	if not toast.is_stamped(kind_c):
+		_fail("is_stamped(%d) is false after its arrival under a level-up" % kind_c)
+	if BestRunStore.found_landmark_ids().size() != 2:
+		_fail("the level-up arrival stored %s, wanted two ids" % str(BestRunStore.found_landmark_ids()))
+
+	# The file is wiped afterwards — the cache does not move, because the
+	# compass tick reads memory, never the ConfigFile.
+	_write_found_raw("[]")
+	if not toast.is_stamped(kind_a):
+		_fail("wiping the store file unstamped kind %d — is_stamped() must read the cache" % kind_a)
+	label.text = ""
+	label.visible = false
+	var marker_d := Node3D.new()
+	marker_d.set_meta("kind", kind_a)
+	marker_d.position = Vector3(1200.0, 0.0, 1200.0)
+	root.add_child(marker_d)
+	toast._first_visit(marker_d)
+	if not label.text.is_empty():
+		_fail("a cached kind posted '%s' after its file entry was wiped" % label.text)
+
+	# ...and the 5 Hz tick can never read the file: the minimap must not name
+	# the store read at all.
+	var minimap_source: String = FileAccess.get_file_as_string("res://scripts/minimap_hud.gd")
+	if minimap_source.is_empty():
+		_fail("could not read minimap_hud.gd to check the tick never reads the store")
+	elif minimap_source.count("found_landmark_ids(") != 0:
+		_fail("minimap_hud.gd calls found_landmark_ids() — the compass tick must read the toast cache, never the ConfigFile")
+
+	_write_found_raw("[]")
+	for node in [marker_a, marker_b, marker_c, marker_d, seed_node]:
+		root.remove_child(node)
+		node.free()
+	root.remove_child(label)
+	label.free()
+	root.remove_child(toast)
+	toast.free()
+	Sentinel.done("passport_echo")
 
 
 func _check_key() -> void:
