@@ -269,9 +269,17 @@ const TREASURE_SALT: int = 0x7EA5
 ## The lifetime-first stamp caption (bead godot-test1-nufd): posted once through
 ## WorldCaption.post_caption when an arrival stamps a kind the passport never
 ## held. A CSV KEY like the card's four strings below — `tr()` on the format
-## string, count then registry size — with its German row beside the passport
-## rows in ui.csv.
-const STAMP_CAPTION: String = "New passport stamp — %d of %d"
+## string, count then registry size then the passport key — with its German row
+## beside the passport rows in ui.csv.
+##
+## The key names itself (bead godot-test1-wus8): the caption is the one and only
+## in-game introduction to the passport, and it pointed nowhere — the panel
+## opens on J alone (taught otherwise only in the F1 card) and carries no
+## opener button. The key is read off `PassportPanel.TOGGLE_KEY` through
+## `OS.get_keycode_string()`, never a literal — `passport_panel.gd`'s own close
+## hint already uses exactly that idiom, so a rebound key can never drift from
+## the caption that teaches it.
+const STAMP_CAPTION: String = "New passport stamp — %d of %d (press %s)"
 
 ## coin.gd is preloaded ONLY for its static `id_at()` — the project's one
 ## "identify a deterministic world thing by where it stands" helper, which is
@@ -1528,7 +1536,8 @@ func _post_stamp_caption() -> void:
 	var label := get_tree().get_first_node_in_group("world_caption")
 	if label == null or not label.has_method("post_caption"):
 		return
-	label.post_caption(tr(STAMP_CAPTION) % [_stamped.size(), LandmarkBuilders.LANDMARKS.size()])
+	label.post_caption(tr(STAMP_CAPTION) % [_stamped.size(), LandmarkBuilders.LANDMARKS.size(),
+			OS.get_keycode_string(PassportPanel.TOGGLE_KEY)])
 
 
 func _treasure_amount(id: int, run_seed: int) -> int:
