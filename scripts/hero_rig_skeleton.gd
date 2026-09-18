@@ -648,7 +648,7 @@ func _unit(swing: float, reference: String) -> float:
 	"""A swing (or a swing RATE) as a fraction of the DEFAULT gait row's own
 	amplitude, clamped. This is how the pelvis and the shoulders scale with the
 	hero without this file ever reading a `GAITS` row: Teibi's 44-degree legs
-	give 1.1, Phoboman's 24 give 0.6, and a standing hero gives 0."""
+	give 1.1, Phoboman's 34 give 0.85, and a standing hero gives 0."""
 	return clampf(swing / deg_to_rad(float(GAIT_SKIN[reference])), -1.5, 1.5)
 
 

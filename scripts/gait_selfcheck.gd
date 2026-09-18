@@ -30,10 +30,15 @@ extends SceneTree
 ## runs the same bounds, the same non-periodicity test and a determinism probe
 ## against the SKINNED Teibi — since bead godot-test1-5u3.3 the SHIPPED one
 ## (`scenes/characters/teibi.tscn`), a model with no `LeftArm` at all. Windman
-## joined him on the bone rig at bead 5u3.5; Primm and Phoboman are still on the
-## limb rig, and checks 1-7 — which run every hero in `CHARACTERS`, the skinned
-## ones included — still measure exactly what they measured, through
-## `rig.measure()`, on whichever driver each took.
+## joined him on the bone rig at bead 5u3.5, Primm at 5u3.6, and Phoboman — the
+## last hero on the limb rig — at bead godot-test1-9k9n.2 (epic `9k9n`, owner
+## ruling 2026-09-18), so checks 1-7 now measure all four heroes through
+## `rig.measure()` on the skinned driver. Check 8's limb-vs-bone equivalence
+## comparison retired with him — with no hero left on limbs it would compare
+## the bone driver against itself — while its driver script stays as a
+## skinned-only smoke, because `slump()` is the one pose no clock drives; and
+## the skinned-vs-skinned determinism probe beside it is what "same pose from
+## the same clock" means from now on.
 ##
 ## Deliberately NOT localized (a debug surface, per CLAUDE.md).
 
@@ -145,10 +150,10 @@ const SKINNED_MOVE_DEG: float = 1.0
 ## far more than enough for the envelope and the diagonal.
 const SKINNED_SWEEP_SECONDS: float = 20.0
 
-## CHECK 9's FIXTURE (bd godot-test1-9ynx) — Phoboman's standing height (1.80 m)
-## and limb rig binding.
+## CHECK 9's FIXTURE (bd godot-test1-9k9n.2) — Phoboman's standing height on the
+## skinned mesh (1.7992 m, PR #420's PROVENANCE row) and skinned-driver binding.
 const PHOBOMAN_FIXTURE: String = "res://scenes/characters/phoboman.tscn"
-const PHOBOMAN_TARGET_HEIGHT: float = 1.80
+const PHOBOMAN_TARGET_HEIGHT: float = 1.7992
 const PHOBOMAN_HEIGHT_TOL: float = 0.02
 ## An arbitrary clock the determinism probe asks twice about — arbitrary on
 ## purpose: a round number could land on a sine zero and compare two rest poses.
@@ -247,6 +252,11 @@ const SKINNED_BAND_DEG: Dictionary = {
 ## poses measure zero either way, but two poses one ULP apart measure 0.00098 rad
 ## through `angle_to` and 6e-8 here (both measured on this bead).
 const SKINNED_DETERMINISM_EPS: float = 1e-6
+## How close the driver script's closing slump must land to its own arguments
+## (0.37 / -0.14, symmetric by contract). Same-driver round trip, so 1e-3 is
+## four orders over the float noise and two under the smallest real deviation
+## (a dropped slump reads 0, 0.14 away).
+const SKINNED_SLUMP_EPS: float = 1e-3
 ## ...and the same comparison made WITHOUT resetting the two skeletons first, so
 ## one of them arrives carrying 430 frames of history. `_set_axis` is a
 ## read-modify-write by design (it is `node.rotation.x = v`), so the components a
@@ -355,8 +365,9 @@ func _run() -> void:
 
 func _check_catalogue() -> void:
 	"""
-	Every hero has a row, the DEFAULT row is still today's walk, and no row
-	carries a field the animation never reads.
+	Every hero has a row, the DEFAULT row is still today's walk, no row
+	carries a field the animation never reads, and every CHARACTERS scene
+	binds the skinned driver through HeroRig itself.
 	"""
 	var default_row: Dictionary = PlayerAnimation.GAITS.get("DEFAULT", {})
 	if default_row.is_empty():
@@ -408,6 +419,30 @@ func _check_catalogue() -> void:
 		if amount < 0.0 or amount >= 1.0:
 			_fail("GAITS['%s']['hitch'] is %.3f — it must stay in [0, 1) or the "
 					% [hero, amount] + "amplitude factor reaches zero and flips the limbs")
+
+	# (e) Every CHARACTERS scene binds the SKINNED driver — through HeroRig
+	#     itself, not a copy of its discovery: the real scene is instantiated,
+	#     the real rest table is captured, and the seam is asked. A limb scene
+	#     can no longer come back silently (child 9k9n.3 retires the limb
+	#     driver; until then this is the guard that says the roster left it).
+	for entry: Dictionary in PlayerController.CHARACTERS:
+		var hero: String = String(entry["name"])
+		var path: String = String(entry["scene_path"])
+		var packed: PackedScene = load(path)
+		if packed == null:
+			_fail("could not load %s — no catalogue guard runs on '%s'" % [path, hero])
+			continue
+		var hfix: Node3D = packed.instantiate()
+		root.add_child(hfix)
+		var hbody: Node3D = hfix.get_node_or_null("Body") as Node3D
+		var hrig: RefCounted = null
+		if hbody != null:
+			hrig = HeroRig.for_body(hbody, PlayerAnimation.capture_rest_pose(hfix))
+		if hrig == null or String(hrig.kind()) != "skinned":
+			_fail("%s bound the '%s' rig — every CHARACTERS scene must take the "
+					% [path, "none" if hrig == null else hrig.kind()]
+					+ "skinned driver, so a migrated hero cannot slide back onto limbs")
+		hfix.queue_free()
 
 	Sentinel.done("catalogue")
 
@@ -1124,16 +1159,15 @@ func _check_skinned(player: Node3D) -> void:
 	      bobble forced on — an unmeasured write is a write that can be deleted
 	      in silence (the PR's second mutation control).
 
-	...and then three things the walk sweep STRUCTURALLY CANNOT see:
+	...and then two things the walk sweep STRUCTURALLY CANNOT see:
 
-	  (g) THE TWO DRIVERS ARE THE SAME POSE — an identical script of driver calls
-	      run against the limb rig and the bone rig, compared key by key. The
-	      walk sweep above pins all four `*_z` keys to zero (`animate_walking()`
-	      opens with `reset_sidestep_pose()`), so without this `sidestep()`,
-	      `air()`, `drop_wings()` and `reset_roll()` would have no coverage
-	      anywhere in the suite — no shipped hero binds this driver. And equality
-	      against the rig this game already ships is a far sharper instrument
-	      than a bound: it fails on one flipped sign in any of the ten writes.
+	  (g) THE DRIVER SCRIPT, on the bone rig alone. The limb-vs-bone
+	      comparison retired with the last limb hero (bead godot-test1-9k9n.2:
+	      with Phoboman skinned it compared the bone driver against itself),
+	      but the script stays because `slump()` is the one pose no clock
+	      drives, so these lines are the only place in the suite that watches
+	      the tower's jailed pose draw. No oracle and no second rig: the poses
+	      are asserted against the script's own asymmetric arguments.
 	  (h) THE JOINTS — the knee that bends on the back-swing and the elbow that
 	      tracks the shoulder. They are the whole reason a skeleton beats five
 	      nodes, and `measure()` deliberately does not expose them: its keys are
@@ -1153,12 +1187,12 @@ func _check_skinned(player: Node3D) -> void:
 	      back, and the knee must travel along the skeleton's ±Z (the way the
 	      hero faces), not sideways.
 
-	(g) SURVIVED BEAD godot-test1-5u3.9 UNCHANGED, and that is a design rule
-	      rather than luck: every bone that bead added — the calf, the foot, the
-	      forearm, the clavicle, the pelvis and the two spine bones — is a bone
-	      `measure()` does not expose, so a skinned hero still walks the exact
-	      stride the gait row asked for and the two drivers are still the same
-	      eleven numbers. What `5u3.9` added instead lives in
+	(h) and (i) SURVIVED BEAD godot-test1-5u3.9 UNCHANGED, and that is a
+	      design rule rather than luck: every bone that bead added — the calf,
+	      the foot, the forearm, the clavicle, the pelvis and the two spine
+	      bones — is a bone `measure()` does not expose, so a skinned hero
+	      still walks the exact stride the gait row asked for. What `5u3.9`
+	      added instead lives in
 	      `_measure_skinned_joints()` beside (h) — the phased knee, the level
 	      sole, the lagging elbow, the countered pelvis, the absorbed landing,
 	      the breath and a band around all of them, every one measured in the
@@ -1320,58 +1354,37 @@ func _check_skinned(player: Node3D) -> void:
 					+ "over the whole sweep — the driver claims that axis and is "
 					+ "not writing it")
 
-	# (g) THE TWO DRIVERS ARE THE SAME POSE. Hand an identical script of driver
-	#     calls to the limb rig and to the bone rig and compare `measure()` key by
-	#     key. This is the seam's ACTUAL claim, and it is stronger than any bound:
-	#     it catches a flipped sign, a swapped side or a dropped term in ANY of the
-	#     ten pose writes — including every Z write, which the walk sweep above
-	#     structurally cannot reach (`animate_walking()` opens with
-	#     `reset_sidestep_pose()`, pinning all four `*_z` keys to zero). The Z
-	#     writes need it most: the sidestep's two legs are `splay + reach` and
-	#     `splay - reach`, not a mirrored pair, so (c)'s diagonal is no proxy.
-	#
-	#     The limb rig is the player's own — the arguments come from this script,
-	#     not from a `GAITS` row, so neither side reads a gait at all. Only the
-	#     rig-owned keys are compared: `body_*` is written by the CALLER on the
-	#     `Body` node, and these two rigs hang off two different bodies.
-	#
-	#     THE ORACLE IS A HERO STILL ON LIMBS, and the epic keeps taking them: it
-	#     was Teibi until bead godot-test1-5u3.3 made him the fixture above, then
-	#     Windman until bead 5u3.5 migrated him too, and Primm goes at 5u3.6. So it
-	#     is PHOBOMAN, who is the END of that line rather than the next name on it:
-	#     his sphere body stays on the limb rig for good by owner ruling (epic 5u3
-	#     NOTES, "yes, sphere"), which is what guarantees this oracle always has
-	#     somebody left to be. The guard right below is what makes each hand-off
-	#     loud rather than silent: it fails the moment this name picks up a
-	#     Skeleton3D, so the check can never compare the bone driver against itself
-	#     and call it agreement.
-	player.set_active_character(_hero_index("phoboman"))
-	var limb_poses: Array[Dictionary] = _drive_rig(player.anim.rig)
+	# (g) THE SCRIPT STILL RUNS — on the bone rig alone. The limb-vs-bone
+	#     comparison retired with the last limb hero (bead godot-test1-9k9n.2:
+	#     with Phoboman skinned it compared the bone driver against itself),
+	#     but the script stays because `slump()` is the one pose on the
+	#     contract no clock drives — the tower calls it once per jailing — so
+	#     without these lines a skinned captive could stand to attention with
+	#     every check in the file still green. No oracle and no second rig:
+	#     the poses are asserted against the script's own asymmetric arguments
+	#     instead, on the fixture's own skinned rig.
 	var bone_poses: Array[Dictionary] = _drive_rig(anim.rig)
-	# THE ORACLE HAS TO BE THE OTHER RIG, and there has to BE a comparison: an
-	# empty script or a `player.anim` that somehow bound a skeleton too would
-	# make every assertion below vacuous while printing OK.
-	if String(player.anim.rig.kind()) != "limbs":
-		_fail("the equivalence oracle bound the '%s' rig — it must be the LIMB rig, "
-				% player.anim.rig.kind() + "or this compares the bone driver with itself")
-	if limb_poses.is_empty() or limb_poses.size() != bone_poses.size():
-		_fail("the driver script answered %d poses on the limb rig and %d on the bone "
-				% [limb_poses.size(), bone_poses.size()] + "rig — nothing was compared")
-	for step_index: int in limb_poses.size():
-		var want: Dictionary = limb_poses[step_index]
-		var got: Dictionary = bone_poses[step_index]
+	if bone_poses.is_empty():
+		_fail("the driver script answered no poses — nothing below ran")
+	for step_index: int in bone_poses.size():
 		for key: String in RIG_KEYS:
-			if not want.has(key) or not got.has(key):
-				_fail("skinned fixture: step %d of the driver script answered '%s' on "
-						% [step_index, "the limb rig" if want.has(key) else "the bone rig"]
-						+ "only — both rigs must claim the same keys")
-				continue
-			if absf(float(want[key]) - float(got[key])) > 1e-6:
-				_fail("skinned fixture: at step %d of the driver script the limb rig "
-						% step_index + "drew '%s' = %.6f and the bone rig %.6f — the two "
-						% [key, float(want[key]), float(got[key])]
-						+ "rigs must be the SAME pose written two ways, or a hero changes "
-						+ "the way it walks the day it is migrated")
+			if not bone_poses[step_index].has(key):
+				_fail("skinned fixture: step %d of the driver script has no '%s' — "
+						% [step_index, key] + "a pose method that stopped writing its key "
+						+ "is otherwise silent")
+	# The script closes with rest_pose() then slump(0.37, -0.14): symmetric by
+	# contract, so both arms read the arm number and both legs the leg number.
+	var last: Dictionary = bone_poses[bone_poses.size() - 1]
+	for key: String in ["left_arm_x", "right_arm_x"]:
+		if absf(float(last[key]) - 0.37) > SKINNED_SLUMP_EPS:
+			_fail("skinned fixture: the closing slump drew '%s' = %.6f for 0.37 in — "
+					% [key, float(last[key])]
+					+ "the tower's jailed pose is not reaching the bones")
+	for key: String in ["left_leg_x", "right_leg_x"]:
+		if absf(float(last[key]) + 0.14) > SKINNED_SLUMP_EPS:
+			_fail("skinned fixture: the closing slump drew '%s' = %.6f for -0.14 in — "
+					% [key, float(last[key])]
+					+ "the tower's jailed pose is not reaching the bones")
 
 	_measure_skinned_joints(anim, fixture)
 	_check_skinned_determinism(player)
@@ -1896,10 +1909,10 @@ func _check_skinned_determinism(player: Node3D) -> void:
 	Sentinel.done("skinned_determinism")
 
 
-## The keys BOTH rigs own, and the ones check 8's equivalence script compares.
-## `body_y` / `body_x` / `body_z` are deliberately absent: the caller writes them
-## on the `Body` NODE for either rig kind, and the two rigs in that comparison
-## hang off two different bodies.
+## The keys every driver owns on `measure()`, and the ones check 8's driver
+## script is asserted against. `body_y` / `body_x` / `body_z` are deliberately
+## absent: the caller writes them on the `Body` NODE, and the script runs on a
+## fixture whose body is nobody's.
 const RIG_KEYS: Array[String] = ["left_arm_x", "right_arm_x", "left_leg_x",
 		"right_leg_x", "left_arm_z", "right_arm_z", "left_leg_z", "right_leg_z",
 		"head_z"]
@@ -1957,26 +1970,21 @@ func _drive_rig(rig) -> Array[Dictionary]:
 	return out
 
 
-func _hero_index(hero: String) -> int:
-	"""`CHARACTERS` index by name, or 0 — the roster is a const and every name in
-	it is unique, so this is a lookup and not a search that can fail meaningfully."""
-	for index: int in PlayerController.CHARACTERS.size():
-		if String(PlayerController.CHARACTERS[index]["name"]) == hero:
-			return index
-	return 0
-
 
 # ============================================================================
-# CHECK 9 — PHOBOMAN STANDING HEIGHT AND LIMB RIG (bead godot-test1-9ynx)
+# CHECK 9 — PHOBOMAN SKINNED, STANDING HEIGHT (bead godot-test1-9k9n.2)
 # ============================================================================
 
 func _check_phoboman(player: Node3D) -> void:
 	"""
-	Phoboman's size matches the skinned cast (1.80 m ± 0.02 m standing height),
-	and he still binds the limb rig (owner ruling: Phoboman keeps the limb rig).
+	Phoboman walks on the skinned mesh (owner ruling 2026-09-18, epic `9k9n` —
+	this supersedes the 9ynx "keeps the limb rig" ruling), and his size matches
+	the skinned cast (1.7992 m ± 0.02 m standing height, PR #420's number).
 
 	Measured on the real shipped scene (`scenes/characters/phoboman.tscn`):
-	an AABB walk over its MeshInstance3D nodes in scene space at rest.
+	an AABB walk over its MeshInstance3D nodes in scene space at rest — which
+	still works on one skinned mesh, and the walk must find at least one (an
+	empty walk reads height 0, which would fail anyway, but silently).
 	"""
 	var packed: PackedScene = load(PHOBOMAN_FIXTURE)
 	if packed == null:
@@ -1986,7 +1994,8 @@ func _check_phoboman(player: Node3D) -> void:
 	var fixture: Node3D = packed.instantiate()
 	root.add_child(fixture)
 
-	# (a) THE CAPABILITY FLAG: Phoboman keeps the limb rig by exact node names.
+	# (a) THE CAPABILITY FLAG: Phoboman takes the skinned driver — the SCENE
+	#     is the flag, so a Skeleton3D under Body is the whole assertion.
 	var anim: PlayerAnimation = PlayerAnimation.new()
 	anim.player = player
 	var saved: Node = player.current_character_node
@@ -1995,18 +2004,24 @@ func _check_phoboman(player: Node3D) -> void:
 	anim.setup_animation_references()
 	player.current_character_node = saved
 
-	if anim.rig == null or String(anim.rig.kind()) != "limbs":
-		_fail("%s bound the '%s' rig — Phoboman must bind the limb rig by exact node names"
-				% [PHOBOMAN_FIXTURE, "none" if anim.rig == null else anim.rig.kind()])
+	if anim.rig == null or String(anim.rig.kind()) != "skinned":
+		_fail("%s bound the '%s' rig — Phoboman must bind the skinned driver "
+				% [PHOBOMAN_FIXTURE, "none" if anim.rig == null else anim.rig.kind()]
+				+ "through the Skeleton3D in his scene (owner ruling 2026-09-18)")
 
-	# (b) STANDING HEIGHT: 1.80 m ± 0.02 m at rest (feet to crown).
+	# (b) STANDING HEIGHT: 1.7992 m ± 0.02 m at rest (feet to crown).
 	var aabb := AABB()
 	var first := true
+	var meshes := 0
 	for m in fixture.find_children("*", "MeshInstance3D", true, false):
 		var mi := m as MeshInstance3D
 		var box := _relative(mi, fixture) * mi.get_aabb()
 		aabb = box if first else aabb.merge(box)
 		first = false
+		meshes += 1
+	if meshes == 0:
+		_fail("%s has no MeshInstance3D — the height below would read 0 and fail "
+				% PHOBOMAN_FIXTURE + "anyway, but for the wrong reason")
 
 	var height: float = aabb.size.y
 	if absf(height - PHOBOMAN_TARGET_HEIGHT) > PHOBOMAN_HEIGHT_TOL:

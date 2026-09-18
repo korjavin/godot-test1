@@ -137,9 +137,15 @@ const GAITS: Dictionary = {
 		"bob": 0.032, "sway_deg": 2.0, "lean_deg": 2.0,
 		"hitch": 0.05, "phase": 2.6, "idle_rate": 1.4, "idle_bob": 0.016,
 	},
-	# A waddle: small legs, a wide roll, and a head that will not sit still.
+	# A waddle ON A HUMAN RIG (bead godot-test1-9k9n.2): short human legs, a
+	# wide roll, and a head that will not sit still. stride_rate, sway, head,
+	# hitch and phase are the personality the row exists for and stay exactly
+	# as the sphere walked them; leg_deg 24 was sized for stub legs under a
+	# sphere and barely bent a skeleton (the pelvis/shoulder work scales with
+	# the swing, so 24 read as 0.6 of a stride), hence 34 — judged on
+	# 19_body_stride / 20_body_strip, inside LIMB_LIMIT_DEG with room.
 	"phoboman": {
-		"stride_rate": 7.4, "arm_deg": 22.0, "leg_deg": 24.0, "arm_asym": 1.25,
+		"stride_rate": 7.4, "arm_deg": 22.0, "leg_deg": 34.0, "arm_asym": 1.25,
 		"bob": 0.028, "sway_deg": 11.0, "head_deg": 7.0, "hitch": 0.16,
 		"phase": 5.1, "idle_rate": 2.2, "idle_bob": 0.012,
 	},

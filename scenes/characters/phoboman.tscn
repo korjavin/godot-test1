@@ -1,77 +1,42 @@
-[gd_scene load_steps=12 format=3 uid="uid://c8phoboman001"]
+[gd_scene load_steps=2 format=3 uid="uid://c8phoboman001"]
 
-[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_head.glb" id="1_head"]
-[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_torso.glb" id="2_torso"]
-[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_left_upper_arm.glb" id="3_left_upper_arm"]
-[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_left_lower_arm.glb" id="4_left_lower_arm"]
-[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_right_upper_arm.glb" id="5_right_upper_arm"]
-[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_right_lower_arm.glb" id="6_right_lower_arm"]
-[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_left_upper_leg.glb" id="7_left_upper_leg"]
-[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_left_lower_leg.glb" id="8_left_lower_leg"]
-[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_right_upper_leg.glb" id="9_right_upper_leg"]
-[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_right_lower_leg.glb" id="10_right_lower_leg"]
+; PHOBOMAN, SKINNED — bead godot-test1-9k9n.2 (epic `9k9n`, owner ruling
+; 2026-09-18): the heavy HUMAN on MPFB2's `game_engine` rig, 23 bones, built by
+; `scripts/build_hero.py --hero phoboman` (the source of record;
+; `assets/models/characters/PROVENANCE.md` carries the row). The ten generated
+; parts this scene used to instance are referenced nowhere here any more; the
+; files themselves, and the generator that wrote them, retire in child 9k9n.3.
+;
+; THE SCENE IS THE FLAG (`scenes/characters/teibi.tscn` said it first): the
+; Skeleton3D under `Body` is what makes `hero_rig.gd` hand him to
+; `hero_rig_skeleton.gd` instead of `hero_rig_limbs.gd`, which is why this
+; migration is a data change and `player_controller.gd`, `remote_avatar.gd`
+; and `player_abilities.gd` change by zero lines (`player_animation.gd`'s
+; GAITS row is retuned for human legs, the waddle kept — that is the one
+; exception, and it is numbers, not code).
+;
+; THE UID IS LOAD-BEARING and stays `uid://c8phoboman001`:
+; `player_controller.gd`'s CHARACTERS points at the PATH, but a changed uid
+; makes Godot rewrite every reference that resolved this scene by uid, and warn
+; while it does it.
+;
+; `Body` stays even though the mesh needs no wrapper: the landing squash writes
+; Body.position.y, `capture_rest_pose()` reads Body.rotation and the caller
+; writes the lean and sway there for BOTH rig kinds, so every hero scene in this
+; game has one. The .glb instance carries NO basis — a SKINNED glTF is exported
+; Y-up and placed by its own root node, so the Rx(-90) every UNRIGGED part
+; scene applies would lay the hero on his face.
+;
+; NO BoneAttachment3D: the helmet, the dragon and the pho face are IN the mesh
+; (`join_rigid` / `join_weighted` in `build_helmet` / `build_dragon`), so the
+; gait's head bobble nods the whole dome with no prop node to seat. The 9ynx
+; 1.1013 Body scale is GONE with the parts — the .glb is built at size
+; (1.7992 m standing, PROVENANCE row).
+
+[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_skinned.glb" id="1_body"]
 
 [node name="Phoboman" type="Node3D"]
 
-; Phoboman scaled 1.1013 on Body to match the skinned cast standing height (1.80 m):
-;   Before: standing height 1.6344 m (heel-to-crown), width 1.5665 m (torso 1.0400 m), feet y=-0.0250 m (sink 25.0 mm).
-;   After:  standing height 1.8000 m (heel-to-crown), width 1.7252 m (torso 1.1454 m), feet y=-0.0275 m (sink 27.5 mm).
 [node name="Body" type="Node3D" parent="."]
-transform = Transform3D(1.1013, 0, 0, 0, 1.1013, 0, 0, 0, 1.1013, 0, 0, 0)
 
-; Phoboman has no neck by design (bead godot-test1-z3e.7): the helmet is a
-; diving bell whose collar ring emerges from the body sphere — head and
-; torso overlap instead of gapping, so there is nothing to close.
-[node name="Head" parent="Body" instance=ExtResource("1_head")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 1.04, 0)
-
-[node name="Torso" parent="Body" instance=ExtResource("2_torso")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0.62, 0)
-
-[node name="LeftArm" type="Node3D" parent="Body"]
-transform = Transform3D(-0.390731, 0.920505, 0, -0.920505, -0.390731, 0, 0, 0, 1, -0.46, 0.7, 0)
-
-[node name="UpperArm" parent="Body/LeftArm" instance=ExtResource("3_left_upper_arm")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
-
-[node name="LowerArm" type="Node3D" parent="Body/LeftArm"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.15, 0)
-
-[node name="Mesh" parent="Body/LeftArm/LowerArm" instance=ExtResource("4_left_lower_arm")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
-
-[node name="RightArm" type="Node3D" parent="Body"]
-transform = Transform3D(-0.390731, -0.920505, 0, 0.920505, -0.390731, 0, 0, 0, 1, 0.46, 0.7, 0)
-
-[node name="UpperArm" parent="Body/RightArm" instance=ExtResource("5_right_upper_arm")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
-
-[node name="LowerArm" type="Node3D" parent="Body/RightArm"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.15, 0)
-
-[node name="Mesh" parent="Body/RightArm/LowerArm" instance=ExtResource("6_right_lower_arm")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
-
-[node name="LeftLeg" type="Node3D" parent="Body"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.13, 0.2, 0)
-
-[node name="UpperLeg" parent="Body/LeftLeg" instance=ExtResource("7_left_upper_leg")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
-
-[node name="LowerLeg" type="Node3D" parent="Body/LeftLeg"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.09, 0)
-
-[node name="Mesh" parent="Body/LeftLeg/LowerLeg" instance=ExtResource("8_left_lower_leg")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
-
-[node name="RightLeg" type="Node3D" parent="Body"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.13, 0.2, 0)
-
-[node name="UpperLeg" parent="Body/RightLeg" instance=ExtResource("9_right_upper_leg")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
-
-[node name="LowerLeg" type="Node3D" parent="Body/RightLeg"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.09, 0)
-
-[node name="Mesh" parent="Body/RightLeg/LowerLeg" instance=ExtResource("10_right_lower_leg")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
+[node name="Mesh" parent="Body" instance=ExtResource("1_body")]
