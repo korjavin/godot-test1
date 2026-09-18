@@ -579,6 +579,9 @@ func _check_tree_data() -> void:
 		"phoboman_flee", "phoboman_radius",
 		# The active/exotic nodes (bead godot-test1-20z.4).
 		"streak_burst", "windman_gravity", "teibi_quake",
+		# The second skill (bead godot-test1-0mr0.1), read by
+		# `has_second_ability()` through the existing `skill_bonus()`.
+		"second_ability",
 	]
 	for hero: String in Progression.SKILL_TREES:
 		var seen: Array[String] = []
@@ -1519,6 +1522,30 @@ class StubCroc extends Node3D:
 		last_duration = duration
 
 
+class StubSightInterior extends Node3D:
+	## The smallest thing `_ability2_windman()` will talk to: a node in the
+	## "tower_interior" group carrying `set_xray`. The real interior needs a
+	## tower, a terrain and a streamed shell; the arm only asks the one method.
+	var xray_calls: Array = []
+
+	func set_xray(on: bool) -> void:
+		xray_calls.append(on)
+
+
+class StubSlotSound extends Node:
+	## The smallest thing the slot-2 press will talk to: `play_buzz` for the
+	## refusal and `play_ability` for the fire, both counted. The real sound
+	## manager bakes buffers; the press path only needs the method names.
+	var buzzes: int = 0
+	var abilities: Array = []
+
+	func play_buzz() -> void:
+		buzzes += 1
+
+	func play_ability(arg: String) -> void:
+		abilities.append(arg)
+
+
 func _check_dial_contract(player: Node, expect_ready: bool, expect_reason: String,
 		where: String) -> void:
 	"""
@@ -1594,6 +1621,160 @@ func _check_active_skills_on_player() -> void:
 	progression.free()
 	player.queue_free()
 	Sentinel.done("active_skills_on_player")
+
+
+func _check_second_slot_is_bought_not_given() -> void:
+	"""
+	SLOT 2 IS BOUGHT, NOT GIVEN (bead godot-test1-0mr0.1): a fresh profile has
+	no second skill on any hero and G is silent; after gale+sight Windman's G
+	fires Air Sight on its own cooldown while F is untouched — all through the
+	real player, the real tree and real input events.
+
+	Plus the Ctrl+G landmine: the MP camera chord must not fire slot 2, pinned
+	by feeding a ctrl-held G through `Input.parse_input_event` and requiring
+	stillness, beside a plain G that fires (or the stillness proves nothing).
+	"""
+	var packed: PackedScene = load(PLAYER_SCENE)
+	if packed == null:
+		_fail("could not load %s" % PLAYER_SCENE)
+		Sentinel.done("second_slot_is_bought_not_given")
+		return
+	var player: Node = packed.instantiate()
+	root.add_child(player)
+	await physics_frame
+	if not player.has_method("try_activate_ability"):
+		_fail("player has no try_activate_ability() — did the script fail to attach?")
+		player.queue_free()
+		Sentinel.done("second_slot_is_bought_not_given")
+		return
+	var windman_index: int = -1
+	for index in player.CHARACTERS.size():
+		if String(player.CHARACTERS[index]["name"]) == "windman":
+			windman_index = index
+	if windman_index < 0:
+		_fail("no windman in CHARACTERS — the slot-2 measurement needs one")
+		player.queue_free()
+		Sentinel.done("second_slot_is_bought_not_given")
+		return
+
+	var progression := _make_progression()
+	_grant_points(progression, 4)
+	var sound := StubSlotSound.new()
+	root.add_child(sound)
+	sound.add_to_group("sound_manager")
+	var interior := StubSightInterior.new()
+	root.add_child(interior)
+	interior.add_to_group("tower_interior")
+
+	# --- Fresh: no hero has a second skill, and G is silent for all four. ---
+	for index in player.CHARACTERS.size():
+		player.set_active_character(index)
+		if player.has_second_ability():
+			_fail("%s has a second skill on a fresh profile — the key must be bought"
+					% String(player.CHARACTERS[index]["name"]))
+		player.try_activate_ability(1)
+	for cd: float in player.ability2_cooldowns:
+		if cd != 0.0:
+			_fail("an unbought slot-2 press charged %.2f s of cooldown" % cd)
+	if sound.buzzes != 0 or not sound.abilities.is_empty():
+		_fail("an unbought slot-2 press reached the sound stub — the key does not exist before purchase")
+
+	# --- The node is gated behind gale, then bought. ---
+	if progression.can_spend("windman", "sight"):
+		_fail("sight is purchasable before gale — earliest purchase is level 2")
+	player.set_active_character(windman_index)
+	_spend_or_fail(progression, "windman", "gale")
+	if not progression.can_spend("windman", "sight"):
+		_fail("sight is not purchasable after gale with points to spend")
+	_spend_or_fail(progression, "windman", "sight")
+	if not player.has_second_ability():
+		_fail("windman has no second skill after buying sight")
+	if player.get_ability_name(1) != "Air Sight":
+		_fail("slot 1 names '%s', wanted 'Air Sight'" % player.get_ability_name(1))
+	if player.get_ability_name(0) != "Air Rush":
+		_fail("slot 0 names '%s' — the indoor swap is gone" % player.get_ability_name(0))
+	player.set_active_character(0 if windman_index != 0 else 1)
+	if player.has_second_ability():
+		_fail("a hero with no slot-2 row reads learned")
+
+	# --- Bought: G fires Air Sight on its own cooldown; F is untouched. ---
+	player.set_active_character(windman_index)
+	player.try_activate_ability(1)
+	if player.windman_sight_timer != player.WINDMAN_SIGHT_DURATION:
+		_fail("slot 1 set sight timer %.2f, wanted %.2f"
+				% [player.windman_sight_timer, player.WINDMAN_SIGHT_DURATION])
+	# `_end_air_sight` also calls set_xray(false) on every character switch, so
+	# the stub log carries those falses too — the press is the one true.
+	if interior.xray_calls.count(true) != 1 or interior.xray_calls.back() != true:
+		_fail("slot 1 did not open the x-ray (calls %s)" % str(interior.xray_calls))
+	var want_cd: float = player._skilled_ability_cooldown(1)
+	if player.ability2_cooldowns[windman_index] != want_cd:
+		_fail("slot 1 charged %.2f, wanted the skilled slot-2 cooldown %.2f"
+				% [player.ability2_cooldowns[windman_index], want_cd])
+	if player.ability_cooldowns[windman_index] != 0.0:
+		_fail("a slot-1 press touched the F cooldown")
+	if sound.abilities != ["windman_2"]:
+		_fail("slot 1 played %s, wanted the windman_2 voice" % str(sound.abilities))
+
+	# --- SEEING still gates slot 1, and costs nothing. ---
+	player.ability2_cooldowns[windman_index] = 0.0
+	var buzzes_before: int = sound.buzzes
+	if player.get_ability_block_reason(1) != "SEEING":
+		_fail("a running look gates slot 1 as '%s', wanted SEEING"
+				% player.get_ability_block_reason(1))
+	player.try_activate_ability(1)
+	if player.ability2_cooldowns[windman_index] != 0.0:
+		_fail("a SEEING-refused press charged cooldown")
+	if sound.buzzes != buzzes_before + 1:
+		_fail("a SEEING-refused press buzzed %d times" % (sound.buzzes - buzzes_before))
+
+	# --- Ctrl+G is the camera chord, not the ability (the landmine). ---
+	player.windman_sight_timer = 0.0
+	player.ability2_cooldowns.fill(0.0)
+	player._end_air_sight()
+	sound.buzzes = 0
+	sound.abilities.clear()
+	interior.xray_calls.clear()
+	_press_key(KEY_G, true)
+	await physics_frame
+	await physics_frame
+	_release_key(KEY_G)
+	if player.windman_sight_timer != 0.0 or player.ability2_cooldowns[windman_index] != 0.0:
+		_fail("Ctrl+G fired slot 2 — the camera chord must stay a chord")
+	if sound.buzzes != 0 or not sound.abilities.is_empty() or not interior.xray_calls.is_empty():
+		_fail("Ctrl+G reached a slot-2 side effect")
+	# ...beside a plain G that fires, or the stillness above proves nothing.
+	_press_key(KEY_G, false)
+	await physics_frame
+	await physics_frame
+	_release_key(KEY_G)
+	if player.windman_sight_timer != player.WINDMAN_SIGHT_DURATION:
+		_fail("a plain G did not fire the bought slot 2 — the chord test is vacuous")
+
+	Input.action_release("special_ability_2")
+	sound.remove_from_group("sound_manager")
+	interior.remove_from_group("tower_interior")
+	sound.free()
+	interior.free()
+	progression.free()
+	player.queue_free()
+	Sentinel.done("second_slot_is_bought_not_given")
+
+
+func _press_key(keycode: Key, ctrl: bool) -> void:
+	"""One real key press into the engine input, the way a finger makes one."""
+	var ev := InputEventKey.new()
+	ev.physical_keycode = keycode
+	ev.pressed = true
+	ev.ctrl_pressed = ctrl
+	Input.parse_input_event(ev)
+
+
+func _release_key(keycode: Key) -> void:
+	var ev := InputEventKey.new()
+	ev.physical_keycode = keycode
+	ev.pressed = false
+	Input.parse_input_event(ev)
 
 
 func _check_speed_burst(player: Node, progression: Progression) -> void:
@@ -1934,6 +2115,7 @@ func _run() -> void:
 	await _check_streak_does_not_inflate_lifetime()
 	await _check_skill_effects_on_player()
 	await _check_active_skills_on_player()
+	await _check_second_slot_is_bought_not_given()
 	await _check_phase_echo_refunds_a_wall_pass()
 	await _check_panel_spends_and_releases_its_pause()
 	_report()

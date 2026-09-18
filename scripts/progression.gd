@@ -235,6 +235,16 @@ const SKILL_TREES: Dictionary = {
 			"cost": 1, "max_ranks": 2, "prereq": "updraft",
 			"effect": "windman_gravity", "per_rank": 0.10,
 		},
+		{
+			# The SECOND SKILL's root (bead godot-test1-0mr0.1): its own branch,
+			# so the third column appears with no UI code, and its own prereq —
+			# gale first, then sight, so the earliest purchase is level 2.
+			# Nothing new persists: a rank merges by max like every other.
+			"id": "sight", "name": "Air Sight", "branch": "Air Sight",
+			"desc": "Learn Air Sight: press G under the HQ roof to see through its walls.",
+			"cost": 1, "max_ranks": 1, "prereq": "gale",
+			"effect": "second_ability", "per_rank": 1.0,
+		},
 	],
 	"primm": [
 		{

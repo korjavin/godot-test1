@@ -912,6 +912,8 @@ func _ready() -> void:
 			collision_half_height = (collision_shape.shape as CapsuleShape3D).height * 0.5
 	ability_cooldowns.resize(CHARACTERS.size())
 	ability_cooldowns.fill(0.0)
+	ability2_cooldowns.resize(CHARACTERS.size())
+	ability2_cooldowns.fill(0.0)
 
 	# Instance every character once up front, then show the starting one (windman).
 	# Pre-instancing here keeps later character switches instant.
@@ -1483,6 +1485,11 @@ func _physics_process(delta: float) -> void:
 	if not _cheat_armed and Engine.get_physics_frames() != _cheat_swallowed_frame:
 		if Input.is_action_just_pressed("special_ability"):
 			try_activate_ability()
+		# Slot 2 on G, EXACT match: Ctrl+G is the MP camera chord
+		# (mp_ui.CAMERA_KEY) and a plain poll would fire Air Sight on every
+		# camera toggle — exact_match keeps the chord and the key distinct.
+		if Input.is_action_just_pressed("special_ability_2", true):
+			try_activate_ability(1)
 
 	# STEP 1: Handle Gravity
 	# If the character is not on the ground, apply gravity. While Windman's Air Rush
@@ -2971,6 +2978,7 @@ func _enter_prison(hero: String) -> void:
 	prisoner_active = true
 	velocity = Vector3.ZERO
 	ability_cooldowns.fill(0.0)
+	ability2_cooldowns.fill(0.0)
 	_reset_ability_states()
 	_apply_view_mode()
 
@@ -3429,6 +3437,7 @@ func restart_game() -> void:
 	# into the new one at full value (die right after a Stink Wave, hit Play
 	# Again, and F is refused for ~12 s with the HUD dial nearly full).
 	ability_cooldowns.fill(0.0)
+	ability2_cooldowns.fill(0.0)
 	# Drop any mid-blink i-frames and restore model visibility for the current
 	# view — blink state must never leak into a fresh run.
 	respawn_blink_timer = 0.0
@@ -3735,6 +3744,7 @@ func join_at(anchor: Vector3) -> void:
 		is_caught = false
 		is_respawning = false
 		ability_cooldowns.fill(0.0)  # Frozen at full since the run ended (see restart_game).
+		ability2_cooldowns.fill(0.0)
 		_hide_respawn_message()
 		var over_ui := get_tree().get_first_node_in_group("game_over_ui")
 		if over_ui and over_ui.has_method("hide_game_over"):
@@ -4147,17 +4157,15 @@ func _room_group_anchor() -> Variant:
 
 
 # ============================================================================
-# SECTION 8: SPECIAL ABILITIES (F KEY)
+# SECTION 8: SPECIAL ABILITIES (F KEY) — AND THE SECOND SKILL (G KEY)
 # ============================================================================
 ## Every character has ONE signature power, fired with F (the "special_ability"
 ## input action). They all share a per-character cooldown and a HUD dial:
 ##
 ##   * windman  — Air Rush:   launches into the sky and flies at ~5× walk speed
-##                            with softened gravity for a few seconds. INDOORS the
-##                            same key is AIR SIGHT instead: the HQ's walls go
-##                            translucent for a few seconds so he can watch a patrol
-##                            through them. One ability, two rooms — see
-##                            `_ability_air_sight()`.
+##                            with softened gravity for a few seconds. INDOORS F
+##                            is gated ROOF instead: a 6 m/s lift under a 4.6 m
+##                            ceiling is a lift past the tower's gates.
 ##   * primm    — Phase Step: blinks straight forward THROUGH a block, never
 ##                            stopping inside it (an instant short teleport).
 ##   * teibi    — Resize:     cycles normal → small → giant → normal. Giant Teibi
@@ -4165,9 +4173,18 @@ func _room_group_anchor() -> Variant:
 ##   * phoboman — Stink Wave: belches expanding waves of stench; every crocodile
 ##                            turns tail and flees for several seconds.
 ##
-## Cooldowns are tracked PER CHARACTER (one timer each), so switching characters
-## shows that character's own readiness on the HUD. Discovery stays group-based
-## (crocodiles via the "crocodile" group), matching the rest of the project.
+## SLOT 2 (bead godot-test1-0mr0.1): one hero's second skill, fired with G (the
+## "special_ability_2" action, exact-matched so the MP camera chord stays a
+## chord), learned as the root of a third skill-tree branch. Today only
+## Windman's Air Sight lives there — the HQ's walls go translucent for a few
+## seconds so he can watch a patrol through them. Each hero bead adds its row
+## to ABILITY2_* and its `_ability2_<hero>()` arm; a hero with no row hears
+## nothing from G.
+##
+## Cooldowns are tracked PER CHARACTER PER SLOT (one timer each), so switching
+## characters shows that character's own readiness on the HUD. Discovery stays
+## group-based (crocodiles via the "crocodile" group), matching the rest of
+## the project.
 
 # ----------------------------------------------------------------------------
 ## THE ABILITY CONSTANT BANNER LIVES IN `PlayerAbilities` (bd godot-test1-ftn.15)
@@ -4182,11 +4199,12 @@ func _room_group_anchor() -> Variant:
 const ABILITY_EFFECT := PlayerAbilities.ABILITY_EFFECT
 const ABILITY_COOLDOWN := PlayerAbilities.ABILITY_COOLDOWN
 const ABILITY_NAME := PlayerAbilities.ABILITY_NAME
+const ABILITY2_NAME := PlayerAbilities.ABILITY2_NAME
+const ABILITY2_COOLDOWN := PlayerAbilities.ABILITY2_COOLDOWN
 const WINDMAN_BOOST_DURATION := PlayerAbilities.WINDMAN_BOOST_DURATION
 const WINDMAN_GRAVITY_FACTOR := PlayerAbilities.WINDMAN_GRAVITY_FACTOR
 const WINDMAN_LIFT := PlayerAbilities.WINDMAN_LIFT
 const WINDMAN_SIGHT_DURATION := PlayerAbilities.WINDMAN_SIGHT_DURATION
-const INDOOR_ABILITY_NAME := PlayerAbilities.INDOOR_ABILITY_NAME
 const PRIMM_BLINK_DISTANCE := PlayerAbilities.PRIMM_BLINK_DISTANCE
 const PRIMM_BLINK_STEP := PlayerAbilities.PRIMM_BLINK_STEP
 const PRIMM_BLINK_MAX_DISTANCE := PlayerAbilities.PRIMM_BLINK_MAX_DISTANCE
@@ -4227,6 +4245,11 @@ const WINDMAN_AIR_SPEED: float = WALK_SPEED * 5.0
 
 ## Per-character cooldown timers (seconds remaining; 0 = ready). Sized in _ready().
 var ability_cooldowns: Array[float] = []
+
+## Per-character SECOND-SLOT cooldown timers (bead godot-test1-0mr0.1) — sized
+## and filled everywhere `ability_cooldowns` is, ticked beside it. Only heroes
+## with an ABILITY2_NAME row ever charge theirs.
+var ability2_cooldowns: Array[float] = []
 
 ## Windman boost time remaining (seconds; > 0 means the Air Rush is active).
 var windman_boost_timer: float = 0.0
@@ -4503,24 +4526,34 @@ func _update_ability_timers(delta: float) -> void:
 	abilities._update_ability_timers(delta)
 
 
-func _cooldown_remaining() -> float:
-	return abilities._cooldown_remaining()
+func _cooldown_remaining(slot: int = 0) -> float:
+	return abilities._cooldown_remaining(slot)
 
 
-func try_activate_ability() -> void:
-	abilities.try_activate_ability()
+func try_activate_ability(slot: int = 0) -> void:
+	abilities.try_activate_ability(slot)
 
 
-func _flash_blocked_feedback() -> void:
-	abilities._flash_blocked_feedback()
+func _flash_blocked_feedback(slot: int = 0) -> void:
+	abilities._flash_blocked_feedback(slot)
+
+
+func has_second_ability() -> bool:
+	"""
+	Whether the current hero's second skill is LEARNED — the G key and its dial
+	exist only past this. Read through the EXISTING `skill_bonus()`: the tree
+	node carries effect "second_ability", so zero new progression API and
+	nothing new persisted.
+	"""
+	return _skill_bonus("second_ability") >= 1.0
 
 
 func _ability_windman() -> bool:
 	return abilities._ability_windman()
 
 
-func _ability_air_sight() -> bool:
-	return abilities._ability_air_sight()
+func _ability2_windman() -> bool:
+	return abilities._ability2_windman()
 
 
 func _end_air_sight() -> void:
@@ -4617,22 +4650,22 @@ func phase_reach() -> float:
 	return PRIMM_BLINK_DISTANCE * _skill_mult("primm_blink")
 
 
-func get_ability_name() -> String:
+func get_ability_name(slot: int = 0) -> String:
 	"""
 	Friendly name of the current character's ability (for the HUD).
 
-	ASKED EVERY FRAME RATHER THAN LATCHED, for the same reason `hero_name()` is:
-	Windman's F is Air Rush outdoors and Air Sight under the HQ's roof, so the label
-	changes when he walks through the door and a dial that remembered the old name
-	would be advertising a power that press will not fire.
+	ASKED EVERY FRAME RATHER THAN LATCHED, for the same reason `hero_name()` is.
+	Slot 0 names the F power straight out of ABILITY_NAME — no more indoor swap:
+	F under the roof is gated ROOF, and the dial names the gate. Slot 1 names
+	the second skill out of ABILITY2_NAME, "Ability" for a hero with no row.
 	"""
-	var char_name: String = CHARACTERS[current_character_index]["name"]
-	if char_name == "windman" and _sheltered():
-		return INDOOR_ABILITY_NAME
-	return ABILITY_NAME.get(char_name, "Ability")
+	if slot == 1:
+		var char_name: String = CHARACTERS[current_character_index]["name"]
+		return ABILITY2_NAME.get(char_name, "Ability")
+	return ABILITY_NAME.get(CHARACTERS[current_character_index]["name"], "Ability")
 
 
-func _skilled_ability_cooldown() -> float:
+func _skilled_ability_cooldown(slot: int = 0) -> float:
 	"""
 	The current character's cooldown length AFTER its skill tree, in seconds. The
 	single expression both the charge in `try_activate_ability()` and the HUD dial
@@ -4641,31 +4674,36 @@ func _skilled_ability_cooldown() -> float:
 	Divide the dial by the UNSKILLED constant and a hero with cooldown ranks
 	arrives at a dial that starts at 0.6 full and empties early: not an error
 	anywhere, just a HUD that quietly stops meaning what it says.
+
+	Quick Recovery multiplies BOTH slots: slot 1 reads ABILITY2_COOLDOWN
+	through the same `_skill_mult("cooldown")`.
 	"""
 	var char_name: String = CHARACTERS[current_character_index]["name"]
+	if slot == 1:
+		return float(ABILITY2_COOLDOWN.get(char_name, 10.0)) * _skill_mult("cooldown")
 	return float(ABILITY_COOLDOWN.get(char_name, 10.0)) * _skill_mult("cooldown")
 
 
-func get_ability_cooldown_ratio() -> float:
+func get_ability_cooldown_ratio(slot: int = 0) -> float:
 	"""Cooldown progress for the HUD dial: 1.0 just-used → 0.0 fully ready."""
-	var duration: float = _skilled_ability_cooldown()
+	var duration: float = _skilled_ability_cooldown(slot)
 	if duration <= 0.0:
 		return 0.0
 	# `_cooldown_remaining()`, not the raw timer: `ability_hud` reads COOLING off
 	# this ratio alone, so a waived press behind a full amber arc would be the
 	# "dial says blocked while the key works" bug in its most visible form.
-	return clampf(_cooldown_remaining() / duration, 0.0, 1.0)
+	return clampf(_cooldown_remaining(slot) / duration, 0.0, 1.0)
 
 
-func get_ability_remaining() -> float:
+func get_ability_remaining(slot: int = 0) -> float:
 	"""Seconds of cooldown left on the current character's ability — the cooldown
 	that is actually in the way, so a waived press shows no countdown."""
-	return maxf(0.0, _cooldown_remaining())
+	return maxf(0.0, _cooldown_remaining(slot))
 
 
-func get_ability_block_reason() -> String:
+func get_ability_block_reason(slot: int = 0) -> String:
 	"""
-	Why an F press would be refused RIGHT NOW even though the cooldown is spent,
+	Why a press would be refused RIGHT NOW even though the cooldown is spent,
 	as a short label for the dial — or "" when nothing but the cooldown stands in
 	the way. Keys into `assets/translations/ui.csv`; the HUD `tr()`s it.
 
@@ -4693,9 +4731,13 @@ func get_ability_block_reason() -> String:
 	           not fit where he is standing. Growing inside geometry is not a
 	           clipping artefact, it is a lift: the depenetration pops him out
 			   upwards, through a storey's ceiling and past its gate.
-	  "SEEING" — Windman's Air Sight is already running. The look outlives a skilled
-			   hero's cooldown, so without this the press would refresh it forever
-			   and the walls would never come back.
+	  "SEEING" — Windman's Air Sight (slot 1) is already running. The look
+			   outlives a skilled hero's cooldown, so without this the press
+			   would refresh it forever and the walls would never come back.
+  "ROOF" — Windman's F under the HQ's roof. Air Rush's 6 m/s lift under a
+			   4.6 m ceiling is a lift past the tower's gates, and there is
+			   nothing else honest for F to do in there: charged-but-gated, the
+			   press costs nothing. Sight is slot 1's business now.
 	  "RAIN" — Windman can't take off inside a storm cloud's rain zone.
 	  "LAND" — AIR RUSH IS A TAKE-OFF, NOT A MID-AIR JET: Windman must have his
 			   feet on the ground (or be inside the coyote window) to launch.
@@ -4750,16 +4792,19 @@ func get_ability_block_reason() -> String:
 			return "TIGHT"
 	if char_name != "windman":
 		return ""
-	# INDOORS, F IS AIR SIGHT, AND NEITHER WINDMAN GATE APPLIES TO IT. RAIN could not
-	# fire in here anyway (the weather asks the same `sheltered()` before it rains on
-	# anybody), and LAND exists to stop Air Rush chaining into infinite flight — a
-	# rule about a take-off, asked of an ability that is not one. Answering the whole
-	# windman branch in one place also means one `_sheltered()` call for the frame.
-	if _sheltered():
+	if slot == 1:
 		# "SEEING" — ONE LOOK AT A TIME. See `WINDMAN_SIGHT_DURATION` for why this is
 		# a gate and not a shorter duration: a fully-ranked cooldown comes back
 		# BEFORE the look ends, and without this the walls never go solid again.
 		return "SEEING" if windman_sight_timer > 0.0 else ""
+	# Slot 0 under the roof is ROOF, not Air Sight and not a takeoff: RAIN could
+	# not fire in here anyway (the weather asks the same `sheltered()` before it
+	# rains on anybody), and LAND exists to stop Air Rush chaining into infinite
+	# flight — a rule about a take-off, asked of a press that must not take off
+	# at all. Answering the whole windman branch in one place also means one
+	# `_sheltered()` call for the frame.
+	if _sheltered():
+		return "ROOF"
 	if _weather_is_raining_here():
 		return "RAIN"
 	if not (is_on_floor() or coyote_timer > 0.0):
@@ -4767,7 +4812,7 @@ func get_ability_block_reason() -> String:
 	return ""
 
 
-func is_ability_ready() -> bool:
+func is_ability_ready(slot: int = 0) -> bool:
 	"""
 	True when the current character can fire its ability right now — ACTUAL
 	availability, cooldown AND gates, not just the cooldown.
@@ -4780,9 +4825,13 @@ func is_ability_ready() -> bool:
 	quietly overloaded. The gated state renders as its own colour and names the
 	gate, because a player with a full charge and a refused press has nothing to
 	wait for and needs to know the fix is to land, not to be patient.
+
+	Slot 1 answers for the second skill — but an unbought key is not "refused",
+	it does not exist, so the second dial is drawn only while
+	`has_second_ability()` and never asks this unlearned.
 	"""
-	return _cooldown_remaining() <= 0.0 \
-			and get_ability_block_reason() == ""
+	return _cooldown_remaining(slot) <= 0.0 \
+			and get_ability_block_reason(slot) == ""
 
 
 func crushes_crocodiles() -> bool:
@@ -4814,6 +4863,11 @@ func crushes_crocodiles() -> bool:
 const ABILITY_BIT_FLYING: int = 1 << 0
 const ABILITY_BIT_SMALL: int = 1 << 1
 const ABILITY_BIT_GIANT: int = 1 << 2
+## Slot-2 visuals are reserved at 1 << 3 and up, spent per hero bead (the katana
+## pose, the kimchi jar — never this scaffolding: Air Sight is local
+## presentation, as it already was). mp_codec's own rule says a bit nothing
+## reads is not sent, so these stay a comment until a hero bead spends one —
+## no wire change here.
 
 
 func ability_visual_state() -> int:

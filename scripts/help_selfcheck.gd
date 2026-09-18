@@ -92,6 +92,7 @@ const ACTION_ROWS: Array = [
 	["duck", "Ctrl"],
 	["switch_character", "R"],
 	["special_ability", "F"],
+	["special_ability_2", "G"],
 	["toggle_camera", "C"],
 	["voice_mic", "V"],
 ]
@@ -273,15 +274,24 @@ func _check_table() -> String:
 			return ("the F row does not name the \"%s\" ability — player_controller." \
 				+ "ABILITY_NAME has %d abilities and the help lists a different set") \
 				% [ability_name, PlayerController.ABILITY_NAME.size()]
-	# ...AND THE ONE THAT IS NOT IN THAT DICT. Air Sight is a SECOND ability on an
-	# existing hero — Windman's F under the HQ's roof — rather than a fifth hero, so
-	# walking `ABILITY_NAME` cannot see it and the card was free to keep telling
-	# players that F flies indoors (codex review). Read off the same const
-	# `get_ability_name()` returns, so renaming it fails here rather than drifting.
-	if not ability_row.contains(PlayerController.INDOOR_ABILITY_NAME):
-		return ("the F row does not name \"%s\" — player_controller hands it to the HUD " \
-			+ "indoors and the card still promises only the outdoor ability") \
-			% PlayerController.INDOOR_ABILITY_NAME
+	# ...AND THE SECOND SKILL (bead godot-test1-0mr0.1). A second ability lives
+	# on an existing hero rather than as a fifth hero, so walking `ABILITY_NAME`
+	# cannot see it — the G row names every ABILITY2_NAME value instead, read
+	# off the dict itself so renaming one fails here rather than drifting. And
+	# the F row must NOT name one: F under the roof is the ROOF gate now, and a
+	# card still promising Air Sight on F is the old swap lingering.
+	var second_row := _row_text("G")
+	if second_row.is_empty():
+		return "no help row for the G key"
+	for second_name: String in PlayerController.ABILITY2_NAME.values():
+		if not second_row.contains(second_name):
+			return ("the G row does not name the \"%s\" second skill — player_controller." \
+				+ "ABILITY2_NAME has %d second skills and the help lists a different set") \
+				% [second_name, PlayerController.ABILITY2_NAME.size()]
+	for second_name: String in PlayerController.ABILITY2_NAME.values():
+		if ability_row.contains(second_name):
+			return ("the F row still names \"%s\" — that power moved to G and F indoors " \
+				+ "is the ROOF gate") % second_name
 
 	# --- The gait modifier reads as a MODIFIER ------------------------------
 	# Bead `godot-test1-kov` inverted the gait: nothing held is the fast gait and

@@ -7,7 +7,8 @@ extends RefCounted
 ## THE SPLIT. The `CharacterBody3D` keeps movement, capture, respawn, the input
 ## map, the null-safe discovery lookups every section shares, the ability STATE
 ## VARS and the whole HUD contract surface; this file keeps the ARMS — the
-## activation, the four powers, their timers, Teibi's fit probes and Air Sight.
+## activation, the four F powers, the slot-2 arms, their timers, Teibi's fit
+## probes and Air Sight.
 ## It is a MOVE and nothing else: not one number, not one branch and not one
 ## comment changed.
 ##
@@ -82,6 +83,19 @@ const ABILITY_NAME := {
 	"phoboman": "Stink Wave",
 }
 
+## SECOND SKILL (bead godot-test1-0mr0.1): one row per hero that HAS a slot 2,
+## read through the same seams as the F dicts above. A hero absent from these
+## dicts has no slot 2 at all — each hero bead adds its row — and the G key is
+## silent for them: the tree node is what grants the key, not the dict.
+## The cooldown skill effect (Quick Recovery) multiplies BOTH slots; the refund
+## (_pending_cooldown_refund, Phase Echo) stays slot-0 only.
+const ABILITY2_NAME := {
+	"windman": "Air Sight",
+}
+const ABILITY2_COOLDOWN := {
+	"windman": 10.0,
+}
+
 # --- Windman: Air Rush ---
 ## How long the boost lasts, in seconds.
 const WINDMAN_BOOST_DURATION: float = 4.0
@@ -114,13 +128,6 @@ const WINDMAN_LIFT: float = 6.0
 ## cooldown ranks stay a straight buff (they shorten the wait, never the look) and
 ## the x-ray is a window whatever the skill tree says.
 const WINDMAN_SIGHT_DURATION: float = 7.0
-
-## The name the HUD gives Windman's F under the roof. A const rather than a literal
-## because `help_selfcheck` reads it: the `?` card names every ability by walking
-## `ABILITY_NAME`, and an ability that is not in that dict — because it is a second
-## ability on an existing hero, not a fifth hero — would otherwise be the one thing
-## the card is allowed to be silently wrong about.
-const INDOOR_ABILITY_NAME: String = "Air Sight"
 
 # --- Primm: Phase Step ---
 ## Desired blink distance — far enough to clear a single block in open ground.
@@ -217,6 +224,10 @@ func _update_ability_timers(delta: float) -> void:
 	for i in player.ability_cooldowns.size():
 		if player.ability_cooldowns[i] > 0.0:
 			player.ability_cooldowns[i] = maxf(0.0, player.ability_cooldowns[i] - delta)
+	# Slot 2 cools beside slot 0 — same shape, its own array.
+	for i in player.ability2_cooldowns.size():
+		if player.ability2_cooldowns[i] > 0.0:
+			player.ability2_cooldowns[i] = maxf(0.0, player.ability2_cooldowns[i] - delta)
 	if player.speed_burst_timer > 0.0:
 		player.speed_burst_timer = maxf(0.0, player.speed_burst_timer - delta)
 	if player.windman_boost_timer > 0.0:
@@ -264,10 +275,10 @@ func _update_ability_timers(delta: float) -> void:
 		_revert_teibi_to_normal()
 
 
-func _cooldown_remaining() -> float:
+func _cooldown_remaining(slot: int = 0) -> float:
 	"""
-	The cooldown that stands in the way of an F press RIGHT NOW, in seconds —
-	which is NOT always the timer sitting in `ability_cooldowns`.
+	The cooldown that stands in the way of a press RIGHT NOW, in seconds —
+	which is NOT always the timer sitting in the cooldown array.
 
 	THIS IS THE ONE HOME OF THE COOLDOWN READ, for exactly the reason
 	`get_ability_block_reason()` is the one home of the gates: the key press, the
@@ -291,31 +302,44 @@ func _cooldown_remaining() -> float:
 	reached out of the SAME `TEIBI_FORM_DURATION` (`_ability_teibi()` refills it
 	only from `prev_state == 0`) — a faster giant, never a longer one.
 
-	The character name is checked as well as the state because `ability_cooldowns`
-	is per-hero: a stale non-zero `teibi_size_state` must not be able to waive
-	somebody else's cooldown. (It cannot today — every switch reverts him — which
-	is why this is a belt, not a fix.)
+	The character name is checked as well as the state because the cooldown
+	arrays are per-hero: a stale non-zero `teibi_size_state` must not be able
+	to waive somebody else's cooldown. (It cannot today — every switch reverts
+	him — which is why this is a belt, not a fix.)
+
+	Slot 1 reads its own array and knows no waiver: the waiver is Teibi's
+	resize cycle, an F power, and no second skill has one.
 	"""
-	if player.teibi_size_state != 0 and String(player.CHARACTERS[player.current_character_index]["name"]) == "teibi":
-		return 0.0
-	return player.ability_cooldowns[player.current_character_index]
+	if slot == 0:
+		if player.teibi_size_state != 0 and String(player.CHARACTERS[player.current_character_index]["name"]) == "teibi":
+			return 0.0
+		return player.ability_cooldowns[player.current_character_index]
+	return player.ability2_cooldowns[player.current_character_index]
 
 
-func try_activate_ability() -> void:
+func try_activate_ability(slot: int = 0) -> void:
 	"""
 	Fire the current character's special ability if it isn't on cooldown. Each
 	ability function returns true when it actually triggered, which is what starts
 	the cooldown — so a no-op never locks the power.
+
+	Slot 1 is the second skill (G): it early-returns SILENTLY — no dial flash,
+	no denial buzz — while the tree node is unbought, because the key does not
+	exist before purchase. Past that the shape is the same: cooldown, gates, a
+	second match, a per-slot charge. The refund stays slot-0 only (Phase Echo).
 	"""
 	var char_name: String = player.CHARACTERS[player.current_character_index]["name"]
+
+	if slot == 1 and not player.has_second_ability():
+		return
 
 	# Still cooling down? The press doesn't fire, but it must not feel dead:
 	# flash the cooldown dial red (via the "ability_hud" group — null-safe, no
 	# hard reference, like every other HUD hookup) and play a low denial buzz.
 	# Asked through `_cooldown_remaining()` so this press and the dial read the
 	# same number — see the waiver documented there.
-	if _cooldown_remaining() > 0.0:
-		_flash_blocked_feedback()
+	if _cooldown_remaining(slot) > 0.0:
+		_flash_blocked_feedback(slot)
 		return
 
 	# Charged, but is anything else in the way? The gates live in ONE function so
@@ -323,55 +347,69 @@ func try_activate_ability() -> void:
 	# `get_ability_block_reason()`. A gated press refuses exactly like a cooling
 	# one (same dial flash, same denial buzz) and costs no cooldown, so the player
 	# can try again the instant the gate lifts.
-	if player.get_ability_block_reason() != "":
-		_flash_blocked_feedback()
+	if player.get_ability_block_reason(slot) != "":
+		_flash_blocked_feedback(slot)
 		return
 
 	var used := false
-	match char_name:
-		"windman":
-			used = _ability_windman()
-		"primm":
-			used = _ability_primm()
-		"teibi":
-			used = _ability_teibi()
-		"phoboman":
-			used = _ability_phoboman()
+	if slot == 0:
+		match char_name:
+			"windman":
+				used = _ability_windman()
+			"primm":
+				used = _ability_primm()
+			"teibi":
+				used = _ability_teibi()
+			"phoboman":
+				used = _ability_phoboman()
+	else:
+		match char_name:
+			"windman":
+				used = _ability2_windman()
 
 	if used:
 		# The skilled duration, and it MUST be the same expression
 		# `get_ability_cooldown_ratio()` divides by — see the note there.
-		var cooldown: float = player._skilled_ability_cooldown()
-		# ...minus anything an ability earned back on the way through (Primm's
-		# Phase Echo). A generic one-shot rather than a Primm branch: it costs one
-		# float, and the active-skills bead has more of these coming.
-		cooldown = maxf(0.0, cooldown - player._pending_cooldown_refund)
-		player._pending_cooldown_refund = 0.0
-		player.ability_cooldowns[player.current_character_index] = cooldown
+		var cooldown: float = player._skilled_ability_cooldown(slot)
+		if slot == 0:
+			# ...minus anything an ability earned back on the way through
+			# (Primm's Phase Echo). A generic one-shot rather than a Primm
+			# branch: it costs one float, and the active-skills bead has more
+			# of these coming. Slot 1 neither earns nor spends a refund.
+			cooldown = maxf(0.0, cooldown - player._pending_cooldown_refund)
+			player._pending_cooldown_refund = 0.0
+			player.ability_cooldowns[player.current_character_index] = cooldown
+		else:
+			player.ability2_cooldowns[player.current_character_index] = cooldown
 		# Whoosh only when the ability actually fired — a failed Primm blink that
-		# costs no cooldown stays silent too.
-		player._sfx("play_ability", char_name)
+		# costs no cooldown stays silent too. Slot 1 plays the hero's second
+		# voice (`ABILITY_PITCH` falls back to 1.0 for heroes without a row).
+		player._sfx("play_ability", char_name if slot == 0 else char_name + "_2")
 
 
-func _flash_blocked_feedback() -> void:
+func _flash_blocked_feedback(slot: int = 0) -> void:
 	"""
 	The one "that press was refused" signal: flash the cooldown dial red (via the
 	"ability_hud" group — null-safe, no hard reference, like every other HUD
 	hookup) and play the low denial buzz. Shared by the cooling-down F press,
 	Windman-in-the-rain, and an E press locked to a single hero by the lobby, so
-	a refusal always feels the same wherever it comes from.
+	a refusal always feels the same wherever it comes from. Slot 1 flashes the
+	second dial.
 	"""
 	var hud: Node = player.get_tree().get_first_node_in_group("ability_hud")
 	if hud and hud.has_method("flash_blocked"):
-		hud.flash_blocked()
+		hud.flash_blocked(slot)
 	player._sfx("play_buzz")
 
 
 func _ability_windman() -> bool:
-	"""Air Rush: launch up and forward, then soar fast with softened gravity —
-	or, under the HQ's roof, Air Sight instead (see `_ability_air_sight`)."""
-	if player._sheltered():
-		return _ability_air_sight()
+	"""Air Rush: launch up and forward, then soar fast with softened gravity.
+
+	ALWAYS Air Rush now (bead godot-test1-0mr0.1): Air Sight moved to the
+	purchasable slot 2 (`_ability2_windman`), and F under the roof is the ROOF
+	gate instead of a swap — a 6 m/s lift under a 4.6 m ceiling is a lift past
+	the gates the tower audit believes in.
+	"""
 	var forward: Vector3 = -player.transform.basis.z
 	forward.y = 0.0
 	forward = forward.normalized()
@@ -398,16 +436,16 @@ func _ability_windman() -> bool:
 	return true
 
 
-func _ability_air_sight() -> bool:
+func _ability2_windman() -> bool:
 	"""
 	Air Sight: for `WINDMAN_SIGHT_DURATION` the walls of the storey Windman is on go
 	translucent, so he can read the layout and — the point — watch a guard's patrol
 	through them before stepping into a corridor.
 
-	WINDMAN'S INDOOR F, and it is the same ability rather than a fifth one: the wind
-	is what he bends either way, and Air Rush under a 4.6 m ceiling was already a
-	press that did nothing worth doing. Everything around it is untouched — the same
-	dispatch, the same cooldown, the same dial, the same refusal surface.
+	WINDMAN'S SLOT 2 (bead godot-test1-0mr0.1): today's indoor F, moved — the same
+	arm, the same refusal surface, its own cooldown dial. Still indoors-only (child
+	.2 makes it universal); outdoors, or with no interior in the tree, it answers
+	`false` and the press costs nothing.
 
 	THE BUILDING DOES THE WORK (`TowerInterior.set_xray`), through the same null-safe
 	group + `has_method` door every other system reads. No interior in the tree means
