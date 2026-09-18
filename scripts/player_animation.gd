@@ -135,33 +135,39 @@ const GAITS: Dictionary = {
 		"bob": 0.032, "sway_deg": 2.0, "lean_deg": 2.0,
 		"hitch": 0.05, "phase": 2.6, "idle_rate": 1.4, "idle_bob": 0.016,
 	},
-	# A WADDLE ON HALF A LEG (bead godot-test1-9k9n.2 put it on a human rig,
-	# bead godot-test1-9k9n.7 halved the leg under it). The personality is
-	# unchanged and is the whole point of the row — the wide roll, the restless
-	# head, the hitch and its phase, the uneven arms — but the two numbers that
-	# are geometry and not taste were both re-derived against the body the owner
-	# ruled for on 2026-09-18, whose legs are 0.259 of his standing height.
+	# A WADDLE ON A THIRD OF A LEG (bead godot-test1-9k9n.2 put it on a human
+	# rig, bead godot-test1-9k9n.7 halved the leg under it, bead
+	# godot-test1-9k9n.9 took it down again to 0.197 of his standing height on
+	# the owner's "the arms and legs even smaller"). The personality is unchanged
+	# and is the whole point of the row — the wide roll, the restless head, the
+	# hitch and its phase, the uneven arms — but the one number that is geometry
+	# and not taste is re-derived against the body that ships, every time that
+	# body moves.
 	#
-	# leg_deg 44, because a stubby leg has to swing WIDE to cover ground: at 34
-	# this rig moved the foot 0.28 m per half-stride where the sphere-era row
-	# moved it 0.43, and the walk read as a shuffle. 44 is inside
-	# `LIMB_LIMIT_DEG` (75) with the hitch and the sidestep on top, and it is the
-	# cast's widest swing after Windman's 46 — which is what a man on castors
-	# should be.
+	# leg_deg 44 STAYS, and that is the deliberate half of this: a stubby leg has
+	# to swing WIDE to cover ground (at 34 this rig moved the foot 0.28 m per
+	# half-stride where the sphere-era row moved it 0.43, and the walk read as a
+	# shuffle), and 44 is already the cast's widest swing after Windman's 46,
+	# inside `LIMB_LIMIT_DEG` (75) with the hitch and the sidestep on top. Buying
+	# the rate back by opening the swing further is what that ceiling is there to
+	# refuse; a hero with stub legs takes quick small steps, and that is the
+	# picture.
 	#
-	# stride_rate 13.8 is then DERIVED by Teibi's own peak-match rule (see his
+	# stride_rate 18.1 is then DERIVED by Teibi's own peak-match rule (see his
 	# row): the foot's backward speed peaks at L·A·ω at mid-stance, so matching
-	# that to ground speed is the no-slide criterion. L = 0.471 m hip-to-foot on
+	# that to ground speed is the no-slide criterion. L = 0.3603 m hip-to-foot on
 	# the shipped skeleton (`thigh_l` → `calf_l` → `foot_l` rest, model scale
 	# 1.0, `silhouette()` prints it every build), A = 44° = 0.768 rad,
-	# v = WALK_SPEED 5.0: ω = 5.0 / (0.471 × 0.768) = 13.8 rad/s. It is nearly
-	# twice the 7.4 he walked at before and that is not a tuning drift — it is
-	# the arithmetic of halving a leg: the same ground under half the stride is
-	# twice the steps. (The 7.4 was never derived; it was the sphere's own cycle,
-	# carried over by 9k9n.2 and already 36% under the rate its own leg asked
-	# for.)
+	# v = WALK_SPEED 5.0: ω = 5.0 / (0.3603 × 0.768) = 18.1 rad/s — a 0.35 s
+	# cycle, and the fastest row in the cast by 2.8x over Windman. That is not a
+	# tuning drift, it is the arithmetic of a shorter leg twice over: the same
+	# ground under a third of the stride is three times the steps. (The 7.4 this
+	# row carried before bead 9k9n.7 was never derived at all — it was the
+	# sphere's own cycle.) `gait_selfcheck` check 4(d) re-derives it from
+	# `PHOBOMAN_LEG_M`, and its 240 Hz sweep still samples this rate 83 times a
+	# cycle.
 	"phoboman": {
-		"stride_rate": 13.8, "arm_deg": 22.0, "leg_deg": 44.0, "arm_asym": 1.25,
+		"stride_rate": 18.1, "arm_deg": 22.0, "leg_deg": 44.0, "arm_asym": 1.25,
 		"bob": 0.028, "sway_deg": 11.0, "head_deg": 7.0, "hitch": 0.16,
 		"phase": 5.1, "idle_rate": 2.2, "idle_bob": 0.012,
 	},

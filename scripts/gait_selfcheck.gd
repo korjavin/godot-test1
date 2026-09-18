@@ -59,9 +59,9 @@ const BODY_Y_MAX: float = 0.10
 const HEAD_LIMIT_DEG: float = 15.0
 
 ## The sweep: 60 s of walking sampled at 240 Hz, which is well inside the
-## Nyquist limit of the fastest row (Phoboman's 13.8 rad/s stride since bead
-## godot-test1-9k9n.7 halved his legs — 2.20 Hz, so 109 samples a cycle; it was
-## Primm's 10.6 before that).
+## Nyquist limit of the fastest row (Phoboman's 18.1 rad/s stride since bead
+## godot-test1-9k9n.9 halved his legs again — 2.88 Hz, so 83 samples a cycle; it
+## was 13.8 after bead 9k9n.7 and Primm's 10.6 before either).
 const SWEEP_SECONDS: float = 60.0
 const SWEEP_HZ: float = 240.0
 
@@ -112,8 +112,8 @@ const STRAFE_EPS_DEG: float = 1.0
 ## phases land at slightly different points on the peak read as four distinct
 ## numbers even with the scaling pinned to 1.0 — measured, they differed in the
 ## fourth decimal and a distinctness test passed. The rows really spread these by
-## 1.9x, 2.0x and 2.1x (the third is the step rate, 13.8 over Windman's 6.5 since
-## bead godot-test1-9k9n.7; it was 1.6x when Primm's 10.6 topped the roster), so
+## 1.9x, 2.0x and 2.8x (the third is the step rate, 18.1 over Windman's 6.5 since
+## bead godot-test1-9k9n.9; it was 1.6x when Primm's 10.6 topped the roster), so
 ## 1.1 is far above the sampling noise and far below every real spread.
 const PERSONALITY_SPREAD: float = 1.1
 
@@ -132,14 +132,18 @@ const TEIBI_RATE_TOL: float = 0.15
 
 ## PHOBOMAN'S HIP-TO-FOOT, the same measurement on the same chain (`thigh_l` ->
 ## `calf_l` -> `foot_l` rest, model scale 1.0), and the same reason it is written
-## out rather than read off a node. 0.4712 m since bead godot-test1-9k9n.7 halved
-## his legs (owner ruling 2026-09-18); `build_hero.py`'s `silhouette()` prints it
-## on every build of him and `hero_manifest.json` pins the .glb it came from, so
-## the day the model is rebuilt shorter this number and the row below it both
-## have to move. He gets the same derived-rate check Teibi does and for a
-## stronger reason: his row's rate is nearly twice what it was, purely because
-## `L` halved, which is exactly the coupling a check like this exists to hold.
-const PHOBOMAN_LEG_M: float = 0.4712
+## out rather than read off a node. 0.3603 m since bead godot-test1-9k9n.9 took
+## the legs down a second time — 0.197 of his standing height, against the 0.4712
+## (0.259 h) bead 9k9n.7 left and the 0.726 (0.403 h) before either — on the owner
+## ruling 2026-09-18 "the arms and legs even smaller". `build_hero.py`'s
+## `silhouette()` prints it on every build of him and `hero_manifest.json` pins
+## the .glb it came from, so the day the model is rebuilt shorter this number and
+## the row below it both have to move — which is exactly what happened twice in
+## two days. He gets the same derived-rate check Teibi does and for a stronger
+## reason: his row's rate has now more than doubled from the sphere-era 7.4,
+## purely because `L` shrank, which is the coupling a check like this exists to
+## hold.
+const PHOBOMAN_LEG_M: float = 0.3603
 
 ## CHECK 8's FIXTURE (bd godot-test1-5u3.2) — the skinned Teibi. It was the
 ## spike's own scratch scene while no hero shipped skinned; since bead
@@ -165,15 +169,20 @@ const SKINNED_MOVE_DEG: float = 1.0
 const SKINNED_SWEEP_SECONDS: float = 20.0
 
 ## CHECK 9's FIXTURE (bd godot-test1-9k9n.2) — Phoboman's standing height on the
-## skinned mesh and skinned-driver binding. 1.8191 m since bead
-## godot-test1-9k9n.7 re-proportioned him (owner ruling 2026-09-18: short arms,
-## short legs, a huge belly): `build_hero.py` still reframes the HUMAN to his
-## row's 1.70 m, but the diving helmet is scaled off his measured skull and a
-## body with half a leg in it carries a larger head at the same total — so the
-## dome and its valve knob top him out 2 cm higher than the 1.7992 of PR #420.
-## The number is measured by the build and written on the PROVENANCE row.
+## skinned mesh and skinned-driver binding. 1.8254 m since bead
+## godot-test1-9k9n.9 re-proportioned him a second time (owner ruling
+## 2026-09-18: "the arms and legs even smaller, and the body and belly together
+## more round"): `build_hero.py` still reframes the HUMAN to his row's 1.70 m,
+## but the diving helmet is scaled off his measured skull and a body with a
+## third of a leg in it carries a larger head at the same total — so the dome and
+## its valve knob top him out 6 mm above the 1.8191 of PR #431 and 2.6 cm above
+## the 1.7992 of PR #420. The number is measured by the build and written on the
+## PROVENANCE row. The TOLERANCE is 2 cm and the last TWO of those heights are
+## 6 mm apart, so this check cannot tell #431's body from this one — but #420's
+## 1.7992 is 2.6 cm away and would fail it. It pins the scale of the model, and
+## on the coarsest of the three steps it also pins which model.
 const PHOBOMAN_FIXTURE: String = "res://scenes/characters/phoboman.tscn"
-const PHOBOMAN_TARGET_HEIGHT: float = 1.8191
+const PHOBOMAN_TARGET_HEIGHT: float = 1.8254
 const PHOBOMAN_HEIGHT_TOL: float = 0.02
 ## An arbitrary clock the determinism probe asks twice about — arbitrary on
 ## purpose: a round number could land on a sine zero and compare two rest poses.
@@ -2345,7 +2354,7 @@ func _check_phoboman(player: Node3D) -> void:
 	"""
 	Phoboman walks on the skinned mesh (owner ruling 2026-09-18, epic `9k9n` —
 	this supersedes the 9ynx "keeps the limb rig" ruling), and his size matches
-	the skinned cast (1.8191 m ± 0.02 m standing height, bead 9k9n.7's number).
+	the skinned cast (1.8254 m ± 0.02 m standing height, bead 9k9n.9's number).
 
 	Measured on the real shipped scene (`scenes/characters/phoboman.tscn`):
 	an AABB walk over its MeshInstance3D nodes in scene space at rest — which
@@ -2375,7 +2384,7 @@ func _check_phoboman(player: Node3D) -> void:
 				% [PHOBOMAN_FIXTURE, "none" if anim.rig == null else anim.rig.kind()]
 				+ "through the Skeleton3D in his scene (owner ruling 2026-09-18)")
 
-	# (b) STANDING HEIGHT: 1.8191 m ± 0.02 m at rest (feet to crown).
+	# (b) STANDING HEIGHT: 1.8254 m ± 0.02 m at rest (feet to crown).
 	var aabb := AABB()
 	var first := true
 	var meshes := 0
