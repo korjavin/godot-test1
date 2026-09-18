@@ -127,6 +127,17 @@ const TEIBI_LEG_M: float = 0.865
 ## fails here until the row is re-derived with it.
 const TEIBI_RATE_TOL: float = 0.15
 
+## PHOBOMAN'S HIP-TO-FOOT, the same measurement on the same chain (`thigh_l` ->
+## `calf_l` -> `foot_l` rest, model scale 1.0), and the same reason it is written
+## out rather than read off a node. 0.4712 m since bead godot-test1-9k9n.7 halved
+## his legs (owner ruling 2026-09-18); `build_hero.py`'s `silhouette()` prints it
+## on every build of him and `hero_manifest.json` pins the .glb it came from, so
+## the day the model is rebuilt shorter this number and the row below it both
+## have to move. He gets the same derived-rate check Teibi does and for a
+## stronger reason: his row's rate is nearly twice what it was, purely because
+## `L` halved, which is exactly the coupling a check like this exists to hold.
+const PHOBOMAN_LEG_M: float = 0.4712
+
 ## CHECK 8's FIXTURE (bd godot-test1-5u3.2) — the skinned Teibi. It was the
 ## spike's own scratch scene while no hero shipped skinned; since bead
 ## godot-test1-5u3.3 it is the SHIPPED hero, so this check now measures the thing
@@ -674,7 +685,7 @@ func _check_personality(player: Node3D) -> void:
 	"""
 	(a) No two heroes share a stride period, (b) no hero's pose repeats at
 	their own stride period — which is exactly what "the hitch exists" means —
-	and (c) Phoboman still waddles.
+	and (c) Phoboman still waddles, and (d) his rate is still derived from his own leg.
 
 	(b) is the load-bearing half: a single-sine walk is periodic at its stride
 	by construction, so comparing the pose at t and t + T is the one measurement
@@ -728,6 +739,24 @@ func _check_personality(player: Node3D) -> void:
 	if waddle < 8.0:
 		_fail("phoboman's sway_deg is %.1f — the waddle rolls 8 degrees at least "
 				% waddle + "(the row walks 11); the waddle went home to phoboman")
+
+	# (d) ...AND HIS RATE IS DERIVED TOO (bead godot-test1-9k9n.7). Same rule as
+	#     check 4b, same tolerance, a different leg: v/(L·A) on `PHOBOMAN_LEG_M`.
+	#     His row carried the retired sphere's own 7.4 until this bead, which was
+	#     36% under what its own leg asked for, so the one thing that must not
+	#     happen again is the rate surviving a body that moved under it. A
+	#     rebuild that changes his hip-to-foot fails here until both move.
+	var pho: Dictionary = PlayerAnimation.gait_for("phoboman")
+	var pho_want: float = PlayerController.WALK_SPEED \
+			/ (PHOBOMAN_LEG_M * deg_to_rad(float(pho["leg_deg"])))
+	var pho_rate: float = float(pho["stride_rate"])
+	if absf(pho_rate - pho_want) / pho_want > TEIBI_RATE_TOL:
+		_fail("phoboman's stride_rate is %.3f but v/(L·A) derives %.3f (WALK_SPEED "
+				% [pho_rate, pho_want]
+				+ "%.1f over %.4f m hip-to-foot times %.3f rad of leg) — the row is "
+				% [PlayerController.WALK_SPEED, PHOBOMAN_LEG_M,
+					deg_to_rad(float(pho["leg_deg"]))]
+				+ "no longer derived, re-derive it against the shipped skeleton")
 
 	Sentinel.done("personality")
 
@@ -2104,7 +2133,7 @@ func _check_phoboman(player: Node3D) -> void:
 	"""
 	Phoboman walks on the skinned mesh (owner ruling 2026-09-18, epic `9k9n` —
 	this supersedes the 9ynx "keeps the limb rig" ruling), and his size matches
-	the skinned cast (1.7992 m ± 0.02 m standing height, PR #420's number).
+	the skinned cast (1.8191 m ± 0.02 m standing height, bead 9k9n.7's number).
 
 	Measured on the real shipped scene (`scenes/characters/phoboman.tscn`):
 	an AABB walk over its MeshInstance3D nodes in scene space at rest — which
@@ -2134,7 +2163,7 @@ func _check_phoboman(player: Node3D) -> void:
 				% [PHOBOMAN_FIXTURE, "none" if anim.rig == null else anim.rig.kind()]
 				+ "through the Skeleton3D in his scene (owner ruling 2026-09-18)")
 
-	# (b) STANDING HEIGHT: 1.7992 m ± 0.02 m at rest (feet to crown).
+	# (b) STANDING HEIGHT: 1.8191 m ± 0.02 m at rest (feet to crown).
 	var aabb := AABB()
 	var first := true
 	var meshes := 0

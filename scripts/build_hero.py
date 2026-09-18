@@ -1172,17 +1172,21 @@ HEROES = {
         "colours": {
             'body_blue':    (0.13, 0.18, 0.46, 1.0),   # deep royal/navy belly
             # -- the dragon, re-graded for this scene (bead godot-test1-9k9n.8),
-            # and the debt bead 9k9n.5 booked in the paragraph below. Both are
-            # the generator's own values scaled to HALF exposure — the RATIO of
-            # the three channels is untouched, so the hue is the generator's to
-            # the last digit and only the stop moved. Half and not the fit's own
-            # answer because the fit's headline is that 0.47 linear is white and
-            # the red was at 0.80: it was not a little hot, it was 1.7 stops over
-            # its own ceiling. 0.40 lands where the helmet's brass dome landed
-            # (0.43 renders 234), with room left for the lit facets, which is the
-            # whole point — the shading has to live in the top of the channel.
-            'dragon_red':   (0.40, 0.065, 0.065, 1.0),  # scales -> (221, 47, 37)
-            'dragon_gold':  (0.41, 0.33, 0.135, 1.0),   # horns, eyes, whiskers
+            # and the debt bead 9k9n.5 booked in the paragraph below. BOTH ARE THE
+            # GENERATOR'S OWN VALUES WITH ONLY THE STOP MOVED — each channel is
+            # scaled by ONE factor per colour, so the RATIO is untouched and the
+            # hue is the generator's to the last digit. The factors are NOT the
+            # same for the two, and that is the whole of the difference between
+            # them: red x0.500, gold x0.446 (1.00 and 1.17 stops down). Gold is
+            # the further down of the two because it starts higher — 0.92 against
+            # the red's 0.80 — and both ends had to land under the same ceiling.
+            # That ceiling is the fit's headline from bead 9k9n.5: 0.47 linear is
+            # WHITE, so the red was not a little hot, it was 1.7 stops over it.
+            # 0.40 lands where the helmet's brass dome landed (0.43 renders 234),
+            # with room left for the lit facets, which is the point — the shading
+            # has to live in the top of the channel.
+            'dragon_red':   (0.40, 0.065, 0.065, 1.0),  # x0.500 -> (242, 43, 34)
+            'dragon_gold':  (0.41, 0.33, 0.135, 1.0),   # x0.446; horns, eyes, whiskers
             # -- the helmet, graded for this scene; the comment is what it RENDERS
             'helmet_gold':  (0.43, 0.32, 0.17, 1.0),   # brass dome -> (234,190,87)
             'helmet_dark':  (0.25, 0.18, 0.085, 1.0),  # ring, rivets -> (174,125,46)
@@ -3679,12 +3683,14 @@ HELMET_TRIS = (1600, 3400)      # the budget, asserted where it is spent
 # BOTH ENDS ARE MEASURED, and both of them by an assert that fired.
 #
 #   the RIGHT end is a hard limit, and it is the HANDS. The hero ships with his arms
-#   5 degrees off vertical (`apply_pose_as_rest`) and his hands beside his hips,
-#   which on a body this wide is over the belly's own flank. An earlier build of
-#   this bead scaled the generator's path 1.6x about the centre and put the dragon's
-#   head 4.6 mm from the right hand — 43 hand vertices inside its head sphere, found
-#   by eye on `grid_33`'s 3/4 column. At 0.45 the clearance is 83.2 mm, and
-#   `assert_clear_of_arms` is the guard that measures it every build.
+#   out to the side (5 degrees off vertical when this was written, his row's own
+#   `arms_down_deg` 30 since bead godot-test1-9k9n.7) and his hands over the belly's
+#   own flank, which on a body this wide is where a dragon's head wants to be. An
+#   earlier build of bead 9k9n.1 scaled the generator's path 1.6x about the centre
+#   and put that head 4.6 mm from the right hand — 43 hand vertices inside its head
+#   sphere, found by eye on `grid_33`'s 3/4 column. At 0.45 the clearance measured
+#   83.2 mm; at today's 0.40 on today's body it measures 55.7 mm, and
+#   `assert_clear_of_arms` is the guard that takes that reading every build.
 #   the LEFT end is the TRUNK's own silhouette. 0.90 put the tail's top waypoint at
 #   x -0.224, which at its own height (z 1.253, the upper chest, where a fat man is
 #   narrower than at his waist) is off the front of him — `surface()` refused it.
@@ -4106,15 +4112,16 @@ def assert_clear_of_arms(obj, first_vert, clearance=DRAGON_ARM_CLEAR):
     """No vertex of the accessory joined at `first_vert` may be in an arm.
 
     THE WHOLE ARM AND NOT JUST THE HAND, although the hand is what this was written
-    for: an arm hanging at 5 degrees puts its elbow over the widest part of a belly
-    like this one, and on the shipped build the tightest clearance is the UPPER ARM
-    and not the fist (59.8 mm against the hand's 83.2)."
+    for: an arm resting against a belly like this one puts its ELBOW over the widest
+    part of it, and the tightest clearance has been the upper arm and not the fist on
+    every build since (59.8 mm against the hand's 83.2 when the arms hung at 5
+    degrees; 55.7 mm at the row's own 30).
 
     RUN AFTER `apply_pose_as_rest`, AND THAT IS THE WHOLE POINT. `build_dragon`
     measures a body in MakeHuman's A-pose, where the arms stand 41 degrees off
-    vertical and the hands are out at the sides; the hero ships with them 5 degrees
-    off vertical, beside his hips — which on a wide, short body is exactly where the
-    belly's flank is. So a dragon that lies on the belly at build time can be inside
+    vertical; the hero ships with them at his row's `arms_down_deg` — which on a
+    wide, short body is down where the belly's flank is, wherever between the two
+    that angle lands. So a dragon that lies on the belly at build time can be inside
     a fist at export time, and nothing upstream can see it: `surface()` asks where
     the belly is, `report_weights` asks whether a vertex is driven, and a head
     modelled 2 cm proud of the skin two bones away from its own is neither question.

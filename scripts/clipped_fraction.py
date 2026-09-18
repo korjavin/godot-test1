@@ -122,11 +122,19 @@ def measure(path, rect, threshold=THRESHOLD):
     godot-test1-9k9n.8). `clipped` is the original one and the one a FACE is
     judged by: luma at or over `THRESHOLD`, i.e. the pixel has gone to paper
     white and the shape is gone. `flat` is the one a SATURATED colour fails
-    instead — any single channel pegged at 255 while the others are nowhere near
-    it, which never moves the luma and never trips the first number. Phoboman's
-    dragon was 84% flat on red at `18_body_3m` and 0.00% clipped: a scarlet
-    serpent whose whole red channel was one value, so every fold in it was drawn
-    by green and blue alone.
+    instead — a channel pegged at 255 on a pixel that is NOT white, which never
+    moves the luma and never trips the first number. Phoboman's dragon was 99.9%
+    flat on red over its own rect and 0.00% clipped: a scarlet serpent whose whole
+    red channel was one value, so every fold in it was drawn by green and blue
+    alone.
+
+    THE TWO ARE DISJOINT BY CONSTRUCTION, by the `elif` below, and it has to be
+    that way round: paper white has all three channels at 255, so a bare
+    `max(...) >= 255` counts every clipped FACE pixel as flat as well and the two
+    numbers stop telling apart the two failures they exist to separate: every
+    pixel `clipped` counts is a pixel with three channels at 255, so on the
+    pre-9k9n.5 `phoboman` visor the bare predicate would have reported that
+    51.37% as a saturated colour whose shading had collapsed.
     """
     width, height, nch, px = read_rgb(path)
     x0, x1 = int(rect[0] * width), int(rect[2] * width)
@@ -141,7 +149,7 @@ def measure(path, rect, threshold=THRESHOLD):
             n += 1
             if luma >= threshold:
                 clipped += 1
-            if max(px[i], px[i + 1], px[i + 2]) >= 255:
+            elif max(px[i], px[i + 1], px[i + 2]) >= 255:
                 flat += 1
     assert n, "empty rect"
     return clipped / n, flat / n, total / n, n
