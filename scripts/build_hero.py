@@ -25,7 +25,10 @@ WHAT A ROW IS (and where each half of it came from):
                     z3e.10 stump cannot come back.
   colours           the hero's own generator palette (`self.colors`), verbatim,
                     ungraded — `hero_skin.SKIN_GRADE` is applied here, at paint
-                    time, to the entries named in GRADED_COLOURS.
+                    time, to the entries named in GRADED_COLOURS. Except where a
+                    row's own note says otherwise: the eight of Phoboman's helmet
+                    were re-graded FOR THIS SCENE (bead godot-test1-9k9n.5), which
+                    is the third lever and the only hand-fitted one.
   bone_regions      clothing as BONE REGIONS: which bone wears which colour. A
                     sleeveless shirt is `upperarm_* -> skin`, shorts are
                     `calf_* -> skin`, gloves are `hand_* -> gloves`. No geometry,
@@ -1048,8 +1051,10 @@ HEROES = {
         # with the helmet, the pho face and the chest dragon as joined accessories.
         # This SUPERSEDES the 2026-09-11 "Phoboman keeps the limb rig for good /
         # sphere body" ruling. The design target that survives is the retired
-        # part-tree generator's — its palette verbatim, its helmet assembly,
-        # its dragon — ported onto a body that walks.
+        # part-tree generator's — its palette, its helmet assembly, its dragon —
+        # ported onto a body that walks. Verbatim, except that the HELMET'S EIGHT
+        # colours were re-graded for this renderer by bead godot-test1-9k9n.5: see
+        # the note over `colours` below, which is where the numbers are.
         #
         # NO `FACES` ROW. Every other hero's face is his own recipe because it is
         # what the camera reads at 3 m; Phoboman's is behind 3 mm of helmet glass
