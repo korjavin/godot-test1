@@ -927,6 +927,55 @@ func _style_model_meshes(node: Node) -> void:
 		_style_model_meshes(child)
 
 
+## THE SIGHT GHOST — one shared overlay for Air Sight (bead godot-test1-0mr0.2).
+## A single static StandardMaterial3D, built once and handed to every ghosted
+## mesh: unshaded pale cyan (Windman's effect colour) at 0.55 alpha, drawn only
+## where the body is OCCLUDED on Forward+ (`DEPTH_TEST_INVERTED`, measured to
+## exist on Godot 4.5) so a visible body stays itself and only its hidden parts
+## ghost — and drawn through everything on gl_compatibility (`no_depth_test`),
+## less pretty but the same information, because the web renderer is the one
+## this ships on. `render_priority` 1 sits above the toon materials (priority
+## 0); transparency puts it in the transparent pass either way. One material
+## for the whole cast, never per body: the renderer batches what shares.
+static var _ghost_material: StandardMaterial3D = null
+
+
+static func ghost_material_shared() -> StandardMaterial3D:
+	"""The one Air Sight overlay material — built once, shared by every body."""
+	if _ghost_material == null:
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.albedo_color = Color(0.7, 0.92, 1.0, 0.55)
+		if RenderingServer.get_current_rendering_method() == "gl_compatibility":
+			mat.no_depth_test = true
+		else:
+			mat.depth_test = BaseMaterial3D.DEPTH_TEST_INVERTED
+		mat.render_priority = 1
+		_ghost_material = mat
+	return _ghost_material
+
+
+func set_xray_ghost(on: bool) -> void:
+	"""
+	Show this body through whatever occludes it (Air Sight), or put it back.
+
+	One walk over the model subtree sets/clears `material_overlay` on every
+	MeshInstance3D. ONLY the overlay: `material_override` is ToonShading's and
+	is never touched, so clearing hands the exact styled mesh back. Idempotent —
+	clearing a body that was never ghosted, or one whose meshes changed, is a
+	no-op per mesh.
+	"""
+	_set_xray_ghost_walk(self, on)
+
+
+static func _set_xray_ghost_walk(node: Node, on: bool) -> void:
+	if node is MeshInstance3D:
+		(node as MeshInstance3D).material_overlay = ghost_material_shared() if on else null
+	for child in node.get_children():
+		_set_xray_ghost_walk(child, on)
+
+
 func _physics_process(delta: float) -> void:
 	"""Update movement, body animation and collisions every physics frame."""
 	# ------------------------------------------------------------------------

@@ -1869,62 +1869,133 @@ func _measure_skinned_joints(anim, fixture: Node3D) -> void:
 					+ "and the hip and nothing else, so this is the only envelope the "
 					+ "joints bead `5u3.9` added have.")
 
-	# ---- (j) THE STINK WAVE RAISES THE ARMS, AND LEAVES NO RESIDUE ------
-	# Bead godot-test1-9k9n.4: Phoboman's F telegraph on bones. Driven on the
-	# TEIBI fixture — the pose is the driver's, not the hero's, so the probe
-	# belongs to the driver. Entered OUT OF A STRIDE like (h7): the raise has to
-	# win over a live swing, not over rest. Converged with repeated full-amount
-	# calls (the lerp idiom, exactly like air): RELAX_FRAMES is overkill for two
-	# chained lerps at 1.0 and that is the point — convergence must not be what
-	# is being measured.
+	# ---- (j) THE STINK WAVE RIDES WALK, AIR AND IDLE, AND LEAVES NO RESIDUE -
+	# Bead godot-test1-9k9n.6: Phoboman's F telegraph on bones. Driven through
+	# the SHIPPED animation paths with `phoboman_stink_timer` on the player,
+	# asserting that `_apply_stink_pose()` is called and raises the arms on every
+	# path (walk, air, idle, and strafe in j2 below) and that expiring the timer
+	# leaves no residue on the reclaimed skeleton.
 	var hand_r: int = skel.find_bone("hand_r")
 	if hand_r < 0:
 		_fail("skinned fixture: the rig has no `hand_r` bone — the stink probe "
 				+ "did not run")
 		Sentinel.done("skinned_joints")
 		return
+
+	# (j1) WALK PATH: drive `animate_walking()`.
 	anim.rig.rest_pose()
-	var rest_l: Vector3 = _at(skel, b["hand_l"])
-	var rest_r: Vector3 = _at(skel, hand_r)
-	_pose_cycle(anim, PI * 0.5, swing, 0.0)
-	for i: int in RELAX_FRAMES:
-		anim.rig.stink(1.0)
-	for stink_probe: Array in [[rest_l, b["hand_l"], "left"], [rest_r, hand_r, "right"]]:
-		var stink_base: Vector3 = stink_probe[0]
-		var stink_tip: Vector3 = _at(skel, stink_probe[1])
-		var stink_travel: Vector3 = stink_tip - stink_base
-		# Forward is -Z (the way the hero faces, per `locomotion()`): the hand
-		# must come OUT toward it, not up or sideways.
-		if -stink_travel.z <= STINK_TRAVEL_M:
-			_fail("skinned fixture: stink(1.0) moved the %s hand (%.4f, %.4f, %.4f) m — "
-					% [stink_probe[2], stink_travel.x, stink_travel.y, stink_travel.z]
+	anim.player.phoboman_stink_timer = 0.0
+	anim.animation_time = 0.0
+	anim.animate_walking(step, 1.0)
+	var walk_l: Vector3 = _at(skel, b["hand_l"])
+	var walk_r: Vector3 = _at(skel, hand_r)
+	anim.player.phoboman_stink_timer = PlayerAbilities.PHOBOMAN_STINK_DURATION
+	anim.animate_walking(step, 1.0)
+	for walk_probe: Array in [[walk_l, b["hand_l"], "left"], [walk_r, hand_r, "right"]]:
+		var walk_base: Vector3 = walk_probe[0]
+		var walk_tip: Vector3 = _at(skel, walk_probe[1])
+		var walk_travel: Vector3 = walk_tip - walk_base
+		if -walk_travel.z <= STINK_TRAVEL_M:
+			_fail("skinned fixture: walking at full stink timer moved the %s hand (%.4f, %.4f, %.4f) m — "
+					% [walk_probe[2], walk_travel.x, walk_travel.y, walk_travel.z]
 					+ "both upper arms must rise ~40 deg forward (`stink_raise_deg`), "
 					+ "which carries a hand at least %.2f m toward -Z" % STINK_TRAVEL_M)
-		elif absf(stink_travel.x) > absf(stink_travel.z) * STINK_ROLL_TOLERANCE:
-			_fail("skinned fixture: stink(1.0) carried the %s hand %.4f m sideways "
-					% [stink_probe[2], stink_travel.x] + "against %.4f m forward — a "
-					% absf(stink_travel.z) + "forward raise must move the hand more "
+		elif absf(walk_travel.x) > absf(walk_travel.z) * STINK_ROLL_TOLERANCE:
+			_fail("skinned fixture: walking at full stink timer carried the %s hand %.4f m sideways "
+					% [walk_probe[2], walk_travel.x] + "against %.4f m forward — a "
+					% absf(walk_travel.z) + "forward raise must move the hand more "
 					+ "forward than sideways (ceiling ratio %.1f)" % STINK_ROLL_TOLERANCE)
-	# THE RETURN: the normal path reclaims the arms — locomotion with NO
-	# rest_pose first, so any residue stink left on a bone the gait does not
-	# rewrite is what this measures, against the rest tips above.
-	anim.rig.set_clock(0.0, 0.0, 0.0, 0.0)
-	anim.rig.locomotion(0.0, 0.0, 1.0)
-	for stink_probe: Array in [[rest_l, b["hand_l"], "left"], [rest_r, hand_r, "right"]]:
-		var stink_base: Vector3 = stink_probe[0]
-		var stink_gap: float = _at(skel, stink_probe[1]).distance_to(stink_base)
-		if stink_gap > REST_EPS:
-			_fail("skinned fixture: the neutral gait left the %s hand %.4f m from rest "
-					% [stink_probe[2], stink_gap] + "after the stink pose — the wave's "
-					+ "arms must be reclaimed by the path every frame already walks "
-					+ "(ceiling %.3f m)" % REST_EPS)
+	# THE RETURN (walk): expire timer, drive normal walking frame.
+	anim.player.phoboman_stink_timer = 0.0
+	anim.animate_walking(step, 1.0)
+	for walk_probe: Array in [[walk_l, b["hand_l"], "left"], [walk_r, hand_r, "right"]]:
+		var walk_base: Vector3 = walk_probe[0]
+		var walk_gap: float = _at(skel, walk_probe[1]).distance_to(walk_base)
+		if walk_gap > REST_EPS:
+			_fail("skinned fixture: a walking frame with the timer expired left the %s hand "
+					% walk_probe[2] + "%.4f m off the walk rest — the wave's arms froze "
+					% walk_gap + "past the timer (ceiling %.3f m)" % REST_EPS)
 
-	# ---- (j2) THE WAVE RIDES THE STRAFE, AND LEAVES NO RESIDUE ------
+	# (j2) AIR PATH: drive `animate_jumping()`.
+	# Air spreads arms out as wings; stink overlays a forward pitch (+X).
+	anim.rig.rest_pose()
+	anim.player.phoboman_stink_timer = 0.0
+	anim.animation_time = 0.0
+	for i: int in 20:
+		anim.animation_time = 0.0
+		anim.animate_jumping()
+	var air_l: Vector3 = _at(skel, b["hand_l"])
+	var air_r: Vector3 = _at(skel, hand_r)
+	anim.player.phoboman_stink_timer = PlayerAbilities.PHOBOMAN_STINK_DURATION
+	anim.animate_jumping()
+	for air_probe: Array in [[air_l, b["hand_l"], "left"], [air_r, hand_r, "right"]]:
+		var air_base: Vector3 = air_probe[0]
+		var air_tip: Vector3 = _at(skel, air_probe[1])
+		var air_dist: float = air_tip.distance_to(air_base)
+		if air_dist <= STINK_TRAVEL_M:
+			_fail("skinned fixture: jumping at full stink timer moved the %s hand %.4f m — "
+					% [air_probe[2], air_dist] + "the wave must raise the arms over the air "
+					+ "flap, carrying a hand at least %.2f m" % STINK_TRAVEL_M)
+	var air_meas: Dictionary = anim.rig.measure()
+	if air_meas["left_arm_x"] < deg_to_rad(30.0) or air_meas["right_arm_x"] < deg_to_rad(30.0):
+		_fail("skinned fixture: jumping at full stink timer left upper arms at (%.1f, %.1f) deg — "
+				% [rad_to_deg(air_meas["left_arm_x"]), rad_to_deg(air_meas["right_arm_x"])]
+				+ "the stink overlay must pitch shoulders forward toward ~40 deg")
+	# THE RETURN (air): expire timer, relax air frames back to rest wing flap.
+	anim.player.phoboman_stink_timer = 0.0
+	for i: int in RELAX_FRAMES:
+		anim.animation_time = 0.0
+		anim.animate_jumping()
+	for air_probe: Array in [[air_l, b["hand_l"], "left"], [air_r, hand_r, "right"]]:
+		var air_base: Vector3 = air_probe[0]
+		var air_gap: float = _at(skel, air_probe[1]).distance_to(air_base)
+		if air_gap > REST_EPS:
+			_fail("skinned fixture: jumping frames with the timer expired left the %s hand "
+					% air_probe[2] + "%.4f m off the air pose — the wave's arms froze "
+					% air_gap + "past the timer (ceiling %.3f m)" % REST_EPS)
+
+	# (j3) IDLE PATH: drive `animate_idle()`.
+	anim.rig.rest_pose()
+	anim.player.phoboman_stink_timer = 0.0
+	anim.animation_time = 0.0
+	for i: int in RELAX_FRAMES:
+		anim.animate_idle(step)
+	var idle_l: Vector3 = _at(skel, b["hand_l"])
+	var idle_r: Vector3 = _at(skel, hand_r)
+	anim.player.phoboman_stink_timer = PlayerAbilities.PHOBOMAN_STINK_DURATION
+	anim.animate_idle(step)
+	for idle_probe: Array in [[idle_l, b["hand_l"], "left"], [idle_r, hand_r, "right"]]:
+		var idle_base: Vector3 = idle_probe[0]
+		var idle_tip: Vector3 = _at(skel, idle_probe[1])
+		var idle_travel: Vector3 = idle_tip - idle_base
+		if -idle_travel.z <= STINK_TRAVEL_M:
+			_fail("skinned fixture: idle at full stink timer moved the %s hand (%.4f, %.4f, %.4f) m — "
+					% [idle_probe[2], idle_travel.x, idle_travel.y, idle_travel.z]
+					+ "both upper arms must rise ~40 deg forward (`stink_raise_deg`), "
+					+ "which carries a hand at least %.2f m toward -Z" % STINK_TRAVEL_M)
+		elif absf(idle_travel.x) > absf(idle_travel.z) * STINK_ROLL_TOLERANCE:
+			_fail("skinned fixture: idle at full stink timer carried the %s hand %.4f m sideways "
+					% [idle_probe[2], idle_travel.x] + "against %.4f m forward — a "
+					% absf(idle_travel.z) + "forward raise must move the hand more "
+					+ "forward than sideways (ceiling ratio %.1f)" % STINK_ROLL_TOLERANCE)
+	# THE RETURN (idle): expire timer, relax idle frames back to standing pose.
+	anim.player.phoboman_stink_timer = 0.0
+	for i: int in RELAX_FRAMES:
+		anim.animate_idle(step)
+	for idle_probe: Array in [[idle_l, b["hand_l"], "left"], [idle_r, hand_r, "right"]]:
+		var idle_base: Vector3 = idle_probe[0]
+		var idle_gap: float = _at(skel, idle_probe[1]).distance_to(idle_base)
+		if idle_gap > REST_EPS:
+			_fail("skinned fixture: idle frames with the timer expired left the %s hand "
+					% idle_probe[2] + "%.4f m off the idle rest — the wave's arms froze "
+					% idle_gap + "past the timer (ceiling %.3f m)" % REST_EPS)
+
+	# ---- (j4) THE WAVE RIDES THE STRAFE, AND LEAVES NO RESIDUE ------
 	# Round 2 (codex review): `animate_sidestep()` never called the overlay, so
 	# F while strafing showed no telegraph — and strafing mid-wave froze the
 	# raised arms past the timer, because the strafe rewrote no arm X axis.
 	# Driven through the SHIPPED strafe path with the timer as the amount and
-	# measured in skeleton space like (j): the raise against the STRAFE rest
+	# measured in skeleton space like (j1–j3): the raise against the STRAFE rest
 	# (not the stand rest above), the return against it too. Zero velocity, so
 	# the phase never advances and no footstep can fire.
 	anim.rig.rest_pose()
