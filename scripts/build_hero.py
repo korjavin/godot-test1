@@ -1247,7 +1247,9 @@ HEROES = {
         # godot-test1-9k9n.7 re-proportioned the body under it and the same three
         # measured +15.0% on the 87 cm shell that came out, i.e. back on the floor
         # — a taller shell is more garment for the same fold to be a fraction of.
-        # Two more at the same 7 cm spacing take it to +20.3%, mid-budget.
+        # Two more at the same 7 cm spacing took it to +20.3%, mid-budget; the
+        # round body of bead 9k9n.9 wears the same five at +18.8%, which is the
+        # same five gathers on a 97 cm shell and still mid-budget.
         "creases": (("pelvis", 0.16), ("pelvis", 0.23), ("pelvis", 0.30),
                     ("pelvis", 0.37), ("pelvis", 0.44)),
         # THE HELMET AND THE DRAGON, the two accessories this row brings — see
@@ -1293,60 +1295,70 @@ HEROES = {
         # THE SILHOUETTE, PAST MAKEHUMAN'S RANGE (bead godot-test1-9k9n.7, owner
         # ruling 2026-09-18: "more humanoid, yes, but NOT a human. Legs much
         # shorter, arms much shorter, the belly huge. Remember how he was made").
-        # See `squash_proportions` for what the three numbers do and why the
-        # sliders above could not do it. THE STARTING POINT IS ARITHMETIC AND THE
-        # LANDING IS MEASURED: the #420 build measured leg 0.403 h, arm 0.293 h
-        # and belly 0.295 h on a 1.7992 m figure, each factor was first solved
-        # for its own target through `reframe`'s renormalisation, and then each
-        # was corrected against a rebuild, because `reframe`'s scale, the helmet's
+        # See `squash_proportions` for what the numbers do and why the sliders
+        # above could not do it.
+        #
+        # ROUND TWO, AND THE ROW IS A DIFFERENT CREATURE (bead godot-test1-9k9n.9;
+        # owner on `grid_35`, 2026-09-18: "Better, but the arms and legs even
+        # smaller, and the body and belly TOGETHER more round"). The first round
+        # made a fat man; "together more round" says the trunk is ONE volume from
+        # collar to hips and not a chest sitting on a stomach, which is what the
+        # retired sphere build was — `BODY_R` 0.52, the whole torso one ball, the
+        # limbs stubs off it. So the belly profile is no longer a bulge added to a
+        # human: it is a TAPER AT BOTH ENDS, and the amplitudes below say so in
+        # their signs. `trunk_roundness()` is the number that made that sayable.
+        #
+        # THE STARTING POINT IS ARITHMETIC AND THE LANDING IS MEASURED, and every
+        # figure below is off a rebuild, because `reframe`'s scale, the helmet's
         # own scale (it grows off the skull, so it grows with them) and where the
         # skin weights actually put the widest vertex are all downstream of the
-        # numbers. The same shape of loop the helmet palette needed in bead
-        # godot-test1-9k9n.5, and it took the same number of rounds.
+        # numbers. Five rounds of build-and-read for the profile alone.
         #
-        #   leg 0.47    landed first try: 0.4712 m of leg in a 1.8191 m figure,
-        #               0.259 h against the bead's 0.25.
-        #   arm 0.45    and THE TARGET IS 0.25 AND NOT THE BEAD'S 0.30, which is
-        #               the one place this row departs from what it was asked
-        #               for. The rejected #420 body measures 0.293 h on this
-        #               metric, so 0.30 is a target it already met: shipping it
-        #               would have delivered nothing at all against "arms much
-        #               shorter", and an earlier build of this bead did exactly
-        #               that (0.304 h, an arm 5% LONGER in metres than the one the
-        #               owner rejected — `reframe`'s 1.34x scale-up, itself a
-        #               consequence of halving the legs, gives back more than
-        #               `k_arm` takes off). The bead's 0.30 was read off the
-        #               sphere design by eye and that design's own arm reach is
-        #               0.17 h, so 0.25 sits between the two and is the first
-        #               value that makes the ruling true: 0.4588 m, 0.252 h, an
-        #               arm 13% shorter in metres than #420's on a figure 1% taller.
-        #   belly       +50% measured 0.502 h and +55% 0.515, i.e. 0.49 m of
-        #               width per unit of amplitude and not the 1:1 the first
-        #               solve assumed — a weight-blended inflate only reaches its
-        #               full amplitude where one bone owns the skin outright.
-        #               0.68 at `spine_01` reads 1.004 m, 0.552 h. The amplitudes
-        #               are per BONE, so the WEIGHTS are the profile: widest at
-        #               `pelvis`/`spine_01`, half that at the chest, a token at
-        #               the shoulders. `clavicle_*` and the arm chain carry a
-        #               small one too — not to fatten them but to move them OUT,
-        #               because an arm on a ball starts at the ball's flank; it
-        #               is the retired build's own shoulders at x +-0.46 on a
-        #               0.52 m sphere.
+        #   leg 0.305   0.3603 m of leg in a 1.8254 m figure = 0.197 h, just
+        #               under the bead's 0.20 ceiling (it was 0.47 -> 0.259 h).
+        #               The legs ARE stubs now; the bead says they may be.
+        #   arm 0.39    0.3447 m = 0.189 h, inside the bead's 0.17-0.20 band and
+        #               a hair over the retired sphere's own 0.17 reach. It is a
+        #               UNIFORM scale since this bead and the old axis-only map
+        #               could not have got here at all — `squash_proportions`'s
+        #               header has the crumple that proved it, and the short
+        #               version is that the same metric read 0.362 at `k_arm` 0.12
+        #               and 0.359 at 0.00, i.e. it had stopped answering.
+        #   belly       THE SIGNS ARE THE SHAPE. A circle's widest point is at its
+        #               MIDDLE, and a MakeHuman male's is at his hips, so the hips
+        #               come IN — `pelvis` -0.60, a NEGATIVE amplitude and the
+        #               first this pass has ever carried — while the chest goes OUT
+        #               (`spine_02` 0.45, `spine_03` 0.40 against the 0.38 / 0.14
+        #               that left the step the owner saw in `grid_35`'s 3/4
+        #               column). `spine_03` alone drives everything from z 0.77 to
+        #               the neck, so those two numbers are the whole upper half of
+        #               the ball and there is no third knob for the shoulders.
+        #               Measured: 0.9999 m across, 0.548 h, roundness 0.942.
+        #               `clavicle_*` and the arm chain carry a small one that is
+        #               not about fatness at all — it moves the arm OUT, because an
+        #               arm on a ball starts at the ball's flank; it is the retired
+        #               build's own shoulders at x +-0.46 on a 0.52 m sphere, and
+        #               it is what puts the hands at x +-0.553 on a trunk whose
+        #               own half-width is 0.50.
         "proportions": {
-            "arm": 0.45,
-            "leg": 0.47,
-            "belly": {"pelvis": 0.61, "spine_01": 0.68, "spine_02": 0.38,
-                      "spine_03": 0.14, "clavicle_l": 0.22, "clavicle_r": 0.22,
+            "arm": 0.39,
+            "leg": 0.305,
+            "belly": {"pelvis": -0.60, "spine_01": 0.17, "spine_02": 0.45,
+                      "spine_03": 0.40, "clavicle_l": 0.22, "clavicle_r": 0.22,
                       "upperarm_l": 0.20, "upperarm_r": 0.20,
                       "lowerarm_l": 0.20, "lowerarm_r": 0.20,
                       "hand_l": 0.20, "hand_r": 0.20},
         },
         # ... AND WHAT THAT HAS TO MEASURE, on the shipped figure (`silhouette`).
-        # The bead's three numbers, except the arm — see the note over `arm` above
-        # for why that one is 0.25. The belly takes the bottom of its 0.55-0.60
-        # band, because the band's top is the retired sphere's own 0.64 and this
-        # body still has to have arms beside it.
-        "silhouette": {"leg": 0.25, "arm": 0.25, "belly": 0.55},
+        # The first three are the bead's own numbers: its limbs are CEILINGS
+        # ("leg <= 0.20 h, arm <= 0.20 h") and the targets sit just under them, so
+        # `SILHOUETTE_TOL` — 0.015 for this reason — cannot pass a limb that is
+        # over. The belly stays at the bottom of its 0.55-0.60 band; the band's
+        # top is the retired sphere's own 0.64 and this body still has to have
+        # arms beside it. `roundness` is a FLOOR and not a target (`silhouette`
+        # says why): the body #431 shipped scores 0.838 and this one 0.942.
+        "silhouette": {"leg": 0.195, "arm": 0.19, "belly": 0.55,
+                       "roundness": 0.90},
         # A FAT MAN'S ARMS DO NOT HANG AT 5 DEGREES. The cast's rest puts them
         # beside the hips; on a hero whose belly is half his height that is inside
         # the belly. 30 degrees is where they clear it, and it is also the pose the
@@ -1996,23 +2008,38 @@ def decimate(obj, body_tris, head_tris):
 # IT IS THREE MOVES AND THEY DO NOT INTERACT (which is why the row is three
 # numbers and not a tuning session):
 #
-#   ARMS   compressed along their OWN axis about the shoulder — so they get
-#          short without getting thin, and the row keeps the muscle targets that
-#          make them beefy. Along the arm's axis and not along z because the body
-#          is still in MakeHuman's A-pose here (trap 5), where an arm is 41
-#          degrees off vertical and a z scale would flatten it sideways instead
-#          of shortening it.
+#   ARMS   SHRUNK ABOUT THE SHOULDER — one uniform scale, so the whole arm gets
+#          smaller rather than merely shorter. It was a compression along the
+#          arm's own axis until bead godot-test1-9k9n.9, on the argument that it
+#          kept the arm beefy while it took the length off, AND THAT MAP HAS A
+#          FLOOR THIS BEAD WALKED INTO. An axis-only map leaves every
+#          perpendicular offset where it found it, and MakeHuman's A-pose elbow
+#          sits 8 cm off the shoulder-to-fingertip line: measured on this body,
+#          `k_arm` 0.45 gave a 0.512 m chain, 0.12 gave 0.362 and 0.0 gave 0.359
+#          — i.e. below about 0.2 the number stops answering to the knob at all,
+#          and what it is reporting by then is a CRUMPLE. At `k_arm` 0.06 the
+#          rest skeleton read shoulder (-0.374, 0.017, 1.155), elbow
+#          (-0.452, 0.017, 1.021), wrist (-0.406, 0.056, 1.127): the forearm
+#          dives and the hand doubles back up inside it, which is a rig no gait
+#          can swing and a bone outside the skin it drives. A similarity has no
+#          floor and no crumple — the chain is exactly `k_arm` of what it was,
+#          and it stays the same shape — and "arms even smaller" (owner,
+#          2026-09-18) asks for the thinness too: the design this is going back
+#          to hangs thin stubs off a ball.
 #   BELLY  scaled RADIALLY about the body's own vertical axis, by an amount each
 #          vertex takes from the bones that drive it. The row names an amplitude
-#          per bone, so the weights ARE the profile: the bulge is widest where
-#          `pelvis` and `spine_01` own the skin, fades out through the chest, and
-#          is zero at the neck and past the knees — smooth by construction,
+#          per bone, so the weights ARE the profile — smooth by construction,
 #          because a skin weight is smooth. No z band, no falloff curve, no seam.
+#          AN AMPLITUDE MAY BE NEGATIVE, and since bead godot-test1-9k9n.9 one
+#          is: a ball is not a body with a bulge on it, it is a body that TAPERS
+#          at both ends, and the hips of a MakeHuman male do not taper on their
+#          own. `pelvis` -0.60 is that taper. Nothing in the map cared about the
+#          sign; only the `> 0.0` guard that skipped the scale did.
 #   LEGS   everything under the hip joint rises TOWARD it, so the crotch, the
 #          thighs, the boots and the leg bones all shorten by one factor with the
 #          hip as the fixed point. Purely spatial, so nothing shears — except
-#          that an arm is exempt (`t_arm`), the A-pose hand hanging below the hip
-#          being a hand and not a leg.
+#          that an arm is exempt (the `1 - max(t_l, t_r)` term), the A-pose hand
+#          hanging below the hip being a hand and not a leg.
 #
 # HEIGHT IS NOT ONE OF THE MOVES. `reframe()` runs straight after this and scales
 # crown-to-heel to the row's `height` whatever the legs did, so the pass is a
@@ -2052,8 +2079,8 @@ INFLATE_WITH_SKIN = frozenset(["clavicle_l", "clavicle_r"]
 
 
 def squash_proportions(obj, armature, joints, row):
-    """Push one row's silhouette past MakeHuman's range: short arms, short legs,
-    a huge belly. Transforms the mesh, the ARMATURE REST (trap 4's rule, by the
+    """Push one row's silhouette past MakeHuman's range: small arms, short legs,
+    a round trunk. Transforms the mesh, the ARMATURE REST (trap 4's rule, by the
     same map rather than by the same matrix — the map is not affine) and the
     joint dictionary together, and returns the moved joints.
 
@@ -2067,14 +2094,13 @@ def squash_proportions(obj, armature, joints, row):
     belly = spec.get("belly", {})
     hip_z = joints["pelvis"].z
 
-    # THE ARM'S OWN AXIS, off the REST DATA and not the pose (trap 6): shoulder
-    # to fingertip, i.e. the whole three-bone chain's direction, because the
-    # A-pose arm is near enough straight that one axis shortens all of it evenly.
+    # THE ARM'S FIXED POINT, off the REST DATA and not the pose (trap 6): the
+    # shoulder, which is the one point of an arm that belongs to the torso and
+    # must not move when the arm shrinks. The direction the chain runs in is not
+    # read at all any more — a similarity needs a centre and nothing else.
     bones = armature.data.bones
-    arm_o, arm_a = {}, {}
-    for side in ("l", "r"):
-        arm_o[side] = bones["upperarm_" + side].head_local.copy()
-        arm_a[side] = (bones["hand_" + side].tail_local - arm_o[side]).normalized()
+    arm_o = {side: bones["upperarm_" + side].head_local.copy()
+             for side in ("l", "r")}
 
     # THE INFLATE'S AMOUNT PER VERTEX, and its axis measured off the same number.
     # The axis is where the belly's own mass is (amount-squared weighted, so the
@@ -2103,10 +2129,8 @@ def squash_proportions(obj, armature, joints, row):
         q = Vector(p)
         for side, t in (("l", t_l), ("r", t_r)):
             if t > 0.0:
-                reach = (q - arm_o[side]).dot(arm_a[side])
-                if reach > 0.0:
-                    q -= arm_a[side] * (t * (1.0 - k_arm) * reach)
-        if fatness > 0.0:
+                q += (q - arm_o[side]) * (t * (k_arm - 1.0))
+        if fatness != 0.0:
             q.x = axis.x + (q.x - axis.x) * (1.0 + fatness)
             q.y = axis.y + (q.y - axis.y) * (1.0 + fatness)
         if q.z < hip_z:
@@ -2153,31 +2177,129 @@ def squash_proportions(obj, armature, joints, row):
     for name, p in joints.items():
         out[name] = remap(p, 1.0 if name == "l-elbow" else 0.0,
                           1.0 if name == "r-elbow" else 0.0)
-    log("proportions: arm x%.2f, leg x%.2f, belly +%.0f%% max about %s"
-        % (k_arm, k_leg, 100.0 * max(belly.values()) if belly else 0.0,
+    log("proportions: arm x%.2f, leg x%.2f, belly %+.0f%%..%+.0f%% about %s"
+        % (k_arm, k_leg,
+           100.0 * min(belly.values()) if belly else 0.0,
+           100.0 * max(belly.values()) if belly else 0.0,
            tuple(round(c, 4) for c in axis)))
     log("joints (squashed):", {k: tuple(round(c, 4) for c in v) for k, v in out.items()})
     return out
 
 
 # HOW FAR A MEASURED RATIO MAY SIT FROM THE ROW'S TARGET before the build fails.
-# The row's numbers are the OWNER'S, off bead godot-test1-9k9n.7 ("leg ~ 0.25 h,
-# arm ~ 0.3 h, belly ~ 0.55-0.6 h") with the arm taken lower for the reason the
-# row argues, so the tolerance is what "~" is worth on a silhouette judged by eye
-# at 3 m: 3% of standing height is 5 cm on this hero, which is a centimetre under
-# the width of his own hand and nothing a viewer names. Wide enough that a
-# `proportions` retune of one number does not fail the other two, narrow enough
-# that the REJECTED body fails all three — measured on its own committed `.blend`,
-# #420 reads leg 0.403, arm 0.293, belly 0.295 against this row's 0.25 / 0.25 /
-# 0.55, which is 0.15, 0.04 and 0.26 outside. (Against the bead's 0.30 for the arm
-# it would have been 0.007 INSIDE, i.e. no gate at all on that axis, which is what
-# review round 2 of this bead found and what moved the target.)
-SILHOUETTE_TOL = 0.03
+# It was 0.03 — what "~" is worth on a silhouette judged by eye at 3 m, 5 cm on
+# this hero — while the row's numbers were an owner's "leg ~ 0.25 h, arm ~ 0.3 h,
+# belly ~ 0.55-0.6 h". 0.015 SINCE BEAD godot-test1-9k9n.9, AND THE REASON IS
+# WHAT KIND OF NUMBER THE ROW NOW HOLDS: that bead's limbs are a CEILING ("leg
+# <= 0.20 h, arm <= 0.20 h"), and a +-0.03 band around a 0.195 target passes a
+# leg at 0.225 — a gate that lets the ruling it exists for be walked back by a
+# fifth is not a gate. 0.015 is 2.7 cm on this hero, still under the width of his
+# own hand and still nothing a viewer names, and every one of the four targets
+# below lands inside a fifth of it. The REJECTED body is outside on all three of
+# the ratios it shares, by 0.06 / 0.10 / 0.00 against this row (measured on its
+# own committed `.blend`, which is the only honest place to read it): the body
+# #431 shipped and the owner sent back reads leg 0.259 and arm 0.252, which is
+# 0.064 and 0.062 outside — and belly 0.552, which is INSIDE. That a rejected
+# silhouette passed one of the three gates on the nose is exactly why `roundness`
+# had to join them: a pear and a ball of one width and one height are one number.
+SILHOUETTE_TOL = 0.015
+
+# THE TRUNK, AS THE ROUNDNESS METRIC READS IT — the same four bones the belly
+# width is measured over, because "the body and the belly TOGETHER" (owner,
+# 2026-09-18 on `grid_35`) is exactly the statement that those four are ONE
+# volume and not a chest stacked on a stomach.
+TRUNK_BONES = ("pelvis", "spine_01", "spine_02", "spine_03")
+# FIVE SLICES ACROSS THE MIDDLE 60% OF THE TRUNK, evenly spaced (20%, 35%, 50%,
+# 65%, 80% of its height), and the 20% at each end is left out ON PURPOSE. A
+# trunk is only a solid of revolution between its holes: the top fifth is where
+# the neck leaves it and the bottom fifth is where the two legs do, and a
+# horizontal slice through either measures a gap between limbs rather than a
+# silhouette — the widest vertex at 5% of trunk height is the outside of a
+# thigh. The band a viewer reads as "the ball" is what is left, and it is the
+# band a step between a chest and a waist lands in. (Measured on the body #431
+# shipped and the owner sent back: over the FULL height it scores 0.838, its two
+# end slices reading 0.702 and 0.888; over this band, 0.858. The floor below
+# rejects it either way, and the second number is the one about its shape.)
+ROUNDNESS_SLICES = 5
+ROUNDNESS_SPAN = (0.20, 0.80)
+
+
+def trunk_roundness(obj):
+    """How close the trunk's own profile is to a CIRCLE from collar to hips —
+    the number behind the owner's "the body and belly together more round", and
+    the one thing the three `silhouette()` ratios could not say. A pear and a
+    ball of the same width and height score the same on `belly`; they do not
+    score the same here.
+
+    The trunk is every vertex the four `TRUNK_BONES` own outright (the same
+    >0.5 test the belly width uses, so the two numbers are read off the same
+    body). Its z extent is the circle's DIAMETER, and at each of five slices the
+    measured half-extent — `max(width, depth) / 2`, the bead's own metric, i.e.
+    the fatter of the two silhouettes a viewer can walk around to — is compared
+    with what a circle of that diameter would have there. The score is the
+    smaller over the larger, so being too WIDE at the chest counts against it
+    exactly as being too narrow does, and the headline is the mean of the five.
+
+    TWO-SIDED, AND THAT IS THE WHOLE POINT. A one-sided "never pinched" test
+    would pass the rejected body's own hips, which are 42% wider than the circle
+    at the same height and are half of why it reads as a pear; a "never fatter"
+    one would pass a plank. The MEAN and not the minimum, because one slice of a
+    human trunk always argues with the other four — `spine_03` drives everything
+    from z 0.77 to the neck, so the chest and the shoulders are one number and
+    cannot both land on the circle — and a gate that can only be satisfied by
+    geometry this rig cannot make is a gate nobody can pass honestly. The five
+    scores are logged, so a mean carried by four good slices is visible.
+
+    Returns (mean, [per-slice scores]). What it CANNOT see: the trunk is
+    measured as a solid of revolution about the body's own vertical axis, so a
+    body that is round in front and flat in profile scores whatever its wider
+    axis does. That is the bead's metric and it is the right one for this hero —
+    the belly inflate scales x and y by the same factor, so the aspect ratio
+    between them is MakeHuman's and not something a `proportions` row can drift.
+    Both extents are logged anyway, which is what would show it if that changed.
+    """
+    ids = _vg_ids(obj, TRUNK_BONES)
+    trunk = [v.co for v in obj.data.vertices if _group_weight(v, ids) > 0.5]
+    if len(trunk) < 32:
+        raise AssertionError("only %d trunk vertices: the roundness of this body "
+                             "cannot be measured" % len(trunk))
+    z0 = min(c.z for c in trunk)
+    z1 = max(c.z for c in trunk)
+    height = z1 - z0
+    radius = height / 2.0
+    centre_z = (z0 + z1) / 2.0
+    lo, hi = ROUNDNESS_SPAN
+    step = (hi - lo) / (ROUNDNESS_SLICES - 1)
+    half_band = height * step / 2.0
+    scores = []
+    for i in range(ROUNDNESS_SLICES):
+        z = z0 + height * (lo + step * i)
+        band = [c for c in trunk if abs(c.z - z) <= half_band]
+        if not band:
+            raise AssertionError("the trunk has a hole in it: no vertex within "
+                                 "%.3f m of z=%.3f" % (half_band, z))
+        wide = max(c.x for c in band) - min(c.x for c in band)
+        deep = max(c.y for c in band) - min(c.y for c in band)
+        got = max(wide, deep) / 2.0
+        want = radius * math.sqrt(max(0.0, 1.0 - ((z - centre_z) / radius) ** 2))
+        scores.append(min(got, want) / max(got, want))
+        log("  roundness slice %d: z %.4f | width %.4f depth %.4f | r %.4f vs "
+            "circle %.4f | %.3f" % (i, z, wide, deep, got, want, scores[-1]))
+    mean = sum(scores) / len(scores)
+    log("trunk: %.4f m tall, %d verts, roundness %.3f (slices %s)"
+        % (height, len(trunk), mean, " ".join("%.3f" % s for s in scores)))
+    return mean, scores
 
 
 def silhouette(obj, armature, row):
-    """The three ratios the owner judges this hero by, measured on the SHIPPED
+    """The four numbers the owner judges this hero by, measured on the SHIPPED
     figure and asserted against the row's `silhouette` targets.
+
+    Three are RATIOS of standing height with a target and a tolerance; the
+    fourth, `roundness`, is `trunk_roundness()` and is a FLOOR (see the
+    `continue` below). It joined them at bead godot-test1-9k9n.9 because the
+    other three could not see what the owner sent `grid_35` back for: a pear and
+    a ball of the same width and the same height read identically on `belly`.
 
     Measured after the joins and after `apply_pose_as_rest`, so the height is the
     one the game draws (helmet and valve knob included, which is what tops
@@ -2188,8 +2310,12 @@ def silhouette(obj, armature, row):
     has no bone and the silhouette is the whole point.
 
     The dragon rides the three spine bones, so its vertices are inside the belly
-    measurement — by design: it is 1.2 cm proud of a surface it lies on down the
-    CENTRE LINE, and the width is read at the flanks, where it is not.
+    measurement AND inside the trunk `roundness` one — by design for the first:
+    it is 1.2 cm proud of a surface it lies on down the CENTRE LINE, and the
+    width is read at the flanks, where it is not. For `roundness` it is 1.2 cm on
+    a DEPTH of ~0.95 m at the slices it crosses, and depth only counts there when
+    it beats width, which on this body it does at the belly — so read the two
+    extents the log prints per slice before blaming a profile on a serpent.
 
     AND A BASELINE FOR THIS COMES OFF THE `.blend`, NEVER OFF THE `.glb`. glTF has
     no bone TAILS — it stores joints as nodes — so Blender's importer INVENTS one
@@ -2219,7 +2345,21 @@ def silhouette(obj, armature, row):
     log("silhouette: height %.4f m | leg %.4f m = %.3f h | arm %.4f m = %.3f h | "
         "belly %.4f m = %.3f h"
         % (height, leg, got["leg"], arm, got["arm"], max(xs) - min(xs), got["belly"]))
+    got["roundness"] = trunk_roundness(obj)[0]
     for key, target in row.get("silhouette", {}).items():
+        # ROUNDNESS IS A FLOOR AND THE OTHER THREE ARE TARGETS, because they are
+        # different kinds of number: a leg 3 cm shorter than asked for is as much
+        # a miss as one 3 cm longer, and a trunk ROUNDER than the row asks for is
+        # this bead's own direction of travel. One `continue`, and the row keeps
+        # every number the owner rules this hero by in one place.
+        if key == "roundness":
+            if got[key] < float(target):
+                raise AssertionError(
+                    "the trunk scores %.3f against a circle, under the row's %.3f "
+                    "floor — the body and the belly have come apart into a chest "
+                    "and a stomach again, re-derive the `belly` amplitudes"
+                    % (got[key], float(target)))
+            continue
         if abs(got[key] - float(target)) > SILHOUETTE_TOL:
             raise AssertionError(
                 "%s is %.3f of standing height, outside the row's %.3f +- %.3f — "
@@ -3769,6 +3909,19 @@ HELMET_TRIS = (1600, 3400)      # the budget, asserted where it is spent
 # the amplitudes that shipped), because the belly under it grew more. The left bias
 # the canon asks for — "starting from the left side and stretching to the middle" —
 # is kept by taking the 0.20 off both ends rather than off one.
+#
+# AND BEAD godot-test1-9k9n.9 RE-FITTED IT AND LANDED ON THE SAME PAIR, which is
+# worth a line because the body under it is a different shape. The map is `half_w`
+# times this span and `half_w` did not move (the belly measures 0.9999 m against
+# 1.0040); what moved is where that width SITS, and the animal is laid by ray at
+# z 0.8400 either way, which on the new trunk is the middle of the ball instead of
+# the top of a pear — so it lies on MORE belly, not less. Both ends re-measured on
+# the shipped mesh: the tail's top waypoint is accepted by `surface()` (it refuses
+# anything off the front, which is how the last two fits were found), and the head
+# clears the arms by 224.4 mm against the 20 mm floor — a number that went from
+# 68.7 because the arms are a third of the size. The span could therefore GROW
+# again; it is not, because the serpent already runs 0.472 of a belly it has to
+# read across at 3 m, and what the clearance bought is margin, not licence.
 DRAGON_REACH = (-0.55, 0.40)
 # The generator's own path PLUS the head assembly hung off its last waypoint, as an
 # x span in ITS units: the tail's radius at one end, the snout's far edge at the
