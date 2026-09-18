@@ -179,6 +179,8 @@ func _check_table() -> String:
 		# restate the constant back to itself — a tautology, not a check.
 		[MinimapHud.ZOOM_IN_KEYCODES[0], "+ / -", "minimap_hud.ZOOM_IN_KEYCODES[0]"],
 		[MinimapHud.ZOOM_OUT_KEYCODES[0], "+ / -", "minimap_hud.ZOOM_OUT_KEYCODES[0]"],
+		# No keycode because the wheel is an InputEventMouseButton in player_controller._input, not an input-map action.
+		[KEY_NONE, "Wheel", "player_controller._input (mouse wheel zoom)"],
 	]
 	for entry: Array in raw:
 		var legend: String = entry[1]
@@ -187,7 +189,7 @@ func _check_table() -> String:
 		# The zoom keys are punctuation whose keycode name ("Equal", "Minus") is not
 		# the legend a player reads, so only their presence is asserted; the letter
 		# and function keys are compared by name.
-		if legend == "+ / -":
+		if legend == "+ / -" or legend == "Wheel":
 			continue
 		var actual: String = OS.get_keycode_string(int(entry[0]))
 		if actual != legend:
