@@ -3345,7 +3345,7 @@ HELMET_TRIS = (1600, 3400)      # the budget, asserted where it is spent
 #   this bead scaled the generator's path 1.6x about the centre and put the dragon's
 #   head 4.6 mm from the right hand — 43 hand vertices inside its head sphere, found
 #   by eye on `grid_33`'s 3/4 column. At 0.45 the clearance is 83.2 mm, and
-#   `assert_clear_of_hands` is the guard that measures it every build.
+#   `assert_clear_of_arms` is the guard that measures it every build.
 #   the LEFT end is the TRUNK's own silhouette. 0.90 put the tail's top waypoint at
 #   x -0.224, which at its own height (z 1.253, the upper chest, where a fat man is
 #   narrower than at his waist) is off the front of him — `surface()` refused it.
@@ -3360,10 +3360,18 @@ DRAGON_REACH = (-0.70, 0.45)
 # animal and not just its spine — which is the half of it the round-2 review found
 # hanging off the body.
 DRAGON_GEN_X = (-0.23, 0.33)
-DRAGON_PROUD = 0.012     # the generator's own standoff: the tube's CENTRE line
-                         # stands this far off the belly, so half of it is sunk
-                         # in and it reads as embossed art rather than a snake
-                         # lying on a man.
+DRAGON_PROUD = 0.012     # the generator's own standoff, and world metres like
+                         # every other argument to `surface()`'s `proud`: the tube's
+                         # CENTRE line stands this far off the belly, so part of it
+                         # is sunk in and it reads as embossed art rather than as a
+                         # snake lying on a man. How much part varies along the
+                         # serpent, because the standoff does NOT scale with it —
+                         # measured on the shipped build, 12 mm against a 16 mm tail
+                         # radius (a quarter buried) and against a 35 mm head radius
+                         # (two thirds). That is the generator's own behaviour, not
+                         # a slip: its radii vary the same way against the same flat
+                         # 0.012, and a tail that buried two thirds of itself would
+                         # be a tail nobody can see.
 DRAGON_WHISKER_PROUD = 0.020   # ... and the generator's own extra for the gold
                                # whiskers, which flick off the belly rather than
                                # lying on it
@@ -3443,11 +3451,11 @@ def build_helmet(colours, obj, tj):
     are one cause — that assembly was authored for a renderer it never had:
 
       the bowl        `create_head_assembly` hangs the broth and its noodles
-                      INSIDE the dome. Nothing in this cast is transparent, so
-                      that is a face sealed in an opaque sphere — which is
-                      literally what shipped: `docs/style/heroes/phoboman-after.png`
-                      is a bare olive dome with no face on it at all. The bowl
-                      sits ON the dome here (`apex`, `fy`).
+                      INSIDE the dome — 6 cm behind its own front surface, with an
+                      opaque glass disc in between. Nothing in this cast is
+                      transparent, so that is a face sealed in a sphere and
+                      invisible from every angle. The bowl sits ON the dome here
+                      (`apex`, `fy`), and the arithmetic is at `apex`.
       the glass       and for the same reason the pane in front of it is a lid,
                       so it is a bevel RING around the soup instead.
       the noodles     the generator turns each strand OUT of the porthole plane,
@@ -3511,14 +3519,14 @@ def build_helmet(colours, obj, tj):
     port_z = GEN_DOME_R * 0.92       # the generator's names, kept so the port
     port_r = 0.165                   # reads against `create_head_assembly`
     # WHERE THE DOME'S OWN SURFACE IS AT THE PORTHOLE, in the generator's units.
-    # `create_head_assembly` put the soup and its noodles INSIDE the dome, 6 cm
-    # behind this — which is a face you can only see through the glass, and there
-    # is no glass in this renderer and never was in the last one either: the old
-    # shipped Phoboman (`docs/style/heroes/phoboman-after.png`) is a bare olive
-    # dome with no face on it at all, for exactly this reason. So the bowl sits ON
-    # the dome here, a few millimetres proud, framed by the rim that still hugs the
-    # curve — which is what `assets/portraits/phoboman.png` draws and what the
-    # canon means by "the open visor of the helmet shows the soup".
+    # `create_head_assembly` put the soup and its noodles INSIDE the dome, and the
+    # three numbers say the rest: its broth disc sits at y = 0.86*0.27 - 0.02 =
+    # 0.2122, its opaque `glass` disc at 0.2522, and the dome's own opaque surface
+    # at 0.2754. Nothing of that face can be seen from the front by any renderer in
+    # this game — there is no transparency in the cast. So the bowl sits ON the dome
+    # here, a few millimetres proud, framed by the rim that still hugs the curve —
+    # which is what `assets/portraits/phoboman.png` draws and what the canon means
+    # by "the open visor of the helmet shows the soup".
     apex = GEN_DOME_R * HELMET_DEEP * math.sqrt(max(0.0, 1.0 - (
         (port_z - GEN_DOME_R * 0.86) / (GEN_DOME_R * HELMET_FLAT)) ** 2))
     face_y = apex + HELMET_FACE_PROUD - 0.02   # the broth disc is 0.04 deep
@@ -3698,12 +3706,19 @@ def spine_split(armature):
             for n in (0, 1, 2)}
 
 
-DRAGON_HAND_CLEAR = 0.020   # how much air the dragon must leave around a hand in
+DRAGON_ARM_CLEAR = 0.020    # how much air the dragon must leave around an ARM in
                             # the SHIPPED rest, measured after `apply_pose_as_rest`
+ARM_BONES = ["upperarm_l", "upperarm_r", "lowerarm_l", "lowerarm_r",
+             "hand_l", "hand_r"]
 
 
-def assert_clear_of_hands(obj, first_vert, clearance=DRAGON_HAND_CLEAR):
-    """No vertex of the accessory joined at `first_vert` may be in a hand.
+def assert_clear_of_arms(obj, first_vert, clearance=DRAGON_ARM_CLEAR):
+    """No vertex of the accessory joined at `first_vert` may be in an arm.
+
+    THE WHOLE ARM AND NOT JUST THE HAND, although the hand is what this was written
+    for: an arm hanging at 5 degrees puts its elbow over the widest part of a belly
+    like this one, and on the shipped build the tightest clearance is the UPPER ARM
+    and not the fist (59.8 mm against the hand's 83.2)."
 
     RUN AFTER `apply_pose_as_rest`, AND THAT IS THE WHOLE POINT. `build_dragon`
     measures a body in MakeHuman's A-pose, where the arms stand 41 degrees off
@@ -3719,25 +3734,25 @@ def assert_clear_of_hands(obj, first_vert, clearance=DRAGON_HAND_CLEAR):
     A join APPENDS, so the accessory is exactly the vertices past `first_vert` — the
     coat tails' idiom.
     """
-    ids = _vg_ids(obj, ["hand_l", "hand_r"])
-    hands = [v.co for v in obj.data.vertices if _group_weight(v, ids) > 0.5]
-    if not hands:
-        raise AssertionError("no hand vertices: this hero has no hands to clear")
-    xs = [c.x for c in hands]
-    zs = [c.z for c in hands]
+    ids = _vg_ids(obj, ARM_BONES)
+    arm = [v.co for v in obj.data.vertices if _group_weight(v, ids) > 0.5]
+    if not arm:
+        raise AssertionError("no arm vertices: this hero has no arms to clear")
+    xs = [c.x for c in arm]
+    zs = [c.z for c in arm]
     worst, at = 1e9, None
     for v in obj.data.vertices[first_vert:]:
-        for h in hands:
+        for h in arm:
             d = (v.co - h).length
             if d < worst:
                 worst, at = d, v.co.copy()
-    log("hand clearance: %.1f mm (floor %.0f), nearest accessory vertex %s; hands "
+    log("arm clearance: %.1f mm (floor %.0f), nearest accessory vertex %s; arms "
         "x %.3f..%.3f z %.3f..%.3f"
         % (worst * 1000.0, clearance * 1000.0,
            tuple(round(c, 3) for c in at), min(xs), max(xs), min(zs), max(zs)))
     if worst < clearance:
         raise AssertionError(
-            "the accessory joined at vertex %d comes %.1f mm of a hand in the "
+            "the accessory joined at vertex %d comes %.1f mm of an arm in the "
             "shipped rest (floor %.0f mm), nearest at %s — it was modelled on the "
             "A-pose body and the arms have come down since"
             % (first_vert, worst * 1000.0, clearance * 1000.0,
@@ -4824,9 +4839,9 @@ def build(hero, shot=None):
 
     apply_pose_as_rest(armature, obj, ARMS_DOWN_DEG)
     # ... AND ONLY NOW CAN THE DRAGON BE CHECKED against the arms, because only now
-    # are they where the hero ships them — see `assert_clear_of_hands`.
+    # are they where the hero ships them — see `assert_clear_of_arms`.
     if dragon_v0 is not None:
-        assert_clear_of_hands(obj, dragon_v0)
+        assert_clear_of_arms(obj, dragon_v0)
     report_weights(obj, armature, "skinned body (accessories joined)")
     assert_no_multires([obj, armature])
 

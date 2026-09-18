@@ -9,12 +9,17 @@ Run OUTSIDE Blender, invoking it headless (bound with `perl -e 'alarm 900; exec
   blender --background --python-exit-code 1 --python scripts/blender_hero.py -- \
       import <hero> [--screenshot <path.png>]
 
-<hero> IS PHOBOMAN AND ONLY PHOBOMAN, by owner ruling 2026-09-11: he keeps his
-sphere body, his ten-part tree and the limb rig, where Teibi (bead
-godot-test1-5u3.3), Windman (5u3.5) and Primm (5u3.6) each became one skinned mesh
-on a Skeleton3D. Reproducing a PART TREE from such a .tscn has nothing to
-reproduce (Windman's scene still holds one instanced .glb, his FAN, but a
+<hero> IS PHOBOMAN AND ONLY PHOBOMAN, because his is the last PART TREE in the
+cast: Teibi (bead godot-test1-5u3.3), Windman (5u3.5) and Primm (5u3.6) each became
+one skinned mesh on a Skeleton3D, and reproducing a part tree from such a .tscn has
+nothing to reproduce (Windman's scene still holds one instanced .glb, his FAN, but a
 BoneAttachment3D is not a part tree and this lane cannot walk it).
+
+NOT because of the 2026-09-11 ruling any more, which is why that ruling is not quoted
+here: it was SUPERSEDED on 2026-09-18 (epic godot-test1-9k9n, option B). Bead 9k9n.1
+built Phoboman a skinned mesh on the same rig as the other three, 9k9n.2 wires his
+.tscn to it and 9k9n.3 retires his part tree — and with it this lane's last subject,
+leaving `screenshot()` below as the only thing anyone still calls in here.
 
 THE EXPORT LANE IS GONE (bead godot-test1-5u3.8). It wrote ONE hand-edited part
 back into the repo's Z-up glTF convention, and it existed for the authored heads
