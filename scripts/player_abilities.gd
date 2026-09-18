@@ -127,6 +127,16 @@ const WINDMAN_LIFT: float = 6.0
 ## not a retune. `"SEEING"` refuses the press while a look is already running, so
 ## cooldown ranks stay a straight buff (they shorten the wait, never the look) and
 ## the x-ray is a window whatever the skill tree says.
+##
+## COST READING, debug web export (headless Chromium + SwiftShader, 1280x720,
+## bead godot-test1-0mr0.2): field with 7 awake, sight off FPS 11 / 134.4 ms /
+## 368 draws vs the arm frame FPS 11 / 268.0 ms / 343 draws; city gate with 1
+## awake, off FPS 12 / 145.7 ms / 267 draws vs arm FPS 12 / 148.5 ms / 211
+## draws vs +2.4 s FPS 13 / 76.6 ms / 212 draws. No sustained FPS, frame-time
+## or draw-call delta from the overlays — one elevated arm frame (effect spawn
+## plus the awake-set walk; single frame, exact attribution uncertain under
+## software GL), then back to baseline. Bound stands: <= ~55 awake bodies x
+## their meshes x 1 extra draw x 7 s, behind the purchased node.
 const WINDMAN_SIGHT_DURATION: float = 7.0
 
 # --- Primm: Phase Step ---
