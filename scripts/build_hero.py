@@ -3330,10 +3330,25 @@ HELMET_FACE_FLAT = 0.6
 HELMET_TRIS = (1600, 3400)      # the budget, asserted where it is spent
 
 DRAGON_SPAN = 1.6        # how much of the belly the S-curve covers. The
-                         # generator's path fills about half of its own sphere;
-                         # the canon wants a dragon "starting from the left side
-                         # and stretching to the middle" of a belly, which is
-                         # more of it than that.
+                         # generator's path fills about half of its own sphere,
+                         # which on this belly is a thin squiggle in the middle of
+                         # it; 1.6 is what makes the serpent read red-on-blue at
+                         # the 3 m the game is judged at (its body is 5.2 cm thick
+                         # at the head, against 3.0 at 1.0).
+                         #
+                         # AND IT IS MORE THAN THE CANON'S WORDS. `docs/characters/
+                         # phoboman.md` says "starting from the left side and
+                         # stretching to the middle"; measured on the shipped
+                         # build, the motif runs x -0.188..+0.267 on a belly whose
+                         # half-width is 0.265 — flank to flank, which is the same
+                         # line's "a long tail smoothly wrapping the belly" but is
+                         # not its "to the middle". The trade is deliberate and it
+                         # is READABILITY, and it is one number if the owner reads
+                         # `docs/style/z3e/grid_33_phoboman_blender.png` the other
+                         # way: scaling is about the belly's centre, so dropping
+                         # this pulls both ends in together. (The head end no
+                         # longer LEAVES the belly either way — every piece of it
+                         # goes through `surface()`; see `off()`.)
 DRAGON_PROUD = 0.012     # the generator's own standoff: the tube's CENTRE line
                          # stands this far off the belly, so half of it is sunk
                          # in and it reads as embossed art rather than a snake
@@ -3388,10 +3403,12 @@ def _tube_seat(p0, p1, radius, sections=8):
     """Add a cylinder and return the matrix that lays it from `p0` to `p1` — the
     pair `_piece` wants, like every `bpy.ops.mesh.primitive_*_add` above it.
 
-    The dragon's segments and its horns, whiskers and claws. The round joint
-    spheres the generator already drops at every waypoint are what make the chain
-    read as one continuous serpent, which is the same thing its capsules did for a
-    tenth of the triangles."""
+    The dragon's body segments and its claw tufts — its two callers, and the two
+    pieces of it that are drawn between a pair of endpoints; the horns and the
+    whiskers are seated by an anchor and an angle instead and add their own
+    cylinder. The round joint spheres the generator already drops at every waypoint
+    are what make the chain read as one continuous serpent, which is the same thing
+    its capsules did for a tenth of the triangles."""
     p0, p1 = Vector(p0), Vector(p1)
     axis = p1 - p0
     if axis.length < 1e-6:
@@ -3597,6 +3614,11 @@ def build_helmet(colours, obj, tj):
         pieces.append(_piece("PhoHerb%d" % i, colours["nose_green"],
                              Matrix.Translation(g(hx, fy(0.03), port_z + hz))))
 
+    # THE STRANDS LIE IN THE GLASS PLANE, which is the third departure in this
+    # function's docstring: `create_head_assembly` turns each one out of that plane
+    # with a second 90-degree X rotation after the tilt, so its "swirly noodle
+    # strands across the lower broth" end up four stubs pointing at the camera.
+    # Only the tilt is applied here.
     for i, (sx, sz, sl, rot) in enumerate(((-0.07, -0.06, 0.10, 20),
                                            (0.05, -0.07, 0.09, -25),
                                            (-0.02, -0.095, 0.08, 10),
@@ -3728,10 +3750,20 @@ def build_dragon(colours, obj, tj):
         pieces.append(_piece("DragonJoint%d" % i, colours["dragon_red"],
                              Matrix.Translation(p)))
 
-    anchor = pts[-1]
+    # THE HEAD RIDES THE BELLY, like every segment behind it. The generator hung
+    # its head, snout, horns and eyes off the last waypoint by a plain offset,
+    # which is exact on a sphere it had just built and wrong on a body: 9 cm to
+    # character-right of that waypoint the belly has already curved away, so a
+    # snout placed at the ANCHOR's own depth floats off the front. Each piece goes
+    # through `surface()` at its own (x, z) instead, which also means the same
+    # assert that catches a waypoint off the front now catches a snout off it —
+    # the review of round 2 found this one by reading `grid_33` and it was
+    # invisible from the source.
+    head_x, head_z = path_xz[-1]
 
     def off(dx, dy, dz):
-        return Matrix.Translation(anchor + Vector((dx, dy, dz)) * k)
+        return Matrix.Translation(surface(head_x + dx, head_z + dz,
+                                          DRAGON_PROUD + dy * k))
 
     bpy.ops.mesh.primitive_uv_sphere_add(radius=0.085 * k, segments=10, ring_count=6)
     pieces.append(_piece("DragonHead", colours["dragon_red"],
@@ -4639,9 +4671,13 @@ def build(hero, shot=None):
     if "emblem" in row:
         paint_chest_glyph(obj, tj, row)
 
-    # FIRST OF THE ACCESSORIES, because it is the only one that MEASURES the body
-    # it is joined to: `build_goggles` reads the head's own outline at eye height,
-    # and a beret brim or an eyeball inside that slab would be measured as skull.
+    # FIRST OF THE ACCESSORIES, because it MEASURES the body it is joined to:
+    # `build_goggles` reads the head's own outline at eye height, and a beret brim
+    # or an eyeball inside that slab would be measured as skull. `build_helmet` and
+    # `build_dragon` below read the body too (the skull, and the belly by ray), so
+    # the rule is that a measuring builder runs before anything is joined into what
+    # it measures — the helmet sits after the beret and the eyes only because no row
+    # wears both, and the day one does it moves up here.
     # (Its polygons are flat-shaded for the coat tails' reason — a frame and a lens
     # are hard-edged, and smoothing a box ring rounds it into a sausage.)
     if "goggles" in row:
@@ -4865,8 +4901,8 @@ def rest_row(shots, path):
         img.pixels.foreach_get(buf)
         frame = buf.reshape(img.size[1], img.size[0], 4)
         # The helper frames a whole 4 m field of view for a 1.8 m man, so most of
-        # each square is floor. Keep the middle third: three heroes at a readable
-        # size beat three squares of background.
+        # each square is floor. Keep the middle third: the cast at a readable size
+        # beats a row of squares of background.
         cut = frame.shape[1] // 3
         frames.append(frame[:, cut:-cut])
         bpy.data.images.remove(img)

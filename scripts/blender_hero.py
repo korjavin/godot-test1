@@ -27,7 +27,7 @@ the one the .tscn's untouched Transform3D already expects.
 
 SKINNED HEROES ARE NOT THIS LANE — scripts/build_hero.py IS. That file builds a
 whole human on MPFB2's game_engine rig from one HEROES row and exports one skinned
-.glb for windman, primm and teibi, and its `screenshot()` call below is the only
+.glb for every hero in the cast, and its `screenshot()` call below is the only
 thing it borrows from here. Nothing in this file's matrix math applies there: trap
 2's Rx(-90) conjugation is for UNRIGGED parts hung on a .tscn node, and a skinned
 glTF is placed by its own root node and exports Y-up (build_hero.py's own trap 3).

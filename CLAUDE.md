@@ -51,9 +51,10 @@ mesh each on a 23-bone MakeHuman rig, source of record `scripts/build_hero.py`
 (Blender + MPFB2, run by hand, outside the CI rebuild gate;
 `scripts/hero_manifest.json` is their staleness gate instead). Phoboman is the
 newest and the only one not yet WIRED to his mesh (bead godot-test1-9k9n.1 built it,
-9k9n.2 wires it), so his ten generated parts and Windman's fan are still the two
-names in `build.yml`'s rebuild loop (`generate_phoboman_separate.py`,
-`generate_windman_fan.py`).
+9k9n.2 wires it, 9k9n.3 retires the parts), so his ten generated parts are still
+one of the three names in `build.yml`'s rebuild loop, beside Windman's fan and
+Primm's katanas (`generate_phoboman_separate.py`, `generate_windman_fan.py`,
+`generate_primm_swords.py`).
 
 `.gd.uid` files are Godot's; don't hand-edit them.
 

@@ -5,8 +5,9 @@ There are TWO KINDS OF HERO in this folder, and the `.tscn` is what says which:
 * **Skinned** — one `.glb` holding one mesh on a 23-bone MakeHuman rig
   (`<hero>_parts/<hero>_skinned.glb`), built by `scripts/build_hero.py` from a
   `HEROES` row. `hero_rig.gd` finds the `Skeleton3D` **by type** and poses it with
-  `hero_rig_skeleton.gd`. Teibi (bead godot-test1-5u3.3), Windman (bead 5u3.5) and
-  Primm (bead 5u3.6) are here.
+  `hero_rig_skeleton.gd`. Teibi (bead godot-test1-5u3.3), Windman (bead 5u3.5),
+  Primm (bead 5u3.6) and Phoboman (bead 9k9n.1 — built, and WIRED by 9k9n.2) are
+  here.
 * **Separate parts** — a folder of GLB parts assembled by a `.tscn` whose
   `Body/LeftArm` / `RightArm` / `LeftLeg` / `RightLeg` containers are rotated at run
   time, the limbs found **by exact node name** and posed by `hero_rig_limbs.gd`.

@@ -107,7 +107,7 @@ wrote them and the `export_presets.cfg` exclusion that kept them out of the web 
 their job was to be compared, the comparison happened, and the grids that recorded it
 (`grid_27_cloth_spike.png`, `grid_27_cloth_spike.md`) are still committed.
 
-What the three passes are, on every garment of all three skinned heroes:
+What the three passes are, on every garment of all four skinned heroes:
 
 | pass | what it does | what it costs |
 |---|---|---|
