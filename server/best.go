@@ -38,6 +38,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -58,8 +60,24 @@ const (
 	// broken client from parking absurd numbers in the JSON file.
 	maxBestValue = 1 << 30
 
-	// maxBestBody is the accepted request body. A record is two small integers.
-	maxBestBody = 256
+	// maxBestBody is the accepted request body, SIZED FROM THE CONSTANTS, not
+	// guessed. A POST carries the finder's whole passport set on every write,
+	// and at its absolute worst that array is maxFoundIDs ids of 32 chars,
+	// quoted and comma-separated: 1 + 128*34 + 127 + 1 = 4481 bytes. The four
+	// numeric fields at their clamped widest (1<<30, ten digits each) add
+	// about a hundred more — roughly 4.6 KB all told. 8192 is that worst case
+	// with room to spare (~1.8x), still far too small for a hostile client to
+	// park anything large behind. A smaller cap would REJECT A VALID FULL
+	// PASSPORT: 4096 locked out every later update for a player who
+	// legitimately filled all 128 stamps, since the client re-sends the whole
+	// set on every POST. Over the cap is a 400, never a truncation.
+	maxBestBody = 8192
+
+	// maxFoundIDs bounds one player's found set, here and on the client (which
+	// holds MAX_FOUND_IDS = 128 too). At the cap the STORED set wins over the
+	// excess: a merge keeps what it has and takes newcomers only while there
+	// is room, so a hostile or broken client cannot rotate anyone's stamps out.
+	maxFoundIDs = 128
 
 	// bestDumpInterval is how often a dirty store is written to disk. The lobby
 	// has no graceful shutdown (see main), so a SIGTERM can lose up to this much
@@ -72,6 +90,10 @@ const (
 // client generates 32 hex characters; the range is wider so an older or newer
 // client's format still works.
 var playerIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`)
+
+// foundIDRe is the whole passport-id validation, mirroring the client's
+// FOUND_ID_PATTERN: the registry builder minus `_landmark_`.
+var foundIDRe = regexp.MustCompile(`^[a-z0-9_]{1,32}$`)
 
 // bestRecord is one player's records. Every field is an INDEPENDENT maximum,
 // matching the client: a long-but-poor run can set one without the other.
@@ -95,8 +117,15 @@ type bestRecord struct {
 	Lifetime int `json:"lifetime"`
 	// Spent is skill points spent. 0 until the skill-tree phase exists; stored
 	// now so that phase touches no server code.
-	Spent int   `json:"spent"`
-	Seen  int64 `json:"seen"` // unix seconds; refreshed by read AND write
+	Spent int `json:"spent"`
+	// Found is the discovery-passport set: every field-landmark id this player
+	// has ever found, unioned across their devices. A set, not a maximum — the
+	// merge below unions it, the bound and the id shape beside it applying on
+	// the request path AND in load(), so neither a hostile POST nor a
+	// hand-edited dump can park anything else here. An older client posts no
+	// `found` at all; that decodes as nil and unions nothing.
+	Found []string `json:"found"`
+	Seen  int64    `json:"seen"` // unix seconds; refreshed by read AND write
 }
 
 type bestStore struct {
@@ -130,6 +159,12 @@ func (s *bestStore) get(id string) bestRecord {
 		return bestRecord{}
 	}
 	rec.Seen = time.Now().Unix()
+	// A snapshot, not the stored slice: the handler marshals the returned
+	// record after the lock is released, and the stored backing array is one
+	// merge() alone touches — through its own clone. (Merge never mutates a
+	// handed-out array, so the store and this response may share this
+	// generation's array; neither will write to it again.)
+	rec.Found = slices.Clone(rec.Found)
 	s.recs[id] = rec
 	s.dirty = true
 	return rec
@@ -143,7 +178,7 @@ func (s *bestStore) get(id string) bestRecord {
 // An older client that does not know about progression posts no `lifetime` /
 // `spent` at all; JSON decodes those as 0, and 0 raises nothing. That is the
 // whole backward-compatibility story.
-func (s *bestStore) merge(id string, distance, coins, lifetime, spent int) bestRecord {
+func (s *bestStore) merge(id string, distance, coins, lifetime, spent int, found []string) bestRecord {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, existed := s.recs[id]
@@ -162,10 +197,50 @@ func (s *bestStore) merge(id string, distance, coins, lifetime, spent int) bestR
 	if spent > rec.Spent {
 		rec.Spent = spent
 	}
+	// The found set unions: shaped, unseen ids join while there is room, and
+	// the STORED set wins over the excess — at the cap nothing already held is
+	// dropped for a newcomer. Sorted, like the client keeps it.
+	//
+	// The union runs on a CLONE of the stored slice, not in place: the handler
+	// marshals the RETURNED record after this lock is released, so appending
+	// into (or sorting) the stored backing array would race an overlapping GET
+	// for the same player. Clone always copies into a fresh array, so the
+	// appends and the sort below never touch an array a response may still be
+	// encoding — no generation ever mutates a handed-out slice.
+	foundSet := slices.Clone(rec.Found)
+	for _, f := range found {
+		if len(foundSet) >= maxFoundIDs {
+			break
+		}
+		if !foundIDRe.MatchString(f) || slices.Contains(foundSet, f) {
+			continue
+		}
+		foundSet = append(foundSet, f)
+	}
+	sort.Strings(foundSet)
+	rec.Found = foundSet
 	rec.Seen = time.Now().Unix()
 	s.recs[id] = rec
 	s.dirty = true
 	return rec
+}
+
+// sanitizeFound is the whole passport-set validation in one place: shaped ids
+// only, deduplicated, sorted, bounded. load() routes through it so a
+// hand-edited dump cannot smuggle past the request path's bounds.
+func sanitizeFound(ids []string) []string {
+	out := make([]string, 0, maxFoundIDs)
+	for _, id := range ids {
+		if len(out) >= maxFoundIDs {
+			break
+		}
+		if !foundIDRe.MatchString(id) || slices.Contains(out, id) {
+			continue
+		}
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // evictOldestLocked drops the least-recently-seen record. Caller holds the mutex.
@@ -205,6 +280,7 @@ func (s *bestStore) load() error {
 		rec.Coins = clampBestValue(rec.Coins)
 		rec.Lifetime = clampBestValue(rec.Lifetime)
 		rec.Spent = clampBestValue(rec.Spent)
+		rec.Found = sanitizeFound(rec.Found)
 		s.recs[id] = rec
 		if len(s.recs) >= maxBestRecords {
 			break
@@ -274,8 +350,8 @@ func clampBestValue(v int) int {
 
 // bestHandler serves GET/POST /best?id=<player id>.
 //
-//	GET  → {"distance":N,"coins":N,"lifetime":N,"spent":N}   stored (zeroes if unknown)
-//	POST → {"distance":N,"coins":N,"lifetime":N,"spent":N}   AFTER merging the body
+//	GET  → {"distance":N,"coins":N,"lifetime":N,"spent":N,"found":[...]}   stored (zeroes if unknown)
+//	POST → {"distance":N,"coins":N,"lifetime":N,"spent":N,"found":[...]}   AFTER merging the body
 //
 // Same CORS rule as /ice and /rooms — the game is served from a different origin
 // than the lobby, so without the header the browser discards the response. Unlike
@@ -308,10 +384,11 @@ func (s *bestStore) handler(w http.ResponseWriter, r *http.Request) {
 		rec = s.get(id)
 	case http.MethodPost:
 		var body struct {
-			Distance int `json:"distance"`
-			Coins    int `json:"coins"`
-			Lifetime int `json:"lifetime"`
-			Spent    int `json:"spent"`
+			Distance int      `json:"distance"`
+			Coins    int      `json:"coins"`
+			Lifetime int      `json:"lifetime"`
+			Spent    int      `json:"spent"`
+			Found    []string `json:"found"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBestBody)).Decode(&body); err != nil {
 			http.Error(w, "bad body", http.StatusBadRequest)
@@ -319,7 +396,8 @@ func (s *bestStore) handler(w http.ResponseWriter, r *http.Request) {
 		}
 		rec = s.merge(id,
 			clampBestValue(body.Distance), clampBestValue(body.Coins),
-			clampBestValue(body.Lifetime), clampBestValue(body.Spent))
+			clampBestValue(body.Lifetime), clampBestValue(body.Spent),
+			body.Found)
 	default:
 		w.Header().Set("Allow", "GET, POST, OPTIONS")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -335,5 +413,6 @@ func (s *bestStore) handler(w http.ResponseWriter, r *http.Request) {
 		"coins":    rec.Coins,
 		"lifetime": rec.Lifetime,
 		"spent":    rec.Spent,
+		"found":    rec.Found,
 	}))
 }

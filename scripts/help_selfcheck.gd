@@ -74,6 +74,7 @@ const SkillTreeUi := preload("res://scripts/skill_tree_ui.gd")
 const CityMapPanel := preload("res://scripts/city_map_panel.gd")
 const TowerLiftMenu := preload("res://scripts/tower_lift_menu.gd")
 const MultiplayerUI := preload("res://scripts/mp_ui.gd")
+const PassportPanel := preload("res://scripts/passport_panel.gd")
 const LandmarkToast := preload("res://scripts/landmark_toast.gd")
 const PlayerController := preload("res://scripts/player_controller.gd")
 
@@ -169,6 +170,7 @@ func _check_table() -> String:
 		[PauseController.PAUSE_KEY, "P", "pause_controller.PAUSE_KEY"],
 		[SkillTreeUi.TOGGLE_KEY, "K", "skill_tree_ui.TOGGLE_KEY"],
 		[CityMapPanel.TOGGLE_KEY, "B", "city_map_panel.TOGGLE_KEY"],
+		[PassportPanel.TOGGLE_KEY, "J", "passport_panel.TOGGLE_KEY"],
 		[TowerLiftMenu.TOGGLE_KEY, "L", "tower_lift_menu.TOGGLE_KEY"],
 		[MultiplayerUI.TOGGLE_KEY, "N", "mp_ui.TOGGLE_KEY"],
 		# The zoom pair only asserts that a row for them EXISTS. Their keycodes are

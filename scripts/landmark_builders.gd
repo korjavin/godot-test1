@@ -104,6 +104,7 @@ const LM_SLATE_BLUE := Color(0.30, 0.34, 0.45)   # Neuschwanstein's blue-grey sp
 const LANDMARKS: Array = [
 	{
 		"builder": "_landmark_stonehenge",
+		"stamp": "Stones. Arranged. Nobody says why.",
 		"name": "Stonehenge",
 		"fact": "A Neolithic stone circle on Salisbury Plain, England, raised around 2500 BC.",
 		"radius": 7.6,
@@ -111,6 +112,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_moai",
+		"stamp": "Heads that outstared the sea.",
 		"name": "Moai of Easter Island",
 		"fact": "Nearly 900 stone figures carved by the Rapa Nui on Easter Island, Chile, between 1250 and 1500.",
 		"radius": 6.6,
@@ -118,6 +120,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_giza",
+		"stamp": "Four thousand years, zero moving parts.",
 		"name": "Pyramids of Giza",
 		"fact": "Three royal tombs near Cairo, Egypt, built around 2560 BC — the last surviving Wonder of the Ancient World.",
 		"radius": 9.4,
@@ -125,6 +128,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_golden_gate",
+		"stamp": "Painted orange so ships would see it.",
 		"name": "Golden Gate Bridge",
 		"fact": "A 2.7 km suspension bridge over San Francisco Bay, USA, opened in 1937 and painted International Orange.",
 		"radius": 9.4,
@@ -132,6 +136,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_liberty",
+		"stamp": "A gift that came in 350 crates.",
 		"name": "Statue of Liberty",
 		"fact": "A 93 m copper statue in New York Harbor, USA — a gift from France, dedicated in 1886.",
 		"radius": 5.4,
@@ -139,6 +144,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_plaza_mayor",
+		"stamp": "A square that burned down three times.",
 		"name": "Plaza Mayor",
 		"fact": "The arcaded central square of Madrid, Spain, completed in 1619 and ringed by 237 balconies.",
 		"radius": 8.6,
@@ -146,6 +152,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_eiffel",
+		"stamp": "Meant to last twenty years.",
 		"name": "Eiffel Tower",
 		"fact": "A 330 m iron tower in Paris, France, built for the 1889 World's Fair and meant to stand only 20 years.",
 		"radius": 6.2,
@@ -153,6 +160,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_taj",
+		"stamp": "A tomb, not a palace.",
 		"name": "Taj Mahal",
 		"fact": "A white marble mausoleum in Agra, India, built by Shah Jahan for his wife Mumtaz Mahal in 1653.",
 		"radius": 8.6,
@@ -167,6 +175,7 @@ const LANDMARKS: Array = [
 	# is the cap: the rest of that pool is a wave of its own.
 	{
 		"builder": "_landmark_colosseum",
+		"stamp": "Seated fifty thousand. Emptied in minutes.",
 		"name": "Colosseum",
 		"fact": "A Roman amphitheatre completed in AD 80 that seated over 50,000 spectators in the heart of Rome, Italy.",
 		"radius": 8.6,
@@ -174,6 +183,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_big_ben",
+		"stamp": "The bell, not the tower.",
 		"name": "Big Ben",
 		"fact": "The 96 m clock tower of the Palace of Westminster in London, England — Big Ben is properly the bell inside it.",
 		"radius": 4.4,
@@ -181,6 +191,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_pisa",
+		"stamp": "Started leaning before it was finished.",
 		"name": "Leaning Tower of Pisa",
 		"fact": "A 12th-century bell tower in Pisa, Italy that began tilting during construction because of the soft ground beneath it.",
 		"radius": 4.4,
@@ -188,6 +199,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_sphinx",
+		"stamp": "Nose missing since before anyone wrote it down.",
 		"name": "Great Sphinx of Giza",
 		"fact": "A 73 m limestone lion with a human head, carved from the bedrock at Giza, Egypt around 2500 BC.",
 		"radius": 7.6,
@@ -195,6 +207,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_redeemer",
+		"stamp": "Struck by lightning. Kept the arms open.",
 		"name": "Christ the Redeemer",
 		"fact": "A 30 m soapstone statue that has stood on Corcovado mountain above Rio de Janeiro, Brazil since 1931.",
 		"radius": 4.8,
@@ -202,6 +215,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_torii",
+		"stamp": "A gate that floats at high tide.",
 		"name": "Itsukushima Torii",
 		"fact": "The vermilion gate of Itsukushima Shrine in Japan, which stands in the sea and appears to float at high tide.",
 		"radius": 5.6,
@@ -209,6 +223,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_great_wall",
+		"stamp": "Not visible from space. Visible from here.",
 		"name": "Great Wall of China",
 		"fact": "A chain of walls and watchtowers across northern China, over 20,000 km long and built over some 2,000 years.",
 		"radius": 9.4,
@@ -216,6 +231,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_brandenburg",
+		"stamp": "A gate that has faced both ways.",
 		"name": "Brandenburg Gate",
 		"fact": "A sandstone gate in Berlin, Germany, finished in 1791 and crowned by the Quadriga — a chariot drawn by four horses.",
 		"radius": 8.4,
@@ -223,6 +239,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_neuschwanstein",
+		"stamp": "Built for one king. Seen by millions.",
 		"name": "Neuschwanstein Castle",
 		"fact": "A hillside castle in Bavaria, Germany, begun in 1869 for King Ludwig II and never finished in his lifetime.",
 		"radius": 8.0,
@@ -230,6 +247,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_cologne",
+		"stamp": "Six centuries to finish. Worth it.",
 		"name": "Cologne Cathedral",
 		"fact": "A Gothic cathedral in Cologne, Germany — begun in 1248, halted for 300 years and completed only in 1880.",
 		"radius": 8.6,
@@ -258,6 +276,7 @@ const LANDMARKS: Array = [
 	# which at the 30 m these are judged from is exactly what a warm tan reads as.
 	{
 		"builder": "_landmark_st_basil",
+		"stamp": "Nine chapels wearing one hat.",
 		"name": "St Basil's Cathedral",
 		"fact": "A cathedral of nine coloured onion domes on Red Square in Moscow, Russia, completed in 1561 for Ivan the Terrible.",
 		"radius": 6.4,
@@ -265,6 +284,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_sydney_opera",
+		"stamp": "A million tiles, all the same shade.",
 		"name": "Sydney Opera House",
 		"fact": "A performing-arts centre on Sydney Harbour, Australia, opened in 1973 and roofed with over a million tiles.",
 		"radius": 8.2,
@@ -272,6 +292,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_chichen_itza",
+		"stamp": "A staircase that turns into a serpent.",
 		"name": "Chichén Itzá",
 		"fact": "El Castillo, a Maya step pyramid in Chichén Itzá, Mexico, whose four stairways total 365 steps — one for every day.",
 		"radius": 8.4,
@@ -279,6 +300,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_petra",
+		"stamp": "Carved in, not built up.",
 		"name": "Petra",
 		"fact": "Al-Khazneh, a temple facade carved into a rose-red sandstone cliff at Petra, Jordan, around the 1st century AD.",
 		"radius": 8.0,
@@ -286,6 +308,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_rushmore",
+		"stamp": "Four faces, no necks.",
 		"name": "Mount Rushmore",
 		"fact": "Four 18 m presidential heads carved into a granite cliff in South Dakota, USA, between 1927 and 1941.",
 		"radius": 8.6,
@@ -293,6 +316,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_angkor_wat",
+		"stamp": "Faces west, toward the setting sun.",
 		"name": "Angkor Wat",
 		"fact": "The largest religious monument on Earth, raised in Cambodia around 1150 and still flown on the national flag.",
 		"radius": 9.0,
@@ -300,6 +324,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_machu_picchu",
+		"stamp": "Never found by the conquistadors.",
 		"name": "Machu Picchu",
 		"fact": "An Inca city on a 2,430 m ridge in Peru, built around 1450 and unknown to the outside world until 1911.",
 		"radius": 9.0,
@@ -307,6 +332,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_pont_du_gard",
+		"stamp": "Water ran here, not traffic.",
 		"name": "Pont du Gard",
 		"fact": "A three-tier Roman aqueduct bridge over the Gardon in France, built around AD 50 to carry water 50 km to Nîmes.",
 		"radius": 8.8,
@@ -314,6 +340,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_kinderdijk",
+		"stamp": "Nineteen mills against one sea.",
 		"name": "Kinderdijk Windmills",
 		"fact": "Nineteen windmills built around 1740 to drain the polders of Kinderdijk, the Netherlands — a UNESCO World Heritage site.",
 		"radius": 8.2,
@@ -321,6 +348,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_pharos",
+		"stamp": "A lighthouse that outlived its city.",
 		"name": "Lighthouse of Alexandria",
 		"fact": "A 100 m lighthouse on the island of Pharos at Alexandria, Egypt — a Wonder of the Ancient World, toppled by earthquakes.",
 		"radius": 6.6,
@@ -359,6 +387,7 @@ const LANDMARKS: Array = [
 	# registry would have been one too many.
 	{
 		"builder": "_landmark_reichstag",
+		"stamp": "A glass dome over a parliament.",
 		"name": "Reichstag Building",
 		"fact": "The seat of the German parliament in Berlin, opened in 1894 and crowned in 1999 with a glass dome the public may climb.",
 		"radius": 8.4,
@@ -366,6 +395,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_fernsehturm",
+		"stamp": "A sun-cross on a socialist sphere.",
 		"name": "Berlin TV Tower",
 		"fact": "At 368 m the tallest structure in Germany, raised in East Berlin in 1969 — sunlight on its sphere draws a cross the state could never remove.",
 		"radius": 6.4,
@@ -373,6 +403,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_porta_nigra",
+		"stamp": "Roman, black, still standing.",
 		"name": "Porta Nigra",
 		"fact": "A Roman city gate in Trier from around AD 170, built of sandstone blocks set without mortar — the largest still standing north of the Alps.",
 		"radius": 8.2,
@@ -380,6 +411,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_holstentor",
+		"stamp": "Leaning inward, by mistake.",
 		"name": "Holsten Gate",
 		"fact": "The western gate of Lübeck, finished in 1478 in northern brick Gothic — its two round towers lean because the marshy ground gave way.",
 		"radius": 7.8,
@@ -387,6 +419,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_frauenkirche",
+		"stamp": "Rebuilt from its own rubble.",
 		"name": "Dresden Frauenkirche",
 		"fact": "A Baroque church of 1743 whose great stone dome fell in the firestorm of 1945 — rebuilt from its own rubble and reconsecrated in 2005.",
 		"radius": 7.2,
@@ -394,6 +427,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_elbphilharmonie",
+		"stamp": "A wave of glass on a warehouse.",
 		"name": "Elbphilharmonie",
 		"fact": "A concert hall opened in Hamburg in 2017 — a wave of glass set on top of a brick harbour warehouse from 1963.",
 		"radius": 7.4,
@@ -401,6 +435,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_zugspitze",
+		"stamp": "A cross where Germany runs out.",
 		"name": "Zugspitze Summit Cross",
 		"fact": "A gilded cross on Germany's highest peak, 2,962 m up in the Alps — first raised in 1851 after being carried up in pieces.",
 		"radius": 6.0,
@@ -408,6 +443,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_wartburg",
+		"stamp": "A castle that hid a translator.",
 		"name": "Wartburg Castle",
 		"fact": "A castle above Eisenach founded in 1067, where Martin Luther hid as 'Junker Jörg' and translated the New Testament in eleven weeks.",
 		"radius": 7.2,
@@ -415,6 +451,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_ulm_minster",
+		"stamp": "The tallest church spire on Earth.",
 		"name": "Ulm Minster",
 		"fact": "The tallest church steeple in the world at 161.5 m, begun in Ulm in 1377 and finished only in 1890 — 768 steps to the viewing gallery.",
 		"radius": 8.0,
@@ -422,6 +459,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_bremen_musicians",
+		"stamp": "Four animals that never reached Bremen.",
 		"name": "Bremen Town Musicians",
 		"fact": "A donkey, dog, cat and rooster from the Grimm tale of 1819, cast in bronze at Bremen in 1953 — grasp the donkey's forelegs for luck.",
 		"radius": 4.2,
@@ -457,6 +495,7 @@ const LANDMARKS: Array = [
 	# LM_BASALT.
 	{
 		"builder": "_landmark_parthenon",
+		"stamp": "Its columns lean so it looks straight.",
 		"name": "Parthenon",
 		"fact": "A marble temple to Athena on the Acropolis of Athens, Greece, finished in 438 BC — its columns swell slightly so that they look straight.",
 		"radius": 8.8,
@@ -464,6 +503,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_sagrada",
+		"stamp": "Still not finished. Still open.",
 		"name": "Sagrada Família",
 		"fact": "A basilica in Barcelona, Spain, begun by Antoni Gaudí in 1882 and still unfinished — its eighteen planned towers rise only as fast as the donations come in.",
 		"radius": 7.6,
@@ -471,6 +511,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_tower_bridge",
+		"stamp": "Opens for boats. Not for cars.",
 		"name": "Tower Bridge",
 		"fact": "A bascule bridge over the Thames in London, England, opened in 1894 — its two road halves still lift about 800 times a year.",
 		"radius": 8.8,
@@ -478,6 +519,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_arc_de_triomphe",
+		"stamp": "Twelve avenues meet under one arch.",
 		"name": "Arc de Triomphe",
 		"fact": "A 50 m triumphal arch in Paris, France, ordered by Napoleon in 1806 — twelve avenues radiate from the circle around it.",
 		"radius": 7.2,
@@ -485,6 +527,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_atomium",
+		"stamp": "One iron crystal, 165 billion times bigger.",
 		"name": "Atomium",
 		"fact": "Nine steel spheres in Brussels, Belgium — one cell of an iron crystal magnified 165 billion times, built for the 1958 World's Fair.",
 		"radius": 6.6,
@@ -492,6 +535,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_hollywood",
+		"stamp": "Was an advert for houses.",
 		"name": "Hollywood Sign",
 		"fact": "Nine 14 m letters above Los Angeles, USA, put up in 1923 to advertise a housing estate — they read HOLLYWOODLAND until 1949.",
 		"radius": 8.8,
@@ -499,6 +543,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_space_needle",
+		"stamp": "Sketched on a napkin.",
 		"name": "Space Needle",
 		"fact": "A 184 m observation tower raised for the 1962 World's Fair in Seattle, USA — its saucer was first sketched on a coffee-house napkin.",
 		"radius": 6.2,
@@ -506,6 +551,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_osaka_castle",
+		"stamp": "Burned, rebuilt, made of concrete.",
 		"name": "Osaka Castle",
 		"fact": "A Japanese castle first raised in 1583 on a base of a hundred thousand stone blocks — the golden fish on its roofs are there to ward off fire.",
 		"radius": 8.8,
@@ -513,6 +559,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_stave_church",
+		"stamp": "Wood, tar, and 800 winters.",
 		"name": "Borgund Stave Church",
 		"fact": "A church of tarred pine raised in Norway around 1180 — the dragon heads on its gables guard a Christian roof in Viking style.",
 		"radius": 6.4,
@@ -520,6 +567,7 @@ const LANDMARKS: Array = [
 	},
 	{
 		"builder": "_landmark_trevi",
+		"stamp": "Toss a coin; they sweep it up nightly.",
 		"name": "Trevi Fountain",
 		"fact": "A Baroque fountain finished in Rome, Italy in 1762 and fed by an aqueduct of 19 BC — some 3,000 euros in coins are thrown into it every day.",
 		"radius": 8.6,

@@ -331,6 +331,21 @@ func _ready() -> void:
 	_build_ui()
 
 
+func nearest_circle_distance(from: Vector3) -> float:
+	"""
+	Flat XZ metres to the nearest waypoint circle, INF when the terrain is
+	missing or degenerate. Read-only seam for the road-music driver (bead
+	godot-test1-bv0f); the latch in _scan() stays the only enter edge.
+	"""
+	var terrain := get_tree().get_first_node_in_group("terrain") as Node3D
+	if terrain == null or not terrain.has_method("tower_site"):
+		return INF
+	var best: float = INF
+	for site in TerrainWaypoints.waypoint_sites(terrain):
+		best = minf(best, _xz_distance(from, site["pos"] as Vector3))
+	return best
+
+
 func standing_on() -> int:
 	"""
 	The waypoint circle the hero is currently on, or -1 when they are on none.
