@@ -3,12 +3,12 @@
     "phoboman": {
       "bones": 23,
       "glb": "phoboman_parts/phoboman_skinned.glb",
-      "glb_bytes": 831672,
+      "glb_bytes": 832112,
       "head_tris": 4208,
-      "height_m": 1.7992,
+      "height_m": 1.8191,
       "texture_bytes": 0,
       "texture_size": 0,
-      "tris": 15798
+      "tris": 15746
     },
     "primm": {
       "bones": 23,

@@ -261,7 +261,7 @@ const HUNTER_PING_NOTE_DURATION: float = 0.055  # each tone: a blip, not a beep
 const HUNTER_PING_GAP: float = 0.035    # silence between them — two events, not one
 const HUNTER_PING_DECAY: float = 22.0   # per-tone exponential; fast, but it rings
 const HUNTER_PING_VOLUME_DB: float = -12.0  # under the growl (-8) and hiss (-11):
-                                            # a warning at range, not a jumpscare
+											# a warning at range, not a jumpscare
 
 # --- Hunter grab: the servo clamp landing. ---
 ## Fired when a hunter's contact is resolved (piglet_crocodile_ai's hunt branch in

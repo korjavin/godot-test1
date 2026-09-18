@@ -33,7 +33,8 @@
 ; (`join_rigid` / `join_weighted` in `build_helmet` / `build_dragon`), so the
 ; gait's head bobble nods the whole dome with no prop node to seat. The 9ynx
 ; 1.1013 Body scale is GONE with the parts — the .glb is built at size
-; (1.7992 m standing, PROVENANCE row).
+; (1.8191 m standing since bead godot-test1-9k9n.7 re-proportioned him,
+; PROVENANCE row).
 
 [ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_skinned.glb" id="1_body"]
 

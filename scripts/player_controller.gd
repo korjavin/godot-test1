@@ -224,16 +224,16 @@ const CAMERA_PITCH_MAX: float = 60.0   # Looking up limit (degrees)
 ## works outdoors and on the shorter indoor boom, and the SpringArm3D still
 ## clamps against walls exactly as it does today.
 const CAMERA_ZOOM_MIN: float = 0.25   # quarter boom: 2.06 m outdoors, 0.96 m
-                                     # indoors — over-the-shoulder, measured clear
-                                     # of the head (see the closest-indoor-zoom
-                                     # assertion in view_selfcheck)
+									# indoors — over-the-shoulder, measured clear
+									# of the head (see the closest-indoor-zoom
+									# assertion in view_selfcheck)
 const CAMERA_ZOOM_MAX: float = 4.0    # quadruple boom: 33.0 m outdoors, 15.4 m
-                                     # indoors — well inside the fog, which sits
-                                     # 150 m out on web, further on desktop
+									# indoors — well inside the fog, which sits
+									# 150 m out on web, further on desktop
 const CAMERA_ZOOM_STEP: float = 0.15  # one wheel notch multiplies/divides by
-                                     # 1.15; 1.15^10 ≈ 4.05 crosses from 1.0 to
-                                     # either stop, 1.15^20 ≈ 16.4 the whole 16x
-                                     # range end to end
+									# 1.15; 1.15^10 ≈ 4.05 crosses from 1.0 to
+									# either stop, 1.15^20 ≈ 16.4 the whole 16x
+									# range end to end
 
 ## First-person view (one stop on the C / "toggle_camera" cycle).
 ## Eye height above the FEET at normal scale — just under the ~1.8 m head top,
@@ -4737,7 +4737,7 @@ func get_ability_block_reason(slot: int = 0) -> String:
 			   would refresh it forever and the walls would never come back.
 			   (The OUTSIDE gate retired with the indoor-only sight in
 			   godot-test1-0mr0.2; slot 1 asks no roof question any more.)
-  "ROOF" — Windman's F under the HQ's roof. Air Rush's 6 m/s lift under a
+	  "ROOF" — Windman's F under the HQ's roof. Air Rush's 6 m/s lift under a
 			   4.6 m ceiling is a lift past the tower's gates, and there is
 			   nothing else honest for F to do in there: charged-but-gated, the
 			   press costs nothing. Sight is slot 1's business now.
