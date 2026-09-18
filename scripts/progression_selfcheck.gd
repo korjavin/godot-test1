@@ -1758,11 +1758,12 @@ func _check_second_slot_is_bought_not_given() -> void:
 	if sound.buzzes != 0 or not sound.abilities.is_empty() or not interior.xray_calls.is_empty():
 		_fail("Ctrl+G reached a slot-2 side effect")
 	# ...beside a plain G that fires, or the stillness above proves nothing.
+	# A running look (not exact equality — two physics frames tick the timer).
 	_press_key(KEY_G, false)
 	await physics_frame
 	await physics_frame
 	_release_key(KEY_G)
-	if player.windman_sight_timer != player.WINDMAN_SIGHT_DURATION:
+	if player.windman_sight_timer <= 0.0:
 		_fail("a plain G did not fire the bought slot 2 — the chord test is vacuous")
 
 	Input.action_release("special_ability_2")
@@ -1775,6 +1776,134 @@ func _check_second_slot_is_bought_not_given() -> void:
 	progression.free()
 	player.queue_free()
 	Sentinel.done("second_slot_is_bought_not_given")
+
+
+func _check_air_sight_ghosts_the_awake_set() -> void:
+	"""
+	AIR SIGHT IS UNIVERSAL (bead godot-test1-0mr0.2): a slot-1 press with no
+	interior in the tree ghosts every AWAKE croc's meshes with the ONE shared
+	material, leaves slept bodies and holograms alone, charges the cooldown —
+	and the ghosts die with the timer and with a reset.
+
+	Two REAL croc bodies (the shipped scene, species set before add_child per
+	its contract; physics frozen by hand so the probe measures the overlay, not
+	the AI), a hologram double (meshes, no group), the real player and the real
+	tree with sight bought. The overlay identity is read off the SHIPPED
+	singleton, never rebuilt here.
+	"""
+	var packed: PackedScene = load(PLAYER_SCENE)
+	if packed == null:
+		_fail("could not load %s" % PLAYER_SCENE)
+		Sentinel.done("air_sight_ghosts_the_awake_set")
+		return
+	var player: Node = packed.instantiate()
+	root.add_child(player)
+	await physics_frame
+	var windman_index: int = -1
+	for index in player.CHARACTERS.size():
+		if String(player.CHARACTERS[index]["name"]) == "windman":
+			windman_index = index
+	if windman_index < 0:
+		_fail("no windman in CHARACTERS — the ghost measurement needs one")
+		player.queue_free()
+		Sentinel.done("air_sight_ghosts_the_awake_set")
+		return
+	var progression := _make_progression()
+	_grant_points(progression, 4)
+	_spend_or_fail(progression, "windman", "gale")
+	_spend_or_fail(progression, "windman", "sight")
+	player.set_active_character(windman_index)
+
+	var croc_packed: PackedScene = load("res://scenes/characters/piglet_crocodile.tscn")
+	if croc_packed == null:
+		_fail("could not load the croc scene")
+		progression.free()
+		player.queue_free()
+		Sentinel.done("air_sight_ghosts_the_awake_set")
+		return
+	var awake: Node = croc_packed.instantiate()
+	awake.set("species", "crocodile")
+	root.add_child(awake)
+	awake.set_physics_process(false)
+	var slept: Node = croc_packed.instantiate()
+	slept.set("species", "crocodile")
+	root.add_child(slept)
+	# ASLEEP BY HAND: set_lod_active(false) refuses a body that is not
+	# is_on_floor(), and a headless probe has no floor.
+	slept.set("lod_active", false)
+	slept.set_physics_process(false)
+	var hologram := Node3D.new()
+	var holo_mesh := MeshInstance3D.new()
+	holo_mesh.mesh = BoxMesh.new()
+	hologram.add_child(holo_mesh)
+	root.add_child(hologram)
+
+	# No interior in the tree — and the press still fires: outdoors the ghosts
+	# ARE the ability (the retired interior-null rule).
+	player.ability2_cooldowns[windman_index] = 0.0
+	player.try_activate_ability(1)
+	if player.windman_sight_timer != player.WINDMAN_SIGHT_DURATION:
+		_fail("slot 1 with no interior set no look — the universal arm must fire anywhere")
+	if player.ability2_cooldowns[windman_index] <= 0.0:
+		_fail("the ghost press charged no cooldown")
+	var shared: Material = (load("res://scripts/piglet_crocodile_ai.gd") as GDScript).ghost_material_shared()
+	var awake_meshes: Array = _ghost_meshes(awake)
+	if awake_meshes.is_empty():
+		_fail("the awake croc has no meshes — the overlay measurement is vacuous")
+	for mesh: MeshInstance3D in awake_meshes:
+		if mesh.material_overlay != shared:
+			_fail("an awake mesh wears %s, not the one shared ghost material" % str(mesh.material_overlay))
+	for mesh: MeshInstance3D in _ghost_meshes(slept):
+		if mesh.material_overlay != null:
+			_fail("a slept body got the overlay — only lod_active bodies ghost")
+	if holo_mesh.material_overlay != null:
+		_fail("a hologram got the overlay — holograms are not bodies")
+	# Clearing must not touch the styled override ToonShading owns.
+	var styled_before: Material = (awake_meshes[0] as MeshInstance3D).material_override
+
+	# Past 7 s the ghosts die with the timer, through the shipped tick path.
+	player.windman_sight_timer = 0.001
+	await physics_frame
+	await physics_frame
+	if player.windman_sight_timer != 0.0:
+		_fail("the look did not expire")
+	for mesh: MeshInstance3D in awake_meshes:
+		if mesh.material_overlay != null:
+			_fail("an overlay survived the timer — _end_air_sight must walk the group")
+	if (awake_meshes[0] as MeshInstance3D).material_override != styled_before:
+		_fail("clearing touched material_override — only the overlay may move")
+
+	# ...and a reset mid-window clears too.
+	player.ability2_cooldowns[windman_index] = 0.0
+	player.try_activate_ability(1)
+	player.windman_sight_timer = 2.0
+	player._reset_ability_states()
+	if player.windman_sight_timer != 0.0:
+		_fail("a reset left the look running")
+	for mesh: MeshInstance3D in awake_meshes:
+		if mesh.material_overlay != null:
+			_fail("an overlay survived a reset — switch/respawn must clear both slots' transients")
+
+	for node in [awake, slept, hologram]:
+		root.remove_child(node)
+		node.free()
+	progression.free()
+	player.queue_free()
+	Sentinel.done("air_sight_ghosts_the_awake_set")
+
+
+func _ghost_meshes(body: Node) -> Array:
+	"""Every MeshInstance3D under a body, the walk the arm's own walk mirrors."""
+	var out: Array = []
+	_walk_ghost_meshes(body, out)
+	return out
+
+
+func _walk_ghost_meshes(node: Node, out: Array) -> void:
+	if node is MeshInstance3D:
+		out.append(node)
+	for child in node.get_children():
+		_walk_ghost_meshes(child, out)
 
 
 func _press_key(keycode: Key, ctrl: bool) -> void:
@@ -2132,6 +2261,7 @@ func _run() -> void:
 	await _check_skill_effects_on_player()
 	await _check_active_skills_on_player()
 	await _check_second_slot_is_bought_not_given()
+	await _check_air_sight_ghosts_the_awake_set()
 	await _check_phase_echo_refunds_a_wall_pass()
 	await _check_panel_spends_and_releases_its_pause()
 	_report()

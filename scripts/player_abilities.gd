@@ -127,6 +127,16 @@ const WINDMAN_LIFT: float = 6.0
 ## not a retune. `"SEEING"` refuses the press while a look is already running, so
 ## cooldown ranks stay a straight buff (they shorten the wait, never the look) and
 ## the x-ray is a window whatever the skill tree says.
+##
+## COST READING, debug web export (headless Chromium + SwiftShader, 1280x720,
+## bead godot-test1-0mr0.2): field with 7 awake, sight off FPS 11 / 134.4 ms /
+## 368 draws vs the arm frame FPS 11 / 268.0 ms / 343 draws; city gate with 1
+## awake, off FPS 12 / 145.7 ms / 267 draws vs arm FPS 12 / 148.5 ms / 211
+## draws vs +2.4 s FPS 13 / 76.6 ms / 212 draws. No sustained FPS, frame-time
+## or draw-call delta from the overlays — one elevated arm frame (effect spawn
+## plus the awake-set walk; single frame, exact attribution uncertain under
+## software GL), then back to baseline. Bound stands: <= ~55 awake bodies x
+## their meshes x 1 extra draw x 7 s, behind the purchased node.
 const WINDMAN_SIGHT_DURATION: float = 7.0
 
 # --- Primm: Phase Step ---
@@ -240,13 +250,15 @@ func _update_ability_timers(delta: float) -> void:
 			player.windman_boost_timer = 0.0
 	if player.windman_sight_timer > 0.0:
 		player.windman_sight_timer = maxf(0.0, player.windman_sight_timer - delta)
-		# Walking back out ends it too — the same shape as the wet-wings drop above,
-		# and for the same reason: the ability is a property of being INSIDE this
-		# building, so carrying it out of the door would leave a translucent HQ
-		# standing behind a player who is no longer in it. (Only asked while the
-		# sight is actually running, so nobody else pays for the lookup.)
-		if player.windman_sight_timer <= 0.0 or not player._sheltered():
+		if player.windman_sight_timer <= 0.0:
 			_end_air_sight()
+		elif not player._sheltered():
+			# Walking out ends ONLY the wall half — the same shape as the
+			# wet-wings drop above: carrying translucency out of the door would
+			# leave a see-through HQ behind a player no longer in it. The ghosts
+			# are not a property of the building, so they run their 7 s.
+			# (Only asked while the sight runs, so nobody else pays.)
+			_set_sight_walls(false)
 	# Teibi's small/giant form expires on its own after a while, snapping him back
 	# to normal size with no extra press — so he can never get stuck transformed.
 	if player.teibi_size_state != 0 and player.teibi_form_timer > 0.0:
@@ -438,33 +450,27 @@ func _ability_windman() -> bool:
 
 func _ability2_windman() -> bool:
 	"""
-	Air Sight: for `WINDMAN_SIGHT_DURATION` the walls of the storey Windman is on go
-	translucent, so he can read the layout and — the point — watch a guard's patrol
-	through them before stepping into a corridor.
+	Air Sight, UNIVERSAL (bead godot-test1-0mr0.2): for `WINDMAN_SIGHT_DURATION`
+	every AWAKE predator around Windman draws THROUGH whatever hides it — a
+	Budapest facade, a forest canopy, a mountain box, the HQ's walls, a herd —
+	as a cyan ghost where it is hidden, itself where it is not. Under the HQ's
+	roof the storey's walls go translucent too, exactly as before. "The wind's
+	sight": he does not see walls, he sees what breathes behind them.
 
-	WINDMAN'S SLOT 2 (bead godot-test1-0mr0.1): today's indoor F, moved — the same
-	arm, the same refusal surface, its own cooldown dial. Still indoors-only (child
-	.2 makes it universal): unsheltered it answers `false` before touching the
-	building, so the press costs nothing — belt beside the OUTSIDE gate, which
-	refuses first, for direct callers of the arm.
-
-	THE BUILDING DOES THE WORK (`TowerInterior.set_xray`), through the same null-safe
-	group + `has_method` door every other system reads. No interior in the tree means
-	no ability: `false` back, so `try_activate_ability()` charges no cooldown and the
-	press can be tried again the moment he is somewhere it means something. That is
-	the standing "a no-op never locks the power" rule, and it is what keeps a Windman
-	standing under a roof this game does not have from losing eight seconds to it.
+	WINDMAN'S SLOT 2: the same dispatch, the same refusal surface (SEEING), its
+	own cooldown dial. True even with no interior in the tree — outdoors the
+	ghosts ARE the ability, so there is nothing to refuse. No displacement, no
+	speed, nothing dies: the overlay rides the bodies' own meshes and the
+	counts never move.
 	"""
-	# Round 2: the roof question comes FIRST. The interior streams in at 360 m,
-	# so it exists all over the yard and the road — opening the x-ray out there
-	# charges a cooldown for an effect the next tick cancels. The OUTSIDE gate
-	# refuses the press before it gets here; this `false` is for direct callers.
-	if not player._sheltered():
-		return false
-	var interior: Node = player.get_tree().get_first_node_in_group("tower_interior")
-	if interior == null or not interior.has_method("set_xray"):
-		return false
-	interior.call("set_xray", true)
+	# THE GHOSTS ARE THE ABILITY — indoors AND out. A body that wakes mid-window
+	# is not ghosted until the next press (7 s, accepted).
+	_set_sight_ghosts(true)
+	# ...and under a roof, the walls too (today's body, unchanged) — but ONLY
+	# there: opening the x-ray on the yard would buy one tick of translucent
+	# walls before the walk-out clause below puts them back.
+	if player._sheltered():
+		_set_sight_walls(true)
 	player.windman_sight_timer = WINDMAN_SIGHT_DURATION
 	# The same self-building, self-freeing sphere every other ability sells itself
 	# with — small and pale here, because the effect the player should be looking at
@@ -473,21 +479,50 @@ func _ability2_windman() -> bool:
 	return true
 
 
-func _end_air_sight() -> void:
+func _set_sight_ghosts(on: bool) -> void:
 	"""
-	Put the walls back. Idempotent and safe to call for any character at any time —
-	which is what lets `_reset_ability_states()` call it unconditionally beside
-	`_revert_teibi_to_normal()`, and what makes "cleared on switch, on respawn and on
-	the way out of the door" one line each instead of a state machine.
+	Ghost every AWAKE body in the "crocodile" group — or unghost the world.
 
-	The interior is looked up fresh rather than remembered: the tower streams out
-	with the terrain, and a remembered reference would be the one thing in this
-	script holding a freed node.
+	Awake means `lod_active`: inside SIM_RADIUS the LOD manager simulates and the
+	body is a threat worth seeing; slept bodies are frozen shapes, not threats,
+	and waking one mid-window does not ghost it until the next press. Bosses,
+	the hunter and the HQ guards are piglet bodies in this group, so they ghost
+	like everything else; remote peers' avatars are in NO group, so a hologram
+	is never touched. Clearing (`on == false`) reaches EVERY valid body with the
+	method — including one that fell asleep mid-window — because the filter
+	above applies only while ghosting.
 	"""
-	player.windman_sight_timer = 0.0
+	for c in player.get_tree().get_nodes_in_group("crocodile"):
+		if not is_instance_valid(c):
+			continue
+		if on and c.get("lod_active") != true:
+			continue
+		if c.has_method("set_xray_ghost"):
+			c.call("set_xray_ghost", on)
+
+
+func _set_sight_walls(on: bool) -> void:
+	"""The wall half of the sight, through the interior's own door."""
 	var interior: Node = player.get_tree().get_first_node_in_group("tower_interior")
 	if interior != null and interior.has_method("set_xray"):
-		interior.call("set_xray", false)
+		interior.call("set_xray", on)
+
+
+func _end_air_sight() -> void:
+	"""
+	Put the walls back AND unghost every body. Idempotent and safe to call for
+	any character at any time — which is what lets `_reset_ability_states()`
+	call it unconditionally beside `_revert_teibi_to_normal()`, and what makes
+	"cleared on switch, on respawn and on capture" one line each instead of a
+	state machine.
+
+	Looked up fresh rather than remembered throughout: the tower streams out
+	with the terrain, bodies sleep and free, and a remembered reference would be
+	the one thing in this script holding a freed node.
+	"""
+	player.windman_sight_timer = 0.0
+	_set_sight_ghosts(false)
+	_set_sight_walls(false)
 
 
 func _ability_primm() -> bool:

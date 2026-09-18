@@ -4365,11 +4365,11 @@ func _sheltered() -> bool:
 	self-checks) simply answers "outdoors".
 
 	THE BUILDING OWNS THIS QUESTION and always did — `sheltered()` is what already
-	keeps the rain off Windman indoors (`weather_manager._sheltered_at`). Three
-	indoor ability rules read it now: Windman's F is ROOF-gated in here, his slot 2
-	is OUTSIDE-gated out there, and Teibi may not be giant in here at all. Neither
-	restates the envelope's numbers, which is the whole reason the predicate lives
-	on the shell.
+	keeps the rain off Windman indoors (`weather_manager._sheltered_at`). Two indoor
+	ability rules read it now: Windman's F is ROOF-gated in here, and Teibi may not
+	be giant in here at all — while the sight arm asks it only to decide whether
+	the walls join the ghosts. Neither restates the envelope's numbers, which is
+	the whole reason the predicate lives on the shell.
 
 	Cheap enough for the per-frame paths that consume it (`get_ability_block_reason()`
 	is polled by the HUD): one group lookup plus one transform multiply and three
@@ -4735,10 +4735,8 @@ func get_ability_block_reason(slot: int = 0) -> String:
 	  "SEEING" — Windman's Air Sight (slot 1) is already running. The look
 			   outlives a skilled hero's cooldown, so without this the press
 			   would refresh it forever and the walls would never come back.
-	  "OUTSIDE" — Windman's Air Sight (slot 1) with no roof overhead. The power
-			   reads a storey, so in the open there is nothing to see through:
-			   charged-but-gated, the press costs nothing. (Child 0mr0.2 makes
-			   the sight universal and retires this gate.)
+			   (The OUTSIDE gate retired with the indoor-only sight in
+			   godot-test1-0mr0.2; slot 1 asks no roof question any more.)
 	  "ROOF" — Windman's F under the HQ's roof. Air Rush's 6 m/s lift under a
 			   4.6 m ceiling is a lift past the tower's gates, and there is
 			   nothing else honest for F to do in there: charged-but-gated, the
@@ -4798,14 +4796,10 @@ func get_ability_block_reason(slot: int = 0) -> String:
 	if char_name != "windman":
 		return ""
 	if slot == 1:
-		# "OUTSIDE" — AIR SIGHT NEEDS A ROOF (bead godot-test1-0mr0.1 round 2).
-		# The interior streams in at 360 m, so "an interior exists" is true all
-		# over the yard, the road and the gate circle: without this, G out there
-		# opens the x-ray AND charges the cooldown, and the next timer tick
-		# cancels the effect because nobody is sheltered. Location first: the
-		# power does not exist in the open, running look or not.
-		if not _sheltered():
-			return "OUTSIDE"
+		# Slot 1 is shelter-blind now (bead godot-test1-0mr0.2): Air Sight is
+		# universal — the ghosts ARE the ability outdoors, so there is no roof
+		# question left to ask. The OUTSIDE gate retired with the indoor-only
+		# version; only the running look refuses.
 		# "SEEING" — ONE LOOK AT A TIME. See `WINDMAN_SIGHT_DURATION` for why this is
 		# a gate and not a shorter duration: a fully-ranked cooldown comes back
 		# BEFORE the look ends, and without this the walls never go solid again.

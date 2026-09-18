@@ -3059,8 +3059,10 @@ func _check_air_sight_is_the_indoor_air_rush() -> void:
 	await _settle(player)
 	if bool(interior.call("xray_active")):
 		_fail("walking out of the HQ left it see-through behind us")
-	if player.windman_sight_timer > 0.0:
-		_fail("walking out left %.2f s of Air Sight running" % player.windman_sight_timer)
+	# ...but the LOOK walks out with us now (bead godot-test1-0mr0.2): the door
+	# ends the wall half, the ghosts run their 7 s.
+	if player.windman_sight_timer <= 0.0:
+		_fail("walking out ended the look — only the walls end at the door")
 
 	# --- Outdoors F is Air Rush again, unchanged. ---
 	if player.get_ability_name() != "Air Rush":
@@ -3074,26 +3076,34 @@ func _check_air_sight_is_the_indoor_air_rush() -> void:
 	if bool(interior.call("xray_active")):
 		_fail("an outdoor Air Rush made the HQ see-through")
 
-	# --- Outdoors G is the OUTSIDE gate (bead godot-test1-0mr0.1 round 2). ---
-	# The interior is loaded out here too (360 m radius), so "it exists" cannot
-	# be the test: unsheltered, the press must refuse with a named reason, cost
-	# no cooldown, and never touch the building.
-	if player.get_ability_block_reason(1) != "OUTSIDE":
-		_fail("outdoors G is gated by '%s' — the sight needs a roof"
+	# --- Outdoors G is the sight too (bead godot-test1-0mr0.2). ---
+	# The OUTSIDE gate retired with the indoor-only version: unsheltered, the
+	# press FIRES — ghosts, not walls (the arm opens the x-ray only under a
+	# roof), on the slot-2 cooldown. Let the walked-out look expire first, or
+	# SEEING answers (which is itself the gate working).
+	player.windman_sight_timer = 0.001
+	await _settle(player)
+	if player.windman_sight_timer > 0.0:
+		_fail("the walked-out look would not expire")
+	if player.get_ability_block_reason(1) != "":
+		_fail("outdoors G is gated by '%s' — the sight is universal now"
 			% player.get_ability_block_reason(1))
 	player.ability2_cooldowns[player.current_character_index] = 0.0
 	player.try_activate_ability(1)
 	await process_frame
-	if player.ability2_cooldowns[player.current_character_index] > 0.0:
-		_fail("an OUTSIDE-refused press charged %.2f s of slot-2 cooldown"
-			% player.ability2_cooldowns[player.current_character_index])
+	if player.ability2_cooldowns[player.current_character_index] <= 0.0:
+		_fail("G outdoors charged no cooldown — the universal arm must fire anywhere")
+	if player.windman_sight_timer <= 0.0:
+		_fail("G outdoors set no look")
 	if bool(interior.call("xray_active")):
-		_fail("G on the yard opened the x-ray — then the tick cancels it")
-	if player.windman_sight_timer > 0.0:
-		_fail("G outdoors started a look with no roof overhead")
+		_fail("G on the yard opened the x-ray — walls join only under a roof")
 
 	# --- And the timer is the third exit: it must expire on its own indoors. ---
 	player.global_position = indoors
+	await _settle(player)
+	# End the look the yard press started — re-arming through SEEING would test
+	# the gate, not the timer.
+	player.windman_sight_timer = 0.001
 	await _settle(player)
 	player.ability2_cooldowns[player.current_character_index] = 0.0
 	player.try_activate_ability(1)
@@ -3106,7 +3116,7 @@ func _check_air_sight_is_the_indoor_air_rush() -> void:
 	await _settle(player)
 	if bool(interior.call("xray_active")):
 		_fail("Air Sight's timer ran out and the walls stayed see-through")
-	print("air sight: G opens the walls indoors, F answers ROOF, outdoors F is still Air Rush and G answers OUTSIDE, and all three exits clear it")
+	print("air sight: G ghosts everywhere and opens the walls indoors, F answers ROOF, outdoors F is still Air Rush, and all three exits clear it")
 
 	_clear(player)
 	second_tree.remove_from_group("progression")
