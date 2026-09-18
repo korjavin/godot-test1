@@ -1935,7 +1935,15 @@ func _check_alarm_verb() -> String:
 
 	# ...and a MALFORMED one reaches nothing, through the same arm: the drop is the
 	# parser's, but the arm is what has to honour it.
-	mp._receive_mesh_verb("carol", "alrm", {"t": "alrm", "f": 99, "x": 0.0, "z": 0.0})
+	#
+	# A FRESH SENDER, and that is load-bearing rather than tidy (review round 1,
+	# corroborated): `_verb_rate_ok` meters per sender+verb, so reusing `carol`
+	# would spend her SECOND `alrm` here — and at a budget of 1, which the pinning
+	# line below explicitly allows, this packet would be refused at the rate gate
+	# before it ever reached the parser. `raised` would still read 1, the check
+	# would still go green, and it would have stopped measuring the storey bound
+	# altogether.
+	mp._receive_mesh_verb("frank", "alrm", {"t": "alrm", "f": 99, "x": 0.0, "z": 0.0})
 	if (interior.get("raised") as Array).size() != 1:
 		interior.queue_free()
 		mp.queue_free()
@@ -1986,26 +1994,50 @@ func _check_alarm_verb() -> String:
 		mp.queue_free()
 		return "the flood raised nothing at all — this sub-check measured no budget"
 
-	# --- 5. THE ENCODER. Offline it refuses (no room to tell); in a room it
-	# publishes and applies NOTHING locally — the interior is the caller, so a
-	# local pass would be the raise happening twice. Its own bug stays off the
-	# wire: a non-finite point is a packet every receiver would drop anyway.
+	# --- 5. THE ENCODER, THROUGH THE SHIPPED FORWARDER — `_check_shot_parser`'s
+	# rule ("THE ENCODER, through the shipped forwarder"), and it is what pins that
+	# `MpManager.publish_alarm` exists at all: bead .4's `TowerInterior` finds the
+	# "mp" group and asks `has_method`, so a send site reachable only as a static
+	# would be a send site the tower family cannot legally call.
+	#
+	# Offline it refuses (no room to tell); in a room it publishes and applies
+	# NOTHING locally — the interior is the caller, so a local pass would be the
+	# raise happening twice. And it REFUSES ANYTHING ITS OWN RECEIVER WOULD DROP,
+	# which is the asymmetry this block exists to close: a sighting off the
+	# envelope or on a storey the plans do not draw must not go out reporting
+	# success while every peer silently drops it.
+	if not mp.has_method("publish_alarm"):
+		interior.queue_free()
+		mp.queue_free()
+		return "MpManager has no `publish_alarm` forwarder — bead .4's tower-side caller "\
+			+ "would have to reach MpWorldSync directly, across families"
 	var published: int = (interior.get("raised") as Array).size()
+	var half: float = TowerPlans.PLAN_HALF
+	var storeys: int = TowerPlanBoxes.FLOOR_Y.size()
 	mp._state = MPManager.State.OFFLINE
-	if MpWorldSync.publish_alarm(mp, 1, Vector2(12.5, -7.25)):
+	if mp.publish_alarm(1, Vector2(12.5, -7.25)):
 		interior.queue_free()
 		mp.queue_free()
 		return "publish_alarm published with no room to publish into"
 	mp._state = MPManager.State.IN_ROOM
 	mp._rtc = WebRTCMultiplayerPeer.new()
-	if not MpWorldSync.publish_alarm(mp, 1, Vector2(12.5, -7.25)):
+	if not mp.publish_alarm(1, Vector2(12.5, -7.25)):
 		interior.queue_free()
 		mp.queue_free()
 		return "publish_alarm refused an honest sighting from a room member"
-	if MpWorldSync.publish_alarm(mp, 1, Vector2(NAN, 0.0)):
-		interior.queue_free()
-		mp.queue_free()
-		return "publish_alarm put a non-finite sighting point on the wire"
+	var unsendable: Array = [
+		[1, Vector2(NAN, 0.0)],             # our own NaN
+		[1, Vector2(0.0, INF)],
+		[1, Vector2(half + 0.1, 0.0)],      # off the envelope — every peer drops it
+		[storeys, Vector2(0.0, 0.0)],       # a storey the plans do not draw
+		[-1, Vector2(0.0, 0.0)],
+	]
+	for bad: Array in unsendable:
+		if mp.publish_alarm(int(bad[0]), bad[1] as Vector2):
+			interior.queue_free()
+			mp.queue_free()
+			return "publish_alarm sent %s, which every receiver's decode_alrm drops — "\
+				% str(bad) + "the send site and its own parser disagree"
 	if (interior.get("raised") as Array).size() != published:
 		interior.queue_free()
 		mp.queue_free()

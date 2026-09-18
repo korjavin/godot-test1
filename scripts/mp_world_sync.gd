@@ -430,8 +430,11 @@ static func publish_alarm(mp: Node, floor_index: int, local_xz: Vector2) -> bool
 
 	@param floor_index: the storey, an index into `TowerPlanBoxes.FLOOR_Y`.
 	@param local_xz: where they were seen, in metres LOCAL to the shell's origin.
-	@return: whether it went on the wire. False offline, and false for a point this
-	    machine's own caller got wrong — see the finiteness note below.
+	@return: whether the room has been told — `request_guard_lure()`'s contract and
+	    not a delivery receipt. False OFFLINE, and false for a sighting this
+	    machine's own caller got wrong; true means the packet was handed to
+	    `_broadcast_reliable`, which writes only to peers whose data channel is
+	    already open and silently reaches nobody when the mesh is not up.
 
 	THE CALLER HAS ALREADY RAISED IT HERE. Unlike `request_guard_lure()` this does
 	not apply anything locally: the alarm lives on the interior and the interior is
@@ -467,14 +470,20 @@ static func publish_alarm(mp: Node, floor_index: int, local_xz: Vector2) -> bool
 	"""
 	if not mp.is_online():
 		return false
-	# OUR OWN BUG STAYS OFF THE WIRE, `announce_boss_shot`'s rule: a non-finite
-	# point would be dropped by every receiver's `decode_alrm` anyway, so sending
-	# it only spends the room's budget on a packet nobody can act on.
-	if not local_xz.is_finite():
-		return false
-	mp._broadcast_reliable(var_to_bytes({
+	var packet: Dictionary = {
 		"t": "alrm", "f": floor_index, "x": local_xz.x, "z": local_xz.y,
-	}))
+	}
+	# OUR OWN BUG STAYS OFF THE WIRE, `announce_boss_shot`'s rule — but tested by
+	# running the packet through the RECEIVER'S OWN PARSER rather than by
+	# re-stating its bounds here. Two reasons, and the second is the one that
+	# keeps working: a sighting outside the envelope or on a storey the plans do
+	# not draw would be dropped by every peer while this returned true, and the
+	# encoder and the decoder can now never disagree about a FIELD NAME either —
+	# a typo'd key is a packet that fails to decode here, on this machine, in the
+	# self-check, instead of one that decodes nowhere in the room.
+	if MpCodec.decode_alrm(packet).is_empty():
+		return false
+	mp._broadcast_reliable(var_to_bytes(packet))
 	return true
 
 
@@ -482,10 +491,25 @@ static func receive_alrm(mp: Node, _from_id: String, packet: Dictionary) -> void
 	"""
 	ANY member's sighting: raise the same storey's alarm here.
 
-	No authority test — see `publish_alarm()` for why this verb is anyone-to-
-	everyone. What makes it safe is `decode_alrm()`, which answers the two
-	questions this machine can answer alone: is that a storey this building has,
-	and is that point inside its envelope. Whole or nothing, like every sibling.
+	No authority test and NO SENDER-POSITION TEST — see `publish_alarm()` for why
+	this verb is anyone-to-everyone. What makes it safe is `decode_alrm()`, which
+	answers the two questions this machine can answer alone: is that a storey this
+	building has, and is that point inside its envelope. Whole or nothing, like
+	every sibling.
+
+	THE MISSING PROXIMITY CHECK IS `gate`'S RULING, NOT AN OVERSIGHT, and the
+	other anyone-to-everyone verb states it in as many words
+	(`MpManager._receive_gate`): "The sender carries no authority and is asked
+	nothing: any member may open, so there is no holder to check and no position
+	to verify." `receive_pad` asks WAS THE SENDER THERE because `pad` is
+	master-arbitrated and carries an INDEX the master resolves against the plan —
+	one machine decides for the room. Here every receiver decides for itself, so
+	a presence table that has not caught up with the sender would drop a real
+	alarm on that screen alone. The accepted ceiling, stated so nobody
+	re-litigates it silently: a modified client in the room can raise any
+	storey's alarm from anywhere in the world, bounded at the verb's 2/s, and
+	what it buys is a guard walking to a point — the same thing the `pad` verb
+	already offers it at the same budget.
 
 	Applied through group discovery and `has_method`-guarded like every other
 	cross-system call in this file: no tower streamed in on this machine and there
