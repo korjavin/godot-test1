@@ -828,23 +828,6 @@ const CHEST_BURST_DURATION := TerrainFeatures.CHEST_BURST_DURATION
 ## cannot give. Read by `TerrainWaypoints.spawn_waypoint_in_chunk`.
 @export var spawn_waypoints: bool = true
 
-
-func waypoint_sites() -> Array[Dictionary]:
-	"""
-	THE ONE FORWARDER into `terrain_waypoints.gd`, added at bead
-	godot-test1-z2yv.1 and earned rather than speculative — the rule the eight
-	bridge forwarders and the `coin_road` block are written under.
-
-	`BikePaths.station_blocked()` asks whether a station stands inside a teleport
-	circle, and a SIBLING static family reaches another one through the node that
-	owns the state, never by naming the class (CLAUDE.md, Conventions). Everything
-	else that reads this table is outside the family system — `waypoint_hub.gd`,
-	`minimap_hud.gd`, `city_map_panel.gd` — and names the class directly, as does
-	`waypoint_selfcheck`, which is the family's own check and must read its
-	subject rather than a forwarder.
-	"""
-	return TerrainWaypoints.waypoint_sites(self)
-
 ## THE RARITY ROLL IS RETIRED, and `LANDMARK_CHANCE` with it (bead
 ## godot-test1-bcf). Until 2026-09-04 a chunk rolled 0.21 * scarcity against its
 ## own LANDMARK_SALT stream and then drew a kind uniformly from the registry;
@@ -3172,8 +3155,15 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 
 	# THE BICYCLE PATHS' share of this chunk (epic godot-test1-z2yv). Like the
 	# artifacts and the camps it is a PRIVATE hash stream — its own salt, its own
-	# coordinate primes, its own turn hash — so it consumes nothing from anybody
-	# and the world with `spawn_bike_paths` off is byte-identical.
+	# coordinate primes, its own turn hash — so it consumes NO DRAW from anybody
+	# and with `spawn_bike_paths` off every other box in the world is where it was.
+	#
+	# NOT "byte-identical", and the difference is a FOOTPRINT rather than a draw:
+	# a pole appends one to `obstacles`, which the crocodile, boss and hunter
+	# spawners below read, so on a chunk that grows a pole the predators can land
+	# elsewhere. That is the same shared-currency mechanism the camps and the
+	# chests use — `BikePaths`' banner states it, and `bike_path_selfcheck` check 1
+	# makes its node-for-node comparison only on the chunks with no pole on them.
 	#
 	# IMMEDIATELY AFTER THE CITY, and that position is the whole of its ordering
 	# requirement. After, because a pole is skipped when its site already falls
@@ -3621,6 +3611,27 @@ func spawn_chest_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 
 func landmark_sites() -> Dictionary:
 	return TerrainLandmarks.landmark_sites(self)
+
+
+# ============================================================================
+# WAYPOINTS — one forwarder; the circles are in terrain_waypoints.gd
+# ============================================================================
+#
+# THE ONLY NAME THAT NEEDS ONE, added at bead godot-test1-z2yv.1 and earned
+# rather than speculative — the rule the eight bridge forwarders and the
+# `coin_road` block above are written under.
+#
+# `BikePaths.station_blocked()` asks whether a station stands inside a teleport
+# circle, and a SIBLING static family reaches another one THROUGH THE NODE that
+# owns the state, never by naming the class (CLAUDE.md, Conventions). Everything
+# else that reads this table is outside the family system — `waypoint_hub.gd`,
+# `minimap_hud.gd`, `city_map_panel.gd` — and names the class directly, as does
+# `waypoint_selfcheck`, which is the family's OWN check and must read its subject
+# rather than a forwarder. `spawn_waypoint_in_chunk` needs none either: its one
+# caller is `create_chunk`, in this file.
+
+func waypoint_sites() -> Array[Dictionary]:
+	return TerrainWaypoints.waypoint_sites(self)
 
 
 func _landmark_at(chunk_pos: Vector2i) -> Dictionary:

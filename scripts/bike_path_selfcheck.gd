@@ -90,6 +90,18 @@ const BLOCK_BODY: String = "BlockCollision"
 ## six different stretches of field exercise it as well as thirty do.
 const COVER_SAMPLE: int = 6
 
+## Check 3's SEARCH SPACE in seeds, not a sample: it sweeps these in order and
+## stops at the first seed by which it has seen both shapes it needs — a
+## truncated path and one that ran to `BIKE_PATH_MAX_STATIONS`. The three CI
+## `SEEDS` lead it only because they are cheap to try first, and
+## `waypoint_selfcheck`'s CONTROL_SEEDS is the same shape.
+const TRUNCATION_SEEDS: Array[int] = [20260904, 777, 4242, 1, 424242, 999983, 750, 99]
+
+## How many station-strides `_check_half_step_control` samples looking for a
+## narrow river band. The measured rate is one per ~49,000 dry pairs, so this is
+## sized to find several and it stops at the first.
+const HALF_STEP_SAMPLES: int = 250000
+
 ## Check 2's and check 3's search space, in chunks, centred on the origin. Big
 ## enough to hold several paths on every seed (measured: 3 to 20 per seed over
 ## this square) and small enough to stay a fraction of a second.
@@ -171,6 +183,7 @@ func _check_kill_switch(terrain_script: GDScript) -> void:
 	var off: Node3D = _terrain(terrain_script, SEEDS[0], false)
 	var with_path: int = 0
 	var without: int = 0
+	var bare_path: int = 0
 	var nodes_seen: int = 0
 
 	for x: int in AB_X:
@@ -236,6 +249,12 @@ func _check_kill_switch(terrain_script: GDScript) -> void:
 			# from a stray draw. On a chunk with no pole nothing downstream can even
 			# see the paths, so a single differing node IS a draw.
 			if poles == 0:
+				# ...and THIS is the one with any power: a chunk where the drawing code
+				# really ran and still appended no footprint. Counted separately from
+				# `nodes_seen`, which the band's eleven path-free chunks would keep
+				# comfortably above zero on their own.
+				if not markers.is_empty():
+					bare_path += 1
 				var nodes_on: Array[String] = _node_table(chunk_on)
 				var nodes_off: Array[String] = _node_table(chunk_off)
 				nodes_seen += nodes_off.size()
@@ -266,6 +285,18 @@ func _check_kill_switch(terrain_script: GDScript) -> void:
 		_fail("check 1 compared %d chunks and found no chunk-parented nodes at all in any of "
 				% (AB_X.size() * AB_Y.size())
 				+ "them — the half of this check that catches a stray draw is blind")
+	if bare_path == 0:
+		# THE CONTROL THE `poles == 0` GATE NEEDS, and it is not the same as
+		# `with_path`. On a chunk with no path at all the spawner reaches no
+		# `create_box` and the two builds are identical by construction whatever bug
+		# exists, so the node comparison asserts nothing there. Only a chunk that
+		# DREW and still appended no footprint can show a stray draw — and a retune
+		# of the chance, the stride, the primes or the band that leaves every path
+		# chunk carrying a pole would empty that set silently.
+		_fail("check 1's A/B field holds no chunk that draws bike-path geometry AND appends "
+				+ "no footprint, so its stray-draw comparison ran only on chunks where the "
+				+ "spawner drew nothing and could not have failed. Retune AB_X / AB_Y until "
+				+ "the band contains a path with no pole on it")
 	on.free()
 	off.free()
 	Sentinel.done("kill_switch")
@@ -446,12 +477,22 @@ func _check_truncation(terrain_script: GDScript) -> void:
 	A SWEEP AND NOT A FIXTURE, and it fails when the sweep comes up empty: the
 	rule under test is "a blocked station ends the path", and a check that never
 	met a blocked station would report that rule as holding while saying nothing.
+	TWO shapes have to turn up, not one — a truncated path and a path that ran to
+	full length — and `TRUNCATION_SEEDS` is a search space rather than a sample.
+
+	THE HALF-STEP SAMPLE IS CONTROLLED SEPARATELY, in `_check_half_step_control`
+	below, because no path sweep this file can afford would ever meet the shape it
+	guards. Read that function before trusting the segment assertion here.
 
 	WHAT IS ASSERTED and what is only COUNTED, because the difference matters to
 	the next reader. ASSERTED, per path: every station in the list passes the
-	shipped predicate, and the list is at least `BIKE_PATH_MIN_STATIONS` long.
-	That pair IS the "never resumes past a block" rule — a walk that resumed would
-	put a blocked station in the list. COUNTED, per path: whether the station
+	station predicate, every SEGMENT between two of them passes the half-step
+	river sample, and the list is at least `BIKE_PATH_MIN_STATIONS` long. Both
+	predicates, because the walk stops on both and the second is not implied by
+	the first — two stations either side of a narrow band are each legal on their
+	own. That set IS the "never resumes past a block" rule: a walk that resumed
+	would leave a blocked station, or a drowned segment, inside the list.
+	COUNTED, per path: whether the station
 	after the last one is blocked. That cannot be asserted, and deliberately so —
 	`_bike_path_at` rolls its length with `randi_range`, so a path that simply ran
 	out has a perfectly legal successor. It is the NON-VACUITY GUARD at the bottom
@@ -464,7 +505,14 @@ func _check_truncation(terrain_script: GDScript) -> void:
 	"""
 	var truncated: int = 0
 	var full_length: int = 0
-	for seed_value: int in SEEDS:
+	var swept: int = 0
+	for seed_value: int in TRUNCATION_SEEDS:
+		# Stop at the first seed by which every shape has been seen. The prefix
+		# assertions below ran on every path of every seed swept, so this bounds the
+		# SEARCH and not the checking.
+		if truncated > 0 and full_length > 0:
+			break
+		swept += 1
 		var terrain: Node3D = _terrain(terrain_script, seed_value, true)
 		for ox in range(-SWEEP_HALF, SWEEP_HALF + 1):
 			for oy in range(-SWEEP_HALF, SWEEP_HALF + 1):
@@ -472,13 +520,25 @@ func _check_truncation(terrain_script: GDScript) -> void:
 				var stations: Array[Dictionary] = BikePaths.bike_path_at(terrain, origin)
 				if stations.is_empty():
 					continue
-				# THE PREFIX IS LEGAL. Every station that was kept must pass the
-				# same predicate that stopped the walk.
+				# THE PREFIX IS LEGAL, and that is BOTH predicates the walk stops on.
+				# The stations first...
 				for i in stations.size():
 					if BikePaths.station_blocked(terrain, stations[i]["pos"]):
 						_fail("seed %d origin %s: station %d of %d stands somewhere the walk "
 								% [seed_value, origin, i, stations.size()]
 								+ "should have stopped — the path is not a legal prefix")
+						break
+				# ...and then the GROUND BETWEEN THEM, which is a separate statement and
+				# not a corollary of the one above: the whole reason `segment_blocked`
+				# exists is that both stations flanking a river band narrower than the
+				# station pitch are individually legal. Asserting only the stations would
+				# pass a strip laid straight across the water.
+				for i in range(stations.size() - 1):
+					if BikePaths.segment_blocked(terrain, stations[i]["pos"], stations[i + 1]["pos"]):
+						_fail("seed %d origin %s: the strip between stations %d and %d crosses "
+								% [seed_value, origin, i, i + 1]
+								+ "water, though both of its ends stand on dry ground — the "
+								+ "half-step river sample is not stopping the walk")
 						break
 				if stations.size() < BikePaths.BIKE_PATH_MIN_STATIONS:
 					_fail("seed %d origin %s: a path of %d stations survived, below "
@@ -497,14 +557,68 @@ func _check_truncation(terrain_script: GDScript) -> void:
 
 	if truncated == 0:
 		_fail("check 3 swept %d seeds x %dx%d origins and found no path that was stopped by "
-				% [SEEDS.size(), SWEEP_HALF * 2 + 1, SWEEP_HALF * 2 + 1]
+				% [swept, SWEEP_HALF * 2 + 1, SWEEP_HALF * 2 + 1]
 				+ "the road, a river, the mountains, the city, the HQ, a landmark or a "
-				+ "waypoint — the truncation rule is untested, so widen the sweep rather "
-				+ "than trusting this")
+				+ "waypoint — the truncation rule is untested, so widen TRUNCATION_SEEDS "
+				+ "rather than trusting this")
 	if full_length == 0:
 		_fail("check 3 found no path that ran to BIKE_PATH_MAX_STATIONS, so 'it stopped "
 				+ "because it was blocked' has no control: every path may simply be short")
+	_check_half_step_control(terrain_script)
 	Sentinel.done("truncation")
+
+
+func _check_half_step_control(terrain_script: GDScript) -> void:
+	"""
+	THE CONTROL ON `segment_blocked` ITSELF, because the sweep above cannot be one.
+
+	The segment half of check 3's prefix assertion holds over every path swept —
+	and it would hold just as perfectly if `segment_blocked` were `return false`.
+	Widening the sweep does not fix that: MEASURED over 778,924 dry-dry pairs a
+	station-stride apart, across four seeds and the whole corridor, exactly 16 had
+	a wet midpoint. That is one narrow band per ~49,000 pairs, or roughly one path
+	in four thousand — so a sweep big enough to meet one by chance would cost more
+	than every other check in this file put together, and a sweep that did NOT
+	meet one would report green either way.
+
+	So the predicate is controlled DIRECTLY instead: search the field for the
+	shape it exists for — two dry points a station apart with water between them —
+	and assert it answers true there. That turns "no drawn segment crosses water"
+	from a claim the suite cannot fail into one whose predicate is known to work,
+	and it is the reason `segment_blocked` cannot be quietly emptied out.
+
+	A FIXED-SEED sample and not `randomize()`: this is a search over a
+	deterministic field, so a fixed generator makes the same search every run and
+	a failure is reproducible. It stops at the first hit, which at the measured
+	rate is a few thousand samples in.
+	"""
+	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 99
+	var found: int = 0
+	var dry_pairs: int = 0
+	for _i in HALF_STEP_SAMPLES:
+		var p := Vector2(rng.randf_range(-2000.0, 2000.0), rng.randf_range(-1500.0, 1500.0))
+		var heading: float = rng.randf() * TAU
+		var q: Vector2 = p + Vector2(cos(heading), sin(heading)) * BikePaths.BIKE_STATION_SPACING
+		if terrain.is_river_at(Vector3(p.x, 0.0, p.y)) \
+				or terrain.is_river_at(Vector3(q.x, 0.0, q.y)):
+			continue
+		dry_pairs += 1
+		if BikePaths.segment_blocked(terrain, p, q):
+			found += 1
+			break
+	terrain.free()
+	if dry_pairs == 0:
+		_fail("check 3's half-step control found no dry pair at all in %d samples — it is "
+				% HALF_STEP_SAMPLES + "not sampling the field")
+	elif found == 0:
+		_fail("check 3's half-step control swept %d dry station-strides on seed %d and found "
+				% [dry_pairs, SEEDS[0]] + "no pair with water between its two dry ends, so "
+				+ "`BikePaths.segment_blocked()` was never once seen to answer true and could "
+				+ "be `return false` with this file still green. Raise HALF_STEP_SAMPLES (the "
+				+ "measured rate is about one such pair per 49,000)")
+	Sentinel.done("half_step_control")
 
 
 # ============================================================================
@@ -720,14 +834,6 @@ func _markers(chunk: Node) -> Array[Node]:
 		if child.is_in_group(BikePaths.BIKE_PATH_GROUP):
 			out.append(child)
 	return out
-
-
-func _segments_for(terrain: Node3D, chunk_pos: Vector2i, origin: Vector2i) -> PackedInt32Array:
-	## Which of `origin`'s segments `chunk_pos` draws, straight off its marker.
-	for row: Dictionary in (_spawn_bare(terrain, chunk_pos)["paths"] as Array[Dictionary]):
-		if row["origin"] == origin:
-			return row["segments"]
-	return PackedInt32Array()
 
 
 func _strip_positions(terrain: Node3D, chunk_pos: Vector2i, batch: Array) -> Array[Vector2]:
