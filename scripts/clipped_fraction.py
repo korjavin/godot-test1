@@ -71,7 +71,16 @@ def _red_dominant(r, g, b):
     """The dragon: a red that leads both other channels by a clear margin. 60 is
     far above the ~25 counts of hue spread the cloth bake puts across one flat
     colour, and far below the ~200 that separates the serpent from the blue shell
-    it lies on."""
+    it lies on.
+
+    IT SEES THE SERPENT AND NOT ITS GOLD, deliberately: `dragon_gold` is a brass
+    whose red leads by well under 60 both before and after bead 9k9n.8's re-grade,
+    so the horns, eyes, whiskers and claw tufts are outside this region and the
+    number it prints is about `dragon_red` alone. That is the right scope —
+    `dragon_red` is 96% of the animal's pixels and the flat channel was ITS
+    failure — but a widened margin would let the helmet's own brass in, and the
+    gold is judged on the evidence grid like every other colour in that assembly.
+    Say "the serpent" and not "the dragon" when quoting it."""
     return r > 120 and r > g + 60 and r > b + 60
 
 
@@ -149,12 +158,14 @@ def measure(path, region, threshold=THRESHOLD):
     alone.
 
     THE TWO ARE DISJOINT BY CONSTRUCTION, by the `elif` below, and it has to be
-    that way round: paper white has all three channels at 255, so a bare
-    `max(...) >= 255` counts every clipped FACE pixel as flat as well and the two
-    numbers stop telling apart the two failures they exist to separate: every
-    pixel `clipped` counts is a pixel with three channels at 255, so on the
-    pre-9k9n.5 `phoboman` visor the bare predicate would have reported that
-    51.37% as a saturated colour whose shading had collapsed.
+    that way round. A pixel over `THRESHOLD` is one whose luma has gone, which on
+    a blown-out highlight is normally all three channels at or near 255 — and a
+    bare `max(...) >= 255` then counts it as flat as well, so the two numbers stop
+    telling apart the two failures they exist to separate: on the pre-9k9n.5
+    `phoboman` visor it would have reported that 51.37% as a saturated colour
+    whose shading had collapsed. `clipped` is a LUMA test and not a
+    three-channels-at-255 one, so the two predicates are not nested and the `elif`
+    is what makes the partition, not an arithmetic accident of them.
     """
     width, height, nch, px = read_rgb(path)
     pick = region if callable(region) else None

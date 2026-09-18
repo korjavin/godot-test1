@@ -1185,7 +1185,11 @@ HEROES = {
             # the further down of the two because it starts higher — 0.92 against
             # the red's 0.80 — and both ends had to land under the same ceiling.
             # That ceiling is the fit's headline from bead 9k9n.5: 0.47 linear is
-            # WHITE, so the red was not a little hot, it was 1.7 stops over it.
+            # WHITE, and the red sat at 0.80 — 1.70x over it, which is 0.77 of a
+            # stop. (A RATIO IS NOT A STOP and this comment said 1.7 stops for a
+            # round: 1.7 stops over 0.47 would be 1.53 linear, nearly twice what
+            # the generator ever asked for, and anyone re-deriving from the wrong
+            # unit over-darkens by an octave.)
             # 0.40 lands where the helmet's brass dome landed (0.43 renders 234),
             # with room left for the lit facets, which is the point — the shading
             # has to live in the top of the channel.
@@ -2139,9 +2143,12 @@ def squash_proportions(obj, armature, joints, row):
         o.select_set(o is obj)
 
     # AND THE JOINT HELPERS, which every landmark downstream is measured from.
-    # No inflate on them: `landmarks()` reads these for their HEIGHT and nothing
-    # else, and the two the export asserts on for sign — the shoulders — are where
-    # the amplitude has already faded out.
+    # No inflate on them, and the reason is what they are READ FOR and not where
+    # they sit: `landmarks()` takes their HEIGHT and nothing else, and z is the one
+    # axis a radial scale does not touch. The two the export asserts on for sign —
+    # the shoulders — are in the inflate's reach (the row gives `clavicle_*` 0.22),
+    # but the scale is positive and about an axis between them, so it can move a
+    # shoulder outward and never across.
     out = {}
     for name, p in joints.items():
         out[name] = remap(p, 1.0 if name == "l-elbow" else 0.0,

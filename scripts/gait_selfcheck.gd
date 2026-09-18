@@ -59,7 +59,9 @@ const BODY_Y_MAX: float = 0.10
 const HEAD_LIMIT_DEG: float = 15.0
 
 ## The sweep: 60 s of walking sampled at 240 Hz, which is well inside the
-## Nyquist limit of the fastest row (Primm's 10.6 rad/s stride).
+## Nyquist limit of the fastest row (Phoboman's 13.8 rad/s stride since bead
+## godot-test1-9k9n.7 halved his legs — 2.20 Hz, so 109 samples a cycle; it was
+## Primm's 10.6 before that).
 const SWEEP_SECONDS: float = 60.0
 const SWEEP_HZ: float = 240.0
 
@@ -110,8 +112,9 @@ const STRAFE_EPS_DEG: float = 1.0
 ## phases land at slightly different points on the peak read as four distinct
 ## numbers even with the scaling pinned to 1.0 — measured, they differed in the
 ## fourth decimal and a distinctness test passed. The rows really spread these by
-## 1.9x, 2.0x and 1.6x, so 1.1 is far above the sampling noise and far below
-## every real spread.
+## 1.9x, 2.0x and 2.1x (the third is the step rate, 13.8 over Windman's 6.5 since
+## bead godot-test1-9k9n.7; it was 1.6x when Primm's 10.6 topped the roster), so
+## 1.1 is far above the sampling noise and far below every real spread.
 const PERSONALITY_SPREAD: float = 1.1
 
 ## TEIBI'S PLAIN WALK (bead godot-test1-xkz4). His hip-to-foot rest length in
