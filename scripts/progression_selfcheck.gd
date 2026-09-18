@@ -1483,6 +1483,67 @@ func _check_panel_spends_and_releases_its_pause() -> void:
 	Sentinel.done("panel_spends_and_releases_its_pause")
 
 
+func _check_card_fits_three_columns() -> void:
+	"""
+	Bead godot-test1-1m3x: the skill card fits three branch columns with NO
+	horizontal scroll (owner ruling — the AUTO stopgap scrolled and it was
+	unpleasant). Driven on the REAL panel in a sized stage at the desktop
+	default, for a three-column hero (windman, the owner's case) and a
+	two-column one (teibi — nothing regressed).
+
+	Two halves, because each catches what the other cannot: the structural fit
+	(content minimum against the scroll container's laid-out width) is exact
+	and headless-deterministic, while the scrollbar's own visibility is the
+	thing the owner actually saw. The column COUNT is the negative control — a
+	card that "fits" by dropping the third branch passes every width below and
+	breaks the feature instead.
+
+	Mutation control: shrink CARD_WIDTH back toward 640 and the fit goes red
+	(content needs 3 × 292 + 2 × separation; the container offers CARD_WIDTH −
+	inset).
+	"""
+	var progression := _make_progression()
+	var stage := Control.new()
+	stage.size = Vector2(1280.0, 720.0)
+	root.add_child(stage)
+	var panel: Control = Control.new()
+	panel.set_script(load("res://scripts/skill_tree_ui.gd"))
+	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	stage.add_child(panel)
+	await process_frame
+	await process_frame
+	panel._set_panel_open(true)
+	for hero: String in ["windman", "teibi"]:
+		panel._view_hero = hero
+		panel._rebuild()
+		await process_frame
+		await process_frame
+		var columns: HBoxContainer = panel._columns
+		var want_columns: int = 3 if hero == "windman" else 2
+		if columns.get_child_count() != want_columns:
+			_fail("%s builds %d branch columns, wanted %d — the card fits only"
+				% [hero, columns.get_child_count(), want_columns]
+				+ " because a branch never arrived")
+			continue
+		var scroll: ScrollContainer = panel._card.get_child(0) as ScrollContainer
+		if scroll == null:
+			_fail("%s: the card's first child is no ScrollContainer" % hero)
+			continue
+		var need: float = columns.get_combined_minimum_size().x
+		var have: float = (scroll as Control).size.x
+		if need > have:
+			_fail("%s: branch columns need %.0f px but the scroll container is"
+				% [hero, need] + " %.0f px wide — the card scrolls horizontally" % have)
+		if scroll.get_h_scroll_bar().is_visible_in_tree():
+			_fail("%s: the horizontal scrollbar is drawn — the owner sees a"
+				% hero + " scroll where the card should simply fit")
+	panel._set_panel_open(false)
+	stage.queue_free()
+	progression.free()
+	await process_frame
+	Sentinel.done("card_fits_three_columns")
+
+
 ## Is the card really on screen? `is_visible_in_tree()` off the CARD, so it asks
 ## every ancestor between the card and the root — which is the whole point: the
 ## bug this catches was one wrapper in the middle left hidden while the node the
@@ -2264,4 +2325,5 @@ func _run() -> void:
 	await _check_air_sight_ghosts_the_awake_set()
 	await _check_phase_echo_refunds_a_wall_pass()
 	await _check_panel_spends_and_releases_its_pause()
+	await _check_card_fits_three_columns()
 	_report()

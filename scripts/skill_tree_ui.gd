@@ -140,15 +140,31 @@ const BUTTON_GAP: float = 8.0
 ## bumps this and passes slot 2; nothing else moves.
 const COLUMN_SLOTS: int = 2
 
-## The open card. Two branch columns sit side by side; a third (the second
-## skill's own branch, bead godot-test1-0mr0.1) scrolls HORIZONTALLY — the
-## columns keep their width and the scroll goes both ways, so nothing learned
-## about the two-column layout moves. It scrolls (a `ScrollContainer`) so a
-## short phone screen in landscape still reaches the
-## Close button.
-const CARD_WIDTH: float = 640.0
-const CARD_MAX_HEIGHT: float = 560.0
+## The open card. Three branch columns sit side by side: 3 × COLUMN_WIDTH plus
+## the two COLUMN_SEPARATION gaps fit inside CARD_WIDTH − CARD_INSET, so nothing
+## scrolls horizontally (bead godot-test1-1m3x — the 640 predates the third
+## column and the viewport is 1920 × 1080, so widening spends headroom nobody
+## misses instead of squeezing the two-column look every hero learned). It still
+## scrolls (a `ScrollContainer`, horizontal AUTO) so a short phone screen in
+## landscape still reaches the Close button — and so a fourth column, if one
+## ever lands, scrolls instead of breaking.
 const COLUMN_WIDTH: float = 292.0
+## The gap between two branch columns in `_columns` (a theme constant, so an int).
+const COLUMN_SEPARATION: int = 16
+## What the scroll container and the body inset from the card's own edges (its
+## frame and content margins).
+const CARD_INSET: float = 36.0
+## Three columns wide, DERIVED so the arithmetic cannot drift from the layout:
+## 3 × 292 + 2 × 16 + 36 = 944. Shrink this below that sum and the third column
+## scrolls again — `progression_selfcheck` measures exactly that.
+const CARD_WIDTH: float = 3.0 * COLUMN_WIDTH + 2.0 * COLUMN_SEPARATION + CARD_INSET
+const CARD_MAX_HEIGHT: float = 560.0
+## Text reserve inside a node button: the Button stylebox padding plus the
+## retired "   3/3" rank counter's ~48 px, kept as reserve now the name stands
+## alone — `locale_selfcheck` budgets node names against
+## COLUMN_WIDTH − NODE_TEXT_RESERVE, so the budget stays conservative the way
+## the panel left it (see `_add_node_row`).
+const NODE_TEXT_RESERVE: float = 60.0
 
 ## Node buttons are past the ~44–48 pt minimum touch target: this panel has to be
 ## operable by thumb, not only by mouse.
@@ -349,18 +365,19 @@ func _build_ui() -> void:
 
 	var scroll := ScrollContainer.new()
 	scroll.name = "Scroll"
-	# Horizontal scroll is what carries a THIRD branch column (the second
-	# skill's branch): three columns at COLUMN_WIDTH no longer fit 604 px, and
-	# squeezing them would rewrite the two-column look every hero learned.
+	# Horizontal scroll stays AUTO as the no-op a FOURTH column would need: three
+	# columns at COLUMN_WIDTH fit CARD_WIDTH − inset exactly, so nothing scrolls
+	# today and nothing learned about the two-column look moved to get there.
+	# (The vertical scroll and the short-screen reach below are still live.)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	scroll.custom_minimum_size = Vector2(CARD_WIDTH - 36.0, 0.0)
+	scroll.custom_minimum_size = Vector2(CARD_WIDTH - CARD_INSET, 0.0)
 	_card.add_child(scroll)
 
 	var vbox := VBoxContainer.new()
 	vbox.name = "Body"
 	vbox.add_theme_constant_override("separation", 10)
 	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	vbox.custom_minimum_size = Vector2(CARD_WIDTH - 36.0, 0.0)
+	vbox.custom_minimum_size = Vector2(CARD_WIDTH - CARD_INSET, 0.0)
 	scroll.add_child(vbox)
 
 	_title_label = Label.new()
@@ -392,7 +409,7 @@ func _build_ui() -> void:
 
 	_columns = HBoxContainer.new()
 	_columns.name = "Branches"
-	_columns.add_theme_constant_override("separation", 16)
+	_columns.add_theme_constant_override("separation", COLUMN_SEPARATION)
 	vbox.add_child(_columns)
 
 	# A STEEL rule, not an `HSeparator`: the separator's line comes off the engine
@@ -525,7 +542,7 @@ func _set_panel_open(open: bool) -> void:
 		var scroll := _card.get_child(0) as ScrollContainer
 		if scroll != null:
 			scroll.custom_minimum_size = Vector2(
-				CARD_WIDTH - 36.0, minf(CARD_MAX_HEIGHT, maxf(200.0, view_height - 80.0))
+				CARD_WIDTH - CARD_INSET, minf(CARD_MAX_HEIGHT, maxf(200.0, view_height - 80.0))
 			)
 		_rebuild()
 	_apply_pause(open)
