@@ -1532,6 +1532,16 @@ class StubSightInterior extends Node3D:
 		xray_calls.append(on)
 
 
+class StubShelterTower extends Node3D:
+	## The smallest thing `_sheltered()` will talk to (bead godot-test1-0mr0.1
+	## round 2): a node in the "tower" group carrying `sheltered`, answering
+	## sheltered — Air Sight needs a roof, and the fire legs stand under one.
+	var sheltered_answer: bool = true
+
+	func sheltered(_pos: Vector3) -> bool:
+		return sheltered_answer
+
+
 class StubSlotSound extends Node:
 	## The smallest thing the slot-2 press will talk to: `play_buzz` for the
 	## refusal and `play_ability` for the fire, both counted. The real sound
@@ -1665,6 +1675,10 @@ func _check_second_slot_is_bought_not_given() -> void:
 	var interior := StubSightInterior.new()
 	root.add_child(interior)
 	interior.add_to_group("tower_interior")
+	# Round 2: the slot-2 gates need a roof — the fire legs stand under one.
+	var shelter := StubShelterTower.new()
+	root.add_child(shelter)
+	shelter.add_to_group("tower")
 
 	# --- Fresh: no hero has a second skill, and G is silent for all four. ---
 	for index in player.CHARACTERS.size():
@@ -1754,8 +1768,10 @@ func _check_second_slot_is_bought_not_given() -> void:
 	Input.action_release("special_ability_2")
 	sound.remove_from_group("sound_manager")
 	interior.remove_from_group("tower_interior")
+	shelter.remove_from_group("tower")
 	sound.free()
 	interior.free()
+	shelter.free()
 	progression.free()
 	player.queue_free()
 	Sentinel.done("second_slot_is_bought_not_given")

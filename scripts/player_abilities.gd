@@ -444,8 +444,9 @@ func _ability2_windman() -> bool:
 
 	WINDMAN'S SLOT 2 (bead godot-test1-0mr0.1): today's indoor F, moved — the same
 	arm, the same refusal surface, its own cooldown dial. Still indoors-only (child
-	.2 makes it universal); outdoors, or with no interior in the tree, it answers
-	`false` and the press costs nothing.
+	.2 makes it universal): unsheltered it answers `false` before touching the
+	building, so the press costs nothing — belt beside the OUTSIDE gate, which
+	refuses first, for direct callers of the arm.
 
 	THE BUILDING DOES THE WORK (`TowerInterior.set_xray`), through the same null-safe
 	group + `has_method` door every other system reads. No interior in the tree means
@@ -454,6 +455,12 @@ func _ability2_windman() -> bool:
 	the standing "a no-op never locks the power" rule, and it is what keeps a Windman
 	standing under a roof this game does not have from losing eight seconds to it.
 	"""
+	# Round 2: the roof question comes FIRST. The interior streams in at 360 m,
+	# so it exists all over the yard and the road — opening the x-ray out there
+	# charges a cooldown for an effect the next tick cancels. The OUTSIDE gate
+	# refuses the press before it gets here; this `false` is for direct callers.
+	if not player._sheltered():
+		return false
 	var interior: Node = player.get_tree().get_first_node_in_group("tower_interior")
 	if interior == null or not interior.has_method("set_xray"):
 		return false

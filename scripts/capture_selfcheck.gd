@@ -3074,6 +3074,24 @@ func _check_air_sight_is_the_indoor_air_rush() -> void:
 	if bool(interior.call("xray_active")):
 		_fail("an outdoor Air Rush made the HQ see-through")
 
+	# --- Outdoors G is the OUTSIDE gate (bead godot-test1-0mr0.1 round 2). ---
+	# The interior is loaded out here too (360 m radius), so "it exists" cannot
+	# be the test: unsheltered, the press must refuse with a named reason, cost
+	# no cooldown, and never touch the building.
+	if player.get_ability_block_reason(1) != "OUTSIDE":
+		_fail("outdoors G is gated by '%s' — the sight needs a roof"
+			% player.get_ability_block_reason(1))
+	player.ability2_cooldowns[player.current_character_index] = 0.0
+	player.try_activate_ability(1)
+	await process_frame
+	if player.ability2_cooldowns[player.current_character_index] > 0.0:
+		_fail("an OUTSIDE-refused press charged %.2f s of slot-2 cooldown"
+			% player.ability2_cooldowns[player.current_character_index])
+	if bool(interior.call("xray_active")):
+		_fail("G on the yard opened the x-ray — then the tick cancels it")
+	if player.windman_sight_timer > 0.0:
+		_fail("G outdoors started a look with no roof overhead")
+
 	# --- And the timer is the third exit: it must expire on its own indoors. ---
 	player.global_position = indoors
 	await _settle(player)
@@ -3088,7 +3106,7 @@ func _check_air_sight_is_the_indoor_air_rush() -> void:
 	await _settle(player)
 	if bool(interior.call("xray_active")):
 		_fail("Air Sight's timer ran out and the walls stayed see-through")
-	print("air sight: G opens the walls indoors, F answers ROOF, outdoors F is still Air Rush, and all three exits clear it")
+	print("air sight: G opens the walls indoors, F answers ROOF, outdoors F is still Air Rush and G answers OUTSIDE, and all three exits clear it")
 
 	_clear(player)
 	second_tree.remove_from_group("progression")
