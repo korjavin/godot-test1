@@ -3290,8 +3290,10 @@ def attach_tails(obj, row, tj):
 
 GEN_DOME_R = 0.27        # `create_head_assembly`'s own dome radius: the unit every
                          # other number in that function is written against, and
-                         # therefore the divisor of this port's one scale.
-GEN_BODY_R = 0.52        # ... and `BODY_R`, the same thing for the dragon.
+                         # therefore the divisor of this port's one scale. (The
+                         # dragon has no such divisor: it is fitted to the belly it
+                         # lies on rather than scaled from the generator's `BODY_R`
+                         # — see `DRAGON_REACH`.)
 
 HELMET_CLEAR = 0.055     # air between the skull's own surface and the dome. A
                          # DEEP-SEA DIVING HELMET IS NOT A CRASH HELMET: the head
@@ -3329,26 +3331,35 @@ HELMET_FACE_PROUD = 0.004       # how far the bowl of soup stands off the dome's
 HELMET_FACE_FLAT = 0.6
 HELMET_TRIS = (1600, 3400)      # the budget, asserted where it is spent
 
-DRAGON_SPAN = 1.6        # how much of the belly the S-curve covers. The
-                         # generator's path fills about half of its own sphere,
-                         # which on this belly is a thin squiggle in the middle of
-                         # it; 1.6 is what makes the serpent read red-on-blue at
-                         # the 3 m the game is judged at (its body is 5.2 cm thick
-                         # at the head, against 3.0 at 1.0).
-                         #
-                         # AND IT IS MORE THAN THE CANON'S WORDS. `docs/characters/
-                         # phoboman.md` says "starting from the left side and
-                         # stretching to the middle"; measured on the shipped
-                         # build, the motif runs x -0.188..+0.267 on a belly whose
-                         # half-width is 0.265 — flank to flank, which is the same
-                         # line's "a long tail smoothly wrapping the belly" but is
-                         # not its "to the middle". The trade is deliberate and it
-                         # is READABILITY, and it is one number if the owner reads
-                         # `docs/style/z3e/grid_33_phoboman_blender.png` the other
-                         # way: scaling is about the belly's centre, so dropping
-                         # this pulls both ends in together. (The head end no
-                         # longer LEAVES the belly either way — every piece of it
-                         # goes through `surface()`; see `off()`.)
+# WHERE THE SERPENT RUNS ACROSS THE BELLY, as a fraction of its half-width: the
+# canon's "starting from the left side and stretching to the middle"
+# (`docs/characters/phoboman.md`), taken literally. The generator could not express
+# this — its dragon is drawn on a sphere whose centre IS the character's centre, so
+# it is scaled about the middle and reaches as far right as it does left.
+#
+# BOTH ENDS ARE MEASURED, and both of them by an assert that fired.
+#
+#   the RIGHT end is a hard limit, and it is the HANDS. The hero ships with his arms
+#   5 degrees off vertical (`apply_pose_as_rest`) and his hands beside his hips,
+#   which on a body this wide is over the belly's own flank. An earlier build of
+#   this bead scaled the generator's path 1.6x about the centre and put the dragon's
+#   head 4.6 mm from the right hand — 43 hand vertices inside its head sphere, found
+#   by eye on `grid_33`'s 3/4 column. At 0.45 the clearance is 83.2 mm, and
+#   `assert_clear_of_hands` is the guard that measures it every build.
+#   the LEFT end is the TRUNK's own silhouette. 0.90 put the tail's top waypoint at
+#   x -0.224, which at its own height (z 1.253, the upper chest, where a fat man is
+#   narrower than at his waist) is off the front of him — `surface()` refused it.
+#
+# And the width between them is the boldness: the serpent's body is 7.0 cm across at
+# the head, which is what it has to be to read red-on-blue at the 3 m the game is
+# judged at. That is the trade if these ever move.
+DRAGON_REACH = (-0.70, 0.45)
+# The generator's own path PLUS the head assembly hung off its last waypoint, as an
+# x span in ITS units: the tail's radius at one end, the snout's far edge at the
+# other. `DRAGON_REACH` is mapped onto this, so those fractions bound the whole
+# animal and not just its spine — which is the half of it the round-2 review found
+# hanging off the body.
+DRAGON_GEN_X = (-0.23, 0.33)
 DRAGON_PROUD = 0.012     # the generator's own standoff: the tube's CENTRE line
                          # stands this far off the belly, so half of it is sunk
                          # in and it reads as embossed art rather than a snake
@@ -3687,6 +3698,52 @@ def spine_split(armature):
             for n in (0, 1, 2)}
 
 
+DRAGON_HAND_CLEAR = 0.020   # how much air the dragon must leave around a hand in
+                            # the SHIPPED rest, measured after `apply_pose_as_rest`
+
+
+def assert_clear_of_hands(obj, first_vert, clearance=DRAGON_HAND_CLEAR):
+    """No vertex of the accessory joined at `first_vert` may be in a hand.
+
+    RUN AFTER `apply_pose_as_rest`, AND THAT IS THE WHOLE POINT. `build_dragon`
+    measures a body in MakeHuman's A-pose, where the arms stand 41 degrees off
+    vertical and the hands are out at the sides; the hero ships with them 5 degrees
+    off vertical, beside his hips — which on a wide, short body is exactly where the
+    belly's flank is. So a dragon that lies on the belly at build time can be inside
+    a fist at export time, and nothing upstream can see it: `surface()` asks where
+    the belly is, `report_weights` asks whether a vertex is driven, and a head
+    modelled 2 cm proud of the skin two bones away from its own is neither question.
+    Measured 2026-09-18 on the first build of bead 9k9n.1: 43 hand vertices inside
+    the dragon's head sphere, found by eye on `grid_33`'s 3/4 column.
+
+    A join APPENDS, so the accessory is exactly the vertices past `first_vert` — the
+    coat tails' idiom.
+    """
+    ids = _vg_ids(obj, ["hand_l", "hand_r"])
+    hands = [v.co for v in obj.data.vertices if _group_weight(v, ids) > 0.5]
+    if not hands:
+        raise AssertionError("no hand vertices: this hero has no hands to clear")
+    xs = [c.x for c in hands]
+    zs = [c.z for c in hands]
+    worst, at = 1e9, None
+    for v in obj.data.vertices[first_vert:]:
+        for h in hands:
+            d = (v.co - h).length
+            if d < worst:
+                worst, at = d, v.co.copy()
+    log("hand clearance: %.1f mm (floor %.0f), nearest accessory vertex %s; hands "
+        "x %.3f..%.3f z %.3f..%.3f"
+        % (worst * 1000.0, clearance * 1000.0,
+           tuple(round(c, 3) for c in at), min(xs), max(xs), min(zs), max(zs)))
+    if worst < clearance:
+        raise AssertionError(
+            "the accessory joined at vertex %d comes %.1f mm of a hand in the "
+            "shipped rest (floor %.0f mm), nearest at %s — it was modelled on the "
+            "A-pose body and the arms have come down since"
+            % (first_vert, worst * 1000.0, clearance * 1000.0,
+               tuple(round(c, 3) for c in at)))
+
+
 def build_dragon(colours, obj, tj):
     """`create_torso_assembly`'s red Chinese dragon, laid on the BELLY's own
     surface: the same eight waypoints, the same taper, the same gold horns, eyes,
@@ -3701,10 +3758,28 @@ def build_dragon(colours, obj, tj):
     """
     from mathutils.bvhtree import BVHTree
     me = obj.data
-    bvh = BVHTree.FromPolygons([tuple(v.co) for v in me.vertices],
-                               [tuple(p.vertices) for p in me.polygons])
     torso_ids = _vg_ids(obj, REGION_BONES["torso"])
     lo, hi = tj["pelvis"].z, tj["neck"].z
+    # THE TREE IS THE TRUNK AND NOTHING ELSE. A ray cast at the whole body answers
+    # "where is the first surface in front of this point", and at the flanks the
+    # first surface can be an ARM — MakeHuman rests in an A-pose here, so a hand
+    # hangs level with the hip. `surface()` below would then seat a segment on a
+    # forearm and report success. Filtered, the same ray finds nothing there and
+    # the assert fires, which is what a guard whose message says "off this hero's
+    # own front" has to mean.
+    #
+    # TWO BONE SETS, AND THEY ARE TWO DIFFERENT QUESTIONS. The tree is the surface
+    # the dragon may lie on, which is the blue shell's own scope (`garments`, the
+    # first row) — clavicles included, because the tail tip reaches the upper chest.
+    # `belly` below is the MEASUREMENT the path is scaled against, and that is the
+    # belly proper: a waist half-width, not a shoulder one.
+    shell_ids = _vg_ids(obj, TORSO_BONES + ["pelvis"])
+    trunk = {i for i, v in enumerate(me.vertices)
+             if _group_weight(v, shell_ids) > 0.5}
+    bvh = BVHTree.FromPolygons(
+        [tuple(v.co) for v in me.vertices],
+        [tuple(p.vertices) for p in me.polygons
+         if all(i in trunk for i in p.vertices)])
     belly = [v.co for v in me.vertices
              if _group_weight(v, torso_ids) > 0.5 and lo <= v.co.z <= hi]
     if len(belly) < 64:
@@ -3714,13 +3789,17 @@ def build_dragon(colours, obj, tj):
     half_w = max(abs(c.x - cx) for c in belly)
     half_h = (hi - lo) / 2.0
     mid = (hi + lo) / 2.0
-    # ONE SCALE, off the SMALLER half — the generator's path is drawn on a round
-    # sphere and keeping its aspect is what keeps the serpent a serpent.
-    k = DRAGON_SPAN * min(half_w, half_h) / GEN_BODY_R
+    # ONE SCALE AND ONE SHIFT, both read off `DRAGON_REACH`: the generator's whole
+    # animal is mapped onto that span of this hero's own belly. The scale is then
+    # used on z as well, because the path is drawn on a round sphere and keeping its
+    # aspect is what keeps the serpent a serpent.
+    lo_f, hi_f = DRAGON_REACH
+    k = (hi_f - lo_f) * half_w / (DRAGON_GEN_X[1] - DRAGON_GEN_X[0])
+    x0 = cx + lo_f * half_w - DRAGON_GEN_X[0] * k
 
     def surface(x, z, proud=DRAGON_PROUD):
         """The generator's `_project_to_sphere`, asked of the real belly."""
-        px, pz = cx + x * k, mid + z * k
+        px, pz = x0 + x * k, mid + z * k
         py = _face_front(bvh, px, pz)
         if py is None or py <= 0.0:
             raise AssertionError(
@@ -4510,8 +4589,11 @@ def weight_strays_to(obj, armature, bone, floor):
 
 def head_tri_count(obj):
     """Triangles whose every vertex is driven by the head — the bead's face-survived
-    assert. Counted on the mesh as exported, so the beret and the eyes (weighted to
-    `head` by `join_rigid`) count with it, and so does the wrap."""
+    assert. Counted on the mesh as exported, so EVERY accessory `join_rigid` puts on
+    `head` counts with it: the beret, the eyes, Primm's goggles, Phoboman's whole
+    helmet, and so does the wrap. On a helmeted row the number is mostly dome (2,708
+    of Phoboman's 4,208), which is exactly why `build()` drops the `HEAD_TRIS_MIN`
+    floor for such a row rather than reading this as a face that survived."""
     ids = {vg.index for vg in obj.vertex_groups if vg.name in ("head", "neck_01")}
     head = {v.index for v in obj.data.vertices if _group_weight(v, ids) > 0.5}
     obj.data.calc_loop_triangles()
@@ -4676,8 +4758,10 @@ def build(hero, shot=None):
     # or an eyeball inside that slab would be measured as skull. `build_helmet` and
     # `build_dragon` below read the body too (the skull, and the belly by ray), so
     # the rule is that a measuring builder runs before anything is joined into what
-    # it measures — the helmet sits after the beret and the eyes only because no row
-    # wears both, and the day one does it moves up here.
+    # it measures. The helmet sits after the beret and the eyes only because no row
+    # wears both, and the day one does it moves up here; the dragon is safe after
+    # the helmet because it rays a tree built from the TRUNK's own polygons, which
+    # a dome weighted to `head` is not in.
     # (Its polygons are flat-shaded for the coat tails' reason — a frame and a lens
     # are hard-edged, and smoothing a box ring rounds it into a sausage.)
     if "goggles" in row:
@@ -4703,8 +4787,10 @@ def build(hero, shot=None):
         obj = join_rigid(obj, build_helmet(row["colours"], obj, tj), "head")
         flat_faces = frozenset(flat_faces) | frozenset(
             range(helmet_p0, len(obj.data.polygons)))
+    dragon_v0 = None
     if row.get("dragon"):
         dragon_p0 = len(obj.data.polygons)
+        dragon_v0 = len(obj.data.vertices)
         obj = join_weighted(obj, build_dragon(row["colours"], obj, tj),
                             spine_split(armature))
         flat_faces = frozenset(flat_faces) | frozenset(
@@ -4737,6 +4823,10 @@ def build(hero, shot=None):
     bake_cloth_shading(obj)
 
     apply_pose_as_rest(armature, obj, ARMS_DOWN_DEG)
+    # ... AND ONLY NOW CAN THE DRAGON BE CHECKED against the arms, because only now
+    # are they where the hero ships them — see `assert_clear_of_hands`.
+    if dragon_v0 is not None:
+        assert_clear_of_hands(obj, dragon_v0)
     report_weights(obj, armature, "skinned body (accessories joined)")
     assert_no_multires([obj, armature])
 
