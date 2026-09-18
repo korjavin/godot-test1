@@ -177,8 +177,10 @@ const SKINNED_SWEEP_SECONDS: float = 20.0
 ## third of a leg in it carries a larger head at the same total — so the dome and
 ## its valve knob top him out 6 mm above the 1.8191 of PR #431 and 2.6 cm above
 ## the 1.7992 of PR #420. The number is measured by the build and written on the
-## PROVENANCE row; the TOLERANCE is 2 cm and those three heights are 6 mm apart,
-## so this check pins the SCALE of the model, not which re-proportioning it is.
+## PROVENANCE row. The TOLERANCE is 2 cm and the last TWO of those heights are
+## 6 mm apart, so this check cannot tell #431's body from this one — but #420's
+## 1.7992 is 2.6 cm away and would fail it. It pins the scale of the model, and
+## on the coarsest of the three steps it also pins which model.
 const PHOBOMAN_FIXTURE: String = "res://scenes/characters/phoboman.tscn"
 const PHOBOMAN_TARGET_HEIGHT: float = 1.8254
 const PHOBOMAN_HEIGHT_TOL: float = 0.02

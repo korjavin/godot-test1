@@ -1350,15 +1350,26 @@ HEROES = {
                       "hand_l": 0.20, "hand_r": 0.20},
         },
         # ... AND WHAT THAT HAS TO MEASURE, on the shipped figure (`silhouette`).
-        # The first three are the bead's own numbers: its limbs are CEILINGS
-        # ("leg <= 0.20 h, arm <= 0.20 h") and the targets sit just under them, so
-        # `SILHOUETTE_TOL` — 0.015 for this reason — cannot pass a limb that is
-        # over. The belly stays at the bottom of its 0.55-0.60 band; the band's
-        # top is the retired sphere's own 0.64 and this body still has to have
-        # arms beside it. `roundness` is a FLOOR and not a target (`silhouette`
-        # says why): the body #431 shipped scores 0.838 and this one 0.942.
+        # The first three are the bead's own numbers, and its limbs are CEILINGS
+        # ("leg <= 0.20 h, arm <= 0.20 h") rather than targets, so they sit just
+        # under with `SILHOUETTE_CEILING` laid over the tolerance — the band alone
+        # would accept 0.210. The belly stays at the bottom of its 0.55-0.60 band;
+        # the band's top is the retired sphere's own 0.64 and this body still has
+        # to have arms beside it.
+        #
+        # `roundness` is a FLOOR and not a target (`silhouette` says why), and 0.93
+        # is not the bead's 0.90 — because the metric's own scale is narrow and
+        # 0.90 is in the wrong part of it. Measured closed-form on the two solids
+        # this gate exists to tell apart: a PERFECT SPHERE scores 0.9443 (not 1.0 —
+        # `got` is the widest vertex in a band and `want` the circle at the band's
+        # centre) and the best CYLINDER, a barrel with dead-vertical sides at
+        # D = 0.954 h, scores 0.9262. A 0.90 floor passes that barrel by 0.026, and
+        # a barrel is one edit away — uniform `belly` amplitudes across the four
+        # trunk bones is exactly a constant-width trunk. 0.93 rejects it and still
+        # leaves this build's 0.942 twelve thousandths of room under a real ball.
+        # (The body #431 shipped scores 0.838.)
         "silhouette": {"leg": 0.195, "arm": 0.19, "belly": 0.55,
-                       "roundness": 0.90},
+                       "roundness": 0.93},
         # A FAT MAN'S ARMS DO NOT HANG AT 5 DEGREES. The cast's rest puts them
         # beside the hips; on a hero whose belly is half his height that is inside
         # the belly. 30 degrees is where they clear it, and it is also the pose the
@@ -2194,15 +2205,27 @@ def squash_proportions(obj, armature, joints, row):
 # <= 0.20 h, arm <= 0.20 h"), and a +-0.03 band around a 0.195 target passes a
 # leg at 0.225 — a gate that lets the ruling it exists for be walked back by a
 # fifth is not a gate. 0.015 is 2.7 cm on this hero, still under the width of his
-# own hand and still nothing a viewer names, and every one of the four targets
-# below lands inside a fifth of it. The REJECTED body is outside on all three of
+# own hand and still nothing a viewer names, and all three RATIO targets below
+# land inside a fifth of it. (`roundness` is the fourth number and does not use
+# this tolerance at all — it is a floor.) The REJECTED body is outside on all three of
 # the ratios it shares, by 0.06 / 0.10 / 0.00 against this row (measured on its
 # own committed `.blend`, which is the only honest place to read it): the body
-# #431 shipped and the owner sent back reads leg 0.259 and arm 0.252, which is
-# 0.064 and 0.062 outside — and belly 0.552, which is INSIDE. That a rejected
-# silhouette passed one of the three gates on the nose is exactly why `roundness`
-# had to join them: a pear and a ball of one width and one height are one number.
+# #431 shipped and the owner sent back is outside on TWO of the three ratios it
+# shares — leg 0.259 and arm 0.252, i.e. 0.064 and 0.062 over — and INSIDE on the
+# third, belly 0.552 against a 0.55 target. That a rejected silhouette passed one
+# of these three gates on the nose is exactly why `roundness` had to join them: a
+# pear and a ball of one width and one height are one number.
 SILHOUETTE_TOL = 0.015
+
+# ... AND THE ONE-SIDED HALF OF IT, because two of this hero's numbers are not
+# targets at all. Bead godot-test1-9k9n.9's acceptance is "leg <= 0.20 h, arm <=
+# 0.20 h ... asserted in build_hero.py", and a +-0.015 band around a 0.195 target
+# accepts 0.210 — 1.8 cm of leg on this hero that clears the gate and breaks the
+# ruling. The band stays (a limb 3 cm SHORTER than asked for is a miss too, which
+# is the whole reason these are targets), and this is the ceiling laid over it, in
+# the shape `roundness` uses for its floor. A key with no entry here has no
+# ceiling, which is every other hero's case.
+SILHOUETTE_CEILING = {"leg": 0.20, "arm": 0.20}
 
 # THE TRUNK, AS THE ROUNDNESS METRIC READS IT — the same four bones the belly
 # width is measured over, because "the body and the belly TOGETHER" (owner,
@@ -2216,10 +2239,18 @@ TRUNK_BONES = ("pelvis", "spine_01", "spine_02", "spine_03")
 # horizontal slice through either measures a gap between limbs rather than a
 # silhouette — the widest vertex at 5% of trunk height is the outside of a
 # thigh. The band a viewer reads as "the ball" is what is left, and it is the
-# band a step between a chest and a waist lands in. (Measured on the body #431
-# shipped and the owner sent back: over the FULL height it scores 0.838, its two
-# end slices reading 0.702 and 0.888; over this band, 0.858. The floor below
-# rejects it either way, and the second number is the one about its shape.)
+# band a step between a chest and a waist lands in.
+#
+# AND THE REAL REASON THE ENDS GO IS ARITHMETIC, not anatomy: `want` is a circle
+# of the trunk's own height, so at 0% and 100% of that height it is identically
+# ZERO and the slice scores 0.000 for ANY body — a ball, a plank, anything.
+# Measured on the two committed `.blend`s, full height against this band: the
+# body #431 shipped scores 0.509 -> 0.838, and this one 0.568 -> 0.942. So the
+# window is worth a third of the scale and is the most load-bearing number here;
+# it is NOT chosen to pass. Swept on the same two bodies, this build clears 0.90
+# at every window from (0.125, 0.875) inward and at 3, 5, 7 and 9 slices
+# (0.902 / 0.913 / 0.942 / 0.939 / 0.933 and 0.923 / 0.942 / 0.946 / 0.944)
+# while #431 never reaches 0.844 at any of them.
 ROUNDNESS_SLICES = 5
 ROUNDNESS_SPAN = (0.20, 0.80)
 
@@ -2337,7 +2368,7 @@ def silhouette(obj, armature, row):
     leg = seg("thigh_l", "calf_l") + seg("calf_l", "foot_l")
     arm = (seg("upperarm_l", "lowerarm_l") + seg("lowerarm_l", "hand_l")
            + (bone["hand_l"].tail_local - bone["hand_l"].head_local).length)
-    ids = _vg_ids(obj, ["pelvis", "spine_01", "spine_02", "spine_03"])
+    ids = _vg_ids(obj, TRUNK_BONES)
     xs = [v.co.x for v in obj.data.vertices if _group_weight(v, ids) > 0.5]
     if not xs:
         raise AssertionError("no trunk vertex: the belly cannot be measured")
@@ -2365,6 +2396,12 @@ def silhouette(obj, armature, row):
                 "%s is %.3f of standing height, outside the row's %.3f +- %.3f — "
                 "the silhouette this hero is judged by has drifted, re-derive the "
                 "`proportions` row" % (key, got[key], float(target), SILHOUETTE_TOL))
+        cap = SILHOUETTE_CEILING.get(key)
+        if cap is not None and got[key] > cap:
+            raise AssertionError(
+                "%s is %.3f of standing height, over the %.2f CEILING — that one "
+                "is an owner ruling and not a target, so the tolerance does not "
+                "buy anything above it" % (key, got[key], cap))
     return got
 
 
