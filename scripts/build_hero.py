@@ -1123,23 +1123,38 @@ HEROES = {
         # lemon-yellow ball with a white ring, where the canon draws a brass helmet
         # over a bowl of orange soup. 51.37% of the visor was blown out.
         #
-        # SO THE EIGHT ARE SOLVED BACKWARDS, not nudged. Over the range this helmet
-        # lives in, every channel of this scene answers ONE curve, fitted on the
-        # frame's own unclipped samples and good to a few counts from 0.10 up:
+        # SO THE EIGHT ARE SOLVED AGAINST THE FRAME, not nudged. The first guess
+        # comes off a one-line fit of the frame's own unclipped samples — a WHITE
+        # POINT and a gamma, pooled across the three channels:
         #
         #     displayed ~ 255 * (albedo / 0.47) ** 0.85       (albedo < 0.47)
         #
-        # — so anything at or above 0.47 linear is white, which is where SEVEN of
-        # the generator's eight sat. Below ~0.10 the contrast curve crushes harder
-        # than the fit and the answer lands darker than asked, which is why the
-        # pupils are aimed high. Each value below is the inverse of that curve at
-        # the sRGB its comment names, and the comment is what the frame MEASURES,
-        # not what was hoped for. Nothing clips now: 0.00% over the visor
-        # (`scripts/clipped_fraction.py`'s `phoboman` rect, mean luma 0.889 ->
-        # 0.664) and 0.00% over the dome (5.48% before, mean 0.966 -> 0.730).
+        # and its headline is the number that matters: anything at or ABOVE 0.47
+        # linear is white, which is where SEVEN of the generator's eight sat. It is
+        # a starting point and not the transfer. Take it as one and it lands 12-25
+        # counts out on a saturated hue, because saturation 1.12 pushes a colour's
+        # dominant channel up and its weakest down and a per-channel scalar cannot
+        # say that; below ~0.10 the contrast curve crushes harder than the fit as
+        # well. So each value here is the fit INVERTED at a chosen sRGB and then
+        # corrected against a rebuild — two rounds of (build, `--import`, shoot the
+        # web `17_head_face` frame, read the pixels) — and the triple in each
+        # comment is what that frame MEASURES, not what was asked for. Anyone
+        # re-grading one of these should expect the same second round.
         #
-        # The four BODY colours are untouched: they sit on `HeroCloth` under the
-        # cloth bake's own darkening, and `18_body_3m` shows them reading as drawn.
+        # Nothing clips now: 0.00% over the visor (`scripts/clipped_fraction.py`'s
+        # `phoboman` rect, mean luma 0.889 -> 0.663) and 0.00% over the dome
+        # (5.48% before, mean 0.966 -> 0.730).
+        #
+        # THE SIX BODY COLOURS ARE OUT OF THIS BEAD'S SCOPE, and they are not all in
+        # the same place: `body_blue`, `pants_black` and `boots_black` are garments
+        # and land on `HeroCloth` under the cloth bake's own darkening, `skin` is on
+        # `HeroSkin` through `GRADED_COLOURS`, and the DRAGON's two are ungraded on
+        # `HeroSkin` like the helmet — so `dragon_red` (0.80 red against that 0.47
+        # white point) still flat-clips its red channel on 92% of its pixels at
+        # `18_body_3m`. It reads as a shaded red serpent anyway, because green and
+        # blue carry the shading there and nothing else in this cast is red, which
+        # is why it is a follow-up and not this bead: the owner ruled on the visor
+        # and the dome. Do not read this paragraph as saying the dragon is fine.
         "colours": {
             'body_blue':    (0.13, 0.18, 0.46, 1.0),   # deep royal/navy belly
             'dragon_red':   (0.80, 0.13, 0.13, 1.0),   # bold Chinese-dragon red
@@ -3332,7 +3347,7 @@ HELMET_CLEAR = 0.055     # air between the skull's own surface and the dome. A
                          # godot-test1-9ynx put the rest of the cast. Measured,
                          # not chosen: 22 mm (the smallest dome that encloses the
                          # skull) stopped the figure at 1.7605.
-HELMET_FLAT = 0.94       # THIS PORT'S OWN, and the fourth departure in
+HELMET_FLAT = 0.94       # THIS PORT'S OWN, and the fifth departure in
                          # `build_helmet`'s list: `create_head_assembly` scales its
                          # dome (1.0, 1.02, 1.0), so it is deepened and not
                          # flattened at all — "a sphere flattened a touch" is that
@@ -3658,16 +3673,28 @@ def build_helmet(colours, obj, tj):
         # the flat dark dot a drawn face has (measured on the web `17_head_face`
         # frame at (140, 67, 26) sliding to black round its own rim). Squashed to
         # 0.16 every front facet's normal points out of the visor, so the whole disc
-        # takes ONE shade — (49, 34, 21) across the pair, the same reason the broth
-        # behind it reads flat — and the
-        # depth goes with it: at 0.16 the old seat left the pupil's front face
-        # BEHIND the noodle ring's, so it moves out to `fy(0.075)` and clears the
-        # ring by 5.5 generator units. Same primitive, same vertex count, same
-        # `HELMET_TRIS` bill.
+        # takes ONE shade — (49, 34, 21) across the pair, which is the same reason
+        # the broth behind it reads flat.
+        #
+        # AND THE DEPTH GOES WITH IT, twice. At 0.16 the generator's own seat left
+        # the pupil's front face BEHIND the noodle ring's, so the disc had to come
+        # forward — and the first build of this bead took it to `fy(0.075)`, which
+        # cleared the ring and pulled the disc out of EVERYTHING: its rear sat 14 mm
+        # in front of the broth and 5 mm in front of the ring, an unconnected chip
+        # hovering off the soup (invisible head-on, which is exactly why the frame
+        # it was judged on looked clean — review round 1). `fy(0.060)` is the seat
+        # that holds both ends, and its two numbers are read off the EXPORTED mesh
+        # and not off an ideal torus, because `minor_segments=6` makes the ring a
+        # HEXAGON in section whose front face slopes from (r 18.1 mm, z -0.2715) out
+        # to (r 23.0, z -0.2800). At the disc's own 19.5 mm radius that face is at
+        # -0.2739, and the 6.2 mm disc runs -0.2788 to -0.2726: its rear is 1.3 mm
+        # INSIDE the ring and its front stands 4.9 mm proud of it. So the pupil is
+        # seated in the eye, the eye crosses the broth, and the dot is still the
+        # thing you see. Same primitive, same vertex count, same `HELMET_TRIS` bill.
         bpy.ops.mesh.primitive_uv_sphere_add(radius=0.028 * k, segments=10,
                                              ring_count=6)
         pieces.append(_piece("PhoPupil" + side, colours["eye_dark"],
-                             Matrix.Translation(g(ex, fy(0.075), eye_gz))
+                             Matrix.Translation(g(ex, fy(0.060), eye_gz))
                              @ Matrix.Diagonal(Vector((1.0, 0.16, 1.0, 1.0)))))
 
     bpy.ops.mesh.primitive_uv_sphere_add(radius=0.028 * k, segments=10, ring_count=6)

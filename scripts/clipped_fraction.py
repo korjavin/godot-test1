@@ -24,7 +24,7 @@ the framing at any resolution, and each hero's is chosen to lie ENTIRELY INSIDE
 the face — no sky, no ground, no collar. The printed fraction is then exactly
 "how much of the face is clipped" with nothing to argue about, and the same rect
 must be used before and after or the comparison means nothing. `17_head_face`
-frames crown-relative, so these three hold for any build of these heroes.
+frames crown-relative, so they hold for any build of these heroes.
 
 No PIL on the machine this was written for, hence the ~40 lines of zlib below;
 `Image.get_pixel` in GDScript would have been the other way round.
