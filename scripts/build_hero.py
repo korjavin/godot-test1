@@ -4,7 +4,13 @@ scripts/build_hero.py — THE SKINNED HERO LANE. A hero is a `HEROES` row.
 Bead godot-test1-5u3.1 (epic 5u3, SKINNED HEROES), the SOURCE OF RECORD for the
 shipped Teibi since bead 5u3.3, and GENERALISED to the whole cast by bead 5u3.4:
 windman, primm and teibi are three rows of one table and there is no second
-script. Started as a copy of the z3e.10 spike (`scripts/spike_z3e_teibi_body.py`,
+script. A FOURTH ROW SINCE BEAD godot-test1-9k9n.1 (epic 9k9n, owner ruling
+2026-09-18, option B): Phoboman was the one hero left on the part generator and
+the limb rig — a sphere for a belly, ten `.glb` files — and he is a heavy HUMAN
+here now, with the diving helmet, the pho-bowl face and the chest dragon as
+joined accessories. He needed no new pipeline stage: a row, two builders and a
+per-row head budget, which is the test this table was always going to be put to.
+Started as a copy of the z3e.10 spike (`scripts/spike_z3e_teibi_body.py`,
 deleted by 5u3.3) with the ten-piece joint SPLIT removed and an ARMATURE added:
 the body is one mesh on MPFB2's `game_engine` rig, exported as one skinned .glb.
 
@@ -55,6 +61,18 @@ WHAT A ROW IS (and where each half of it came from):
                     belongs in the .tscn as a BoneAttachment3D (Windman's fan on
                     `hand_r`, bead 5u3.5) — the row does not model it and neither
                     does this.
+  helmet/dragon     Phoboman's, and Phoboman's alone (bead godot-test1-9k9n.1):
+                    the brass diving helmet with the pho-bowl face behind its
+                    glass, rigid on `head` so the gait's bobble nods it, and the
+                    red Chinese dragon on the belly, weighted ACROSS the three
+                    spine bones because that is how much body it lies on
+                    (`build_helmet`, `build_dragon`, `spine_split`). Both are
+                    `generate_phoboman_separate.py`'s own pieces and palette,
+                    re-seated on the hero's measured skull and belly.
+  head_tris         a row's own head decimate target, overriding `HEAD_TRIS`, and
+                    with it the `HEAD_TRIS_MIN` floor when the row wears a
+                    `helmet`. One row has a face nobody can see, and the
+                    triangles it does not spend are what its accessories cost.
   emblem            a MOTIF painted onto the body's own vertices: a centre-line,
                     a stroke width and a landmark to hang it off. Windman's chest
                     "W" is the only one (`paint_chest_glyph`).
@@ -1011,6 +1029,180 @@ HEROES = {
         "height": 1.78,
         "out_dir": "primm_parts",
         "stem": "primm_skinned",
+    },
+    "phoboman": {
+        # docs/characters/phoboman.md: "resembles a teaspoon" — short (140-150 cm),
+        # a large round belly the upper body widens into, legs short and almost
+        # invisible under it, arms short but noticeably muscular and BARE, black
+        # short pants, flat black boots, and a deep-sea diving helmet with the
+        # pho-soup face behind its glass.
+        #
+        # THE FOURTH ROW, AND THE OWNER'S OPTION B (2026-09-18, epic
+        # godot-test1-9k9n): Phoboman is a heavy HUMAN on the same rig as the trio,
+        # with the helmet, the pho face and the chest dragon as joined accessories.
+        # This SUPERSEDES the 2026-09-11 "Phoboman keeps the limb rig for good /
+        # sphere body" ruling. The design target that survives is
+        # `scripts/generate_phoboman_separate.py`'s — its palette verbatim, its
+        # helmet assembly, its dragon — ported onto a body that walks.
+        #
+        # NO `FACES` ROW. Every other hero's face is his own recipe because it is
+        # what the camera reads at 3 m; Phoboman's is behind 3 mm of helmet glass
+        # and is `build_helmet`'s broth, noodles and herb nose. The MakeHuman face
+        # under the dome is never seen, which is also why this row carries
+        # `head_tris` and `helmet` (see `build()`).
+        "macros": {"gender": 0.9, "age": 0.5, "muscle": 0.6, "weight": 1.0,
+                   # LOW PROPORTIONS is MakeHuman's own word for "not idealised":
+                   # the slider runs from uncommon (0) to idealistic (1) and the
+                   # canon's silhouette is the opposite of a fashion plate.
+                   "proportions": 0.15,
+                   # AND LOW HEIGHT, although `reframe` scales every hero to his
+                   # row's metre value anyway: this macro is not a size, it is a
+                   # set of PROPORTIONS — a short MakeHuman is short in the legs
+                   # and large in the head and trunk, which is the canon's
+                   # "140-150 cm ... legs are short and almost invisible under the
+                   # belly" surviving the scale back up to the cast's one height.
+                   "height": 0.2,
+                   "caucasian": 1.0, "african": 0.0, "asian": 0.0},
+        # THE TEASPOON, AS TARGETS. `weight` 1.0 alone makes a fat man, not a bowl:
+        # it thickens everything evenly. The belly is `stomach-pregnant-incr` at
+        # full (MakeHuman's own name for "the abdomen is a sphere"), softened by
+        # `stomach-tone-decr`; the torso is widened and deepened around it and its
+        # V is inverted so the shoulders narrow into the middle rather than out of
+        # it ("upper body smoothly widens towards the middle"); both leg segments
+        # are shortened to the floor of their range ("legs are short and almost
+        # invisible under the belly"); the arms are shortened and thickened
+        # ("short but noticeably muscular"); and the neck is collapsed, because
+        # today's phoboman.tscn says "no neck by design" and the helmet collar
+        # lands on the shoulders.
+        "targets": [(("stomach", "stomach-pregnant-incr.target.gz"), 1.0),
+                    (("stomach", "stomach-tone-decr.target.gz"), 0.7),
+                    (("torso", "torso-scale-horiz-incr.target.gz"), 0.7),
+                    (("torso", "torso-scale-depth-incr.target.gz"), 0.6),
+                    (("torso", "torso-vshape-decr.target.gz"), 0.5),
+                    (("torso", "measure-waist-circ-incr.target.gz"), 0.8),
+                    (("hip", "hip-scale-horiz-incr.target.gz"), 0.5),
+                    (("legs", "upperlegs-height-decr.target.gz"), 1.0),
+                    (("legs", "lowerlegs-height-decr.target.gz"), 1.0),
+                    (("legs", "measure-thigh-circ-incr.target.gz"), 0.5),
+                    (("arms", "measure-upperarm-length-decr.target.gz"), 0.7),
+                    (("arms", "measure-lowerarm-length-decr.target.gz"), 0.7),
+                    (("arms", "measure-upperarm-circ-incr.target.gz"), 0.8),
+                    (("arms", "l-upperarm-muscle-incr.target.gz"), 0.6),
+                    (("arms", "r-upperarm-muscle-incr.target.gz"), 0.6),
+                    (("arms", "l-lowerarm-muscle-incr.target.gz"), 0.6),
+                    (("arms", "r-lowerarm-muscle-incr.target.gz"), 0.6),
+                    (("neck", "neck-scale-vert-decr.target.gz"), 1.0),
+                    (("neck", "neck-scale-horiz-incr.target.gz"), 0.5)],
+        # `generate_phoboman_separate.py`'s `self.colors`, VERBATIM — the canon's
+        # own "repeat the colors of the face, head, dragon on the belly, pants and
+        # boots" and the convention every other row here follows. `skin` is graded
+        # by `GRADED_COLOURS` like the rest of the cast's.
+        #
+        # THE ONE ADDITION is `pants_black`, because the generator dressed the legs
+        # in `boots_black` and this row has a boot shaft to be black AGAINST (the
+        # lesson Primm's `jeans_navy` note records). Two stops up, still black.
+        #
+        # EXPECT THE EXPOSURE PROBLEM Primm's goggle row documents: this scene
+        # lifts a linear albedo by ~1.85 before the sRGB encode, so `glass` (0.55,
+        # 0.75, 0.82), `broth_hi` (0.99, 0.78, 0.30) and `noodle` (0.97, 0.85,
+        # 0.55) are all candidates to clip flat white on `HeroSkin`. They are
+        # NOT moved here: nothing in this bead renders in Godot (the .glb is
+        # unwired until child 9k9n.2), and a value moved against a guess is a value
+        # nobody can re-derive. Child .2 measures the `17_head_face` frame and
+        # moves them HERE, with the measurement in the comment, as Primm's did.
+        "colours": {
+            'body_blue':    (0.13, 0.18, 0.46, 1.0),   # deep royal/navy belly
+            'dragon_red':   (0.80, 0.13, 0.13, 1.0),   # bold Chinese-dragon red
+            'dragon_gold':  (0.92, 0.74, 0.30, 1.0),   # horns, eyes, whiskers
+            'helmet_gold':  (0.80, 0.62, 0.24, 1.0),   # brass/gold diving helmet
+            'helmet_dark':  (0.55, 0.41, 0.15, 1.0),   # darker brass: ring, rivets
+            'glass':        (0.55, 0.75, 0.82, 1.0),   # porthole glass
+            'broth':        (0.95, 0.52, 0.18, 1.0),   # orange pho broth
+            'broth_hi':     (0.99, 0.78, 0.30, 1.0),   # bright-yellow highlight
+            'noodle':       (0.97, 0.85, 0.55, 1.0),   # pale noodle strands
+            'eye_dark':     (0.20, 0.10, 0.05, 1.0),   # dark noodle-eye pupils
+            'nose_green':   (0.30, 0.70, 0.22, 1.0),   # bright-green herb nose
+            'skin':         (0.91, 0.71, 0.58, 1.0),   # bare muscular arm skin
+            'boots_black':  (0.07, 0.07, 0.08, 1.0),   # flat black boots
+            'pants_black':  (0.11, 0.11, 0.13, 1.0),   # ... and the shorts over them
+        },
+        # BARE BEEFY ARMS and black legs, as bone regions: the upper and lower arm
+        # leave the default `shirt` for `skin` (the hands are already skin), and the
+        # calf leaves `trousers` for `shoes`, because the boot shaft reaches the
+        # knee and the pants stop above it. `clavicle_*` stays behind in `shirt`,
+        # which is the blue belly shell's shoulder cap.
+        "bone_regions": {"upperarm_l": "skin", "upperarm_r": "skin",
+                         "lowerarm_l": "skin", "lowerarm_r": "skin",
+                         "calf_l": "shoes", "calf_r": "shoes"},
+        "colour_key": {"skin": "skin", "shirt": "body_blue",
+                       "trousers": "pants_black", "shoes": "boots_black"},
+        # No belt, no cuff, no collar: the belly is one blue garment from the neck
+        # to the hips and the arms it would band are bare.
+        "bands": (),
+        # THE BELLY IS A GARMENT (the canon's "blue background with a red Chinese
+        # dragon" is a colour on a shell, not a skin tone), and it is the baggiest
+        # cut in the cast because the canon's build is "round and loose". Under it
+        # the short pants are fitted and stop 6 cm below the knee joint, where the
+        # boot shaft takes over and SWALLOWS them — Primm's trouser/boot pair,
+        # same two cuts in the same order.
+        "garments": (
+            {"bones": TORSO_BONES + ["pelvis"], "top": ("neck", -0.02),
+             "bottom": ("pelvis", -0.04), "cut": GARMENT_BAGGY, "key": "shirt"},
+            {"bones": THIGH_BONES, "top": ("pelvis", -0.02),
+             "bottom": ("knee", 0.06), "cut": GARMENT_FITTED, "key": "trousers"},
+            {"bones": SHAFT_BONES, "top": ("knee", 0.06), "bottom": ("ground", 0.0),
+             "cut": GARMENT_BOOT, "key": "shoes"},
+        ),
+        # THREE CREASES ACROSS THE BELLY, because a 63 cm garment shell with no
+        # joint anywhere in it gets none from the cast's own list — see
+        # `_fold_bands`. 7 cm apart on a 5.6 cm band, so they run together into one
+        # gathered belt across the middle, which is what a loose shell over a round
+        # stomach does and what "the build is round and loose" asks for. Measured:
+        # the joint list alone folded him +14.6%, under the pass's own 15-25%
+        # budget; these take him to the middle of it.
+        "creases": (("pelvis", 0.16), ("pelvis", 0.23), ("pelvis", 0.30)),
+        # THE HELMET AND THE DRAGON, the two accessories this row brings — see
+        # `build_helmet` and `build_dragon`. Both are geometry joined into the mesh
+        # after the paint, the helmet rigid on `head` (so the gait's 7-degree head
+        # bobble nods the whole dome) and the dragon weighted across the three
+        # spine bones (so the belly's twist and breathing carry it).
+        "helmet": True,
+        "dragon": True,
+        # NO HAIR IS VISIBLE UNDER A DIVING HELMET, and this row says so with the
+        # numbers rather than with a branch in `paint_body`: a hairline a metre
+        # above the eye line selects no vertex, so no vertex is painted `hair` and
+        # nothing is lifted. (The alternative was an `if "hair" in row` guard on
+        # four reads in `paint_body`; a row that dresses itself out is the smaller
+        # change and it keeps that function's shape.)
+        "hair": {"lift": 0.0, "front": 1.0, "nape": 0.0, "brows": False},
+        "beret": False,
+        # No eyeballs: the sockets are inside the dome and the face the camera
+        # reads is the broth behind the glass.
+        "eyes": False,
+        # THE HEAD UNDER THE HELMET IS DEAD GEOMETRY and must not spend the head
+        # budget — those triangles are what the helmet and the dragon are paid
+        # from. Low enough to be cheap, high enough that MakeHuman's own `lips`
+        # group survives the collapse (`paint_body`'s `LIP_VERTS_MIN`, which is an
+        # assert this row still has to pass even though nobody will ever see the
+        # mouth). `HEAD_TRIS_MIN` does not apply to a helmeted row: see `build()`.
+        #
+        # 1,500 AND NOT 1,200, and the difference is that mouth. 1,200 built and
+        # passed with 12 lip vertices against a floor of 8 — a margin of four
+        # vertices on a hero nobody is looking at, which is the kind of number that
+        # turns a face target into a failed build two beads from now. 300 more
+        # triangles is 2% of this hero's budget.
+        "head_tris": 1500,
+        # 1.70 AND NOT THE CANON'S 1.40-1.50. The shared capsule, `CameraPivot` and
+        # `FIRST_PERSON_EYE_HEIGHT` are tuned for ONE height and bead godot-test1-9ynx
+        # put the whole figure at 1.80 m; this is the HUMAN, crown-to-heel, short
+        # and wide, and the helmet dome and its valve knob top the figure out near
+        # 1.80. The total is measured by the build and written on the PROVENANCE
+        # row, because child 9k9n.2's `PHOBOMAN_TARGET_HEIGHT` is taken from it.
+        # (The `abs(height - row["height"])` assert measures the human BEFORE the
+        # joins, so the helmet never fights it.)
+        "height": 1.70,
+        "out_dir": "phoboman_parts",
+        "stem": "phoboman_skinned",
     },
 }
 
@@ -2108,6 +2300,16 @@ def _fold_bands(obj, tj, row):
     elbow = (tj["l-elbow"].z + tj["r-elbow"].z) / 2.0
     creases = [z["knee"], elbow, z["shoulder"] - 0.055]      # knee, elbow, armpit
     gathers = [z["pelvis"] + 0.055, z["wrist"] - 0.02, z["shoe_top"] + 0.01]
+    # AND A ROW MAY NAME ITS OWN (bead godot-test1-9k9n.1). The three above are the
+    # cast's JOINTS, which is where a sleeve and a trouser leg crease — and the
+    # budget assert below reads them as "how much cloth this hero has". Phoboman's
+    # arms are bare by canon and his biggest garment is a 60 cm belly shell with no
+    # joint anywhere in it, so the joint list alone folds him half as much as the
+    # trio and calls it a pass. His row names the heights his own loose cloth
+    # gathers at instead ("the build is round and loose", `docs/characters/
+    # phoboman.md`). Empty for every other row, which is why the trio's bands —
+    # and therefore their `.glb` — did not move.
+    creases += [z[name] + offset for name, offset in row.get("creases", ())]
     return creases, gathers, z
 
 
@@ -2920,10 +3122,23 @@ def join_weighted(target, extra, weights):
     """Join `extra` into `target` with every one of its vertices carrying
     `weights` — a bone name to weight map that should sum to 1. The join happens
     AFTER the rig so MPFB2's automatic weights are never asked to guess for a
-    beret; the groups are written by hand instead."""
+    beret; the groups are written by hand instead.
+
+    A WEIGHT MAY BE A CALLABLE `(vertex) -> weight` (bead godot-test1-9k9n.1), for
+    an accessory that spans more than one bone's worth of body: Phoboman's dragon
+    lies across his whole belly, which three spine bones drive, and one constant
+    per bone would make the tail and the head of the same serpent move together
+    while the belly under them does not. `spine_split` is the one writer; the map
+    it returns still sums to 1 at every height, which is what keeps this a JOIN
+    and not a second rig.
+    """
     for bone, weight in weights.items():
         vg = extra.vertex_groups.new(name=bone)
-        vg.add(list(range(len(extra.data.vertices))), weight, 'REPLACE')
+        if callable(weight):
+            for v in extra.data.vertices:
+                vg.add([v.index], weight(v), 'REPLACE')
+        else:
+            vg.add(list(range(len(extra.data.vertices))), weight, 'REPLACE')
     bpy.context.view_layer.objects.active = target
     for o in bpy.data.objects:
         o.select_set(o is target or o is extra)
@@ -3028,6 +3243,493 @@ def attach_tails(obj, row, tj):
     log("coat tails: z %.3f..%.3f, back y %.3f, %d faces, pelvis %.2f / thigh %.2f"
         % (bottom_z, hem_z, back_y, len(faces), share, 1.0 - share))
     return obj, faces
+
+
+# ===========================================================================
+# PHOBOMAN'S DIVING HELMET AND HIS CHEST DRAGON — bead godot-test1-9k9n.1,
+# epic 9k9n, owner ruling 2026-09-18 (option B).
+#
+# Phoboman was a part tree — one sphere for a belly, a helmet dropped on top of
+# it, ten `.glb` files and the limb rig. He is a `HEROES` row now, which means his
+# two unmistakable pieces have to be built on a MakeHuman body instead of on a
+# 0.52 m ball. Both are ACCESSORIES in this file's sense: geometry joined into the
+# one skinned mesh and weighted by hand, like the beret, the eyes and the coat
+# tails, and not garments (nothing here goes in `CLOTH_VG`).
+#
+# THE DESIGN TARGET IS `scripts/generate_phoboman_separate.py`, piece for piece
+# and colour for colour — `create_head_assembly`'s dome, collar, valve knob,
+# rivets, porthole rim, glass, broth, highlight, noodle eyes, herb nose and
+# strands, and `create_torso_assembly`'s swept red serpent with its gold horns,
+# eyes, whiskers and claw tufts. What changes is WHERE each piece sits, and that
+# is the beret's lesson from bead z3e.15, restated: a saucer sized for a 0.25 m
+# sphere floats 8 cm off a MakeHuman skull. So the generator's internal
+# proportions are kept as ONE affine map — a single scale `k` and a single seat —
+# and the two numbers that feed that map are MEASURED on the body:
+#
+#   the dome's radius   the smallest dome that swallows this hero's own skull
+#                       (`HELMET_CLEAR` of air), found by growing it until every
+#                       head vertex above the neck joint is inside it.
+#   the seat            chosen so the generator's own porthole height lands on
+#                       this hero's own EYE LINE. The face behind the glass is
+#                       then where a face goes, whatever the macros did.
+#
+# The collar lands where that map puts it, which is on the shoulders, and the
+# assert below says so out loud: the collar is what hides the neck join ("no neck
+# by design", today's phoboman.tscn), so a collar up by the ears is a build
+# failure and not a judgement call.
+# ===========================================================================
+
+GEN_DOME_R = 0.27        # `create_head_assembly`'s own dome radius: the unit every
+                         # other number in that function is written against, and
+                         # therefore the divisor of this port's one scale.
+GEN_BODY_R = 0.52        # ... and `BODY_R`, the same thing for the dragon.
+
+HELMET_CLEAR = 0.055     # air between the skull's own surface and the dome. A
+                         # DEEP-SEA DIVING HELMET IS NOT A CRASH HELMET: the head
+                         # floats inside it, and the canon asks for a "wide dome"
+                         # (the generator's was 0.54 m across, on a body that was
+                         # one sphere). It is also the knob that tops the figure
+                         # out: the dome's radius is the only free length in the
+                         # assembly, the whole helmet scales with it, and 55 mm of
+                         # air puts the valve knob at 1.80 m — where bead
+                         # godot-test1-9ynx put the rest of the cast. Measured,
+                         # not chosen: 22 mm (the smallest dome that encloses the
+                         # skull) stopped the figure at 1.7605.
+HELMET_FLAT = 0.94       # the dome is a sphere flattened a touch (its docstring's
+                         # own word); 1.02 across, which is the generator's.
+HELMET_DEEP = 1.02
+HELMET_R_MAX = 0.40      # a dome wider than this is not a helmet, it is a bug in
+                         # the head measurement — the growth loop's fence.
+HELMET_STEP = 0.002      # and how finely it grows
+HELMET_COLLAR = (-0.10, 0.04)   # where the collar ring may land, relative to the
+                                # neck joint: on the shoulders, not on the ears
+HELMET_FACE_PROUD = 0.004       # how far the bowl of soup stands off the dome's
+                                # own surface, and `HELMET_FACE_FLAT` how much of
+                                # the generator's depth spread between the broth,
+                                # the noodles and the herb nose survives — both in
+                                # the generator's units, both read by `fy` below.
+HELMET_FACE_FLAT = 0.6
+HELMET_TRIS = (1600, 3400)      # the budget, asserted where it is spent
+
+DRAGON_SPAN = 1.6        # how much of the belly the S-curve covers. The
+                         # generator's path fills about half of its own sphere;
+                         # the canon wants a dragon "starting from the left side
+                         # and stretching to the middle" of a belly, which is
+                         # more of it than that.
+DRAGON_PROUD = 0.012     # the generator's own standoff: the tube's CENTRE line
+                         # stands this far off the belly, so half of it is sunk
+                         # in and it reads as embossed art rather than a snake
+                         # lying on a man.
+DRAGON_TRIS = (600, 1800)
+
+
+def _painted(obj, colour):
+    """One flat `FLOAT_COLOR` vertex colour over a whole primitive, in the
+    attribute name and domain the body's own paint uses — so a join merges the
+    two instead of dropping one (`build_eyes` is the precedent, per sphere)."""
+    attr = obj.data.color_attributes.new(name="Color", type='FLOAT_COLOR',
+                                         domain='POINT')
+    for i in range(len(obj.data.vertices)):
+        attr.data[i].color = colour
+    obj.data.color_attributes.active_color = attr
+    obj.data.attributes.active_color = attr
+    return obj
+
+
+def _piece(name, colour, matrix):
+    """The primitive `bpy.ops` just added, moved into place and painted.
+
+    The transform goes on the mesh DATA and not on the object, so nothing has to
+    be applied afterwards and `bpy.ops.object.join()` cannot drop it."""
+    obj = bpy.context.active_object
+    obj.name = name
+    obj.data.transform(matrix)
+    obj.data.update()
+    return _painted(obj, colour)
+
+
+def _join_pieces(pieces, name):
+    for o in bpy.data.objects:
+        o.select_set(o in pieces)
+    bpy.context.view_layer.objects.active = pieces[0]
+    bpy.ops.object.join()
+    joined = bpy.context.active_object
+    joined.name = name
+    return joined
+
+
+# A disc or a ring built on the XY plane, turned to look out of the face (+Y in
+# this script's frame, which glTF's Y-up conversion lands on Godot's -Z: trap 3).
+FACE_Y = Matrix.Rotation(-math.pi / 2.0, 4, 'X')
+
+
+def _tube(p0, p1, radius, sections=8):
+    """A cylinder from `p0` to `p1`. The dragon's segments and its horns, whiskers
+    and claws; the round joint spheres the generator already drops at every
+    waypoint are what make the chain read as one continuous serpent, which is the
+    same thing its capsules did for a tenth of the triangles."""
+    p0, p1 = Vector(p0), Vector(p1)
+    axis = p1 - p0
+    if axis.length < 1e-6:
+        raise AssertionError("zero-length tube at %s" % (tuple(p0),))
+    bpy.ops.mesh.primitive_cylinder_add(radius=radius, depth=axis.length,
+                                        vertices=sections)
+    return (Matrix.Translation((p0 + p1) / 2.0)
+            @ Vector((0.0, 0.0, 1.0)).rotation_difference(axis).to_matrix().to_4x4())
+
+
+def build_helmet(colours, obj, tj):
+    """The brass diving helmet with the pho-bowl face behind its glass, as ONE
+    mesh, seated on this hero's own skull.
+
+    `obj` and not the beret's bare `crown_z`, because a dome has to SWALLOW a head
+    rather than sit on it: the radius is read off the skull's own extent and the
+    enclosure is asserted, which a single crown height cannot express.
+
+    Every piece is `create_head_assembly`'s, in its order, at its size times one
+    scale `k`. The one deliberate departure is the noodle strands: the generator
+    turns each strand out of the porthole plane, so its "swirly noodle strands
+    across the lower broth" are four stubs pointing at the camera. They lie in the
+    glass plane here, tilted by the generator's own angles, which is what that
+    line describes.
+    """
+    head_ids = _vg_ids(obj, ["head"])
+    co = [v.co.copy() for v in obj.data.vertices
+          if _group_weight(v, head_ids) > 0.5]
+    if len(co) < 32:
+        raise AssertionError("only %d head vertices: the helmet has no skull to "
+                             "be measured against" % len(co))
+    eye_z = (tj["l-eye"].z + tj["r-eye"].z) / 2.0
+    neck_z = tj["neck"].z
+    axis = _skull_axis(obj, eye_z - GOGGLE_SLAB, eye_z + GOGGLE_SLAB)
+    skull = [c for c in co if c.z > neck_z]
+    if not skull:
+        raise AssertionError("no head vertex above the neck joint at z=%.3f" % neck_z)
+
+    def outside(radius):
+        """Head vertices above the neck that the dome of this radius does not
+        cover. `dome_z` is the seat, which is a function of the radius: it is
+        whatever puts the generator's porthole on the eye line."""
+        dome_z = eye_z - 0.06 * radius
+        return [c for c in skull
+                if ((c.x - axis.x) / radius) ** 2
+                + ((c.y - axis.y) / (radius * HELMET_DEEP)) ** 2
+                + ((c.z - dome_z) / (radius * HELMET_FLAT)) ** 2 > 1.0]
+
+    r = max(max(abs(c.x - axis.x) for c in skull),
+            max(abs(c.y - axis.y) for c in skull)) + HELMET_CLEAR
+    while r < HELMET_R_MAX and outside(r):
+        r += HELMET_STEP
+    proud = outside(r)
+    if proud:
+        raise AssertionError(
+            "%d head vertex(es) poke through a %.3f m dome — the head measurement "
+            "is wrong or this hero has no head (highest %.4f, crown %.4f)"
+            % (len(proud), r, max(c.z for c in proud), max(c.z for c in skull)))
+    k = r / GEN_DOME_R
+    # The generator's local frame: z = 0 is the helmet's base, the dome's centre
+    # sits 0.86 of a dome radius above it, and the porthole 0.92 of one. Seating
+    # the porthole on the eye line is therefore one subtraction.
+    base_z = eye_z - 0.92 * r
+    dome_z = base_z + 0.86 * r
+
+    def g(x, y, z):
+        """A point of the generator's own frame, in the game frame."""
+        return Vector((axis.x + x * k, axis.y + y * k, base_z + z * k))
+
+    port_z = GEN_DOME_R * 0.92       # the generator's names, kept so the port
+    port_r = 0.165                   # reads against `create_head_assembly`
+    # WHERE THE DOME'S OWN SURFACE IS AT THE PORTHOLE, in the generator's units.
+    # `create_head_assembly` put the soup and its noodles INSIDE the dome, 6 cm
+    # behind this — which is a face you can only see through the glass, and there
+    # is no glass in this renderer and never was in the last one either: the old
+    # shipped Phoboman (`docs/style/heroes/phoboman-after.png`) is a bare olive
+    # dome with no face on it at all, for exactly this reason. So the bowl sits ON
+    # the dome here, a few millimetres proud, framed by the rim that still hugs the
+    # curve — which is what `assets/portraits/phoboman.png` draws and what the
+    # canon means by "the open visor of the helmet shows the soup".
+    apex = GEN_DOME_R * HELMET_DEEP * math.sqrt(max(0.0, 1.0 - (
+        (port_z - GEN_DOME_R * 0.86) / (GEN_DOME_R * HELMET_FLAT)) ** 2))
+    face_y = apex + HELMET_FACE_PROUD - 0.02   # the broth disc is 0.04 deep
+
+    def fy(offset):
+        """A face feature's own depth, the generator's offset off the broth,
+        FLATTENED: those offsets were free to spread 6 cm inside a hollow dome and
+        here every millimetre of them is a millimetre the porthole bulges."""
+        return face_y + offset * HELMET_FACE_FLAT
+
+    pieces = []
+
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=r, segments=18, ring_count=10)
+    pieces.append(_piece(
+        "HelmetDome", colours["helmet_gold"],
+        Matrix.Translation(Vector((axis.x, axis.y, dome_z)))
+        @ Matrix.Diagonal(Vector((1.0, HELMET_DEEP, HELMET_FLAT, 1.0)))))
+
+    collar_z = g(0.0, 0.0, 0.03).z
+    lo, hi = HELMET_COLLAR
+    if not neck_z + lo <= collar_z <= neck_z + hi:
+        raise AssertionError(
+            "the collar lands at %.4f, outside the neck joint's %.4f%+.2f..%+.2f "
+            "band — it is what hides the neck join, so it belongs on the shoulders"
+            % (collar_z, neck_z, lo, hi))
+    bpy.ops.mesh.primitive_torus_add(major_radius=0.235 * k, minor_radius=0.045 * k,
+                                     major_segments=20, minor_segments=8)
+    pieces.append(_piece("HelmetCollar", colours["helmet_dark"],
+                         Matrix.Translation(g(0.0, 0.0, 0.03))))
+
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.045 * k, depth=0.05 * k, vertices=12)
+    pieces.append(_piece("HelmetKnob", colours["helmet_dark"],
+                         Matrix.Translation(g(0.0, 0.0, GEN_DOME_R * 1.72 + 0.02))))
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.035 * k, segments=10, ring_count=6)
+    pieces.append(_piece("HelmetKnobTop", colours["helmet_gold"],
+                         Matrix.Translation(g(0.0, 0.0, GEN_DOME_R * 1.72 + 0.07))))
+
+    bpy.ops.mesh.primitive_torus_add(major_radius=port_r * k, minor_radius=0.028 * k,
+                                     major_segments=20, minor_segments=8)
+    pieces.append(_piece("HelmetPortRim", colours["helmet_dark"],
+                         Matrix.Translation(g(0.0, GEN_DOME_R * 0.86, port_z))
+                         @ FACE_Y))
+
+    for i in range(10):
+        ang = i * (2.0 * math.pi / 10.0)
+        rx = math.cos(ang) * port_r
+        rz = port_z + math.sin(ang) * port_r
+        ry = math.sqrt(max(GEN_DOME_R ** 2 - rx * rx, 0.0)) * 0.92 + 0.03
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=0.017 * k, segments=6, ring_count=4)
+        pieces.append(_piece("HelmetRivet%d" % i, colours["helmet_dark"],
+                             Matrix.Translation(g(rx, ry + 0.02, rz))))
+
+    # THE GLASS IS A BEVEL AND NOT A PANE, and it is the one piece of
+    # `create_head_assembly` this port does not build as it stands. There is no
+    # transparency anywhere in this cast — vertex colour on an opaque toon
+    # material — so the generator's disc, which sits 4 cm in FRONT of the broth at
+    # very nearly the porthole's own radius, is a lid: the first build of this bead
+    # rendered a pale blue plate with two eyes and a nose poking through it, where
+    # `assets/portraits/phoboman.png` and the canon both put the soup ("the open
+    # visor of the helmet shows the soup"). A ring at the same height shows what
+    # the portrait shows — a bright glazed edge round the broth — and the bowl
+    # behind it. Same colour, same place, same 20 sections; a disc's worth of
+    # triangles for a ring.
+    bpy.ops.mesh.primitive_torus_add(major_radius=(port_r - 0.030) * k,
+                                     minor_radius=0.014 * k,
+                                     major_segments=20, minor_segments=6)
+    pieces.append(_piece("HelmetGlass", colours["glass"],
+                         Matrix.Translation(g(0.0, fy(0.04), port_z)) @ FACE_Y))
+
+    # THE PHO, BEHIND THE GLASS: broth, the bright pool along its top rim, two
+    # noodle eyes with dark pupils, the green herb nose and its flecks, and the
+    # slurped noodle tangle across the bottom. The canon's "face inside the
+    # helmet", and the reason this row carries no `FACES` recipe at all.
+    bpy.ops.mesh.primitive_cylinder_add(radius=(port_r - 0.02) * k,
+                                        depth=0.04 * k, vertices=20)
+    pieces.append(_piece("PhoBroth", colours["broth"],
+                         Matrix.Translation(g(0.0, face_y, port_z)) @ FACE_Y))
+
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.05 * k, segments=10, ring_count=6)
+    pieces.append(_piece("PhoHighlight", colours["broth_hi"],
+                         Matrix.Translation(g(0.0, fy(0.01), port_z + 0.10))
+                         @ Matrix.Diagonal(Vector((1.6, 0.4, 0.45, 1.0)))))
+
+    eye_gz = port_z + 0.045
+    for side, ex in (("L", -0.058), ("R", 0.058)):
+        bpy.ops.mesh.primitive_torus_add(major_radius=0.040 * k,
+                                         minor_radius=0.014 * k,
+                                         major_segments=14, minor_segments=6)
+        pieces.append(_piece("PhoEyeRing" + side, colours["noodle"],
+                             Matrix.Translation(g(ex, fy(0.05), eye_gz)) @ FACE_Y))
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=0.028 * k, segments=10,
+                                             ring_count=6)
+        pieces.append(_piece("PhoPupil" + side, colours["eye_dark"],
+                             Matrix.Translation(g(ex, fy(0.062), eye_gz))
+                             @ Matrix.Diagonal(Vector((1.0, 0.7, 1.0, 1.0)))))
+
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.028 * k, segments=10, ring_count=6)
+    pieces.append(_piece("PhoNose", colours["nose_green"],
+                         Matrix.Translation(g(0.0, fy(0.04), port_z - 0.01))
+                         @ Matrix.Diagonal(Vector((1.1, 0.7, 1.3, 1.0)))))
+    for i, (hx, hz) in enumerate(((-0.05, -0.04), (0.055, -0.05), (0.0, -0.085))):
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=0.013 * k, segments=6,
+                                             ring_count=4)
+        pieces.append(_piece("PhoHerb%d" % i, colours["nose_green"],
+                             Matrix.Translation(g(hx, fy(0.03), port_z + hz))))
+
+    for i, (sx, sz, sl, rot) in enumerate(((-0.07, -0.06, 0.10, 20),
+                                           (0.05, -0.07, 0.09, -25),
+                                           (-0.02, -0.095, 0.08, 10),
+                                           (0.07, -0.04, 0.07, 35))):
+        bpy.ops.mesh.primitive_cylinder_add(radius=0.009 * k, depth=sl * k,
+                                            vertices=6)
+        pieces.append(_piece(
+            "PhoNoodle%d" % i, colours["noodle"],
+            Matrix.Translation(g(sx, fy(0.03), port_z + sz))
+            @ Matrix.Rotation(math.radians(rot), 4, 'Y')))
+
+    helmet = _join_pieces(pieces, "Helmet")
+    tris = _tri_count(helmet.data)
+    log("helmet: radius %.4f m (scale %.3f), seat z %.4f, collar %.4f (neck %.4f), "
+        "top %.4f, %d pieces, %d tris"
+        % (r, k, base_z, collar_z, neck_z,
+           max(v.co.z for v in helmet.data.vertices), len(pieces), tris))
+    if not HELMET_TRIS[0] <= tris <= HELMET_TRIS[1]:
+        raise AssertionError("the helmet is %d tris, outside the %d-%d budget"
+                             % (tris, HELMET_TRIS[0], HELMET_TRIS[1]))
+    return helmet
+
+
+def spine_split(armature):
+    """Per-vertex weights that hand a belly-wide accessory to the three spine
+    bones by HEIGHT — `join_weighted`'s callable form, and the dragon's only
+    caller.
+
+    `hero_rig_skeleton.gd` writes all three spine bones (the lean, the twist and
+    the breathing), so a serpent that runs from the hips to the chest on one of
+    them tears away from the belly under it at every stride. The blend is the
+    plainest partition of unity there is — linear between neighbouring bone
+    heads, flat outside the pair — which is what a linear-blend skin does to the
+    body's own vertices at the same heights.
+
+    The bone heads are read off the REST data (`head_local`), because `reframe`
+    transformed that and trap 6 says the pose bones still answer in the old frame.
+    """
+    zs = [armature.data.bones["spine_%02d" % n].head_local.z for n in (1, 2, 3)]
+    if not zs[0] < zs[1] < zs[2]:
+        raise AssertionError("the spine bones are not stacked: %s" % (zs,))
+
+    def blend(z):
+        if z <= zs[0]:
+            return (1.0, 0.0, 0.0)
+        if z >= zs[2]:
+            return (0.0, 0.0, 1.0)
+        i = 0 if z <= zs[1] else 1
+        t = (z - zs[i]) / (zs[i + 1] - zs[i])
+        w = [0.0, 0.0, 0.0]
+        w[i], w[i + 1] = 1.0 - t, t
+        return tuple(w)
+
+    # THE CHECK: a blend that does not sum to 1 is a vertex that shrinks toward
+    # the origin as the spine moves, and `report_weights` cannot see it (it only
+    # catches a total of ZERO). Eleven samples across the range and one outside
+    # each end, here, where the function is.
+    for n in range(-2, 15):
+        z = zs[0] + (zs[2] - zs[0]) * n / 12.0
+        total = sum(blend(z))
+        if abs(total - 1.0) > 1e-9:
+            raise AssertionError("spine_split(%.4f) sums to %.6f, not 1" % (z, total))
+    log("dragon weights: spine_01 %.4f, spine_02 %.4f, spine_03 %.4f"
+        % tuple(zs))
+    return {"spine_%02d" % (n + 1): (lambda i: lambda v: blend(v.co.z)[i])(n)
+            for n in (0, 1, 2)}
+
+
+def build_dragon(colours, obj, tj):
+    """`create_torso_assembly`'s red Chinese dragon, laid on the BELLY's own
+    surface: the same eight waypoints, the same taper, the same gold horns, eyes,
+    whiskers and claw tufts, and the same 1.2 cm of standoff.
+
+    THE SURFACE IS READ BY RAY, not computed. The generator projected its
+    waypoints onto a sphere it had just built, and knew the answer in closed
+    form; this belly is a decimated MakeHuman torso that has since been morphed,
+    dressed, folded and pushed 2 cm proud by its own garment shell, and the only
+    honest question to ask it is where its front is at a point. `_face_front` is
+    already that question (bead nvy asked it of a brow); this asks it of a belly.
+    """
+    from mathutils.bvhtree import BVHTree
+    me = obj.data
+    bvh = BVHTree.FromPolygons([tuple(v.co) for v in me.vertices],
+                               [tuple(p.vertices) for p in me.polygons])
+    torso_ids = _vg_ids(obj, REGION_BONES["torso"])
+    lo, hi = tj["pelvis"].z, tj["neck"].z
+    belly = [v.co for v in me.vertices
+             if _group_weight(v, torso_ids) > 0.5 and lo <= v.co.z <= hi]
+    if len(belly) < 64:
+        raise AssertionError("only %d torso vertices between z %.3f and %.3f: the "
+                             "dragon has no belly to lie on" % (len(belly), lo, hi))
+    cx = (min(c.x for c in belly) + max(c.x for c in belly)) / 2.0
+    half_w = max(abs(c.x - cx) for c in belly)
+    half_h = (hi - lo) / 2.0
+    mid = (hi + lo) / 2.0
+    # ONE SCALE, off the SMALLER half — the generator's path is drawn on a round
+    # sphere and keeping its aspect is what keeps the serpent a serpent.
+    k = DRAGON_SPAN * min(half_w, half_h) / GEN_BODY_R
+
+    def surface(x, z, proud=DRAGON_PROUD):
+        """The generator's `_project_to_sphere`, asked of the real belly."""
+        px, pz = cx + x * k, mid + z * k
+        py = _face_front(bvh, px, pz)
+        if py is None or py <= 0.0:
+            raise AssertionError(
+                "no belly surface in front of (%.4f, %.4f) — the dragon's %s "
+                "waypoint is off this hero's own front" % (px, pz, (x, z)))
+        return Vector((px, py + proud, pz))
+
+    path_xz = [(-0.20, 0.26),    # tail tip, at the hero's left flank
+               (-0.06, 0.20),
+               (0.05, 0.09),
+               (0.09, -0.03),
+               (0.01, -0.13),
+               (-0.08, -0.20),
+               (0.02, -0.26),
+               (0.15, -0.27)]    # head end, lower and centre-right of the belly
+    pts = [surface(x, z) for x, z in path_xz]
+    radii = [(0.030 + (0.064 - 0.030) * i / (len(pts) - 1.0)) * k
+             for i in range(len(pts))]
+    pieces = []
+    for i in range(len(pts) - 1):
+        m = _tube(pts[i], pts[i + 1], (radii[i] + radii[i + 1]) / 2.0, sections=8)
+        pieces.append(_piece("DragonSeg%d" % i, colours["dragon_red"], m))
+    for i, p in enumerate(pts):
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=radii[i] * 1.05, segments=8,
+                                             ring_count=5)
+        pieces.append(_piece("DragonJoint%d" % i, colours["dragon_red"],
+                             Matrix.Translation(p)))
+
+    anchor = pts[-1]
+
+    def off(dx, dy, dz):
+        return Matrix.Translation(anchor + Vector((dx, dy, dz)) * k)
+
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.085 * k, segments=10, ring_count=6)
+    pieces.append(_piece("DragonHead", colours["dragon_red"],
+                         off(0.04, 0.01, -0.02)
+                         @ Matrix.Diagonal(Vector((1.25, 0.9, 1.0, 1.0)))))
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.05 * k, segments=8, ring_count=5)
+    pieces.append(_piece("DragonSnout", colours["dragon_red"],
+                         off(0.11, 0.0, -0.04)
+                         @ Matrix.Diagonal(Vector((1.4, 0.9, 0.85, 1.0)))))
+    for side, hx in (("L", -0.025), ("R", 0.025)):
+        bpy.ops.mesh.primitive_cylinder_add(radius=0.011 * k, depth=0.06 * k,
+                                            vertices=6)
+        pieces.append(_piece("DragonHorn" + side, colours["dragon_gold"],
+                             off(hx, 0.02, 0.06)
+                             @ Matrix.Rotation(math.radians(-30), 4, 'X')))
+    for side, hx in (("L", -0.015), ("R", 0.035)):
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=0.012 * k, segments=6,
+                                             ring_count=4)
+        pieces.append(_piece("DragonEye" + side, colours["dragon_gold"],
+                             off(hx + 0.03, 0.04, 0.0)))
+    for i, (wx, wz, wr) in enumerate(((0.20, -0.24, 40), (0.20, -0.31, -20))):
+        bpy.ops.mesh.primitive_cylinder_add(radius=0.008 * k, depth=0.08 * k,
+                                            vertices=6)
+        pieces.append(_piece("DragonWhisker%d" % i, colours["dragon_gold"],
+                             Matrix.Translation(surface(wx + 0.04, wz, 0.02 * k))
+                             @ Matrix.Rotation(math.radians(wr), 4, 'Y')))
+    for i, (clx, clz) in enumerate(((0.06, 0.04), (0.03, -0.10), (-0.05, -0.18))):
+        m = _tube(surface(clx, clz), surface(clx + 0.05, clz - 0.05, 0.0),
+                  0.016 * k, sections=6)
+        pieces.append(_piece("DragonClaw%d" % i, colours["dragon_red"], m))
+
+    dragon = _join_pieces(pieces, "Dragon")
+    tris = _tri_count(dragon.data)
+    log("dragon: scale %.3f on a %.3f x %.3f m belly (centre x %.4f, z %.4f), "
+        "x %.4f..%.4f, %d pieces, %d tris"
+        % (k, half_w * 2.0, half_h * 2.0, cx, mid,
+           min(v.co.x for v in dragon.data.vertices),
+           max(v.co.x for v in dragon.data.vertices), len(pieces), tris))
+    if not DRAGON_TRIS[0] <= tris <= DRAGON_TRIS[1]:
+        raise AssertionError("the dragon is %d tris, outside the %d-%d budget"
+                             % (tris, DRAGON_TRIS[0], DRAGON_TRIS[1]))
+    return dragon
 
 
 # ---------------------------------------------------------------------------
@@ -3813,7 +4515,8 @@ def build(hero, shot=None):
     """Build one hero: one skinned `.glb` and its `.blend`, plus the manifest row."""
     row = HEROES[hero]
     if "band" in row and (row["beret"] or row["eyes"] or "tails" in row
-                          or "goggles" in row):
+                          or "goggles" in row or row.get("helmet")
+                          or row.get("dragon")):
         raise AssertionError(
             "%s wears a cloth band AND an accessory: `sharp` is polygon indices "
             "and a join after the wrap renumbers them (see export_glb)" % hero)
@@ -3829,7 +4532,12 @@ def build(hero, shot=None):
     report_weights(human, armature, "basemesh (pre-convert)")
 
     obj = bake_to_plain_mesh(human, armature)
-    decimate(obj, BODY_TRIS, HEAD_TRIS)
+    # A ROW MAY BUY A CHEAPER HEAD (bead godot-test1-9k9n.1). The head is 8% of the
+    # silhouette and all of the acting — which is why it has its own target at all
+    # — but Phoboman's is inside a sealed diving helmet and none of it is ever
+    # drawn. Those triangles are what his helmet and his dragon are paid from, and
+    # `TRI_BUDGET` is still the backstop behind the trade.
+    decimate(obj, BODY_TRIS, row.get("head_tris", HEAD_TRIS))
     m = reframe(obj, armature, row["height"])
     tj = {name: m @ p for name, p in joints.items()}
     log("joints (game frame):", {k: tuple(round(c, 4) for c in v) for k, v in tj.items()})
@@ -3896,6 +4604,24 @@ def build(hero, shot=None):
     if row["eyes"]:
         obj = join_rigid(obj, build_eyes(row["colours"], tj["l-eye"], tj["r-eye"]),
                          "head")
+    # PHOBOMAN'S TWO (bead godot-test1-9k9n.1). The helmet rides `head` like the
+    # beret, so the gait's 7-degree head bobble nods the whole dome — that is the
+    # point of joining it to that bone rather than hanging it off a
+    # `BoneAttachment3D`. The dragon rides the three SPINE bones at once, because
+    # it lies across a belly all three of them drive (`spine_split`). Both are
+    # flat-shaded for the coat tails' reason: a rivet or a rim smoothed into the
+    # dome is a sausage.
+    if row.get("helmet"):
+        helmet_p0 = len(obj.data.polygons)
+        obj = join_rigid(obj, build_helmet(row["colours"], obj, tj), "head")
+        flat_faces = frozenset(flat_faces) | frozenset(
+            range(helmet_p0, len(obj.data.polygons)))
+    if row.get("dragon"):
+        dragon_p0 = len(obj.data.polygons)
+        obj = join_weighted(obj, build_dragon(row["colours"], obj, tj),
+                            spine_split(armature))
+        flat_faces = frozenset(flat_faces) | frozenset(
+            range(dragon_p0, len(obj.data.polygons)))
     if "tails" in row:
         tail_v0 = len(obj.data.vertices)
         obj, tail_faces = attach_tails(obj, row, tj)
@@ -3934,10 +4660,17 @@ def build(hero, shot=None):
         raise AssertionError("feet %.4f m off the ground (cap 0.04)" % min(zs))
 
     head_tris = head_tri_count(obj)
-    log("head: %d tris (floor %d)" % (head_tris, HEAD_TRIS_MIN))
-    if head_tris < HEAD_TRIS_MIN:
+    # THE FLOOR IS THE FACE'S, AND A HELMETED HEAD HAS NO FACE (bead
+    # godot-test1-9k9n.1). "The face melted" is a statement about what the camera
+    # reads at 3 m; behind a sealed dome it reads the helmet, whose own triangles
+    # are budgeted in `build_helmet`. Keyed on the row's `helmet`, not on its
+    # `head_tris`, because the thing that makes the floor meaningless is the dome
+    # and not the number.
+    floor = 0 if row.get("helmet") else HEAD_TRIS_MIN
+    log("head: %d tris (floor %d)" % (head_tris, floor))
+    if head_tris < floor:
         raise AssertionError("the face melted: %d head tris under the %d floor"
-                             % (head_tris, HEAD_TRIS_MIN))
+                             % (head_tris, floor))
 
     out_dir = os.path.join(OUT_ROOT, row["out_dir"])
     os.makedirs(out_dir, exist_ok=True)

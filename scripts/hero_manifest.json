@@ -1,5 +1,15 @@
 {
   "heroes": {
+    "phoboman": {
+      "bones": 23,
+      "glb": "phoboman_parts/phoboman_skinned.glb",
+      "glb_bytes": 831672,
+      "head_tris": 4208,
+      "height_m": 1.7992,
+      "texture_bytes": 0,
+      "texture_size": 0,
+      "tris": 15798
+    },
     "primm": {
       "bones": 23,
       "glb": "primm_parts/primm_skinned.glb",
