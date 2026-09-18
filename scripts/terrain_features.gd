@@ -1281,10 +1281,13 @@ static func spawn_camp_in_chunk(terrain: Node3D, chunk_pos: Vector2i, parent_chu
 	# props with its own independent RNG stream so existing hut geometry and camp
 	# draws remain byte-identical:
 	var story: int = _camp_story_at(terrain, chunk_pos)
+	var gag_result: Dictionary = {}
+	var gag_box_start := block_batch.size()
+	var gag_box_count := 0
 	if terrain.spawn_camp_stories:
-		var gag_result := _camp_story_gag(terrain, story, center, hut_footprints, block_batch, block_body, chunk_pos)
+		gag_result = _camp_story_gag(terrain, story, center, hut_footprints, block_batch, block_body, chunk_pos)
+		gag_box_count = block_batch.size() - gag_box_start
 		if not gag_result.is_empty():
-			hut_footprints.append({ "pos": gag_result.pos, "radius": gag_result.radius })
 			camp_top = maxf(camp_top, gag_result.top)
 
 		var marker := Node3D.new()
@@ -1292,6 +1295,8 @@ static func spawn_camp_in_chunk(terrain: Node3D, chunk_pos: Vector2i, parent_chu
 		marker.position = center
 		marker.set_meta("story", story)
 		marker.set_meta("radius", CAMP_RADIUS)
+		marker.set_meta("gag_start", gag_box_start)
+		marker.set_meta("gag_count", gag_box_count)
 		marker.add_to_group("camp_story")
 		parent_chunk.add_child(marker)
 
@@ -1299,6 +1304,10 @@ static func spawn_camp_in_chunk(terrain: Node3D, chunk_pos: Vector2i, parent_chu
 	# huts go in FIRST so the props can be tested against them: the two rings
 	# touch, and a hut is nearly 3 m of radius around its ring position.
 	_camp_props(terrain, center, rng, block_batch, block_body, hut_footprints)
+
+	if not gag_result.is_empty():
+		hut_footprints.append({ "pos": gag_result.pos, "radius": gag_result.radius })
+	parent_chunk.set_meta("camp_hut_footprints", hut_footprints.duplicate(true))
 
 	# 4. A couple of scattered coins by the fire — a small "someone lives here"
 	# reward, NOT a treasure haul. There is deliberately NO GEM: the guaranteed gem

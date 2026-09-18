@@ -117,10 +117,10 @@ func _check_b_camp_ab(terrain: Node3D) -> void:
 				var chunk_off := MeshInstance3D.new()
 				var obstacles_off: Array = []
 				TerrainFeatures.spawn_camp_in_chunk(terrain, chunk, chunk_off, obstacles_off, batch_off, body_off)
-				chunk_off.queue_free()
-				body_off.queue_free()
 
 				if obstacles_off.is_empty():
+					chunk_off.queue_free()
+					body_off.queue_free()
 					continue
 
 				# 2. Build camp with stories ON:
@@ -130,54 +130,75 @@ func _check_b_camp_ab(terrain: Node3D) -> void:
 				var chunk_on := MeshInstance3D.new()
 				var obstacles_on: Array = []
 				TerrainFeatures.spawn_camp_in_chunk(terrain, chunk, chunk_on, obstacles_on, batch_on, body_on)
+
+				# Find marker and coins:
+				var marker: Node = null
+				var coins_on: Array[Vector3] = []
+				for child in chunk_on.get_children():
+					if child.is_in_group("camp_story"):
+						marker = child
+					else:
+						coins_on.append(child.position)
+
+				var coins_off: Array[Vector3] = []
+				for child in chunk_off.get_children():
+					if not child.is_in_group("camp_story"):
+						coins_off.append(child.position)
+
+				var gag_start: int = int(marker.get_meta("gag_start", batch_on.size())) if marker != null else batch_on.size()
+				var gag_count: int = int(marker.get_meta("gag_count", 0)) if marker != null else 0
+
+				var filtered_on: Array = batch_on.slice(0, gag_start) + batch_on.slice(gag_start + gag_count)
+
+				# 1. Compare entire block batch:
+				if batch_off.size() != filtered_on.size():
+					_fail("chunk %s batch size mismatch: off=%d, on_filtered=%d (gag=%d)" % [chunk, batch_off.size(), filtered_on.size(), gag_count])
+				else:
+					for k in range(batch_off.size()):
+						var item_off: Dictionary = batch_off[k]
+						var item_on: Dictionary = filtered_on[k]
+						if item_off.get("kind") != item_on.get("kind"):
+							_fail("chunk %s item %d kind mismatch: off=%d, on=%d" % [chunk, k, item_off.get("kind"), item_on.get("kind")])
+							break
+						var t_off: Transform3D = item_off["transform"]
+						var t_on: Transform3D = item_on["transform"]
+						if not t_off.is_equal_approx(t_on):
+							_fail("chunk %s item %d transform mismatch" % [chunk, k])
+							break
+						if item_off["color"] != item_on["color"]:
+							_fail("chunk %s item %d color mismatch" % [chunk, k])
+							break
+
+				# 2. Compare coin reward positions:
+				if coins_off.size() != coins_on.size():
+					_fail("chunk %s coin count mismatch: off=%d, on=%d" % [chunk, coins_off.size(), coins_on.size()])
+				else:
+					for c in range(coins_off.size()):
+						if not coins_off[c].is_equal_approx(coins_on[c]):
+							_fail("chunk %s coin %d position mismatch: off=%s, on=%s" % [chunk, c, coins_off[c], coins_on[c]])
+							break
+
+				# 3. Compare hut footprints:
+				var footprints_off: Array = chunk_off.get_meta("camp_hut_footprints", [])
+				var footprints_on: Array = chunk_on.get_meta("camp_hut_footprints", [])
+				var expected_on_count: int = footprints_off.size() + (1 if gag_count > 0 else 0)
+				if footprints_on.size() != expected_on_count:
+					_fail("chunk %s hut footprints count mismatch: off=%d, on=%d (gag=%d)" % [chunk, footprints_off.size(), footprints_on.size(), gag_count])
+				else:
+					for h in range(footprints_off.size()):
+						var f_off: Dictionary = footprints_off[h]
+						var f_on: Dictionary = footprints_on[h]
+						if not (f_off["pos"] as Vector3).is_equal_approx(f_on["pos"]):
+							_fail("chunk %s hut footprint %d pos mismatch" % [chunk, h])
+							break
+						if not is_equal_approx(f_off["radius"], f_on["radius"]):
+							_fail("chunk %s hut footprint %d radius mismatch" % [chunk, h])
+							break
+
+				chunk_off.queue_free()
+				body_off.queue_free()
 				chunk_on.queue_free()
 				body_on.queue_free()
-
-				# Extract SPHERE boxes (hut tiers) and fire stones:
-				var spheres_off: Array = []
-				var stones_off: Array = []
-				for item in batch_off:
-					if item.get("kind") == ChunkBatch.BoxKind.SPHERE:
-						spheres_off.append(item)
-					elif item.get("kind") == ChunkBatch.BoxKind.CUBE:
-						var sc: Vector3 = item["transform"].basis.get_scale()
-						if sc.is_equal_approx(TerrainFeatures.CAMP_FIRE_STONE_SIZE):
-							stones_off.append(item)
-
-				var spheres_on: Array = []
-				var stones_on: Array = []
-				for item in batch_on:
-					if item.get("kind") == ChunkBatch.BoxKind.SPHERE:
-						spheres_on.append(item)
-					elif item.get("kind") == ChunkBatch.BoxKind.CUBE:
-						var sc: Vector3 = item["transform"].basis.get_scale()
-						if sc.is_equal_approx(TerrainFeatures.CAMP_FIRE_STONE_SIZE):
-							stones_on.append(item)
-
-				if spheres_off.size() != spheres_on.size() or spheres_off.is_empty():
-					_fail("hut sphere count mismatch in chunk %s: off=%d, on=%d" % [chunk, spheres_off.size(), spheres_on.size()])
-					break
-
-				for k in range(spheres_off.size()):
-					var t_off: Transform3D = spheres_off[k]["transform"]
-					var t_on: Transform3D = spheres_on[k]["transform"]
-					if not t_off.is_equal_approx(t_on):
-						_fail("hut sphere transform mismatch in chunk %s at index %d" % [chunk, k])
-						break
-					if spheres_off[k]["color"] != spheres_on[k]["color"]:
-						_fail("hut sphere color mismatch in chunk %s at index %d" % [chunk, k])
-						break
-
-				if stones_off.size() != stones_on.size() or stones_off.is_empty():
-					_fail("fire stone count mismatch in chunk %s: off=%d, on=%d" % [chunk, stones_off.size(), stones_on.size()])
-					break
-
-				for k in range(stones_off.size()):
-					var t_off: Transform3D = stones_off[k]["transform"]
-					var t_on: Transform3D = stones_on[k]["transform"]
-					if not t_off.is_equal_approx(t_on):
-						_fail("fire stone transform mismatch in chunk %s at index %d" % [chunk, k])
-						break
 
 				built_camps += 1
 				if built_camps >= 40:
