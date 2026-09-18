@@ -266,6 +266,13 @@ const TREASURE_BURST_DURATION: float = 1.2
 ## (or perturb) one. It draws from no shared RandomNumberGenerator at all.
 const TREASURE_SALT: int = 0x7EA5
 
+## The lifetime-first stamp caption (bead godot-test1-nufd): posted once through
+## WorldCaption.post_caption when an arrival stamps a kind the passport never
+## held. A CSV KEY like the card's four strings below — `tr()` on the format
+## string, count then registry size — with its German row beside the passport
+## rows in ui.csv.
+const STAMP_CAPTION: String = "New passport stamp — %d of %d"
+
 ## coin.gd is preloaded ONLY for its static `id_at()` — the project's one
 ## "identify a deterministic world thing by where it stands" helper, which is
 ## exactly what a landmark needs (its marker never moves, so the id is stable by
@@ -384,6 +391,20 @@ var _visited: Dictionary = {}
 ## matters: a monotonically increasing run counter on the terrain.
 var _visited_run_seed: int = 0
 
+## THE PASSPORT CACHE — one reader, why (bead godot-test1-nufd, round 2). The
+## lifetime mirror of BestRunStore's found set: passport id String -> true.
+## Hydrated ONCE at ready — a returning player with a full passport reads true
+## tiers before reaching anything — re-merged on a run change, and refreshed
+## off `BestRunStore.found_version` on every read: one integer compare, and the
+## file is re-read ONLY when the stored set actually grew (an arrival, a late
+## lobby merge). The steady-state compass tick therefore performs ZERO store
+## reads — memory, no file, no seed, no draw. Monotone like the store: entries
+## are added on stamp and merged on refresh, cleared on nothing.
+var _stamped: Dictionary = {}
+## The store generation `_stamped` was last merged from. -1 (older than any
+## real generation) until the first hydrate, so the first read always fills.
+var _stamped_version: int = -1
+
 ## Latched GD-SURVEY camp stories (bead godot-test1-w0z2): story_id -> stage (1 = memo, 2 = report).
 var _stories: Dictionary = {}
 
@@ -442,6 +463,11 @@ func _ready() -> void:
 	# reads 1/2/3 for a hero switch. Group lookup, no hard reference, like every
 	# other cross-system hookup in this project.
 	add_to_group("landmark_toast")
+
+	# The passport cache fills ONCE here (bead godot-test1-nufd round 2): a
+	# returning player with a full passport must read true tiers BEFORE reaching
+	# anything, and one ConfigFile read at scene build is not a per-tick cost.
+	_hydrate_stamped()
 
 	# THE SKIN, AND IT IS ONE LINE ON THIS ROOT (bead godot-test1-y1o.34). Every
 	# face and colour below comes off `HudTheme` from here on. **On this node and
@@ -1448,10 +1474,61 @@ func _first_visit(marker: Node3D) -> bool:
 	# city arrivals never reach here (`_arrive_city` is their path), and the
 	# has_meta guard keeps it that way if one ever does.
 	if marker.has_meta("kind"):
-		var kind: int = clampi(int(marker.get_meta("kind")), 0, LandmarkBuilders.LANDMARKS.size() - 1)
-		var builder: String = String(LandmarkBuilders.LANDMARKS[kind]["builder"])
-		BestRunStore.merge_found_landmark_ids([builder.trim_prefix("_landmark_")])
+		var stamp_id: String = _passport_id(int(marker.get_meta("kind")))
+		_ensure_stamped_fresh()
+		var new_stamp: bool = not _stamped.has(stamp_id)
+		_stamped[stamp_id] = true
+		BestRunStore.merge_found_landmark_ids([stamp_id])
+		if new_stamp:
+			_post_stamp_caption()
 	return true
+
+
+func _passport_id(kind: int) -> String:
+	## The passport id for a landmark kind: the registry builder minus its
+	## prefix. ONE derivation for the stamp path and is_stamped() alike, so
+	## the compass and the cache can never disagree on what a kind is called.
+	var clamped: int = clampi(kind, 0, LandmarkBuilders.LANDMARKS.size() - 1)
+	return String(LandmarkBuilders.LANDMARKS[clamped]["builder"]).trim_prefix("_landmark_")
+
+
+func _ensure_stamped_fresh() -> void:
+	## Re-merge the stored found set into the lifetime cache — but ONLY when
+	## the store's generation moved since the last merge. Steady-state reads
+	## (the 5 Hz compass tick through `is_stamped()`) cost one integer compare
+	## and no file; a stamp arrival or a late lobby merge costs one re-read.
+	if BestRunStore.found_version != _stamped_version:
+		_hydrate_stamped()
+
+
+func _hydrate_stamped() -> void:
+	## Merge the stored found set into the lifetime cache and remember the
+	## generation. Called at ready, on a run change, and lazily by
+	## `_ensure_stamped_fresh()` — never bare on the tick.
+	for found_id: String in BestRunStore.found_landmark_ids():
+		_stamped[found_id] = true
+	_stamped_version = BestRunStore.found_version
+
+
+func is_stamped(kind: int) -> bool:
+	"""
+	Has this landmark kind EVER been stamped into the passport — any run, this
+	profile? The compass's tier read (bead godot-test1-nufd): memory over
+	_stamped once the generation check passes, so the steady-state 5 Hz gather
+	pays no file read — the re-read happens only when the store actually grew.
+	"""
+	_ensure_stamped_fresh()
+	return _stamped.has(_passport_id(kind))
+
+
+func _post_stamp_caption() -> void:
+	## ONE line on a lifetime-first stamp, through the existing caption channel.
+	## Fire-once: a refused post (someone else's text on the label, e.g. a
+	## level-up) is skipped, not retried — the stamp itself is already stored.
+	var label := get_tree().get_first_node_in_group("world_caption")
+	if label == null or not label.has_method("post_caption"):
+		return
+	label.post_caption(tr(STAMP_CAPTION) % [_stamped.size(), LandmarkBuilders.LANDMARKS.size()])
 
 
 func _treasure_amount(id: int, run_seed: int) -> int:
@@ -1521,6 +1598,10 @@ func _sync_run() -> int:
 	if run_seed != _visited_run_seed:
 		_visited_run_seed = run_seed
 		_visited.clear()
+		# The lifetime cache is NOT cleared — the passport outlives the run —
+		# only actively re-merged, so stamps earned elsewhere (another scene,
+		# another tab) arrive at the run start, not mid-run.
+		_hydrate_stamped()
 		_stories.clear()
 		_burst_remaining = 0
 		# The city approach latch re-arms with the field one (`_cancel_quiz` below

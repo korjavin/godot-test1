@@ -219,6 +219,21 @@ class StubTower extends Node3D:
 	func sheltered(_pos: Vector3) -> bool:
 		return inside
 
+## A stand-in for the landmark toast's passport half (bead godot-test1-nufd):
+## nothing visited this run, and one configurable kind stamped. Never the real
+## toast: the tier rule must hold against the method names alone, the way the
+## shipped gather reaches them (group + has_method). The old-toast path (no
+## is_stamped at all) is probed with a bare Node further below.
+class StubPassportToast extends Node:
+	var stamped_kind: int = -1
+	var with_stamped_read: bool = true
+
+	func is_visited(_pos: Vector3) -> bool:
+		return false
+
+	func is_stamped(kind: int) -> bool:
+		return with_stamped_read and kind == stamped_kind
+
 ## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
 ## lands in and lets the script carry on, so a check that dies halfway simply
 ## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
@@ -978,7 +993,9 @@ func _check_landmarks() -> String:
 func _check_landmark_compass() -> String:
 	"""The landmark compass (bead godot-test1-uj0u): nearest unvisited target tracking,
 	hysteresis against rivals, off-disc rim arrow vs on-disc bold X mark, anonymous approach
-	caption, quiz and indoor suppression, and memo reset.
+	caption, quiz and indoor suppression, and memo reset. Plus the passport tiers
+	(bead godot-test1-nufd): an unstamped kind displaces a nearer stamped target,
+	and without is_stamped the nearest rule returns.
 	"""
 	var map: Control = root.get_node_or_null("Main/HUD/MinimapHUD")
 	var player: Node3D = get_first_node_in_group("player")
@@ -1231,6 +1248,62 @@ func _check_landmark_compass() -> String:
 		map.reset_landmark_compass()
 		if map._has_target_landmark or not map._target_caption_fired.is_empty():
 			failure = "reset_landmark_compass() did not clear target or caption memory"
+			break
+
+		# 11. Passport tiers (bead godot-test1-nufd): the compass prefers an
+		# unstamped kind over a nearer stamped one, and without is_stamped it
+		# plays today's nearest rule. Swaps the REAL toast out of the group
+		# for a stub — the gather must hold against the method names alone —
+		# and parks every earlier probe first, so the two below are the only
+		# candidates.
+		for p in probes:
+			p.remove_from_group("landmark")
+		toast.remove_from_group("landmark_toast")
+		map.reset_landmark_compass()
+		map._floor_text = ""
+		var stub := StubPassportToast.new()
+		stub.stamped_kind = 0
+		root.add_child(stub)
+		stub.add_to_group("landmark_toast")
+		var near := Node3D.new()
+		root.add_child(near)
+		near.set_meta("kind", 0)
+		near.global_position = origin + Vector3(60.0, 0.0, 0.0)
+		near.add_to_group("landmark")
+		map._tick()
+		if map._target_landmark_node != near:
+			failure = "lone stamped kind 0 was not selected with no rival"
+			break
+		# A tier-0 rival appears 50% FARTHER — hysteresis would hold the
+		# nearer target within a tier, but tier 0 always displaces tier 1.
+		var far := Node3D.new()
+		root.add_child(far)
+		far.set_meta("kind", 1)
+		far.global_position = origin + Vector3(0.0, 0.0, 90.0)
+		far.add_to_group("landmark")
+		map._tick()
+		if map._target_landmark_node != far:
+			failure = "passport tiers failed: nearer stamped kind 0 beat farther unstamped kind 1"
+		else:
+			# Old toast (no is_stamped at all): today's nearest rule returns.
+			stub.remove_from_group("landmark_toast")
+			var bare := Node.new()
+			root.add_child(bare)
+			bare.add_to_group("landmark_toast")
+			map.reset_landmark_compass()
+			map._tick()
+			if map._target_landmark_node != near:
+				failure = "without is_stamped the compass did not fall back to the nearest candidate"
+			bare.remove_from_group("landmark_toast")
+			bare.queue_free()
+		stub.remove_from_group("landmark_toast")
+		stub.queue_free()
+		near.remove_from_group("landmark")
+		far.remove_from_group("landmark")
+		near.queue_free()
+		far.queue_free()
+		toast.add_to_group("landmark_toast")
+		if not failure.is_empty():
 			break
 
 		break

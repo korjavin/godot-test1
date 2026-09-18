@@ -182,6 +182,13 @@ const LS_FOUND: String = "ck_found_landmarks"
 ## headroom against a hand-edited dump, not a limit on discovery.
 const MAX_FOUND_IDS: int = 128
 
+## Monotone generation counter for the passport found set (bead godot-test1-nufd
+## round 2): bumped ONLY when the stored set actually grows, so an in-memory
+## mirror can tell "changed since I last looked" off one integer compare and
+## re-read the file only then — never per tick. Not persisted and not merged:
+## a relaunch re-hydrates from the file anyway, which is newer than any count.
+static var found_version: int = 0
+
 ## A passport id is the registry builder minus `_landmark_` — lowercase ASCII,
 ## digits and underscores — and the store holds the line at 32 characters.
 const FOUND_ID_PATTERN: String = "^[a-z0-9_]{1,32}$"
@@ -730,9 +737,10 @@ static func merge_found_landmark_ids(ids: Array) -> void:
 	the sanitizer, so a profile written by an older build self-heals the same
 	way the tower set does.
 
-	Called on a run's FIRST arrival at a field landmark and nowhere else — rare
-	and precious, so it writes immediately rather than batching to a later
-	flush that a crash eats. Failures are ignored, for `_write_local`'s reason.
+	Called on a run's first arrival at a field landmark and by the lobby fold —
+	rare and precious either way, so it writes immediately rather than batching
+	to a later flush that a crash eats. Failures are ignored, for `_write_local`'s
+	reason.
 	"""
 	var stored := found_landmark_ids()
 	var merged := stored.duplicate()
@@ -752,6 +760,11 @@ static func merge_found_landmark_ids(ids: Array) -> void:
 	# trip on every revisit.
 	if merged == stored:
 		return
+	# The set grew: bump the generation so in-memory mirrors (the toast's
+	# passport cache, bead godot-test1-nufd round 2) can see the change without
+	# re-reading the file. Both writers — the arrival above and the lobby fold
+	# below — pass through here, so one bump covers both.
+	found_version += 1
 	if OS.has_feature("web"):
 		_ls_set(LS_FOUND, JSON.stringify(merged))
 	var cfg := ConfigFile.new()
