@@ -136,7 +136,6 @@ const ROWS: Array = [
 	["Q / E", "Turn left and right.", Mode.DESKTOP],
 	["A / D", "Strafe left or right while held.", Mode.DESKTOP],
 	["Mouse", "Look around. Click to grab the cursor again.", Mode.DESKTOP],
-	["Wheel", "Zoom the camera in and out.", Mode.DESKTOP],
 	["Space", "Jump. A jump also breaks a crocodile's scent.", Mode.DESKTOP],
 	["Shift", "Hold to slow to a walk. Let go and you run again.", Mode.DESKTOP],
 	["Ctrl", "Duck and move slowly.", Mode.DESKTOP],
@@ -162,6 +161,10 @@ const ROWS: Array = [
 	["K", "Open the skill tree — also the Skills button, top right.", Mode.DESKTOP],
 	["M", "Show or hide the minimap.", Mode.DESKTOP],
 	["+ / -", "Zoom the minimap in and out.", Mode.DESKTOP],
+	# The camera zoom wheel — an EXISTS-only legend like "+ / -" above it, because
+	# the wheel is an InputEventMouseButton in player_controller._input rather
+	# than an input-map action. Points at player_controller.CAMERA_ZOOM_MIN/MAX.
+	["Wheel", "Zoom the camera in and out — roll forward to come closer.", Mode.DESKTOP],
 	# The city map panel — a raw keycode like K, M and P above it, and named here
 	# because a panel nobody can find is a panel that does not exist. The panel
 	# carries an opener button of its own.

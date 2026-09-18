@@ -117,6 +117,8 @@ Sie setzen fort"
 "Cycle the view: over the shoulder, eyes, front.","Cycle the view: over the shoulder, eyes, front.","Ansicht wechseln: Schulter, Augen, Front."
 "Show or hide the minimap.","Show or hide the minimap.","Karte ein- oder ausblenden."
 "Zoom the minimap in and out.","Zoom the minimap in and out.","Karte näher oder weiter stellen."
+"Wheel","Wheel","Mausrad"
+"Zoom the camera in and out — roll forward to come closer.","Zoom the camera in and out — roll forward to come closer.","Kamera näher oder weiter stellen — nach vorne rollen bringt sie näher."
 "Pause the game.","Pause the game.","Spiel anhalten."
 "Free the mouse cursor. Press again to grab it back.","Free the mouse cursor. Press again to grab it back.","Zeiger freigeben. Nochmal drücken, um ihn zurückzuholen."
 "Open or close this list.","Open or close this list.","Diese Liste öffnen oder schließen."
@@ -355,8 +357,6 @@ Waiting for the shared world…,Waiting for the shared world…,Warte auf die ge
 Host not responding — voting to migrate…,Host not responding — voting to migrate…,Host antwortet nicht — Abstimmung zur Migration läuft…
 Cannot reach the lobby at %s (error %d),Cannot reach the lobby at %s (error %d),Lobby unter %s nicht erreichbar (Fehler %d)
 Offline,Offline,Nicht verbunden
-"Wheel","Wheel","Mausrad"
-"Zoom the camera in and out.","Zoom the camera in and out.","Kamera näher oder weiter stellen."
 "Something odd ahead, %d m","Something odd ahead, %d m","Etwas Merkwürdiges voraus, %d m"
 "Stones. Arranged. Nobody says why.","Stones. Arranged. Nobody says why.","Steine. Sortiert. Warum, weiß keiner."
 "Heads that outstared the sea.","Heads that outstared the sea.","Köpfe, die das Meer anstarrten."
