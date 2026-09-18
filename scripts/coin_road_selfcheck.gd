@@ -7,40 +7,40 @@ with ZERO new RNG draws: `_road_figure()` is a reverse hash lookup on the block
 index, and the four station draws (chance, lat, lon, gem) are REINTERPRETED
 through it. What each check guards, in check order:
 
-  draw_parity    — per station over -50..600 x 3 seeds, on and off agree on the
-                   COUNT and the GEM SEQUENCE. This is the zero-draws proof: a
-                   fifth draw anywhere upstream would slide both.
-  plain_identical — in NONE blocks the positions are EXACTLY equal on/off.
-  bounds         — every on-leg coin stays inside |lat| <= half_band and
-                   |lon| <= LONG_JITTER * spacing, measured off the shipped
-                   station cache (`_road_station`) and the shipped `_road_width`
-                   / `_road_spacing`. Figures never touch the seam pad.
-  holdable       — slalom centres move <= 0.6 * spacing between consecutive
-                   stations (measured 0.54 worst case); lightning side runs are
-                   all >= 3 stations, read off surviving coins' lateral signs
-                   against the bead's run rule.
-  streak         — per figure block, every consecutive-survivor pair's
-                   ALONG-ROAD gap stays within its SAME pair's plain gap plus
-                   one station step. Same-pair (survival is draw-identical both
-                   legs), not maxima: maxima compare different pairs per leg
-                   and the figure normalizes lucky plain endpoints apart — seed
-                   7331 block -2 fails maxima 10.9 vs 8.8 on unmutated code.
-                   Along-road and not XZ: lateral movement IS the figure, so an
-                   XZ max is dominated by empty-run endpoint phase — seed
-                   900913 fails it 30.9 vs 27.7 on unmutated code. (Also
-                   deliberately no absolute 25 m bound: empty stations are a
-                   deterministic property of the shipped scatter — seed 11
-                   leaves stations 150-153 bare in BOTH legs for a 36 m plain
-                   gap no figure-preserving implementation can close, since
-                   figures move coins but add none.)
-  ids            — `Coin.id_at` is unique over every coin on -50..600: seeds 7,
-                   11 and 900913 plus a 40-seed sweep. 7 is the round-1 figure
-                   collision, and the sweep caught a PLAIN one (seed 5003
-                   station 46, a NONE block) — so the avoidance runs on every
-                   coin, not just figured ones, and this check covers both.
-  mix            — over 400 blocks every figure occurs and NONE holds 35-65%.
-  text           — `_road_coins_at` holds exactly four `rng.randf` call sites
-                   (landmark_sites' text-scan idiom): a fifth draw fails here.
+	draw_parity    — per station over -50..600 x 3 seeds, on and off agree on the
+					COUNT and the GEM SEQUENCE. This is the zero-draws proof: a
+					fifth draw anywhere upstream would slide both.
+	plain_identical — in NONE blocks the positions are EXACTLY equal on/off.
+	bounds         — every on-leg coin stays inside |lat| <= half_band and
+					|lon| <= LONG_JITTER * spacing, measured off the shipped
+					station cache (`_road_station`) and the shipped `_road_width`
+					/ `_road_spacing`. Figures never touch the seam pad.
+	holdable       — slalom centres move <= 0.6 * spacing between consecutive
+					stations (measured 0.54 worst case); lightning side runs are
+					all >= 3 stations, read off surviving coins' lateral signs
+					against the bead's run rule.
+	streak         — per figure block, every consecutive-survivor pair's
+					ALONG-ROAD gap stays within its SAME pair's plain gap plus
+					one station step. Same-pair (survival is draw-identical both
+					legs), not maxima: maxima compare different pairs per leg
+					and the figure normalizes lucky plain endpoints apart — seed
+					7331 block -2 fails maxima 10.9 vs 8.8 on unmutated code.
+					Along-road and not XZ: lateral movement IS the figure, so an
+					XZ max is dominated by empty-run endpoint phase — seed
+					900913 fails it 30.9 vs 27.7 on unmutated code. (Also
+					deliberately no absolute 25 m bound: empty stations are a
+					deterministic property of the shipped scatter — seed 11
+					leaves stations 150-153 bare in BOTH legs for a 36 m plain
+					gap no figure-preserving implementation can close, since
+					figures move coins but add none.)
+	ids            — `Coin.id_at` is unique over every coin on -50..600: seeds 7,
+					11 and 900913 plus a 40-seed sweep. 7 is the round-1 figure
+					collision, and the sweep caught a PLAIN one (seed 5003
+					station 46, a NONE block) — so the avoidance runs on every
+					coin, not just figured ones, and this check covers both.
+	mix            — over 400 blocks every figure occurs and NONE holds 35-65%.
+	text           — `_road_coins_at` holds exactly four `rng.randf` call sites
+					(landmark_sites' text-scan idiom): a fifth draw fails here.
 
 The probes call the real `_road_coins_at` through the terrain forwarder on real
 (detached, never-in-tree) terrains, the way budapest_selfcheck's road probes do.

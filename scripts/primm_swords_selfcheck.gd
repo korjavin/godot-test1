@@ -7,24 +7,24 @@ hero AND on the remote mirror (same scene, rebound per instance — a hologram
 keeps its swords).
 
 1. Local:  Swords exists on Body, is a BoneAttachment3D, names spine_03, uses
-   the external skeleton, its path resolves to the same Skeleton3D the limb
-   rig found by type, `get_skeleton()` is bound at runtime, and the instanced
-   prop carries real geometry (> 100 verts — an empty import fails here).
+	the external skeleton, its path resolves to the same Skeleton3D the limb
+	rig found by type, `get_skeleton()` is bound at runtime, and the instanced
+	prop carries real geometry (> 100 verts — an empty import fails here).
 2. Mirror: RemoteAvatar setup + set_character(1) keeps the Swords node with
-   the same bone name, a bound skeleton, and real geometry.
+	the same bone name, a bound skeleton, and real geometry.
 3. Clearance: at rest pose the blade tips stay outside the coat-tails volume
-   (> 5 mm — a rub is a fail), with silhouette pins (|tip x| and hilt height)
-   catching a gross misplacement a pure clearance test would miss.
+	(> 5 mm — a rub is a fail), with silhouette pins (|tip x| and hilt height)
+	catching a gross misplacement a pure clearance test would miss.
 4. Outward: the shipped prop's saya tubes are Godot-FRONT-facing (codex
-   round 1 — the tubes shipped wound inside-out and rendered inverted). Only
-   the saya faces are measured, and deliberately: the tsuba sits ON the
-   centroid plane, so a centroid dot cannot judge its caps (batch_selfcheck's
-   star-shaped requirement), while every saya face stands well off it. Godot's
-   front face is the CLOCKWISE one seen from outside, and the importer flips
-   winding (measured: trimesh 83% right-hand-outward reads 17% here), so a
-   correctly shipped saya reads right-hand-INWARD on every one of its 240
-   faces — the generator asserts the source side (positive volume), this
-   asserts the shipped side.
+	round 1 — the tubes shipped wound inside-out and rendered inverted). Only
+	the saya faces are measured, and deliberately: the tsuba sits ON the
+	centroid plane, so a centroid dot cannot judge its caps (batch_selfcheck's
+	star-shaped requirement), while every saya face stands well off it. Godot's
+	front face is the CLOCKWISE one seen from outside, and the importer flips
+	winding (measured: trimesh 83% right-hand-outward reads 17% here), so a
+	correctly shipped saya reads right-hand-INWARD on every one of its 240
+	faces — the generator asserts the source side (positive volume), this
+	asserts the shipped side.
 
 Sentinel contract: isolate first, done() last in _run(), finish() at report.
 """
