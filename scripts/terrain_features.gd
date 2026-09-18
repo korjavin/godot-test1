@@ -164,6 +164,15 @@ const ARTIFACT_COIN_RING_PAD_MAX: float = 4.0
 ## Determinism contract: identical to the artifact one — pure function of chunk
 ## coords + run_seed, ZERO draws from the shared chunk RNG, so the ~30 of 31 chunks
 ## without a camp regenerate byte-for-byte as they did before camps existed.
+##
+## - GD-SURVEY STORIES & GAGS (bead godot-test1-w0z2): every built camp carries a
+##   two-beat dry bureaucratic story (memo on approach, report on arrival) and one
+##   absurd oversized gag object. Stories are an independent hash stream (own salt
+##   and coordinate primes), so zero draws from the camp RNG. The gag is built
+##   with its OWN RandomNumberGenerator between the huts (step 2) and the props
+##   (step 3), so existing hut geometry and draws remain byte-identical whether
+##   spawn_camp_stories is on or off. The gag is appended to hut_footprints so
+##   crates and tether posts naturally clear it.
 
 ## Kill switch, mirrors spawn_artifacts / spawn_biome_content / spawn_coins.
 ## (The `spawn_camps` @export stays on endless_terrain.gd — an `@export` is
@@ -302,6 +311,46 @@ const CAMP_WOOD := Color(0.42, 0.31, 0.20)
 ## glow_hdr_threshold is 0.85, so an energy of 2.5 blooms for free.
 const CAMP_EMBER_COLOR := Color(1.0, 0.55, 0.18)
 const CAMP_EMBER_ENERGY: float = 2.5
+
+## Warning orange for the confiscated fire hazards gag cone (bead godot-test1-w0z2).
+## World palette, not a HudTheme hex.
+const CAMP_STORY_ORANGE := Color(1.0, 0.40, 0.05)
+
+## --- GD-SURVEY roadside camp stories (bead godot-test1-w0z2)
+## Independent hash stream for camp story selection.
+const CAMP_STORY_SALT: int = 0x57_081E
+const CAMP_GAG_RING: float = 3.0
+
+const STORY_TITLE_MEMO := "GD-SURVEY memo"
+const STORY_TITLE_REPORT := "GD-SURVEY report"
+
+enum CampGag { DESK = 0, GAUGE = 1, FORMS = 2, CONE = 3 }
+
+const STORIES: Array = [
+	{
+		"memo": "Camp inspection scheduled for noon.",
+		"report": "Inspector: absent. Desk: present.",
+		"gag": CampGag.DESK,
+	},
+	{
+		"memo": "Assess herd morale. Use the scale.",
+		"report": "Morale: 3. Scale: undisclosed.",
+		"gag": CampGag.GAUGE,
+	},
+	{
+		"memo": "Count the tents. Twice.",
+		"report": "Tents: 4. Recount: 4. Filed.",
+		"gag": CampGag.FORMS,
+	},
+	{
+		"memo": "Confiscate all fire hazards.",
+		"report": "Fire: confiscated. Ashes: pending.",
+		"gag": CampGag.CONE,
+	},
+]
+
+const GAG_RADII: Array[float] = [1.88, 1.60, 0.85, 1.70]
+const GAG_TOPS: Array[float] = [4.025, 6.0, 6.1, 4.2]
 
 ## Coin reward: a couple of scattered coins near the fire. NO gem — see the banner.
 ## 2-4 -> 1-3, the 30% reward trim of bead godot-test1-7ed.
@@ -1062,6 +1111,71 @@ static func _camp_spot_clear(terrain: Node3D, pos: Vector3, radius: float, solid
 			return false
 	return true
 
+
+static func _camp_story_hash(terrain: Node3D, chunk_pos: Vector2i) -> int:
+	return hash(Vector3i(chunk_pos.x * 57859, chunk_pos.y * 31337, terrain.run_seed ^ CAMP_STORY_SALT))
+
+
+static func _camp_story_at(terrain: Node3D, chunk_pos: Vector2i) -> int:
+	"""Reverse lookup for a chunk's GD-SURVEY story index (0..3). Pure function
+	of chunk coords + terrain.run_seed with independent salt and coordinate primes,
+	consuming zero draws from any shared or camp RNG."""
+	return posmod(_camp_story_hash(terrain, chunk_pos), STORIES.size())
+
+
+static func _camp_story_gag(terrain: Node3D, story: int, center: Vector3, hut_footprints: Array, block_batch: Array, block_body: StaticBody3D, chunk_pos: Vector2i = Vector2i.ZERO) -> Dictionary:
+	"""
+	Build the absurd oversized gag object for this camp (bead godot-test1-w0z2).
+	Uses its OWN RandomNumberGenerator seeded from the story hash so hut geometry
+	and camp RNG draw counts remain byte-identical whether stories are on or off.
+
+	@return: { "pos": Vector3, "radius": float, "top": float } on success, {} if no slot cleared.
+	"""
+	if chunk_pos == Vector2i.ZERO and terrain != null and terrain.has_method("world_to_chunk"):
+		chunk_pos = terrain.world_to_chunk(center)
+	var story_hash := _camp_story_hash(terrain, chunk_pos)
+	var gag_rng := RandomNumberGenerator.new()
+	gag_rng.seed = story_hash
+
+	var gag_radius: float = GAG_RADII[story]
+	var gag_top: float = GAG_TOPS[story]
+
+	var start_angle: float = gag_rng.randf_range(0.0, TAU)
+	var chosen_pos := Vector3.ZERO
+	var found := false
+	for i in range(8):
+		var a: float = start_angle + float(i) * (TAU / 8.0)
+		var p := center + Vector3(cos(a) * CAMP_GAG_RING, 0.0, sin(a) * CAMP_GAG_RING)
+		if _camp_spot_clear(terrain, p, gag_radius, hut_footprints):
+			chosen_pos = p
+			found = true
+			break
+
+	if not found:
+		return {}
+
+	var yaw: float = gag_rng.randf_range(0.0, TAU)
+	match story:
+		CampGag.DESK:
+			# Desk: 3.4 x 0.25 x 1.6 slab at y 3.9 on one 0.35 x 3.8 x 0.35 leg (CAMP_WOOD)
+			terrain.create_box(chosen_pos + Vector3(0.0, 1.9, 0.0), Vector3(0.35, 3.8, 0.35), yaw, gag_rng, block_batch, block_body, 0.0, CAMP_WOOD)
+			terrain.create_box(chosen_pos + Vector3(0.0, 3.9, 0.0), Vector3(3.4, 0.25, 1.6), yaw, gag_rng, block_batch, block_body, 0.0, CAMP_WOOD)
+		CampGag.GAUGE:
+			# Gauge: 0.3 x 6.0 x 0.3 post (CAMP_STONE) with a 1.6 x 0.3 x 0.2 pointer slab (CAMP_HUT_A) bolted low
+			terrain.create_box(chosen_pos + Vector3(0.0, 3.0, 0.0), Vector3(0.3, 6.0, 0.3), yaw, gag_rng, block_batch, block_body, 0.0, CAMP_STONE)
+			var pointer_offset := Basis(Vector3.UP, yaw) * Vector3(0.65, 0.0, 0.0)
+			terrain.create_box(chosen_pos + Vector3(0.0, 1.0, 0.0) + pointer_offset, Vector3(1.6, 0.3, 0.2), yaw, gag_rng, block_batch, block_body, 0.0, CAMP_HUT_A)
+		CampGag.FORMS:
+			# Forms: pale 1.0 x 5.5 x 1.3 stack tilted 0.06 rad + 0.6 ROCK-kind paperweight on top
+			terrain.create_box(chosen_pos + Vector3(0.0, 2.75, 0.0), Vector3(1.0, 5.5, 1.3), yaw, gag_rng, block_batch, block_body, 0.06, CAMP_HUT_A)
+			terrain.create_box(chosen_pos + Vector3(0.0, 5.8, 0.0), Vector3(0.6, 0.6, 0.6), yaw, gag_rng, block_batch, block_body, 0.0, CAMP_STONE, true, ChunkBatch.BoxKind.ROCK)
+		CampGag.CONE:
+			# Cone: CONE-kind 2.4 x 4.2 x 2.4 in warning orange
+			terrain.create_box(chosen_pos + Vector3(0.0, 2.1, 0.0), Vector3(2.4, 4.2, 2.4), yaw, gag_rng, block_batch, block_body, 0.0, CAMP_STORY_ORANGE, true, ChunkBatch.BoxKind.CONE)
+
+	return { "pos": chosen_pos, "radius": gag_radius, "top": gag_top }
+
+
 static func spawn_camp_in_chunk(terrain: Node3D, chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Spawn this chunk's nomad camp, if _camp_at says it has one. Called from
@@ -1163,10 +1277,37 @@ static func spawn_camp_in_chunk(terrain: Node3D, chunk_pos: Vector2i, parent_chu
 		hut_footprints.append({ "pos": hut_center, "radius": footprint.radius })
 		camp_top = maxf(camp_top, footprint.top)
 
+	# 2b. The GD-SURVEY story gag (bead godot-test1-w0z2), built between huts and
+	# props with its own independent RNG stream so existing hut geometry and camp
+	# draws remain byte-identical:
+	var story: int = _camp_story_at(terrain, chunk_pos)
+	var gag_result: Dictionary = {}
+	var gag_box_start := block_batch.size()
+	var gag_box_count := 0
+	if terrain.spawn_camp_stories:
+		gag_result = _camp_story_gag(terrain, story, center, hut_footprints, block_batch, block_body, chunk_pos)
+		gag_box_count = block_batch.size() - gag_box_start
+		if not gag_result.is_empty():
+			camp_top = maxf(camp_top, gag_result.top)
+
+		var marker := Node3D.new()
+		marker.name = "CampStoryMarker"
+		marker.position = center
+		marker.set_meta("story", story)
+		marker.set_meta("radius", CAMP_RADIUS)
+		marker.set_meta("gag_start", gag_box_start)
+		marker.set_meta("gag_count", gag_box_count)
+		marker.add_to_group("camp_story")
+		parent_chunk.add_child(marker)
+
 	# 3. The lived-in clutter, on its own tighter ring between fire and huts. The
 	# huts go in FIRST so the props can be tested against them: the two rings
 	# touch, and a hut is nearly 3 m of radius around its ring position.
 	_camp_props(terrain, center, rng, block_batch, block_body, hut_footprints)
+
+	if not gag_result.is_empty():
+		hut_footprints.append({ "pos": gag_result.pos, "radius": gag_result.radius })
+	parent_chunk.set_meta("camp_hut_footprints", hut_footprints.duplicate(true))
 
 	# 4. A couple of scattered coins by the fire — a small "someone lives here"
 	# reward, NOT a treasure haul. There is deliberately NO GEM: the guaranteed gem

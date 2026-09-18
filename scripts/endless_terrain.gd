@@ -690,6 +690,7 @@ const FIELD_BRIDGE_PYLON_RISE := FieldBridges.FIELD_BRIDGE_PYLON_RISE
 # flags. `TerrainFeatures` reads them off the terrain it is handed.
 @export var spawn_artifacts: bool = true
 @export var spawn_camps: bool = true
+@export var spawn_camp_stories: bool = true
 @export var spawn_chests: bool = true
 
 # ----------------------------------------------------------------------------
