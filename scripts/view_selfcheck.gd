@@ -199,8 +199,13 @@ func _check_view(player: Node3D, camera: Camera3D, model: Node3D, mode: int,
 ## godot-test1-hwwv). INDOOR_ARM_LENGTH × CAMERA_ZOOM_MIN = 3.85 × 0.25 = 0.96 m
 ## must stay above this, or the camera sits inside the hero's head: measured
 ## with a headless probe at 0.25 (arm arrives at 0.9625 m; camera to
-## Phoboman's head-bone base 1.01 m on the skinned mesh — bead
-## godot-test1-9k9n.2, same indoor + 40-notches-in path as the zoom check;
+## Phoboman's head-bone base 1.06 m on the skinned mesh — bead
+## godot-test1-9k9n.2 read 1.01 on the body it shipped and bead
+## godot-test1-9k9n.9 re-measured 1.0425 on #431's and 1.0580 on its own, the
+## same indoor + 40-notches-in path as the zoom check: the re-proportioning
+## takes the head DOWN (bone base 1.4735 -> 1.4471 m in scene space, the legs
+## carrying the whole figure with them) and the camera sits above it, so every
+## round of this has moved the reading AWAY from the near plane;
 ## Teibi/Windman geometry ≈ 0.94 m to head centre, worst-case giant-Teibi
 ## clearance ≈ 0.65 m) against Camera3D.near 0.2 — so 0.5 keeps more than
 ## twice the near plane of room even in the worst case, and a future MIN below
