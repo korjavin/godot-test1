@@ -693,6 +693,14 @@ const FIELD_BRIDGE_PYLON_RISE := FieldBridges.FIELD_BRIDGE_PYLON_RISE
 @export var spawn_camp_stories: bool = true
 @export var spawn_chests: bool = true
 
+## THE BICYCLE PATHS' flag (epic godot-test1-z2yv), `spawn_field_bridges`'
+## precedent: it exists so `bike_path_selfcheck` check 1 can build the same field
+## of chunks with the paths OFF and prove that nothing else in the world moved by
+## a single box. The family itself is `scripts/terrain_bike_paths.gd`; an
+## `@export` is inspector-facing world-engine configuration and a static library
+## has no inspector, so the flag sits here with the rest of them.
+@export var spawn_bike_paths: bool = true
+
 # ----------------------------------------------------------------------------
 # THE PRIVATE-STREAM FEATURES — what anything outside the family still reads
 # ----------------------------------------------------------------------------
@@ -1705,6 +1713,24 @@ var _approach_coin_line_cache: PackedVector2Array = PackedVector2Array()
 var _landmark_sites_cache: Dictionary = {}
 var _landmark_sites_built: bool = false
 
+## Memoized result of `BikePaths._bike_path_at()` — origin chunk Vector2i -> that
+## origin's station list (`[]` for the overwhelming majority of origins). Every
+## chunk within reach of an origin asks for the SAME path, so without this each
+## one would re-walk it; `scan_radius_chunks()` is 4, so the memo turns 81 walks
+## per chunk into 81 dictionary hits.
+##
+## IT LIVES HERE AND NOT ON `BikePaths`, and that is the rule rather than a
+## preference: a memo on a static family is state `_drop_seeded_memos()` cannot
+## reach, so it would survive every re-seed and hand a multiplayer joiner the
+## wrong world (`chunk_stream_selfcheck` check 6c fails the build for one). It is
+## a pure function of `run_seed`, so the reset below is the second half of this
+## declaration and lands in the same commit.
+##
+## Capped rather than evicted: `BikePaths.bike_path_at()` CLEARS it whole past
+## `BIKE_MEMO_CAP`, which is safe because the function is pure and a dropped entry
+## rebuilds identically — see that function.
+var _bike_path_cache: Dictionary = {}
+
 ## Reference to the player node to track their position
 var player: Node3D
 
@@ -2266,6 +2292,11 @@ func _drop_seeded_memos() -> void:
 	# ...and the FIELD_ALTITUDE spike's coarse road polyline, which is a window
 	# onto the same centreline. `update_chunks` rebuilds it for the new world.
 	_alt_road_segs = PackedVector4Array()
+	# ...and the BICYCLE PATHS, which are seeded a step further out still: the
+	# origin roll carries `run_seed` directly, and every blocking test the walk
+	# makes reads the road centreline, the biome field or the landmark table above.
+	# A path kept across a re-seed would be a strip laid out for the LAST world.
+	_bike_path_cache = {}
 
 
 func _roll_biome_offset() -> void:
@@ -3121,6 +3152,24 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# body, exactly like a cactus. It also runs BEFORE the coin spawners below,
 	# which is what lets the approach line perch or skip over city stone.
 	spawn_city_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
+
+	# THE BICYCLE PATHS' share of this chunk (epic godot-test1-z2yv). Like the
+	# artifacts and the camps it is a PRIVATE hash stream — its own salt, its own
+	# coordinate primes, its own turn hash — so it consumes nothing from anybody
+	# and the world with `spawn_bike_paths` off is byte-identical.
+	#
+	# IMMEDIATELY AFTER THE CITY, and that position is the whole of its ordering
+	# requirement. After, because a pole is skipped when its site already falls
+	# inside an `obstacles` footprint, and the city's plateau footprints are the
+	# last ones to be appended — running before it would let a post stand through
+	# a Buda hill. Before `_build_block_multimesh` for the usual reason, so a
+	# strip, a dash and a post join the chunk's ONE MultiMesh draw call and ONE
+	# collision body. And before the field bridges, which append no footprint and
+	# only APPEND boxes, so this family's entries stay the ONE contiguous range
+	# that `bike_path_selfcheck` check 1 cuts out of the batch — and so the CUBE
+	# bucket indices the marker records still point at the same boxes when the
+	# MultiMesh is built (see the spawner's docstring for that invariant).
+	BikePaths.spawn_bike_path_in_chunk(self, chunk_pos, mesh_instance, obstacles, block_batch, block_body)
 
 	# ...and the FIELD's bridges, wherever the coin road crosses a river band
 	# (bead godot-test1-06o.2). Same ordering requirement as the six above and for
