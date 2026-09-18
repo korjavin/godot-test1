@@ -311,6 +311,16 @@ const CAR_HORN_VOLUME_DB: float = -9.0
 ## it must yield to — so while any crocodile's is_chasing is set the driver
 ## holds its state and takes no voice. Per-peer cosmetic: the driver reads only
 ## local groups, sends no verb, touches no seed.
+##
+## INDOORS IS DUCKING, NOT A LOSS (bead godot-test1-bqk6): the motif is ROAD
+## music, and inside the HQ it holds the same way it holds under a chase —
+## no voice, no cadence, and the approach latch drops so walking back out
+## restarts the rise from note 0, exactly as walking away with nothing in
+## range does. Why this is necessary: the HQ gate circle stands
+## WAYPOINT_SIDE_STANDOFF (8 m) off the tower's +Z wall while the approach
+## range is 80 m, so the whole interior footprint is permanently
+## "approaching" a circle that cannot be stood on from inside — without the
+## gate the motif would climb to its top note on entry and hold it forever.
 const ROAD_MOTIF_RANGE: float = 80.0      # approach starts inside this many metres
 const ROAD_MOTIF_TICK: float = 0.25       # driver step; music needs nothing faster
 const ROAD_MOTIF_NOTE_EVERY: int = 2      # a motif note every 2nd tick = 0.5 s apart
@@ -667,6 +677,18 @@ func tick_road_music() -> void:
 		return  # the gesture gate — the negative control for every note below
 	if _road_chase_on():
 		return  # DUCKING IS SKIPPING (see ROAD_MOTIF_*): hold state, steal no voice
+	if _road_indoors():
+		# INDOORS IS DUCKING (bead godot-test1-bqk6): the HQ gate circle is 8 m
+		# off the wall inside an 80 m approach range, so without this the motif
+		# would climb on entry and hold its top note forever. Hold state and
+		# steal no voice like a chase — but drop the approach latch, so leaving
+		# restarts the rise from note 0 as walking away with nothing in range
+		# does. Before the arrival read on purpose: a field arrival cannot be
+		# earned from inside a building. A queued phrase stays queued below
+		# the gate and drains again once back outside.
+		_road_approaching = false
+		_road_has_target = false
+		return
 	if not _road_phrase.is_empty():
 		_play_oneshot("coin", ROAD_PHRASE_VOLUME_DB, float(_road_phrase.pop_front()))
 	var player := get_tree().get_first_node_in_group("player")
@@ -754,6 +776,24 @@ func _road_chase_on() -> bool:
 		if "is_chasing" in c and bool(c.get("is_chasing")):
 			return true
 	return false
+
+
+func _road_indoors() -> bool:
+	## Whether the local player is inside the HQ's walls right now — the indoor
+	## ducking read (bead godot-test1-bqk6). The project's one indoor predicate,
+	## reached the way the indoor camera reaches it: group lookup, null-safe,
+	## then the pure static `TowerInterior.inside_walls()` on the room-local
+	## offset — never the group's mere existence, because the shell streams in
+	## at 360 m and stays for the run while the player roams the field outside.
+	## A scene with no tower (or no player) simply reads "outdoors".
+	var player := get_tree().get_first_node_in_group("player")
+	if player == null or not (player is Node3D):
+		return false
+	var room := get_tree().get_first_node_in_group("tower_interior")
+	if room == null or not (room is Node3D):
+		return false
+	return TowerInterior.inside_walls(
+			(player as Node3D).global_position - (room as Node3D).global_position)
 
 
 func _play_resolve() -> void:

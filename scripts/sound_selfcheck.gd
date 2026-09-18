@@ -28,6 +28,9 @@ extends SceneTree
 ##     one-bar phrase on every 25th pickup with multi-pickup room awards
 ##     counting whole (round 2), and reads the distance off the live body even
 ##     with the map hidden (round 2, real minimap node).
+##  6b. INDOORS (bead godot-test1-bqk6): inside the HQ's walls the motif ducks
+##     like under a chase — no voice, no cadence — and leaving restarts the
+##     climb from note 0.
 ##
 
 const SoundManager := preload("res://scripts/sound_manager.gd")
@@ -391,6 +394,33 @@ func _check_road_music() -> void:
 		_expect_voices(sm, expected, "room-award phrase tap %d missing" % i)
 		_expect_tap(players, 16 + i, coin_stream, SoundManager.ROAD_PHRASE_PITCHES[i],
 				SoundManager.ROAD_PHRASE_VOLUME_DB, "room-award phrase tap %d" % i)
+
+	# --- INDOORS (bead godot-test1-bqk6): the HQ gate circle is 8 m off the
+	# wall inside an 80 m approach range, so without the duck the interior
+	# would sing forever. The stub room stands at the origin, where
+	# TowerInterior.inside_walls answers on the offset alone — a plain Node3D,
+	# because the shipped read only needs its global_position, never a method.
+	var room := Node3D.new()
+	room.add_to_group("tower_interior")
+	root.add_child(room)
+	player_stub.position = Vector3.ZERO  # interior-local origin: inside the walls
+	hub.circle_dist = 20.0  # a circle in range — the motif must still stay silent
+	compass.dist = INF  # no landmark target: the pure HQ-gate case, a circle approach
+	toast.visited = false  # stale from the drop-order round above; the leg tests the motif, not a cadence
+	for i in range(8):
+		sm.tick_road_music()
+	_expect_voices(sm, expected, "road motif took a voice inside the HQ — indoors ducks like a chase")
+	# ...and no resolve was banked either: leaving restarts the climb at note 0.
+	player_stub.position = Vector3(500.0, 0.0, 0.0)  # outside the walls
+	sm.tick_road_music()
+	expected += 1
+	_expect_voices(sm, expected, "motif did not resume within a tick of leaving the HQ")
+	_expect_tap(players, 20, coin_stream, SoundManager.ROAD_MOTIF_PITCHES[0],
+			SoundManager.ROAD_MOTIF_VOLUME_DB, "re-emergence motif note")
+	hub.circle_dist = INF
+	compass.dist = INF
+	root.remove_child(room)
+	room.free()
 
 	# --- LEVELS, stated next to the existing cues they sit under. ---
 	if not (SoundManager.ROAD_MOTIF_VOLUME_DB < SoundManager.FOOTSTEP_VOLUME_DB):
