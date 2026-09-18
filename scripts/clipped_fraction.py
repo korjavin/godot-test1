@@ -18,7 +18,8 @@ Compatibility workaround that a later engine could turn into a double decode.
     # teibi's face is on the skinned body: add `body=skinned`
     python3 scripts/clipped_fraction.py windman /tmp/after/windman_fp/17_head_face.png
     python3 scripts/clipped_fraction.py 0.377,0.489,0.498,0.636 frame.png   # own rect
-    # the dragon is judged on `flat`, not on `clipped` — see `measure`
+    # the dragon is judged on `flat`, not on `clipped`, and is selected by COLOUR
+    # and not by a rect — see `measure` and `COLOUR_REGIONS`
     python3 scripts/clipped_fraction.py phoboman_dragon /tmp/after/pho_web/18_body_3m.png
 
 THE RECT IS THE WHOLE TRICK. It is given in FRACTIONS of the frame, so it follows
@@ -53,15 +54,28 @@ FACE_RECTS = {
     "primm": (0.445, 0.533, 0.570, 0.689),
     "teibi": (0.460, 0.498, 0.600, 0.711),
     "phoboman": (0.5525, 0.510, 0.6825, 0.770),
-    # ... and `phoboman_dragon` is not a face at all (bead godot-test1-9k9n.8).
-    # It is the widest all-red square that fits inside the serpent on the web
-    # `18_body_3m` frame, found by scanning for it rather than by eye, so the
-    # rect holds no blue shell and no gold. It is the one thing in this cast that
-    # fails a DIFFERENT way from a face: its luma never approaches white, because
-    # green and blue stay low — what clips is the RED CHANNEL, on its own, which
-    # is the second number `measure()` returns.
-    "phoboman_dragon": (0.528, 0.549, 0.544, 0.578),
 }
+
+# ...AND ONE REGION THAT IS NOT A RECT (bead godot-test1-9k9n.8). A rect works for
+# a face because `17_head_face` frames crown-relative: the same fractions land on
+# the same face in any build at any resolution. `18_body_3m` does not — it frames
+# a whole body from a settle, and MEASURED across three builds of the same hero
+# the figure moved ~10% of frame height between runs, so a rect inscribed in his
+# dragon on one frame sits on his blue belly shell on the next and the number
+# silently becomes a measurement of something else. A colour mask has no framing
+# to drift with: it selects the serpent by BEING the serpent, which is honest
+# here precisely because nothing else in this cast is red.
+#
+# `measure()` takes either, so a key in this table is used instead of a rect.
+def _red_dominant(r, g, b):
+    """The dragon: a red that leads both other channels by a clear margin. 60 is
+    far above the ~25 counts of hue spread the cloth bake puts across one flat
+    colour, and far below the ~200 that separates the serpent from the blue shell
+    it lies on."""
+    return r > 120 and r > g + 60 and r > b + 60
+
+
+COLOUR_REGIONS = {"phoboman_dragon": _red_dominant}
 
 
 def read_rgb(path):
@@ -115,8 +129,14 @@ def read_rgb(path):
     return width, height, nch, out
 
 
-def measure(path, rect, threshold=THRESHOLD):
-    """(clipped fraction, flat-channel fraction, mean luma, pixel count) in `rect`.
+def measure(path, region, threshold=THRESHOLD):
+    """(clipped fraction, flat-channel fraction, mean luma, pixel count) in `region`.
+
+    `region` is a rect as fractions of the frame, or a predicate on (r, g, b) —
+    see `COLOUR_REGIONS` for why the second kind exists. `n` is what the region
+    actually selected, so it is also the sanity check on a mask: a dragon that
+    renders 25,000 pixels in one build and 300 in the next was not measured, it
+    was missed.
 
     TWO NUMBERS BECAUSE THERE ARE TWO FAILURES (the second added by bead
     godot-test1-9k9n.8). `clipped` is the original one and the one a FACE is
@@ -137,13 +157,19 @@ def measure(path, rect, threshold=THRESHOLD):
     51.37% as a saturated colour whose shading had collapsed.
     """
     width, height, nch, px = read_rgb(path)
-    x0, x1 = int(rect[0] * width), int(rect[2] * width)
-    y0, y1 = int(rect[1] * height), int(rect[3] * height)
+    pick = region if callable(region) else None
+    if pick is None:
+        x0, x1 = int(region[0] * width), int(region[2] * width)
+        y0, y1 = int(region[1] * height), int(region[3] * height)
+    else:
+        x0, y0, x1, y1 = 0, 0, width, height
     clipped, flat, total, n = 0, 0, 0.0, 0
     for y in range(y0, y1):
         row = y * width * nch
         for x in range(x0, x1):
             i = row + x * nch
+            if pick is not None and not pick(px[i], px[i + 1], px[i + 2]):
+                continue
             luma = (0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2]) / 255.0
             total += luma
             n += 1
@@ -151,7 +177,7 @@ def measure(path, rect, threshold=THRESHOLD):
                 clipped += 1
             elif max(px[i], px[i + 1], px[i + 2]) >= 255:
                 flat += 1
-    assert n, "empty rect"
+    assert n, "the region selected no pixel at all"
     return clipped / n, flat / n, total / n, n
 
 
@@ -159,15 +185,19 @@ def main():
     if len(sys.argv) < 3:
         raise SystemExit("usage: clipped_fraction.py <hero|x0,y0,x1,y1> <png>...")
     key = sys.argv[1]
-    if key in FACE_RECTS:
-        rect = FACE_RECTS[key]
+    if key in COLOUR_REGIONS:
+        region, label = COLOUR_REGIONS[key], key
+    elif key in FACE_RECTS:
+        region = FACE_RECTS[key]
+        label = ",".join("%.3f" % v for v in region)
     else:
-        rect = tuple(float(v) for v in key.split(","))
-        assert len(rect) == 4, "rect is x0,y0,x1,y1 as fractions of the frame"
+        region = tuple(float(v) for v in key.split(","))
+        assert len(region) == 4, "rect is x0,y0,x1,y1 as fractions of the frame"
+        label = ",".join("%.3f" % v for v in region)
     for path in sys.argv[2:]:
-        clipped, flat, mean, n = measure(path, rect)
-        print("%s  clipped=%.4f flat=%.4f mean=%.4f n=%d rect=%s"
-              % (path, clipped, flat, mean, n, ",".join("%.3f" % v for v in rect)))
+        clipped, flat, mean, n = measure(path, region)
+        print("%s  clipped=%.4f flat=%.4f mean=%.4f n=%d region=%s"
+              % (path, clipped, flat, mean, n, label))
 
 
 if __name__ == "__main__":
