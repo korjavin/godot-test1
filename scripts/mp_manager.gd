@@ -194,6 +194,15 @@ const VERB_BUDGET_PER_SEC: Dictionary = {
 	# per run and 4 is `gate`'s number for `gate`'s reason — a monotone union has
 	# nothing to arbitrate, so the budget is the whole of the defence.
 	"wp": 4,
+	# one HQ storey alarm each (epic godot-test1-buyt): a sighting is a rare event
+	# with a multi-second cooldown on the sending side, so 2/s is already about six
+	# times the honest rate. Tighter than `gate`'s 4 on purpose — `gate` is a
+	# MONOTONE union with nothing to arbitrate, whereas this verb WAKES A GUARD, and
+	# an unbounded one is a button that keeps every guard in the building
+	# permanently off its post. It is anyone-to-everyone, so "only the master sends
+	# this" is not even the half-defence it is elsewhere; the budget and
+	# `MpCodec.decode_alrm()`'s bounds are the whole of it.
+	"alrm": 2,
 }
 
 ## Join gate publish pacing (review rounds 3-4): one id per JOIN_GATE_PACE_SEC,
@@ -4336,6 +4345,8 @@ func _receive_mesh_verb(from_id: String, verb: String, packet: Dictionary) -> vo
 			MpCrocSync.receive_shot(self, from_id, packet)
 		"pad":
 			MpWorldSync.receive_pad(self, from_id, packet)
+		"alrm":
+			MpWorldSync.receive_alrm(self, from_id, packet)
 		"lmk":
 			_receive_lmk(from_id, packet)
 		"cap":

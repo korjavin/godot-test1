@@ -1,7 +1,10 @@
 class_name MpWorldSync
 extends RefCounted
 ## THE MASTER-RELAYED WORLD VERBS FAMILY — herd, weather (wx), flee, and pad,
-## lifted whole out of `mp_manager.gd` (bd godot-test1-ftn.31).
+## lifted whole out of `mp_manager.gd` (bd godot-test1-ftn.31) — plus the HQ
+## alarm (`alrm`, epic godot-test1-buyt), which is the one pair here that is NOT
+## master-arbitrated: `publish_alarm()`'s send site says why, and it is the same
+## coverage argument `MpManager.publish_gate_opened()` already makes.
 ##
 ## THE SPLIT, and why it falls exactly here. `MpManager` keeps the MESH: the
 ## socket, the peers, presence, the verbs' dispatch table, the join snapshot, the
@@ -419,3 +422,86 @@ static func receive_pad(mp: Node, from_id: String, packet: Dictionary) -> void:
 	if not MpCodec.pad_press_in_reach(sender as Vector3, where as Vector3):
 		return
 	apply_guard_lure(mp, int(msg["f"]), int(msg["p"]))
+
+
+static func publish_alarm(mp: Node, floor_index: int, local_xz: Vector2) -> bool:
+	"""
+	A staffer saw somebody: raise that storey's alarm on every screen in the room.
+
+	@param floor_index: the storey, an index into `TowerPlanBoxes.FLOOR_Y`.
+	@param local_xz: where they were seen, in metres LOCAL to the shell's origin.
+	@return: whether it went on the wire. False offline, and false for a point this
+	    machine's own caller got wrong — see the finiteness note below.
+
+	THE CALLER HAS ALREADY RAISED IT HERE. Unlike `request_guard_lure()` this does
+	not apply anything locally: the alarm lives on the interior and the interior is
+	what calls this, so a local pass would be the raise happening twice. This
+	function only moves the fact — `publish_gate_opened()`'s shape, and the arm
+	that replays it (`receive_alrm`) is the one that goes through the building.
+
+	THE CEILINGS, written here because this is the send site:
+
+	ANYONE-TO-EVERYONE AND NOT MASTER-ARBITRATED, unlike `pad`, and the reason is
+	COVERAGE. The master may be two kilometres away in the field with no tower
+	streamed in at all, in which case it has no plan to check the sighting against
+	and no klaxon to sound — a master-arbitrated alarm would be an alarm nobody
+	hears. `pad` tolerates that because a refused lure is a plate that did nothing;
+	a refused ALARM is the feature not existing for the party actually inside the
+	building. What replaces the master's arbitration is that the packet is
+	checkable against constants every machine owns (`MpCodec.decode_alrm()`):
+	there is no world coordinate in it to spoof.
+
+	RELIABLE, because it is an EDGE and not a state: nothing re-sends it.
+
+	NO REPAIR LEG, and this is where it parts company with `gate`. An alarm is NOT
+	MONOTONE — it expires — so there is no field on the `room` packet and no field
+	in the join snapshot, for the same reason the captive set stays out of
+	`BestRunStore`: a union merge of something that comes back down is a lie. A
+	dropped `alrm` is one alarm one peer missed, and it self-heals when that alarm
+	expires anyway. A peer whose ICE is still negotiating simply does not get this
+	one, and there is no lobby relay leg either: an alarm that arrives three
+	seconds late is worse than an alarm that never arrives.
+
+	AN OLDER BUILD drops the verb silently (`_receive_mesh_verb`'s forward-
+	compatibility arm), which is the same no-op as having no tower streamed in.
+	"""
+	if not mp.is_online():
+		return false
+	# OUR OWN BUG STAYS OFF THE WIRE, `announce_boss_shot`'s rule: a non-finite
+	# point would be dropped by every receiver's `decode_alrm` anyway, so sending
+	# it only spends the room's budget on a packet nobody can act on.
+	if not local_xz.is_finite():
+		return false
+	mp._broadcast_reliable(var_to_bytes({
+		"t": "alrm", "f": floor_index, "x": local_xz.x, "z": local_xz.y,
+	}))
+	return true
+
+
+static func receive_alrm(mp: Node, _from_id: String, packet: Dictionary) -> void:
+	"""
+	ANY member's sighting: raise the same storey's alarm here.
+
+	No authority test — see `publish_alarm()` for why this verb is anyone-to-
+	everyone. What makes it safe is `decode_alrm()`, which answers the two
+	questions this machine can answer alone: is that a storey this building has,
+	and is that point inside its envelope. Whole or nothing, like every sibling.
+
+	Applied through group discovery and `has_method`-guarded like every other
+	cross-system call in this file: no tower streamed in on this machine and there
+	is nothing to raise, which is not an error — `apply_guard_lure()`'s LOD idiom.
+	The SAME guard is what lets this verb ship before the alarm itself exists
+	(bead godot-test1-buyt.4 is what adds `raise_alarm`); until it lands this is a
+	validated, rate-limited no-op and deliberately so.
+
+	`false` is the publish flag: a replayed alarm raises the building's own state
+	and must not go back on the wire, or two peers would echo one sighting round
+	the room forever.
+	"""
+	var msg: Dictionary = MpCodec.decode_alrm(packet)
+	if msg.is_empty():
+		return
+	var interior := mp.get_tree().get_first_node_in_group("tower_interior")
+	if interior == null or not interior.has_method("raise_alarm"):
+		return
+	interior.call("raise_alarm", int(msg["f"]), msg["xz"] as Vector2, false)
