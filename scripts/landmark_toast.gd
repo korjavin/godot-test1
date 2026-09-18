@@ -117,6 +117,12 @@ extends Control
 ##     walk with no spatial index — an index over three items costs more than it
 ##     saves.
 ##   * A hidden card is `visible = false`, so it is not laid out and not drawn.
+##
+## THE THIRD ANNOUNCER (bead godot-test1-w0z2): roadside nomad camp GD-SURVEY
+## punchlines. A camp story posts its dry bureaucratic memo on approach (within
+## STORY_MEMO_RADIUS 45 m from the road band) and its punchline report on arrival
+## (within radius + APPROACH_PAD), both through announce(). Yields to pending
+## quizzes, latched per story per run, and cleared in _sync_run().
 
 # ============================================================================
 # CONFIGURATION
@@ -133,6 +139,10 @@ const TICK_INTERVAL: float = 0.25
 ## look like they should — roughly 12-15 m out, i.e. close enough that you are
 ## clearly visiting the thing rather than walking past its postcode.
 const APPROACH_PAD: float = 6.0
+
+## Roadside camp story memo trigger distance (metres). Camps sit 22-45 m from
+## the road centerline, so 45 m allows passing runners on the road to catch the memo.
+const STORY_MEMO_RADIUS: float = 45.0
 
 ## Metres beyond the landmark's radius at which the card RE-ARMS. Strictly greater
 ## than APPROACH_PAD, which makes it a dead-band: standing exactly on the trigger
@@ -374,6 +384,9 @@ var _visited: Dictionary = {}
 ## matters: a monotonically increasing run counter on the terrain.
 var _visited_run_seed: int = 0
 
+## Latched GD-SURVEY camp stories (bead godot-test1-w0z2): story_id -> stage (1 = memo, 2 = report).
+var _stories: Dictionary = {}
+
 ## The three option rows and the buttons inside them, built once in _ready() and
 ## hidden whenever no question is pending. Held as members for the same reason the
 ## labels are: the ask and the reveal write them, nothing outside does.
@@ -610,6 +623,7 @@ func _process(delta: float) -> void:
 	_tick_timer = 0.0
 	_scan()
 	_scan_city()
+	_scan_stories()
 
 
 # ============================================================================
@@ -805,6 +819,54 @@ func _slot_distance(origin: Vector3, slot: Dictionary) -> float:
 	somebody standing directly on top of Buda Castle."""
 	var pos: Vector3 = slot["pos"]
 	return Vector2(origin.x - pos.x, origin.z - pos.z).length()
+
+
+func _scan_stories() -> void:
+	"""
+	Throttled proximity pass over roadside camp stories (bead godot-test1-w0z2):
+	fires memo within STORY_MEMO_RADIUS (45 m) and report on arrival
+	(within radius + APPROACH_PAD) via announce(). Yields to pending quiz,
+	latched per story per run.
+	"""
+	_sync_run()
+	var player := get_tree().get_first_node_in_group("player") as Node3D
+	if player == null:
+		return
+	var markers := get_tree().get_nodes_in_group("camp_story")
+	if markers.is_empty():
+		return
+	var origin := player.global_position
+
+	var nearest_marker: Node3D = null
+	var nearest_distance := INF
+	for m in markers:
+		var node := m as Node3D
+		if node == null or not is_instance_valid(node):
+			continue
+		var d := Vector2(origin.x - node.global_position.x, origin.z - node.global_position.z).length()
+		if d < nearest_distance:
+			nearest_distance = d
+			nearest_marker = node
+
+	if nearest_marker == null:
+		return
+
+	var story: int = int(nearest_marker.get_meta("story", -1))
+	if story < 0 or story >= TerrainFeatures.STORIES.size():
+		return
+	var radius: float = float(nearest_marker.get_meta("radius", TerrainFeatures.CAMP_RADIUS))
+	var stage: int = int(_stories.get(story, 0))
+
+	if nearest_distance <= radius + APPROACH_PAD:
+		if stage < 2:
+			var entry: Dictionary = TerrainFeatures.STORIES[story]
+			if announce(TerrainFeatures.STORY_TITLE_REPORT, entry.report):
+				_stories[story] = 2
+	elif nearest_distance <= STORY_MEMO_RADIUS:
+		if stage < 1:
+			var entry: Dictionary = TerrainFeatures.STORIES[story]
+			if announce(TerrainFeatures.STORY_TITLE_MEMO, entry.memo):
+				_stories[story] = 1
 
 
 func _arrive_city(index: int) -> void:
@@ -1449,6 +1511,7 @@ func _sync_run() -> int:
 	if run_seed != _visited_run_seed:
 		_visited_run_seed = run_seed
 		_visited.clear()
+		_stories.clear()
 		_burst_remaining = 0
 		# The city approach latch re-arms with the field one (`_cancel_quiz` below
 		# clears `_active`): the first Budapest landmark of the NEW run must not be
