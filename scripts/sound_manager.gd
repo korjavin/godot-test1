@@ -292,6 +292,17 @@ const CAR_HORN_NOTE_DURATION: float = 0.13
 const CAR_HORN_GAP: float = 0.07
 const CAR_HORN_VOLUME_DB: float = -9.0
 
+# --- HQ alarm klaxon: a two-tone alternating corporate siren. ---
+## Pulsed by the interior manager while a storey's alarm timer is above zero
+## (bead godot-test1-buyt.1). Square-wave so it cuts through the road music and
+## reads as an industrial/corporate alarm rather than a chime. A one-shot the
+## caller repeats, not a loop player.
+const KLAXON_FREQ_HIGH: float = 800.0
+const KLAXON_FREQ_LOW: float = 600.0
+const KLAXON_FREQS: Array[float] = [800.0, 600.0, 800.0, 600.0]
+const KLAXON_TONE_DURATION: float = 0.15  # 4 tones * 0.15 s = 0.60 s total
+const KLAXON_VOLUME_DB: float = -8.0
+
 # --- Road music: an approach motif that resolves at a landmark or a waypoint circle (bead godot-test1-bv0f). ---
 ## A feel layer, not a cue: while the landmark compass target (bead uj0u) or a
 ## waypoint circle is within ~80 m, the driver below sings a slow rising line —
@@ -412,6 +423,7 @@ func _ready() -> void:
 	_streams["crunch"] = _build_wav(_synth_crunch())
 	_streams["hunter_ping"] = _build_wav(_synth_hunter_ping())
 	_streams["car_horn"] = _build_wav(_synth_car_horn())
+	_streams["klaxon"] = _build_wav(_synth_klaxon())
 
 	# Build the one-shot player pool.
 	for i in range(ONESHOT_PLAYER_COUNT):
@@ -633,6 +645,15 @@ func play_car_horn(distance: float = 0.0) -> void:
 	if distance > 5.0:
 		vol -= clampf((distance - 5.0) * 0.18, 0.0, 12.0)
 	_play_oneshot("car_horn", vol)
+
+
+func play_klaxon() -> void:
+	## HQ alarm klaxon — a two-tone alternating corporate siren pulsed while an
+	## interior storey's alarm is active (bead godot-test1-buyt.1).
+	##
+	## Routing through _play_oneshot is what keeps the browser-gesture gate
+	## honoured: there is no path here that bypasses _unlocked.
+	_play_oneshot("klaxon", KLAXON_VOLUME_DB)
 
 
 func play_projectile(style: String) -> void:
@@ -1024,6 +1045,27 @@ func _synth_car_horn() -> PackedFloat32Array:
 			var progress: float = float(i) / note_frames
 			var envelope: float = exp(-t * 28.0) * (1.0 - progress)
 			samples.append(signf(sin(TAU * freq * t)) * envelope * 0.55)
+	return samples
+
+
+func _synth_klaxon() -> PackedFloat32Array:
+	## A two-tone alternating corporate siren (~0.6 s) for the HQ alarm.
+	## Square wave so it cuts through the road music and reads as a mechanical /
+	## industrial alarm rather than a musical chime. Each tone carries a short
+	## envelope taper so transitions and endings never click.
+	var samples := PackedFloat32Array()
+	var note_frames: int = int(KLAXON_TONE_DURATION * MIX_RATE)
+	var taper_frames: int = int(0.005 * MIX_RATE)  # 5 ms anti-click taper
+	for freq in KLAXON_FREQS:
+		for i in range(note_frames):
+			var t: float = float(i) / MIX_RATE
+			var env: float = 1.0
+			if i < taper_frames:
+				env = float(i) / taper_frames
+			elif i > note_frames - taper_frames:
+				env = float(note_frames - i) / taper_frames
+			var square: float = 1.0 if sin(TAU * freq * t) >= 0.0 else -1.0
+			samples.append(square * env * 0.55)
 	return samples
 
 

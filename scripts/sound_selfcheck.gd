@@ -31,6 +31,9 @@ extends SceneTree
 ##  6b. INDOORS (bead godot-test1-bqk6): inside the HQ's walls the motif ducks
 ##     like under a chase — no voice, no cadence — and leaving restarts the
 ##     climb from note 0.
+##  7. THE HQ ALARM KLAXON (bead godot-test1-buyt.1): a two-tone alternating siren,
+##     gated behind unlock_audio() like every other cue, non-looping one-shot in
+##     the pool, samples finite and bounded in [-1, 1], distinct alternating pitches.
 ##
 
 const SoundManager := preload("res://scripts/sound_manager.gd")
@@ -81,6 +84,7 @@ func _run() -> void:
 	_check_sound_unlock_and_loops()
 	_check_waypoint_cues()
 	_check_road_music()
+	_check_klaxon_cue()
 	await _finish()
 
 
@@ -493,3 +497,91 @@ func _expect_tap(players: Array, voice_total: int, stream: AudioStreamWAV,
 		_fail("%s pitched %.4f, expected %.4f" % [what, voice.pitch_scale, pitch])
 	if not is_equal_approx(voice.volume_db, volume_db):
 		_fail("%s at %.1f dB, expected %.1f" % [what, voice.volume_db, volume_db])
+
+
+func _check_klaxon_cue() -> void:
+	## Check 7 — the HQ alarm klaxon cue (bead godot-test1-buyt.1).
+	##
+	## Verifies:
+	## 1. _synth_klaxon() produces a non-empty, finite PackedFloat32Array in [-1, 1],
+	##    ~0.6 s duration, with two alternating pitches.
+	## 2. Gated behind unlock_audio() like every other play path.
+	## 3. play_klaxon() takes a pool voice when unlocked, playing the "klaxon" WAV
+	##    buffer at KLAXON_VOLUME_DB as a non-looping one-shot.
+	var sm := SoundManager.new()
+	root.add_child(sm)
+
+	# --- SYNTHESIS CONTRACT ---
+	var samples: PackedFloat32Array = sm.call("_synth_klaxon")
+	if samples.is_empty():
+		_fail("_synth_klaxon() returned an empty sample array")
+	var duration: float = float(samples.size()) / float(SoundManager.MIX_RATE)
+	if absf(duration - 0.6) > 0.05:
+		_fail("_synth_klaxon() duration is %.3f s, expected ~0.6 s" % duration)
+
+	var min_val: float = 0.0
+	var max_val: float = 0.0
+	var has_non_zero: bool = false
+	for s in samples:
+		if is_nan(s) or is_inf(s):
+			_fail("_synth_klaxon() returned non-finite samples (NaN or Inf)")
+			break
+		if s < min_val:
+			min_val = s
+		if s > max_val:
+			max_val = s
+		if absf(s) > 0.01:
+			has_non_zero = true
+
+	if not has_non_zero:
+		_fail("_synth_klaxon() returned silence (all samples near zero)")
+	if min_val < -1.0 or max_val > 1.0:
+		_fail("_synth_klaxon() samples out of [-1, 1] range: [%.3f, %.3f]" % [min_val, max_val])
+
+	# Prove two distinct alternating pitches (measuring zero-crossings in tone 0 vs tone 1).
+	var note_frames: int = samples.size() / SoundManager.KLAXON_FREQS.size()
+	var zc0: int = _count_zero_crossings(samples, 0, note_frames)
+	var zc1: int = _count_zero_crossings(samples, note_frames, note_frames * 2)
+	if zc0 == zc1 or zc0 == 0 or zc1 == 0:
+		_fail("_synth_klaxon() does not produce two distinct pitches (zero crossings tone 0: %d, tone 1: %d)" \
+				% [zc0, zc1])
+
+	# --- THE GATE: locked audio must consume no voice ---
+	sm.play_klaxon()
+	if int(sm.get("_next_player")) != 0:
+		_fail("play_klaxon() took a pool voice before unlock_audio() — browser gesture gate bypassed")
+
+	sm.unlock_audio()
+
+	# --- PLAYBACK: unlocked audio takes one pool player and plays the klaxon WAV ---
+	var streams: Dictionary = sm.get("_streams")
+	var klaxon_stream: AudioStreamWAV = streams.get("klaxon")
+	if klaxon_stream == null:
+		_fail("klaxon stream not found in _streams")
+	elif klaxon_stream.data.is_empty():
+		_fail("klaxon stream data is empty")
+	elif klaxon_stream.loop_mode != AudioStreamWAV.LOOP_DISABLED:
+		_fail("klaxon stream must not loop — repeat is the caller's")
+
+	var players: Array = sm.get("_players")
+	sm.play_klaxon()
+	if int(sm.get("_next_player")) != 1:
+		_fail("play_klaxon() took %d pool voices, expected 1" % int(sm.get("_next_player")))
+	var voice: AudioStreamPlayer = players[0]
+	if voice.stream != klaxon_stream:
+		_fail("play_klaxon() voice stream is not the klaxon stream")
+	if not is_equal_approx(voice.volume_db, SoundManager.KLAXON_VOLUME_DB):
+		_fail("play_klaxon() voice volume is %.1f dB, expected %.1f dB" \
+				% [voice.volume_db, SoundManager.KLAXON_VOLUME_DB])
+
+	root.remove_child(sm)
+	sm.free()
+	Sentinel.done("klaxon_cue")
+
+
+func _count_zero_crossings(samples: PackedFloat32Array, start: int, end: int) -> int:
+	var crossings: int = 0
+	for i in range(start + 1, mini(end, samples.size())):
+		if (samples[i - 1] < 0.0 and samples[i] > 0.0) or (samples[i - 1] > 0.0 and samples[i] < 0.0):
+			crossings += 1
+	return crossings
