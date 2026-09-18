@@ -331,10 +331,8 @@ func set_clock(seconds: float, land: float,
 	THE SEAM BEAD `5u3.9` ADDED, and the only one it added: the caller hands over
 	the three things a natural gait needs that a swing ANGLE cannot carry.
 
-	It is reached through `has_method("set_clock")` — CLAUDE.md's discovery rule —
-	which is exactly what keeps `hero_rig_limbs.gd` the byte-identical file it has
-	to stay: the limb rig does not answer this, so nobody calls it on the limb rig
-	and its `locomotion()` signature never grows an argument.
+	It is reached directly — one driver now, and the `has_method` guard on the
+	caller retired with the limb rig at bead godot-test1-9k9n.3.
 
 	@param seconds:  the caller's animation clock. Drives the breath and the
 	                 standing weight shift, and nothing else — both are slow
@@ -551,16 +549,20 @@ func reset_roll() -> void:
 
 func measure() -> Dictionary:
 	"""
-	The same dictionary the limb driver answers, read back OFF THE SKELETON —
-	never off a cached copy of what was written, or a deleted write would still
-	measure. See `hero_rig_limbs.measure()` for the contract; the four limb keys
-	are the shoulder and hip bones, which are what the limb rig's four nodes are.
+	The pose read back OFF THE SKELETON — never off a cached copy of what was
+	written, or a deleted write would still measure. THE CONTRACT, now stated
+	here since this is the only driver left (bead godot-test1-9k9n.3 retired the
+	limb rig whose `measure()` this used to mirror): `left_arm_x`,
+	`right_arm_x`, `left_leg_x`, `right_leg_x` are the shoulder and hip bones'
+	X rotations off rest in radians, the four `*_z` keys their rolls, `head_z`
+	the head bone's bobble (absent when the rig has no HEAD), and `body_x` /
+	`body_y` / `body_z` the caller's `Body`-node writes echoed back.
 
 	IT DELIBERATELY DOES NOT GROW with bead `5u3.9`'s seven new bones. Its job is
-	to mean the SAME THING on either rig kind — that is what lets one set of
-	bounds hold both, and what lets check 8g compare the two drivers pose for
-	pose. The new joints are measured where they actually are, in skeleton space,
-	by `gait_selfcheck._measure_skinned_joints()`.
+	to stay the one set of numbers every bound in `gait_selfcheck` holds — and
+	what lets check 8's driver script pin the clock-less `slump()` against the
+	script's own arguments. The new joints are measured where they actually are,
+	in skeleton space, by `gait_selfcheck._measure_skinned_joints()`.
 	"""
 	var body_rest: Vector3 = _rest.get("body", Vector3.ZERO)
 	var out: Dictionary = {

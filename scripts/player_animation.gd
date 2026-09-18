@@ -23,18 +23,16 @@ extends RefCounted
 ##
 ## TWO RIG KINDS, ONE POSE (bd godot-test1-5u3.2). There is still no
 ## `AnimationPlayer` anywhere in this game — every pose below is written by
-## hand — but the thing written is no longer always a limb node. Each character
-## scene brings a `Body`, and `setup_animation_references()` asks
-## `hero_rig.gd` which driver it holds: a scene carrying a `Skeleton3D` (found
-## by TYPE) is posed on BONES by `hero_rig_skeleton.gd`, and anything else keeps
-## the `LeftArm` / `RightArm` / `LeftLeg` / `RightLeg` (plus OPTIONAL `Head`)
-## exact-name contract byte-for-byte in `hero_rig_limbs.gd`. **The scene is the
-## flag** — no export, no per-hero table entry — which is what lets the four
-## heroes migrate one at a time with the game playable after every one. A scene
-## that brings neither binds no rig and stays frozen, exactly as a misspelled
-## limb always did.
+## hand onto BONES. Each character scene brings a `Body`, and
+## `setup_animation_references()` asks `hero_rig.gd` for its driver: a scene
+## carrying a `Skeleton3D` (found by TYPE) is posed by `hero_rig_skeleton.gd`.
+## **The scene is the flag** — no export, no per-hero table entry — which is
+## what let the four heroes migrate one at a time with the game playable after
+## every one (the last limb hero migrated at bead godot-test1-9k9n.2; the limb
+## driver retired in 9k9n.3). A scene that brings no skeleton binds no rig and
+## stays frozen.
 ##
-## WHAT STAYS HERE, for both kinds: the clock (`animation_time`), the two sines,
+## WHAT STAYS HERE: the clock (`animation_time`), the two sines,
 ## the footstep trigger, and every write to the `Body` NODE — the bob, the lean,
 ## the sway and the landing squash. The driver writes limb pose only, so the
 ## local hero and `remote_avatar.gd`'s mirror stay the same pure function of
@@ -208,14 +206,13 @@ var animation_time: float = 0.0
 ## Animation speed multiplier for walking/running
 var animation_speed: float = 1.0
 
-## THIS CHARACTER'S POSE DRIVER — a `hero_rig_limbs.gd` or a
-## `hero_rig_skeleton.gd`, picked by `HeroRig.for_body()` on every swap. NULL
-## means "nothing here can be posed": the model draws, stands frozen and errors
-## nowhere, which is what the exact-name contract has always done with a scene
-## that spells a limb differently. Every pose function below returns early on it.
+## THIS CHARACTER'S POSE DRIVER — a `hero_rig_skeleton.gd`, bound by
+## `HeroRig.for_body()` on every swap. NULL means "nothing here can be posed":
+## the model draws, stands frozen and errors nowhere. Every pose function below
+## returns early on it.
 var rig: RefCounted = null
 
-## The `Body` node — the one node BOTH rig kinds have, and the one this file
+## The `Body` node — the one node above the skeleton, and the one this file
 ## writes itself: the bob, the lean, the sway and the landing squash. It is
 ## model-local, so Teibi's resize scales all four for free.
 var character_body: Node3D = null
@@ -276,19 +273,18 @@ var _last_sidestep_sine_sign: int = 0
 
 static func capture_rest_pose(instance: Node3D) -> Dictionary:
 	"""
-	Record a character's limb rotations while it sits in its untouched rest pose.
-	Keys match those used by the animation functions (left_arm, right_leg, ...).
+	Record the character's `Body` rotation while it sits in its untouched rest
+	pose — the one rest value the callers write themselves (bob, lean, sway),
+	so a swap mid-stride never leaves the tilt baked into the next character.
+	The limbs need no entry: every hero is a skeleton now, and its rest pose is
+	the one baked into its bones.
 
 	STATIC since bd godot-test1-5u3.2, for the reason `gait_for()` is: this reads
 	nothing but the instance, and `remote_avatar.gd` needs exactly this table for
 	the rig it binds. One rest-capture, not two copies that can drift.
 
-	A SKINNED hero returns just `body` — it has no limb nodes, and its rest pose
-	is the one baked into its skeleton. `HeroRig.for_body()` hands this table to
-	the driver either way; the skinned one reads only that `body` key.
-
 	@param instance: A freshly-instanced character model
-	@return Dictionary of limb name -> rest rotation
+	@return Dictionary with the one `body` key every caller writes itself
 	"""
 	var pose: Dictionary = {}
 	var body := instance.get_node_or_null("Body")
@@ -296,18 +292,6 @@ static func capture_rest_pose(instance: Node3D) -> Dictionary:
 		return pose
 
 	pose["body"] = body.rotation
-	# `head` rides the same table as the four limbs because the gait bobbles it:
-	# every axis an animation writes has to have a rest value here, or a swap
-	# mid-stride leaves the tilt baked into the next character.
-	var limb_keys := {
-		"left_arm": "LeftArm", "right_arm": "RightArm",
-		"left_leg": "LeftLeg", "right_leg": "RightLeg",
-		"head": "Head",
-	}
-	for key in limb_keys:
-		var limb := body.get_node_or_null(limb_keys[key])
-		if limb:
-			pose[key] = limb.rotation
 	return pose
 
 func restore_rest_pose(index: int) -> void:
@@ -578,15 +562,15 @@ func _hand_over_clock(arm_rate: float = 0.0, leg_rate: float = 0.0) -> void:
 	of the two swings — `cos(φ)` where the swing is `A·sin(φ)`, scaled by the very
 	same amplitude, so the driver never repeats this function's arithmetic.
 
-	GUARDED BY `has_method`, which is CLAUDE.md's discovery rule and, here, the
-	thing that keeps `hero_rig_limbs.gd` byte-identical: only the skinned driver
-	answers `set_clock`, so the limb rig's `locomotion()` signature never grows an
-	argument and every hero still on nodes animates exactly as it did. Every pose
-	path calls this, not just the walk, because each of them is reachable on its
-	own (`style_shots.gd` poses through `animate_idle()` and `animate_jumping()`
-	directly, and `gait_selfcheck` through `animate_walking()`).
+	DIRECT, not guarded: there is one driver now and it always answers
+	`set_clock` (the `has_method` guard retired with the limb driver at bead
+	godot-test1-9k9n.3 — it existed only so the limb rig never saw this call).
+	Every pose path calls this, not just the walk, because each of them is
+	reachable on its own (`style_shots.gd` poses through `animate_idle()` and
+	`animate_jumping()` directly, and `gait_selfcheck` through
+	`animate_walking()`).
 	"""
-	if rig != null and rig.has_method("set_clock"):
+	if rig != null:
 		rig.set_clock(animation_time, land_squash_amount(), arm_rate, leg_rate)
 
 

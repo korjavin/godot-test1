@@ -5,15 +5,17 @@
 ; `scripts/build_hero.py --hero phoboman` (the source of record;
 ; `assets/models/characters/PROVENANCE.md` carries the row). The ten generated
 ; parts this scene used to instance are referenced nowhere here any more; the
-; files themselves, and the generator that wrote them, retire in child 9k9n.3.
+; files themselves, and the generator that wrote them, retired in bead
+; godot-test1-9k9n.3.
 ;
 ; THE SCENE IS THE FLAG (`scenes/characters/teibi.tscn` said it first): the
 ; Skeleton3D under `Body` is what makes `hero_rig.gd` hand him to
-; `hero_rig_skeleton.gd` instead of `hero_rig_limbs.gd`, which is why this
-; migration is a data change and `player_controller.gd`, `remote_avatar.gd`
-; and `player_abilities.gd` change by zero lines (`player_animation.gd`'s
-; GAITS row is retuned for human legs, the waddle kept — that is the one
-; exception, and it is numbers, not code).
+; `hero_rig_skeleton.gd` — the one pose driver left since bead
+; godot-test1-9k9n.3 retired the limb rig — which is why this migration is a
+; data change and `player_controller.gd`, `remote_avatar.gd` and
+; `player_abilities.gd` change by zero lines (`player_animation.gd`'s GAITS row
+; is retuned for human legs, the waddle kept — that is the one exception, and
+; it is numbers, not code).
 ;
 ; THE UID IS LOAD-BEARING and stays `uid://c8phoboman001`:
 ; `player_controller.gd`'s CHARACTERS points at the PATH, but a changed uid

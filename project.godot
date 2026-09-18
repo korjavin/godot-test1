@@ -60,7 +60,7 @@ locale/fallback="en"
 ; imported: Godot's Blender importer shells out to a Blender binary the CI runner
 ; does not have and the headless --import hangs on the scan (PR #344). The .glb is
 ; the artifact of record; a .blend is opened in Blender by hand (scripts/build_hero.py
-; writes the skinned ones, scripts/blender_hero.py reassembles Phoboman's part tree).
+; writes the skinned ones — the part-tree lane retired at bead godot-test1-9k9n.3).
 import/blender/enabled=false
 
 [input]
