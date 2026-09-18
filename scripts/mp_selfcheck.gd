@@ -207,10 +207,11 @@ func _check_avatar_isolation() -> String:
 
 
 ## How many of the four playable characters are SKINNED, i.e. built by
-## `scripts/build_hero.py` and therefore carrying a garment material. Teibi,
-## Windman and Primm; Phoboman keeps his generated part tree (owner ruling) and
-## is the negative control in the check below — he must carry no cloth at all.
-const SKINNED_HEROES := 3
+## `scripts/build_hero.py` and therefore carrying a garment material. All four
+## since bead godot-test1-9k9n.2 wired Phoboman to his mesh (owner ruling
+## 2026-09-18, epic `9k9n`) — the check below walks every one of them, and the
+## old "Phoboman carries no cloth" negative control retired with his part tree.
+const SKINNED_HEROES := 4
 
 
 func _check_avatar_cloth() -> String:

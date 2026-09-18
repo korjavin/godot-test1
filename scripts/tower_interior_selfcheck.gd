@@ -4112,7 +4112,8 @@ func _storey_of(mesh: MeshInstance3D) -> int:
 
 
 # ============================================================================
-# CHECK 22 — the jailed slump reaches every rig kind (bd godot-test1-6su)
+# CHECK 22 — the jailed slump reaches every skeleton (bd godot-test1-6su;
+# re-aimed at bead godot-test1-9k9n.2, when the last limb hero migrated)
 # ============================================================================
 
 ## Radians of slop on a captive's measured pose. Wide enough for the float noise
@@ -4123,16 +4124,19 @@ const SLUMP_EPS: float = 1e-3
 
 ## Which driver each hero in the probe below must bind, and therefore what this
 ## check is actually comparing. It is asserted rather than assumed: the day a
-## named scene changes rig kind this stops covering two of them, and it must say
-## so instead of going quiet while measuring the same driver twice. That is
+## named scene changes rig kind this stops covering what it covered, and it must
+## say so instead of going quiet while measuring the same thing twice. That is
 ## exactly what happened at bead godot-test1-5u3.5, when `windman_updated.tscn`
-## grew a `Skeleton3D` and this row moved from "limbs" to "skinned". The LIMB half
-## is PHOBOMAN and not simply the next hero down the epic's list, because his
-## sphere body stays on the limb rig FOR GOOD by owner ruling (epic 5u3 NOTES,
-## "yes, sphere") while Teibi, Windman and Primm all leave it — so this pair stops
-## needing an edit per migration. Windman is the skinned half because he is the
-## DEFAULT hero and therefore the captive most players will ever look at.
-const SLUMP_RIGS: Dictionary = {"windman": "skinned", "phoboman": "limbs"}
+## grew a `Skeleton3D` and his row moved from "limbs" to "skinned" — and again
+## at bead godot-test1-9k9n.2, when Phoboman, the last hero on limbs, bound a
+## Skeleton3D and the "limbs" half below fired exactly as this comment designed
+## it to (owner ruling 2026-09-18, epic `9k9n`, supersedes the 5u3 "FOR GOOD").
+## The pair is now TWO SKELETONS rather than two drivers: Windman's and
+## Phoboman's are different bodies on different rest bases, so the authored
+## numbers reaching both is still a comparison with teeth — and the limb driver
+## retires in child 9k9n.3. Windman stays because he is the DEFAULT hero and
+## therefore the captive most players will ever look at.
+const SLUMP_RIGS: Dictionary = {"windman": "skinned", "phoboman": "skinned"}
 
 
 func _check_the_slump_reaches_every_rig() -> void:
@@ -4145,16 +4149,21 @@ func _check_the_slump_reaches_every_rig() -> void:
 	null, the loop skipped in silence, and he stood in his cell to attention
 	wearing the body tilt alone. It DEGRADED rather than errored, which is the
 	limb contract working exactly as designed and is why nothing in the suite
-	noticed; beads 5u3.5/.6 migrate Windman and Primm behind him, so the authored
-	pose was on its way out for every captive but Phoboman.
+	noticed; beads 5u3.5/.6 migrated Windman and Primm behind him, and bead
+	godot-test1-9k9n.2 migrates Phoboman, the last captive on limbs — which is
+	why this check is now two skeletons and not two drivers.
 
-	BOTH RIG KINDS, ONE ASSERTION EACH. Jail the hero, then read his pose back
-	through `HeroRig.measure()` — the one reading that means the same thing on
-	five nodes and on a rolled MakeHuman skeleton — bound against a rest table
-	captured off a FRESH instance of the same scene. Reading off an independently
-	captured rest is what stops "the model was never posed at all" from measuring
-	as zero and passing: `measure()` is off-rest, so a rig bound to the posed body
-	with the posed body's own rotations as its rest answers zero for everything.
+	BOTH SKELETONS, ONE ASSERTION EACH — since bead godot-test1-9k9n.2 no hero
+	is left on limbs, so "both rig kinds" retired with Phoboman's migration and
+	this proves the authored numbers reach two DIFFERENT skeletons instead
+	(Windman's proportions and rest bases are not Phoboman's). Jail the hero,
+	then read his pose back through `HeroRig.measure()` — the one reading that
+	means the same thing on five nodes and on a rolled MakeHuman skeleton —
+	bound against a rest table captured off a FRESH instance of the same scene.
+	Reading off an independently captured rest is what stops "the model was never
+	posed at all" from measuring as zero and passing: `measure()` is off-rest,
+	so a rig bound to the posed body with the posed body's own rotations as its
+	rest answers zero for everything.
 
 	The three numbers come from `TowerInterior`'s own consts and are never
 	restated here, so a retuned slump moves this check with it rather than
@@ -4204,8 +4213,9 @@ func _check_the_slump_reaches_every_rig() -> void:
 			_fail("no rig binds %s's cell body — a jailed hero cannot be posed at all" % hero)
 			continue
 		if String(rig.kind()) != String(SLUMP_RIGS[hero]):
-			_fail(("%s's cell body bound the '%s' rig, expected '%s' — this check no "
-				+ "longer covers both drivers") % [hero, rig.kind(), SLUMP_RIGS[hero]])
+			_fail(("%s's cell body bound the '%s' rig, expected '%s' — the jailed "
+				+ "slump must reach this hero through the rig his scene binds")
+				% [hero, rig.kind(), SLUMP_RIGS[hero]])
 		var pose: Dictionary = rig.measure()
 		for key: String in want:
 			if not pose.has(key):
