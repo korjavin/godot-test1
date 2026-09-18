@@ -214,7 +214,16 @@ from hero_skin import graded  # noqa: E402
 OUT_ROOT = os.path.join(REPO, "assets", "models", "characters")
 MANIFEST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hero_manifest.json")
 TEXTURE_BYTES_MAX = 512 * 512 * 4     # owner ruling: <= 512^2 albedo, no normal map
-ARMS_DOWN_MAX_DEG = 12.0              # how far off vertical a shipped rest may stand
+# HOW FAR OFF VERTICAL A SHIPPED REST MAY STAND. The thing this cap is here to
+# catch is MakeHuman's A-POSE surviving to the .glb (trap 5 — measured 41.3
+# degrees), which would start both animation columns from the wrong arms; it
+# was 12 while every hero in the cast was a person with a person's shoulders.
+# Bead godot-test1-9k9n.7 raised it to 34 for Phoboman, whose row sets its own
+# `arms_down_deg`: his belly is 0.55 of his standing height and arms hanging at
+# the cast's 5 degrees hang INSIDE it — a fat man's arms rest out over his own
+# stomach, and the retired sphere build had them straight out sideways. 34 is
+# still 7 degrees clear of the A-pose the cap exists to refuse.
+ARMS_DOWN_MAX_DEG = 34.0
 
 RIG = "game_engine"
 RIG_BONES = 53               # what MPFB2 ships; asserted the moment the rig lands
@@ -1205,15 +1214,20 @@ HEROES = {
             {"bones": SHAFT_BONES, "top": ("knee", 0.06), "bottom": ("ground", 0.0),
              "cut": GARMENT_BOOT, "key": "shoes"},
         ),
-        # THREE CREASES ACROSS THE BELLY, because a 63 cm garment shell with no
-        # joint anywhere in it gets none from the cast's own list — see
-        # `_fold_bands`. Three separate gathers 7 cm apart, each `CREASE_BAND`'s
-        # own 5.6 cm tall, so 1.4 cm of flat shell is left between them: what a
-        # loose blue shell over a round stomach does, and what "the build is round
-        # and loose" asks for. NOT decoration — measured, the cast's joint list
-        # alone folds him +10.2%, which is UNDER `FOLD_TRIS_MIN` and FAILS
-        # `fold_garments`'s budget assert; these three take him to +18.1%.
-        "creases": (("pelvis", 0.16), ("pelvis", 0.23), ("pelvis", 0.30)),
+        # FIVE CREASES ACROSS THE BELLY, because a garment shell with no joint
+        # anywhere in it gets none from the cast's own list — see `_fold_bands`.
+        # Separate gathers 7 cm apart, each `CREASE_BAND`'s own 5.6 cm tall, so
+        # 1.4 cm of flat shell is left between them: what a loose blue shell over
+        # a round stomach does, and what "the build is round and loose" asks for.
+        # NOT decoration — measured, the cast's joint list alone folds him +10.2%,
+        # which is UNDER `FOLD_TRIS_MIN` and FAILS `fold_garments`'s budget
+        # assert. THREE of them took a 63 cm shell to +18.1%; bead
+        # godot-test1-9k9n.7 re-proportioned the body under it and the same three
+        # measured +15.0% on the 87 cm shell that came out, i.e. back on the floor
+        # — a taller shell is more garment for the same fold to be a fraction of.
+        # Two more at the same 7 cm spacing take it to +20.3%, mid-budget.
+        "creases": (("pelvis", 0.16), ("pelvis", 0.23), ("pelvis", 0.30),
+                    ("pelvis", 0.37), ("pelvis", 0.44)),
         # THE HELMET AND THE DRAGON, the two accessories this row brings — see
         # `build_helmet` and `build_dragon`. Both are geometry joined into the mesh
         # after the paint, the helmet rigid on `head` (so the gait's 7-degree head
@@ -1254,6 +1268,59 @@ HEROES = {
         # (The `abs(height - row["height"])` assert measures the human BEFORE the
         # joins, so the helmet never fights it.)
         "height": 1.70,
+        # THE SILHOUETTE, PAST MAKEHUMAN'S RANGE (bead godot-test1-9k9n.7, owner
+        # ruling 2026-09-18: "more humanoid, yes, but NOT a human. Legs much
+        # shorter, arms much shorter, the belly huge. Remember how he was made").
+        # See `squash_proportions` for what the three numbers do and why the
+        # sliders above could not do it. THE STARTING POINT IS ARITHMETIC AND THE
+        # LANDING IS MEASURED: the #420 build measured leg 0.403 h, arm 0.405 h
+        # and belly 0.292 h on a 1.7992 m figure, each factor was first solved
+        # for its own target through `reframe`'s renormalisation, and then each
+        # was corrected against one rebuild, because `reframe`'s scale, the
+        # helmet's own scale (it grows off the skull, so it grows with them) and
+        # where the skin weights actually put the widest vertex are all
+        # downstream of the numbers. Two rounds, the same shape of loop the
+        # helmet palette needed in bead godot-test1-9k9n.5.
+        #
+        #   leg 0.47    landed first try: 0.4712 m of leg in a 1.8191 m figure,
+        #               0.259 h against the bead's 0.25.
+        #   arm 0.68    0.57 measured 0.253 h — the solve was against the arm's
+        #               SKIN span and the assert reads the BONE chain, which the
+        #               A-pose hides a fist's worth of. Scaled by the miss:
+        #               0.5192 m, 0.285 h against 0.30.
+        #   belly       +50% measured 0.502 h and +55% 0.515, i.e. 0.49 m of
+        #               width per unit of amplitude and not the 1:1 the first
+        #               solve assumed — a weight-blended inflate only reaches its
+        #               full amplitude where one bone owns the skin outright.
+        #               0.68 at `spine_01` reads 1.004 m, 0.552 h. The amplitudes
+        #               are per BONE, so the WEIGHTS are the profile: widest at
+        #               `pelvis`/`spine_01`, half that at the chest, a token at
+        #               the shoulders. `clavicle_*` and the arm chain carry a
+        #               small one too — not to fatten them but to move them OUT,
+        #               because an arm on a ball starts at the ball's flank; it
+        #               is the retired build's own shoulders at x +-0.46 on a
+        #               0.52 m sphere.
+        "proportions": {
+            "arm": 0.68,
+            "leg": 0.47,
+            "belly": {"pelvis": 0.61, "spine_01": 0.68, "spine_02": 0.38,
+                      "spine_03": 0.14, "clavicle_l": 0.22, "clavicle_r": 0.22,
+                      "upperarm_l": 0.20, "upperarm_r": 0.20,
+                      "lowerarm_l": 0.20, "lowerarm_r": 0.20,
+                      "hand_l": 0.20, "hand_r": 0.20},
+        },
+        # ... AND WHAT THAT HAS TO MEASURE, on the shipped figure (`silhouette`).
+        # The owner's three numbers, verbatim from the bead; the belly takes the
+        # bottom of its 0.55-0.60 band, because the band's top is the retired
+        # sphere's own 0.64 and this body still has to have arms beside it.
+        "silhouette": {"leg": 0.25, "arm": 0.30, "belly": 0.55},
+        # A FAT MAN'S ARMS DO NOT HANG AT 5 DEGREES. The cast's rest puts them
+        # beside the hips; on a hero whose belly is half his height that is inside
+        # the belly. 30 degrees is where they clear it, and it is also the pose the
+        # retired build drew — its arms came horizontally out of the sphere's
+        # equator (`phoboman.tscn`, the LeftArm basis, 113 degrees about Z). See
+        # `ARMS_DOWN_MAX_DEG`, which this is the reason for.
+        "arms_down_deg": 30.0,
         "out_dir": "phoboman_parts",
         "stem": "phoboman_skinned",
     },
@@ -1869,6 +1936,222 @@ def decimate(obj, body_tris, head_tris):
     collapse(head_tris + (total - head), protect_head=False)
     total, head = counts()
     log("head pass: %d tris (%d head, %d body)" % (total, head, total - head))
+
+
+# ---------------------------------------------------------------------------
+# THE PROPORTIONS PASS — bead godot-test1-9k9n.7
+# ---------------------------------------------------------------------------
+
+# WHY THIS EXISTS AT ALL, because a whole modelling pass wants a reason.
+#
+# OWNER RULING 2026-09-18, on the first skinned Phoboman (PRs #420/#421): "I
+# categorically dislike it. He should be more humanoid, yes, but NOT a human.
+# Legs much shorter, arms much shorter, the belly huge. Remember how he was
+# made." The thing to remember is `generate_phoboman_separate.py`, retired in
+# bead 9k9n.3: a 1.04 m sphere (`BODY_R` 0.52) with 0.2 m leg stubs and 0.28 m
+# arms poking horizontally out of its equator, under the diving helmet.
+#
+# AND MAKEHUMAN CANNOT GET THERE. Every macro and target this cast has is
+# already at or near its stop in Phoboman's row — `weight` 1.0, `height` 0.2,
+# `proportions` 0.15, `stomach-pregnant-incr` 1.0, both leg-length targets at
+# the FLOOR of their range — and that build measured leg 0.40 h, arm 0.41 h,
+# belly 0.29 h against the bead's 0.25 / 0.30 / 0.55-0.60. The sliders are a
+# human's range and this character is not inside it. So the silhouette is taken
+# the rest of the way by hand, once, as one map applied to the mesh and to the
+# rig together, and the row says in three numbers what it asks for.
+#
+# IT IS THREE MOVES AND THEY DO NOT INTERACT (which is why the row is three
+# numbers and not a tuning session):
+#
+#   ARMS   compressed along their OWN axis about the shoulder — so they get
+#          short without getting thin, and the row keeps the muscle targets that
+#          make them beefy. Along the arm's axis and not along z because the body
+#          is still in MakeHuman's A-pose here (trap 5), where an arm is 41
+#          degrees off vertical and a z scale would flatten it sideways instead
+#          of shortening it.
+#   BELLY  scaled RADIALLY about the body's own vertical axis, by an amount each
+#          vertex takes from the bones that drive it. The row names an amplitude
+#          per bone, so the weights ARE the profile: the bulge is widest where
+#          `pelvis` and `spine_01` own the skin, fades out through the chest, and
+#          is zero at the neck and past the knees — smooth by construction,
+#          because a skin weight is smooth. No z band, no falloff curve, no seam.
+#   LEGS   everything under the hip joint rises TOWARD it, so the crotch, the
+#          thighs, the boots and the leg bones all shorten by one factor with the
+#          hip as the fixed point. Purely spatial, so nothing shears — except
+#          that an arm is exempt (`t_arm`), the A-pose hand hanging below the hip
+#          being a hand and not a leg.
+#
+# HEIGHT IS NOT ONE OF THE MOVES. `reframe()` runs straight after this and scales
+# crown-to-heel to the row's `height` whatever the legs did, so the pass is a
+# statement about PROPORTION only and the figure that ships is still the cast's
+# one size. That is also what makes the three numbers independent of each other:
+# shortening the legs makes everything else a larger fraction of the total for
+# free, which is arithmetic `silhouette()` reports rather than something to tune.
+#
+# BEFORE `reframe()` AND AFTER `decimate()`. Before, so the height normalisation
+# is the last word and `build()`'s own height assert still means what it says;
+# after, so the collapse works on a human-shaped body, which is the shape its
+# head/body split was measured on.
+
+ARM_CHAIN = {"l": ["upperarm_l", "lowerarm_l", "hand_l"],
+             "r": ["upperarm_r", "lowerarm_r", "hand_r"]}
+
+
+def squash_proportions(obj, armature, joints, row):
+    """Push one row's silhouette past MakeHuman's range: short arms, short legs,
+    a huge belly. Transforms the mesh, the ARMATURE REST (trap 4's rule, by the
+    same map rather than by the same matrix — the map is not affine) and the
+    joint dictionary together, and returns the moved joints.
+
+    A no-op, and not even a log line, for a row without `proportions`.
+    """
+    spec = row.get("proportions")
+    if not spec:
+        return joints
+    k_arm = float(spec["arm"])
+    k_leg = float(spec["leg"])
+    belly = spec.get("belly", {})
+    hip_z = joints["pelvis"].z
+
+    # THE ARM'S OWN AXIS, off the REST DATA and not the pose (trap 6): shoulder
+    # to fingertip, i.e. the whole three-bone chain's direction, because the
+    # A-pose arm is near enough straight that one axis shortens all of it evenly.
+    bones = armature.data.bones
+    arm_o, arm_a = {}, {}
+    for side in ("l", "r"):
+        arm_o[side] = bones["upperarm_" + side].head_local.copy()
+        arm_a[side] = (bones["hand_" + side].tail_local - arm_o[side]).normalized()
+
+    # THE INFLATE'S AMOUNT PER VERTEX, and its axis measured off the same number.
+    # The axis is where the belly's own mass is (amount-squared weighted, so the
+    # widest band decides it), which on a symmetric body is its plane of symmetry
+    # in x and the trunk's centre in y — read rather than assumed, because a
+    # radial scale about the wrong axis is a lean.
+    amp = {}
+    for name, value in belly.items():
+        group = obj.vertex_groups.get(name)
+        if group is None:
+            raise AssertionError("belly inflate names %r, which is not a deform "
+                                 "group on this body" % name)
+        amp[group.index] = float(value)
+    fat = [sum(g.weight * amp[g.group] for g in v.groups if g.group in amp)
+           for v in obj.data.vertices]
+    mass = sum(a * a for a in fat)
+    if belly and mass <= 0.0:
+        raise AssertionError("the belly inflate selected no vertex at all")
+    axis = Vector((0.0, 0.0, 0.0))
+    if mass > 0.0:
+        for v, a in zip(obj.data.vertices, fat):
+            axis += v.co * (a * a)
+        axis /= mass
+
+    def remap(p, t_l=0.0, t_r=0.0, fatness=0.0):
+        q = Vector(p)
+        for side, t in (("l", t_l), ("r", t_r)):
+            if t > 0.0:
+                reach = (q - arm_o[side]).dot(arm_a[side])
+                if reach > 0.0:
+                    q -= arm_a[side] * (t * (1.0 - k_arm) * reach)
+        if fatness > 0.0:
+            q.x = axis.x + (q.x - axis.x) * (1.0 + fatness)
+            q.y = axis.y + (q.y - axis.y) * (1.0 + fatness)
+        if q.z < hip_z:
+            q.z += (1.0 - max(t_l, t_r)) * (1.0 - k_leg) * (hip_z - q.z)
+        return q
+
+    ids = {side: _vg_ids(obj, ARM_CHAIN[side]) for side in ("l", "r")}
+    for v, a in zip(obj.data.vertices, fat):
+        v.co = remap(v.co, _group_weight(v, ids["l"]), _group_weight(v, ids["r"]), a)
+    obj.data.update()
+
+    # THE RIG BY THE SAME MAP (trap 4). A bone has no skin weight, so its arm
+    # blend is 1 or 0 by name and it takes no inflate at all: the spine and the
+    # clavicles sit on or beside the axis a fat belly grows around, and a rig that
+    # grew with it would drive the hero from inside his own stomach.
+    bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.context.view_layer.objects.active = armature
+    for o in bpy.data.objects:
+        o.select_set(o is armature)
+    bpy.ops.object.mode_set(mode='EDIT')
+    moved = {}
+    for bone in armature.data.edit_bones:
+        t_l = 1.0 if bone.name in ARM_CHAIN["l"] else 0.0
+        t_r = 1.0 if bone.name in ARM_CHAIN["r"] else 0.0
+        moved[bone.name] = (remap(bone.head, t_l, t_r), remap(bone.tail, t_l, t_r))
+    for bone in armature.data.edit_bones:
+        bone.head, bone.tail = moved[bone.name]
+    bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.context.view_layer.objects.active = obj
+    for o in bpy.data.objects:
+        o.select_set(o is obj)
+
+    # AND THE JOINT HELPERS, which every landmark downstream is measured from.
+    # No inflate on them: `landmarks()` reads these for their HEIGHT and nothing
+    # else, and the two the export asserts on for sign — the shoulders — are where
+    # the amplitude has already faded out.
+    out = {}
+    for name, p in joints.items():
+        out[name] = remap(p, 1.0 if name == "l-elbow" else 0.0,
+                          1.0 if name == "r-elbow" else 0.0)
+    log("proportions: arm x%.2f, leg x%.2f, belly +%.0f%% max about %s"
+        % (k_arm, k_leg, 100.0 * max(belly.values()) if belly else 0.0,
+           tuple(round(c, 4) for c in axis)))
+    log("joints (squashed):", {k: tuple(round(c, 4) for c in v) for k, v in out.items()})
+    return out
+
+
+# HOW FAR A MEASURED RATIO MAY SIT FROM THE ROW'S TARGET before the build fails.
+# The row's numbers are the OWNER'S, off bead godot-test1-9k9n.7 ("leg ~ 0.25 h,
+# arm ~ 0.3 h, belly ~ 0.55-0.6 h"), so the tolerance is what "~" is worth on a
+# silhouette judged by eye at 3 m: 3% of standing height is 5 cm on this hero,
+# which is a centimetre under the width of his own hand and nothing a viewer
+# names. Wide enough that a `proportions` retune of one number does not fail the
+# other two, narrow enough that the #420 body (leg 0.40, arm 0.41, belly 0.29)
+# fails all three.
+SILHOUETTE_TOL = 0.03
+
+
+def silhouette(obj, armature, row):
+    """The three ratios the owner judges this hero by, measured on the SHIPPED
+    figure and asserted against the row's `silhouette` targets.
+
+    Measured after the joins and after `apply_pose_as_rest`, so the height is the
+    one the game draws (helmet and valve knob included, which is what tops
+    Phoboman out) and the arms are where they ship. The two limb numbers come off
+    the REST SKELETON and not off the skin, because that is the length the gait
+    swings and `player_animation.gd`'s peak-match rule divides by (`gait_selfcheck`
+    holds the same chain for Teibi); the belly comes off the SKIN, because a belly
+    has no bone and the silhouette is the whole point.
+
+    The dragon rides the three spine bones, so its vertices are inside the belly
+    measurement — by design: it is 1.2 cm proud of a surface it lies on down the
+    CENTRE LINE, and the width is read at the flanks, where it is not.
+    """
+    zs = [v.co.z for v in obj.data.vertices]
+    height = max(zs) - min(zs)
+    bone = armature.data.bones
+
+    def seg(a, b):
+        return (bone[b].head_local - bone[a].head_local).length
+
+    leg = seg("thigh_l", "calf_l") + seg("calf_l", "foot_l")
+    arm = (seg("upperarm_l", "lowerarm_l") + seg("lowerarm_l", "hand_l")
+           + (bone["hand_l"].tail_local - bone["hand_l"].head_local).length)
+    ids = _vg_ids(obj, ["pelvis", "spine_01", "spine_02", "spine_03"])
+    xs = [v.co.x for v in obj.data.vertices if _group_weight(v, ids) > 0.5]
+    if not xs:
+        raise AssertionError("no trunk vertex: the belly cannot be measured")
+    got = {"leg": leg / height, "arm": arm / height, "belly": (max(xs) - min(xs)) / height}
+    log("silhouette: height %.4f m | leg %.4f m = %.3f h | arm %.4f m = %.3f h | "
+        "belly %.4f m = %.3f h"
+        % (height, leg, got["leg"], arm, got["arm"], max(xs) - min(xs), got["belly"]))
+    for key, target in row.get("silhouette", {}).items():
+        if abs(got[key] - float(target)) > SILHOUETTE_TOL:
+            raise AssertionError(
+                "%s is %.3f of standing height, outside the row's %.3f +- %.3f — "
+                "the silhouette this hero is judged by has drifted, re-derive the "
+                "`proportions` row" % (key, got[key], float(target), SILHOUETTE_TOL))
+    return got
 
 
 def reframe(obj, armature, target_height):
@@ -3399,7 +3682,18 @@ HELMET_TRIS = (1600, 3400)      # the budget, asserted where it is spent
 # And the width between them is the boldness: the serpent's body is 7.0 cm across at
 # the head, which is what it has to be to read red-on-blue at the 3 m the game is
 # judged at. That is the trade if these ever move.
-DRAGON_REACH = (-0.70, 0.45)
+#
+# BEAD godot-test1-9k9n.7 MOVED BOTH, and it is the same left-end assert that said
+# so. The whole map is `half_w` times this span, and a belly that went from 0.53 m
+# wide to 1.00 m took the animal with it — at (-0.70, 0.45) the tail's top waypoint
+# landed at x -0.292, z 1.174, which on THIS body is the upper chest the inflate
+# deliberately does not reach, and `surface()` refused it exactly as it refused 0.90
+# on the old one. The span comes in from 1.15 to 0.95, which is what puts it back on
+# the belly proper; the scale still GREW (0.774 against the old 0.539, and 0.852 at
+# the amplitudes that shipped), because the belly under it grew more. The left bias
+# the canon asks for — "starting from the left side and stretching to the middle" —
+# is kept by taking the 0.20 off both ends rather than off one.
+DRAGON_REACH = (-0.55, 0.40)
 # The generator's own path PLUS the head assembly hung off its last waypoint, as an
 # x span in ITS units: the tail's radius at one end, the snout's far edge at the
 # other. `DRAGON_REACH` is mapped onto this, so those fractions bound the whole
@@ -4785,9 +5079,10 @@ def build(hero, shot=None):
         raise AssertionError(
             "%s wears a cloth band AND an accessory: `sharp` is polygon indices "
             "and a join after the wrap renumbers them (see export_glb)" % hero)
-    if ARMS_DOWN_DEG >= ARMS_DOWN_MAX_DEG:
+    arms_down = float(row.get("arms_down_deg", ARMS_DOWN_DEG))
+    if arms_down >= ARMS_DOWN_MAX_DEG:
         raise AssertionError("the shipped rest stands %.1f deg off vertical, over "
-                             "the %.1f cap" % (ARMS_DOWN_DEG, ARMS_DOWN_MAX_DEG))
+                             "the %.1f cap" % (arms_down, ARMS_DOWN_MAX_DEG))
     enable_mpfb()
     clear_scene()
 
@@ -4803,6 +5098,10 @@ def build(hero, shot=None):
     # drawn. Those triangles are what his helmet and his dragon are paid from, and
     # `TRI_BUDGET` is still the backstop behind the trade.
     decimate(obj, BODY_TRIS, row.get("head_tris", HEAD_TRIS))
+    # PAST MAKEHUMAN'S RANGE (bead godot-test1-9k9n.7), for the one row that asks:
+    # short arms, short legs and a huge belly, on the mesh and the rig together.
+    # Before the reframe, so the height normalisation below is still the last word.
+    joints = squash_proportions(obj, armature, joints, row)
     m = reframe(obj, armature, row["height"])
     tj = {name: m @ p for name, p in joints.items()}
     log("joints (game frame):", {k: tuple(round(c, 4) for c in v) for k, v in tj.items()})
@@ -4922,7 +5221,7 @@ def build(hero, shot=None):
     # occludes once they are part of the same mesh the rays are cast against.
     bake_cloth_shading(obj)
 
-    apply_pose_as_rest(armature, obj, ARMS_DOWN_DEG)
+    apply_pose_as_rest(armature, obj, arms_down)
     # ... AND ONLY NOW CAN THE DRAGON BE CHECKED against the arms, because only now
     # are they where the hero ships them — see `assert_clear_of_arms`.
     if dragon_v0 is not None:
@@ -4935,6 +5234,10 @@ def build(hero, shot=None):
         % (max(zs) - min(zs), min(zs), max(zs), len(obj.data.vertices)))
     if abs(min(zs)) > 0.04:
         raise AssertionError("feet %.4f m off the ground (cap 0.04)" % min(zs))
+
+    # THE SILHOUETTE, MEASURED AND ASSERTED (bead godot-test1-9k9n.7) — here
+    # because this is the figure that ships: helmet on, arms where they rest.
+    silhouette(obj, armature, row)
 
     head_tris = head_tri_count(obj)
     # THE FLOOR IS THE FACE'S, AND A HELMETED HEAD HAS NO FACE (bead

@@ -151,9 +151,15 @@ const SKINNED_MOVE_DEG: float = 1.0
 const SKINNED_SWEEP_SECONDS: float = 20.0
 
 ## CHECK 9's FIXTURE (bd godot-test1-9k9n.2) — Phoboman's standing height on the
-## skinned mesh (1.7992 m, PR #420's PROVENANCE row) and skinned-driver binding.
+## skinned mesh and skinned-driver binding. 1.8191 m since bead
+## godot-test1-9k9n.7 re-proportioned him (owner ruling 2026-09-18: short arms,
+## short legs, a huge belly): `build_hero.py` still reframes the HUMAN to his
+## row's 1.70 m, but the diving helmet is scaled off his measured skull and a
+## body with half a leg in it carries a larger head at the same total — so the
+## dome and its valve knob top him out 2 cm higher than the 1.7992 of PR #420.
+## The number is measured by the build and written on the PROVENANCE row.
 const PHOBOMAN_FIXTURE: String = "res://scenes/characters/phoboman.tscn"
-const PHOBOMAN_TARGET_HEIGHT: float = 1.7992
+const PHOBOMAN_TARGET_HEIGHT: float = 1.8191
 const PHOBOMAN_HEIGHT_TOL: float = 0.02
 ## An arbitrary clock the determinism probe asks twice about — arbitrary on
 ## purpose: a round number could land on a sine zero and compare two rest poses.
