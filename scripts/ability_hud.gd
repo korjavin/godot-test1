@@ -18,12 +18,15 @@ extends Control
 ##
 ## Like the rest of the HUD it uses GROUP-BASED discovery — it finds the player via
 ## the "player" group rather than a hard reference — so it keeps working across
-## respawns and character switches. It reads five small methods on the player:
+## respawns and character switches. It reads five small methods on the player,
+## each with a slot (0 = F, 1 = G):
 ##   get_ability_cooldown_ratio()  1.0 just-used → 0.0 ready (drives the arc)
 ##   get_ability_remaining()       seconds left (shown inside the dial)
 ##   get_ability_name()            label under the dial
 ##   is_ability_ready()            ACTUAL availability — cooldown AND gates
-##   get_ability_block_reason()    "" or the gate's short label ("LAND"/"RAIN")
+##   get_ability_block_reason()    "" or the gate's short label ("LAND"/"RAIN"/"ROOF")
+## plus has_second_ability(), which is the only thing that draws the second,
+## smaller G dial LEFT of the first (bead godot-test1-0mr0.1).
 ## The first and the fourth deliberately measure different things (see
 ## `is_ability_ready()` in player_controller.gd), which is what lets three states
 ## come out of two inputs that can never contradict each other: "cooling" is read
@@ -51,13 +54,34 @@ var _last_arc: int = -1
 var _last_tenths: int = -1
 
 ## Seconds left of the "blocked press" red flash (0 = not flashing). Set by
-## flash_blocked() on any refused F press; while it runs the ring and the F hint
-## render in COLOR_BLOCKED, overriding all three states above.
+## flash_blocked() on any refused press; while it runs the refused slot's ring
+## and key hint render in COLOR_BLOCKED, overriding all three states above.
 var _blocked_timer: float = 0.0
+## Which slot the running flash belongs to (bead godot-test1-0mr0.1) — a
+## refused G must not paint the F dial red with it.
+var _blocked_slot: int = 0
+
+## The second dial's own snapshot (bead godot-test1-0mr0.1) — read with
+## slot = 1, drawn only while the hero's second skill is learned. The redraw
+## change-check covers both snapshots, so an idle pair still costs nothing.
+var _has_second: bool = false
+var _ratio2: float = 0.0
+var _ready2: bool = false
+var _name2: String = ""
+var _secs2: float = 0.0
+var _reason2: String = ""
+var _arc2: int = -1
+var _tenths2: int = -1
 
 # --- Layout ------------------------------------------------------------------
 const DIAL_RADIUS: float = 40.0
 const RING_WIDTH: float = 6.0
+## Second dial (slot 2, G key): smaller, LEFT of the first — the same ring,
+## the same three states, the same palette consts. No new hex.
+const DIAL2_RADIUS: float = 28.0
+const DIAL2_KEY_SIZE: int = 22
+const DIAL2_NAME_SIZE: int = 14
+const DIAL2_INFO_SIZE: int = 12
 ## Vertical centre of the dial within this control.
 const DIAL_CENTER_Y: float = 56.0
 const BLOCKED_FLASH_DURATION: float = 0.15
@@ -92,10 +116,11 @@ func _ready() -> void:
 	add_to_group("ability_hud")
 
 
-func flash_blocked() -> void:
-	"""Called (via the "ability_hud" group) when an F press is REFUSED — still
-	cooling, or charged but gated — briefly renders the dial in red so the press
-	visibly registers as 'not now' instead of feeling dead."""
+func flash_blocked(slot: int = 0) -> void:
+	"""Called (via the "ability_hud" group) when a press is REFUSED — still
+	cooling, or charged but gated — briefly renders that slot's dial in red so
+	the press visibly registers as 'not now' instead of feeling dead."""
+	_blocked_slot = slot
 	_blocked_timer = BLOCKED_FLASH_DURATION
 	queue_redraw()
 
@@ -128,8 +153,27 @@ func _process(_delta: float) -> void:
 	# changes, so the HUD costs zero redraws instead of one per frame.
 	var arc := roundi(ratio * 128.0)
 	var tenths := roundi(secs * 10.0)
+	# Slot 2: same five reads, guarded — a hero with no second skill shows no
+	# dial and costs no state. has_method because a scene with an older player
+	# (or none the group knows) must degrade, not error.
+	var has_second: bool = player.has_method("has_second_ability") and player.has_second_ability()
+	var ratio2 := 0.0
+	var ready2 := false
+	var name2 := ""
+	var secs2 := 0.0
+	var reason2 := ""
+	if has_second:
+		ratio2 = player.get_ability_cooldown_ratio(1)
+		ready2 = player.is_ability_ready(1)
+		name2 = player.get_ability_name(1)
+		secs2 = player.get_ability_remaining(1)
+		reason2 = player.get_ability_block_reason(1)
+	var arc2 := roundi(ratio2 * 128.0)
+	var tenths2 := roundi(secs2 * 10.0)
 	if _have_data and ready == _ability_ready and ability_name == _ability_name \
-			and arc == _last_arc and tenths == _last_tenths and reason == _block_reason:
+			and arc == _last_arc and tenths == _last_tenths and reason == _block_reason \
+			and has_second == _has_second and ready2 == _ready2 and name2 == _name2 \
+			and arc2 == _arc2 and tenths2 == _tenths2 and reason2 == _reason2:
 		return
 	_have_data = true
 	_ratio = ratio
@@ -139,6 +183,14 @@ func _process(_delta: float) -> void:
 	_block_reason = reason
 	_last_arc = arc
 	_last_tenths = tenths
+	_has_second = has_second
+	_ratio2 = ratio2
+	_ready2 = ready2
+	_name2 = name2
+	_secs2 = secs2
+	_reason2 = reason2
+	_arc2 = arc2
+	_tenths2 = tenths2
 	queue_redraw()
 
 
@@ -150,8 +202,10 @@ func _draw() -> void:
 	var ratio := _ratio  # 1 = just used, 0 = ready
 	var ready := _ability_ready
 	var ability_name := _ability_name
-	# Blocked-press flash: while it runs, the arc and the F hint go red.
-	var blocked := _blocked_timer > 0.0
+	# Blocked-press flash: while it runs, the refused slot's arc and key hint
+	# go red.
+	var blocked := _blocked_timer > 0.0 and _blocked_slot == 0
+	var blocked2 := _blocked_timer > 0.0 and _blocked_slot == 1
 
 	# Oswald Bold — the film's title-card face. HUD lettering and numerals are
 	# the heading weight throughout (`hero_hud` does the same one file along).
@@ -196,15 +250,58 @@ func _draw() -> void:
 		Vector2(center.x, center.y + DIAL_RADIUS + 24.0), name_size, HudTheme.BONE)
 
 	# Inside the dial: the seconds left while cooling, otherwise the gate that is
-	# holding a full charge back — "LAND", "RAIN" — so the player is told what to
-	# DO rather than watching a countdown that already finished. tr() explicitly,
-	# per CLAUDE.md rule 2: a drawn string is not an auto-translated Control.text.
+	# holding a full charge back — "LAND", "RAIN", "ROOF" — so the player is told
+	# what to DO rather than watching a countdown that already finished. tr()
+	# explicitly, per CLAUDE.md rule 2: a drawn string is not an auto-translated
+	# Control.text.
 	if cooling:
 		_draw_centered(font, "%.1f" % _secs, Vector2(center.x, center.y + 22.0),
 			14, HudTheme.BONE)
 	elif _block_reason != "":
 		_draw_centered(font, tr(_block_reason), Vector2(center.x, center.y + 22.0),
 			14, COLOR_GATED)
+
+	# The second dial, LEFT of the first and smaller: the same three states off
+	# the slot-1 snapshot, the "G" hint in its centre, drawn only while the
+	# hero's second skill is learned.
+	if _has_second:
+		_draw_dial(font, Vector2(center.x - (DIAL_RADIUS + 8.0) - 12.0 - (DIAL2_RADIUS + 8.0), center.y),
+			DIAL2_RADIUS, _ratio2, _ready2, blocked2, "G", DIAL2_KEY_SIZE,
+			_name2, DIAL2_NAME_SIZE, _secs2, _reason2, DIAL2_INFO_SIZE)
+
+
+func _draw_dial(font: Font, center: Vector2, dial_radius: float, ratio: float,
+		ready: bool, blocked: bool, key_hint: String, key_size: int,
+		ability_name: String, name_size: int, secs: float, block_reason: String,
+		info_size: int) -> void:
+	"""One cooldown dial at `center` — the F dial's own drawing, parameterised,
+	so the two rings can never drift apart about what a state looks like."""
+	draw_circle(center, dial_radius + 8.0, COLOR_BACKDROP)
+	draw_arc(center, dial_radius, 0.0, TAU, 48, COLOR_TRACK, RING_WIDTH, true)
+	var cooling := ratio > 0.0
+	var ring_col := COLOR_READY
+	if blocked:
+		ring_col = COLOR_BLOCKED
+	elif cooling:
+		ring_col = COLOR_COOLING
+	elif not ready:
+		ring_col = COLOR_GATED
+	if cooling:
+		var start := -PI / 2.0
+		draw_arc(center, dial_radius, start, start + TAU * ratio, 48, ring_col,
+			RING_WIDTH, true)
+	else:
+		draw_arc(center, dial_radius, 0.0, TAU, 48, ring_col, RING_WIDTH, true)
+	var key_col := HudTheme.BONE if cooling and not blocked else ring_col
+	_draw_centered(font, key_hint, center + Vector2(0.0, key_size * 0.36), key_size, key_col)
+	_draw_centered(font, tr(ability_name).to_upper(),
+		Vector2(center.x, center.y + dial_radius + 24.0), name_size, HudTheme.BONE)
+	if cooling:
+		_draw_centered(font, "%.1f" % secs, Vector2(center.x, center.y + 15.0),
+			info_size, HudTheme.BONE)
+	elif not block_reason.is_empty():
+		_draw_centered(font, tr(block_reason), Vector2(center.x, center.y + 15.0),
+			info_size, COLOR_GATED)
 
 
 func _draw_centered(font: Font, text: String, baseline_center: Vector2, font_size: int, color: Color) -> void:

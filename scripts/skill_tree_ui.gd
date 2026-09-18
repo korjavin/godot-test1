@@ -140,8 +140,11 @@ const BUTTON_GAP: float = 8.0
 ## bumps this and passes slot 2; nothing else moves.
 const COLUMN_SLOTS: int = 2
 
-## The open card. Wide enough for two branch columns side by side, and it scrolls
-## (a `ScrollContainer`) so a short phone screen in landscape still reaches the
+## The open card. Two branch columns sit side by side; a third (the second
+## skill's own branch, bead godot-test1-0mr0.1) scrolls HORIZONTALLY — the
+## columns keep their width and the scroll goes both ways, so nothing learned
+## about the two-column layout moves. It scrolls (a `ScrollContainer`) so a
+## short phone screen in landscape still reaches the
 ## Close button.
 const CARD_WIDTH: float = 640.0
 const CARD_MAX_HEIGHT: float = 560.0
@@ -346,7 +349,10 @@ func _build_ui() -> void:
 
 	var scroll := ScrollContainer.new()
 	scroll.name = "Scroll"
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	# Horizontal scroll is what carries a THIRD branch column (the second
+	# skill's branch): three columns at COLUMN_WIDTH no longer fit 604 px, and
+	# squeezing them would rewrite the two-column look every hero learned.
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	scroll.custom_minimum_size = Vector2(CARD_WIDTH - 36.0, 0.0)
 	_card.add_child(scroll)
 

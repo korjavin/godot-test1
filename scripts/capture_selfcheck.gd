@@ -272,6 +272,23 @@ class TerrainStub extends Node:
 		ring_from.append((body as Node3D).global_position if body != null else Vector3.INF)
 
 
+class StubSecondSkillProgression extends Node:
+	## A tree that has granted every second skill and nothing else (bead
+	## godot-test1-0mr0.1): `skill_bonus("second_ability")` reads learned, every
+	## multiplier reads unskilled. The real Progression needs coins, levels and
+	## a store; the gate under test only asks these methods — but the player's
+	## per-frame gait read asks `gait_mult` too, so the stub carries that as a
+	## flat 1.0 rather than erroring every physics tick.
+	func skill_mult(_hero: String, _effect: String) -> float:
+		return 1.0
+
+	func gait_mult(_hero: String, _small: bool, _burst: bool) -> float:
+		return 1.0
+
+	func skill_bonus(_hero: String, effect: String) -> float:
+		return 1.0 if effect == "second_ability" else 0.0
+
+
 ## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
 ## lands in and lets the script carry on, so a check that dies halfway simply
 ## stops asserting and this file prints "SELFCHECK OK". Every check below stamps
@@ -2160,6 +2177,13 @@ func _check_reassign_first_imprison_last() -> void:
 			+ "of the four powers is one or the other")
 	if player.is_ability_ready():
 		_fail("the HUD would show the ability READY inside the cell block")
+	# ...and the second slot answers the same: CELL is shared by both slots, so
+	# a learned G stays dead in the cell too.
+	if player.get_ability_block_reason(1) != "CELL":
+		_fail("the prison role's slot-2 gate answers '%s' — CELL is shared by both slots"
+			% player.get_ability_block_reason(1))
+	if player.is_ability_ready(1):
+		_fail("the HUD would show the second dial READY inside the cell block")
 
 	# ---- (d1) a cellmate, never yourself -----------------------------------
 	#
@@ -2913,13 +2937,14 @@ func _reset_form(player: Node) -> void:
 
 func _check_air_sight_is_the_indoor_air_rush() -> void:
 	"""
-	Check 10 (bead godot-test1-oht). WINDMAN'S F IS ONE KEY AND TWO ABILITIES, and
-	which one it is is decided by the roof over his head.
+	Check 10 (beads godot-test1-oht, godot-test1-0mr0.1). AIR SIGHT IS WINDMAN'S
+	SECOND SKILL: G fires it under the roof, F in there is the ROOF gate, and
+	outdoors F is still Air Rush.
 
-	`tower_interior_selfcheck`'s check 19 owns the other half — that the swap reaches
-	the WALLS and nothing else, and restores. This half is the PLAYER's: that the
-	dispatch picks Air Sight in here and Air Rush out there, that the ability really
-	drives the building rather than merely setting a timer, and — the part that would
+	`tower_interior_selfcheck`'s check 19 owns the other half — that the sight
+	reaches the WALLS and nothing else, and restores. This half is the PLAYER's:
+	that slot 1 dispatches the sight in here, that the ability really drives the
+	building rather than merely setting a timer, and — the part that would
 	otherwise ship broken and look fine — that it CANNOT BLEED.
 
 	THE BLEED IS THE INTERESTING FAILURE. Every other ability's leftovers are a float
@@ -2936,10 +2961,17 @@ func _check_air_sight_is_the_indoor_air_rush() -> void:
 		tower.queue_free()
 		Sentinel.done("air_sight_is_the_indoor_air_rush")
 		return
+	# Slot 1 needs the tree node bought: a stub progression that granted every
+	# second skill (the real purchase path is progression_selfcheck's).
+	var second_tree := StubSecondSkillProgression.new()
+	root.add_child(second_tree)
+	second_tree.add_to_group("progression")
 	var player := await _make_player()
 	if not _become(player, "windman"):
 		_fail("player.tscn has no windman in CHARACTERS — check 10 cannot drive Air Sight")
 		_clear(player)
+		second_tree.remove_from_group("progression")
+		second_tree.queue_free()
 		tower.queue_free()
 		Sentinel.done("air_sight_is_the_indoor_air_rush")
 		return
@@ -2947,25 +2979,45 @@ func _check_air_sight_is_the_indoor_air_rush() -> void:
 	var indoors := interior.to_global(Vector3(0.0, TowerInterior.FLOOR_Y[0], 0.0))
 	var outdoors := tower.global_position + Vector3(TowerShell.OUTER_HALF * 3.0, 0.0, 0.0)
 
-	# --- Indoors: F is Air Sight. ---
+	# --- Indoors: F is the ROOF gate. ---
 	player.global_position = indoors
 	await _settle(player)
 	if not bool(tower.call("sheltered", player.global_position)):
 		_fail("check 10's indoor spot is not under the roof — the whole check is vacuous")
-	if player.get_ability_name() != "Air Sight":
-		_fail("indoors the HUD still advertises %s" % player.get_ability_name())
-	if player.get_ability_block_reason() != "":
-		_fail("indoors Air Sight is gated by %s — the take-off gates leaked into it" % \
-			player.get_ability_block_reason())
+	if player.get_ability_name() != "Air Rush":
+		_fail("indoors the HUD advertises %s — F is Air Rush everywhere now" % player.get_ability_name())
+	if player.get_ability_block_reason() != "ROOF":
+		_fail("indoors F is gated by '%s' — the take-off gates leaked into the roof gate"
+			% player.get_ability_block_reason())
 	player.ability_cooldowns[player.current_character_index] = 0.0
 	player.try_activate_ability()
 	await process_frame
-	if not bool(interior.call("xray_active")):
-		_fail("F indoors did not make the walls see-through")
+	if bool(interior.call("xray_active")):
+		_fail("F indoors made the walls see-through — the swap is gone, the gate is ROOF")
 	if player.windman_boost_timer > 0.0:
-		_fail("F indoors fired the Air Rush as well — the two abilities are not exclusive")
-	if player.ability_cooldowns[player.current_character_index] <= 0.0:
-		_fail("Air Sight fired and charged no cooldown — the dial has nothing to run")
+		_fail("F indoors fired the Air Rush — a 6 m/s lift under a 4.6 m ceiling")
+	if player.ability_cooldowns[player.current_character_index] > 0.0:
+		_fail("a ROOF-refused press charged %.2f s of cooldown"
+			% player.ability_cooldowns[player.current_character_index])
+	if player.windman_sight_timer > 0.0:
+		_fail("F indoors started a look — sight is slot 1's now")
+
+	# --- Indoors: G is Air Sight. ---
+	player.ability2_cooldowns[player.current_character_index] = 0.0
+	if player.get_ability_name(1) != "Air Sight":
+		_fail("slot 1 advertises %s" % player.get_ability_name(1))
+	if player.get_ability_block_reason(1) != "":
+		_fail("indoors Air Sight is gated by '%s'" % player.get_ability_block_reason(1))
+	player.try_activate_ability(1)
+	await process_frame
+	if not bool(interior.call("xray_active")):
+		_fail("G indoors did not make the walls see-through")
+	if player.windman_boost_timer > 0.0:
+		_fail("G indoors fired the Air Rush as well — the two abilities are not exclusive")
+	if player.ability2_cooldowns[player.current_character_index] <= 0.0:
+		_fail("Air Sight fired and charged no cooldown — the second dial has nothing to run")
+	if player.ability_cooldowns[player.current_character_index] != 0.0:
+		_fail("slot 1 charged the F cooldown")
 
 	# ONE LOOK AT A TIME (codex review). A fully-ranked Windman's cooldown (4.80 s) is
 	# SHORTER than the look (7 s), so a press on every recharge would hold the walls
@@ -2973,19 +3025,19 @@ func _check_air_sight_is_the_indoor_air_rush() -> void:
 	# closes it, so it is asked as state: charge the cooldown to zero, which is the
 	# strongest form of the press the skill tree can ever produce, and the gate must
 	# still be the thing standing in the way.
-	player.ability_cooldowns[player.current_character_index] = 0.0
-	if player.get_ability_block_reason() != "SEEING":
+	player.ability2_cooldowns[player.current_character_index] = 0.0
+	if player.get_ability_block_reason(1) != "SEEING":
 		_fail("with Air Sight already running and the cooldown spent, the next press is gated by %s — a skilled Windman can chain it forever" % \
-			player.get_ability_block_reason())
+			player.get_ability_block_reason(1))
 	var look_left: float = player.windman_sight_timer
-	player.try_activate_ability()
+	player.try_activate_ability(1)
 	await process_frame
 	if player.windman_sight_timer > look_left:
 		_fail("the refused press refreshed the look (%.2f s -> %.2f s)" % [
 			look_left, player.windman_sight_timer])
-	if player.ability_cooldowns[player.current_character_index] > 0.0:
+	if player.ability2_cooldowns[player.current_character_index] > 0.0:
 		_fail("the refused Air Sight press charged %.2f s of cooldown" % \
-			player.ability_cooldowns[player.current_character_index])
+			player.ability2_cooldowns[player.current_character_index])
 
 	# --- The switch clears it, and it is the BUILDING that has to say so. ---
 	if not _become(player, "primm"):
@@ -2998,11 +3050,11 @@ func _check_air_sight_is_the_indoor_air_rush() -> void:
 		_fail("could not switch back to windman")
 
 	# --- Walking out of the door ends it too. ---
-	player.ability_cooldowns[player.current_character_index] = 0.0
-	player.try_activate_ability()
+	player.ability2_cooldowns[player.current_character_index] = 0.0
+	player.try_activate_ability(1)
 	await process_frame
 	if not bool(interior.call("xray_active")):
-		_fail("F indoors did not re-arm Air Sight after the switch")
+		_fail("G indoors did not re-arm Air Sight after the switch")
 	player.global_position = outdoors
 	await _settle(player)
 	if bool(interior.call("xray_active")):
@@ -3022,11 +3074,29 @@ func _check_air_sight_is_the_indoor_air_rush() -> void:
 	if bool(interior.call("xray_active")):
 		_fail("an outdoor Air Rush made the HQ see-through")
 
+	# --- Outdoors G is the OUTSIDE gate (bead godot-test1-0mr0.1 round 2). ---
+	# The interior is loaded out here too (360 m radius), so "it exists" cannot
+	# be the test: unsheltered, the press must refuse with a named reason, cost
+	# no cooldown, and never touch the building.
+	if player.get_ability_block_reason(1) != "OUTSIDE":
+		_fail("outdoors G is gated by '%s' — the sight needs a roof"
+			% player.get_ability_block_reason(1))
+	player.ability2_cooldowns[player.current_character_index] = 0.0
+	player.try_activate_ability(1)
+	await process_frame
+	if player.ability2_cooldowns[player.current_character_index] > 0.0:
+		_fail("an OUTSIDE-refused press charged %.2f s of slot-2 cooldown"
+			% player.ability2_cooldowns[player.current_character_index])
+	if bool(interior.call("xray_active")):
+		_fail("G on the yard opened the x-ray — then the tick cancels it")
+	if player.windman_sight_timer > 0.0:
+		_fail("G outdoors started a look with no roof overhead")
+
 	# --- And the timer is the third exit: it must expire on its own indoors. ---
 	player.global_position = indoors
 	await _settle(player)
-	player.ability_cooldowns[player.current_character_index] = 0.0
-	player.try_activate_ability()
+	player.ability2_cooldowns[player.current_character_index] = 0.0
+	player.try_activate_ability(1)
 	await process_frame
 	if not bool(interior.call("xray_active")):
 		_fail("Air Sight would not re-arm for the expiry subject")
@@ -3036,9 +3106,11 @@ func _check_air_sight_is_the_indoor_air_rush() -> void:
 	await _settle(player)
 	if bool(interior.call("xray_active")):
 		_fail("Air Sight's timer ran out and the walls stayed see-through")
-	print("air sight: indoors it swaps the walls, outdoors F is still Air Rush, and all three exits clear it")
+	print("air sight: G opens the walls indoors, F answers ROOF, outdoors F is still Air Rush and G answers OUTSIDE, and all three exits clear it")
 
 	_clear(player)
+	second_tree.remove_from_group("progression")
+	second_tree.queue_free()
 	tower.queue_free()
 	await process_frame
 	Sentinel.done("air_sight_is_the_indoor_air_rush")

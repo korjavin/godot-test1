@@ -2485,6 +2485,14 @@ func _check_chords_free() -> void:
 				# D is exempt: the arm releases EVERYTHING the event matches
 				# (bead godot-test1-0h4 — a non-QWERTY D label can sit on any
 				# bound physical key), so whatever binds D bare is covered.
+				# G is exempt the other way (bead godot-test1-0mr0.1): it binds
+				# special_ability_2 bare, but that poll is EXACT-match — a
+				# ctrl-held G never fires the action, so the chord needs no
+				# release and the key needs no second binding. Pinned as TEXT
+				# below: dropping exact_match fails this exemption with it.
+				if bare_key == int(MultiplayerUIScript.CAMERA_KEY) \
+						and String(action) == "special_ability_2":
+					continue
 				if bare_key != int(MultiplayerUIScript.DEAFEN_KEY):
 					_fail("%s is also the bare binding of \"%s\" — a chord letter must bind no gameplay action"
 						% [bare_label, action])
@@ -2506,6 +2514,15 @@ func _check_chords_free() -> void:
 	var dup_key: int = int(MultiplayerUIScript.MUTE_KEY)
 	if CityMapSelfcheck._owner_claiming(dup_key, [[[dup_key], "a fake chord owner"]]).is_empty():
 		_fail("the chord scan missed a fake owner holding Ctrl+M — it cannot detect a real chord collision either")
+	# THE G EXEMPTION'S RECEIPT (bead godot-test1-0mr0.1): the scan above lets
+	# G bind special_ability_2 ONLY because that poll is exact-match. A plain
+	# poll would fire Air Sight on every camera toggle (Godot action matching
+	# ignores modifiers), so losing the `true` fails here rather than drifting.
+	var player_source: String = FileAccess.get_file_as_string("res://scripts/player_controller.gd")
+	if player_source.is_empty():
+		_fail("could not read res://scripts/player_controller.gd for the slot-2 exact-match check")
+	elif not player_source.contains("is_action_just_pressed(\"special_ability_2\", true)"):
+		_fail("the slot-2 poll lost its exact_match — Ctrl+G now fires the ability and the G exemption above is a lie")
 	Sentinel.done("chords_free")
 
 
