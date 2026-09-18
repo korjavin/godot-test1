@@ -1142,7 +1142,7 @@ HEROES = {
         # re-grading one of these should expect the same second round.
         #
         # Nothing clips now: 0.00% over the visor (`scripts/clipped_fraction.py`'s
-        # `phoboman` rect, mean luma 0.889 -> 0.663) and 0.00% over the dome
+        # `phoboman` rect, mean luma 0.889 -> 0.666) and 0.00% over the dome
         # (5.48% before, mean 0.966 -> 0.730).
         #
         # THE SIX BODY COLOURS ARE OUT OF THIS BEAD'S SCOPE, and they are not all in
@@ -3676,25 +3676,31 @@ def build_helmet(colours, obj, tj):
         # takes ONE shade — (49, 34, 21) across the pair, which is the same reason
         # the broth behind it reads flat.
         #
-        # AND THE DEPTH GOES WITH IT, twice. At 0.16 the generator's own seat left
-        # the pupil's front face BEHIND the noodle ring's, so the disc had to come
-        # forward — and the first build of this bead took it to `fy(0.075)`, which
-        # cleared the ring and pulled the disc out of EVERYTHING: its rear sat 14 mm
-        # in front of the broth and 5 mm in front of the ring, an unconnected chip
-        # hovering off the soup (invisible head-on, which is exactly why the frame
-        # it was judged on looked clean — review round 1). `fy(0.060)` is the seat
-        # that holds both ends, and its two numbers are read off the EXPORTED mesh
-        # and not off an ideal torus, because `minor_segments=6` makes the ring a
-        # HEXAGON in section whose front face slopes from (r 18.1 mm, z -0.2715) out
-        # to (r 23.0, z -0.2800). At the disc's own 19.5 mm radius that face is at
-        # -0.2739, and the 6.2 mm disc runs -0.2788 to -0.2726: its rear is 1.3 mm
-        # INSIDE the ring and its front stands 4.9 mm proud of it. So the pupil is
-        # seated in the eye, the eye crosses the broth, and the dot is still the
-        # thing you see. Same primitive, same vertex count, same `HELMET_TRIS` bill.
+        # AND THE SEAT GOES BACK WITH IT, to `fy(0.052)` from the generator's own
+        # `fy(0.062)`, because flattening a ball takes its REAR away: the ball
+        # reached into the broth behind it and a 6.2 mm disc at the same seat
+        # reaches nothing, and a piece of this helmet that touches no other piece is
+        # a chip hovering in the visor. (Both of this bead's earlier builds were
+        # that chip. The first moved the disc FORWARD, to `fy(0.075)`, on the
+        # premise that the ring's front stood proud of it — which is true only of
+        # the ring's globally forwardmost vertex at r >= 23 mm, out where a disc of
+        # radius 19.5 can never be occluded by it. Review rounds 1 and 2.)
+        #
+        # SEATING IS PER RADIUS, and both solids are read off the EXPORTED mesh,
+        # because `minor_segments=6` makes the ring a HEXAGON in section: its front
+        # face is the straight run from (r 18.1 mm, z -271.50) out to (r 23.0,
+        # z -279.96), and the disc is an ellipsoid, so its own rear rises from
+        # z_centre + 3.12 mm on the axis to z_centre at the rim. Over the 18.1 ..
+        # 19.5 mm band where the two overlap, this seat puts the disc's rear
+        # 0.33 - 1.76 mm INSIDE that face while its front still stands up to 2.01 mm
+        # proud of it: the pupil bites the eye ring, the ring crosses the broth, and
+        # the dot is the thing you see. The ring hides the outer 3% of the disc's
+        # radius, which is the bite. Same primitive, same vertex count, same
+        # `HELMET_TRIS` bill.
         bpy.ops.mesh.primitive_uv_sphere_add(radius=0.028 * k, segments=10,
                                              ring_count=6)
         pieces.append(_piece("PhoPupil" + side, colours["eye_dark"],
-                             Matrix.Translation(g(ex, fy(0.060), eye_gz))
+                             Matrix.Translation(g(ex, fy(0.052), eye_gz))
                              @ Matrix.Diagonal(Vector((1.0, 0.16, 1.0, 1.0)))))
 
     bpy.ops.mesh.primitive_uv_sphere_add(radius=0.028 * k, segments=10, ring_count=6)
