@@ -40,14 +40,13 @@ class_name RemoteAvatar
 ## uses so a remote runner reads as a runner and not as a sliding statue.
 ##
 ## THE MIRROR RUNS THE SAME DRIVER (bd godot-test1-5u3.2). `HeroRig.for_body()`
-## picks the pose driver off the SCENE — bones for a hero carrying a
-## `Skeleton3D`, the exact-name limb rig for anything else — on this side
-## exactly as on the player's, and `_animate()` hands it the same two
-## already-scaled swings. The one thing that differs is where the phase comes
-## from: the player advances a clock, this advances on DISTANCE walked off the
-## speed already in the presence packet. Nothing was added to the wire for any
-## of it, and a hero that migrates to a skinned model migrates on both sides at
-## once because neither side decides the rig kind.
+## binds the skinned driver off the SCENE on this side exactly as on the
+## player's, and `_animate()` hands it the same two already-scaled swings. The
+## one thing that differs is where the phase comes from: the player advances a
+## clock, this advances on DISTANCE walked off the speed already in the presence
+## packet. Nothing was added to the wire for any of it, and a hero that migrates
+## to a skinned model migrates on both sides at once because neither side
+## decides anything (a scene with no skeleton binds null on both sides).
 
 # ============================================================================
 # CONSTANTS
@@ -163,11 +162,10 @@ var name_tag: Label3D = null
 var _speaking: bool = false
 
 ## The instanced character scene itself, its `Body` node, and the pose driver
-## `HeroRig.for_body()` picked for it — the SAME seam the local player binds
-## (bd godot-test1-5u3.2): a scene carrying a `Skeleton3D` is posed on bones, a
-## scene with `LeftArm` / `RightArm` / `LeftLeg` / `RightLeg` under `Body` keeps
-## the exact-name limb rig. Null rig = a model this build cannot pose; it draws
-## and stands still, which is what a mirror should do rather than error.
+## `HeroRig.for_body()` bound for it — the SAME seam the local player binds
+## (bd godot-test1-5u3.2): a scene carrying a `Skeleton3D` is posed on bones.
+## Null rig = a model this build cannot pose; it draws and stands still, which
+## is what a mirror should do rather than error.
 var character_node: Node3D = null
 var character_body: Node3D = null
 var _rig: RefCounted = null
@@ -338,20 +336,20 @@ func _bind_rig() -> void:
 	"""
 	Record the model's rest pose and bind its driver — the SAME two calls the
 	local player makes in `PlayerAnimation.setup_animation_references()`, which
-	is the point: one rest-capture and one rig-kind decision, shared, so the
-	mirror can never disagree with the body it is a picture of about what a
-	hero's scene is.
+	is the point: one rest-capture and one seam call, shared, so the mirror can
+	never disagree with the body it is a picture of about what a hero's scene is.
 
-	A model whose `Body` holds neither a `Skeleton3D` nor the four exact-named
-	limbs binds nothing and simply stands there, exactly as it would locally.
+	A model whose `Body` holds no `Skeleton3D` binds nothing and simply stands
+	there, exactly as it would locally.
 	"""
 	character_body = character_node.get_node_or_null("Body")
 	if not character_body:
 		return
 
-	# `body` and `head` ride the same table as the four limbs because the gait
-	# rolls, pitches and bobbles them — every axis an animation writes needs a
-	# rest value, or a model swap leaves the lean baked into the next hero.
+	# The rest table is the `Body` rotation alone now (the limbs it used to
+	# list retired with the limb driver): the gait's roll, pitch and bobble are
+	# the caller's writes, and without the body's rest a swap leaves the lean
+	# baked into the next hero.
 	rest_rotations = PlayerAnimation.capture_rest_pose(character_node)
 	_rig = HeroRig.for_body(character_body, rest_rotations)
 
@@ -579,8 +577,8 @@ func _hand_over_clock(arm_rate: float = 0.0, leg_rate: float = 0.0) -> void:
 	is not on the wire — a remote peer lands without the knee absorb, exactly as
 	it lands without the container squash today.
 
-	Guarded by `has_method` like the local one, so the limb rig never sees it."""
-	if _rig != null and _rig.has_method("set_clock"):
+	Direct like the local one: a single driver that always answers `set_clock`."""
+	if _rig != null:
 		_rig.set_clock(_skin_clock, 0.0, arm_rate, leg_rate)
 
 

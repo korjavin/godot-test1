@@ -133,8 +133,8 @@ const TEIBI_RATE_TOL: float = 0.15
 ## the game draws rather than a model beside it. Hard-coded rather than "whichever
 ## CHARACTERS row brings a Skeleton3D", because a fixture that goes looking for
 ## its own subject reports SELFCHECK OK on the day the last skinned hero is
-## mis-wired back onto the limb rig — which is the one thing checks 1-7 cannot
-## see either (they measure through `rig.measure()`, whichever driver answers).
+## mis-wired off its Skeleton3D — which is the one thing checks 1-7 cannot see
+## either (a sceneless model binds null and they measure nothing at all).
 const SKINNED_FIXTURE: String = "res://scenes/characters/teibi.tscn"
 ## Teibi's row asks for no head bobble, and an axis nothing measures is an axis
 ## that can be deleted in silence — so the fixture runs his row with this forced
@@ -422,9 +422,10 @@ func _check_catalogue() -> void:
 
 	# (e) Every CHARACTERS scene binds the SKINNED driver — through HeroRig
 	#     itself, not a copy of its discovery: the real scene is instantiated,
-	#     the real rest table is captured, and the seam is asked. A limb scene
-	#     can no longer come back silently (child 9k9n.3 retires the limb
-	#     driver; until then this is the guard that says the roster left it).
+	#     the real rest table is captured, and the seam is asked. A scene that
+	#     lost its skeleton binds null and can no longer come back silently
+	#     (bead 9k9n.3 retired the limb driver; this is the guard that says the
+	#     roster left it).
 	for entry: Dictionary in PlayerController.CHARACTERS:
 		var hero: String = String(entry["name"])
 		var path: String = String(entry["scene_path"])

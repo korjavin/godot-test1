@@ -10,8 +10,9 @@
 ;
 ; THE SCENE IS THE FLAG (`scenes/characters/teibi.tscn` said it first): the
 ; Skeleton3D under `Body` is what makes `hero_rig.gd` hand him to
-; `hero_rig_skeleton.gd` instead of `hero_rig_limbs.gd` (bd 5u3.2), which is why
-; this migration is a data change and `player_animation.gd`, `player_controller.gd`,
+; `hero_rig_skeleton.gd` (bd 5u3.2) — the one pose driver left since bead
+; godot-test1-9k9n.3 retired the limb rig — which is why this migration is a
+; data change and `player_animation.gd`, `player_controller.gd`,
 ; `remote_avatar.gd` and `player_abilities.gd` change by zero lines.
 ;
 ; THE UID IS LOAD-BEARING and stays `uid://windman_3d_updated_001`:

@@ -67,7 +67,7 @@ WHAT A ROW IS (and where each half of it came from):
                     red Chinese dragon on the belly, weighted ACROSS the three
                     spine bones because that is how much body it lies on
                     (`build_helmet`, `build_dragon`, `spine_split`). Both are
-                    `generate_phoboman_separate.py`'s own pieces and palette,
+                    the retired part-tree generator's own pieces and palette,
                     re-seated on the hero's measured skull and belly.
   creases           a row's OWN crease heights, as `(landmark, offset)` pairs
                     appended to the cast's joint list in `_fold_bands`. The joints
@@ -139,8 +139,9 @@ these, which are this lane's own):
  2. `convert(target='MESH')` APPLIES AND REMOVES EVERY MODIFIER, the armature
     modifier included — the bone weights survive (they are vertex groups), the
     binding does not. Re-add it with `RigService.ensure_armature_modifier`.
- 3. blender_hero.py's conjugation trick (W_blender = Rx(90)·W_godot·Rx(90)^-1)
-    is for UNRIGGED parts hung on a .tscn node whose basis is Rx(-90). A
+ 3. The retired part-import lane's conjugation trick (W_blender =
+    Rx(90)·W_godot·Rx(90)^-1) is for UNRIGGED parts hung on a .tscn node whose
+    basis is Rx(-90). A
     SKINNED glTF is placed by its own root node and exports Y-up: do NOT copy
     it here. This script builds in Blender's Z-up with +Y = the face, exports
     with `export_yup=True` (the default), and glTF's (x, z, -y) map lands the
@@ -205,8 +206,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # its directory is not on `sys.path`.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hero_skin import graded  # noqa: E402
-# Blender's own screenshot helper, reused for the rest row (`--rest-row`).
-import blender_hero  # noqa: E402
+
 
 OUT_ROOT = os.path.join(REPO, "assets", "models", "characters")
 MANIFEST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hero_manifest.json")
@@ -1047,9 +1047,9 @@ HEROES = {
         # godot-test1-9k9n): Phoboman is a heavy HUMAN on the same rig as the trio,
         # with the helmet, the pho face and the chest dragon as joined accessories.
         # This SUPERSEDES the 2026-09-11 "Phoboman keeps the limb rig for good /
-        # sphere body" ruling. The design target that survives is
-        # `scripts/generate_phoboman_separate.py`'s — its palette verbatim, its
-        # helmet assembly, its dragon — ported onto a body that walks.
+        # sphere body" ruling. The design target that survives is the retired
+        # part-tree generator's — its palette verbatim, its helmet assembly,
+        # its dragon — ported onto a body that walks.
         #
         # NO `FACES` ROW. Every other hero's face is his own recipe because it is
         # what the camera reads at 3 m; Phoboman's is behind 3 mm of helmet glass
@@ -1099,7 +1099,7 @@ HEROES = {
                     (("arms", "r-lowerarm-muscle-incr.target.gz"), 0.6),
                     (("neck", "neck-scale-vert-decr.target.gz"), 1.0),
                     (("neck", "neck-scale-horiz-incr.target.gz"), 0.5)],
-        # `generate_phoboman_separate.py`'s `self.colors`, VERBATIM — the canon's
+        # The retired part-tree generator's `self.colors`, VERBATIM — the canon's
         # own "repeat the colors of the face, head, dragon on the belly, pants and
         # boots" and the convention every other row here follows. `skin` is graded
         # by `GRADED_COLOURS` like the rest of the cast's.
@@ -3265,8 +3265,9 @@ def attach_tails(obj, row, tj):
 # one skinned mesh and weighted by hand, like the beret, the eyes and the coat
 # tails, and not garments (nothing here goes in `CLOTH_VG`).
 #
-# THE DESIGN TARGET IS `scripts/generate_phoboman_separate.py`, piece for piece
-# and colour for colour — `create_head_assembly`'s dome, collar, valve knob,
+# THE DESIGN TARGET IS the retired part-tree generator, piece for piece and
+# colour for colour (bead godot-test1-9k9n.3 deleted its script) —
+# `create_head_assembly`'s dome, collar, valve knob,
 # rivets, porthole rim, glass, broth, highlight, noodle eyes, herb nose and
 # strands, and `create_torso_assembly`'s swept red serpent with its gold horns,
 # eyes, whiskers and claw tufts. What changes is WHERE each piece sits, and that
@@ -4904,22 +4905,23 @@ def build(hero, shot=None):
     log("wrote %s (%d bytes)" % (os.path.basename(blend), os.path.getsize(blend)))
 
     if shot:
-        # blender_hero.py's helper shoots from -Y, because the part trees it was
-        # written for are built facing that way (its Rx(+90) root). These bodies
-        # face +Y, so without this the rest row is three backs of heads. Turned at
-        # the OBJECT level and only after both files are written — the .glb and the
-        # .blend already have the rest pose they are supposed to have, and the mesh
-        # and the armature turn together so the modifier still binds — which is
-        # what turning only the ROOTS does, the mesh being MPFB2's child of the
-        # armature. Turning both instead composes pi with pi and the hero faces
-        # front again (measured 2026-09-11: three backs of heads).
+        # The `screenshot()` helper below shoots from -Y, because the part trees
+        # the retired lane was written for are built facing that way (its Rx(+90)
+        # root). These bodies face +Y, so without this the rest row is three backs
+        # of heads. Turned at the OBJECT level and only after both files are
+        # written — the .glb and the .blend already have the rest pose they are
+        # supposed to have, and the mesh and the armature turn together so the
+        # modifier still binds — which is what turning only the ROOTS does, the
+        # mesh being MPFB2's child of the armature. Turning both instead composes
+        # pi with pi and the hero faces front again (measured 2026-09-11: three
+        # backs of heads).
         for o in (obj, armature):
             if o.parent is None:
                 o.rotation_euler.z = math.pi
         # Workbench's default MATERIAL colour mode renders a hero with no material
         # as grey clay; these bodies ARE their vertex colours.
         bpy.context.scene.display.shading.color_type = 'VERTEX'
-        blender_hero.screenshot(shot, max(zs))
+        screenshot(shot, max(zs))
     log("done")
     return {
         "glb": os.path.relpath(glb, OUT_ROOT),
@@ -4993,9 +4995,35 @@ def check_manifest(built):
         % (len(built), os.path.relpath(MANIFEST, REPO)))
 
 
+def screenshot(path, height_hint):
+    """Render the assembled hero from the game's third-person distance (~4 m,
+    slightly above), Workbench: no material/light setup needed, fast headless.
+
+    Folded in from the retired `scripts/blender_hero.py` (bead godot-test1-9k9n.3):
+    that lane's import half has no hero left, and this helper is the only thing
+    anyone still called in there. bpy + Vector + log is all it needs."""
+    scene = bpy.context.scene
+    target = Vector((0.0, 0.0, height_hint * 0.55))
+    cam_loc = Vector((0.0, -4.0, height_hint * 0.75))
+    cam_data = bpy.data.cameras.new("HeroCam")
+    cam_obj = bpy.data.objects.new("HeroCam", cam_data)
+    bpy.context.collection.objects.link(cam_obj)
+    cam_obj.location = cam_loc
+    cam_obj.rotation_euler = (target - cam_loc).to_track_quat('-Z', 'Y').to_euler()
+    scene.camera = cam_obj
+
+    scene.render.engine = 'BLENDER_WORKBENCH'
+    scene.render.resolution_x = 640
+    scene.render.resolution_y = 640
+    scene.render.filepath = path
+    bpy.context.view_layer.update()
+    bpy.ops.render.render(write_still=True)
+    log("wrote screenshot", path)
+
+
 def rest_row(shots, path):
     """The cast at rest, side by side in one strip. Blender renders each hero on its
-    own (`blender_hero.screenshot`, reused) and numpy pastes them — Pillow is not
+    own (`screenshot`, just above) and numpy pastes them — Pillow is not
     installed in Blender's Python and is not worth adding for one concatenate."""
     import numpy
 

@@ -11,11 +11,12 @@ code lives here once and each generate_*.py is a short table of proportions and
 colours. The hunter robot is the one customer that skips `quadruped()` and stacks
 its own boxes — it still owes the three contracts below, it just isn't an animal.
 The older per-character generators (generate_crocodile_model.py,
-generate_phoboman_separate.py, generate_windman_fan.py) predate this and are left
+generate_windman_fan.py) predate this and are left
 alone — with ONE exception, which is `export_faceted()`. THAT FUNCTION IS THE
 WHOLE CAST'S, not the predators': the crocodile imports it, and so does what is
-left of the heroes' generated geometry — Phoboman's whole part tree and Windman's
-FAN, which is all three skinned heroes left behind (bead `godot-test1-y1o.21`,
+left of the heroes' generated geometry — Windman's FAN, which is all the four
+skinned heroes left behind (Phoboman's whole part tree retired at bead
+godot-test1-9k9n.3; bead `godot-test1-y1o.21`,
 owner ruling 2026-09-05 "facet ALL"; the skinned bodies are smooth-shaded and
 built in Blender, see build_hero.py). Flat normals are a property of the EXPORT
 and every model that wants them wants the same one. Those callers owe none of the
