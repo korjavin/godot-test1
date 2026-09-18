@@ -9,6 +9,7 @@
   "budapest_city_selfcheck": 7,
   "budapest_selfcheck": 5,
   "build_version_selfcheck": 1,
+  "camp_story_selfcheck": 1,
   "capture_selfcheck": 29,
   "chunk_stream_selfcheck": 1,
   "coin_road_selfcheck": 2,
@@ -35,6 +36,7 @@
   "pause_selfcheck": 2,
   "passport_selfcheck": 1,
   "perf_selfcheck": 0,
+  "primm_swords_selfcheck": 1,
   "progression_selfcheck": 2,
   "projectile_selfcheck": 26,
   "prop_selfcheck": 10,
@@ -52,6 +54,8 @@
   "view_selfcheck": 1,
   "voice_selfcheck": 2,
   "wade_selfcheck": 18,
+  "waypoint_panel_selfcheck": 2,
   "waypoint_selfcheck": 2,
+  "waypoint_travel_selfcheck": 2,
   "weather_selfcheck": 0
 }
