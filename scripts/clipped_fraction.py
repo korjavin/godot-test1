@@ -18,6 +18,8 @@ Compatibility workaround that a later engine could turn into a double decode.
     # teibi's face is on the skinned body: add `body=skinned`
     python3 scripts/clipped_fraction.py windman /tmp/after/windman_fp/17_head_face.png
     python3 scripts/clipped_fraction.py 0.377,0.489,0.498,0.636 frame.png   # own rect
+    # the dragon is judged on `flat`, not on `clipped` — see `measure`
+    python3 scripts/clipped_fraction.py phoboman_dragon /tmp/after/pho_web/18_body_3m.png
 
 THE RECT IS THE WHOLE TRICK. It is given in FRACTIONS of the frame, so it follows
 the framing at any resolution, and each hero's is chosen to lie ENTIRELY INSIDE
@@ -51,6 +53,14 @@ FACE_RECTS = {
     "primm": (0.445, 0.533, 0.570, 0.689),
     "teibi": (0.460, 0.498, 0.600, 0.711),
     "phoboman": (0.5525, 0.510, 0.6825, 0.770),
+    # ... and `phoboman_dragon` is not a face at all (bead godot-test1-9k9n.8).
+    # It is the widest all-red square that fits inside the serpent on the web
+    # `18_body_3m` frame, found by scanning for it rather than by eye, so the
+    # rect holds no blue shell and no gold. It is the one thing in this cast that
+    # fails a DIFFERENT way from a face: its luma never approaches white, because
+    # green and blue stay low — what clips is the RED CHANNEL, on its own, which
+    # is the second number `measure()` returns.
+    "phoboman_dragon": (0.528, 0.549, 0.544, 0.578),
 }
 
 
@@ -106,11 +116,22 @@ def read_rgb(path):
 
 
 def measure(path, rect, threshold=THRESHOLD):
-    """(clipped fraction, mean luma, pixel count) inside `rect`."""
+    """(clipped fraction, flat-channel fraction, mean luma, pixel count) in `rect`.
+
+    TWO NUMBERS BECAUSE THERE ARE TWO FAILURES (the second added by bead
+    godot-test1-9k9n.8). `clipped` is the original one and the one a FACE is
+    judged by: luma at or over `THRESHOLD`, i.e. the pixel has gone to paper
+    white and the shape is gone. `flat` is the one a SATURATED colour fails
+    instead — any single channel pegged at 255 while the others are nowhere near
+    it, which never moves the luma and never trips the first number. Phoboman's
+    dragon was 84% flat on red at `18_body_3m` and 0.00% clipped: a scarlet
+    serpent whose whole red channel was one value, so every fold in it was drawn
+    by green and blue alone.
+    """
     width, height, nch, px = read_rgb(path)
     x0, x1 = int(rect[0] * width), int(rect[2] * width)
     y0, y1 = int(rect[1] * height), int(rect[3] * height)
-    clipped, total, n = 0, 0.0, 0
+    clipped, flat, total, n = 0, 0, 0.0, 0
     for y in range(y0, y1):
         row = y * width * nch
         for x in range(x0, x1):
@@ -120,8 +141,10 @@ def measure(path, rect, threshold=THRESHOLD):
             n += 1
             if luma >= threshold:
                 clipped += 1
+            if max(px[i], px[i + 1], px[i + 2]) >= 255:
+                flat += 1
     assert n, "empty rect"
-    return clipped / n, total / n, n
+    return clipped / n, flat / n, total / n, n
 
 
 def main():
@@ -134,9 +157,9 @@ def main():
         rect = tuple(float(v) for v in key.split(","))
         assert len(rect) == 4, "rect is x0,y0,x1,y1 as fractions of the frame"
     for path in sys.argv[2:]:
-        clipped, mean, n = measure(path, rect)
-        print("%s  clipped=%.4f mean=%.4f n=%d rect=%s"
-              % (path, clipped, mean, n, ",".join("%.3f" % v for v in rect)))
+        clipped, flat, mean, n = measure(path, rect)
+        print("%s  clipped=%.4f flat=%.4f mean=%.4f n=%d rect=%s"
+              % (path, clipped, flat, mean, n, ",".join("%.3f" % v for v in rect)))
 
 
 if __name__ == "__main__":

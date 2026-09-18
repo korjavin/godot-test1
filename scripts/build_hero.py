@@ -1171,8 +1171,18 @@ HEROES = {
         # and the dome. Do not read this paragraph as saying the dragon is fine.
         "colours": {
             'body_blue':    (0.13, 0.18, 0.46, 1.0),   # deep royal/navy belly
-            'dragon_red':   (0.80, 0.13, 0.13, 1.0),   # bold Chinese-dragon red
-            'dragon_gold':  (0.92, 0.74, 0.30, 1.0),   # horns, eyes, whiskers
+            # -- the dragon, re-graded for this scene (bead godot-test1-9k9n.8),
+            # and the debt bead 9k9n.5 booked in the paragraph below. Both are
+            # the generator's own values scaled to HALF exposure — the RATIO of
+            # the three channels is untouched, so the hue is the generator's to
+            # the last digit and only the stop moved. Half and not the fit's own
+            # answer because the fit's headline is that 0.47 linear is white and
+            # the red was at 0.80: it was not a little hot, it was 1.7 stops over
+            # its own ceiling. 0.40 lands where the helmet's brass dome landed
+            # (0.43 renders 234), with room left for the lit facets, which is the
+            # whole point — the shading has to live in the top of the channel.
+            'dragon_red':   (0.40, 0.065, 0.065, 1.0),  # scales -> (221, 47, 37)
+            'dragon_gold':  (0.41, 0.33, 0.135, 1.0),   # horns, eyes, whiskers
             # -- the helmet, graded for this scene; the comment is what it RENDERS
             'helmet_gold':  (0.43, 0.32, 0.17, 1.0),   # brass dome -> (234,190,87)
             'helmet_dark':  (0.25, 0.18, 0.085, 1.0),  # ring, rivets -> (174,125,46)
@@ -4087,8 +4097,9 @@ def spine_split(armature):
 
 DRAGON_ARM_CLEAR = 0.020    # how much air the dragon must leave around an ARM in
                             # the SHIPPED rest, measured after `apply_pose_as_rest`
-ARM_BONES = ["upperarm_l", "upperarm_r", "lowerarm_l", "lowerarm_r",
-             "hand_l", "hand_r"]
+# The same six bones `ARM_CHAIN` names, flat: this asks "is this vertex in an
+# arm", that one asks "which arm, and which way does it point".
+ARM_BONES = ARM_CHAIN["l"] + ARM_CHAIN["r"]
 
 
 def assert_clear_of_arms(obj, first_vert, clearance=DRAGON_ARM_CLEAR):
