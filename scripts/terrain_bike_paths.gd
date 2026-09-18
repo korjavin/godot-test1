@@ -44,9 +44,20 @@ extends RefCounted
 ## Everything here comes from this family's own salt + primes, from its own turn
 ## hash, or from a PRIVATE fixed-seed builder generator. The shared chunk / biome
 ## / coin / crocodile streams are the sequences they were before bike paths
-## existed, which is why `spawn_bike_paths = false` yields a byte-identical world
-## — `bike_path_selfcheck` check 1 is that statement, measured through the
-## shipped `create_chunk` on both sides.
+## existed, so with `spawn_bike_paths = false` every other box in the world is
+## where it was. `bike_path_selfcheck` check 1 is that statement, measured
+## through the shipped `create_chunk` on both sides.
+##
+## WITH ONE SANCTIONED EXCEPTION, and it is a FOOTPRINT rather than a draw: a
+## pole appends `{pos, radius, top, climbable}` to `obstacles`, which the
+## crocodile, boss and hunter spawners read a few lines later in `create_chunk`.
+## A candidate inside a footprint is rejected, and `terrain_predators.gd`'s own
+## note says what follows — "a rejection still skips the successful spawn's
+## `rotation.y` draw below, so the rest of this chunk's crocodile positions
+## shift". That is the shared-currency mechanism camps, chests and artifacts all
+## use, not a stream this family touched, and check 1 tests node-for-node
+## equality only on the chunks where this family appended NO footprint, which is
+## where the claim is exactly true.
 ##
 ## ----------------------------------------------------------------------------
 ## BLOCKED = TRUNCATED, NEVER GAPPED
@@ -82,15 +93,21 @@ extends RefCounted
 # THE SEED: THIS FAMILY'S OWN SALT AND ITS OWN COORDINATE PRIMES
 # ============================================================================
 #
-# The primes are NEW. Already spoken for elsewhere in this world engine:
-# 73856093/19349663 (artifacts), 83492791/15485863 (the biome offset),
-# 40960001/26463089 (camps), 96174811/18266587 (the scarcity roll),
-# 86028121/50331653 (chests), 40499/86969 and 83492791/28411639 (predators).
+# The primes are NEW, and that was checked against the whole tree rather than
+# against the handful a reader remembers. Already spoken for elsewhere in this
+# world engine: 73856093/19349663 (artifacts), 83492791/15485863 (the biome
+# offset), 40960001/26463089 (camps), 96174811/18266587 (the scarcity roll),
+# 86028121/50331653 (chests), 32452867/49979687 (the landmark sites),
+# 122949829/104395301 (hunters), 141650939/175961107 (the Danube), 179424673 and
+# 32452843 (the crocodile roll), 40499/86969 and 83492791/28411639 (predators),
+# 57859/31337 (the camp story) and 92821 (the road's figures).
+#
 # Sharing a pair would correlate two features: a chunk that hosts a camp would
 # thereby be likelier (or never) to host a path, which is the one thing an
-# independent stream exists to prevent.
-const BIKE_HASH_PRIME_X: int = 32452843
-const BIKE_HASH_PRIME_Y: int = 49979687
+# independent stream exists to prevent. `grep -rhoE '[0-9]{5,10}' scripts/` is
+# the check the next author owes, and it is how these two were chosen.
+const BIKE_HASH_PRIME_X: int = 67867979
+const BIKE_HASH_PRIME_Y: int = 34019651
 
 ## "BIKE PATH"-ish; arbitrary fixed constant, XORed into `run_seed` so this
 ## family's stream is its own even where the primes would agree.
@@ -99,9 +116,9 @@ const BIKE_PATH_SALT: int = 0xB1_1E9A7
 ## The TURN hash's own salt and primes — see `_bike_turn()` for why this family
 ## may not call `CoinRoad._road_turn`.
 const BIKE_TURN_SALT: int = 0xB1_1E70A
-const BIKE_TURN_PRIME_X: int = 27644437
-const BIKE_TURN_PRIME_Y: int = 6291469
-const BIKE_TURN_PRIME_I: int = 12582917
+const BIKE_TURN_PRIME_X: int = 55621459
+const BIKE_TURN_PRIME_Y: int = 71378569
+const BIKE_TURN_PRIME_I: int = 15485917
 
 # ============================================================================
 # THE PATH'S SHAPE
@@ -307,15 +324,25 @@ static func _bike_path_at(terrain: Node3D, origin: Vector2i) -> Array[Dictionary
 
 	# --- THE WALK. Truncate at the first blocked station: keep the prefix, drop
 	# everything after, never resume past the block.
+	# The waypoint table, read ONCE for the whole walk rather than once per
+	# station — it is pure in `run_seed` and rebuilding it is the most expensive
+	# thing in the predicate after the road cache. See `_station_blocked`.
+	var waypoints: Array[Dictionary] = terrain.waypoint_sites()
+
 	var stations: Array[Dictionary] = []
 	var pos := start
 	var heading := heading0
 	for i in count:
-		if station_blocked(terrain, pos):
+		if _station_blocked(terrain, pos, waypoints):
 			break
 		stations.append({ "pos": pos, "heading": heading })
 		heading = _next_heading(terrain, origin, heading0, heading, i)
-		pos += Vector2(cos(heading), sin(heading)) * BIKE_STATION_SPACING
+		var step: Vector2 = pos + Vector2(cos(heading), sin(heading)) * BIKE_STATION_SPACING
+		# ...and the water BETWEEN the two, which the station pitch is too coarse
+		# to see on its own. Truncating here keeps the prefix that ends at `pos`.
+		if segment_blocked(terrain, pos, step):
+			break
+		pos = step
 
 	if stations.size() < BIKE_PATH_MIN_STATIONS:
 		return []
@@ -396,6 +423,54 @@ static func station_blocked(terrain: Node3D, p: Vector2) -> bool:
 	@param p: The candidate station, WORLD space (x, z).
 	@return: true when the path must stop here.
 
+	THE ONE-ARGUMENT FORM, for callers with a single point to test (the walk's
+	own is `_station_blocked` below, which is handed the waypoint table once for
+	the whole path instead of rebuilding it per station).
+	"""
+	return _station_blocked(terrain, p, terrain.waypoint_sites())
+
+
+static func segment_blocked(terrain: Node3D, a: Vector2, b: Vector2) -> bool:
+	"""
+	Does the SEGMENT between two legal stations cross water?
+
+	@return: true when the path must stop at `a` rather than reach `b`.
+
+	THE HALF-STEP RIVER SAMPLE, and it exists because the station pitch is coarse
+	against the one feature in the field that is thin. `RIVER_HALF_WIDTH`'s own
+	measurement note (`endless_terrain.gd`) puts a band at roughly 8-9 m across at
+	the mean gradient — but the gradient varies, and wherever it is steep the band
+	drops under `BIKE_STATION_SPACING` and a 5 m step can put one station on each
+	dry side of it. The strip between them would then be laid across the water,
+	which is the exact case `station_blocked`'s river test says cannot happen.
+
+	Only the river is sampled here, and that is the whole of the reasoning: every
+	other blocking feature is wide against the pitch — the road's swath is 14 m,
+	the tower's disc is padded by a full station stride, the mountain band and the
+	city rect are hundreds of metres, and a 5.6 m waypoint clearance can only be
+	clipped in its outer half-metre. Re-running all seven tests at the midpoint
+	would double the walk's cost to re-answer six questions that were never in
+	doubt.
+
+	ponytail: this halves the effective pitch to 2.5 m rather than making the test
+	continuous, so a band under 2.5 m across could still be stepped over. If one
+	ever is, the upgrade is a swept test along the segment rather than a third
+	sample point.
+	"""
+	return terrain.is_river_at(Vector3((a.x + b.x) * 0.5, 0.0, (a.y + b.y) * 0.5))
+
+
+static func _station_blocked(terrain: Node3D, p: Vector2, waypoints: Array[Dictionary]) -> bool:
+	"""
+	`station_blocked` with the waypoint table passed in.
+
+	@param p: The candidate station, WORLD space (x, z).
+	@param waypoints: `terrain.waypoint_sites()`, read ONCE per walk. That table
+	                  is not memoized — every call allocates eleven rows and runs
+	                  six binary searches with a river re-walk each — and it is
+	                  loop-invariant here, being pure in `run_seed`.
+	@return: true when the path must stop here.
+
 	PURE IN (POSITION, SEED) — every one of the seven tests below is, and that is
 	the load-bearing property: it is why every chunk that evaluates an origin
 	truncates its path at the SAME station, and therefore why a per-chunk draw of
@@ -420,7 +495,7 @@ static func station_blocked(terrain: Node3D, p: Vector2) -> bool:
 	# 3. A field landmark's site. `landmark_sites()` returns chunk -> kind, so the
 	#    CHUNK test IS the disc test and it is cheaper than one — a memoized
 	#    dictionary hit against a table that is built once per run.
-	if TerrainLandmarks.landmark_sites(terrain).has(terrain.world_to_chunk(Vector3(p.x, 0.0, p.y))):
+	if terrain.landmark_sites().has(terrain.world_to_chunk(Vector3(p.x, 0.0, p.y))):
 		return true
 
 	# 4. The mountain massif — impassable box stone, so a strip into it is a strip
@@ -435,9 +510,9 @@ static func station_blocked(terrain: Node3D, p: Vector2) -> bool:
 		return true
 
 	# 6. The waypoint circles. Eleven of them in the world, so this is eleven
-	#    distances against a table that is pure arithmetic over the road cache.
+	#    distances against a table the caller built once for the whole walk.
 	var clear: float = TerrainWaypoints.RING_RADIUS + BIKE_WAYPOINT_MARGIN
-	for site: Dictionary in TerrainWaypoints.waypoint_sites(terrain):
+	for site: Dictionary in waypoints:
 		var at: Vector3 = site["pos"]
 		if Vector2(p.x - at.x, p.y - at.z).length() < clear:
 			return true
@@ -499,9 +574,15 @@ static func spawn_bike_path_in_chunk(terrain: Node3D, chunk_pos: Vector2i,
 	# Where this family's first box lands in the CUBE bucket — see the docstring.
 	var cube_start: int = _cube_count(block_batch)
 	var cube_cursor: int = cube_start
-	var chunk_origin: Vector3 = terrain.chunk_to_world(chunk_pos)
-	var corner := Vector2(chunk_origin.x - terrain.chunk_size * 0.5,
-			chunk_origin.z - terrain.chunk_size * 0.5)
+	# THE CHUNK-LOCAL FRAME IS CENTRED ON THE CHUNK NODE, not on its corner:
+	# `create_chunk` sets `mesh_instance.position = chunk_to_world(chunk_pos)` and
+	# `chunk_to_world` returns the chunk's CENTRE, so a chunk-local coordinate runs
+	# [-chunk_size/2, +chunk_size/2] and a world point converts by subtracting the
+	# centre. `terrain_bridges.gd` is the closest precedent — a world-space
+	# polyline drawn per chunk by this same midpoint rule — and it subtracts the
+	# centre too.
+	var chunk_centre: Vector3 = terrain.chunk_to_world(chunk_pos)
+	var centre := Vector2(chunk_centre.x, chunk_centre.z)
 
 	var markers: Array[Node3D] = []
 	var radius: int = scan_radius_chunks(terrain)
@@ -511,7 +592,7 @@ static func spawn_bike_path_in_chunk(terrain: Node3D, chunk_pos: Vector2i,
 			var stations: Array[Dictionary] = bike_path_at(terrain, origin)
 			if stations.is_empty():
 				continue
-			var built: Dictionary = _draw_path_share(terrain, chunk_pos, corner, origin,
+			var built: Dictionary = _draw_path_share(terrain, chunk_pos, centre, origin,
 					stations, rng, obstacles, block_batch, block_body, cube_cursor)
 			cube_cursor = built["cube_cursor"]
 			if (built["segments"] as PackedInt32Array).is_empty():
@@ -535,16 +616,17 @@ static func spawn_bike_path_in_chunk(terrain: Node3D, chunk_pos: Vector2i,
 		marker.set_meta("cube_start", cube_start)
 
 
-static func _draw_path_share(terrain: Node3D, chunk_pos: Vector2i, corner: Vector2,
+static func _draw_path_share(terrain: Node3D, chunk_pos: Vector2i, centre: Vector2,
 		origin: Vector2i, stations: Array[Dictionary], rng: RandomNumberGenerator,
 		obstacles: Array, block_batch: Array, block_body: StaticBody3D,
 		cube_cursor: int) -> Dictionary:
 	"""
 	One origin's segments, insofar as they belong to `chunk_pos`.
 
-	@param corner: The chunk's -X/-Z corner in world XZ. Every `create_box` in this
-	               project takes a CHUNK-LOCAL centre, so this is what the world-
-	               space station positions are measured against.
+	@param centre: The chunk's CENTRE in world XZ — the position of the chunk node
+	               itself. Every `create_box` in this project takes a CHUNK-LOCAL
+	               centre, and chunk-local is relative to that node, so this is
+	               what the world-space station positions are measured against.
 	@param cube_cursor: How many CUBE entries the batch holds already.
 	@return: `{ "segments": PackedInt32Array, "poles": PackedInt32Array,
 	            "cube_cursor": int }` — the segment indices drawn here, the CUBE
@@ -566,7 +648,7 @@ static func _draw_path_share(terrain: Node3D, chunk_pos: Vector2i, corner: Vecto
 		# are the same arithmetic.
 		var head: float = stations[i + 1]["heading"]
 		var yaw: float = -head
-		var local_mid: Vector2 = mid - corner
+		var local_mid: Vector2 = mid - centre
 
 		# --- THE STRIP: one flat box per segment, no collision and NO FOOTPRINT.
 		# The waypoint disc's precedent: the strip is paint, you walk over it.
@@ -579,7 +661,7 @@ static func _draw_path_share(terrain: Node3D, chunk_pos: Vector2i, corner: Vecto
 
 		# --- THE CENTRE LINE: one short dash at the segment's HEAD station, on top
 		# of the strip. Also paint.
-		var head_pos: Vector2 = b - corner
+		var head_pos: Vector2 = b - centre
 		terrain.create_box(
 				Vector3(head_pos.x, BIKE_PATH_THICKNESS + BIKE_DASH_THICKNESS * 0.5, head_pos.y),
 				Vector3(BIKE_DASH_LENGTH, BIKE_DASH_THICKNESS, BIKE_DASH_WIDTH),
@@ -650,15 +732,22 @@ static func _make_marker(origin: Vector2i, built: Dictionary,
 
 static func _cube_count(block_batch: Array) -> int:
 	"""
-	How many entries in the batch so far are CUBEs.
+	How many entries in the batch so far land in the CUBE bucket.
 
-	`create_box` always writes `kind`, so the default below is for the hand-built
-	batches the self-checks hand around — the same allowance
-	`ChunkBatch._build_block_multimesh` makes, and for the same reason.
+	BOTH of `_build_block_multimesh`'s allowances, because the answer has to be
+	the bucket's own and not a second opinion about it: an entry with NO `kind`
+	reads as a CUBE (which is how a self-check hands this a batch without
+	restating the key), and so does an entry whose `kind` is not in the enum at
+	all (which is how that function keeps a bad value from vanishing into a bucket
+	its loop never visits). Counting either one differently would slide every
+	`cube_start` this family records, and `.2` colours a lamp by that index.
 	"""
 	var n := 0
 	for entry: Variant in block_batch:
-		if (entry as Dictionary).get("kind", ChunkBatch.BoxKind.CUBE) == ChunkBatch.BoxKind.CUBE:
+		var kind: int = (entry as Dictionary).get("kind", ChunkBatch.BoxKind.CUBE)
+		if ChunkBatch.BoxKind.find_key(kind) == null:
+			kind = ChunkBatch.BoxKind.CUBE
+		if kind == ChunkBatch.BoxKind.CUBE:
 			n += 1
 	return n
 

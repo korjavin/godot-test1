@@ -18,18 +18,26 @@ extends SceneTree
 ##      is what catches a draw hidden behind a helper. Its two controls run the
 ##      other way: the field must contain a chunk WITH a path (or the slice is
 ##      never exercised) and a chunk WITHOUT one (or "identical" is trivial).
-##   2. PURITY AND SEAMLESSNESS. The same chunk built twice is byte-identical,
-##      batch and `obstacles` both. Then, for real paths across a real field, the
-##      union of the segments drawn by every chunk in reach is EXACTLY the
-##      station list — each segment once, none missing. MUTATION CONTROL: the
-##      comparator is re-run over a perturbed copy of the same data (one segment
-##      dropped, then one duplicated) and must report both, because "the cover
-##      was perfect" is also what a comparator that never looks says.
-##   3. TRUNCATION, NOT GAPS. A SWEEP over seeds and origins for a path that
-##      actually runs into something, and it FAILS IF IT FINDS NONE — a check
-##      that can pass by never testing the thing is not a check. For the ones it
-##      finds: every station in the list is legal, and the station AFTER the last
-##      one (taken from the shipped recurrence, not a copy of it) is blocked.
+##   2. PURITY, SEAMLESSNESS, AND WHERE THE GEOMETRY ACTUALLY LANDS. The same
+##      chunk built twice is byte-identical, batch and `obstacles` both. Then, for
+##      real paths across a real field: (b) the union of the segments drawn by
+##      every chunk in reach is EXACTLY the station list — each segment once, none
+##      missing — with a mutation control on the comparator in both directions;
+##      and (c) every strip box's WORLD position is its segment's midpoint, which
+##      is the only assertion in the file that ties a drawn box to the station
+##      that produced it. Without (c) a wrong local frame — chunk-local is
+##      relative to the chunk NODE, which stands at the chunk CENTRE, not its
+##      corner — puts every strip half a chunk off the ground the walk cleared
+##      and the other five checks all still pass.
+##   3. TRUNCATION, NOT GAPS. Every station in the list is legal, measured against
+##      the shipped predicate; a path shorter than `BIKE_PATH_MIN_STATIONS` is a
+##      failure. Then a SWEEP over seeds and origins for a path that actually runs
+##      into something, and it FAILS IF IT FINDS NONE — a check that can pass by
+##      never testing the thing is not a check. The successor station is taken
+##      from the shipped recurrence and asked whether it is blocked; that is a
+##      NON-VACUITY COUNTER and not an assertion, deliberately, because a path may
+##      also simply have run out of its rolled length and then has a perfectly
+##      legal successor. "Never resumes past a block" is the prefix loop above it.
 ##   4. SCARCITY, form 2. Origins in the HQ corridor produce paths; origins
 ##      beyond `SCARCITY_PLAIN_DISTANCE` produce NONE. The near field is the
 ##      control — `scarcity_selfcheck` check 2's own shape — and `scarcity_at()`
@@ -57,13 +65,18 @@ const CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
 const SEEDS: Array[int] = [20260904, 777, 4242]
 
 ## THE A/B FIELD: a 4x4 band of chunks off the road's north side on `SEEDS[0]`,
-## chosen because it holds BOTH kinds of chunk check 1 needs — seven that carry
-## path geometry (with poles) and nine that carry none. It is a band and not a
-## scatter so that a path crossing a seam is compared on both sides of it. The
-## two controls below assert the mix rather than trusting this comment, so a
-## retune that empties the band fails loudly instead of passing vacuously.
-const AB_X: Array[int] = [0, 1, 2, 3]
-const AB_Y: Array[int] = [7, 8, 9, 10]
+## chosen because it holds every kind of chunk check 1 needs — four carrying path
+## geometry WITH poles, one carrying strip and dashes but NO pole (which is where
+## the node-for-node comparison is made, see that check), and eleven carrying no
+## path at all. It is a band and not a scatter so that a path crossing a seam is
+## compared on both sides of it.
+##
+## IT MOVES WHEN THE STREAM DOES, which is the point of the controls below rather
+## than a fragility: they assert the mix instead of trusting this comment, so a
+## retuned prime, salt or chance empties the band LOUDLY. Re-derive it by
+## sweeping `spawn_bike_path_in_chunk` over a band and reading which chunks draw.
+const AB_X: Array[int] = [-5, -4, -3, -2]
+const AB_Y: Array[int] = [8, 9, 10, 11]
 
 ## The CUBE bucket's node name — `ChunkBatch._emit_kind_multimesh` keeps the bare
 ## name for CUBE and suffixes every other kind, and this family builds CUBEs only.
@@ -81,6 +94,12 @@ const COVER_SAMPLE: int = 6
 ## enough to hold several paths on every seed (measured: 3 to 20 per seed over
 ## this square) and small enough to stay a fraction of a second.
 const SWEEP_HALF: int = 14
+
+## How far a strip box's world centre may sit from its segment's midpoint in
+## check 2c. Metres, and it is a float-comparison tolerance rather than a design
+## allowance: the two numbers are computed from the same `Vector2` a few calls
+## apart, so anything above millimetres is a real displacement.
+const STRIP_TOLERANCE: float = 0.01
 
 ## Check 4's far field: origins this many chunks out on Z, which at chunk_size 50
 ## is ~6 km from both the Budapest rect and the HQ corridor — comfortably past
@@ -110,7 +129,8 @@ func _run() -> void:
 	_check_footprints(terrain_script)
 
 	if _failures.is_empty():
-		print("bike paths: the kill switch leaves the world byte-identical, the "
+		print("bike paths: the kill switch leaves every other box in the world where "
+				+ "it was, each strip stands on the ground its own walk cleared, the "
 				+ "per-chunk shares cover every segment exactly once, blocked paths "
 				+ "truncate rather than gap, scarcity empties the far field, no chunk "
 				+ "grew a MultiMesh bucket and only the poles claim a footprint")
@@ -163,8 +183,11 @@ func _check_kill_switch(terrain_script: GDScript) -> void:
 
 			var markers: Array[Node] = _markers(chunk_on)
 			var poles: int = 0
+			var sliced: int = 0
 			for marker: Node in markers:
 				poles += (marker.get_meta("poles") as PackedInt32Array).size()
+			if not markers.is_empty():
+				sliced = int(markers[0].get_meta("batch_count"))
 			if markers.is_empty():
 				without += 1
 			else:
@@ -196,18 +219,31 @@ func _check_kill_switch(terrain_script: GDScript) -> void:
 				for name: String in table_off:
 					if var_to_bytes(table_on[name]) != var_to_bytes(table_off[name]):
 						_fail("chunk %s: the '%s' bucket differs between the two builds once "
-								% [chunk_pos, name] + "this family's own %d boxes are sliced "
-								% poles + "out — the paths moved somebody else's geometry")
+								% [chunk_pos, name] + "this family's own %d boxes are sliced out "
+								% sliced + "— the paths moved somebody else's geometry")
 						break
 
 			# --- The bodies: crocodiles, coins, everything parented to the chunk.
-			var nodes_on: Array[String] = _node_table(chunk_on)
-			var nodes_off: Array[String] = _node_table(chunk_off)
-			nodes_seen += nodes_off.size()
-			if nodes_on != nodes_off:
-				_fail("chunk %s: %d chunk-parented nodes with the paths on, %d with them off "
-						% [chunk_pos, nodes_on.size(), nodes_off.size()]
-						+ "— a draw was taken from the shared chunk stream")
+			#
+			# ONLY WHERE THIS FAMILY APPENDED NO FOOTPRINT, and that is not a
+			# weakening — it is where the claim is exactly true. A pole footprint is
+			# read by the crocodile, boss and hunter spawners that run after this
+			# one, and `terrain_predators.gd` says what follows: "a rejection still
+			# skips the successful spawn's `rotation.y` draw below, so the rest of
+			# this chunk's crocodile positions shift". That is the shared-currency
+			# mechanism camps and chests use too, so a difference on a chunk with a
+			# pole would be sanctioned behaviour and this comparator cannot tell it
+			# from a stray draw. On a chunk with no pole nothing downstream can even
+			# see the paths, so a single differing node IS a draw.
+			if poles == 0:
+				var nodes_on: Array[String] = _node_table(chunk_on)
+				var nodes_off: Array[String] = _node_table(chunk_off)
+				nodes_seen += nodes_off.size()
+				if nodes_on != nodes_off:
+					_fail("chunk %s carries no bike-path pole, so nothing downstream can see "
+							% chunk_pos + "this family at all — yet it holds %d chunk-parented "
+							% nodes_on.size() + "nodes with the paths on and %d with them off. "
+							% nodes_off.size() + "A draw was taken from the shared chunk stream")
 
 			# --- The collision body. Its shapes are added inline by `create_box`, so
 			# they are not a list a marker indexes; what IS exactly stated is that
@@ -254,6 +290,18 @@ func _check_purity_and_seams(terrain_script: GDScript) -> void:
 	agree with a broken one. What this check owns instead is the COMPARATOR, and
 	the two mutations below are the control on it.
 
+	...AND THEN (c) WHERE THE BOX ACTUALLY LANDS, which is the one assertion in
+	this file that connects a drawn box to the station that produced it. Every
+	other check compares a build against another build (1, 5), a list against
+	itself (2a, 2b), a station list against a predicate (3, 4) or a count against
+	a count (6) — all of which a uniformly wrong local frame satisfies perfectly.
+	`create_box` takes a CHUNK-LOCAL centre and the chunk node stands at the chunk
+	CENTRE, so a conversion that subtracted the corner instead would put every
+	strip half a chunk off the ground `station_blocked` cleared, across the coin
+	road and the rivers, with all six checks green. This is measured in WORLD
+	space — the chunk node's position plus the batch entry's own origin — because
+	that is the frame the claim is made in.
+
 	WHAT IT DOES AND DOES NOT PIN, honestly: ANY partition of the segments is a
 	perfect cover, so this does not prove the rule is the MIDPOINT one — it proves
 	it is a partition. That is the property the seam needs, and the two realistic
@@ -288,6 +336,7 @@ func _check_purity_and_seams(terrain_script: GDScript) -> void:
 
 	# --- b. THE COVER, over every path in a sweep of origins.
 	var covered: int = 0
+	var strip_checked: int = 0
 	var sample: Array = []  # one real per-chunk split, kept for the mutation control
 	for ox in range(-SWEEP_HALF, SWEEP_HALF + 1):
 		for oy in range(-SWEEP_HALF, SWEEP_HALF + 1):
@@ -300,9 +349,32 @@ func _check_purity_and_seams(terrain_script: GDScript) -> void:
 			var lists: Array = []
 			for cx in range(ox - radius, ox + radius + 1):
 				for cy in range(oy - radius, oy + radius + 1):
-					var drawn: PackedInt32Array = _segments_for(terrain, Vector2i(cx, cy), origin)
-					if not drawn.is_empty():
-						lists.append(drawn)
+					var chunk_pos := Vector2i(cx, cy)
+					var built: Dictionary = _spawn_bare(terrain, chunk_pos)
+					var drawn := PackedInt32Array()
+					for row: Dictionary in (built["paths"] as Array[Dictionary]):
+						if row["origin"] == origin:
+							drawn = row["segments"]
+					if drawn.is_empty():
+						continue
+					lists.append(drawn)
+					# --- c. AND THE BOXES ARE WHERE THE WALK SAID. See the docstring.
+					var strips: Array[Vector2] = _strip_positions(terrain, chunk_pos, built["batch"])
+					for i: int in drawn:
+						var a: Vector2 = stations[i]["pos"]
+						var b: Vector2 = stations[i + 1]["pos"]
+						var want: Vector2 = (a + b) * 0.5
+						var best: float = INF
+						for at: Vector2 in strips:
+							best = minf(best, at.distance_to(want))
+						if best > STRIP_TOLERANCE:
+							_fail("origin %s segment %d: chunk %s claims to draw it, but its nearest "
+									% [origin, i, chunk_pos] + "strip box stands %.2f m from the "
+									% best + "segment's midpoint %s. The strip is not on the ground "
+									% want + "the walk cleared — check the chunk-local frame, which "
+									+ "is centred on the chunk NODE and not on its corner")
+							break
+						strip_checked += 1
 			var fault: String = _cover_fault(lists, stations.size() - 1)
 			if fault != "":
 				_fail("the path from origin %s is not covered by the chunks around it: %s"
@@ -315,6 +387,9 @@ func _check_purity_and_seams(terrain_script: GDScript) -> void:
 		_fail("check 2b found no path at all in a %dx%d sweep of origins on seed %d — the "
 				% [SWEEP_HALF * 2 + 1, SWEEP_HALF * 2 + 1, SEEDS[0]]
 				+ "cover assertion was never made")
+	if strip_checked == 0:
+		_fail("check 2c located no strip box at all, so the one assertion in this file that "
+				+ "ties a drawn box to the station that produced it never fired")
 	if sample.is_empty():
 		_fail("check 2b found no path that spans more than one chunk, so the seam — the "
 				+ "whole subject of this check — was never crossed")
@@ -372,10 +447,20 @@ func _check_truncation(terrain_script: GDScript) -> void:
 	rule under test is "a blocked station ends the path", and a check that never
 	met a blocked station would report that rule as holding while saying nothing.
 
-	The station after the last one is taken from `BikePaths.next_station()` — the
-	shipped recurrence itself, not a copy of it here — because the only way to
-	tell a TRUNCATED path from one that simply ran out of length is to ask whether
-	the step it did not take was legal.
+	WHAT IS ASSERTED and what is only COUNTED, because the difference matters to
+	the next reader. ASSERTED, per path: every station in the list passes the
+	shipped predicate, and the list is at least `BIKE_PATH_MIN_STATIONS` long.
+	That pair IS the "never resumes past a block" rule — a walk that resumed would
+	put a blocked station in the list. COUNTED, per path: whether the station
+	after the last one is blocked. That cannot be asserted, and deliberately so —
+	`_bike_path_at` rolls its length with `randi_range`, so a path that simply ran
+	out has a perfectly legal successor. It is the NON-VACUITY GUARD at the bottom
+	of this function instead, and the guard is the point: without it the two
+	assertions above hold trivially in a world where nothing is ever blocked.
+
+	The successor comes from `BikePaths.next_station()` and
+	`BikePaths.segment_blocked()` — the shipped recurrence and the shipped
+	half-step river sample, not copies of them here.
 	"""
 	var truncated: int = 0
 	var full_length: int = 0
@@ -403,7 +488,8 @@ func _check_truncation(terrain_script: GDScript) -> void:
 				var head: float = stations[0]["heading"]
 				var next: Dictionary = BikePaths.next_station(terrain, origin, head,
 						stations[-1], stations.size() - 1)
-				if BikePaths.station_blocked(terrain, next["pos"]):
+				if BikePaths.station_blocked(terrain, next["pos"]) \
+						or BikePaths.segment_blocked(terrain, stations[-1]["pos"], next["pos"]):
 					truncated += 1
 				elif stations.size() == BikePaths.BIKE_PATH_MAX_STATIONS:
 					full_length += 1
@@ -642,6 +728,28 @@ func _segments_for(terrain: Node3D, chunk_pos: Vector2i, origin: Vector2i) -> Pa
 		if row["origin"] == origin:
 			return row["segments"]
 	return PackedInt32Array()
+
+
+func _strip_positions(terrain: Node3D, chunk_pos: Vector2i, batch: Array) -> Array[Vector2]:
+	"""
+	The WORLD XZ centre of every STRIP box in `batch`.
+
+	A strip is picked out by its height alone — `BIKE_PATH_THICKNESS * 0.5`, the
+	only box this family puts there (the dashes ride on top of it and the posts
+	stand half their own height up) — so this needs no index and no meta, which
+	is what keeps it independent of the bookkeeping the rest of the file trusts.
+
+	World, not chunk-local: the chunk node stands at `chunk_to_world(chunk_pos)`
+	and a batch entry's transform origin is relative to it, so this is the sum.
+	"""
+	var at: Vector3 = terrain.chunk_to_world(chunk_pos)
+	var out: Array[Vector2] = []
+	for entry_v: Variant in batch:
+		var t: Transform3D = (entry_v as Dictionary)["transform"]
+		if not is_equal_approx(t.origin.y, BikePaths.BIKE_PATH_THICKNESS * 0.5):
+			continue
+		out.append(Vector2(at.x + t.origin.x, at.z + t.origin.z))
+	return out
 
 
 func _multimesh_table(chunk: Node) -> Dictionary:

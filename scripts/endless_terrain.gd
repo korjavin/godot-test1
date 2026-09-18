@@ -828,6 +828,23 @@ const CHEST_BURST_DURATION := TerrainFeatures.CHEST_BURST_DURATION
 ## cannot give. Read by `TerrainWaypoints.spawn_waypoint_in_chunk`.
 @export var spawn_waypoints: bool = true
 
+
+func waypoint_sites() -> Array[Dictionary]:
+	"""
+	THE ONE FORWARDER into `terrain_waypoints.gd`, added at bead
+	godot-test1-z2yv.1 and earned rather than speculative — the rule the eight
+	bridge forwarders and the `coin_road` block are written under.
+
+	`BikePaths.station_blocked()` asks whether a station stands inside a teleport
+	circle, and a SIBLING static family reaches another one through the node that
+	owns the state, never by naming the class (CLAUDE.md, Conventions). Everything
+	else that reads this table is outside the family system — `waypoint_hub.gd`,
+	`minimap_hud.gd`, `city_map_panel.gd` — and names the class directly, as does
+	`waypoint_selfcheck`, which is the family's own check and must read its
+	subject rather than a forwarder.
+	"""
+	return TerrainWaypoints.waypoint_sites(self)
+
 ## THE RARITY ROLL IS RETIRED, and `LANDMARK_CHANCE` with it (bead
 ## godot-test1-bcf). Until 2026-09-04 a chunk rolled 0.21 * scarcity against its
 ## own LANDMARK_SALT stream and then drew a kind uniformly from the registry;
@@ -3584,18 +3601,27 @@ func spawn_chest_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 #   * `spawn_landmark_in_chunk` is `create_chunk`'s call-order list plus four
 #     self-checks (budapest, enemy_spawn, field_bridge, landmark_sites);
 #
-# NEITHER PUBLIC SITE QUERY GETS ONE, and that is measured rather than assumed:
-# `landmark_sites()` and `landmark_site(kind)` are the "a site is computable
-# without its chunk" seam, and nothing in the project reaches either through the
-# `terrain` group — `landmark_sites_selfcheck` names the class (it is the
-# family's own check) and `style_shots` uses `_landmark_at`. They are spelled
-# `TerrainLandmarks.landmark_sites(terrain)`; a forwarder for a name with no
-# caller is dead weight, and this file has enough of those to carry already.
+# `landmark_sites()` GOT ONE AT BEAD godot-test1-z2yv.1, and the measurement is
+# what changed rather than the rule. It and `landmark_site(kind)` are the "a site
+# is computable without its chunk" seam, and until the bicycle paths landed
+# nothing reached either through the `terrain` group — so the forwarder would
+# have been dead weight and the call sites were spelled
+# `TerrainLandmarks.landmark_sites(terrain)`. `BikePaths.station_blocked()` is a
+# SIBLING FAMILY asking whether a station stands on a landmark's chunk, and
+# CLAUDE.md's conventions are explicit about that direction: "a family's ...
+# libraries reach a sibling family through the node that owns the state, never
+# directly". So `landmark_sites()` is forwarded below and `landmark_site(kind)`
+# still is not — it has no caller outside the family, and one is still dead
+# weight.
 #
 # `landmark_sites_selfcheck` — the FAMILY's own check — names the class directly
 # instead, which is the epic's acceptance (d) and `scarcity_selfcheck`'s ftn.7
 # lesson: a check that reads its subject through a forwarder measures the
 # forwarder.
+
+func landmark_sites() -> Dictionary:
+	return TerrainLandmarks.landmark_sites(self)
+
 
 func _landmark_at(chunk_pos: Vector2i) -> Dictionary:
 	return TerrainLandmarks._landmark_at(self, chunk_pos)
