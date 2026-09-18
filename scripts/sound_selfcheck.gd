@@ -81,11 +81,12 @@ func _run() -> void:
 	_check_sound_unlock_and_loops()
 	_check_waypoint_cues()
 	_check_road_music()
-	_finish()
+	await _finish()
 
 
 func _finish() -> void:
 	if _failures.is_empty():
+		await Sentinel.settle_audio(self)
 		Sentinel.finish(self)
 		return
 	for failure: String in _failures:

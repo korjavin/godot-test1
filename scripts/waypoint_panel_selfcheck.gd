@@ -112,6 +112,7 @@ func _initialize() -> void:
 	await _check_press_travels()
 
 	if _failures.is_empty():
+		await Sentinel.settle_audio(self)
 		Sentinel.finish(self)
 	else:
 		for line: String in _failures:
