@@ -326,6 +326,7 @@ func _run() -> void:
 	await _check_run_outcome_and_win()
 	await _check_resize_is_not_a_lift()
 	await _check_air_sight_is_the_indoor_air_rush()
+	await _check_twin_flash_scares_and_never_kills()
 	await _check_no_second_way_to_lose()
 	await _check_a_hunter_walks_in_and_takes_a_hero()
 	await _check_escape_leaves_the_ending_cursor_free()
@@ -3124,6 +3125,173 @@ func _check_air_sight_is_the_indoor_air_rush() -> void:
 	tower.queue_free()
 	await process_frame
 	Sentinel.done("air_sight_is_the_indoor_air_rush")
+
+
+# ============================================================================
+# 10b. TWIN FLASH SCARES AND NEVER KILLS
+# ============================================================================
+
+func _check_twin_flash_scares_and_never_kills() -> void:
+	"""
+	Check 10b (bead godot-test1-0mr0.3). TWIN FLASH IS PRIMM'S SECOND SKILL: G
+	cross-slashes — a white disc just ahead of him — and everything with a pulse
+	in front of him bolts. Bosses do not care, guards do not flinch, and NOTHING
+	dies (owner ruling 3: the scare, not the kill; door-cutting and tree-felling
+	rejected).
+
+	Driven through the REAL slot-1 press on REAL bodies from the shipped scenes,
+	beside check 10's Air Sight (the other second skill): the press must dispatch
+	`_ability2_primm`, the only body fleeing must be the ordinary croc ahead with
+	exactly PRIMM_FLASH_FLEE_DURATION on its clock, and the arm's own source must
+	name no kill.
+
+	THE SHAPE IS THE FORWARD-BIASED DISC, and the four bodies are its compass:
+	one croc 3 m ahead (1 m from the origin 2 m ahead — inside), one 3 m behind
+	(5 m from the origin — outside the 3.5 m radius), a guard ahead (a live
+	`tower_guard.tscn` on its own row, which keeps `stink_immune` precisely so a
+	katana never becomes a "press G past the patrol" — the stealth ruling at
+	`species_table.gd`'s guard block), and a boss ahead (`setup_as_boss`
+	before `add_child`, the call-order contract — `flee_from()`'s own early
+	return is what shrugs it). The hunter needs no fifth body: its row lost
+	`stink_immune` by owner ruling 2026-09-04, so it flees down the same path
+	the control croc measures.
+
+	THE KILL IS ASSERTED BY NAME, in check 17's spelling-test idiom: a Twin
+	Flash that freed or squashed would change no behaviour this check's live
+	bodies could see on the day it landed short of counting the dead — which it
+	also does ("none freed"). Both halves stay because each catches what the
+	other cannot: the grep catches a kill call on a path no probe body walks,
+	the bodies catch a kill the grep cannot spell.
+
+	EXACTNESS IS HONEST HERE, not tight: the press and every read below run in
+	one synchronous span — no await between the G press and the clock reads —
+	so no physics tick can spend the flee both halves name. A `== 3.0` read
+	after even one frame would be a race against the croc's own clock.
+	"""
+	# Slot 1 needs the tree node bought: a stub progression that granted every
+	# second skill (the real purchase path is progression_selfcheck's) — the
+	# same staging check 10 uses, because the gate under test is the same one.
+	var second_tree := StubSecondSkillProgression.new()
+	root.add_child(second_tree)
+	second_tree.add_to_group("progression")
+	var player := await _make_player()
+	if not _become(player, "primm"):
+		_fail("player.tscn has no primm in CHARACTERS — check 10b cannot drive Twin Flash")
+		_clear(player)
+		second_tree.remove_from_group("progression")
+		second_tree.queue_free()
+		Sentinel.done("twin_flash_scares_and_never_kills")
+		return
+
+	# The four compass points, all LIVE bodies on REAL rows: a control croc, a
+	# second control for the behind, a guard (its row carries `stink_immune`),
+	# and a boss (the modifier, on an ordinary crocodile row — boss immunity is
+	# species-independent). Species before add_child throughout: `_ready()`
+	# resolves the spec exactly once, and the boss contract is three deep
+	# (`boss_probe.spawn_boss` states it).
+	var ahead: Node = load(CROC_SCENE).instantiate()
+	root.add_child(ahead)
+	var behind: Node = load(CROC_SCENE).instantiate()
+	root.add_child(behind)
+	var guard: Node = load(GUARD_SCENE).instantiate()
+	guard.species = GUARD_SPECIES
+	root.add_child(guard)
+	var boss: Node = load(CROC_SCENE).instantiate()
+	boss.species = CONTROL_SPECIES
+	boss.setup_as_boss(3.0)
+	root.add_child(boss)
+	await process_frame
+	if not bool(guard.spec.get("stink_immune", false)):
+		_fail("the probe guard's row carries no stink_immune — check 10b would be"
+			+ " measuring a guard that flinches, and the stealth ruling with it")
+	if not bool(boss.is_boss):
+		_fail("setup_as_boss() left is_boss false — check 10b has no boss to shrug")
+
+	# Face-relative stands: ahead is -Z's business, read off the live basis
+	# rather than assumed, because the press aims the disc off the same basis.
+	var forward: Vector3 = -(player as Node3D).transform.basis.z
+	forward.y = 0.0
+	forward = forward.normalized()
+	var right: Vector3 = (player as Node3D).transform.basis.x
+	right.y = 0.0
+	right = right.normalized()
+	var spot: Vector3 = (player as Node3D).global_position
+	(ahead as Node3D).global_position = spot + forward * 3.0
+	(behind as Node3D).global_position = spot - forward * 3.0
+	(guard as Node3D).global_position = spot + forward * 3.0 + right * 1.5
+	(boss as Node3D).global_position = spot + forward * 3.5 - right * 1.0
+
+	# --- G is Twin Flash, and nothing gates it in the field. ---
+	if player.get_ability_name(1) != "Twin Flash":
+		_fail("slot 1 advertises %s" % player.get_ability_name(1))
+	if player.get_ability_block_reason(1) != "":
+		_fail("in the open field Twin Flash is gated by '%s'"
+			% player.get_ability_block_reason(1))
+	player.ability2_cooldowns[player.current_character_index] = 0.0
+	# NO AWAIT from here to the clock reads: the press runs synchronously, so
+	# the flee durations below are the arm's, unspent by any physics tick.
+	player.try_activate_ability(1)
+	if player.primm_slash_timer != PlayerAbilities.PRIMM_SLASH_DURATION:
+		_fail("G set a %.3f s slash window, not the %.1f s cut"
+			% [player.primm_slash_timer, PlayerAbilities.PRIMM_SLASH_DURATION])
+	if not bool(ahead.get("is_fleeing")):
+		_fail("the croc 3 m ahead is not fleeing — the scare found nothing")
+	if float(ahead.get("flee_time_remaining")) != PlayerAbilities.PRIMM_FLASH_FLEE_DURATION:
+		_fail("the croc ahead flees for %.3f s, not the %.1f s flinch"
+			% [float(ahead.get("flee_time_remaining")),
+				PlayerAbilities.PRIMM_FLASH_FLEE_DURATION])
+	if PlayerAbilities.PRIMM_FLASH_FLEE_DURATION != 3.0:
+		_fail("PRIMM_FLASH_FLEE_DURATION is %.1f s — the flinch reads against the"
+			% PlayerAbilities.PRIMM_FLASH_FLEE_DURATION
+			+ " Stink Wave's 10 s, and a retune has to say so here")
+	if bool(behind.get("is_fleeing")):
+		_fail("the croc 3 m BEHIND flees — the disc reaches 1.5 m back, not 3")
+	if bool(guard.get("is_fleeing")):
+		_fail("a tower guard fled the katanas — stink_immune is the 'fearless"
+			+ " furniture' key, and a scatter turns the stealth building into"
+			+ " 'press G past the patrol'")
+	if bool(boss.get("is_fleeing")):
+		_fail("a boss fled the katanas — bosses do not care")
+	for subject: Array in [[ahead, "the croc ahead"], [behind, "the croc behind"],
+			[guard, "the guard"], [boss, "the boss"]]:
+		if not is_instance_valid(subject[0]):
+			_fail("Twin Flash freed %s — the scare is a scare, never a kill"
+				% subject[1])
+		elif (subject[0] as Node).is_queued_for_deletion():
+			_fail("Twin Flash queued %s for deletion" % subject[1])
+
+	# --- And the arm's source names no kill, by name. ---
+	var text: String = FileAccess.get_file_as_string(
+		"res://scripts/player_abilities.gd")
+	var start: int = text.find("func _ability2_primm()")
+	if start == -1:
+		_fail("player_abilities.gd declares no _ability2_primm — the press above"
+			+ " fired nothing and every flee above is someone else's")
+	else:
+		var following: int = text.find("\nfunc ", start + 1)
+		var body: String = text.substr(start,
+			following - start if following != -1 else text.length() - start)
+		if body.contains("squash_and_die"):
+			_fail("Twin Flash calls squash_and_die — the scare is a scare,"
+				+ " never a kill (ruling 3)")
+		if body.contains("request_croc_kill"):
+			_fail("Twin Flash calls request_croc_kill — the relay carries"
+				+ " flee verbs only")
+	print("twin flash: G cross-slashes, only the croc ahead bolts for 3.0 s, guard and boss stand, none freed, the arm names no kill")
+
+	if is_instance_valid(ahead):
+		ahead.queue_free()
+	if is_instance_valid(behind):
+		behind.queue_free()
+	if is_instance_valid(guard):
+		guard.queue_free()
+	if is_instance_valid(boss):
+		boss.queue_free()
+	_clear(player)
+	second_tree.remove_from_group("progression")
+	second_tree.queue_free()
+	await process_frame
+	Sentinel.done("twin_flash_scares_and_never_kills")
 
 
 # ============================================================================

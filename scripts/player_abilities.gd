@@ -91,9 +91,11 @@ const ABILITY_NAME := {
 ## (_pending_cooldown_refund, Phase Echo) stays slot-0 only.
 const ABILITY2_NAME := {
 	"windman": "Air Sight",
+	"primm": "Twin Flash",
 }
 const ABILITY2_COOLDOWN := {
 	"windman": 10.0,
+	"primm": 6.0,
 }
 
 # --- Windman: Air Rush ---
@@ -147,6 +149,22 @@ const PRIMM_BLINK_DISTANCE: float = 6.0
 const PRIMM_BLINK_STEP: float = 0.5
 ## How far out the scan looks before giving up (covers any structure in-game).
 const PRIMM_BLINK_MAX_DISTANCE: float = 40.0
+
+# --- Primm: Twin Flash (bead godot-test1-0mr0.3) ---
+## How long the cross-slash pose holds, in seconds — a cut, not a hold. The
+## pose amount is a triangle over this (up the first 0.15 s, down the rest),
+## counted down in `_update_ability_timers()`.
+const PRIMM_SLASH_DURATION: float = 0.5
+## The rising edge of that triangle, in seconds.
+const PRIMM_SLASH_RISE_S: float = 0.15
+## How long what stands before the blades runs, in seconds — a flinch against
+## the Stink Wave's 10 s.
+const PRIMM_FLASH_FLEE_DURATION: float = 3.0
+## Radius of the scare disc, in metres, about an origin 2 m ahead — a
+## forward-biased disc (0 to 5.5 m ahead, 1.5 m behind) through the EXISTING
+## radial flee verb, so no protocol work and no line-of-sight discipline: a
+## wall between Primm and a croc is a wall it cannot bite through either.
+const PRIMM_FLASH_RADIUS: float = 3.5
 
 # --- Teibi: Resize ---
 ## Scale factors for the small and giant forms (1.0 is the normal size).
@@ -231,6 +249,13 @@ func _update_ability_timers(delta: float) -> void:
 		# over its duration, so hitting zero hands the arms back to the gait and
 		# the return needs no second state.
 		player.phoboman_stink_timer = maxf(0.0, player.phoboman_stink_timer - delta)
+	if player.primm_slash_timer > 0.0:
+		# No revert logic either: the triangle IS this timer over its duration,
+		# and hitting zero sheathes the swords below, so expiry hands both the
+		# arms and the blades back with no second state.
+		player.primm_slash_timer = maxf(0.0, player.primm_slash_timer - delta)
+		if player.primm_slash_timer <= 0.0:
+			_set_primm_swords_drawn(false)
 	for i in player.ability_cooldowns.size():
 		if player.ability_cooldowns[i] > 0.0:
 			player.ability_cooldowns[i] = maxf(0.0, player.ability_cooldowns[i] - delta)
@@ -378,6 +403,8 @@ func try_activate_ability(slot: int = 0) -> void:
 		match char_name:
 			"windman":
 				used = _ability2_windman()
+			"primm":
+				used = _ability2_primm()
 
 	if used:
 		# The skilled duration, and it MUST be the same expression
@@ -523,6 +550,56 @@ func _end_air_sight() -> void:
 	player.windman_sight_timer = 0.0
 	_set_sight_ghosts(false)
 	_set_sight_walls(false)
+
+
+func _ability2_primm() -> bool:
+	"""
+	Twin Flash: both katanas leave the back for the hands and Primm
+	cross-slashes — a white flash disc just ahead of him, and everything with
+	a pulse in front of him bolts. The scare is the EXISTING radial flee verb
+	(`_scare_crocodiles`), so bosses, guards (`stink_immune`) and slept bodies
+	decline it in `flee_from()`, the hunter flees, and NOTHING dies — the check
+	greps this body for kill calls to prove it.
+
+	No displacement, no speed: the feet never move, only the arms and the
+	blades. The pose triangle IS the return (see `_apply_slash_pose()`), and
+	the swords swap back on timer expiry and in `_reset_ability_states()`.
+	"""
+	var forward: Vector3 = -player.transform.basis.z
+	forward.y = 0.0
+	forward = forward.normalized()
+	var origin: Vector3 = player.global_position + forward * 2.0
+	player.primm_slash_timer = PRIMM_SLASH_DURATION
+	_set_primm_swords_drawn(true)
+	_spawn_ability_effect(origin, Color(1.0, 1.0, 1.0, 0.6), PRIMM_FLASH_RADIUS, 0.3)
+	_scare_crocodiles(origin, PRIMM_FLASH_FLEE_DURATION, PRIMM_FLASH_RADIUS)
+	return true
+
+
+func _set_primm_swords_drawn(drawn: bool) -> void:
+	"""Swap Primm's katanas between back and hands — or put them back.
+
+	Drawn: the `Swords` back pair hides and the `SwordL`/`SwordR` hand pair
+	shows, for exactly the slash window. Sheathed: the reverse. Null-safe on
+	every node: the scene may be another hero's (a reset is unconditional across
+	characters), still streaming, or mid-swap, and a 0.5 s swap nobody can
+	track for continuity is not worth a failure — the next arm or reset simply
+	states the pose again. Continuity is a flip-book problem here, not state:
+	sheathe-then-draw inside one window re-hides and re-shows, which reads as
+	one longer flash, and that is honest.
+	"""
+	var scene: Node = player.current_character_node
+	if scene == null:
+		return
+	var back: Node = scene.get_node_or_null("Body/Swords")
+	var left: Node = scene.get_node_or_null("Body/SwordL")
+	var right: Node = scene.get_node_or_null("Body/SwordR")
+	if back != null and "visible" in back:
+		back.visible = not drawn
+	if left != null and "visible" in left:
+		left.visible = drawn
+	if right != null and "visible" in right:
+		right.visible = drawn
 
 
 func _ability_primm() -> bool:
@@ -884,6 +961,8 @@ func _reset_ability_states() -> void:
 	player.speed_burst_timer = 0.0
 	player._pending_cooldown_refund = 0.0
 	player.phoboman_stink_timer = 0.0
+	player.primm_slash_timer = 0.0
+	_set_primm_swords_drawn(false)
 	_revert_teibi_to_normal()
 	# Air Sight lives in the BUILDING's materials rather than in a field here, so it
 	# is the one transient state that leaks something visible if it is not cleared:
