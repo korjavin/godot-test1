@@ -209,6 +209,14 @@ static func _isolated() -> bool:
 		and _StartOverlayScript.locale_config_path.begins_with(prefix))
 
 
+static func settle_audio(tree: SceneTree) -> void:
+	## Let the Dummy driver's mix thread (~93 ms a step) reap stopped playbacks,
+	## or AudioServer::finish() reports them leaked. 0.75 s gives enough margin
+	## for longer cues (like waypoint travel's 0.47 s whoosh_rev) to finish and
+	## reap under headless Dummy audio mixing.
+	await tree.create_timer(0.75).timeout
+
+
 static func done(name: String) -> void:
 	"""Stamp `name` as having run to a deliberate exit."""
 	_reached[name] = true
