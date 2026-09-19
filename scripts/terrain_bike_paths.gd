@@ -67,8 +67,14 @@ extends RefCounted
 ## per-chunk draw of a shared polyline can agree with itself at all. The walk
 ## keeps the prefix and stops; it never resumes past the block, and a path left
 ## shorter than `BIKE_PATH_MIN_STATIONS` is dropped whole. No river crossings and
-## no road crossings: the field bridges are k-indexed ROAD machinery, and a
-## crossing would put road coins on the strip.
+## no road crossings: a spur is a side street with no destination to be worth a
+## bridge, and a road crossing would put road coins on the strip.
+##
+## THAT IS THE SPUR TIER'S RULE AND NOT THE FAMILY'S. A TRUNK crosses water on a
+## real field deck (child `godot-test1-pnvb.3`) — the deck builder was never
+## k-indexed, only the SCAN that finds the road's crossings was, and a trunk
+## reaches it through `terrain.bike_trunk_bridges()` the way the authored approach
+## corridor already did.
 ##
 ## ----------------------------------------------------------------------------
 ## CUBE ONLY, AND ZERO NEW MULTIMESH BUCKETS
@@ -903,9 +909,10 @@ static func _station_blocked(terrain: Node3D, p: Vector2, waypoints: Array[Dicti
 	if terrain.biome_at(p.x, p.y) == terrain.Biome.MOUNTAIN:
 		return true
 
-	# 5. The rivers. NO CROSSINGS: the field bridges are k-indexed ROAD machinery
-	#    (`terrain_bridges.gd`), so a bike path cannot be given one, and a strip
-	#    that forded a river would be a strip you wade.
+	# 5. The rivers. NO CROSSINGS FOR A SPUR: a strip that forded a river would be a
+	#    strip you wade, and a side street 30 to 120 m long is not worth a bridge to
+	#    carry it. A TRUNK is (child `godot-test1-pnvb.3`, `bike_trunk_bridges`);
+	#    this predicate is the spur tier's and `_trunk_blocked` dropped the test.
 	if terrain.is_river_at(Vector3(p.x, 0.0, p.y)):
 		return true
 
@@ -935,11 +942,14 @@ static func trunks(terrain: Node3D) -> Array[Dictionary]:
 
 	@param terrain: The `EndlessTerrain`.
 	@return: Rows of `{ id: int (the edge id), stations: Array[Dictionary] in the
-	         walk order `_draw_path_share` expects, box: Rect2 (the route's
-	         bounding box in world XZ, padded by one segment length), from: Vector2,
-	         to: Vector2, bridges: Array (the field-bridge rows this route's river
-	         crossings need, child `.3`) }`, for the edges that produced a route at
-	         all. The memo itself, not a copy — it is asked once per chunk.
+	         walk order `_draw_path_share` expects, box: Rect2 (the world XZ box
+	         every piece of this trunk's STONE stands inside — the route's own,
+	         padded by one segment length, MERGED with each deck's, because a ramp
+	         foot reaches a ramp run past the last station it was built from),
+	         from: Vector2, to: Vector2, bridges: Array (the field-bridge rows this
+	         route's river crossings need, child `.3`) }`, for the edges that
+	         produced a route at all. The memo itself, not a copy — it is asked
+	         once per chunk.
 
 	AN EDGE THAT WAS ABANDONED IS SIMPLY ABSENT, which is the only honest shape:
 	a half trunk is the litter this epic exists to remove, so the alternatives are
@@ -1064,9 +1074,15 @@ static func _drawable_decks(terrain: Node3D, rows: Array,
 		# stone's outer reach instead — a quarter of the world's crossings for
 		# 0.25 m of parapet edge, which is a trade nobody would make. The 1 deck
 		# this test does cost is a crossing whose rail really did reach a keep-out.
+		# ...AND THE POINTS THE BOXES STAND ON, not the points the polyline bends at.
+		# A slab is centred on its segment's midpoint and a RAMP is one box up to
+		# 34 m long, so its centre sits as much as 17 m from the nearest vertex of
+		# `poly` — a screen over the vertices alone would pass a ramp lying squarely
+		# inside a keep-out. `row["screen"]` is built from the shipped slab table, so
+		# this owns no second idea of where the stone is.
 		var pad: float = row["rail"]
 		var clear: bool = true
-		for pt: Vector2 in (row["poly"] as PackedVector2Array):
+		for pt: Vector2 in (row["screen"] as PackedVector2Array):
 			for corner: Vector2 in [Vector2.ZERO, Vector2(pad, pad), Vector2(pad, -pad),
 					Vector2(-pad, pad), Vector2(-pad, -pad)]:
 				if trunk_keep_out(terrain, pt + corner, waypoints):
@@ -1331,12 +1347,16 @@ static func trunk_keep_out(terrain: Node3D, p: Vector2,
 	@param waypoints: `terrain.waypoint_sites()`, read once by the caller.
 	@return: true when nothing this family builds may stand here.
 
-	TWO CALLERS, AND THEY ARE THE TWO HALVES OF ONE RULING (owner, 2026-09-19):
+	THREE CALLERS, AND THE FIRST TWO ARE THE TWO HALVES OF ONE RULING (owner,
+	2026-09-19):
 
 	  * `_trunk_blocked` asks it of a station the route is NOT heading for, and
 	    abandons the trunk whole — an obstacle.
 	  * `_draw_path_share` asks it of a segment the route IS heading for, and
 	    DRAWS NOTHING THERE — a destination the route stops at the edge of.
+	  * `_drawable_decks` (child `.3`) asks it of a river deck's own points, and
+	    drops the deck — the same ruling as the second, applied to the one piece of
+	    this family's stone that is not laid along the route's own line.
 
 	THE SECOND CALLER EXISTS BECAUSE OF A REAL COLLISION, and it is worth writing
 	down so nobody removes it as belt-and-braces. The HQ anchor is

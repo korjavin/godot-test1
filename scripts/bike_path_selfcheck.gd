@@ -405,6 +405,12 @@ const BRIDGE_Y_TOLERANCE: float = 0.002
 const X_WINDOW_EAST: float = 900.0
 const X_WINDOW_BULGE: float = 60.0
 
+## B2b's own sampling pitch over a ramp rectangle, metres. A QUARTER of the
+## builder's `FIELD_BRIDGE_PROBE_STEP` on purpose: a control that sampled at the
+## same pitch as the code under test would agree with it about which points exist,
+## and the defect this catches is exactly a lane the builder's walk never reached.
+const RAMP_PROBE: float = 0.25
+
 ## The edge id T3a's synthetic route wears. It replaces the memo whole, so it
 ## cannot collide with anything — but it is deliberately not 0 either, so a marker
 ## carrying it can never be mistaken for a real trunk in a log.
@@ -444,8 +450,9 @@ func _run() -> void:
 	_check_trunk_intersections(terrain_script)
 	_check_trunk_keep_outs(terrain_script)
 	_check_trunk_memo(terrain_script)
-	# --- CHILD `.3`, the bridges. B1 / B3 / B4 are one call (they all need the same
-	# deck), B2 is its own sweep.
+	# --- CHILD `.3`, the bridges. FIVE STATEMENTS IN THREE CALLS: B1, B3 and B4 are
+	# one call because all three need the same drawn deck, B5 is the window scan's
+	# own unit assertion, and B2 is its own sweep.
 	_check_trunk_bridges(terrain_script)
 	_check_bridge_x_window(terrain_script)
 	_check_no_paint_on_water(terrain_script)
@@ -840,8 +847,9 @@ func _check_trunk_cover(terrain_script: GDScript) -> void:
 					if int(row["edge"]) == edge_id:
 						lists.append(row["segments"])
 		# THE EXPECTED SET IS THE DRAWABLE SEGMENTS above, not every segment. A trunk
-		# is deliberately not drawn over water (`.3` bridges it) or inside a
-		# destination's keep-out disc (T5), so a chunk records only what it drew —
+		# is deliberately not drawn AT GROUND LEVEL over water (`.3` carries it on a
+		# deck instead) or inside a destination's keep-out disc (T5), so a chunk
+		# records only what it drew —
 		# which is also why it leaves no marker where it drew nothing. Computed from
 		# the SHIPPED predicates, so this owns no copy of the rule it is checking:
 		# the midpoint assignment is still entirely the marker's word.
@@ -896,7 +904,8 @@ func _drawable_segments(terrain: Node3D, stations: Array[Dictionary],
 
 	Both skip rules, asked of the SHIPPED predicates rather than restated: the
 	water (`is_river_at` at both stations, `segment_blocked` between — a trunk
-	segment over a river waits for `godot-test1-pnvb.3`'s deck) and the
+	segment over a river is carried on `godot-test1-pnvb.3`'s DECK and is never
+	painted at ground level, so it is not a drawn segment either way) and the
 	destination keep-outs (`BikePaths.trunk_keep_out`, T5's ruling).
 	"""
 	var out: Dictionary = {}
@@ -2265,8 +2274,11 @@ func _check_trunk_world_tie(terrain_script: GDScript) -> void:
 	Dictionaries and every field in it is real, and `_spawn_bare` drives the
 	SHIPPED `spawn_bike_path_in_chunk` into one.
 
-	WATER IS SKIPPED, because until `godot-test1-pnvb.3` a trunk segment over a
-	river is deliberately not drawn.
+	WATER IS SKIPPED, AND THE SKIP IS PERMANENT. A trunk segment over a river is
+	never painted at ground level — child `godot-test1-pnvb.3` carries it on a DECK
+	at `FieldBridges.FIELD_BRIDGE_TOP` instead, which is B1's subject and not this
+	check's, and where a crossing is refused the gap stays. Deleting this skip would
+	make T1 look for a strip box that must not exist.
 	"""
 	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
 	var waypoints: Array[Dictionary] = terrain.waypoint_sites()
@@ -2568,6 +2580,13 @@ func _check_trunk_bridges(terrain_script: GDScript) -> void:
 	    plus half the slab's thickness) is what `terrain.field_bridge_surface_y()`
 	    answers there. A deck built for the wrong span puts no box at that XZ; a
 	    strip drawn at ground level instead of on the deck fails the Y.
+	  * **B1b** and it is asked of EVERY SLAB OF THE ROW, ramps included, each in
+	    whatever chunk the centre rule gave it. That is the control on the
+	    trunk-route box merge: a ramp foot stands a ramp run plus its push budget
+	    past the last station the deck was built from, so the chunk holding nothing
+	    but that ramp rejects the whole trunk unless its box was widened to hold the
+	    decks — and the ramp is then silently never drawn, which asking only about a
+	    slab over the water cannot see.
 	  * **B3** at that same XZ, a body at deck height is NOT wading and the deep
 	    channel does NOT push it — while the water underneath it is real, which is
 	    the control that stops B3 passing on dry ground. THE MECHANISM IS THE
@@ -2597,29 +2616,47 @@ func _check_trunk_bridges(terrain_script: GDScript) -> void:
 	var tied: int = 0
 	var decks: int = 0
 	var deck_only: int = 0
+	var slabs_tied: int = 0
+	# `_deck_box_at`'s memo is keyed on a chunk and holds THIS terrain's batches, so
+	# it is emptied here rather than left to leak into a later seed's world.
+	_deck_chunks.clear()
 	for trunk: Dictionary in BikePaths.trunks(terrain):
 		for row_v: Variant in (trunk["bridges"] as Array):
 			var row: Dictionary = row_v
 			decks += 1
-			# The WETTEST slab: the one whose own midpoint stands over water. The deck
-			# runs on past the banks (it grows until a ramp foot is dry), so the middle
-			# of the table is not automatically the middle of the river.
+			# --- B1b. EVERY SLAB OF THE ROW IS DRAWN, in whatever chunk the centre rule
+			# gave it. See the banner: this is the control on the box merge, and the
+			# slabs it is really about are the two RAMPS, which reach furthest from the
+			# stations the route's own box was built from.
 			var mid := Vector2.INF
 			for slab_v: Variant in FieldBridges._field_bridge_slabs(row):
 				var slab: Dictionary = slab_v
-				if float(slab["y_a"]) < FieldBridges.FIELD_BRIDGE_TOP \
-						or float(slab["y_b"]) < FieldBridges.FIELD_BRIDGE_TOP:
-					continue   # a ramp, which is on dry ground by construction
 				var at: Vector2 = Vector2(slab["start"]) \
 						+ (slab["dir"] as Vector2) * float(slab["len"]) * 0.5
-				if terrain.is_river_at(Vector3(at.x, 0.0, at.y)):
+				var ramp: bool = float(slab["y_a"]) < FieldBridges.FIELD_BRIDGE_TOP \
+						or float(slab["y_b"]) < FieldBridges.FIELD_BRIDGE_TOP
+				if _deck_box_at(terrain, at) == INF:
+					_fail("B1b: trunk %d's deck carries a %s centred at %s, and the chunk %s "
+							% [int(trunk["id"]), "ramp" if ramp else "slab", at,
+							terrain.world_to_chunk(Vector3(at.x, 0.0, at.y))]
+							+ "the centre rule gives it drew no box there. A deck's stone "
+							+ "reaches past the stations it was built from, so the route's "
+							+ "own bounding box has to be merged with its decks' or the "
+							+ "chunk rejects the trunk before the deck pass runs")
+					continue
+				slabs_tied += 1
+				# ...and the WETTEST slab is the one the rest of B1 and all of B3 use:
+				# the deck runs on past the banks (it grows until a ramp foot is dry),
+				# so the middle of the table is not automatically the middle of the river.
+				if mid == Vector2.INF and not ramp \
+						and terrain.is_river_at(Vector3(at.x, 0.0, at.y)):
 					mid = at
-					break
 			if mid == Vector2.INF:
 				continue   # this crossing's deck slabs all straddle the bank; try the next
-			# --- B1. The chunk that owns that slab is the one the centre rule gave it.
+			# --- B1. The chunk that owns that slab is the one the centre rule gave it,
+			# and `_deck_box_at` above already built it.
 			var chunk_pos: Vector2i = terrain.world_to_chunk(Vector3(mid.x, 0.0, mid.y))
-			var built: Dictionary = _spawn_bare(terrain, chunk_pos)
+			var built: Dictionary = _deck_chunks[chunk_pos]
 			var at_world: Vector3 = terrain.chunk_to_world(chunk_pos)
 			var best: float = INF
 			var hit: Transform3D = Transform3D()
@@ -2707,12 +2744,43 @@ func _check_trunk_bridges(terrain_script: GDScript) -> void:
 	elif tied == 0:
 		_fail("B1 walked %d trunk decks and tied not one of them to the water underneath it. "
 				% decks + "Every other assertion in this file compares a build to a build")
+	if slabs_tied == 0 and decks > 0:
+		_fail("B1b tied not one slab of %d decks to a drawn box, so the box merge has no "
+				% decks + "control at all")
 	print("bike trunks B1: %d of %d decks on seed %d were tied box-for-box to the river span "
-			% [tied, decks, SEEDS[0]] + "that produced them; %d of those chunks drew a deck "
-			% deck_only + "and no strip at all, which is the case check 1's slice needs a "
-			+ "marker for")
+			% [tied, decks, SEEDS[0]] + "that produced them, over %d slabs and ramps; %d of "
+			% [slabs_tied, deck_only] + "those chunks drew a deck and no strip at all, which "
+			+ "is the case check 1's slice needs a marker for")
 	terrain.free()
 	Sentinel.done("trunk_bridges")
+
+
+var _deck_chunks: Dictionary = {}
+
+func _deck_box_at(terrain: Node3D, at: Vector2) -> float:
+	"""
+	How far the nearest box in the batch of `at`'s OWN chunk stands from it, or INF
+	when that chunk drew nothing within `STRIP_TOLERANCE`.
+
+	The chunk is the one the shipped `world_to_chunk` gives the point, which is the
+	centre rule the emitter slices every slab by — so this asks the same question
+	the geometry answers, never a rect intersection of its own.
+
+	MEMOIZED PER CHUNK, because a deck's slabs share two or three chunks between
+	them and `_spawn_bare` drives the whole two-tier spawner. Dropped by the caller
+	when it changes terrain.
+	"""
+	var chunk_pos: Vector2i = terrain.world_to_chunk(Vector3(at.x, 0.0, at.y))
+	if not _deck_chunks.has(chunk_pos):
+		_deck_chunks[chunk_pos] = _spawn_bare(terrain, chunk_pos)
+	var built: Dictionary = _deck_chunks[chunk_pos]
+	var origin: Vector3 = terrain.chunk_to_world(chunk_pos)
+	var best: float = INF
+	for entry_v: Variant in (built["batch"] as Array):
+		var t: Transform3D = (entry_v as Dictionary)["transform"]
+		best = minf(best, Vector2(origin.x + t.origin.x,
+				origin.z + t.origin.z).distance_to(at))
+	return INF if best > STRIP_TOLERANCE else best
 
 
 func _bridge_kill_switch(terrain_script: GDScript, on: Node3D, at: Vector2) -> void:
@@ -2866,14 +2934,56 @@ func _check_no_paint_on_water(terrain_script: GDScript) -> void:
 	IT FAILS ON ZERO CROSSINGS, because a sweep of seeds where no route ever meets
 	a river asserts nothing at all — and it prints how many of those crossings got
 	a deck, which is the measurement this bead is judged on.
+
+	**B2b — AND EVERY DECK'S RAMP RECTANGLE IS DRY, walked HERE.** That is the
+	control on the deck-wide wet probe, and it has to be an independent walk or it
+	is no control at all: asking `FieldBridges._field_bridge_dry_across` would ask
+	the function under test. So this samples the whole rectangle itself, at a
+	quarter metre in both axes and with BOTH edges included, and it is over eight
+	seeds because whether any one of them grows a ramp whose edge clips the water
+	is a population question. A ramp is the one piece of a bridge that is under
+	`WADE_SURFACE_MAX` for its first stretch, so a wet edge there is a hero wading
+	on a bridge.
 	"""
 	var crossings: int = 0
 	var bridged: int = 0
 	var bare: int = 0
 	var strips_seen: int = 0
+	var ramps: int = 0
 	for seed_value: int in TRUNCATION_SEEDS:
 		var terrain: Node3D = _terrain(terrain_script, seed_value, true)
 		for trunk: Dictionary in BikePaths.trunks(terrain):
+			# --- B2b. The ramps, walked by this file and not by the builder.
+			for row_v: Variant in (trunk["bridges"] as Array):
+				var row: Dictionary = row_v
+				var half: float = row["half"]
+				for slab_v: Variant in FieldBridges._field_bridge_slabs(row):
+					var slab: Dictionary = slab_v
+					if float(slab["y_a"]) >= FieldBridges.FIELD_BRIDGE_TOP \
+							and float(slab["y_b"]) >= FieldBridges.FIELD_BRIDGE_TOP:
+						continue        # a deck slab; it is MEANT to be over water
+					ramps += 1
+					var dir: Vector2 = slab["dir"]
+					var perp := Vector2(-dir.y, dir.x)
+					var run: float = slab["len"]
+					var steps: int = maxi(1, int(run / RAMP_PROBE))
+					var lanes: int = maxi(1, int(half * 2.0 / RAMP_PROBE))
+					for a in steps + 1:
+						for b in lanes + 1:
+							var at: Vector2 = Vector2(slab["start"]) \
+									+ dir * (run * float(a) / float(steps)) \
+									+ perp * (half * (2.0 * float(b) / float(lanes) - 1.0))
+							if not terrain.is_river_at(Vector3(at.x, 0.0, at.y)):
+								continue
+							_fail("B2b: seed %d, trunk %d has a RAMP standing in the water "
+									% [seed_value, int(trunk["id"])] + "at %s. A ramp is "
+									% at + "under WADE_SURFACE_MAX for its first stretch and "
+									+ "it is %.1f m wide, so a hero on that edge wades ON a "
+									% (half * 2.0) + "bridge. The deck-wide probe is missing "
+									+ "part of its section — check that its lane walk really "
+									+ "reaches both edges when `half` is not a whole number "
+									+ "of probe steps")
+							break
 			var stations: Array[Dictionary] = trunk["stations"]
 			var was_wet: bool = false
 			for i in range(stations.size() - 1):
@@ -2919,8 +3029,12 @@ func _check_no_paint_on_water(terrain_script: GDScript) -> void:
 	if strips_seen == 0:
 		_fail("B2 built the chunks around %d crossings and found no strip box in any of "
 				% crossings + "them, so the sweep measured nothing")
-	print("bike trunks B2: %d trunk river crossings over %d seeds — %d carry a deck, %d are "
-			% [crossings, TRUNCATION_SEEDS.size(), bridged, bare] + "left as bare gaps (a "
+	if ramps == 0 and bridged > 0:
+		_fail("B2b walked %d bridged crossings and found no ramp slab in any of them, so "
+				% bridged + "the deck-wide probe's control asserted nothing")
+	print("bike trunks B2: %d ramp rectangles walked dry; %d trunk river crossings over %d "
+			% [ramps, crossings, TRUNCATION_SEEDS.size()] + "seeds — %d carry a deck, %d are "
+			% [bridged, bare] + "left as bare gaps (a "
 			+ "bank with no dry abutment, or a crossing inside a keep-out). %d strip boxes "
 			% strips_seen + "were measured against the water and none stands in it")
 	Sentinel.done("no_paint_on_water")

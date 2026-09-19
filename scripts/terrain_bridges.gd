@@ -1063,8 +1063,9 @@ static func bike_trunk_bridges(terrain: Node3D, pts: PackedVector2Array,
 	@return: `{ "rows": Array, "refused": bool }`. `refused` is the LAKE and only
 	         the lake (see below); `rows` are in the shape `field_bridge_at()`
 	         returns, with `"bike": true`, `"k0"/"k1" = -1` (no station index) and
-	         `"box"` / `"rail"`, the Rect2 every piece of this deck's stone stands
-	         inside and the lateral offset of its outermost box CENTRE.
+	         `"box"` / `"rail"` / `"screen"`, the Rect2 every piece of this deck's
+	         stone stands inside, the lateral offset of its outermost box CENTRE,
+	         and the points its boxes are really centred on.
 
 	PURE, AND IT MEMOIZES NOTHING. `BikePaths.trunks()` calls this once per edge
 	while it builds its own memo and keeps the rows on the trunk row, so the memo
@@ -1088,9 +1089,10 @@ static func bike_trunk_bridges(terrain: Node3D, pts: PackedVector2Array,
 	strip is already drawn across, and a deck under drawn paint is stone nobody
 	needed. So detection matches `segment_blocked`'s own half-step exactly, which is
 	also what keeps this affordable: MEASURED on the three CI seeds, the whole cold
-	`BikePaths.trunks()` walk is 8-11 ms with it and 8-17 ms at the corridor's 1 m,
-	paid once per run by whichever chunk streams in first. The DECK is decimated
-	back to `pitch` either way, so the stone is the same shape.
+	`BikePaths.trunks()` walk costs a third less with it than at the corridor's 1 m,
+	and `BikePaths.trunks()`'s own banner carries the numbers rather than this one
+	repeating them. The DECK is decimated back to `pitch` either way, so the stone
+	is the same shape.
 
 	THE LAKE ABANDONS THE WHOLE TRUNK, and nothing else here does. Past
 	FIELD_BRIDGE_MAX_SPAN of walked water this is not a river the path crosses, it
@@ -1227,6 +1229,20 @@ static func bike_trunk_bridges(terrain: Node3D, pts: PackedVector2Array,
 				hi = hi.max(pt)
 			var pad: float = field_bridge_outer_reach(half)
 			row["box"] = Rect2(lo - Vector2(pad, pad), hi - lo + Vector2(pad, pad) * 2.0)
+			# ...and WHERE THIS DECK'S BOXES ACTUALLY STAND, which is not where its
+			# polyline bends. A slab is centred on the MIDPOINT of its segment, and a
+			# RAMP slab is one box up to `_field_bridge_run()` plus the whole
+			# FIELD_BRIDGE_FOOT_PUSH_MAX long — so its centre can be 17 m from the
+			# nearest point of `poly`, and a screen that walked the vertices alone
+			# would pass a ramp lying squarely inside a keep-out. The slab table is
+			# the one description of what the stone is (see `_field_bridge_slabs`),
+			# so the screen is built from it rather than from a second guess.
+			var screen := PackedVector2Array(row["poly"])
+			for slab_v: Variant in _field_bridge_slabs(row):
+				var slab: Dictionary = slab_v
+				screen.append(Vector2(slab["start"])
+						+ (slab["dir"] as Vector2) * float(slab["len"]) * 0.5)
+			row["screen"] = screen
 			# ...and where this deck's OUTERMOST BOX CENTRE stands, which is the
 			# parapet's mitred rail line and nothing to do with `pad` above. The
 			# keep-out sweep one family along measures box centres, and `pad` is a
