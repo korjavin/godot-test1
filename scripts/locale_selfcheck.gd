@@ -366,6 +366,10 @@ const WIDTH_BUDGETS: Array = [
 	["%s was freed", 14, 336.0, "event log line"],
 	["Deafened", 14, 336.0, "event log line"],
 	["Undeafened", 14, 336.0, "event log line"],
+	# ...and the one line pushed into that ring rather than diffed into it: the HQ
+	# alarm off the `alrm` verb (bead godot-test1-buyt.4). Same card, same font,
+	# same budget — where it came from does not change what it is drawn in.
+	["Alarm raised inside the HQ", 14, 336.0, "event log line"],
 	# world_caption.gd — the lifetime-first stamp caption (bead godot-test1-wus8)
 	# posts to LevelUpLabel, full-frame centred at size 40. No fixed control to
 	# measure against, so the budget is the base viewport (project.godot's 1920)
@@ -375,6 +379,10 @@ const WIDTH_BUDGETS: Array = [
 	# shared with every other world caption (respawn, level-up — unbudgeted by
 	# the same rule), so none of those buys an entry here either.
 	["New passport stamp — %d of %d (press %s)", 40, 1820.0, "world stamp caption"],
+	# ...and the HQ alarm caption (bead godot-test1-buyt.4), posted to the same
+	# label through the same `post_caption()` seam, so it carries the same budget
+	# for the same reason: it is centred on the frame and must never outgrow it.
+	["Spotted! The alarm is up", 40, 1820.0, "world alarm caption"],
 ]
 
 var _failures: Array[String] = []

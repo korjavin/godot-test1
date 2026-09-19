@@ -1888,15 +1888,19 @@ func investigate_point(pos: Vector3, seconds: float,
 	"""
 	Go and look at `pos` for `seconds`, then walk back and resume the beat.
 
-	@param pos: world space. The HQ's cyan `P` plate that was just stepped on.
+	@param pos: world space, and there are TWO things it can be since bead
+		godot-test1-buyt.4: the HQ's cyan `P` plate that was just stepped on, or the
+		point a staffer saw the hero at. Both arrive through the one router,
+		`TowerInterior._send_guard_to()`.
 	@param seconds: how long to stand facing it once there.
 	@param route: the corners to walk on the way, world space, ending at or near
 		`pos` — `TowerInterior.plan_route()`'s output. EMPTY means "straight
 		there", which is the honest answer for an open room and the only thing a
 	    caller without a floor plan can say.
 	@return: whether the lure was TAKEN. False is the ordinary answer, not an
-	    error: a body that is busy refuses, and the caller spends its cooldown
-	    anyway (see `TowerInterior._press_lure_pad`).
+	    error: a body that is busy refuses, and a plate's caller spends its cooldown
+	    anyway (see `TowerInterior._press_lure_pad`); an alarm's caller bounds
+	    itself instead, by refusing to raise a storey whose alarm is already up.
 
 	THE ANTI-PUPPET RULES ARE ALL HERE, in the one shared function, because there
 	are two ways in — a local press and the master applying a relayed `pad` verb —
