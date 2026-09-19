@@ -1731,6 +1731,19 @@ var _landmark_sites_built: bool = false
 ## rebuilds identically — see that function.
 var _bike_path_cache: Dictionary = {}
 
+## Memoized result of `BikeNetwork.anchors()` and `BikeNetwork.edges()` — exactly
+## two keys, "anchors" and "edges", for the whole world (epic godot-test1-pnvb).
+## The trunk graph is a pure function of `run_seed` through four tables that are
+## themselves pure in it, so a table kept across a re-seed would route this run's
+## network between the LAST run's landmarks.
+##
+## HERE AND NOT ON `BikeNetwork`, for `_bike_path_cache`'s reason one family
+## along: a memo on a static family is state `_drop_seeded_memos()` cannot reach,
+## so it survives every re-seed and hands a multiplayer joiner the wrong world
+## (`chunk_stream_selfcheck` check 6c). Uncapped on purpose — two keys per world
+## is nothing for a cap to evict.
+var _bike_network_cache: Dictionary = {}
+
 ## Reference to the player node to track their position
 var player: Node3D
 
@@ -2297,6 +2310,11 @@ func _drop_seeded_memos() -> void:
 	# makes reads the road centreline, the biome field or the landmark table above.
 	# A path kept across a re-seed would be a strip laid out for the LAST world.
 	_bike_path_cache = {}
+	# ...and the BIKE ROAD NETWORK's anchor table and trunk graph, which ride the
+	# road centreline twice over: the waypoint sites and the landmark sites above
+	# are both derived from it, so a graph kept across a re-seed would join this
+	# run's gate to the last run's monuments.
+	_bike_network_cache = {}
 
 
 func _roll_biome_offset() -> void:
