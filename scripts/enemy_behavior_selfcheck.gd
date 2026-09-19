@@ -261,8 +261,12 @@ func _check_shrink_pulse(croc_ai: GDScript) -> void:
 	  IMMUNE     a `crush_immune` ROW and a boss both refuse the pulse, and a
 	             SLEPT body refuses it too — each against the plain awake body
 	             that accepts it one line away.
-	  SLEPT      a body slept mid-window comes back BIG. A slept body ticks
-	             nothing, so without this it would wake ankle-high and stay there.
+	  SLEPT      a body slept mid-window comes back BIG — asserted on the MESH
+	             BASIS, not on the factor that feeds it, because a sleeper runs
+	             neither line that writes one.
+	  WIRED      a body handed the flag over the wire (no clock) and then handed
+	             back to its own AI clears it on the first local frame, with
+	             `is_fleeing` as the sibling control.
 	"""
 	var shrunk_scale: float = float(croc_ai.get("SHRUNK_SCALE"))
 	var ease_s: float = float(croc_ai.get("SHRINK_EASE_SECONDS"))
@@ -514,6 +518,10 @@ func _check_shrink_pulse(croc_ai: GDScript) -> void:
 	for _i in range(30):
 		asleep._physics_process(step)
 	asleep.shrink_for(duration)
+	# ...and let it finish DRAWING itself small before it is slept, or the basis
+	# assertion below would be reading an identity nothing ever shrank.
+	for _i in range(ease_ticks):
+		asleep._animate_body(step)
 	if not bool(asleep.is_shrunk):
 		_fail("shrink: the sleep probe's body would not shrink while awake, so the"
 				+ " slept-mid-window half below has nothing to clear")
@@ -526,12 +534,87 @@ func _check_shrink_pulse(croc_ai: GDScript) -> void:
 		if bool(asleep.is_shrunk):
 			_fail("shrink: a body slept mid-window is still shrunk — a sleeper ticks"
 					+ " nothing, so it would WAKE UP ankle-high and stay that way")
+		# MEASURED ON THE MESH TRANSFORM, NOT ON `_shrink_factor` (review round 1).
+		# The factor is an INPUT to the two `scaled_local` lines in `_animate_body`
+		# / `_animate_bite`, and a slept body runs neither — so an assertion on the
+		# variable passes on exactly the build that leaves the last animated basis
+		# on screen at 0.45 for the whole sleep, in the 10 m band between the sleep
+		# radius (~50 m) and `VISUAL_CULL_DISTANCE` (60 m) where it is genuinely
+		# drawn. `get_scale().x` reads back what the renderer will use.
+		var drawn: float = (asleep.model as Node3D).transform.basis.get_scale().x \
+				/ maxf(float(asleep.model_base_scale.x), 0.0001)
+		if not is_equal_approx(drawn, 1.0):
+			_fail("shrink: a body slept mid-window is still DRAWN at %.3f of its"
+					% drawn + " rest size — the mesh basis is written only in"
+					+ " `_animate_body` / `_animate_bite`, which a sleeper never"
+					+ " runs, so clearing `_shrink_factor` alone changes nothing on"
+					+ " screen and a frozen ankle-high body shows to the draw cull")
 		if not is_equal_approx(float(asleep._shrink_factor), 1.0):
-			_fail("shrink: a body slept mid-window is still DRAWN at %.3f — the"
-					% float(asleep._shrink_factor) + " factor eases in the animation"
-					+ " a sleeper never runs, and the draw cull is wider than the"
-					+ " sleep radius, so it would be visibly tiny")
+			_fail("shrink: a body slept mid-window kept `_shrink_factor` at %.3f —"
+					% float(asleep._shrink_factor) + " the next animated frame would"
+					+ " ease back DOWN from 1.0 instead of holding it")
+		# ...AND THE OTHER DIRECTION: WAKING CLEARS IT TOO (review round 1). A body
+		# can be slept WHILE remote-driven and take `CROC_FLAG_SHRUNK` off the wire
+		# with no clock of its own; `_tick_shrink`'s first local frame would clear
+		# that, but a sleeper runs no `_physics_process` to have one. The flag is
+		# assigned directly here because that is exactly what `set_remote_state()`
+		# does to a body in this state, and staging a real sample would force
+		# physics back on and destroy the condition under test.
+		asleep.is_shrunk = true
+		asleep.set_lod_active(true)
+		if bool(asleep.is_shrunk):
+			_fail("shrink: a body that was handed the shrink flag WHILE SLEPT woke"
+					+ " up still shrunk — a sleeper has no local frame in which to"
+					+ " spend the zero clock, so it stays ankle-high indefinitely")
 	asleep.free()
+
+	# ---- THE WIRE-DRIVEN LATCH (review round 1) -----------------------------
+	# The failure this is written against: `set_remote_state()` hands a body
+	# `is_shrunk` TRUE with a clock of ZERO — deliberately, because the master owns
+	# the window — and then the master's samples stop for entirely ordinary reasons
+	# (it walks past its own sleep radius, it leaves, this peer is promoted).
+	# `clear_remote_drive()` gives the body back to its own AI still flagged, and a
+	# countdown asking `shrunk_time_remaining > 0.0` would return every frame
+	# FOREVER: permanently tiny, permanently harmless, permanently unable to
+	# acquire — and a peer later promoted to master would broadcast
+	# `CROC_FLAG_SHRUNK` for those bodies to the whole room.
+	#
+	# Driven through the three SHIPPED entry points and nothing else, because the
+	# bug lives in how they compose: `set_remote_state`, `clear_remote_drive`, then
+	# one ordinary `_physics_process`. `is_fleeing` rides along as the CONTROL — the
+	# sibling flag whose countdown is gated the right way already — so "the shrink
+	# cleared" cannot be true because the probe reset everything.
+	var wired: Node = load(CROC_SCENE).instantiate()
+	wired.species = "crocodile"
+	root.add_child(wired)
+	wired._find_player()
+	var flags: int = MpCodec.CROC_FLAG_SHRUNK | MpCodec.CROC_FLAG_FLEEING
+	wired.set_remote_state(Vector3(0.0, 0.0, 0.0), 0.0, flags)
+	if not bool(wired.is_shrunk) or not bool(wired.remote_driven):
+		_fail("shrink: a sample carrying CROC_FLAG_SHRUNK left the body un-shrunk"
+				+ " (shrunk %s, remote %s) — the latch probe below has nothing to"
+				% [wired.is_shrunk, wired.remote_driven] + " un-latch")
+	if float(wired.shrunk_time_remaining) != 0.0:
+		_fail("shrink: a wire-driven body started a clock of its own (%.2f s) —"
+				% float(wired.shrunk_time_remaining) + " the master owns the window,"
+				+ " and a second clock is a second answer the room can drift on")
+	wired.clear_remote_drive()
+	if bool(wired.remote_driven):
+		_fail("shrink: clear_remote_drive() left the body remote-driven, so the"
+				+ " local frame below never runs its own AI")
+	wired._physics_process(step)
+	if bool(wired.is_shrunk):
+		_fail("shrink: a body handed CROC_FLAG_SHRUNK over the wire and then handed"
+				+ " back to its own AI is STILL shrunk after a local frame — the"
+				+ " countdown is gated on the clock instead of the flag, and a"
+				+ " wire-driven shrink carries no clock, so this body is ankle-high"
+				+ " and harmless for the rest of the run")
+	if bool(wired.is_fleeing):
+		_fail("shrink: the CONTROL flag (is_fleeing) also survived the same frame,"
+				+ " so the shrink clearing above would prove nothing about the"
+				+ " shrink — something is wrong with the probe, not the feature")
+	wired.free()
+
 	floor_body.free()
 
 	print("shrink ray: eased to %.2f, %.2fx speed, no bite, no acquire, back at %.1f s;"

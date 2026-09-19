@@ -2580,6 +2580,16 @@ func shrink_for(seconds: float) -> void:
 	NOT guarded on `remote_driven`, for `flee_from()`'s reason: the flag is
 	overwritten by the master's next sample 100 ms later, and the master — whose
 	own bodies are never remote-driven — gets the real shrink from the relay.
+
+	ponytail: THE COLLISION CAPSULE STAYS FULL SIZE. Only the model basis is
+	scaled (`_ease_shrink_factor` and the two `scaled_local` lines); the
+	`CharacterBody3D`'s own `scale` is untouched, unlike the per-instance size roll
+	in `_ready()`, which scales the whole body precisely so the mesh and the
+	capsule move together. A tiny body that still shoves like a full one is a KNOWN
+	CEILING and a deliberate one — the player is not blocked either way (its mask
+	excludes the crocodile layer, so "you walk THROUGH the pack" holds), and what
+	is left is bodies displacing each other and the terrain at a size they are not
+	drawn at. Scale the shape if it ever reads wrong.
 	"""
 	if is_boss:
 		return
@@ -2629,8 +2639,22 @@ func _tick_shrink(delta: float) -> void:
 	(It never reaches this line anyway: `_physics_process` returns above it for a
 	remote body. Stated rather than relied on, because the guard is one `return`
 	away from somebody else's refactor.)
+
+	GATED ON THE FLAG AND NOT ON THE CLOCK, which is the whole of the next
+	paragraph and is `flee`'s shape rather than an optimisation. A wire-driven
+	body carries `is_shrunk` TRUE with a clock of ZERO — `set_remote_state()`
+	deliberately sets no clock — and the master's samples stop for ordinary
+	reasons: it walks past its own sleep radius (`send_croc_sync` skips sleepers),
+	it leaves, or this peer is promoted. `clear_remote_drive()` then hands the body
+	back to its own AI still flagged, and a countdown that asked `clock > 0` would
+	return every frame forever: permanently tiny, permanently harmless,
+	permanently unable to acquire — and a peer promoted to master would broadcast
+	`CROC_FLAG_SHRUNK` for those bodies to the whole room indefinitely. Asking the
+	FLAG instead means the first locally simulated frame spends a zero clock and
+	clears it, exactly as `is_fleeing`'s countdown self-heals a relayed flee (see
+	the `if is_fleeing:` block in `_physics_process`) and as `is_paused` does.
 	"""
-	if remote_driven or shrunk_time_remaining <= 0.0:
+	if remote_driven or not is_shrunk:
 		return
 	shrunk_time_remaining -= delta
 	if shrunk_time_remaining <= 0.0:
@@ -2872,19 +2896,39 @@ func set_lod_active(active: bool) -> void:
 		# Rush across the 50 m sleep boundary.
 		is_fleeing = false
 		flee_time_remaining = 0.0
-		# ...and any SHRINK, which needs this MORE than the flee does and for a
-		# reason the flee's note does not have to make (bead godot-test1-0mr0.4).
-		# A slept body ticks nothing, so a body slept mid-shrink would hold
-		# `is_shrunk` for the whole sleep — and a running player covers 45 m in
-		# the 6 s window, so crossing the sleep boundary mid-pulse is the ORDINARY
-		# case and not a corner one. A flee held past its clock is merely a
-		# harmless crocodile; a shrink held past its clock is a body that WAKES UP
-		# ANKLE-HIGH and stays that way. The factor goes back with it: it eases in
-		# `_animate_body`, which a slept body does not run either, so leaving it at
-		# 0.45 would draw a tiny crocodile the draw cull (60 m) still shows.
-		is_shrunk = false
-		shrunk_time_remaining = 0.0
-		_shrink_factor = 1.0
+	# ...AND ANY SHRINK, ON BOTH TRANSITIONS — outside the `not active` branch
+	# above, unlike every other line in it (bead godot-test1-0mr0.4).
+	#
+	# The sleep half needs it MORE than the flee does, for a reason the flee's note
+	# does not have to make: a slept body ticks nothing, so one slept mid-shrink
+	# would hold `is_shrunk` for the whole sleep — and a running player covers 45 m
+	# in the 6 s window, so crossing the boundary mid-pulse is ORDINARY play. A
+	# flee held past its clock is merely a harmless crocodile; a shrink held past
+	# its clock is a body that WAKES UP ANKLE-HIGH and stays that way.
+	#
+	# The WAKE half is the one the review found (round 1): a body can be slept
+	# WHILE remote-driven, take `CROC_FLAG_SHRUNK` off the wire with no clock, and
+	# lose remote drive. `_tick_shrink`'s first local frame would clear it — but a
+	# slept body runs no `_physics_process` to have one, so without this it wakes
+	# tiny with nothing left to tell it otherwise. Clearing on the way UP costs
+	# nothing honest: `shrink_for()` refuses a slept body, so no legitimate shrink
+	# can be waiting here, and a remote one is restored by the master's next sample
+	# 100 ms later.
+	is_shrunk = false
+	shrunk_time_remaining = 0.0
+	_shrink_factor = 1.0
+	# AND THE DRAWN BASIS WITH IT, because the factor is not what is drawn (review
+	# round 1). The mesh transform is written in exactly two places, both inside
+	# `_animate_body`/`_animate_bite`, and a slept body runs neither — so resetting
+	# the variable alone leaves the LAST ANIMATED basis on screen at 0.45 for the
+	# whole sleep. Sleep is at ~50 m and `VISUAL_CULL_DISTANCE` is 60, so that is a
+	# 10 m band in which a frozen ankle-high crocodile is genuinely visible.
+	# `orthonormalized()` recovers the rotation those two lines composed and
+	# `scaled_local` puts the rest scale back on it — the same composition, at
+	# factor 1.0, without re-deriving a single animation input.
+	if model != null:
+		model.transform.basis = model.transform.basis.orthonormalized() \
+				.scaled_local(model_base_scale)
 
 
 # ============================================================================
