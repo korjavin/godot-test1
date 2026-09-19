@@ -3702,6 +3702,15 @@ func bike_edges() -> Array[Dictionary]:
 	return BikeNetwork.edges(self)
 
 
+## ...and the TRUNK ROUTES themselves, for `FieldBridges` (bead godot-test1-pnvb.3).
+## The bridge family is the one sibling that has to read this table — its third
+## source of a centreline is a bike trunk — and a `BikePaths` reference inside
+## `terrain_bridges.gd` would be a parse-time edge back the way `terrain_bike_paths.gd`
+## already points (it reaches the bridges through `bike_trunk_bridges` below).
+func bike_trunks() -> Array[Dictionary]:
+	return BikePaths.trunks(self)
+
+
 func _landmark_at(chunk_pos: Vector2i) -> Dictionary:
 	return TerrainLandmarks._landmark_at(self, chunk_pos)
 
@@ -4669,6 +4678,22 @@ func _field_bridge_surface_on(row: Dictionary, world_pos: Vector3) -> float:
 func spawn_field_bridges_in_chunk(chunk_pos: Vector2i, block_batch: Array,
 		block_body: StaticBody3D) -> void:
 	FieldBridges.spawn_field_bridges_in_chunk(self, chunk_pos, block_batch, block_body)
+
+
+## THE BIKE FAMILY'S TWO (bead godot-test1-pnvb.3): the decks one trunk needs, and
+## the emission of one row into one chunk. Both are reached from
+## `terrain_bike_paths.gd`, which draws its own decks at its own single emission
+## site so `bike_path_selfcheck` check 1 can still slice ONE contiguous range out of
+## the batch.
+func bike_trunk_bridges(pts: PackedVector2Array, half: float, pitch: float) -> Dictionary:
+	return FieldBridges.bike_trunk_bridges(self, pts, half, pitch)
+
+
+func emit_field_bridge_in_chunk(row: Dictionary, chunk_pos: Vector2i, centre: Vector3,
+		rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D,
+		deck_color: Color, pylons: bool) -> void:
+	FieldBridges.emit_bridge_in_chunk(self, row, chunk_pos, centre, rng, block_batch,
+			block_body, deck_color, pylons)
 
 
 # ============================================================================

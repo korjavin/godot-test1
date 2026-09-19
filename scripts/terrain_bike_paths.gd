@@ -931,8 +931,9 @@ static func trunks(terrain: Node3D) -> Array[Dictionary]:
 	@return: Rows of `{ id: int (the edge id), stations: Array[Dictionary] in the
 	         walk order `_draw_path_share` expects, box: Rect2 (the route's
 	         bounding box in world XZ, padded by one segment length), from: Vector2,
-	         to: Vector2 }`, for the edges that produced a route at all. The memo
-	         itself, not a copy — it is asked once per chunk.
+	         to: Vector2, bridges: Array (the field-bridge rows this route's river
+	         crossings need, child `.3`) }`, for the edges that produced a route at
+	         all. The memo itself, not a copy — it is asked once per chunk.
 
 	AN EDGE THAT WAS ABANDONED IS SIMPLY ABSENT, which is the only honest shape:
 	a half trunk is the litter this epic exists to remove, so the alternatives are
@@ -962,9 +963,23 @@ static func trunks(terrain: Node3D) -> Array[Dictionary]:
 	# owns the state, because a class-name reference is a parse-time edge and `.4`
 	# is about to add one the other way.
 	var anchors: Array[Dictionary] = terrain.bike_anchors()
+	# Read ONCE for every edge, `_station_blocked`'s note: the table is not memoized
+	# and it is pure in `run_seed`, so it is loop-invariant here.
+	var waypoints: Array[Dictionary] = terrain.waypoint_sites()
 	for edge: Dictionary in terrain.bike_edges():
 		var route: Array[Dictionary] = _trunk_route(terrain, anchors, edge)
 		if route.size() < TRUNK_MIN_STATIONS:
+			continue
+		# --- THE RIVERS (child `.3`). A trunk crosses one ON A REAL DECK, built by
+		# the shipped `FieldBridges._field_bridge_row_from` through the terrain's
+		# forwarder — the family reaches its sibling through the node that owns the
+		# state, never by name. A LAKE (past FIELD_BRIDGE_MAX_SPAN of walked water)
+		# abandons the whole edge, because a half trunk is the litter this epic
+		# exists to remove and a bike path is never anyone's only route, so nothing
+		# can softlock either way.
+		var water: Dictionary = terrain.bike_trunk_bridges(
+				_trunk_poly(route), BIKE_PATH_WIDTH * 0.5, BIKE_STATION_SPACING)
+		if bool(water["refused"]):
 			continue
 		out.append({
 			"id": int(edge["id"]),
@@ -972,8 +987,51 @@ static func trunks(terrain: Node3D) -> Array[Dictionary]:
 			"box": _trunk_box(route),
 			"from": route[0]["pos"],
 			"to": route[-1]["pos"],
+			"bridges": _drawable_decks(terrain, water["rows"], waypoints),
 		})
 	cache["trunks"] = out
+	return out
+
+
+static func _trunk_poly(route: Array[Dictionary]) -> PackedVector2Array:
+	## A route's station positions alone — what the bridge scan walks.
+	var out := PackedVector2Array()
+	for station: Dictionary in route:
+		out.append(station["pos"])
+	return out
+
+
+static func _drawable_decks(terrain: Node3D, rows: Array,
+		waypoints: Array[Dictionary]) -> Array:
+	"""
+	The decks of `rows` this family is ALLOWED to draw — the keep-out rule applied
+	to the stone as well as to the paint.
+
+	A DECK IS PAINT WITH COLLISION, so it is exactly what `trunk_keep_out` is for:
+	`bike_path_selfcheck` T5 sweeps EVERY box this family emits against the tower's
+	disc, the teleport circles, the landmark chunks and the coin road's swath, and a
+	sixteen-box deck inside one would be the same defect as a post inside one (three
+	of the five failures that check exists for were collision shapes). The walk's
+	endpoint exemption lets a trunk REACH its own anchor through a disc; it has
+	never let it build there.
+
+	FILTERED HERE AND NOT AT DRAW TIME, so the row is absent from
+	`field_bridges_near()` too — a registered deck nobody draws would tell
+	`field_bridge_surface_y` there is stone where a player finds water.
+
+	A dropped deck leaves the un-painted gap `.2` already ships. It is rare — a
+	crossing has to fall inside a disc — and `bike_path_selfcheck` B2 counts it.
+	"""
+	var out: Array = []
+	for row_v: Variant in rows:
+		var row: Dictionary = row_v
+		var clear: bool = true
+		for pt: Vector2 in (row["poly"] as PackedVector2Array):
+			if trunk_keep_out(terrain, pt, waypoints):
+				clear = false
+				break
+		if clear:
+			out.append(row)
 	return out
 
 
@@ -981,7 +1039,10 @@ static func trunk_abandoned(terrain: Node3D, edge: Dictionary) -> String:
 	"""
 	WHY the trunk on `edge` does not exist, or "" when it does.
 
-	@return: One of "", "city" (both anchors inside Budapest's authored rect),
+	@return: One of "", "lake" (child `.3`: a river crossing wider than
+	         `FieldBridges.FIELD_BRIDGE_MAX_SPAN` of walked water — standing water
+	         rather than a river, and no deck is built over it), "city" (both anchors
+	         inside Budapest's authored rect),
 	         "mountain" (walled in, or still skirting after `TRUNK_DETOUR_MAX`
 	         stations), "road" (the coin road's swath, which `.4` owns), "site" (a
 	         waypoint circle, a landmark or the tower disc it was not heading for),
@@ -1003,7 +1064,16 @@ static func trunk_abandoned(terrain: Node3D, edge: Dictionary) -> String:
 	"""
 	var reason: Array[String] = [""]
 	_trunk_route(terrain, terrain.bike_anchors(), edge, reason)
-	return reason[0]
+	if reason[0] != "":
+		return reason[0]
+	# THE WALK SUCCEEDED AND THE EDGE IS STILL ABSENT, so the water refused it —
+	# `trunks()` is the only other place an edge is dropped, and the lake is the only
+	# reason it drops one (child `.3`). Asked of the MEMO rather than re-scanned, so
+	# this reader can never disagree with the table it reports on.
+	for trunk: Dictionary in trunks(terrain):
+		if int(trunk["id"]) == int(edge["id"]):
+			return ""
+	return "lake"
 
 
 static func _trunk_route(terrain: Node3D, anchors: Array[Dictionary], edge: Dictionary,
@@ -1469,7 +1539,40 @@ static func spawn_bike_path_in_chunk(terrain: Node3D, chunk_pos: Vector2i,
 				trunk["stations"], rng, obstacles, block_batch, block_body, cube_cursor,
 				edge_id, k, waypoints)
 		cube_cursor = built["cube_cursor"]
-		if (built["segments"] as PackedInt32Array).is_empty():
+
+		# --- THE BRIDGES (child `.3`): where this route crosses a river, the paint
+		# stops and a DECK carries it over. Emitted HERE, at this family's single
+		# emission site, and never from `FieldBridges.spawn_field_bridges_in_chunk` —
+		# that spawner runs AFTER this one, so a deck drawn there would split this
+		# family's batch entries into two ranges and `bike_path_selfcheck` check 1
+		# could no longer cut ONE contiguous run out of the CUBE bucket. The bridge
+		# family is asked only for the ROW (at `trunks()`) and for the emission of it,
+		# both of which draw nothing of their own.
+		#
+		# THE DECK IS THE PAINT. Its slabs are emitted in BIKE_STRIP_COLOR, so the red
+		# line reads as continuous over the water and there is no second flat box
+		# lying on the stone at ground height — which is the defect B2 exists to catch.
+		# The slab's own centre rule slices it, exactly as it slices a road deck.
+		#
+		# SCARCITY DOES NOT REACH IT: a deck is ROUTE, not furniture, and the route is
+		# the epic's named exemption (CLAUDE.md, the second of the two). A crossing
+		# with no deck is a gap in the road, not a thinner one.
+		var deck_boxes: int = block_batch.size()
+		for row_v: Variant in (trunk["bridges"] as Array):
+			terrain.emit_field_bridge_in_chunk(row_v, chunk_pos, chunk_centre, rng,
+					block_batch, block_body, BIKE_STRIP_COLOR, false)
+		# Every box a deck emits is a CUBE (`create_box`'s default kind), so the batch
+		# delta IS the cube delta and the cursor the NEXT trunk's poles are recorded
+		# against stays true.
+		deck_boxes = block_batch.size() - deck_boxes
+		cube_cursor += deck_boxes
+
+		# A MARKER WHENEVER THIS CHUNK DREW ANYTHING FOR THIS TRUNK, decks included.
+		# Check 1 slices the batch using `batch_start` / `cube_start` off the FIRST
+		# marker in the chunk, so a chunk that drew only a deck and left no marker
+		# would hand the A/B a run of boxes it cannot cut out — the family would read
+		# as having moved somebody else's geometry.
+		if (built["segments"] as PackedInt32Array).is_empty() and deck_boxes == 0:
 			continue
 		markers.append(_make_marker(terrain, key, built, parent_chunk, edge_id))
 
@@ -1538,11 +1641,14 @@ static func _draw_path_share(terrain: Node3D, chunk_pos: Vector2i, centre: Vecto
 		if terrain.world_to_chunk(Vector3(mid.x, 0.0, mid.y)) != chunk_pos:
 			continue
 		# --- TRUNK ONLY: THE WATER. A trunk is not stopped by a river any more
-		# (`_trunk_blocked` dropped the test), so the segment across one is simply
-		# NOT DRAWN and the paint has a visible gap. THAT GAP IS A PLACEHOLDER WITH
-		# A NAMED SUCCESSOR — `godot-test1-pnvb.3` fills it with a real deck through
-		# `FieldBridges._field_bridge_row_from` — and not an oversight. Both ends and
-		# the midpoint are sampled, because a station may now stand IN the water.
+		# (`_trunk_blocked` dropped the test), so the segment across one is not
+		# painted AT GROUND LEVEL — child `.3` carries it over on a DECK instead,
+		# emitted by the caller from `trunk["bridges"]` at deck height. What is left
+		# here is the ground-level skip, and it is what keeps a strip out of the
+		# water whether a deck was built or not: where a crossing was refused (no dry
+		# abutment, or water running off the end of the route) the gap `.2` shipped
+		# simply stays. Both ends and the midpoint are sampled, because a station may
+		# stand IN the water.
 		if edge_id >= 0 and (terrain.is_river_at(Vector3(a.x, 0.0, a.y))
 				or terrain.is_river_at(Vector3(b.x, 0.0, b.y))
 				or segment_blocked(terrain, a, b)):
