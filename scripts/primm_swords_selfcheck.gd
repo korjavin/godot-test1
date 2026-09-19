@@ -30,6 +30,9 @@ Twin Flash poses on the GROUND, where the feet never move — a grounded
 remote Primm with ABILITY_BIT_SLASH set crosses the arms and shows the hand
 pair, and clearing the bit reclaims both on the next gait frames (a slash
 that ends mid-air lands sheathed).
+6. Grounded dance (bead godot-test1-b7eg): a grounded remote Windman with
+ABILITY_BIT_DANCE set bounces both arms off rest; clearing the bit reclaims
+them. The assertion PR #437 initially lacked for the slash, on its own avatar.
 
 Sentinel contract: isolate first, done() last in _run(), finish() at report.
 """
@@ -82,6 +85,7 @@ func _run() -> void:
 	_check_local_attachment(fixture)
 	_check_remote_mirror(avatar)
 	await _check_grounded_slash(avatar)
+	await _check_grounded_dance()
 	_check_clearance(fixture)
 	_check_outward(fixture)
 	fixture.queue_free()
@@ -238,6 +242,60 @@ func _check_grounded_slash(avatar: Node3D) -> void:
 			+ " deg — the grounded gait never reclaimed the cross")
 	print("grounded slash: the bit crosses a grounded peer's arms and draws the hand pair, clearing it sheathes and reclaims")
 	Sentinel.done("grounded_slash")
+
+
+func _check_grounded_dance() -> void:
+	"""
+	Bead godot-test1-b7eg, acceptance 5: a GROUNDED remote avatar with
+	ABILITY_BIT_DANCE set bounces, and clearing the bit reclaims the arms on
+	the next gait frames. Its own avatar (Windman, slot 0 — the slash avatar
+	above is Primm), standing still on the floor: while the bit is set both
+	upper arms must be off rest, and with the bit cleared both must be back
+	near it. This is the assertion PR #437 initially lacked for the slash, and
+	the one a careless dance mirror fails: the pose is grounded by definition,
+	so only the grounded path is driven.
+	"""
+	var dancer: Node3D = RemoteAvatar.new()
+	root.add_child(dancer)
+	dancer.setup("dance-probe")
+	dancer.set_character(0)
+	await process_frame
+	if dancer.character_node == null:
+		_failures.append("dance: set_character(0) left no character_node")
+		dancer.queue_free()
+		Sentinel.done("grounded_dance")
+		return
+	if dancer._rig == null or not dancer._rig.has_method("measure"):
+		_failures.append("dance: remote windman bound no measurable rig")
+		dancer.queue_free()
+		Sentinel.done("grounded_dance")
+		return
+	dancer.on_floor = true
+	dancer.move_speed = 0.0
+	dancer.ability_bits = PlayerController.ABILITY_BIT_DANCE
+	await process_frame
+	await process_frame
+	var bouncing: Dictionary = dancer._rig.measure()
+	if absf(float(bouncing.get("left_arm_x", 0.0))) < deg_to_rad(50.0) \
+			and absf(float(bouncing.get("right_arm_x", 0.0))) < deg_to_rad(50.0):
+		_failures.append("dance: a GROUNDED peer with the dance bit set holds his arms at"
+			+ " (%.1f, %.1f) deg — the mirror never posed" % [
+				rad_to_deg(float(bouncing.get("left_arm_x", 0.0))),
+				rad_to_deg(float(bouncing.get("right_arm_x", 0.0)))])
+	dancer.ability_bits = 0
+	await process_frame
+	await process_frame
+	var rest: Dictionary = dancer._rig.measure()
+	if absf(float(rest.get("left_arm_x", 0.0))) > deg_to_rad(10.0) \
+			or absf(float(rest.get("right_arm_x", 0.0))) > deg_to_rad(10.0):
+		_failures.append("dance: clearing the bit left the arms at (%.1f, %.1f) deg — "
+			% [rad_to_deg(float(rest.get("left_arm_x", 0.0))),
+				rad_to_deg(float(rest.get("right_arm_x", 0.0)))]
+			+ "the grounded gait never reclaimed the bounce")
+	print("grounded dance: the bit bounces a grounded peer's arms, clearing it reclaims")
+	dancer.queue_free()
+	await process_frame
+	Sentinel.done("grounded_dance")
 
 
 func _tail_box_world(fixture: Node) -> AABB:

@@ -247,6 +247,23 @@ func _tick() -> void:
 	_repaint_on_change()
 
 
+func note_event(line: String) -> void:
+	## Push ONE already-translated line into the ring — the log's only entry for a
+	## room event this widget's 2 Hz poll cannot see, because it is an EDGE and not
+	## a state. The HQ alarm off the `alrm` verb is the first (bead
+	## godot-test1-buyt.4): it goes up and comes back down inside one run, so there
+	## is nothing for a snapshot compare to diff against.
+	##
+	## Read-only as far as the game is concerned, exactly like the rest of this
+	## file: it appends a string and repaints, and it holds no reference to whoever
+	## called it. The repaint is the tick's own gate, so a line pushed between ticks
+	## still lands on screen this frame rather than up to half a second later.
+	if line.is_empty():
+		return
+	_append(line)
+	_repaint_on_change()
+
+
 func note_local_leave() -> void:
 	## Called by the MP panel's Leave button BEFORE manager.leave(), so the
 	## next offline tick reads as ours.

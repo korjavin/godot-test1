@@ -687,6 +687,7 @@ func animate_walking(delta: float, speed_multiplier: float) -> void:
 
 	_apply_stink_pose()
 	_apply_slash_pose()
+	_apply_dance_pose()
 
 func _apply_stink_pose() -> void:
 	"""Phoboman's Stink Wave telegraph (bead godot-test1-9k9n.4): while his wave
@@ -730,6 +731,34 @@ func _apply_slash_pose() -> void:
 	var amount: float = minf(clampf(elapsed / PlayerAbilities.PRIMM_SLASH_RISE_S, 0.0, 1.0),
 			clampf(timer / (PlayerAbilities.PRIMM_SLASH_DURATION - PlayerAbilities.PRIMM_SLASH_RISE_S), 0.0, 1.0))
 	rig.slash(amount)
+
+func _apply_dance_pose() -> void:
+	"""Windman's hidden dance (bead godot-test1-b7eg): while his dance timer
+	runs, the arms bounce OVER the gait. Called at the end of every clocked
+	pose path beside `_apply_stink_pose()` and `_apply_slash_pose()` — walk,
+	air, idle, sidestep — after the gait drew, because `rig.dance()` lerps
+	from the CURRENT angles.
+
+	The phase loops DANCE_BEATS times over the window while the amount fades up
+	the first EDGE_S and down the last, so it reads as a dance, not a twitch —
+	a triangle would spend the middle holding still. The timer is set only by
+	the 6-then-7 fire and cleared on move/jump/switch/respawn/capture, so a
+	nonzero timer MEANS Windman mid-dance. A remote mirror never sets it AND
+	STILL SHOWS THE POSE: the `ab` bit carries the dance across the room and
+	`remote_avatar.gd` runs its own phase at full amount, the legs-snap
+	convention rather than this envelope (a mirror has no clock to shape
+	against)."""
+	if rig == null or player == null:
+		return
+	var timer: float = float(player.windman_dance_timer)
+	if timer <= 0.0:
+		return
+	var elapsed: float = PlayerAbilities.WINDMAN_DANCE_DURATION - timer
+	var phase: float = elapsed / PlayerAbilities.WINDMAN_DANCE_DURATION \
+			* PlayerAbilities.WINDMAN_DANCE_BEATS * TAU
+	var amount: float = minf(clampf(elapsed / PlayerAbilities.WINDMAN_DANCE_EDGE_S, 0.0, 1.0),
+			clampf(timer / PlayerAbilities.WINDMAN_DANCE_EDGE_S, 0.0, 1.0))
+	rig.dance(phase, amount)
 
 func relax_gait_extras(weight: float) -> void:
 	"""
@@ -867,6 +896,7 @@ func animate_sidestep(delta: float) -> void:
 	# rides it too — without this, F while strafing showed no telegraph.
 	_apply_stink_pose()
 	_apply_slash_pose()
+	_apply_dance_pose()
 
 func animate_jumping() -> void:
 	"""
@@ -910,6 +940,7 @@ func animate_jumping() -> void:
 
 	_apply_stink_pose()
 	_apply_slash_pose()
+	_apply_dance_pose()
 
 func animate_landing() -> void:
 	"""
@@ -956,6 +987,7 @@ func animate_idle(delta: float) -> void:
 
 	_apply_stink_pose()
 	_apply_slash_pose()
+	_apply_dance_pose()
 
 func reset_sidestep_pose() -> void:
 	"""

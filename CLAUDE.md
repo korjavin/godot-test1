@@ -192,7 +192,10 @@ gameplay input goes through named actions.
   owns both ends and the silence timeout), ranged-boss shots (`shot`, reliable, one per shot,
   replayed with the body's own row params, lethality local) and the HQ's opened gates (`gate`,
   anyone-to-everyone, plus `g` on the `room` packet and `go` in the join snapshot from the master;
-  a non-master's own set drains once per join under half the verb budget). Clear clouds, birds,
+  a non-master's own set drains once per join under half the verb budget) and the HQ's staff
+  alarm (`alrm`, anyone-to-everyone, reliable, NOT master-arbitrated — the master may be in the
+  field with no tower streamed in; the point is interior-local so every bound is a local const,
+  and there is no repair leg because an alarm expires). Clear clouds, birds,
   crowd and traffic stay per-peer cosmetic. Storms are rolled around every room member
   (owner ruling A, bead `gyd`). Each verb's ceilings (older builds, RTT lag) are written
   at its send site. Beads `vej`, `coq`, `d81`, `gyd`.
