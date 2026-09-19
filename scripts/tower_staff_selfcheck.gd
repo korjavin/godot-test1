@@ -1661,8 +1661,16 @@ func _check_the_guard_converges() -> void:
 				+ " no doorway")
 	else:
 		var door_floor: int = int(door["floor"])
-		var mid: Vector3 = ((door["from"] as Vector3) + (door["to"] as Vector3)) * 0.5
 		var corridor: Vector3 = door["from"]
+		# OFF THE CELL'S CENTRE LINE, and that is not tidiness. At the exact centre
+		# of a `D` the two neighbours are EQUIDISTANT, so every ordering of the
+		# candidates is a correct one and the order assertion below cannot fail —
+		# measured: a build that offered them FARTHEST FIRST passed this clause.
+		# Standing 0.15 of a cell towards one side is where a hero in a doorway
+		# actually is, and it gives the two candidates an order to get wrong.
+		var mid: Vector3 = (corridor + (door["to"] as Vector3)) * 0.5
+		var near_side: Vector3 = door["to"]
+		mid = mid.lerp(near_side, 0.15)
 		if TowerInterior._route_open(TowerInterior._plan_char(
 				TowerPlans.storey(door_floor)["rows"], TowerInterior._plan_cell_of(mid))):
 			_fail("check 11's doorway cell on storey %d is route-open — the clause"
@@ -1708,6 +1716,12 @@ func _check_the_guard_converges() -> void:
 				_fail("the doorway candidates on storey %d are not in ascending"
 						% door_floor + " distance order — the guard would walk past the"
 						+ " near side to reach the far one")
+			if not offered.is_empty() and offered[0].distance_to(near_side) \
+					> offered[0].distance_to(corridor):
+				_fail("a hero standing towards the %s side of the doorway on storey %d"
+						% [str(near_side), door_floor] + " was offered the OTHER side"
+						+ " first — nearest first is what makes the guard turn up where"
+						+ " you were rather than round the corner")
 			var reachable := 0
 			for at: Vector3 in offered:
 				if not TowerInterior.plan_route(door_floor, corridor, at).is_empty():
