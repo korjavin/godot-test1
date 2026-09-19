@@ -377,6 +377,24 @@ const T3A_STATIONS: int = 40
 ## succeed. Eight seeds is a few seconds and is the number printed in the finding.
 const T3B_SEEDS: Array[int] = [20260904, 777, 4242, 1, 424242, 999983, 750, 99]
 
+## The drawn-chain sweep (bead godot-test1-pnvb.7, owner decision a′): T3B blind,
+## exactly as it stood before any result was seen, plus 2 (a boundary-dangle
+## world) and 42 (an HQ-sealed world) so every failure class found is represented.
+## Do NOT extend this to chase green — a seed that passes post-hoc proves nothing.
+const DRAWN_CHAIN_SEEDS: Array[int] = [20260904, 777, 4242, 1, 424242, 999983, 750, 99, 2, 42]
+## Sealed worlds (owner decision a′): seed → [human reason, observed class]. The
+## check asserts these come out BROKEN in the matching class — "exhausted" (the
+## HQ reach stalls with the frontier spent) or "dangle" (a trunk touches the gate
+## but its far end is a rect point) — and FAILS a sealed seed that comes out
+## THERE ("no longer sealed — move it to the green list") or in the other class,
+## so the record can never rot: a future walk-level fix has to touch this list.
+const DRAWN_CHAIN_SEALED := {
+	1: ["gate massif", "exhausted"],
+	424242: ["hq massif", "exhausted"],
+	42: ["hq in mountain biome", "exhausted"],
+	2: ["boundary dangle", "dangle"],
+}
+
 ## T4's ceiling on the trunk memo, in STATIONS across the whole world. Measured on
 ## the three CI seeds at the shipped `TRUNK_DEGREES`: 125 to 558. The ceiling is set
 ## an order of magnitude above the worst of them, because what it guards is a
@@ -458,14 +476,15 @@ func _run() -> void:
 	_check_lamp_indices(terrain_script)
 	_check_cycle_off_the_seed(terrain_script)
 	# --- TIER 1, the trunk routes (epic `godot-test1-pnvb`, child `.2`). Checks 2, 3
-	# and 4 above already grew a trunk half of their own. SIX CHECKS IN FIVE CALLS:
-	# 2d rides check 2, 3b rides check 3, T3a and T3b ride check 4, and the four
+	# and 4 above already grew a trunk half of their own. SEVEN CHECKS IN SIX CALLS:
+	# 2d rides check 2, 3b rides check 3, T3a and T3b ride check 4, and the five
 	# below are their own. Keep that count true — the banner says why it is the only
 	# cross-check on the list.
 	_check_trunk_world_tie(terrain_script)
 	_check_trunk_intersections(terrain_script)
 	_check_trunk_keep_outs(terrain_script)
 	_check_trunk_memo(terrain_script)
+	_check_drawn_chain_reaches_budapest(terrain_script)
 	# --- CHILD `.3`, the bridges. SIX STATEMENTS IN FOUR CALLS: B1 (with B1b), B3
 	# and B4 are one call because they all need the same drawn deck, B5 and B6 are
 	# the two unit assertions on the pieces no seed reliably exercises, and B2 (with
@@ -1384,7 +1403,7 @@ func _check_trunk_scarcity_split(terrain_script: GDScript) -> void:
 		# function, hands the spawner an empty table and leaves every assertion
 		# below failing for a reason that has nothing to do with scarcity.
 		var only: Array[Dictionary] = [{
-			"id": SYNTHETIC_EDGE_ID, "stations": stations,
+			"id": SYNTHETIC_EDGE_ID, "a": -1, "b": -2, "stations": stations,
 			"box": BikePaths._trunk_box(stations),
 			"from": stations[0]["pos"], "to": stations[-1]["pos"],
 			"bridges": [],   # child `.3`: a synthetic route crosses no water
@@ -2896,7 +2915,7 @@ func _check_bridge_x_window(terrain_script: GDScript) -> void:
 	# `Array[Dictionary]` annotation. An empty station list and an empty box mean the
 	# spawner can never draw this route — only the window scan ever sees it.
 	var only: Array[Dictionary] = [{
-		"id": SYNTHETIC_EDGE_ID, "stations": [] as Array[Dictionary],
+		"id": SYNTHETIC_EDGE_ID, "a": -1, "b": -2, "stations": [] as Array[Dictionary],
 		"box": Rect2(), "from": poly[0], "to": poly[poly.size() - 1],
 		"bridges": [row],
 	}]
@@ -3176,7 +3195,7 @@ func _check_trunk_memo(terrain_script: GDScript) -> void:
 				+ "`chunk_stream_selfcheck` check 6 audits the drop list for exactly this")
 	if var_to_bytes(BikePaths.trunks(terrain)) != snapshot:
 		_fail("T4: the same seed produced different trunks after `_drop_seeded_memos()`. A "
-				+ "route must be a pure function of (edge id, run_seed), or a chunk redraws "
+				+ "route must be a pure function of (anchor pair, run_seed), or a chunk redraws "
 				+ "different paint every time it streams back in")
 
 	terrain.set_run_seed(SEEDS[1])
@@ -3186,6 +3205,135 @@ func _check_trunk_memo(terrain_script: GDScript) -> void:
 				+ "and the check is comparing one world with itself")
 	terrain.free()
 	Sentinel.done("trunk_memo")
+
+
+func _check_drawn_chain_reaches_budapest(terrain_script: GDScript) -> void:
+	"""
+	CHECK — A DRAWN TRUNK CHAIN CONNECTS THE HQ ANCHOR TO THE GATE ANCHOR, ON
+	EVERY GREEN SEED (bead godot-test1-pnvb.7, the owner's headline: "you should
+	be able to get to Budapest along them"; owner decision a′ for the sealed ones).
+
+	Not the graph — the DRAWN tier: breadth-first search over the exact from/to
+	endpoints of the same `BikePaths.trunks()` rows the spawner draws. The snap
+	assigns anchor positions bit-for-bit, so exact Vector2 equality IS the chain;
+	a trunk ending at the rect edge connects at its anchor end only, and a link the
+	walk abandoned whole is not a link at all.
+
+	TWO ASSERTIONS over DRAWN_CHAIN_SEEDS (the blind eight plus the two failure
+	classes): every green seed comes out THERE (failing on zero trunks, naming the
+	seed and the stall x), and every sealed seed comes out BROKEN IN ITS RECORDED
+	CLASS — "exhausted" (the HQ reach stalls with the frontier spent) or "dangle"
+	(a trunk touches the gate but dangles at a rect point). A sealed seed that
+	comes out THERE, or in the other class, fails LOUD, so the record can never
+	rot: the walk-level fix has to touch DRAWN_CHAIN_SEALED to land. Prints per
+	seed (trunks, metres, x-range, THERE/BROKEN-for-reason) plus the abandonment
+	reason histogram over the whole list.
+	"""
+	var reasons := {}
+	for seed_value: int in DRAWN_CHAIN_SEEDS:
+		var terrain: Node3D = _terrain(terrain_script, seed_value, true)
+		var anchors: Array = terrain.bike_anchors()
+		var hq := Vector2.INF
+		var gate := Vector2.INF
+		for row: Dictionary in anchors:
+			if str(row["id"]) == "hq":
+				hq = row["pos"]
+			elif str(row["id"]) == "gate":
+				gate = row["pos"]
+		if hq == Vector2.INF or gate == Vector2.INF:
+			_fail("seed %d: no HQ anchor or no gate anchor — the chain has no ends" % seed_value)
+			terrain.free()
+			continue
+		var edges: Array = terrain.bike_edges()
+		var trunks: Array[Dictionary] = BikePaths.trunks(terrain)
+		var built := {}
+		for trunk: Dictionary in trunks:
+			built[int(trunk["id"])] = true
+		for edge: Dictionary in edges:
+			if built.has(int(edge["id"])):
+				continue
+			var why: String = BikePaths.trunk_abandoned(terrain, edge)
+			reasons[why] = int(reasons.get(why, 0)) + 1
+		if trunks.is_empty():
+			_fail("seed %d: no trunks drawn at all — the chain cannot start" % seed_value)
+			terrain.free()
+			continue
+		var reach := {hq: true}
+		var changed: bool = true
+		while changed:
+			changed = false
+			for trunk: Dictionary in trunks:
+				var f: Vector2 = trunk["from"]
+				var tt: Vector2 = trunk["to"]
+				if reach.has(f) and not reach.has(tt):
+					reach[tt] = true
+					changed = true
+				if reach.has(tt) and not reach.has(f):
+					reach[f] = true
+					changed = true
+		var metres: float = 0.0
+		var xmin: float = INF
+		var xmax: float = -INF
+		for trunk: Dictionary in trunks:
+			var route: Array[Dictionary] = trunk["stations"]
+			for s: Dictionary in route:
+				var x: float = (s["pos"] as Vector2).x
+				xmin = minf(xmin, x)
+				xmax = maxf(xmax, x)
+			for i in range(route.size() - 1):
+				metres += (route[i]["pos"] as Vector2).distance_to(route[i + 1]["pos"])
+		var reached: bool = reach.has(gate)
+		var reached_x: float = -INF
+		for p: Vector2 in reach.keys():
+			reached_x = maxf(reached_x, p.x)
+		if reached:
+			print("drawn chain: seed %d holds %d trunks and %d m of route over x %.0f..%.0f; "
+					% [seed_value, trunks.size(), int(metres), xmin, xmax]
+					+ "the drawn chain to the gate is THERE")
+			if DRAWN_CHAIN_SEALED.has(seed_value):
+				_fail("seed %d is no longer sealed (%s) — move it to the green list"
+					% [seed_value, DRAWN_CHAIN_SEALED[seed_value][0]])
+			terrain.free()
+			continue
+		# BROKEN. Which class? A trunk touching the gate whose far end is a rect
+		# point (not any anchor) is the boundary dangle: the approach ended on the
+		# rect edge. A gate touched only by snapped island links — or not touched at
+		# all — is the exhausted frontier.
+		var dangle := false
+		for trunk: Dictionary in trunks:
+			var f: Vector2 = trunk["from"]
+			var tt: Vector2 = trunk["to"]
+			if f != gate and tt != gate:
+				continue
+			var far: Vector2 = tt if f == gate else f
+			var far_is_anchor := false
+			for row: Dictionary in anchors:
+				if row["pos"] == far:
+					far_is_anchor = true
+					break
+			if not far_is_anchor:
+				dangle = true
+				break
+		var actual := "dangle" if dangle else "exhausted"
+		if not DRAWN_CHAIN_SEALED.has(seed_value):
+			_fail("seed %d: the drawn chain from the HQ stalls at x %.0f with %d m of trunk, "
+				% [seed_value, reached_x, int(metres)]
+				+ "the gate stands at x %.0f — pass 2b found no strict pair to extend it, "
+				% gate.x + "so on this world the owner's headline does not hold")
+			terrain.free()
+			continue
+		var record: Array = DRAWN_CHAIN_SEALED[seed_value]
+		if actual != String(record[1]):
+			_fail("seed %d is sealed as %s but came out %s — the record rotted, re-survey it"
+				% [seed_value, record[0], actual])
+			terrain.free()
+			continue
+		print("drawn chain: seed %d holds %d trunks and %d m of route over x %.0f..%.0f; "
+				% [seed_value, trunks.size(), int(metres), xmin, xmax]
+				+ "BROKEN for its recorded reason (%s: %s)" % [record[0], actual])
+		terrain.free()
+	print("drawn chain abandonment reasons over %d seeds: %s" % [DRAWN_CHAIN_SEEDS.size(), str(reasons)])
+	Sentinel.done("drawn_chain_reaches_budapest")
 
 
 # ============================================================================
@@ -3227,7 +3375,7 @@ func _synthetic_poles(terrain: Node3D, chunk_pos: Vector2i) -> int:
 	"""
 	var stations: Array[Dictionary] = _synthetic_trunk(terrain, chunk_pos)
 	var only: Array[Dictionary] = [{
-		"id": SYNTHETIC_EDGE_ID, "stations": stations,
+		"id": SYNTHETIC_EDGE_ID, "a": -1, "b": -2, "stations": stations,
 		"box": BikePaths._trunk_box(stations),
 		"from": stations[0]["pos"], "to": stations[-1]["pos"],
 		# Child `.3`: a synthetic route crosses no water, so it needs no deck — and
