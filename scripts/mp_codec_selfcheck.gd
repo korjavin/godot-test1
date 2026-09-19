@@ -11,7 +11,7 @@ extends SceneTree
 ##   2. presence parser, 3. forced seed, 4. peer ids, 6. join-snapshot parser,
 ##   7. presence backcompat, 8. retired heart fields, 9. hero index,
 ##   10. croc-sync parser, 12. room multiplier, the `cap` / `pad` / `gate` / `wp`
-##   verb parsers, 24. ability visual state.
+##   / `alrm` verb parsers, 24. ability visual state.
 ##
 ## Run it headless:
 ##
@@ -89,6 +89,9 @@ func _run_checks() -> String:
 	if not failure.is_empty():
 		return failure
 	failure = _check_wp_parser()
+	if not failure.is_empty():
+		return failure
+	failure = _check_alrm_parser()
 	if not failure.is_empty():
 		return failure
 	return _check_ability_visual_state()
@@ -1023,6 +1026,117 @@ func _check_wp_parser() -> String:
 	if not MPManager.VERB_BUDGET_PER_SEC.has("wp"):
 		return "the wp verb has no VERB_BUDGET_PER_SEC row"
 	Sentinel.done("wp_parser")
+	return ""
+
+
+func _check_alrm_parser() -> String:
+	"""
+	The `alrm` verb — epic godot-test1-buyt, bead .2 — against hostile packets.
+
+	THE HONEST PACKET COMES FIRST AND IT IS THE POINT: a parser that returned
+	`{}` for everything would pass every rejection below while leaving the storey
+	silent on every screen but the witness's.
+
+	This verb is anyone-to-everyone and carries a POSITION, which no other verb in
+	this file does — `pad` and `lmk` carry an index precisely so the master can
+	look it up. What replaces that lookup is that the point is INTERIOR-LOCAL, so
+	both bounds are constants this machine owns and are read HERE from the plans
+	themselves, never re-typed: a check that wrote 38.8 down again would pass the
+	day somebody widened the building and the parser stopped agreeing with it.
+	"""
+	var storeys: int = TowerPlanBoxes.FLOOR_Y.size()
+	var half: float = TowerPlans.PLAN_HALF
+	var honest: Dictionary = {"t": "alrm", "f": 1, "x": 12.5, "z": -7.25}
+	var good: Dictionary = MpCodec.decode_alrm(honest)
+	if good.is_empty():
+		return "decode_alrm dropped an honest sighting"
+	if int(good["f"]) != 1 or (good["xz"] as Vector2) != Vector2(12.5, -7.25):
+		return "decode_alrm changed an honest sighting (%s)" % str(good)
+
+	# An honest round-trip THROUGH BYTES: what the witness publishes must survive
+	# the codec, or the room replays an alarm nobody raised.
+	var trip: Dictionary = MpCodec.decode_alrm(bytes_to_var(var_to_bytes(honest)))
+	if trip.is_empty() or str(trip) != str(good):
+		return "decode_alrm did not round-trip an honest sighting (%s)" % str(trip)
+
+	# EVERY storey the plans declare is a storey this parser accepts, and the
+	# envelope is INCLUSIVE at its own edge — a staffer standing against the outer
+	# wall is standing in the building.
+	for index: int in storeys:
+		if MpCodec.decode_alrm({"t": "alrm", "f": index, "x": 0.0, "z": 0.0}).is_empty():
+			return "decode_alrm dropped declared storey %d" % index
+	if MpCodec.decode_alrm({"t": "alrm", "f": 0, "x": half, "z": -half}).is_empty():
+		return "decode_alrm dropped a sighting exactly on the envelope (±%.2f m)" % half
+
+	# ...and everything a peer that is not speaking this protocol could send.
+	var hostile: Array[Dictionary] = [
+		{"t": "alrm"},                                    # nothing at all
+		{"t": "alrm", "x": 0.0, "z": 0.0},                # no storey
+		{"t": "alrm", "f": 1, "z": 0.0},                  # no x
+		{"t": "alrm", "f": 1, "x": 0.0},                  # no z
+		{"t": "alrm", "f": "1", "x": 0.0, "z": 0.0},      # storey is a string
+		{"t": "alrm", "f": true, "x": 0.0, "z": 0.0},     # ...or a bool
+		{"t": "alrm", "f": [1], "x": 0.0, "z": 0.0},      # ...or an array
+		{"t": "alrm", "f": 1, "x": "0", "z": 0.0},        # x is a string
+		{"t": "alrm", "f": 1, "x": Vector2.ZERO, "z": 0.0},  # ...or a vector
+		{"t": "alrm", "f": 1, "x": 0.0, "z": null},       # z is nothing
+		{"t": "alrm", "f": -1, "x": 0.0, "z": 0.0},       # below the ground floor
+		{"t": "alrm", "f": storeys, "x": 0.0, "z": 0.0},  # one storey past the roof
+		{"t": "alrm", "f": 99, "x": 0.0, "z": 0.0},       # a floor nothing draws
+		{"t": "alrm", "f": 1.5, "x": 0.0, "z": 0.0},      # half a storey is no storey
+		{"t": "alrm", "f": NAN, "x": 0.0, "z": 0.0},      # NaN fails BOTH range halves
+		{"t": "alrm", "f": INF, "x": 0.0, "z": 0.0},
+		{"t": "alrm", "f": 1, "x": NAN, "z": 0.0},        # ...and absf(NAN) > half is FALSE
+		{"t": "alrm", "f": 1, "x": 0.0, "z": NAN},
+		{"t": "alrm", "f": 1, "x": INF, "z": 0.0},
+		{"t": "alrm", "f": 1, "x": 0.0, "z": -INF},
+		{"t": "alrm", "f": 1, "x": half + 0.1, "z": 0.0},   # outside the envelope
+		{"t": "alrm", "f": 1, "x": 0.0, "z": -half - 0.1},
+		{"t": "alrm", "f": 1, "x": 1.0e9, "z": 0.0},        # ...a world coordinate
+	]
+	for packet: Dictionary in hostile:
+		if not MpCodec.decode_alrm(packet).is_empty():
+			return "decode_alrm accepted the hostile packet %s" % str(packet)
+
+	# The verb has to be budgeted like every other one `_receive_mesh_verb`
+	# dispatches, and here the budget carries more weight than usual: the verb is
+	# anyone-to-everyone, so there is no master authority behind it at all.
+	if not MPManager.VERB_BUDGET_PER_SEC.has("alrm"):
+		return "the alrm verb has no VERB_BUDGET_PER_SEC row"
+
+	# ...and the SECOND half of the boundary: was the sender at the building at
+	# all. `receive_pad`'s question, with `receive_pad`'s reason — "without this a
+	# modified client would divert any guard in the building from the far side of
+	# the world" — and the opposite failure direction, which is the part worth
+	# pinning (see `alarm_sender_at_hq`).
+	var hq := Vector3(1200.0, 0.0, -340.0)
+	if not MpCodec.alarm_sender_at_hq(hq, hq):
+		return "alarm_sender_at_hq refused a peer standing in the middle of the HQ"
+	# The far CORNER of the plan is an honest place to stand: the gate is coarse on
+	# purpose and must not start refusing a sender in a doorway over presence lag.
+	var corner := hq + Vector3(half, 12.0, half)
+	if not MpCodec.alarm_sender_at_hq(corner, hq):
+		return "alarm_sender_at_hq refused a peer at the plan's own far corner (%s)" % str(corner)
+	# ...and the attack it exists to stop.
+	if MpCodec.alarm_sender_at_hq(hq + Vector3(2000.0, 0.0, 0.0), hq):
+		return "alarm_sender_at_hq accepted a peer 2 km away — a modified client could "\
+			+ "raise every storey's alarm from the far side of the field"
+	if MpCodec.alarm_sender_at_hq(hq + Vector3(0.0, 0.0, -300.0), hq):
+		return "alarm_sender_at_hq accepted a peer 300 m from the tower"
+	# FLAT XZ: the sender is on a storey, and the tower node's origin is at its
+	# feet, so height must not enter the distance.
+	if not MpCodec.alarm_sender_at_hq(hq + Vector3(0.0, 400.0, 0.0), hq):
+		return "alarm_sender_at_hq refused a peer directly above the tower's centre — "\
+			+ "the test is flat XZ, or nobody on an upper storey may raise anything"
+	# NON-FINITE READS AS YES, the opposite of `pad_press_in_reach` and the whole
+	# fail-open rule: a position this machine cannot evaluate must never cost a
+	# real alarm its screen.
+	if not MpCodec.alarm_sender_at_hq(Vector3(NAN, 0.0, 0.0), hq):
+		return "alarm_sender_at_hq refused a NaN sender position — the gate fails CLOSED, "\
+			+ "so a peer with a stale presence table loses real alarms"
+	if not MpCodec.alarm_sender_at_hq(hq, Vector3.INF):
+		return "alarm_sender_at_hq refused an unplaceable tower — same fail-open rule"
+	Sentinel.done("alrm_parser")
 	return ""
 
 

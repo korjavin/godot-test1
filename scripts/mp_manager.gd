@@ -194,6 +194,19 @@ const VERB_BUDGET_PER_SEC: Dictionary = {
 	# per run and 4 is `gate`'s number for `gate`'s reason — a monotone union has
 	# nothing to arbitrate, so the budget is the whole of the defence.
 	"wp": 4,
+	# one HQ storey alarm each (epic godot-test1-buyt). 2/s is about six times the
+	# honest rate IF the sighting source re-arms no faster than every couple of
+	# seconds — which is a REQUIREMENT ON BEAD .4's CALLER, not a property this
+	# build has: nothing before `publish_alarm` paces anything today. Stated here
+	# rather than assumed, because `alrm` has no repair leg, so a sighting that
+	# re-fires every frame loses its third packet onward on every screen with
+	# nothing in any log to say so. Tighter than `gate`'s 4 on purpose — `gate` is a
+	# MONOTONE union with nothing to arbitrate, whereas this verb WAKES A GUARD, and
+	# an unbounded one is a button that keeps every guard in the building
+	# permanently off its post. It is anyone-to-everyone, so "only the master sends
+	# this" is not even the half-defence it is elsewhere; the budget and
+	# `MpCodec.decode_alrm()`'s bounds are the whole of it.
+	"alrm": 2,
 }
 
 ## Join gate publish pacing (review rounds 3-4): one id per JOIN_GATE_PACE_SEC,
@@ -4336,6 +4349,8 @@ func _receive_mesh_verb(from_id: String, verb: String, packet: Dictionary) -> vo
 			MpCrocSync.receive_shot(self, from_id, packet)
 		"pad":
 			MpWorldSync.receive_pad(self, from_id, packet)
+		"alrm":
+			MpWorldSync.receive_alrm(self, from_id, packet)
 		"lmk":
 			_receive_lmk(from_id, packet)
 		"cap":
@@ -4458,6 +4473,16 @@ func request_croc_flee(origin: Vector3, duration: float, radius: float = 0.0,
 
 func request_guard_lure(floor_index: int, pad_index: int) -> bool:
 	return MpWorldSync.request_guard_lure(self, floor_index, pad_index)
+
+
+func publish_alarm(floor_index: int, local_xz: Vector2) -> bool:
+	## The HQ alarm's send site (epic godot-test1-buyt), a forwarder for the same
+	## reason as the two above: gameplay reaches the mesh by finding the "mp" group
+	## and asking `has_method`, never by naming a static family. The caller lands in
+	## bead .4 (`TowerInterior.raise_alarm`) and reaches THIS name, so the tower
+	## family never calls `MpWorldSync` directly — which is CLAUDE.md's "reach a
+	## sibling family through the node that owns the state".
+	return MpWorldSync.publish_alarm(self, floor_index, local_xz)
 
 
 # =============================================================================

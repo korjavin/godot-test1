@@ -165,6 +165,9 @@ func _run_checks() -> String:
 	failure = await _check_shot_parser()
 	if not failure.is_empty():
 		return failure
+	failure = _check_alarm_verb()
+	if not failure.is_empty():
+		return failure
 	failure = _check_room_pause()
 	if not failure.is_empty():
 		return failure
@@ -1814,6 +1817,275 @@ func _check_shot_parser() -> String:
 	holder.queue_free()
 	mp.queue_free()
 	Sentinel.done("shot_parser")
+	return ""
+
+
+## The interior reduced to the one method `MpWorldSync.receive_alrm()` calls, in
+## group "tower_interior" so it is found through the shipped group lookup.
+##
+## A `Node3D` because the real one is: the sender gate measures the sender's
+## published position against the building's own `global_position`, so a stub with
+## no transform would skip the half of `receive_alrm` this check exists to drive.
+const INTERIOR_STUB_SOURCE := """extends Node3D
+var raised: Array = []
+func raise_alarm(floor_index: int, local_xz: Vector2, publish: bool) -> void:
+	raised.append([floor_index, local_xz, publish])
+"""
+
+## ...and the SAME node without `raise_alarm`, which is what every build before
+## bead godot-test1-buyt.4 actually ships. See `_check_alarm_verb`.
+const INTERIOR_NO_ALARM_STUB_SOURCE := """extends Node
+var lured: int = 0
+func lure_guard(_floor_index: int, _pad_index: int) -> void:
+	lured += 1
+"""
+
+
+func _check_alarm_verb() -> String:
+	"""
+	The `alrm` verb end to end — epic godot-test1-buyt, bead .2: the dispatch arm,
+	the rate limit, the `has_method` guard and the encoder. The PARSER's hostile
+	packets live in `mp_codec_selfcheck._check_alrm_parser()` (CI shards by file).
+
+	THREE OF THE CLAIMS MATTER MOST, AND THE THIRD IS THE ODD ONE:
+
+	  1. a well-formed packet reaches the building through `_receive_mesh_verb`,
+	     with `publish` FALSE — a replayed alarm must not go back on the wire, or
+	     two peers echo one sighting round the room forever;
+	  2. the third `alrm` inside one second is refused, because this verb is
+	     anyone-to-everyone and the budget is the whole of its defence;
+	  3. WITH NO `raise_alarm` ON THE BUILDING IT IS A SILENT NO-OP, and that is
+	     not a degradation case — it is the shipping state of this bead. The alarm
+	     itself lands in godot-test1-buyt.4; until then the guard is what lets the
+	     verb ship on its own, correctly validated and correctly bounded, without
+	     a stub in `tower_interior.gd` that would cost the two beads their merge
+	     disjointness.
+	"""
+	var honest: Dictionary = {"t": "alrm", "f": 1, "x": 12.5, "z": -7.25}
+
+	# --- 1. NO TOWER STREAMED IN. Measured FIRST, while the tree really has no
+	# interior in it: a peer in the field receiving an alarm from a peer in the
+	# building has nothing to raise, which is the LOD idiom and not an error.
+	var mp: Node = _room_manager("us")
+	mp._receive_mesh_verb("bob", "alrm", honest)
+
+	# --- 2. AN INTERIOR THAT PREDATES THE ALARM is left alone, not called into.
+	#
+	# THE GUARD IS READ OUT OF THE SOURCE, `_check_retired_heart_keys_are_tolerated`'s
+	# idiom, and it has to be: `Object.call()` on a method that is not there pushes
+	# an error and returns null WITHOUT aborting the caller, so the driven path
+	# below cannot tell the two apart — it would pass either way and only CI's
+	# "no SCRIPT ERROR" rule would notice. Grepping the handler makes the missing
+	# guard a RED CHECK rather than a line in a log.
+	#
+	# WHY THIS MATTERS ENOUGH TO GREP FOR: `raise_alarm` does not exist yet. It
+	# lands with bead godot-test1-buyt.4, and this guard is the whole reason the
+	# verb can ship before it — correctly validated, correctly bounded and a no-op
+	# — without a stub in `tower_interior.gd` that would cost the two beads their
+	# merge disjointness.
+	var sync_source: String = FileAccess.get_file_as_string("res://scripts/mp_world_sync.gd")
+	var handler_at: int = sync_source.find("func receive_alrm(")
+	if handler_at < 0:
+		mp.queue_free()
+		return "mp_world_sync.gd has no receive_alrm — the alrm verb dispatches nowhere"
+	var handler_end: int = sync_source.find("\nstatic func ", handler_at + 1)
+	var handler: String = sync_source.substr(handler_at,
+		(handler_end if handler_end >= 0 else sync_source.length()) - handler_at)
+	if not handler.contains("has_method(\"raise_alarm\")"):
+		mp.queue_free()
+		return "receive_alrm calls into the building without a `has_method(\"raise_alarm\")` "\
+			+ "guard — every build before bead godot-test1-buyt.4 would push an error per packet"
+
+	# ...and the same thing driven, because a grep alone does not prove the branch
+	# is taken: a real interior with no `raise_alarm` on it is left untouched.
+	var bare_script := GDScript.new()
+	bare_script.source_code = INTERIOR_NO_ALARM_STUB_SOURCE
+	bare_script.reload()
+	var bare: Node = bare_script.new()
+	bare.add_to_group("tower_interior")
+	root.add_child(bare)
+	MpWorldSync.receive_alrm(mp, "bob", honest)
+	if int(bare.get("lured")) != 0:
+		bare.queue_free()
+		mp.queue_free()
+		return "an alrm packet reached an interior that has no alarm to raise"
+	bare.remove_from_group("tower_interior")
+	bare.queue_free()
+
+	# --- 3. THE DISPATCH ARM, through the shipped `_receive_mesh_verb` and not by
+	# calling the handler: a parser with no arm behind it decodes into nothing.
+	var interior_script := GDScript.new()
+	interior_script.source_code = INTERIOR_STUB_SOURCE
+	interior_script.reload()
+	var interior: Node = interior_script.new()
+	interior.add_to_group("tower_interior")
+	root.add_child(interior)
+	mp._receive_mesh_verb("carol", "alrm", honest)
+	var raised: Array = interior.get("raised") as Array
+	if raised.size() != 1:
+		interior.queue_free()
+		mp.queue_free()
+		return "the alrm verb is decoded but `_receive_mesh_verb` routes it nowhere"
+	var got: Array = raised[0] as Array
+	if int(got[0]) != 1 or (got[1] as Vector2) != Vector2(12.5, -7.25):
+		interior.queue_free()
+		mp.queue_free()
+		return "the replayed alarm reached the building as %s" % str(got)
+	if bool(got[2]):
+		interior.queue_free()
+		mp.queue_free()
+		return "a replayed alarm was re-published — two peers would echo one sighting "\
+			+ "round the room for as long as the room lasts"
+
+	# ...and a MALFORMED one reaches nothing, through the same arm: the drop is the
+	# parser's, but the arm is what has to honour it.
+	#
+	# A FRESH SENDER, and that is load-bearing rather than tidy (review round 1,
+	# corroborated): `_verb_rate_ok` meters per sender+verb, so reusing `carol`
+	# would spend her SECOND `alrm` here — and at a budget of 1, which the pinning
+	# line below explicitly allows, this packet would be refused at the rate gate
+	# before it ever reached the parser. `raised` would still read 1, the check
+	# would still go green, and it would have stopped measuring the storey bound
+	# altogether.
+	mp._receive_mesh_verb("frank", "alrm", {"t": "alrm", "f": 99, "x": 0.0, "z": 0.0})
+	if (interior.get("raised") as Array).size() != 1:
+		interior.queue_free()
+		mp.queue_free()
+		return "a sighting on a storey the plans do not draw was raised anyway"
+
+	# --- 3b. THE SENDER GATE, BOTH HALVES. Known-and-far drops; unknown accepts.
+	#
+	# The second half is the one that needs a check, because it is the direction
+	# that fails SILENTLY: a gate that fails closed still looks correct from the
+	# attacker's side and only costs a lagging teammate the alarm he should have
+	# heard. `_room_manager` leaves `_peer_state` empty, so every dispatch above
+	# already exercised the unknown-sender path — this pins it deliberately and
+	# then pins the refusal beside it.
+	var seen: int = (interior.get("raised") as Array).size()
+	var hq: Vector3 = (interior as Node3D).global_position
+	mp._peer_state["greta"] = {"pos": hq + Vector3(2000.0, 0.0, 0.0)}
+	mp._receive_mesh_verb("greta", "alrm", honest)
+	if (interior.get("raised") as Array).size() != seen:
+		interior.queue_free()
+		mp.queue_free()
+		return "an alarm from a peer 2 km from the HQ was raised — a modified client "\
+			+ "could divert every guard in the building from the far side of the world"
+	mp._peer_state["greta"] = {"pos": hq + Vector3(3.0, 0.0, -2.0)}
+	mp._receive_mesh_verb("greta", "alrm", honest)
+	if (interior.get("raised") as Array).size() != seen + 1:
+		interior.queue_free()
+		mp.queue_free()
+		return "an alarm from a peer standing in the HQ was refused"
+	# ...and the FAIL-OPEN half: a sender this machine cannot place is let through.
+	mp._peer_state["helen"] = {"pos": "nowhere"}
+	mp._receive_mesh_verb("helen", "alrm", honest)
+	if (interior.get("raised") as Array).size() != seen + 2:
+		interior.queue_free()
+		mp.queue_free()
+		return "an alarm from a peer whose presence carries no usable position was "\
+			+ "dropped — the gate fails CLOSED, so a peer whose table is stale loses "\
+			+ "real alarms that everybody else hears"
+	mp._peer_state.erase("greta")
+	mp._peer_state.erase("helen")
+	seen = (interior.get("raised") as Array).size()
+
+	# --- 4. THE RATE LIMIT. One spend past the budget is refused (it is 2 today).
+	if not MPManager.VERB_BUDGET_PER_SEC.has("alrm"):
+		interior.queue_free()
+		mp.queue_free()
+		return "the alrm verb has no rate budget — an unbounded one keeps every guard "\
+			+ "in the building permanently off its post"
+	var budget: int = int(MPManager.VERB_BUDGET_PER_SEC["alrm"])
+	# THE NUMBER ITSELF IS PINNED, not just "there is one", and against the
+	# NEIGHBOUR rather than a re-typed 2: `pad` is the closest verb — the other way
+	# to move an HQ guard — and this one has strictly less authority behind it
+	# (anyone-to-everyone, no master arbitration), so a budget looser than `pad`'s
+	# would be a widening nobody argued for. Everything below measures that the
+	# meter is CONSULTED; this line is what keeps the meter worth consulting.
+	if budget < 1 or budget > int(MPManager.VERB_BUDGET_PER_SEC["pad"]):
+		interior.queue_free()
+		mp.queue_free()
+		return "the alrm budget is %d/s, looser than `pad`'s %d — this verb wakes a guard "\
+			% [budget, int(MPManager.VERB_BUDGET_PER_SEC["pad"])] \
+			+ "and has no master arbitration in front of it"
+	for spend: int in budget:
+		if not mp._verb_rate_ok("dave", "alrm"):
+			interior.queue_free()
+			mp.queue_free()
+			return "the alrm budget refused spend %d of its own %d" % [spend, budget]
+	if mp._verb_rate_ok("dave", "alrm"):
+		interior.queue_free()
+		mp.queue_free()
+		return "the alrm budget of %d let a peer spend %d in one second" % [budget, budget + 1]
+	# ...and the flood dies at the DISPATCH and not merely at the meter, which is
+	# the half that matters: a budget nothing consults is a comment. A fresh peer
+	# spends its whole allowance and then gets nothing, klaxon and all.
+	var before: int = (interior.get("raised") as Array).size()
+	for _flood: int in budget + 4:
+		mp._receive_mesh_verb("erin", "alrm", honest)
+	var through: int = (interior.get("raised") as Array).size() - before
+	if through > budget:
+		interior.queue_free()
+		mp.queue_free()
+		return "a flood of %d alrm packets raised %d alarms, past the %d/s budget" \
+			% [budget + 4, through, budget]
+	if through < 1:
+		interior.queue_free()
+		mp.queue_free()
+		return "the flood raised nothing at all — this sub-check measured no budget"
+
+	# --- 5. THE ENCODER, THROUGH THE SHIPPED FORWARDER — `_check_shot_parser`'s
+	# rule ("THE ENCODER, through the shipped forwarder"), and it is what pins that
+	# `MpManager.publish_alarm` exists at all: bead .4's `TowerInterior` finds the
+	# "mp" group and asks `has_method`, so a send site reachable only as a static
+	# would be a send site the tower family cannot legally call.
+	#
+	# Offline it refuses (no room to tell); in a room it publishes and applies
+	# NOTHING locally — the interior is the caller, so a local pass would be the
+	# raise happening twice. And it REFUSES ANYTHING ITS OWN RECEIVER WOULD DROP,
+	# which is the asymmetry this block exists to close: a sighting off the
+	# envelope or on a storey the plans do not draw must not go out reporting
+	# success while every peer silently drops it.
+	if not mp.has_method("publish_alarm"):
+		interior.queue_free()
+		mp.queue_free()
+		return "MpManager has no `publish_alarm` forwarder — bead .4's tower-side caller "\
+			+ "would have to reach MpWorldSync directly, across families"
+	var published: int = (interior.get("raised") as Array).size()
+	var half: float = TowerPlans.PLAN_HALF
+	var storeys: int = TowerPlanBoxes.FLOOR_Y.size()
+	mp._state = MPManager.State.OFFLINE
+	if mp.publish_alarm(1, Vector2(12.5, -7.25)):
+		interior.queue_free()
+		mp.queue_free()
+		return "publish_alarm published with no room to publish into"
+	mp._state = MPManager.State.IN_ROOM
+	mp._rtc = WebRTCMultiplayerPeer.new()
+	if not mp.publish_alarm(1, Vector2(12.5, -7.25)):
+		interior.queue_free()
+		mp.queue_free()
+		return "publish_alarm refused an honest sighting from a room member"
+	var unsendable: Array = [
+		[1, Vector2(NAN, 0.0)],             # our own NaN
+		[1, Vector2(0.0, INF)],
+		[1, Vector2(half + 0.1, 0.0)],      # off the envelope — every peer drops it
+		[storeys, Vector2(0.0, 0.0)],       # a storey the plans do not draw
+		[-1, Vector2(0.0, 0.0)],
+	]
+	for bad: Array in unsendable:
+		if mp.publish_alarm(int(bad[0]), bad[1] as Vector2):
+			interior.queue_free()
+			mp.queue_free()
+			return "publish_alarm sent %s, which every receiver's decode_alrm drops — "\
+				% str(bad) + "the send site and its own parser disagree"
+	if (interior.get("raised") as Array).size() != published:
+		interior.queue_free()
+		mp.queue_free()
+		return "publish_alarm raised the alarm locally as well as sending it — the "\
+			+ "caller has already raised it, so this is the raise happening twice"
+	interior.queue_free()
+	mp.queue_free()
+	Sentinel.done("alarm_verb")
 	return ""
 
 

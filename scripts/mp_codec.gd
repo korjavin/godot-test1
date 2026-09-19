@@ -1282,6 +1282,116 @@ static func landmark_claim_in_reach(sender: Vector3, slot: Vector3, radius: floa
 	return flat.length() <= radius + MAX_LANDMARK_CLAIM_PAD
 
 # =============================================================================
+# HQ ALARM — the `alrm` verb (epic godot-test1-buyt, bead .2)
+# =============================================================================
+
+## How far outside the HQ's own footprint a peer's last published position may be
+## and still have raised an alarm inside it, in metres.
+##
+## THE SECOND TRUST BOUNDARY THE `alrm` VERB NEEDS. `decode_alrm()` answers "is
+## this a point in this building"; this answers "was the sender AT this building",
+## which is the question `receive_pad()` asks one verb along and for the same
+## reason it gives — without it a modified client diverts any guard in the
+## building from the far side of the world.
+##
+## COARSE ON PURPOSE, and it is not a second `inside_walls()`. The honest sender
+## is standing in the building, so the bound only has to separate "at the HQ" from
+## "somewhere else in a several-kilometre field"; anything finer would start
+## refusing a sender in a doorway over presence lag. The radius is the plan's own
+## far CORNER (`PLAN_HALF * √2`, ~54.9 m) plus this pad, so a peer past ~85 m from
+## the tower's centre — the building is 80 m across — is unambiguously not in it.
+##
+## The pad is `MAX_LANDMARK_CLAIM_PAD`'s number for its reason: presence is only
+## published at `PRESENCE_HZ`, so this machine's picture of the sender can be a
+## fraction of a second — several metres of running — behind the moment the
+## sighting fired.
+const MAX_ALARM_SENDER_PAD: float = 30.0
+
+static func decode_alrm(packet: Dictionary) -> Dictionary:
+	"""
+	The `alrm` parser — ANY member's sighting raising one storey's alarm.
+
+	@return: `{"f": int, "xz": Vector2}`, or an EMPTY DICTIONARY — trusted whole
+	    or dropped whole, static and instance-free so scripts/mp_codec_selfcheck.gd
+	    can beat on it, exactly like `decode_pad()`.
+
+	THE POINT IS INTERIOR-LOCAL, NOT WORLD, and that is the whole trust boundary:
+	every bound below is a constant THIS machine owns — the storey count the plans
+	declare and the envelope those plans are drawn inside — so there is no world
+	coordinate to spoof and no lookup to get wrong. A sighting outside the
+	building's own 38.8 m half-extent is not a sighting in this building, and one
+	naming storey 12 names nothing.
+
+	`_is_number` and NOT `TYPE_INT` on `f` — `decode_lmk`'s leniency without
+	`decode_lmk`'s transport. This verb is mesh-only, so nothing here has crossed
+	`JSON.parse_string`; the index is still checked FINITE AND IN RANGE BEFORE ANY
+	CAST (`int(NAN)` is undefined and on wasm the trunc can trap the module
+	outright), and a fractional one is refused afterwards: storey 3.5 is not a
+	storey, it is a peer that is not speaking this protocol.
+
+	The floor bound is `TowerPlanBoxes.FLOOR_Y.size()` and the envelope is
+	`TowerPlans.PLAN_HALF` — never a number written down twice, so the day an
+	eleventh storey lands this parser has already learnt it. Both are reached
+	INSIDE THE FUNCTION BODY and never as a top-level `const`: `tower_shell.gd`
+	reads `MpCodec.MAX_GATE_ID` back the same way, and one parse-time `const`
+	pointing either way would make the pair a cycle.
+	"""
+	if not _is_number(packet.get("f", null)) \
+			or not _is_number(packet.get("x", null)) \
+			or not _is_number(packet.get("z", null)):
+		return {}
+	# FINITENESS BEFORE ANY USE, the rule `decode_presence()` spells out, and here
+	# it is load-bearing twice over: a NaN poisons every value it touches, and
+	# `absf(NAN) > PLAN_HALF` is FALSE — the envelope test below would wave it
+	# through and hand the building a sighting point no route can be walked to.
+	var x: float = float(packet["x"])
+	var z: float = float(packet["z"])
+	if not is_finite(x) or not is_finite(z):
+		return {}
+	# ...and the same for the index, where NaN fails BOTH halves of the range test
+	# (`NAN < 0.0` and `NAN >= size` are each false), so this line is the only
+	# thing standing between a hostile packet and the float→int trunc.
+	var raw_floor: float = float(packet["f"])
+	if not is_finite(raw_floor) or raw_floor < 0.0 \
+			or raw_floor >= float(TowerPlanBoxes.FLOOR_Y.size()):
+		return {}
+	var floor_index: int = int(raw_floor)
+	if float(floor_index) != raw_floor:
+		return {}
+	if absf(x) > TowerPlans.PLAN_HALF or absf(z) > TowerPlans.PLAN_HALF:
+		return {}
+	return {"f": floor_index, "xz": Vector2(x, z)}
+
+
+static func alarm_sender_at_hq(sender: Vector3, tower_centre: Vector3) -> bool:
+	"""
+	Could a peer whose last published position is `sender` have raised an alarm in
+	the HQ standing at `tower_centre`?
+
+	Static and pure so scripts/mp_codec_selfcheck.gd can drive it, and
+	finiteness-checked before anything is derived from either point — the
+	`pad_press_in_reach` rule, for the same reason: a non-finite input has to read
+	as an ANSWER, never as "infinitely far, compare it anyway".
+
+	FLAT XZ, like `landmark_claim_in_reach`: the sender may be on any storey and
+	the tower node's origin is at its feet, so a Y-aware distance would refuse the
+	alarm of somebody standing on the ninth floor.
+
+	IT ANSWERS TRUE FOR A NON-FINITE INPUT, which is the opposite of
+	`pad_press_in_reach` and deliberate. This is the FAIL-OPEN half of the gate
+	(see `MpWorldSync.receive_alrm`): a position this machine cannot evaluate must
+	not cost a real alarm its screen, so "I don't know" reads as "let it through",
+	and only a position that is KNOWN AND FAR is a refusal. `pad` can fail closed
+	because ONE machine — the master — decides for the whole room; here every
+	receiver decides for itself, so failing closed on a stale table would drop a
+	genuine alarm on that screen alone.
+	"""
+	if not sender.is_finite() or not tower_centre.is_finite():
+		return true
+	var flat := Vector2(sender.x - tower_centre.x, sender.z - tower_centre.z)
+	return flat.length() <= TowerPlans.PLAN_HALF * sqrt(2.0) + MAX_ALARM_SENDER_PAD
+
+# =============================================================================
 # VOICE SIGNALLING — the `vc` family
 # =============================================================================
 

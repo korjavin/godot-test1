@@ -1,7 +1,10 @@
 class_name MpWorldSync
 extends RefCounted
 ## THE MASTER-RELAYED WORLD VERBS FAMILY — herd, weather (wx), flee, and pad,
-## lifted whole out of `mp_manager.gd` (bd godot-test1-ftn.31).
+## lifted whole out of `mp_manager.gd` (bd godot-test1-ftn.31) — plus the HQ
+## alarm (`alrm`, epic godot-test1-buyt), which is the one pair here that is NOT
+## master-arbitrated: `publish_alarm()`'s send site says why, and it is the same
+## coverage argument `MpManager.publish_gate_opened()` already makes.
 ##
 ## THE SPLIT, and why it falls exactly here. `MpManager` keeps the MESH: the
 ## socket, the peers, presence, the verbs' dispatch table, the join snapshot, the
@@ -419,3 +422,134 @@ static func receive_pad(mp: Node, from_id: String, packet: Dictionary) -> void:
 	if not MpCodec.pad_press_in_reach(sender as Vector3, where as Vector3):
 		return
 	apply_guard_lure(mp, int(msg["f"]), int(msg["p"]))
+
+
+static func publish_alarm(mp: Node, floor_index: int, local_xz: Vector2) -> bool:
+	"""
+	A staffer saw somebody: raise that storey's alarm on every screen in the room.
+
+	@param floor_index: the storey, an index into `TowerPlanBoxes.FLOOR_Y`.
+	@param local_xz: where they were seen, in metres LOCAL to the shell's origin.
+	@return: whether the room has been told — `request_guard_lure()`'s contract and
+	    not a delivery receipt. False OFFLINE, and false for a sighting this
+	    machine's own caller got wrong; true means the packet was handed to
+	    `_broadcast_reliable`, which writes only to peers whose data channel is
+	    already open and silently reaches nobody when the mesh is not up.
+
+	THE CALLER HAS ALREADY RAISED IT HERE. Unlike `request_guard_lure()` this does
+	not apply anything locally: the alarm lives on the interior and the interior is
+	what calls this, so a local pass would be the raise happening twice. This
+	function only moves the fact — `publish_gate_opened()`'s shape, and the arm
+	that replays it (`receive_alrm`) is the one that goes through the building.
+
+	THE CEILINGS, written here because this is the send site:
+
+	ANYONE-TO-EVERYONE AND NOT MASTER-ARBITRATED, unlike `pad`, and the reason is
+	COVERAGE. The master may be two kilometres away in the field with no tower
+	streamed in at all, in which case it has no plan to check the sighting against
+	and no klaxon to sound — a master-arbitrated alarm would be an alarm nobody
+	hears. `pad` tolerates that because a refused lure is a plate that did nothing;
+	a refused ALARM is the feature not existing for the party actually inside the
+	building. What replaces the master's arbitration is that the packet is
+	checkable against constants every machine owns (`MpCodec.decode_alrm()`):
+	there is no world coordinate in it to spoof.
+
+	RELIABLE, because it is an EDGE and not a state: nothing re-sends it.
+
+	NO REPAIR LEG, and this is where it parts company with `gate`. An alarm is NOT
+	MONOTONE — it expires — so there is no field on the `room` packet and no field
+	in the join snapshot, for the same reason the captive set stays out of
+	`BestRunStore`: a union merge of something that comes back down is a lie. A
+	dropped `alrm` is one alarm one peer missed, and it self-heals when that alarm
+	expires anyway. A peer whose ICE is still negotiating simply does not get this
+	one, and there is no lobby relay leg either: an alarm that arrives three
+	seconds late is worse than an alarm that never arrives.
+
+	AN OLDER BUILD drops the verb silently (`_receive_mesh_verb`'s forward-
+	compatibility arm), which is the same no-op as having no tower streamed in.
+	"""
+	if not mp.is_online():
+		return false
+	var packet: Dictionary = {
+		"t": "alrm", "f": floor_index, "x": local_xz.x, "z": local_xz.y,
+	}
+	# OUR OWN BUG STAYS OFF THE WIRE, `announce_boss_shot`'s rule — but tested by
+	# running the packet through the RECEIVER'S OWN PARSER rather than by
+	# re-stating its bounds here. Two reasons, and the second is the one that
+	# keeps working: a sighting outside the envelope or on a storey the plans do
+	# not draw would be dropped by every peer while this returned true, and the
+	# encoder and the decoder can now never disagree about a FIELD NAME either —
+	# a typo'd key is a packet that fails to decode here, on this machine, in the
+	# self-check, instead of one that decodes nowhere in the room.
+	if MpCodec.decode_alrm(packet).is_empty():
+		return false
+	mp._broadcast_reliable(var_to_bytes(packet))
+	return true
+
+
+static func receive_alrm(mp: Node, from_id: String, packet: Dictionary) -> void:
+	"""
+	ANY member's sighting: raise the same storey's alarm here.
+
+	No authority test — see `publish_alarm()` for why this verb is anyone-to-
+	everyone. Safety is two questions, not one:
+
+	  1. IS THIS A POINT IN THIS BUILDING? `decode_alrm()`, whole or nothing: a
+	     storey the plans draw and an x/z inside the envelope, both bounds read
+	     from constants this machine owns.
+	  2. WAS THE SENDER AT THIS BUILDING? Its last published presence position,
+	     against `MpCodec.alarm_sender_at_hq()`. This is `receive_pad()`'s second
+	     question and it is here for the reason that one gives in as many words:
+	     "without this a modified client would divert any guard in the building
+	     from the far side of the world."
+
+	QUESTION 2 FAILS OPEN, AND THAT IS THE WHOLE DIFFERENCE FROM `pad`. `pad` is
+	MASTER-ARBITRATED — one machine holds one presence table and decides for the
+	room — so it can drop a press whose sender it cannot place. This verb is
+	anyone-to-everyone for the coverage reason `publish_alarm()` sets out, so
+	every receiver evaluates question 2 against ITS OWN table; failing closed
+	there would mean a peer whose presence for the sender is stale, or who has
+	none yet, silently loses a REAL alarm while everybody else hears it. So only
+	a sender this machine can place AND places far away is refused. Unknown,
+	missing or non-finite reads as yes.
+
+	WHAT THAT LEAVES, stated so nobody re-litigates it silently: a modified client
+	that is genuinely at the HQ can name a storey it is not on. It gets a guard
+	walking to a point on that storey, at the verb's 2/s, in a 2-4 player co-op
+	room — and it is already standing in the building, where that guard is a
+	threat to it too. The far-side-of-the-world spoof, which is the one that
+	matters, is refused by every peer with a current position for the sender.
+
+	The `gate` verb needs none of this because it carries an ID and not a place
+	(`MpManager._receive_gate`: "no holder to check and no position to verify").
+	Anyone-to-everyone settles WHO MAY SEND; it does not settle whether the
+	payload is checkable, and this payload is.
+
+	Applied through group discovery and `has_method`-guarded like every other
+	cross-system call in this file: no tower streamed in on this machine and there
+	is nothing to raise, which is not an error — `apply_guard_lure()`'s LOD idiom.
+	The SAME guard is what lets this verb ship before the alarm itself exists
+	(bead godot-test1-buyt.4 is what adds `raise_alarm`); until it lands this is a
+	validated, rate-limited no-op and deliberately so.
+
+	`false` is the publish flag: a replayed alarm raises the building's own state
+	and must not go back on the wire, or two peers would echo one sighting round
+	the room forever.
+	"""
+	var msg: Dictionary = MpCodec.decode_alrm(packet)
+	if msg.is_empty():
+		return
+	var interior := mp.get_tree().get_first_node_in_group("tower_interior")
+	if interior == null or not interior.has_method("raise_alarm"):
+		return
+	# QUESTION 2, FAIL-OPEN (see above). Every `return` skipped here is a position
+	# this machine could not evaluate, and each one deliberately lets the alarm
+	# through rather than refusing it: no entry for the sender, no `pos` on that
+	# entry, or an interior with no transform to measure against.
+	if interior is Node3D and mp._peer_state.has(from_id):
+		var sender: Variant = (mp._peer_state[from_id] as Dictionary).get("pos", null)
+		if typeof(sender) == TYPE_VECTOR3 \
+				and not MpCodec.alarm_sender_at_hq(
+					sender as Vector3, (interior as Node3D).global_position):
+			return
+	interior.call("raise_alarm", int(msg["f"]), msg["xz"] as Vector2, false)
