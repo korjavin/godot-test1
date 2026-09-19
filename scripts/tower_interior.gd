@@ -3019,58 +3019,83 @@ func _send_guard_to(floor_index: int, at_local: Vector3, seconds: float) -> bool
 	var guard := _guard_on(floor_index)
 	if guard == null or not guard.has_method("investigate_point"):
 		return false
-	var target := _standable_near(floor_index, at_local)
-	var route := plan_route(floor_index, guard.global_position - global_position, target)
-	if route.is_empty():
-		return false
-	var world := PackedVector3Array()
-	for point: Vector3 in route:
-		world.append(global_position + point)
-	return bool(guard.call("investigate_point", global_position + target, seconds, world))
+	var from := guard.global_position - global_position
+	# THE FIRST CANDIDATE THE PLAN OFFERS A WAY TO, in ascending distance order.
+	# Routability decides and not geometry: the nearest open cell to a doorway is a
+	# coin toss between the two sides of it, and on half the shipped storeys one of
+	# those sides is sealed behind that very gate — so picking by distance alone
+	# strands the guard exactly where the snap was added to stop it. (revmux round 2,
+	# major.) At most four BFS runs over a 1600-cell `const` grid, and only for a
+	# sighting that landed on a cell nobody can stand on.
+	for target: Vector3 in _sighting_candidates(floor_index, at_local):
+		var route := plan_route(floor_index, from, target)
+		if route.is_empty():
+			continue
+		var world := PackedVector3Array()
+		for point: Vector3 in route:
+			world.append(global_position + point)
+		return bool(guard.call("investigate_point", global_position + target, seconds,
+				world))
+	return false
 
 
-func _standable_near(floor_index: int, at_local: Vector3) -> Vector3:
+func _sighting_candidates(floor_index: int, at_local: Vector3) -> Array[Vector3]:
 	"""
-	`at_local`, or the centre of the nearest cell a body may stand on.
+	Where a body could be sent to look at `at_local` — the point itself, or the
+	cells around it a body may stand on, nearest first.
 
 	WHY A SIGHTING NEEDS THIS AND A PLATE DID NOT. A `P` plate is route-open by
-	construction, so `lure_guard()` could hand `plan_route()` its goal raw. A
-	SIGHTING is wherever the hero was standing, and the two most likely places are
-	cells `_route_open()` refuses: a DOORWAY (`D` — every doorway on this grid is a
-	gate slot, and `line_of_sight()` deliberately lets a hero standing in an open
-	one be seen) and the RAMP LANE (`S` — deliberately not an occluder either). The
-	BFS only ever enqueues route-open cells, so an unsnapped goal in either of them
+	construction, so `lure_guard()` could hand `plan_route()` its goal raw, and this
+	returns that goal alone — the plate's path is unchanged to the bit. A SIGHTING
+	is wherever the hero was standing, and the two most likely places are cells
+	`_route_open()` refuses: a DOORWAY (`D` — every doorway on this grid is a gate
+	slot, and `line_of_sight()` deliberately lets a hero standing in an open one be
+	seen) and the RAMP LANE (`S` — deliberately not an occluder either). The BFS
+	only ever enqueues route-open cells, so an unsnapped goal in either of them
 	comes back empty and the alarm sounds with nobody coming. (revmux round 1, major.)
 
-	A RING OF ONE CELL AND NO MORE. The corridor side of a doorway is 4-adjacent to
-	it and the floor beside a ramp lane is too, so one ring answers both cases —
-	while a room sealed behind a shut gate stays genuinely unreachable and is still
-	refused, which is the answer the plan is giving. Widening the search until
-	something is found would walk the guard to the wrong side of a wall.
+	EVERY OPEN NEIGHBOUR IS OFFERED, not the nearest one: which side of a doorway
+	the hero's feet were on does not say which side the guard can reach, and the
+	caller is what decides by trying to route to each in turn.
 
-	Returns `at_local` unchanged when it is already standable, so the plate's path
-	is bit-identical to what it was.
+	A RING OF ONE CELL AND NO MORE, so a room sealed behind a shut gate stays
+	genuinely unreachable and is still refused — which is the answer the plan is
+	giving. Widening until something is found would walk the guard to the wrong side
+	of a wall.
+
+	`ponytail:` THE CEILING IS THE MIDDLE OF A RAMP LANE, and it is one ring's worth.
+	Seven of the ten storeys draw the ramp as a two-row lane walled on both long
+	sides, so only its END cells are 4-adjacent to open floor. What keeps that
+	narrow is `TowerStaff.sees()`'s storey test: `current_floor()` attributes a lane
+	cell to the storey that draws it only within `FLOOR_HYSTERESIS` (0.8 m) of the
+	head, which at the shipped 0.64–1.0 m of drop per cell is the head cell itself —
+	and that one IS adjacent to the `s` landing. The exception is storey 3, whose
+	0.64 m/cell lane leaves a ~0.5 m band over the SECOND cell where a sighting
+	raises the alarm and routes no guard. Measured, documented and not closed: the
+	upgrade is to walk along the lane axis when the raw cell is `S`, and it belongs
+	here rather than in a wider ring. (revmux round 2, minor.)
 	"""
+	var out: Array[Vector3] = []
 	var plan := TowerPlans.storey(floor_index)
 	if plan.is_empty():
-		return at_local
+		return [at_local] as Array[Vector3]
 	var rows: Array = plan["rows"]
 	var cell := _plan_cell_of(at_local)
 	if _route_open(_plan_char(rows, cell)):
-		return at_local
-	var best := at_local
-	var gap := INF
+		return [at_local] as Array[Vector3]
+	var ranked: Array[Dictionary] = []
 	for step: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 		var near_cell := cell + step
 		if not _route_open(_plan_char(rows, near_cell)):
 			continue
 		var at := Vector3(_grid_x(float(near_cell.x) + 0.5), FLOOR_Y[floor_index],
 				_grid_z(float(near_cell.y) + 0.5))
-		var reach: float = at.distance_to(at_local)
-		if reach < gap:
-			gap = reach
-			best = at
-	return best
+		ranked.append({"at": at, "gap": at.distance_to(at_local)})
+	ranked.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			return float(a["gap"]) < float(b["gap"]))
+	for row: Dictionary in ranked:
+		out.append(row["at"])
+	return out
 
 
 func raise_alarm(floor_index: int, local_xz: Vector2, publish: bool = true) -> bool:
@@ -3108,6 +3133,17 @@ func raise_alarm(floor_index: int, local_xz: Vector2, publish: bool = true) -> b
 	# The guard holds for the WHOLE alarm rather than `LURE_HOLD_SECONDS`: the
 	# alarm is the state, and a guard that walked home while the klaxon was still
 	# sounding would be the building contradicting itself.
+	#
+	# AND THIS ERRAND IS RUN OFF-SITE TOO, unlike the klaxon one line up, which is
+	# deliberate rather than an oversight (revmux round 2, minor). A relayed alarm
+	# on a peer kilometres away wakes that peer's own copy of the storey's guard for
+	# the errand. The klaxon is a NOISE and belongs to whoever is in the room; the
+	# guard's position is STATE, and the timer above was moved off the draw gate
+	# precisely so every peer holds the same alarm — a guard suppressed by proximity
+	# would leave the state and the population disagreeing on that machine, and the
+	# body would be standing on its post when the player finally arrived to a
+	# building that says its alarm is up. It is one body, bounded by the errand, and
+	# the LOD manager's next scan puts it back to sleep.
 	_send_guard_to(floor_index, Vector3(local_xz.x, FLOOR_Y[floor_index], local_xz.y),
 			ALARM_SECONDS)
 	if publish:

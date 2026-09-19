@@ -1294,7 +1294,14 @@ func _check_the_alarm_state() -> void:
 	      that is not a number. `MpCodec.decode_alrm()` already refuses both on the
 	      wire; this is the same refusal at the other door, where the caller is a
 	      staffer rather than a packet.
-	  (f) CROSSING THE DOORWAY CLEARS EVERY ALARM, with the population.
+	  (f) OFF-SITE, BOTH HALVES. A peer kilometres from the HQ is handed alarms over
+	      the `alrm` verb whether or not it has the tower on screen: the klaxon must
+	      be SILENT there (it is a pool one-shot at a fixed volume with no
+	      attenuation), and the timer must still DRAIN — driven through the engine's
+	      own `_process`, because the early return while the building is not drawn is
+	      the thing under test. A frozen timer refuses every later sighting on that
+	      storey for the rest of the run.
+	  (g) CROSSING THE DOORWAY CLEARS EVERY ALARM, with the population.
 	"""
 	var interior := await TowerProbe.make_interior(self) as TowerInterior
 	# SOMEBODY AT THE BUILDING. The klaxon is a noise in a room and is gated on this
@@ -1347,7 +1354,11 @@ func _check_the_alarm_state() -> void:
 	# window, and audible. One siren every `ALARM_PULSE` over the whole alarm is a
 	# statement with one right answer; count the raise's own as the first of them.
 	# (revmux round 1, minor.)
-	var want: int = int(TowerInterior.ALARM_SECONDS / TowerInterior.ALARM_PULSE)
+	# `ceil` AND NOT `int`: the shipped pair divides exactly, but `ALARM_SECONDS` is
+	# framed as a tunable by its own note, and under `int()` this assertion reds on
+	# CORRECT code the day either constant is retuned to a pair that does not —
+	# telling the reader the right answer is wrong. (revmux round 2, minor.)
+	var want: int = int(ceil(TowerInterior.ALARM_SECONDS / TowerInterior.ALARM_PULSE))
 	if lit_at_raise + pulses != want:
 		_fail("a %.0f s alarm sounded the klaxon %d times; one every %.1f s is exactly"
 				% [TowerInterior.ALARM_SECONDS, lit_at_raise + pulses,
@@ -1405,7 +1416,7 @@ func _check_the_alarm_state() -> void:
 	if interior.raise_alarm(maxi(floors - 1, 0), Vector2(NAN, 0.0)):
 		_fail("an alarm was raised at a sighting point that is not a number")
 
-	# ---- (g) OFF-SITE: the timer runs, and the klaxon does not -----------------
+	# ---- (f) OFF-SITE: the timer runs, and the klaxon does not -----------------
 	# A peer two kilometres out in the field is handed alarms over the `alrm` verb
 	# whether or not it has the tower on screen, and both halves of that go wrong in
 	# ways nothing else here would see (revmux round 1, major):
@@ -1437,7 +1448,7 @@ func _check_the_alarm_state() -> void:
 				% [far, stood] + " not drawn — it would freeze there and refuse every"
 				+ " later sighting on that storey for the rest of the run")
 
-	# ---- (f) the reset -------------------------------------------------------
+	# ---- (g) the reset -------------------------------------------------------
 	interior._on_tower_doorway(null)
 	for any: int in floors:
 		if interior.alarm_seconds_left(any) > 0.0:
@@ -1660,18 +1671,50 @@ func _check_the_guard_converges() -> void:
 			_fail("the router reached the `%s` doorway cell on storey %d unaided —"
 					% [TowerPlans.GATE_CHAR, door_floor] + " the snap has nothing to do")
 		else:
-			var snapped: Vector3 = interior._standable_near(door_floor, mid)
-			if snapped.is_equal_approx(mid):
-				_fail("a sighting in the `%s` doorway on storey %d was left where it"
-						% [TowerPlans.GATE_CHAR, door_floor] + " was — the klaxon"
-						+ " sounds and no guard can be routed to it")
-			elif TowerInterior.plan_route(door_floor, corridor, snapped).is_empty():
-				_fail("the snapped sighting %s on storey %d is still unroutable"
-						% [str(snapped), door_floor])
-			elif snapped.distance_to(mid) > TowerPlans.PLAN_CELL * 1.5:
-				_fail("a sighting in a doorway was snapped %.1f m away on storey %d —"
-						% [snapped.distance_to(mid), door_floor] + " that is the wrong"
-						+ " side of a wall, not the corridor outside the door")
+			var offered: Array[Vector3] = interior._sighting_candidates(door_floor, mid)
+			# EVERY OPEN NEIGHBOUR, NEAREST FIRST — and the count is the assertion
+			# that matters. Which side of a doorway the hero's feet were on is a coin
+			# toss, and on half the shipped storeys one side of a `D` is sealed behind
+			# that very gate; a snap that offered only the geometrically nearest cell
+			# would hand the router the sealed side half the time and strand the guard
+			# in exactly the case this exists to fix. (revmux round 2, major.)
+			if offered.size() < 2:
+				_fail("a sighting in the `%s` doorway on storey %d was offered %d place"
+						% [TowerPlans.GATE_CHAR, door_floor, offered.size()]
+						+ "s to route to, though the plan draws open floor on both"
+						+ " sides of it — half of those sightings strand the guard")
+			var far_first := false
+			var strayed := false
+			var walled := false
+			var last := -1.0
+			for at: Vector3 in offered:
+				if at.distance_to(mid) > TowerPlans.PLAN_CELL * 1.5:
+					strayed = true
+				if not TowerInterior._route_open(TowerInterior._plan_char(
+						TowerPlans.storey(door_floor)["rows"],
+						TowerInterior._plan_cell_of(at))):
+					walled = true
+				if at.distance_to(mid) < last - EPS:
+					far_first = true
+				last = at.distance_to(mid)
+			if strayed:
+				_fail("a doorway sighting on storey %d was offered a cell more than one"
+						% door_floor + " ring away — that is the wrong side of a wall,"
+						+ " not the corridor outside the door")
+			if walled:
+				_fail("a doorway sighting on storey %d was offered a cell the router"
+						% door_floor + " itself refuses")
+			if far_first:
+				_fail("the doorway candidates on storey %d are not in ascending"
+						% door_floor + " distance order — the guard would walk past the"
+						+ " near side to reach the far one")
+			var reachable := 0
+			for at: Vector3 in offered:
+				if not TowerInterior.plan_route(door_floor, corridor, at).is_empty():
+					reachable += 1
+			if reachable == 0:
+				_fail("none of the %d places offered for a doorway sighting on storey"
+						% offered.size() + " %d can be routed to" % door_floor)
 
 	# WHICH STOREY AND WHICH POINT ARE THE PLANS' BUSINESS: the SHORTEST walk, over
 	# every storey that draws a `G`, from that post to a room centre at least
