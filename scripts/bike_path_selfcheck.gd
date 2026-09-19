@@ -7,8 +7,8 @@ extends SceneTree
 ## ...and epic `godot-test1-pnvb`, child `.2`, adds TIER 1 — the trunk routes that
 ## run between named anchors — to the same file, because everything below the walk
 ## is shared. Six of the eleven checks below cover both tiers untouched, three grew
-## a trunk half (2d, 3b, 4/T3) and four are new (T1, T2, T3a/b, T4); they are listed
-## after check 11.
+## a trunk half (2d, 3b, 4/T3) and five are new (T1, T2, T3a/b, T4, T5); they are
+## listed after check 11.
 ##
 ## `scripts/terrain_bike_paths.gd`'s banner carries the design; this file is the
 ## part of it a future edit cannot slip past. Six checks, every one of them an
@@ -115,8 +115,8 @@ extends SceneTree
 ##   2d. THE BOUNDING-BOX LOOKUP AGREES WITH THE MIDPOINT RULE. Check 2b's cover
 ##      assertion, re-made for the other way a chunk finds a polyline. A box that
 ##      is too tight loses the segments at the ends, which is the chunk-seam bug in
-##      a new place, and `_cover_fault` (mutation-controlled in 2b) is the
-##      comparator.
+##      a new place. Its comparator is `_cover_fault_set`, which is new here and
+##      carries its own three-way control at the bottom of the check.
 ##   3b. A TRUNK NEVER ENDS IN OPEN FIELD — the exact defect the owner reported. It
 ##      ends at its own anchor or at Budapest's rect edge, or it does not exist at
 ##      all; and the reasons the others were abandoned are PRINTED, split by cause,
@@ -316,10 +316,15 @@ const TIE_YAW_TOLERANCE: float = 1e-4
 ## driven at, on the same band check 4 already measures as `scarcity_at() == 0`. The
 ## X is off the corridor's own axis so the pair below cannot share a road.
 const T3A_FAR_CHUNK: Vector2i = Vector2i(3, FAR_CHUNK_Y)
-## ...and its k = 1 CONTROL, a chunk inside `SCARCITY_CORRIDOR_RECT`. Both are
-## asserted to really carry the k they are chosen for, so neither half of T3a can
-## pass because the site was mis-chosen.
-const T3A_NEAR_CHUNK: Vector2i = Vector2i(3, 0)
+## ...and the SEARCH BAND for its k = 1 CONTROL, inside `SCARCITY_CORRIDOR_RECT`.
+## SEARCHED AND NOT TYPED, because a typed one rots: the first version was
+## `Vector2i(3, 0)`, on the corridor's own axis, and the moment the coin road's
+## swath joined `trunk_keep_out` that chunk could draw nothing at all and the
+## control failed for a reason that had nothing to do with scarcity. The check
+## takes the first chunk in this band that carries k = 1 AND has drawable segments,
+## and fails loudly if the band holds none.
+const T3A_NEAR_BAND_X: Array[int] = [2, 3, 4, 5, 6, 7, 8]
+const T3A_NEAR_BAND_Y: Array[int] = [0, 1, -1, 2, -2, 3, -3]
 
 ## How many stations T3a's synthetic trunk carries. It is laid straight across the
 ## chunk under test, so this only has to be long enough that several segment
@@ -376,7 +381,9 @@ func _run() -> void:
 	_check_lamp_indices(terrain_script)
 	_check_cycle_off_the_seed(terrain_script)
 	# --- TIER 1, the trunk routes (epic `godot-test1-pnvb`, child `.2`). Checks 2,
-	# 3 and 4 above already grew a trunk half of their own; these four are new.
+	# 3 and 4 above already grew a trunk half of their own; FIVE are new — T3a and
+	# T3b are the two inside `_check_scarcity`, so the tier-1 set is five checks in
+	# four calls here. Keep both halves of that count true; the banner says why.
 	_check_trunk_world_tie(terrain_script)
 	_check_trunk_intersections(terrain_script)
 	_check_trunk_keep_outs(terrain_script)
@@ -723,7 +730,11 @@ func _check_trunk_cover(terrain_script: GDScript) -> void:
 	box claims, so a segment the box wrongly excluded would be FOUND by the sweep
 	and reported as a duplicate-free hole rather than missed by both.
 
-	`_cover_fault` is check 2b's comparator, mutation-controlled there.
+	THE COMPARATOR IS `_cover_fault_set`, NOT check 2b's `_cover_fault`, and it
+	carries a third branch 2b's does not: "drawn, though it is over water or inside
+	a keep-out disc". 2b's mutation controls do not reach it, so this check drives
+	that branch itself at the bottom — a comparator credited with a control it does
+	not have is the claim the next author would rely on instead of re-deriving.
 	"""
 	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
 	var waypoints: Array[Dictionary] = terrain.waypoint_sites()
@@ -793,6 +804,22 @@ func _check_trunk_cover(terrain_script: GDScript) -> void:
 	if drawable_total == 0:
 		_fail("check 2d expected no drawable segment at all across the trunks it walked, so "
 				+ "its cover assertion was satisfied by an empty set")
+	# THE COMPARATOR'S OWN CONTROL, all three directions, on a fixture rather than on
+	# the world — `_cover_fault_set` is new in this bead and 2b's mutations drive
+	# `_cover_fault` instead. Without the third one, a lost water or keep-out skip
+	# would draw paint under a coin and this check would call it a perfect cover.
+	var probe: Dictionary = { 1: true, 2: true }
+	if _cover_fault_set([PackedInt32Array([1, 2])], probe) != "":
+		_fail("check 2d's comparator rejects a cover that is in fact perfect")
+	if _cover_fault_set([PackedInt32Array([1])], probe) == "":
+		_fail("check 2d's comparator called a cover with a segment MISSING perfect — it "
+				+ "would not notice a hole in a trunk at a chunk seam")
+	if _cover_fault_set([PackedInt32Array([1, 2]), PackedInt32Array([2])], probe) == "":
+		_fail("check 2d's comparator called a cover with a segment drawn TWICE perfect")
+	if _cover_fault_set([PackedInt32Array([1, 2, 3])], probe) == "":
+		_fail("check 2d's comparator accepted a segment that is NOT drawable — it would not "
+				+ "notice the water skip or the keep-out skip being lost, which is paint "
+				+ "over a river or under the coin road's coins")
 	terrain.free()
 	Sentinel.done("trunk_cover")
 
@@ -1049,28 +1076,32 @@ func _check_trunk_endings(terrain_script: GDScript) -> void:
 	if checked == 0:
 		_fail("check 3b found no trunk at all across %d seeds, so 'a trunk never ends in "
 				% SEEDS.size() + "open field' was asserted of nothing")
-	# THE COIN ROAD IS REFUSED EVERYWHERE, INCLUDING AT AN ENDPOINT — and this is
-	# the assertion that says so, because nothing else in the file can. Five
-	# waypoint anchors (`approach`, `spawn`, `road_1..N`) stand ON the centreline,
-	# so if the endpoint exemption covered the road as an earlier draft of it did,
-	# every trunk terminating at one would lay its last 70 m of strip down the
-	# middle of the coin swath and snap its terminal station exactly onto the
-	# centreline. Round 1 of the review caught the code; this catches it coming back.
-	#
-	# NON-VACUOUS ON `road_refusals`: the reasons histogram must show the test
-	# actually firing, or "no station in the swath" is what a world with no road
-	# near any trunk looks like.
-	if road_stations > 0:
-		_fail("check 3b: %d trunk stations stand within BIKE_ROAD_CLEARANCE of the coin "
-				% road_stations + "road's centreline. The road refuses a trunk EVERYWHERE — "
-				+ "`godot-test1-pnvb.4` owns the crossing and until it lands a trunk that "
-				+ "meets the swath is abandoned whole, endpoint or not, because five "
-				+ "waypoint anchors stand on the centreline itself")
+	# THE ROAD STILL REFUSES A TRUNK MID-SPAN, and that number is
+	# `godot-test1-pnvb.4`'s case. The road is exempt only within
+	# `TRUNK_APPROACH_RADIUS` of the trunk's OWN anchors — the gate sits dead centre
+	# in the swath, so without that exemption every edge incident on it is abandoned
+	# and the epic's headline ("get to Budapest along them") is unreachable. What
+	# the exemption does NOT do any more is let paint onto the swath: the road is
+	# inside `trunk_keep_out`, so T5's box-and-footprint sweep is what asserts no
+	# strip ever lies under a coin. This half only measures that the refusal is
+	# still alive at all.
 	if int(reasons.get("road", 0)) == 0:
 		_fail("check 3b: not one edge across %d seeds was abandoned for the coin road, so "
-				% SEEDS.size() + "the refusal was never seen to fire and 'no station in the "
-				+ "swath' holds for free. That number is also `godot-test1-pnvb.4`'s case, "
-				+ "so a zero here means the case has gone missing")
+				% SEEDS.size() + "the mid-span refusal was never seen to fire. "
+				+ "`godot-test1-pnvb.4` owns that crossing and this number is its case, so "
+				+ "a zero here means either the case has gone missing or the road stopped "
+				+ "refusing anything at all")
+	# ...AND THE STATIONS THE EXEMPTION LET THROUGH ARE COUNTED, NOT ASSERTED, because
+	# they are legitimate: a trunk to the gate walks the last 70 m along the corridor
+	# and draws none of it. A ZERO here would mean the exemption is inert and T5's
+	# road half is testing nothing, so that direction IS a failure.
+	if road_stations == 0:
+		_fail("check 3b: not one trunk station falls inside the coin road's swath, so the "
+				+ "endpoint exemption never fired and T5's assertion that no PAINT lands "
+				+ "there holds for free. The gate anchor sits dead centre in the swath, so "
+				+ "a world with a trunk to the gate must produce some")
+	print("bike trunks: the endpoint exemption let %d trunk stations into the coin road's "
+			% road_stations + "swath, where T5 asserts no box and no footprint is drawn")
 	if at_anchor == 0:
 		_fail("check 3b found no trunk that ended at its own anchor, so the snap — the thing "
 				+ "that makes the owner's intersections exact — was never once seen to happen")
@@ -1211,17 +1242,36 @@ func _check_trunk_scarcity_split(terrain_script: GDScript) -> void:
 	the far pole count does not.
 	"""
 	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
+	var waypoints: Array[Dictionary] = terrain.waypoint_sites()
 	var far_k: float = terrain.scarcity_at(terrain.chunk_to_world(T3A_FAR_CHUNK))
-	var near_k: float = terrain.scarcity_at(terrain.chunk_to_world(T3A_NEAR_CHUNK))
 	if far_k != 0.0:
 		_fail("T3a's far site %s has scarcity %.3f, not 0 — the exemption half of this "
 				% [T3A_FAR_CHUNK, far_k] + "check would be measuring the ordinary case. "
 				+ "Move T3A_FAR_CHUNK further out")
-	if near_k != 1.0:
-		_fail("T3a's near site %s has scarcity %.3f, not 1 — the control half cannot say "
-				% [T3A_NEAR_CHUNK, near_k] + "whether a missing pole is the thinning or a "
-				+ "pole builder that never runs. Move T3A_NEAR_CHUNK into the corridor")
-	for chunk_pos: Vector2i in [T3A_FAR_CHUNK, T3A_NEAR_CHUNK]:
+	# THE CONTROL SITE, SEARCHED. k = 1 AND somewhere this family would really draw:
+	# a chunk on the coin road's centreline or in a keep-out draws nothing however
+	# scarcity behaves, and a control that fails for that reason says nothing about
+	# the rule under test. See `T3A_NEAR_BAND_X`.
+	var near_chunk := Vector2i(1 << 30, 1 << 30)
+	for bx: int in T3A_NEAR_BAND_X:
+		for by: int in T3A_NEAR_BAND_Y:
+			var cand := Vector2i(bx, by)
+			if terrain.scarcity_at(terrain.chunk_to_world(cand)) != 1.0:
+				continue
+			if _dry_segments_in(terrain, _synthetic_trunk(terrain, cand), cand, waypoints) == 0:
+				continue
+			near_chunk = cand
+			break
+		if near_chunk.x != 1 << 30:
+			break
+	if near_chunk.x == 1 << 30:
+		_fail("T3a found no chunk in its search band that is both at k = 1 and able to "
+				+ "carry a trunk at all, so the control half — 'a trunk in the corridor DOES "
+				+ "stand poles' — could not be made. Widen T3A_NEAR_BAND_X / _Y")
+		terrain.free()
+		Sentinel.done("trunk_scarcity_split")
+		return
+	for chunk_pos: Vector2i in [T3A_FAR_CHUNK, near_chunk]:
 		var k: float = terrain.scarcity_at(terrain.chunk_to_world(chunk_pos))
 		var stations: Array[Dictionary] = _synthetic_trunk(terrain, chunk_pos)
 		# THE SHIPPED MEMO, overwritten with one route. `spawn_bike_path_in_chunk`
@@ -1240,8 +1290,7 @@ func _check_trunk_scarcity_split(terrain_script: GDScript) -> void:
 		}]
 		terrain._bike_trunk_cache["trunks"] = only
 		var built: Dictionary = _spawn_bare(terrain, chunk_pos)
-		var want: int = _dry_segments_in(terrain, stations, chunk_pos,
-				terrain.waypoint_sites())
+		var want: int = _dry_segments_in(terrain, stations, chunk_pos, waypoints)
 		var strips: int = _strips_on(terrain, chunk_pos, built["batch"], stations)
 		var poles: int = -1
 		for row: Dictionary in (built["paths"] as Array[Dictionary]):
@@ -2336,6 +2385,17 @@ func _check_trunk_keep_outs(terrain_script: GDScript) -> void:
 	It reads the boxes and the footprints off `_spawn_bare`'s own batch and
 	`obstacles`, in world space, and never off a built MultiMesh: instance data is
 	write-only under the headless dummy renderer.
+
+	THE SWEEP IS TIER-BLIND, DELIBERATELY, and the messages below say "a bike box"
+	rather than "a trunk" because of it. `_spawn_bare` drives the shipped spawner,
+	which draws BOTH tiers, and the `edge` meta could filter it — but a SPUR standing
+	geometry in a keep-out is a defect on exactly the same grounds, and there are two
+	narrow ways it can: `_station_blocked` clears a spur STATION against these same
+	radii and nothing re-tests its POLE, which leans `BIKE_POLE_OFFSET` to the side,
+	so a station 72.6 m from the tower centre or half a metre outside a landmark's
+	chunk can still plant a post inside. Filtering to trunks would hide that. If this
+	ever fires on a spur it is a finding and not a false alarm, and the fix is the
+	same guard the trunk tier already carries.
 	"""
 	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
 	var waypoints: Array[Dictionary] = terrain.waypoint_sites()
@@ -2371,9 +2431,10 @@ func _check_trunk_keep_outs(terrain_script: GDScript) -> void:
 			if BikePaths.trunk_keep_out(terrain, world, waypoints):
 				boxes += 1
 				_fail("T5: chunk %s draws a bike box at %s, which is inside a destination's "
-						% [chunk_pos, world] + "keep-out disc (the tower's, a teleport "
-						+ "circle's or a landmark's). A trunk must STOP at the disc, not be "
-						+ "exempt from it — the anchor is authored ground")
+						% [chunk_pos, world] + "keep-out (the tower's disc, a teleport "
+						+ "circle, a landmark's chunk or the coin road's swath). This family "
+						+ "must STOP at one, not be exempt from it — a trunk is entitled to "
+						+ "WALK to its own anchor, never to PAINT the last 70 m of it")
 				break
 		for o_v: Variant in (built["obstacles"] as Array):
 			var pos: Vector3 = (o_v as Dictionary)["pos"]
@@ -2381,9 +2442,9 @@ func _check_trunk_keep_outs(terrain_script: GDScript) -> void:
 			if BikePaths.trunk_keep_out(terrain, world, waypoints):
 				shapes += 1
 				_fail("T5: chunk %s appends a bike-path FOOTPRINT at %s, inside a "
-						% [chunk_pos, world] + "destination's keep-out disc. Three of the "
-						+ "five failures this check exists for were collision shapes, so the "
-						+ "stop has to cover the poles and not only the paint")
+						% [chunk_pos, world] + "keep-out. Three of the five failures this "
+						+ "check exists for were collision shapes, so the stop has to cover "
+						+ "the poles and not only the paint")
 				break
 	if chunks.is_empty():
 		_fail("T5 built no chunk at all, so neither half of it ran")

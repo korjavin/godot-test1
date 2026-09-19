@@ -1145,34 +1145,46 @@ static func _trunk_blocked(terrain: Node3D, p: Vector2, waypoints: Array[Diction
 	route is rebuilt from scratch every time the memo is dropped, and every chunk
 	that draws a share of it must get the identical polyline back.
 	"""
-	# THE COIN ROAD, FIRST AND NEVER EXEMPTED, and the ORDER is the whole of it.
-	# `godot-test1-pnvb.4` owns the crossing and until it lands the shipped refusal
-	# stands — "a crossing would put road coins on the strip". Behind the endpoint
-	# exemption below it would NOT stand: `waypoint_sites()` puts `approach`,
-	# `spawn` and `road_1..N` directly ON the centreline, so every trunk ending at
-	# one of those anchors would have its last 70 m of strip laid down the middle of
-	# the coin swath and its terminal station snapped exactly onto the centreline —
-	# which is the case the rule is actually about, not an edge of it. Round 1 of
-	# the review caught this; the banner and this comment both claimed the refusal
-	# held while the code had already excused it.
+	# THE ENDPOINT EXEMPTION, AND IT COVERS THE ROAD TOO — which took two rounds of
+	# review to get right, so the reasoning is written out rather than assumed.
 	#
-	# The consequence is measured rather than hidden: check 3 prints how many trunks
-	# a seed loses here, and that number is what says what `.4` is worth.
-	if terrain._road_lateral_distance(p.x, p.y, BIKE_ROAD_CLEARANCE) < BIKE_ROAD_CLEARANCE:
-		if not reason.is_empty():
-			reason[0] = "road"
-		return true
-	# THE THREE DESTINATIONS, which the endpoint exemption DOES cover: a trunk whose
-	# anchor is the HQ has to be allowed to reach the HQ. Where it reaches into a
-	# disc the WALK is permitted and the PAINT is not — `trunk_keep_out`'s second
-	# caller in `_draw_path_share` is the other half of that ruling.
+	# Round 1 found the road being exempted here while the banner claimed it was
+	# not, and the fix was to test the road FIRST and never exempt it. Round 2 found
+	# what that costs: `BudapestPlan.GATE` is (1600, 0) and the coin road's APPROACH
+	# CORRIDOR ends exactly there, so `_road_lateral_distance` at the gate anchor is
+	# 0.0 — the gate sits dead centre in the swath. Testing the road first therefore
+	# abandons EVERY edge incident on the gate, and the gate is the anchor this
+	# whole epic is pointed at: *"you should be able to GET TO BUDAPEST along them"*.
+	# Measured on all three CI seeds.
+	#
+	# SO THE WALK IS EXEMPT AND THE PAINT IS NOT — the same ruling the tower disc
+	# already ships under, and the mechanism the epic prescribes for the road:
+	# `trunk_keep_out` carries the swath, so `_draw_path_share` draws NOTHING within
+	# `BIKE_ROAD_CLEARANCE` of the centreline and no coin can land on a strip
+	# because no strip is there. What round 1's finding was actually about — 70 m of
+	# strip down the middle of the coin swath — is now impossible, and the gate is
+	# reachable again.
+	#
+	# `godot-test1-pnvb.4` STILL OWNS THE CROSSING. A trunk that meets the swath
+	# MID-SPAN, away from either of its own anchors, is still abandoned whole below;
+	# check 3 prints how many that is, and that number is still `.4`'s case.
 	if p.distance_to(from) < TRUNK_APPROACH_RADIUS or p.distance_to(to) < TRUNK_APPROACH_RADIUS:
 		return false
+	# Split for the REPORT and not for the rule: `trunk_keep_out` would answer both,
+	# but check 3's histogram tells "road" from "site" and `.4`'s case is the first
+	# number. The road is last because it is the one test that may grow the station
+	# cache.
 	if trunk_keep_out(terrain, p, waypoints):
 		if not reason.is_empty():
-			reason[0] = "site"
+			reason[0] = "site" if not _road_swath(terrain, p) else "road"
 		return true
 	return false
+
+
+static func _road_swath(terrain: Node3D, p: Vector2) -> bool:
+	"""Is this world XZ inside the coin road's clearance swath? For the REPORT only —
+	`trunk_keep_out` owns the rule, and this only says which bucket a refusal goes in."""
+	return terrain._road_lateral_distance(p.x, p.y, BIKE_ROAD_CLEARANCE) < BIKE_ROAD_CLEARANCE
 
 
 static func trunk_keep_out(terrain: Node3D, p: Vector2,
@@ -1221,7 +1233,14 @@ static func trunk_keep_out(terrain: Node3D, p: Vector2,
 		var at: Vector3 = site["pos"]
 		if Vector2(p.x - at.x, p.y - at.z).length() < clear:
 			return true
-	return false
+	# ...AND THE COIN ROAD'S SWATH, last because it is the one test that may grow the
+	# station cache. IT IS HERE AND NOT ONLY IN `_trunk_blocked` because the harm the
+	# road's refusal exists to prevent is PAINT UNDER COINS, and paint is what this
+	# predicate stops: with the road in it, no strip, dash, pole or footprint this
+	# family emits can ever stand within `BIKE_ROAD_CLEARANCE` of the centreline,
+	# whatever the walk was allowed to do. `bike_path_selfcheck` T5 asserts exactly
+	# that, over every box and every footprint in the chunk.
+	return terrain._road_lateral_distance(p.x, p.y, BIKE_ROAD_CLEARANCE) < BIKE_ROAD_CLEARANCE
 
 
 static func _anchor_in_city(terrain: Node3D, p: Vector2) -> bool:
