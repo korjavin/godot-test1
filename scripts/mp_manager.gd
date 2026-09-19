@@ -194,6 +194,14 @@ const VERB_BUDGET_PER_SEC: Dictionary = {
 	# per run and 4 is `gate`'s number for `gate`'s reason — a monotone union has
 	# nothing to arbitrate, so the budget is the whole of the defence.
 	"wp": 4,
+	# one Shrink Ray pulse each (bead godot-test1-0mr0.4). `flee`'s number for
+	# `flee`'s reason — the two verbs are the same shape and the honest rate is
+	# the same one, a hero's ability cooldown (10 s here, so 4/s is forty times
+	# it). What the budget defends is narrower than the flee's, because
+	# `MpCodec.decode_shr()` already refuses an unbounded radius: this bounds how
+	# OFTEN a modified client may re-arm an 8 m pulse it is entitled to fire, not
+	# how far one reaches.
+	"shr": 4,
 	# one HQ storey alarm each (epic godot-test1-buyt). 2/s is about six times the
 	# honest rate IF the sighting source re-arms no faster than every couple of
 	# seconds — which is a REQUIREMENT ON BEAD .4's CALLER, not a property this
@@ -4341,6 +4349,8 @@ func _receive_mesh_verb(from_id: String, verb: String, packet: Dictionary) -> vo
 			MpClaims.receive_confirm(self, from_id, packet)
 		"flee":
 			MpWorldSync.receive_flee(self, from_id, packet)
+		"shr":
+			MpWorldSync.receive_shr(self, from_id, packet)
 		"kill":
 			MpCrocSync.receive_kill(self, from_id, packet)
 		"dead":
@@ -4469,6 +4479,16 @@ func _is_mesh_peer_connected(int_id: int) -> bool:
 func request_croc_flee(origin: Vector3, duration: float, radius: float = 0.0,
 		tracks_player: bool = true) -> bool:
 	return MpWorldSync.request_croc_flee(self, origin, duration, radius, tracks_player)
+
+
+func request_croc_shrink(origin: Vector3, duration: float, radius: float) -> bool:
+	## Teibi's Shrink Ray's send site (bead godot-test1-0mr0.4), a forwarder for the
+	## reason the two beside it are: gameplay reaches the mesh by finding the "mp"
+	## group and asking `has_method`, never by naming a static family. The caller is
+	## `player_abilities._shrink_crocodiles()`, which therefore never calls
+	## `MpWorldSync` directly — CLAUDE.md's "reach a sibling family through the node
+	## that owns the state".
+	return MpWorldSync.request_croc_shrink(self, origin, duration, radius)
 
 
 func request_guard_lure(floor_index: int, pad_index: int) -> bool:

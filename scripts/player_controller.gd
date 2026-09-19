@@ -4212,6 +4212,8 @@ const PRIMM_SLASH_DURATION := PlayerAbilities.PRIMM_SLASH_DURATION
 const PRIMM_SLASH_RISE_S := PlayerAbilities.PRIMM_SLASH_RISE_S
 const PRIMM_FLASH_FLEE_DURATION := PlayerAbilities.PRIMM_FLASH_FLEE_DURATION
 const PRIMM_FLASH_RADIUS := PlayerAbilities.PRIMM_FLASH_RADIUS
+const TEIBI_SHRINK_RADIUS := PlayerAbilities.TEIBI_SHRINK_RADIUS
+const TEIBI_SHRINK_DURATION := PlayerAbilities.TEIBI_SHRINK_DURATION
 const TEIBI_SCALE_SMALL := PlayerAbilities.TEIBI_SCALE_SMALL
 const TEIBI_SCALE_BIG := PlayerAbilities.TEIBI_SCALE_BIG
 const TEIBI_FIT_GROUND_CLEAR := PlayerAbilities.TEIBI_FIT_GROUND_CLEAR
@@ -4732,13 +4734,13 @@ func get_ability_block_reason(slot: int = 0) -> String:
 	  "CELL" — the prison role has no ability at all: every one of the four is a
 			   phase, a flight, a combat verb or a wave, and the role is defined as
 			   having none of them.
-	  "INDOOR" — Teibi's next press would make him GIANT and he is inside the HQ.
+	  "INDOOR" — Teibi's SLOT-0 press would make him GIANT and he is inside the HQ.
 	           Owner ruling (bead godot-test1-xdf): the building is the stealth
 	           layer and a giant does not fit its pace. Not an exploit patch — the
 			   exploit is `_teibi_grow_blocked()`'s job and it still does it — but a
 			   design rule, which is why it refuses in the middle of an empty room
 			   too. SMALL stays allowed in here: it is the stealth-flavoured form.
-	  "TIGHT"— Teibi's next press would make him GIANT and the grown capsule does
+	  "TIGHT"— Teibi's SLOT-0 press would make him GIANT and the grown capsule does
 	           not fit where he is standing. Growing inside geometry is not a
 	           clipping artefact, it is a lift: the depenetration pops him out
 			   upwards, through a storey's ceiling and past its gate.
@@ -4798,7 +4800,15 @@ func get_ability_block_reason(slot: int = 0) -> String:
 	# looking for a wider corridor that does not exist. `_teibi_grow_blocked()` stays
 	# the outdoor refusal and is not weakened; it is simply not the one talking in
 	# here. (`capture_selfcheck` check 9 keeps measuring it directly for that reason.)
-	if char_name == "teibi" and teibi_size_state == 1:
+	#
+	# SLOT 0 ONLY (bead godot-test1-0mr0.4). Both gates are about the press that
+	# would GROW him, and slot 1 is the Shrink Ray — it never touches
+	# `teibi_size_state`, so neither refusal has anything to say about it. Without
+	# this scoping a small Teibi standing in the HQ would see his own second skill
+	# refused with "INDOOR", a reason belonging to an ability he did not press, and
+	# the one place the Shrink Ray is most obviously the right answer (a corridor
+	# full of predators) is the one place it would not fire.
+	if slot == 0 and char_name == "teibi" and teibi_size_state == 1:
 		if _sheltered():
 			return "INDOOR"
 		if _teibi_grow_blocked():

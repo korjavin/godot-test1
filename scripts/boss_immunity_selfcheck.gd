@@ -10,8 +10,11 @@ extends SceneTree
 ## ONE OF FIVE — see `boss_selfcheck.gd`'s header for the family and for why bead
 ## `godot-test1-ftn.24` split it; `scripts/boss_probe.gd` is the shared harness.
 ##
-##   1. CRUSH IMMUNITY IS AN ORDERING. `_on_player_collision` early-returns for
-##      is_boss ABOVE the giant-Teibi crush block; swap those two blocks and
+##   1. CRUSH IMMUNITY IS AN ORDERING — and so is the Shrink Ray's harmlessness
+##      (bead godot-test1-0mr0.4, owner ruling 3: killing is forbidden, so a
+##      shrunk body is never crushed by anyone, giant Teibi included).
+##      `_on_player_collision` early-returns for is_shrunk, then for
+##      is_boss, both ABOVE the giant-Teibi crush block; swap those blocks and
 ##      giant Teibi one-shots the game's biggest threat with no error anywhere.
 ##      Check 7 pins the order — with a NON-boss negative control, because "the
 ##      boss survived" is also true of a stub that never crushed anything.
@@ -158,6 +161,13 @@ func _check_crush_immunity(packed: PackedScene, species_name: String,
 	victim.species = species_name
 	victim.position = Vector3(10.0, 1.0, 0.0)
 	root.add_child(victim)
+	# The THIRD body, spawned with the other two so one settle covers all three:
+	# the crushed `victim` frees itself, so a second settle after the crush would
+	# invalidate it. See the shrunk block at the bottom of this function.
+	var small: CharacterBody3D = packed.instantiate()
+	small.species = species_name
+	small.position = Vector3(-10.0, 1.0, 0.0)
+	root.add_child(small)
 	await _frames(BossProbe.SETTLE_FRAMES)
 
 	# The harness guards `BossProbe.drive()` asks on every other file's behalf.
@@ -172,6 +182,7 @@ func _check_crush_immunity(packed: PackedScene, species_name: String,
 		giant.giant = false
 		boss.queue_free()
 		victim.queue_free()
+		small.queue_free()
 		await _frames(2)
 		Sentinel.done("crush_immunity")
 		return
@@ -197,6 +208,47 @@ func _check_crush_immunity(packed: PackedScene, species_name: String,
 	if giant.bitten - before != 0:
 		_fail("crush: an ordinary body bit a crushing giant (hit count %d)"
 				% (giant.bitten - before))
+
+	# --- AND A SHRUNK BODY IS NEVER CRUSHED EITHER (bead godot-test1-0mr0.4) ---
+	#
+	# OWNER RULING 3 (2026-09-18): killing is forbidden in this game, and giant
+	# Teibi's crush is the one legacy exception that still kills. So Teibi's own
+	# second skill must not feed that exception: a body his Shrink Ray made
+	# ankle-high is harmless AND uncrushable, or the pair would be a two-key
+	# execution — press G, walk into the pack — with nothing anywhere to say so.
+	#
+	# IT IS THE SAME ORDERING CLAIM AS THE BOSS ABOVE, one block higher: the
+	# `is_shrunk` early return in `_on_player_collision` sits above the is_boss
+	# block and above the crush block. Move it below either and this fails.
+	#
+	# THE CONTROL IS ALREADY WRITTEN, which is what makes this non-vacuous: the
+	# very same giant stub just crushed `victim`, an ordinary body of this same
+	# species, three lines up. So "the shrunk one survived" cannot be true because
+	# the stub stopped crushing, because the crush was measured working on the
+	# frame before. The bite half matters as much: a survivor that BIT would mean
+	# the return had simply moved below the crush block into the bite path.
+	# Set through the SHIPPED hook, never by poking the flag: `shrink_for()` owns
+	# the three refusals (boss, `crush_immune`, slept), so a build where the hook
+	# refused this body outright would leave `is_shrunk` false and the assertion
+	# below would report a crush — which is the honest reading of "the skill did
+	# not take on the species this check drives".
+	small.shrink_for(1.0)
+	if not bool(small.is_shrunk):
+		_fail("crush: shrink_for() left a plain %s un-shrunk, so the two"
+				% species_name + " assertions below measure an ordinary body and"
+				+ " prove nothing about the shrunk ordering")
+	before = giant.bitten
+	small._on_player_collision(giant)
+	if not small.is_in_group("crocodile"):
+		_fail("crush: giant Teibi SQUASHED a body his own Shrink Ray had just made"
+				+ " ankle-high — owner ruling 3 forbids killing, so the `is_shrunk`"
+				+ " early return in _on_player_collision must stay ABOVE the crush"
+				+ " block (and above the is_boss block above it)")
+	if giant.bitten - before != 0:
+		_fail("crush: a SHRUNK body bit the player %d time(s) — it fell through to"
+				% (giant.bitten - before) + " the bite path, so the early return is"
+				+ " below the crush block rather than above it")
+	small.queue_free()
 
 	giant.giant = false
 	boss.queue_free()
