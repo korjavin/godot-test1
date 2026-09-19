@@ -61,8 +61,8 @@ extends SceneTree
 ## (measured at bead `godot-test1-z2yv.2`: `get_instance_color()` returns opaque
 ## black, `get_instance_transform()` the identity, `.buffer` empty, at every
 ## index). So check 1's bucket tables assert the bucket NAMES and each bucket's
-## `instance_count`, which is exactly what a stray draw changes; reading a colour
-## back would be vacuous coverage and there is none of it in this file.
+## `instance_count`, which is exactly what a moved or extra box changes; reading a
+## colour back would be vacuous coverage and there is none of it in this file.
 
 ## The end-of-check sentinel — see `scripts/selfcheck_sentinel.gd` for why every
 ## check stamps itself and the report site never prints SELFCHECK OK itself.
@@ -192,10 +192,11 @@ func _check_zero_draws(terrain_script: GDScript) -> void:
 			var b: Node = asked.active_chunks[chunk_pos]
 			var c: Node = other.active_chunks[chunk_pos]
 
-			# --- The bodies. THE HALF THAT CATCHES A STRAY DRAW: one extra draw from
-			# the shared chunk stream slides every crocodile and every coin in the
-			# chunk. No exemption anywhere in the field, because this family appends
-			# no footprint — there is no chunk where a difference would be legal.
+			# --- The bodies. THE HALF THAT CATCHES A CHANGED WORLD: every crocodile and
+			# every coin in the chunk, by class and position. No exemption anywhere in
+			# the field, because this family appends no footprint — there is no chunk
+			# where a difference would be legal. (Not "a stray draw": see the docstring
+			# — there is no shared stream a draw in this family could advance.)
 			var nodes_plain: Array[String] = _node_table(a)
 			var nodes_asked: Array[String] = _node_table(b)
 			nodes_seen += nodes_plain.size()
@@ -250,7 +251,7 @@ func _check_zero_draws(terrain_script: GDScript) -> void:
 	if nodes_seen == 0:
 		_fail("check 1 compared %d chunks and found no chunk-parented nodes in any of "
 				% (AB_X.size() * AB_Y.size())
-				+ "them — the half of this check that catches a stray draw is blind. "
+				+ "them — the half of this check that would see a changed world is blind. "
 				+ "Retune AB_X / AB_Y onto furnished ground")
 	if buckets_seen == 0:
 		_fail("check 1's field produced no MultiMesh buckets at all, so the box half of "
@@ -621,8 +622,12 @@ func _check_well_formed(terrain_script: GDScript) -> void:
 				+ "density table is doing nothing it could not do with a single value")
 	var seed_varied: bool = false
 	for i: int in range(1, degree_words.size()):
-		# Compared over the SHARED PREFIX: the trunkable count differs between seeds,
-		# so two words of different length would differ for the wrong reason.
+		# Compared over the SHARED PREFIX, and the reason is the ANCHOR count, not the
+		# trunkable count: the word is built over every anchor index (see above), so
+		# its length is `rows.size()`, and that moves only when a landmark kind fails
+		# to place. The trunkable count swings 16-31 and has no effect on it at all.
+		# (Round 3 of the review; this comment previously said the opposite, which is
+		# exactly the mistake the block above exists to stop.)
 		var n: int = mini(degree_words[i].length(), degree_words[0].length())
 		if n > 0 and degree_words[i].substr(0, n) != degree_words[0].substr(0, n):
 			seed_varied = true
@@ -763,8 +768,17 @@ func _check_world_tie(terrain_script: GDScript) -> void:
 	#
 	# The ladder is now `_truth_for()` and the comparison is `_same_place()`, and
 	# BOTH are what this control calls. It asks the shipped derivation for the HQ's
-	# place and the shipped comparator whether the gate stands there. Mutate either
-	# one and this goes red with them.
+	# place and the shipped comparator whether the gate stands there.
+	#
+	# WHAT IT COVERS AND WHAT IT DOES NOT, because a universal claim here would be
+	# the fourth version of this mistake. It catches a comparator stuck at `true`
+	# and an `hq` branch that stops resolving. It does NOT catch a WIDENED
+	# `POS_TOLERANCE`: its two points are 2000 m apart, so a tolerance of 500 m
+	# leaves the loop more permissive and this control still answering "no" — and
+	# check 5 would then accept an anchor standing 500 m from where the shipped
+	# sources put it, which is the predecessor epic's 25 m bug with a bigger number.
+	# That axis is guarded by the SEPARATE bound below, on the constant itself,
+	# stated as what it is rather than dressed up as a live control. (Round 3.)
 	var probe: Node3D = _terrain(terrain_script, SEEDS[0])
 	var probe_rows: Array[Dictionary] = BikeNetwork.anchors(probe)
 	var probe_tower: Vector3 = probe.tower_site()
@@ -787,6 +801,25 @@ func _check_world_tie(terrain_script: GDScript) -> void:
 					+ "cannot tell two anchors apart or the ladder is echoing back "
 					+ "whatever it was handed — and every world tie above passed for free")
 	probe.free()
+
+	# --- AND THE BOUND ON THE TOLERANCE ITSELF. `POS_TOLERANCE` is a FLOAT
+	# COMPARISON EPSILON and never a design allowance: both sides of every
+	# comparison above run the same arithmetic on the same doubles, so the true
+	# difference is either zero or metres. A value anywhere near a metre is
+	# therefore not a loosened tolerance, it is check 5 deciding to accept
+	# geometry in the wrong place — the exact class this check exists to catch.
+	#
+	# THIS IS A BOUND ON A CONSTANT AND IT SAYS SO. It is not a mutation control
+	# and it is not dressed as one: the round-1 version of this file asserted
+	# exactly this while claiming to be a live perturbation test, and being honest
+	# about which is which is the whole lesson of the three rounds above.
+	if POS_TOLERANCE >= 1.0:
+		_fail("POS_TOLERANCE is %.3f m. It is a float-comparison epsilon, so anything "
+				% POS_TOLERANCE + "approaching a metre means check 5 now accepts an "
+				+ "anchor that stands a metre or more from where the shipped sources put "
+				+ "it — which is the wrong-position class this check exists to catch, "
+				+ "waved through by its own tolerance")
+
 	print("bike network check 5: %d edge endpoints re-derived from the shipped anchor "
 			% endpoints + "sources — %s" % str(checked))
 	Sentinel.done("world_tie")
@@ -837,9 +870,13 @@ func _truth_for(id: String, tower: Vector3, waypoints: Dictionary,
 	@param tower: `terrain.tower_site()`, read by the caller.
 	@param waypoints: id (UNPREFIXED) -> XZ, from `waypoint_sites()`.
 	@param landmarks: kind -> XZ, from `landmark_sites()`.
-	@return: `[Vector2 truth, String source]`, and `["", ...]` — an empty SOURCE —
-	         when no shipped source can place this id. Callers must test the
-	         source, never the position: `Vector2.INF` is a value and "" is not.
+	@return: `[Vector2 truth, String source]`. When no shipped source can place this
+	         id it is `[Vector2.INF, ""]` — element ONE, the source, is the empty
+	         string. TEST THE SOURCE AND NEVER THE POSITION: `Vector2.INF` is a
+	         legitimate `Vector2`, and `found[0] == ""` compares a Vector2 to a
+	         String, which in GDScript is simply false and falls through to a
+	         distance of INF reported as a mismatch rather than as an unresolvable
+	         id.
 
 	A FUNCTION AND NOT AN INLINE LADDER purely so that check 5's control can call
 	it. Round 2 of the review found the control re-implementing this ladder's `hq`
@@ -907,8 +944,8 @@ func _multimesh_table(chunk: Node) -> Dictionary:
 	MULTIMESH INSTANCE DATA IS WRITE-ONLY UNDER THE HEADLESS DUMMY RENDERER
 	(measured at bead `godot-test1-z2yv.2`), so the rows are placeholders and what
 	a table-against-table comparison really asserts is the BUCKET NAMES and each
-	bucket's `instance_count`. That is exactly what a stray draw or a moved box
-	changes, which is all check 1 claims from it.
+	bucket's `instance_count`. That is exactly what a moved or extra box changes,
+	which is all check 1 claims from it.
 	"""
 	var out: Dictionary = {}
 	for child: Node in chunk.get_children():
@@ -925,8 +962,10 @@ func _multimesh_table(chunk: Node) -> Dictionary:
 func _node_table(chunk: Node) -> Array[String]:
 	"""
 	Every chunk-parented NODE — crocodiles, coins, accents — as a sorted list of
-	descriptors. This is the half of check 1 that catches a stray draw, since one
-	extra draw slides every body in the chunk.
+	descriptors. This is the half of check 1 that sees a world changed under the
+	spawners: anything that perturbs their inputs slides every body in the chunk.
+	(Not "a stray draw" — see `_check_zero_draws`'s docstring for why this family
+	has no shared stream to draw from.)
 
 	CLASS AND POSITION, NEVER THE NODE NAME. Godot auto-names an unnamed instance
 	with a process-wide counter, so the terrains this check builds side by side
