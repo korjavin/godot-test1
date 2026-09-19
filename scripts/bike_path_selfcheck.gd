@@ -367,6 +367,13 @@ const BRIDGE_WINDOW: float = 120.0
 ## anything above the batch transform's own precision is a real disagreement.
 const BRIDGE_Y_TOLERANCE: float = 0.002
 
+## B5's synthetic deck: how far east it stands, and how far its middle bulges
+## WEST of its two ends. The bulge only has to be bigger than nothing — it is 60 m
+## so the window arithmetic has room on both sides of it and the failure message
+## can print a number a reader recognises as a real deck's width of drift.
+const X_WINDOW_EAST: float = 900.0
+const X_WINDOW_BULGE: float = 60.0
+
 ## The edge id T3a's synthetic route wears. It replaces the memo whole, so it
 ## cannot collide with anything — but it is deliberately not 0 either, so a marker
 ## carrying it can never be mistaken for a real trunk in a log.
@@ -409,6 +416,7 @@ func _run() -> void:
 	# --- CHILD `.3`, the bridges. B1 / B3 / B4 are one call (they all need the same
 	# deck), B2 is its own sweep.
 	_check_trunk_bridges(terrain_script)
+	_check_bridge_x_window(terrain_script)
 	_check_no_paint_on_water(terrain_script)
 	# AWAITED, and it is the only one that is: a chunk unloads through `queue_free`,
 	# so the check has to let a frame pass before it can ask whether the Timer is
@@ -2561,6 +2569,7 @@ func _check_trunk_bridges(terrain_script: GDScript) -> void:
 				+ "thing that stops the deep channel shoving him off it — see B3")
 	var tied: int = 0
 	var decks: int = 0
+	var deck_only: int = 0
 	for trunk: Dictionary in BikePaths.trunks(terrain):
 		for row_v: Variant in (trunk["bridges"] as Array):
 			var row: Dictionary = row_v
@@ -2627,6 +2636,27 @@ func _check_trunk_bridges(terrain_script: GDScript) -> void:
 						% asked + "player stands on and the surface every spawner asks about "
 						+ "have come apart — or the strip is painted at ground level over the "
 						+ "deck rather than being it")
+			# ...and the chunk that drew it CARRIES A MARKER for this edge. That is not
+			# bookkeeping: check 1 slices this family out of the CUBE bucket using
+			# `batch_start` / `cube_start` off the first marker in the chunk, so a chunk
+			# whose whole share is a deck — which is the ordinary shape of the middle of
+			# a crossing, where every segment is wet and none is painted — would
+			# otherwise hand the A/B a run of boxes it cannot cut out.
+			var claimed: bool = false
+			var bare_deck: bool = true
+			for row2: Dictionary in (built["paths"] as Array[Dictionary]):
+				if int(row2["edge"]) != int(trunk["id"]):
+					continue
+				claimed = true
+				if not (row2["segments"] as PackedInt32Array).is_empty():
+					bare_deck = false
+			if not claimed:
+				_fail("B1: chunk %s drew trunk %d's deck and left no marker, so check 1 "
+						% [chunk_pos, int(trunk["id"])] + "cannot cut this family's boxes "
+						+ "out of the CUBE bucket and the kill-switch A/B would report the "
+						+ "bike paths as having moved somebody else's geometry")
+			elif bare_deck:
+				deck_only += 1
 			# --- B3. A body ON the deck is out of the water; a body UNDER it is not.
 			var on_deck := Vector3(mid.x, FieldBridges.FIELD_BRIDGE_TOP, mid.y)
 			if terrain.is_wading_at(on_deck):
@@ -2651,7 +2681,9 @@ func _check_trunk_bridges(terrain_script: GDScript) -> void:
 		_fail("B1 walked %d trunk decks and tied not one of them to the water underneath it. "
 				% decks + "Every other assertion in this file compares a build to a build")
 	print("bike trunks B1: %d of %d decks on seed %d were tied box-for-box to the river span "
-			% [tied, decks, SEEDS[0]] + "that produced them")
+			% [tied, decks, SEEDS[0]] + "that produced them; %d of those chunks drew a deck "
+			% deck_only + "and no strip at all, which is the case check 1's slice needs a "
+			+ "marker for")
 	terrain.free()
 	Sentinel.done("trunk_bridges")
 
@@ -2695,6 +2727,84 @@ func _check_bridge_kill_switch(terrain_script: GDScript, on: Node3D, at: Vector2
 		_fail("B4 compared a window around %s that holds no bike deck at all, so 'the flag "
 				% at + "removes them' was asserted of nothing")
 	off.free()
+
+
+func _check_bridge_x_window(terrain_script: GDScript) -> void:
+	"""
+	B5 — `field_bridges_near()` REJECTS A BIKE DECK ON ITS WHOLE X EXTENT, not on
+	its two endpoints.
+
+	The window scan's two older sources are MONOTONE IN X by construction — the
+	coin road's stations advance in X, and so does the approach corridor — so it
+	tests `poly[0].x` and `poly[-1].x` and that is exactly right for them. A TRUNK
+	runs between two anchors and may head due north and come back, so its endpoints
+	say nothing about how far west or east its stone reached. The row therefore
+	carries `x_lo` / `x_hi`, computed once over every point when it is built.
+
+	IT IS A UNIT ASSERTION ON A HAND-BUILT ROW, and deliberately so. The difference
+	between the two rules only shows on a deck whose extremes are not its ends, and
+	whether any CI seed grows one is precisely the population question that makes a
+	behavioural check vacuous — the endpoint rule was measured to survive every
+	assertion in this file on all three seeds. So the row is made to order: a deck
+	that runs due north with a 60 m westward bulge in the middle, stuffed into the
+	trunk memo the way T3a stuffs a synthetic route, and a window placed WEST of its
+	endpoints and reaching the bulge. Nothing else about it is synthetic — it goes
+	through the shipped `field_bridges_near()` and the shipped reach.
+	"""
+	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
+	var reach: float = FieldBridges._field_bridge_reach(terrain)
+	# Far off the road, so the road's and the corridor's own rows cannot be confused
+	# with this one, and far enough north that nothing else is near.
+	var east: float = X_WINDOW_EAST
+	var poly := PackedVector2Array([
+		Vector2(east, -80.0), Vector2(east - X_WINDOW_BULGE, -40.0),
+		Vector2(east - X_WINDOW_BULGE, 40.0), Vector2(east, 80.0),
+	])
+	var lo: float = INF
+	var hi: float = -INF
+	for pt: Vector2 in poly:
+		lo = minf(lo, pt.x)
+		hi = maxf(hi, pt.x)
+	var along := PackedFloat32Array([0.0])
+	for i in range(1, poly.size()):
+		along.append(along[i - 1] + poly[i].distance_to(poly[i - 1]))
+	var row: Dictionary = {
+		"poly": poly, "along": along, "half": BikePaths.BIKE_PATH_WIDTH * 0.5,
+		"k0": -1, "k1": -1, "bike": true, "x_lo": lo, "x_hi": hi,
+	}
+	# Typed, because `trunks()` hands the memo straight back under an
+	# `Array[Dictionary]` annotation. An empty station list and an empty box mean the
+	# spawner can never draw this route — only the window scan ever sees it.
+	var only: Array[Dictionary] = [{
+		"id": SYNTHETIC_EDGE_ID, "stations": [] as Array[Dictionary],
+		"box": Rect2(), "from": poly[0], "to": poly[poly.size() - 1],
+		"bridges": [row],
+	}]
+	terrain._bike_trunk_cache["trunks"] = only
+	# A window whose padded eastern edge falls BETWEEN the bulge and the endpoints:
+	# the extent test keeps the row, the endpoint test throws it away.
+	var x1: float = east - reach - X_WINDOW_BULGE * 0.5
+	assert(lo <= x1 + reach and poly[0].x > x1 + reach)
+	var found: bool = false
+	for row_v: Variant in terrain.field_bridges_near(x1 - 1.0, x1):
+		if (row_v as Dictionary).get("bike", false):
+			found = true
+	if not found:
+		_fail("B5: a bike deck reaching west to x = %.1f was not returned for the window "
+				% lo + "[%.1f, %.1f], which its stone reaches into. The X rejection is "
+				% [x1 - 1.0, x1] + "reading the polyline's ENDPOINTS (x = %.1f), and a trunk "
+				% poly[0].x + "may run due north — so a chunk near the edge of the scan "
+				+ "window is told there is no deck over water there")
+	# ...and the control: a window this deck's stone really cannot reach must NOT
+	# return it, or B5 would pass on a source that rejects nothing at all.
+	var far: float = lo - reach - X_WINDOW_BULGE
+	for row_v: Variant in terrain.field_bridges_near(far - 1.0, far):
+		if (row_v as Dictionary).get("bike", false):
+			_fail("B5's control failed: the same deck came back for a window %.0f m west "
+					% (lo - far) + "of its westernmost stone, so the source rejects nothing "
+					+ "and the assertion above holds for free")
+	terrain.free()
+	Sentinel.done("bridge_x_window")
 
 
 func _check_no_paint_on_water(terrain_script: GDScript) -> void:
@@ -2763,6 +2873,11 @@ func _check_no_paint_on_water(terrain_script: GDScript) -> void:
 		_fail("B2 swept %d seeds and found no trunk crossing a river at all, so 'no paint on "
 				% TRUNCATION_SEEDS.size() + "open water' held for free and this bead's "
 				+ "subject was never once exercised")
+	if bridged == 0:
+		_fail("B2 found %d trunk river crossings over %d seeds and not ONE of them carries a "
+				% [crossings, TRUNCATION_SEEDS.size()] + "deck. Every crossing being refused "
+				+ "is what this bead looks like when it is dead — a wet probe wider than the "
+				+ "deck, a scan that never finds a bank, or a filter that drops every row")
 	if strips_seen == 0:
 		_fail("B2 built the chunks around %d crossings and found no strip box in any of "
 				% crossings + "them, so the sweep measured nothing")

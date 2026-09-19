@@ -1530,6 +1530,7 @@ static func spawn_bike_path_in_chunk(terrain: Node3D, chunk_pos: Vector2i,
 	# allocates eleven rows and runs six binary searches per call and is pure in
 	# `run_seed`, so it is loop-invariant here exactly as it is in the spur walk.
 	var waypoints: Array[Dictionary] = terrain.waypoint_sites()
+	var shares: Array[Dictionary] = []
 	for trunk: Dictionary in trunks(terrain):
 		if not (trunk["box"] as Rect2).intersects(chunk_rect):
 			continue
@@ -1539,42 +1540,61 @@ static func spawn_bike_path_in_chunk(terrain: Node3D, chunk_pos: Vector2i,
 				trunk["stations"], rng, obstacles, block_batch, block_body, cube_cursor,
 				edge_id, k, waypoints)
 		cube_cursor = built["cube_cursor"]
+		shares.append({ "key": key, "edge": edge_id, "built": built,
+				"bridges": trunk["bridges"] })
 
-		# --- THE BRIDGES (child `.3`): where this route crosses a river, the paint
-		# stops and a DECK carries it over. Emitted HERE, at this family's single
-		# emission site, and never from `FieldBridges.spawn_field_bridges_in_chunk` —
-		# that spawner runs AFTER this one, so a deck drawn there would split this
-		# family's batch entries into two ranges and `bike_path_selfcheck` check 1
-		# could no longer cut ONE contiguous run out of the CUBE bucket. The bridge
-		# family is asked only for the ROW (at `trunks()`) and for the emission of it,
-		# both of which draw nothing of their own.
-		#
-		# THE DECK IS THE PAINT. Its slabs are emitted in BIKE_STRIP_COLOR, so the red
-		# line reads as continuous over the water and there is no second flat box
-		# lying on the stone at ground height — which is the defect B2 exists to catch.
-		# The slab's own centre rule slices it, exactly as it slices a road deck.
-		#
-		# SCARCITY DOES NOT REACH IT: a deck is ROUTE, not furniture, and the route is
-		# the epic's named exemption (CLAUDE.md, the second of the two). A crossing
-		# with no deck is a gap in the road, not a thinner one.
-		var deck_boxes: int = block_batch.size()
-		for row_v: Variant in (trunk["bridges"] as Array):
+	# --- THE BRIDGES (child `.3`): where a route crosses a river the paint stops and
+	# a DECK carries it over.
+	#
+	# EMITTED HERE, at this family's single emission site, and never from
+	# `FieldBridges.spawn_field_bridges_in_chunk` — that spawner runs AFTER this one,
+	# so a deck drawn there would split this family's batch entries into two ranges
+	# and `bike_path_selfcheck` check 1 could no longer cut ONE contiguous run out of
+	# the CUBE bucket. The bridge family is asked only for the ROW (at `trunks()`) and
+	# for the emission of one, both of which draw nothing of their own.
+	#
+	# AND AFTER EVERY ROUTE'S OWN BOXES, IN A SECOND PASS, which is what makes the
+	# CUBE-bucket bookkeeping unable to go wrong rather than merely correct: every
+	# index a marker records — each pole, each signal's first lens — is taken before
+	# the first deck box exists, so no arithmetic here can slide one. Interleaving the
+	# two needed `cube_cursor` advanced by the deck's own box count, and check 9's
+	# lamp assertion would only have caught it on a chunk that happened to carry both
+	# a deck and a later trunk's signal head.
+	#
+	# THE DECK IS THE PAINT. Its slabs are emitted in BIKE_STRIP_COLOR, so the red line
+	# reads as continuous over the water and there is no second flat box lying on the
+	# stone at ground height — the defect B2 exists to catch. Each slab takes the
+	# centre rule for itself, exactly as a road deck's does.
+	#
+	# SCARCITY DOES NOT REACH IT: a deck is ROUTE, not furniture, and the route is the
+	# epic's named exemption (CLAUDE.md, the second of the two). A crossing with no
+	# deck is a gap in the road, not a thinner one.
+	for share: Dictionary in shares:
+		var before: int = block_batch.size()
+		for row_v: Variant in (share["bridges"] as Array):
 			terrain.emit_field_bridge_in_chunk(row_v, chunk_pos, chunk_centre, rng,
 					block_batch, block_body, BIKE_STRIP_COLOR, false)
-		# Every box a deck emits is a CUBE (`create_box`'s default kind), so the batch
-		# delta IS the cube delta and the cursor the NEXT trunk's poles are recorded
-		# against stays true.
-		deck_boxes = block_batch.size() - deck_boxes
-		cube_cursor += deck_boxes
-
-		# A MARKER WHENEVER THIS CHUNK DREW ANYTHING FOR THIS TRUNK, decks included.
-		# Check 1 slices the batch using `batch_start` / `cube_start` off the FIRST
-		# marker in the chunk, so a chunk that drew only a deck and left no marker
-		# would hand the A/B a run of boxes it cannot cut out — the family would read
-		# as having moved somebody else's geometry.
-		if (built["segments"] as PackedInt32Array).is_empty() and deck_boxes == 0:
+		# A MARKER WHENEVER THIS CHUNK DREW ANYTHING FOR THIS TRUNK, DECKS INCLUDED —
+		# and a chunk holding only the middle of a crossing really does draw a deck and
+		# no strip, because the wet segments over it are the ones that are never
+		# painted. Check 1 slices the batch using `batch_start` / `cube_start` off the
+		# FIRST marker in the chunk, so a deck with no marker beside it is a run of
+		# boxes the A/B cannot cut out, and this family would read as having moved
+		# somebody else's geometry. `bike_path_selfcheck` B1 asserts the marker.
+		#
+		# NOT EXERCISED BY ANY CI SEED, and both halves are said plainly because the
+		# second is what makes the first worth writing down. A deck is 20-50 m long
+		# against a 50 m chunk, so the chunk holding the middle of a crossing has so far
+		# always held a dry segment of the same trunk as well — B1 prints the count and
+		# it is 0 on seed 20260904 today (measured, mutation M9: deleting the
+		# `block_batch.size() == before` clause leaves the whole suite green). It costs
+		# one integer compare and the first seed that lines a crossing up with a chunk
+		# seam would otherwise turn check 1 red for a reason nobody could read.
+		if ((share["built"]["segments"] as PackedInt32Array).is_empty()
+				and block_batch.size() == before):
 			continue
-		markers.append(_make_marker(terrain, key, built, parent_chunk, edge_id))
+		markers.append(_make_marker(terrain, share["key"], share["built"], parent_chunk,
+				int(share["edge"])))
 
 	# EVERY MARKER CARRIES THE WHOLE FAMILY'S SLICE, not only its own path's. The
 	# `gag_start` / `gag_count` idiom (`terrain_features.gd`'s camp story gag,
