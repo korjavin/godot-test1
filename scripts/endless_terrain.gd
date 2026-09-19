@@ -693,6 +693,14 @@ const FIELD_BRIDGE_PYLON_RISE := FieldBridges.FIELD_BRIDGE_PYLON_RISE
 @export var spawn_camp_stories: bool = true
 @export var spawn_chests: bool = true
 
+## THE BICYCLE PATHS' flag (epic godot-test1-z2yv), `spawn_field_bridges`'
+## precedent: it exists so `bike_path_selfcheck` check 1 can build the same field
+## of chunks with the paths OFF and prove that nothing else in the world moved by
+## a single box. The family itself is `scripts/terrain_bike_paths.gd`; an
+## `@export` is inspector-facing world-engine configuration and a static library
+## has no inspector, so the flag sits here with the rest of them.
+@export var spawn_bike_paths: bool = true
+
 # ----------------------------------------------------------------------------
 # THE PRIVATE-STREAM FEATURES — what anything outside the family still reads
 # ----------------------------------------------------------------------------
@@ -1705,6 +1713,24 @@ var _approach_coin_line_cache: PackedVector2Array = PackedVector2Array()
 var _landmark_sites_cache: Dictionary = {}
 var _landmark_sites_built: bool = false
 
+## Memoized result of `BikePaths._bike_path_at()` — origin chunk Vector2i -> that
+## origin's station list (`[]` for the overwhelming majority of origins). Every
+## chunk within reach of an origin asks for the SAME path, so without this each
+## one would re-walk it; `scan_radius_chunks()` is 4, so the memo turns 81 walks
+## per chunk into 81 dictionary hits.
+##
+## IT LIVES HERE AND NOT ON `BikePaths`, and that is the rule rather than a
+## preference: a memo on a static family is state `_drop_seeded_memos()` cannot
+## reach, so it would survive every re-seed and hand a multiplayer joiner the
+## wrong world (`chunk_stream_selfcheck` check 6c fails the build for one). It is
+## a pure function of `run_seed`, so the reset below is the second half of this
+## declaration and lands in the same commit.
+##
+## Capped rather than evicted: `BikePaths.bike_path_at()` CLEARS it whole past
+## `BIKE_MEMO_CAP`, which is safe because the function is pure and a dropped entry
+## rebuilds identically — see that function.
+var _bike_path_cache: Dictionary = {}
+
 ## Reference to the player node to track their position
 var player: Node3D
 
@@ -2266,6 +2292,11 @@ func _drop_seeded_memos() -> void:
 	# ...and the FIELD_ALTITUDE spike's coarse road polyline, which is a window
 	# onto the same centreline. `update_chunks` rebuilds it for the new world.
 	_alt_road_segs = PackedVector4Array()
+	# ...and the BICYCLE PATHS, which are seeded a step further out still: the
+	# origin roll carries `run_seed` directly, and every blocking test the walk
+	# makes reads the road centreline, the biome field or the landmark table above.
+	# A path kept across a re-seed would be a strip laid out for the LAST world.
+	_bike_path_cache = {}
 
 
 func _roll_biome_offset() -> void:
@@ -3122,6 +3153,31 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# which is what lets the approach line perch or skip over city stone.
 	spawn_city_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
 
+	# THE BICYCLE PATHS' share of this chunk (epic godot-test1-z2yv). Like the
+	# artifacts and the camps it is a PRIVATE hash stream — its own salt, its own
+	# coordinate primes, its own turn hash — so it consumes NO DRAW from anybody
+	# and with `spawn_bike_paths` off every other box in the world is where it was.
+	#
+	# NOT "byte-identical", and the difference is a FOOTPRINT rather than a draw:
+	# a pole appends one to `obstacles`, which the crocodile, boss and hunter
+	# spawners below read, so on a chunk that grows a pole the predators can land
+	# elsewhere. That is the same shared-currency mechanism the camps and the
+	# chests use — `BikePaths`' banner states it, and `bike_path_selfcheck` check 1
+	# makes its node-for-node comparison only on the chunks with no pole on them.
+	#
+	# IMMEDIATELY AFTER THE CITY, and that position is the whole of its ordering
+	# requirement. After, because a pole is skipped when its site already falls
+	# inside an `obstacles` footprint, and the city's plateau footprints are the
+	# last ones to be appended — running before it would let a post stand through
+	# a Buda hill. Before `_build_block_multimesh` for the usual reason, so a
+	# strip, a dash and a post join the chunk's ONE MultiMesh draw call and ONE
+	# collision body. And before the field bridges, which append no footprint and
+	# only APPEND boxes, so this family's entries stay the ONE contiguous range
+	# that `bike_path_selfcheck` check 1 cuts out of the batch — and so the CUBE
+	# bucket indices the marker records still point at the same boxes when the
+	# MultiMesh is built (see the spawner's docstring for that invariant).
+	BikePaths.spawn_bike_path_in_chunk(self, chunk_pos, mesh_instance, obstacles, block_batch, block_body)
+
 	# ...and the FIELD's bridges, wherever the coin road crosses a river band
 	# (bead godot-test1-06o.2). Same ordering requirement as the six above and for
 	# the same two reasons: after everything that fills `obstacles` (though it
@@ -3535,18 +3591,48 @@ func spawn_chest_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 #   * `spawn_landmark_in_chunk` is `create_chunk`'s call-order list plus four
 #     self-checks (budapest, enemy_spawn, field_bridge, landmark_sites);
 #
-# NEITHER PUBLIC SITE QUERY GETS ONE, and that is measured rather than assumed:
-# `landmark_sites()` and `landmark_site(kind)` are the "a site is computable
-# without its chunk" seam, and nothing in the project reaches either through the
-# `terrain` group — `landmark_sites_selfcheck` names the class (it is the
-# family's own check) and `style_shots` uses `_landmark_at`. They are spelled
-# `TerrainLandmarks.landmark_sites(terrain)`; a forwarder for a name with no
-# caller is dead weight, and this file has enough of those to carry already.
+# `landmark_sites()` GOT ONE AT BEAD godot-test1-z2yv.1, and the measurement is
+# what changed rather than the rule. It and `landmark_site(kind)` are the "a site
+# is computable without its chunk" seam, and until the bicycle paths landed
+# nothing reached either through the `terrain` group — so the forwarder would
+# have been dead weight and the call sites were spelled
+# `TerrainLandmarks.landmark_sites(terrain)`. `BikePaths.station_blocked()` is a
+# SIBLING FAMILY asking whether a station stands on a landmark's chunk, and
+# CLAUDE.md's conventions are explicit about that direction: "a family's ...
+# libraries reach a sibling family through the node that owns the state, never
+# directly". So `landmark_sites()` is forwarded below and `landmark_site(kind)`
+# still is not — it has no caller outside the family, and one is still dead
+# weight.
 #
 # `landmark_sites_selfcheck` — the FAMILY's own check — names the class directly
 # instead, which is the epic's acceptance (d) and `scarcity_selfcheck`'s ftn.7
 # lesson: a check that reads its subject through a forwarder measures the
 # forwarder.
+
+func landmark_sites() -> Dictionary:
+	return TerrainLandmarks.landmark_sites(self)
+
+
+# ============================================================================
+# WAYPOINTS — one forwarder; the circles are in terrain_waypoints.gd
+# ============================================================================
+#
+# THE ONLY NAME THAT NEEDS ONE, added at bead godot-test1-z2yv.1 and earned
+# rather than speculative — the rule the eight bridge forwarders and the
+# `coin_road` block above are written under.
+#
+# `BikePaths.station_blocked()` asks whether a station stands inside a teleport
+# circle, and a SIBLING static family reaches another one THROUGH THE NODE that
+# owns the state, never by naming the class (CLAUDE.md, Conventions). Everything
+# else that reads this table is outside the family system — `waypoint_hub.gd`,
+# `minimap_hud.gd`, `city_map_panel.gd` — and names the class directly, as does
+# `waypoint_selfcheck`, which is the family's OWN check and must read its subject
+# rather than a forwarder. `spawn_waypoint_in_chunk` needs none either: its one
+# caller is `create_chunk`, in this file.
+
+func waypoint_sites() -> Array[Dictionary]:
+	return TerrainWaypoints.waypoint_sites(self)
+
 
 func _landmark_at(chunk_pos: Vector2i) -> Dictionary:
 	return TerrainLandmarks._landmark_at(self, chunk_pos)
