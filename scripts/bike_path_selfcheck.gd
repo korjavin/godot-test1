@@ -2741,6 +2741,10 @@ func _check_bridge_x_window(terrain_script: GDScript) -> void:
 	say nothing about how far west or east its stone reached. The row therefore
 	carries `x_lo` / `x_hi`, computed once over every point when it is built.
 
+	THE ROW CARRIES A `box` AND THE SCAN REJECTS ON IT. That box is also the
+	per-chunk reject at the emission site, so getting it wrong is two defects and
+	not one.
+
 	IT IS A UNIT ASSERTION ON A HAND-BUILT ROW, and deliberately so. The difference
 	between the two rules only shows on a deck whose extremes are not its ends, and
 	whether any CI seed grows one is precisely the population question that makes a
@@ -2760,17 +2764,20 @@ func _check_bridge_x_window(terrain_script: GDScript) -> void:
 		Vector2(east, -80.0), Vector2(east - X_WINDOW_BULGE, -40.0),
 		Vector2(east - X_WINDOW_BULGE, 40.0), Vector2(east, 80.0),
 	])
-	var lo: float = INF
-	var hi: float = -INF
+	var lo: Vector2 = Vector2(INF, INF)
+	var hi: Vector2 = Vector2(-INF, -INF)
 	for pt: Vector2 in poly:
-		lo = minf(lo, pt.x)
-		hi = maxf(hi, pt.x)
+		lo = lo.min(pt)
+		hi = hi.max(pt)
+	var pad: float = FieldBridges.field_bridge_outer_reach(
+			BikePaths.BIKE_PATH_WIDTH * 0.5)
 	var along := PackedFloat32Array([0.0])
 	for i in range(1, poly.size()):
 		along.append(along[i - 1] + poly[i].distance_to(poly[i - 1]))
 	var row: Dictionary = {
 		"poly": poly, "along": along, "half": BikePaths.BIKE_PATH_WIDTH * 0.5,
-		"k0": -1, "k1": -1, "bike": true, "x_lo": lo, "x_hi": hi,
+		"k0": -1, "k1": -1, "bike": true,
+		"box": Rect2(lo - Vector2(pad, pad), hi - lo + Vector2(pad, pad) * 2.0),
 	}
 	# Typed, because `trunks()` hands the memo straight back under an
 	# `Array[Dictionary]` annotation. An empty station list and an empty box mean the
@@ -2784,25 +2791,29 @@ func _check_bridge_x_window(terrain_script: GDScript) -> void:
 	# A window whose padded eastern edge falls BETWEEN the bulge and the endpoints:
 	# the extent test keeps the row, the endpoint test throws it away.
 	var x1: float = east - reach - X_WINDOW_BULGE * 0.5
-	assert(lo <= x1 + reach and poly[0].x > x1 + reach)
+	if not (lo.x - pad <= x1 + reach and poly[0].x > x1 + reach):
+		_fail("B5 built a window that does not discriminate between the two rules "
+				+ "(west stone at %.1f, endpoints at %.1f, window edge at %.1f) — the "
+				% [lo.x - pad, poly[0].x, x1 + reach] + "assertion below would hold under "
+				+ "either, so retune X_WINDOW_BULGE against the current reach")
 	var found: bool = false
 	for row_v: Variant in terrain.field_bridges_near(x1 - 1.0, x1):
 		if (row_v as Dictionary).get("bike", false):
 			found = true
 	if not found:
 		_fail("B5: a bike deck reaching west to x = %.1f was not returned for the window "
-				% lo + "[%.1f, %.1f], which its stone reaches into. The X rejection is "
+				% (lo.x - pad) + "[%.1f, %.1f], which its stone reaches into. The X rejection is "
 				% [x1 - 1.0, x1] + "reading the polyline's ENDPOINTS (x = %.1f), and a trunk "
 				% poly[0].x + "may run due north — so a chunk near the edge of the scan "
 				+ "window is told there is no deck over water there")
 	# ...and the control: a window this deck's stone really cannot reach must NOT
 	# return it, or B5 would pass on a source that rejects nothing at all.
-	var far: float = lo - reach - X_WINDOW_BULGE
+	var far: float = lo.x - pad - reach - X_WINDOW_BULGE
 	for row_v: Variant in terrain.field_bridges_near(far - 1.0, far):
 		if (row_v as Dictionary).get("bike", false):
 			_fail("B5's control failed: the same deck came back for a window %.0f m west "
-					% (lo - far) + "of its westernmost stone, so the source rejects nothing "
-					+ "and the assertion above holds for free")
+					% (lo.x - pad - far) + "of its westernmost stone, so the source rejects "
+					+ "nothing and the assertion above holds for free")
 	terrain.free()
 	Sentinel.done("bridge_x_window")
 

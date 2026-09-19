@@ -1572,6 +1572,12 @@ static func spawn_bike_path_in_chunk(terrain: Node3D, chunk_pos: Vector2i,
 	for share: Dictionary in shares:
 		var before: int = block_batch.size()
 		for row_v: Variant in (share["bridges"] as Array):
+			# REJECTED ON THE ROW'S OWN BOX FIRST. A trunk's box can reach a 10x10
+			# block of chunks and one deck is 40 m of that, so without this every
+			# chunk the ROUTE touches would mitre two rail lines and walk every slab
+			# of a bridge kilometres away. The box is the deck's stone, trim included.
+			if not ((row_v as Dictionary)["box"] as Rect2).intersects(chunk_rect):
+				continue
 			terrain.emit_field_bridge_in_chunk(row_v, chunk_pos, chunk_centre, rng,
 					block_batch, block_body, BIKE_STRIP_COLOR, false)
 		# A MARKER WHENEVER THIS CHUNK DREW ANYTHING FOR THIS TRUNK, DECKS INCLUDED —

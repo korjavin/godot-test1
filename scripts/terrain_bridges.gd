@@ -1056,7 +1056,7 @@ static func bike_trunk_bridges(terrain: Node3D, pts: PackedVector2Array,
 	@return: `{ "rows": Array, "refused": bool }`. `refused` is the LAKE and only
 	         the lake (see below); `rows` are in the shape `field_bridge_at()`
 	         returns, with `"bike": true`, `"k0"/"k1" = -1` (no station index) and
-	         `"x_lo"/"x_hi"`, the polyline's X extent.
+	         `"box"`, the Rect2 every piece of this deck's stone stands inside.
 
 	PURE, AND IT MEMOIZES NOTHING. `BikePaths.trunks()` calls this once per edge
 	while it builds its own memo and keeps the rows on the trunk row, so the memo
@@ -1072,11 +1072,17 @@ static func bike_trunk_bridges(terrain: Node3D, pts: PackedVector2Array,
 	every primitive under it — `_centreline_wet_metres`, `_field_bridge_ramp_dry`,
 	`_field_bridge_foot`, `_field_bridge_row_from` — is the shipped one.
 
-	SAMPLED AT FIELD_BRIDGE_PROBE_STEP, for the corridor's reason: a trunk station
-	is 5 m of ground and a river band can be narrower, so a walk that asked only at
-	the stations would step over the very crossing `BikePaths.segment_blocked`'s
-	half-step sample then refuses to paint. Detection is metre-fine; the DECK is
-	decimated back to `pitch`, so the stone is the same shape either way.
+	SAMPLED AT HALF THE STATION PITCH — the resolution the PAINT is skipped at, and
+	not the corridor's metre. A trunk station is 5 m of ground and a river band can
+	be narrower, so a walk that asked only at the stations would step straight over
+	the crossing `BikePaths.segment_blocked` then refuses to paint; but going FINER
+	than that predicate buys nothing either, because a band it steps over is one the
+	strip is already drawn across, and a deck under drawn paint is stone nobody
+	needed. So detection matches `segment_blocked`'s own half-step exactly, which is
+	also what keeps this affordable: MEASURED on the three CI seeds, the whole cold
+	`BikePaths.trunks()` walk is 8-11 ms with it and 8-17 ms at the corridor's 1 m,
+	paid once per run by whichever chunk streams in first. The DECK is decimated
+	back to `pitch` either way, so the stone is the same shape.
 
 	THE LAKE ABANDONS THE WHOLE TRUNK, and nothing else here does. Past
 	FIELD_BRIDGE_MAX_SPAN of walked water this is not a river the path crosses, it
@@ -1101,16 +1107,17 @@ static func bike_trunk_bridges(terrain: Node3D, pts: PackedVector2Array,
 		return out
 	# The polyline at the probe step. Each station's own point is kept, so the
 	# decimation below lands back on the stations wherever the stride divides.
+	var step: float = pitch * 0.5
 	var fine := PackedVector2Array()
 	for i in range(pts.size() - 1):
 		var a: Vector2 = pts[i]
 		var b: Vector2 = pts[i + 1]
-		var steps: int = maxi(1, int(a.distance_to(b) / FIELD_BRIDGE_PROBE_STEP))
+		var steps: int = maxi(1, int(a.distance_to(b) / step))
 		for s in steps:
 			fine.append(a.lerp(b, float(s) / float(steps)))
 	fine.append(pts[pts.size() - 1])
 
-	var stride: int = maxi(1, roundi(pitch / FIELD_BRIDGE_PROBE_STEP))
+	var stride: int = maxi(1, roundi(pitch / step))
 	var run: float = _field_bridge_run()
 	var rows: Array = []
 	var i: int = 0
@@ -1182,17 +1189,28 @@ static func bike_trunk_bridges(terrain: Node3D, pts: PackedVector2Array,
 			row["k0"] = -1     # a trunk has no station index
 			row["k1"] = -1
 			row["bike"] = true
-			# THE X EXTENT OVER THE WHOLE POLYLINE, computed once here because
-			# `field_bridges_near`'s endpoint test assumes MONOTONE X — true of the
-			# road (its X strictly increases) and of the approach corridor, and false
-			# of a trunk, which may run due north and come back.
-			var lo: float = INF
-			var hi: float = -INF
+			# THE BOUNDING BOX OVER THE WHOLE POLYLINE, computed once here and read
+			# by both of this row's consumers.
+			#
+			# ITS X HALF IS WHY IT EXISTS: `field_bridges_near`'s rejection tests
+			# `poly[0].x` and `poly[-1].x`, which is exactly right for the two older
+			# sources — the road's X strictly increases and so does the corridor's —
+			# and wrong for a trunk, which may run due north and come back, so its
+			# endpoints say nothing about how far west its stone reached.
+			#
+			# ITS Z HALF IS THE PER-CHUNK REJECT the emission site needs: a trunk's
+			# bounding box can reach a 10x10 block of chunks and its deck is 40 m of
+			# it, so without this every one of those chunks mitres two rail lines and
+			# walks every slab of a bridge that is kilometres away. Grown by
+			# `field_bridge_outer_reach`, because the parapet stands outboard of the
+			# walking line and the box has to hold the STONE, not the centreline.
+			var lo: Vector2 = Vector2(INF, INF)
+			var hi: Vector2 = Vector2(-INF, -INF)
 			for pt: Vector2 in (row["poly"] as PackedVector2Array):
-				lo = minf(lo, pt.x)
-				hi = maxf(hi, pt.x)
-			row["x_lo"] = lo
-			row["x_hi"] = hi
+				lo = lo.min(pt)
+				hi = hi.max(pt)
+			var pad: float = field_bridge_outer_reach(half)
+			row["box"] = Rect2(lo - Vector2(pad, pad), hi - lo + Vector2(pad, pad) * 2.0)
 			rows.append(row)
 		i = j + 1
 	out["rows"] = rows
@@ -1257,7 +1275,8 @@ static func field_bridges_near(terrain: Node3D, x0: float, x1: float) -> Array:
 		for trunk_v: Variant in terrain.bike_trunks():
 			for row_v: Variant in ((trunk_v as Dictionary)["bridges"] as Array):
 				var row: Dictionary = row_v
-				if float(row["x_hi"]) < x0 - reach or float(row["x_lo"]) > x1 + reach:
+				var box: Rect2 = row["box"]
+				if box.end.x < x0 - reach or box.position.x > x1 + reach:
 					continue
 				rows.append(row)
 	return rows
