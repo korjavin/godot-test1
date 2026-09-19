@@ -292,7 +292,14 @@ static func _field_bridge_dry_across(terrain: Node3D, centre: Vector2, dir: Vect
 	"""
 	var perp := Vector2(-dir.y, dir.x)
 	var lane := -half
-	while lane < half + FIELD_BRIDGE_PROBE_STEP * 0.5:
+	# THE BOUND IS A WHOLE STEP PAST THE EDGE, and the `minf` below is what makes
+	# that safe: it clamps the last lane back onto the far parapet. A HALF step
+	# instead only reaches the edge when `half` is a whole number of steps — true
+	# of the road (8.0 at 1.0) and false of the bike deck (1.2), whose +1.2 m edge
+	# was never probed at all, so a deck could be called dry across a section with
+	# water under one of its rails. The road's sample sequence is unchanged: at
+	# half = 8 the walk still ends on lane 8 either way.
+	while lane < half + FIELD_BRIDGE_PROBE_STEP:
 		var at := centre + perp * minf(lane, half)
 		if terrain.is_river_at(Vector3(at.x, 0.0, at.y)):
 			return false
@@ -1056,7 +1063,8 @@ static func bike_trunk_bridges(terrain: Node3D, pts: PackedVector2Array,
 	@return: `{ "rows": Array, "refused": bool }`. `refused` is the LAKE and only
 	         the lake (see below); `rows` are in the shape `field_bridge_at()`
 	         returns, with `"bike": true`, `"k0"/"k1" = -1` (no station index) and
-	         `"box"`, the Rect2 every piece of this deck's stone stands inside.
+	         `"box"` / `"rail"`, the Rect2 every piece of this deck's stone stands
+	         inside and the lateral offset of its outermost box CENTRE.
 
 	PURE, AND IT MEMOIZES NOTHING. `BikePaths.trunks()` calls this once per edge
 	while it builds its own memo and keeps the rows on the trunk row, so the memo
@@ -1183,6 +1191,14 @@ static func bike_trunk_bridges(terrain: Node3D, pts: PackedVector2Array,
 			# deck needs a middle (the row is dry margin, deck..., dry margin). This
 			# is the common case here, not a corner of one: the fine sampling exists
 			# precisely to find bands narrower than a station.
+			#
+			# THE MIDDLE POINT IS ALWAYS DISTINCT FROM THE FIRST, and it has to be:
+			# `_field_bridge_row_from` normalises `pts[1] - pts[0]`, so two equal
+			# points there would hand it a zero vector and every slab downstream a
+			# zero length. It cannot happen — the loop above is entered only when
+			# `fine[i + 1]` is wet, so the walk runs at least once and `j >= i + 2`
+			# before either growth widens it further. Integer division therefore
+			# lands on `i + 1` at worst.
 			deck = PackedVector2Array([fine[i], fine[(i + j) / 2], fine[j]])
 		var row: Dictionary = _field_bridge_row_from(terrain, deck, half)
 		if not row.is_empty():
@@ -1211,6 +1227,15 @@ static func bike_trunk_bridges(terrain: Node3D, pts: PackedVector2Array,
 				hi = hi.max(pt)
 			var pad: float = field_bridge_outer_reach(half)
 			row["box"] = Rect2(lo - Vector2(pad, pad), hi - lo + Vector2(pad, pad) * 2.0)
+			# ...and where this deck's OUTERMOST BOX CENTRE stands, which is the
+			# parapet's mitred rail line and nothing to do with `pad` above. The
+			# keep-out sweep one family along measures box centres, and `pad` is a
+			# rejection margin grown for the widest trim a ROAD deck can carry —
+			# using it there refused a quarter of the crossings over a 0.9 m
+			# difference that no box occupies. MEASURED over `bike_path_selfcheck`
+			# B2's eight seeds and 24 crossings: 11 decks with no lateral test at
+			# all, 10 with this rail offset, 8 with `pad`.
+			row["rail"] = half + FIELD_BRIDGE_PARAPET_WIDTH * 0.5
 			rows.append(row)
 		i = j + 1
 	out["rows"] = rows
@@ -1218,9 +1243,11 @@ static func bike_trunk_bridges(terrain: Node3D, pts: PackedVector2Array,
 
 
 static func _approach_wet(terrain: Node3D, pts: PackedVector2Array, i: int) -> bool:
-	"""Is the corridor in the water at sample `i`? THE CENTRELINE, for
-	_field_bridge_wet's reason — the samples are already a metre apart, so one
-	point each is the whole stretch."""
+	"""Is this polyline in the water at sample `i`? THE CENTRELINE, for
+	_field_bridge_wet's reason — the caller has already resampled finely enough
+	that one point each is the whole stretch, which is a metre for the approach
+	corridor and half a station for a bike trunk (`bike_trunk_bridges` says why the
+	two differ)."""
 	return terrain.is_river_at(Vector3(pts[i].x, 0.0, pts[i].y))
 
 
@@ -1270,7 +1297,7 @@ static func field_bridges_near(terrain: Node3D, x0: float, x1: float) -> Array:
 	# REJECTED ON THE POLYLINE'S OWN X EXTENT, not on its endpoints. The two sources
 	# above are monotone in X by construction; a trunk runs between two anchors and
 	# may head due north, so `poly[0]` and `poly[-1]` say nothing about how far west
-	# it reached. `x_lo` / `x_hi` are computed once when the row is built.
+	# it reached. The box is computed once, over every point, when the row is built.
 	if terrain.spawn_bike_paths:
 		for trunk_v: Variant in terrain.bike_trunks():
 			for row_v: Variant in ((trunk_v as Dictionary)["bridges"] as Array):

@@ -11,6 +11,11 @@ extends SceneTree
 ## Six, counting T3a and T3b separately, is the number every statement in this file
 ## uses. They are listed after check 11.
 ##
+## ...and child `.3` adds THE BRIDGE SET, five statements in three calls: B1, B3 and
+## B4 share `_check_trunk_bridges` because all three need the same drawn deck, B5 is
+## its own unit assertion on the window scan, and B2 is its own sweep. They are
+## listed after T4.
+##
 ## `scripts/terrain_bike_paths.gd`'s banner carries the design; this file is the
 ## part of it a future edit cannot slip past. Six checks, every one of them an
 ## effect measurement WITH A CONTROL — the house rule in this suite:
@@ -155,6 +160,32 @@ extends SceneTree
 ##   T4. THE MEMO. Its station count is printed and capped, it regenerates
 ##      identically after `_drop_seeded_memos()`, and it CHANGES after
 ##      `set_run_seed()` — the half that fails if the drop list ever loses it.
+##   B1. THE DECK, TIED TO THE RIVER SPAN THAT PRODUCED IT — this child's named
+##      world tie. A box really in the chunk's batch, at a slab midpoint of the
+##      row, over a point where `is_river_at` is TRUE, at this family's own width,
+##      with a walking surface `field_bridge_surface_y` agrees about, and a MARKER
+##      beside it so check 1 can still slice the family out of the CUBE bucket. It
+##      fails loudly if the seed grew no deck at all.
+##   B2. NO PAINT ON OPEN WATER, swept over every truncation seed and tier-blind
+##      like T5. It prints how many river crossings the trunks make and how many
+##      carry a deck, and fails on zero of either — a sweep with no crossing in it
+##      asserts nothing, and a sweep where every crossing is refused is what this
+##      child looks like when it is dead.
+##   B3. THE WADE SUPPRESSION. A body ON a deck is neither wading nor pushed by
+##      the deep channel, while the water under it is real — the control without
+##      which B3 would pass on dry ground. The mechanism is the WADE_SURFACE_MAX
+##      height gate, asserted directly against FIELD_BRIDGE_TOP, and not
+##      `_deep_channel_ford`, which is only reached below that gate and answers
+##      about the ROAD's stations.
+##   B4. THE KILL SWITCH, over a deck's own window: with `spawn_bike_paths` off,
+##      `field_bridges_near()` returns exactly what it returns with the flag on
+##      minus this family's rows — so the flag turns off the QUERIES as well as
+##      the boxes. It fails if the window it compared held no bike deck.
+##   B5. THE WINDOW SCAN REJECTS ON A ROW'S WHOLE EXTENT, not on its endpoints:
+##      the two older sources are monotone in X and a trunk may run due north. A
+##      unit assertion on a deck built to bulge west of its own ends, because
+##      whether a seed grows one is the population question that would make a
+##      behavioural check vacuous.
 
 ## The end-of-check sentinel — see `scripts/selfcheck_sentinel.gd` for why every
 ## check stamps itself and the report site never prints SELFCHECK OK itself.
@@ -2513,11 +2544,7 @@ func _check_trunk_keep_outs(terrain_script: GDScript) -> void:
 
 
 # ============================================================================
-# T4 — what the trunk memo costs, and that it is really seeded
-# ============================================================================
-
-# ============================================================================
-# B1-B4 — THE TRUNK BRIDGES (child `godot-test1-pnvb.3`)
+# B1 / B3 / B4 — THE TRUNK BRIDGES (child `godot-test1-pnvb.3`)
 # ============================================================================
 
 func _check_trunk_bridges(terrain_script: GDScript) -> void:
@@ -2671,7 +2698,7 @@ func _check_trunk_bridges(terrain_script: GDScript) -> void:
 						% mid + "as wading either, so the two assertions above hold for dry "
 						+ "ground and prove nothing")
 			# --- B4. The kill switch, over this deck's own window.
-			_check_bridge_kill_switch(terrain_script, terrain, mid)
+			_bridge_kill_switch(terrain_script, terrain, mid)
 			tied += 1
 	if decks == 0:
 		_fail("B1 found no trunk bridge at all on seed %d, so this bead's named world tie "
@@ -2688,7 +2715,7 @@ func _check_trunk_bridges(terrain_script: GDScript) -> void:
 	Sentinel.done("trunk_bridges")
 
 
-func _check_bridge_kill_switch(terrain_script: GDScript, on: Node3D, at: Vector2) -> void:
+func _bridge_kill_switch(terrain_script: GDScript, on: Node3D, at: Vector2) -> void:
 	"""
 	B4 — `field_bridges_near()` over one deck's window, with the family off.
 
@@ -2739,7 +2766,7 @@ func _check_bridge_x_window(terrain_script: GDScript) -> void:
 	tests `poly[0].x` and `poly[-1].x` and that is exactly right for them. A TRUNK
 	runs between two anchors and may head due north and come back, so its endpoints
 	say nothing about how far west or east its stone reached. The row therefore
-	carries `x_lo` / `x_hi`, computed once over every point when it is built.
+	carries a `box`, computed once over every point when it is built.
 
 	THE ROW CARRIES A `box` AND THE SCAN REJECTS ON IT. That box is also the
 	per-chunk reject at the emission site, so getting it wrong is two defects and

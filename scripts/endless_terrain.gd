@@ -4623,7 +4623,7 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 	CoinRoad.spawn_coins_in_chunk(self, chunk_pos, parent_chunk, obstacles)
 
 # ============================================================================
-# FIELD BRIDGES — eight one-line forwarders into `FieldBridges` (bd godot-test1-ftn.28)
+# FIELD BRIDGES — ten one-line forwarders into `FieldBridges` (bd godot-test1-ftn.28)
 # ============================================================================
 #
 # The family itself is `scripts/terrain_bridges.gd` now; read that file's

@@ -186,10 +186,16 @@ extends RefCounted
 ##     STEERS AROUND IT (`_trunk_skirt`), and if it cannot clear inside
 ##     `TRUNK_DETOUR_MAX` stations it is ABANDONED WHOLE. Never truncated: half a
 ##     trunk is the litter this epic exists to remove.
-##   * THE RIVERS DO NOT BLOCK ANY MORE. `.3` bridges them. Until it lands, a
-##     segment over water is simply NOT DRAWN — a visible gap in the paint. That
-##     gap is a PLACEHOLDER WITH A NAMED SUCCESSOR, not an oversight, and the walk
-##     itself is unaffected, so `.3` changes only what is drawn.
+##   * THE RIVERS DO NOT BLOCK ANY MORE, AND `.3` HAS LANDED: a crossing is
+##     carried on a real field DECK, built by `FieldBridges._field_bridge_row_from`
+##     through the terrain's forwarder and emitted at this family's own single
+##     emission site. A segment over water is still never painted AT GROUND LEVEL —
+##     the deck is the paint there — and where a crossing is refused (no dry
+##     abutment, or a keep-out) the gap `.2` shipped simply stays. The one thing
+##     that can still stop a whole trunk is a LAKE: past
+##     `FieldBridges.FIELD_BRIDGE_MAX_SPAN` of walked water the edge is abandoned,
+##     reported as "lake" by `trunk_abandoned`. Nothing softlocks — a bike path is
+##     never anyone's only route.
 ##   * THE COIN ROAD is where the WALK and the PAINT part company, and `.4` owns
 ##     what is left. A trunk that meets the swath MID-SPAN — away from both of its
 ##     own anchors — is still abandoned whole, and `bike_path_selfcheck` check 3
@@ -945,11 +951,16 @@ static func trunks(terrain: Node3D) -> Array[Dictionary]:
 	whatever the memo's shape. See `_bike_trunk_cache`'s declaration.
 
 	WHAT IT COSTS, MEASURED on the three CI seeds rather than estimated: the COLD
-	call is 6.3 ms — 17 to 32 edges walked at 5 m a station, each station asking
-	the road's lateral distance, the landmark table and eleven waypoints — and it
-	is paid ONCE per run, by whichever chunk streams in first. Every chunk after
-	it pays a dictionary hit and tens of `Rect2.intersects`: the whole of
-	`spawn_bike_path_in_chunk`, BOTH TIERS, measures 0.032 ms per corridor chunk.
+	call is 6.8 to 12.0 ms — 17 to 32 edges walked at 5 m a station, each station
+	asking the road's lateral distance, the landmark table and eleven waypoints,
+	and then each surviving route walked again at half that pitch against the river
+	field for child `.3`'s bridge scan — and it is paid ONCE per run, by whichever
+	chunk streams in first. (It was 6.3 ms before `.3`, and 8 to 17 ms when that
+	scan sampled at the approach corridor's metre; `bike_trunk_bridges` carries the
+	reasoning for the pitch it settled on.) Every chunk after it pays a dictionary
+	hit and tens of `Rect2.intersects`: the whole of `spawn_bike_path_in_chunk`,
+	BOTH TIERS, measures 0.065-0.072 ms per corridor chunk and 0.376 ms on one
+	carrying a deck, where it mitres two rail lines and walks the slabs.
 	`bike_path_selfcheck` check T4 prints the memo's size every run.
 
 	COSTS NO DRAW. See the banner: the graph is a dispatch and the walk is a hash.
@@ -981,13 +992,24 @@ static func trunks(terrain: Node3D) -> Array[Dictionary]:
 				_trunk_poly(route), BIKE_PATH_WIDTH * 0.5, BIKE_STATION_SPACING)
 		if bool(water["refused"]):
 			continue
+		var decks: Array = _drawable_decks(terrain, water["rows"], waypoints)
+		# THE ROUTE'S BOX HAS TO HOLD THE DECKS TOO. A deck's ramp foot stands a
+		# whole ramp run plus its push budget PAST the last station it was built
+		# from, and the box is what the per-chunk lookup rejects on — so a chunk
+		# holding nothing but that ramp would reject the trunk before the deck pass
+		# ever ran, and the ramp would silently never be drawn. Merging is free:
+		# the box is a rejection filter, so a wider one costs a few `Rect2` tests
+		# and the midpoint rule still decides who draws what.
+		var box: Rect2 = _trunk_box(route)
+		for row_v: Variant in decks:
+			box = box.merge((row_v as Dictionary)["box"] as Rect2)
 		out.append({
 			"id": int(edge["id"]),
 			"stations": route,
-			"box": _trunk_box(route),
+			"box": box,
 			"from": route[0]["pos"],
 			"to": route[-1]["pos"],
-			"bridges": _drawable_decks(terrain, water["rows"], waypoints),
+			"bridges": decks,
 		})
 	cache["trunks"] = out
 	return out
@@ -1025,10 +1047,32 @@ static func _drawable_decks(terrain: Node3D, rows: Array,
 	var out: Array = []
 	for row_v: Variant in rows:
 		var row: Dictionary = row_v
+		# THE STONE, NOT THE WALKING LINE. A parapet is cantilevered `row["rail"]`
+		# outboard of the centreline, and the LANDMARK keep-out is a chunk boundary
+		# with no margin at all — so a deck point a metre outside one puts its rail
+		# inside it, and T5 sweeps box centres. The four corners of the rail square
+		# are enough for that: a chunk boundary is axis-aligned, so the square's
+		# extreme point in the direction that crosses it is a corner. The other
+		# three keep-outs carry margins well past it (5 m at the tower, 3 m at a
+		# circle, 14 m at the road) and were never in doubt.
+		#
+		# IT IS THE BOX CENTRE AND NOT THE STONE'S OUTER FACE, which is the same
+		# ruling the strip already ships under: a box may overhang a boundary the
+		# way any box overhangs a chunk seam, and what may not stand inside one is
+		# a thing. MEASURED over B2's eight seeds and 24 crossings: 11 decks with no
+		# lateral test at all, 10 with this one, and 8 when the offset used was the
+		# stone's outer reach instead — a quarter of the world's crossings for
+		# 0.25 m of parapet edge, which is a trade nobody would make. The 1 deck
+		# this test does cost is a crossing whose rail really did reach a keep-out.
+		var pad: float = row["rail"]
 		var clear: bool = true
 		for pt: Vector2 in (row["poly"] as PackedVector2Array):
-			if trunk_keep_out(terrain, pt, waypoints):
-				clear = false
+			for corner: Vector2 in [Vector2.ZERO, Vector2(pad, pad), Vector2(pad, -pad),
+					Vector2(-pad, pad), Vector2(-pad, -pad)]:
+				if trunk_keep_out(terrain, pt + corner, waypoints):
+					clear = false
+					break
+			if not clear:
 				break
 		if clear:
 			out.append(row)
