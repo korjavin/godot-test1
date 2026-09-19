@@ -11,10 +11,10 @@ extends SceneTree
 ## Six, counting T3a and T3b separately, is the number every statement in this file
 ## uses. They are listed after check 11.
 ##
-## ...and child `.3` adds THE BRIDGE SET, five statements in three calls: B1, B3 and
-## B4 share `_check_trunk_bridges` because all three need the same drawn deck, B5 is
-## its own unit assertion on the window scan, and B2 is its own sweep. They are
-## listed after T4.
+## ...and child `.3` adds THE BRIDGE SET, six statements in four calls: B1 (with
+## B1b), B3 and B4 share `_check_trunk_bridges` because they all need the same drawn
+## deck, B5 and B6 are unit assertions on the two pieces no seed reliably exercises,
+## and B2 (with B2b) is its own sweep. They are listed after T4.
 ##
 ## `scripts/terrain_bike_paths.gd`'s banner carries the design; this file is the
 ## part of it a future edit cannot slip past. Six checks, every one of them an
@@ -181,6 +181,10 @@ extends SceneTree
 ##      `field_bridges_near()` returns exactly what it returns with the flag on
 ##      minus this family's rows — so the flag turns off the QUERIES as well as
 ##      the boxes. It fails if the window it compared held no bike deck.
+##   B6. THE DECK-WIDE WET PROBE REACHES ITS FAR EDGE at a width the probe step
+##      does not divide. A constructed section with a river exactly on its far
+##      lane, because the defect only shows where the water starts inside the last
+##      step and no seed reliably puts a ramp there.
 ##   B5. THE WINDOW SCAN REJECTS ON A ROW'S WHOLE EXTENT, not on its endpoints:
 ##      the two older sources are monotone in X and a trunk may run due north. A
 ##      unit assertion on a deck built to bulge west of its own ends, because
@@ -411,6 +415,18 @@ const X_WINDOW_BULGE: float = 60.0
 ## and the defect this catches is exactly a lane the builder's walk never reached.
 const RAMP_PROBE: float = 0.25
 
+## Where B6 looks for a river EDGE — a band of the corridor either side of the
+## road, which every seed's rivers cross. It is a search space and not a claim
+## about a world: the check fails if it finds nothing in here, which is what makes
+## retuning it the right response rather than deleting the assertion.
+const PROBE_SCAN_RECT: Rect2 = Rect2(-300.0, -200.0, 900.0, 400.0)
+## Its pitch. Fine in Z because it is hunting a band edge, coarse in X because one
+## river crossing anywhere in the rect is all it needs.
+const PROBE_SCAN_STEP: float = 0.5
+const PROBE_SCAN_STEP_X: float = 7.0
+## A hair, to keep the lane walk below `half` off the far edge itself.
+const EDGE_EPS_LOCAL: float = 0.001
+
 ## The edge id T3a's synthetic route wears. It replaces the memo whole, so it
 ## cannot collide with anything — but it is deliberately not 0 either, so a marker
 ## carrying it can never be mistaken for a real trunk in a log.
@@ -450,11 +466,13 @@ func _run() -> void:
 	_check_trunk_intersections(terrain_script)
 	_check_trunk_keep_outs(terrain_script)
 	_check_trunk_memo(terrain_script)
-	# --- CHILD `.3`, the bridges. FIVE STATEMENTS IN THREE CALLS: B1, B3 and B4 are
-	# one call because all three need the same drawn deck, B5 is the window scan's
-	# own unit assertion, and B2 is its own sweep.
+	# --- CHILD `.3`, the bridges. SIX STATEMENTS IN FOUR CALLS: B1 (with B1b), B3
+	# and B4 are one call because they all need the same drawn deck, B5 and B6 are
+	# the two unit assertions on the pieces no seed reliably exercises, and B2 (with
+	# B2b) is its own sweep.
 	_check_trunk_bridges(terrain_script)
 	_check_bridge_x_window(terrain_script)
+	_check_deck_probe_width(terrain_script)
 	_check_no_paint_on_water(terrain_script)
 	# AWAITED, and it is the only one that is: a chunk unloads through `queue_free`,
 	# so the check has to let a frame pass before it can ask whether the Timer is
@@ -2911,6 +2929,72 @@ func _check_bridge_x_window(terrain_script: GDScript) -> void:
 					+ "nothing and the assertion above holds for free")
 	terrain.free()
 	Sentinel.done("bridge_x_window")
+
+
+func _check_deck_probe_width(terrain_script: GDScript) -> void:
+	"""
+	B6 — THE DECK-WIDE WET PROBE REACHES ITS FAR EDGE, at a width that is not a
+	whole number of probe steps.
+
+	`FieldBridges._field_bridge_dry_across` walks lanes from `-half` outward at
+	`FIELD_BRIDGE_PROBE_STEP` and clamps the last one back onto `+half`. Whether
+	that clamp is ever reached depends on the loop bound, and the bound was written
+	for a width the step divides: the road's 8.0 at 1.0 lands a lane exactly on the
+	edge, and this family's 1.2 does not — its +1.2 m edge was never sampled at all,
+	so a deck could be called dry across a section with water under one rail.
+
+	IT IS A UNIT ASSERTION ON A CONSTRUCTED SECTION, for B5's reason. The defect
+	only shows where the water starts INSIDE the last step, and whether any seed
+	grows a ramp positioned like that is exactly the population question that makes
+	a behavioural check vacuous — B2b walks every ramp rectangle in eight seeds and
+	stayed green with the bound reverted (measured, mutation M11). So the section is
+	found rather than waited for: a wet point with every lane below it dry, which is
+	a river's own EDGE, and the probe centred half a deck short of it.
+
+	The search itself is the non-vacuity guard — it fails if the world it scanned
+	held no river edge at all, because then nothing was asked.
+	"""
+	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
+	var half: float = BikePaths.BIKE_PATH_WIDTH * 0.5
+	# `_field_bridge_dry_across` takes its normal as (-dir.y, dir.x), so a section
+	# running east samples along +Z and the far edge is the one at +half.
+	var dir := Vector2.RIGHT
+	var tested := false
+	var x: float = PROBE_SCAN_RECT.position.x
+	while x < PROBE_SCAN_RECT.end.x and not tested:
+		var z: float = PROBE_SCAN_RECT.position.y
+		while z < PROBE_SCAN_RECT.end.y:
+			z += PROBE_SCAN_STEP
+			var edge := Vector2(x, z)
+			if not terrain.is_river_at(Vector3(edge.x, 0.0, edge.y)):
+				continue
+			# The probe centred so that `edge` is exactly its far lane. Every lane
+			# BELOW that must be dry, or both bounds answer "wet" and the case
+			# discriminates nothing.
+			var centre: Vector2 = edge - Vector2(0.0, half)
+			var clean: bool = true
+			var lane: float = -half
+			while lane < half - EDGE_EPS_LOCAL:
+				if terrain.is_river_at(Vector3(centre.x, 0.0, centre.y + lane)):
+					clean = false
+					break
+				lane += FieldBridges.FIELD_BRIDGE_PROBE_STEP
+			if not clean:
+				continue
+			tested = true
+			if FieldBridges._field_bridge_dry_across(terrain, centre, dir, half):
+				_fail("B6: a %.1f m section centred at %s reads as DRY ALL THE WAY ACROSS, "
+						% [half * 2.0, centre] + "and the river starts at %s — its own far "
+						% edge + "edge. The lane walk is stopping short of `half`, so a deck "
+						+ "of this width can be built with water under one of its rails")
+			break
+		x += PROBE_SCAN_STEP_X
+	if not tested:
+		_fail("B6 scanned %s and found no river edge with dry ground a deck's width behind "
+				% PROBE_SCAN_RECT + "it, so the probe's far lane was never once exercised. "
+				+ "Retune PROBE_SCAN_RECT against the current seed")
+	terrain.free()
+	Sentinel.done("deck_probe_width")
 
 
 func _check_no_paint_on_water(terrain_script: GDScript) -> void:
