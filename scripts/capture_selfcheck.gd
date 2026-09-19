@@ -3852,8 +3852,18 @@ func _check_kimchi_lures_then_scatters() -> void:
 		if not is_instance_valid(subject[0]):
 			_fail("the Kimchi Offering freed %s — the jar lures and scatters,"
 				% subject[1] + " it never kills (ruling 3)")
-		elif (subject[0] as Node).is_queued_for_deletion():
+			continue
+		if (subject[0] as Node).is_queued_for_deletion():
 			_fail("the Kimchi Offering queued %s for deletion" % subject[1])
+		# THE GROUP IS WHERE A DEATH IS VISIBLE SYNCHRONOUSLY. `squash_and_die()`
+		# frees the body behind a tween, so `is_instance_valid` is still true the
+		# frame it is called — it leaves the "crocodile" group FIRST, and that is
+		# the read that catches a kill without waiting a second for the corpse.
+		# (Measured: the kill mutation passed the two tests above and only the
+		# source grep caught it, which is one half of the claim standing alone.)
+		elif not (subject[0] as Node).is_in_group("crocodile"):
+			_fail("the Kimchi Offering took %s out of the crocodile group — that is"
+				% subject[1] + " the first thing a death does here")
 
 	# --- ...and neither the arm nor the jar names a kill, by name. ---
 	# Check 10b's spelling test, over BOTH files: the arm chooses the spot and

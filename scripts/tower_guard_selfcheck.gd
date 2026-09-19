@@ -1342,8 +1342,11 @@ func _check_a_kimchi_jar_routes_a_guard() -> void:
 				_fail("errand waypoint %d is %s; the plan's corner is %s"
 						% [i, str(path[i]), str(interior.global_position + want[i])])
 				break
+	# GUARDED, because a runtime error aborts the FUNCTION it lands in: with no
+	# errand at all `path` is empty, and reading [0] here would take claims (b)
+	# and (c) down with it — a check that dies halfway simply stops asserting.
 	var aim: Vector3 = guard.get("investigate_target")
-	if aim.distance_to(path[0]) > 0.01:
+	if not path.is_empty() and aim.distance_to(path[0]) > 0.01:
 		_fail("the guard is walking at %s, which is not its own first corner %s"
 				% [str(aim), str(path[0])])
 
