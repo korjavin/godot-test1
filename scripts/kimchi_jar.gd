@@ -249,11 +249,11 @@ func _burst() -> void:
 	upgrade is a shared static on the AI script itself, and it is a refactor, not
 	this bead.
 	"""
+	if not is_inside_tree():
+		return
 	# Parented to the jar's PARENT and not to the jar, `_spawn_ability_effect()`'s
 	# rule: the last wave's delay plus lifetime outlasts `LINGER`, so a wave hung
 	# on the jar would be cut off mid-expansion when the jar frees itself.
-	if not is_inside_tree():
-		return
 	var here: Vector3 = global_position
 	var parent: Node = get_parent()
 	for i in range(3):
