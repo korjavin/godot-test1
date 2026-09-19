@@ -142,9 +142,12 @@ const ROWS: Array = [
 	["R", "Switch hero: Windman, Primm, Teibi, Phoboman.", Mode.DESKTOP],
 	["1 2 3 4", "Jump straight to one hero — the numbers on the portraits.", Mode.DESKTOP],
 	["F", "Special ability: Air Rush, Phase Step, Resize or Stink Wave.", Mode.DESKTOP],
-	# All four heroes have one now (epic godot-test1-0mr0 complete), so the row
-	# stops naming them: four names plus their German is a line nothing fits.
-	["G", "Second skill, once learned in the skill tree (K) — one per hero.", Mode.DESKTOP],
+	# EVERY NAME, and `help_selfcheck` is why: it walks `ABILITY2_NAME` and
+	# demands this row contain each value, so a fourth hero's skill cannot land
+	# without the card learning it. Shortened around the list rather than at the
+	# expense of it — the parenthetical is what gave four names and their German
+	# room to fit (bead godot-test1-0mr0.5).
+	["G", "Second skill (learn it in the skill tree, K): Air Sight, Twin Flash, Shrink Ray, Kimchi Offering.", Mode.DESKTOP],
 	["C", "Cycle the view: over the shoulder, eyes, front.", Mode.DESKTOP],
 	["V", "Voice mic on/off in a multiplayer room (hold to talk in push-to-talk mode).", Mode.DESKTOP],
 

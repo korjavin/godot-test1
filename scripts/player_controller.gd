@@ -4841,13 +4841,26 @@ func get_ability_block_reason(slot: int = 0) -> String:
 			   at a time: a second would double the lure radius for free, and the
 			   two bursts would be a scatter and then a second scatter of the
 			   bodies the first one sent running. The gate lifts the moment the
-			   jar frees itself, so it is at most six seconds of charged-but-
-			   gated dial — and `ABILITY2_COOLDOWN["phoboman"]` is longer than
-			   that anyway, so in normal play nobody ever sees it. It exists for
-			   the ONE case where the cooldown cannot answer: a respawn or a
-			   character switch zeroes nothing about the jar, and a hero who
-			   comes back to a still-brewing pot is refused by state rather than
-			   by a clock somebody reset.
+			   jar frees itself, at `KimchiJar.FERMENT + LINGER` = 6 s.
+
+			   IT IS THE INVARIANT, NOT A SECOND COOLDOWN, and it is written as
+			   STATE for `"SEEING"`'s reason one hero along: "is a jar still out"
+			   is a question only the jar can answer, and a weakref answers null
+			   the moment it frees itself. `ABILITY2_COOLDOWN["phoboman"]` is
+			   14 s against that 6 s life, so in ordinary play the cooldown
+			   always refuses first and nobody sees this reason on the dial.
+
+			   WHAT IT DELIBERATELY DOES NOT COVER, said out loud because the
+			   sibling comment in `_reset_ability_states()` is what causes it: a
+			   switch, a respawn or a capture CLEARS this hero's claim without
+			   freeing the jar (the pot is a world object and its burst still
+			   comes), so a hero who comes back to a still-brewing jar is not
+			   refused by this gate. Nothing but the cooldown stands there — and
+			   the cooldown survives all three, because `ability2_cooldowns` is
+			   only ever refilled by `restart_game()`, `join_at()` and the prison
+			   bench, each of which is a new run or a new world. Two pots at once
+			   is two bursts; it is bounded, and it is what "the next Phoboman
+			   may place one" costs.
 	  "SEEING" — Windman's Air Sight (slot 1) is already running. The look
 			   outlives a skilled hero's cooldown, so without this the press
 			   would refresh it forever and the walls would never come back.
