@@ -50,6 +50,56 @@ extends SceneTree
 ##   6. FOOTPRINTS. Every pole appends exactly one `{climbable: false}` footprint
 ##      with the post's own radius and top; the strip and the dashes append
 ##      nothing at all. Non-vacuous: the sweep must find poles.
+##
+## ...and child `.2` — the four authored signs and the traffic head — adds six:
+## 7, 8, 7c, 9, 10 and 11. That is FIVE functions in `_run()`, because 7 and 8 share
+## one sweep; the count is the only cross-check on the list below, so keep both
+## halves of it true.
+##
+##   7 + 8. WHAT STANDS ON THE POLES, in one sweep because they share it. Every
+##      pole carries EXACTLY ONE top; every top is a legal kind; all four sign
+##      kinds AND the signal head turn up across the seeds, because a kind that
+##      can never be drawn is a dead branch and a broken dispatch looks exactly
+##      like one. And every box this family emits is still a `BoxKind.CUBE` with
+##      the signs and the heads present, which is `batch_selfcheck` check 5's
+##      `KIND_CAP_BY_NAME` table needing no row changed, asserted where the boxes
+##      are rather than promised in a comment.
+##   7c. AND WHERE THAT TOP ACTUALLY STANDS. Every box a pole carries within the
+##      post's own height must be IN FRONT of the post, measured off the emitted
+##      transforms. Round 1 of the review found the sign plate built at the post's
+##      own centre, inside a 0.16 m box — a grey bar down the middle of every sign
+##      and CROSSING's centre pip swallowed whole — and NOTHING above could see it:
+##      7 and 8 count, 9 indexes, 1 and 5 compare a build to a build. It is `.1`'s
+##      25 m bug in miniature, and this is the assertion shaped like the one that
+##      caught that. Its control is the predicate run on the post itself.
+##   9. THE INDEX, AND IT IS THE REASON THIS BEAD WAS NOT MECHANICAL. A lamp's
+##      MultiMesh instance index is its position among the CUBE ENTRIES ONLY —
+##      `_build_block_multimesh` buckets by kind — so the index the marker records
+##      is not its index in `block_batch` and an index one out still writes a
+##      perfectly valid box. MULTIMESH INSTANCE DATA IS WRITE-ONLY UNDER THE
+##      HEADLESS DUMMY RENDERER (measured — see that check), so "read the colour
+##      back" is not available and would have read black at every index and passed
+##      with any base. Instead the recorded index is compared against what the
+##      SHIPPED `_build_block_multimesh` does with the very batch the spawner
+##      wrote, on a fixture that holds non-CUBE boxes too; its control is that a
+##      lens's batch index and its bucket index must be DIFFERENT NUMBERS, or the
+##      check could not tell the two apart. Then the head's own Timer is fired
+##      through its `timeout` signal on a real chunk, which steps the phase only if
+##      the connection, the Timer -> bucket walk and the index range all hold — and
+##      its control is a deliberately out-of-range index, which must not step.
+##  10. THE CYCLE IS NOT ON THE SEED. Two terrains on the same seed build the head
+##      geometry byte-identically (so nothing drawn depends on the `randomize()`d
+##      clock), and the plant/tick/write functions are read AS TEXT: the plant
+##      randomizes and never touches `run_seed`, the geometry never randomizes, and
+##      the write linearises. `scarcity_selfcheck` check 3's shape, and the only
+##      form of those three assertions a future edit cannot slip past.
+##  11. AN UNLOADED CHUNK LEAVES NO TIMER BEHIND. The cycle Timer hangs off this
+##      family's marker rather than off the chunk (a deliberate departure from the
+##      bead — it keeps the Timer out of the child list check 1 compares), which is
+##      only safe if it is still freed with the chunk. Measured through the shipped
+##      `remove_chunk()`, which is `queue_free`, so this is the one check in the
+##      file that awaits a frame. Its control is a second chunk left loaded, whose
+##      Timer must still be alive at the end.
 
 ## The end-of-check sentinel — see `scripts/selfcheck_sentinel.gd` for why every
 ## check stamps itself and the report site never prints SELFCHECK OK itself.
@@ -118,6 +168,81 @@ const STRIP_TOLERANCE: float = 0.01
 ## `SCARCITY_PLAIN_DISTANCE` (4 km), where `scarcity_at()` is exactly 0.
 const FAR_CHUNK_Y: int = 130
 
+## Checks 7-8 sweep THREE seeds, so their square is smaller than `SWEEP_HALF`'s —
+## 19x19 chunks per seed is a few hundred poles, which is two orders of magnitude
+## more than the five-kind histogram needs and still a fraction of a second. The
+## histogram is the assertion; the square is only its cost.
+const TOP_SWEEP_HALF: int = 9
+
+## How many boxes check 7c will read as a pole's top. `_draw_path_share` emits the
+## post and then exactly one top, and the largest top is four boxes (a head plus its
+## three lenses; CROSSING is a plate plus three pips). The run also stops at the next
+## post or at ground level, so this is a bound and not a count — and check 7c asserts
+## the bound still covers `SIGN_KINDS`, because a top that outgrew it would lose its
+## last box out of the measurement in silence.
+const TOP_BOXES_MAX: int = 4
+
+## Below this height, in metres, a box is this family's PAINT — the strip sits at 0.03
+## and a dash at 0.075, so anything under it is the next segment's rather than the
+## pole's top. It is what ends the run when a pole's top is shorter than
+## `TOP_BOXES_MAX`.
+const GROUND_BAND: float = 0.2
+
+## Float slack on check 7c's clearance comparison, metres. The two sides are computed
+## from the same constants a few calls apart, so this is precision and not an
+## allowance: a real overlap is centimetres, not microns.
+const CLEARANCE_TOLERANCE: float = 0.0005
+
+## Check 9's fixture prefix: the kinds a real chunk already holds by the time this
+## family runs — a mast, a rock, a wedged roof. THREE of the seven are CUBEs, so a
+## bike-path box's CUBE-bucket index and its batch index are DIFFERENT NUMBERS,
+## which is the only reason that check can tell one from the other. Check 9 (b)
+## fails loudly if this stops being true.
+const PREFIX_KINDS: Array[int] = [
+	ChunkBatch.BoxKind.CYLINDER, ChunkBatch.BoxKind.CUBE, ChunkBatch.BoxKind.ROCK,
+	ChunkBatch.BoxKind.CUBE, ChunkBatch.BoxKind.CYLINDER, ChunkBatch.BoxKind.WEDGE,
+	ChunkBatch.BoxKind.CUBE,
+]
+
+## How many chunks check 9 will build for real looking for a head that survived
+## the pole's footprint skip. A bare-spawner hit is only a candidate — see that
+## check — and at the shipped mix most candidates do survive, so this is a bound
+## on a search that normally ends on its first try.
+const LAMP_CANDIDATES: int = 12
+
+## Check 10b reads this family AS TEXT.
+const FAMILY_SCRIPT: String = "res://scripts/terrain_bike_paths.gd"
+
+## `[function, needle, must contain, why]`. Each row is a rule that a behavioural
+## check can only speak for the world it sampled, so it is read out of the source
+## instead — `scarcity_selfcheck` check 3's form. The needles are deliberately the
+## CODE spelling and not the prose one (`rng.randomize()`, not `randomize()`), so a
+## rule cannot be satisfied by the docstring that explains it.
+const TEXT_RULES: Array[Array] = [
+	["_plant_signal_timers", "rng.randomize()", true,
+		"the traffic light's phase and dwell are AMBIENCE and CLAUDE.md puts ambience "
+		+ "outside the determinism contract on a randomize()d RNG. A seeded clock would "
+		+ "put two peers' lamps in lockstep, which is a promise this game does not make "
+		+ "and the wire does not carry"],
+	["_plant_signal_timers", "run_seed", false,
+		"the cycle must never read the seed — see the rule above. Placement is seeded; "
+		+ "the clock is not"],
+	["_build_signal_head", "rng.randomize()", false,
+		"the head's GEOMETRY is the seed's business and is drawn from the spawner's "
+		+ "fixed-seed generator. Randomising it would make the same chunk differ between "
+		+ "two players, which is the one thing the world contract forbids"],
+	["write_lamps", ".srgb_to_linear())", true,
+		"create_box stores its colour already linearised (chunk_batch.gd's COLOUR SPACE "
+		+ "paragraph), so a raw Color written into the MultiMesh renders one lamp "
+		+ "brighter than every other box in the world, on desktop and on web"],
+]
+
+## How far two colours may differ and still count as the same. A float-comparison
+## tolerance and not a design allowance: both sides of every comparison in check 9
+## run the same `srgb_to_linear()` on the same constant, so anything above the
+## MultiMesh buffer's own float precision is a different colour.
+const COLOR_TOLERANCE: float = 0.002
+
 var _failures: Array[String] = []
 
 
@@ -139,13 +264,26 @@ func _run() -> void:
 	_check_scarcity(terrain_script)
 	_check_no_new_buckets(terrain_script)
 	_check_footprints(terrain_script)
+	_check_tops_and_cubes(terrain_script)
+	_check_sign_clearance(terrain_script)
+	_check_lamp_indices(terrain_script)
+	_check_cycle_off_the_seed(terrain_script)
+	# AWAITED, and it is the only one that is: a chunk unloads through `queue_free`,
+	# so the check has to let a frame pass before it can ask whether the Timer is
+	# really gone. See `_check_unload`.
+	await _check_unload(terrain_script)
 
 	if _failures.is_empty():
 		print("bike paths: the kill switch leaves every other box in the world where "
 				+ "it was, each strip stands on the ground its own walk cleared, the "
 				+ "per-chunk shares cover every segment exactly once, blocked paths "
 				+ "truncate rather than gap, scarcity empties the far field, no chunk "
-				+ "grew a MultiMesh bucket and only the poles claim a footprint")
+				+ "grew a MultiMesh bucket, only the poles claim a footprint, every "
+				+ "pole carries one of the five authored tops and stands it clear of "
+				+ "its own post, the CUBE-bucket index recorded for a lamp is the one "
+				+ "the shipped bucketing really puts it at, the cycle is randomize()d "
+				+ "ambience the seed cannot see, and an unloaded chunk leaves no Timer "
+				+ "behind")
 		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
@@ -768,6 +906,688 @@ func _check_footprints(terrain_script: GDScript) -> void:
 
 
 # ============================================================================
+# CHECKS 7 + 8 — one top per pole, all five kinds drawn, and all of them CUBEs
+# ============================================================================
+
+func _check_tops_and_cubes(terrain_script: GDScript) -> void:
+	"""
+	Every pole carries exactly one top; every kind the table can produce is really
+	produced; and every box this family emits is still a CUBE.
+
+	ONE SWEEP FOR BOTH, because both are statements about the same boxes and the
+	sweep is the expensive part.
+
+	WHY "ALL FIVE KINDS APPEAR" IS THE ASSERTION AND NOT A NICETY: the top is a HASH
+	DISPATCH into a fixed table, and the two ways that breaks are a fold that cannot
+	reach part of the table (a negative modulo, a mask too narrow, a `% 4` left over
+	from a four-row version) and a table row nothing indexes. Both leave a kind that
+	can never be drawn — a dead branch that no other check in this file, and nothing
+	in the game, would ever notice. Counting the histogram over three seeds is the
+	control that catches it.
+
+	THE CUBE HALF is `batch_selfcheck` check 5's `KIND_CAP_BY_NAME` ruling, asserted
+	on the entries themselves. Check 5 above compares a chunk's BUCKETS with the
+	paths on and off, which is the same statement from the outside; this one also
+	fails if a sign plate is emitted as a CYLINDER in a chunk that already had a
+	CYLINDER bucket from its own biome content — the case the bucket comparison
+	cannot see, and exactly the mast the epic refused.
+	"""
+	var histogram: Dictionary = {}
+	var poles_seen: int = 0
+	var boxes_seen: int = 0
+	for seed_value: int in SEEDS:
+		var terrain: Node3D = _terrain(terrain_script, seed_value, true)
+		for ox in range(-TOP_SWEEP_HALF, TOP_SWEEP_HALF + 1):
+			for oy in range(-TOP_SWEEP_HALF, TOP_SWEEP_HALF + 1):
+				var chunk_pos := Vector2i(ox, oy)
+				var built: Dictionary = _spawn_bare(terrain, chunk_pos)
+				for entry_v: Variant in (built["batch"] as Array):
+					boxes_seen += 1
+					var kind: int = (entry_v as Dictionary).get("kind", ChunkBatch.BoxKind.CUBE)
+					if kind != ChunkBatch.BoxKind.CUBE:
+						_fail("seed %d chunk %s emitted a box of kind %s — this family is CUBE "
+								% [seed_value, chunk_pos, ChunkBatch.BoxKind.find_key(kind)]
+								+ "only, so that `KIND_CAP_BY_NAME` in batch_selfcheck needs no "
+								+ "row changed and a path costs no chunk a second draw call")
+						break
+				for row: Dictionary in (built["paths"] as Array[Dictionary]):
+					var poles: PackedInt32Array = row["poles"]
+					var tops: PackedInt32Array = row["tops"]
+					var signals: PackedInt32Array = row["signals"]
+					poles_seen += poles.size()
+					if tops.size() != poles.size():
+						_fail("seed %d chunk %s origin %s built %d poles but recorded %d tops — "
+								% [seed_value, chunk_pos, row["origin"], poles.size(), tops.size()]
+								+ "every pole carries exactly one sign or one head, and a pole "
+								+ "skipped for a footprint must skip its top with it")
+					var heads: int = 0
+					for top: int in tops:
+						if top != BikePaths.POLE_TOP_SIGNAL \
+								and (top < 0 or top >= BikePaths.SIGN_KINDS.size()):
+							_fail("seed %d chunk %s: a pole carries top %d, which is neither a "
+									% [seed_value, chunk_pos, top] + "SIGN_KINDS index nor "
+									+ "POLE_TOP_SIGNAL — the dispatch fold is out of range")
+							continue
+						if top == BikePaths.POLE_TOP_SIGNAL:
+							heads += 1
+						histogram[top] = int(histogram.get(top, 0)) + 1
+					if signals.size() != heads:
+						_fail("seed %d chunk %s origin %s dispatched %d signal heads but recorded "
+								% [seed_value, chunk_pos, row["origin"], heads]
+								+ "%d lamp indices — the cycle would drive a head that is not "
+								% signals.size() + "there, or leave one dark forever")
+		terrain.free()
+
+	if poles_seen == 0:
+		_fail("checks 7-8 swept %d seeds x %dx%d chunks and found no pole at all, so every "
+				% [SEEDS.size(), TOP_SWEEP_HALF * 2 + 1, TOP_SWEEP_HALF * 2 + 1]
+				+ "assertion about what stands on one was vacuous")
+	if boxes_seen == 0:
+		_fail("checks 7-8 found no box at all in the sweep, so 'CUBE only' asserted nothing")
+	for kind in BikePaths.SIGN_KINDS.size():
+		if not histogram.has(kind):
+			_fail("sign kind %d (`%s`) was never once drawn in %d seeds x %dx%d chunks over "
+					% [kind, _sign_name(kind), SEEDS.size(), TOP_SWEEP_HALF * 2 + 1,
+					TOP_SWEEP_HALF * 2 + 1] + "%d poles — it is a dead branch, which is what a "
+					% poles_seen + "dispatch fold that cannot reach the whole of POLE_TOPS looks "
+					+ "like from the outside")
+	if not histogram.has(BikePaths.POLE_TOP_SIGNAL):
+		_fail("not one traffic head was dispatched over %d poles — the cycling signal, which "
+				% poles_seen + "is half of this bead, is never built and check 9 has nothing "
+				+ "to read")
+	Sentinel.done("tops_and_cubes")
+
+
+func _sign_name(kind: int) -> String:
+	## The authored sign kinds in `SIGN_KINDS` order, for a message a reader can act
+	## on. A plain lookup table: the family stores no names (a sign carries no text,
+	## which is the whole ruling), so this is the one place they are written down.
+	return ["ROUTE", "YIELD", "STOP", "CROSSING"][kind] if kind >= 0 and kind < 4 \
+			else "kind %d" % kind
+
+
+# ============================================================================
+# CHECK 7c — a sign stands CLEAR of its own post
+# ============================================================================
+
+func _check_sign_clearance(terrain_script: GDScript) -> void:
+	"""
+	EVERY BOX A POLE CARRIES THAT STANDS WITHIN THE POST'S OWN HEIGHT MUST BE IN
+	FRONT OF THE POST, measured off the drawn boxes.
+
+	This is round 1's major, turned into an assertion. A sign plate is
+	`SIGN_PLATE_DEPTH` = 0.05 thick and the post it hangs on is `BIKE_POLE_WIDTH` =
+	0.16 square, so a plate centred on the post's own XZ is INSIDE it: the sign reads
+	with a grey bar straight down its middle, and CROSSING's centre bar — one of its
+	three — is swallowed whole. NOTHING ELSE IN THIS FILE COULD SEE THAT. Checks 7
+	and 8 count tops and box kinds, check 9 pins indices, check 1 compares a build to
+	a build, and the style shot that would have shown it is deferred. It is the same
+	shape as `.1`'s 25 m bug: every count was right and the geometry was wrong.
+
+	MEASURED OFF THE TRANSFORMS AND NOT OFF THE CONSTANTS. A batch entry's own basis
+	carries its facing and its size (`Basis(UP, yaw).scaled_local(dims)`, so
+	`basis.x` is the approach axis scaled by the box's depth), so the post and the
+	sign are each read from what was actually emitted — a check written against
+	`SIGN_STANDOFF` would agree with any value of it, including zero.
+
+	ONLY BOXES INSIDE THE POST'S HEIGHT are held to it: the traffic head sits ON TOP
+	of the post (its lenses are above `BIKE_POLE_HEIGHT`), so it is not occluded by
+	anything and is exempt by construction rather than by exception.
+
+	ITS CONTROL is the predicate applied to the POST ITSELF, which must report a
+	failure — a post is not clear of a post. Without it "every sign is clear" would
+	also be what a predicate that can never fail prints.
+	"""
+	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
+	# THE BOUND HAS TO COVER THE AUTHORED TABLES, and it is asserted rather than
+	# trusted because the failure is silent: a top of five boxes would have its fifth
+	# walk out of the run below unmeasured, `signs_seen` would still be non-zero, and
+	# a pictogram built inside the post — round 1's major — would ship green. A fourth
+	# pip on any `SIGN_KINDS` row is all it takes.
+	var widest: int = 4  # the traffic head: one head box plus three lenses.
+	for row: Dictionary in BikePaths.SIGN_KINDS:
+		widest = maxi(widest, 1 + (row["pips"] as Array).size())
+	if TOP_BOXES_MAX < widest:
+		_fail("check 7c reads at most %d boxes as a pole's top, but the authored tables now "
+				% TOP_BOXES_MAX + "build one of %d — the boxes past the bound would never be "
+				% widest + "measured against the post, which is the one thing this check exists "
+				+ "to see. Raise TOP_BOXES_MAX")
+	var posts_seen: int = 0
+	var signs_seen: int = 0
+	var control_fired: bool = false
+	for ox in range(-SWEEP_HALF, SWEEP_HALF + 1):
+		for oy in range(-SWEEP_HALF, SWEEP_HALF + 1):
+			var chunk_pos := Vector2i(ox, oy)
+			var built: Dictionary = _spawn_bare(terrain, chunk_pos)
+			var batch: Array = built["batch"]
+			for row: Dictionary in (built["paths"] as Array[Dictionary]):
+				for p: int in (row["poles"] as PackedInt32Array):
+					if p < 0 or p >= batch.size():
+						_fail("chunk %s: the marker records a pole at CUBE instance %d and the "
+								% [chunk_pos, p] + "chunk's own batch holds %d boxes"
+								% batch.size())
+						continue
+					var post: Transform3D = (batch[p] as Dictionary)["transform"]
+					# THE INDEX IS THE TIE, and asserting it is free: `_spawn_bare` starts
+					# from an EMPTY batch and this family emits CUBEs only, so a pole's
+					# CUBE-bucket index IS its batch index here. If that ever stops being
+					# true the entry at `p` is not a post and this says so, rather than
+					# quietly measuring the wrong box.
+					if not _is_post(post):
+						_fail("chunk %s: the marker records a pole at index %d, but the box "
+								% [chunk_pos, p] + "there is not a post — the recorded index and "
+								+ "the geometry have come apart")
+						continue
+					posts_seen += 1
+					if not control_fired:
+						# THE CONTROL: a post is not clear of itself.
+						control_fired = true
+						if _clearance_fault(post, post) == "":
+							_fail("check 7c's clearance predicate calls the POST ITSELF clear of "
+									+ "the post, so it cannot fail and 'every sign stands clear' "
+									+ "is an assertion about nothing")
+					# THE TOP IS THE CONTIGUOUS RUN AFTER THE POST — `_draw_path_share`
+					# emits the pole and then its one top, nothing between. Bounding it by
+					# `TOP_BOXES_MAX` and stopping at the next post or at ground level is
+					# what keeps a CROSSING path's strip out: two bike paths may cross, and
+					# a filter that took every box within a radius of the post would read a
+					# foreign 5 m strip box as a sign buried in it and fail a correct world.
+					for k in range(p + 1, mini(p + 1 + TOP_BOXES_MAX, batch.size())):
+						var box: Transform3D = (batch[k] as Dictionary)["transform"]
+						if _is_post(box) or box.origin.y < GROUND_BAND:
+							break
+						# Above the post's own top nothing can be occluded by it — that is
+						# where the traffic head lives, exempt by construction.
+						if box.origin.y + box.basis.y.length() * 0.5 > BikePaths.BIKE_POLE_HEIGHT:
+							continue
+						signs_seen += 1
+						var fault: String = _clearance_fault(post, box)
+						if fault != "":
+							_fail("chunk %s: box %d, which the pole at index %d carries, %s. A "
+									% [chunk_pos, k, p, fault] + "plate or a pictogram inside the "
+									+ "post reads with a grey bar down its middle, and a centred "
+									+ "pip does not read at all — see `SIGN_STANDOFF`")
+	terrain.free()
+	if posts_seen == 0:
+		_fail("check 7c swept %dx%d chunks and found no post at all, so it measured nothing"
+				% [SWEEP_HALF * 2 + 1, SWEEP_HALF * 2 + 1])
+	if signs_seen == 0:
+		_fail("check 7c found %d posts and not one box standing on any of them within the "
+				% posts_seen + "post's own height — the sign geometry it exists to measure was "
+				+ "never looked at (did every plate move above BIKE_POLE_HEIGHT, or is "
+				+ "TOP_BOXES_MAX now too small to reach one?)")
+	Sentinel.done("sign_clearance")
+
+
+func _is_post(t: Transform3D) -> bool:
+	## A pole post, picked out by its own dimensions and its centre height — no meta
+	## and no index, the same way `_strip_positions` finds a strip.
+	return is_equal_approx(t.origin.y, BikePaths.BIKE_POLE_HEIGHT * 0.5) \
+			and is_equal_approx(t.basis.y.length(), BikePaths.BIKE_POLE_HEIGHT) \
+			and is_equal_approx(t.basis.x.length(), BikePaths.BIKE_POLE_WIDTH)
+
+
+func _clearance_fault(post: Transform3D, box: Transform3D) -> String:
+	"""
+	Does `box` stand in front of `post` along the post's own approach axis?
+
+	@return: "" when it does, otherwise the overlap in words.
+
+	`basis.x` is the box's local +X scaled by its depth, and for this family local +X
+	is the direction of travel (`yaw == -head`), so its normalised form is the axis
+	and its length is the depth. A sign is built on the -X side, so "in front" is a
+	NEGATIVE offset along that axis, and the near face must clear the post's own half
+	width.
+	"""
+	var axis: Vector3 = post.basis.x.normalized()
+	var along: float = (box.origin - post.origin).dot(axis)
+	var depth: float = box.basis.x.length()
+	var near: float = -along - depth * 0.5
+	if near >= BikePaths.BIKE_POLE_WIDTH * 0.5 - CLEARANCE_TOLERANCE:
+		return ""
+	return "stands %.3f m in front of the post's centre and is %.3f m deep, so its near " \
+			% [-along, depth] + "face is %.3f m out where the post's own is %.3f m" \
+			% [near, BikePaths.BIKE_POLE_WIDTH * 0.5]
+
+
+# ============================================================================
+# CHECK 9 — the recorded CUBE-bucket index really is that lamp
+# ============================================================================
+
+func _check_lamp_indices(terrain_script: GDScript) -> void:
+	"""
+	THE CHECK THIS BEAD EXISTS FOR.
+
+	`ChunkBatch._build_block_multimesh` buckets the batch BY KIND and emits in ENUM
+	order, so a lamp's MultiMesh instance index is its position among the CUBE
+	ENTRIES ONLY — never its index in `block_batch`. The spawner records the former,
+	and an index one out still addresses a real box: the head above it, the lens
+	below it, or some other family's block entirely. Nothing in the game would ever
+	report that; one lamp would simply light the wrong thing.
+
+	WHAT A HEADLESS CHECK CAN AND CANNOT SEE, measured before this check was written
+	because the obvious form of it is a mirage: under the dummy rendering server
+	`--headless` runs on, MULTIMESH INSTANCE DATA IS WRITE-ONLY.
+	`get_instance_color()` returns opaque black and `get_instance_transform()` the
+	identity for every instance of every MultiMesh, and `buffer` comes back empty
+	(measured on a two-instance MultiMesh built by hand, in and out of the tree).
+	So "read the colour back at the recorded index" cannot be the assertion here —
+	it would read black at every index, pass with any base, and look like coverage.
+	`instance_count` IS real, and so is everything in `block_batch`, and this check
+	is built out of those two.
+
+	  (a) THE INDEX, END TO END AND WITHOUT A SECOND COPY OF THE BUCKETING RULE. Run
+	      the shipped spawner into a batch that already holds NON-CUBE entries (the
+	      masts, rocks and trees a real chunk has by the time this family runs), find
+	      the three lamp boxes in that batch by their own colour, and ask the SHIPPED
+	      `ChunkBatch._build_block_multimesh` where each of them lands: built on the
+	      batch TRUNCATED at a lamp, the CUBE bucket's `instance_count` IS that
+	      lamp's CUBE-bucket index. That number must equal what the marker recorded.
+	  (b) THE CONTROL, permanent and not a mutation someone once ran: the lamp's
+	      BATCH index must differ from its CUBE-bucket index. If they were equal the
+	      whole check would pass just as well on a spawner that recorded the batch
+	      index — the exact bug it exists for — so a fixture that stopped containing
+	      non-CUBE entries has to fail loudly rather than quietly assert nothing.
+	  (c) THE LIVE PLUMBING, on a REAL chunk built through `create_chunk`. Fire the
+	      head's own Timer through its `timeout` signal and assert the phase
+	      ADVANCED — which it can only do if the connection reached
+	      `BikePaths.tick_signal`, if `signal_multimesh()` found the chunk's CUBE
+	      bucket from the Timer, and if `base + 3` really is inside that bucket's
+	      `instance_count`; every one of those failures returns early and leaves the
+	      phase alone. Its control is a Timer whose `lamp0` is deliberately out of
+	      range, which must NOT advance.
+	"""
+	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
+
+	# THE SWEEP, and it collects two different things at once. The bare spawner below
+	# is handed an EMPTY `obstacles`, so no pole is skipped and every chunk that CAN
+	# carry a head does; in a real chunk a pole whose site is already taken is skipped
+	# and takes its head with it. So a hit here is a candidate for (c) and nothing
+	# more — while its batch, a real run of the shipped spawner, is what (a) needs.
+	var candidates: Array[Vector2i] = []
+	var probe := Vector2i(0, 0)
+	var batch: Array = []
+	var bases := PackedInt32Array()
+	for ox in range(-SWEEP_HALF, SWEEP_HALF + 1):
+		if candidates.size() >= LAMP_CANDIDATES:
+			break
+		for oy in range(-SWEEP_HALF, SWEEP_HALF + 1):
+			var pos := Vector2i(ox, oy)
+			var trial: Array = _prefix_batch()
+			var obstacles: Array = []
+			var body := StaticBody3D.new()
+			var chunk := MeshInstance3D.new()
+			BikePaths.spawn_bike_path_in_chunk(terrain, pos, chunk, obstacles, trial, body)
+			var here := PackedInt32Array()
+			for marker: Node in _markers(chunk):
+				here.append_array(marker.get_meta("signals") as PackedInt32Array)
+			chunk.free()
+			body.free()
+			if here.is_empty():
+				continue
+			candidates.append(pos)
+			if batch.is_empty():
+				probe = pos
+				batch = trial
+				bases = here
+			if candidates.size() >= LAMP_CANDIDATES:
+				break
+	if bases.is_empty():
+		_fail("check 9 swept %dx%d chunks on seed %d and found no traffic head at all, so the "
+				% [SWEEP_HALF * 2 + 1, SWEEP_HALF * 2 + 1, SEEDS[0]] + "one assertion in this "
+				+ "file that ties a recorded MultiMesh index to the lamp it claims to address "
+				+ "never fired")
+		terrain.free()
+		Sentinel.done("lamp_indices")
+		return
+
+	# --- (a) THE INDEX. Find the lenses in the batch by their own colour — the three
+	# DARKENED lamp colours are the only boxes in the world drawn in them — and ask
+	# the shipped bucketing function where each one lands.
+	var dark := PackedColorArray()
+	for j in 3:
+		dark.append(BikePaths.lamp_color(terrain, j, false).srgb_to_linear())
+	var lamp_rows: Array[Array] = []
+	for t in batch.size():
+		var c: Color = (batch[t] as Dictionary)["color"]
+		for j in 3:
+			if _same_color(c, dark[j]):
+				lamp_rows.append([t, j])
+				break
+	if lamp_rows.size() != bases.size() * 3:
+		_fail("chunk %s recorded %d traffic heads but its batch holds %d boxes painted in the "
+				% [probe, bases.size(), lamp_rows.size()] + "three lens colours — a head is "
+				+ "three lenses, and `signals` must carry exactly one entry per head")
+	else:
+		for n in bases.size():
+			for j in 3:
+				var row: Array = lamp_rows[n * 3 + j]
+				if int(row[1]) != j:
+					_fail("chunk %s head %d: the lenses are emitted out of order — `SIGNAL_LIT` "
+							% [probe, n] + "and the cycle both assume the stack is built "
+							+ "top-down red, amber, green")
+					continue
+				var want: int = bases[n] + j
+				var got: int = _cube_index_of(batch, int(row[0]))
+				if got != want:
+					_fail("chunk %s head %d: the marker records its %s lens at CUBE instance %d, "
+							% [probe, n, ["red", "amber", "green"][j], want]
+							+ "but that box is batch entry %d, which the shipped "
+							% int(row[0]) + "`_build_block_multimesh` puts at CUBE instance %d. "
+							% got + "A lamp's instance index is its position among the CUBE "
+							+ "ENTRIES ONLY (the batch is bucketed BY KIND and emitted in ENUM "
+							+ "order) — recording a `block_batch` index, or forgetting the head "
+							+ "box that precedes the lenses, is exactly what this looks like")
+		# --- (b) THE CONTROL. If a lens's batch index and its CUBE-bucket index were
+		# the same number, every assertion above would hold just as well for a spawner
+		# that recorded the wrong one, and this check would be decoration.
+		var first: Array = lamp_rows[0]
+		if int(first[0]) == bases[0]:
+			_fail("check 9's fixture has stopped containing non-CUBE boxes: the first lens is "
+					+ "batch entry %d AND CUBE instance %d, so the assertions above cannot tell "
+					% [int(first[0]), bases[0]] + "a batch index from a bucket index — which is "
+					+ "the only bug they exist to catch. Restore PREFIX_KINDS")
+		if bases[0] <= 0:
+			_fail("check 9's fixture put the first lens at CUBE instance %d, so the offset this "
+					% bases[0] + "check is about is zero and any bookkeeping would pass")
+
+	# --- (c) THE LIVE PLUMBING, on a chunk built through the shipped `create_chunk`.
+	var timer: Timer = null
+	var live := Vector2i(0, 0)
+	var instances: int = 0
+	for candidate: Vector2i in candidates:
+		terrain.create_chunk(candidate)
+		var chunk_node: Node = terrain.active_chunks[candidate]
+		var bucket: Node = chunk_node.get_node_or_null(CUBE_BUCKET)
+		timer = _signal_timer(chunk_node)
+		if timer == null or bucket == null:
+			timer = null
+			continue
+		live = candidate
+		instances = (bucket as MultiMeshInstance3D).multimesh.instance_count
+		break
+	if timer == null:
+		_fail("check 9 built %d chunks that carry a traffic head through the bare spawner and "
+				% candidates.size() + "not one of them grew a head and a CUBE bucket for real, "
+				+ "so the Timer, its connection and the node walk from Timer to bucket are all "
+				+ "untested. Raise LAMP_CANDIDATES, or find out why every candidate pole is "
+				+ "being skipped")
+		terrain.free()
+		Sentinel.done("lamp_indices")
+		return
+	var live_base: int = int(timer.get_meta("lamp0"))
+	if live_base + 3 > instances:
+		_fail("chunk %s: the head's lenses are recorded at CUBE instances [%d, %d) and the built "
+				% [live, live_base, live_base + 3] + "bucket holds %d — the cycle would write "
+				% instances + "off the end of the buffer and silently do nothing forever")
+	var phase: int = int(timer.get_meta("phase"))
+	for step in 2:
+		# A TICK THROUGH THE TIMER'S OWN SIGNAL, so the `connect` at plant time is
+		# under test along with everything else. The phase can only advance if the
+		# callable arrived, if `signal_multimesh()` walked Timer -> marker -> chunk ->
+		# bucket, and if `base + 3` is inside that bucket: every other outcome returns
+		# early and leaves the phase alone.
+		timer.timeout.emit()
+		var stepped: int = int(timer.get_meta("phase"))
+		if stepped != (phase + 1) % 3:
+			_fail("chunk %s: tick %d left the head at phase %d, not %d — either the Timer's "
+					% [live, step, stepped, (phase + 1) % 3] + "`timeout` never reaches "
+					+ "`BikePaths.tick_signal`, or the tick bailed out because it could not walk "
+					+ "from the Timer to the chunk's '%s', or because the recorded index is "
+					% CUBE_BUCKET + "outside that bucket. The lamps would never change")
+			break
+		phase = stepped
+	# THE CONTROL ON THAT ASSERTION: the phase advances only where the write is really
+	# addressable, so an index off the end must leave it exactly where it was. Without
+	# this, "the phase advanced" would also be satisfied by a tick that stepped first
+	# and checked afterwards — which is a tick that writes into a neighbour's boxes.
+	timer.set_meta("lamp0", instances)
+	var held: int = int(timer.get_meta("phase"))
+	timer.timeout.emit()
+	if int(timer.get_meta("phase")) != held:
+		_fail("chunk %s: a head whose lenses are recorded at CUBE instance %d, one past the end "
+				% [live, instances] + "of a %d-instance bucket, still stepped its phase — so the "
+				% instances + "tick writes before it checks, and 'the phase advanced' says "
+				+ "nothing about whether the write landed anywhere")
+	terrain.free()
+	Sentinel.done("lamp_indices")
+
+
+func _prefix_batch() -> Array:
+	"""
+	A stand-in for the boxes a real chunk already holds when this family runs.
+
+	THE POINT IS THE NON-CUBES. `_build_block_multimesh` buckets by kind, so a batch
+	of nothing but CUBEs gives every box a bucket index equal to its batch index, and
+	check 9 could not then tell the two apart. A real chunk has masts, rocks, trees
+	and wedged roofs in it by the time the bike paths are drawn; these seven entries
+	are the cheapest thing with that shape, and check 9 (b) fails if they stop having
+	it.
+	"""
+	var out: Array = []
+	for i in PREFIX_KINDS.size():
+		out.append({
+			"transform": Transform3D(Basis(), Vector3(float(i), 0.0, 0.0)),
+			"color": Color(0.1, 0.1, 0.1),
+			"kind": PREFIX_KINDS[i],
+		})
+	return out
+
+
+func _cube_index_of(batch: Array, t: int) -> int:
+	"""
+	Where batch entry `t` lands in the CUBE bucket, ASKED OF THE SHIPPED BUCKETING
+	FUNCTION rather than worked out here.
+
+	Built on the batch TRUNCATED at `t`, the CUBE bucket's `instance_count` is
+	exactly the number of CUBE entries before `t` — which is `t`'s own CUBE-bucket
+	index. That is the whole trick, and it is why this check needs no second copy of
+	`_build_block_multimesh`'s rule: a copy would agree with a broken original.
+	`instance_count` is also one of the few things a MultiMesh will still tell you
+	under the headless dummy renderer — see this check's docstring.
+	"""
+	var probe := MeshInstance3D.new()
+	ChunkBatch._build_block_multimesh(probe, batch.slice(0, t))
+	var node: Node = probe.get_node_or_null(CUBE_BUCKET)
+	var n: int = 0 if node == null else (node as MultiMeshInstance3D).multimesh.instance_count
+	probe.free()
+	return n
+
+
+
+# ============================================================================
+# CHECK 10 — the cycle is ambience: the seed cannot see it
+# ============================================================================
+
+func _check_cycle_off_the_seed(terrain_script: GDScript) -> void:
+	"""
+	PLACEMENT is seeded, THE CYCLE IS NOT, and both halves are asserted here.
+
+	(a) BEHAVIOURAL. Two SEPARATE terrains on the same seed build the same chunk
+	    byte-identically. A `randomize()`d value that leaked into the geometry —
+	    the obvious slip being to light the initial lamp from the rolled phase —
+	    differs between two processes and between two terrains in one, so this is
+	    the measurement that catches it. It is non-vacuous only if the chunk it
+	    compares actually holds a head, which is what the sweep below insists on.
+
+	(b) TEXTUAL, `scarcity_selfcheck` check 3's shape and for its reason: a
+	    behavioural check can only speak for the world it sampled, and "this clock
+	    is not on the seed" is a statement about the code. The plant randomizes and
+	    never reads `run_seed`; the geometry never randomizes; the write linearises.
+	    Each of the three is a rule a future edit would otherwise slip past, and the
+	    check fails by name if a function it reads has been renamed away.
+	"""
+	# --- (a)
+	var a: Node3D = _terrain(terrain_script, SEEDS[0], true)
+	var b: Node3D = _terrain(terrain_script, SEEDS[0], true)
+	var compared: int = 0
+	for ox in range(-SWEEP_HALF, SWEEP_HALF + 1):
+		if compared > 0:
+			break
+		for oy in range(-SWEEP_HALF, SWEEP_HALF + 1):
+			var chunk_pos := Vector2i(ox, oy)
+			var built_a: Dictionary = _spawn_bare(a, chunk_pos)
+			var heads: int = 0
+			for row: Dictionary in (built_a["paths"] as Array[Dictionary]):
+				heads += (row["signals"] as PackedInt32Array).size()
+			if heads == 0:
+				continue
+			var built_b: Dictionary = _spawn_bare(b, chunk_pos)
+			compared += 1
+			if var_to_bytes(built_a["batch"]) != var_to_bytes(built_b["batch"]):
+				_fail("chunk %s carries %d traffic heads and two terrains on seed %d built it "
+						% [chunk_pos, heads, SEEDS[0]] + "differently — something the "
+						+ "`randomize()`d cycle rolls has leaked into the geometry, and the "
+						+ "world is no longer a pure function of its seed")
+			break
+	if compared == 0:
+		_fail("check 10a swept %dx%d chunks and found none with a traffic head in it, so its "
+				% [SWEEP_HALF * 2 + 1, SWEEP_HALF * 2 + 1] + "same-seed comparison never "
+				+ "covered the one feature in this family that has a randomize()d clock")
+	a.free()
+	b.free()
+
+	# --- (b)
+	var source: String = FileAccess.get_file_as_string(FAMILY_SCRIPT)
+	if source.is_empty():
+		_fail("could not read %s as text — check 10b cannot run" % FAMILY_SCRIPT)
+		Sentinel.done("cycle_off_the_seed")
+		return
+	for rule: Array in TEXT_RULES:
+		var fn: String = rule[0]
+		var needle: String = rule[1]
+		var must: bool = rule[2]
+		var why: String = rule[3]
+		var body: String = _function_body(source, fn)
+		if body.strip_edges().is_empty():
+			_fail("check 10b found no function `%s` in %s — it was renamed or removed, and "
+					% [fn, FAMILY_SCRIPT] + "this assertion is now measuring nothing")
+			continue
+		if body.contains(needle) != must:
+			_fail("`%s` %s `%s`: %s" % [fn, "must contain" if must else "must not contain",
+					needle, why])
+	Sentinel.done("cycle_off_the_seed")
+
+
+# ============================================================================
+# CHECK 11 — an unloaded chunk leaves no Timer behind
+# ============================================================================
+
+func _check_unload(terrain_script: GDScript) -> void:
+	"""
+	THE PARENTING RULE, MEASURED RATHER THAN TRUSTED.
+
+	This family's Timer hangs off its MARKER, which hangs off the chunk — a
+	deliberate departure from the bead, which said to parent it to the chunk itself,
+	taken so the Timer stays out of the chunk's own child list (check 1 compares that
+	list node for node to catch a stray draw). The departure is only safe if the
+	Timer is still freed with the chunk, and "parented under it, so it must be" is a
+	claim about Godot rather than a measurement. A per-chunk node that outlived its
+	chunk in an endless runner is an unbounded leak AND a Timer ticking forever into
+	a freed bucket.
+
+	`remove_chunk()` is the shipped unload path and it uses `queue_free`, so this is
+	the one check in the file that awaits a frame — a `free()` here would measure a
+	teardown the game never performs.
+
+	Non-vacuous by construction: it fails if it cannot find a chunk with a Timer in
+	the first place, and it asserts the Timer was ALIVE before the unload as well as
+	gone after it.
+
+	ITS CONTROL IS A SECOND CHUNK THAT IS NOT UNLOADED, and its Timer must still be
+	alive at the end. Without it, "the weak reference went null" is also what a check
+	that had freed the whole world — or that was reading a reference which is null
+	however the frame went — would print, and the assertion would pass whatever the
+	unload did.
+	"""
+	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
+	var found := Vector2i(0, 0)
+	var timer: Timer = null
+	var kept: Timer = null
+	for ox in range(-SWEEP_HALF, SWEEP_HALF + 1):
+		if timer != null and kept != null:
+			break
+		for oy in range(-SWEEP_HALF, SWEEP_HALF + 1):
+			var pos := Vector2i(ox, oy)
+			var built: Dictionary = _spawn_bare(terrain, pos)
+			var heads: int = 0
+			for row: Dictionary in (built["paths"] as Array[Dictionary]):
+				heads += (row["signals"] as PackedInt32Array).size()
+			if heads == 0:
+				continue
+			terrain.create_chunk(pos)
+			var here: Timer = _signal_timer(terrain.active_chunks[pos])
+			if here == null:
+				continue
+			if timer == null:
+				timer = here
+				found = pos
+			elif kept == null:
+				# THE CONTROL'S CHUNK: built, never unloaded, and its Timer must still
+				# be alive when this check ends.
+				kept = here
+				break
+	if timer == null:
+		_fail("check 11 swept %dx%d chunks and built no chunk that carried a cycle Timer, so "
+				% [SWEEP_HALF * 2 + 1, SWEEP_HALF * 2 + 1] + "'an unloaded chunk leaves none "
+				+ "behind' was never once asked of a chunk that had one")
+		terrain.free()
+		Sentinel.done("unload")
+		return
+	var ref: WeakRef = weakref(timer)
+	if ref.get_ref() == null:
+		_fail("check 11's Timer was already dead before the chunk was unloaded")
+	# REMEMBERED AS A BOOLEAN, AND THAT IS THE WHOLE POINT: in Godot a reference to a
+	# FREED object compares equal to null, so a `kept != null` written after the unload
+	# is false exactly when the control has something to say, and the guard below would
+	# short-circuit itself into silence in the one state it exists to detect.
+	var has_control: bool = kept != null
+	if not has_control:
+		_fail("check 11 found only one chunk with a cycle Timer in a %dx%d sweep, so it has no "
+				% [SWEEP_HALF * 2 + 1, SWEEP_HALF * 2 + 1] + "second chunk to leave loaded — "
+				+ "and without that control 'the Timer went away' is also what this check would "
+				+ "print if nothing it holds survived the frame")
+	var control: WeakRef = weakref(kept)
+	terrain.remove_chunk(found)
+	# `queue_free` frees at the end of the frame, which is why this check is awaited.
+	await process_frame
+	await process_frame
+	if ref.get_ref() != null:
+		_fail("chunk %s was unloaded through the shipped `remove_chunk()` and its bike-path "
+				% found + "cycle Timer is still alive — every head the player walks past leaks "
+				+ "a node that goes on ticking into a bucket that no longer exists")
+	if terrain.active_chunks.has(found):
+		_fail("chunk %s is still in `active_chunks` after `remove_chunk()`, so check 11 "
+				% found + "measured an unload that did not happen")
+	if has_control and control.get_ref() == null:
+		_fail("check 11's control Timer, in a chunk that was never unloaded, died along with "
+				+ "the one that was — so 'the Timer went away' says nothing about the unload")
+	terrain.free()
+	Sentinel.done("unload")
+
+
+func _function_body(source: String, name: String) -> String:
+	"""
+	The lines of `func <name>(...)` up to the next top-level `func`, or "" when there
+	is no such function. `scarcity_selfcheck`'s helper, and crude for its reason:
+	GDScript's one-function-per-column-0-`func` layout is the whole grammar this
+	needs, and `static func` counts — this family is static from end to end, so a
+	matcher that only knew the instance spelling would find nothing at all and pass.
+	"""
+	var out: PackedStringArray = PackedStringArray()
+	var inside := false
+	for line: String in source.split("\n"):
+		if line.begins_with("func " + name + "(") or line.begins_with("static func " + name + "("):
+			inside = true
+			continue
+		if inside:
+			if line.begins_with("func ") or line.begins_with("static func "):
+				break
+			out.append(line)
+	return "\n".join(out)
+
+
+# ============================================================================
 # HELPERS
 # ============================================================================
 
@@ -798,8 +1618,13 @@ func _spawn_bare(terrain: Node3D, chunk_pos: Vector2i) -> Dictionary:
 	return what it produced with every node freed again.
 
 	@return: `{ "batch": Array, "obstacles": Array, "poles": int,
-	            "paths": Array[Dictionary] }`, the last being one row per marker
-	          carrying its `origin` and its `segments`.
+	            "paths": Array[Dictionary] }`. `poles` is the chunk's TOTAL pole
+	          count; `paths` is one row per marker, carrying that marker's whole
+	          meta: `origin`, `segments`, `poles` (this path's own poles, as
+	          CUBE-BUCKET indices — see check 9's banner for why that is not the
+	          batch index, though in this helper's empty CUBE-only batch the two
+	          coincide, which is what lets check 7c index the batch with them),
+	          `tops` (one per pole) and `signals` (each head's first lens).
 
 	An EMPTY `obstacles` on purpose, in the checks that count footprints: with
 	nothing already built no pole is skipped, so the pole count is the stride's
@@ -819,6 +1644,11 @@ func _spawn_bare(terrain: Node3D, chunk_pos: Vector2i) -> Dictionary:
 		paths.append({
 			"origin": marker.get_meta("origin"),
 			"segments": marker.get_meta("segments"),
+			"poles": mine,
+			# Child `.2`: what each of those poles carries, and each signal head's
+			# first lens in CUBE-bucket coordinates. Checks 7-9.
+			"tops": marker.get_meta("tops"),
+			"signals": marker.get_meta("signals"),
 		})
 	# Everything this call built is freed here — a self-check that leaked a node
 	# per chunk over a 29x29 sweep would be the slowest check in the suite.
@@ -861,6 +1691,17 @@ func _strip_positions(terrain: Node3D, chunk_pos: Vector2i, batch: Array) -> Arr
 func _multimesh_table(chunk: Node) -> Dictionary:
 	## Every `BlockMultiMesh*` child as name -> [[transform, colour], ...], which
 	## is the batch as it survived into the GPU buffer.
+	##
+	## READ THIS BEFORE TRUSTING WHAT A COMPARISON OF TWO OF THESE PROVES (measured
+	## at bead `.2`): under the dummy rendering server `--headless` runs on, MultiMesh
+	## instance data is WRITE-ONLY — `get_instance_transform()` returns the identity
+	## and `get_instance_color()` opaque black for every instance, and `buffer` comes
+	## back empty. So the rows below are placeholders, and what a table-against-table
+	## comparison really asserts is the BUCKET NAMES and each bucket's
+	## `instance_count`. That is still the whole of check 5's claim and most of check
+	## 1's (a stray draw changes a count), but the geometry itself is pinned by check
+	## 2c, which reads `block_batch` directly — the batch is a plain Array of
+	## Dictionaries and every field in it is real.
 	var out: Dictionary = {}
 	for child: Node in chunk.get_children():
 		if not (child is MultiMeshInstance3D):
@@ -893,6 +1734,26 @@ func _node_table(chunk: Node) -> Array[String]:
 		out.append("%s|%.4f,%.4f,%.4f" % [child.get_class(), at.x, at.y, at.z])
 	out.sort()
 	return out
+
+
+func _signal_timer(chunk: Node) -> Timer:
+	## The first traffic head's cycle Timer in a built chunk. It hangs off this
+	## family's MARKER rather than off the chunk itself — see
+	## `BikePaths.SIGNAL_TIMER_NAME` for why — so this walks one level deeper than
+	## `_markers` does.
+	for marker: Node in _markers(chunk):
+		for child: Node in marker.get_children():
+			if child is Timer:
+				return child as Timer
+	return null
+
+
+func _same_color(a: Color, b: Color) -> bool:
+	## Equal to within float precision — see `COLOR_TOLERANCE`. Read off BATCH
+	## ENTRIES, never off a built MultiMesh: instance data is write-only under the
+	## headless dummy renderer (check 9's docstring carries that measurement).
+	return absf(a.r - b.r) <= COLOR_TOLERANCE and absf(a.g - b.g) <= COLOR_TOLERANCE \
+			and absf(a.b - b.b) <= COLOR_TOLERANCE
 
 
 func _shape_count(chunk: Node) -> int:
