@@ -70,6 +70,18 @@ extends RefCounted
 ## no road crossings: a spur is a side street with no destination to be worth a
 ## bridge, and a road crossing would put road coins on the strip.
 ##
+## PART B -- SPURS AIM (child `godot-test1-pnvb.4`, decision c-prime). A spur is a
+## side street off a trunk, BY CONSTRUCTION: after its four draws happen in their
+## shipped order, the bearing is REPLACED with the heading from its start to the
+## nearest trunk station in reach and the length with the distance there (clamped
+## to the shipped max). Consume-and-discard on bearing AND length: the draws are
+## kept, their values are replaced, so the stream is intact and check 1 re-rolls
+## all four and asserts the replacement. Past the reach there is nothing to hang
+## off (`attach`); short of it, the 1-stride endpoint guard below is the
+## TRUNCATION guard, not the filter: it rejects the walks the keep-outs stop
+## before they arrive. A post-walk reject alone could only filter, never create
+## attachment; the aim creates it.
+##
 ## THAT IS THE SPUR TIER'S RULE AND NOT THE FAMILY'S. A TRUNK crosses water on a
 ## real field deck (child `godot-test1-pnvb.3`) — the deck builder was never
 ## k-indexed, only the SCAN that finds the road's crossings was, and a trunk
@@ -333,11 +345,28 @@ const BIKE_TURN_PRIME_I: int = 15485917
 ## epic's "here and there": at k = 1 (the HQ corridor and the city) roughly one
 ## chunk in twelve starts a path, and since a path crosses several chunks the
 ## corridor reads as furnished rather than as a scatter of stubs.
-const BIKE_PATH_CHANCE: float = 0.085
+##
+## `.4` measured into the side-street band (decision c-prime): at 0.085 the C4
+## corridor sweep keeps 26 spurs over 106 trunks (ratio 0.25, under the 0.3-0.5
+## the decision asks for), so this stands at 0.12 for 38 over 106 (0.32-0.39
+## per CI seed, mean 0.36). The aim rejects ~90% of passers (no trunk in reach,
+## or the walk truncated first), so the world at 0.12 is still 3x sparser in
+## spurs than the shipped one: down in density against the old world, up a hair
+## in the constant against the bead letter, with the measured ratio deciding.
+const BIKE_PATH_CHANCE: float = 0.12
 
 ## Metres between stations. The strip is one box per SEGMENT, so this is also the
 ## strip's box length and the granularity the truncation speaks in.
 const BIKE_STATION_SPACING: float = 5.0
+
+## THE SPUR ATTACH DISTANCE (child `godot-test1-pnvb.4`, Part B). A spur survives
+## only when one of its endpoints lands within ONE STRIDE of a trunk station —
+## measured below against the shipped trunk memo, which costs no draw. One
+## stride is the tightest reading of "hangs off one": a side street meets the
+## main road, it does not merely pass through the neighbourhood. Loosening this
+## would keep more spurs but they would read as the same litter under a new
+## name. `bike_path_selfcheck` C4 pins it as a literal.
+const SPUR_ATTACH_DISTANCE: float = BIKE_STATION_SPACING
 
 ## A path shorter than this after truncation is dropped whole: a two-station stub
 ## is litter, not a bicycle path.
@@ -376,6 +405,26 @@ const BIKE_MAX_HEADING_DEG: float = 42.0
 ## one width, and a second opinion about it would put a bike path under the
 ## road's coins.
 const BIKE_ROAD_CLEARANCE: float = 14.0
+
+## THE CROSSING ANGLE (child `godot-test1-pnvb.4`, Part A). A trunk may cross the
+## coin road's swath mid-span where the acute angle between its own heading and
+## the road station's heading EXCEEDS this. 45 degrees is the midpoint between
+## "alongside" (0) and "square" (90): a shallower crossing lays a long run of
+## strip under the coin line, which is the case the refusal's coin argument is
+## really about, while a steeper one is across and gone in a few segments. The
+## WALK goes through and the PAINT still stops — the shipped keep-out draw skip
+## gaps every segment the swath touches, so no coin can land on a strip because
+## no strip is there. `bike_path_selfcheck` C3 pins this number as a literal.
+const BIKE_ROAD_CROSSING_MIN_DEG: float = 45.0
+
+## How far either side of a road gap a trunk pole stands that still reads as
+## flanking the crossing, in SEGMENTS. The swath is 28 m across (two
+## `BIKE_ROAD_CLEARANCE`), so a square crossing gaps ~6 segments and an oblique
+## one up to ~8; poles stand every `BIKE_POLE_STRIDE` = 4 segments, so 8 each
+## way always reaches the first drawn pole past the paint gap on both sides.
+## Those poles carry the CROSSING zebra (`BIKE_CROSSING_SIGN`), forced over the
+## dispatch. `bike_path_selfcheck` C1 pins the window's effect, not the number.
+const TRUNK_CROSSING_FLANK_SEGMENTS: int = 8
 
 ## Extra margin around a waypoint circle. `TerrainWaypoints.RING_RADIUS` is the
 ## paint; a strip that stopped exactly at the rim would still read as running
@@ -524,6 +573,11 @@ const BIKE_TOP_PRIME_I: int = 20996011
 ## The sentinel `POLE_TOPS` uses for "a traffic head, not a sign". Negative so it
 ## can never be read as an index into `SIGN_KINDS` by accident.
 const POLE_TOP_SIGNAL: int = -1
+
+## `SIGN_KINDS` index of the CROSSING zebra (child `godot-test1-pnvb.4`, Part A).
+## Forced over `_pole_top`'s dispatch result at the poles flanking a road
+## crossing — an override of the dispatched value, never a draw.
+const BIKE_CROSSING_SIGN: int = 3
 
 ## THE DISPATCH TABLE, and the whole of the "how often" question. One fold of one
 ## hash indexes it, so adding a kind or retuning the mix costs NO DRAW and moves
@@ -694,7 +748,7 @@ static func bike_path_at(terrain: Node3D, origin: Vector2i) -> Array[Dictionary]
 	return path
 
 
-static func _bike_path_at(terrain: Node3D, origin: Vector2i) -> Array[Dictionary]:
+static func _bike_path_at(terrain: Node3D, origin: Vector2i, rejected: Array = []) -> Array[Dictionary]:
 	"""
 	Roll and walk the path at `origin`. `_camp_at` / `_artifact_at` for a polyline.
 
@@ -740,8 +794,29 @@ static func _bike_path_at(terrain: Node3D, origin: Vector2i) -> Array[Dictionary
 	# corridor the world is strung along.
 	var heading0: float = rng.randf() * TAU
 
-	# (d) THE LENGTH, in stations.
+	# (d) THE LENGTH, in stations — drawn, then DISCARDED by the aim below
+	# (child `.4`: consume-and-discard keeps the draw and replaces the value).
 	var count: int = rng.randi_range(BIKE_PATH_MIN_STATIONS, BIKE_PATH_MAX_STATIONS)
+
+	# --- THE AIM (child `godot-test1-pnvb.4`, Part B, decision c-prime).
+	# Consume-and-discard on the bearing AND the length: the two draws above
+	# happened in their shipped order and their values are REPLACED, never
+	# skipped — skipping a draw is forbidden, replacing a consumed value keeps
+	# the stream intact. The spur aims from its start at the nearest trunk
+	# station within `BIKE_PATH_MAX_REACH` and walks exactly far enough to get
+	# there (clamped to the shipped length range's max); past that reach there
+	# is nothing to hang off and the spur is rejected with reason `attach`.
+	# The `_spur_attaches` guard below is then the TRUNCATION guard, not the
+	# filter: a walk the keep-outs stop before it arrives is rejected, an
+	# arrival survives. `bike_path_selfcheck` check 1 re-rolls the four draws
+	# and asserts the replacement, which is the measurement of this paragraph.
+	var aim: Vector2 = _spur_aim_target(terrain, start)
+	if aim == Vector2.INF:
+		if not rejected.is_empty():
+			rejected[0] = "attach"
+		return []
+	heading0 = (aim - start).angle()
+	count = mini(int(ceil(start.distance_to(aim) / BIKE_STATION_SPACING)) + 1, BIKE_PATH_MAX_STATIONS)
 
 	# --- THE WALK. Truncate at the first blocked station: keep the prefix, drop
 	# everything after, never resume past the block.
@@ -766,8 +841,90 @@ static func _bike_path_at(terrain: Node3D, origin: Vector2i) -> Array[Dictionary
 		pos = step
 
 	if stations.size() < BIKE_PATH_MIN_STATIONS:
+		if not rejected.is_empty():
+			rejected[0] = "short"
+		return []
+	# --- THE ARRIVAL GUARD (child `godot-test1-pnvb.4`, Part B). The aim above
+	# points the spur at its trunk; this rejects the walks the world stops first.
+	# In exactly the place the length gate above rejects, so neither gate costs
+	# a draw.
+	if not _spur_attaches(terrain, stations):
+		if not rejected.is_empty():
+			rejected[0] = "attach"
 		return []
 	return stations
+
+
+static func _spur_aim_target(terrain: Node3D, start: Vector2) -> Vector2:
+	"""
+	The trunk station a spur starting at `start` aims at (child `godot-test1-pnvb.4`,
+	Part B, decision c-prime): the nearest trunk station within `BIKE_PATH_MAX_REACH`,
+	or `Vector2.INF` when none is in reach.
+	
+	The route boxes reject first (each grown by the reach, which is a superset of
+	the station scan — a point within reach of a station is within reach of its
+	box), so only trunks that can possibly supply the target pay the scan. Pure
+	in (position, seed), costs no draw; the caller re-rolls nothing and skips
+	nothing — the bearing and length draws already happened and their values are
+	replaced, which is the consume-and-discard the bead names.
+	"""
+	var best := Vector2.INF
+	var best_d: float = BIKE_PATH_MAX_REACH
+	for trunk: Dictionary in trunks(terrain):
+		if not (trunk["box"] as Rect2).grow(BIKE_PATH_MAX_REACH).has_point(start):
+			continue
+		for station: Dictionary in (trunk["stations"] as Array[Dictionary]):
+			var d: float = start.distance_to(station["pos"])
+			if d < best_d:
+				best_d = d
+				best = station["pos"]
+	return best
+
+
+static func _spur_attaches(terrain: Node3D, stations: Array[Dictionary]) -> bool:
+	"""
+	Does this walked spur arrive at a trunk (child `godot-test1-pnvb.4`, Part B,
+	decision c-prime: the TRUNCATION guard behind the aim)?
+	
+	True when either ENDPOINT — the first or the last station — lands within
+	`SPUR_ATTACH_DISTANCE` of any trunk station. Endpoints only, never the
+	middle: a side street MEETS the main road at its end. Measured against the
+	shipped trunk memo, which costs no draw; the route box rejects first so only
+	trunks that can possibly attach pay the station scan.
+	"""
+	var first: Vector2 = stations[0]["pos"]
+	var last: Vector2 = stations[stations.size() - 1]["pos"]
+	for trunk: Dictionary in trunks(terrain):
+		var box: Rect2 = (trunk["box"] as Rect2).grow(SPUR_ATTACH_DISTANCE)
+		if not box.has_point(first) and not box.has_point(last):
+			continue
+		for station: Dictionary in (trunk["stations"] as Array[Dictionary]):
+			var at: Vector2 = station["pos"]
+			if first.distance_to(at) < SPUR_ATTACH_DISTANCE or last.distance_to(at) < SPUR_ATTACH_DISTANCE:
+				return true
+	return false
+
+
+static func spur_attach_ok(terrain: Node3D, stations: Array[Dictionary]) -> bool:
+	"""
+	The attach predicate for one walked spur, for `bike_path_selfcheck` C4 — the
+	shipped rule, asked of survivors the way check 3 asks `station_blocked` of its
+	prefixes.
+	"""
+	return _spur_attaches(terrain, stations)
+
+
+static func spur_reject_reason(terrain: Node3D, origin: Vector2i) -> String:
+	"""
+	Why the spur at `origin` does not exist: "short" (the length gate), "attach"
+	(Part B's gate), or "" — which means the rarity roll failed OR the spur
+	survived, told apart by whether `bike_path_at` returned stations. Walks
+	UNMEMOIZED (the memo stores only the stations) so C4 can count the rejects;
+	the walk is pure, so the answer is the memo's own.
+	"""
+	var rejected: Array = [""]
+	_bike_path_at(terrain, origin, rejected)
+	return String(rejected[0])
 
 
 static func next_station(terrain: Node3D, origin: Vector2i, heading0: float,
@@ -986,6 +1143,11 @@ static func trunks(terrain: Node3D) -> Array[Dictionary]:
 	hit and tens of `Rect2.intersects`: the whole of `spawn_bike_path_in_chunk`,
 	BOTH TIERS, measures 0.065-0.072 ms per corridor chunk and 0.376 ms on one
 	carrying a deck, where it mitres two rail lines and walks the slabs.
+Child `.4` re-measured: 0.17 ms on a spur A/B chunk (the aim lookup per rarity-passer)
+and 0.67 ms on a crossing chunk (plus the flank window per trunk pole), seed 20260904;
+the memo cold call is ~56 ms there at 33 routes, up from a dozen, because steep
+crossings now walk to full length instead of dying at the swath. Still once per run
+and sub-ms per chunk.
 	`bike_path_selfcheck` check T4 prints the memo's size every run.
 
 	COSTS NO DRAW. See the banner: the graph is a dispatch and the walk is a hash.
@@ -1311,7 +1473,7 @@ static func _trunk_route(terrain: Node3D, anchors: Array[Dictionary], edge: Dict
 			else:
 				at_rect = true
 			break
-		if _trunk_blocked(terrain, step, waypoints, from, to, reason):
+		if _trunk_blocked(terrain, step, waypoints, from, to, want, reason):
 			return []
 		heading = want
 		pos = step
@@ -1330,7 +1492,7 @@ static func _trunk_route(terrain: Node3D, anchors: Array[Dictionary], edge: Dict
 
 
 static func _trunk_blocked(terrain: Node3D, p: Vector2, waypoints: Array[Dictionary],
-		from: Vector2, to: Vector2, reason: Array[String] = []) -> bool:
+		from: Vector2, to: Vector2, heading: float, reason: Array[String] = []) -> bool:
 	"""
 	May a TRUNK station stand at this world XZ? `_station_blocked`'s seven tests,
 	re-decided for a route that has to lead somewhere.
@@ -1340,6 +1502,10 @@ static func _trunk_blocked(terrain: Node3D, p: Vector2, waypoints: Array[Diction
 	                         skipped, the coin road included — the walk is entitled
 	                         to reach its own anchor. The PAINT is not: the same
 	                         tests run again at draw time through `trunk_keep_out`.
+	@param heading: The heading the walk used to reach `p`. It is only read where
+	                         the swath is the SOLE refusal (child `godot-test1-pnvb.4`,
+	                         Part A): a near-perpendicular crossing walks through,
+	                         a shallow one is abandoned whole.
 	@return: true when the trunk must be abandoned whole.
 
 	FOUR OF THE SEVEN ARE HERE. The mountain is the caller's (it skirts before it
@@ -1376,13 +1542,19 @@ static func _trunk_blocked(terrain: Node3D, p: Vector2, waypoints: Array[Diction
 	# check 3 prints how many that is, and that number is still `.4`'s case.
 	if p.distance_to(from) < TRUNK_APPROACH_RADIUS or p.distance_to(to) < TRUNK_APPROACH_RADIUS:
 		return false
-	# Split for the REPORT and not for the rule: `trunk_keep_out` would answer both,
-	# but check 3's histogram tells "road" from "site" and `.4`'s case is the first
-	# number. The road is last because it is the one test that may grow the station
-	# cache.
-	if trunk_keep_out(terrain, p, waypoints):
+	# Split for the REPORT and not for the rule: the discs refuse outright, while
+	# the road refusal is conditional on the crossing angle (child
+	# `godot-test1-pnvb.4`, Part A) — so the road is tested on its own, after the
+	# discs, and last because it is the one test that may grow the station cache.
+	if trunk_keep_out(terrain, p, waypoints, false):
 		if not reason.is_empty():
-			reason[0] = "site" if not _road_swath(terrain, p) else "road"
+			reason[0] = "site"
+		return true
+	if _road_swath(terrain, p):
+		if _trunk_road_crossing_ok(terrain, p, heading):
+			return false
+		if not reason.is_empty():
+			reason[0] = "road"
 		return true
 	return false
 
@@ -1403,9 +1575,69 @@ static func _road_swath(terrain: Node3D, p: Vector2) -> bool:
 	"""
 	return terrain._road_lateral_distance(p.x, p.y, BIKE_ROAD_CLEARANCE) < BIKE_ROAD_CLEARANCE
 
+static func road_station_near(terrain: Node3D, p: Vector2) -> Dictionary:
+	"""
+	The road station judging world XZ `p` (child `godot-test1-pnvb.4`, round 2).
+	
+	THE ONE SEAM for station picking, shared by the walk (`_trunk_road_crossing_ok`)
+	and `bike_path_selfcheck` C3: an earlier revision picked the station twice with
+	a `best_k = -1` sentinel in both places, and station indices go NEGATIVE west
+	of the origin -- so every western crossing was refused and the check was blind
+	to it through the same sentinel. There is no int sentinel left to share:
+	this returns `{k, station}` for the nearest of the two stations straddling
+	`p.x` (cache extended, binary-searched, clamped -- the shipped idiom), or `{}`
+	when no station stands near. Pure, costs no draw.
+	"""
+	var pad: float = BIKE_ROAD_CLEARANCE + terrain._road_spacing() * 2.0
+	terrain._road_extend_to_x(p.x - pad, p.x + pad)
+	var k0: int = terrain._road_first_k_at_or_after_x(p.x)
+	var k_last: int = mini(terrain.road_k_max, terrain._road_terminal_k())
+	var best := {}
+	var best_d: float = INF
+	for k: int in [k0 - 1, k0]:
+		if k < terrain.road_k_min or k > k_last:
+			continue
+		var st: Dictionary = terrain._road_station(k)
+		var d: float = Vector2(p.x, p.y).distance_to(st["center"])
+		if d < best_d:
+			best_d = d
+			best = {"k": k, "station": st}
+	return best
+
+
+static func _trunk_road_crossing_ok(terrain: Node3D, p: Vector2, heading: float) -> bool:
+	"""
+	May this trunk step cross the coin road HERE, at this heading?
+	
+	@param p: The candidate step, WORLD space (x, z) — already known to be inside
+	         the swath. @param heading: The heading the walk used to reach it.
+	@return: true when the crossing is near-perpendicular (child `godot-test1-pnvb.4`,
+	         Part A) and the walk may continue; false keeps the shipped refusal.
+	
+	THE ACUTE ANGLE, not the signed difference: running ALONGSIDE the road in
+	either direction reads ~0 and stays refused, crossing it square reads ~PI/2.
+	The road heading comes through `road_station_near` (the one seam C3 shares),
+	`terrain._road_extend_to_x` — the same binary-search idiom every other road
+	consumer uses (`terrain._road_first_k_at_or_after_x`). The nearest of the two
+	stations straddling `p.x` is the heading read, so a point between two stations
+	is judged by the closer centreline — and a refusal is the default when no
+	station is near, which cannot happen behind `_road_swath` but must still be
+	the safe answer.
+	
+	PURE IN (POSITION, SEED) like everything else in the walk, and it costs no
+	draw: two hashes' worth of cache lookups and one comparison.
+	"""
+	var near: Dictionary = road_station_near(terrain, p)
+	if near.is_empty():
+		return false
+	var road_heading: float = float((near["station"] as Dictionary)["heading"])
+	var diff: float = absf(wrapf(heading - road_heading, -PI, PI))
+	return minf(diff, PI - diff) > deg_to_rad(BIKE_ROAD_CROSSING_MIN_DEG)
+
+
 
 static func trunk_keep_out(terrain: Node3D, p: Vector2,
-		waypoints: Array[Dictionary]) -> bool:
+		waypoints: Array[Dictionary], include_road: bool = true) -> bool:
 	"""
 	Is this world XZ somewhere this family must not draw — the tower's disc, a
 	teleport circle, a landmark's chunk, or the coin road's swath?
@@ -1481,7 +1713,13 @@ static func trunk_keep_out(terrain: Node3D, p: Vector2,
 	# tier this bead is meant to leave alone. T5 is deliberately TIER-BLIND, so if a
 	# seed ever lines one up the build goes red and that is the right outcome: a
 	# finding, not a false alarm.
-	return _road_swath(terrain, p)
+	#
+	# `include_road` is for `_trunk_blocked` ONLY (child `godot-test1-pnvb.4`): the
+	# walk must tell a destination-disc refusal from a road refusal, because the road
+	# one is now conditional on the crossing angle while the discs refuse outright.
+	# Every other caller — the draw-time skip, `_drawable_decks`, T5 — passes the
+	# default and sees all four members exactly as before.
+	return _road_swath(terrain, p) if include_road else false
 
 
 static func _anchor_in_city(terrain: Node3D, p: Vector2) -> bool:
@@ -1934,6 +2172,11 @@ static func _draw_path_share(terrain: Node3D, chunk_pos: Vector2i, centre: Vecto
 		# reached only here, AFTER the footprint skip above, so a pole that was
 		# never built carries no top either and `tops` stays parallel to `poles`.
 		var top: int = _pole_top(terrain, origin, i + 1)
+		# --- TRUNK ONLY: THE CROSSING ZEBRA (child `godot-test1-pnvb.4`, Part A). A
+		# pole flanking a road gap carries the CROSSING sign whatever the dispatch
+		# said — an override of the dispatched value, never a draw.
+		if edge_id >= 0 and _pole_flanks_road_crossing(terrain, stations, i):
+			top = BIKE_CROSSING_SIGN
 		tops.append(top)
 		if top == POLE_TOP_SIGNAL:
 			# THE OFF-BY-ONE LIVES ON THIS LINE. `_build_signal_head` emits the head
@@ -2026,6 +2269,27 @@ static func _pole_top(terrain: Node3D, origin: Vector2i, i: int) -> int:
 			origin.y * BIKE_TOP_PRIME_Y,
 			terrain.run_seed ^ BIKE_TOP_SALT))
 	return POLE_TOPS[(h & 0x7FFFFFFF) % POLE_TOPS.size()]
+
+
+static func _pole_flanks_road_crossing(terrain: Node3D, stations: Array[Dictionary], seg_i: int) -> bool:
+	"""
+	Does the pole on segment `seg_i` flank a road crossing?
+	
+	True when any segment within `TRUNK_CROSSING_FLANK_SEGMENTS` has its midpoint
+	inside the coin swath — i.e. this pole stands just past the paint gap the
+	shipped keep-out draw skip leaves where the WALK went through. Asked of the
+	shipped `_road_lateral_distance` comparison, the same one C1 re-measures.
+	Pure, costs no draw, and called only where a trunk pole is actually built.
+	"""
+	var lo: int = maxi(0, seg_i - TRUNK_CROSSING_FLANK_SEGMENTS)
+	var hi: int = mini(stations.size() - 2, seg_i + TRUNK_CROSSING_FLANK_SEGMENTS)
+	for o in range(lo, hi + 1):
+		var a: Vector2 = stations[o]["pos"]
+		var b: Vector2 = stations[o + 1]["pos"]
+		var mid: Vector2 = (a + b) * 0.5
+		if terrain._road_lateral_distance(mid.x, mid.y, BIKE_ROAD_CLEARANCE) < BIKE_ROAD_CLEARANCE:
+			return true
+	return false
 
 
 static func _palette(terrain: Node3D, key: int) -> Color:

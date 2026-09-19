@@ -16,6 +16,14 @@ extends SceneTree
 ## deck, B5 and B6 are unit assertions on the two pieces no seed reliably exercises,
 ## and B2 (with B2b) is its own sweep. They are listed after T4.
 ##
+## ...and child `.4` (road crossings + aimed spurs) adds FOUR, each its own call
+## after the drawn chain: C1 (the world tie off the DRAWN box, the route spanning
+## the swath, the zebra override at the flanking poles), C2 (no road coin stands
+## on a drawn strip), C3 (the angle rule over the CI seeds, failing on zero
+## crossings), C4 (every surviving spur attaches, with the spur:trunk ratio). Check
+## 1 additionally re-rolls the four spur draws and asserts the aim replacing
+## bearing and length; 3b counts mid-span crossings beside the shallow refusals.
+##
 ## `scripts/terrain_bike_paths.gd`'s banner carries the design; this file is the
 ## part of it a future edit cannot slip past. Six checks, every one of them an
 ## effect measurement WITH A CONTROL — the house rule in this suite:
@@ -215,8 +223,15 @@ const SEEDS: Array[int] = [20260904, 777, 4242]
 ## than a fragility: they assert the mix instead of trusting this comment, so a
 ## retuned prime, salt or chance empties the band LOUDLY. Re-derive it by
 ## sweeping `spawn_bike_path_in_chunk` over a band and reading which chunks draw.
+##
+## RE-DERIVED for child `godot-test1-pnvb.4`: aimed spurs live where a trunk is in
+## reach, so the old band (y 8..11) holds no path at all and checks 1, 2a and 5 go
+## red on empty. This one (y 2..5, same X) holds 6 path chunks, 10 empty ones, 2
+## that draw geometry with no pole, and 3 spur markers on seed 20260904: the mix
+## the controls screen for, counted with empty obstacles (the real pipeline can
+## only skip more poles, never fewer, so the bare count is the conservative one).
 const AB_X: Array[int] = [-5, -4, -3, -2]
-const AB_Y: Array[int] = [8, 9, 10, 11]
+const AB_Y: Array[int] = [2, 3, 4, 5]
 
 ## The CUBE bucket's node name — `ChunkBatch._emit_kind_multimesh` keeps the bare
 ## name for CUBE and suffixes every other kind, and this family builds CUBEs only.
@@ -246,6 +261,16 @@ const HALF_STEP_SAMPLES: int = 250000
 ## enough to hold several paths on every seed (measured: 3 to 20 per seed over
 ## this square) and small enough to stay a fraction of a second.
 const SWEEP_HALF: int = 14
+
+## C4's corridor band, in origin chunks: the sweep the spur:trunk ratio is
+## printed over. Wide enough that aimed spurs survive on every CI seed (a 29x29
+## square holds 0-3); the ratio is survivors per trunk in the world memo, so the
+## band sets its scale and the const comment on `BIKE_PATH_CHANCE` records what
+## this one measured.
+const C4_X0: int = -30
+const C4_X1: int = 30
+const C4_Y0: int = -10
+const C4_Y1: int = 20
 
 ## How far a strip box's world centre may sit from its segment's midpoint in
 ## check 2c. Metres, and it is a float-comparison tolerance rather than a design
@@ -476,15 +501,20 @@ func _run() -> void:
 	_check_lamp_indices(terrain_script)
 	_check_cycle_off_the_seed(terrain_script)
 	# --- TIER 1, the trunk routes (epic `godot-test1-pnvb`, child `.2`). Checks 2, 3
-	# and 4 above already grew a trunk half of their own. SEVEN CHECKS IN SIX CALLS:
-	# 2d rides check 2, 3b rides check 3, T3a and T3b ride check 4, and the five
-	# below are their own. Keep that count true — the banner says why it is the only
+	# and 4 above already grew a trunk half of their own. 2d rides check 2, 3b rides
+	# check 3, T3a and T3b ride check 4; everything below is its own call: T1, T2,
+	# T5, T4, the drawn chain, and child `.4`'s C1 through C4.
+	# Keep that list true. — the banner says why it is the only
 	# cross-check on the list.
 	_check_trunk_world_tie(terrain_script)
 	_check_trunk_intersections(terrain_script)
 	_check_trunk_keep_outs(terrain_script)
 	_check_trunk_memo(terrain_script)
 	_check_drawn_chain_reaches_budapest(terrain_script)
+	_check_road_crossing_world_tie(terrain_script)
+	_check_no_coin_on_strip(terrain_script)
+	_check_crossing_angle_rule(terrain_script)
+	_check_spurs_attach(terrain_script)
 	# --- CHILD `.3`, the bridges. SIX STATEMENTS IN FOUR CALLS: B1 (with B1b), B3
 	# and B4 are one call because they all need the same drawn deck, B5 and B6 are
 	# the two unit assertions on the pieces no seed reliably exercises, and B2 (with
@@ -669,6 +699,66 @@ func _check_kill_switch(terrain_script: GDScript) -> void:
 				+ "no footprint, so its stray-draw comparison ran only on chunks where the "
 				+ "spawner drew nothing and could not have failed. Retune AB_X / AB_Y until "
 				+ "the band contains a path with no pole on it")
+	# --- THE AIM, MEASURED (child `godot-test1-pnvb.4`, decision c-prime). Every
+	# surviving spur in the band above re-rolls its four draws in their shipped
+	# order and asserts the replacement: the rarity and the two offsets reproduce
+	# the walk's start (no draw skipped or reordered), and the walked bearing and
+	# length equal the aim at the nearest trunk station (consume-and-discard on
+	# both). The target is brute-forced off the shipped memo WITHOUT the box
+	# prefilter, so the lookup agrees with `_spur_aim_target` by value rather
+	# than by sharing its code.
+	var aim_checked: int = 0
+	var trunks_on: Array[Dictionary] = BikePaths.trunks(on)
+	for x: int in AB_X:
+		for y: int in AB_Y:
+			var chunk_here: Node = on.active_chunks[Vector2i(x, y)]
+			for marker: Node in _markers(chunk_here):
+				if int(marker.get_meta("edge")) != -1:
+					continue
+				var origin: Vector2i = marker.get_meta("origin")
+				var stations: Array[Dictionary] = BikePaths.bike_path_at(on, origin)
+				if stations.is_empty():
+					_fail("check 1: a spur marker promises geometry the walk never drew")
+					continue
+				var rng := RandomNumberGenerator.new()
+				rng.seed = hash(Vector3i(origin.x * BikePaths.BIKE_HASH_PRIME_X,
+					origin.y * BikePaths.BIKE_HASH_PRIME_Y,
+					on.run_seed ^ BikePaths.BIKE_PATH_SALT))
+				var size: float = on.chunk_size
+				var k: float = on.scarcity_at(on.chunk_to_world(origin))
+				if not (rng.randf() < BikePaths.BIKE_PATH_CHANCE * k):
+					_fail("check 1: a surviving spur whose rarity roll fails; the draw order moved")
+				var start: Vector2 = stations[0]["pos"]
+				if start != Vector2(float(origin.x) * size + rng.randf() * size,
+					float(origin.y) * size + rng.randf() * size):
+					_fail("check 1: a surviving spur starts away from its two offset draws "
+					+ "a draw was added, removed or reordered ahead of them")
+				var _bearing: float = rng.randf() * TAU
+				var _length: int = rng.randi_range(BikePaths.BIKE_PATH_MIN_STATIONS,
+					BikePaths.BIKE_PATH_MAX_STATIONS)
+				var target := Vector2.INF
+				var best_d: float = BikePaths.BIKE_PATH_MAX_REACH
+				for trunk: Dictionary in trunks_on:
+					for station: Dictionary in (trunk["stations"] as Array[Dictionary]):
+						var d: float = start.distance_to(station["pos"])
+						if d < best_d:
+							best_d = d
+							target = station["pos"]
+				if target == Vector2.INF:
+					_fail("check 1: a surviving spur with no trunk station in reach of its start")
+					continue
+				if float(stations[0]["heading"]) != (target - start).angle():
+					_fail("check 1: a surviving spur not walking the aim at its nearest trunk station "
+					+ "though the bearing draw was consumed")
+				var want_count: int = mini(int(ceil(start.distance_to(target)
+					/ BikePaths.BIKE_STATION_SPACING)) + 1, BikePaths.BIKE_PATH_MAX_STATIONS)
+				if stations.size() != want_count:
+					_fail("check 1: a surviving spur walking the wrong station count for its aim "
+					+ "though the length draw was consumed")
+				aim_checked += 1
+	if aim_checked == 0:
+		_fail("check 1 found no surviving spur in its A/B field, so the aim was never measured")
+	print("check 1: the aim holds on %d band spurs" % aim_checked)
 	on.free()
 	off.free()
 	Sentinel.done("kill_switch")
@@ -1118,7 +1208,7 @@ func _check_trunk_endings(terrain_script: GDScript) -> void:
 	ones that survived really did end one of those two ways.
 
 	AND IT PRINTS WHY THE OTHERS DID NOT, split by cause, because one of those
-	numbers IS `godot-test1-pnvb.4`'s case: the coin road still refuses a trunk
+	numbers WAS `godot-test1-pnvb.4`'s case and is now its report card: steep crossings
 	MID-SPAN (*"a crossing would put road coins on the strip"*), and how many edges
 	that costs the network is a measurement rather than an argument. Near its OWN
 	anchor a trunk may walk the corridor — the gate sits dead centre in it — and T5
@@ -1137,6 +1227,7 @@ func _check_trunk_endings(terrain_script: GDScript) -> void:
 	var at_anchor: int = 0
 	var at_rect: int = 0
 	var road_stations: int = 0
+	var midspan_crossings: int = 0
 	for seed_value: int in SEEDS:
 		var terrain: Node3D = _terrain(terrain_script, seed_value, true)
 		if BikePaths.TRUNK_APPROACH_RADIUS < terrain.TOWER_RADIUS:
@@ -1161,6 +1252,17 @@ func _check_trunk_endings(terrain_script: GDScript) -> void:
 				continue
 			checked += 1
 			var stations: Array[Dictionary] = built[edge_id]["stations"]
+			var fa: Vector2 = anchors[int(built[edge_id]["a"])]["pos"]
+			var fb: Vector2 = anchors[int(built[edge_id]["b"])]["pos"]
+			for station: Dictionary in stations:
+				var at: Vector2 = station["pos"]
+				if at.distance_to(fa) < BikePaths.TRUNK_APPROACH_RADIUS \
+					or at.distance_to(fb) < BikePaths.TRUNK_APPROACH_RADIUS:
+					continue
+				if terrain._road_lateral_distance(at.x, at.y, BikePaths.BIKE_ROAD_CLEARANCE) \
+					< BikePaths.BIKE_ROAD_CLEARANCE:
+					midspan_crossings += 1
+					break
 			for station: Dictionary in stations:
 				var at: Vector2 = station["pos"]
 				if terrain._road_lateral_distance(at.x, at.y, BikePaths.BIKE_ROAD_CLEARANCE) \
@@ -1198,12 +1300,13 @@ func _check_trunk_endings(terrain_script: GDScript) -> void:
 	# inside `trunk_keep_out`, so T5's box-and-footprint sweep is what asserts no
 	# strip ever lies under a coin. This half only measures that the refusal is
 	# still alive at all.
-	if int(reasons.get("road", 0)) == 0:
+	if int(reasons.get("road", 0)) == 0 and midspan_crossings == 0:
 		_fail("check 3b: not one edge across %d seeds was abandoned for the coin road, so "
 				% SEEDS.size() + "the mid-span refusal was never seen to fire. "
 				+ "`godot-test1-pnvb.4` owns that crossing and this number is its case, so "
-				+ "a zero here means either the case has gone missing or the road stopped "
-				+ "refusing anything at all")
+				+ "a zero here means the refusal never fired AND no trunk crosses mid-span: "
+				+ "the network stopped meeting the road at all (steep crossings walk through "
+				+ "under child godot-test1-pnvb.4, so a refusal or a crossing must show)")
 	# ...AND THE STATIONS THE EXEMPTION LET THROUGH ARE COUNTED, NOT ASSERTED, because
 	# they are legitimate: a trunk to the gate walks the last 70 m along the corridor
 	# and draws none of it. A ZERO here would mean the exemption is inert and T5's
@@ -1218,9 +1321,11 @@ func _check_trunk_endings(terrain_script: GDScript) -> void:
 	if at_anchor == 0:
 		_fail("check 3b found no trunk that ended at its own anchor, so the snap — the thing "
 				+ "that makes the owner's intersections exact — was never once seen to happen")
+	print("bike trunks: %d routes cross the coin road mid-span (walked through, paint gapped)"
+			% midspan_crossings)
 	print("bike trunks: %d routes end at their anchor, %d at Budapest's rect edge, over %d "
 			% [at_anchor, at_rect, SEEDS.size()] + "seeds. Edges that produced NO trunk, by "
-			+ "cause: %s — \"road\" is what godot-test1-pnvb.4 buys back, \"city\" is edges "
+			+ "cause: %s — \"road\" is a shallow crossing refused under godot-test1-pnvb.4, \"city\" is edges "
 			% reasons + "with both anchors inside the authored rect, and \"mountain\" is a "
 			+ "massif the skirt could not clear")
 	Sentinel.done("trunk_endings")
@@ -2277,6 +2382,309 @@ func _function_body(source: String, name: String) -> String:
 # ============================================================================
 # T1 — THE WORLD TIE, and it is this bead's named non-negotiable assertion
 # ============================================================================
+
+func _check_road_crossing_world_tie(terrain_script: GDScript) -> void:
+	"""
+	C1 (child `godot-test1-pnvb.4`, Part A) -- THE WORLD TIE OFF THE DRAWN BOX,
+	AND THE ROUTE CONTINUES ACROSS THE ROAD.
+	
+	On seed 20260904 trunk 31 crosses the coin road through chunk (13, -3) with
+	strip boxes, road coins and flanking poles all in it. Built through the
+	SHIPPED `create_chunk`, then tied to a bare spawner run whose batch is
+	readable: per edge the real marker's segments must equal the bare one's
+	(segments never depend on footprints, so a mismatch is a second share-rule
+	hiding somewhere), and past that tie every measurement is off the DRAWN box,
+	never off the station list.
+	
+	Three statements: (a) every drawn strip box in the chunk stands at least
+	`BIKE_ROAD_CLEARANCE` from the centreline, measured at its own world centre
+	through the shipped `_road_lateral_distance` (which reads INF off-road, so
+	the comparison IS the test); (b) the trunk's stations DO span the swath --
+	an in-swath station exists mid-span, which is what distinguishes a crossing
+	from a truncation -- while the chunk's marker for that edge still claims
+	drawn segments, so the gap is in the paint and not in the route; (c) every
+	built trunk pole flanking the road gap carries the CROSSING zebra
+	(SIGN_KINDS[3], pinned as the literal 3), forced over the dispatch. The
+	chunk is chosen so at least one flanking pole dispatches something else,
+	and the check fails if it finds no flanking pole at all.
+	
+	No MultiMesh colour or transform is read back anywhere: instance data is
+	write-only under the headless dummy renderer (`_multimesh_table`'s note).
+	The batch is a plain Array of Dictionaries and every field in it is real,
+	which is what T1 already relies on.
+	"""
+	var terrain: Node3D = _terrain(terrain_script, 20260904, true)
+	var chunk_pos := Vector2i(13, -3)
+	var edge_id: int = 31
+	terrain.create_chunk(chunk_pos)
+	if not terrain.active_chunks.has(chunk_pos):
+		_fail("C1: chunk %s never streamed, so the crossing has nothing to stand on" % chunk_pos)
+		terrain.free()
+		Sentinel.done("road_crossing_world_tie")
+		return
+	var chunk_node: Node = terrain.active_chunks[chunk_pos]
+	var built: Dictionary = _spawn_bare(terrain, chunk_pos)
+	var at: Vector3 = terrain.chunk_to_world(chunk_pos)
+	var real_rows: Dictionary = {}
+	for marker: Node in _markers(chunk_node):
+		real_rows[int(marker.get_meta("edge"))] = marker.get_meta("segments")
+	var bare_rows: Dictionary = {}
+	for row: Dictionary in (built["paths"] as Array[Dictionary]):
+		bare_rows[int(row["edge"])] = row["segments"]
+	for edge_v: Variant in real_rows:
+		if not bare_rows.has(edge_v) or (bare_rows[edge_v] as PackedInt32Array) != (real_rows[edge_v] as PackedInt32Array):
+			_fail("C1: edge %d draws %s for real but %s bare -- the per-chunk share " % [edge_v, real_rows[edge_v], bare_rows.get(edge_v, [])] + "is not the midpoint rule in both places")
+	for edge_v: Variant in bare_rows:
+		if not real_rows.has(edge_v):
+			_fail("C1: edge %d draws %s bare but nothing for real -- same rule, both ways" % [edge_v, bare_rows[edge_v]])
+	var strips: Array = []
+	for entry_v: Variant in (built["batch"] as Array):
+		var entry: Dictionary = entry_v
+		var t: Transform3D = entry["transform"]
+		if not is_equal_approx(t.origin.y, BikePaths.BIKE_PATH_THICKNESS * 0.5):
+			continue
+		var world := Vector2(at.x + t.origin.x, at.z + t.origin.z)
+		if terrain._road_lateral_distance(world.x, world.y, BikePaths.BIKE_ROAD_CLEARANCE) < 14.0:
+			_fail("C1: chunk %s draws a bike strip box at %s, inside the coin road's swath " % [chunk_pos, world] + "-- the paint gap the crossing owes the road is missing")
+		var axis := Vector2(t.basis.x.x, t.basis.x.z).normalized()
+		strips.append({"pos": world, "half": t.basis.x.length() * 0.5, "axis": axis})
+	if strips.is_empty():
+		_fail("C1: chunk %s draws no strip box at all, so the swath assertion held for free" % chunk_pos)
+	var route: Array[Dictionary] = []
+	for trunk: Dictionary in BikePaths.trunks(terrain):
+		if int(trunk["id"]) == edge_id:
+			route = trunk["stations"]
+	if route.is_empty():
+		_fail("C1: trunk %d does not exist on seed 20260904 -- the crossing moved" % edge_id)
+		terrain.free()
+		Sentinel.done("road_crossing_world_tie")
+		return
+	var in_swath: int = 0
+	for station: Dictionary in route:
+		var p: Vector2 = station["pos"]
+		if terrain._road_lateral_distance(p.x, p.y, BikePaths.BIKE_ROAD_CLEARANCE) < BikePaths.BIKE_ROAD_CLEARANCE:
+			in_swath += 1
+	if in_swath == 0:
+		_fail("C1: trunk %d has no station in the swath -- it truncates at the road, " % edge_id + "it does not cross it")
+	if not real_rows.has(edge_id) or (real_rows[edge_id] as PackedInt32Array).is_empty():
+		_fail("C1: trunk %d draws nothing in chunk %s -- the gap swallowed the route, " % [edge_id, chunk_pos] + "not just the paint")
+	var bare_poles := PackedInt32Array()
+	var bare_tops := PackedInt32Array()
+	for row: Dictionary in (built["paths"] as Array[Dictionary]):
+		if int(row["edge"]) == edge_id:
+			bare_poles = row["poles"]
+			bare_tops = row["tops"]
+	var flanks: int = 0
+	for pi in bare_poles.size():
+		var bt: Transform3D = ((built["batch"] as Array)[int(bare_poles[pi])] as Dictionary)["transform"]
+		var pw := Vector2(at.x + bt.origin.x, at.z + bt.origin.z)
+		var best_j: int = 0
+		var best_d: float = INF
+		for j in route.size():
+			var dd: float = pw.distance_to(route[j]["pos"])
+			if dd < best_d:
+				best_d = dd
+				best_j = j
+		var flanking: bool = false
+		for o in range(maxi(0, best_j - 8), mini(route.size() - 1, best_j + 9)):
+			var m2: Vector2 = ((route[o]["pos"] as Vector2) + (route[o + 1]["pos"] as Vector2)) * 0.5
+			if terrain._road_lateral_distance(m2.x, m2.y, BikePaths.BIKE_ROAD_CLEARANCE) < BikePaths.BIKE_ROAD_CLEARANCE:
+				flanking = true
+				break
+		if flanking:
+			flanks += 1
+			if int(bare_tops[pi]) != 3:
+				_fail("C1: trunk %d has a pole flanking the road gap at %s carrying top %d, " % [edge_id, pw, int(bare_tops[pi])] + "not the CROSSING zebra (SIGN_KINDS[3]) the override owes it")
+	if flanks == 0:
+		_fail("C1: trunk %d shows no flanking pole in chunk %s, so the zebra override " % [edge_id, chunk_pos] + "was never exercised -- re-derive the chunk")
+	print("C1: chunk %s draws %d strip boxes clear of the swath; " % [chunk_pos, strips.size()] + "trunk %d spans %d in-swath stations with %d flanking zebra poles" % [edge_id, in_swath, flanks])
+	terrain.free()
+	Sentinel.done("road_crossing_world_tie")
+
+
+func _check_no_coin_on_strip(terrain_script: GDScript) -> void:
+	"""
+	C2 (child `godot-test1-pnvb.4`, Part A) -- NO ROAD COIN STANDS ON A DRAWN STRIP.
+	
+	The shipped refusal's actual worry, asserted directly and strictly stronger
+	than the refusal was: on C1's chunk, every coin `CoinRoad.spawn_coins_in_chunk`
+	places is measured against every drawn strip box. A coin counts as ON a strip
+	when its XZ falls inside the box's footprint grown by a 0.3 m hair (float
+	slack and nothing more -- the nearest real pair is metres apart). Fails if
+	the chunk holds no coin or no strip, so neither half can hold for free.
+	
+	The coins are read off the shipped `_road_coins_at` over a 60 m window around
+	the chunk (far wider than the spawner's own pad, so no station is missed) and
+	bucketed by final chunk exactly the way the spawner buckets them. Settling,
+	tower and deck adjustments never move a coin in XZ -- perch changes Y and
+	skips only remove -- so this raw scatter set is a SUPERSET of the placed set
+	and the assertion over it is stronger than over the placed set.
+	"""
+	var terrain: Node3D = _terrain(terrain_script, 20260904, true)
+	var chunk_pos := Vector2i(13, -3)
+	var built: Dictionary = _spawn_bare(terrain, chunk_pos)
+	var at: Vector3 = terrain.chunk_to_world(chunk_pos)
+	var strips: Array = []
+	for entry_v: Variant in (built["batch"] as Array):
+		var t: Transform3D = (entry_v as Dictionary)["transform"]
+		if not is_equal_approx(t.origin.y, BikePaths.BIKE_PATH_THICKNESS * 0.5):
+			continue
+		var axis := Vector2(t.basis.x.x, t.basis.x.z).normalized()
+		strips.append({"pos": Vector2(at.x + t.origin.x, at.z + t.origin.z),
+			"half": t.basis.x.length() * 0.5, "axis": axis})
+	if strips.is_empty():
+		_fail("C2: chunk %s draws no strip box, so no coin can overlap one" % chunk_pos)
+		terrain.free()
+		Sentinel.done("no_coin_on_strip")
+		return
+	var coins: Array[Vector2] = []
+	terrain._road_extend_to_x(at.x - 60.0, at.x + 60.0)
+	var kk: int = terrain._road_first_k_at_or_after_x(at.x - 60.0)
+	while kk <= terrain.road_k_max:
+		var st: Dictionary = terrain._road_station(kk)
+		kk += 1
+		if (st["center"] as Vector2).x > at.x + 60.0:
+			break
+		for cw_v: Variant in terrain._road_coins_at(kk - 1):
+			var cp: Vector3 = (cw_v as Dictionary)["pos"]
+			if terrain.world_to_chunk(cp) == chunk_pos:
+				coins.append(Vector2(cp.x, cp.z))
+	if coins.is_empty():
+		_fail("C2: chunk %s holds no road coin, so the overlap assertion held for free" % chunk_pos)
+		terrain.free()
+		Sentinel.done("no_coin_on_strip")
+		return
+	for coin: Vector2 in coins:
+		for strip: Dictionary in strips:
+			var rel: Vector2 = coin - (strip["pos"] as Vector2)
+			var axis: Vector2 = strip["axis"]
+			var along: float = absf(rel.dot(axis))
+			var across: float = absf(rel.dot(Vector2(-axis.y, axis.x)))
+			if along <= float(strip["half"]) + 0.3 and across <= BikePaths.BIKE_PATH_WIDTH * 0.5 + 0.3:
+				_fail("C2: road coin at %s stands on a drawn strip box at %s in chunk %s -- " % [coin, strip["pos"], chunk_pos] + "a coin can land on paint the crossing failed to gap")
+				break
+	print("C2: %d road coins stand clear of %d drawn strip boxes in chunk %s" % [coins.size(), strips.size(), chunk_pos])
+	terrain.free()
+	Sentinel.done("no_coin_on_strip")
+
+
+func _check_crossing_angle_rule(terrain_script: GDScript) -> void:
+	"""
+	C3 (child `godot-test1-pnvb.4`, Part A) -- THE ANGLE RULE BITES.
+	
+	Over the CI seeds, every trunk station walked through the swath mid-span must
+	cross it at an acute angle above 45 degrees (pinned as the literal
+	`acute <= 45.0` against `BIKE_ROAD_CROSSING_MIN_DEG`), measured between
+	the station's own walked heading and the road station's heading through the
+	shipped seam `BikePaths.road_station_near` -- which C3 drives rather than
+	re-implementing the pick. Round 2 removed a `best_k = -1` sentinel the check
+	used to share with the walk, blind west of the origin where station indices
+	go negative; a sub-assertion fails on zero crossings judged by a negative
+	station, so the seam cannot go blind there again. Endpoint-exempt corridor
+	walking (the gate approach)
+	is out of scope: it runs alongside by entitlement, not by crossing. Fails
+	if the sweep finds no crossing at all, and prints how many candidate
+	crossings were refused for running shallow (the `trunk_abandoned` "road"
+	bucket), which is the rule's other half.
+	"""
+	var crossings: int = 0
+	var neg_crossings: int = 0
+	var shallow: int = 0
+	var min_acute: float = 90.0
+	for seed_value: int in SEEDS:
+		var terrain: Node3D = _terrain(terrain_script, seed_value, true)
+		var anchors: Array = terrain.bike_anchors()
+		for trunk: Dictionary in BikePaths.trunks(terrain):
+			var fa: Vector2 = anchors[int(trunk["a"])]["pos"]
+			var fb: Vector2 = anchors[int(trunk["b"])]["pos"]
+			var crosses: bool = false
+			var neg: bool = false
+			for station: Dictionary in (trunk["stations"] as Array[Dictionary]):
+				var p: Vector2 = station["pos"]
+				if p.distance_to(fa) < BikePaths.TRUNK_APPROACH_RADIUS \
+					or p.distance_to(fb) < BikePaths.TRUNK_APPROACH_RADIUS:
+					continue
+				if terrain._road_lateral_distance(p.x, p.y, BikePaths.BIKE_ROAD_CLEARANCE) \
+					>= BikePaths.BIKE_ROAD_CLEARANCE:
+					continue
+				var near: Dictionary = BikePaths.road_station_near(terrain, p)
+				if near.is_empty():
+					_fail("C3: seed %d has a trunk station in the swath with no road station near -- " % seed_value + "the swath reading disagrees with the station cache")
+					continue
+				var rh: float = float((near["station"] as Dictionary)["heading"])
+				if int(near["k"]) < 0:
+					neg = true
+				var diff: float = absf(wrapf(float(station["heading"]) - rh, -PI, PI))
+				var acute: float = rad_to_deg(minf(diff, PI - diff))
+				if acute <= 45.0:
+					_fail("C3: seed %d trunk %d crosses the swath at %.1f degrees -- " % [seed_value, int(trunk["id"]), acute] + "the near-perpendicular rule let a shallow crossing through")
+				min_acute = minf(min_acute, acute)
+				crosses = true
+			if crosses:
+				crossings += 1
+			if neg:
+				neg_crossings += 1
+		for edge: Dictionary in terrain.bike_edges():
+			if BikePaths.trunk_abandoned(terrain, edge) == "road":
+				shallow += 1
+		terrain.free()
+	if crossings == 0:
+		_fail("C3 swept %d seeds and found no trunk crossing the coin road -- a rule " % SEEDS.size() + "with no crossing in it asserts nothing")
+	if neg_crossings == 0:
+		_fail("C3 swept %d seeds and no crossing is judged by a negative road station index " % SEEDS.size() + "-- west of the origin the pick may be refusing blind (round-2 sentinel)")
+	print("C3: %d trunks cross mid-span, shallowest at %.1f deg (rule: above 45); " % [crossings, min_acute] + "%d shallow candidates refused, %d judged by a negative station" % [shallow, neg_crossings])
+	Sentinel.done("crossing_angle_rule")
+
+
+func _check_spurs_attach(terrain_script: GDScript) -> void:
+	"""
+	C4 (child `godot-test1-pnvb.4`, Part B) -- EVERY SURVIVING SPUR ATTACHES.
+	
+	Over a corridor band on the CI seeds, every spur the walk keeps must have an
+	endpoint within `SPUR_ATTACH_DISTANCE` of a trunk station, asked of the
+	shipped `spur_attach_ok` the way check 3 asks `station_blocked` of its
+	prefixes. Prints per seed the survivors, the aim/guard rejects (origins
+	whose rarity roll passes but no spur survives, classified by the shipped
+	`spur_reject_reason`) and the trunk count, with the spur:trunk ratio -- the
+	number the owner's complaint is really about and the number `BIKE_PATH_CHANCE`
+	is retuned against. Fails if no spur survives anywhere, so the assertion
+	cannot hold for free.
+	"""
+	var total_surv: int = 0
+	var total_rej: int = 0
+	var total_trunks: int = 0
+	for seed_value: int in SEEDS:
+		var terrain: Node3D = _terrain(terrain_script, seed_value, true)
+		var trunks: Array[Dictionary] = BikePaths.trunks(terrain)
+		var surv: int = 0
+		var rej: int = 0
+		for ox in range(C4_X0, C4_X1 + 1):
+			for oy in range(C4_Y0, C4_Y1 + 1):
+				var origin := Vector2i(ox, oy)
+				var stations: Array[Dictionary] = BikePaths.bike_path_at(terrain, origin)
+				if not stations.is_empty():
+					if not BikePaths.spur_attach_ok(terrain, stations):
+						_fail("C4: seed %d keeps the spur from origin %s, yet neither endpoint " % [seed_value, origin] + "lands within a stride of a trunk station -- an unattached spur exists")
+					surv += 1
+				else:
+					var rng := RandomNumberGenerator.new()
+					rng.seed = hash(Vector3i(origin.x * BikePaths.BIKE_HASH_PRIME_X,
+						origin.y * BikePaths.BIKE_HASH_PRIME_Y,
+						terrain.run_seed ^ BikePaths.BIKE_PATH_SALT))
+					var k: float = terrain.scarcity_at(terrain.chunk_to_world(origin))
+					if rng.randf() < BikePaths.BIKE_PATH_CHANCE * k:
+						if BikePaths.spur_reject_reason(terrain, origin) == "attach":
+							rej += 1
+		print("C4: seed %d: %d surviving spurs attach, %d aimed walks rejected, %d trunks (ratio %.2f)" % [seed_value, surv, rej, trunks.size(), float(surv) / float(maxi(1, trunks.size()))])
+		total_surv += surv
+		total_rej += rej
+		total_trunks += trunks.size()
+		terrain.free()
+	if total_surv == 0:
+		_fail("C4 swept %d seeds x %d origins and no spur survived anywhere, so every " % [SEEDS.size(), (C4_X1 - C4_X0 + 1) * (C4_Y1 - C4_Y0 + 1)] + "survivor attaches holds for free")
+	print("C4: %d survivors attach over %d trunks (%d rejects); mean spur:trunk ratio %.2f" % [total_surv, total_trunks, total_rej, float(total_surv) / float(maxi(1, total_trunks))])
+	Sentinel.done("spurs_attach")
+
 
 func _check_trunk_world_tie(terrain_script: GDScript) -> void:
 	"""
