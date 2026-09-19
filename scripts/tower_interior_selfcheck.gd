@@ -1084,11 +1084,16 @@ func _check_node_shape() -> void:
 	var interior := await TowerProbe.make_interior(self)
 	var boxes := TowerInterior.all_boxes()
 	var meshes := _all_meshes(interior)
-	# THE DOSSIER RACK COUNTS, and it counts in BOTH numbers. It is a
-	# `MultiMeshInstance3D` rather than a `MeshInstance3D` — the only one in the
-	# building — so `_all_meshes` cannot see it, and a node the engine draws that no
-	# budget counts is a budget that has stopped meaning anything. One node, one
-	# surface, one draw, six pickups: see `TowerInterior._build_dossiers`.
+	# THE MULTIMESHES COUNT, AND THEY COUNT IN BOTH NUMBERS. There are three since
+	# bead `godot-test1-buyt.3` — the dossier rack and the two staff archetypes —
+	# and they are `MultiMeshInstance3D` rather than `MeshInstance3D`, so
+	# `_all_meshes` cannot see any of them. A node the engine draws that no budget
+	# counts is a budget that has stopped meaning anything. Each is one node, one
+	# surface and one draw however many instances it holds: six pickups for the
+	# rack (`TowerDossiers.build`), a whole ten-storey population for the two staff
+	# racks (`TowerStaff.reset`). That property is the entire reason either exists
+	# in this form, and check 4 of `tower_staff_selfcheck` asserts the staff half of
+	# it by measuring the welded body's surface count.
 	var racks := _multimeshes(interior)
 	var drawn := meshes.size() + racks.size()
 	if drawn > TowerInterior.DRAW_BUDGET:
@@ -1174,16 +1179,29 @@ func _check_node_shape() -> void:
 			bodies += 1
 		elif child is Area3D:
 			areas += 1
-	# EXACTLY ONE MULTIMESH, AND IT IS THE DOSSIER RACK. The rule this replaces was
-	# "none at all — it is authored geometry, not chunk content", and it still says
-	# that: what a multimesh must not be here is the chunk streamer's decorative
-	# batching coming indoors. One rack of six AUTHORED pickups that have to
-	# disappear one at a time is the one thing a merged storey batch cannot express,
-	# and it is counted in both budgets above rather than hiding under them.
-	if racks.size() != 1:
-		_fail("the interior holds %d MultiMeshInstance3D — expected exactly one, the DossierRack" % racks.size())
-	elif String(racks[0].name) != "DossierRack":
-		_fail("the interior's one MultiMeshInstance3D is called %s, not DossierRack" % racks[0].name)
+	# EXACTLY THREE MULTIMESHES, AND EVERY ONE OF THEM IS NAMED HERE. The rule this
+	# replaces was "none at all — it is authored geometry, not chunk content", and
+	# it still says that: what a multimesh must not be here is the chunk streamer's
+	# decorative batching coming indoors. A rack of six AUTHORED pickups that have
+	# to disappear one at a time, and a POPULATION that has to move, are the two
+	# things a merged storey batch cannot express — and all three are counted in
+	# both budgets above rather than hiding under them.
+	#
+	# BY NAME AND NOT BY COUNT, since bead `godot-test1-buyt.3`. A bare count was
+	# enough while there was one; with three, a check that only counted would pass
+	# a build that dropped a staff archetype and grew some other multimesh in its
+	# place, which is exactly the "a feature drawn 25 m off that six checks all
+	# passed" shape. The set is what is asserted.
+	const WANT_RACKS: Array[String] = ["DossierRack", "StaffScientists", "StaffEngineers"]
+	var rack_names: Array[String] = []
+	for rack: MultiMeshInstance3D in racks:
+		rack_names.append(String(rack.name))
+	rack_names.sort()
+	var want_sorted := WANT_RACKS.duplicate()
+	want_sorted.sort()
+	if rack_names != want_sorted:
+		_fail("the interior's MultiMeshInstance3D nodes are %s — expected exactly %s" % [
+			str(rack_names), str(want_sorted)])
 	if bodies != 1:
 		_fail("the interior has %d StaticBody3D, expected exactly one" % bodies)
 	# Three pads (demand, identity, checkpoint) and the block's own: four spine pads,
@@ -2217,10 +2235,11 @@ func _all_meshes(node: Node) -> Array[MeshInstance3D]:
 
 
 func _multimeshes(node: Node) -> Array[MultiMeshInstance3D]:
-	## The `MultiMeshInstance3D`s under `node` — the dossier rack, and nothing else
-	## in this building. Separate from `_all_meshes` because they are not
-	## `MeshInstance3D`s and check 6's material walk is a claim about the ones that
-	## are; check 5 adds the two together, because the ENGINE does.
+	## The `MultiMeshInstance3D`s under `node` — the dossier rack and the two staff
+	## archetypes, and nothing else in this building. Separate from `_all_meshes`
+	## because they are not `MeshInstance3D`s and check 6's material walk is a claim
+	## about the ones that are; check 5 adds the two together, because the ENGINE
+	## does, and asserts the SET by name rather than the count.
 	var out: Array[MultiMeshInstance3D] = []
 	for child: Node in _descendants(node):
 		if child is MultiMeshInstance3D:

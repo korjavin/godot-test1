@@ -50,6 +50,7 @@
   "tower_lift_selfcheck": 1,
   "tower_selfcheck": 2,
   "tower_shell_selfcheck": 9,
+  "tower_staff_selfcheck": 1,
   "tower_site_selfcheck": 2,
   "traffic_selfcheck": 16,
   "view_selfcheck": 1,
