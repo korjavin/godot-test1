@@ -21,7 +21,10 @@ extends SceneTree
 ##     against the PLAN, not against the function that produced it, so a leg that
 ##     was straight-lined because `plan_route` came back empty fails here however
 ##     healthy the arithmetic around it looked. Three negative controls run with
-##     it, because a walkability test that cannot fail is worse than none.
+##     it, because a walkability test that cannot fail is worse than none. Every
+##     STOP is also checked against the cell bbox a separate scan of the ASCII says
+##     its room occupies — the assertion that catches an axis swap, which puts a
+##     body in the wrong room while every build-versus-build comparison agrees.
 ##  2. **THE DERIVATION IS DETERMINISTIC.** The tower is one of the project's two
 ##     authored exceptions: nothing in its plan is seeded or hashed, and two peers
 ##     in one room must watch the same staff walk the same corridors. Asserted
@@ -44,9 +47,10 @@ extends SceneTree
 ##  5. **THE BODIES MOVE, AND THEY MOVE ALONG THE PATH.** Driven for two seconds of
 ##     simulated time. Every staffer's drawn position must change, must stay inside
 ##     `TowerInterior.inside_walls()`, must sit ON its own loop's polyline, and must
-##     not have travelled further than `WALK_SPEED` allows. Read out of the
-##     MultiMesh BUFFER — the thing the engine is handed — and not out of the
-##     records that decided it.
+##     not have travelled further than `WALK_SPEED` allows — and the cell it is
+##     drawn on is read back out of the storey's own ASCII `rows` string and must
+##     not be one the router refuses. Read out of the MultiMesh BUFFER — the thing
+##     the engine is handed — and not out of the records that decided it.
 ##  6. **THE STOREY WINDOW WRITES HIDDEN STAFF OUT OF THE DRAW.** Staff are not
 ##     children of a storey container — one MultiMesh spans ten floors — so the
 ##     interior's `visible = false` cannot hide them and `tick()` drops them out of
@@ -187,6 +191,21 @@ func _check_the_loops_are_walkable() -> void:
 				_fail("storey %d waypoint %d stands at %s, on cell %s = '%s', which"
 					% [floor_index, i, str(here), str(cell), ch]
 					+ " the router itself refuses to cross")
+			# ...AND IT STANDS IN THE MIDDLE OF ITS CELL, not on the boundary.
+			# `plan_route` emits cell CENTRES and `_storey_stops` derives them with
+			# `+ 0.5`; drop that half-cell anywhere in the chain and every body
+			# walks the lane's edge instead of its lane. Nothing above notices —
+			# the boundary of cell c still floors to cell c, so the character test
+			# passes and the polyline moves with it — which is exactly why this is
+			# asserted as a number rather than inferred.
+			var centre_x := TowerInterior._grid_x(float(cell.x) + 0.5)
+			var centre_z := TowerInterior._grid_z(float(cell.y) + 0.5)
+			if not is_equal_approx(here.x, centre_x) \
+					or not is_equal_approx(here.z, centre_z):
+				_fail("storey %d waypoint %d is at (%.3f, %.3f) but the centre of"
+					% [floor_index, i, here.x, here.z]
+					+ " cell %s is (%.3f, %.3f) — the staff walk the edge of the"
+					% [str(cell), centre_x, centre_z] + " lane, not the lane")
 			if not is_equal_approx(here.y, TowerInterior.FLOOR_Y[floor_index]):
 				_fail("storey %d waypoint %d is at y %.3f, not on its slab at %.3f"
 					% [floor_index, i, here.y, TowerInterior.FLOOR_Y[floor_index]])
@@ -197,6 +216,45 @@ func _check_the_loops_are_walkable() -> void:
 						str(TowerInterior._plan_cell_of(next))]
 					+ " that long was straight-lined, not routed, so a staffer"
 					+ " walks through whatever is between them")
+	# EVERY STOP LANDS INSIDE THE ROOM IT CLAIMS, read back out of the PLAN.
+	#
+	# This is the assertion that catches the class of bug a count cannot. `path[0]`
+	# and every stop on it were produced by `_grid_x(cell.x + 0.5)` /
+	# `_grid_z(cell.y + 0.5)`; this converts them BACK to a cell with
+	# `_plan_cell_of()` and asks whether that cell is inside the bbox a completely
+	# separate scan of the ASCII (`plan_room_rect`) says the room occupies. A
+	# derivation that read the wrong room's rect, that swapped the x and z axes —
+	# the classic, and the one that puts a body tens of metres away in a different
+	# room while every build-versus-build comparison stays perfectly consistent —
+	# or that lost the `+ 0.5` and landed on a boundary, fails here. Nothing in this
+	# block is compared against another thing `TowerStaff` computed.
+	var stops_checked := 0
+	for loop: Dictionary in table:
+		var floor_index: int = loop["floor"]
+		var rooms: Dictionary = TowerPlans.storey(floor_index)["rooms"]
+		var path: PackedVector3Array = loop["path"]
+		for letter: String in (loop["stops"] as Array):
+			if not rooms.has(letter):
+				_fail("storey %d's loop claims a stop in room '%s', which its plan"
+					% [floor_index, letter] + " does not declare")
+				continue
+			var rect := TowerInterior.plan_room_rect(floor_index,
+					String(rooms[letter]))
+			# The stop is on the lap by construction, so find it there: the first
+			# waypoint whose cell is inside the room is the stop for that room.
+			var landed := false
+			for point: Vector3 in path:
+				if rect.has_point(TowerInterior._plan_cell_of(point)):
+					landed = true
+					break
+			stops_checked += 1
+			if not landed:
+				_fail("storey %d's loop never enters room '%s', whose plan cells"
+					% [floor_index, letter] + " are %s — the stop derived for it is"
+					% str(rect) + " somewhere else in the building")
+	if stops_checked < table.size():
+		_fail("only %d stops were checked against a room rect over %d loops — the"
+			% [stops_checked, table.size()] + " room-rect assertion is not running")
 	# --- Negative control A: the router is reading the plan at all (21b's).
 	var walled := Vector3(TowerPlans.PLAN_HALF + 1.0, 0.0, 0.0)
 	if not TowerInterior.plan_route(0, Vector3.ZERO, walled).is_empty():
@@ -644,6 +702,24 @@ func _check_the_bodies_walk_their_loops() -> void:
 				% [floor_index, moved, WALK_SECONDS]
 				+ " %.3f m WALK_SPEED allows — that is a teleport, not a walk"
 				% ceiling)
+		# THE DRAWN POSITION, READ BACK OUT OF THE ASCII THAT AUTHORED THE STOREY.
+		# `to` came out of the MultiMesh BUFFER — the transform the engine is handed
+		# — and this converts it to a plan cell and asks the storey's own `rows`
+		# string what is drawn there. A staffer rendered in a wall, off the grid, or
+		# tens of metres from the plan it was derived from fails on the character,
+		# whatever the arithmetic that placed it agreed with.
+		var rows: Array = TowerPlans.storey(floor_index)["rows"] \
+				if not TowerPlans.storey(floor_index).is_empty() else []
+		if rows.is_empty():
+			_fail("a staffer reports storey %d, which has no plan rows" % floor_index)
+		else:
+			var cell := TowerInterior._plan_cell_of(to)
+			var ch := TowerInterior._plan_char(rows, cell)
+			if not TowerInterior._route_open(ch):
+				_fail("the staffer on storey %d is drawn at %s, which is plan cell"
+					% [floor_index, str(to)] + " %s = '%s' — a cell the router"
+					% [str(cell), ch] + " itself refuses, so it is being rendered"
+					+ " inside the stonework")
 		if not TowerInterior.inside_walls(to):
 			_fail("the staffer on storey %d walked to %s, which is not inside the"
 				% [floor_index, str(to)] + " building's walls")
