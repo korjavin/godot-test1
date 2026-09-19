@@ -388,9 +388,18 @@ const BIKE_WAYPOINT_MARGIN: float = 3.0
 
 ## The pseudo-origin ROW a trunk's turn hash is keyed on. `_bike_turn` and
 ## `_pole_top` are keyed on `(origin.x, origin.y, station)`, and a trunk has no
-## origin chunk — it has an EDGE ID. Passing `Vector2i(edge_id, TRUNK_TURN_ROW)`
-## reuses both hashes VERBATIM rather than writing a second copy of either, which
-## is what the bead asks for and what stops two turn tables drifting apart.
+## origin chunk — it has an ANCHOR PAIR. Packing the pair into x with
+## `TRUNK_TURN_ROW` as y reuses both hashes VERBATIM rather than writing a second
+## copy of either, which is what the bead asks for and what stops two turn tables
+## drifting apart.
+##
+## KEYED ON THE PAIR AND NOT ON THE EDGE ID, and that is load-bearing for child
+## `.7`: an edge id is the pair's rank in the emitted table, so it does not exist
+## until the edge set is chosen — but choosing the set means walking the
+## candidates, and a walk keyed on the id cannot be walked before it is chosen.
+## The pair is stable before, during and after selection, so the walk the graph
+## tests is bit-for-bit the walk the spawner draws. Direction is immaterial for
+## free now: the key packs the UNORDERED pair, so (i, j) and (j, i) are one walk.
 ##
 ## The row is out of the world rather than merely unlikely: chunk y = 777000 at
 ## `chunk_size` 50 is 38,850 km from the origin, so no spur origin the streamer
@@ -406,6 +415,12 @@ const BIKE_WAYPOINT_MARGIN: float = 3.0
 ## this row. RETUNE AGAINST THAT and not against 64 bits: a row of 3e9 would not
 ## survive the narrowing as a distinct value at all.
 const TRUNK_TURN_ROW: int = 777000
+
+## The pair-packing stride for the turn key above: key.x = min * STRIDE + max.
+## Anchor indices sit in the dozens, so 4096 is injective with room for a world
+## of anchors, and the y row keeps trunk keys off every spur origin exactly as
+## the note above argues.
+const TRUNK_TURN_PAIR_STRIDE: int = 4096
 
 ## How far past the straight-line station count a homing walk may wander before
 ## it is abandoned. The walk's heading is clamped to `BIKE_MAX_HEADING_DEG` of the
@@ -1023,6 +1038,8 @@ static func trunks(terrain: Node3D) -> Array[Dictionary]:
 			box = box.merge((row_v as Dictionary)["box"] as Rect2)
 		out.append({
 			"id": int(edge["id"]),
+			"a": int(edge["a"]),
+			"b": int(edge["b"]),
 			"stations": route,
 			"box": box,
 			"from": route[0]["pos"],
@@ -1150,6 +1167,41 @@ static func trunk_abandoned(terrain: Node3D, edge: Dictionary) -> String:
 	return "lake"
 
 
+static func _trunk_turn_key(a: int, b: int) -> Vector2i:
+	"""
+	The turn-and-top hash key for the trunk between anchors a and b: the
+	unordered pair packed into x on `TRUNK_TURN_ROW` (see its note and
+	`TRUNK_TURN_PAIR_STRIDE`). Stable before the edge set is chosen, while it
+	is chosen and after — which is what lets the graph test-walk a candidate
+	pair and get bit-for-bit the walk the spawner will draw for it.
+	"""
+	return Vector2i(mini(a, b) * TRUNK_TURN_PAIR_STRIDE + maxi(a, b), TRUNK_TURN_ROW)
+
+
+static func trunk_pair_walk(terrain: Node3D, anchors: Array[Dictionary], a: int, b: int,
+		reason: Array[String]) -> Array[Dictionary]:
+	"""
+	The route the trunk between anchors a and b WOULD draw, walked to test it.
+
+	@param anchors: `terrain.bike_anchors()`, the table the candidate pair indexes.
+	@param reason: OUT, the walk's refusal ("" when the pair draws): one of
+	               "mountain", "city", "road", "site", "lost" or "short" — the
+	               walk's own vocabulary, and deliberately NOT the lake: that
+	               verdict lives in the bridge scan over the finished edge set,
+	               and asking it here would recurse through the memo this answer
+	               feeds (`trunk_abandoned`'s note). The graph records these at
+	               selection time; the draw tier reports the lake at draw time.
+	@return: The stations, or [] when the walk is abandoned whole.
+
+	THE QUESTION THE GRAPH ASKS (bead godot-test1-pnvb.7): `BikeNetwork.edges()`
+	reaches this through the terrain's forwarder, never by name, and walks every
+	candidate pair before the edge set is chosen — so the repair joins components
+	with links that actually draw instead of ones the walk abandons. COSTS NO
+	DRAW: the walk is `_bike_turn` hashes on the pair key, never a roll.
+	"""
+	return _trunk_route(terrain, anchors, {"a": a, "b": b}, reason)
+
+
 static func _trunk_route(terrain: Node3D, anchors: Array[Dictionary], edge: Dictionary,
 		reason: Array[String] = []) -> Array[Dictionary]:
 	"""
@@ -1203,7 +1255,7 @@ static func _trunk_route(terrain: Node3D, anchors: Array[Dictionary], edge: Dict
 			reason[0] = "city"
 		return []
 
-	var key := Vector2i(int(edge["id"]), TRUNK_TURN_ROW)
+	var key := _trunk_turn_key(int(edge["a"]), int(edge["b"]))
 	# The waypoint table, read ONCE for the whole walk — `_station_blocked`'s note.
 	var waypoints: Array[Dictionary] = terrain.waypoint_sites()
 	var ceiling: int = int(ceil(
@@ -1613,7 +1665,7 @@ static func spawn_bike_path_in_chunk(terrain: Node3D, chunk_pos: Vector2i,
 		if not (trunk["box"] as Rect2).intersects(chunk_rect):
 			continue
 		var edge_id: int = int(trunk["id"])
-		var key := Vector2i(edge_id, TRUNK_TURN_ROW)
+		var key := _trunk_turn_key(int(trunk["a"]), int(trunk["b"]))
 		var built: Dictionary = _draw_path_share(terrain, chunk_pos, centre, key,
 				trunk["stations"], rng, obstacles, block_batch, block_body, cube_cursor,
 				edge_id, k, waypoints)
@@ -1710,7 +1762,8 @@ static func _draw_path_share(terrain: Node3D, chunk_pos: Vector2i, centre: Vecto
 	               centre, and chunk-local is relative to that node, so this is
 	               what the world-space station positions are measured against.
 	@param origin: The key this polyline's turn and top hashes are keyed on — a
-	               SPUR's origin chunk, or `Vector2i(edge_id, TRUNK_TURN_ROW)`.
+	               SPUR's origin chunk, or a trunk's pair-packed key
+	               (`_trunk_turn_key`).
 	@param cube_cursor: How many CUBE entries the batch holds already.
 	@param edge_id: -1 for a spur; the trunk's edge id otherwise. IT IS THE TIER
 	                SWITCH as well as the id, and the only two things it changes

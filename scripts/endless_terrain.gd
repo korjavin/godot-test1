@@ -3708,6 +3708,17 @@ func bike_edges() -> Array[Dictionary]:
 	return BikeNetwork.edges(self)
 
 
+## The route a trunk between two bike anchors WOULD walk, for `BikeNetwork`'s edge
+## selection (bead godot-test1-pnvb.7) — the graph asks this of every candidate pair
+## before the edge set is chosen, through the node the way the convention requires,
+## never `BikePaths` by name. `reason` is the walk's OUT refusal ("" when the pair
+## draws); the lake verdict is NOT included, because that lives in the bridge scan
+## over the finished edge set and asking it here would recurse through the memo this
+## answer feeds (`trunk_abandoned`'s note in `terrain_bike_paths.gd`).
+func bike_trunk_walk(anchors: Array[Dictionary], a: int, b: int, reason: Array[String]) -> Array[Dictionary]:
+	return BikePaths.trunk_pair_walk(self, anchors, a, b, reason)
+
+
 ## ...and the TRUNK ROUTES themselves, for `FieldBridges` (bead godot-test1-pnvb.3).
 ## The bridge family is the one sibling that has to read this table — its third
 ## source of a centreline is a bike trunk — and a `BikePaths` reference inside

@@ -228,9 +228,10 @@ const TRUNK_ANCHOR_MIN_K: float = 1.0
 ## the landmark tail is NOT guaranteed, because a kind whose `LANDMARK_SITE_TRIES`
 ## attempts are all rejected simply has no site that run (`terrain_landmarks.gd`'s
 ## "honest degrade"). Check 4 prints the range rather than one number for exactly
-## that reason. Of the 61, 16-31 are trunkable, producing **17-39 edges, 32 at
-## the median**, and a hop count from the HQ to the gate of 3-15. Check 4 prints
-## the histogram, and that printed number is what the owner retunes against.
+## that reason. Of the 61, 36-46 are trunkable, producing **43-57 edges, 51.5 at
+## the median**, and a hop count from the HQ to the gate of 3-16. Check 4 prints
+## the histogram (pass 2b's drawn-chain parallels included), and that printed
+## number is what the owner retunes against.
 ##
 ## THE SPREAD IS THE CORRIDOR FILTER'S, NOT THE DISPATCH'S: the trunkable count
 ## moves by a factor of two between seeds because how much of the museum mile
@@ -361,21 +362,31 @@ static func edges(terrain: Node3D) -> Array[Dictionary]:
 	         itself, not a copy.
 
 	COSTS NO DRAW — it is a dispatch and arithmetic over a table that was already
-	pure in `run_seed`. See the banner.
+	pure in `run_seed`, and the candidate walks it tests are `_bike_turn` hashes on
+	the pair key: more calls of the same streamless hash, never a roll. See the banner.
 
 	THREE PASSES, all deterministic:
 
 	1. NEAREST NEIGHBOURS. Every TRUNKABLE anchor takes its `_degree()` closest
-	   trunkable neighbours inside `TRUNK_MAX_EDGE`. `(i, j)` and `(j, i)` are the
-	   same trunk, so the pairs go into a set keyed on `(min, max)` — which is also
-	   why the realised degree is not the dispatched one: an anchor that four
+	   trunkable neighbours inside `TRUNK_MAX_EDGE`, exactly as before. `(i, j)` and
+	   `(j, i)` are the same trunk AND the same walk now — the turn key packs the
+	   unordered pair — so the pairs go into a set keyed on `(min, max)`. That is
+	   also why the realised degree is not the dispatched one: an anchor that four
 	   neighbours all chose ends up with four trunks and rolled nothing.
 	2. CONNECT THE GATE. A union-find over pass 1, and for every component that
 	   does not hold the gate, the single shortest edge joining it to one that does
-	   — repeated until no component moves. That is what makes *"you should be able
-	   to get to Budapest along them"* a property of the construction rather than a
-	   hope. It may join components; it may NOT smuggle a non-trunkable anchor back
-	   in, and check 3's acceptance says so.
+	   — repeated until no component moves. Unchanged by bead .7: this joins the
+	   GRAPH, and a dangling link joins it as well as a snapped one. That is what
+	   makes *"you should be able to get to Budapest along them"* a property of the
+	   construction rather than a hope, at the graph tier. It may join components;
+	   it may NOT smuggle a non-trunkable anchor back in, and check 3's acceptance
+	   says so.
+	2b. DRAWN-REACHABILITY (bead .7). Pass 2 joins the graph; the drawn chain needs
+	    the DRAWN links to connect, and a dangling pass-1 link (a rect-edge ending)
+	    joins the graph but never the chain. So starting from the HQ over links that
+	    draw AND snap both anchors exactly, extend the reached set toward the gate,
+	    best-first, until it arrives or no strict pair extends it. Each added pair is
+	    a graph edge too (and joins the union-find), so pass 3 keeps it.
 	3. DROP THE UNREACHABLE. A component that pass 2 could not join inside
 	   `TRUNK_REPAIR_MAX_EDGE` loses its edges entirely. An island of trunk with no
 	   way to the city is exactly the thing the owner played and disliked.
@@ -396,6 +407,8 @@ static func edges(terrain: Node3D) -> Array[Dictionary]:
 
 	# --- PASS 1: nearest neighbours, deduplicated into unordered pairs.
 	var pairs: Dictionary = {}
+	# Walk verdicts, keyed on the unordered pair so (i, j) is never walked twice.
+	var tested: Dictionary = {}
 	for i: int in eligible:
 		var here: Vector2 = rows[i]["pos"]
 		var cands: Array[Array] = []
@@ -468,6 +481,42 @@ static func edges(terrain: Node3D) -> Array[Dictionary]:
 			if not joined:
 				break
 
+	# --- PASS 2b: DRAWN-REACHABILITY (bead godot-test1-pnvb.7). Pass 2 joins the
+	# GRAPH; the drawn chain needs the DRAWN links to connect, and a dangling
+	# pass-1 link (a rect-edge ending) joins the graph but never the chain. So
+	# starting from the HQ over links that draw AND snap both anchors exactly,
+	# extend the reached set toward the gate, best-first, until it arrives or no
+	# strict pair extends it. Each added pair is a graph edge too (and joins
+	# `parent`), so pass 3 keeps it; a sweep that adds nothing ends the pass.
+	var hq: int = -1
+	for i: int in eligible:
+		if int(rows[i]["kind"]) == KIND_HQ:
+			hq = i
+	if hq >= 0 and gate >= 0:
+		for _sweep: int in eligible.size():
+			var reached := _drawn_reach(terrain, rows, pairs, tested, hq)
+			if reached.has(gate):
+				break
+			# Frontier: every (reached, unreached) pair inside the cap, walked
+			# best-first until one draws AND snaps both anchors exactly.
+			var frontier: Array[Array] = []
+			for u: int in reached.keys():
+				for v: int in eligible:
+					if reached.has(v):
+						continue
+					var d: float = (rows[u]["pos"] as Vector2).distance_to(rows[v]["pos"])
+					if d <= TRUNK_REPAIR_MAX_EDGE:
+						frontier.append([d, mini(u, v), maxi(u, v)])
+			frontier.sort_custom(_nearer_edge)
+			var extended: bool = false
+			for c: Array in frontier:
+				if _strict_link(terrain, rows, tested, int(c[1]), int(c[2])):
+					pairs[Vector2i(int(c[1]), int(c[2]))] = true
+					_union(parent, int(c[1]), int(c[2]))
+					extended = true
+					break
+			if not extended:
+				break
 	# --- PASS 3: drop whatever still cannot reach the city, then emit in a fixed
 	# order so the row ids are a property of the world.
 	var keys: Array[Vector2i] = []
@@ -483,6 +532,89 @@ static func edges(terrain: Node3D) -> Array[Dictionary]:
 
 	cache["edges"] = out
 	return out
+
+
+static func _test_pair(terrain: Node3D, rows: Array[Dictionary], tested: Dictionary,
+		i: int, j: int) -> Dictionary:
+	"""
+	Walk the trunk candidate between anchors i and j, ONCE per edge set (bead
+	godot-test1-pnvb.7).
+
+	The verdict cache is keyed on the unordered pair, but the walk always runs
+	from the LOWER index: the emitted edge stores a=min, b=max, so the tested
+	walk is bit-for-bit the walk the spawner will draw for it.
+
+	@return: `{ "reason": String ("" when the pair draws), "first": Vector2,
+	           "last": Vector2 }` — the route's own endpoints for the strict test.
+	           COSTS NO DRAW: the walk is hashes on the pair key, never a roll.
+	"""
+	var key := Vector2i(mini(i, j), maxi(i, j))
+	if tested.has(key):
+		return tested[key]
+	var reason: Array[String] = [""]
+	var route: Array[Dictionary] = terrain.bike_trunk_walk(rows, key.x, key.y, reason)
+	var verdict := {"reason": reason[0], "first": Vector2.ZERO, "last": Vector2.ZERO}
+	if reason[0] == "" and not route.is_empty():
+		verdict["first"] = route[0]["pos"]
+		verdict["last"] = route[-1]["pos"]
+	tested[key] = verdict
+	return verdict
+
+
+static func _drawn_reach(terrain: Node3D, rows: Array[Dictionary], pairs: Dictionary,
+		tested: Dictionary, start: int) -> Dictionary:
+	"""
+	The anchors drawn-connected to `start` through links that draw AND snap both
+	anchors exactly (bead godot-test1-pnvb.7) — the set pass 2b extends toward the
+	gate. Pairs are walked on demand through `_strict_link` and cached in `tested`,
+	so a sweep costs walks only along the reached frontier.
+	"""
+	var reached := {start: true}
+	var adj := {}
+	for key: Vector2i in pairs:
+		if not adj.has(key.x):
+			adj[key.x] = []
+		if not adj.has(key.y):
+			adj[key.y] = []
+		(adj[key.x] as Array).append(key.y)
+		(adj[key.y] as Array).append(key.x)
+	var queue: Array[int] = [start]
+	while not queue.is_empty():
+		var cur: int = queue.pop_front()
+		for nb: int in adj.get(cur, []):
+			if reached.has(nb):
+				continue
+			if _strict_link(terrain, rows, tested, cur, nb):
+				reached[nb] = true
+				queue.append(nb)
+	return reached
+
+
+static func _strict_link(terrain: Node3D, rows: Array[Dictionary], tested: Dictionary,
+		a: int, b: int) -> bool:
+	"""
+	Would the trunk between anchors a and b draw AND snap both anchors exactly —
+	the admission test for a DRAWN chain link (bead godot-test1-pnvb.7)? A rect-edge
+	ending is drawn but dangling, so it joins the graph and never the chain.
+	Walked from the lower index through `_test_pair`: the emitted edge stores
+	a=min, b=max, so the tested walk is bit-for-bit the drawn one.
+	"""
+	var v: Dictionary = _test_pair(terrain, rows, tested, a, b)
+	if String(v["reason"]) != "":
+		return false
+	var fa: Vector2 = rows[a]["pos"]
+	var fb: Vector2 = rows[b]["pos"]
+	return (v["first"] == fa and v["last"] == fb) \
+			or (v["first"] == fb and v["last"] == fa)
+
+
+static func _nearer_edge(a: Array, b: Array) -> bool:
+	"""`[distance, i, j]` ordered by distance, ties broken on (i, j) — the `_nearer`
+	idiom with the loop roles kept, so the winner at a tied distance is the pair the
+	old index-ordered loops met first. Exact `==`, for `_nearer`'s transitivity reason."""
+	return float(a[0]) < float(b[0]) \
+			or (float(a[0]) == float(b[0]) and (int(a[1]) < int(b[1]) \
+				or (int(a[1]) == int(b[1]) and int(a[2]) < int(b[2]))))
 
 
 static func _anchor(id: String, pos: Vector2, kind: int) -> Dictionary:
