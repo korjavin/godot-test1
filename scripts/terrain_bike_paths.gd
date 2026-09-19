@@ -1170,9 +1170,16 @@ static func _plant_signal_timers(terrain: Node3D, marker: Node3D,
 		# the game's: `create_chunk` parents its chunk before it calls any spawner, so
 		# on the production path the Timer enters the tree live and `start()` would
 		# work. `bike_path_selfcheck` calls this same spawner on a bare
-		# `MeshInstance3D.new()` that never enters a tree, where `start()` pushes an
-		# error and fails the build. Autostart is the spelling that is correct in
-		# both: it begins when (and if) the Timer enters a tree.
+		# `MeshInstance3D.new()` that never enters a tree, where `Timer.start()` trips
+		# its own `ERR_FAIL_COND(!is_inside_tree())` and the Timer simply never runs.
+		#
+		# AND CI WOULD NOT TELL YOU. That guard prints an engine `ERROR:` from C++,
+		# not a `SCRIPT ERROR:`, and the gate in `build.yml` is the exit code, the
+		# `SELFCHECK OK` line and a grep for `SCRIPT ERROR`. A `start()` here would
+		# leave the fixture's Timer inert with every assertion still passing and the
+		# shard still green — so this comment, and not the build, is what stands
+		# between the next author and a dead check. Autostart is the spelling that is
+		# correct in both places: it begins when (and if) the Timer enters a tree.
 		timer.autostart = true
 		timer.wait_time = maxf(0.05, rng.randf() * dwell)
 		timer.set_meta("lamp0", base)

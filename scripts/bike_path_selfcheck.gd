@@ -51,7 +51,8 @@ extends SceneTree
 ##      with the post's own radius and top; the strip and the dashes append
 ##      nothing at all. Non-vacuous: the sweep must find poles.
 ##
-## ...and child `.2` — the four authored signs and the traffic head — adds four:
+## ...and child `.2` — the four authored signs and the traffic head — adds six
+## (7, 8, 7c, 9, 10 and 11), which is what `_run()` calls:
 ##
 ##   7 + 8. WHAT STANDS ON THE POLES, in one sweep because they share it. Every
 ##      pole carries EXACTLY ONE top; every top is a legal kind; all four sign
@@ -171,11 +172,17 @@ const FAR_CHUNK_Y: int = 130
 ## histogram is the assertion; the square is only its cost.
 const TOP_SWEEP_HALF: int = 9
 
-## How far from a post's centre, in metres of chunk-local XZ, check 7c will look for
-## the boxes that post carries. Comfortably wider than the widest plate's standoff
-## and far narrower than `BIKE_POLE_OFFSET` (1.65), which is what keeps the strip and
-## the dashes — the only other boxes at a post's height — out of the sweep.
-const POLE_NEAR: float = 0.6
+## How many boxes check 7c will read as a pole's top. `_draw_path_share` emits the
+## post and then exactly one top, and the largest top is four boxes (a head plus its
+## three lenses; CROSSING is a plate plus three pips). The run also stops at the next
+## post or at ground level, so this is a bound and not a count.
+const TOP_BOXES_MAX: int = 4
+
+## Below this height, in metres, a box is this family's PAINT — the strip sits at 0.03
+## and a dash at 0.075, so anything under it is the next segment's rather than the
+## pole's top. It is what ends the run when a pole's top is shorter than
+## `TOP_BOXES_MAX`.
+const GROUND_BAND: float = 0.2
 
 ## Float slack on check 7c's clearance comparison, metres. The two sides are computed
 ## from the same constants a few calls apart, so this is precision and not an
@@ -1034,38 +1041,55 @@ func _check_sign_clearance(terrain_script: GDScript) -> void:
 	for ox in range(-SWEEP_HALF, SWEEP_HALF + 1):
 		for oy in range(-SWEEP_HALF, SWEEP_HALF + 1):
 			var chunk_pos := Vector2i(ox, oy)
-			var batch: Array = _spawn_bare(terrain, chunk_pos)["batch"]
-			for post_v: Variant in batch:
-				var post: Transform3D = (post_v as Dictionary)["transform"]
-				if not _is_post(post):
-					continue
-				posts_seen += 1
-				if not control_fired:
-					# THE CONTROL: the post is not clear of itself.
-					control_fired = true
-					if _clearance_fault(post, post) == "":
-						_fail("check 7c's clearance predicate calls the POST ITSELF clear of the "
-								+ "post, so it cannot fail and 'every sign stands clear' is an "
-								+ "assertion about nothing")
-				for box_v: Variant in batch:
-					var box: Transform3D = (box_v as Dictionary)["transform"]
-					if box == post:
+			var built: Dictionary = _spawn_bare(terrain, chunk_pos)
+			var batch: Array = built["batch"]
+			for row: Dictionary in (built["paths"] as Array[Dictionary]):
+				for p: int in (row["poles"] as PackedInt32Array):
+					if p < 0 or p >= batch.size():
+						_fail("chunk %s: the marker records a pole at CUBE instance %d and the "
+								% [chunk_pos, p] + "chunk's own batch holds %d boxes"
+								% batch.size())
 						continue
-					if Vector2(box.origin.x - post.origin.x,
-							box.origin.z - post.origin.z).length() > POLE_NEAR:
+					var post: Transform3D = (batch[p] as Dictionary)["transform"]
+					# THE INDEX IS THE TIE, and asserting it is free: `_spawn_bare` starts
+					# from an EMPTY batch and this family emits CUBEs only, so a pole's
+					# CUBE-bucket index IS its batch index here. If that ever stops being
+					# true the entry at `p` is not a post and this says so, rather than
+					# quietly measuring the wrong box.
+					if not _is_post(post):
+						_fail("chunk %s: the marker records a pole at index %d, but the box "
+								% [chunk_pos, p] + "there is not a post — the recorded index and "
+								+ "the geometry have come apart")
 						continue
-					# Above the post's own top it cannot be occluded by it — that is
-					# where the traffic head lives, and it is exempt by construction.
-					if box.origin.y + box.basis.y.length() * 0.5 > BikePaths.BIKE_POLE_HEIGHT:
-						continue
-					signs_seen += 1
-					var fault: String = _clearance_fault(post, box)
-					if fault != "":
-						_fail("chunk %s: a box the pole at (%.1f, %.1f) carries %s. A plate or a "
-								% [chunk_pos, post.origin.x, post.origin.z, fault]
-								+ "pictogram inside the post reads with a grey bar down its "
-								+ "middle, and a centred pip does not read at all — see "
-								+ "`SIGN_STANDOFF`")
+					posts_seen += 1
+					if not control_fired:
+						# THE CONTROL: a post is not clear of itself.
+						control_fired = true
+						if _clearance_fault(post, post) == "":
+							_fail("check 7c's clearance predicate calls the POST ITSELF clear of "
+									+ "the post, so it cannot fail and 'every sign stands clear' "
+									+ "is an assertion about nothing")
+					# THE TOP IS THE CONTIGUOUS RUN AFTER THE POST — `_draw_path_share`
+					# emits the pole and then its one top, nothing between. Bounding it by
+					# `TOP_BOXES_MAX` and stopping at the next post or at ground level is
+					# what keeps a CROSSING path's strip out: two bike paths may cross, and
+					# a filter that took every box within a radius of the post would read a
+					# foreign 5 m strip box as a sign buried in it and fail a correct world.
+					for k in range(p + 1, mini(p + 1 + TOP_BOXES_MAX, batch.size())):
+						var box: Transform3D = (batch[k] as Dictionary)["transform"]
+						if _is_post(box) or box.origin.y < GROUND_BAND:
+							break
+						# Above the post's own top nothing can be occluded by it — that is
+						# where the traffic head lives, exempt by construction.
+						if box.origin.y + box.basis.y.length() * 0.5 > BikePaths.BIKE_POLE_HEIGHT:
+							continue
+						signs_seen += 1
+						var fault: String = _clearance_fault(post, box)
+						if fault != "":
+							_fail("chunk %s: box %d, which the pole at index %d carries, %s. A "
+									% [chunk_pos, k, p, fault] + "plate or a pictogram inside the "
+									+ "post reads with a grey bar down its middle, and a centred "
+									+ "pip does not read at all — see `SIGN_STANDOFF`")
 	terrain.free()
 	if posts_seen == 0:
 		_fail("check 7c swept %dx%d chunks and found no post at all, so it measured nothing"
@@ -1073,8 +1097,8 @@ func _check_sign_clearance(terrain_script: GDScript) -> void:
 	if signs_seen == 0:
 		_fail("check 7c found %d posts and not one box standing on any of them within the "
 				% posts_seen + "post's own height — the sign geometry it exists to measure was "
-				+ "never looked at (did the plates move above BIKE_POLE_HEIGHT, or is POLE_NEAR "
-				+ "too tight?)")
+				+ "never looked at (did every plate move above BIKE_POLE_HEIGHT, or is "
+				+ "TOP_BOXES_MAX now too small to reach one?)")
 	Sentinel.done("sign_clearance")
 
 
@@ -1496,7 +1520,12 @@ func _check_unload(terrain_script: GDScript) -> void:
 	var ref: WeakRef = weakref(timer)
 	if ref.get_ref() == null:
 		_fail("check 11's Timer was already dead before the chunk was unloaded")
-	if kept == null:
+	# REMEMBERED AS A BOOLEAN, AND THAT IS THE WHOLE POINT: in Godot a reference to a
+	# FREED object compares equal to null, so a `kept != null` written after the unload
+	# is false exactly when the control has something to say, and the guard below would
+	# short-circuit itself into silence in the one state it exists to detect.
+	var has_control: bool = kept != null
+	if not has_control:
 		_fail("check 11 found only one chunk with a cycle Timer in a %dx%d sweep, so it has no "
 				% [SWEEP_HALF * 2 + 1, SWEEP_HALF * 2 + 1] + "second chunk to leave loaded — "
 				+ "and without that control 'the Timer went away' is also what this check would "
@@ -1513,7 +1542,7 @@ func _check_unload(terrain_script: GDScript) -> void:
 	if terrain.active_chunks.has(found):
 		_fail("chunk %s is still in `active_chunks` after `remove_chunk()`, so check 11 "
 				% found + "measured an unload that did not happen")
-	if kept != null and control.get_ref() == null:
+	if has_control and control.get_ref() == null:
 		_fail("check 11's control Timer, in a chunk that was never unloaded, died along with "
 				+ "the one that was — so 'the Timer went away' says nothing about the unload")
 	terrain.free()
