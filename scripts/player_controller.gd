@@ -4658,10 +4658,6 @@ func _ability2_windman() -> bool:
 	return abilities._ability2_windman()
 
 
-func _ability2_phoboman() -> bool:
-	return abilities._ability2_phoboman()
-
-
 func _end_air_sight() -> void:
 	abilities._end_air_sight()
 

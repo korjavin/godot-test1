@@ -1338,11 +1338,18 @@ func _check_bait_parser() -> String:
 			+ " with no position must read as 'cannot tell', never as a distance"
 	if MpCodec.bait_place_in_reach(stood, Vector3.INF):
 		return "bait_place_in_reach accepted a jar at Vector3.INF"
-	# THE BOUND IS LOOSER THAN THE PLATE'S AND TIGHTER THAN THE JAR'S OWN LURE —
-	# both halves stated, because a bound that drifted past the lure radius would
-	# stop being a bound at all (a spoofed jar could reach bodies the sender could
-	# not) and one that fell to the plate's 6 m would drop honest jars placed by a
-	# sprinting hero whose presence packet is one tick behind.
+	# ONE RELATION IS ASSERTED AND ONLY ONE: the bait bound must stay LOOSER than
+	# the plate's, because a jar is thrown 3 m ahead of a moving hero while a
+	# plate is stood on, and falling to the plate's 6 m would drop honest jars
+	# placed by a sprinter whose presence packet is one tick behind.
+	#
+	# IT IS NOT TIGHTER THAN THE LURE, and saying so here rather than implying an
+	# ordering nobody enforces (revmux round 1, `docs+tests`): 50 m against
+	# `KimchiJar.LURE_RADIUS` 20 m means a peer standing honestly where it says it
+	# is can put a jar 50 m out and reach bodies 70 m from itself. That is the
+	# deliberate skirt `MAX_BAIT_PLACE_DISTANCE`'s own banner argues, and it is
+	# argued there rather than pinned here, because pinning it would be this check
+	# asserting a design call instead of a trust boundary.
 	if MpCodec.MAX_BAIT_PLACE_DISTANCE <= MpCodec.MAX_PAD_PRESS_DISTANCE:
 		return "the bait bound (%.1f m) is no looser than the pad's (%.1f m) —"\
 			% [MpCodec.MAX_BAIT_PLACE_DISTANCE, MpCodec.MAX_PAD_PRESS_DISTANCE]\

@@ -2559,8 +2559,12 @@ func flee_from(source: Vector3, duration: float, tracks_player: bool = true) -> 
 	# body that is on its way home, so a second scare costs nothing.
 	#
 	# IT IS CORRECT FOR EVERY OTHER CALLER TOO, which is why it lives here and not
-	# in the jar: a Stink Wave or a Twin Flash that catches a guard walking to a
-	# `P` plate had exactly the same bug, one lure along.
+	# in the jar — and the example has to be a body that REACHES this line, which
+	# an HQ guard never does (`stink_immune` returns three lines up; revmux round
+	# 1, `docs+tests`). It is the HUNTER ROBOT: its row lost `stink_immune` by
+	# owner ruling 2026-09-04 and it is the one row carrying
+	# `crowd_confusion_chance`, so a Stink Wave or a Twin Flash catching one
+	# mid-way to a Budapest citizen had exactly this bug before today.
 	if is_investigating:
 		_abandon_investigation()
 	# A flee trigger/refresh must never shorten an active flee already in progress (Codex P2).

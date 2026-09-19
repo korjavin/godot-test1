@@ -1225,6 +1225,9 @@ func _check_the_lure_diverts_a_guard() -> void:
 ## every other reading in the check would still be green.
 const KIMCHI_ROUTE_MIN: int = 2
 
+## The body claim (d) stands in the open field beside the tower.
+const KIMCHI_CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
+
 
 func _check_a_kimchi_jar_routes_a_guard() -> void:
 	"""
@@ -1243,7 +1246,17 @@ func _check_a_kimchi_jar_routes_a_guard() -> void:
 	      errand — `stink_immune` is what makes the HQ's stealth layer survive an
 	      ability, and the guard is still standing over the pot afterwards;
 	  (c) a jar OUTSIDE the walls is refused by `lure_guard_to()`, so the seam
-	      cannot be used to reach into the building from the field.
+	      cannot be used to reach into the building from the field;
+	  (d) A JAR IN THE WALL BAND STILL LURES THE FIELD. The shell's envelope
+	      (`TowerShell.OUTER_HALF` 40.0) and the plan's (`TowerPlans.PLAN_HALF`
+	      38.8) are 1.2 m apart — one wall thickness, which `sheltered()`'s own
+	      docstring names as a gap it narrows without closing. A jar landing in
+	      that band is refused by the building AND was, before revmux round 1,
+	      dropped by the jar before its field loop: a hero standing two metres
+	      outside the tower facing it spent a 14 s cooldown on a pot that lured
+	      nobody at all. The probe stands a crocodile in the open and asserts it
+	      takes the lure from a jar in the band — and asserts the band IS the
+	      band, by reading `sheltered()` at that very point.
 
 	THE STOREY AND THE SPOT ARE A QUESTION FOR THE PLANS, never numbers written
 	here (check 21's rule): the search below takes the storey/plate pair whose
@@ -1362,10 +1375,49 @@ func _check_a_kimchi_jar_routes_a_guard() -> void:
 	if not is_instance_valid(guard):
 		_fail("the jar freed the guard — it lures and scatters, never kills")
 
+	# ---- (d) THE WALL BAND IS NOT A DEAD ZONE --------------------------------
+	# The band is derived from the two envelopes, never typed: a retune of either
+	# moves this probe with it, and a build where they finally agree collapses the
+	# band to nothing and fails the `sheltered()` assertion below rather than
+	# passing vacuously on a point that is simply outdoors.
+	var band_x: float = (TowerPlans.PLAN_HALF + TowerShell.OUTER_HALF) * 0.5
+	if TowerShell.OUTER_HALF - TowerPlans.PLAN_HALF <= 0.01:
+		_fail("the shell and the plan now share an envelope — claim (d) has no"
+				+ " wall band to measure and must be retired rather than left green")
+	var band: Vector3 = interior.global_position \
+			+ Vector3(band_x, TowerInterior.FLOOR_Y[0], 0.0)
+	var shell_says: Variant = shell.call("sheltered", band)
+	if typeof(shell_says) != TYPE_BOOL or not bool(shell_says):
+		_fail("the shell does not call %s sheltered — claim (d) is measuring a"
+				% str(band) + " point in the open field, where nothing was ever broken")
+	if interior.lure_guard_to(band, KimchiJar.LURE_HOLD):
+		_fail("the building routed a guard to a jar inside its own wall — %s is"
+				% str(band) + " past TowerPlans.PLAN_HALF and there is no floor there")
+	# One crocodile in the open, inside the jar's lure ball and well outside the
+	# shell, so nothing about it is the building's.
+	var field: Node = load(KIMCHI_CROC_SCENE).instantiate()
+	root.add_child(field)
+	await process_frame
+	(field as Node3D).global_position = band + Vector3(KimchiJar.LURE_RADIUS * 0.5, 0.0, 0.0)
+	if bool(shell.call("sheltered", (field as Node3D).global_position)):
+		_fail("the field probe is under the shell's roof — claim (d) needs a body"
+				+ " the jar's own shelter skip will not drop")
+	var band_jar: KimchiJar = KimchiJar.drop(root, band)
+	if band_jar == null:
+		_fail("KimchiJar.drop() built no jar in the wall band")
+	elif not bool(field.get("is_investigating")):
+		_fail("a jar in the wall band lured nothing: the crocodile %.1f m away in"
+				% (field as Node3D).global_position.distance_to(band)
+				+ " the open never took it, so the band is still a dead zone")
+	if is_instance_valid(band_jar):
+		band_jar.queue_free()
+	field.queue_free()
+
 	print("kimchi indoors: storey %d's guard walks the plan's %d corners to the jar"
 			% [floor_index, path.size()]
 			+ " and is still standing over it after the burst; a jar in the field"
-			+ " is refused")
+			+ " is refused, and one in the %.1f m wall band still lures the open"
+			% (TowerShell.OUTER_HALF - TowerPlans.PLAN_HALF))
 	if is_instance_valid(jar):
 		jar.queue_free()
 	await TowerProbe.clear(self, null, shell)

@@ -167,6 +167,10 @@ func _lure() -> void:
 	`lure_guard_to()` and no geometry is computed here. A predator that knew about
 	`TowerPlans` would be a hunting AI with a level editor in it (`lure_guard()`).
 
+	WHICH WORLD IS THE ROUTER'S ANSWER, not the shell's envelope — see the
+	comment at the branch itself for the 1.2 m of wall band that told the two
+	apart, and for what falling through now costs.
+
 	INDOORS THE GUARD IS THE WHOLE POPULATION, and that is a `ponytail:` bound
 	worth naming: the storey's guard is the only body `TowerInterior` can route,
 	so a jar under the roof lures it and nothing else. The cell block's crocodiles
@@ -193,14 +197,21 @@ func _lure() -> void:
 	# one that has not entered yet. Same degrade as every group lookup here.
 	if not is_inside_tree():
 		return
+	# THE BUILDING GETS FIRST REFUSAL, AND ITS OWN ANSWER IS WHAT DECIDES — not
+	# the shell's envelope (revmux round 1, `arch+quality`). The two are not the
+	# same box: `TowerShell.sheltered()` measures `OUTER_HALF` (40.0) and
+	# `lure_guard_to()` measures `TowerPlans.PLAN_HALF` (38.8), and
+	# `sheltered()`'s own docstring names that 1.2 m of wall band as a gap it
+	# narrows without closing. Branching on the SHELL put every jar landing in
+	# that band — a hero standing two metres outside the tower and facing it,
+	# which is ordinary play — into a dead zone: the building refused it and the
+	# field never saw it, so a 14 s cooldown bought a pot that lured nobody.
+	# Asking the router instead has one answer for one question, and
+	# `tower_guard_selfcheck` check 22(d) stands a crocodile in that band to
+	# prove it.
 	var interior: Node = get_tree().get_first_node_in_group("tower_interior")
-	if _under_the_roof(global_position):
-		# INDOORS THE BUILDING ANSWERS OR NOBODY DOES. A shell with no interior
-		# streamed in has no plan and no guard, so there is nothing to route — and
-		# falling through to the group loop below would be worse than doing
-		# nothing: it would hand a body a straight line through the walls.
-		if interior != null and interior.has_method("lure_guard_to"):
-			interior.call("lure_guard_to", global_position, LURE_HOLD)
+	if interior != null and interior.has_method("lure_guard_to") \
+			and bool(interior.call("lure_guard_to", global_position, LURE_HOLD)):
 		return
 	var radius_sq := LURE_RADIUS * LURE_RADIUS
 	for body: Node in get_tree().get_nodes_in_group("crocodile"):
@@ -216,10 +227,17 @@ func _lure() -> void:
 			continue
 		if (body as Node3D).global_position.distance_squared_to(global_position) > radius_sq:
 			continue
-		# A guard standing INSIDE the building while the jar is outside it is the
-		# one body a straight-line route would walk into a wall. The stall
-		# watchdog would eventually hand it back, but a lure that visibly fails is
-		# worse than one that never fired: the roof is what decides, not a species.
+		# A BODY THE SHELL SHELTERS IS THE BUILDING'S, and a straight line to it
+		# goes through a wall. The router above is the only thing that may move
+		# one; here the roof decides, not a species.
+		#
+		# `ponytail:` the residual, now that the arm above falls through on a
+		# refusal: a jar genuinely inside a room that the plan can route no guard
+		# to (no `G` on that storey, or a busy one) reaches this loop and may walk
+		# an UNSHELTERED body toward the outside of the wall it is behind.
+		# `_investigate_move()`'s stall watchdog bounds that to one walk and hands
+		# the leash back. The upgrade is a router that takes a body rather than
+		# finding one, and it belongs in `tower_interior.gd`.
 		if _under_the_roof((body as Node3D).global_position):
 			continue
 		body.call("investigate_point", global_position, LURE_HOLD)

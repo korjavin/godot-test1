@@ -639,9 +639,9 @@ func _ability2_phoboman() -> bool:
 	a NOSE still standing within 6 m of it bolts. They come for the smell and they
 	leave because of the smell.
 
-	NOTHING DIES (owner ruling 3, 2026-09-18) and nothing is freed: check 10c
-	greps this body and `kimchi_jar.gd` for a kill call, the way check 10b does
-	for Twin Flash. No displacement and no speed either — Phoboman puts a pot
+	NOTHING DIES (owner ruling 3, 2026-09-18) and nothing is freed:
+	`capture_selfcheck` check 10d greps this body and `kimchi_jar.gd` for a kill
+	call, the way check 10b does for Twin Flash. No displacement and no speed either — Phoboman puts a pot
 	down and keeps walking.
 
 	THE TWO BEATS AND EVERY NUMBER ARE THE JAR'S, not this arm's. The jar is a

@@ -3623,8 +3623,8 @@ func _check_kimchi_lures_then_scatters() -> void:
 	that dropped a jar and watched one crocodile approach would pass just as
 	happily if the jar attracted EVERYTHING IN THE WORLD or NOTHING BUT THE
 	PROBE, so the compass is built to fail in both directions at once — three
-	bodies that MUST take the lure and four that MUST NOT, three that MUST flee
-	and four that MUST NOT, and the two sets are deliberately not the same three:
+	bodies that MUST take the lure and four that MUST NOT, two that MUST flee
+	and five that MUST NOT, and the two sets are deliberately not the same:
 
 	  sniffer  15 m from the jar   lured, NOT scattered  (inside 20, outside 6)
 	  close     2 m                lured AND scattered
@@ -3839,8 +3839,9 @@ func _check_kimchi_lures_then_scatters() -> void:
 	# THE ERRAND IS DROPPED BY THE FLIGHT, and the guard is its control: it was
 	# lured too and it never fled, so it is still standing over the pot.
 	if bool(close.get("is_investigating")):
-		_fail("the scattered sniffer still holds its errand — it would run for"
-			+ " 4 s and then walk back to the pot that just went off in its face")
+		_fail("`close` sniffed the jar, was scattered by it, and still holds its"
+			+ " errand — it would run for 4 s and then walk back to the pot that"
+			+ " just went off in its face")
 	if not bool(guard.get("is_investigating")):
 		_fail("the guard dropped its errand without ever fleeing — the one-line"
 			+ " fix in flee_from() is meant to fire on a FLIGHT, not on a burst")
@@ -3923,9 +3924,9 @@ func _source_span(path: String, from: String, until: String) -> String:
 	"""
 	The text of one function in `path`, from its declaration to the next `until`.
 
-	Check 10b spells this inline; 10c needs it twice, so it is a helper rather
-	than a third copy. An EMPTY string means the declaration is not there at all,
-	which is a failure the caller states in its own words.
+	Checks 10b and 10c both spell this inline; 10d wanted it too, so it is a
+	helper rather than a third copy. An EMPTY string means the declaration is not
+	there at all, which is a failure the caller states in its own words.
 	"""
 	var text: String = FileAccess.get_file_as_string(path)
 	var start: int = text.find(from)
