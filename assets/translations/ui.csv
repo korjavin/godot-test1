@@ -416,7 +416,7 @@ Offline,Offline,Nicht verbunden
 "%d strange places found","%d strange places found","%d seltsame Orte gefunden"
 "Press %s or Esc to close the passport","Press %s or Esc to close the passport","%s oder Esc drückt den Pass weg"
 "Open your discovery passport.","Open your discovery passport.","Öffne deinen Entdeckungspass."
-"New passport stamp — %d of %d","New passport stamp — %d of %d","Neuer Pass-Stempel — %d von %d"
+"New passport stamp — %d of %d (press %s)","New passport stamp — %d of %d (press %s)","Neuer Pass-Stempel — %d von %d (%s drücken)"
 "GD-SURVEY memo","GD-SURVEY memo","GD-SURVEY-Mitteilung"
 "GD-SURVEY report","GD-SURVEY report","GD-SURVEY-Bericht"
 "Camp inspection scheduled for noon.","Camp inspection scheduled for noon.","Lagerinspektion für Mittag angesetzt."

@@ -3200,28 +3200,44 @@ func _check_twin_flash_scares_and_never_kills() -> void:
 	boss.species = CONTROL_SPECIES
 	boss.setup_as_boss(3.0)
 	root.add_child(boss)
+	# The compass itself, in metres ahead and metres right of wherever the player
+	# IS: `_plant()` resolves both against the live body every time it is called,
+	# which is what keeps the second plant honest (see its docstring).
+	var stands: Array[Array] = [
+		[ahead, 3.0, 0.0],
+		[behind, -3.0, 0.0],
+		[guard, 3.0, 1.5],
+		[boss, 3.5, -1.0],
+	]
+	# STOOD OFF BEFORE THE STAGING FRAME, AND PLANTED AGAIN AFTER IT (bead
+	# godot-test1-gjiu). `_check_the_ai_says_who_bit()`'s `PROBE_STANDOFF` sentry
+	# argues the first half, and this is the same bug one check along: a live body
+	# added while the player stands at the origin OVERLAPS it, and its own
+	# `_physics_process` runs `_on_player_collision` during the `await` below. One
+	# `await process_frame` is an UNBOUNDED number of physics ticks, so on a loaded
+	# runner the GUARD's grab is the one that lands — and a guard grab jails Primm
+	# and auto-switches the active hero, after which every read below is about
+	# somebody else (`slot 1 advertises Ability`, and three more that all read as
+	# "Twin Flash is broken"). It went red on CI twice while passing on every
+	# developer machine. The second plant is the other half of the same frame: a
+	# body standing 3 m off CHASES across it, and this compass has to be exact —
+	# so it is re-planted with no `await` left between here and the press.
+	_plant(player, stands)
 	await process_frame
+	_plant(player, stands)
 	if not bool(guard.spec.get("stink_immune", false)):
 		_fail("the probe guard's row carries no stink_immune — check 10b would be"
 			+ " measuring a guard that flinches, and the stealth ruling with it")
 	if not bool(boss.is_boss):
 		_fail("setup_as_boss() left is_boss false — check 10b has no boss to shrug")
 
-	# Face-relative stands: ahead is -Z's business, read off the live basis
-	# rather than assumed, because the press aims the disc off the same basis.
-	var forward: Vector3 = -(player as Node3D).transform.basis.z
-	forward.y = 0.0
-	forward = forward.normalized()
-	var right: Vector3 = (player as Node3D).transform.basis.x
-	right.y = 0.0
-	right = right.normalized()
-	var spot: Vector3 = (player as Node3D).global_position
-	(ahead as Node3D).global_position = spot + forward * 3.0
-	(behind as Node3D).global_position = spot - forward * 3.0
-	(guard as Node3D).global_position = spot + forward * 3.0 + right * 1.5
-	(boss as Node3D).global_position = spot + forward * 3.5 - right * 1.0
-
 	# --- G is Twin Flash, and nothing gates it in the field. ---
+	# THE HERO IS STILL THE ONE THIS CHECK IS ABOUT. Asked out loud because the
+	# staging race above is silent otherwise: a hero swapped out from under the
+	# press arrives as four failures about the ability, and none about the swap.
+	if player.hero_name() != "primm":
+		_fail("the hero is %s at the press, not primm — something took Primm while"
+			% player.hero_name() + " check 10b was staging its bodies")
 	if player.get_ability_name(1) != "Twin Flash":
 		_fail("slot 1 advertises %s" % player.get_ability_name(1))
 	if player.get_ability_block_reason(1) != "":
@@ -3628,6 +3644,33 @@ func _assert_cell_body(interior: Node, hero: String, expected: bool) -> void:
 			_fail("capture: %s's cell body contains group membership (%s)" % [hero, node.name])
 		for child: Node in node.get_children():
 			pending.append(child)
+
+
+func _plant(player: Node, stands: Array[Array]) -> void:
+	"""
+	Put each `[body, metres ahead, metres right]` stand where the check needs it.
+
+	FACE-RELATIVE TO THE PLAYER AS IT IS NOW, never to a remembered anchor: these
+	harnesses build no floor, so the probe player is in free fall from the moment
+	it is added, and a stand measured one frame early sits that frame's fall above
+	the hero it is aimed at. The Twin Flash scare tests `distance_squared_to` in
+	THREE dimensions, so a stale y is spent straight out of the disc's radius
+	budget. Reading the live body every call costs one transform and owes nothing.
+
+	Call it on BOTH sides of a staging frame — check 10b's use argues why once is
+	never enough: a body added on top of the player bites across that frame, and a
+	body stood off chases across it.
+	"""
+	var forward: Vector3 = -(player as Node3D).transform.basis.z
+	forward.y = 0.0
+	forward = forward.normalized()
+	var right: Vector3 = (player as Node3D).transform.basis.x
+	right.y = 0.0
+	right = right.normalized()
+	var spot: Vector3 = (player as Node3D).global_position
+	for stand: Array in stands:
+		(stand[0] as Node3D).global_position = \
+			spot + forward * float(stand[1]) + right * float(stand[2])
 
 
 func _clear(player: Node) -> void:

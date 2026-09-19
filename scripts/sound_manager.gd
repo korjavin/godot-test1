@@ -300,7 +300,7 @@ const CAR_HORN_VOLUME_DB: float = -9.0
 ## caller repeats, not a loop player.
 const KLAXON_FREQ_HIGH: float = 800.0
 const KLAXON_FREQ_LOW: float = 600.0
-const KLAXON_FREQS: Array[float] = [800.0, 600.0, 800.0, 600.0]
+const KLAXON_FREQS: Array[float] = [KLAXON_FREQ_HIGH, KLAXON_FREQ_LOW, KLAXON_FREQ_HIGH, KLAXON_FREQ_LOW]
 const KLAXON_TONE_DURATION: float = 0.15  # 4 tones * 0.15 s = 0.60 s total
 const KLAXON_VOLUME_DB: float = -8.0
 
