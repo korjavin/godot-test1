@@ -61,6 +61,14 @@ extends SceneTree
 ##      the signs and the heads present, which is `batch_selfcheck` check 5's
 ##      `KIND_CAP_BY_NAME` table needing no row changed, asserted where the boxes
 ##      are rather than promised in a comment.
+##   7c. AND WHERE THAT TOP ACTUALLY STANDS. Every box a pole carries within the
+##      post's own height must be IN FRONT of the post, measured off the emitted
+##      transforms. Round 1 of the review found the sign plate built at the post's
+##      own centre, inside a 0.16 m box — a grey bar down the middle of every sign
+##      and CROSSING's centre pip swallowed whole — and NOTHING above could see it:
+##      7 and 8 count, 9 indexes, 1 and 5 compare a build to a build. It is `.1`'s
+##      25 m bug in miniature, and this is the assertion shaped like the one that
+##      caught that. Its control is the predicate run on the post itself.
 ##   9. THE INDEX, AND IT IS THE REASON THIS BEAD WAS NOT MECHANICAL. A lamp's
 ##      MultiMesh instance index is its position among the CUBE ENTRIES ONLY —
 ##      `_build_block_multimesh` buckets by kind — so the index the marker records
@@ -82,6 +90,13 @@ extends SceneTree
 ##      randomizes and never touches `run_seed`, the geometry never randomizes, and
 ##      the write linearises. `scarcity_selfcheck` check 3's shape, and the only
 ##      form of those three assertions a future edit cannot slip past.
+##  11. AN UNLOADED CHUNK LEAVES NO TIMER BEHIND. The cycle Timer hangs off this
+##      family's marker rather than off the chunk (a deliberate departure from the
+##      bead — it keeps the Timer out of the child list check 1 compares), which is
+##      only safe if it is still freed with the chunk. Measured through the shipped
+##      `remove_chunk()`, which is `queue_free`, so this is the one check in the
+##      file that awaits a frame. Its control is a second chunk left loaded, whose
+##      Timer must still be alive at the end.
 
 ## The end-of-check sentinel — see `scripts/selfcheck_sentinel.gd` for why every
 ## check stamps itself and the report site never prints SELFCHECK OK itself.
@@ -156,6 +171,17 @@ const FAR_CHUNK_Y: int = 130
 ## histogram is the assertion; the square is only its cost.
 const TOP_SWEEP_HALF: int = 9
 
+## How far from a post's centre, in metres of chunk-local XZ, check 7c will look for
+## the boxes that post carries. Comfortably wider than the widest plate's standoff
+## and far narrower than `BIKE_POLE_OFFSET` (1.65), which is what keeps the strip and
+## the dashes — the only other boxes at a post's height — out of the sweep.
+const POLE_NEAR: float = 0.6
+
+## Float slack on check 7c's clearance comparison, metres. The two sides are computed
+## from the same constants a few calls apart, so this is precision and not an
+## allowance: a real overlap is centimetres, not microns.
+const CLEARANCE_TOLERANCE: float = 0.0005
+
 ## Check 9's fixture prefix: the kinds a real chunk already holds by the time this
 ## family runs — a mast, a rock, a wedged roof. THREE of the seven are CUBEs, so a
 ## bike-path box's CUBE-bucket index and its batch index are DIFFERENT NUMBERS,
@@ -228,8 +254,13 @@ func _run() -> void:
 	_check_no_new_buckets(terrain_script)
 	_check_footprints(terrain_script)
 	_check_tops_and_cubes(terrain_script)
+	_check_sign_clearance(terrain_script)
 	_check_lamp_indices(terrain_script)
 	_check_cycle_off_the_seed(terrain_script)
+	# AWAITED, and it is the only one that is: a chunk unloads through `queue_free`,
+	# so the check has to let a frame pass before it can ask whether the Timer is
+	# really gone. See `_check_unload`.
+	await _check_unload(terrain_script)
 
 	if _failures.is_empty():
 		print("bike paths: the kill switch leaves every other box in the world where "
@@ -237,9 +268,11 @@ func _run() -> void:
 				+ "per-chunk shares cover every segment exactly once, blocked paths "
 				+ "truncate rather than gap, scarcity empties the far field, no chunk "
 				+ "grew a MultiMesh bucket, only the poles claim a footprint, every "
-				+ "pole carries one of the five authored tops, the CUBE-bucket index "
-				+ "recorded for a lamp is the one the shipped bucketing really puts "
-				+ "it at, and the cycle is randomize()d ambience the seed cannot see")
+				+ "pole carries one of the five authored tops and stands it clear of "
+				+ "its own post, the CUBE-bucket index recorded for a lamp is the one "
+				+ "the shipped bucketing really puts it at, the cycle is randomize()d "
+				+ "ambience the seed cannot see, and an unloaded chunk leaves no Timer "
+				+ "behind")
 		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
@@ -963,6 +996,120 @@ func _sign_name(kind: int) -> String:
 
 
 # ============================================================================
+# CHECK 7c — a sign stands CLEAR of its own post
+# ============================================================================
+
+func _check_sign_clearance(terrain_script: GDScript) -> void:
+	"""
+	EVERY BOX A POLE CARRIES THAT STANDS WITHIN THE POST'S OWN HEIGHT MUST BE IN
+	FRONT OF THE POST, measured off the drawn boxes.
+
+	This is round 1's major, turned into an assertion. A sign plate is
+	`SIGN_PLATE_DEPTH` = 0.05 thick and the post it hangs on is `BIKE_POLE_WIDTH` =
+	0.16 square, so a plate centred on the post's own XZ is INSIDE it: the sign reads
+	with a grey bar straight down its middle, and CROSSING's centre bar — one of its
+	three — is swallowed whole. NOTHING ELSE IN THIS FILE COULD SEE THAT. Checks 7
+	and 8 count tops and box kinds, check 9 pins indices, check 1 compares a build to
+	a build, and the style shot that would have shown it is deferred. It is the same
+	shape as `.1`'s 25 m bug: every count was right and the geometry was wrong.
+
+	MEASURED OFF THE TRANSFORMS AND NOT OFF THE CONSTANTS. A batch entry's own basis
+	carries its facing and its size (`Basis(UP, yaw).scaled_local(dims)`, so
+	`basis.x` is the approach axis scaled by the box's depth), so the post and the
+	sign are each read from what was actually emitted — a check written against
+	`SIGN_STANDOFF` would agree with any value of it, including zero.
+
+	ONLY BOXES INSIDE THE POST'S HEIGHT are held to it: the traffic head sits ON TOP
+	of the post (its lenses are above `BIKE_POLE_HEIGHT`), so it is not occluded by
+	anything and is exempt by construction rather than by exception.
+
+	ITS CONTROL is the predicate applied to the POST ITSELF, which must report a
+	failure — a post is not clear of a post. Without it "every sign is clear" would
+	also be what a predicate that can never fail prints.
+	"""
+	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
+	var posts_seen: int = 0
+	var signs_seen: int = 0
+	var control_fired: bool = false
+	for ox in range(-SWEEP_HALF, SWEEP_HALF + 1):
+		for oy in range(-SWEEP_HALF, SWEEP_HALF + 1):
+			var chunk_pos := Vector2i(ox, oy)
+			var batch: Array = _spawn_bare(terrain, chunk_pos)["batch"]
+			for post_v: Variant in batch:
+				var post: Transform3D = (post_v as Dictionary)["transform"]
+				if not _is_post(post):
+					continue
+				posts_seen += 1
+				if not control_fired:
+					# THE CONTROL: the post is not clear of itself.
+					control_fired = true
+					if _clearance_fault(post, post) == "":
+						_fail("check 7c's clearance predicate calls the POST ITSELF clear of the "
+								+ "post, so it cannot fail and 'every sign stands clear' is an "
+								+ "assertion about nothing")
+				for box_v: Variant in batch:
+					var box: Transform3D = (box_v as Dictionary)["transform"]
+					if box == post:
+						continue
+					if Vector2(box.origin.x - post.origin.x,
+							box.origin.z - post.origin.z).length() > POLE_NEAR:
+						continue
+					# Above the post's own top it cannot be occluded by it — that is
+					# where the traffic head lives, and it is exempt by construction.
+					if box.origin.y + box.basis.y.length() * 0.5 > BikePaths.BIKE_POLE_HEIGHT:
+						continue
+					signs_seen += 1
+					var fault: String = _clearance_fault(post, box)
+					if fault != "":
+						_fail("chunk %s: a box the pole at (%.1f, %.1f) carries %s. A plate or a "
+								% [chunk_pos, post.origin.x, post.origin.z, fault]
+								+ "pictogram inside the post reads with a grey bar down its "
+								+ "middle, and a centred pip does not read at all — see "
+								+ "`SIGN_STANDOFF`")
+	terrain.free()
+	if posts_seen == 0:
+		_fail("check 7c swept %dx%d chunks and found no post at all, so it measured nothing"
+				% [SWEEP_HALF * 2 + 1, SWEEP_HALF * 2 + 1])
+	if signs_seen == 0:
+		_fail("check 7c found %d posts and not one box standing on any of them within the "
+				% posts_seen + "post's own height — the sign geometry it exists to measure was "
+				+ "never looked at (did the plates move above BIKE_POLE_HEIGHT, or is POLE_NEAR "
+				+ "too tight?)")
+	Sentinel.done("sign_clearance")
+
+
+func _is_post(t: Transform3D) -> bool:
+	## A pole post, picked out by its own dimensions and its centre height — no meta
+	## and no index, the same way `_strip_positions` finds a strip.
+	return is_equal_approx(t.origin.y, BikePaths.BIKE_POLE_HEIGHT * 0.5) \
+			and is_equal_approx(t.basis.y.length(), BikePaths.BIKE_POLE_HEIGHT) \
+			and is_equal_approx(t.basis.x.length(), BikePaths.BIKE_POLE_WIDTH)
+
+
+func _clearance_fault(post: Transform3D, box: Transform3D) -> String:
+	"""
+	Does `box` stand in front of `post` along the post's own approach axis?
+
+	@return: "" when it does, otherwise the overlap in words.
+
+	`basis.x` is the box's local +X scaled by its depth, and for this family local +X
+	is the direction of travel (`yaw == -head`), so its normalised form is the axis
+	and its length is the depth. A sign is built on the -X side, so "in front" is a
+	NEGATIVE offset along that axis, and the near face must clear the post's own half
+	width.
+	"""
+	var axis: Vector3 = post.basis.x.normalized()
+	var along: float = (box.origin - post.origin).dot(axis)
+	var depth: float = box.basis.x.length()
+	var near: float = -along - depth * 0.5
+	if near >= BikePaths.BIKE_POLE_WIDTH * 0.5 - CLEARANCE_TOLERANCE:
+		return ""
+	return "stands %.3f m in front of the post's centre and is %.3f m deep, so its near " \
+			% [-along, depth] + "face is %.3f m out where the post's own is %.3f m" \
+			% [near, BikePaths.BIKE_POLE_WIDTH * 0.5]
+
+
+# ============================================================================
 # CHECK 9 — the recorded CUBE-bucket index really is that lamp
 # ============================================================================
 
@@ -1279,6 +1426,98 @@ func _check_cycle_off_the_seed(terrain_script: GDScript) -> void:
 			_fail("`%s` %s `%s`: %s" % [fn, "must contain" if must else "must not contain",
 					needle, why])
 	Sentinel.done("cycle_off_the_seed")
+
+
+# ============================================================================
+# CHECK 11 — an unloaded chunk leaves no Timer behind
+# ============================================================================
+
+func _check_unload(terrain_script: GDScript) -> void:
+	"""
+	THE PARENTING RULE, MEASURED RATHER THAN TRUSTED.
+
+	This family's Timer hangs off its MARKER, which hangs off the chunk — a
+	deliberate departure from the bead, which said to parent it to the chunk itself,
+	taken so the Timer stays out of the chunk's own child list (check 1 compares that
+	list node for node to catch a stray draw). The departure is only safe if the
+	Timer is still freed with the chunk, and "parented under it, so it must be" is a
+	claim about Godot rather than a measurement. A per-chunk node that outlived its
+	chunk in an endless runner is an unbounded leak AND a Timer ticking forever into
+	a freed bucket.
+
+	`remove_chunk()` is the shipped unload path and it uses `queue_free`, so this is
+	the one check in the file that awaits a frame — a `free()` here would measure a
+	teardown the game never performs.
+
+	Non-vacuous by construction: it fails if it cannot find a chunk with a Timer in
+	the first place, and it asserts the Timer was ALIVE before the unload as well as
+	gone after it.
+
+	ITS CONTROL IS A SECOND CHUNK THAT IS NOT UNLOADED, and its Timer must still be
+	alive at the end. Without it, "the weak reference went null" is also what a check
+	that had freed the whole world — or that was reading a reference which is null
+	however the frame went — would print, and the assertion would pass whatever the
+	unload did.
+	"""
+	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
+	var found := Vector2i(0, 0)
+	var timer: Timer = null
+	var kept: Timer = null
+	for ox in range(-SWEEP_HALF, SWEEP_HALF + 1):
+		if timer != null and kept != null:
+			break
+		for oy in range(-SWEEP_HALF, SWEEP_HALF + 1):
+			var pos := Vector2i(ox, oy)
+			var built: Dictionary = _spawn_bare(terrain, pos)
+			var heads: int = 0
+			for row: Dictionary in (built["paths"] as Array[Dictionary]):
+				heads += (row["signals"] as PackedInt32Array).size()
+			if heads == 0:
+				continue
+			terrain.create_chunk(pos)
+			var here: Timer = _signal_timer(terrain.active_chunks[pos])
+			if here == null:
+				continue
+			if timer == null:
+				timer = here
+				found = pos
+			elif kept == null:
+				# THE CONTROL'S CHUNK: built, never unloaded, and its Timer must still
+				# be alive when this check ends.
+				kept = here
+				break
+	if timer == null:
+		_fail("check 11 swept %dx%d chunks and built no chunk that carried a cycle Timer, so "
+				% [SWEEP_HALF * 2 + 1, SWEEP_HALF * 2 + 1] + "'an unloaded chunk leaves none "
+				+ "behind' was never once asked of a chunk that had one")
+		terrain.free()
+		Sentinel.done("unload")
+		return
+	var ref: WeakRef = weakref(timer)
+	if ref.get_ref() == null:
+		_fail("check 11's Timer was already dead before the chunk was unloaded")
+	if kept == null:
+		_fail("check 11 found only one chunk with a cycle Timer in a %dx%d sweep, so it has no "
+				% [SWEEP_HALF * 2 + 1, SWEEP_HALF * 2 + 1] + "second chunk to leave loaded — "
+				+ "and without that control 'the Timer went away' is also what this check would "
+				+ "print if nothing it holds survived the frame")
+	var control: WeakRef = weakref(kept)
+	terrain.remove_chunk(found)
+	# `queue_free` frees at the end of the frame, which is why this check is awaited.
+	await process_frame
+	await process_frame
+	if ref.get_ref() != null:
+		_fail("chunk %s was unloaded through the shipped `remove_chunk()` and its bike-path "
+				% found + "cycle Timer is still alive — every head the player walks past leaks "
+				+ "a node that goes on ticking into a bucket that no longer exists")
+	if terrain.active_chunks.has(found):
+		_fail("chunk %s is still in `active_chunks` after `remove_chunk()`, so check 11 "
+				% found + "measured an unload that did not happen")
+	if kept != null and control.get_ref() == null:
+		_fail("check 11's control Timer, in a chunk that was never unloaded, died along with "
+				+ "the one that was — so 'the Timer went away' says nothing about the unload")
+	terrain.free()
+	Sentinel.done("unload")
 
 
 func _function_body(source: String, name: String) -> String:

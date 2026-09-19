@@ -287,8 +287,15 @@ const POLE_TOP_SIGNAL: int = -1
 ## hash indexes it, so adding a kind or retuning the mix costs NO DRAW and moves
 ## nothing: the stations, the strip and the poles are exactly where they were.
 ## Eight sign slots to one signal, because a working traffic light out in an empty
-## field is a joke that stops being funny at every fourth pole — at this mix a
-## typical path carries five or six signs and about one head every other path.
+## field is a joke that stops being funny at every fourth pole.
+##
+## WHAT THAT MIX ACTUALLY PRODUCES, counted rather than guessed (round 1 found the
+## first version of this paragraph was out by a factor of two, and it is the number
+## the next author retunes `BIKE_PATH_CHANCE`, `BIKE_POLE_STRIDE` or this table
+## against). A path of `n` stations carries `floor((n - 1) / BIKE_POLE_STRIDE)`
+## poles, and `n` is uniform on [6, 24], so the mean is 59/19 = 3.1 poles — BEFORE
+## truncation and the `_footprint_taken` skip take more. At 8:1 that is about 2.8
+## signs a path and one head roughly every third path.
 const POLE_TOPS: Array[int] = [0, 1, 2, 3, 0, 1, 2, 3, POLE_TOP_SIGNAL]
 
 ## Palette KEYS, resolved through `_palette()` against the terrain's own constants.
@@ -302,6 +309,15 @@ const PAL_GREEN: int = 3
 ## How thick a sign plate is, and how far its pictogram stands proud of the face.
 const SIGN_PLATE_DEPTH: float = 0.05
 const SIGN_PIP_DEPTH: float = 0.035
+
+## HOW FAR FORWARD OF THE POST'S CENTRE THE PLATE STANDS, and it is derived rather
+## than typed because getting it wrong is invisible in every count and every index:
+## a plate centred on the post is INSIDE it (the post is `BIKE_POLE_WIDTH` square,
+## so it spans +/- 0.08 along the approach axis and the plate is 0.05 thick), and
+## every sign reads with a grey bar down its middle. The plate's BACK face touches
+## the post's FRONT face. `_build_sign` carries the full reasoning and the
+## self-check's clearance assertion measures it off the drawn boxes.
+const SIGN_STANDOFF: float = BIKE_POLE_WIDTH * 0.5 + SIGN_PLATE_DEPTH * 0.5
 ## The plate's centre height on the 2.6 m post — eye level for a rider, and it
 ## keeps the tallest plate's top under the post's own.
 const SIGN_CENTRE_Y: float = 2.05
@@ -1008,6 +1024,18 @@ static func _build_sign(terrain: Node3D, kind: int, at: Vector2, head: float,
 	head)` — the direction of travel — so the plate is THIN IN X and the pictogram
 	stands proud on its -X face.
 
+	...AND IT STANDS OFF THE POST'S FRONT FACE, which is the whole of `SIGN_STANDOFF`
+	and was round 1's major finding. A plate centred on `at` — the post's own centre —
+	is INSIDE the post: the post is `BIKE_POLE_WIDTH` square, so it occupies
+	+/- 0.08 m along the approach axis, while a plate is `SIGN_PLATE_DEPTH` = 0.05
+	thick and its pictogram only reaches 0.06. Every sign would have had a grey
+	0.16 m bar straight down its middle, cutting ROUTE's and STOP's single bar into
+	two stubs and swallowing CROSSING's centre bar whole — so the "three upright
+	bars" would render as two and PIP COUNT, one of the three axes the four kinds are
+	told apart by, would be corrupted. The plate's BACK face now touches the post's
+	FRONT face, and `bike_path_selfcheck`'s clearance check measures that off the
+	drawn boxes rather than trusting this paragraph.
+
 	NO COLLISION on any of it: you may ride through a sign plate, which is the
 	waypoint paint's ruling and the reason check 1's collision-shape delta is still
 	exactly the pole count. No footprint either — the post beneath it owns the one
@@ -1015,16 +1043,18 @@ static func _build_sign(terrain: Node3D, kind: int, at: Vector2, head: float,
 	"""
 	var row: Dictionary = SIGN_KINDS[kind]
 	var plate: Vector2 = row["plate"]
+	var dir := Vector2(cos(head), sin(head))
+	var side := Vector2(-sin(head), cos(head))
+	# Forward of the post, by the post's half-width plus the plate's own — see above.
+	var stand: Vector2 = at - dir * SIGN_STANDOFF
 	terrain.create_box(
-			Vector3(at.x, SIGN_CENTRE_Y, at.y),
+			Vector3(stand.x, SIGN_CENTRE_Y, stand.y),
 			Vector3(SIGN_PLATE_DEPTH, plate.y, plate.x),
 			yaw, rng, block_batch, block_body, 0.0,
 			_palette(terrain, int(row["plate_color"])), false, ChunkBatch.BoxKind.CUBE)
 	cube_cursor += 1
 
-	var dir := Vector2(cos(head), sin(head))
-	var side := Vector2(-sin(head), cos(head))
-	var face: Vector2 = at - dir * (SIGN_PLATE_DEPTH * 0.5 + SIGN_PIP_DEPTH * 0.5)
+	var face: Vector2 = stand - dir * (SIGN_PLATE_DEPTH * 0.5 + SIGN_PIP_DEPTH * 0.5)
 	var pip: Vector2 = row["pip"]
 	var pip_color: Color = _palette(terrain, int(row["pip_color"]))
 	for off_v: Variant in (row["pips"] as Array):
@@ -1136,9 +1166,13 @@ static func _plant_signal_timers(terrain: Node3D, marker: Node3D,
 		var timer := Timer.new()
 		timer.name = SIGNAL_TIMER_NAME
 		timer.one_shot = false
-		# AUTOSTART rather than `start()`: the chunk is not in the tree yet when the
-		# spawner runs, and `start()` on a detached Timer is an error. Autostart
-		# begins the moment the chunk enters.
+		# AUTOSTART rather than `start()`, and the reason is the CHECK'S chunk and not
+		# the game's: `create_chunk` parents its chunk before it calls any spawner, so
+		# on the production path the Timer enters the tree live and `start()` would
+		# work. `bike_path_selfcheck` calls this same spawner on a bare
+		# `MeshInstance3D.new()` that never enters a tree, where `start()` pushes an
+		# error and fails the build. Autostart is the spelling that is correct in
+		# both: it begins when (and if) the Timer enters a tree.
 		timer.autostart = true
 		timer.wait_time = maxf(0.05, rng.randf() * dwell)
 		timer.set_meta("lamp0", base)
@@ -1207,8 +1241,12 @@ static func write_lamps(mm: MultiMesh, base: int, phase: int,
 	visibly brighter than every other box in the world, on desktop and on web.
 
 	THE INDEX IS A CUBE-BUCKET INDEX, never a `block_batch` index — see the banner.
-	An index one out still writes a perfectly valid instance, which is why check 9
-	reads the colour back and controls it against `base + 1`.
+	An index one out still writes a perfectly valid instance, and nothing in the game
+	would report it. That is why check 9 exists, and why it does NOT read the colour
+	back: MultiMesh instance data is write-only under the headless dummy renderer, so
+	a read would return black at every index and pass with any base. It compares the
+	recorded index against what the shipped `_build_block_multimesh` does with the
+	very batch this family wrote. Read that check before editing this function.
 	"""
 	var lit: int = SIGNAL_LIT[phase]
 	for j in 3:
