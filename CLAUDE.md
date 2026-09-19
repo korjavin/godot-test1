@@ -197,7 +197,11 @@ gameplay input goes through named actions.
   a non-master's own set drains once per join under half the verb budget) and the HQ's staff
   alarm (`alrm`, anyone-to-everyone, reliable, NOT master-arbitrated — the master may be in the
   field with no tower streamed in; the point is interior-local so every bound is a local const,
-  and there is no repair leg because an alarm expires). Clear clouds, birds,
+  and there is no repair leg because an alarm expires) and Phoboman's kimchi jar (`bait`,
+  anyone-to-everyone, reliable — the jar is a PICTURE as well as an effect (owner ruling
+  2026-09-18), so every member draws one and runs its own clock; the MASTER's copy is the
+  one whose beats the pack obeys, through the croc-sync flag byte, and it adds no wire
+  flag of its own). Clear clouds, birds,
   crowd and traffic stay per-peer cosmetic. Storms are rolled around every room member
   (owner ruling A, bead `gyd`). Each verb's ceilings (older builds, RTT lag) are written
   at its send site. Beads `vej`, `coq`, `d81`, `gyd`.

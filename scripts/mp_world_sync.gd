@@ -213,6 +213,12 @@ static func receive_wx(mp: Node, from_id: String, packet: Dictionary) -> void:
 #     pad    peer   → master   {"t":"pad","f":int,"p":int}     an HQ lure plate
 #     kill   peer   → master   {"t":"kill","id":int}           giant Teibi's crush
 #     dead   master → everyone {"t":"dead","id":int}           the kill ruling
+#     bait   anyone → everyone {"t":"bait","x","y","z"}        a Kimchi jar
+#
+# `bait` is the odd one and `publish_bait()` says why at length: the jar is a
+# PICTURE as well as an effect (owner ruling 2026-09-18), so it goes to the whole
+# room rather than to the master, everybody draws one, and the master's copy is
+# still the one whose beats the pack obeys.
 #
 # THERE IS DELIBERATELY NO `flee` OR `shr` BROADCAST: `is_fleeing` and
 # `is_shrunk` are both bits in the sync packet's flag byte, so the master applying
@@ -505,6 +511,133 @@ static func receive_pad(mp: Node, from_id: String, packet: Dictionary) -> void:
 	if not MpCodec.pad_press_in_reach(sender as Vector3, where as Vector3):
 		return
 	apply_guard_lure(mp, int(msg["f"]), int(msg["p"]))
+
+
+# =============================================================================
+# KIMCHI JARS — the `bait` verb (bead godot-test1-0mr0.5)
+# =============================================================================
+
+static func publish_bait(mp: Node, at: Vector3) -> bool:
+	"""
+	Phoboman set a Kimchi Offering jar down: put the same jar on every screen in
+	the room.
+
+	@param at: where it landed, in WORLD metres.
+	@return: whether the room has been told — `publish_alarm()`'s contract and not
+	    a delivery receipt. False offline, and false for a jar this machine's own
+	    caller got wrong.
+
+	ANYONE-TO-EVERYONE AND NOT MASTER-ARBITRATED, unlike `flee` and `pad`, and the
+	reason is the OWNER'S RULING (2026-09-18): "the katana pose and the kimchi jar
+	are VISIBLE TO EVERYONE IN THE ROOM in v1". A jar is a PICTURE as much as an
+	effect — a clay pot sitting on the ground that the pack is visibly walking
+	toward — and a master-arbitrated `bait` puts that picture on exactly one
+	machine. So this is `alrm`'s shape rather than `flee`'s: it goes to everybody,
+	everybody drops a jar, and every jar runs its own clock.
+
+	THAT IS NOT A SECOND SIMULATION, and the difference is worth stating because
+	"master simulates, peers replay" is a CLAUDE.md rule. What a peer's jar does
+	locally is exactly what `request_croc_flee()`'s local pass already does, for
+	the same documented reasons: it is the real simulation for the bodies the
+	master's terrain has not streamed in, and a no-op for the rest
+	(`investigate_point()` refuses a `remote_driven` body outright, and a flee
+	flag set on one is overwritten by the master's next croc-sync sample 100 ms
+	later). So the GAMEPLAY still comes from the master's jar and rides home in
+	the flag byte; the peers' copies are the picture and the coverage skirt.
+
+	RELIABLE, because a jar is an EDGE and not a state: nothing re-sends it, and a
+	lost one is a pot that never appeared.
+
+	NO REPAIR LEG, `alrm`'s ruling for `alrm`'s reason: a jar is NOT MONOTONE — it
+	cracks and frees itself after six seconds — so there is no field on the `room`
+	packet and none in the join snapshot. A peer whose ICE is still negotiating
+	misses this one, and a jar that arrives four seconds late would be worse than
+	a jar that never arrives (its clock would start as everybody else's ended).
+
+	NO LOCAL PASS HERE. The caster's own jar was dropped by
+	`PlayerAbilities._ability2_phoboman()` before this was called — the arm owns
+	the weakref that gates the second press — so applying again here would be two
+	jars in one spot on the caster's screen. `publish_gate_opened()`'s split
+	exactly: this function only moves the fact.
+
+	AN OLDER BUILD drops the verb silently (`_receive_mesh_verb`'s forward-
+	compatibility arm), which is one peer who does not see the pot.
+	"""
+	if not mp.is_online():
+		return false
+	var packet: Dictionary = {"t": "bait", "x": at.x, "y": at.y, "z": at.z}
+	# OUR OWN BUG STAYS OFF THE WIRE, tested by running the packet through the
+	# RECEIVER'S OWN PARSER rather than by re-stating its bounds — `publish_alarm`
+	# argues this at length, and the second half of the argument is the one that
+	# keeps working: the encoder and the decoder can now never disagree about a
+	# FIELD NAME either.
+	if MpCodec.decode_bait(packet).is_empty():
+		return false
+	mp._broadcast_reliable(var_to_bytes(packet))
+	return true
+
+
+static func receive_bait(mp: Node, from_id: String, packet: Dictionary) -> void:
+	"""
+	ANY member's jar: drop the same one here.
+
+	No authority test — see `publish_bait()` for why this verb is anyone-to-
+	everyone. Safety is two questions, `receive_alrm()`'s pair:
+
+	  1. IS THIS A POINT? `decode_bait()`, whole or nothing: three finite
+	     coordinates inside the world's envelope.
+	  2. WAS THE SENDER THERE? Its last published presence position, against
+	     `MpCodec.bait_place_in_reach()`. Without it a modified client drops jars
+	     on the far side of the world and scatters a pack it cannot see.
+
+	QUESTION 2 FAILS OPEN, and for `receive_alrm()`'s reason in as many words:
+	every receiver evaluates it against ITS OWN presence table, so failing closed
+	would mean a peer whose picture of the sender is stale, or who has none yet,
+	silently loses a REAL jar while everybody else sees it. Only a sender this
+	machine can place AND places far away is refused.
+
+	WHAT THAT LEAVES: a modified client genuinely standing where it says it is can
+	drop a jar 50 m away instead of 3 m away, at the verb's 4/s, in a 2-4 player
+	co-op room. It could have walked there.
+
+	NOTHING IS RE-BROADCAST. A replayed jar must not go back on the wire or two
+	peers would echo one pot round the room forever — `receive_alrm()`'s `publish`
+	flag, expressed here by this arm simply not calling `publish_bait()`.
+	"""
+	var msg: Dictionary = MpCodec.decode_bait(packet)
+	if msg.is_empty():
+		return
+	# QUESTION 2, FAIL-OPEN. Every branch skipped here is a position this machine
+	# could not evaluate — no entry for the sender, or no `pos` on that entry —
+	# and each one deliberately lets the jar through rather than refusing it.
+	if mp._peer_state.has(from_id):
+		var sender: Variant = (mp._peer_state[from_id] as Dictionary).get("pos", null)
+		if typeof(sender) == TYPE_VECTOR3 \
+				and not MpCodec.bait_place_in_reach(sender as Vector3, msg["at"] as Vector3):
+			return
+	apply_bait(mp, msg["at"] as Vector3)
+
+
+static func apply_bait(mp: Node, at: Vector3) -> void:
+	"""
+	Put one jar in this machine's world, on the same parent the caster's own arm
+	uses (`_ability2_phoboman`): the player's PARENT, so it survives a switch, a
+	respawn and the player being freed.
+
+	FALLS BACK TO THE MP NODE'S OWN PARENT when there is no local player — a
+	spectating or still-loading peer is not a reason to lose the pot, and the jar
+	needs a parent and nothing else. Group discovery with no hard reference, like
+	every other cross-system call in this file.
+	"""
+	var host: Node = null
+	var player: Node = mp.get_tree().get_first_node_in_group("player")
+	if player != null:
+		host = player.get_parent()
+	if host == null:
+		host = mp.get_parent()
+	if host == null:
+		return
+	KimchiJar.drop(host, at)
 
 
 static func publish_alarm(mp: Node, floor_index: int, local_xz: Vector2) -> bool:

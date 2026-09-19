@@ -328,6 +328,7 @@ func _run() -> void:
 	await _check_air_sight_is_the_indoor_air_rush()
 	await _check_twin_flash_scares_and_never_kills()
 	await _check_shrink_ray_shrinks_the_reached_and_nothing_else()
+	await _check_kimchi_lures_then_scatters()
 	await _check_no_second_way_to_lose()
 	await _check_a_hunter_walks_in_and_takes_a_hero()
 	await _check_escape_leaves_the_ending_cursor_free()
@@ -3598,6 +3599,342 @@ func _check_shrink_ray_shrinks_the_reached_and_nothing_else() -> void:
 	tower.queue_free()
 	await process_frame
 	Sentinel.done("shrink_ray_reaches_what_it_reaches")
+
+
+# ============================================================================
+# 10d. THE KIMCHI OFFERING LURES EVERYTHING AND SCATTERS THE ONES WITH A NOSE
+# ============================================================================
+
+func _check_kimchi_lures_then_scatters() -> void:
+	"""
+	Check 10d (bead godot-test1-0mr0.5). KIMCHI OFFERING IS PHOBOMAN'S SECOND
+	SKILL: G sets a clay jar down 3 m ahead, everything idle within 20 m walks
+	over to sniff it, and five seconds later it bursts and everything with a NOSE
+	within 6 m bolts. Guards come and DO NOT run (owner ruling 5: "yes, attract
+	all"); bosses neither come nor run; sleepers are not woken; nothing dies
+	(ruling 3).
+
+	DRIVEN THROUGH THE REAL SLOT-1 PRESS ON REAL BODIES from the shipped scenes,
+	check 10b's staging exactly — and then through the REAL JAR'S OWN CLOCK
+	(`jar._process(FERMENT)`), because beat 2 is the half a "one crocodile came
+	over" check would never reach.
+
+	SEVEN BODIES, AND EVERY ONE OF THEM ANSWERS A DIFFERENT QUESTION. A check
+	that dropped a jar and watched one crocodile approach would pass just as
+	happily if the jar attracted EVERYTHING IN THE WORLD or NOTHING BUT THE
+	PROBE, so the compass is built to fail in both directions at once — three
+	bodies that MUST take the lure and four that MUST NOT, two that MUST flee
+	and five that MUST NOT, and the two sets are deliberately not the same:
+
+	  sniffer  15 m from the jar   lured, NOT scattered  (inside 20, outside 6)
+	  close     2 m                lured AND scattered
+	  guard     2.2 m              lured, NOT scattered  (`stink_immune`)
+	  chaser    4 m                NOT lured, scattered  (a busy body refuses)
+	  boss      3.6 m              NOT lured, NOT scattered (the is_boss layer)
+	  slept     4 m                NOT lured, NOT scattered, STILL ASLEEP
+	  far      37 m                NOT lured, NOT scattered (outside 20)
+
+	Which means: an arm that lured the world fails on boss/slept/far, an arm that
+	lured nothing fails on sniffer/close/guard, an arm whose burst radius grew to
+	the lure radius fails on sniffer, one whose lure shrank to the burst radius
+	fails on sniffer too, one that lost the `is_boss` exclusion fails on boss, one
+	that lost the `lod_active` exclusion fails on slept (twice — lured, and woken),
+	and one that let a guard flee fails on guard. None of those is a count against
+	a count: every body is named and every direction is stated.
+
+	THE SOURCE OF THE FLIGHT IS ASSERTED, not just the fact of it. `flee_source`
+	must be the JAR and `flee_tracks_player` must be FALSE — a burst that ran the
+	pack away from the HERO instead of away from the pot would leave every body
+	fleeing and every `is_fleeing` read above green, which is the vacuous version
+	of this check.
+
+	AND THE ERRAND IS DROPPED. `close` sniffed the jar and was then scared off it;
+	it must no longer be `is_investigating`, or it would walk back to the pot that
+	just went off in its face (`flee_from`'s one-line fix). The GUARD is the
+	control for that line: it never fled, so it is still standing there.
+
+	EXACTNESS IS HONEST HERE for check 10b's reason: no `await` sits between the
+	press, the jar's clock and the reads, so no physics tick can spend a flee or
+	move a body out of a radius this check is measuring.
+	"""
+	var second_tree := StubSecondSkillProgression.new()
+	root.add_child(second_tree)
+	second_tree.add_to_group("progression")
+	var player := await _make_player()
+	if not _become(player, "phoboman"):
+		_fail("player.tscn has no phoboman in CHARACTERS — check 10d cannot drive"
+			+ " the Kimchi Offering")
+		_clear(player)
+		second_tree.remove_from_group("progression")
+		second_tree.queue_free()
+		Sentinel.done("kimchi_lures_then_scatters")
+		return
+
+	# The compass. Species before add_child throughout (`_ready()` resolves the
+	# spec exactly once) and the boss contract is three deep.
+	var sniffer: Node = load(CROC_SCENE).instantiate()
+	root.add_child(sniffer)
+	var close: Node = load(CROC_SCENE).instantiate()
+	root.add_child(close)
+	var chaser: Node = load(CROC_SCENE).instantiate()
+	root.add_child(chaser)
+	var slept: Node = load(CROC_SCENE).instantiate()
+	root.add_child(slept)
+	var far: Node = load(CROC_SCENE).instantiate()
+	root.add_child(far)
+	var guard: Node = load(GUARD_SCENE).instantiate()
+	guard.species = GUARD_SPECIES
+	root.add_child(guard)
+	var boss: Node = load(CROC_SCENE).instantiate()
+	boss.species = CONTROL_SPECIES
+	boss.setup_as_boss(3.0)
+	root.add_child(boss)
+	# Metres AHEAD of the player, against a jar that lands at ahead = 3.0.
+	var stands: Array[Array] = [
+		[sniffer, 18.0, 0.0],
+		[close, 5.0, 0.0],
+		[chaser, 7.0, 0.0],
+		[slept, 3.0, 4.0],
+		[far, 40.0, 0.0],
+		[guard, 4.0, 2.0],
+		[boss, 6.0, -2.0],
+	]
+	# Stood off before the staging frame and planted again after it — check 10b's
+	# docstring argues both halves, and the second matters more here: this compass
+	# has a body 2 m from the burst edge and another 1 m inside the lure edge.
+	_plant(player, stands)
+	await process_frame
+	_plant(player, stands)
+	# THE TWO STATES THE CHECK SETS ITSELF, both after the staging frame so the
+	# frame cannot undo them.
+	chaser.is_chasing = true
+	# WRITTEN, NOT ASKED FOR. `set_lod_active(false)` REFUSES a body that is not
+	# `is_on_floor()`, and this harness builds no floor — every probe here is in
+	# free fall from the frame it was added (see `_plant()`). What is under test
+	# is the two `lod_active` exclusions (`KimchiJar._lure()`'s and
+	# `flee_from()`'s), not the transition that sets the flag, so the flag is set
+	# the way a settled body would have had it and the dispatch is switched off
+	# beside it, which is what `set_lod_active()` does next.
+	slept.lod_active = false
+	slept.set_physics_process(false)
+	if bool(slept.get("lod_active")):
+		_fail("the slept probe is still awake — check 10d has no sleeper")
+	if not bool(guard.spec.get("stink_immune", false)):
+		_fail("the probe guard's row carries no stink_immune — check 10d would be"
+			+ " measuring a guard that flinches, and the owner's 'guards come and"
+			+ " sniff and stay unbothered' with it")
+	if bool(guard.spec.get("stink_immune", false)) and bool(sniffer.spec.get("stink_immune", false)):
+		_fail("the ordinary croc row carries stink_immune too — nothing in this"
+			+ " check can tell a nose from a sealed machine")
+	if not bool(boss.is_boss):
+		_fail("setup_as_boss() left is_boss false — check 10d has no boss to shrug")
+
+	# --- G is the Kimchi Offering, and nothing gates it in the field. ---
+	if player.hero_name() != "phoboman":
+		_fail("the hero is %s at the press, not phoboman — something took Phoboman"
+			% player.hero_name() + " while check 10d was staging its bodies")
+	if player.get_ability_name(1) != "Kimchi Offering":
+		_fail("slot 1 advertises %s" % player.get_ability_name(1))
+	if player.get_ability_block_reason(1) != "":
+		_fail("with no jar out the Kimchi Offering is gated by '%s'"
+			% player.get_ability_block_reason(1))
+	# THE NUMBERS ARE PINNED, check 10b's rule: these radii are read against each
+	# other all the way down this check, so a retune has to say so here.
+	if KimchiJar.LURE_RADIUS != 20.0 or KimchiJar.BURST_RADIUS != 6.0:
+		_fail("the jar lures at %.1f m and bursts at %.1f m — this compass is built"
+			% [KimchiJar.LURE_RADIUS, KimchiJar.BURST_RADIUS]
+			+ " around 20 and 6, and a retune has to move the bodies with it")
+	if KimchiJar.BURST_RADIUS >= KimchiJar.LURE_RADIUS:
+		_fail("the burst reaches as far as the lure — then every body that comes"
+			+ " is scattered and the skill is a slower Stink Wave")
+
+	var forward: Vector3 = -(player as Node3D).transform.basis.z
+	forward.y = 0.0
+	var where: Vector3 = (player as Node3D).global_position \
+			+ forward.normalized() * PlayerAbilities.KIMCHI_PLACE_AHEAD
+	player.ability2_cooldowns[player.current_character_index] = 0.0
+	# NO AWAIT from here to the last read below.
+	player.try_activate_ability(1)
+
+	# --- THE JAR IS A WORLD OBJECT, and the press is now gated on it. ---
+	var jar_ref: WeakRef = player._kimchi_jar
+	if jar_ref == null or jar_ref.get_ref() == null:
+		_fail("G placed no jar — every read below is about a world that never"
+			+ " changed")
+		_free_kimchi_probes([sniffer, close, chaser, slept, far, guard, boss])
+		_clear(player)
+		second_tree.remove_from_group("progression")
+		second_tree.queue_free()
+		Sentinel.done("kimchi_lures_then_scatters")
+		return
+	var jar: Node3D = jar_ref.get_ref() as Node3D
+	if jar.get_parent() == player:
+		_fail("the jar is parented to the player — a switch or a capture would"
+			+ " take the pot out of the world with him")
+	if jar.global_position.distance_to(where) > 0.01:
+		_fail("the jar landed at %s, not %.1f m ahead at %s"
+			% [str(jar.global_position), PlayerAbilities.KIMCHI_PLACE_AHEAD, str(where)])
+	if player.get_ability_block_reason(1) != "JAR":
+		_fail("a second press with a jar already out is gated by '%s', not 'JAR'"
+			% player.get_ability_block_reason(1))
+
+	# --- BEAT 1. Who came, who did not, and where they are walking. ---
+	var lured: Array[String] = []
+	for subject: Array in [[sniffer, "sniffer"], [close, "close"], [guard, "guard"]]:
+		if not bool((subject[0] as Node).get("is_investigating")):
+			_fail("%s did not take the lure — it stands %.1f m from a jar that"
+				% [subject[1], (subject[0] as Node3D).global_position.distance_to(
+					jar.global_position)] + " reaches %.1f m" % KimchiJar.LURE_RADIUS)
+			continue
+		lured.append(String(subject[1]))
+		var aim: Vector3 = (subject[0] as Node).get("investigate_target")
+		if aim.distance_to(jar.global_position) > 0.01:
+			_fail("%s took an errand to %s, which is not the jar at %s"
+				% [subject[1], str(aim), str(jar.global_position)])
+	if lured.size() != 3:
+		_fail("the jar lured %d of the three bodies that must come (%s) — a lure"
+			% [lured.size(), ", ".join(lured)]
+			+ " that reaches nobody passes every 'X did not flee' claim below")
+	for subject: Array in [[chaser, "the chasing croc"], [boss, "the boss"],
+			[slept, "the slept croc"], [far, "the croc 37 m away"]]:
+		if bool((subject[0] as Node).get("is_investigating")):
+			_fail("%s took the lure — it must not" % subject[1])
+	if bool(slept.get("lod_active")):
+		_fail("the lure WOKE the slept croc — investigate_point() wakes what it"
+			+ " lures, so one press would wake every sleeper in a 20 m ball")
+
+	# --- BEAT 2, on the jar's own clock. ---
+	jar._process(KimchiJar.FERMENT)
+	var scattered: Array[String] = []
+	for subject: Array in [[close, "close"], [chaser, "the chasing croc"]]:
+		if not bool((subject[0] as Node).get("is_fleeing")):
+			_fail("%s is %.1f m from the burst and did not run"
+				% [subject[1], (subject[0] as Node3D).global_position.distance_to(
+					jar.global_position)])
+			continue
+		scattered.append(String(subject[1]))
+		if float((subject[0] as Node).get("flee_time_remaining")) != KimchiJar.FLEE_DURATION:
+			_fail("%s runs for %.3f s, not the %.1f s the ferment buys"
+				% [subject[1], float((subject[0] as Node).get("flee_time_remaining")),
+					KimchiJar.FLEE_DURATION])
+		# THE SOURCE IS THE POT, NOT THE HERO. Without these two the burst could
+		# be running the pack at Phoboman and every `is_fleeing` above would
+		# still read true.
+		var source: Vector3 = (subject[0] as Node).get("flee_source")
+		if source.distance_to(jar.global_position) > 0.01:
+			_fail("%s is running from %s, and the jar is at %s"
+				% [subject[1], str(source), str(jar.global_position)])
+		if bool((subject[0] as Node).get("flee_tracks_player")):
+			_fail("%s tracks the PLAYER as it runs — the smell came from a pot on"
+				% subject[1] + " the ground, and on a peer that is a pack driven"
+				+ " straight at the teammate who placed it")
+	if scattered.size() != 2:
+		_fail("the burst scattered %d of the two bodies that must run (%s)"
+			% [scattered.size(), ", ".join(scattered)])
+	for subject: Array in [[guard, "the guard"], [boss, "the boss"],
+			[slept, "the slept croc"], [sniffer, "the sniffer 15 m out"],
+			[far, "the croc 37 m away"]]:
+		if bool((subject[0] as Node).get("is_fleeing")):
+			_fail("%s fled the burst — it must not" % subject[1])
+	# THE ERRAND IS DROPPED BY THE FLIGHT, and the guard is its control: it was
+	# lured too and it never fled, so it is still standing over the pot.
+	if bool(close.get("is_investigating")):
+		_fail("`close` sniffed the jar, was scattered by it, and still holds its"
+			+ " errand — it would run for 4 s and then walk back to the pot that"
+			+ " just went off in its face")
+	if not bool(guard.get("is_investigating")):
+		_fail("the guard dropped its errand without ever fleeing — the one-line"
+			+ " fix in flee_from() is meant to fire on a FLIGHT, not on a burst")
+
+	# --- NOTHING DIED. ---
+	for subject: Array in [[sniffer, "the sniffer"], [close, "the close croc"],
+			[chaser, "the chasing croc"], [slept, "the slept croc"],
+			[far, "the far croc"], [guard, "the guard"], [boss, "the boss"]]:
+		if not is_instance_valid(subject[0]):
+			_fail("the Kimchi Offering freed %s — the jar lures and scatters,"
+				% subject[1] + " it never kills (ruling 3)")
+			continue
+		if (subject[0] as Node).is_queued_for_deletion():
+			_fail("the Kimchi Offering queued %s for deletion" % subject[1])
+		# THE GROUP IS WHERE A DEATH IS VISIBLE SYNCHRONOUSLY. `squash_and_die()`
+		# frees the body behind a tween, so `is_instance_valid` is still true the
+		# frame it is called — it leaves the "crocodile" group FIRST, and that is
+		# the read that catches a kill without waiting a second for the corpse.
+		# (Measured: the kill mutation passed the two tests above and only the
+		# source grep caught it, which is one half of the claim standing alone.)
+		elif not (subject[0] as Node).is_in_group("crocodile"):
+			_fail("the Kimchi Offering took %s out of the crocodile group — that is"
+				% subject[1] + " the first thing a death does here")
+
+	# --- ...and neither the arm nor the jar names a kill, by name. ---
+	# Check 10b's spelling test, over BOTH files: the arm chooses the spot and
+	# the jar owns both beats, so a kill could be spelled in either.
+	var arm: String = _source_span("res://scripts/player_abilities.gd",
+		"func _ability2_phoboman()", "\nfunc ")
+	if arm.is_empty():
+		_fail("player_abilities.gd declares no _ability2_phoboman — the press"
+			+ " above fired nothing and every reading here is someone else's")
+	var jar_src: String = FileAccess.get_file_as_string("res://scripts/kimchi_jar.gd")
+	for pair: Array in [[arm, "the Kimchi arm"], [jar_src, "kimchi_jar.gd"]]:
+		for spelling: String in ["squash_and_die", "request_croc_kill", "queue_free()"]:
+			if spelling == "queue_free()" and pair[1] == "kimchi_jar.gd":
+				continue  # the jar frees ITSELF — that is the transient idiom.
+			if String(pair[0]).contains(spelling):
+				_fail("%s calls %s — the jar lures and scatters, it never kills"
+					% [pair[1], spelling])
+	# AND NO SPECIES NAME ANYWHERE. "Guards come but do not run" is two row-keyed
+	# functions disagreeing, never a name test (CLAUDE.md, "predators are data").
+	for pair2: Array in [[arm, "the Kimchi arm"], [jar_src, "kimchi_jar.gd"]]:
+		for name2: String in ["\"tower_guard\"", "\"hunter_robot\"", "\"crocodile\" =="]:
+			if String(pair2[0]).contains(name2):
+				_fail("%s tests a species by NAME (%s) — every exclusion here is a"
+					% [pair2[1], name2] + " row key or the is_boss layer")
+
+	# --- THE GATE LIFTS WHEN THE JAR GOES. ---
+	jar._process(KimchiJar.LINGER)
+	await process_frame
+	if player._kimchi_jar != null and player._kimchi_jar.get_ref() != null:
+		_fail("the jar is still alive %.1f s after it landed — it frees itself at"
+			% (KimchiJar.FERMENT + KimchiJar.LINGER) + " FERMENT + LINGER")
+	elif player.get_ability_block_reason(1) != "":
+		_fail("the jar is gone and the press is still gated by '%s'"
+			% player.get_ability_block_reason(1))
+
+	print("kimchi: G drops a jar 3 m out, sniffer/close/guard come and boss/slept/"
+		+ "chaser/far do not, the burst scatters close and chaser from the POT for"
+		+ " 4.0 s, guard and boss stand, the sleeper never woke, none freed,"
+		+ " neither file names a kill or a species")
+
+	_free_kimchi_probes([sniffer, close, chaser, slept, far, guard, boss])
+	_clear(player)
+	second_tree.remove_from_group("progression")
+	second_tree.queue_free()
+	await process_frame
+	Sentinel.done("kimchi_lures_then_scatters")
+
+
+func _free_kimchi_probes(bodies: Array) -> void:
+	"""Tear the compass down, tolerating a body a failure above already lost."""
+	for body: Variant in bodies:
+		if is_instance_valid(body):
+			(body as Node).queue_free()
+
+
+func _source_span(path: String, from: String, until: String) -> String:
+	"""
+	The text of one function in `path`, from its declaration to the next `until`.
+
+	Checks 10b and 10c both spell this inline; 10d wanted it too, so it is a
+	helper rather than a third copy. An EMPTY string means the declaration is not
+	there at all, which is a failure the caller states in its own words.
+	"""
+	var text: String = FileAccess.get_file_as_string(path)
+	var start: int = text.find(from)
+	if start == -1:
+		return ""
+	var following: int = text.find(until, start + 1)
+	return text.substr(start,
+		following - start if following != -1 else text.length() - start)
 
 
 # ============================================================================

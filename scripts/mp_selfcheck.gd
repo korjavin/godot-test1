@@ -168,6 +168,9 @@ func _run_checks() -> String:
 	failure = _check_alarm_verb()
 	if not failure.is_empty():
 		return failure
+	failure = await _check_bait_verb()
+	if not failure.is_empty():
+		return failure
 	failure = _check_room_pause()
 	if not failure.is_empty():
 		return failure
@@ -1346,6 +1349,259 @@ func _captive_player() -> Node:
 	node.add_to_group("player")
 	root.add_child(node)
 	return node
+
+
+## A crocodile reduced to the two methods a Kimchi jar calls on it, plus the
+## state `KimchiJar` reads before it calls either — in group "crocodile", so it
+## is found through the shipped group lookup and not handed over.
+##
+## A `CharacterBody3D` because the real one is and because the jar measures
+## `global_position`; a body with no transform would skip the radius half of
+## every beat this check exists to drive.
+const BAIT_BODY_SOURCE := """extends CharacterBody3D
+var is_boss: bool = false
+var lod_active: bool = true
+var errands: Array = []
+var flights: Array = []
+func investigate_point(pos: Vector3, seconds: float,
+		route: PackedVector3Array = PackedVector3Array()) -> bool:
+	errands.append([pos, seconds, route])
+	return true
+func flee_from(source: Vector3, duration: float, tracks_player: bool = true) -> void:
+	flights.append([source, duration, tracks_player])
+"""
+
+
+func _check_bait_verb() -> String:
+	"""
+	The `bait` verb end to end (bead godot-test1-0mr0.5): the dispatch arm, the
+	sender gate, the rate limit, the encoder, and the JAR the packet is FOR. The
+	hostile packets live in `mp_codec_selfcheck._check_bait_parser()` (CI shards
+	by file).
+
+	FIVE CLAIMS, AND THE LAST TWO ARE THE ONES A WEAKER CHECK WOULD MISS:
+
+	  1. a well-formed packet reaches `_receive_mesh_verb` and DROPS A JAR — a
+	     parser with no arm behind it decodes into nothing, and the owner's
+	     ruling is that every member of the room sees the pot;
+	  2. a replayed jar is NOT re-broadcast, or two peers would echo one pot
+	     round the room forever;
+	  3. a sender this machine can place and places 400 m away is refused, and a
+	     sender it CANNOT place is let through (fail-open, `receive_alrm`'s rule);
+	  4. THE JAR THAT LANDS IS THE REAL ONE AND IT RUNS BOTH BEATS HERE — a body
+	     in the lure ball takes an errand at the packet's point and, on the jar's
+	     own clock, runs from it. A `bait` that merely spawned a decoration would
+	     pass claims 1-3 and leave the master simulating nothing;
+	  5. THE VERB ADDS NO WIRE FLAG, so there is no new state to be stranded on a
+	     body whose driving peer went away. `is_investigating` is never on the
+	     wire and `set_remote_state()` ends the errand at the authority change;
+	     `is_fleeing` is an existing bit that self-heals. Both driven below on a
+	     REAL crocodile, because "it self-heals" is the exact claim bead
+	     godot-test1-0mr0.4's review found to be false of its own new flag.
+	"""
+	var honest: Dictionary = {"t": "bait", "x": 30.0, "y": 0.0, "z": -10.0}
+	var at := Vector3(30.0, 0.0, -10.0)
+
+	# --- 1. THE DISPATCH ARM, through the shipped `_receive_mesh_verb` and not by
+	# calling the handler. No presence for "bob", so the sender gate FAILS OPEN.
+	var mp: Node = _room_manager("us")
+	mp._master = "themaster"
+	var before: int = _jars_under(root).size()
+	mp._receive_mesh_verb("bob", "bait", honest)
+	var jars: Array[Node] = _jars_under(root)
+	if jars.size() != before + 1:
+		mp.queue_free()
+		return "a bait packet from a peer we have no presence for dropped %d jars"\
+			% (jars.size() - before) + " — the sender gate must FAIL OPEN, or a peer"\
+			+ " whose presence is stale silently loses a real jar"
+	var jar: Node3D = jars[-1] as Node3D
+	if jar.global_position.distance_to(at) > 0.01:
+		jar.queue_free()
+		mp.queue_free()
+		return "the replayed jar landed at %s, not at the packet's %s"\
+			% [str(jar.global_position), str(at)]
+	jar.queue_free()
+
+	# --- 2. NOTHING GOES BACK ON THE WIRE. Driven by grep AND by shape: the
+	# handler must not call the publisher, or one pot becomes a loop.
+	var sync_source: String = FileAccess.get_file_as_string("res://scripts/mp_world_sync.gd")
+	var handler_at: int = sync_source.find("func receive_bait(")
+	if handler_at < 0:
+		mp.queue_free()
+		return "mp_world_sync.gd has no receive_bait — the bait verb dispatches nowhere"
+	var handler_end: int = sync_source.find("\nstatic func ", handler_at + 1)
+	var handler: String = sync_source.substr(handler_at,
+		(handler_end if handler_end >= 0 else sync_source.length()) - handler_at)
+	# THE BODY, NOT THE DOCSTRING. The docstring names `publish_bait()` in the
+	# very sentence that explains why this arm must not call it, so a naive grep
+	# over the whole function fails on a correct build — which it did, first run.
+	var quotes := '"""'
+	var doc_end: int = handler.find(quotes, handler.find(quotes) + 3)
+	var body: String = handler.substr(doc_end + 3) if doc_end >= 0 else handler
+	if body.contains("publish_bait("):
+		mp.queue_free()
+		return "receive_bait re-publishes the jar it just replayed — two peers would"\
+			+ " echo one pot round the room for as long as the room lasts"
+
+	# --- 3. THE SENDER GATE, both ways. A peer we CAN place, 400 m from the jar
+	# it claims to have set down, is refused; the same peer standing next to it is
+	# not. A gate that refused everything would pass the first half alone.
+	mp._peer_state["carol"] = {"pos": at + Vector3(0.0, 0.0, 400.0)}
+	before = _jars_under(root).size()
+	mp._receive_mesh_verb("carol", "bait", honest)
+	if _jars_under(root).size() != before:
+		for stray: Node in _jars_under(root):
+			stray.queue_free()
+		mp.queue_free()
+		return "a peer 400 m from its own jar dropped one anyway — a modified client"\
+			+ " could scatter a pack on the far side of the world"
+	mp._peer_state["dave"] = {"pos": at + Vector3(2.0, 0.0, 0.0)}
+	mp._receive_mesh_verb("dave", "bait", honest)
+	jars = _jars_under(root)
+	if jars.size() != before + 1:
+		mp.queue_free()
+		return "a peer standing 2 m from its own jar was refused — the sender gate"\
+			+ " is refusing honest play, not spoofs"
+
+	# --- 4. THE JAR THAT LANDED IS THE REAL ONE, and it runs both beats. Two
+	# stubs: one inside the lure ball and outside the burst, one inside both.
+	var body_script := GDScript.new()
+	body_script.source_code = BAIT_BODY_SOURCE
+	body_script.reload()
+	var sniffer: Node3D = body_script.new()
+	sniffer.add_to_group("crocodile")
+	root.add_child(sniffer)
+	sniffer.global_position = at + Vector3(0.0, 0.0, KimchiJar.BURST_RADIUS + 5.0)
+	var close: Node3D = body_script.new()
+	close.add_to_group("crocodile")
+	root.add_child(close)
+	close.global_position = at + Vector3(1.0, 0.0, 0.0)
+	var far: Node3D = body_script.new()
+	far.add_to_group("crocodile")
+	root.add_child(far)
+	far.global_position = at + Vector3(0.0, 0.0, KimchiJar.LURE_RADIUS + 20.0)
+	var live: Node3D = _jars_under(root)[-1] as Node3D
+	live.queue_free()
+	# A FRESH JAR with the bodies already standing there — beat 1 fires at the
+	# drop, so the stubs have to exist before the packet does.
+	mp._peer_state["erin"] = {"pos": at}
+	mp._receive_mesh_verb("erin", "bait", honest)
+	var jar2: Node3D = _jars_under(root)[-1] as Node3D
+	var teardown: Array[Node] = [sniffer, close, far, jar2, mp]
+	if (sniffer.get("errands") as Array).size() != 1:
+		return _free_all(teardown, "the replayed jar lured %d bodies at %.1f m —"
+			% [(sniffer.get("errands") as Array).size(),
+				KimchiJar.BURST_RADIUS + 5.0]
+			+ " a bait that spawns a decoration passes every claim above")
+	var errand: Array = (sniffer.get("errands") as Array)[0]
+	if (errand[0] as Vector3).distance_to(at) > 0.01:
+		return _free_all(teardown, "the errand points at %s, not at the jar's %s"
+			% [str(errand[0]), str(at)])
+	if (far.get("errands") as Array).size() != 0:
+		return _free_all(teardown, "a body %.1f m out took the lure — the jar's own"
+			% (KimchiJar.LURE_RADIUS + 20.0) + " %.1f m bound did not travel with it"
+			% KimchiJar.LURE_RADIUS)
+	# ...and beat 2, on the jar's own clock. The MASTER runs this for the room;
+	# here it is the peer's copy, which is the same code and the same reading.
+	jar2._process(KimchiJar.FERMENT)
+	if (close.get("flights") as Array).size() != 1:
+		return _free_all(teardown, "the burst reached %d bodies 1 m from the pot"
+			% (close.get("flights") as Array).size())
+	var flight: Array = (close.get("flights") as Array)[0]
+	if (flight[0] as Vector3).distance_to(at) != 0.0 or bool(flight[2]):
+		return _free_all(teardown, "the replayed burst runs bodies from %s with"
+			% str(flight[0]) + " tracks_player %s — on a peer that is the pack"
+			% str(flight[2]) + " driven straight at the teammate who placed it")
+	if float(flight[1]) != KimchiJar.FLEE_DURATION:
+		return _free_all(teardown, "the replayed burst runs for %.3f s, not %.1f"
+			% [float(flight[1]), KimchiJar.FLEE_DURATION])
+	if (sniffer.get("flights") as Array).size() != 0:
+		return _free_all(teardown, "the burst reached a body %.1f m out, past its"
+			% (KimchiJar.BURST_RADIUS + 5.0) + " own %.1f m" % KimchiJar.BURST_RADIUS)
+	sniffer.queue_free()
+	close.queue_free()
+	far.queue_free()
+	jar2.queue_free()
+
+	# --- 5. NO NEW WIRE FLAG, AND THE ERRAND SURVIVES NEITHER AUTHORITY CHANGE.
+	# A REAL crocodile, because the claim is about the real state machine: it is
+	# lured, then the master's first sample arrives, and the errand must be over.
+	# Bead godot-test1-0mr0.4's review found exactly this shape false of a NEW
+	# flag; this one asserts that the verb introduced none.
+	var real: Node = load("res://scenes/characters/piglet_crocodile.tscn").instantiate()
+	root.add_child(real)
+	await process_frame
+	real.global_position = Vector3.ZERO
+	if not bool(real.call("investigate_point", Vector3(4.0, 0.0, 0.0), KimchiJar.LURE_HOLD)):
+		real.queue_free()
+		mp.queue_free()
+		return "a free crocodile refused a lure — check 5 has no errand to strand"
+	real.set_remote_state(Vector3(4.0, 0.0, 0.0), 0.0, 0)
+	if bool(real.get("is_investigating")):
+		real.queue_free()
+		mp.queue_free()
+		return "an errand survived the master taking the body over — a remote-driven"\
+			+ " body runs no _investigate_move, so the flag would never come down"\
+			+ " and the body could never sleep again"
+	real.clear_remote_drive()
+	if bool(real.get("is_investigating")) or bool(real.get("is_fleeing")):
+		real.queue_free()
+		mp.queue_free()
+		return "a body handed back by the master is still on an errand or still"\
+			+ " fleeing with nothing left to clear it"
+	real.queue_free()
+
+	# --- THE RATE LIMIT, and the encoder's own bound.
+	if not MPManager.VERB_BUDGET_PER_SEC.has("bait"):
+		mp.queue_free()
+		return "the bait verb has no rate budget — an unbounded one is a button that"\
+			+ " keeps every body in the room walking to pots and running from them"
+	var budget: int = int(MPManager.VERB_BUDGET_PER_SEC["bait"])
+	if budget < 1 or budget > int(MPManager.VERB_BUDGET_PER_SEC["flee"]):
+		mp.queue_free()
+		return "the bait budget is %d/s, looser than `flee`'s %d — this verb IS a"\
+			% [budget, int(MPManager.VERB_BUDGET_PER_SEC["flee"])] + " flee, one"\
+			+ " beat later, plus a lure"
+	for spend in range(budget):
+		if not mp._verb_rate_ok("frank", "bait"):
+			mp.queue_free()
+			return "the bait budget refused spend %d of its own %d" % [spend, budget]
+	if mp._verb_rate_ok("frank", "bait"):
+		mp.queue_free()
+		return "the bait budget of %d let a peer spend %d in one second" \
+			% [budget, budget + 1]
+
+	# ...and OUR OWN packet decodes on every receiver, `publish_alarm`'s rule:
+	# the encoder and the decoder can never disagree about a field name, because
+	# the send site is tested through the RECEIVER's parser.
+	mp._master = "us"
+	mp._state = MPManager.State.IN_ROOM
+	if not MpWorldSync.publish_bait(mp, Vector3(12.0, 0.0, -3.0)):
+		mp.queue_free()
+		return "publish_bait refused an honest jar while in a room — every peer"\
+			+ " would be looking at a pot that only the caster can see"
+	for stray2: Node in _jars_under(root):
+		stray2.queue_free()
+	mp.queue_free()
+	Sentinel.done("bait_verb")
+	return ""
+
+
+func _jars_under(where: Node) -> Array[Node]:
+	"""Every `KimchiJar` currently parented under `where`, in the order found."""
+	var out: Array[Node] = []
+	for child: Node in where.get_children():
+		if child is KimchiJar and not child.is_queued_for_deletion():
+			out.append(child)
+	return out
+
+
+func _free_all(nodes: Array[Node], message: String) -> String:
+	"""Tear a probe set down and hand its failure back in one statement."""
+	for node: Node in nodes:
+		if is_instance_valid(node):
+			node.queue_free()
+	return message
 
 
 func _room_manager(you: String) -> Node:

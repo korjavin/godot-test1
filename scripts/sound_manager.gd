@@ -96,6 +96,7 @@ const ABILITY_PITCH: Dictionary = {
 	"primm_2": 1.8,  # Twin Flash's second voice: a higher zip than Phase Step's 1.4
 	"teibi_2": 1.6,  # Shrink Ray: a bright zap ABOVE the resize's heavy 0.7, because
 	                 # this one makes something else small rather than him
+	"phoboman_2": 0.6,  # the jar going down: lower and heavier than the wave's 0.85
 }
 
 # --- Crocodile bite: a harsh descending square-wave burst. ---

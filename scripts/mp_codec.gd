@@ -163,6 +163,28 @@ const MAX_LANDMARK_CLAIM_PAD: float = 30.0
 ## plate is a 1.94 m cell — and still three cells wide, against a 78 m storey.
 const MAX_PAD_PRESS_DISTANCE: float = 6.0
 
+## How far from where a peer last said it was standing a Kimchi jar it claims to
+## have placed may land, in metres.
+##
+## THE TRUST BOUNDARY THE `bait` VERB NEEDS, and it is a LOOSER one than
+## `MAX_PAD_PRESS_DISTANCE`'s because the payload is different in kind. A `pad`
+## carries a plate INDEX the master looks up in the authored plan, so the
+## position test is the only thing standing between a peer and every guard in the
+## building. A `bait` carries a WORLD POINT, and what it buys is small: bodies
+## within 20 m of it walk over and sniff, and bodies within 6 m of it — and with
+## a nose — run for four seconds. There is no plan to consult, so this test is
+## the whole of the check, and it answers the one attack worth refusing: a client
+## dropping jars on the far side of the world, on somebody else's screen,
+## scattering a pack it cannot see.
+##
+## 50 m, and it is a skirt rather than a second radius. The honest distance is
+## `PlayerAbilities.KIMCHI_PLACE_AHEAD` = 3 m, plus however far the caster has
+## run since its last presence packet — at PRESENCE_HZ and a sprint that is a few
+## metres — plus whatever a peer's copy of that presence is behind on a bad link.
+## Against the jar's own 20 m lure this leaves a spoof no more useful than
+## walking there, which is the bar every position test here is set at.
+const MAX_BAIT_PLACE_DISTANCE: float = 50.0
+
 ## Trust-boundary bound on the `cd` field. RETIRED AS A VALUE, KEPT AS A SHAPE
 ## (owner veto 2026-09-01, bead `godot-test1-ueg`): this build always publishes 0.0
 ## and reads nothing off it, but `decode_room()` DROPS a packet missing `cd`, and
@@ -1221,6 +1243,63 @@ static func pad_press_in_reach(sender: Vector3, pad: Vector3) -> bool:
 	if not sender.is_finite() or not pad.is_finite():
 		return false
 	return sender.distance_to(pad) <= MAX_PAD_PRESS_DISTANCE
+
+# =============================================================================
+# KIMCHI JARS — the `bait` verb
+# =============================================================================
+
+static func decode_bait(packet: Dictionary) -> Dictionary:
+	"""
+	The `bait` parser (bead godot-test1-0mr0.5) — one more trust boundary in this
+	file. (No ordinal: the ones above have collided twice as verbs landed in
+	parallel, so a thirteenth number would only be a fourteenth thing to get
+	wrong. What matters is the rule, not the count.)
+
+	@return: `{"at": Vector3}`, or an EMPTY DICTIONARY — trusted whole or dropped
+	    whole, static and instance-free so scripts/mp_codec_selfcheck.gd can beat
+	    on it, exactly like `decode_pad()`.
+
+	`_is_number` AND NOT `TYPE_FLOAT`, the rule `decode_alrm()` states one verb
+	along: a coordinate that happens to land on a whole number is written by
+	`var_to_bytes` as an INT, so a jar placed at exactly z = 0 would be dropped by
+	a strict-float test on some presses and not on others.
+
+	FINITENESS BEFORE ANYTHING IS DERIVED, `decode_presence()`'s rule: a NaN here
+	would reach `KimchiJar.drop()` as a node position and then
+	`distance_squared_to` on every body in the group, poisoning every comparison
+	it touched — and on wasm a non-finite float-to-int trunc can trap the module.
+	The envelope is the world's, `MAX_PRESENCE_COORD`, for the reason
+	`receive_flee` bounds its origin with it: a jar at 1e30 is not a place.
+
+	WHERE THE SENDER WAS IS NOT THIS FUNCTION'S BUSINESS — that is
+	`bait_place_in_reach()`, asked by the receiver against its own presence table,
+	because this function is pure and has no room to ask about.
+	"""
+	if not _is_number(packet.get("x", null)) or not _is_number(packet.get("y", null)) \
+			or not _is_number(packet.get("z", null)):
+		return {}
+	var at := Vector3(float(packet["x"]), float(packet["y"]), float(packet["z"]))
+	if not at.is_finite():
+		return {}
+	if absf(at.x) > MAX_PRESENCE_COORD or absf(at.y) > MAX_PRESENCE_COORD \
+			or absf(at.z) > MAX_PRESENCE_COORD:
+		return {}
+	return {"at": at}
+
+
+static func bait_place_in_reach(sender: Vector3, jar: Vector3) -> bool:
+	"""
+	Could a peer standing at `sender` have set a jar down at `jar`?
+
+	`pad_press_in_reach()`'s shape and its reason, one verb along and one bound
+	looser (see `MAX_BAIT_PLACE_DISTANCE`). Static and pure so the self-check can
+	drive it, and finiteness-checked before anything is derived from either point:
+	a caller with no position for the sender has to read as "cannot tell", never
+	as "infinitely far, therefore compare it anyway".
+	"""
+	if not sender.is_finite() or not jar.is_finite():
+		return false
+	return sender.distance_to(jar) <= MAX_BAIT_PLACE_DISTANCE
 
 # =============================================================================
 # LANDMARK CLAIMS — the `lmk` verb

@@ -2550,6 +2550,24 @@ func flee_from(source: Vector3, duration: float, tracks_player: bool = true) -> 
 	# remote-driven, gets the real flee from this very call — see
 	# MpManager.request_croc_flee.
 	is_fleeing = true
+	# A FLEEING BODY DROPS ITS ERRAND (bead godot-test1-0mr0.5). `is_fleeing`
+	# outranks `is_investigating` in `_physics_process`, so without this line the
+	# errand merely PAUSES: a sniffer scared off a Kimchi jar mid-hold would run
+	# for four seconds and then calmly walk back to the pot that just went off in
+	# its face. `_abandon_investigation()` turns the walk around instead — the
+	# body goes home and hands its borrowed leash back — and it already refuses a
+	# body that is on its way home, so a second scare costs nothing.
+	#
+	# IT IS CORRECT FOR EVERY OTHER CALLER TOO, which is why it lives here and not
+	# in the jar — and the example has to be a body that REACHES this line, which
+	# an HQ guard never does: the `stink_immune` early return AT THE TOP OF THIS
+	# FUNCTION sends it home first (revmux rounds 1 and 2, `docs+tests`). It is
+	# the HUNTER ROBOT: its row lost `stink_immune` by owner ruling 2026-09-04
+	# and it is the one row carrying `crowd_confusion_chance`, so a Stink Wave or
+	# a Twin Flash catching one mid-way to a Budapest citizen had exactly this
+	# bug before today.
+	if is_investigating:
+		_abandon_investigation()
 	# A flee trigger/refresh must never shorten an active flee already in progress (Codex P2).
 	flee_time_remaining = maxf(flee_time_remaining, duration)
 	flee_source = source
