@@ -344,6 +344,16 @@ const SKILL_TREES: Dictionary = {
 			"cost": 1, "max_ranks": 1, "prereq": "scurry",
 			"effect": "teibi_quake", "per_rank": 6.0,
 		},
+		{
+			# The SECOND SKILL's root (bead godot-test1-0mr0.4): its own branch, so
+			# the third column appears with no UI code, and its own prereq — Held
+			# Form first, then the ray, so the earliest purchase is level 2. Nothing
+			# new persists: a rank merges by max like every other.
+			"id": "shrink", "name": "Shrink Ray", "branch": "Shrink Ray",
+			"desc": "Learn Shrink Ray: press G and every predator within 8 m is ankle-high for six seconds — slow, harmless and never crushed.",
+			"cost": 1, "max_ranks": 1, "prereq": "hold",
+			"effect": "second_ability", "per_rank": 1.0,
+		},
 	],
 	"phoboman": [
 		{

@@ -92,11 +92,13 @@ const ABILITY_NAME := {
 const ABILITY2_NAME := {
 	"windman": "Air Sight",
 	"primm": "Twin Flash",
+	"teibi": "Shrink Ray",
 	"phoboman": "Kimchi Offering",
 }
 const ABILITY2_COOLDOWN := {
 	"windman": 10.0,
 	"primm": 6.0,
+	"teibi": 10.0,
 	# The longest second-skill cooldown in the game, and deliberately longer than
 	# the jar's own 6 s life (`KimchiJar.FERMENT + LINGER`): a second jar may
 	# never be placed while the first is still brewing, so the "JAR" gate refuses
@@ -173,6 +175,20 @@ const PRIMM_FLASH_FLEE_DURATION: float = 3.0
 ## radial flee verb, so no protocol work and no line-of-sight discipline: a
 ## wall between Primm and a croc is a wall it cannot bite through either.
 const PRIMM_FLASH_RADIUS: float = 3.5
+
+# --- Teibi: Shrink Ray (bead godot-test1-0mr0.4) ---
+## How far the violet pulse reaches, in metres. A CORRIDOR, not a room-wide
+## disarm: 8 m is about two body lengths either side of Teibi, so the pack in
+## front of him goes ankle-high and the one he has not reached yet does not.
+const TEIBI_SHRINK_RADIUS: float = 8.0
+## How long a body it catches stays small, in seconds — long enough to walk
+## THROUGH a pack, short enough that the walk is the whole of the reward.
+const TEIBI_SHRINK_DURATION: float = 6.0
+##
+## HOW SMALL IS NOT HERE. `PigletCrocodileAI.SHRUNK_SCALE` owns that number,
+## because what a shrunk crocodile looks like and how fast it waddles are
+## properties of the crocodile — this pulse carries a radius and a duration and
+## nothing else, which is also why the `shr` verb needs no scale field.
 
 # --- Windman: hidden dance (bead godot-test1-b7eg) ---
 ## How long the emote runs, in seconds — a couple of seconds, a few beats, no
@@ -440,6 +456,8 @@ func try_activate_ability(slot: int = 0) -> void:
 				used = _ability2_windman()
 			"primm":
 				used = _ability2_primm()
+			"teibi":
+				used = _ability2_teibi()
 			"phoboman":
 				used = _ability2_phoboman()
 
@@ -867,6 +885,39 @@ func _shape_blocked(probe: Shape3D, centre: Vector3) -> bool:
 	return not space.intersect_shape(query, 1).is_empty()
 
 
+func _ability2_teibi() -> bool:
+	"""
+	Shrink Ray: a violet pulse 8 m wide, and every predator inside it is suddenly
+	ankle-high — squeaking, waddling at a toddler's pace, snapping at nothing. You
+	walk THROUGH the pack. Six seconds later they pop back and resume.
+
+	NOTHING DIES, and the ruling is load-bearing rather than flavour (owner ruling
+	3, 2026-09-18): a shrunk body is harmless, slow and unable to acquire, and it
+	is NEVER CRUSHED — not even by giant Teibi, whose crush is the game's one
+	legacy kill. That early return lives at the very top of
+	`piglet_crocodile_ai._on_player_collision()` and `boss_immunity_selfcheck`
+	pins its placement; without it this skill would be a two-key execution.
+
+	NO TRANSIENT STATE ON THE PLAYER, and that is worth stating because every
+	other ability here leaves one. The effect lives entirely on the BODIES it
+	caught — each runs its own clock — so `_reset_ability_states()` has nothing to
+	clear, a character switch mid-pulse leaves the pack small until it wears off
+	(which is honest: the pulse happened), and there is no revert path to get
+	wrong.
+
+	IT IS FORM-BLIND AND ROOF-BLIND. Slot 2 never touches `teibi_size_state`, so
+	it fires the same in any form, and it is allowed inside the HQ because the
+	stealth layer needs no special case: every guard in there is `crush_immune`,
+	which `shrink_for()` refuses, so pressing G on a patrol is a violet flash and
+	nothing else. `get_ability_block_reason()` therefore scopes the INDOOR/TIGHT
+	Resize gates to slot 0.
+	"""
+	var origin: Vector3 = player.global_position
+	_spawn_ability_effect(origin, Color(0.6, 0.35, 0.95, 0.5), TEIBI_SHRINK_RADIUS, 0.6)
+	_shrink_crocodiles(origin, TEIBI_SHRINK_DURATION, TEIBI_SHRINK_RADIUS)
+	return true
+
+
 func _ability_teibi() -> bool:
 	"""
 	Resize: cycle normal → small → giant → normal. Giant form crushes crocodiles
@@ -976,6 +1027,38 @@ func _scare_crocodiles(origin: Vector3, duration: float, radius: float) -> void:
 	var mp: Node = player._mp()
 	if mp and mp.has_method("request_croc_flee"):
 		mp.request_croc_flee(origin, duration, radius)
+
+
+func _shrink_crocodiles(origin: Vector3, duration: float, radius: float) -> void:
+	"""
+	THE one "make the predators round here ankle-high" path — `_scare_crocodiles()`
+	one effect along, and deliberately its twin: the radius test, the group
+	discovery and the multiplayer relay each have exactly one home, so a second
+	shrink effect is one call.
+
+	The three immunities — boss, `crush_immune`, slept — are NOT re-implemented
+	here: `shrink_for()` owns all three early returns, which is what keeps the rule
+	in the one file that owns it, and is why the HQ guards and the hunter robot
+	stand there at full size without this loop knowing they exist.
+
+	MULTIPLAYER, exactly as the scare: the local loop runs on EVERY caller (correct
+	for the bodies this peer still simulates, harmless on the remote-driven ones,
+	whose next 10 Hz sample overwrites the flag), and `request_croc_shrink` asks the
+	master to do the same to the bodies it is the authority for. Nothing comes back
+	and nothing needs to — `is_shrunk` is a bit in the sync packet's flag byte
+	(`CROC_FLAG_SHRUNK`), so the master's copy reaches every screen for free.
+	"""
+	var radius_sq := radius * radius
+	for croc in player.get_tree().get_nodes_in_group("crocodile"):
+		if not (croc is Node3D) or not croc.has_method("shrink_for"):
+			continue
+		if (croc as Node3D).global_position.distance_squared_to(origin) > radius_sq:
+			continue
+		croc.shrink_for(duration)
+
+	var mp: Node = player._mp()
+	if mp and mp.has_method("request_croc_shrink"):
+		mp.request_croc_shrink(origin, duration, radius)
 
 
 func _current_teibi_scale() -> float:

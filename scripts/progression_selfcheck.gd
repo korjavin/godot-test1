@@ -1488,8 +1488,7 @@ func _check_card_fits_three_columns() -> void:
 	Bead godot-test1-1m3x: the skill card fits three branch columns with NO
 	horizontal scroll (owner ruling — the AUTO stopgap scrolled and it was
 	unpleasant). Driven on the REAL panel in a sized stage at the desktop
-	default, for a three-column hero (windman, the owner's case) and a
-	two-column one (teibi — nothing regressed).
+	default, over EVERY hero.
 
 	Two halves, because each catches what the other cannot: the structural fit
 	(content minimum against the scroll container's laid-out width) is exact
@@ -1497,6 +1496,17 @@ func _check_card_fits_three_columns() -> void:
 	thing the owner actually saw. The column COUNT is the negative control — a
 	card that "fits" by dropping the third branch passes every width below and
 	breaks the feature instead.
+
+	THE COUNT IS READ OFF `SKILL_TREES`, NEVER NAMED (epic godot-test1-0mr0).
+	This used to want three columns for windman and two for teibi, because those
+	were the shapes the day it was written; the second-skill epic gives every
+	hero a third branch one bead at a time, and teibi's arrival (bead
+	godot-test1-0mr0.4) failed this check for being CORRECT. A hero-name
+	expectation in a table-driven UI is a tripwire on the table, so the wanted
+	count is now derived from the hero's own distinct branches and the
+	three-column claim is kept honest by asserting that SOME hero reaches three
+	— without which the whole fit measurement would go vacuous the day every
+	tree shrank.
 
 	Mutation control: shrink CARD_WIDTH back toward 640 and the fit goes red
 	(content needs 3 × 292 + 2 × separation; the container offers CARD_WIDTH −
@@ -1513,13 +1523,19 @@ func _check_card_fits_three_columns() -> void:
 	await process_frame
 	await process_frame
 	panel._set_panel_open(true)
-	for hero: String in ["windman", "teibi"]:
+	var widest: int = 0
+	for hero: String in Progression.SKILL_TREES:
 		panel._view_hero = hero
 		panel._rebuild()
 		await process_frame
 		await process_frame
 		var columns: HBoxContainer = panel._columns
-		var want_columns: int = 3 if hero == "windman" else 2
+		# The hero's own branch count, off the table the panel builds from.
+		var branches: Dictionary = {}
+		for node: Dictionary in Progression.SKILL_TREES[hero]:
+			branches[String(node.get("branch", ""))] = true
+		var want_columns: int = branches.size()
+		widest = maxi(widest, want_columns)
 		if columns.get_child_count() != want_columns:
 			_fail("%s builds %d branch columns, wanted %d — the card fits only"
 				% [hero, columns.get_child_count(), want_columns]
@@ -1537,6 +1553,13 @@ func _check_card_fits_three_columns() -> void:
 		if scroll.get_h_scroll_bar().is_visible_in_tree():
 			_fail("%s: the horizontal scrollbar is drawn — the owner sees a"
 				% hero + " scroll where the card should simply fit")
+	# ...and the claim the check is NAMED for: three columns have to be a shape
+	# some hero actually asks the card for, or every fit measured above is a fit
+	# of two columns in a card sized for three.
+	if widest < 3:
+		_fail("no hero's SKILL_TREES declares three branches (the widest is %d)"
+			% widest + " — the card was widened for a three-column layout"
+			+ " nothing builds any more, so the fit above proves nothing")
 	panel._set_panel_open(false)
 	stage.queue_free()
 	progression.free()

@@ -184,6 +184,12 @@ func _run() -> void:
 	# One call per BEHAVIOUR, and each one probes EVERY species carrying it — see
 	# _species_with(). Nothing here names an animal; a second charger or a third
 	# burst row is measured the moment its row lands.
+	# FIRST, AND IN AN EMPTY WORLD ON PURPOSE (bead godot-test1-0mr0.4): the shrink
+	# probe races two bodies down a corridor and reads their speeds back, and
+	# `_check_wanderer_adoption` below streams REAL chunks into `root` — geometry
+	# the obstacle feelers would steer around, which is a speed multiplier this
+	# probe cannot tell from the one it is measuring.
+	_check_shrink_pulse(croc_ai)
 	_check_pack_surround(croc_ai)
 	_check_ambush_trip_wire()
 	_check_charge_dodge()
@@ -197,6 +203,488 @@ func _run() -> void:
 	_check_crowd_confusion(croc_ai)
 
 	_report()
+
+
+# ============================================================================
+# THE SHRINK RAY — Teibi's second skill on a live body (bead godot-test1-0mr0.4)
+# ============================================================================
+
+## How many `_physics_process` ticks a probe drives per simulated second, and the
+## step it drives them at. 60 Hz is the engine's own default and the only reason
+## the number appears here at all is that these probes call `_physics_process`
+## directly — the file's standing trade (see `_probe_scent`'s ponytail note): no
+## real physics frames, so no clock but this one.
+const SHRINK_PROBE_HZ: float = 60.0
+
+## Slack on the ease, in seconds. `_tick_shrink` moves the factor at a constant
+## rate over `SHRINK_EASE_SECONDS`, so two extra ticks is generous and a build
+## that forgot to ease at all still lands inside it — which is why the probe ALSO
+## asserts the first tick has NOT arrived, the half that fails on a snap.
+const SHRINK_EASE_SLACK: float = 0.05
+
+
+func _check_shrink_pulse(croc_ai: GDScript) -> void:
+	"""
+	Check 8h. TEIBI'S SHRINK RAY, on live bodies: a shrunk predator is TINY, SLOW,
+	HARMLESS, unable to ACQUIRE and, above all, NEVER CRUSHED — and it is all five
+	of those only TEMPORARILY.
+
+	@param croc_ai: the crocodile AI script, for `SHRUNK_SCALE` and the ease
+
+	WHY IT IS HERE AND NOT ONLY IN `capture_selfcheck`. That file owns the PRESS —
+	which bodies an 8 m pulse reaches and which it does not. This owns what the
+	pulse DID to a body it reached, over time, which is a different failure: a
+	skill whose radius is perfect and whose effect never expires is a pack that is
+	ankle-high for the rest of the run, and no radius test can see it.
+
+	Driven on REAL bodies from the shipped scene through the SHIPPED entry points
+	— `shrink_for()`, `_update_chase_state()`, `_on_player_collision()` and
+	`_physics_process()` itself — in this file's standing idiom: the functions are
+	called directly rather than awaited as engine frames (`_probe_scent`'s
+	ponytail note states the trade and its ceiling).
+
+	EVERY CLAIM CARRIES ITS CONTROL, because almost all of them are claims that
+	something does NOT happen, and "nothing happened" is also true of a build
+	where the skill does not exist:
+
+	  TINY       the drawn factor reaches `SHRUNK_SCALE` — and has NOT reached it
+	             on the first tick, which is the half a snap fails.
+	  SLOW       measured as a RATIO against an identical twin whose only
+	             difference is the shrink, with both bodies' per-instance speed
+	             roll pinned to one number. An absolute would pass against a body
+	             that was simply standing still.
+	  HARMLESS   it does not bite the stub; the twin does.
+	  BLIND      it does not re-acquire a quarry standing on top of it; the twin
+	             does, in the same loop.
+	  TEMPORARY  at half the window it is still small; past the window it is big,
+	             drawn at 1.0, and hunting again.
+	  IMMUNE     a `crush_immune` ROW and a boss both refuse the pulse, and a
+	             SLEPT body refuses it too — each against the plain awake body
+	             that accepts it one line away.
+	  SLEPT      a body slept mid-window comes back BIG — asserted on the MESH
+	             BASIS, not on the factor that feeds it, because a sleeper runs
+	             neither line that writes one.
+	  WIRED      a body handed the flag over the wire (no clock) and then handed
+	             back to its own AI clears it on the first local frame, with
+	             `is_fleeing` as the sibling control.
+	"""
+	var shrunk_scale: float = float(croc_ai.get("SHRUNK_SCALE"))
+	var ease_s: float = float(croc_ai.get("SHRINK_EASE_SECONDS"))
+	if shrunk_scale <= 0.0 or shrunk_scale >= 1.0:
+		_fail("piglet_crocodile_ai.SHRUNK_SCALE is %.2f — outside (0, 1) it is not"
+				% shrunk_scale + " a shrink at all, and every ratio below would be"
+				+ " measured against a body that never changed size")
+		Sentinel.done("shrink_pulse")
+		return
+	if ease_s <= 0.0:
+		_fail("piglet_crocodile_ai.SHRINK_EASE_SECONDS is %.2f — a zero ease is a"
+				% ease_s + " one-frame teleport of the silhouette, and the"
+				+ " not-yet-there assertion below would be measuring nothing")
+		Sentinel.done("shrink_pulse")
+		return
+
+	# The quarry: one stub in group "player", standing ON the bodies so that
+	# acquisition is never in doubt and only the shrink can refuse it.
+	var stub_script := GDScript.new()
+	stub_script.source_code = HUNT_STUB_SOURCE
+	stub_script.reload()
+	var stub := Node3D.new()
+	stub.set_script(stub_script)
+	stub.add_to_group("player")
+	root.add_child(stub)
+	stub.global_position = Vector3.ZERO
+
+	# A FLOOR, which only the last probe needs and which it cannot fake: the
+	# shipped `set_lod_active(false)` REFUSES a body that is not `is_on_floor()`
+	# (it would freeze gravity forever), so a slept-mid-window probe run in an
+	# empty world would be asserting against a call that silently did nothing.
+	# An infinite plane at y = 0, where this game's ground is.
+	var floor_body := StaticBody3D.new()
+	var floor_shape := CollisionShape3D.new()
+	floor_shape.shape = WorldBoundaryShape3D.new()
+	floor_body.add_child(floor_shape)
+	root.add_child(floor_body)
+
+	# THE TWO BODIES ARE TWINS, and that is the whole design of this probe: same
+	# species, same position, same pinned speed, driven through the same calls.
+	# The ONLY difference is which of them was shrunk, so every difference
+	# measured below is the shrink's and nothing else's.
+	var small: Node = load(CROC_SCENE).instantiate()
+	small.species = "crocodile"          # before add_child, the row's own contract
+	root.add_child(small)
+	var twin: Node = load(CROC_SCENE).instantiate()
+	twin.species = "crocodile"
+	root.add_child(twin)
+	small.global_position = Vector3.ZERO
+	twin.global_position = Vector3.ZERO
+	small._find_player()
+	twin._find_player()
+	# The per-instance speed roll is ±50%, so two bodies out of the same scene do
+	# NOT run at the same pace. Pinned to one number here or the ratio below would
+	# be measuring that roll.
+	small.chase_speed_instance = 5.0
+	twin.chase_speed_instance = 5.0
+
+	var duration: float = 6.0
+	var step: float = 1.0 / SHRINK_PROBE_HZ
+	small.shrink_for(duration)
+	if not bool(small.is_shrunk):
+		_fail("shrink: shrink_for() left a plain awake crocodile un-shrunk — every"
+				+ " assertion in check 8h below would be measuring two identical"
+				+ " bodies and passing for that reason")
+		stub.free()
+		small.free()
+		twin.free()
+		Sentinel.done("shrink_pulse")
+		return
+	if bool(twin.is_shrunk):
+		_fail("shrink: the CONTROL twin came back shrunk from a pulse aimed at the"
+				+ " other body — `shrink_for` is reaching bodies it was not called"
+				+ " on, so no negative half of this check means anything")
+
+	# ---- TINY, AND EASED RATHER THAN SNAPPED --------------------------------
+	small._animate_body(step)
+	if is_equal_approx(float(small._shrink_factor), shrunk_scale):
+		_fail("shrink: the drawn factor hit %.2f on the very first frame — the pop"
+				% shrunk_scale + " is meant to ease over %.2f s, and a snap is a"
+				% ease_s + " silhouette that teleports")
+	var ease_ticks: int = int((ease_s + SHRINK_EASE_SLACK) * SHRINK_PROBE_HZ)
+	for _i in range(ease_ticks):
+		small._animate_body(step)
+		twin._animate_body(step)
+	if not is_equal_approx(float(small._shrink_factor), shrunk_scale):
+		_fail("shrink: %.2f s of animation left the drawn factor at %.3f, not"
+				% [ease_s + SHRINK_EASE_SLACK, float(small._shrink_factor)]
+				+ " SHRUNK_SCALE %.2f — the body never finishes shrinking" % shrunk_scale)
+	if not is_equal_approx(float(twin._shrink_factor), 1.0):
+		_fail("shrink: the CONTROL twin's drawn factor moved to %.3f without ever"
+				% float(twin._shrink_factor) + " being shrunk — the ease is running"
+				+ " on bodies nothing pulsed")
+
+	# ---- BLIND: it cannot acquire a quarry standing on top of it ------------
+	# The twin is driven through the SAME loop and MUST acquire, or "the shrunk one
+	# did not chase" would also be true of a probe whose quarry was unreachable.
+	for _i in range(30):
+		small._update_chase_state()
+		twin._update_chase_state()
+	if bool(small.is_chasing):
+		_fail("shrink: an ankle-high crocodile acquired a quarry standing on top of"
+				+ " it — `_update_chase_state`'s is_shrunk return is what makes the"
+				+ " pack a corridor you walk through rather than one that turns")
+	if not bool(twin.is_chasing):
+		_fail("shrink: the CONTROL twin did not acquire the same quarry in the same"
+				+ " loop, so the shrunk body not acquiring proves nothing")
+
+	# ---- SLOW: a ratio against the twin, both fleeing the same point ---------
+	# FLEEING rather than chasing, because the flee branch takes `chase_speed_instance`
+	# whole and takes it every frame — a wander would fold this file's own random
+	# walk into the measurement, and a chase would fold in the burst arm.
+	# STOOD WELL APART, each fleeing a source directly behind it: at one spot the
+	# two bodies are each OTHER's obstacle, and `_avoid_obstacles()` multiplies the
+	# row's `avoid_speed_factor` — a second speed multiplier on top of the one
+	# under test, and one that need not land on both of them equally.
+	small.global_position = Vector3(-40.0, 0.0, 0.0)
+	twin.global_position = Vector3(40.0, 0.0, 0.0)
+	small.velocity = Vector3.ZERO
+	twin.velocity = Vector3.ZERO
+	small.flee_from(Vector3(-40.0, 0.0, -10.0), duration, false)
+	twin.flee_from(Vector3(40.0, 0.0, -10.0), duration, false)
+	for _i in range(10):
+		small._physics_process(step)
+		twin._physics_process(step)
+	var small_speed: float = Vector2(small.velocity.x, small.velocity.z).length()
+	var twin_speed: float = Vector2(twin.velocity.x, twin.velocity.z).length()
+	if twin_speed <= 0.0:
+		_fail("shrink: the CONTROL twin is standing still at %.3f m/s, so the"
+				% twin_speed + " speed ratio below has no denominator and cannot"
+				+ " fail")
+	elif not is_equal_approx(small_speed / twin_speed, shrunk_scale):
+		_fail("shrink: an ankle-high crocodile runs at %.3f m/s against its twin's"
+				% small_speed + " %.3f — a ratio of %.3f, not SHRUNK_SCALE %.2f."
+				% [twin_speed, small_speed / twin_speed, shrunk_scale]
+				+ " Tiny legs are what make the pulse readable, and a predator"
+				+ " made SLOWER is the only side of the speed lattice a skill may"
+				+ " touch")
+
+	# ---- HARMLESS, on the shipped contact path ------------------------------
+	# THE FLEE FROM THE SPEED PROBE IS CLEARED FIRST, and the control is what
+	# caught its absence: `is_fleeing` is ITS OWN brush-past in
+	# `_on_player_collision`, so a fleeing twin does not bite either and "the
+	# shrunk one did not bite" would have been true of a build with no shrink in
+	# it at all. Now the only difference between these two bodies is the shrink.
+	for body: Node in [small, twin]:
+		body.is_fleeing = false
+		body.flee_time_remaining = 0.0
+	var before: int = int(stub.hits)
+	small._on_player_collision(stub)
+	if int(stub.hits) != before:
+		_fail("shrink: an ankle-high crocodile bit the player — contact with a"
+				+ " shrunk body is a brush-past, and the early return that makes it"
+				+ " one is also what stops giant Teibi crushing it")
+	twin._on_player_collision(stub)
+	if int(stub.hits) == before:
+		_fail("shrink: the CONTROL twin did not bite either, so the shrunk body not"
+				+ " biting proves nothing about the shrink")
+
+	# ---- TEMPORARY: still small at half the window, big past it -------------
+	var half_ticks: int = int(duration * 0.5 * SHRINK_PROBE_HZ)
+	for _i in range(half_ticks):
+		small._physics_process(step)
+	if not bool(small.is_shrunk):
+		_fail("shrink: the body was full size again %.1f s into a %.1f s window —"
+				% [duration * 0.5, duration] + " the clock is running down faster"
+				+ " than the pulse asked for")
+	# Past the window, plus the ease back. The clock is spent in `_physics_process`
+	# and the factor eases in the animation it calls, so this drives the one path.
+	var rest_ticks: int = int((duration * 0.5 + ease_s + SHRINK_EASE_SLACK) * SHRINK_PROBE_HZ)
+	for _i in range(rest_ticks):
+		small._physics_process(step)
+	if bool(small.is_shrunk):
+		_fail("shrink: the body was STILL ankle-high %.1f s into a %.1f s window —"
+				% [duration + ease_s, duration] + " nothing dies in this game, so"
+				+ " an effect that never expires is the nearest thing to it")
+	if not is_equal_approx(float(small._shrink_factor), 1.0):
+		_fail("shrink: the window expired but the body is still DRAWN at %.3f —"
+				% float(small._shrink_factor) + " the state came back and the"
+				+ " silhouette did not")
+	# PUT IT BACK ON THE QUARRY FIRST. The speed probe above ran this body a dozen
+	# metres away from the stub — past its own `detection_radius` — so without this
+	# the re-acquisition below would fail for a reason that has nothing to do with
+	# the shrink. (It failed exactly that way when this probe was first written.)
+	small.global_position = Vector3.ZERO
+	small._update_chase_state()
+	if not bool(small.is_chasing):
+		_fail("shrink: a body that has popped back to full size did not re-acquire"
+				+ " the quarry standing on top of it — `_update_chase_state`'s"
+				+ " is_shrunk return is latching past the state it reads")
+
+	# ---- THE THREE REFUSALS, each against the body that accepts -------------
+	# ROW DATA, NEVER A NAME TEST (CLAUDE.md: predators are data). The armoured
+	# row is found by ASKING THE TABLE for a `crush_immune` one, so a build that
+	# retires or renames that species is measured rather than silently skipped.
+	var armoured: String = ""
+	for name_v: Variant in _species_table:
+		if bool((_species_table[name_v] as Dictionary).get("crush_immune", false)):
+			armoured = String(name_v)
+			break
+	if armoured.is_empty():
+		_fail("no SPECIES row carries `crush_immune` — the chassis half of the"
+				+ " Shrink Ray's immunity (the HQ guards, the hunter robot) is"
+				+ " unreachable from any species and check 8h cannot measure it")
+	else:
+		var chassis: Node = load(CROC_SCENE).instantiate()
+		chassis.species = armoured
+		root.add_child(chassis)
+		chassis.shrink_for(duration)
+		if bool(chassis.is_shrunk):
+			_fail("shrink: a `crush_immune` %s was shrunk — a chassis is not flesh,"
+					% armoured + " and the HQ's guards carry that key precisely so"
+					+ " the stealth building cannot be answered with one key press")
+		chassis.free()
+
+	var boss: Node = load(CROC_SCENE).instantiate()
+	boss.species = "crocodile"
+	boss.setup_as_boss(3.0)        # before add_child, the call-order contract
+	root.add_child(boss)
+	if not bool(boss.is_boss):
+		_fail("shrink: setup_as_boss() left is_boss false — check 8h has no boss to"
+				+ " shrug the pulse, so the boss half below is vacuous")
+	boss.shrink_for(duration)
+	if bool(boss.is_shrunk):
+		_fail("shrink: a BOSS was shrunk — immunity is a property of boss-ness and"
+				+ " lives in `shrink_for`'s own early return, beside the one"
+				+ " `flee_from` makes for the Stink Wave")
+	boss.free()
+
+	var asleep: Node = load(CROC_SCENE).instantiate()
+	asleep.species = "crocodile"
+	root.add_child(asleep)
+	asleep.lod_active = false
+	asleep.shrink_for(duration)
+	if bool(asleep.is_shrunk):
+		_fail("shrink: a SLEPT body was shrunk — it runs no `_physics_process`, so"
+				+ " its clock could never tick down and it would stay ankle-high"
+				+ " until the player walked back within SIM_RADIUS")
+
+	# ...AND A BODY SLEPT MID-WINDOW COMES BACK BIG. The other direction of the
+	# same rule, and the one the ordinary case actually hits: a running player
+	# covers 45 m in six seconds, so crossing the sleep boundary mid-pulse is
+	# normal play rather than a corner. `set_lod_active` refuses a body that is not
+	# on the floor, so this drives the shipped setter on one that is.
+	asleep.lod_active = true
+	asleep.global_position = Vector3(0.0, 0.5, 0.0)
+	# Settle it onto the plane through the shipped tick, so `is_on_floor()` is the
+	# engine's answer and not an assumption.
+	for _i in range(30):
+		asleep._physics_process(step)
+	asleep.shrink_for(duration)
+	# ...and let it finish DRAWING itself small before it is slept, or the basis
+	# assertion below would be reading an identity nothing ever shrank.
+	for _i in range(ease_ticks):
+		asleep._animate_body(step)
+	if not bool(asleep.is_shrunk):
+		_fail("shrink: the sleep probe's body would not shrink while awake, so the"
+				+ " slept-mid-window half below has nothing to clear")
+	elif not asleep.is_on_floor():
+		_fail("shrink: the sleep probe's body is not on the floor, so"
+				+ " `set_lod_active(false)` refuses it and the slept-mid-window"
+				+ " half below would pass without ever running")
+	else:
+		asleep.set_lod_active(false)
+		if bool(asleep.is_shrunk):
+			_fail("shrink: a body slept mid-window is still shrunk — a sleeper ticks"
+					+ " nothing, so it would WAKE UP ankle-high and stay that way")
+		# MEASURED ON THE MESH TRANSFORM, NOT ON `_shrink_factor` (review round 1).
+		# The factor is an INPUT to the two `scaled_local` lines in `_animate_body`
+		# / `_animate_bite`, and a slept body runs neither — so an assertion on the
+		# variable passes on exactly the build that leaves the last animated basis
+		# on screen at 0.45 for the whole sleep, in the 10 m band between the sleep
+		# radius (~50 m) and `VISUAL_CULL_DISTANCE` (60 m) where it is genuinely
+		# drawn. `get_scale().x` reads back what the renderer will use.
+		var drawn: float = (asleep.model as Node3D).transform.basis.get_scale().x \
+				/ maxf(float(asleep.model_base_scale.x), 0.0001)
+		if not is_equal_approx(drawn, 1.0):
+			_fail("shrink: a body slept mid-window is still DRAWN at %.3f of its"
+					% drawn + " rest size — the mesh basis is written only in"
+					+ " `_animate_body` / `_animate_bite`, which a sleeper never"
+					+ " runs, so clearing `_shrink_factor` alone changes nothing on"
+					+ " screen and a frozen ankle-high body shows to the draw cull")
+		if not is_equal_approx(float(asleep._shrink_factor), 1.0):
+			_fail("shrink: a body slept mid-window kept `_shrink_factor` at %.3f —"
+					% float(asleep._shrink_factor) + " the next animated frame would"
+					+ " ease back DOWN from 1.0 instead of holding it")
+		# ...AND THE OTHER DIRECTION: WAKING CLEARS IT TOO (review round 1). A body
+		# can be slept WHILE remote-driven and take `CROC_FLAG_SHRUNK` off the wire
+		# with no clock of its own; `_tick_shrink`'s first local frame would clear
+		# that, but a sleeper runs no `_physics_process` to have one. The flag is
+		# assigned directly here because that is exactly what `set_remote_state()`
+		# does to a body in this state, and staging a real sample would force
+		# physics back on and destroy the condition under test.
+		asleep.is_shrunk = true
+		asleep.set_lod_active(true)
+		if bool(asleep.is_shrunk):
+			_fail("shrink: a body that was handed the shrink flag WHILE SLEPT woke"
+					+ " up still shrunk — a sleeper has no local frame in which to"
+					+ " spend the zero clock, so it stays ankle-high indefinitely")
+	asleep.free()
+
+	# ---- THE WIRE-DRIVEN LATCH (review round 1) -----------------------------
+	# The failure this is written against: `set_remote_state()` hands a body
+	# `is_shrunk` TRUE with a clock of ZERO — deliberately, because the master owns
+	# the window — and then the master's samples stop for entirely ordinary reasons
+	# (it walks past its own sleep radius, it leaves, this peer is promoted).
+	# `clear_remote_drive()` gives the body back to its own AI still flagged, and a
+	# countdown asking `shrunk_time_remaining > 0.0` would return every frame
+	# FOREVER: permanently tiny, permanently harmless, permanently unable to
+	# acquire — and a peer later promoted to master would broadcast
+	# `CROC_FLAG_SHRUNK` for those bodies to the whole room.
+	#
+	# Driven through the three SHIPPED entry points and nothing else, because the
+	# bug lives in how they compose: `set_remote_state`, `clear_remote_drive`, then
+	# one ordinary `_physics_process`.
+	#
+	# THE CONTROL IS THE OPPOSITE OUTCOME AT THE MIDDLE STEP, like every other
+	# control in this check (the twin that must NOT shrink, the twin that MUST
+	# bite, the twin that MUST acquire). The flag has to SURVIVE
+	# `clear_remote_drive()` and be gone one frame later, because that pair is what
+	# names the mechanism: an implementation that cleared the shrink inside
+	# `clear_remote_drive()` instead would also leave the body un-shrunk at the end
+	# — and would leave the LATCH itself untested, since the countdown's gate would
+	# never be consulted. That was the alternative fix considered in round 1, so it
+	# is a build somebody could plausibly write. (Review round 3 caught the first
+	# version of this probe asserting the same direction for `is_fleeing` as for
+	# `is_shrunk`, which discriminated nothing at all: both flags come off the wire
+	# in the identical shape and both self-clear the same way.)
+	var wired: Node = load(CROC_SCENE).instantiate()
+	wired.species = "crocodile"
+	root.add_child(wired)
+	wired._find_player()
+	var flags: int = MpCodec.CROC_FLAG_SHRUNK | MpCodec.CROC_FLAG_FLEEING
+	wired.set_remote_state(Vector3(0.0, 0.0, 0.0), 0.0, flags)
+	if not bool(wired.is_shrunk) or not bool(wired.remote_driven):
+		_fail("shrink: a sample carrying CROC_FLAG_SHRUNK left the body un-shrunk"
+				+ " (shrunk %s, remote %s) — the latch probe below has nothing to"
+				% [wired.is_shrunk, wired.remote_driven] + " un-latch")
+	# `is_fleeing` is not a control, it is the LIVENESS half: the same sample arms
+	# it, so a body that ends the probe with both flags gone really did run the
+	# local branch that spends a zero clock, rather than never having been armed.
+	# Asserted armed HERE so it cannot pass by never having been set.
+	if not bool(wired.is_fleeing):
+		_fail("shrink: the same sample did not arm is_fleeing, so the liveness"
+				+ " half of the wired probe would pass on a body that was never"
+				+ " given anything to clear")
+	if float(wired.shrunk_time_remaining) != 0.0:
+		_fail("shrink: a wire-driven body started a clock of its own (%.2f s) —"
+				% float(wired.shrunk_time_remaining) + " the master owns the window,"
+				+ " and a second clock is a second answer the room can drift on")
+	wired.clear_remote_drive()
+	if bool(wired.remote_driven):
+		_fail("shrink: clear_remote_drive() left the body remote-driven, so the"
+				+ " local frame below never runs its own AI")
+	# THE CONTROL: still shrunk at this point, because an AWAKE body is handed back
+	# to its own AI and it is the AI's next frame that clears it. `clear_remote_drive`
+	# clears the shrink only for a body whose physics stays OFF (a slept one, which
+	# would get no such frame) — see its own note.
+	if bool(wired.lod_active) and not bool(wired.is_shrunk):
+		_fail("shrink: clear_remote_drive() cleared the shrink on an AWAKE body"
+				+ " itself, so the assertion below passes without the countdown's"
+				+ " flag gate ever being consulted — and the latch this probe"
+				+ " exists for would ship untested behind it")
+	wired._physics_process(step)
+	if bool(wired.is_shrunk):
+		_fail("shrink: a body handed CROC_FLAG_SHRUNK over the wire and then handed"
+				+ " back to its own AI is STILL shrunk after a local frame — the"
+				+ " countdown is gated on the clock instead of the flag, and a"
+				+ " wire-driven shrink carries no clock, so this body is ankle-high"
+				+ " and harmless for the rest of the run")
+	if bool(wired.is_fleeing):
+		_fail("shrink: the sibling flag (is_fleeing) also survived that frame, so"
+				+ " the body never ran its own AI at all and the shrink clearing"
+				+ " above is somebody else's doing")
+	wired.free()
+
+	# ...AND THE SLEPT VARIANT, which has no LOD transition to rescue it (review
+	# round 3). The order is what makes it its own case: the manager sleeps the
+	# body at ~52 m BEFORE any pulse, the master (whose sync radius is 55 m) then
+	# syncs and shrinks it, and when the samples stop `lod_active` has never
+	# changed — so `set_lod_active()` no-ops, `clear_remote_drive()` hands the
+	# physics switch back OFF, and `_tick_shrink()` never gets a frame. Without the
+	# conditional clear in `clear_remote_drive()` the body sits frozen and
+	# ankle-high in the 50–60 m band between the sleep radius and the draw cull.
+	var slept_wire: Node = load(CROC_SCENE).instantiate()
+	slept_wire.species = "crocodile"
+	root.add_child(slept_wire)
+	slept_wire.lod_active = false          # the manager put it to sleep first
+	slept_wire.set_remote_state(Vector3(0.0, 0.0, 0.0), 0.0,
+			MpCodec.CROC_FLAG_SHRUNK)
+	if not bool(slept_wire.is_shrunk):
+		_fail("shrink: a slept body took no shrink off the wire, so the frozen-tiny"
+				+ " probe below has nothing frozen to measure")
+	slept_wire._animate_body(step)
+	slept_wire.clear_remote_drive()
+	if bool(slept_wire.is_shrunk):
+		_fail("shrink: a body that was ALREADY SLEPT when the wire shrank it is"
+				+ " still shrunk after losing remote drive — `lod_active` never"
+				+ " changed, so no LOD transition can clear it and its physics is"
+				+ " switched back off, leaving it frozen ankle-high inside the draw"
+				+ " cull until the player walks back within SIM_RADIUS")
+	var slept_drawn: float = (slept_wire.model as Node3D).transform.basis \
+			.get_scale().x / maxf(float(slept_wire.model_base_scale.x), 0.0001)
+	if not is_equal_approx(slept_drawn, 1.0):
+		_fail("shrink: that body is still DRAWN at %.3f of its rest size — the"
+				% slept_drawn + " state came back and the silhouette did not, and"
+				+ " nothing will animate it again until the player returns")
+	slept_wire.free()
+
+	floor_body.free()
+
+	print("shrink ray: eased to %.2f, %.2fx speed, no bite, no acquire, back at %.1f s;"
+			% [shrunk_scale, shrunk_scale, duration]
+			+ " boss, crush_immune and slept bodies refuse it; a slept one comes back big")
+	stub.free()
+	small.free()
+	twin.free()
+	Sentinel.done("shrink_pulse")
 
 
 func _derive_boss_only() -> void:

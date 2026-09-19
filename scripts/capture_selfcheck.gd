@@ -327,6 +327,7 @@ func _run() -> void:
 	await _check_resize_is_not_a_lift()
 	await _check_air_sight_is_the_indoor_air_rush()
 	await _check_twin_flash_scares_and_never_kills()
+	await _check_shrink_ray_shrinks_the_reached_and_nothing_else()
 	await _check_kimchi_lures_then_scatters()
 	await _check_no_second_way_to_lose()
 	await _check_a_hunter_walks_in_and_takes_a_hero()
@@ -3312,12 +3313,301 @@ func _check_twin_flash_scares_and_never_kills() -> void:
 
 
 # ============================================================================
-# 10c. THE KIMCHI OFFERING LURES EVERYTHING AND SCATTERS THE ONES WITH A NOSE
+# 10c. THE SHRINK RAY REACHES WHAT IT REACHES, AND NOTHING ELSE
+# ============================================================================
+
+func _check_shrink_ray_shrinks_the_reached_and_nothing_else() -> void:
+	"""
+	Check 10c (bead godot-test1-0mr0.4). SHRINK RAY IS TEIBI'S SECOND SKILL: G
+	sends a violet pulse 8 m wide and every predator inside it is ankle-high for
+	six seconds — slow, harmless, unable to acquire and, by owner ruling 3
+	(2026-09-18, killing is forbidden), NEVER CRUSHED. The chassis rows — the HQ
+	guards, the hunter robot — do not shrink at all, and bosses shrug.
+
+	Driven through the REAL slot-1 press on REAL bodies from the shipped scenes,
+	beside checks 10 and 10b (the other two second skills).
+
+	THE FAILURE THIS CHECK EXISTS FOR IS THE VACUOUS ONE. A probe that shrank one
+	crocodile and read its scale back would pass just as happily if the pulse had
+	shrunk EVERYTHING IN THE WORLD, or if it had shrunk nothing at all and the
+	probe had shrunk its own body by hand. So the four bodies below are the
+	COMPASS, and both directions of every claim are asserted:
+
+	  INSIDE     an ordinary croc 4 m away — comfortably inside the 8 m radius —
+	             IS shrunk.
+	  OUTSIDE    an identical croc at twice the radius is NOT, which is what makes
+	             this a pulse and not a room-wide disarm. It is placed off the
+	             RADIUS ITSELF, so the pair keeps measuring "the radius is
+	             honoured" through a retune — and BECAUSE it scales, the radius
+	             and the duration are ALSO pinned as literals further down. A
+	             control that moves with its subject cannot fail when the subject
+	             moves, which is how a 15 m pulse passed this check once.
+	  CHASSIS    a live `tower_guard.tscn` on its own row, standing INSIDE the
+	             radius, is untouched — `crush_immune` is the "not flesh" key and
+	             the stealth building must not be answerable with one key press.
+	  BOSS       a boss INSIDE the radius is untouched, through the is_boss layer.
+
+	...and before any of that, the SLOT SCOPING, asked under a real HQ roof where
+	the Resize gate actually fires: a small Teibi's slot 0 must answer "INDOOR"
+	(the control) and his slot 1 must answer nothing at all.
+
+	...and the press itself is asserted to have HAPPENED: the cooldown is spent,
+	which no arm that returned false can do. Without that, every "was not shrunk"
+	above is also true of a G that fired nothing.
+
+	NO AWAIT BETWEEN THE PRESS AND THE READS, check 10b's discipline and for its
+	reason: the shrink clock is spent in `_physics_process`, so a read after even
+	one physics tick would be racing the bodies' own clocks. Everything from
+	`try_activate_ability(1)` to the last assertion runs in one synchronous span.
+	"""
+	# Slot 1 needs the tree node bought: the same stub tree checks 10 and 10b use,
+	# because the gate under test is the same one. (The real purchase path — that
+	# `shrink` is a node with effect "second_ability" at all — is
+	# `progression_selfcheck`'s.)
+	var tower := await _make_tower()
+	var interior: Node3D = get_first_node_in_group("tower_interior")
+	if interior == null:
+		_fail("the tower built no interior — check 10c has no roof to gate against")
+		tower.queue_free()
+		Sentinel.done("shrink_ray_reaches_what_it_reaches")
+		return
+	var second_tree := StubSecondSkillProgression.new()
+	root.add_child(second_tree)
+	second_tree.add_to_group("progression")
+	var player := await _make_player()
+	if not _become(player, "teibi"):
+		_fail("player.tscn has no teibi in CHARACTERS — check 10c cannot drive the Shrink Ray")
+		_clear(player)
+		second_tree.remove_from_group("progression")
+		second_tree.queue_free()
+		tower.queue_free()
+		Sentinel.done("shrink_ray_reaches_what_it_reaches")
+		return
+
+	# --- THE SLOT SCOPING, ASKED WHERE THE GATE ACTUALLY FIRES ---------------
+	# `teibi_size_state == 1` means the next RESIZE press would make him giant,
+	# which is what "INDOOR" is about — and slot 1 never touches the size at all.
+	# Before the gates were scoped to slot 0 (bead godot-test1-0mr0.4) a small
+	# Teibi inside the HQ saw his own second skill refused with a reason belonging
+	# to an ability he had not pressed, in the one place the ray is most obviously
+	# the right answer: a corridor full of predators.
+	#
+	# ASKED INDOORS ON A REAL SHELL, because outdoors with room to grow neither
+	# gate fires and the claim would be true of a build that never scoped
+	# anything. THE SLOT-0 READ IS THE CONTROL and it comes first: if "INDOOR"
+	# has stopped answering at all, the slot-1 read below means nothing.
+	player.global_position = interior.to_global(
+			Vector3(0.0, TowerInterior.FLOOR_Y[0], 0.0))
+	await _settle(player)
+	var restore_size: int = int(player.teibi_size_state)
+	player.teibi_size_state = 1
+	if not bool(tower.call("sheltered", player.global_position)):
+		_fail("check 10c's indoor spot is not under the roof, so the INDOOR gate"
+			+ " cannot fire and the slot-scoping pair below is vacuous")
+	if player.get_ability_block_reason(0) != "INDOOR":
+		_fail("a small Teibi under the HQ roof has slot 0 gated by '%s', not"
+			% player.get_ability_block_reason(0) + " INDOOR — the control for the"
+			+ " scoping assertion below is not firing")
+	if player.get_ability_block_reason(1) != "":
+		_fail("a small Teibi under the HQ roof has his SECOND skill gated by '%s'"
+			% player.get_ability_block_reason(1) + " — the Resize gates belong to"
+			+ " slot 0, and the Shrink Ray is allowed indoors (every guard in"
+			+ " there is crush_immune, so it changes nothing about the stealth)")
+	player.teibi_size_state = restore_size
+	# ...and back outside, well clear of the building, for the pulse itself.
+	player.global_position = tower.global_position \
+			+ Vector3(TowerShell.OUTER_HALF * 3.0, 0.0, 0.0)
+	await _settle(player)
+
+	var radius: float = PlayerAbilities.TEIBI_SHRINK_RADIUS
+	# PARKED A KILOMETRE OFF UNTIL THE STANDS ARE SET, and the guard is why: a
+	# `captures_hero` body that spawns at the origin is a body standing ON the
+	# player for the one frame below, and the arrest switches the hero out from
+	# under the whole check. (It did exactly that when this check was first
+	# written — every assertion below then read a phoboman who has no second
+	# skill at all.) `position` before `add_child`, the same door `species` uses.
+	var holding := Vector3(1000.0, 0.0, 1000.0)
+	var inside: Node = load(CROC_SCENE).instantiate()
+	inside.species = CONTROL_SPECIES
+	inside.position = holding
+	root.add_child(inside)
+	var outside: Node = load(CROC_SCENE).instantiate()
+	outside.species = CONTROL_SPECIES
+	outside.position = holding + Vector3(20.0, 0.0, 0.0)
+	root.add_child(outside)
+	var guard: Node = load(GUARD_SCENE).instantiate()
+	guard.species = GUARD_SPECIES
+	guard.position = holding + Vector3(40.0, 0.0, 0.0)
+	root.add_child(guard)
+	var boss: Node = load(CROC_SCENE).instantiate()
+	boss.species = CONTROL_SPECIES
+	boss.setup_as_boss(3.0)         # before add_child, the call-order contract
+	boss.position = holding + Vector3(60.0, 0.0, 0.0)
+	root.add_child(boss)
+	await process_frame
+	if player.hero_name() != "teibi":
+		_fail("check 10c's player is %s by the time the bodies are staged, not"
+			% player.hero_name() + " teibi — something switched the hero out from"
+			+ " under the press and every reading below is another hero's")
+	if not bool(guard.spec.get("crush_immune", false)):
+		_fail("the probe guard's row carries no crush_immune — check 10c would be"
+			+ " measuring a guard that shrinks, and the stealth ruling with it")
+	if not bool(boss.is_boss):
+		_fail("setup_as_boss() left is_boss false — check 10c has no boss to shrug")
+
+	# THE PULSE IS RADIAL AND CENTRED ON TEIBI, so the stands are metres from his
+	# feet and the two controls are placed off the RADIUS itself. `+ 0.0` on the y
+	# keeps every body on the same plane as the caster: the sweep is a 3D distance,
+	# so a body parked at a different height would be further away than it looks.
+	var spot: Vector3 = (player as Node3D).global_position
+	(inside as Node3D).global_position = spot + Vector3(radius * 0.5, 0.0, 0.0)
+	(outside as Node3D).global_position = spot + Vector3(0.0, 0.0, radius * 2.0)
+	(guard as Node3D).global_position = spot + Vector3(-radius * 0.5, 0.0, 0.0)
+	(boss as Node3D).global_position = spot + Vector3(0.0, 0.0, -radius * 0.4)
+
+	# --- G is the Shrink Ray, and nothing gates it — in ANY form, indoors too. ---
+	if player.get_ability_name(1) != "Shrink Ray":
+		_fail("slot 1 advertises %s" % player.get_ability_name(1))
+	if player.get_ability_block_reason(1) != "":
+		_fail("in the open field the Shrink Ray is gated by '%s'"
+			% player.get_ability_block_reason(1))
+	player.ability2_cooldowns[player.current_character_index] = 0.0
+	# NO AWAIT from here to the last read: the press runs synchronously, so the
+	# states below are the arm's, unspent by any physics tick.
+	player.try_activate_ability(1)
+	# THE PRESS HAPPENED. A cooldown is only charged for an arm that returned
+	# true, so this is what stops every negative below passing on a dead key.
+	if player.ability2_cooldowns[player.current_character_index] <= 0.0:
+		_fail("G left the slot-1 cooldown at %.2f — the arm never fired, so every"
+			% player.ability2_cooldowns[player.current_character_index]
+			+ " body standing un-shrunk below proves nothing")
+	if not bool(inside.get("is_shrunk")):
+		_fail("the croc %.1f m away — inside the %.1f m pulse — was not shrunk"
+			% [radius * 0.5, radius])
+	if float(inside.get("shrunk_time_remaining")) != PlayerAbilities.TEIBI_SHRINK_DURATION:
+		_fail("the croc inside the pulse is shrunk for %.3f s, not the %.1f s window"
+			% [float(inside.get("shrunk_time_remaining")),
+				PlayerAbilities.TEIBI_SHRINK_DURATION])
+	if bool(outside.get("is_shrunk")):
+		_fail("the croc %.1f m away — TWICE the %.1f m radius — was shrunk too, so"
+			% [radius * 2.0, radius] + " the pulse is not a pulse: it is a"
+			+ " room-wide disarm and there is nothing to walk through")
+	if bool(guard.get("is_shrunk")):
+		_fail("an HQ guard standing inside the pulse was shrunk — crush_immune is"
+			+ " the 'not flesh' key, and a shrinkable guard turns the stealth"
+			+ " building into 'press G past the patrol'")
+	if bool(boss.get("is_shrunk")):
+		_fail("a boss standing inside the pulse was shrunk — bosses shrug")
+	# THE TWO NUMBERS ARE THE OWNER'S, AND THEY ARE ASSERTED AS LITERALS — check
+	# 10b's `PRIMM_FLASH_FLEE_DURATION != 3.0` guard, for its reason and after the
+	# same near miss. Every reading above is placed off the CONSTANTS, so a retune
+	# moves the probe's own controls with the feature and the whole check goes on
+	# passing at any radius at all: widening the pulse to 15 m left this check
+	# green while it was being written, because the "outside" body sat at twice
+	# whatever the new radius was. So the design's own numbers are pinned here,
+	# and a retune has to come through this line and say so.
+	if PlayerAbilities.TEIBI_SHRINK_RADIUS != 8.0:
+		_fail("TEIBI_SHRINK_RADIUS is %.1f m, not the 8 m the owner set"
+			% PlayerAbilities.TEIBI_SHRINK_RADIUS + " — the pulse is a CORRIDOR you"
+			+ " walk through, and a wider one is a room-wide disarm")
+	if PlayerAbilities.TEIBI_SHRINK_DURATION != 6.0:
+		_fail("TEIBI_SHRINK_DURATION is %.1f s, not the 6 s the owner set"
+			% PlayerAbilities.TEIBI_SHRINK_DURATION + " — long enough to walk"
+			+ " through a pack, short enough that the walk is the whole reward")
+
+	# --- AND THE INVARIANT THE WHOLE DESIGN LEANS ON, OVER THE TABLE ---------
+	# `shrink_for()` refuses a `crush_immune` row, and the Shrink Ray is safe for
+	# the capture rules ONLY because every `captures_hero` row carries that key
+	# too — so no grabber can ever be standing in the world shrunk, and the jail
+	# stays reachable. Today both capture rows (`hunter_robot`, `tower_guard`) are
+	# chassis and say so; a future FLESH grabber would be shrinkable, and a
+	# shrunk grabber cannot acquire, so the one route into the HQ would quietly
+	# become "press G at the arresting officer". Asserted over the TABLE rather
+	# than over the two names, so the day that row lands this says so by name.
+	var rows: Dictionary = load(CROC_SCRIPT).get_script_constant_map().get("SPECIES", {})
+	if rows.is_empty():
+		_fail("check 10c could not read the SPECIES table, so the capture-row"
+			+ " invariant below is vacuous")
+	var grabbers: int = 0
+	for row_name: Variant in rows:
+		var row: Dictionary = rows[row_name]
+		if not bool(row.get("captures_hero", false)):
+			continue
+		grabbers += 1
+		if not bool(row.get("crush_immune", false)):
+			_fail("SPECIES['%s'] captures the hero but is NOT crush_immune, so"
+				% String(row_name) + " Teibi's Shrink Ray can shrink it — and a"
+				+ " shrunk body cannot acquire. One G press at the arresting"
+				+ " officer would disarm the only route into the HQ.")
+	if grabbers == 0:
+		_fail("no SPECIES row carries captures_hero — the invariant check above"
+			+ " walked an empty set and proved nothing")
+	# NOTHING DIED, the ruling that makes this skill legal at all.
+	for subject: Array in [[inside, "the croc inside"], [outside, "the croc outside"],
+			[guard, "the guard"], [boss, "the boss"]]:
+		if not is_instance_valid(subject[0]):
+			_fail("the Shrink Ray freed %s — nothing dies in this game" % subject[1])
+		elif (subject[0] as Node).is_queued_for_deletion():
+			_fail("the Shrink Ray queued %s for deletion" % subject[1])
+
+	# --- AND A SHRUNK BODY IS NOT CRUSHABLE BY THE HERO WHO SHRANK IT. ---
+	# The whole ruling in one contact: giant Teibi walks into the body his own G
+	# just shrank and it must survive AND not bite. The ordering that makes it so
+	# is pinned in `boss_immunity_selfcheck` with its own crushable control; this
+	# is the same claim asked of the REAL pair — a real player.tscn in giant form
+	# against a body a real G press shrank — because that is the combination a
+	# player produces and nothing else in the suite puts the two together.
+	var was_giant: bool = bool(player.is_giant)
+	player.is_giant = true
+	if not player.crushes_crocodiles():
+		_fail("the probe player does not crush at all, so the survival below is"
+			+ " not about the shrink")
+	inside._on_player_collision(player)
+	player.is_giant = was_giant
+	if not is_instance_valid(inside) or not inside.is_in_group("crocodile"):
+		_fail("GIANT Teibi crushed a body his OWN Shrink Ray had just made"
+			+ " ankle-high — the two skills together are an execution, and owner"
+			+ " ruling 3 forbids killing")
+
+	# --- ...and the arm's source names no kill, by name. ---
+	# Check 10b's second half, for its reason: the grep catches a kill call on a
+	# path no probe body walks, the bodies catch a kill the grep cannot spell.
+	var text: String = FileAccess.get_file_as_string(
+		"res://scripts/player_abilities.gd")
+	var start: int = text.find("func _ability2_teibi()")
+	if start == -1:
+		_fail("player_abilities.gd declares no _ability2_teibi — the press above"
+			+ " fired nothing and every reading above is someone else's")
+	else:
+		var following: int = text.find("\nfunc ", start + 1)
+		var body: String = text.substr(start,
+			following - start if following != -1 else text.length() - start)
+		for kill_call: String in ["squash_and_die", "request_croc_kill", "queue_free"]:
+			if body.contains(kill_call):
+				_fail("the Shrink Ray calls %s — it makes predators small, never"
+					% kill_call + " dead (ruling 3)")
+	print("shrink ray: G shrinks only the croc inside the %.1f m pulse for %.1f s,"
+			% [radius, PlayerAbilities.TEIBI_SHRINK_DURATION]
+			+ " guard and boss stand full size, giant Teibi cannot crush it, none freed")
+
+	for body_v: Node in [inside, outside, guard, boss]:
+		if is_instance_valid(body_v):
+			body_v.queue_free()
+	_clear(player)
+	second_tree.remove_from_group("progression")
+	second_tree.queue_free()
+	tower.queue_free()
+	await process_frame
+	Sentinel.done("shrink_ray_reaches_what_it_reaches")
+
+
+# ============================================================================
+# 10d. THE KIMCHI OFFERING LURES EVERYTHING AND SCATTERS THE ONES WITH A NOSE
 # ============================================================================
 
 func _check_kimchi_lures_then_scatters() -> void:
 	"""
-	Check 10c (bead godot-test1-0mr0.5). KIMCHI OFFERING IS PHOBOMAN'S SECOND
+	Check 10d (bead godot-test1-0mr0.5). KIMCHI OFFERING IS PHOBOMAN'S SECOND
 	SKILL: G sets a clay jar down 3 m ahead, everything idle within 20 m walks
 	over to sniff it, and five seconds later it bursts and everything with a NOSE
 	within 6 m bolts. Guards come and DO NOT run (owner ruling 5: "yes, attract
@@ -3372,7 +3662,7 @@ func _check_kimchi_lures_then_scatters() -> void:
 	second_tree.add_to_group("progression")
 	var player := await _make_player()
 	if not _become(player, "phoboman"):
-		_fail("player.tscn has no phoboman in CHARACTERS — check 10c cannot drive"
+		_fail("player.tscn has no phoboman in CHARACTERS — check 10d cannot drive"
 			+ " the Kimchi Offering")
 		_clear(player)
 		second_tree.remove_from_group("progression")
@@ -3428,21 +3718,21 @@ func _check_kimchi_lures_then_scatters() -> void:
 	slept.lod_active = false
 	slept.set_physics_process(false)
 	if bool(slept.get("lod_active")):
-		_fail("the slept probe is still awake — check 10c has no sleeper")
+		_fail("the slept probe is still awake — check 10d has no sleeper")
 	if not bool(guard.spec.get("stink_immune", false)):
-		_fail("the probe guard's row carries no stink_immune — check 10c would be"
+		_fail("the probe guard's row carries no stink_immune — check 10d would be"
 			+ " measuring a guard that flinches, and the owner's 'guards come and"
 			+ " sniff and stay unbothered' with it")
 	if bool(guard.spec.get("stink_immune", false)) and bool(sniffer.spec.get("stink_immune", false)):
 		_fail("the ordinary croc row carries stink_immune too — nothing in this"
 			+ " check can tell a nose from a sealed machine")
 	if not bool(boss.is_boss):
-		_fail("setup_as_boss() left is_boss false — check 10c has no boss to shrug")
+		_fail("setup_as_boss() left is_boss false — check 10d has no boss to shrug")
 
 	# --- G is the Kimchi Offering, and nothing gates it in the field. ---
 	if player.hero_name() != "phoboman":
 		_fail("the hero is %s at the press, not phoboman — something took Phoboman"
-			% player.hero_name() + " while check 10c was staging its bodies")
+			% player.hero_name() + " while check 10d was staging its bodies")
 	if player.get_ability_name(1) != "Kimchi Offering":
 		_fail("slot 1 advertises %s" % player.get_ability_name(1))
 	if player.get_ability_block_reason(1) != "":
