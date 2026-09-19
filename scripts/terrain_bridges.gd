@@ -21,6 +21,12 @@ extends RefCounted
 ## clearing every seed-derived cache (bd bvq). A static library holds no run
 ## state, and the run's seed is the terrain's.
 ##
+## The BIKE TRUNKS' decks (bd godot-test1-pnvb.3) add no fifth one: they are built
+## once per edge while `BikePaths.trunks()` builds its own table and they ride it,
+## so the memo that holds them is `_bike_trunk_cache` — already on the terrain,
+## already in `_drop_seeded_memos()`, already bounded by the world's edge count. A
+## cache of its own here would be a second thing to remember to drop.
+##
 ## What else stayed on the terrain:
 ##   * `@export var spawn_field_bridges` (a static library has no inspector).
 ##   * `_deep_channel_ford` (belongs to the wading section, calls
@@ -201,10 +207,14 @@ static func _field_bridge_run() -> float:
 	return FIELD_BRIDGE_TOP * BudapestPlan.BRIDGE_RAMP_RUN / BudapestPlan.BRIDGE_DECK_TOP
 
 
-static func field_bridge_outer_reach() -> float:
+static func field_bridge_outer_reach(half: float = FIELD_BRIDGE_HALF_WIDTH) -> float:
 	"""
 	How far from the walking line ANY of a bridge's stone reaches — the deck's
 	half-width plus the widest piece of trim standing outboard of it.
+
+	@param half: HALF the deck's width, defaulted to the road's so check 5 and the
+	             terrain's forwarder are unchanged. A bike trunk's deck passes its
+	             own (bead godot-test1-pnvb.3).
 
 	The number check 5 measures against every *_ROAD_CLEARANCE in this file, and
 	it is a DERIVATION rather than FIELD_BRIDGE_HALF_WIDTH read a second time:
@@ -212,7 +222,7 @@ static func field_bridge_outer_reach() -> float:
 	const block), so the stone now reaches further than the lane does and the
 	"no prop can ever stand on a deck" contract is about the stone.
 	"""
-	return FIELD_BRIDGE_HALF_WIDTH + maxf(FIELD_BRIDGE_PARAPET_WIDTH,
+	return half + maxf(FIELD_BRIDGE_PARAPET_WIDTH,
 			FIELD_BRIDGE_PARAPET_WIDTH * 0.5 + FIELD_BRIDGE_PYLON_WIDTH)
 
 
@@ -240,13 +250,30 @@ static func _field_bridge_reach(terrain: Node3D) -> float:
 			+ FIELD_BRIDGE_BANK_WALK_MAX
 
 
-static func _field_bridge_dry_across(terrain: Node3D, centre: Vector2, dir: Vector2) -> bool:
+static func _field_bridge_dry_across(terrain: Node3D, centre: Vector2, dir: Vector2,
+		half: float = FIELD_BRIDGE_HALF_WIDTH) -> bool:
 	"""
 	Is a deck-wide cross-section at `centre` DRY ALL THE WAY ACROSS?
 
 	@param centre: The centreline point, world XZ.
 	@param dir: The direction the deck runs in (unit); the section is measured
 	            perpendicular to it.
+	@param half: HALF the deck's width. Defaulted to the road's own, so every
+	             shipped caller is byte-identical; a BIKE TRUNK's deck is
+	             BIKE_PATH_WIDTH wide and passes its own (bead godot-test1-pnvb.3).
+	             The row already carried "half" and `_field_bridge_slabs` already
+	             read it — only this probe and `field_bridge_outer_reach` were
+	             still reading the const, so an 8 m section was being tested under
+	             a 2.4 m strip.
+
+	             WHAT IT COSTS TO GET WRONG IS A DECK, NOT A WRONG DECK, and that
+	             is why no assertion catches it: a probe WIDER than the deck only
+	             ever refuses a bank it could have carried, so the failure mode is
+	             a missing crossing rather than stone in the water. Measured
+	             (mutation M7, this parameter reverted to the const): 11 of
+	             `bike_path_selfcheck` B2's 24 crossings get a deck instead of 12,
+	             and the suite stays green. B2 prints that count every run, which
+	             is where the loss is visible.
 	@return: false the moment any sample of the section stands in a river band.
 
 	THE WHOLE WIDTH, NOT THREE LANES. A river is a contour crossed at an angle, so
@@ -264,9 +291,16 @@ static func _field_bridge_dry_across(terrain: Node3D, centre: Vector2, dir: Vect
 	the world.
 	"""
 	var perp := Vector2(-dir.y, dir.x)
-	var lane := -FIELD_BRIDGE_HALF_WIDTH
-	while lane < FIELD_BRIDGE_HALF_WIDTH + FIELD_BRIDGE_PROBE_STEP * 0.5:
-		var at := centre + perp * minf(lane, FIELD_BRIDGE_HALF_WIDTH)
+	var lane := -half
+	# THE BOUND IS A WHOLE STEP PAST THE EDGE, and the `minf` below is what makes
+	# that safe: it clamps the last lane back onto the far parapet. A HALF step
+	# instead only reaches the edge when `half` is a whole number of steps — true
+	# of the road (8.0 at 1.0) and false of the bike deck (1.2), whose +1.2 m edge
+	# was never probed at all, so a deck could be called dry across a section with
+	# water under one of its rails. The road's sample sequence is unchanged: at
+	# half = 8 the walk still ends on lane 8 either way.
+	while lane < half + FIELD_BRIDGE_PROBE_STEP:
+		var at := centre + perp * minf(lane, half)
 		if terrain.is_river_at(Vector3(at.x, 0.0, at.y)):
 			return false
 		lane += FIELD_BRIDGE_PROBE_STEP
@@ -350,10 +384,13 @@ static func _field_bridge_out_dir(terrain: Node3D, k: int, sign: int) -> Vector2
 	return (here - inward).normalized()
 
 
-static func _field_bridge_ramp_dry(terrain: Node3D, head: Vector2, foot: Vector2) -> bool:
+static func _field_bridge_ramp_dry(terrain: Node3D, head: Vector2, foot: Vector2,
+		half: float = FIELD_BRIDGE_HALF_WIDTH) -> bool:
 	"""
 	Is the whole RAMP RECTANGLE — every deck-wide section from the deck's end
 	`head` down to `foot` — clear of the water?
+
+	@param half: HALF the rectangle's width — see `_field_bridge_dry_across`.
 
 	The abutment's real question, and the growth loop's too: a ramp that lands on
 	a dry section but crosses a shallow on the way is a stretch of bridge under
@@ -361,14 +398,14 @@ static func _field_bridge_ramp_dry(terrain: Node3D, head: Vector2, foot: Vector2
 	"""
 	var run := head.distance_to(foot)
 	if run <= 0.0:
-		return _field_bridge_dry_across(terrain, head, Vector2.RIGHT)
+		return _field_bridge_dry_across(terrain, head, Vector2.RIGHT, half)
 	var dir := (foot - head) / run
 	var steps := int(run / FIELD_BRIDGE_PROBE_STEP)
 	for i in range(steps + 1):
 		if not _field_bridge_dry_across(terrain, head + dir * minf(
-				float(i) * FIELD_BRIDGE_PROBE_STEP, run), dir):
+				float(i) * FIELD_BRIDGE_PROBE_STEP, run), dir, half):
 			return false
-	return _field_bridge_dry_across(terrain, foot, dir)
+	return _field_bridge_dry_across(terrain, foot, dir, half)
 
 
 static func _field_bridge_section_dry(terrain: Node3D, k: int) -> bool:
@@ -411,13 +448,15 @@ static func _centreline_wet_metres(terrain: Node3D, from: Vector2, to: Vector2) 
 	return wet
 
 
-static func _field_bridge_foot(terrain: Node3D, head: Vector2, out_dir: Vector2) -> Vector2:
+static func _field_bridge_foot(terrain: Node3D, head: Vector2, out_dir: Vector2,
+		half: float = FIELD_BRIDGE_HALF_WIDTH) -> Vector2:
 	"""
 	Where one ramp's FOOT stands: back along `out_dir` from the deck's end, far
 	enough that the whole width of the abutment is on dry land.
 
 	@param head: The deck end this ramp climbs to (a station centre).
 	@param out_dir: Unit vector pointing AWAY from the deck, along the ramp.
+	@param half: HALF the abutment's width — see `_field_bridge_dry_across`.
 	@return: The foot point, world XZ — or `Vector2.INF` when no dry foot exists
 	         inside the push budget, which REFUSES the whole bridge.
 
@@ -447,7 +486,7 @@ static func _field_bridge_foot(terrain: Node3D, head: Vector2, out_dir: Vector2)
 		# so a hero hugging its parapet over a bank shallow wades on a bridge —
 		# measured on six seeds, ~1-3 m of one edge each. The rectangle is every
 		# section from the deck's end down to the foot.
-		if _field_bridge_ramp_dry(terrain, head, foot):
+		if _field_bridge_ramp_dry(terrain, head, foot, half):
 			return foot
 		pushed += FIELD_BRIDGE_PROBE_STEP
 	# NEVER A KNOWN-WET FOOT. Out of budget the honest answer is that this bank
@@ -758,12 +797,16 @@ static func field_bridge_at(terrain: Node3D, k0: int) -> Dictionary:
 	return row
 
 
-static func _field_bridge_row_from(terrain: Node3D, pts: PackedVector2Array) -> Dictionary:
+static func _field_bridge_row_from(terrain: Node3D, pts: PackedVector2Array,
+		half: float = FIELD_BRIDGE_HALF_WIDTH) -> Dictionary:
 	"""
 	One bridge's geometry from the centreline points its deck stands on.
 
 	@param pts: The deck's own centre points, west to east, the DRY margin point
 	            at each end included. At least three.
+	@param half: HALF the deck's width, and the only thing a BIKE TRUNK's deck
+	             changes about this arithmetic (bead godot-test1-pnvb.3). It goes
+	             into the row, which is where every reader already looks for it.
 	@return: The row (see field_bridge_at), or {} when either abutment cannot be
 	         put on dry ground — which refuses the whole crossing.
 
@@ -783,8 +826,8 @@ static func _field_bridge_row_from(terrain: Node3D, pts: PackedVector2Array) -> 
 		return {}
 	var head := (pts[1] - pts[0]).normalized()
 	var tail := (pts[pts.size() - 1] - pts[pts.size() - 2]).normalized()
-	var west := _field_bridge_foot(terrain, pts[0], -head)
-	var east := _field_bridge_foot(terrain, pts[pts.size() - 1], tail)
+	var west := _field_bridge_foot(terrain, pts[0], -head, half)
+	var east := _field_bridge_foot(terrain, pts[pts.size() - 1], tail, half)
 	if west == Vector2.INF or east == Vector2.INF:
 		return {}   # no dry bank for an abutment — see _field_bridge_foot
 
@@ -798,7 +841,7 @@ static func _field_bridge_row_from(terrain: Node3D, pts: PackedVector2Array) -> 
 	for i in range(1, poly.size()):
 		along.append(along[i - 1] + poly[i].distance_to(poly[i - 1]))
 
-	return { "poly": poly, "along": along, "half": FIELD_BRIDGE_HALF_WIDTH }
+	return { "poly": poly, "along": along, "half": half }
 
 
 static func approach_bridges(terrain: Node3D) -> Array:
@@ -1007,10 +1050,220 @@ static func approach_bridges(terrain: Node3D) -> Array:
 	return terrain._approach_bridge_cache
 
 
+static func bike_trunk_bridges(terrain: Node3D, pts: PackedVector2Array,
+		half: float, pitch: float) -> Dictionary:
+	"""
+	THE DECKS ONE BIKE TRUNK NEEDS — the THIRD source of a centreline into
+	`_field_bridge_row_from` (bead godot-test1-pnvb.3).
+
+	@param pts: The trunk's own station positions, in walk order.
+	@param half: HALF the deck's width — the bike strip's, not the road's.
+	@param pitch: The trunk's station spacing, which the deck is decimated back to
+	              so a slab spans a segment rather than a metre.
+	@return: `{ "rows": Array, "refused": bool }`. `refused` is the LAKE and only
+	         the lake (see below); `rows` are in the shape `field_bridge_at()`
+	         returns, with `"bike": true`, `"k0"/"k1" = -1` (no station index) and
+	         `"box"` / `"rail"` / `"screen"`, the Rect2 every piece of this deck's
+	         stone stands inside, the lateral offset of its outermost box CENTRE,
+	         and the points its boxes are really centred on.
+
+	PURE, AND IT MEMOIZES NOTHING. `BikePaths.trunks()` calls this once per edge
+	while it builds its own memo and keeps the rows on the trunk row, so the memo
+	that holds these decks is `_bike_trunk_cache` — already named in
+	`_drop_seeded_memos()`, already capped by the world's edge count. A second
+	cache here would be a second thing to drop under a re-seed.
+
+	IT IS approach_bridges()'s WALK, NOT ITS BODY, and the difference is worth
+	stating because a fourth copy of the crossing walk would be a defect. What the
+	corridor's scan carries that a trunk has none of: a station index, the handoff
+	with the road side and its ownership test, the city-rect clamp, and a west
+	extension onto the road's own centreline. What is left is the walk itself, and
+	every primitive under it — `_centreline_wet_metres`, `_field_bridge_ramp_dry`,
+	`_field_bridge_foot`, `_field_bridge_row_from` — is the shipped one.
+
+	SAMPLED AT HALF THE STATION PITCH — the resolution the PAINT is skipped at, and
+	not the corridor's metre. A trunk station is 5 m of ground and a river band can
+	be narrower, so a walk that asked only at the stations would step straight over
+	the crossing `BikePaths.segment_blocked` then refuses to paint; but going FINER
+	than that predicate buys nothing either, because a band it steps over is one the
+	strip is already drawn across, and a deck under drawn paint is stone nobody
+	needed. So detection matches `segment_blocked`'s own half-step exactly, which is
+	also what keeps this affordable: MEASURED on the three CI seeds, the whole cold
+	`BikePaths.trunks()` walk costs a third less with it than at the corridor's 1 m,
+	and `BikePaths.trunks()`'s own banner carries the numbers rather than this one
+	repeating them. The DECK is decimated back to `pitch` either way, so the stone
+	is the same shape.
+
+	THE LAKE ABANDONS THE WHOLE TRUNK, and nothing else here does. Past
+	FIELD_BRIDGE_MAX_SPAN of walked water this is not a river the path crosses, it
+	is standing water — the road's own ruling — and the epic's rule is that a half
+	trunk is litter, so the edge simply does not exist (`trunk_abandoned` reports
+	it as "lake"). NOTHING CAN SOFTLOCK EITHER WAY: a bike path is never anyone's
+	only route to anywhere, which is exactly why abandoning is the cheap answer
+	here and wading is the road's.
+
+	EVERY OTHER REFUSAL LEAVES THE GAP THE ROUTE ALREADY HAD. A bank with no dry
+	abutment inside the push budget, or a crossing that runs off the end of the
+	route, gives `{}` from `_field_bridge_row_from` — and the honest consequence is
+	the un-drawn segment `godot-test1-pnvb.2` already ships, not the deletion of a
+	kilometre of road that is fine everywhere else. `bike_path_selfcheck` B2 counts
+	both outcomes.
+
+	ZERO RNG. Every question below is the trunk polyline against the river field,
+	and both are already pure in `run_seed`.
+	"""
+	var out: Dictionary = { "rows": [], "refused": false }
+	if pts.size() < 2:
+		return out
+	# The polyline at the probe step. Each station's own point is kept, so the
+	# decimation below lands back on the stations wherever the stride divides.
+	var step: float = pitch * 0.5
+	var fine := PackedVector2Array()
+	for i in range(pts.size() - 1):
+		var a: Vector2 = pts[i]
+		var b: Vector2 = pts[i + 1]
+		var steps: int = maxi(1, int(a.distance_to(b) / step))
+		for s in steps:
+			fine.append(a.lerp(b, float(s) / float(steps)))
+	fine.append(pts[pts.size() - 1])
+
+	var stride: int = maxi(1, roundi(pitch / step))
+	var run: float = _field_bridge_run()
+	var rows: Array = []
+	var i: int = 0
+	while i < fine.size() - 1:
+		if _approach_wet(terrain, fine, i) or not _approach_wet(terrain, fine, i + 1):
+			i += 1
+			continue
+		# `i` is the last DRY sample before the water. Walk to the far bank,
+		# accumulating METRES WALKED — never the chord, which a curved wet run makes
+		# shorter than the path really is (field_bridge_at's measurement).
+		var j: int = i + 1
+		var walked: float = 0.0
+		while j < fine.size() - 1 and _approach_wet(terrain, fine, j):
+			walked += fine[j].distance_to(fine[j - 1])
+			if walked > FIELD_BRIDGE_MAX_SPAN:
+				out["refused"] = true      # a lake — the whole trunk goes
+				return out
+			j += 1
+		if j >= fine.size() - 1:
+			# The water runs off the end of the route: there is no far bank on this
+			# polyline to stand an abutment on, so the gap stays. It cannot be a
+			# silent truncation — the route is unchanged, only unpainted here.
+			i = j + 1
+			continue
+		# ...and the same growth outward as the road's and the corridor's, on the
+		# RAMP RECTANGLE and along the direction the DECIMATED deck will hand its
+		# foot: the deck carries on at deck height until the bank is dry rather than
+		# dragging a ramp — which is under WADE_SURFACE_MAX for its first stretch —
+		# along the water.
+		var grown: float = 0.0
+		while i > 0 and grown < FIELD_BRIDGE_BANK_WALK_MAX and not _field_bridge_ramp_dry(
+				terrain, fine[i], fine[i] - (fine[mini(i + stride, fine.size() - 1)]
+						- fine[i]).normalized() * run, half):
+			grown += fine[i].distance_to(fine[i - 1])
+			i -= 1
+		grown = 0.0
+		while j < fine.size() - 2 and grown < FIELD_BRIDGE_BANK_WALK_MAX \
+				and not _field_bridge_ramp_dry(terrain, fine[j],
+						fine[j] + (fine[j] - fine[maxi(j - stride, 0)]).normalized() * run,
+						half):
+			grown += fine[j].distance_to(fine[j + 1])
+			j += 1
+
+		# ONE DECK PER STRETCH OF WATER: two crossings whose banks grew into each
+		# other would otherwise be decked twice over the same ground, which is the
+		# z-fight `field_bridge_at`'s western-entry rule exists to stop.
+		var mid: Vector2 = fine[(i + j) / 2]
+		if _field_bridge_decked(terrain, mid, rows):
+			i = j + 1
+			continue
+
+		# THE DECK, decimated back to the station pitch — a slab per metre would be
+		# a hundred boxes and a hundred collision shapes for one crossing. Both ends
+		# are kept whatever the stride lands on.
+		var deck := PackedVector2Array()
+		var m: int = i
+		while m < j:
+			deck.append(fine[m])
+			m += stride
+		deck.append(fine[j])
+		if deck.size() < 3:
+			# A crossing narrower than one stride decimates to its two ends, and a
+			# deck needs a middle (the row is dry margin, deck..., dry margin). This
+			# is the common case here, not a corner of one: the fine sampling exists
+			# precisely to find bands narrower than a station.
+			#
+			# THE MIDDLE POINT IS ALWAYS DISTINCT FROM THE FIRST, and it has to be:
+			# `_field_bridge_row_from` normalises `pts[1] - pts[0]`, so two equal
+			# points there would hand it a zero vector and every slab downstream a
+			# zero length. It cannot happen — the loop above is entered only when
+			# `fine[i + 1]` is wet, so the walk runs at least once and `j >= i + 2`
+			# before either growth widens it further. Integer division therefore
+			# lands on `i + 1` at worst.
+			deck = PackedVector2Array([fine[i], fine[(i + j) / 2], fine[j]])
+		var row: Dictionary = _field_bridge_row_from(terrain, deck, half)
+		if not row.is_empty():
+			row["k0"] = -1     # a trunk has no station index
+			row["k1"] = -1
+			row["bike"] = true
+			# THE BOUNDING BOX OVER THE WHOLE POLYLINE, computed once here and read
+			# by both of this row's consumers.
+			#
+			# ITS X HALF IS WHY IT EXISTS: `field_bridges_near`'s rejection tests
+			# `poly[0].x` and `poly[-1].x`, which is exactly right for the two older
+			# sources — the road's X strictly increases and so does the corridor's —
+			# and wrong for a trunk, which may run due north and come back, so its
+			# endpoints say nothing about how far west its stone reached.
+			#
+			# ITS Z HALF IS THE PER-CHUNK REJECT the emission site needs: a trunk's
+			# bounding box can reach a 10x10 block of chunks and its deck is 40 m of
+			# it, so without this every one of those chunks mitres two rail lines and
+			# walks every slab of a bridge that is kilometres away. Grown by
+			# `field_bridge_outer_reach`, because the parapet stands outboard of the
+			# walking line and the box has to hold the STONE, not the centreline.
+			var lo: Vector2 = Vector2(INF, INF)
+			var hi: Vector2 = Vector2(-INF, -INF)
+			for pt: Vector2 in (row["poly"] as PackedVector2Array):
+				lo = lo.min(pt)
+				hi = hi.max(pt)
+			var pad: float = field_bridge_outer_reach(half)
+			row["box"] = Rect2(lo - Vector2(pad, pad), hi - lo + Vector2(pad, pad) * 2.0)
+			# ...and WHERE THIS DECK'S BOXES ACTUALLY STAND, which is not where its
+			# polyline bends. A slab is centred on the MIDPOINT of its segment, and a
+			# RAMP slab is one box up to `_field_bridge_run()` plus the whole
+			# FIELD_BRIDGE_FOOT_PUSH_MAX long — so its centre can be 17 m from the
+			# nearest point of `poly`, and a screen that walked the vertices alone
+			# would pass a ramp lying squarely inside a keep-out. The slab table is
+			# the one description of what the stone is (see `_field_bridge_slabs`),
+			# so the screen is built from it rather than from a second guess.
+			var screen := PackedVector2Array(row["poly"])
+			for slab_v: Variant in _field_bridge_slabs(row):
+				var slab: Dictionary = slab_v
+				screen.append(Vector2(slab["start"])
+						+ (slab["dir"] as Vector2) * float(slab["len"]) * 0.5)
+			row["screen"] = screen
+			# ...and where this deck's OUTERMOST BOX CENTRE stands, which is the
+			# parapet's mitred rail line and nothing to do with `pad` above. The
+			# keep-out sweep one family along measures box centres, and `pad` is a
+			# rejection margin grown for the widest trim a ROAD deck can carry —
+			# using it there refused a quarter of the crossings over a 0.9 m
+			# difference that no box occupies. MEASURED over `bike_path_selfcheck`
+			# B2's eight seeds and 24 crossings: 11 decks with no lateral test at
+			# all, 10 with this rail offset, 8 with `pad`.
+			row["rail"] = half + FIELD_BRIDGE_PARAPET_WIDTH * 0.5
+			rows.append(row)
+		i = j + 1
+	out["rows"] = rows
+	return out
+
+
 static func _approach_wet(terrain: Node3D, pts: PackedVector2Array, i: int) -> bool:
-	"""Is the corridor in the water at sample `i`? THE CENTRELINE, for
-	_field_bridge_wet's reason — the samples are already a metre apart, so one
-	point each is the whole stretch."""
+	"""Is this polyline in the water at sample `i`? THE CENTRELINE, for
+	_field_bridge_wet's reason — the caller has already resampled finely enough
+	that one point each is the whole stretch, which is a metre for the approach
+	corridor and half a station for a bike trunk (`bike_trunk_bridges` says why the
+	two differ)."""
 	return terrain.is_river_at(Vector3(pts[i].x, 0.0, pts[i].y))
 
 
@@ -1044,6 +1297,31 @@ static func field_bridges_near(terrain: Node3D, x0: float, x1: float) -> Array:
 		if poly[poly.size() - 1].x < x0 - reach or poly[0].x > x1 + reach:
 			continue
 		rows.append(row)
+	# ...and THE BIKE TRUNKS' decks (bead godot-test1-pnvb.3), the third source of
+	# a centreline. Registering them HERE is the whole of what makes a bike bridge
+	# real rather than a shape: `field_bridge_surface_y` (what stands on the deck),
+	# `field_bridge_stand_y` (bodies) and `_field_bridge_decked` all route through
+	# this one function, and they are why a crocodile spawns ON a trunk deck instead
+	# of under it.
+	#
+	# THE KILL SWITCH IS HERE AND NOT ONLY AT THE SPAWNER: with `spawn_bike_paths`
+	# off this family must be invisible to every query as well as to every batch, or
+	# `bike_path_selfcheck` check 1's A/B is measuring a world that still has bike
+	# stone in it. The early return costs one bool and it is what makes the flag
+	# true.
+	#
+	# REJECTED ON THE POLYLINE'S OWN X EXTENT, not on its endpoints. The two sources
+	# above are monotone in X by construction; a trunk runs between two anchors and
+	# may head due north, so `poly[0]` and `poly[-1]` say nothing about how far west
+	# it reached. The box is computed once, over every point, when the row is built.
+	if terrain.spawn_bike_paths:
+		for trunk_v: Variant in terrain.bike_trunks():
+			for row_v: Variant in ((trunk_v as Dictionary)["bridges"] as Array):
+				var row: Dictionary = row_v
+				var box: Rect2 = row["box"]
+				if box.end.x < x0 - reach or box.position.x > x1 + reach:
+					continue
+				rows.append(row)
 	return rows
 
 
@@ -1220,101 +1498,141 @@ static func spawn_field_bridges_in_chunk(terrain: Node3D, chunk_pos: Vector2i, b
 	rng.seed = FIELD_BRIDGE_STREAM_SEED
 	for row_v: Variant in rows:
 		var row: Dictionary = row_v
-		var poly: PackedVector2Array = row["poly"]
-		# The two parapet lines, mitred, one per deck edge — segment `i` of each
-		# belongs to slab `i`. Once per row per CHUNK, not once per slab: it is
-		# pure in the row (so it is cached nowhere and can leak across no
-		# re-seed) and it is a couple of dozen normalises against a window scan
-		# this feature already budgets in milliseconds.
-		var rail_off: float = float(row["half"]) + FIELD_BRIDGE_PARAPET_WIDTH * 0.5
-		var rails: Array[PackedVector2Array] = [
-			_field_bridge_rail_line(poly, rail_off),
-			_field_bridge_rail_line(poly, -rail_off),
-		]
-		var slabs := _field_bridge_slabs(row)
-		for i in slabs.size():
-			var slab: Dictionary = slabs[i]
-			var dir: Vector2 = slab["dir"]
-			var run_h: float = slab["len"]
-			var y_a: float = slab["y_a"]
-			var y_b: float = slab["y_b"]
-			var half: float = slab["half"]
-			var mid: Vector2 = Vector2(slab["start"]) + dir * run_h * 0.5
-			var rise := y_b - y_a
-			var length := sqrt(run_h * run_h + rise * rise)
-			# create_box composes Basis(UP, yaw) * Basis(RIGHT, tilt), so a box
-			# long in LOCAL Z is tipped by `tilt` and swung to its heading by
-			# `yaw` — the derivation _city_ramp_slice spells out. Local +Z lands
-			# on (cos(tilt) * sin(yaw), -sin(tilt), cos(tilt) * cos(yaw)), so
-			# yaw = atan2(dir.x, dir.y) points it along this segment and
-			# tilt = -atan2(rise, run) tips it up that segment's climb.
-			var yaw := atan2(dir.x, dir.y)
-			var tilt := -atan2(rise, run_h)
-			var surface := (y_a + y_b) * 0.5
-			if terrain.world_to_chunk(Vector3(mid.x, 0.0, mid.y)) == chunk_pos:
-				terrain.create_box(
-						Vector3(mid.x - centre.x,
-								surface - FIELD_BRIDGE_THICKNESS * 0.5,
-								mid.y - centre.z),
-						Vector3(half * 2.0, FIELD_BRIDGE_THICKNESS, length),
-						yaw, rng, block_batch, block_body, tilt,
-						FIELD_BRIDGE_STONE)
+		# A BIKE TRUNK'S DECK IS NOT THIS SPAWNER'S (bead godot-test1-pnvb.3), and
+		# that is the kill switch rather than tidiness: `spawn_bike_path_in_chunk`
+		# runs BEFORE this function, so a deck emitted here would split the bike
+		# family's batch entries into two ranges and `bike_path_selfcheck` check 1 —
+		# which cuts ONE contiguous run out of the CUBE bucket — could no longer
+		# slice it. The bike family asks `emit_bridge_in_chunk` for its own decks at
+		# its own single emission site.
+		if bool(row.get("bike", false)):
+			continue
+		emit_bridge_in_chunk(terrain, row, chunk_pos, centre, rng, block_batch, block_body)
 
-			# THE PARAPETS — one per edge of this slab, ramps included, because a
-			# rail that stops where the deck does is a rail you walk off the side
-			# of the approach. A rail segment is parallel to its slab (offset
-			# lines are), so it takes the slab's own `yaw`; only its LENGTH moves,
-			# which is what a mitre does at a turn.
-			#
-			# EACH ONE TAKES THE CENTRE RULE FOR ITSELF: a parapet's midpoint is
-			# 8.25 m off its slab's, so the chunk that owns the slab is routinely
-			# not the chunk that owns the wall — the rule slices a BOX.
-			for rail_v: Variant in rails:
-				var rail: PackedVector2Array = rail_v
-				var r_mid: Vector2 = (rail[i] + rail[i + 1]) * 0.5
-				var r_run: float = rail[i].distance_to(rail[i + 1])
-				if r_run <= EDGE_EPS:
-					continue
-				if terrain.world_to_chunk(Vector3(r_mid.x, 0.0, r_mid.y)) != chunk_pos:
-					continue
-				terrain.create_box(
-						Vector3(r_mid.x - centre.x,
-								surface + (FIELD_BRIDGE_PARAPET_HEIGHT
-										- FIELD_BRIDGE_THICKNESS) * 0.5,
-								r_mid.y - centre.z),
-						Vector3(FIELD_BRIDGE_PARAPET_WIDTH,
-								FIELD_BRIDGE_PARAPET_HEIGHT + FIELD_BRIDGE_THICKNESS,
-								sqrt(r_run * r_run + rise * rise)),
-						yaw, rng, block_batch, block_body,
-						-atan2(rise, r_run), FIELD_BRIDGE_PARAPET_STONE)
 
-		# THE PYLON PAIR AT EACH BANK. The deck's two ends are poly[1] and
-		# poly[-2] by construction (_field_bridge_row_from appends a ramp foot
-		# outside each of them), and the slab meeting each is COLINEAR with the
-		# deck segment beyond it — so the heading is that segment's and there is
-		# no fourth description of the bridge's shape to keep in step.
-		var last := poly.size() - 1
-		for bank in [
-			{ "at": poly[1], "dir": (poly[2] - poly[1]).normalized() },
-			{ "at": poly[last - 1], "dir": (poly[last - 1] - poly[last - 2]).normalized() },
-		]:
-			var b_dir: Vector2 = bank["dir"]
-			var b_perp := Vector2(b_dir.y, -b_dir.x)
-			var b_top := FIELD_BRIDGE_TOP + FIELD_BRIDGE_PYLON_RISE
-			for side in [-1.0, 1.0]:
-				# OUTBOARD OF THE PARAPET'S CENTRE LINE by half a pylon, so the
-				# two solids interpenetrate rather than share a face — see the
-				# const block for why flush is z-fighting and not tidiness.
-				var at: Vector2 = Vector2(bank["at"]) + b_perp * (side
-						* (float(row["half"]) + FIELD_BRIDGE_PARAPET_WIDTH * 0.5
-								+ FIELD_BRIDGE_PYLON_WIDTH * 0.5))
-				if terrain.world_to_chunk(Vector3(at.x, 0.0, at.y)) != chunk_pos:
-					continue
-				terrain.create_box(
-						Vector3(at.x - centre.x, b_top * 0.5, at.y - centre.z),
-						Vector3(FIELD_BRIDGE_PYLON_WIDTH, b_top,
-								FIELD_BRIDGE_PYLON_DEPTH),
-						atan2(b_dir.x, b_dir.y), rng, block_batch, block_body,
-						0.0, FIELD_BRIDGE_PYLON_STONE, false)
+static func emit_bridge_in_chunk(terrain: Node3D, row: Dictionary, chunk_pos: Vector2i,
+		centre: Vector3, rng: RandomNumberGenerator, block_batch: Array,
+		block_body: StaticBody3D, deck_color: Color = FIELD_BRIDGE_STONE,
+		pylons: bool = true) -> void:
+	"""
+	ONE bridge row's share of ONE chunk — the deck slabs, the parapets and (for the
+	road) the pylon pair, each taking the centre rule for itself.
+
+	@param centre: `terrain.chunk_to_world(chunk_pos)`, which both callers already
+	               hold.
+	@param deck_color / @param pylons: THE ONLY TWO THINGS A BIKE TRUNK'S DECK
+	               CHANGES. Its slabs are painted in the family's own strip colour
+	               so the red line reads as continuous over the water (there is no
+	               separate strip box on a deck — a second flat box lying on the
+	               slab would be the "paint at ground level over a deck" defect
+	               `bike_path_selfcheck` B2 exists to catch), and it carries no
+	               pylons: a 0.9 m post rising 4.8 m at the bank of a 2.4 m wide
+	               path reads as a gateway, judged by eye. Everything else — the
+	               profile, the mitre, the centre rule, the zero-RNG rule — is the
+	               road's, because a second copy is how the two would drift apart.
+
+	SPLIT OUT OF `spawn_field_bridges_in_chunk` BY bead godot-test1-pnvb.3 and
+	otherwise unchanged, so the road's stone is byte-identical: the loop below is
+	the shipped one, moved.
+	"""
+	var poly: PackedVector2Array = row["poly"]
+	# The two parapet lines, mitred, one per deck edge — segment `i` of each
+	# belongs to slab `i`. Once per row per CHUNK, not once per slab: it is
+	# pure in the row (so it is cached nowhere and can leak across no
+	# re-seed) and it is a couple of dozen normalises against a window scan
+	# this feature already budgets in milliseconds.
+	var rail_off: float = float(row["half"]) + FIELD_BRIDGE_PARAPET_WIDTH * 0.5
+	var rails: Array[PackedVector2Array] = [
+		_field_bridge_rail_line(poly, rail_off),
+		_field_bridge_rail_line(poly, -rail_off),
+	]
+	var slabs := _field_bridge_slabs(row)
+	for i in slabs.size():
+		var slab: Dictionary = slabs[i]
+		var dir: Vector2 = slab["dir"]
+		var run_h: float = slab["len"]
+		var y_a: float = slab["y_a"]
+		var y_b: float = slab["y_b"]
+		var half: float = slab["half"]
+		var mid: Vector2 = Vector2(slab["start"]) + dir * run_h * 0.5
+		var rise := y_b - y_a
+		var length := sqrt(run_h * run_h + rise * rise)
+		# create_box composes Basis(UP, yaw) * Basis(RIGHT, tilt), so a box
+		# long in LOCAL Z is tipped by `tilt` and swung to its heading by
+		# `yaw` — the derivation _city_ramp_slice spells out. Local +Z lands
+		# on (cos(tilt) * sin(yaw), -sin(tilt), cos(tilt) * cos(yaw)), so
+		# yaw = atan2(dir.x, dir.y) points it along this segment and
+		# tilt = -atan2(rise, run) tips it up that segment's climb.
+		var yaw := atan2(dir.x, dir.y)
+		var tilt := -atan2(rise, run_h)
+		var surface := (y_a + y_b) * 0.5
+		if terrain.world_to_chunk(Vector3(mid.x, 0.0, mid.y)) == chunk_pos:
+			terrain.create_box(
+					Vector3(mid.x - centre.x,
+							surface - FIELD_BRIDGE_THICKNESS * 0.5,
+							mid.y - centre.z),
+					Vector3(half * 2.0, FIELD_BRIDGE_THICKNESS, length),
+					yaw, rng, block_batch, block_body, tilt,
+					deck_color)
+
+		# THE PARAPETS — one per edge of this slab, ramps included, because a
+		# rail that stops where the deck does is a rail you walk off the side
+		# of the approach. A rail segment is parallel to its slab (offset
+		# lines are), so it takes the slab's own `yaw`; only its LENGTH moves,
+		# which is what a mitre does at a turn.
+		#
+		# EACH ONE TAKES THE CENTRE RULE FOR ITSELF: a parapet's midpoint is
+		# 8.25 m off its slab's, so the chunk that owns the slab is routinely
+		# not the chunk that owns the wall — the rule slices a BOX.
+		for rail_v: Variant in rails:
+			var rail: PackedVector2Array = rail_v
+			var r_mid: Vector2 = (rail[i] + rail[i + 1]) * 0.5
+			var r_run: float = rail[i].distance_to(rail[i + 1])
+			if r_run <= EDGE_EPS:
+				continue
+			if terrain.world_to_chunk(Vector3(r_mid.x, 0.0, r_mid.y)) != chunk_pos:
+				continue
+			terrain.create_box(
+					Vector3(r_mid.x - centre.x,
+							surface + (FIELD_BRIDGE_PARAPET_HEIGHT
+									- FIELD_BRIDGE_THICKNESS) * 0.5,
+							r_mid.y - centre.z),
+					Vector3(FIELD_BRIDGE_PARAPET_WIDTH,
+							FIELD_BRIDGE_PARAPET_HEIGHT + FIELD_BRIDGE_THICKNESS,
+							sqrt(r_run * r_run + rise * rise)),
+					yaw, rng, block_batch, block_body,
+					-atan2(rise, r_run), FIELD_BRIDGE_PARAPET_STONE)
+
+	# THE PYLON PAIR AT EACH BANK. The deck's two ends are poly[1] and
+	# poly[-2] by construction (_field_bridge_row_from appends a ramp foot
+	# outside each of them), and the slab meeting each is COLINEAR with the
+	# deck segment beyond it — so the heading is that segment's and there is
+	# no fourth description of the bridge's shape to keep in step.
+	# ...AND THE PYLON PAIR, road decks only (see the `pylons` parameter).
+	if not pylons:
+		return
+	var last := poly.size() - 1
+	for bank in [
+		{ "at": poly[1], "dir": (poly[2] - poly[1]).normalized() },
+		{ "at": poly[last - 1], "dir": (poly[last - 1] - poly[last - 2]).normalized() },
+	]:
+		var b_dir: Vector2 = bank["dir"]
+		var b_perp := Vector2(b_dir.y, -b_dir.x)
+		var b_top := FIELD_BRIDGE_TOP + FIELD_BRIDGE_PYLON_RISE
+		for side in [-1.0, 1.0]:
+			# OUTBOARD OF THE PARAPET'S CENTRE LINE by half a pylon, so the
+			# two solids interpenetrate rather than share a face — see the
+			# const block for why flush is z-fighting and not tidiness.
+			var at: Vector2 = Vector2(bank["at"]) + b_perp * (side
+					* (float(row["half"]) + FIELD_BRIDGE_PARAPET_WIDTH * 0.5
+							+ FIELD_BRIDGE_PYLON_WIDTH * 0.5))
+			if terrain.world_to_chunk(Vector3(at.x, 0.0, at.y)) != chunk_pos:
+				continue
+			terrain.create_box(
+					Vector3(at.x - centre.x, b_top * 0.5, at.y - centre.z),
+					Vector3(FIELD_BRIDGE_PYLON_WIDTH, b_top,
+							FIELD_BRIDGE_PYLON_DEPTH),
+					atan2(b_dir.x, b_dir.y), rng, block_batch, block_body,
+					0.0, FIELD_BRIDGE_PYLON_STONE, false)
 
 
