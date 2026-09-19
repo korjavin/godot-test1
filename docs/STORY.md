@@ -53,7 +53,7 @@ spellings in-game: **Windman, Primm, Teibi, Phoboman** (the sheets' "Tiebe"
 and "Pho-boman" are older spellings of the same people).
 
 Each hero has an F power from the first second, and a G **second skill** learned
-in the skill tree (K). No second skill kills: they scare, blind or shrink.
+in the skill tree (K). No second skill kills: they scare, reveal or shrink.
 
 | Hero | Power (F) | Second skill (G) | Story role |
 |---|---|---|---|

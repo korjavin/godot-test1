@@ -581,9 +581,20 @@ func _check_shrink_pulse(croc_ai: GDScript) -> void:
 	#
 	# Driven through the three SHIPPED entry points and nothing else, because the
 	# bug lives in how they compose: `set_remote_state`, `clear_remote_drive`, then
-	# one ordinary `_physics_process`. `is_fleeing` rides along as the CONTROL — the
-	# sibling flag whose countdown is gated the right way already — so "the shrink
-	# cleared" cannot be true because the probe reset everything.
+	# one ordinary `_physics_process`.
+	#
+	# THE CONTROL IS THE OPPOSITE OUTCOME AT THE MIDDLE STEP, like every other
+	# control in this check (the twin that must NOT shrink, the twin that MUST
+	# bite, the twin that MUST acquire). The flag has to SURVIVE
+	# `clear_remote_drive()` and be gone one frame later, because that pair is what
+	# names the mechanism: an implementation that cleared the shrink inside
+	# `clear_remote_drive()` instead would also leave the body un-shrunk at the end
+	# — and would leave the LATCH itself untested, since the countdown's gate would
+	# never be consulted. That was the alternative fix considered in round 1, so it
+	# is a build somebody could plausibly write. (Review round 3 caught the first
+	# version of this probe asserting the same direction for `is_fleeing` as for
+	# `is_shrunk`, which discriminated nothing at all: both flags come off the wire
+	# in the identical shape and both self-clear the same way.)
 	var wired: Node = load(CROC_SCENE).instantiate()
 	wired.species = "crocodile"
 	root.add_child(wired)
@@ -594,6 +605,14 @@ func _check_shrink_pulse(croc_ai: GDScript) -> void:
 		_fail("shrink: a sample carrying CROC_FLAG_SHRUNK left the body un-shrunk"
 				+ " (shrunk %s, remote %s) — the latch probe below has nothing to"
 				% [wired.is_shrunk, wired.remote_driven] + " un-latch")
+	# `is_fleeing` is not a control, it is the LIVENESS half: the same sample arms
+	# it, so a body that ends the probe with both flags gone really did run the
+	# local branch that spends a zero clock, rather than never having been armed.
+	# Asserted armed HERE so it cannot pass by never having been set.
+	if not bool(wired.is_fleeing):
+		_fail("shrink: the same sample did not arm is_fleeing, so the liveness"
+				+ " half of the wired probe would pass on a body that was never"
+				+ " given anything to clear")
 	if float(wired.shrunk_time_remaining) != 0.0:
 		_fail("shrink: a wire-driven body started a clock of its own (%.2f s) —"
 				% float(wired.shrunk_time_remaining) + " the master owns the window,"
@@ -602,6 +621,15 @@ func _check_shrink_pulse(croc_ai: GDScript) -> void:
 	if bool(wired.remote_driven):
 		_fail("shrink: clear_remote_drive() left the body remote-driven, so the"
 				+ " local frame below never runs its own AI")
+	# THE CONTROL: still shrunk at this point, because an AWAKE body is handed back
+	# to its own AI and it is the AI's next frame that clears it. `clear_remote_drive`
+	# clears the shrink only for a body whose physics stays OFF (a slept one, which
+	# would get no such frame) — see its own note.
+	if bool(wired.lod_active) and not bool(wired.is_shrunk):
+		_fail("shrink: clear_remote_drive() cleared the shrink on an AWAKE body"
+				+ " itself, so the assertion below passes without the countdown's"
+				+ " flag gate ever being consulted — and the latch this probe"
+				+ " exists for would ship untested behind it")
 	wired._physics_process(step)
 	if bool(wired.is_shrunk):
 		_fail("shrink: a body handed CROC_FLAG_SHRUNK over the wire and then handed"
@@ -610,10 +638,43 @@ func _check_shrink_pulse(croc_ai: GDScript) -> void:
 				+ " wire-driven shrink carries no clock, so this body is ankle-high"
 				+ " and harmless for the rest of the run")
 	if bool(wired.is_fleeing):
-		_fail("shrink: the CONTROL flag (is_fleeing) also survived the same frame,"
-				+ " so the shrink clearing above would prove nothing about the"
-				+ " shrink — something is wrong with the probe, not the feature")
+		_fail("shrink: the sibling flag (is_fleeing) also survived that frame, so"
+				+ " the body never ran its own AI at all and the shrink clearing"
+				+ " above is somebody else's doing")
 	wired.free()
+
+	# ...AND THE SLEPT VARIANT, which has no LOD transition to rescue it (review
+	# round 3). The order is what makes it its own case: the manager sleeps the
+	# body at ~52 m BEFORE any pulse, the master (whose sync radius is 55 m) then
+	# syncs and shrinks it, and when the samples stop `lod_active` has never
+	# changed — so `set_lod_active()` no-ops, `clear_remote_drive()` hands the
+	# physics switch back OFF, and `_tick_shrink()` never gets a frame. Without the
+	# conditional clear in `clear_remote_drive()` the body sits frozen and
+	# ankle-high in the 50–60 m band between the sleep radius and the draw cull.
+	var slept_wire: Node = load(CROC_SCENE).instantiate()
+	slept_wire.species = "crocodile"
+	root.add_child(slept_wire)
+	slept_wire.lod_active = false          # the manager put it to sleep first
+	slept_wire.set_remote_state(Vector3(0.0, 0.0, 0.0), 0.0,
+			MpCodec.CROC_FLAG_SHRUNK)
+	if not bool(slept_wire.is_shrunk):
+		_fail("shrink: a slept body took no shrink off the wire, so the frozen-tiny"
+				+ " probe below has nothing frozen to measure")
+	slept_wire._animate_body(step)
+	slept_wire.clear_remote_drive()
+	if bool(slept_wire.is_shrunk):
+		_fail("shrink: a body that was ALREADY SLEPT when the wire shrank it is"
+				+ " still shrunk after losing remote drive — `lod_active` never"
+				+ " changed, so no LOD transition can clear it and its physics is"
+				+ " switched back off, leaving it frozen ankle-high inside the draw"
+				+ " cull until the player walks back within SIM_RADIUS")
+	var slept_drawn: float = (slept_wire.model as Node3D).transform.basis \
+			.get_scale().x / maxf(float(slept_wire.model_base_scale.x), 0.0001)
+	if not is_equal_approx(slept_drawn, 1.0):
+		_fail("shrink: that body is still DRAWN at %.3f of its rest size — the"
+				% slept_drawn + " state came back and the silhouette did not, and"
+				+ " nothing will animate it again until the player returns")
+	slept_wire.free()
 
 	floor_body.free()
 

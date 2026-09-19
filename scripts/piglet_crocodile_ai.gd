@@ -577,10 +577,14 @@ var is_shrunk: bool = false
 ## Seconds of shrink left (counts down to 0; always 0 on a remote-driven body).
 var shrunk_time_remaining: float = 0.0
 ## What the model is ACTUALLY drawn at right now: 1.0 normal, `SHRUNK_SCALE`
-## fully shrunk, eased between over `SHRINK_EASE_SECONDS` in `_tick_shrink()`.
+## fully shrunk, eased between over `SHRINK_EASE_SECONDS` in
+## `_ease_shrink_factor()` — which is a different function from the CLOCK's
+## (`_tick_shrink`) and deliberately so; the two run on different paths.
 ## The BASIS is rewritten every frame from `model_base_scale` (see
 ## `_animate_body`), so a tween on `model.scale` would be overwritten on the next
-## frame — the FACTOR is what eases, and the basis multiplies by it.
+## frame — the FACTOR is what eases, and the basis multiplies by it. It is an
+## INPUT to that basis and never the drawn size on its own, which is why
+## `set_lod_active()` writes the basis back as well as resetting this.
 var _shrink_factor: float = 1.0
 
 ## Boss flags, set by the terrain via setup_as_boss() BEFORE this node enters
@@ -2612,6 +2616,36 @@ func shrink_for(seconds: float) -> void:
 		_spot_label.visible = false
 
 
+func _clear_shrink() -> void:
+	"""
+	Put this body back to full size AND TO FULL SIZE ON SCREEN — the one writer of
+	"the shrink is over" for every path that is not the clock.
+
+	THE BASIS IS WRITTEN, NOT JUST THE FACTOR (review round 1). `_shrink_factor`
+	is an INPUT to the two `scaled_local` lines in `_animate_body` /
+	`_animate_bite`, and every caller below is a body that is about to stop
+	running either — so resetting the variable alone leaves the LAST ANIMATED
+	basis on screen at 0.45. Sleep is at ~50 m and `VISUAL_CULL_DISTANCE` is 60,
+	so that is a 10 m band in which a frozen ankle-high crocodile is genuinely
+	drawn. `orthonormalized()` recovers the rotation those two lines composed and
+	`scaled_local` puts the rest scale back on it: the same composition at factor
+	1.0, with no animation input re-derived. Both compositions are
+	rotation-times-scale, so the round trip is exact — including for a row whose
+	`model_base_scale` is non-uniform, like the green dragon's 1, 1.6, 1.
+
+	IT IS NOT THE ORDINARY END OF A SHRINK. That is `_tick_shrink()` spending the
+	clock, which leaves `_ease_shrink_factor()` to pop the body back over
+	`SHRINK_EASE_SECONDS`. This is the abrupt version, for the two paths where
+	there will be no next animated frame to ease on.
+	"""
+	is_shrunk = false
+	shrunk_time_remaining = 0.0
+	_shrink_factor = 1.0
+	if model != null:
+		model.transform.basis = model.transform.basis.orthonormalized() \
+				.scaled_local(model_base_scale)
+
+
 func _tick_shrink(delta: float) -> void:
 	"""
 	Spend the shrink clock. Called from `_physics_process` beside
@@ -2914,21 +2948,8 @@ func set_lod_active(active: bool) -> void:
 	# nothing honest: `shrink_for()` refuses a slept body, so no legitimate shrink
 	# can be waiting here, and a remote one is restored by the master's next sample
 	# 100 ms later.
-	is_shrunk = false
-	shrunk_time_remaining = 0.0
-	_shrink_factor = 1.0
-	# AND THE DRAWN BASIS WITH IT, because the factor is not what is drawn (review
-	# round 1). The mesh transform is written in exactly two places, both inside
-	# `_animate_body`/`_animate_bite`, and a slept body runs neither — so resetting
-	# the variable alone leaves the LAST ANIMATED basis on screen at 0.45 for the
-	# whole sleep. Sleep is at ~50 m and `VISUAL_CULL_DISTANCE` is 60, so that is a
-	# 10 m band in which a frozen ankle-high crocodile is genuinely visible.
-	# `orthonormalized()` recovers the rotation those two lines composed and
-	# `scaled_local` puts the rest scale back on it — the same composition, at
-	# factor 1.0, without re-deriving a single animation input.
-	if model != null:
-		model.transform.basis = model.transform.basis.orthonormalized() \
-				.scaled_local(model_base_scale)
+	# ...and the DRAWN size with it, which is `_clear_shrink()`'s whole point.
+	_clear_shrink()
 
 
 # ============================================================================
@@ -3115,6 +3136,20 @@ func clear_remote_drive() -> void:
 	if not is_in_group("crocodile"):
 		return
 	velocity = Vector3.ZERO
+	# A BODY HANDED BACK WITH ITS PHYSICS STILL OFF KEEPS NOTHING (bead
+	# godot-test1-0mr0.4, review round 3). The sleep order matters and this is the
+	# half `set_lod_active()` cannot reach: the LOD manager sleeps a body at ~52 m
+	# BEFORE any pulse, the master — whose `CROC_SYNC_RADIUS` is 55 m — then syncs
+	# it and shrinks it, and when the samples stop there is no LOD TRANSITION to
+	# clear anything, because `lod_active` never changed. The line below hands the
+	# physics switch back off, so `_tick_shrink()` gets no frame either, and the
+	# body would sit frozen and ankle-high in the 50–60 m band until the player
+	# walked back inside 45 m. Conditional on `lod_active` rather than
+	# unconditional precisely so it does NOT pre-empt the ordinary path: an AWAKE
+	# body keeps its flag here and clears it on its own next frame, which is the
+	# guarantee `_tick_shrink()`'s flag gate exists to give.
+	if not lod_active:
+		_clear_shrink()
 	# Hand the physics switch back to the LOD manager's last decision. While we
 	# were remote-driven set_remote_state() forced processing ON regardless of
 	# `lod_active` (see there); leaving it on for a crocodile the manager thinks is
