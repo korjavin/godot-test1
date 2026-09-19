@@ -1024,9 +1024,10 @@ func _check_hunter_sync() -> String:
 	  3. THE FLAG BYTE. Every combination the encoder can produce round-trips
 	     through a real hunter body byte-identically. That is the executable form
 	     of this bead's ruling that the hunt states owe no new bit (see
-	     CROC_FLAG_BURROWED's note in mp_codec.gd): today five bits, five
-	     restored, and the day someone adds a sixth for a pose motion cannot
-	     show, this fails until `set_remote_state` learns it too.
+	     CROC_FLAG_BURROWED's note in mp_codec.gd): today SIX bits, six restored
+	     — the sixth is the Shrink Ray's scale, which is precisely the "pose
+	     motion cannot show" that note reserved bit 32 for — and the day someone
+	     adds a seventh, this fails until `set_remote_state` learns it too.
 	"""
 	# --- 1. Identity. Distinct namespaces, and wire-safe over the real scheme.
 	var hunter_name: String = "Hunter_3_-4_0"
@@ -1076,7 +1077,14 @@ func _check_hunter_sync() -> String:
 	var sender: Node = _spawn_hunter("Hunter_7_7_0")
 	var receiver: Node = _spawn_hunter("Hunter_7_7_1")
 	var fields: Array[String] = [
-		"is_chasing", "is_fleeing", "is_paused", "is_biting", "is_burrowed"
+		"is_chasing", "is_fleeing", "is_paused", "is_biting", "is_burrowed",
+		# THE SIXTH BIT, and the mask assertion below is what demanded it: Teibi's
+		# Shrink Ray (bead godot-test1-0mr0.4) spent `CROC_FLAG_SHRUNK`, so adding
+		# the bit to `mp_codec.gd` without this line fails the `full != declared`
+		# test by name — which is exactly the guard the docstring above promises
+		# ("the day someone adds a sixth for a pose motion cannot show, this fails
+		# until `set_remote_state` learns it too").
+		"is_shrunk",
 	]
 
 	# THE SWEEP IS ONLY AS COMPLETE AS THIS LIST, so the list is checked against

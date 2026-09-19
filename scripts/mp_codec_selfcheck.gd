@@ -94,6 +94,9 @@ func _run_checks() -> String:
 	failure = _check_alrm_parser()
 	if not failure.is_empty():
 		return failure
+	failure = _check_shr_parser()
+	if not failure.is_empty():
+		return failure
 	return _check_ability_visual_state()
 
 
@@ -1137,6 +1140,128 @@ func _check_alrm_parser() -> String:
 	if not MpCodec.alarm_sender_at_hq(hq, Vector3.INF):
 		return "alarm_sender_at_hq refused an unplaceable tower — same fail-open rule"
 	Sentinel.done("alrm_parser")
+	return ""
+
+
+func _check_shr_parser() -> String:
+	"""
+	The `shr` verb — Teibi's Shrink Ray, bead godot-test1-0mr0.4 — against hostile
+	packets, in `_check_alrm_parser`'s idiom one verb along.
+
+	THE HONEST PACKET COMES FIRST AND IT IS THE POINT: a parser that returned `{}`
+	for everything would pass every rejection below while leaving the skill dead on
+	every screen but the caster's, and nothing else in this file would notice.
+
+	WHAT MAKES THIS VERB WORTH ITS OWN BOUNDARY is that a shrunk predator cannot
+	acquire and cannot bite, so the two numbers it carries are both DISARM knobs. An
+	unbounded `d` disarms the pack for the rest of the run; a zero or missing `r` —
+	which the `flee` verb this is modelled on reads as "unbounded", because
+	Phoboman's wave genuinely is global — would hand one packet every awake body in
+	the room. So the radius is MANDATORY AND POSITIVE here, and that difference from
+	the sibling verb is asserted rather than merely commented.
+
+	The bounds are read off the codec itself, never re-typed: a check that wrote 30
+	and 20 down again would pass the day somebody retuned the parser and stopped
+	agreeing with it.
+	"""
+	var max_d: float = MP_CODEC.MAX_SHRINK_DURATION
+	var max_r: float = MP_CODEC.MAX_SHRINK_RADIUS
+	var honest: Dictionary = {
+		"t": "shr", "x": 12.5, "y": 0.0, "z": -7.25, "d": 6.0, "r": 8.0,
+	}
+	var good: Dictionary = MpCodec.decode_shr(honest)
+	if good.is_empty():
+		return "decode_shr dropped an honest pulse"
+	if (good["origin"] as Vector3) != Vector3(12.5, 0.0, -7.25) \
+			or not is_equal_approx(float(good["d"]), 6.0) \
+			or not is_equal_approx(float(good["r"]), 8.0):
+		return "decode_shr changed an honest pulse (%s)" % str(good)
+
+	# An honest round-trip THROUGH BYTES: what the caster sends must survive the
+	# codec, or the master shrinks nothing and the peer's screen is the only one
+	# where the pack went small.
+	var trip: Dictionary = MpCodec.decode_shr(bytes_to_var(var_to_bytes(honest)))
+	if trip.is_empty() or str(trip) != str(good):
+		return "decode_shr did not round-trip an honest pulse (%s)" % str(trip)
+
+	# THE SHIPPED PULSE MUST FIT INSIDE THE BOUNDS, or the skill is rejected by its
+	# own trust boundary on every screen but the caster's — the failure a bounds
+	# check cannot see by looking at bounds alone. Read off the ability, so a retune
+	# of either number lands here rather than in a bug report.
+	var ability: Dictionary = Player.get_script_constant_map()
+	var shipped_d: float = float(ability.get("TEIBI_SHRINK_DURATION", 0.0))
+	var shipped_r: float = float(ability.get("TEIBI_SHRINK_RADIUS", 0.0))
+	if shipped_d <= 0.0 or shipped_r <= 0.0:
+		return "could not read TEIBI_SHRINK_DURATION / TEIBI_SHRINK_RADIUS off" \
+			+ " player_controller.gd — the shipped-pulse test below would be vacuous"
+	if MpCodec.decode_shr({"t": "shr", "x": 0.0, "y": 0.0, "z": 0.0,
+			"d": shipped_d, "r": shipped_r}).is_empty():
+		return "decode_shr drops the pulse the game actually fires (d %.1f, r %.1f)" \
+			% [shipped_d, shipped_r]
+	# ...and the edges are INCLUSIVE at the bound itself.
+	if MpCodec.decode_shr({"t": "shr", "x": 0.0, "y": 0.0, "z": 0.0,
+			"d": max_d, "r": max_r}).is_empty():
+		return "decode_shr dropped a pulse exactly on its bounds (d %.1f, r %.1f)" \
+			% [max_d, max_r]
+
+	# ...and everything a peer that is not speaking this protocol could send.
+	var hostile: Array[Dictionary] = [
+		{"t": "shr"},                                                     # nothing at all
+		{"t": "shr", "y": 0.0, "z": 0.0, "d": 6.0, "r": 8.0},             # no x
+		{"t": "shr", "x": 0.0, "z": 0.0, "d": 6.0, "r": 8.0},             # no y
+		{"t": "shr", "x": 0.0, "y": 0.0, "d": 6.0, "r": 8.0},             # no z
+		{"t": "shr", "x": 0.0, "y": 0.0, "z": 0.0, "r": 8.0},             # no duration
+		# NO RADIUS — the verb this one is modelled on reads that as "unbounded".
+		{"t": "shr", "x": 0.0, "y": 0.0, "z": 0.0, "d": 6.0},
+		{"t": "shr", "x": "0", "y": 0.0, "z": 0.0, "d": 6.0, "r": 8.0},   # x is a string
+		{"t": "shr", "x": Vector2.ZERO, "y": 0.0, "z": 0.0, "d": 6.0, "r": 8.0},
+		{"t": "shr", "x": 0.0, "y": 0.0, "z": 0.0, "d": "6", "r": 8.0},   # d is a string
+		{"t": "shr", "x": 0.0, "y": 0.0, "z": 0.0, "d": true, "r": 8.0},  # ...or a bool
+		{"t": "shr", "x": 0.0, "y": 0.0, "z": 0.0, "d": 6.0, "r": [8.0]}, # r is an array
+		{"t": "shr", "x": 0.0, "y": 0.0, "z": 0.0, "d": 6.0, "r": null},  # ...or nothing
+		{"t": "shr", "x": NAN, "y": 0.0, "z": 0.0, "d": 6.0, "r": 8.0},   # absf(NAN) > MAX is FALSE
+		{"t": "shr", "x": 0.0, "y": NAN, "z": 0.0, "d": 6.0, "r": 8.0},
+		{"t": "shr", "x": 0.0, "y": 0.0, "z": NAN, "d": 6.0, "r": 8.0},
+		{"t": "shr", "x": INF, "y": 0.0, "z": 0.0, "d": 6.0, "r": 8.0},
+		{"t": "shr", "x": 0.0, "y": 0.0, "z": -INF, "d": 6.0, "r": 8.0},
+		{"t": "shr", "x": 1.0e9, "y": 0.0, "z": 0.0, "d": 6.0, "r": 8.0}, # past the world
+		{"t": "shr", "x": 0.0, "y": 0.0, "z": 0.0, "d": NAN, "r": 8.0},   # NAN <= 0.0 is FALSE too
+		{"t": "shr", "x": 0.0, "y": 0.0, "z": 0.0, "d": INF, "r": 8.0},
+		{"t": "shr", "x": 0.0, "y": 0.0, "z": 0.0, "d": 0.0, "r": 8.0},   # a pulse of no length
+		{"t": "shr", "x": 0.0, "y": 0.0, "z": 0.0, "d": -6.0, "r": 8.0},
+		{"t": "shr", "x": 0.0, "y": 0.0, "z": 0.0, "d": max_d + 0.1, "r": 8.0},
+		{"t": "shr", "x": 0.0, "y": 0.0, "z": 0.0, "d": 1.0e9, "r": 8.0}, # the whole run
+		# ...and the radius, where a NaN would make every distance test answer
+		# false: a silent no-op that looks exactly like a working feature.
+		{"t": "shr", "x": 0.0, "y": 0.0, "z": 0.0, "d": 6.0, "r": NAN},
+		{"t": "shr", "x": 0.0, "y": 0.0, "z": 0.0, "d": 6.0, "r": INF},
+		{"t": "shr", "x": 0.0, "y": 0.0, "z": 0.0, "d": 6.0, "r": 0.0},
+		{"t": "shr", "x": 0.0, "y": 0.0, "z": 0.0, "d": 6.0, "r": -8.0},
+		{"t": "shr", "x": 0.0, "y": 0.0, "z": 0.0, "d": 6.0, "r": max_r + 0.1},
+		{"t": "shr", "x": 0.0, "y": 0.0, "z": 0.0, "d": 6.0, "r": 1.0e9},
+	]
+	for packet: Dictionary in hostile:
+		if not MpCodec.decode_shr(packet).is_empty():
+			return "decode_shr accepted the hostile packet %s" % str(packet)
+
+	# THE VERB IS BUDGETED. It mutates bodies the master simulates for the whole
+	# room, so an unbudgeted one is a button that keeps the pack ankle-high
+	# permanently — `flee`'s reason, and the ceiling itself is written at the row.
+	if not MPManager.VERB_BUDGET_PER_SEC.has("shr"):
+		return "the shr verb has no VERB_BUDGET_PER_SEC row"
+
+	# THE FLAG BIT IS DISTINCT AND IS A SINGLE BIT. `CROC_FLAG_SHRUNK` is read with
+	# `&` on the far side, so a value overlapping an existing flag would silently
+	# make a burrowed viper read as shrunk on every peer.
+	var flags: Dictionary = MP_CODEC.get_script_constant_map()
+	var shrunk_bit: int = int(flags["CROC_FLAG_SHRUNK"])
+	if shrunk_bit <= 0 or shrunk_bit & (shrunk_bit - 1) != 0:
+		return "CROC_FLAG_SHRUNK (%d) is not a single bit" % shrunk_bit
+	for key: String in flags.keys():
+		if key.begins_with("CROC_FLAG_") and key != "CROC_FLAG_SHRUNK" \
+				and int(flags[key]) & shrunk_bit != 0:
+			return "CROC_FLAG_SHRUNK (%d) overlaps %s" % [shrunk_bit, key]
+	Sentinel.done("shr_parser")
 	return ""
 
 

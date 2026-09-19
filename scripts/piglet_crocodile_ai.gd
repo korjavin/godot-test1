@@ -50,6 +50,21 @@ const DISTANCE_SPEED_SCALE_MAX: float = 0.6
 ## SPECIES may raise it.
 const MAX_CHASE_SPEED: float = 8.5
 
+## HOW SMALL A SHRUNK BODY IS — Teibi's Shrink Ray (bead godot-test1-0mr0.4), as
+## a fraction of its normal size. It multiplies the drawn model AND the ground
+## speed, which is what makes the effect readable without a second tunable: a
+## body with ankle-high legs waddles, and a predator made SLOWER is inside the
+## speed lattice by construction (CLAUDE.md — a player made faster would not be).
+##
+## IT LIVES HERE AND NOT ON THE ABILITY. What a shrunk crocodile looks like and
+## how fast it waddles are properties of the CROCODILE; `player_abilities.gd`
+## supplies only the radius and the duration of the pulse, so the number 0.45 has
+## exactly one home and the wire needs no scale field at all.
+const SHRUNK_SCALE: float = 0.45
+## How long the pop in and the pop back take, in seconds. Short enough to read as
+## a zap and long enough not to be a one-frame teleport of the silhouette.
+const SHRINK_EASE_SECONDS: float = 0.2
+
 # ----- Pack steering (behavior == "pack") -----
 ## Aliased back from `croc_steering.gd`, which moved with `pack_steer_point()` —
 ## the only thing that reads it (bd godot-test1-ftn.16). The 25 lines on why it
@@ -545,6 +560,33 @@ var flee_source: Vector3 = Vector3.ZERO
 ## the fixed `flee_source` (false: a wave relayed from another peer in the room).
 var flee_tracks_player: bool = true
 
+## SHRUNK STATE — Teibi's Shrink Ray (bead godot-test1-0mr0.4). A shrunk body is
+## ankle-high, SLOW (its ground speed scales with its legs), HARMLESS (contact is
+## a brush-past) and CANNOT ACQUIRE — and it is NEVER CRUSHED, by anybody,
+## including giant Teibi. Owner ruling 3, 2026-09-18: killing is forbidden in this
+## game, so a skill that made a body crushable would be a kill by the back door.
+## The early return in `_on_player_collision` therefore sits ABOVE the is_boss
+## block, and `boss_immunity_selfcheck` check 7 pins that ordering.
+##
+## Same two-field shape as the flee above, for the same reason: the BOOL is what
+## every behaviour and the wire read (a remote-driven body is handed it by
+## `CROC_FLAG_SHRUNK` and runs no clock of its own), and the CLOCK is local and
+## only ever counted in `_physics_process` (`_tick_shrink`) — never in the
+## animation, which a body with no model never reaches.
+var is_shrunk: bool = false
+## Seconds of shrink left (counts down to 0; always 0 on a remote-driven body).
+var shrunk_time_remaining: float = 0.0
+## What the model is ACTUALLY drawn at right now: 1.0 normal, `SHRUNK_SCALE`
+## fully shrunk, eased between over `SHRINK_EASE_SECONDS` in
+## `_ease_shrink_factor()` — which is a different function from the CLOCK's
+## (`_tick_shrink`) and deliberately so; the two run on different paths.
+## The BASIS is rewritten every frame from `model_base_scale` (see
+## `_animate_body`), so a tween on `model.scale` would be overwritten on the next
+## frame — the FACTOR is what eases, and the basis multiplies by it. It is an
+## INPUT to that basis and never the drawn size on its own, which is why
+## `set_lod_active()` writes the basis back as well as resetting this.
+var _shrink_factor: float = 1.0
+
 ## Boss flags, set by the terrain via setup_as_boss() BEFORE this node enters
 ## the tree (so _ready sees them). A boss skips the per-instance random
 ## speed/size rolls — its size comes from the deterministic schedule instead.
@@ -1006,6 +1048,11 @@ func _physics_process(delta: float) -> void:
 	# Crowd cooldown tick — before the lod gate so the frame that decides to sleep
 	# still ticks, and sleep itself is refused while the guard ticks (see set_lod_active).
 	_tick_crowd_cooldown(delta)
+	# Teibi's Shrink Ray's clock, here for the line above's reason and for one of
+	# its own: `_animate_body` returns early on a null `model`, which this file
+	# supports, so a clock spent there would latch `is_shrunk` forever on a
+	# modelless body. See `_tick_shrink()`.
+	_tick_shrink(delta)
 
 	if not lod_active:
 		velocity = Vector3.ZERO
@@ -1126,6 +1173,15 @@ func _physics_process(delta: float) -> void:
 				current_speed *= burst_factor
 			if avoiding:
 				current_speed *= spec["avoid_speed_factor"]
+			# TINY LEGS (bead godot-test1-0mr0.4). A shrunk body waddles at its own
+			# scale — the same number that draws it, so there is no second tunable
+			# to retune and no way for the look and the pace to disagree. It is a
+			# predator made SLOWER, which the speed lattice permits by construction
+			# (only a player made FASTER would break it); and it multiplies LAST so
+			# it bounds the burst arm too, whose peak is the one speed in this game
+			# allowed above MAX_CHASE_SPEED.
+			if is_shrunk:
+				current_speed *= SHRUNK_SCALE
 			velocity.x = sin(rotation.y) * current_speed
 			velocity.z = cos(rotation.y) * current_speed
 		else:
@@ -1181,6 +1237,14 @@ static func _is_quarry_giant(q: Node) -> bool:
 
 func _update_chase_state() -> void:
 	"""Check distance to the nearest quarry and update chase state."""
+	# A SHRUNK BODY CANNOT ACQUIRE (bead godot-test1-0mr0.4). Ankle-high is not a
+	# cosmetic state: the pulse drops the chase in `shrink_for()` and this is what
+	# stops it being picked straight back up on the very next frame, which is the
+	# whole of "you walk THROUGH the pack". Topmost, so it also out-votes the
+	# giant-fear refresh below — a body this small has nothing left to decide.
+	if is_shrunk:
+		is_chasing = false
+		return
 	if not player_node:
 		is_chasing = false
 		return
@@ -2496,6 +2560,164 @@ func flee_from(source: Vector3, duration: float, tracks_player: bool = true) -> 
 		_spot_label.visible = false
 
 
+func shrink_for(seconds: float) -> void:
+	"""
+	Public hook called by Teibi's Shrink Ray (via the "crocodile" group): make this
+	crocodile ankle-high for `seconds`. It becomes slow, harmless and unable to
+	acquire — and, by owner ruling 3 (2026-09-18, killing is forbidden), it is
+	NEVER crushed while it is small, not even by giant Teibi.
+
+	THE THREE EARLY RETURNS ARE `flee_from()`'s, VERBATIM AND FOR ITS REASONS, so
+	this deliberately reads as that function one effect along:
+
+	  * A BOSS SHRUGS. Immunity is a property of boss-ness, asserted on the flag
+	    and never on a species name, and it lives here rather than in a group
+	    trick so LOD sleep and the MP relay keep finding the body.
+	  * A CHASSIS DOES NOT SHRINK. `crush_immune` is the row key for "this is not
+	    flesh" — the same key the crush block reads — so the hunter robot and the
+	    HQ guards stand there at full size and the stealth layer keeps its rule.
+	    It is `spec.get`, so every animal in the table is untouched and a future
+	    armoured predator opts in with a row edit (CLAUDE.md: predators are data).
+	  * A SLEPT BODY IS NOT SHRUNK, and that is a CORRECTNESS rule rather than a
+	    nicety, exactly as it is for the flee: `set_lod_active(false)` switches the
+	    physics callback off, so `shrunk_time_remaining` could never tick down and
+	    one press would leave every crocodile in every loaded chunk tiny until it
+	    woke. A slept body is > 45 m away (SIM_RADIUS) and an 8 m pulse does not
+	    reach that far anyway.
+
+	NOT guarded on `remote_driven`, for `flee_from()`'s reason: the flag is
+	overwritten by the master's next sample 100 ms later, and the master — whose
+	own bodies are never remote-driven — gets the real shrink from the relay.
+
+	ponytail: THE COLLISION CAPSULE STAYS FULL SIZE. Only the model basis is
+	scaled (`_ease_shrink_factor` and the two `scaled_local` lines); the
+	`CharacterBody3D`'s own `scale` is untouched, unlike the per-instance size roll
+	in `_ready()`, which scales the whole body precisely so the mesh and the
+	capsule move together. A tiny body that still shoves like a full one is a KNOWN
+	CEILING and a deliberate one — the player is not blocked either way (its mask
+	excludes the crocodile layer, so "you walk THROUGH the pack" holds), and what
+	is left is bodies displacing each other and the terrain at a size they are not
+	drawn at. Scale the shape if it ever reads wrong.
+	"""
+	if is_boss:
+		return
+	if spec.get("crush_immune", false):
+		return
+	if not lod_active:
+		return
+	is_shrunk = true
+	# A refresh must never SHORTEN a shrink already running — `flee_from()`'s rule,
+	# and here it also keeps the effect stable when two Teibis pulse the same pack.
+	shrunk_time_remaining = maxf(shrunk_time_remaining, seconds)
+	# It drops whatever it was doing and cannot pick it back up until it is big
+	# again: the chase here, the errand below, and `_update_chase_state()`'s own
+	# early return for the re-acquisition.
+	is_chasing = false
+	if is_investigating:
+		_abandon_investigation()
+	spot_clock = 0.0
+	if _spot_label != null:
+		_spot_label.visible = false
+
+
+func _clear_shrink() -> void:
+	"""
+	Put this body back to full size AND TO FULL SIZE ON SCREEN — the one writer of
+	"the shrink is over" for every path that is not the clock.
+
+	THE BASIS IS WRITTEN, NOT JUST THE FACTOR (review round 1). `_shrink_factor`
+	is an INPUT to the two `scaled_local` lines in `_animate_body` /
+	`_animate_bite`, and every caller below is a body that is about to stop
+	running either — so resetting the variable alone leaves the LAST ANIMATED
+	basis on screen at 0.45. Sleep is at ~50 m and `VISUAL_CULL_DISTANCE` is 60,
+	so that is a 10 m band in which a frozen ankle-high crocodile is genuinely
+	drawn. `orthonormalized()` recovers the rotation those two lines composed and
+	`scaled_local` puts the rest scale back on it: the same composition at factor
+	1.0, with no animation input re-derived. Both compositions are
+	rotation-times-scale, so the round trip is exact — including for a row whose
+	`model_base_scale` is non-uniform, like the green dragon's 1, 1.6, 1.
+
+	IT IS NOT THE ORDINARY END OF A SHRINK. That is `_tick_shrink()` spending the
+	clock, which leaves `_ease_shrink_factor()` to pop the body back over
+	`SHRINK_EASE_SECONDS`. This is the abrupt version, for the two paths where
+	there will be no next animated frame to ease on.
+	"""
+	is_shrunk = false
+	shrunk_time_remaining = 0.0
+	_shrink_factor = 1.0
+	if model != null:
+		model.transform.basis = model.transform.basis.orthonormalized() \
+				.scaled_local(model_base_scale)
+
+
+func _tick_shrink(delta: float) -> void:
+	"""
+	Spend the shrink clock. Called from `_physics_process` beside
+	`_tick_crowd_cooldown`, and ABOVE the LOD gate for that one's reason: the frame
+	that decides to sleep still ticks, and `set_lod_active(false)` clears the state
+	outright anyway.
+
+	IT IS NOT IN `_animate_body`, and that is the whole reason this is its own
+	function rather than two lines in the ease below. `_animate_body` returns early
+	when `model` is null, which this file explicitly supports
+	(`get_node_or_null("Model")` in `_ready`) — so a clock spent there would never
+	run for a modelless body and `is_shrunk` would LATCH FOREVER: permanently
+	harmless, permanently unable to acquire. `flee_time_remaining` is spent in
+	`_physics_process` for the same reason, and this sits beside it.
+
+	ABOVE THE PAUSE BRANCH, unlike the flee's countdown: a body standing in its
+	post-bite recovery still pops back to size on time. The flee can afford to
+	freeze through a pause because a paused body is harmless either way; a shrink
+	that froze would outlive its own window by whatever the pause cost.
+
+	NOT ON A REMOTE-DRIVEN BODY. It has `is_shrunk` handed to it by
+	`CROC_FLAG_SHRUNK` in `set_remote_state()` and must run no clock of its own, or
+	it would pop back six seconds after the master's pulse regardless of what the
+	master is still doing — the legs-snap convention the whole sync is written in.
+	(It never reaches this line anyway: `_physics_process` returns above it for a
+	remote body. Stated rather than relied on, because the guard is one `return`
+	away from somebody else's refactor.)
+
+	GATED ON THE FLAG AND NOT ON THE CLOCK, which is the whole of the next
+	paragraph and is `flee`'s shape rather than an optimisation. A wire-driven
+	body carries `is_shrunk` TRUE with a clock of ZERO — `set_remote_state()`
+	deliberately sets no clock — and the master's samples stop for ordinary
+	reasons: it walks past its own sleep radius (`send_croc_sync` skips sleepers),
+	it leaves, or this peer is promoted. `clear_remote_drive()` then hands the body
+	back to its own AI still flagged, and a countdown that asked `clock > 0` would
+	return every frame forever: permanently tiny, permanently harmless,
+	permanently unable to acquire — and a peer promoted to master would broadcast
+	`CROC_FLAG_SHRUNK` for those bodies to the whole room indefinitely. Asking the
+	FLAG instead means the first locally simulated frame spends a zero clock and
+	clears it, exactly as `is_fleeing`'s countdown self-heals a relayed flee (see
+	the `if is_fleeing:` block in `_physics_process`) and as `is_paused` does.
+	"""
+	if remote_driven or not is_shrunk:
+		return
+	shrunk_time_remaining -= delta
+	if shrunk_time_remaining <= 0.0:
+		shrunk_time_remaining = 0.0
+		is_shrunk = false
+
+
+func _ease_shrink_factor(delta: float) -> void:
+	"""
+	Ease the DRAWN factor toward whatever `is_shrunk` currently says, at a constant
+	rate over `SHRINK_EASE_SECONDS`.
+
+	Called from the top of `_animate_body()`, which is the ONE call both the local
+	and the remote-driven paths already share (the river sink rides it for that
+	reason) — and it is the right home because the factor is consumed exactly twice,
+	in the two `scaled_local` lines below it. A REMOTE body reaches this and not the
+	clock, which is the whole split: the master owns the window, every screen draws
+	the pop.
+	"""
+	var target: float = SHRUNK_SCALE if is_shrunk else 1.0
+	if not is_equal_approx(_shrink_factor, target):
+		_shrink_factor = move_toward(_shrink_factor, target,
+				delta * (1.0 - SHRUNK_SCALE) / SHRINK_EASE_SECONDS)
+
+
 func _wander(delta: float) -> void:
 	"""
 	Organic wandering: instead of snapping to a brand-new random direction and
@@ -2712,6 +2934,26 @@ func set_lod_active(active: bool) -> void:
 		# Rush across the 50 m sleep boundary.
 		is_fleeing = false
 		flee_time_remaining = 0.0
+	# ...AND ANY SHRINK, ON BOTH TRANSITIONS — outside the `not active` branch
+	# above, unlike every other line in it (bead godot-test1-0mr0.4).
+	#
+	# The sleep half needs it MORE than the flee does, for a reason the flee's note
+	# does not have to make: a slept body ticks nothing, so one slept mid-shrink
+	# would hold `is_shrunk` for the whole sleep — and a running player covers 45 m
+	# in the 6 s window, so crossing the boundary mid-pulse is ORDINARY play. A
+	# flee held past its clock is merely a harmless crocodile; a shrink held past
+	# its clock is a body that WAKES UP ANKLE-HIGH and stays that way.
+	#
+	# The WAKE half is the one the review found (round 1): a body can be slept
+	# WHILE remote-driven, take `CROC_FLAG_SHRUNK` off the wire with no clock, and
+	# lose remote drive. `_tick_shrink`'s first local frame would clear it — but a
+	# slept body runs no `_physics_process` to have one, so without this it wakes
+	# tiny with nothing left to tell it otherwise. Clearing on the way UP costs
+	# nothing honest: `shrink_for()` refuses a slept body, so no legitimate shrink
+	# can be waiting here, and a remote one is restored by the master's next sample
+	# 100 ms later.
+	# ...and the DRAWN size with it, which is `_clear_shrink()`'s whole point.
+	_clear_shrink()
 
 
 # ============================================================================
@@ -2836,6 +3078,13 @@ func set_remote_state(pos: Vector3, yaw: float, flags: int) -> void:
 	# other bits do not imply, because the behaviour dispatch that decides it is
 	# skipped for the whole of a pause or a flee.
 	is_burrowed = (flags & MpCodec.CROC_FLAG_BURROWED) != 0
+	# The SHRINK rides the byte for the burrow's exact reason (bead
+	# godot-test1-0mr0.4): it is a change to the body's SIZE, which no amount of
+	# transform sync can express — the packet carries a position and a yaw, not a
+	# scale. Assigned raw and with no clock: `_tick_shrink()` skips the countdown
+	# on a remote-driven body precisely so the master's samples own the window,
+	# and the eased factor follows this bool on the next animation frame.
+	is_shrunk = (flags & MpCodec.CROC_FLAG_SHRUNK) != 0
 	if (flags & MpCodec.CROC_FLAG_BITING) != 0:
 		_start_bite()
 
@@ -2891,6 +3140,20 @@ func clear_remote_drive() -> void:
 	if not is_in_group("crocodile"):
 		return
 	velocity = Vector3.ZERO
+	# A BODY HANDED BACK WITH ITS PHYSICS STILL OFF KEEPS NOTHING (bead
+	# godot-test1-0mr0.4, review round 3). The sleep order matters and this is the
+	# half `set_lod_active()` cannot reach: the LOD manager sleeps a body at ~52 m
+	# BEFORE any pulse, the master — whose `CROC_SYNC_RADIUS` is 55 m — then syncs
+	# it and shrinks it, and when the samples stop there is no LOD TRANSITION to
+	# clear anything, because `lod_active` never changed. The line below hands the
+	# physics switch back off, so `_tick_shrink()` gets no frame either, and the
+	# body would sit frozen and ankle-high in the 50–60 m band until the player
+	# walked back inside 45 m. Conditional on `lod_active` rather than
+	# unconditional precisely so it does NOT pre-empt the ordinary path: an AWAKE
+	# body keeps its flag here and clears it on its own next frame, which is the
+	# guarantee `_tick_shrink()`'s flag gate exists to give.
+	if not lod_active:
+		_clear_shrink()
 	# Hand the physics switch back to the LOD manager's last decision. While we
 	# were remote-driven set_remote_state() forced processing ON regardless of
 	# `lod_active` (see there); leaving it on for a crocodile the manager thinks is
@@ -3205,6 +3468,11 @@ func _animate_body(delta: float) -> void:
 	# height both animation branches compose on, so a crocodile that chomps you
 	# from the water stays in the water for the whole chomp.
 	_tick_river_sink(delta)
+	# ...and the shrink FACTOR, for the same reason and in the same place: it scales
+	# the basis both animation branches compose, so a body chomping while it pops
+	# back to size must pop back mid-chomp rather than after it. Only the drawn
+	# factor — the CLOCK is spent in `_physics_process`; see `_tick_shrink()`.
+	_ease_shrink_factor(delta)
 
 	animation_time += delta
 
@@ -3258,7 +3526,12 @@ func _animate_body(delta: float) -> void:
 	# uniform rows. Same fix, same reason, in _animate_bite below.
 	var facing := Basis(Vector3.UP, spec["model_facing_offset"])
 	var oscillation := Basis.from_euler(Vector3(current_pitch, yaw_sway, roll))
-	model.transform.basis = (oscillation * facing).scaled_local(model_base_scale)
+	# `_shrink_factor` rides the same multiply (bead godot-test1-0mr0.4): the basis
+	# is rewritten from `model_base_scale` every frame, so a tween on `model.scale`
+	# would be thrown away here — the FACTOR eases and this scales by it. The model
+	# node sits at the body's origin with the mesh's feet on it, so shrinking about
+	# that origin leaves a tiny crocodile standing on the ground.
+	model.transform.basis = (oscillation * facing).scaled_local(model_base_scale * _shrink_factor)
 	model.position.y = model_base_y + bob
 
 
@@ -3346,7 +3619,7 @@ func _animate_bite(delta: float) -> void:
 	# scaled_local for the reason spelled out in _animate_body: the bite is the
 	# DEEPEST pitch in the game (30 degrees on the dragon), so a parent-frame
 	# stretch would shear hardest exactly here.
-	model.transform.basis = (snap * facing).scaled_local(model_base_scale)
+	model.transform.basis = (snap * facing).scaled_local(model_base_scale * _shrink_factor)
 	# Lunge along the body's forward axis (+Z) and lift a touch on each snap.
 	model.position = Vector3(0.0, model_base_y + absf(chomp) * 0.04, lunge)
 
@@ -3393,7 +3666,28 @@ func _on_player_collision(player: Node) -> void:
 	with two exceptions tied to special abilities:
 	  * Giant-form Teibi CRUSHES the crocodile on contact instead of being bitten.
 	  * A crocodile fleeing Phoboman's stink is harmless and just brushes past.
+	  * A crocodile SHRUNK by Teibi's Shrink Ray is harmless AND uncrushable.
 	"""
+	# A SHRUNK BODY BITES NOBODY AND IS CRUSHED BY NOBODY (bead godot-test1-0mr0.4).
+	#
+	# THIS RETURN'S PLACEMENT IS THE OWNER RULING, not a tidy-up. Ruling 3 of
+	# 2026-09-18 is that KILLING IS FORBIDDEN in this game, and giant Teibi's crush
+	# is the one legacy exception that still kills. Move this below the crush block
+	# and the Shrink Ray becomes a two-key execution — press G, walk into the pack,
+	# and every ankle-high body pops — which is a kill by the back door with no
+	# error anywhere to say so. So it sits ABOVE the is_boss block, above the crush
+	# block, above everything: while a body is small NOTHING happens on contact but
+	# a brush-past, in either direction.
+	#
+	# It costs the capture rules nothing. `captures_hero` bodies are all
+	# `crush_immune`, and `shrink_for()` refuses a `crush_immune` row outright — so
+	# no grabber can ever be standing here shrunk, and the jail stays reachable.
+	#
+	# `boss_immunity_selfcheck` check 7 pins this ordering with a live crushable
+	# body of the same species as its control.
+	if is_shrunk:
+		return
+
 	# A BOSS is bigger than even giant-form Teibi (3.75x+ vs the giant scale), so
 	# giant form gets bitten like anyone else — bosses are never crushable. This
 	# early check sits ABOVE the crush block so that block stays untouched.

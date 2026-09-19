@@ -91,6 +91,17 @@ const CROC_FLAG_BITING: int = 8
 ## striking) for as long as that state lasts. Sending the answer costs a bit that
 ## was spare; deriving it costs a desync with no bound on how long it shows.
 const CROC_FLAG_BURROWED: int = 16
+## Teibi's Shrink Ray (bead godot-test1-0mr0.4) — BIT 32, the one the note below
+## reserved for "a pose motion cannot show", which a SCALE is exactly. The packet
+## carries a position and a yaw at full fidelity and nothing else: a body drawn at
+## 0.45 on the master is drawn at full size on every other screen unless this bit
+## says otherwise, and it is not derivable from anything else in the byte.
+##
+## THE CLOCK STAYS ON THE MASTER, which is what makes one bit enough. A
+## remote-driven body assigns `is_shrunk` off this bit and runs no countdown of
+## its own (`piglet_crocodile_ai._tick_shrink()`), so the master's window is the
+## room's window and there is no duration on the wire to disagree about.
+const CROC_FLAG_SHRUNK: int = 32
 ##
 ## THE HUNTER OWES NO BIT, AND THAT IS A RULING, NOT A DEFERRAL (bead
 ## godot-test1-9rm.5). The hunt arm has three states — telegraphing, shadowing at
@@ -112,12 +123,13 @@ const CROC_FLAG_BURROWED: int = 16
 ## without a sixth bit. (Today the arm fires it, which is silent on a peer — see
 ## the ping note in bead godot-test1-9rm.6.)
 ##
-## Three bits are spare; the reason not to spend one is that a bit nothing reads
-## is a bit the encoder and the decoder can drift apart on. If a hunter ever grows
-## a pose that motion cannot show — a lock-on beam, a carry animation — it takes
-## bit 32 and extends BOTH sides, which `mp_selfcheck._check_hunter_sync()` sweeps
-## for: it round-trips every combination the encoder can produce and fails if the
-## decoder has not learned one.
+## Bit 32 has now been SPENT, and by exactly the test this paragraph set: Teibi's
+## Shrink Ray is a pose motion cannot show (see `CROC_FLAG_SHRUNK` above), so it
+## extended BOTH sides on the same commit. TWO BITS ARE SPARE; the reason not to
+## spend one is unchanged — a bit nothing reads is a bit the encoder and the
+## decoder can drift apart on — and so is the gate:
+## `mp_selfcheck._check_hunter_sync()` round-trips every combination the encoder
+## can produce and fails if the decoder has not learned one.
 
 ## Most crocodile entries one sync packet may carry — see `decode_croc_sync()`.
 ## Generous by design: the master only ever sends the crocs awake around one
@@ -445,6 +457,8 @@ static func _croc_flags(croc: Node) -> int:
 		flags |= CROC_FLAG_BITING
 	if "is_burrowed" in croc and croc.is_burrowed:
 		flags |= CROC_FLAG_BURROWED
+	if "is_shrunk" in croc and croc.is_shrunk:
+		flags |= CROC_FLAG_SHRUNK
 	return flags
 
 static func decode_croc_sync(state: Dictionary) -> Dictionary:
@@ -1109,6 +1123,64 @@ static func decode_captive(packet: Dictionary) -> Dictionary:
 	if typeof(packet.get("c", null)) != TYPE_BOOL:
 		return {}
 	return {"h": name, "c": bool(packet["c"])}
+
+# =============================================================================
+# THE SHRINK RAY — the `shr` verb (bead godot-test1-0mr0.4)
+# =============================================================================
+
+## The longest shrink a relayed pulse may ask for, in seconds. Teibi's own is 6,
+## so this is five times the honest number and exists only to bound a hostile one:
+## a shrunk predator cannot acquire and cannot bite, so an UNBOUNDED duration is a
+## modified client disarming the pack it is standing in for the rest of the run —
+## `MAX_FLEE_DURATION`'s reason, one verb along and with more at stake, since
+## a flee wears off into a body that comes back and this one has to be told to.
+const MAX_SHRINK_DURATION: float = 30.0
+
+## ...and the widest such pulse, in metres. Teibi's own is 8. THE RADIUS IS
+## MANDATORY AND MUST BE POSITIVE, which is the one place this parser is STRICTER
+## than the flee it is modelled on: `receive_flee` reads a missing or zero `r` as
+## "unbounded", because Phoboman's wave genuinely is global by design. There is no
+## global shrink and there never should be, so the same reading here would hand a
+## hostile packet every awake crocodile in the room at once.
+const MAX_SHRINK_RADIUS: float = 20.0
+
+static func decode_shr(packet: Dictionary) -> Dictionary:
+	"""
+	The `shr` parser — a peer's Shrink Ray pulse, arriving at the master.
+
+	@return: `{"origin": Vector3, "d": float, "r": float}`, or an EMPTY DICTIONARY
+	    — trusted whole or dropped whole, static and instance-free so
+	    scripts/mp_codec_selfcheck.gd can beat on it, exactly like `decode_pad()`.
+
+	`receive_flee()`'s bounds, in a parser rather than inline, because CLAUDE.md's
+	rule for a new verb is a parser HERE and a handler in `mp_manager.gd` — and
+	because a bound that can be driven from a self-check is a bound that can be
+	shown to reject, which an inline one cannot.
+
+	FINITENESS BEFORE ANY USE, the rule `decode_presence()` spells out and the one
+	that carries the most weight here: a NaN origin poisons every distance the
+	master's sweep derives from it, `absf(NAN) > MAX` is FALSE so the magnitude
+	test alone would wave it through, and `NAN <= 0.0` is false as well — so the
+	positivity tests below would pass a NaN radius straight into a radius-squared
+	comparison that answers false for every body, i.e. a silent no-op that looks
+	like a working feature. Every field is checked finite first and separately.
+	"""
+	for key: String in ["x", "y", "z", "d", "r"]:
+		if not _is_number(packet.get(key, null)):
+			return {}
+	var origin := Vector3(float(packet["x"]), float(packet["y"]), float(packet["z"]))
+	if not origin.is_finite():
+		return {}
+	if absf(origin.x) > MAX_PRESENCE_COORD or absf(origin.y) > MAX_PRESENCE_COORD \
+			or absf(origin.z) > MAX_PRESENCE_COORD:
+		return {}
+	var duration: float = float(packet["d"])
+	if not is_finite(duration) or duration <= 0.0 or duration > MAX_SHRINK_DURATION:
+		return {}
+	var radius: float = float(packet["r"])
+	if not is_finite(radius) or radius <= 0.0 or radius > MAX_SHRINK_RADIUS:
+		return {}
+	return {"origin": origin, "d": duration, "r": radius}
 
 # =============================================================================
 # LURE PLATES — the `pad` verb

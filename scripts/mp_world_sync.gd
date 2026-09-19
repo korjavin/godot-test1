@@ -209,19 +209,20 @@ static func receive_wx(mp: Node, from_id: String, packet: Dictionary) -> void:
 # a lost one is an ability that visibly did nothing):
 #
 #     flee   peer   → master   {"t":"flee","x","y","z","d"}    Phoboman's wave
+#     shr    peer   → master   {"t":"shr","x","y","z","d","r"} Teibi's Shrink Ray
 #     pad    peer   → master   {"t":"pad","f":int,"p":int}     an HQ lure plate
 #     kill   peer   → master   {"t":"kill","id":int}           giant Teibi's crush
 #     dead   master → everyone {"t":"dead","id":int}           the kill ruling
 #
-# THERE IS DELIBERATELY NO `flee` BROADCAST: `is_fleeing` is already a bit in the
-# sync packet's flag byte, so the master applying `flee_from()` reaches every peer
-# 100 ms later through machinery that already exists. A kill needs its own
-# broadcast only because it FREES a node, which no amount of transform sync can
-# express.
+# THERE IS DELIBERATELY NO `flee` OR `shr` BROADCAST: `is_fleeing` and
+# `is_shrunk` are both bits in the sync packet's flag byte, so the master applying
+# `flee_from()` / `shrink_for()` reaches every peer 100 ms later through machinery
+# that already exists. A kill needs its own broadcast only because it FREES a
+# node, which no amount of transform sync can express.
 #
-# `flee` and `pad` are below; the `kill`/`dead` pair moved to `mp_croc_sync.gd`
-# with the rest of the crocodile family (bd godot-test1-ftn.18), and this table
-# is still the one place all four are written down together.
+# `flee`, `shr` and `pad` are below; the `kill`/`dead` pair moved to
+# `mp_croc_sync.gd` with the rest of the crocodile family (bd godot-test1-ftn.18),
+# and this table is still the one place all five are written down together.
 
 static func request_croc_flee(mp: Node, origin: Vector3, duration: float, radius: float = 0.0,
 		tracks_player: bool = true) -> bool:
@@ -338,6 +339,88 @@ static func receive_flee(mp: Node, _from_id: String, packet: Dictionary) -> void
 	# tracks_player FALSE: the caster is on another screen, so the crocodiles must
 	# run from `origin`, not from our own player.
 	apply_flee(mp, origin, duration, radius, false)
+
+
+static func request_croc_shrink(mp: Node, origin: Vector3, duration: float,
+		radius: float) -> bool:
+	"""
+	Teibi's Shrink Ray, made room-wide (bead godot-test1-0mr0.4): the `flee` verb's
+	shape one verb along, and everything it shares with that one it shares for that
+	one's reasons — so read `request_croc_flee()` above first.
+
+	The three differences, and each is a design decision rather than a detail:
+
+	  * THE RADIUS IS MANDATORY. Phoboman's wave is global by design and passes 0
+	    for "unbounded"; an 8 m pulse is the whole of what makes this a corridor
+	    you walk through rather than a room-wide disarm, so a zero here is a bug
+	    and `MpCodec.decode_shr()` refuses one on the wire.
+	  * NO `tracks_player`. A flee needs to know whose position to run FROM; a
+	    shrink is not a heading, so the origin is only ever the centre of a sphere
+	    and a relayed pulse needs no caster at all.
+	  * THERE IS DELIBERATELY NO BROADCAST, for the same reason the flee has none:
+	    `is_shrunk` is a bit in the sync packet's flag byte (`CROC_FLAG_SHRUNK`),
+	    so the master applying `shrink_for()` reaches every peer 100 ms later
+	    through machinery that already exists.
+
+	APPLIED LOCALLY AS WELL AS RELAYED, for the coverage reason the flee gives: the
+	master only drives the crocodiles ITS terrain has loaded, so a peer a render
+	distance away from the master would otherwise get nothing back at all and press
+	G on a pack that never blinked.
+
+	@return whether the room has taken it over — false OFFLINE only, the same
+	    one-test shape `request_croc_flee()` gives its callers.
+	"""
+	if not mp.is_online():
+		return false
+	apply_shrink(mp, origin, duration, radius)
+	if mp._master == mp._you:
+		return true
+	mp._send_reliable_to_master(var_to_bytes({
+		"t": "shr", "x": origin.x, "y": origin.y, "z": origin.z,
+		"d": duration, "r": radius,
+	}))
+	return true
+
+
+static func apply_shrink(mp: Node, origin: Vector3, duration: float, radius: float) -> void:
+	"""
+	The same group loop `player_abilities._shrink_crocodiles()` runs, over the
+	crocodiles this peer drives.
+
+	No boss test and no `crush_immune` test here on purpose — `shrink_for()` owns
+	all three of its early returns, which is what keeps the rule in the one file
+	that owns it. `apply_flee()`'s rule, verbatim.
+
+	`is Node3D` alongside the `has_method` guard for `apply_flee()`'s reason: a
+	property read on a null cast is a hard error, and in GDScript that unwinds the
+	whole function — abandoning every remaining crocodile mid-sweep.
+	"""
+	var radius_sq: float = radius * radius
+	for croc: Node in mp.get_tree().get_nodes_in_group("crocodile"):
+		if not is_instance_valid(croc) or not (croc is Node3D) or not croc.has_method("shrink_for"):
+			continue
+		if (croc as Node3D).global_position.distance_squared_to(origin) > radius_sq:
+			continue
+		croc.shrink_for(duration)
+
+
+static func receive_shr(mp: Node, _from_id: String, packet: Dictionary) -> void:
+	"""
+	MASTER ONLY: another peer's Shrink Ray, arriving over the mesh as unvalidated
+	peer input. Whole or nothing through `MpCodec.decode_shr()`, which is where
+	every bound and the reason for it is written down.
+
+	The master test is the authority half and it is not a formality: this verb
+	mutates bodies the master simulates for the whole room, so a non-master that
+	acted on it would be applying a stranger's pulse to a copy nobody else can see
+	— exactly the divergence the croc sync exists to prevent.
+	"""
+	if mp._master != mp._you:
+		return
+	var msg: Dictionary = MpCodec.decode_shr(packet)
+	if msg.is_empty():
+		return
+	apply_shrink(mp, msg["origin"] as Vector3, float(msg["d"]), float(msg["r"]))
 
 
 static func request_guard_lure(mp: Node, floor_index: int, pad_index: int) -> bool:

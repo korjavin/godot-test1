@@ -52,12 +52,15 @@ Visual sheets: [Windman](characters/windman.md), [Primm](characters/primm.md),
 spellings in-game: **Windman, Primm, Teibi, Phoboman** (the sheets' "Tiebe"
 and "Pho-boman" are older spellings of the same people).
 
-| Hero | Power | Story role |
-|---|---|---|
-| Windman | Air Rush in the field; Air Sight indoors (sees patrols through walls) | The scout |
-| Primm | Phase Step — blinks through walls, never lands inside geometry | The one the HQ caught first; his rescue is the authored first beat |
-| Teibi | Resize — small or giant; giant crushes predators, small fits the crawl | The one who fits where nobody else does |
-| Phoboman | Stink Wave — predators flee; machines do not | The one machines cannot smell |
+Each hero has an F power from the first second, and a G **second skill** learned
+in the skill tree (K). No second skill kills: they scare, reveal or shrink.
+
+| Hero | Power (F) | Second skill (G) | Story role |
+|---|---|---|---|
+| Windman | Air Rush — a take-off, grounded only | Air Sight — every awake predator shows through whatever hides it, anywhere | The scout |
+| Primm | Phase Step — blinks through walls, never lands inside geometry | Twin Flash — a cross-slash that scares off what stands before him | The one the HQ caught first; his rescue is the authored first beat |
+| Teibi | Resize — small or giant; giant crushes predators, small fits the crawl | Shrink Ray — an 8 m pulse leaves predators ankle-high for six seconds: slow, harmless, never crushed | The one who fits where nobody else does |
+| Phoboman | Stink Wave — predators flee; machines do not | *(not built yet)* | The one machines cannot smell |
 
 **The heroes are the lives.** There are no hearts. A bite is a tax — a moment
 frozen and a slice of the run's coins. What a hunter takes is a *hero*: the
