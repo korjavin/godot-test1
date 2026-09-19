@@ -1327,13 +1327,19 @@ const SCARCITY_D0: float = 400.0
 const SCARCITY_SALT: int = 0x5C4177 # own stream for per-object scarcity rolls
 const _SCARCITY_DENOM: float = 2.3978952727983707 # log(1+4000/400) = log(11) — keep in sync with the two consts above
 ## HQ-to-gate corridor that keeps the tutorial road furnished: the union of this box
-## and the Budapest rect is where k=1. Z half-width 200 m contains the coin road's
-## real Z envelope between station 0 and ROAD_TERMINAL_X — measured max |z| 129 m
-## across 200 run_seeds plus half band 10 m = 139 m, rounded to 200 m for margin.
+## and the Budapest rect is where k=1. Z half-width 1000 m contains the coin road's
+## real Z envelope between station 0 and ROAD_TERMINAL_X — measured max |z| 775 m
+## across 1000 run_seeds (seeds 1..1000; a 250-seed sweep peaked at 732 m) plus the
+## mile-landmark lateral offset 120 m plus half band 10 m = 905 m, rounded to
+## 1000 m for margin. The old 200 m (from a 129 m measurement, bead godot-test1-q184)
+## under-covered the road the rect was drawn around, so content thinned on the road
+## corridor itself. The RECT is derived from the HALF-WIDTH below so the two cannot
+## drift; widening moves scarcity for every spawner (no RNG draw changes — the rect
+## feeds a multiplier, not a draw) and is measured in scarcity_selfcheck.
 ## X runs from the HQ disc's east edge (tower_site.x - TOWER_RADIUS = -400-65=-465)
 ## to the rect's west edge (BUDAPEST_MIN.x=1600). Const Rect2s, no per-call alloc.
-const SCARCITY_CORRIDOR_HALF_WIDTH: float = 200.0
-const SCARCITY_CORRIDOR_RECT: Rect2 = Rect2(-465.0, -200.0, 2065.0, 400.0)
+const SCARCITY_CORRIDOR_HALF_WIDTH: float = 1000.0
+const SCARCITY_CORRIDOR_RECT: Rect2 = Rect2(-465.0, -SCARCITY_CORRIDOR_HALF_WIDTH, 2065.0, 2.0 * SCARCITY_CORRIDOR_HALF_WIDTH)
 
 
 func scarcity_at(pos: Vector3) -> float:
