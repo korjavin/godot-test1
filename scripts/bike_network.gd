@@ -1,0 +1,506 @@
+class_name BikeNetwork
+extends RefCounted
+## ============================================================================
+## THE BIKE ROAD NETWORK — the anchor table and the trunk graph. TOPOLOGY ONLY.
+## ============================================================================
+## Epic `godot-test1-pnvb`, child `.1`. Owner, 2026-09-19, after playing the
+## strips `godot-test1-z2yv` shipped (Russian, paraphrased): *"they are TOO SMALL
+## and TOO RANDOM. They should look like a REAL ROAD NETWORK — they should LEAD
+## somewhere, be long, maybe even cross via BRIDGES, you should be able to GET TO
+## BUDAPEST along them, and there should be INTERSECTIONS."*
+##
+## THIS FILE DRAWS NOTHING. It answers two questions and no others: WHERE the
+## world's fixed points are (`anchors()`) and WHICH PAIRS of them a trunk runs
+## between (`edges()`). The route between a pair, the boxes, the bridges and the
+## minimap are `.2`, `.3` and `.5`; `terrain_bike_paths.gd` — the spur tier —
+## does not know this file exists yet and `.4` is what introduces them.
+##
+## A `class_name`d library of STATIC functions that RECEIVES the terrain as its
+## first argument — the `terrain_bike_paths.gd` / `coin_road.gd` /
+## `terrain_waypoints.gd` idiom, and the twelfth family written in it.
+## `extends RefCounted` and everything `static`: this is a namespace, not a node.
+## `terrain` is typed `Node3D` for `landmark_builders.gd`'s reason —
+## `endless_terrain.gd` declares no `class_name`.
+##
+## ----------------------------------------------------------------------------
+## WHY A GRAPH RATHER THAN A LONGER RANDOM WALK
+## ----------------------------------------------------------------------------
+## Two reasons, and both are architectural rather than aesthetic:
+##
+## 1. **A random walk cannot LEAD anywhere.** Lengthening one produces a longer
+##    wander, not a destination. "Purposeful" is a different generator, one with
+##    the destination in the recurrence — which is what `.2` builds on top of the
+##    pairs below.
+## 2. **A random walk cannot INTERSECT without breaking the RNG contract.** Two
+##    walks seeded at their own origin chunks know nothing about each other, so a
+##    junction would need either a shared lattice both snap to or cross-origin
+##    awareness. A graph whose edges SHARE ENDPOINTS intersects BY CONSTRUCTION,
+##    at zero determinism cost: two trunks meet at an anchor because both are
+##    DEFINED to end there. There is no "did they meet?" query anywhere.
+##
+## ----------------------------------------------------------------------------
+## NOT ONE DRAW, FROM ANY STREAM, ANYWHERE IN THIS FILE
+## ----------------------------------------------------------------------------
+## Every anchor source is already pure in `run_seed` and already memoized:
+## `tower_site()` is a constant, `TerrainWaypoints.waypoint_sites()` says so in
+## its own docstring ("Costs no draw"), `TerrainLandmarks.landmark_sites()` is a
+## hash-per-attempt site table, and `BudapestPlan.GATE` is a const a designer
+## typed. READING THEM CONSUMES NOTHING.
+##
+## And the edge set is a **HASH DISPATCH, NEVER A ROLL** — CLAUDE.md, *"dispatch
+## (which species, which box kind, which boss) costs no draw"*. `_degree()` folds
+## one `hash(Vector3i(...))` into `TRUNK_DEGREES`; an `rng.randi()` there instead
+## would take a draw and slide every crocodile in the world. The trunk tier is
+## therefore strictly CHEAPER than the spur tier it will join: the spurs at least
+## roll their rarity, and this rolls nothing at all.
+##
+## `bike_network_selfcheck` check 1 is that statement measured rather than
+## promised: a field of chunks built through the shipped `create_chunk`, once
+## normally and once with `anchors()` and `edges()` asked for first, node for node
+## and MultiMesh entry for MultiMesh entry.
+##
+## ----------------------------------------------------------------------------
+## THE SEED: THIS FAMILY'S OWN SALT AND ITS OWN PRIME
+## ----------------------------------------------------------------------------
+## The prime is NEW, and that was checked against the whole tree the way
+## `terrain_bike_paths.gd`'s banner demands rather than against the handful a
+## reader remembers: `grep -rhoE '[0-9]{5,10}' scripts/ | sort -u` is 195 numbers
+## and 43112609 is in none of them. Sharing a pair would correlate two features —
+## an anchor index that draws a high degree would thereby be likelier to host
+## something else — which is the one thing an independent stream exists to
+## prevent. The next author owes the same grep.
+##
+## ONE prime and not two, deliberately: the dispatch's only coordinate is the
+## ANCHOR INDEX. A second prime multiplying a constant zero would be decoration.
+##
+## ----------------------------------------------------------------------------
+## CORRIDOR ONLY — OWNER RULING, 2026-09-19, AND IT OVERRULED THE ARCHITECT
+## ----------------------------------------------------------------------------
+## *"Trunks run between the HQ, the waypoints, the Budapest gate and CORRIDOR
+## landmarks. Anchors in the 0.5-2.5 km annulus are refused as trunk endpoints.
+## The far field is deliberately empty and it stays that way — no bare paint out
+## there. If a landmark is reachable only by leaving the corridor, it simply gets
+## no trunk."*
+##
+## `anchors()` still returns EVERY anchor — the table is useful to `.5`'s minimap
+## and to `godot-test1-z2yv.3`'s racks whatever their eligibility, and throwing
+## rows away here would be a second opinion the rest of the epic has to
+## re-derive. The ruling lands as one `trunkable` field, and `edges()` builds over
+## that subset only.
+##
+## THE TEST IS ONE SHIPPED PURE FUNCTION AND NOT A NEW CONSTANT:
+##
+##     trunkable = terrain.scarcity_at(Vector3(pos.x, 0.0, pos.y)) >= TRUNK_ANCHOR_MIN_K
+##
+## `scarcity_at()` returns exactly 1.0 inside the union of
+## `SCARCITY_CORRIDOR_RECT` and `BudapestPlan.rect()` and falls off
+## logarithmically outside it, so "inside the corridor" and "k = 1" ARE THE SAME
+## STATEMENT. A second `Rect2` typed here would drift from the shipped one the
+## moment anybody retuned it. It also separates the two landmark families for free
+## without this file knowing which is which: the mile sits 60-120 m off the
+## centreline (`LANDMARK_MILE_LATERAL_*`), the annulus 0.5-2.5 km
+## (`LANDMARK_FIELD_LATERAL_*`).
+##
+## ### THE EDGE CASE — PREDICTED FOR LANDMARKS, MEASURED WIDER THAN THAT
+## `SCARCITY_CORRIDOR_RECT`'s Z half-width is 200 m, and its own comment records
+## the measurement behind it: *"measured max |z| 129 m across 200 run_seeds plus
+## half band 10 m = 139 m, rounded to 200 m for margin."* A MILE landmark stands
+## up to 120 m off that centreline, so a worst case of 129 + 120 = 249 m > 200 m
+## was predicted when this bead was filed: a handful of genuine mile landmarks
+## falling just outside k = 1 and being refused as trunk endpoints. That much is
+## not a defect — a refused landmark getting no trunk is exactly the owner's
+## stated intent, and the far field staying empty is worth more than the last
+## monument on the list.
+##
+## **THE SWEEP FOUND IT REACHES THE ROAD WAYPOINTS TOO, WHICH THE BEAD DID NOT
+## EXPECT.** The bead states *"the HQ, all eleven waypoints and the GATE are inside
+## the union by construction, so the filter only ever bites on landmarks."* That is
+## FALSE, and the number is in check 4's printout: across the 16-seed sweep, 26
+## WAYPOINT anchors were refused on 14 of the 16 seeds — `approach` (which stands
+## at x = -200, WEST of station 0 and therefore outside the span the rect's comment
+## was measured over) and `road_1` / `road_2` / `road_3` on the centreline itself,
+## the worst at `road_3` on seed 987654321, z = -488 m with k = 0.799. A road
+## station at |z| 488 m is nearly four times the 129 m that comment claims as the
+## measured maximum, so THAT MEASUREMENT IS STALE and the corridor rect is
+## narrower than the road it was drawn around.
+##
+## IT IS STILL HANDLED BY MEASURING RATHER THAN BY WIDENING SOMETHING, and the
+## `>= 1.0` test SHIPS AS WRITTEN, because the fix is not this family's to make:
+## the honest repair is to re-measure `SCARCITY_CORRIDOR_RECT` against the road it
+## is supposed to contain, which moves scarcity for every spawner in the world and
+## is a bead of its own. `bike_network_selfcheck` check 4 PRINTS every refused
+## anchor, split by kind, with its own k and how far below 1.0 it fell — a refused
+## WAYPOINT is flagged separately, because that one is a symptom of the rect and
+## not of this filter. The network survives it: check 3 asserts the gate is still
+## reachable from the HQ on every seed of the sweep, and it is, in 3 to 15 hops.
+##
+## If the sweep ever shows anchors being lost at a rate anyone cares about before
+## that rect is re-measured, the sanctioned stopgap is to lower the ONE named
+## `TRUNK_ANCHOR_MIN_K` below — **never a second corridor rectangle.**
+##
+## ----------------------------------------------------------------------------
+## THE MEMO LIVES ON THE TERRAIN
+## ----------------------------------------------------------------------------
+## `terrain._bike_network_cache`, dropped by `_drop_seeded_memos()` beside
+## `_bike_path_cache` and `_landmark_sites_cache`. NOT a `static var` here: memo
+## state `_drop_seeded_memos()` cannot reach survives every re-seed and hands a
+## multiplayer joiner the wrong world — `chunk_stream_selfcheck` check 6c fails
+## the build for one, and this family is in that check's audited set.
+##
+## IT IS NOT CAPPED, and that is a statement rather than an omission: unlike
+## `_bike_path_cache` (one entry per origin chunk, unbounded in a long run) this
+## is exactly TWO keys for the whole world. There is nothing for a cap to evict.
+
+# ============================================================================
+# THE SEED (see the banner)
+# ============================================================================
+
+## The degree dispatch's coordinate prime. Used nowhere else in this world engine
+## — see the banner for the grep that says so.
+const BIKE_NET_PRIME_I: int = 43112609
+
+## "BIKE NET"-ish; an arbitrary fixed constant, XORed into `run_seed` so this
+## family's dispatch is its own even where a prime would agree with another's.
+const BIKE_NET_SALT: int = 0xB1_1E_4E7
+
+# ============================================================================
+# THE ANCHOR TABLE
+# ============================================================================
+
+## Anchor kinds. `.2` reads these to decide what a trunk does at each end — it
+## stops at the rect edge for a CITY_WAYPOINT, because Budapest's streets are
+## authored and `in_budapest()` exists to refuse a procedural strip across Váci
+## utca; the GATE at x = 1600 is the city's real front door and is the one a trunk
+## ends AT.
+const KIND_HQ: int = 0
+const KIND_WAYPOINT: int = 1
+const KIND_CITY_WAYPOINT: int = 2
+const KIND_GATE: int = 3
+const KIND_LANDMARK: int = 4
+
+## The corridor filter, and the ONLY knob it has. 1.0 means "exactly inside the
+## union of SCARCITY_CORRIDOR_RECT and the Budapest rect", because that is where
+## `scarcity_at()` returns exactly 1.0. See the banner's EDGE CASE section for the
+## 249 m > 200 m arithmetic that is the one reason this would ever move, and for
+## why the answer is this number and never a second rectangle.
+const TRUNK_ANCHOR_MIN_K: float = 1.0
+
+# ============================================================================
+# THE TRUNK GRAPH
+# ============================================================================
+
+## THE DENSITY KNOB — owner ruling 2026-09-19, "MEDIUM: it should read as a
+## NETWORK, not as a couple of highways". One entry per hash fold, the `POLE_TOPS`
+## idiom: four anchors in six get two trunks and two get one, for a mean degree of
+## 1.67.
+##
+## RETUNING THIS COSTS NO DRAW AND MOVES NOTHING — not one station, not one
+## crocodile, not one coin — precisely because `_degree()` is a hash and not a
+## roll. That is what makes the knob cheap enough to leave in the open.
+##
+## MEASURED, over `bike_network_selfcheck`'s 16-seed sweep on the shipped
+## constants: 61 anchors in every world (the HQ, 11 waypoints, the gate and 48
+## landmark kinds), of which 16-31 are trunkable, producing **17-39 edges, 32 at
+## the median**, and a hop count from the HQ to the gate of 3-15. Check 4 prints
+## the histogram, and that printed number is what the owner retunes against.
+##
+## THE SPREAD IS THE CORRIDOR FILTER'S, NOT THE DISPATCH'S: the trunkable count
+## moves by a factor of two between seeds because how much of the museum mile
+## falls inside k = 1 depends on how far that seed's road wanders. See the banner's
+## EDGE CASE section and check 4's printout.
+const TRUNK_DEGREES: Array[int] = [1, 2, 2, 1, 2, 2]
+
+## The longest trunk the nearest-neighbour pass will draw. Measured against the
+## world it has to span: road waypoints are `WAYPOINT_SPACING` 450 m apart and
+## mile landmarks `LANDMARK_MILE_SPACING` 75 m, so at 700 m every anchor in the
+## corridor has neighbours and nothing is joined across half the map. An anchor
+## with NO neighbour inside it gets no edge from this pass — the honest degrade,
+## and the repair below is what stops that becoming a hole in the network.
+const TRUNK_MAX_EDGE: float = 700.0
+
+## ...and the repair's own cap, deliberately looser: the repair joins whole
+## COMPONENTS, and the gap between two clusters is by definition bigger than the
+## gap inside one. A component that still cannot reach the gate inside this is
+## DROPPED WHOLE rather than joined by a 6 km trunk across the empty field — the
+## far field stays empty, which is the same ruling the corridor filter serves.
+const TRUNK_REPAIR_MAX_EDGE: float = 1600.0
+
+
+static func anchors(terrain: Node3D) -> Array[Dictionary]:
+	"""
+	THE WORLD'S FIXED POINTS THIS RUN, AT STABLE INDICES.
+
+	@param terrain: The `EndlessTerrain`, for `tower_site()`, the road cache and
+	                `scarcity_at()`.
+	@return: Rows of `{ id: String, pos: Vector2 (world XZ), kind: int,
+	         trunkable: bool }`. The memo itself, not a copy — it is asked once per
+	         run per consumer and nobody may write to it.
+
+	THE ORDER IS FIXED-COUNT FIRST: index 0 is the HQ, 1..N the waypoints in
+	`waypoint_sites()`'s own order, N+1 the gate, and the landmarks after that in
+	KIND order. Everything but the landmarks therefore sits at the same index in
+	every world, and the landmark tail moves only because a kind that found no site
+	this run is simply absent. Identity is carried by `id` for any consumer that
+	needs it across seeds.
+
+	COSTS NO DRAW. All four sources are already pure in `run_seed` and already
+	memoized; see the banner.
+	"""
+	var cache: Dictionary = terrain._bike_network_cache
+	if cache.has("anchors"):
+		return cache["anchors"]
+
+	var rows: Array[Dictionary] = []
+
+	# --- 0: the HQ. A constant site (owner ruling 2026-08-29) — the one anchor
+	# that is not even seeded.
+	var tower: Vector3 = terrain.tower_site()
+	rows.append(_anchor("hq", Vector2(tower.x, tower.z), KIND_HQ))
+
+	# --- 1..N: the teleport circles, in the order that file fixes as a wire
+	# format. Its `_road_extend_to_x` leaves the station cache warm, which is why
+	# there is no second extend anywhere in this file: the road cache grows
+	# contiguously from station 0 and an extra extend is wasted work in a family
+	# that owns nothing about the road.
+	for site: Dictionary in TerrainWaypoints.waypoint_sites(terrain):
+		var pos: Vector3 = site["pos"]
+		var flat := Vector2(pos.x, pos.z)
+		# The five city circles stand INSIDE the authored rect. They stay in the
+		# table (they are legitimate destinations) and are marked so `.2` can stop a
+		# trunk at the rect edge rather than paint one across an authored street.
+		var kind: int = KIND_CITY_WAYPOINT if terrain.in_budapest(flat.x, flat.y) else KIND_WAYPOINT
+		# `wp_` PREFIXED, AND THAT IS NOT DECORATION. `waypoint_sites()` already
+		# contains a circle called "hq" (the one round the corner from the tower's
+		# door) and one called "gate" (BudapestPlan's, at x = 1724, two blocks INSIDE
+		# the rect) — both of which are different places from this table's own "hq"
+		# (the building's centre) and "gate" (the city's front door at x = 1600, 124 m
+		# west of the circle). Unprefixed, an anchor id would name two positions and
+		# every consumer that looks a row up by id would silently get the wrong one.
+		# Check 5 found this on its first run, which is exactly what a world tie is
+		# for; check 4 asserts the ids are unique so it cannot come back.
+		rows.append(_anchor("wp_%s" % String(site["id"]), flat, kind))
+
+	# --- N+1: the city's front door, an authored constant.
+	rows.append(_anchor("gate", Vector2(BudapestPlan.GATE.x, BudapestPlan.GATE.z), KIND_GATE))
+
+	# --- N+2..: the museum mile and the annulus, one site per kind that found one.
+	#
+	# THE CHUNK CENTRE IS THE ANCHOR, and that is the honest reading rather than a
+	# rounding: `landmark_sites()` is chunk -> kind, and the exact metre inside the
+	# chunk is chosen later by `spawn_landmark_in_chunk`'s candidate loop against
+	# the finished `obstacles`. The centre is the only position of a landmark that
+	# is computable for a chunk that has never streamed in, which is exactly what a
+	# global table needs. A trunk arriving within half a chunk of a monument has
+	# arrived at it.
+	#
+	# SORTED BY KIND rather than trusting the Dictionary's insertion order, so the
+	# index a landmark takes is a property of the world and not of a container.
+	var sites: Dictionary = TerrainLandmarks.landmark_sites(terrain)
+	var by_kind: Array[Array] = []
+	for chunk: Vector2i in sites:
+		by_kind.append([int(sites[chunk]), chunk])
+	by_kind.sort_custom(func(a: Array, b: Array) -> bool: return int(a[0]) < int(b[0]))
+	for row: Array in by_kind:
+		var centre: Vector3 = terrain.chunk_to_world(row[1] as Vector2i)
+		rows.append(_anchor("landmark_%d" % int(row[0]), Vector2(centre.x, centre.z), KIND_LANDMARK))
+
+	# THE CORRIDOR FILTER, in one place for every kind at once — see the banner.
+	# It bites on landmarks as designed AND, measured, on the road waypoints, whose
+	# centreline wanders further than `SCARCITY_CORRIDOR_RECT`'s own comment
+	# claims; check 4 prints both. One pass over every kind and no exception list,
+	# because an exception list is what would have hidden that.
+	for row: Dictionary in rows:
+		var pos: Vector2 = row["pos"]
+		row["trunkable"] = terrain.scarcity_at(Vector3(pos.x, 0.0, pos.y)) >= TRUNK_ANCHOR_MIN_K
+
+	cache["anchors"] = rows
+	return rows
+
+
+static func edges(terrain: Node3D) -> Array[Dictionary]:
+	"""
+	THE TRUNK GRAPH: which pairs of anchors a trunk runs between.
+
+	@param terrain: The `EndlessTerrain`.
+	@return: Rows of `{ id: int, a: int, b: int }` where `a < b` index
+	         `anchors()`. `id` is the row's own position in this array. The memo
+	         itself, not a copy.
+
+	COSTS NO DRAW — it is a dispatch and arithmetic over a table that was already
+	pure in `run_seed`. See the banner.
+
+	THREE PASSES, all deterministic:
+
+	1. NEAREST NEIGHBOURS. Every TRUNKABLE anchor takes its `_degree()` closest
+	   trunkable neighbours inside `TRUNK_MAX_EDGE`. `(i, j)` and `(j, i)` are the
+	   same trunk, so the pairs go into a set keyed on `(min, max)` — which is also
+	   why the realised degree is not the dispatched one: an anchor that four
+	   neighbours all chose ends up with four trunks and rolled nothing.
+	2. CONNECT THE GATE. A union-find over pass 1, and for every component that
+	   does not hold the gate, the single shortest edge joining it to one that does
+	   — repeated until no component moves. That is what makes *"you should be able
+	   to get to Budapest along them"* a property of the construction rather than a
+	   hope. It may join components; it may NOT smuggle a non-trunkable anchor back
+	   in, and check 3's acceptance says so.
+	3. DROP THE UNREACHABLE. A component that pass 2 could not join inside
+	   `TRUNK_REPAIR_MAX_EDGE` loses its edges entirely. An island of trunk with no
+	   way to the city is exactly the thing the owner played and disliked.
+	"""
+	var cache: Dictionary = terrain._bike_network_cache
+	if cache.has("edges"):
+		return cache["edges"]
+
+	var rows: Array[Dictionary] = anchors(terrain)
+	var eligible: PackedInt32Array = PackedInt32Array()
+	var gate: int = -1
+	for i: int in rows.size():
+		if not bool(rows[i]["trunkable"]):
+			continue
+		eligible.append(i)
+		if int(rows[i]["kind"]) == KIND_GATE:
+			gate = i
+
+	# --- PASS 1: nearest neighbours, deduplicated into unordered pairs.
+	var pairs: Dictionary = {}
+	for i: int in eligible:
+		var here: Vector2 = rows[i]["pos"]
+		var cands: Array[Array] = []
+		for j: int in eligible:
+			if j == i:
+				continue
+			var there: Vector2 = rows[j]["pos"]
+			cands.append([here.distance_to(there), j])
+		# A TOTAL ORDER, tie-broken on the index: `sort_custom` is not stable, and
+		# two anchors exactly equidistant from a third are not impossible in a world
+		# whose road is symmetric about z = 0.
+		cands.sort_custom(_nearer)
+		var want: int = _degree(terrain, i)
+		var taken: int = 0
+		for c: Array in cands:
+			if taken >= want:
+				break
+			if float(c[0]) > TRUNK_MAX_EDGE:
+				# Sorted, so nothing further along is nearer. An anchor with no
+				# neighbour inside the cap simply gets none here — the honest degrade.
+				break
+			pairs[Vector2i(mini(i, int(c[1])), maxi(i, int(c[1])))] = true
+			taken += 1
+
+	# --- PASS 2: connect every component to the gate's.
+	var parent: Dictionary = {}
+	for i: int in eligible:
+		parent[i] = i
+	for key: Vector2i in pairs:
+		_union(parent, key.x, key.y)
+	if gate >= 0:
+		# To a fixpoint: a component processed early may have no candidate INTO the
+		# gate's component yet and acquire one once a nearer component has joined.
+		# Bounded by the component count, so at most `eligible.size()` sweeps.
+		for _sweep: int in eligible.size():
+			var joined: bool = false
+			var gate_root: int = _find(parent, gate)
+			# Grouped by root and walked in root order, so which component is repaired
+			# first is a property of the anchor indices and not of a Dictionary.
+			var roots: Array[int] = []
+			for i: int in eligible:
+				var r: int = _find(parent, i)
+				if r != gate_root and not roots.has(r):
+					roots.append(r)
+			roots.sort()
+			for root: int in roots:
+				if _find(parent, root) == _find(parent, gate):
+					continue  # already joined by an earlier repair this sweep
+				var best: float = INF
+				var best_pair := Vector2i(-1, -1)
+				for i: int in eligible:
+					if _find(parent, i) != root:
+						continue
+					for j: int in eligible:
+						if _find(parent, j) != _find(parent, gate):
+							continue
+						var from: Vector2 = rows[i]["pos"]
+						var to: Vector2 = rows[j]["pos"]
+						var d: float = from.distance_to(to)
+						# `<` and not `<=`, with the pair built as (min, max): the first
+						# candidate at a tied distance wins and the loops run in index
+						# order, so the winner is the lowest pair either way.
+						if d < best:
+							best = d
+							best_pair = Vector2i(mini(i, j), maxi(i, j))
+				if best <= TRUNK_REPAIR_MAX_EDGE and best_pair.x >= 0:
+					pairs[best_pair] = true
+					_union(parent, best_pair.x, best_pair.y)
+					joined = true
+			if not joined:
+				break
+
+	# --- PASS 3: drop whatever still cannot reach the city, then emit in a fixed
+	# order so the row ids are a property of the world.
+	var keys: Array[Vector2i] = []
+	for key: Vector2i in pairs:
+		if gate >= 0 and _find(parent, key.x) != _find(parent, gate):
+			continue
+		keys.append(key)
+	keys.sort_custom(func(p: Vector2i, q: Vector2i) -> bool:
+		return p.x < q.x if p.x != q.x else p.y < q.y)
+	var out: Array[Dictionary] = []
+	for key: Vector2i in keys:
+		out.append({ "id": out.size(), "a": key.x, "b": key.y })
+
+	cache["edges"] = out
+	return out
+
+
+static func _anchor(id: String, pos: Vector2, kind: int) -> Dictionary:
+	"""One anchor row, `trunkable` filled in by `anchors()`'s single filter pass."""
+	return { "id": id, "pos": pos, "kind": kind, "trunkable": false }
+
+
+static func _degree(terrain: Node3D, index: int) -> int:
+	"""
+	How many nearest neighbours anchor `index` reaches for: ONE FOLD OF ONE HASH.
+
+	@param index: The anchor's index in `anchors()`.
+	@return: An entry of `TRUNK_DEGREES`.
+
+	A DISPATCH AND NOT A ROLL, which is the whole property this bead exists to
+	protect — CLAUDE.md, "dispatch costs no draw". An `rng.randi()` here would take
+	a draw from whatever stream the caller happened to be holding and move every
+	spawn in the world; it would also make the density knob above impossible to
+	turn, because a retune would then shift the stream.
+
+	Mask AFTER the shift is not needed here — there is no second field — but
+	`hash()` may return a negative, so the modulo is taken on the absolute value
+	rather than on a value that could index backwards.
+	"""
+	var h: int = hash(Vector3i(index * BIKE_NET_PRIME_I, 0, terrain.run_seed ^ BIKE_NET_SALT))
+	return TRUNK_DEGREES[absi(h) % TRUNK_DEGREES.size()]
+
+
+static func _nearer(a: Array, b: Array) -> bool:
+	"""`[distance, index]` ordered by distance, ties broken on the index."""
+	if not is_equal_approx(float(a[0]), float(b[0])):
+		return float(a[0]) < float(b[0])
+	return int(a[1]) < int(b[1])
+
+
+static func _find(parent: Dictionary, i: int) -> int:
+	"""Union-find root of `i`, with path compression."""
+	var root: int = i
+	while int(parent[root]) != root:
+		root = int(parent[root])
+	while int(parent[i]) != i:
+		var next: int = int(parent[i])
+		parent[i] = root
+		i = next
+	return root
+
+
+static func _union(parent: Dictionary, a: int, b: int) -> void:
+	"""Merge two components, the LOWER index always becoming the root so that the
+	repair pass walks them in an order the anchor table fixes."""
+	var ra: int = _find(parent, a)
+	var rb: int = _find(parent, b)
+	if ra == rb:
+		return
+	parent[maxi(ra, rb)] = mini(ra, rb)
