@@ -9,9 +9,10 @@ extends RefCounted
 ##
 ## `.1` laid the PATHS — a strip, a dashed centre line and bare poles. `.2` put
 ## the four authored SIGNS and the cycling TRAFFIC HEAD on those poles (see "WHAT
-## STANDS ON THE POLES" below). The bike-stand rack at each end is `.3` and the
-## rental bike itself is a later epic; both hang off this family's marker instead
-## of re-deriving a position.
+## STANDS ON THE POLES" below). `.3` stands ONE bike-stand rack at every NETWORK
+## ANCHOR a trunk touches (see "THE ANCHOR RACKS" below), and the rental bike
+## itself is a later epic; it hangs off the rack's marker instead of re-deriving
+## a position.
 ##
 ## A `class_name`d library of STATIC functions that RECEIVES the terrain as its
 ## first argument and calls `terrain.create_box` / `terrain.scarcity_at` /
@@ -693,6 +694,64 @@ const CUBE_BUCKET_NAME: String = "BlockMultiMesh"
 ## off it and `.3` hangs the stand off the path's ends.
 const BIKE_PATH_GROUP: String = "bike_path"
 const BIKE_PATH_MARKER_NAME: String = "BikePathMarker"
+
+## THE ANCHOR RACKS (bead `godot-test1-z2yv.3`, re-specified 2026-09-19 by the
+## owner's network ruling): ONE rack per NETWORK ANCHOR a trunk touches, never
+## at a random path end, and spurs get none. A Sheffield stand in silhouette —
+## one low rail plus three thin hoop uprights — CUBE only, through `create_box`
+## off this family's fixed-seed builder RNG, parented to the chunk. NO MECHANICS
+## AT ALL: no Area3D, no input, no HUD, no coin cost, no `player_abilities`
+## entry. The rental is a later epic; this bead lays the anchor it will read —
+## one bare `Node3D` per rack in group `bike_stand`, carrying `anchor: int` (the
+## index into `BikeNetwork.anchors()`) and `pos: Vector3` (world).
+const BIKE_STAND_GROUP: String = "bike_stand"
+const BIKE_STAND_MARKER_NAME: String = "BikeStand"
+
+## The rack's fixed geometry, never rolled: the rail the wheels lean against and
+## the three uprights the locks go round.
+const RACK_RAIL_LENGTH: float = 2.2
+const RACK_RAIL_HEIGHT: float = 0.08
+const RACK_RAIL_DEPTH: float = 0.12
+const RACK_RAIL_Y: float = 0.5
+const RACK_UPRIGHT_WIDTH: float = 0.09
+const RACK_UPRIGHT_HEIGHT: float = 1.0
+const RACK_UPRIGHT_DEPTH: float = 0.09
+const RACK_UPRIGHT_COUNT: int = 3
+const RACK_COLOR: Color = Color(0.13, 0.34, 0.29)
+
+## ONE footprint for the whole rack, not one per upright — the footprint
+## vocabulary is a circle plus a top, and a rack is one obstacle.
+const RACK_RADIUS: float = 1.4
+const RACK_TOP: float = 1.0
+
+## WHERE it stands. The anchor's own position is INSIDE a keep-out by
+## construction — the HQ anchor is the tower's centre, a waypoint anchor its
+## circle's, a landmark anchor its chunk's, the gate the road's swath — so the
+## site is the NEAREST of these fixed offsets, in this order, that clears BOTH
+## the shipped `trunk_keep_out` and `_footprint_taken`. Nearest-first is the
+## property and the table is the mechanism; a taken site builds no rack and
+## plants no marker, because a marker with no rack under it is a lie the rental
+## epic would build on. Costs no draw: the anchor table is pure in `run_seed`
+## and both tests roll nothing.
+const RACK_SITE_DISTANCES: Array[float] = [6.0, 10.0, 16.0, 24.0, 36.0, 52.0, 80.0]
+const RACK_SITE_DIRECTIONS: Array[Vector2] = [
+	Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, -1),
+]
+
+## How far a rack's boxes may stand from their anchor, metres: the last ring
+## above plus the rail's half-length. Stated literally because
+## `bike_path_selfcheck` R3 (the world tie) asserts it.
+const RACK_ANCHOR_REACH: float = 82.0
+
+## The plan-extent the keep-out test covers around a site: the rail's half-length
+## plus one box-depth of margin, on the rack's axis. The rack's yaw is fixed 0,
+## so its boxes stand on the X axis through the site — `rack_site()` asks the
+## shipped `trunk_keep_out` of the site AND both rail ends, because T5 sweeps box
+## centres and a site that clears with a rail end inside a keep-out is the exact
+## defect it exists for. (Rotate the rack and this stencil must grow with it.)
+## `_footprint_taken` needs no stencil: it adds the radii, so the one test at
+## the site already covers the whole stand.
+const RACK_EXTENT: float = 1.25
 
 ## The memo's ceiling, in origins. An endless walk visits unboundedly many
 ## origins, so the dictionary is CLEARED WHOLE when it passes this — safe because
@@ -1863,6 +1922,32 @@ static func spawn_bike_path_in_chunk(terrain: Node3D, chunk_pos: Vector2i,
 	var centre := Vector2(chunk_centre.x, chunk_centre.z)
 
 	var markers: Array[Node3D] = []
+	# --- THE ANCHOR RACKS (bead `godot-test1-z2yv.3`): one per NETWORK ANCHOR a
+	# trunk touches, and spurs get none. The anchor's own position is inside a
+	# keep-out by construction, so `rack_site()` settles the nearest clearing
+	# offset; a taken site builds NO rack and plants NO marker.
+	#
+	# BUILT ONLY FROM THE ANCHOR'S OWN CHUNK, so dedup is by construction (one
+	# anchor lives in exactly one chunk) rather than by a runtime set — two
+	# trunks meeting at one waypoint share that anchor's single rack.
+	#
+	# FIRST, BEFORE EITHER TIER'S BOXES. Check 7c reads a pole's top as the
+	# contiguous run of boxes after its post, so racks emitted last would let a
+	# rack box walk into the last pole's top run and fail a correct world; with
+	# the racks first every recorded CUBE index is still taken after them, and
+	# the family's batch entries stay the ONE contiguous range check 1 slices.
+	var anchors_here: Array[Dictionary] = terrain.bike_anchors()
+	for anchor_index: int in touched_anchors(terrain):
+		var apos: Vector2 = anchors_here[anchor_index]["pos"]
+		if terrain.world_to_chunk(Vector3(apos.x, 0.0, apos.y)) != chunk_pos:
+			continue
+		var site: Vector2 = rack_site(terrain, apos, terrain.waypoint_sites(),
+				obstacles, centre)
+		if site == Vector2.INF:
+			continue
+		cube_cursor = _build_rack(terrain, anchor_index, site, centre, rng,
+				obstacles, block_batch, block_body, cube_cursor, parent_chunk,
+				markers)
 	var radius: int = scan_radius_chunks(terrain)
 	for ox in range(chunk_pos.x - radius, chunk_pos.x + radius + 1):
 		for oy in range(chunk_pos.y - radius, chunk_pos.y + radius + 1):
@@ -2236,6 +2321,119 @@ static func _make_marker(terrain: Node3D, origin: Vector2i, built: Dictionary,
 	parent_chunk.add_child(marker)
 	_plant_signal_timers(terrain, marker, built["signals"])
 	return marker
+
+
+static func touched_anchors(terrain: Node3D) -> Array[int]:
+	"""
+	Every anchor index a trunk touches, least first: both ends of every edge in
+	`terrain.bike_edges()`.
+
+	@param terrain: The `EndlessTerrain`.
+	@return: Sorted anchor indices into `terrain.bike_anchors()`.
+
+	DERIVED FROM THE TRUNK SET and never from a second opinion about where the
+	corridor is (owner ruling 2026-09-19, amendment to bead `godot-test1-z2yv.3`):
+	an anchor with no incident edge gets no rack, whatever kind it is. COSTS NO
+	DRAW — the edge set is a hash dispatch over a table already pure in
+	`run_seed`.
+	"""
+	var out: Array[int] = []
+	for edge: Dictionary in terrain.bike_edges():
+		for key: String in ["a", "b"]:
+			var idx: int = int(edge[key])
+			if not out.has(idx):
+				out.append(idx)
+	out.sort()
+	return out
+
+
+static func rack_site(terrain: Node3D, anchor_pos: Vector2,
+		waypoints: Array[Dictionary], obstacles: Array, centre: Vector2) -> Vector2:
+	"""
+	The rack's world XZ for the anchor at `anchor_pos`, or `Vector2.INF` when no
+	candidate clears.
+
+	@param anchor_pos: The anchor's world XZ, from `terrain.bike_anchors()`.
+	@param waypoints: `terrain.waypoint_sites()`, for `trunk_keep_out`.
+	@param obstacles: The chunk's finished `obstacles` list, for `_footprint_taken`.
+	@param centre: The building chunk's centre in world XZ (`obstacles` is
+	               chunk-local).
+	@return: The nearest clearing fixed offset, or `Vector2.INF`.
+
+	NEAREST-FIRST over `RACK_SITE_DISTANCES` x `RACK_SITE_DIRECTIONS`, both fixed
+	tables, so the site is a pure function of (anchor, `run_seed`) that costs no
+	draw. A candidate must clear the shipped `trunk_keep_out` — the tower's disc,
+	a teleport circle, a landmark's chunk, the coin road's swath — at the site
+	AND at both rail ends (`RACK_EXTENT`), AND read free against `obstacles`, or
+	the rack (and its marker with it) is skipped.
+	"""
+	for dist: float in RACK_SITE_DISTANCES:
+		for dir: Vector2 in RACK_SITE_DIRECTIONS:
+			var site: Vector2 = anchor_pos + dir * dist
+			if trunk_keep_out(terrain, site, waypoints):
+				continue
+			# ...AND BOTH RAIL ENDS. A site that clears with a box inside a
+			# keep-out is a rack T5 would catch, so the stencil decides here.
+			if trunk_keep_out(terrain, site + Vector2(RACK_EXTENT, 0.0), waypoints):
+				continue
+			if trunk_keep_out(terrain, site - Vector2(RACK_EXTENT, 0.0), waypoints):
+				continue
+			if _footprint_taken(obstacles, site - centre):
+				continue
+			return site
+	return Vector2.INF
+
+
+static func _build_rack(terrain: Node3D, anchor_index: int, site: Vector2,
+		centre: Vector2, rng: RandomNumberGenerator, obstacles: Array,
+		block_batch: Array, block_body: StaticBody3D, cube_cursor: int,
+		parent_chunk: MeshInstance3D, markers: Array[Node3D]) -> int:
+	"""
+	The rack at world-XZ `site`: one low rail, `RACK_UPRIGHT_COUNT` thin hoop
+	uprights, ONE footprint for the whole stand, and the bare `bike_stand`
+	marker the rental epic will read.
+
+	@param anchor_index: The index into `terrain.bike_anchors()` this rack stands
+	                     for — the marker's `anchor` meta.
+	@param centre: The building chunk's centre in world XZ.
+	@return: The advanced CUBE cursor.
+
+	CUBE ONLY, through `create_box` off the family's fixed-seed builder RNG like
+	everything else, so the boxes land inside the family's
+	batch_start/batch_count slice. The marker carries the WORLD position: it
+	outlives any one chunk's frame and the rental epic must not re-derive it.
+	"""
+	var at: Vector2 = site - centre
+	terrain.create_box(
+			Vector3(at.x, RACK_RAIL_Y, at.y),
+			Vector3(RACK_RAIL_LENGTH, RACK_RAIL_HEIGHT, RACK_RAIL_DEPTH),
+			0.0, rng, block_batch, block_body, 0.0, RACK_COLOR, true,
+			ChunkBatch.BoxKind.CUBE)
+	cube_cursor += 1
+	for u in RACK_UPRIGHT_COUNT:
+		var x: float = at.x - RACK_RAIL_LENGTH * 0.5 \
+				+ RACK_RAIL_LENGTH * float(u) / float(RACK_UPRIGHT_COUNT - 1)
+		terrain.create_box(
+				Vector3(x, RACK_UPRIGHT_HEIGHT * 0.5, at.y),
+				Vector3(RACK_UPRIGHT_WIDTH, RACK_UPRIGHT_HEIGHT, RACK_UPRIGHT_DEPTH),
+				0.0, rng, block_batch, block_body, 0.0, RACK_COLOR, true,
+				ChunkBatch.BoxKind.CUBE)
+		cube_cursor += 1
+	# NON-CLIMBABLE, like the poles: a stand has no top to stand on.
+	obstacles.append({
+		"pos": Vector3(at.x, 0.0, at.y),
+		"radius": RACK_RADIUS,
+		"top": RACK_TOP,
+		"climbable": false,
+	})
+	var stand := Node3D.new()
+	stand.name = BIKE_STAND_MARKER_NAME
+	stand.add_to_group(BIKE_STAND_GROUP)
+	stand.set_meta("anchor", anchor_index)
+	stand.set_meta("pos", Vector3(site.x, 0.0, site.y))
+	parent_chunk.add_child(stand)
+	markers.append(stand)
+	return cube_cursor
 
 
 # ============================================================================
