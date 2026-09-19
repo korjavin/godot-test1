@@ -166,6 +166,19 @@ const PRIMM_FLASH_FLEE_DURATION: float = 3.0
 ## wall between Primm and a croc is a wall it cannot bite through either.
 const PRIMM_FLASH_RADIUS: float = 3.5
 
+# --- Windman: hidden dance (bead godot-test1-b7eg) ---
+## How long the emote runs, in seconds — a couple of seconds, a few beats, no
+## gameplay effect at any point of it. The pose loops DANCE_BEATS times over
+## this (up the first EDGE_S, down the last EDGE_S), counted down in
+## `_update_ability_timers()`.
+const WINDMAN_DANCE_DURATION: float = 2.0
+## How many bounce loops the pose runs over the duration (2 Hz — a bounce, not
+## a sway).
+const WINDMAN_DANCE_BEATS: float = 4.0
+## The fade in and out at both ends, in seconds — the slash triangle's idiom,
+## so the arms hand back to the gait with no pop.
+const WINDMAN_DANCE_EDGE_S: float = 0.15
+
 # --- Teibi: Resize ---
 ## Scale factors for the small and giant forms (1.0 is the normal size).
 const TEIBI_SCALE_SMALL: float = 0.45
@@ -256,6 +269,12 @@ func _update_ability_timers(delta: float) -> void:
 		player.primm_slash_timer = maxf(0.0, player.primm_slash_timer - delta)
 		if player.primm_slash_timer <= 0.0:
 			_set_primm_swords_drawn(false)
+	if player.windman_dance_timer > 0.0:
+		# No revert logic either: the loop IS this timer over its duration, and
+		# the edge fades hand the arms back, so expiry needs no second state —
+		# and carries none, because the dance owns no cooldown, no refund and
+		# no pose outside the two arm chains.
+		player.windman_dance_timer = maxf(0.0, player.windman_dance_timer - delta)
 	for i in player.ability_cooldowns.size():
 		if player.ability_cooldowns[i] > 0.0:
 			player.ability_cooldowns[i] = maxf(0.0, player.ability_cooldowns[i] - delta)
@@ -956,13 +975,15 @@ func _spawn_ability_effect(pos: Vector3, color: Color, max_radius: float, lifeti
 
 
 func _reset_ability_states() -> void:
-	"""Clear transient ability state on respawn (air boost, air sight, giant/small form, stink pose)."""
+	"""Clear transient ability state on respawn (air boost, air sight, giant/small form, stink pose, dance)."""
 	player.windman_boost_timer = 0.0
 	player.speed_burst_timer = 0.0
 	player._pending_cooldown_refund = 0.0
 	player.phoboman_stink_timer = 0.0
 	player.primm_slash_timer = 0.0
 	_set_primm_swords_drawn(false)
+	player.windman_dance_timer = 0.0
+	player._dance_armed = false
 	_revert_teibi_to_normal()
 	# Air Sight lives in the BUILDING's materials rather than in a field here, so it
 	# is the one transient state that leaks something visible if it is not cleared:

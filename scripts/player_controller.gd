@@ -1067,6 +1067,24 @@ func _input(event: InputEvent) -> void:
 			_cheat_buffer = ""
 
 
+func _panels_busy() -> bool:
+	"""
+	Whether the lift menu or the waypoint travel list currently owns the digit
+	keys (bead godot-test1-b7eg): both read 6/7 as choices while open
+	(`tower_lift_menu.CHOICE_KEYCODES`, `waypoint_hub.CHOICE_KEYCODES`), so the
+	dance stands down for both. Group-based discovery with `has_method`, never
+	a reference — a panel that is not in the tree simply answers nothing, the
+	project's degradation rule for optional systems.
+	"""
+	var lift := get_tree().get_first_node_in_group("tower_lift_menu")
+	if lift != null and lift.has_method("is_open") and bool(lift.call("is_open")):
+		return true
+	var hub := get_tree().get_first_node_in_group("waypoint_hub")
+	if hub != null and hub.has_method("is_panel_open") and bool(hub.call("is_panel_open")):
+		return true
+	return false
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	"""
 	1-4 (number row or numpad) jump STRAIGHT to that hero — the digits hero_hud.gd
@@ -1094,6 +1112,35 @@ func _unhandled_input(event: InputEvent) -> void:
 	var toast := get_tree().get_first_node_in_group("landmark_toast")
 	if toast and toast.has_method("is_quiz_pending") and toast.is_quiz_pending():
 		return
+	# WINDMAN'S DANCE (bead godot-test1-b7eg): 6 arms, 7 fires within
+	# DANCE_SEQUENCE_WINDOW_MS — the cheat recogniser's shape, on digits. Only
+	# Windman dances; any other key in between (digits included — the hero loop
+	# below runs AFTER this clears) or a stale arm clears silently. The lift
+	# menu and the waypoint list own these digits while open (their
+	# CHOICE_KEYCODES), so the emote stands down for both: a player picking
+	# floor 7 dances instead of riding otherwise. Quiz-pending returns above,
+	# paused trees at the top — same as every digit here.
+	if _panels_busy():
+		# A digit typed into an open panel belongs to the panel: clear any arm
+		# (it is an "other key") and touch nothing else — notably not the hero
+		# loop below, whose behaviour with panels open is not this bead's to
+		# change.
+		_dance_armed = false
+	else:
+		if key.keycode == KEY_6 or key.keycode == KEY_KP_6:
+			_dance_armed = true
+			_dance_armed_msec = Time.get_ticks_msec()
+			get_viewport().set_input_as_handled()
+			return
+		if key.keycode == KEY_7 or key.keycode == KEY_KP_7:
+			if _dance_armed \
+					and Time.get_ticks_msec() - _dance_armed_msec <= DANCE_SEQUENCE_WINDOW_MS \
+					and String(CHARACTERS[current_character_index]["name"]) == "windman":
+				windman_dance_timer = WINDMAN_DANCE_DURATION
+			_dance_armed = false
+			get_viewport().set_input_as_handled()
+			return
+		_dance_armed = false
 	for index: int in HERO_KEYCODES.size():
 		if (HERO_KEYCODES[index] as Array).has(key.keycode):
 			switch_to_character(index)
@@ -1580,6 +1627,16 @@ func _physics_process(delta: float) -> void:
 	# below already knows about the river underfoot.)
 	var input_dir := get_input_direction()
 	var current_speed := calculate_current_speed()
+
+	# STEP 7.5: Windman's dance breaks on the first step or hop (bead
+	# godot-test1-b7eg): a dance you can walk away from is a speed the lattice
+	# never priced. A buffered jump press counts even before the body leaves
+	# the ground, and leaving the ground any other way ends it too. Caught,
+	# switch and respawn clear it in `_reset_ability_states()` instead — they
+	# never reach this step.
+	if windman_dance_timer > 0.0 \
+			and (input_dir != Vector2.ZERO or jump_buffer_timer > 0.0 or not is_on_floor()):
+		windman_dance_timer = 0.0
 
 	# STEP 8: Build this frame's horizontal velocity from input_dir in local space,
 	# rotated into the world by transform.basis. Composed (lateral, forward) is
@@ -4024,17 +4081,17 @@ func travel_to_waypoint(index: int) -> bool:
 	Hop to waypoint circle `index`, paying `TELEPORT_COIN_COST` for it.
 
 	@param index: a row of `TerrainWaypoints.waypoint_sites()` — the same index
-	    that is the circle's bit in `waypoint_mask` and on the wire.
+		that is the circle's bit in `waypoint_mask` and on the wire.
 	@return: whether the hop actually happened. Every refusal moves NOTHING and
 	    charges NOTHING.
 
 	THE REFUSALS, and all of them are silent but the last:
 	  * a hop already in flight (`_travel_busy`);
 	  * mid-respawn, caught, or the run is over — the body is not the player's to
-	    move in any of the three;
+		move in any of the three;
 	  * not standing on a circle, per `waypoint_hub.standing_on()`, which is a
-	    POSITION AND NOT A PERMISSION (its docstring) — so the bit for the circle
-	    under our feet is ANDed against `waypoint_mask` here;
+		POSITION AND NOT A PERMISSION (its docstring) — so the bit for the circle
+		under our feet is ANDed against `waypoint_mask` here;
 	  * the target's bit is clear — you cannot travel to a circle the crew has not
 	    found;
 	  * the target is the circle we are standing on;
@@ -4055,15 +4112,15 @@ func travel_to_waypoint(index: int) -> bool:
 
 	WHAT THIS DELIBERATELY DOES NOT DO:
 	  * NO VERB. Peers need no packet: a remote avatar that finds its target more
-	    than `RemoteAvatar.TELEPORT_DISTANCE` away snaps instead of interpolating,
-	    which is the arrival, drawn correctly, for free.
+		than `RemoteAvatar.TELEPORT_DISTANCE` away snaps instead of interpolating,
+		which is the arrival, drawn correctly, for free.
 	  * NO COOLDOWN (owner ruling — the price is the brake).
 	  * NOTHING ABOUT THE CHASE. The pack left behind is simply 2 km away on the
-	    next frame: `crocodile_lod_manager` sleeps everything past `SIM_RADIUS` and
-	    `hunt_director` reaps its bucket. Abandoning a chase is what travel IS.
+		next frame: `crocodile_lod_manager` sleeps everything past `SIM_RADIUS` and
+		`hunt_director` reaps its bucket. Abandoning a chase is what travel IS.
 	  * NOTHING ABOUT CAPTIVES. No circle stands inside the HQ (site 0 is
-	    `WAYPOINT_SIDE_STANDOFF` clear of the +Z wall), so `inside_walls()` is
-	    false at every one of them and no checkpoint rule applies.
+		`WAYPOINT_SIDE_STANDOFF` clear of the +Z wall), so `inside_walls()` is
+		false at every one of them and no checkpoint rule applies.
 	"""
 	# Both latches — see the pair in `debug_teleport_to()` for why one is not enough.
 	if _travel_busy or _debug_teleport_busy:
@@ -4212,6 +4269,15 @@ const PRIMM_SLASH_DURATION := PlayerAbilities.PRIMM_SLASH_DURATION
 const PRIMM_SLASH_RISE_S := PlayerAbilities.PRIMM_SLASH_RISE_S
 const PRIMM_FLASH_FLEE_DURATION := PlayerAbilities.PRIMM_FLASH_FLEE_DURATION
 const PRIMM_FLASH_RADIUS := PlayerAbilities.PRIMM_FLASH_RADIUS
+const WINDMAN_DANCE_DURATION := PlayerAbilities.WINDMAN_DANCE_DURATION
+const WINDMAN_DANCE_BEATS := PlayerAbilities.WINDMAN_DANCE_BEATS
+const WINDMAN_DANCE_EDGE_S := PlayerAbilities.WINDMAN_DANCE_EDGE_S
+## How long after a 6 a 7 still dances, in milliseconds — a deliberate human
+## gap, not a fumbled chord: long enough for a small pause between two
+## deliberate presses, short enough that a stray 7 a minute later finds nothing
+## armed. The cheat recogniser's 2 s is the generous cousin; a dance is cheaper
+## to misfire than a teleport, but the owner said "a small pause", so 0.8 s.
+const DANCE_SEQUENCE_WINDOW_MS: int = 800
 const TEIBI_SCALE_SMALL := PlayerAbilities.TEIBI_SCALE_SMALL
 const TEIBI_SCALE_BIG := PlayerAbilities.TEIBI_SCALE_BIG
 const TEIBI_FIT_GROUND_CLEAR := PlayerAbilities.TEIBI_FIT_GROUND_CLEAR
@@ -4299,6 +4365,18 @@ var phoboman_stink_timer: float = 0.0
 ## the pose triangle IS the return, and the swords swap back on expiry. See
 ## PRIMM_SLASH_DURATION.
 var primm_slash_timer: float = 0.0
+
+## Seconds left in Windman's hidden dance (0 while he stands normally). Set when
+## 6-then-7 fires, counted down in `_update_ability_timers()`; the loop IS the
+## return. See WINDMAN_DANCE_DURATION. No gameplay effect at any point of it —
+## movement, jumping, leaving the ground, capture, switch and respawn all end
+## it (the first three per-frame below, the rest in `_reset_ability_states()`).
+var windman_dance_timer: float = 0.0
+## Whether a 6 has armed the dance and when, in wall-clock milliseconds — the
+## cheat recogniser's shape exactly: a 7 within DANCE_SEQUENCE_WINDOW_MS fires,
+## any other key or a stale arm clears. Cleared with the timer above.
+var _dance_armed: bool = false
+var _dance_armed_msec: int = 0
 
 ## True only while Teibi is giant — makes him crush crocodiles on contact.
 var is_giant: bool = false
@@ -4885,6 +4963,9 @@ const ABILITY_BIT_GIANT: int = 1 << 2
 ## passes the byte through and ignores unknown bits, so spending one is no
 ## wire change either.
 const ABILITY_BIT_SLASH: int = 1 << 3
+## Windman's dance (bead godot-test1-b7eg) — the next free bit, room-wide by the
+## katana-pose ruling: an emote nobody else sees is pointless in co-op.
+const ABILITY_BIT_DANCE: int = 1 << 4
 
 
 func ability_visual_state() -> int:
@@ -4902,6 +4983,8 @@ func ability_visual_state() -> int:
 		bits |= ABILITY_BIT_GIANT
 	if primm_slash_timer > 0.0:
 		bits |= ABILITY_BIT_SLASH
+	if windman_dance_timer > 0.0:
+		bits |= ABILITY_BIT_DANCE
 	return bits
 
 
