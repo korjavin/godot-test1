@@ -180,8 +180,17 @@ const ARCHETYPE_NAMES: Array[String] = ["Scientists", "Engineers"]
 ## its reasoning: one number for both, and it is the MAXIMUM because the span is a
 ## divisor — a shorter body simply tops out short of full colour, whereas a span
 ## UNDER a body's height clamps its whole head flat and throws the gradient away
-## over the part you actually look at. The engineer's hard hat is the top of it.
-const STAFF_MESH_TOP: float = 1.80
+## over the part you actually look at.
+##
+## MEASURED OFF THE WELD, not off the figure's nominal height, and the two are not
+## the same number. The engineer's hard hat is welded at centre y 1.77 with a size
+## of 0.12, and `CityAgents.add_box` passes `size` straight to `BoxMesh.size` and
+## emits `center + vertex` — so the crown is at 1.77 + 0.06 = **1.83**, not the
+## 1.80 the figure stands to. The scientist tops out at 1.75 (hair, 1.70 + 0.05).
+## A span of 1.80 would have clamped the top 3 cm of the hat flat at full colour,
+## which is the one part of an engineer you see coming down a corridor. Re-measure
+## this whenever `_archetype_mesh()` grows a box above the hat.
+const STAFF_MESH_TOP: float = 1.83
 
 ## Surface roughness handed to `CityAgents.gradient_material`. Higher than the
 ## crowd's 0.85: a lab coat and a boiler suit are matte cloth under the interior's
@@ -421,11 +430,22 @@ static func _loop_pose(loop: Dictionary, distance: float) -> Array:
 	"""
 	Where a staffer stands and which way it faces, `distance` metres round a lap.
 
-	@return: `[Vector3 interior-local position, float yaw, int segment index]`.
+	@return: `[Vector3 interior-local position, float yaw]`.
 
-	The segment index is handed back so `tick()` can resume the scan from it: the
-	walk is monotone, so following a body round a 370-waypoint loop is one compare
-	a frame rather than a binary search, and the wrap resets it to zero.
+	A LINEAR SCAN OF THE ARC TABLE FROM ZERO, and that is a measurement rather than
+	an oversight. The obvious alternative is to carry the segment index on the
+	walker and resume from it, since the walk is monotone — but a resume is
+	per-walker state that has to be invalidated on every reset and kept in step with
+	the wrap, and the scan it saves does not show up: `tick()` costs **0.022 ms a
+	frame** for the whole building, measured 2026-09-19 over 600 frames with nine
+	staff on loops totalling 1,660 waypoints, at two scans per walker per frame.
+	(Two because the frustum test needs a position before the step can be decided,
+	and the step moves it.)
+
+	`ponytail:` THE CEILING IS THAT IT IS O(waypoints), on a table whose longest row
+	is 370. If a plan ever makes that matter, the upgrade is a resume index on the
+	walker — or a binary search over `arc`, which needs no state at all and is the
+	one to reach for first.
 	"""
 	var arc: PackedFloat32Array = loop["arc"]
 	var path: PackedVector3Array = loop["path"]
@@ -443,7 +463,7 @@ static func _loop_pose(loop: Dictionary, distance: float) -> Array:
 	# built to; the same `atan2(-x, -z)` therefore puts a staffer's face down its
 	# own direction of travel.
 	var yaw: float = atan2(-heading.x, -heading.z) if heading.length_squared() > 0.0 else 0.0
-	return [at, yaw, seg]
+	return [at, yaw]
 
 # ============================================================================
 # THE POPULATION — free everything and stand it back up
@@ -497,7 +517,6 @@ static func reset(interior: TowerInterior) -> void:
 				# EVENLY SPACED ROUND THE LAP, so raising STAFF_PER_STOREY buys
 				# more encounters rather than a conga line.
 				"dist": float(loop["length"]) * float(k) / float(STAFF_PER_STOREY),
-				"seg": 0,
 				"slot": -1,
 				"lod_debt": 0.0,
 			})
@@ -591,7 +610,6 @@ static func tick(interior: TowerInterior, delta: float) -> void:
 			walker["dist"] = fposmod(moved, length)
 			pose = _loop_pose(loop, float(walker["dist"]))
 			at = pose[0]
-		walker["seg"] = int(pose[2])
 
 		# WHICH BUFFER SLOT THIS STAFFER LANDED IN, or -1 for one the window is not
 		# drawing. `walkers()` reads the transform back out of the buffer through
@@ -724,8 +742,9 @@ static func _archetype_mesh(archetype: int) -> ArrayMesh:
 		_box(st, Vector3(0.0, 1.70, 0.0), Vector3(0.30, 0.10, 0.30), hair)
 		_box(st, Vector3(0.0, 1.60, -0.145), Vector3(0.26, 0.06, 0.02), glasses)
 	else:
-		# THE ENGINEER (1.80 m to the crown of the hat): blue overalls over a grey
-		# tee, a tool belt and a yellow hard hat. The hat is the read — it is the
+		# THE ENGINEER (1.83 m to the crown of the hat — `STAFF_MESH_TOP`, and see
+		# its note on why that is not 1.80): blue overalls over a grey tee, a tool
+		# belt and a yellow hard hat. The hat is the read — it is the
 		# one saturated warm colour in a building painted off-white.
 		var overalls := Color(0.18, 0.32, 0.58)
 		var tee := Color(0.72, 0.74, 0.76)

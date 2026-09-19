@@ -35,16 +35,26 @@ extends SceneTree
 ##     Asserted by WALKING THE SUBTREE, never by reading the source: a collider
 ##     added by a scene, by a tween or by a future archetype is caught the same way
 ##     one typed into this file would be.
-##  4. **TWO DRAWS, ONE MATERIAL.** Two `MultiMeshInstance3D`, shadows off, sharing
-##     ONE `Material` by identity — across two separately built interiors, which is
-##     the only form of the assertion a per-build `duplicate()` cannot pass.
+##  4. **TWO DRAWS, ONE MATERIAL, AND A GRADIENT SPAN THAT FITS.** Two
+##     `MultiMeshInstance3D`, shadows off, sharing ONE `Material` by identity —
+##     across two separately built interiors, which is the only form of the
+##     assertion a per-build `duplicate()` cannot pass. `STAFF_MESH_TOP` is
+##     measured against the live `AABB` of the welded bodies, because a span under
+##     the tallest one clamps its head flat and nothing else would ever say so.
 ##  5. **THE BODIES MOVE, AND THEY MOVE ALONG THE PATH.** Driven for two seconds of
 ##     simulated time. Every staffer's drawn position must change, must stay inside
 ##     `TowerInterior.inside_walls()`, must sit ON its own loop's polyline, and must
 ##     not have travelled further than `WALK_SPEED` allows. Read out of the
 ##     MultiMesh BUFFER — the thing the engine is handed — and not out of the
 ##     records that decided it.
-##  6. **THE POPULATION RESETS** on the shell's own `player_entered`, exactly as the
+##  6. **THE STOREY WINDOW WRITES HIDDEN STAFF OUT OF THE DRAW.** Staff are not
+##     children of a storey container — one MultiMesh spans ten floors — so the
+##     interior's `visible = false` cannot hide them and `tick()` drops them out of
+##     `visible_instance_count` instead. Every other probe in this file runs with
+##     `_drawn_floor` at -1, where that branch is never taken, so this one drives
+##     all ten windows and asserts against `_floor_visible` itself. Its control is
+##     that the gate made BOTH decisions over the sweep.
+##  7. **THE POPULATION RESETS** on the shell's own `player_entered`, exactly as the
 ##     guards do, and the opened set does not.
 ##
 ## The draw budget the two MultiMeshes moved (38 -> 40) is asserted where it lives,
@@ -75,7 +85,7 @@ const WALK_STEP: float = 1.0 / 60.0
 ## How far off its mark a re-entered staffer may be found, in metres.
 ##
 ## NOT `EPS`, AND THE REASON IS THE SAME ONE `tower_guard_selfcheck`'s
-## `POST_SETTLE_EPS` is written around. Check 6 reads the population one PROCESS
+## `POST_SETTLE_EPS` is written around. Check 7 reads the population one PROCESS
 ## FRAME after the doorway signal, and the building's own `_process` walks the
 ## staff on that frame by whatever delta the frame took — unbounded on a loaded CI
 ## runner. The question the check asks is "was the population RESET to its marks,
@@ -112,6 +122,7 @@ func _run() -> void:
 	await _check_no_collider_and_no_group()
 	await _check_two_draws_one_material()
 	await _check_the_bodies_walk_their_loops()
+	await _check_the_storey_window_hides_them()
 	await _check_the_population_resets_on_re_entry()
 	_report()
 
@@ -513,6 +524,31 @@ func _check_two_draws_one_material() -> void:
 			_fail("`%s`'s welded body submits %d surfaces, not 1 — a MultiMesh"
 				% [rack.name, surfaces] + " draws once PER SURFACE, so the two-draw"
 				+ " claim is only true of a single-surface weld")
+	# STAFF_MESH_TOP IS MEASURED OFF THE WELDED MESH, not taken on trust. It is the
+	# divisor the top-lit gradient is computed over, so a value UNDER the tallest
+	# body clamps that body's head flat at full colour and throws the gradient away
+	# over the part you actually look at — and it is a number nothing else would
+	# ever contradict, because a wrong gradient renders perfectly happily. Compared
+	# against the live `AABB`, which is the mesh the engine draws.
+	#
+	# It shipped at 1.80 against a crown of 1.83 (the hard hat is welded at centre
+	# 1.77 with a size of 0.12, and `add_box` emits `centre + vertex`), which is
+	# exactly the silent 3 cm this assertion exists to catch. FEET AT ZERO is
+	# asserted with it: the whole "boots-to-hat" span only means anything if the
+	# weld starts on the floor.
+	var tallest := 0.0
+	for rack: MultiMeshInstance3D in racks_a:
+		var box: AABB = rack.multimesh.mesh.get_aabb()
+		tallest = maxf(tallest, box.position.y + box.size.y)
+		if absf(box.position.y) > EPS:
+			_fail("`%s`'s welded body starts at y %.3f, not with its feet on the"
+				% [rack.name, box.position.y] + " floor — the gradient span and the"
+				+ " walk both assume a body welded at zero")
+	if not is_equal_approx(tallest, TowerStaff.STAFF_MESH_TOP):
+		_fail("the tallest welded staff body tops out at %.3f m but STAFF_MESH_TOP"
+			% tallest + " is %.3f — the gradient span is measured over the wrong"
+			% TowerStaff.STAFF_MESH_TOP + " height, and a span UNDER the body"
+			+ " clamps its head flat at full colour")
 	# The two archetypes must be two different bodies, or "scientists and engineers"
 	# is one population wearing one coat.
 	if racks_a.size() == 2 and racks_a[0].multimesh != null \
@@ -661,12 +697,104 @@ func _distance_to_path(path: PackedVector3Array, at: Vector3) -> float:
 
 
 # ============================================================================
-# CHECK 6 — the population resets on re-entry
+# CHECK 6 — the storey window writes hidden staff out of the draw
+# ============================================================================
+
+func _check_the_storey_window_hides_them() -> void:
+	"""
+	Check 6. A staffer on a storey the interior is not drawing is written OUT of
+	`visible_instance_count`, and one on the drawn storey or its neighbours is not.
+
+	THE OTHER HALF OF `tick()`'s GATING, and until this check existed nothing in the
+	suite touched it. `window` is `interior._drawn_floor >= 0`, `_drawn_floor` is
+	written only by `TowerInterior._update_visibility()`, and that function returns
+	early when there is no player — so every other probe in this file runs with
+	`_drawn_floor` at -1, `window` false and `drawn` true for everybody. The branch
+	that matters was executed nowhere and asserted nowhere.
+
+	WHY IT MATTERS ENOUGH TO DRIVE DIRECTLY. Staff are NOT children of a storey
+	container: one MultiMesh spans ten floors, which is the dossier rack's problem
+	exactly, and a storey container's `visible = false` therefore cannot hide them.
+	Without this gate a staffer on floor 9 is drawn walking inside floor 4's slab
+	while the player stands on it, which is the kind of thing that looks like a
+	rendering bug and is a gating bug.
+
+	`_drawn_floor` IS SET DIRECTLY rather than by standing a player up inside the
+	building, because what is under test is `TowerStaff.tick()`'s reading of that
+	field, not `_update_visibility()`'s writing of it — that half is
+	`tower_interior_selfcheck`'s check 3. Driving it here would make this check fail
+	on a camera bug in another file.
+
+	THE EXPECTATION IS DERIVED FROM `_floor_visible`, NOT RESTATED. That is the
+	function `tick()` calls, so a check carrying its own `absi(a - b) <= 1` would
+	stop agreeing with the building the day `FLOOR_NEIGHBOURS` grows an irregular
+	row — which is the whole reason that table exists.
+	"""
+	var interior := await TowerProbe.make_interior(self)
+	var floors: Array[int] = []
+	for loop: Dictionary in TowerStaff.loops():
+		floors.append(int(loop["floor"]))
+	if floors.size() < 3:
+		_fail("only %d storeys carry staff — check 6 cannot tell a window from"
+			% floors.size() + " 'everything is drawn'")
+		interior.queue_free()
+		await process_frame
+		Sentinel.done("the_storey_window_hides_them")
+		return
+	var hid := 0
+	var showed := 0
+	for window: int in TowerInterior.FLOOR_Y.size():
+		interior._drawn_floor = window
+		TowerStaff.tick(interior, 0.0)
+		var drawn: Array[int] = []
+		for walker: Dictionary in TowerStaff.walkers(interior):
+			drawn.append(int(walker["floor"]))
+		for floor_index: int in floors:
+			var want := TowerInterior._floor_visible(floor_index, window)
+			var got := drawn.has(floor_index)
+			if want:
+				showed += 1
+			else:
+				hid += 1
+			if want and not got:
+				_fail("with the window on storey %d, the staffer on storey %d is"
+					% [window, floor_index] + " not drawn, though the interior"
+					+ " draws that floor")
+			elif got and not want:
+				_fail("with the window on storey %d, the staffer on storey %d is"
+					% [window, floor_index] + " still drawn — it is walking inside"
+					+ " a slab the player cannot see through")
+		# ...and the COUNT, which is the thing the engine actually reads. A `slot`
+		# left stale from the previous window would keep a body on screen while
+		# `walkers()` reported it gone.
+		var visible := 0
+		for a: int in TowerStaff.ARCHETYPE_COUNT:
+			var rack := interior._staff.get_child(a) as MultiMeshInstance3D
+			visible += rack.multimesh.visible_instance_count
+		if visible != drawn.size():
+			_fail("with the window on storey %d the MultiMeshes draw %d instances"
+				% [window, visible] + " but %d staff report drawn" % drawn.size())
+	# THE CONTROL: over the ten windows the gate must have said BOTH things. A test
+	# that only ever saw "drawn" — which is exactly what every other check in this
+	# file sees — cannot fail on a gate that is wired backwards.
+	if hid == 0 or showed == 0:
+		_fail("over %d windows the gate hid %d staff and showed %d — it never made"
+			% [TowerInterior.FLOOR_Y.size(), hid, showed] + " both decisions, so"
+			+ " this check would pass on a gate wired either way round")
+	print("tower staff: over %d storey windows the gate hid %d and drew %d"
+		% [TowerInterior.FLOOR_Y.size(), hid, showed])
+	interior.queue_free()
+	await process_frame
+	Sentinel.done("the_storey_window_hides_them")
+
+
+# ============================================================================
+# CHECK 7 — the population resets on re-entry
 # ============================================================================
 
 func _check_the_population_resets_on_re_entry() -> void:
 	"""
-	Check 6. Crossing the doorway stands the staff back at the start of their loops
+	Check 7. Crossing the doorway stands the staff back at the start of their loops
 	and leaves the opened gates alone.
 
 	"STRUCTURE PERSISTS; POPULATION RESETS" IS ONE SENTENCE WITH TWO HALVES, and
@@ -682,7 +810,7 @@ func _check_the_population_resets_on_re_entry() -> void:
 	var shell := await TowerProbe.make_tower(self)
 	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
 	if interior == null:
-		_fail("no TowerInterior under the shell — check 6 has nothing to measure")
+		_fail("no TowerInterior under the shell — check 7 has nothing to measure")
 		await TowerProbe.clear(self, null, shell)
 		Sentinel.done("the_population_resets_on_re_entry")
 		return
@@ -692,7 +820,7 @@ func _check_the_population_resets_on_re_entry() -> void:
 	var staff_before := interior.get_node_or_null("Staff")
 	var marks := TowerStaff.walkers(interior)
 	if marks.is_empty():
-		_fail("the tower stood up no staff at all — check 6 would pass on an empty"
+		_fail("the tower stood up no staff at all — check 7 would pass on an empty"
 				+ " building")
 		await TowerProbe.clear(self, null, shell)
 		Sentinel.done("the_population_resets_on_re_entry")
@@ -707,7 +835,7 @@ func _check_the_population_resets_on_re_entry() -> void:
 		drift = maxf(drift, (marks[i]["position"] as Vector3).distance_to(
 				wandered[i]["position"]))
 	if drift < 1.0:
-		_fail("six seconds of walking moved the staff at most %.3f m — check 6"
+		_fail("six seconds of walking moved the staff at most %.3f m — check 7"
 			% drift + " cannot tell a reset from doing nothing")
 
 	# THE REAL TRIGGER: the shell's own emission, not the private handler.

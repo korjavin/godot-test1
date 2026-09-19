@@ -7,8 +7,20 @@ extends RefCounted
 ##
 ## Shared by BOTH ambience managers (crowd_manager.gd, traffic_manager.gd) because
 ## the rule and its tick rate must be ONE number: two copies drift, and the two
-## managers are the same problem twice. Nothing else may use it — this is a budget
-## for scenery, never for anything a predator, a coin or a player can touch.
+## managers are the same problem twice.
+##
+## THE RULE IS ABOUT WHAT A CONSUMER IS, NOT HOW MANY THERE ARE. This is a budget
+## for SCENERY — never for anything a predator, a coin or a player can touch —
+## because a body that is ticked a few times a second is a body whose position is
+## stale, and stale is fine for a citizen and a lie for anything that can catch
+## you. A third consumer landed at bead `godot-test1-buyt.3`: `tower_staff.gd`, the
+## HQ's civilian staff, which qualify exactly — no collider, no group, no contact
+## path, nothing a hero can touch and nothing that can touch a hero. (When
+## `godot-test1-buyt.4` gives a staffer a view cone, the SIGHTING is local and
+## exact; it is the walk that is coarse-ticked, and a staffer whose feet lag a
+## fifth of a second is a staffer who saw you from very slightly the wrong spot,
+## which is scenery precision and not gameplay precision.) Anything that does not
+## meet that bar still may not use this file, whatever the count is by then.
 ##
 ## ----------------------------------------------------------------------------
 ## A COARSE TICK, NOT A FREEZE — this is the whole design

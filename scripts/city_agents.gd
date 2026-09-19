@@ -79,13 +79,18 @@ static func gradient_material(mesh_top: float, roughness: float) -> ShaderMateri
 	## like the street they stand on instead of reading flat against a
 	## gradient-shaded city.
 	##
-	## The two callers differ in exactly two numbers — the body height the
-	## gradient is measured over and the roughness — so they are the two
-	## arguments, and each manager keeps its own lazy singleton over this. That
-	## split is deliberate: "ONE material per manager, never one per instance" is
-	## an invariant `crowd_selfcheck` and `traffic_selfcheck` both assert off the
-	## live `material_override`, and a cache in here would quietly make it "one
-	## per (height, roughness) pair" — the same thing today and not tomorrow.
+	## Its callers differ in exactly two numbers — the body height the gradient is
+	## measured over and the roughness — so they are the two arguments, and each
+	## caller keeps its own lazy singleton over this. That split is deliberate:
+	## "ONE material per manager, never one per instance" is an invariant
+	## `crowd_selfcheck` and `traffic_selfcheck` both assert off the live
+	## `material_override`, and a cache in here would quietly make it "one per
+	## (height, roughness) pair" — the same thing today and not tomorrow.
+	##
+	## There were two of them until bead `godot-test1-buyt.3`; the third is
+	## `tower_staff.gd`, whose two MultiMeshes share one material between them and
+	## whose own check asserts that by identity ACROSS TWO BUILT INTERIORS — the
+	## only form of the assertion a per-build `duplicate()` cannot pass.
 	##
 	## The tint arrives through `COLOR` (vertex colours, times the per-instance
 	## colour of a `use_colors` MultiMesh), so `albedo` stays at its white default.

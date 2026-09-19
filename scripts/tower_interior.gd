@@ -778,7 +778,7 @@ const XRAY_ALPHA: float = 0.30
 ## own surface so they can be swapped costs ONE surface per planned storey and
 ## nothing else — no node, no material per box, and no work at all while it is off.
 ##
-## MEASURED AT 49 with ten storeys authored, of which the ten wall surfaces are the
+## MEASURED AT 51 with ten storeys authored, of which the ten wall surfaces are the
 ## whole of what Air Sight added. The slack over it is the same slack `DRAW_BUDGET`
 ## carries, and for the same reason: a moving part earns a mesh, and a mesh is at
 ## least one more draw.
@@ -787,6 +787,13 @@ const XRAY_ALPHA: float = 0.30
 ## matte folders, deliberately NOT a `GLOW_COLORS` colour, so the six pickups cost
 ## the building one surface between them and no emissive surface at all. That is
 ## the whole reason they are one rack and not six meshes: see `DRAW_BUDGET`.
+##
+## 49 -> 51 IS THE CIVILIAN STAFF (bead godot-test1-buyt.3) — one `MultiMesh` per
+## archetype, and each archetype's body is welded by `SurfaceTool` into exactly ONE
+## surface (asserted, because a two-surface weld would silently double the draw
+## cost of the whole population). Two archetypes, two surfaces, however many staff
+## ever walk the building. The same argument the dossiers made one bead earlier,
+## and `DRAW_BUDGET`'s banner carries the node half of it.
 const SURFACE_BUDGET: int = 54
 
 ## The ground storey's carpet layer. 2 cm of pure colour, non-solid, laid OVER the
