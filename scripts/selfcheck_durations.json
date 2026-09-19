@@ -1,6 +1,7 @@
 {
   "altitude_selfcheck": 7,
   "batch_selfcheck": 0,
+  "bike_network_selfcheck": 1,
   "bike_path_selfcheck": 2,
   "boss_arms_selfcheck": 56,
   "boss_immunity_selfcheck": 14,
