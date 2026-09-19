@@ -81,7 +81,12 @@ const SEEDED_ROAD_STATE: PackedStringArray = [
 ## (ftn.4's ruling, which is why `_landmark_at` stayed there), so a static memo
 ## is unreachable from the one seam that is allowed to forget nothing.
 const FAMILY_PREFIX: String = "terrain_"
-const FAMILY_EXTRA: PackedStringArray = ["budapest_streamer.gd"]
+## `bike_network.gd` is a static terrain family too — it just does not carry the
+## `terrain_` prefix the glob keys on (epic godot-test1-pnvb named it for the
+## feature rather than for the file it was cut out of). Its memo lives on the
+## terrain as `_bike_network_cache`; this line is what stops the next author
+## putting it back on the family.
+const FAMILY_EXTRA: PackedStringArray = ["budapest_streamer.gd", "bike_network.gd"]
 const SCRIPT_DIR: String = "res://scripts"
 
 ## One seed is enough: this check is about the STATE MACHINE around a chunk, not
