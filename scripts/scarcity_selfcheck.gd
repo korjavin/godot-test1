@@ -17,7 +17,7 @@ extends SceneTree
 ## list of builders: a biome added tomorrow is measured the day its row lands, and a
 ## builder that forgets `k` fails the build rather than being noticed in a screenshot.
 ##
-## Three checks:
+## Four checks:
 ##
 ##   1. THE GRADIENT ITSELF — `scarcity_at` is monotone decreasing, exactly 1
 ##      inside the union of the Budapest rect and the HQ-to-gate corridor, and
@@ -43,9 +43,17 @@ extends SceneTree
 ##      difficulty gradient widens the target with |x|) — thinning them would
 ##      REWARD walking away from Budapest, which is the opposite of the ruling.
 ##
+##   4. THE ROAD'S OWN CORRIDOR IS NEVER THINNED — every coin-road station from
+##      0 to the terminal reads k = 1.0, over a multi-seed sweep through the
+##      shipped station cache (bead godot-test1-q184: the rect was narrower than
+##      the road it was drawn around). The rect's Z extent is bound to
+##      SCARCITY_CORRIDOR_HALF_WIDTH in the same check, so the two consts cannot
+##      drift apart the way they did before.
+##
 ## HOUSE RULE, as everywhere else: every assertion is an effect measurement with a
 ## control. Check 2's near field is check 2's control; check 3's `far >= near` has
-## the far count's own non-zero as its control.
+## the far count's own non-zero as its control; check 4's sweep reach is pinned by
+## ROAD_CORRIDOR_Z_FLOOR, so a broken sweep cannot pass by reaching nothing.
 
 const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
 
@@ -98,12 +106,20 @@ const FAR_SAMPLES: int = 250
 ## this check put its far centre 4.6 km out, sampled chunks at 3.5 km with
 ## k = 0.048, and reported seven biomes as broken. The centres are where the
 ## fields are; the per-chunk test is what makes them the fields they claim to be.
-const NEAR_CENTRE: Vector3 = Vector3(0.0, 0.0, 900.0)
+const NEAR_CENTRE: Vector3 = Vector3(0.0, 0.0, 1700.0)
 const FAR_CENTRE: Vector3 = Vector3(12000.0, 0.0, 0.0)
 
 ## Seeds check 2 runs over. Three, because the biome field moves with `run_seed`
 ## and a single field could put a biome's samples somewhere unrepresentative.
 const SEEDS: Array[int] = [20260904, 777, 4242]
+
+## Seeds check 4 sweeps the road over: forty consecutive seeds from a fixed start
+## (~11k stations through the shipped cache). Z_FLOOR pins the sweep's own reach —
+## the lowest 40-seed window measured 545 m, so a sweep peaking below 500 m is a
+## broken sweep, not a passing one.
+const ROAD_CORRIDOR_FIRST_SEED: int = 1
+const ROAD_CORRIDOR_SEEDS: int = 40
+const ROAD_CORRIDOR_Z_FLOOR: float = 500.0
 
 ## Every spawner that must NEVER read the gradient, by function name. Predators
 ## and the road are design-fixed (see the SCARCITY banner in endless_terrain.gd).
@@ -138,6 +154,7 @@ func _initialize() -> void:
 		_check_gradient(terrain_script, consts)
 		_check_every_biome(terrain_script, consts)
 		_check_never_thinned()
+		_check_road_corridor(terrain_script, consts)
 	_report()
 
 
@@ -524,3 +541,63 @@ func _function_body(source: String, name: String) -> String:
 				break
 			out.append(line)
 	return "\n".join(out)
+# ============================================================================
+# CHECK 4 — the road's own corridor is never thinned
+# ============================================================================
+
+func _check_road_corridor(terrain_script: GDScript, consts: Dictionary) -> void:
+	"""
+	THE INVARIANT THE CORRIDOR COMMENT INFORMALLY CLAIMS (bead godot-test1-q184):
+	every coin-road station from 0 to the terminal reads scarcity_at() == 1.0.
+
+	The rect used to be narrower than the road it was drawn around (half-width
+	200 m against a measured centreline envelope of 775 m), so content thinned
+	ON the road corridor for every consumer of the three scarcity forms. The
+	sweep below goes through the SHIPPED station cache (`_road_extend_to_x` to
+	span the run, `_road_station` per station, `_road_terminal_k` to stop) and
+	the shipped `scarcity_at` — no copied generator — over ROAD_CORRIDOR_SEEDS
+	seeds, stations 0 through T.
+
+	NON-VACUOUS BY CONSTRUCTION: the sweep's own max |z| must clear
+	ROAD_CORRIDOR_Z_FLOOR (pinned: the lowest 40-seed window measured 545 m), or
+	a broken sweep (a terminal stuck at 0, a cache that never extends) would pass
+	by reaching nothing. And the rect's Z extent is bound to
+	SCARCITY_CORRIDOR_HALF_WIDTH beside it, so the two consts cannot drift apart
+	the way they did before.
+	"""
+	var half: float = float(consts["SCARCITY_CORRIDOR_HALF_WIDTH"])
+	var rect: Rect2 = consts["SCARCITY_CORRIDOR_RECT"]
+	if rect.position.y != -half or rect.size.y != 2.0 * half:
+		_fail("SCARCITY_CORRIDOR_RECT %s is not [-half, +half] of SCARCITY_CORRIDOR_HALF_WIDTH %.1f — "
+				% [str(rect), half]
+				+ "the rect's Z extent must be derived from the half-width so the two cannot drift")
+	var worst_z := 0.0
+	var bad_count := 0
+	var bad: Array[String] = []
+	for s in range(ROAD_CORRIDOR_SEEDS):
+		var seed_value: int = ROAD_CORRIDOR_FIRST_SEED + s
+		var terrain := Node3D.new()
+		terrain.set_script(terrain_script)
+		terrain.set_run_seed(seed_value)
+		terrain._road_extend_to_x(-500.0, 1600.0)
+		var terminal: int = terrain._road_terminal_k()
+		for k in range(0, terminal + 1):
+			var center: Vector2 = terrain._road_station(k)["center"]
+			worst_z = maxf(worst_z, absf(center.y))
+			var kk := float(terrain.scarcity_at(Vector3(center.x, 0.0, center.y)))
+			if kk < 1.0:
+				bad_count += 1
+				if bad.size() < 5:
+					bad.append("seed %d station %d (x %.0f, z %.0f) k %.3f" % [seed_value, k, center.x, center.y, kk])
+		terrain.free()
+	if worst_z < ROAD_CORRIDOR_Z_FLOOR:
+		_fail("road-corridor sweep only reached |z| %.1f (floor %.1f) — "
+				% [worst_z, ROAD_CORRIDOR_Z_FLOOR]
+				+ "the sweep is vacuous, not proven")
+	if bad_count > 0:
+		_fail("road-corridor sweep: %d station(s) read k < 1.0, e.g. %s — "
+				% [bad_count, "; ".join(bad)]
+				+ "the corridor rect under-covers the road it was drawn around")
+	print("  road corridor %d seeds x stations 0..T all k=1.0; sweep max |z|=%.1f (floor %.1f)"
+			% [ROAD_CORRIDOR_SEEDS, worst_z, ROAD_CORRIDOR_Z_FLOOR])
+	Sentinel.done("road_corridor")
