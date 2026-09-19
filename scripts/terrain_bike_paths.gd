@@ -3,15 +3,15 @@ extends RefCounted
 ## ============================================================================
 ## THE BICYCLE PATHS — short seeded strips laid across the field biomes
 ## ============================================================================
-## Epic `godot-test1-z2yv`, child `.1`. Owner, 2026-09-18 (Russian, paraphrased):
-## *"in our field biomes there should be BICYCLE PATHS stretched here and there,
-## with various TRAFFIC LIGHTS and ROAD SIGNS along them"*.
+## Epic `godot-test1-z2yv`, children `.1` and `.2`. Owner, 2026-09-18 (Russian,
+## paraphrased): *"in our field biomes there should be BICYCLE PATHS stretched
+## here and there, with various TRAFFIC LIGHTS and ROAD SIGNS along them"*.
 ##
-## This bead ships the PATHS and nothing that stands on them: a strip, a dashed
-## centre line and bare poles. The four authored sign kinds and the cycling
-## traffic head are `.2`; the bike-stand rack at each end is `.3`; the rental
-## bike itself is a later epic. Everything here is built so those three can hang
-## off a marker instead of re-deriving a position.
+## `.1` laid the PATHS — a strip, a dashed centre line and bare poles. `.2` put
+## the four authored SIGNS and the cycling TRAFFIC HEAD on those poles (see "WHAT
+## STANDS ON THE POLES" below). The bike-stand rack at each end is `.3` and the
+## rental bike itself is a later epic; both hang off this family's marker instead
+## of re-deriving a position.
 ##
 ## A `class_name`d library of STATIC functions that RECEIVES the terrain as its
 ## first argument and calls `terrain.create_box` / `terrain.scarcity_at` /
@@ -78,6 +78,64 @@ extends RefCounted
 ## PLAINS/SNOW/FOREST chunk that carries a path, and the epic refuses it:
 ## `batch_selfcheck` check 5's `KIND_CAP_BY_NAME` table needs no row changed, and
 ## `bike_path_selfcheck` check 5 makes that unfailable rather than a promise.
+##
+## ----------------------------------------------------------------------------
+## WHAT STANDS ON THE POLES: FOUR AUTHORED SIGNS, AND A HEAD THAT CYCLES
+## ----------------------------------------------------------------------------
+## (Child `.2`.) Every pole carries EXACTLY ONE top, and which one is a HASH
+## DISPATCH of (origin chunk, station index) through the fixed `POLE_TOPS` table.
+## A DISPATCH COSTS NO DRAW — CLAUDE.md, "dispatch (which species, which box kind,
+## which boss) costs no draw" — and an `rng.randi()` here instead would consume a
+## draw from this family's own stream and move every station of every path in the
+## world. The kill-switch A/B (`bike_path_selfcheck` check 1) is byte-identical
+## with the signs on, and that is the statement.
+##
+## A SIGN is a plate CUBE plus one to three pictogram CUBEs standing on the face a
+## rider approaches, in the palette the city's own street furniture already spends
+## (`terrain.CITY_METAL` and the three `terrain.CITY_LAMP_*`). NO TEXT AND NO
+## GLYPH NODES: a sign reads by SILHOUETTE and COLOUR — never a `Label3D`, never a
+## font, never a texture. That is a design ruling first, and it is also exactly
+## why this family is invisible to `locale_selfcheck`: there is no string here for
+## a German translation to overflow, and there may never be one.
+##
+## THE SIGNAL HEAD is the city band's three-lamp stack, copied from
+## `terrain_biomes.gd`'s street furniture (the `if is_signal:` arm) rather than
+## called into it — a static family reaches a sibling family through the node that
+## owns the state, and there is no state here to own. Bright ALBEDO and never
+## emissive, CUBEs and not SPHEREs, for the reasons written at the original.
+##
+## ----------------------------------------------------------------------------
+## PLACEMENT IS SEEDED; THE CYCLE IS AMBIENCE
+## ----------------------------------------------------------------------------
+## WHERE a head stands is the seed's business (it rode in on `.1`'s stations and
+## the dispatch above). WHICH LAMP IS LIT is not: it is one `Timer` per head on a
+## `randomize()`d phase and dwell, which is CLAUDE.md's ambience rule — "ambience
+## is deliberately OUTSIDE the contract on a `randomize()`d RNG. Don't wire it to
+## the seed". NEVER SEEDED AND NEVER ON THE WIRE: two peers standing at the same
+## light see different lamps lit, and that is the accepted ruling, the same one
+## the clear clouds, the birds, the crowd and the traffic already ship under.
+##
+## The build therefore draws all three lenses DIM, so the geometry stays a pure
+## function of the seed; a head is dark for less than one dwell after its chunk
+## loads and then cycles G -> A -> R forever.
+##
+## THE WRITE IS `set_instance_color` AT A CUBE-BUCKET INDEX, and that index is the
+## one fragile thing in this family. `ChunkBatch._build_block_multimesh` buckets by
+## KIND and emits in ENUM order, so a lamp's MultiMesh instance index is its
+## position among the CUBE ENTRIES ONLY — never its index in `block_batch`. The
+## index recorded here is valid because the city splitter has already run and
+## because everything after this spawner only APPENDS. `bike_path_selfcheck`
+## check 9 measures that against the SHIPPED bucketing function rather than
+## against a copy of its rule, and carries its own off-by-one control — an index
+## that is one out still writes a box, just the wrong one, and nothing else in
+## the world would ever notice. (Reading the colour back is not available to it:
+## MultiMesh instance data is write-only under the headless dummy renderer, which
+## that check's docstring measures and writes down.)
+##
+## `srgb_to_linear()` ON EVERY WRITE IS NOT OPTIONAL: `create_box` stores its
+## colour already linearised (`chunk_batch.gd`'s COLOUR SPACE paragraph says why),
+## so a raw `Color` written here would make one lamp visibly brighter than every
+## other box in the world, on desktop and on web alike.
 ##
 ## ----------------------------------------------------------------------------
 ## THE MEMO LIVES ON THE TERRAIN NODE
@@ -208,6 +266,111 @@ const BIKE_POLE_RADIUS: float = BIKE_POLE_WIDTH * 0.71 + 0.15
 const BIKE_STRIP_COLOR: Color = Color(0.55, 0.26, 0.20)
 const BIKE_DASH_COLOR: Color = Color(0.88, 0.87, 0.82)
 const BIKE_POLE_COLOR: Color = Color(0.44, 0.45, 0.47)
+
+# ============================================================================
+# WHAT STANDS ON THE POLE — the dispatch, the four signs, the signal head
+# ============================================================================
+
+## The TOP dispatch's own salt and primes, chosen the way the two pairs above
+## were: `grep -rl` over `scripts/` finds all three of these nowhere else. They
+## are only ever fed to `hash()`, never to an RNG — see `_pole_top`.
+const BIKE_TOP_SALT: int = 0xB1_1E516E
+const BIKE_TOP_PRIME_X: int = 30402457
+const BIKE_TOP_PRIME_Y: int = 24036583
+const BIKE_TOP_PRIME_I: int = 20996011
+
+## The sentinel `POLE_TOPS` uses for "a traffic head, not a sign". Negative so it
+## can never be read as an index into `SIGN_KINDS` by accident.
+const POLE_TOP_SIGNAL: int = -1
+
+## THE DISPATCH TABLE, and the whole of the "how often" question. One fold of one
+## hash indexes it, so adding a kind or retuning the mix costs NO DRAW and moves
+## nothing: the stations, the strip and the poles are exactly where they were.
+## Eight sign slots to one signal, because a working traffic light out in an empty
+## field is a joke that stops being funny at every fourth pole — at this mix a
+## typical path carries five or six signs and about one head every other path.
+const POLE_TOPS: Array[int] = [0, 1, 2, 3, 0, 1, 2, 3, POLE_TOP_SIGNAL]
+
+## Palette KEYS, resolved through `_palette()` against the terrain's own constants.
+## The table below is a `const`, and `terrain.CITY_METAL` is not a constant
+## expression — a family reaches the city's palette through the node that owns it.
+const PAL_METAL: int = 0
+const PAL_RED: int = 1
+const PAL_AMBER: int = 2
+const PAL_GREEN: int = 3
+
+## How thick a sign plate is, and how far its pictogram stands proud of the face.
+const SIGN_PLATE_DEPTH: float = 0.05
+const SIGN_PIP_DEPTH: float = 0.035
+## The plate's centre height on the 2.6 m post — eye level for a rider, and it
+## keeps the tallest plate's top under the post's own.
+const SIGN_CENTRE_Y: float = 2.05
+
+## THE FOUR AUTHORED SIGNS. Indexed by the dispatch above, and each one differs
+## from the other three in PLATE COLOUR, PLATE SHAPE and PIP COUNT at once, so it
+## reads at 30 m as a silhouette rather than as a thing you walk up to and study.
+##   `plate`: (width across the path, height).  `pip`: one pictogram box, same.
+##   `pips`:  each pictogram's offset on the plate face, (across, up).
+## No text, no glyph node, no texture — see the banner, and `locale_selfcheck`.
+const SIGN_KINDS: Array[Dictionary] = [
+	# 0 — ROUTE. A tall green plate with one bar across it: this strip is a bike
+	#     lane and it goes that way.
+	{
+		"plate": Vector2(0.44, 0.60), "plate_color": PAL_GREEN,
+		"pip": Vector2(0.30, 0.07), "pip_color": PAL_METAL,
+		"pips": [Vector2(0.0, 0.0)],
+	},
+	# 1 — YIELD. An amber square with two stacked bars: give way, junction ahead.
+	{
+		"plate": Vector2(0.46, 0.46), "plate_color": PAL_AMBER,
+		"pip": Vector2(0.26, 0.06), "pip_color": PAL_METAL,
+		"pips": [Vector2(0.0, 0.09), Vector2(0.0, -0.09)],
+	},
+	# 2 — STOP. A wide, short red plate with one fat bar: the no-entry silhouette.
+	{
+		"plate": Vector2(0.62, 0.34), "plate_color": PAL_RED,
+		"pip": Vector2(0.40, 0.11), "pip_color": PAL_METAL,
+		"pips": [Vector2(0.0, 0.0)],
+	},
+	# 3 — CROSSING. A metal square with three upright amber bars: a zebra, which is
+	#     the one pictogram in this set that is literally what it depicts.
+	{
+		"plate": Vector2(0.50, 0.50), "plate_color": PAL_METAL,
+		"pip": Vector2(0.07, 0.34), "pip_color": PAL_AMBER,
+		"pips": [Vector2(-0.14, 0.0), Vector2(0.0, 0.0), Vector2(0.14, 0.0)],
+	},
+]
+
+## One lamp box, a side. The city's own is 0.22 on a 4 m mast (`CITY_LIGHT_LAMP`);
+## this head sits on a 2.6 m bike-path post, so it is scaled down to match.
+const BIKE_LAMP: float = 0.16
+
+## How far an UNLIT lens is darkened from its own colour. The stack must still read
+## as a traffic light with every lamp off — which is how every head looks for its
+## first fraction of a dwell after a chunk loads.
+const BIKE_LAMP_DIM: float = 0.62
+
+## The lamp the cycle lights, by phase: G -> A -> R. The stack is built top-down
+## RED, AMBER, GREEN (the city's order), so phase 0 lights lamp 2.
+const SIGNAL_LIT: Array[int] = [2, 1, 0]
+
+## The dwell between steps, seconds, rolled once per head off a `randomize()`d RNG.
+## THE FLOOR IS A PERFORMANCE NUMBER, not a taste one: `set_instance_color` dirties
+## the whole instance buffer and a field chunk's CUBE bucket carries several
+## hundred boxes, so a head must never be a per-frame writer. With the phase rolled
+## the same way, heads in one chunk are staggered for free.
+const SIGNAL_DWELL_MIN: float = 2.2
+const SIGNAL_DWELL_MAX: float = 4.5
+
+## The per-head Timer's node name. It is a CHILD OF THE MARKER (which is a child of
+## the chunk), so it is freed with the chunk like every other per-chunk node — and
+## it stays out of the chunk's own child list, which `bike_path_selfcheck` check 1
+## compares node for node to catch a stray draw.
+const SIGNAL_TIMER_NAME: String = "BikeSignalCycle"
+
+## The CUBE bucket's node name, which is what `_build_block_multimesh` calls the
+## MultiMeshInstance3D it emits for `BoxKind.CUBE` (every other kind is suffixed).
+const CUBE_BUCKET_NAME: String = "BlockMultiMesh"
 
 # ============================================================================
 # THE MARKER
@@ -597,7 +760,7 @@ static func spawn_bike_path_in_chunk(terrain: Node3D, chunk_pos: Vector2i,
 			cube_cursor = built["cube_cursor"]
 			if (built["segments"] as PackedInt32Array).is_empty():
 				continue
-			markers.append(_make_marker(origin, built, parent_chunk))
+			markers.append(_make_marker(terrain, origin, built, parent_chunk))
 
 	# EVERY MARKER CARRIES THE WHOLE FAMILY'S SLICE, not only its own path's. The
 	# `gag_start` / `gag_count` idiom (`terrain_features.gd`'s camp story gag,
@@ -628,12 +791,16 @@ static func _draw_path_share(terrain: Node3D, chunk_pos: Vector2i, centre: Vecto
 	               centre, and chunk-local is relative to that node, so this is
 	               what the world-space station positions are measured against.
 	@param cube_cursor: How many CUBE entries the batch holds already.
-	@return: `{ "segments": PackedInt32Array, "poles": PackedInt32Array,
-	            "cube_cursor": int }` — the segment indices drawn here, the CUBE
-	          bucket index of each pole built here, and the advanced cursor.
+	@return: `{ "segments", "poles", "tops", "signals", "cube_cursor" }` — the
+	          segment indices drawn here, the CUBE-bucket index of each pole built
+	          here, the top each of those poles carries (a `SIGN_KINDS` index or
+	          `POLE_TOP_SIGNAL`, one entry per pole), the CUBE-bucket index of each
+	          signal head's FIRST lens, and the advanced cursor.
 	"""
 	var segments := PackedInt32Array()
 	var poles := PackedInt32Array()
+	var tops := PackedInt32Array()
+	var signals := PackedInt32Array()
 	for i in range(stations.size() - 1):
 		var a: Vector2 = stations[i]["pos"]
 		var b: Vector2 = stations[i + 1]["pos"]
@@ -696,10 +863,31 @@ static func _draw_path_share(terrain: Node3D, chunk_pos: Vector2i, centre: Vecto
 			"climbable": false,
 		})
 
-	return { "segments": segments, "poles": poles, "cube_cursor": cube_cursor }
+		# --- AND WHAT STANDS ON IT (child `.2`): one sign, or one signal head.
+		# A HASH DISPATCH and not a draw — see `_pole_top` and the banner. It is
+		# reached only here, AFTER the footprint skip above, so a pole that was
+		# never built carries no top either and `tops` stays parallel to `poles`.
+		var top: int = _pole_top(terrain, origin, i + 1)
+		tops.append(top)
+		if top == POLE_TOP_SIGNAL:
+			# THE OFF-BY-ONE LIVES ON THIS LINE. `_build_signal_head` emits the head
+			# box FIRST and the three lenses after it, so lamp 0 stands one past the
+			# cursor as it is now. `bike_path_selfcheck` check 9 asks the SHIPPED
+			# `_build_block_multimesh` where this lens really lands and compares.
+			signals.append(cube_cursor + 1)
+			cube_cursor = _build_signal_head(terrain, at, head, yaw, rng,
+					block_batch, block_body, cube_cursor)
+		else:
+			cube_cursor = _build_sign(terrain, top, at, head, yaw, rng,
+					block_batch, block_body, cube_cursor)
+
+	return {
+		"segments": segments, "poles": poles, "tops": tops, "signals": signals,
+		"cube_cursor": cube_cursor,
+	}
 
 
-static func _make_marker(origin: Vector2i, built: Dictionary,
+static func _make_marker(terrain: Node3D, origin: Vector2i, built: Dictionary,
 		parent_chunk: MeshInstance3D) -> Node3D:
 	"""
 	One bare Node3D per path present in this chunk — no mesh, no script, no
@@ -720,10 +908,312 @@ static func _make_marker(origin: Vector2i, built: Dictionary,
 	# second copy of that rule — a copy which would then agree with a broken one.
 	marker.set_meta("segments", built["segments"])
 	# Each pole's CUBE BUCKET index (see the spawner's docstring — it is NOT the
-	# batch index), so `.2` can colour a lamp with one `set_instance_color`.
+	# batch index), so a lamp is one `set_instance_color` away.
 	marker.set_meta("poles", built["poles"])
+	# What each of those poles carries, one entry per pole, and the CUBE-bucket
+	# index of each signal head's first lens. `bike_path_selfcheck` checks 7 and 9
+	# read both, and `.3` gets the path's ends the same way.
+	marker.set_meta("tops", built["tops"])
+	marker.set_meta("signals", built["signals"])
 	parent_chunk.add_child(marker)
+	_plant_signal_timers(terrain, marker, built["signals"])
 	return marker
+
+
+# ============================================================================
+# THE POLE'S TOP — the dispatch and the two things it can build
+# ============================================================================
+
+static func _pole_top(terrain: Node3D, origin: Vector2i, i: int) -> int:
+	"""
+	What the pole at station `i` of the path from `origin` carries.
+
+	@return: an index into `SIGN_KINDS`, or `POLE_TOP_SIGNAL`.
+
+	A HASH DISPATCH AND NOT A DRAW, which is the one thing this function exists to
+	be. CLAUDE.md: "Dispatch (which species, which box kind, which boss) costs no
+	draw." An `rng.randi_range(0, 4)` here would read identically and would move
+	every station of every bike path in the world, because this family's walk rolls
+	its start, its bearing and its length off one stream and a fifth draw slides all
+	three. `bike_path_selfcheck` check 1 is the measurement of that.
+
+	Keyed on the ORIGIN as well as the station index for `_bike_turn`'s reason: on
+	the index alone every path in the world would carry the same sign at its own
+	fourth pole.
+
+	Folded to a POSITIVE int before the modulo — `hash()` may return a negative, and
+	a negative modulo in GDScript is negative, which would index the table backwards
+	and (with this table) still return a legal kind. That is the sort of bug that
+	never crashes.
+	"""
+	var h: int = hash(Vector3i(
+			origin.x * BIKE_TOP_PRIME_X + i * BIKE_TOP_PRIME_I,
+			origin.y * BIKE_TOP_PRIME_Y,
+			terrain.run_seed ^ BIKE_TOP_SALT))
+	return POLE_TOPS[(h & 0x7FFFFFFF) % POLE_TOPS.size()]
+
+
+static func _palette(terrain: Node3D, key: int) -> Color:
+	"""
+	One of the city's four street-furniture colours, by `PAL_*` key.
+
+	Through the TERRAIN, which re-exports `TerrainProps`' palette, and not by
+	reaching into `TerrainProps` directly: a static family reaches a sibling family
+	through the node that owns the state (CLAUDE.md's conventions). The keys exist
+	because `SIGN_KINDS` is a `const` and a terrain constant is not a constant
+	expression.
+	"""
+	match key:
+		PAL_RED:
+			return terrain.CITY_LAMP_RED
+		PAL_AMBER:
+			return terrain.CITY_LAMP_AMBER
+		PAL_GREEN:
+			return terrain.CITY_LAMP_GREEN
+		_:
+			return terrain.CITY_METAL
+
+
+static func lamp_color(terrain: Node3D, lamp: int, lit: bool) -> Color:
+	"""
+	One lens's colour, top-down: 0 red, 1 amber, 2 green (the city's stack order).
+
+	@param lit: false for the darkened lens the BUILD draws and the cycle leaves on
+	            the two lamps it is not lighting.
+	@return: The raw sRGB colour. EVERY WRITE PATH LINEARISES IT ITSELF —
+	         `create_box` on the way into the batch, `write_lamps` on the way into
+	         the MultiMesh — so this must not be pre-linearised here.
+
+	Public because `bike_path_selfcheck` check 9 asserts the built colours against
+	it rather than against a second copy of this table.
+	"""
+	var bright: Color = _palette(terrain, [PAL_RED, PAL_AMBER, PAL_GREEN][lamp])
+	return bright if lit else bright.darkened(BIKE_LAMP_DIM)
+
+
+static func _build_sign(terrain: Node3D, kind: int, at: Vector2, head: float,
+		yaw: float, rng: RandomNumberGenerator, block_batch: Array,
+		block_body: StaticBody3D, cube_cursor: int) -> int:
+	"""
+	One authored sign on the post at chunk-local `at`.
+
+	@param kind: An index into `SIGN_KINDS`.
+	@param head: The segment's heading, radians — the walk's own, from which the
+	             plate's facing is derived.
+	@param yaw: The box yaw the rest of this family uses, `-head`.
+	@return: The advanced CUBE cursor.
+
+	THE PLATE FACES BACK ALONG THE PATH, so a rider riding the strip reads it head
+	on. Under `Basis(UP, yaw)` with `yaw == -head`, local +X maps to `(cos head, sin
+	head)` — the direction of travel — so the plate is THIN IN X and the pictogram
+	stands proud on its -X face.
+
+	NO COLLISION on any of it: you may ride through a sign plate, which is the
+	waypoint paint's ruling and the reason check 1's collision-shape delta is still
+	exactly the pole count. No footprint either — the post beneath it owns the one
+	footprint this family claims.
+	"""
+	var row: Dictionary = SIGN_KINDS[kind]
+	var plate: Vector2 = row["plate"]
+	terrain.create_box(
+			Vector3(at.x, SIGN_CENTRE_Y, at.y),
+			Vector3(SIGN_PLATE_DEPTH, plate.y, plate.x),
+			yaw, rng, block_batch, block_body, 0.0,
+			_palette(terrain, int(row["plate_color"])), false, ChunkBatch.BoxKind.CUBE)
+	cube_cursor += 1
+
+	var dir := Vector2(cos(head), sin(head))
+	var side := Vector2(-sin(head), cos(head))
+	var face: Vector2 = at - dir * (SIGN_PLATE_DEPTH * 0.5 + SIGN_PIP_DEPTH * 0.5)
+	var pip: Vector2 = row["pip"]
+	var pip_color: Color = _palette(terrain, int(row["pip_color"]))
+	for off_v: Variant in (row["pips"] as Array):
+		var off: Vector2 = off_v
+		var p: Vector2 = face + side * off.x
+		terrain.create_box(
+				Vector3(p.x, SIGN_CENTRE_Y + off.y, p.y),
+				Vector3(SIGN_PIP_DEPTH, pip.y, pip.x),
+				yaw, rng, block_batch, block_body, 0.0, pip_color, false,
+				ChunkBatch.BoxKind.CUBE)
+		cube_cursor += 1
+	return cube_cursor
+
+
+static func _build_signal_head(terrain: Node3D, at: Vector2, head: float, yaw: float,
+		rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D,
+		cube_cursor: int) -> int:
+	"""
+	The three-lamp stack on the post at chunk-local `at`.
+
+	@return: The advanced CUBE cursor. THE HEAD BOX IS EMITTED FIRST and the three
+	         lenses in top-down order after it, which is the layout the caller's
+	         `signals.append(cube_cursor + 1)` and `SIGNAL_LIT` both assume.
+
+	COPIED FROM `terrain_biomes.gd`'s street furniture — the `if is_signal:` arm of
+	its city-light loop, nine lines — rather than called into it: a static family
+	reaches a sibling family through the node that owns the state, and there is no
+	state here to own. The proportions are that block's, scaled from the city's
+	`CITY_LIGHT_LAMP` 0.22 on a 4 m mast to `BIKE_LAMP` on this family's 2.6 m post.
+	Its own note says why the head and the lenses stay CUBEs and not SPHEREs, and
+	why the lamps are BRIGHT ALBEDO and never emissive; both hold here, and this
+	family adds no bucket either (check 5, check 8).
+
+	THE AXES ARE SWAPPED against the original, and only the axes: the city's masts
+	are yawed on their own convention while this family's boxes carry the strip's
+	`yaw == -head`, under which local +X is the direction of travel. So the head is
+	deep in X and wide in Z, and the lenses stand proud on the -X face — the face a
+	rider coming up the strip is looking at.
+	"""
+	var head_h: float = BIKE_LAMP * 3.4
+	terrain.create_box(
+			Vector3(at.x, BIKE_POLE_HEIGHT + head_h * 0.5, at.y),
+			Vector3(BIKE_LAMP * 1.4, head_h, BIKE_LAMP * 1.5),
+			yaw, rng, block_batch, block_body, 0.0, terrain.CITY_METAL, false,
+			ChunkBatch.BoxKind.CUBE)
+	cube_cursor += 1
+
+	var dir := Vector2(cos(head), sin(head))
+	var face: Vector2 = at - dir * (BIKE_LAMP * 0.75)
+	for j in 3:
+		# DIM AT BUILD TIME, every one of them. The lit lamp is the cycle's business
+		# and the cycle is `randomize()`d ambience, so nothing the seed can see may
+		# depend on it — check 10 is that statement.
+		terrain.create_box(
+				Vector3(face.x,
+						BIKE_POLE_HEIGHT + head_h - BIKE_LAMP * (0.7 + float(j) * 1.05),
+						face.y),
+				Vector3(BIKE_LAMP * 0.4, BIKE_LAMP, BIKE_LAMP),
+				yaw, rng, block_batch, block_body, 0.0, lamp_color(terrain, j, false),
+				false, ChunkBatch.BoxKind.CUBE)
+		cube_cursor += 1
+	return cube_cursor
+
+
+# ============================================================================
+# THE CYCLE — ambience, on a randomize()d clock, never on the seed
+# ============================================================================
+
+static func _plant_signal_timers(terrain: Node3D, marker: Node3D,
+		signals: PackedInt32Array) -> void:
+	"""
+	One `Timer` per signal head in this chunk, each cycling its own three lenses.
+
+	@param signals: Each head's FIRST lens, in CUBE-bucket coordinates.
+
+	`randomize()`, DELIBERATELY, and this is the whole of the ruling: placement is
+	the seed's (the stations, the poles, the dispatch), the cycle is AMBIENCE and
+	CLAUDE.md puts ambience outside the determinism contract on a `randomize()`d
+	RNG. Two peers standing at the same light therefore see different lamps lit;
+	that is accepted and recorded, the same ruling the clear clouds, the birds, the
+	crowd and the traffic ship under. DO NOT seed this and do not put it on the
+	wire.
+
+	THE PHASE IS THE FIRST WAIT and it is what staggers the heads for free: a
+	`set_instance_color` dirties the whole instance buffer of a bucket that carries
+	several hundred boxes on a field chunk, so what must never happen is every head
+	in view writing on one frame. With the dwell floored at `SIGNAL_DWELL_MIN` and
+	the phase uniform inside it, two heads landing on the same frame twice running
+	is not a thing this can do.
+
+	PARENTED TO THE MARKER, which is parented to the chunk: freed with the chunk
+	like every other per-chunk node, and out of the chunk's own child list, which
+	`bike_path_selfcheck` check 1 compares node for node.
+	"""
+	if signals.is_empty():
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	# The two colour tables the tick writes, resolved ONCE here because the Timer is
+	# all the tick gets: it has no terrain to ask, by design — a per-chunk node that
+	# held a reference to the terrain would outlive nothing and confuse everything.
+	var bright := PackedColorArray()
+	var dim := PackedColorArray()
+	for j in 3:
+		bright.append(lamp_color(terrain, j, true))
+		dim.append(lamp_color(terrain, j, false))
+	for base: int in signals:
+		var dwell: float = rng.randf_range(SIGNAL_DWELL_MIN, SIGNAL_DWELL_MAX)
+		var timer := Timer.new()
+		timer.name = SIGNAL_TIMER_NAME
+		timer.one_shot = false
+		# AUTOSTART rather than `start()`: the chunk is not in the tree yet when the
+		# spawner runs, and `start()` on a detached Timer is an error. Autostart
+		# begins the moment the chunk enters.
+		timer.autostart = true
+		timer.wait_time = maxf(0.05, rng.randf() * dwell)
+		timer.set_meta("lamp0", base)
+		timer.set_meta("dwell", dwell)
+		timer.set_meta("phase", rng.randi_range(0, 2))
+		timer.set_meta("bright", bright)
+		timer.set_meta("dim", dim)
+		timer.timeout.connect(Callable(BikePaths, "tick_signal").bind(timer))
+		marker.add_child(timer)
+
+
+static func tick_signal(timer: Timer) -> void:
+	"""
+	One step of one head's cycle: G -> A -> R, written into the chunk's CUBE bucket.
+
+	Public because `bike_path_selfcheck` check 9 drives it — through the Timer's own
+	`timeout` signal, so the connection above is under test too.
+
+	EVERY EARLY-OUT HERE IS A REAL CASE, not defensive padding: a chunk whose batch
+	was empty grows no `BlockMultiMesh` at all (`create_chunk` skips the build), and
+	a Timer can fire on the frame its chunk is being torn down. Both mean "no lamp to
+	write", and neither is an error.
+	"""
+	var mm: MultiMesh = signal_multimesh(timer)
+	if mm == null:
+		return
+	var base: int = int(timer.get_meta("lamp0", -1))
+	if base < 0 or base + 3 > mm.instance_count:
+		return
+	var phase: int = (int(timer.get_meta("phase", 0)) + 1) % 3
+	timer.set_meta("phase", phase)
+	# The first wait was the PHASE, a fraction of the dwell; every one after it is
+	# the dwell itself. Idempotent, so it costs nothing to write on every tick.
+	timer.wait_time = float(timer.get_meta("dwell", SIGNAL_DWELL_MIN))
+	write_lamps(mm, base, phase,
+			timer.get_meta("bright") as PackedColorArray,
+			timer.get_meta("dim") as PackedColorArray)
+
+
+static func signal_multimesh(timer: Node) -> MultiMesh:
+	"""
+	The CUBE bucket of the chunk a signal Timer belongs to, or null.
+
+	Timer -> marker -> chunk -> `BlockMultiMesh`. Named rather than inlined so the
+	self-check can ask the same question the tick asks.
+	"""
+	var marker: Node = timer.get_parent()
+	if marker == null or marker.get_parent() == null:
+		return null
+	var node: Node = marker.get_parent().get_node_or_null(CUBE_BUCKET_NAME)
+	if node == null or not (node is MultiMeshInstance3D):
+		return null
+	return (node as MultiMeshInstance3D).multimesh
+
+
+static func write_lamps(mm: MultiMesh, base: int, phase: int,
+		bright: PackedColorArray, dim: PackedColorArray) -> void:
+	"""
+	Light lamp `SIGNAL_LIT[phase]` of the head whose first lens is instance `base`,
+	and darken the other two.
+
+	`srgb_to_linear()` IS NOT OPTIONAL. `create_box` stores its colour already
+	linearised (`chunk_batch.gd`'s COLOUR SPACE paragraph: a per-instance MultiMesh
+	colour is fed straight to the shader as a vertex colour and skips the sRGB step
+	a material would have done), so a raw `Color` written here would render one lamp
+	visibly brighter than every other box in the world, on desktop and on web.
+
+	THE INDEX IS A CUBE-BUCKET INDEX, never a `block_batch` index — see the banner.
+	An index one out still writes a perfectly valid instance, which is why check 9
+	reads the colour back and controls it against `base + 1`.
+	"""
+	var lit: int = SIGNAL_LIT[phase]
+	for j in 3:
+		var c: Color = bright[j] if j == lit else dim[j]
+		mm.set_instance_color(base + j, c.srgb_to_linear())
 
 
 # ============================================================================
