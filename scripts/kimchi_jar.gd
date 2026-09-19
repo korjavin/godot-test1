@@ -13,7 +13,7 @@ extends Node3D
 ##     leave because of the smell.
 ##
 ## NOTHING DIES HERE AND NOTHING MAY (owner ruling 3, 2026-09-18): the jar lures
-## and scatters. `capture_selfcheck` check 10c greps this file and the arm that
+## and scatters. `capture_selfcheck` check 10d greps this file and the arm that
 ## spawns it for a kill call, and counts its live bodies afterwards.
 ##
 ## WHY THE GUARDS COME AND DO NOT RUN, with no species test anywhere. The two
@@ -188,8 +188,17 @@ func _lure() -> void:
 	Busy bodies (chasing, biting, already on an errand) and remote-driven ones
 	refuse inside `investigate_point()`, where both doors into it can see the rule.
 	"""
+	# A jar outside the tree lures nobody, and is not an error: `drop()` is called
+	# with whatever parent the caller has, and a scene run standalone may hand it
+	# one that has not entered yet. Same degrade as every group lookup here.
+	if not is_inside_tree():
+		return
 	var interior: Node = get_tree().get_first_node_in_group("tower_interior")
 	if _under_the_roof(global_position):
+		# INDOORS THE BUILDING ANSWERS OR NOBODY DOES. A shell with no interior
+		# streamed in has no plan and no guard, so there is nothing to route — and
+		# falling through to the group loop below would be worse than doing
+		# nothing: it would hand a body a straight line through the walls.
 		if interior != null and interior.has_method("lure_guard_to"):
 			interior.call("lure_guard_to", global_position, LURE_HOLD)
 		return
@@ -243,6 +252,8 @@ func _burst() -> void:
 	# Parented to the jar's PARENT and not to the jar, `_spawn_ability_effect()`'s
 	# rule: the last wave's delay plus lifetime outlasts `LINGER`, so a wave hung
 	# on the jar would be cut off mid-expansion when the jar frees itself.
+	if not is_inside_tree():
+		return
 	var here: Vector3 = global_position
 	var parent: Node = get_parent()
 	for i in range(3):
