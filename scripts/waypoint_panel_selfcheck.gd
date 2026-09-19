@@ -716,8 +716,23 @@ func _check_pause_policy() -> void:
 	stub.own_coins = 100
 	hub._refresh_rows()
 	# Digits are refused while a quiz is pending — and the tick closes a list
-	# the quiz started under. No tick between the two: the keypress proves the
-	# input guard, the tick proves the close.
+	# the quiz started under. The keypress proves the input guard, the explicit
+	# `_tick()` below proves the close, and they are only two different things
+	# while NO TICK RUNS BETWEEN THEM.
+	#
+	# WHICH IS WHY THERE IS NO AWAITED FRAME IN THIS BLOCK (bead godot-test1-omp1).
+	# `WaypointHub._process` accumulates `delta` and calls `_tick()` every
+	# `TICK_INTERVAL` (0.2 s), and one `await process_frame` is one frame but an
+	# UNBOUNDED amount of wall clock: on a loaded runner that single frame carries
+	# 0.2 s or more, the hub's own tick closes the list over the pending quiz
+	# before the digit is ever pressed, and the assertion below then blames the
+	# keypress for the tick's work. It went red on CI on a branch that touches no
+	# waypoint file at all. The frame bought nothing to begin with — `add_to_group`
+	# before `add_child` registers the group on ENTER_TREE, synchronously, so
+	# `_quiz_pending()`'s `get_first_node_in_group` sees this toast on the very
+	# next line. Zeroing `_tick_timer` after an await would not have helped: by
+	# then the tick has already run. Same lesson as `capture_selfcheck._plant()`
+	# (bead godot-test1-gjiu), one check along.
 	var quiz := StubToast.new()
 	quiz.pending = true
 	var real_toasts: Array = []
@@ -726,7 +741,14 @@ func _check_pause_policy() -> void:
 		real_toasts.append(old_toast)
 	quiz.add_to_group("landmark_toast")
 	root.add_child(quiz)
-	await process_frame
+	# THE LIST IS STILL UP GOING IN. Asked out loud because the close the tick
+	# does and the close a digit would do are indistinguishable afterwards: if an
+	# await ever creeps back into the staging above, this says so instead of
+	# leaving the refusal assertion to blame the keypress.
+	if not hub.is_panel_open():
+		_fail("the travel list was already closed before the digit was pressed — "
+			+ "a hub tick ran while the quiz was being staged, so the refusal "
+			+ "below would be measuring the tick and not the input guard")
 	hub._input(_key_event(KEY_2))
 	if stub.travelled_to != -1:
 		_fail("a digit travelled under a pending landmark quiz")
