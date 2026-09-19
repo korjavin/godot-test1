@@ -191,8 +191,11 @@ extends RefCounted
 ##     gap is a PLACEHOLDER WITH A NAMED SUCCESSOR, not an oversight, and the walk
 ##     itself is unaffected, so `.3` changes only what is drawn.
 ##   * THE COIN ROAD still refuses, and `.4` owns the crossing. For now a trunk
-##     that meets the swath is abandoned whole; `bike_path_selfcheck` check 3
-##     PRINTS how many that is on every seed, and that number is `.4`'s whole case.
+##     that meets the swath is abandoned whole — INCLUDING ONE THAT ENDS AT A ROAD
+##     WAYPOINT, because those anchors stand on the centreline itself and the
+##     endpoint exemption below deliberately does not cover the road;
+##     `bike_path_selfcheck` check 3 PRINTS how many that is on every seed, and
+##     that number is `.4`'s whole case.
 ##   * BUDAPEST's rect still stops a trunk, AT THE RECT EDGE. The gate anchor is
 ##     ON that edge (x = 1600), which is how *"you should be able to get to
 ##     Budapest along them"* comes out true. An edge with one end inside the rect
@@ -204,7 +207,13 @@ extends RefCounted
 ##     DESTINATIONS. They keep refusing every trunk that is not heading for them,
 ##     and they are skipped inside `TRUNK_APPROACH_RADIUS` of this edge's OWN two
 ##     endpoints — one radius, derived from the largest of them (the tower's 65 m
-##     disc), because a trunk to the HQ has to be allowed to reach the HQ.
+##     disc), because a trunk to the HQ has to be allowed to reach the HQ. THE WALK
+##     IS LET THROUGH AND THE PAINT IS NOT: the HQ anchor is the tower's own centre,
+##     so `_draw_path_share` asks `trunk_keep_out()` again at draw time and emits
+##     nothing — no strip, no dash, no pole, no footprint — inside the disc. Owner
+##     ruling, 2026-09-19, after `tower_site_selfcheck` caught the first build of
+##     this bead standing collision shapes 19.9 m from the tower: stop the trunk at
+##     the disc, never exempt the trunk from the disc.
 ##
 ## ### FINDING A TRUNK FROM A CHUNK: A BOUNDING BOX, NOT A RADIUS SCAN
 ## `scan_radius_chunks()` works because a spur reaches 120 m. A TRUNK IS
@@ -367,8 +376,17 @@ const BIKE_WAYPOINT_MARGIN: float = 3.0
 ##
 ## The row is out of the world rather than merely unlikely: chunk y = 777000 at
 ## `chunk_size` 50 is 38,850 km from the origin, so no spur origin the streamer
-## can ever reach shares a key with a trunk. Small enough that
-## `origin.y * BIKE_TURN_PRIME_Y` stays well inside 64 bits.
+## can ever reach shares a key with a trunk.
+##
+## AND THE COLLISION ARGUMENT SURVIVES THE INT32 NARROWING, which is the bound that
+## actually applies and not the 64-bit one an earlier draft of this comment claimed
+## (round 1 of the review). `origin.y * BIKE_TURN_PRIME_Y` is ~5.5e13 and goes into
+## a `Vector3i` component, whose values are limited to 32 bits — the wrap is silent
+## and deterministic, and `scripts/budapest_streamer.gd` records the same thing one
+## family along. It is still collision-free because `BIKE_TURN_PRIME_Y` is ODD and
+## therefore invertible mod 2^32, so only `origin.y == TRUNK_TURN_ROW` can land on
+## this row. RETUNE AGAINST THAT and not against 64 bits: a row of 3e9 would not
+## survive the narrowing as a distinct value at all.
 const TRUNK_TURN_ROW: int = 777000
 
 ## How far past the straight-line station count a homing walk may wander before
@@ -380,8 +398,9 @@ const TRUNK_TURN_ROW: int = 777000
 const TRUNK_MAX_STATION_FACTOR: float = 3.0
 
 ## Inside this of either of the edge's OWN endpoints, the tower disc, the waypoint
-## circles, the landmark sites and the coin road stop refusing: they are this
-## trunk's DESTINATION, not an obstacle. DERIVED FROM THE LARGEST OF THEM — the
+## circles and the landmark sites stop refusing: they are this trunk's DESTINATION,
+## not an obstacle. THE COIN ROAD IS NOT IN THAT LIST and is tested before the
+## exemption — see `_trunk_blocked`, and the banner. DERIVED FROM THE LARGEST OF THEM — the
 ## tower's `TOWER_RADIUS` is 65 m, so a trunk to the HQ anchor (which is the
 ## tower's own centre) has to be allowed the last 65 m — plus one station stride.
 ## Typed here rather than read off the terrain because `EndlessTerrain` declares
@@ -956,8 +975,16 @@ static func trunk_abandoned(terrain: Node3D, edge: Dictionary) -> String:
 	@return: One of "", "city" (both anchors inside Budapest's authored rect),
 	         "mountain" (walled in, or still skirting after `TRUNK_DETOUR_MAX`
 	         stations), "road" (the coin road's swath, which `.4` owns), "site" (a
-	         waypoint circle, a landmark or the tower disc it was not heading for)
-	         or "lost" (the station ceiling ran out).
+	         waypoint circle, a landmark or the tower disc it was not heading for),
+	         "lost" (the station ceiling ran out) or "short" (it stopped at
+	         Budapest's rect edge with fewer than `TRUNK_MIN_STATIONS` stations —
+	         the common case is an edge that starts AT the gate, which sits exactly
+	         on the boundary, and heads into the city).
+
+	THE KEY SET IS A CONTRACT, not a description: `bike_path_selfcheck` check 3
+	prints the histogram and `.3` / `.4` build their case on it, so a seventh exit
+	added to `_trunk_route` owes a line here. Round 1 of the review caught "short"
+	missing from this list.
 
 	PUBLIC AND SEPARATE FROM THE WALK because `bike_path_selfcheck` check 3 has to
 	report the reasons rather than a count, and because the ONE number that makes
@@ -1104,8 +1131,9 @@ static func _trunk_blocked(terrain: Node3D, p: Vector2, waypoints: Array[Diction
 	re-decided for a route that has to lead somewhere.
 
 	@param from / @param to: This edge's own two anchors. Inside
-	                         `TRUNK_APPROACH_RADIUS` of either, every test below is
-	                         skipped: they are the DESTINATION.
+	                         `TRUNK_APPROACH_RADIUS` of either, the three DESTINATION
+	                         tests are skipped — but NOT the coin road, which is
+	                         tested first for the reason written at it.
 	@return: true when the trunk must be abandoned whole.
 
 	FOUR OF THE SEVEN ARE HERE. The mountain is the caller's (it skirts before it
@@ -1117,31 +1145,82 @@ static func _trunk_blocked(terrain: Node3D, p: Vector2, waypoints: Array[Diction
 	route is rebuilt from scratch every time the memo is dropped, and every chunk
 	that draws a share of it must get the identical polyline back.
 	"""
+	# THE COIN ROAD, FIRST AND NEVER EXEMPTED, and the ORDER is the whole of it.
+	# `godot-test1-pnvb.4` owns the crossing and until it lands the shipped refusal
+	# stands — "a crossing would put road coins on the strip". Behind the endpoint
+	# exemption below it would NOT stand: `waypoint_sites()` puts `approach`,
+	# `spawn` and `road_1..N` directly ON the centreline, so every trunk ending at
+	# one of those anchors would have its last 70 m of strip laid down the middle of
+	# the coin swath and its terminal station snapped exactly onto the centreline —
+	# which is the case the rule is actually about, not an edge of it. Round 1 of
+	# the review caught this; the banner and this comment both claimed the refusal
+	# held while the code had already excused it.
+	#
+	# The consequence is measured rather than hidden: check 3 prints how many trunks
+	# a seed loses here, and that number is what says what `.4` is worth.
+	if terrain._road_lateral_distance(p.x, p.y, BIKE_ROAD_CLEARANCE) < BIKE_ROAD_CLEARANCE:
+		if not reason.is_empty():
+			reason[0] = "road"
+		return true
+	# THE THREE DESTINATIONS, which the endpoint exemption DOES cover: a trunk whose
+	# anchor is the HQ has to be allowed to reach the HQ. Where it reaches into a
+	# disc the WALK is permitted and the PAINT is not — `trunk_keep_out`'s second
+	# caller in `_draw_path_share` is the other half of that ruling.
 	if p.distance_to(from) < TRUNK_APPROACH_RADIUS or p.distance_to(to) < TRUNK_APPROACH_RADIUS:
 		return false
-	if terrain.tower_excludes(p.x, p.y, BIKE_STATION_SPACING):
+	if trunk_keep_out(terrain, p, waypoints):
 		if not reason.is_empty():
 			reason[0] = "site"
 		return true
+	return false
+
+
+static func trunk_keep_out(terrain: Node3D, p: Vector2,
+		waypoints: Array[Dictionary]) -> bool:
+	"""
+	Is this world XZ inside one of the three DESTINATION keep-out discs — the
+	tower's, a teleport circle's, or a landmark's chunk?
+
+	@param waypoints: `terrain.waypoint_sites()`, read once by the caller.
+	@return: true when nothing this family builds may stand here.
+
+	TWO CALLERS, AND THEY ARE THE TWO HALVES OF ONE RULING (owner, 2026-09-19):
+
+	  * `_trunk_blocked` asks it of a station the route is NOT heading for, and
+	    abandons the trunk whole — an obstacle.
+	  * `_draw_path_share` asks it of a segment the route IS heading for, and
+	    DRAWS NOTHING THERE — a destination the route stops at the edge of.
+
+	THE SECOND CALLER EXISTS BECAUSE OF A REAL COLLISION, and it is worth writing
+	down so nobody removes it as belt-and-braces. The HQ anchor is
+	`tower_site()` — the tower's OWN CENTRE — so a trunk ending there is entitled
+	by `TRUNK_APPROACH_RADIUS` to walk its last 65 m straight through the keep-out
+	disc that exists to protect the building's authored approach, and the first
+	build of this bead did: `tower_site_selfcheck` failed with a marker 35.4 m from
+	the tower site and three collision shapes at 19.9, 40.1 and 59.8 m. The two
+	rules are each correct on their own and were never considered together.
+
+	THE RULING IS TO STOP THE PAINT, NOT TO EXEMPT IT. The tower is one of this
+	project's two authored exceptions and a generated strip has no business inside
+	its disc — while a trunk that terminates cleanly at the boundary still leads to
+	the HQ in every sense the owner asked for: you can see where it goes, and you
+	walk the last 65 m. The same shape of problem belongs to every other
+	destination, so this tests all three rather than only the one that failed.
+
+	IT IS A DRAW-TIME SKIP AND NOT A WALK-TIME TRUNCATION — the epic's own coin-road
+	shape. The station list is unchanged, the topology `godot-test1-pnvb.1` built is
+	untouched, and no RNG is involved at all: the builder generator is fixed-seed
+	and this predicate is a hash-free pure function of position.
+	"""
+	if terrain.tower_excludes(p.x, p.y, BIKE_STATION_SPACING):
+		return true
 	if terrain.landmark_sites().has(terrain.world_to_chunk(Vector3(p.x, 0.0, p.y))):
-		if not reason.is_empty():
-			reason[0] = "site"
 		return true
 	var clear: float = TerrainWaypoints.RING_RADIUS + BIKE_WAYPOINT_MARGIN
 	for site: Dictionary in waypoints:
 		var at: Vector3 = site["pos"]
 		if Vector2(p.x - at.x, p.y - at.z).length() < clear:
-			if not reason.is_empty():
-				reason[0] = "site"
 			return true
-	# THE COIN ROAD, and `godot-test1-pnvb.4` OWNS THE CROSSING. The shipped refusal
-	# stands for now — "a crossing would put road coins on the strip" — and the
-	# consequence is measured rather than hidden: check 3 prints how many trunks a
-	# seed loses here, which is the number that says what `.4` is worth.
-	if terrain._road_lateral_distance(p.x, p.y, BIKE_ROAD_CLEARANCE) < BIKE_ROAD_CLEARANCE:
-		if not reason.is_empty():
-			reason[0] = "road"
-		return true
 	return false
 
 
@@ -1206,11 +1285,19 @@ static func _trunk_box(stations: Array[Dictionary]) -> Rect2:
 	"""
 	A route's bounding box in world XZ, padded by one segment length.
 
-	THE PAD IS NOT COSMETIC: a chunk is claimed by a segment whose MIDPOINT falls
-	inside it, and the strip box drawn for that segment is a station stride long,
-	so geometry legitimately overhangs the box the stations alone describe. A chunk
-	just outside an unpadded box can still own a segment, and rejecting it would be
-	the chunk-seam bug this whole family's shape exists to prevent.
+	THE PAD IS A MARGIN AND NOT A REQUIREMENT, and the difference is measured
+	rather than asserted. The reasoning for it is real: a chunk is claimed by a
+	segment whose MIDPOINT falls inside it, and the strip box drawn for that
+	segment is a station stride long, so geometry legitimately overhangs the box
+	the stations alone describe. But a chunk is 50 m and a stride is 5, so at the
+	shipped `chunk_size` an unpadded box loses nothing — `bike_path_selfcheck`
+	check 2d is GREEN with the pad removed entirely, and that is stated here rather
+	than left for somebody to discover while trusting a control that does not
+	exist. What 2d does catch is a lookup wrong by more than half a chunk: a pad of
+	-30 m and an `encloses` in place of the spawner's `intersects` both turn it red.
+
+	So the pad is kept as headroom against a smaller `chunk_size` or a longer
+	stride, not as a bug fix, and the next author owes no more than that.
 	"""
 	var box := Rect2(stations[0]["pos"], Vector2.ZERO)
 	for station: Dictionary in stations:
@@ -1309,6 +1396,10 @@ static func spawn_bike_path_in_chunk(terrain: Node3D, chunk_pos: Vector2i,
 	# is exempt and is drawn whatever this says. `_scarcity_keep`'s own docstring
 	# asks for the chunk centre rather than the object's position.
 	var k: float = terrain.scarcity_at(chunk_centre)
+	# The teleport circles, read ONCE for every trunk in this chunk — `waypoint_sites()`
+	# allocates eleven rows and runs six binary searches per call and is pure in
+	# `run_seed`, so it is loop-invariant here exactly as it is in the spur walk.
+	var waypoints: Array[Dictionary] = terrain.waypoint_sites()
 	for trunk: Dictionary in trunks(terrain):
 		if not (trunk["box"] as Rect2).intersects(chunk_rect):
 			continue
@@ -1316,7 +1407,7 @@ static func spawn_bike_path_in_chunk(terrain: Node3D, chunk_pos: Vector2i,
 		var key := Vector2i(edge_id, TRUNK_TURN_ROW)
 		var built: Dictionary = _draw_path_share(terrain, chunk_pos, centre, key,
 				trunk["stations"], rng, obstacles, block_batch, block_body, cube_cursor,
-				edge_id, k)
+				edge_id, k, waypoints)
 		cube_cursor = built["cube_cursor"]
 		if (built["segments"] as PackedInt32Array).is_empty():
 			continue
@@ -1342,7 +1433,8 @@ static func spawn_bike_path_in_chunk(terrain: Node3D, chunk_pos: Vector2i,
 static func _draw_path_share(terrain: Node3D, chunk_pos: Vector2i, centre: Vector2,
 		origin: Vector2i, stations: Array[Dictionary], rng: RandomNumberGenerator,
 		obstacles: Array, block_batch: Array, block_body: StaticBody3D,
-		cube_cursor: int, edge_id: int = -1, k: float = 1.0) -> Dictionary:
+		cube_cursor: int, edge_id: int = -1, k: float = 1.0,
+		waypoints: Array[Dictionary] = []) -> Dictionary:
 	"""
 	One polyline's segments, insofar as they belong to `chunk_pos`.
 
@@ -1358,6 +1450,10 @@ static func _draw_path_share(terrain: Node3D, chunk_pos: Vector2i, centre: Vecto
 	                are marked TRUNK ONLY below.
 	@param k: `scarcity_at()` at the chunk centre, for the trunk furniture's form-3
 	          roll. Ignored for a spur, whose thinning happened at its rarity roll.
+	@param waypoints: `terrain.waypoint_sites()`, read ONCE per chunk by the caller
+	                  and handed down for `trunk_keep_out` — that table is not
+	                  memoized and rebuilding it per segment would be the most
+	                  expensive thing in the spawner. Ignored for a spur.
 	@return: `{ "segments", "poles", "tops", "signals", "cube_cursor" }` — the
 	          segment indices drawn here, the CUBE-bucket index of each pole built
 	          here, the top each of those poles carries (a `SIGN_KINDS` index or
@@ -1381,12 +1477,6 @@ static func _draw_path_share(terrain: Node3D, chunk_pos: Vector2i, centre: Vecto
 		var mid: Vector2 = (a + b) * 0.5
 		if terrain.world_to_chunk(Vector3(mid.x, 0.0, mid.y)) != chunk_pos:
 			continue
-		# RECORDED BEFORE THE WATER SKIP BELOW, and that is the right reading: this
-		# list is which segments THIS CHUNK OWNS, not which boxes it emitted. Check
-		# 2's cover assertion is about the assignment rule, and `.3` needs to be told
-		# about exactly the segments whose deck it will build.
-		segments.append(i)
-
 		# --- TRUNK ONLY: THE WATER. A trunk is not stopped by a river any more
 		# (`_trunk_blocked` dropped the test), so the segment across one is simply
 		# NOT DRAWN and the paint has a visible gap. THAT GAP IS A PLACEHOLDER WITH
@@ -1397,6 +1487,34 @@ static func _draw_path_share(terrain: Node3D, chunk_pos: Vector2i, centre: Vecto
 				or terrain.is_river_at(Vector3(b.x, 0.0, b.y))
 				or segment_blocked(terrain, a, b)):
 			continue
+
+		# --- TRUNK ONLY: THE DESTINATION'S OWN KEEP-OUT DISC, and it covers the
+		# STRIP, THE DASH, THE POLE AND ITS FOOTPRINT because it is a `continue`
+		# above all four. `_trunk_blocked` let the WALK through here — the anchor
+		# this route ends at is inside one of these discs and it is entitled to
+		# reach it — and this is where the PAINT stops instead. Owner ruling,
+		# 2026-09-19: stop the trunk at the disc, never exempt the trunk from the
+		# disc. `trunk_keep_out` carries the reasoning and the measurement.
+		#
+		# BOTH ENDS AND THE MIDPOINT, so a segment straddling the boundary is refused
+		# rather than half-drawn — and the midpoint is not redundant, because the
+		# LANDMARK test is a CHUNK test and not a disc: two stations in neighbouring
+		# chunks can straddle a landmark's own chunk with neither of them in it.
+		# Measured: without the midpoint, one box and one footprint survived in a
+		# disc on seed 20260904, and check T5 named both.
+		if edge_id >= 0 and (trunk_keep_out(terrain, a, waypoints)
+				or trunk_keep_out(terrain, b, waypoints)
+				or trunk_keep_out(terrain, (a + b) * 0.5, waypoints)):
+			continue
+
+		# RECORDED AFTER BOTH SKIPS: this list is what the chunk DREW, not what the
+		# midpoint rule assigned it. A chunk whose whole share is water or keep-out
+		# draws nothing and must therefore leave no MARKER either — an empty Node3D
+		# standing 35 m from the tower is exactly what `tower_site_selfcheck` refuses,
+		# and a marker that promises geometry there would be a lie to `.3` and `.4`
+		# as well. A wet gap is found by walking the route against `is_river_at`, the
+		# same question the line above asks, rather than by a meta that could go stale.
+		segments.append(i)
 
 		# A yaw turns the box's local +X toward -Z, while the walk measures its
 		# heading as (cos h, sin h) in (x, z) — so the yaw that points a box along
@@ -1435,6 +1553,23 @@ static func _draw_path_share(terrain: Node3D, chunk_pos: Vector2i, centre: Vecto
 		# only. The strip still runs past it: paint over a boulder is fine, a post
 		# THROUGH one is not.
 		if _footprint_taken(obstacles, at):
+			continue
+		# --- TRUNK ONLY: THE POLE'S OWN KEEP-OUT. It stands `BIKE_POLE_OFFSET` to the
+		# SIDE of the strip, so a post can reach into a keep-out the segment itself
+		# cleared — and the post is the one thing this family emits that carries
+		# COLLISION and a FOOTPRINT, which is what `tower_site_selfcheck` saw. Tested
+		# in WORLD space, because `at` is chunk-local by this point.
+		#
+		# IT IS NOT REDUNDANT, AND IT IS ALSO NOT EXERCISED BY ANY CI SEED — both
+		# halves said plainly, because the second is what makes the first worth
+		# writing down. The segment test above subsumes this for the two CIRCULAR
+		# keep-outs: the tower's is padded by a full station stride and a waypoint
+		# circle's by 3 m, and the post leans in by only 1.65 m. It does NOT subsume
+		# it for the LANDMARK test, which is a SQUARE chunk boundary — a station
+		# 0.5 m outside a landmark's chunk puts its post inside. Deleting this line
+		# leaves `bike_path_selfcheck` T5 green today (measured, mutation M9) and a
+		# post through a monument the first seed that lines one up.
+		if edge_id >= 0 and trunk_keep_out(terrain, at + centre, waypoints):
 			continue
 		# --- TRUNK ONLY: SCARCITY, FORM 3. THE ROUTE ABOVE IS EXEMPT AND THE
 		# FURNITURE IS NOT — the split this epic turns on, and the banner carries

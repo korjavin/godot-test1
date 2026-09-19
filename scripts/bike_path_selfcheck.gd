@@ -139,6 +139,15 @@ extends SceneTree
 ##      T3b sweeps for a real sub-k = 1 trunk and PRINTS the count, including zero,
 ##      as a FINDING and never as a verdict. AN EXEMPTION DELETED BECAUSE IT LOOKED
 ##      UNUSED IS THE BUG.
+##   T5. A TRUNK STOPS AT ITS DESTINATION'S KEEP-OUT DISC. The HQ anchor IS the
+##      tower's centre, so the route walks its last 65 m through the disc that
+##      protects the building's authored approach — and nothing this family draws
+##      may stand in there. Measured on the first build of this bead:
+##      `tower_site_selfcheck` failed with a marker 35.4 m from the tower and three
+##      collision shapes at 19.9, 40.1 and 59.8 m. Asserted for all three
+##      destination kinds (the tower, the teleport circles, the landmark sites),
+##      not only the one that failed, and NON-VACUOUS: it fails unless it finds a
+##      trunk whose stations really do enter a disc.
 ##   T4. THE MEMO. Its station count is printed and capped, it regenerates
 ##      identically after `_drop_seeded_memos()`, and it CHANGES after
 ##      `set_run_seed()` — the half that fails if the drop list ever loses it.
@@ -370,6 +379,7 @@ func _run() -> void:
 	# 3 and 4 above already grew a trunk half of their own; these four are new.
 	_check_trunk_world_tie(terrain_script)
 	_check_trunk_intersections(terrain_script)
+	_check_trunk_keep_outs(terrain_script)
 	_check_trunk_memo(terrain_script)
 	# AWAITED, and it is the only one that is: a chunk unloads through `queue_free`,
 	# so the check has to let a frame pass before it can ask whether the Timer is
@@ -389,7 +399,9 @@ func _run() -> void:
 				+ "behind, every trunk runs from one anchor to another and never stops in "
 				+ "open field, two trunks sharing an anchor end on the same metre to the "
 				+ "bit, a trunk's bounding-box lookup covers every segment exactly once, "
-				+ "and the far field keeps a trunk's paint while losing all of its poles")
+				+ "the far field keeps a trunk's paint while losing all of its poles, and "
+				+ "no trunk lays a box or a footprint inside the disc of the destination it "
+				+ "is heading for")
 		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
@@ -714,18 +726,36 @@ func _check_trunk_cover(terrain_script: GDScript) -> void:
 	`_cover_fault` is check 2b's comparator, mutation-controlled there.
 	"""
 	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
+	var waypoints: Array[Dictionary] = terrain.waypoint_sites()
 	var trunks: Array[Dictionary] = BikePaths.trunks(terrain)
 	var covered: int = 0
 	var spanned: int = 0
+	var drawable_total: int = 0
 	for trunk: Dictionary in trunks:
 		if covered >= TRUNK_COVER_SAMPLE:
 			break
 		var stations: Array[Dictionary] = trunk["stations"]
 		var edge_id: int = int(trunk["id"])
-		var box: Rect2 = trunk["box"]
-		var lo: Vector2i = terrain.world_to_chunk(Vector3(box.position.x, 0.0, box.position.y))
-		var hi: Vector2i = terrain.world_to_chunk(
-				Vector3(box.position.x + box.size.x, 0.0, box.position.y + box.size.y))
+		# A TRUNK WITH NOTHING DRAWABLE IS NOT A SAMPLE, it is a vacuous pass — and
+		# they exist: `hq -> wp_hq` is 48 m entirely inside the tower's keep-out disc,
+		# so every one of its segments is skipped and any cover of the empty set is
+		# perfect. Counting one toward `TRUNK_COVER_SAMPLE` was measured to let a
+		# `_trunk_box` shrunk by three station strides pass this check (mutation M5).
+		var want: Dictionary = _drawable_segments(terrain, stations, waypoints)
+		if want.is_empty():
+			continue
+		# THE SWEEP IS DERIVED FROM THE STATIONS, NOT FROM `trunk["box"]`, and that is
+		# the control rather than a detail: the box is the thing under test, so a
+		# sweep taken from it would shrink in step with a box that had gone too tight
+		# and the hole would close behind the mutation. Measured — an earlier draft
+		# used the box and a `grow(-3 * spacing)` mutation came back GREEN.
+		var lo := Vector2i(1 << 30, 1 << 30)
+		var hi := Vector2i(-(1 << 30), -(1 << 30))
+		for station: Dictionary in stations:
+			var at: Vector2 = station["pos"]
+			var c: Vector2i = terrain.world_to_chunk(Vector3(at.x, 0.0, at.y))
+			lo = Vector2i(mini(lo.x, c.x), mini(lo.y, c.y))
+			hi = Vector2i(maxi(hi.x, c.x), maxi(hi.y, c.y))
 		var lists: Array = []
 		for cx in range(lo.x - 1, hi.x + 2):
 			for cy in range(lo.y - 1, hi.y + 2):
@@ -733,12 +763,19 @@ func _check_trunk_cover(terrain_script: GDScript) -> void:
 				for row: Dictionary in (built["paths"] as Array[Dictionary]):
 					if int(row["edge"]) == edge_id:
 						lists.append(row["segments"])
-		var fault: String = _cover_fault(lists, stations.size() - 1)
+		# THE EXPECTED SET IS THE DRAWABLE SEGMENTS above, not every segment. A trunk
+		# is deliberately not drawn over water (`.3` bridges it) or inside a
+		# destination's keep-out disc (T5), so a chunk records only what it drew —
+		# which is also why it leaves no marker where it drew nothing. Computed from
+		# the SHIPPED predicates, so this owns no copy of the rule it is checking:
+		# the midpoint assignment is still entirely the marker's word.
+		drawable_total += want.size()
+		var fault: String = _cover_fault_set(lists, want)
 		if fault != "":
-			_fail("trunk %d (%d stations) is not covered by the chunks its bounding box "
-					% [edge_id, stations.size()] + "reaches: %s. The box lookup and the "
-					% fault + "midpoint rule disagree, which is a hole in the paint at a "
-					+ "chunk seam")
+			_fail("trunk %d (%d stations, %d drawable) is not covered by the chunks its "
+					% [edge_id, stations.size(), want.size()] + "bounding box reaches: %s. "
+					% fault + "The box lookup and the midpoint rule disagree, which is a "
+					+ "hole in the paint at a chunk seam")
 		else:
 			covered += 1
 		if lists.size() >= 2:
@@ -753,8 +790,60 @@ func _check_trunk_cover(terrain_script: GDScript) -> void:
 	if spanned == 0:
 		_fail("check 2d found no trunk whose segments are split across more than one chunk, "
 				+ "so the seam — the whole subject of this check — was never crossed")
+	if drawable_total == 0:
+		_fail("check 2d expected no drawable segment at all across the trunks it walked, so "
+				+ "its cover assertion was satisfied by an empty set")
 	terrain.free()
 	Sentinel.done("trunk_cover")
+
+
+func _drawable_segments(terrain: Node3D, stations: Array[Dictionary],
+		waypoints: Array[Dictionary]) -> Dictionary:
+	"""
+	Which of a route's segments this family draws at all, as a set of indices.
+
+	Both skip rules, asked of the SHIPPED predicates rather than restated: the
+	water (`is_river_at` at both stations, `segment_blocked` between — a trunk
+	segment over a river waits for `godot-test1-pnvb.3`'s deck) and the
+	destination keep-outs (`BikePaths.trunk_keep_out`, T5's ruling).
+	"""
+	var out: Dictionary = {}
+	for i in range(stations.size() - 1):
+		var a: Vector2 = stations[i]["pos"]
+		var b: Vector2 = stations[i + 1]["pos"]
+		if terrain.is_river_at(Vector3(a.x, 0.0, a.y)) \
+				or terrain.is_river_at(Vector3(b.x, 0.0, b.y)) \
+				or BikePaths.segment_blocked(terrain, a, b):
+			continue
+		if BikePaths.trunk_keep_out(terrain, a, waypoints) \
+				or BikePaths.trunk_keep_out(terrain, b, waypoints) \
+				or BikePaths.trunk_keep_out(terrain, (a + b) * 0.5, waypoints):
+			continue
+		out[i] = true
+	return out
+
+
+func _cover_fault_set(lists: Array, expected: Dictionary) -> String:
+	"""
+	`_cover_fault` against an EXPLICIT expected set rather than `0 .. n-1`.
+
+	@return: "" when `lists` is a perfect cover of `expected`, otherwise the first
+	         fault in words — a duplicate, a hole, or a segment drawn that should
+	         not have been, which is the direction `_cover_fault` cannot express and
+	         is exactly how a lost keep-out or water skip would show up here.
+	"""
+	var seen: Dictionary = {}
+	for list_v: Variant in lists:
+		for i: int in (list_v as PackedInt32Array):
+			if seen.has(i):
+				return "segment %d is drawn by two chunks" % i
+			if not expected.has(i):
+				return "segment %d is drawn, though it is over water or inside a keep-out disc" % i
+			seen[i] = true
+	for i_v: Variant in expected:
+		if not seen.has(i_v):
+			return "segment %d is drawn by no chunk at all" % int(i_v)
+	return ""
 
 
 func _cover_fault(lists: Array, segment_count: int) -> String:
@@ -907,6 +996,7 @@ func _check_trunk_endings(terrain_script: GDScript) -> void:
 	var checked: int = 0
 	var at_anchor: int = 0
 	var at_rect: int = 0
+	var road_stations: int = 0
 	for seed_value: int in SEEDS:
 		var terrain: Node3D = _terrain(terrain_script, seed_value, true)
 		if BikePaths.TRUNK_APPROACH_RADIUS < terrain.TOWER_RADIUS:
@@ -931,6 +1021,11 @@ func _check_trunk_endings(terrain_script: GDScript) -> void:
 				continue
 			checked += 1
 			var stations: Array[Dictionary] = built[edge_id]["stations"]
+			for station: Dictionary in stations:
+				var at: Vector2 = station["pos"]
+				if terrain._road_lateral_distance(at.x, at.y, BikePaths.BIKE_ROAD_CLEARANCE) \
+						< BikePaths.BIKE_ROAD_CLEARANCE:
+					road_stations += 1
 			var last: Vector2 = stations[-1]["pos"]
 			var ends_at_anchor: bool = last == (anchors[int(edge["a"])]["pos"] as Vector2) \
 					or last == (anchors[int(edge["b"])]["pos"] as Vector2)
@@ -954,6 +1049,28 @@ func _check_trunk_endings(terrain_script: GDScript) -> void:
 	if checked == 0:
 		_fail("check 3b found no trunk at all across %d seeds, so 'a trunk never ends in "
 				% SEEDS.size() + "open field' was asserted of nothing")
+	# THE COIN ROAD IS REFUSED EVERYWHERE, INCLUDING AT AN ENDPOINT — and this is
+	# the assertion that says so, because nothing else in the file can. Five
+	# waypoint anchors (`approach`, `spawn`, `road_1..N`) stand ON the centreline,
+	# so if the endpoint exemption covered the road as an earlier draft of it did,
+	# every trunk terminating at one would lay its last 70 m of strip down the
+	# middle of the coin swath and snap its terminal station exactly onto the
+	# centreline. Round 1 of the review caught the code; this catches it coming back.
+	#
+	# NON-VACUOUS ON `road_refusals`: the reasons histogram must show the test
+	# actually firing, or "no station in the swath" is what a world with no road
+	# near any trunk looks like.
+	if road_stations > 0:
+		_fail("check 3b: %d trunk stations stand within BIKE_ROAD_CLEARANCE of the coin "
+				% road_stations + "road's centreline. The road refuses a trunk EVERYWHERE — "
+				+ "`godot-test1-pnvb.4` owns the crossing and until it lands a trunk that "
+				+ "meets the swath is abandoned whole, endpoint or not, because five "
+				+ "waypoint anchors stand on the centreline itself")
+	if int(reasons.get("road", 0)) == 0:
+		_fail("check 3b: not one edge across %d seeds was abandoned for the coin road, so "
+				% SEEDS.size() + "the refusal was never seen to fire and 'no station in the "
+				+ "swath' holds for free. That number is also `godot-test1-pnvb.4`'s case, "
+				+ "so a zero here means the case has gone missing")
 	if at_anchor == 0:
 		_fail("check 3b found no trunk that ended at its own anchor, so the snap — the thing "
 				+ "that makes the owner's intersections exact — was never once seen to happen")
@@ -1123,7 +1240,8 @@ func _check_trunk_scarcity_split(terrain_script: GDScript) -> void:
 		}]
 		terrain._bike_trunk_cache["trunks"] = only
 		var built: Dictionary = _spawn_bare(terrain, chunk_pos)
-		var want: int = _dry_segments_in(terrain, stations, chunk_pos)
+		var want: int = _dry_segments_in(terrain, stations, chunk_pos,
+				terrain.waypoint_sites())
 		var strips: int = _strips_on(terrain, chunk_pos, built["batch"], stations)
 		var poles: int = -1
 		for row: Dictionary in (built["paths"] as Array[Dictionary]):
@@ -2028,6 +2146,7 @@ func _check_trunk_world_tie(terrain_script: GDScript) -> void:
 	river is deliberately not drawn.
 	"""
 	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
+	var waypoints: Array[Dictionary] = terrain.waypoint_sites()
 	var trunks: Array[Dictionary] = BikePaths.trunks(terrain)
 	var tied: int = 0
 	var trunks_used: int = 0
@@ -2047,6 +2166,15 @@ func _check_trunk_world_tie(terrain_script: GDScript) -> void:
 					or BikePaths.segment_blocked(terrain, a, b):
 				continue
 			var mid: Vector2 = (a + b) * 0.5
+			# ...and the segments inside a DESTINATION'S KEEP-OUT DISC, which are not
+			# drawn either (T5's ruling). A trunk's first segments are the ones most
+			# likely to be in one — the HQ anchor IS the tower's centre — so without
+			# this T1 would sample exactly the stretch the family deliberately leaves
+			# bare and report every route as missing its paint.
+			if BikePaths.trunk_keep_out(terrain, a, waypoints) \
+					or BikePaths.trunk_keep_out(terrain, b, waypoints) \
+					or BikePaths.trunk_keep_out(terrain, mid, waypoints):
+				continue
 			var chunk_pos: Vector2i = terrain.world_to_chunk(Vector3(mid.x, 0.0, mid.y))
 			var built: Dictionary = _spawn_bare(terrain, chunk_pos)
 			var at: Vector3 = terrain.chunk_to_world(chunk_pos)
@@ -2176,6 +2304,97 @@ func _check_trunk_intersections(terrain_script: GDScript) -> void:
 
 
 # ============================================================================
+# T5 — a trunk stops at its destination's keep-out disc
+# ============================================================================
+
+func _check_trunk_keep_outs(terrain_script: GDScript) -> void:
+	"""
+	NOTHING THIS FAMILY EMITS STANDS INSIDE A DESTINATION'S KEEP-OUT DISC — not a
+	box, not a collision shape, not a footprint.
+
+	THE COLLISION THIS EXISTS FOR, measured rather than imagined. The HQ anchor is
+	`tower_site()`, the tower's OWN CENTRE, so `TRUNK_APPROACH_RADIUS` entitles a
+	trunk ending there to walk its last 65 m straight through the keep-out disc
+	that protects the building's authored approach — and the first build of this
+	bead did exactly that. `tower_site_selfcheck` caught it: a `BikePathMarker`
+	35.4 m from the tower site and three `CollisionShape3D`s at 19.9, 40.1 and
+	59.8 m. Both rules were correct on their own; nobody had put them together.
+
+	The owner's ruling is to stop the PAINT at the disc rather than exempt the
+	trunk from it, so the stop is a draw-time `continue` in `_draw_path_share` on
+	the shipped `BikePaths.trunk_keep_out()`. This is that ruling, asserted where
+	the family lives — `tower_site_selfcheck` would catch the tower again, but it
+	knows nothing about the waypoint circles or the landmark sites, which have
+	exactly the same shape of problem and were never the one that failed.
+
+	NON-VACUOUS BY CONSTRUCTION, and this is the half that matters. A trunk that
+	never enters a disc satisfies the assertion for free, so the check first counts
+	the STATIONS that really do fall inside one — the ones the walk's endpoint
+	exemption produced — and FAILS IF THAT COUNT IS ZERO. Only then does "no box in
+	there" mean the draw-time stop is doing the work.
+
+	It reads the boxes and the footprints off `_spawn_bare`'s own batch and
+	`obstacles`, in world space, and never off a built MultiMesh: instance data is
+	write-only under the headless dummy renderer.
+	"""
+	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
+	var waypoints: Array[Dictionary] = terrain.waypoint_sites()
+	var inside_stations: int = 0
+	var chunks: Dictionary = {}
+	for trunk: Dictionary in BikePaths.trunks(terrain):
+		for station: Dictionary in (trunk["stations"] as Array[Dictionary]):
+			var at: Vector2 = station["pos"]
+			if not BikePaths.trunk_keep_out(terrain, at, waypoints):
+				continue
+			inside_stations += 1
+			# Every chunk that could draw a segment ending here, and its ring, so a
+			# box overhanging the seam from outside is measured too.
+			var home: Vector2i = terrain.world_to_chunk(Vector3(at.x, 0.0, at.y))
+			for dx in range(-1, 2):
+				for dy in range(-1, 2):
+					chunks[home + Vector2i(dx, dy)] = true
+	if inside_stations == 0:
+		_fail("T5 found no trunk station inside any destination keep-out disc on seed %d, "
+				% SEEDS[0] + "so the draw-time stop was never exercised and 'no box in the "
+				+ "disc' holds for free. The HQ anchor IS the tower's centre, so a world "
+				+ "with a trunk to the HQ must produce some — re-derive the seed rather "
+				+ "than trusting this")
+	var boxes: int = 0
+	var shapes: int = 0
+	for key: Variant in chunks:
+		var chunk_pos: Vector2i = key
+		var built: Dictionary = _spawn_bare(terrain, chunk_pos)
+		var at: Vector3 = terrain.chunk_to_world(chunk_pos)
+		for entry_v: Variant in (built["batch"] as Array):
+			var t: Transform3D = (entry_v as Dictionary)["transform"]
+			var world := Vector2(at.x + t.origin.x, at.z + t.origin.z)
+			if BikePaths.trunk_keep_out(terrain, world, waypoints):
+				boxes += 1
+				_fail("T5: chunk %s draws a bike box at %s, which is inside a destination's "
+						% [chunk_pos, world] + "keep-out disc (the tower's, a teleport "
+						+ "circle's or a landmark's). A trunk must STOP at the disc, not be "
+						+ "exempt from it — the anchor is authored ground")
+				break
+		for o_v: Variant in (built["obstacles"] as Array):
+			var pos: Vector3 = (o_v as Dictionary)["pos"]
+			var world := Vector2(at.x + pos.x, at.z + pos.z)
+			if BikePaths.trunk_keep_out(terrain, world, waypoints):
+				shapes += 1
+				_fail("T5: chunk %s appends a bike-path FOOTPRINT at %s, inside a "
+						% [chunk_pos, world] + "destination's keep-out disc. Three of the "
+						+ "five failures this check exists for were collision shapes, so the "
+						+ "stop has to cover the poles and not only the paint")
+				break
+	if chunks.is_empty():
+		_fail("T5 built no chunk at all, so neither half of it ran")
+	print("bike trunks T5: %d trunk stations fall inside a destination keep-out disc on "
+			% inside_stations + "seed %d, over %d chunks; %d boxes and %d footprints were "
+			% [SEEDS[0], chunks.size(), boxes, shapes] + "drawn in there (both must be 0)")
+	terrain.free()
+	Sentinel.done("trunk_keep_outs")
+
+
+# ============================================================================
 # T4 — what the trunk memo costs, and that it is really seeded
 # ============================================================================
 
@@ -2264,7 +2483,7 @@ func _synthetic_trunk(terrain: Node3D, chunk_pos: Vector2i) -> Array[Dictionary]
 
 
 func _dry_segments_in(terrain: Node3D, stations: Array[Dictionary],
-		chunk_pos: Vector2i) -> int:
+		chunk_pos: Vector2i, waypoints: Array[Dictionary]) -> int:
 	"""
 	How many of a route's segments this chunk owns AND is allowed to draw.
 
@@ -2282,6 +2501,10 @@ func _dry_segments_in(terrain: Node3D, stations: Array[Dictionary],
 		if terrain.is_river_at(Vector3(a.x, 0.0, a.y)) \
 				or terrain.is_river_at(Vector3(b.x, 0.0, b.y)) \
 				or BikePaths.segment_blocked(terrain, a, b):
+			continue
+		if BikePaths.trunk_keep_out(terrain, a, waypoints) \
+				or BikePaths.trunk_keep_out(terrain, b, waypoints) \
+				or BikePaths.trunk_keep_out(terrain, (a + b) * 0.5, waypoints):
 			continue
 		n += 1
 	return n
