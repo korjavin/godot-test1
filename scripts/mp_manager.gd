@@ -207,6 +207,15 @@ const VERB_BUDGET_PER_SEC: Dictionary = {
 	# this" is not even the half-defence it is elsewhere; the budget and
 	# `MpCodec.decode_alrm()`'s bounds are the whole of it.
 	"alrm": 2,
+	# one Kimchi Offering jar each (bead godot-test1-0mr0.5). `flee`'s number for
+	# `flee`'s reason — this verb IS a flee, one beat later, plus a lure — and the
+	# honest rate is far under it: the ability's own cooldown is 14 s and the
+	# `"JAR"` gate refuses a second jar while the first is brewing, so one peer
+	# playing the game sends at most 1 per 14 s. Anyone-to-everyone like `alrm`,
+	# so "only the master sends this" is not even the half-defence it is
+	# elsewhere; this budget, `MpCodec.decode_bait()`'s envelope and the sender-
+	# reach test are the whole of it.
+	"bait": 4,
 }
 
 ## Join gate publish pacing (review rounds 3-4): one id per JOIN_GATE_PACE_SEC,
@@ -4351,6 +4360,8 @@ func _receive_mesh_verb(from_id: String, verb: String, packet: Dictionary) -> vo
 			MpWorldSync.receive_pad(self, from_id, packet)
 		"alrm":
 			MpWorldSync.receive_alrm(self, from_id, packet)
+		"bait":
+			MpWorldSync.receive_bait(self, from_id, packet)
 		"lmk":
 			_receive_lmk(from_id, packet)
 		"cap":
@@ -4483,6 +4494,13 @@ func publish_alarm(floor_index: int, local_xz: Vector2) -> bool:
 	## family never calls `MpWorldSync` directly — which is CLAUDE.md's "reach a
 	## sibling family through the node that owns the state".
 	return MpWorldSync.publish_alarm(self, floor_index, local_xz)
+
+
+func publish_bait(at: Vector3) -> bool:
+	## The Kimchi jar's send site (bead godot-test1-0mr0.5), a forwarder for the
+	## same reason as the three above: `PlayerAbilities` finds the "mp" group and
+	## asks `has_method("publish_bait")`, and never names a static family.
+	return MpWorldSync.publish_bait(self, at)
 
 
 # =============================================================================

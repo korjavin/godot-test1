@@ -92,10 +92,18 @@ const ABILITY_NAME := {
 const ABILITY2_NAME := {
 	"windman": "Air Sight",
 	"primm": "Twin Flash",
+	"phoboman": "Kimchi Offering",
 }
 const ABILITY2_COOLDOWN := {
 	"windman": 10.0,
 	"primm": 6.0,
+	# The longest second-skill cooldown in the game, and deliberately longer than
+	# the jar's own 6 s life (`KimchiJar.FERMENT + LINGER`): a second jar may
+	# never be placed while the first is still brewing, so the "JAR" gate refuses
+	# on the state and this refuses on the clock — belt and braces, because the
+	# gate is a weakref and a weakref cleared by a respawn would otherwise hand
+	# back the press eight seconds early.
+	"phoboman": 14.0,
 }
 
 # --- Windman: Air Rush ---
@@ -248,6 +256,14 @@ const PHOBOMAN_STINK_DURATION: float = 0.9
 ## which could not have hunted the player during the flight anyway: the nerf is
 ## real on paper and close to invisible in play, and it buys a live skill node.
 const PHOBOMAN_FLEE_RADIUS: float = 22.0
+
+# --- Phoboman: Kimchi Offering (bead godot-test1-0mr0.5) ---
+## How far ahead of Phoboman the jar lands, in metres. Far enough to be a thing
+## he PUT somewhere rather than a thing he is standing on — beat 2 is a 6 m
+## burst, so a jar at his feet would scatter the pack he was using as cover —
+## and short enough to land inside the corridor he is looking down. The rest of
+## the numbers belong to the jar and are stated once, on `KimchiJar`.
+const KIMCHI_PLACE_AHEAD: float = 3.0
 
 
 # ============================================================================
@@ -424,6 +440,8 @@ func try_activate_ability(slot: int = 0) -> void:
 				used = _ability2_windman()
 			"primm":
 				used = _ability2_primm()
+			"phoboman":
+				used = _ability2_phoboman()
 
 	if used:
 		# The skilled duration, and it MUST be the same expression
@@ -592,6 +610,55 @@ func _ability2_primm() -> bool:
 	_set_primm_swords_drawn(true)
 	_spawn_ability_effect(origin, Color(1.0, 1.0, 1.0, 0.6), PRIMM_FLASH_RADIUS, 0.3)
 	_scare_crocodiles(origin, PRIMM_FLASH_FLEE_DURATION, PRIMM_FLASH_RADIUS)
+	return true
+
+
+func _ability2_phoboman() -> bool:
+	"""
+	Kimchi Offering: Phoboman sets a clay jar down three metres ahead. Everything
+	idle within 20 m — crocodiles, the hunter robot, the storey's guard — walks
+	over to sniff it; five seconds later the kimchi is ready, and everything with
+	a NOSE still standing within 6 m of it bolts. They come for the smell and they
+	leave because of the smell.
+
+	NOTHING DIES (owner ruling 3, 2026-09-18) and nothing is freed: check 10c
+	greps this body and `kimchi_jar.gd` for a kill call, the way check 10b does
+	for Twin Flash. No displacement and no speed either — Phoboman puts a pot
+	down and keeps walking.
+
+	THE TWO BEATS AND EVERY NUMBER ARE THE JAR'S, not this arm's. The jar is a
+	world object the moment it lands: it survives a character switch, a respawn
+	and a capture (it is parented to the player's PARENT), and it keeps its own
+	clock, so the burst comes whether Phoboman is still there or not. All this arm
+	does is choose the spot, remember the jar so a second press is refused, and
+	tell the room.
+
+	`get_parent()` NULL is the standalone-scene degrade every spawner here has:
+	`KimchiJar.drop()` answers null, the weakref is never taken, and the press
+	costs no cooldown — the same shape as a Phase Step with nowhere to land.
+	"""
+	var forward: Vector3 = -player.transform.basis.z
+	forward.y = 0.0
+	if forward.length() < 0.01:
+		return false
+	forward = forward.normalized()
+	# THE WORLD IS FLAT (CLAUDE.md), so the jar sits at the hero's own y: ground
+	# outdoors, the storey slab indoors. No raycast, and nothing to snap to.
+	var where: Vector3 = player.global_position + forward * KIMCHI_PLACE_AHEAD
+	var jar: Node = KimchiJar.drop(player.get_parent(), where)
+	if jar == null:
+		return false
+	player._kimchi_jar = weakref(jar)
+	# AND THE ROOM GETS ONE TOO (owner ruling 2026-09-18: the jar is visible to
+	# everyone in the room in v1). A broadcast rather than a request to the
+	# master, because the jar is a PICTURE as well as an effect and a master-only
+	# jar would be invisible to the peers standing next to it — see
+	# `MpWorldSync.publish_bait()` for the whole argument and its ceilings. Every
+	# receiver drops its own copy and runs its own clock; the master's is the one
+	# the pack actually obeys.
+	var mp: Node = player._mp()
+	if mp and mp.has_method("publish_bait"):
+		mp.call("publish_bait", where)
 	return true
 
 
@@ -984,6 +1051,13 @@ func _reset_ability_states() -> void:
 	_set_primm_swords_drawn(false)
 	player.windman_dance_timer = 0.0
 	player._dance_armed = false
+	# THE JAR IS NOT FREED, ONLY FORGOTTEN (bead godot-test1-0mr0.5). It stopped
+	# being Phoboman's the moment it landed: it is a world object on its own
+	# clock, and a switch, a respawn or a capture must not reach into the world
+	# and undo it — the burst still comes, which is the whole "a jar nobody
+	# visits is a delayed stink mine" half of the skill. What IS cleared is this
+	# hero's claim on it, so the next Phoboman may place one.
+	player._kimchi_jar = null
 	_revert_teibi_to_normal()
 	# Air Sight lives in the BUILDING's materials rather than in a field here, so it
 	# is the one transient state that leaks something visible if it is not cleared:

@@ -142,7 +142,7 @@ const ROWS: Array = [
 	["R", "Switch hero: Windman, Primm, Teibi, Phoboman.", Mode.DESKTOP],
 	["1 2 3 4", "Jump straight to one hero — the numbers on the portraits.", Mode.DESKTOP],
 	["F", "Special ability: Air Rush, Phase Step, Resize or Stink Wave.", Mode.DESKTOP],
-	["G", "Second skill, once learned in the skill tree (K): Air Sight for Windman, Twin Flash for Primm.", Mode.DESKTOP],
+	["G", "Second skill, once learned in the skill tree (K): Air Sight, Twin Flash or Kimchi Offering.", Mode.DESKTOP],
 	["C", "Cycle the view: over the shoulder, eyes, front.", Mode.DESKTOP],
 	["V", "Voice mic on/off in a multiplayer room (hold to talk in push-to-talk mode).", Mode.DESKTOP],
 

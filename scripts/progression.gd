@@ -388,6 +388,16 @@ const SKILL_TREES: Dictionary = {
 			"cost": 1, "max_ranks": 1, "prereq": "reek",
 			"effect": "phoboman_radius", "per_rank": 0.25,
 		},
+		{
+			# The SECOND SKILL's root (bead godot-test1-0mr0.5): its own branch,
+			# so the third column appears with no UI code, and its own prereq —
+			# reek first, then the jar, so the earliest purchase is level 2.
+			# Nothing new persists: a rank merges by max like every other.
+			"id": "kimchi", "name": "Kimchi Offering", "branch": "Kimchi Offering",
+			"desc": "Learn Kimchi Offering: press G to set down a jar that draws every predator — and every guard — then bursts and scatters the ones with a nose.",
+			"cost": 1, "max_ranks": 1, "prereq": "reek",
+			"effect": "second_ability", "per_rank": 1.0,
+		},
 	],
 }
 

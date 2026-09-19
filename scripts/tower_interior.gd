@@ -2995,6 +2995,46 @@ func lure_guard(floor_index: int, pad_index: int) -> bool:
 	return _send_guard_to(floor_index, where, LURE_HOLD_SECONDS)
 
 
+func lure_guard_to(where_world: Vector3, seconds: float) -> bool:
+	"""
+	Send whichever storey's guard owns `where_world` over to stand and look at it.
+
+	@param where_world: a point in WORLD space — a Kimchi Offering jar, today.
+	@param seconds: how long the guard stands over it once there.
+	@return: whether a guard took the errand. False is ordinary and it is
+	    `lure_guard()`'s list plus one: a point that is not inside this building
+	    at all.
+
+	PUBLIC AND WORLD-SPACE because the caller is not part of this family.
+	`kimchi_jar.gd` is a transient ability node that knows nothing about storeys,
+	plans or local coordinates and must not learn — it asks the building "there
+	is a jar here, send somebody" and the building answers. Everything the answer
+	needs is in this file already: the envelope (`inside_walls`), which storey a
+	height belongs to (`current_floor`) and the router (`_send_guard_to`).
+
+	NOT A SECOND ROUTER. This is three lines of translation onto
+	`_send_guard_to()` — the one that `lure_guard()` and `raise_alarm()` already
+	share — for exactly the reason bead godot-test1-buyt.4 gave when it made that
+	function: a second copy of "find the guard, plan a route, hand it to
+	`investigate_point`" is a second copy to keep in step. The candidate snapping,
+	the routability-over-distance choice and every anti-puppet rule come with it
+	unchanged, so a jar dropped in a doorway or on the ramp lane behaves exactly
+	like a sighting there.
+	"""
+	if not where_world.is_finite():
+		return false
+	var local: Vector3 = where_world - global_position
+	if not inside_walls(local):
+		return false
+	# `current_floor()` always names a real storey (floor 0 is its floor of last
+	# resort), so there is no index to bounds-check here.
+	var floor_index := current_floor(local.y)
+	# The guard walks the storey's floor, not the jar's exact height: a jar is
+	# 0.66 m tall and `plan_route()` is a grid walk on the slab.
+	return _send_guard_to(floor_index,
+			Vector3(local.x, FLOOR_Y[floor_index], local.z), seconds)
+
+
 func _send_guard_to(floor_index: int, at_local: Vector3, seconds: float) -> bool:
 	"""
 	Walk storey `floor_index`'s guard to `at_local` and hold it there `seconds`.

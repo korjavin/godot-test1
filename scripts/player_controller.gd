@@ -4378,6 +4378,17 @@ var windman_dance_timer: float = 0.0
 var _dance_armed: bool = false
 var _dance_armed_msec: int = 0
 
+## Phoboman's live Kimchi Offering jar, as a WEAKREF, or null when he has none
+## out (bead godot-test1-0mr0.5). One jar at a time: the `"JAR"` gate reads this
+## and refuses the second press while the first is still brewing.
+##
+## A WEAKREF AND NOT A REFERENCE, because the jar frees ITSELF six seconds after
+## it lands and this must not be the one thing in the game holding a freed node.
+## `_reset_ability_states()` clears the claim (never the jar) on switch, respawn
+## and capture; the jar is parented to the player's parent, so it outlives all
+## three and bursts on its own clock either way.
+var _kimchi_jar: WeakRef = null
+
 ## True only while Teibi is giant — makes him crush crocodiles on contact.
 var is_giant: bool = false
 
@@ -4645,6 +4656,10 @@ func _ability2_windman() -> bool:
 	return abilities._ability2_windman()
 
 
+func _ability2_phoboman() -> bool:
+	return abilities._ability2_phoboman()
+
+
 func _end_air_sight() -> void:
 	abilities._end_air_sight()
 
@@ -4820,6 +4835,17 @@ func get_ability_block_reason(slot: int = 0) -> String:
 	           not fit where he is standing. Growing inside geometry is not a
 	           clipping artefact, it is a lift: the depenetration pops him out
 			   upwards, through a storey's ceiling and past its gate.
+	  "JAR" — Phoboman already has a Kimchi Offering jar out (slot 1). One jar
+			   at a time: a second would double the lure radius for free, and the
+			   two bursts would be a scatter and then a second scatter of the
+			   bodies the first one sent running. The gate lifts the moment the
+			   jar frees itself, so it is at most six seconds of charged-but-
+			   gated dial — and `ABILITY2_COOLDOWN["phoboman"]` is longer than
+			   that anyway, so in normal play nobody ever sees it. It exists for
+			   the ONE case where the cooldown cannot answer: a respawn or a
+			   character switch zeroes nothing about the jar, and a hero who
+			   comes back to a still-brewing pot is refused by state rather than
+			   by a clock somebody reset.
 	  "SEEING" — Windman's Air Sight (slot 1) is already running. The look
 			   outlives a skilled hero's cooldown, so without this the press
 			   would refresh it forever and the walls would never come back.
@@ -4881,6 +4907,15 @@ func get_ability_block_reason(slot: int = 0) -> String:
 			return "INDOOR"
 		if _teibi_grow_blocked():
 			return "TIGHT"
+	# "JAR" — ONE KIMCHI OFFERING AT A TIME (bead godot-test1-0mr0.5). Asked of
+	# the weakref rather than of a timer: the jar owns its own clock and frees
+	# itself, so "is one still out" is a question only the jar can answer, and a
+	# freed one answers null through the weakref for free. Slot 0 (the Stink
+	# Wave) is untouched — a jar on the ground says nothing about a wave.
+	if char_name == "phoboman":
+		if slot == 1 and _kimchi_jar != null and _kimchi_jar.get_ref() != null:
+			return "JAR"
+		return ""
 	if char_name != "windman":
 		return ""
 	if slot == 1:

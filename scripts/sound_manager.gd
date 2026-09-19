@@ -94,6 +94,7 @@ const ABILITY_PITCH: Dictionary = {
 	"phoboman": 0.85,  # slightly low and gross for the stink wave
 	"windman_2": 1.2,  # Air Sight's second voice: the same air, a step up
 	"primm_2": 1.8,  # Twin Flash's second voice: a higher zip than Phase Step's 1.4
+	"phoboman_2": 0.6,  # the jar going down: lower and heavier than the wave's 0.85
 }
 
 # --- Crocodile bite: a harsh descending square-wave burst. ---

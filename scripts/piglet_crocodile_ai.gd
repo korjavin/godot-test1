@@ -2486,6 +2486,19 @@ func flee_from(source: Vector3, duration: float, tracks_player: bool = true) -> 
 	# remote-driven, gets the real flee from this very call — see
 	# MpManager.request_croc_flee.
 	is_fleeing = true
+	# A FLEEING BODY DROPS ITS ERRAND (bead godot-test1-0mr0.5). `is_fleeing`
+	# outranks `is_investigating` in `_physics_process`, so without this line the
+	# errand merely PAUSES: a sniffer scared off a Kimchi jar mid-hold would run
+	# for four seconds and then calmly walk back to the pot that just went off in
+	# its face. `_abandon_investigation()` turns the walk around instead — the
+	# body goes home and hands its borrowed leash back — and it already refuses a
+	# body that is on its way home, so a second scare costs nothing.
+	#
+	# IT IS CORRECT FOR EVERY OTHER CALLER TOO, which is why it lives here and not
+	# in the jar: a Stink Wave or a Twin Flash that catches a guard walking to a
+	# `P` plate had exactly the same bug, one lure along.
+	if is_investigating:
+		_abandon_investigation()
 	# A flee trigger/refresh must never shorten an active flee already in progress (Codex P2).
 	flee_time_remaining = maxf(flee_time_remaining, duration)
 	flee_source = source
