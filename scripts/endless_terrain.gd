@@ -1744,6 +1744,28 @@ var _bike_path_cache: Dictionary = {}
 ## is nothing for a cap to evict.
 var _bike_network_cache: Dictionary = {}
 
+## Every TRUNK's full station list and its bounding box, under the single key
+## "trunks" (epic godot-test1-pnvb, child `.2`). One entry per edge of
+## `_bike_network_cache`'s graph, built in one pass the first time any chunk asks.
+##
+## ONE KEY AND NOT ONE PER EDGE, because the per-chunk lookup needs EVERY trunk's
+## bounding box on its first call anyway — a trunk is kilometres long, so
+## `BikePaths.scan_radius_chunks()`'s 9x9 sweep of origin chunks cannot find one
+## and the chunk asks the whole table instead. Lazy per-edge memoization would
+## buy nothing: the first chunk of the run fills all of it either way.
+##
+## UNCAPPED, for `_bike_network_cache`'s reason one declaration up rather than as
+## an omission: it holds the measured 17-32 edges of the whole world (a few
+## thousand `Vector2`s in total, printed by `bike_path_selfcheck` check T4) and
+## there is nothing for a cap to evict. `_bike_path_cache` above is capped
+## because IT grows one entry per origin chunk a long run walks past.
+##
+## Seeded twice over — the graph it is built from is pure in `run_seed`, and the
+## walk between two anchors reads the road centreline, the biome field and the
+## landmark table. A trunk kept across a re-seed would be paint laid out for the
+## last world's monuments.
+var _bike_trunk_cache: Dictionary = {}
+
 ## Reference to the player node to track their position
 var player: Node3D
 
@@ -2315,6 +2337,9 @@ func _drop_seeded_memos() -> void:
 	# are both derived from it, so a graph kept across a re-seed would join this
 	# run's gate to the last run's monuments.
 	_bike_network_cache = {}
+	# ...and the TRUNK ROUTES walked between that graph's anchors, which are the
+	# graph plus the road, the biome field and the landmark table all over again.
+	_bike_trunk_cache = {}
 
 
 func _roll_biome_offset() -> void:
@@ -3650,6 +3675,31 @@ func landmark_sites() -> Dictionary:
 
 func waypoint_sites() -> Array[Dictionary]:
 	return TerrainWaypoints.waypoint_sites(self)
+
+
+# ============================================================================
+# THE BIKE ROAD NETWORK — two forwarders; the graph is in bike_network.gd
+# ============================================================================
+#
+# EARNED AT BEAD godot-test1-pnvb.2, and by exactly the rule above: `BikePaths`
+# walks a trunk between two anchors of `BikeNetwork`'s graph, and a SIBLING
+# static family reaches another one THROUGH THE NODE that owns the state, never
+# by naming the class (CLAUDE.md, Conventions — "a `const` alias or a type
+# annotation is a parse-time reference — one direction only, or it is a cycle").
+# `BikePaths` -> `BikeNetwork` is one direction today; `.4` is the child that
+# makes the spur tier read a trunk, which is the moment a class-name reference
+# here would close the loop. Adding the forwarder now costs two lines and means
+# that bead has nothing to undo.
+#
+# `bike_network_selfcheck` is the family's OWN check and names `BikeNetwork`
+# directly, for `landmark_sites_selfcheck`'s reason above.
+
+func bike_anchors() -> Array[Dictionary]:
+	return BikeNetwork.anchors(self)
+
+
+func bike_edges() -> Array[Dictionary]:
+	return BikeNetwork.edges(self)
 
 
 func _landmark_at(chunk_pos: Vector2i) -> Dictionary:

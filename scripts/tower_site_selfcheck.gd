@@ -404,6 +404,29 @@ func _digest_field(chunks: Array[Vector2i], seed_value: int, distance: float) ->
 	## warmed is re-derived at the new distance on first use).
 	var terrain := _make_terrain(seed_value)
 	terrain.tower_site_distance = distance
+	# ...WITH THE BIKE FAMILY OFF, and this is the one thing in checks 5 and 6 that
+	# is not simply "the shipped pipeline" (bead godot-test1-pnvb.2).
+	#
+	# THE TOWER IS AN ANCHOR OF THE BIKE ROAD NETWORK. `BikeNetwork.anchors()`
+	# index 0 IS `tower_site()`, and the trunk graph joins each anchor to its
+	# nearest neighbours — so moving the tower to the far field genuinely changes
+	# the EDGE SET of the whole network (measured on FIELD_SEED: 29 edges and 10
+	# trunks with the tower in place, 26 and 9 with it moved) and therefore moves
+	# trunk poles, and the crocodiles their footprints displace, in chunks nowhere
+	# near the disc. That is the network doing what it is designed to do, not a
+	# rejection eating a draw, and it is what this comparison would otherwise
+	# report as the latter.
+	#
+	# NOTHING IS LOST BY SWITCHING IT OFF HERE. What check 5 exists to measure is
+	# that the tower's REJECTIONS cost the shared streams nothing, and every other
+	# rejection is still in the comparison. The bike family's own zero-draw property
+	# is measured far more strictly than a digest could, by `bike_path_selfcheck`
+	# check 1: the same field built twice through the shipped `create_chunk` with
+	# `spawn_bike_paths` on and off, compared node for node, bucket for bucket and
+	# shape for shape. And CHECK 4 ABOVE KEEPS THE BIKE PATHS ON — it is the check
+	# that caught a trunk standing collision shapes 19.9 m from the tower, so the
+	# disc's coverage of this family is untouched.
+	terrain.spawn_bike_paths = false
 	var out := {}
 	for chunk_pos: Vector2i in chunks:
 		terrain.create_chunk(chunk_pos)
