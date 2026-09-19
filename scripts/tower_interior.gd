@@ -625,7 +625,19 @@ const FLOOR_HYSTERESIS: float = 0.8
 ## it is both; the "no MultiMeshInstance3D here" rule it replaces meant "this is
 ## authored geometry, not chunk content", and one authored rack of pickups is not
 ## the chunk streamer coming indoors.
-const DRAW_BUDGET: int = 38
+##
+## 40 SINCE THE CIVILIAN STAFF (bead `godot-test1-buyt.3`), AND TWO IS THE WHOLE
+## COST OF A POPULATION. The owner asked for scientists and engineers walking the
+## storeys; the epic's decision is that they are crowd-style MultiMesh proxies with
+## no collider, so the ENTIRE ten-storey population is two `MultiMeshInstance3D` —
+## one per archetype — and two draw calls however many staff ever walk. The
+## alternative weighed and refused was a skinned body apiece: ten to twenty
+## `Skeleton3D`s writing bone rotations every frame, in the one building the owner
+## asks the player to spend the most time in. Two more surfaces with it (49 -> 51
+## of `SURFACE_BUDGET`'s 54), because one MultiMesh submits its mesh's surfaces
+## once however many instances it holds — which is the same argument the dossiers
+## made one bead earlier. `scripts/tower_staff.gd`'s header carries the reasoning.
+const DRAW_BUDGET: int = 40
 
 # ============================================================================
 # PALETTE — one material per colour, shared process-wide (see `_material`)
@@ -1136,8 +1148,17 @@ var _dossier_lore_queue: Array[String] = []
 ## frame. The rack is ONE node for the whole building, so it cannot hide with a
 ## storey container; this is what tells `TowerDossiers.refresh()` when to re-decide,
 ## and it means the decision costs one integer compare a frame rather than six
-## transform writes.
+## transform writes. `TowerStaff.tick()` reads it for the very same reason.
 var _drawn_floor: int = -1
+
+## THE CIVILIAN STAFF (bead `godot-test1-buyt.3`) — the building's second
+## population, after the guards. `_staff` holds the two `MultiMeshInstance3D`
+## archetypes and `_staff_walkers` is one record per body (its storey, its loop,
+## how far round the lap it is). Both are rebuilt whole by `TowerStaff.reset()`,
+## which is the whole of "structure persists; population resets" for them.
+## Read `scripts/tower_staff.gd` for why a staffer has no collider at all.
+var _staff: Node3D = null
+var _staff_walkers: Array[Dictionary] = []
 
 ## The partway reaction's clock, counting 0 -> 1 over NUDGE_TIME. Zero when idle.
 var _nudge: float = 0.0
@@ -1988,6 +2009,11 @@ func _ready() -> void:
 	# first frame. One idle frame later the shell is where it belongs.
 	reset_guards.call_deferred()
 
+	# ...and THE CIVILIAN STAFF, which is NOT deferred and does not need to be: a
+	# staffer is a MultiMesh instance under this node, so its transform is
+	# interior-LOCAL and there is no world-space leash to compute a frame early.
+	TowerStaff.reset(self)
+
 	# ...and the dossiers' JOIN REPLAY, deferred for the very same reason: a dossier
 	# id is its world position, and right now this building is standing at the
 	# terrain's origin. One idle frame later it is on the tower site and the id a
@@ -2052,6 +2078,7 @@ func _process(delta: float) -> void:
 	_tick_lure_pads(delta)
 	_tick_purge(delta)
 	TowerDossiers.tick(self, delta)
+	TowerStaff.tick(self, delta)
 
 
 # ============================================================================
@@ -3822,8 +3849,13 @@ func _on_tower_doorway(_body: Node3D) -> void:
 	their posts" is the acceptance, and re-placing them on the way out costs one
 	free-and-rebuild of the whole population at the one moment nothing is looking
 	at it.
+
+	BOTH POPULATIONS, since bead `godot-test1-buyt.3`. The staff reset is the same
+	ruling as the guards' and is reached the same way — "structure persists;
+	population resets" is about the building's bodies, not about which kind.
 	"""
 	reset_guards()
+	TowerStaff.reset(self)
 
 
 func reset_guards() -> void:

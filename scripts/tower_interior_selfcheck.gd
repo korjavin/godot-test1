@@ -1174,16 +1174,29 @@ func _check_node_shape() -> void:
 			bodies += 1
 		elif child is Area3D:
 			areas += 1
-	# EXACTLY ONE MULTIMESH, AND IT IS THE DOSSIER RACK. The rule this replaces was
-	# "none at all — it is authored geometry, not chunk content", and it still says
-	# that: what a multimesh must not be here is the chunk streamer's decorative
-	# batching coming indoors. One rack of six AUTHORED pickups that have to
-	# disappear one at a time is the one thing a merged storey batch cannot express,
-	# and it is counted in both budgets above rather than hiding under them.
-	if racks.size() != 1:
-		_fail("the interior holds %d MultiMeshInstance3D — expected exactly one, the DossierRack" % racks.size())
-	elif String(racks[0].name) != "DossierRack":
-		_fail("the interior's one MultiMeshInstance3D is called %s, not DossierRack" % racks[0].name)
+	# EXACTLY THREE MULTIMESHES, AND EVERY ONE OF THEM IS NAMED HERE. The rule this
+	# replaces was "none at all — it is authored geometry, not chunk content", and
+	# it still says that: what a multimesh must not be here is the chunk streamer's
+	# decorative batching coming indoors. A rack of six AUTHORED pickups that have
+	# to disappear one at a time, and a POPULATION that has to move, are the two
+	# things a merged storey batch cannot express — and all three are counted in
+	# both budgets above rather than hiding under them.
+	#
+	# BY NAME AND NOT BY COUNT, since bead `godot-test1-buyt.3`. A bare count was
+	# enough while there was one; with three, a check that only counted would pass
+	# a build that dropped a staff archetype and grew some other multimesh in its
+	# place, which is exactly the "a feature drawn 25 m off that six checks all
+	# passed" shape. The set is what is asserted.
+	const WANT_RACKS: Array[String] = ["DossierRack", "StaffScientists", "StaffEngineers"]
+	var rack_names: Array[String] = []
+	for rack: MultiMeshInstance3D in racks:
+		rack_names.append(String(rack.name))
+	rack_names.sort()
+	var want_sorted := WANT_RACKS.duplicate()
+	want_sorted.sort()
+	if rack_names != want_sorted:
+		_fail("the interior's MultiMeshInstance3D nodes are %s — expected exactly %s" % [
+			str(rack_names), str(want_sorted)])
 	if bodies != 1:
 		_fail("the interior has %d StaticBody3D, expected exactly one" % bodies)
 	# Three pads (demand, identity, checkpoint) and the block's own: four spine pads,
