@@ -571,7 +571,8 @@ var flee_tracks_player: bool = true
 ## Same two-field shape as the flee above, for the same reason: the BOOL is what
 ## every behaviour and the wire read (a remote-driven body is handed it by
 ## `CROC_FLAG_SHRUNK` and runs no clock of its own), and the CLOCK is local and
-## only ever counted in `_physics_process`.
+## only ever counted in `_physics_process` (`_tick_shrink`) — never in the
+## animation, which a body with no model never reaches.
 var is_shrunk: bool = false
 ## Seconds of shrink left (counts down to 0; always 0 on a remote-driven body).
 var shrunk_time_remaining: float = 0.0
@@ -1043,6 +1044,11 @@ func _physics_process(delta: float) -> void:
 	# Crowd cooldown tick — before the lod gate so the frame that decides to sleep
 	# still ticks, and sleep itself is refused while the guard ticks (see set_lod_active).
 	_tick_crowd_cooldown(delta)
+	# Teibi's Shrink Ray's clock, here for the line above's reason and for one of
+	# its own: `_animate_body` returns early on a null `model`, which this file
+	# supports, so a clock spent there would latch `is_shrunk` forever on a
+	# modelless body. See `_tick_shrink()`.
+	_tick_shrink(delta)
 
 	if not lod_active:
 		velocity = Vector3.ZERO
@@ -2598,22 +2604,52 @@ func shrink_for(seconds: float) -> void:
 
 func _tick_shrink(delta: float) -> void:
 	"""
-	Spend the shrink clock and ease the drawn factor toward it. Called from the top
-	of `_animate_body()`, which is the ONE call both the local and the
-	remote-driven paths already share (the river sink rides it for that reason).
+	Spend the shrink clock. Called from `_physics_process` beside
+	`_tick_crowd_cooldown`, and ABOVE the LOD gate for that one's reason: the frame
+	that decides to sleep still ticks, and `set_lod_active(false)` clears the state
+	outright anyway.
 
-	THE CLOCK IS LOCAL, THE FACTOR IS EVERYONE'S. A remote-driven body has
-	`is_shrunk` handed to it by `CROC_FLAG_SHRUNK` in `set_remote_state()` and must
-	run no clock of its own, or it would pop back to full size six seconds after the
-	master's pulse regardless of what the master is still doing — the legs-snap
-	convention the whole sync is written in. So the countdown is skipped for it and
-	only the ease below runs.
+	IT IS NOT IN `_animate_body`, and that is the whole reason this is its own
+	function rather than two lines in the ease below. `_animate_body` returns early
+	when `model` is null, which this file explicitly supports
+	(`get_node_or_null("Model")` in `_ready`) — so a clock spent there would never
+	run for a modelless body and `is_shrunk` would LATCH FOREVER: permanently
+	harmless, permanently unable to acquire. `flee_time_remaining` is spent in
+	`_physics_process` for the same reason, and this sits beside it.
+
+	ABOVE THE PAUSE BRANCH, unlike the flee's countdown: a body standing in its
+	post-bite recovery still pops back to size on time. The flee can afford to
+	freeze through a pause because a paused body is harmless either way; a shrink
+	that froze would outlive its own window by whatever the pause cost.
+
+	NOT ON A REMOTE-DRIVEN BODY. It has `is_shrunk` handed to it by
+	`CROC_FLAG_SHRUNK` in `set_remote_state()` and must run no clock of its own, or
+	it would pop back six seconds after the master's pulse regardless of what the
+	master is still doing — the legs-snap convention the whole sync is written in.
+	(It never reaches this line anyway: `_physics_process` returns above it for a
+	remote body. Stated rather than relied on, because the guard is one `return`
+	away from somebody else's refactor.)
 	"""
-	if not remote_driven and shrunk_time_remaining > 0.0:
-		shrunk_time_remaining -= delta
-		if shrunk_time_remaining <= 0.0:
-			shrunk_time_remaining = 0.0
-			is_shrunk = false
+	if remote_driven or shrunk_time_remaining <= 0.0:
+		return
+	shrunk_time_remaining -= delta
+	if shrunk_time_remaining <= 0.0:
+		shrunk_time_remaining = 0.0
+		is_shrunk = false
+
+
+func _ease_shrink_factor(delta: float) -> void:
+	"""
+	Ease the DRAWN factor toward whatever `is_shrunk` currently says, at a constant
+	rate over `SHRINK_EASE_SECONDS`.
+
+	Called from the top of `_animate_body()`, which is the ONE call both the local
+	and the remote-driven paths already share (the river sink rides it for that
+	reason) — and it is the right home because the factor is consumed exactly twice,
+	in the two `scaled_local` lines below it. A REMOTE body reaches this and not the
+	clock, which is the whole split: the master owns the window, every screen draws
+	the pop.
+	"""
 	var target: float = SHRUNK_SCALE if is_shrunk else 1.0
 	if not is_equal_approx(_shrink_factor, target):
 		_shrink_factor = move_toward(_shrink_factor, target,
@@ -3349,10 +3385,11 @@ func _animate_body(delta: float) -> void:
 	# height both animation branches compose on, so a crocodile that chomps you
 	# from the water stays in the water for the whole chomp.
 	_tick_river_sink(delta)
-	# ...and the shrink, for the same reason and in the same place: it scales the
-	# basis both animation branches compose, so a body chomping while it pops back
-	# to size must pop back mid-chomp rather than after it.
-	_tick_shrink(delta)
+	# ...and the shrink FACTOR, for the same reason and in the same place: it scales
+	# the basis both animation branches compose, so a body chomping while it pops
+	# back to size must pop back mid-chomp rather than after it. Only the drawn
+	# factor — the CLOCK is spent in `_physics_process`; see `_tick_shrink()`.
+	_ease_shrink_factor(delta)
 
 	animation_time += delta
 
