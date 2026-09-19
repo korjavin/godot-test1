@@ -1438,6 +1438,10 @@ func _check_a_staffer_raises_the_alarm() -> void:
 		await process_frame
 		Sentinel.done("a_staffer_raises_the_alarm")
 		return
+	# The mesh stub is here to read back WHERE the alarm says it saw somebody: the
+	# only record of the sighting POINT is what goes out on the wire and into
+	# `_send_guard_to`, and the guard walks there in check 11 rather than here.
+	var mp := _stub(MP_STUB_SOURCE, "mp")
 	var walker: Dictionary = interior._staff_walkers[0]
 	var loop: Dictionary = walker["loop"]
 	var path: PackedVector3Array = loop["path"]
@@ -1468,6 +1472,30 @@ func _check_a_staffer_raises_the_alarm() -> void:
 	if interior.alarm_seconds_left(floor_index) <= 0.0:
 		_fail("a hero stood in a staffer's cone for %.2f s on storey %d and no alarm"
 				% [float(2 * half + 8) * step, floor_index] + " ever went up")
+
+	# ---- WHERE IT SAYS IT SAW SOMEBODY --------------------------------------
+	# THE HERO'S CELL, NOT THE STAFFER'S, and those two are one plan cell apart here
+	# on purpose. This is the assertion that a mutant swapping them has to fail: the
+	# guard is sent to the SIGHTING, so a build that published the witness's own feet
+	# would walk it to the wrong end of the corridor while every count, every timer
+	# and every flag in this file still agreed.
+	var published: Array = mp.get("published") as Array
+	if published.size() != 1:
+		_fail("one sighting published %d alarms to the mesh" % published.size())
+	else:
+		var hero_xz := Vector2(path[1].x, path[1].z)
+		var eye_xz := Vector2(path[0].x, path[0].z)
+		var sent: Vector2 = (published[0] as Array)[1]
+		if int((published[0] as Array)[0]) != floor_index:
+			_fail("the sighting was published on storey %d, not the staffer's own %d"
+					% [int((published[0] as Array)[0]), floor_index])
+		if sent.distance_to(hero_xz) > sent.distance_to(eye_xz):
+			_fail("the alarm named %s, which is the STAFFER at %s rather than the hero"
+					% [str(sent), str(eye_xz)] + " at %s — the guard would converge on"
+					% str(hero_xz) + " the witness")
+		if sent.distance_to(hero_xz) > EPS:
+			_fail("the alarm named %s, %.2f m from the hero it saw at %s"
+					% [str(sent), sent.distance_to(hero_xz), str(hero_xz)])
 
 	# ---- THE CONTROL: behind it, and out of the cone -------------------------
 	# A fresh storey, so the bound in check 9(b) cannot be what keeps this dark.
@@ -1500,6 +1528,7 @@ func _check_a_staffer_raises_the_alarm() -> void:
 			% [float(half) * step, float(2 * half + 8) * step,
 			TowerStaff.SIGHT_TELEGRAPH])
 	interior._player = null
+	mp.queue_free()
 	hero.queue_free()
 	interior.queue_free()
 	await process_frame
