@@ -1575,6 +1575,36 @@ static func _road_swath(terrain: Node3D, p: Vector2) -> bool:
 	"""
 	return terrain._road_lateral_distance(p.x, p.y, BIKE_ROAD_CLEARANCE) < BIKE_ROAD_CLEARANCE
 
+static func road_station_near(terrain: Node3D, p: Vector2) -> Dictionary:
+	"""
+	The road station judging world XZ `p` (child `godot-test1-pnvb.4`, round 2).
+	
+	THE ONE SEAM for station picking, shared by the walk (`_trunk_road_crossing_ok`)
+	and `bike_path_selfcheck` C3: an earlier revision picked the station twice with
+	a `best_k = -1` sentinel in both places, and station indices go NEGATIVE west
+	of the origin -- so every western crossing was refused and the check was blind
+	to it through the same sentinel. There is no int sentinel left to share:
+	this returns `{k, station}` for the nearest of the two stations straddling
+	`p.x` (cache extended, binary-searched, clamped -- the shipped idiom), or `{}`
+	when no station stands near. Pure, costs no draw.
+	"""
+	var pad: float = BIKE_ROAD_CLEARANCE + terrain._road_spacing() * 2.0
+	terrain._road_extend_to_x(p.x - pad, p.x + pad)
+	var k0: int = terrain._road_first_k_at_or_after_x(p.x)
+	var k_last: int = mini(terrain.road_k_max, terrain._road_terminal_k())
+	var best := {}
+	var best_d: float = INF
+	for k: int in [k0 - 1, k0]:
+		if k < terrain.road_k_min or k > k_last:
+			continue
+		var st: Dictionary = terrain._road_station(k)
+		var d: float = Vector2(p.x, p.y).distance_to(st["center"])
+		if d < best_d:
+			best_d = d
+			best = {"k": k, "station": st}
+	return best
+
+
 static func _trunk_road_crossing_ok(terrain: Node3D, p: Vector2, heading: float) -> bool:
 	"""
 	May this trunk step cross the coin road HERE, at this heading?
@@ -1586,7 +1616,7 @@ static func _trunk_road_crossing_ok(terrain: Node3D, p: Vector2, heading: float)
 	
 	THE ACUTE ANGLE, not the signed difference: running ALONGSIDE the road in
 	either direction reads ~0 and stays refused, crossing it square reads ~PI/2.
-	The road heading comes from `terrain._road_station(k).heading` after
+	The road heading comes through `road_station_near` (the one seam C3 shares),
 	`terrain._road_extend_to_x` — the same binary-search idiom every other road
 	consumer uses (`terrain._road_first_k_at_or_after_x`). The nearest of the two
 	stations straddling `p.x` is the heading read, so a point between two stations
@@ -1597,23 +1627,10 @@ static func _trunk_road_crossing_ok(terrain: Node3D, p: Vector2, heading: float)
 	PURE IN (POSITION, SEED) like everything else in the walk, and it costs no
 	draw: two hashes' worth of cache lookups and one comparison.
 	"""
-	var pad: float = BIKE_ROAD_CLEARANCE + terrain._road_spacing() * 2.0
-	terrain._road_extend_to_x(p.x - pad, p.x + pad)
-	var k0: int = terrain._road_first_k_at_or_after_x(p.x)
-	var k_last: int = mini(terrain.road_k_max, terrain._road_terminal_k())
-	var best_k: int = -1
-	var best_d: float = INF
-	for k: int in [k0 - 1, k0]:
-		if k < terrain.road_k_min or k > k_last:
-			continue
-		var near: Vector2 = (terrain._road_station(k) as Dictionary)["center"]
-		var d: float = Vector2(p.x, p.y).distance_to(near)
-		if d < best_d:
-			best_d = d
-			best_k = k
-	if best_k < 0:
+	var near: Dictionary = road_station_near(terrain, p)
+	if near.is_empty():
 		return false
-	var road_heading: float = float((terrain._road_station(best_k) as Dictionary)["heading"])
+	var road_heading: float = float((near["station"] as Dictionary)["heading"])
 	var diff: float = absf(wrapf(heading - road_heading, -PI, PI))
 	return minf(diff, PI - diff) > deg_to_rad(BIKE_ROAD_CROSSING_MIN_DEG)
 

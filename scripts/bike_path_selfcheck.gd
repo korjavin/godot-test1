@@ -2574,16 +2574,21 @@ func _check_crossing_angle_rule(terrain_script: GDScript) -> void:
 	
 	Over the CI seeds, every trunk station walked through the swath mid-span must
 	cross it at an acute angle above 45 degrees (pinned as the literal
-	`deg_to_rad(45.0)` against `BIKE_ROAD_CROSSING_MIN_DEG`), measured between
-	the station's own walked heading and the nearest road station's heading --
-	the shipped extend-then-binary-search idiom, nearest of the two stations
-	straddling the point. Endpoint-exempt corridor walking (the gate approach)
+	`acute <= 45.0` against `BIKE_ROAD_CROSSING_MIN_DEG`), measured between
+	the station's own walked heading and the road station's heading through the
+	shipped seam `BikePaths.road_station_near` -- which C3 drives rather than
+	re-implementing the pick. Round 2 removed a `best_k = -1` sentinel the check
+	used to share with the walk, blind west of the origin where station indices
+	go negative; a sub-assertion fails on zero crossings judged by a negative
+	station, so the seam cannot go blind there again. Endpoint-exempt corridor
+	walking (the gate approach)
 	is out of scope: it runs alongside by entitlement, not by crossing. Fails
 	if the sweep finds no crossing at all, and prints how many candidate
 	crossings were refused for running shallow (the `trunk_abandoned` "road"
 	bucket), which is the rule's other half.
 	"""
 	var crossings: int = 0
+	var neg_crossings: int = 0
 	var shallow: int = 0
 	var min_acute: float = 90.0
 	for seed_value: int in SEEDS:
@@ -2593,6 +2598,7 @@ func _check_crossing_angle_rule(terrain_script: GDScript) -> void:
 			var fa: Vector2 = anchors[int(trunk["a"])]["pos"]
 			var fb: Vector2 = anchors[int(trunk["b"])]["pos"]
 			var crosses: bool = false
+			var neg: bool = false
 			for station: Dictionary in (trunk["stations"] as Array[Dictionary]):
 				var p: Vector2 = station["pos"]
 				if p.distance_to(fa) < BikePaths.TRUNK_APPROACH_RADIUS \
@@ -2601,23 +2607,13 @@ func _check_crossing_angle_rule(terrain_script: GDScript) -> void:
 				if terrain._road_lateral_distance(p.x, p.y, BikePaths.BIKE_ROAD_CLEARANCE) \
 					>= BikePaths.BIKE_ROAD_CLEARANCE:
 					continue
-				var pad: float = BikePaths.BIKE_ROAD_CLEARANCE + terrain._road_spacing() * 2.0
-				terrain._road_extend_to_x(p.x - pad, p.x + pad)
-				var k0: int = terrain._road_first_k_at_or_after_x(p.x)
-				var k_last: int = mini(terrain.road_k_max, terrain._road_terminal_k())
-				var best_k: int = -1
-				var best_d: float = INF
-				for k: int in [k0 - 1, k0]:
-					if k < terrain.road_k_min or k > k_last:
-						continue
-					var d: float = p.distance_to((terrain._road_station(k) as Dictionary)["center"])
-					if d < best_d:
-						best_d = d
-						best_k = k
-				if best_k < 0:
+				var near: Dictionary = BikePaths.road_station_near(terrain, p)
+				if near.is_empty():
 					_fail("C3: seed %d has a trunk station in the swath with no road station near -- " % seed_value + "the swath reading disagrees with the station cache")
 					continue
-				var rh: float = float((terrain._road_station(best_k) as Dictionary)["heading"])
+				var rh: float = float((near["station"] as Dictionary)["heading"])
+				if int(near["k"]) < 0:
+					neg = true
 				var diff: float = absf(wrapf(float(station["heading"]) - rh, -PI, PI))
 				var acute: float = rad_to_deg(minf(diff, PI - diff))
 				if acute <= 45.0:
@@ -2626,13 +2622,17 @@ func _check_crossing_angle_rule(terrain_script: GDScript) -> void:
 				crosses = true
 			if crosses:
 				crossings += 1
+			if neg:
+				neg_crossings += 1
 		for edge: Dictionary in terrain.bike_edges():
 			if BikePaths.trunk_abandoned(terrain, edge) == "road":
 				shallow += 1
 		terrain.free()
 	if crossings == 0:
 		_fail("C3 swept %d seeds and found no trunk crossing the coin road -- a rule " % SEEDS.size() + "with no crossing in it asserts nothing")
-	print("C3: %d trunks cross mid-span, shallowest at %.1f deg (rule: above 45); " % [crossings, min_acute] + "%d shallow candidates refused" % shallow)
+	if neg_crossings == 0:
+		_fail("C3 swept %d seeds and no crossing is judged by a negative road station index " % SEEDS.size() + "-- west of the origin the pick may be refusing blind (round-2 sentinel)")
+	print("C3: %d trunks cross mid-span, shallowest at %.1f deg (rule: above 45); " % [crossings, min_acute] + "%d shallow candidates refused, %d judged by a negative station" % [shallow, neg_crossings])
 	Sentinel.done("crossing_angle_rule")
 
 
