@@ -51,8 +51,10 @@ extends SceneTree
 ##      with the post's own radius and top; the strip and the dashes append
 ##      nothing at all. Non-vacuous: the sweep must find poles.
 ##
-## ...and child `.2` — the four authored signs and the traffic head — adds six
-## (7, 8, 7c, 9, 10 and 11), which is what `_run()` calls:
+## ...and child `.2` — the four authored signs and the traffic head — adds six:
+## 7, 8, 7c, 9, 10 and 11. That is FIVE functions in `_run()`, because 7 and 8 share
+## one sweep; the count is the only cross-check on the list below, so keep both
+## halves of it true.
 ##
 ##   7 + 8. WHAT STANDS ON THE POLES, in one sweep because they share it. Every
 ##      pole carries EXACTLY ONE top; every top is a legal kind; all four sign
@@ -175,7 +177,9 @@ const TOP_SWEEP_HALF: int = 9
 ## How many boxes check 7c will read as a pole's top. `_draw_path_share` emits the
 ## post and then exactly one top, and the largest top is four boxes (a head plus its
 ## three lenses; CROSSING is a plate plus three pips). The run also stops at the next
-## post or at ground level, so this is a bound and not a count.
+## post or at ground level, so this is a bound and not a count — and check 7c asserts
+## the bound still covers `SIGN_KINDS`, because a top that outgrew it would lose its
+## last box out of the measurement in silence.
 const TOP_BOXES_MAX: int = 4
 
 ## Below this height, in metres, a box is this family's PAINT — the strip sits at 0.03
@@ -1035,6 +1039,19 @@ func _check_sign_clearance(terrain_script: GDScript) -> void:
 	also be what a predicate that can never fail prints.
 	"""
 	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
+	# THE BOUND HAS TO COVER THE AUTHORED TABLES, and it is asserted rather than
+	# trusted because the failure is silent: a top of five boxes would have its fifth
+	# walk out of the run below unmeasured, `signs_seen` would still be non-zero, and
+	# a pictogram built inside the post — round 1's major — would ship green. A fourth
+	# pip on any `SIGN_KINDS` row is all it takes.
+	var widest: int = 4  # the traffic head: one head box plus three lenses.
+	for row: Dictionary in BikePaths.SIGN_KINDS:
+		widest = maxi(widest, 1 + (row["pips"] as Array).size())
+	if TOP_BOXES_MAX < widest:
+		_fail("check 7c reads at most %d boxes as a pole's top, but the authored tables now "
+				% TOP_BOXES_MAX + "build one of %d — the boxes past the bound would never be "
+				% widest + "measured against the post, which is the one thing this check exists "
+				+ "to see. Raise TOP_BOXES_MAX")
 	var posts_seen: int = 0
 	var signs_seen: int = 0
 	var control_fired: bool = false
@@ -1601,8 +1618,13 @@ func _spawn_bare(terrain: Node3D, chunk_pos: Vector2i) -> Dictionary:
 	return what it produced with every node freed again.
 
 	@return: `{ "batch": Array, "obstacles": Array, "poles": int,
-	            "paths": Array[Dictionary] }`, the last being one row per marker
-	          carrying its `origin` and its `segments`.
+	            "paths": Array[Dictionary] }`. `poles` is the chunk's TOTAL pole
+	          count; `paths` is one row per marker, carrying that marker's whole
+	          meta: `origin`, `segments`, `poles` (this path's own poles, as
+	          CUBE-BUCKET indices — see check 9's banner for why that is not the
+	          batch index, though in this helper's empty CUBE-only batch the two
+	          coincide, which is what lets check 7c index the batch with them),
+	          `tops` (one per pole) and `signals` (each head's first lens).
 
 	An EMPTY `obstacles` on purpose, in the checks that count footprints: with
 	nothing already built no pole is skipped, so the pole count is the stride's
