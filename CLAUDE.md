@@ -112,7 +112,9 @@ no physics body, so nothing can follow a hologram.
   `obstacles`; later spawners read it. Settle reward coins before appending the feature's own.
 - **Scarcity is one rule for every biome**: content thins with distance through
   `scarcity_at()` in exactly three forms (see `_scarcity_keep`); predators, bosses and road
-  coins are never thinned; the mountain massif is the single exemption.
+  coins are never thinned. There are **exactly two exemptions**: the mountain massif, and
+  the **bike trunk route** (`terrain_bike_paths.gd` — the ROUTE only; its poles, signs and
+  traffic heads stay thinned on form 3, and spurs are never exempt).
 
 ### Two authored exceptions, and only two
 - **The tower** is one building at one constant site, built from `tower_shell.gd`'s box
