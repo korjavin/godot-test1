@@ -190,12 +190,18 @@ extends RefCounted
 ##     segment over water is simply NOT DRAWN — a visible gap in the paint. That
 ##     gap is a PLACEHOLDER WITH A NAMED SUCCESSOR, not an oversight, and the walk
 ##     itself is unaffected, so `.3` changes only what is drawn.
-##   * THE COIN ROAD still refuses, and `.4` owns the crossing. For now a trunk
-##     that meets the swath is abandoned whole — INCLUDING ONE THAT ENDS AT A ROAD
-##     WAYPOINT, because those anchors stand on the centreline itself and the
-##     endpoint exemption below deliberately does not cover the road;
-##     `bike_path_selfcheck` check 3 PRINTS how many that is on every seed, and
-##     that number is `.4`'s whole case.
+##   * THE COIN ROAD is where the WALK and the PAINT part company, and `.4` owns
+##     what is left. A trunk that meets the swath MID-SPAN — away from both of its
+##     own anchors — is still abandoned whole, and `bike_path_selfcheck` check 3
+##     PRINTS how many that is on every seed; that number is `.4`'s case. But the
+##     swath is ALSO inside `trunk_keep_out`, so within `TRUNK_APPROACH_RADIUS` of
+##     its own anchor a trunk may WALK the corridor and draws none of it. That
+##     matters because `BudapestPlan.GATE` sits DEAD CENTRE in the swath (the road's
+##     approach corridor ends exactly there), so the alternative — refusing the road
+##     before the exemption — abandons every edge incident on the gate and the
+##     owner's *"get to Budapest along them"* becomes unreachable. Measured on all
+##     three CI seeds, in round 2 of this bead's review. No coin can land on a strip
+##     because no strip is there.
 ##   * BUDAPEST's rect still stops a trunk, AT THE RECT EDGE. The gate anchor is
 ##     ON that edge (x = 1600), which is how *"you should be able to get to
 ##     Budapest along them"* comes out true. An edge with one end inside the rect
@@ -398,9 +404,12 @@ const TRUNK_TURN_ROW: int = 777000
 const TRUNK_MAX_STATION_FACTOR: float = 3.0
 
 ## Inside this of either of the edge's OWN endpoints, the tower disc, the waypoint
-## circles and the landmark sites stop refusing: they are this trunk's DESTINATION,
-## not an obstacle. THE COIN ROAD IS NOT IN THAT LIST and is tested before the
-## exemption — see `_trunk_blocked`, and the banner. DERIVED FROM THE LARGEST OF THEM — the
+## circles, the landmark sites AND THE COIN ROAD'S SWATH stop refusing the WALK:
+## they are this trunk's DESTINATION, not an obstacle. They do not stop refusing the
+## PAINT — `trunk_keep_out` runs them all again at draw time, so a trunk walks the
+## last stretch to its anchor and draws none of it. The road is in that list because
+## `BudapestPlan.GATE` sits dead centre in the swath; see `_trunk_blocked`, and the
+## banner. DERIVED FROM THE LARGEST OF THEM — the
 ## tower's `TOWER_RADIUS` is 65 m, so a trunk to the HQ anchor (which is the
 ## tower's own centre) has to be allowed the last 65 m — plus one station stride.
 ## Typed here rather than read off the terrain because `EndlessTerrain` declares
@@ -1131,9 +1140,10 @@ static func _trunk_blocked(terrain: Node3D, p: Vector2, waypoints: Array[Diction
 	re-decided for a route that has to lead somewhere.
 
 	@param from / @param to: This edge's own two anchors. Inside
-	                         `TRUNK_APPROACH_RADIUS` of either, the three DESTINATION
-	                         tests are skipped — but NOT the coin road, which is
-	                         tested first for the reason written at it.
+	                         `TRUNK_APPROACH_RADIUS` of either, EVERY test below is
+	                         skipped, the coin road included — the walk is entitled
+	                         to reach its own anchor. The PAINT is not: the same
+	                         tests run again at draw time through `trunk_keep_out`.
 	@return: true when the trunk must be abandoned whole.
 
 	FOUR OF THE SEVEN ARE HERE. The mountain is the caller's (it skirts before it
@@ -1182,16 +1192,27 @@ static func _trunk_blocked(terrain: Node3D, p: Vector2, waypoints: Array[Diction
 
 
 static func _road_swath(terrain: Node3D, p: Vector2) -> bool:
-	"""Is this world XZ inside the coin road's clearance swath? For the REPORT only —
-	`trunk_keep_out` owns the rule, and this only says which bucket a refusal goes in."""
+	"""
+	Is this world XZ inside the coin road's clearance swath?
+
+	THE ONE SPELLING OF IT IN THIS TIER, and `trunk_keep_out` calls it too rather
+	than writing the comparison out a second time — `BIKE_ROAD_CLEARANCE`'s own note
+	says a second opinion about that number is what puts a bike path under the
+	road's coins, and two literal copies fifty lines apart is exactly how a second
+	opinion starts. (`_station_blocked` test 7 is the spur tier's copy and predates
+	this; it is left alone because this bead does not touch that walk.)
+
+	`_trunk_blocked` also uses it to decide WHICH BUCKET a refusal is reported in —
+	"road" or "site" — which is a report and not a rule.
+	"""
 	return terrain._road_lateral_distance(p.x, p.y, BIKE_ROAD_CLEARANCE) < BIKE_ROAD_CLEARANCE
 
 
 static func trunk_keep_out(terrain: Node3D, p: Vector2,
 		waypoints: Array[Dictionary]) -> bool:
 	"""
-	Is this world XZ inside one of the three DESTINATION keep-out discs — the
-	tower's, a teleport circle's, or a landmark's chunk?
+	Is this world XZ somewhere this family must not draw — the tower's disc, a
+	teleport circle, a landmark's chunk, or the coin road's swath?
 
 	@param waypoints: `terrain.waypoint_sites()`, read once by the caller.
 	@return: true when nothing this family builds may stand here.
@@ -1217,7 +1238,15 @@ static func trunk_keep_out(terrain: Node3D, p: Vector2,
 	its disc — while a trunk that terminates cleanly at the boundary still leads to
 	the HQ in every sense the owner asked for: you can see where it goes, and you
 	walk the last 65 m. The same shape of problem belongs to every other
-	destination, so this tests all three rather than only the one that failed.
+	destination, so this tests all of them rather than only the one that failed.
+
+	THE FOURTH MEMBER IS NOT A DESTINATION AND NOT A DISC. The coin road's swath
+	joined this predicate in round 2 of the review, and it is different in kind from
+	the other three: a world-spanning linear corridor rather than a point the route
+	is heading for, and the one test here that may GROW the road station cache. It
+	is in the same predicate because it wants the same answer — the route may walk
+	there and may not paint there — and that is the whole of what the two callers
+	below ask.
 
 	IT IS A DRAW-TIME SKIP AND NOT A WALK-TIME TRUNCATION — the epic's own coin-road
 	shape. The station list is unchanged, the topology `godot-test1-pnvb.1` built is
@@ -1236,11 +1265,23 @@ static func trunk_keep_out(terrain: Node3D, p: Vector2,
 	# ...AND THE COIN ROAD'S SWATH, last because it is the one test that may grow the
 	# station cache. IT IS HERE AND NOT ONLY IN `_trunk_blocked` because the harm the
 	# road's refusal exists to prevent is PAINT UNDER COINS, and paint is what this
-	# predicate stops: with the road in it, no strip, dash, pole or footprint this
-	# family emits can ever stand within `BIKE_ROAD_CLEARANCE` of the centreline,
-	# whatever the walk was allowed to do. `bike_path_selfcheck` T5 asserts exactly
-	# that, over every box and every footprint in the chunk.
-	return terrain._road_lateral_distance(p.x, p.y, BIKE_ROAD_CLEARANCE) < BIKE_ROAD_CLEARANCE
+	# predicate stops: with the road in it, no strip, dash, pole or footprint A TRUNK
+	# emits can stand within `BIKE_ROAD_CLEARANCE` of the centreline, whatever the
+	# walk was allowed to do. `bike_path_selfcheck` T5 asserts that over every box
+	# and every footprint in the chunk.
+	#
+	# THE SPUR TIER IS NOT COVERED BY THAT SENTENCE, and the distinction is exact
+	# rather than pedantic: both draw-time guards in `_draw_path_share` are gated on
+	# `edge_id >= 0`. A spur's STATIONS clear the swath (`_station_blocked` test 7)
+	# but its POLE is planted `BIKE_POLE_OFFSET` = 1.65 m to the side and nothing
+	# re-tests it, so a spur running beside the road with a station at 14.0-15.65 m
+	# lateral can put a post in the swath. That is a pre-existing spur-tier gap this
+	# bead does not widen and does not close — closing it would remove a footprint
+	# and move the crocodiles that footprint displaces, which is a change to the spur
+	# tier this bead is meant to leave alone. T5 is deliberately TIER-BLIND, so if a
+	# seed ever lines one up the build goes red and that is the right outcome: a
+	# finding, not a false alarm.
+	return _road_swath(terrain, p)
 
 
 static func _anchor_in_city(terrain: Node3D, p: Vector2) -> bool:
