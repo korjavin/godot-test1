@@ -1328,9 +1328,12 @@ func _check_a_kimchi_jar_routes_a_guard() -> void:
 		_fail("the outdoor jar put the guard on an errand anyway")
 
 	# ---- (a) THE REAL JAR, DROPPED THROUGH ITS OWN FACTORY --------------------
-	# `KimchiJar.drop()` and not `lure_guard_to()` directly, because the branch
-	# under test is the jar's: it has to ASK the shell whether it is under a roof
-	# and then hand the whole indoor case to the building.
+	# `KimchiJar.drop()` and not `lure_guard_to()` directly, because the seam
+	# under test is the jar's: it hands every jar to the router and lets THE
+	# ROUTER'S ANSWER decide whether the field loop runs at all. (It used to ask
+	# the shell whether it was under a roof; claim (d) below is the wall band
+	# that cost, and the sentence is corrected here so the file does not say both
+	# things — revmux round 2, `bugs+impl`.)
 	var jar: KimchiJar = KimchiJar.drop(root, interior.global_position + spot)
 	if jar == null:
 		_fail("KimchiJar.drop() built no jar — check 22 has nothing to route")
@@ -1376,10 +1379,17 @@ func _check_a_kimchi_jar_routes_a_guard() -> void:
 		_fail("the jar freed the guard — it lures and scatters, never kills")
 
 	# ---- (d) THE WALL BAND IS NOT A DEAD ZONE --------------------------------
-	# The band is derived from the two envelopes, never typed: a retune of either
-	# moves this probe with it, and a build where they finally agree collapses the
-	# band to nothing and fails the `sheltered()` assertion below rather than
-	# passing vacuously on a point that is simply outdoors.
+	# The band is derived from the two envelopes, never typed, so a retune of
+	# either moves this probe with it.
+	#
+	# THE GUARD BELOW IS WHAT CATCHES A COLLAPSE, and it is not a belt on top of
+	# the `sheltered()` read — it is the only thing that can (revmux round 2,
+	# `arch+quality`). If `PLAN_HALF` were retuned up to `OUTER_HALF` the midpoint
+	# would BE `OUTER_HALF`, and `TowerShell.sheltered()` compares `<=`, so the
+	# read below stays green on exactly the degeneracy it would then be measuring.
+	# Delete the `<= 0.01` test and the whole of claim (d) passes vacuously: a
+	# sheltered point, a router that refuses for an unrelated reason, and a field
+	# probe ten metres further out that was never in a band at all.
 	var band_x: float = (TowerPlans.PLAN_HALF + TowerShell.OUTER_HALF) * 0.5
 	if TowerShell.OUTER_HALF - TowerPlans.PLAN_HALF <= 0.01:
 		_fail("the shell and the plan now share an envelope — claim (d) has no"

@@ -231,13 +231,22 @@ func _lure() -> void:
 		# goes through a wall. The router above is the only thing that may move
 		# one; here the roof decides, not a species.
 		#
-		# `ponytail:` the residual, now that the arm above falls through on a
-		# refusal: a jar genuinely inside a room that the plan can route no guard
-		# to (no `G` on that storey, or a busy one) reaches this loop and may walk
-		# an UNSHELTERED body toward the outside of the wall it is behind.
+		# `ponytail:` THE RESIDUAL, and there are exactly three ways to be refused
+		# indoors and reach this loop: no `G` on that storey, a guard already
+		# busy, and — the one a player can walk to on purpose — A JAR IN THE WALL
+		# BAND (revmux round 2, `bugs+impl`). Every storey draws a one-cell `#`
+		# ring, so a hero pressed to the inner face stands at |x| 36.36 and
+		# `KIMCHI_PLACE_AHEAD` 3.0 lands the pot between 38.8 and 39.36: past
+		# `TowerPlans.PLAN_HALF`, inside `TowerShell.OUTER_HALF`. The router
+		# refuses it, this loop skips the guard two metres away because the shell
+		# shelters it, and with no unsheltered body within 20 m the press buys
+		# nothing. That is the roof deciding, which is the policy above — but it
+		# is a dud a player can reproduce, and it is named here rather than left
+		# to be rediscovered. For the first two the loop DOES run and may walk an
+		# unsheltered body at the outside of the wall it is behind;
 		# `_investigate_move()`'s stall watchdog bounds that to one walk and hands
-		# the leash back. The upgrade is a router that takes a body rather than
-		# finding one, and it belongs in `tower_interior.gd`.
+		# the leash back. The upgrade for all three is a router that takes a body
+		# rather than finding one, and it belongs in `tower_interior.gd`.
 		if _under_the_roof((body as Node3D).global_position):
 			continue
 		body.call("investigate_point", global_position, LURE_HOLD)
