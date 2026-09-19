@@ -1150,9 +1150,9 @@ var _lure_cooldown: Dictionary = {}
 ## "Persistence is monotone"): every field there merges with max or union, and a
 ## thing that goes up and comes back down inside one run makes a union a lie — a
 ## late reply would hand you a building whose alarms were all still sounding.
-## `tower_guards.gd`'s "three kinds of tower state, three homes" note is the
-## catalogue; this is the third kind, population state, and it resets with the
-## population on `_on_tower_doorway()`.
+## `tower_guards.gd`'s banner — "the population half of `structure persists,
+## population resets`" — is where the two halves are set out; an alarm belongs to
+## the population half, and it resets with the bodies on `_on_tower_doorway()`.
 ##
 ## MASTER-LESS, unlike every other shared thing in this building: each peer's own
 ## staff watch each peer's own hero (CLAUDE.md — "player" is the LOCAL player) and
@@ -2131,6 +2131,15 @@ func _process(delta: float) -> void:
 	"""
 	_player = get_tree().get_first_node_in_group("player") as Node3D
 	var near := _update_visibility()
+	# THE ALARM RUNS ABOVE THE DRAW GATE, and it is the only thing here that does.
+	# Everything below is about a building somebody is looking at; an alarm is the
+	# one piece of this building's state a peer KILOMETRES AWAY can be handed, over
+	# the `alrm` verb, and a timer that only ran while the building was drawn would
+	# freeze at `ALARM_SECONDS` on that machine — which then refuses every later
+	# sighting on that storey for the rest of the run, because `raise_alarm()` bails
+	# on a storey whose alarm is still up. Ten float subtractions over at most ten
+	# entries. (revmux round 1, major.)
+	_tick_alarm(delta)
 	if not near:
 		return
 	_tick_press(delta)
@@ -2138,7 +2147,6 @@ func _process(delta: float) -> void:
 	_tick_pads()
 	_tick_room_close()
 	_tick_lure_pads(delta)
-	_tick_alarm(delta)
 	_tick_purge(delta)
 	TowerDossiers.tick(self, delta)
 	TowerStaff.tick(self, delta)
@@ -3011,13 +3019,58 @@ func _send_guard_to(floor_index: int, at_local: Vector3, seconds: float) -> bool
 	var guard := _guard_on(floor_index)
 	if guard == null or not guard.has_method("investigate_point"):
 		return false
-	var route := plan_route(floor_index, guard.global_position - global_position, at_local)
+	var target := _standable_near(floor_index, at_local)
+	var route := plan_route(floor_index, guard.global_position - global_position, target)
 	if route.is_empty():
 		return false
 	var world := PackedVector3Array()
 	for point: Vector3 in route:
 		world.append(global_position + point)
-	return bool(guard.call("investigate_point", global_position + at_local, seconds, world))
+	return bool(guard.call("investigate_point", global_position + target, seconds, world))
+
+
+func _standable_near(floor_index: int, at_local: Vector3) -> Vector3:
+	"""
+	`at_local`, or the centre of the nearest cell a body may stand on.
+
+	WHY A SIGHTING NEEDS THIS AND A PLATE DID NOT. A `P` plate is route-open by
+	construction, so `lure_guard()` could hand `plan_route()` its goal raw. A
+	SIGHTING is wherever the hero was standing, and the two most likely places are
+	cells `_route_open()` refuses: a DOORWAY (`D` — every doorway on this grid is a
+	gate slot, and `line_of_sight()` deliberately lets a hero standing in an open
+	one be seen) and the RAMP LANE (`S` — deliberately not an occluder either). The
+	BFS only ever enqueues route-open cells, so an unsnapped goal in either of them
+	comes back empty and the alarm sounds with nobody coming. (revmux round 1, major.)
+
+	A RING OF ONE CELL AND NO MORE. The corridor side of a doorway is 4-adjacent to
+	it and the floor beside a ramp lane is too, so one ring answers both cases —
+	while a room sealed behind a shut gate stays genuinely unreachable and is still
+	refused, which is the answer the plan is giving. Widening the search until
+	something is found would walk the guard to the wrong side of a wall.
+
+	Returns `at_local` unchanged when it is already standable, so the plate's path
+	is bit-identical to what it was.
+	"""
+	var plan := TowerPlans.storey(floor_index)
+	if plan.is_empty():
+		return at_local
+	var rows: Array = plan["rows"]
+	var cell := _plan_cell_of(at_local)
+	if _route_open(_plan_char(rows, cell)):
+		return at_local
+	var best := at_local
+	var gap := INF
+	for step: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var near_cell := cell + step
+		if not _route_open(_plan_char(rows, near_cell)):
+			continue
+		var at := Vector3(_grid_x(float(near_cell.x) + 0.5), FLOOR_Y[floor_index],
+				_grid_z(float(near_cell.y) + 0.5))
+		var reach: float = at.distance_to(at_local)
+		if reach < gap:
+			gap = reach
+			best = at
+	return best
 
 
 func raise_alarm(floor_index: int, local_xz: Vector2, publish: bool = true) -> bool:
@@ -3051,7 +3104,7 @@ func raise_alarm(floor_index: int, local_xz: Vector2, publish: bool = true) -> b
 	if float(_alarm.get(floor_index, 0.0)) > 0.0:
 		return false
 	_alarm[floor_index] = ALARM_SECONDS
-	_sfx("play_klaxon")
+	_klaxon()
 	# The guard holds for the WHOLE alarm rather than `LURE_HOLD_SECONDS`: the
 	# alarm is the state, and a guard that walked home while the klaxon was still
 	# sounding would be the building contradicting itself.
@@ -3095,8 +3148,37 @@ func _tick_alarm(delta: float) -> void:
 			continue
 		var now: float = maxf(0.0, was - delta)
 		_alarm[floor_index] = now
-		if now > 0.0 and int(was / ALARM_PULSE) != int(now / ALARM_PULSE):
-			_sfx("play_klaxon")
+		# THE EDGE IS READ OFF ELAPSED TIME, NOT OFF WHAT IS LEFT, and that is not a
+		# rephrasing: `ALARM_SECONDS` is a whole multiple of `ALARM_PULSE`, so a
+		# remaining-time edge is re-crossed on the very first tick after the raise
+		# and the alarm opened with two overlapping sirens one frame apart. Counted
+		# from zero the boundary at the raise is behind us. (revmux round 1, minor.)
+		if now > 0.0 and int((ALARM_SECONDS - was) / ALARM_PULSE) \
+				!= int((ALARM_SECONDS - now) / ALARM_PULSE):
+			_klaxon()
+
+
+func _klaxon() -> void:
+	"""
+	Sound the klaxon, IF THIS MACHINE IS AT THE BUILDING.
+
+	A klaxon is a noise in a room. `SoundManager.play_klaxon()` is a pool one-shot
+	at a fixed volume with no attenuation and no position, so without this gate a
+	peer two kilometres out in the field hears the HQ siren at full volume every
+	time somebody else's staffer spots them — which is also what the room-log line
+	on the replay path exists to replace. (revmux round 1, major.)
+
+	THE SAME TEST `_update_visibility()` DRAWS BY, flat and on the local player:
+	beyond `DRAW_RADIUS` the building is not even being rendered on this screen.
+	Reached through `_player`, so a scene with nobody in it is silent — which is the
+	honest answer rather than a degrade.
+	"""
+	if _player == null or not is_instance_valid(_player):
+		return
+	var flat := _player.global_position - global_position
+	if Vector2(flat.x, flat.z).length() > DRAW_RADIUS:
+		return
+	_sfx("play_klaxon")
 
 
 func alarm_seconds_left(floor_index: int) -> float:

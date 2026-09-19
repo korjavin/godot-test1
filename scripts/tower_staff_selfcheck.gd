@@ -1297,6 +1297,15 @@ func _check_the_alarm_state() -> void:
 	  (f) CROSSING THE DOORWAY CLEARS EVERY ALARM, with the population.
 	"""
 	var interior := await TowerProbe.make_interior(self) as TowerInterior
+	# SOMEBODY AT THE BUILDING. The klaxon is a noise in a room and is gated on this
+	# machine having a player within `DRAW_RADIUS` of it, so a check with an empty
+	# tree would measure silence and call it a pulse count. In group "player"
+	# because `_process` re-reads the group every frame.
+	var hero := Node3D.new()
+	hero.add_to_group("player")
+	root.add_child(hero)
+	hero.global_position = interior.global_position
+	interior._player = hero
 	var sound := _stub(SOUND_STUB_SOURCE, "sound_manager")
 	var mp := _stub(MP_STUB_SOURCE, "mp")
 	var caption := _stub(CAPTION_STUB_SOURCE, "world_caption")
@@ -1331,11 +1340,18 @@ func _check_the_alarm_state() -> void:
 	for _i in ticks:
 		interior._tick_alarm(step)
 	var pulses: int = int(sound.get("klaxons")) - lit_at_raise
+	# EXACT, AND NOT "ABOUT RIGHT". A tolerance here is what hid the opening double
+	# siren: `ALARM_SECONDS` is a whole multiple of `ALARM_PULSE`, so a pulse edge
+	# read off REMAINING time is re-crossed on the first tick after the raise and
+	# the alarm began with two overlapping one-shots a frame apart — inside a ±1
+	# window, and audible. One siren every `ALARM_PULSE` over the whole alarm is a
+	# statement with one right answer; count the raise's own as the first of them.
+	# (revmux round 1, minor.)
 	var want: int = int(TowerInterior.ALARM_SECONDS / TowerInterior.ALARM_PULSE)
-	if pulses < want - 1 or pulses > want + 1:
-		_fail("a %.0f s alarm pulsed the klaxon %d times; at one every %.1f s it should"
-				% [TowerInterior.ALARM_SECONDS, pulses, TowerInterior.ALARM_PULSE]
-				+ " pulse about %d" % want)
+	if lit_at_raise + pulses != want:
+		_fail("a %.0f s alarm sounded the klaxon %d times; one every %.1f s is exactly"
+				% [TowerInterior.ALARM_SECONDS, lit_at_raise + pulses,
+				TowerInterior.ALARM_PULSE] + " %d" % want)
 	if interior.alarm_seconds_left(lit) > 0.0:
 		_fail("storey %d's alarm was still up %.1f s after it was raised"
 				% [lit, TowerInterior.ALARM_SECONDS])
@@ -1389,6 +1405,38 @@ func _check_the_alarm_state() -> void:
 	if interior.raise_alarm(maxi(floors - 1, 0), Vector2(NAN, 0.0)):
 		_fail("an alarm was raised at a sighting point that is not a number")
 
+	# ---- (g) OFF-SITE: the timer runs, and the klaxon does not -----------------
+	# A peer two kilometres out in the field is handed alarms over the `alrm` verb
+	# whether or not it has the tower on screen, and both halves of that go wrong in
+	# ways nothing else here would see (revmux round 1, major):
+	#
+	#   * the KLAXON is a pool one-shot at a fixed volume with no attenuation, so an
+	#     ungated one is the HQ siren at full volume in an empty field;
+	#   * the TIMER is ticked from the building's own `_process`, which returns early
+	#     while the interior is not drawn — so an alarm raised off-site would freeze
+	#     at `ALARM_SECONDS` forever, and `raise_alarm()` would then refuse every
+	#     later sighting on that storey for the rest of the run.
+	#
+	# Driven through the ENGINE'S OWN `_process` rather than by calling `_tick_alarm`
+	# by hand, because the early return is the thing under test.
+	var far: int = 0 if lit != 0 else 1
+	interior._alarm.clear()
+	hero.global_position = interior.global_position + Vector3(2000.0, 0.0, 0.0)
+	await process_frame
+	var silent: int = int(sound.get("klaxons"))
+	if not interior.raise_alarm(far, spot, false):
+		_fail("an alarm relayed to a peer out in the field was refused")
+	if int(sound.get("klaxons")) != silent:
+		_fail("a peer 2 km from the HQ heard the klaxon — it is a pool one-shot at a"
+				+ " fixed volume with no attenuation, so it plays in an empty field")
+	var stood: float = interior.alarm_seconds_left(far)
+	for _i in 4:
+		await process_frame
+	if interior.alarm_seconds_left(far) >= stood:
+		_fail("storey %d's alarm stood at %.2f s over four frames with the building"
+				% [far, stood] + " not drawn — it would freeze there and refuse every"
+				+ " later sighting on that storey for the rest of the run")
+
 	# ---- (f) the reset -------------------------------------------------------
 	interior._on_tower_doorway(null)
 	for any: int in floors:
@@ -1406,6 +1454,7 @@ func _check_the_alarm_state() -> void:
 	mp.queue_free()
 	caption.queue_free()
 	log_hud.queue_free()
+	hero.queue_free()
 	interior.queue_free()
 	await process_frame
 	Sentinel.done("the_alarm_state")
@@ -1584,6 +1633,45 @@ func _check_the_guard_converges() -> void:
 		await TowerProbe.clear(self, null, shell)
 		Sentinel.done("the_guard_converges")
 		return
+
+	# ---- A SIGHTING IN A DOORWAY IS STILL AN ERRAND ---------------------------
+	# `plan_route()` only ever enqueues cells `_route_open()` accepts, which refuses
+	# every `D` and the `S` ramp lane — while `TowerStaff.line_of_sight()`
+	# deliberately lets a hero standing in an OPEN doorway be seen, and deliberately
+	# does not treat the ramp as an occluder. Unsnapped, the two most likely places
+	# to be spotted are the two the router cannot reach, and the alarm sounds with
+	# nobody coming. `_standable_near()` is the snap; this is its control, and the
+	# control is the half that matters — the RAW cell must genuinely be unroutable,
+	# or the snap is being credited with a route that was always there. (revmux
+	# round 1, major.)
+	var door := _gated_pair()
+	if door.is_empty():
+		_fail("no storey draws a reachable gate cell — check 11's doorway clause has"
+				+ " no doorway")
+	else:
+		var door_floor: int = int(door["floor"])
+		var mid: Vector3 = ((door["from"] as Vector3) + (door["to"] as Vector3)) * 0.5
+		var corridor: Vector3 = door["from"]
+		if TowerInterior._route_open(TowerInterior._plan_char(
+				TowerPlans.storey(door_floor)["rows"], TowerInterior._plan_cell_of(mid))):
+			_fail("check 11's doorway cell on storey %d is route-open — the clause"
+					% door_floor + " would measure nothing")
+		elif not TowerInterior.plan_route(door_floor, corridor, mid).is_empty():
+			_fail("the router reached the `%s` doorway cell on storey %d unaided —"
+					% [TowerPlans.GATE_CHAR, door_floor] + " the snap has nothing to do")
+		else:
+			var snapped: Vector3 = interior._standable_near(door_floor, mid)
+			if snapped.is_equal_approx(mid):
+				_fail("a sighting in the `%s` doorway on storey %d was left where it"
+						% [TowerPlans.GATE_CHAR, door_floor] + " was — the klaxon"
+						+ " sounds and no guard can be routed to it")
+			elif TowerInterior.plan_route(door_floor, corridor, snapped).is_empty():
+				_fail("the snapped sighting %s on storey %d is still unroutable"
+						% [str(snapped), door_floor])
+			elif snapped.distance_to(mid) > TowerPlans.PLAN_CELL * 1.5:
+				_fail("a sighting in a doorway was snapped %.1f m away on storey %d —"
+						% [snapped.distance_to(mid), door_floor] + " that is the wrong"
+						+ " side of a wall, not the corridor outside the door")
 
 	# WHICH STOREY AND WHICH POINT ARE THE PLANS' BUSINESS: the SHORTEST walk, over
 	# every storey that draws a `G`, from that post to a room centre at least
