@@ -3181,12 +3181,13 @@ func _check_twin_flash_scares_and_never_kills() -> void:
 	`stink_immune` by owner ruling 2026-09-04, so it flees down the same path
 	the control croc measures.
 
-	THE KILL IS ASSERTED BY NAME, in check 17's spelling-test idiom: a Twin
-	Flash that freed or squashed would change no behaviour this check's live
-	bodies could see on the day it landed short of counting the dead — which it
-	also does ("none freed"). Both halves stay because each catches what the
-	other cannot: the grep catches a kill call on a path no probe body walks,
-	the bodies catch a kill the grep cannot spell.
+	THE KILL IS ASSERTED TWICE: over live bodies through `_assert_body_alive`
+	and by name in check 17's spelling-test idiom. The body read is group
+	membership, not validity — `squash_and_die()` frees behind a tween, so a
+	freed-or-queued read cannot see a kill in the frame it lands (bead
+	godot-test1-24jq). Both halves stay because each catches what the other
+	cannot: the grep catches a kill call on a path no probe body walks, the
+	bodies catch a kill the grep cannot spell.
 
 	EXACTNESS IS HONEST HERE, not tight: the press and every read below run in
 	one synchronous span — no await between the G press and the clock reads —
@@ -3295,11 +3296,7 @@ func _check_twin_flash_scares_and_never_kills() -> void:
 		_fail("a boss fled the katanas — bosses do not care")
 	for subject: Array in [[ahead, "the croc ahead"], [behind, "the croc behind"],
 			[guard, "the guard"], [boss, "the boss"]]:
-		if not is_instance_valid(subject[0]):
-			_fail("Twin Flash freed %s — the scare is a scare, never a kill"
-				% subject[1])
-		elif (subject[0] as Node).is_queued_for_deletion():
-			_fail("Twin Flash queued %s for deletion" % subject[1])
+		_assert_body_alive("Twin Flash", subject)
 
 	# --- And the arm's source names no kill, by name. ---
 	var text: String = FileAccess.get_file_as_string(
@@ -3568,10 +3565,7 @@ func _check_shrink_ray_shrinks_the_reached_and_nothing_else() -> void:
 	# NOTHING DIED, the ruling that makes this skill legal at all.
 	for subject: Array in [[inside, "the croc inside"], [outside, "the croc outside"],
 			[guard, "the guard"], [boss, "the boss"]]:
-		if not is_instance_valid(subject[0]):
-			_fail("the Shrink Ray freed %s — nothing dies in this game" % subject[1])
-		elif (subject[0] as Node).is_queued_for_deletion():
-			_fail("the Shrink Ray queued %s for deletion" % subject[1])
+		_assert_body_alive("Shrink Ray", subject)
 
 	# --- AND A SHRUNK BODY IS NOT CRUSHABLE BY THE HERO WHO SHRANK IT. ---
 	# The whole ruling in one contact: giant Teibi walks into the body his own G
@@ -3594,7 +3588,9 @@ func _check_shrink_ray_shrinks_the_reached_and_nothing_else() -> void:
 
 	# --- ...and the arm's source names no kill, by name. ---
 	# Check 10b's second half, for its reason: the grep catches a kill call on a
-	# path no probe body walks, the bodies catch a kill the grep cannot spell.
+	# path no probe body walks, the bodies catch a kill the grep cannot spell —
+	# through `_assert_body_alive`'s group read, which sees a squash the same
+	# frame it lands (bead godot-test1-24jq).
 	var text: String = FileAccess.get_file_as_string(
 		"res://scripts/player_abilities.gd")
 	var start: int = text.find("func _ability2_teibi()")
@@ -3873,21 +3869,7 @@ func _check_kimchi_lures_then_scatters() -> void:
 	for subject: Array in [[sniffer, "the sniffer"], [close, "the close croc"],
 			[chaser, "the chasing croc"], [slept, "the slept croc"],
 			[far, "the far croc"], [guard, "the guard"], [boss, "the boss"]]:
-		if not is_instance_valid(subject[0]):
-			_fail("the Kimchi Offering freed %s — the jar lures and scatters,"
-				% subject[1] + " it never kills (ruling 3)")
-			continue
-		if (subject[0] as Node).is_queued_for_deletion():
-			_fail("the Kimchi Offering queued %s for deletion" % subject[1])
-		# THE GROUP IS WHERE A DEATH IS VISIBLE SYNCHRONOUSLY. `squash_and_die()`
-		# frees the body behind a tween, so `is_instance_valid` is still true the
-		# frame it is called — it leaves the "crocodile" group FIRST, and that is
-		# the read that catches a kill without waiting a second for the corpse.
-		# (Measured: the kill mutation passed the two tests above and only the
-		# source grep caught it, which is one half of the claim standing alone.)
-		elif not (subject[0] as Node).is_in_group("crocodile"):
-			_fail("the Kimchi Offering took %s out of the crocodile group — that is"
-				% subject[1] + " the first thing a death does here")
+		_assert_body_alive("Kimchi Offering", subject)
 
 	# --- ...and neither the arm nor the jar names a kill, by name. ---
 	# Check 10b's spelling test, over BOTH files: the arm chooses the spot and
@@ -3958,6 +3940,35 @@ func _source_span(path: String, from: String, until: String) -> String:
 	var following: int = text.find(until, start + 1)
 	return text.substr(start,
 		following - start if following != -1 else text.length() - start)
+
+
+func _assert_body_alive(skill: String, subject: Array) -> void:
+	"""
+	"Nothing dies" over ONE live probe body, for the skill named by `skill`.
+
+	Three reads, and the third is the one that matters (bead godot-test1-24jq):
+	`squash_and_die()` frees the body behind a tween, so in the frame the kill
+	lands `is_instance_valid` is still true and nothing is queued for deletion —
+	the first two reads cannot see it. Leaving the "crocodile" group is the
+	first thing a death does here and it happens synchronously, so the group
+	read is what catches a kill the same frame without waiting on the corpse.
+	The source-grep halves beside each caller catch a kill call on a path no
+	probe body walks; this catches the kill the grep cannot spell.
+
+	Checks 10b, 10c and 10d each carried their own copy of the first two reads;
+	one helper, so the next death-visibility fix lands once instead of twice
+	more — the `_source_span` precedent directly above, for the same reason.
+	"""
+	var body: Variant = subject[0]
+	var label: String = subject[1]
+	if not is_instance_valid(body):
+		_fail("%s freed %s — nothing dies in this game (ruling 3)" % [skill, label])
+		return
+	if (body as Node).is_queued_for_deletion():
+		_fail("%s queued %s for deletion" % [skill, label])
+	elif not (body as Node).is_in_group("crocodile"):
+		_fail("%s took %s out of the crocodile group — that is the first thing a death does here"
+				% [skill, label])
 
 
 # ============================================================================
