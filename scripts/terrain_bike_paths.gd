@@ -1010,6 +1010,14 @@ static func trunks(terrain: Node3D) -> Array[Dictionary]:
 		# ever ran, and the ramp would silently never be drawn. Merging is free:
 		# the box is a rejection filter, so a wider one costs a few `Rect2` tests
 		# and the midpoint rule still decides who draws what.
+		#
+		# NOT EXERCISED BY ANY CI SEED (measured, mutation M12: deleting the merge
+		# leaves the whole suite green), and said plainly for the reason the marker
+		# guard in the spawner says it. A deck mid-route sits well inside the route's
+		# own padded box; the merge bites only where a crossing is near an extreme
+		# station, or where a foot push carries a ramp sideways past one. It costs one
+		# `Rect2.merge` per deck, and `bike_path_selfcheck` B1b is the assertion that
+		# fires the day a seed lines one up.
 		var box: Rect2 = _trunk_box(route)
 		for row_v: Variant in decks:
 			box = box.merge((row_v as Dictionary)["box"] as Rect2)
@@ -1080,6 +1088,12 @@ static func _drawable_decks(terrain: Node3D, rows: Array,
 		# `poly` — a screen over the vertices alone would pass a ramp lying squarely
 		# inside a keep-out. `row["screen"]` is built from the shipped slab table, so
 		# this owns no second idea of where the stone is.
+		#
+		# NOT EXERCISED BY ANY CI SEED EITHER (measured, mutation M13: screening the
+		# vertices alone leaves the suite green) — no seed has yet grown a long pushed
+		# ramp whose midpoint lands in a keep-out its own ends miss. T5 is what goes
+		# red the day one does, and it would name a box rather than a rule, so this is
+		# where the rule is written down.
 		var pad: float = row["rail"]
 		var clear: bool = true
 		for pt: Vector2 in (row["screen"] as PackedVector2Array):
