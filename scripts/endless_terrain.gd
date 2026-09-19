@@ -4627,7 +4627,7 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 # ============================================================================
 #
 # The family itself is `scripts/terrain_bridges.gd` now; read that file's
-# header for what stayed here and why. These eight are the names reached from
+# header for what stayed here and why. These ten are the names reached from
 # OUTSIDE this file, measured rather than guessed (`create_box`'s precedent,
 # ftn.1; `terrain_biomes`' eleven, ftn.5; `coin_road`'s twelve, ftn.7;
 # `budapest_streamer`'s eight, ftn.8):
@@ -4641,6 +4641,8 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 #   * `_field_bridge_surface_on` (coin_road)
 #   * `spawn_field_bridges_in_chunk` (field_bridge_selfcheck)
 #   * `field_bridge_outer_reach` (field_bridge_selfcheck)
+#   * `bike_trunk_bridges` (terrain_bike_paths, bd godot-test1-pnvb.3)
+#   * `emit_field_bridge_in_chunk` (terrain_bike_paths, bd godot-test1-pnvb.3)
 #
 # `field_bridge_selfcheck` — the FAMILY's own check — was repointed to
 # `FieldBridges._x(terrain, ...)` for the private helpers, while

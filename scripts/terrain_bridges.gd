@@ -21,6 +21,12 @@ extends RefCounted
 ## clearing every seed-derived cache (bd bvq). A static library holds no run
 ## state, and the run's seed is the terrain's.
 ##
+## The BIKE TRUNKS' decks (bd godot-test1-pnvb.3) add no fifth one: they are built
+## once per edge while `BikePaths.trunks()` builds its own table and they ride it,
+## so the memo that holds them is `_bike_trunk_cache` — already on the terrain,
+## already in `_drop_seeded_memos()`, already bounded by the world's edge count. A
+## cache of its own here would be a second thing to remember to drop.
+##
 ## What else stayed on the terrain:
 ##   * `@export var spawn_field_bridges` (a static library has no inspector).
 ##   * `_deep_channel_ford` (belongs to the wading section, calls
@@ -259,6 +265,15 @@ static func _field_bridge_dry_across(terrain: Node3D, centre: Vector2, dir: Vect
 	             read it — only this probe and `field_bridge_outer_reach` were
 	             still reading the const, so an 8 m section was being tested under
 	             a 2.4 m strip.
+
+	             WHAT IT COSTS TO GET WRONG IS A DECK, NOT A WRONG DECK, and that
+	             is why no assertion catches it: a probe WIDER than the deck only
+	             ever refuses a bank it could have carried, so the failure mode is
+	             a missing crossing rather than stone in the water. Measured
+	             (mutation M7, this parameter reverted to the const): 11 of
+	             `bike_path_selfcheck` B2's 24 crossings get a deck instead of 12,
+	             and the suite stays green. B2 prints that count every run, which
+	             is where the loss is visible.
 	@return: false the moment any sample of the section stands in a river band.
 
 	THE WHOLE WIDTH, NOT THREE LANES. A river is a contour crossed at an angle, so
