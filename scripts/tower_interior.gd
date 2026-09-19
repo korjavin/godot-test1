@@ -499,6 +499,43 @@ const LURE_HOLD_SECONDS: float = 10.0
 const LURE_COOLDOWN: float = 20.0
 
 
+## THE ALARM — how long one storey stays lit after a staffer sees you (bead
+## godot-test1-buyt.4, epic godot-test1-buyt).
+##
+## THE BOUND IS THE POINT. An alarm does not queue and does not extend: while a
+## storey's timer is above zero `raise_alarm()` refuses outright, so a staffer
+## standing in a doorway watching you cannot stack ten errands on one guard, and
+## the `alrm` verb cannot be spent faster than one packet per storey per
+## `ALARM_SECONDS` however often the sighting re-fires. That is the pacing
+## `MpManager.VERB_BUDGET_PER_SEC`'s `alrm` row asks its caller for in as many
+## words, and it is honoured here rather than by a second cooldown beside it.
+##
+## TWELVE SECONDS is `LURE_HOLD_SECONDS` plus a corridor. The guard holds on the
+## sighting point for exactly this long (`raise_alarm` hands it to
+## `_send_guard_to`), so the number is "how long the place you were seen stays
+## watched" — longer than the plate's ten, because a plate is a noise and a
+## sighting is you.
+const ALARM_SECONDS: float = 12.0
+
+## Seconds between klaxon pulses while a storey's alarm is up. `play_klaxon()` is
+## a ~0.6 s ONE-SHOT and deliberately not a loop player (bead godot-test1-buyt.1),
+## so "the alarm is sounding" lives in exactly one place — the timer below — and
+## the sound is re-fired from `_tick_alarm()` rather than started and forgotten.
+## Two seconds leaves about 1.4 s of silence between sirens: dense enough to be a
+## state and not a cue, sparse enough that the road music is still audible under it.
+const ALARM_PULSE: float = 2.0
+
+## The two lines an alarm says, and they go to DIFFERENT places on purpose.
+##
+## The caption is for the peer whose own staffer saw them — it is the answer to
+## "what was that noise", on the screen of the person who caused it. The event-log
+## line is for everybody else in the room, off the `alrm` verb: a teammate three
+## storeys down learns somebody was spotted without a klaxon they cannot place.
+## Keys are the English strings and both carry a `locale_selfcheck` width budget.
+const ALARM_CAPTION: String = "Spotted! The alarm is up"
+const ALARM_LOG_LINE: String = "Alarm raised inside the HQ"
+
+
 # ============================================================================
 # VISIBILITY GATING — the web frame budget's half of this bead
 # ============================================================================
@@ -1104,6 +1141,24 @@ var _purge_cooldown: float = 0.0
 ## mesh: it is an INPUT gate on this screen's plate, while the rule that stops a
 ## room walking a guard around is the guard's own refusal to take a second errand.
 var _lure_cooldown: Dictionary = {}
+
+## Seconds each STOREY's alarm still has to run, keyed by floor index. Absent or
+## zero means down.
+##
+## IT IS NOT IN `TowerShell.opened` AND IT IS NOT IN `BestRunStore`, and that is
+## the same argument the captive set is kept out of the store by (CLAUDE.md,
+## "Persistence is monotone"): every field there merges with max or union, and a
+## thing that goes up and comes back down inside one run makes a union a lie — a
+## late reply would hand you a building whose alarms were all still sounding.
+## `tower_guards.gd`'s "three kinds of tower state, three homes" note is the
+## catalogue; this is the third kind, population state, and it resets with the
+## population on `_on_tower_doorway()`.
+##
+## MASTER-LESS, unlike every other shared thing in this building: each peer's own
+## staff watch each peer's own hero (CLAUDE.md — "player" is the LOCAL player) and
+## the `alrm` verb is what makes one peer's sighting everybody's problem. See
+## `MpWorldSync.publish_alarm()` for why that verb is anyone-to-everyone.
+var _alarm: Dictionary = {}
 var _containment: MeshInstance3D = null
 
 ## The scar's rubble and its collision shape. Hidden and non-solid until the world
@@ -2083,6 +2138,7 @@ func _process(delta: float) -> void:
 	_tick_pads()
 	_tick_room_close()
 	_tick_lure_pads(delta)
+	_tick_alarm(delta)
 	_tick_purge(delta)
 	TowerDossiers.tick(self, delta)
 	TowerStaff.tick(self, delta)
@@ -2915,21 +2971,137 @@ func lure_guard(floor_index: int, pad_index: int) -> bool:
 	`investigate_point()` takes one: this file owns the floor plan, and a predator
 	that knew about `TowerPlans` would be a hunting AI with a level editor in it.
 	The guard walks corners; a plate the plan offers no way to is simply refused.
+
+	THE ROUTING ITSELF IS `_send_guard_to()`, shared with `raise_alarm()` since
+	bead godot-test1-buyt.4: an alarm is this errand sent to the place a staffer
+	saw you instead of to a plate, and one router with two callers is what stops
+	the two drifting apart the way two copies of it would.
 	"""
-	var where := pad_world(floor_index, pad_index)
+	var where := pad_point(floor_index, pad_index)
 	if not where.is_finite():
 		return false
+	return _send_guard_to(floor_index, where, LURE_HOLD_SECONDS)
+
+
+func _send_guard_to(floor_index: int, at_local: Vector3, seconds: float) -> bool:
+	"""
+	Walk storey `floor_index`'s guard to `at_local` and hold it there `seconds`.
+
+	@param at_local: interior-LOCAL metres, on that storey's walking surface.
+	@return: whether a guard took the errand — every false is ordinary, and they
+	    are the four `lure_guard()` lists: no guard on this storey, a body without
+	    the method, a point the plan offers no way to, and a guard that is busy.
+
+	THE ONE ROUTER, and it exists because there are now TWO doors into it — the
+	`P` plate and a staffer's sighting. `investigate_point()` keeps owning every
+	anti-puppet rule (a busy body refuses, an acquisition cancels, a remote-driven
+	body refuses); this function owns the floor plan, which is the split
+	`lure_guard()`'s docstring argues for and the reason the AI takes a route
+	rather than computing one.
+
+	SINGLE STOREY, AND THAT IS A CONSTRAINT RATHER THAN AN OVERSIGHT.
+	`plan_route()` is a four-connected BFS over ONE storey's grid with no ramp
+	traversal, `GUARDS_PER_STOREY_MAX` is 1 (owner, 2026-08-30) and
+	`set_confinement()` leashes each guard to its own floor —
+	`tower_guard_selfcheck` check 14 spends eight seconds of full-speed pursuit
+	proving that last one. A converge that climbed a ramp would have to break all
+	three, so cross-storey convergence is a separate bead if the owner ever asks
+	for it, never a widening of this function.
+	"""
 	var guard := _guard_on(floor_index)
 	if guard == null or not guard.has_method("investigate_point"):
 		return false
-	var route := plan_route(floor_index, guard.global_position - global_position,
-			pad_point(floor_index, pad_index))
+	var route := plan_route(floor_index, guard.global_position - global_position, at_local)
 	if route.is_empty():
 		return false
 	var world := PackedVector3Array()
 	for point: Vector3 in route:
 		world.append(global_position + point)
-	return bool(guard.call("investigate_point", where, LURE_HOLD_SECONDS, world))
+	return bool(guard.call("investigate_point", global_position + at_local, seconds, world))
+
+
+func raise_alarm(floor_index: int, local_xz: Vector2, publish: bool = true) -> bool:
+	"""
+	A staffer saw somebody on storey `floor_index`: klaxon, converge, and tell the
+	room (bead godot-test1-buyt.4).
+
+	@param local_xz: where they were seen, interior-LOCAL metres, x and z.
+	@param publish: whether to put this sighting on the mesh. FALSE on the replay
+	    path (`MpWorldSync.receive_alrm`), and that flag is the whole of what stops
+	    two peers echoing one sighting round the room for as long as the room lasts.
+	@return: whether the alarm went up. False is ordinary: this storey's alarm is
+	    already up, or the packet named a storey the plans do not draw.
+
+	PUBLIC AND `has_method`-DISCOVERED, because there are two doors and they must
+	not drift: this building's own staff (`TowerStaff.tick()`) and the `alrm` verb.
+	The signature is the one `MpWorldSync.receive_alrm()` calls and
+	`mp_selfcheck._check_alarm_verb()` asserts, so it is a contract with a merged
+	check behind it rather than a local choice.
+
+	IT DOES NOT QUEUE AND IT DOES NOT EXTEND (`ALARM_SECONDS`' note): a storey whose
+	timer is up refuses, which is what bounds both the errand and the verb.
+
+	NOTHING HERE CAN CAPTURE, TAX OR KILL. Owner ruling 2026-09-18: killing is
+	forbidden and a staffer has no contact path at all. The only stake an alarm
+	raises is that the GUARD — which already carries `captures_hero` and
+	`coin_setback` — is now standing where you were. There is no second way to lose.
+	"""
+	if floor_index < 0 or floor_index >= FLOOR_Y.size() or not local_xz.is_finite():
+		return false
+	if float(_alarm.get(floor_index, 0.0)) > 0.0:
+		return false
+	_alarm[floor_index] = ALARM_SECONDS
+	_sfx("play_klaxon")
+	# The guard holds for the WHOLE alarm rather than `LURE_HOLD_SECONDS`: the
+	# alarm is the state, and a guard that walked home while the klaxon was still
+	# sounding would be the building contradicting itself.
+	_send_guard_to(floor_index, Vector3(local_xz.x, FLOOR_Y[floor_index], local_xz.y),
+			ALARM_SECONDS)
+	if publish:
+		# OUR OWN staffer saw US: the caption is the answer to "what was that
+		# noise", on the screen of the person who caused it.
+		var caption := get_tree().get_first_node_in_group("world_caption")
+		if caption != null and caption.has_method("post_caption"):
+			caption.call("post_caption", tr(ALARM_CAPTION))
+		var mp := get_tree().get_first_node_in_group("mp")
+		if mp != null and mp.has_method("publish_alarm"):
+			mp.call("publish_alarm", floor_index, local_xz)
+	else:
+		# ...and a RELAYED one is somebody else's sighting, which is news rather
+		# than an explanation — the room's log, where a teammate three storeys down
+		# reads it without a klaxon they cannot place.
+		var log_hud := get_tree().get_first_node_in_group("event_log")
+		if log_hud != null and log_hud.has_method("note_event"):
+			log_hud.call("note_event", tr(ALARM_LOG_LINE))
+	return true
+
+
+func _tick_alarm(delta: float) -> void:
+	"""
+	Run every storey's alarm down, pulsing the klaxon while one is up.
+
+	THE PULSE IS THE CALLER'S, and that is bead godot-test1-buyt.1's own ruling:
+	`play_klaxon()` is a one-shot and not a loop player precisely so that "the alarm
+	is sounding" is this dictionary and nothing else. The pulse edge is read off the
+	timer rather than kept in a second countdown, so there is no per-storey pulse
+	clock to reset, to drift or to leave running after the alarm expires.
+
+	At most ten entries, ever. `keys()` because the loop writes the dictionary it
+	is walking.
+	"""
+	for floor_index: int in _alarm.keys():
+		var was: float = float(_alarm[floor_index])
+		if was <= 0.0:
+			continue
+		var now: float = maxf(0.0, was - delta)
+		_alarm[floor_index] = now
+		if now > 0.0 and int(was / ALARM_PULSE) != int(now / ALARM_PULSE):
+			_sfx("play_klaxon")
+
+
+func alarm_seconds_left(floor_index: int) -> float:
+	"""How long storey `floor_index`'s alarm still has to run, 0.0 when it is down."""
+	return float(_alarm.get(floor_index, 0.0))
 
 
 func _guard_on(floor_index: int) -> Node3D:
@@ -3863,6 +4035,11 @@ func _on_tower_doorway(_body: Node3D) -> void:
 	"""
 	reset_guards()
 	TowerStaff.reset(self)
+	# ...AND EVERY ALARM, with them. An alarm left standing across a re-entry is a
+	# guard walking to a sighting that happened in a building the player has left
+	# and come back to — and since the guards are freed and re-posted on this same
+	# signal, it would be an errand with no body on the other end of it.
+	_alarm.clear()
 
 
 func reset_guards() -> void:

@@ -7,10 +7,11 @@ extends RefCounted
 ## OWNER, 2026-09-18: "Inside the GD-SURVEY HQ there should be STAFF walking
 ## around — scientists in white coats, engineers in blue overalls — going about
 ## the storeys." This file is the BODIES AND THEIR LOOPS and nothing else: staff
-## walk, staff are visible, staff do nothing. The sighting, the klaxon and the
-## guard's converge are bead `godot-test1-buyt.4`'s and are deliberately absent
-## here — a population you can see walking is a thing to look at on its own, and
-## splitting it off is what let .1, .2 and .3 land in parallel.
+## walk, staff are visible, and since bead `godot-test1-buyt.4` staff SEE — the
+## sighting test below, whose only output is a call to
+## `TowerInterior.raise_alarm()`. The klaxon, the alarm state and the guard's
+## converge all live on the interior, which is what let .1, .2 and .3 land in
+## parallel with this file.
 ##
 ## `tower_guards.gd` IS THE TEMPLATE, verbatim where it fits: `class_name`, every
 ## function `static`, no instance state, the interior handed in as an argument,
@@ -104,17 +105,20 @@ extends RefCounted
 ##     one staffer per storey reads empty — see `STAFF_PER_STOREY`.
 ##
 ## ============================================================================
-## RESERVED FOR BEAD `godot-test1-buyt.4` — the owner's detection defaults
+## THE SIGHTING — bead `godot-test1-buyt.4`, and what it may and may not do
 ## ============================================================================
 ##
-## Recorded here rather than implemented, because this bead raises no alarm and a
-## const with no reader is dead code. When .4 writes the sighting test, the owner's
-## numbers are ~7 m of reach and a ~90-degree cone: NARROWER AND SHORTER than the
-## guard's own 9 m / 120 degrees (`species_table.gd`'s `tower_guard` row), so that
-## staff make a corridor dangerous to loiter in while the GUARD stays the thing
-## that actually catches you. The stake does not move: a staffer never touches the
-## player, has no `captures_hero` and no `coin_setback`, and the only consequence
-## of being seen is that the storey's own guard walks to where you were.
+## A staffer that has the local hero inside `SIGHT_RADIUS`, inside `SIGHT_CONE_DEG`
+## of the way it is walking, on its own storey and with a clear march of plan cells
+## between them, holds that for `SIGHT_TELEGRAPH` seconds and then calls
+## `TowerInterior.raise_alarm()`. That is the whole of it.
+##
+## THE STAKE DOES NOT MOVE. A staffer never touches the player, carries no
+## `captures_hero` and no `coin_setback`, and owns no contact handler at all (owner
+## ruling 2026-09-18: killing is forbidden, capture only). The single consequence
+## of being seen is that the storey's own GUARD — which already captures and
+## already taxes — walks to where you were and stands there. There is no second way
+## to lose in this file and there may not be one.
 
 ## The shared ambience budget — "only those moving who we can see", without
 ## freezing. Reused rather than re-derived: that file exists precisely so the rule
@@ -164,6 +168,58 @@ const STRIDE_FREQUENCY: float = 4.2
 const WALK_BOB_AMOUNT: float = 0.045
 const WALK_SWAY_AMOUNT: float = 0.035
 const WALK_PITCH_AMOUNT: float = 0.015
+
+# ============================================================================
+# WHAT A STAFFER NOTICES — the owner's two numbers, and both are retune knobs
+# ============================================================================
+
+## How far a staffer notices the hero, in metres.
+##
+## SHORTER THAN THE GUARD'S 9 m (`species_table.gd`'s `tower_guard` row) because a
+## civilian notices less than a sentry: they are reading a clipboard, not watching
+## the corridor. The read this buys is the one the owner asked for — staff make a
+## corridor dangerous to STROLL down, while the guard stays the thing that actually
+## catches you — and it is why a room you can cross in a hurry is still crossable.
+const SIGHT_RADIUS: float = 7.0
+
+## ...and how wide, in degrees, centred on the way it is walking.
+##
+## NARROWER THAN THE GUARD'S 120 for the same reason, and the pair is what makes
+## walking BEHIND a staffer a real move: at 90 degrees a quarter turn of the
+## corridor is out of it. Resolved once into a cosine below —
+## `piglet_crocodile_ai._ready()`'s idiom, where the guard's own row becomes
+## `view_cone_cos` — so the per-frame test is one dot product and no trigonometry.
+const SIGHT_CONE_DEG: float = 90.0
+
+## The cone's half-angle as a cosine. A `static var` rather than a `const` because
+## `cos()` is not a constant expression in GDScript; it is evaluated once per
+## process, which is the same thing the AI's `_ready()` achieves per body.
+static var _sight_cone_cos: float = cos(deg_to_rad(SIGHT_CONE_DEG * 0.5))
+
+## Seconds the hero must stay seen before the alarm goes up.
+##
+## `PigletCrocodileAI.SPOT_TELEGRAPH_TIME`'s precedent and very nearly its number
+## (0.6): the guard's cone gives you a beat to back out of a doorway before it
+## commits, and a staffer that shouted on the first frame would make every corner
+## a coin flip rather than a decision. Slightly longer than the guard's, because a
+## civilian is the one who has to look twice.
+##
+## SPENT IN REAL SECONDS, not in the coarse tick's banked time: whether the CAMERA
+## can see the staffer has nothing to do with how long the staffer has been looking
+## at you.
+const SIGHT_TELEGRAPH: float = 0.8
+
+## How finely the cell march samples the line between two points, as a fraction of
+## `TowerPlans.PLAN_CELL`. A quarter cell is ~0.49 m, so at `SIGHT_RADIUS` the whole
+## march is fifteen lookups — the "few dozen compares" this test is cheap for.
+##
+## `ponytail:` THE CEILING IS A CORNER GRAZE. A segment that clips the very corner
+## of a wall cell can have a chord shorter than one sample and be missed, which
+## reads as seeing past a corner by a few centimetres — which is roughly what a
+## person can do. A wall crossed anywhere near head-on has a chord of at least a
+## whole cell and cannot be missed. If a plan ever needs that exact, the upgrade is
+## a supercover DDA in `tower_plan_boxes.gd` beside the router, not a finer sample.
+const SIGHT_MARCH_FRACTION: float = 0.25
 
 # ============================================================================
 # THE TWO ARCHETYPES
@@ -466,6 +522,166 @@ static func _loop_pose(loop: Dictionary, distance: float) -> Array:
 	return [at, yaw]
 
 # ============================================================================
+# THE SIGHTING — a cone, a storey and a march of plan cells
+# ============================================================================
+
+static func sees(floor_index: int, eye_local: Vector3, yaw: float,
+		quarry_local_pos: Vector3, gate_open: Callable = Callable()) -> bool:
+	"""
+	Can a staffer standing at `eye_local` facing `yaw` see `quarry_local_pos`?
+
+	@param eye_local: the staffer, interior-LOCAL metres — `_loop_pose()`'s answer.
+	@param yaw: the same pose's yaw, which is what the body is DRAWN facing.
+	@param quarry_local_pos: the hero, interior-local.
+	@param gate_open: `TowerInterior._is_open`, or an invalid `Callable` for "every
+	    gate is shut", which is what a standalone scene with no shell above it
+	    actually has.
+	@return: true only if all four hold — the storey, the radius, the cone and the
+	    march.
+
+	PURE AND STATIC, so `tower_staff_selfcheck` can drive every one of the four
+	conditions and its inversion without a scene, a body or a physics frame.
+
+	THE FACING IS DERIVED FROM THE DRAWN YAW and not from the walk direction it came
+	from, deliberately: `tick()` welds the body with `Basis().rotated(UP, yaw)` onto
+	a mesh that faces -Z, so `-sin/-cos` is the direction a PLAYER sees it looking.
+	A cone taken off anything else would be a cone that disagreed with the figure.
+
+	THE STOREY IS `TowerInterior.current_floor()` and not a height band: the plans
+	are stacked slabs with their own hysteresis, and that function is what every
+	other part of this building means by "which floor is this". Without it the
+	march — which is one storey's 40 x 40 grid — would answer a question about a
+	point three floors up.
+	"""
+	if not eye_local.is_finite() or not quarry_local_pos.is_finite():
+		return false
+	if TowerInterior.current_floor(quarry_local_pos.y) != floor_index:
+		return false
+	var to_quarry := quarry_local_pos - eye_local
+	to_quarry.y = 0.0
+	var reach: float = to_quarry.length()
+	if reach > SIGHT_RADIUS or reach <= 0.0:
+		return false
+	# ONE DOT PRODUCT against the cached cosine — `piglet_crocodile_ai`'s test,
+	# written here rather than borrowed because a staffer is not a `SPECIES` row and
+	# must not become one to be looked at.
+	var forward := Vector3(-sin(yaw), 0.0, -cos(yaw))
+	if forward.dot(to_quarry / reach) < _sight_cone_cos:
+		return false
+	return line_of_sight(floor_index, eye_local, quarry_local_pos, gate_open)
+
+
+static func line_of_sight(floor_index: int, from_local: Vector3, to_local: Vector3,
+		gate_open: Callable = Callable()) -> bool:
+	"""
+	Is the storey's own floor plan clear between these two interior-local points?
+
+	A MARCH OF PLAN CELLS, AND NOT A PHYSICS RAY, and that is the load-bearing
+	choice in this file after the missing collider. The interior's geometry is
+	merged `ArrayMesh` batches: a ray would hit gate masses, dressing, the dossier
+	rack and the hero's own capsule, all of which are questions the 40 x 40
+	character grid answers exactly and for a few dozen compares. It also needs no
+	physics frame, which is what lets the self-check drive it in a loop.
+
+	WHAT BLOCKS: `TowerPlans.WALL_CHAR`, and a `D` whose gate is SHUT. An open
+	doorway is a doorway — you can see through it and so can a staffer — so the
+	answer is read from `TowerInterior._is_open()` through the interior rather than
+	re-derived here, because the opened set is the shell's and this file has no
+	business holding a second opinion about it. A `D` cell the storey's `gates` dict
+	does not name is treated as shut: an unnamed mass is one nothing can open.
+
+	NOT AN OCCLUDER: the `S` stair lane, which `_route_open` refuses for a walking
+	body because it is a descending deck — you can see across one perfectly well.
+
+	Sampled every `SIGHT_MARCH_FRACTION` of a cell between the two, ENDPOINTS
+	EXCLUDED: the cells the two bodies stand in are not between them, and a hero
+	standing in an open doorway must not occlude himself.
+	"""
+	var plan := TowerPlans.storey(floor_index)
+	if plan.is_empty():
+		return false
+	var rows: Array = plan["rows"]
+	var gates: Dictionary = plan["gates"]
+	var span := Vector2(to_local.x - from_local.x, to_local.z - from_local.z)
+	var reach: float = span.length()
+	if reach <= 0.0:
+		return true
+	var steps: int = int(ceil(reach / (TowerPlans.PLAN_CELL * SIGHT_MARCH_FRACTION)))
+	for i in range(1, steps):
+		var at := Vector3(from_local.x + span.x * float(i) / float(steps), from_local.y,
+				from_local.z + span.y * float(i) / float(steps))
+		if _sight_blocked(rows, gates, TowerInterior._plan_cell_of(at), gate_open):
+			return false
+	return true
+
+
+static func _sight_blocked(rows: Array, gates: Dictionary, cell: Vector2i,
+		gate_open: Callable) -> bool:
+	"""One cell of the march: is it a wall, or a shut door? See `line_of_sight()`."""
+	# `_plan_char` answers `#` off the edge of the grid, which is what the shell
+	# actually is out there — so a march that leaves the plan stops at the wall.
+	var ch := TowerInterior._plan_char(rows, cell)
+	if ch == TowerPlans.WALL_CHAR:
+		return true
+	if ch != TowerPlans.GATE_CHAR:
+		return false
+	var gate_id := String(gates.get("%d,%d" % [cell.x, cell.y], ""))
+	if gate_id.is_empty() or not gate_open.is_valid():
+		return true
+	return not bool(gate_open.call(gate_id))
+
+
+static func _watch(interior: TowerInterior, walker: Dictionary, at: Vector3,
+		yaw: float, quarry: Vector3, delta: float) -> void:
+	"""
+	One staffer's sighting clock, spent from `tick()` once its pose is decided.
+
+	THE TELEGRAPH BEAT IS WHY THIS KEEPS STATE AT ALL: `SIGHT_TELEGRAPH` seconds of
+	being seen before anything happens, so stepping back out of a doorway is a move
+	you can make. Leave the cone and the clock is lost, exactly as the guard's
+	`spot_clock` is — re-entering costs a fresh beat.
+
+	THE CLOCK SATURATES rather than resetting on a raise, and that is what paces the
+	`alrm` verb. `raise_alarm()` refuses while that storey's alarm is already up, so
+	a staffer that keeps watching you calls it every frame and gets `false` back for
+	`ALARM_SECONDS` — one packet per storey per alarm, nowhere near the 2/s budget,
+	and no cooldown of our own to keep in step with the interior's.
+	"""
+	if not sees(int(walker["floor"]), at, yaw, quarry, interior._is_open):
+		walker["seen"] = 0.0
+		return
+	var clock: float = float(walker.get("seen", 0.0)) + delta
+	walker["seen"] = minf(clock, SIGHT_TELEGRAPH)
+	if clock < SIGHT_TELEGRAPH:
+		return
+	# THE POINT IS WHERE THE HERO IS, not where the staffer is: what the guard is
+	# being sent to look at is the sighting, and `raise_alarm()` is what turns it
+	# into a klaxon, a converge and — on this peer's own sighting — a mesh packet.
+	interior.raise_alarm(int(walker["floor"]), Vector2(quarry.x, quarry.z), true)
+
+
+static func quarry_local(interior: TowerInterior) -> Vector3:
+	"""
+	Where this peer's OWN hero is standing, in interior-local metres, or
+	`Vector3.INF` when there is nobody in the building for staff to see.
+
+	THE LOCAL PLAYER ONLY, and that is the correct shape rather than a gap
+	(CLAUDE.md): a remote peer's avatar joins no group and carries no physics body,
+	so each peer's staff watch each peer's own hero and the `alrm` verb is what
+	makes one peer's sighting everybody's problem.
+
+	`_player` is the interior's own handle, refreshed at the top of its `_process`
+	one line before `tick()` is called — asking the group again here would be the
+	same lookup twice a frame.
+	"""
+	var player: Node3D = interior._player
+	if player == null or not is_instance_valid(player):
+		return Vector3.INF
+	var local := player.global_position - interior.global_position
+	return local if TowerInterior.inside_walls(local) else Vector3.INF
+
+
+# ============================================================================
 # THE POPULATION — free everything and stand it back up
 # ============================================================================
 
@@ -519,6 +735,11 @@ static func reset(interior: TowerInterior) -> void:
 				"dist": float(loop["length"]) * float(k) / float(STAFF_PER_STOREY),
 				"slot": -1,
 				"lod_debt": 0.0,
+				# The sighting clock — seconds the local hero has been in this
+				# staffer's cone without a break. Per-run and per-peer, reset with
+				# the population, and never shared: what one peer's staff saw is
+				# published as a raised ALARM, never as a clock to keep in step.
+				"seen": 0.0,
 			})
 			per_archetype[archetype] += 1
 
@@ -586,6 +807,11 @@ static func tick(interior: TowerInterior, delta: float) -> void:
 	var window: bool = interior._drawn_floor >= 0 \
 			and interior._drawn_floor < TowerInterior.FLOOR_Y.size()
 
+	# WHO THERE IS TO SEE, once for the whole building rather than once per body:
+	# there is one local hero and it is standing on one storey.
+	var quarry := quarry_local(interior)
+	var quarry_floor: int = TowerInterior.current_floor(quarry.y) if quarry.is_finite() else -1
+
 	var buffers: Array[PackedFloat32Array] = []
 	var counts: Array[int] = []
 	for a: int in ARCHETYPE_COUNT:
@@ -610,6 +836,20 @@ static func tick(interior: TowerInterior, delta: float) -> void:
 			walker["dist"] = fposmod(moved, length)
 			pose = _loop_pose(loop, float(walker["dist"]))
 			at = pose[0]
+
+		# ...AND WHETHER IT CAN SEE YOU, off the pose it was just drawn with and
+		# BEFORE the draw gate below: being written out of the visible count means
+		# the CAMERA cannot see the staffer, which has nothing to do with whether
+		# the staffer can see you. A sighting that switched itself off when you
+		# looked away would be the stealth game playing itself.
+		#
+		# The storey test is free here and saves the march on nine floors out of
+		# ten; `sees()` makes it again, because it is a precondition of the march
+		# rather than an optimisation.
+		if quarry_floor == int(walker["floor"]):
+			_watch(interior, walker, at, float(pose[1]), quarry, delta)
+		elif float(walker.get("seen", 0.0)) > 0.0:
+			walker["seen"] = 0.0
 
 		# WHICH BUFFER SLOT THIS STAFFER LANDED IN, or -1 for one the window is not
 		# drawing. `walkers()` reads the transform back out of the buffer through

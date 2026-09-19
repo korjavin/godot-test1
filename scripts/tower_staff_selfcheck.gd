@@ -60,6 +60,28 @@ extends SceneTree
 ##     that the gate made BOTH decisions over the sweep.
 ##  7. **THE POPULATION RESETS** on the shell's own `player_entered`, exactly as the
 ##     guards do, and the opened set does not.
+##  8. **THE SIGHTING TEST, AND EACH OF ITS FOUR CONDITIONS INVERTED** (bead
+##     `godot-test1-buyt.4`). Storey, radius, cone and a march of plan cells — all
+##     four have to say yes, and each one is turned off in isolation while the
+##     other three are held. Every geometry is read out of the ASCII: a straight
+##     open run, a `. # .` triple and a `D` cell with its own gate id. The one that
+##     cannot be faked is the wall: a pair inside the radius, dead in the cone, and
+##     refused only because the plan says there is stone between them.
+##  9. **THE ALARM IS PER STOREY, BOUNDED, PULSED AND ROUTED.** One storey lit
+##     leaves the others dark; a storey whose alarm is up refuses the next raise
+##     and re-arms once it expires; the klaxon is pulsed BY THE TIMER and counted
+##     over a whole alarm with a bound on both sides (a build that pulsed every
+##     frame passes "did it sound"); and the `publish` flag decides mesh-and-caption
+##     versus room-log-only, which is what stops two peers echoing one sighting.
+## 10. **A STAFFER ACTUALLY RAISES IT, AND ONLY AFTER THE TELEGRAPH BEAT.** Driven
+##     through the shipped `tick()` with the hero on the staffer's own next
+##     waypoint. Half the beat must leave the storey dark; the second half must
+##     light it; and a hero standing BEHIND the same staffer lights nothing.
+## 11. **THE GUARD CONVERGES ON THE SIGHTING AND WALKS HOME**, as a real body under
+##     real physics — to a room centre that is neither its post nor a lure plate,
+##     so a build wired to the wrong thing cannot arrive. Every guard on every
+##     other storey must still be on its post afterwards: convergence is
+##     single-storey by three shipped rulings, not by omission.
 ##
 ## The draw budget the two MultiMeshes moved (38 -> 40) is asserted where it lives,
 ## by `tower_interior_selfcheck`'s check 5.
@@ -128,6 +150,10 @@ func _run() -> void:
 	await _check_the_bodies_walk_their_loops()
 	await _check_the_storey_window_hides_them()
 	await _check_the_population_resets_on_re_entry()
+	_check_the_sighting_test()
+	await _check_the_alarm_state()
+	await _check_a_staffer_raises_the_alarm()
+	await _check_the_guard_converges()
 	_report()
 
 
@@ -951,6 +977,712 @@ func _check_the_population_resets_on_re_entry() -> void:
 
 func _fail(message: String) -> void:
 	_failures.append(message)
+
+
+# ============================================================================
+# CHECK 8 — the sighting test: four conditions, and each one inverted
+# ============================================================================
+
+func _check_the_sighting_test() -> void:
+	"""
+	Check 8. `TowerStaff.sees()` answers yes only when the storey, the radius, the
+	cone AND the march of plan cells all say yes — and no when any ONE of them is
+	turned off while the other three are held.
+
+	EVERY GEOMETRY IN THIS CHECK IS READ OUT OF THE ASCII, never written down here:
+	a straight run of route-open cells for the three that are about arithmetic, a
+	`. # .` triple for the wall, and a `D` cell with its own gate id for the door.
+	A check that typed its own coordinates would agree with a build that had drawn
+	the plan somewhere else.
+
+	THE INVERSIONS ARE ISOLATED, which is the part that makes them worth running.
+	The far quarry is placed ON THE CLEAR RUN and the march is asserted CLEAR there
+	before the radius is asserted to refuse it, so "no" cannot be the wall
+	answering; the cone is turned by rotating the YAW ALONE, which moves nothing
+	the other three tests read. Both sides of the cone's edge are pinned, so a
+	360-degree implementation fails one and a blind one fails the other.
+	"""
+	var run := _straight_open_run()
+	if run.is_empty():
+		_fail("no storey draws a straight open run long enough to measure a %.1f m"
+				% TowerStaff.SIGHT_RADIUS + " sighting — check 8 would pass vacuously")
+		Sentinel.done("the_sighting_test")
+		return
+	var floor_index: int = int(run["floor"])
+	var eye: Vector3 = run["from"]
+	var dir: Vector3 = run["dir"]
+	var yaw: float = atan2(-dir.x, -dir.z)
+
+	# ---- THE POSITIVE, first and load-bearing: a staffer looking down its own
+	# corridor at somebody two cells away sees them. Everything below is a refusal,
+	# and a `sees()` that answered false to everything would pass all of them.
+	var near: Vector3 = eye + dir * (TowerPlans.PLAN_CELL * 2.0)
+	if not TowerStaff.sees(floor_index, eye, yaw, near):
+		_fail("a staffer on storey %d did not see a hero %.1f m dead ahead of it down"
+				% [floor_index, TowerPlans.PLAN_CELL * 2.0] + " an open corridor")
+
+	# ---- (a) THE RADIUS, with the march proved clear at the far point so that the
+	# refusal can only be the distance.
+	var far: Vector3 = eye + dir * (TowerStaff.SIGHT_RADIUS + 0.5)
+	if not TowerStaff.line_of_sight(floor_index, eye, far):
+		_fail("check 8's far mark is behind a wall — the radius inversion would be"
+				+ " measuring the march instead")
+	elif TowerStaff.sees(floor_index, eye, yaw, far):
+		_fail("a staffer saw a hero %.1f m away, past its own %.1f m reach"
+				% [TowerStaff.SIGHT_RADIUS + 0.5, TowerStaff.SIGHT_RADIUS])
+	var inside: Vector3 = eye + dir * (TowerStaff.SIGHT_RADIUS - 0.3)
+	if TowerStaff.line_of_sight(floor_index, eye, inside) \
+			and not TowerStaff.sees(floor_index, eye, yaw, inside):
+		_fail("a staffer did not see a hero %.1f m away, INSIDE its own %.1f m reach"
+				% [TowerStaff.SIGHT_RADIUS - 0.3, TowerStaff.SIGHT_RADIUS]
+				+ " — the radius is shorter than the const says")
+
+	# ---- (b) THE CONE, both sides of its own edge, by turning the yaw and nothing
+	# else. The mesh faces -Z at yaw 0, so this is the rotation a player sees.
+	var half := deg_to_rad(TowerStaff.SIGHT_CONE_DEG * 0.5)
+	if not TowerStaff.sees(floor_index, eye, yaw + half - 0.09, near):
+		_fail("a hero %.0f degrees off a staffer's heading was outside a %.0f-degree"
+				% [rad_to_deg(half - 0.09), TowerStaff.SIGHT_CONE_DEG] + " cone")
+	if TowerStaff.sees(floor_index, eye, yaw + half + 0.09, near):
+		_fail("a hero %.0f degrees off a staffer's heading was INSIDE its %.0f-degree"
+				% [rad_to_deg(half + 0.09), TowerStaff.SIGHT_CONE_DEG]
+				+ " cone — the cone is wider than the const says")
+	if TowerStaff.sees(floor_index, eye, yaw + PI, near):
+		_fail("a staffer saw a hero standing directly BEHIND it — walking behind one"
+				+ " is the move the cone exists to allow")
+
+	# ---- (c) THE STOREY. The same x and z, lifted to another floor's walking
+	# surface: a cone test is blind to height and these are stacked slabs.
+	var other := -1
+	for candidate: int in TowerInterior.FLOOR_Y.size():
+		if candidate != floor_index:
+			other = candidate
+			break
+	if other >= 0:
+		var upstairs := Vector3(near.x, TowerInterior.FLOOR_Y[other], near.z)
+		if TowerStaff.sees(floor_index, eye, yaw, upstairs):
+			_fail("a staffer on storey %d saw a hero standing on storey %d at the same"
+					% [floor_index, other] + " x/z — it is looking through a slab")
+
+	# ---- (d) THE MARCH: a wall between, read out of a `. # .` triple in the ASCII.
+	var wall := _walled_pair()
+	if wall.is_empty():
+		_fail("no storey draws an open cell, a wall and an open cell in a row —"
+				+ " check 8's line-of-sight inversion has nothing to stand behind")
+	else:
+		var wall_floor: int = int(wall["floor"])
+		var wall_eye: Vector3 = wall["from"]
+		var wall_at: Vector3 = wall["to"]
+		var wall_yaw: float = atan2(-(wall_at.x - wall_eye.x), -(wall_at.z - wall_eye.z))
+		# The pair is inside the radius and dead in the cone BY CONSTRUCTION, so the
+		# only thing left to refuse it is the wall — which is the whole assertion:
+		# a sighting that fired through one would land here and nowhere else.
+		var gap: float = Vector2(wall_at.x - wall_eye.x, wall_at.z - wall_eye.z).length()
+		if gap > TowerStaff.SIGHT_RADIUS:
+			_fail("check 8(d)'s walled pair is %.1f m apart, past the %.1f m reach —"
+					% [gap, TowerStaff.SIGHT_RADIUS] + " the refusal would be the radius")
+		if TowerStaff.line_of_sight(wall_floor, wall_eye, wall_at):
+			_fail("the march crossed a `%s` cell on storey %d and called it clear"
+					% [TowerPlans.WALL_CHAR, wall_floor])
+		if TowerStaff.sees(wall_floor, wall_eye, wall_yaw, wall_at):
+			_fail("a staffer on storey %d saw a hero THROUGH A WALL %.1f m away"
+					% [wall_floor, gap])
+
+	# ---- (e) A DOOR IS AN OCCLUDER ONLY WHILE IT IS SHUT, and the answer comes
+	# from the interior's own opened set rather than from a second opinion here.
+	var door := _gated_pair()
+	if door.is_empty():
+		_fail("no storey draws a gate cell with open floor either side of it —"
+				+ " check 8's door clause has nothing to look through")
+	else:
+		var door_floor: int = int(door["floor"])
+		var shut := func(_id: String) -> bool: return false
+		var opened := func(id: String) -> bool: return id == String(door["gate"])
+		if TowerStaff.line_of_sight(door_floor, door["from"], door["to"], shut):
+			_fail("the march looked straight through the CLOSED gate `%s` on storey %d"
+					% [String(door["gate"]), door_floor])
+		if not TowerStaff.line_of_sight(door_floor, door["from"], door["to"], opened):
+			_fail("the march refused the OPEN gate `%s` on storey %d — an open doorway"
+					% [String(door["gate"]), door_floor] + " is a doorway")
+		# ...and with nobody to ask, a door is shut: a standalone interior with no
+		# shell over it has no opened set at all.
+		if TowerStaff.line_of_sight(door_floor, door["from"], door["to"]):
+			_fail("with no opened set to consult, gate `%s` read as OPEN — a building"
+					% String(door["gate"]) + " with no shell must not see through its doors")
+	print("tower staff: sighting %.1f m / %.0f deg measured on storey %d; wall pair %s,"
+			% [TowerStaff.SIGHT_RADIUS, TowerStaff.SIGHT_CONE_DEG, floor_index,
+			"f%d" % int(wall.get("floor", -1))]
+			+ " gate pair %s `%s`" % ["f%d" % int(door.get("floor", -1)),
+			String(door.get("gate", ""))])
+	Sentinel.done("the_sighting_test")
+
+
+func _cell_point(floor_index: int, cell: Vector2i) -> Vector3:
+	"""One plan cell's centre, in interior-local metres on that storey's surface."""
+	return Vector3(TowerInterior._grid_x(float(cell.x) + 0.5),
+			TowerInterior.FLOOR_Y[floor_index],
+			TowerInterior._grid_z(float(cell.y) + 0.5))
+
+
+func _straight_open_run() -> Dictionary:
+	"""
+	The first straight line of route-open cells long enough to measure a sighting
+	over, as `{floor, from, dir}` — `from` the first cell's centre in local metres
+	and `dir` a unit step along the run.
+
+	LONG ENOUGH means past `SIGHT_RADIUS` plus a cell, so the radius inversion has
+	somewhere clear to stand. Rows first, then columns; both axes are searched
+	because which one a corridor runs along is the plan's business, not this file's.
+	"""
+	var want: int = int(ceil((TowerStaff.SIGHT_RADIUS + TowerPlans.PLAN_CELL)
+			/ TowerPlans.PLAN_CELL)) + 1
+	for floor_index: int in TowerPlans.floors():
+		var plan := TowerPlans.storey(floor_index)
+		if plan.is_empty():
+			continue
+		var rows: Array = plan["rows"]
+		for axis: int in 2:
+			var outer: int = rows.size() if axis == 0 else String(rows[0]).length()
+			for a: int in outer:
+				var run := 0
+				var inner: int = String(rows[0]).length() if axis == 0 else rows.size()
+				for b: int in inner:
+					var cell := Vector2i(b, a) if axis == 0 else Vector2i(a, b)
+					if TowerInterior._route_open(TowerInterior._plan_char(rows, cell)):
+						run += 1
+					else:
+						run = 0
+					if run < want:
+						continue
+					var step := Vector2i(1, 0) if axis == 0 else Vector2i(0, 1)
+					var start := cell - step * (run - 1)
+					return {
+						"floor": floor_index,
+						"from": _cell_point(floor_index, start),
+						"dir": (_cell_point(floor_index, start + step)
+								- _cell_point(floor_index, start)).normalized(),
+					}
+	return {}
+
+
+func _walled_pair() -> Dictionary:
+	"""
+	The first `open, wall, open` triple in any storey's ASCII, as
+	`{floor, from, to}` in local metres — two cells a staffer could reach across
+	with exactly one `#` in between.
+	"""
+	for floor_index: int in TowerPlans.floors():
+		var plan := TowerPlans.storey(floor_index)
+		if plan.is_empty():
+			continue
+		var rows: Array = plan["rows"]
+		for r: int in rows.size():
+			var line := String(rows[r])
+			for c in range(1, line.length() - 1):
+				if line[c] != TowerPlans.WALL_CHAR:
+					continue
+				if not TowerInterior._route_open(line[c - 1]) \
+						or not TowerInterior._route_open(line[c + 1]):
+					continue
+				return {
+					"floor": floor_index,
+					"from": _cell_point(floor_index, Vector2i(c - 1, r)),
+					"to": _cell_point(floor_index, Vector2i(c + 1, r)),
+				}
+	return {}
+
+
+func _gated_pair() -> Dictionary:
+	"""
+	The first gate cell with route-open floor on BOTH sides along one axis, as
+	`{floor, gate, from, to}` — the two cells a doorway stands between.
+
+	The gate id comes out of the storey's own `gates` dict, keyed `"c,r"`, which is
+	the one binding between a `D` character and a gate (`TowerGates.gate_slots()`).
+	A check that named a gate itself would stop measuring the day one was renamed.
+	"""
+	for floor_index: int in TowerPlans.floors():
+		var plan := TowerPlans.storey(floor_index)
+		if plan.is_empty():
+			continue
+		var rows: Array = plan["rows"]
+		var gates: Dictionary = plan["gates"]
+		for key: String in gates:
+			var parts := key.split(",")
+			if parts.size() != 2:
+				continue
+			var cell := Vector2i(int(parts[0]), int(parts[1]))
+			if TowerInterior._plan_char(rows, cell) != TowerPlans.GATE_CHAR:
+				continue
+			for step: Vector2i in [Vector2i(1, 0), Vector2i(0, 1)]:
+				if not TowerInterior._route_open(TowerInterior._plan_char(rows, cell - step)) \
+						or not TowerInterior._route_open(
+								TowerInterior._plan_char(rows, cell + step)):
+					continue
+				return {
+					"floor": floor_index,
+					"gate": String(gates[key]),
+					"from": _cell_point(floor_index, cell - step),
+					"to": _cell_point(floor_index, cell + step),
+				}
+	return {}
+
+
+# ============================================================================
+# CHECK 9 — the alarm: per storey, bounded, pulsed, routed, and cleared
+# ============================================================================
+
+## The three nodes an alarm talks to, reduced to the one method each and put in
+## the group the interior finds them by. Source strings rather than scenes, the
+## `mp_selfcheck` idiom: what is being measured is which of them is called, and a
+## stub that can only count is a stub that cannot answer for the wrong reason.
+const SOUND_STUB_SOURCE := """extends Node
+var klaxons: int = 0
+func play_klaxon() -> void:
+	klaxons += 1
+"""
+const MP_STUB_SOURCE := """extends Node
+var published: Array = []
+func publish_alarm(floor_index: int, local_xz: Vector2) -> bool:
+	published.append([floor_index, local_xz])
+	return true
+"""
+const CAPTION_STUB_SOURCE := """extends Node
+var captions: Array = []
+func post_caption(msg: String, _duration: float = 0.0) -> bool:
+	captions.append(msg)
+	return true
+"""
+const LOG_STUB_SOURCE := """extends Node
+var lines: Array = []
+func note_event(line: String) -> void:
+	lines.append(line)
+"""
+
+
+func _stub(source: String, group: String) -> Node:
+	"""One group-discovered stub in the tree. Freed by the caller."""
+	var script := GDScript.new()
+	script.source_code = source
+	script.reload()
+	var node: Node = script.new()
+	node.add_to_group(group)
+	root.add_child(node)
+	return node
+
+
+func _check_the_alarm_state() -> void:
+	"""
+	Check 9. `TowerInterior.raise_alarm()` and the timer behind it.
+
+	  (a) PER STOREY. Raising on one floor leaves every other floor's alarm down —
+	      the whole reason the state is a dictionary keyed by floor and not a flag.
+	  (b) BOUNDED. A storey whose alarm is up refuses the next raise outright, so a
+	      staffer standing in a doorway cannot stack errands or spend the `alrm`
+	      verb's budget; and it re-arms once the timer has run out, so an alarm is
+	      a window and not a fuse.
+	  (c) THE KLAXON IS PULSED BY THE TIMER, not started and forgotten: bead
+	      godot-test1-buyt.1 shipped a ~0.6 s ONE-SHOT on purpose. Counted over a
+	      whole alarm and bounded on BOTH sides — a build that pulsed every frame
+	      passes a "did it sound" test and deafens the player.
+	  (d) THE PUBLISH FLAG IS THE ECHO GATE. `publish = true` reaches the mesh and
+	      says so on this screen's caption; `publish = false` — the `alrm` replay
+	      path — reaches NEITHER, and puts its line in the room log instead. Two
+	      peers that both re-published would echo one sighting round the room for
+	      as long as the room lasted.
+	  (e) A GARBAGE SIGHTING IS REFUSED: a storey the plans do not draw, or a point
+	      that is not a number. `MpCodec.decode_alrm()` already refuses both on the
+	      wire; this is the same refusal at the other door, where the caller is a
+	      staffer rather than a packet.
+	  (f) CROSSING THE DOORWAY CLEARS EVERY ALARM, with the population.
+	"""
+	var interior := await TowerProbe.make_interior(self) as TowerInterior
+	var sound := _stub(SOUND_STUB_SOURCE, "sound_manager")
+	var mp := _stub(MP_STUB_SOURCE, "mp")
+	var caption := _stub(CAPTION_STUB_SOURCE, "world_caption")
+	var log_hud := _stub(LOG_STUB_SOURCE, "event_log")
+	var floors: int = TowerInterior.FLOOR_Y.size()
+	var lit: int = mini(4, floors - 1)
+	var spot := Vector2(3.0, -2.0)
+
+	# ---- (a) and the raise itself -------------------------------------------
+	if not interior.raise_alarm(lit, spot):
+		_fail("raise_alarm refused an honest sighting on storey %d" % lit)
+	if absf(interior.alarm_seconds_left(lit) - TowerInterior.ALARM_SECONDS) > EPS:
+		_fail("storey %d's alarm stands at %.2f s, not the %.2f s it was raised for"
+				% [lit, interior.alarm_seconds_left(lit), TowerInterior.ALARM_SECONDS])
+	for other: int in floors:
+		if other != lit and interior.alarm_seconds_left(other) > 0.0:
+			_fail("raising storey %d's alarm also lit storey %d — the alarm is a"
+					% [lit, other] + " building-wide flag, not a per-storey state")
+
+	# ---- (b) the bound -------------------------------------------------------
+	if interior.raise_alarm(lit, spot):
+		_fail("a second alarm was accepted on storey %d while its first was still"
+				% lit + " up — an alarm that queues is a button to hold down")
+
+	# ---- (c) the pulse, over a whole alarm -----------------------------------
+	var lit_at_raise: int = int(sound.get("klaxons"))
+	if lit_at_raise != 1:
+		_fail("raising an alarm sounded the klaxon %d times, expected exactly one"
+				% lit_at_raise)
+	var step: float = 1.0 / 60.0
+	var ticks: int = int(ceil(TowerInterior.ALARM_SECONDS / step)) + 4
+	for _i in ticks:
+		interior._tick_alarm(step)
+	var pulses: int = int(sound.get("klaxons")) - lit_at_raise
+	var want: int = int(TowerInterior.ALARM_SECONDS / TowerInterior.ALARM_PULSE)
+	if pulses < want - 1 or pulses > want + 1:
+		_fail("a %.0f s alarm pulsed the klaxon %d times; at one every %.1f s it should"
+				% [TowerInterior.ALARM_SECONDS, pulses, TowerInterior.ALARM_PULSE]
+				+ " pulse about %d" % want)
+	if interior.alarm_seconds_left(lit) > 0.0:
+		_fail("storey %d's alarm was still up %.1f s after it was raised"
+				% [lit, TowerInterior.ALARM_SECONDS])
+	var quiet: int = int(sound.get("klaxons"))
+	for _i in 120:
+		interior._tick_alarm(step)
+	if int(sound.get("klaxons")) != quiet:
+		_fail("the klaxon kept sounding after every alarm had expired")
+	# ...and it re-arms.
+	if not interior.raise_alarm(lit, spot):
+		_fail("storey %d refused a fresh alarm after its own had expired — an alarm"
+				% lit + " is a window, not a fuse")
+
+	# ---- (d) the publish flag ------------------------------------------------
+	if (mp.get("published") as Array).size() != 2:
+		_fail("the two published alarms reached the mesh %d times"
+				% (mp.get("published") as Array).size())
+	else:
+		var sent: Array = (mp.get("published") as Array)[0]
+		if int(sent[0]) != lit or (sent[1] as Vector2) != spot:
+			_fail("the sighting reached the mesh as %s, not storey %d at %s"
+					% [str(sent), lit, str(spot)])
+	if (caption.get("captions") as Array).size() != 2:
+		_fail("a staffer's own sighting did not put a caption on this screen")
+	if not (log_hud.get("lines") as Array).is_empty():
+		_fail("our OWN sighting wrote a line into the room log — the log is for the"
+				+ " alarms we did not cause")
+	var relayed: int = mini(lit + 1, floors - 1)
+	if relayed == lit:
+		relayed = maxi(lit - 1, 0)
+	var published_before: int = (mp.get("published") as Array).size()
+	var captions_before: int = (caption.get("captions") as Array).size()
+	if not interior.raise_alarm(relayed, spot, false):
+		_fail("a relayed alarm was refused on storey %d" % relayed)
+	if (mp.get("published") as Array).size() != published_before:
+		_fail("a REPLAYED alarm went back out on the mesh — two peers would echo one"
+				+ " sighting round the room for as long as the room lasted")
+	if (caption.get("captions") as Array).size() != captions_before:
+		_fail("a relayed alarm captioned this screen, which never saw anything")
+	if (log_hud.get("lines") as Array).size() != 1:
+		_fail("a relayed alarm wrote %d lines into the room log, expected one"
+				% (log_hud.get("lines") as Array).size())
+	elif String((log_hud.get("lines") as Array)[0]) != tr(TowerInterior.ALARM_LOG_LINE):
+		_fail("the room log line was %s, not the translated %s"
+				% [str((log_hud.get("lines") as Array)[0]), TowerInterior.ALARM_LOG_LINE])
+
+	# ---- (e) garbage ---------------------------------------------------------
+	for bad: int in [-1, floors, floors + 7]:
+		if interior.raise_alarm(bad, spot):
+			_fail("an alarm was raised on storey %d, which the plans do not draw" % bad)
+	if interior.raise_alarm(maxi(floors - 1, 0), Vector2(NAN, 0.0)):
+		_fail("an alarm was raised at a sighting point that is not a number")
+
+	# ---- (f) the reset -------------------------------------------------------
+	interior._on_tower_doorway(null)
+	for any: int in floors:
+		if interior.alarm_seconds_left(any) > 0.0:
+			_fail("storey %d's alarm survived a doorway crossing — the guards are"
+					% any + " re-posted on that signal, so the errand has no body left")
+
+	print("tower staff: storey %d's alarm ran %.0f s and pulsed the klaxon %d times;"
+			% [lit, TowerInterior.ALARM_SECONDS, pulses]
+			+ " %d published, %d captioned, %d logged"
+			% [(mp.get("published") as Array).size(),
+			(caption.get("captions") as Array).size(),
+			(log_hud.get("lines") as Array).size()])
+	sound.queue_free()
+	mp.queue_free()
+	caption.queue_free()
+	log_hud.queue_free()
+	interior.queue_free()
+	await process_frame
+	Sentinel.done("the_alarm_state")
+
+
+# ============================================================================
+# CHECK 10 — a staffer actually raises it, and only after the telegraph beat
+# ============================================================================
+
+func _check_a_staffer_raises_the_alarm() -> void:
+	"""
+	Check 10. The wiring, driven through the shipped `tick()`: a hero standing in a
+	staffer's cone raises that storey's alarm — AFTER the telegraph beat and not
+	before — and a hero standing behind the same staffer raises nothing.
+
+	THE HERO IS PUT ON THE STAFFER'S OWN NEXT WAYPOINT, which is one route-open cell
+	ahead of it along its loop. That is dead in the cone, inside the radius and
+	clear by construction — the loop is continuous (check 1) — so nothing here is
+	balanced on a coordinate this file guessed.
+
+	THE BEAT IS THE ASSERTION WITH TEETH. Half of `SIGHT_TELEGRAPH` is driven first
+	and the storey must still be dark: a build that raised on the first frame in
+	the cone passes every "did it fire" test and makes every corner a coin flip.
+	Its control is the second half, which must then raise it.
+	"""
+	var interior := await TowerProbe.make_interior(self) as TowerInterior
+	if interior._staff_walkers.is_empty():
+		_fail("the building stood up no staff — check 10 has nobody to be seen by")
+		interior.queue_free()
+		await process_frame
+		Sentinel.done("a_staffer_raises_the_alarm")
+		return
+	var walker: Dictionary = interior._staff_walkers[0]
+	var loop: Dictionary = walker["loop"]
+	var path: PackedVector3Array = loop["path"]
+	var floor_index: int = int(walker["floor"])
+	# Park the staffer ON its first waypoint, so its heading is the leg to the
+	# second one and the hero can stand on the end of it.
+	walker["dist"] = 0.0
+	walker["seen"] = 0.0
+	var hero := Node3D.new()
+	root.add_child(hero)
+	hero.global_position = interior.global_position + path[1]
+	interior._player = hero
+
+	# ---- THE BEAT ------------------------------------------------------------
+	var step: float = 1.0 / 60.0
+	var half: int = int(TowerStaff.SIGHT_TELEGRAPH * 0.5 / step)
+	for _i in half:
+		TowerStaff.tick(interior, step)
+	if float(walker["seen"]) <= 0.0:
+		_fail("a hero standing %.1f m dead ahead of a staffer on storey %d was not"
+				% [path[0].distance_to(path[1]), floor_index] + " noticed at all")
+	if interior.alarm_seconds_left(floor_index) > 0.0:
+		_fail("the alarm went up after %.2f s, inside the %.2f s telegraph beat —"
+				% [float(half) * step, TowerStaff.SIGHT_TELEGRAPH]
+				+ " backing out of a doorway has to be a move")
+	for _i in half + 8:
+		TowerStaff.tick(interior, step)
+	if interior.alarm_seconds_left(floor_index) <= 0.0:
+		_fail("a hero stood in a staffer's cone for %.2f s on storey %d and no alarm"
+				% [float(2 * half + 8) * step, floor_index] + " ever went up")
+
+	# ---- THE CONTROL: behind it, and out of the cone -------------------------
+	# A fresh storey, so the bound in check 9(b) cannot be what keeps this dark.
+	var behind := -1
+	for candidate: Dictionary in interior._staff_walkers:
+		if int(candidate["floor"]) != floor_index:
+			behind = interior._staff_walkers.find(candidate)
+			break
+	if behind < 0:
+		_fail("only one storey carries staff — check 10's control has nowhere to run")
+	else:
+		var other: Dictionary = interior._staff_walkers[behind]
+		var other_loop: Dictionary = other["loop"]
+		var other_path: PackedVector3Array = other_loop["path"]
+		other["dist"] = 0.0
+		other["seen"] = 0.0
+		# One cell the OTHER way: the staffer walks from path[0] towards path[1],
+		# so the far side of path[0] is squarely behind it.
+		hero.global_position = interior.global_position \
+				+ other_path[0] + (other_path[0] - other_path[1])
+		for _i in int(TowerStaff.SIGHT_TELEGRAPH * 3.0 / step):
+			TowerStaff.tick(interior, step)
+		if interior.alarm_seconds_left(int(other["floor"])) > 0.0:
+			_fail("a staffer on storey %d raised the alarm on a hero standing BEHIND"
+					% int(other["floor"]) + " it")
+
+	print("tower staff: a hero %.2f m ahead of the staffer on storey %d was dark at"
+			% [path[0].distance_to(path[1]), floor_index]
+			+ " %.2f s and lit at %.2f s (beat %.2f s); behind it, nothing"
+			% [float(half) * step, float(2 * half + 8) * step,
+			TowerStaff.SIGHT_TELEGRAPH])
+	interior._player = null
+	hero.queue_free()
+	interior.queue_free()
+	await process_frame
+	Sentinel.done("a_staffer_raises_the_alarm")
+
+
+# ============================================================================
+# CHECK 11 — the guard converges on the sighting, and walks home afterwards
+# ============================================================================
+
+## How long check 11 gives a guard to walk to the sighting, in seconds.
+## `tower_guard_selfcheck`'s own lure budget, for the same walk over the same plan.
+const CONVERGE_BUDGET: float = 18.0
+
+## The shortest errand check 11 will accept, in metres of ROUTE. Comfortably past
+## `INVESTIGATE_ARRIVE` (1.6 m) and past a wander's own drift, so "it arrived"
+## cannot be "it was standing there".
+const CONVERGE_MIN_WALK: float = 8.0
+
+## How close to its post the guard has to get back to for the return to count.
+## Loose on purpose: what is being measured is "it came back", and a body settling
+## onto a slab at the end of a route is allowed a metre of it.
+const HOME_EPS: float = 2.0
+
+
+func _check_the_guard_converges() -> void:
+	"""
+	Check 11. A raised alarm walks the storey's REAL guard to the sighting point,
+	holds it there for the alarm's own duration, and then walks it home.
+
+	THE SIGHTING IS NOT A PLATE AND NOT THE POST. It is a room centre several metres
+	off the post, so a build that had wired the alarm to `lure_guard()`'s plate, or
+	one that did nothing at all, cannot reach it. That is the assertion a wrong
+	implementation cannot satisfy: the body has to arrive at the cell the ALARM
+	named.
+
+	THE HOLD IS ASSERTED AS A VALUE and then wound forward, rather than waited out.
+	`ALARM_SECONDS` of standing still is twelve seconds of real physics for one
+	number, and the number is readable the frame the errand is taken — so the check
+	reads it there and then spends its frames on the WALK HOME, which is the part
+	that can only be measured by watching.
+
+	NOTHING HERE MOVES A SECOND BODY. The converging guard is the SIGHTING STOREY'S
+	OWN, and every other guard in the building must still be standing on its post
+	when this is over: `GUARDS_PER_STOREY_MAX` is 1, `plan_route` is a single-storey
+	BFS and `set_confinement` leashes a guard to its own floor, so a cross-storey
+	converge would have to break all three (see `TowerInterior._send_guard_to`).
+	"""
+	var shell := await TowerProbe.make_tower(self)
+	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
+	if interior == null:
+		_fail("no interior under the tower — check 11 has nothing to raise")
+		await TowerProbe.clear(self, null, shell)
+		Sentinel.done("the_guard_converges")
+		return
+
+	# WHICH STOREY AND WHICH POINT ARE THE PLANS' BUSINESS: the SHORTEST walk, over
+	# every storey that draws a `G`, from that post to a room centre at least
+	# `CONVERGE_MIN_WALK` metres of ROUTE away. Shortest because the budget below is
+	# real physics and a 39 m errand is half a minute of it; at least that far
+	# because a sighting the guard is already standing on measures nothing.
+	#
+	# ROUTE length and not straight-line: the plan is a maze and the two disagree by
+	# a factor of three on some floors.
+	var floor_index := -1
+	var sighting := Vector3.INF
+	var walk := INF
+	for candidate: int in TowerPlans.floors():
+		var post: Dictionary = TowerInterior._plan_guard_post(candidate)
+		if post.is_empty():
+			continue
+		var from: Vector3 = post["post"]
+		for stop: Dictionary in TowerStaff._storey_stops(candidate):
+			var route := TowerInterior.plan_route(candidate, from, stop["point"])
+			if route.is_empty():
+				continue
+			var length := from.distance_to(route[0])
+			for i in range(1, route.size()):
+				length += route[i - 1].distance_to(route[i])
+			if length < CONVERGE_MIN_WALK or length >= walk:
+				continue
+			floor_index = candidate
+			sighting = stop["point"]
+			walk = length
+	if floor_index < 0:
+		_fail("no storey carries a guard post with a room centre at least %.0f m of"
+				% CONVERGE_MIN_WALK + " route away — check 11 would pass vacuously")
+		await TowerProbe.clear(self, null, shell)
+		Sentinel.done("the_guard_converges")
+		return
+
+	# NO PROBE PLAYER, and that is deliberate rather than an omission: an
+	# ACQUISITION CANCELS AN ERRAND (`_abandon_investigation`), so a hero parked
+	# anywhere a guard can smell turns this check into a measurement of the chase.
+	# `tower_guard_selfcheck` check 21 parks one because it goes on to measure the
+	# spot; this check only needs the walk, and the walk needs nobody to be seen.
+	interior.reset_guards()
+	await process_frame
+	for _i in 30:
+		await physics_frame
+
+	var guard: Node3D = interior.call("_guard_on", floor_index) as Node3D
+	if guard == null:
+		_fail("storey %d draws a `G` but stood no guard on it" % floor_index)
+		await TowerProbe.clear(self, null, shell)
+		Sentinel.done("the_guard_converges")
+		return
+	var post := guard.global_position
+
+	if not interior.raise_alarm(floor_index, Vector2(sighting.x, sighting.z), false):
+		_fail("the alarm on storey %d was refused" % floor_index)
+		await TowerProbe.clear(self, null, shell)
+		Sentinel.done("the_guard_converges")
+		return
+	if not bool(guard.get("is_investigating")):
+		_fail("the alarm on storey %d woke no guard — the converge is a flag nothing"
+				% floor_index + " acts on")
+	elif absf(float(guard.get("_investigate_hold")) - TowerInterior.ALARM_SECONDS) > EPS:
+		_fail("the guard holds the sighting for %.1f s, not the alarm's own %.1f s —"
+				% [float(guard.get("_investigate_hold")), TowerInterior.ALARM_SECONDS]
+				+ " it would walk home with the klaxon still sounding")
+
+	# ---- THE WALK OUT --------------------------------------------------------
+	var arrive: float = float(load(TowerProbe.CROC_SCRIPT)
+			.get_script_constant_map()["INVESTIGATE_ARRIVE"])
+	var target := interior.global_position + sighting
+	var arrived := false
+	var best := INF
+	for _i in int(CONVERGE_BUDGET * 60.0):
+		await physics_frame
+		var gap: float = Vector2(guard.global_position.x - target.x,
+				guard.global_position.z - target.z).length()
+		best = minf(best, gap)
+		if gap <= arrive:
+			arrived = true
+			break
+	if not arrived:
+		_fail("the guard never reached the sighting %.1f m of route from its post in"
+				% walk + " %.0f s (closest %.1f m) — the alarm converges on nothing"
+				% [CONVERGE_BUDGET, best])
+
+	# ---- NOBODY ELSE TOOK THE ERRAND ----------------------------------------
+	# Measured off `is_investigating` and NOT off where the bodies are standing: a
+	# guard that is not on an errand is still WANDERING its own beat, so a position
+	# test here would fail on a perfectly correct build. The errand flag is exactly
+	# what a cross-storey converge would have to set, and the only thing that sets
+	# it is `investigate_point()`.
+	var strays: Array[String] = []
+	for other: Node in interior._guards.get_children():
+		if other == guard or not (other is Node3D):
+			continue
+		if bool(other.get("is_investigating")):
+			strays.append(other.name)
+	if not strays.is_empty():
+		_fail("storey %d's alarm put %s on an errand as well — convergence is"
+				% [floor_index, str(strays)] + " SINGLE-STOREY by three shipped"
+				+ " rulings (see TowerInterior._send_guard_to)")
+	if not bool(guard.get("is_investigating")) and arrived:
+		_fail("the guard that walked to the sighting is not the one the alarm named")
+
+	# ---- THE WALK HOME -------------------------------------------------------
+	# The HOLD's length was asserted above, off the value the errand was taken with;
+	# spending twelve seconds of real physics watching a body stand still would
+	# measure the same number again. Wound forward, so these frames buy the walk
+	# back — which is the half that can only be seen by watching.
+	guard.set("_investigate_hold", 0.05)
+	var home := false
+	for _i in int(CONVERGE_BUDGET * 60.0):
+		await physics_frame
+		if not bool(guard.get("is_investigating")) \
+				and guard.global_position.distance_to(post) <= HOME_EPS:
+			home = true
+			break
+	if arrived and not home:
+		_fail("the guard never got back to its post after the alarm (it stands %.1f m"
+				% guard.global_position.distance_to(post) + " away, investigating=%s)"
+				% str(guard.get("is_investigating")))
+
+	print("tower staff: storey %d's guard walked %.1f m of route to the sighting"
+			% [floor_index, walk] + " (arrived=%s, home=%s), %d other guards idle"
+			% [str(arrived), str(home), interior._guards.get_child_count() - 1])
+	await TowerProbe.clear(self, null, shell)
+	Sentinel.done("the_guard_converges")
 
 
 func _report() -> void:
