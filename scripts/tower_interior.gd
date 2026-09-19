@@ -2126,8 +2126,12 @@ func _process(delta: float) -> void:
 	Everything that moves, plus the visibility gating.
 
 	ONE `_process` FOR THE WHOLE BUILDING — the fauna manager's rule. The press,
-	two gate tweens, one distance test and two boolean writes; all of it is skipped
-	outright while the interior is not drawn, which is most of a run.
+	two gate tweens, one distance test and two boolean writes; all of it but the
+	ALARM TIMER is skipped outright while the interior is not drawn, which is most
+	of a run. That one exception is deliberate and the note at the `_tick_alarm`
+	call says why: an alarm is the one piece of this building's state a peer
+	kilometres away can be handed, over the `alrm` verb, and a timer that only ran
+	while somebody was looking would freeze there for the rest of the run.
 	"""
 	_player = get_tree().get_first_node_in_group("player") as Node3D
 	var near := _update_visibility()

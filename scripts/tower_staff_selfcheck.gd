@@ -1192,16 +1192,21 @@ func _walled_pair() -> Dictionary:
 	return {}
 
 
-func _gated_pair() -> Dictionary:
+func _gated_pair(only_floor: int = -1) -> Dictionary:
 	"""
 	The first gate cell with route-open floor on BOTH sides along one axis, as
 	`{floor, gate, from, to}` — the two cells a doorway stands between.
+
+	@param only_floor: restrict the search to one storey, `-1` for any. The seam
+	    clause in check 11 needs a doorway on the storey whose guard is standing up.
 
 	The gate id comes out of the storey's own `gates` dict, keyed `"c,r"`, which is
 	the one binding between a `D` character and a gate (`TowerGates.gate_slots()`).
 	A check that named a gate itself would stop measuring the day one was renamed.
 	"""
 	for floor_index: int in TowerPlans.floors():
+		if only_floor >= 0 and floor_index != only_floor:
+			continue
 		var plan := TowerPlans.storey(floor_index)
 		if plan.is_empty():
 			continue
@@ -1631,6 +1636,11 @@ func _check_the_guard_converges() -> void:
 	reads it there and then spends its frames on the WALK HOME, which is the part
 	that can only be measured by watching.
 
+	THE DOORWAY IS TWO CLAUSES, not one: `_sighting_candidates()` is measured as a
+	LIST before the walk, and `_send_guard_to()`'s choice from that list is driven
+	afterwards, biased towards whichever side of the door the standing guard cannot
+	reach — which is the case a build that offered only the nearest cell fails.
+
 	NOTHING HERE MOVES A SECOND BODY. The converging guard is the SIGHTING STOREY'S
 	OWN, and every other guard in the building must still be standing on its post
 	when this is over: `GUARDS_PER_STOREY_MAX` is 1, `plan_route` is a single-storey
@@ -1651,10 +1661,12 @@ func _check_the_guard_converges() -> void:
 	# deliberately lets a hero standing in an OPEN doorway be seen, and deliberately
 	# does not treat the ramp as an occluder. Unsnapped, the two most likely places
 	# to be spotted are the two the router cannot reach, and the alarm sounds with
-	# nobody coming. `_standable_near()` is the snap; this is its control, and the
-	# control is the half that matters — the RAW cell must genuinely be unroutable,
-	# or the snap is being credited with a route that was always there. (revmux
-	# round 1, major.)
+	# nobody coming. `_sighting_candidates()` is the list of places the guard could
+	# be sent instead, and `_send_guard_to()` takes the first of them the router can
+	# reach. This measures the LIST; the clause after the converge drives the
+	# SELECTION through the shipped seam. Its control is the half that matters — the
+	# RAW cell must genuinely be unroutable, or the candidate list is being credited
+	# with a route that was always there. (revmux rounds 1 and 2, major.)
 	var door := _gated_pair()
 	if door.is_empty():
 		_fail("no storey draws a reachable gate cell — check 11's doorway clause has"
@@ -1677,7 +1689,8 @@ func _check_the_guard_converges() -> void:
 					% door_floor + " would measure nothing")
 		elif not TowerInterior.plan_route(door_floor, corridor, mid).is_empty():
 			_fail("the router reached the `%s` doorway cell on storey %d unaided —"
-					% [TowerPlans.GATE_CHAR, door_floor] + " the snap has nothing to do")
+					% [TowerPlans.GATE_CHAR, door_floor] + " the candidate list has"
+					+ " nothing to do")
 		else:
 			var offered: Array[Vector3] = interior._sighting_candidates(door_floor, mid)
 			# EVERY OPEN NEIGHBOUR, NEAREST FIRST — and the count is the assertion
@@ -1722,13 +1735,13 @@ func _check_the_guard_converges() -> void:
 						% [str(near_side), door_floor] + " was offered the OTHER side"
 						+ " first — nearest first is what makes the guard turn up where"
 						+ " you were rather than round the corner")
-			var reachable := 0
-			for at: Vector3 in offered:
-				if not TowerInterior.plan_route(door_floor, corridor, at).is_empty():
-					reachable += 1
-			if reachable == 0:
-				_fail("none of the %d places offered for a doorway sighting on storey"
-						% offered.size() + " %d can be routed to" % door_floor)
+			# NO `reachable >= 1` CLAUSE HERE, and its absence is the point. `corridor`
+			# is `_gated_pair()`'s own from-side cell and therefore always one of the
+			# candidates, so `plan_route(corridor, corridor)` takes the router's
+			# `start == goal` fast path on every build and a count of routable
+			# candidates can never be zero. That clause read like it covered the
+			# selection and covered nothing; the selection is driven below, through
+			# `_send_guard_to()` itself. (revmux round 3, minor.)
 
 	# WHICH STOREY AND WHICH POINT ARE THE PLANS' BUSINESS: the SHORTEST walk, over
 	# every storey that draws a `G`, from that post to a room centre at least
@@ -1852,6 +1865,51 @@ func _check_the_guard_converges() -> void:
 				% guard.global_position.distance_to(post) + " away, investigating=%s)"
 				% str(guard.get("is_investigating")))
 
+	# ---- THE SELECTION, THROUGH `_send_guard_to()` ---------------------------
+	# The candidate LIST is measured above; this is the half that picks from it. A
+	# hero standing in a doorway is on one side of it or the other, and on half the
+	# shipped storeys one of those sides is sealed behind that very gate — so the
+	# errand has to survive its own NEAREST candidate being unroutable. Driven on
+	# the storey that already has a guard standing on it, biased towards whichever
+	# side the router cannot reach FROM THAT BODY, which is the case a
+	# nearest-candidate-only build fails. (revmux round 3, minor.)
+	var seam := _gated_pair(floor_index)
+	var seam_note := "no gate on this storey"
+	if not seam.is_empty() and home:
+		var here: Vector3 = guard.global_position - interior.global_position
+		var side_a: Vector3 = seam["from"]
+		var side_b: Vector3 = seam["to"]
+		var a_open := not TowerInterior.plan_route(floor_index, here, side_a).is_empty()
+		var b_open := not TowerInterior.plan_route(floor_index, here, side_b).is_empty()
+		if not a_open and not b_open:
+			seam_note = "both sides of the gate are sealed from the post"
+		else:
+			# Bias towards the side the guard CANNOT reach when there is one, so the
+			# nearest candidate is the wrong one and the loop has to go round again.
+			var reach_side: Vector3 = side_a if a_open else side_b
+			var lean: Vector3 = side_b if a_open and not b_open else \
+					(side_a if b_open and not a_open else side_b)
+			seam_note = "both sides routable" if a_open and b_open \
+					else "the near side is sealed"
+			var stand: Vector3 = ((side_a + side_b) * 0.5).lerp(lean, 0.15)
+			interior._alarm.clear()
+			if not interior._send_guard_to(floor_index, stand,
+					TowerInterior.ALARM_SECONDS):
+				_fail("a sighting in the doorway on storey %d was refused, though the"
+						% floor_index + " guard can route to %s one cell away — the"
+						% str(reach_side) + " klaxon sounds and nobody comes (%s)"
+						% seam_note)
+			else:
+				var walked: Array = guard.get("_investigate_path")
+				var went: Vector3 = walked[walked.size() - 1] if not walked.is_empty() \
+						else Vector3.INF
+				if went.distance_to(interior.global_position + reach_side) > EPS:
+					_fail("the doorway errand on storey %d ended at %s rather than the"
+							% [floor_index, str(went)] + " side the guard can actually"
+							+ " reach, %s (%s)"
+							% [str(interior.global_position + reach_side), seam_note])
+
+	print("tower staff: doorway errand on storey %d — %s" % [floor_index, seam_note])
 	print("tower staff: storey %d's guard walked %.1f m of route to the sighting"
 			% [floor_index, walk] + " (arrived=%s, home=%s), %d other guards idle"
 			% [str(arrived), str(home), interior._guards.get_child_count() - 1])
