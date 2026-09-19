@@ -236,6 +236,14 @@ const SLASH_TRAVEL_M: float = 0.10
 ## APART and measures negative, so this is the assertion that keeps the
 ## skeleton's rest honest.
 const SLASH_CROSS_M: float = 0.05
+## ...and how far Windman's dance (bead godot-test1-b7eg, probe (l) below) must
+## move each hand. A 55-degree raise with a 25-degree alternating swing on the
+## same ~0.55 m chain moves either hand several decimetres at the beat peak;
+## 0.10 clears it with the same margin both older probes take. The peak arm —
+## not the travel — is what the raise mutation hangs off (see the driver
+## comment), so the travel pin is honest displacement and the arm pin is the
+## mutation control.
+const DANCE_TRAVEL_M: float = 0.10
 ## ...and how much the shoulder-to-hand reach must differ between the two arm
 ## extremes, where `ELBOW_TRACK_RATIO` 0.3 opens the elbow from 24 to 6 degrees.
 ## Measured 0.008 m on Teibi's ~0.28 m upper arm and forearm; a deleted or
@@ -371,6 +379,8 @@ func _run() -> void:
 		Sentinel.done("skinned_joints")
 		Sentinel.done("skinned_determinism")
 		Sentinel.done("phoboman")
+		Sentinel.done("dance_sequence")
+		Sentinel.done("dance_panels")
 		_report()
 		return
 
@@ -396,6 +406,8 @@ func _run() -> void:
 		Sentinel.done("skinned_joints")
 		Sentinel.done("skinned_determinism")
 		Sentinel.done("phoboman")
+		Sentinel.done("dance_sequence")
+		Sentinel.done("dance_panels")
 		player.queue_free()
 		_report()
 		return
@@ -408,6 +420,8 @@ func _run() -> void:
 	_check_sidestep(player)
 	_check_skinned(player)
 	_check_phoboman(player)
+	await _check_dance_sequence(player)
+	await _check_dance_panels(player)
 
 	player.queue_free()
 	await process_frame
@@ -2170,6 +2184,125 @@ func _measure_skinned_joints(anim, fixture: Node3D) -> void:
 	anim.player.velocity = Vector3.ZERO
 	anim.player.primm_slash_timer = 0.0
 
+	# ---- (l) THE DANCE LOOPS EVERY PATH AND LEAVES NO RESIDUE
+	# Bead godot-test1-b7eg: Windman's emote on bones, in (k)'s idiom.
+	# Pinned at the end of the fade-in (elapsed EDGE_S, amount exactly 1.0),
+	# where the phase sits at 0.3 of a loop — left arm near its peak, right
+	# mid-pump, elbows bouncing. The alternating pump means no single phase
+	# raises both arms, so the pin asserts displaced hands AND the peak arm:
+	# both hands must be off rest by DANCE_TRAVEL_M and the left upper arm
+	# above 50 degrees, and expiring the timer must hand both back to the gait
+	# on every path.
+	var dance_peak: float = PlayerAbilities.WINDMAN_DANCE_DURATION - PlayerAbilities.WINDMAN_DANCE_EDGE_S
+	# (l1) WALK PATH: drive `animate_walking()`.
+	anim.rig.rest_pose()
+	anim.player.windman_dance_timer = 0.0
+	anim.animation_time = 0.0
+	anim.animate_walking(step, 1.0)
+	var lwalk_l: Vector3 = _at(skel, b["hand_l"])
+	var lwalk_r: Vector3 = _at(skel, hand_r)
+	anim.player.windman_dance_timer = dance_peak
+	anim.animate_walking(step, 1.0)
+	for lwalk_probe: Array in [[lwalk_l, b["hand_l"], "left"], [lwalk_r, hand_r, "right"]]:
+		if _at(skel, lwalk_probe[1]).distance_to(lwalk_probe[0]) <= DANCE_TRAVEL_M:
+			_fail("skinned fixture: walking at the dance peak moved the %s hand %.4f m — "
+					% [lwalk_probe[2], _at(skel, lwalk_probe[1]).distance_to(lwalk_probe[0])]
+					+ "the bounce must lift both hands at least %.2f m off the gait" % DANCE_TRAVEL_M)
+	var lwalk_meas: Dictionary = anim.rig.measure()
+	if lwalk_meas["left_arm_x"] < deg_to_rad(50.0):
+		_fail("skinned fixture: walking at the dance peak holds the left arm at %.1f deg — "
+				% rad_to_deg(lwalk_meas["left_arm_x"])
+				+ "the peak arm must clear 50 deg toward the ~55 deg raise")
+	# THE RETURN (walk): expire timer, drive normal walking frame.
+	anim.player.windman_dance_timer = 0.0
+	anim.animate_walking(step, 1.0)
+	for lwalk_probe: Array in [[lwalk_l, b["hand_l"], "left"], [lwalk_r, hand_r, "right"]]:
+		var lwalk_gap: float = _at(skel, lwalk_probe[1]).distance_to(lwalk_probe[0])
+		if lwalk_gap > REST_EPS:
+			_fail("skinned fixture: a walking frame with the dance timer expired left the %s hand "
+					% lwalk_probe[2] + "%.4f m off the walk rest — the dance froze "
+					% lwalk_gap + "past the timer (ceiling %.3f m)" % REST_EPS)
+	# (l2) AIR PATH: drive `animate_jumping()`.
+	anim.rig.rest_pose()
+	anim.player.windman_dance_timer = 0.0
+	anim.animation_time = 0.0
+	for i: int in 20:
+		anim.animation_time = 0.0
+		anim.animate_jumping()
+	var lair_l: Vector3 = _at(skel, b["hand_l"])
+	var lair_r: Vector3 = _at(skel, hand_r)
+	anim.player.windman_dance_timer = dance_peak
+	anim.animate_jumping()
+	for lair_probe: Array in [[lair_l, b["hand_l"], "left"], [lair_r, hand_r, "right"]]:
+		if _at(skel, lair_probe[1]).distance_to(lair_probe[0]) <= DANCE_TRAVEL_M:
+			_fail("skinned fixture: jumping at the dance peak moved the %s hand %.4f m — "
+					% [lair_probe[2], _at(skel, lair_probe[1]).distance_to(lair_probe[0])]
+					+ "the bounce must ride over the air flap too")
+	# THE RETURN (air): expire timer, relax air frames back.
+	anim.player.windman_dance_timer = 0.0
+	for i: int in RELAX_FRAMES:
+		anim.animation_time = 0.0
+		anim.animate_jumping()
+	for lair_probe: Array in [[lair_l, b["hand_l"], "left"], [lair_r, hand_r, "right"]]:
+		var lair_gap: float = _at(skel, lair_probe[1]).distance_to(lair_probe[0])
+		if lair_gap > REST_EPS:
+			_fail("skinned fixture: jumping frames with the dance timer expired left the %s hand "
+					% lair_probe[2] + "%.4f m off the air pose — the dance froze "
+					% lair_gap + "past the timer (ceiling %.3f m)" % REST_EPS)
+	# (l3) IDLE PATH: drive `animate_idle()`.
+	anim.rig.rest_pose()
+	anim.player.windman_dance_timer = 0.0
+	anim.animation_time = 0.0
+	for i: int in RELAX_FRAMES:
+		anim.animate_idle(step)
+	var lidle_l: Vector3 = _at(skel, b["hand_l"])
+	var lidle_r: Vector3 = _at(skel, hand_r)
+	anim.player.windman_dance_timer = dance_peak
+	anim.animate_idle(step)
+	for lidle_probe: Array in [[lidle_l, b["hand_l"], "left"], [lidle_r, hand_r, "right"]]:
+		if _at(skel, lidle_probe[1]).distance_to(lidle_probe[0]) <= DANCE_TRAVEL_M:
+			_fail("skinned fixture: idle at the dance peak moved the %s hand %.4f m — "
+					% [lidle_probe[2], _at(skel, lidle_probe[1]).distance_to(lidle_probe[0])]
+					+ "the bounce must ride over the idle too")
+	# THE RETURN (idle): expire timer, relax idle frames back.
+	anim.player.windman_dance_timer = 0.0
+	for i: int in RELAX_FRAMES:
+		anim.animate_idle(step)
+	for lidle_probe: Array in [[lidle_l, b["hand_l"], "left"], [lidle_r, hand_r, "right"]]:
+		var lidle_gap: float = _at(skel, lidle_probe[1]).distance_to(lidle_probe[0])
+		if lidle_gap > REST_EPS:
+			_fail("skinned fixture: idle frames with the dance timer expired left the %s hand "
+					% lidle_probe[2] + "%.4f m off the idle rest — the dance froze "
+					% lidle_gap + "past the timer (ceiling %.3f m)" % REST_EPS)
+	# (l4) STRAFE PATH: drive `animate_sidestep()`.
+	anim.rig.rest_pose()
+	anim.reset_sidestep_pose()
+	anim.player.velocity = Vector3.ZERO
+	anim.player.step_direction = 1.0
+	anim.player.windman_dance_timer = 0.0
+	anim.animate_sidestep(step)
+	var lstrafe_l: Vector3 = _at(skel, b["hand_l"])
+	var lstrafe_r: Vector3 = _at(skel, hand_r)
+	anim.player.windman_dance_timer = dance_peak
+	anim.animate_sidestep(step)
+	for lstrafe_probe: Array in [[lstrafe_l, b["hand_l"], "left"], [lstrafe_r, hand_r, "right"]]:
+		if _at(skel, lstrafe_probe[1]).distance_to(lstrafe_probe[0]) <= DANCE_TRAVEL_M:
+			_fail("skinned fixture: a strafe frame at the dance peak moved the %s hand %.4f m — "
+					% [lstrafe_probe[2], _at(skel, lstrafe_probe[1]).distance_to(lstrafe_probe[0])]
+					+ "the bounce must ride over the strafe too")
+	# THE RETURN (strafe): expire the timer, drive a strafe frame.
+	anim.player.windman_dance_timer = 0.0
+	anim.animate_sidestep(step)
+	for lstrafe_probe: Array in [[lstrafe_l, b["hand_l"], "left"], [lstrafe_r, hand_r, "right"]]:
+		var lstrafe_gap: float = _at(skel, lstrafe_probe[1]).distance_to(lstrafe_probe[0])
+		if lstrafe_gap > REST_EPS:
+			_fail("skinned fixture: a strafe frame with the dance timer expired left the %s hand "
+					% lstrafe_probe[2] + "%.4f m off the strafe rest — the dance froze "
+					% lstrafe_gap + "past the timer (ceiling %.3f m)" % REST_EPS)
+	anim.player.step_direction = 0.0
+	anim.player.velocity = Vector3.ZERO
+	anim.player.windman_dance_timer = 0.0
+
 	Sentinel.done("skinned_joints")
 
 
@@ -2406,6 +2539,313 @@ func _check_phoboman(player: Node3D) -> void:
 
 	fixture.queue_free()
 	Sentinel.done("phoboman")
+
+
+## A lift menu that is open with no tower behind it: the player's dance guard
+## asks `is_open()` off the group, and this is what answers while the panel's
+## own digit routing is driven on the real node beside it.
+class DanceLiftStub extends Control:
+	var open: bool = false
+
+	func is_open() -> bool:
+		return open
+
+
+## Same shape for the waypoint travel list.
+class DanceHubStub extends Control:
+	var open: bool = false
+
+	func is_panel_open() -> bool:
+		return open
+
+
+func _dance_event(keycode: Key) -> InputEventKey:
+	"""A pressed digit, the way `tower_lift_selfcheck._digit_event` builds one."""
+	var event := InputEventKey.new()
+	event.keycode = keycode
+	event.physical_keycode = keycode
+	event.pressed = true
+	return event
+
+
+func _tap_dance_key(keycode: Key) -> void:
+	"""Press and release through real dispatch, the debug-teleport idiom: what
+	fires (or refuses) below is the shipped `_unhandled_input` path, not a
+	direct call into it."""
+	Input.parse_input_event(_dance_event(keycode))
+	await physics_frame
+	await process_frame
+	var release := InputEventKey.new()
+	release.keycode = keycode
+	release.physical_keycode = keycode
+	release.pressed = false
+	Input.parse_input_event(release)
+	await physics_frame
+	await process_frame
+
+
+func _dance_floor() -> StaticBody3D:
+	"""A floor. The gait tree has no terrain, so without one the player spends
+	every physics frame falling — and the dance cancels the moment the ground
+	goes, which would make every timer assertion below measure gravity."""
+	var body := StaticBody3D.new()
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(20.0, 1.0, 20.0)
+	shape.shape = box
+	body.add_child(shape)
+	root.add_child(body)
+	body.global_position = Vector3(0.0, -0.5, 0.0)
+	return body
+
+
+func _settle_dancer(player: Node3D) -> bool:
+	"""Drop the body onto the dance floor and wait for ground. False when the
+	floor never arrives — every timer below would then be measuring a fall."""
+	player.global_position = Vector3(0.0, 2.0, 0.0)
+	player.velocity = Vector3.ZERO
+	for i: int in 120:
+		await physics_frame
+		if player.is_on_floor():
+			return true
+	return false
+
+
+func _check_dance_sequence(player: Node3D) -> void:
+	"""
+	Bead godot-test1-b7eg, acceptance 1, 2 and 6: 6-then-7 is a sequence, not
+	a chord — driven through REAL dispatch, the debug-teleport idiom, on a
+	grounded Windman.
+
+	6 then 7 inside the window fires the full-duration timer and raises the
+	room-wide bit; 6 then 7 past the window does not; 7 alone does not; 6 then
+	another digit then 7 does not; the same sequence on a non-Windman does
+	nothing; and while it dances nothing else moves — position, velocity,
+	boosts, cooldowns and every sibling timer stand still while the dance
+	timer itself runs down (which is also what proves the frames ticked, so
+	"nothing moved" cannot pass on a frozen world). Moving and jumping end it,
+	by hand on the real actions.
+	"""
+	var floor_body := _dance_floor()
+	if not await _settle_dancer(player):
+		_fail("the dancer never found the floor — the sequence would measure a fall")
+		floor_body.queue_free()
+		Sentinel.done("dance_sequence")
+		return
+	player.set_active_character(0)
+	if String(PlayerController.CHARACTERS[int(player.current_character_index)]["name"]) != "windman":
+		_fail("slot 0 is no Windman — the sequence has nobody to dance")
+		floor_body.queue_free()
+		Sentinel.done("dance_sequence")
+		return
+	player.windman_dance_timer = 0.0
+	player._dance_armed = false
+
+	# 6 arms, 7 fires: the timer at full duration and the room-wide bit up.
+	await _tap_dance_key(KEY_6)
+	if not player._dance_armed:
+		_fail("6 did not arm the dance")
+	await _tap_dance_key(KEY_7)
+	if player.windman_dance_timer <= 0.0 \
+			or player.windman_dance_timer > PlayerAbilities.WINDMAN_DANCE_DURATION:
+		_fail("6 then 7 set a %.3f s dance timer, wanted the full %.1f s"
+				% [player.windman_dance_timer, PlayerAbilities.WINDMAN_DANCE_DURATION])
+	if not bool(player.ability_visual_state() & PlayerController.ABILITY_BIT_DANCE):
+		_fail("a dancing Windman raises no DANCE bit — peers would see nothing")
+	player.windman_dance_timer = 0.0
+	player._dance_armed = false
+
+	# Past the window, the arm is dead: backdate past 5 s, 7 finds nothing.
+	await _tap_dance_key(KEY_6)
+	player._dance_armed_msec = Time.get_ticks_msec() - 5000
+	await _tap_dance_key(KEY_7)
+	if player.windman_dance_timer > 0.0:
+		_fail("6 then 7 past the window still danced — the arm never expires")
+	if player._dance_armed:
+		_fail("a stale 7 left the arm set — the next 7 would fire on it")
+
+	# 7 alone never fires.
+	player._dance_armed = false
+	await _tap_dance_key(KEY_7)
+	if player.windman_dance_timer > 0.0:
+		_fail("7 alone danced with no 6 before it")
+
+	# 6, another digit, 7: the middle key clears the arm.
+	await _tap_dance_key(KEY_6)
+	await _tap_dance_key(KEY_5)
+	if player._dance_armed:
+		_fail("a digit between 6 and 7 left the arm set")
+	await _tap_dance_key(KEY_7)
+	if player.windman_dance_timer > 0.0:
+		_fail("6 then 5 then 7 danced — only an immediate 7 may fire")
+
+	# Another hero pressing 6-7 does nothing (primm here — a check that only
+	# ever drove Windman would pass just as happily if everyone danced).
+	player.set_active_character(1)
+	await _tap_dance_key(KEY_6)
+	await _tap_dance_key(KEY_7)
+	if player.windman_dance_timer > 0.0:
+		_fail("primm danced on 6-then-7 — only Windman dances")
+	player.set_active_character(0)
+	player.windman_dance_timer = 0.0
+	player._dance_armed = false
+
+	# NO GAMEPLAY EFFECT: fire on a standing Windman and run 30 physics frames
+	# with no input. The dance timer itself must run DOWN (proving the frames
+	# ticked) while position, velocity, boosts, cooldowns and sibling timers
+	# stand exactly still — and the tree stays unpaused throughout.
+	await _tap_dance_key(KEY_6)
+	await _tap_dance_key(KEY_7)
+	if player.windman_dance_timer <= 0.0:
+		_fail("6 then 7 did not fire for the no-effect subject")
+		floor_body.queue_free()
+		Sentinel.done("dance_sequence")
+		return
+	var spot: Vector3 = player.global_position
+	for i: int in 30:
+		await physics_frame
+	if player.windman_dance_timer <= 0.0 \
+			or player.windman_dance_timer >= PlayerAbilities.WINDMAN_DANCE_DURATION:
+		_fail("30 physics frames left the dance timer at %.3f s — it must run down, not freeze or vanish"
+				% player.windman_dance_timer)
+	if player.global_position.distance_to(spot) > 0.02:
+		_fail("dancing moved the body %.4f m with no input"
+				% player.global_position.distance_to(spot))
+	if player.velocity.length() > 0.5:
+		_fail("dancing leaves velocity at %.3f m/s — Air Rush's 6 m/s would read here" % player.velocity.length())
+	if player.windman_boost_timer > 0.0 or player.speed_burst_timer > 0.0:
+		_fail("dancing lit a boost or burst timer")
+	for i: int in player.ability_cooldowns.size():
+		if player.ability_cooldowns[i] != 0.0 or player.ability2_cooldowns[i] != 0.0:
+			_fail("dancing charged cooldown slot %d — the emote costs nothing" % i)
+	if player.primm_slash_timer > 0.0 or player.phoboman_stink_timer > 0.0 \
+			or player.windman_sight_timer > 0.0:
+		_fail("dancing started a sibling ability timer")
+	if root.get_tree().paused:
+		_fail("dancing paused the tree — the emote takes no pause claim")
+
+	# INTERRUPTIBLE: a step ends it, and so does a hop — by hand on the real
+	# movement actions, not by poking the timer.
+	player.windman_dance_timer = PlayerAbilities.WINDMAN_DANCE_DURATION
+	Input.action_press("move_forward")
+	for i: int in 3:
+		await physics_frame
+	Input.action_release("move_forward")
+	if player.windman_dance_timer > 0.0:
+		_fail("walking forward left %.2f s of dance running — the first step ends it"
+				% player.windman_dance_timer)
+	player.windman_dance_timer = PlayerAbilities.WINDMAN_DANCE_DURATION
+	Input.action_press("jump")
+	await physics_frame
+	Input.action_release("jump")
+	for i: int in 3:
+		await physics_frame
+	if player.windman_dance_timer > 0.0:
+		_fail("jumping left %.2f s of dance running — the hop ends it"
+				% player.windman_dance_timer)
+
+	player.windman_dance_timer = 0.0
+	player._dance_armed = false
+	player.global_position = Vector3.ZERO
+	floor_body.queue_free()
+	await process_frame
+	Sentinel.done("dance_sequence")
+
+
+func _check_dance_panels(player: Node3D) -> void:
+	"""
+	Bead godot-test1-b7eg, acceptance 3: 6 and 7 belong to the lift menu and
+	the waypoint list while either is open — the dance must not arm or fire
+	there, and the digits must still reach the panels.
+
+	The guard is driven through the SHIPPED player handler with group stubs
+	answering the open state (the capture-stub idiom — no tower, no circles);
+	the routing half drives the REAL panel handlers with the same crafted
+	digits and watches the viewport swallow them. The panels' own checks own
+	what the digits DO once routed (floor picked, row travelled); this owns
+	that the dance stands down and the keys still arrive.
+	"""
+	var lift := DanceLiftStub.new()
+	root.add_child(lift)
+	lift.add_to_group("tower_lift_menu")
+	var hub := DanceHubStub.new()
+	root.add_child(hub)
+	hub.add_to_group("waypoint_hub")
+	player.set_active_character(0)
+	player.windman_dance_timer = 0.0
+	player._dance_armed = false
+
+	# Lift open: 6 does not arm, and an arm from before the open does not fire.
+	lift.open = true
+	player._unhandled_input(_dance_event(KEY_6))
+	if player._dance_armed:
+		_fail("6 armed the dance with the lift menu open — the digit belongs to the menu")
+	player._unhandled_input(_dance_event(KEY_7))
+	if player.windman_dance_timer > 0.0:
+		_fail("7 fired the dance with the lift menu open")
+	lift.open = false
+	player._unhandled_input(_dance_event(KEY_6))
+	if not player._dance_armed:
+		_fail("6 did not arm with the lift menu closed — the guard over-refuses")
+	lift.open = true
+	player._unhandled_input(_dance_event(KEY_7))
+	if player.windman_dance_timer > 0.0:
+		_fail("a pre-open arm fired 7 with the lift menu open — opening must clear it")
+	if player._dance_armed:
+		_fail("7 with the lift menu open left the arm set")
+	lift.open = false
+	player._dance_armed = false
+
+	# Waypoint list open: the same pair, off its own predicate.
+	hub.open = true
+	player._unhandled_input(_dance_event(KEY_6))
+	if player._dance_armed:
+		_fail("6 armed the dance with the waypoint list open")
+	player._unhandled_input(_dance_event(KEY_7))
+	if player.windman_dance_timer > 0.0:
+		_fail("7 fired the dance with the waypoint list open")
+	hub.open = false
+	player._unhandled_input(_dance_event(KEY_6))
+	player._unhandled_input(_dance_event(KEY_7))
+	if player.windman_dance_timer <= 0.0:
+		_fail("6 then 7 with both panels closed did not fire — the guard over-refuses")
+	player.windman_dance_timer = 0.0
+	player._dance_armed = false
+
+	# ROUTING: the digits still reach the real panels. A bare menu node
+	# degrades without its tower (its own null-safety rule); poked open with a
+	# six-floor offer, 7 must be swallowed before it can reach the player — and
+	# the same for a bare travel list. What the digits DO once routed is the
+	# panels' own checks, green in the same run.
+	var menu := Control.new()
+	menu.set_script(load("res://scripts/tower_lift_menu.gd"))
+	root.add_child(menu)
+	await process_frame
+	menu._open = true
+	var offer: Array[int] = [0, 1, 2, 3, 4, 5]
+	menu._offered = offer
+	menu._unhandled_input(_dance_event(KEY_7))
+	if not root.is_input_handled():
+		_fail("7 with the lift menu open was not swallowed by the menu — the digit no longer reaches the panel")
+	menu._open = false
+	menu.queue_free()
+	var list := Control.new()
+	list.set_script(load("res://scripts/waypoint_hub.gd"))
+	root.add_child(list)
+	await process_frame
+	list._panel_open = true
+	list._input(_dance_event(KEY_7))
+	if not root.is_input_handled():
+		_fail("7 with the waypoint list open was not swallowed by the list")
+	list._panel_open = false
+	list.queue_free()
+	await process_frame
+
+	lift.queue_free()
+	hub.queue_free()
+	player.windman_dance_timer = 0.0
+	player._dance_armed = false
+	Sentinel.done("dance_panels")
 
 
 static func _relative(node: Node3D, root_node: Node3D) -> Transform3D:

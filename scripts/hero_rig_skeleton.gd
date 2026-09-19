@@ -249,6 +249,21 @@ const GAIT_SKIN: Dictionary = {
 	# The elbows flexed with it, degrees — bent enough to read as a cut rather
 	# than a semaphore.
 	"slash_elbow_deg": 35.0,
+	# --- DANCE --------------------------------------------------------------
+	# Windman's hidden emote (bead godot-test1-b7eg): a bouncing two-beat loop,
+	# degrees about the skeleton's +X / +Z / elbow X. The arms pump up
+	# ALTERNATELY around a raised middle (left rides sin, right rides sin + PI)
+	# while the elbows bounce at twice the rate — up-down-up-down reads as a
+	# dance where a symmetric hold would read as a semaphore. Measured, not
+	# reasoned, like the slash cross: `gait_selfcheck` probe (l) pins both
+	# hands off rest and an arm above 50 degrees at the beat peak, and the
+	# raise is what that pinning hangs off (raise to 0 and the peak falls to
+	# the bare swing, under the pin).
+	"dance_raise_deg": 55.0,
+	"dance_swing_deg": 25.0,
+	"dance_sway_deg": 15.0,
+	"dance_elbow_deg": 45.0,
+	"dance_pump_deg": 15.0,
 	# --- IDLE ---------------------------------------------------------------
 	# The breath, on the chest: rate in Hz and amplitude in degrees of pitch.
 	# 1.1 degrees at spine_03 is about 8 mm at the shoulders — the "few mm" the
@@ -594,6 +609,36 @@ func slash(amount: float) -> void:
 				lerp(_axis(UPPERARM[side], AXIS_Z), cross, amount))
 		_set_axis(LOWERARM[side], AXIS_X,
 				lerp(_axis(LOWERARM[side], AXIS_X), _deg("slash_elbow_deg"), amount))
+
+
+func dance(phase: float, amount: float) -> void:
+	"""Windman's hidden emote (bead godot-test1-b7eg): a bouncing loop, pure in
+	(phase, amount) like everything else in the driver.
+
+	EASED at `amount` in `stink()`'s idiom: each axis lerps from its CURRENT
+	angle toward the danced one, so the caller fading 1 to 0 hands the arms
+	back to whatever the gait is drawing with no pop and no second state. A
+	REMOTE mirror with no clock of its own runs its own phase (see
+	`remote_avatar.gd`) and calls this at 1.0 while the presence `ab` bit is
+	set, the legs-snap convention rather than an envelope.
+
+	Only the two arm chains. Everything else — legs, spine, head — stays
+	whatever the gait drew, which is what makes the return a non-event: the
+	next locomotion, air or strafe frame rewrites these same axes anyway
+	(`drop_wings()` zeroes the roll on the ground, `air()` rewrites it over
+	this in the air)."""
+	for side: String in ["left", "right"]:
+		var beat: float = sin(phase) if side == "left" else sin(phase + PI)
+		var mirror: float = -1.0 if side == "left" else 1.0
+		_set_axis(UPPERARM[side], AXIS_X,
+				lerp(_axis(UPPERARM[side], AXIS_X),
+						_deg("dance_raise_deg") + _deg("dance_swing_deg") * beat, amount))
+		_set_axis(UPPERARM[side], AXIS_Z,
+				lerp(_axis(UPPERARM[side], AXIS_Z),
+						mirror * _deg("dance_sway_deg") * (0.5 + 0.5 * sin(2.0 * phase)), amount))
+		_set_axis(LOWERARM[side], AXIS_X,
+				lerp(_axis(LOWERARM[side], AXIS_X),
+						_deg("dance_elbow_deg") + _deg("dance_pump_deg") * sin(2.0 * phase), amount))
 
 
 func sidestep(splay: float, reach: float, lift_left: bool, lift: float,

@@ -148,6 +148,12 @@ var ability_bits: int = 0
 ## wire for it to read right.
 var _flap_phase: float = 0.0
 
+## Local dance clock for Windman's emote, same deal as the flap: the bounce is
+## a loop, so the mirror runs its own phase at the shipped beat rate while the
+## presence `ab` bit is set. A peer two hundred metres away cannot tell our
+## downbeat from the sender's.
+var _dance_phase: float = 0.0
+
 ## Container for the instanced character scene.
 var model_root: Node3D = null
 
@@ -524,6 +530,7 @@ func _animate(delta: float) -> void:
 		_hand_over_clock()
 		_rig.air(spread, tuck, 1.0)
 		_apply_slash_pose()
+		_apply_dance_pose(delta)
 		_relax_gait_extras()
 		return
 
@@ -577,6 +584,10 @@ func _animate(delta: float) -> void:
 	# `locomotion()` rewrites both arm axes above, so the next grounded frame
 	# reclaims the arms and re-sheathes the swords when the bit drops.
 	_apply_slash_pose()
+	# The dance rides here too (bead godot-test1-b7eg) — and on the airborne
+	# path above, both of them explicitly: a grounded-by-definition pose that
+	# runs in one branch only is the review-round failure from PR #437.
+	_apply_dance_pose(delta)
 
 func _apply_slash_pose() -> void:
 	"""Primm's Twin Flash, room-wide (bead godot-test1-0mr0.3, owner ruling):
@@ -590,6 +601,22 @@ func _apply_slash_pose() -> void:
 	if _rig != null and slashing and _rig.has_method("slash"):
 		_rig.slash(1.0)
 	_set_avatar_swords_drawn(slashing)
+
+
+func _apply_dance_pose(delta: float) -> void:
+	"""Windman's hidden dance, room-wide (bead godot-test1-b7eg, owner ruling
+	behind the katana pose): while the presence `ab` bit is set, the arms
+	bounce at the shipped beat rate off the mirror's OWN phase — a loop has no
+	meaningful downbeat to carry on the wire, the flap's argument exactly.
+	Called on BOTH the grounded and airborne paths (the review-round lesson
+	from PR #437: a grounded-by-definition pose that runs in one branch only
+	is a pose nobody sees). `has_method` for the file's usual reason: a rig
+	this build cannot pose draws and stands still rather than erroring."""
+	if _rig != null and bool(ability_bits & PLAYER_SCRIPT.ABILITY_BIT_DANCE) \
+			and _rig.has_method("dance"):
+		_dance_phase += delta * TAU * float(PLAYER_SCRIPT.WINDMAN_DANCE_BEATS) \
+				/ float(PLAYER_SCRIPT.WINDMAN_DANCE_DURATION)
+		_rig.dance(_dance_phase, 1.0)
 
 
 func _set_avatar_swords_drawn(drawn: bool) -> void:
