@@ -49,6 +49,11 @@ const StartOverlay := preload("res://scripts/start_overlay.gd")
 ## so a retuned card width retunes the gate rather than drifting from it.
 const WaypointHub := preload("res://scripts/waypoint_hub.gd")
 const PassportPanel := preload("res://scripts/passport_panel.gd")
+## The skill tree panel, for the budgets below — read off its own constants
+## rather than retyped, so retuning COLUMN_WIDTH or CARD_WIDTH retunes the gate
+## with it (bead godot-test1-1m3x: the literals measured the OLD widths while
+## the real panel overflowed in German).
+const SkillTreeUi := preload("res://scripts/skill_tree_ui.gd")
 
 ## The round trip is driven against `StartOverlay.locale_config_path`, which
 ## `Sentinel.isolate_user_state()` has already moved into a directory private to
@@ -295,29 +300,35 @@ const WIDTH_BUDGETS: Array = [
 		"passport stamp"],
 	["Toss a coin; they sweep it up nightly.", PassportPanel.STAMP_FONT_SIZE, PassportPanel.CARD_INNER_WIDTH,
 		"passport stamp"],
-	# COLUMN_WIDTH 292, font 18, ~8 px Button padding, less the "   3/3" rank
-	# counter composed onto every node name (~48 px at this size).
-	["Quick Recovery", 18, 232.0, "skill node name"],
-	["Second Wind", 18, 232.0, "skill node name"],
-	["Fleet Foot", 18, 232.0, "skill node name"],
-	["Long Gale", 18, 232.0, "skill node name"],
-	["Updraft", 18, 232.0, "skill node name"],
-	["Long Step", 18, 232.0, "skill node name"],
-	["Phase Echo", 18, 232.0, "skill node name"],
-	["Held Form", 18, 232.0, "skill node name"],
-	["Scurry", 18, 232.0, "skill node name"],
-	["Lingering Reek", 18, 232.0, "skill node name"],
-	["Billowing Cloud", 18, 232.0, "skill node name"],
+	# skill_tree_ui.gd — every budget DERIVED, never retyped (bead
+	# godot-test1-1m3x): node names against the column less the button's text
+	# reserve, headings against the column itself. The second-skill names ride
+	# both faces — a node button AND a branch heading — so both rows name them.
+	["Quick Recovery", 18, SkillTreeUi.COLUMN_WIDTH - SkillTreeUi.NODE_TEXT_RESERVE, "skill node name"],
+	["Second Wind", 18, SkillTreeUi.COLUMN_WIDTH - SkillTreeUi.NODE_TEXT_RESERVE, "skill node name"],
+	["Fleet Foot", 18, SkillTreeUi.COLUMN_WIDTH - SkillTreeUi.NODE_TEXT_RESERVE, "skill node name"],
+	["Long Gale", 18, SkillTreeUi.COLUMN_WIDTH - SkillTreeUi.NODE_TEXT_RESERVE, "skill node name"],
+	["Updraft", 18, SkillTreeUi.COLUMN_WIDTH - SkillTreeUi.NODE_TEXT_RESERVE, "skill node name"],
+	["Long Step", 18, SkillTreeUi.COLUMN_WIDTH - SkillTreeUi.NODE_TEXT_RESERVE, "skill node name"],
+	["Phase Echo", 18, SkillTreeUi.COLUMN_WIDTH - SkillTreeUi.NODE_TEXT_RESERVE, "skill node name"],
+	["Held Form", 18, SkillTreeUi.COLUMN_WIDTH - SkillTreeUi.NODE_TEXT_RESERVE, "skill node name"],
+	["Scurry", 18, SkillTreeUi.COLUMN_WIDTH - SkillTreeUi.NODE_TEXT_RESERVE, "skill node name"],
+	["Lingering Reek", 18, SkillTreeUi.COLUMN_WIDTH - SkillTreeUi.NODE_TEXT_RESERVE, "skill node name"],
+	["Billowing Cloud", 18, SkillTreeUi.COLUMN_WIDTH - SkillTreeUi.NODE_TEXT_RESERVE, "skill node name"],
 	# The active/exotic nodes (bead godot-test1-20z.4) share the same column.
-	["Adrenaline", 18, 232.0, "skill node name"],
-	["Feather Fall", 18, 232.0, "skill node name"],
-	["Crush Quake", 18, 232.0, "skill node name"],
+	["Adrenaline", 18, SkillTreeUi.COLUMN_WIDTH - SkillTreeUi.NODE_TEXT_RESERVE, "skill node name"],
+	["Feather Fall", 18, SkillTreeUi.COLUMN_WIDTH - SkillTreeUi.NODE_TEXT_RESERVE, "skill node name"],
+	["Crush Quake", 18, SkillTreeUi.COLUMN_WIDTH - SkillTreeUi.NODE_TEXT_RESERVE, "skill node name"],
+	["Air Sight", 18, SkillTreeUi.COLUMN_WIDTH - SkillTreeUi.NODE_TEXT_RESERVE, "skill node name"],
+	["Twin Flash", 18, SkillTreeUi.COLUMN_WIDTH - SkillTreeUi.NODE_TEXT_RESERVE, "skill node name"],
 	# Branch headings are plain Labels the full width of their column.
-	["Focus", 16, 292.0, "skill branch heading"],
-	["Air Rush", 16, 292.0, "skill branch heading"],
-	["Phase Step", 16, 292.0, "skill branch heading"],
-	["Resize", 16, 292.0, "skill branch heading"],
-	["Stink Wave", 16, 292.0, "skill branch heading"],
+	["Focus", 16, SkillTreeUi.COLUMN_WIDTH, "skill branch heading"],
+	["Air Rush", 16, SkillTreeUi.COLUMN_WIDTH, "skill branch heading"],
+	["Phase Step", 16, SkillTreeUi.COLUMN_WIDTH, "skill branch heading"],
+	["Resize", 16, SkillTreeUi.COLUMN_WIDTH, "skill branch heading"],
+	["Stink Wave", 16, SkillTreeUi.COLUMN_WIDTH, "skill branch heading"],
+	["Air Sight", 16, SkillTreeUi.COLUMN_WIDTH, "skill branch heading"],
+	["Twin Flash", 16, SkillTreeUi.COLUMN_WIDTH, "skill branch heading"],
 	# ability_hud.gd — the dial name under the dial, name_size 18, centred
 	# across the AbilityHUD control's own 160 px width (main.tscn
 	# offsets -176 / -16), no clip — so the control width IS the budget.
@@ -326,9 +337,8 @@ const WIDTH_BUDGETS: Array = [
 	["Phase Step", 18, 160.0, "ability dial name"],
 	["Resize", 18, 160.0, "ability dial name"],
 	["Stink Wave", 18, 160.0, "ability dial name"],
-	# The card title is one non-wrapping line across CARD_WIDTH 640 less the
-	# 18 px content margin each side and the ScrollContainer's own 36 px.
-	["%s — Level %d,  %d points", 22, 604.0, "skill tree card title"],
+	# The card title is one non-wrapping line across the card less its inset.
+	["%s — Level %d,  %d points", 22, SkillTreeUi.CARD_WIDTH - SkillTreeUi.CARD_INSET, "skill tree card title"],
 	# minimap_hud.gd — the caption fragments (bead godot-test1-kox and godot-test1-8gw.13).
 	# They are drawn under the disc, centred across the widget's own 202 px (MAP_CENTER.x * 2)
 	# at TEXT_SIZE 15 (and BUDAPEST_TEXT_SIZE 13 for the third line) and do NOT clip.
