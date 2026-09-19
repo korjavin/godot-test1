@@ -93,6 +93,7 @@ func _run() -> void:
 	await _check_guards_reset_on_re_entry()
 	await _check_the_leash_holds_under_a_chase()
 	await _check_the_lure_diverts_a_guard()
+	await _check_a_kimchi_jar_routes_a_guard()
 	_report()
 
 
@@ -1211,6 +1212,161 @@ func _check_the_lure_diverts_a_guard() -> void:
 	await TowerProbe.clear(self, hero, shell)
 	_check_every_plate_has_a_way_to_it()
 	Sentinel.done("the_lure_diverts_a_guard")
+
+
+# ============================================================================
+# 22. A KIMCHI JAR INDOORS IS ROUTED BY THE BUILDING, AND NEVER SCATTERS A GUARD
+# ============================================================================
+
+## The shortest routed errand check 22 will accept, in WAYPOINTS. Two corners is
+## what tells a planned route apart from a straight line: `investigate_point()`
+## given an EMPTY route stores exactly one waypoint (the destination), so a jar
+## that had stopped asking the building would leave a path of size 1 here and
+## every other reading in the check would still be green.
+const KIMCHI_ROUTE_MIN: int = 2
+
+
+func _check_a_kimchi_jar_routes_a_guard() -> void:
+	"""
+	Check 22 (bead godot-test1-0mr0.5). PHOBOMAN'S KIMCHI JAR REACHES THE HQ'S
+	GUARDS — owner ruling 5, "yes, attract all": a guard is `stink_immune`
+	"fearless furniture" and the kimchi gets it anyway. But the building routes
+	it, and it never runs.
+
+	  (a) a REAL jar dropped on a guard's storey puts that guard on an errand,
+	      and the errand's path is the PLAN'S, corner for corner — not a straight
+	      line through two walls. This is the claim that catches a jar which
+	      stopped calling `TowerInterior.lure_guard_to()` and fell through to its
+	      own outdoor group loop: that path would be one waypoint long and the
+	      guard would walk into a wall until the stall watchdog took it home;
+	  (b) the jar's own burst does NOT scatter the guard and does NOT end its
+	      errand — `stink_immune` is what makes the HQ's stealth layer survive an
+	      ability, and the guard is still standing over the pot afterwards;
+	  (c) a jar OUTSIDE the walls is refused by `lure_guard_to()`, so the seam
+	      cannot be used to reach into the building from the field.
+
+	THE STOREY AND THE SPOT ARE A QUESTION FOR THE PLANS, never numbers written
+	here (check 21's rule): the search below takes the storey/plate pair whose
+	planned route is LONGEST, and fails out loud if the whole building cannot
+	offer one at least `KIMCHI_ROUTE_MIN` waypoints long — because at one
+	waypoint claim (a) stops being able to fail.
+	"""
+	var shell := await TowerProbe.make_tower(self)
+	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
+	if interior == null:
+		_fail("no interior in the tower — check 22 has nothing to drop a jar in")
+		await TowerProbe.clear(self, null, shell)
+		Sentinel.done("a_kimchi_jar_routes_a_guard")
+		return
+
+	# THE LONGEST PLANNED WALK IN THE BUILDING, from a guard's post to a plate on
+	# its own storey. Plates are used as jar sites only because they are points the
+	# plan guarantees are route-open and reachable — the jar is not a plate and
+	# presses nothing.
+	var floor_index := -1
+	var spot := Vector3.ZERO
+	var best := 0
+	for candidate: int in TowerPlans.floors():
+		var post: Dictionary = TowerInterior._plan_guard_post(candidate)
+		if post.is_empty():
+			continue
+		var cells := TowerInterior.pad_cells(TowerPlans.storey(candidate))
+		for i: int in cells.size():
+			var target: Vector3 = TowerInterior.pad_point(candidate, i)
+			var route := TowerInterior.plan_route(candidate,
+					post["post"] as Vector3, target)
+			if route.size() > best:
+				best = route.size()
+				floor_index = candidate
+				spot = target
+	if floor_index < 0 or best < KIMCHI_ROUTE_MIN:
+		_fail("the longest planned guard walk in the building is %d waypoints —"
+				% best + " under %d claim (a) cannot tell a routed errand from a"
+				% KIMCHI_ROUTE_MIN + " straight line, so check 22 would pass vacuously")
+		await TowerProbe.clear(self, null, shell)
+		Sentinel.done("a_kimchi_jar_routes_a_guard")
+		return
+
+	interior.reset_guards()
+	await process_frame
+	for _i in 30:
+		await physics_frame
+	var guard: Node3D = interior.call("_guard_on", floor_index) as Node3D
+	if guard == null:
+		_fail("storey %d draws a `G` but the building stood no guard on it" % floor_index)
+		await TowerProbe.clear(self, null, shell)
+		Sentinel.done("a_kimchi_jar_routes_a_guard")
+		return
+	if not bool(guard.get("spec").get("stink_immune", false)):
+		_fail("the storey's guard carries no stink_immune — claim (b) would be"
+				+ " measuring a guard that flinches, and the stealth ruling with it")
+
+	# ---- (c) A JAR IN THE FIELD IS NOT THIS BUILDING'S BUSINESS ---------------
+	# Measured FIRST, while the guard is definitely free: a refusal read after a
+	# successful lure could be the busy-body rule answering instead of the
+	# envelope, and the two failures look identical.
+	var outside: Vector3 = interior.global_position \
+			+ Vector3(TowerPlans.PLAN_HALF * 4.0, 0.0, 0.0)
+	if interior.lure_guard_to(outside, KimchiJar.LURE_HOLD):
+		_fail("a jar %.0f m outside the walls lured a guard — the seam would be a"
+				% (TowerPlans.PLAN_HALF * 4.0) + " way to reach into the building"
+				+ " from the field")
+	if bool(guard.get("is_investigating")):
+		_fail("the outdoor jar put the guard on an errand anyway")
+
+	# ---- (a) THE REAL JAR, DROPPED THROUGH ITS OWN FACTORY --------------------
+	# `KimchiJar.drop()` and not `lure_guard_to()` directly, because the branch
+	# under test is the jar's: it has to ASK the shell whether it is under a roof
+	# and then hand the whole indoor case to the building.
+	var jar: KimchiJar = KimchiJar.drop(root, interior.global_position + spot)
+	if jar == null:
+		_fail("KimchiJar.drop() built no jar — check 22 has nothing to route")
+		await TowerProbe.clear(self, null, shell)
+		Sentinel.done("a_kimchi_jar_routes_a_guard")
+		return
+	if not bool(guard.get("is_investigating")):
+		_fail("a jar on storey %d's floor lured nobody — the owner's ruling is that"
+				% floor_index + " the kimchi reaches the guards too")
+	var path: Array = guard.get("_investigate_path")
+	if path.size() < KIMCHI_ROUTE_MIN:
+		_fail("the guard's errand is %d waypoint(s) long — the plan offers a %d-corner"
+				% [path.size(), best] + " route to that spot, so the jar is sending it"
+				+ " STRAIGHT THERE, through whatever walls are in the way")
+	# ...and the corners are the PLAN'S, point for point. Size alone would pass a
+	# jar that invented its own waypoints.
+	var want := TowerInterior.plan_route(floor_index,
+			guard.global_position - interior.global_position, spot)
+	if path.size() == want.size():
+		for i: int in want.size():
+			if (path[i] as Vector3).distance_to(interior.global_position + want[i]) > 0.01:
+				_fail("errand waypoint %d is %s; the plan's corner is %s"
+						% [i, str(path[i]), str(interior.global_position + want[i])])
+				break
+	var aim: Vector3 = guard.get("investigate_target")
+	if aim.distance_to(path[0]) > 0.01:
+		_fail("the guard is walking at %s, which is not its own first corner %s"
+				% [str(aim), str(path[0])])
+
+	# ---- (b) THE BURST LEAVES IT STANDING -------------------------------------
+	jar._process(KimchiJar.FERMENT)
+	if bool(guard.get("is_fleeing")):
+		_fail("the guard fled the kimchi burst — stink_immune is the 'fearless"
+				+ " furniture' key, and a scatter turns the stealth building into"
+				+ " 'press G past the patrol'")
+	if not bool(guard.get("is_investigating")):
+		_fail("the burst ended the guard's errand — it never fled, so the one-line"
+				+ " fix in flee_from() must not have reached it")
+	if not is_instance_valid(guard):
+		_fail("the jar freed the guard — it lures and scatters, never kills")
+
+	print("kimchi indoors: storey %d's guard walks the plan's %d corners to the jar"
+			% [floor_index, path.size()]
+			+ " and is still standing over it after the burst; a jar in the field"
+			+ " is refused")
+	if is_instance_valid(jar):
+		jar.queue_free()
+	await TowerProbe.clear(self, null, shell)
+	Sentinel.done("a_kimchi_jar_routes_a_guard")
 
 
 func _check_every_plate_has_a_way_to_it() -> void:

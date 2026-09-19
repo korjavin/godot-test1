@@ -97,6 +97,9 @@ func _run_checks() -> String:
 	failure = _check_shr_parser()
 	if not failure.is_empty():
 		return failure
+	failure = _check_bait_parser()
+	if not failure.is_empty():
+		return failure
 	return _check_ability_visual_state()
 
 
@@ -1268,6 +1271,85 @@ func _check_shr_parser() -> String:
 # =============================================================================
 # 24. THE ABILITY STATE A WATCHER SEES (bead godot-test1-69p)
 # =============================================================================
+
+func _check_bait_parser() -> String:
+	"""
+	The `bait` verb's two pure halves (bead godot-test1-0mr0.5), `_check_pad_parser`'s
+	shape one verb along.
+
+	This verb carries a WORLD POINT rather than an index, so there is no authored
+	plan between the packet and the world: the parser's envelope and the sender-
+	reach test are the whole of its safety. The honest cases are asserted FIRST, or
+	a parser that dropped everything would pass every rejection below — and one of
+	them is load-bearing in a way `pad`'s is not: a jar placed at exactly z = 0 is
+	written by `var_to_bytes` as an INT, so a strict-float test would drop honest
+	packets on some presses and not on others, which is the kind of bug that never
+	reproduces.
+	"""
+	var good: Dictionary = MpCodec.decode_bait({"t": "bait", "x": 12.5, "y": 0.0, "z": -7.25})
+	if (good.get("at", Vector3.INF) as Vector3) != Vector3(12.5, 0.0, -7.25):
+		return "decode_bait dropped an honest jar (%s)" % str(good)
+	# THE INT CASE, and it is not a formality: `var_to_bytes` writes 0.0 as an INT.
+	var whole: Dictionary = MpCodec.decode_bait({"t": "bait", "x": 0, "y": 0, "z": 0})
+	if (whole.get("at", Vector3.INF) as Vector3) != Vector3.ZERO:
+		return "decode_bait dropped a jar at the origin — whole-numbered coordinates"\
+			+ " cross the wire as INTs and a strict-float test loses them"
+
+	var nan_value: float = sqrt(-1.0)
+	var hostile: Array[Dictionary] = [
+		{"t": "bait", "y": 0.0, "z": 0.0},                     # no x
+		{"t": "bait", "x": 0.0, "z": 0.0},                     # no y
+		{"t": "bait", "x": 0.0, "y": 0.0},                     # no z
+		{"t": "bait", "x": "3", "y": 0.0, "z": 0.0},           # x is a string
+		{"t": "bait", "x": [3.0], "y": 0.0, "z": 0.0},         # ...or an array
+		{"t": "bait", "x": true, "y": 0.0, "z": 0.0},          # ...or a bool
+		{"t": "bait", "x": nan_value, "y": 0.0, "z": 0.0},     # NaN
+		{"t": "bait", "x": 0.0, "y": INF, "z": 0.0},           # infinite
+		{"t": "bait", "x": 0.0, "y": 0.0, "z": -INF},
+		# ...and outside the world, which is what `receive_flee` bounds its own
+		# origin with: a jar at 1e30 is not a place.
+		{"t": "bait", "x": MpCodec.MAX_PRESENCE_COORD * 10.0, "y": 0.0, "z": 0.0},
+		{"t": "bait", "x": 0.0, "y": 0.0, "z": -MpCodec.MAX_PRESENCE_COORD * 10.0},
+	]
+	for packet: Dictionary in hostile:
+		if not MpCodec.decode_bait(packet).is_empty():
+			return "decode_bait accepted the hostile packet %s" % str(packet)
+
+	# ...and the second half: a jar is only a jar if the sender was standing near
+	# where it landed. The honest distance is KIMCHI_PLACE_AHEAD (3 m) plus a
+	# presence lag, so "anywhere in the world" must NOT pass — that is the whole
+	# attack this half exists to stop.
+	var stood := Vector3(400.0, 0.0, -120.0)
+	if not MpCodec.bait_place_in_reach(stood, stood + Vector3(0.0, 0.0, 3.0)):
+		return "bait_place_in_reach refused a jar 3 m from the sender, which is"\
+			+ " exactly where PlayerAbilities.KIMCHI_PLACE_AHEAD puts one"
+	# ...and the bound is read off the const rather than re-typed, so a retune
+	# moves the probes with it instead of leaving them measuring the old number.
+	var just_in: float = MpCodec.MAX_BAIT_PLACE_DISTANCE - 1.0
+	var well_out: float = MpCodec.MAX_BAIT_PLACE_DISTANCE * 4.0
+	if not MpCodec.bait_place_in_reach(stood, stood + Vector3(just_in, 0.0, 0.0)):
+		return "bait_place_in_reach refused a jar %.1f m out, inside its own %.1f m"\
+			% [just_in, MpCodec.MAX_BAIT_PLACE_DISTANCE] + " bound"
+	if MpCodec.bait_place_in_reach(stood, stood + Vector3(well_out, 0.0, 0.0)):
+		return "bait_place_in_reach accepted a jar %.1f m from the sender — a"\
+			% well_out + " modified client could scatter a pack it cannot see"
+	if MpCodec.bait_place_in_reach(Vector3.INF, stood):
+		return "bait_place_in_reach accepted a sender at Vector3.INF — a caller"\
+			+ " with no position must read as 'cannot tell', never as a distance"
+	if MpCodec.bait_place_in_reach(stood, Vector3.INF):
+		return "bait_place_in_reach accepted a jar at Vector3.INF"
+	# THE BOUND IS LOOSER THAN THE PLATE'S AND TIGHTER THAN THE JAR'S OWN LURE —
+	# both halves stated, because a bound that drifted past the lure radius would
+	# stop being a bound at all (a spoofed jar could reach bodies the sender could
+	# not) and one that fell to the plate's 6 m would drop honest jars placed by a
+	# sprinting hero whose presence packet is one tick behind.
+	if MpCodec.MAX_BAIT_PLACE_DISTANCE <= MpCodec.MAX_PAD_PRESS_DISTANCE:
+		return "the bait bound (%.1f m) is no looser than the pad's (%.1f m) —"\
+			% [MpCodec.MAX_BAIT_PLACE_DISTANCE, MpCodec.MAX_PAD_PRESS_DISTANCE]\
+			+ " a jar is placed 3 m ahead of a moving hero, a plate is stood on"
+	Sentinel.done("bait_parser")
+	return ""
+
 
 func _check_ability_visual_state() -> String:
 	"""
