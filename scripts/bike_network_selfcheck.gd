@@ -33,8 +33,10 @@ extends SceneTree
 ##   3. REACHABILITY — the owner's requirement, asserted rather than hoped. Over a
 ##      16-seed sweep the GATE anchor is reachable from the HQ anchor over
 ##      `edges()` in EVERY world. Prints the worst-case hop count and the longest
-##      edge. Its control is that the walk really walks: a hop count of zero would
-##      mean the two anchors were the same row.
+##      edge, and ASSERTS both against `TRUNK_REPAIR_MAX_EDGE` rather than only
+##      printing them — the span half of the far-field ruling, which check 4's
+##      endpoint test does not cover. Its controls are that the walk really walked
+##      and that an edge length was really read.
 ##   4. WELL-FORMEDNESS, AND THE NUMBERS THE OWNER RETUNES AGAINST. No self-loop,
 ##      no duplicate unordered pair, every index in range, every dispatched degree
 ##      an entry of `TRUNK_DEGREES`, and — the amendment's acceptance addition —
@@ -47,8 +49,8 @@ extends SceneTree
 ##      compared against what `anchors()` put in the table. This is the assertion
 ##      that a self-consistent wrong graph cannot pass: checks 1-4 all compare the
 ##      table to itself or to a copy of itself, and would be just as green if every
-##      anchor were at the origin. Its control is a deliberate perturbation, which
-##      must be caught.
+##      anchor were at the origin. Its control asks the same comparator whether the
+##      gate stands where `tower_site()` puts the HQ, and it must say no.
 ##
 ## MULTIMESH INSTANCE DATA IS WRITE-ONLY UNDER THE HEADLESS DUMMY RENDERER
 ## (measured at bead `godot-test1-z2yv.2`: `get_instance_color()` returns opaque
@@ -333,8 +335,8 @@ func _check_reachability(terrain_script: GDScript) -> void:
 	"""
 	var worst_hops: int = 0
 	var longest: float = 0.0
-	var trivial: int = 0
 	var walked: int = 0
+	var over_cap: Array[String] = []
 
 	for run_seed: int in SEEDS:
 		var terrain: Node3D = _terrain(terrain_script, run_seed)
@@ -347,8 +349,6 @@ func _check_reachability(terrain_script: GDScript) -> void:
 					% [run_seed, "HQ" if hq < 0 else "GATE"])
 			terrain.free()
 			continue
-		if hq == gate:
-			trivial += 1
 
 		var hops: Dictionary = _hop_counts(edges, hq)
 		if not hops.has(gate):
@@ -363,25 +363,55 @@ func _check_reachability(terrain_script: GDScript) -> void:
 		for row: Dictionary in edges:
 			var pa: Vector2 = rows[int(row["a"])]["pos"]
 			var pb: Vector2 = rows[int(row["b"])]["pos"]
-			longest = maxf(longest, pa.distance_to(pb))
+			var span: float = pa.distance_to(pb)
+			longest = maxf(longest, span)
+			# THE SPAN HALF OF THE CORRIDOR RULING, and it was missing until round 1 of
+			# the review found that deleting `best <= TRUNK_REPAIR_MAX_EDGE` from
+			# `edges()` left the whole suite green. Check 4 asserts no edge ENDS outside
+			# k = 1; without this, nothing stopped one CROSSING kilometres of empty
+			# world between two corridor anchors, which is the bare paint in the far
+			# field the owner ruled against. `TRUNK_REPAIR_MAX_EDGE` and not
+			# `TRUNK_MAX_EDGE`, because from out here a pass-1 edge and a repair edge
+			# are indistinguishable and the looser cap is the one that binds both.
+			# ITS HONEST STATUS, MEASURED: on the shipped sweep the longest trunk is
+			# 1527 m against a 1600 m cap, so this assertion HAS NOT FIRED and deleting
+			# the cap from `edges()` leaves it green HERE — the repair simply never
+			# wants a longer edge in these 16 worlds. It is a guard with 73 m of
+			# headroom, not a demonstrated catch, and the margin is printed below so a
+			# retune that closes it is visible. It is kept because the failure it
+			# guards is real on an unseen seed and free to check; the claim is the
+			# guard, not the coverage.
+			if span > BikeNetwork.TRUNK_REPAIR_MAX_EDGE:
+				over_cap.append("seed %d edge %d '%s'->'%s' %.0f m"
+						% [run_seed, int(row["id"]), rows[int(row["a"])]["id"],
+								rows[int(row["b"])]["id"], span])
 		terrain.free()
 
+	for line: String in over_cap:
+		_fail("a trunk is longer than TRUNK_REPAIR_MAX_EDGE (%.0f m): %s. Both caps are "
+				% [BikeNetwork.TRUNK_REPAIR_MAX_EDGE, line] + "load-bearing for the "
+				+ "owner's far-field ruling — a component that cannot reach the gate "
+				+ "inside the cap is DROPPED WHOLE rather than joined across the empty "
+				+ "field")
 	if walked == 0:
 		_fail("check 3 never once walked from the HQ to the gate across %d seeds, so its "
 				% SEEDS.size() + "assertion never ran")
-	if trivial > 0:
-		_fail("check 3 found the HQ and the GATE at the SAME anchor index in %d of %d "
-				% [trivial, SEEDS.size()] + "worlds — 'reachable' is trivially true there "
-				+ "and the check proves nothing")
+	if longest <= 0.0:
+		_fail("check 3 measured a longest trunk of %.0f m over %d seeds — it never read "
+				% [longest, SEEDS.size()] + "an edge's length at all, so the cap assertion "
+				+ "above ran on nothing")
 	if worst_hops <= 0:
 		_fail("check 3's worst-case HQ-to-gate hop count came out %d over %d seeds — a "
 				% [worst_hops, SEEDS.size()] + "walk of no hops is not a walk, so the "
 				+ "graph search is not searching")
 	print("bike network check 3: the gate is reachable from the HQ in all %d worlds; "
-			% SEEDS.size() + "worst-case %d hops, longest single trunk %.0f m (cap %.0f m "
-			% [worst_hops, longest, BikeNetwork.TRUNK_MAX_EDGE]
-			+ "on the nearest-neighbour pass, %.0f m on the connectivity repair)"
-			% BikeNetwork.TRUNK_REPAIR_MAX_EDGE)
+			% SEEDS.size() + "worst-case %d hops, longest single trunk %.0f m against the "
+			% [worst_hops, longest] + "%.0f m repair cap (%.0f m of headroom; the "
+			% [BikeNetwork.TRUNK_REPAIR_MAX_EDGE, BikeNetwork.TRUNK_REPAIR_MAX_EDGE - longest]
+			+ "nearest-neighbour pass caps at %.0f m). A seed that closed that margin "
+			% BikeNetwork.TRUNK_MAX_EDGE + "would have a component DROPPED rather than "
+			+ "joined, which is the intended degrade and which this check would catch "
+			+ "only if it disconnected the HQ from the gate.")
 	Sentinel.done("reachability")
 
 
@@ -401,20 +431,35 @@ func _check_well_formed(terrain_script: GDScript) -> void:
 	"""
 	var histogram: Array[int] = []
 	var trunkable_counts: Array[int] = []
-	var total_anchors: int = 0
+	var anchor_counts: Array[int] = []
 	var refused_landmarks: int = 0
+	var refused_per_seed: Array[String] = []
 	var refused_others: Array[String] = []
-	var worst_landmark_k: float = 1.0
+	var worst_landmark_k: float = INF
 	var degrees_seen: int = 0
 	var edges_seen: int = 0
+	## THE DISPATCH, per seed, as a string of digits — check 4's two new assertions
+	## (see the non-vacuity block). One entry per seed, so they can be compared.
+	var degree_words: Array[String] = []
 
 	for run_seed: int in SEEDS:
 		var terrain: Node3D = _terrain(terrain_script, run_seed)
 		var rows: Array[Dictionary] = BikeNetwork.anchors(terrain)
 		var edges: Array[Dictionary] = BikeNetwork.edges(terrain)
-		total_anchors = maxi(total_anchors, rows.size())
+		# PER SEED AND NOT A MAXIMUM. The fixed head of the table (HQ, waypoints,
+		# gate) is constant by construction, but a landmark kind whose every attempt
+		# was rejected has no site that run — `terrain_landmarks.gd`'s honest degrade
+		# — so the count really can move, and a `maxi` here would print the best world
+		# as if it were every world and hide a future change that started losing
+		# monuments. (Round 1 of the review.)
+		anchor_counts.append(rows.size())
 
 		var trunkable: int = 0
+		# RULING 3 asks for the refusals PER SEED and split by how far below 1.0 they
+		# fell, so they are banded here rather than only totalled.
+		var refused_here: int = 0
+		var bands: Array[int] = [0, 0, 0]  # k >= 0.95, 0.75-0.95, < 0.75
+		var degree_word: String = ""
 		var ids: Dictionary = {}
 		for i: int in rows.size():
 			# IDS ARE UNIQUE, and this assertion exists because check 5 caught the
@@ -443,7 +488,9 @@ func _check_well_formed(terrain_script: GDScript) -> void:
 				trunkable += 1
 			elif int(rows[i]["kind"]) == BikeNetwork.KIND_LANDMARK:
 				refused_landmarks += 1
+				refused_here += 1
 				worst_landmark_k = minf(worst_landmark_k, k)
+				bands[0 if k >= 0.95 else (1 if k >= 0.75 else 2)] += 1
 			else:
 				# A REFUSED NON-LANDMARK IS THE FINDING, not the design. The bead
 				# expected the HQ, the waypoints and the gate to be inside the union by
@@ -452,6 +499,15 @@ func _check_well_formed(terrain_script: GDScript) -> void:
 						% [run_seed, rows[i]["id"], k, pos.x, pos.y])
 			# THE DISPATCH ITSELF, asked of the shipped function: a degree outside the
 			# table means the fold is out of range and some anchor silently took none.
+			# THE WORD IS BUILT OVER EVERY ANCHOR INDEX, trunkable or not, and that is
+			# the whole reason the seed-dependence assertion below has any teeth. The
+			# first version built it over the TRUNKABLE anchors only, and a `_degree()`
+			# with `run_seed` deleted still produced a different word per seed — because
+			# WHICH anchors are trunkable moves with the seed, so the word changed for a
+			# reason that had nothing to do with the dispatch. Indexed over the whole
+			# table the word is directly comparable, and dropping the seed makes it
+			# identical in every world. (Found by mutating this file's own new check.)
+			degree_word += str(BikeNetwork._degree(terrain, i))
 			if expected:
 				var deg: int = BikeNetwork._degree(terrain, i)
 				degrees_seen += 1
@@ -493,6 +549,9 @@ func _check_well_formed(terrain_script: GDScript) -> void:
 
 		histogram.append(edges.size())
 		trunkable_counts.append(trunkable)
+		degree_words.append(degree_word)
+		refused_per_seed.append("seed %d: %d refused (%d at k>=0.95, %d at 0.75-0.95, "
+				% [run_seed, refused_here, bands[0], bands[1]] + "%d below 0.75)" % bands[2])
 		terrain.free()
 
 	# --- NON-VACUITY. Every "we found N of these" fails on N == 0.
@@ -502,21 +561,59 @@ func _check_well_formed(terrain_script: GDScript) -> void:
 	if degrees_seen == 0:
 		_fail("check 4 never evaluated `_degree()` on a single anchor, so the dispatch "
 				+ "range assertion never ran")
-	if total_anchors == 0:
+	if anchor_counts.is_empty():
 		_fail("check 4 found no anchors in any world")
+
+	# --- THE DISPATCH IS A KNOB, AND THESE TWO ASSERT IT IS ONE. Round 1 of the
+	# review measured that `TRUNK_DEGREES = [1,1,1,1,1,1]` and dropping `run_seed`
+	# out of `_degree()`'s hash BOTH left the whole suite green: check 2's re-seed
+	# half passes on the anchor POSITIONS moving, and nothing looked at the degrees
+	# themselves. So the constant the banner calls "THE DENSITY KNOB" and the
+	# seed-dependence of the fold were the two unasserted things in the file.
+	var distinct: Dictionary = {}
+	for word: String in degree_words:
+		for c: String in word:
+			distinct[c] = true
+	if distinct.size() < 2:
+		_fail("every anchor in every one of the %d worlds dispatched the SAME degree "
+				% SEEDS.size() + "(%s). TRUNK_DEGREES %s is meant to be a mix, and a "
+				% [str(distinct.keys()), str(BikeNetwork.TRUNK_DEGREES)]
+				+ "single-valued table collapses the network toward a chain that the "
+				+ "repair pass then quietly rebuilds — reachability would still pass")
+	var seed_varied: bool = false
+	for i: int in range(1, degree_words.size()):
+		# Compared over the SHARED PREFIX: the trunkable count differs between seeds,
+		# so two words of different length would differ for the wrong reason.
+		var n: int = mini(degree_words[i].length(), degree_words[0].length())
+		if n > 0 and degree_words[i].substr(0, n) != degree_words[0].substr(0, n):
+			seed_varied = true
+			break
+	if not seed_varied and degree_words.size() > 1:
+		_fail("the degree dispatch is IDENTICAL across all %d seeds, so `_degree()` is "
+				% SEEDS.size() + "not reading `run_seed` at all — every world would get "
+				+ "the same trunk pattern laid over a different set of anchors")
 
 	histogram.sort()
 	trunkable_counts.sort()
+	anchor_counts.sort()
+	var anchor_span: String = str(anchor_counts[0]) if anchor_counts[0] == anchor_counts[-1] \
+			else "%d-%d" % [anchor_counts[0], anchor_counts[-1]]
 	print("bike network check 4 — THE DENSITY KNOB (owner ruling: MEDIUM). Over %d "
-			% SEEDS.size() + "seeds: %d anchors per world, %d-%d of them trunkable; "
-			% [total_anchors, trunkable_counts[0], trunkable_counts[-1]]
+			% SEEDS.size() + "seeds: %s anchors per world, %d-%d of them trunkable; "
+			% [anchor_span, trunkable_counts[0], trunkable_counts[-1]]
 			+ "edge count %d-%d, median %d. Retune TRUNK_DEGREES %s against these."
 			% [histogram[0], histogram[-1], histogram[histogram.size() / 2],
 					str(BikeNetwork.TRUNK_DEGREES)])
-	print("bike network check 4 — REFUSED ANCHORS. %d landmark anchors refused across "
-			% refused_landmarks + "the sweep (worst k %.3f), which is the owner's stated "
-			% worst_landmark_k + "intent: a landmark reachable only by leaving the "
-			+ "corridor gets no trunk.")
+	if refused_landmarks == 0:
+		print("bike network check 4 — REFUSED ANCHORS. No landmark anchor was refused "
+				+ "anywhere in the sweep.")
+	else:
+		print("bike network check 4 — REFUSED LANDMARKS, per seed and banded by how far "
+				+ "below k = 1.0 they fell (%d over the sweep, worst k %.3f). A landmark "
+				% [refused_landmarks, worst_landmark_k] + "reachable only by leaving the "
+				+ "corridor gets no trunk, and that is the owner's stated intent:")
+		for line: String in refused_per_seed:
+			print("    ", line)
 	if refused_others.is_empty():
 		print("bike network check 4 — no non-landmark anchor was refused.")
 	else:
@@ -555,8 +652,8 @@ func _check_world_tie(terrain_script: GDScript) -> void:
 	The re-derivation goes back to the FOUR SHIPPED SOURCES by the id the row
 	carries — `tower_site()`, `TerrainWaypoints.waypoint_sites()`,
 	`TerrainLandmarks.landmark_sites()`, `BudapestPlan.GATE` — and never to
-	`anchors()`. Its control is a deliberate one-metre perturbation, which the
-	comparator must catch.
+	`anchors()`. Its control runs that same comparator on two anchors that are
+	genuinely two kilometres apart and demands it says so.
 	"""
 	var checked: Dictionary = {}
 	var endpoints: int = 0
@@ -630,14 +727,36 @@ func _check_world_tie(terrain_script: GDScript) -> void:
 					% source + "so that source is untested — either no trunk ever ends "
 					+ "there (a finding in its own right) or the id matching is broken")
 
-	# --- THE CONTROL. A comparator that always agreed would make every assertion
-	# above vacuous, so it is shown here disagreeing with a point one metre off.
+	# --- THE CONTROL, and it drives the LIVE re-derivation rather than a constant.
+	#
+	# ROUND 1 OF THE REVIEW KILLED THE FIRST VERSION OF THIS, and the lesson is the
+	# file's own subject one level up. It read
+	# `real.distance_to(real + Vector2(1, 0)) <= POS_TOLERANCE` — which is `1.0 <=
+	# 0.001` for every possible `real`, so it built and freed a whole terrain to
+	# feed a value the arithmetic cancelled, and asserted nothing but
+	# `POS_TOLERANCE < 1.0`. It was a control shaped like a control: the exact
+	# failure this check exists to catch, committed inside the check itself.
+	#
+	# This one re-derives the HQ's position from `tower_site()` the way the loop
+	# above does, and asks the SAME comparator whether that is the gate's place. It
+	# must say no. A comparator that always agreed, a `truth` derivation that
+	# returned whatever it was handed, or a tolerance widened to kilometres all turn
+	# this red, and none of them turned the old one red.
 	var probe: Node3D = _terrain(terrain_script, SEEDS[0])
 	var probe_rows: Array[Dictionary] = BikeNetwork.anchors(probe)
-	var real: Vector2 = probe_rows[0]["pos"]
-	if real.distance_to(real + Vector2(1.0, 0.0)) <= POS_TOLERANCE:
-		_fail("check 5's position comparator accepts a point a whole metre away as the "
-				+ "same place, so every tie above was vacuous")
+	var probe_tower: Vector3 = probe.tower_site()
+	var hq_truth := Vector2(probe_tower.x, probe_tower.z)
+	var gate_index: int = _index_of_kind(probe_rows, BikeNetwork.KIND_GATE)
+	if gate_index < 0:
+		_fail("check 5's control could not find the GATE anchor, so it never ran")
+	else:
+		var gate_pos: Vector2 = probe_rows[gate_index]["pos"]
+		if gate_pos.distance_to(hq_truth) <= POS_TOLERANCE:
+			_fail("check 5's comparator says the GATE anchor at (%.1f, %.1f) stands where "
+					% [gate_pos.x, gate_pos.y] + "tower_site() puts the HQ, (%.1f, %.1f). "
+					% [hq_truth.x, hq_truth.y] + "Those are %.0f m apart, so the comparator "
+					% gate_pos.distance_to(hq_truth) + "cannot tell two anchors apart and "
+					+ "every world tie above passed for free")
 	probe.free()
 	print("bike network check 5: %d edge endpoints re-derived from the shipped anchor "
 			% endpoints + "sources — %s" % str(checked))

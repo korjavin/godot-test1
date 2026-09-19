@@ -49,15 +49,37 @@ extends RefCounted
 ##
 ## And the edge set is a **HASH DISPATCH, NEVER A ROLL** — CLAUDE.md, *"dispatch
 ## (which species, which box kind, which boss) costs no draw"*. `_degree()` folds
-## one `hash(Vector3i(...))` into `TRUNK_DEGREES`; an `rng.randi()` there instead
-## would take a draw and slide every crocodile in the world. The trunk tier is
-## therefore strictly CHEAPER than the spur tier it will join: the spurs at least
-## roll their rarity, and this rolls nothing at all.
+## one `hash(Vector3i(...))` into `TRUNK_DEGREES`. The trunk tier is therefore
+## strictly CHEAPER than the spur tier it will join: the spurs at least roll their
+## rarity, and this rolls nothing at all — which is what makes the density knob
+## below free to retune.
 ##
-## `bike_network_selfcheck` check 1 is that statement measured rather than
-## promised: a field of chunks built through the shipped `create_chunk`, once
-## normally and once with `anchors()` and `edges()` asked for first, node for node
-## and MultiMesh entry for MultiMesh entry.
+## ### WHAT ACTUALLY PROTECTS THE STREAMS HERE, STATED HONESTLY
+## The usual framing — *"an `rng.randi()` in this file would slide every crocodile
+## in the world"* — is **not true of this file**, and writing it down as if it were
+## would point the next author's attention at the wrong risk (round 1 of the
+## review measured this; the earlier draft of this banner said it).
+##
+## Every RNG in the world engine is FUNCTION-LOCAL and re-derived per chunk:
+## `spawn_objects_in_chunk` builds `RandomNumberGenerator.new()` seeded on
+## `hash(Vector3i(chunk.x * 73856093, chunk.y * 19349663, run_seed))` and it dies
+## with the call; `terrain_biomes.gd` and `terrain_predators.gd` each do the same
+## on their own salt. The terrain node holds NO member RNG at all. So no function
+## here is handed a stream, and there is no stream a stray draw in this file could
+## advance. **The zero-draw property is structural, not measured** — and it is
+## worth saying which, because "we checked" and "it cannot happen" are different
+## guarantees and only one of them survives a refactor.
+##
+## THE RISK THAT IS REAL, AND THE ONE `bike_network_selfcheck` CHECK 1 MEASURES,
+## is the other half: `anchors()` calls the road station cache and the landmark
+## site table EARLIER, and in a different order, than a streaming world would, and
+## it holds live references to memos whose docstrings say "read-only to callers".
+## Warming a pure memo early must be a no-op, and writing to one is a world
+## changed under every spawner downstream. Check 1 is a field of chunks built
+## through the shipped `create_chunk` twice — once normally, once with `anchors()`
+## and `edges()` asked for first — node for node, bucket for bucket and collision
+## shape for collision shape. Its mutation control is exactly that: one line
+## writing into the shared landmark memo turns all three halves red.
 ##
 ## ----------------------------------------------------------------------------
 ## THE SEED: THIS FAMILY'S OWN SALT AND ITS OWN PRIME
@@ -199,8 +221,12 @@ const TRUNK_ANCHOR_MIN_K: float = 1.0
 ## roll. That is what makes the knob cheap enough to leave in the open.
 ##
 ## MEASURED, over `bike_network_selfcheck`'s 16-seed sweep on the shipped
-## constants: 61 anchors in every world (the HQ, 11 waypoints, the gate and 48
-## landmark kinds), of which 16-31 are trunkable, producing **17-39 edges, 32 at
+## constants: 61 anchors (the HQ, 11 waypoints, the gate and 48 landmark kinds) on
+## every seed of that sweep — the fixed head of 13 is constant by construction, but
+## the landmark tail is NOT guaranteed, because a kind whose `LANDMARK_SITE_TRIES`
+## attempts are all rejected simply has no site that run (`terrain_landmarks.gd`'s
+## "honest degrade"). Check 4 prints the range rather than one number for exactly
+## that reason. Of the 61, 16-31 are trunkable, producing **17-39 edges, 32 at
 ## the median**, and a hop count from the HQ to the gate of 3-15. Check 4 prints
 ## the histogram, and that printed number is what the owner retunes against.
 ##
@@ -258,11 +284,17 @@ static func anchors(terrain: Node3D) -> Array[Dictionary]:
 	rows.append(_anchor("hq", Vector2(tower.x, tower.z), KIND_HQ))
 
 	# --- 1..N: the teleport circles, in the order that file fixes as a wire
-	# format. Its `_road_extend_to_x` leaves the station cache warm, which is why
+	# format. THROUGH THE TERRAIN'S FORWARDER and never `TerrainWaypoints` by name
+	# — CLAUDE.md, Conventions: a static family reaches a sibling family "through
+	# the node that owns the state, never directly", because "a `const` alias or a
+	# type annotation is a parse-time reference — one direction only, or it is a
+	# cycle". `terrain_bike_paths.gd` already complies both ways, and `.4` is the
+	# child that will make one of those files name THIS one.
+	# Its `_road_extend_to_x` leaves the station cache warm, which is why
 	# there is no second extend anywhere in this file: the road cache grows
 	# contiguously from station 0 and an extra extend is wasted work in a family
 	# that owns nothing about the road.
-	for site: Dictionary in TerrainWaypoints.waypoint_sites(terrain):
+	for site: Dictionary in terrain.waypoint_sites():
 		var pos: Vector3 = site["pos"]
 		var flat := Vector2(pos.x, pos.z)
 		# The five city circles stand INSIDE the authored rect. They stay in the
@@ -295,7 +327,7 @@ static func anchors(terrain: Node3D) -> Array[Dictionary]:
 	#
 	# SORTED BY KIND rather than trusting the Dictionary's insertion order, so the
 	# index a landmark takes is a property of the world and not of a container.
-	var sites: Dictionary = TerrainLandmarks.landmark_sites(terrain)
+	var sites: Dictionary = terrain.landmark_sites()
 	var by_kind: Array[Array] = []
 	for chunk: Vector2i in sites:
 		by_kind.append([int(sites[chunk]), chunk])
@@ -463,25 +495,40 @@ static func _degree(terrain: Node3D, index: int) -> int:
 	@param index: The anchor's index in `anchors()`.
 	@return: An entry of `TRUNK_DEGREES`.
 
-	A DISPATCH AND NOT A ROLL, which is the whole property this bead exists to
-	protect — CLAUDE.md, "dispatch costs no draw". An `rng.randi()` here would take
-	a draw from whatever stream the caller happened to be holding and move every
-	spawn in the world; it would also make the density knob above impossible to
-	turn, because a retune would then shift the stream.
+	A DISPATCH AND NOT A ROLL — CLAUDE.md, "dispatch costs no draw". NOT because a
+	draw here would disturb a caller's stream: this function is handed no RNG and
+	the terrain holds none, so there is no stream to disturb (see the banner's
+	honest version of that claim). The reason is the one that survives: a roll
+	makes the density knob above IMPOSSIBLE TO TURN, because retuning
+	`TRUNK_DEGREES` would then change how many draws the graph consumes and move
+	whatever shared the stream. As a hash it is free to retune forever, and that is
+	what owner Ruling 2 asked for.
 
-	Mask AFTER the shift is not needed here — there is no second field — but
-	`hash()` may return a negative, so the modulo is taken on the absolute value
-	rather than on a value that could index backwards.
+	`absi()` AND NOT A MASK: there is no second field to shift past, so the modulo
+	is taken on the absolute value. Note that dropping it would NOT raise — GDScript
+	indexes an Array from the tail on a negative index — which is why check 4
+	asserts the dispatch VARIES and moves with `run_seed` rather than only that its
+	result is in the table.
 	"""
 	var h: int = hash(Vector3i(index * BIKE_NET_PRIME_I, 0, terrain.run_seed ^ BIKE_NET_SALT))
 	return TRUNK_DEGREES[absi(h) % TRUNK_DEGREES.size()]
 
 
 static func _nearer(a: Array, b: Array) -> bool:
-	"""`[distance, index]` ordered by distance, ties broken on the index."""
-	if not is_equal_approx(float(a[0]), float(b[0])):
-		return float(a[0]) < float(b[0])
-	return int(a[1]) < int(b[1])
+	"""
+	`[distance, index]` ordered by distance, ties broken on the index.
+
+	EXACT `==` AND NOT `is_equal_approx`, which is `coin_road_selfcheck`'s own
+	idiom one family along (`a[0] < c[0] or (a[0] == c[0] and a[1] < c[1])`).
+	Approximate equality is NOT TRANSITIVE, so a comparator built on it is not the
+	strict weak ordering `sort_custom` requires and three anchors inside one
+	tolerance band can order cyclically. Exact is also the only version that is
+	the TOTAL ORDER the caller's comment claims: both distances come out of the
+	same arithmetic on the same doubles every run, so equality here means the same
+	thing in every world, and the index tie-break settles it.
+	"""
+	return float(a[0]) < float(b[0]) \
+			or (float(a[0]) == float(b[0]) and int(a[1]) < int(b[1]))
 
 
 static func _find(parent: Dictionary, i: int) -> int:
