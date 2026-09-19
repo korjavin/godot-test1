@@ -150,10 +150,12 @@ extends RefCounted
 ## `>= 1.0` test SHIPS AS WRITTEN, because the fix is not this family's to make:
 ## the honest repair is to re-measure `SCARCITY_CORRIDOR_RECT` against the road it
 ## is supposed to contain, which moves scarcity for every spawner in the world and
-## is a bead of its own. `bike_network_selfcheck` check 4 PRINTS every refused
-## anchor, split by kind, with its own k and how far below 1.0 it fell — a refused
-## WAYPOINT is flagged separately, because that one is a symptom of the rect and
-## not of this filter. The network survives it: check 3 asserts the gate is still
+## is a bead of its own. `bike_network_selfcheck` check 4 PRINTS the refusals SPLIT
+## BY KIND: every refused WAYPOINT one line each with its own k and position,
+## because there are a couple of dozen and each one is a finding about the rect
+## rather than about this filter; the refused LANDMARKS per seed, banded by how far
+## below 1.0 they fell, because there are hundreds of them and Ruling 3 asked for
+## that distribution rather than a roll call. The network survives it: check 3 asserts the gate is still
 ## reachable from the HQ on every seed of the sweep, and it is, in 3 to 15 hops.
 ##
 ## If the sweep ever shows anchors being lost at a rate anyone cares about before
@@ -505,10 +507,17 @@ static func _degree(terrain: Node3D, index: int) -> int:
 	what owner Ruling 2 asked for.
 
 	`absi()` AND NOT A MASK: there is no second field to shift past, so the modulo
-	is taken on the absolute value. Note that dropping it would NOT raise — GDScript
-	indexes an Array from the tail on a negative index — which is why check 4
-	asserts the dispatch VARIES and moves with `run_seed` rather than only that its
-	result is in the table.
+	is taken on the absolute value.
+
+	AND NOTHING ASSERTS IT, WHICH IS DELIBERATE AND WORTH KNOWING. Dropping `absi()`
+	would not raise — GDScript indexes an Array from the tail on a negative index,
+	so `TRUNK_DEGREES[-5..-1]` are all entries of the table — and it would still
+	produce a mix of degrees that still moved with `run_seed`, so neither of check
+	4's dispatch assertions would see it either. That is acceptable: the effect is
+	to reshuffle which index lands on which degree, i.e. a DIFFERENT world, not a
+	broken one. It is spelled out because "check 4 covers it" is the natural thing
+	to assume and it is not true. (Round 2 of the review; this paragraph previously
+	said the opposite.)
 	"""
 	var h: int = hash(Vector3i(index * BIKE_NET_PRIME_I, 0, terrain.run_seed ^ BIKE_NET_SALT))
 	return TRUNK_DEGREES[absi(h) % TRUNK_DEGREES.size()]

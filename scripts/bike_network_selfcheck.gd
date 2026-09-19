@@ -41,8 +41,13 @@ extends SceneTree
 ##      no duplicate unordered pair, every index in range, every dispatched degree
 ##      an entry of `TRUNK_DEGREES`, and — the amendment's acceptance addition —
 ##      NO EDGE WITH AN ENDPOINT BELOW `TRUNK_ANCHOR_MIN_K`, asserted over the
-##      sweep rather than argued. Then it PRINTS: total anchors, trunkable anchors,
-##      the edge-count histogram, and every refused anchor with its own k.
+##      sweep rather than argued, and — the two the round-1 review found missing —
+##      that the degree dispatch VARIES WITHIN a world and MOVES WITH `run_seed`.
+##      Then it PRINTS: the anchor count as a per-seed range, the trunkable range,
+##      the edge-count histogram, every refused WAYPOINT with its own k, and the
+##      refused LANDMARKS per seed banded by how far below k = 1.0 they fell
+##      (banded and not per-anchor: there are hundreds of them across the sweep,
+##      and Ruling 3 asked for the distribution).
 ##   5. THE WORLD TIE. Every edge endpoint's position is re-derived FROM THE
 ##      SHIPPED ANCHOR SOURCES — `tower_site()`, `waypoint_sites()`,
 ##      `landmark_sites()`, `BudapestPlan.GATE` — by the id the row carries, and
@@ -143,18 +148,24 @@ func _check_zero_draws(terrain_script: GDScript) -> void:
 	The same field of chunks with and without `anchors()` / `edges()` asked for
 	first, compared through the SHIPPED `create_chunk` on both sides.
 
-	WHY THE WHOLE PIPELINE AND NOT THE FAMILY ALONE: what has to hold is that this
-	family costs the shared chunk / biome / crocodile streams NOTHING, and the only
-	place that is visible is downstream of it. A single stray draw slides every
-	crocodile and every coin in the chunk, which the node table sees. Asking the
-	two functions on a bare terrain and diffing their output would prove nothing at
-	all — it is exactly the self-consistent comparison this file exists to avoid.
+	WHAT IT REALLY GUARDS, AND IT IS NOT A STRAY `rng.randi()`. Every RNG in the
+	world engine is function-local and re-derived per chunk, and the terrain node
+	holds no member RNG at all, so nothing in this family is handed a stream and a
+	draw here could not be observed downstream — `bike_network.gd`'s banner carries
+	that measurement and the reasoning. The zero-draw property is STRUCTURAL.
 
-	AND IT IS NOT ONLY ABOUT AN `rng.randi()` IN THIS FILE. `anchors()` warms the
-	road station cache and the landmark site table by calling them EARLIER than a
-	streaming world would. Those are memoized pure functions, so an earlier warm
-	must be a no-op — and if one of them ever stops being pure, this is the check
-	that says so.
+	THE RISK THAT IS REAL IS THE OTHER HALF. `anchors()` calls the road station
+	cache and the landmark site table EARLIER, and in a different order, than a
+	streaming world would, and it holds live references to memos whose docstrings
+	say "read-only to callers". Warming a pure memo early must be a no-op; WRITING
+	to one is a world changed under every spawner downstream. That is what this
+	comparison measures, and it is what its mutation control exercises — one line
+	writing into the shared landmark memo turns all three halves red.
+
+	WHY THE WHOLE PIPELINE AND NOT THE FAMILY ALONE: because that damage is only
+	visible downstream. Asking the two functions on a bare terrain and diffing
+	their output would prove nothing at all — it is exactly the self-consistent
+	comparison this file exists to avoid.
 	"""
 	var plain: Node3D = _terrain(terrain_script, SEEDS[0])
 	var asked: Node3D = _terrain(terrain_script, SEEDS[0])
@@ -191,10 +202,12 @@ func _check_zero_draws(terrain_script: GDScript) -> void:
 			if nodes_plain != nodes_asked:
 				_fail("chunk %s holds %d chunk-parented nodes when the network was never "
 						% [chunk_pos, nodes_plain.size()]
-						+ "asked for and %d when it was asked for first. The bike network "
+						+ "asked for and %d when it was asked for first. Asking for the "
 						% nodes_asked.size()
-						+ "took a draw from the shared chunk stream — CLAUDE.md: one extra "
-						+ "draw moves every spawn in the world")
+						+ "anchor table changed the world: the likely cause is a WRITE into "
+						+ "a shared memo (`landmark_sites()` and the road station cache are "
+						+ "returned live and are read-only to callers), or one of those "
+						+ "memos no longer being pure in `run_seed` when warmed early")
 			if nodes_plain != _node_table(c):
 				comparator_bit = true
 
@@ -205,9 +218,17 @@ func _check_zero_draws(terrain_script: GDScript) -> void:
 			var table_asked: Dictionary = _multimesh_table(b)
 			buckets_seen += table_plain.size()
 			if table_plain.keys() != table_asked.keys():
+				# `str(...)` ON BOTH, and it is not decoration: in GDScript a bare `Array`
+				# on the right of `%` is the ARGUMENT LIST, not one value. A chunk has
+				# one MultiMesh child per box kind, so `keys()` normally holds several
+				# and `"%s" % keys()` was an arity mismatch that RAISED — killing this
+				# check mid-field, before its `free()` calls and before its sentinel
+				# stamp, exactly when it had something to report. (Round 2 of the
+				# review; `[chunk_pos, table_plain.keys()]` was already correct because
+				# there the array IS the argument list.)
 				_fail("chunk %s has MultiMesh buckets %s without the network asked for and "
-						% [chunk_pos, table_plain.keys()] + "%s with it — this family emits "
-						% table_asked.keys() + "no box at all and may not change one")
+						% [chunk_pos, str(table_plain.keys())] + "%s with it — this family "
+						% str(table_asked.keys()) + "emits no box at all and may not change one")
 			else:
 				for name: String in table_plain:
 					if var_to_bytes(table_plain[name]) != var_to_bytes(table_asked[name]):
@@ -570,16 +591,34 @@ func _check_well_formed(terrain_script: GDScript) -> void:
 	# half passes on the anchor POSITIONS moving, and nothing looked at the degrees
 	# themselves. So the constant the banner calls "THE DENSITY KNOB" and the
 	# seed-dependence of the fold were the two unasserted things in the file.
+	# PER WORLD, NOT POOLED ACROSS THE SWEEP, and round 2 of the review is why. A
+	# pooled set passes the sibling mutation: drop `index` from `_degree()`'s fold
+	# and every anchor in a given world takes the SAME degree, while different seeds
+	# land on different entries of the table — so the pooled set still holds a 1 and
+	# a 2. Asked per world, that mutation is a world of identical digits and goes
+	# red. The property being asserted is the one the dispatch exists for: WHICH
+	# anchor you are changes how many trunks you get.
+	var mixed_worlds: int = 0
 	var distinct: Dictionary = {}
 	for word: String in degree_words:
+		var here: Dictionary = {}
 		for c: String in word:
 			distinct[c] = true
+			here[c] = true
+		if here.size() >= 2:
+			mixed_worlds += 1
 	if distinct.size() < 2:
 		_fail("every anchor in every one of the %d worlds dispatched the SAME degree "
 				% SEEDS.size() + "(%s). TRUNK_DEGREES %s is meant to be a mix, and a "
 				% [str(distinct.keys()), str(BikeNetwork.TRUNK_DEGREES)]
 				+ "single-valued table collapses the network toward a chain that the "
 				+ "repair pass then quietly rebuilds — reachability would still pass")
+	elif mixed_worlds < SEEDS.size():
+		_fail("only %d of %d worlds contain more than one degree — in the rest, every "
+				% [mixed_worlds, SEEDS.size()] + "anchor took the same one. `_degree()` "
+				+ "is not varying with the ANCHOR INDEX (the likely cause is `index` "
+				+ "dropped from its hash), so the degree is a per-world constant and the "
+				+ "density table is doing nothing it could not do with a single value")
 	var seed_varied: bool = false
 	for i: int in range(1, degree_words.size()):
 		# Compared over the SHARED PREFIX: the trunkable count differs between seeds,
@@ -677,36 +716,19 @@ func _check_world_tie(terrain_script: GDScript) -> void:
 			for end: int in [int(row["a"]), int(row["b"])]:
 				var id: String = rows[end]["id"]
 				var claimed: Vector2 = rows[end]["pos"]
-				var truth := Vector2.INF
-				var source: String = ""
-				if id == "hq":
-					truth = Vector2(tower.x, tower.z)
-					source = "tower_site()"
-				elif id == "gate":
-					truth = Vector2(BudapestPlan.GATE.x, BudapestPlan.GATE.z)
-					source = "BudapestPlan.GATE"
-				elif id.begins_with("wp_") and waypoints.has(id.trim_prefix("wp_")):
-					truth = waypoints[id.trim_prefix("wp_")]
-					source = "TerrainWaypoints.waypoint_sites()"
-				elif id.begins_with("landmark_"):
-					var kind: int = int(id.trim_prefix("landmark_"))
-					if not landmarks.has(kind):
-						_fail("seed %d: edge %d ends at anchor '%s', but "
-								% [run_seed, int(row["id"]), id]
-								+ "TerrainLandmarks.landmark_sites() has no site for kind %d "
-								% kind + "this run — the anchor table invented a monument")
-						continue
-					truth = landmarks[kind]
-					source = "TerrainLandmarks.landmark_sites()"
-				else:
-					_fail("seed %d: edge %d ends at anchor '%s', whose id matches none of "
-							% [run_seed, int(row["id"]), id] + "the four shipped anchor "
-							+ "sources — this check cannot tie it to the world and would "
-							+ "have skipped it silently")
+				var found: Array = _truth_for(id, tower, waypoints, landmarks)
+				var truth: Vector2 = found[0]
+				var source: String = found[1]
+				if source == "":
+					_fail("seed %d: edge %d ends at anchor '%s', which none of the four "
+							% [run_seed, int(row["id"]), id] + "shipped anchor sources can "
+							+ "place — either the table invented it, or a landmark kind that "
+							+ "has no site this run is in the graph. This check cannot tie it "
+							+ "to the world and would otherwise have skipped it silently")
 					continue
 				endpoints += 1
 				checked[source] = int(checked.get(source, 0)) + 1
-				if claimed.distance_to(truth) > POS_TOLERANCE:
+				if not _same_place(claimed, truth):
 					_fail("seed %d: edge %d ends at anchor '%s', which anchors() places at "
 							% [run_seed, int(row["id"]), id] + "(%.3f, %.3f) — but %s puts "
 							% [claimed.x, claimed.y, source] + "it at (%.3f, %.3f), %.2f m "
@@ -727,36 +749,43 @@ func _check_world_tie(terrain_script: GDScript) -> void:
 					% source + "so that source is untested — either no trunk ever ends "
 					+ "there (a finding in its own right) or the id matching is broken")
 
-	# --- THE CONTROL, and it drives the LIVE re-derivation rather than a constant.
+	# --- THE CONTROL, AND IT RUNS THE SAME TWO FUNCTIONS THE LOOP ABOVE RUNS.
 	#
-	# ROUND 1 OF THE REVIEW KILLED THE FIRST VERSION OF THIS, and the lesson is the
-	# file's own subject one level up. It read
-	# `real.distance_to(real + Vector2(1, 0)) <= POS_TOLERANCE` — which is `1.0 <=
-	# 0.001` for every possible `real`, so it built and freed a whole terrain to
-	# feed a value the arithmetic cancelled, and asserted nothing but
-	# `POS_TOLERANCE < 1.0`. It was a control shaped like a control: the exact
-	# failure this check exists to catch, committed inside the check itself.
+	# THIS IS THE THIRD VERSION AND EACH ROUND KILLED THE ONE BEFORE, which is the
+	# file's own subject turned on itself. Round 1 killed
+	# `real.distance_to(real + Vector2(1, 0)) <= POS_TOLERANCE` — `1.0 <= 0.001` for
+	# every possible `real`, a whole terrain built to feed a term the arithmetic
+	# cancelled. Round 2 killed its replacement for a subtler reason: it ran on live
+	# data, but it RE-IMPLEMENTED the `hq` branch and wrote its own comparison, so
+	# it shared no code with the assertion it claimed to control. Mutating the
+	# loop's comparator to `false`, or ending its ladder in `truth = claimed`, left
+	# the whole of check 5 asserting nothing and the control green.
 	#
-	# This one re-derives the HQ's position from `tower_site()` the way the loop
-	# above does, and asks the SAME comparator whether that is the gate's place. It
-	# must say no. A comparator that always agreed, a `truth` derivation that
-	# returned whatever it was handed, or a tolerance widened to kilometres all turn
-	# this red, and none of them turned the old one red.
+	# The ladder is now `_truth_for()` and the comparison is `_same_place()`, and
+	# BOTH are what this control calls. It asks the shipped derivation for the HQ's
+	# place and the shipped comparator whether the gate stands there. Mutate either
+	# one and this goes red with them.
 	var probe: Node3D = _terrain(terrain_script, SEEDS[0])
 	var probe_rows: Array[Dictionary] = BikeNetwork.anchors(probe)
 	var probe_tower: Vector3 = probe.tower_site()
-	var hq_truth := Vector2(probe_tower.x, probe_tower.z)
+	var control: Array = _truth_for("hq", probe_tower, {}, {})
+	var hq_truth: Vector2 = control[0]
 	var gate_index: int = _index_of_kind(probe_rows, BikeNetwork.KIND_GATE)
-	if gate_index < 0:
+	if String(control[1]) != "tower_site()":
+		_fail("check 5's control asked `_truth_for()` for the HQ and got source '%s' — "
+				% String(control[1]) + "the ladder no longer resolves the id the loop "
+				+ "above depends on, so this control is not exercising it")
+	elif gate_index < 0:
 		_fail("check 5's control could not find the GATE anchor, so it never ran")
 	else:
 		var gate_pos: Vector2 = probe_rows[gate_index]["pos"]
-		if gate_pos.distance_to(hq_truth) <= POS_TOLERANCE:
+		if _same_place(gate_pos, hq_truth):
 			_fail("check 5's comparator says the GATE anchor at (%.1f, %.1f) stands where "
-					% [gate_pos.x, gate_pos.y] + "tower_site() puts the HQ, (%.1f, %.1f). "
-					% [hq_truth.x, hq_truth.y] + "Those are %.0f m apart, so the comparator "
-					% gate_pos.distance_to(hq_truth) + "cannot tell two anchors apart and "
-					+ "every world tie above passed for free")
+					% [gate_pos.x, gate_pos.y] + "`_truth_for(\"hq\")` puts the HQ, "
+					+ "(%.1f, %.1f). Those are %.0f m apart, so either the comparator "
+					% [hq_truth.x, hq_truth.y, gate_pos.distance_to(hq_truth)]
+					+ "cannot tell two anchors apart or the ladder is echoing back "
+					+ "whatever it was handed — and every world tie above passed for free")
 	probe.free()
 	print("bike network check 5: %d edge endpoints re-derived from the shipped anchor "
 			% endpoints + "sources — %s" % str(checked))
@@ -785,6 +814,51 @@ func _terrain(terrain_script: GDScript, seed_value: int) -> Node3D:
 	root.add_child(terrain)
 	terrain.set_run_seed(seed_value)
 	return terrain
+
+
+func _same_place(a: Vector2, b: Vector2) -> bool:
+	"""
+	THE ONE COMPARISON check 5 makes, so its control can be made of the same thing
+	the assertion is made of.
+
+	A float tolerance and not a design allowance: both sides run the same
+	arithmetic on the same doubles, so anything above `POS_TOLERANCE` is a
+	different place.
+	"""
+	return a.distance_to(b) <= POS_TOLERANCE
+
+
+func _truth_for(id: String, tower: Vector3, waypoints: Dictionary,
+		landmarks: Dictionary) -> Array:
+	"""
+	WHERE THE SHIPPED SOURCES SAY THE ANCHOR CALLED `id` STANDS.
+
+	@param id: The anchor row's own id.
+	@param tower: `terrain.tower_site()`, read by the caller.
+	@param waypoints: id (UNPREFIXED) -> XZ, from `waypoint_sites()`.
+	@param landmarks: kind -> XZ, from `landmark_sites()`.
+	@return: `[Vector2 truth, String source]`, and `["", ...]` — an empty SOURCE —
+	         when no shipped source can place this id. Callers must test the
+	         source, never the position: `Vector2.INF` is a value and "" is not.
+
+	A FUNCTION AND NOT AN INLINE LADDER purely so that check 5's control can call
+	it. Round 2 of the review found the control re-implementing this ladder's `hq`
+	branch, which meant a mutation to the real one left the control green — a
+	control that shares no code with its assertion is not a control. It reads
+	`BudapestPlan.GATE` directly, which is correct for a check: a self-check reads
+	its subject, not a forwarder.
+	"""
+	if id == "hq":
+		return [Vector2(tower.x, tower.z), "tower_site()"]
+	if id == "gate":
+		return [Vector2(BudapestPlan.GATE.x, BudapestPlan.GATE.z), "BudapestPlan.GATE"]
+	if id.begins_with("wp_") and waypoints.has(id.trim_prefix("wp_")):
+		return [waypoints[id.trim_prefix("wp_")], "TerrainWaypoints.waypoint_sites()"]
+	if id.begins_with("landmark_"):
+		var kind: int = int(id.trim_prefix("landmark_"))
+		if landmarks.has(kind):
+			return [landmarks[kind], "TerrainLandmarks.landmark_sites()"]
+	return [Vector2.INF, ""]
 
 
 func _index_of_kind(rows: Array[Dictionary], kind: int) -> int:
