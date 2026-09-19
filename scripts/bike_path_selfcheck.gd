@@ -1321,7 +1321,7 @@ func _check_trunk_endings(terrain_script: GDScript) -> void:
 	if at_anchor == 0:
 		_fail("check 3b found no trunk that ended at its own anchor, so the snap — the thing "
 				+ "that makes the owner's intersections exact — was never once seen to happen")
-		print("bike trunks: %d routes cross the coin road mid-span (walked through, paint gapped)"
+	print("bike trunks: %d routes cross the coin road mid-span (walked through, paint gapped)"
 			% midspan_crossings)
 	print("bike trunks: %d routes end at their anchor, %d at Budapest's rect edge, over %d "
 			% [at_anchor, at_rect, SEEDS.size()] + "seeds. Edges that produced NO trunk, by "
