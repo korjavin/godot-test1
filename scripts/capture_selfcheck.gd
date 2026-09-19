@@ -1756,9 +1756,32 @@ func _check_the_sweep_spares_a_guard() -> void:
 	root.add_child(guard)
 	var croc: Node = load(CROC_SCENE).instantiate()
 	root.add_child(croc)
+	# The compass, in metres ahead and metres right of wherever the player IS:
+	# `_plant()` resolves both against the live body every time it is called,
+	# which is what keeps the second plant honest (see its docstring).
+	var stands: Array[Array] = [
+		[guard, 3.0, 0.0],
+		[croc, 4.0, 0.0],
+	]
+	# STOOD OFF BEFORE THE STAGING FRAME, AND PLANTED AGAIN AFTER IT (bead
+	# godot-test1-tdt5). `_check_the_ai_says_who_bit()`'s `PROBE_STANDOFF`
+	# sentry argues the first half, and this is the same race check 10b
+	# carried: live bodies added while the player stands at the origin OVERLAP
+	# it, and their own `_physics_process` runs `_on_player_collision` during
+	# the `await` below. One `await process_frame` is an UNBOUNDED number of
+	# physics ticks, so on a loaded runner the GUARD's grab is the one that
+	# lands — and a guard grab jails the active hero and auto-switches it (seen
+	# live at --fixed-fps 5: Windman jailed, Primm standing in). This check's
+	# assertions never read the hero, so the grab changes nothing it looks at
+	# — luck, not safety. The second plant is the other half of the same
+	# frame: a body stood a few metres off closes across it (measured live at
+	# --fixed-fps 5, where twelve ticks carry the guard a full metre — a 1 m
+	# stand did NOT hold, 3 m does), so the compass is re-planted with no
+	# `await` left between here and the sweep. The distances are standoff only:
+	# the sweep tests a 25 m radius, so 3 and 4 m stand in for the old 1 and 2.
+	_plant(player, stands)
 	await process_frame
-	(guard as Node3D).global_position = spot + Vector3(1.0, 0.0, 0.0)
-	(croc as Node3D).global_position = spot + Vector3(2.0, 0.0, 0.0)
+	_plant(player, stands)
 	if String(guard.spec.get("behavior", "")) == "" \
 			or not bool(guard.spec.get("sweep_exempt", false)):
 		_fail("the probe guard did not resolve the '%s' row — check 12 would be"
