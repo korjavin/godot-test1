@@ -2778,7 +2778,9 @@ func _skip_explained(terrain: Node3D, apos: Vector2, prelim: Vector2,
 	         decision — M-phase2 below), otherwise the taker's description.
 	"""
 	var centre: Vector3 = terrain.chunk_to_world(home)
+	# In the tree, because the chest plant walks it from its marker.
 	var mesh_instance := MeshInstance3D.new()
+	root.add_child(mesh_instance)
 	var platforms: Array = []
 	var block_batch: Array = []
 	var block_body := StaticBody3D.new()
