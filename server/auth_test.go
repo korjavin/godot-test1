@@ -568,7 +568,9 @@ func TestAuthSessionRewritesIdToSub(t *testing.T) {
 }
 
 // linkFixture seeds the merge test's three records: the anon id holds 100
-// and one stamp with a t=50 save; sub holds 50, another stamp, a t=40 save.
+// and stamp_a with a t=50 save; sub holds 50, stamp_a AND stamp_b, a t=40
+// save. The overlap is deliberate: the correct union is [stamp_a, stamp_b],
+// so a merge that appends without dedup stores three and fails below.
 func linkFixture(t *testing.T, e *authEnv, anon, sub string) {
 	t.Helper()
 	if rec := authedBest(e, http.MethodPost, anon, "", `{"distance":100,"found":["stamp_a"]}`); rec.Code != http.StatusOK {
@@ -577,7 +579,7 @@ func linkFixture(t *testing.T, e *authEnv, anon, sub string) {
 	if rec := authedSave(e, http.MethodPost, anon, "", `{"blob":"B50","saved_at":50}`); rec.Code != http.StatusOK {
 		t.Fatalf("seed anon save status %d", rec.Code)
 	}
-	if rec := authedBest(e, http.MethodPost, sub, "", `{"distance":50,"found":["stamp_b"]}`); rec.Code != http.StatusOK {
+	if rec := authedBest(e, http.MethodPost, sub, "", `{"distance":50,"found":["stamp_a","stamp_b"]}`); rec.Code != http.StatusOK {
 		t.Fatalf("seed sub best status %d", rec.Code)
 	}
 	if rec := authedSave(e, http.MethodPost, sub, "", `{"blob":"B40","saved_at":40}`); rec.Code != http.StatusOK {
