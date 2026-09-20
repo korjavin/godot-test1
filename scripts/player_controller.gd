@@ -830,6 +830,9 @@ const PRISON_TICK: float = 0.5
 ## terrain and a prisoner there is simply not confined.
 var _prison_origin: Vector3 = Vector3.ZERO
 var _prison_confined: bool = false
+## The captive the prison role holds - his cell is the confinement box. Latched in
+## `_enter_prison()` beside the origin, read by `_confine_to_block()` every frame.
+var _prison_hero: String = ""
 
 ## Reference to the character model container
 @onready var character_container: Node3D = $CharacterModel
@@ -1441,7 +1444,7 @@ func _physics_process(delta: float) -> void:
 	# the whole CAUGHT_DURATION. A no-op solo (one group lookup and a return).
 	_tick_prison(delta)
 
-	# ...and keep a benched player inside the cell block. ABOVE THE FREEZE BRANCHES,
+	# ...and keep a benched player inside his OWN CELL. ABOVE THE FREEZE BRANCHES,
 	# which is the whole reason it is here and not beside `move_and_slide()`: the
 	# body spends the caught freeze, the respawn grace and the game-over screen
 	# below those early returns, and a clamp under them would stop holding at
@@ -3102,7 +3105,7 @@ func in_prison_role() -> bool:
 
 func _enter_prison(hero: String) -> void:
 	"""
-	Take up the prison role: play as your captive, inside his cell block.
+	Take up the prison role: play as your captive, inside his OWN cell.
 
 	@param hero: the captive we hold — his cell is where we stand up.
 
@@ -3111,6 +3114,7 @@ func _enter_prison(hero: String) -> void:
 	tower is not banked as a personal best nobody ran.
 	"""
 	prisoner_active = true
+	_prison_hero = hero
 	velocity = Vector3.ZERO
 	ability_cooldowns.fill(0.0)
 	ability2_cooldowns.fill(0.0)
@@ -3150,18 +3154,20 @@ func _exit_prison() -> void:
 
 func _confine_to_block() -> void:
 	"""
-	Keep a prisoner inside the cell block. Movement confined, nothing else changed.
+	Keep a prisoner inside his OWN CELL. Movement confined, nothing else changed.
 
 	A CLAMP AND NOT A WALL, deliberately: a wall is geometry every other body in the
 	game would collide with too (a rescuer, a guard, a teammate's avatar), and the
 	confinement is a property of THIS PLAYER'S ROLE, not of the building. Two
 	clamps, x and z — y is left alone so gravity, the floor and the ramp all still
-	behave, and there is no vertical way out of a roofed block anyway.
+	behave, and there is no vertical way out of a roofed block anyway. The clamp is
+	size-blind - position only - so a shrunk Teibi is held by exactly the same two
+	lines as everybody else.
 	"""
 	if not prisoner_active or not _prison_confined:
 		return
-	var lo := _prison_origin + TowerInterior.block_min()
-	var hi := _prison_origin + TowerInterior.block_max()
+	var lo := _prison_origin + TowerInterior.cell_min(_prison_hero)
+	var hi := _prison_origin + TowerInterior.cell_max(_prison_hero)
 	global_position.x = clampf(global_position.x, lo.x, hi.x)
 	global_position.z = clampf(global_position.z, lo.z, hi.z)
 

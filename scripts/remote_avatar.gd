@@ -406,7 +406,7 @@ func apply_presence_visibility(is_captive: bool, pos: Vector3) -> void:
 	"""
 	Decide whether this peer's picture is drawn, from the captive flag the presence drain resolved (bead godot-test1-xqbk).
 
-	A captive `c` is drawn ONLY inside the cell block and hidden anywhere else (the field window, a stale placement); anything else is drawn unconditionally. The box is the same clamp `player_controller._confine_to_block()` uses — `terrain.tower_site()` plus `TowerInterior.block_min()/block_max()`, x/z only, y left alone — so the prisoner in his cell stays visible because liberation is a teammate walking into that cell.
+	A captive `c` is drawn ONLY inside the cell block and hidden anywhere else (the field window, a stale placement); anything else is drawn unconditionally. The box is the block union - `terrain.tower_site()` plus `TowerInterior.block_min()/block_max()`, x/z only, y left alone - which holds every cell, so the prisoner in his own cell stays visible because liberation is a teammate walking into that cell. (The prison role's own clamp is tighter since bead godot-test1-n85a: one cell, not the block.)
 
 	Null-safe: with no terrain in the tree (every headless harness) a captive is hidden, which errs toward the fix; a missing box (unbuilt interior) hides too. Never touches the model, only `visible`.
 	"""
