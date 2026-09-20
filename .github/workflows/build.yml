@@ -512,16 +512,18 @@ jobs:
       # the sphere body and the limb rig). Each is one SKINNED mesh built by hand
       # in Blender (scripts/build_hero.py, MPFB2 — not installable on the
       # runner), gated instead by the manifest `stat` step below.
-      # SO THIS LOOP IS TWO PROPS AND NOT FOUR HEROES: generate_windman_fan.py
+      # SO THIS LOOP IS THREE PROPS AND NOT FOUR HEROES: generate_windman_fan.py
       # builds one PROP (a fan on a BoneAttachment3D, rigid geometry a skeleton
       # carries) and nothing else, and bead z629 gives Primm the fan's idiom
       # back: generate_primm_swords.py builds one PROP (two sheathed katanas
-      # crossed on a BoneAttachment3D) and nothing else. Both are owed the
-      # rebuild-and-diff gate below; Teibi and Phoboman have no generated
-      # geometry left at all.
+      # crossed on a BoneAttachment3D) and nothing else. Bead godot-test1-z2yv.5
+      # gives the RIDDEN BIKE the same idiom back: generate_bike.py builds one
+      # PROP (`shared_parts/bike.glb`, instanced once for all four heroes by
+      # bead z2yv.7) and nothing else. All three are owed the rebuild-and-diff
+      # gate below; Teibi and Phoboman have no generated geometry left at all.
       - name: 🦸 Rebuild the generated hero geometry
         run: |
-          for gen in generate_windman_fan generate_primm_swords; do
+          for gen in generate_windman_fan generate_primm_swords generate_bike; do
             python3 "scripts/${gen}.py" || {
               echo "::error::scripts/${gen}.py failed"
               exit 1
@@ -582,7 +584,7 @@ jobs:
           [ -z "$dirty" ] || {
             printf '%s\n' "$dirty"
             git diff --stat -- assets/models/characters
-            echo "::error::rebuilding dirtied the models listed above — the committed .glb is not what its generator produces. Run 'pip install -r scripts/requirements.txt && python3 scripts/predator_parts.py' (predators + crocodile) and 'python3 scripts/generate_windman_fan.py && python3 scripts/generate_primm_swords.py' (the generated hero props) and commit the result."
+            echo "::error::rebuilding dirtied the models listed above — the committed .glb is not what its generator produces. Run 'pip install -r scripts/requirements.txt && python3 scripts/predator_parts.py' (predators + crocodile) and 'python3 scripts/generate_windman_fan.py && python3 scripts/generate_primm_swords.py && python3 scripts/generate_bike.py' (the generated hero props) and commit the result."
             exit 1
           }
           echo "every committed model matches its generator"
