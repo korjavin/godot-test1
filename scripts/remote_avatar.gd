@@ -401,6 +401,30 @@ func receive_state(pos: Vector3, yaw: float, char_index: int, speed: float,
 	ability_bits = ability
 	set_character(char_index)
 
+
+func apply_presence_visibility(is_captive: bool, pos: Vector3) -> void:
+	"""
+	Decide whether this peer's picture is drawn, from the captive flag the presence drain resolved (bead godot-test1-xqbk).
+
+	A captive `c` is drawn ONLY inside the cell block and hidden anywhere else (the field window, a stale placement); anything else is drawn unconditionally. The box is the same clamp `player_controller._confine_to_block()` uses — `terrain.tower_site()` plus `TowerInterior.block_min()/block_max()`, x/z only, y left alone — so the prisoner in his cell stays visible because liberation is a teammate walking into that cell.
+
+	Null-safe: with no terrain in the tree (every headless harness) a captive is hidden, which errs toward the fix; a missing box (unbuilt interior) hides too. Never touches the model, only `visible`.
+	"""
+	if not is_captive:
+		visible = true
+		return
+	var terrain: Node = get_tree().get_first_node_in_group("terrain")
+	if terrain == null or not terrain.has_method("tower_site"):
+		visible = false
+		return
+	var site: Vector3 = terrain.call("tower_site")
+	var lo: Vector3 = site + TowerInterior.block_min()
+	var hi: Vector3 = site + TowerInterior.block_max()
+	if lo.x > hi.x or lo.z > hi.z:
+		visible = false
+		return
+	visible = pos.x >= lo.x and pos.x <= hi.x and pos.z >= lo.z and pos.z <= hi.z
+
 # ============================================================================
 # PER-FRAME: SMOOTHING + ANIMATION
 # ============================================================================

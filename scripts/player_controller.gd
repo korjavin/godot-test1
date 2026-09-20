@@ -2202,6 +2202,11 @@ func is_hero_captive(hero: String) -> bool:
 	return captive_heroes.has(hero)
 
 
+func is_quarry() -> bool:
+	"""Is the body standing here huntable by the field pack? A body wearing a captive hero is not — the hero is in a cell, and the hunters must not camp on the body left behind. Read by `piglet_crocodile_ai._update_chase_state()` through `has_method`, so a stub without it stays huntable."""
+	return not captive_heroes.has(hero_name())
+
+
 func hero_freed(hero: String) -> void:
 	"""
 	The cell block freed somebody. Put him back in the E-cycle.
@@ -2977,7 +2982,7 @@ func _respawn_in_place() -> void:
 	# not fire the group relocation, which would throw the body kilometres out to the
 	# team and hand it straight back to `_confine_to_block()` — the yank the clamp is
 	# there to make impossible, arriving via the one path that outruns it.
-	var anchor: Variant = null if prisoner_active else _room_group_anchor()
+	var anchor: Variant = null if (prisoner_active or captive_heroes.has(hero_name())) else _room_group_anchor()
 	if anchor != null:
 		var from_xz := Vector2(global_position.x, global_position.z)
 		_place_near(anchor as Vector3)
