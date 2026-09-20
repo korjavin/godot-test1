@@ -4531,6 +4531,14 @@ func _check_lane_world_tie(terrain_script: GDScript) -> void:
 	midpoint.
 	"""
 	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
+	# THE FIXED SIDE, PINNED LITERALLY: +1.0 on the file's left normal, one
+	# side world-wide by owner ruling 2026-09-20, no per-seed choice. The
+	# station tie below reads the const (it must — the lane is arithmetic off
+	# it), so without this pin a flipped side would pass here self-consistently
+	# and only the chunk checks would notice. C3 pins its 45.0 the same way.
+	if BikePaths.TRUNK_LANE_SIDE != 1.0:
+		_fail("B1: TRUNK_LANE_SIDE is %s, not the ruled +1.0 — the lane changed "
+				% BikePaths.TRUNK_LANE_SIDE + "sides of the road")
 	var anchors: Array = terrain.bike_anchors()
 	var tied: bool = false
 	for trunk: Dictionary in BikePaths.trunks(terrain):
