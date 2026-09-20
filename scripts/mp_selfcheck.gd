@@ -132,6 +132,9 @@ func _run_checks() -> String:
 	failure = _check_remote_scent()
 	if not failure.is_empty():
 		return failure
+	failure = _check_captive_presence()
+	if not failure.is_empty():
+		return failure
 	failure = _check_claim_base_value()
 	if not failure.is_empty():
 		return failure
@@ -740,6 +743,145 @@ func bank_awarded(amount: int, base_total: int = 0, pickup_count: int = 1) -> vo
 	count_seen = pickup_count
 	calls += 1
 """
+
+
+func _check_captive_presence() -> String:
+	"""
+	A captive `c` is neither a quarry nor a field picture (bead godot-test1-xqbk).
+
+	Driven through the SHIPPED `_apply_presence_state` — the exact fold the
+	presence drain runs per packet — with bob's primm captive in the room set:
+
+	  captive c in the open field -> `nearest_member_position()` answers null
+	  AND the avatar is hidden;
+	  the same packet with a free hero -> answers p AND visible (the control, so
+	  "answers null" cannot be satisfied by a query that never answers);
+	  the same captive c inside the cell block -> STILL hidden from the quarry
+	  query but VISIBLE (the prisoner picture survives — liberation is a teammate
+	  walking into that cell);
+	  freed (`cap` false) and re-applied in the field -> quarry again AND visible
+	  again (the second negative control);
+	  `nearest_member_position_including_captive()` still answers the captive
+	  field packet (the confined sentry's query — the prison role's game);
+	  `peer_positions()` still lists the captive peer (LOD coverage unchanged —
+	  exactly like the airborne rule, so m2 fails here).
+
+	No wire change: captive-ness comes from `c` against `_captives` via
+	`hero_name_of`, and `mp_codec_selfcheck` is untouched.
+	"""
+	var mp: Node = _room_manager("me")
+	mp._master = "me"
+	mp._you = "me"
+	mp._receive_captive("bob", {"t": "cap", "h": "primm", "c": true})
+	if not mp.is_hero_captive("primm"):
+		mp.free()
+		return "bob's capture of the primm he holds was refused — the probe never reaches the captive state"
+	var c_captive: int = MPManager.hero_index("primm")
+	var c_free: int = MPManager.hero_index("windman")
+	if c_captive < 0 or c_free < 0:
+		mp.free()
+		return "hero_index lost primm (%d) or windman (%d) — the probe cannot name its packets" % [c_captive, c_free]
+	var terrain_script := GDScript.new()
+	terrain_script.source_code = "extends Node3D\nfunc tower_site() -> Vector3:\n\treturn Vector3(-400.0, 0.0, 0.0)\n"
+	terrain_script.reload()
+	var terrain: Node = Node3D.new()
+	terrain.set_script(terrain_script)
+	terrain.add_to_group("terrain")
+	root.add_child(terrain)
+	var site: Vector3 = Vector3(-400.0, 0.0, 0.0)
+	var lo: Vector3 = site + TowerInterior.block_min()
+	var hi: Vector3 = site + TowerInterior.block_max()
+	if lo.x > hi.x or lo.z > hi.z:
+		terrain.free()
+		mp.free()
+		return "TowerInterior.block_min/max came back inverted (%s / %s) — the cell box is unbuilt headless" % [str(lo), str(hi)]
+	var cell := Vector3((lo.x + hi.x) * 0.5, 0.0, (lo.z + hi.z) * 0.5)
+	var field := Vector3(100.0, 0.0, 100.0)
+	var avatar := RemoteAvatar.new()
+	avatar.setup("bob")
+	mp.add_child(avatar)
+	mp._avatars["bob"] = avatar
+	var base: Dictionary = {"y": 0.0, "s": 0.0, "g": true, "cc": 0, "dd": 0, "ab": 0, "pz": false}
+	var captive_field: Dictionary = base.duplicate()
+	captive_field["p"] = field
+	captive_field["c"] = c_captive
+	mp._apply_presence_state("bob", captive_field)
+	var hunted: Variant = mp.nearest_member_position(field)
+	if hunted != null:
+		avatar.free()
+		terrain.free()
+		mp.free()
+		return "a captive c in the field was still offered as quarry (%s) — the master's hunters camp on the body" % str(hunted)
+	if avatar.visible:
+		avatar.free()
+		terrain.free()
+		mp.free()
+		return "a captive c in the field is still drawn — the jailed hero stands on the road next to the team"
+	# The confined sentry's query still answers it (the prison role's game).
+	var guard_view: Variant = mp.nearest_member_position_including_captive(field)
+	if guard_view == null or (guard_view as Vector3).distance_to(field) > 0.01:
+		avatar.free()
+		terrain.free()
+		mp.free()
+		return "the including-captive query dropped a captive field packet (%s) — a confined sentry would lose its prisoner" % str(guard_view)
+	# Control: the same packet with a free hero is a quarry and is drawn.
+	var free_field: Dictionary = base.duplicate()
+	free_field["p"] = field
+	free_field["c"] = c_free
+	mp._apply_presence_state("bob", free_field)
+	var hunted_free: Variant = mp.nearest_member_position(field)
+	if hunted_free == null or (hunted_free as Vector3).distance_to(field) > 0.01:
+		avatar.free()
+		terrain.free()
+		mp.free()
+		return "a free hero in the field was NOT offered (%s) — the quarry query answers nothing at all" % str(hunted_free)
+	if not avatar.visible:
+		avatar.free()
+		terrain.free()
+		mp.free()
+		return "a free hero in the field is hidden — the picture query hides everybody"
+	# The prisoner in his cell: visible, but still not a quarry.
+	var captive_cell: Dictionary = base.duplicate()
+	captive_cell["p"] = cell
+	captive_cell["c"] = c_captive
+	mp._apply_presence_state("bob", captive_cell)
+	if not avatar.visible:
+		avatar.free()
+		terrain.free()
+		mp.free()
+		return "a captive c inside the cell block is hidden — the prisoner picture did not survive (m3)"
+	var hunted_cell: Variant = mp.nearest_member_position(cell)
+	if hunted_cell != null:
+		avatar.free()
+		terrain.free()
+		mp.free()
+		return "a captive c inside the cell block was offered as quarry (%s) — the master's field hunters camp on the block" % str(hunted_cell)
+	# LOD coverage is unchanged: peer_positions still lists the captive peer.
+	var awake: Variant = mp.peer_positions()
+	if not (awake is Array) or (awake as Array).size() != 1:
+		avatar.free()
+		terrain.free()
+		mp.free()
+		return "peer_positions() dropped the captive peer — LOD coverage changed with the quarry rule (m2)"
+	# Freed and re-applied in the field: quarry again, visible again.
+	mp._receive_captive("dave", {"t": "cap", "h": "primm", "c": false})
+	mp._apply_presence_state("bob", captive_field)
+	var hunted_freed: Variant = mp.nearest_member_position(field)
+	if hunted_freed == null or (hunted_freed as Vector3).distance_to(field) > 0.01:
+		avatar.free()
+		terrain.free()
+		mp.free()
+		return "after the liberation the same field packet was still not a quarry — the flag stuck"
+	if not avatar.visible:
+		avatar.free()
+		terrain.free()
+		mp.free()
+		return "after the liberation the same field packet stayed hidden — the picture stuck"
+	avatar.free()
+	terrain.free()
+	mp.free()
+	Sentinel.done("captive_presence")
+	return ""
 
 
 func _check_claim_base_value() -> String:
