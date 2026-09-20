@@ -213,6 +213,11 @@ const KIND_LANDMARK: int = 4
 ## and for why the answer is this number and never a second rectangle.
 const TRUNK_ANCHOR_MIN_K: float = 1.0
 
+## The HQ's anchor: the door circle, not the tower's centre (bead
+## godot-test1-pnvb.9 — KIND_HQ row 0 is never trunkable). `edges()` pass 2b
+## and both self-checks root the HQ-to-gate chain here.
+const HQ_ANCHOR_ID: String = "wp_hq"
+
 # ============================================================================
 # THE TRUNK GRAPH
 # ============================================================================
@@ -232,15 +237,18 @@ const TRUNK_ANCHOR_MIN_K: float = 1.0
 ## the landmark tail is NOT guaranteed, because a kind whose `LANDMARK_SITE_TRIES`
 ## attempts are all rejected simply has no site that run (`terrain_landmarks.gd`'s
 ## "honest degrade"). Check 4 prints the range rather than one number for exactly
-## that reason. Of the 61, 36-46 are trunkable, producing **43-57 edges, 51.5 at
-## the median**, and a hop count from the HQ to the gate of 3-16. Check 4 prints
-## the histogram (pass 2b's drawn-chain parallels included), and that printed
-## number is what the owner retunes against.
+## that reason. Since bead godot-test1-pnvb.9 only the PLACES are trunkable — the
+## 6 field circles and the gate, 7 on every seed of the sweep — producing **6-9
+## edges, median 7**, and a hop count from the HQ's door circle to the gate of
+## 1-6. Check 4 prints the histogram (pass 2b's drawn-chain parallels included),
+## and that printed number is what the owner retunes against.
 ##
-## THE SPREAD IS THE CORRIDOR FILTER'S, NOT THE DISPATCH'S: the trunkable count
-## moves by a factor of two between seeds because how much of the museum mile
-## falls inside k = 1 depends on how far that seed's road wanders. See the banner's
-## EDGE CASE section and check 4's printout.
+## THE (SMALL) SPREAD IS THE DISPATCH'S: seven anchors at degree 1-2 make six to
+## nine pairs, and the repair and pass 2b add the chain links the drawn tier
+## needs. The corridor filter's old spread (how much of the mile fell inside
+## k = 1) is gone with the landmark vertices; what the filter still guards is
+## that no road circle ever falls OUTSIDE k = 1, and check 4's refused-places
+## printout is the tripwire.
 const TRUNK_DEGREES: Array[int] = [1, 2, 2, 1, 2, 2]
 
 ## The longest trunk the nearest-neighbour pass will draw. Measured against the
@@ -343,14 +351,20 @@ static func anchors(terrain: Node3D) -> Array[Dictionary]:
 		var centre: Vector3 = terrain.chunk_to_world(row[1] as Vector2i)
 		rows.append(_anchor("landmark_%d" % int(row[0]), Vector2(centre.x, centre.z), KIND_LANDMARK))
 
-	# THE CORRIDOR FILTER, in one place for every kind at once — see the banner.
-	# It bites on landmarks as designed; the road waypoints now read k = 1 under
-	# the widened rect, and `scarcity_selfcheck` check 4 guards that they keep doing
-	# so. One pass over every kind and no exception list, because an exception list
-	# is what hid the pre-#457 under-coverage.
+	# THE PLACES-ONLY FILTER (bead godot-test1-pnvb.9). Trunkable = the places:
+	# KIND_WAYPOINT (the field teleport circles — the door circle wp_hq among
+	# them, the HQ's anchor) and KIND_GATE (the city's front door), inside the
+	# corridor. KIND_HQ (the tower's centre), KIND_CITY_WAYPOINT (the gate
+	# already IS the city's anchor) and KIND_LANDMARK are never trunkable.
+	# Every row is STILL RETURNED — the racks, the minimap and .11 read them.
+	# The k test stays so a road circle that ever leaves the corridor still
+	# refuses (`scarcity_selfcheck` check 4 guards the road stays covered).
+	# No second corridor rect (banner rule).
 	for row: Dictionary in rows:
 		var pos: Vector2 = row["pos"]
-		row["trunkable"] = terrain.scarcity_at(Vector3(pos.x, 0.0, pos.y)) >= TRUNK_ANCHOR_MIN_K
+		var kind: int = int(row["kind"])
+		row["trunkable"] = (kind == KIND_WAYPOINT or kind == KIND_GATE) \
+				and terrain.scarcity_at(Vector3(pos.x, 0.0, pos.y)) >= TRUNK_ANCHOR_MIN_K
 
 	cache["anchors"] = rows
 	return rows
@@ -494,7 +508,7 @@ static func edges(terrain: Node3D) -> Array[Dictionary]:
 	# `parent`), so pass 3 keeps it; a sweep that adds nothing ends the pass.
 	var hq: int = -1
 	for i: int in eligible:
-		if int(rows[i]["kind"]) == KIND_HQ:
+		if String(rows[i]["id"]) == HQ_ANCHOR_ID:
 			hq = i
 	if hq >= 0 and gate >= 0:
 		for _sweep: int in eligible.size():
