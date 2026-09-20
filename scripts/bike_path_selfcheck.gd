@@ -648,14 +648,16 @@ func _run() -> void:
 	# --- BEAD `godot-test1-z2yv.3`, the anchor racks: R1 (one rack per touched
 	# anchor), R2 (the `bike_stand` contract), R3 (the world tie), R4 (the
 	# rack's own clearance radius).
-	# --- BEAD `godot-test1-z2yv.9`, the parked bikes: P (the five acceptance
-	# lines on box RECORDS, never the MultiMesh; checks 1 and 6 carry the
-	# shape and footprint budget halves). Keep that list true.
+	# --- BEAD `godot-test1-z2yv.9`, the parked bikes (rebuilt `godot-test1-ou1f`):
+	# P (the five acceptance lines on box RECORDS, never the MultiMesh; checks
+	# 1 and 6 carry the shape and footprint budget halves) plus C, the
+	# before/after census control at the end of this file. Keep that list true.
 	_check_anchor_racks(terrain_script)
 	_check_bike_stand_contract(terrain_script)
 	_check_anchor_rack_world_tie(terrain_script)
 	_check_rack_clearance(terrain_script)
 	_check_parked_bikes(terrain_script)
+	_check_parked_bike_census_control(terrain_script)
 	# --- CHILD `.3`, the bridges. SIX STATEMENTS IN FOUR CALLS: B1 (with B1b), B3
 	# and B4 are one call because they all need the same drawn deck, B5 and B6 are
 	# the two unit assertions on the pieces no seed reliably exercises, and B2 (with
@@ -675,7 +677,7 @@ func _run() -> void:
 				+ "per-chunk shares cover every trunk segment exactly once, trunks "
 				+ "are abandoned whole and never truncated, the route is exempt and "
 				+ "the furniture thins, the spur tier stays off its whole band, no chunk "
-				+ "grew a MultiMesh bucket, only the poles claim a footprint, every "
+				+ "grew a MultiMesh bucket beyond the parked bikes' own CYLINDER one, "
 				+ "pole carries one of the five authored tops and stands it clear of "
 				+ "its own post, the CUBE-bucket index recorded for a lamp is the one "
 				+ "the shipped bucketing really puts it at, the cycle is randomize()d "
@@ -695,8 +697,9 @@ func _run() -> void:
 				+ "contract the rental epic will read, and a rack box really in "
 				+ "the chunk's batch stands within a stated distance of its anchor, "
 				+ "with the footprint asked in the rack's own radius, and every "
-				+ "rack carries its parked-bike CUBE silhouettes inside its own "
-				+ "footprint and slice, byte-identical across builds, every mile "
+				+ "rack carries its nine-box parked-bike silhouettes inside its own "
+				+ "footprint and slice, byte-identical across builds, the pre-bike "
+				+ "boxes pinned to their consts on three seeds, every mile "
 				+ "monument passing the gates grows its side-link onto the nearest "
 				+ "trunk station to the bit and paints no piece under 40 m")
 		Sentinel.finish(self)
@@ -1519,7 +1522,8 @@ func _measure_trunks_below_k1(terrain_script: GDScript) -> void:
 func _check_no_new_buckets(terrain_script: GDScript) -> void:
 	"""
 	A chunk carrying a path has exactly the `BlockMultiMesh_*` children it has
-	without one.
+	without one — plus, since bead `godot-test1-ou1f`, at most the parked bikes'
+	own `BlockMultiMesh_CYLINDER`.
 
 	THE RULING, MADE UNFAILABLE. `batch_selfcheck` check 5 caps the draw calls per
 	biome from a table its own sweep cannot reach this family with — it builds
@@ -1528,6 +1532,13 @@ func _check_no_new_buckets(terrain_script: GDScript) -> void:
 	asserted HERE, where the paths are: one new bucket would be +1 draw call on
 	every PLAINS / SNOW / FOREST chunk that carries a strip, which is a great many
 	more chunks than the eleven the waypoint disc is forgiven for.
+	
+	THE CYLINDER EXCEPTION (bead `godot-test1-ou1f`) is exactly one bucket, and it
+	is this family's own: the parked-bike wheels and hubs are CYLINDERs — a kind
+	`batch_selfcheck` check 5 already bills, so no cap row changes — and a rack
+	stands on few chunks per world. Any second new bucket, any missing bucket, or
+	a CYLINDER bucket on a chunk whose bare run holds no bike disc (checks 7–8
+	own that half) still fails.
 	"""
 	var on: Node3D = _terrain(terrain_script, SEEDS[0], true)
 	var off: Node3D = _terrain(terrain_script, SEEDS[0], false)
@@ -1547,9 +1558,14 @@ func _check_no_new_buckets(terrain_script: GDScript) -> void:
 			buckets_on.sort()
 			buckets_off.sort()
 			if buckets_on != buckets_off:
-				_fail("chunk %s draws buckets %s with a bike path in it and %s without — a "
-						% [chunk_pos, buckets_on, buckets_off]
-						+ "bike path must be CUBEs and nothing else")
+				var extra: Array = buckets_on.filter(
+						func(k: String) -> bool: return not buckets_off.has(k))
+				var missing: Array = buckets_off.filter(
+						func(k: String) -> bool: return not buckets_on.has(k))
+				if extra != ["BlockMultiMesh_CYLINDER"] or not missing.is_empty():
+					_fail("chunk %s draws buckets %s with a bike path in it and %s without — a "
+							% [chunk_pos, buckets_on, buckets_off]
+							+ "bike path adds no bucket but the parked bikes' own CYLINDER one")
 			if buckets_off.is_empty():
 				_fail("chunk %s has no MultiMesh bucket at all with the paths off, so the "
 						% chunk_pos + "comparison above cannot see a bucket being added")
@@ -1574,7 +1590,8 @@ func _check_footprints(terrain_script: GDScript) -> void:
 	appended footprints must equal the poles the markers recorded PLUS the racks
 	(bead `godot-test1-z2yv.3`: one footprint for the whole stand, not one per
 	upright), never the count of boxes — and the parked bikes (bead
-	`godot-test1-z2yv.9`: four CUBE boxes a silhouette, all inside the rack's
+	`godot-test1-z2yv.9`, rebuilt `godot-test1-ou1f`: nine boxes a silhouette
+(four CYLINDER discs + five CUBE frame boxes), all inside the rack's
 	own circle) are paint in exactly that sense. A post is NON-CLIMBABLE and its `top` is
 	its full height: a mast has no top to stand on (`terrain_biomes.gd`'s street
 	furniture) — and a stand is no more climbable than a post.
@@ -1594,7 +1611,7 @@ func _check_footprints(terrain_script: GDScript) -> void:
 			poles_seen += poles
 			racks_seen += racks
 			paint_seen += batch.size() - poles - racks * (1 + BikePaths.RACK_UPRIGHT_COUNT
-					+ 4 * BikePaths.PARKED_BIKES_PER_RACK)
+					+ BikePaths.PARKED_BIKE_BOXES_PER_BIKE * BikePaths.PARKED_BIKES_PER_RACK)
 			if obstacles.size() != poles + racks:
 				_fail("chunk %s built %d boxes of which %d are poles and %d racks, and "
 						% [chunk_pos, batch.size(), poles, racks] + "appended %d "
@@ -1641,7 +1658,7 @@ func _check_footprints(terrain_script: GDScript) -> void:
 func _check_tops_and_cubes(terrain_script: GDScript) -> void:
 	"""
 	Every pole carries exactly one top; every kind the table can produce is really
-	produced; and every box this family emits is still a CUBE.
+	produced; and every box this family emits is a CUBE or a parked-bike disc.
 
 	ONE SWEEP FOR BOTH, because both are statements about the same boxes and the
 	sweep is the expensive part.
@@ -1654,16 +1671,19 @@ func _check_tops_and_cubes(terrain_script: GDScript) -> void:
 	in the game, would ever notice. Counting the histogram over three seeds is the
 	control that catches it.
 
-	THE CUBE HALF is `batch_selfcheck` check 5's `KIND_CAP_BY_NAME` ruling, asserted
+	THE KIND HALF is `batch_selfcheck` check 5's `KIND_CAP_BY_NAME` ruling, asserted
 	on the entries themselves. Check 5 above compares a chunk's BUCKETS with the
 	paths on and off, which is the same statement from the outside; this one also
-	fails if a sign plate is emitted as a CYLINDER in a chunk that already had a
-	CYLINDER bucket from its own biome content — the case the bucket comparison
-	cannot see, and exactly the mast the epic refused.
+	fails if a sign plate is emitted as a CYLINDER — the case the bucket comparison
+	cannot see when the chunk already holds a CYLINDER bucket from its own biome
+	content, and exactly the mast the epic refused — and a CYLINDER that is
+	neither a parked-bike wheel nor a hub fails here too.
 	"""
 	var histogram: Dictionary = {}
 	var poles_seen: int = 0
 	var boxes_seen: int = 0
+	var wheel_key := _sorted_lengths(BikePaths.PARKED_BIKE_WHEEL_DIMS)
+	var hub_key := _sorted_lengths(BikePaths.PARKED_BIKE_HUB_DIMS)
 	for seed_value: int in SEEDS:
 		var terrain: Node3D = _terrain(terrain_script, seed_value, true)
 		for ox in range(-TOP_SWEEP_HALF, TOP_SWEEP_HALF + 1):
@@ -1672,12 +1692,21 @@ func _check_tops_and_cubes(terrain_script: GDScript) -> void:
 				var built: Dictionary = _spawn_bare(terrain, chunk_pos)
 				for entry_v: Variant in (built["batch"] as Array):
 					boxes_seen += 1
-					var kind: int = (entry_v as Dictionary).get("kind", ChunkBatch.BoxKind.CUBE)
-					if kind != ChunkBatch.BoxKind.CUBE:
-						_fail("seed %d chunk %s emitted a box of kind %s — this family is CUBE "
-								% [seed_value, chunk_pos, ChunkBatch.BoxKind.find_key(kind)]
-								+ "only, so that `KIND_CAP_BY_NAME` in batch_selfcheck needs no "
-								+ "row changed and a path costs no chunk a second draw call")
+					var entry: Dictionary = entry_v
+					var kind: int = entry.get("kind", ChunkBatch.BoxKind.CUBE)
+					if kind == ChunkBatch.BoxKind.CUBE:
+						continue
+					# THE DISC HALF (bead `godot-test1-ou1f`): a parked-bike wheel or hub is
+					# the family's only CYLINDER — anything else fails.
+					var bt: Transform3D = entry["transform"]
+					var key := _sorted_lengths(Vector3(bt.basis.x.length(),
+						bt.basis.y.length(), bt.basis.z.length()))
+					if kind != ChunkBatch.BoxKind.CYLINDER or not (
+						_same_dims(key, wheel_key) or _same_dims(key, hub_key)):
+						_fail("seed %d chunk %s emitted a box of kind %s sized %s — this family is CUBEs "
+								% [seed_value, chunk_pos, ChunkBatch.BoxKind.find_key(kind), key]
+								+ "plus the parked bikes' wheel/hub discs, so that `KIND_CAP_BY_NAME` in "
+								+ "batch_selfcheck needs no row changed")
 						break
 				for row: Dictionary in (built["paths"] as Array[Dictionary]):
 					var poles: PackedInt32Array = row["poles"]
@@ -1789,19 +1818,28 @@ func _check_sign_clearance(terrain_script: GDScript) -> void:
 			var chunk_pos := Vector2i(ox, oy)
 			var built: Dictionary = _spawn_bare(terrain, chunk_pos)
 			var batch: Array = built["batch"]
+			# THE CUBE-ORDINAL MAP (bead `godot-test1-ou1f`): a pole's recorded
+			# index is a CUBE-bucket index, and the parked bikes' CYLINDER discs
+			# interleave this batch — so `batch[p]` is the wrong box whenever a
+			# rack was built before the pole. The p-th CUBE entry is the post.
+			var cubes: Array[int] = []
+			for e in batch.size():
+				if int((batch[e] as Dictionary).get("kind", ChunkBatch.BoxKind.CUBE)) \
+						== ChunkBatch.BoxKind.CUBE:
+					cubes.append(e)
 			for row: Dictionary in (built["paths"] as Array[Dictionary]):
 				for p: int in (row["poles"] as PackedInt32Array):
-					if p < 0 or p >= batch.size():
+					if p < 0 or p >= cubes.size():
 						_fail("chunk %s: the marker records a pole at CUBE instance %d and the "
-								% [chunk_pos, p] + "chunk's own batch holds %d boxes"
-								% batch.size())
+								% [chunk_pos, p] + "chunk's own batch holds %d CUBE boxes"
+								% cubes.size())
 						continue
-					var post: Transform3D = (batch[p] as Dictionary)["transform"]
-					# THE INDEX IS THE TIE, and asserting it is free: `_spawn_bare` starts
-					# from an EMPTY batch and this family emits CUBEs only, so a pole's
-					# CUBE-bucket index IS its batch index here. If that ever stops being
-					# true the entry at `p` is not a post and this says so, rather than
-					# quietly measuring the wrong box.
+					var post: Transform3D = (batch[cubes[p]] as Dictionary)["transform"]
+					# THE INDEX IS THE TIE, and asserting it is free: the map above turns
+					# the recorded CUBE-bucket index back into the batch entry the shipped
+					# bucketing puts in that instance. If the two ever come apart the entry
+					# is not a post and this says so, rather than quietly measuring the
+					# wrong box.
 					if not _is_post(post):
 						_fail("chunk %s: the marker records a pole at index %d, but the box "
 								% [chunk_pos, p] + "there is not a post — the recorded index and "
@@ -1821,7 +1859,8 @@ func _check_sign_clearance(terrain_script: GDScript) -> void:
 					# what keeps a CROSSING path's strip out: two bike paths may cross, and
 					# a filter that took every box within a radius of the post would read a
 					# foreign 5 m strip box as a sign buried in it and fail a correct world.
-					for k in range(p + 1, mini(p + 1 + TOP_BOXES_MAX, batch.size())):
+					for q in range(p + 1, mini(p + 1 + TOP_BOXES_MAX, cubes.size())):
+						var k: int = cubes[q]
 						var box: Transform3D = (batch[k] as Dictionary)["transform"]
 						if _is_post(box) or box.origin.y < GROUND_BAND:
 							break
@@ -3315,8 +3354,9 @@ func _check_anchor_rack_world_tie(terrain_script: GDScript) -> void:
 
 func _check_parked_bikes(terrain_script: GDScript) -> void:
 	"""
-	At every rack R1 counts, exactly `PARKED_BIKES_PER_RACK` four-CUBE parked-bike
-	silhouettes — chunk content, world-tied, inside the rack's footprint and slice.
+	At every rack R1 counts, exactly `PARKED_BIKES_PER_RACK` nine-box parked-bike
+	silhouettes — round CYLINDER wheels + hubs, tilted-tube CUBE frames — chunk
+	content, world-tied, inside the rack's footprint and slice.
 
 	Read off the family's box RECORDS (the `_spawn_bare` batch the slice is built
 	from, as check 1 does), never the MultiMesh: instance data is write-only
@@ -3325,17 +3365,19 @@ func _check_parked_bikes(terrain_script: GDScript) -> void:
 	with the geometry anywhere at all.
 
 	The rack's own run is found by its rail (rail dims, at the marker R1
-	counts): rail + 3 uprights + 4 boxes per bike, in that order. Reading the
+	counts): rail + 3 uprights + 9 boxes per bike, in that order. Reading the
 	bikes off the run — rather than sweeping the batch for their dims — is what
 	keeps a neighbouring rack's silhouettes, or a deck slab that happened to
 	share a size, out of this marker's count.
 
 	One clause per acceptance line, each with its mutation control:
 
-	  P1. COUNT: exactly `PARKED_BIKES_PER_RACK` x 4 CUBE records per rack, in
-	      W,W,F,S order per slot — and the found rack count equals R1's stashed
-	      count, failing on zero either way. M-none (no bikes) breaks the run;
-	      M-extra (5 a rack) breaks it the other way.
+	  P1. COUNT: exactly `PARKED_BIKES_PER_RACK` x `PARKED_BIKE_BOXES_PER_BIKE`
+	      records per rack — per slot WHEEL,HUB,WHEEL,HUB,TOP,DOWN,POST,SADDLE,BAR,
+	      the four discs CYLINDER and the five frame boxes CUBE — and the found
+	      rack count equals R1's stashed count, failing on zero either way.
+	      M-none (no bikes) breaks the run; M-extra (10 a rack) breaks it the
+	      other way.
 	  P2. WORLD TIE: every bike box centre within `RACK_EXTENT` of its marker in
 	      XZ with y in (0, 1.0], and inside the chunk that OWNS the rack
 	      (`rack_owners()`, not re-derived, not a neighbour). M-offset (+25 m
@@ -3347,27 +3389,37 @@ func _check_parked_bikes(terrain_script: GDScript) -> void:
 	  P4. DETERMINISM: the same chunk twice is byte-identical records
 	      (position, dims, colour, kind) — and the run order above is the
 	      in-check half of "the bikes came after the rack's last draw", with
-	      each slot wearing its constant tint. M-draw (one extra randf before
+	      each slot's frame wearing its constant tint, every tyre black and
+	      every hub light. M-draw (one extra randf before
 	      the rail) is a KNOWN SURVIVOR here, and honestly so: every family
 	      colour is an override, so a private-stream draw moves no stored value
 	      — the shared-stream half of "no draw moved" is check 1's node table,
 	      R1's before/after counts and chunk_stream_selfcheck, all of which the
 	      PR tables carry.
 	  P5. SLICE BUDGET: the stand marker's stamped slice covers the bare batch
-	      whole, and every family record is a CUBE (check 5 proper, on real
-	      chunks, is untouched — CUBE only).
+	      whole, and every family record is a CUBE or a bike disc (checks 5 and
+	      7–8 carry the bucket halves, on real chunks and on the entries).
 	"""
 	var wheel_dims := _sorted_lengths(BikePaths.PARKED_BIKE_WHEEL_DIMS)
-	var frame_dims := _sorted_lengths(BikePaths.PARKED_BIKE_FRAME_DIMS)
+	var hub_dims := _sorted_lengths(BikePaths.PARKED_BIKE_HUB_DIMS)
+	var top_dims := _sorted_lengths(BikePaths.PARKED_BIKE_TOPTUBE_DIMS)
+	var down_dims := _sorted_lengths(BikePaths.PARKED_BIKE_DOWNTUBE_DIMS)
+	var post_dims := _sorted_lengths(BikePaths.PARKED_BIKE_POST_DIMS)
 	var saddle_dims := _sorted_lengths(BikePaths.PARKED_BIKE_SADDLE_DIMS)
+	var bar_dims := _sorted_lengths(BikePaths.PARKED_BIKE_BAR_DIMS)
 	var rail_dims := _sorted_lengths(Vector3(BikePaths.RACK_RAIL_LENGTH,
 			BikePaths.RACK_RAIL_HEIGHT, BikePaths.RACK_RAIL_DEPTH))
 	var upright_dims := _sorted_lengths(Vector3(BikePaths.RACK_UPRIGHT_WIDTH,
 			BikePaths.RACK_UPRIGHT_HEIGHT, BikePaths.RACK_UPRIGHT_DEPTH))
 	var want_run: Array = [upright_dims, upright_dims, upright_dims]
+	var want_kinds: Array = [ChunkBatch.BoxKind.CUBE, ChunkBatch.BoxKind.CUBE, ChunkBatch.BoxKind.CUBE]
 	for b in BikePaths.PARKED_BIKES_PER_RACK:
-		want_run.append_array([wheel_dims, wheel_dims, frame_dims, saddle_dims])
-	var want_bikes: int = 4 * BikePaths.PARKED_BIKES_PER_RACK
+		want_run.append_array([wheel_dims, hub_dims, wheel_dims, hub_dims,
+			top_dims, down_dims, post_dims, saddle_dims, bar_dims])
+		want_kinds.append_array([ChunkBatch.BoxKind.CYLINDER, ChunkBatch.BoxKind.CYLINDER,
+			ChunkBatch.BoxKind.CYLINDER, ChunkBatch.BoxKind.CYLINDER,
+			ChunkBatch.BoxKind.CUBE, ChunkBatch.BoxKind.CUBE, ChunkBatch.BoxKind.CUBE, ChunkBatch.BoxKind.CUBE, ChunkBatch.BoxKind.CUBE])
+	var want_bikes: int = BikePaths.PARKED_BIKE_BOXES_PER_BIKE * BikePaths.PARKED_BIKES_PER_RACK
 	for seed_value: int in SEEDS:
 		var terrain: Node3D = _terrain(terrain_script, seed_value, true)
 		var anchors: Array[Dictionary] = terrain.bike_anchors()
@@ -3434,8 +3486,9 @@ func _check_parked_bikes(terrain_script: GDScript) -> void:
 					break
 				var entry: Dictionary = batch[e]
 				var bt: Transform3D = entry["transform"]
-				run.append(_sorted_lengths(Vector3(bt.basis.x.length(),
-							bt.basis.y.length(), bt.basis.z.length())))
+				run.append([_sorted_lengths(Vector3(bt.basis.x.length(),
+							bt.basis.y.length(), bt.basis.z.length())),
+							int(entry.get("kind", ChunkBatch.BoxKind.CUBE))])
 			if run.size() != want_run.size():
 				_fail("P seed %d anchor %d (%s): its rack's record run holds %d "
 						% [seed_value, idx, String(anchors[idx]["id"]), run.size() + 1]
@@ -3443,11 +3496,12 @@ func _check_parked_bikes(terrain_script: GDScript) -> void:
 				continue
 			var ordered: bool = true
 			for i in want_run.size():
-				if not _same_dims(run[i], want_run[i]):
-					_fail("P seed %d anchor %d (%s): record %d past its rail is %s, "
-							% [seed_value, idx, String(anchors[idx]["id"]), i + 1, run[i]]
-							+ "want %s — the bikes did not land after the rack's last draw"
-							% [want_run[i]])
+				if not _same_dims(run[i][0], want_run[i]) or run[i][1] != want_kinds[i]:
+					_fail("P seed %d anchor %d (%s): record %d past its rail is %s/%s, "
+							% [seed_value, idx, String(anchors[idx]["id"]), i + 1, run[i][0],
+							ChunkBatch.BoxKind.find_key(run[i][1])]
+							+ "want %s/%s — the bikes did not land after the rack's last draw"
+							% [want_run[i], ChunkBatch.BoxKind.find_key(want_kinds[i])])
 					ordered = false
 					break
 			if not ordered:
@@ -3456,10 +3510,13 @@ func _check_parked_bikes(terrain_script: GDScript) -> void:
 			# --- P2 + P3 + P4 (colour half): every bike box off its run entry.
 			for n in want_bikes:
 				var entry: Dictionary = batch[rail_at + 4 + n]
-				if int(entry["kind"]) != ChunkBatch.BoxKind.CUBE:
-					_fail("P seed %d anchor %d (%s): bike record %d is not a CUBE "
-							% [seed_value, idx, String(anchors[idx]["id"]), n] + "— the "
-							+ "parked bikes must bill no new bucket")
+				var kind: int = int(entry.get("kind", ChunkBatch.BoxKind.CUBE))
+				if kind != want_kinds[3 + n]:
+					_fail("P seed %d anchor %d (%s): bike record %d is a %s, want %s — "
+							% [seed_value, idx, String(anchors[idx]["id"]), n,
+							ChunkBatch.BoxKind.find_key(kind),
+							ChunkBatch.BoxKind.find_key(want_kinds[3 + n])]
+							+ "the wheels and hubs are CYLINDER, the frame is CUBE")
 					continue
 				var bt: Transform3D = entry["transform"]
 				var world := Vector2(centre.x + bt.origin.x, centre.z + bt.origin.z)
@@ -3490,8 +3547,14 @@ func _check_parked_bikes(terrain_script: GDScript) -> void:
 									% [seed_value, idx, String(anchors[idx]["id"]), n]
 									+ "at %s, past RACK_RADIUS %.2f — it needs a "
 									% [cworld, BikePaths.RACK_RADIUS] + "footprint of its own")
+				var slot: int = n / BikePaths.PARKED_BIKE_BOXES_PER_BIKE
+				var part: int = n % BikePaths.PARKED_BIKE_BOXES_PER_BIKE
 				var want_tint: Color = BikePaths.PARKED_BIKE_COLORS[
-						(n / 4) % BikePaths.PARKED_BIKE_COLORS.size()]
+						slot % BikePaths.PARKED_BIKE_COLORS.size()]
+				if part == 0 or part == 2:
+					want_tint = BikePaths.PARKED_BIKE_TYRE_COLOR
+				elif part == 1 or part == 3:
+					want_tint = BikePaths.PARKED_BIKE_HUB_COLOR
 				if not _same_color(entry["color"], want_tint.srgb_to_linear()):
 					_fail("P seed %d anchor %d (%s): bike record %d wears %s, not "
 							% [seed_value, idx, String(anchors[idx]["id"]), n, entry["color"]]
@@ -3502,13 +3565,16 @@ func _check_parked_bikes(terrain_script: GDScript) -> void:
 			var sweep: int = 0
 			for e in batch.size():
 				var entry: Dictionary = batch[e]
-				if int(entry["kind"]) != ChunkBatch.BoxKind.CUBE:
-					continue
+				var skind: int = int(entry.get("kind", ChunkBatch.BoxKind.CUBE))
 				var bt: Transform3D = entry["transform"]
 				var key := _sorted_lengths(Vector3(bt.basis.x.length(),
 						bt.basis.y.length(), bt.basis.z.length()))
-				if not (_same_dims(key, wheel_dims) or _same_dims(key, frame_dims) \
-						or _same_dims(key, saddle_dims)):
+				var pair_ok: bool = false
+				for i in range(3, want_run.size()):
+					if skind == want_kinds[i] and _same_dims(key, want_run[i]):
+						pair_ok = true
+						break
+				if not pair_ok:
 					continue
 				var world := Vector2(centre.x + bt.origin.x, centre.z + bt.origin.z)
 				if world.distance_to(Vector2(mpos.x, mpos.z)) > MARKER_GEOMETRY_TOLERANCE:
@@ -5814,8 +5880,8 @@ func _spawn_bare(terrain: Node3D, chunk_pos: Vector2i) -> Dictionary:
 	          that marker's whole
 	          meta: `origin`, `segments`, `poles` (this path's own poles, as
 	          CUBE-BUCKET indices — see check 9's banner for why that is not the
-	          batch index, though in this helper's empty CUBE-only batch the two
-	          coincide, which is what lets check 7c index the batch with them),
+	          batch index; check 7c maps them through the batch's CUBE ordinal
+	          because the parked bikes' discs interleave it),
 	          `tops` (one per pole) and `signals` (each head's first lens).
 
 	An EMPTY `obstacles` on purpose, in the checks that count footprints: with
@@ -5970,3 +6036,107 @@ func _shape_count(chunk: Node) -> int:
 		if String(child.name) == BLOCK_BODY:
 			return child.get_child_count()
 	return 0
+
+
+# ============================================================================
+# C — the parked-bike before/after census control (bead godot-test1-ou1f)
+# ============================================================================
+
+func _check_parked_bike_census_control(terrain_script: GDScript) -> void:
+	"""
+	The RNG-contract control the rebuild owes: every box the rack emitted
+	BEFORE the first bike box — the rail plus `RACK_UPRIGHT_COUNT` uprights —
+	stands where the shipped consts put it, on all three SEEDS.
+	
+	Recomputed from first principles (site + `RACK_*` consts), never read off
+	the bike code: the expected rail/upright centres are derived here from the
+	same inputs the builder takes, and each is compared — dims, origin to
+	2 mm, colour, kind — against the record the bare batch actually holds at
+	the rack's run head. POSITIONS, not counts: moving a pre-bike box by any
+	amount the eye could see breaks this, while adding or dropping a bike box
+	does not (that is P's verdict, not this one's). The kind half pins that no
+	CYLINDER stands among them — every disc came after the rack's last draw.
+	Fails on zero racks seen.
+	"""
+	var rail_dims := _sorted_lengths(Vector3(BikePaths.RACK_RAIL_LENGTH,
+		BikePaths.RACK_RAIL_HEIGHT, BikePaths.RACK_RAIL_DEPTH))
+	var upright_dims := _sorted_lengths(Vector3(BikePaths.RACK_UPRIGHT_WIDTH,
+		BikePaths.RACK_UPRIGHT_HEIGHT, BikePaths.RACK_UPRIGHT_DEPTH))
+	var racks: int = 0
+	var prebike: int = 0
+	for seed_value: int in SEEDS:
+		var terrain: Node3D = _terrain(terrain_script, seed_value, true)
+		var anchors: Array[Dictionary] = terrain.bike_anchors()
+		var touched: Array[int] = _touched_from_edges(terrain)
+		var waypoints: Array[Dictionary] = terrain.waypoint_sites()
+		for idx: int in touched:
+			var psite: Vector2 = BikePaths.rack_site(
+				terrain, anchors[idx]["pos"], waypoints)
+			if psite == Vector2.INF:
+				continue  # R1 owns the no-site verdict
+			var home: Vector2i = terrain.world_to_chunk(
+				Vector3(psite.x, 0.0, psite.y))
+			var built: Dictionary = _spawn_bare(terrain, home)
+			var batch: Array = built["batch"]
+			var mine: Array[Dictionary] = []
+			for s: Dictionary in (built["stands"] as Array):
+				if int(s["anchor"]) == idx:
+					mine.append(s)
+			if mine.size() != 1:
+				continue  # P owns the marker verdicts
+			var mpos: Vector3 = mine[0]["pos"]
+			var centre: Vector3 = terrain.chunk_to_world(home)
+			var at := Vector2(psite.x - centre.x, psite.y - centre.z)
+			var want_at: Array = [Vector3(at.x, BikePaths.RACK_RAIL_Y, at.y)]
+			var want_dims: Array = [rail_dims]
+			for u in BikePaths.RACK_UPRIGHT_COUNT:
+				var x: float = at.x - BikePaths.RACK_RAIL_LENGTH * 0.5 \
+					+ BikePaths.RACK_RAIL_LENGTH * float(u) / float(BikePaths.RACK_UPRIGHT_COUNT - 1)
+				want_at.append(Vector3(x, BikePaths.RACK_UPRIGHT_HEIGHT * 0.5, at.y))
+				want_dims.append(upright_dims)
+			var rail_at: int = -1
+			for e in batch.size():
+				var entry: Dictionary = batch[e]
+				var bt: Transform3D = entry["transform"]
+				var key := _sorted_lengths(Vector3(bt.basis.x.length(),
+						bt.basis.y.length(), bt.basis.z.length()))
+				if not _same_dims(key, rail_dims):
+					continue
+				var world := Vector2(centre.x + bt.origin.x, centre.z + bt.origin.z)
+				if world.distance_to(Vector2(mpos.x, mpos.z)) > 0.5:
+					continue
+				rail_at = e if rail_at < 0 else -2
+			if rail_at < 0:
+				continue  # P owns the missing-run verdict
+			racks += 1
+			for i in want_at.size():
+				var entry: Dictionary = batch[rail_at + i]
+				var bt: Transform3D = entry["transform"]
+				var key := _sorted_lengths(Vector3(bt.basis.x.length(),
+						bt.basis.y.length(), bt.basis.z.length()))
+				if not _same_dims(key, want_dims[i]):
+					_fail("C seed %d anchor %d (%s): pre-bike record %d has dims %s, want %s — "
+							% [seed_value, idx, String(anchors[idx]["id"]), i, key, want_dims[i]]
+							+ "the rack's own run moved under the rebuild")
+				var drift: float = bt.origin.distance_to(want_at[i])
+				if drift > 0.002:
+					_fail("C seed %d anchor %d (%s): pre-bike record %d stands at %s, %.4f m off "
+							% [seed_value, idx, String(anchors[idx]["id"]), i, bt.origin, drift]
+							+ "its const-derived centre — the rebuild moved a box it must not touch")
+				var ckind: int = int(entry.get("kind", ChunkBatch.BoxKind.CUBE))
+				if ckind != ChunkBatch.BoxKind.CUBE:
+					_fail("C seed %d anchor %d (%s): pre-bike record %d is a %s, not a CUBE — "
+							% [seed_value, idx, String(anchors[idx]["id"]), i, ChunkBatch.BoxKind.find_key(ckind)]
+							+ "a disc stands inside the rack's own run")
+				if not _same_color(entry["color"], BikePaths.RACK_COLOR.srgb_to_linear()):
+					_fail("C seed %d anchor %d (%s): pre-bike record %d wears %s, not RACK_COLOR — "
+							% [seed_value, idx, String(anchors[idx]["id"]), i, entry["color"]]
+							+ "the rack's own boxes changed tint under the rebuild")
+			prebike += want_at.size()
+		terrain.free()
+	if racks == 0:
+		_fail("C swept %d seeds and found no rack run at all, so the census asserted nothing"
+			% SEEDS.size())
+	print("C: %d pre-bike boxes at %d racks stand on their const-derived centres over %d seeds"
+		% [prebike, racks, SEEDS.size()])
+	Sentinel.done("parked_bike_census_control")
