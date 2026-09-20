@@ -44,10 +44,18 @@ extends SceneTree
 ##      sweep rather than argued, and — the two the round-1 review found missing —
 ##      that the degree dispatch VARIES WITHIN a world and MOVES WITH `run_seed`.
 ##      Then it PRINTS: the anchor count as a per-seed range, the trunkable range,
-##      the edge-count histogram, every refused WAYPOINT with its own k, and the
-##      refused LANDMARKS per seed banded by how far below k = 1.0 they fell
-##      (banded and not per-anchor: there are hundreds of them across the sweep,
-##      and Ruling 3 asked for the distribution).
+##      the edge-count histogram, every refused PLACE with its own k (the
+##      tripwire that would catch the corridor under-covering the road again),
+##      and the refused LANDMARKS per seed banded by how far below k = 1.0 they
+##      fell (banded and not per-anchor: there are hundreds of them across the
+##      sweep; since pnvb.9 landmarks are refused BY KIND and the banding shows
+##      where they would fall).
+##   6. PLACES ONLY (bead godot-test1-pnvb.9, A1): zero trunkable LANDMARK, HQ or
+##      CITY_WAYPOINT rows; controls (>= 20 landmark rows in the table, the
+##      `wp_hq` row trunkable and carrying a trunk) fail on zero.
+##   7. NO FAR ENDPOINT (bead godot-test1-pnvb.9, A3): zero trunks touching a
+##      LANDMARK anchor at road-lateral >= 300 m; the far-landmark population
+##      control fails on zero.
 ##   5. THE WORLD TIE. Every anchor row's position is re-derived FROM THE
 ##      SHIPPED ANCHOR SOURCES (every row since pnvb.9 — the tower centre and
 ##      the landmarks left the graph, so endpoints alone no longer reach them) — `tower_site()`, `waypoint_sites()`,
@@ -121,6 +129,8 @@ func _run() -> void:
 	_check_reachability(terrain_script)
 	_check_well_formed(terrain_script)
 	_check_world_tie(terrain_script)
+	_check_places_only(terrain_script)
+	_check_no_far_endpoint(terrain_script)
 
 	if _failures.is_empty():
 		print("bike network: asking for the anchor table and the trunk graph moves "
@@ -666,7 +676,8 @@ func _check_well_formed(terrain_script: GDScript) -> void:
 		for line: String in refused_per_seed:
 			print("    ", line)
 	if refused_others.is_empty():
-		print("bike network check 4 — no non-landmark anchor was refused.")
+		print("bike network check 4 — no PLACE anchor was refused (the tower "
+				+ "centre and the city circles are refused BY KIND, by design).")
 	else:
 		# NOT A FAILURE, AND DELIBERATELY SO: the `>= 1.0` test is what the owner
 		# ruled and it ships as written. This printout is the measurement the bead
@@ -828,6 +839,135 @@ func _check_world_tie(terrain_script: GDScript) -> void:
 	print("bike network check 5: %d anchor rows re-derived from the shipped anchor "
 			% endpoints + "sources — %s" % str(checked))
 	Sentinel.done("world_tie")
+
+
+# ============================================================================
+# CHECK 6 — TRUNKABLE = THE PLACES (bead godot-test1-pnvb.9, A1)
+# ============================================================================
+
+func _check_places_only(terrain_script: GDScript) -> void:
+	"""
+	Zero trunkable rows of kind LANDMARK, HQ or CITY_WAYPOINT, over the sweep.
+
+	The graph runs between PLACES: the field teleport circles (the door circle
+	`wp_hq` among them — the HQ's anchor) and the gate, inside the corridor.
+	The tower-centre row, the five city circles and every landmark chunk stay
+	in the table (the racks, the minimap and .11 read them) but never carry a
+	trunk. The k test stays underneath, so this asserts the KIND half: a
+	trunkable row must be a corridor place, both halves at once.
+
+	CONTROLS, both failing on zero: the table still holds >= 20 landmark rows
+	(a filter that deleted rows instead of flagging them would show here), and
+	the `wp_hq` row is trunkable and incident to >= 1 graph edge (mutation (ii)
+	below targets exactly this).
+	"""
+	var worst: Array[String] = []
+	var landmark_min: int = 1 << 30
+	for run_seed: int in SEEDS:
+		var terrain: Node3D = _terrain(terrain_script, run_seed)
+		var rows: Array[Dictionary] = BikeNetwork.anchors(terrain)
+		var edges: Array[Dictionary] = BikeNetwork.edges(terrain)
+		var landmark_rows: int = 0
+		var wphq: int = -1
+		for i: int in rows.size():
+			var kind: int = int(rows[i]["kind"])
+			if kind == BikeNetwork.KIND_LANDMARK:
+				landmark_rows += 1
+			if String(rows[i]["id"]) == BikeNetwork.HQ_ANCHOR_ID:
+				wphq = i
+			if bool(rows[i]["trunkable"]) and kind != BikeNetwork.KIND_WAYPOINT \
+					and kind != BikeNetwork.KIND_GATE:
+				worst.append("seed %d: anchor '%s' (kind %d) is trunkable"
+						% [run_seed, rows[i]["id"], kind])
+		landmark_min = mini(landmark_min, landmark_rows)
+		if landmark_rows < 20:
+			_fail("seed %d: the anchor table holds only %d landmark rows — "
+					% [run_seed, landmark_rows] + "racks, the minimap and .11 read "
+					+ "those rows, so a filter that deleted them instead of flagging "
+					+ "them breaks the world beyond the graph")
+		if wphq < 0:
+			_fail("seed %d: no '%s' row in the anchor table at all"
+					% [run_seed, BikeNetwork.HQ_ANCHOR_ID])
+		else:
+			if not bool(rows[wphq]["trunkable"]):
+				_fail("seed %d: the '%s' row is not trunkable — the HQ has no "
+						% [run_seed, BikeNetwork.HQ_ANCHOR_ID] + "anchor in the graph")
+			var incident: int = 0
+			for row: Dictionary in edges:
+				if int(row["a"]) == wphq or int(row["b"]) == wphq:
+					incident += 1
+			if incident == 0:
+				_fail("seed %d: the '%s' row carries no trunk — the HQ is "
+						% [run_seed, BikeNetwork.HQ_ANCHOR_ID] + "isolated from its "
+						+ "own network")
+		terrain.free()
+	for line: String in worst:
+		_fail(line + " — trunkable is places-only (KIND_WAYPOINT and KIND_GATE "
+				+ "inside the corridor); the tower centre, the city circles and "
+				+ "the landmark chunks never carry a trunk")
+	if landmark_min == 1 << 30:
+		_fail("check 6 counted landmark rows on no seed at all")
+	else:
+		print("bike network check 6 (A1): no trunkable LANDMARK, HQ or "
+				+ "CITY_WAYPOINT row on any of %d seeds; fewest landmark rows %d; "
+				% [SEEDS.size(), landmark_min] + "the HQ door circle is trunkable "
+				+ "and carries a trunk everywhere")
+	Sentinel.done("places_only")
+
+
+# ============================================================================
+# CHECK 7 — NO TRUNK TO THE FAR FIELD (bead godot-test1-pnvb.9, A3)
+# ============================================================================
+
+func _check_no_far_endpoint(terrain_script: GDScript) -> void:
+	"""
+	Zero trunks touching a LANDMARK anchor with road-lateral >= 300 m (owner
+	ruling 2026-09-19, amendment ruling 3: the far field stays empty).
+
+	Ruling 3 governs the ANNULUS population, which is landmarks — so the
+	lateral test is scoped to LANDMARK rows, and deliberately not to places: a
+	road circle far down a wandering road can read a large nearest-station
+	distance while standing at k = 1 inside the corridor (measured: the door
+	circle reads past 300 m on 4 of these 16 seeds), and places are governed by
+	the k test check 4 owns. The CONTROL counts such landmark rows, >= 1 per
+	seed, failing on zero so the assertion has a population.
+
+	Lateral is the shipped `_road_lateral_distance` at clearance 300: it reads
+	INF off the road's X span, and INF counts as far, exactly as the callers
+	that keep the far field empty read it.
+	"""
+	var far_edges: Array[String] = []
+	for run_seed: int in SEEDS:
+		var terrain: Node3D = _terrain(terrain_script, run_seed)
+		var rows: Array[Dictionary] = BikeNetwork.anchors(terrain)
+		var edges: Array[Dictionary] = BikeNetwork.edges(terrain)
+		var far_rows: int = 0
+		var lat := {}
+		for i: int in rows.size():
+			var pos: Vector2 = rows[i]["pos"]
+			var d: float = terrain._road_lateral_distance(pos.x, pos.y, 300.0)
+			lat[i] = d
+			if d >= 300.0 and int(rows[i]["kind"]) == BikeNetwork.KIND_LANDMARK:
+				far_rows += 1
+		if far_rows == 0:
+			_fail("seed %d: no landmark row reads road-lateral >= 300 m — the "
+					% run_seed + "far-field population this check guards is empty "
+					+ "and 'no trunk reaches it' holds for free")
+		for row: Dictionary in edges:
+			for end: int in [int(row["a"]), int(row["b"])]:
+				if int(rows[end]["kind"]) == BikeNetwork.KIND_LANDMARK \
+						and float(lat[end]) >= 300.0:
+					far_edges.append("seed %d: edge %d touches landmark '%s' at "
+							% [run_seed, int(row["id"]), rows[end]["id"]] + "road-"
+							+ "lateral %.0f m — bare paint in the far field, which "
+							% float(lat[end]) + "ruling 3 forbids")
+		terrain.free()
+	for line: String in far_edges:
+		_fail(line)
+	if far_edges.is_empty():
+		print("bike network check 7 (A3): no trunk touches a landmark anchor at "
+				+ "road-lateral >= 300 m on any of %d seeds" % SEEDS.size())
+	Sentinel.done("no_far_endpoint")
 
 
 # ============================================================================

@@ -237,15 +237,18 @@ const HQ_ANCHOR_ID: String = "wp_hq"
 ## the landmark tail is NOT guaranteed, because a kind whose `LANDMARK_SITE_TRIES`
 ## attempts are all rejected simply has no site that run (`terrain_landmarks.gd`'s
 ## "honest degrade"). Check 4 prints the range rather than one number for exactly
-## that reason. Of the 61, 36-46 are trunkable, producing **43-57 edges, 51.5 at
-## the median**, and a hop count from the HQ to the gate of 3-16. Check 4 prints
-## the histogram (pass 2b's drawn-chain parallels included), and that printed
-## number is what the owner retunes against.
+## that reason. Since bead godot-test1-pnvb.9 only the PLACES are trunkable — the
+## 6 field circles and the gate, 7 on every seed of the sweep — producing **6-9
+## edges, median 7**, and a hop count from the HQ's door circle to the gate of
+## 1-6. Check 4 prints the histogram (pass 2b's drawn-chain parallels included),
+## and that printed number is what the owner retunes against.
 ##
-## THE SPREAD IS THE CORRIDOR FILTER'S, NOT THE DISPATCH'S: the trunkable count
-## moves by a factor of two between seeds because how much of the museum mile
-## falls inside k = 1 depends on how far that seed's road wanders. See the banner's
-## EDGE CASE section and check 4's printout.
+## THE (SMALL) SPREAD IS THE DISPATCH'S: seven anchors at degree 1-2 make six to
+## nine pairs, and the repair and pass 2b add the chain links the drawn tier
+## needs. The corridor filter's old spread (how much of the mile fell inside
+## k = 1) is gone with the landmark vertices; what the filter still guards is
+## that no road circle ever falls OUTSIDE k = 1, and check 4's refused-places
+## printout is the tripwire.
 const TRUNK_DEGREES: Array[int] = [1, 2, 2, 1, 2, 2]
 
 ## The longest trunk the nearest-neighbour pass will draw. Measured against the
