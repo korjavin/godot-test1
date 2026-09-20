@@ -512,8 +512,15 @@ func update_character_animation(delta: float, input_dir: Vector2) -> void:
 			player._spawn_ability_effect(player.global_position, Color(0.75, 0.7, 0.6, 0.45), 1.6, 0.3)
 		player._fall_speed = 0.0
 
+	# The rental-bike seat FIRST (bead godot-test1-z2yv.6): a rider is never
+	# "jumping" or "walking", airborne or not, so the pedal branch outranks the
+	# whole chain below. `is_riding` is z2yv.7's field; until it lands this
+	# reads it null-safe off the player (absent is false), so the branch draws
+	# nothing and the old chain runs exactly as before.
+	if player.get("is_riding") == true:
+		animate_pedalling(delta)
 	# Jump/Fall animation
-	if not current_on_floor:
+	elif not current_on_floor:
 		animate_jumping()
 	# Sidestep takes priority on the ground when strafing without forward motion
 	elif player.is_stepping and absf(input_dir.y) <= 0.01:
@@ -684,6 +691,50 @@ func animate_walking(delta: float, speed_multiplier: float) -> void:
 	# lockstep with the feet. Optional node (or bone), per the row's docs: a
 	# model without one draws none.
 	rig.head_bobble(wobble * deg_to_rad(float(_gait["head_deg"])))
+
+	_apply_stink_pose()
+	_apply_slash_pose()
+	_apply_dance_pose()
+
+func animate_pedalling(delta: float) -> void:
+	"""
+	Pedal the rental bike (bead godot-test1-z2yv.6): seat the pose through the
+	shared `rig.pedal()` and nowhere else — no AnimationPlayer anywhere in
+	this game, and the local hero and `remote_avatar.gd`'s mirror stay the
+	same pure function of (hero, phase) with nothing on the presence packet.
+
+	THE CADENCE IS THE GAIT ROW'S OWN `stride_rate`, the same clock
+	`animate_walking()` strides on — per-hero flavour for free, and a slow
+	Teibi pedals slowly. (`delta` is carried for the signature every branch
+	shares; the clock itself is `animation_time`, advanced once at the top of
+	`update_character_animation()`.) The remote mirror (z2yv.8) passes 1.0
+	with its own distance-driven phase, having no clock to ease against.
+
+	The seat owns BOTH arm chains (hands on the bars) and the spine lean, so
+	this clears what the stride may have left the same way `sidestep_pose()`
+	does — roll snapped, pitch and head eased — and then draws the seat. The
+	ability overlays ride on top like on every other clocked path; with their
+	timers at zero they are no-ops and the bars keep the hands.
+
+	@param delta: Time since last frame (carried, not read — see above)
+	"""
+	if rig == null:
+		return
+
+	# Drop what the stride may have left: the strafe roll snapped (the seat
+	# never writes Z, so a leftover would ride along), the walk's lean and
+	# head bobble eased (a rider sits level).
+	reset_sidestep_pose()
+	relax_gait_extras(1.0)
+
+	# The clock, with the stride behind it: the breath lives here too.
+	_hand_over_clock()
+	var phase: float = animation_time * float(_gait["stride_rate"])
+	rig.pedal(phase, 1.0)
+
+	# Seated: the body rides down onto the saddle instead of bobbing over it.
+	if character_body:
+		character_body.position.y = lerp(character_body.position.y, 0.0, 0.2)
 
 	_apply_stink_pose()
 	_apply_slash_pose()

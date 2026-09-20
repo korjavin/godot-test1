@@ -379,6 +379,7 @@ func _run() -> void:
 		Sentinel.done("skinned_joints")
 		Sentinel.done("skinned_determinism")
 		Sentinel.done("phoboman")
+		Sentinel.done("pedal")
 		Sentinel.done("dance_sequence")
 		Sentinel.done("dance_panels")
 		_report()
@@ -406,6 +407,7 @@ func _run() -> void:
 		Sentinel.done("skinned_joints")
 		Sentinel.done("skinned_determinism")
 		Sentinel.done("phoboman")
+		Sentinel.done("pedal")
 		Sentinel.done("dance_sequence")
 		Sentinel.done("dance_panels")
 		player.queue_free()
@@ -420,6 +422,7 @@ func _run() -> void:
 	_check_sidestep(player)
 	_check_skinned(player)
 	_check_phoboman(player)
+	_check_pedal(player)
 	await _check_dance_sequence(player)
 	await _check_dance_panels(player)
 
@@ -2539,6 +2542,454 @@ func _check_phoboman(player: Node3D) -> void:
 
 	fixture.queue_free()
 	Sentinel.done("phoboman")
+
+
+# ============================================================================
+# CHECK 10 — THE PEDAL SEAT (bead godot-test1-z2yv.6)
+# ============================================================================
+
+## The seat's own numbers, written out rather than read off `GAIT_SKIN` — the
+## `TODAY` precedent: a probe that reads the table it guards goes green with
+## the table, and a retune must come here to say so. 68/20 rather than the
+## bead's ~70/~25: the seat plus the stroke must stay under the driver's
+## 90-degree euler ceiling (see the GAIT_SKIN note), or the quarter-phase
+## spread folds and the antiphase formula below has no margin.
+const PEDAL_HIP_DEG: float = 68.0
+const PEDAL_STROKE_DEG: float = 20.0
+const PEDAL_KNEE_DEG: float = 60.0
+const PEDAL_ARM_DEG: float = 45.0
+const PEDAL_LEAN_DEG: float = 15.0
+## Upper-arm acceptance band (the bead's ±5°), transition stillness (±0.01
+## rad) and the leak ceiling after `rest_pose()` (identical operations, so
+## anything above float noise is a bone the rest did not put back).
+const PEDAL_ARM_EPS_DEG: float = 5.0
+const PEDAL_REST_EPS: float = 0.01
+const PEDAL_LEAK_EPS: float = 0.001
+## The head must travel forward (-Z, the way the heroes face) by this in
+## skeleton space when the seat leans in — a 15° lean over ~0.35 m of
+## spine-to-head, so about a third of the expected travel.
+const PEDAL_HEAD_FORWARD_M: float = 0.03
+
+
+## A player just real enough for `update_character_animation()` to dispatch
+## on: the floor answer, the frozen-window flags, the landing-squash state and
+## the three ability timers, all plain vars. `is_riding` is a REAL var here;
+## on the shipped player it arrives with z2yv.7, and until then the branch
+## reads it null-safe — the full suite drives the real player past the branch
+## on every walk, which is the absent-property leg of this probe.
+class PedalStubPlayer extends RefCounted:
+	var current_character_node: Node = null
+	var is_riding: bool = false
+	var on_floor: bool = true
+	var is_caught: bool = false
+	var is_respawning: bool = false
+	var is_game_over: bool = false
+	var is_stepping: bool = false
+	var is_running: bool = false
+	var is_wading: bool = false
+	var land_squash_timer: float = 0.0
+	var land_squash_strength: float = 0.0
+	var LAND_SQUASH_DURATION: float = 0.18
+	var LAND_SQUASH_SPEED_DIVISOR: float = 1.0
+	var LAND_HARD_SPEED: float = 99.0
+	var _fall_speed: float = 0.0
+	var shake_amount: float = 0.0
+	var character_container = null
+	var _teibi_tween = null
+	var phoboman_stink_timer: float = 0.0
+	var primm_slash_timer: float = 0.0
+	var windman_dance_timer: float = 0.0
+
+	func is_on_floor() -> bool:
+		return on_floor
+
+	func _sfx(_which: String) -> void:
+		pass
+
+	func _spawn_ability_effect(_at: Vector3, _hue: Color, _size: float, _span: float) -> void:
+		pass
+
+	func _current_teibi_scale() -> float:
+		return 1.0
+
+
+## Counts which animation the dispatch CHOSE, then runs it — so the probe
+## asserts the branch taken AND the pose drawn, never one without the other.
+class PedalSpy extends PlayerAnimation:
+	var walk_calls: int = 0
+	var jump_calls: int = 0
+	var pedal_calls: int = 0
+
+	func animate_walking(delta: float, speed_multiplier: float) -> void:
+		walk_calls += 1
+		super(delta, speed_multiplier)
+
+	func animate_jumping() -> void:
+		jump_calls += 1
+		super()
+
+	func animate_pedalling(delta: float) -> void:
+		pedal_calls += 1
+		super(delta)
+
+
+func _check_pedal(player: Node3D) -> void:
+	"""
+	THE PEDAL SEAT (bead godot-test1-z2yv.6): one `rig.pedal()` for all four
+	heroes, one dispatch branch, measured through `rig.measure()`.
+
+	(1) SEATED AND ANTIPHASE: at phases 0 and PI both thighs sit flexed
+	    forward past hip − stroke − 1°; at PI/2 the pair stands 2 × 0.8 ×
+	    stroke apart (sin is 0 at both 0 and PI, so the antiphase leg is read
+	    at the quarter phase, where the legs oppose).
+	(2) KNEES FOLDED: both calves at least knee − stroke − 1° deep at both
+	    phases, read in skeleton space — `measure()` deliberately hides the
+	    calf, so this is the one joint read off `rig._axis()`, in the same
+	    skeleton-space units every write uses.
+	(3) ARMS TO THE BARS: upper-arm X within 5° of the arm angle, the roll
+	    axis exactly at rest (the seat never writes Z), the spine leaned, the
+	    head carried forward in skeleton space — outside the euler algebra,
+	    so the lean's DIRECTION is measured, not trusted. The head's rest
+	    height comes off a FRESH second fixture (see (5)): a rest that leaked
+	    would cloud a test-side rest read, so the oracle must never touch it.
+	(4) TRANSITION: at amount 0.0 nothing moves (±0.01 rad on every measured
+	    bone and every joint the seat writes); at 0.5 each sits strictly
+	    between rest and full.
+	(5) NO LEAK: `rest_pose()` after the seat restores every bone the seat
+	    wrote — thighs, calves, feet, arms, forearms AND the spine — and
+	    disturbs none it must never touch, to 0.001 rad (the drop_wings
+	    lesson). Compared against a FRESH fixture that never pedalled: a
+	    baseline read through a rest that SKIPS the spine would be dirty by
+	    construction, so the oracle is the exported rest, not the last one.
+	(6) DISPATCH: on a stub player the seat outranks the whole chain — riding
+	    and airborne still pedals, riding and moving never walks — and with
+	    the flag down the walk frame is the old walk frame, number for
+	    number.
+
+	ONE FUNCTION ON PURPOSE: a runtime error aborts only the function it
+	lands in, so a helper carrying one leg of this probe could die with the
+	stamp below still landing. Inline, an abort misses `done("pedal")` and
+	`finish()` fails the run instead of printing OK over untested legs.
+	"""
+	var seat_min: float = deg_to_rad(PEDAL_HIP_DEG - PEDAL_STROKE_DEG - 1.0)
+	var spread_min: float = deg_to_rad(2.0 * 0.8 * PEDAL_STROKE_DEG)
+	var fold_min: float = deg_to_rad(PEDAL_KNEE_DEG - PEDAL_STROKE_DEG - 1.0)
+	var arm_want: float = deg_to_rad(PEDAL_ARM_DEG)
+	var arm_eps: float = deg_to_rad(PEDAL_ARM_EPS_DEG)
+	var lean_want: float = deg_to_rad(PEDAL_LEAN_DEG)
+	var x_bones: Array[String] = ["thigh_l", "thigh_r", "calf_l", "calf_r",
+			"foot_l", "foot_r", "upperarm_l", "upperarm_r",
+			"lowerarm_l", "lowerarm_r", "spine_02"]
+	var triple_bones: Array[String] = ["pelvis", "spine_02", "spine_03",
+			"clavicle_l", "clavicle_r", "head"]
+	var limb_keys: Array[String] = ["left_arm_x", "right_arm_x", "left_leg_x",
+			"right_leg_x", "left_arm_z", "right_arm_z", "left_leg_z",
+			"right_leg_z"]
+
+	var heroes: int = 0
+	for entry: Dictionary in PlayerController.CHARACTERS:
+		var hero: String = String(entry["name"])
+		var packed: PackedScene = load(String(entry["scene_path"]))
+		if packed == null:
+			_fail("pedal probe: could not load %s — %s went unmeasured"
+					% [String(entry["scene_path"]), hero])
+			continue
+		var fixture: Node3D = packed.instantiate()
+		root.add_child(fixture)
+		var anim: PlayerAnimation = PlayerAnimation.new()
+		anim.player = player
+		var saved: Node = player.current_character_node
+		player.current_character_node = fixture
+		anim.original_rotations = PlayerAnimation.capture_rest_pose(fixture)
+		anim.setup_animation_references()
+		player.current_character_node = saved
+		if anim.rig == null or String(anim.rig.kind()) != "skinned":
+			_fail("pedal probe: %s bound the '%s' rig — the seat needs bones"
+					% [hero, "none" if anim.rig == null else anim.rig.kind()])
+			fixture.queue_free()
+			continue
+		heroes += 1
+		var rig = anim.rig
+		# The oracle fixture: a second instance of the same hero that never
+		# pedals, so legs (3) and (5) read TRUE rest even if `rest_pose()`
+		# itself ever stops restoring. Freed once snapshotted.
+		var base_fixture: Node3D = packed.instantiate()
+		root.add_child(base_fixture)
+		var base_anim: PlayerAnimation = PlayerAnimation.new()
+		base_anim.player = player
+		player.current_character_node = base_fixture
+		base_anim.original_rotations = PlayerAnimation.capture_rest_pose(base_fixture)
+		base_anim.setup_animation_references()
+		player.current_character_node = saved
+		if base_anim.rig == null:
+			_fail("pedal probe: baseline bound no rig for this hero")
+			base_fixture.queue_free()
+			fixture.queue_free()
+			continue
+		base_anim.rig.rest_pose()
+		var base_axes: Dictionary = {}
+		for bone: String in x_bones:
+			base_axes[bone] = base_anim.rig._axis(bone, 0)
+		var base_all: Dictionary = {}
+		for bone: String in triple_bones:
+			for axis: int in [0, 1, 2]:
+				base_all[bone + ":" + str(axis)] = base_anim.rig._axis(bone, axis)
+		var base_head_z: float = 0.0
+		var base_head_ok: bool = false
+		var base_skels: Array[Node] = base_fixture.find_children("*", "Skeleton3D", true, false)
+		if not base_skels.is_empty():
+			var base_skel: Skeleton3D = base_skels[0] as Skeleton3D
+			var base_head: int = base_skel.find_bone("head")
+			if base_head >= 0:
+				base_head_z = base_skel.get_bone_global_pose(base_head).origin.z
+				base_head_ok = true
+		if not base_head_ok:
+			_fail("pedal probe: baseline has no head bone - lean direction unmeasured")
+		base_fixture.queue_free()
+
+		# --- (1) SEATED at both phases; ANTIPHASE at the quarter. ---
+		rig.rest_pose()
+		rig.pedal(0.0, 1.0)
+		var m0: Dictionary = rig.measure()
+		rig.pedal(PI, 1.0)
+		var m1: Dictionary = rig.measure()
+		for m: Dictionary in [m0, m1]:
+			for key: String in ["left_leg_x", "right_leg_x"]:
+				if float(m[key]) < seat_min:
+					_fail("pedal probe: %s thigh %s is %.1f° — want seated past %.1f°"
+							% [hero, key, rad_to_deg(float(m[key])), rad_to_deg(seat_min)])
+		rig.pedal(PI / 2.0, 1.0)
+		var mq: Dictionary = rig.measure()
+		var spread: float = absf(float(mq["left_leg_x"]) - float(mq["right_leg_x"]))
+		if spread < spread_min:
+			_fail("pedal probe: %s thighs %.1f° apart at the quarter phase — want ≥ %.1f° (antiphase)"
+					% [hero, rad_to_deg(spread), rad_to_deg(spread_min)])
+		for key: String in ["left_leg_x", "right_leg_x"]:
+			if float(mq[key]) < seat_min:
+				_fail("pedal probe: %s thigh %s is %.1f° at the quarter — want seated past %.1f°"
+						% [hero, key, rad_to_deg(float(mq[key])), rad_to_deg(seat_min)])
+
+		# --- (2) KNEES FOLDED, in skeleton space. ---
+		rig.rest_pose()
+		for phase: float in [0.0, PI]:
+			rig.pedal(phase, 1.0)
+			for side: String in ["left", "right"]:
+				var calf_name: String = "calf_l" if side == "left" else "calf_r"
+				var calf: float = rig._axis(calf_name, 0)
+				if calf > -fold_min:
+					_fail("pedal probe: %s calf %s is %.1f° — want folded past %.1f°"
+							% [hero, side, rad_to_deg(calf), rad_to_deg(fold_min)])
+
+		# --- (3) ARMS TO THE BARS, ROLL AT REST, SPINE LEANED, HEAD FORWARD. ---
+		rig.rest_pose()
+		rig.pedal(0.0, 1.0)
+		var ma: Dictionary = rig.measure()
+		for key: String in ["left_arm_x", "right_arm_x"]:
+			if absf(float(ma[key]) - arm_want) > arm_eps:
+				_fail("pedal probe: %s %s is %.1f° — want %.1f° ± %.1f° (bars)"
+						% [hero, key, rad_to_deg(float(ma[key])), PEDAL_ARM_DEG, PEDAL_ARM_EPS_DEG])
+		for key: String in ["left_arm_z", "right_arm_z"]:
+			if absf(float(ma[key])) > PEDAL_REST_EPS:
+				_fail("pedal probe: %s %s is %.4f rad — the seat never writes roll, want rest (±%.2f)"
+						% [hero, key, float(ma[key]), PEDAL_REST_EPS])
+		var spine: float = rig._axis("spine_02", 0)
+		if absf(spine + lean_want) > deg_to_rad(1.0):
+			_fail("pedal probe: %s spine X is %+.1f° — want leaned %+.1f° ± 1°"
+					% [hero, rad_to_deg(spine), rad_to_deg(-lean_want)])
+		var skels: Array[Node] = fixture.find_children("*", "Skeleton3D", true, false)
+		if skels.is_empty():
+			_fail("pedal probe: %s has no Skeleton3D — the lean direction went unmeasured" % hero)
+		else:
+			var skel: Skeleton3D = skels[0] as Skeleton3D
+			var head: int = skel.find_bone("head")
+			if head < 0:
+				_fail("pedal probe: %s has no head bone — the lean direction went unmeasured" % hero)
+			elif base_head_ok:
+				var z1: float = skel.get_bone_global_pose(head).origin.z
+				if base_head_z - z1 < PEDAL_HEAD_FORWARD_M:
+					_fail("pedal probe: %s head moved %+.3f m in Z when the seat leaned in — want forward past %.2f m"
+							% [hero, z1 - base_head_z, PEDAL_HEAD_FORWARD_M])
+
+		# --- (4) TRANSITION: 0.0 moves nothing, 0.5 lands strictly between. ---
+		rig.rest_pose()
+		var rest_m: Dictionary = rig.measure()
+		var rest_axes: Dictionary = {}
+		for bone: String in x_bones:
+			rest_axes[bone] = rig._axis(bone, 0)
+		rig.pedal(0.7, 0.0)
+		var still_m: Dictionary = rig.measure()
+		var keys: Array[String] = limb_keys.duplicate()
+		if rest_m.has("head_z"):
+			keys.append("head_z")
+		for key: String in keys:
+			if absf(float(still_m[key]) - float(rest_m[key])) > PEDAL_REST_EPS:
+				_fail("pedal probe: %s %s moved %+.4f rad at amount 0.0 — want untouched (±%.2f)"
+						% [hero, key, float(still_m[key]) - float(rest_m[key]), PEDAL_REST_EPS])
+		for bone: String in x_bones:
+			if absf(float(rig._axis(bone, 0)) - float(rest_axes[bone])) > PEDAL_REST_EPS:
+				_fail("pedal probe: %s joint %s moved %+.4f rad at amount 0.0 — want untouched (±%.2f)"
+						% [hero, bone, float(rig._axis(bone, 0)) - float(rest_axes[bone]), PEDAL_REST_EPS])
+		rig.pedal(0.7, 0.5)
+		var half_m: Dictionary = rig.measure()
+		var half_axes: Dictionary = {}
+		for bone: String in x_bones:
+			half_axes[bone] = rig._axis(bone, 0)
+		rig.pedal(0.7, 1.0)
+		var full_m: Dictionary = rig.measure()
+		for key: String in ["left_leg_x", "right_leg_x", "left_arm_x", "right_arm_x"]:
+			var d_full: float = absf(float(full_m[key]) - float(rest_m[key]))
+			var d_half: float = absf(float(half_m[key]) - float(rest_m[key]))
+			if d_full < deg_to_rad(1.0):
+				continue
+			if not (d_half > 0.25 * d_full and d_half < 0.75 * d_full):
+				_fail("pedal probe: %s %s half-seat %.1f° is not strictly between rest and full %.1f°"
+						% [hero, key, rad_to_deg(d_half), rad_to_deg(d_full)])
+		for bone: String in ["thigh_l", "thigh_r", "calf_l", "calf_r",
+				"foot_l", "foot_r", "upperarm_l", "upperarm_r", "spine_02"]:
+			var a_full: float = absf(rig._axis(bone, 0) - float(rest_axes[bone]))
+			var a_half: float = absf(float(half_axes[bone]) - float(rest_axes[bone]))
+			if a_full < deg_to_rad(1.0):
+				continue
+			if not (a_half > 0.25 * a_full and a_half < 0.75 * a_full):
+				_fail("pedal probe: %s joint %s half-seat %.1f° is not strictly between rest and full %.1f°"
+						% [hero, bone, rad_to_deg(a_half), rad_to_deg(a_full)])
+
+		# --- (5) NO LEAK: the seat, then rest, is the EXPORTED rest. ---
+		rig.pedal(0.7, 1.0)
+		rig.rest_pose()
+		for bone: String in x_bones:
+			var gap: float = absf(float(rig._axis(bone, 0)) - float(base_axes[bone]))
+			if gap > PEDAL_LEAK_EPS:
+				_fail("pedal probe: %s joint %s rests %.5f rad off after seat+rest — want %.4f (the drop_wings lesson)"
+						% [hero, bone, gap, PEDAL_LEAK_EPS])
+		for key: String in base_all.keys():
+			var parts: PackedStringArray = String(key).split(":")
+			var gap_all: float = absf(float(rig._axis(parts[0], int(parts[1]))) - float(base_all[key]))
+			if gap_all > PEDAL_LEAK_EPS:
+				_fail("pedal probe: %s bone %s rests %.5f rad off after seat+rest — want %.4f"
+						% [hero, key, gap_all, PEDAL_LEAK_EPS])
+
+		fixture.queue_free()
+	if heroes != 4:
+		_fail("pedal probe: measured %d heroes — want 4, over CHARACTERS, never a list" % heroes)
+
+	# --- (6) DISPATCH: the seat outranks the chain; down is the old chain. ---
+	var scout: PackedScene = load(SKINNED_FIXTURE)
+	if scout == null:
+		_fail("pedal probe: could not load %s for the dispatch leg" % SKINNED_FIXTURE)
+	else:
+		var step: float = 1.0 / 60.0
+		var clock: float = 3.7
+		# Riding and AIRBORNE: still the seat, never the wings.
+		var flyer: Node3D = scout.instantiate()
+		root.add_child(flyer)
+		var wing_stub: PedalStubPlayer = PedalStubPlayer.new()
+		wing_stub.current_character_node = flyer
+		wing_stub.is_riding = true
+		wing_stub.on_floor = false
+		var wing: PedalSpy = PedalSpy.new()
+		wing.player = wing_stub
+		wing.original_rotations = PlayerAnimation.capture_rest_pose(flyer)
+		wing.setup_animation_references()
+		wing._gait = PlayerAnimation.gait_for("teibi")
+		if wing.rig == null:
+			_fail("pedal probe: the dispatch leg bound no rig")
+		else:
+			wing.animation_time = clock
+			wing.was_on_floor = false
+			wing.update_character_animation(step, Vector2.ZERO)
+			if wing.jump_calls != 0 or wing.walk_calls != 0 or wing.pedal_calls != 1:
+				_fail("pedal probe: riding+airborne ran walk=%d jump=%d pedal=%d — want 0/0/1"
+						% [wing.walk_calls, wing.jump_calls, wing.pedal_calls])
+			var wing_thigh: float = float(wing.rig.measure()["left_leg_x"])
+			if wing_thigh < seat_min:
+				_fail("pedal probe: riding+airborne drew thigh %.1f° — want the seat past %.1f°"
+						% [rad_to_deg(wing_thigh), rad_to_deg(seat_min)])
+		flyer.queue_free()
+		# Riding and MOVING: never the walk.
+		var roller: Node3D = scout.instantiate()
+		root.add_child(roller)
+		var roll_stub: PedalStubPlayer = PedalStubPlayer.new()
+		roll_stub.current_character_node = roller
+		roll_stub.is_riding = true
+		roll_stub.on_floor = true
+		var roll: PedalSpy = PedalSpy.new()
+		roll.player = roll_stub
+		roll.original_rotations = PlayerAnimation.capture_rest_pose(roller)
+		roll.setup_animation_references()
+		roll._gait = PlayerAnimation.gait_for("teibi")
+		if roll.rig == null:
+			_fail("pedal probe: the dispatch leg bound no rig")
+		else:
+			roll.animation_time = clock
+			roll.was_on_floor = true
+			roll.update_character_animation(step, Vector2(0.0, 1.0))
+			if roll.walk_calls != 0 or roll.jump_calls != 0 or roll.pedal_calls != 1:
+				_fail("pedal probe: riding+moving ran walk=%d jump=%d pedal=%d — want 0/0/1"
+						% [roll.walk_calls, roll.jump_calls, roll.pedal_calls])
+		roller.queue_free()
+		# Flag DOWN and moving: the old chain, number for number.
+		var strider: Node3D = scout.instantiate()
+		root.add_child(strider)
+		var stride_stub: PedalStubPlayer = PedalStubPlayer.new()
+		stride_stub.current_character_node = strider
+		stride_stub.on_floor = true
+		var stride: PedalSpy = PedalSpy.new()
+		stride.player = stride_stub
+		stride.original_rotations = PlayerAnimation.capture_rest_pose(strider)
+		stride.setup_animation_references()
+		stride._gait = PlayerAnimation.gait_for("teibi")
+		if stride.rig == null:
+			_fail("pedal probe: the dispatch leg bound no rig")
+		else:
+			stride.animation_time = clock
+			stride.was_on_floor = true
+			stride.update_character_animation(step, Vector2(0.0, 1.0))
+			if stride.walk_calls != 1 or stride.pedal_calls != 0 or stride.jump_calls != 0:
+				_fail("pedal probe: flag-down+moving ran walk=%d jump=%d pedal=%d — want 1/0/0"
+						% [stride.walk_calls, stride.jump_calls, stride.pedal_calls])
+			else:
+				var walker_fixture: Node3D = scout.instantiate()
+				root.add_child(walker_fixture)
+				var walker_stub: PedalStubPlayer = PedalStubPlayer.new()
+				walker_stub.current_character_node = walker_fixture
+				var control: PlayerAnimation = PlayerAnimation.new()
+				control.player = walker_stub
+				control.original_rotations = PlayerAnimation.capture_rest_pose(walker_fixture)
+				control.setup_animation_references()
+				control._gait = PlayerAnimation.gait_for("teibi")
+				control.animation_time = clock + step
+				control.animate_walking(step, 1.0)
+				var rode: Dictionary = stride.rig.measure()
+				var walked: Dictionary = control.rig.measure()
+				for key: String in rode.keys():
+					if absf(float(rode[key]) - float(walked[key])) > 0.0000001:
+						_fail("pedal probe: flag-down walk frame %s is %.7f vs %.7f — the old chain must be byte-identical"
+								% [key, float(rode[key]), float(walked[key])])
+				walker_fixture.queue_free()
+		strider.queue_free()
+		# Flag DOWN and airborne: the wings, not the seat.
+		var faller: Node3D = scout.instantiate()
+		root.add_child(faller)
+		var fall_stub: PedalStubPlayer = PedalStubPlayer.new()
+		fall_stub.current_character_node = faller
+		fall_stub.on_floor = false
+		var fall: PedalSpy = PedalSpy.new()
+		fall.player = fall_stub
+		fall.original_rotations = PlayerAnimation.capture_rest_pose(faller)
+		fall.setup_animation_references()
+		fall._gait = PlayerAnimation.gait_for("teibi")
+		if fall.rig == null:
+			_fail("pedal probe: the dispatch leg bound no rig")
+		else:
+			fall.animation_time = clock
+			fall.was_on_floor = false
+			fall.update_character_animation(step, Vector2.ZERO)
+			if fall.jump_calls != 1 or fall.pedal_calls != 0 or fall.walk_calls != 0:
+				_fail("pedal probe: flag-down+airborne ran walk=%d jump=%d pedal=%d — want 0/1/0"
+						% [fall.walk_calls, fall.jump_calls, fall.pedal_calls])
+		faller.queue_free()
+	Sentinel.done("pedal")
 
 
 ## A lift menu that is open with no tower behind it: the player's dance guard
