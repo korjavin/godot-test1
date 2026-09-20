@@ -218,6 +218,25 @@ static var _found_id_rx: RegEx = null
 const CONFIG_WORLD_SECTION: String = "world"
 const CONFIG_WORLD_ARCHIVED: String = "archived"
 
+## THE BROWSER/DESKTOP SAVE SLOT (epic godot-test1-i8yu, bead .2) - ONE string:
+## cfg `[save] slot` on desktop, `ck_save` in localStorage on web. Deliberately
+## inside the existing file: the tower section's banner reserved exactly this (a
+## second key or a section suffix), so no third `user://` path and the hermetic
+## audits (`Sentinel.REAL_PATHS`, `progression_selfcheck`) stay untouched. Same
+## read-modify-write every other write uses; on web LS is written (setItem has
+## committed when it returns) and BOTH layers are read, so a pre-switch cfg
+## record is kept (the passport's one-way migration idiom).
+##
+## PLAIN OVERWRITE, no merge - the file's FIRST non-monotone field after the
+## archive latch, and that is right because a save goes backwards by design: a
+## checkpoint after coins were spent, or after a captive was freed, holds LESS
+## than the checkpoint before it. Last-write-wins by `saved_at`; an ended
+## campaign (`archive_world()`) and a fresh one (`new_game()`) clear it, so a
+## run never resurrects captives across runs.
+const CONFIG_SAVE_SECTION: String = "save"
+const CONFIG_SAVE_KEY: String = "slot"
+const LS_SAVE: String = "ck_save"
+
 ## Hard bound on the stored tower set, at BOTH ends — what is written and what is
 ## accepted back. The same discipline (and the same reason) as
 ## `MpCodec.MAX_STATE_IDS`: this exists to keep a corrupt or hand-edited file
@@ -939,6 +958,7 @@ static func archive_world(outcome: String = OUTCOME_CAPTURED) -> void:
 	counters, the player id and the tower's opened set survive it — an archived
 	world is still the profile that earned them.
 	"""
+	clear_save_slot()
 	var cfg := ConfigFile.new()
 	cfg.load(config_path)
 	cfg.set_value(CONFIG_WORLD_SECTION, CONFIG_WORLD_ARCHIVED, outcome)
@@ -955,10 +975,62 @@ static func new_game() -> void:
 	it already inherits the meta-progression counters; the save-id epic is what
 	separates them, and it separates all three together or none.
 	"""
+	clear_save_slot()
 	var cfg := ConfigFile.new()
 	if cfg.load(config_path) != OK:
 		return
 	cfg.set_value(CONFIG_WORLD_SECTION, CONFIG_WORLD_ARCHIVED, false)
+	cfg.save(config_path)
+
+
+# =============================================================================
+# THE SAVE SLOT - one overwrite string (see the const banner above)
+# =============================================================================
+
+static func save_slot() -> String:
+	"""
+	The saved run, as the `SaveState` blob `write_save_slot()` stored - or ""
+	when there is none (no save yet, cleared by `clear_save_slot()`, or a
+	truncated/hand-edited value, which reads as no save for the tower set's
+	reason: the run simply starts over and can save again).
+
+	On web localStorage answers first (it is the write layer) and the cfg
+	second, so a record stored before the localStorage switch is kept.
+	"""
+	if OS.has_feature("web"):
+		var from_ls := _ls_get(LS_SAVE)
+		if not from_ls.is_empty():
+			return from_ls
+	var cfg := ConfigFile.new()
+	if cfg.load(config_path) != OK:
+		return ""
+	return String(cfg.get_value(CONFIG_SAVE_SECTION, CONFIG_SAVE_KEY, ""))
+
+
+static func write_save_slot(raw: String) -> void:
+	"""
+	Store `raw` as the saved run. PLAIN OVERWRITE - the one field in this file
+	that is not merged, for the banner's reason: a save goes backwards.
+
+	@param raw: the canonical `SaveState.encode()` blob (about 200-400 bytes).
+	"""
+	if OS.has_feature("web"):
+		_ls_set(LS_SAVE, raw)
+		return
+	var cfg := ConfigFile.new()
+	cfg.load(config_path)  # keep the records, the counters and the player id intact
+	cfg.set_value(CONFIG_SAVE_SECTION, CONFIG_SAVE_KEY, raw)
+	cfg.save(config_path)
+
+
+static func clear_save_slot() -> void:
+	"""Forget the saved run. An ended campaign and a new game both come through
+	here, so neither can resurrect the captives the save was stored with."""
+	if OS.has_feature("web"):
+		_ls_set(LS_SAVE, "")
+	var cfg := ConfigFile.new()
+	cfg.load(config_path)
+	cfg.set_value(CONFIG_SAVE_SECTION, CONFIG_SAVE_KEY, "")
 	cfg.save(config_path)
 
 

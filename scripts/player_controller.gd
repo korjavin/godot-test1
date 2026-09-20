@@ -340,6 +340,20 @@ var own_distance: int = 0
 ## it is the run's position on the shared map, not a personal record.
 var own_distance_origin: Vector2 = Vector2.ZERO
 
+## Already-banked personal metres this run (send-back i8yu.2 round 1): the
+## restore seats it from the save with the origin under the body, so the
+## personal figure keeps climbing from the checkpoint instead of freezing at
+## the saved value until it is walked twice. Zero except across a restore —
+## fresh runs, joins and hard resets all re-zero it beside the origin.
+var own_distance_base: int = 0
+
+## The headline's own copy of the same idiom: what `own_distance_base` is to
+## the personal record, this is to the map figure. Its origin is NEVER shifted
+## by a teleport (a hop moves the headline today, by documented definition),
+## only re-seated by a restore, a join or a hard reset.
+var run_distance_base: int = 0
+var run_distance_origin: Vector2 = Vector2.ZERO
+
 ## Headline score: how far this run has travelled, in metres — the farthest
 ## HORIZONTAL DISPLACEMENT from the (0,0) spawn point ever reached this run.
 ## (Originally this tracked farthest world X — the coin road's forward axis —
@@ -1499,11 +1513,10 @@ func _physics_process(delta: float) -> void:
 	# for why displacement, not raw X). Spawn is world (0,0) on the XZ plane, so
 	# the displacement is just the length of the horizontal position.
 	var here := Vector2(global_position.x, global_position.z)
-	var travelled: int = int(here.length())
-	run_distance = maxi(run_distance, travelled)
+	run_distance = maxi(run_distance, run_distance_base + int((here - run_distance_origin).length()))
 	# Measured from own_distance_origin, which is the spawn except after a mid-run
 	# join — see that field for why the personal record cannot use `travelled`.
-	own_distance = maxi(own_distance, int((here - own_distance_origin).length()))
+	own_distance = maxi(own_distance, own_distance_base + int((here - own_distance_origin).length()))
 
 	# STEP 0.41: Checkpoint those records on a slow timer. See BANK_INTERVAL — a
 	# session that never takes a bite must not be lost to a closed tab.
@@ -1511,6 +1524,13 @@ func _physics_process(delta: float) -> void:
 	if bank_timer >= BANK_INTERVAL:
 		bank_timer = 0.0
 		_bank_records()
+	# STEP 0.42: the HQ wall crossing, both directions — one group lookup and
+	# pure math per tick (`_tick_prison`'s precedent), writing only on the flip.
+	_poll_hq_crossing()
+	# Pending lift landings drain the first tick a shell exists — and only
+	# while non-empty, so the steady state pays one `is_empty()`.
+	if not _pending_lift_ids.is_empty():
+		_drain_pending_lift_ids()
 
 	# STEP 0.42: In a multiplayer room remember the bank reads (see
 	# _refresh_shared_totals) — the HUD's own line stays personal. Done here,
@@ -3428,6 +3448,9 @@ func _bank_records() -> bool:
 	var progression := get_tree().get_first_node_in_group("progression")
 	if progression and progression.has_method("save"):
 		progression.save()
+	# THE SAVE SLOT rides the same tick and every bite: `write_save()` is
+	# change-gated, so a quiet interval costs a slot read, not a write.
+	write_save()
 	return is_new_best
 
 
@@ -3658,7 +3681,10 @@ func reset_position() -> void:
 	coins_collected = 0
 	own_coins = 0  # ... and this peer's share of a room's bank along with it.
 	run_distance = 0
+	run_distance_base = 0
+	run_distance_origin = Vector2.ZERO
 	own_distance = 0
+	own_distance_base = 0
 	own_distance_origin = Vector2.ZERO  # ... back to the origin spawn it teleports to.
 	run_beat_record = false  # ... and the new run has not beaten anything yet.
 	record_coins = 0
@@ -3672,6 +3698,8 @@ func reset_position() -> void:
 	# and not that: a peer carrying a solo run's eighteen landmarks into somebody
 	# else's world would win it on arrival (codex review 2026-09-02).
 	explored_mask = 0
+	_save_last_landing = ""
+	_pending_lift_ids = []
 	# ...AND SO ARE THE WAYPOINTS, for the identical reason one line up (epic
 	# godot-test1-sc6, owner ruling 2026-09-12: per-run). Stepping onto a circle
 	# is not EARNED, so it rides no monotone store — and this is the site the
@@ -3820,6 +3848,7 @@ func join_at(anchor: Vector3) -> void:
 	# The personal distance record restarts from where we arrived, or the group's
 	# kilometres are banked into user://best_run.cfg as ours (see the field).
 	own_distance = 0
+	own_distance_base = 0
 	own_distance_origin = Vector2(global_position.x, global_position.z)
 	# run_distance goes with them, and for the same reason one level up: it is a
 	# running MAX and it is what this peer publishes as the room's distance (`dd`
@@ -3829,6 +3858,8 @@ func join_at(anchor: Vector3) -> void:
 	# EVERYONE, permanently, because a max never comes back down. The room's real
 	# figure arrives from the snapshots and the next presence packet.
 	run_distance = 0
+	run_distance_base = 0
+	run_distance_origin = Vector2.ZERO
 	# ...and so does the record LATCH, because it is derived from the coins the
 	# lines above just wiped. It is set by `_bank_records()` on a bite and read
 	# once at the ending; left standing from a solo leg it would flash "NEW BEST!"
@@ -3842,6 +3873,8 @@ func join_at(anchor: Vector3) -> void:
 	# nobody else has (codex review 2026-09-02). The room's set arrives whole in the
 	# master's join snapshot (`lm`) moments later.
 	explored_mask = 0
+	_save_last_landing = ""
+	_pending_lift_ids = []
 	# ...AND SO DO THE WAYPOINTS (epic godot-test1-sc6). Sharper here than for
 	# Budapest, whose slots are authored constants: three of the eleven circles
 	# stand on the ROAD, whose stations are a pure function of `run_seed`, so a
@@ -4265,6 +4298,8 @@ func travel_to_waypoint(index: int) -> bool:
 	# THE ARRIVAL, NOT THE BUTTON (bead .5's cue, wired here by .4): every refusal
 	# above returns before this line, so a hop that did not happen makes no noise.
 	_sfx("play_waypoint_travel")
+	# THE ARRIVAL CHECKPOINTS: the hop happened, so the slot follows the body.
+	write_save()
 	return true
 
 
@@ -4300,6 +4335,374 @@ func _room_group_anchor() -> Variant:
 	if mp != null and mp.has_method("group_anchor"):
 		return mp.group_anchor()
 	return null
+
+
+# ============================================================================
+# THE SAVE SLOT (EPIC godot-test1-i8yu, BEAD .2) — write at checkpoints, restore
+# through the joiner path
+# ============================================================================
+## One slot, last-write-wins: `BestRunStore.save_slot()` holds the `SaveState`
+## blob, written change-gated from the bank tick (which already runs every 15 s
+## and on every bite), the end of a waypoint hop, the HQ wall crossing in both
+## directions, and the window close request. Continue (bead .3's button) is
+## `continue_save()`: the debug teleport's tail with one seed write in front.
+##
+## WHAT A SAVE IS: the seed plus what lives on the player — position, hero,
+## this peer's own coins and distance (in a room `coins_collected` is the ROOM's
+## bank, and saving it would dupe the crew's coins into every member's slot),
+## captives, the two per-run masks, and the lift's per-run landings. What it is
+## NOT is everything the epic lists as deliberately unsaved: weather, crocs,
+## transient ability state, the interior's per-run guards/dossiers/alarm.
+##
+## A SAVE INSIDE THE HQ RESTORES AT THE LIFT (owner ruling 2026-09-20,
+## superseding the bead's door default): the `landing` field names the storey's
+## last checkpoint and the body is set down on that landing's lift stand — the
+## tower's knock-back-to-checkpoint idiom, not the door. The interior's per-run
+## state is rebuilt by `_tower_reset` and cannot be replayed, so an interior XYZ
+## is never restored to.
+
+## Reentrancy latch for `continue_save()`: it awaits a physics frame, and a
+## second restore starting inside that frame would wipe the world the first is
+## halfway through landing in (`_travel_busy`'s shape and reason).
+var _continue_busy: bool = false
+
+## The wall-crossing edge `write_save()` is gated on: `_poll_hq_crossing()`
+## writes once per flip, both directions.
+var _save_last_in_hq: bool = false
+
+## The last lift landing stood on while earned, for the `landing` field: the
+## current storey's stop when it is earned, else the previously seen one. Reset
+## with the run (a new run offers only the ground floor) — which is every place
+## `explored_mask`/`waypoint_mask` are wiped, by assignment beside them.
+var _save_last_landing: String = ""
+
+## Lift landings restored while no shell is streamed (send-back i8yu.2 round
+## 1): a field restore far from the tower has no shell to re-mark into, and
+## the landings are deliberately not in the profile — so without this they
+## would be gone at the next snapshot. Kept on the player until a shell exists
+## (`_drain_pending_lift_ids()`, every tick while non-empty), carried in
+## `save_snapshot()` while pending, and reset with the run beside the masks.
+var _pending_lift_ids: Array = []
+
+
+func _notification(what: int) -> void:
+	"""
+	Last-chance checkpoint: the window close request writes the slot. On web
+	`setItem` has committed when it returns (see `best_run_store.gd`'s banner),
+	so the close write lands; on desktop the ConfigFile write is the same
+	synchronous call every other checkpoint uses.
+	"""
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		write_save()
+
+
+func _is_in_hq_now() -> bool:
+	"""
+	Whether the body is inside the HQ's walls right now: `_refresh_indoor_camera`'s
+	idiom — the pure static on the same offset, never "the group exists" — so the
+	two can never disagree. False with no tower in the tree (every standalone
+	scene reads "outdoors").
+	"""
+	if not is_inside_tree():
+		return false
+	var room := get_tree().get_first_node_in_group("tower_interior") as Node3D
+	return room != null \
+		and TowerInterior.inside_walls(global_position - room.global_position)
+
+
+func save_snapshot() -> Dictionary:
+	"""
+	The run as a `SaveState` v1 dict, or `{}` when the body is not the player's
+	to move: game over, the caught freeze, the respawn grace, or a teleport /
+	restore already in flight. `{}` encodes as no-save, so a refusal can never
+	reach storage — and `write_save()` drops it before the change gate.
+	"""
+	if is_game_over or is_caught or is_respawning \
+			or _travel_busy or _debug_teleport_busy or _continue_busy:
+		return {}
+	var terrain := get_tree().get_first_node_in_group("terrain")
+	if terrain == null:
+		return {}
+	var seed_value: Variant = terrain.get("run_seed")
+	if seed_value == null:
+		return {}
+	var in_hq_now := _is_in_hq_now()
+	var lift_ids: Array = []
+	var shell := get_tree().get_first_node_in_group("tower")
+	if shell != null and shell.has_method("earned_ids"):
+		for id in Array(shell.call("earned_ids")):
+			if TowerGraph.is_lift_stop_id(String(id)):
+				lift_ids.append(String(id))
+	# ...plus what is still waiting for a shell (MAJOR 1): pending ids are
+	# restored landings no snapshot may drop.
+	for id in _pending_lift_ids:
+		if not lift_ids.has(String(id)):
+			lift_ids.append(String(id))
+	lift_ids.sort()
+	var captives_now: Array = []
+	for hero in captive_heroes.keys():
+		captives_now.append(String(hero))
+	captives_now.sort()
+	return {
+		"captives": captives_now,
+		"coins": own_coins,
+		"distance": own_distance,
+		"explored": explored_mask,
+		"hero": current_character_index,
+		"in_hq": in_hq_now,
+		"landing": _save_landing_now(in_hq_now),
+		"lift": lift_ids,
+		"pos": [global_position.x, global_position.y, global_position.z],
+		"saved_at": int(Time.get_unix_time_from_system()),
+		"seed": int(seed_value),
+		"v": SaveState.VERSION,
+		"waypoints": waypoint_mask,
+	}
+
+
+func write_save() -> void:
+	"""
+	Checkpoint the run into the slot. CHANGE-GATED on the canonical string with
+	`saved_at` zeroed out (`Progression.save()`'s signature idiom): `saved_at`
+	is set only when the rest changed, so a standing player writes nothing and a
+	quiet 15 s tick costs one slot read and two canonical encodings.
+	"""
+	var snap := save_snapshot()
+	if snap.is_empty():
+		return
+	var stored: Dictionary = SaveState.decode(BestRunStore.save_slot())
+	if not stored.is_empty() and _save_rest_key(stored) == _save_rest_key(snap):
+		return
+	BestRunStore.write_save_slot(SaveState.encode(snap))
+
+
+func has_save() -> bool:
+	"""
+	Whether a Continue exists: a decodable blob in the slot in a world that has
+	not ended. The archive clear is what makes this false after an ending (the
+	slot is emptied at archive time); the latch check beside it is the belt and
+	braces, because an archived world is read-only whatever the slot holds.
+	"""
+	if BestRunStore.world_archived():
+		return false
+	return not SaveState.decode(BestRunStore.save_slot()).is_empty()
+
+
+func continue_save() -> bool:
+	"""
+	Restore the saved run and return whether it happened. Async: it awaits one
+	physics frame like `debug_teleport_to`.
+
+	REFUSED — moving nothing — in a room (the master's seed wins, CLAUDE.md), in
+	an archived world, on a bad blob, while the body is not the player's to move,
+	or while another restore is in flight. A room join never reads the slot; only
+	bead .3's button calls this.
+
+	Otherwise, in this order: `new_run(seed, chunk)` — the bead's one seed write
+	in front, through the only door (`set_run_seed` is the only seed write and
+	`new_run()` is the door) — then the joiner tail (`build_ring_now`, one
+	physics frame, `_place_near`), or the lift stand when the save was taken
+	indoors; then the REPLACEMENT through the existing seams (never a merge:
+	captives the checkpoint lacks leave first, masks assign, lift ids re-mark
+	or wait pending). The lift ids are re-marked AFTER `new_run` returns and
+	the shell rehydrated (it reads the profile on build), or the landings are
+	lost on load. Distance seats base + offset, so both figures keep climbing
+	from the checkpoint instead of freezing at it.
+	"""
+	if _continue_busy:
+		return false
+	if BestRunStore.world_archived():
+		return false
+	var mp := _mp()
+	if mp != null and mp.has_method("room_seed") and mp.call("room_seed") != null:
+		return false
+	if is_game_over or is_caught or is_respawning:
+		return false
+	var saved: Dictionary = SaveState.decode(BestRunStore.save_slot())
+	if saved.is_empty():
+		return false
+	var terrain := get_tree().get_first_node_in_group("terrain")
+	if terrain == null or not terrain.has_method("new_run") \
+			or not terrain.has_method("world_to_chunk") \
+			or not terrain.has_method("build_ring_now"):
+		return false
+	_continue_busy = true
+	var saved_pos: Array = saved["pos"]
+	var dest := Vector3(float(saved_pos[0]), float(saved_pos[1]), float(saved_pos[2]))
+	var chunk: Vector2i = terrain.world_to_chunk(dest)
+	terrain.new_run(int(saved["seed"]), chunk)
+	# The ring settled before any probe runs: bought up front, plus one physics
+	# frame so the space learns the new chunks. Stated here rather than shared
+	# with `_jump_to()`: `bike_rental_selfcheck` pins that function's body by
+	# name, so the tail is not lifted (the bead's "consider" stays a no).
+	terrain.build_ring_now(chunk)
+	await get_tree().physics_frame
+	var placed := false
+	if bool(saved["in_hq"]):
+		placed = _move_to_landing(saved)
+	else:
+		_place_near(dest)
+		placed = true
+	if not placed:
+		_continue_busy = false
+		return false
+	# A RESTORE REPLACES THE RUN'S PER-RUN STATE (send-back i8yu.2 round 1) —
+	# it never merges into it. First the captives the checkpoint does not have
+	# leave through the SAME mirror seam, so the tower follows them out; a hero
+	# captured after the save stays jailed otherwise.
+	for hero in captive_heroes.keys():
+		set_hero_captive(String(hero), false)
+	# The auto-switch seam, never the cycle: the cycle refuses mid-ability
+	# presses and a restore is not a press (`_capture_active_hero`'s reason).
+	set_active_character(int(saved["hero"]))
+	# The SAME function a grab uses, which mirrors into the tower's `set_captive`
+	# — never a direct `captive_heroes[...]` write, which the tower would not see.
+	for hero in Array(saved["captives"]):
+		set_hero_captive(String(hero), true)
+	# Assignment, not the OR idiom: "only grows inside a run" is for a run, not
+	# for loading one. The win check still runs, so a crafted eighteen still wins.
+	explored_mask = int(saved["explored"])
+	_check_budapest_win()
+	waypoint_mask = int(saved["waypoints"])
+	var shell := get_tree().get_first_node_in_group("tower")
+	var fresh_pending: Array = []
+	for stop_id in Array(saved["lift"]):
+		if shell != null and shell.has_method("mark_opened"):
+			# publish=false (no wire: nothing on the wire changed), persist=true:
+			# the store's own sanitizer keeps the per-run landing off the disk
+			# while `earned` re-seats it in memory for the run — which is also
+			# what keeps the NEXT snapshot carrying it.
+			shell.call("mark_opened", String(stop_id), false, true)
+		else:
+			# No shell streamed (a field restore far from the tower): the ids
+			# wait on the player instead of dying with this frame (MAJOR 1).
+			fresh_pending.append(String(stop_id))
+	_pending_lift_ids = fresh_pending
+	own_coins = int(saved["coins"])
+	coins_collected = own_coins
+	# Base + offset (MAJOR 3): the checkpoint's metres stay banked while both
+	# figures measure the new travel from here. A reset would freeze the counters
+	# at the saved value until it was walked twice.
+	run_distance = int(saved["distance"])
+	run_distance_base = run_distance
+	run_distance_origin = Vector2(global_position.x, global_position.z)
+	own_distance = run_distance
+	own_distance_base = own_distance
+	own_distance_origin = Vector2(global_position.x, global_position.z)
+	_reset_ability_states()
+	clear_nearby_crocodiles(global_position)
+	_apply_view_mode()
+	respawn_blink_timer = 0.0
+	# The crossing edge and the landing memory converge on the restore, so the
+	# next tick does not re-save what just loaded.
+	_save_last_in_hq = bool(saved["in_hq"])
+	_save_last_landing = String(saved["landing"])
+	_continue_busy = false
+	return true
+
+
+static func _save_rest_key(state: Dictionary) -> String:
+	"""
+	Canonical bytes of a save state with `saved_at` zeroed: the change gate's
+	comparison. `JSON.stringify` sorts keys and the format normalizes values, so
+	two equal rests are byte-equal and the clock never counts as a change.
+	"""
+	var rest := state.duplicate()
+	rest["saved_at"] = 0
+	return SaveState.encode(rest)
+
+
+static func _lift_stop_for_floor(floor_index: int) -> String:
+	"""
+	The lift stop id landing on `floor_index`, or "" when no stop row claims a
+	room on that storey. Derived from the stop rows (`TowerGraph.lift_stops()`
+	and `TowerInterior.landing_floor()`), never a second table.
+	"""
+	for row in TowerGraph.lift_stops():
+		if TowerInterior.landing_floor(String(row.get("room", ""))) == floor_index:
+			return String(row.get("unlock", ""))
+	return ""
+
+
+func _save_landing_now(in_hq_now: bool) -> String:
+	"""
+	The `landing` field for a snapshot taken now: the current storey's stop when
+	it is earned, else the last earned landing still held, else "" (no landing
+	earned yet — the doorway case on restore). Only read when `in_hq` is true.
+	"""
+	if not in_hq_now or not is_inside_tree():
+		return ""
+	var room := get_tree().get_first_node_in_group("tower_interior") as Node3D
+	var shell := get_tree().get_first_node_in_group("tower")
+	if room == null or shell == null or not shell.has_method("earned_ids"):
+		return ""
+	var earned: Array = Array(shell.call("earned_ids"))
+	var floor_here: int = TowerInterior.current_floor(
+		(global_position - room.global_position).y)
+	var stop_here := _lift_stop_for_floor(floor_here)
+	if stop_here != "" and earned.has(stop_here):
+		_save_last_landing = stop_here
+		return stop_here
+	if _save_last_landing != "" and earned.has(_save_last_landing):
+		return _save_last_landing
+	return ""
+
+
+func _move_to_landing(saved: Dictionary) -> bool:
+	"""
+	Set the body down on the lift stand the save's `landing` names — the HQ half
+	of the restore. The lift ride's placement (`ride_to`'s line), without the
+	menu: the stand for the landing's floor, the entry when no landing was earned
+	yet (the `setback_point` idiom minus its checkpoint half — the checkpoint is
+	a monotone gate id and the restore rides the lift), or false with no tower in
+	the tree.
+	"""
+	if not is_inside_tree():
+		return false
+	var interior := get_tree().get_first_node_in_group("tower_interior") as Node3D
+	if interior == null:
+		return false
+	var floor := -1
+	var want := String(saved.get("landing", ""))
+	if want != "":
+		for row in TowerGraph.lift_stops():
+			if String(row.get("unlock", "")) == want:
+				floor = TowerInterior.landing_floor(String(row.get("room", "")))
+				break
+	var stand: Vector3 = TowerInterior.lift_stand(floor) \
+		if floor >= 0 else TowerInterior.entry_stand()
+	global_position = interior.global_position + stand
+	velocity = Vector3.ZERO
+	return true
+
+
+func _drain_pending_lift_ids() -> void:
+	"""
+	Hand restored lift landings to a newly streamed shell (MAJOR 1): the same
+	`mark_opened` seating a present shell gets, deferred until there is one.
+	Silent — the slot already carries the ids (the snapshot unions them), so
+	no checkpoint is owed.
+	"""
+	var shell := get_tree().get_first_node_in_group("tower")
+	if shell == null or not shell.has_method("mark_opened"):
+		return
+	for stop_id in _pending_lift_ids:
+		shell.call("mark_opened", String(stop_id), false, true)
+	_pending_lift_ids.clear()
+
+
+func _poll_hq_crossing() -> void:
+	"""
+	Write the slot on the HQ wall crossing, in both directions: the wall line is
+	where the outside position stops being true (entry) and where the interior
+	position starts being one worth keeping (exit). Once per flip — the gate is
+	the edge, and `write_save()`'s own change gate absorbs the rest.
+	"""
+	var in_hq_now := _is_in_hq_now()
+	if in_hq_now == _save_last_in_hq:
+		return
+	_save_last_in_hq = in_hq_now
+	write_save()
 
 
 # ============================================================================
