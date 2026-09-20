@@ -2147,21 +2147,24 @@ func _check_reassign_first_imprison_last() -> void:
 	      packet on every other peer and the room's captive sets diverge. The
 	      reassignment must also go through the ROOM — a local index write would put
 	      two peers in one body — so what is measured is the call, not the result.
-	  (b) IMPRISON LAST. The same capture with NOTHING free stands the player up in
-	      their own cell inside the block, and confines them there: shoved out, they
-	      are back inside on the next physics frame. That is "no phasing, no solo
-	      escape" as a measurement rather than a promise.
-	  (c) THE BLOCK'S SYSTEMS ARE REACHABLE FROM INSIDE IT, AND THE ROLE HAS NO
-	      OTHERS. The cell stand and the vent-purge pad are both inside the
-	      confinement box — a role confined to a box that excluded its own systems
-	      would be a cell with nothing in it, and nothing else in this file would
-	      notice — and every character ability is refused while the role runs, which
-	      is "no phasing, no combat loop" measured at the one gate the HUD reads.
+	  (b) IMPRISON LAST, IN HIS OWN CELL. The same capture with NOTHING free stands
+	      the player up in their own cell, and confines them THERE: shoved to the
+	      gallery or to a cellmate's stand, they are back inside their own rect on
+	      the next physics frame - and a freed hero shoved to the same points stays
+	      where he is put. That is "no roaming, no solo escape" as a measurement
+	      rather than a promise.
+	  (c) THE CELL'S SYSTEMS ARE INSIDE IT, AND THE ROLE HAS NO OTHERS. Every
+	      hero's stand and vent-purge pad lie inside his OWN cell rect, and every
+	      other hero's stand and pad lie outside it — a role confined to a cell
+	      that excluded its own systems would be a cell with nothing in it, and
+	      nothing else in this file would notice — and every character ability is
+	      refused while the role runs, which is "no phasing, no combat loop"
+	      measured at the one gate the HUD reads.
 	  (d) THE WAY OUT, THREE WAYS. A hero freed elsewhere in the room ends the role
 	      and the liberation is told to the room; a hero that becomes claimable
 	      LATER ends it through the tick's own retry, which is the half of
-	      "reassign first" that only exists after the bench; and a prisoner may free
-	      a CELLMATE but never themselves.
+	      "reassign first" that only exists after the bench; and a prisoner frees
+	      NOBODY — neither himself nor a cellmate — until a teammate walks in.
 	  (e) THE ENDING, from both sides. The grab that takes the room's LAST hero
 	      still pays its bill and gets its full freeze — the bench tick polls at
 	      0.5 s and the freeze runs 0.55 s, so a tick that did not stand aside for
@@ -2238,29 +2241,81 @@ func _check_reassign_first_imprison_last() -> void:
 	if player.free_hero_count() != TowerGraph.HEROES.size() - 1:
 		_fail("the bench fired with %d heroes free — it must only ever fire when the ROOM "
 			% player.free_hero_count() + "has nothing to give, never as a stand-in for game over")
-	var lo: Vector3 = TerrainStub.SITE + TowerInterior.block_min()
-	var hi: Vector3 = TerrainStub.SITE + TowerInterior.block_max()
+	var lo: Vector3 = TerrainStub.SITE + TowerInterior.cell_min("primm")
+	var hi: Vector3 = TerrainStub.SITE + TowerInterior.cell_max("primm")
 	if not _inside(player.global_position, lo, hi):
-		_fail("the benched player stood up at %s, outside the cell block (%s .. %s)"
+		_fail("the benched player stood up at %s, outside his OWN cell (%s .. %s)"
 			% [player.global_position, lo, hi])
-	# CONFINEMENT, measured by breaking it: shoved through the spine wall and out of
-	# the building entirely, one physics frame must put the body back.
-	player.global_position = TerrainStub.SITE + Vector3(0.0, 0.0, -40.0)
-	await _tick(2)
-	if not _inside(player.global_position, lo, hi):
-		_fail("a prisoner shoved to %s stayed out of the block — the confinement is a "
-			% player.global_position + "suggestion, and the role has a solo escape")
+	# CONFINEMENT, measured by breaking it twice: shoved to the gallery - the
+	# prisoner's old roaming ground - and to a cellmate's stand, one physics
+	# frame must put the body back inside its own rect. Both points are asserted
+	# outside the rect first, so a clamp that never engaged cannot pass.
+	var gbox: Dictionary = TowerInterior._cell_span(TowerInterior.plan_room_rect(
+		TowerInterior.block_floor(), TowerInterior.BLOCK_ROOM))
+	var gallery := TerrainStub.SITE + Vector3(
+		(float(gbox["x0"]) + float(gbox["x1"])) * 0.5,
+		TowerInterior.FLOOR_Y[TowerInterior.block_floor()] + 0.2,
+		(float(gbox["z0"]) + float(gbox["z1"])) * 0.5)
+	var mate_stand: Vector3 = TerrainStub.SITE + TowerInterior.cell_stand("teibi")
+	for point: Vector3 in [gallery, mate_stand]:
+		if _inside(point, lo, hi):
+			_fail("the shove point %s is already inside primm's cell — the confinement "
+				% point + "probe is vacuous")
+		player.global_position = point
+		await _tick(2)
+		if not _inside(player.global_position, lo, hi):
+			_fail("a prisoner shoved to %s stayed out of his own cell — the confinement "
+				% player.global_position + "is a suggestion, and the role has a solo escape")
+	# CONTROL: freed (the role lifted through a real tick past PRISON_TICK), the
+	# same shoves stick - the clamp belongs to the role, not the building.
+	player.set_hero_captive("primm", false)
+	await _tick(45)
+	if player.prisoner_active:
+		_fail("primm was freed and the prison role never lifted — the control cannot measure anything")
+	for point: Vector3 in [gallery, mate_stand]:
+		var before: Vector3 = player.global_position
+		if Vector2(point.x - before.x, point.z - before.z).length() < 1.0:
+			_fail("the control shove to %s starts %s — under a metre, the probe is vacuous"
+				% [point, before])
+		player.global_position = point
+		await _tick(2)
+		if Vector2(player.global_position.x - point.x, player.global_position.z - point.z).length() > 0.5:
+			_fail("a freed hero shoved to %s drifted to %s — something is still clamping him"
+				% [point, player.global_position])
+	player.set_hero_captive("primm", true)
+	await _tick(45)
+	if not player.prisoner_active:
+		_fail("primm was re-taken and nobody was benched again — the rest of the check has no prisoner")
 
-	# ---- (c) the systems are inside the box --------------------------------
+	# ---- (c) every cell carries its own systems, and nobody else's ----------
+	# (this replaces the old "pad inside the box" assertion, which was the roaming
+	# rule in test form: one gallery pad every prisoner could walk to).
+	if TowerGraph.HEROES.size() != 4:
+		_fail("the room holds %d heroes, expected 4 — every cell/pad count below assumes four"
+			% TowerGraph.HEROES.size())
 	for hero: Variant in TowerGraph.HEROES:
-		var stand: Vector3 = TerrainStub.SITE + TowerInterior.cell_stand(String(hero))
-		if not _inside(stand, lo, hi):
-			_fail("%s's cell stand is outside the confinement box — a prisoner would be "
-				% String(hero) + "clamped out of their own cell on the first frame")
-	var pad := TerrainStub.SITE + TowerInterior.purge_pad()
-	if not _inside(pad, lo, hi):
-		_fail("the vent-purge pad at %s is outside the confinement box — the block's system "
-			% pad + "cannot be operated by the only player who is ever locked in with it")
+		var h := String(hero)
+		var hlo: Vector3 = TerrainStub.SITE + TowerInterior.cell_min(h)
+		var hhi: Vector3 = TerrainStub.SITE + TowerInterior.cell_max(h)
+		var stand: Vector3 = TerrainStub.SITE + TowerInterior.cell_stand(h)
+		if not _inside(stand, hlo, hhi):
+			_fail("%s's cell stand is outside his OWN cell — a prisoner would be "
+				% h + "clamped out of it on the first frame")
+		var pad: Vector3 = TerrainStub.SITE + TowerInterior.purge_pad_for(h)
+		if not _inside(pad, hlo, hhi):
+			_fail("%s's vent-purge pad at %s is outside his own cell — the role's one "
+				% [h, pad] + "assist cannot be operated by the player locked in with it")
+		for other: Variant in TowerGraph.HEROES:
+			if String(other) == h:
+				continue
+			var op: Vector3 = TerrainStub.SITE + TowerInterior.purge_pad_for(String(other))
+			if _inside(op, hlo, hhi):
+				_fail("%s's purge pad is inside %s's cell — one pad serves two prisoners"
+					% [String(other), h])
+			var os: Vector3 = TerrainStub.SITE + TowerInterior.cell_stand(String(other))
+			if _inside(os, hlo, hhi):
+				_fail("%s's cell stand is inside %s's cell — the cells overlap"
+					% [String(other), h])
 	# ...and no ability at all. Asked of `get_ability_block_reason()`, which is the
 	# ONE home of the gates — the F press and the HUD dial both read it, so a gate
 	# that lived only at the press would show a green READY dial over a dead key.
@@ -2280,11 +2335,11 @@ func _check_reassign_first_imprison_last() -> void:
 
 	# ---- (d1) a cellmate, never yourself -----------------------------------
 	#
-	# The prisoner plays as their own captive, so their own recess is the one
-	# liberation the owner's ruling forbids — walk into it and nothing happens. The
-	# cell beside it is the block's second system and must still work, which is the
-	# negative control that stops "no solo escape" being implemented as "no
-	# liberation at all".
+	# The prisoner plays as their own captive, confined to their own recess, and
+	# frees NOBODY until a teammate walks in — neither himself, nor the cellmate
+	# beside him (bead godot-test1-n85a). The control below (the same body, out of
+	# the role) is what stops "no solo escape" being implemented as "no liberation
+	# at all".
 	var shell := await _make_tower()
 	shell.global_position = TerrainStub.SITE
 	var interior: Node = shell.get_child(0)
@@ -2303,9 +2358,18 @@ func _check_reassign_first_imprison_last() -> void:
 	room.reported.clear()
 	interior.set_captive("teibi", true)
 	interior.call("_on_cell_enter", player, "teibi")
+	if not interior.is_captive("teibi"):
+		_fail("a prisoner walked into a CELLMATE's cell and freed him — the bench frees "
+			+ "nobody until a teammate walks in")
+	# CONTROL: the same body out of the role frees the same cellmate, so the
+	# refusal above is the role and not the room. Synchronous — no tick runs
+	# between the two calls, so nothing benches or unbenches under it.
+	player.prisoner_active = false
+	interior.call("_on_cell_enter", player, "teibi")
+	player.prisoner_active = true
 	if interior.is_captive("teibi"):
-		_fail("a prisoner could not free a CELLMATE — the refusal above is refusing every "
-			+ "liberation, and the block's second system does nothing")
+		_fail("a free rescuer walked into teibi's cell and nothing happened — the refusal "
+			+ "above refuses every liberation, not just the prisoner's")
 	# ...AND A LIBERATION OF SOMEBODY THE ROOM NEVER HELD IS NOT REPORTED. The tower
 	# calls `hero_freed()` for its AUTHORED staging too, which no player ever had
 	# taken off them. Telling the room leaves a release tombstone on a hero nobody
@@ -2325,6 +2389,10 @@ func _check_reassign_first_imprison_last() -> void:
 	# the same manager verb on every placement and respawn, so the log already holds
 	# the bench's own.
 	room.flees.clear()
+	# ONTO HIS OWN PAD FIRST: the purge is fired by standing on it, and the pad
+	# is inside primm's cell now - the clamp keeps this teleport, which is the point.
+	player.global_position = TerrainStub.SITE + TowerInterior.purge_pad_for("primm") \
+		+ Vector3(0.0, 0.2, 0.0)
 	interior.call("_on_purge_enter", player)
 	interior._process(0.1)
 	if not room.flees.is_empty():

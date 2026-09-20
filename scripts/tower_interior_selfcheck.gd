@@ -174,6 +174,12 @@ var _failures: Array[String] = []
 ## character models and a camera rig to test four method calls.
 class ProbePlayer extends CharacterBody3D:
 	var hero: String = "windman"
+	## Whether this probe is serving the prison role. The interior's
+	## `_on_cell_enter()` refuses a liberation from a body that is, so a probe
+	## that leaves this false stays a rescuer and one that sets it is the bench.
+	## A body with no such property at all is never refused, which is the
+	## ordinary-rescue path the rest of this file measures.
+	var prisoner_active: bool = false
 	var reach: float = 0.0
 	var hits: int = 0
 	## Every hero the tower told this player it had freed, in order. The phase-9
@@ -202,6 +208,26 @@ class ProbePlayer extends CharacterBody3D:
 
 	func set_indoor_camera(is_indoor: bool) -> void:
 		indoor = is_indoor
+
+
+## A stand-in for the multiplayer manager carrying exactly the two methods the
+## cell block's vent purge reads - `peer_markers()` in the shape the real room
+## answers it, and `request_croc_flee()` with the real manager's four parameters
+## (capture_selfcheck's RoomStub carries the same contract with the same warning:
+## a stub one argument short fails the call and the pad does nothing). Every
+## other interior system asks `has_method` before touching the room, so a stub
+## this small is invisible to all of them.
+class PurgeRoomStub extends Node:
+	var team: Array = []
+	var flees: Array = []
+
+	func peer_markers() -> Variant:
+		return null if team.is_empty() else team
+
+	func request_croc_flee(origin: Vector3, duration: float, radius: float = 0.0,
+			tracks_player: bool = true) -> bool:
+		flees.append([origin, duration, radius, tracks_player])
+		return true
 
 
 ## THE END-OF-CHECK SENTINEL. A GDScript runtime error aborts the FUNCTION it
@@ -245,6 +271,7 @@ func _run() -> void:
 	_check_the_scar_plan()
 	await _check_the_scar_is_drawn_and_permanent()
 	await _check_spines_and_liberation()
+	await _check_the_prisoner_stays_in_his_own_cell()
 	_check_the_offices_are_furnished_and_still_walkable()
 	_check_the_plaques_point_at_the_stairs()
 	await _check_air_sight_shows_through_walls_only()
@@ -1205,7 +1232,8 @@ func _check_node_shape() -> void:
 	if bodies != 1:
 		_fail("the interior has %d StaticBody3D, expected exactly one" % bodies)
 	# Three pads (demand, identity, checkpoint) and the block's own: four spine pads,
-	# four cell volumes, the crawl press's hazard and the gallery's vent-purge pad.
+	# four cell volumes, the crawl press's hazard and the four per-cell vent-purge
+	# pads (bead godot-test1-n85a: one pad per cell, so the count follows HEROES).
 	# COUNTED AND NOT CAPPED — an Area3D nobody meant to build is a trigger that
 	# fires, and every one of these is named in this file.
 	#
@@ -1229,8 +1257,8 @@ func _check_node_shape() -> void:
 	# grew a trigger is a folder you can walk through, and this is where that shows.
 	var stop_floors: Array[int] = TowerInterior.lift_stop_floors()
 	var lift_stops := stop_floors.size()
-	var want_areas := 3 + TowerInterior.SPINE_DOORS.size() + TowerGraph.HEROES.size() \
-			+ 2 + lift_stops + TowerDossiers.DOSSIERS.size()
+	var want_areas := 3 + TowerInterior.SPINE_DOORS.size() + 2 * TowerGraph.HEROES.size() \
+			+ 1 + lift_stops + TowerDossiers.DOSSIERS.size()
 	var lock_pads := 0
 	var lure_pads := 0
 	for plan: Dictionary in TowerPlans.STOREYS:
@@ -1238,7 +1266,7 @@ func _check_node_shape() -> void:
 		lure_pads += TowerInterior.pad_cells(plan).size()
 	want_areas += lock_pads + lure_pads
 	if areas != want_areas:
-		_fail("the interior has %d Area3D, expected %d (3 pads + %d spine pads + %d cells + 1 press + 1 purge + %d riddle lock pads + %d lure pads + %d lift stop + %d dossiers)" % [
+		_fail("the interior has %d Area3D, expected %d (3 pads + %d spine pads + %d cells + 1 press + %d purge + %d riddle lock pads + %d lure pads + %d lift stop + %d dossiers)" % [
 			areas, want_areas, TowerInterior.SPINE_DOORS.size(), TowerGraph.HEROES.size(),
 			lock_pads, lure_pads, lift_stops, TowerDossiers.DOSSIERS.size()])
 	# ...and EVERY stop stands where the graph says it does. A trigger built on the
@@ -3010,6 +3038,249 @@ func _check_spines_and_liberation() -> void:
 	again.queue_free()
 	await process_frame
 	Sentinel.done("spines_and_liberation")
+
+func _cell_boxes_overlap(alo: Vector3, ahi: Vector3, blo: Vector3, bhi: Vector3) -> bool:
+	"""Do two x/z confinement boxes overlap (touching faces do not count)?"""
+	return alo.x < bhi.x - EPS and blo.x < ahi.x - EPS \
+		and alo.z < bhi.z - EPS and blo.z < ahi.z - EPS
+
+
+func _check_the_prisoner_stays_in_his_own_cell() -> void:
+	"""
+	Check 12b. The bench confines to the OWN cell (bead godot-test1-n85a).
+
+	FOUR HALVES, each with its control:
+
+	  (e) GEOMETRY. Every hero's `cell_min()`/`cell_max()` box is non-empty, sits
+	      inside the block union, and holds his stand - and the four boxes are
+	      pairwise disjoint. Pure statics, so this is the audit the clamp is
+	      measured against everywhere else.
+	  (p) PADS. Every cell carries exactly one purge pad and one purge trigger,
+	      and each pad stands inside its own cell's box at the storey's walking
+	      surface. Four cells, four pads, four triggers - any other count fails.
+	  (d) THE RULE. A body serving the prison role frees NOBODY: entering a
+	      cellmate's cell leaves him captive and tells the player nothing. The
+	      control is the same body out of the role, which frees him - so the
+	      refusal is the role and not the room.
+	  (s) SMALL TEIBI. A live player, shrunk through the REAL seam (the
+	      `teibi_size_state` the F-cycle writes plus the `_apply_teibi_scale` it
+	      applies - check 20's line), is stood on his own pad and shoved at the
+	      cell's open mouth past the gallery, ten metres: the real
+	      `_confine_to_block()` holds every step. The clamp is position-only, so
+	      a small body is held by exactly the same two lines - this is the
+	      measurement rather than the sentence.
+	  (f) THE PAD STILL WORKS. The same prisoner stood on his own pad's REAL
+	      trigger volume fires the purge once per teammate, with the purge's own
+	      constants and `tracks_player` false. The control is a rescuer on the
+	      same pad, who fires nothing - the pad is the prisoner's, not the
+	      party's. (The cooldown half already lives in capture_selfcheck's d1b.)
+	"""
+	if TowerGraph.HEROES.size() != 4:
+		_fail("the room holds %d heroes, expected 4 - every cell/pad count below assumes four"
+			% TowerGraph.HEROES.size())
+	var surf: float = TowerInterior.FLOOR_Y[TowerInterior.block_floor()]
+	var elow := {}
+	var ehigh := {}
+	for hero: String in TowerGraph.HEROES:
+		var clo: Vector3 = TowerInterior.cell_min(hero)
+		var chi: Vector3 = TowerInterior.cell_max(hero)
+		if clo.x >= chi.x or clo.z >= chi.z:
+			_fail("%s's cell box is empty (%s .. %s) - the clamp has nowhere to hold him"
+				% [hero, clo, chi])
+		# RE-DERIVED FROM THE PLAN, not trusted: the rect through `_cell_span` plus
+		# `BLOCK_INSET` is the whole definition, so a corner that forgot the inset
+		# (or read the wrong room) fails here rather than drifting the clamp into
+		# a wall - or into the next cell.
+		var rect: Rect2i = TowerInterior.plan_room_rect(TowerInterior.block_floor(), "cell_%s" % hero)
+		if rect.size == Vector2i.ZERO:
+			_fail("%s has no cell room on the block floor - the clamp fell back to the whole block" % hero)
+		else:
+			var span: Dictionary = TowerInterior._cell_span(rect)
+			var want_lo := Vector3(float(span["x0"]) + TowerInterior.BLOCK_INSET, surf,
+				float(span["z0"]) + TowerInterior.BLOCK_INSET)
+			var want_hi := Vector3(float(span["x1"]) - TowerInterior.BLOCK_INSET, surf,
+				float(span["z1"]) - TowerInterior.BLOCK_INSET)
+			if not clo.is_equal_approx(want_lo) or not chi.is_equal_approx(want_hi):
+				_fail("%s's cell box (%s .. %s) is not its plan rect %s +/- INSET - the clamp is not the cell"
+					% [hero, clo, chi, rect])
+		var blo: Vector3 = TowerInterior.block_min()
+		var bhi: Vector3 = TowerInterior.block_max()
+		if clo.x < blo.x or clo.z < blo.z or chi.x > bhi.x or chi.z > bhi.z:
+			_fail("%s's cell box (%s .. %s) escapes the block union (%s .. %s)"
+				% [hero, clo, chi, blo, bhi])
+		var stand: Vector3 = TowerInterior.cell_stand(hero)
+		if not (stand.x >= clo.x and stand.x <= chi.x and stand.z >= clo.z and stand.z <= chi.z):
+			_fail("%s's stand %s is outside his own cell box (%s .. %s)"
+				% [hero, stand, clo, chi])
+		var pad: Vector3 = TowerInterior.purge_pad_for(hero)
+		if pad == Vector3.ZERO:
+			_fail("%s has no purge pad - his cell carries no assist" % hero)
+		else:
+			if not is_equal_approx(pad.y, surf):
+				_fail("%s's pad is at y = %.2f, not the storey's %.2f m walking surface"
+					% [hero, pad.y, surf])
+			if not (pad.x >= clo.x and pad.x <= chi.x and pad.z >= clo.z and pad.z <= chi.z):
+				_fail("%s's pad at %s is outside his own cell box (%s .. %s)"
+					% [hero, pad, clo, chi])
+		elow[hero] = clo
+		ehigh[hero] = chi
+	var names: Array[String] = TowerGraph.HEROES
+	for i in names.size():
+		for j in range(i + 1, names.size()):
+			var alo: Vector3 = elow[names[i]] as Vector3
+			var ahi: Vector3 = ehigh[names[i]] as Vector3
+			var blo2: Vector3 = elow[names[j]] as Vector3
+			var bhi2: Vector3 = ehigh[names[j]] as Vector3
+			if _cell_boxes_overlap(alo, ahi, blo2, bhi2):
+				_fail("%s's and %s's cell boxes overlap - one clamp serves two prisoners"
+					% [names[i], names[j]])
+
+	var shell := await TowerProbe.make_tower(self)
+	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
+	if interior == null:
+		_fail("the tower has no TowerInterior child")
+		await TowerProbe.clear(self, null, shell)
+		Sentinel.done("the_prisoner_stays_in_his_own_cell")
+		return
+	var triggers := 0
+	for child: Node in _descendants(interior):
+		if child is Area3D and String(child.name).begins_with("PurgeTrigger"):
+			triggers += 1
+	if triggers != 4:
+		_fail("the block carries %d purge triggers, expected 4 (one per cell)" % triggers)
+	var plates := 0
+	for pbox: Dictionary in TowerInterior.plan_boxes(TowerInterior.block_floor()):
+		if String(pbox["name"]).begins_with("PurgePad"):
+			plates += 1
+	if plates != 4:
+		_fail("the block draws %d purge pads, expected 4 (one per cell)" % plates)
+
+	# ---- (d) a prisoner frees nobody; a rescuer frees ----
+	var body := ProbePlayer.new()
+	body.hero = "primm"
+	body.prisoner_active = true
+	# A SHAPE, so the trigger volumes see him: an Area3D never fires for a body
+	# with no collision shape (check 12's probe carries the same box, for the
+	# same reason - the liberation volumes it drives).
+	var pshape := CollisionShape3D.new()
+	var pbox := BoxShape3D.new()
+	pbox.size = Vector3(0.8, 1.8, 0.8)
+	pshape.shape = pbox
+	body.add_child(pshape)
+	body.add_to_group("player")
+	root.add_child(body)
+	await process_frame
+	# ONE TICK FIRST, so the interior has bound `_player`: `_liberate()` reaches
+	# the player through that reference, and without this the claims about what the
+	# room is told would pass against any code at all (capture_selfcheck's note).
+	interior._process(0.1)
+	if interior.get("_player") != body:
+		_fail("the interior did not bind the player, so nothing below can measure the seam")
+	interior.set_captive("teibi", true)
+	interior.call("_on_cell_enter", body, "teibi")
+	if not interior.is_captive("teibi"):
+		_fail("a prisoner walked into a cellmate's cell and freed him - the bench frees nobody until a teammate walks in")
+	if not body.freed.is_empty():
+		_fail("the tower told a prisoner %s was freed - a bench that reports a rescue it refused"
+			% [body.freed])
+	body.prisoner_active = false
+	interior.call("_on_cell_enter", body, "teibi")
+	if interior.is_captive("teibi"):
+		_fail("a free rescuer walked into teibi's cell and nothing happened - the refusal above refuses every liberation")
+	if body.freed != ["teibi"]:
+		_fail("the player was told %s was freed, expected [teibi] - the roster seam did not fire"
+			% [body.freed])
+
+	# ---- (f) the pad still works, through its real trigger ----
+	var stub := PurgeRoomStub.new()
+	stub.add_to_group("mp")
+	root.add_child(stub)
+	await process_frame
+	var trig := interior.get_node_or_null("Floor%d/PurgeTrigger%s"
+		% [TowerInterior.block_floor(), "Teibi"]) as Area3D
+	if trig == null:
+		_fail("there is no PurgeTriggerTeibi Area3D - teibi's cell has a pad with no trigger")
+	else:
+		body.prisoner_active = true
+		body.global_position = trig.global_position
+		await TowerProbe.settle_physics(self)
+		var mate: Vector3 = body.global_position + Vector3(300.0, 0.0, 0.0)
+		stub.team = [{"pos": mate, "color": Color.WHITE}]
+		interior._process(0.1)
+		if stub.flees.size() != 1:
+			_fail("teibi's pad, stood on by its prisoner, relayed %d flee requests, expected one per teammate"
+				% stub.flees.size())
+		else:
+			var fired: Array = stub.flees[0]
+			if (fired[0] as Vector3).distance_to(mate) > EPS:
+				_fail("the purge scattered the pack at %s, not around the teammate at %s"
+					% [fired[0], mate])
+			if float(fired[1]) != TowerInterior.PURGE_FLEE_SECONDS \
+					or float(fired[2]) != TowerInterior.PURGE_FLEE_RADIUS:
+				_fail("the purge relayed %.1f s / %.1f m, not its own constants" % [fired[1], fired[2]])
+			if bool(fired[3]):
+				_fail("the purge asked the pack to run from the CASTER - on a prisoner who is "
+					+ "also the room master that is the tower, i.e. roughly towards the teammate "
+					+ "the purge was bought to help")
+		# ...AND A RESCUER ON THE SAME PAD FIRES NOTHING. The cooldown is reset
+		# first, so a silence blamed on it cannot pass.
+		interior.set("_purge_cooldown", 0.0)
+		body.prisoner_active = false
+		interior._process(TowerInterior.PURGE_COOLDOWN + 0.1)
+		if stub.flees.size() != 1:
+			_fail("an ordinary rescuer standing on a purge pad fired it (%d requests) - it is "
+				% stub.flees.size() + "the prison role's system, not the party's")
+	body.queue_free()
+	stub.queue_free()
+	await process_frame
+
+	# ---- (s) small Teibi, shoved at the mouth, stays inside ----
+	# A LIVE player, because the clamp and the scale both live on him. His physics
+	# is frozen and the roster half of the bench is staged by hand (the flags
+	# `_enter_prison()` latches); the clamp under test is the REAL
+	# `_confine_to_block()`, driven once per shove, and capture_selfcheck measures
+	# the roster half for real. Synchronous throughout, so no tick can bench or
+	# unbench under the loop.
+	var hero: Node3D = load(TowerProbe.PLAYER_SCENE).instantiate() as Node3D
+	root.add_child(hero)
+	await process_frame
+	hero.set_physics_process(false)
+	hero.set("prisoner_active", true)
+	hero.set("_prison_confined", true)
+	hero.set("_prison_hero", "teibi")
+	hero.set("_prison_origin", shell.global_position)
+	# SHRUNK LIKE TEIBI, through the real seam: the state the F-cycle writes plus
+	# the scale it applies. The collision snaps (physics never lags the visual);
+	# the assert below reads the snap, not the tween.
+	var small: float = float(load(PLAYER_SCRIPT).get("TEIBI_SCALE_SMALL"))
+	hero.set("teibi_size_state", 1)
+	hero.call("_apply_teibi_scale", small)
+	var capsule := hero.get_node_or_null("CollisionShape3D") as CollisionShape3D
+	if capsule == null or not is_equal_approx(capsule.scale.x, small):
+		_fail("the probe is not shrunk - the scale seam did not take, and the push below measures nothing")
+	var origin: Vector3 = shell.global_position
+	var psurf: float = origin.y + TowerInterior.FLOOR_Y[TowerInterior.block_floor()]
+	var pad_at: Vector3 = origin + TowerInterior.purge_pad_for("teibi")
+	var plow: Vector3 = origin + TowerInterior.cell_min("teibi")
+	var phigh: Vector3 = origin + TowerInterior.cell_max("teibi")
+	# +z IS the mouth: the plan draws the cells above the gallery (rows 4-7 over
+	# rows 8-10) and row number runs toward +z, so the open, ungated edge is the
+	# high-z side - the escape route a small body would take if there were one.
+	if pad_at.z + 10.0 <= phigh.z:
+		_fail("the push never leaves teibi's cell - the probe is vacuous")
+	hero.global_position = Vector3(pad_at.x, psurf, pad_at.z)
+	for k in range(1, 11):
+		hero.global_position = Vector3(pad_at.x, psurf, pad_at.z + float(k))
+		hero.call("_confine_to_block")
+		var p: Vector3 = hero.global_position
+		if p.x < plow.x or p.x > phigh.x or p.z < plow.z or p.z > phigh.z:
+			_fail("small Teibi shoved %d m at the mouth is at %s, outside his cell - the clamp has a size hole"
+				% [k, p])
+	print("prisoner: 4 cells disjoint, 4 pads inside them, a prisoner frees nobody, small Teibi held, the pad fires")
+	hero.queue_free()
+	shell.queue_free()
+	await process_frame
+	Sentinel.done("the_prisoner_stays_in_his_own_cell")
 
 
 # ============================================================================
