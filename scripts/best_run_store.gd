@@ -54,6 +54,39 @@ class_name BestRunStore
 ## authentication (see `server/best.go`'s trust-model note), and any retry timer —
 ## the next game over posts again.
 ##
+## THE SAVE SLOT RIDES `/save` BESIDE `/best` (epic godot-test1-i8yu, bead .5) —
+## and a save is NOT a record, so the monotone rule above does NOT cover it. The
+## two copies reconcile by `saved_at`, LAST-WRITE-WINS:
+##
+##   * BOOT: `fetch()` also GETs `/save?id=`; a server blob decoding valid whose
+##     `saved_at` is NEWER than the local slot's (or the slot is empty) replaces
+##     it and emits `save_loaded` once, so the start card can flip PLAY to
+##     CONTINUE while it still shows. A server copy OLDER than (or equal to)
+##     local is ignored — and the next write pushes ours, so there is no
+##     catch-up POST at boot.
+##   * WRITE: `push_save_slot()` (asked by `player_controller.write_save()` after
+##     its change gate) POSTs the slot's own blob under the slot's own stamp —
+##     never `now`, or every POST would outbid a newer server copy instead of
+##     learning it. The server answers LWW, and a reply NEWER than what was sent
+##     (another device wrote meanwhile) is adopted locally, silently — do not
+##     fight. `clear_save_slot()` sends the DELETE verb the same way.
+##   * Every failure silent and non-fatal, exactly like `/best`: the local layer
+##     has already answered. No retry timer either — the next checkpoint posts
+##     again, which bounds a moving player at 4 POSTs/min through .2's
+##     change-gated 15 s tick (a standing player posts nothing).
+##   * In a room writes still happen (the slot carries the room's seed — epic
+##     rule); reads never apply mid-run — only `continue_save()` reads the slot,
+##     and it refuses in a room.
+##
+## The wire shape is the server's (`server/save.go`): GET answers
+## `{"blob":s,"saved_at":N}` (zeroes when unknown), POST takes
+## `{"blob":s,"saved_at":N}` and answers the record to trust (the stored one on
+## a stale write), an empty POST blob clears, DELETE clears. The BLOB is opaque
+## here — `SaveState.decode` is the ONLY gate (malformed, v=2 and oversize all
+## read as no-save); the envelope stamp is never trusted. A POST racing the boot
+## GET cannot corrupt it: adoption needs a STRICTLY newer stamp, so our own echo
+## (equal stamp) is ignored.
+##
 ## IT ALSO CARRIES THE META-PROGRESSION COUNTERS (`lifetime_coins` /
 ## `spent_points`), and that is reuse rather than scope creep: they are keyed by
 ## the same player id, want the same monotone merge, the same local layers and the
@@ -103,6 +136,14 @@ class_name BestRunStore
 ## Static rather than per-instance so ONE assignment covers every store the run
 ## builds, including the one `player_controller._ready()` makes for itself.
 static var config_path: String = "user://best_run.cfg"
+
+## Lobby origin override. Empty (the game) means `LobbyClient.http_url()` with
+## the whole `--lobby=` / `?lobby=` / export / default precedence; a self-check
+## points it at a stub URL that refuses connections, so the whole sync half
+## runs hermetically — fake replies are fed through the `_on_save_*_completed`
+## handlers directly. Static and writable purely as a test seam, like
+## `config_path` above; nothing in the game ever assigns it.
+static var lobby_url_override: String = ""
 const CONFIG_SECTION: String = "best"
 const CONFIG_PLAYER_SECTION: String = "player"
 
@@ -276,6 +317,13 @@ signal loaded(distance: int, coins: int)
 ## The values only ever rise, so a listener folds each in with `maxi`.
 signal progression_loaded(lifetime_coins: int, spent_points: int)
 
+## The cloud slot adopted a server-newer copy at boot. Fires at most once per
+## adopted reply — never for an older/equal/malformed reply, never on the write
+## path (an adoption there stays silent, so the card cannot flip mid-run). The
+## start card listens while it still shows and flips PLAY to CONTINUE; a late
+## listener re-reads through `save_slot()` / `has_save()`.
+signal save_loaded
+
 # =============================================================================
 # STATE
 # =============================================================================
@@ -323,12 +371,56 @@ var _player_id: String = ""
 ## overlap retries nothing.
 var _adopt_refetch_pending: bool = false
 
+## Live instances for static-origin verbs. `write_save_slot()` stays
+## instance-free (its one production writer asks its owned store to push), but
+## `clear_save_slot()` originates in static contexts with no owner in scope
+## (`archive_world()`, `new_game()`, the start card's NEW GAME) — so the clear
+## verb fans out to every live in-tree instance. Weakrefs, pruned on every use;
+## the local layer is always cleared first, so a fan-out to nobody still
+## cleared the slot.
+static var _save_sync_live: Array = []
+
+
+func _init() -> void:
+	_save_sync_live.append(weakref(self))
+
+
+## Drop dead instance refs. Cheap enough to run on every use.
+static func _prune_save_sync_live() -> void:
+	var kept: Array = []
+	for ref: WeakRef in _save_sync_live:
+		if ref.get_ref() != null:
+			kept.append(ref)
+	_save_sync_live = kept
+
 ## Two `HTTPRequest` nodes, deliberately — one node answers ERR_BUSY while a
 ## request is in flight, and the boot GET can still be running when a very short
 ## first run ends. Same reasoning (and the same fix) as `lobby_client.gd`'s
 ## `_http` / `_rooms_http` split.
 var _get_http: HTTPRequest = null
 var _post_http: HTTPRequest = null
+
+## The save slot's own GET/POST pair, deliberately — the boot GET and a
+## checkpoint POST overlap exactly the way `/best`'s do, so sharing `/best`'s
+## nodes would ERR_BUSY-drop one of them. Same timeout, same silent rule.
+var _save_get_http: HTTPRequest = null
+var _save_post_http: HTTPRequest = null
+
+## The clear's own node (round 1: the DELETE reused the POST node and died on
+## ERR_BUSY behind every checkpoint push — node-per-verb, as `/best`'s split).
+var _save_delete_http: HTTPRequest = null
+
+## The last save verb this instance STARTED ("GET", "POST", "DELETE" for the
+## clear effect, "" when none): observability for `save_selfcheck`, which pins
+## that fetch GETs, a push POSTs and a clear DELETEs. Recorded only when
+## `request()` accepted the request — a refused lobby still records it (the
+## request starts, then fails async), while an ERR_BUSY overlap records nothing.
+var _last_save_verb: String = ""
+
+## The `saved_at` the in-flight save POST carried. A reply adopts only when
+## NEWER than this — never than the live slot, which a checkpoint may have
+## advanced meanwhile.
+var _save_post_sent_at: int = 0
 
 ## Whether the boot GET's reply may be trusted as a PRE-SUBMIT baseline — which is
 ## the only thing `server_best_distance` is for, and the one property the two
@@ -363,6 +455,7 @@ func fetch() -> void:
 	loaded.emit(distance, coins)
 	progression_loaded.emit(lifetime_coins, spent_points)
 	_request_get()
+	_request_save_get()
 
 
 func submit(_new_distance: int, new_coins: int) -> void:
@@ -1012,7 +1105,22 @@ static func write_save_slot(raw: String) -> void:
 	Store `raw` as the saved run. PLAIN OVERWRITE - the one field in this file
 	that is not merged, for the banner's reason: a save goes backwards.
 
+	LOCAL ONLY: the POST rides separately through `push_save_slot()`, asked by
+	the slot's one production writer (`player_controller.write_save()`, after its
+	change gate) on the store node it owns. Kept apart so a lobby that is down
+	cannot touch this path — the local answer is unconditional.
+
 	@param raw: the canonical `SaveState.encode()` blob (about 200-400 bytes).
+	"""
+	_write_save_local(raw)
+
+
+static func _write_save_local(raw: String) -> void:
+	"""
+	The local half of `write_save_slot()`, shared with the boot adoption in
+	`_on_save_get_completed()` — which must NOT push back what it just learned,
+	or every boot GET would echo into a write (and the next checkpoint carries
+	ours anyway).
 	"""
 	if OS.has_feature("web"):
 		_ls_set(LS_SAVE, raw)
@@ -1025,13 +1133,47 @@ static func write_save_slot(raw: String) -> void:
 
 static func clear_save_slot() -> void:
 	"""Forget the saved run. An ended campaign and a new game both come through
-	here, so neither can resurrect the captives the save was stored with."""
+	here, so neither can resurrect the captives the save was stored with.
+
+	The DELETE verb fans out to every live in-tree store (see
+	`_save_sync_live`): an ended campaign that never writes again must still
+	clear the server copy, or the next boot's GET would resurrect it onto
+	another device. Local first, silent always — a fan-out to nobody still
+	cleared the slot."""
 	if OS.has_feature("web"):
 		_ls_set(LS_SAVE, "")
 	var cfg := ConfigFile.new()
 	cfg.load(config_path)
 	cfg.set_value(CONFIG_SAVE_SECTION, CONFIG_SAVE_KEY, "")
 	cfg.save(config_path)
+	_notify_save_cleared()
+
+
+static func _notify_save_cleared() -> void:
+	"""Send the clear verb on every live instance. Prunes dead refs as it goes."""
+	_prune_save_sync_live()
+	var kept: Array = []
+	for ref: WeakRef in _save_sync_live:
+		var inst := ref.get_ref() as BestRunStore
+		if inst == null or not is_instance_valid(inst):
+			continue
+		kept.append(ref)
+		if inst.is_inside_tree():
+			# The GET first: a boot fetch still in flight must not resurrect
+			# the slot just cleared (NEW GAME while the lobby is slow).
+			inst._cancel_save_get()
+			inst._request_save_delete()
+	_save_sync_live = kept
+
+
+func _cancel_save_get() -> void:
+	"""Drop an in-flight cloud-slot GET, with its one-shot, so a late reply
+	cannot land on a slot cleared after the request started."""
+	if _save_get_http == null:
+		return
+	_save_get_http.cancel_request()
+	if _save_get_http.request_completed.is_connected(_on_save_get_completed):
+		_save_get_http.request_completed.disconnect(_on_save_get_completed)
 
 
 func _load_or_make_player_id() -> String:
@@ -1105,9 +1247,22 @@ static func _ls_set(key: String, value: String) -> void:
 # SERVER LAYER
 # =============================================================================
 
+static func _origin() -> String:
+	"""The lobby origin: the override when a self-check set one, else the usual
+	`--lobby=` / `?lobby=` / export / default precedence."""
+	if not lobby_url_override.is_empty():
+		return lobby_url_override.strip_edges().rstrip("/")
+	return LobbyClient.http_url()
+
+
 func _endpoint() -> String:
 	"""`<lobby origin>/best?id=<player id>`, honouring the usual lobby overrides."""
-	return "%s/best?id=%s" % [LobbyClient.http_url(), player_id().uri_encode()]
+	return "%s/best?id=%s" % [_origin(), player_id().uri_encode()]
+
+
+func _save_endpoint() -> String:
+	"""`<lobby origin>/save?id=<player id>` — the slot beside the records."""
+	return "%s/save?id=%s" % [_origin(), player_id().uri_encode()]
 
 
 func _request_get() -> void:
@@ -1251,3 +1406,161 @@ func _request_post() -> void:
 	# here costs only the cross-device half — but it must not be invisible.
 	if err != OK and err != ERR_BUSY:
 		push_warning("BestRunStore: /best POST could not start (%d)" % err)
+
+# ---------------------------------------------------------------------------
+# SAVE SYNC — GET at boot, POST on push, DELETE on clear (see the banner)
+# ---------------------------------------------------------------------------
+
+func _request_save_get() -> void:
+	"""Ask the lobby for this player's cloud slot. Every failure silent: the
+	local slot has already answered, and a failed reply simply leaves it."""
+	if player_id().is_empty():
+		return
+	if _save_get_http == null:
+		_save_get_http = HTTPRequest.new()
+		_save_get_http.timeout = REQUEST_TIMEOUT_SEC
+		add_child(_save_get_http)
+	if _save_get_http.request(_save_endpoint()) != OK:
+		return
+	# Recorded only on a started request: the check pins the verb the lobby
+	# actually received, not the intent.
+	_last_save_verb = "GET"
+	_save_get_http.request_completed.connect(_on_save_get_completed, CONNECT_ONE_SHOT)
+
+
+func _on_save_get_completed(
+	result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray
+) -> void:
+	"""
+	Reconcile the cloud slot with the local one, LAST-WRITE-WINS on `saved_at`.
+
+	Anything unexpected — transport failure, non-200, an unparseable envelope,
+	an empty blob (no cloud save yet), a blob `SaveState.decode` rejects
+	(malformed, v=2, oversize) — leaves the local slot untouched and emits
+	nothing. A server copy older than or equal to local is ignored too: the next
+	write pushes ours. Only a STRICTLY newer server copy replaces the local
+	slot, and only that emits `save_loaded` — once per adopted reply.
+	"""
+	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
+		return
+	var json := JSON.new()
+	if json.parse(body.get_string_from_utf8()) != OK or typeof(json.data) != TYPE_DICTIONARY:
+		return
+	var data := json.data as Dictionary
+	if typeof(data.get("blob")) != TYPE_STRING:
+		return
+	var blob := String(data.get("blob"))
+	if blob.is_empty():
+		return
+	# `SaveState.decode` is the ONLY gate: the envelope stamp is never trusted.
+	var remote := SaveState.decode(blob)
+	if remote.is_empty():
+		return
+	var remote_at := int(remote.get("saved_at", -1))
+	var local_at := -1
+	var local := SaveState.decode(save_slot())
+	if not local.is_empty():
+		local_at = int(local.get("saved_at", -1))
+	if remote_at <= local_at:
+		return
+	# Local-only, never a push: answering a GET with a POST would echo every
+	# boot into a write, and the next checkpoint carries ours anyway.
+	_write_save_local(blob)
+	save_loaded.emit()
+
+
+func push_save_slot() -> void:
+	"""
+	POST the current slot to the lobby. Asked by `player_controller.write_save()`
+	after its change gate — so this only ever runs when the rest changed.
+
+	Carries the slot's OWN stamp (never `now`): the server answers LWW, and a
+	reply newer than what was sent is adopted rather than fought. An empty slot
+	sends the clear verb as DELETE instead — a clear that never writes again must
+	still reach the server. A corrupt slot posts nothing: it reads as no-save
+	locally, and garbage must not ride the wire. Every failure silent.
+	"""
+	if player_id().is_empty():
+		return
+	var raw := save_slot()
+	if raw.is_empty():
+		_request_save_delete()
+		return
+	var snap := SaveState.decode(raw)
+	if snap.is_empty():
+		return
+	var sent_at := int(snap.get("saved_at", 0))
+	var out := JSON.stringify({"blob": raw, "saved_at": sent_at})
+	if _save_post_http == null:
+		_save_post_http = HTTPRequest.new()
+		_save_post_http.timeout = REQUEST_TIMEOUT_SEC
+		add_child(_save_post_http)
+	if _save_post_http.request(
+		_save_endpoint(), ["Content-Type: application/json"], HTTPClient.METHOD_POST, out
+	) != OK:
+		return
+	# Both set only on a started request: on ERR_BUSY the baseline must keep
+	# the in-flight POST's stamp, or a genuinely newer server record is skipped
+	# (round 1 minor 6) — and the verb must name what the lobby received
+	# (round 1 MAJOR 2).
+	_save_post_sent_at = sent_at
+	_last_save_verb = "POST"
+	_save_post_http.request_completed.connect(_on_save_post_completed, CONNECT_ONE_SHOT)
+
+
+func _on_save_post_completed(
+	result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray
+) -> void:
+	"""
+	Adopt the reply when it is NEWER than what was sent — another device wrote
+	meanwhile, and the server (LWW) kept theirs. Anything else — failure,
+	non-200, an unparseable envelope, a malformed blob, an older-or-equal stamp
+	(including our own echo) — is ignored, silently and without a signal: the
+	write path never flips the card.
+	"""
+	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
+		return
+	var json := JSON.new()
+	if json.parse(body.get_string_from_utf8()) != OK or typeof(json.data) != TYPE_DICTIONARY:
+		return
+	var data := json.data as Dictionary
+	if typeof(data.get("blob")) != TYPE_STRING:
+		return
+	var blob := String(data.get("blob"))
+	var remote := SaveState.decode(blob)
+	if remote.is_empty():
+		return
+	# Against the SENT stamp, not the live slot: a checkpoint may have advanced
+	# it meanwhile, and only the server's word on what we sent can outbid it.
+	if int(remote.get("saved_at", -1)) <= _save_post_sent_at:
+		return
+	_write_save_local(blob)
+
+
+func _request_save_delete() -> void:
+	"""DELETE the cloud slot. Fire-and-forget: no reply is read, every failure
+	silent — the local clear already happened. Own node (round 1 MAJOR 1: sharing
+	the POST node died on ERR_BUSY behind every checkpoint push, so the clear
+	never left and the next boot resurrected the ended campaign cross-device).
+	On a start failure the clearing POST below is tried instead — the server
+	clears on an empty blob too — so a dropped verb only costs a stale server
+	copy that LWW settles on the next write. The verb recorded is the EFFECT
+	(clear), whichever method carried it, and only when one actually started."""
+	if player_id().is_empty():
+		return
+	if _save_delete_http == null:
+		_save_delete_http = HTTPRequest.new()
+		_save_delete_http.timeout = REQUEST_TIMEOUT_SEC
+		add_child(_save_delete_http)
+	if _save_delete_http.request(_save_endpoint(), [], HTTPClient.METHOD_DELETE) == OK:
+		_last_save_verb = "DELETE"
+		return
+	if _save_post_http == null:
+		_save_post_http = HTTPRequest.new()
+		_save_post_http.timeout = REQUEST_TIMEOUT_SEC
+		add_child(_save_post_http)
+	# No reply handler: the answer to a clear is nothing, and an empty blob
+	# decodes as no-save anyway.
+	if _save_post_http.request(_save_endpoint(), ["Content-Type: application/json"],
+			HTTPClient.METHOD_POST, JSON.stringify({"blob": "", "saved_at": 0})) == OK:
+		_last_save_verb = "DELETE"
