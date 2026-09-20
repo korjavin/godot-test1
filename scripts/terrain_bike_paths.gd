@@ -1471,11 +1471,31 @@ static func _trunk_gate_lane(terrain: Node3D, anchors: Array[Dictionary], ai: in
 	return stations
 
 
+static func _is_hq_door_pair(anchors: Array[Dictionary], ai: int, bi: int) -> bool:
+	"""
+	Is this anchor pair the HQ door circle plus a road circle — the one pair
+	class the fallback owns (bead godot-test1-pnvb.8)?
+
+	ONE SEAM for the question, read by the route dispatcher, the lane builder
+	and the checks: the door is the KIND_WAYPOINT row that never sits on a
+	road station, so its id tells it apart. `.get` (and not `[]`) because a
+	monument link's synthetic rows carry no id and must answer false, never
+	throw. The `1` is `BikeNetwork.KIND_WAYPOINT` by value, the `_trunk_lane`
+	idiom.
+	"""
+	if String(anchors[ai].get("id", "")) == HQ_DOOR_ANCHOR_ID \
+			and int(anchors[bi].get("kind", -1)) == 1:
+		return true
+	return String(anchors[bi].get("id", "")) == HQ_DOOR_ANCHOR_ID \
+			and int(anchors[ai].get("kind", -1)) == 1
+
+
 static func _trunk_hq_lane(terrain: Node3D, anchors: Array[Dictionary], ai: int, bi: int) -> Array[Dictionary]:
 	"""
-	THE HQ DOOR'S LANE (bead godot-test1-pnvb.8) — or [] when this pair is not
-	the door circle plus a road circle, or when the door's approach crosses
-	stone outside the pass.
+	THE HQ DOOR'S LANE (bead godot-test1-pnvb.8) — a FALLBACK, tried only after
+	the homing walk abandons on mountain (see `_trunk_route`); or [] when this
+	pair is not the door circle plus a road circle, or when the door's
+	approach is refused.
 
 	@param ai / @param bi: The edge's two anchor indices into `anchors`.
 	@return: `[door] + [road_station(k).center + left * offset for k in
@@ -1492,15 +1512,17 @@ static func _trunk_hq_lane(terrain: Node3D, anchors: Array[Dictionary], ai: int,
 	straight door-to-circle approach would walk at the wall instead.
 
 	THE APPROACH IS THE ONLY GROUND THE ROAD DOES NOT ALREADY CLEAR, so it is
-	the only part that can refuse. Sampled at `BIKE_STATION_SPACING` — the
-	walk's own pitch, not a new number — mountain outside the canyon refuses,
-	with exactly one exemption beside the canyon's: within
-	`TRUNK_APPROACH_RADIUS` of the door, the pocket edge the lane is entitled
-	to leave. That radius is the walk's endpoint entitlement ("the walk may
-	reach its anchor"), reused rather than retyped, and it refuses far earlier
-	than a walk would give up (which skirts up to `TRUNK_DETOUR_MAX` stations
-	before abandoning). A refused approach is [] here and the homing walk
-	below dies mountain as it always has — the seed stays sealed, honestly.
+	the only part that can refuse (round 2: the lane is a fallback, so this
+	gate decides sealed-or-not where the walk has already died). Sampled at
+	`BIKE_STATION_SPACING` — the walk's own pitch, not a new number — three
+	refusals, all past `TRUNK_APPROACH_RADIUS` of the door (the walk's
+	endpoint entitlement, reused rather than retyped): mountain outside the
+	canyon; the keep-out discs (tower, teleport circles, landmark chunks —
+	without the swath, which the approach joins by design and the draw tier
+	gaps like every lane stub); and water, stricter than the walk on purpose
+	(see the code). A refused approach is [] and the seed stays sealed under
+	the walk's own verdict — seed 1 crosses a keep-out disc past the exemption
+	and stays sealed exactly this way, an honest 2 of 3.
 
 	The circle-to-last-offset stub needs no check: both ends stand inside the
 	canyon clearance (the circle on the centreline, the offset
@@ -1527,19 +1549,14 @@ static func _trunk_hq_lane(terrain: Node3D, anchors: Array[Dictionary], ai: int,
 	"""
 	var door_end: int = -1
 	var road_end: int = -1
-	if String(anchors[ai].get("id", "")) == HQ_DOOR_ANCHOR_ID \
-			and int(anchors[bi].get("kind", -1)) == 1:
+	if not _is_hq_door_pair(anchors, ai, bi):
+		return []
+	if String(anchors[ai].get("id", "")) == HQ_DOOR_ANCHOR_ID:
 		door_end = ai
 		road_end = bi
-	elif String(anchors[bi].get("id", "")) == HQ_DOOR_ANCHOR_ID \
-			and int(anchors[ai].get("kind", -1)) == 1:
+	else:
 		door_end = bi
 		road_end = ai
-	else:
-		return []
-	# The `1` is `BikeNetwork.KIND_WAYPOINT` by value, the `_trunk_lane` idiom;
-	# `.get` (and not `[]`) because a monument link's synthetic rows carry no
-	# id and must fall through here, never throw.
 	var pr: Vector2 = anchors[road_end]["pos"]
 	var nr: Dictionary = road_station_near(terrain, pr)
 	if nr.is_empty():
@@ -1559,6 +1576,9 @@ static func _trunk_hq_lane(terrain: Node3D, anchors: Array[Dictionary], ai: int,
 	var hd: float = float((nd["station"] as Dictionary)["heading"])
 	var cd: Vector2 = (nd["station"] as Dictionary)["center"]
 	var head_off: Vector2 = cd + Vector2(-sin(hd), cos(hd)) * (TRUNK_LANE_SIDE * TRUNK_LANE_OFFSET)
+	# The waypoint table, read ONCE for the gate — it is pure in `run_seed`
+	# and rebuilding it per sample is the gate's most expensive answer.
+	var gate_wp: Array[Dictionary] = terrain.waypoint_sites()
 	var legs: int = maxi(1, int(ceil(pd.distance_to(head_off) / BIKE_STATION_SPACING)))
 	for s in range(legs + 1):
 		var p: Vector2 = pd.lerp(head_off, float(s) / float(legs))
@@ -1566,6 +1586,19 @@ static func _trunk_hq_lane(terrain: Node3D, anchors: Array[Dictionary], ai: int,
 			continue
 		if terrain.biome_at(p.x, p.y) == terrain.Biome.MOUNTAIN \
 				and not _in_canyon(terrain, p):
+			return []
+		# ...AND THE KEEP-OUTS (round 2): the tower's disc, a teleport circle,
+		# a landmark's chunk — the same discs the walk is refused by and the
+		# draw tier gaps. WITHOUT the swath (`include_road = false`): the
+		# approach joins the road, so its tail stands beside the centreline by
+		# design, and swath paint is gapped at draw like every lane's circle
+		# stub. ...AND THE WATER, a stricter answer than the walk's on purpose:
+		# the bridge tier would deck a river, but an approach that needs a deck
+		# is a second crossing this bead does not need, and a lake refuses the
+		# whole lane downstream anyway.
+		if trunk_keep_out(terrain, p, gate_wp, false):
+			return []
+		if terrain.is_river_at(Vector3(p.x, 0.0, p.y)):
 			return []
 	var stations: Array[Dictionary] = [{ "pos": pd, "heading": hd }]
 	var k: int = kd
@@ -1620,13 +1653,15 @@ static func _trunk_lane(terrain: Node3D, anchors: Array[Dictionary], ai: int, bi
 	approach.
 
 	AN HQ-DOOR PAIR (bead godot-test1-pnvb.8: the door circle plus a road
-	circle) is ALSO a lane — `_trunk_hq_lane` above: the road's offset
-	stations from the DOOR's nearest station to the circle's, with a short
-	approach from the door circle to the first of them. The approach is the
-	only ground the road does not already clear, so it is the only part that
-	can refuse (mountain outside the pass and past the door's own
-	`TRUNK_APPROACH_RADIUS`); a refused approach falls through to the walk
-	below and dies mountain as it always has.
+	circle) answers the geometric lane question — `_trunk_hq_lane` above: the
+	road's offset stations from the DOOR's nearest station to the circle's,
+	with a short approach from the door circle to the first of them. The
+	ROUTE, though, goes through `_trunk_route`'s fallback: the pair walks
+	first and the lane fires only on a mountain abandonment, so green worlds
+	keep their drawn walks bit-for-bit. The geometric HQ answer lives in
+	`_trunk_hq_lane` above — read directly by the dispatcher and the HQ-aware
+	checks — while this function refuses the door at the SNAP test, as it
+	always has.
 
 	COSTS NO DRAW: arithmetic over the road cache. The span is clamped at
 	`ROAD_TERMINAL_X` (the cache stays honest past it, but no lane ever needs
@@ -1645,12 +1680,12 @@ static func _trunk_lane(terrain: Node3D, anchors: Array[Dictionary], ai: int, bi
 		return []
 	if gate_end >= 0:
 		return _trunk_gate_lane(terrain, anchors, ai, bi, gate_end)
-	# THE HQ DOOR'S LANE (bead godot-test1-pnvb.8): the door circle plus a road
-	# circle rides the road's own stations through the canyon. A refused
-	# approach is [] here and the walk below dies mountain as it always has.
-	var hq: Array[Dictionary] = _trunk_hq_lane(terrain, anchors, ai, bi)
-	if not hq.is_empty():
-		return hq
+	# HQ-DOOR PAIRS ARE NOT ANSWERED HERE (bead godot-test1-pnvb.8, round 2):
+	# the door never sits on a station, so the SNAP test below refuses it and
+	# this function keeps its master contract (road pairs and circle-gate
+	# pairs; [] for the walks — B1b and B2's scope comments say so). The
+	# geometric HQ answer is `_trunk_hq_lane`, read directly by the route
+	# dispatcher and the HQ-aware checks.
 	var pa: Vector2 = anchors[ai]["pos"]
 	var pb: Vector2 = anchors[bi]["pos"]
 	var na: Dictionary = road_station_near(terrain, pa)
@@ -1689,8 +1724,9 @@ static func _trunk_lane(terrain: Node3D, anchors: Array[Dictionary], ai: int, bi
 static func _trunk_route(terrain: Node3D, anchors: Array[Dictionary], edge: Dictionary,
 		reason: Array[String] = [], link_anchor: int = -1) -> Array[Dictionary]:
 	"""
-	THE HOMING WALK from one anchor to the other. A pure function of (edge id,
-	`run_seed`), and it consumes no RNG at all.
+	THE ROUTE from one anchor to the other — the homing walk below, or the HQ
+	door's lane as a fallback. A pure function of (edge id, `run_seed`), and
+	it consumes no RNG at all.
 
 	@param anchors: `terrain.bike_anchors()`, passed in because the caller walks
 	                every edge against the same table — or a two-row synthetic
@@ -1704,6 +1740,13 @@ static func _trunk_route(terrain: Node3D, anchors: Array[Dictionary], edge: Dict
 	                the walk is otherwise the same recurrence, and a link's
 	                synthetic rows wear a non-road kind so the lane never fires.
 	@return: The stations, `{ "pos": Vector2, "heading": float }`, or `[]`.
+
+	THE HQ FALLBACK (bead godot-test1-pnvb.8, round 2) lives in the dispatcher
+	below and not in `_trunk_lane`: a door-circle pair walks first, and
+	`_trunk_hq_lane` fires only on a mountain abandonment. `_trunk_lane`
+	itself still answers the geometric question ("is this pair lane-shaped?")
+	for the checks that ask it — C3's bucket, B1's tie — while the ROUTE goes
+	through the walk first.
 
 	THE RECURRENCE IS `_next_heading()`: this walk passes THE BEARING TO ITS TARGET,
 	RECOMPUTED HERE AT EVERY STATION, as `heading0`. The restore term therefore
@@ -1730,12 +1773,57 @@ static func _trunk_route(terrain: Node3D, anchors: Array[Dictionary], edge: Dict
 	"""
 	if not reason.is_empty():
 		reason[0] = ""
+	var ai: int = int(edge["a"])
+	var bi: int = int(edge["b"])
+	# THE HQ DOOR'S LANE IS A FALLBACK (bead godot-test1-pnvb.8, round 2): a
+	# door-circle pair walks FIRST, like every pair, and the lane fires ONLY
+	# when that walk abandons on MOUNTAIN — the sealed class. Round 1 hooked
+	# the lane before the walk and repainted the CI seeds' already-drawn door
+	# routes with lanes trailing kilometre-long unpainted approaches; the
+	# fallback keeps every world the walk can draw exactly as it was. Any
+	# other abandonment (road, site, lost, short, city) is the graph's business
+	# and stays abandoned, as it always has.
+	if link_anchor < 0 and _is_hq_door_pair(anchors, ai, bi):
+		# The verdict lives in a LOCAL array on purpose: `trunks()` calls with
+		# no reason array at all, and the fallback must fire there too — the
+		# table, not the caller, decides. The caller's array keeps the walk's
+		# verdict on every path the walk itself would have taken it.
+		var verdict: Array[String] = [""]
+		var walked: Array[Dictionary] = _trunk_hom_walk(terrain, anchors, ai, bi,
+				verdict, link_anchor)
+		if not walked.is_empty():
+			return walked
+		if verdict[0] != "mountain":
+			if not reason.is_empty():
+				reason[0] = verdict[0]
+			return []
+		var hq_lane: Array[Dictionary] = _trunk_hq_lane(terrain, anchors, ai, bi)
+		if hq_lane.is_empty():
+			# The approach refused: the walk's mountain verdict stands, so a
+			# refused seed stays sealed under its own name, honestly.
+			if not reason.is_empty():
+				reason[0] = verdict[0]
+			return []
+		if not reason.is_empty():
+			reason[0] = ""
+		return hq_lane
 	# THE LANE FIRST: a road pair never walks.
-	var lane: Array[Dictionary] = _trunk_lane(terrain, anchors, int(edge["a"]), int(edge["b"]))
+	var lane: Array[Dictionary] = _trunk_lane(terrain, anchors, ai, bi)
 	if not lane.is_empty():
 		return lane
-	var from: Vector2 = anchors[int(edge["a"])]["pos"]
-	var to: Vector2 = anchors[int(edge["b"])]["pos"]
+	return _trunk_hom_walk(terrain, anchors, ai, bi, reason, link_anchor)
+
+
+static func _trunk_hom_walk(terrain: Node3D, anchors: Array[Dictionary], ai: int, bi: int,
+		reason: Array[String] = [], link_anchor: int = -1) -> Array[Dictionary]:
+	"""
+	THE HOMING WALK, the recurrence `_trunk_route` documents — factored out so
+	the HQ fallback can walk first and lane second without a second copy of
+	the recurrence. Bit-for-bit the walk it always was: same key, same order,
+	same abandonments.
+	"""
+	var from: Vector2 = anchors[ai]["pos"]
+	var to: Vector2 = anchors[bi]["pos"]
 	# WALKED FROM THE END OUTSIDE THE CITY. The rect stops a trunk, so an edge whose
 	# `a` happens to be a city waypoint would otherwise die on its first station and
 	# the route that leads INTO Budapest — the owner's headline — would never be
@@ -1752,7 +1840,7 @@ static func _trunk_route(terrain: Node3D, anchors: Array[Dictionary], edge: Dict
 		return []
 
 	var key := _trunk_link_key(link_anchor) if link_anchor >= 0 \
-		else _trunk_turn_key(int(edge["a"]), int(edge["b"]))
+		else _trunk_turn_key(ai, bi)
 	# The waypoint table, read ONCE for the whole walk — it is pure in `run_seed`
 	# and rebuilding it per station is the walk's most expensive answer.
 	var waypoints: Array[Dictionary] = terrain.waypoint_sites()

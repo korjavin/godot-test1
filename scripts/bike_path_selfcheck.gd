@@ -289,11 +289,10 @@ const LANE_GAP_CHUNK := Vector2i(13, -2)
 ## stations between the connector skip and the pass gap. (31337 used to hold
 ## two — a lone lane segment plus a gate walk's first 25 m; round 2's gate
 ## lanes absorbed the walk stub, so it graduated back under the bar.)
-## 555: the HQ door's lane shares its approach across two trunks (HQ→approach
-## and HQ→spawn ride the same door-to-road stations), so the one 10 m stub the
-## shared approach paints before its river gap counts twice — one world stub,
-## two census pieces, both ending at segment 2 on water.
-const SMALL_PIECES_PINNED := {123456: 2, 555: 2}
+## 555 held 2 in round 1 (two HQ lanes sharing one approach stub) and
+## graduated back under the bar in round 2, when the fallback's approach gate
+## refused its lanes: the stub is gone with them.
+const SMALL_PIECES_PINNED := {123456: 2}
 
 ## THE A/B FIELD: a 4x4 band of chunks off the road's north side on `SEEDS[0]`,
 ## chosen because it holds every kind of chunk check 1 needs — four carrying path
@@ -504,14 +503,16 @@ const DRAWN_CHAIN_SEEDS: Array[int] = [20260904, 777, 4242, 1, 424242, 999983, 7
 ## THERE ("no longer sealed — move it to the green list") or in the other class,
 ## so the record can never rot: a future walk-level fix has to touch this list.
 const DRAWN_CHAIN_SEALED := {
-	# Bead godot-test1-pnvb.8 (the HQ door's lane — door-plus-road-circle pairs
-	# ride the road's own stations through the canyon): seeds 1, 424242 and 42
-	# come out THERE and move to the green list, per the check's own rule, so
-	# the list is EMPTY and the green half below covers every seed in the
-	# sweep. 99999 came out THERE through the canyon in pnvb.9 round 1; round
-	# 2's gate lanes recovered seed 2 and the four road-refused worlds
-	# (20260904, 4242, 750, 99) the same way. 555 is not in this sweep and
-	# stays pnvb.8's, by owner ruling 2026-09-20.
+	# Bead godot-test1-pnvb.8, round 2 (the HQ door's lane as a FALLBACK: the
+	# pair walks first, the lane fires only on a mountain abandonment): seeds
+	# 42 and 424242 come out THERE and move to the green list, per the check's
+	# own rule. Seed 1 stays sealed — its approach crosses a keep-out disc
+	# past the door's exemption (measured), so the lane refuses and the walk
+	# is dead: an honest 2 of 3. 99999 came out THERE through the canyon in
+	# pnvb.9 round 1; round 2's gate lanes recovered seed 2 and the four
+	# road-refused worlds (20260904, 4242, 750, 99) the same way. 555 is not
+	# in this sweep and stays pnvb.8's, by owner ruling 2026-09-20.
+	1: ["hq approach refused at a keep-out disc", "exhausted"],
 }
 
 ## T4's ceiling on the trunk memo, in STATIONS across the whole world. Measured on
@@ -2494,10 +2495,12 @@ func _check_crossing_angle_rule(terrain_script: GDScript) -> void:
 
 	Bead `godot-test1-pnvb.8` widens the WALK census (the ban and the refusal
 	half) from SEEDS to DRAWN_CHAIN_SEEDS, and that is repair, not chase: the
-	HQ door's lane retired the CI seeds' last road deaths, and a sweep with no
-	refusal in it asserts nothing. The list is the drawn chain's own fixed
-	sweep, not a new one, and the ban is stronger for it (more walks judged,
-	same 45-degree rule).
+	list is the drawn chain's own fixed sweep, not a new one, and the ban is
+	stronger for it (more walks judged, same 45-degree rule). Round 2 buckets
+	HQ pairs by the route they draw: the fallback walks them first, so a
+	drawn walk is judged here (ban + refusal census) while a drawn lane rides
+	the lane bucket above — bucketing by shape alone would judge neither
+	(the walk hides behind the lane's shape, the lane behind the walk's ban).
 
 	Retired WITH the last crossing: the fail-on-zero-crossings (C3 measured
 	zero mid-span crossings on every CI seed — lanes do not cross and no walk
@@ -2512,11 +2515,9 @@ func _check_crossing_angle_rule(terrain_script: GDScript) -> void:
 	var crossings: int = 0
 	var neg_station: int = 0
 	var roads: int = 0
-	# Bead `godot-test1-pnvb.8`: the drawn chain's own fixed sweep, not SEEDS.
-	# The HQ door's lane retired the CI seeds' last road deaths — every edge on
-	# all three CI seeds is a lane now (measured 7/7, 6/6, 7/7) — so the ban
-	# and the refusal half below held for free on SEEDS. Same rule, more
-	# walks judged; the lane and seam halves ride along unchanged.
+	# Bead `godot-test1-pnvb.8`, round 2: the drawn chain's own fixed sweep, not
+	# SEEDS — same rule, more walks judged; the lane and seam halves ride
+	# along unchanged.
 	for seed_value: int in DRAWN_CHAIN_SEEDS:
 		var terrain: Node3D = _terrain(terrain_script, seed_value, true)
 		var anchors: Array = terrain.bike_anchors()
@@ -2524,7 +2525,23 @@ func _check_crossing_angle_rule(terrain_script: GDScript) -> void:
 		for e: Dictionary in edges:
 			var ai: int = int(e["a"])
 			var bi: int = int(e["b"])
-			if not BikePaths._trunk_lane(terrain, anchors, ai, bi).is_empty():
+			# HQ pairs are bucketed by the route they DRAW, not by shape
+			# (round 2): the fallback walks them first, so a drawn walk (the
+			# CI seeds) belongs to the ban and the refusal census below, while
+			# a drawn lane (the joined seals) rides the lane bucket like every
+			# lane. `==` holds bit-for-bit: both sides are the same floats in
+			# the same order.
+			var hq_drawn: Array[Dictionary] = []
+			var hq_shaped: Array[Dictionary] = []
+			var hq_pair: bool = BikePaths._is_hq_door_pair(anchors, ai, bi)
+			var hq_reason: Array[String] = [""]
+			if hq_pair:
+				hq_drawn = terrain.bike_trunk_walk(anchors, ai, bi, hq_reason)
+				hq_shaped = BikePaths._trunk_hq_lane(terrain, anchors, ai, bi)
+			var drew_lane: bool = not BikePaths._trunk_lane(terrain, anchors, ai, bi).is_empty()
+			if hq_pair:
+				drew_lane = not hq_drawn.is_empty() and hq_drawn == hq_shaped
+			if drew_lane:
 				# A lane: alongside by construction, out of scope. Its span
 				# still feeds the seam control below — read off the CIRCLE
 				# ends only. The gate end is never handed to
@@ -2541,8 +2558,11 @@ func _check_crossing_angle_rule(terrain_script: GDScript) -> void:
 				if neg_here:
 					neg_station += 1
 				continue
-			var reason: Array[String] = [""]
-			var route: Array[Dictionary] = terrain.bike_trunk_walk(anchors, ai, bi, reason)
+			var reason: Array[String] = hq_reason
+			var route: Array[Dictionary] = hq_drawn
+			if not hq_pair:
+				reason = [""]
+				route = terrain.bike_trunk_walk(anchors, ai, bi, reason)
 			if route.is_empty():
 				if reason[0] == "road":
 					roads += 1
@@ -4512,6 +4532,59 @@ func _check_drawn_chain_reaches_budapest(terrain_script: GDScript) -> void:
 			continue
 		var edges: Array = terrain.bike_edges()
 		var trunks: Array[Dictionary] = BikePaths.trunks(terrain)
+		# --- THE HQ LINK'S CHARACTER (bead godot-test1-pnvb.8, round 2): the
+		# fallback keeps every world the walk can draw exactly as it was, so on
+		# the CI seeds the HQ trunk toward the approach circle must BE the walk
+		# — short, painting near the door — while on the joined seals every HQ
+		# trunk must be the lane. Round 1 hooked the lane before the walk and
+		# repainted the CI door routes with kilometre-long unpainted approaches;
+		# this block is what goes red if that ever comes back.
+		var hq_idx: int = -1
+		var approach_idx: int = -1
+		for ndi in anchors.size():
+			if str(anchors[ndi]["id"]) == "wp_hq":
+				hq_idx = ndi
+			elif str(anchors[ndi]["id"]) == "wp_approach":
+				approach_idx = ndi
+		var wp_all: Array = terrain.waypoint_sites()
+		if seed_value == 20260904 or seed_value == 777 or seed_value == 4242:
+			var want_edge: int = -1
+			for he: Dictionary in edges:
+				if (int(he["a"]) == hq_idx and int(he["b"]) == approach_idx) \
+						or (int(he["a"]) == approach_idx and int(he["b"]) == hq_idx):
+					want_edge = int(he["id"])
+			if want_edge < 0:
+				_fail("seed %d: no hq→approach edge in the graph — re-survey the control" % seed_value)
+			else:
+				var hq_trunk: Dictionary = {}
+				for ht: Dictionary in trunks:
+					if int(ht["id"]) == want_edge:
+						hq_trunk = ht
+				if hq_trunk.is_empty():
+					_fail("seed %d: the hq→approach edge draws nothing — the fallback broke the walk" % seed_value)
+				else:
+					var hq_route: Array = hq_trunk["stations"]
+					var second_leg: float = ((hq_route[0]["pos"] as Vector2).distance_to(hq_route[1]["pos"] as Vector2))
+					if second_leg > 6.0:
+						_fail("seed %d: hq→approach second station is %.0f m out — it is the lane, not the walk; the fallback fired where the walk draws" % [seed_value, second_leg])
+					var walked_len: float = 0.0
+					for wi in range(hq_route.size() - 1):
+						walked_len += ((hq_route[wi]["pos"] as Vector2).distance_to(hq_route[wi + 1]["pos"] as Vector2))
+					if walked_len >= 500.0:
+						_fail("seed %d: hq→approach route is %.0f m — outside the master walk band; the fallback fired where the walk draws" % [seed_value, walked_len])
+					var first_paint: float = _first_painted_from_door(terrain, hq_route, wp_all, hq)
+					if first_paint < 0.0 or first_paint > 60.0:
+						_fail("seed %d: hq→approach first paints %.0f m from the door — the door hole is back" % [seed_value, first_paint])
+		elif seed_value == 42 or seed_value == 424242:
+			for ht: Dictionary in trunks:
+				var fa: Vector2 = ht["from"]
+				var hto: Vector2 = ht["to"]
+				if fa != hq and hto != hq:
+					continue
+				var lane_route: Array = ht["stations"]
+				var first_leg: float = ((lane_route[0]["pos"] as Vector2).distance_to(lane_route[1]["pos"] as Vector2))
+				if first_leg <= BikePaths.TRUNK_APPROACH_RADIUS:
+					_fail("seed %d: HQ trunk %d steps %.0f m — a walk draws on a sealed seed; re-survey the seal" % [seed_value, int(ht["id"]), first_leg])
 		var built := {}
 		for trunk: Dictionary in trunks:
 			built[int(trunk["id"])] = true
@@ -4738,6 +4811,35 @@ func _painted_runs(terrain: Node3D, stations: Array, waypoints: Array) -> Array[
 	return runs
 
 
+func _first_painted_from_door(terrain: Node3D, stations: Array, waypoints: Array,
+		door: Vector2) -> float:
+	"""
+	The distance from `door` to the first DRAWABLE segment's midpoint — the
+	round-2 control's "paint near the door" half (bead godot-test1-pnvb.8).
+
+	Drawability is the draw tier's own rule (water, keep-out, pass gap), asked
+	of the same shipped predicates `_draw_path_share` asks, so the answer is
+	what the chunks paint rather than a second opinion. Returns -1 when
+	nothing paints.
+	"""
+	for i in range(stations.size() - 1):
+		var a: Vector2 = stations[i]["pos"]
+		var b: Vector2 = stations[i + 1]["pos"]
+		var mid: Vector2 = (a + b) * 0.5
+		if terrain.is_river_at(Vector3(a.x, 0.0, a.y)) \
+				or terrain.is_river_at(Vector3(b.x, 0.0, b.y)) \
+				or BikePaths.segment_blocked(terrain, a, b):
+			continue
+		if BikePaths.trunk_keep_out(terrain, a, waypoints) \
+				or BikePaths.trunk_keep_out(terrain, b, waypoints) \
+				or BikePaths.trunk_keep_out(terrain, (a + b) * 0.5, waypoints):
+			continue
+		if terrain.biome_at(mid.x, mid.y) == terrain.Biome.MOUNTAIN:
+			continue
+		return mid.distance_to(door)
+	return -1.0
+
+
 func _check_trunk_shape(terrain_script: GDScript) -> void:
 	"""
 	A2 (bead godot-test1-pnvb.9) -- THE TRUNK SHAPE, over SWEEP16 (the same
@@ -4842,6 +4944,12 @@ func _check_lane_world_tie(terrain_script: GDScript) -> void:
 
 	Fails if no lane, no drawable lane segment, or no strip box answers the
 	midpoint.
+
+	Round 2 pins one HQ lane's side the same way, on seed 424242 where the
+	fallback fires: the road tie above breaks after the first tied lane, which
+	is never an HQ lane, so an HQ-only side flip would pass it
+	self-consistently. Same tie (offsets, headings, anchor ends), no drawn-box
+	half — the side is pinned at station level, where a flip lands 36 m off.
 	"""
 	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
 	# THE FIXED SIDE, PINNED LITERALLY: +1.0 on the file's left normal, one
@@ -4979,6 +5087,68 @@ func _check_lane_world_tie(terrain_script: GDScript) -> void:
 	if not tied:
 		_fail("B1 swept seed %d and tied no lane to the road's stations — no lane "
 				% SEEDS[0] + "with a drawable segment, or no strip box answered")
+	# --- THE HQ LANE'S SIDE (bead godot-test1-pnvb.8, round 2): the tie above
+	# breaks after the first tied lane, which on SEEDS[0] is never an HQ lane —
+	# so a side flip inside `_trunk_hq_lane` alone passes there
+	# self-consistently. Tie one HQ lane explicitly, on a seed where the
+	# fallback fires (424242): every offset station is its road station plus
+	# the fixed side, carrying the road station's heading, between the two
+	# anchors. Fails if no HQ lane draws there at all.
+	var hq2_terrain: Node3D = _terrain(terrain_script, 424242, true)
+	var hq2_anchors: Array = hq2_terrain.bike_anchors()
+	var hq2_tied: bool = false
+	for hq2_trunk: Dictionary in BikePaths.trunks(hq2_terrain):
+		var hq2_ai: int = int(hq2_trunk["a"])
+		var hq2_bi: int = int(hq2_trunk["b"])
+		var hq2_ai_door: bool = String(hq2_anchors[hq2_ai].get("id", "")) == "wp_hq"
+		var hq2_bi_door: bool = String(hq2_anchors[hq2_bi].get("id", "")) == "wp_hq"
+		if not hq2_ai_door and not hq2_bi_door:
+			continue
+		if BikePaths._trunk_hq_lane(hq2_terrain, hq2_anchors, hq2_ai, hq2_bi).is_empty():
+			continue
+		var hq2_stations: Array = hq2_trunk["stations"]
+		# The road span, off the shipped seam per END (the door's end reads its
+		# nearest station, the circle's its own — never SNAP-checked here; the
+		# lane already passed that to exist at all).
+		var hq2_na: Dictionary = BikePaths.road_station_near(hq2_terrain, hq2_anchors[hq2_ai]["pos"])
+		var hq2_nb: Dictionary = BikePaths.road_station_near(hq2_terrain, hq2_anchors[hq2_bi]["pos"])
+		var hq2_ka: int = int(hq2_na["k"])
+		var hq2_kb: int = int(hq2_nb["k"])
+		var hq2_step: int = 1 if hq2_ka <= hq2_kb else -1
+		var hq2_count: int = abs(hq2_ka - hq2_kb) + 1
+		if hq2_stations.size() != hq2_count + 2:
+			_fail("B1: HQ lane %d has %d stations over %d road stations" % [int(hq2_trunk["id"]), hq2_stations.size(), hq2_count])
+			continue
+		if (hq2_stations[0]["pos"] as Vector2) != (hq2_anchors[hq2_ai]["pos"] as Vector2):
+			_fail("B1: HQ lane %d does not start exactly on its anchor" % int(hq2_trunk["id"]))
+		if (hq2_stations[hq2_stations.size() - 1]["pos"] as Vector2) != (hq2_anchors[hq2_bi]["pos"] as Vector2):
+			_fail("B1: HQ lane %d does not end exactly on its anchor" % int(hq2_trunk["id"]))
+		var hq2_k: int = hq2_ka
+		var hq2_ok: bool = true
+		for hq2_j in hq2_count:
+			var hq2_rst: Dictionary = hq2_terrain._road_station(hq2_k)
+			var hq2_c: Vector2 = hq2_rst["center"]
+			var hq2_h: float = float(hq2_rst["heading"])
+			var hq2_want: Vector2 = hq2_c + Vector2(-sin(hq2_h), cos(hq2_h)) \
+					* (BikePaths.TRUNK_LANE_SIDE * BikePaths.TRUNK_LANE_OFFSET)
+			var hq2_got: Vector2 = (hq2_stations[1 + hq2_j] as Dictionary)["pos"]
+			if hq2_got != hq2_want:
+				_fail("B1: HQ lane %d station %d is at %s, off the road station (%.1f, %.1f) plus the fixed side" % [int(hq2_trunk["id"]), hq2_k, hq2_got, hq2_c.x, hq2_c.y])
+				hq2_ok = false
+				break
+			if float((hq2_stations[1 + hq2_j] as Dictionary)["heading"]) != hq2_h:
+				_fail("B1: HQ lane %d station %d carries a non-road heading" % [int(hq2_trunk["id"]), hq2_k])
+				hq2_ok = false
+				break
+			hq2_k += hq2_step
+		if not hq2_ok:
+			continue
+		print("B1: HQ lane %d (%d road stations k=%d..%d) tied to the road line on the fixed side" % [int(hq2_trunk["id"]), hq2_count, hq2_ka, hq2_kb])
+		hq2_tied = true
+		break
+	if not hq2_tied:
+		_fail("B1: no HQ lane draws on seed 424242 — the fallback stopped firing; re-survey the tie")
+	hq2_terrain.free()
 	terrain.free()
 	_check_lane_graze(terrain_script)
 	Sentinel.done("lane_world_tie")
