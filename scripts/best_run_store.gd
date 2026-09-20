@@ -299,6 +299,18 @@ const PLAYER_ID_HEX_LEN: int = 32
 ## both tightened together; minted ids are `%08x` lowercase and always match.
 const PLAYER_ID_PATTERN: String = "^[0-9a-fA-F]{32}$"
 
+## The sign-in email's EXACT shape (bead `godot-test1-i8yu.7.2`): one `@`, a
+## dotted domain, a 2+ letter top level — the same strictness the lobby applies
+## before it sends anything, so a typo is refused HERE with the address
+## untouched instead of 422ing a request for it.
+const MAGIC_LINK_EMAIL_PATTERN: String = "^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}$"
+
+## The `?token=` query key the magic link carries back into the game URL, and
+## the longest token the client adopts — the lobby mints the value, the client
+## only checks the envelope (present, URL-safe, bounded).
+const MAGIC_TOKEN_PARAM: String = "token"
+const MAGIC_TOKEN_MAX_LEN: int = 256
+
 ## `HTTPRequest`'s default timeout is *wait forever*, and a stuck request makes
 ## every later one on that node answer ERR_BUSY — the trap `lobby_client.gd`
 ## documents at length. Short, because nothing waits on these.
@@ -421,6 +433,29 @@ var _last_save_verb: String = ""
 ## NEWER than this — never than the live slot, which a checkpoint may have
 ## advanced meanwhile.
 var _save_post_sent_at: int = 0
+
+## The exact headers the last request STARTED with, per instance: observability
+## for `save_selfcheck`, beside `_last_save_verb` and with its rule — recorded
+## only when `request()` accepted the request, so the spy pins the bearer the
+## lobby actually received instead of the intent.
+var _last_request_headers: PackedStringArray = []
+
+## The magic-link POST's own node (bead `godot-test1-i8yu.7.2`): node-per-verb,
+## as the save split — sharing a node would ERR_BUSY-drop the link behind a
+## checkpoint push. Same timeout, same silent rule.
+var _magic_http: HTTPRequest = null
+
+## The session token the lobby minted for the last validated magic-link click.
+## Empty is signed out — a fresh install, or a 401 since — and every verb
+## sends its bearer only while one is held, so anonymous traffic is byte-for-byte
+## what it was before this ring existed.
+var _lobby_token: String = ""
+
+## The address the current sign-in link went to. Written ONLY by
+## `request_magic_link()` on a valid address — never by a reply — so it is
+## the validated email the status row shows beside a live token, and "" for a
+## token that arrived with no request behind it.
+var _magic_email_sent: String = ""
 
 ## Whether the boot GET's reply may be trusted as a PRE-SUBMIT baseline — which is
 ## the only thing `server_best_distance` is for, and the one property the two
@@ -1273,7 +1308,8 @@ func _request_get() -> void:
 		_get_http = HTTPRequest.new()
 		_get_http.timeout = REQUEST_TIMEOUT_SEC
 		add_child(_get_http)
-	var err: int = _get_http.request(_endpoint())
+	var headers := PackedStringArray(_lobby_headers())
+	var err: int = _get_http.request(_endpoint(), headers)
 	if err != OK:
 		# ERR_BUSY is an ordinary overlap and says nothing — with ONE exception:
 		# an adoption's fetch dropped here is the adopted id never syncing while
@@ -1286,6 +1322,7 @@ func _request_get() -> void:
 			_adopt_refetch_pending = false
 		return
 	_adopt_refetch_pending = false
+	_last_request_headers = headers
 	# The window opens here and closes in the reply handler; a POST inside it is
 	# what closes the baseline. See `_get_baseline_ok`.
 	_get_in_flight = true
@@ -1304,6 +1341,8 @@ func _on_get_completed(
 	# Closed FIRST, above every early return: a GET that failed is still no longer
 	# outstanding, and a POST after it races nothing.
 	_get_in_flight = false
+	if _reject_if_signed_out(response_code):
+		return
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
 		return
 	var json := JSON.new()
@@ -1393,9 +1432,13 @@ func _request_post() -> void:
 		# dropped POST costs nothing but a round of cross-device sync.
 		"found": found_landmark_ids(),
 	})
+	var headers := PackedStringArray(["Content-Type: application/json"])
+	headers.append_array(_lobby_headers())
 	var err: int = _post_http.request(
-		_endpoint(), ["Content-Type: application/json"], HTTPClient.METHOD_POST, body
+		_endpoint(), headers, HTTPClient.METHOD_POST, body
 	)
+	if err == OK:
+		_last_request_headers = headers
 	if err == OK and _get_in_flight:
 		# This run's numbers are now on their way to a lobby whose reply to the boot
 		# GET has not been read yet, so that reply may echo them back. Retire the
@@ -1420,11 +1463,13 @@ func _request_save_get() -> void:
 		_save_get_http = HTTPRequest.new()
 		_save_get_http.timeout = REQUEST_TIMEOUT_SEC
 		add_child(_save_get_http)
-	if _save_get_http.request(_save_endpoint()) != OK:
+	var headers := PackedStringArray(_lobby_headers())
+	if _save_get_http.request(_save_endpoint(), headers) != OK:
 		return
 	# Recorded only on a started request: the check pins the verb the lobby
 	# actually received, not the intent.
 	_last_save_verb = "GET"
+	_last_request_headers = headers
 	_save_get_http.request_completed.connect(_on_save_get_completed, CONNECT_ONE_SHOT)
 
 
@@ -1441,6 +1486,8 @@ func _on_save_get_completed(
 	write pushes ours. Only a STRICTLY newer server copy replaces the local
 	slot, and only that emits `save_loaded` — once per adopted reply.
 	"""
+	if _reject_if_signed_out(response_code):
+		return
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
 		return
 	var json := JSON.new()
@@ -1495,8 +1542,10 @@ func push_save_slot() -> void:
 		_save_post_http = HTTPRequest.new()
 		_save_post_http.timeout = REQUEST_TIMEOUT_SEC
 		add_child(_save_post_http)
+	var headers := PackedStringArray(["Content-Type: application/json"])
+	headers.append_array(_lobby_headers())
 	if _save_post_http.request(
-		_save_endpoint(), ["Content-Type: application/json"], HTTPClient.METHOD_POST, out
+		_save_endpoint(), headers, HTTPClient.METHOD_POST, out
 	) != OK:
 		return
 	# Both set only on a started request: on ERR_BUSY the baseline must keep
@@ -1505,6 +1554,7 @@ func push_save_slot() -> void:
 	# (round 1 MAJOR 2).
 	_save_post_sent_at = sent_at
 	_last_save_verb = "POST"
+	_last_request_headers = headers
 	_save_post_http.request_completed.connect(_on_save_post_completed, CONNECT_ONE_SHOT)
 
 
@@ -1518,6 +1568,8 @@ func _on_save_post_completed(
 	(including our own echo) — is ignored, silently and without a signal: the
 	write path never flips the card.
 	"""
+	if _reject_if_signed_out(response_code):
+		return
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
 		return
 	var json := JSON.new()
@@ -1552,8 +1604,10 @@ func _request_save_delete() -> void:
 		_save_delete_http = HTTPRequest.new()
 		_save_delete_http.timeout = REQUEST_TIMEOUT_SEC
 		add_child(_save_delete_http)
-	if _save_delete_http.request(_save_endpoint(), [], HTTPClient.METHOD_DELETE) == OK:
+	var headers := PackedStringArray(_lobby_headers())
+	if _save_delete_http.request(_save_endpoint(), headers, HTTPClient.METHOD_DELETE) == OK:
 		_last_save_verb = "DELETE"
+		_last_request_headers = headers
 		return
 	if _save_post_http == null:
 		_save_post_http = HTTPRequest.new()
@@ -1561,6 +1615,170 @@ func _request_save_delete() -> void:
 		add_child(_save_post_http)
 	# No reply handler: the answer to a clear is nothing, and an empty blob
 	# decodes as no-save anyway.
-	if _save_post_http.request(_save_endpoint(), ["Content-Type: application/json"],
+	var post_headers := PackedStringArray(["Content-Type: application/json"])
+	post_headers.append_array(_lobby_headers())
+	if _save_post_http.request(_save_endpoint(), post_headers,
 			HTTPClient.METHOD_POST, JSON.stringify({"blob": "", "saved_at": 0})) == OK:
 		_last_save_verb = "DELETE"
+		_last_request_headers = post_headers
+
+
+# ==============================================================================
+# AUTH RING — magic-link sign-in (bead godot-test1-i8yu.7.2)
+# ==============================================================================
+## Passwordless sign-in for the web export, where there is no keyboard to type
+## a claim code with: the player enters an email, the lobby emails a link, and
+## tapping it reopens the game with `?token=` — which the MP panel sniffs and
+## hands here. The token IS the session: the lobby minted it for that click, so
+## adopting it is signing in. The address remembered is the one the current
+## link went to (written by the request, never by a reply); a token that
+## arrived with no request behind it signs in with no address to show.
+##
+## The store never touches UI — every failure here is silent like the rest of
+## the file, and every outcome reads off state: `signed_in()` for the row,
+## `signed_in_email()` for the address, `request_magic_link()`'s bool for the
+## send. The panel speaks; the store only ever clears the token (401).
+
+
+## Whether this instance holds a session token. The panel paints SIGNED IN
+## only off this — never off the email field, which is why a typed-but-unsent
+## address can never read as signed in.
+func signed_in() -> bool:
+	return not _lobby_token.is_empty()
+
+
+## The validated email beside a live token, "" otherwise — signed out, or a
+## token with no request behind it.
+func signed_in_email() -> String:
+	if _lobby_token.is_empty():
+		return ""
+	return _magic_email_sent
+
+
+static func is_valid_magic_email(address: String) -> bool:
+	"""Whether `address` is shaped like an email: one `@`, a dotted domain,
+	a 2+ letter top level. Factored out so the request path and the panel
+	cannot drift apart — the lobby refuses anything else, so a second
+	spelling of "valid" is a second outage. Strictly `MAGIC_LINK_EMAIL_PATTERN`,
+	which also refuses the spaces and signs the engine's looser checks admit.
+	"""
+	if address.is_empty() or address.length() > 254:
+		return false
+	var shape := RegEx.create_from_string(MAGIC_LINK_EMAIL_PATTERN)
+	return shape != null and shape.search(address) != null
+
+
+func request_magic_link(email: String) -> bool:
+	"""Ask the lobby to email a sign-in link to `email`. True means the address
+	validated AND the POST started — the panel says LINK SENT off that; false
+	means the address failed the shape and nothing was recorded or sent, and
+	the panel says why off this. Silent either way: the outcome reads off the
+	return, never off a signal.
+	"""
+	var address: String = email.strip_edges()
+	if not is_valid_magic_email(address):
+		return false
+	_magic_email_sent = address
+	_request_magic_link()
+	return true
+
+
+func _magic_link_request() -> Dictionary:
+	"""The magic-link POST as data (`url`/`headers`/`body`): factored pure so
+	`save_selfcheck` pins the bearer and the body shape without sending
+	anything. Bearer rides exactly like the save verbs'.
+	"""
+	var headers := PackedStringArray(["Content-Type: application/json"])
+	headers.append_array(_lobby_headers())
+	var body := JSON.stringify({"email": _magic_email_sent, "redirect": _magic_redirect()})
+	return {"url": "%s/auth/magic" % _origin(), "headers": headers, "body": body}
+
+
+func _magic_redirect() -> String:
+	"""The URL the emailed link returns to: this page without its query on web,
+	"" elsewhere — desktop has no URL to return to, and the token only ever
+	arrives on the device whose browser holds the game. Typed, not `str()`-ed:
+	a blocked eval answers null, and "<null>" as a redirect would send the
+	player nowhere (`build_version.gd`'s rule).
+	"""
+	if not OS.has_feature("web"):
+		return ""
+	var href: Variant = JavaScriptBridge.eval(
+		"window.location.origin + window.location.pathname", true)
+	return href as String if typeof(href) == TYPE_STRING else ""
+
+
+func _request_magic_link() -> void:
+	"""POST the sign-in link request. Own node, same silent rule as every verb:
+	the reply only ever carries trouble (or 401) — a sent link needs no reply,
+	and the panel already said LINK SENT off the dispatch.
+	"""
+	if player_id().is_empty():
+		return
+	if _magic_http == null:
+		_magic_http = HTTPRequest.new()
+		_magic_http.timeout = REQUEST_TIMEOUT_SEC
+		add_child(_magic_http)
+	var ask := _magic_link_request()
+	if _magic_http.request(ask["url"], ask["headers"], HTTPClient.METHOD_POST, ask["body"]) != OK:
+		return
+	_last_request_headers = ask["headers"]
+
+
+func _on_magic_link_completed(
+	result: int, response_code: int, _headers: PackedStringArray, _body: PackedByteArray
+) -> void:
+	"""Read the link request's reply: 401 signs out (the token died mid-run),
+	anything else non-200 is silence — the panel said LINK SENT off the dispatch,
+	and the file's rule is that a failed send costs only the round, never a
+	signal. A 200 needs nothing: the link is in the mailbox, not in the reply.
+	"""
+	if _reject_if_signed_out(response_code):
+		return
+	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
+		return
+
+
+func adopt_magic_token(token: String) -> bool:
+	"""Adopt a `?token=` the URL sniff found: the lobby minted it, so holding it
+	is signed in. Strict envelope only — present, URL-safe, bounded — never the
+	mint's own shape, which is the server's business. Refusal leaves the token
+	untouched; adoption fetches, so the records the token names merge in like
+	any other adoption. Same token twice is true without a second fetch.
+	"""
+	if token.is_empty() or token.length() > MAGIC_TOKEN_MAX_LEN:
+		return false
+	for i in token.length():
+		var c: int = token.unicode_at(i)
+		var ok := (c >= 48 and c <= 57) or (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 45 or c == 95
+		if not ok:
+			return false
+	if token == _lobby_token:
+		return true
+	_lobby_token = token
+	fetch()
+	return true
+
+
+func _lobby_headers() -> Array:
+	"""The session bearer for the wire: one `Authorization` header while a token
+	is held, nothing when signed out — so the anonymous boot GET and every
+	other signed-out request send exactly what they sent before this ring.
+	"""
+	if _lobby_token.is_empty():
+		return []
+	return ["Authorization: Bearer %s" % _lobby_token]
+
+
+func _reject_if_signed_out(response_code: int) -> bool:
+	"""The 401 rule, in one place so the five reply handlers cannot drift: a 401
+	means the session died server-side, so the token is cleared — records stay
+	local-only from here — and the caller returns. True when it signed out,
+	so handlers lead with `if _reject_if_signed_out(...): return`. Silent, like
+	every failure in this file: the panel's status row repaints off `signed_in()`
+	on its next refresh, which is where the player reads it.
+	"""
+	if response_code != HTTPClient.RESPONSE_UNAUTHORIZED:
+		return false
+	_lobby_token = ""
+	return true

@@ -1510,6 +1510,41 @@ func _check_claim_code_adopts_a_pasted_id() -> void:
 	Sentinel.done("claim_code_adopts_a_pasted_id")
 
 
+func _check_claim_401_signs_out() -> void:
+	"""
+	A 401 signs the profile out: the token goes, the id stays.
+
+	The records-GET reply is the claim flow's own sync (an adoption refetches
+	through it), so the gate is probed HERE beside the adoption check: a fed
+	401 clears a held token while the player id is untouched, and a fed 200
+	keeps the token \u2014 feed-direct like the save verbs' probes, no network.
+	The per-verb matrix (every reply handler) is `save_selfcheck`'s 17b; this
+	is the claim-adjacent half the bead names.
+
+	NON-VACUOUS by named mutation: the gate dropped from `_on_get_completed`
+	leaves the token standing after its 401 \u2014 red below.
+	"""
+	var store := BestRunStore.new()
+	root.add_child(store)
+	var before: String = store.player_id()
+	store._lobby_token = "claim-probe"
+	store._on_get_completed(HTTPRequest.RESULT_SUCCESS, 401, PackedStringArray([]), PackedByteArray())
+	if not store._lobby_token.is_empty():
+		_fail("a 401 on the records GET left the token standing \u2014 the gate is skipped (M1)")
+	if store.player_id() != before:
+		_fail("a 401 moved the player id to %s \u2014 sign-out must keep the id" % store.player_id())
+	if store._magic_email_sent != "":
+		_fail("a 401 wrote the remembered address \u2014 sign-out clears the token only")
+	store._lobby_token = "claim-probe"
+	store._on_get_completed(HTTPRequest.RESULT_SUCCESS, 200, PackedStringArray([]), "{}".to_utf8_buffer())
+	if store._lobby_token != "claim-probe":
+		_fail("a 200 records GET cleared the token \u2014 the gate is over-eager")
+	store._lobby_token = ""
+	root.remove_child(store)
+	store.free()
+	Sentinel.done("claim_401_signs_out")
+
+
 func _check_phase_echo_refunds_a_wall_pass() -> void:
 	"""
 	Primm's Phase Echo pays out for going THROUGH something, and the wall is
@@ -2517,6 +2552,7 @@ func _run() -> void:
 	_check_ranks_merge_is_monotone()
 	_check_ranks_survive_a_relaunch()
 	await _check_claim_code_adopts_a_pasted_id()
+	await _check_claim_401_signs_out()
 	_check_every_selfcheck_is_hermetic()
 	await _check_streak_does_not_inflate_lifetime()
 	await _check_skill_effects_on_player()

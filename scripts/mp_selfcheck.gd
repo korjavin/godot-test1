@@ -81,6 +81,7 @@ const MPManager: GDScript = preload("res://scripts/mp_manager.gd")
 ## Script method and not something a class name resolves to.
 const MP_CODEC: GDScript = preload("res://scripts/mp_codec.gd")
 const Terrain: GDScript = preload("res://scripts/endless_terrain.gd")
+const MultiplayerUI: GDScript = preload("res://scripts/mp_ui.gd")
 const Coin: GDScript = preload("res://scripts/coin.gd")
 const Player: GDScript = preload("res://scripts/player_controller.gd")
 const CrocAI: GDScript = preload("res://scripts/piglet_crocodile_ai.gd")
@@ -139,6 +140,9 @@ func _run_checks() -> String:
 	if not failure.is_empty():
 		return failure
 	failure = _check_claim_base_value()
+	if not failure.is_empty():
+		return failure
+	failure = await _check_magic_link_panel()
 	if not failure.is_empty():
 		return failure
 	failure = _check_terrain_focus_points()
@@ -1181,6 +1185,112 @@ func _check_confirm_base_is_unforgeable() -> String:
 # =============================================================================
 # 18. TERRAIN FOCUS POINTS (bead godot-test1-s86.14)
 # =============================================================================
+
+class MagicStubPlayer extends Node:
+	## A stand-in player carrying a real save store: the panel finds its store
+	## by group plus property, the same seam the claim rows use.
+	var best_run_store: BestRunStore = null
+	func _ready() -> void:
+		add_to_group("player")
+
+
+func _check_magic_link_panel() -> String:
+	"""
+	The Sync section's auth trio: an email row, the claim-code display as the
+	code row, and a sign-in status that is state, never echo.
+
+	Garbage is refused with the reason on the status label and nothing recorded;
+	a valid address records, clears the field and says LINK SENT; a held token
+	flips the status to SIGNED IN AS the validated address; a typed-but-unsent
+	field never leaks into the status; losing the token between refreshes (the
+	401 that landed quietly) says SIGNED OUT once and then stays quiet; German
+	repaints the placeholder and the status; the URL sniff answers "" on desktop.
+
+	NON-VACUOUS by named mutation: the status painted off the field instead of
+	`signed_in()` echoes the typed address (M1); the edge unspoken leaves the
+	status label off after a sign-out (M2); the placeholder resolved only at
+	build freezes English under German (M3). Hermetic: the stub lobby while the
+	panel lives, restored with the locale afterwards.
+	"""
+	var restore_url: String = BestRunStore.lobby_url_override
+	BestRunStore.lobby_url_override = "http://127.0.0.1:9"
+	var restore_locale: String = TranslationServer.get_locale()
+	var stub := MagicStubPlayer.new()
+	var store := BestRunStore.new()
+	stub.best_run_store = store
+	root.add_child(stub)
+	root.add_child(store)
+	var panel: Control = MultiplayerUI.new()
+	root.add_child(panel)
+	await process_frame
+	var failure: String = await _drive_magic_link_panel(panel, store)
+	TranslationServer.set_locale(restore_locale)
+	BestRunStore.lobby_url_override = restore_url
+	panel.free()
+	stub.free()
+	store.free()
+	if failure.is_empty():
+		Sentinel.done("magic_link_panel")
+	return failure
+
+
+func _drive_magic_link_panel(panel: Control, store: BestRunStore) -> String:
+	var field: LineEdit = panel.get("_magic_email") as LineEdit
+	var status: Label = panel.get("_auth_status") as Label
+	var heard: Label = panel.get("_status_label") as Label
+	if field == null or status == null or heard == null:
+		return "the Sync section has no email row, status row or status label"
+	panel._refresh_claim()
+	if status.text != "NOT SIGNED IN":
+		return "signed out should read NOT SIGNED IN, got %s" % status.text
+	field.text = "not-an-email"
+	panel._on_magic_send_pressed()
+	if store._magic_email_sent != "":
+		return "a refused address was recorded"
+	if heard.text != "NOT A VALID EMAIL ADDRESS":
+		return "a refused address should say why, heard %s" % heard.text
+	if status.text != "NOT SIGNED IN":
+		return "the status row echoed the typed-but-unsent field: %s" % status.text
+	field.text = "pilot@example.com"
+	panel._on_magic_send_pressed()
+	if store._magic_email_sent != "pilot@example.com":
+		return "a valid send recorded %s" % store._magic_email_sent
+	if field.text != "":
+		return "a valid send should clear the field"
+	if heard.text != "LINK SENT \u2014 CHECK YOUR EMAIL":
+		return "a valid send should say LINK SENT, heard %s" % heard.text
+	store._lobby_token = "panel-probe"
+	panel._refresh_claim()
+	if status.text != "SIGNED IN AS pilot@example.com":
+		return "a held token should read SIGNED IN AS the address, got %s" % status.text
+	field.text = "other@example.com"
+	panel._refresh_claim()
+	if status.text != "SIGNED IN AS pilot@example.com":
+		return "the status row leaked the unsent field: %s" % status.text
+	store._lobby_token = ""
+	panel._refresh_claim()
+	if status.text != "NOT SIGNED IN":
+		return "after a sign-out the status should read NOT SIGNED IN, got %s" % status.text
+	if heard.text != "SIGNED OUT \u2014 RECORDS ARE LOCAL-ONLY":
+		return "a quiet 401 should speak once, heard %s" % heard.text
+	heard.text = "QUIET"
+	panel._refresh_claim()
+	if heard.text != "QUIET":
+		return "the sign-out spoke twice: %s" % heard.text
+	if panel._sniff_magic_token() != "":
+		return "the token sniff should answer blank on desktop"
+	TranslationServer.set_locale("de")
+	await process_frame
+	panel._refresh_claim()
+	if field.placeholder_text != "E-MAIL F\u00dcR ANMELDELINK":
+		return "the German placeholder did not repaint: %s" % field.placeholder_text
+	store._lobby_token = "panel-probe"
+	panel._refresh_claim()
+	if status.text != "ANGEMELDET ALS pilot@example.com":
+		return "the German status did not repaint: %s" % status.text
+	store._lobby_token = ""
+	return ""
+
 
 func _check_terrain_focus_points() -> String:
 	"""

@@ -315,9 +315,21 @@ var _code_row: HBoxContainer = null
 ## The Sync / claim-code section (bead godot-test1-i8yu.6): the player id in
 ## groups of four with its own Copy, plus a paste field and "Use this code".
 ## Hidden when the scene has no player store to read or adopt into.
+##
+## Bead godot-test1-i8yu.7.2's auth trio lives here too: the email row (field +
+## Send), the CODE row (the claim-code display above — the account the link
+## signs in is the claim id, so no second code display), and the sign-in status
+## (SIGNED IN AS the validated email, else NOT SIGNED IN — never a second copy
+## of the field's typed-but-unsent text).
 var _claim_section: VBoxContainer = null
 var _claim_id_label: Label = null
 var _claim_input: LineEdit = null
+var _magic_email: LineEdit = null
+var _auth_status: Label = null
+## Bookkeeping, not state: the URL sniff runs once per session, and the last
+## refresh's sign-in state lets a 401 that landed quietly speak once.
+var _auth_sniffed: bool = false
+var _auth_was_signed_in: bool = false
 
 ## Where a friend's invite code is typed, plus the Join button beside it.
 var _code_input: LineEdit = null
@@ -948,6 +960,37 @@ func _build_ui() -> void:
 	claim_use.size_flags_horizontal = Control.SIZE_SHRINK_END
 	claim_use_row.add_child(claim_use)
 
+	# THE AUTH TRIO (bead godot-test1-i8yu.7.2): the email row, then the sign-in
+	# status under the claim-code display that is the trio's code row.
+	var magic_row := HBoxContainer.new()
+	magic_row.add_theme_constant_override("separation", 8)
+	magic_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_claim_section.add_child(magic_row)
+
+	_magic_email = LineEdit.new()
+	_magic_email.name = "MagicEmail"
+	_magic_email.placeholder_text = tr("EMAIL FOR SIGN-IN LINK")
+	_magic_email.custom_minimum_size = Vector2(0.0, TOUCH_MIN_HEIGHT)
+	_magic_email.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
+	_magic_email.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_style_line_edit(_magic_email)
+	# Enter in the field is the same as pressing the button beside it — the Join
+	# row's convention, for the Join row's reason (a phone's "go" key).
+	_magic_email.text_submitted.connect(func(_t: String) -> void: _on_magic_send_pressed())
+	magic_row.add_child(_magic_email)
+
+	var magic_send := _make_button("SEND SIGN-IN LINK", _on_magic_send_pressed)
+	magic_send.size_flags_horizontal = Control.SIZE_SHRINK_END
+	magic_row.add_child(magic_send)
+
+	_auth_status = Label.new()
+	_auth_status.name = "AuthStatus"
+	_auth_status.text = ""
+	_auth_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_auth_status.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
+	_auth_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_claim_section.add_child(_auth_status)
+
 	# --- Leave + Close ----------------------------------------------------
 	_leave_button = _make_button("Leave room", _on_leave_pressed)
 
@@ -1208,13 +1251,48 @@ static func _group_claim_code(id: String) -> String:
 	return grouped
 
 
+## The store for the auth rows, plus the one-time URL-token sniff: the emailed
+## link reopens the game with `?token=`, and this resolution point — where
+## `_claim_store()` is first reached for the auth UI — is where that token is
+## handed to the store. Sniffed once per session (a helper owns both, so neither
+## the paint below nor the Copy/Use handlers re-eval); adoption fetches, so the
+## records the token names merge in. Also connects the claim/auth repaint to
+## `save_loaded` once, guarded the card's way — a slot landing later repaints
+## instead of going stale — because the panel, unlike the card, is never
+## dismissed and needs no disconnect.
+func _resolve_auth_store() -> Node:
+	var store := _claim_store()
+	if store == null:
+		return null
+	if not _auth_sniffed:
+		_auth_sniffed = true
+		var token: String = _sniff_magic_token()
+		if not token.is_empty() and store.has_method("adopt_magic_token"):
+			store.call("adopt_magic_token", token)
+	if store.has_signal("save_loaded") and not store.save_loaded.is_connected(_refresh_claim):
+		store.save_loaded.connect(_refresh_claim)
+	return store
+
+
+## Read `?token=` off the page URL, or "" when absent — desktop included.
+## String-only by construction (`VoiceJs.MAGIC_TOKEN_SNIPPET` answers "" for
+## none, never a boolean): the bridge corrupts booleans into dead Variants, so
+## a non-string answer — blocked eval, engine build without the bridge — reads
+## as absent too (`build_version.gd`'s typed-not-`str()`-ed rule).
+func _sniff_magic_token() -> String:
+	if not OS.has_feature("web"):
+		return ""
+	var answer: Variant = JavaScriptBridge.eval(VoiceJs.MAGIC_TOKEN_SNIPPET, true)
+	return answer as String if typeof(answer) == TYPE_STRING else ""
+
+
 ## Repaint the claim-code section: hidden without a player store, otherwise the
 ## grouped id plus the one-line leak warning — anyone holding the code reads and
 ## overwrites the save, and only a new code undoes that. Re-run on every
 ## `_refresh()`, which is also where a live locale switch lands, so the tooltip
 ## re-resolves instead of freezing in the build language.
 func _refresh_claim() -> void:
-	var store := _claim_store()
+	var store := _resolve_auth_store()
 	if _claim_section != null:
 		_claim_section.visible = store != null
 	if store == null or _claim_id_label == null:
@@ -1222,6 +1300,33 @@ func _refresh_claim() -> void:
 	var id: String = String(store.call("player_id"))
 	_claim_id_label.text = _group_claim_code(id)
 	_claim_id_label.tooltip_text = tr("Anyone with this code can read and overwrite your save and raise your records — only a new code undoes that.")
+	_paint_auth_rows(store)
+
+
+## Paint the magic-link rows: the field's placeholder (re-resolved here, so a
+## live locale switch repaints it — placeholders don't auto-translate), and the
+## sign-in status off the store's own `signed_in()`: SIGNED IN AS the validated
+## address (SIGNED IN with no address behind the token), else NOT SIGNED IN —
+## never the field's typed-but-unsent text. A true→false edge between refreshes
+## is a 401 that landed quietly, and speaks once on the status label, where the
+## player reads send outcomes too.
+func _paint_auth_rows(store: Node) -> void:
+	if _magic_email != null:
+		_magic_email.placeholder_text = tr("EMAIL FOR SIGN-IN LINK")
+	var signed_in: bool = store.has_method("signed_in") and bool(store.call("signed_in"))
+	if _auth_was_signed_in and not signed_in:
+		_on_status(tr("SIGNED OUT — RECORDS ARE LOCAL-ONLY"))
+	_auth_was_signed_in = signed_in
+	if _auth_status == null:
+		return
+	if not signed_in:
+		_auth_status.text = tr("NOT SIGNED IN")
+		return
+	var email: String = String(store.call("signed_in_email")) if store.has_method("signed_in_email") else ""
+	if email.is_empty():
+		_auth_status.text = tr("SIGNED IN")
+	else:
+		_auth_status.text = tr("SIGNED IN AS %s") % email
 
 
 func _on_claim_copy_pressed() -> void:
@@ -1233,6 +1338,25 @@ func _on_claim_copy_pressed() -> void:
 		return
 	_copy_to_clipboard(id)
 	_on_status(tr("Copied %s to the clipboard") % _group_claim_code(id))
+
+
+func _on_magic_send_pressed() -> void:
+	# Done typing — drop the caret so a phone's on-screen keyboard folds away,
+	# the Join handler's convention for the Join handler's reason.
+	if _magic_email != null:
+		_magic_email.release_focus()
+	var store := _claim_store()
+	if store == null or not store.has_method("request_magic_link"):
+		_on_status("Multiplayer is not available in this scene")
+		return
+	var address: String = "" if _magic_email == null else _magic_email.text
+	if bool(store.call("request_magic_link", address)):
+		if _magic_email != null:
+			_magic_email.text = ""
+		_paint_auth_rows(store)
+		_on_status(tr("LINK SENT — CHECK YOUR EMAIL"))
+	else:
+		_on_status(tr("NOT A VALID EMAIL ADDRESS"))
 
 
 func _on_claim_use_pressed() -> void:
