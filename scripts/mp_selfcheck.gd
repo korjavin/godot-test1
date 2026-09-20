@@ -135,6 +135,9 @@ func _run_checks() -> String:
 	failure = _check_captive_presence()
 	if not failure.is_empty():
 		return failure
+	failure = _check_bike_mirror()
+	if not failure.is_empty():
+		return failure
 	failure = _check_claim_base_value()
 	if not failure.is_empty():
 		return failure
@@ -882,6 +885,159 @@ func _check_captive_presence() -> String:
 	mp.free()
 	Sentinel.done("captive_presence")
 	return ""
+
+
+func _check_bike_mirror() -> String:
+	"""
+	THE MP MIRROR (bead godot-test1-z2yv.8, owner ruling 6: TEAMMATES MUST SEE
+	THE BIKE): `ABILITY_BIT_BIKE` rides the presence `ab` byte, and a remote
+	avatar whose packet carries it pedals on a `Bike` mesh.
+
+	NO codec change, NO manager change, NO new verb: bit 5 = 32 sits inside
+	`MpCodec`'s 0..255 `ab` clamp, `ability_visual_state()` already emits it
+	(.7), and the presence drain already hands `ab` to `receive_state()`.
+
+	Four legs, one per acceptance line (5 is the suite + mp_e2e, below):
+
+	  1. wire: ab = BIKE survives `var_to_bytes` + `decode_presence`; BIKE |
+	     FLYING both survive; ab = 256 drops the packet whole. M-mask (the
+	     codec clamped to 0..31) goes red on the first case.
+	  2. avatar: two packets 1 m apart with the bit instance a `Bike` node
+	     (asserted to EXIST first — `visible` on a missing node reads
+	     vacuous) and seat the pose (`rig.measure()`: both thighs forward
+	     past 40 deg with both arms at the bars; at stride PI/2 the legs
+	     oppose 25+ deg apart while both stay seated); a packet without the
+	     bit hides the mesh and hands the legs back to the walk (a back leg
+	     drops under 10 deg again). M-blind (branch dropped) goes red on the
+	     pose; M-stuck (never hides) goes red on the edge back.
+	  3. isolation: every hero's avatar still joins no group and carries no
+	     `CollisionObject3D` with the `Bike` child instanced — counted over a
+	     counted-nonzero subtree, so a zero over nothing cannot pass. M-body
+	     (bike.glb imported with a collider) goes red.
+	  4. emit: a real player with `is_riding` reports bit 5 out of
+	     `ability_visual_state()`, and the presence dict the manager's
+	     omit-when-zero rule builds for those bits carries it through the
+	     real validator. M-silent (the bit never emitted) goes red.
+	"""
+	var base: Dictionary = {
+		"p": Vector3.ZERO, "y": 0.0, "c": 0, "s": 0.0, "g": true,
+	}
+	# --- Leg 1: the wire. ---
+	var bike_only: Dictionary = base.duplicate()
+	bike_only["ab"] = Player.ABILITY_BIT_BIKE
+	var back: Dictionary = MP_CODEC.decode_presence(var_to_bytes(bike_only))
+	if back.is_empty() or (int(back["ab"]) & Player.ABILITY_BIT_BIKE) == 0:
+		return "bike_mirror leg 1 (wire): ab=%s did not survive the packet: %s (M-mask)" % [str(bike_only["ab"]), str(back)]
+	var both: Dictionary = base.duplicate()
+	both["ab"] = Player.ABILITY_BIT_BIKE | Player.ABILITY_BIT_FLYING
+	var back_both: Dictionary = MP_CODEC.decode_presence(var_to_bytes(both))
+	if back_both.is_empty() or int(back_both["ab"]) != int(both["ab"]):
+		return "bike_mirror leg 1 (wire): ab=%s came back %s — the flying pair must survive together" % [str(both["ab"]), str(back_both)]
+	var over: Dictionary = base.duplicate()
+	over["ab"] = 256
+	if not MP_CODEC.decode_presence(var_to_bytes(over)).is_empty():
+		return "bike_mirror leg 1 (wire): ab=256 was accepted — the one-byte clamp no longer holds the byte"
+	# --- Leg 2: the avatar pedals, then hands the legs back. ---
+	var avatar := RemoteAvatar.new()
+	root.add_child(avatar)
+	avatar.setup("bike-peer")
+	avatar.set_character(0)
+	if avatar.character_node == null:
+		avatar.free()
+		return "bike_mirror leg 2 (avatar): set_character(0) instanced no model — the pose walk would be vacuous"
+	if avatar._rig == null:
+		avatar.free()
+		return "bike_mirror leg 2 (avatar): character 0 bound no rig — the pedal has nothing to drive"
+	var bit: int = Player.ABILITY_BIT_BIKE
+	avatar.receive_state(Vector3.ZERO, 0.0, 0, 4.0, true, bit)
+	avatar.receive_state(Vector3(1.0, 0.0, 0.0), 0.0, 0, 4.0, true, bit)
+	avatar.stride_phase = 0.0
+	avatar._animate(0.0)
+	var saddle: Node = avatar.model_root.get_node_or_null("Bike")
+	if saddle == null:
+		avatar.free()
+		return "bike_mirror leg 2 (avatar): no `Bike` node under the avatar after two bike-bit packets — `visible` on a missing node would read vacuous (M-blind)"
+	if not bool(saddle.get("visible")):
+		avatar.free()
+		return "bike_mirror leg 2 (avatar): the `Bike` mesh is hidden while the bit is set (M-blind)"
+	var seated: Dictionary = avatar._rig.measure()
+	var seat_min: float = deg_to_rad(40.0)
+	if float(seated["left_leg_x"]) < seat_min or float(seated["right_leg_x"]) < seat_min:
+		avatar.free()
+		return "bike_mirror leg 2 (avatar): thighs at (%f, %f) rad — a pedaller sits with both forward past 40 deg (M-blind)" % [float(seated["left_leg_x"]), float(seated["right_leg_x"])]
+	var bar_min: float = deg_to_rad(30.0)
+	if float(seated["left_arm_x"]) < bar_min or float(seated["right_arm_x"]) < bar_min:
+		avatar.free()
+		return "bike_mirror leg 2 (avatar): arms at (%f, %f) rad — both hands ride the bars past 30 deg (M-blind)" % [float(seated["left_arm_x"]), float(seated["right_arm_x"])]
+	avatar.stride_phase = PI / 2.0
+	avatar._animate(0.0)
+	var quarter: Dictionary = avatar._rig.measure()
+	var oppose: float = absf(float(quarter["left_leg_x"]) - float(quarter["right_leg_x"]))
+	if oppose < deg_to_rad(25.0):
+		avatar.free()
+		return "bike_mirror leg 2 (avatar): quarter-phase legs %f rad apart — the stroke runs in antiphase (M-blind)" % oppose
+	if minf(float(quarter["left_leg_x"]), float(quarter["right_leg_x"])) < deg_to_rad(25.0):
+		avatar.free()
+		return "bike_mirror leg 2 (avatar): a quarter-phase leg left the seat — both stay forward while pedalling"
+	avatar.receive_state(Vector3(2.0, 0.0, 0.0), 0.0, 0, 4.0, true, 0)
+	avatar.stride_phase = PI / 2.0
+	avatar._animate(0.0)
+	if saddle == null or not is_instance_valid(saddle) or bool(saddle.get("visible")):
+		avatar.free()
+		return "bike_mirror leg 2 (avatar): the `Bike` mesh is still drawn after the bit dropped (M-stuck)"
+	var walk: Dictionary = avatar._rig.measure()
+	if minf(float(walk["left_leg_x"]), float(walk["right_leg_x"])) > deg_to_rad(10.0):
+		avatar.free()
+		return "bike_mirror leg 2 (avatar): both thighs still forward past 10 deg after the bit dropped — the walk never came back (M-stuck)"
+	avatar.free()
+	# --- Leg 3: the isolation contract, with the saddle up. ---
+	for index: int in Player.CHARACTERS.size():
+		var probe := RemoteAvatar.new()
+		probe.setup("bike-isolation")
+		probe.set_character(index)
+		if probe.character_node == null:
+			probe.free()
+			return "bike_mirror leg 3 (isolation): set_character(%d) instanced no model — the walk would be vacuous" % index
+		probe.receive_state(Vector3.ZERO, 0.0, index, 4.0, true, bit)
+		probe._animate(0.016)
+		if probe.model_root.get_node_or_null("Bike") == null:
+			probe.free()
+			return "bike_mirror leg 3 (isolation): character %d never instanced its `Bike` — the zero-collider count covers nothing" % index
+		var failure: String = _walk_isolation(probe, probe)
+		if not failure.is_empty():
+			probe.free()
+			return "bike_mirror leg 3 (isolation): %s (character %d, M-body)" % [failure, index]
+		var nodes: int = _count_subtree(probe)
+		probe.free()
+		if nodes <= 0:
+			return "bike_mirror leg 3 (isolation): character %d walked %d nodes — the count is vacuous" % [index, nodes]
+	# --- Leg 4: the emit, off a real player. ---
+	var rider: Node = Player.new()
+	rider.set("is_riding", true)
+	var emitted: int = int(rider.call("ability_visual_state"))
+	if (emitted & Player.ABILITY_BIT_BIKE) == 0:
+		rider.free()
+		return "bike_mirror leg 4 (emit): ability_visual_state() is %d with is_riding — bit 5 never left the rider (M-silent)" % emitted
+	var shaped: Dictionary = base.duplicate()
+	if emitted != 0:
+		shaped["ab"] = emitted
+	if not shaped.has("ab") or (int(shaped["ab"]) & Player.ABILITY_BIT_BIKE) == 0:
+		rider.free()
+		return "bike_mirror leg 4 (emit): the presence dict carries %s — the omit-when-zero build dropped the ride" % str(shaped.get("ab", null))
+	var heard: Dictionary = MP_CODEC.decode_presence(var_to_bytes(shaped))
+	rider.free()
+	if heard.is_empty() or (int(heard["ab"]) & Player.ABILITY_BIT_BIKE) == 0:
+		return "bike_mirror leg 4 (emit): the rider's dict decoded to %s — the bit died on the wire" % str(heard)
+	Sentinel.done("bike_mirror")
+	return ""
+
+
+func _count_subtree(node: Node) -> int:
+	"""Nodes under `node`, inclusive — the non-vacuous half of a zero count."""
+	var total: int = 1
+	for child in node.get_children():
+		total += _count_subtree(child)
+	return total
 
 
 func _check_claim_base_value() -> String:
