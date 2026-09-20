@@ -2451,7 +2451,7 @@ static func rack_build_site(terrain: Node3D, anchor_pos: Vector2, owner: Vector2
 				continue
 			if _site_keep_out(terrain, site, waypoints):
 				continue
-			if _footprint_taken(obstacles, site - centre):
+			if _footprint_taken(obstacles, site - centre, RACK_RADIUS):
 				continue
 			return site
 	return Vector2.INF
@@ -2888,17 +2888,20 @@ static func _cube_count(block_batch: Array) -> int:
 	return n
 
 
-static func _footprint_taken(obstacles: Array, at: Vector2) -> bool:
+static func _footprint_taken(obstacles: Array, at: Vector2, radius: float = BIKE_POLE_RADIUS) -> bool:
 	"""
-	Would a post at this CHUNK-LOCAL spot stand inside something already built?
+	Would a thing of this CHUNK-LOCAL footprint radius stand inside something
+	already built at this spot?
 
 	The chunk's own `obstacles` list is the shared currency: blocks, biome content,
 	artifacts, camps, chests and the city's plateaus are all in it by the time this
-	spawner runs, which is exactly why the call site sits where it does.
+	spawner runs, which is exactly why the call site sits where it does. The
+	candidate asks with its OWN radius — a post with the pole's, a rack with the
+	stand's — because the currency only works when the asker spends what it is.
 	"""
 	for o: Variant in obstacles:
 		var entry: Dictionary = o
 		var pos: Vector3 = entry["pos"]
-		if Vector2(pos.x - at.x, pos.z - at.y).length() < float(entry["radius"]) + BIKE_POLE_RADIUS:
+		if Vector2(pos.x - at.x, pos.z - at.y).length() < float(entry["radius"]) + radius:
 			return true
 	return false
