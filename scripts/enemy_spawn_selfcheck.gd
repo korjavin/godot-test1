@@ -258,6 +258,12 @@ var _boss_interval: int = 0
 var _walk_speed: float = 0.0
 var _max_chase_speed: float = 0.0
 
+## The rental bike's end of the lattice (bead godot-test1-z2yv.7), read off
+## player_controller.gd like the two ends above — never restated.
+var _bike_speed: float = 0.0
+var _run_speed: float = 0.0
+var _character_speed: Dictionary = {}
+
 ## Species dispatched from BIOME_BOSS and from nowhere in BIOME_SPECIES, filled
 ## in by _check_species_table (which runs before every probe). Two checks need
 ## the same answer — the lattice's lower bound is waived for these rows, and the
@@ -355,6 +361,9 @@ func _run() -> void:
 	_max_chase_speed = float(croc_consts.get("MAX_CHASE_SPEED", 0.0))
 	var player_consts: Dictionary = load(PLAYER_SCRIPT).get_script_constant_map()
 	_walk_speed = float(player_consts.get("WALK_SPEED", 0.0))
+	_bike_speed = float(player_consts.get("BIKE_SPEED", 0.0))
+	_run_speed = float(player_consts.get("RUN_SPEED", 0.0))
+	_character_speed = player_consts.get("CHARACTER_SPEED", {})
 	_mp_consts = load(MP_SCRIPT).get_script_constant_map()
 	_sim_radius = float(load(LOD_SCRIPT).get_script_constant_map().get("SIM_RADIUS", 0.0))
 	if _sim_radius <= 0.0:
@@ -398,6 +407,7 @@ func _run() -> void:
 				+ " has no list of bands to demand, so a band with no predator in it"
 				+ " would go untested rather than reported")
 	_check_species_table()
+	_check_bike_lattice()
 	# THE BEHAVIOUR PROBES ARE NOT HERE. One probe per arm — pack, ambush, charge,
 	# burst, ranged, hunt, scent, leap, cone, crowd — lives in
 	# `scripts/enemy_behavior_selfcheck.gd`, split out by bead `godot-test1-ftn.13`
@@ -706,6 +716,50 @@ func _check_species_table() -> void:
 				% [_species_table.size(), _biome_species.size()]
 				+ " species table ran against a world with one predator in it")
 	Sentinel.done("species_table")
+
+
+## THE RENTAL BIKE'S LATTICE SEAT (bead godot-test1-z2yv.7): BIKE_SPEED owes
+## two margins, both READ off player_controller.gd and species_table.gd rather
+## than restated. First, above the SLOWEST run — iterate CHARACTER_SPEED, so a
+## new slowest hero moves this check with it. Second, above EVERY burst peak:
+## the burst arm multiplies burst_factor AFTER the MAX_CHASE_SPEED clamp, so a
+## body at clamp speed bursts to clamp x factor instantaneously (spike §1:
+## 11.05 / 11.48) — the peak is the CLAMP times the row's factor, not the
+## row's nominal chase times it. Iterate SPECIES, count the burst rows, and
+## fail on 0 (today 2: the cougar and the alley hound), so a third burst row is
+## measured the day it lands and a table that quietly drops both is red, not
+## silently safe.
+func _check_bike_lattice() -> void:
+	if _bike_speed <= 0.0 or _run_speed <= 0.0 or _character_speed.is_empty():
+		_fail("player_controller.gd has no BIKE_SPEED / RUN_SPEED / CHARACTER_SPEED —"
+			+ " the rental bike's lattice seat cannot be measured")
+		Sentinel.done("bike_lattice")
+		return
+	var slowest_run: float = INF
+	for name_v: Variant in _character_speed:
+		slowest_run = minf(slowest_run,
+			_run_speed * float(_character_speed[name_v]))
+	if slowest_run == INF:
+		_fail("CHARACTER_SPEED is empty — the slowest run is undefined")
+	elif _bike_speed <= slowest_run:
+		_fail("BIKE_SPEED %.1f is at or below the slowest run %.1f —"
+			% [_bike_speed, slowest_run]
+			+ " a rider no longer outruns every hero on foot, let alone a predator")
+	var burst_rows: int = 0
+	for name_v: Variant in _species_table:
+		var row: Dictionary = _species_table[name_v]
+		if not row.has("burst_factor"):
+			continue
+		burst_rows += 1
+		var peak: float = _max_chase_speed * float(row["burst_factor"])
+		if _bike_speed <= peak:
+			_fail("BIKE_SPEED %.1f is at or below SPECIES['%s'] burst peak %.2f —"
+				% [_bike_speed, String(name_v), peak]
+				+ " a bursting predator can close on a rider")
+	if burst_rows == 0:
+		_fail("no SPECIES row carries burst_factor — the burst-peak half of the"
+			+ " bike lattice measured nothing")
+	Sentinel.done("bike_lattice")
 
 
 func _check_dispatch_map(label: String, map: Dictionary) -> void:
