@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -134,6 +135,24 @@ func verifyToken(t *testing.T, e *authEnv, email, ip string) string {
 	return sess
 }
 
+// testSub stands in for a second account's random sub in direct inserts —
+// fixed, well-formed, never minted by any flow in the test.
+const testSub = "ababababababababababababababababababababababababababababababab"
+
+// subOf reads the sub a session authenticates as: with random subs the tests
+// cannot precompute it, so they resolve it through the flow like the game.
+func subOf(t *testing.T, e *authEnv, sess string) string {
+	t.Helper()
+	e.auth.mu.Lock()
+	defer e.auth.mu.Unlock()
+	s, ok := e.auth.sessions[tokenKey(sess)]
+	if !ok {
+		t.Fatalf("session authenticates nothing")
+		return ""
+	}
+	return s.Sub
+}
+
 // insertSession mints a session straight into the map for tests of the
 // middleware rather than the minting.
 func insertSession(e *authEnv, sub string, exp int64) string {
@@ -254,8 +273,11 @@ func TestAuthMagicMailsALinkOnce(t *testing.T) {
 		if k == tok {
 			t.Errorf("pending is keyed by the raw token")
 		}
-		if p.Sub != subForEmail(addr) {
-			t.Errorf("pending sub %q, wanted the address hash", p.Sub)
+		if mapped, ok := e.auth.subs[emailHash(addr)]; !ok || mapped != p.Sub {
+			t.Errorf("pending sub %q, not mapped from the address hash", p.Sub)
+		}
+		if p.Sub == emailHash(addr) {
+			t.Errorf("pending sub IS the address hash — the account is derivable")
 		}
 	}
 	// The address in NO map: pending, sessions, aliases, limits.
@@ -619,10 +641,10 @@ func TestAuthLinkMergesOnce(t *testing.T) {
 	t.Setenv("SMTP_HOST", "mail.example")
 	e := newAuthEnv()
 	const email = "link@example.com"
-	sub := subForEmail(email)
 	const anon = "cccccccccccccccccccccccccccccccc"
-	linkFixture(t, e, anon, sub)
 	sess := verifyToken(t, e, email, "203.0.113.7")
+	sub := subOf(t, e, sess)
+	linkFixture(t, e, anon, sub)
 
 	// The first authed request naming anon fires the link.
 	if rec := authedBest(e, http.MethodGet, anon, sess, ""); rec.Code != http.StatusOK {
@@ -663,16 +685,16 @@ func TestAuthLinkNeverRelinks(t *testing.T) {
 	t.Setenv("SMTP_HOST", "mail.example")
 	e := newAuthEnv()
 	const anon = "dddddddddddddddddddddddddddddddd"
-	sub1 := subForEmail("first@example.com")
+	sess1pre := verifyToken(t, e, "first@example.com", "203.0.113.7")
+	sub1 := subOf(t, e, sess1pre)
 	if rec := authedBest(e, http.MethodPost, anon, "", `{"distance":100}`); rec.Code != http.StatusOK {
 		t.Fatalf("seed anon status %d", rec.Code)
 	}
-	sess1 := verifyToken(t, e, "first@example.com", "203.0.113.7")
-	if rec := authedBest(e, http.MethodGet, anon, sess1, ""); rec.Code != http.StatusOK {
+	if rec := authedBest(e, http.MethodGet, anon, sess1pre, ""); rec.Code != http.StatusOK {
 		t.Fatalf("link GET status %d", rec.Code)
 	}
 
-	sess2 := insertSession(e, subForEmail("second@example.com"), time.Now().Add(sessionTTL).Unix())
+	sess2 := insertSession(e, testSub, time.Now().Add(sessionTTL).Unix())
 	if rec := authedBest(e, http.MethodGet, anon, sess2, ""); rec.Code != http.StatusOK {
 		t.Fatalf("second session GET status %d", rec.Code)
 	} else if br := decodeAuthBest(t, rec); br.Distance != 0 {
@@ -684,7 +706,7 @@ func TestAuthLinkNeverRelinks(t *testing.T) {
 	if got != sub1 {
 		t.Errorf("alias points at %q, wanted the first sub", got)
 	}
-	if br := subBest(t, e, subForEmail("second@example.com"), sess2); br.Distance != 0 {
+	if br := subBest(t, e, testSub, sess2); br.Distance != 0 {
 		t.Errorf("second sub holds distance %d of the anon, wanted 0", br.Distance)
 	}
 }
@@ -695,15 +717,15 @@ func TestAuthLinkSaveLWWKeepsNewerSub(t *testing.T) {
 	t.Setenv("SMTP_HOST", "mail.example")
 	e := newAuthEnv()
 	const email = "lww@example.com"
-	sub := subForEmail(email)
 	const anon = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	sess := verifyToken(t, e, email, "203.0.113.7")
+	sub := subOf(t, e, sess)
 	if rec := authedSave(e, http.MethodPost, anon, "", `{"blob":"OLD","saved_at":50}`); rec.Code != http.StatusOK {
 		t.Fatalf("seed anon save status %d", rec.Code)
 	}
 	if rec := authedSave(e, http.MethodPost, sub, "", `{"blob":"NEW","saved_at":80}`); rec.Code != http.StatusOK {
 		t.Fatalf("seed sub save status %d", rec.Code)
 	}
-	sess := verifyToken(t, e, email, "203.0.113.7")
 	if rec := authedBest(e, http.MethodGet, anon, sess, ""); rec.Code != http.StatusOK {
 		t.Fatalf("link GET status %d", rec.Code)
 	}
@@ -827,9 +849,9 @@ func TestAuthFileSurvivesRestart(t *testing.T) {
 	e := newAuthEnv()
 	e.auth.path = filepath.Join(t.TempDir(), "auth.json")
 	const email = "link@example.com"
-	sub := subForEmail(email)
 	const anon = "ffffffffffffffffffffffffffffff01"
 	sess := verifyToken(t, e, email, "203.0.113.7")
+	sub := subOf(t, e, sess)
 	if rec := authedBest(e, http.MethodGet, anon, sess, ""); rec.Code != http.StatusOK {
 		t.Fatalf("link GET status %d", rec.Code)
 	}
@@ -847,10 +869,14 @@ func TestAuthFileSurvivesRestart(t *testing.T) {
 	}
 	r2.mu.Lock()
 	got := r2.aliases[anon]
+	mapped, mok := r2.subs[emailHash(email)]
 	n := len(r2.sessions)
 	r2.mu.Unlock()
 	if got != sub {
 		t.Errorf("reloaded alias = %q, wanted the sub", got)
+	}
+	if !mok || mapped != sub {
+		t.Errorf("reloaded subs lost the email mapping")
 	}
 	if n != 1 {
 		t.Errorf("reloaded sessions = %d, wanted 1", n)
@@ -888,7 +914,7 @@ func TestAuthFailedDumpStaysDirty(t *testing.T) {
 	e := newAuthEnv()
 	e.auth.path = filepath.Join(blocker, "sub", "auth.json")
 	e.auth.mu.Lock()
-	e.auth.sessions[strings.Repeat("ab", 32)] = authSession{Sub: subForEmail("a@b.c"), Exp: time.Now().Add(time.Hour).Unix()}
+	e.auth.sessions[strings.Repeat("ab", 32)] = authSession{Sub: testSub, Exp: time.Now().Add(time.Hour).Unix()}
 	e.auth.dirty = true
 	e.auth.mu.Unlock()
 
@@ -915,7 +941,7 @@ func TestAuthIsNotOnHealthz(t *testing.T) {
 	e := newAuthEnv()
 	e.auth.path = filepath.Join(blocker, "sub", "auth.json")
 	e.auth.mu.Lock()
-	e.auth.sessions[strings.Repeat("cd", 32)] = authSession{Sub: subForEmail("a@b.c"), Exp: time.Now().Add(time.Hour).Unix()}
+	e.auth.sessions[strings.Repeat("cd", 32)] = authSession{Sub: testSub, Exp: time.Now().Add(time.Hour).Unix()}
 	e.auth.dirty = true
 	e.auth.mu.Unlock()
 	if err := e.auth.dump(); err == nil {
@@ -1009,10 +1035,10 @@ func TestAuthCapsHold(t *testing.T) {
 	// Fill sessions with staggered expiries through the real shape.
 
 	for i := 0; i < maxAuthSessions; i++ {
-		e.auth.sessions[fmt.Sprintf("%064x", i)] = authSession{Sub: subForEmail("a@b.c"), Exp: base + int64(i)}
+		e.auth.sessions[fmt.Sprintf("%064x", i)] = authSession{Sub: testSub, Exp: base + int64(i)}
 	}
 	earliest := fmt.Sprintf("%064x", 0)
-	e.auth.pending[tokenKey(strings.Repeat("ff", 32))] = authPending{Sub: subForEmail("a@b.c"), Exp: base + 3600}
+	e.auth.pending[tokenKey(strings.Repeat("ff", 32))] = authPending{Sub: testSub, Exp: base + 3600}
 	e.auth.mu.Unlock()
 	rec := httptest.NewRecorder()
 	e.auth.verifyHandler(rec, httptest.NewRequest(http.MethodGet, "/auth/verify?t="+strings.Repeat("ff", 32), nil))
@@ -1036,7 +1062,7 @@ func TestAuthMiddlewareConcurrent(t *testing.T) {
 	t.Setenv("SMTP_HOST", "mail.example")
 	e := newAuthEnv()
 	const anon = "99999999999999999999999999999999"
-	sess := insertSession(e, subForEmail("race@example.com"), time.Now().Add(sessionTTL).Unix())
+	sess := insertSession(e, testSub, time.Now().Add(sessionTTL).Unix())
 
 	const writers = 8
 	const rounds = 25
@@ -1076,7 +1102,230 @@ func TestAuthMiddlewareConcurrent(t *testing.T) {
 	e.auth.mu.Lock()
 	got := e.auth.aliases[anon]
 	e.auth.mu.Unlock()
-	if got != subForEmail("race@example.com") {
+	if got != testSub {
 		t.Errorf("alias = %q past the hammering", got)
+	}
+}
+
+// TestAuthSubIsRandom: the sub is minted, not derived — knowing the address
+// buys nothing. An anonymous read under sha256(email) serves zeroes.
+func TestAuthSubIsRandom(t *testing.T) {
+	t.Setenv("SMTP_HOST", "mail.example")
+	e := newAuthEnv()
+	const email = "known@example.com"
+	sess := verifyToken(t, e, email, "203.0.113.7")
+	sub := subOf(t, e, sess)
+	derived := emailHash(email)
+	if sub == derived {
+		t.Fatalf("sub IS sha256(email) — the account is derivable")
+	}
+	if !playerIDRe.MatchString(sub) {
+		t.Fatalf("sub %q is not a well-formed player id", sub)
+	}
+	// The attack from the review: read/write/wipe under the derived value,
+	// no session. All three must find nothing.
+	if rec := authedBest(e, http.MethodGet, derived, "", ""); rec.Code != http.StatusOK {
+		t.Fatalf("derived GET status %d", rec.Code)
+	} else if br := decodeAuthBest(t, rec); br.Distance != 0 {
+		t.Errorf("derived GET reads distance %d", br.Distance)
+	}
+	if rec := authedSave(e, http.MethodGet, derived, "", ""); rec.Code != http.StatusOK {
+		t.Fatalf("derived save GET status %d", rec.Code)
+	} else if strings.Contains(rec.Body.String(), `"blob":""`) == false {
+		t.Errorf("derived save GET body %q", rec.Body.String())
+	}
+	if rec := authedSave(e, http.MethodDelete, derived, "", ""); rec.Code != http.StatusOK {
+		t.Fatalf("derived DELETE status %d", rec.Code)
+	}
+	// And the mapping persists: a second verify for the same address reuses
+	// the same sub.
+	sess2 := verifyToken(t, e, email, "203.0.113.8")
+	if sub2 := subOf(t, e, sess2); sub2 != sub {
+		t.Errorf("second verify minted a new sub — the account split")
+	}
+}
+
+// TestAuthSubsCap: past ten thousand mappings a NEW address 429s, while a
+// known hash still resolves (refusing it would split nothing, it only reuses).
+func TestAuthSubsCap(t *testing.T) {
+	t.Setenv("SMTP_HOST", "mail.example")
+	e := newAuthEnv()
+	e.auth.send = func(to, link string) error { return nil }
+	known := emailHash("known@example.com")
+	e.auth.mu.Lock()
+	e.auth.subs[known] = testSub
+	for i := 0; len(e.auth.subs) < maxAuthSubs; i++ {
+		e.auth.subs[fmt.Sprintf("k%063d", i)] = testSub
+	}
+	e.auth.mu.Unlock()
+	if rec := postMagic(e, "known@example.com", "203.0.113.7"); rec.Code != http.StatusOK {
+		t.Errorf("known hash past the cap status %d, wanted 200", rec.Code)
+	}
+	if rec := postMagic(e, "stranger@example.com", "203.0.113.7"); rec.Code != http.StatusTooManyRequests {
+		t.Errorf("new address past the subs cap status %d, wanted 429", rec.Code)
+	}
+}
+
+// TestAuthLimitsBounded: refused requests cannot grow the rate-limit map
+// without bound — past the cap new windows are dropped, live ones enforced.
+func TestAuthLimitsBounded(t *testing.T) {
+	t.Setenv("SMTP_HOST", "mail.example")
+	e := newAuthEnv()
+	e.auth.send = func(to, link string) error { return nil }
+	e.auth.mu.Lock()
+	for i := 0; i < maxAuthLimits-1; i++ {
+		e.auth.limits[fmt.Sprintf("em:%064x", i)] = authWindow{n: 1, until: time.Now().Add(time.Hour)}
+	}
+	e.auth.limits["ip:10.9.9.9"] = authWindow{n: magicPerIP, until: time.Now().Add(time.Hour)}
+	e.auth.mu.Unlock()
+	for i := 0; i < 500; i++ {
+		if rec := postMagic(e, fmt.Sprintf("flood%d@example.com", i), "10.9.9.9"); rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("refused request %d status %d, wanted 429", i, rec.Code)
+		}
+	}
+	e.auth.mu.Lock()
+	n := len(e.auth.limits)
+	e.auth.mu.Unlock()
+	if n != maxAuthLimits {
+		t.Errorf("limits holds %d entries after 500 refused requests, wanted exactly the cap %d", n, maxAuthLimits)
+	}
+	if rec := postMagic(e, "one-more@example.com", "10.9.9.9"); rec.Code != http.StatusTooManyRequests {
+		t.Errorf("live window past the cap status %d, wanted 429", rec.Code)
+	}
+}
+
+// TestAuthLinkPastCapSkipsMerge: with the alias map full, an authed request
+// for a new anon id merges NOTHING — the claim-first order refuses before the
+// merge, so a newer anon save cannot clobber sub's.
+func TestAuthLinkPastCapSkipsMerge(t *testing.T) {
+	t.Setenv("SMTP_HOST", "mail.example")
+	e := newAuthEnv()
+	const email = "capped@example.com"
+	sess := verifyToken(t, e, email, "203.0.113.7")
+	sub := subOf(t, e, sess)
+	const anon = "ffffffffffffffffffffffffffffff03"
+	if rec := authedSave(e, http.MethodPost, anon, "", `{"blob":"NEWER","saved_at":99}`); rec.Code != http.StatusOK {
+		t.Fatalf("seed anon save status %d", rec.Code)
+	}
+	if rec := authedSave(e, http.MethodPost, sub, "", `{"blob":"MINE","saved_at":50}`); rec.Code != http.StatusOK {
+		t.Fatalf("seed sub save status %d", rec.Code)
+	}
+	e.auth.mu.Lock()
+	for i := 0; len(e.auth.aliases) < maxAuthAliases; i++ {
+		e.auth.aliases[fmt.Sprintf("a%063d", i)] = testSub
+	}
+	e.auth.mu.Unlock()
+	if rec := authedBest(e, http.MethodGet, anon, sess, ""); rec.Code != http.StatusOK {
+		t.Fatalf("past-cap GET status %d", rec.Code)
+	}
+	if blob, at := subSave(t, e, sub, sess); blob != "MINE" || at != 50 {
+		t.Errorf("past-cap link merged %q/%d, wanted MINE/50 untouched", blob, at)
+	}
+	e.auth.mu.Lock()
+	n := len(e.auth.aliases)
+	e.auth.mu.Unlock()
+	if n != maxAuthAliases {
+		t.Errorf("aliases holds %d past the cap", n)
+	}
+}
+
+// TestAuthEmailCaseFolds: Foo@X.com and foo@x.com are the SAME account — the
+// identity key folds case, and the reviewer caught the missing assertion.
+func TestAuthEmailCaseFolds(t *testing.T) {
+	t.Setenv("SMTP_HOST", "mail.example")
+	e := newAuthEnv()
+	sess1 := verifyToken(t, e, "Foo@X.com", "203.0.113.7")
+	sess2 := verifyToken(t, e, "foo@x.com", "203.0.113.8")
+	if sub1, sub2 := subOf(t, e, sess1), subOf(t, e, sess2); sub1 != sub2 {
+		t.Errorf("case variants minted two subs — the account split")
+	}
+}
+
+// TestAuthSelfIdSkipsLink: an authed request naming sub itself skips the link
+// machinery entirely — no alias to self, no merge, just the record.
+func TestAuthSelfIdSkipsLink(t *testing.T) {
+	t.Setenv("SMTP_HOST", "mail.example")
+	e := newAuthEnv()
+	sess := verifyToken(t, e, "self@example.com", "203.0.113.7")
+	sub := subOf(t, e, sess)
+	// The verify above dirtied the file by minting the session; clear it so
+	// the self request's own dirtiness is what the assertion measures.
+	e.auth.mu.Lock()
+	e.auth.dirty = false
+	e.auth.mu.Unlock()
+	if rec := authedBest(e, http.MethodPost, sub, sess, `{"distance":7}`); rec.Code != http.StatusOK {
+		t.Fatalf("self POST status %d", rec.Code)
+	}
+	e.auth.mu.Lock()
+	_, selfAlias := e.auth.aliases[sub]
+	dirty := e.auth.dirty
+	e.auth.mu.Unlock()
+	if selfAlias {
+		t.Errorf("an alias to self was recorded")
+	}
+	if dirty {
+		t.Errorf("a self request dirtied the file")
+	}
+	if br := subBest(t, e, sub, sess); br.Distance != 7 {
+		t.Errorf("self GET reads distance %d, wanted 7", br.Distance)
+	}
+}
+
+// TestAuthSMTPDeadline: a relay that accepts and then goes silent cannot hold
+// the send goroutine past the deadline — one per /auth/magic otherwise.
+func TestAuthSMTPDeadline(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("no loopback listener: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			// Accept and go silent: no greeting, no replies, never close.
+			_ = c
+		}
+	}()
+	t.Setenv("SMTP_HOST", "127.0.0.1")
+	t.Setenv("SMTP_PORT", strings.Split(ln.Addr().String(), ":")[1])
+	start := time.Now()
+	err = sendMagicMail("a@b.c", "http://example.com/auth/verify?t=x")
+	took := time.Since(start)
+	if err == nil {
+		t.Fatalf("silent relay returned nil")
+	}
+	if took > 45*time.Second {
+		t.Errorf("silent relay held the send %v, wanted the 30 s deadline", took)
+	}
+	t.Logf("silent relay failed after %v: %v", took.Round(time.Second), err)
+}
+
+// TestAuthLinkBaseSanitizes: only http/https ever leave the lobby, and the
+// port never rides along — Traefik's Host() match ignores it.
+func TestAuthLinkBaseSanitizes(t *testing.T) {
+	cases := []struct {
+		host, proto, want string
+	}{
+		{"example.com", "", "http://example.com"},
+		{"example.com", "https", "https://example.com"},
+		{"example.com", "HTTPS", "https://example.com"},
+		{"example.com", "javascript://x", "http://example.com"},
+		{"example.com", "gopher", "http://example.com"},
+		{"example.com:8443", "https", "https://example.com"},
+		{"example.com:8443", "javascript://x", "http://example.com"},
+		{"example.com:8443", "", "http://example.com"},
+	}
+	for _, c := range cases {
+		r := httptest.NewRequest(http.MethodPost, "/auth/magic", nil)
+		r.Host = c.host
+		if c.proto != "" {
+			r.Header.Set("X-Forwarded-Proto", c.proto)
+		}
+		if got := magicLinkBase(r); got != c.want {
+			t.Errorf("host %q proto %q: base %q, wanted %q", c.host, c.proto, got, c.want)
+		}
 	}
 }

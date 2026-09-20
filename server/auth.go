@@ -11,10 +11,16 @@ package main
 // the session's sub once (/best merged monotone, /save by LWW); anonymous
 // requests never follow aliases.
 //
-// WHY THE ADDRESS IS NEVER STORED: delivery needs it for one send and
-// identity needs one stable key. hex(sha256(lower(trim(address)))) is the key
-// (sub), and it is irreversible for the purpose — the pending and session
-// maps, the dump file and the logs hold hashes, never addresses.
+// WHY THE ADDRESS IS NEVER STORED — AND WHY THE SUB IS RANDOM: delivery
+// needs the address for one send and identity needs one stable key, but
+// hex(sha256(address)) as the key would make every account derivable by
+// anyone who knows the address — and the anonymous ?id= surface accepts any
+// 64-hex id, so signing in would make the account LESS safe than staying
+// anonymous. Instead the sub is 32 random bytes minted server-side the first
+// time an email hash verifies, persisted in auth.json as subs[sha256(email)]
+// (capped and dumped like the others) and reused on every later verify for
+// the same hash. The pending and session maps, the dump file and the logs
+// hold hashes and random subs — never addresses, never derivable ones.
 //
 // WHY TOKENS ARE KEYED BY THEIR SHA256: a leaked auth.json must hold nothing
 // usable, and a digest lookup needs no comparison at all — the presented
@@ -85,6 +91,15 @@ const (
 	maxAuthSessions = 10000
 	maxAuthAliases  = 10000
 	maxAuthPending  = 1000
+	// maxAuthSubs caps the email-hash -> sub map, like the others. Past it a
+	// NEW address answers 429 (a known hash still resolves — refusing it
+	// would split nothing, it only reuses).
+	maxAuthSubs = 10000
+	// maxAuthLimits caps the rate-limit map: past it a new window is dropped,
+	// never created, so refused requests cannot grow it without bound (round
+	// 2: every fresh address on the refusal path used to mint one). A full
+	// map degrades open for strangers and still enforces live windows.
+	maxAuthLimits = 10000
 	// magicPerIP: 10 links per 10 minutes per client ip.
 	// magicPerEmail: 3 links per 15 minutes per email hash.
 	magicPerIP          = 10
@@ -121,6 +136,7 @@ type authStore struct {
 	mu       sync.Mutex
 	sessions map[string]authSession // key = hex(sha256(session token)); DUMPED
 	aliases  map[string]string      // anon player id -> sub; DUMPED
+	subs     map[string]string      // hex(sha256(address)) -> random sub; DUMPED
 	pending  map[string]authPending // key = hex(sha256(magic token)); memory only
 	limits   map[string]authWindow  // "ip:<ip>" / "em:<subhash>"; memory only
 	path     string                 // "" = memory only (tests, no volume)
@@ -135,6 +151,7 @@ func newAuthStore(path string, best *bestStore, save *saveStore) *authStore {
 	a := &authStore{
 		sessions: map[string]authSession{},
 		aliases:  map[string]string{},
+		subs:     map[string]string{},
 		pending:  map[string]authPending{},
 		limits:   map[string]authWindow{},
 		path:     path,
@@ -168,28 +185,52 @@ func normalizeEmail(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }
 
-// subForEmail is the identity key: hex(sha256(normalized address)). 64 chars,
-// inside playerIDRe, so /best and /save need no schema change — a signed-in
-// player's records live under sub in the same maps.
-func subForEmail(email string) string {
+// emailHash is the stable bucket key for one address: hex(sha256(normalized
+// address)). It indexes the subs map and the per-email rate window — but it
+// is NEVER the sub itself (see the banner).
+func emailHash(email string) string {
 	sum := sha256.Sum256([]byte(normalizeEmail(email)))
 	return hex.EncodeToString(sum[:])
 }
 
-// validEmail is the whole address rule: after trim+lowercase, exactly one @
-// with non-empty sides, no whitespace/CR/LF anywhere (the header-injection
-// guard), length within bound. The mail bouncing is the rest of the
-// validation.
+var errAuthBusy = errors.New("auth store is full")
+
+// subForLocked resolves an email hash to its random sub, minting and
+// persisting the mapping on first use. Same 64-hex shape as every player id,
+// so /best and /save need no schema change — a signed-in player's records
+// live under sub in the same maps. Call with the lock held.
+func (a *authStore) subForLocked(hash string) (string, error) {
+	if sub, ok := a.subs[hash]; ok {
+		return sub, nil
+	}
+	if len(a.subs) >= maxAuthSubs {
+		return "", errAuthBusy
+	}
+	tok, err := mintToken()
+	if err != nil {
+		return "", err
+	}
+	sub := tokenKey(tok)
+	a.subs[hash] = sub
+	a.dirty = true
+	return sub, nil
+}
+
+// validEmail is the whole address rule: net/mail parses the shape, and the
+// explicit checks on top close what the parser lets through — whitespace,
+// CR/LF (the header-injection guard) and the other C0 controls, plus any
+// display name or comment the round-trip drops. The mail bouncing is the rest
+// of the validation.
 func validEmail(email string) bool {
 	e := normalizeEmail(email)
 	if len(e) == 0 || len(e) > maxEmailLen {
 		return false
 	}
-	if strings.ContainsAny(e, " \t\r\n") {
+	if strings.ContainsAny(e, " \t\r\n\x00\x0b\x0c") {
 		return false
 	}
-	parts := strings.Split(e, "@")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	addr, err := mail.ParseAddress(e)
+	if err != nil || addr.Name != "" || addr.Address != e {
 		return false
 	}
 	return true
@@ -210,10 +251,12 @@ func tokenKey(tok string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// clientIP is the rate-limit identity: X-Real-Ip when Traefik set it (the
-// container is only reachable through the traefik network, so it is not
-// spoofable from outside — hence the comment, not a check), else the
-// connection's host.
+// clientIP is the rate-limit identity: X-Real-Ip when Traefik set it, else
+// the connection's host. Undefended invariant, stated not checked: the
+// container is only reachable through the traefik network, so the header is
+// not spoofable from outside — but an absent header buckets the whole world
+// together, and direct container access would forge it. Both are deployment
+// facts, not code the lobby can verify; hence the comment, not a check.
 func clientIP(r *http.Request) string {
 	if ip := strings.TrimSpace(r.Header.Get("X-Real-Ip")); ip != "" {
 		return ip
@@ -252,14 +295,24 @@ func authCORS(w http.ResponseWriter, r *http.Request) {
 // Traefik it is https); r.Host is LOBBY_HOST there, because Traefik matches
 // the Host rule before the path rule ever runs.
 func magicLinkBase(r *http.Request) string {
+	// Only http/https ever leave here: X-Forwarded-Proto is operator-set but
+	// validated anyway (javascript:// was reproduced against the echo), and
+	// the port is stripped — Traefik's Host() match ignores it, so keeping an
+	// attacker-chosen one would mint links to it.
 	scheme := "http"
 	if p := r.Header.Get("X-Forwarded-Proto"); p != "" {
-		scheme = strings.ToLower(strings.TrimSpace(strings.Split(p, ",")[0]))
-		if scheme == "" {
-			scheme = "http"
+		if first := strings.ToLower(strings.TrimSpace(strings.Split(p, ",")[0])); first == "https" {
+			scheme = "https"
 		}
 	}
-	return scheme + "://" + r.Host
+	host := r.Host
+	if h, _, err := net.SplitHostPort(r.Host); err == nil {
+		host = h
+		if strings.Contains(host, ":") {
+			host = "[" + host + "]"
+		}
+	}
+	return scheme + "://" + host
 }
 
 // rateMinutesLeft is the 429's N: the window's remainder, rounded UP to whole
@@ -302,7 +355,7 @@ func (a *authStore) magicHandler(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, r, http.StatusBadRequest, "That does not look like an email address")
 		return
 	}
-	sub := subForEmail(body.Email)
+	hash := emailHash(body.Email)
 	to := strings.TrimSpace(body.Email)
 
 	// No relay configured and not the local dev flag: refuse, plainly.
@@ -315,7 +368,7 @@ func (a *authStore) magicHandler(w http.ResponseWriter, r *http.Request) {
 	// bumped only on a well-formed address.
 	now := a.now()
 	a.mu.Lock()
-	emKey, ipKey := "em:"+sub, "ip:"+clientIP(r)
+	emKey, ipKey := "em:"+hash, "ip:"+clientIP(r)
 	em, emOK := a.limits[emKey]
 	emLive := emOK && now.Before(em.until)
 	ip, ipOK := a.limits[ipKey]
@@ -323,6 +376,11 @@ func (a *authStore) magicHandler(w http.ResponseWriter, r *http.Request) {
 	bump := func(key string, window time.Duration) {
 		win, ok := a.limits[key]
 		if !ok || !now.Before(win.until) {
+			// Capped (round 2 MAJOR 2): a full map drops the new window
+			// instead of growing without bound on refused requests.
+			if !ok && len(a.limits) >= maxAuthLimits {
+				return
+			}
 			win = authWindow{n: 0, until: now.Add(window)}
 		}
 		win.n++
@@ -348,6 +406,18 @@ func (a *authStore) magicHandler(w http.ResponseWriter, r *http.Request) {
 	if len(a.pending) >= maxAuthPending {
 		a.mu.Unlock()
 		writeAuthError(w, r, http.StatusTooManyRequests, "The lobby is busy — try again in a minute")
+		return
+	}
+	// The sub resolves AFTER the limits (a 429 must not mint an account) and
+	// fails closed past the subs cap.
+	sub, err := a.subForLocked(hash)
+	if err != nil {
+		a.mu.Unlock()
+		if err == errAuthBusy {
+			writeAuthError(w, r, http.StatusTooManyRequests, "The lobby is busy — try again in a minute")
+		} else {
+			writeAuthError(w, r, http.StatusInternalServerError, "Could not send a sign-in link")
+		}
 		return
 	}
 	tok, err := mintToken()
@@ -489,9 +559,13 @@ func (a *authStore) sessionHandler(w http.ResponseWriter, r *http.Request) {
 // already points elsewhere is never re-pointed. Past the alias cap the link
 // is refused SILENTLY: the request still runs under sub.
 //
-// Lock order, stated because the race test leans on it: the auth lock is
-// taken for the alias check/record ONLY. The stores' merges take their own
-// locks while the auth lock is released — never nested either way.
+// Lock order, stated because the race test leans on it: the alias check, cap
+// and claim take the auth lock and nothing else, released before the merges —
+// never nested either way. Two documented non-goals, stated not fixed: two
+// FIRST-links for one anon id racing across sessions can merge that one anon
+// record into two subs (the merges are monotone/idempotent, impact low — the
+// alias itself still records once); and a corrupt auth.json loads empty and
+// is overwritten on the next dump, exactly like save.go.
 func (a *authStore) withSession(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
@@ -539,25 +613,31 @@ func (a *authStore) withSession(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // linkAuthAlias merges one anon id into sub once and records the alias. The
-// merges run lock-free (each store serialises itself); the alias check and
-// record take the auth lock and nothing else.
+// cap is checked and the slot CLAIMED first, the merges run after: past the
+// cap a merge-first order would re-merge on every request (and one session
+// could walk 10 000 distinct ?id=s through it), while a claimed slot skips
+// everything. The merges themselves run lock-free (each store serialises
+// itself); the alias check, cap and claim take the auth lock and nothing
+// else.
 func linkAuthAlias(a *authStore, anon, sub string) {
+	a.mu.Lock()
+	if _, linked := a.aliases[anon]; linked {
+		a.mu.Unlock()
+		return
+	}
+	if len(a.aliases) >= maxAuthAliases {
+		a.mu.Unlock()
+		return
+	}
+	a.aliases[anon] = sub
+	a.dirty = true
+	a.mu.Unlock()
 	rec := a.best.get(anon)
 	a.best.merge(sub, rec.Distance, rec.Coins, rec.Lifetime, rec.Spent, rec.Found)
 	sv := a.save.get(anon)
 	if sv.Blob != "" {
 		a.save.put(sub, sv.Blob, sv.SavedAt)
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if _, linked := a.aliases[anon]; linked {
-		return
-	}
-	if len(a.aliases) >= maxAuthAliases {
-		return
-	}
-	a.aliases[anon] = sub
-	a.dirty = true
 }
 
 // sendMagicMail delivers one link through the deployment's relay: plain SMTP
@@ -581,6 +661,9 @@ func sendMagicMail(to, link string) error {
 		if err != nil {
 			return err
 		}
+		// Past the dial nothing has a deadline: a silent relay would hang
+		// this goroutine forever, one per /auth/magic.
+		_ = tlsConn.SetDeadline(time.Now().Add(30 * time.Second))
 		var err2 error
 		if c, err2 = smtp.NewClient(tlsConn, host); err2 != nil {
 			_ = tlsConn.Close()
@@ -591,6 +674,7 @@ func sendMagicMail(to, link string) error {
 		if err != nil {
 			return err
 		}
+		_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
 		var err2 error
 		if c, err2 = smtp.NewClient(conn, host); err2 != nil {
 			_ = conn.Close()
@@ -642,6 +726,7 @@ func sendMagicMail(to, link string) error {
 type authDump struct {
 	Sessions map[string]authSession `json:"sessions"`
 	Aliases  map[string]string      `json:"aliases"`
+	Subs     map[string]string      `json:"subs"`
 }
 
 // load reads the dump back, re-applying every bound the request path
@@ -658,6 +743,15 @@ func (a *authStore) load() error {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	for k, v := range dump.Subs {
+		if len(a.subs) >= maxAuthSubs {
+			break
+		}
+		if !tokenRe.MatchString(k) || !playerIDRe.MatchString(v) {
+			continue
+		}
+		a.subs[k] = v
+	}
 	for k, s := range dump.Sessions {
 		if len(a.sessions) >= maxAuthSessions {
 			break
@@ -689,12 +783,16 @@ func (a *authStore) dump() error {
 	dump := authDump{
 		Sessions: make(map[string]authSession, len(a.sessions)),
 		Aliases:  make(map[string]string, len(a.aliases)),
+		Subs:     make(map[string]string, len(a.subs)),
 	}
 	for k, v := range a.sessions {
 		dump.Sessions[k] = v
 	}
 	for k, v := range a.aliases {
 		dump.Aliases[k] = v
+	}
+	for k, v := range a.subs {
+		dump.Subs[k] = v
 	}
 	a.mu.Unlock()
 
