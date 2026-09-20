@@ -39,9 +39,10 @@ class_name BestRunStore
 ##     *and* `user://` on the one device orphans the old record too (it stays on
 ##     the server, unreachable, until the cap evicts it). That is the bead's own
 ##     design — this game has no accounts and the owner scoped the acceptance to
-##     "devices sharing the player id". `ponytail:` the upgrade path is showing
-##     the id somewhere the player can copy it and accepting a pasted one, which
-##     is a UI feature, not a change here; a real login is the one after that.
+##     "devices sharing the player id". `ponytail:` the upgrade path was showing
+##     the id somewhere the player can copy it and accepting a pasted one —
+##     SHIPPED as `adopt_player_id()` below plus the MP panel's Sync section
+##     (bead godot-test1-i8yu.6); a real login is still the one after that.
 ##
 ## RECORDS ONLY EVER GO UP, on both layers and on the server. That is what makes
 ## the ordering irrelevant: `loaded` fires once with the local values (inside
@@ -230,6 +231,14 @@ const MAX_TOWER_IDS: int = 256
 ## is the only attack and it does not work.
 const PLAYER_ID_HEX_LEN: int = 32
 
+## The id's EXACT shape: 32 hex digits, upper- or lower-case, nothing else — in
+## particular no sign. `String.is_valid_hex_number()` accepts a leading `+`/`-`,
+## so a signed 32-char string used to validate AND persist as an id the lobby's
+## `playerIDRe` then rejected on every request, killing sync until a valid code
+## was adopted (send-back round 1). The mint path shares the validator below, so
+## both tightened together; minted ids are `%08x` lowercase and always match.
+const PLAYER_ID_PATTERN: String = "^[0-9a-fA-F]{32}$"
+
 ## `HTTPRequest`'s default timeout is *wait forever*, and a stuck request makes
 ## every later one on that node answer ERR_BUSY — the trap `lobby_client.gd`
 ## documents at length. Short, because nothing waits on these.
@@ -286,6 +295,14 @@ var landmarks_best: int = 0
 var skill_ranks: Dictionary = {}
 
 var _player_id: String = ""
+
+## An adoption whose fetch found the GET node busy (the boot fetch still in
+## flight, or two adopts back to back): the adopted id's GET never started, so
+## this remembers it across the in-flight request. `_request_get()` clears it
+## the moment a GET actually starts; `_on_get_completed()` spends it on exactly
+## one retry. Never armed by anything but `adopt_player_id()`, so an ordinary
+## overlap retries nothing.
+var _adopt_refetch_pending: bool = false
 
 ## Two `HTTPRequest` nodes, deliberately — one node answers ERR_BUSY while a
 ## request is in flight, and the boot GET can still be running when a very short
@@ -385,6 +402,55 @@ func player_id() -> String:
 	if _player_id.is_empty():
 		_player_id = _load_or_make_player_id()
 	return _player_id
+
+
+static func is_valid_player_id(code: String) -> bool:
+	"""
+	Whether `code` is shaped like a player id: 32 hex characters.
+
+	The re-mint rule `_load_or_make_player_id()` already enforces, factored out
+	so the mint path and the claim path (`adopt_player_id()`) cannot drift
+	apart — the lobby refuses anything else, so a second spelling of "valid"
+	is a second outage. Strictly `PLAYER_ID_PATTERN`, never the engine's
+	`is_valid_hex_number()` (see that const for why the engine spelling lies).
+	"""
+	var shape := RegEx.create_from_string(PLAYER_ID_PATTERN)
+	return shape != null and shape.search(code) != null
+
+
+func adopt_player_id(code: String) -> bool:
+	"""
+	Adopt a pasted claim code as this profile's player id (bead godot-test1-i8yu.6).
+
+	The code may carry the display separators (`mp_ui.gd` shows groups of four)
+	and any casing; both are normalized away, and anything that is not then a
+	valid id is refused WITHOUT changing anything — no layer written,
+	`_player_id` untouched, no request made.
+
+	On acceptance BOTH local layers are written — the `localStorage` key AND the
+	ConfigFile `[player]` id, on every platform (the migration idiom in
+	`_load_or_make_player_id()` reads both, so both must agree) — `_player_id`
+	is set, and `fetch()` runs once so the adopted id's records merge in through
+	the ordinary monotone path. The saved game follows the same rule once its
+	own boot load lands (epic godot-test1-i8yu).
+	"""
+	var cleaned: String = code.strip_edges().to_lower()
+	for separator: String in [" ", "\t", "\n", "\r", "-"]:
+		cleaned = cleaned.replace(separator, "")
+	if not is_valid_player_id(cleaned):
+		return false
+	_ls_set(LS_PLAYER_ID, cleaned)
+	var cfg := ConfigFile.new()
+	cfg.load(config_path)  # keep every other section intact
+	cfg.set_value(CONFIG_PLAYER_SECTION, "id", cleaned)
+	cfg.save(config_path)
+	_player_id = cleaned
+	# Armed until the adoption's GET actually starts (see `_request_get`): if the
+	# boot fetch is still in flight, this fetch's GET is dropped on ERR_BUSY and
+	# the flag buys it one retry when that GET completes (see `_on_get_completed`).
+	_adopt_refetch_pending = true
+	fetch()
+	return true
 
 
 # =============================================================================
@@ -909,7 +975,8 @@ func _load_or_make_player_id() -> String:
 			stored = str(cfg.get_value(CONFIG_PLAYER_SECTION, "id", ""))
 	# Re-mint anything the lobby would refuse, so a corrupted store self-heals
 	# instead of 400ing every request for the rest of this install's life.
-	if stored.length() == PLAYER_ID_HEX_LEN and stored.is_valid_hex_number():
+	# The shape itself is `is_valid_player_id()`, shared with `adopt_player_id()`.
+	if is_valid_player_id(stored):
 		return stored
 
 	var rng := RandomNumberGenerator.new()
@@ -981,13 +1048,17 @@ func _request_get() -> void:
 		add_child(_get_http)
 	var err: int = _get_http.request(_endpoint())
 	if err != OK:
-		# ERR_BUSY is an ordinary overlap and says nothing. Anything else — above
-		# all ERR_UNCONFIGURED, which is what a node not yet inside the tree
-		# answers — is the silent-no-sync failure this whole feature is prone to,
-		# so say it out loud rather than degrading quietly.
+		# ERR_BUSY is an ordinary overlap and says nothing — with ONE exception:
+		# an adoption's fetch dropped here is the adopted id never syncing while
+		# the UI says "adopted", so `_adopt_refetch_pending` survives exactly this
+		# error and dies on every other (nothing is in flight to complete after
+		# those) and on the line below (the GET carrying this id started, so the
+		# retry has nothing left to buy).
 		if err != ERR_BUSY:
 			push_warning("BestRunStore: /best GET could not start (%d)" % err)
+			_adopt_refetch_pending = false
 		return
+	_adopt_refetch_pending = false
 	# The window opens here and closes in the reply handler; a POST inside it is
 	# what closes the baseline. See `_get_baseline_ok`.
 	_get_in_flight = true
@@ -1063,6 +1134,14 @@ func _on_get_completed(
 		progression_loaded.emit(lifetime_coins, spent_points)
 	if server_is_behind:
 		_request_post()
+	if _adopt_refetch_pending:
+		# The adoption fetch above (or an earlier one) found the GET node busy,
+		# so everything just processed belongs to the PRE-adoption id and the
+		# adopted id's GET never happened. One retry, spent here: `_endpoint()`
+		# reads `player_id()` at call time, so it carries the adopted id, and the
+		# flag is already down, so the retry cannot chain into a second one.
+		_adopt_refetch_pending = false
+		fetch()
 
 
 func _request_post() -> void:
