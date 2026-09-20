@@ -439,6 +439,16 @@ var is_investigating: bool = false
 ## refuses a busy body, while the jar takes anybody.
 var is_baited: bool = false
 
+## Seconds of honeypot left on THIS body, ticked in the baited branch whether
+## the body has arrived or not (round 1, bead godot-test1-m7jp). The expiry is
+## ABSOLUTE — catch time plus the jar's remainder — so a body that walks 8 s
+## releases with the jar at 12 s, not at 12 s plus its travel: the hold below
+## only ever ticked after arrival, which kept far bodies baited past the crack
+## with the flag byte still claiming it. Delta-clock, like every other timer
+## in this file (flee, shrink, pause): driven frames advance it, a paused tree
+## freezes it, and a check can spend it without waiting on the wall.
+var _bait_left: float = 0.0
+
 ## Where the investigation is walking RIGHT NOW — the head of `_investigate_path`,
 ## in world space, kept as a plain field because it is what everything outside
 ## this state (the self-check, a future HUD tell) wants to ask.
@@ -1098,7 +1108,20 @@ func _physics_process(delta: float) -> void:
 		# errand and no stink can move it. The walk itself reuses the lure's
 		# legs at a wander speed (see take_bait()).
 		if is_baited:
-			_investigate_move(delta)
+			# THE DEADLINE (round 1): the jar's clock, not the arrival clock.
+			_bait_left -= delta
+			if _bait_left <= 0.0:
+				# The pot cracked under it — walking, holding or stuck. The
+				# honeypot lifts and the errand turns home through the
+				# existing legs: `_abandon_investigation()` refuses a body
+				# already on the way home, so there is no second copy of
+				# "go home" here.
+				is_baited = false
+				_bait_left = 0.0
+				if is_investigating and _investigate_hold > 0.0:
+					_abandon_investigation()
+			else:
+				_investigate_move(delta)
 		else:
 			# Fleeing (Phoboman's Stink Wave) overrides everything below;
 			# otherwise chase the player if in range, else wander.
@@ -2073,9 +2096,11 @@ func take_bait(pos: Vector3, seconds: float) -> bool:
 	jar's own clock owns).
 
 	@param pos: the jar, world space — clamped into the territory for a boss.
-	@param seconds: how long to stand over it once there. The jar passes its
-	    own remainder (`HONEYPOT_SECONDS - age`), so every body releases on the
-	    jar's 12 s no matter when it was caught.
+	@param seconds: the jar's own remainder (`HONEYPOT_SECONDS - age`). It is
+	    BOTH the facing hold once there AND the absolute deadline ticked from
+	    the catch whatever the legs are doing (round 1) — so every body
+	    releases on the jar's 12 s no matter when it was caught or how far it
+	    had to walk.
 	@return: whether the bait was TAKEN.
 	"""
 	if remote_driven or is_baited:
@@ -2126,6 +2151,7 @@ func take_bait(pos: Vector3, seconds: float) -> bool:
 	is_baited = true
 	investigate_target = target
 	_investigate_hold = seconds
+	_bait_left = seconds
 	_investigate_aim(target)
 	if is_confined:
 		_investigate_leash = {"center": confine_center, "half": confine_half}
@@ -2260,6 +2286,7 @@ func _investigate_go_home() -> void:
 	# the jar's 12 s reaching the body, so the walk home is unbaited and the
 	# pack can acquire again.
 	is_baited = false
+	_bait_left = 0.0
 	if not _investigate_leash.is_empty():
 		confine_center = global_position
 		confine_half = _investigate_leash["half"]
@@ -2282,6 +2309,7 @@ func _end_investigation() -> void:
 	# ...and the honeypot with it (bead godot-test1-m7jp): an unconfined body
 	# has no post to walk back to, so the home leg IS this line.
 	is_baited = false
+	_bait_left = 0.0
 	_investigate_hold = 0.0
 	_investigate_path = []
 	_investigate_home = []

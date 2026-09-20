@@ -3705,11 +3705,11 @@ func _check_kimchi_honeypot() -> void:
 	(`jar._process(dt)`), because the hold, the late joiner and the release are
 	the halves a "one crocodile came over" check would never reach.
 
-	SEVEN BODIES, AND EVERY ONE OF THEM ANSWERS A DIFFERENT QUESTION. A check
+	EIGHT BODIES, AND EVERY ONE OF THEM ANSWERS A DIFFERENT QUESTION. A check
 	that dropped a jar and watched one crocodile approach would pass just as
-	happily if the jar armed late, refused busy bodies, released early or never
-	reached the room — so the compass is built to fail in every one of those
-	directions at once:
+	happily if the jar armed late, refused busy bodies, released early, expired
+	on arrival instead of on the jar, or never reached the room — so the compass
+	is built to fail in every one of those directions at once:
 
 	  chaser   croc, chasing, 4 m from the jar    baited on landing, chase dropped
 	  tracker  hunter, tracking, 20 m             baited on landing, track dropped
@@ -3718,6 +3718,8 @@ func _check_kimchi_honeypot() -> void:
 	  guard    tower guard on a post, ~4 m        baited, walks home on release
 	  slept    croc, asleep, 4 m                  NOT baited, STILL ASLEEP
 	  far      croc, 37 m                         NOT baited — then the late joiner
+	  long     croc, 40 m, taken directly         released at 12 s MID-WALK
+	      (round 1: expiry is catch + jar remainder, not arrival + hold)
 
 	Which means: an arm with an arming delay fails on the landing frame; one
 	that refuses busy bodies fails on chaser (and the hunter); one that lost
@@ -3756,6 +3758,8 @@ func _check_kimchi_honeypot() -> void:
 	root.add_child(idle)
 	var far: Node = load(CROC_SCENE).instantiate()
 	root.add_child(far)
+	var long: Node = load(CROC_SCENE).instantiate()
+	root.add_child(long)
 	var slept: Node = load(CROC_SCENE).instantiate()
 	root.add_child(slept)
 	var guard: Node = load(GUARD_SCENE).instantiate()
@@ -3773,6 +3777,7 @@ func _check_kimchi_honeypot() -> void:
 		[tracker, 23.0, 0.0],
 		[idle, 18.0, 0.0],
 		[far, 40.0, 0.0],
+		[long, 43.0, 0.0],
 		[slept, 3.0, 4.0],
 		[guard, 6.0, 3.0],
 		[boss, 13.0, -2.0],
@@ -3858,7 +3863,7 @@ func _check_kimchi_honeypot() -> void:
 	if jar_ref == null or jar_ref.get_ref() == null:
 		_fail("G placed no jar — every read below is about a world that never"
 			+ " changed")
-		_free_kimchi_probes([chaser, tracker, idle, far, slept, guard, boss])
+		_free_kimchi_probes([chaser, tracker, idle, far, slept, guard, boss, long])
 		floor_body.queue_free()
 		_clear(player)
 		second_tree.remove_from_group("progression")
@@ -3919,17 +3924,23 @@ func _check_kimchi_honeypot() -> void:
 			+ " does not refuse one (mutation (b))")
 	if bool(tracker.get("is_tracking")):
 		_fail("the tracker is still tracking — the honeypot ignores scent too")
-	for subject: Array in [[far, "the croc 37 m away"], [slept, "the slept croc"]]:
+	for subject: Array in [[far, "the croc 37 m away"], [slept, "the slept croc"],
+			[long, "the croc 40 m away"]]:
 		if bool((subject[0] as Node).get("is_baited")):
 			_fail("%s took the jar — it must not" % subject[1])
 	if bool(slept.get("lod_active")):
 		_fail("the sweep WOKE the slept croc — one press would wake every"
 			+ " sleeper in a 30 m ball")
+	# THE 40 m PROBE (round 1): past the sweep, so taken directly — the throw
+	# is what catches it, the walk is what the release must not wait on.
+	if not long.take_bait(jar_pos, KimchiJar.HONEYPOT_SECONDS):
+		_fail("a body 40 m out refused a direct take — take_bait has no range"
+			+ " of its own, the radius is the jar's")
 
 	# --- AT 6 s: STILL BAITED, holds unrefreshed. ---
 	jar._process(6.0)
 	for subject: Array in [[chaser, "chaser"], [tracker, "tracker"],
-			[idle, "idle"], [guard, "guard"], [boss, "boss"]]:
+			[idle, "idle"], [guard, "guard"], [boss, "boss"], [long, "long"]]:
 		if not bool((subject[0] as Node).get("is_baited")):
 			_fail("%s is already free at t=6 — the release comes at 12, not 6"
 				% subject[1] + " (mutation (c))")
@@ -3937,6 +3948,10 @@ func _check_kimchi_honeypot() -> void:
 			_fail("%s holds %.2f s at t=6 — the sweep re-taking it would refresh"
 				% [subject[1], float((subject[0] as Node).get("_investigate_hold"))]
 				+ " a hold the jar's own clock owns; take_bait is idempotent")
+		if float((subject[0] as Node).get("_bait_left")) != KimchiJar.HONEYPOT_SECONDS:
+			_fail("%s has %.2f s of bait left at t=6 — the deadline is the jar's"
+				% [subject[1], float((subject[0] as Node).get("_bait_left"))]
+				+ " remainder too, and it is not refreshed either")
 
 	# --- LATE JOINER: into 10 m at t=7, caught with the 5 s left. ---
 	(far as Node3D).global_position = jar_pos + Vector3(10.0, 0.0, 0.0)
@@ -3989,13 +4004,25 @@ func _check_kimchi_honeypot() -> void:
 	if float(jar.get("_age")) < KimchiJar.HONEYPOT_SECONDS:
 		_fail("the jar is %.2f s old after its own clock said 12.5 — the release"
 			% float(jar.get("_age")) + " never fired")
-	# Every probe arrives first — teleported to its own errand target, not
-	# walked, because no frame may pass: the jar for the field and the guard,
-	# the fence point for the boss (a boss never reaches the pot itself). An
-	# arrived body is the state the release is ABOUT, so one 12 s frame each
-	# spends every hold and the home leg ends every errand. (Still-outbound
-	# bodies keep walking to the cracked pot for their remainder — see
-	# `KimchiJar._release` — and the stall watchdog bounds the stuck ones.)
+	# THE 40 m PROBE (round 1): caught at the throw with 40 m of walking ahead
+	# of it. Driven in frame by frame — half-second ticks with a 1.6 m step
+	# each, so every leg records progress and the stall watchdog never fires —
+	# the deadline and only the deadline ends it: 24 ticks spend exactly 12 s,
+	# while arrival-relative expiry would hold it for 12 s plus its travel.
+	for _i in 24:
+		long._physics_process(0.5)
+		if bool(long.get("is_baited")):
+			(long as Node3D).global_position = (long as Node3D).global_position.move_toward(jar_pos, 1.6)
+	if bool(long.get("is_baited")):
+		_fail("a body caught from 40 m out is still baited past 12 s — expiry"
+			+ " is absolute (catch + jar remainder), not arrival + hold")
+	if bool(long.get("is_investigating")):
+		_fail("the 40 m probe is still on an errand past 12 s")
+	# Every other probe arrives first — teleported to its own errand target,
+	# not walked, because no frame may pass: the jar for the field and the
+	# guard, the fence point for the boss (a boss never reaches the pot
+	# itself). An arrived body is the state the release is ABOUT, so one 12 s
+	# frame each spends every deadline and the home leg ends every errand.
 	var arrivals: Array = [[chaser, "chaser", Vector3(0.3, 0.0, 0.0)],
 		[tracker, "tracker", Vector3(-0.3, 0.0, 0.0)],
 		[idle, "idle", Vector3(0.0, 0.0, 0.3)],
@@ -4052,7 +4079,7 @@ func _check_kimchi_honeypot() -> void:
 			% player.get_ability_block_reason(1))
 
 	# --- NOTHING DIED: the count and the bodies. ---
-	var pack_before: int = 7
+	var pack_before: int = 8
 	if pack_after != pack_before:
 		_fail("the pack went from %d bodies to %d — nothing dies in this game"
 			% [pack_before, pack_after] + " (ruling 3)")
@@ -4061,7 +4088,7 @@ func _check_kimchi_honeypot() -> void:
 			+ " from one that was never there")
 	for subject: Array in [[chaser, "the chaser"], [tracker, "the tracker"],
 			[idle, "idle"], [far, "the late joiner"], [slept, "the slept croc"],
-			[guard, "the guard"], [boss, "the boss"]]:
+			[guard, "the guard"], [boss, "the boss"], [long, "long"]]:
 		_assert_body_alive("Kimchi Offering", subject)
 
 	# --- ...and neither the arm nor the jar names a kill, by name. ---
@@ -4113,11 +4140,11 @@ func _check_kimchi_honeypot() -> void:
 			% str(player.captive_heroes.keys()))
 
 	print("kimchi honeypot: G drops a jar 3 m out, chaser/tracker/idle/guard take it"
-		+ " on landing and the boss at its fence, far and slept do not, the late joiner"
+		+ " on landing and the boss at its fence, far/slept/long do not, the late joiner"
 		+ " is caught at t=7 with 5 s, hero/stink/capture ignored with live controls,"
 		+ " all released at 12 s, none freed, neither file names a kill or a species")
 
-	_free_kimchi_probes([chaser, tracker, idle, far, slept, guard, boss])
+	_free_kimchi_probes([chaser, tracker, idle, far, slept, guard, boss, long])
 	floor_body.queue_free()
 	_clear(player)
 	second_tree.remove_from_group("progression")
