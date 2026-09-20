@@ -44,12 +44,21 @@ extends SceneTree
 ##      sweep rather than argued, and — the two the round-1 review found missing —
 ##      that the degree dispatch VARIES WITHIN a world and MOVES WITH `run_seed`.
 ##      Then it PRINTS: the anchor count as a per-seed range, the trunkable range,
-##      the edge-count histogram, every refused WAYPOINT with its own k, and the
-##      refused LANDMARKS per seed banded by how far below k = 1.0 they fell
-##      (banded and not per-anchor: there are hundreds of them across the sweep,
-##      and Ruling 3 asked for the distribution).
-##   5. THE WORLD TIE. Every edge endpoint's position is re-derived FROM THE
-##      SHIPPED ANCHOR SOURCES — `tower_site()`, `waypoint_sites()`,
+##      the edge-count histogram, every refused PLACE with its own k (the
+##      tripwire that would catch the corridor under-covering the road again),
+##      and the refused LANDMARKS per seed banded by how far below k = 1.0 they
+##      fell (banded and not per-anchor: there are hundreds of them across the
+##      sweep; since pnvb.9 landmarks are refused BY KIND and the banding shows
+##      where they would fall).
+##   6. PLACES ONLY (bead godot-test1-pnvb.9, A1): zero trunkable LANDMARK, HQ or
+##      CITY_WAYPOINT rows; controls (>= 20 landmark rows in the table, the
+##      `wp_hq` row trunkable and carrying a trunk) fail on zero.
+##   7. NO FAR ENDPOINT (bead godot-test1-pnvb.9, A3): zero trunks touching a
+##      LANDMARK anchor at road-lateral >= 300 m; the far-landmark population
+##      control fails on zero.
+##   5. THE WORLD TIE. Every anchor row's position is re-derived FROM THE
+##      SHIPPED ANCHOR SOURCES (every row since pnvb.9 — the tower centre and
+##      the landmarks left the graph, so endpoints alone no longer reach them) — `tower_site()`, `waypoint_sites()`,
 ##      `landmark_sites()`, `BudapestPlan.GATE` — by the id the row carries, and
 ##      compared against what `anchors()` put in the table. This is the assertion
 ##      that a self-consistent wrong graph cannot pass: checks 1-4 all compare the
@@ -120,6 +129,8 @@ func _run() -> void:
 	_check_reachability(terrain_script)
 	_check_well_formed(terrain_script)
 	_check_world_tie(terrain_script)
+	_check_places_only(terrain_script)
+	_check_no_far_endpoint(terrain_script)
 
 	if _failures.is_empty():
 		print("bike network: asking for the anchor table and the trunk graph moves "
@@ -364,7 +375,7 @@ func _check_reachability(terrain_script: GDScript) -> void:
 		var terrain: Node3D = _terrain(terrain_script, run_seed)
 		var rows: Array[Dictionary] = BikeNetwork.anchors(terrain)
 		var edges: Array[Dictionary] = BikeNetwork.edges(terrain)
-		var hq: int = _index_of_kind(rows, BikeNetwork.KIND_HQ)
+		var hq: int = _index_of_id(rows, BikeNetwork.HQ_ANCHOR_ID)
 		var gate: int = _index_of_kind(rows, BikeNetwork.KIND_GATE)
 		if hq < 0 or gate < 0:
 			_fail("seed %d: the anchor table has no %s anchor at all"
@@ -500,7 +511,9 @@ func _check_well_formed(terrain_script: GDScript) -> void:
 			# read off the row: a `trunkable` field that had drifted from
 			# `scarcity_at()` is exactly the bug the amendment forbids a second
 			# rectangle in order to prevent.
-			var expected: bool = k >= BikeNetwork.TRUNK_ANCHOR_MIN_K
+			var place: bool = int(rows[i]["kind"]) == BikeNetwork.KIND_WAYPOINT \
+					or int(rows[i]["kind"]) == BikeNetwork.KIND_GATE
+			var expected: bool = place and k >= BikeNetwork.TRUNK_ANCHOR_MIN_K
 			if bool(rows[i]["trunkable"]) != expected:
 				_fail("seed %d: anchor '%s' is marked trunkable=%s but scarcity_at() at "
 						% [run_seed, rows[i]["id"], rows[i]["trunkable"]]
@@ -513,12 +526,16 @@ func _check_well_formed(terrain_script: GDScript) -> void:
 				refused_here += 1
 				worst_landmark_k = minf(worst_landmark_k, k)
 				bands[0 if k >= 0.95 else (1 if k >= 0.75 else 2)] += 1
-			else:
-				# A REFUSED NON-LANDMARK IS THE FINDING, not the design. The bead
-				# expected the HQ, the waypoints and the gate to be inside the union by
-				# construction; they are not. See the family banner.
+			elif place:
+				# A REFUSED PLACE IS THE FINDING, not the design. The field
+				# circles and the gate are inside the union by construction
+				# (`scarcity_selfcheck` check 4 guards the road stays covered);
+				# a refused one means the corridor rect narrowed under the road
+				# again. See the family banner.
 				refused_others.append("seed %d %s k=%.3f at (%.0f, %.0f)"
 						% [run_seed, rows[i]["id"], k, pos.x, pos.y])
+			# ...otherwise never trunkable by KIND (bead godot-test1-pnvb.9):
+			# the tower centre, the city circles, counted nowhere by design.
 			# THE DISPATCH ITSELF, asked of the shipped function: a degree outside the
 			# table means the fold is out of range and some anchor silently took none.
 			# THE WORD IS BUILT OVER EVERY ANCHOR INDEX, trunkable or not, and that is
@@ -659,17 +676,17 @@ func _check_well_formed(terrain_script: GDScript) -> void:
 		for line: String in refused_per_seed:
 			print("    ", line)
 	if refused_others.is_empty():
-		print("bike network check 4 — no non-landmark anchor was refused.")
+		print("bike network check 4 — no PLACE anchor was refused (the tower "
+				+ "centre and the city circles are refused BY KIND, by design).")
 	else:
 		# NOT A FAILURE, AND DELIBERATELY SO: the `>= 1.0` test is what the owner
 		# ruled and it ships as written. This printout is the measurement the bead
 		# asked for instead of a widened rectangle, and it says the corridor rect is
 		# narrower than the road it was drawn around. See the family banner.
-		print("bike network check 4 — FINDING, %d WAYPOINT anchors refused as trunk "
-				% refused_others.size() + "endpoints. The bead expected the filter to "
-				+ "bite only on landmarks; SCARCITY_CORRIDOR_RECT's own comment claims a "
-				+ "measured max |z| of 129 m for the road and these stand further out. "
-				+ "The rect is stale, not this filter:")
+		print("bike network check 4 — FINDING, %d PLACE anchors refused as trunk "
+				% refused_others.size() + "endpoints. The filter is places-only by "
+				+ "design, so a refused field circle or gate means the corridor rect "
+				+ "narrowed under the road again. The rect is stale, not this filter:")
 		for line: String in refused_others:
 			print("    ", line)
 	Sentinel.done("well_formed")
@@ -681,7 +698,7 @@ func _check_well_formed(terrain_script: GDScript) -> void:
 
 func _check_world_tie(terrain_script: GDScript) -> void:
 	"""
-	EVERY EDGE ENDPOINT STANDS WHERE THE SHIPPED ANCHOR SOURCES SAY IT STANDS.
+	EVERY ANCHOR ROW STANDS WHERE THE SHIPPED ANCHOR SOURCES SAY IT STANDS.
 
 	THIS IS THE ONE ASSERTION IN THE FILE THAT IS NOT ABOUT THE TABLE'S RELATIONSHIP
 	WITH ITSELF. Checks 1-4 compare a build to a build, a table to a copy of the
@@ -717,29 +734,28 @@ func _check_world_tie(terrain_script: GDScript) -> void:
 			var centre: Vector3 = terrain.chunk_to_world(chunk)
 			landmarks[int(TerrainLandmarks.landmark_sites(terrain)[chunk])] = Vector2(centre.x, centre.z)
 
-		for row: Dictionary in edges:
-			for end: int in [int(row["a"]), int(row["b"])]:
+		for end: int in rows.size():
 				var id: String = rows[end]["id"]
 				var claimed: Vector2 = rows[end]["pos"]
 				var found: Array = _truth_for(id, tower, waypoints, landmarks)
 				var truth: Vector2 = found[0]
 				var source: String = found[1]
 				if source == "":
-					_fail("seed %d: edge %d ends at anchor '%s', which none of the four "
-							% [run_seed, int(row["id"]), id] + "shipped anchor sources can "
+					_fail("seed %d: anchor '%s', which none of the four "
+							% [run_seed, id] + "shipped anchor sources can "
 							+ "place — either the table invented it, or a landmark kind that "
-							+ "has no site this run is in the graph. This check cannot tie it "
+							+ "has no site this run is in the table. This check cannot tie it "
 							+ "to the world and would otherwise have skipped it silently")
 					continue
 				endpoints += 1
 				checked[source] = int(checked.get(source, 0)) + 1
 				if not _same_place(claimed, truth):
-					_fail("seed %d: edge %d ends at anchor '%s', which anchors() places at "
-							% [run_seed, int(row["id"]), id] + "(%.3f, %.3f) — but %s puts "
+					_fail("seed %d: anchor '%s', which anchors() places at "
+							% [run_seed, id] + "(%.3f, %.3f) — but %s puts "
 							% [claimed.x, claimed.y, source] + "it at (%.3f, %.3f), %.2f m "
 							% [truth.x, truth.y, claimed.distance_to(truth)]
-							+ "away. The graph is self-consistent and wrong: it joins the "
-							+ "right indices to the wrong places in the world")
+							+ "away. The table is self-consistent and wrong: it joins the "
+							+ "right ids to the wrong places in the world")
 		terrain.free()
 
 	# --- NON-VACUITY, on every axis this check could go blind along.
@@ -820,9 +836,138 @@ func _check_world_tie(terrain_script: GDScript) -> void:
 				+ "it — which is the wrong-position class this check exists to catch, "
 				+ "waved through by its own tolerance")
 
-	print("bike network check 5: %d edge endpoints re-derived from the shipped anchor "
+	print("bike network check 5: %d anchor rows re-derived from the shipped anchor "
 			% endpoints + "sources — %s" % str(checked))
 	Sentinel.done("world_tie")
+
+
+# ============================================================================
+# CHECK 6 — TRUNKABLE = THE PLACES (bead godot-test1-pnvb.9, A1)
+# ============================================================================
+
+func _check_places_only(terrain_script: GDScript) -> void:
+	"""
+	Zero trunkable rows of kind LANDMARK, HQ or CITY_WAYPOINT, over the sweep.
+
+	The graph runs between PLACES: the field teleport circles (the door circle
+	`wp_hq` among them — the HQ's anchor) and the gate, inside the corridor.
+	The tower-centre row, the five city circles and every landmark chunk stay
+	in the table (the racks, the minimap and .11 read them) but never carry a
+	trunk. The k test stays underneath, so this asserts the KIND half: a
+	trunkable row must be a corridor place, both halves at once.
+
+	CONTROLS, both failing on zero: the table still holds >= 20 landmark rows
+	(a filter that deleted rows instead of flagging them would show here), and
+	the `wp_hq` row is trunkable and incident to >= 1 graph edge (mutation (ii)
+	below targets exactly this).
+	"""
+	var worst: Array[String] = []
+	var landmark_min: int = 1 << 30
+	for run_seed: int in SEEDS:
+		var terrain: Node3D = _terrain(terrain_script, run_seed)
+		var rows: Array[Dictionary] = BikeNetwork.anchors(terrain)
+		var edges: Array[Dictionary] = BikeNetwork.edges(terrain)
+		var landmark_rows: int = 0
+		var wphq: int = -1
+		for i: int in rows.size():
+			var kind: int = int(rows[i]["kind"])
+			if kind == BikeNetwork.KIND_LANDMARK:
+				landmark_rows += 1
+			if String(rows[i]["id"]) == BikeNetwork.HQ_ANCHOR_ID:
+				wphq = i
+			if bool(rows[i]["trunkable"]) and kind != BikeNetwork.KIND_WAYPOINT \
+					and kind != BikeNetwork.KIND_GATE:
+				worst.append("seed %d: anchor '%s' (kind %d) is trunkable"
+						% [run_seed, rows[i]["id"], kind])
+		landmark_min = mini(landmark_min, landmark_rows)
+		if landmark_rows < 20:
+			_fail("seed %d: the anchor table holds only %d landmark rows — "
+					% [run_seed, landmark_rows] + "racks, the minimap and .11 read "
+					+ "those rows, so a filter that deleted them instead of flagging "
+					+ "them breaks the world beyond the graph")
+		if wphq < 0:
+			_fail("seed %d: no '%s' row in the anchor table at all"
+					% [run_seed, BikeNetwork.HQ_ANCHOR_ID])
+		else:
+			if not bool(rows[wphq]["trunkable"]):
+				_fail("seed %d: the '%s' row is not trunkable — the HQ has no "
+						% [run_seed, BikeNetwork.HQ_ANCHOR_ID] + "anchor in the graph")
+			var incident: int = 0
+			for row: Dictionary in edges:
+				if int(row["a"]) == wphq or int(row["b"]) == wphq:
+					incident += 1
+			if incident == 0:
+				_fail("seed %d: the '%s' row carries no trunk — the HQ is "
+						% [run_seed, BikeNetwork.HQ_ANCHOR_ID] + "isolated from its "
+						+ "own network")
+		terrain.free()
+	for line: String in worst:
+		_fail(line + " — trunkable is places-only (KIND_WAYPOINT and KIND_GATE "
+				+ "inside the corridor); the tower centre, the city circles and "
+				+ "the landmark chunks never carry a trunk")
+	if landmark_min == 1 << 30:
+		_fail("check 6 counted landmark rows on no seed at all")
+	else:
+		print("bike network check 6 (A1): no trunkable LANDMARK, HQ or "
+				+ "CITY_WAYPOINT row on any of %d seeds; fewest landmark rows %d; "
+				% [SEEDS.size(), landmark_min] + "the HQ door circle is trunkable "
+				+ "and carries a trunk everywhere")
+	Sentinel.done("places_only")
+
+
+# ============================================================================
+# CHECK 7 — NO TRUNK TO THE FAR FIELD (bead godot-test1-pnvb.9, A3)
+# ============================================================================
+
+func _check_no_far_endpoint(terrain_script: GDScript) -> void:
+	"""
+	Zero trunks touching a LANDMARK anchor with road-lateral >= 300 m (owner
+	ruling 2026-09-19, amendment ruling 3: the far field stays empty).
+
+	Ruling 3 governs the ANNULUS population, which is landmarks — so the
+	lateral test is scoped to LANDMARK rows, and deliberately not to places: a
+	road circle far down a wandering road can read a large nearest-station
+	distance while standing at k = 1 inside the corridor (measured: the door
+	circle reads past 300 m on 4 of these 16 seeds), and places are governed by
+	the k test check 4 owns. The CONTROL counts such landmark rows, >= 1 per
+	seed, failing on zero so the assertion has a population.
+
+	Lateral is the shipped `_road_lateral_distance` at clearance 300: it reads
+	INF off the road's X span, and INF counts as far, exactly as the callers
+	that keep the far field empty read it.
+	"""
+	var far_edges: Array[String] = []
+	for run_seed: int in SEEDS:
+		var terrain: Node3D = _terrain(terrain_script, run_seed)
+		var rows: Array[Dictionary] = BikeNetwork.anchors(terrain)
+		var edges: Array[Dictionary] = BikeNetwork.edges(terrain)
+		var far_rows: int = 0
+		var lat := {}
+		for i: int in rows.size():
+			var pos: Vector2 = rows[i]["pos"]
+			var d: float = terrain._road_lateral_distance(pos.x, pos.y, 300.0)
+			lat[i] = d
+			if d >= 300.0 and int(rows[i]["kind"]) == BikeNetwork.KIND_LANDMARK:
+				far_rows += 1
+		if far_rows == 0:
+			_fail("seed %d: no landmark row reads road-lateral >= 300 m — the "
+					% run_seed + "far-field population this check guards is empty "
+					+ "and 'no trunk reaches it' holds for free")
+		for row: Dictionary in edges:
+			for end: int in [int(row["a"]), int(row["b"])]:
+				if int(rows[end]["kind"]) == BikeNetwork.KIND_LANDMARK \
+						and float(lat[end]) >= 300.0:
+					far_edges.append("seed %d: edge %d touches landmark '%s' at "
+							% [run_seed, int(row["id"]), rows[end]["id"]] + "road-"
+							+ "lateral %.0f m — bare paint in the far field, which "
+							% float(lat[end]) + "ruling 3 forbids")
+		terrain.free()
+	for line: String in far_edges:
+		_fail(line)
+	if far_edges.is_empty():
+		print("bike network check 7 (A3): no trunk touches a landmark anchor at "
+				+ "road-lateral >= 300 m on any of %d seeds" % SEEDS.size())
+	Sentinel.done("no_far_endpoint")
 
 
 # ============================================================================
@@ -896,6 +1041,14 @@ func _truth_for(id: String, tower: Vector3, waypoints: Dictionary,
 		if landmarks.has(kind):
 			return [landmarks[kind], "TerrainLandmarks.landmark_sites()"]
 	return [Vector2.INF, ""]
+
+
+func _index_of_id(rows: Array[Dictionary], anchor_id: String) -> int:
+	"""The anchor carrying an id — the HQ's door circle since pnvb.9."""
+	for i: int in rows.size():
+		if String(rows[i]["id"]) == anchor_id:
+			return i
+	return -1
 
 
 func _index_of_kind(rows: Array[Dictionary], kind: int) -> int:
