@@ -724,15 +724,28 @@ const RACK_COLOR: Color = Color(0.13, 0.34, 0.29)
 const RACK_RADIUS: float = 1.4
 const RACK_TOP: float = 1.0
 
-## WHERE it stands. The anchor's own position is INSIDE a keep-out by
-## construction — the HQ anchor is the tower's centre, a waypoint anchor its
-## circle's, a landmark anchor its chunk's, the gate the road's swath — so the
-## site is the NEAREST of these fixed offsets, in this order, that clears BOTH
-## the shipped `trunk_keep_out` and `_footprint_taken`. Nearest-first is the
-## property and the table is the mechanism; a taken site builds no rack and
-## plants no marker, because a marker with no rack under it is a lie the rental
-## epic would build on. Costs no draw: the anchor table is pure in `run_seed`
-## and both tests roll nothing.
+## WHERE it stands, IN TWO PHASES. The anchor's own position is INSIDE a
+## keep-out by construction — the HQ anchor is the tower's centre, a waypoint
+## anchor its circle's, a landmark anchor its chunk's, the gate the road's swath
+## — so the site is the NEAREST of these fixed offsets, in this order, that
+## clears the shipped `trunk_keep_out` stencil. Nearest-first is the property
+## and the table is the mechanism. Costs no draw: the anchor table is pure in
+## `run_seed` and the stencil rolls nothing.
+##
+## Phase 1 (`rack_site`) is keep-outs ONLY and therefore pure in (anchor,
+## `run_seed`): every chunk agrees on it, exactly one chunk contains it, and
+## that chunk OWNS the rack — `rack_owners()` settles the map once per run.
+## Phase 2 (`rack_build_site`) runs in the owner alone and takes the nearest
+## candidate that is homed there and reads free against the owner's OWN
+## `obstacles` (`_footprint_taken`). A taken owner builds no rack and plants no
+## marker, because a marker with no rack under it is a lie the rental epic
+## would build on.
+##
+## THE OWNER IS THE SITE'S CHUNK, NEVER THE ANCHOR'S. An 80 m ring puts the HQ
+## rack two chunks east of its anchor; geometry parented — and a footprint
+## appended — anywhere but where it stands unloads with the wrong chunk and
+## reserves the wrong obstacles list. `bike_path_selfcheck` R1 asserts every
+## marker, footprint and box centre is in the building chunk for exactly this.
 const RACK_SITE_DISTANCES: Array[float] = [6.0, 10.0, 16.0, 24.0, 36.0, 52.0, 80.0]
 const RACK_SITE_DIRECTIONS: Array[Vector2] = [
 	Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, -1),
@@ -1923,26 +1936,33 @@ static func spawn_bike_path_in_chunk(terrain: Node3D, chunk_pos: Vector2i,
 
 	var markers: Array[Node3D] = []
 	# --- THE ANCHOR RACKS (bead `godot-test1-z2yv.3`): one per NETWORK ANCHOR a
-	# trunk touches, and spurs get none. The anchor's own position is inside a
-	# keep-out by construction, so `rack_site()` settles the nearest clearing
-	# offset; a taken site builds NO rack and plants NO marker.
+	# trunk touches, and spurs get none.
 	#
-	# BUILT ONLY FROM THE ANCHOR'S OWN CHUNK, so dedup is by construction (one
-	# anchor lives in exactly one chunk) rather than by a runtime set — two
-	# trunks meeting at one waypoint share that anchor's single rack.
+	# OWNED BY THE SITE'S CHUNK, NEVER THE ANCHOR'S. The anchor's own position
+	# is inside a keep-out by construction and an 80 m ring puts the HQ rack two
+	# chunks east of it, so building from the anchor's chunk would parent the
+	# geometry — and append the footprint — to a chunk the rack does not stand
+	# in. `rack_owners()` settles the owner map once per run (pure, hence one
+	# owner by construction — two trunks meeting at one waypoint share that
+	# anchor's single rack) and only the owner builds, settling the final site
+	# against its OWN obstacles.
 	#
 	# FIRST, BEFORE EITHER TIER'S BOXES. Check 7c reads a pole's top as the
 	# contiguous run of boxes after its post, so racks emitted last would let a
 	# rack box walk into the last pole's top run and fail a correct world; with
 	# the racks first every recorded CUBE index is still taken after them, and
 	# the family's batch entries stay the ONE contiguous range check 1 slices.
+	var owners: Dictionary = rack_owners(terrain)
 	var anchors_here: Array[Dictionary] = terrain.bike_anchors()
+	var stands_once: Array = terrain.waypoint_sites()
 	for anchor_index: int in touched_anchors(terrain):
-		var apos: Vector2 = anchors_here[anchor_index]["pos"]
-		if terrain.world_to_chunk(Vector3(apos.x, 0.0, apos.y)) != chunk_pos:
+		if not owners.has(anchor_index):
+			continue  # no keep-out-clearing candidate anywhere: honest skip
+		if owners[anchor_index] != chunk_pos:
 			continue
-		var site: Vector2 = rack_site(terrain, apos, terrain.waypoint_sites(),
-				obstacles, centre)
+		var apos: Vector2 = anchors_here[anchor_index]["pos"]
+		var site: Vector2 = rack_build_site(terrain, apos, chunk_pos,
+				stands_once, obstacles, centre)
 		if site == Vector2.INF:
 			continue
 		cube_cursor = _build_rack(terrain, anchor_index, site, centre, rng,
@@ -2347,36 +2367,89 @@ static func touched_anchors(terrain: Node3D) -> Array[int]:
 	return out
 
 
-static func rack_site(terrain: Node3D, anchor_pos: Vector2,
-		waypoints: Array[Dictionary], obstacles: Array, centre: Vector2) -> Vector2:
+static func rack_owners(terrain: Node3D) -> Dictionary:
 	"""
-	The rack's world XZ for the anchor at `anchor_pos`, or `Vector2.INF` when no
-	candidate clears.
+	Each anchor's rack-owner chunk, settled ONCE PER RUN: `{ index: Vector2i }`.
+	Anchors with no keep-out-clearing candidate anywhere are simply absent.
+
+	Memoized in `terrain._bike_trunk_cache` beside the routes: same lifecycle
+	(dropped by `_drop_seeded_memos()`), no new terrain var, no static state.
+	The per-chunk hook asks it for every touched anchor, so computing the map
+	per chunk instead of per run would bill every chunk for the whole anchor
+	table's search.
+	"""
+	var cache: Dictionary = terrain._bike_trunk_cache
+	if cache.has("rack_owners"):
+		return cache["rack_owners"]
+	var owners := {}
+	var anchors: Array[Dictionary] = terrain.bike_anchors()
+	var waypoints: Array[Dictionary] = terrain.waypoint_sites()
+	for i in anchors.size():
+		var site: Vector2 = rack_site(terrain, anchors[i]["pos"], waypoints)
+		if site == Vector2.INF:
+			continue
+		owners[i] = terrain.world_to_chunk(Vector3(site.x, 0.0, site.y))
+	cache["rack_owners"] = owners
+	return owners
+
+
+static func rack_site(terrain: Node3D, anchor_pos: Vector2,
+		waypoints: Array[Dictionary]) -> Vector2:
+	"""
+	The anchor's PRELIMINARY rack site (world XZ): the nearest fixed offset
+	clearing the keep-out stencil, or `Vector2.INF` when none does.
 
 	@param anchor_pos: The anchor's world XZ, from `terrain.bike_anchors()`.
 	@param waypoints: `terrain.waypoint_sites()`, for `trunk_keep_out`.
-	@param obstacles: The chunk's finished `obstacles` list, for `_footprint_taken`.
-	@param centre: The building chunk's centre in world XZ (`obstacles` is
-	               chunk-local).
-	@return: The nearest clearing fixed offset, or `Vector2.INF`.
+	@return: The nearest clearing offset, or `Vector2.INF`.
 
-	NEAREST-FIRST over `RACK_SITE_DISTANCES` x `RACK_SITE_DIRECTIONS`, both fixed
-	tables, so the site is a pure function of (anchor, `run_seed`) that costs no
-	draw. A candidate must clear the shipped `trunk_keep_out` — the tower's disc,
-	a teleport circle, a landmark's chunk, the coin road's swath — at the site
-	AND at both rail ends (`RACK_EXTENT`), AND read free against `obstacles`, or
-	the rack (and its marker with it) is skipped.
+	KEEP-OUTS ONLY and therefore PURE in (anchor, `run_seed`) — no obstacles
+	read, no draw rolled — so every chunk agrees on it and exactly one chunk
+	contains it: that chunk owns the rack (`rack_owners()`). The owner then
+	settles the FINAL site against its own obstacles (`rack_build_site`); the
+	preliminary site is where the owner is, not necessarily where the rack ends
+	up, and `bike_path_selfcheck` R1 knows the difference.
 	"""
 	for dist: float in RACK_SITE_DISTANCES:
 		for dir: Vector2 in RACK_SITE_DIRECTIONS:
 			var site: Vector2 = anchor_pos + dir * dist
-			if trunk_keep_out(terrain, site, waypoints):
+			if _site_keep_out(terrain, site, waypoints):
 				continue
-			# ...AND BOTH RAIL ENDS. A site that clears with a box inside a
-			# keep-out is a rack T5 would catch, so the stencil decides here.
-			if trunk_keep_out(terrain, site + Vector2(RACK_EXTENT, 0.0), waypoints):
+			return site
+	return Vector2.INF
+
+
+static func _site_keep_out(terrain: Node3D, site: Vector2,
+		waypoints: Array[Dictionary]) -> bool:
+	"""
+	The stencil one rack candidate must clear: the shipped `trunk_keep_out` —
+	the tower's disc, a teleport circle, a landmark's chunk, the coin road's
+	swath — at the site AND at both rail ends (`RACK_EXTENT`). T5 sweeps box
+	centres, so a site that clears with a box inside a keep-out is the exact
+	defect it exists for.
+	"""
+	return trunk_keep_out(terrain, site, waypoints) \
+			or trunk_keep_out(terrain, site + Vector2(RACK_EXTENT, 0.0), waypoints) \
+			or trunk_keep_out(terrain, site - Vector2(RACK_EXTENT, 0.0), waypoints)
+
+
+static func rack_build_site(terrain: Node3D, anchor_pos: Vector2, owner: Vector2i,
+		waypoints: Array[Dictionary], obstacles: Array, centre: Vector2) -> Vector2:
+	"""
+	The FINAL rack site: the nearest candidate that clears the stencil, is
+	homed in `owner`, and reads free against the owner's OWN `obstacles` — or
+	`Vector2.INF`, in which case no rack is built and no marker planted.
+
+	Runs in the owner chunk only. The homing filter is what keeps dedup by
+	construction under site ownership: without it every chunk whose square a
+	candidate falls in would build one.
+	"""
+	for dist: float in RACK_SITE_DISTANCES:
+		for dir: Vector2 in RACK_SITE_DIRECTIONS:
+			var site: Vector2 = anchor_pos + dir * dist
+			if terrain.world_to_chunk(Vector3(site.x, 0.0, site.y)) != owner:
 				continue
-			if trunk_keep_out(terrain, site - Vector2(RACK_EXTENT, 0.0), waypoints):
+			if _site_keep_out(terrain, site, waypoints):
 				continue
 			if _footprint_taken(obstacles, site - centre):
 				continue

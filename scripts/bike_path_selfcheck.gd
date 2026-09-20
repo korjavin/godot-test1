@@ -27,12 +27,15 @@ extends SceneTree
 ## ...and bead `godot-test1-z2yv.3` — the bike-stand rack at every NETWORK ANCHOR
 ## a trunk touches — adds THREE of its own after C4: R1 (exactly one rack per
 ## touched anchor across the field, every marker within `RACK_ANCHOR_REACH` of
-## its anchor, dedup by construction, untouched anchors and pure spur ends bare;
-## fails on zero racks), R2 (the contract the rental epic reads: group exactly
-## `bike_stand`, metas `anchor: int` and `pos: Vector3`, tier-separated from the
-## path markers), R3 (the world tie: a rack box really in the chunk's batch,
-## through the shipped bucketing, standing within a stated literal distance of
-## its anchor, with the marker on top of the geometry). Checks 1 and 5 need no
+## its anchor AND inside the building chunk, dedup by construction on
+## preliminary sites, untouched anchors and pure spur ends bare; fails on zero
+## racks), R2 (the contract the rental epic reads: group exactly `bike_stand`,
+## metas `anchor: int` and `pos: Vector3`, tier-separated from the path
+## markers), R3 (the world tie: a rack box really in the chunk's batch, through
+## the shipped bucketing, standing within a stated literal distance of its
+## anchor, with the marker on top of the geometry and the footprint in the
+## building chunk). A rack is owned by its site's chunk, never its anchor's —
+## an 80 m ring puts the HQ rack two chunks east of it. Checks 1 and 5 need no
 ## change — the racks land inside the family's own batch slice as CUBEs — and
 ## check 6 counts one footprint per rack beside the one per pole.
 ##
@@ -2762,6 +2765,68 @@ func _sorted_lengths(v: Vector3) -> Array[float]:
 	return a
 
 
+func _skip_explained(terrain: Node3D, apos: Vector2, prelim: Vector2,
+		home: Vector2i, waypoints: Array[Dictionary]) -> String:
+	"""
+	Why the touched anchor's owner chunk built no rack for it: rebuild the
+	owner's pre-bike `obstacles` EXACTLY as `create_chunk` does — the same eight
+	spawners in the same order — and show the preliminary site reads taken
+	there, with the taker named; and that every OTHER owner-homed candidate
+	reads taken or keep-out too, or phase 2 should have built THERE instead.
+
+	@return: "" when the skip does NOT follow from the inputs (a broken build
+	         decision — M-phase2 below), otherwise the taker's description.
+	"""
+	var centre: Vector3 = terrain.chunk_to_world(home)
+	var mesh_instance := MeshInstance3D.new()
+	var platforms: Array = []
+	var block_batch: Array = []
+	var block_body := StaticBody3D.new()
+	var obstacles: Array = terrain.spawn_objects_in_chunk(
+			home, platforms, block_batch, block_body)
+	terrain.spawn_artifact_in_chunk(home, mesh_instance, obstacles, block_batch, block_body)
+	TerrainBiomes.spawn_biome_content_in_chunk(terrain, home, obstacles, block_batch, block_body)
+	terrain.spawn_camp_in_chunk(home, mesh_instance, obstacles, block_batch, block_body)
+	terrain.spawn_landmark_in_chunk(home, mesh_instance, obstacles, block_batch, block_body)
+	terrain.spawn_chest_in_chunk(home, mesh_instance, obstacles, block_batch, block_body)
+	TerrainWaypoints.spawn_waypoint_in_chunk(terrain, home, mesh_instance, obstacles, block_batch, block_body)
+	terrain.spawn_city_in_chunk(home, mesh_instance, obstacles, block_batch, block_body)
+	var at: Vector2 = prelim - Vector2(centre.x, centre.z)
+	var excuse: String = ""
+	if BikePaths._footprint_taken(obstacles, at):
+		var best_d: float = INF
+		var best := {"top": 0.0, "radius": 0.0}
+		for o_v: Variant in obstacles:
+			var entry: Dictionary = o_v
+			var fpos: Vector3 = entry["pos"]
+			var d: float = Vector2(fpos.x - at.x, fpos.y - at.y).length() \
+					- float(entry["radius"])
+			if d < best_d:
+				best_d = d
+				best = entry
+		excuse = "a footprint (top %.2f, radius %.2f) takes the preliminary site" \
+				% [float(best["top"]), float(best["radius"])]
+		for dist: float in BikePaths.RACK_SITE_DISTANCES:
+			for dir: Vector2 in BikePaths.RACK_SITE_DIRECTIONS:
+				var site: Vector2 = apos + dir * dist
+				if site == prelim:
+					continue
+				if terrain.world_to_chunk(Vector3(site.x, 0.0, site.y)) != home:
+					continue
+				if BikePaths._site_keep_out(terrain, site, waypoints):
+					continue
+				if BikePaths._footprint_taken(obstacles,
+						site - Vector2(centre.x, centre.z)):
+					continue
+				excuse = ""
+				break
+			if excuse == "":
+				break
+	mesh_instance.free()
+	block_body.free()
+	return excuse
+
+
 func _same_dims(a: Array[float], b: Array[float]) -> bool:
 	## Equal to within float precision — the `_same_color` idiom, for sizes.
 	for i in 3:
@@ -2798,12 +2863,17 @@ func _check_anchor_racks(terrain_script: GDScript) -> void:
 	"""
 	Across the field, exactly one rack per anchor a trunk touches.
 
-	Every touched anchor's OWN chunk is built through the SHIPPED `create_chunk`
+	Every touched anchor's OWNER chunk — the chunk containing its preliminary
+	site, derived here from the shipped pure `rack_site()` rather than by
+	trusting the spawner's memo — is built through the SHIPPED `create_chunk`
 	and must hold exactly one `bike_stand` marker for it, standing within
-	`RACK_ANCHOR_REACH` of the anchor. Dedup is by construction, so the same
-	chunk must hold exactly the markers homed in it — one per touched anchor it
-	contains, nothing else. Untouched anchors (the far-field landmarks no trunk
-	reaches) must grow nothing. Fails on zero racks found.
+	`RACK_ANCHOR_REACH` of the anchor AND inside the building chunk: a rack is
+	owned by its site's chunk, never its anchor's. The shapes under the marker
+	must be the rack's and may overhang the seam by no more than the rack's own
+	half-length. Dedup is by construction, so an owner chunk must hold exactly
+	the markers site-homed in it — nothing else. Untouched anchors (the
+	far-field landmarks no trunk reaches) must grow nothing. Fails on zero
+	racks found.
 
 	SPURS GET NO RACK, over C4's own population: every surviving spur end in
 	pure-spur territory — farther than any anchor's rack can explain — must have
@@ -2815,11 +2885,27 @@ func _check_anchor_racks(terrain_script: GDScript) -> void:
 		var terrain: Node3D = _terrain(terrain_script, seed_value, true)
 		var anchors: Array[Dictionary] = terrain.bike_anchors()
 		var touched: Array[int] = _touched_from_edges(terrain)
+		var waypoints: Array[Dictionary] = terrain.waypoint_sites()
 		var built_chunks := {}
+		# Every anchor's preliminary site this seed — the ownership map, derived
+		# from the shipped pure function so the chunks built below are the
+		# owners by value rather than by trusting the spawner's memo.
+		var prelim := {}
+		for i in anchors.size():
+			prelim[i] = BikePaths.rack_site(terrain, anchors[i]["pos"], waypoints)
 		var racks_found: int = 0
+		var skipped: int = 0
+		var skipped_homes := {}
 		for idx: int in touched:
 			var apos: Vector2 = anchors[idx]["pos"]
-			var home: Vector2i = terrain.world_to_chunk(Vector3(apos.x, 0.0, apos.y))
+			var psite: Vector2 = prelim[idx]
+			if psite == Vector2.INF:
+				_fail("R1 seed %d anchor %d (%s): no keep-out-clearing site "
+						% [seed_value, idx, String(anchors[idx]["id"])] + "anywhere, "
+						+ "so it can never grow its rack")
+				continue
+			var home: Vector2i = terrain.world_to_chunk(
+					Vector3(psite.x, 0.0, psite.y))
 			if not built_chunks.has(home):
 				terrain.create_chunk(home)
 				built_chunks[home] = true
@@ -2829,11 +2915,24 @@ func _check_anchor_racks(terrain_script: GDScript) -> void:
 				# matching it here must fail the count, never raise.
 				if int(s.get_meta("anchor", -999)) == idx:
 					mine.append(s)
-			if mine.size() != 1:
-				_fail("R1 seed %d anchor %d (%s): the anchor's own chunk %s holds %d "
-						% [seed_value, idx, String(anchors[idx]["id"]), home, mine.size()]
-						+ "bike_stand markers for it — one rack per anchor a trunk "
-						+ "touches, never zero and never two")
+			if mine.is_empty():
+				# AN EXPLAINED SKIP. A taken site builds no rack and plants no
+				# marker — the bead's own rule — so an owner that built nothing
+				# must name the taker (M-phase2 below breaks the build decision
+				# and turns this red).
+				var excuse: String = _skip_explained(terrain, apos, psite, home,
+						waypoints)
+				if excuse == "":
+					_fail("R1 seed %d anchor %d (%s): its owner chunk %s holds no "
+							% [seed_value, idx, String(anchors[idx]["id"]), home]
+							+ "marker for it, and the skip is UNEXPLAINED — the "
+							+ "preliminary site reads free, so phase 2 should have "
+							+ "built there")
+					continue
+				print("R1: seed %d anchor %d (%s) skipped: %s"
+						% [seed_value, idx, String(anchors[idx]["id"]), excuse])
+				skipped += 1
+				skipped_homes[home] = int(skipped_homes.get(home, 0)) + 1
 				continue
 			if not mine[0].has_meta("pos"):
 				_fail("R1 seed %d anchor %d (%s): its marker carries no `pos` meta"
@@ -2847,10 +2946,26 @@ func _check_anchor_racks(terrain_script: GDScript) -> void:
 						+ "past RACK_ANCHOR_REACH %.1f — every marker sits at its anchor"
 						% BikePaths.RACK_ANCHOR_REACH)
 				continue
-			# ...AND RACK GEOMETRY UNDER IT. A marker with no rack under it is a
-			# lie the rental epic would build on, so every marker must have the
-			# rail's and the uprights' shapes standing within tolerance of it
-			# (M-norack below builds the marker with no boxes and turns this red).
+			# IN-CHUNK, STRICT: the marker stands in the chunk that built it. A
+			# rack owned by its anchor's chunk instead (M-owner below) plants
+			# the marker a chunk away from its own geometry, which is what this
+			# half turns red on.
+			if terrain.world_to_chunk(Vector3(pos.x, 0.0, pos.z)) != home:
+				_fail("R1 seed %d anchor %d (%s): its marker stands at %s, in chunk "
+						% [seed_value, idx, String(anchors[idx]["id"]), pos] + "%s — "
+						% terrain.world_to_chunk(Vector3(pos.x, 0.0, pos.z)) + "built "
+						+ "by chunk %s. A rack is owned by its site's chunk, never "
+						% home + "its anchor's")
+				continue
+			# ...AND RACK GEOMETRY UNDER IT, IN THE SAME CHUNK. A marker with no
+			# rack under it is a lie the rental epic would build on, so every
+			# marker must have the rail's and the uprights' shapes standing
+			# within tolerance of it (M-norack below builds the marker with no
+			# boxes and turns this red) — and every one of those shapes must
+			# stand in the building chunk within the rack's own half-length of
+			# its edge (M-owner below parents the geometry a chunk away and
+			# turns that red). Centres may overhang a seam the way any box may;
+			# what may not live in another chunk is the rack.
 			var rail_dims := _sorted_lengths(Vector3(BikePaths.RACK_RAIL_LENGTH,
 					BikePaths.RACK_RAIL_HEIGHT, BikePaths.RACK_RAIL_DEPTH))
 			var upright_dims := _sorted_lengths(Vector3(BikePaths.RACK_UPRIGHT_WIDTH,
@@ -2858,6 +2973,10 @@ func _check_anchor_racks(terrain_script: GDScript) -> void:
 			var rail_under: int = 0
 			var uprights_under: int = 0
 			var chunk_centre: Vector3 = terrain.chunk_to_world(home)
+			var half: float = terrain.chunk_size * 0.5
+			var grown := Rect2(chunk_centre.x - half, chunk_centre.z - half,
+					half * 2.0, half * 2.0).grow(BikePaths.RACK_EXTENT)
+			var out_of_chunk: int = 0
 			var block_body: Node = terrain.active_chunks[home].get_node_or_null(
 					BLOCK_BODY)
 			if block_body != null:
@@ -2872,43 +2991,63 @@ func _check_anchor_racks(terrain_script: GDScript) -> void:
 							or _same_dims(key, upright_dims)):
 						continue
 					var at: Vector3 = (shape_node as Node3D).position
-					var near: float = Vector2(chunk_centre.x + at.x - pos.x,
-							chunk_centre.z + at.z - pos.z).length()
+					var world := Vector2(chunk_centre.x + at.x, chunk_centre.z + at.z)
+					var near: float = world.distance_to(Vector2(pos.x, pos.z))
 					if near > MARKER_GEOMETRY_TOLERANCE:
 						continue
 					if _same_dims(key, rail_dims):
 						rail_under += 1
 					else:
 						uprights_under += 1
+					if not grown.has_point(world):
+						out_of_chunk += 1
 			if rail_under != 1 or uprights_under != BikePaths.RACK_UPRIGHT_COUNT:
 				_fail("R1 seed %d anchor %d (%s): %d rail + %d upright shapes stand "
 						% [seed_value, idx, String(anchors[idx]["id"]), rail_under,
 							uprights_under] + "at its marker, want 1 + %d"
 						% BikePaths.RACK_UPRIGHT_COUNT)
 				continue
+			if out_of_chunk > 0:
+				_fail("R1 seed %d anchor %d (%s): %d of its rack shapes stand past "
+						% [seed_value, idx, String(anchors[idx]["id"]), out_of_chunk]
+						+ "the building chunk %s plus the rack's own half-length — "
+						% home + "geometry parented to a chunk it does not stand in "
+						+ "unloads with the wrong chunk")
+				continue
 			racks_found += 1
-		# DEDUP BY CONSTRUCTION. Building from every trunk end instead of from
-		# the anchor's own chunk puts every anchor's rack in every chunk, which
-		# is what this half turns red on (M-dedup below).
+		# DEDUP BY CONSTRUCTION — on preliminary sites, not anchor positions. A
+		# chunk owns the anchors whose sites fall in it; building from every
+		# trunk end (M-dedup below) or from the anchor's chunk (M-owner below)
+		# puts racks where no site-homing allows, which is what this half turns
+		# red on.
 		for home_v: Variant in built_chunks:
 			var home: Vector2i = home_v
 			var stands: Array[Node] = _stand_markers(terrain.active_chunks[home])
 			var want: int = 0
 			for idx: int in touched:
-				var apos: Vector2 = anchors[idx]["pos"]
-				if terrain.world_to_chunk(Vector3(apos.x, 0.0, apos.y)) == home:
+				var psite: Vector2 = prelim[idx]
+				if psite == Vector2.INF:
+					continue
+				if terrain.world_to_chunk(Vector3(psite.x, 0.0, psite.y)) == home:
 					want += 1
+			want -= int(skipped_homes.get(home, 0))
 			if stands.size() != want:
 				_fail("R1 seed %d chunk %s homes %d touched anchors but holds %d "
 						% [seed_value, home, want, stands.size()] + "bike_stand markers "
 						+ "— dedup is by construction (one anchor, one chunk, one rack), "
 						+ "not by a runtime set")
 		# UNTOUCHED anchors grow nothing: no trunk reaches them, so no rack does.
+		# Looked for in their preliminary owner's chunk — where a rack would
+		# stand if the touched gate broke (M-untouched below).
+		var untouched_tested: int = 0
 		for i in anchors.size():
 			if touched.has(i):
 				continue
-			var apos: Vector2 = anchors[i]["pos"]
-			var home: Vector2i = terrain.world_to_chunk(Vector3(apos.x, 0.0, apos.y))
+			var psite: Vector2 = prelim[i]
+			if psite == Vector2.INF:
+				continue
+			untouched_tested += 1
+			var home: Vector2i = terrain.world_to_chunk(Vector3(psite.x, 0.0, psite.y))
 			if not built_chunks.has(home):
 				terrain.create_chunk(home)
 				built_chunks[home] = true
@@ -2918,12 +3057,15 @@ func _check_anchor_racks(terrain_script: GDScript) -> void:
 							% [seed_value, i, String(anchors[i]["id"])] + "chunk holds "
 							+ "a bike_stand marker for it")
 					break
+		if untouched_tested == 0:
+			_fail("R1 seed %d: no untouched anchor has a preliminary site, so "
+					% seed_value + "'untouched anchors grow nothing' held for free")
 		if racks_found == 0:
 			_fail("R1 seed %d found no rack on %d touched anchors, so 'exactly one "
 					% [seed_value, touched.size()] + "rack per touched anchor' held "
 					+ "for free")
-		print("R1: seed %d: %d racks stand on %d touched anchors"
-				% [seed_value, racks_found, touched.size()])
+		print("R1: seed %d: %d racks stand on %d touched anchors (%d explained skips)"
+				% [seed_value, racks_found, touched.size(), skipped])
 		# --- SPURS GET NO RACK. C4's survivors, filtered to pure-spur territory
 		# so no anchor's own rack can explain a marker near the end.
 		for ox in range(C4_X0, C4_X1 + 1):
@@ -2957,7 +3099,7 @@ func _check_anchor_racks(terrain_script: GDScript) -> void:
 						_fail("R1 seed %d: the surviving spur from origin %s ends at %s, "
 								% [seed_value, origin, end] + "clear of every touched "
 								+ "anchor, yet a bike_stand marker (anchor %d) stands "
-								% int(s.get_meta("anchor")) + "%.1f m from its end — "
+								% int(s.get_meta("anchor", -999)) + "%.1f m from its end — "
 								% d + "spurs get no rack")
 						break
 				pure_tested += 1
@@ -2991,10 +3133,15 @@ func _check_bike_stand_contract(terrain_script: GDScript) -> void:
 		var terrain: Node3D = _terrain(terrain_script, seed_value, true)
 		var anchors: Array[Dictionary] = terrain.bike_anchors()
 		var touched: Array[int] = _touched_from_edges(terrain)
+		var waypoints: Array[Dictionary] = terrain.waypoint_sites()
 		var built_chunks := {}
 		for idx: int in touched:
-			var apos: Vector2 = anchors[idx]["pos"]
-			var home: Vector2i = terrain.world_to_chunk(Vector3(apos.x, 0.0, apos.y))
+			var psite: Vector2 = BikePaths.rack_site(
+					terrain, anchors[idx]["pos"], waypoints)
+			if psite == Vector2.INF:
+				continue  # R1 owns the missing-owner verdict
+			var home: Vector2i = terrain.world_to_chunk(
+					Vector3(psite.x, 0.0, psite.y))
 			if not built_chunks.has(home):
 				terrain.create_chunk(home)
 				built_chunks[home] = true
@@ -3065,7 +3212,14 @@ func _check_anchor_rack_world_tie(terrain_script: GDScript) -> void:
 		var idx: int = TIE_ANCHORS[t]
 		var bound: float = TIE_BOUNDS[t]
 		var apos: Vector2 = anchors[idx]["pos"]
-		var home: Vector2i = terrain.world_to_chunk(Vector3(apos.x, 0.0, apos.y))
+		var prelim: Vector2 = BikePaths.rack_site(
+				terrain, apos, terrain.waypoint_sites())
+		if prelim == Vector2.INF:
+			_fail("R3 anchor %d (%s): no keep-out-clearing site — the tie needs "
+					% [idx, String(anchors[idx]["id"])] + "R1's owner")
+			continue
+		var home: Vector2i = terrain.world_to_chunk(
+				Vector3(prelim.x, 0.0, prelim.y))
 		terrain.create_chunk(home)
 		var chunk_node: Node = terrain.active_chunks[home]
 		var centre: Vector3 = terrain.chunk_to_world(home)
@@ -3179,6 +3333,40 @@ func _check_anchor_rack_world_tie(terrain_script: GDScript) -> void:
 			_fail("R3 anchor %d (%s): the rail box stands %.1f m from the anchor, "
 					% [idx, String(anchors[idx]["id"]), dw] + "past the stated bound "
 					+ "%.1f" % bound)
+		# IN-CHUNK, both halves of the finding: the rail box may overhang the
+		# seam by no more than the rack's half-length, and the footprint the
+		# bare run appended stands strictly inside the building chunk — the
+		# obstacles list the crocodile spawner reads is the chunk the rack
+		# stands in.
+		var half: float = terrain.chunk_size * 0.5
+		var grown := Rect2(centre.x - half, centre.z - half,
+				half * 2.0, half * 2.0).grow(BikePaths.RACK_EXTENT)
+		if not grown.has_point(world):
+			_fail("R3 anchor %d (%s): the rail box stands at %s, past chunk %s "
+					% [idx, String(anchors[idx]["id"]), world, home] + "plus the "
+					+ "rack's own half-length — geometry parented to a chunk it "
+					+ "does not stand in unloads with the wrong chunk")
+		var prints_under: int = 0
+		for o_v: Variant in obstacles:
+			var entry: Dictionary = o_v
+			if not is_equal_approx(float(entry["top"]), BikePaths.RACK_TOP):
+				continue
+			var fpos: Vector3 = entry["pos"]
+			var fworld := Vector2(centre.x + fpos.x, centre.z + fpos.z)
+			if fworld.distance_to(Vector2(mpos.x, mpos.z)) > MARKER_GEOMETRY_TOLERANCE:
+				continue
+			prints_under += 1
+			var strict := Rect2(centre.x - half, centre.z - half,
+					half * 2.0, half * 2.0).grow(0.01)
+			if not strict.has_point(fworld):
+				_fail("R3 anchor %d (%s): its footprint stands at %s, outside "
+						% [idx, String(anchors[idx]["id"]), fworld] + "chunk %s — "
+						% home + "the obstacles list it reserves is the wrong "
+						+ "chunk's")
+		if prints_under != 1:
+			_fail("R3 anchor %d (%s): %d rack footprints stand at its marker, "
+					% [idx, String(anchors[idx]["id"]), prints_under] + "want "
+					+ "exactly one")
 		var drift: float = world.distance_to(Vector2(mpos.x, mpos.z))
 		if drift > MARKER_GEOMETRY_TOLERANCE:
 			_fail("R3 anchor %d (%s): the bare spawner's rail stands %.1f m from the "
