@@ -5194,6 +5194,17 @@ func _check_pass_gap(terrain_script: GDScript) -> void:
 # CHECKS L1/L2/L3 — THE MONUMENT SIDE-LINKS (bead godot-test1-pnvb.11)
 # ============================================================================
 
+## THE OWNER'S TWO LINK NUMBERS, PINNED LITERALLY (owner ruling 2026-09-20,
+## bead godot-test1-pnvb.11, option b): a monument link is emitted only where
+## the walk is >= 60 m AND the painted piece is >= 40 m. L1 and L3 gate their
+## re-walks and assertions on THESE, never on the production consts — a check
+## that reads the knob it guards follows any retune of it, including to zero,
+## and the suite stays green over a dead gate (round-1 send-back). The
+## pinned-equality assertions beside them make a retune a deliberate two-place
+## edit with the reason written twice.
+const OWNER_LINK_MIN_WALK: float = 60.0
+const OWNER_LINK_MIN_PAINT: float = 40.0
+
 func _link_graph_stations(trunks: Array) -> Array:
 	"""The non-link rows' station lists, in memo order — the only stations a
 	monument link may aim at, so links never chain off each other."""
@@ -5253,6 +5264,13 @@ func _check_monument_links(terrain_script: GDScript) -> void:
 	(mile monuments / links emitted / skipped by each gate / painted
 	lengths) plus `trunks()`' cold cost per seed (K's perf half).
 	"""
+	if BikePaths.TRUNK_LINK_MIN_WALK != OWNER_LINK_MIN_WALK \
+			or BikePaths.TRUNK_LINK_MIN_PAINT != OWNER_LINK_MIN_PAINT:
+		_fail("L1: the production gates are %.1f/%.1f m, not the ruled "
+				% [BikePaths.TRUNK_LINK_MIN_WALK, BikePaths.TRUNK_LINK_MIN_PAINT]
+				+ "%.0f/%.0f m — a retune is a two-place edit, here and in "
+				% [OWNER_LINK_MIN_WALK, OWNER_LINK_MIN_PAINT]
+				+ "`terrain_bike_paths.gd`, with the reason written twice")
 	var emitted_total: int = 0
 	var annulus_total: int = 0
 	for run_seed: int in SWEEP16:
@@ -5316,23 +5334,23 @@ func _check_monument_links(terrain_script: GDScript) -> void:
 							% int((emitted[ai] as Dictionary)["id"]))
 				continue
 			var walk: float = _link_walk_length(route)
-			if walk < BikePaths.TRUNK_LINK_MIN_WALK:
+			if walk < OWNER_LINK_MIN_WALK:
 				skip_walk += 1
 				if emitted.has(ai):
 					_fail("L1: seed %d anchor %d (kind %d): walk %.1f m, under "
 							% [run_seed, ai, kind, walk] + "the %.0f m gate, yet "
-							% BikePaths.TRUNK_LINK_MIN_WALK + "link %d stands"
+							% OWNER_LINK_MIN_WALK + "link %d stands"
 							% int((emitted[ai] as Dictionary)["id"]))
 				continue
 			var painted: float = 0.0
 			for r: float in _painted_runs(terrain, route, waypoints):
 				painted += r
-			if painted < BikePaths.TRUNK_LINK_MIN_PAINT:
+			if painted < OWNER_LINK_MIN_PAINT:
 				skip_paint += 1
 				if emitted.has(ai):
 					_fail("L1: seed %d anchor %d (kind %d): painted %.1f m, under "
 							% [run_seed, ai, kind, painted] + "the %.0f m gate, yet "
-							% BikePaths.TRUNK_LINK_MIN_PAINT + "link %d stands"
+							% OWNER_LINK_MIN_PAINT + "link %d stands"
 							% int((emitted[ai] as Dictionary)["id"]))
 				continue
 			var poly := PackedVector2Array()
@@ -5433,7 +5451,7 @@ func _check_monument_link_world_tie(terrain_script: GDScript) -> void:
 	var drawn: Dictionary = _drawable_segments(terrain, stations, waypoints)
 	if drawn.is_empty():
 		_fail("L2: link %d has no drawable segment though it passed the %.0f m "
-				% [int(link["id"]), BikePaths.TRUNK_LINK_MIN_PAINT] + "paint gate — "
+				% [int(link["id"]), OWNER_LINK_MIN_PAINT] + "paint gate — "
 				+ "the gate and the draw tier disagree about what paints")
 	else:
 		var keys: Array = drawn.keys()
@@ -5496,6 +5514,13 @@ func _check_monument_link_lengths(terrain_script: GDScript) -> void:
 	sweep (`trunk_link_report`'s "walk"/"paint" rows) — a gate that never fired
 	is a gate this check never saw.
 	"""
+	if BikePaths.TRUNK_LINK_MIN_WALK != OWNER_LINK_MIN_WALK \
+			or BikePaths.TRUNK_LINK_MIN_PAINT != OWNER_LINK_MIN_PAINT:
+		_fail("L3: the production gates are %.1f/%.1f m, not the ruled "
+				% [BikePaths.TRUNK_LINK_MIN_WALK, BikePaths.TRUNK_LINK_MIN_PAINT]
+				+ "%.0f/%.0f m — a retune is a two-place edit, here and in "
+				% [OWNER_LINK_MIN_WALK, OWNER_LINK_MIN_PAINT]
+				+ "`terrain_bike_paths.gd`, with the reason written twice")
 	var gate_skipped: int = 0
 	for run_seed: int in SWEEP16:
 		var terrain: Node3D = _terrain(terrain_script, run_seed, true)
@@ -5545,10 +5570,10 @@ func _check_monument_link_lengths(terrain_script: GDScript) -> void:
 				total += ((stations[i] as Dictionary)["pos"] as Vector2).distance_to(
 						(stations[i + 1] as Dictionary)["pos"] as Vector2)
 			totals.append(snappedf(total, 0.1))
-			if total < BikePaths.TRUNK_LINK_MIN_PAINT:
+			if total < OWNER_LINK_MIN_PAINT:
 				_fail("L3: seed %d link %d paints %.1f m, under the %.0f m gate "
 						% [run_seed, int(trunk["id"]), total,
-							BikePaths.TRUNK_LINK_MIN_PAINT] + "— the gate let a "
+							OWNER_LINK_MIN_PAINT] + "— the gate let a "
 						+ "stub through")
 		print("L3: seed %d: %d links, painted totals %s" % [run_seed, link_n, totals])
 		terrain.free()
