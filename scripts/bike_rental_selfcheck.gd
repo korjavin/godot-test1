@@ -388,8 +388,14 @@ func _check_edges(player: Node) -> void:
 	stand = _add_stand(player, Vector3(1, 0, 0))
 	if player.try_mount_bike():
 		await physics_frame
+		# The press may meet the air (a teleport-stepped body lands when it
+		# lands), so wait for the verdict — a dismount or a launch — not for a
+		# frame count. The buffer (0.5 s) outlives the wait either way.
 		player.jump_buffer_timer = 0.5
-		await physics_frame
+		for _i: int in 40:
+			await physics_frame
+			if not player.is_riding or player.velocity.y > 0.0:
+				break
 		if player.is_riding:
 			_fail("edges: a jump press while riding did not dismount")
 		if player.jump_buffer_timer != 0.0:

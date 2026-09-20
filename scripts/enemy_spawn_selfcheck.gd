@@ -722,11 +722,13 @@ func _check_species_table() -> void:
 ## two margins, both READ off player_controller.gd and species_table.gd rather
 ## than restated. First, above the SLOWEST run — iterate CHARACTER_SPEED, so a
 ## new slowest hero moves this check with it. Second, above EVERY burst peak:
-## the burst arm multiplies burst_factor AFTER the MAX_CHASE_SPEED clamp, so the
-## peak a row can instantaneously reach is min(chase, clamp) x factor — iterate
-## SPECIES, count the burst rows, and fail on 0 (today 2: the cougar and the
-## alley hound), so a third burst row is measured the day it lands and a table
-## that quietly drops both is red, not silently safe.
+## the burst arm multiplies burst_factor AFTER the MAX_CHASE_SPEED clamp, so a
+## body at clamp speed bursts to clamp x factor instantaneously (spike §1:
+## 11.05 / 11.48) — the peak is the CLAMP times the row's factor, not the
+## row's nominal chase times it. Iterate SPECIES, count the burst rows, and
+## fail on 0 (today 2: the cougar and the alley hound), so a third burst row is
+## measured the day it lands and a table that quietly drops both is red, not
+## silently safe.
 func _check_bike_lattice() -> void:
 	if _bike_speed <= 0.0 or _run_speed <= 0.0 or _character_speed.is_empty():
 		_fail("player_controller.gd has no BIKE_SPEED / RUN_SPEED / CHARACTER_SPEED —"
@@ -749,8 +751,7 @@ func _check_bike_lattice() -> void:
 		if not row.has("burst_factor"):
 			continue
 		burst_rows += 1
-		var peak: float = minf(float(row.get("chase_speed", 0.0)),
-			_max_chase_speed) * float(row["burst_factor"])
+		var peak: float = _max_chase_speed * float(row["burst_factor"])
 		if _bike_speed <= peak:
 			_fail("BIKE_SPEED %.1f is at or below SPECIES['%s'] burst peak %.2f —"
 				% [_bike_speed, String(name_v), peak]
