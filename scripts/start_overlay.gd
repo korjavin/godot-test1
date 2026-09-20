@@ -261,6 +261,12 @@ var _phone: bool = false
 ## language row. Null on the phone card, which builds no choices at all.
 var _choice_box: VBoxContainer = null
 
+## The player's save store this card listens to for `save_loaded` (bead
+## godot-test1-i8yu.5): a server-newer boot reply flips PLAY to CONTINUE while
+## the card still shows. Set on connect, cleared on disconnect — never looked
+## up twice, so dismiss needs no group and survives a freed player.
+var _save_store: Node = null
+
 # --- Child node references (built in _ready, not from a .tscn) --------------
 
 ## Everything visible, in one child, so hiding the card behind the film is a
@@ -497,6 +503,7 @@ func reenter_for_new_run() -> void:
 	# re-asks: without this a Play Again keeps offering the world just ended,
 	# whose checkpoint no longer exists.
 	_refresh_start_choices()
+	_listen_for_server_save()
 	visible = true
 	set_process(true)
 	set_process_unhandled_input(true)
@@ -665,6 +672,7 @@ func _build_ui() -> void:
 	_choice_box.add_theme_constant_override("separation", HudTheme.CARD_PADDING)
 	vbox.add_child(_choice_box)
 	_refresh_start_choices()
+	_listen_for_server_save()
 
 	# THE WHOLE OF MULTIPLAYER'S DISCOVERABILITY, and it is deliberately a
 	# sentence rather than a button (see the header). It names the control, the
@@ -886,6 +894,32 @@ func _has_continue() -> bool:
 
 ## (Re)build the card's choice buttons for the current slot state. Called once
 ## from `_build_ui()` and again from `reenter_for_new_run()`.
+func _listen_for_server_save() -> void:
+	# The boot GET lands ~1 RTT after the player's fetch; without this the card
+	# keeps the PLAY it built while the lobby was still answering. Group lookup
+	# with `has_method`, never a path — standalone (`style_shots.tscn`) and
+	# stub-player scenes degrade to the built choices.
+	var player := get_tree().get_first_node_in_group("player")
+	if player == null or not player.has_method("has_save"):
+		return
+	var store: Node = player.get("best_run_store")
+	if store == null or not store.has_signal("save_loaded"):
+		return
+	if store.save_loaded.is_connected(_refresh_start_choices):
+		return
+	store.save_loaded.connect(_refresh_start_choices)
+	_save_store = store
+
+
+func _disconnect_server_save() -> void:
+	# Dismiss stands the card down for good: a later `save_loaded` (another
+	# device's write landing after PLAY began) must not rebuild dead buttons.
+	if _save_store != null and is_instance_valid(_save_store):
+		if _save_store.save_loaded.is_connected(_refresh_start_choices):
+			_save_store.save_loaded.disconnect(_refresh_start_choices)
+	_save_store = null
+
+
 func _refresh_start_choices() -> void:
 	if _choice_box == null:
 		return
@@ -926,6 +960,7 @@ func _dismiss() -> void:
 	if _dismissed:
 		return
 	_dismissed = true
+	_disconnect_server_save()
 	if _body != null:
 		_body.visible = false
 	visible = false
