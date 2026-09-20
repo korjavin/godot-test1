@@ -291,8 +291,10 @@ extends RefCounted
 ## rule still has to be TRUE AT THE EDGES: a trunk bowing outside the corridor
 ## mid-span (measured — it happens), a retuned `SCARCITY_CORRIDOR_RECT`, a moved
 ## tower (`tower_site_selfcheck` drives it far out), a seed whose road wanders
-## past the 129 m envelope that rect's own comment claims (it does — see
-## `bike_network.gd`'s EDGE CASE section and bead `godot-test1-q184`).
+## near the half-width's edge (contained since PR #457 measured the 775 m
+## envelope against the 1000 m half-width — see `bike_network.gd`'s EDGE CASE
+## section and bead `godot-test1-q184` — and guarded by `scarcity_selfcheck`
+## check 4 rather than merely hoped).
 ## **AN EXEMPTION DELETED BECAUSE IT LOOKED UNUSED IS THE BUG.** Check T3a drives
 ## both code paths directly at a synthetic k = 0 rather than hunting for a seed
 ## that happens to reach one, precisely so that neither half can rot unnoticed.

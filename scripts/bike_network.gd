@@ -123,44 +123,48 @@ extends RefCounted
 ## centreline (`LANDMARK_MILE_LATERAL_*`), the annulus 0.5-2.5 km
 ## (`LANDMARK_FIELD_LATERAL_*`).
 ##
-## ### THE EDGE CASE — PREDICTED FOR LANDMARKS, MEASURED WIDER THAN THAT
-## `SCARCITY_CORRIDOR_RECT`'s Z half-width is 200 m, and its own comment records
-## the measurement behind it: *"measured max |z| 129 m across 200 run_seeds plus
-## half band 10 m = 139 m, rounded to 200 m for margin."* A MILE landmark stands
-## up to 120 m off that centreline, so a worst case of 129 + 120 = 249 m > 200 m
-## was predicted when this bead was filed: a handful of genuine mile landmarks
-## falling just outside k = 1 and being refused as trunk endpoints. That much is
-## not a defect — a refused landmark getting no trunk is exactly the owner's
-## stated intent, and the far field staying empty is worth more than the last
-## monument on the list.
+## ### THE EDGE CASE — PREDICTED FOR LANDMARKS, THEN MEASURED WIDER THAN THAT
+## `SCARCITY_CORRIDOR_RECT`'s Z half-width is 1000 m, and its own comment records
+## the measurement behind it: *"measured max |z| 775 m across 1000 run_seeds
+## (seeds 1..1000) plus the mile-landmark lateral offset 120 m plus half band
+## 10 m = 905 m, rounded to 1000 m for margin."* A MILE landmark stands up to
+## 120 m off that centreline, and that 120 m is already inside the 905 m the
+## rect was measured against — so a refused mile landmark is genuinely far out,
+## not a near miss. That much is not a defect — a refused landmark getting no
+## trunk is exactly the owner's stated intent, and the far field staying empty
+## is worth more than the last monument on the list.
 ##
-## **THE SWEEP FOUND IT REACHES THE ROAD WAYPOINTS TOO, WHICH THE BEAD DID NOT
-## EXPECT.** The bead states *"the HQ, all eleven waypoints and the GATE are inside
-## the union by construction, so the filter only ever bites on landmarks."* That is
-## FALSE, and the number is in check 4's printout: across the 16-seed sweep, 26
+## **UNDER THE OLD 200 m RECT THE FILTER REACHED THE ROAD WAYPOINTS TOO, WHICH
+## THE BEAD DID NOT EXPECT — AND THAT IS HISTORY.** The bead states *"the HQ, all
+## eleven waypoints and the GATE are inside the union by construction, so the
+## filter only ever bites on landmarks."* Under the pre-#457 rect that was FALSE,
+## and the number was in check 4's printout: across the 16-seed sweep, 26
 ## WAYPOINT anchors were refused on 14 of the 16 seeds — `approach` (which stands
-## at x = -200, WEST of station 0 and therefore outside the span the rect's comment
+## at x = -200, WEST of station 0 and therefore outside the span the old comment
 ## was measured over) and `road_1` / `road_2` / `road_3` on the centreline itself,
 ## the worst at `road_3` on seed 987654321, z = -488 m with k = 0.799. A road
-## station at |z| 488 m is nearly four times the 129 m that comment claims as the
-## measured maximum, so THAT MEASUREMENT IS STALE and the corridor rect is
-## narrower than the road it was drawn around.
+## station at |z| 488 m was nearly four times the 129 m the old comment claimed
+## as the measured maximum: the corridor rect was narrower than the road it was
+## drawn around.
 ##
-## IT IS STILL HANDLED BY MEASURING RATHER THAN BY WIDENING SOMETHING, and the
-## `>= 1.0` test SHIPS AS WRITTEN, because the fix is not this family's to make:
-## the honest repair is to re-measure `SCARCITY_CORRIDOR_RECT` against the road it
-## is supposed to contain, which moves scarcity for every spawner in the world and
-## is a bead of its own. `bike_network_selfcheck` check 4 PRINTS the refusals SPLIT
-## BY KIND: every refused WAYPOINT one line each with its own k and position,
-## because there are a couple of dozen and each one is a finding about the rect
-## rather than about this filter; the refused LANDMARKS per seed, banded by how far
+## PR #457 (bead godot-test1-q184) RE-MEASURED AND WIDENED instead of reasoning
+## around it: half-width 200 → 1000 m against the 775 m envelope, the rect
+## derived from the const so the two cannot drift, and `scarcity_selfcheck`
+## check 4 guarding "every road station reads k = 1" — containment is now
+## guarded rather than merely hoped. The `>= 1.0` test SHIPS AS WRITTEN, and the
+## widening (never this family's edit to make: it moves scarcity for every
+## spawner in the world) is why. `bike_network_selfcheck` check 4 still PRINTS
+## the refusals SPLIT BY KIND: every refused WAYPOINT one line each with its own
+## k and position — the tripwire that would catch the corridor under-covering
+## the road a second time; the refused LANDMARKS per seed, banded by how far
 ## below 1.0 they fell, because there are hundreds of them and Ruling 3 asked for
-## that distribution rather than a roll call. The network survives it: check 3 asserts the gate is still
-## reachable from the HQ on every seed of the sweep, and it is, in 3 to 15 hops.
+## that distribution rather than a roll call. The network survives refusals either
+## way: check 3 asserts the gate is still reachable from the HQ on every seed of
+## the sweep, and it is, in 3 to 15 hops.
 ##
-## If the sweep ever shows anchors being lost at a rate anyone cares about before
-## that rect is re-measured, the sanctioned stopgap is to lower the ONE named
-## `TRUNK_ANCHOR_MIN_K` below — **never a second corridor rectangle.**
+## If the sweep ever shows anchors being lost at a rate anyone cares about, the
+## sanctioned stopgap is to lower the ONE named `TRUNK_ANCHOR_MIN_K` below —
+## **never a second corridor rectangle.**
 ##
 ## ----------------------------------------------------------------------------
 ## THE MEMO LIVES ON THE TERRAIN
@@ -205,8 +209,8 @@ const KIND_LANDMARK: int = 4
 ## The corridor filter, and the ONLY knob it has. 1.0 means "exactly inside the
 ## union of SCARCITY_CORRIDOR_RECT and the Budapest rect", because that is where
 ## `scarcity_at()` returns exactly 1.0. See the banner's EDGE CASE section for the
-## 249 m > 200 m arithmetic that is the one reason this would ever move, and for
-## why the answer is this number and never a second rectangle.
+## 905 m-against-1000 m measurement that is the one reason this would ever move,
+## and for why the answer is this number and never a second rectangle.
 const TRUNK_ANCHOR_MIN_K: float = 1.0
 
 # ============================================================================
@@ -340,10 +344,10 @@ static func anchors(terrain: Node3D) -> Array[Dictionary]:
 		rows.append(_anchor("landmark_%d" % int(row[0]), Vector2(centre.x, centre.z), KIND_LANDMARK))
 
 	# THE CORRIDOR FILTER, in one place for every kind at once — see the banner.
-	# It bites on landmarks as designed AND, measured, on the road waypoints, whose
-	# centreline wanders further than `SCARCITY_CORRIDOR_RECT`'s own comment
-	# claims; check 4 prints both. One pass over every kind and no exception list,
-	# because an exception list is what would have hidden that.
+	# It bites on landmarks as designed; the road waypoints now read k = 1 under
+	# the widened rect, and `scarcity_selfcheck` check 4 guards that they keep doing
+	# so. One pass over every kind and no exception list, because an exception list
+	# is what hid the pre-#457 under-coverage.
 	for row: Dictionary in rows:
 		var pos: Vector2 = row["pos"]
 		row["trunkable"] = terrain.scarcity_at(Vector3(pos.x, 0.0, pos.y)) >= TRUNK_ANCHOR_MIN_K
