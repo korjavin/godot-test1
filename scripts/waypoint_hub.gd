@@ -109,7 +109,9 @@ extends Control
 ## WHAT IS ON IT: one row per FOUND circle, in index order, with the distance
 ## from the hero right-aligned; the row you are standing on is listed and
 ## DISABLED (it is where you are, not somewhere to go); a row you cannot afford
-## is disabled too, over a line that says what the fare is. A press calls
+## stays PRESSABLE but greyed, over a line that names the fare AND your own
+## balance — pressing it reaches `travel_to_waypoint()`, which says why on
+## screen (bead godot-test1-hiyn). A press calls
 ## `PlayerController.travel_to_waypoint()` and the panel is gone.
 ## `ponytail:` a LIST and not a drawn road strip — a strip is eleven dots on a
 ## line for eleven places, and it would need its own projection, its own scale
@@ -201,8 +203,9 @@ const DISTANCE_LINE: String = "%d m"
 const HERE_LINE: String = "You are here"
 ## The fare line, and it is `player_controller`'s OWN refusal string: the card a
 ## too-poor traveller gets says exactly this, so the panel and the refusal cannot
-## drift into quoting two different prices.
-const PRICE_LINE: String = "Travel costs %d coins."
+## drift into quoting two different prices. Names the fare AND the hero's own
+## balance (bead godot-test1-hiyn) — the same ui.csv key the toast body uses.
+const PRICE_LINE: String = "Travel costs %d coins, you have %d."
 ## Shown when the crew has found this circle and no other — the state every run
 ## starts in, and the one that has to teach the mechanic rather than look broken.
 const EMPTY_LINE: String = "No other waypoint found yet."
@@ -667,6 +670,11 @@ func _open_panel_for(index: int, player: Node3D) -> void:
 	below if one starts under the list — a city circle can stand near enough a
 	landmark for both to be live at once, and the quiz is modal over the whole
 	screen while it is up.
+
+	THESE STAY SILENT ON PURPOSE (bead godot-test1-hiyn): the clear-bit case is a
+	first-visit race `_arrive()` closes one call earlier, and
+	`_hero_unavailable()` / the quiz are states with their own screens.
+	`travel_to_waypoint()`'s own refusals all speak — see its docstring.
 	"""
 	if _panel_open:
 		return
@@ -847,18 +855,20 @@ func _refresh_rows() -> void:
 		else:
 			_row_distances[i].text = tr(DISTANCE_LINE) \
 				% int(roundf(_xz_distance(origin, sites[i]["pos"] as Vector3)))
-		# THE TWO REASONS A ROW IS DEAD, and they are deliberately one state: the
-		# circle under your feet is not somewhere to go, and a hop you cannot pay
-		# for is not one to offer. The theme greys a disabled Button's own label;
-		# the distance column is a separate Label, so it is greyed here to match.
-		_rows[i].disabled = here or not affordable
+		# ONLY THE ROW UNDERFOOT IS DEAD (bead godot-test1-hiyn): a hop you
+		# cannot pay for stays PRESSABLE so the press reaches
+		# `travel_to_waypoint()`, which says why on screen. The theme greys a
+		# disabled Button's own label; the distance column is a separate Label,
+		# so an unaffordable row is greyed there to match while staying live.
+		_rows[i].disabled = here
+		var grey: bool = here or not affordable
 		_row_distances[i].add_theme_color_override("font_color",
-			COLOR_DISTANCE_OFF if _rows[i].disabled else COLOR_DISTANCE)
+			COLOR_DISTANCE_OFF if grey else COLOR_DISTANCE)
 
 	if _empty_label != null:
 		_empty_label.visible = elsewhere == 0
 	if _price_label != null:
-		_price_label.text = tr(PRICE_LINE) % PLAYER_SCRIPT.TELEPORT_COIN_COST
+		_price_label.text = tr(PRICE_LINE) % [PLAYER_SCRIPT.TELEPORT_COIN_COST, coins]
 
 
 func _on_row_pressed(index: int) -> void:
@@ -873,10 +883,11 @@ func _on_row_pressed(index: int) -> void:
 
 	...AND IT COMES BACK IF NOTHING HAPPENED. `travel_to_waypoint()` has refusals
 	this list cannot see — a room that has not placed this body yet is the real
-	one — and every one of them is SILENT but the coin case. Closing on a press
-	that did nothing would leave a hero standing on a circle with no list and no
-	explanation, and no way to get it back but walking off and back on, because
-	the open is an edge. So the answer is awaited and a refused hop re-opens.
+	one — and every one of them SPEAKS on screen (bead godot-test1-hiyn). Closing
+	on a press that did nothing would leave a hero standing on a circle with no
+	list and no explanation, and no way to get it back but walking off and back
+	on, because the open is an edge. So the answer is awaited and a refused hop
+	re-opens.
 
 	`await player.call(...)` and not a bare call: `travel_to_waypoint()` is a
 	coroutine, so a bare call answers a `GDScriptFunctionState` — an object, which
