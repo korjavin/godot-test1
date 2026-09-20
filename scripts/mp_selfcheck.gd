@@ -1172,7 +1172,7 @@ func _check_hunter_sync() -> String:
 	  3. THE FLAG BYTE. Every combination the encoder can produce round-trips
 	     through a real hunter body byte-identically. That is the executable form
 	     of this bead's ruling that the hunt states owe no new bit (see
-	     CROC_FLAG_BURROWED's note in mp_codec.gd): today SIX bits, six restored
+	     CROC_FLAG_BURROWED's note in mp_codec.gd): today SEVEN bits, seven restored
 	     — the sixth is the Shrink Ray's scale, which is precisely the "pose
 	     motion cannot show" that note reserved bit 32 for — and the day someone
 	     adds a seventh, this fails until `set_remote_state` learns it too.
@@ -1233,6 +1233,12 @@ func _check_hunter_sync() -> String:
 		# ("the day someone adds a sixth for a pose motion cannot show, this fails
 		# until `set_remote_state` learns it too").
 		"is_shrunk",
+		# THE SEVENTH BIT (bead godot-test1-m7jp): Phoboman's Kimchi Offering
+		# spent `CROC_FLAG_BAITED` on the same terms as the sixth, so the sweep
+		# below drives the baited flag through the encoder and the decoder like
+		# every other bit. The mask assertion past it fails by name without the
+		# member line below, which is exactly the guard the docstring promises.
+		"is_baited",
 	]
 
 	# THE SWEEP IS ONLY AS COMPLETE AS THIS LIST, so the list is checked against
@@ -1496,24 +1502,13 @@ func _captive_player() -> Node:
 	return node
 
 
-## A crocodile reduced to the two methods a Kimchi jar calls on it, plus the
-## state `KimchiJar` reads before it calls either — in group "crocodile", so it
-## is found through the shipped group lookup and not handed over.
-##
-## A `CharacterBody3D` because the real one is and because the jar measures
-## `global_position`; a body with no transform would skip the radius half of
-## every beat this check exists to drive.
-const BAIT_BODY_SOURCE := """extends CharacterBody3D
-var is_boss: bool = false
-var lod_active: bool = true
-var errands: Array = []
-var flights: Array = []
-func investigate_point(pos: Vector3, seconds: float,
-		route: PackedVector3Array = PackedVector3Array()) -> bool:
-	errands.append([pos, seconds, route])
-	return true
-func flee_from(source: Vector3, duration: float, tracks_player: bool = true) -> void:
-	flights.append([source, duration, tracks_player])
+## A witness that only counts bites. `_on_player_collision()` calls
+## `hit_by_crocodile()` on whatever it is given, so a counter in the tree is on
+## the exact code path the game uses — and a baited body must never reach it.
+const BAIT_WITNESS_SOURCE := """extends Node
+var hits: Array = []
+func hit_by_crocodile(attacker = null) -> void:
+	hits.append(attacker)
 """
 
 
@@ -1533,16 +1528,17 @@ func _check_bait_verb() -> String:
 	     round the room forever;
 	  3. a sender this machine can place and places 400 m away is refused, and a
 	     sender it CANNOT place is let through (fail-open, `receive_alrm`'s rule);
-	  4. THE JAR THAT LANDS IS THE REAL ONE AND IT RUNS BOTH BEATS HERE — a body
-	     in the lure ball takes an errand at the packet's point and, on the jar's
-	     own clock, runs from it. A `bait` that merely spawned a decoration would
-	     pass claims 1-3 and leave the master simulating nothing;
-	  5. THE VERB ADDS NO WIRE FLAG, so there is no new state to be stranded on a
-	     body whose driving peer went away. `is_investigating` is never on the
-	     wire and `set_remote_state()` ends the errand at the authority change;
-	     `is_fleeing` is an existing bit that self-heals. Both driven below on a
-	     REAL crocodile, because "it self-heals" is the exact claim bead
-	     godot-test1-0mr0.4's review found to be false of its own new flag.
+	  4. THE JAR THAT LANDS IS THE REAL ONE AND IT HOLDS THE PACK HERE — a
+	     CHASING master body takes it on the same frame the packet lands: baited
+	     at the packet's point, chase dropped, the jar's own 12 s on its clock. A
+	     `bait` that merely spawned a decoration would pass claims 1-3 and leave
+	     the master simulating nothing;
+	  5. THE HONEYPOT RIDES ONE FLAG BIT, and it self-heals. `is_baited` packs
+	     into `CROC_FLAG_BAITED` off a real baited body, restores onto a
+	     remote-driven one (where it must make contact harmless), and clears on
+	     the next sample without the bit. Driven on REAL crocodiles, because "it
+	     self-heals" is the exact claim bead godot-test1-0mr0.4's review found to
+	     be false of its own new flag.
 	"""
 	var honest: Dictionary = {"t": "bait", "x": 30.0, "y": 0.0, "z": -10.0}
 	var at := Vector3(30.0, 0.0, -10.0)
@@ -1608,93 +1604,92 @@ func _check_bait_verb() -> String:
 		return "a peer standing 2 m from its own jar was refused — the sender gate"\
 			+ " is refusing honest play, not spoofs"
 
-	# --- 4. THE JAR THAT LANDED IS THE REAL ONE, and it runs both beats. Two
-	# stubs: one inside the lure ball and outside the burst, one inside both.
-	var body_script := GDScript.new()
-	body_script.source_code = BAIT_BODY_SOURCE
-	body_script.reload()
-	var sniffer: Node3D = body_script.new()
-	sniffer.add_to_group("crocodile")
-	root.add_child(sniffer)
-	sniffer.global_position = at + Vector3(0.0, 0.0, KimchiJar.BURST_RADIUS + 5.0)
-	var close: Node3D = body_script.new()
-	close.add_to_group("crocodile")
-	root.add_child(close)
-	close.global_position = at + Vector3(1.0, 0.0, 0.0)
-	var far: Node3D = body_script.new()
-	far.add_to_group("crocodile")
-	root.add_child(far)
-	far.global_position = at + Vector3(0.0, 0.0, KimchiJar.LURE_RADIUS + 20.0)
-	var live: Node3D = _jars_under(root)[-1] as Node3D
-	live.queue_free()
-	# A FRESH JAR with the bodies already standing there — beat 1 fires at the
-	# drop, so the stubs have to exist before the packet does.
-	mp._peer_state["erin"] = {"pos": at}
-	mp._receive_mesh_verb("erin", "bait", honest)
-	var jar2: Node3D = _jars_under(root)[-1] as Node3D
-	var teardown: Array[Node] = [sniffer, close, far, jar2, mp]
-	if (sniffer.get("errands") as Array).size() != 1:
-		return _free_all(teardown, "the replayed jar lured %d bodies at %.1f m —"
-			% [(sniffer.get("errands") as Array).size(),
-				KimchiJar.BURST_RADIUS + 5.0]
-			+ " a bait that spawns a decoration passes every claim above")
-	var errand: Array = (sniffer.get("errands") as Array)[0]
-	if (errand[0] as Vector3).distance_to(at) > 0.01:
-		return _free_all(teardown, "the errand points at %s, not at the jar's %s"
-			% [str(errand[0]), str(at)])
-	if (far.get("errands") as Array).size() != 0:
-		return _free_all(teardown, "a body %.1f m out took the lure — the jar's own"
-			% (KimchiJar.LURE_RADIUS + 20.0) + " %.1f m bound did not travel with it"
-			% KimchiJar.LURE_RADIUS)
-	# ...and beat 2, on the jar's own clock. The MASTER runs this for the room;
-	# here it is the peer's copy, which is the same code and the same reading.
-	jar2._process(KimchiJar.FERMENT)
-	if (close.get("flights") as Array).size() != 1:
-		return _free_all(teardown, "the burst reached %d bodies 1 m from the pot"
-			% (close.get("flights") as Array).size())
-	var flight: Array = (close.get("flights") as Array)[0]
-	if (flight[0] as Vector3).distance_to(at) != 0.0 or bool(flight[2]):
-		return _free_all(teardown, "the replayed burst runs bodies from %s with"
-			% str(flight[0]) + " tracks_player %s — on a peer that is the pack"
-			% str(flight[2]) + " driven straight at the teammate who placed it")
-	if float(flight[1]) != KimchiJar.FLEE_DURATION:
-		return _free_all(teardown, "the replayed burst runs for %.3f s, not %.1f"
-			% [float(flight[1]), KimchiJar.FLEE_DURATION])
-	if (sniffer.get("flights") as Array).size() != 0:
-		return _free_all(teardown, "the burst reached a body %.1f m out, past its"
-			% (KimchiJar.BURST_RADIUS + 5.0) + " own %.1f m" % KimchiJar.BURST_RADIUS)
-	sniffer.queue_free()
-	close.queue_free()
-	far.queue_free()
-	jar2.queue_free()
-
-	# --- 5. NO NEW WIRE FLAG, AND THE ERRAND SURVIVES NEITHER AUTHORITY CHANGE.
-	# A REAL crocodile, because the claim is about the real state machine: it is
-	# lured, then the master's first sample arrives, and the errand must be over.
-	# Bead godot-test1-0mr0.4's review found exactly this shape false of a NEW
-	# flag; this one asserts that the verb introduced none.
+	# --- 4. THE JAR THAT LANDS IS THE REAL ONE, and it holds the pack HERE.
+	# A CHASING master body takes it on the same frame the packet lands: baited
+	# at the packet's point, chase dropped, the jar's own 12 s on its clock. A
+	# `bait` that merely spawned a decoration would pass claims 1-3 and leave
+	# the master simulating nothing; one that refused busy bodies (the shipped
+	# jar's disease, bead godot-test1-m7jp) fails the chase line below.
+	for stray: Node in _jars_under(root):
+		stray.queue_free()
+	mp._master = "us"
 	var real: Node = load("res://scenes/characters/piglet_crocodile.tscn").instantiate()
 	root.add_child(real)
+	# Parked far from the packet's point for the settle frame, so the queued
+	# strays above cannot pre-bait it as they flush — the reads below must be
+	# about THIS packet, on THIS frame.
+	(real as Node3D).global_position = Vector3(0.0, 0.0, 40.0)
 	await process_frame
-	real.global_position = Vector3.ZERO
-	if not bool(real.call("investigate_point", Vector3(4.0, 0.0, 0.0), KimchiJar.LURE_HOLD)):
-		real.queue_free()
-		mp.queue_free()
-		return "a free crocodile refused a lure — check 5 has no errand to strand"
-	real.set_remote_state(Vector3(4.0, 0.0, 0.0), 0.0, 0)
-	if bool(real.get("is_investigating")):
-		real.queue_free()
-		mp.queue_free()
-		return "an errand survived the master taking the body over — a remote-driven"\
-			+ " body runs no _investigate_move, so the flag would never come down"\
-			+ " and the body could never sleep again"
+	(real as Node3D).global_position = at + Vector3(4.0, 0.0, 0.0)
+	real.set("is_chasing", true)
+	mp._peer_state["bob2"] = {"pos": at}
+	mp._receive_mesh_verb("bob2", "bait", honest)
+	var teardown: Array[Node] = [real, mp]
+	for stray2: Node in _jars_under(root):
+		teardown.append(stray2)
+	if not bool(real.get("is_baited")):
+		return _free_all(teardown, "a CHASING master body refused the replayed jar"
+			+ " 4 m away — the honeypot takes busy bodies (mutation (b))")
+	if bool(real.get("is_chasing")):
+		return _free_all(teardown, "the master body took the jar and kept chasing"
+			+ " — take_bait drops the old stake")
+	var aim: Vector3 = real.get("investigate_target")
+	if aim.distance_to(at) > 0.01:
+		return _free_all(teardown, "the master body walks at %s, not at the jar's"
+			% str(aim) + " %s" % str(at))
+	if float(real.get("_investigate_hold")) != KimchiJar.HONEYPOT_SECONDS:
+		return _free_all(teardown, "the master body holds %.2f s, not the jar's"
+			% float(real.get("_investigate_hold")) + " %.1f"
+			% KimchiJar.HONEYPOT_SECONDS)
+
+	# --- 5. THE HONEYPOT RIDES ONE FLAG BIT, and it self-heals.
+	# Packed off the baited master body above, restored onto a remote-driven
+	# one — where it must make contact harmless — and cleared by the next
+	# sample without it. Driven on REAL crocodiles, because "it self-heals" is
+	# the exact claim bead godot-test1-0mr0.4's review found false of its own
+	# new flag.
+	if MpCodec._croc_flags(real) & MpCodec.CROC_FLAG_BAITED == 0:
+		return _free_all(teardown, "the encoder packed %d for a baited body —"
+			% MpCodec._croc_flags(real) + " CROC_FLAG_BAITED is not on the wire"
+			+ " (mutation (e))")
+	var peer_body: Node = load("res://scenes/characters/piglet_crocodile.tscn").instantiate()
+	root.add_child(peer_body)
+	await process_frame
+	teardown.append(peer_body)
+	peer_body.set_remote_state(at, 0.0, MpCodec.CROC_FLAG_BAITED)
+	if not bool(peer_body.get("is_baited")):
+		return _free_all(teardown, "set_remote_state dropped CROC_FLAG_BAITED —"
+			+ " the decoder has not learned the bit the encoder sends"
+			+ " (mutation (e))")
+	var witness_script := GDScript.new()
+	witness_script.source_code = BAIT_WITNESS_SOURCE
+	witness_script.reload()
+	var witness: Node = witness_script.new()
+	root.add_child(witness)
+	teardown.append(witness)
+	peer_body._on_player_collision(witness)
+	if (witness.get("hits") as Array).size() != 0:
+		return _free_all(teardown, "a baited remote body bit a passing teammate —"
+			+ " the flag byte must carry the harmlessness or the honeypot only"
+			+ " holds on the master's screen (mutation (f))")
+	peer_body.set_remote_state(at, 0.0, 0)
+	if bool(peer_body.get("is_baited")):
+		return _free_all(teardown, "is_baited survived a sample without the bit —"
+			+ " a peer whose master moved on would hold the pack forever")
+	peer_body._on_player_collision(witness)
+	if (witness.get("hits") as Array).size() != 1:
+		return _free_all(teardown, "the cleared body bit %d times, not once —"
+			% (witness.get("hits") as Array).size() + " the collision half above"
+			+ " measured a body that could never bite")
+	# ...and the master's own errand does not survive the authority change
+	# either: the body it drove comes home clean when the samples stop.
+	real.set_remote_state(at, 0.0, 0)
 	real.clear_remote_drive()
-	if bool(real.get("is_investigating")) or bool(real.get("is_fleeing")):
-		real.queue_free()
-		mp.queue_free()
-		return "a body handed back by the master is still on an errand or still"\
-			+ " fleeing with nothing left to clear it"
-	real.queue_free()
+	if bool(real.get("is_investigating")) or bool(real.get("is_baited")) \
+			or bool(real.get("is_fleeing")):
+		return _free_all(teardown, "a body handed back by the master is still"
+			+ " held, on an errand or fleeing with nothing left to clear it")
+
 
 	# --- THE RATE LIMIT, and the encoder's own bound.
 	if not MPManager.VERB_BUDGET_PER_SEC.has("bait"):

@@ -100,8 +100,8 @@ const ABILITY2_COOLDOWN := {
 	"primm": 6.0,
 	"teibi": 10.0,
 	# The longest second-skill cooldown in the game, and deliberately longer than
-	# the jar's own 6 s life (`KimchiJar.FERMENT + LINGER`): a second jar may
-	# never be placed while the first is still brewing, so the "JAR" gate refuses
+	# the jar's own 13 s life (`KimchiJar.HONEYPOT_SECONDS + LINGER`): a second jar
+	# may never be placed while the first is still down, so the "JAR" gate refuses
 	# on the state and this refuses on the clock — belt and braces, because the
 	# gate is a weakref and a weakref cleared by a respawn would otherwise hand
 	# back the press eight seconds early.
@@ -684,11 +684,11 @@ func _ability2_primm() -> bool:
 
 func _ability2_phoboman() -> bool:
 	"""
-	Kimchi Offering: Phoboman sets a clay jar down three metres ahead. Everything
-	idle within 20 m — crocodiles, the hunter robot, the storey's guard — walks
-	over to sniff it; five seconds later the kimchi is ready, and everything with
-	a NOSE still standing within 6 m of it bolts. They come for the smell and they
-	leave because of the smell.
+	Kimchi Offering: Phoboman sets a clay jar down three metres ahead. Every
+	hunter and crocodile within 30 m — and the storey's guard, through the
+	building's router — converges on it and HOLDS there for 12 s, ignoring the
+	heroes, the stink and every scent track; then the pot cracks with a shimmer
+	and the pack is released. They come for the smell and they stay for it.
 
 	NOTHING DIES (owner ruling 3, 2026-09-18) and nothing is freed:
 	`capture_selfcheck` check 10d greps this body and `kimchi_jar.gd` for a kill

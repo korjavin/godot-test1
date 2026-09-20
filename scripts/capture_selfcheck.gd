@@ -103,6 +103,7 @@ const PLAYER_SCENE: String = "res://scenes/player.tscn"
 const SHELL_SCENE: String = "res://scenes/tower/tower_shell.tscn"
 const INTERIOR_SCENE: String = "res://scenes/tower/tower_interior.tscn"
 const CROC_SCRIPT: String = "res://scripts/piglet_crocodile_ai.gd"
+const LOD_SCRIPT: String = "res://scripts/crocodile_lod_manager.gd"
 ## Check 10 needs REAL bodies, not the row stubs the checks above use — see there.
 const HUNTER_SCENE: String = "res://scenes/characters/hunter_robot.tscn"
 ## The field's retrieval unit, by row name — this file's ONE spelling of it, the
@@ -329,7 +330,7 @@ func _run() -> void:
 	await _check_air_sight_is_the_indoor_air_rush()
 	await _check_twin_flash_scares_and_never_kills()
 	await _check_shrink_ray_shrinks_the_reached_and_nothing_else()
-	await _check_kimchi_lures_then_scatters()
+	await _check_kimchi_honeypot()
 	await _check_no_second_way_to_lose()
 	await _check_a_hunter_walks_in_and_takes_a_hero()
 	await _check_escape_leaves_the_ending_cursor_free()
@@ -3687,60 +3688,51 @@ func _check_shrink_ray_shrinks_the_reached_and_nothing_else() -> void:
 
 
 # ============================================================================
-# 10d. THE KIMCHI OFFERING LURES EVERYTHING AND SCATTERS THE ONES WITH A NOSE
+# 10d. THE KIMCHI OFFERING IS A HONEYPOT — immediate, 12 s, the pack holds
 # ============================================================================
 
-func _check_kimchi_lures_then_scatters() -> void:
+func _check_kimchi_honeypot() -> void:
 	"""
-	Check 10d (bead godot-test1-0mr0.5). KIMCHI OFFERING IS PHOBOMAN'S SECOND
-	SKILL: G sets a clay jar down 3 m ahead, everything idle within 20 m walks
-	over to sniff it, and five seconds later it bursts and everything with a NOSE
-	within 6 m bolts. Guards come and DO NOT run (owner ruling 5: "yes, attract
-	all"); bosses neither come nor run; sleepers are not woken; nothing dies
-	(ruling 3).
+	Check 10d (bead godot-test1-m7jp). KIMCHI OFFERING IS PHOBOMAN'S SECOND
+	SKILL: G sets a clay jar down 3 m ahead and every hunter and crocodile
+	within 30 m converges on it and HOLDS there for 12 s — ignoring the heroes
+	(no chase, no capture, no bite), the stink (no flee) and every scent track
+	— then the pot cracks with a shimmer and the pack is released. Bosses come
+	but hold at their fence; sleepers are never woken; nothing dies (ruling 3).
 
 	DRIVEN THROUGH THE REAL SLOT-1 PRESS ON REAL BODIES from the shipped scenes,
 	check 10b's staging exactly — and then through the REAL JAR'S OWN CLOCK
-	(`jar._process(FERMENT)`), because beat 2 is the half a "one crocodile came
-	over" check would never reach.
+	(`jar._process(dt)`), because the hold, the late joiner and the release are
+	the halves a "one crocodile came over" check would never reach.
 
-	SEVEN BODIES, AND EVERY ONE OF THEM ANSWERS A DIFFERENT QUESTION. A check
+	EIGHT BODIES, AND EVERY ONE OF THEM ANSWERS A DIFFERENT QUESTION. A check
 	that dropped a jar and watched one crocodile approach would pass just as
-	happily if the jar attracted EVERYTHING IN THE WORLD or NOTHING BUT THE
-	PROBE, so the compass is built to fail in both directions at once — three
-	bodies that MUST take the lure and four that MUST NOT, two that MUST flee
-	and five that MUST NOT, and the two sets are deliberately not the same:
+	happily if the jar armed late, refused busy bodies, released early, expired
+	on arrival instead of on the jar, or never reached the room — so the compass
+	is built to fail in every one of those directions at once:
 
-	  sniffer  15 m from the jar   lured, NOT scattered  (inside 20, outside 6)
-	  close     2 m                lured AND scattered
-	  guard     2.2 m              lured, NOT scattered  (`stink_immune`)
-	  chaser    4 m                NOT lured, scattered  (a busy body refuses)
-	  boss      3.6 m              NOT lured, NOT scattered (the is_boss layer)
-	  slept     4 m                NOT lured, NOT scattered, STILL ASLEEP
-	  far      37 m                NOT lured, NOT scattered (outside 20)
+	  chaser   croc, chasing, 4 m from the jar    baited on landing, chase dropped
+	  tracker  hunter, tracking, 20 m             baited on landing, track dropped
+	  idle     croc, 15 m                         baited, proves the natural release
+	  boss     croc boss, home 40 m from the jar  baited AT ITS FENCE, not at the pot
+	  guard    tower guard on a post, ~4 m        baited, walks home on release
+	  slept    croc, asleep, 4 m                  NOT baited, STILL ASLEEP
+	  far      croc, 37 m                         NOT baited — then the late joiner
+	  long     croc, 40 m, taken directly         released at 12 s MID-WALK
+	      (round 1: expiry is catch + jar remainder, not arrival + hold)
 
-	Which means: an arm that lured the world fails on boss/slept/far, an arm that
-	lured nothing fails on sniffer/close/guard, an arm whose burst radius grew to
-	the lure radius fails on sniffer, one whose lure shrank to the burst radius
-	fails on sniffer too, one that lost the `is_boss` exclusion fails on boss, one
-	that lost the `lod_active` exclusion fails on slept (twice — lured, and woken),
-	and one that let a guard flee fails on guard. None of those is a count against
-	a count: every body is named and every direction is stated.
-
-	THE SOURCE OF THE FLIGHT IS ASSERTED, not just the fact of it. `flee_source`
-	must be the JAR and `flee_tracks_player` must be FALSE — a burst that ran the
-	pack away from the HERO instead of away from the pot would leave every body
-	fleeing and every `is_fleeing` read above green, which is the vacuous version
-	of this check.
-
-	AND THE ERRAND IS DROPPED. `close` sniffed the jar and was then scared off it;
-	it must no longer be `is_investigating`, or it would walk back to the pot that
-	just went off in its face (`flee_from`'s one-line fix). The GUARD is the
-	control for that line: it never fled, so it is still standing there.
+	Which means: an arm with an arming delay fails on the landing frame; one
+	that refuses busy bodies fails on chaser (and the hunter); one that lost
+	the boss clamp fails on the boss line; one that lost the lod exclusion
+	fails on slept (twice — baited, and woken); one with a 6 s life fails the
+	late joiner and the pinned numbers. None of those is a count against a
+	count: every body is named and every direction is stated.
 
 	EXACTNESS IS HONEST HERE for check 10b's reason: no `await` sits between the
-	press, the jar's clock and the reads, so no physics tick can spend a flee or
-	move a body out of a radius this check is measuring.
+	press and the landing reads, so no physics tick can spend a hold or move a
+	body out of a radius this check is measuring. The floor below is the one
+	exception the chase control needs: acquisition refuses an airborne hero, so
+	the control that proves a released body CAN chase needs everybody grounded.
 	"""
 	var second_tree := StubSecondSkillProgression.new()
 	root.add_child(second_tree)
@@ -3752,21 +3744,24 @@ func _check_kimchi_lures_then_scatters() -> void:
 		_clear(player)
 		second_tree.remove_from_group("progression")
 		second_tree.queue_free()
-		Sentinel.done("kimchi_lures_then_scatters")
+		Sentinel.done("kimchi_honeypot")
 		return
 
 	# The compass. Species before add_child throughout (`_ready()` resolves the
 	# spec exactly once) and the boss contract is three deep.
-	var sniffer: Node = load(CROC_SCENE).instantiate()
-	root.add_child(sniffer)
-	var close: Node = load(CROC_SCENE).instantiate()
-	root.add_child(close)
 	var chaser: Node = load(CROC_SCENE).instantiate()
 	root.add_child(chaser)
-	var slept: Node = load(CROC_SCENE).instantiate()
-	root.add_child(slept)
+	var tracker: Node = load(HUNTER_SCENE).instantiate()
+	tracker.species = HUNTER_ROW
+	root.add_child(tracker)
+	var idle: Node = load(CROC_SCENE).instantiate()
+	root.add_child(idle)
 	var far: Node = load(CROC_SCENE).instantiate()
 	root.add_child(far)
+	var long: Node = load(CROC_SCENE).instantiate()
+	root.add_child(long)
+	var slept: Node = load(CROC_SCENE).instantiate()
+	root.add_child(slept)
 	var guard: Node = load(GUARD_SCENE).instantiate()
 	guard.species = GUARD_SPECIES
 	root.add_child(guard)
@@ -3774,45 +3769,61 @@ func _check_kimchi_lures_then_scatters() -> void:
 	boss.species = CONTROL_SPECIES
 	boss.setup_as_boss(3.0)
 	root.add_child(boss)
-	# Metres AHEAD of the player, against a jar that lands at ahead = 3.0.
+	# Metres AHEAD of the player, against a jar that lands at ahead = 3.0:
+	# chaser 4 m, tracker 20 m, idle 15 m, boss ~10 m, guard ~4 m from the pot;
+	# far 37 m out, slept 4 m out but asleep.
 	var stands: Array[Array] = [
-		[sniffer, 18.0, 0.0],
-		[close, 5.0, 0.0],
 		[chaser, 7.0, 0.0],
-		[slept, 3.0, 4.0],
+		[tracker, 23.0, 0.0],
+		[idle, 18.0, 0.0],
 		[far, 40.0, 0.0],
-		[guard, 4.0, 2.0],
-		[boss, 6.0, -2.0],
+		[long, 43.0, 0.0],
+		[slept, 3.0, 4.0],
+		[guard, 6.0, 3.0],
+		[boss, 13.0, -2.0],
 	]
-	# Stood off before the staging frame and planted again after it — check 10b's
-	# docstring argues both halves, and the second matters more here: this compass
-	# has a body 2 m from the burst edge and another 1 m inside the lure edge.
+	# A FLOOR, so the chase control has grounded bodies to stand on. This
+	# harness builds none and every probe here is in free fall — and
+	# acquisition refuses an airborne hero, so without one the control that a
+	# released body CAN chase would fail on correct code. An infinite plane at
+	# y = 0, settled before the press; the landing reads below are exact
+	# because no frame passes between the second plant and the press.
+	var floor_body := StaticBody3D.new()
+	var floor_shape := CollisionShape3D.new()
+	floor_shape.shape = WorldBoundaryShape3D.new()
+	floor_body.add_child(floor_shape)
+	root.add_child(floor_body)
 	_plant(player, stands)
 	await process_frame
+	for _i in 12:
+		await physics_frame
 	_plant(player, stands)
-	# THE TWO STATES THE CHECK SETS ITSELF, both after the staging frame so the
-	# frame cannot undo them.
+	# THE STATES THE CHECK SETS ITSELF, all after the last frame so no tick
+	# can undo them.
 	chaser.is_chasing = true
+	tracker.is_chasing = false
+	tracker.is_tracking = true
+	tracker.track_target = (player as Node3D).global_position
+	# The guard walks a post: confined the way the tower confines its own, so
+	# the release has a home leg to walk and a leash to hand back.
+	guard.set_confinement((guard as Node3D).global_position, Vector2(2.0, 2.0))
 	# WRITTEN, NOT ASKED FOR. `set_lod_active(false)` REFUSES a body that is not
-	# `is_on_floor()`, and this harness builds no floor — every probe here is in
-	# free fall from the frame it was added (see `_plant()`). What is under test
-	# is the two `lod_active` exclusions (`KimchiJar._lure()`'s and
-	# `flee_from()`'s), not the transition that sets the flag, so the flag is set
-	# the way a settled body would have had it and the dispatch is switched off
-	# beside it, which is what `set_lod_active()` does next.
+	# `is_on_floor()`, and the floor above only just caught them — what is under
+	# test is the sweep's `lod_active` exclusion, not the transition that sets
+	# the flag, so the flag is set the way a settled body would have had it and
+	# the dispatch is switched off beside it, which is what `set_lod_active()`
+	# does next.
 	slept.lod_active = false
 	slept.set_physics_process(false)
 	if bool(slept.get("lod_active")):
 		_fail("the slept probe is still awake — check 10d has no sleeper")
-	if not bool(guard.spec.get("stink_immune", false)):
-		_fail("the probe guard's row carries no stink_immune — check 10d would be"
-			+ " measuring a guard that flinches, and the owner's 'guards come and"
-			+ " sniff and stay unbothered' with it")
-	if bool(guard.spec.get("stink_immune", false)) and bool(sniffer.spec.get("stink_immune", false)):
-		_fail("the ordinary croc row carries stink_immune too — nothing in this"
-			+ " check can tell a nose from a sealed machine")
+	if String(tracker.spec.get("behavior", "")) != "hunt":
+		_fail("the tracker did not resolve the hunt row — check 10d has no hunter")
+	if not bool(tracker.spec.get("captures_hero", false)):
+		_fail("the tracker row carries no captures_hero — the capture half would"
+			+ " be measuring a body that cannot jail")
 	if not bool(boss.is_boss):
-		_fail("setup_as_boss() left is_boss false — check 10d has no boss to shrug")
+		_fail("setup_as_boss() left is_boss false — check 10d has no boss to clamp")
 
 	# --- G is the Kimchi Offering, and nothing gates it in the field. ---
 	if player.hero_name() != "phoboman":
@@ -3823,22 +3834,28 @@ func _check_kimchi_lures_then_scatters() -> void:
 	if player.get_ability_block_reason(1) != "":
 		_fail("with no jar out the Kimchi Offering is gated by '%s'"
 			% player.get_ability_block_reason(1))
-	# THE NUMBERS ARE PINNED, check 10b's rule: these radii are read against each
-	# other all the way down this check, so a retune has to say so here.
-	if KimchiJar.LURE_RADIUS != 20.0 or KimchiJar.BURST_RADIUS != 6.0:
-		_fail("the jar lures at %.1f m and bursts at %.1f m — this compass is built"
-			% [KimchiJar.LURE_RADIUS, KimchiJar.BURST_RADIUS]
-			+ " around 20 and 6, and a retune has to move the bodies with it")
-	if KimchiJar.BURST_RADIUS >= KimchiJar.LURE_RADIUS:
-		_fail("the burst reaches as far as the lure — then every body that comes"
-			+ " is scattered and the skill is a slower Stink Wave")
+	# THE NUMBERS ARE PINNED, check 10b's rule: 12 s by literal (mutation (c)
+	# goes red here) and the radius against the species table and the LOD
+	# manager below (item 9), because a retune has to move the bodies with it.
+	if KimchiJar.HONEYPOT_SECONDS != 12.0 or KimchiJar.HONEYPOT_RADIUS != 30.0:
+		_fail("the jar holds %.1f s at %.1f m — this compass is built"
+			% [KimchiJar.HONEYPOT_SECONDS, KimchiJar.HONEYPOT_RADIUS]
+			+ " around 12 s and 30 m, and a retune has to move the bodies with it")
+	_assert_honeypot_radius()
+	if player.captive_heroes.size() != 0:
+		_fail("the staging frame already jailed somebody — every capture read"
+			+ " below is about a roster that did not start empty")
 
 	var forward: Vector3 = -(player as Node3D).transform.basis.z
 	forward.y = 0.0
 	var where: Vector3 = (player as Node3D).global_position \
 			+ forward.normalized() * PlayerAbilities.KIMCHI_PLACE_AHEAD
+	# The boss's territory must NOT cover the pot: its home is stood 40 m out
+	# BEFORE the press, so the landing sweep already meets a jar outside the
+	# leash and the clamp has something to do.
+	boss.home_position = where + Vector3(40.0, 0.0, 0.0)
 	player.ability2_cooldowns[player.current_character_index] = 0.0
-	# NO AWAIT from here to the last read below.
+	# NO AWAIT from here to the landing reads below.
 	player.try_activate_ability(1)
 
 	# --- THE JAR IS A WORLD OBJECT, and the press is now gated on it. ---
@@ -3846,11 +3863,12 @@ func _check_kimchi_lures_then_scatters() -> void:
 	if jar_ref == null or jar_ref.get_ref() == null:
 		_fail("G placed no jar — every read below is about a world that never"
 			+ " changed")
-		_free_kimchi_probes([sniffer, close, chaser, slept, far, guard, boss])
+		_free_kimchi_probes([chaser, tracker, idle, far, slept, guard, boss, long])
+		floor_body.queue_free()
 		_clear(player)
 		second_tree.remove_from_group("progression")
 		second_tree.queue_free()
-		Sentinel.done("kimchi_lures_then_scatters")
+		Sentinel.done("kimchi_honeypot")
 		return
 	var jar: Node3D = jar_ref.get_ref() as Node3D
 	if jar.get_parent() == player:
@@ -3862,84 +3880,220 @@ func _check_kimchi_lures_then_scatters() -> void:
 	if player.get_ability_block_reason(1) != "JAR":
 		_fail("a second press with a jar already out is gated by '%s', not 'JAR'"
 			% player.get_ability_block_reason(1))
+	var jar_pos: Vector3 = jar.global_position
 
-	# --- BEAT 1. Who came, who did not, and where they are walking. ---
-	var lured: Array[String] = []
-	for subject: Array in [[sniffer, "sniffer"], [close, "close"], [guard, "guard"]]:
-		if not bool((subject[0] as Node).get("is_investigating")):
-			_fail("%s did not take the lure — it stands %.1f m from a jar that"
+	# --- ON THE LANDING FRAME: who is baited, who is not, and at what. ---
+	var baited: Array[String] = []
+	for subject: Array in [[chaser, "chaser"], [tracker, "tracker"],
+			[idle, "idle"], [guard, "guard"]]:
+		if not bool((subject[0] as Node).get("is_baited")):
+			_fail("%s did not take the jar on landing — it stands %.1f m from"
 				% [subject[1], (subject[0] as Node3D).global_position.distance_to(
-					jar.global_position)] + " reaches %.1f m" % KimchiJar.LURE_RADIUS)
+					jar_pos)] + " a pot that reaches %.1f m" % KimchiJar.HONEYPOT_RADIUS)
 			continue
-		lured.append(String(subject[1]))
+		baited.append(String(subject[1]))
 		var aim: Vector3 = (subject[0] as Node).get("investigate_target")
-		if aim.distance_to(jar.global_position) > 0.01:
+		if aim.distance_to(jar_pos) > 0.01:
 			_fail("%s took an errand to %s, which is not the jar at %s"
-				% [subject[1], str(aim), str(jar.global_position)])
-	if lured.size() != 3:
-		_fail("the jar lured %d of the three bodies that must come (%s) — a lure"
-			% [lured.size(), ", ".join(lured)]
-			+ " that reaches nobody passes every 'X did not flee' claim below")
-	for subject: Array in [[chaser, "the chasing croc"], [boss, "the boss"],
-			[slept, "the slept croc"], [far, "the croc 37 m away"]]:
-		if bool((subject[0] as Node).get("is_investigating")):
-			_fail("%s took the lure — it must not" % subject[1])
+				% [subject[1], str(aim), str(jar_pos)])
+		if float((subject[0] as Node).get("_investigate_hold")) != KimchiJar.HONEYPOT_SECONDS:
+			_fail("%s holds %.2f s, not the jar's %.1f — every body releases on"
+				% [subject[1], float((subject[0] as Node).get("_investigate_hold")),
+					KimchiJar.HONEYPOT_SECONDS] + " the jar's own 12 s")
+	if baited.size() != 4:
+		_fail("the jar baited %d of the four bodies that must take it on landing"
+			% baited.size() + " (%s) — an arming delay (mutation (a)) or a busy-"
+			% ", ".join(baited) + "body refusal (mutation (b)) lands here")
+	# The boss is the fifth taking, measured separately: it must be baited but
+	# NOT at the pot — the leash clamp pulled its errand back to the fence.
+	if not bool(boss.get("is_baited")):
+		_fail("the boss did not take the jar — bosses come (clamped), they are"
+			+ " not skipped")
+	else:
+		var baim: Vector3 = boss.get("investigate_target")
+		if not boss.in_territory(baim):
+			_fail("the boss walks at %s, outside its territory at %s — the clamp"
+				% [str(baim), str(boss.home_position)] + " is not clamping")
+		if baim.distance_to(jar_pos) < 1.0:
+			_fail("the boss walks at the jar itself — the leash clamp is gone"
+				+ " (mutation (g)), and it would fight the hard clamp instead of"
+				+ " holding the fence")
+	# The chase and the track were dropped, not paused.
+	if bool(chaser.get("is_chasing")):
+		_fail("the chaser is still chasing — take_bait takes a BUSY body, it"
+			+ " does not refuse one (mutation (b))")
+	if bool(tracker.get("is_tracking")):
+		_fail("the tracker is still tracking — the honeypot ignores scent too")
+	for subject: Array in [[far, "the croc 37 m away"], [slept, "the slept croc"],
+			[long, "the croc 40 m away"]]:
+		if bool((subject[0] as Node).get("is_baited")):
+			_fail("%s took the jar — it must not" % subject[1])
 	if bool(slept.get("lod_active")):
-		_fail("the lure WOKE the slept croc — investigate_point() wakes what it"
-			+ " lures, so one press would wake every sleeper in a 20 m ball")
+		_fail("the sweep WOKE the slept croc — one press would wake every"
+			+ " sleeper in a 30 m ball")
+	# THE 40 m PROBE (round 1): past the sweep, so taken directly — the throw
+	# is what catches it, the walk is what the release must not wait on.
+	if not long.take_bait(jar_pos, KimchiJar.HONEYPOT_SECONDS):
+		_fail("a body 40 m out refused a direct take — take_bait has no range"
+			+ " of its own, the radius is the jar's")
 
-	# --- BEAT 2, on the jar's own clock. ---
-	jar._process(KimchiJar.FERMENT)
-	var scattered: Array[String] = []
-	for subject: Array in [[close, "close"], [chaser, "the chasing croc"]]:
-		if not bool((subject[0] as Node).get("is_fleeing")):
-			_fail("%s is %.1f m from the burst and did not run"
-				% [subject[1], (subject[0] as Node3D).global_position.distance_to(
-					jar.global_position)])
-			continue
-		scattered.append(String(subject[1]))
-		if float((subject[0] as Node).get("flee_time_remaining")) != KimchiJar.FLEE_DURATION:
-			_fail("%s runs for %.3f s, not the %.1f s the ferment buys"
-				% [subject[1], float((subject[0] as Node).get("flee_time_remaining")),
-					KimchiJar.FLEE_DURATION])
-		# THE SOURCE IS THE POT, NOT THE HERO. Without these two the burst could
-		# be running the pack at Phoboman and every `is_fleeing` above would
-		# still read true.
-		var source: Vector3 = (subject[0] as Node).get("flee_source")
-		if source.distance_to(jar.global_position) > 0.01:
-			_fail("%s is running from %s, and the jar is at %s"
-				% [subject[1], str(source), str(jar.global_position)])
-		if bool((subject[0] as Node).get("flee_tracks_player")):
-			_fail("%s tracks the PLAYER as it runs — the smell came from a pot on"
-				% subject[1] + " the ground, and on a peer that is a pack driven"
-				+ " straight at the teammate who placed it")
-	if scattered.size() != 2:
-		_fail("the burst scattered %d of the two bodies that must run (%s)"
-			% [scattered.size(), ", ".join(scattered)])
-	for subject: Array in [[guard, "the guard"], [boss, "the boss"],
-			[slept, "the slept croc"], [sniffer, "the sniffer 15 m out"],
-			[far, "the croc 37 m away"]]:
-		if bool((subject[0] as Node).get("is_fleeing")):
-			_fail("%s fled the burst — it must not" % subject[1])
-	# THE ERRAND IS DROPPED BY THE FLIGHT, and the guard is its control: it was
-	# lured too and it never fled, so it is still standing over the pot.
-	if bool(close.get("is_investigating")):
-		_fail("`close` sniffed the jar, was scattered by it, and still holds its"
-			+ " errand — it would run for 4 s and then walk back to the pot that"
-			+ " just went off in its face")
+	# --- AT 6 s: STILL BAITED, holds unrefreshed. ---
+	jar._process(6.0)
+	for subject: Array in [[chaser, "chaser"], [tracker, "tracker"],
+			[idle, "idle"], [guard, "guard"], [boss, "boss"], [long, "long"]]:
+		if not bool((subject[0] as Node).get("is_baited")):
+			_fail("%s is already free at t=6 — the release comes at 12, not 6"
+				% subject[1] + " (mutation (c))")
+		if float((subject[0] as Node).get("_investigate_hold")) != KimchiJar.HONEYPOT_SECONDS:
+			_fail("%s holds %.2f s at t=6 — the sweep re-taking it would refresh"
+				% [subject[1], float((subject[0] as Node).get("_investigate_hold"))]
+				+ " a hold the jar's own clock owns; take_bait is idempotent")
+		if float((subject[0] as Node).get("_bait_left")) != KimchiJar.HONEYPOT_SECONDS:
+			_fail("%s has %.2f s of bait left at t=6 — the deadline is the jar's"
+				% [subject[1], float((subject[0] as Node).get("_bait_left"))]
+				+ " remainder too, and it is not refreshed either")
+
+	# --- LATE JOINER: into 10 m at t=7, caught with the 5 s left. ---
+	(far as Node3D).global_position = jar_pos + Vector3(10.0, 0.0, 0.0)
+	jar._process(1.0)
+	if not bool(far.get("is_baited")):
+		_fail("a body that walked into 10 m at t=7 took nothing — the sweep runs"
+			+ " while the jar is down, not once at the drop")
+	if absf(float(far.get("_investigate_hold")) - 5.0) > 0.01:
+		_fail("the late joiner holds %.2f s, not the 5 s the jar still has —"
+			% float(far.get("_investigate_hold")) + " every body releases on the"
+			+ " jar's 12 s no matter when it was caught")
+
+	# --- IGNORES THE HERO: the load-bearing pair. ---
+	(player as Node3D).global_position = \
+		(chaser as Node3D).global_position + Vector3(2.0, 0.0, 0.0)
+	var chase_aim: Vector3 = chaser.get("investigate_target")
+	chaser._update_chase_state()
+	if bool(chaser.get("is_chasing")):
+		_fail("a baited body re-acquired the hero standing 2 m inside its radius"
+			+ " — the honeypot ignores the heroes")
+	if (chaser.get("investigate_target") as Vector3).distance_to(chase_aim) > 0.01:
+		_fail("the chase check moved a baited body's errand — it must not touch it")
+	chaser._physics_process(1.0 / 60.0)
+	if bool(chaser.get("is_chasing")):
+		_fail("one physics frame re-acquired the hero next to a baited body")
+	if not bool(chaser.get("is_baited")):
+		_fail("one physics frame ended the honeypot early — no re-acquisition"
+			+ " may cancel it")
+
+	# --- IGNORES THE STINK. ---
+	var captive_before: int = player.captive_heroes.size()
+	chaser.flee_from(jar_pos, 4.0, false)
+	if bool(chaser.get("is_fleeing")):
+		_fail("a baited body fled a Stink Wave at the jar — the honeypot ignores"
+			+ " stink, flash and quake")
+	if not bool(chaser.get("is_baited")):
+		_fail("the wave ended a baited errand without moving the body")
+
+	# --- IGNORES CAPTURE: the baited hunter brushes past. ---
+	tracker._on_player_collision(player)
+	if player.captive_heroes.size() != captive_before:
+		_fail("a baited hunter jailed %s — captures_hero cannot fire through the"
+			% str(player.captive_heroes.keys()) + " honeypot (mutation (f))")
+	if player.hero_name() != "phoboman":
+		_fail("a baited hunter switched the hero to %s without jailing anybody"
+			% player.hero_name())
+
+	# --- RELEASE AT 12 s. ---
+	jar._process(5.5)
+	if float(jar.get("_age")) < KimchiJar.HONEYPOT_SECONDS:
+		_fail("the jar is %.2f s old after its own clock said 12.5 — the release"
+			% float(jar.get("_age")) + " never fired")
+	# THE 40 m PROBE (round 1): caught at the throw with 40 m of walking ahead
+	# of it. Driven in frame by frame — half-second ticks with a 1.6 m step
+	# each, so every leg records progress and the stall watchdog never fires —
+	# the deadline and only the deadline ends it: 24 ticks spend exactly 12 s,
+	# while arrival-relative expiry would hold it for 12 s plus its travel.
+	for _i in 24:
+		long._physics_process(0.5)
+		if bool(long.get("is_baited")):
+			(long as Node3D).global_position = (long as Node3D).global_position.move_toward(jar_pos, 1.6)
+	if bool(long.get("is_baited")):
+		_fail("a body caught from 40 m out is still baited past 12 s — expiry"
+			+ " is absolute (catch + jar remainder), not arrival + hold")
+	if bool(long.get("is_investigating")):
+		_fail("the 40 m probe is still on an errand past 12 s")
+	# Every other probe arrives first — teleported to its own errand target,
+	# not walked, because no frame may pass: the jar for the field and the
+	# guard, the fence point for the boss (a boss never reaches the pot
+	# itself). An arrived body is the state the release is ABOUT, so one 12 s
+	# frame each spends every deadline and the home leg ends every errand.
+	var arrivals: Array = [[chaser, "chaser", Vector3(0.3, 0.0, 0.0)],
+		[tracker, "tracker", Vector3(-0.3, 0.0, 0.0)],
+		[idle, "idle", Vector3(0.0, 0.0, 0.3)],
+		[far, "the late joiner", Vector3(0.0, 0.0, -0.3)],
+		[guard, "guard", Vector3(0.2, 0.0, 0.2)]]
+	for arrival: Array in arrivals:
+		var dest: Vector3 = (arrival[0] as Node).get("investigate_target") as Vector3
+		(arrival[0] as Node3D).global_position = dest + (arrival[2] as Vector3)
+	(boss as Node3D).global_position = boss.get("investigate_target") as Vector3
+	for subject: Array in [[chaser, "chaser"], [tracker, "tracker"],
+			[idle, "idle"], [far, "the late joiner"], [boss, "boss"]]:
+		(subject[0] as Node)._physics_process(KimchiJar.HONEYPOT_SECONDS)
+		if bool((subject[0] as Node).get("is_baited")):
+			_fail("%s is still baited past 12 s — release is the home leg, not"
+				% subject[1] + " a second effect")
+		if bool((subject[0] as Node).get("is_investigating")):
+			_fail("%s is still on an errand past 12 s — a field body goes back"
+				% subject[1] + " to wander through _end_investigation()")
+	guard._physics_process(KimchiJar.HONEYPOT_SECONDS)
+	if bool(guard.get("is_baited")):
+		_fail("the guard is still baited past 12 s")
 	if not bool(guard.get("is_investigating")):
-		_fail("the guard dropped its errand without ever fleeing — the one-line"
-			+ " fix in flee_from() is meant to fire on a FLIGHT, not on a burst")
+		_fail("the guard is not walking home — a confined body releases onto"
+			+ " the home leg, it does not end where it stands")
+	if float(guard.get("_investigate_hold")) != 0.0:
+		_fail("the guard walks home with %.2f s of hold left"
+			% float(guard.get("_investigate_hold")))
+	if (guard.get("confine_half") as Vector2) != Vector2(2.0, 2.0):
+		_fail("the guard walks home in %s, not its authored 2x2 post — the"
+			% str(guard.get("confine_half")) + " borrowed leash was not handed back")
 
-	# --- NOTHING DIED. ---
-	for subject: Array in [[sniffer, "the sniffer"], [close, "the close croc"],
-			[chaser, "the chasing croc"], [slept, "the slept croc"],
-			[far, "the far croc"], [guard, "the guard"], [boss, "the boss"]]:
+	# --- THE GATE LIFTS WHEN THE JAR GOES. ---
+	# Counted by hand: a SceneTree script's `root` is a Window, which has no
+	# group lookup — `_jars_under` in mp_selfcheck walks the children the same
+	# way, and every probe here is a direct child of it.
+	var pack_after: int = 0
+	for child: Node in root.get_children():
+		if child.is_in_group("crocodile") and not child.is_queued_for_deletion():
+			pack_after += 1
+	jar._process(KimchiJar.LINGER + 0.5)
+	# One frame for the queued free to land — the jar frees ITSELF through the
+	# transient idiom, and `is_instance_valid` still reads true until the queue
+	# is flushed. The pack is already released, so the tick moves nothing this
+	# check still measures.
+	await process_frame
+	if is_instance_valid(jar):
+		_fail("the jar is still alive %.1f s after it landed — it frees itself"
+			% (KimchiJar.HONEYPOT_SECONDS + KimchiJar.LINGER + 0.5)
+			+ " at HONEYPOT_SECONDS + LINGER")
+	elif player._kimchi_jar != null and player._kimchi_jar.get_ref() != null:
+		_fail("the jar is gone and the press still remembers it")
+	elif player.get_ability_block_reason(1) != "":
+		_fail("the jar is gone and the press is still gated by '%s'"
+			% player.get_ability_block_reason(1))
+
+	# --- NOTHING DIED: the count and the bodies. ---
+	var pack_before: int = 8
+	if pack_after != pack_before:
+		_fail("the pack went from %d bodies to %d — nothing dies in this game"
+			% [pack_before, pack_after] + " (ruling 3)")
+	if pack_after == 0:
+		_fail("the pack count is 0 — the count above cannot tell a kept pack"
+			+ " from one that was never there")
+	for subject: Array in [[chaser, "the chaser"], [tracker, "the tracker"],
+			[idle, "idle"], [far, "the late joiner"], [slept, "the slept croc"],
+			[guard, "the guard"], [boss, "the boss"], [long, "long"]]:
 		_assert_body_alive("Kimchi Offering", subject)
 
 	# --- ...and neither the arm nor the jar names a kill, by name. ---
 	# Check 10b's spelling test, over BOTH files: the arm chooses the spot and
-	# the jar owns both beats, so a kill could be spelled in either.
+	# the jar owns the clock, so a kill could be spelled in either.
 	var arm: String = _source_span("res://scripts/player_abilities.gd",
 		"func _ability2_phoboman()", "\nfunc ")
 	if arm.is_empty():
@@ -3951,37 +4105,81 @@ func _check_kimchi_lures_then_scatters() -> void:
 			if spelling == "queue_free()" and pair[1] == "kimchi_jar.gd":
 				continue  # the jar frees ITSELF — that is the transient idiom.
 			if String(pair[0]).contains(spelling):
-				_fail("%s calls %s — the jar lures and scatters, it never kills"
+				_fail("%s calls %s — the jar lures and releases, it never kills"
 					% [pair[1], spelling])
-	# AND NO SPECIES NAME ANYWHERE. "Guards come but do not run" is two row-keyed
-	# functions disagreeing, never a name test (CLAUDE.md, "predators are data").
+	# AND NO SPECIES NAME ANYWHERE. "Every hunter and crocodile in range" is a
+	# radius and a door, never a name test (CLAUDE.md, "predators are data").
 	for pair2: Array in [[arm, "the Kimchi arm"], [jar_src, "kimchi_jar.gd"]]:
 		for name2: String in ["\"tower_guard\"", "\"hunter_robot\"", "\"crocodile\" =="]:
 			if String(pair2[0]).contains(name2):
-				_fail("%s tests a species by NAME (%s) — every exclusion here is a"
-					% [pair2[1], name2] + " row key or the is_boss layer")
+				_fail("%s tests a species by NAME (%s) — every rule here is the"
+					% [pair2[1], name2] + " radius, a row key or the is_boss layer")
 
-	# --- THE GATE LIFTS WHEN THE JAR GOES. ---
-	jar._process(KimchiJar.LINGER)
-	await process_frame
-	if player._kimchi_jar != null and player._kimchi_jar.get_ref() != null:
-		_fail("the jar is still alive %.1f s after it landed — it frees itself at"
-			% (KimchiJar.FERMENT + KimchiJar.LINGER) + " FERMENT + LINGER")
-	elif player.get_ability_block_reason(1) != "":
-		_fail("the jar is gone and the press is still gated by '%s'"
-			% player.get_ability_block_reason(1))
+	# --- THE CONTROLS: the same bodies, unbaited, in a jarless world. ---
+	# A check without these is vacuous (orchestration-2026-09-19 memory: the
+	# four species of vacuous assertion) — each proves the probe CAN do what
+	# the honeypot stopped it doing.
+	(player as Node3D).global_position = \
+		(chaser as Node3D).global_position + Vector3(2.0, 0.0, 0.0)
+	chaser._update_chase_state()
+	if not bool(chaser.get("is_chasing")):
+		_fail("the released chaser did not acquire the hero 2 m away — the"
+			+ " honeypot reads above measured a body that could never chase")
+	idle.flee_from(jar_pos, 4.0, false)
+	if not bool(idle.get("is_fleeing")):
+		_fail("the released idle did not flee — the stink reads above measured"
+			+ " a body that could never flinch")
+	var jailed_before: int = player.captive_heroes.size()
+	tracker._on_player_collision(player)
+	if player.captive_heroes.size() != jailed_before + 1:
+		_fail("the released hunter jailed %d heroes, not one more — the capture"
+			% (player.captive_heroes.size() - jailed_before)
+			+ " reads above measured a body that could never jail")
+	if not player.captive_heroes.has("phoboman"):
+		_fail("the released hunter jailed %s, not phoboman"
+			% str(player.captive_heroes.keys()))
 
-	print("kimchi: G drops a jar 3 m out, sniffer/close/guard come and boss/slept/"
-		+ "chaser/far do not, the burst scatters close and chaser from the POT for"
-		+ " 4.0 s, guard and boss stand, the sleeper never woke, none freed,"
-		+ " neither file names a kill or a species")
+	print("kimchi honeypot: G drops a jar 3 m out, chaser/tracker/idle/guard take it"
+		+ " on landing and the boss at its fence, far/slept/long do not, the late joiner"
+		+ " is caught at t=7 with 5 s, hero/stink/capture ignored with live controls,"
+		+ " all released at 12 s, none freed, neither file names a kill or a species")
 
-	_free_kimchi_probes([sniffer, close, chaser, slept, far, guard, boss])
+	_free_kimchi_probes([chaser, tracker, idle, far, slept, guard, boss, long])
+	floor_body.queue_free()
 	_clear(player)
 	second_tree.remove_from_group("progression")
 	second_tree.queue_free()
 	await process_frame
-	Sentinel.done("kimchi_lures_then_scatters")
+	Sentinel.done("kimchi_honeypot")
+
+
+func _assert_honeypot_radius() -> void:
+	"""
+	Item 9 of check 10d, factored out so the landing reads stay in order: the
+	pinned radius argued against the table it must cover and the sleep radius
+	it must not wake. Iterated, never two literals — a new widest row or an LOD
+	retune moves this, not a comment.
+	"""
+	var table: Dictionary = load(CROC_SCRIPT).get_script_constant_map().get("SPECIES", {})
+	if table.is_empty():
+		_fail("SPECIES is empty — the radius bound below is vacuous")
+		return
+	var widest: float = 0.0
+	for key: String in table.keys():
+		widest = maxf(widest, float((table[key] as Dictionary).get("detection_radius", 0.0)))
+	if widest <= 0.0:
+		_fail("no row carries a detection_radius — the radius bound is vacuous")
+	if not (KimchiJar.HONEYPOT_RADIUS > widest):
+		_fail("HONEYPOT_RADIUS %.1f does not cover the widest detection_radius"
+			% KimchiJar.HONEYPOT_RADIUS + " %.1f — a body that could see the hero"
+			% widest + " from the jar would ignore the pot")
+	var sim_radius: float = float(load(LOD_SCRIPT).get_script_constant_map().get("SIM_RADIUS", 0.0))
+	if sim_radius <= 0.0:
+		_fail("crocodile_lod_manager has no SIM_RADIUS — the sleep bound is vacuous")
+	elif not (KimchiJar.HONEYPOT_RADIUS < sim_radius):
+		_fail("HONEYPOT_RADIUS %.1f reaches past SIM_RADIUS %.1f — one press"
+			% [KimchiJar.HONEYPOT_RADIUS, sim_radius] + " would wake every sleeper"
+			+ " in the ball")
 
 
 func _free_kimchi_probes(bodies: Array) -> void:

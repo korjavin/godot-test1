@@ -215,10 +215,11 @@ const VERB_BUDGET_PER_SEC: Dictionary = {
 	# this" is not even the half-defence it is elsewhere; the budget and
 	# `MpCodec.decode_alrm()`'s bounds are the whole of it.
 	"alrm": 2,
-	# one Kimchi Offering jar each (bead godot-test1-0mr0.5). `flee`'s number for
-	# `flee`'s reason — this verb IS a flee, one beat later, plus a lure — and the
+	# one Kimchi Offering jar each (bead godot-test1-0mr0.5, honeypot since
+	# bead godot-test1-m7jp). `flee`'s number for `flee`'s reason — this verb
+	# holds the pack it reaches for 12 s — and the
 	# honest rate is far under it: the ability's own cooldown is 14 s and the
-	# `"JAR"` gate refuses a second jar while the first is brewing, so one peer
+	# `"JAR"` gate refuses a second jar while the first is down, so one peer
 	# playing the game sends at most 1 per 14 s. Anyone-to-everyone like `alrm`,
 	# so "only the master sends this" is not even the half-defence it is
 	# elsewhere; this budget, `MpCodec.decode_bait()`'s envelope and the sender-

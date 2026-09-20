@@ -102,6 +102,17 @@ const CROC_FLAG_BURROWED: int = 16
 ## its own (`piglet_crocodile_ai._tick_shrink()`), so the master's window is the
 ## room's window and there is no duration on the wire to disagree about.
 const CROC_FLAG_SHRUNK: int = 32
+## Phoboman's Kimchi Offering (bead godot-test1-m7jp) — BIT 64, spent by the
+## same test the paragraph below sets: harmlessness a peer cannot see.
+##
+## THE CLOCK STAYS ON THE MASTER, `CROC_FLAG_SHRUNK`'s shape exactly. A
+## remote-driven body assigns `is_baited` off this bit and runs no countdown
+## and no errand of its own (`piglet_crocodile_ai.set_remote_state()`), so the
+## master's 12 s is the room's 12 s and there is no duration on the wire to
+## disagree about. The bit is NOT derivable — a peer must know the body at the
+## jar will not bite, because `_tick_remote()` bites locally — and it
+## self-heals: the next sample without the bit clears it.
+const CROC_FLAG_BAITED: int = 64
 ##
 ## THE HUNTER OWES NO BIT, AND THAT IS A RULING, NOT A DEFERRAL (bead
 ## godot-test1-9rm.5). The hunt arm has three states — telegraphing, shadowing at
@@ -125,9 +136,13 @@ const CROC_FLAG_SHRUNK: int = 32
 ##
 ## Bit 32 has now been SPENT, and by exactly the test this paragraph set: Teibi's
 ## Shrink Ray is a pose motion cannot show (see `CROC_FLAG_SHRUNK` above), so it
-## extended BOTH sides on the same commit. TWO BITS ARE SPARE; the reason not to
-## spend one is unchanged — a bit nothing reads is a bit the encoder and the
-## decoder can drift apart on — and so is the gate:
+## extended BOTH sides on the same commit. Bit 64 went the same way for
+## Phoboman's Kimchi Offering (bead godot-test1-m7jp): a body the master holds
+## at the jar must read as harmless on a peer whose `_tick_remote()` bites
+## locally, and harmlessness is not derivable from the other bits — see
+## `CROC_FLAG_BAITED` above. ONE BIT IS SPARE; the reason not to spend it is
+## unchanged — a bit nothing reads is a bit the encoder and the decoder can
+## drift apart on — and so is the gate:
 ## `mp_selfcheck._check_hunter_sync()` round-trips every combination the encoder
 ## can produce and fails if the decoder has not learned one.
 
@@ -181,7 +196,7 @@ const MAX_PAD_PRESS_DISTANCE: float = 6.0
 ## `PlayerAbilities.KIMCHI_PLACE_AHEAD` = 3 m, plus however far the caster has
 ## run since its last presence packet — at PRESENCE_HZ and a sprint that is a few
 ## metres — plus whatever a peer's copy of that presence is behind on a bad link.
-## Against the jar's own 20 m lure this leaves a spoof no more useful than
+## Against the jar's own 30 m honeypot this leaves a spoof no more useful than
 ## walking there, which is the bar every position test here is set at.
 const MAX_BAIT_PLACE_DISTANCE: float = 50.0
 
@@ -481,6 +496,8 @@ static func _croc_flags(croc: Node) -> int:
 		flags |= CROC_FLAG_BURROWED
 	if "is_shrunk" in croc and croc.is_shrunk:
 		flags |= CROC_FLAG_SHRUNK
+	if "is_baited" in croc and croc.is_baited:
+		flags |= CROC_FLAG_BAITED
 	return flags
 
 static func decode_croc_sync(state: Dictionary) -> Dictionary:
