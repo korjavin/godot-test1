@@ -16,19 +16,25 @@ extends SceneTree
 ## deck, B5 and B6 are unit assertions on the two pieces no seed reliably exercises,
 ## and B2 (with B2b) is its own sweep. They are listed after T4.
 ##
-## ...and child `.4` (road crossings + aimed spurs) adds FOUR, each its own call
-## after the drawn chain: C1 (the world tie off the DRAWN box, the route spanning
-## the swath, the zebra override at the flanking poles), C2 (no road coin stands
-## on a drawn strip), C3 (the angle rule over the CI seeds, failing on zero
-## crossings), C4 (every surviving spur attaches, with the spur:trunk ratio). Check
-## 1 additionally re-rolls the four spur draws and asserts the aim replacing
-## bearing and length; 3b counts mid-span crossings beside the shallow refusals.
+## ...and child `.4` (road crossings) adds THREE, each its own call after the
+## drawn chain: C1 (the world tie off the DRAWN box, the route spanning the
+## swath, the zebra override at the flanking poles), C2 (no road coin stands on
+## a drawn strip), C3 (the angle rule over the CI seeds, failing on zero
+## crossings). 3b counts mid-span crossings beside the shallow refusals.
+##
+## ...and bead `godot-test1-pnvb.10` (the spur tier's deletion, owner ruling
+## 2026-09-20) swaps C4 for S1 in the same slot: the corridor band swept whole
+## on the architect's 8 probe seeds carries no edge -1 marker anywhere, with a
+## trunk marker on every seed as the control. Check 1's spur-aim re-roll, check
+## 2's spur cover, check 3's spur prefix sweep, check 4's spur form-2 sweep and
+## R1's spur-bare half retired with the tier; 2d, 3b, T3a/T3b and the untouched
+## anchor half are the same statements for the remaining walk.
 ##
 ## ...and bead `godot-test1-z2yv.3` — the bike-stand rack at every NETWORK ANCHOR
 ## a trunk touches — adds THREE of its own after C4: R1 (exactly one rack per
 ## touched anchor across the field, every marker within `RACK_ANCHOR_REACH` of
 ## its anchor AND inside the building chunk, dedup by construction on
-## preliminary sites, untouched anchors and pure spur ends bare; fails on zero
+## preliminary sites, and untouched anchors bare; fails on zero
 ## racks), R2 (the contract the rental epic reads: group exactly `bike_stand`,
 ## metas `anchor: int` and `pos: Vector3`, tier-separated from the path
 ## markers), R3 (the world tie: a rack box really in the chunk's batch, through
@@ -56,31 +62,21 @@ extends SceneTree
 ##      is what catches a draw hidden behind a helper. Its two controls run the
 ##      other way: the field must contain a chunk WITH a path (or the slice is
 ##      never exercised) and a chunk WITHOUT one (or "identical" is trivial).
-##   2. PURITY, SEAMLESSNESS, AND WHERE THE GEOMETRY ACTUALLY LANDS. The same
-##      chunk built twice is byte-identical, batch and `obstacles` both. Then, for
-##      real paths across a real field: (b) the union of the segments drawn by
-##      every chunk in reach is EXACTLY the station list — each segment once, none
-##      missing — with a mutation control on the comparator in both directions;
-##      and (c) every strip box's WORLD position is its segment's midpoint, which
-##      is the only assertion in the file that ties a drawn box to the station
-##      that produced it. Without (c) a wrong local frame — chunk-local is
-##      relative to the chunk NODE, which stands at the chunk CENTRE, not its
-##      corner — puts every strip half a chunk off the ground the walk cleared
-##      and the other five checks all still pass.
-##   3. TRUNCATION, NOT GAPS. Every station in the list is legal, measured against
-##      the shipped predicate; a path shorter than `BIKE_PATH_MIN_STATIONS` is a
-##      failure. Then a SWEEP over seeds and origins for a path that actually runs
-##      into something, and it FAILS IF IT FINDS NONE — a check that can pass by
-##      never testing the thing is not a check. The successor station is taken
-##      from the shipped recurrence and asked whether it is blocked; that is a
-##      NON-VACUITY COUNTER and not an assertion, deliberately, because a path may
-##      also simply have run out of its rolled length and then has a perfectly
-##      legal successor. "Never resumes past a block" is the prefix loop above it.
-##   4. SCARCITY, form 2. Origins in the HQ corridor produce paths; origins
-##      beyond `SCARCITY_PLAIN_DISTANCE` produce NONE. The near field is the
-##      control — `scarcity_selfcheck` check 2's own shape — and `scarcity_at()`
-##      is asserted to really be 0 out there, so the far half cannot pass because
-##      the band was mis-chosen.
+##   2. PURITY, SEAMLESSNESS, AND THE TRUNK COVER. The same chunk built twice
+##      is byte-identical, batch and `obstacles` both (2a). Then 2d: the union of
+##      the segments drawn by every chunk a trunk's box touches is EXACTLY the
+##      drawable set — each segment once, none missing, none over water or in a
+##      keep-out — with a three-way mutation control on the comparator. The
+##      spur-origin cover retired with its tier in `godot-test1-pnvb.10`.
+##   3. ABANDONED WHOLE, NEVER TRUNCATED. The spur prefix sweep retired with its
+##      tier in `godot-test1-pnvb.10`; what remains is the half-step control (the
+##      river sample seen to answer true, so `segment_blocked` cannot be quietly
+##      emptied) and 3b (every surviving trunk ends at its anchor or the rect
+##      edge, abandonment reasons printed). Both fail on zero from their own side.
+##   4. THE SCARCITY SPLIT. The spur form-2 sweep retired with its tier in
+##      `godot-test1-pnvb.10`; what remains is T3a (a synthetic trunk at a measured
+##      k = 0 site draws its strip and not one pole, with the k = 1 control) and
+##      T3b (the real-world measurement beside it).
 ##   5. ZERO NEW BUCKETS. A chunk carrying a path has exactly the
 ##      `BlockMultiMesh_*` children it has without one. The "CUBE only" ruling
 ##      (`batch_selfcheck` check 5's `KIND_CAP_BY_NAME` needs no row changed),
@@ -139,10 +135,10 @@ extends SceneTree
 ##      file that awaits a frame. Its control is a second chunk left loaded, whose
 ##      Timer must still be alive at the end.
 ##
-## ...and epic `godot-test1-pnvb` child `.2` — THE TRUNK ROUTES — grows three of the
-## checks above (2, 3 and 4) and adds six of its own. A trunk is a polyline between
-## two anchors of `bike_network.gd`'s graph; it is found by a BOUNDING BOX rather than by `scan_radius_chunks()`, its
-## route is EXEMPT from scarcity and its FURNITURE is not.
+## ...and epic `godot-test1-pnvb` child `.2` — THE TRUNK ROUTES — re-points checks
+## 2, 3 and 4 onto the trunk walk and adds six of its own. A trunk is a polyline
+## between two anchors of `bike_network.gd`'s graph; it is found by a BOUNDING BOX,
+## its route is EXEMPT from scarcity and its FURNITURE is not.
 ##
 ##   2d. THE BOUNDING-BOX LOOKUP AGREES WITH THE MIDPOINT RULE. Check 2b's cover
 ##      assertion, re-made for the other way a chunk finds a polyline. A box that
@@ -242,14 +238,15 @@ const SEEDS: Array[int] = [20260904, 777, 4242]
 ## retuned prime, salt or chance empties the band LOUDLY. Re-derive it by
 ## sweeping `spawn_bike_path_in_chunk` over a band and reading which chunks draw.
 ##
-## RE-DERIVED for child `godot-test1-pnvb.4`: aimed spurs live where a trunk is in
-## reach, so the old band (y 8..11) holds no path at all and checks 1, 2a and 5 go
-## red on empty. This one (y 2..5, same X) holds 6 path chunks, 10 empty ones, 2
-## that draw geometry with no pole, and 3 spur markers on seed 20260904: the mix
-## the controls screen for, counted with empty obstacles (the real pipeline can
-## only skip more poles, never fewer, so the bare count is the conservative one).
-const AB_X: Array[int] = [-5, -4, -3, -2]
-const AB_Y: Array[int] = [2, 3, 4, 5]
+## RE-DERIVED for `godot-test1-pnvb.10`: the spur tier is gone, so the old band
+## (x -5..-2, y 2..5) holds no path at all and checks 1, 2a and 5 go red on
+## empty. This one (x -6..-3, y 3..6) straddles the trunk that runs diagonally
+## down-left through it and holds 4 trunk chunks, 11 empty ones and 1 that draws
+## geometry with no pole on seed 20260904: the mix the controls screen for,
+## counted with empty obstacles (the real pipeline can only skip more poles,
+## never fewer, so the bare count is the conservative one).
+const AB_X: Array[int] = [-6, -5, -4, -3]
+const AB_Y: Array[int] = [3, 4, 5, 6]
 
 ## The CUBE bucket's node name — `ChunkBatch._emit_kind_multimesh` keeps the bare
 ## name for CUBE and suffixes every other kind, and this family builds CUBEs only.
@@ -257,17 +254,11 @@ const CUBE_BUCKET: String = "BlockMultiMesh"
 ## The chunk's single shared collision body.
 const BLOCK_BODY: String = "BlockCollision"
 
-## How many real paths check 2b walks the whole cover of. Every one of them costs
-## `(2 * scan_radius + 1)^2` spawner calls, so this is a bound on the check's cost
-## rather than on its meaning: the assertion is about the RULE, and six paths on
-## six different stretches of field exercise it as well as thirty do.
-const COVER_SAMPLE: int = 6
-
-## Check 3's SEARCH SPACE in seeds, not a sample: it sweeps these in order and
-## stops at the first seed by which it has seen both shapes it needs — a
-## truncated path and one that ran to `BIKE_PATH_MAX_STATIONS`. The three CI
-## `SEEDS` lead it only because they are cheap to try first, and
-## `waypoint_selfcheck`'s CONTROL_SEEDS is the same shape.
+## S1's and B2's SEED LIST: the architect's 8 probe seeds — the band that measured
+## 137 one-ended spur stubs, and every trunk river crossing since. A fixed list
+## rather than a sample, and both checks fail on zero from their own side (S1 on
+## zero trunk markers, B2 on zero crossings), so neither can pass on seeds that
+## stopped exercising them. `waypoint_selfcheck`'s CONTROL_SEEDS is the same shape.
 const TRUNCATION_SEEDS: Array[int] = [20260904, 777, 4242, 1, 424242, 999983, 750, 99]
 
 ## How many station-strides `_check_half_step_control` samples looking for a
@@ -280,15 +271,14 @@ const HALF_STEP_SAMPLES: int = 250000
 ## this square) and small enough to stay a fraction of a second.
 const SWEEP_HALF: int = 14
 
-## C4's corridor band, in origin chunks: the sweep the spur:trunk ratio is
-## printed over. Wide enough that aimed spurs survive on every CI seed (a 29x29
-## square holds 0-3); the ratio is survivors per trunk in the world memo, so the
-## band sets its scale and the const comment on `BIKE_PATH_CHANCE` records what
-## this one measured.
-const C4_X0: int = -30
-const C4_X1: int = 30
-const C4_Y0: int = -10
-const C4_Y1: int = 20
+## S1's corridor band, in chunks: the architect's probe band (world x -700..1750,
+## z -400..400) that measured 137 one-ended spur stubs over 8 seeds. Swept whole
+## on every one of those seeds; the tier is off, so no chunk may carry an edge -1
+## marker, and every seed must still carry trunk paint (the control).
+const S1_X0: int = -14
+const S1_X1: int = 35
+const S1_Z0: int = -8
+const S1_Z1: int = 8
 
 ## How far a strip box's world centre may sit from its segment's midpoint in
 ## check 2c. Metres, and it is a float-comparison tolerance rather than a design
@@ -508,11 +498,6 @@ const TIE_BOUNDS: Array[float] = [82.0, 20.0, 40.0]
 ## with no rack under it is the lie this bead exists to prevent.
 const MARKER_GEOMETRY_TOLERANCE: float = 3.0
 
-## How near a spur end a stand marker may stand before R1 calls it a rack on a
-## spur. A rack is ~2 m of steel, so 5 m is far past float slack and far short
-## of the reach that would explain the marker as some anchor's.
-const SPUR_END_CLEARANCE: float = 5.0
-
 var _failures: Array[String] = []
 
 
@@ -539,9 +524,10 @@ func _run() -> void:
 	_check_lamp_indices(terrain_script)
 	_check_cycle_off_the_seed(terrain_script)
 	# --- TIER 1, the trunk routes (epic `godot-test1-pnvb`, child `.2`). Checks 2, 3
-	# and 4 above already grew a trunk half of their own. 2d rides check 2, 3b rides
-	# check 3, T3a and T3b ride check 4; everything below is its own call: T1, T2,
-	# T5, T4, the drawn chain, and child `.4`'s C1 through C4.
+	# and 4 are trunk checks under spur-era names: 2 is purity plus 2d's cover, 3 is
+	# the half-step control plus 3b's endings, 4 is T3a and T3b's scarcity split.
+	# Everything below is its own call: T1, T2, T5, T4, the drawn chain, child
+	# `.4`'s C1 through C3, and S1 (the retired spur tier stays off).
 	# Keep that list true. — the banner says why it is the only
 	# cross-check on the list.
 	_check_trunk_world_tie(terrain_script)
@@ -552,9 +538,9 @@ func _run() -> void:
 	_check_road_crossing_world_tie(terrain_script)
 	_check_no_coin_on_strip(terrain_script)
 	_check_crossing_angle_rule(terrain_script)
-	_check_spurs_attach(terrain_script)
+	_check_spur_tier_off(terrain_script)
 	# --- BEAD `godot-test1-z2yv.3`, the anchor racks: R1 (one rack per touched
-	# anchor, spurs bare), R2 (the `bike_stand` contract), R3 (the world tie).
+	# anchor), R2 (the `bike_stand` contract), R3 (the world tie).
 	_check_anchor_racks(terrain_script)
 	_check_bike_stand_contract(terrain_script)
 	_check_anchor_rack_world_tie(terrain_script)
@@ -574,9 +560,10 @@ func _run() -> void:
 
 	if _failures.is_empty():
 		print("bike paths: the kill switch leaves every other box in the world where "
-				+ "it was, each strip stands on the ground its own walk cleared, the "
-				+ "per-chunk shares cover every segment exactly once, blocked paths "
-				+ "truncate rather than gap, scarcity empties the far field, no chunk "
+				+ "it was, the same chunk twice is the same chunk, the "
+				+ "per-chunk shares cover every trunk segment exactly once, trunks "
+				+ "are abandoned whole and never truncated, the route is exempt and "
+				+ "the furniture thins, the spur tier stays off its whole band, no chunk "
 				+ "grew a MultiMesh bucket, only the poles claim a footprint, every "
 				+ "pole carries one of the five authored tops and stands it clear of "
 				+ "its own post, the CUBE-bucket index recorded for a lamp is the one "
@@ -592,8 +579,8 @@ func _run() -> void:
 				+ "on one is neither wading nor pushed off it, the kill switch takes the "
 				+ "decks out of field_bridges_near() as well as out of the batch, and no "
 				+ "strip of this family's paint is ever laid on open water, one "
-				+ "bike-stand rack stands at every network anchor a trunk touches "
-				+ "and no spur end grows one, every marker carries exactly the "
+				+ "bike-stand rack stands at every network anchor a trunk touches, "
+				+ "every marker carries exactly the "
 				+ "contract the rental epic will read, and a rack box really in "
 				+ "the chunk's batch stands within a stated distance of its anchor, "
 				+ "with the footprint asked in the rack's own radius")
@@ -748,66 +735,8 @@ func _check_kill_switch(terrain_script: GDScript) -> void:
 				+ "no footprint, so its stray-draw comparison ran only on chunks where the "
 				+ "spawner drew nothing and could not have failed. Retune AB_X / AB_Y until "
 				+ "the band contains a path with no pole on it")
-	# --- THE AIM, MEASURED (child `godot-test1-pnvb.4`, decision c-prime). Every
-	# surviving spur in the band above re-rolls its four draws in their shipped
-	# order and asserts the replacement: the rarity and the two offsets reproduce
-	# the walk's start (no draw skipped or reordered), and the walked bearing and
-	# length equal the aim at the nearest trunk station (consume-and-discard on
-	# both). The target is brute-forced off the shipped memo WITHOUT the box
-	# prefilter, so the lookup agrees with `_spur_aim_target` by value rather
-	# than by sharing its code.
-	var aim_checked: int = 0
-	var trunks_on: Array[Dictionary] = BikePaths.trunks(on)
-	for x: int in AB_X:
-		for y: int in AB_Y:
-			var chunk_here: Node = on.active_chunks[Vector2i(x, y)]
-			for marker: Node in _markers(chunk_here):
-				if int(marker.get_meta("edge")) != -1:
-					continue
-				var origin: Vector2i = marker.get_meta("origin")
-				var stations: Array[Dictionary] = BikePaths.bike_path_at(on, origin)
-				if stations.is_empty():
-					_fail("check 1: a spur marker promises geometry the walk never drew")
-					continue
-				var rng := RandomNumberGenerator.new()
-				rng.seed = hash(Vector3i(origin.x * BikePaths.BIKE_HASH_PRIME_X,
-					origin.y * BikePaths.BIKE_HASH_PRIME_Y,
-					on.run_seed ^ BikePaths.BIKE_PATH_SALT))
-				var size: float = on.chunk_size
-				var k: float = on.scarcity_at(on.chunk_to_world(origin))
-				if not (rng.randf() < BikePaths.BIKE_PATH_CHANCE * k):
-					_fail("check 1: a surviving spur whose rarity roll fails; the draw order moved")
-				var start: Vector2 = stations[0]["pos"]
-				if start != Vector2(float(origin.x) * size + rng.randf() * size,
-					float(origin.y) * size + rng.randf() * size):
-					_fail("check 1: a surviving spur starts away from its two offset draws "
-					+ "a draw was added, removed or reordered ahead of them")
-				var _bearing: float = rng.randf() * TAU
-				var _length: int = rng.randi_range(BikePaths.BIKE_PATH_MIN_STATIONS,
-					BikePaths.BIKE_PATH_MAX_STATIONS)
-				var target := Vector2.INF
-				var best_d: float = BikePaths.BIKE_PATH_MAX_REACH
-				for trunk: Dictionary in trunks_on:
-					for station: Dictionary in (trunk["stations"] as Array[Dictionary]):
-						var d: float = start.distance_to(station["pos"])
-						if d < best_d:
-							best_d = d
-							target = station["pos"]
-				if target == Vector2.INF:
-					_fail("check 1: a surviving spur with no trunk station in reach of its start")
-					continue
-				if float(stations[0]["heading"]) != (target - start).angle():
-					_fail("check 1: a surviving spur not walking the aim at its nearest trunk station "
-					+ "though the bearing draw was consumed")
-				var want_count: int = mini(int(ceil(start.distance_to(target)
-					/ BikePaths.BIKE_STATION_SPACING)) + 1, BikePaths.BIKE_PATH_MAX_STATIONS)
-				if stations.size() != want_count:
-					_fail("check 1: a surviving spur walking the wrong station count for its aim "
-					+ "though the length draw was consumed")
-				aim_checked += 1
-	if aim_checked == 0:
-		_fail("check 1 found no surviving spur in its A/B field, so the aim was never measured")
-	print("check 1: the aim holds on %d band spurs" % aim_checked)
+	print("check 1: A/B over %d chunks (%d with paths, %d bare, %d without)"
+		% [AB_X.size() * AB_Y.size(), with_path, bare_path, without])
 	on.free()
 	off.free()
 	Sentinel.done("kill_switch")
@@ -819,40 +748,30 @@ func _check_kill_switch(terrain_script: GDScript) -> void:
 
 func _check_purity_and_seams(terrain_script: GDScript) -> void:
 	"""
-	The same chunk twice is the same chunk; and across a field, the segments drawn
-	by every chunk in reach of an origin are the polyline's own, each exactly once.
+	The same chunk twice is the same chunk (2a, below, over the A/B band); and
+	across a field, the segments drawn by every chunk a trunk's box touches are
+	the route's own, each exactly once (2d, the trunk cover).
 
-	THE SEAM IS THE POINT. A path is rolled at its ORIGIN and drawn by whichever
+	THE SEAM IS THE POINT. A route is walked once per run and drawn by whichever
 	chunk each segment's MIDPOINT falls in, so "no duplicate, no gap" is the whole
 	statement of that rule — the failure it excludes is a strip that stops at a
 	chunk edge and starts again half a metre later.
 
-	The union is read off the markers' `segments` meta rather than recomputed
-	here, deliberately: a second copy of the midpoint rule inside this check would
-	agree with a broken one. What this check owns instead is the COMPARATOR, and
-	the two mutations below are the control on it.
+	The spur-origin cover (2b) and the spur strip-position tie (2c) stood here
+	until `godot-test1-pnvb.10` and retired with that tier; 2d and the trunk world
+	tie (T1) are the same two statements for the remaining walk. The union is read
+	off the markers' `segments` meta rather than recomputed here, deliberately: a
+	second copy of the midpoint rule inside this check would agree with a broken
+	one. What 2d owns instead is the COMPARATOR, and the mutations at its bottom
+	are the control on it.
 
-	...AND THEN (c) WHERE THE BOX ACTUALLY LANDS, which is the one assertion in
-	this file that connects a drawn box to the station that produced it. Every
-	other check compares a build against another build (1, 5), a list against
-	itself (2a, 2b), a station list against a predicate (3, 4) or a count against
-	a count (6) — all of which a uniformly wrong local frame satisfies perfectly.
-	`create_box` takes a CHUNK-LOCAL centre and the chunk node stands at the chunk
-	CENTRE, so a conversion that subtracted the corner instead would put every
-	strip half a chunk off the ground `station_blocked` cleared, across the coin
-	road and the rivers, with all six checks green. This is measured in WORLD
-	space — the chunk node's position plus the batch entry's own origin — because
-	that is the frame the claim is made in.
-
-	WHAT IT DOES AND DOES NOT PIN, honestly: ANY partition of the segments is a
-	perfect cover, so this does not prove the rule is the MIDPOINT one — it proves
-	it is a partition. That is the property the seam needs, and the two realistic
-	ways to lose it are exactly the two the mutations exercise: draw a segment in
-	every chunk an endpoint touches (a strip drawn twice) and draw it only where
-	both endpoints land (a hole at every seam).
+	...AND THEN WHERE THE BOX ACTUALLY LANDS — T1, the one assertion in this file
+	that connects a drawn box to the station that produced it. Every other check
+	compares a build against another build (1, 5), a list against itself (2a, 2d),
+	a station list against a predicate (3b, 4) or a count against a count (6) — all
+	of which a uniformly wrong local frame satisfies perfectly.
 	"""
 	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
-	var radius: int = BikePaths.scan_radius_chunks(terrain)
 
 	# --- a. WITHIN A RUN: the same chunk, built twice, down to the byte.
 	var rebuilt: int = 0
@@ -876,85 +795,10 @@ func _check_purity_and_seams(terrain_script: GDScript) -> void:
 		_fail("check 2a rebuilt %d chunks and not one of them drew a box, so 'identical' "
 				% (AB_X.size() * AB_Y.size()) + "was vacuous")
 
-	# --- b. THE COVER, over every path in a sweep of origins.
-	var covered: int = 0
-	var strip_checked: int = 0
-	var sample: Array = []  # one real per-chunk split, kept for the mutation control
-	for ox in range(-SWEEP_HALF, SWEEP_HALF + 1):
-		for oy in range(-SWEEP_HALF, SWEEP_HALF + 1):
-			var origin := Vector2i(ox, oy)
-			if covered >= COVER_SAMPLE:
-				break
-			var stations: Array[Dictionary] = BikePaths.bike_path_at(terrain, origin)
-			if stations.size() < 2:
-				continue
-			var lists: Array = []
-			for cx in range(ox - radius, ox + radius + 1):
-				for cy in range(oy - radius, oy + radius + 1):
-					var chunk_pos := Vector2i(cx, cy)
-					var built: Dictionary = _spawn_bare(terrain, chunk_pos)
-					var drawn := PackedInt32Array()
-					for row: Dictionary in (built["paths"] as Array[Dictionary]):
-						if row["origin"] == origin:
-							drawn = row["segments"]
-					if drawn.is_empty():
-						continue
-					lists.append(drawn)
-					# --- c. AND THE BOXES ARE WHERE THE WALK SAID. See the docstring.
-					var strips: Array[Vector2] = _strip_positions(terrain, chunk_pos, built["batch"])
-					for i: int in drawn:
-						var a: Vector2 = stations[i]["pos"]
-						var b: Vector2 = stations[i + 1]["pos"]
-						var want: Vector2 = (a + b) * 0.5
-						var best: float = INF
-						for at: Vector2 in strips:
-							best = minf(best, at.distance_to(want))
-						if best > STRIP_TOLERANCE:
-							_fail("origin %s segment %d: chunk %s claims to draw it, but its nearest "
-									% [origin, i, chunk_pos] + "strip box stands %.2f m from the "
-									% best + "segment's midpoint %s. The strip is not on the ground "
-									% want + "the walk cleared — check the chunk-local frame, which "
-									+ "is centred on the chunk NODE and not on its corner")
-							break
-						strip_checked += 1
-			var fault: String = _cover_fault(lists, stations.size() - 1)
-			if fault != "":
-				_fail("the path from origin %s is not covered by the chunks around it: %s"
-						% [origin, fault])
-			else:
-				covered += 1
-			if sample.is_empty() and lists.size() >= 2:
-				sample = lists
-	if covered == 0:
-		_fail("check 2b found no path at all in a %dx%d sweep of origins on seed %d — the "
-				% [SWEEP_HALF * 2 + 1, SWEEP_HALF * 2 + 1, SEEDS[0]]
-				+ "cover assertion was never made")
-	if strip_checked == 0:
-		_fail("check 2c located no strip box at all, so the one assertion in this file that "
-				+ "ties a drawn box to the station that produced it never fired")
-	if sample.is_empty():
-		_fail("check 2b found no path that spans more than one chunk, so the seam — the "
-				+ "whole subject of this check — was never crossed")
-	else:
-		# THE MUTATION CONTROL. Both directions, over the same real data: a rule
-		# that dropped a segment and a rule that drew one twice must each be caught,
-		# or a "perfect cover" verdict says nothing.
-		var n: int = 0
-		for list_v: Variant in sample:
-			n += (list_v as PackedInt32Array).size()
-		var gapped: Array = sample.duplicate(true)
-		var first_list: PackedInt32Array = gapped[0]
-		first_list.remove_at(0)
-		gapped[0] = first_list
-		if _cover_fault(gapped, n) == "":
-			_fail("check 2b's comparator called a cover with a segment MISSING perfect — it "
-					+ "would not notice a bike path with a hole at a chunk seam")
-		var doubled: Array = sample.duplicate(true)
-		doubled.append(sample[0])
-		if _cover_fault(doubled, n) == "":
-			_fail("check 2b's comparator called a cover with a segment drawn TWICE perfect — "
-					+ "it would not notice two chunks both claiming the same strip")
-	terrain.free()
+	# --- b + c. THE SPUR COVER stood here until `godot-test1-pnvb.10`: the union
+	# of per-chunk shares over a sweep of spur origins, plus the strip-position
+	# world tie. Retired with the tier; the trunk cover below (2d) and the trunk
+	# world tie (T1) are the same two statements for the remaining walk.
 	# --- d. AND THE SAME STATEMENT FOR A TRUNK, whose chunks are found by a
 	# BOUNDING BOX and not by the radius scan the three passes above rely on.
 	_check_trunk_cover(terrain_script)
@@ -966,23 +810,23 @@ func _check_trunk_cover(terrain_script: GDScript) -> void:
 	CHECK 2 EXTENDED — a trunk's per-chunk shares are a perfect cover of its
 	segments, so the BOUNDING-BOX LOOKUP AGREES WITH THE MIDPOINT RULE.
 
-	THIS IS A DIFFERENT STATEMENT FROM 2b AND THAT IS WHY IT EXISTS. A spur is
-	found by `scan_radius_chunks()`, a square sweep derived from the path's own
-	maximum reach; a trunk is kilometres long and is found instead by rejecting on
-	its bounding box. Those are two ways of answering "which chunks might hold a
-	piece of this?", and a box that is too tight loses the segments at the ends —
-	the chunk-seam bug, back in a new place. The midpoint rule is unchanged, so the
-	cover is the whole assertion: every segment drawn by exactly one chunk.
+	THIS IS THE COVER STATEMENT FOR THE REMAINING WALK. A trunk is kilometres
+	long and is found by rejecting on its bounding box — the way of answering
+	"which chunks might hold a piece of this?", and a box that is too tight loses
+	the segments at the ends — the chunk-seam bug, back in a new place. (The spur
+	origin's radius sweep retired with its tier in `godot-test1-pnvb.10`.) The
+	midpoint rule is unchanged, so the cover is the whole assertion: every segment
+	drawn by exactly one chunk.
 
 	SWEPT OVER THE TRUNK'S OWN BOX IN CHUNKS, one chunk wider each way than the
 	box claims, so a segment the box wrongly excluded would be FOUND by the sweep
 	and reported as a duplicate-free hole rather than missed by both.
 
-	THE COMPARATOR IS `_cover_fault_set`, NOT check 2b's `_cover_fault`, and it
-	carries a third branch 2b's does not: "drawn, though it is over water or inside
-	a keep-out disc". 2b's mutation controls do not reach it, so this check drives
-	that branch itself at the bottom — a comparator credited with a control it does
-	not have is the claim the next author would rely on instead of re-deriving.
+	THE COMPARATOR IS `_cover_fault_set`, and it carries a third branch beyond
+	duplicate-or-hole: "drawn, though it is over water or inside a keep-out disc".
+	This check drives that branch itself at the bottom — a comparator credited
+	with a control it does not have is the claim the next author would rely on
+	instead of re-deriving.
 	"""
 	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
 	var waypoints: Array[Dictionary] = terrain.waypoint_sites()
@@ -1054,9 +898,8 @@ func _check_trunk_cover(terrain_script: GDScript) -> void:
 		_fail("check 2d expected no drawable segment at all across the trunks it walked, so "
 				+ "its cover assertion was satisfied by an empty set")
 	# THE COMPARATOR'S OWN CONTROL, all three directions, on a fixture rather than on
-	# the world — `_cover_fault_set` is new in this bead and 2b's mutations drive
-	# `_cover_fault` instead. Without the third one, a lost water or keep-out skip
-	# would draw paint under a coin and this check would call it a perfect cover.
+	# the world. Without the third one, a lost water or keep-out skip would draw
+	# paint under a coin and this check would call it a perfect cover.
 	var probe: Dictionary = { 1: true, 2: true }
 	if _cover_fault_set([PackedInt32Array([1, 2])], probe) != "":
 		_fail("check 2d's comparator rejects a cover that is in fact perfect")
@@ -1102,12 +945,12 @@ func _drawable_segments(terrain: Node3D, stations: Array[Dictionary],
 
 func _cover_fault_set(lists: Array, expected: Dictionary) -> String:
 	"""
-	`_cover_fault` against an EXPLICIT expected set rather than `0 .. n-1`.
+	Is `lists` — one per-chunk list of segment indices — a perfect cover of the
+	explicit `expected` set?
 
-	@return: "" when `lists` is a perfect cover of `expected`, otherwise the first
-	         fault in words — a duplicate, a hole, or a segment drawn that should
-	         not have been, which is the direction `_cover_fault` cannot express and
-	         is exactly how a lost keep-out or water skip would show up here.
+	@return: "" when it is, otherwise the first fault in words — a duplicate, a
+	         hole, or a segment drawn that should not have been, which is exactly
+	         how a lost keep-out or water skip would show up here.
 	"""
 	var seen: Dictionary = {}
 	for list_v: Variant in lists:
@@ -1123,123 +966,36 @@ func _cover_fault_set(lists: Array, expected: Dictionary) -> String:
 	return ""
 
 
-func _cover_fault(lists: Array, segment_count: int) -> String:
-	"""
-	Is `lists` — one per-chunk list of segment indices — a perfect cover of
-	`0 .. segment_count - 1`?
-
-	@return: "" when it is, otherwise the first fault in words.
-	"""
-	var seen: Dictionary = {}
-	for list_v: Variant in lists:
-		for i: int in (list_v as PackedInt32Array):
-			if seen.has(i):
-				return "segment %d is drawn by two chunks" % i
-			seen[i] = true
-	for i in segment_count:
-		if not seen.has(i):
-			return "segment %d is drawn by no chunk at all" % i
-	return ""
-
-
 # ============================================================================
 # CHECK 3 — blocked means truncated, never gapped
 # ============================================================================
 
 func _check_truncation(terrain_script: GDScript) -> void:
 	"""
-	Find paths that actually run into something and assert they STOP there.
+	Blocked means abandoned whole, never gapped — and the river sample is
+	controlled directly.
 
-	A SWEEP AND NOT A FIXTURE, and it fails when the sweep comes up empty: the
-	rule under test is "a blocked station ends the path", and a check that never
-	met a blocked station would report that rule as holding while saying nothing.
-	TWO shapes have to turn up, not one — a truncated path and a path that ran to
-	full length — and `TRUNCATION_SEEDS` is a search space rather than a sample.
+	THE SPUR PREFIX SWEEP is gone (see the note at the bottom of this function):
+	it walked spur origins asserting every station legal, every segment dry and
+	the successor's block as a non-vacuity counter. What remains of check 3 is in
+	the two calls below, and both fail on zero from their own side.
 
-	THE HALF-STEP SAMPLE IS CONTROLLED SEPARATELY, in `_check_half_step_control`
-	below, because no path sweep this file can afford would ever meet the shape it
-	guards. Read that function before trusting the segment assertion here.
+	THE HALF-STEP SAMPLE IS CONTROLLED DIRECTLY, in `_check_half_step_control`,
+	because no affordable sweep would ever meet the shape it guards: two dry
+	points a station apart with water between them. Without it,
+	`segment_blocked` could be `return false` with this file still green.
 
-	WHAT IS ASSERTED and what is only COUNTED, because the difference matters to
-	the next reader. ASSERTED, per path: every station in the list passes the
-	station predicate, every SEGMENT between two of them passes the half-step
-	river sample, and the list is at least `BIKE_PATH_MIN_STATIONS` long. Both
-	predicates, because the walk stops on both and the second is not implied by
-	the first — two stations either side of a narrow band are each legal on their
-	own. That set IS the "never resumes past a block" rule: a walk that resumed
-	would leave a blocked station, or a drowned segment, inside the list.
-	COUNTED, per path: whether the station
-	after the last one is blocked. That cannot be asserted, and deliberately so —
-	`_bike_path_at` rolls its length with `randi_range`, so a path that simply ran
-	out has a perfectly legal successor. It is the NON-VACUITY GUARD at the bottom
-	of this function instead, and the guard is the point: without it the two
-	assertions above hold trivially in a world where nothing is ever blocked.
-
-	The successor comes from `BikePaths.next_station()` and
-	`BikePaths.segment_blocked()` — the shipped recurrence and the shipped
-	half-step river sample, not copies of them here.
+	THE TRUNK FORM OF THE RULE is `_check_trunk_endings`: a route that stops
+	halfway is the litter the owner played and disliked, so the only legal endings
+	are its own anchor and Budapest's rect edge, and the abandonment reasons are
+	printed beside them.
 	"""
-	var truncated: int = 0
-	var full_length: int = 0
-	var swept: int = 0
-	for seed_value: int in TRUNCATION_SEEDS:
-		# Stop at the first seed by which every shape has been seen. The prefix
-		# assertions below ran on every path of every seed swept, so this bounds the
-		# SEARCH and not the checking.
-		if truncated > 0 and full_length > 0:
-			break
-		swept += 1
-		var terrain: Node3D = _terrain(terrain_script, seed_value, true)
-		for ox in range(-SWEEP_HALF, SWEEP_HALF + 1):
-			for oy in range(-SWEEP_HALF, SWEEP_HALF + 1):
-				var origin := Vector2i(ox, oy)
-				var stations: Array[Dictionary] = BikePaths.bike_path_at(terrain, origin)
-				if stations.is_empty():
-					continue
-				# THE PREFIX IS LEGAL, and that is BOTH predicates the walk stops on.
-				# The stations first...
-				for i in stations.size():
-					if BikePaths.station_blocked(terrain, stations[i]["pos"]):
-						_fail("seed %d origin %s: station %d of %d stands somewhere the walk "
-								% [seed_value, origin, i, stations.size()]
-								+ "should have stopped — the path is not a legal prefix")
-						break
-				# ...and then the GROUND BETWEEN THEM, which is a separate statement and
-				# not a corollary of the one above: the whole reason `segment_blocked`
-				# exists is that both stations flanking a river band narrower than the
-				# station pitch are individually legal. Asserting only the stations would
-				# pass a strip laid straight across the water.
-				for i in range(stations.size() - 1):
-					if BikePaths.segment_blocked(terrain, stations[i]["pos"], stations[i + 1]["pos"]):
-						_fail("seed %d origin %s: the strip between stations %d and %d crosses "
-								% [seed_value, origin, i, i + 1]
-								+ "water, though both of its ends stand on dry ground — the "
-								+ "half-step river sample is not stopping the walk")
-						break
-				if stations.size() < BikePaths.BIKE_PATH_MIN_STATIONS:
-					_fail("seed %d origin %s: a path of %d stations survived, below "
-							% [seed_value, origin, stations.size()]
-							+ "BIKE_PATH_MIN_STATIONS %d — a stub should be dropped whole"
-							% BikePaths.BIKE_PATH_MIN_STATIONS)
-				var head: float = stations[0]["heading"]
-				var next: Dictionary = BikePaths.next_station(terrain, origin, head,
-						stations[-1], stations.size() - 1)
-				if BikePaths.station_blocked(terrain, next["pos"]) \
-						or BikePaths.segment_blocked(terrain, stations[-1]["pos"], next["pos"]):
-					truncated += 1
-				elif stations.size() == BikePaths.BIKE_PATH_MAX_STATIONS:
-					full_length += 1
-		terrain.free()
-
-	if truncated == 0:
-		_fail("check 3 swept %d seeds x %dx%d origins and found no path that was stopped by "
-				% [swept, SWEEP_HALF * 2 + 1, SWEEP_HALF * 2 + 1]
-				+ "the road, a river, the mountains, the city, the HQ, a landmark or a "
-				+ "waypoint — the truncation rule is untested, so widen TRUNCATION_SEEDS "
-				+ "rather than trusting this")
-	if full_length == 0:
-		_fail("check 3 found no path that ran to BIKE_PATH_MAX_STATIONS, so 'it stopped "
-				+ "because it was blocked' has no control: every path may simply be short")
+	# THE SPUR PREFIX SWEEP stood here until `godot-test1-pnvb.10`: every station
+	# legal against the shipped predicates, the successor asked of the shipped
+	# recurrence, failing on zero truncated AND zero full-length paths. Retired
+	# with the walk it measured. What remains of check 3 is the predicate's own
+	# control and the trunk form of the rule — routes abandoned whole, never
+	# truncated — both below.
 	_check_half_step_control(terrain_script)
 	_check_trunk_endings(terrain_script)
 	Sentinel.done("truncation")
@@ -1250,11 +1006,11 @@ func _check_trunk_endings(terrain_script: GDScript) -> void:
 	CHECK 3 EXTENDED — A TRUNK NEVER ENDS IN OPEN FIELD, which is the exact defect
 	the owner reported and the reason this epic exists.
 
-	A spur truncates at any of seven tests. A trunk may not: a route that stops
-	halfway is the litter the owner played and disliked, so the only legal endings
-	are its own ANCHOR (the snap) and BUDAPEST'S RECT EDGE (the city's streets are
-	authored). Everything else abandons the route WHOLE, and this asserts that the
-	ones that survived really did end one of those two ways.
+	The retired spur walk truncated at any of seven tests. A trunk may not: a route
+	that stops halfway is the litter the owner played and disliked, so the only legal
+	endings are its own ANCHOR (the snap) and BUDAPEST'S RECT EDGE (the city's
+	streets are authored). Everything else abandons the route WHOLE, and this
+	asserts that the ones that survived really did end one of those two ways.
 
 	AND IT PRINTS WHY THE OTHERS DID NOT, split by cause, because one of those
 	numbers WAS `godot-test1-pnvb.4`'s case and is now its report card: steep crossings
@@ -1439,40 +1195,19 @@ func _check_half_step_control(terrain_script: GDScript) -> void:
 
 func _check_scarcity(terrain_script: GDScript) -> void:
 	"""
-	Paths near the HQ corridor, and NONE beyond `SCARCITY_PLAIN_DISTANCE`.
+	The trunk scarcity split: the route is exempt, the furniture is thinned.
 
-	`scarcity_selfcheck` check 2's shape: the near field is the control, because
-	"no path out there" is also what a rarity roll that never fires looks like.
-	The far band's own `scarcity_at()` is asserted to be 0 as well, so the check
-	cannot pass because the band was chosen too close to the city.
+	THE SPUR FORM-2 SWEEP is gone (see the note at the bottom of this function):
+	it fruited corridor origins and barred the far field, failing on zero near
+	paths. What remains of check 4 is in the two calls below — T3a drives both
+	halves of the split at a synthetic k = 0 site and its k = 1 control, T3b
+	measures the real world beside them — and the split is what stands between
+	the next author and deleting an exemption that looks unused.
 	"""
-	for seed_value: int in SEEDS:
-		var terrain: Node3D = _terrain(terrain_script, seed_value, true)
-		var near: int = 0
-		var far: int = 0
-		var k_far: float = 0.0
-		for ox in range(-SWEEP_HALF, SWEEP_HALF + 1):
-			for oy in range(-SWEEP_HALF, SWEEP_HALF + 1):
-				if not BikePaths.bike_path_at(terrain, Vector2i(ox, oy)).is_empty():
-					near += 1
-				var out := Vector2i(ox, FAR_CHUNK_Y + oy)
-				k_far = maxf(k_far, terrain.scarcity_at(terrain.chunk_to_world(out)))
-				if not BikePaths.bike_path_at(terrain, out).is_empty():
-					far += 1
-		if near == 0:
-			_fail("seed %d: not one path in the %dx%d of origins around the corridor, where "
-					% [seed_value, SWEEP_HALF * 2 + 1, SWEEP_HALF * 2 + 1]
-					+ "scarcity is 1 — the rarity roll never fires and the far half of this "
-					+ "check passes for the wrong reason")
-		if k_far > 0.0:
-			_fail("seed %d: check 4's far band reaches scarcity %.3f, so it is not past "
-					% [seed_value, k_far] + "SCARCITY_PLAIN_DISTANCE at all — raise "
-					+ "FAR_CHUNK_Y")
-		elif far > 0:
-			_fail("seed %d: %d paths stand beyond SCARCITY_PLAIN_DISTANCE, where "
-					% [seed_value, far] + "scarcity_at() is 0 — the bike paths are exempting "
-					+ "themselves from the one rule every biome shares")
-		terrain.free()
+	# THE SPUR FORM-2 SWEEP stood here until `godot-test1-pnvb.10`: corridor
+	# origins fruiting, far-field origins bare, failing on zero near paths. Retired
+	# with the rarity roll it measured. What remains of check 4 is the trunk
+	# scarcity split — the route exempt, the furniture thinned — both below.
 	# --- AND THE OTHER HALF OF THE RULE, which tier 1 splits in two.
 	_check_trunk_scarcity_split(terrain_script)
 	_measure_trunks_below_k1(terrain_script)
@@ -2701,55 +2436,56 @@ func _check_crossing_angle_rule(terrain_script: GDScript) -> void:
 	Sentinel.done("crossing_angle_rule")
 
 
-func _check_spurs_attach(terrain_script: GDScript) -> void:
+func _check_spur_tier_off(terrain_script: GDScript) -> void:
 	"""
-	C4 (child `godot-test1-pnvb.4`, Part B) -- EVERY SURVIVING SPUR ATTACHES.
-	
-	Over a corridor band on the CI seeds, every spur the walk keeps must have an
-	endpoint within `SPUR_ATTACH_DISTANCE` of a trunk station, asked of the
-	shipped `spur_attach_ok` the way check 3 asks `station_blocked` of its
-	prefixes. Prints per seed the survivors, the aim/guard rejects (origins
-	whose rarity roll passes but no spur survives, classified by the shipped
-	`spur_reject_reason`) and the trunk count, with the spur:trunk ratio -- the
-	number the owner's complaint is really about and the number `BIKE_PATH_CHANCE`
-	is retuned against. Fails if no spur survives anywhere, so the assertion
-	cannot hold for free.
-	"""
-	var total_surv: int = 0
-	var total_rej: int = 0
-	var total_trunks: int = 0
-	for seed_value: int in SEEDS:
-		var terrain: Node3D = _terrain(terrain_script, seed_value, true)
-		var trunks: Array[Dictionary] = BikePaths.trunks(terrain)
-		var surv: int = 0
-		var rej: int = 0
-		for ox in range(C4_X0, C4_X1 + 1):
-			for oy in range(C4_Y0, C4_Y1 + 1):
-				var origin := Vector2i(ox, oy)
-				var stations: Array[Dictionary] = BikePaths.bike_path_at(terrain, origin)
-				if not stations.is_empty():
-					if not BikePaths.spur_attach_ok(terrain, stations):
-						_fail("C4: seed %d keeps the spur from origin %s, yet neither endpoint " % [seed_value, origin] + "lands within a stride of a trunk station -- an unattached spur exists")
-					surv += 1
-				else:
-					var rng := RandomNumberGenerator.new()
-					rng.seed = hash(Vector3i(origin.x * BikePaths.BIKE_HASH_PRIME_X,
-						origin.y * BikePaths.BIKE_HASH_PRIME_Y,
-						terrain.run_seed ^ BikePaths.BIKE_PATH_SALT))
-					var k: float = terrain.scarcity_at(terrain.chunk_to_world(origin))
-					if rng.randf() < BikePaths.BIKE_PATH_CHANCE * k:
-						if BikePaths.spur_reject_reason(terrain, origin) == "attach":
-							rej += 1
-		print("C4: seed %d: %d surviving spurs attach, %d aimed walks rejected, %d trunks (ratio %.2f)" % [seed_value, surv, rej, trunks.size(), float(surv) / float(maxi(1, trunks.size()))])
-		total_surv += surv
-		total_rej += rej
-		total_trunks += trunks.size()
-		terrain.free()
-	if total_surv == 0:
-		_fail("C4 swept %d seeds x %d origins and no spur survived anywhere, so every " % [SEEDS.size(), (C4_X1 - C4_X0 + 1) * (C4_Y1 - C4_Y0 + 1)] + "survivor attaches holds for free")
-	print("C4: %d survivors attach over %d trunks (%d rejects); mean spur:trunk ratio %.2f" % [total_surv, total_trunks, total_rej, float(total_surv) / float(maxi(1, total_trunks))])
-	Sentinel.done("spurs_attach")
+	S1 (bead `godot-test1-pnvb.10`, owner ruling 2026-09-20) — THE SPUR TIER
+	IS OFF.
 
+	Over the architect's own probe band (world x -700..1750, z -400..400, the
+	band that measured 137 one-ended spur stubs across these 8 seeds), every
+	chunk is built through the SHIPPED spawner and every `bike_path` marker is
+	read: NONE may carry edge -1, the retired spur tier's mark. The CONTROL is
+	a trunk marker on every seed — without it, "no spur markers" is also what a
+	band with no paint at all looks like, and the check would hold for free.
+	Both halves fail on zero from their own side: a restored spur walk fails
+	the first, a seed that lost its trunks fails the second.
+
+	The mutation control is the bead's own: leave one spur call path in
+	`spawn_bike_path_in_chunk` and this goes red on the first seed.
+	"""
+	var seeds_swept: int = 0
+	for seed_value: int in TRUNCATION_SEEDS:
+		var terrain: Node3D = _terrain(terrain_script, seed_value, true)
+		var spur: int = 0
+		var spur_first := Vector2i(1 << 30, 1 << 30)
+		var trunk: int = 0
+		for cx in range(S1_X0, S1_X1 + 1):
+			for cz in range(S1_Z0, S1_Z1 + 1):
+				var built: Dictionary = _spawn_bare(terrain, Vector2i(cx, cz))
+				for row: Dictionary in (built["paths"] as Array[Dictionary]):
+					if int(row["edge"]) == -1:
+						spur += 1
+						if spur_first.x == 1 << 30:
+							spur_first = Vector2i(cx, cz)
+					else:
+						trunk += 1
+		if spur > 0:
+			_fail("S1: seed %d draws %d spur markers (edge -1) across the corridor "
+					% [seed_value, spur] + "band, first at chunk %s — the spur tier "
+					% spur_first + "is walking again")
+		if trunk == 0:
+			_fail("S1: seed %d carries no trunk marker anywhere in the corridor band, "
+					% seed_value + "so 'no spur markers' held for free — the band "
+					+ "lost its paint, not its spurs")
+		print("S1: seed %d: %d trunk markers and %d spur markers over %d chunks"
+				% [seed_value, trunk, spur,
+					(S1_X1 - S1_X0 + 1) * (S1_Z1 - S1_Z0 + 1)])
+		seeds_swept += 1
+		terrain.free()
+	if seeds_swept != TRUNCATION_SEEDS.size():
+		_fail("S1 swept %d of %d seeds — the loop never finishes whole"
+			% [seeds_swept, TRUNCATION_SEEDS.size()])
+	Sentinel.done("spur_tier_off")
 
 func _stand_markers(chunk: Node) -> Array[Node]:
 	## The rental epic's markers: this family's bare Node3Ds in group
@@ -2863,7 +2599,7 @@ func _touched_from_edges(terrain: Node3D) -> Array[int]:
 
 
 # ============================================================================
-# R1 — one rack per touched anchor, and spurs get none (bead godot-test1-z2yv.3)
+# R1 — one rack per touched anchor (bead godot-test1-z2yv.3)
 # ============================================================================
 
 func _check_anchor_racks(terrain_script: GDScript) -> void:
@@ -2882,12 +2618,10 @@ func _check_anchor_racks(terrain_script: GDScript) -> void:
 	far-field landmarks no trunk reaches) must grow nothing. Fails on zero
 	racks found.
 
-	SPURS GET NO RACK, over C4's own population: every surviving spur end in
-	pure-spur territory — farther than any anchor's rack can explain — must have
-	no stand marker within `SPUR_END_CLEARANCE` of it. Fails if no pure end was
-	tested.
+	The spur-bare half (no stand marker at a surviving spur's end) retired with
+	the spur tier in `godot-test1-pnvb.10`: racks stand at touched anchors, and the
+	untouched-anchor half above is what asserts nothing grows elsewhere.
 	"""
-	var pure_tested: int = 0
 	for seed_value: int in SEEDS:
 		var terrain: Node3D = _terrain(terrain_script, seed_value, true)
 		var anchors: Array[Dictionary] = terrain.bike_anchors()
@@ -3073,49 +2807,11 @@ func _check_anchor_racks(terrain_script: GDScript) -> void:
 					+ "for free")
 		print("R1: seed %d: %d racks stand on %d touched anchors (%d explained skips)"
 				% [seed_value, racks_found, touched.size(), skipped])
-		# --- SPURS GET NO RACK. C4's survivors, filtered to pure-spur territory
-		# so no anchor's own rack can explain a marker near the end.
-		for ox in range(C4_X0, C4_X1 + 1):
-			for oy in range(C4_Y0, C4_Y1 + 1):
-				var origin := Vector2i(ox, oy)
-				var stations: Array[Dictionary] = BikePaths.bike_path_at(terrain, origin)
-				if stations.is_empty():
-					continue
-				if not BikePaths.spur_attach_ok(terrain, stations):
-					continue
-				var end: Vector2 = stations[-1]["pos"]
-				var pure: bool = true
-				for idx: int in touched:
-					var apos: Vector2 = anchors[idx]["pos"]
-					if end.distance_to(apos) \
-							<= BikePaths.RACK_ANCHOR_REACH + SPUR_END_CLEARANCE:
-						pure = false
-						break
-				if not pure:
-					continue
-				var home: Vector2i = terrain.world_to_chunk(Vector3(end.x, 0.0, end.y))
-				if not built_chunks.has(home):
-					terrain.create_chunk(home)
-					built_chunks[home] = true
-				for s: Node in _stand_markers(terrain.active_chunks[home]):
-					# Defaulted: a marker with no `pos` meta is R2's catch, and it
-					# must never read as standing at a spur end.
-					var pos: Vector3 = s.get_meta("pos", Vector3.INF)
-					var d: float = Vector2(pos.x - end.x, pos.z - end.y).length()
-					if d <= SPUR_END_CLEARANCE:
-						_fail("R1 seed %d: the surviving spur from origin %s ends at %s, "
-								% [seed_value, origin, end] + "clear of every touched "
-								+ "anchor, yet a bike_stand marker (anchor %d) stands "
-								% int(s.get_meta("anchor", -999)) + "%.1f m from its end — "
-								% d + "spurs get no rack")
-						break
-				pure_tested += 1
+		# SPURS GOT NO RACK until `godot-test1-pnvb.10`: C4's survivors, filtered
+		# to pure-spur territory, had to stand bare of stand markers. Retired with
+		# the tier — a rack stands at a touched anchor's settled site, and the
+		# untouched-anchor half above is what asserts nothing grows elsewhere.
 		terrain.free()
-	if pure_tested == 0:
-		_fail("R1 swept %d seeds x %d origins and no surviving spur ended in "
-				% [SEEDS.size(), (C4_X1 - C4_X0 + 1) * (C4_Y1 - C4_Y0 + 1)] + "pure-spur "
-				+ "territory, so 'spurs get no rack' held for free")
-	print("R1: %d pure spur ends tested bare over %d seeds" % [pure_tested, SEEDS.size()])
 	Sentinel.done("anchor_racks")
 
 
@@ -3467,8 +3163,9 @@ func _check_trunk_world_tie(terrain_script: GDScript) -> void:
 	check compared a build to a build, a list to itself, or a count to a count.*
 	Tier 1 introduces a whole new way in: its stations come out of a graph rather
 	than out of a chunk's own coordinates, so a frame error here would land every
-	trunk in the world somewhere other than the ground its walk cleared, and 2c
-	would not see it (it only reads spurs) while 2d, 3b and T2 all still passed.
+	trunk in the world somewhere other than the ground its walk cleared, and 2d,
+	3b and T2 would all still pass — every one of them compares lists to lists,
+	never a box to the ground.
 
 	SO, PER SAMPLED SEGMENT, FOUR STATEMENTS ABOUT ONE BOX:
 	  * a strip box exists in that chunk's batch whose WORLD centre — the chunk
@@ -3697,20 +3394,13 @@ func _check_trunk_keep_outs(terrain_script: GDScript) -> void:
 	`obstacles`, in world space, and never off a built MultiMesh: instance data is
 	write-only under the headless dummy renderer.
 
-	THE SWEEP IS TIER-BLIND, DELIBERATELY, and the messages below say "a bike box"
-	rather than "a trunk" because of it. `_spawn_bare` drives the shipped spawner,
-	which draws BOTH tiers, and the `edge` meta could filter it — but a SPUR standing
-	geometry in a keep-out is a defect on exactly the same grounds, and there are two
-	narrow ways it can: `_station_blocked` clears a spur STATION against these same
-	radii and nothing re-tests its POLE, which leans `BIKE_POLE_OFFSET` = 1.65 m to
-	the side, so a station 72.6 m from the tower centre or half a metre outside a
-	landmark's chunk can still plant a post inside. THE COIN ROAD IS A THIRD WAY and
-	the widest of them, added when the swath joined `trunk_keep_out`: a spur station
-	is cleared at 14 m lateral, so one standing at 14.0-15.65 m with its pole on the
-	road side plants a post in the swath. Filtering to trunks would hide all three.
-	If this ever fires on a spur it is a finding and not a false alarm, and the fix
-	is the same guard the trunk tier already carries — `terrain_bike_paths.gd` says
-	at that guard why this bead does not reach across and apply it.
+	THE SWEEP READS EVERY BOX AND FOOTPRINT the shipped spawner emits, in world
+	space, and the messages below say "a bike box" rather than "a trunk" because
+	the family draws nothing else. Until `godot-test1-pnvb.10` this was tier-blind
+	on purpose — a spur pole planted 1.65 m to the side of a cleared station could
+	land in a keep-out three narrow ways — but the spur tier is gone now, so the
+	sweep asserts the trunk guards directly: no box and no footprint inside any of
+	the four keep-outs.
 	"""
 	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
 	var waypoints: Array[Dictionary] = terrain.waypoint_sites()
@@ -4208,10 +3898,9 @@ func _check_no_paint_on_water(terrain_script: GDScript) -> void:
 	this family puts there — a deck slab stands a metre and a half up), and the
 	question asked of each is the shipped `is_river_at`.
 
-	TIER-BLIND, like T5 and for the same reason: a SPUR over water is the same
-	defect on the same grounds, and `_station_blocked` test 5 plus
-	`segment_blocked`'s half-step are what keep one out today. If this ever fires
-	on a spur it is a finding, not a false alarm.
+	TRUNK-ONLY since `godot-test1-pnvb.10`: the spur tier that shared this sweep
+	is gone, and `segment_blocked`'s half-step is what keeps paint off the water
+	today.
 
 	IT FAILS ON ZERO CROSSINGS, because a sweep of seeds where no route ever meets
 	a river asserts nothing at all — and it prints how many of those crossings got
@@ -4604,9 +4293,9 @@ func _strips_on(terrain: Node3D, chunk_pos: Vector2i, batch: Array,
 	How many strip boxes in `batch` stand on one of `stations`' segment midpoints.
 
 	POSITION-MATCHED AND NOT COUNTED, because T3a's near site is a real corridor
-	chunk that also carries spurs: a bare count of the strips in that batch would
-	be measuring somebody else's paint. Matching against the synthetic route's own
-	midpoints is also a second, cheap world tie.
+	chunk carrying real trunk paint beside the synthetic route: a bare count of
+	the strips in that batch would be measuring somebody else's paint. Matching
+	against the synthetic route's own midpoints is also a second, cheap world tie.
 	"""
 	var at: Vector3 = terrain.chunk_to_world(chunk_pos)
 	var n: int = 0
@@ -4683,9 +4372,8 @@ func _spawn_bare(terrain: Node3D, chunk_pos: Vector2i) -> Dictionary:
 			# first lens in CUBE-bucket coordinates. Checks 7-9.
 			"tops": marker.get_meta("tops"),
 			"signals": marker.get_meta("signals"),
-			# Child `pnvb.2`: -1 for a SPUR, the edge id for a TRUNK. Check 2d and
-			# T1 tell the two tiers apart with it rather than by re-deriving
-			# anything from a position.
+			# The trunk's edge id. Check 2d and T1 tell routes apart with it rather
+			# than by re-deriving anything from a position.
 			"edge": int(marker.get_meta("edge")),
 		})
 	var stands: int = 0

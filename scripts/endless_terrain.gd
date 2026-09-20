@@ -1719,32 +1719,14 @@ var _approach_coin_line_cache: PackedVector2Array = PackedVector2Array()
 var _landmark_sites_cache: Dictionary = {}
 var _landmark_sites_built: bool = false
 
-## Memoized result of `BikePaths._bike_path_at()` — origin chunk Vector2i -> that
-## origin's station list (`[]` for the overwhelming majority of origins). Every
-## chunk within reach of an origin asks for the SAME path, so without this each
-## one would re-walk it; `scan_radius_chunks()` is 4, so the memo turns 81 walks
-## per chunk into 81 dictionary hits.
-##
-## IT LIVES HERE AND NOT ON `BikePaths`, and that is the rule rather than a
-## preference: a memo on a static family is state `_drop_seeded_memos()` cannot
-## reach, so it would survive every re-seed and hand a multiplayer joiner the
-## wrong world (`chunk_stream_selfcheck` check 6c fails the build for one). It is
-## a pure function of `run_seed`, so the reset below is the second half of this
-## declaration and lands in the same commit.
-##
-## Capped rather than evicted: `BikePaths.bike_path_at()` CLEARS it whole past
-## `BIKE_MEMO_CAP`, which is safe because the function is pure and a dropped entry
-## rebuilds identically — see that function.
-var _bike_path_cache: Dictionary = {}
-
 ## Memoized result of `BikeNetwork.anchors()` and `BikeNetwork.edges()` — exactly
 ## two keys, "anchors" and "edges", for the whole world (epic godot-test1-pnvb).
 ## The trunk graph is a pure function of `run_seed` through four tables that are
 ## themselves pure in it, so a table kept across a re-seed would route this run's
 ## network between the LAST run's landmarks.
 ##
-## HERE AND NOT ON `BikeNetwork`, for `_bike_path_cache`'s reason one family
-## along: a memo on a static family is state `_drop_seeded_memos()` cannot reach,
+## HERE AND NOT ON `BikeNetwork`, for the rule one family along: a memo on a
+## static family is state `_drop_seeded_memos()` cannot reach,
 ## so it survives every re-seed and hands a multiplayer joiner the wrong world
 ## (`chunk_stream_selfcheck` check 6c). Uncapped on purpose — two keys per world
 ## is nothing for a cap to evict.
@@ -1756,15 +1738,14 @@ var _bike_network_cache: Dictionary = {}
 ##
 ## ONE KEY AND NOT ONE PER EDGE, because the per-chunk lookup needs EVERY trunk's
 ## bounding box on its first call anyway — a trunk is kilometres long, so
-## `BikePaths.scan_radius_chunks()`'s 9x9 sweep of origin chunks cannot find one
-## and the chunk asks the whole table instead. Lazy per-edge memoization would
+## no bounded neighbourhood scan of origins can find one, so the chunk asks the
+## whole table instead. Lazy per-edge memoization would
 ## buy nothing: the first chunk of the run fills all of it either way.
 ##
 ## UNCAPPED, for `_bike_network_cache`'s reason one declaration up rather than as
 ## an omission: it holds the measured 17-32 edges of the whole world (a few
 ## thousand `Vector2`s in total, printed by `bike_path_selfcheck` check T4) and
-## there is nothing for a cap to evict. `_bike_path_cache` above is capped
-## because IT grows one entry per origin chunk a long run walks past.
+## there is nothing for a cap to evict.
 ##
 ## Seeded twice over — the graph it is built from is pure in `run_seed`, and the
 ## walk between two anchors reads the road centreline, the biome field and the
@@ -2333,11 +2314,6 @@ func _drop_seeded_memos() -> void:
 	# ...and the FIELD_ALTITUDE spike's coarse road polyline, which is a window
 	# onto the same centreline. `update_chunks` rebuilds it for the new world.
 	_alt_road_segs = PackedVector4Array()
-	# ...and the BICYCLE PATHS, which are seeded a step further out still: the
-	# origin roll carries `run_seed` directly, and every blocking test the walk
-	# makes reads the road centreline, the biome field or the landmark table above.
-	# A path kept across a re-seed would be a strip laid out for the LAST world.
-	_bike_path_cache = {}
 	# ...and the BIKE ROAD NETWORK's anchor table and trunk graph, which ride the
 	# road centreline twice over: the waypoint sites and the landmark sites above
 	# are both derived from it, so a graph kept across a re-seed would join this
@@ -3645,7 +3621,7 @@ func spawn_chest_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 # is computable without its chunk" seam, and until the bicycle paths landed
 # nothing reached either through the `terrain` group — so the forwarder would
 # have been dead weight and the call sites were spelled
-# `TerrainLandmarks.landmark_sites(terrain)`. `BikePaths.station_blocked()` is a
+# `TerrainLandmarks.landmark_sites(terrain)`. `BikePaths.trunk_keep_out()` is a
 # SIBLING FAMILY asking whether a station stands on a landmark's chunk, and
 # CLAUDE.md's conventions are explicit about that direction: "a family's ...
 # libraries reach a sibling family through the node that owns the state, never
@@ -3670,7 +3646,7 @@ func landmark_sites() -> Dictionary:
 # rather than speculative — the rule the eight bridge forwarders and the
 # `coin_road` block above are written under.
 #
-# `BikePaths.station_blocked()` asks whether a station stands inside a teleport
+# `BikePaths.trunk_keep_out()` asks whether a station stands inside a teleport
 # circle, and a SIBLING static family reaches another one THROUGH THE NODE that
 # owns the state, never by naming the class (CLAUDE.md, Conventions). Everything
 # else that reads this table is outside the family system — `waypoint_hub.gd`,
@@ -3692,10 +3668,10 @@ func waypoint_sites() -> Array[Dictionary]:
 # static family reaches another one THROUGH THE NODE that owns the state, never
 # by naming the class (CLAUDE.md, Conventions — "a `const` alias or a type
 # annotation is a parse-time reference — one direction only, or it is a cycle").
-# `BikePaths` -> `BikeNetwork` is one direction today; `.4` is the child that
-# makes the spur tier read a trunk, which is the moment a class-name reference
-# here would close the loop. Adding the forwarder now costs two lines and means
-# that bead has nothing to undo.
+# `BikePaths` -> `BikeNetwork` is one direction today; the retired spur tier used
+# to read a trunk the other way, which is the moment a class-name reference here
+# would have closed the loop. The forwarder stays: the graph tier is reached
+# through the node that owns the state, never by name.
 #
 # `bike_network_selfcheck` is the family's OWN check and names `BikeNetwork`
 # directly, for `landmark_sites_selfcheck`'s reason above.
