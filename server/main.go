@@ -1,10 +1,11 @@
 package main
 
-// main.go — process entry: config from the environment, six routes, and one
-// small piece of state. The lobby does signalling, membership and master-naming
+// main.go — process entry: config from the environment, seven routes, and two
+// small pieces of state. The lobby does signalling, membership and master-naming
 // and no game logic, but it is no longer entirely stateless: /best keeps
 // per-player best-run records (best.go), because the game's own `user://` store
-// does not survive on the web export. Still no database.
+// does not survive on the web export, and /save keeps one opaque cloud slot
+// per player (save.go). Still no database.
 
 import (
 	"crypto/hmac"
@@ -51,6 +52,11 @@ func main() {
 	// life of the process, they just do not survive a redeploy.
 	best := newBestStore(env("LOBBY_BEST_FILE", ""))
 	go best.runDumper()
+	// One opaque cloud save slot per player — save.go for why it is a second
+	// store rather than a field on the best record. LOBBY_SAVE_FILE unset
+	// means memory-only, same as the best store.
+	save := newSaveStore(env("LOBBY_SAVE_FILE", ""))
+	go save.runDumper()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.ServeWS)
@@ -60,6 +66,7 @@ func main() {
 	// — the game client's catch-all owns `/` in production, so a route missing
 	// from the lobby's narrow rule silently serves index.html instead.
 	mux.HandleFunc("/best", best.handler)
+	mux.HandleFunc("/save", save.handler)
 	mux.HandleFunc("/healthz", healthzHandler(hub))
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
