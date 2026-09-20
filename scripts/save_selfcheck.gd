@@ -70,6 +70,37 @@ extends SceneTree
 ## (indoor restore at the door instead of the landing) fails check 9.
 ## Round-1 mutations, one per MAJOR: restore-the-merge fails check 10, drop
 ## the pending list fails check 12, origin-without-base fails check 11.
+##
+## BEAD .5 — CLIENT SYNC (checks 13-17, hermetic: `BestRunStore.config_path` is
+## the Sentinel scratch and `lobby_url_override` points at a stub URL that
+## refuses connections; fake server replies are fed through the
+## `_on_save_*_completed` handlers directly):
+##
+##   13. BOOT LWW. A reply with a newer `saved_at` replaces the local slot and
+##      emits `save_loaded` once; an older reply, an equal stamp (our own echo),
+##      an empty blob, a malformed / v=2 / oversize blob, a non-200 and a
+##      transport failure all leave the slot untouched and emit nothing. An
+##      empty local slot adopts a valid newer reply. The envelope stamp is never
+##      trusted (a far-future envelope around an older blob is ignored) — decode
+##      is `SaveState.decode`, nothing else.
+##   14. POST ADOPT. A POST reply newer than what was sent is adopted locally and
+##      silently (no signal — the write path never flips the card); an
+##      older-or-equal reply, a malformed one, an empty one, a non-200 and a
+##      transport failure keep the slot.
+##   15. SILENT OFFLINE. Against the refusing stub, a write plus a push plus a
+##      fetch leave the local slot byte-identical and emit nothing.
+##   16. WIRE UNTOUCHED. `mp_codec.gd` / `mp_manager.gd` carry no save-sync seam
+##      (the pause_selfcheck grep idiom, comments stripped).
+##   17. VERBS. `fetch()` GETs the cloud slot, a push POSTs it, and
+##      `clear_save_slot()` DELETEs it (and empties the local slot).
+##
+## Bead .5's mutations, each naming its check: M1 (boot compare flipped —
+## older-or-equal wins) fails check 13's replace AND ignore asserts; M2 (POST
+## reply ignored) fails check 14's adopt assert; M3 (local write skipped when
+## the lobby is down) fails check 15's byte-identical assert; the clear verb not
+## sent fails check 17's DELETE assert; a malformed/oversize/v=2 reply applied
+## fails check 13's ignore asserts. Both bad-reply loops assert their own
+## count, so a dropped variant fails BY COUNT.
 
 ## The end-of-check sentinel — see `scripts/selfcheck_sentinel.gd` for why every
 ## check stamps itself and the report site never prints SELFCHECK OK itself.
@@ -101,11 +132,26 @@ const INTERIOR_SCENE: String = "res://scenes/tower/tower_interior.tscn"
 ## (sorted keys, no spaces) so check 4 can demand byte-equality with it.
 const LITERAL: String = "{\"captives\":[\"primm\",\"teibi\"],\"coins\":1250,\"distance\":3340,\"explored\":7,\"hero\":2,\"in_hq\":true,\"landing\":\"lift_stop_s3\",\"lift\":[\"lift_stop_s3\"],\"pos\":[1234.5,0.0,-9876.25],\"saved_at\":1758326400,\"seed\":20260904,\"v\":1,\"waypoints\":3}"
 
+## Bead .5's hermetic lobby: port 9 (discard) on loopback refuses connections,
+## so every real request fails silently async while fake replies drive the
+## asserts through the `_on_save_*_completed` handlers directly.
+const STUB_LOBBY_URL: String = "http://127.0.0.1:9"
+
+## Bead .5's three stamps on the check-3 literal: the arranged slot, a newer
+## server copy, and an older one. Same valid blob — only the clock moves.
+const SAVE_AT_SENT: int = 1758326400
+const SAVE_AT_NEWER: int = 1758326500
+const SAVE_AT_OLDER: int = 1758326300
+
 var _failures: Array[String] = []
 
 
 func _initialize() -> void:
 	Sentinel.isolate_user_state()
+	# Bead .5: the whole file syncs against the refusing stub from here on, so
+	# checks 5-12's pushes and clears fail silently instead of reaching the
+	# production lobby — their asserts only ever read the local layer.
+	BestRunStore.lobby_url_override = STUB_LOBBY_URL
 	_check_round_trip()
 	_check_bounds_reject()
 	_check_wire_literal()
@@ -118,6 +164,11 @@ func _initialize() -> void:
 	await _check_restore_replaces()
 	await _check_distance_accumulates()
 	await _check_pending_lift_ids()
+	await _check_save_boot_lww()
+	await _check_save_post_adopt()
+	await _check_save_silent_offline()
+	_check_save_wire_untouched()
+	await _check_save_verbs()
 	_report()
 
 
@@ -944,3 +995,225 @@ func _check_pending_lift_ids() -> void:
 		"the snapshot should carry the landing after the drain")
 	await _clear_world(terrain2, player2, tower2)
 	Sentinel.done("pending_lift_ids")
+
+# ---------------------------------------------------------------------------
+# BEAD .5 — CLIENT SYNC: hermetic LWW checks (see the header, checks 13-17)
+# ---------------------------------------------------------------------------
+
+func _save_blob_at(saved_at: int) -> String:
+	# The check-3 literal re-stamped: the same valid blob, only the clock moves.
+	return LITERAL.replace("\"saved_at\":1758326400", "\"saved_at\":%d" % saved_at)
+
+
+func _save_reply(blob: String, envelope_at: int) -> PackedByteArray:
+	# A server envelope around `blob`. The envelope stamp is bait, never the
+	# rule — the handlers must judge the blob alone.
+	return JSON.stringify({"blob": blob, "saved_at": envelope_at}).to_utf8_buffer()
+
+
+func _make_save_store() -> BestRunStore:
+	# A live in-tree store against the stub lobby. One frame first: without it
+	# every request answers ERR_UNCONFIGURED (`best_run_e2e`'s Trap 1).
+	var store := BestRunStore.new()
+	root.add_child(store)
+	await process_frame
+	return store
+
+
+func _feed_save_get(store: BestRunStore, blob: String, envelope_at: int) -> void:
+	store._on_save_get_completed(HTTPRequest.RESULT_SUCCESS, 200,
+		PackedStringArray([]), _save_reply(blob, envelope_at))
+
+
+# ---------------------------------------------------------------------------
+# CHECK 13 — boot LWW: newer replaces and fires once, everything else is silence
+# ---------------------------------------------------------------------------
+
+func _check_save_boot_lww() -> void:
+	BestRunStore.clear_save_slot()
+	var store := await _make_save_store()
+	var fired: Array = []
+	store.save_loaded.connect(func() -> void: fired.append(1))
+	var sent := _save_blob_at(SAVE_AT_SENT)
+	var newer := _save_blob_at(SAVE_AT_NEWER)
+	var older := _save_blob_at(SAVE_AT_OLDER)
+	# Arrange an older local slot: the newer reply must win it.
+	BestRunStore.write_save_slot(older)
+	_expect(BestRunStore.save_slot() == older, "setup: the older slot should be arranged")
+	_feed_save_get(store, newer, SAVE_AT_NEWER)
+	_expect(BestRunStore.save_slot() == newer,
+		"a newer server copy should replace the local slot")
+	_expect(fired.size() == 1, "save_loaded should fire once for the adoption")
+	# An older reply loses to what we hold, silently.
+	_feed_save_get(store, older, SAVE_AT_OLDER)
+	_expect(BestRunStore.save_slot() == newer, "an older server copy should be ignored")
+	_expect(fired.size() == 1, "an older reply should not re-fire save_loaded")
+	# Our own echo (equal stamp) is ignored too.
+	_feed_save_get(store, newer, SAVE_AT_NEWER)
+	_expect(BestRunStore.save_slot() == newer, "an equal stamp should be ignored")
+	_expect(fired.size() == 1, "an echo should not re-fire save_loaded")
+	# Every bad reply reads as no cloud save. The count IS the assertion: a
+	# dropped variant fails here, not silently.
+	var padding: String = "".lpad(SaveState.MAX_SAVE_BYTES + 1 - newer.length(), " ")
+	var bad: Array = [
+		_save_reply("", 0),
+		_save_reply("garbage", 0),
+		_save_reply("[]", 0),
+		_save_reply(newer.replace("\"v\":1", "\"v\":2"), 0),
+		_save_reply(newer + padding, 0),
+		_save_reply(older, 9999999999),
+	]
+	var tried := 0
+	for reply: PackedByteArray in bad:
+		store._on_save_get_completed(HTTPRequest.RESULT_SUCCESS, 200,
+			PackedStringArray([]), reply)
+		tried += 1
+		_expect(BestRunStore.save_slot() == newer,
+			"a bad server reply should leave the slot untouched")
+		_expect(fired.size() == 1, "a bad reply should not fire save_loaded")
+	_expect(tried == 6, "tried %d bad replies, not 6" % tried)
+	# Transport failures and non-200s are silence, not state.
+	store._on_save_get_completed(HTTPRequest.RESULT_CONNECTION_ERROR, 200,
+		PackedStringArray([]), _save_reply(newer, SAVE_AT_NEWER))
+	store._on_save_get_completed(HTTPRequest.RESULT_SUCCESS, 500,
+		PackedStringArray([]), _save_reply(newer, SAVE_AT_NEWER))
+	_expect(BestRunStore.save_slot() == newer, "a failed GET should change nothing")
+	_expect(fired.size() == 1, "a failed GET should not fire save_loaded")
+	# An empty slot adopts a valid newer copy (the other device's world).
+	BestRunStore.clear_save_slot()
+	fired.clear()
+	_expect(BestRunStore.save_slot() == "", "setup: the slot should be empty")
+	_feed_save_get(store, newer, SAVE_AT_NEWER)
+	_expect(BestRunStore.save_slot() == newer,
+		"an empty slot should adopt a valid server copy")
+	_expect(fired.size() == 1, "the adoption should fire save_loaded once")
+	store.queue_free()
+	Sentinel.done("save_boot_lww")
+
+
+# ---------------------------------------------------------------------------
+# CHECK 14 — POST adopt: a reply newer than sent is taken, silently
+# ---------------------------------------------------------------------------
+
+func _check_save_post_adopt() -> void:
+	BestRunStore.clear_save_slot()
+	var store := await _make_save_store()
+	var fired: Array = []
+	store.save_loaded.connect(func() -> void: fired.append(1))
+	var sent := _save_blob_at(SAVE_AT_SENT)
+	var newer := _save_blob_at(SAVE_AT_NEWER)
+	var older := _save_blob_at(SAVE_AT_OLDER)
+	BestRunStore.write_save_slot(sent)
+	store.push_save_slot()
+	_expect(store._last_save_verb == "POST", "a push should POST the slot")
+	_expect(store._save_post_sent_at == SAVE_AT_SENT,
+		"a push should carry the slot's own stamp")
+	# Another device won the race: adopt, silently.
+	store._on_save_post_completed(HTTPRequest.RESULT_SUCCESS, 200,
+		PackedStringArray([]), _save_reply(newer, SAVE_AT_NEWER))
+	_expect(BestRunStore.save_slot() == newer,
+		"a newer POST reply should be adopted locally")
+	_expect(fired.is_empty(), "the write path should never emit save_loaded")
+	# Everything else keeps the arranged slot. The count IS the assertion.
+	var keep: Array = [
+		_save_reply(older, SAVE_AT_OLDER),
+		_save_reply(sent, SAVE_AT_SENT),
+		_save_reply("garbage", 0),
+		_save_reply("", 0),
+	]
+	var tried := 0
+	for reply: PackedByteArray in keep:
+		BestRunStore.write_save_slot(sent)
+		store.push_save_slot()
+		store._on_save_post_completed(HTTPRequest.RESULT_SUCCESS, 200,
+			PackedStringArray([]), reply)
+		tried += 1
+		_expect(BestRunStore.save_slot() == sent,
+			"an older-or-equal-or-bad POST reply should keep the slot")
+		_expect(fired.is_empty(), "a kept reply should not emit save_loaded")
+	_expect(tried == 4, "tried %d kept replies, not 4" % tried)
+	# Failures are silence too.
+	BestRunStore.write_save_slot(sent)
+	store.push_save_slot()
+	store._on_save_post_completed(HTTPRequest.RESULT_CONNECTION_ERROR, 200,
+		PackedStringArray([]), _save_reply(newer, SAVE_AT_NEWER))
+	store._on_save_post_completed(HTTPRequest.RESULT_SUCCESS, 500,
+		PackedStringArray([]), _save_reply(newer, SAVE_AT_NEWER))
+	_expect(BestRunStore.save_slot() == sent, "a failed POST should change nothing")
+	store.queue_free()
+	Sentinel.done("save_post_adopt")
+
+
+# ---------------------------------------------------------------------------
+# CHECK 15 — silent offline: write + push + fetch against the refusing stub
+# ---------------------------------------------------------------------------
+
+func _check_save_silent_offline() -> void:
+	BestRunStore.clear_save_slot()
+	var store := await _make_save_store()
+	var fired: Array = []
+	store.save_loaded.connect(func() -> void: fired.append(1))
+	BestRunStore.write_save_slot(LITERAL)
+	store.push_save_slot()
+	store.fetch()
+	# Let every refused completion land: the slot must be byte-identical after.
+	await create_timer(2.0).timeout
+	_expect(BestRunStore.save_slot() == LITERAL,
+		"an unreachable lobby must not cost the local write")
+	_expect(fired.is_empty(), "silence should emit nothing")
+	store.queue_free()
+	Sentinel.done("save_silent_offline")
+
+
+# ---------------------------------------------------------------------------
+# CHECK 16 — the multiplayer wire is untouched by save sync
+# ---------------------------------------------------------------------------
+
+func _check_save_wire_untouched() -> void:
+	# The pause_selfcheck idiom: strip the comment tail, then look for the seam.
+	var targets: Array[String] = ["mp_codec.gd", "mp_manager.gd"]
+	# Save-sync identifiers only: `BestRunStore` itself is already on the wire
+	# for the tower gate set (`MAX_TOWER_IDS`, `tower_opened_ids`), which predates
+	# this bead and is not the save slot.
+	var tokens: Array[String] = ["save_loaded", "save_slot", "/save", "push_save",
+		"SaveState", "_save_get", "_save_post", "_save_delete"]
+	var scanned := 0
+	for name: String in targets:
+		var source: String = FileAccess.get_file_as_string("res://scripts/" + name)
+		_expect(not source.is_empty(),
+			"could not read %s — the check would pass vacuously" % name)
+		if source.is_empty():
+			continue
+		scanned += 1
+		for line: String in source.split("\n"):
+			var code := line
+			var hash_at := code.find("#")
+			if hash_at >= 0:
+				code = code.substr(0, hash_at)
+			for token: String in tokens:
+				_expect(not code.contains(token),
+					"%s carries save-sync (%s)" % [name, token])
+	_expect(scanned == targets.size(),
+		"scanned %d of %d wire files" % [scanned, targets.size()])
+	Sentinel.done("save_wire_untouched")
+
+
+# ---------------------------------------------------------------------------
+# CHECK 17 — verbs: fetch GETs, a push POSTs, a clear DELETEs
+# ---------------------------------------------------------------------------
+
+func _check_save_verbs() -> void:
+	BestRunStore.clear_save_slot()
+	var store := await _make_save_store()
+	_expect(store._last_save_verb == "", "no verb should be recorded before any sync")
+	BestRunStore.write_save_slot(LITERAL)
+	store.fetch()
+	_expect(store._last_save_verb == "GET", "fetch should GET the cloud slot")
+	store.push_save_slot()
+	_expect(store._last_save_verb == "POST", "a push should POST the slot")
+	BestRunStore.clear_save_slot()
+	_expect(store._last_save_verb == "DELETE", "a clear should send the clear verb")
+	_expect(BestRunStore.save_slot() == "",
+		"clear should empty the slot (negative control)")
+	store.queue_free()
+	Sentinel.done("save_verbs")
