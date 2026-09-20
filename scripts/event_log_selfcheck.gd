@@ -747,9 +747,9 @@ func _check_corner_fit() -> String:
 			# THE CONTROL: the same rules on a scene with the log shoved
 			# 182 px up must FAIL — otherwise "clears its neighbours" is
 			# unprovable.
-			var tampered: String = text.replace("offset_top = 282.0", "offset_top = 100.0")
+			var tampered: String = text.replace("offset_top = 354.0", "offset_top = 100.0")
 			if tampered == text:
-				failure = "the control scene has no 282.0 to move — it measured nothing"
+				failure = "the control scene has no 354.0 to move — it measured nothing"
 			else:
 				var moved := {}
 				for name: String in ["EventLogHUD", "CoinLabel", "AbilityHUD"]:
@@ -767,7 +767,7 @@ func _assert_fit(rects: Dictionary) -> String:
 	if (rects["EventLogHUD"] as Rect2) == Rect2():
 		return "EventLogHUD has no readable top-right rect in main.tscn"
 	var log_rect: Rect2 = rects["EventLogHUD"]
-	if log_rect.position.y < 282.0:
+	if log_rect.position.y < 354.0:
 		return "EventLogHUD starts at y=%.0f, inside AbilityHUD's airspace" % log_rect.position.y
 	if log_rect.size.x < 360.0:
 		return "EventLogHUD is %.0f px wide — the log card is 360" % log_rect.size.x

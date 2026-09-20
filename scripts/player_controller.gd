@@ -3804,11 +3804,14 @@ func join_at(anchor: Vector3) -> void:
 
 	# This peer's SOLO tally is not the room's: own_coins would inflate the shared
 	# bank with coins banked in a different world. The "Coins:" line is personal
-	# (bead godot-test1-y77d), so zeroing this starts the joiner honestly at 0.
+	# (bead godot-test1-y77d), so BOTH coin fields are zeroed here — own_coins
+	# alone would leave the old solo balance on the HUD while every fare and
+	# purchase spends 0 (send-back round 1). The restart pair below is the model.
 	# (It also makes a reconnect safe: the incumbents froze this peer's
 	# old contribution in _gone_coins, and coming back at zero is what stops it
 	# being counted twice.)
 	own_coins = 0
+	coins_collected = 0
 	# The personal distance record restarts from where we arrived, or the group's
 	# kilometres are banked into user://best_run.cfg as ours (see the field).
 	own_distance = 0

@@ -235,6 +235,7 @@ func _run() -> void:
 	_check_the_voice_seams_in_a_room()
 	_check_the_hud_theme()
 	_check_the_level_strip()
+	await _check_coin_room_block()
 	_report()
 
 
@@ -1258,7 +1259,9 @@ func _check_the_level_strip() -> void:
 	     above `AbilityHUD`, the widget directly under it. Both numbers live in
 	     `main.tscn` and in `coin_hud.gd`'s consts, which is to say in two files that
 	     no single edit keeps in step; each rule carries the tamper that proves it
-	     bites.
+	     bites. The rect is 136 tall because the ROOM state carries two text
+	     lines: see check 9c for the live half of this (a static rect cannot say
+	     where the strip sits once the text grows).
 	"""
 	# --- a. the strip really reads and really repaints ---------------------------
 	# COMMENTS STRIPPED FIRST, and check 8d's `ponytail:` note is why: a scan that
@@ -1290,14 +1293,14 @@ func _check_the_level_strip() -> void:
 		_fail(msg)
 	# A rect pushed PAST the dial below it must fail the clearance rule...
 	var over := _level_strip_band_failures(
-		text.replace("offset_bottom = 92.0", "offset_bottom = 110.0"))
+		text.replace("offset_bottom = 156.0", "offset_bottom = 180.0"))
 	_check(_any_contains(over, "AbilityHUD"),
-		"a CoinLabel ending at 110 still clears AbilityHUD as far as this check is "
+		"a CoinLabel ending at 180 still clears AbilityHUD as far as this check is "
 		+ "concerned — the clearance rule has stopped biting")
 	# ...and one shrunk back to where it was before the strip must fail the other,
 	# because a strip with no band is a strip drawn over the count's own glyphs.
 	var under := _level_strip_band_failures(
-		text.replace("offset_bottom = 92.0", "offset_bottom = 80.0"))
+		text.replace("offset_bottom = 156.0", "offset_bottom = 80.0"))
 	_check(_any_contains(under, "band"),
 		"a CoinLabel back at its pre-strip height still leaves room for the band — "
 		+ "the band rule has stopped biting")
@@ -1350,6 +1353,101 @@ func _level_strip_band_failures(text: String) -> Array[String]:
 				% [coin_rect.end.y, dial_rect.position.y]
 				+ "strip would be painted over the dial")
 	return out
+
+
+func _check_coin_room_block() -> void:
+	"""
+	9c. THE ROOM BLOCK (send-back round 1): with the `Crew:` line up, the strip
+	sits BELOW the crew text and the whole `CoinLabel` still ends above
+	`AbilityHUD` — the two overlaps a pinned strip plus a grown label produced.
+
+	A live corner, not a static rect: 9b pins the designed numbers, but neither
+	the strip's derived top nor the label's grown height exists until a real
+	`coin_hud` lays text out. Driven both ways — solo first (the control: strip
+	exactly at `STRIP_TOP`, one line, rect as designed), then a room stub whose
+	bank reads — through the SHIPPED script, so a strip pinned back at the
+	constant fails the room leg (the round's mutation) and a label grown past
+	the dial fails the clearance leg.
+	"""
+	var scene_text := FileAccess.get_file_as_string(MAIN_SCENE_PATH)
+	var coin_rect: Variant = _node_rect(scene_text, "CoinLabel")
+	var dial_rect: Variant = _node_rect(scene_text, "AbilityHUD")
+	if coin_rect == null or dial_rect == null:
+		_fail("main.tscn has lost CoinLabel or AbilityHUD — the room block is unmeasurable")
+		Sentinel.done("coin_room_block")
+		return
+	var ability_top: float = (dial_rect as Rect2).position.y
+	# The designed corner at 1280x720, anchors resolving against a sized parent
+	# rather than the headless window — `locale_selfcheck`'s card probe, same
+	# reason.
+	var stage := Control.new()
+	stage.size = Vector2(1280.0, 720.0)
+	root.add_child(stage)
+	var hud := Label.new()
+	hud.set_script(COIN_SCRIPT)
+	hud.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	hud.offset_left = -280.0
+	hud.offset_top = 20.0
+	hud.offset_right = -24.0
+	hud.offset_bottom = 156.0
+	hud.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	hud.grow_vertical = Control.GROW_DIRECTION_END
+	hud.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	var solo := CoinStub.new()
+	solo.add_to_group("player")
+	root.add_child(solo)
+	stage.add_child(hud)
+	await process_frame
+	await process_frame
+	_check(not ("CREW" in hud.text),
+		"the solo control draws a crew line with no bank — the fixture is not solo")
+	_check(absf(hud.size.y - 136.0) < 1.0,
+		"solo CoinLabel is %.0f px tall, not the designed 136 — the fixture moved"
+		% hud.size.y)
+	_check(hud.coin_strip_top() == COIN_SCRIPT.STRIP_TOP,
+		"solo strip sits at %.0f, not STRIP_TOP %d — the control moved"
+		% [hud.coin_strip_top(), int(COIN_SCRIPT.STRIP_TOP)])
+	solo.remove_from_group("player")
+	solo.free()
+	var room := CoinStub.new()
+	room.bank = 1004
+	room.add_to_group("player")
+	root.add_child(room)
+	await process_frame
+	await process_frame
+	_check("CREW" in hud.text and "1004" in hud.text,
+		"the room HUD reads \"%s\" — the room leg is measuring nothing" % hud.text)
+	var text_bottom: float = hud.get_minimum_size().y
+	var strip: float = hud.coin_strip_top()
+	_check(strip >= text_bottom - 0.5,
+		"the room strip starts at %.0f inside %.0f px of text — it paints over the crew line"
+		% [strip, text_bottom])
+	_check(strip <= hud.size.y - COIN_SCRIPT.STRIP_BAND,
+		"the room strip starts at %.0f and the rect is %.0f — the %.0f px band overflows it"
+		% [strip, hud.size.y, COIN_SCRIPT.STRIP_BAND])
+	_check(hud.position.y + hud.size.y <= ability_top,
+		"the room coin block ends at %.0f, past AbilityHUD at %.0f"
+		% [hud.position.y + hud.size.y, ability_top])
+	room.remove_from_group("player")
+	room.free()
+	hud.free()
+	stage.free()
+	Sentinel.done("coin_room_block")
+
+
+## A hero the coin HUD can read: personal coins, a bank that is there solo not
+## at all and in a room, and no streak. `progression` is deliberately absent —
+## the strip's geometry must not depend on the level backend existing.
+class CoinStub extends Node:
+	var coins_collected: int = 5
+	var own_coins: int = 5
+	var bank: Variant = null
+
+	func room_bank() -> Variant:
+		return bank
+
+	func get_streak_multiplier() -> int:
+		return 1
 
 
 func _script_paths() -> PackedStringArray:

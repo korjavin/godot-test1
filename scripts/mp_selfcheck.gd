@@ -3315,6 +3315,15 @@ func _check_personal_coins_crew_bank() -> String:
 	player.add_to_group("player")
 	root.add_child(player)
 	await process_frame
+	# JOIN WIPES BOTH FIELDS (send-back round 1): a 300-coin solo tally must not
+	# survive placement — the HUD line is personal now, so a stale
+	# coins_collected would spend 0 while showing 300. M0: drop the
+	# coins_collected reset in join_at() -> red here.
+	player.set("own_coins", 300)
+	player.set("coins_collected", 300)
+	player.call("join_at", Vector3(100.0, 0.0, 100.0))
+	if int(player.get("own_coins")) != 0 or int(player.get("coins_collected")) != 0:
+		return _bank_cleanup(mp, player, "join kept own=%d shown=%d — both must wipe to 0 (M0)" % [int(player.get("own_coins")), int(player.get("coins_collected"))])
 	player.set("own_coins", 5)
 	player.set("coins_collected", 5)
 	player.set("own_distance", 0)
