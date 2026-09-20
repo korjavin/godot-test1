@@ -306,20 +306,21 @@ const STREAK_COINS_PER_STEP: int = 10
 var coin_streak: int = 0
 var streak_timer: float = 0.0
 
-## MULTIPLAYER CONTRIBUTION. Inside a room the two numbers the HUD shows —
-## coins_collected and run_distance — become the ROOM's totals, summed by
-## mp_manager.gd from what every member contributes. This field is what THIS
-## peer contributes: the coins it banked itself. It has to be kept apart from
-## the displayed field, because that one is overwritten with the shared total
-## every physics tick (see _refresh_shared_totals) and would otherwise feed its
-## own room total back into itself, doubling the bank on every frame. Offline it
-## is simply carried along and never read, so solo play is unchanged.
+## MULTIPLAYER CONTRIBUTION. Inside a room the HUD shows TWO numbers: this
+## peer's own coins (coins_collected, personal again — bead godot-test1-y77d)
+## and the crew's bank on a labelled second line (see room_bank()). This field
+## is what THIS peer contributes: the coins it banked itself. It has to be kept
+## apart from the bank, because the bank is summed by mp_manager.gd from every
+## member's contribution and feeding the bank back into itself would double it
+## on every frame. Offline it is simply carried along and never read, so solo
+## play is unchanged.
 var own_coins: int = 0
 
-## True while _refresh_shared_totals is overwriting the displayed score fields
-## with the room's totals. It exists purely to catch the falling edge — the frame
-## the room ends — so this peer's own numbers can be put back; without it the
-## room's totals are simply abandoned in the HUD fields for the rest of the run.
+## Whether the last _refresh_shared_totals() call saw a readable room bank.
+## coins_collected is PERSONAL again (bead godot-test1-y77d) and is never
+## overwritten, so there is nothing to restore on the falling edge — this is a
+## state flag only, kept so the room leg stays observable (and so the old
+## restore cannot silently come back: mp_selfcheck A4 fails if it does).
 var _showing_shared_totals: bool = false
 
 ## This peer's OWN farthest displacement this run. Not a contribution the room
@@ -1511,10 +1512,11 @@ func _physics_process(delta: float) -> void:
 		bank_timer = 0.0
 		_bank_records()
 
-	# STEP 0.42: In a multiplayer room the score fields the two HUDs read become
-	# the ROOM's, not this peer's. Done here, immediately after the local
-	# distance max above, so this frame's own contribution is already folded in.
-	# Costs one group lookup and nothing else when there is no room.
+	# STEP 0.42: In a multiplayer room remember the bank reads (see
+	# _refresh_shared_totals) — the HUD's own line stays personal. Done here,
+	# immediately after the local distance max above, so this frame's own
+	# contribution is already folded in. Costs one group lookup and nothing else
+	# when there is no room.
 	_refresh_shared_totals()
 
 	# STEP 0.45: Tick the coin-streak window down; when it lapses the streak is
@@ -2426,13 +2428,11 @@ func _pay_coin_setback(fraction: float) -> bool:
 	calling this.
 
 	THE COINS COME OFF `own_coins`, WHICH IS THIS PEER'S OWN STAKE. Solo the two
-	fields are identical and this is simply "that fraction of your coins". In a ROOM
-	`coins_collected` is the whole room's bank (see `_refresh_shared_totals`), and
-	billing a fraction of four players' bank to one player's contribution could
-	drive `own_coins` negative and make the shared total drift. So the fraction is
-	taken of what this player actually put in, and the SAME number comes off the
-	displayed figure so the HUD moves on the frame the hit lands rather than on the
-	next shared recompute.
+	fields are identical and this is simply "that fraction of your coins". In a room
+	`coins_collected` is personal too (bead godot-test1-y77d) — never the crew's
+	bank — so billing a fraction of four players' bank to one player's contribution
+	cannot happen: the fraction is taken of what this player actually put in, and
+	the SAME number comes off the displayed figure so the HUD moves on this frame.
 
 	LIFETIME COINS ARE NEVER TOUCHED. `progression.gd`'s count and
 	`best_run_store.gd`'s records are monotone by design (every persistence layer
@@ -2656,8 +2656,8 @@ func collect_coin(value: int = 1) -> void:
 	_maybe_start_speed_burst()
 	coins_collected += value * get_streak_multiplier()
 	# The same multiplied value, banked again as THIS peer's contribution to a
-	# multiplayer room (see own_coins). Untouched by the shared recompute, which
-	# overwrites coins_collected but never this.
+	# multiplayer room (see own_coins). The shared tracker never writes
+	# coins_collected (bead godot-test1-y77d), so the two move together.
 	own_coins += value * get_streak_multiplier()
 	# ROAD MUSIC (bead godot-test1-bv0f): every Nth pickup queues a phrase.
 	_sfx("notify_coin_pickup", 1)
@@ -3386,10 +3386,9 @@ func _bank_records() -> bool:
 	when a record ACTUALLY moved — so the network sees traffic on improvements and
 	nothing else.
 
-	Records are read off own_coins, NOT the displayed fields: in a
-	room those are the ROOM's totals (see _refresh_shared_totals), so writing them
-	here would persist the whole room's bank as this player's personal best. Solo
-	the pairs are identical.
+	Records are read off own_coins, NOT the crew bank: the bank is the room's
+	shared total (see room_bank()) and writing it here would persist the whole
+	room as this player's personal best. Solo the pairs are identical.
 
 	...off the run's PEAK own_coins, though, not its live balance (bead
 	godot-test1-h6x). `_on_caught_finished()` bills the attacker's setback and THEN
@@ -3804,9 +3803,9 @@ func join_at(anchor: Vector3) -> void:
 	_place_near(anchor)
 
 	# This peer's SOLO tally is not the room's: own_coins would inflate the shared
-	# bank with coins banked in a different world. The displayed coins/distance
-	# are the room's from the next tick either way, so zeroing this costs nothing
-	# visible. (It also makes a reconnect safe: the incumbents froze this peer's
+	# bank with coins banked in a different world. The "Coins:" line is personal
+	# (bead godot-test1-y77d), so zeroing this starts the joiner honestly at 0.
+	# (It also makes a reconnect safe: the incumbents froze this peer's
 	# old contribution in _gone_coins, and coming back at zero is what stops it
 	# being counted twice.)
 	own_coins = 0
@@ -3846,8 +3845,8 @@ func join_at(anchor: Vector3) -> void:
 	# JOINING FROM THE GAME OVER SCREEN IS A SUPPORTED FLOW — mp_ui deliberately
 	# does not pause over it, so the panel's Join button works there. Without this
 	# the joiner is placed beside the group and left frozen: is_game_over
-	# early-returns _physics_process above _refresh_shared_totals, so the room's
-	# bank never even reaches it. The room owns the roster from the next tick.
+	# early-returns _physics_process above _refresh_shared_totals, so the room
+	# flag never even flips for it. The room owns the roster from the next tick.
 	if is_game_over:
 		is_game_over = false
 		run_outcome = Outcome.CAPTURED
@@ -4138,30 +4137,39 @@ func travel_to_waypoint(index: int) -> bool:
 	@return: whether the hop actually happened. Every refusal moves NOTHING and
 	    charges NOTHING.
 
-	THE REFUSALS, and all of them are silent but the last:
-	  * a hop already in flight (`_travel_busy`);
-	  * mid-respawn, caught, or the run is over — the body is not the player's to
-		move in any of the three;
+	THE REFUSALS — EVERY ONE A PLAYER CAN REACH SAYS WHY (owner ruling
+	2026-09-20, bead godot-test1-hiyn; a silent refusal is a bug in itself):
+	  * mid-respawn, caught, or the run is over — "Cannot travel now";
 	  * not standing on a circle, per `waypoint_hub.standing_on()`, which is a
-		POSITION AND NOT A PERMISSION (its docstring) — so the bit for the circle
-		under our feet is ANDed against `waypoint_mask` here;
+		POSITION AND NOT A PERMISSION (its docstring) — "Not on a found circle";
+	  * standing on a circle whose bit is clear — the mask half of the AND —
+		"Not on a found circle";
 	  * the target's bit is clear — you cannot travel to a circle the crew has not
-	    found;
-	  * the target is the circle we are standing on;
-	  * a room that has not put this body down yet (`_travel_room_ready`);
-	  * fewer than `TELEPORT_COIN_COST` coins. THIS ONE SPEAKS — owner ruling:
-	    *"short of coins → refuse with a caption"*. It is last on purpose: a hero
-	    who is not eligible to travel at all must not be told about a price.
+	    found — "Circle not found yet";
+	  * the target is the circle we are standing on — "You are already here";
+	  * a room that has not put this body down yet (`_travel_room_ready`) —
+		"Waiting for the room";
+	  * fewer than `TELEPORT_COIN_COST` coins — "Not enough coins", naming the
+		real personal number (`own_coins`, the value actually charged). It is last
+		on purpose: a hero who is not eligible to travel at all must not be told
+		about a price.
+
+	TWO REFUSALS STAY SILENT ON PURPOSE: a hop already in flight (`_travel_busy`
+	/ `_debug_teleport_busy`) is a re-entrancy latch mid-hop, never a
+	player-visible state; and no hub / no terrain means a scene without the world
+	— which has no toast either. `_open_panel_for()`'s own silent refusals (a
+	clear bit on first visit, `_hero_unavailable()`, a pending quiz) are states
+	with their own screens and stay silent there too; see its docstring.
 
 	THE PRICE IS A COIN TAX AND NOTHING MORE. `own_coins` is this peer's own stake
-	(in a room `coins_collected` is the whole crew's bank — see
-	`_refresh_shared_totals`), so the bill comes off that and the same number comes
-	off the displayed figure so the HUD moves on this frame. LIFETIME TOTALS ARE
-	NEVER TOUCHED: `progression.gd`'s count and `best_run_store.gd`'s records are
-	monotone by design (CLAUDE.md, Persistence is monotone), and this is the second
-	place in the file that bills a run — `_pay_coin_setback()` is the first — so it
-	also snapshots `record_coins` the way that one does, or the run's coin PEAK
-	would be lost every time somebody travelled while ahead.
+	(`coins_collected` is personal too — bead godot-test1-y77d), so the bill comes
+	off that and the same number comes off the displayed figure so the HUD moves on
+	this frame. LIFETIME TOTALS ARE NEVER TOUCHED: `progression.gd`'s count and
+	`best_run_store.gd`'s records are monotone by design (CLAUDE.md, Persistence
+	is monotone), and this is the second place in the file that bills a run —
+	`_pay_coin_setback()` is the first — so it also snapshots `record_coins` the
+	way that one does, or the run's coin PEAK would be lost every time somebody
+	travelled while ahead.
 
 	WHAT THIS DELIBERATELY DOES NOT DO:
 	  * NO VERB. Peers need no packet: a remote avatar that finds its target more
@@ -4176,9 +4184,12 @@ func travel_to_waypoint(index: int) -> bool:
 		false at every one of them and no checkpoint rule applies.
 	"""
 	# Both latches — see the pair in `debug_teleport_to()` for why one is not enough.
+	# Silent: a re-entrancy guard mid-hop, never a player-visible state.
 	if _travel_busy or _debug_teleport_busy:
 		return false
 	if is_respawning or is_caught or is_game_over:
+		_say_travel_refused("Cannot travel now",
+			tr("The hero cannot travel right now."))
 		return false
 	var hub := get_tree().get_first_node_in_group("waypoint_hub")
 	if hub == null or not hub.has_method("standing_on") or not hub.has_method("arrived_at"):
@@ -4188,18 +4199,36 @@ func travel_to_waypoint(index: int) -> bool:
 		return false
 	var sites: Array[Dictionary] = TerrainWaypoints.waypoint_sites(terrain)
 	var here: int = int(hub.call("standing_on"))
-	if here < 0 or here >= sites.size() or index < 0 or index >= sites.size():
+	if here < 0 or here >= sites.size():
+		_say_travel_refused("Not on a found circle",
+			tr("Stand on a found circle to travel."))
+		return false
+	if index < 0 or index >= sites.size():
+		_say_travel_refused("Circle not found yet",
+			tr("That circle is not found yet."))
 		return false
 	if index == here:
+		_say_travel_refused("You are already here",
+			tr("You are already at that circle."))
 		return false
 	# STANDING ON A *FOUND* CIRCLE — the hub answers the first half, the mask the
-	# second, and the epic's rule is the AND of the two.
-	if waypoint_mask & (1 << here) == 0 or waypoint_mask & (1 << index) == 0:
+	# second, and the epic's rule is the AND of the two. Split so each half names
+	# its own reason.
+	if waypoint_mask & (1 << here) == 0:
+		_say_travel_refused("Not on a found circle",
+			tr("Stand on a found circle to travel."))
+		return false
+	if waypoint_mask & (1 << index) == 0:
+		_say_travel_refused("Circle not found yet",
+			tr("That circle is not found yet."))
 		return false
 	if not _travel_room_ready():
+		_say_travel_refused("Waiting for the room",
+			tr("You are not placed in the room yet."))
 		return false
 	if own_coins < TELEPORT_COIN_COST:
-		_say_travel_too_poor()
+		_say_travel_refused("Not enough coins",
+			tr("Travel costs %d coins, you have %d.") % [TELEPORT_COIN_COST, own_coins])
 		return false
 
 	# THE PEAK, SNAPSHOTTED BEFORE THE BILL — `_pay_coin_setback()`'s line and its
@@ -4207,9 +4236,7 @@ func travel_to_waypoint(index: int) -> bool:
 	# recording where the live balance is about to drop below it.
 	record_coins = maxi(record_coins, own_coins)
 	# SNAPSHOTTED, NOT RE-ADDED, so the refund below is exactly the bill. The
-	# displayed figure is clamped at zero (in a room it is the crew's bank and a
-	# joiner's has not been folded in yet, so it can legitimately sit under the
-	# fare), and `+= COST` would hand back more than the clamp took.
+	# displayed figure moves with the fare and is clamped at zero.
 	var own_before: int = own_coins
 	var shown_before: int = coins_collected
 	own_coins -= TELEPORT_COIN_COST
@@ -4233,9 +4260,10 @@ func travel_to_waypoint(index: int) -> bool:
 	return true
 
 
-func _say_travel_too_poor() -> void:
+func _say_travel_refused(title: String, body: String) -> void:
 	"""
-	The one refusal the player is told about: too few coins for the fare.
+	One speaker for every waypoint refusal a player can reach (bead
+	godot-test1-hiyn; owner ruling 2026-09-20: every refusal says why on screen).
 
 	It is `landmark_toast`'s two-line card, which is the same widget
 	`waypoint_hub` raises when a circle is found — so the epic says everything it
@@ -4245,12 +4273,12 @@ func _say_travel_too_poor() -> void:
 
 	The title is a raw `ui.csv` key (`Control`'s auto-translation does the rest —
 	`announce`'s contract); the body is a FORMAT string and therefore takes an
-	explicit `tr()` before the `%`, which is CLAUDE.md's localization rule.
+	explicit `tr()` before the `%` at the call site, which is CLAUDE.md's
+	localization rule.
 	"""
 	var toast := get_tree().get_first_node_in_group("landmark_toast")
 	if toast != null and toast.has_method("announce"):
-		toast.call("announce", "Not enough coins",
-			tr("Travel costs %d coins.") % TELEPORT_COIN_COST)
+		toast.call("announce", title, body)
 
 
 func _room_group_anchor() -> Variant:
@@ -4499,39 +4527,42 @@ func _mp() -> Node:
 	return get_tree().get_first_node_in_group("mp")
 
 
-func _refresh_shared_totals() -> void:
+func room_bank() -> Variant:
 	"""
-	While in a multiplayer room, overwrite the two DISPLAYED score fields with the
-	room's totals: the bank is the sum of every member's own coins, and the
-	distance the furthest anyone has reached. There is no third total — hearts
-	were the room's other shared number and heroes are the lives now (owner ruling
-	2026-08-31), so the room's shared death state is the captive set alone, which
-	rides the mesh and is read where a run actually ends (`_on_caught_finished()`).
+	The crew's bank in a room, or null solo — the labelled second line's value.
 
-	coin_hud.gd is deliberately NOT edited — it reads these very fields, so it
-	shows the room's numbers in a room and this peer's own numbers solo, with no
-	branch of its own.
-
-	Offline (or with no room joined) every call below answers null and nothing is
-	written, so solo play is byte-for-byte what it was.
+	Thin seam over `mp.shared_bank(own_coins)` so coin_hud.gd keeps its
+	group-lookup-only shape (bead godot-test1-y77d): the HUD asks the player,
+	the player asks the manager. Null-safe with a has_method guard, so a scene
+	with no manager answers solo.
 	"""
 	var mp := _mp()
 	if mp == null or not mp.has_method("shared_bank"):
-		return
-	var bank: Variant = mp.shared_bank(own_coins)
+		return null
+	return mp.shared_bank(own_coins)
+
+
+func _refresh_shared_totals() -> void:
+	"""
+	Track whether the room bank reads — and nothing else (bead godot-test1-y77d).
+
+	coins_collected is PERSONAL again: this peer's own count in a room too, moved
+	only by the places own_coins moves (pickup, tax, fare, restart). The crew's
+	bank keeps existing inside mp_manager.shared_bank() and is drawn as the
+	labelled "Crew:" second line (see room_bank() and coin_hud.gd) — never
+	written into coins_collected here. run_distance handling is untouched: it is
+	a running max and a fair room figure.
+
+	Offline (or with no room joined) the bank answers null and the flag clears,
+	so solo play is byte-for-byte what it was.
+	"""
+	var bank: Variant = room_bank()
 	if bank == null:
-		# Manager present but no room: solo semantics, untouched — EXCEPT on the
-		# frame the room ends. The displayed fields are still holding the room's
-		# totals and nothing else ever writes them back, so a room's four-figure
-		# bank would sit in coins_collected for the rest of the solo run. Restore
-		# this peer's own numbers.
 		if _showing_shared_totals:
 			_showing_shared_totals = false
-			coins_collected = own_coins
 			run_distance = own_distance
 		return
 	_showing_shared_totals = true
-	coins_collected = int(bank)
 
 
 func _weather_is_raining_here() -> bool:

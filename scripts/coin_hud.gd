@@ -2,10 +2,11 @@ extends Label
 ## Score HUD (top-right of the screen): the coin count, and the level strip it
 ## paints under itself.
 ##
-## Each frame this mirrors the player's coin count (the headline score) into the
-## label text. It finds the player through the "player" group rather than a hard
-## reference, matching the rest of the project, so it keeps working across player
-## respawns.
+## Each frame this mirrors the player's OWN coin count (the headline score) into
+## the label text, plus the crew's bank on a second labelled line while in a room
+## (bead godot-test1-y77d). It finds the player through the "player" group rather
+## than a hard reference, matching the rest of the project, so it keeps working
+## across player respawns.
 ##
 ## THIS LABEL ALSO PAINTS (bead godot-test1-l8rs). Under the text, inside its own
 ## rect, `_draw()` puts a Diablo-ish hexagon badge carrying the level digits and a
@@ -194,6 +195,15 @@ func _process(delta: float) -> void:
 		var mult: int = player.get_streak_multiplier()
 		if mult > 1:
 			line += " (x%d)" % mult
+		# THE CREW BANK, ONE LABELLED LINE UNDER THE PERSONAL ONE (bead
+		# godot-test1-y77d). Drawn only when the player's room_bank() reads
+		# non-null — solo there is no second line at all. Asked through the
+		# player so this keeps its group-lookup-only shape; the bank itself is
+		# summed in mp_manager.shared_bank().
+		if player.has_method("room_bank"):
+			var bank: Variant = player.call("room_bank")
+			if bank != null:
+				line += "\n" + tr("Crew: %d") % int(bank)
 		# ALL CAPS AT THE DRAW SITE and never in `ui.csv`, where the key IS the
 		# English source string — the spec's typography rule, and the reason the
 		# composition above happens into a local rather than into `.text`.

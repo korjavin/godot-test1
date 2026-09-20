@@ -178,8 +178,10 @@ const WIDTH_BUDGETS: Array = [
 	# header gives — they autowrap inside a container that grows.
 	["Waypoints", WaypointHub.TITLE_FONT_SIZE, WaypointHub.CARD_WIDTH,
 		"waypoint panel title"],
-	# The price line does NOT wrap: it is one composed line under the rows.
-	["Travel costs %d coins.", WaypointHub.LINE_FONT_SIZE, WaypointHub.CARD_WIDTH,
+	# The price line does NOT wrap: it is one composed line under the rows. Names
+	# the fare AND the hero's own balance (bead godot-test1-hiyn) — the same key
+	# the too-poor toast body uses, so one budget holds both.
+	["Travel costs %d coins, you have %d.", WaypointHub.LINE_FONT_SIZE, WaypointHub.CARD_WIDTH,
 		"waypoint panel price"],
 	# THE ROW NAMES, against what a row leaves the name after the distance column.
 	# `clip_text` means an overflow here eats its own tail rather than running

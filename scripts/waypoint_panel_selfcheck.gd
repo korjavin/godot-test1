@@ -25,7 +25,9 @@ extends SceneTree
 ##     `SITE_NAMES` would otherwise ship as "road_2" in both languages), the row
 ##     you are standing on is listed and DISABLED, the distance beside each other
 ##     row is the real XZ distance, and the two coin states are driven both ways:
-##     a hero short of the fare has every row dead, a hero who can pay does not.
+##     a hero short of the fare keeps every row PRESSABLE but greyed (bead
+##     godot-test1-hiyn — the press is what says why), a hero who can pay draws
+##     them live; the price line names the fare AND the hero's own balance.
 ##
 ##  c. NO PAUSE, AND DIGITS. The list opens with the holder count unchanged,
 ##     the tree running and the mouse mode untouched — solo AND in a room, which
@@ -33,9 +35,10 @@ extends SceneTree
 ##     game-over refusals are the kind that are written once and quietly stop
 ##     working, so both get a positive control beside them. Then the digit path,
 ##     through the shipped `_input` with real key events: KEY_2 travels
-##     to row 1, a disabled row's key and an echo do nothing, numpad works, and
-##     digits are refused while a quiz is pending (with the tick closing a list
-##     the quiz started under). Then REAL DISPATCH through `parse_input_event`
+##     to row 1, the standing row's key and an echo do nothing, an unaffordable
+##     row's key still travels (it is pressable so it can speak), numpad works,
+##     and digits are refused while a quiz is pending (with the tick closing a
+##     list the quiz started under). Then REAL DISPATCH through `parse_input_event`
 ##     for the engine order: a standing-row digit switches no hero, a live digit
 ##     travels without switching, Esc closes — and a source grep proves the
 ##     player's Esc branch is guarded on the open list (mouse writes are
@@ -515,18 +518,22 @@ func _check_rows() -> void:
 
 	# --- THE FARE, both ways -------------------------------------------------
 	# The panel's own reading of `TELEPORT_COIN_COST`, driven either side of it: a
-	# hero one coin short has nothing to press, and one who can exactly pay does.
+	# hero one coin short keeps every row PRESSABLE but greyed (bead
+	# godot-test1-hiyn — silencing the row would silence the reason), and one who
+	# can exactly pay draws them live. The price line names the fare AND the
+	# hero's own balance.
 	player.own_coins = PlayerScript.TELEPORT_COIN_COST - 1
 	hub._refresh_rows()
 	for i: int in shown:
-		if not hub._rows[i].disabled:
-			_fail("row %d is pressable for a hero who cannot pay the %d-coin fare"
-				% [i, PlayerScript.TELEPORT_COIN_COST])
+		if i == 1:
+			continue  # the row underfoot stays dead whatever the purse holds
+		if hub._rows[i].disabled:
+			_fail("row %d is dead for a hero short of the fare — it must stay pressable so the press can say why" % i)
 		if not _distance_colour(hub, i).is_equal_approx(WaypointHub.COLOR_DISTANCE_OFF):
-			_fail("row %d is greyed out but its distance is still drawn live" % i)
-	# EQUALITY AND NOT `contains`: the fare is 15 and "150" contains "15", so a
-	# price line off by a factor of ten would pass a substring test.
-	var want_price: String = tr(WaypointHub.PRICE_LINE) % PlayerScript.TELEPORT_COIN_COST
+			_fail("row %d is pressable-but-poor and its distance is still drawn live" % i)
+	# The balance rides on the price line itself (M5: without it the "700"
+	# repro explains nothing before any press).
+	var want_price: String = tr(WaypointHub.PRICE_LINE) % [PlayerScript.TELEPORT_COIN_COST, PlayerScript.TELEPORT_COIN_COST - 1]
 	if hub._price_label.text != want_price:
 		_fail("the price line reads \"%s\"; the fare is \"%s\""
 			% [hub._price_label.text, want_price])
@@ -726,15 +733,21 @@ func _check_pause_policy() -> void:
 		_fail("the disabled row's digit travelled to row %d" % stub.travelled_to)
 	if not hub.is_panel_open():
 		_fail("a disabled row's digit closed the travel list — ignored means ignored")
-	# ...and so does a row the hero cannot pay for.
+	# ...but a row the hero cannot pay for STAYS PRESSABLE (bead godot-test1-hiyn):
+	# its digit reaches travel, which is the speaker. The stub answers true here,
+	# so the list closes behind the hop.
 	stub.own_coins = 0
 	hub._refresh_rows()
+	stub.travelled_to = -1
 	hub._input(_key_event(KEY_3))
-	if stub.travelled_to != -1:
-		_fail("an unaffordable row's digit travelled to row %d" % stub.travelled_to)
-	if not hub.is_panel_open():
-		_fail("an unaffordable row's digit closed the travel list")
+	await process_frame
+	if stub.travelled_to != 2:
+		_fail("an unaffordable row's digit reached %d, not row 2 — the greyed row must still speak" % stub.travelled_to)
+	if hub.is_panel_open():
+		_fail("an unaffordable row's digit travelled and left the travel list open")
 	stub.own_coins = 100
+	stub.travelled_to = -1
+	_reopen_on(stub, hub, sites, 0)
 	hub._refresh_rows()
 	# Digits are refused while a quiz is pending — and the tick closes a list
 	# the quiz started under. The keypress proves the input guard, the explicit
@@ -1003,9 +1016,10 @@ func _check_press_travels() -> void:
 
 	# --- A REFUSED HOP PUTS THE LIST BACK ------------------------------------
 	# `travel_to_waypoint()` has refusals this panel cannot see (a room that has
-	# not placed this body yet is the real one) and all of them are silent. A
-	# press that ate the list and did nothing would leave the hero with no way
-	# back to it but walking off the circle and on again, the open being an edge.
+	# not placed this body yet is the real one) and every one of them SPEAKS
+	# (bead godot-test1-hiyn). A press that ate the list and did nothing would
+	# leave the hero with no way back to it but walking off the circle and on
+	# again, the open being an edge.
 	stub.travelled_to = -1
 	stub.answer = false
 	stub.waypoint_mask = real_mask
@@ -1024,6 +1038,23 @@ func _check_press_travels() -> void:
 	if not hub.is_panel_open():
 		_fail("a REFUSED hop ate the travel list — nothing moved, nothing was said, "
 			+ "and the list cannot be re-opened without walking off the circle")
+	# --- A POOR HOP REACHES TRAVEL AND COMES BACK (bead godot-test1-hiyn, A3) --
+	# A greyed row is pressable: the press calls travel_to_waypoint, the refused
+	# hop re-opens the list (M4: a disabled row never calls), and the price line
+	# already named the balance (M5).
+	stub.travelled_to = -1
+	stub.answer = false
+	stub.own_coins = 3
+	hub._refresh_rows()
+	if not ("3" in hub._price_label.text):
+		_fail("the price line reads \"%s\" — it must name the hero's own 3 (M5)"
+			% hub._price_label.text)
+	(hub._rows[2] as Button).pressed.emit()
+	await process_frame
+	if stub.travelled_to != 2:
+		_fail("pressing a greyed row asked to travel to %d, not row 2 (M4)" % stub.travelled_to)
+	if not hub.is_panel_open():
+		_fail("a refused poor hop ate the travel list instead of re-opening it")
 	hub.set_panel_open(false)
 	Sentinel.done("press_travels")
 

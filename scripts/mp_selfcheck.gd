@@ -174,6 +174,9 @@ func _run_checks() -> String:
 	failure = _check_room_pause()
 	if not failure.is_empty():
 		return failure
+	failure = await _check_personal_coins_crew_bank()
+	if not failure.is_empty():
+		return failure
 	return _check_voice_chat_tx()
 
 
@@ -3277,6 +3280,122 @@ func _is_body_blocked_at(pos: Vector3) -> bool:
 # =============================================================================
 # 25. THE ROOM-WIDE PAUSE (bead godot-test1-3a2)
 # =============================================================================
+
+# =============================================================================
+# 26. PERSONAL COINS + THE CREW BANK (bead godot-test1-y77d)
+# =============================================================================
+
+func _check_personal_coins_crew_bank() -> String:
+	"""
+	The HUD's "Coins:" line is PERSONAL again and the crew bank rides a labelled
+	second line (bead godot-test1-y77d).
+
+	A1: host player with own_coins = 5, one synthetic peer presence with cc = 999
+	fed through the REAL presence validator (`MpCodec._decode_presence_dict`) into
+	the shipped `_peer_state` shape — one refresh leaves coins_collected == 5,
+	own_coins == 5 and shared_bank(5) == 1004. M1 (restore `coins_collected =
+	int(bank)`) goes red; M2 (skip the peer loop) goes red on the bank.
+	A2: the peer leaving freezes its 999 in `_gone_coins` — bank stays 1004,
+	coins stay 5. M3 (drop the `_gone_coins` add) goes red.
+	A3: a 20% tax bills the OWN stake — 5 -> 4/4, bank 1003. M4 (bill the bank)
+	goes red.
+	A4: leaving the room clears the flag and coins stay personal. M5 (restore the
+	bank on leave) goes red.
+	A5: the HUD draws "5" and "1004" in a room and hides the crew line solo. M6
+	(hide the crew line) and M7 (bank in the coin line) go red.
+	"""
+	var mp: Node = MPManager.new()
+	mp.add_to_group("mp")
+	root.add_child(mp)
+	mp._state = MPManager.State.IN_ROOM
+	mp._first_member = true
+	mp._join_applied = true
+	mp._gone_coins = 0
+	var player: Node = Player.new()
+	player.add_to_group("player")
+	root.add_child(player)
+	await process_frame
+	player.set("own_coins", 5)
+	player.set("coins_collected", 5)
+	player.set("own_distance", 0)
+	player.set("run_distance", 0)
+	# The peer's 999 through the REAL validator, written in the shipped shape
+	# (mp_manager.gd `_receive_mesh_packets`: decode then `_peer_state[from]`).
+	var raw: Dictionary = {"p": Vector3(10.0, 0.0, 0.0), "g": true, "y": 0.0,
+		"s": 0.0, "c": 0, "cc": 999, "dd": 0}
+	var state: Dictionary = MP_CODEC._decode_presence_dict(raw)
+	if state.is_empty():
+		return _bank_cleanup(mp, player, "the honest presence packet failed validation — the A1 fixture is vacuous")
+	mp._peer_state["peer1"] = {"coins": state["cc"], "dist": state["dd"],
+		"pos": state["p"], "floor": state["g"], "pz": state["pz"]}
+	if int(mp.shared_bank(5)) != 1004:
+		return _bank_cleanup(mp, player, "shared_bank(5) is %s, not 1004 — the crew number is gone (M2)" % str(mp.shared_bank(5)))
+	player.call("_refresh_shared_totals")
+	if int(player.get("coins_collected")) != 5:
+		return _bank_cleanup(mp, player, "A1: coins_collected is %d after one refresh, not 5 — the HUD shows the bank again (M1)" % int(player.get("coins_collected")))
+	if int(player.get("own_coins")) != 5:
+		return _bank_cleanup(mp, player, "A1: own_coins moved to %d under a refresh" % int(player.get("own_coins")))
+	if int(player.call("room_bank")) != 1004:
+		return _bank_cleanup(mp, player, "A1: room_bank() is %s, not 1004" % str(player.call("room_bank")))
+	# A5 in the room: the HUD names both numbers.
+	var hud: Label = (load("res://scripts/coin_hud.gd") as GDScript).new()
+	root.add_child(hud)
+	await process_frame
+	await process_frame
+	var text: String = hud.text
+	if not ("5" in text and "1004" in text):
+		var got: String = text
+		hud.free()
+		return _bank_cleanup(mp, player, "A5: the room HUD reads \"%s\" — it must name own 5 and crew 1004 (M6/M7)" % got)
+	if not ("CREW" in text):
+		hud.free()
+		return _bank_cleanup(mp, player, "A5: the room HUD has no labelled crew line (M6)")
+	hud.free()
+	# A2: the peer leaves — its 999 freezes, the personal line does not move.
+	mp._on_lobby_peer_left("peer1")
+	if int(mp.shared_bank(int(player.get("own_coins")))) != 1004:
+		return _bank_cleanup(mp, player, "A2: bank after the peer left is %s, not 1004 — _gone_coins did not freeze it (M3)" % str(mp.shared_bank(int(player.get("own_coins")))))
+	player.call("_refresh_shared_totals")
+	if int(player.get("coins_collected")) != 5:
+		return _bank_cleanup(mp, player, "A2: coins_collected moved to %d when the peer left" % int(player.get("coins_collected")))
+	# A3: the tax bills the OWN stake.
+	player.call("_pay_coin_setback", 0.2)
+	if int(player.get("own_coins")) != 4 or int(player.get("coins_collected")) != 4:
+		return _bank_cleanup(mp, player, "A3: tax left own=%d shown=%d, not 4/4 (M4)" % [int(player.get("own_coins")), int(player.get("coins_collected"))])
+	if int(mp.shared_bank(int(player.get("own_coins")))) != 1003:
+		return _bank_cleanup(mp, player, "A3: bank after tax is %s, not 1003" % str(mp.shared_bank(int(player.get("own_coins")))))
+	# A4: leaving the room — personal stays, the flag clears, the crew line hides.
+	mp.leave()
+	player.call("_refresh_shared_totals")
+	if int(player.get("coins_collected")) != int(player.get("own_coins")):
+		return _bank_cleanup(mp, player, "A4: after leave coins=%d own=%d — the old restore is back (M5)" % [int(player.get("coins_collected")), int(player.get("own_coins"))])
+	if bool(player.get("_showing_shared_totals")):
+		return _bank_cleanup(mp, player, "A4: _showing_shared_totals still true after leave")
+	if player.call("room_bank") != null:
+		return _bank_cleanup(mp, player, "A4: room_bank() still reads after leave")
+	var hud2: Label = (load("res://scripts/coin_hud.gd") as GDScript).new()
+	root.add_child(hud2)
+	await process_frame
+	await process_frame
+	var solo_text: String = hud2.text
+	hud2.free()
+	if "CREW" in solo_text:
+		return _bank_cleanup(mp, player, "A4: the solo HUD still draws a crew line")
+	_bank_cleanup(mp, player, "")
+	Sentinel.done("personal_coins_crew_bank")
+	return ""
+
+
+func _bank_cleanup(mp: Node, player: Node, failure: String) -> String:
+	"""Free the bank fixture's nodes and hand the failure back ("" on success)."""
+	if is_instance_valid(player):
+		player.remove_from_group("player")
+		player.free()
+	if is_instance_valid(mp):
+		mp.remove_from_group("mp")
+		mp.free()
+	return failure
+
 
 func _check_room_pause() -> String:
 	"""
