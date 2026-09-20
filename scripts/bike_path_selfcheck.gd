@@ -34,7 +34,10 @@ extends SceneTree
 ## markers), R3 (the world tie: a rack box really in the chunk's batch, through
 ## the shipped bucketing, standing within a stated literal distance of its
 ## anchor, with the marker on top of the geometry and the footprint in the
-## building chunk). A rack is owned by its site's chunk, never its anchor's —
+## building chunk), R4 (the rack asks the footprint test with its own 1.4 m
+## radius, not the pole's — one synthetic obstacle between the two thresholds,
+## refused or moved, never kept). A rack is owned by its site's chunk, never
+## its anchor's —
 ## an 80 m ring puts the HQ rack two chunks east of it. Checks 1 and 5 need no
 ## change — the racks land inside the family's own batch slice as CUBEs — and
 ## check 6 counts one footprint per rack beside the one per pole.
@@ -555,6 +558,7 @@ func _run() -> void:
 	_check_anchor_racks(terrain_script)
 	_check_bike_stand_contract(terrain_script)
 	_check_anchor_rack_world_tie(terrain_script)
+	_check_rack_clearance(terrain_script)
 	# --- CHILD `.3`, the bridges. SIX STATEMENTS IN FOUR CALLS: B1 (with B1b), B3
 	# and B4 are one call because they all need the same drawn deck, B5 and B6 are
 	# the two unit assertions on the pieces no seed reliably exercises, and B2 (with
@@ -591,7 +595,8 @@ func _run() -> void:
 				+ "bike-stand rack stands at every network anchor a trunk touches "
 				+ "and no spur end grows one, every marker carries exactly the "
 				+ "contract the rental epic will read, and a rack box really in "
-				+ "the chunk's batch stands within a stated distance of its anchor")
+				+ "the chunk's batch stands within a stated distance of its anchor, "
+				+ "with the footprint asked in the rack's own radius")
 		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
@@ -2795,7 +2800,7 @@ func _skip_explained(terrain: Node3D, apos: Vector2, prelim: Vector2,
 	terrain.spawn_city_in_chunk(home, mesh_instance, obstacles, block_batch, block_body)
 	var at: Vector2 = prelim - Vector2(centre.x, centre.z)
 	var excuse: String = ""
-	if BikePaths._footprint_taken(obstacles, at):
+	if BikePaths._footprint_taken(obstacles, at, BikePaths.RACK_RADIUS):
 		var best_d: float = INF
 		var best := {"top": 0.0, "radius": 0.0}
 		for o_v: Variant in obstacles:
@@ -2818,7 +2823,7 @@ func _skip_explained(terrain: Node3D, apos: Vector2, prelim: Vector2,
 				if BikePaths._site_keep_out(terrain, site, waypoints):
 					continue
 				if BikePaths._footprint_taken(obstacles,
-						site - Vector2(centre.x, centre.z)):
+						site - Vector2(centre.x, centre.z), BikePaths.RACK_RADIUS):
 					continue
 				excuse = ""
 				break
@@ -3112,6 +3117,77 @@ func _check_anchor_racks(terrain_script: GDScript) -> void:
 				+ "territory, so 'spurs get no rack' held for free")
 	print("R1: %d pure spur ends tested bare over %d seeds" % [pure_tested, SEEDS.size()])
 	Sentinel.done("anchor_racks")
+
+
+# ============================================================================
+# R4 — the rack asks with its OWN radius (round-2 finding)
+# ============================================================================
+
+func _check_rack_clearance(terrain_script: GDScript) -> void:
+	"""
+	The footprint currency only works when the asker spends what it is: a post
+	asks with the pole's radius, a rack with the stand's (`RACK_RADIUS` = 1.4 m,
+	not 0.26 m).
+
+	ONE synthetic obstacle, placed BETWEEN the two thresholds — at
+	obstacle.radius + 0.8 m from a real preliminary site, so it reads FREE to a
+	post and TAKEN to a rack — and the shipped `rack_build_site` must refuse
+	the site (move or skip). With the pole radius back in it builds there, and
+	the `moved == prelim` assertion below is what turns red (M-radius). The
+	unit pair above it pins the two thresholds directly. Fail-on-zero: the
+	probe asserts the unmutated build did NOT stay, not merely that nothing
+	fired.
+	"""
+	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
+	var anchors: Array[Dictionary] = terrain.bike_anchors()
+	var touched: Array[int] = _touched_from_edges(terrain)
+	var waypoints: Array[Dictionary] = terrain.waypoint_sites()
+	var idx: int = -1
+	var apos := Vector2.INF
+	var prelim := Vector2.INF
+	for cand: int in touched:
+		var site: Vector2 = BikePaths.rack_site(terrain, anchors[cand]["pos"], waypoints)
+		if site != Vector2.INF:
+			idx = cand
+			apos = anchors[cand]["pos"]
+			prelim = site
+			break
+	if idx < 0:
+		_fail("R4 found no touched anchor with a preliminary site on seed %d, "
+				% SEEDS[0] + "so the clearance probe never ran")
+		terrain.free()
+		Sentinel.done("rack_clearance")
+		return
+	var owner: Vector2i = terrain.world_to_chunk(Vector3(prelim.x, 0.0, prelim.y))
+	var centre: Vector3 = terrain.chunk_to_world(owner)
+	var at: Vector2 = prelim - Vector2(centre.x, centre.z)
+	var obstacles: Array = [{
+		"pos": Vector3(at.x + 2.8, 0.0, at.y),
+		"radius": 2.0, "top": 1.0, "climbable": false,
+	}]
+	if BikePaths._footprint_taken(obstacles, at):
+		_fail("R4: a post reads TAKEN 2.8 m from a radius-2.0 obstacle — the pole "
+				+ "threshold moved")
+	if not BikePaths._footprint_taken(obstacles, at, BikePaths.RACK_RADIUS):
+		_fail("R4: a rack reads FREE 2.8 m from a radius-2.0 obstacle — the rack "
+				+ "threshold moved")
+	var moved: Vector2 = BikePaths.rack_build_site(terrain, apos, owner,
+			waypoints, obstacles, Vector2(centre.x, centre.z))
+	if moved == prelim:
+		_fail("R4: the shipped build site kept the preliminary site with a taken "
+				+ "footprint 2.8 m out — the rack asks with the pole's radius")
+	elif moved == Vector2.INF:
+		print("R4: anchor %d (%s): the synthetic obstacle skips the rack"
+				% [idx, String(anchors[idx]["id"])])
+	else:
+		var dm: float = moved.distance_to(apos)
+		print("R4: anchor %d (%s): the synthetic obstacle moves the rack to %.1f m"
+				% [idx, String(anchors[idx]["id"]), dm])
+		if dm > BikePaths.RACK_ANCHOR_REACH + 0.01:
+			_fail("R4: the moved site stands %.1f m from its anchor, past "
+					% dm + "RACK_ANCHOR_REACH")
+	terrain.free()
+	Sentinel.done("rack_clearance")
 
 
 # ============================================================================
