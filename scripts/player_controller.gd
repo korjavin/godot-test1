@@ -4031,8 +4031,8 @@ func debug_teleport_to(dest: Vector3) -> bool:
 	`MpManager._apply_join_placement()`'s own placement; the arrival path wins
 	by construction because it runs last.
 
-	The re-seat is `_land_at()`, which this function and the waypoint travel
-	below share through `_jump_to()`; its docstring is where the sequence lives.
+	The re-seat is `_jump_to()`, which this function and the waypoint travel
+	below now share; its docstring is where the sequence is explained.
 	"""
 	if not debug_teleport_allowed(OS.is_debug_build(), _debug_in_room()):
 		return false
@@ -4074,10 +4074,26 @@ func _jump_to(dest: Vector3) -> bool:
 	first one is halfway through landing in.
 	"""
 	var terrain := get_tree().get_first_node_in_group("terrain")
-	if terrain == null or not terrain.has_method("relocate"):
+	if terrain == null or not terrain.has_method("relocate") \
+			or not terrain.has_method("world_to_chunk") \
+			or not terrain.has_method("build_ring_now"):
 		return false
-	terrain.relocate(terrain.world_to_chunk(dest))
-	return await _land_at(dest)
+	var chunk: Vector2i = terrain.world_to_chunk(dest)
+	terrain.relocate(chunk)
+	terrain.build_ring_now(chunk)
+	await get_tree().physics_frame
+	var from_xz := Vector2(global_position.x, global_position.z)
+	_place_near(dest)
+	# A TELEPORT IS NOT DISTANCE RUN — `_respawn_in_place()`'s line, verbatim.
+	own_distance_origin += Vector2(global_position.x, global_position.z) - from_xz
+	clear_nearby_crocodiles(global_position)
+	respawn_blink_timer = 0.0
+	_apply_view_mode()
+	# TRANSIENT ABILITY STATE IS CLEARED ON EVERY TELEPORT (CLAUDE.md, Player and
+	# camera): a Windman mid-air-rush or a giant Teibi arriving 2 km away would
+	# carry a boost the new neighborhood never granted.
+	_reset_ability_states()
+	return true
 
 
 # ============================================================================
@@ -4474,12 +4490,18 @@ func continue_save() -> bool:
 	var dest := Vector3(float(saved_pos[0]), float(saved_pos[1]), float(saved_pos[2]))
 	var chunk: Vector2i = terrain.world_to_chunk(dest)
 	terrain.new_run(int(saved["seed"]), chunk)
+	# The ring settled before any probe runs: bought up front, plus one physics
+	# frame so the space learns the new chunks. Stated here rather than shared
+	# with `_jump_to()`: `bike_rental_selfcheck` pins that function's body by
+	# name, so the tail is not lifted (the bead's "consider" stays a no).
+	terrain.build_ring_now(chunk)
+	await get_tree().physics_frame
 	var placed := false
 	if bool(saved["in_hq"]):
-		await _settle_ring(terrain, chunk)
 		placed = _move_to_landing(saved)
 	else:
-		placed = await _land_at(dest)
+		_place_near(dest)
+		placed = true
 	if not placed:
 		_continue_busy = false
 		return false
@@ -4565,42 +4587,6 @@ func _save_landing_now(in_hq_now: bool) -> String:
 	if _save_last_landing != "" and earned.has(_save_last_landing):
 		return _save_last_landing
 	return ""
-
-
-func _settle_ring(terrain: Node, around: Vector2i) -> void:
-	"""
-	Buy the ring's content up front and let the physics space learn the new
-	chunks before any probe runs: `build_ring_now()` plus one physics frame.
-	The half of `_land_at()` the HQ restore shares without the field placement.
-	"""
-	terrain.build_ring_now(around)
-	await get_tree().physics_frame
-
-
-func _land_at(dest: Vector3) -> bool:
-	"""
-	THE RE-SEAT TAIL, shared by the debug cheat, the waypoint hop (both through
-	`_jump_to()`) and the field restore: the ring settled, the body placed, the
-	landing hygiene. Every GATE stays the caller's — this asks no permission and
-	charges no price, it only moves a body.
-	"""
-	var terrain := get_tree().get_first_node_in_group("terrain")
-	if terrain == null or not terrain.has_method("world_to_chunk") \
-			or not terrain.has_method("build_ring_now"):
-		return false
-	await _settle_ring(terrain, terrain.world_to_chunk(dest))
-	var from_xz := Vector2(global_position.x, global_position.z)
-	_place_near(dest)
-	# A TELEPORT IS NOT DISTANCE RUN — `_respawn_in_place()`'s line, verbatim.
-	own_distance_origin += Vector2(global_position.x, global_position.z) - from_xz
-	clear_nearby_crocodiles(global_position)
-	respawn_blink_timer = 0.0
-	_apply_view_mode()
-	# TRANSIENT ABILITY STATE IS CLEARED ON EVERY TELEPORT (CLAUDE.md, Player and
-	# camera): a Windman mid-air-rush or a giant Teibi arriving 2 km away would
-	# carry a boost the new neighborhood never granted.
-	_reset_ability_states()
-	return true
 
 
 func _move_to_landing(saved: Dictionary) -> bool:
