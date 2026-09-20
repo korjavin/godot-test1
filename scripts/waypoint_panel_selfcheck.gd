@@ -150,6 +150,27 @@ func _world() -> Array:
 	return [player, terrain, hub, sites]
 
 
+func _wait_until_available(player: Node, hub: Node) -> void:
+	"""Wait out a bite grace the hero is still serving, in swept space.
+
+	A bite from the previous check's last frames leaves the hero `is_caught` and
+	then `is_respawning` for a good two seconds, and this check's staging is
+	synchronous — the grace cannot tick down between here and the open below, so
+	without this the list is refused for a hero who did nothing wrong. Swept
+	first, in `capture_selfcheck`'s spelling, and re-swept every frame, so
+	nothing can re-bite while the grace runs out; the bound is wall clock so it
+	holds at every speed, and at normal speed the hero is available on entry and
+	this costs one sweep and zero frames. The predicate is the hub's own
+	`_hero_unavailable()`, so the wait and the open cannot disagree about who
+	may travel.
+	"""
+	player.clear_nearby_crocodiles(player.global_position)
+	var deadline: int = Time.get_ticks_msec() + 6000
+	while hub._hero_unavailable(player) and Time.get_ticks_msec() < deadline:
+		player.clear_nearby_crocodiles(player.global_position)
+		await process_frame
+
+
 func _stand_on(player: Node, hub: Node, sites: Array, index: int) -> void:
 	"""Put the body on circle `index` and run the shipped scan once — which also
 	FINDS it the first time, through `_arrive()` -> `activate_waypoint()`, so every
@@ -902,6 +923,15 @@ func _check_press_travels() -> void:
 	var hub: Node = world[2]
 	var sites: Array = world[3]
 
+	# CROC-PROOF STAGING (bead godot-test1-yfdh): the world keeps running under
+	# this check, and a Piglet Crocodile can reach the hero during the previous
+	# check's last frames — at `--fixed-fps 2` that bite's grace (CAUGHT 0.55 s
+	# plus RESPAWN_GRACE 1.5 s) still covers this synchronous staging, so the
+	# open below is refused with the hero mid-grace and the check fails 2 in 7.
+	# No tolerance widened, no retry: the refusal itself stays asserted, in the
+	# pause check's game-over leg.
+	await _wait_until_available(player, hub)
+
 	# Find three circles with the real hero, so the panel has rows...
 	player.own_coins = 100
 	_walk_away(player, hub)
@@ -921,7 +951,35 @@ func _check_press_travels() -> void:
 	var stub := RecordingHero.new()
 	stub.add_to_group("player")
 	root.add_child(stub)
-	await process_frame
+	# NO AWAITED FRAME BETWEEN STAGING AND THE PRESS (bead godot-test1-e8e5).
+	# `WaypointHub._process` accumulates `delta` and calls `_tick()` every
+	# `TICK_INTERVAL` (0.2 s), and one `await process_frame` is one frame but an
+	# UNBOUNDED amount of wall clock: on a loaded runner that single frame carries
+	# 0.2 s or more, the hub's own tick re-arms `_standing_on = -1` over the stub
+	# standing nowhere and closes the list before the row is ever pressed, and the
+	# assertion below then blames the press for the tick's work. The frame bought
+	# nothing to begin with — `add_to_group` before `add_child` registers the
+	# group on ENTER_TREE, synchronously, so `_on_row_pressed()`'s
+	# `get_first_node_in_group` sees this stub on the very next line. Same lesson
+	# as the quiz block one check up (bead godot-test1-omp1, PR #444) and
+	# `capture_selfcheck._plant()` (bead godot-test1-gjiu), one check along.
+	#
+	# AND THE STUB STANDS ON THE CIRCLE, NOT AT THE ORIGIN. A tick still runs on
+	# the frame the press itself needs (the stub's `travel_to_waypoint()` is a
+	# coroutine), and over a stub standing nowhere that tick re-arms the latch and
+	# closes the list — the same vacuity one frame later. Stood where the hero
+	# stood, the scan keeps the latch and the tick can only refresh the rows, so
+	# the close below is the press's and nothing else's.
+	var stand: Vector3 = sites[1]["pos"]
+	stub.global_position = Vector3(stand.x, 1.0, stand.z)
+	# THE LIST IS STILL UP GOING IN. Asked out loud because the close the tick
+	# does and the close a press does are indistinguishable afterwards: if an
+	# await ever creeps back into the staging above, this says so instead of
+	# leaving the travel assertion to blame the press.
+	if not hub.is_panel_open():
+		_fail("the travel list was already closed before a row was pressed — "
+			+ "a hub tick ran during the staging above, so the close below "
+			+ "would be measuring the tick and not the press")
 
 	# THE BUTTON'S OWN `pressed` SIGNAL, never `_on_row_pressed()` directly
 	# (review, 2026-09-12): calling the handler skips the `connect` and the bound
