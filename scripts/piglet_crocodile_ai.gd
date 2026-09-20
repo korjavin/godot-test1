@@ -426,6 +426,19 @@ var has_stalked: bool = false
 ## restoring it moves nothing.
 var is_investigating: bool = false
 
+## THE HONEYPOT FLAG (bead godot-test1-m7jp). Set only by `take_bait()`, cleared
+## only on release (`_investigate_go_home()` / `_end_investigation()`), the peer's
+## copy off `MpCodec.CROC_FLAG_BAITED`, and nowhere else. While it is set the
+## body walks the lure's legs at a wander speed and ignores everything around
+## it — no chase, no track, no flee, no bite, no capture — because the baited
+## branch in `_physics_process` runs ABOVE the flee and the chase, and the two
+## entry points that could move it anyway (`flee_from()`,
+## `_on_player_collision()`) refuse it outright. It is a second bool beside
+## `is_investigating` rather than a value of it because the plate's
+## anti-puppet rules must keep applying to plates: `investigate_point()` still
+## refuses a busy body, while the jar takes anybody.
+var is_baited: bool = false
+
 ## Where the investigation is walking RIGHT NOW — the head of `_investigate_path`,
 ## in world space, kept as a plain field because it is what everything outside
 ## this state (the self-check, a future HUD tell) wants to ask.
@@ -1079,41 +1092,51 @@ func _physics_process(delta: float) -> void:
 		velocity.x = 0.0
 		velocity.z = 0.0
 	else:
-		# Decide what we want to do this frame. Fleeing (Phoboman's Stink Wave)
-		# overrides everything; otherwise chase the player if in range, else wander.
-		if is_fleeing:
-			flee_time_remaining -= delta
-			if flee_time_remaining <= 0.0:
-				# The whiff wore off — go back to normal wandering.
-				is_fleeing = false
-				_choose_new_direction()
-
-		if is_fleeing:
-			# If this row fears giant Teibi, refresh fear each frame while the giant remains in range.
-			if float(spec.get("fears_giant_radius", 0.0)) > 0.0 and player_node != null:
-				_update_chase_state()
-			# Run directly away from the player.
-			_flee()
+		# Decide what we want to do this frame. A baited body (Phoboman's Kimchi
+		# honeypot, bead godot-test1-m7jp) outranks everything below: flee and
+		# chase are not even consulted, so no re-acquisition can cancel the
+		# errand and no stink can move it. The walk itself reuses the lure's
+		# legs at a wander speed (see take_bait()).
+		if is_baited:
+			_investigate_move(delta)
 		else:
-			_update_chase_state()
-			if is_chasing and player_node:
-				# Chase the player
-				_chase_player()
-			elif is_tracking:
-				# Nothing in smelling range, but a track underfoot: walk it. Set
-				# by the hunt arm's second leg (`_track_scent`), which only a row
-				# carrying `scent_radius` can ever reach — so for every animal in
-				# the table this branch is dead and the wander below is unchanged.
-				_track_move()
-			elif is_investigating:
-				# Somebody set a plate off across the floor: go and look at it.
-				# UNDER the track and the chase on purpose — a live quarry and a
-				# fresh footprint both outrank a noise, so the lure can never pull
-				# a committed body off anything. See `investigate_point()`.
-				_investigate_move(delta)
+			# Fleeing (Phoboman's Stink Wave) overrides everything below;
+			# otherwise chase the player if in range, else wander.
+			if is_fleeing:
+				flee_time_remaining -= delta
+				if flee_time_remaining <= 0.0:
+					# The whiff wore off — go back to normal wandering.
+					is_fleeing = false
+					_choose_new_direction()
+
+			if is_fleeing:
+				# If this row fears giant Teibi, refresh fear each frame while the giant remains in range.
+				if float(spec.get("fears_giant_radius", 0.0)) > 0.0 and player_node != null:
+					_update_chase_state()
+				# Run directly away from the player.
+				_flee()
 			else:
-				# Wander with smooth, organic steering
-				_wander(delta)
+				_update_chase_state()
+				if is_chasing and player_node:
+					# Chase the player
+					_chase_player()
+				elif is_tracking:
+					# Nothing in smelling range, but a track underfoot: walk it. Set
+					# by the hunt arm's second leg (`_track_scent`), which only a row
+					# carrying `scent_radius` can ever reach — so for every animal in
+					# the table this branch is dead and the wander below is unchanged.
+					_track_move()
+				elif is_investigating:
+					# Somebody set a plate off across the floor: go and look at it.
+					# UNDER the track and the chase on purpose — a live quarry and a
+					# fresh footprint both outrank a noise, so the lure can never pull
+					# a committed body off anything. See `investigate_point()`.
+					# (A baited body never reaches this arm: the branch above owns
+					# every body carrying `is_baited`, plate or jar.)
+					_investigate_move(delta)
+				else:
+					# Wander with smooth, organic steering
+					_wander(delta)
 
 		# Steer around any block ahead so we don't drive our snout into it. This
 		# may override the chase/wander heading for this frame.
@@ -1237,6 +1260,14 @@ static func _is_quarry_giant(q: Node) -> bool:
 
 func _update_chase_state() -> void:
 	"""Check distance to the nearest quarry and update chase state."""
+	# A BAITED BODY CANNOT ACQUIRE (bead godot-test1-m7jp). The baited branch in
+	# `_physics_process` never calls this while the flag is set, so this is the
+	# second half of the same invariant, not the first: whoever calls the chase
+	# check directly on a body standing over the jar must get the same answer
+	# the frame would have given — still baited, still not chasing.
+	if is_baited:
+		is_chasing = false
+		return
 	# A SHRUNK BODY CANNOT ACQUIRE (bead godot-test1-0mr0.4). Ankle-high is not a
 	# cosmetic state: the pulse drops the chase in `shrink_for()` and this is what
 	# stops it being picked straight back up on the very next frame, which is the
@@ -2026,6 +2057,82 @@ func investigate_point(pos: Vector3, seconds: float,
 	return true
 
 
+func take_bait(pos: Vector3, seconds: float) -> bool:
+	"""
+	Take Phoboman's Kimchi Offering honeypot: walk to `pos`, hold `seconds`,
+	then walk home (bead godot-test1-m7jp).
+
+	THE JAR'S OWN DOOR, beside `investigate_point()` and deliberately not a
+	parameter on it: the plate's three anti-puppet rules must keep applying to
+	plates, and the jar plays by the opposite ones. A BUSY body is TAKEN, not
+	refused — chasing, tracking, biting, fleeing or already on an errand, the
+	old stake is dropped and the walk starts. The only two refusals are a
+	remote-driven body (the master owns that walk, and a peer writing it would
+	grow a leash nothing there hands back) and a body that is already baited
+	(the jar sweeps every tick, so taking it twice would refresh a hold the
+	jar's own clock owns).
+
+	@param pos: the jar, world space — clamped into the territory for a boss.
+	@param seconds: how long to stand over it once there. The jar passes its
+	    own remainder (`HONEYPOT_SECONDS - age`), so every body releases on the
+	    jar's 12 s no matter when it was caught.
+	@return: whether the bait was TAKEN.
+	"""
+	if remote_driven or is_baited:
+		return false
+	if not pos.is_finite() or not is_finite(seconds) or seconds <= 0.0:
+		return false
+	# THE OLD STAKE IS OVER FIRST. Whatever errand was running ends the way
+	# `_end_investigation()` ends one — the authored leash handed back where it
+	# was taken — minus the fresh wander heading, which would cost an RNG draw
+	# for a body that is going nowhere yet. The chase, the track, the bite and
+	# the flee are dropped and the telegraph cleared, so nothing about what the
+	# body was doing survives into the walk.
+	if not _investigate_leash.is_empty():
+		confine_center = _investigate_leash["center"]
+		confine_half = _investigate_leash["half"]
+		_investigate_leash = {}
+	_crowd_errand = false
+	is_investigating = false
+	_investigate_hold = 0.0
+	_investigate_path = []
+	_investigate_home = []
+	is_chasing = false
+	is_tracking = false
+	is_biting = false
+	bite_timer = 0.0
+	is_fleeing = false
+	flee_time_remaining = 0.0
+	spot_clock = 0.0
+	if _spot_label != null:
+		_spot_label.visible = false
+	# A BOSS COMES, CLAMPED TO ITS LEASH — the `is_boss` LAYER (CLAUDE.md), not
+	# a row key and not a name. The jar is pulled back inside the territory
+	# with one margin of fence left, so the boss walks to the fence and holds
+	# there instead of fighting the hard clamp until the stall watchdog frees
+	# it early.
+	var target := pos
+	if is_boss:
+		var flat := Vector3(pos.x - home_position.x, 0.0, pos.z - home_position.z)
+		flat = flat.limit_length(territory_radius() - BOSS_TERRITORY_MARGIN)
+		target = Vector3(home_position.x + flat.x, pos.y, home_position.z + flat.z)
+	# The errand internals in `investigate_point()`'s shape: one straight leg
+	# out, the way back built at the post, the borrowed leash recorded for a
+	# confined body. No wake: the jar never offers the pot to a sleeper (see
+	# `KimchiJar._lure`), so there is nothing here that needs waking.
+	_investigate_path = [target]
+	_investigate_home = []
+	is_investigating = true
+	is_baited = true
+	investigate_target = target
+	_investigate_hold = seconds
+	_investigate_aim(target)
+	if is_confined:
+		_investigate_leash = {"center": confine_center, "half": confine_half}
+		_investigate_home.append(confine_center)
+	return true
+
+
 func _investigate_aim(point: Vector3) -> void:
 	"""Walk at `point` from here, with a fresh stall clock. The one waypoint seam."""
 	investigate_target = point
@@ -2149,6 +2256,10 @@ func _investigate_go_home() -> void:
 	already reached zero, which is exactly what an expiring hold is.
 	"""
 	_investigate_hold = 0.0
+	# THE HONEYPOT LIFTS HERE (bead godot-test1-m7jp): the hold running out is
+	# the jar's 12 s reaching the body, so the walk home is unbaited and the
+	# pack can acquire again.
+	is_baited = false
 	if not _investigate_leash.is_empty():
 		confine_center = global_position
 		confine_half = _investigate_leash["half"]
@@ -2168,6 +2279,9 @@ func _end_investigation() -> void:
 		_investigate_leash = {}
 	_crowd_errand = false
 	is_investigating = false
+	# ...and the honeypot with it (bead godot-test1-m7jp): an unconfined body
+	# has no post to walk back to, so the home leg IS this line.
+	is_baited = false
 	_investigate_hold = 0.0
 	_investigate_path = []
 	_investigate_home = []
@@ -2552,6 +2666,14 @@ func flee_from(source: Vector3, duration: float, tracks_player: bool = true) -> 
 	# SIM_RADIUS in crocodile_lod_manager); no smell reaches that far anyway.
 	if not lod_active:
 		return
+	# A BAITED BODY DOES NOT FLINCH (bead godot-test1-m7jp). The honeypot ignores
+	# everything around it — stink, flash and quake — so a Stink Wave, a Twin
+	# Flash or a quake never tears it off the jar. Beside the boss and sealed
+	# returns above, and for their reason: immunity lives HERE, not in group
+	# tricks, so the wave still finds the body and every other group consumer
+	# stays intact.
+	if is_baited:
+		return
 	# NOT guarded on remote_driven, and that is deliberate — do not "fix" it. A
 	# remote-driven crocodile takes its motion (and its flee flag) from the
 	# master's samples, so setting the flag here is harmless: the next sample
@@ -2561,9 +2683,10 @@ func flee_from(source: Vector3, duration: float, tracks_player: bool = true) -> 
 	is_fleeing = true
 	# A FLEEING BODY DROPS ITS ERRAND (bead godot-test1-0mr0.5). `is_fleeing`
 	# outranks `is_investigating` in `_physics_process`, so without this line the
-	# errand merely PAUSES: a sniffer scared off a Kimchi jar mid-hold would run
-	# for four seconds and then calmly walk back to the pot that just went off in
-	# its face. `_abandon_investigation()` turns the walk around instead — the
+	# errand merely PAUSES: a guard scared off a lure plate mid-hold would run
+	# for the wave and then calmly walk back to the plate. (A honeypot body
+	# never reaches this line — `is_baited` returns above.)
+	# `_abandon_investigation()` turns the walk around instead — the
 	# body goes home and hands its borrowed leash back — and it already refuses a
 	# body that is on its way home, so a second scare costs nothing.
 	#
@@ -3112,6 +3235,14 @@ func set_remote_state(pos: Vector3, yaw: float, flags: int) -> void:
 	# on a remote-driven body precisely so the master's samples own the window,
 	# and the eased factor follows this bool on the next animation frame.
 	is_shrunk = (flags & MpCodec.CROC_FLAG_SHRUNK) != 0
+	# THE HONEYPOT RIDES THE BYTE (bead godot-test1-m7jp): a body the master
+	# holds at the jar must not bite a peer who walks past it, and the peer's
+	# `_tick_remote()` bites locally — so the harmlessness has to travel in the
+	# sample. Assigned raw with no clock, `CROC_FLAG_SHRUNK`'s shape exactly:
+	# the master's window is the room's window, and the next sample without the
+	# bit clears it again. No errand starts here — a remote-driven body renders
+	# the master's walk and runs none of its own.
+	is_baited = (flags & MpCodec.CROC_FLAG_BAITED) != 0
 	if (flags & MpCodec.CROC_FLAG_BITING) != 0:
 		_start_bite()
 
@@ -3157,6 +3288,11 @@ func clear_remote_drive() -> void:
 		return
 	remote_driven = false
 	_has_remote_sample = false
+	# A body handed back with the honeypot bit still set would walk at a target
+	# no errand owns (the peer never ran one — see `set_remote_state`), so the
+	# flag comes home with the authority. The next sweep re-baits it if the jar
+	# is still down.
+	is_baited = false
 	# Same guard, same reason, as set_remote_state(): a body already dying
 	# (squash_and_die left the group and stopped physics) must not have physics
 	# handed back to it. It can still be remote-driven here — a local crush runs
@@ -3694,7 +3830,16 @@ func _on_player_collision(player: Node) -> void:
 	  * Giant-form Teibi CRUSHES the crocodile on contact instead of being bitten.
 	  * A crocodile fleeing Phoboman's stink is harmless and just brushes past.
 	  * A crocodile SHRUNK by Teibi's Shrink Ray is harmless AND uncrushable.
+	  * A crocodile BAITED by Phoboman's Kimchi Offering is harmless: it holds
+	    at the jar and brushes past every hero (bead godot-test1-m7jp).
 	"""
+	# A BAITED BODY BITES NOBODY AND IS CRUSHED BY NOBODY (bead
+	# godot-test1-m7jp). Above everything — shrunk, boss, crush — on purpose:
+	# the owner said "ignore everything", so for 12 s the body is furniture and
+	# `captures_hero` cannot fire through it. A state test on the body, never a
+	# player lookup: "player" is the LOCAL player only.
+	if is_baited:
+		return
 	# A SHRUNK BODY BITES NOBODY AND IS CRUSHED BY NOBODY (bead godot-test1-0mr0.4).
 	#
 	# THIS RETURN'S PLACEMENT IS THE OWNER RULING, not a tidy-up. Ruling 3 of

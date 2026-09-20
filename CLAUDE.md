@@ -201,7 +201,7 @@ gameplay input goes through named actions.
   anyone-to-everyone, reliable — the jar is a PICTURE as well as an effect (owner ruling
   2026-09-18), so every member draws one and runs its own clock; the MASTER's copy is the
   one whose beats the pack obeys, through the croc-sync flag byte, and it adds no wire
-  flag of its own). Clear clouds, birds,
+  flag of its own beyond `CROC_FLAG_BAITED` on that byte (bead godot-test1-m7jp). Clear clouds, birds,
   crowd and traffic stay per-peer cosmetic. Storms are rolled around every room member
   (owner ruling A, bead `gyd`). Each verb's ceilings (older builds, RTT lag) are written
   at its send site. Beads `vej`, `coq`, `d81`, `gyd`.

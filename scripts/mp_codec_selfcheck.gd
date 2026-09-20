@@ -1264,6 +1264,17 @@ func _check_shr_parser() -> String:
 		if key.begins_with("CROC_FLAG_") and key != "CROC_FLAG_SHRUNK" \
 				and int(flags[key]) & shrunk_bit != 0:
 			return "CROC_FLAG_SHRUNK (%d) overlaps %s" % [shrunk_bit, key]
+	# THE HONEYPOT BIT IS DISTINCT AND IS A SINGLE BIT (bead godot-test1-m7jp).
+	# `CROC_FLAG_BAITED` is read with `&` on the far side, so a value overlapping
+	# an existing flag would silently make every fleeing body read as baited on
+	# every peer — the SHRUNK test above in this exact shape.
+	var baited_bit: int = int(flags["CROC_FLAG_BAITED"])
+	if baited_bit <= 0 or baited_bit & (baited_bit - 1) != 0:
+		return "CROC_FLAG_BAITED (%d) is not a single bit" % baited_bit
+	for key: String in flags.keys():
+		if key.begins_with("CROC_FLAG_") and key != "CROC_FLAG_BAITED" \
+				and int(flags[key]) & baited_bit != 0:
+			return "CROC_FLAG_BAITED (%d) overlaps %s" % [baited_bit, key]
 	Sentinel.done("shr_parser")
 	return ""
 
@@ -1343,10 +1354,10 @@ func _check_bait_parser() -> String:
 	# plate is stood on, and falling to the plate's 6 m would drop honest jars
 	# placed by a sprinter whose presence packet is one tick behind.
 	#
-	# IT IS NOT TIGHTER THAN THE LURE, and saying so here rather than implying an
+	# IT IS NOT TIGHTER THAN THE HONEYPOT, and saying so here rather than implying an
 	# ordering nobody enforces (revmux round 1, `docs+tests`): 50 m against
-	# `KimchiJar.LURE_RADIUS` 20 m means a peer standing honestly where it says it
-	# is can put a jar 50 m out and reach bodies 70 m from itself. That is the
+	# `KimchiJar.HONEYPOT_RADIUS` 30 m means a peer standing honestly where it says it
+	# is can put a jar 50 m out and reach bodies 80 m from itself. That is the
 	# deliberate skirt `MAX_BAIT_PLACE_DISTANCE`'s own banner argues, and it is
 	# argued there rather than pinned here, because pinning it would be this check
 	# asserting a design call instead of a trust boundary.

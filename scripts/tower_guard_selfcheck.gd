@@ -1242,7 +1242,7 @@ func _check_a_kimchi_jar_routes_a_guard() -> void:
 	      stopped calling `TowerInterior.lure_guard_to()` and fell through to its
 	      own outdoor group loop: that path would be one waypoint long and the
 	      guard would walk into a wall until the stall watchdog took it home;
-	  (b) the jar's own burst does NOT scatter the guard and does NOT end its
+	  (b) the jar's own release does NOT scatter the guard and does NOT end its
 	      errand — `stink_immune` is what makes the HQ's stealth layer survive an
 	      ability, and the guard is still standing over the pot afterwards;
 	  (c) a jar OUTSIDE the walls is refused by `lure_guard_to()`, so the seam
@@ -1320,7 +1320,7 @@ func _check_a_kimchi_jar_routes_a_guard() -> void:
 	# envelope, and the two failures look identical.
 	var outside: Vector3 = interior.global_position \
 			+ Vector3(TowerPlans.PLAN_HALF * 4.0, 0.0, 0.0)
-	if interior.lure_guard_to(outside, KimchiJar.LURE_HOLD):
+	if interior.lure_guard_to(outside, KimchiJar.HONEYPOT_SECONDS):
 		_fail("a jar %.0f m outside the walls lured a guard — the seam would be a"
 				% (TowerPlans.PLAN_HALF * 4.0) + " way to reach into the building"
 				+ " from the field")
@@ -1366,17 +1366,17 @@ func _check_a_kimchi_jar_routes_a_guard() -> void:
 		_fail("the guard is walking at %s, which is not its own first corner %s"
 				% [str(aim), str(path[0])])
 
-	# ---- (b) THE BURST LEAVES IT STANDING -------------------------------------
-	jar._process(KimchiJar.FERMENT)
+	# ---- (b) THE RELEASE LEAVES IT STANDING -------------------------------------
+	jar._process(KimchiJar.HONEYPOT_SECONDS)
 	if bool(guard.get("is_fleeing")):
-		_fail("the guard fled the kimchi burst — stink_immune is the 'fearless"
+		_fail("the guard fled the kimchi release — stink_immune is the 'fearless"
 				+ " furniture' key, and a scatter turns the stealth building into"
 				+ " 'press G past the patrol'")
 	if not bool(guard.get("is_investigating")):
-		_fail("the burst ended the guard's errand — it never fled, so the one-line"
-				+ " fix in flee_from() must not have reached it")
+		_fail("the release ended the guard's errand — it never fled, and the"
+				+ " honeypot has no flight to drop it with")
 	if not is_instance_valid(guard):
-		_fail("the jar freed the guard — it lures and scatters, never kills")
+		_fail("the jar freed the guard — it lures and releases, never kills")
 
 	# ---- (d) THE WALL BAND IS NOT A DEAD ZONE --------------------------------
 	# The band is derived from the two envelopes, never typed, so a retune of
@@ -1400,7 +1400,7 @@ func _check_a_kimchi_jar_routes_a_guard() -> void:
 	if typeof(shell_says) != TYPE_BOOL or not bool(shell_says):
 		_fail("the shell does not call %s sheltered — claim (d) is measuring a"
 				% str(band) + " point in the open field, where nothing was ever broken")
-	if interior.lure_guard_to(band, KimchiJar.LURE_HOLD):
+	if interior.lure_guard_to(band, KimchiJar.HONEYPOT_SECONDS):
 		_fail("the building routed a guard to a jar inside its own wall — %s is"
 				% str(band) + " past TowerPlans.PLAN_HALF and there is no floor there")
 	# One crocodile in the open, inside the jar's lure ball and well outside the
@@ -1408,7 +1408,7 @@ func _check_a_kimchi_jar_routes_a_guard() -> void:
 	var field: Node = load(KIMCHI_CROC_SCENE).instantiate()
 	root.add_child(field)
 	await process_frame
-	(field as Node3D).global_position = band + Vector3(KimchiJar.LURE_RADIUS * 0.5, 0.0, 0.0)
+	(field as Node3D).global_position = band + Vector3(KimchiJar.HONEYPOT_RADIUS * 0.5, 0.0, 0.0)
 	if bool(shell.call("sheltered", (field as Node3D).global_position)):
 		_fail("the field probe is under the shell's roof — claim (d) needs a body"
 				+ " the jar's own shelter skip will not drop")
@@ -1425,7 +1425,7 @@ func _check_a_kimchi_jar_routes_a_guard() -> void:
 
 	print("kimchi indoors: storey %d's guard walks the plan's %d corners to the jar"
 			% [floor_index, path.size()]
-			+ " and is still standing over it after the burst; a jar in the field"
+			+ " and is still standing over it after the release; a jar in the field"
 			+ " is refused, and one in the %.1f m wall band still lures the open"
 			% (TowerShell.OUTER_HALF - TowerPlans.PLAN_HALF))
 	if is_instance_valid(jar):
